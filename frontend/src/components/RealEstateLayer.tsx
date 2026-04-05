@@ -152,9 +152,10 @@ export default function RealEstateLayer({ filters, onPropertySelect }: RealEstat
   // Client-side filter + categorize
   const geojson = useMemo<GeoJSON.FeatureCollection | null>(() => {
     const filtered = properties.filter(p => {
+      if (p.noise == null) return false  // no noise data = don't show
       if (filters.propertyType !== 'all' && p.type !== filters.propertyType) return false
       if (filters.listingType !== 'all' && p.listing !== filters.listingType) return false
-      if (filters.maxNoise > 0 && p.noise != null && p.noise > filters.maxNoise) return false
+      if (p.noise > filters.maxNoise) return false
       return true
     })
     if (filtered.length === 0) return null
