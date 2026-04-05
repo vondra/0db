@@ -60,8 +60,8 @@ const SOURCE_LABELS: Record<string, string> = {
 const SUBTYPE_LABELS: Record<string, Record<string, string>> = {
   road: { motorway: 'Motorway', trunk: 'Trunk road', primary: 'Primary road', secondary: 'Secondary road', tertiary: 'Tertiary road', residential: 'Local road', living_street: 'Living street' },
   railway: { freight_corridor: 'Freight railway', passenger: 'Railway', tram: 'Tram', light_rail: 'Light rail', Rail: 'Railway', Tram: 'Tram', LightRail: 'Light rail', NarrowGauge: 'Narrow gauge', Funicular: 'Funicular' },
-  industrial: { '0': 'Industrial', '1': 'Quarry', '2': 'Farm', '3': 'Works', '4': 'Wastewater', '10': 'Wind turbine', industrial: 'Industrial', commercial: 'Commercial', quarry: 'Quarry', power_plant: 'Power plant' },
-  building: { residential_multi: 'Apartment building', residential_single: 'House', commercial: 'Commercial / retail', education: 'School / kindergarten', healthcare: 'Hospital / clinic', worship: 'Church', public: 'Public building', hospitality: 'Restaurant / bar', garage: 'Garage / parking', farm: 'Farm building', default: 'Building' },
+  industrial: { industrial_area: 'Industrial area', quarry: 'Quarry', farm: 'Farm', factory: 'Factory', wastewater: 'Wastewater plant', wind_turbine: 'Wind turbine' },
+  building: { residential_multi: 'Apartment building', residential_single: 'House', commercial: 'Commercial / retail', warehouse: 'Warehouse', education: 'School / kindergarten', healthcare: 'Hospital / clinic', worship: 'Church', public: 'Public building', hospitality: 'Restaurant / bar', garage: 'Garage / parking', farm: 'Farm building', default: 'Building' },
   aircraft: { mixed: 'Aircraft', aircraft: 'Aircraft' },
 }
 

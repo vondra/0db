@@ -269,16 +269,41 @@ fn compute_roads(
         }
 
         // Group by (ref, name, class) — all "D1 motorway" segments → one contributor
-        let key = (seg.road_ref.clone(), seg.name.clone(), seg.road_class);
+        // Ramp merging: motorway/trunk with no ref → find nearest with ref
+        let effective_ref = if seg.road_ref.is_empty() && class_idx <= 1 {
+            // Look for nearest motorway/trunk segment with ref
+            let mut best_ref = String::new();
+            let mut best_dist = f64::MAX;
+            for other in roads.iter() {
+                if other.road_class as usize > 1 { continue; }
+                if other.road_ref.is_empty() { continue; }
+                let d = ((seg.cp_lat - other.cp_lat).powi(2) + (seg.cp_lon - other.cp_lon).powi(2)).sqrt();
+                if d < best_dist { best_dist = d; best_ref = other.road_ref.clone(); }
+            }
+            best_ref
+        } else {
+            seg.road_ref.clone()
+        };
+
+        let key = (effective_ref.clone(), seg.name.clone(), seg.road_class);
         let acc = roads_by_key.entry(key).or_insert_with(|| {
-            let display_name = if !seg.road_ref.is_empty() && !seg.name.is_empty() {
-                format!("{} — {}", seg.road_ref, seg.name)
-            } else if !seg.road_ref.is_empty() {
-                seg.road_ref.clone()
+            let display_name = if !effective_ref.is_empty() && !seg.name.is_empty() {
+                format!("{} — {}", effective_ref, seg.name)
+            } else if !effective_ref.is_empty() {
+                effective_ref.clone()
             } else if !seg.name.is_empty() {
                 seg.name.clone()
             } else {
-                String::new()
+                // Fallback based on class
+                match class_idx {
+                    0 => "Motorway".to_string(),
+                    1 => "Trunk road".to_string(),
+                    2 => "Primary road".to_string(),
+                    3 => "Secondary road".to_string(),
+                    4 => "Tertiary road".to_string(),
+                    5 => "Local road".to_string(),
+                    _ => "Road".to_string(),
+                }
             };
             RoadAccum {
                 class_name, display_name, first_osm_id: seg.osm_id,
@@ -441,12 +466,12 @@ fn compute_railways(
             }
         }
 
-        // Group by (ref, name, type). When both ref+name empty, group all
-        // unnamed same-type railways together (e.g. all tram segments → one "Tram").
+        // Group by (ref, name, type). When both ref+name empty, group by osm_id
+        // (each OSM way is a logical track segment — avoids merging entire city tram network).
         let key_str = if !seg.rail_ref.is_empty() || !seg.name.is_empty() {
             format!("{}|{}", seg.rail_ref, seg.name)
         } else {
-            String::new() // all unnamed same-type merge into one
+            format!("osm:{}", seg.osm_id)
         };
         let key = (key_str, seg.rail_type);
         let acc = rails_by_key.entry(key).or_insert_with(|| RailAccum {
@@ -646,12 +671,21 @@ fn compute_point_sources(
             osm_id: Some(*osm_id), geometry,
             source_type: source_type_name.to_string(),
             name: acc.name.clone(),
-            subtype: match acc.subtype {
-                0 => "residential_multi", 1 => "commercial", 2 => "industrial",
-                3 => "education", 4 => "healthcare", 5 => "worship",
-                6 => "hospitality", 7 => "garage", 8 => "default",
-                9 => "farm", 10 => "public",
-                _ => "default",
+            subtype: if source_type_name == "industrial" {
+                match acc.subtype {
+                    0 => "industrial_area", 1 => "quarry", 2 => "farm",
+                    3 => "factory", 4 => "wastewater",
+                    10 => "wind_turbine",
+                    _ => "industrial_area",
+                }
+            } else {
+                match acc.subtype {
+                    0 => "residential_multi", 1 => "commercial", 2 => "warehouse",
+                    3 => "education", 4 => "healthcare", 5 => "worship",
+                    6 => "hospitality", 7 => "garage", 8 => "farm",
+                    9 => "public",
+                    _ => "default",
+                }
             }.to_string(),
             distance_m: acc.min_dist,
             periods: pt_periods, periods_free: free_periods,
