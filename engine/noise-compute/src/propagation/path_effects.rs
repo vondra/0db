@@ -79,7 +79,10 @@ pub fn screening_attenuation(
         let t = k as f64 / n_samples as f64;
         // Skip samples within exclusion radius of source (self-screening suppression).
         // t × dist_m = distance from source along path.
-        if exclusion_radius_m > 0.0 && t * dist_m < exclusion_radius_m {
+        // Cap at 50% of path: never blank the entire path, always check the far half
+        // for genuine obstacles between source polygon edge and receiver.
+        let excl_limit = if exclusion_radius_m > 0.0 { exclusion_radius_m.min(dist_m * 0.5) } else { 0.0 };
+        if excl_limit > 0.0 && t * dist_m < excl_limit {
             continue;
         }
         let lat = src_lat + t * (rcv_lat - src_lat);
