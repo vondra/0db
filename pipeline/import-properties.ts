@@ -10,7 +10,7 @@
 
 import { mkdirSync, existsSync, writeFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { latLngToCell } from 'h3-js'
+import { latLngToCell, cellToParent } from 'h3-js'
 
 const RATE_LIMIT_MS = 1200
 const PHOTO_RATE_MS = 300
@@ -232,23 +232,18 @@ function lookupNoise(lat: number, lng: number): number | null {
 
   const h3bi = BigInt('0x' + h3_11)
 
-  // Find partition file
-  let parent5: string
-  try {
-    const { cellToParent } = require('h3-js')
-    parent5 = cellToParent(h3_11, 5)
-  } catch { return null }
-
+  const parent5 = cellToParent(h3_11, 5)
   const tilePath = resolve(TILES_DIR, 'r11', 'total', `${parent5}.bin`)
   const tile = loadTile(tilePath)
   if (!tile) return null
 
-  // Binary search
+  // Binary search (BigInt64Array values compared as BigInt)
   let lo = 0, hi = tile.hexes.length - 1
   while (lo <= hi) {
     const mid = (lo + hi) >>> 1
-    if (tile.hexes[mid] === h3bi) return tile.lden[mid] / 10
-    if (tile.hexes[mid] < h3bi) lo = mid + 1
+    const v = tile.hexes[mid]
+    if (v === h3bi) return tile.lden[mid] / 10
+    if (v < h3bi) lo = mid + 1
     else hi = mid - 1
   }
   return null
