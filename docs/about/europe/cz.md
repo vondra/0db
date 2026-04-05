@@ -41,7 +41,7 @@ map: { center: [15.5, 49.8], zoom: 7 }
 
 ## Terrain elevation
 
-- **[DMR 5G](https://geoportal.cuzk.cz/) ([ČÚZK](https://www.cuzk.cz/))** — Czech national DEM at 5 m resolution, derived from airborne LiDAR
+- **[Copernicus GLO-30 DEM](https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model)** — 30 m global DEM from TanDEM-X (<4 m LE90 accuracy), with [SRTM](https://www.usgs.gov/centers/eros/science/usgs-eros-archive-digital-elevation-shuttle-radar-topography-mission-srtm-1) as fallback
 - Critical for accurate terrain diffraction — Czech landscape has many valleys and ridges that significantly affect noise propagation
 
 ## Noise barriers

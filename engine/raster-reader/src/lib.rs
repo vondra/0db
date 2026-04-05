@@ -1,7 +1,7 @@
 //! Real raster reader — raw 1°×1° tiles, mmap'd, global scale.
 //!
 //! Implements noise_compute::types::RasterSampler for both popup (lazy) and pipeline (pre-loaded).
-//! Reads SRTM .hgt (DEM), building height, forest cover, IMD ground type.
+//! Reads Copernicus GLO-30 / SRTM DEM, GHSL building height, WorldCover forest, IMD ground type.
 
 pub mod tile;
 
@@ -20,10 +20,9 @@ pub struct RealRasters {
 impl RealRasters {
     /// Create from source-data directory. Tiles loaded lazily on first access.
     pub fn new(data_dir: &Path) -> Self {
-        // DEM: SRTM .hgt files (i16 BE, 1201×1201)
-        // Try source-data/rasters/dem/*.raw first, fallback to source-data/dem/srtm/*.hgt
+        // DEM: Copernicus GLO-30 primary (.hgt), SRTM fallback (.hgt)
         let dem = TileStore::new(
-            data_dir.join("rasters/dem"), 1201, DType::I16BE, Interp::Bilinear, 0.0, ".raw",
+            data_dir.join("dem/copernicus"), 1201, DType::I16BE, Interp::Bilinear, 0.0, ".hgt",
         ).with_alt_dir(data_dir.join("dem/srtm"), ".hgt");
 
         // Building height: u8 (meters), 1201×1201, nearest-neighbor

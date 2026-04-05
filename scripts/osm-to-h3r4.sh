@@ -34,7 +34,7 @@ log "  Input:      $PBF_FILE ($PBF_SIZE_HR)"
 log "  Output:     $OUTPUT_DIR"
 log "  Node cache: $NODE_CACHE"
 log "  Spill dir:  $SPILL_DIR"
-log "  Disk free:  $(df -h /home/vondra --output=avail | tail -1 | xargs)"
+log "  Disk free:  $(df -h "$HOME" --output=avail | tail -1 | xargs)"
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -51,7 +51,7 @@ T_START=$(date +%s)
         CACHE_SIZE=0
         [ -f "$NODE_CACHE" ] && CACHE_SIZE=$(stat --printf='%s' "$NODE_CACHE" 2>/dev/null || echo 0)
         CACHE_HR=$(numfmt --to=iec-i --suffix=B "$CACHE_SIZE" 2>/dev/null || echo "?")
-        DISK_FREE=$(df -h /home/vondra --output=avail | tail -1 | xargs)
+        DISK_FREE=$(df -h "$HOME" --output=avail | tail -1 | xargs)
         log "  progress: $ELAPSED_HR | hexes $HEX_COUNT | node-cache $CACHE_HR | disk $DISK_FREE"
     done
 ) &
@@ -79,4 +79,4 @@ log ""
 log "=== OSM extraction DONE ==="
 log "  $HEX_COUNT hex directories, $OUTPUT_SIZE total"
 log "  Time: $(printf '%dh%02dm%02ds' $((T_ELAPSED/3600)) $(((T_ELAPSED%3600)/60)) $((T_ELAPSED%60)))"
-log "  Disk free: $(df -h /home/vondra --output=avail | tail -1 | xargs)"
+log "  Disk free: $(df -h "$HOME" --output=avail | tail -1 | xargs)"

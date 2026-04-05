@@ -418,7 +418,10 @@ Quiet Map is an open-source project. All computations are transparent and reprod
 - **Base map:** © [CARTO](https://carto.com/about-carto/), © [OpenStreetMap](https://www.openstreetmap.org/about/) contributors
 - **Terrain basemap:** © [OpenTopoMap](https://opentopomap.org/)
 - **Satellite imagery:** © [Esri](https://www.esri.com/), Maxar, Earthstar Geographics
-- **Elevation data:** [SRTM](https://www.usgs.gov/centers/eros/science/usgs-eros-archive-digital-elevation-shuttle-radar-topography-mission-srtm-1) (NASA/USGS, public domain)
+- **Elevation data:** [Copernicus GLO-30 DEM](https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model) (ESA/Copernicus, primary), [SRTM](https://www.usgs.gov/centers/eros/science/usgs-eros-archive-digital-elevation-shuttle-radar-topography-mission-srtm-1) (NASA/USGS, fallback)
+- **Building height:** [GHSL Built-H R2023A](https://human-settlement.emergency.copernicus.eu/ghs_buH2023.php) (JRC/European Commission)
+- **Land cover & vegetation:** [ESA WorldCover 2021](https://worldcover2021.esa.int/) (ESA, CC BY 4.0)
+- **Ground imperviousness:** [Copernicus Imperviousness Density](https://land.copernicus.eu/en/products/high-resolution-layer-imperviousness) (EEA, Europe)
 - **Road & railway data:** © [OpenStreetMap](https://www.openstreetmap.org/) contributors (ODbL)
 - **Flight data:** [adsb.lol](https://adsb.lol/) (ADS-B community feeds)
 - **Map rendering:** [MapLibre GL JS](https://maplibre.org/) (open source)

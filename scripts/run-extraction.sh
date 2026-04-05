@@ -18,11 +18,15 @@ mkdir -p "$LOG_DIR"
 log() { echo "[main] $(date '+%Y-%m-%d %H:%M:%S') $*"; }
 
 STEP="${1:-all}"
+case "$STEP" in
+    all|rasters|aircraft|osm) ;;
+    *) echo "Usage: $0 [all|rasters|aircraft|osm]"; exit 1 ;;
+esac
 
 log "========================================"
 log "  Extraction: step=$STEP"
 log "========================================"
-log "  Disk:  $(df -h /home/vondra --output=size,avail | tail -1 | xargs)"
+log "  Disk:  $(df -h "$HOME" --output=size,avail | tail -1 | xargs)"
 log "  CPUs:  $(nproc)"
 log "  RAM:   $(free -h | awk '/Mem:/{print $2}')"
 log ""
@@ -34,7 +38,7 @@ NAMES=()
 # ── Rasters (fast, ~5 min) ───────────────────────────────────────────
 if [ "$STEP" = "all" ] || [ "$STEP" = "rasters" ]; then
     log "Starting: rasters → $LOG_DIR/extraction-rasters.log"
-    bash "$SCRIPT_DIR/rasters-to-tiles.sh" &> "$LOG_DIR/extraction-rasters.log" &
+    bash "$SCRIPT_DIR/rasters-global.sh" convert &> "$LOG_DIR/extraction-rasters.log" &
     PIDS+=($!)
     NAMES+=("rasters")
 fi
@@ -76,7 +80,7 @@ log ""
         NOW=$(date +%s)
         ELAPSED=$((NOW - T_START))
         ELAPSED_HR=$(printf '%dh%02dm' $((ELAPSED/3600)) $(((ELAPSED%3600)/60)))
-        DISK_FREE=$(df -h /home/vondra --output=avail | tail -1 | xargs)
+        DISK_FREE=$(df -h "$HOME" --output=avail | tail -1 | xargs)
 
         STATUS=""
         for i in "${!PIDS[@]}"; do
@@ -133,7 +137,7 @@ for rtype in dem/srtm rasters/building rasters/forest rasters/imd; do
     fi
 done
 
-log "  Disk free: $(df -h /home/vondra --output=avail | tail -1 | xargs)"
+log "  Disk free: $(df -h "$HOME" --output=avail | tail -1 | xargs)"
 
 [ "$FAIL" -ne 0 ] && exit 1
 exit 0
