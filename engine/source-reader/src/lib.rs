@@ -403,7 +403,11 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
             }
         }
 
-        let barriers = query_barriers_from_batches(&data.barrier_batches, lat, lng, 500.0);
+        // Load barriers within 10km (matching road source radius).
+        // WHY: Previously 500m only loaded barriers near the receiver. But screening
+        // checks barriers along the ENTIRE source→receiver path. A barrier near a highway
+        // 5km away was silently dropped, causing popup/tile disagreement.
+        let barriers = query_barriers_from_batches(&data.barrier_batches, lat, lng, 10_000.0);
         for b in barriers {
             all_barriers.push(noise_compute::types::Barrier {
                 osm_id: b.osm_id,
