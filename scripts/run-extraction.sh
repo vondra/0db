@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# Master extraction script: rasters + ADS-B + OSM in parallel.
+#
+# Usage:
+#   ./scripts/run-extraction.sh              # all steps
+#   ./scripts/run-extraction.sh rasters      # only rasters
+#   ./scripts/run-extraction.sh aircraft     # only ADS-B
+#   ./scripts/run-extraction.sh osm          # only OSM
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR"
+
+LOG_DIR="logs"
+mkdir -p "$LOG_DIR"
+
+log() { echo "[main] $(date '+%Y-%m-%d %H:%M:%S') $*"; }
+
+STEP="${1:-all}"
+
+log "========================================"
+log "  Extraction: step=$STEP"
+log "========================================"
+log "  Disk:  $(df -h /home/vondra --output=size,avail | tail -1 | xargs)"
+log "  CPUs:  $(nproc)"
+log "  RAM:   $(free -h | awk '/Mem:/{print $2}')"
+log ""
+
+T_START=$(date +%s)
+PIDS=()
+NAMES=()
+
+# ── Rasters (fast, ~5 min) ───────────────────────────────────────────
+if [ "$STEP" = "all" ] || [ "$STEP" = "rasters" ]; then
+    log "Starting: rasters → $LOG_DIR/extraction-rasters.log"
+    bash "$SCRIPT_DIR/rasters-to-tiles.sh" &> "$LOG_DIR/extraction-rasters.log" &
+    PIDS+=($!)
+    NAMES+=("rasters")
+fi
+
+# ── ADS-B 2025 (heavy, ~2-6h) ────────────────────────────────────────
+if [ "$STEP" = "all" ] || [ "$STEP" = "aircraft" ]; then
+    log "Starting: aircraft → $LOG_DIR/extraction-aircraft.log"
+    bash "$SCRIPT_DIR/adsb-to-h3r4.sh" &> "$LOG_DIR/extraction-aircraft.log" &
+    PIDS+=($!)
+    NAMES+=("aircraft")
+fi
+
+# ── OSM planet (heavy, ~4-8h) ────────────────────────────────────────
+if [ "$STEP" = "all" ] || [ "$STEP" = "osm" ]; then
+    log "Starting: osm → $LOG_DIR/extraction-osm.log"
+    bash "$SCRIPT_DIR/osm-to-h3r4.sh" &> "$LOG_DIR/extraction-osm.log" &
+    PIDS+=($!)
+    NAMES+=("osm")
+fi
+
+if [ ${#PIDS[@]} -eq 0 ]; then
+    log "Nothing to do for step=$STEP"
+    exit 0
+fi
+
+log "${#PIDS[@]} tasks launched"
+log ""
+
+# ── Monitor ──────────────────────────────────────────────────────────
+(
+    while true; do
+        ANY_RUNNING=0
+        for pid in "${PIDS[@]}"; do
+            kill -0 "$pid" 2>/dev/null && ANY_RUNNING=1
+        done
+        [ "$ANY_RUNNING" -eq 0 ] && break
+
+        sleep 300  # every 5 min
+        NOW=$(date +%s)
+        ELAPSED=$((NOW - T_START))
+        ELAPSED_HR=$(printf '%dh%02dm' $((ELAPSED/3600)) $(((ELAPSED%3600)/60)))
+        DISK_FREE=$(df -h /home/vondra --output=avail | tail -1 | xargs)
+
+        STATUS=""
+        for i in "${!PIDS[@]}"; do
+            if kill -0 "${PIDS[$i]}" 2>/dev/null; then
+                STATUS="$STATUS ${NAMES[$i]}:running"
+            else
+                STATUS="$STATUS ${NAMES[$i]}:done"
+            fi
+        done
+        log "status ($ELAPSED_HR):$STATUS | disk $DISK_FREE"
+    done
+) &
+MONITOR_PID=$!
+
+# ── Wait ─────────────────────────────────────────────────────────────
+FAIL=0
+for i in "${!PIDS[@]}"; do
+    wait "${PIDS[$i]}"
+    RC=$?
+    if [ $RC -eq 0 ]; then
+        log "${NAMES[$i]}: SUCCESS"
+    else
+        log "${NAMES[$i]}: FAILED (exit $RC)"
+        FAIL=1
+    fi
+done
+
+kill "$MONITOR_PID" 2>/dev/null || true
+wait "$MONITOR_PID" 2>/dev/null || true
+
+# ── Summary ──────────────────────────────────────────────────────────
+T_TOTAL=$(( $(date +%s) - T_START ))
+ELAPSED_HR=$(printf '%dh%02dm%02ds' $((T_TOTAL/3600)) $(((T_TOTAL%3600)/60)) $((T_TOTAL%60)))
+
+log ""
+log "========================================"
+log "  EXTRACTION COMPLETE ($ELAPSED_HR)"
+log "========================================"
+
+# Count outputs
+for dir in data/prepared/2025/h3r4 data/prepared/2026/h3r4; do
+    if [ -d "$dir" ]; then
+        HEX_COUNT=$(find "$dir" -maxdepth 1 -type d | wc -l)
+        SIZE=$(du -sh "$dir" 2>/dev/null | cut -f1)
+        log "  $dir: $((HEX_COUNT - 1)) hexes, $SIZE"
+    fi
+done
+
+for rtype in dem/srtm rasters/building rasters/forest rasters/imd; do
+    DIR="data/prepared/$rtype"
+    if [ -d "$DIR" ]; then
+        COUNT=$(ls "$DIR" 2>/dev/null | wc -l)
+        log "  $rtype: $COUNT tiles"
+    fi
+done
+
+log "  Disk free: $(df -h /home/vondra --output=avail | tail -1 | xargs)"
+
+[ "$FAIL" -ne 0 ] && exit 1
+exit 0
