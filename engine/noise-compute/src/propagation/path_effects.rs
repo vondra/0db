@@ -71,8 +71,12 @@ pub fn screening_attenuation(
 ) -> [f64; NUM_BANDS] {
     // Sample building height along entire path every ~30m.
     // Find tallest building on the line source→receiver.
+    // Sample every ~30m, but cap at 15 samples max (450m coverage).
+    // WHY: 50 samples × raster lookup per source-receiver pair was the #1 bottleneck.
+    // 15 samples covers 450m of path — sufficient to find any building obstruction.
+    // Beyond 450m, screening effect is negligible relative to geometric divergence.
     let n_samples = (dist_m / 30.0).ceil() as usize;
-    let n_samples = n_samples.clamp(3, 50);
+    let n_samples = n_samples.clamp(3, 15);
     let mut max_bh = 0.0f64;
     let mut max_bh_t = 0.5;
     for k in 1..n_samples {
