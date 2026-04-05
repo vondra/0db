@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import FloatingCard from './FloatingCard'
 import { NoiseDetailContent } from './DetailPopup'
@@ -10,10 +11,18 @@ interface DetailCardProps {
 }
 
 export default function DetailCard({ noiseData, onNoiseClose, onHighlight }: DetailCardProps) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (noiseData && scrollRef.current) {
+      scrollRef.current.scrollTop = 0
+    }
+  }, [noiseData])
+
   if (!noiseData) return null
 
   return (
-    <FloatingCard className="relative p-0 max-h-[50vh] overflow-y-auto">
+    <FloatingCard className="relative p-0 max-h-[50vh] overflow-y-auto" ref={scrollRef}>
       <button
         onClick={onNoiseClose}
         className="absolute top-2 right-2 z-10 p-1 rounded-lg hover:bg-black/5 text-muted-foreground hover:text-foreground"

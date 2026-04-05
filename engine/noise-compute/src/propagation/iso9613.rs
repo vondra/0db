@@ -138,6 +138,7 @@ pub fn propagate_variants(
     let mut no_terrain_energy = 0.0f64;
     let mut no_screening_energy = 0.0f64;
     let mut no_vegetation_energy = 0.0f64;
+    let mut band_energy = [0.0f64; NUM_BANDS];
 
     for i in 0..NUM_BANDS {
         // Base WITHOUT ground: emission - divergence - atmospheric
@@ -173,7 +174,9 @@ pub fn propagate_variants(
 
         // A-weight and convert to linear energy
         let aw = A_WEIGHTING[i];
-        full_energy += 10f64.powf((full + aw) / 10.0);
+        let full_aw = 10f64.powf((full + aw) / 10.0);
+        full_energy += full_aw;
+        band_energy[i] = full_aw;
         free_energy += 10f64.powf((free + aw) / 10.0);
         no_terrain_energy += 10f64.powf((no_terrain + aw) / 10.0);
         no_screening_energy += 10f64.powf((no_screening + aw) / 10.0);
@@ -186,6 +189,7 @@ pub fn propagate_variants(
         no_terrain_energy,
         no_screening_energy,
         no_vegetation_energy,
+        band_energy,
     }
 }
 
@@ -201,10 +205,13 @@ pub fn propagate_single(
     finite_line_corr: f64,
 ) -> crate::types::PropagationVariants {
     let mut energy = 0.0f64;
+    let mut band_energy = [0.0f64; NUM_BANDS];
     for i in 0..NUM_BANDS {
         let level = propagate_band(emission_bands[i], d_slant, source_geom, ground_g, i)
                     + finite_line_corr;
-        energy += (( level + A_WEIGHTING[i]) * 0.230258509299_f64).exp(); // ln(10)/10, ~20 cycles vs powf ~80
+        let e = (( level + A_WEIGHTING[i]) * 0.230258509299_f64).exp();
+        energy += e;
+        band_energy[i] = e;
     }
     crate::types::PropagationVariants {
         full_energy: energy,
@@ -212,6 +219,7 @@ pub fn propagate_single(
         no_terrain_energy: energy,
         no_screening_energy: energy,
         no_vegetation_energy: energy,
+        band_energy,
     }
 }
 

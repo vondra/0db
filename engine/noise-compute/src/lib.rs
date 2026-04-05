@@ -348,7 +348,9 @@ fn compute_roads(
             terrain: terrain_bk,
             screening: screening_bk,
             vegetation: veg_bk,
-            received_bands: [0.0; NUM_BANDS], // per-band now handled internally by propagate_variants
+            received_bands: std::array::from_fn(|j| {
+                10.0 * acc.variants[0].band_energy[j].max(1e-30).log10()
+            }),
         });
     }
 
@@ -513,7 +515,9 @@ fn compute_railways(
             terrain: rail_effects.0,
             screening: rail_effects.1,
             vegetation: rail_effects.2,
-            received_bands: [0.0; NUM_BANDS],
+            received_bands: std::array::from_fn(|j| {
+                10.0 * acc.variants[0].band_energy[j].max(1e-30).log10()
+            }),
         });
     }
 
@@ -656,7 +660,9 @@ fn compute_point_sources(
             terrain: pt_effects.0,
             screening: pt_effects.1,
             vegetation: pt_effects.2,
-            received_bands: [0.0; NUM_BANDS],
+            received_bands: std::array::from_fn(|j| {
+                10.0 * acc.variants[0].band_energy[j].max(1e-30).log10()
+            }),
         });
     }
 
