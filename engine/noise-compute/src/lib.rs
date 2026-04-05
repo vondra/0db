@@ -662,14 +662,6 @@ fn compute_point_sources(
         let ln = PropagationVariants::to_db(acc.variants[2].full_energy);
         let pt_periods = periods::periods(ld, le, ln);
         if pt_periods.lden_db < 0.0 {
-            if acc.name.contains("CAVD") || acc.emission_energy > 1e8 {
-                let em_db = 10.0 * acc.emission_energy.max(1e-30).log10();
-                let full_db = 10.0 * acc.variants[0].full_energy.max(1e-30).log10();
-                let free_db = 10.0 * acc.variants[0].free_field_energy.max(1e-30).log10();
-                eprintln!("  SKIP {}: Lden={:.1} Ld={:.1} em={:.1} full_day={:.1} free_day={:.1} dist={:.0} n_pts={}",
-                    acc.name, pt_periods.lden_db, ld, em_db, full_db, free_db, acc.min_dist,
-                    sources.iter().filter(|s| s.osm_id == *osm_id).count());
-            }
             continue;
         }
 
