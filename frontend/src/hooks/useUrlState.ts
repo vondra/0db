@@ -83,7 +83,7 @@ export function buildHash(state: {
   const parts: string[] = [
     `lat=${state.lat.toFixed(4)}`,
     `lng=${state.lng.toFixed(4)}`,
-    `z=${state.zoom.toFixed(1)}`,
+    `z=${state.zoom.toFixed(2)}`,
   ]
 
   const allActive =
