@@ -13,6 +13,7 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 indicatif = "0.17"
 rayon = "1"
+noise-compute = { path = "../noise-compute" }
 
 [profile.release]
 opt-level = 3

@@ -152,8 +152,11 @@ impl Spiller {
 
         match ftype {
             FeatureType::Building => {
+                // Use amenity/shop/healthcare tags to override building type classification.
+                // WHY: building=yes + amenity=school → type 3 (school), not 0 (residential).
+                let bt = building_type_from_tags(tags);
                 let _ = write!(w, "\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                    tags.get("building").map(|s| building_type(s)).unwrap_or(0),
+                    bt,
                     tags.get("building:use").map(|s| building_use(s)).unwrap_or(0),
                     tags.get("height").and_then(|s| parse_height(s)).unwrap_or(0.0),
                     tags.get("building:levels").and_then(|s| s.parse::<u8>().ok()).unwrap_or(0),
@@ -192,6 +195,49 @@ impl Spiller {
         }
         Ok(())
     }
+}
+
+/// Classify building type from all relevant OSM tags, not just building=*.
+/// Priority: amenity/shop/healthcare > building tag.
+/// WHY: OSM mappers often tag building=yes with function in amenity/shop.
+///   Without this, a hospital tagged building=yes + amenity=hospital
+///   would be classified as residential and get wrong emission profile.
+fn building_type_from_tags(tags: &Tags) -> u8 {
+    // First check amenity/shop/healthcare/tourism — these override building tag
+    if let Some(amenity) = tags.get("amenity") {
+        match amenity.as_str() {
+            "school" | "kindergarten" | "university" | "college" | "library" => return 3,
+            "hospital" | "clinic" | "doctors" | "dentist" | "pharmacy" => return 4,
+            "place_of_worship" => return 5,
+            "restaurant" | "bar" | "pub" | "cafe" | "fast_food" | "nightclub" => return 1, // commercial/hospitality
+            "parking" | "parking_space" => return 7,
+            "fire_station" | "police" | "townhall" | "courthouse" | "post_office" => return 9,
+            _ => {}
+        }
+    }
+    if let Some(shop) = tags.get("shop") {
+        if !shop.is_empty() { return 1; } // any shop = commercial
+    }
+    if let Some(healthcare) = tags.get("healthcare") {
+        match healthcare.as_str() {
+            "hospital" | "clinic" => return 4,
+            _ => {}
+        }
+    }
+    if let Some(tourism) = tags.get("tourism") {
+        match tourism.as_str() {
+            "hotel" | "hostel" | "motel" | "guest_house" => return 6,
+            _ => {}
+        }
+    }
+    if let Some(leisure) = tags.get("leisure") {
+        match leisure.as_str() {
+            "sports_centre" | "stadium" | "swimming_pool" => return 9, // public
+            _ => {}
+        }
+    }
+    // Fallback to building tag
+    tags.get("building").map(|s| building_type(s)).unwrap_or(0)
 }
 
 fn building_type(val: &str) -> u8 {
