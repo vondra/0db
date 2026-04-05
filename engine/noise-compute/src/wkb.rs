@@ -107,6 +107,127 @@ fn ring_area_offset(bytes: &[u8], start: usize, read_u32: &dyn Fn(usize) -> u32,
     Some((area_m2, off))
 }
 
+/// Generate grid points inside a WKB polygon for distributed emission.
+///
+/// WHY: A single centroid point source creates unrealistic "donut" patterns
+/// (quiet inside large facility, loud ring at centroid distance).
+/// Distributed points spread emission across the real footprint.
+/// Each point gets Lw_per_point = Lw_total - 10×log₁₀(N) (energy-conserving).
+///
+/// spacing_m: approximate grid spacing in meters (30m for buildings, 150m for industrial)
+/// Returns: Vec of (lat, lon) points inside the polygon. At least 1 (centroid fallback).
+pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
+    // Parse polygon coordinates
+    let coords = match parse_wkb_polygon_coords(wkb_hex) {
+        Some(c) => c,
+        None => return vec![],
+    };
+
+    if coords.is_empty() { return vec![]; }
+
+    // Bounding box
+    let mut min_lat = f64::MAX;
+    let mut max_lat = f64::MIN;
+    let mut min_lon = f64::MAX;
+    let mut max_lon = f64::MIN;
+    for &(lat, lon) in &coords {
+        if lat < min_lat { min_lat = lat; }
+        if lat > max_lat { max_lat = lat; }
+        if lon < min_lon { min_lon = lon; }
+        if lon > max_lon { max_lon = lon; }
+    }
+
+    // Convert spacing to degrees
+    let mid_lat = (min_lat + max_lat) / 2.0;
+    let lat_step = spacing_m / 110_540.0;
+    let lon_step = spacing_m / (111_320.0 * mid_lat.to_radians().cos().max(0.1));
+
+    // Generate grid
+    let mut points = Vec::new();
+    let mut lat = min_lat + lat_step / 2.0;
+    while lat <= max_lat {
+        let mut lon = min_lon + lon_step / 2.0;
+        while lon <= max_lon {
+            if point_in_polygon(lat, lon, &coords) {
+                points.push((lat, lon));
+            }
+            lon += lon_step;
+        }
+        lat += lat_step;
+    }
+
+    // Fallback: at least the centroid
+    if points.is_empty() {
+        let clat = coords.iter().map(|c| c.0).sum::<f64>() / coords.len() as f64;
+        let clon = coords.iter().map(|c| c.1).sum::<f64>() / coords.len() as f64;
+        points.push((clat, clon));
+    }
+
+    points
+}
+
+/// Parse WKB hex into outer ring coordinates as Vec<(lat, lon)>.
+fn parse_wkb_polygon_coords(wkb_hex: &str) -> Option<Vec<(f64, f64)>> {
+    if wkb_hex.len() < 18 { return None; }
+
+    let bytes: Vec<u8> = (0..wkb_hex.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(&wkb_hex[i..i+2], 16).ok())
+        .collect();
+    if bytes.len() < 13 { return None; }
+
+    let le = bytes[0] == 1;
+    let wkb_type = if le {
+        u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
+    } else {
+        u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
+    };
+    if wkb_type != 3 { return None; } // only single Polygon for now
+
+    let read_u32 = |off: usize| -> u32 {
+        if off + 4 > bytes.len() { return 0; }
+        if le { u32::from_le_bytes([bytes[off], bytes[off+1], bytes[off+2], bytes[off+3]]) }
+        else { u32::from_be_bytes([bytes[off], bytes[off+1], bytes[off+2], bytes[off+3]]) }
+    };
+    let read_f64 = |off: usize| -> f64 {
+        if off + 8 > bytes.len() { return 0.0; }
+        let mut b = [0u8; 8];
+        b.copy_from_slice(&bytes[off..off+8]);
+        if le { f64::from_le_bytes(b) } else { f64::from_be_bytes(b) }
+    };
+
+    let num_rings = read_u32(5) as usize;
+    if num_rings == 0 { return None; }
+    let num_points = read_u32(9) as usize;
+    if num_points < 3 { return None; }
+    let off = 13;
+    if off + num_points * 16 > bytes.len() { return None; }
+
+    let mut coords = Vec::with_capacity(num_points);
+    for i in 0..num_points {
+        let lon = read_f64(off + i * 16);
+        let lat = read_f64(off + i * 16 + 8);
+        coords.push((lat, lon));
+    }
+    Some(coords)
+}
+
+/// Ray-casting point-in-polygon test.
+fn point_in_polygon(lat: f64, lon: f64, poly: &[(f64, f64)]) -> bool {
+    let n = poly.len();
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let (yi, xi) = poly[i];
+        let (yj, xj) = poly[j];
+        if ((yi > lat) != (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

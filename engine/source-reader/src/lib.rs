@@ -253,19 +253,35 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                 String::new()
             };
 
-            all_buildings.push(noise_compute::types::PointSource {
-                osm_id: b.osm_id,
-                lat: b.centroid_lat, lon: b.centroid_lon,
-                source_height_m: h / 2.0,
-                source_type: b.building_type,
-                lw_day: lw_f32,
-                lw_evening: lw_eve,
-                lw_night: lw_night,
-                n_points: 1,
-                name: display_name,
-                polygon_wkb: b.polygon_wkb.clone(),
-                dist_m: b.dist_m,
-            });
+            // Distributed points for large buildings (>2000 m²).
+            // WHY: Shopping malls, hospitals, schools have facades on all sides.
+            // Single centroid misrepresents spatial emission pattern.
+            // Grid spacing 30m for buildings (finer than 150m for industrial).
+            let grid_spacing = if area > 2000.0 { 30.0 } else { 0.0 };
+            let grid_points = if grid_spacing > 0.0 {
+                let pts = noise_compute::wkb::wkb_grid_points(&b.polygon_wkb, grid_spacing);
+                if pts.len() > 1 { pts } else { vec![(b.centroid_lat, b.centroid_lon)] }
+            } else {
+                vec![(b.centroid_lat, b.centroid_lon)]
+            };
+            let n_pts = grid_points.len() as u16;
+            let lw_split = if n_pts > 1 { 10.0 * (n_pts as f32).log10() } else { 0.0 };
+            for (pt_lat, pt_lon) in &grid_points {
+                let pt_dist = crate::geo::flat_dist(lat, lng, *pt_lat, *pt_lon);
+                let mut d = lw_f32; let mut e = lw_eve; let mut n = lw_night;
+                for j in 0..8 { d[j] -= lw_split; e[j] -= lw_split; n[j] -= lw_split; }
+                all_buildings.push(noise_compute::types::PointSource {
+                    osm_id: b.osm_id,
+                    lat: *pt_lat, lon: *pt_lon,
+                    source_height_m: h / 2.0,
+                    source_type: b.building_type,
+                    lw_day: d, lw_evening: e, lw_night: n,
+                    n_points: n_pts,
+                    name: display_name.clone(),
+                    polygon_wkb: b.polygon_wkb.clone(),
+                    dist_m: pt_dist,
+                });
+            }
         }
 
         // Industrial → PointSource
@@ -346,13 +362,32 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                     // Was 1.5m (ground only). Changed to 5.0m as representative acoustic center
                     // for typical industrial mix (ISO 8297 suggests effective center).
                     // Wind turbines use hub_height separately (60-120m).
-                    all_industrial.push(noise_compute::types::PointSource {
-                        osm_id, lat: c_lat, lon: c_lon,
-                        source_height_m: 5.0,
-                        source_type: st,
-                        lw_day: em, lw_evening: em_evening, lw_night: em_night,
-                        n_points: 1, name: iname, polygon_wkb: wkb_hex, dist_m: dist,
-                    });
+                    // Distributed points: spread emission across polygon area.
+                    // WHY: Single centroid creates "donut" pattern — quiet inside, loud ring.
+                    // Grid of points matches ISO 9613-2 area source subdivision.
+                    // Small (<10K m²): 1 point. Medium (10-100K): 3-5. Large (>100K): 5-20.
+                    // Energy conservation: Lw_per_point = Lw_total - 10×log₁₀(N).
+                    let grid_spacing = if area > 100_000.0 { 150.0 } else if area > 10_000.0 { 80.0 } else { 0.0 };
+                    let grid_points = if grid_spacing > 0.0 {
+                        let pts = noise_compute::wkb::wkb_grid_points(&wkb_hex, grid_spacing);
+                        if pts.len() > 1 { pts } else { vec![(c_lat, c_lon)] }
+                    } else {
+                        vec![(c_lat, c_lon)]
+                    };
+                    let n_pts = grid_points.len() as u16;
+                    let lw_split = if n_pts > 1 { 10.0 * (n_pts as f32).log10() } else { 0.0 };
+                    for (pt_lat, pt_lon) in &grid_points {
+                        let pt_dist = crate::geo::flat_dist(lat, lng, *pt_lat, *pt_lon);
+                        let mut em_d = em; let mut em_e = em_evening; let mut em_n = em_night;
+                        for j in 0..8 { em_d[j] -= lw_split; em_e[j] -= lw_split; em_n[j] -= lw_split; }
+                        all_industrial.push(noise_compute::types::PointSource {
+                            osm_id, lat: *pt_lat, lon: *pt_lon,
+                            source_height_m: 5.0,
+                            source_type: st,
+                            lw_day: em_d, lw_evening: em_e, lw_night: em_n,
+                            n_points: n_pts, name: iname.clone(), polygon_wkb: wkb_hex.clone(), dist_m: pt_dist,
+                        });
+                    }
                 }
             }
         }
