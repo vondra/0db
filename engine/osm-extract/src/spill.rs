@@ -89,7 +89,7 @@ impl Spiller {
                 let lit = match tags.get("lit").map(|s| s.as_str()) {
                     Some("yes") => 1u8, Some("no") => 2, _ => 0, // 0=unknown
                 };
-                let _ = write!(w, "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                let _ = write!(w, "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     classify::road_class(highway),
                     tags.get("maxspeed").and_then(|s| s.parse::<u8>().ok()).unwrap_or(0),
                     classify::surface_type(tags.get("surface").map(|s| s.as_str())),
@@ -101,6 +101,8 @@ impl Spiller {
                     if tunnel { 1 } else { 0 },
                     if toll { 1 } else { 0 },
                     lit,
+                    classify::junction_type(tags.get("junction").map(|s| s.as_str())),
+                    classify::access_type(tags.get("access").map(|s| s.as_str()), tags.get("motor_vehicle").map(|s| s.as_str())),
                 );
             }
             FeatureType::Railway => {
@@ -111,25 +113,26 @@ impl Spiller {
                     _ => 0, // unknown
                 };
                 let gauge = tags.get("gauge").and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
-                let _ = write!(w, "\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                let bridge = matches!(tags.get("bridge").map(|s| s.as_str()), Some("yes" | "viaduct" | "cantilever" | "movable"));
+                let tunnel = matches!(tags.get("tunnel").map(|s| s.as_str()), Some("yes" | "building_passage" | "culvert"));
+                let _ = write!(w, "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     classify::rail_type(railway),
-                    tags.get("usage").and_then(|s| match s.as_str() {
-                        "main" => Some(0u8), "branch" => Some(1), "industrial" => Some(2), _ => Some(0)
-                    }).unwrap_or(0),
+                    classify::rail_usage_type(tags.get("usage").map(|s| s.as_str())),
                     tags.get("maxspeed").and_then(|s| s.parse::<u8>().ok()).unwrap_or(0),
                     tags.get("name").unwrap_or(&String::new()),
                     tags.get("ref").unwrap_or(&String::new()),
                     electrified,
                     gauge,
+                    if bridge { 1 } else { 0 },
+                    if tunnel { 1 } else { 0 },
+                    if tags.get("highspeed").map(|s| s.as_str()) == Some("yes") { 1 } else { 0 },
+                    classify::rail_service_type(tags.get("service").map(|s| s.as_str())),
                 );
             }
             FeatureType::Barrier => {
                 let _ = write!(w, "\t{}\t{}",
                     tags.get("height").and_then(|s| s.parse::<f32>().ok()).unwrap_or(3.0),
-                    tags.get("material").and_then(|s| match s.as_str() {
-                        "concrete" => Some(0u8), "metal" => Some(1), "wood" => Some(2),
-                        "glass" => Some(3), "brick" => Some(4), _ => Some(0)
-                    }).unwrap_or(0),
+                    classify::barrier_material_type(tags.get("material").map(|s| s.as_str())),
                 );
             }
             _ => {}

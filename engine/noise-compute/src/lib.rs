@@ -248,7 +248,7 @@ fn compute_roads(
         );
         let screening_atten = propagation::path_effects::screening_attenuation(
             rasters, barriers, seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon,
-            src_alt, rcv_alt, seg.dist_m,
+            src_alt, rcv_alt, seg.dist_m, 0.0, // roads: no exclusion radius
         );
         let veg_atten = propagation::path_effects::vegetation_attenuation_path(
             rasters, seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon, seg.dist_m,
@@ -415,6 +415,7 @@ fn compute_railways(
         variants: [PropagationVariants; 3],
         emission_energy: f64,
         line_coords: HashMap<i64, Vec<[f64; 2]>>,
+        has_bridge: bool,
     }
     let mut rails_by_key: HashMap<(String, u8), RailAccum> = HashMap::new();
 
@@ -423,6 +424,8 @@ fn compute_railways(
     let night_pct = 0.15;
 
     for seg in railways {
+        // Tunnel: skip segment — sound contained inside, not heard outside
+        if seg.tunnel { continue; }
         if seg.dist_m > 8000.0 { continue; }
 
         let src_elev = rasters.elevation(seg.cp_lat, seg.cp_lon);
@@ -437,7 +440,8 @@ fn compute_railways(
         if q_pax + q_frt <= 0.0 { continue; }
 
         let rcv_alt = receiver.altitude_m();
-        let ground_g = rasters.ground_g(receiver.lat, receiver.lon);
+        // Bridge: hard surface below → G=0 (no ground absorption). ISO 9613-2 §7.3.1
+        let ground_g = if seg.bridge { 0.0 } else { rasters.ground_g(receiver.lat, receiver.lon) };
         let flc = geo::finite_line_correction(seg.length_m as f64, seg.dist_m, seg.fraction);
 
         // Per-segment path effects
@@ -447,7 +451,7 @@ fn compute_railways(
         );
         let screening_atten = propagation::path_effects::screening_attenuation(
             rasters, barriers, seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon,
-            src_alt, rcv_alt, seg.dist_m,
+            src_alt, rcv_alt, seg.dist_m, 0.0, // railways: no exclusion radius
         );
         let veg_atten = propagation::path_effects::vegetation_attenuation_path(
             rasters, seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon, seg.dist_m,
@@ -493,9 +497,11 @@ fn compute_railways(
             cp_lat: seg.cp_lat, cp_lon: seg.cp_lon, src_height: src_alt,
             variants: [PropagationVariants::default(), PropagationVariants::default(), PropagationVariants::default()],
             emission_energy: 0.0, line_coords: HashMap::new(),
+            has_bridge: false,
         });
         for pi in 0..3 { acc.variants[pi].add(&seg_variants[pi]); }
         acc.emission_energy += day_emission_energy;
+        if seg.bridge { acc.has_bridge = true; }
         if seg.dist_m < acc.min_dist {
             acc.min_dist = seg.dist_m;
             acc.min_d_slant = d_slant;
@@ -533,7 +539,10 @@ fn compute_railways(
             osm_id: Some(acc.first_osm_id), geometry,
             source_type: "railway".to_string(),
             name: if acc.name.is_empty() { String::new() } else { acc.name.clone() },
-            subtype: format!("{:?}", acc.rail_type),
+            subtype: {
+                let base = format!("{:?}", acc.rail_type);
+                if acc.has_bridge { format!("{} (bridge)", base) } else { base }
+            },
             distance_m: acc.min_dist,
             periods: rail_periods, periods_free: free_periods,
             emission_db: 10.0 * acc.emission_energy.max(1e-12).log10(),
@@ -602,7 +611,7 @@ fn compute_point_sources(
         );
         let screening_atten = propagation::path_effects::screening_attenuation(
             rasters, barriers, src.lat, src.lon, receiver.lat, receiver.lon,
-            src_alt, rcv_alt, src.dist_m,
+            src_alt, rcv_alt, src.dist_m, src.exclusion_radius_m as f64,
         );
         let veg_atten = propagation::path_effects::vegetation_attenuation_path(
             rasters, src.lat, src.lon, receiver.lat, receiver.lon, src.dist_m,
@@ -649,7 +658,17 @@ fn compute_point_sources(
         let le = PropagationVariants::to_db(acc.variants[1].full_energy);
         let ln = PropagationVariants::to_db(acc.variants[2].full_energy);
         let pt_periods = periods::periods(ld, le, ln);
-        if pt_periods.lden_db < 0.0 { continue; }
+        if pt_periods.lden_db < 0.0 {
+            if acc.name.contains("CAVD") || acc.emission_energy > 1e8 {
+                let em_db = 10.0 * acc.emission_energy.max(1e-30).log10();
+                let full_db = 10.0 * acc.variants[0].full_energy.max(1e-30).log10();
+                let free_db = 10.0 * acc.variants[0].free_field_energy.max(1e-30).log10();
+                eprintln!("  SKIP {}: Lden={:.1} Ld={:.1} em={:.1} full_day={:.1} free_day={:.1} dist={:.0} n_pts={}",
+                    acc.name, pt_periods.lden_db, ld, em_db, full_db, free_db, acc.min_dist,
+                    sources.iter().filter(|s| s.osm_id == *osm_id).count());
+            }
+            continue;
+        }
 
         let ld_free = PropagationVariants::to_db(acc.variants[0].free_field_energy);
         let le_free = PropagationVariants::to_db(acc.variants[1].free_field_energy);

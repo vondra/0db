@@ -223,6 +223,9 @@ pub struct RailResult {
     pub maxspeed: u8,
     pub name: String,
     pub rail_ref: String,
+    pub bridge: bool,
+    pub tunnel: bool,
+    pub service: u8,
     pub dist_m: f64,
     pub cp_lat: f64, pub cp_lon: f64,
     pub fraction: f64,
@@ -251,6 +254,9 @@ pub fn query_railways_from_batches(
         let maxspd = col_u8(batch, "maxspeed");
         let name = col_str(batch, "name");
         let rail_ref = col_str(batch, "ref");
+        let bridge_col = col_bool(batch, "bridge");
+        let tunnel_col = col_bool(batch, "tunnel");
+        let service_col = col_u8(batch, "service");
 
         for i in 0..n {
             let s_lat = slat.value(i);
@@ -279,6 +285,9 @@ pub fn query_railways_from_batches(
                 maxspeed: maxspd.map(|a| a.value(i)).unwrap_or(0),
                 name: name.map(|a| a.value(i).to_string()).unwrap_or_default(),
                 rail_ref: rail_ref.map(|a| a.value(i).to_string()).unwrap_or_default(),
+                bridge: bridge_col.map(|a| a.value(i)).unwrap_or(false),
+                tunnel: tunnel_col.map(|a| a.value(i)).unwrap_or(false),
+                service: service_col.map(|a| a.value(i)).unwrap_or(0),
                 dist_m: cp.dist_m, cp_lat: cp.lat, cp_lon: cp.lon, fraction: cp.fraction,
             });
         }

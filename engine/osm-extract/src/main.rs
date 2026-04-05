@@ -106,8 +106,13 @@ fn main() -> Result<()> {
                                 classify::FeatureType::Building => {
                                     let mut t = classify::Tags::new();
                                     for (k, v) in &tags {
-                                        if matches!(k.as_str(), "building" | "building:use" | "height" |
-                                                     "building:levels" | "name" | "addr:street" | "addr:housenumber") {
+                                        // Copy amenity/shop/healthcare/tourism/leisure from relation tags.
+                                // WHY: Large buildings (hospitals, schools, malls) are often multipolygon
+                                // relations. Without these tags, building_type_from_tags() can't classify
+                                // them correctly — a hospital gets type 0 (residential) instead of 4.
+                                if matches!(k.as_str(), "building" | "building:use" | "height" |
+                                                     "building:levels" | "name" | "addr:street" | "addr:housenumber" |
+                                                     "amenity" | "shop" | "healthcare" | "tourism" | "leisure") {
                                             t.insert(k.clone(), v.clone());
                                         }
                                     }
@@ -117,7 +122,11 @@ fn main() -> Result<()> {
                                 classify::FeatureType::Industrial => {
                                     let mut t = classify::Tags::new();
                                     for (k, v) in &tags {
-                                        if matches!(k.as_str(), "landuse" | "man_made" | "name") {
+                                        // Copy operator/product/industrial from relation tags.
+                                // WHY: Large industrial complexes are multipolygon relations.
+                                // These tags enable NACE sector matching for emission profiles.
+                                if matches!(k.as_str(), "landuse" | "man_made" | "name" |
+                                                     "operator" | "product" | "industrial") {
                                             t.insert(k.clone(), v.clone());
                                         }
                                     }

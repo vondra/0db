@@ -157,10 +157,11 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
         // Railways
         let railways = query_railways_from_batches(&data.railway_batches, lat, lng, 8000.0);
         for r in railways {
-            // Use enrichment data if available, otherwise defaults
             let rt = noise_compute::emission::railway::RailType::from_u8(r.rail_type);
             let (def_pax, def_frt) = noise_compute::emission::railway::default_traffic(rt, r.usage);
             let def_speed = noise_compute::emission::railway::default_speed(rt);
+            // Service tracks (yard/siding/spur): 2% traffic (minimal shunting)
+            let svc_factor = if r.service > 0 { 0.02 } else { 1.0 };
 
             all_railways.push(noise_compute::types::RailSegment {
                 osm_id: r.osm_id,
@@ -171,12 +172,14 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                 rail_type: r.rail_type,
                 usage: r.usage,
                 maxspeed: r.maxspeed,
-                trains_passenger: def_pax as i32,
-                trains_freight: def_frt as i32,
+                trains_passenger: (def_pax * svc_factor) as i32,
+                trains_freight: (def_frt * svc_factor) as i32,
                 speed_kmh: if r.maxspeed > 0 { r.maxspeed } else { def_speed as u8 },
                 track_count: 1,
                 name: r.name.clone(),
                 rail_ref: r.rail_ref.clone(),
+                bridge: r.bridge,
+                tunnel: r.tunnel,
                 dist_m: r.dist_m,
                 cp_lat: r.cp_lat, cp_lon: r.cp_lon,
                 fraction: r.fraction,
@@ -279,6 +282,7 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                     n_points: n_pts,
                     name: display_name.clone(),
                     polygon_wkb: b.polygon_wkb.clone(),
+                    exclusion_radius_m: 0.0,
                     dist_m: pt_dist,
                 });
             }
@@ -331,7 +335,8 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                         source_height_m: hub,
                         source_type: st,
                         lw_day: em, lw_evening: em, lw_night: em,
-                        n_points: 1, name: iname, polygon_wkb: wkb_hex, dist_m: dist,
+                        n_points: 1, name: iname, polygon_wkb: wkb_hex,
+                        exclusion_radius_m: 0.0, dist_m: dist,
                     });
                 } else {
                     // Industrial site — area-scaled emission
@@ -386,7 +391,9 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                             source_height_m: 5.0,
                             source_type: st,
                             lw_day: em_d, lw_evening: em_e, lw_night: em_n,
-                            n_points: n_pts, name: iname.clone(), polygon_wkb: wkb_hex.clone(), dist_m: pt_dist,
+                            n_points: n_pts, name: iname.clone(), polygon_wkb: wkb_hex.clone(),
+                            exclusion_radius_m: (area as f32 / std::f32::consts::PI).sqrt(),
+                            dist_m: pt_dist,
                         });
                     }
                 }

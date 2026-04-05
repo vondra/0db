@@ -53,6 +53,12 @@ pub fn terrain_attenuation(
 /// Now we sample every ~30m, matching terrain_attenuation() which also profiles
 /// the full path. Any building anywhere on the line-of-sight is found.
 ///
+/// `exclusion_radius_m`: skip screening samples closer than this distance from source.
+/// WHY: Grid points inside an industrial polygon emit through the polygon's own buildings.
+/// R = √(area/π) approximates the polygon footprint radius. Buildings within R of the
+/// source are the source itself, not real obstacles (ISO 9613-2: screening = obstacles
+/// BETWEEN source and receiver, not at source location).
+///
 /// Also checks explicit noise barriers from the barriers vector.
 pub fn screening_attenuation(
     rasters: &dyn RasterSampler,
@@ -61,6 +67,7 @@ pub fn screening_attenuation(
     rcv_lat: f64, rcv_lon: f64,
     src_elev: f64, rcv_alt: f64,
     dist_m: f64,
+    exclusion_radius_m: f64,
 ) -> [f64; NUM_BANDS] {
     // Sample building height along entire path every ~30m.
     // Find tallest building on the line source→receiver.
@@ -70,6 +77,11 @@ pub fn screening_attenuation(
     let mut max_bh_t = 0.5;
     for k in 1..n_samples {
         let t = k as f64 / n_samples as f64;
+        // Skip samples within exclusion radius of source (self-screening suppression).
+        // t × dist_m = distance from source along path.
+        if exclusion_radius_m > 0.0 && t * dist_m < exclusion_radius_m {
+            continue;
+        }
         let lat = src_lat + t * (rcv_lat - src_lat);
         let lon = src_lon + t * (rcv_lon - src_lon);
         let bh = rasters.building_height(lat, lon);
