@@ -181,7 +181,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
             </div>
           </>}
 
-          {c.source_type !== 'aircraft' && c.received_bands && c.received_bands.length === 8 && (
+          {c.source_type !== 'aircraft' && c.received_bands && c.received_bands.length === 8 && c.received_bands.some(b => b !== 0) && (
             <div className="mt-1 text-[10px] text-muted-foreground/60">
               [{c.received_bands.map(b => Math.round(b)).join(' ')}]
             </div>
