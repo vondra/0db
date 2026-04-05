@@ -19,10 +19,7 @@ pub fn terrain_attenuation(
     src_elev: f64, rcv_alt: f64,
     dist_m: f64,
 ) -> [f64; NUM_BANDS] {
-    // Unified 3km cutoff — same as pipeline inner_loop.
-    // WHY: Mismatch caused grid points at 2-3km to get terrain=0 in popup
-    // but terrain≠0 in pipeline, creating inconsistent results.
-    if dist_m > 3000.0 { return [0.0; NUM_BANDS]; }
+    if dist_m > 2000.0 { return [0.0; NUM_BANDS]; }
 
     // 5-point LOS check (25%, 50%, 75%)
     let hill_detected = [0.25, 0.5, 0.75].iter().any(|&t| {
