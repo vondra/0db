@@ -43,8 +43,15 @@ pub fn terrain_attenuation(
 
 /// Compute building screening attenuation per band.
 ///
-/// Samples building height at path midpoint. If a building (or noise barrier)
-/// protrudes above the line-of-sight, computes screening attenuation.
+/// Samples building height along the ENTIRE source→receiver path (~30m steps).
+/// Finds the tallest obstruction (building or noise barrier) anywhere on the path.
+///
+/// WHY: Previous version sampled only the midpoint (50% of path). A building at 5%
+/// or 42% of the path was invisible. This caused CAVD industrial area (1 km²) to
+/// show 0 dB at 500m because buildings inside the compound blocked the midpoint
+/// but not the actual line-of-sight from edge grid points.
+/// Now we sample every ~30m, matching terrain_attenuation() which also profiles
+/// the full path. Any building anywhere on the line-of-sight is found.
 ///
 /// Also checks explicit noise barriers from the barriers vector.
 pub fn screening_attenuation(
@@ -55,11 +62,22 @@ pub fn screening_attenuation(
     src_elev: f64, rcv_alt: f64,
     dist_m: f64,
 ) -> [f64; NUM_BANDS] {
-    // Find tallest obstruction along path
-    let mid_lat = (src_lat + rcv_lat) * 0.5;
-    let mid_lon = (src_lon + rcv_lon) * 0.5;
-    let mut max_bh = rasters.building_height(mid_lat, mid_lon);
+    // Sample building height along entire path every ~30m.
+    // Find tallest building on the line source→receiver.
+    let n_samples = (dist_m / 30.0).ceil() as usize;
+    let n_samples = n_samples.clamp(3, 50);
+    let mut max_bh = 0.0f64;
     let mut max_bh_t = 0.5;
+    for k in 1..n_samples {
+        let t = k as f64 / n_samples as f64;
+        let lat = src_lat + t * (rcv_lat - src_lat);
+        let lon = src_lon + t * (rcv_lon - src_lon);
+        let bh = rasters.building_height(lat, lon);
+        if bh > max_bh {
+            max_bh = bh;
+            max_bh_t = t;
+        }
+    }
 
     // Check noise barriers
     let dlat = rcv_lat - src_lat;
