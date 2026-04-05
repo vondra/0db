@@ -159,6 +159,12 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
           )}
 
           {!isAircraftV33 && <>
+            {c.received_lden_free > 0 && c.received_lden_free !== c.received_lden && (
+              <div className="flex justify-between text-muted-foreground/60 text-[10px]">
+                <span>Free-field Lden</span>
+                <span>{c.received_lden_free.toFixed(1)} dB</span>
+              </div>
+            )}
             <div className="flex justify-between">
               <span>Emission</span>
               <span className="text-foreground">{c.emission_db.toFixed(1)} dB{c.source_type === 'road' || c.source_type === 'railway' ? '/m' : ''}</span>
@@ -166,6 +172,18 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
             <div className="flex justify-between">
               <span>Baseline</span>
               <span>{fmt(c.baseline.total_db)} dB</span>
+            </div>
+            <div className="flex justify-between text-muted-foreground/50 text-[9px] ml-2">
+              <span>Geometric</span>
+              <span>{fmt(c.baseline.geometric_db)}</span>
+            </div>
+            <div className="flex justify-between text-muted-foreground/50 text-[9px] ml-2">
+              <span>Atmospheric</span>
+              <span>{fmt(c.baseline.atmospheric_db)}</span>
+            </div>
+            <div className="flex justify-between text-muted-foreground/50 text-[9px] ml-2">
+              <span>Ground G={c.baseline.ground_factor.toFixed(1)}</span>
+              <span>{fmt(c.baseline.ground_db)}</span>
             </div>
             <div className="flex justify-between">
               <span>Terrain {c.terrain.delta_m > 0 ? `\u03B4=${c.terrain.delta_m}m ${c.terrain.is_double ? 'dbl' : ''}` : ''}</span>
