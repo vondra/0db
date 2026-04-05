@@ -6,6 +6,7 @@ import { searchRoutes } from './routes/search.js'
 import { noiseOnflyV2Routes } from './routes/noise-onfly-v2.js'
 import { isochronRoutes } from './routes/isochron.js'
 import { docsRoutes } from './routes/docs.js'
+import { h3r4Routes } from './routes/h3r4.js'
 
 export async function buildApp(opts: { logger?: boolean } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: opts.logger ?? false })
@@ -21,6 +22,7 @@ export async function buildApp(opts: { logger?: boolean } = {}): Promise<Fastify
   await app.register(noiseOnflyV2Routes)
   await app.register(isochronRoutes)
   await app.register(docsRoutes)
+  await app.register(h3r4Routes)
 
   return app
 }

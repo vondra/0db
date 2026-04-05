@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react'
 import SourceToggles from './SourceToggles'
 import OverlayControls from './OverlayControls'
 import SoundPathSection from './SoundPathSection'
+import type { RealEstateFilters } from './RealEstateLayer'
 
 interface LayersPanelProps {
   open: boolean
@@ -14,6 +15,8 @@ interface LayersPanelProps {
   onQuietClustersChange: (enabled: boolean) => void
   quietThreshold: number
   onQuietThresholdChange: (threshold: number) => void
+  realEstateFilters: RealEstateFilters
+  onRealEstateChange: (filters: RealEstateFilters) => void
 }
 
 export default function LayersPanel({
@@ -22,6 +25,7 @@ export default function LayersPanel({
   propagationFactors, onPropagationChange,
   quietClustersEnabled, onQuietClustersChange,
   quietThreshold, onQuietThresholdChange,
+  realEstateFilters, onRealEstateChange,
 }: LayersPanelProps) {
   const [dismissing, setDismissing] = useState(false)
   const [dragOffset, setDragOffset] = useState(0)
@@ -93,6 +97,8 @@ export default function LayersPanel({
         onQuietClustersChange={onQuietClustersChange}
         quietThreshold={quietThreshold}
         onQuietThresholdChange={onQuietThresholdChange}
+        realEstateFilters={realEstateFilters}
+        onRealEstateChange={onRealEstateChange}
       />
       <div className="my-2 border-t border-border" />
       <SoundPathSection

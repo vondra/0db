@@ -10,6 +10,7 @@ import MobileDetailSheet from './components/MobileDetailSheet'
 import BasemapBar from './components/BasemapBar'
 import { useUrlState } from './hooks/useUrlState'
 import type { SelectedLocation } from './components/FlyToLocation'
+import type { RealEstateFilters } from './components/RealEstateLayer'
 import type { NoiseComputeData } from './components/DetailPopup'
 import type { HexFeature } from './components/HexLayer'
 import { DEFAULT_BASEMAP, type BasemapId } from './utils/basemaps'
@@ -46,6 +47,9 @@ export default function App() {
   const [quietClustersEnabled, setQuietClustersEnabled] = useState(initial.quietClusters)
   const [quietThreshold, setQuietThreshold] = useState(initial.quietThreshold ?? 35)
   const [basemap, setBasemap] = useState<BasemapId>(initial.basemap ?? DEFAULT_BASEMAP)
+  const [realEstateFilters, setRealEstateFilters] = useState<RealEstateFilters>({
+    enabled: false, propertyType: 'all', listingType: 'all', maxNoise: 35,
+  })
 
   const mapViewRef = useRef({ lat: initial.lat, lng: initial.lng, zoom: initial.zoom })
   const activeSourcesRef = useRef(activeSources)
@@ -182,6 +186,8 @@ export default function App() {
               onQuietClustersChange={handleQuietClustersChange}
               quietThreshold={quietThreshold}
               onQuietThresholdChange={handleQuietThresholdChange}
+              realEstateFilters={realEstateFilters}
+              onRealEstateChange={setRealEstateFilters}
             />
           </div>
           <div className="pointer-events-auto">
@@ -215,6 +221,7 @@ export default function App() {
         quietClustersEnabled={quietClustersEnabled}
         quietThreshold={quietThreshold}
         highlightGeometry={highlightGeometry}
+        realEstateFilters={realEstateFilters}
       />
 
       {/* Mobile: layers toggle button */}
@@ -246,6 +253,8 @@ export default function App() {
           onQuietClustersChange={handleQuietClustersChange}
           quietThreshold={quietThreshold}
           onQuietThresholdChange={handleQuietThresholdChange}
+          realEstateFilters={realEstateFilters}
+          onRealEstateChange={setRealEstateFilters}
         />
       </div>
 

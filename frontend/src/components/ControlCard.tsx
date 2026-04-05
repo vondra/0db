@@ -4,6 +4,7 @@ import FloatingCard from './FloatingCard'
 import SourceToggles from './SourceToggles'
 import OverlayControls from './OverlayControls'
 import SoundPathSection from './SoundPathSection'
+import type { RealEstateFilters } from './RealEstateLayer'
 
 interface ControlCardProps {
   activeSources: Set<string>
@@ -14,6 +15,8 @@ interface ControlCardProps {
   onQuietClustersChange: (enabled: boolean) => void
   quietThreshold: number
   onQuietThresholdChange: (threshold: number) => void
+  realEstateFilters: RealEstateFilters
+  onRealEstateChange: (filters: RealEstateFilters) => void
 }
 
 export default function ControlCard({
@@ -21,6 +24,7 @@ export default function ControlCard({
   propagationFactors, onPropagationChange,
   quietClustersEnabled, onQuietClustersChange,
   quietThreshold, onQuietThresholdChange,
+  realEstateFilters, onRealEstateChange,
 }: ControlCardProps) {
   const [collapsed, setCollapsed] = useState(false)
 
@@ -58,6 +62,8 @@ export default function ControlCard({
         onQuietClustersChange={onQuietClustersChange}
         quietThreshold={quietThreshold}
         onQuietThresholdChange={onQuietThresholdChange}
+        realEstateFilters={realEstateFilters}
+        onRealEstateChange={onRealEstateChange}
       />
 
       <div className="my-1.5 border-t border-border" />
