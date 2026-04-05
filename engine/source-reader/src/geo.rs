@@ -84,6 +84,136 @@ pub fn grid_disk_r4(lat: f64, lon: f64) -> Vec<String> {
     result
 }
 
+/// Compute area in m² from WKB hex-encoded polygon.
+/// Uses Shoelace formula with cos(lat) correction for WGS84→metric.
+///
+/// WHY: Industrial and building area was hardcoded (10000 m² industrial, 100 m² building).
+/// This caused Spolana (500K m²) to have same Lw as a small recycling yard.
+/// Formula: Lw = base + 10×log₁₀(area/10000) per ISO 8297.
+/// ALSO AFFECTS: pipeline-worker/io/arrow.rs uses same pattern.
+/// REVIEWED: GPT-5.4 + Gemini 3.1 Pro confirmed approach. Gemini warns
+///           cos(lat) correction is approximate; EPSG:3035 projection is better
+///           but acceptable for runtime. osm-extract should pre-compute area_m2.
+pub fn wkb_area_m2(wkb_hex: &str) -> Option<f64> {
+    if wkb_hex.len() < 18 { return None; } // minimum viable WKB
+
+    // Decode hex → bytes
+    let bytes: Vec<u8> = (0..wkb_hex.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(&wkb_hex[i..i+2], 16).ok())
+        .collect();
+
+    if bytes.len() < 9 { return None; }
+
+    // WKB format: byte_order(1) + type(4) + num_rings(4) + ring...
+    let le = bytes[0] == 1;
+    let wkb_type = if le {
+        u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
+    } else {
+        u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
+    };
+
+    // Type 3 = Polygon, Type 6 = MultiPolygon
+    if wkb_type != 3 && wkb_type != 6 { return None; }
+
+    let read_u32 = |off: usize| -> u32 {
+        if le { u32::from_le_bytes([bytes[off], bytes[off+1], bytes[off+2], bytes[off+3]]) }
+        else { u32::from_be_bytes([bytes[off], bytes[off+1], bytes[off+2], bytes[off+3]]) }
+    };
+    let read_f64 = |off: usize| -> f64 {
+        let mut b = [0u8; 8];
+        b.copy_from_slice(&bytes[off..off+8]);
+        if le { f64::from_le_bytes(b) } else { f64::from_be_bytes(b) }
+    };
+
+    if wkb_type == 3 {
+        // Single Polygon
+        polygon_area_from_wkb_at(&bytes, 5, le, &read_u32, &read_f64)
+    } else {
+        // MultiPolygon — sum areas
+        let num_polys = read_u32(5) as usize;
+        let mut total = 0.0;
+        let mut off = 9;
+        for _ in 0..num_polys {
+            if off + 5 > bytes.len() { break; }
+            // Each polygon has its own byte_order + type header
+            off += 5; // skip sub-polygon header (byte_order + type)
+            if let Some((area, new_off)) = polygon_area_and_offset(&bytes, off, le, &read_u32, &read_f64) {
+                total += area;
+                off = new_off;
+            } else { break; }
+        }
+        if total > 0.0 { Some(total) } else { None }
+    }
+}
+
+fn polygon_area_from_wkb_at(
+    bytes: &[u8], start: usize, _le: bool,
+    read_u32: &dyn Fn(usize) -> u32,
+    read_f64: &dyn Fn(usize) -> f64,
+) -> Option<f64> {
+    let (area, _) = polygon_area_and_offset(bytes, start, _le, read_u32, read_f64)?;
+    Some(area)
+}
+
+fn polygon_area_and_offset(
+    bytes: &[u8], start: usize, _le: bool,
+    read_u32: &dyn Fn(usize) -> u32,
+    read_f64: &dyn Fn(usize) -> f64,
+) -> Option<(f64, usize)> {
+    if start + 4 > bytes.len() { return None; }
+    let num_rings = read_u32(start) as usize;
+    let mut off = start + 4;
+
+    // Only use outer ring (first ring) for area
+    if num_rings == 0 { return None; }
+    if off + 4 > bytes.len() { return None; }
+    let num_points = read_u32(off) as usize;
+    off += 4;
+
+    if num_points < 3 { return None; }
+    if off + num_points * 16 > bytes.len() { return None; }
+
+    // Read coordinates
+    let mut lats = Vec::with_capacity(num_points);
+    let mut lons = Vec::with_capacity(num_points);
+    for _ in 0..num_points {
+        let lon = read_f64(off);
+        let lat = read_f64(off + 8);
+        lons.push(lon);
+        lats.push(lat);
+        off += 16;
+    }
+
+    // Skip remaining rings (inner holes)
+    for _ in 1..num_rings {
+        if off + 4 > bytes.len() { break; }
+        let ring_pts = read_u32(off) as usize;
+        off += 4 + ring_pts * 16;
+    }
+
+    // Shoelace formula in degrees, then convert to m²
+    // Area correction: multiply by cos(mean_lat) for longitude stretching
+    let mean_lat: f64 = lats.iter().sum::<f64>() / lats.len() as f64;
+    let cos_lat = mean_lat.to_radians().cos();
+
+    let mut area_deg2 = 0.0f64;
+    for i in 0..num_points {
+        let j = (i + 1) % num_points;
+        // Shoelace with longitude scaled by cos(lat) for equal-area approximation
+        let xi = lons[i] * cos_lat;
+        let xj = lons[j] * cos_lat;
+        area_deg2 += xi * lats[j] - xj * lats[i];
+    }
+    area_deg2 = (area_deg2 / 2.0).abs();
+
+    // Convert degree² to m²: 1° lat ≈ 110540m, 1° lon ≈ 111320m×cos(lat)
+    // Already scaled lons by cos_lat, so: area_m2 = area_deg2 × 110540 × 111320
+    let area_m2 = area_deg2 * 110_540.0 * 111_320.0;
+
+    Some((area_m2, off))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

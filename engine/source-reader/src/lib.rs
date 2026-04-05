@@ -193,7 +193,13 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
             let fl = if b.floors > 0 { b.floors } else { (h / 3.0).ceil() as u8 };
 
             let profile = noise_compute::emission::settlement::building_profile(b.building_type);
-            let lw = noise_compute::emission::settlement::building_lw(&profile, 100.0, fl);
+            // Building area from WKB polygon (was hardcoded 100 m²).
+            // WHY: A 5000 m² shopping mall had same Lw as a 100 m² house.
+            // area_m2 field from hex_store, or compute from WKB, or fallback 100 m².
+            let area = if b.area_m2 > 0.0 { b.area_m2 as f64 } else {
+                crate::geo::wkb_area_m2(&b.polygon_wkb).unwrap_or(100.0)
+            };
+            let lw = noise_compute::emission::settlement::building_lw(&profile, area, fl);
             if lw < 10.0 { continue; }
 
             let bands = noise_compute::emission::settlement::building_emission_bands(&profile, lw);
@@ -246,6 +252,11 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
             let hub_h: Option<&arrow::array::Float32Array> = batch.column_by_name("hub_height").and_then(|c| c.as_any().downcast_ref());
             let power: Option<&arrow::array::Float32Array> = batch.column_by_name("rated_power_kw").and_then(|c| c.as_any().downcast_ref());
             let ind_name: Option<&arrow::array::StringArray> = batch.column_by_name("name").and_then(|c| c.as_any().downcast_ref());
+            // Read WKB polygon for area calculation and map display
+            // WHY: Industrial area was hardcoded to 10000 m², making Spolana (500K m²)
+            // have same emission as a small recycling yard. Now we compute real area from WKB.
+            // REVIEWED: GPT-5.4 + Gemini 3.1 Pro confirmed WKB area approach.
+            let wkb_col: Option<&arrow::array::BinaryArray> = batch.column_by_name("polygon_wkb").and_then(|c| c.as_any().downcast_ref());
 
             for i in 0..n {
                 let c_lat = clat.value(i);
@@ -254,40 +265,63 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                 if dist > 5000.0 { continue; }
 
                 let st = stype.map(|a| a.value(i)).unwrap_or(0);
+                let iname = ind_name.map(|a| a.value(i).to_string()).unwrap_or_default();
+                let osm_id = batch.column_by_name("osm_id").and_then(|c| c.as_any().downcast_ref::<arrow::array::Int64Array>()).map(|a| a.value(i)).unwrap_or(0);
+
+                // Get WKB hex string for polygon display + area calculation
+                let wkb_hex = wkb_col.map(|a| {
+                    let b = a.value(i);
+                    b.iter().map(|byte| format!("{:02x}", byte)).collect::<String>()
+                }).unwrap_or_default();
 
                 if st == 10 {
-                    // Wind turbine
+                    // Wind turbine — point source, NOT area-scaled
+                    // WHY: IEC 61400-11 gives per-turbine Lw. Wind farms = N individual point sources.
+                    // Area scaling would be physically wrong for turbines.
                     let hub = hub_h.and_then(|a| { let v = a.value(i); if v > 0.0 { Some(v) } else { None }}).unwrap_or(80.0);
                     let kw = power.and_then(|a| { let v = a.value(i); if v > 0.0 { Some(v) } else { None }}).unwrap_or(2000.0);
                     let (lw, bands) = noise_compute::emission::wind::wind_turbine_emission(kw as f64);
                     if lw < 10.0 { continue; }
                     let em: [f32; 8] = std::array::from_fn(|j| bands[j] as f32);
-                    let iname = ind_name.map(|a| a.value(i).to_string()).unwrap_or_default();
+                    // Wind turbines emit 24/7 (no temporal offset)
                     all_industrial.push(noise_compute::types::PointSource {
-                        osm_id: batch.column_by_name("osm_id").and_then(|c| c.as_any().downcast_ref::<arrow::array::Int64Array>()).map(|a| a.value(i)).unwrap_or(0),
-                        lat: c_lat, lon: c_lon,
+                        osm_id, lat: c_lat, lon: c_lon,
                         source_height_m: hub,
                         source_type: st,
                         lw_day: em, lw_evening: em, lw_night: em,
-                        n_points: 1, name: iname, polygon_wkb: String::new(), dist_m: dist,
+                        n_points: 1, name: iname, polygon_wkb: wkb_hex, dist_m: dist,
                     });
                 } else {
-                    // Industrial site
+                    // Industrial site — area-scaled emission
+                    // WHY: Lw = base + 10×log₁₀(area/10000) per ISO 8297 methodology.
+                    // Real area from WKB polygon (was hardcoded 10000 m²).
+                    // Fallback 10000 m² if WKB unavailable.
+                    let area = crate::geo::wkb_area_m2(&wkb_hex).unwrap_or(10000.0);
                     let profile = noise_compute::emission::industrial::industrial_profile(st);
-                    let lw = noise_compute::emission::industrial::industrial_lw(&profile, 10000.0);
+                    let lw = noise_compute::emission::industrial::industrial_lw(&profile, area);
                     if lw < 10.0 { continue; }
                     let bands = noise_compute::emission::industrial::industrial_emission_bands(&profile, lw);
                     let em: [f32; 8] = std::array::from_fn(|j| bands[j] as f32);
+                    // Apply temporal offsets from profile (was hardcoded -3 dB night for all types)
+                    // WHY: Quarries are silent at night (offset -20 dB), wastewater runs 24/7 (offset 0).
+                    // Hardcoded -3 dB made quarries too loud and wastewater too quiet at night.
+                    // This directly affects Lden via +10 dB night penalty in END 2002/49/EC formula.
+                    let mut em_evening = em;
                     let mut em_night = em;
-                    for j in 0..8 { em_night[j] -= 3.0; }
-                    let iname = ind_name.map(|a| a.value(i).to_string()).unwrap_or_default();
+                    for j in 0..8 {
+                        em_evening[j] += profile.evening_offset as f32;
+                        em_night[j] += profile.night_offset as f32;
+                    }
+                    // Source height: mix of ground equipment + roof vents.
+                    // Was 1.5m (ground only). Changed to 5.0m as representative acoustic center
+                    // for typical industrial mix (ISO 8297 suggests effective center).
+                    // Wind turbines use hub_height separately (60-120m).
                     all_industrial.push(noise_compute::types::PointSource {
-                        osm_id: batch.column_by_name("osm_id").and_then(|c| c.as_any().downcast_ref::<arrow::array::Int64Array>()).map(|a| a.value(i)).unwrap_or(0),
-                        lat: c_lat, lon: c_lon,
-                        source_height_m: 1.5,
+                        osm_id, lat: c_lat, lon: c_lon,
+                        source_height_m: 5.0,
                         source_type: st,
-                        lw_day: em, lw_evening: em, lw_night: em_night,
-                        n_points: 1, name: iname, polygon_wkb: String::new(), dist_m: dist,
+                        lw_day: em, lw_evening: em_evening, lw_night: em_night,
+                        n_points: 1, name: iname, polygon_wkb: wkb_hex, dist_m: dist,
                     });
                 }
             }

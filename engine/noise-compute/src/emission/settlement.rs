@@ -31,10 +31,13 @@ pub fn building_profile(building_type: u8) -> BuildingProfile {
             spectrum: [-3.0, -1.0, 0.0, 1.0, 1.0, 1.0, -1.0, -3.0],
             evening_offset: -3.0, night_offset: -20.0,
         },
-        2 => BuildingProfile { // industrial/warehouse — skip (handled by industrial module)
-            lw_fixed: 0.0, lw_per_m2: 0.0,
-            spectrum: [0.0; NUM_BANDS],
-            evening_offset: 0.0, night_offset: 0.0,
+        2 => BuildingProfile { // warehouse/industrial building — HVAC, ventilation, handling
+            // WHY: Was Lw=0 (silent). But warehouses have ventilation, HVAC, loading activity.
+            // Industrial landuse polygon = outdoor activity; building = facade/roof breakout.
+            // Both contribute — NOT double counting (different physical noise sources).
+            lw_fixed: 40.0, lw_per_m2: 15.0,
+            spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -5.0, night_offset: -15.0,
         },
         3 => BuildingProfile { // school
             lw_fixed: 60.0, lw_per_m2: 22.0,
@@ -46,10 +49,30 @@ pub fn building_profile(building_type: u8) -> BuildingProfile {
             spectrum: [-3.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -4.0],
             evening_offset: -3.0, night_offset: -5.0, // 24/7 operation
         },
+        5 => BuildingProfile { // church/worship — bells, organ, gatherings
+            lw_fixed: 50.0, lw_per_m2: 20.0,
+            spectrum: [-3.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
+            evening_offset: -5.0, night_offset: -20.0,
+        },
         6 => BuildingProfile { // hotel
             lw_fixed: 48.0, lw_per_m2: 16.0,
             spectrum: [-2.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
             evening_offset: -2.0, night_offset: -10.0,
+        },
+        7 => BuildingProfile { // garage/parking — ventilation fans, engine starts
+            lw_fixed: 35.0, lw_per_m2: 12.0,
+            spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -5.0, night_offset: -15.0,
+        },
+        8 => BuildingProfile { // farm building — animals, machinery, seasonal
+            lw_fixed: 40.0, lw_per_m2: 14.0,
+            spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -5.0, night_offset: -20.0,
+        },
+        9 => BuildingProfile { // public/civic/government — office HVAC, visitor traffic
+            lw_fixed: 52.0, lw_per_m2: 18.0,
+            spectrum: [-3.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -4.0],
+            evening_offset: -8.0, night_offset: -20.0,
         },
         _ => BuildingProfile { // default (residential)
             lw_fixed: 45.0, lw_per_m2: 15.0,

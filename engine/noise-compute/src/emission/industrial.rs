@@ -21,10 +21,17 @@ pub fn industrial_profile(site_type: u8) -> IndustrialProfile {
             spectrum: [-5.0, -3.0, -1.0, 0.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -3.0, night_offset: -10.0,
         },
-        1 => IndustrialProfile { // quarry
+        1 => IndustrialProfile { // quarry — crushing, loading, blasting
             base_lw: 75.0,
             spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -2.0, -5.0, -8.0],
             evening_offset: -5.0, night_offset: -20.0,
+        },
+        2 => IndustrialProfile { // farmyard — animal husbandry, machinery, seasonal
+            // WHY: Was missing (fallthrough to default 68 dB). Farms are quieter than
+            // industry and mostly active during daytime only.
+            base_lw: 55.0,
+            spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -5.0, night_offset: -20.0, // virtually silent at night
         },
         3 => IndustrialProfile { // works/factory
             base_lw: 72.0,
