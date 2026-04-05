@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+.env
+
+# Data - large binary files, not in git
+data/
+
+# Build artifacts
+*.tsbuildinfo
+target/
+*.node

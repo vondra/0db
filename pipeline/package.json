@@ -1,0 +1,13 @@
+{
+  "name": "pipeline",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "h3-js": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
