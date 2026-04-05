@@ -79,13 +79,16 @@ impl RasterSampler for RealRasters {
     fn ground_g(&self, lat: f64, lon: f64) -> f64 {
         // IMD 0=natural(soft), 100=impervious(hard)
         // G: 0=hard, 1=soft → G = 1.0 - IMD/100
+        // Default tile value is 50 (missing data → G=0.5), so no special case needed.
+        // WHY no conditional: IMD=0 means fully soft ground (forest, meadow) → G=1.0.
+        // Old code returned 0.5 for IMD=0, halving ground attenuation in rural areas.
         let imd = self.imd.sample(lat, lon);
-        if imd > 0.0 { 1.0 - imd / 100.0 } else { 0.5 }
+        (1.0 - imd / 100.0).clamp(0.0, 1.0)
     }
 
     fn ground_g_path(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
         let avg_imd = self.imd.avg_along_path(lat1, lon1, lat2, lon2);
-        if avg_imd > 0.0 { 1.0 - avg_imd / 100.0 } else { 0.5 }
+        (1.0 - avg_imd / 100.0).clamp(0.0, 1.0)
     }
 
     fn terrain_profile(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64, _steps: usize) -> Vec<f64> {
