@@ -381,6 +381,10 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                     };
                     let n_pts = grid_points.len() as u16;
                     let lw_split = if n_pts > 1 { 10.0 * (n_pts as f32).log10() } else { 0.0 };
+                    // Per-point exclusion radius — matches pipeline (arrow.rs:372).
+                    // WHY: Using total area made R too large for edge points.
+                    let area_per_pt = area / n_pts.max(1) as f64;
+                    let excl_r = (area_per_pt as f32 / std::f32::consts::PI).sqrt();
                     for (pt_lat, pt_lon) in &grid_points {
                         let pt_dist = crate::geo::flat_dist(lat, lng, *pt_lat, *pt_lon);
                         let mut em_d = em; let mut em_e = em_evening; let mut em_n = em_night;
@@ -391,7 +395,7 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                             source_type: st,
                             lw_day: em_d, lw_evening: em_e, lw_night: em_n,
                             n_points: n_pts, name: iname.clone(), polygon_wkb: wkb_hex.clone(),
-                            exclusion_radius_m: (area as f32 / std::f32::consts::PI).sqrt(),
+                            exclusion_radius_m: excl_r,
                             dist_m: pt_dist,
                         });
                     }
