@@ -71,24 +71,19 @@ pub fn screening_attenuation(
 ) -> [f64; NUM_BANDS] {
     // Sample building height along entire path every ~30m.
     // Find tallest building on the line source→receiver.
-    // Sample every ~30m, but cap at 15 samples max (450m coverage).
-    // WHY: 50 samples × raster lookup per source-receiver pair was the #1 bottleneck.
-    // 15 samples covers 450m of path — sufficient to find any building obstruction.
-    // Beyond 450m, screening effect is negligible relative to geometric divergence.
+    // Sample building height along path to find tallest obstruction.
+    // For short paths (<450m): every ~30m (up to 15 samples).
+    // For long paths (>450m): concentrate 15 samples near source (7) and receiver (8),
+    // because screening is only effective close to source or receiver (Fresnel zone).
+    // WHY: Spreading 15 samples evenly over 3km = 200m steps → misses 10-30m wide buildings.
     let n_samples = (dist_m / 30.0).ceil() as usize;
-    let n_samples = n_samples.clamp(3, 15);
     let mut max_bh = 0.0f64;
     let mut max_bh_t = 0.5;
-    for k in 1..n_samples {
-        let t = k as f64 / n_samples as f64;
-        // Skip samples within exclusion radius of source (self-screening suppression).
-        // t × dist_m = distance from source along path.
-        // Cap at 50% of path: never blank the entire path, always check the far half
-        // for genuine obstacles between source polygon edge and receiver.
-        let excl_limit = if exclusion_radius_m > 0.0 { exclusion_radius_m.min(dist_m * 0.5) } else { 0.0 };
-        if excl_limit > 0.0 && t * dist_m < excl_limit {
-            continue;
-        }
+
+    let excl_limit = if exclusion_radius_m > 0.0 { exclusion_radius_m.min(dist_m * 0.5) } else { 0.0 };
+
+    let mut check_point = |t: f64| {
+        if excl_limit > 0.0 && t * dist_m < excl_limit { return; }
         let lat = src_lat + t * (rcv_lat - src_lat);
         let lon = src_lon + t * (rcv_lon - src_lon);
         let bh = rasters.building_height(lat, lon);
@@ -96,6 +91,18 @@ pub fn screening_attenuation(
             max_bh = bh;
             max_bh_t = t;
         }
+    };
+
+    if n_samples <= 15 {
+        // Short path: every ~30m
+        for k in 1..n_samples {
+            check_point(k as f64 / n_samples as f64);
+        }
+    } else {
+        // Long path: 7 samples near source + 8 near receiver (30m apart each)
+        let step_t = 30.0 / dist_m;
+        for k in 1..=7 { check_point(k as f64 * step_t); }
+        for k in 1..=8 { check_point(1.0 - (k as f64 * step_t)); }
     }
 
     // Check noise barriers
