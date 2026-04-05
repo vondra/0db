@@ -197,7 +197,7 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
             // WHY: A 5000 m² shopping mall had same Lw as a 100 m² house.
             // area_m2 field from hex_store, or compute from WKB, or fallback 100 m².
             let area = if b.area_m2 > 0.0 { b.area_m2 as f64 } else {
-                crate::geo::wkb_area_m2(&b.polygon_wkb).unwrap_or(100.0)
+                noise_compute::wkb::wkb_area_m2(&b.polygon_wkb).unwrap_or(100.0)
             };
             let lw = noise_compute::emission::settlement::building_lw(&profile, area, fl);
             if lw < 10.0 { continue; }
@@ -296,7 +296,7 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                     // WHY: Lw = base + 10×log₁₀(area/10000) per ISO 8297 methodology.
                     // Real area from WKB polygon (was hardcoded 10000 m²).
                     // Fallback 10000 m² if WKB unavailable.
-                    let area = crate::geo::wkb_area_m2(&wkb_hex).unwrap_or(10000.0);
+                    let area = noise_compute::wkb::wkb_area_m2(&wkb_hex).unwrap_or(10000.0);
                     let profile = noise_compute::emission::industrial::industrial_profile(st);
                     let lw = noise_compute::emission::industrial::industrial_lw(&profile, area);
                     if lw < 10.0 { continue; }

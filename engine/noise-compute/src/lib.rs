@@ -13,6 +13,7 @@ pub mod emission;
 pub mod propagation;
 pub mod periods;
 pub mod confidence;
+pub mod wkb;
 
 use types::*;
 use constants::*;
