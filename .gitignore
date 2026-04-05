@@ -10,3 +10,4 @@ data/
 *.tsbuildinfo
 target/
 *.node
+engine/pipeline-worker/backend/
