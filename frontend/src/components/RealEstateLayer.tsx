@@ -76,7 +76,7 @@ export default function RealEstateLayer({ filters, onPropertySelect }: RealEstat
         return
       }
       try {
-        const res = await fetch(`/api/h3r4/${hex}/properties.json`)
+        const res = await fetch(`/api/h3r4/${hex}/real-estate/index.json`)
         if (!res.ok) { hexCache.set(hex, []); return }
         const data: Property[] = await res.json()
         hexCache.set(hex, data)
