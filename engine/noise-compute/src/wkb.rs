@@ -167,6 +167,7 @@ pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
 }
 
 /// Parse WKB hex into outer ring coordinates as Vec<(lat, lon)>.
+/// Reuses same parsing logic as ring_area_offset (proven to work for area calculation).
 fn parse_wkb_polygon_coords(wkb_hex: &str) -> Option<Vec<(f64, f64)>> {
     if wkb_hex.len() < 18 { return None; }
 
@@ -174,7 +175,7 @@ fn parse_wkb_polygon_coords(wkb_hex: &str) -> Option<Vec<(f64, f64)>> {
         .step_by(2)
         .filter_map(|i| u8::from_str_radix(&wkb_hex[i..i+2], 16).ok())
         .collect();
-    if bytes.len() < 13 { return None; }
+    if bytes.len() < 9 { return None; }
 
     let le = bytes[0] == 1;
     let wkb_type = if le {
@@ -182,7 +183,6 @@ fn parse_wkb_polygon_coords(wkb_hex: &str) -> Option<Vec<(f64, f64)>> {
     } else {
         u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
     };
-    if wkb_type != 3 { return None; } // only single Polygon for now
 
     let read_u32 = |off: usize| -> u32 {
         if off + 4 > bytes.len() { return 0; }
@@ -196,17 +196,34 @@ fn parse_wkb_polygon_coords(wkb_hex: &str) -> Option<Vec<(f64, f64)>> {
         if le { f64::from_le_bytes(b) } else { f64::from_be_bytes(b) }
     };
 
-    let num_rings = read_u32(5) as usize;
+    // Handle both Polygon (3) and MultiPolygon (6) — use first polygon's outer ring
+    let ring_start = match wkb_type {
+        3 => 5, // byte_order(1) + type(4) → rings start at 5
+        6 => {
+            // MultiPolygon: skip to first sub-polygon
+            // 5=num_polys, then first sub-polygon has byte_order(1)+type(4)+rings
+            if bytes.len() < 14 { return None; }
+            5 + 4 + 1 + 4 // skip num_polys(4) + sub byte_order(1) + sub type(4) = offset 14
+        }
+        _ => return None,
+    };
+
+    if ring_start + 4 > bytes.len() { return None; }
+    let num_rings = read_u32(ring_start) as usize;
     if num_rings == 0 { return None; }
-    let num_points = read_u32(9) as usize;
+
+    let pts_off = ring_start + 4;
+    if pts_off + 4 > bytes.len() { return None; }
+    let num_points = read_u32(pts_off) as usize;
     if num_points < 3 { return None; }
-    let off = 13;
-    if off + num_points * 16 > bytes.len() { return None; }
+
+    let coord_off = pts_off + 4;
+    if coord_off + num_points * 16 > bytes.len() { return None; }
 
     let mut coords = Vec::with_capacity(num_points);
     for i in 0..num_points {
-        let lon = read_f64(off + i * 16);
-        let lat = read_f64(off + i * 16 + 8);
+        let lon = read_f64(coord_off + i * 16);
+        let lat = read_f64(coord_off + i * 16 + 8);
         coords.push((lat, lon));
     }
     Some(coords)

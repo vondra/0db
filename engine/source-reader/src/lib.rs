@@ -370,6 +370,7 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                     let grid_spacing = if area > 100_000.0 { 150.0 } else if area > 10_000.0 { 80.0 } else { 0.0 };
                     let grid_points = if grid_spacing > 0.0 {
                         let pts = noise_compute::wkb::wkb_grid_points(&wkb_hex, grid_spacing);
+                        eprintln!("  GRID: {} area={:.0} spacing={} wkb_len={} → {} points", iname, area, grid_spacing, wkb_hex.len(), pts.len());
                         if pts.len() > 1 { pts } else { vec![(c_lat, c_lon)] }
                     } else {
                         vec![(c_lat, c_lon)]
