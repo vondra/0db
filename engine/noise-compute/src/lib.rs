@@ -595,7 +595,10 @@ fn compute_point_sources(
     let mut pts_by_osm: HashMap<i64, PtAccum> = HashMap::new();
 
     for src in sources {
-        if src.dist_m > 3000.0 { continue; }
+        // Match pipeline max_radius (5km for industrial, 2km for buildings).
+        // WHY: popup had 3km cutoff while pipeline used 5km → popup missed sources
+        // that pipeline included, causing "no sources" in popup but visible noise in tiles.
+        if src.dist_m > 5000.0 { continue; }
 
         let src_alt = rasters.elevation(src.lat, src.lon) + src.source_height_m as f64;
         let rcv_alt = receiver.altitude_m();
