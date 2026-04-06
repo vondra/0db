@@ -86,14 +86,7 @@ fn ring_area_offset(bytes: &[u8], start: usize, read_u32: &dyn Fn(usize) -> u32,
         off += 16;
     }
 
-    // Skip inner rings
-    for _ in 1..num_rings {
-        if off + 4 > bytes.len() { break; }
-        let rp = read_u32(off) as usize;
-        off += 4 + rp * 16;
-    }
-
-    // Shoelace with cos(lat) metric correction
+    // Shoelace for outer ring
     let mean_lat: f64 = lats.iter().sum::<f64>() / lats.len() as f64;
     let cos_lat = mean_lat.to_radians().cos();
     let mut area_deg2 = 0.0f64;
@@ -103,7 +96,32 @@ fn ring_area_offset(bytes: &[u8], start: usize, read_u32: &dyn Fn(usize) -> u32,
         let xj = lons[j] * cos_lat;
         area_deg2 += xi * lats[j] - xj * lats[i];
     }
-    let area_m2 = (area_deg2 / 2.0).abs() * 110_540.0 * 111_320.0;
+    let outer_area = (area_deg2 / 2.0).abs() * 110_540.0 * 111_320.0;
+
+    // Subtract inner rings (courtyards, holes).
+    // WHY: Buildings with courtyards had full outer area → Lw overestimated by ~3 dB.
+    let mut hole_area = 0.0f64;
+    for _ in 1..num_rings {
+        if off + 4 > bytes.len() { break; }
+        let rp = read_u32(off) as usize;
+        off += 4;
+        if rp < 3 || off + rp * 16 > bytes.len() { off += rp * 16; continue; }
+        let mut h_lats = Vec::with_capacity(rp);
+        let mut h_lons = Vec::with_capacity(rp);
+        for _ in 0..rp {
+            h_lons.push(read_f64(off));
+            h_lats.push(read_f64(off + 8));
+            off += 16;
+        }
+        let mut h_area = 0.0f64;
+        for i in 0..rp {
+            let j = (i + 1) % rp;
+            h_area += h_lons[i] * cos_lat * h_lats[j] - h_lons[j] * cos_lat * h_lats[i];
+        }
+        hole_area += (h_area / 2.0).abs() * 110_540.0 * 111_320.0;
+    }
+
+    let area_m2 = (outer_area - hole_area).max(1.0);
     Some((area_m2, off))
 }
 
@@ -117,10 +135,16 @@ fn ring_area_offset(bytes: &[u8], start: usize, read_u32: &dyn Fn(usize) -> u32,
 /// spacing_m: approximate grid spacing in meters (30m for buildings, 150m for industrial)
 /// Returns: Vec of (lat, lon) points inside the polygon. At least 1 (centroid fallback).
 pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
-    // Parse polygon coordinates
-    let coords = match parse_wkb_polygon_coords(wkb_hex) {
+    // Parse polygon outer ring + inner rings (courtyards)
+    let (coords, holes) = match parse_wkb_polygon_with_holes(wkb_hex) {
         Some(c) => c,
-        None => return vec![],
+        None => {
+            // Fallback to outer-ring-only parsing
+            match parse_wkb_polygon_coords(wkb_hex) {
+                Some(c) => (c, vec![]),
+                None => return vec![],
+            }
+        }
     };
 
     if coords.is_empty() { return vec![]; }
@@ -142,13 +166,15 @@ pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
     let lat_step = spacing_m / 110_540.0;
     let lon_step = spacing_m / (111_320.0 * mid_lat.to_radians().cos().max(0.1));
 
-    // Generate grid
+    // Generate grid — exclude points inside courtyards (inner rings)
     let mut points = Vec::new();
     let mut lat = min_lat + lat_step / 2.0;
     while lat <= max_lat {
         let mut lon = min_lon + lon_step / 2.0;
         while lon <= max_lon {
-            if point_in_polygon(lat, lon, &coords) {
+            if point_in_polygon(lat, lon, &coords)
+                && !holes.iter().any(|h| point_in_polygon(lat, lon, h))
+            {
                 points.push((lat, lon));
             }
             lon += lon_step;
@@ -164,6 +190,82 @@ pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
     }
 
     points
+}
+
+/// Parse WKB with inner rings (holes). Returns (outer_ring, vec_of_holes).
+fn parse_wkb_polygon_with_holes(wkb_hex: &str) -> Option<(Vec<(f64, f64)>, Vec<Vec<(f64, f64)>>)> {
+    if wkb_hex.len() < 18 { return None; }
+    let bytes: Vec<u8> = (0..wkb_hex.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(&wkb_hex[i..i+2], 16).ok())
+        .collect();
+    if bytes.len() < 9 { return None; }
+
+    let le = bytes[0] == 1;
+    let wkb_type = if le {
+        u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
+    } else {
+        u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
+    };
+
+    let read_u32 = |off: usize| -> u32 {
+        if off + 4 > bytes.len() { return 0; }
+        if le { u32::from_le_bytes([bytes[off], bytes[off+1], bytes[off+2], bytes[off+3]]) }
+        else { u32::from_be_bytes([bytes[off], bytes[off+1], bytes[off+2], bytes[off+3]]) }
+    };
+    let read_f64 = |off: usize| -> f64 {
+        if off + 8 > bytes.len() { return 0.0; }
+        let mut b = [0u8; 8];
+        b.copy_from_slice(&bytes[off..off+8]);
+        if le { f64::from_le_bytes(b) } else { f64::from_be_bytes(b) }
+    };
+
+    let ring_start = match wkb_type {
+        3 => 5,
+        6 => {
+            if bytes.len() < 14 { return None; }
+            14
+        }
+        _ => return None,
+    };
+
+    if ring_start + 4 > bytes.len() { return None; }
+    let num_rings = read_u32(ring_start) as usize;
+    if num_rings == 0 { return None; }
+
+    // Parse outer ring
+    let mut off = ring_start + 4;
+    if off + 4 > bytes.len() { return None; }
+    let num_points = read_u32(off) as usize;
+    off += 4;
+    if num_points < 3 || off + num_points * 16 > bytes.len() { return None; }
+
+    let mut outer = Vec::with_capacity(num_points);
+    for _ in 0..num_points {
+        let lon = read_f64(off);
+        let lat = read_f64(off + 8);
+        outer.push((lat, lon));
+        off += 16;
+    }
+
+    // Parse inner rings (holes)
+    let mut holes = Vec::new();
+    for _ in 1..num_rings {
+        if off + 4 > bytes.len() { break; }
+        let rp = read_u32(off) as usize;
+        off += 4;
+        if rp < 3 || off + rp * 16 > bytes.len() { off += rp * 16; continue; }
+        let mut hole = Vec::with_capacity(rp);
+        for _ in 0..rp {
+            let lon = read_f64(off);
+            let lat = read_f64(off + 8);
+            hole.push((lat, lon));
+            off += 16;
+        }
+        holes.push(hole);
+    }
+
+    Some((outer, holes))
 }
 
 /// Parse WKB hex into outer ring coordinates as Vec<(lat, lon)>.
@@ -255,9 +357,3 @@ mod tests {
         assert_eq!(wkb_area_m2("0102"), None);
     }
 }
-
-// TODO (GPT-5.4 review): Inner rings (courtyards) are not subtracted from area.
-// A building with 50% courtyard gets full area → Lw overestimated by ~3 dB.
-// MultiPolygon only uses first polygon for grid points.
-// Fix: subtract inner ring areas, test containment against all rings,
-// iterate all polygons in MultiPolygon for grid generation.
