@@ -207,18 +207,54 @@ impl TileStore {
         ((1.0 - frac_lat) * max, frac_lon * max)
     }
 
+    /// Fast tile lookup for pre-loaded tiles (skips init path).
+    #[inline]
+    fn get_tile_fast(&self, lat_int: i32, lon_int: i32) -> Option<&RawTile> {
+        let idx = Self::tile_idx(lat_int, lon_int);
+        self.tiles[idx].get().and_then(|t| t.as_ref())
+    }
+
+    /// Sample at (frac_row, frac_col) within a tile, using this store's interpolation mode.
+    #[inline]
+    fn sample_tile(&self, tile: &RawTile, frac_lat: f64, frac_lon: f64) -> f64 {
+        let (frac_row, frac_col) = Self::frac_to_pixel(frac_lat, frac_lon, tile.grid_size);
+        match self.interp {
+            Interp::Bilinear => tile.sample_bilinear(frac_row, frac_col),
+            Interp::Nearest => tile.sample_nearest(frac_row, frac_col),
+        }
+    }
+
     /// Sample raster value at (lat, lon).
     pub fn sample(&self, lat: f64, lon: f64) -> f64 {
         let (lat_int, lon_int, frac_lat, frac_lon) = Self::to_tile_key(lat, lon);
 
-        match self.get_tile(lat_int, lon_int) {
-            Some(tile) => {
-                let (frac_row, frac_col) = Self::frac_to_pixel(frac_lat, frac_lon, tile.grid_size);
-                match self.interp {
-                    Interp::Bilinear => tile.sample_bilinear(frac_row, frac_col),
-                    Interp::Nearest => tile.sample_nearest(frac_row, frac_col),
+        match self.get_tile_fast(lat_int, lon_int) {
+            Some(tile) => self.sample_tile(tile, frac_lat, frac_lon),
+            None => {
+                // Fallback: try full get_tile (handles lazy loading for popup)
+                match self.get_tile(lat_int, lon_int) {
+                    Some(tile) => self.sample_tile(tile, frac_lat, frac_lon),
+                    None => self.default_value,
                 }
-            },
+            }
+        }
+    }
+
+    /// Sample with tile caching — avoids repeated OnceLock lookups when consecutive
+    /// samples fall within the same 1° tile (common for path sampling).
+    #[inline]
+    fn sample_cached<'a>(&'a self, lat: f64, lon: f64, cached_key: &mut (i32, i32), cached_tile: &mut Option<&'a RawTile>) -> f64 {
+        let (lat_int, lon_int, frac_lat, frac_lon) = Self::to_tile_key(lat, lon);
+        let tile = if (lat_int, lon_int) == *cached_key {
+            *cached_tile
+        } else {
+            *cached_key = (lat_int, lon_int);
+            let t = self.get_tile_fast(lat_int, lon_int);
+            *cached_tile = t;
+            t
+        };
+        match tile {
+            Some(t) => self.sample_tile(t, frac_lat, frac_lon),
             None => self.default_value,
         }
     }
@@ -230,16 +266,17 @@ impl TileStore {
         let dlon = (lon2 - lon1) * 111_320.0 * cos_lat;
         let dist_m = (dlat * dlat + dlon * dlon).sqrt();
 
-        // Step at raster resolution (~30m for 1201 grid)
         let cell_m = 110_540.0 / (self.grid_size - 1) as f64;
         let steps = (dist_m / cell_m).ceil().max(3.0) as usize;
 
+        let mut cached_key = (i32::MIN, i32::MIN);
+        let mut cached_tile: Option<&RawTile> = None;
         let mut profile = Vec::with_capacity(steps);
         for i in 0..steps {
             let t = i as f64 / (steps - 1).max(1) as f64;
             let lat = lat1 + t * (lat2 - lat1);
             let lon = lon1 + t * (lon2 - lon1);
-            profile.push(self.sample(lat, lon));
+            profile.push(self.sample_cached(lat, lon, &mut cached_key, &mut cached_tile));
         }
         profile
     }
@@ -255,12 +292,14 @@ impl TileStore {
 
         let mut max_val = 0.0f64;
         let mut max_t = 0.5;
+        let mut cached_key = (i32::MIN, i32::MIN);
+        let mut cached_tile: Option<&RawTile> = None;
 
         for i in 1..steps - 1 {  // skip source and receiver positions
             let t = i as f64 / (steps - 1).max(1) as f64;
             let lat = lat1 + t * (lat2 - lat1);
             let lon = lon1 + t * (lon2 - lon1);
-            let v = self.sample(lat, lon);
+            let v = self.sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
             if v > max_val {
                 max_val = v;
                 max_t = t;
@@ -286,12 +325,14 @@ impl TileStore {
 
         let mut total_depth = 0.0;
         let mut contiguous_depth = 0.0;
+        let mut cached_key = (i32::MIN, i32::MIN);
+        let mut cached_tile: Option<&RawTile> = None;
 
         for i in 0..steps {
             let t = i as f64 / (steps - 1).max(1) as f64;
             let lat = lat1 + t * (lat2 - lat1);
             let lon = lon1 + t * (lon2 - lon1);
-            let v = self.sample(lat, lon);
+            let v = self.sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
 
             if v > threshold {
                 contiguous_depth += step_m;
@@ -322,11 +363,13 @@ impl TileStore {
         let steps = (dist_m / cell_m).ceil().max(3.0) as usize;
 
         let mut sum = 0.0;
+        let mut cached_key = (i32::MIN, i32::MIN);
+        let mut cached_tile: Option<&RawTile> = None;
         for i in 0..steps {
             let t = i as f64 / (steps - 1).max(1) as f64;
             let lat = lat1 + t * (lat2 - lat1);
             let lon = lon1 + t * (lon2 - lon1);
-            sum += self.sample(lat, lon);
+            sum += self.sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
         }
         sum / steps as f64
     }
