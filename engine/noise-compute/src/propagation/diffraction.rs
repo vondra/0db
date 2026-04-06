@@ -97,13 +97,13 @@ pub fn compute_path_difference(
 
     let d_se1 = (d1 * d1 + (top1 - src_elev).powi(2)).sqrt();
 
-    // Edge-to-edge: follow profile
-    let mut d_e1e2 = 0.0;
-    for i in e1..e2 {
-        let seg_h = step_dist;
-        let seg_v = profile[i + 1] - profile[i];
-        d_e1e2 += (seg_h * seg_h + seg_v * seg_v).sqrt();
-    }
+    // Edge-to-edge: straight-line through air (NOT along ground contour).
+    // WHY: Sound travels in a straight line between diffraction edges.
+    // The old code followed the terrain surface (dipping into valleys),
+    // grossly overestimating the path difference and over-attenuating
+    // noise behind double hills (up to 25 dB cap).
+    let d2 = e2 as f64 * step_dist;
+    let d_e1e2 = ((d2 - d1).powi(2) + (top2 - top1).powi(2)).sqrt();
 
     let d2r = (n - 1 - e2) as f64 * step_dist;
     let d_e2r = (d2r * d2r + (top2 - rcv_elev).powi(2)).sqrt();
