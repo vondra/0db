@@ -69,14 +69,27 @@ pub fn finite_line_correction(
     // Distances from closest point to segment endpoints (along segment)
     let d1 = fraction * seg_length_m;
     let d2 = (1.0 - fraction) * seg_length_m;
+    let inv_d = 1.0 / d_perp_horizontal;
+    let a1 = d1 * inv_d;
+    let a2 = d2 * inv_d;
 
-    // Angle subtended by segment as seen from receiver
-    let theta = (d1 / d_perp_horizontal).atan() + (d2 / d_perp_horizontal).atan();
+    // Angle subtended by segment as seen from receiver.
+    // Use atan addition formula: atan(a1) + atan(a2) = atan((a1+a2)/(1-a1*a2)) + k*π
+    // For positive a1,a2: if a1*a2 < 1, k=0; if a1*a2 >= 1, k=1 (theta > π/2).
+    let prod = a1 * a2;
+    let theta = if prod < 0.98 {
+        // Single atan instead of two
+        ((a1 + a2) / (1.0 - prod)).atan()
+    } else {
+        // a1*a2 >= 1: denominator near zero or negative, use two atans (rare case)
+        a1.atan() + a2.atan()
+    };
 
     // Correction: ratio of subtended angle to π (full infinite line)
-    let correction = 10.0 * (theta / std::f64::consts::PI).log10();
+    // Use ln for speed: 10*log10(x) = (10/ln10)*ln(x)
+    let correction = 4.342944819032518_f64 * (theta / std::f64::consts::PI).ln();
 
-    correction.min(0.0) // always ≤ 0 (finite line always quieter than infinite)
+    correction.min(0.0)
 }
 
 #[cfg(test)]
