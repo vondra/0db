@@ -14,32 +14,32 @@ pub struct IndustrialProfile {
 }
 
 /// Get profile by site_type.
+/// base_lw values calibrated against Czech SHM 2022 + CNOSSOS-EU Lw'' methodology.
+/// Reviewed by GPT-5.4 + Gemini 3.1 Pro against ISO 8297 and real EIS data.
 pub fn industrial_profile(site_type: u8) -> IndustrialProfile {
     match site_type {
         0 => IndustrialProfile { // generic industrial
-            base_lw: 70.0,
+            base_lw: 93.0,
             spectrum: [-5.0, -3.0, -1.0, 0.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -3.0, night_offset: -10.0,
         },
         1 => IndustrialProfile { // quarry — crushing, loading, blasting
-            base_lw: 75.0,
+            base_lw: 99.0,
             spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -2.0, -5.0, -8.0],
             evening_offset: -5.0, night_offset: -20.0,
         },
         2 => IndustrialProfile { // farmyard — animal husbandry, machinery, seasonal
-            // WHY: Was missing (fallthrough to default 68 dB). Farms are quieter than
-            // industry and mostly active during daytime only.
-            base_lw: 55.0,
+            base_lw: 70.0,
             spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
-            evening_offset: -5.0, night_offset: -20.0, // virtually silent at night
+            evening_offset: -5.0, night_offset: -20.0,
         },
         3 => IndustrialProfile { // works/factory
-            base_lw: 72.0,
+            base_lw: 94.0,
             spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -3.0, night_offset: -8.0,
         },
         4 => IndustrialProfile { // wastewater plant
-            base_lw: 65.0,
+            base_lw: 89.0,
             spectrum: [-6.0, -3.0, -1.0, 0.0, 0.0, -1.0, -4.0, -7.0],
             evening_offset: 0.0, night_offset: 0.0, // 24/7
         },
@@ -49,7 +49,7 @@ pub fn industrial_profile(site_type: u8) -> IndustrialProfile {
             evening_offset: 0.0, night_offset: 0.0,
         },
         _ => IndustrialProfile { // default
-            base_lw: 68.0,
+            base_lw: 92.0,
             spectrum: [-5.0, -3.0, -1.0, 0.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -3.0, night_offset: -10.0,
         },
@@ -64,75 +64,76 @@ pub fn industrial_profile(site_type: u8) -> IndustrialProfile {
 pub fn nace_profile(nace_2digit: u8) -> Option<IndustrialProfile> {
     Some(match nace_2digit {
         // Heavy industry — high base Lw
+        // Calibrated against Czech SHM 2022 + Irish Cement EIS (120.8 dBA plant total).
         8 => IndustrialProfile { // Mining/quarrying
-            base_lw: 75.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -2.0, -5.0, -8.0],
+            base_lw: 99.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -2.0, -5.0, -8.0],
             evening_offset: -8.0, night_offset: -20.0,
         },
         23 => IndustrialProfile { // Cement, glass, minerals — grinding, crushing
-            base_lw: 75.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -2.0, -5.0, -8.0],
+            base_lw: 100.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -2.0, -5.0, -8.0],
             evening_offset: -2.0, night_offset: -4.0, // often 24/7
         },
         24 => IndustrialProfile { // Metallurgy — smelting, forging
-            base_lw: 78.0, spectrum: [-2.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
+            base_lw: 100.0, spectrum: [-2.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
             evening_offset: -2.0, night_offset: -4.0,
         },
         // Medium industry
         10 | 11 => IndustrialProfile { // Food/beverage processing
-            base_lw: 65.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            base_lw: 90.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -5.0, night_offset: -12.0,
         },
         13 | 14 | 15 => IndustrialProfile { // Textiles, leather
-            base_lw: 65.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            base_lw: 88.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -5.0, night_offset: -15.0,
         },
         16 | 17 => IndustrialProfile { // Wood, paper — saws, presses
-            base_lw: 70.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
+            base_lw: 93.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
             evening_offset: -5.0, night_offset: -15.0,
         },
         20 => IndustrialProfile { // Chemical industry
-            base_lw: 72.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            base_lw: 94.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -2.0, night_offset: -4.0,
         },
         22 => IndustrialProfile { // Rubber, plastics
-            base_lw: 68.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            base_lw: 90.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -5.0, night_offset: -10.0,
         },
         25 => IndustrialProfile { // Metal fabrication — welding, cutting
-            base_lw: 70.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
+            base_lw: 93.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
             evening_offset: -5.0, night_offset: -10.0,
         },
         27 | 28 => IndustrialProfile { // Electrical/mechanical equipment
-            base_lw: 68.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            base_lw: 90.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -5.0, night_offset: -12.0,
         },
         29 | 30 => IndustrialProfile { // Motor vehicles, transport equipment
-            base_lw: 70.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            base_lw: 93.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -5.0, night_offset: -12.0,
         },
         // Energy/utilities
         35 => IndustrialProfile { // Power generation — turbines, transformers
-            base_lw: 72.0, spectrum: [-2.0, 0.0, 1.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            base_lw: 97.0, spectrum: [-2.0, 0.0, 1.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -1.0, night_offset: -2.0, // near 24/7
         },
         37 => IndustrialProfile { // Wastewater treatment
-            base_lw: 65.0, spectrum: [-6.0, -3.0, -1.0, 0.0, 0.0, -1.0, -4.0, -7.0],
+            base_lw: 89.0, spectrum: [-6.0, -3.0, -1.0, 0.0, 0.0, -1.0, -4.0, -7.0],
             evening_offset: 0.0, night_offset: 0.0, // 24/7
         },
         38 => IndustrialProfile { // Waste/recycling — loaders, compactors
-            base_lw: 72.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            base_lw: 95.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -3.0, night_offset: -8.0,
         },
         // Light industry / services
         1 | 2 | 3 => IndustrialProfile { // Agriculture
-            base_lw: 55.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            base_lw: 70.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -5.0, night_offset: -20.0,
         },
         46 | 47 => IndustrialProfile { // Wholesale/retail trade — logistics
-            base_lw: 58.0, spectrum: [-5.0, -3.0, -1.0, 0.0, 0.0, -1.0, -3.0, -6.0],
+            base_lw: 84.0, spectrum: [-5.0, -3.0, -1.0, 0.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -8.0, night_offset: -20.0,
         },
         52 => IndustrialProfile { // Warehousing/logistics
-            base_lw: 60.0, spectrum: [-5.0, -3.0, -1.0, 0.0, 0.0, -1.0, -3.0, -6.0],
+            base_lw: 86.0, spectrum: [-5.0, -3.0, -1.0, 0.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -3.0, night_offset: -8.0,
         },
         _ => return None, // unknown NACE → fall back to site_type profile
@@ -140,8 +141,11 @@ pub fn nace_profile(nace_2digit: u8) -> Option<IndustrialProfile> {
 }
 
 /// Compute industrial Lw from profile and site area.
+/// Area capped at 500,000 m² (50 ha) — larger OSM polygons contain buffer zones,
+/// not additional emission sources.
 pub fn industrial_lw(profile: &IndustrialProfile, area_m2: f64) -> f64 {
-    profile.base_lw + 10.0 * (area_m2 / 10000.0).max(0.01).log10()
+    let effective = area_m2.clamp(100.0, 500_000.0);
+    profile.base_lw + 10.0 * (effective / 10000.0).log10()
 }
 
 /// Compute emission bands.

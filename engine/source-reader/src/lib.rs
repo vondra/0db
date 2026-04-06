@@ -362,10 +362,17 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                         em_evening[j] += profile.evening_offset as f32;
                         em_night[j] += profile.night_offset as f32;
                     }
-                    // Source height: mix of ground equipment + roof vents.
-                    // Was 1.5m (ground only). Changed to 5.0m as representative acoustic center
-                    // for typical industrial mix (ISO 8297 suggests effective center).
+                    // Source height depends on industry type.
+                    // Heavy industry (quarry, cement, metal, power): 10m (stacks, kilns, roof vents)
+                    // Default: 5m (ground equipment mix, ISO 8297 effective center)
                     // Wind turbines use hub_height separately (60-120m).
+                    let src_height: f32 = if st == 1 { 8.0 } else {
+                        let nace = NACE_LOOKUP.get().and_then(|l| l.get(&osm_id)).copied();
+                        match nace {
+                            Some(8 | 23 | 24 | 35) => 10.0,
+                            _ => 5.0,
+                        }
+                    };
                     // Distributed points: spread emission across polygon area.
                     // WHY: Single centroid creates "donut" pattern — quiet inside, loud ring.
                     // Grid of points matches ISO 9613-2 area source subdivision.
@@ -390,7 +397,7 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                         for j in 0..8 { em_d[j] -= lw_split; em_e[j] -= lw_split; em_n[j] -= lw_split; }
                         all_industrial.push(noise_compute::types::PointSource {
                             osm_id, lat: *pt_lat, lon: *pt_lon,
-                            source_height_m: 5.0,
+                            source_height_m: src_height,
                             source_type: st,
                             lw_day: em_d, lw_evening: em_e, lw_night: em_n,
                             n_points: n_pts, name: iname.clone(), polygon_wkb: wkb_hex.clone(),
