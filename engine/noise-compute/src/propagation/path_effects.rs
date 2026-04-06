@@ -36,7 +36,7 @@ pub fn terrain_attenuation(
     let profile = rasters.terrain_profile(src_lat, src_lon, rcv_lat, rcv_lon, 0);
     let src_ground = if !profile.is_empty() { profile[0] } else { 0.0 };
     let src_agl = (src_elev - src_ground).max(0.05);
-    let rcv_agl = 1.5; // receiver height above ground
+    let rcv_agl = crate::constants::DEFAULT_RECEIVER_HEIGHT;
     let diff = diffraction::compute_path_difference(&profile, dist_m, src_agl, rcv_agl);
     diffraction::diffraction_attenuation(diff.delta, diff.is_double)
 }

@@ -25,8 +25,10 @@ pub const BAND_FREQ: [f64; NUM_BANDS] = [63.0, 125.0, 250.0, 500.0, 1000.0, 2000
 /// Speed of sound [m/s] at 15°C.
 pub const SPEED_OF_SOUND: f64 = 340.0;
 
-/// Default receiver height [m] — human ear height.
-pub const DEFAULT_RECEIVER_HEIGHT: f64 = 1.5;
+/// Default receiver height [m] — END 2002/49/EC facade standard (4.0m).
+/// Was 1.5m (human ear). Changed to 4.0m to match EU strategic noise mapping
+/// and eliminate systematic -3 dB bias vs SHM across all sources.
+pub const DEFAULT_RECEIVER_HEIGHT: f64 = 4.0;
 
 /// Favourable propagation probability (CNOSSOS-EU §2.5.21, Central Europe).
 pub const P_FAV: f64 = 0.5;
