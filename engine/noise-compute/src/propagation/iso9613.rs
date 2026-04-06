@@ -141,9 +141,17 @@ pub fn propagate_variants(
     let mut no_vegetation_energy = 0.0f64;
     let mut band_energy = [0.0f64; NUM_BANDS];
 
+    // Geometric divergence depends only on distance, not frequency — compute once.
+    let d = d_slant.max(1.0);
+    let geo_div = match source_geom {
+        SourceGeometry::Line => 10.0 * (2.0 * std::f64::consts::PI * d).log10(),
+        SourceGeometry::Point => 20.0 * d.log10() + 11.0,
+    };
+    let d_over_1000 = d_slant / 1000.0;
+
     for i in 0..NUM_BANDS {
         // Base WITHOUT ground: emission - divergence - atmospheric
-        let base_no_ground = propagate_band_no_ground(emission_bands[i], d_slant, source_geom, i);
+        let base_no_ground = emission_bands[i] - geo_div - ALPHA_ATM[i] * d_over_1000;
 
         // Ground effect (A_gr)
         let a_gr = GROUND_CF[i] * ground_g;
@@ -212,10 +220,17 @@ pub fn propagate_single(
 ) -> crate::types::PropagationVariants {
     let mut energy = 0.0f64;
     let mut band_energy = [0.0f64; NUM_BANDS];
+    let d = d_slant.max(1.0);
+    let geo_div = match source_geom {
+        SourceGeometry::Line => 10.0 * (2.0 * std::f64::consts::PI * d).log10(),
+        SourceGeometry::Point => 20.0 * d.log10() + 11.0,
+    };
+    let d_over_1000 = d_slant / 1000.0;
+    let c = std::f64::consts::LN_10 * 0.1;
     for i in 0..NUM_BANDS {
-        let level = propagate_band(emission_bands[i], d_slant, source_geom, ground_g, i)
-                    + finite_line_corr;
-        let e = (( level + A_WEIGHTING[i]) * 0.230258509299_f64).exp();
+        let level = emission_bands[i] - geo_div - ALPHA_ATM[i] * d_over_1000
+                    - GROUND_CF[i] * ground_g + finite_line_corr;
+        let e = ((level + A_WEIGHTING[i]) * c).exp();
         energy += e;
         band_energy[i] = e;
     }
