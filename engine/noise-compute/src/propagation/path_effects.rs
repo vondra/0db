@@ -19,7 +19,7 @@ pub fn terrain_attenuation(
     src_elev: f64, rcv_alt: f64,
     dist_m: f64,
 ) -> [f64; NUM_BANDS] {
-    if dist_m > 3000.0 { return [0.0; NUM_BANDS]; }
+    if dist_m > 5000.0 { return [0.0; NUM_BANDS]; }
 
     // 5-point LOS check (25%, 50%, 75%)
     let hill_detected = [0.25, 0.5, 0.75].iter().any(|&t| {
@@ -93,16 +93,11 @@ pub fn screening_attenuation(
         }
     };
 
-    if n_samples <= 15 {
-        // Short path: every ~30m
-        for k in 1..n_samples {
-            check_point(k as f64 / n_samples as f64);
-        }
-    } else {
-        // Long path: 7 samples near source + 8 near receiver (30m apart each)
-        let step_t = 30.0 / dist_m;
-        for k in 1..=7 { check_point(k as f64 * step_t); }
-        for k in 1..=8 { check_point(1.0 - (k as f64 * step_t)); }
+    // Sample every ~50m along the full path (not just near endpoints).
+    // clamp(2, 200): at least midpoint even for short paths, cap for very long ones.
+    let n = ((dist_m / 50.0).ceil() as usize).clamp(2, 200);
+    for k in 1..n {
+        check_point(k as f64 / n as f64);
     }
 
     // Check noise barriers
@@ -112,7 +107,7 @@ pub fn screening_attenuation(
     for barrier in barriers {
         if barrier.dist_m > dist_m + 100.0 { continue; }
         let t = ((barrier.lat - src_lat) * dlat + (barrier.lon - src_lon) * dlon) / path_len_sq;
-        if t < 0.05 || t > 0.95 { continue; }
+        if t < 0.01 || t > 0.99 { continue; }
         let closest_lat = src_lat + t * dlat;
         let closest_lon = src_lon + t * dlon;
         let perp_dist = super::geo::flat_dist(barrier.lat, barrier.lon, closest_lat, closest_lon);

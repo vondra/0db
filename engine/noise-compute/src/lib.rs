@@ -184,6 +184,7 @@ fn compute_roads(
 ) -> (NoisePeriods, Vec<Contributor>) {
     let road_classes = ["motorway", "trunk", "primary", "secondary", "tertiary", "residential", "living_street"];
     let max_dist = [10000.0, 5000.0, 5000.0, 2000.0, 1000.0, 500.0, 200.0];
+    let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
     use std::collections::HashMap;
 
@@ -209,7 +210,15 @@ fn compute_roads(
 
     for seg in roads {
         let class_idx = (seg.road_class as usize).min(6);
-        if seg.dist_m > max_dist[class_idx] { continue; }
+        let max_d = max_dist[class_idx];
+        if seg.dist_m > max_d { continue; }
+
+        // Fade-out in last 20% of range: smooth transition instead of sharp cutoff.
+        // Applies to computed energy (after all path effects), not to the model itself.
+        let fade_start = max_d * 0.8;
+        let fade_factor = if seg.dist_m > fade_start {
+            1.0 - (seg.dist_m - fade_start) / (max_d - fade_start)
+        } else { 1.0 };
 
         // Tunnel: skip segment (sound contained inside tunnel, not heard outside)
         if seg.tunnel { continue; }
@@ -260,7 +269,7 @@ fn compute_roads(
             let flows = road::build_period_flows(light, medium, heavy, moto, speed, *pct, *hours);
             let emission = road::line_source_emission(&flows, surf_corr);
             let v = iso9613::propagate_variants(&emission, d_slant, SourceGeometry::Line, ground_g,
-                &terrain_atten, &screening_atten, &veg_atten, 0.0, flc);
+                &terrain_atten, &screening_atten, &veg_atten, reflection, flc);
             seg_variants[pi].add(&v);
             if pi == 0 {
                 for j in 0..NUM_BANDS {
@@ -316,8 +325,12 @@ fn compute_roads(
                 band_energy: [0.0; NUM_BANDS], line_coords: HashMap::new(),
             }
         });
-        for pi in 0..3 { acc.variants[pi].add(&seg_variants[pi]); }
-        acc.emission_energy += day_emission_energy;
+        // Apply fade-out factor to energy (linear scale) before accumulation
+        for pi in 0..3 {
+            if fade_factor < 1.0 { seg_variants[pi].scale(fade_factor); }
+            acc.variants[pi].add(&seg_variants[pi]);
+        }
+        acc.emission_energy += day_emission_energy * fade_factor;
         if seg.dist_m < acc.min_dist {
             acc.min_dist = seg.dist_m;
             acc.min_d_slant = d_slant;
@@ -422,6 +435,7 @@ fn compute_railways(
     let day_pct = 0.65;
     let eve_pct = 0.20;
     let night_pct = 0.15;
+    let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
     for seg in railways {
         // Tunnel: skip segment — sound contained inside, not heard outside
@@ -462,7 +476,7 @@ fn compute_railways(
         for (pi, pct) in [day_pct, eve_pct, night_pct].iter().enumerate() {
             let emission = railway::railway_emission(rail_type, speed, q_pax * pct, q_frt * pct);
             let v = iso9613::propagate_variants(&emission, d_slant, SourceGeometry::Line, ground_g,
-                &terrain_atten, &screening_atten, &veg_atten, 0.0, flc);
+                &terrain_atten, &screening_atten, &veg_atten, reflection, flc);
             seg_variants[pi].add(&v);
             if pi == 0 {
                 for j in 0..NUM_BANDS {
@@ -593,6 +607,8 @@ fn compute_point_sources(
         polygon_wkb: String,
     }
     let mut pts_by_osm: HashMap<i64, PtAccum> = HashMap::new();
+    let ground_g = rasters.ground_g(receiver.lat, receiver.lon);
+    let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
     for src in sources {
         // Match pipeline max_radius (5km for industrial, 2km for buildings).
@@ -604,8 +620,6 @@ fn compute_point_sources(
         let rcv_alt = receiver.altitude_m();
         let d_slant = geo::slant_dist(src.dist_m, src_alt, rcv_alt);
         if d_slant < 1.0 { continue; }
-
-        let ground_g = rasters.ground_g(receiver.lat, receiver.lon);
 
         // Per-source path effects
         let terrain_atten = propagation::path_effects::terrain_attenuation(
@@ -619,7 +633,6 @@ fn compute_point_sources(
         let veg_atten = propagation::path_effects::vegetation_attenuation_path(
             rasters, src.lat, src.lon, receiver.lat, receiver.lon, src.dist_m,
         );
-        let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
         let v_day = iso9613::propagate_variants(
             &src.lw_day.map(|v| v as f64), d_slant, SourceGeometry::Point, ground_g,
@@ -1073,6 +1086,7 @@ mod tests {
             trains_passenger: 80, trains_freight: 20, speed_kmh: 100, track_count: 2,
             name: String::new(), rail_ref: String::new(),
             dist_m: 200.0, cp_lat: 50.08, cp_lon: 14.42, fraction: 0.5,
+            bridge: false, tunnel: false,
         }];
 
         let result = compute_at_point(&receiver, &roads, &railways, &[], &[], &[], &[], &MockRasters, &ComputeConfig::default());
@@ -1184,6 +1198,7 @@ mod tests {
             trains_passenger: 80, trains_freight: 20, speed_kmh: 100, track_count: 2,
             name: String::new(), rail_ref: String::new(),
             dist_m: 200.0, cp_lat: 50.08, cp_lon: 14.42, fraction: 0.5,
+            bridge: false, tunnel: false,
         }];
         let aircraft = vec![AircraftSegment {
             flight_id: 1, profile_idx: 0, is_departure: false,

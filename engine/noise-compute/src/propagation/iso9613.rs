@@ -405,10 +405,12 @@ mod tests {
         let mut a = crate::types::PropagationVariants {
             full_energy: 1.0, free_field_energy: 2.0,
             no_terrain_energy: 3.0, no_screening_energy: 4.0, no_vegetation_energy: 5.0,
+            band_energy: [0.0; crate::types::NUM_BANDS],
         };
         let b = crate::types::PropagationVariants {
             full_energy: 10.0, free_field_energy: 20.0,
             no_terrain_energy: 30.0, no_screening_energy: 40.0, no_vegetation_energy: 50.0,
+            band_energy: [0.0; crate::types::NUM_BANDS],
         };
         a.add(&b);
         assert!((a.full_energy - 11.0).abs() < 1e-10);
