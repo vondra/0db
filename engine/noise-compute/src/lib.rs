@@ -809,7 +809,8 @@ fn compute_aircraft(
         // Per-flight Lmax
         if acc.peak_lmax > global_peak_lmax { global_peak_lmax = acc.peak_lmax; }
 
-        // Helicopter count (profile 6 = LightGA/rotorcraft)
+        // Helicopter count — approximation. Profile 6 is mixed LightGA+Rotorcraft.
+        // TODO: separate GA from rotorcraft in ADS-B extractor for accurate count.
         if acc.profile_idx == 6 { helicopter_count += 1.0 / n_days_f; }
 
         // Band classification by Lmax

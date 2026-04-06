@@ -322,9 +322,11 @@ pub fn segment_sel(
     let dv = delta_v(seg.speed_kt as f64, profile);
     let df = delta_f(cpa.q_m, cpa.seg_len_m, profile.d_bar_m);
 
-    // Λ not applied to rotorcraft (profile 6)
-    let lambda = if seg.profile_idx == 6 { 0.0 }
-        else { lateral_attenuation(cpa.beta_deg, cpa.lateral_m) };
+    // Lateral attenuation applied to all profiles including profile 6 (LightGA+Rotorcraft).
+    // WHY: Profile 6 is a mixed bucket (C172, PA28 + helicopters). Old code skipped lateral
+    // attenuation for ALL profile 6, overestimating fixed-wing GA noise by up to 10.9 dB.
+    // Helicopters technically don't have lateral attenuation, but they're ~10% of profile 6.
+    let lambda = lateral_attenuation(cpa.beta_deg, cpa.lateral_m);
 
     let di = delta_i(cpa.beta_deg, profile.installation);
 
