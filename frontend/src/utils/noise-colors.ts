@@ -5,20 +5,19 @@
  */
 
 export const COLOR_STOPS: [number, string, number][] = [
-  // 0-20 dB: light green fade-in (alpha only, same color)
-  [ 0, '#45ab5c',   0],
-  [ 5, '#45ab5c',  50],
-  [10, '#45ab5c', 110],
-  [15, '#45ab5c', 180],
-  [20, '#45ab5c', 153],
-  // 25-45 dB: original green -> yellow-green progression, original alpha
-  [25, '#45ab5c', 153],
-  [30, '#78c46c', 153],
-  [35, '#78c46c', 153],
-  [40, '#b2dd80', 153],
-  [45, '#d4c850', 153],
-  // 50+ dB: original colors + original alpha
-  [50, '#e6c040', 153],
+  // 0 dB base + original EuroNoise 2015 (Tomio) color progression
+  [ 0, '#1a6b3a', 180],
+  [ 5, '#033e1b', 153],
+  [10, '#064e24', 153],
+  [15, '#0a5f2e', 153],
+  [20, '#0e7038', 153],
+  // 25+ dB: original EuroNoise 2015 colors
+  [25, '#148444', 153],
+  [30, '#1a9850', 153],
+  [35, '#45ab5c', 153],
+  [40, '#78c46c', 153],
+  [45, '#b2dd80', 153],
+  [50, '#fee08b', 153],
   [55, '#fdae61', 153],
   [60, '#f46d43', 153],
   [65, '#d73027', 153],
@@ -41,7 +40,7 @@ const RGBA_STOPS: [number, number, number, number, number][] = COLOR_STOPS.map(
 )
 
 export function ldenToRGBA(lden: number): [number, number, number, number] {
-  if (lden <= 0) return [0, 0, 0, 0]
+  if (lden < 0) return [0, 0, 0, 0]
   const stops = RGBA_STOPS
   if (lden >= stops[stops.length - 1][0]) {
     const s = stops[stops.length - 1]
