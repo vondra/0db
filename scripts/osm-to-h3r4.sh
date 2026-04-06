@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Extract noise-relevant features from OSM planet PBF → H3R4 Arrow IPC.
 #
-# Output: data/prepared/2026/h3r4/{hex}/ with roads.arrow, railways.arrow, buildings.arrow, industrial.arrow
+# Output: data/prepared/{year}/h3r4/{hex}/ with roads.arrow, railways.arrow, buildings.arrow, industrial.arrow
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
