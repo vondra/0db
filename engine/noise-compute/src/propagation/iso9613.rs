@@ -152,10 +152,13 @@ pub fn propagate_variants(
         let a_bar_no_terrain = screening_atten[i];
         let a_bar_no_screening = terrain_atten[i];
 
-        // ISO 9613-2 §7.3.1: use max(A_gr, A_bar), not A_gr + A_bar
-        let ground_or_bar_full = a_gr.max(a_bar_full);
-        let ground_or_bar_no_terrain = a_gr.max(a_bar_no_terrain);
-        let ground_or_bar_no_screening = a_gr.max(a_bar_no_screening);
+        // ISO 9613-2 §7.3.1: max(A_gr, A_bar) ONLY when a barrier exists.
+        // Without barriers, use A_gr directly (which can be negative = amplification
+        // for soft ground at low frequencies like 63/125 Hz).
+        // WHY: a_gr.max(0.0) discarded low-frequency ground amplification in open fields.
+        let ground_or_bar_full = if a_bar_full > 0.0 { a_gr.max(a_bar_full) } else { a_gr };
+        let ground_or_bar_no_terrain = if a_bar_no_terrain > 0.0 { a_gr.max(a_bar_no_terrain) } else { a_gr };
+        let ground_or_bar_no_screening = if a_bar_no_screening > 0.0 { a_gr.max(a_bar_no_screening) } else { a_gr };
 
         // Free-field: ground only, no barriers, no vegetation
         let free = base_no_ground - a_gr + finite_line_corr;
