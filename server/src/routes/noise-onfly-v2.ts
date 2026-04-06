@@ -14,7 +14,8 @@ let sourceModule: {
 } | null = null
 
 const SOURCE_READER_PATH = resolve(import.meta.dirname, '../../../engine/source-reader/target/release/libsource_reader.so')
-const H3R4_DIR = process.env.H3R4_DIR || resolve(import.meta.dirname, '../../../data/prepared/h3r4')
+const YEAR = process.env.DATA_YEAR || '2025'
+const H3R4_DIR = process.env.H3R4_DIR || resolve(import.meta.dirname, `../../../data/prepared/${YEAR}/h3r4`)
 
 try {
   const nodePath = SOURCE_READER_PATH.replace('.so', '.node')
