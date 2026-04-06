@@ -130,10 +130,20 @@ pub fn screening_attenuation(
     );
     let bld_top = bld_ground + max_bh;
     let los_height = src_elev + (rcv_alt - src_elev) * max_bh_t;
-    let screen_delta = bld_top - los_height;
+    let screen_h = bld_top - los_height; // vertical height above line-of-sight
 
-    if screen_delta > 0.0 {
-        screening::building_screening(screen_delta)
+    if screen_h > 0.0 {
+        // Convert vertical height above LOS to path length difference (δ).
+        // WHY: Old code passed screen_h directly as δ to the Maekawa formula.
+        // screen_h is the VERTICAL height; δ is the DETOUR distance.
+        // For h=2m at 100m from source on 300m path: δ=0.03m, not 2m.
+        // Passing h instead of δ overestimated screening by ~67× → instant 10 dB cap.
+        let d1 = max_bh_t * dist_m;         // source → building (horizontal)
+        let d2 = (1.0 - max_bh_t) * dist_m; // building → receiver (horizontal)
+        let delta = ((d1 * d1 + screen_h * screen_h).sqrt()
+                   + (d2 * d2 + screen_h * screen_h).sqrt()
+                   - dist_m).max(0.0);
+        screening::building_screening(delta)
     } else {
         [0.0; NUM_BANDS]
     }
