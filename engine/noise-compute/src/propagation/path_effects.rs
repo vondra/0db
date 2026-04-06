@@ -69,36 +69,13 @@ pub fn screening_attenuation(
     dist_m: f64,
     exclusion_radius_m: f64,
 ) -> [f64; NUM_BANDS] {
-    // Sample building height along entire path every ~30m.
-    // Find tallest building on the line source→receiver.
-    // Sample building height along path to find tallest obstruction.
-    // For short paths (<450m): every ~30m (up to 15 samples).
-    // For long paths (>450m): concentrate 15 samples near source (7) and receiver (8),
-    // because screening is only effective close to source or receiver (Fresnel zone).
-    // WHY: Spreading 15 samples evenly over 3km = 200m steps → misses 10-30m wide buildings.
-    let n_samples = (dist_m / 30.0).ceil() as usize;
-    let mut max_bh = 0.0f64;
-    let mut max_bh_t = 0.5;
-
     let excl_limit = if exclusion_radius_m > 0.0 { exclusion_radius_m.min(dist_m * 0.5) } else { 0.0 };
 
-    let mut check_point = |t: f64| {
-        if excl_limit > 0.0 && t * dist_m < excl_limit { return; }
-        let lat = src_lat + t * (rcv_lat - src_lat);
-        let lon = src_lon + t * (rcv_lon - src_lon);
-        let bh = rasters.building_height(lat, lon);
-        if bh > max_bh {
-            max_bh = bh;
-            max_bh_t = t;
-        }
-    };
-
-    // Sample every ~50m along the full path (not just near endpoints).
-    // clamp(2, 200): at least midpoint even for short paths, cap for very long ones.
-    let n = ((dist_m / 50.0).ceil() as usize).clamp(2, 200);
-    for k in 1..n {
-        check_point(k as f64 / n as f64);
-    }
+    // Find tallest building along path (sampled every ~50m).
+    // Pipeline overrides with tile-cached sampling to avoid repeated OnceLock lookups.
+    let (mut max_bh, mut max_bh_t) = rasters.max_building_along_path(
+        src_lat, src_lon, rcv_lat, rcv_lon, dist_m, excl_limit,
+    );
 
     // Check noise barriers
     let dlat = rcv_lat - src_lat;

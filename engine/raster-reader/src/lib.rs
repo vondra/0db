@@ -113,6 +113,28 @@ impl RasterSampler for RealRasters {
         else if density > 0.2 { 1.5 }
         else { 0.0 }
     }
+
+    fn max_building_along_path(
+        &self, src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64,
+        dist_m: f64, excl_start_m: f64,
+    ) -> (f64, f64) {
+        // Same 50m sampling as default, but uses tile-cached lookups to avoid
+        // repeated OnceLock atomic loads within the same 1° tile.
+        let n = ((dist_m / 50.0).ceil() as usize).clamp(2, 200);
+        let mut max_bh = 0.0f64;
+        let mut max_t = 0.5;
+        let mut cached_key = (i32::MIN, i32::MIN);
+        let mut cached_tile = None;
+        for k in 1..n {
+            let t = k as f64 / n as f64;
+            if excl_start_m > 0.0 && t * dist_m < excl_start_m { continue; }
+            let lat = src_lat + t * (rcv_lat - src_lat);
+            let lon = src_lon + t * (rcv_lon - src_lon);
+            let bh = self.building.sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
+            if bh > max_bh { max_bh = bh; max_t = t; }
+        }
+        (max_bh, max_t)
+    }
 }
 
 #[cfg(test)]

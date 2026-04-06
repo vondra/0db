@@ -27,7 +27,7 @@ pub enum Interp {
 }
 
 /// One mmap'd 1°×1° tile.
-struct RawTile {
+pub(crate) struct RawTile {
     mmap: Mmap,
     grid_size: u32,
     dtype: DType,
@@ -243,7 +243,9 @@ impl TileStore {
     /// Sample with tile caching — avoids repeated OnceLock lookups when consecutive
     /// samples fall within the same 1° tile (common for path sampling).
     #[inline]
-    fn sample_cached<'a>(&'a self, lat: f64, lon: f64, cached_key: &mut (i32, i32), cached_tile: &mut Option<&'a RawTile>) -> f64 {
+    /// Sample with tile caching — avoids repeated OnceLock lookups when consecutive
+    /// samples fall within the same 1° tile.
+    pub(crate) fn sample_cached<'a>(&'a self, lat: f64, lon: f64, cached_key: &mut (i32, i32), cached_tile: &mut Option<&'a RawTile>) -> f64 {
         let (lat_int, lon_int, frac_lat, frac_lon) = Self::to_tile_key(lat, lon);
         let tile = if (lat_int, lon_int) == *cached_key {
             *cached_tile
