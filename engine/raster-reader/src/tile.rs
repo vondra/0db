@@ -5,7 +5,7 @@
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use memmap2::Mmap;
 
 /// Data type of raw tile pixels.
@@ -121,7 +121,7 @@ pub struct TileStore {
     default_value: f64,
     extension: &'static str,
     alt_extension: Option<&'static str>,
-    tiles: Vec<OnceLock<Option<Arc<RawTile>>>>,  // flat array, lock-free
+    tiles: Vec<OnceLock<Option<RawTile>>>,  // flat array, lock-free (no Arc — TileStore owns tiles)
 }
 
 impl TileStore {
@@ -168,7 +168,7 @@ impl TileStore {
     }
 
     /// Get or load a tile. Lock-free after first access (OnceLock).
-    fn get_tile(&self, lat_int: i32, lon_int: i32) -> Option<Arc<RawTile>> {
+    fn get_tile(&self, lat_int: i32, lon_int: i32) -> Option<&RawTile> {
         let idx = Self::tile_idx(lat_int, lon_int);
 
         self.tiles[idx].get_or_init(|| {
@@ -185,8 +185,8 @@ impl TileStore {
                 else { None }
             } else { None };
 
-            tile.map(Arc::new)
-        }).clone()
+            tile
+        }).as_ref()
     }
 
     /// Convert (lat, lon) to tile key.
