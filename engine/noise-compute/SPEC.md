@@ -2,12 +2,12 @@
 
 Engineering formulas inspired by CNOSSOS-EU 2021/1226, ISO 9613-2:2024, and ECAC Doc 29 4th Edition. This is NOT a certified implementation of any standard. Simplifications are documented in each section.
 
-**Purpose**: Continental noise atlas for public information ("where do I hear noise"). Not regulatory END mapping.
+**Purpose**: Global noise atlas for public information ("where do I hear noise"). Not regulatory END mapping.
 
 ## Constants
 
 ### Receiver
-- **Height**: 1.5 m (human ear height, not END 4.0 m facade)
+- **Height**: 4.0 m (END standard facade height)
 - **Temperature**: 15 °C
 - **Humidity**: 70% RH
 - **Pressure**: 101.325 kPa
@@ -174,12 +174,12 @@ A_bar,i = min(20, 10 × log₁₀(3 + 20 × δ × f[i] / 340))
 Double edge:
 A_bar,i = min(25, 10 × log₁₀(3 + 20 × δ × f[i] / 340))
 ```
-Terrain profile sampled from DEM. Receiver at **1.5m** above ground.
+Terrain profile sampled from DEM (Copernicus GLO-30 primary, SRTM fallback). Receiver at **4.0m** above ground.
 
 ### 3.6 Building screening (ISO 9613-2, per-band)
-Same diffraction formula as terrain, using building height profile along source-receiver path.
+Same diffraction formula as terrain. Samples building height at ~30m steps along entire source-receiver path (not just midpoint).
 ```
-δ_bld = max building height along path - direct line height at that point
+δ_bld = max building height along path - direct LOS height at that point
 A_screen,i = min(10, 10 × log₁₀(3 + 20 × δ_bld × f[i] / 340))
 ```
 
@@ -272,13 +272,17 @@ Receives PRE-DISCRETIZED point sources. Discretization done at import:
 
 ### Emission
 ```
-Lw = baseLw + 10 × log₁₀(area_m² / 10000)
+Lw = baseLw + 10 × log₁₀(min(area_m², 500000) / 10000)
 ```
-baseLw from NACE code profile.
+baseLw from NACE code profile (calibrated against Czech SHM 2022):
+- Heavy industry (cement, steel, power): 99-100 dB
+- Medium industry (chemical, food): 88-95 dB
+- Light industry (warehouse, commercial): 70-86 dB
+Area scaling capped at 50 ha (500,000 m²) to prevent OSM polygon artifacts.
 
 ### Source height
-- Open-air: 1.5m
-- Enclosed: 4.0m
+- Heavy industry (NACE 8/23/24/35): 10m
+- Other industrial: 5m
 - Wind turbine: hub_height
 
 ### Wind turbines (IEC 61400-11)
@@ -340,5 +344,5 @@ ISO 9613-2 point source.
 | **Meteorology** | P_FAV=0.5 energy boost formula | ISO 9613-2: Cmet = C₀(1 - 10·h_s/r), subtracted from downwind | ±2 dB at long range. Both are approximations of wind/gradient effects. |
 | **Road categories** | 4 categories (no 4a mopeds, no 5) | CNOSSOS: 5 categories (4a, 4b, 5) | <0.5 dB. Mopeds rare, cat 5 is open. |
 | **Railway emission** | Simplified RMR (one rolling spectrum per type) | CNOSSOS Annex IV: component-based (roughness, transfer function per rail/wheel type) | ±2 dB. We use aggregate reference spectra, not full component model. |
-| **Receiver height** | 1.5m (human ear) | END: 4.0m (facade). ISO: variable. | ~2-3 dB for ground sources. Intentional — we map noise for people, not buildings. |
+| **Receiver height** | 4.0m (END facade) | END: 4.0m (facade). ISO: variable. | Matches END standard. |
 | **Aircraft NPD** | 8 proxy profiles | Doc 29: official ANP database | ±3 dB per aircraft type. We approximate, not certify. |
