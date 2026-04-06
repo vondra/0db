@@ -5,10 +5,13 @@ import SourceToggles from './SourceToggles'
 import OverlayControls from './OverlayControls'
 import SoundPathSection from './SoundPathSection'
 import type { RealEstateFilters } from './RealEstateLayer'
+import type { SourceMode } from '../hooks/useUrlState'
 
 interface ControlCardProps {
   activeSources: Set<string>
+  sourceModes: Record<string, SourceMode>
   onToggleSource: (sourceId: string) => void
+  onSourceModeChange: (sourceId: string, mode: SourceMode) => void
   propagationFactors: Record<string, boolean>
   onPropagationChange: (factors: Record<string, boolean>) => void
   quietClustersEnabled: boolean
@@ -20,7 +23,7 @@ interface ControlCardProps {
 }
 
 export default function ControlCard({
-  activeSources, onToggleSource,
+  activeSources, sourceModes, onToggleSource, onSourceModeChange,
   propagationFactors, onPropagationChange,
   quietClustersEnabled, onQuietClustersChange,
   quietThreshold, onQuietThresholdChange,
@@ -53,7 +56,7 @@ export default function ControlCard({
         <ChevronUp className="size-3.5" />
       </button>
 
-      <SourceToggles activeSources={activeSources} onToggleSource={onToggleSource} />
+      <SourceToggles activeSources={activeSources} sourceModes={sourceModes} onToggleSource={onToggleSource} onSourceModeChange={onSourceModeChange} />
 
       <div className="my-1.5 border-t border-border" />
 

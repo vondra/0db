@@ -3,12 +3,15 @@ import SourceToggles from './SourceToggles'
 import OverlayControls from './OverlayControls'
 import SoundPathSection from './SoundPathSection'
 import type { RealEstateFilters } from './RealEstateLayer'
+import type { SourceMode } from '../hooks/useUrlState'
 
 interface LayersPanelProps {
   open: boolean
   onClose: () => void
   activeSources: Set<string>
+  sourceModes: Record<string, SourceMode>
   onToggleSource: (sourceId: string) => void
+  onSourceModeChange: (sourceId: string, mode: SourceMode) => void
   propagationFactors: Record<string, boolean>
   onPropagationChange: (factors: Record<string, boolean>) => void
   quietClustersEnabled: boolean
@@ -21,7 +24,7 @@ interface LayersPanelProps {
 
 export default function LayersPanel({
   open, onClose,
-  activeSources, onToggleSource,
+  activeSources, sourceModes, onToggleSource, onSourceModeChange,
   propagationFactors, onPropagationChange,
   quietClustersEnabled, onQuietClustersChange,
   quietThreshold, onQuietThresholdChange,
@@ -90,7 +93,7 @@ export default function LayersPanel({
         <div className="w-10 h-1 bg-muted-foreground/30 rounded-full" />
       </div>
 
-      <SourceToggles activeSources={activeSources} onToggleSource={onToggleSource} />
+      <SourceToggles activeSources={activeSources} sourceModes={sourceModes} onToggleSource={onToggleSource} onSourceModeChange={onSourceModeChange} />
       <div className="my-2 border-t border-border" />
       <OverlayControls
         quietClustersEnabled={quietClustersEnabled}

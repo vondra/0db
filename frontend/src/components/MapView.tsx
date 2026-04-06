@@ -13,6 +13,7 @@ import { DEFAULT_BASEMAP, getBasemapStyle, type BasemapId } from '../utils/basem
 import type { HexFeature } from './HexLayer'
 import type { SelectedLocation } from './FlyToLocation'
 import type { NoiseComputeData } from './DetailPopup'
+import type { SourceMode } from '../hooks/useUrlState'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 interface MapViewProps {
@@ -20,6 +21,7 @@ interface MapViewProps {
   initialCenter?: [number, number]
   initialZoom?: number
   activeSources?: Set<string>
+  sourceModes?: Record<string, SourceMode>
   propagationFactors?: Record<string, boolean>
   basemap?: BasemapId
   onViewChange?: (lat: number, lng: number, zoom: number) => void
@@ -37,7 +39,7 @@ interface MapViewProps {
 }
 
 export default function MapView({
-  selectedLocation, initialCenter, initialZoom, activeSources, propagationFactors,
+  selectedLocation, initialCenter, initialZoom, activeSources, sourceModes, propagationFactors,
   basemap, onViewChange, onHexData, onDetailData, onDetailPositionChange,
   initialDetailPosition, onSelectedPointChange,
   hexData, quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters,
@@ -66,6 +68,7 @@ export default function MapView({
       <NavigationControl position="bottom-left" showCompass={false} />
       <HexLayer
         activeSources={activeSources}
+        sourceModes={sourceModes}
         propagationFactors={propagationFactors}
         onHexData={onHexData}
         basemapId={bm}

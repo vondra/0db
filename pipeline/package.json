@@ -5,6 +5,7 @@
   "dependencies": {
     "apache-arrow": "^21.1.0",
     "csv-parse": "^6.2.1",
+    "geotiff": "^3.0.5",
     "h3-js": "^4.4.0"
   },
   "devDependencies": {

@@ -69,3 +69,16 @@ export function ldenToColor(lden: number): string {
   }
   return COLOR_STOPS[0][1]
 }
+
+/** Diverging color scale for diff visualization (0db - SHM). */
+export const DIFF_COLOR_STOPS: [number, string][] = [
+  [-15, '#08519c'],
+  [-10, '#3182bd'],
+  [-5,  '#9ecae1'],
+  [-2,  '#c6dbef'],
+  [0,   '#2ca02c'],
+  [2,   '#fee08b'],
+  [5,   '#fdae61'],
+  [10,  '#d73027'],
+  [15,  '#7f0000'],
+]

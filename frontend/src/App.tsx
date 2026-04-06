@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useMemo } from 'react'
 import AboutPage from './components/AboutPage'
 import MapView from './components/MapView'
 import SearchBar from './components/SearchBar'
@@ -8,7 +8,7 @@ import DetailCard from './components/DetailCard'
 import LayersPanel from './components/LayersPanel'
 import MobileDetailSheet from './components/MobileDetailSheet'
 import BasemapBar from './components/BasemapBar'
-import { useUrlState } from './hooks/useUrlState'
+import { useUrlState, type SourceMode } from './hooks/useUrlState'
 import type { SelectedLocation } from './components/FlyToLocation'
 import type { RealEstateFilters } from './components/RealEstateLayer'
 import type { NoiseComputeData } from './components/DetailPopup'
@@ -26,9 +26,22 @@ export default function App() {
   const [layersOpen, setLayersOpen] = useState(false)
   const [isochronActive, setIsochronActive] = useState(false)
   const [isochronGeojson, setIsochronGeojson] = useState<GeoJSON.Feature | null>(null)
-  const [activeSources, setActiveSources] = useState<Set<string>>(
-    new Set(initial.layers)
-  )
+  const [sourceModes, setSourceModes] = useState<Record<string, SourceMode>>(() => {
+    const modes: Record<string, SourceMode> = {}
+    for (const id of ['road', 'railway', 'aircraft', 'building', 'industrial']) {
+      modes[id] = initial.layers.includes(id) ? '0db' : 'off'
+    }
+    // Apply saved source modes from URL
+    for (const [id, mode] of Object.entries(initial.sourceModes)) {
+      if (initial.layers.includes(id)) modes[id] = mode
+    }
+    return modes
+  })
+
+  // Derive activeSources for backwards compat — memoize to avoid new Set reference each render
+  const activeSources = useMemo(() => new Set(
+    Object.entries(sourceModes).filter(([, m]) => m !== 'off').map(([id]) => id)
+  ), [sourceModes])
   const [propagationFactors, setPropagationFactors] = useState<Record<string, boolean>>(() => {
     const factors: Record<string, boolean> = {
       terrain: true,
@@ -52,7 +65,8 @@ export default function App() {
   })
 
   const mapViewRef = useRef({ lat: initial.lat, lng: initial.lng, zoom: initial.zoom })
-  const activeSourcesRef = useRef(activeSources)
+  const sourceModesRef = useRef(sourceModes)
+  sourceModesRef.current = sourceModes
   const propagationRef = useRef(propagationFactors)
   const quietClustersRef = useRef(quietClustersEnabled)
   const quietThresholdRef = useRef(quietThreshold)
@@ -60,6 +74,7 @@ export default function App() {
 
   const syncUrl = useCallback((overrides?: Partial<{
     layers: Set<string>
+    sourceModes: Record<string, SourceMode>
     quietClusters: boolean
     quietThreshold: number
     lat: number
@@ -70,6 +85,10 @@ export default function App() {
     basemap: BasemapId
   }>) => {
     const v = mapViewRef.current
+    const modes = overrides?.sourceModes ?? sourceModesRef.current
+    const activeLayers = new Set(
+      Object.entries(modes).filter(([, m]) => m !== 'off').map(([id]) => id)
+    )
     const factors = propagationRef.current
     const disabledFactors = Object.entries(factors)
       .filter(([, enabled]) => !enabled)
@@ -78,7 +97,8 @@ export default function App() {
       lat: overrides?.lat ?? v.lat,
       lng: overrides?.lng ?? v.lng,
       zoom: overrides?.zoom ?? v.zoom,
-      layers: overrides?.layers ?? activeSourcesRef.current,
+      layers: overrides?.layers ?? activeLayers,
+      sourceModes: modes,
       quietClusters: overrides?.quietClusters ?? quietClustersRef.current,
       quietThreshold: overrides?.quietThreshold ?? quietThresholdRef.current,
       detailPosition: overrides?.detailPosition ?? null,
@@ -93,12 +113,18 @@ export default function App() {
   }, [syncUrl])
 
   const handleToggleSource = useCallback((sourceId: string) => {
-    setActiveSources(prev => {
-      const next = new Set(prev)
-      if (next.has(sourceId)) next.delete(sourceId)
-      else next.add(sourceId)
-      activeSourcesRef.current = next
-      syncUrl({ layers: next })
+    setSourceModes(prev => {
+      const current = prev[sourceId] ?? '0db'
+      const next = { ...prev, [sourceId]: current === 'off' ? '0db' : 'off' as SourceMode }
+      syncUrl({ sourceModes: next })
+      return next
+    })
+  }, [syncUrl])
+
+  const handleSourceModeChange = useCallback((sourceId: string, mode: SourceMode) => {
+    setSourceModes(prev => {
+      const next = { ...prev, [sourceId]: mode }
+      syncUrl({ sourceModes: next })
       return next
     })
   }, [syncUrl])
@@ -179,7 +205,9 @@ export default function App() {
           <div className="pointer-events-auto">
             <ControlCard
               activeSources={activeSources}
+              sourceModes={sourceModes}
               onToggleSource={handleToggleSource}
+              onSourceModeChange={handleSourceModeChange}
               propagationFactors={propagationFactors}
               onPropagationChange={handlePropagationChange}
               quietClustersEnabled={quietClustersEnabled}
@@ -209,6 +237,7 @@ export default function App() {
         initialCenter={[initial.lat, initial.lng]}
         initialZoom={initial.zoom}
         activeSources={activeSources}
+        sourceModes={sourceModes}
         propagationFactors={propagationFactors}
         basemap={basemap}
         isochronGeojson={isochronGeojson}
@@ -246,7 +275,9 @@ export default function App() {
           open={layersOpen}
           onClose={() => setLayersOpen(false)}
           activeSources={activeSources}
+          sourceModes={sourceModes}
           onToggleSource={handleToggleSource}
+          onSourceModeChange={handleSourceModeChange}
           propagationFactors={propagationFactors}
           onPropagationChange={handlePropagationChange}
           quietClustersEnabled={quietClustersEnabled}

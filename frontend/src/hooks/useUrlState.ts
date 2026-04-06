@@ -7,11 +7,14 @@ const DEFAULT_ZOOM = 8
 const ALL_SOURCE_IDS = ['road', 'railway', 'aircraft', 'building', 'industrial']
 export const ALL_PROPAGATION_IDS = ['terrain', 'screening', 'vegetation']
 
+export type SourceMode = 'off' | '0db' | 'shm' | 'diff'
+
 export interface UrlState {
   lat: number
   lng: number
   zoom: number
   layers: string[]
+  sourceModes: Record<string, SourceMode>
   quietClusters: boolean
   quietThreshold: number
   detailPosition: { lat: number; lng: number } | null
@@ -27,6 +30,7 @@ function parseHash(): UrlState {
       lng: DEFAULT_LNG,
       zoom: DEFAULT_ZOOM,
       layers: [...ALL_SOURCE_IDS],
+      sourceModes: {},
       quietClusters: false,
       quietThreshold: 35,
       detailPosition: null,
@@ -54,13 +58,28 @@ function parseHash(): UrlState {
     ? params.get('pd')!.split(',').filter(id => ALL_PROPAGATION_IDS.includes(id)).sort()
     : []
 
+  // Parse source modes: sm=road:shm,railway:diff
+  const sourceModes: Record<string, SourceMode> = {}
+  const smParam = params.get('sm')
+  if (smParam) {
+    for (const entry of smParam.split(',')) {
+      const [id, mode] = entry.split(':')
+      if (ALL_SOURCE_IDS.includes(id) && ['shm', 'diff'].includes(mode)) {
+        sourceModes[id] = mode as SourceMode
+      }
+    }
+  }
+
+  const layers = params.has('layers')
+    ? params.get('layers')!.split(',').filter(s => ALL_SOURCE_IDS.includes(s))
+    : [...ALL_SOURCE_IDS]
+
   return {
     lat: parseFloat(params.get('lat') || '') || DEFAULT_LAT,
     lng: parseFloat(params.get('lng') || '') || DEFAULT_LNG,
     zoom: parseFloat(params.get('z') || '') || DEFAULT_ZOOM,
-    layers: params.has('layers')
-      ? params.get('layers')!.split(',').filter(s => ALL_SOURCE_IDS.includes(s))
-      : [...ALL_SOURCE_IDS],
+    layers,
+    sourceModes,
     quietClusters: params.get('qc') === '1',
     quietThreshold: params.has('qt') ? parseInt(params.get('qt')!, 10) : 35,
     detailPosition,
@@ -74,6 +93,7 @@ export function buildHash(state: {
   lng: number
   zoom: number
   layers: Set<string>
+  sourceModes?: Record<string, SourceMode>
   quietClusters: boolean
   quietThreshold?: number
   detailPosition?: { lat: number; lng: number } | null
@@ -107,6 +127,16 @@ export function buildHash(state: {
     parts.push(`bm=${state.basemap}`)
   }
 
+  // Source modes: only serialize non-default (non-0db) modes
+  if (state.sourceModes) {
+    const entries = Object.entries(state.sourceModes)
+      .filter(([, mode]) => mode !== '0db' && mode !== 'off')
+      .sort(([a], [b]) => a.localeCompare(b))
+    if (entries.length > 0) {
+      parts.push(`sm=${entries.map(([id, mode]) => `${id}:${mode}`).join(',')}`)
+    }
+  }
+
   const pd = state.propagationDisabled?.filter(id => ALL_PROPAGATION_IDS.includes(id)).sort() ?? []
   if (pd.length > 0) {
     parts.push(`pd=${pd.join(',')}`)
@@ -124,6 +154,7 @@ export function useUrlState() {
     lng: number
     zoom: number
     layers: Set<string>
+    sourceModes?: Record<string, SourceMode>
     quietClusters: boolean
     quietThreshold?: number
     detailPosition?: { lat: number; lng: number } | null
