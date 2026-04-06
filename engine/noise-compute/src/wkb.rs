@@ -255,3 +255,9 @@ mod tests {
         assert_eq!(wkb_area_m2("0102"), None);
     }
 }
+
+// TODO (GPT-5.4 review): Inner rings (courtyards) are not subtracted from area.
+// A building with 50% courtyard gets full area → Lw overestimated by ~3 dB.
+// MultiPolygon only uses first polygon for grid points.
+// Fix: subtract inner ring areas, test containment against all rings,
+// iterate all polygons in MultiPolygon for grid generation.
