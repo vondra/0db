@@ -234,13 +234,12 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
             let bands = noise_compute::emission::settlement::building_emission_bands(&profile, lw);
             let lw_f32: [f32; 8] = std::array::from_fn(|i| bands[i] as f32);
 
-            // Evening/night period reduction
+            // Evening/night reduction from profile (matches pipeline).
             let mut lw_eve = lw_f32;
             let mut lw_night = lw_f32;
-            if b.building_type == 0 || b.building_type == 3 || b.building_type == 4 {
-                for j in 0..8 { lw_eve[j] -= 3.0; lw_night[j] -= 8.0; }
-            } else if b.building_type == 1 {
-                for j in 0..8 { lw_eve[j] -= 5.0; lw_night[j] -= 15.0; }
+            for j in 0..8 {
+                lw_eve[j] += profile.evening_offset as f32;
+                lw_night[j] += profile.night_offset as f32;
             }
 
             // Build display name: "Name" or "Street Nr" or building type
