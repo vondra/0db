@@ -198,11 +198,23 @@ Sampled from building height raster in 8 directions around receiver.
 Applied ONCE per receiver, not per source-receiver path.
 
 ### 3.9 Favourable meteorological conditions (CNOSSOS-EU §2.5.21)
+❌ NOT IMPLEMENTED. P_FAV=0.5 constant exists but is not used in propagation.
+Planned formula:
 ```
 boost = min(3, max(0, (d - 50) × 0.01))    [dB]
 multiplier = P_FAV × 10^(boost/10) + (1 - P_FAV)
 where P_FAV = 0.5 (Central Europe default)
 ```
+
+### 3.10 Transport-specific adjustments
+Applied in pipeline and popup:
+- **Bridge**: G=0 (hard surface, overrides IMD raster)
+- **Tunnel**: segment skipped entirely (sound contained inside)
+- **Oneway road**: AADT × 0.5 (approximation: half the traffic of two-way)
+- **Service railway** (yard/siding/spur): 2% of default traffic
+- **Junction**: speed capped at 30 km/h (roundabouts)
+- **Private/destination access**: 10% of default traffic
+- **Industrial exclusion radius**: R=√(area/π) — buildings within R of source point are not counted as screening (prevents self-screening from source's own footprint)
 
 ### 3.10 Total received level per band
 ```
@@ -341,8 +353,12 @@ ISO 9613-2 point source.
 | **Diffraction** | 10·log₁₀(3 + 20·δ·f/340), caps 20/25 dB | CNOSSOS §2.5.21-23: Rayleigh criterion, C'' convexity factor, ground-barrier interaction | ±3 dB behind barriers. We over-simplify barrier+ground interaction. |
 | **Building screening** | Max building height along path → per-band diffraction | ISO 9613-2: explicit obstacle modelling per edge | ±3 dB in complex urban. Our approach samples raster, not individual building edges. |
 | **Urban reflection** | Per-receiver enclosure boost +0-5 dB | ISO 9613-2 §7.5: image-source reflection model | ±2 dB. Standard requires full reflection geometry, we use heuristic. |
-| **Meteorology** | P_FAV=0.5 energy boost formula | ISO 9613-2: Cmet = C₀(1 - 10·h_s/r), subtracted from downwind | ±2 dB at long range. Both are approximations of wind/gradient effects. |
+| **Meteorology** | NOT IMPLEMENTED (P_FAV exists but unused) | ISO 9613-2: Cmet = C₀(1 - 10·h_s/r), subtracted from downwind | ±2 dB at long range. TODO: implement. |
 | **Road categories** | 4 categories (no 4a mopeds, no 5) | CNOSSOS: 5 categories (4a, 4b, 5) | <0.5 dB. Mopeds rare, cat 5 is open. |
 | **Railway emission** | Simplified RMR (one rolling spectrum per type) | CNOSSOS Annex IV: component-based (roughness, transfer function per rail/wheel type) | ±2 dB. We use aggregate reference spectra, not full component model. |
 | **Receiver height** | 4.0m (END facade) | END: 4.0m (facade). ISO: variable. | Matches END standard. |
 | **Aircraft NPD** | 8 proxy profiles | Doc 29: official ANP database | ±3 dB per aircraft type. We approximate, not certify. |
+| **Bridge/tunnel** | Bridge G=0, tunnel skip | No standard specifies this directly | Physically correct — bridge is hard surface, tunnel contains sound. |
+| **Oneway roads** | AADT × 0.5 | No standard | Approximation: one-way carries ~50% of two-way equivalent. |
+| **Service railway** | 2% of default traffic | No standard | Yard/siding/spur tracks have minimal scheduled traffic. |
+| **Industrial self-screening** | Exclusion radius R=√(area/π) | ISO 9613-2: explicit geometry | Prevents false screening from source's own building footprint. |
