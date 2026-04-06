@@ -69,6 +69,7 @@ export default function MapView({
         propagationFactors={propagationFactors}
         onHexData={onHexData}
         basemapId={bm}
+        quietClustersEnabled={quietClustersEnabled}
       />
       <HexHoverTooltip activeSources={activeSources} propagationFactors={propagationFactors} />
       <QuietClustersLayer hexFeatures={hexData ?? []} enabled={quietClustersEnabled ?? false} threshold={quietThreshold ?? 35} />
