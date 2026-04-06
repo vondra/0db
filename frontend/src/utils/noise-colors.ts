@@ -6,7 +6,7 @@
 
 export const COLOR_STOPS: [number, string, number][] = [
   // 0 dB base + original EuroNoise 2015 (Tomio) color progression
-  [ 0, '#1a6b3a', 180],
+  [ 0, '#024a1a', 153],
   [ 5, '#033e1b', 153],
   [10, '#064e24', 153],
   [15, '#0a5f2e', 153],
