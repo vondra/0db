@@ -99,8 +99,9 @@ pub fn propagate_bands(
 /// A-weighted total from octave band levels.
 /// L_A = 10 × log₁₀(Σ 10^((L_i + A_i) / 10))
 pub fn a_weighted_total(bands: &[f64; NUM_BANDS]) -> f64 {
+    let c = std::f64::consts::LN_10 * 0.1;
     let energy: f64 = bands.iter().enumerate()
-        .map(|(i, &level)| 10f64.powf((level + A_WEIGHTING[i]) / 10.0))
+        .map(|(i, &level)| ((level + A_WEIGHTING[i]) * c).exp())
         .sum();
     if energy > 0.0 { 10.0 * energy.log10() } else { f64::NEG_INFINITY }
 }
@@ -175,15 +176,17 @@ pub fn propagate_variants(
         let no_vegetation = base_no_ground - ground_or_bar_full
                             + reflection_boost_db + finite_line_corr;
 
-        // A-weight and convert to linear energy
+        // A-weight and convert to linear energy via exp (faster than powf)
+        // 10^((x+aw)/10) = e^((x+aw) * ln(10)/10)
         let aw = A_WEIGHTING[i];
-        let full_aw = 10f64.powf((full + aw) / 10.0);
+        let c = std::f64::consts::LN_10 * 0.1; // ln(10)/10
+        let full_aw = ((full + aw) * c).exp();
         full_energy += full_aw;
         band_energy[i] = full_aw;
-        free_energy += 10f64.powf((free + aw) / 10.0);
-        no_terrain_energy += 10f64.powf((no_terrain + aw) / 10.0);
-        no_screening_energy += 10f64.powf((no_screening + aw) / 10.0);
-        no_vegetation_energy += 10f64.powf((no_vegetation + aw) / 10.0);
+        free_energy += ((free + aw) * c).exp();
+        no_terrain_energy += ((no_terrain + aw) * c).exp();
+        no_screening_energy += ((no_screening + aw) * c).exp();
+        no_vegetation_energy += ((no_vegetation + aw) * c).exp();
     }
 
     crate::types::PropagationVariants {
