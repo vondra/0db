@@ -37,7 +37,16 @@ convert_one() {
     out_name=$(printf "%s%02d%s%03d" "$ns" "$((10#$lat))" "$ew" "$((10#$lon))")
     local out="$DST/${out_name}.hgt"
     [ -f "$out" ] && return 0
-    gdal_translate -of SRTMHGT -q "$tif" "$out" 2>/dev/null || true
+    # Copernicus COG is 3600×3600, SRTMHGT needs 3601×3601. Warp to exact 1°×1° grid.
+    local lat_n=$((10#$lat))
+    local lon_n=$((10#$lon))
+    [ "$ns" = "S" ] && lat_n=$((-lat_n))
+    [ "$ew" = "W" ] && lon_n=$((-lon_n))
+    local tmp="/tmp/cop_${out_name}.tif"
+    gdalwarp -q -te "$lon_n" "$lat_n" "$((lon_n+1))" "$((lat_n+1))" \
+        -ts 3601 3601 -r bilinear -ot Int16 "$tif" "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+    gdal_translate -of SRTMHGT -q "$tmp" "$out" 2>/dev/null || true
+    rm -f "$tmp"
 }
 export -f convert_one
 export DST
