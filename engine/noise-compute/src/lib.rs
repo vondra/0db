@@ -752,7 +752,7 @@ fn compute_aircraft(
     use std::collections::HashMap;
     use emission::aircraft;
 
-    let rx_elev = rasters.elevation(receiver.lat, receiver.lon);
+    let rx_elev = receiver.altitude_m();
     let n_days_f = n_days as f64;
 
     // Per-flight accumulation
