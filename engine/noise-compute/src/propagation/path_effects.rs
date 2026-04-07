@@ -38,7 +38,7 @@ pub fn terrain_attenuation(
     let src_agl = (src_elev - src_ground).max(0.05);
     let rcv_agl = crate::constants::DEFAULT_RECEIVER_HEIGHT;
     let diff = diffraction::compute_path_difference(&profile, dist_m, src_agl, rcv_agl);
-    diffraction::diffraction_attenuation(diff.delta, diff.is_double)
+    diffraction::diffraction_attenuation_with_edge(diff.delta, diff.is_double, diff.edge_distance)
 }
 
 /// Compute building screening attenuation per band.
