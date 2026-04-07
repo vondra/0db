@@ -72,10 +72,11 @@ fn vehicle_emission(coeffs: &RailVehicleCoeffs, speed_kmh: f64) -> [f64; NUM_BAN
     let speed_corr = B_ROLLING * (v / coeffs.v_ref).log10();
 
     let mut bands = [0.0f64; NUM_BANDS];
+    let c = std::f64::consts::LN_10 * 0.1;
     for i in 0..NUM_BANDS {
         let l_roll = coeffs.a_rolling[i] + speed_corr;
         let l_tract = coeffs.a_traction[i];
-        bands[i] = 10.0 * (10f64.powf(l_roll / 10.0) + 10f64.powf(l_tract / 10.0)).log10();
+        bands[i] = 10.0 * ((l_roll * c).exp() + (l_tract * c).exp()).log10();
     }
     bands
 }
@@ -104,7 +105,7 @@ pub fn railway_emission(
         let per_train = vehicle_emission(coeffs, v);
         let q_corr = 10.0 * trains_passenger_per_day.log10();
         for i in 0..NUM_BANDS {
-            total_energy[i] += 10f64.powf((per_train[i] + q_corr) / 10.0);
+            total_energy[i] += ((per_train[i] + q_corr) * std::f64::consts::LN_10 * 0.1).exp();
         }
     }
 
@@ -113,7 +114,7 @@ pub fn railway_emission(
         let per_train = vehicle_emission(&FREIGHT, v.min(FREIGHT.v_max));
         let q_corr = 10.0 * trains_freight_per_day.log10();
         for i in 0..NUM_BANDS {
-            total_energy[i] += 10f64.powf((per_train[i] + q_corr) / 10.0);
+            total_energy[i] += ((per_train[i] + q_corr) * std::f64::consts::LN_10 * 0.1).exp();
         }
     }
 
