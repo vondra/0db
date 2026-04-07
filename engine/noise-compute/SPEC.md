@@ -60,6 +60,8 @@ L_WR,i = A_R,i + B_R,i × log₁₀(v / v_ref)
 ```
 where v_ref = 70 km/h. Coefficients A_R, B_R from CNOSSOS-EU Table 2.3.a.
 
+**Known issue:** Current coefficients may not match the latest CNOSSOS-EU 2019 amendment (2019/1010). Cat1 A_R at 63 Hz is 83.1 in our code vs 79.7 in the amended standard. Updating requires revalidation of all reference test cases (K1, K2).
+
 ### Propulsion noise per band
 ```
 L_WP,i = A_P,i + B_P,i × (v - v_ref) / v_ref

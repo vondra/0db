@@ -89,7 +89,8 @@ fn vehicle_emission_bands(category: VehicleCategory, speed: f64, surface_corr: f
         let l_wp = c.a_p[i] + c.b_p[i] * speed_delta;
         if let (Some(a_r), Some(b_r)) = (&c.a_r, &c.b_r) {
             let l_wr = a_r[i] + b_r[i] * log_ratio + surface_corr; // surfCorr to rolling only
-            bands[i] = 10.0 * (10f64.powf(l_wr / 10.0) + 10f64.powf(l_wp / 10.0)).log10();
+            let c = std::f64::consts::LN_10 * 0.1;
+            bands[i] = 10.0 * ((l_wr * c).exp() + (l_wp * c).exp()).log10();
         } else {
             bands[i] = l_wp; // propulsion-only categories: no surface correction
         }
@@ -117,7 +118,7 @@ pub fn line_source_emission(flows: &[CategoryFlow], surface_corr_db: f64) -> [f6
 
         for i in 0..NUM_BANDS {
             // Energy sum: density × 10^(L_W/10)
-            let energy = density * 10f64.powf(bands[i] / 10.0);
+            let energy = density * (bands[i] * std::f64::consts::LN_10 * 0.1).exp();
             if total[i] == f64::NEG_INFINITY {
                 total[i] = energy;
             } else {
