@@ -166,20 +166,23 @@ Note: Uses HORIZONTAL distances, not 3D slant. This is a fix from V33/V44 which 
 
 ### 3.5 Terrain diffraction (ISO 9613-2 §7.3/7.4)
 ```
-δ = path_via_edge - direct_path    [m]
+δ = path_via_edges - direct_path    [m]
 
-Single edge:
+Single edge (§7.3):
 A_bar,i = min(20, 10 × log₁₀(3 + 20 × δ × f[i] / 340))
 
-Double edge:
-A_bar,i = min(25, 10 × log₁₀(3 + 20 × δ × f[i] / 340))
+Double edge (§7.4):
+C₃ = (1 + (5λ/e)²) / (1/3 + (5λ/e)²)    where e = edge-to-edge distance, λ = 340/f[i]
+A_bar,i = min(25, 10 × log₁₀(3 + C₃ × 20 × δ × f[i] / 340))
 ```
+C₃ accounts for thick barriers: 1.0 when edges are far apart, up to 3.0 when close.
 Terrain profile sampled from DEM (Copernicus GLO-30 primary, SRTM fallback). Receiver at **4.0m** above ground.
 
 ### 3.6 Building screening (ISO 9613-2, per-band)
-Same diffraction formula as terrain. Samples building height at ~30m steps along entire source-receiver path (not just midpoint).
+Samples building height every ~50m along source-receiver path. Finds tallest building above line-of-sight, then computes path difference using full 3D geometry:
 ```
-δ_bld = max building height along path - direct LOS height at that point
+S = (0, src_elev),  B = (d_horiz, bld_top),  R = (dist_m, rcv_alt)
+δ_bld = |S→B| + |B→R| - |S→R|    (3D detour minus direct slant path)
 A_screen,i = min(10, 10 × log₁₀(3 + 20 × δ_bld × f[i] / 340))
 ```
 
@@ -350,7 +353,7 @@ ISO 9613-2 point source.
 | **Line source + FLC** | Cylindrical divergence + end-angle finite-line correction | ISO 9613-2: point sources only, subdivide line into representative points | ±1-2 dB near segment endpoints. Standard practice in noise mapping software. |
 | **Surface correction** | One scalar ΔL_WR per surface type | CNOSSOS Table F-4: per-band αm + βm, speed-dependent | ±1 dB. Our scalars are band-averaged approximations. |
 | **Ground effect** | CF[i] × G lookup | CNOSSOS §2.5.15-18: geometry-dependent Aground with height substitutions, separate source/middle/receiver zones | ±2 dB in complex terrain. Our CF model matches NoiseModelling v5 simplification. |
-| **Diffraction** | 10·log₁₀(3 + 20·δ·f/340), caps 20/25 dB | CNOSSOS §2.5.21-23: Rayleigh criterion, C'' convexity factor, ground-barrier interaction | ±3 dB behind barriers. We over-simplify barrier+ground interaction. |
+| **Diffraction** | 10·log₁₀(3 + C₃·20·δ·f/340), caps 20/25 dB, C₃ for double edges | CNOSSOS §2.5.21-23: Rayleigh criterion, C'' convexity factor, ground-barrier interaction | ±3 dB behind barriers. C₃ now implemented; C'' convexity still simplified. |
 | **Building screening** | Max building height along path → per-band diffraction | ISO 9613-2: explicit obstacle modelling per edge | ±3 dB in complex urban. Our approach samples raster, not individual building edges. |
 | **Urban reflection** | Per-receiver enclosure boost +0-5 dB | ISO 9613-2 §7.5: image-source reflection model | ±2 dB. Standard requires full reflection geometry, we use heuristic. |
 | **Meteorology** | NOT IMPLEMENTED (P_FAV exists but unused) | ISO 9613-2: Cmet = C₀(1 - 10·h_s/r), subtracted from downwind | ±2 dB at long range. TODO: implement. |
