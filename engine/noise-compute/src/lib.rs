@@ -202,7 +202,7 @@ fn compute_roads(
         // Per-period variant energies (full, free-field, no_terrain, no_screening, no_vegetation)
         variants: [PropagationVariants; 3], // day, evening, night
         emission_energy: f64,
-        band_energy: [f64; NUM_BANDS],
+        _band_energy: [f64; NUM_BANDS],
         line_coords: HashMap<i64, Vec<[f64; 2]>>,
     }
     // Group by (ref, name, class) — not osm_id — so "D1" becomes one contributor
@@ -322,7 +322,7 @@ fn compute_roads(
                 closest_src_height: src_alt,
                 variants: [PropagationVariants::default(), PropagationVariants::default(), PropagationVariants::default()],
                 emission_energy: 0.0,
-                band_energy: [0.0; NUM_BANDS], line_coords: HashMap::new(),
+                _band_energy: [0.0; NUM_BANDS], line_coords: HashMap::new(),
             }
         });
         // Apply fade-out factor to energy (linear scale) before accumulation
@@ -746,7 +746,7 @@ fn compute_point_sources(
 fn compute_aircraft(
     receiver: &Receiver,
     segments: &[AircraftSegment],
-    rasters: &dyn RasterSampler,
+    _rasters: &dyn RasterSampler,
     n_days: u16,
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
     use std::collections::HashMap;
@@ -810,12 +810,12 @@ fn compute_aircraft(
     let mut helicopter_count = 0.0f64;
     let mut global_peak_lmax = f64::NEG_INFINITY;
 
-    for (fid, acc) in &flights {
+    for (_fid, acc) in &flights {
         for p in 0..3 {
             period_energy[p] += acc.period_energy[p];
         }
 
-        let profile = &aircraft::PROFILES[acc.profile_idx.min(7) as usize];
+        let _profile = &aircraft::PROFILES[acc.profile_idx.min(7) as usize];
         let flight_energy: f64 = acc.period_energy.iter().sum();
         if flight_energy <= 0.0 { continue; }
 
@@ -896,14 +896,6 @@ fn compute_aircraft(
     contributors.sort_by(|a, b| b.periods.lden_db.partial_cmp(&a.periods.lden_db).unwrap_or(std::cmp::Ordering::Equal));
 
     (total, contributors, band_data)
-}
-
-fn energy_sum_db(levels: &[f64]) -> f64 {
-    let sum: f64 = levels.iter()
-        .filter(|v| v.is_finite())
-        .map(|v| 10f64.powf(v / 10.0))
-        .sum();
-    if sum > 0.0 { 10.0 * sum.log10() } else { f64::NEG_INFINITY }
 }
 
 fn default_traffic(class: &str) -> (f64, f64, f64, f64) {

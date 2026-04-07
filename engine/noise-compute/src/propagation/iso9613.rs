@@ -244,27 +244,6 @@ pub fn propagate_single(
     }
 }
 
-/// Single-band propagation WITHOUT ground effect (divergence + atmospheric only).
-#[inline]
-fn propagate_band_no_ground(emission: f64, d_slant: f64, source_geom: SourceGeometry, band: usize) -> f64 {
-    let mut level = emission;
-
-    level -= match source_geom {
-        SourceGeometry::Line => 10.0 * (2.0 * std::f64::consts::PI * d_slant.max(1.0)).log10(),
-        SourceGeometry::Point => 20.0 * d_slant.max(1.0).log10() + 11.0,
-    };
-
-    level -= ALPHA_ATM[band] * d_slant / 1000.0;
-
-    level
-}
-
-/// Single-band propagation with ground effect (divergence + atmospheric + ground).
-#[inline]
-fn propagate_band(emission: f64, d_slant: f64, source_geom: SourceGeometry, ground_g: f64, band: usize) -> f64 {
-    propagate_band_no_ground(emission, d_slant, source_geom, band) - GROUND_CF[band] * ground_g
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
