@@ -34,7 +34,7 @@ pub(crate) struct RawTile {
 }
 
 impl RawTile {
-    fn load(path: &Path, expected_grid: u32, dtype: DType) -> Option<Self> {
+    fn load(path: &Path, _expected_grid: u32, dtype: DType) -> Option<Self> {
         let file = File::open(path).ok()?;
         let mmap = unsafe { Mmap::map(&file).ok()? };
 
@@ -288,7 +288,6 @@ impl TileStore {
     pub fn max_along_path_with_pos(
         &self, lat1: f64, lon1: f64, lat2: f64, lon2: f64, total_dist_m: f64,
     ) -> (f64, f64, f64) {
-        let cos_lat = ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
         let cell_m = 110_540.0 / (self.grid_size - 1) as f64;
         let steps = (total_dist_m / cell_m).ceil().max(3.0) as usize;
 

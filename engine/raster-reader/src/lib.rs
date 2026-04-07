@@ -5,7 +5,7 @@
 
 pub mod tile;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use noise_compute::types::RasterSampler;
 use tile::{TileStore, DType, Interp};
 
