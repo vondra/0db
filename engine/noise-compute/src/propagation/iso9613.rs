@@ -68,28 +68,15 @@ pub fn propagate_bands(
 ) -> BandLevels {
     let mut bands = [0.0f64; NUM_BANDS];
 
+    let d = d_slant.max(1.0);
+    let geo_div = match source_geom {
+        SourceGeometry::Line => 10.0 * (2.0 * std::f64::consts::PI * d).log10(),
+        SourceGeometry::Point => 20.0 * d.log10() + 11.0,
+    };
+    let d_over_1000 = d_slant / 1000.0;
+
     for i in 0..NUM_BANDS {
-        let mut level = emission_bands[i];
-
-        // 1. Geometric divergence (ISO 9613-2)
-        level -= match source_geom {
-            SourceGeometry::Line => {
-                // Cylindrical spreading: 10·log₁₀(2π·d)
-                10.0 * (2.0 * std::f64::consts::PI * d_slant.max(1.0)).log10()
-            }
-            SourceGeometry::Point => {
-                // Spherical spreading: 20·log₁₀(d) + 11
-                20.0 * d_slant.max(1.0).log10() + 11.0
-            }
-        };
-
-        // 2. Atmospheric absorption (ISO 9613-1)
-        level -= ALPHA_ATM[i] * d_slant / 1000.0;
-
-        // 3. Ground effect (CNOSSOS-EU §2.5.15)
-        level -= GROUND_CF[i] * ground_g;
-
-        bands[i] = level;
+        bands[i] = emission_bands[i] - geo_div - ALPHA_ATM[i] * d_over_1000 - GROUND_CF[i] * ground_g;
     }
 
     let a_weighted = a_weighted_total(&bands);
