@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify'
 import { resolve } from 'node:path'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { getElevation } from '../engine/dem-reader.js'
 
 const req = createRequire(import.meta.url)
 let sourceModule: {
@@ -20,8 +21,8 @@ const H3R4_DIR = process.env.H3R4_DIR || resolve(import.meta.dirname, `../../../
 try {
   const nodePath = SOURCE_READER_PATH.replace('.so', '.node')
   if (!existsSync(nodePath) && existsSync(SOURCE_READER_PATH)) {
-    const { symlinkSync } = await import('node:fs')
-    try { symlinkSync(SOURCE_READER_PATH, nodePath) } catch {}
+    const { copyFileSync } = await import('node:fs')
+    try { copyFileSync(SOURCE_READER_PATH, nodePath) } catch {}
   }
   if (existsSync(nodePath) || existsSync(SOURCE_READER_PATH)) {
     sourceModule = req(existsSync(nodePath) ? nodePath : SOURCE_READER_PATH)
@@ -55,7 +56,6 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
         const raw = JSON.parse(resultJson)
         const elapsed = Date.now() - t0
 
-        const { getElevation } = await import('../engine/dem-reader.js')
         const elevation = Math.round(getElevation(lat, lng) * 10) / 10
 
         const sources = (raw.sources ?? []).map((s: any) => ({
