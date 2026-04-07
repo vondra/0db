@@ -12,8 +12,8 @@ pub const ALPHA_ATM: [f64; NUM_BANDS] = [0.1, 0.4, 1.0, 1.9, 3.7, 8.7, 22.0, 58.
 /// Vegetation attenuation [dB/m] (ISO 9613-2:2024 Annex A.2.2).
 pub const ALPHA_VEG: [f64; NUM_BANDS] = [0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.09, 0.12];
 
-/// Maximum vegetation attenuation per band [dB].
-pub const MAX_VEG_ATTEN: f64 = 15.0;
+/// Maximum vegetation attenuation per band [dB] (ISO 9613-2 Table A.1: alpha × 200m).
+pub const MAX_VEG_ATTEN: [f64; NUM_BANDS] = [4.0, 6.0, 8.0, 10.0, 12.0, 16.0, 18.0, 24.0];
 
 /// Ground correction factors (CNOSSOS-EU §2.5.15).
 /// Applied as: A_ground[i] = CF[i] × G, where G = 1 - IMD/100.

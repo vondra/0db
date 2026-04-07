@@ -10,7 +10,7 @@ pub fn vegetation_attenuation(depth_m: f64) -> [f64; NUM_BANDS] {
     if depth_m <= 0.0 { return atten; }
 
     for i in 0..NUM_BANDS {
-        atten[i] = (ALPHA_VEG[i] * depth_m).min(MAX_VEG_ATTEN);
+        atten[i] = (ALPHA_VEG[i] * depth_m).min(MAX_VEG_ATTEN[i]);
     }
     atten
 }
@@ -35,9 +35,13 @@ mod tests {
     }
 
     #[test]
-    fn test_cap_15db() {
+    fn test_per_band_cap() {
         let a = vegetation_attenuation(500.0);
-        // 8 kHz: 0.12 × 500 = 60 → capped to 15
-        assert_eq!(a[7], 15.0);
+        // 8 kHz: 0.12 × 500 = 60 → capped to 24 (ISO Table A.1: 200m × 0.12)
+        assert_eq!(a[7], 24.0);
+        // 63 Hz: 0.02 × 500 = 10 → capped to 4
+        assert_eq!(a[0], 4.0);
+        // 1 kHz: 0.06 × 500 = 30 → capped to 12
+        assert_eq!(a[4], 12.0);
     }
 }
