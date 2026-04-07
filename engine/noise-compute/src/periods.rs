@@ -8,9 +8,10 @@ use crate::types::NoisePeriods;
 ///
 /// Penalty: +5 dB evening, +10 dB night.
 pub fn compute_lden(ld: f64, le: f64, ln: f64) -> f64 {
-    let energy = 12.0 * 10f64.powf(ld / 10.0)
-        + 4.0 * 10f64.powf((le + 5.0) / 10.0)
-        + 8.0 * 10f64.powf((ln + 10.0) / 10.0);
+    let c = std::f64::consts::LN_10 * 0.1;
+    let energy = 12.0 * (ld * c).exp()
+        + 4.0 * ((le + 5.0) * c).exp()
+        + 8.0 * ((ln + 10.0) * c).exp();
     10.0 * (energy / 24.0).log10()
 }
 
@@ -37,9 +38,10 @@ pub fn sum_periods(items: &[NoisePeriods]) -> NoisePeriods {
 
 /// Energy sum of dB values: 10×log₁₀(Σ 10^(Li/10))
 fn energy_sum(values: impl Iterator<Item = f64>) -> f64 {
+    let c = std::f64::consts::LN_10 * 0.1;
     let sum: f64 = values
         .filter(|v| v.is_finite())
-        .map(|v| 10f64.powf(v / 10.0))
+        .map(|v| (v * c).exp())
         .sum();
     if sum > 0.0 { 10.0 * sum.log10() } else { f64::NEG_INFINITY }
 }
