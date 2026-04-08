@@ -76,23 +76,31 @@ pub fn screening_attenuation(
     // building scan (~50m steps) when nothing could possibly screen.
     let dlat = rcv_lat - src_lat;
     let dlon = rcv_lon - src_lon;
-    let path_len_sq = (dlat * dlat + dlon * dlon).max(1e-12);
+    let mid_lat_rad = ((src_lat + rcv_lat) * 0.5).to_radians();
+    let meters_per_deg_lon = 111_320.0 * mid_lat_rad.cos();
+    let path_dx_m = dlon * meters_per_deg_lon;
+    let path_dy_m = dlat * 110_540.0;
+    let path_len_sq_m = (path_dx_m * path_dx_m + path_dy_m * path_dy_m).max(1e-12);
+    let barrier_hit_radius_sq = 50.0 * 50.0;
 
-    let mut has_barrier = false;
+    let mut barrier_max_h = 0.0;
+    let mut barrier_max_t = 0.5;
     for barrier in barriers {
         if barrier.dist_m > dist_m + 100.0 { continue; }
-        let t = ((barrier.lat - src_lat) * dlat + (barrier.lon - src_lon) * dlon) / path_len_sq;
+        let bx_m = (barrier.lon - src_lon) * meters_per_deg_lon;
+        let by_m = (barrier.lat - src_lat) * 110_540.0;
+        let t = (bx_m * path_dx_m + by_m * path_dy_m) / path_len_sq_m;
         if t < 0.01 || t > 0.99 { continue; }
-        let closest_lat = src_lat + t * dlat;
-        let closest_lon = src_lon + t * dlon;
-        let perp_dist = super::geo::flat_dist(barrier.lat, barrier.lon, closest_lat, closest_lon);
-        if perp_dist < 50.0 {
-            has_barrier = true;
-            break;
+        let perp_dx_m = bx_m - t * path_dx_m;
+        let perp_dy_m = by_m - t * path_dy_m;
+        let perp_sq_m = perp_dx_m * perp_dx_m + perp_dy_m * perp_dy_m;
+        if perp_sq_m < barrier_hit_radius_sq && barrier.height_m as f64 > barrier_max_h {
+            barrier_max_h = barrier.height_m as f64;
+            barrier_max_t = t;
         }
     }
 
-    if !has_barrier {
+    if barrier_max_h <= 0.0 {
         // 3-point sparse LOS check: if no building exceeds line-of-sight at 25%/50%/75%,
         // skip the full path scan. Conservative: any hit triggers the full scan.
         let excl_t = if dist_m > 0.0 { excl_limit / dist_m } else { 0.0 };
@@ -110,23 +118,14 @@ pub fn screening_attenuation(
         if probes_clear { return [0.0; NUM_BANDS]; }
     }
 
-    // Full path scan needed — either barrier found or sparse probe detected building
+    // Full path scan needed — either a barrier is near the LOS or sparse probes saw a building.
     let (mut max_bh, mut max_bh_t) = rasters.max_building_along_path(
         src_lat, src_lon, rcv_lat, rcv_lon, dist_m, excl_limit,
     );
 
-    // Merge barrier heights
-    for barrier in barriers {
-        if barrier.dist_m > dist_m + 100.0 { continue; }
-        let t = ((barrier.lat - src_lat) * dlat + (barrier.lon - src_lon) * dlon) / path_len_sq;
-        if t < 0.01 || t > 0.99 { continue; }
-        let closest_lat = src_lat + t * dlat;
-        let closest_lon = src_lon + t * dlon;
-        let perp_dist = super::geo::flat_dist(barrier.lat, barrier.lon, closest_lat, closest_lon);
-        if perp_dist < 50.0 && barrier.height_m as f64 > max_bh {
-            max_bh = barrier.height_m as f64;
-            max_bh_t = t;
-        }
+    if barrier_max_h > max_bh {
+        max_bh = barrier_max_h;
+        max_bh_t = barrier_max_t;
     }
 
     if max_bh <= 0.0 { return [0.0; NUM_BANDS]; }
