@@ -203,7 +203,7 @@ fn compute_roads(
         variants: [PropagationVariants; 3], // day, evening, night
         emission_energy: f64,
         _band_energy: [f64; NUM_BANDS],
-        line_coords: HashMap<i64, Vec<[f64; 2]>>,
+        line_coords: HashMap<i64, Vec<Vec<[f64; 2]>>>,
     }
     // Group by (ref, name, class) — not osm_id — so "D1" becomes one contributor
     let mut roads_by_key: HashMap<(String, String, u8), RoadAccum> = HashMap::new();
@@ -339,9 +339,9 @@ fn compute_roads(
             acc.closest_cp_lon = seg.cp_lon;
             acc.closest_src_height = src_alt;
         }
-        // Collect coords per osm_id for MultiLineString geometry
+        // Each segment → independent 2-point LineString (no ordering issues)
         acc.line_coords.entry(seg.osm_id).or_default()
-            .push([seg.start_lon, seg.start_lat]);
+            .push(vec![[seg.start_lon, seg.start_lat], [seg.end_lon, seg.end_lat]]);
     }
 
     // Emit grouped contributors
@@ -362,7 +362,8 @@ fn compute_roads(
 
         let emission_db = 10.0 * acc.emission_energy.max(1e-12).log10();
         let lines: Vec<&Vec<[f64; 2]>> = acc.line_coords.values()
-            .filter(|c| c.len() >= 2).collect();
+            .flat_map(|segs| segs.iter())
+            .collect();
         let geometry = if !lines.is_empty() {
             Some(serde_json::json!({"type": "MultiLineString", "coordinates": lines}))
         } else { None };
@@ -427,7 +428,7 @@ fn compute_railways(
         cp_lat: f64, cp_lon: f64, src_height: f64,
         variants: [PropagationVariants; 3],
         emission_energy: f64,
-        line_coords: HashMap<i64, Vec<[f64; 2]>>,
+        line_coords: HashMap<i64, Vec<Vec<[f64; 2]>>>,
         has_bridge: bool,
     }
     let mut rails_by_key: HashMap<(String, u8), RailAccum> = HashMap::new();
@@ -525,7 +526,7 @@ fn compute_railways(
             acc.src_height = src_alt;
         }
         acc.line_coords.entry(seg.osm_id).or_default()
-            .push([seg.start_lon, seg.start_lat]);
+            .push(vec![[seg.start_lon, seg.start_lat], [seg.end_lon, seg.end_lat]]);
     }
 
     let mut contributors = Vec::new();
@@ -542,7 +543,8 @@ fn compute_railways(
         let free_periods = periods::periods(ld_free, le_free, ln_free);
 
         let lines: Vec<&Vec<[f64; 2]>> = acc.line_coords.values()
-            .filter(|c| c.len() >= 2).collect();
+            .flat_map(|segs| segs.iter())
+            .collect();
         let geometry = if !lines.is_empty() {
             Some(serde_json::json!({"type": "MultiLineString", "coordinates": lines}))
         } else { None };
