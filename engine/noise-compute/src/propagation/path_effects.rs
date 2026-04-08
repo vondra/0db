@@ -71,9 +71,7 @@ pub fn screening_attenuation(
 ) -> [f64; NUM_BANDS] {
     let excl_limit = if exclusion_radius_m > 0.0 { exclusion_radius_m.min(dist_m * 0.5) } else { 0.0 };
 
-    // Fast reject: check barriers first (cheap), then 3 sparse building probes.
-    // Most source-receiver pairs have open LOS — skip the expensive full-path
-    // building scan (~50m steps) when nothing could possibly screen.
+    // Fast reject: check barriers first (cheap).
     let dlat = rcv_lat - src_lat;
     let dlon = rcv_lon - src_lon;
     let mid_lat_rad = ((src_lat + rcv_lat) * 0.5).to_radians();
@@ -100,25 +98,8 @@ pub fn screening_attenuation(
         }
     }
 
-    if barrier_max_h <= 0.0 {
-        // 3-point sparse LOS check: if no building exceeds line-of-sight at 25%/50%/75%,
-        // skip the full path scan. Conservative: any hit triggers the full scan.
-        let excl_t = if dist_m > 0.0 { excl_limit / dist_m } else { 0.0 };
-        let probes_clear = [0.25, 0.5, 0.75].iter().all(|&t| {
-            if t < excl_t { return true; } // inside exclusion zone — skip
-            let lat = src_lat + t * dlat;
-            let lon = src_lon + t * dlon;
-            let bh = rasters.building_height(lat, lon);
-            if bh <= 0.0 { return true; }
-            let ground = rasters.elevation(lat, lon);
-            let bld_top = ground + bh;
-            let los = src_elev + (rcv_alt - src_elev) * t;
-            bld_top <= los
-        });
-        if probes_clear { return [0.0; NUM_BANDS]; }
-    }
-
-    // Full path scan needed — either a barrier is near the LOS or sparse probes saw a building.
+    // Scan the whole path once for the tallest building candidate.
+    // A sparse 25/50/75 probe can miss real blockers between probe points.
     let (mut max_bh, mut max_bh_t) = rasters.max_building_along_path(
         src_lat, src_lon, rcv_lat, rcv_lon, dist_m, excl_limit,
     );
@@ -169,4 +150,65 @@ pub fn vegetation_attenuation_path(
 
     let forest_depth = rasters.vegetation_depth(src_lat, src_lon, rcv_lat, rcv_lon);
     vegetation::vegetation_attenuation(forest_depth)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct SingleBuildingRaster {
+        building_t: f64,
+        building_height_m: f64,
+    }
+
+    impl RasterSampler for SingleBuildingRaster {
+        fn elevation(&self, _lat: f64, _lon: f64) -> f64 { 0.0 }
+        fn building_height(&self, _lat: f64, _lon: f64) -> f64 { 0.0 }
+        fn vegetation_depth(&self, _lat1: f64, _lon1: f64, _lat2: f64, _lon2: f64) -> f64 { 0.0 }
+        fn ground_g(&self, _lat: f64, _lon: f64) -> f64 { 0.0 }
+        fn ground_g_path(&self, _lat1: f64, _lon1: f64, _lat2: f64, _lon2: f64) -> f64 { 0.0 }
+        fn terrain_profile(&self, _lat1: f64, _lon1: f64, _lat2: f64, _lon2: f64, _steps: usize) -> Vec<f64> {
+            vec![0.0, 0.0]
+        }
+        fn building_enclosure(&self, _lat: f64, _lon: f64) -> f64 { 0.0 }
+
+        fn max_building_along_path(
+            &self,
+            _src_lat: f64,
+            _src_lon: f64,
+            _rcv_lat: f64,
+            _rcv_lon: f64,
+            _dist_m: f64,
+            excl_start_m: f64,
+        ) -> (f64, f64) {
+            if excl_start_m > 0.0 {
+                (0.0, 0.5)
+            } else {
+                (self.building_height_m, self.building_t)
+            }
+        }
+    }
+
+    #[test]
+    fn screening_does_not_miss_building_between_sparse_probe_points() {
+        let raster = SingleBuildingRaster {
+            building_t: 0.4,
+            building_height_m: 20.0,
+        };
+
+        let atten = screening_attenuation(
+            &raster,
+            &[],
+            0.0, 0.0,
+            0.0, 0.01,
+            1.0, 1.0,
+            1000.0,
+            0.0,
+        );
+
+        assert!(
+            atten.iter().any(|&a| a > 0.0),
+            "blocking building at t=0.4 should produce screening, got {atten:?}"
+        );
+    }
 }
