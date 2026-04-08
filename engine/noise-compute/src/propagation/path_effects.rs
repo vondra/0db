@@ -71,16 +71,51 @@ pub fn screening_attenuation(
 ) -> [f64; NUM_BANDS] {
     let excl_limit = if exclusion_radius_m > 0.0 { exclusion_radius_m.min(dist_m * 0.5) } else { 0.0 };
 
-    // Find tallest building along path (sampled every ~50m).
-    // Pipeline overrides with tile-cached sampling to avoid repeated OnceLock lookups.
+    // Fast reject: check barriers first (cheap), then 3 sparse building probes.
+    // Most source-receiver pairs have open LOS — skip the expensive full-path
+    // building scan (~50m steps) when nothing could possibly screen.
+    let dlat = rcv_lat - src_lat;
+    let dlon = rcv_lon - src_lon;
+    let path_len_sq = (dlat * dlat + dlon * dlon).max(1e-12);
+
+    let mut has_barrier = false;
+    for barrier in barriers {
+        if barrier.dist_m > dist_m + 100.0 { continue; }
+        let t = ((barrier.lat - src_lat) * dlat + (barrier.lon - src_lon) * dlon) / path_len_sq;
+        if t < 0.01 || t > 0.99 { continue; }
+        let closest_lat = src_lat + t * dlat;
+        let closest_lon = src_lon + t * dlon;
+        let perp_dist = super::geo::flat_dist(barrier.lat, barrier.lon, closest_lat, closest_lon);
+        if perp_dist < 50.0 {
+            has_barrier = true;
+            break;
+        }
+    }
+
+    if !has_barrier {
+        // 3-point sparse LOS check: if no building exceeds line-of-sight at 25%/50%/75%,
+        // skip the full path scan. Conservative: any hit triggers the full scan.
+        let excl_t = if dist_m > 0.0 { excl_limit / dist_m } else { 0.0 };
+        let probes_clear = [0.25, 0.5, 0.75].iter().all(|&t| {
+            if t < excl_t { return true; } // inside exclusion zone — skip
+            let lat = src_lat + t * dlat;
+            let lon = src_lon + t * dlon;
+            let bh = rasters.building_height(lat, lon);
+            if bh <= 0.0 { return true; }
+            let ground = rasters.elevation(lat, lon);
+            let bld_top = ground + bh;
+            let los = src_elev + (rcv_alt - src_elev) * t;
+            bld_top <= los
+        });
+        if probes_clear { return [0.0; NUM_BANDS]; }
+    }
+
+    // Full path scan needed — either barrier found or sparse probe detected building
     let (mut max_bh, mut max_bh_t) = rasters.max_building_along_path(
         src_lat, src_lon, rcv_lat, rcv_lon, dist_m, excl_limit,
     );
 
-    // Check noise barriers
-    let dlat = rcv_lat - src_lat;
-    let dlon = rcv_lon - src_lon;
-    let path_len_sq = (dlat * dlat + dlon * dlon).max(1e-12);
+    // Merge barrier heights
     for barrier in barriers {
         if barrier.dist_m > dist_m + 100.0 { continue; }
         let t = ((barrier.lat - src_lat) * dlat + (barrier.lon - src_lon) * dlon) / path_len_sq;
