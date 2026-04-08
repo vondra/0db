@@ -76,23 +76,26 @@ impl VehicleCategory {
     }
 }
 
-/// Single-vehicle emission per band [dB].
+/// Single-vehicle emission per band in linear energy.
+///
 /// Surface correction is applied to rolling noise BEFORE combining with propulsion.
-fn vehicle_emission_bands(category: VehicleCategory, speed: f64, surface_corr: f64) -> [f64; NUM_BANDS] {
+/// Keeping the result in energy avoids a hot dB -> energy round-trip in
+/// `line_source_emission()`.
+fn vehicle_emission_energy_bands(category: VehicleCategory, speed: f64, surface_corr: f64) -> [f64; NUM_BANDS] {
     let c = category.coeffs();
     let v = speed.clamp(20.0, 130.0);
     let log_ratio = (v / V_REF_ROAD).log10();
     let speed_delta = (v - V_REF_ROAD) / V_REF_ROAD;
+    let db_to_ln = std::f64::consts::LN_10 * 0.1;
 
     let mut bands = [0.0f64; NUM_BANDS];
     for i in 0..NUM_BANDS {
         let l_wp = c.a_p[i] + c.b_p[i] * speed_delta;
         if let (Some(a_r), Some(b_r)) = (&c.a_r, &c.b_r) {
             let l_wr = a_r[i] + b_r[i] * log_ratio + surface_corr; // surfCorr to rolling only
-            let c = std::f64::consts::LN_10 * 0.1;
-            bands[i] = 10.0 * ((l_wr * c).exp() + (l_wp * c).exp()).log10();
+            bands[i] = (l_wr * db_to_ln).exp() + (l_wp * db_to_ln).exp();
         } else {
-            bands[i] = l_wp; // propulsion-only categories: no surface correction
+            bands[i] = (l_wp * db_to_ln).exp(); // propulsion-only categories: no surface correction
         }
     }
     bands
@@ -110,15 +113,16 @@ pub fn line_source_emission(flows: &[CategoryFlow], surface_corr_db: f64) -> [f6
             _ => flow.speed_kmh,
         };
 
-        // Surface correction applied inside vehicle_emission_bands (to rolling only, before combining)
-        let bands = vehicle_emission_bands(flow.category, speed, surface_corr_db);
+        // Surface correction applied inside vehicle_emission_energy_bands (to rolling only,
+        // before combining with propulsion).
+        let bands = vehicle_emission_energy_bands(flow.category, speed, surface_corr_db);
 
         // CNOSSOS: density = Q / (1000 × v)  where Q = veh/h, v = km/h
         let density = flow.q_per_hour / (1000.0 * speed);
 
         for i in 0..NUM_BANDS {
-            // Energy sum: density × 10^(L_W/10)
-            let energy = density * (bands[i] * std::f64::consts::LN_10 * 0.1).exp();
+            // Energy sum: density × vehicle_energy
+            let energy = density * bands[i];
             if total[i] == f64::NEG_INFINITY {
                 total[i] = energy;
             } else {
