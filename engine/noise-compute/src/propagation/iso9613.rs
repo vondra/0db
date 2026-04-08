@@ -10,7 +10,7 @@ use crate::types::NUM_BANDS;
 /// Worst-case error < 0.001 dB in the acoustic energy domain (|x| < 20).
 /// Replaces 40× std::exp() per source-receiver pair in propagate_variants().
 #[inline(always)]
-fn fast_exp_f64(x: f64) -> f64 {
+pub(crate) fn fast_exp_f64(x: f64) -> f64 {
     // Clamp to avoid overflow/underflow (acoustic range: ~[-50, +20])
     let x = x.max(-87.0).min(88.0);
     // Range reduction: e^x = 2^(x/ln2) = 2^n * e^r where |r| <= ln(2)/2

@@ -13,6 +13,7 @@
 
 use crate::types::NUM_BANDS;
 use crate::constants::*;
+use crate::propagation::iso9613::fast_exp_f64;
 
 /// CNOSSOS coefficients per vehicle category.
 struct CnossosCoeffs {
@@ -89,13 +90,16 @@ fn vehicle_emission_energy_bands(category: VehicleCategory, speed: f64, surface_
     let db_to_ln = std::f64::consts::LN_10 * 0.1;
 
     let mut bands = [0.0f64; NUM_BANDS];
-    for i in 0..NUM_BANDS {
-        let l_wp = c.a_p[i] + c.b_p[i] * speed_delta;
-        if let (Some(a_r), Some(b_r)) = (&c.a_r, &c.b_r) {
+    if let (Some(a_r), Some(b_r)) = (&c.a_r, &c.b_r) {
+        for i in 0..NUM_BANDS {
+            let l_wp = c.a_p[i] + c.b_p[i] * speed_delta;
             let l_wr = a_r[i] + b_r[i] * log_ratio + surface_corr; // surfCorr to rolling only
-            bands[i] = (l_wr * db_to_ln).exp() + (l_wp * db_to_ln).exp();
-        } else {
-            bands[i] = (l_wp * db_to_ln).exp(); // propulsion-only categories: no surface correction
+            bands[i] = fast_exp_f64(l_wr * db_to_ln) + fast_exp_f64(l_wp * db_to_ln);
+        }
+    } else {
+        for i in 0..NUM_BANDS {
+            let l_wp = c.a_p[i] + c.b_p[i] * speed_delta;
+            bands[i] = fast_exp_f64(l_wp * db_to_ln); // propulsion-only categories: no surface correction
         }
     }
     bands
