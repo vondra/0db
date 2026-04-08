@@ -273,7 +273,7 @@ fn compute_roads(
             seg_variants[pi].add(&v);
             if pi == 0 {
                 for j in 0..NUM_BANDS {
-                    day_emission_energy += 10f64.powf(emission[j] / 10.0);
+                    day_emission_energy += crate::propagation::iso9613::fast_exp_f64(emission[j] * std::f64::consts::LN_10 * 0.1);
                 }
             }
         }
@@ -393,9 +393,9 @@ fn compute_roads(
     // Sum contributor-level full-energy for total (already includes all path effects)
     let mut total_energy = [0.0f64; 3];
     for c in &contributors {
-        total_energy[0] += 10f64.powf(c.periods.ld_db / 10.0);
-        total_energy[1] += 10f64.powf(c.periods.le_db / 10.0);
-        total_energy[2] += 10f64.powf(c.periods.ln_db / 10.0);
+        total_energy[0] += crate::propagation::iso9613::fast_exp_f64(c.periods.ld_db * std::f64::consts::LN_10 * 0.1);
+        total_energy[1] += crate::propagation::iso9613::fast_exp_f64(c.periods.le_db * std::f64::consts::LN_10 * 0.1);
+        total_energy[2] += crate::propagation::iso9613::fast_exp_f64(c.periods.ln_db * std::f64::consts::LN_10 * 0.1);
     }
     let ld = 10.0 * total_energy[0].max(1e-12).log10();
     let le = 10.0 * total_energy[1].max(1e-12).log10();
@@ -477,7 +477,7 @@ fn compute_railways(
             seg_variants[pi].add(&v);
             if pi == 0 {
                 for j in 0..NUM_BANDS {
-                    day_emission_energy += 10f64.powf(emission[j] / 10.0);
+                    day_emission_energy += crate::propagation::iso9613::fast_exp_f64(emission[j] * std::f64::consts::LN_10 * 0.1);
                 }
             }
         }
@@ -567,9 +567,9 @@ fn compute_railways(
     // Sum contributor-level path-affected energies for total
     let mut total_energy = [0.0f64; 3];
     for c in &contributors {
-        total_energy[0] += 10f64.powf(c.periods.ld_db / 10.0);
-        total_energy[1] += 10f64.powf(c.periods.le_db / 10.0);
-        total_energy[2] += 10f64.powf(c.periods.ln_db / 10.0);
+        total_energy[0] += crate::propagation::iso9613::fast_exp_f64(c.periods.ld_db * std::f64::consts::LN_10 * 0.1);
+        total_energy[1] += crate::propagation::iso9613::fast_exp_f64(c.periods.le_db * std::f64::consts::LN_10 * 0.1);
+        total_energy[2] += crate::propagation::iso9613::fast_exp_f64(c.periods.ln_db * std::f64::consts::LN_10 * 0.1);
     }
     let ld = 10.0 * total_energy[0].max(1e-12).log10();
     let le = 10.0 * total_energy[1].max(1e-12).log10();
@@ -641,7 +641,7 @@ fn compute_point_sources(
             &terrain_atten, &screening_atten, &veg_atten, reflection, 0.0,
         );
 
-        let day_em: f64 = src.lw_day.iter().map(|&v| 10f64.powf(v as f64 / 10.0)).sum();
+        let day_em: f64 = src.lw_day.iter().map(|&v| crate::propagation::iso9613::fast_exp_f64(v as f64 * std::f64::consts::LN_10 * 0.1)).sum();
 
         let acc = pts_by_osm.entry(src.osm_id).or_insert_with(|| PtAccum {
             name: src.name.clone(), subtype: src.source_type,
@@ -725,9 +725,9 @@ fn compute_point_sources(
     // Sum contributor-level full-energy for total
     let mut total_energy = [0.0f64; 3];
     for c in &contributors {
-        total_energy[0] += 10f64.powf(c.periods.ld_db / 10.0);
-        total_energy[1] += 10f64.powf(c.periods.le_db / 10.0);
-        total_energy[2] += 10f64.powf(c.periods.ln_db / 10.0);
+        total_energy[0] += crate::propagation::iso9613::fast_exp_f64(c.periods.ld_db * std::f64::consts::LN_10 * 0.1);
+        total_energy[1] += crate::propagation::iso9613::fast_exp_f64(c.periods.le_db * std::f64::consts::LN_10 * 0.1);
+        total_energy[2] += crate::propagation::iso9613::fast_exp_f64(c.periods.ln_db * std::f64::consts::LN_10 * 0.1);
     }
     let ld = 10.0 * total_energy[0].max(1e-12).log10();
     let le = 10.0 * total_energy[1].max(1e-12).log10();
@@ -765,7 +765,7 @@ fn compute_aircraft(
             None => continue,
         };
 
-        let energy = 10f64.powf(sel / 10.0);
+        let energy = crate::propagation::iso9613::fast_exp_f64(sel * std::f64::consts::LN_10 * 0.1);
         let period = seg.period.min(2) as usize;
 
         let acc = flights.entry(seg.flight_id).or_insert(FlightAccum {
