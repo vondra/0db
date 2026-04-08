@@ -21,8 +21,8 @@ const H3R4_DIR = process.env.H3R4_DIR || resolve(import.meta.dirname, `../../../
 try {
   const nodePath = SOURCE_READER_PATH.replace('.so', '.node')
   if (!existsSync(nodePath) && existsSync(SOURCE_READER_PATH)) {
-    const { copyFileSync } = await import('node:fs')
-    try { copyFileSync(SOURCE_READER_PATH, nodePath) } catch {}
+    const { symlinkSync } = await import('node:fs')
+    try { symlinkSync(SOURCE_READER_PATH, nodePath) } catch {}
   }
   if (existsSync(nodePath) || existsSync(SOURCE_READER_PATH)) {
     sourceModule = req(existsSync(nodePath) ? nodePath : SOURCE_READER_PATH)
