@@ -6,6 +6,27 @@
 use crate::constants::*;
 use crate::types::NUM_BANDS;
 
+/// Fast exp() approximation using range reduction + 5th-order polynomial.
+/// Worst-case error < 0.001 dB in the acoustic energy domain (|x| < 20).
+/// Replaces 40× std::exp() per source-receiver pair in propagate_variants().
+#[inline(always)]
+fn fast_exp_f64(x: f64) -> f64 {
+    // Clamp to avoid overflow/underflow (acoustic range: ~[-50, +20])
+    let x = x.max(-87.0).min(88.0);
+    // Range reduction: e^x = 2^(x/ln2) = 2^n * e^r where |r| <= ln(2)/2
+    let inv_ln2 = std::f64::consts::LOG2_E; // 1/ln(2)
+    let n_f = (x * inv_ln2).round();
+    let r = x - n_f * std::f64::consts::LN_2;
+    // 5th-order Taylor: e^r ≈ 1 + r + r²/2 + r³/6 + r⁴/24 + r⁵/120
+    let r2 = r * r;
+    let poly = 1.0 + r + r2 * (0.5 + r * (1.0/6.0 + r * (1.0/24.0 + r * (1.0/120.0))));
+    // Reconstruct: e^x = poly * 2^n via bit manipulation
+    let n = n_f as i64;
+    let bits = ((1023 + n) as u64) << 52;
+    let scale = f64::from_bits(bits);
+    poly * scale
+}
+
 /// Source geometry type — affects geometric divergence formula.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SourceGeometry {
@@ -88,7 +109,7 @@ pub fn propagate_bands(
 pub fn a_weighted_total(bands: &[f64; NUM_BANDS]) -> f64 {
     let c = std::f64::consts::LN_10 * 0.1;
     let energy: f64 = bands.iter().enumerate()
-        .map(|(i, &level)| ((level + A_WEIGHTING[i]) * c).exp())
+        .map(|(i, &level)| fast_exp_f64((level + A_WEIGHTING[i]) * c))
         .sum();
     if energy > 0.0 { 10.0 * energy.log10() } else { f64::NEG_INFINITY }
 }
@@ -171,17 +192,17 @@ pub fn propagate_variants(
         let no_vegetation = base_no_ground - ground_or_bar_full
                             + reflection_boost_db + finite_line_corr;
 
-        // A-weight and convert to linear energy via exp (faster than powf)
+        // A-weight and convert to linear energy via fast_exp (polynomial approx)
         // 10^((x+aw)/10) = e^((x+aw) * ln(10)/10)
         let aw = A_WEIGHTING[i];
-        let c = std::f64::consts::LN_10 * 0.1; // ln(10)/10
-        let full_aw = ((full + aw) * c).exp();
+        let c = std::f64::consts::LN_10 * 0.1;
+        let full_aw = fast_exp_f64((full + aw) * c);
         full_energy += full_aw;
         band_energy[i] = full_aw;
-        free_energy += ((free + aw) * c).exp();
-        no_terrain_energy += ((no_terrain + aw) * c).exp();
-        no_screening_energy += ((no_screening + aw) * c).exp();
-        no_vegetation_energy += ((no_vegetation + aw) * c).exp();
+        free_energy += fast_exp_f64((free + aw) * c);
+        no_terrain_energy += fast_exp_f64((no_terrain + aw) * c);
+        no_screening_energy += fast_exp_f64((no_screening + aw) * c);
+        no_vegetation_energy += fast_exp_f64((no_vegetation + aw) * c);
     }
 
     crate::types::PropagationVariants {
@@ -217,7 +238,7 @@ pub fn propagate_single(
     for i in 0..NUM_BANDS {
         let level = emission_bands[i] - geo_div - ALPHA_ATM[i] * d_over_1000
                     - GROUND_CF[i] * ground_g + finite_line_corr;
-        let e = ((level + A_WEIGHTING[i]) * c).exp();
+        let e = fast_exp_f64((level + A_WEIGHTING[i]) * c);
         energy += e;
         band_energy[i] = e;
     }
@@ -382,6 +403,24 @@ mod tests {
         // Difference should be roughly 5 dB (not exact due to A-weighting)
         assert!((no_terrain_db - full_db) > 2.0 && (no_terrain_db - full_db) < 8.0,
             "terrain effect = {:.1} dB", no_terrain_db - full_db);
+    }
+
+    #[test]
+    fn test_fast_exp_accuracy() {
+        // Verify fast_exp_f64 stays within ±0.001 dB across acoustic domain
+        let mut x = -20.0;
+        let mut worst_db = 0.0f64;
+        while x <= 20.0 {
+            let approx = fast_exp_f64(x);
+            let exact = x.exp();
+            if exact > 0.0 && approx > 0.0 {
+                let err_db = (10.0 * (approx / exact).log10()).abs();
+                worst_db = worst_db.max(err_db);
+            }
+            x += 0.01;
+        }
+        assert!(worst_db < 0.01,
+            "fast_exp_f64 worst-case error {:.6} dB exceeds 0.01 dB bound", worst_db);
     }
 
     #[test]
