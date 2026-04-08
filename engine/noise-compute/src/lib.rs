@@ -203,7 +203,7 @@ fn compute_roads(
         variants: [PropagationVariants; 3], // day, evening, night
         emission_energy: f64,
         _band_energy: [f64; NUM_BANDS],
-        line_coords: HashMap<i64, Vec<Vec<[f64; 2]>>>,
+        line_coords: Vec<[[f64; 2]; 2]>,
     }
     // Group by (ref, name, class) — not osm_id — so "D1" becomes one contributor
     let mut roads_by_key: HashMap<(String, String, u8), RoadAccum> = HashMap::new();
@@ -322,7 +322,7 @@ fn compute_roads(
                 closest_src_height: src_alt,
                 variants: [PropagationVariants::default(), PropagationVariants::default(), PropagationVariants::default()],
                 emission_energy: 0.0,
-                _band_energy: [0.0; NUM_BANDS], line_coords: HashMap::new(),
+                _band_energy: [0.0; NUM_BANDS], line_coords: Vec::new(),
             }
         });
         // Apply fade-out factor to energy (linear scale) before accumulation
@@ -339,9 +339,8 @@ fn compute_roads(
             acc.closest_cp_lon = seg.cp_lon;
             acc.closest_src_height = src_alt;
         }
-        // Each segment → independent 2-point LineString (no ordering issues)
-        acc.line_coords.entry(seg.osm_id).or_default()
-            .push(vec![[seg.start_lon, seg.start_lat], [seg.end_lon, seg.end_lat]]);
+        // Each segment is an independent 2-point LineString; no osm_id regrouping needed.
+        acc.line_coords.push([[seg.start_lon, seg.start_lat], [seg.end_lon, seg.end_lat]]);
     }
 
     // Emit grouped contributors
@@ -361,11 +360,8 @@ fn compute_roads(
         let free_periods = periods::periods(ld_free, le_free, ln_free);
 
         let emission_db = 10.0 * acc.emission_energy.max(1e-12).log10();
-        let lines: Vec<&Vec<[f64; 2]>> = acc.line_coords.values()
-            .flat_map(|segs| segs.iter())
-            .collect();
-        let geometry = if !lines.is_empty() {
-            Some(serde_json::json!({"type": "MultiLineString", "coordinates": lines}))
+        let geometry = if !acc.line_coords.is_empty() {
+            Some(serde_json::json!({"type": "MultiLineString", "coordinates": acc.line_coords}))
         } else { None };
 
         // Tooltip metadata from single raycast on closest segment
@@ -428,7 +424,7 @@ fn compute_railways(
         cp_lat: f64, cp_lon: f64, src_height: f64,
         variants: [PropagationVariants; 3],
         emission_energy: f64,
-        line_coords: HashMap<i64, Vec<Vec<[f64; 2]>>>,
+        line_coords: Vec<[[f64; 2]; 2]>,
         has_bridge: bool,
     }
     let mut rails_by_key: HashMap<(String, u8), RailAccum> = HashMap::new();
@@ -511,7 +507,7 @@ fn compute_railways(
             min_dist: f64::MAX, min_d_slant: 0.0, min_ground_g: 0.5,
             cp_lat: seg.cp_lat, cp_lon: seg.cp_lon, src_height: src_alt,
             variants: [PropagationVariants::default(), PropagationVariants::default(), PropagationVariants::default()],
-            emission_energy: 0.0, line_coords: HashMap::new(),
+            emission_energy: 0.0, line_coords: Vec::new(),
             has_bridge: false,
         });
         for pi in 0..3 { acc.variants[pi].add(&seg_variants[pi]); }
@@ -525,8 +521,7 @@ fn compute_railways(
             acc.cp_lon = seg.cp_lon;
             acc.src_height = src_alt;
         }
-        acc.line_coords.entry(seg.osm_id).or_default()
-            .push(vec![[seg.start_lon, seg.start_lat], [seg.end_lon, seg.end_lat]]);
+        acc.line_coords.push([[seg.start_lon, seg.start_lat], [seg.end_lon, seg.end_lat]]);
     }
 
     let mut contributors = Vec::new();
@@ -542,11 +537,8 @@ fn compute_railways(
         let ln_free = PropagationVariants::to_db(acc.variants[2].free_field_energy);
         let free_periods = periods::periods(ld_free, le_free, ln_free);
 
-        let lines: Vec<&Vec<[f64; 2]>> = acc.line_coords.values()
-            .flat_map(|segs| segs.iter())
-            .collect();
-        let geometry = if !lines.is_empty() {
-            Some(serde_json::json!({"type": "MultiLineString", "coordinates": lines}))
+        let geometry = if !acc.line_coords.is_empty() {
+            Some(serde_json::json!({"type": "MultiLineString", "coordinates": acc.line_coords}))
         } else { None };
 
         let rail_effects = compute_path_effects(rasters, barriers, acc.cp_lat, acc.cp_lon, acc.src_height, receiver, acc.min_dist);
