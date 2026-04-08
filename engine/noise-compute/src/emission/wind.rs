@@ -7,6 +7,9 @@ const TURBINE_SPECTRUM: [f64; NUM_BANDS] = [-2.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0
 
 /// Compute wind turbine Lw from rated power.
 pub fn turbine_lw(rated_power_kw: f64) -> f64 {
+    if !rated_power_kw.is_finite() || rated_power_kw <= 0.0 {
+        return f64::NEG_INFINITY;
+    }
     match rated_power_kw as u32 {
         0..=999 => 98.0,
         1000..=1999 => 101.0,
@@ -43,6 +46,12 @@ mod tests {
         assert_eq!(turbine_lw(500.0), 98.0);
         assert_eq!(turbine_lw(2000.0), 103.0);
         assert_eq!(turbine_lw(6000.0), 107.0);
+    }
+
+    #[test]
+    fn test_invalid_rated_power_is_silent() {
+        assert!(turbine_lw(0.0).is_infinite() && turbine_lw(0.0).is_sign_negative());
+        assert!(turbine_lw(f64::NAN).is_infinite() && turbine_lw(f64::NAN).is_sign_negative());
     }
 
     #[test]
