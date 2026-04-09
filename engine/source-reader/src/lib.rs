@@ -379,7 +379,7 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                     // Grid of points matches ISO 9613-2 area source subdivision.
                     // Small (<10K m²): 1 point. Medium (10-100K): 3-5. Large (>100K): 5-20.
                     // Energy conservation: Lw_per_point = Lw_total - 10×log₁₀(N).
-                    let grid_spacing = if area > 100_000.0 { 150.0 } else if area > 10_000.0 { 80.0 } else { 0.0 };
+                    let grid_spacing = if area > 5_000.0 { 50.0 } else { 0.0 };
                     let grid_points = if grid_spacing > 0.0 {
                         let pts = noise_compute::wkb::wkb_grid_points(&wkb_hex, grid_spacing);
                         if pts.len() > 1 { pts } else { vec![(c_lat, c_lon)] }
