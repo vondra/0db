@@ -948,9 +948,7 @@ fn compute_path_effects(
         rasters, barriers, src_lat, src_lon, receiver.lat, receiver.lon,
         src_height, rcv_alt, dist_m, exclusion_radius_m,
     );
-    let excl_limit = if exclusion_radius_m > 0.0 {
-        exclusion_radius_m.min(dist_m * 0.5)
-    } else { 0.0 };
+    let excl_limit = if exclusion_radius_m > 0.0 { exclusion_radius_m } else { 0.0 };
     let (max_bh, _) = rasters.max_building_along_path(
         src_lat, src_lon, receiver.lat, receiver.lon, dist_m, excl_limit,
     );

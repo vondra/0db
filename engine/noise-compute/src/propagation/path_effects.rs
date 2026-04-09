@@ -69,7 +69,7 @@ pub fn screening_attenuation(
     dist_m: f64,
     exclusion_radius_m: f64,
 ) -> [f64; NUM_BANDS] {
-    let excl_limit = if exclusion_radius_m > 0.0 { exclusion_radius_m.min(dist_m * 0.5) } else { 0.0 };
+    let excl_limit = if exclusion_radius_m > 0.0 { exclusion_radius_m } else { 0.0 };
 
     // Fast reject: check barriers first (cheap).
     let dlat = rcv_lat - src_lat;
