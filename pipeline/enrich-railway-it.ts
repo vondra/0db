@@ -30,12 +30,12 @@ const CACHE_FREQUENCIES = resolve(CACHE_DIR, 'gtfs-stop-frequencies.json')
 const forceDownload = process.argv.includes('--force-download')
 const enrichOnly = process.argv.includes('--enrich-only')
 
-// Italy GTFS feed — data.public-transport.earth aggregates Italian operators
-// (Trenitalia, Trenord, Italo, regional operators)
-const GTFS_URL = 'https://data.public-transport.earth/gtfs/it'
+// Italy GTFS feeds — Trenitalia national timetable
+// Primary: MobilityData catalog (updated daily)
+const GTFS_URL = 'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-marche-trenitalia-gtfs-1319.zip?alt=media'
 
-// Fallback: direct Trenitalia GTFS from Transitland
-const GTFS_FALLBACK_URL = 'https://transit.land/api/v2/feeds/f-sr-trenitalias.p.a./download_latest_feed_version'
+// Fallback: Toscana open data portal (same Trenitalia national GTFS)
+const GTFS_FALLBACK_URL = 'https://dati.toscana.it/dataset/8bb8f8fe-fe7d-41d0-90dc-49f2456180d1/resource/4f85393b-357d-443d-8378-65de4198505f/download/trenitalia.gtfs'
 
 // Italy bounding box
 const IT_BBOX: [number, number, number, number] = [35.5, 6.6, 47.1, 18.6] // [minLat, minLon, maxLat, maxLon]

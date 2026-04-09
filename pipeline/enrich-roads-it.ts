@@ -2,8 +2,16 @@
  * Enrich IT roads.arrow with ANAS TGM (Traffico Giornaliero Medio = AADT) data.
  *
  * Downloads shapefile from MIT open data portal, converts to GeoJSON via ogr2ogr,
- * parses road geometries + TGM values, matches to OSM road segments by proximity
- * (nearest within 50m), adds aadt_light + traffic_source=1 columns to Arrow.
+ * parses monitoring station points (Strada + TGM value), matches to OSM road
+ * segments by road ref + proximity, adds aadt_light + traffic_source=1 to Arrow.
+ *
+ * Data format: 767 monitoring stations (Point geometry in UTM 32N), each with:
+ *   Strada — road ref (e.g. "A1", "SS106", "RA05")
+ *   TGM — Traffico Giornaliero Medio (AADT equivalent)
+ *   Km — kilometric position on the road
+ *
+ * Matching strategy: ref match (mandatory) + nearest station within 10km.
+ * This mirrors enrich-roads-cz.ts which also uses ref + proximity.
  *
  * Source: Ministero delle Infrastrutture e dei Trasporti — TGM Nov 2015
  * https://dati.mit.gov.it/catalog/dataset/a9b851f0-cb05-4e7e-ae43-040926a368db
@@ -29,16 +37,16 @@ const enrichOnly = process.argv.includes('--enrich-only')
 
 const TGM_URL = 'https://dati.mit.gov.it/catalog/dataset/a9b851f0-cb05-4e7e-ae43-040926a368db/resource/09935ff0-da89-4b11-afe9-9902fad9ea57/download/tgm_nov2015.zip'
 
-// Italy bounding box (lat/lon) for sanity checks
+// Italy bounding box (lat/lon)
 const IT_BBOX = { minLat: 35.5, maxLat: 47.1, minLon: 6.6, maxLon: 18.6 }
 
 // ── Types ──
 
-interface TgmSegment {
+interface TgmStation {
+  ref: string          // normalized road ref
   aadt: number         // TGM value (total AADT)
-  lat: number          // centroid latitude
-  lon: number          // centroid longitude
-  coords: [number, number][]  // full geometry for precise matching
+  lat: number
+  lon: number
 }
 
 // ── Step 1: Download + convert shapefile ──
@@ -73,18 +81,19 @@ async function downloadAndConvert(): Promise<any> {
   mkdirSync(shpDir, { recursive: true })
   execSync(`unzip -o -q "${zipPath}" -d "${shpDir}"`, { timeout: 60_000 })
 
-  // Find .shp file(s) in extracted contents
+  // Find .shp file(s)
   const shpFiles = findFiles(shpDir, '.shp')
   if (shpFiles.length === 0) {
     throw new Error(`No .shp files found in extracted archive at ${shpDir}`)
   }
-  console.log(`  Found ${shpFiles.length} shapefile(s): ${shpFiles.map(f => f.split('/').pop()).join(', ')}`)
+  console.log(`  Found shapefile: ${shpFiles[0].split('/').pop()}`)
 
-  // Convert to GeoJSON via ogr2ogr (reproject to WGS84)
+  // Convert to GeoJSON via ogr2ogr — source is UTM 32N (EPSG:32632)
+  // Use -skipfailures because a few points near zone edges fail reprojection
   const shpFile = shpFiles[0]
-  console.log(`  Converting ${shpFile.split('/').pop()} to GeoJSON via ogr2ogr...`)
+  console.log(`  Converting to GeoJSON via ogr2ogr (EPSG:32632 -> 4326)...`)
   execSync(
-    `ogr2ogr -f GeoJSON -t_srs EPSG:4326 "${CACHE_GEOJSON}" "${shpFile}"`,
+    `ogr2ogr -f GeoJSON -t_srs EPSG:4326 -skipfailures "${CACHE_GEOJSON}" "${shpFile}"`,
     { timeout: 120_000 }
   )
 
@@ -110,178 +119,74 @@ function findFiles(dir: string, ext: string): string[] {
   return results
 }
 
-// ── Step 2: Parse GeoJSON into TGM segments ──
+// ── Step 2: Parse GeoJSON into TGM stations grouped by ref ──
 
-function parseTgmFeatures(geojson: any): TgmSegment[] {
-  const segments: TgmSegment[] = []
+function parseStations(geojson: any): Map<string, TgmStation[]> {
+  const byRef = new Map<string, TgmStation[]>()
   const features = geojson.features || []
 
-  // Log available property names from first feature for debugging
   if (features.length > 0) {
     const props = Object.keys(features[0].properties || {})
     console.log(`  Feature properties: ${props.join(', ')}`)
   }
 
-  let skippedNoAadt = 0
-  let skippedNoGeom = 0
+  let skippedNoRef = 0
+  let skippedNoTgm = 0
   let skippedOutOfBounds = 0
 
   for (const f of features) {
     const props = f.properties || {}
     const geom = f.geometry
+    if (!geom || !geom.coordinates) continue
 
-    if (!geom || !geom.coordinates) { skippedNoGeom++; continue }
+    // Road ref
+    const strada = String(props.Strada || props.strada || '').trim()
+    if (!strada) { skippedNoRef++; continue }
 
-    // Try common field names for TGM/AADT value
-    const aadt = findAadtValue(props)
-    if (!aadt || aadt <= 0) { skippedNoAadt++; continue }
+    // TGM value
+    const tgm = props.TGM ?? props.tgm
+    const aadt = typeof tgm === 'number' ? tgm : parseFloat(String(tgm || ''))
+    if (!aadt || isNaN(aadt) || aadt <= 0) { skippedNoTgm++; continue }
 
-    // Extract coordinates — handle LineString and MultiLineString
-    let coords: [number, number][] = []
-    if (geom.type === 'LineString') {
-      coords = geom.coordinates.map((c: number[]) => [c[1], c[0]] as [number, number])
-    } else if (geom.type === 'MultiLineString') {
-      for (const line of geom.coordinates) {
-        coords.push(...line.map((c: number[]) => [c[1], c[0]] as [number, number]))
-      }
-    } else if (geom.type === 'Point') {
-      coords = [[geom.coordinates[1], geom.coordinates[0]]]
-    } else {
-      continue
-    }
-
-    if (coords.length === 0) continue
-
-    // Compute centroid
-    const lat = coords.reduce((s, c) => s + c[0], 0) / coords.length
-    const lon = coords.reduce((s, c) => s + c[1], 0) / coords.length
-
-    // Bounding box check
+    // Coordinates (Point geometry: [lon, lat, optional z])
+    const lon = geom.coordinates[0]
+    const lat = geom.coordinates[1]
     if (lat < IT_BBOX.minLat || lat > IT_BBOX.maxLat ||
         lon < IT_BBOX.minLon || lon > IT_BBOX.maxLon) {
       skippedOutOfBounds++
       continue
     }
 
-    segments.push({ aadt, lat, lon, coords })
+    const ref = normalizeAnasRef(strada)
+    if (!ref) { skippedNoRef++; continue }
+
+    const station: TgmStation = { ref, aadt: Math.round(aadt), lat, lon }
+    if (!byRef.has(ref)) byRef.set(ref, [])
+    byRef.get(ref)!.push(station)
   }
 
-  console.log(`  Parsed ${segments.length} TGM segments`)
-  if (skippedNoAadt > 0) console.log(`  Skipped (no AADT value): ${skippedNoAadt}`)
-  if (skippedNoGeom > 0) console.log(`  Skipped (no geometry): ${skippedNoGeom}`)
+  let totalStations = 0
+  for (const v of byRef.values()) totalStations += v.length
+
+  console.log(`  Parsed ${totalStations} stations across ${byRef.size} unique road refs`)
+  if (skippedNoRef > 0) console.log(`  Skipped (no ref): ${skippedNoRef}`)
+  if (skippedNoTgm > 0) console.log(`  Skipped (no TGM): ${skippedNoTgm}`)
   if (skippedOutOfBounds > 0) console.log(`  Skipped (out of bounds): ${skippedOutOfBounds}`)
 
   // AADT distribution
-  const aadts = segments.map(s => s.aadt).sort((a, b) => a - b)
+  const aadts: number[] = []
+  for (const v of byRef.values()) for (const s of v) aadts.push(s.aadt)
+  aadts.sort((a, b) => a - b)
   if (aadts.length > 0) {
     console.log(`  AADT range: ${aadts[0]} - ${aadts[aadts.length - 1]}, median: ${aadts[Math.floor(aadts.length / 2)]}`)
   }
 
-  return segments
-}
-
-/** Try to find the AADT/TGM value from shapefile properties.
- *  The MIT TGM shapefile uses various field names. */
-function findAadtValue(props: Record<string, any>): number {
-  // Common field names in Italian traffic data:
-  // TGM = Traffico Giornaliero Medio (AADT equivalent)
-  // TGM_TOT, TGM_TOTALE, TGMTOT, TGM
-  // AADT, ADT
-  const candidates = [
-    'TGM', 'tgm', 'Tgm',
-    'TGM_TOT', 'tgm_tot', 'TGM_TOTALE', 'tgm_totale',
-    'TGMTOT', 'tgmtot',
-    'TGM_TOTAL', 'tgm_total',
-    'AADT', 'aadt', 'ADT', 'adt',
-    'TRAFFICO', 'traffico',
-    'MEDIA', 'media',
-    'TGM_2015', 'tgm_2015',
-    'TGM_NOV', 'tgm_nov',
-    'VOLUME', 'volume',
-    'FLUSSO', 'flusso',
-  ]
-
-  for (const key of candidates) {
-    const v = props[key]
-    if (v !== undefined && v !== null) {
-      const num = typeof v === 'number' ? v : parseFloat(String(v))
-      if (!isNaN(num) && num > 0) return Math.round(num)
-    }
-  }
-
-  // Fallback: try any numeric field with a plausible AADT range
-  for (const [key, v] of Object.entries(props)) {
-    if (typeof v === 'number' && v >= 100 && v <= 200_000) {
-      // Heuristic: large-ish integer in traffic range
-      if (/tgm|traffic|flusso|volume|media|veicol/i.test(key)) {
-        return Math.round(v)
-      }
-    }
-  }
-
-  return 0
+  return byRef
 }
 
 // ── Step 3: Enrich Arrow files ──
 
-/** Distance from point to line segment in meters */
-function pointToSegmentDist(
-  pLat: number, pLon: number,
-  aLat: number, aLon: number,
-  bLat: number, bLon: number,
-): number {
-  const cosLat = Math.cos(pLat * Math.PI / 180)
-  const px = pLon * 111320 * cosLat
-  const py = pLat * 110540
-  const ax = aLon * 111320 * cosLat
-  const ay = aLat * 110540
-  const bx = bLon * 111320 * cosLat
-  const by = bLat * 110540
-
-  const dx = bx - ax
-  const dy = by - ay
-  const lenSq = dx * dx + dy * dy
-  if (lenSq < 1e-6) return flatDist(pLat, pLon, aLat, aLon)
-
-  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq
-  t = Math.max(0, Math.min(1, t))
-  const cx = ax + t * dx
-  const cy = ay + t * dy
-  const ddx = px - cx
-  const ddy = py - cy
-  return Math.sqrt(ddx * ddx + ddy * ddy)
-}
-
-/** Flat-earth distance in meters */
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-
-/** Distance from point (lat,lon) to a polyline (array of [lat,lon]) in meters */
-function pointToPolylineDist(pLat: number, pLon: number, coords: [number, number][]): number {
-  if (coords.length === 0) return Infinity
-  if (coords.length === 1) return flatDist(pLat, pLon, coords[0][0], coords[0][1])
-
-  let minDist = Infinity
-  for (let i = 0; i < coords.length - 1; i++) {
-    const d = pointToSegmentDist(pLat, pLon, coords[i][0], coords[i][1], coords[i + 1][0], coords[i + 1][1])
-    if (d < minDist) minDist = d
-  }
-  return minDist
-}
-
-function enrichHexes(tgmSegments: TgmSegment[]): void {
-  // Build spatial grid (0.01 deg ~ 1km cells) for TGM segments
-  const grid = new Map<string, TgmSegment[]>()
-  for (const seg of tgmSegments) {
-    const key = `${Math.floor(seg.lat * 100)}_${Math.floor(seg.lon * 100)}`
-    if (!grid.has(key)) grid.set(key, [])
-    grid.get(key)!.push(seg)
-  }
-
+function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
   const hexDirs = readdirSync(H3R4_DIR).filter(d =>
     d.length === 15 && d.endsWith('ffffffff'))
 
@@ -300,17 +205,18 @@ function enrichHexes(tgmSegments: TgmSegment[]): void {
     const n = table.numRows
     if (n === 0) continue
 
+    const refCol = table.getChild('ref')
     const startLat = table.getChild('start_lat')!
     const startLon = table.getChild('start_lon')!
     const endLat = table.getChild('end_lat')!
     const endLon = table.getChild('end_lon')!
     const roadClassCol = table.getChild('road_class')
 
-    // Check if any road in this hex is within Italy's bbox
+    // Quick check: does this hex have Italian roads?
     let hasItalianRoads = false
     for (let i = 0; i < Math.min(n, 20); i++) {
-      const lat = (startLat.get(i) as number + endLat.get(i) as number) / 2
-      const lon = (startLon.get(i) as number + endLon.get(i) as number) / 2
+      const lat = ((startLat.get(i) as number) + (endLat.get(i) as number)) / 2
+      const lon = ((startLon.get(i) as number) + (endLon.get(i) as number)) / 2
       if (lat >= IT_BBOX.minLat && lat <= IT_BBOX.maxLat &&
           lon >= IT_BBOX.minLon && lon <= IT_BBOX.maxLon) {
         hasItalianRoads = true
@@ -321,7 +227,7 @@ function enrichHexes(tgmSegments: TgmSegment[]): void {
 
     totalRoads += n
 
-    // Read existing columns
+    // Read existing enrichment columns
     const existingAadtLight = table.getChild('aadt_light')
     const existingTrafficSource = table.getChild('traffic_source')
 
@@ -337,53 +243,38 @@ function enrichHexes(tgmSegments: TgmSegment[]): void {
     let hexMatched = 0
 
     for (let i = 0; i < n; i++) {
-      // Skip segments already enriched by another source
+      // Skip already enriched
       if (trafficSource[i] > 0) continue
-
-      const sLat = startLat.get(i) as number
-      const sLon = startLon.get(i) as number
-      const eLat = endLat.get(i) as number
-      const eLon = endLon.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
-
-      // Skip if outside Italy
-      if (midLat < IT_BBOX.minLat || midLat > IT_BBOX.maxLat ||
-          midLon < IT_BBOX.minLon || midLon > IT_BBOX.maxLon) continue
 
       const roadClass = roadClassCol ? (roadClassCol.get(i) as number) : 5
       if (!matchByClass.has(roadClass)) matchByClass.set(roadClass, { matched: 0, total: 0 })
       matchByClass.get(roadClass)!.total++
 
-      // Find nearest TGM segment within 50m
-      const gridKey = `${Math.floor(midLat * 100)}_${Math.floor(midLon * 100)}`
-      let bestDist = 50 // max 50m
-      let bestSeg: TgmSegment | null = null
+      // Ref match is mandatory — no proximity-only fallback
+      const osmRef = refCol ? (refCol.get(i) as string | null) : null
+      if (!osmRef) continue
 
-      // Check 3x3 grid cells around the road midpoint
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const k = `${Math.floor(midLat * 100) + dy}_${Math.floor(midLon * 100) + dx}`
-          const cell = grid.get(k)
-          if (!cell) continue
-          for (const seg of cell) {
-            // Quick centroid distance pre-filter (skip if > 2km away)
-            const centroidDist = flatDist(midLat, midLon, seg.lat, seg.lon)
-            if (centroidDist > 2000) continue
+      const normalized = normalizeOsmRef(osmRef)
+      if (!normalized) continue
 
-            // Precise: distance from road midpoint to TGM polyline
-            const d = pointToPolylineDist(midLat, midLon, seg.coords)
-            if (d < bestDist) {
-              bestDist = d
-              bestSeg = seg
-            }
-          }
-        }
+      const candidates = stationsByRef.get(normalized)
+      if (!candidates || candidates.length === 0) continue
+
+      // Pick closest station by distance to road segment midpoint
+      const midLat = ((startLat.get(i) as number) + (endLat.get(i) as number)) / 2
+      const midLon = ((startLon.get(i) as number) + (endLon.get(i) as number)) / 2
+
+      let best = candidates[0]
+      let bestDist = flatDist(midLat, midLon, best.lat, best.lon)
+      for (let j = 1; j < candidates.length; j++) {
+        const d = flatDist(midLat, midLon, candidates[j].lat, candidates[j].lon)
+        if (d < bestDist) { best = candidates[j]; bestDist = d }
       }
 
-      if (!bestSeg) continue
+      // Max 10km — stations can be sparse on long roads
+      if (bestDist > 10_000) continue
 
-      aadtLight[i] = bestSeg.aadt
+      aadtLight[i] = best.aadt
       trafficSource[i] = 1
       hexMatched++
       matchByClass.get(roadClass)!.matched++
@@ -391,7 +282,7 @@ function enrichHexes(tgmSegments: TgmSegment[]): void {
 
     if (hexMatched === 0) continue
 
-    // Copy ALL existing columns
+    // Copy ALL existing columns by iterating schema
     const columns: Record<string, any> = {}
     for (const field of table.schema.fields) {
       if (field.name === 'aadt_light' || field.name === 'traffic_source') continue
@@ -424,6 +315,80 @@ function enrichHexes(tgmSegments: TgmSegment[]): void {
   }
 }
 
+// ── Helpers ──
+
+/** Normalize ANAS road ref: "SS106" -> "SS 106", "A1" -> "A1", etc.
+ *  Produces a canonical form that can be matched against OSM refs. */
+function normalizeAnasRef(strada: string): string {
+  const s = strada.trim()
+  if (!s) return ''
+
+  // Remove suffixes like "dir", "bis", "ter", "quater", "radd"
+  const base = s.replace(/(dir(-[a-z])?|bis|ter|quater|radd)$/i, '').trim()
+
+  // A-roads (Autostrade): A1, A14, A90 etc.
+  const aMatch = base.match(/^A(\d+)$/i)
+  if (aMatch) return `A${aMatch[1]}`
+
+  // RA-roads (Raccordi Autostradali): RA05 -> RA 5
+  const raMatch = base.match(/^RA\s*0*(\d+)$/i)
+  if (raMatch) return `RA ${raMatch[1]}`
+
+  // SS-roads (Strade Statali): SS106 -> SS 106
+  const ssMatch = base.match(/^SS\s*0*(\d+)$/i)
+  if (ssMatch) return `SS ${ssMatch[1]}`
+
+  // NSA-roads: NSA215 -> NSA 215
+  const nsaMatch = base.match(/^NSA\s*0*(\d+)$/i)
+  if (nsaMatch) return `NSA ${nsaMatch[1]}`
+
+  // Fallback: return as-is
+  return base
+}
+
+/** Normalize OSM road ref for Italian roads.
+ *  OSM uses: "A1", "SS 106", "RA 5", "E45", etc. */
+function normalizeOsmRef(ref: string): string {
+  // OSM refs can have multiple values separated by ;
+  // Try each one
+  const parts = ref.split(';').map(s => s.trim()).filter(Boolean)
+
+  for (const r of parts) {
+    // Skip E-roads (European numbering)
+    if (/^E\s*\d/i.test(r)) continue
+
+    // A-roads
+    const aMatch = r.match(/^A\s*(\d+)$/i)
+    if (aMatch) return `A${aMatch[1]}`
+
+    // RA-roads
+    const raMatch = r.match(/^RA\s*0*(\d+)$/i)
+    if (raMatch) return `RA ${raMatch[1]}`
+
+    // SS-roads (with optional "SS " prefix)
+    const ssMatch = r.match(/^(?:SS|S\.S\.)\s*0*(\d+)$/i)
+    if (ssMatch) return `SS ${ssMatch[1]}`
+
+    // SR-roads (Strade Regionali) — some were former SS roads
+    const srMatch = r.match(/^SR\s*0*(\d+)$/i)
+    if (srMatch) return `SS ${srMatch[1]}`
+
+    // NSA-roads
+    const nsaMatch = r.match(/^NSA\s*0*(\d+)$/i)
+    if (nsaMatch) return `NSA ${nsaMatch[1]}`
+  }
+
+  return ''
+}
+
+/** Flat-earth distance in meters */
+function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
+  const dx = (lon2 - lon1) * 111320 * cosLat
+  const dy = (lat2 - lat1) * 110540
+  return Math.sqrt(dx * dx + dy * dy)
+}
+
 // ── Main ──
 
 async function main() {
@@ -437,17 +402,16 @@ async function main() {
   }
 
   const geojson = await downloadAndConvert()
-  const features = geojson.features || []
-  console.log(`\n  Parsing ${features.length} TGM features...`)
+  console.log(`\n  Parsing TGM stations...`)
+  const stationsByRef = parseStations(geojson)
 
-  const tgmSegments = parseTgmFeatures(geojson)
-  if (tgmSegments.length === 0) {
-    console.error('ERROR: No valid TGM segments found. Check shapefile properties.')
+  if (stationsByRef.size === 0) {
+    console.error('ERROR: No valid TGM stations found. Check shapefile properties.')
     process.exit(1)
   }
 
   console.log(`\n  Enriching roads.arrow files...`)
-  enrichHexes(tgmSegments)
+  enrichHexes(stationsByRef)
   console.log(`\n=== Done ===`)
 }
 
