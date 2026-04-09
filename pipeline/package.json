@@ -3,10 +3,12 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@types/proj4": "^2.5.6",
     "apache-arrow": "^21.1.0",
     "csv-parse": "^6.2.1",
     "geotiff": "^3.0.5",
-    "h3-js": "^4.4.0"
+    "h3-js": "^4.4.0",
+    "proj4": "^2.20.8"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
