@@ -7,8 +7,12 @@ const TURBINE_SPECTRUM: [f64; NUM_BANDS] = [-2.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0
 
 /// Compute wind turbine Lw from rated power.
 pub fn turbine_lw(rated_power_kw: f64) -> f64 {
-    if !rated_power_kw.is_finite() || rated_power_kw <= 0.0 {
-        return f64::NEG_INFINITY;
+    if !rated_power_kw.is_finite() {
+        return f64::NEG_INFINITY; // truly invalid data
+    }
+    // rated_power_kw == 0 means "unknown" in OSM — use 2000 kW default (~103 dB)
+    if rated_power_kw <= 0.0 {
+        return 103.0;
     }
     match rated_power_kw as u32 {
         0..=999 => 98.0,
@@ -49,8 +53,8 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_rated_power_is_silent() {
-        assert!(turbine_lw(0.0).is_infinite() && turbine_lw(0.0).is_sign_negative());
+    fn test_unknown_rated_power_uses_default() {
+        assert_eq!(turbine_lw(0.0), 103.0); // unknown → 2000 kW default
         assert!(turbine_lw(f64::NAN).is_infinite() && turbine_lw(f64::NAN).is_sign_negative());
     }
 
