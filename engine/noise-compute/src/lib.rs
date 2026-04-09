@@ -367,7 +367,7 @@ fn compute_roads(
         // Tooltip metadata from single raycast on closest segment
         let (terrain_bk, screening_bk, veg_bk) = compute_path_effects(
             rasters, barriers, acc.closest_cp_lat, acc.closest_cp_lon, acc.closest_src_height,
-            receiver, acc.min_dist,
+            receiver, acc.min_dist, 0.0,
         );
 
         contributors.push(Contributor {
@@ -541,7 +541,7 @@ fn compute_railways(
             Some(serde_json::json!({"type": "MultiLineString", "coordinates": acc.line_coords}))
         } else { None };
 
-        let rail_effects = compute_path_effects(rasters, barriers, acc.cp_lat, acc.cp_lon, acc.src_height, receiver, acc.min_dist);
+        let rail_effects = compute_path_effects(rasters, barriers, acc.cp_lat, acc.cp_lon, acc.src_height, receiver, acc.min_dist, 0.0);
 
         contributors.push(Contributor {
             osm_id: Some(acc.first_osm_id), geometry,
@@ -596,6 +596,7 @@ fn compute_point_sources(
         min_d_slant: f64,
         min_ground_g: f64,
         src_height: f64,
+        exclusion_radius_m: f32,
         variants: [PropagationVariants; 3],
         emission_energy: f64,
         polygon_wkb: String,
@@ -647,6 +648,7 @@ fn compute_point_sources(
             name: src.name.clone(), subtype: src.source_type,
             lat: src.lat, lon: src.lon, min_dist: f64::MAX,
             min_d_slant: 0.0, min_ground_g: 0.5, src_height: src_alt,
+            exclusion_radius_m: src.exclusion_radius_m,
             variants: [PropagationVariants::default(), PropagationVariants::default(), PropagationVariants::default()],
             emission_energy: 0.0,
             polygon_wkb: src.polygon_wkb.clone(),
@@ -659,6 +661,10 @@ fn compute_point_sources(
             acc.min_dist = src.dist_m;
             acc.min_d_slant = d_slant;
             acc.min_ground_g = ground_g;
+            acc.lat = src.lat;
+            acc.lon = src.lon;
+            acc.src_height = src_alt;
+            acc.exclusion_radius_m = src.exclusion_radius_m;
         }
     }
 
@@ -687,7 +693,7 @@ fn compute_point_sources(
             }))
         };
 
-        let pt_effects = compute_path_effects(rasters, barriers, acc.lat, acc.lon, acc.src_height, receiver, acc.min_dist);
+        let pt_effects = compute_path_effects(rasters, barriers, acc.lat, acc.lon, acc.src_height, receiver, acc.min_dist, acc.exclusion_radius_m as f64);
 
         contributors.push(Contributor {
             osm_id: Some(*osm_id), geometry,
@@ -920,85 +926,56 @@ fn compute_path_effects(
     barriers: &[Barrier],
     src_lat: f64, src_lon: f64, src_height: f64,
     receiver: &Receiver, dist_m: f64,
+    exclusion_radius_m: f64,
 ) -> (TerrainBreakdown, ScreeningBreakdown, VegetationBreakdown) {
     let rcv_alt = receiver.altitude_m();
 
-    // 1. Terrain diffraction from DEM profile
-    // compute_path_difference expects height ABOVE GROUND, not absolute altitude
+    // 1. Terrain — shared function for attenuation, metadata separately
+    let terrain_atten = propagation::path_effects::terrain_attenuation(
+        rasters, src_lat, src_lon, receiver.lat, receiver.lon,
+        src_height, rcv_alt, dist_m,
+    );
     let terrain_profile = rasters.terrain_profile(src_lat, src_lon, receiver.lat, receiver.lon, 0);
     let src_ground = if !terrain_profile.is_empty() { terrain_profile[0] } else { 0.0 };
-    let src_height_agl = (src_height - src_ground).max(0.05); // height above ground at source
-    let rcv_height_agl = receiver.height_m; // 1.5m above ground
+    let src_height_agl = (src_height - src_ground).max(0.05);
+    let rcv_height_agl = receiver.height_m;
     let terrain_diff = propagation::diffraction::compute_path_difference(
         &terrain_profile, dist_m, src_height_agl, rcv_height_agl,
     );
-    let terrain_db = if terrain_diff.delta > 0.0 {
-        propagation::diffraction::diffraction_attenuation(terrain_diff.delta, terrain_diff.is_double)[4]
-    } else { 0.0 };
 
-    // 2. Building screening + noise barriers
-    // Sample building heights along path, find tallest + its position
-    let steps = (dist_m / 10.0).ceil().max(3.0) as usize; // ~10m step
-    let mut max_bh = 0.0f64;
-    let mut max_bh_t = 0.5;
-    for i in 1..steps { // skip endpoints (source + receiver)
-        let t = i as f64 / steps as f64;
-        let lat = src_lat + t * (receiver.lat - src_lat);
-        let lon = src_lon + t * (receiver.lon - src_lon);
-        let bh = rasters.building_height(lat, lon);
-        if bh > max_bh {
-            max_bh = bh;
-            max_bh_t = t;
-        }
-    }
-    // Check noise barriers: if any barrier is close to the path, use its height
-    for barrier in barriers {
-        if barrier.dist_m > dist_m + 100.0 { continue; } // quick reject
-        // Check if barrier is between source and receiver (within 50m of path)
-        let dlat = receiver.lat - src_lat;
-        let dlon = receiver.lon - src_lon;
-        let t = ((barrier.lat - src_lat) * dlat + (barrier.lon - src_lon) * dlon)
-            / (dlat * dlat + dlon * dlon).max(1e-12);
-        if t < 0.05 || t > 0.95 { continue; } // not between source and receiver
-        let closest_lat = src_lat + t * dlat;
-        let closest_lon = src_lon + t * dlon;
-        let perp_dist = geo::flat_dist(barrier.lat, barrier.lon, closest_lat, closest_lon);
-        if perp_dist < 50.0 && barrier.height_m as f64 > max_bh {
-            max_bh = barrier.height_m as f64;
-            max_bh_t = t;
-        }
-    }
-    let screening_db = if max_bh > 0.0 {
-        // Line-of-sight height at building position
-        let bld_ground = rasters.elevation(
-            src_lat + max_bh_t * (receiver.lat - src_lat),
-            src_lon + max_bh_t * (receiver.lon - src_lon),
-        );
-        let bld_top = bld_ground + max_bh;
-        let los_height = src_height + (rcv_alt - src_height) * max_bh_t;
-        let screen_delta = bld_top - los_height;
-        if screen_delta > 0.0 {
-            propagation::screening::building_screening(screen_delta)[4]
-        } else { 0.0 }
+    // 2. Screening — shared function for attenuation, metadata separately
+    let screening_atten = propagation::path_effects::screening_attenuation(
+        rasters, barriers, src_lat, src_lon, receiver.lat, receiver.lon,
+        src_height, rcv_alt, dist_m, exclusion_radius_m,
+    );
+    let excl_limit = if exclusion_radius_m > 0.0 {
+        exclusion_radius_m.min(dist_m * 0.5)
     } else { 0.0 };
+    let (max_bh, _) = rasters.max_building_along_path(
+        src_lat, src_lon, receiver.lat, receiver.lon, dist_m, excl_limit,
+    );
 
-    // 3. Vegetation
-    let forest_depth = rasters.vegetation_depth(src_lat, src_lon, receiver.lat, receiver.lon);
-    let veg_db = propagation::vegetation::vegetation_attenuation(forest_depth)[4];
+    // 3. Vegetation — shared function for attenuation, metadata separately
+    let veg_atten = propagation::path_effects::vegetation_attenuation_path(
+        rasters, src_lat, src_lon, receiver.lat, receiver.lon, dist_m,
+    );
+    let forest_depth = if dist_m <= 500.0 {
+        rasters.vegetation_depth(src_lat, src_lon, receiver.lat, receiver.lon)
+    } else { 0.0 };
 
     (
         TerrainBreakdown {
             delta_m: (terrain_diff.delta * 100.0).round() / 100.0,
             is_double: terrain_diff.is_double,
-            attenuation_db: -(terrain_db * 10.0).round() / 10.0,
+            attenuation_db: -(terrain_atten[4] * 10.0).round() / 10.0,
         },
         ScreeningBreakdown {
             building_path_m: (max_bh * 10.0).round() / 10.0,
-            attenuation_db: -(screening_db * 10.0).round() / 10.0,
+            attenuation_db: -(screening_atten[4] * 10.0).round() / 10.0,
         },
         VegetationBreakdown {
             forest_depth_m: (forest_depth * 10.0).round() / 10.0,
-            attenuation_db: -(veg_db * 10.0).round() / 10.0,
+            attenuation_db: -(veg_atten[4] * 10.0).round() / 10.0,
         },
     )
 }
