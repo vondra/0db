@@ -930,30 +930,19 @@ fn compute_path_effects(
 ) -> (TerrainBreakdown, ScreeningBreakdown, VegetationBreakdown) {
     let rcv_alt = receiver.altitude_m();
 
-    // 1. Terrain — shared function for attenuation, metadata separately
-    let terrain_atten = propagation::path_effects::terrain_attenuation(
-        rasters, src_lat, src_lon, receiver.lat, receiver.lon,
-        src_height, rcv_alt, dist_m,
-    );
-    let terrain_profile = rasters.terrain_profile(src_lat, src_lon, receiver.lat, receiver.lon, 0);
-    let src_ground = if !terrain_profile.is_empty() { terrain_profile[0] } else { 0.0 };
-    let src_height_agl = (src_height - src_ground).max(0.05);
-    let rcv_height_agl = receiver.height_m;
-    let terrain_diff = propagation::diffraction::compute_path_difference(
-        &terrain_profile, dist_m, src_height_agl, rcv_height_agl,
-    );
+    // Single-pass variants that return both attenuation and metadata
+    let (terrain_atten, terrain_delta, terrain_is_double) =
+        propagation::path_effects::terrain_attenuation_with_meta(
+            rasters, src_lat, src_lon, receiver.lat, receiver.lon,
+            src_height, rcv_alt, dist_m,
+        );
 
-    // 2. Screening — shared function for attenuation, metadata separately
-    let screening_atten = propagation::path_effects::screening_attenuation(
-        rasters, barriers, src_lat, src_lon, receiver.lat, receiver.lon,
-        src_height, rcv_alt, dist_m, exclusion_radius_m,
-    );
-    let excl_limit = if exclusion_radius_m > 0.0 { exclusion_radius_m } else { 0.0 };
-    let (max_bh, _) = rasters.max_building_along_path(
-        src_lat, src_lon, receiver.lat, receiver.lon, dist_m, excl_limit,
-    );
+    let (screening_atten, max_bh) =
+        propagation::path_effects::screening_attenuation_with_meta(
+            rasters, barriers, src_lat, src_lon, receiver.lat, receiver.lon,
+            src_height, rcv_alt, dist_m, exclusion_radius_m,
+        );
 
-    // 3. Vegetation — shared function for attenuation, metadata separately
     let veg_atten = propagation::path_effects::vegetation_attenuation_path(
         rasters, src_lat, src_lon, receiver.lat, receiver.lon, dist_m,
     );
@@ -963,8 +952,8 @@ fn compute_path_effects(
 
     (
         TerrainBreakdown {
-            delta_m: (terrain_diff.delta * 100.0).round() / 100.0,
-            is_double: terrain_diff.is_double,
+            delta_m: (terrain_delta * 100.0).round() / 100.0,
+            is_double: terrain_is_double,
             attenuation_db: -(terrain_atten[4] * 10.0).round() / 10.0,
         },
         ScreeningBreakdown {

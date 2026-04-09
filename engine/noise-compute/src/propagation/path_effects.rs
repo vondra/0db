@@ -69,7 +69,7 @@ pub fn screening_attenuation(
     dist_m: f64,
     exclusion_radius_m: f64,
 ) -> [f64; NUM_BANDS] {
-    let excl_limit = if exclusion_radius_m > 0.0 { exclusion_radius_m } else { 0.0 };
+    let excl_limit = exclusion_radius_m.max(0.0);
 
     // Fast reject: check barriers first (cheap).
     let dlat = rcv_lat - src_lat;
@@ -134,6 +134,115 @@ pub fn screening_attenuation(
         screening::building_screening(delta)
     } else {
         [0.0; NUM_BANDS]
+    }
+}
+
+/// Terrain attenuation with metadata (delta, is_double) for popup tooltips.
+///
+/// Combines terrain_attenuation() and metadata extraction into a single pass,
+/// avoiding the duplicate terrain_profile + compute_path_difference calls that
+/// occur when calling terrain_attenuation() then extracting metadata separately.
+pub fn terrain_attenuation_with_meta(
+    rasters: &dyn RasterSampler,
+    src_lat: f64, src_lon: f64,
+    rcv_lat: f64, rcv_lon: f64,
+    src_elev: f64, rcv_alt: f64,
+    dist_m: f64,
+) -> ([f64; NUM_BANDS], f64, bool) {
+    if dist_m > 5000.0 { return ([0.0; NUM_BANDS], 0.0, false); }
+
+    let hill_detected = [0.25, 0.5, 0.75].iter().any(|&t| {
+        let lat = src_lat + t * (rcv_lat - src_lat);
+        let lon = src_lon + t * (rcv_lon - src_lon);
+        let elev = rasters.elevation(lat, lon);
+        let los = src_elev + (rcv_alt - src_elev) * t;
+        elev > los
+    });
+
+    if !hill_detected { return ([0.0; NUM_BANDS], 0.0, false); }
+
+    let profile = rasters.terrain_profile(src_lat, src_lon, rcv_lat, rcv_lon, 0);
+    let src_ground = if !profile.is_empty() { profile[0] } else { 0.0 };
+    let src_agl = (src_elev - src_ground).max(0.05);
+    let rcv_agl = crate::constants::DEFAULT_RECEIVER_HEIGHT;
+    let diff = diffraction::compute_path_difference(&profile, dist_m, src_agl, rcv_agl);
+    let atten = diffraction::diffraction_attenuation_with_edge(diff.delta, diff.is_double, diff.edge_distance);
+    (atten, diff.delta, diff.is_double)
+}
+
+/// Screening attenuation with metadata (max building height) for popup tooltips.
+///
+/// Combines screening_attenuation() and max_building_along_path() into a single
+/// pass, avoiding the duplicate path scan.
+pub fn screening_attenuation_with_meta(
+    rasters: &dyn RasterSampler,
+    barriers: &[Barrier],
+    src_lat: f64, src_lon: f64,
+    rcv_lat: f64, rcv_lon: f64,
+    src_elev: f64, rcv_alt: f64,
+    dist_m: f64,
+    exclusion_radius_m: f64,
+) -> ([f64; NUM_BANDS], f64) {
+    let excl_limit = exclusion_radius_m.max(0.0);
+
+    let dlat = rcv_lat - src_lat;
+    let dlon = rcv_lon - src_lon;
+    let mid_lat_rad = ((src_lat + rcv_lat) * 0.5).to_radians();
+    let meters_per_deg_lon = 111_320.0 * mid_lat_rad.cos();
+    let path_dx_m = dlon * meters_per_deg_lon;
+    let path_dy_m = dlat * 110_540.0;
+    let path_len_sq_m = (path_dx_m * path_dx_m + path_dy_m * path_dy_m).max(1e-12);
+    let barrier_hit_radius_sq = 50.0 * 50.0;
+
+    let mut barrier_max_h = 0.0;
+    let mut barrier_max_t = 0.5;
+    for barrier in barriers {
+        if barrier.dist_m > dist_m + 100.0 { continue; }
+        let bx_m = (barrier.lon - src_lon) * meters_per_deg_lon;
+        let by_m = (barrier.lat - src_lat) * 110_540.0;
+        let t = (bx_m * path_dx_m + by_m * path_dy_m) / path_len_sq_m;
+        if t < 0.01 || t > 0.99 { continue; }
+        let perp_dx_m = bx_m - t * path_dx_m;
+        let perp_dy_m = by_m - t * path_dy_m;
+        let perp_sq_m = perp_dx_m * perp_dx_m + perp_dy_m * perp_dy_m;
+        if perp_sq_m < barrier_hit_radius_sq && barrier.height_m as f64 > barrier_max_h {
+            barrier_max_h = barrier.height_m as f64;
+            barrier_max_t = t;
+        }
+    }
+
+    let (mut max_bh, mut max_bh_t) = rasters.max_building_along_path(
+        src_lat, src_lon, rcv_lat, rcv_lon, dist_m, excl_limit,
+    );
+
+    if barrier_max_h > max_bh {
+        max_bh = barrier_max_h;
+        max_bh_t = barrier_max_t;
+    }
+
+    if max_bh <= 0.0 { return ([0.0; NUM_BANDS], 0.0); }
+
+    let bld_ground = rasters.elevation(
+        src_lat + max_bh_t * dlat,
+        src_lon + max_bh_t * dlon,
+    );
+    let bld_top = bld_ground + max_bh;
+    let los_height = src_elev + (rcv_alt - src_elev) * max_bh_t;
+    let screen_h = bld_top - los_height;
+
+    if screen_h > 0.0 {
+        let d1_h = max_bh_t * dist_m;
+        let d2_h = (1.0 - max_bh_t) * dist_m;
+        let dz_sb = bld_top - src_elev;
+        let dz_br = rcv_alt - bld_top;
+        let dz_sr = rcv_alt - src_elev;
+        let d_sb = (d1_h * d1_h + dz_sb * dz_sb).sqrt();
+        let d_br = (d2_h * d2_h + dz_br * dz_br).sqrt();
+        let d_sr = (dist_m * dist_m + dz_sr * dz_sr).sqrt();
+        let delta = (d_sb + d_br - d_sr).max(0.0);
+        (screening::building_screening(delta), max_bh)
+    } else {
+        ([0.0; NUM_BANDS], max_bh)
     }
 }
 
