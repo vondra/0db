@@ -15,7 +15,7 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8 } from 'apache-arrow'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -324,9 +324,15 @@ function enrichHexes(
     const startLon = table.getChild('start_lon')!
     const endLat = table.getChild('end_lat')!
     const endLon = table.getChild('end_lon')!
+    const osmIdCol = table.getChild('osm_id')
+    const railTypeCol = table.getChild('rail_type')
+    const usageCol = table.getChild('usage')
+    const serviceCol = table.getChild('service')
 
     const trainsPax = new Int32Array(n)
     const trainsFrt = new Int32Array(n)
+    const matchedKeys: string[] = new Array(n).fill('')
+    const mids: { lat: number; lon: number }[] = new Array(n)
     let hexMatched = 0
 
     for (let i = 0; i < n; i++) {
@@ -336,38 +342,81 @@ function enrichHexes(
       const eLon = endLon.get(i) as number
       const midLat = (sLat + eLat) / 2
       const midLon = (sLon + eLon) / 2
+      mids[i] = { lat: midLat, lon: midLon }
 
-      // Find CZPTT segment whose station-pair LINE is closest to this rail segment
-      // WHY point-to-segment: station pairs can be 15+ km apart. Old midpoint-to-midpoint
-      // matching with 3km limit only covered a bubble halfway between stations, missing
-      // segments near the actual stations (75% match → should be 90%+).
-      let bestDist = 5000 // max 5km perpendicular distance to station-pair line
+      let bestDist = 5000
       let bestSeg: SegmentCount | null = null
+      let bestKey = ''
 
       for (const gs of gpsSegments) {
         const d = pointToSegmentDist(midLat, midLon, gs.fromLat, gs.fromLon, gs.toLat, gs.toLon)
         if (d < bestDist) {
           bestDist = d
           bestSeg = gs.seg
+          // Canonicalize key: sort station codes so from→to = to→from
+          const codes = [gs.seg.from_code, gs.seg.to_code].sort()
+          bestKey = codes[0] + '-' + codes[1]
         }
       }
 
       if (bestSeg) {
         trainsPax[i] = bestSeg.passenger
         trainsFrt[i] = bestSeg.freight
+        matchedKeys[i] = bestKey
         hexMatched++
       }
     }
 
     if (hexMatched === 0) continue
 
-    // Copy all existing columns + add train counts
+    // ── Parallel-way detection ──
+    // For each matched segment, count distinct osm_ids with:
+    // same czpttKey + within 50m + different osm_id + same rail_type + same usage + service=0
+    const parallelDiv = new Uint8Array(n).fill(1)
+
+    for (let i = 0; i < n; i++) {
+      if (!matchedKeys[i]) continue
+      const service_i = serviceCol ? (serviceCol.get(i) as number) : 0
+      if (service_i > 0) continue // skip sidings/yards
+      const oid_i = osmIdCol ? String(osmIdCol.get(i)) : '0'
+      const rt_i = railTypeCol ? (railTypeCol.get(i) as number) : 0
+      const usage_i = usageCol ? (usageCol.get(i) as number) : 0
+
+      const neighborOsm = new Set<string>()
+      neighborOsm.add(oid_i) // include self
+
+      for (let j = 0; j < n; j++) {
+        if (j === i) continue
+        if (matchedKeys[j] !== matchedKeys[i]) continue // different timetable section
+        const oid_j = osmIdCol ? String(osmIdCol.get(j)) : '0'
+        if (oid_j === oid_i) continue // same way (different segments of it)
+        if (neighborOsm.has(oid_j)) continue // already counted this way
+        const rt_j = railTypeCol ? (railTypeCol.get(j) as number) : 0
+        const usage_j = usageCol ? (usageCol.get(j) as number) : 0
+        const service_j = serviceCol ? (serviceCol.get(j) as number) : 0
+        if (rt_j !== rt_i || usage_j !== usage_i || service_j > 0) continue
+        const d = flatDist(mids[i].lat, mids[i].lon, mids[j].lat, mids[j].lon)
+        if (d < 50) neighborOsm.add(oid_j)
+      }
+
+      parallelDiv[i] = Math.min(neighborOsm.size, 3) as number
+    }
+
+    // Stats
+    let parCount = 0
+    for (let i = 0; i < n; i++) if (parallelDiv[i] > 1) parCount++
+    if (parCount > 0) {
+      console.log(`    ${hexId}: ${parCount}/${hexMatched} segments have parallel_divisor > 1`)
+    }
+
+    // Copy all existing columns + add train counts + parallel_divisor
     const columns: Record<string, any> = {}
     for (const field of table.schema.fields) {
       columns[field.name] = table.getChild(field.name)!
     }
     columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
     columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
+    columns['parallel_divisor'] = vectorFromArray(parallelDiv, new Uint8())
 
     const newTable = makeTable(columns)
     writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
