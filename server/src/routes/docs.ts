@@ -80,6 +80,21 @@ function buildBreadcrumb(segments: string[]): { slug: string; title: string }[] 
 }
 
 export async function docsRoutes(app: FastifyInstance): Promise<void> {
+  // Serve static assets (images) from docs/about/
+  app.get('/api/docs/assets/*', async (request, reply) => {
+    const wildcard = (request.params as Record<string, string>)['*']
+    if (!/\.(png|jpg|jpeg|webp|svg|gif)$/i.test(wildcard)) {
+      return reply.status(404).send({ error: 'Not found' })
+    }
+    const filePath = path.resolve(path.join(DOCS_DIR, 'about', wildcard))
+    if (!filePath.startsWith(path.resolve(DOCS_DIR)) || !fs.existsSync(filePath)) {
+      return reply.status(404).send({ error: 'Not found' })
+    }
+    const ext = path.extname(filePath).slice(1).toLowerCase()
+    const mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`
+    return reply.type(mime).send(fs.readFileSync(filePath))
+  })
+
   app.get('/api/docs/about', async () => serveDoc([]))
   app.get('/api/docs/about/*', async (request) => {
     const wildcard = (request.params as Record<string, string>)['*']

@@ -91,7 +91,19 @@ export default function AboutPage() {
 
             {doc.body && (
               <div className={PROSE}>
-                <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                <Markdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeRaw]}
+                  components={{
+                    img: ({ src, alt, ...props }) => (
+                      <img
+                        src={src && !src.startsWith('http') ? `/api/docs/assets/${src}` : src}
+                        alt={alt}
+                        {...props}
+                      />
+                    ),
+                  }}
+                >
                   {doc.body.replace(/<!-- MAP -->/g, '')}
                 </Markdown>
               </div>
