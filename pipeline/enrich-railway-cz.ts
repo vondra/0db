@@ -223,6 +223,27 @@ function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): numbe
   return Math.sqrt(dx * dx + dy * dy)
 }
 
+/** Distance from point P to line segment A→B in meters (flat-earth). */
+function pointToSegmentDist(
+  pLat: number, pLon: number,
+  aLat: number, aLon: number,
+  bLat: number, bLon: number,
+): number {
+  const cosLat = Math.cos((pLat + (aLat + bLat) / 2) / 2 * Math.PI / 180)
+  // Convert to local meters relative to P
+  const ax = (aLon - pLon) * 111320 * cosLat
+  const ay = (aLat - pLat) * 110540
+  const bx = (bLon - pLon) * 111320 * cosLat
+  const by = (bLat - pLat) * 110540
+  const dx = bx - ax, dy = by - ay
+  const lenSq = dx * dx + dy * dy
+  if (lenSq < 1) return Math.sqrt(ax * ax + ay * ay) // degenerate (A≈B)
+  // Project P onto AB, clamp t to [0,1]
+  const t = Math.max(0, Math.min(1, (-ax * dx + -ay * dy) / lenSq))
+  const cx = ax + t * dx, cy = ay + t * dy
+  return Math.sqrt(cx * cx + cy * cy)
+}
+
 /** Normalize station name for fuzzy matching */
 function normName(s: string): string {
   return s.toLowerCase()
@@ -316,14 +337,15 @@ function enrichHexes(
       const midLat = (sLat + eLat) / 2
       const midLon = (sLon + eLon) / 2
 
-      // Find CZPTT segment whose station midpoint is closest to this rail segment midpoint
-      let bestDist = 3000 // max 3km from station-pair midpoint
+      // Find CZPTT segment whose station-pair LINE is closest to this rail segment
+      // WHY point-to-segment: station pairs can be 15+ km apart. Old midpoint-to-midpoint
+      // matching with 3km limit only covered a bubble halfway between stations, missing
+      // segments near the actual stations (75% match → should be 90%+).
+      let bestDist = 5000 // max 5km perpendicular distance to station-pair line
       let bestSeg: SegmentCount | null = null
 
       for (const gs of gpsSegments) {
-        const gsMidLat = (gs.fromLat + gs.toLat) / 2
-        const gsMidLon = (gs.fromLon + gs.toLon) / 2
-        const d = flatDist(midLat, midLon, gsMidLat, gsMidLon)
+        const d = pointToSegmentDist(midLat, midLon, gs.fromLat, gs.fromLon, gs.toLat, gs.toLon)
         if (d < bestDist) {
           bestDist = d
           bestSeg = gs.seg
