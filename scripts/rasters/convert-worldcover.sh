@@ -70,10 +70,10 @@ convert_one() {
     local TMP_FOREST="/tmp/wc_forest_${NAME}.tif"
     local TMP_IMD="/tmp/wc_imd_${NAME}.tif"
 
-    # Warp for forest (1201×1201)
+    # Warp for forest (3601×3601 = 30m, matching DEM resolution)
     if [ ! -f "$FOREST_OUT" ]; then
         gdalwarp -q -te "$lon" "$lat" "$((lon + 1))" "$((lat + 1))" \
-            -ts 1201 1201 -r near -ot Byte \
+            -ts 3601 3601 -r near -ot Byte \
             "$VRT" "$TMP_FOREST" 2>/dev/null || { rm -f "$TMP_FOREST"; return 0; }
     fi
 
