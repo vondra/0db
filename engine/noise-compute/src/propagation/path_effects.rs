@@ -83,8 +83,16 @@ pub fn screening_attenuation(
 
     let mut barrier_max_h = 0.0;
     let mut barrier_max_t = 0.5;
+    // AABB pre-filter: skip barriers clearly outside the source-receiver corridor.
+    let lat_pad = 100.0 / 110_540.0;
+    let lon_pad = 100.0 / meters_per_deg_lon.max(1.0);
+    let bb_min_lat = src_lat.min(rcv_lat) - lat_pad;
+    let bb_max_lat = src_lat.max(rcv_lat) + lat_pad;
+    let bb_min_lon = src_lon.min(rcv_lon) - lon_pad;
+    let bb_max_lon = src_lon.max(rcv_lon) + lon_pad;
     for barrier in barriers {
-        if barrier.dist_m > dist_m + 100.0 { continue; }
+        if barrier.lat < bb_min_lat || barrier.lat > bb_max_lat
+            || barrier.lon < bb_min_lon || barrier.lon > bb_max_lon { continue; }
         let bx_m = (barrier.lon - src_lon) * meters_per_deg_lon;
         let by_m = (barrier.lat - src_lat) * 110_540.0;
         let t = (bx_m * path_dx_m + by_m * path_dy_m) / path_len_sq_m;
