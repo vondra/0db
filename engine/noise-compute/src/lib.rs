@@ -239,8 +239,9 @@ fn compute_roads(
             (seg.aadt_light as f64 * oneway_factor, seg.aadt_medium as f64 * oneway_factor,
              seg.aadt_heavy as f64 * oneway_factor, seg.aadt_moto as f64 * oneway_factor)
         } else {
-            (defaults.0 * oneway_factor, defaults.1 * oneway_factor,
-             defaults.2 * oneway_factor, defaults.3 * oneway_factor)
+            let lr = lane_ratio(class_idx, seg.lanes, seg.oneway);
+            let f = oneway_factor * lr;
+            (defaults.0 * f, defaults.1 * f, defaults.2 * f, defaults.3 * f)
         };
 
         let speed = if seg.speed_limit > 0 { seg.speed_limit as f64 } else { default_speed(class_name) };
@@ -908,6 +909,17 @@ fn default_traffic(class: &str) -> (f64, f64, f64, f64) {
         "residential" => (480.0, 5.0, 10.0, 5.0),
         "living_street" => (98.0, 0.0, 1.0, 1.0),
         _ => (480.0, 5.0, 10.0, 5.0),
+    }
+}
+
+/// Lane-based AADT scaling ratio (calibrated from CZ ŘSD CSD 2020 census medians).
+fn lane_ratio(class_idx: usize, lanes: u8, oneway: bool) -> f64 {
+    if lanes <= 2 || class_idx >= 5 { return 1.0; }
+    match (class_idx, oneway) {
+        (0, true) => match lanes.min(3) { 3 => 1.42, _ => 1.0 },
+        (2, false) => match lanes.min(4) { 3 => 1.37, 4 => 2.13, _ => 1.0 },
+        (3, false) => match lanes.min(3) { 3 => 1.83, _ => 1.0 },
+        _ => 1.0,
     }
 }
 
