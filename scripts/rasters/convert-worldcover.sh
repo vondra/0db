@@ -78,10 +78,10 @@ convert_one() {
             "$VRT" "$TMP_FOREST" 2>/dev/null || { rm -f "$TMP_FOREST"; return 0; }
     fi
 
-    # Warp for IMD (401×401, node-registered)
+    # Warp for IMD (3601×3601 = 30m, node-registered matching DEM/forest/building)
     if [ ! -f "$IMD_OUT" ]; then
-        gdalwarp -q -te $(node_extent $lon $lat 401) \
-            -ts 401 401 -r near -ot Byte \
+        gdalwarp -q -te $(node_extent $lon $lat 3601) \
+            -ts 3601 3601 -r near -ot Byte \
             "$VRT" "$TMP_IMD" 2>/dev/null || { rm -f "$TMP_IMD"; return 0; }
     fi
 
