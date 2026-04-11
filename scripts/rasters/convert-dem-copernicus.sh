@@ -4,6 +4,7 @@
 # ~30 min with 16 parallel.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+source scripts/rasters/node-extent.sh
 
 SRC="data/source/dem/copernicus-glo30"
 DST="data/prepared/dem/copernicus"
@@ -43,7 +44,7 @@ convert_one() {
     [ "$ns" = "S" ] && lat_n=$((-lat_n))
     [ "$ew" = "W" ] && lon_n=$((-lon_n))
     local tmp="/tmp/cop_${out_name}.tif"
-    gdalwarp -q -te "$lon_n" "$lat_n" "$((lon_n+1))" "$((lat_n+1))" \
+    gdalwarp -q -te $(node_extent $lon_n $lat_n 3601) \
         -ts 3601 3601 -r bilinear -ot Int16 "$tif" "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
     gdal_translate -of SRTMHGT -q "$tmp" "$out" 2>/dev/null || true
     rm -f "$tmp"

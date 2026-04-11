@@ -4,6 +4,7 @@
 # ~50 min with 16 parallel.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+source scripts/rasters/node-extent.sh
 
 WC_SRC="data/source/vegetation/worldcover-2021"
 FOREST_DST="data/prepared/rasters/forest"
@@ -70,16 +71,16 @@ convert_one() {
     local TMP_FOREST="/tmp/wc_forest_${NAME}.tif"
     local TMP_IMD="/tmp/wc_imd_${NAME}.tif"
 
-    # Warp for forest (3601×3601 = 30m, matching DEM resolution)
+    # Warp for forest (3601×3601 = 30m, node-registered matching DEM)
     if [ ! -f "$FOREST_OUT" ]; then
-        gdalwarp -q -te "$lon" "$lat" "$((lon + 1))" "$((lat + 1))" \
+        gdalwarp -q -te $(node_extent $lon $lat 3601) \
             -ts 3601 3601 -r near -ot Byte \
             "$VRT" "$TMP_FOREST" 2>/dev/null || { rm -f "$TMP_FOREST"; return 0; }
     fi
 
-    # Warp for IMD (401×401)
+    # Warp for IMD (401×401, node-registered)
     if [ ! -f "$IMD_OUT" ]; then
-        gdalwarp -q -te "$lon" "$lat" "$((lon + 1))" "$((lat + 1))" \
+        gdalwarp -q -te $(node_extent $lon $lat 401) \
             -ts 401 401 -r near -ot Byte \
             "$VRT" "$TMP_IMD" 2>/dev/null || { rm -f "$TMP_IMD"; return 0; }
     fi

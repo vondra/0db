@@ -3,6 +3,7 @@
 # Overwrites existing .raw tiles where Copernicus data is available.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+source scripts/rasters/node-extent.sh
 
 IMD_DST="data/prepared/rasters/imd"
 
@@ -54,7 +55,7 @@ for lat in $(seq "$LAT_MIN" "$LAT_MAX"); do
 
         TMP="/tmp/imd_overlay_${NAME}.tif"
         gdalwarp -q -t_srs EPSG:4326 \
-            -te "$lon" "$lat" "$((lon + 1))" "$((lat + 1))" \
+            -te $(node_extent $lon $lat 401) \
             -ts 401 401 -r bilinear -ot Byte \
             "$SRC" "$TMP" 2>/dev/null || continue
 

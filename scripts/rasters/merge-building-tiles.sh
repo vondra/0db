@@ -147,9 +147,8 @@ else:
         ov.tofile('$OUT')
         raise SystemExit(0)
 
-# Merge: Overture where > 0, else GHSL
-merged = np.where(ov > 0, ov, ghsl)
-merged = np.clip(merged, 0, 249).astype(np.uint8)
+# Overture only — no GHSL fallback (GHSL has false positives on highways/fields)
+merged = np.clip(ov, 0, 249).astype(np.uint8)
 merged.tofile('$OUT')
 " 2>/dev/null
 

@@ -123,54 +123,54 @@ process_tile() {
         return 0
     fi
 
-    # Step 2: Check if any height data exists
-    local HAS_HEIGHT
-    HAS_HEIGHT=$(python3 -c "
-import pyarrow.parquet as pq
-t = pq.read_table('$PQ', columns=['height'])
-valid = t.column('height').drop_null()
-print(len(valid))
-" 2>/dev/null || echo "0")
-
-    if [ "$HAS_HEIGHT" = "0" ]; then
-        local C
-        C=$(cat "$PROGRESS_FILE")
-        echo $((C + 1)) > "$PROGRESS_FILE"
-        return 0
-    fi
-
-    # Step 3: Rasterize to GeoTIFF
-    local TMP_TIF="/tmp/overture_bld_${NAME}.tif"
-    gdal_rasterize -q \
-        -a height \
-        -tr 0.000277778 0.000277778 \
-        -te "$LON_MIN" "$LAT_MIN" "$LON_MAX" "$LAT_MAX" \
-        -ot Byte -a_nodata 0 -init 0 \
-        "$PQ" "$TMP_TIF" 2>/dev/null || {
-        rm -f "$TMP_TIF"
-        local C
-        C=$(cat "$PROGRESS_FILE")
-        echo $((C + 1)) > "$PROGRESS_FILE"
-        return 0
-    }
-
-    # Step 4: Convert to raw u8, clamp to [0,249]
+    # Step 2: Rasterize ALL buildings (not just those with height)
+    # Height priority: Overture height > OSM building:levels × 3m > 6m default
     python3 -c "
+import pyarrow.parquet as pq
 import numpy as np
-from osgeo import gdal
+from osgeo import ogr, gdal, osr
 gdal.UseExceptions()
-ds = gdal.Open('$TMP_TIF')
-arr = ds.GetRasterBand(1).ReadAsArray()
-# Ensure 3601x3601 — gdal_rasterize may produce 3600x3600 due to rounding
-if arr.shape != (3601, 3601):
-    import scipy.ndimage
-    arr = scipy.ndimage.zoom(arr, (3601/arr.shape[0], 3601/arr.shape[1]), order=0)
-arr = np.clip(np.nan_to_num(arr, nan=0.0), 0, 249).astype(np.uint8)
-arr.tofile('$OUT')
-ds = None
-" 2>/dev/null || rm -f "$OUT"
 
-    rm -f "$TMP_TIF"
+t = pq.read_table('$PQ', columns=['geometry', 'height'])
+if len(t) == 0:
+    raise SystemExit(0)
+
+drv = ogr.GetDriverByName('Memory')
+ds = drv.CreateDataSource('')
+srs = osr.SpatialReference()
+srs.ImportFromEPSG(4326)
+lyr = ds.CreateLayer('bld', srs, ogr.wkbPolygon)
+lyr.CreateField(ogr.FieldDefn('height', ogr.OFTReal))
+
+DEFAULT_HEIGHT = 6.0
+geoms = t.column('geometry').to_pylist()
+heights = t.column('height').to_pylist()
+for g, h in zip(geoms, heights):
+    if g is None: continue
+    feat = ogr.Feature(lyr.GetLayerDefn())
+    geom = ogr.CreateGeometryFromWkb(bytes(g))
+    if geom is None: continue
+    feat.SetGeometry(geom)
+    height = min(float(h), 249.0) if h is not None else DEFAULT_HEIGHT
+    feat.SetField('height', height)
+    lyr.CreateFeature(feat)
+
+# Node-registered 3601×3601: pixel centers at integer degrees
+N = 3601
+hp = 0.5 / (N - 1)  # half-pixel for edge extension
+target = gdal.GetDriverByName('MEM').Create('', N, N, 1, gdal.GDT_Byte)
+target.SetGeoTransform([$LON_MIN - hp, 1.0 / (N - 1), 0, $LAT_MAX + hp, 0, -1.0 / (N - 1)])
+target_srs = osr.SpatialReference()
+target_srs.ImportFromEPSG(4326)
+target.SetProjection(target_srs.ExportToWkt())
+band = target.GetRasterBand(1)
+band.Fill(0)
+band.SetNoDataValue(0)
+
+gdal.RasterizeLayer(target, [1], lyr, options=['ATTRIBUTE=height'])
+arr = np.clip(band.ReadAsArray(), 0, 249).astype(np.uint8)
+arr.tofile('$OUT')
+" 2>/dev/null || rm -f "$OUT"
 
     # Progress
     local C

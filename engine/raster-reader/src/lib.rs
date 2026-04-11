@@ -22,17 +22,17 @@ impl RealRasters {
     pub fn new(data_dir: &Path) -> Self {
         // DEM: Copernicus GLO-30 primary (.hgt), SRTM fallback (.hgt)
         let dem = TileStore::new(
-            data_dir.join("dem/copernicus"), 1201, DType::I16BE, Interp::Bilinear, 0.0, ".hgt",
+            data_dir.join("dem/copernicus"), 3601, DType::I16BE, Interp::Bilinear, 0.0, ".hgt",
         ).with_alt_dir(data_dir.join("dem/srtm"), ".hgt");
 
-        // Building height: u8 (meters), 1201×1201, nearest-neighbor
+        // Building height: u8 (meters), 3601×3601 (Overture 30m), nearest-neighbor
         let building = TileStore::new(
-            data_dir.join("rasters/building"), 1201, DType::U8, Interp::Nearest, 0.0, ".raw",
+            data_dir.join("rasters/building"), 3601, DType::U8, Interp::Nearest, 0.0, ".raw",
         );
 
-        // Forest cover: u8 (0-100%), 1201×1201, nearest-neighbor
+        // Forest cover: u8 (0/100%), 3601×3601 (WorldCover 30m), nearest-neighbor
         let forest = TileStore::new(
-            data_dir.join("rasters/forest"), 1201, DType::U8, Interp::Nearest, 0.0, ".raw",
+            data_dir.join("rasters/forest"), 3601, DType::U8, Interp::Nearest, 0.0, ".raw",
         );
 
         // IMD ground type: u8 (0-100 imperviousness), 401×401, bilinear
