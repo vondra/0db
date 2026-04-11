@@ -15,9 +15,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-GHSL_DIR="data/prepared/rasters/building"
 PARQUET_DIR="data/enrichment/global/overture-buildings/parquet"
 RASTER_DIR="data/enrichment/global/overture-buildings/rasterized"
+BUILDING_DIR="data/prepared/rasters/building"
 JOBS="${JOBS:-16}"
 PREFIX="${2:-}"
 EXPECTED_SIZE=12967201   # 3601 * 3601 * 1 byte
@@ -48,9 +48,9 @@ fi
 
 mkdir -p "$PARQUET_DIR" "$RASTER_DIR"
 
-# ── Build tile list from existing GHSL tiles (land mask) ────────────────
+# ── Build tile list from parquet cache (downloaded Overture tiles) ──────
 TILE_LIST="/tmp/overture_bld_tiles.txt"
-ls "$GHSL_DIR"/*.raw 2>/dev/null | sed 's/.*\///; s/\.raw//' | sort > "$TILE_LIST"
+ls "$PARQUET_DIR"/*.parquet 2>/dev/null | sed 's/.*\///; s/\.parquet//' | sort > "$TILE_LIST"
 
 if [ -n "$FILTER_PREFIX" ]; then
     grep "^${FILTER_PREFIX}" "$TILE_LIST" > "${TILE_LIST}.filtered" || true
