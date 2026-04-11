@@ -253,6 +253,14 @@ fn compute_roads(
             else { rasters.ground_g(receiver.lat, receiver.lon) };
         let flc = geo::finite_line_correction(seg.length_m as f64, seg.dist_m, seg.fraction);
 
+        // Early exit: skip if free-field < threshold (matching pipeline)
+        {
+            let ef = road::build_period_flows(light, medium, heavy, moto, speed, time_dist.day_pct, 12.0);
+            let ee = road::line_source_emission(&ef, surf_corr);
+            let me = ee.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            if geo::below_free_field_threshold(me, seg.dist_m, 0.0) { continue; }
+        }
+
         // Per-segment path effects
         let terrain_atten = propagation::path_effects::terrain_attenuation(
             rasters, seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon,
@@ -477,6 +485,13 @@ fn compute_railways(
         let q_frt = seg.trains_freight.max(0) as f64;
         if q_pax + q_frt <= 0.0 { continue; }
 
+        // Early exit: skip if free-field < threshold (matching pipeline)
+        {
+            let ee = railway::railway_emission(rail_type, speed, q_pax * day_pct, q_frt * day_pct);
+            let me = ee.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            if geo::below_free_field_threshold(me, seg.dist_m, 0.0) { continue; }
+        }
+
         let rcv_alt = receiver.altitude_m();
 
         // Bridge: hard surface below → G=0 (no ground absorption). ISO 9613-2 §7.3.1
@@ -646,6 +661,12 @@ fn compute_point_sources(
         let rcv_alt = receiver.altitude_m();
         let d_slant = geo::slant_dist(src.dist_m, src_alt, rcv_alt);
         if d_slant < 1.0 { continue; }
+
+        // Early exit: skip if free-field < threshold (matching pipeline)
+        {
+            let me = src.lw_day.iter().cloned().fold(f32::NEG_INFINITY, f32::max) as f64;
+            if geo::below_free_field_threshold(me, src.dist_m, 0.0) { continue; }
+        }
 
         // Per-source path effects
         let terrain_atten = propagation::path_effects::terrain_attenuation(
