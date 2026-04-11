@@ -62,6 +62,7 @@ mod tests {
             vegetation: VegetationBreakdown::default(),
             received_bands: [0.0; crate::types::NUM_BANDS],
             geometry: None,
+            metadata: None,
         }
     }
 
