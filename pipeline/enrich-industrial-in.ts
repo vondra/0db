@@ -1,0 +1,266 @@
+/**
+ * Enrich IN industrial.arrow with Living Atlas India datasets.
+ *
+ * Sources:
+ *
+ * 1. **Power Plants in India** — 1,459 plants with GPS, fuel, capacity, owner.
+ *    URL: `livingatlas.esri.in/server/rest/services/India/Power_Plants/MapServer/0`
+ *    Breakdown: Coal 251, Gas 68, Oil 16, Hydro 231, Nuclear (few), Wind 106,
+ *    Solar 737, Biomass 50. Supplements WRI GPPD (which stopped updating in 2022
+ *    and misses post-2022 solar megaprojects).
+ *
+ * 2. **Industrial Land Parks in India** — 4,924 industrial parks with CPCB
+ *    pollution classification (Red / Orange / Green / White). Red = highly
+ *    polluting (cement, chemicals, metallurgy), Green = clean industry.
+ *    URL: `livingatlas.esri.in/server/rest/services/Industry/Industrial_Land_Park/MapServer/0`
+ *    Breakdown: Red=641, Orange=645, Green=1,443, White=297
+ *
+ * 3. **Cement Plants in India 2024** — 341 plants (polygons, with capacity).
+ *    URL: `livingatlas.esri.in/server/rest/services/Cement_Plants_in_India_2024/MapServer/0`
+ *
+ * Since our pipeline uses a shared `nace-lookup.json` keyed by OSM `osm_id`,
+ * this script writes entries there for:
+ *   - Power plants → NACE 35 (electricity generation)
+ *   - Cement plants → NACE 23 (manufacture of non-metallic mineral products)
+ *   - Industrial parks → OSM `landuse=industrial` polygons get NACE proxy from
+ *     the park's CPCB pollution class (Red→cement-like profile, Orange→chemical,
+ *     Green→light manufacturing, White→service)
+ *
+ * Spatial match: 500m for power/cement plants, 1000m for industrial parks
+ * (since parks are large polygons).
+ *
+ * Usage:
+ *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-in.ts
+ */
+
+import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { tableFromIPC } from 'apache-arrow'
+import { cellToLatLng } from 'h3-js'
+
+const YEAR = process.env.DATA_YEAR || '2025'
+const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
+const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/in`)
+const NACE_LOOKUP_PATH = resolve(import.meta.dirname, `../data/prepared/nace-lookup.json`)
+
+const IN_BBOX: [number, number, number, number] = [6.5, 68.0, 37.0, 98.0]
+const EXCLUDE_ZONES: Array<[number, number, number, number]> = [
+  [23.0, 68.0, 37.0, 74.0],   // Pakistan
+  [28.0, 76.0, 37.0, 98.0],   // China
+  [26.3, 80.0, 30.5, 88.3],   // Nepal
+  [26.6, 88.7, 28.6, 92.2],   // Bhutan
+  [20.5, 88.0, 26.8, 92.8],   // Bangladesh
+  [9.0, 93.5, 28.5, 102.0],   // Myanmar
+  [5.9, 79.5, 9.9, 82.0],     // Sri Lanka
+]
+function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
+  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
+}
+function inExcluded(lat: number, lon: number): boolean {
+  for (const b of EXCLUDE_ZONES) if (inBbox(lat, lon, b)) return true
+  return false
+}
+
+function flatDistM(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
+  const dx = (lon2 - lon1) * 111320 * cosLat
+  const dy = (lat2 - lat1) * 110540
+  return Math.sqrt(dx * dx + dy * dy)
+}
+
+// ── Load Living Atlas industrial sources ──
+
+interface IndustrialSite {
+  lat: number
+  lon: number
+  nace: string
+  name: string
+  source: string
+}
+
+function loadPowerPlants(): IndustrialSite[] {
+  const path = resolve(CACHE_DIR, 'power-plants.geojson')
+  if (!existsSync(path)) return []
+  const fc = JSON.parse(readFileSync(path, 'utf-8'))
+  const out: IndustrialSite[] = []
+  for (const f of fc.features || []) {
+    const g = f.geometry
+    if (!g || g.type !== 'Point') continue
+    const [lon, lat] = g.coordinates
+    if (!inBbox(lat, lon, IN_BBOX) || inExcluded(lat, lon)) continue
+    out.push({
+      lat, lon,
+      nace: '35',  // Electricity, gas, steam, air conditioning supply
+      name: f.properties?.power_plant || f.properties?.plant_name || 'Power Plant',
+      source: 'Living Atlas India Power Plants',
+    })
+  }
+  return out
+}
+
+function loadCementPlants(): IndustrialSite[] {
+  const path = resolve(CACHE_DIR, 'cement-plants.geojson')
+  if (!existsSync(path)) return []
+  const fc = JSON.parse(readFileSync(path, 'utf-8'))
+  const out: IndustrialSite[] = []
+  for (const f of fc.features || []) {
+    const g = f.geometry
+    if (!g) continue
+    // Polygon — use centroid
+    let lat = 0, lon = 0, n = 0
+    if (g.type === 'Polygon') {
+      for (const [x, y] of g.coordinates[0]) { lon += x; lat += y; n++ }
+    } else if (g.type === 'Point') {
+      [lon, lat] = g.coordinates
+      n = 1
+    } else if (g.type === 'MultiPolygon') {
+      for (const [x, y] of g.coordinates[0][0]) { lon += x; lat += y; n++ }
+    }
+    if (n === 0) continue
+    lon /= n; lat /= n
+    if (!inBbox(lat, lon, IN_BBOX) || inExcluded(lat, lon)) continue
+    out.push({
+      lat, lon,
+      nace: '23',  // Manufacture of other non-metallic mineral products (cement)
+      name: f.properties?.plant_name || f.properties?.name || 'Cement Plant',
+      source: 'Living Atlas India Cement Plants 2024',
+    })
+  }
+  return out
+}
+
+function loadIndustrialParks(): IndustrialSite[] {
+  const path = resolve(CACHE_DIR, 'industrial-parks.geojson')
+  if (!existsSync(path)) return []
+  const fc = JSON.parse(readFileSync(path, 'utf-8'))
+  const out: IndustrialSite[] = []
+  for (const f of fc.features || []) {
+    const g = f.geometry
+    if (!g) continue
+    let lat = 0, lon = 0, n = 0
+    if (g.type === 'Point') { [lon, lat] = g.coordinates; n = 1 }
+    else if (g.type === 'Polygon') {
+      for (const [x, y] of g.coordinates[0]) { lon += x; lat += y; n++ }
+    } else if (g.type === 'MultiPolygon') {
+      for (const [x, y] of g.coordinates[0][0]) { lon += x; lat += y; n++ }
+    }
+    if (n === 0) continue
+    lon /= n; lat /= n
+    if (!inBbox(lat, lon, IN_BBOX) || inExcluded(lat, lon)) continue
+    // Map pollution_cat to NACE
+    const pollutionCat = (f.properties?.pollution_cat || '').toLowerCase()
+    let nace = '25'  // default metal products (moderate)
+    if (pollutionCat.includes('red')) nace = '24'   // basic metals (highly polluting)
+    else if (pollutionCat.includes('orange')) nace = '20'  // chemicals
+    else if (pollutionCat.includes('green')) nace = '13'   // textiles (light industry)
+    else if (pollutionCat.includes('white')) nace = '62'   // service (IT parks etc.)
+    out.push({
+      lat, lon,
+      nace,
+      name: f.properties?.park_name || f.properties?.name || 'Industrial Park',
+      source: `Living Atlas India Industrial Land Park (${pollutionCat})`,
+    })
+  }
+  return out
+}
+
+// ── Match industrial sites to OSM industrial polygons ──
+
+async function main() {
+  console.log(`=== IN Industrial Enrichment — Living Atlas India (${YEAR}) ===\n`)
+
+  const power = loadPowerPlants()
+  const cement = loadCementPlants()
+  const parks = loadIndustrialParks()
+  console.log(`  Power plants: ${power.length}`)
+  console.log(`  Cement plants: ${cement.length}`)
+  console.log(`  Industrial parks: ${parks.length}`)
+
+  // Combine all, prioritise in order: cement > power > parks (most specific first)
+  const allSites = [...cement, ...power, ...parks]
+  console.log(`  Total industrial sites: ${allSites.length}`)
+
+  // Spatial grid
+  const grid = new Map<string, IndustrialSite[]>()
+  for (const s of allSites) {
+    const key = `${Math.floor(s.lat * 10)}_${Math.floor(s.lon * 10)}`  // ~10 km cells
+    if (!grid.has(key)) grid.set(key, [])
+    grid.get(key)!.push(s)
+  }
+
+  // Load existing nace-lookup
+  let existing: Record<string, any> = {}
+  if (existsSync(NACE_LOOKUP_PATH)) {
+    try { existing = JSON.parse(readFileSync(NACE_LOOKUP_PATH, 'utf-8')) } catch {}
+  }
+  console.log(`  Existing nace-lookup.json entries: ${Object.keys(existing).length}`)
+
+  // Scan IN hexes industrial.arrow
+  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
+  const hexDirs: string[] = []
+  for (const hex of allHexes) {
+    try {
+      const [lat, lon] = cellToLatLng(hex)
+      if (inBbox(lat, lon, IN_BBOX) && existsSync(resolve(H3R4_DIR, hex, 'industrial.arrow'))) hexDirs.push(hex)
+    } catch {}
+  }
+  console.log(`  IN-bbox hexes with industrial.arrow: ${hexDirs.length}`)
+
+  let totalSites = 0, matched = 0, newEntries = 0
+  const lookup: Record<string, any> = { ...existing }
+
+  for (const hex of hexDirs) {
+    try {
+      const buf = readFileSync(resolve(H3R4_DIR, hex, 'industrial.arrow'))
+      const table = tableFromIPC(buf)
+      const n = table.numRows
+      if (n === 0) continue
+      const osmId = table.getChild('osm_id')
+      const centroidLat = table.getChild('centroid_lat') ?? table.getChild('lat')
+      const centroidLon = table.getChild('centroid_lon') ?? table.getChild('lon')
+      if (!osmId || !centroidLat || !centroidLon) continue
+
+      for (let i = 0; i < n; i++) {
+        totalSites++
+        const lat = centroidLat.get(i) as number
+        const lon = centroidLon.get(i) as number
+        if (lat == null || lon == null) continue
+        if (!inBbox(lat, lon, IN_BBOX) || inExcluded(lat, lon)) continue
+
+        // Find nearest industrial site within 1000m
+        const baseLat = Math.floor(lat * 10)
+        const baseLon = Math.floor(lon * 10)
+        let best: IndustrialSite | null = null
+        let bestDist = 1000
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const cell = grid.get(`${baseLat + dy}_${baseLon + dx}`)
+            if (!cell) continue
+            for (const s of cell) {
+              const d = flatDistM(lat, lon, s.lat, s.lon)
+              if (d < bestDist) { bestDist = d; best = s }
+            }
+          }
+        }
+        if (best) {
+          const id = String(osmId.get(i))
+          if (!lookup[id]) newEntries++
+          lookup[id] = { nace2: best.nace, name: best.name, source: best.source }
+          matched++
+        }
+      }
+    } catch (e: any) {
+      console.log(`  ${hex}: ${e.message.substring(0, 60)}`)
+    }
+  }
+
+  writeFileSync(NACE_LOOKUP_PATH, JSON.stringify(lookup, null, 2))
+  console.log(`\n=== Results ===`)
+  console.log(`  OSM industrial sites scanned: ${totalSites.toLocaleString()}`)
+  console.log(`  Matched to Living Atlas:      ${matched.toLocaleString()}`)
+  console.log(`  New nace-lookup entries:      ${newEntries.toLocaleString()}`)
+  console.log(`  Total nace-lookup entries:    ${Object.keys(lookup).length.toLocaleString()}`)
+  console.log(`\n=== Done ===`)
+}
+
+main().catch(err => { console.error('Error:', err); process.exit(1) })

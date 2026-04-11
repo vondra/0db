@@ -19,17 +19,29 @@ const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = process.env.H3R4_DIR || resolve(import.meta.dirname, `../../../data/prepared/${YEAR}/h3r4`)
 
 try {
+  const { copyFileSync, statSync } = await import('node:fs')
   const nodePath = SOURCE_READER_PATH.replace('.so', '.node')
-  if (!existsSync(nodePath) && existsSync(SOURCE_READER_PATH)) {
-    const { symlinkSync } = await import('node:fs')
-    try { symlinkSync(SOURCE_READER_PATH, nodePath) } catch {}
+
+  if (!existsSync(SOURCE_READER_PATH)) {
+    throw new Error(
+      `libsource_reader.so not found — run: cd engine/source-reader && cargo build --release`,
+    )
   }
-  if (existsSync(nodePath) || existsSync(SOURCE_READER_PATH)) {
-    sourceModule = req(existsSync(nodePath) ? nodePath : SOURCE_READER_PATH)
-    if (sourceModule && existsSync(H3R4_DIR)) {
-      const msg = sourceModule.sourceInit(H3R4_DIR)
-      console.log(`noise-onfly-v2: ${msg}`)
-    }
+
+  // Always copy so every server start dlopens the latest cargo build.
+  // The prior guarded copy kept a stale .node once it existed.
+  copyFileSync(SOURCE_READER_PATH, nodePath)
+
+  const st = statSync(SOURCE_READER_PATH)
+  console.log(
+    `noise-onfly-v2: loaded ${nodePath} ` +
+    `(mtime=${st.mtime.toISOString()} size=${st.size})`,
+  )
+
+  sourceModule = req(nodePath)
+  if (sourceModule && existsSync(H3R4_DIR)) {
+    const msg = sourceModule.sourceInit(H3R4_DIR)
+    console.log(`noise-onfly-v2: ${msg}`)
   }
 } catch (err) {
   console.warn('noise-onfly-v2: source-reader not available:', (err as Error).message)

@@ -26,6 +26,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8 } from 'apache-arrow'
+import { cellToLatLng } from 'h3-js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -187,8 +188,20 @@ function parseStations(geojson: any): Map<string, TgmStation[]> {
 // ── Step 3: Enrich Arrow files ──
 
 function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
-  const hexDirs = readdirSync(H3R4_DIR).filter(d =>
+  // Pre-filter hexes to Italy bbox using H3 center (no file I/O)
+  const allHexes = readdirSync(H3R4_DIR).filter(d =>
     d.length === 15 && d.endsWith('ffffffff'))
+  const hexDirs: string[] = []
+  for (const hex of allHexes) {
+    try {
+      const [lat, lon] = cellToLatLng(hex)
+      if (lat >= IT_BBOX.minLat && lat <= IT_BBOX.maxLat &&
+          lon >= IT_BBOX.minLon && lon <= IT_BBOX.maxLon) {
+        hexDirs.push(hex)
+      }
+    } catch {}
+  }
+  console.log(`  Italian hexes (H3 bbox): ${hexDirs.length} of ${allHexes.length}`)
 
   let totalRoads = 0
   let totalMatched = 0
@@ -271,8 +284,8 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
         if (d < bestDist) { best = candidates[j]; bestDist = d }
       }
 
-      // Max 10km — stations can be sparse on long roads
-      if (bestDist > 10_000) continue
+      // Max 30km — Italian TGM stations are sparse (~653 stations for 300K km of road)
+      if (bestDist > 30_000) continue
 
       aadtLight[i] = best.aadt
       trafficSource[i] = 1
@@ -326,8 +339,8 @@ function normalizeAnasRef(strada: string): string {
   // Remove suffixes like "dir", "bis", "ter", "quater", "radd"
   const base = s.replace(/(dir(-[a-z])?|bis|ter|quater|radd)$/i, '').trim()
 
-  // A-roads (Autostrade): A1, A14, A90 etc.
-  const aMatch = base.match(/^A(\d+)$/i)
+  // A-roads (Autostrade): A01, A1, A14, A90 etc. (strip leading zeros)
+  const aMatch = base.match(/^A\s*0*(\d+)$/i)
   if (aMatch) return `A${aMatch[1]}`
 
   // RA-roads (Raccordi Autostradali): RA05 -> RA 5

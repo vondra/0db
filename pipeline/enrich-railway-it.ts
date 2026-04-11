@@ -30,12 +30,55 @@ const CACHE_FREQUENCIES = resolve(CACHE_DIR, 'gtfs-stop-frequencies.json')
 const forceDownload = process.argv.includes('--force-download')
 const enrichOnly = process.argv.includes('--enrich-only')
 
-// Italy GTFS feeds — Trenitalia national timetable
-// Primary: MobilityData catalog (updated daily)
-const GTFS_URL = 'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-marche-trenitalia-gtfs-1319.zip?alt=media'
+// Italy has no single national rail GTFS. We stitch together regional feeds
+// from Mobility Database (mdb-*). Each feed covers a different part of Italy.
+interface FeedConfig {
+  id: string
+  name: string
+  urls: string[]  // Try in order; first success wins
+}
 
-// Fallback: Toscana open data portal (same Trenitalia national GTFS)
-const GTFS_FALLBACK_URL = 'https://dati.toscana.it/dataset/8bb8f8fe-fe7d-41d0-90dc-49f2456180d1/resource/4f85393b-357d-443d-8378-65de4198505f/download/trenitalia.gtfs'
+const FEEDS: FeedConfig[] = [
+  {
+    id: 'toscana-trenitalia',
+    name: 'Trenitalia (Toscana/Marche/Umbria/Lazio)',
+    urls: [
+      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-marche-trenitalia-gtfs-1319.zip?alt=media',
+      'https://dati.toscana.it/dataset/8bb8f8fe-fe7d-41d0-90dc-49f2456180d1/resource/4f85393b-357d-443d-8378-65de4198505f/download/trenitalia.gtfs',
+    ],
+  },
+  {
+    id: 'trenord-lombardia',
+    name: 'Trenord (Lombardia)',
+    urls: [
+      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-lombardia-trenord-gtfs-855.zip?alt=media',
+      'https://www.dati.lombardia.it/download/3z4k-mxz9/application%2Fzip',
+    ],
+  },
+  {
+    id: 'gtt-piemonte',
+    name: 'GTT Servizio Ferroviario (Piemonte)',
+    urls: [
+      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-piedmont-turin-gruppo-torinese-trasporti-gtfs-2687.zip?alt=media',
+      'https://www.gtt.to.it/open_data/gtt_gtfs.zip',
+    ],
+  },
+  {
+    id: 'ferrotramviaria-puglia',
+    name: 'Ferrotramviaria (Puglia — Bari area)',
+    urls: [
+      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-puglia-ferrotramviaria-gtfs-1058.zip?alt=media',
+    ],
+  },
+  {
+    id: 'trenitalia-sardegna',
+    name: 'Trenitalia (Sardegna)',
+    urls: [
+      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-regione-autonoma-della-sardegna-trenitalia-gtfs-2997.zip?alt=media',
+      'https://www.sardegnamobilita.it/opendata/R_SARDEGTRASP_00008_1_dati_trenitalia.zip',
+    ],
+  },
+]
 
 // Italy bounding box
 const IT_BBOX: [number, number, number, number] = [35.5, 6.6, 47.1, 18.6] // [minLat, minLon, maxLat, maxLon]
@@ -166,80 +209,91 @@ function findTargetWednesday(calendarRows: Record<string, string>[]): string {
   return mid.toISOString().substring(0, 10).replace(/-/g, '')
 }
 
-// ── Step 1: Download GTFS feed ──
+// ── Step 1: Download GTFS feeds ──
 
-async function downloadGtfs(): Promise<string> {
-  const extractDir = resolve(CACHE_DIR, 'gtfs-extracted')
+/**
+ * Download all configured GTFS feeds and return a list of extraction directories.
+ * Each feed is cached in its own subdirectory so multiple feeds can coexist.
+ */
+async function downloadAllGtfs(): Promise<Array<{ feed: FeedConfig; dir: string }>> {
+  const results: Array<{ feed: FeedConfig; dir: string }> = []
 
-  if (!forceDownload && existsSync(resolve(extractDir, 'stops.txt'))) {
-    console.log(`  Using cached GTFS: ${extractDir}`)
-    return extractDir
-  }
-  if (enrichOnly) {
-    if (!existsSync(resolve(extractDir, 'stops.txt'))) {
-      console.error('ERROR: --enrich-only but no cached GTFS found')
-      process.exit(1)
+  for (const feed of FEEDS) {
+    const extractDir = resolve(CACHE_DIR, `gtfs-${feed.id}`)
+
+    if (!forceDownload && existsSync(resolve(extractDir, 'stops.txt'))) {
+      console.log(`  [${feed.id}] Using cached GTFS: ${extractDir}`)
+      results.push({ feed, dir: extractDir })
+      continue
     }
-    return extractDir
-  }
-
-  mkdirSync(CACHE_DIR, { recursive: true })
-  const zipPath = resolve(CACHE_DIR, 'gtfs-it.zip')
-
-  // Try primary URL first, then fallback
-  let downloaded = false
-  for (const url of [GTFS_URL, GTFS_FALLBACK_URL]) {
-    try {
-      console.log(`  Downloading GTFS from ${url}...`)
-      const res = await fetch(url, {
-        signal: AbortSignal.timeout(600_000), // 10 min for large feeds
-        headers: { 'Accept': 'application/zip, application/octet-stream, */*' },
-        redirect: 'follow',
-      })
-      if (!res.ok) {
-        console.log(`  HTTP ${res.status} from ${url}, trying next...`)
+    if (enrichOnly) {
+      if (!existsSync(resolve(extractDir, 'stops.txt'))) {
+        console.log(`  [${feed.id}] --enrich-only but no cached GTFS, skipping`)
         continue
       }
-      const buf = Buffer.from(await res.arrayBuffer())
-      writeFileSync(zipPath, buf)
-      console.log(`  Downloaded: ${(buf.length / 1e6).toFixed(1)} MB`)
-      downloaded = true
-      break
-    } catch (err: any) {
-      console.log(`  Failed: ${err.message}, trying next...`)
+      results.push({ feed, dir: extractDir })
+      continue
     }
-  }
 
-  if (!downloaded) {
-    throw new Error('Failed to download Italy GTFS feed from all sources')
-  }
+    mkdirSync(CACHE_DIR, { recursive: true })
+    const zipPath = resolve(CACHE_DIR, `gtfs-${feed.id}.zip`)
 
-  // Extract
-  mkdirSync(extractDir, { recursive: true })
-  execSync(`unzip -o -q "${zipPath}" -d "${extractDir}"`, { timeout: 120_000 })
-
-  // Verify essential files
-  for (const f of ['stops.txt', 'stop_times.txt', 'trips.txt', 'routes.txt']) {
-    if (!existsSync(resolve(extractDir, f))) {
-      throw new Error(`GTFS feed missing required file: ${f}`)
+    let downloaded = false
+    for (const url of feed.urls) {
+      try {
+        console.log(`  [${feed.id}] Downloading from ${url}...`)
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(600_000),
+          headers: { 'Accept': 'application/zip, application/octet-stream, */*' },
+          redirect: 'follow',
+        })
+        if (!res.ok) {
+          console.log(`  [${feed.id}] HTTP ${res.status}, trying next...`)
+          continue
+        }
+        const buf = Buffer.from(await res.arrayBuffer())
+        writeFileSync(zipPath, buf)
+        console.log(`  [${feed.id}] Downloaded: ${(buf.length / 1e6).toFixed(1)} MB`)
+        downloaded = true
+        break
+      } catch (err: any) {
+        console.log(`  [${feed.id}] Failed: ${err.message}, trying next...`)
+      }
     }
+
+    if (!downloaded) {
+      console.log(`  [${feed.id}] All URLs failed — skipping this feed`)
+      continue
+    }
+
+    mkdirSync(extractDir, { recursive: true })
+    execSync(`unzip -o -q "${zipPath}" -d "${extractDir}"`, { timeout: 120_000 })
+
+    for (const f of ['stops.txt', 'stop_times.txt', 'trips.txt', 'routes.txt']) {
+      if (!existsSync(resolve(extractDir, f))) {
+        console.log(`  [${feed.id}] Missing ${f}, skipping feed`)
+        downloaded = false
+        break
+      }
+    }
+
+    execSync(`rm -f "${zipPath}"`)
+
+    if (downloaded) results.push({ feed, dir: extractDir })
   }
 
-  // Clean up ZIP
-  execSync(`rm -f "${zipPath}"`)
+  if (results.length === 0) {
+    throw new Error('Failed to download any Italy GTFS feed')
+  }
 
-  return extractDir
+  console.log(`  ${results.length}/${FEEDS.length} IT feeds available`)
+  return results
 }
 
 // ── Step 2: Parse GTFS and compute stop frequencies ──
 
-async function computeStopFrequencies(extractDir: string): Promise<StopTrainCount[]> {
-  if (!forceDownload && existsSync(CACHE_FREQUENCIES)) {
-    console.log(`  Using cached stop frequencies: ${CACHE_FREQUENCIES}`)
-    return JSON.parse(readFileSync(CACHE_FREQUENCIES, 'utf-8'))
-  }
-
-  console.log(`  Parsing GTFS files...`)
+async function computeStopFrequenciesForFeed(feed: FeedConfig, extractDir: string): Promise<StopTrainCount[]> {
+  console.log(`\n  [${feed.id}] Parsing GTFS files...`)
   const startTime = Date.now()
 
   // ── routes.txt: route_id -> route_type ──
@@ -464,27 +518,43 @@ async function computeStopFrequencies(extractDir: string): Promise<StopTrainCoun
   }
   const deduped = [...dedupMap.values()]
 
-  console.log(`  ${deduped.length} stops with train counts (${resolvedViaParent} resolved via parent station)`)
+  console.log(`  [${feed.id}] ${deduped.length} stops with train counts (${resolvedViaParent} resolved via parent station)`)
 
-  // Stats
-  const paxCounts = deduped.map(s => s.trains_passenger).sort((a, b) => b - a)
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+  console.log(`  [${feed.id}] GTFS parsing took ${elapsed}s`)
+
+  return deduped
+}
+
+/** Merge stop counts from multiple feeds, deduplicating by coordinates. */
+function mergeStopCounts(perFeedCounts: StopTrainCount[][]): StopTrainCount[] {
+  const mergeMap = new Map<string, StopTrainCount>()
+  for (const counts of perFeedCounts) {
+    for (const sc of counts) {
+      const key = `${sc.lat.toFixed(4)}_${sc.lon.toFixed(4)}`
+      const existing = mergeMap.get(key)
+      if (existing) {
+        existing.trains_passenger += sc.trains_passenger
+        existing.trains_freight += sc.trains_freight
+      } else {
+        mergeMap.set(key, { ...sc })
+      }
+    }
+  }
+  const merged = [...mergeMap.values()]
+
+  const paxCounts = merged.map(s => s.trains_passenger).sort((a, b) => b - a)
   if (paxCounts.length > 0) {
+    console.log(`\n  Merged: ${merged.length} unique stops`)
     console.log(`  Train frequency: max=${paxCounts[0]}, median=${paxCounts[Math.floor(paxCounts.length / 2)]}, min=${paxCounts[paxCounts.length - 1]}`)
-    const top5 = deduped.sort((a, b) => b.trains_passenger - a.trains_passenger).slice(0, 5)
+    const top5 = [...merged].sort((a, b) => b.trains_passenger - a.trains_passenger).slice(0, 5)
     console.log(`  Busiest stops:`)
     for (const s of top5) {
       console.log(`    ${s.trains_passenger} trains/day: ${s.name} (${s.lat.toFixed(4)}, ${s.lon.toFixed(4)})`)
     }
   }
 
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-  console.log(`  GTFS parsing took ${elapsed}s`)
-
-  // Cache
-  writeFileSync(CACHE_FREQUENCIES, JSON.stringify(deduped))
-  console.log(`  Cached to ${CACHE_FREQUENCIES}`)
-
-  return deduped
+  return merged
 }
 
 // ── Step 3: Match stops to railway segments and write Arrow ──
@@ -664,7 +734,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
 // ── Main ──
 
 async function main() {
-  console.log(`=== IT Railway Enrichment — GTFS (${YEAR}) ===\n`)
+  console.log(`=== IT Railway Enrichment — Multi-feed GTFS (${YEAR}) ===\n`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
   console.log(`  Cache: ${CACHE_DIR}\n`)
 
@@ -673,16 +743,34 @@ async function main() {
     process.exit(1)
   }
 
-  const extractDir = await downloadGtfs()
-  const stopCounts = await computeStopFrequencies(extractDir)
+  // Try to reuse cached merged frequencies if present and not forced
+  let merged: StopTrainCount[]
+  if (!forceDownload && existsSync(CACHE_FREQUENCIES)) {
+    console.log(`  Using cached merged stop frequencies: ${CACHE_FREQUENCIES}`)
+    merged = JSON.parse(readFileSync(CACHE_FREQUENCIES, 'utf-8'))
+    console.log(`  ${merged.length} stops in cache`)
+  } else {
+    const feeds = await downloadAllGtfs()
 
-  if (stopCounts.length === 0) {
+    const perFeedCounts: StopTrainCount[][] = []
+    for (const { feed, dir } of feeds) {
+      const counts = await computeStopFrequenciesForFeed(feed, dir)
+      perFeedCounts.push(counts)
+    }
+
+    merged = mergeStopCounts(perFeedCounts)
+
+    writeFileSync(CACHE_FREQUENCIES, JSON.stringify(merged))
+    console.log(`  Cached merged frequencies to ${CACHE_FREQUENCIES}`)
+  }
+
+  if (merged.length === 0) {
     console.log(`\nNo GTFS data to enrich. Exiting.`)
     return
   }
 
   console.log(`\n  Enriching railways.arrow files...`)
-  enrichHexes(stopCounts)
+  enrichHexes(merged)
   console.log(`\n=== Done ===`)
 }
 

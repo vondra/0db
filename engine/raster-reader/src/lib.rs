@@ -35,9 +35,9 @@ impl RealRasters {
             data_dir.join("rasters/forest"), 3601, DType::U8, Interp::Nearest, 0.0, ".raw",
         );
 
-        // IMD ground type: u8 (0-100 imperviousness), 401×401, bilinear
+        // IMD ground type: u8 (0-100 imperviousness), 3601×3601 (WorldCover 30m), bilinear
         let imd = TileStore::new(
-            data_dir.join("rasters/imd"), 401, DType::U8, Interp::Bilinear, 50.0, ".raw",
+            data_dir.join("rasters/imd"), 3601, DType::U8, Interp::Bilinear, 50.0, ".raw",
         );
 
         RealRasters { dem, building, forest, imd }

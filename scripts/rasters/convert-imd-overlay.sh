@@ -55,8 +55,8 @@ for lat in $(seq "$LAT_MIN" "$LAT_MAX"); do
 
         TMP="/tmp/imd_overlay_${NAME}.tif"
         gdalwarp -q -t_srs EPSG:4326 \
-            -te $(node_extent $lon $lat 401) \
-            -ts 401 401 -r bilinear -ot Byte \
+            -te $(node_extent $lon $lat 3601) \
+            -ts 3601 3601 -r bilinear -ot Byte \
             "$SRC" "$TMP" 2>/dev/null || continue
 
         python3 -c "
