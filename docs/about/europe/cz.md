@@ -12,15 +12,20 @@ map: { center: [15.5, 49.8], zoom: 7 }
 
 ## Railway data
 
-- **Czech Railway Infrastructure Administration (SŽ)** — Track geometry and classification
-- **[SŽ daily train counts](https://provoz.spravazeleznic.cz/portal/ViewArticle.aspx?oid=2104272)** — "Počty vlaků" maps with actual daily train frequencies per line segment (2020–2025), used to calibrate emission tiers
+- **[CIS JR (Centrální informační systém jízdních řádů)](https://portal.cisjr.cz/pub/draha/celostatni/szdc/2026/)** — JR2026.zip national timetable: 13,252 train XML definitions, 8,556 trains running on a typical weekday, parsed into 6,742 station-pair segments (173,689 total passenger train movements per day)
+- **Matching**: CZPTT station codes matched to OSM railway stations by name, adjacent station-pair segments mapped to OSM railway geometry by GPS triangulation
+- **Result**: 528,123 Czech railway segments enriched with real passenger train counts (34.7% coverage on segments in matched hexes)
+- **Busiest**: Praha hl.n. ↔ Pha hl.n. Lc105-102 at 276 trains/day, Brno hl.n. přednádr. ↔ Brno hl.n. at 246/day
 - **[SŽ maximum line speeds](https://provoz.spravazeleznic.cz/portal/Show.aspx?path=/Data/Mapy/rychlosti.pdf)** — "Největší traťové rychlosti" map, used alongside OSM `maxspeed` tags
-- **OpenStreetMap** — Railway lines with type (main, regional, tram), `usage` (main/branch/industrial), and `maxspeed` tags
-- **Speed-dependent emission** using CNOSSOS-EU Annex IV / RMR: `Lw/m = Lw0 + 10·log₁₀(Q) + 30·log₁₀(v/v_ref)` where Q = trains/day from SZ data, v = line speed
-- Tier classification: high-speed corridor (250 trains/day, ≥120 km/h), main line (100 trains/day, ≥80 km/h), regional (40 trains/day), branch (20 trains/day), freight industrial (3 trains/day)
+- **Speed-dependent emission** using CNOSSOS-EU Annex IV / RMR: `Lw/m = Lw0 + 10·log₁₀(Q) + 30·log₁₀(v/v_ref)` where Q = trains/day from CZPTT, v = line speed
 - Typical Czech corridor speeds: I. corridor (Praha–Brno) up to 160 km/h, regional lines 80–100 km/h, tram 40–60 km/h
 - Vehicle mapping: RegioPanter/RegioShuttle → RMR Cat-8a (disc-braked EMU), older coaches → Cat-1 (cast iron), freight → Cat-4 (block-braked wagons — realistic for current Czech fleet)
-- Freight composition uses RMR Cat-4: block-braked wagons are still the majority of Czech freight fleet
+
+### Freight data gap
+
+The CIS JR JR2026.zip dataset contains **passenger trains only** (all 13,252 files are `PA_` prefix = passenger). Freight timetables (GVD) are managed internally by Správa železnic and **not publicly distributed** as machine-readable data. Only aggregated annual statistics are available in PDF form (Statistická ročenka SŽ).
+
+For now, `trains_freight` remains 0 in the enriched data. CNOSSOS-EU defaults are applied for major freight corridors (Děčín–Praha–Břeclav E65, Praha–Plzeň–Cheb E55, Brno–Přerov–Ostrava E30). The Czech freight fleet remains predominantly RMR Cat-4 (block-braked wagons).
 
 ## Industrial data
 

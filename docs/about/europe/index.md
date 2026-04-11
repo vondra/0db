@@ -81,6 +81,33 @@ These guidelines inform the color scale — locations above WHO thresholds appea
 - **Average annual noise (Lden)** — Day-evening-night weighted average over a full year. Evening noise gets a +5 dB penalty, night noise +10 dB, reflecting human sensitivity to noise during rest hours. Computed as: Lden = 10 × log₁₀((1/24) × (12 × 10^(Ld/10) + 4 × 10^((Le+5)/10) + 8 × 10^((Ln+10)/10))), where Ld is daytime (07:00-19:00), Le is evening (19:00-23:00), and Ln is nighttime (23:00-07:00).
 - **Night noise (Lnight)** — Average noise during 23:00-07:00, used for sleep disturbance assessment.
 
+## Continental enrichment
+
+European noise data is enriched at three levels: global baseline → continental datasets → national data.
+
+### Applied datasets
+
+| Dataset | Coverage | Impact | Status |
+|---------|----------|--------|--------|
+| **EU city traffic (AADT)** | 36 cities across 15 countries | Road segments get real traffic counts instead of defaults | Applied — 335K+ segments |
+| **GTFS railway timetables** | DE, CH, AT, NL, SE, NO, BE (7 feeds) | Railway segments get real train frequencies | Applied — 130K+ segments |
+| **GPPD power plants** | 34,936 plants worldwide (EU subset) | Industrial sites get NACE 35 classification | Applied — via nace-lookup.json |
+| **Copernicus IMD** | Europe-wide 10m raster | Ground effect G-factor overlay on WorldCover | Applied — in raster pipeline |
+
+### EU city traffic
+
+Source: "Harmonized Annual Averaged Traffic Data at Street Segment Level for European Cities" (Nature Scientific Data, 2025), CC BY 4.0. Cities: Vienna, Brno, Copenhagen, Helsinki, Paris, Grenoble, Toulouse, Lyon, Lille, Bordeaux, Rennes, Marseille, Rouen, Montpellier, Tours, Berlin, Hamburg, Dublin, Milan, Luxembourg, Amsterdam, Oslo, Lisbon, Valencia, Barcelona, Madrid, Malmö, Stockholm, Zurich, Geneva, London, Birmingham, Manchester, Glasgow, Edinburgh, Cardiff.
+
+### GTFS railway
+
+Train frequencies from public GTFS feeds: DELFI (DE), opentransportdata.swiss (CH), ÖBB (AT), NS (NL), Trafikverket (SE), Entur (NO), NMBS/SNCB (BE). Finland skipped (bus-only feed). Busiest Wednesday selected as reference day.
+
+### Known gaps
+
+- **E-PRTR** (30K EU industrial facilities with NACE codes): EEA restructured website to React SPA — all download endpoints broken (404/500). GPPD provides partial coverage (power plants only). Manual browser download needed.
+- **Finland railway**: National GTFS feed contains only bus data. Finnish rail operator VR publishes data separately.
+- **Traffic outside 36 cities**: Roads outside EU city traffic coverage use default AADT by road class.
+
 ## Validation
 
 Model predictions are validated against reference measurements:

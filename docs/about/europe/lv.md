@@ -2,7 +2,27 @@
 title: Latvia
 intro: Noise mapping data sources for Latvia.
 map: { center: [24.1, 56.9], zoom: 7 }
-status: placeholder
 ---
 
-Work in progress. This page will contain Latvia-specific noise data sources, validation references, and regional standards.
+## Railway
+
+### Pasažieru Vilciens (Vivi)
+
+Latvian national rail operator from [Pasažieru Vilciens](https://www.vivi.lv/).
+
+- **Source**: Mobility Database cached feed (data.gov.lv)
+- **Coverage**: 49 rail routes, 137 stops
+- **Result**: 4,965 railway segments enriched across 23 hexes
+- **License**: Open (data.gov.lv)
+
+## Road traffic
+
+LVC (Latvijas valsts ceļi) publishes only aggregate statistics. OSM defaults applied.
+
+## Industrial
+
+- GPPD power plants (NACE 35)
+
+## Validation
+
+Latvia implements END via the Environmental Protection Law. Strategic noise maps produced by the State Environmental Service.

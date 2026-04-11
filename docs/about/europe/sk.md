@@ -2,7 +2,36 @@
 title: Slovakia
 intro: Noise mapping data sources for Slovakia.
 map: { center: [19.7, 48.7], zoom: 7 }
-status: placeholder
 ---
 
-Work in progress. This page will contain Slovakia-specific noise data sources, validation references, and regional standards.
+## Railway
+
+### ZSR GTFS
+
+National railway timetable from [Železnice Slovenskej republiky](https://www.zsr.sk/).
+
+- **Source**: `zsr.sk/files/pre-cestujucich/cestovny-poriadok/gtfs/gtfs.zip`
+- **Coverage**: 2,297 rail routes, 885 stops, 800 with train counts
+- **Result**: 35,706 railway segments enriched across 53 hexes
+- **Busiest stations**: Bratislava hl.st. 385 trains/day, Košice 235, Žilina 226, Trnava 224
+- **License**: Open (data.gov.sk)
+
+## Road traffic
+
+Slovak [SSC (Slovenská správa ciest)](https://www.ssc.sk/) publishes traffic census data (CSD 2022-2023) but **only as PDF files per municipality** — not machine-readable. The ~2,752 counting profiles cannot be programmatically matched to OSM roads without manual PDF parsing or requesting CSV data from `cestna.databanka@ssc.sk`.
+
+**Current status**: OSM road class defaults applied. No per-segment AADT enrichment.
+
+## Industrial
+
+- GPPD power plants (NACE 35) from /enrich-global
+- Slovak PRTR not yet investigated
+
+## Buildings
+
+- Overture Maps global baseline only
+- GKÚ cadastre likely requires license
+
+## Validation
+
+Slovakia implements END via Zákon č. 2/2005 Z.z. o posudzovaní a kontrole hluku. Strategic noise maps are produced by ÚRSO for major roads, railways, and airports.
