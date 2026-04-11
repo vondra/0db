@@ -4,7 +4,7 @@
 
 import type { FastifyInstance } from 'fastify'
 import { resolve } from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, lstatSync, unlinkSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { getElevation } from '../engine/dem-reader.js'
 
@@ -26,6 +26,10 @@ try {
     throw new Error(
       `libsource_reader.so not found — run: cd engine/source-reader && cargo build --release`,
     )
+  }
+
+  if (existsSync(nodePath) && lstatSync(nodePath).isSymbolicLink()) {
+    unlinkSync(nodePath)
   }
 
   // Always copy so every server start dlopens the latest cargo build.

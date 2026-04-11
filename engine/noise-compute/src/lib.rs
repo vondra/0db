@@ -14,10 +14,12 @@ pub mod propagation;
 pub mod periods;
 pub mod confidence;
 pub mod wkb;
+pub mod normalize;
+pub mod present;
 
 use types::*;
 use constants::*;
-use emission::road::{self, TIME_DIST_MOTORWAY, TIME_DIST_URBAN};
+use emission::road::{self};
 use propagation::iso9613::{self, SourceGeometry};
 use propagation::geo;
 
@@ -79,7 +81,7 @@ pub fn compute_at_point(
             source_type: "road".to_string(),
             periods: road_periods.clone(),
             segment_count: roads.len(),
-            displayed_count: road_contributors.len(),
+            displayed_count: present::display_count(&road_contributors),
         });
         all_contributors.extend(road_contributors);
     }
@@ -91,7 +93,7 @@ pub fn compute_at_point(
             source_type: "railway".to_string(),
             periods: rail_periods,
             segment_count: railways.len(),
-            displayed_count: rail_contributors.len(),
+            displayed_count: present::display_count(&rail_contributors),
         });
         all_contributors.extend(rail_contributors);
     }
@@ -105,7 +107,7 @@ pub fn compute_at_point(
             source_type: "building".to_string(),
             periods: bld_periods,
             segment_count: buildings.len(),
-            displayed_count: bld_contributors.len(),
+            displayed_count: present::display_count(&bld_contributors),
         });
         all_contributors.extend(bld_contributors);
     }
@@ -119,7 +121,7 @@ pub fn compute_at_point(
             source_type: "industrial".to_string(),
             periods: ind_periods,
             segment_count: industrial.len(),
-            displayed_count: ind_contributors.len(),
+            displayed_count: present::display_count(&ind_contributors),
         });
         all_contributors.extend(ind_contributors);
     }
@@ -134,7 +136,7 @@ pub fn compute_at_point(
                 source_type: "aircraft".to_string(),
                 periods: air_periods,
                 segment_count: aircraft.len(),
-                displayed_count: air_contributors.len(),
+                displayed_count: present::display_count(&air_contributors),
             });
             all_contributors.extend(air_contributors);
             aircraft_band_data = Some(band_data);
@@ -146,23 +148,7 @@ pub fn compute_at_point(
         &source_results.iter().map(|s| s.periods.clone()).collect::<Vec<_>>()
     );
 
-    all_contributors.sort_by(|a, b| b.periods.lden_db.partial_cmp(&a.periods.lden_db).unwrap_or(std::cmp::Ordering::Equal));
-
-    // Ensure at least top-1 contributor from each source type is included
-    let mut seen_types = std::collections::HashSet::new();
-    let mut guaranteed = Vec::new();
-    for c in &all_contributors {
-        if seen_types.insert(c.source_type.clone()) {
-            guaranteed.push(c.clone());
-        }
-    }
-    all_contributors.truncate(config.top_n);
-    // Re-insert guaranteed contributors that were cut
-    for g in guaranteed {
-        if !all_contributors.iter().any(|c| c.source_type == g.source_type) {
-            all_contributors.push(g);
-        }
-    }
+    all_contributors = present::finalize_popup_contributors(all_contributors, config.top_n);
 
     // Confidence assessment
     let has_census = roads.iter().any(|r| r.traffic_source == 1);
@@ -182,8 +168,6 @@ fn compute_roads(
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
 ) -> (NoisePeriods, Vec<Contributor>) {
-    let road_classes = ["motorway", "trunk", "primary", "secondary", "tertiary", "residential", "living_street"];
-    let max_dist = [10000.0, 5000.0, 5000.0, 2000.0, 1000.0, 500.0, 200.0];
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
     use std::collections::HashMap;
@@ -235,50 +219,33 @@ fn compute_roads(
     let mut roads_by_key: HashMap<(String, String, u8), RoadAccum> = HashMap::new();
 
     for seg in roads {
-        let class_idx = (seg.road_class as usize).min(6);
-        let max_d = max_dist[class_idx];
+        let Some(norm) = normalize::normalize_road_segment(seg) else { continue };
+        let class_idx = norm.class_idx;
+        let max_d = norm.max_distance_m;
         if seg.dist_m > max_d { continue; }
 
         let fade_factor = geo::fade_factor(seg.dist_m, max_d);
 
-        // Tunnel: skip segment (sound contained inside tunnel, not heard outside)
-        if seg.tunnel { continue; }
-        // Skip inaccessible roads: access=no or motor_vehicle=no
-        if seg.access == 2 || seg.access == 4 { continue; }
-
         let src_elev = rasters.elevation(seg.cp_lat, seg.cp_lon);
-        let src_alt = src_elev + SOURCE_HEIGHT_ROAD;
+        let src_alt = src_elev + norm.source_height_m;
         let rcv_alt = receiver.altitude_m();
         let d_slant = geo::slant_dist(seg.dist_m, src_alt, rcv_alt);
         if d_slant < 1.0 { continue; }
 
-        let class_name = road_classes[class_idx];
-        let defaults = default_traffic(class_name);
-        let is_motorway = class_idx <= 1;
-        let time_dist = if is_motorway { &TIME_DIST_MOTORWAY } else { &TIME_DIST_URBAN };
-        let oneway_factor = if seg.oneway { 0.5 } else { 1.0 };
-        // Private roads: 10% traffic (some internal traffic remains)
-        let access_factor = if seg.access == 1 { 0.1 } else { 1.0 };
-
-        let (light, medium, heavy, moto) = if seg.traffic_source == 1 && seg.aadt_light > 0 {
-            (seg.aadt_light as f64 * oneway_factor * access_factor, seg.aadt_medium as f64 * oneway_factor * access_factor,
-             seg.aadt_heavy as f64 * oneway_factor * access_factor, seg.aadt_moto as f64 * oneway_factor * access_factor)
+        let class_name = norm.class_name;
+        let time_dist = norm.time_dist();
+        let light = norm.light_aadt;
+        let medium = norm.medium_aadt;
+        let heavy = norm.heavy_aadt;
+        let moto = norm.moto_aadt;
+        let speed = norm.speed_kmh;
+        let base_speed = if seg.speed_limit > 0 {
+            seg.speed_limit as f64
         } else {
-            let lr = lane_ratio(class_idx, seg.lanes, seg.oneway);
-            let f = oneway_factor * access_factor * lr;
-            (defaults.0 * f, defaults.1 * f, defaults.2 * f, defaults.3 * f)
+            default_speed(class_name)
         };
-
-        // Roundabout speed cap: reduced approach/exit speed
-        let speed = {
-            let base = if seg.speed_limit > 0 { seg.speed_limit as f64 } else { default_speed(class_name) };
-            if seg.junction == 1 { base.min(30.0) } else { base }
-        };
-        let surf_corr = SURFACE_CORR.get(seg.surface_type as usize).copied().unwrap_or(0.0);
-        // Bridge: hard surface below → G=0 (no ground absorption).
-        // Otherwise: line-averaged G from source to receiver (IMD is oversampled at 30 m).
-        // Replaces single-point sample at receiver — better matches ISO 9613-2 §7.3.1
-        // mean-region intent without the full 3-region complexity.
+        let surf_corr = norm.surf_corr_db;
+        // Bridge: hard surface below → G=0 (no ground absorption)
         let ground_g = if seg.bridge { 0.0 }
             else { rasters.ground_g_path(seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon) };
         let flc = geo::finite_line_correction(seg.length_m as f64, seg.dist_m, seg.fraction);
@@ -430,7 +397,7 @@ fn compute_roads(
             acc.closest_speed_posted = seg.speed_limit;
             acc.closest_speed_used = speed;
             acc.closest_speed_source = if seg.junction == 1 {
-                if speed < (if seg.speed_limit > 0 { seg.speed_limit as f64 } else { default_speed(class_name) }) {
+                if speed < base_speed {
                     "roundabout_cap"
                 } else {
                     "osm_posted"
@@ -457,7 +424,6 @@ fn compute_roads(
         let le = PropagationVariants::to_db(acc.variants[1].full_energy);
         let ln = PropagationVariants::to_db(acc.variants[2].full_energy);
         let road_periods = periods::periods(ld, le, ln);
-        if road_periods.lden_db < 0.0 { continue; }
 
         // Free-field energy (for comparison)
         let ld_free = PropagationVariants::to_db(acc.variants[0].free_field_energy);
@@ -554,12 +520,12 @@ fn compute_roads(
         });
     }
 
-    // Sum contributor-level full-energy for total (already includes all path effects)
+    // Total must come from all grouped energies, not from display-filtered contributors.
     let mut total_energy = [0.0f64; 3];
-    for c in &contributors {
-        total_energy[0] += crate::propagation::iso9613::fast_exp_f64(c.periods.ld_db * std::f64::consts::LN_10 * 0.1);
-        total_energy[1] += crate::propagation::iso9613::fast_exp_f64(c.periods.le_db * std::f64::consts::LN_10 * 0.1);
-        total_energy[2] += crate::propagation::iso9613::fast_exp_f64(c.periods.ln_db * std::f64::consts::LN_10 * 0.1);
+    for acc in roads_by_key.values() {
+        total_energy[0] += acc.variants[0].full_energy;
+        total_energy[1] += acc.variants[1].full_energy;
+        total_energy[2] += acc.variants[2].full_energy;
     }
     let ld = 10.0 * total_energy[0].max(1e-12).log10();
     let le = 10.0 * total_energy[1].max(1e-12).log10();
@@ -780,7 +746,6 @@ fn compute_railways(
         let le = PropagationVariants::to_db(acc.variants[1].full_energy);
         let ln = PropagationVariants::to_db(acc.variants[2].full_energy);
         let rail_periods = periods::periods(ld, le, ln);
-        if rail_periods.lden_db < 0.0 { continue; }
 
         let ld_free = PropagationVariants::to_db(acc.variants[0].free_field_energy);
         let le_free = PropagationVariants::to_db(acc.variants[1].free_field_energy);
@@ -841,12 +806,11 @@ fn compute_railways(
         });
     }
 
-    // Sum contributor-level path-affected energies for total
     let mut total_energy = [0.0f64; 3];
-    for c in &contributors {
-        total_energy[0] += crate::propagation::iso9613::fast_exp_f64(c.periods.ld_db * std::f64::consts::LN_10 * 0.1);
-        total_energy[1] += crate::propagation::iso9613::fast_exp_f64(c.periods.le_db * std::f64::consts::LN_10 * 0.1);
-        total_energy[2] += crate::propagation::iso9613::fast_exp_f64(c.periods.ln_db * std::f64::consts::LN_10 * 0.1);
+    for acc in rails_by_key.values() {
+        total_energy[0] += acc.variants[0].full_energy;
+        total_energy[1] += acc.variants[1].full_energy;
+        total_energy[2] += acc.variants[2].full_energy;
     }
     let ld = 10.0 * total_energy[0].max(1e-12).log10();
     let le = 10.0 * total_energy[1].max(1e-12).log10();
@@ -882,10 +846,8 @@ fn compute_point_sources(
     let ground_g = rasters.ground_g(receiver.lat, receiver.lon);
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
-    // Building max 2km (matching pipeline per-building cutoff), industrial 5km
-    let max_d = if source_type_name == "building" { 2000.0 } else { 5000.0 };
-
     for src in sources {
+        let max_d = src.max_radius_m.max(0.0);
         if src.dist_m > max_d { continue; }
 
         let fade_factor = geo::fade_factor(src.dist_m, max_d);
@@ -960,9 +922,6 @@ fn compute_point_sources(
         let le = PropagationVariants::to_db(acc.variants[1].full_energy);
         let ln = PropagationVariants::to_db(acc.variants[2].full_energy);
         let pt_periods = periods::periods(ld, le, ln);
-        if pt_periods.lden_db < 0.0 {
-            continue;
-        }
 
         let ld_free = PropagationVariants::to_db(acc.variants[0].free_field_energy);
         let le_free = PropagationVariants::to_db(acc.variants[1].free_field_energy);
@@ -1036,12 +995,11 @@ fn compute_point_sources(
         });
     }
 
-    // Sum contributor-level full-energy for total
     let mut total_energy = [0.0f64; 3];
-    for c in &contributors {
-        total_energy[0] += crate::propagation::iso9613::fast_exp_f64(c.periods.ld_db * std::f64::consts::LN_10 * 0.1);
-        total_energy[1] += crate::propagation::iso9613::fast_exp_f64(c.periods.le_db * std::f64::consts::LN_10 * 0.1);
-        total_energy[2] += crate::propagation::iso9613::fast_exp_f64(c.periods.ln_db * std::f64::consts::LN_10 * 0.1);
+    for acc in pts_by_osm.values() {
+        total_energy[0] += acc.variants[0].full_energy;
+        total_energy[1] += acc.variants[1].full_energy;
+        total_energy[2] += acc.variants[2].full_energy;
     }
     let ld = 10.0 * total_energy[0].max(1e-12).log10();
     let le = 10.0 * total_energy[1].max(1e-12).log10();
@@ -1204,30 +1162,6 @@ fn compute_aircraft(
     contributors.sort_by(|a, b| b.periods.lden_db.partial_cmp(&a.periods.lden_db).unwrap_or(std::cmp::Ordering::Equal));
 
     (total, contributors, band_data)
-}
-
-fn default_traffic(class: &str) -> (f64, f64, f64, f64) {
-    match class {
-        "motorway" => (21600.0, 2400.0, 5700.0, 300.0),
-        "trunk" => (11700.0, 1200.0, 1800.0, 300.0),
-        "primary" => (7470.0, 540.0, 810.0, 180.0),
-        "secondary" => (2640.0, 120.0, 180.0, 60.0),
-        "tertiary" => (720.0, 26.0, 38.0, 16.0),
-        "residential" => (480.0, 5.0, 10.0, 5.0),
-        "living_street" => (98.0, 0.0, 1.0, 1.0),
-        _ => (480.0, 5.0, 10.0, 5.0),
-    }
-}
-
-/// Lane-based AADT scaling ratio (calibrated from CZ ŘSD CSD 2020 census medians).
-fn lane_ratio(class_idx: usize, lanes: u8, oneway: bool) -> f64 {
-    if lanes <= 2 || class_idx >= 5 { return 1.0; }
-    match (class_idx, oneway) {
-        (0, true) => match lanes.min(3) { 3 => 1.42, _ => 1.0 },
-        (2, false) => match lanes.min(4) { 3 => 1.37, 4 => 2.13, _ => 1.0 },
-        (3, false) => match lanes.min(3) { 3 => 1.83, _ => 1.0 },
-        _ => 1.0,
-    }
 }
 
 fn default_speed(class: &str) -> f64 {

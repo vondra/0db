@@ -3,12 +3,16 @@ name = "source-reader"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["node"]
+node = ["dep:napi", "dep:napi-derive"]
+
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-napi = { version = "2", features = ["serde-json"] }
-napi-derive = "2"
+napi = { version = "2", features = ["serde-json"], optional = true }
+napi-derive = { version = "2", optional = true }
 arrow = { version = "54", default-features = false, features = ["ipc", "ffi"] }
 memmap2 = "0.9"
 serde = { version = "1", features = ["derive"] }

@@ -9,6 +9,14 @@ use std::path::Path;
 use noise_compute::types::RasterSampler;
 use tile::{TileStore, DType, Interp};
 
+fn env_usize(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(default)
+}
+
 /// Real raster data from 1°×1° tiles. Implements RasterSampler.
 pub struct RealRasters {
     pub dem: TileStore,
@@ -20,24 +28,33 @@ pub struct RealRasters {
 impl RealRasters {
     /// Create from source-data directory. Tiles loaded lazily on first access.
     pub fn new(data_dir: &Path) -> Self {
+        let dem_cache_tiles = env_usize("QUIETMAP_CACHE_DEM_TILES", 12);
+        let building_cache_tiles = env_usize("QUIETMAP_CACHE_BUILDING_TILES", 64);
+        let forest_cache_tiles = env_usize("QUIETMAP_CACHE_FOREST_TILES", 64);
+        let imd_cache_tiles = env_usize("QUIETMAP_CACHE_IMD_TILES", 128);
+
         // DEM: Copernicus GLO-30 primary (.hgt), SRTM fallback (.hgt)
         let dem = TileStore::new(
             data_dir.join("dem/copernicus"), 3601, DType::I16BE, Interp::Bilinear, 0.0, ".hgt",
+            dem_cache_tiles,
         ).with_alt_dir(data_dir.join("dem/srtm"), ".hgt");
 
         // Building height: u8 (meters), 3601×3601 (Overture 30m), nearest-neighbor
         let building = TileStore::new(
             data_dir.join("rasters/building"), 3601, DType::U8, Interp::Nearest, 0.0, ".raw",
+            building_cache_tiles,
         );
 
         // Forest cover: u8 (0/100%), 3601×3601 (WorldCover 30m), nearest-neighbor
         let forest = TileStore::new(
             data_dir.join("rasters/forest"), 3601, DType::U8, Interp::Nearest, 0.0, ".raw",
+            forest_cache_tiles,
         );
 
-        // IMD ground type: u8 (0-100 imperviousness), 3601×3601 (WorldCover 30m), bilinear
+        // IMD ground type: u8 (0-100 imperviousness), 3601×3601 (30m), bilinear
         let imd = TileStore::new(
             data_dir.join("rasters/imd"), 3601, DType::U8, Interp::Bilinear, 50.0, ".raw",
+            imd_cache_tiles,
         );
 
         RealRasters { dem, building, forest, imd }

@@ -1,11 +1,13 @@
 //! Generic raw 1°×1° raster tile reader.
 //!
 //! Mmap'd on demand (lazy) or pre-loaded for pipeline.
-//! Thread-safe: mmap is read-only, DashMap for lazy tile cache.
+//! Thread-safe: mmap is read-only, slot cache is bounded to avoid unbounded global growth.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use memmap2::Mmap;
 
 /// Data type of raw tile pixels.
@@ -109,8 +111,15 @@ impl RawTile {
 }
 
 /// Collection of tiles for one raster type. Thread-safe, lazy-loading.
-/// 180 lat × 360 lon = 64,800 slots. OnceLock = wait-free after first init.
+/// 180 lat × 360 lon = 64,800 slots. The slot table is fixed-size, but only a bounded
+/// number of mmap'd tiles stay resident at once.
 const TILE_SLOTS: usize = 180 * 360;
+
+enum TileSlot {
+    Unloaded,
+    Missing,
+    Loaded(Arc<RawTile>),
+}
 
 pub struct TileStore {
     dir: PathBuf,
@@ -121,19 +130,31 @@ pub struct TileStore {
     default_value: f64,
     extension: &'static str,
     alt_extension: Option<&'static str>,
-    tiles: Vec<OnceLock<Option<RawTile>>>,  // flat array, lock-free (no Arc — TileStore owns tiles)
+    max_loaded_tiles: usize,
+    loaded_tiles: AtomicUsize,
+    use_counter: AtomicU64,
+    touches: Vec<AtomicU64>,
+    tiles: Vec<Mutex<TileSlot>>,
 }
 
 impl TileStore {
     pub fn new(
         dir: PathBuf, grid_size: u32, dtype: DType, interp: Interp,
-        default_value: f64, extension: &'static str,
+        default_value: f64, extension: &'static str, max_loaded_tiles: usize,
     ) -> Self {
         let mut tiles = Vec::with_capacity(TILE_SLOTS);
-        for _ in 0..TILE_SLOTS { tiles.push(OnceLock::new()); }
+        let mut touches = Vec::with_capacity(TILE_SLOTS);
+        for _ in 0..TILE_SLOTS {
+            tiles.push(Mutex::new(TileSlot::Unloaded));
+            touches.push(AtomicU64::new(0));
+        }
         TileStore {
             dir, alt_dir: None, grid_size, dtype, interp,
             default_value, extension, alt_extension: None,
+            max_loaded_tiles: max_loaded_tiles.max(1),
+            loaded_tiles: AtomicUsize::new(0),
+            use_counter: AtomicU64::new(1),
+            touches,
             tiles,
         }
     }
@@ -167,26 +188,95 @@ impl TileStore {
         lat * 360 + lon
     }
 
-    /// Get or load a tile. Lock-free after first access (OnceLock).
-    fn get_tile(&self, lat_int: i32, lon_int: i32) -> Option<&RawTile> {
+    #[inline]
+    fn touch_slot(&self, idx: usize) {
+        let stamp = self.use_counter.fetch_add(1, Ordering::Relaxed);
+        self.touches[idx].store(stamp, Ordering::Relaxed);
+    }
+
+    fn evict_if_needed(&self, preserve_idx: usize) {
+        while self.loaded_tiles.load(Ordering::Relaxed) > self.max_loaded_tiles {
+            let mut best_idx = None;
+            let mut best_stamp = u64::MAX;
+
+            for idx in 0..TILE_SLOTS {
+                if idx == preserve_idx { continue; }
+                let stamp = self.touches[idx].load(Ordering::Relaxed);
+                if stamp == 0 || stamp >= best_stamp { continue; }
+                best_stamp = stamp;
+                best_idx = Some(idx);
+            }
+
+            let Some(idx) = best_idx else { break };
+            let mut slot = self.tiles[idx].lock().unwrap_or_else(|e| e.into_inner());
+            if matches!(&*slot, TileSlot::Loaded(_)) {
+                *slot = TileSlot::Unloaded;
+                self.touches[idx].store(0, Ordering::Relaxed);
+                self.loaded_tiles.fetch_sub(1, Ordering::Relaxed);
+            } else {
+                self.touches[idx].store(0, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Get or load a tile. Returns an Arc so the caller can keep using the tile
+    /// even if the cache later evicts that slot.
+    fn get_tile(&self, lat_int: i32, lon_int: i32) -> Option<Arc<RawTile>> {
         let idx = Self::tile_idx(lat_int, lon_int);
+        {
+            let slot = self.tiles[idx].lock().unwrap_or_else(|e| e.into_inner());
+            match &*slot {
+                TileSlot::Loaded(tile) => {
+                    let tile = Arc::clone(tile);
+                    drop(slot);
+                    self.touch_slot(idx);
+                    return Some(tile);
+                }
+                TileSlot::Missing => return None,
+                TileSlot::Unloaded => {}
+            }
+        }
 
-        self.tiles[idx].get_or_init(|| {
-            let ns = if lat_int >= 0 { 'N' } else { 'S' };
-            let ew = if lon_int >= 0 { 'E' } else { 'W' };
-            let base = format!("{}{:02}{}{:03}", ns, lat_int.unsigned_abs(), ew, lon_int.unsigned_abs());
+        let ns = if lat_int >= 0 { 'N' } else { 'S' };
+        let ew = if lon_int >= 0 { 'E' } else { 'W' };
+        let base = format!("{}{:02}{}{:03}", ns, lat_int.unsigned_abs(), ew, lon_int.unsigned_abs());
+        let primary = self.dir.join(format!("{}{}", base, self.extension));
+        let loaded = if primary.exists() {
+            RawTile::load(&primary, self.grid_size, self.dtype)
+        } else if let (Some(alt_dir), Some(alt_ext)) = (&self.alt_dir, self.alt_extension) {
+            let alt = alt_dir.join(format!("{}{}", base, alt_ext));
+            if alt.exists() { RawTile::load(&alt, self.grid_size, self.dtype) } else { None }
+        } else {
+            None
+        };
 
-            let primary = self.dir.join(format!("{}{}", base, self.extension));
-            let tile = if primary.exists() {
-                RawTile::load(&primary, self.grid_size, self.dtype)
-            } else if let (Some(alt_dir), Some(alt_ext)) = (&self.alt_dir, self.alt_extension) {
-                let alt = alt_dir.join(format!("{}{}", base, alt_ext));
-                if alt.exists() { RawTile::load(&alt, self.grid_size, self.dtype) }
-                else { None }
-            } else { None };
-
-            tile
-        }).as_ref()
+        let mut slot = self.tiles[idx].lock().unwrap_or_else(|e| e.into_inner());
+        match &*slot {
+            TileSlot::Loaded(tile) => {
+                let tile = Arc::clone(tile);
+                drop(slot);
+                self.touch_slot(idx);
+                Some(tile)
+            }
+            TileSlot::Missing => None,
+            TileSlot::Unloaded => {
+                let tile = loaded.map(Arc::new);
+                match &tile {
+                    Some(tile) => {
+                        *slot = TileSlot::Loaded(Arc::clone(tile));
+                        self.loaded_tiles.fetch_add(1, Ordering::Relaxed);
+                        drop(slot);
+                        self.touch_slot(idx);
+                        self.evict_if_needed(idx);
+                        Some(Arc::clone(tile))
+                    }
+                    None => {
+                        *slot = TileSlot::Missing;
+                        None
+                    }
+                }
+            }
+        }
     }
 
     /// Convert (lat, lon) to tile key.
@@ -209,9 +299,18 @@ impl TileStore {
 
     /// Fast tile lookup for pre-loaded tiles (skips init path).
     #[inline]
-    fn get_tile_fast(&self, lat_int: i32, lon_int: i32) -> Option<&RawTile> {
+    fn get_tile_fast(&self, lat_int: i32, lon_int: i32) -> Option<Arc<RawTile>> {
         let idx = Self::tile_idx(lat_int, lon_int);
-        self.tiles[idx].get().and_then(|t| t.as_ref())
+        let slot = self.tiles[idx].lock().unwrap_or_else(|e| e.into_inner());
+        match &*slot {
+            TileSlot::Loaded(tile) => {
+                let tile = Arc::clone(tile);
+                drop(slot);
+                self.touch_slot(idx);
+                Some(tile)
+            }
+            TileSlot::Missing | TileSlot::Unloaded => None,
+        }
     }
 
     /// Sample at (frac_row, frac_col) within a tile, using this store's interpolation mode.
@@ -229,11 +328,11 @@ impl TileStore {
         let (lat_int, lon_int, frac_lat, frac_lon) = Self::to_tile_key(lat, lon);
 
         match self.get_tile_fast(lat_int, lon_int) {
-            Some(tile) => self.sample_tile(tile, frac_lat, frac_lon),
+            Some(tile) => self.sample_tile(&tile, frac_lat, frac_lon),
             None => {
                 // Fallback: try full get_tile (handles lazy loading for popup)
                 match self.get_tile(lat_int, lon_int) {
-                    Some(tile) => self.sample_tile(tile, frac_lat, frac_lon),
+                    Some(tile) => self.sample_tile(&tile, frac_lat, frac_lon),
                     None => self.default_value,
                 }
             }
@@ -245,18 +344,18 @@ impl TileStore {
     #[inline]
     /// Sample with tile caching — avoids repeated OnceLock lookups when consecutive
     /// samples fall within the same 1° tile.
-    pub(crate) fn sample_cached<'a>(&'a self, lat: f64, lon: f64, cached_key: &mut (i32, i32), cached_tile: &mut Option<&'a RawTile>) -> f64 {
+    pub(crate) fn sample_cached(&self, lat: f64, lon: f64, cached_key: &mut (i32, i32), cached_tile: &mut Option<Arc<RawTile>>) -> f64 {
         let (lat_int, lon_int, frac_lat, frac_lon) = Self::to_tile_key(lat, lon);
         let tile = if (lat_int, lon_int) == *cached_key {
-            *cached_tile
+            cached_tile.clone()
         } else {
             *cached_key = (lat_int, lon_int);
-            let t = self.get_tile_fast(lat_int, lon_int);
-            *cached_tile = t;
+            let t = self.get_tile_fast(lat_int, lon_int).or_else(|| self.get_tile(lat_int, lon_int));
+            *cached_tile = t.clone();
             t
         };
         match tile {
-            Some(t) => self.sample_tile(t, frac_lat, frac_lon),
+            Some(t) => self.sample_tile(&t, frac_lat, frac_lon),
             None => self.default_value,
         }
     }
@@ -277,7 +376,7 @@ impl TileStore {
         let steps = (dist_m / step_m).ceil().max(3.0) as usize;
 
         let mut cached_key = (i32::MIN, i32::MIN);
-        let mut cached_tile: Option<&RawTile> = None;
+        let mut cached_tile: Option<Arc<RawTile>> = None;
         let mut profile = Vec::with_capacity(steps);
         for i in 0..steps {
             let t = i as f64 / (steps - 1).max(1) as f64;
@@ -299,7 +398,7 @@ impl TileStore {
         let mut max_val = 0.0f64;
         let mut max_t = 0.5;
         let mut cached_key = (i32::MIN, i32::MIN);
-        let mut cached_tile: Option<&RawTile> = None;
+        let mut cached_tile: Option<Arc<RawTile>> = None;
 
         for i in 1..steps - 1 {  // skip source and receiver positions
             let t = i as f64 / (steps - 1).max(1) as f64;
@@ -332,7 +431,7 @@ impl TileStore {
         let mut total_depth = 0.0;
         let mut contiguous_depth = 0.0;
         let mut cached_key = (i32::MIN, i32::MIN);
-        let mut cached_tile: Option<&RawTile> = None;
+        let mut cached_tile: Option<Arc<RawTile>> = None;
 
         for i in 0..steps {
             let t = i as f64 / (steps - 1).max(1) as f64;
@@ -374,7 +473,7 @@ impl TileStore {
 
         let mut sum = 0.0;
         let mut cached_key = (i32::MIN, i32::MIN);
-        let mut cached_tile: Option<&RawTile> = None;
+        let mut cached_tile: Option<Arc<RawTile>> = None;
         for i in 0..steps {
             let t = i as f64 / (steps - 1).max(1) as f64;
             let lat = lat1 + t * (lat2 - lat1);
@@ -394,7 +493,7 @@ mod tests {
         // Real SRTM tile for Brno area
         let store = TileStore::new(
             PathBuf::from("../../source-data/dem/srtm"),
-            1201, DType::I16BE, Interp::Bilinear, 0.0, ".hgt",
+            1201, DType::I16BE, Interp::Bilinear, 0.0, ".hgt", 4,
         );
         // Brno center: ~200-250m elevation
         let elev = store.sample(49.195, 16.608);
@@ -409,7 +508,7 @@ mod tests {
     fn test_building_brno() {
         let store = TileStore::new(
             PathBuf::from("../../source-data/rasters/building"),
-            1201, DType::U8, Interp::Nearest, 0.0, ".raw",
+            1201, DType::U8, Interp::Nearest, 0.0, ".raw", 4,
         );
         // Sample in Brno center — should find some buildings
         let h = store.sample(49.195, 16.608);
@@ -421,7 +520,7 @@ mod tests {
     fn test_missing_tile() {
         let store = TileStore::new(
             PathBuf::from("/nonexistent"),
-            1201, DType::U8, Interp::Nearest, 42.0, ".raw",
+            1201, DType::U8, Interp::Nearest, 42.0, ".raw", 1,
         );
         assert_eq!(store.sample(49.0, 16.0), 42.0);
     }
