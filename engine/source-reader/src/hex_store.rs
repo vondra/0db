@@ -102,6 +102,8 @@ pub struct RoadResult {
     pub road_ref: String,
     pub bridge: bool,
     pub tunnel: bool,
+    pub access: u8,
+    pub junction: u8,
     pub aadt_light: i32,
     pub aadt_medium: i32,
     pub aadt_heavy: i32,
@@ -137,6 +139,8 @@ pub fn query_roads_from_batches(
         let road_ref = col_str(batch, "ref");
         let bridge_col: Option<&arrow::array::BooleanArray> = batch.column_by_name("bridge").and_then(|c| c.as_any().downcast_ref());
         let tunnel_col: Option<&arrow::array::BooleanArray> = batch.column_by_name("tunnel").and_then(|c| c.as_any().downcast_ref());
+        let access_col = col_u8(batch, "access");
+        let junction_col = col_u8(batch, "junction");
         let aadt_l = col_i32(batch, "aadt_light");
         let aadt_m = col_i32(batch, "aadt_medium");
         let aadt_h = col_i32(batch, "aadt_heavy");
@@ -180,6 +184,8 @@ pub fn query_roads_from_batches(
                 road_ref: road_ref.map(|a| a.value(i).to_string()).unwrap_or_default(),
                 bridge: bridge_col.map(|a| a.value(i)).unwrap_or(false),
                 tunnel: tunnel_col.map(|a| a.value(i)).unwrap_or(false),
+                access: access_col.map(|a| a.value(i)).unwrap_or(0),
+                junction: junction_col.map(|a| a.value(i)).unwrap_or(0),
                 aadt_light: aadt_l.map(|a| a.value(i)).unwrap_or(0),
                 aadt_medium: aadt_m.map(|a| a.value(i)).unwrap_or(0),
                 aadt_heavy: aadt_h.map(|a| a.value(i)).unwrap_or(0),

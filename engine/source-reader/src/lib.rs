@@ -150,7 +150,21 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
     let mut all_industrial: Vec<noise_compute::types::PointSource> = Vec::new();
     let mut all_barriers = Vec::new();
     let mut all_aircraft = Vec::new();
-    let n_days: u16 = 110; // Match pipeline --n-days (actual days in ADS-B dataset)
+    // Derive n_days from actual aircraft data (count unique date_ids across all hexes)
+    let n_days: u16 = {
+        let mut date_ids = std::collections::HashSet::new();
+        for hex_id in &hex_ids {
+            let data = store.ensure_hex(hex_id);
+            for batch in &data.aircraft_batches {
+                if let Some(did) = batch.column_by_name("date_id")
+                    .and_then(|c| c.as_any().downcast_ref::<arrow::array::Int16Array>())
+                {
+                    for i in 0..did.len() { date_ids.insert(did.value(i)); }
+                }
+            }
+        }
+        if date_ids.is_empty() { 365 } else { date_ids.len() as u16 }
+    };
 
     for hex_id in &hex_ids {
         let data = store.ensure_hex(hex_id);
@@ -210,6 +224,8 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                 road_ref: r.road_ref.clone(),
                 bridge: r.bridge,
                 tunnel: r.tunnel,
+                access: r.access,
+                junction: r.junction,
                 dist_m: r.dist_m,
                 cp_lat: r.cp_lat, cp_lon: r.cp_lon,
                 fraction: r.fraction,

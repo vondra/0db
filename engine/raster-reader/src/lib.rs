@@ -92,7 +92,6 @@ impl RasterSampler for RealRasters {
     }
 
     fn terrain_profile(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64, _steps: usize) -> Vec<f64> {
-        // Sample at raster resolution (~30m), ignore _steps
         self.dem.profile_along_path(lat1, lon1, lat2, lon2)
     }
 
@@ -120,7 +119,11 @@ impl RasterSampler for RealRasters {
     ) -> (f64, f64) {
         // Same 50m sampling as default, but uses tile-cached lookups to avoid
         // repeated OnceLock atomic loads within the same 1° tile.
-        let n = ((dist_m / 50.0).ceil() as usize).clamp(2, 200);
+        // Adaptive step: 50m at <1km, 150m at 1-3km, 300m at >3km
+        let step = if dist_m <= 1000.0 { 50.0 }
+            else if dist_m <= 3000.0 { 150.0 }
+            else { 300.0 };
+        let n = ((dist_m / step).ceil() as usize).clamp(2, 200);
         let mut max_bh = 0.0f64;
         let mut max_t = 0.5;
         let mut cached_key = (i32::MIN, i32::MIN);

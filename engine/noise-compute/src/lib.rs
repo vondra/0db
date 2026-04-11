@@ -202,7 +202,6 @@ fn compute_roads(
         // Per-period variant energies (full, free-field, no_terrain, no_screening, no_vegetation)
         variants: [PropagationVariants; 3], // day, evening, night
         emission_energy: f64,
-        _band_energy: [f64; NUM_BANDS],
         line_coords: Vec<[[f64; 2]; 2]>,
     }
     // Group by (ref, name, class) — not osm_id — so "D1" becomes one contributor
@@ -213,15 +212,12 @@ fn compute_roads(
         let max_d = max_dist[class_idx];
         if seg.dist_m > max_d { continue; }
 
-        // Fade-out in last 20% of range: smooth transition instead of sharp cutoff.
-        // Applies to computed energy (after all path effects), not to the model itself.
-        let fade_start = max_d * 0.8;
-        let fade_factor = if seg.dist_m > fade_start {
-            1.0 - (seg.dist_m - fade_start) / (max_d - fade_start)
-        } else { 1.0 };
+        let fade_factor = geo::fade_factor(seg.dist_m, max_d);
 
         // Tunnel: skip segment (sound contained inside tunnel, not heard outside)
         if seg.tunnel { continue; }
+        // Skip inaccessible roads: access=no or motor_vehicle=no
+        if seg.access == 2 || seg.access == 4 { continue; }
 
         let src_elev = rasters.elevation(seg.cp_lat, seg.cp_lon);
         let src_alt = src_elev + SOURCE_HEIGHT_ROAD;
@@ -234,17 +230,23 @@ fn compute_roads(
         let is_motorway = class_idx <= 1;
         let time_dist = if is_motorway { &TIME_DIST_MOTORWAY } else { &TIME_DIST_URBAN };
         let oneway_factor = if seg.oneway { 0.5 } else { 1.0 };
+        // Private roads: 10% traffic (some internal traffic remains)
+        let access_factor = if seg.access == 1 { 0.1 } else { 1.0 };
 
         let (light, medium, heavy, moto) = if seg.traffic_source == 1 && seg.aadt_light > 0 {
-            (seg.aadt_light as f64 * oneway_factor, seg.aadt_medium as f64 * oneway_factor,
-             seg.aadt_heavy as f64 * oneway_factor, seg.aadt_moto as f64 * oneway_factor)
+            (seg.aadt_light as f64 * oneway_factor * access_factor, seg.aadt_medium as f64 * oneway_factor * access_factor,
+             seg.aadt_heavy as f64 * oneway_factor * access_factor, seg.aadt_moto as f64 * oneway_factor * access_factor)
         } else {
             let lr = lane_ratio(class_idx, seg.lanes, seg.oneway);
-            let f = oneway_factor * lr;
+            let f = oneway_factor * access_factor * lr;
             (defaults.0 * f, defaults.1 * f, defaults.2 * f, defaults.3 * f)
         };
 
-        let speed = if seg.speed_limit > 0 { seg.speed_limit as f64 } else { default_speed(class_name) };
+        // Roundabout speed cap: reduced approach/exit speed
+        let speed = {
+            let base = if seg.speed_limit > 0 { seg.speed_limit as f64 } else { default_speed(class_name) };
+            if seg.junction == 1 { base.min(30.0) } else { base }
+        };
         let surf_corr = SURFACE_CORR.get(seg.surface_type as usize).copied().unwrap_or(0.0);
         // Bridge: hard surface below → G=0 (no ground absorption)
         let ground_g = if seg.bridge { 0.0 }
@@ -323,7 +325,7 @@ fn compute_roads(
                 closest_src_height: src_alt,
                 variants: [PropagationVariants::default(), PropagationVariants::default(), PropagationVariants::default()],
                 emission_energy: 0.0,
-                _band_energy: [0.0; NUM_BANDS], line_coords: Vec::new(),
+                line_coords: Vec::new(),
             }
         });
         // Apply fade-out factor to energy (linear scale) before accumulation
@@ -365,11 +367,24 @@ fn compute_roads(
             Some(serde_json::json!({"type": "MultiLineString", "coordinates": acc.line_coords}))
         } else { None };
 
-        // Tooltip metadata from single raycast on closest segment
-        let (terrain_bk, screening_bk, veg_bk) = compute_path_effects(
+        // Aggregate path effect deltas from accumulated PropagationVariants
+        let lden_of = |f: fn(&PropagationVariants) -> f64| {
+            PropagationVariants::lden_from_periods(&acc.variants[0], &acc.variants[1], &acc.variants[2], f)
+        };
+        let no_terrain_lden = lden_of(|v| v.no_terrain_energy);
+        let no_screening_lden = lden_of(|v| v.no_screening_energy);
+        let no_veg_lden = lden_of(|v| v.no_vegetation_energy);
+
+        // Nearest segment metadata (for informational display — delta, building height, forest depth)
+        let (nearest_terrain, nearest_screening, nearest_veg) = compute_path_effects(
             rasters, barriers, acc.closest_cp_lat, acc.closest_cp_lon, acc.closest_src_height,
             receiver, acc.min_dist, 0.0,
         );
+
+        // Use aggregate Lden deltas for attenuation, nearest-segment metadata for context
+        let terrain_adj = (road_periods.lden_db - no_terrain_lden).min(0.0);
+        let screening_adj = (road_periods.lden_db - no_screening_lden).min(0.0);
+        let veg_adj = (road_periods.lden_db - no_veg_lden).min(0.0);
 
         contributors.push(Contributor {
             osm_id: Some(acc.first_osm_id),
@@ -382,9 +397,19 @@ fn compute_roads(
             periods_free: free_periods,
             emission_db,
             baseline: iso9613::compute_baseline(acc.min_d_slant, SourceGeometry::Line, acc.min_ground_g),
-            terrain: terrain_bk,
-            screening: screening_bk,
-            vegetation: veg_bk,
+            terrain: TerrainBreakdown {
+                delta_m: nearest_terrain.delta_m,
+                is_double: nearest_terrain.is_double,
+                attenuation_db: (terrain_adj * 10.0).round() / 10.0,
+            },
+            screening: ScreeningBreakdown {
+                building_path_m: nearest_screening.building_path_m,
+                attenuation_db: (screening_adj * 10.0).round() / 10.0,
+            },
+            vegetation: VegetationBreakdown {
+                forest_depth_m: nearest_veg.forest_depth_m,
+                attenuation_db: (veg_adj * 10.0).round() / 10.0,
+            },
             received_bands: std::array::from_fn(|j| {
                 10.0 * acc.variants[0].band_energy[j].max(1e-30).log10()
             }),
@@ -612,6 +637,9 @@ fn compute_point_sources(
         // that pipeline included, causing "no sources" in popup but visible noise in tiles.
         if src.dist_m > 5000.0 { continue; }
 
+        let max_d = 5000.0;
+        let fade_factor = geo::fade_factor(src.dist_m, max_d);
+
         let src_alt = rasters.elevation(src.lat, src.lon) + src.source_height_m as f64;
         let rcv_alt = receiver.altitude_m();
         let d_slant = geo::slant_dist(src.dist_m, src_alt, rcv_alt);
@@ -630,15 +658,15 @@ fn compute_point_sources(
             rasters, src.lat, src.lon, receiver.lat, receiver.lon, src.dist_m,
         );
 
-        let v_day = iso9613::propagate_variants(
+        let mut v_day = iso9613::propagate_variants(
             &src.lw_day.map(|v| v as f64), d_slant, SourceGeometry::Point, ground_g,
             &terrain_atten, &screening_atten, &veg_atten, reflection, 0.0,
         );
-        let v_eve = iso9613::propagate_variants(
+        let mut v_eve = iso9613::propagate_variants(
             &src.lw_evening.map(|v| v as f64), d_slant, SourceGeometry::Point, ground_g,
             &terrain_atten, &screening_atten, &veg_atten, reflection, 0.0,
         );
-        let v_night = iso9613::propagate_variants(
+        let mut v_night = iso9613::propagate_variants(
             &src.lw_night.map(|v| v as f64), d_slant, SourceGeometry::Point, ground_g,
             &terrain_atten, &screening_atten, &veg_atten, reflection, 0.0,
         );
@@ -654,10 +682,11 @@ fn compute_point_sources(
             emission_energy: 0.0,
             polygon_wkb: src.polygon_wkb.clone(),
         });
+        if fade_factor < 1.0 { v_day.scale(fade_factor); v_eve.scale(fade_factor); v_night.scale(fade_factor); }
         acc.variants[0].add(&v_day);
         acc.variants[1].add(&v_eve);
         acc.variants[2].add(&v_night);
-        acc.emission_energy += day_em;
+        acc.emission_energy += day_em * fade_factor;
         if src.dist_m < acc.min_dist {
             acc.min_dist = src.dist_m;
             acc.min_d_slant = d_slant;
@@ -1009,6 +1038,7 @@ mod tests {
             traffic_source: 0, // defaults
             dist_m: 500.0, cp_lat: 50.08, cp_lon: 14.42, fraction: 0.5,
                 name: String::new(), road_ref: String::new(), bridge: false, tunnel: false,
+                access: 0, junction: 0,
         }];
 
         let result = compute_at_point(&receiver, &roads, &[], &[], &[], &[], &[], &MockRasters, &ComputeConfig::default());
@@ -1040,6 +1070,7 @@ mod tests {
             aadt_light: 0, aadt_medium: 0, aadt_heavy: 0, aadt_moto: 0, traffic_source: 0,
             dist_m: 100.0, cp_lat: 50.08, cp_lon: 14.42, fraction: 0.5,
                 name: String::new(), road_ref: String::new(), bridge: false, tunnel: false,
+                access: 0, junction: 0,
         }];
         let railways = vec![RailSegment {
             osm_id: 2, segment_idx: 0,
@@ -1080,6 +1111,7 @@ mod tests {
             traffic_source: 0,
             dist_m: 15.0, cp_lat: 50.08, cp_lon: 14.42, fraction: 0.5,
                 name: String::new(), road_ref: String::new(), bridge: false, tunnel: false,
+                access: 0, junction: 0,
         }];
 
         let result = compute_at_point(&receiver, &roads, &[], &[], &[], &[], &[], &MockRasters, &ComputeConfig::default());
@@ -1152,6 +1184,7 @@ mod tests {
             aadt_light: 0, aadt_medium: 0, aadt_heavy: 0, aadt_moto: 0, traffic_source: 0,
             dist_m: 100.0, cp_lat: 50.08, cp_lon: 14.42, fraction: 0.5,
                 name: String::new(), road_ref: String::new(), bridge: false, tunnel: false,
+                access: 0, junction: 0,
         }];
         let railways = vec![RailSegment {
             osm_id: 2, segment_idx: 0,

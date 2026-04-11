@@ -19,8 +19,6 @@ pub fn terrain_attenuation(
     src_elev: f64, rcv_alt: f64,
     dist_m: f64,
 ) -> [f64; NUM_BANDS] {
-    if dist_m > 5000.0 { return [0.0; NUM_BANDS]; }
-
     // 5-point LOS check (25%, 50%, 75%)
     let hill_detected = [0.25, 0.5, 0.75].iter().any(|&t| {
         let lat = src_lat + t * (rcv_lat - src_lat);
@@ -149,8 +147,6 @@ pub fn terrain_attenuation_with_meta(
     src_elev: f64, rcv_alt: f64,
     dist_m: f64,
 ) -> ([f64; NUM_BANDS], f64, bool) {
-    if dist_m > 5000.0 { return ([0.0; NUM_BANDS], 0.0, false); }
-
     let hill_detected = [0.25, 0.5, 0.75].iter().any(|&t| {
         let lat = src_lat + t * (rcv_lat - src_lat);
         let lon = src_lon + t * (rcv_lon - src_lon);
@@ -248,7 +244,9 @@ pub fn screening_attenuation_with_meta(
 
 /// Compute vegetation attenuation per band.
 ///
-/// Only computed for distances < 500m (vegetation effect is minor beyond that).
+/// Limited to source-receiver distance ≤500m. Beyond that, sound wavefront has spread
+/// too wide for narrow forest-depth ray model to be valid. Physical cap via MAX_VEG_ATTEN
+/// per band (ISO 9613-2 Table A.1: max 200m forest depth).
 pub fn vegetation_attenuation_path(
     rasters: &dyn RasterSampler,
     src_lat: f64, src_lon: f64,

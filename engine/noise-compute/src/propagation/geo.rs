@@ -51,6 +51,29 @@ pub fn point_to_segment(
     (dist, cp_lat, cp_lon, t)
 }
 
+/// Smooth fade-out factor for the last 20% of a source's max range.
+/// Prevents hard-edge artifacts on the map at cutoff boundaries.
+/// Returns 1.0 within 80% of range, linearly fades to 0.0 at max_range.
+#[inline]
+pub fn fade_factor(dist_m: f64, max_range_m: f64) -> f64 {
+    let fade_start = max_range_m * 0.8;
+    if dist_m <= fade_start {
+        1.0
+    } else {
+        1.0 - (dist_m - fade_start) / (max_range_m - fade_start)
+    }
+}
+
+/// Check if a source is too weak to contribute at this distance.
+/// Geometric divergence alone attenuates by ~20*log10(d) + 11 dB;
+/// path effects only attenuate further. Returns true if max emission
+/// minus geometric divergence is already below threshold.
+#[inline]
+pub fn below_free_field_threshold(max_emission_db: f64, dist_m: f64, threshold_db: f64) -> bool {
+    let geo_approx = 20.0 * dist_m.log10() + 11.0;
+    max_emission_db - geo_approx < threshold_db
+}
+
 /// Finite-line correction using HORIZONTAL distance and end angles.
 ///
 /// ISO 9613-2: correction for finite line source vs infinite.

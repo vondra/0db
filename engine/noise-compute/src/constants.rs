@@ -38,7 +38,8 @@ pub const SINGLE_DIFF_CAP: f64 = 20.0;
 pub const DOUBLE_DIFF_CAP: f64 = 25.0;
 
 /// Maximum building screening attenuation per band [dB].
-pub const MAX_SCREENING: f64 = 10.0;
+/// ISO 9613-2 allows 20-25 dB for single/double diffraction.
+pub const MAX_SCREENING: f64 = 20.0;
 
 /// Source heights [m].
 pub const SOURCE_HEIGHT_ROAD: f64 = 0.05;    // CNOSSOS-EU §2.4.1

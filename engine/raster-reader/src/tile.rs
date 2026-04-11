@@ -268,8 +268,13 @@ impl TileStore {
         let dlon = (lon2 - lon1) * 111_320.0 * cos_lat;
         let dist_m = (dlat * dlat + dlon * dlon).sqrt();
 
+        // Adaptive resolution: full at <1km, 3× coarser 1-3km, 6× coarser >3km.
+        // Major terrain features (100m+ wide) detected at all distances.
         let cell_m = 110_540.0 / (self.grid_size - 1) as f64;
-        let steps = (dist_m / cell_m).ceil().max(3.0) as usize;
+        let step_m = if dist_m <= 1000.0 { cell_m }
+            else if dist_m <= 3000.0 { cell_m * 3.0 }
+            else { cell_m * 6.0 };
+        let steps = (dist_m / step_m).ceil().max(3.0) as usize;
 
         let mut cached_key = (i32::MIN, i32::MIN);
         let mut cached_tile: Option<&RawTile> = None;
