@@ -1,18 +1,21 @@
 /**
- * Enrich IT railways.arrow with Trenitalia train frequencies via GTFS.
+ * Enrich CA railways.arrow with train frequencies from Canadian GTFS feeds.
  *
- * Downloads Italy's national GTFS feed from data.public-transport.earth
- * (aggregated Trenitalia + Trenord + other operators), parses stop frequencies,
- * matches GTFS stops to OSM railway segments by proximity, writes
- * trains_passenger + trains_freight columns.
- *
- * This is a standalone Italy-specific version of the global transit enrichment,
- * following the same pattern as enrich-railway-cz.ts and enrich-global-transit.ts.
+ * Sources:
+ *   VIA Rail (national passenger): viarail.ca/sites/all/files/gtfs/viarail.zip
+ *   GO Transit Toronto (Metrolinx commuter): metrolinx GO-GTFS.zip
+ *   TTC Toronto (subway/streetcar/bus): opendata.toronto.ca
+ *   STM Montréal (metro/bus): mdb-latest mirror
+ *   TransLink Vancouver (SkyTrain/SeaBus/bus): translink.ca
+ *   OC Transpo Ottawa (O-Train LRT + bus): octranspo
+ *   Calgary Transit (C-Train LRT + bus): data.calgary.ca
+ *   Edmonton ETS (LRT + bus): edmonton.ca
+ *   Exo Montréal commuter: rtm.quebec
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-it.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-it.ts --force-download
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-it.ts --enrich-only
+ *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-ca.ts
+ *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-ca.ts --force-download
+ *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-ca.ts --enrich-only
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
@@ -24,69 +27,86 @@ import { latLngToCell } from 'h3-js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
-const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/it`)
+const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/ca`)
 const CACHE_FREQUENCIES = resolve(CACHE_DIR, 'gtfs-stop-frequencies.json')
 
 const forceDownload = process.argv.includes('--force-download')
 const enrichOnly = process.argv.includes('--enrich-only')
 
-// Italy has no single national rail GTFS. We stitch together regional feeds
-// from Mobility Database (mdb-*). Each feed covers a different part of Italy.
 interface FeedConfig {
   id: string
   name: string
-  urls: string[]  // Try in order; first success wins
+  urls: string[]
 }
 
 const FEEDS: FeedConfig[] = [
   {
-    id: 'toscana-trenitalia',
-    name: 'Trenitalia (Toscana/Marche/Umbria/Lazio)',
+    id: 'via-rail',
+    name: 'VIA Rail Canada (national passenger)',
     urls: [
-      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-marche-trenitalia-gtfs-1319.zip?alt=media',
-      'https://dati.toscana.it/dataset/8bb8f8fe-fe7d-41d0-90dc-49f2456180d1/resource/4f85393b-357d-443d-8378-65de4198505f/download/trenitalia.gtfs',
+      'https://www.viarail.ca/sites/all/files/gtfs/viarail.zip',
     ],
   },
   {
-    id: 'trenord-lombardia',
-    name: 'Trenord (Lombardia)',
+    id: 'go-transit',
+    name: 'GO Transit Metrolinx (Toronto/Hamilton commuter)',
     urls: [
-      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-lombardia-trenord-gtfs-855.zip?alt=media',
-      'https://www.dati.lombardia.it/download/3z4k-mxz9/application%2Fzip',
+      'https://assets.metrolinx.com/raw/upload/Documents/Metrolinx/Open%20Data/GO-GTFS.zip',
     ],
   },
   {
-    id: 'gtt-piemonte',
-    name: 'GTT Servizio Ferroviario (Piemonte)',
+    id: 'ttc-toronto',
+    name: 'TTC Toronto (subway + streetcar + bus)',
     urls: [
-      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-piedmont-turin-gruppo-torinese-trasporti-gtfs-2687.zip?alt=media',
-      'https://www.gtt.to.it/open_data/gtt_gtfs.zip',
+      'http://opendata.toronto.ca/toronto.transit.commission/ttc-routes-and-schedules/OpenData_TTC_Schedules.zip',
     ],
   },
   {
-    id: 'ferrotramviaria-puglia',
-    name: 'Ferrotramviaria (Puglia — Bari area)',
+    id: 'stm-montreal',
+    name: 'STM Montréal (metro + bus)',
     urls: [
-      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-puglia-ferrotramviaria-gtfs-1058.zip?alt=media',
+      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/ca-quebec-societe-de-transport-de-montreal-stm-gtfs-2126.zip?alt=media',
     ],
   },
   {
-    id: 'trenitalia-sardegna',
-    name: 'Trenitalia (Sardegna)',
+    id: 'translink-vancouver',
+    name: 'TransLink Vancouver (SkyTrain + SeaBus + bus)',
     urls: [
-      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-regione-autonoma-della-sardegna-trenitalia-gtfs-2997.zip?alt=media',
-      'https://www.sardegnamobilita.it/opendata/R_SARDEGTRASP_00008_1_dati_trenitalia.zip',
+      'https://gtfs-static.translink.ca/gtfs/google_transit.zip',
+    ],
+  },
+  {
+    id: 'oc-transpo',
+    name: 'OC Transpo Ottawa (O-Train + bus)',
+    urls: [
+      'https://oct-gtfs-emasagcnfmcgeham.z01.azurefd.net/public-access/GTFSExport.zip',
+    ],
+  },
+  {
+    id: 'calgary-transit',
+    name: 'Calgary Transit (C-Train LRT + bus)',
+    urls: [
+      'https://data.calgary.ca/download/npk7-z3bj/application%2Fzip',
+    ],
+  },
+  {
+    id: 'edmonton-ets',
+    name: 'Edmonton ETS (LRT + bus)',
+    urls: [
+      'https://gtfs.edmonton.ca/TMGTFSRealTimeWebService/GTFS/GTFS.zip',
     ],
   },
 ]
 
-// Italy bounding box
-const IT_BBOX: [number, number, number, number] = [35.5, 6.6, 47.1, 18.6] // [minLat, minLon, maxLat, maxLon]
+// Canada bbox
+const PT_BBOX: [number, number, number, number] = [41.5, -141.0, 84.0, -52.0]
 
-// GTFS route_type: 2=Rail, 100-109=Railway subtypes, 0=Tram, 900-906=Tram subtypes
+// GTFS route_type: 2=Rail, 100-109=Railway subtypes, 0=Tram, 900-906=Tram subtypes,
+// 1=Subway/Metro, 400-405=Urban Railway/Monorail subtypes
 const RAIL_TYPES = new Set([2, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109])
 const TRAM_TYPES = new Set([0, 900, 901, 902, 903, 904, 905, 906])
-const ALL_RAIL_AND_TRAM = new Set([...RAIL_TYPES, ...TRAM_TYPES])
+const METRO_TYPES = new Set([1, 400, 401, 402, 403, 404, 405])
+const ALL_RAIL_AND_TRAM = new Set([...RAIL_TYPES, ...TRAM_TYPES, ...METRO_TYPES])
 
 // ── Types ──
 
@@ -283,10 +303,10 @@ async function downloadAllGtfs(): Promise<Array<{ feed: FeedConfig; dir: string 
   }
 
   if (results.length === 0) {
-    throw new Error('Failed to download any Italy GTFS feed')
+    throw new Error('Failed to download any Canadian GTFS feed')
   }
 
-  console.log(`  ${results.length}/${FEEDS.length} IT feeds available`)
+  console.log(`  ${results.length}/${FEEDS.length} CA feeds available`)
   return results
 }
 
@@ -453,7 +473,7 @@ async function computeStopFrequenciesForFeed(feed: FeedConfig, extractDir: strin
     if (!lat || !lon || isNaN(lat) || isNaN(lon)) { skippedNoCoords++; continue }
 
     // Bounding box check (1 degree margin for border stops)
-    const [minLat, minLon, maxLat, maxLon] = IT_BBOX
+    const [minLat, minLon, maxLat, maxLon] = PT_BBOX
     if (lat < minLat - 1 || lat > maxLat + 1 || lon < minLon - 1 || lon > maxLon + 1) {
       skippedOutOfBounds++
       continue
@@ -734,7 +754,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
 // ── Main ──
 
 async function main() {
-  console.log(`=== IT Railway Enrichment — Multi-feed GTFS (${YEAR}) ===\n`)
+  console.log(`=== CA Railway Enrichment — Multi-feed GTFS (${YEAR}) ===\n`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
   console.log(`  Cache: ${CACHE_DIR}\n`)
 

@@ -16,6 +16,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8 } from 'apache-arrow'
+import { cellToLatLng } from 'h3-js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -88,8 +89,16 @@ async function getTrainCounts(): Promise<Map<string, SegmentCount>> {
   const segments = new Map<string, SegmentCount>()
   let trainsRunning = 0
 
-  // Freight train number patterns (ČD conventions)
-  const FREIGHT_PATTERNS = /^(Nex|Pn|Mn|Lv|Rv|Sv|Vlec)/
+  // NOTE: CIS JR JR2026.zip contains ONLY passenger trains (all files are PA_ prefix).
+  // Freight trains are NOT published in this dataset. Verified 2026-04-10:
+  //   - All 13,252 XML files have ObjectType=PA (passenger)
+  //   - OperationalTrainNumber is always digits-only (no Nex/Pn/Mn letter prefixes)
+  //   - TrafficType values are only "11", "C1"-"C4" (all passenger codes per UIC)
+  // Freight timetables are managed by SŽ but not publicly published as machine-readable.
+  // All trains from this source are counted as passenger; trains_freight remains 0.
+  let passengerTrains = 0
+  let freightTrains = 0
+  let unknownTrains = 0
 
   for (const file of xmlFiles) {
     const xml = readFileSync(resolve(xmlDir, file), 'utf-8')
@@ -110,11 +119,15 @@ async function getTrainCounts(): Promise<Map<string, SegmentCount>> {
 
     trainsRunning++
 
-    // Determine if passenger or freight from CommercialTrafficType or train number
-    const ctMatch = xml.match(/<CommercialTrafficType>([^<]+)</)
-    const tnMatch = xml.match(/<OperationalTrainNumber>([^<]+)</)
-    const ct = ctMatch?.[1] || ''
-    const isFreight = FREIGHT_PATTERNS.test(ct) || /Nex|Pn|Mn/.test(ct)
+    // Detect train type. JR2026 is passenger-only in practice, but check ObjectType
+    // for forward-compatibility if SŽ ever publishes freight data.
+    const objTypeMatch = xml.match(/<ObjectType>([^<]+)</)
+    const objType = objTypeMatch?.[1] || ''
+    // PA = Passenger, NA = Freight (if ever published), TR = Train Run reference
+    const isFreight = objType === 'NA'
+    if (isFreight) freightTrains++
+    else if (objType === 'PA') passengerTrains++
+    else unknownTrains++
 
     // Extract station sequence
     const locRegex = /<LocationPrimaryCode>(\d+)<\/LocationPrimaryCode>\s*<PrimaryLocationName>([^<]+)</g
@@ -148,7 +161,11 @@ async function getTrainCounts(): Promise<Map<string, SegmentCount>> {
   }
 
   console.log(`  ${trainsRunning} trains running on ${TARGET_DATE}`)
+  console.log(`    passenger (PA): ${passengerTrains}, freight (NA): ${freightTrains}, other: ${unknownTrains}`)
   console.log(`  ${segments.size} station-pair segments`)
+  if (freightTrains === 0) {
+    console.log(`  NOTE: JR2026.zip is passenger-only. Freight data not available from this source.`)
+  }
 
   // Cache
   const obj: Record<string, SegmentCount> = {}
@@ -294,8 +311,18 @@ function enrichHexes(
 
   // For each railway segment in Arrow, find the CZPTT segment whose from/to
   // stations are closest to the segment's start/end points
-  const hexDirs = readdirSync(H3R4_DIR).filter(d =>
+  // Pre-filter hexes to Czech Republic bbox using H3 center (no file I/O needed)
+  const allHexes = readdirSync(H3R4_DIR).filter(d =>
     d.length === 15 && d.endsWith('ffffffff'))
+  const hexDirs: string[] = []
+  for (const hex of allHexes) {
+    try {
+      const [lat, lon] = cellToLatLng(hex)
+      // CZ bbox: ~48.5-51.1 N, ~12.0-18.9 E (expanded margin for border hexes)
+      if (lat > 48.0 && lat < 51.5 && lon > 11.5 && lon < 19.5) hexDirs.push(hex)
+    } catch {}
+  }
+  console.log(`  Czech hexes (H3 bbox pre-filter): ${hexDirs.length} of ${allHexes.length} total`)
 
   // Pre-build list of CZPTT segments with GPS
   const gpsSegments: { key: string; seg: SegmentCount; fromLat: number; fromLon: number; toLat: number; toLon: number }[] = []
@@ -422,6 +449,10 @@ function enrichHexes(
     writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
     totalMatched += hexMatched
     hexesUpdated++
+
+    if (hexesUpdated % 20 === 0) {
+      console.log(`  [${hexesUpdated}/${hexDirs.length}] ${totalMatched} segments matched`)
+    }
   }
 
   console.log(`\n=== Results ===`)

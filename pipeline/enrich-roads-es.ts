@@ -1,0 +1,349 @@
+/**
+ * Enrich ES roads.arrow with MITMA Mapa de Tráfico 2022 (Spain national road census).
+ *
+ * Downloads tramos.js (JS-wrapped GeoJSON) from mapatrafico.transportes.gob.es,
+ * parses 7,289 per-segment AADT records covering all autovías + autopistas + N-roads,
+ * matches by ref + midpoint proximity, writes aadt_light/medium/heavy/moto + traffic_source.
+ *
+ * Source: https://mapatrafico.transportes.gob.es/2022/Visor/datos/GIS/tramos.js
+ * License: open data Ministerio de Transportes y Movilidad Sostenible
+ *
+ * Usage:
+ *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-es.ts
+ *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-es.ts --enrich-only
+ *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-es.ts --force-download
+ */
+
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8 } from 'apache-arrow'
+import { cellToLatLng } from 'h3-js'
+
+const YEAR = process.env.DATA_YEAR || '2025'
+const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
+const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/es`)
+const CACHE_TRAMOS = resolve(CACHE_DIR, 'mitma-tramos-2022.js')
+const CACHE_JSON = resolve(CACHE_DIR, 'mitma-tramos-parsed.json')
+
+const enrichOnly = process.argv.includes('--enrich-only')
+const forceDownload = process.argv.includes('--force-download')
+
+const TRAMOS_URL = 'https://mapatrafico.transportes.gob.es/2022/Visor/datos/GIS/tramos.js'
+
+// Spain bbox (Iberian peninsula + Balearics + Canary islands)
+const ES_BBOX: [number, number, number, number] = [27.0, -19.0, 44.0, 5.0]
+
+// ── Types ──
+
+interface TramoSection {
+  via: string         // raw road ref e.g. "A-5", "AP-7", "N-340"
+  ref: string         // normalized ref for matching
+  midLat: number
+  midLon: number
+  pkInicio: number
+  pkFin: number
+  longitud: number
+  clase: string       // road class (Autopista, Autovía, etc.)
+  imdTot: number
+  imdLig: number
+  imdPes: number
+  aadt_light: number
+  aadt_medium: number
+  aadt_heavy: number
+  aadt_moto: number
+}
+
+// ── Step 1: Download MITMA tramos GeoJSON ──
+
+async function downloadTramos(): Promise<TramoSection[]> {
+  if (!forceDownload && existsSync(CACHE_JSON)) {
+    console.log(`  Using cached parsed JSON: ${CACHE_JSON}`)
+    return JSON.parse(readFileSync(CACHE_JSON, 'utf-8'))
+  }
+
+  mkdirSync(CACHE_DIR, { recursive: true })
+
+  if (!forceDownload && existsSync(CACHE_TRAMOS)) {
+    console.log(`  Using cached tramos.js: ${CACHE_TRAMOS}`)
+  } else {
+    if (enrichOnly) {
+      throw new Error('--enrich-only but tramos.js not cached')
+    }
+    console.log(`  Downloading MITMA tramos (12.5 MB)...`)
+    const res = await fetch(TRAMOS_URL, { signal: AbortSignal.timeout(120_000) })
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${TRAMOS_URL}`)
+    const buf = Buffer.from(await res.arrayBuffer())
+    writeFileSync(CACHE_TRAMOS, buf)
+    console.log(`  Cached: ${(buf.length / 1e6).toFixed(1)} MB`)
+  }
+
+  return parseTramos()
+}
+
+function parseTramos(): TramoSection[] {
+  const raw = readFileSync(CACHE_TRAMOS, 'utf-8')
+  const jsonStart = raw.indexOf('{')
+  if (jsonStart < 0) throw new Error('No JSON object found in tramos.js')
+  // Strip "var tramos_data = " prefix and any trailing semicolon
+  let jsonText = raw.substring(jsonStart).trim()
+  if (jsonText.endsWith(';')) jsonText = jsonText.slice(0, -1)
+  const data = JSON.parse(jsonText)
+  console.log(`  Parsed FeatureCollection: ${data.features.length} features`)
+
+  const sections: TramoSection[] = []
+  let skipped = 0
+
+  for (const feat of data.features) {
+    const props = feat.properties || {}
+    const via = (props.via || '').toString().trim()
+    const imdTot = parseFloat(props.imdtot || '0')
+    const imdLig = parseFloat(props.imdlig || '0')
+    const imdPes = parseFloat(props.imdpes || '0')
+
+    if (!via || imdTot <= 0) { skipped++; continue }
+
+    // Compute centroid of MultiLineString geometry
+    const coords = feat.geometry?.coordinates
+    if (!coords || !Array.isArray(coords) || coords.length === 0) { skipped++; continue }
+
+    let sumLat = 0, sumLon = 0, count = 0
+    for (const line of coords) {
+      for (const [lon, lat] of line) {
+        sumLat += lat
+        sumLon += lon
+        count++
+      }
+    }
+    if (count === 0) { skipped++; continue }
+    const midLat = sumLat / count
+    const midLon = sumLon / count
+
+    if (midLat < ES_BBOX[0] || midLat > ES_BBOX[2] || midLon < ES_BBOX[1] || midLon > ES_BBOX[3]) {
+      skipped++; continue
+    }
+
+    // Normalize ref: "A-5" → "A5", "AP-7" → "AP7", "N-340" → "N340"
+    const ref = via.replace(/[-\s]/g, '').toUpperCase()
+
+    // CNOSSOS vehicle split:
+    // imdLig already excludes heavy. ~1% of total = motorcycles (CNOSSOS default).
+    // imdPes (heavy) split into ~5% buses (medium) + 95% trucks (heavy).
+    const motoFrac = 0.01
+    const busFracOfHeavy = 0.05
+    const aadt_moto = Math.round(imdTot * motoFrac)
+    const aadt_medium = Math.round(imdPes * busFracOfHeavy)
+    const aadt_heavy = Math.round(imdPes - aadt_medium)
+    const aadt_light = Math.max(0, Math.round(imdLig - aadt_moto))
+
+    sections.push({
+      via,
+      ref,
+      midLat,
+      midLon,
+      pkInicio: parseFloat(props.pkinicio_t || '0'),
+      pkFin: parseFloat(props.pkfin_t || '0'),
+      longitud: parseFloat(props.longitud || '0'),
+      clase: props.clase || '',
+      imdTot,
+      imdLig,
+      imdPes,
+      aadt_light,
+      aadt_medium,
+      aadt_heavy,
+      aadt_moto,
+    })
+  }
+
+  console.log(`  Parsed: ${sections.length} sections, ${skipped} skipped (no via/imd/coords)`)
+  writeFileSync(CACHE_JSON, JSON.stringify(sections))
+  console.log(`  Cached parsed JSON: ${CACHE_JSON}`)
+  return sections
+}
+
+// ── Step 2: Enrich roads.arrow files ──
+
+function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLon = (lon2 - lon1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+async function enrichArrows(sections: TramoSection[]): Promise<void> {
+  // Index sections by normalized ref
+  const refIndex = new Map<string, TramoSection[]>()
+  for (const s of sections) {
+    if (!refIndex.has(s.ref)) refIndex.set(s.ref, [])
+    refIndex.get(s.ref)!.push(s)
+  }
+  console.log(`\n  Ref index: ${refIndex.size} unique road refs`)
+  console.log(`  Top 10 refs by section count:`)
+  const refCounts = [...refIndex.entries()].map(([ref, list]) => [ref, list.length] as [string, number])
+  refCounts.sort((a, b) => b[1] - a[1])
+  for (const [ref, n] of refCounts.slice(0, 10)) console.log(`    ${ref}: ${n} sections`)
+
+  // Pre-filter Spanish hexes via H3 center
+  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
+  const hexDirs: string[] = []
+  for (const hex of allHexes) {
+    try {
+      const [lat, lon] = cellToLatLng(hex)
+      if (lat >= ES_BBOX[0] && lat <= ES_BBOX[2] && lon >= ES_BBOX[1] && lon <= ES_BBOX[3]) {
+        if (existsSync(resolve(H3R4_DIR, hex, 'roads.arrow'))) hexDirs.push(hex)
+      }
+    } catch {}
+  }
+  console.log(`  Spanish hexes with roads.arrow: ${hexDirs.length}\n`)
+
+  let totalSeg = 0
+  let matched = 0
+  let preserved = 0
+  let hexesUpdated = 0
+  const startTime = Date.now()
+
+  for (let hi = 0; hi < hexDirs.length; hi++) {
+    const hex = hexDirs[hi]
+    const arrowPath = resolve(H3R4_DIR, hex, 'roads.arrow')
+    const buf = readFileSync(arrowPath)
+    const table = tableFromIPC(buf)
+    const numRows = table.numRows
+    if (numRows === 0) continue
+
+    const refs = table.getChild('ref')
+    const startLats = table.getChild('start_lat')
+    const startLons = table.getChild('start_lon')
+    const endLats = table.getChild('end_lat')
+    const endLons = table.getChild('end_lon')
+    const existingSource = table.getChild('traffic_source')
+    const existingLight = table.getChild('aadt_light')
+    const existingMedium = table.getChild('aadt_medium')
+    const existingHeavy = table.getChild('aadt_heavy')
+    const existingMoto = table.getChild('aadt_moto')
+
+    if (!startLats || !startLons || !endLats || !endLons) continue
+
+    const aadtLight = new Int32Array(numRows)
+    const aadtMedium = new Int32Array(numRows)
+    const aadtHeavy = new Int32Array(numRows)
+    const aadtMoto = new Int32Array(numRows)
+    const trafficSource = new Uint8Array(numRows)
+
+    let hexMatched = 0
+
+    for (let i = 0; i < numRows; i++) {
+      totalSeg++
+
+      // Preserve existing enrichment (e.g. EU city traffic from continental)
+      const existingSrc = (existingSource?.get(i) as number) ?? 0
+      if (existingSrc === 1) {
+        aadtLight[i] = (existingLight?.get(i) as number) ?? 0
+        aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
+        aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
+        aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
+        trafficSource[i] = 1
+        preserved++
+        continue
+      }
+
+      const sLat = startLats.get(i) as number
+      const sLon = startLons.get(i) as number
+      const eLat = endLats.get(i) as number
+      const eLon = endLons.get(i) as number
+      const midLat = (sLat + eLat) / 2
+      const midLon = (sLon + eLon) / 2
+
+      const osmRef = (refs?.get(i)?.toString() || '').trim()
+      // Spanish OSM refs use forms like "A-1", "AP-7", "N-340", "M-30"
+      // Try original normalized + first part if multi-ref ("A-1;N-I")
+      const normRef = osmRef.replace(/[-\s]/g, '').toUpperCase().split(';')[0]
+
+      let best: TramoSection | null = null
+      let bestDist = Infinity
+
+      if (normRef && refIndex.has(normRef)) {
+        for (const c of refIndex.get(normRef)!) {
+          const dist = haversineM(midLat, midLon, c.midLat, c.midLon)
+          if (dist < bestDist) { bestDist = dist; best = c }
+        }
+      }
+
+      // Match within 30 km along ref (corridors are long)
+      if (best && bestDist < 30_000) {
+        aadtLight[i] = best.aadt_light
+        aadtMedium[i] = best.aadt_medium
+        aadtHeavy[i] = best.aadt_heavy
+        aadtMoto[i] = best.aadt_moto
+        trafficSource[i] = 1
+        hexMatched++
+        matched++
+      }
+    }
+
+    if (hexMatched > 0) {
+      const columns: Record<string, any> = {}
+      for (const field of table.schema.fields) {
+        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'traffic_source'].includes(field.name)) continue
+        columns[field.name] = table.getChild(field.name)!
+      }
+      columns['aadt_light'] = vectorFromArray(Array.from(aadtLight), new Int32())
+      columns['aadt_medium'] = vectorFromArray(Array.from(aadtMedium), new Int32())
+      columns['aadt_heavy'] = vectorFromArray(Array.from(aadtHeavy), new Int32())
+      columns['aadt_moto'] = vectorFromArray(Array.from(aadtMoto), new Int32())
+      columns['traffic_source'] = vectorFromArray(Array.from(trafficSource), new Uint8())
+      const enriched = makeTable(columns)
+      writeFileSync(arrowPath, Buffer.from(tableToIPC(enriched, 'file')))
+      hexesUpdated++
+    }
+
+    if (hi % 25 === 0 || hi === hexDirs.length - 1) {
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(0)
+      console.log(`  [${elapsed}s] ${hi + 1}/${hexDirs.length} hexes, ${hexesUpdated} updated, ${matched} matched`)
+    }
+  }
+
+  console.log(`\n=== Enrichment Results ===`)
+  console.log(`  Total segments scanned: ${totalSeg}`)
+  console.log(`  Preserved (continental): ${preserved}`)
+  console.log(`  Newly matched: ${matched} (${(100 * matched / Math.max(totalSeg, 1)).toFixed(2)}%)`)
+  console.log(`  Hexes updated: ${hexesUpdated}/${hexDirs.length}`)
+
+  // Top AADT corridors
+  const top = [...sections].sort((a, b) => b.imdTot - a.imdTot).slice(0, 15)
+  console.log(`\n  Top 15 AADT corridors (imd total):`)
+  for (const s of top) {
+    console.log(`    ${s.via.padEnd(8)} pk ${s.pkInicio.toFixed(1)}–${s.pkFin.toFixed(1)}  imdtot=${s.imdTot.toLocaleString().padStart(8)} pes=${(s.imdPes / s.imdTot * 100).toFixed(1)}%`)
+  }
+}
+
+// ── Main ──
+
+async function main() {
+  console.log(`=== ES Road Traffic Enrichment — MITMA Mapa de Tráfico 2022 ===\n`)
+  console.log(`  H3R4 dir: ${H3R4_DIR}`)
+  console.log(`  Cache:    ${CACHE_DIR}\n`)
+
+  if (!existsSync(H3R4_DIR)) {
+    throw new Error(`H3R4 directory not found: ${H3R4_DIR}`)
+  }
+
+  const sections = await downloadTramos()
+  console.log(`\n  Total parsed sections: ${sections.length}`)
+
+  // Class distribution
+  const classCounts = new Map<string, number>()
+  for (const s of sections) {
+    const c = s.clase || 'Unknown'
+    classCounts.set(c, (classCounts.get(c) || 0) + 1)
+  }
+  console.log(`  Class distribution:`)
+  for (const [c, n] of [...classCounts.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${c}: ${n}`)
+  }
+
+  await enrichArrows(sections)
+  console.log(`\n=== Done ===`)
+}
+
+main().catch(err => { console.error('Error:', err); process.exit(1) })

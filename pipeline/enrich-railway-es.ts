@@ -27,8 +27,40 @@ const CACHE_STOP_FREQ = resolve(CACHE_DIR, 'renfe-stop-frequencies.json')
 const forceDownload = process.argv.includes('--force-download')
 const enrichOnly = process.argv.includes('--enrich-only')
 
-// RENFE national GTFS
-const RENFE_GTFS_URL = 'http://data.renfe.com/dataset/34be0058-3a3d-4ee1-89cd-512e1226f53f/resource/25d6b043-9e47-4f99-bd91-edd51d782450/download/google_transit.zip'
+// Spain has multiple complementary rail GTFS feeds. We download all of them
+// and merge stop frequencies before matching to OSM railways.
+interface FeedConfig {
+  id: string
+  name: string
+  urls: string[]  // try in order; first 200 wins
+}
+
+const FEEDS: FeedConfig[] = [
+  {
+    id: 'renfe-av-ld-md',
+    name: 'Renfe Alta Velocidad / Larga Distancia / Media Distancia',
+    urls: [
+      'https://ssl.renfe.com/gtransit/Fichero_AV_LD/google_transit.zip',
+      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/es-renfe-alta-velocidad-larga-distancia-media-distancia-gtfs-2620.zip?alt=media',
+    ],
+  },
+  {
+    id: 'renfe-cercanias',
+    name: 'Renfe Cercanías (commuter — Madrid, Barcelona, Valencia, Bilbao, Asturias, etc.)',
+    urls: [
+      'https://ssl.renfe.com/ftransit/Fichero_CER_FOMENTO/fomento_transit.zip',
+      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/es-unknown-renfe-cercanias-gtfs-2653.zip?alt=media',
+    ],
+  },
+  {
+    id: 'fgc-catalunya',
+    name: 'FGC — Ferrocarrils de la Generalitat de Catalunya',
+    urls: [
+      'https://www.fgc.cat/google/google_transit.zip',
+      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/es-catalunya-ferrocarrils-de-la-generalitat-de-catalunya-gtfs-1856.zip?alt=media',
+    ],
+  },
+]
 
 // Spain bounding box (with margin for border areas)
 const BBOX: [number, number, number, number] = [35.5, -10.0, 44.0, 5.0] // [minLat, minLon, maxLat, maxLon]
@@ -156,62 +188,88 @@ function findTargetWednesday(calendarRows: Record<string, string>[]): string {
   return mid.toISOString().substring(0, 10).replace(/-/g, '')
 }
 
-// ── Step 1: Download + parse RENFE GTFS ──
+// ── Step 1: Download all configured GTFS feeds ──
 
-async function downloadAndExtractGtfs(): Promise<string> {
-  const extractDir = resolve(CACHE_DIR, 'renfe-gtfs')
+async function downloadAllGtfs(): Promise<Array<{ feed: FeedConfig; dir: string }>> {
+  const results: Array<{ feed: FeedConfig; dir: string }> = []
 
-  if (!forceDownload && existsSync(resolve(extractDir, 'stops.txt'))) {
-    console.log(`  Using cached GTFS: ${extractDir}`)
-    return extractDir
-  }
-  if (enrichOnly) {
-    if (!existsSync(resolve(extractDir, 'stops.txt'))) {
-      console.error('ERROR: --enrich-only but no cached GTFS')
-      process.exit(1)
+  for (const feed of FEEDS) {
+    const extractDir = resolve(CACHE_DIR, `gtfs-${feed.id}`)
+
+    if (!forceDownload && existsSync(resolve(extractDir, 'stops.txt'))) {
+      console.log(`  [${feed.id}] Using cached GTFS: ${extractDir}`)
+      results.push({ feed, dir: extractDir })
+      continue
     }
-    return extractDir
-  }
-
-  mkdirSync(CACHE_DIR, { recursive: true })
-  const zipPath = resolve(CACHE_DIR, 'renfe-google_transit.zip')
-
-  console.log(`  Downloading RENFE GTFS from ${RENFE_GTFS_URL}...`)
-  const res = await fetch(RENFE_GTFS_URL, {
-    signal: AbortSignal.timeout(300_000),
-    headers: { 'Accept': 'application/zip, application/octet-stream, */*' },
-    redirect: 'follow',
-  })
-  if (!res.ok) throw new Error(`RENFE GTFS download failed: ${res.status} ${res.statusText}`)
-
-  const buf = Buffer.from(await res.arrayBuffer())
-  writeFileSync(zipPath, buf)
-  console.log(`  Downloaded: ${(buf.length / 1e6).toFixed(1)} MB`)
-
-  mkdirSync(extractDir, { recursive: true })
-  execSync(`unzip -o -q "${zipPath}" -d "${extractDir}"`, { timeout: 120_000 })
-
-  // Verify essential files
-  for (const f of ['stops.txt', 'stop_times.txt', 'trips.txt', 'routes.txt']) {
-    if (!existsSync(resolve(extractDir, f))) {
-      throw new Error(`RENFE GTFS missing required file: ${f}`)
+    if (enrichOnly) {
+      if (!existsSync(resolve(extractDir, 'stops.txt'))) {
+        console.log(`  [${feed.id}] --enrich-only but no cached GTFS, skipping`)
+        continue
+      }
+      results.push({ feed, dir: extractDir })
+      continue
     }
+
+    mkdirSync(CACHE_DIR, { recursive: true })
+    const zipPath = resolve(CACHE_DIR, `gtfs-${feed.id}.zip`)
+
+    let downloaded = false
+    for (const url of feed.urls) {
+      try {
+        console.log(`  [${feed.id}] Downloading from ${url}...`)
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(300_000),
+          headers: { 'Accept': 'application/zip, application/octet-stream, */*' },
+          redirect: 'follow',
+        })
+        if (!res.ok) {
+          console.log(`  [${feed.id}] HTTP ${res.status}, trying next...`)
+          continue
+        }
+        const buf = Buffer.from(await res.arrayBuffer())
+        writeFileSync(zipPath, buf)
+        console.log(`  [${feed.id}] Downloaded: ${(buf.length / 1e6).toFixed(1)} MB`)
+        downloaded = true
+        break
+      } catch (err: any) {
+        console.log(`  [${feed.id}] Failed: ${err.message}, trying next...`)
+      }
+    }
+
+    if (!downloaded) {
+      console.log(`  [${feed.id}] All URLs failed — skipping`)
+      continue
+    }
+
+    mkdirSync(extractDir, { recursive: true })
+    execSync(`unzip -o -q "${zipPath}" -d "${extractDir}"`, { timeout: 120_000 })
+
+    let hasFiles = true
+    for (const f of ['stops.txt', 'stop_times.txt', 'trips.txt', 'routes.txt']) {
+      if (!existsSync(resolve(extractDir, f))) {
+        console.log(`  [${feed.id}] Missing ${f}, skipping`)
+        hasFiles = false
+        break
+      }
+    }
+
+    execSync(`rm -f "${zipPath}"`)
+
+    if (hasFiles) results.push({ feed, dir: extractDir })
   }
 
-  execSync(`rm -f "${zipPath}"`)
-  console.log(`  Extracted GTFS to ${extractDir}`)
-  return extractDir
+  if (results.length === 0) {
+    throw new Error('Failed to download any Spanish GTFS feed')
+  }
+
+  console.log(`\n  ${results.length}/${FEEDS.length} ES feeds available`)
+  return results
 }
 
-// ── Step 2: Compute stop frequencies ──
+// ── Step 2: Compute stop frequencies for one feed ──
 
-async function computeStopFrequencies(extractDir: string): Promise<StopTrainCount[]> {
-  if (!forceDownload && existsSync(CACHE_STOP_FREQ)) {
-    console.log(`  Using cached stop frequencies: ${CACHE_STOP_FREQ}`)
-    return JSON.parse(readFileSync(CACHE_STOP_FREQ, 'utf-8'))
-  }
-
-  console.log('  Parsing GTFS files...')
+async function computeStopFrequenciesForFeed(feed: FeedConfig, extractDir: string): Promise<StopTrainCount[]> {
+  console.log(`\n  [${feed.id}] Parsing GTFS files...`)
   const startTime = Date.now()
 
   // Parse routes.txt
@@ -437,28 +495,43 @@ async function computeStopFrequencies(extractDir: string): Promise<StopTrainCoun
   }
   const deduped = [...dedupMap.values()]
 
-  console.log(`  ${deduped.length} stops with train counts (${resolvedViaParent} resolved via parent station)`)
+  console.log(`  [${feed.id}] ${deduped.length} stops with train counts (${resolvedViaParent} resolved via parent station)`)
 
-  // Stats
-  const paxCounts = deduped.map(s => s.trains_passenger).sort((a, b) => b - a)
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+  console.log(`  [${feed.id}] GTFS parsing took ${elapsed}s`)
+
+  return deduped
+}
+
+/** Merge per-feed stop counts, deduplicating by coordinates. */
+function mergeStopCounts(perFeed: StopTrainCount[][]): StopTrainCount[] {
+  const map = new Map<string, StopTrainCount>()
+  for (const counts of perFeed) {
+    for (const sc of counts) {
+      const key = `${sc.lat.toFixed(4)}_${sc.lon.toFixed(4)}`
+      const existing = map.get(key)
+      if (existing) {
+        existing.trains_passenger += sc.trains_passenger
+        existing.trains_freight += sc.trains_freight
+      } else {
+        map.set(key, { ...sc })
+      }
+    }
+  }
+  const merged = [...map.values()]
+
+  const paxCounts = merged.map(s => s.trains_passenger).sort((a, b) => b - a)
   if (paxCounts.length > 0) {
+    console.log(`\n  Merged: ${merged.length} unique stops`)
     console.log(`  Train frequency: max=${paxCounts[0]}, median=${paxCounts[Math.floor(paxCounts.length / 2)]}, min=${paxCounts[paxCounts.length - 1]}`)
-    const top5 = deduped.sort((a, b) => b.trains_passenger - a.trains_passenger).slice(0, 5)
+    const top5 = [...merged].sort((a, b) => b.trains_passenger - a.trains_passenger).slice(0, 5)
     console.log('  Busiest stops:')
     for (const s of top5) {
       console.log(`    ${s.trains_passenger} trains/day: ${s.name} (${s.lat.toFixed(4)}, ${s.lon.toFixed(4)})`)
     }
   }
 
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-  console.log(`  GTFS parsing took ${elapsed}s`)
-
-  // Cache
-  mkdirSync(CACHE_DIR, { recursive: true })
-  writeFileSync(CACHE_STOP_FREQ, JSON.stringify(deduped))
-  console.log(`  Cached to ${CACHE_STOP_FREQ}`)
-
-  return deduped
+  return merged
 }
 
 // ── Step 3: Match stops to railway segments ──
@@ -628,7 +701,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
 // ── Main ──
 
 async function main() {
-  console.log(`=== ES Railway Enrichment — RENFE GTFS (${YEAR}) ===\n`)
+  console.log(`=== ES Railway Enrichment — Multi-feed GTFS (${YEAR}) ===\n`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
   console.log(`  Cache: ${CACHE_DIR}\n`)
 
@@ -637,16 +710,31 @@ async function main() {
     process.exit(1)
   }
 
-  const extractDir = await downloadAndExtractGtfs()
-  const stopFreqs = await computeStopFrequencies(extractDir)
+  let merged: StopTrainCount[]
+  if (!forceDownload && existsSync(CACHE_STOP_FREQ)) {
+    console.log(`  Using cached merged stop frequencies: ${CACHE_STOP_FREQ}`)
+    merged = JSON.parse(readFileSync(CACHE_STOP_FREQ, 'utf-8'))
+    console.log(`  ${merged.length} stops in cache`)
+  } else {
+    const feeds = await downloadAllGtfs()
+    const perFeed: StopTrainCount[][] = []
+    for (const { feed, dir } of feeds) {
+      const counts = await computeStopFrequenciesForFeed(feed, dir)
+      perFeed.push(counts)
+    }
+    merged = mergeStopCounts(perFeed)
+    mkdirSync(CACHE_DIR, { recursive: true })
+    writeFileSync(CACHE_STOP_FREQ, JSON.stringify(merged))
+    console.log(`  Cached merged frequencies to ${CACHE_STOP_FREQ}`)
+  }
 
-  if (stopFreqs.length === 0) {
+  if (merged.length === 0) {
     console.log('\n  No stop frequencies computed. Nothing to enrich.')
     return
   }
 
   console.log(`\n  Enriching railways.arrow files...`)
-  enrichHexes(stopFreqs)
+  enrichHexes(merged)
   console.log(`\n=== Done ===`)
 }
 

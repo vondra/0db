@@ -1,18 +1,14 @@
 /**
- * Enrich IT railways.arrow with Trenitalia train frequencies via GTFS.
+ * Enrich PT railways.arrow with train frequencies from Portuguese GTFS feeds.
  *
- * Downloads Italy's national GTFS feed from data.public-transport.earth
- * (aggregated Trenitalia + Trenord + other operators), parses stop frequencies,
- * matches GTFS stops to OSM railway segments by proximity, writes
- * trains_passenger + trains_freight columns.
- *
- * This is a standalone Italy-specific version of the global transit enrichment,
- * following the same pattern as enrich-railway-cz.ts and enrich-global-transit.ts.
+ * Downloads multiple Portuguese rail/metro GTFS feeds (Comboios de Portugal,
+ * Metro do Porto, Metro Sul Tejo, Carris Metropolitana de Lisboa) and merges
+ * stop frequencies, then matches GTFS stops to OSM railway segments by proximity.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-it.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-it.ts --force-download
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-it.ts --enrich-only
+ *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-pt.ts
+ *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-pt.ts --force-download
+ *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-pt.ts --enrich-only
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
@@ -24,69 +20,60 @@ import { latLngToCell } from 'h3-js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
-const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/it`)
+const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/pt`)
 const CACHE_FREQUENCIES = resolve(CACHE_DIR, 'gtfs-stop-frequencies.json')
 
 const forceDownload = process.argv.includes('--force-download')
 const enrichOnly = process.argv.includes('--enrich-only')
 
-// Italy has no single national rail GTFS. We stitch together regional feeds
-// from Mobility Database (mdb-*). Each feed covers a different part of Italy.
+// Portugal multi-feed: national rail (CP) + metro Porto + metro sul Tejo +
+// Carris Metropolitana (Lisboa metropolitan area buses + commuter rail)
 interface FeedConfig {
   id: string
   name: string
-  urls: string[]  // Try in order; first success wins
+  urls: string[]
 }
 
 const FEEDS: FeedConfig[] = [
   {
-    id: 'toscana-trenitalia',
-    name: 'Trenitalia (Toscana/Marche/Umbria/Lazio)',
+    id: 'cp-comboios',
+    name: 'Comboios de Portugal (CP) — national rail',
     urls: [
-      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-marche-trenitalia-gtfs-1319.zip?alt=media',
-      'https://dati.toscana.it/dataset/8bb8f8fe-fe7d-41d0-90dc-49f2456180d1/resource/4f85393b-357d-443d-8378-65de4198505f/download/trenitalia.gtfs',
+      'https://publico.cp.pt/gtfs/gtfs.zip',
     ],
   },
   {
-    id: 'trenord-lombardia',
-    name: 'Trenord (Lombardia)',
+    id: 'metro-porto',
+    name: 'Metro do Porto',
     urls: [
-      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-lombardia-trenord-gtfs-855.zip?alt=media',
-      'https://www.dati.lombardia.it/download/3z4k-mxz9/application%2Fzip',
+      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/pt-porto-metro-do-porto-gtfs-2357.zip?alt=media',
     ],
   },
   {
-    id: 'gtt-piemonte',
-    name: 'GTT Servizio Ferroviario (Piemonte)',
+    id: 'metro-sul-tejo',
+    name: 'Metro Sul do Tejo (Almada)',
     urls: [
-      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-piedmont-turin-gruppo-torinese-trasporti-gtfs-2687.zip?alt=media',
-      'https://www.gtt.to.it/open_data/gtt_gtfs.zip',
+      'https://mts.pt/imt/MTS-20240129.zip',
     ],
   },
   {
-    id: 'ferrotramviaria-puglia',
-    name: 'Ferrotramviaria (Puglia — Bari area)',
+    id: 'carris-metropolitana',
+    name: 'Carris Metropolitana de Lisboa (AML buses + commuter)',
     urls: [
-      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-puglia-ferrotramviaria-gtfs-1058.zip?alt=media',
-    ],
-  },
-  {
-    id: 'trenitalia-sardegna',
-    name: 'Trenitalia (Sardegna)',
-    urls: [
-      'https://storage.googleapis.com/storage/v1/b/mdb-latest/o/it-regione-autonoma-della-sardegna-trenitalia-gtfs-2997.zip?alt=media',
-      'https://www.sardegnamobilita.it/opendata/R_SARDEGTRASP_00008_1_dati_trenitalia.zip',
+      'https://api.carrismetropolitana.pt/v2/gtfs',
     ],
   },
 ]
 
-// Italy bounding box
-const IT_BBOX: [number, number, number, number] = [35.5, 6.6, 47.1, 18.6] // [minLat, minLon, maxLat, maxLon]
+// Portugal mainland bounding box (excludes Azores/Madeira)
+const PT_BBOX: [number, number, number, number] = [36.5, -10.0, 42.5, -6.0] // [minLat, minLon, maxLat, maxLon]
 
-// GTFS route_type: 2=Rail, 100-109=Railway subtypes, 0=Tram, 900-906=Tram subtypes
+// GTFS route_type: 2=Rail, 100-109=Railway subtypes, 0=Tram, 900-906=Tram subtypes,
+// 1=Subway/Metro, 400-405=Urban Railway/Monorail subtypes
 const RAIL_TYPES = new Set([2, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109])
 const TRAM_TYPES = new Set([0, 900, 901, 902, 903, 904, 905, 906])
-const ALL_RAIL_AND_TRAM = new Set([...RAIL_TYPES, ...TRAM_TYPES])
+const METRO_TYPES = new Set([1, 400, 401, 402, 403, 404, 405])
+const ALL_RAIL_AND_TRAM = new Set([...RAIL_TYPES, ...TRAM_TYPES, ...METRO_TYPES])
 
 // ── Types ──
 
@@ -283,10 +270,10 @@ async function downloadAllGtfs(): Promise<Array<{ feed: FeedConfig; dir: string 
   }
 
   if (results.length === 0) {
-    throw new Error('Failed to download any Italy GTFS feed')
+    throw new Error('Failed to download any Portuguese GTFS feed')
   }
 
-  console.log(`  ${results.length}/${FEEDS.length} IT feeds available`)
+  console.log(`  ${results.length}/${FEEDS.length} PT feeds available`)
   return results
 }
 
@@ -453,7 +440,7 @@ async function computeStopFrequenciesForFeed(feed: FeedConfig, extractDir: strin
     if (!lat || !lon || isNaN(lat) || isNaN(lon)) { skippedNoCoords++; continue }
 
     // Bounding box check (1 degree margin for border stops)
-    const [minLat, minLon, maxLat, maxLon] = IT_BBOX
+    const [minLat, minLon, maxLat, maxLon] = PT_BBOX
     if (lat < minLat - 1 || lat > maxLat + 1 || lon < minLon - 1 || lon > maxLon + 1) {
       skippedOutOfBounds++
       continue
@@ -734,7 +721,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
 // ── Main ──
 
 async function main() {
-  console.log(`=== IT Railway Enrichment — Multi-feed GTFS (${YEAR}) ===\n`)
+  console.log(`=== PT Railway Enrichment — Multi-feed GTFS (${YEAR}) ===\n`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
   console.log(`  Cache: ${CACHE_DIR}\n`)
 
