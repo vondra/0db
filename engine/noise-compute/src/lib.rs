@@ -253,7 +253,7 @@ fn compute_roads(
             else { rasters.ground_g(receiver.lat, receiver.lon) };
         let flc = geo::finite_line_correction(seg.length_m as f64, seg.dist_m, seg.fraction);
 
-        // Per-segment path effects (same as pipeline inner_loop)
+        // Per-segment path effects
         let terrain_atten = propagation::path_effects::terrain_attenuation(
             rasters, seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon,
             src_alt, rcv_alt, seg.dist_m,
@@ -461,9 +461,10 @@ fn compute_railways(
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
     for seg in railways {
-        // Tunnel: skip segment — sound contained inside, not heard outside
         if seg.tunnel { continue; }
         if seg.dist_m > 8000.0 { continue; }
+
+        let fade_factor = geo::fade_factor(seg.dist_m, 8000.0);
 
         let src_elev = rasters.elevation(seg.cp_lat, seg.cp_lon);
         let src_alt = src_elev + SOURCE_HEIGHT_RAIL;
@@ -477,6 +478,7 @@ fn compute_railways(
         if q_pax + q_frt <= 0.0 { continue; }
 
         let rcv_alt = receiver.altitude_m();
+
         // Bridge: hard surface below → G=0 (no ground absorption). ISO 9613-2 §7.3.1
         let ground_g = if seg.bridge { 0.0 } else { rasters.ground_g(receiver.lat, receiver.lon) };
         let flc = geo::finite_line_correction(seg.length_m as f64, seg.dist_m, seg.fraction);
@@ -536,8 +538,9 @@ fn compute_railways(
             emission_energy: 0.0, line_coords: Vec::new(),
             has_bridge: false,
         });
+        if fade_factor < 1.0 { for pi in 0..3 { seg_variants[pi].scale(fade_factor); } }
         for pi in 0..3 { acc.variants[pi].add(&seg_variants[pi]); }
-        acc.emission_energy += day_emission_energy;
+        acc.emission_energy += day_emission_energy * fade_factor;
         if seg.bridge { acc.has_bridge = true; }
         if seg.dist_m < acc.min_dist {
             acc.min_dist = seg.dist_m;
