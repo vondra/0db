@@ -4,7 +4,7 @@
 //! and vegetation attenuation for a single source-receiver pair.
 //! Returns per-band [f64; NUM_BANDS] attenuation arrays.
 
-use crate::types::{NUM_BANDS, RasterSampler, Barrier};
+use crate::types::{NUM_BANDS, RasterSampler, Barrier, ScreeningObstacleTrace};
 use super::{diffraction, screening, vegetation};
 
 /// Compute terrain diffraction attenuation per band.
@@ -146,7 +146,7 @@ pub fn terrain_attenuation_with_meta(
     rcv_lat: f64, rcv_lon: f64,
     src_elev: f64, rcv_alt: f64,
     dist_m: f64,
-) -> ([f64; NUM_BANDS], f64, bool) {
+) -> ([f64; NUM_BANDS], f64, bool, u32) {
     let hill_detected = [0.25, 0.5, 0.75].iter().any(|&t| {
         let lat = src_lat + t * (rcv_lat - src_lat);
         let lon = src_lon + t * (rcv_lon - src_lon);
@@ -155,21 +155,24 @@ pub fn terrain_attenuation_with_meta(
         elev > los
     });
 
-    if !hill_detected { return ([0.0; NUM_BANDS], 0.0, false); }
+    if !hill_detected { return ([0.0; NUM_BANDS], 0.0, false, 0); }
 
     let profile = rasters.terrain_profile(src_lat, src_lon, rcv_lat, rcv_lon, 0);
+    let profile_points = profile.len() as u32;
     let src_ground = if !profile.is_empty() { profile[0] } else { 0.0 };
     let src_agl = (src_elev - src_ground).max(0.05);
     let rcv_agl = crate::constants::DEFAULT_RECEIVER_HEIGHT;
     let diff = diffraction::compute_path_difference(&profile, dist_m, src_agl, rcv_agl);
     let atten = diffraction::diffraction_attenuation_with_edge(diff.delta, diff.is_double, diff.edge_distance);
-    (atten, diff.delta, diff.is_double)
+    (atten, diff.delta, diff.is_double, profile_points)
 }
 
-/// Screening attenuation with metadata (max building height) for popup tooltips.
+/// Screening attenuation with full obstacle trace for popup tooltips.
 ///
 /// Combines screening_attenuation() and max_building_along_path() into a single
-/// pass, avoiding the duplicate path scan.
+/// pass, avoiding the duplicate path scan. Returns the single obstacle the
+/// engine chose as dominant (barrier or raster-sampled building) plus the
+/// intermediate Fresnel geometry — no fabricated aggregates.
 pub fn screening_attenuation_with_meta(
     rasters: &dyn RasterSampler,
     barriers: &[Barrier],
@@ -178,7 +181,7 @@ pub fn screening_attenuation_with_meta(
     src_elev: f64, rcv_alt: f64,
     dist_m: f64,
     exclusion_radius_m: f64,
-) -> ([f64; NUM_BANDS], f64) {
+) -> ([f64; NUM_BANDS], ScreeningObstacleTrace) {
     let excl_limit = exclusion_radius_m.max(0.0);
 
     let dlat = rcv_lat - src_lat;
@@ -207,16 +210,25 @@ pub fn screening_attenuation_with_meta(
         }
     }
 
-    let (mut max_bh, mut max_bh_t) = rasters.max_building_along_path(
+    let (raster_bh, raster_t, samples_taken, step_m) = rasters.max_building_along_path_stats(
         src_lat, src_lon, rcv_lat, rcv_lon, dist_m, excl_limit,
     );
 
-    if barrier_max_h > max_bh {
-        max_bh = barrier_max_h;
-        max_bh_t = barrier_max_t;
-    }
+    // Pick the winner and remember its kind for the popup trace.
+    let (max_bh, max_bh_t, kind): (f64, f64, &'static str) = if barrier_max_h > raster_bh {
+        (barrier_max_h, barrier_max_t, "barrier")
+    } else if raster_bh > 0.0 {
+        (raster_bh, raster_t, "building")
+    } else {
+        (0.0, 0.5, "none")
+    };
 
-    if max_bh <= 0.0 { return ([0.0; NUM_BANDS], 0.0); }
+    if max_bh <= 0.0 {
+        return ([0.0; NUM_BANDS], ScreeningObstacleTrace {
+            kind: "none", height_m: 0.0, t: 0.0, screen_h_m: 0.0, delta_m: 0.0,
+            samples_taken, step_m,
+        });
+    }
 
     let bld_ground = rasters.elevation(
         src_lat + max_bh_t * dlat,
@@ -236,25 +248,34 @@ pub fn screening_attenuation_with_meta(
         let d_br = (d2_h * d2_h + dz_br * dz_br).sqrt();
         let d_sr = (dist_m * dist_m + dz_sr * dz_sr).sqrt();
         let delta = (d_sb + d_br - d_sr).max(0.0);
-        (screening::building_screening(delta), max_bh)
+        let trace = ScreeningObstacleTrace {
+            kind, height_m: max_bh, t: max_bh_t, screen_h_m: screen_h, delta_m: delta,
+            samples_taken, step_m,
+        };
+        (screening::building_screening(delta), trace)
     } else {
-        ([0.0; NUM_BANDS], max_bh)
+        // Obstacle exists but below line-of-sight — no Fresnel screening.
+        let trace = ScreeningObstacleTrace {
+            kind, height_m: max_bh, t: max_bh_t, screen_h_m: screen_h, delta_m: 0.0,
+            samples_taken, step_m,
+        };
+        ([0.0; NUM_BANDS], trace)
     }
 }
 
 /// Compute vegetation attenuation per band.
 ///
-/// Limited to source-receiver distance ≤500m. Beyond that, sound wavefront has spread
-/// too wide for narrow forest-depth ray model to be valid. Physical cap via MAX_VEG_ATTEN
-/// per band (ISO 9613-2 Table A.1: max 200m forest depth).
+/// Applied for the full source→receiver path matching terrain and screening.
+/// Forest depth is summed over contiguous forest sections (≥10 m) along the
+/// 1D line through the WorldCover 30 m raster. Per-band attenuation is capped
+/// at MAX_VEG_ATTEN (ISO 9613-2 Table A.1: 200 m effective depth ceiling),
+/// so even multi-kilometre paths through forest don't produce unbounded effects.
 pub fn vegetation_attenuation_path(
     rasters: &dyn RasterSampler,
     src_lat: f64, src_lon: f64,
     rcv_lat: f64, rcv_lon: f64,
-    dist_m: f64,
+    _dist_m: f64,
 ) -> [f64; NUM_BANDS] {
-    if dist_m > 500.0 { return [0.0; NUM_BANDS]; }
-
     let forest_depth = rasters.vegetation_depth(src_lat, src_lon, rcv_lat, rcv_lon);
     vegetation::vegetation_attenuation(forest_depth)
 }

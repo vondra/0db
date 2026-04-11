@@ -66,47 +66,27 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
           displayed_count: s.displayed_count ?? 0,
         }))
 
-        const ad = raw.aircraft_detail
-        const aircraftMeta = ad ? {
-          v33: 1,
-          l_day: ad.l_day ?? 0,
-          l_evening: ad.l_evening ?? 0,
-          l_night: ad.l_night ?? 0,
-          lmax_peak: ad.lmax_peak ?? null,
-          flights_per_day: ad.flights_per_day ?? 0,
-          helicopter_flights_per_day: ad.helicopter_flights_per_day ?? 0,
-          faint_flights_per_day: ad.faint_flights_per_day ?? 0,
-          faint_avg_altitude_m: ad.faint_avg_altitude_m ?? 0,
-          faint_top_aircraft: ad.faint_top_aircraft ?? '',
-          audible_flights_per_day: ad.audible_flights_per_day ?? 0,
-          audible_avg_altitude_m: ad.audible_avg_altitude_m ?? 0,
-          audible_top_aircraft: ad.audible_top_aircraft ?? '',
-          disruptive_flights_per_day: ad.disruptive_flights_per_day ?? 0,
-          disruptive_avg_altitude_m: ad.disruptive_avg_altitude_m ?? 0,
-          disruptive_top_aircraft: ad.disruptive_top_aircraft ?? '',
-          elevation_m: elevation,
-          compute_ms: elapsed,
-        } : null
-
-        let isFirstAircraft = true
+        // Typed metadata (SourceMetadata enum from Rust) flows through unchanged.
+        // Aircraft metadata is now Rust-side `SourceMetadata::Aircraft` (not a server-side bag),
+        // so no flattening needed here.
         const topContributors = (raw.contributors ?? []).map((c: any) => {
-          const isAircraft = c.source_type === 'aircraft'
-          const metadata = (isAircraft && isFirstAircraft && aircraftMeta)
-            ? (isFirstAircraft = false, aircraftMeta)
-            : (c.metadata ?? {})
-
+          const screeningRaw = c.screening ?? { building_path_m: 0, attenuation_db: 0 }
           return {
             source_type: c.source_type,
             osm_id: c.osm_id ?? null,
             name: c.name ?? '',
             subtype: c.subtype ?? '',
             distance_m: Math.round(c.distance_m ?? 0),
-            metadata,
+            metadata: c.metadata ?? null,
             emission_db: c.emission_db ?? 0,
             emission_bands: c.emission_bands ?? [],
             baseline: c.baseline ?? { geometric_db: 0, atmospheric_db: 0, ground_factor: 0.5, ground_db: 0, total_db: 0 },
             terrain: c.terrain ?? { delta_m: 0, is_double: false, attenuation_db: 0 },
-            screening: c.screening ?? { building_path_m: 0, attenuation_db: 0 },
+            screening: {
+              building_path_m: screeningRaw.building_path_m ?? 0,
+              attenuation_db: screeningRaw.attenuation_db ?? 0,
+              obstacle: screeningRaw.obstacle ?? null,
+            },
             vegetation: c.vegetation ?? { forest_depth_m: 0, attenuation_db: 0 },
             received_lden: Math.round((c.periods?.lden_db ?? c.received_lden ?? 0) * 10) / 10,
             received_lden_free: Math.round((c.periods_free?.lden_db ?? c.received_lden_free ?? 0) * 10) / 10,

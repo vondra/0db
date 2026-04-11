@@ -180,11 +180,17 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
             let sf = svc_factor / divisor;
 
             // Enriched counts from Arrow, with defaults fallback (matching pipeline)
+            let trains_passenger_source: u8 = if r.trains_passenger > 0 { 0 } else { 1 };
+            let trains_freight_source: u8 = if r.trains_freight > 0 { 0 } else { 1 };
             let q_pax = if r.trains_passenger > 0 { r.trains_passenger as f64 } else { def_pax };
             let q_frt = if r.trains_freight > 0 { r.trains_freight as f64 } else { def_frt };
-            let speed = if r.maxspeed > 0 { r.maxspeed as f64 }
-                else if r.highspeed { 300.0 }
-                else { def_speed };
+            let (speed, speed_source): (f64, u8) = if r.maxspeed > 0 {
+                (r.maxspeed as f64, 0)          // 0 = osm_maxspeed
+            } else if r.highspeed {
+                (300.0, 1)                      // 1 = highspeed_default
+            } else {
+                (def_speed, 2)                  // 2 = type_default
+            };
 
             all_railways.push(noise_compute::types::RailSegment {
                 osm_id: r.osm_id,
@@ -203,6 +209,12 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                 rail_ref: r.rail_ref.clone(),
                 bridge: r.bridge,
                 tunnel: r.tunnel,
+                service: r.service > 0,
+                highspeed: r.highspeed,
+                parallel_divisor: r.parallel_divisor.max(1),
+                speed_source,
+                trains_passenger_source,
+                trains_freight_source,
                 dist_m: r.dist_m,
                 cp_lat: r.cp_lat, cp_lon: r.cp_lon,
                 fraction: r.fraction,

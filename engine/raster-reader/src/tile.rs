@@ -359,6 +359,11 @@ impl TileStore {
     }
 
     /// Average value along path (for ground G from IMD).
+    ///
+    /// Sampling step is min(raster cell, 30 m). For coarse rasters (e.g. IMD at
+    /// 275 m / cell), this means oversampling — bilinear interpolation already
+    /// handles the smooth interpolation between cells, so 30 m sample density
+    /// gives a stable line average matching what the other 30 m path walks use.
     pub fn avg_along_path(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
         let cos_lat = ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
         let dlat = (lat2 - lat1) * 110_540.0;
@@ -366,7 +371,8 @@ impl TileStore {
         let dist_m = (dlat * dlat + dlon * dlon).sqrt();
 
         let cell_m = 110_540.0 / (self.grid_size - 1) as f64;
-        let steps = (dist_m / cell_m).ceil().max(3.0) as usize;
+        let step_m = cell_m.min(30.7);     // 30.7 m matches DEM/forest/building cadence
+        let steps = (dist_m / step_m).ceil().max(3.0) as usize;
 
         let mut sum = 0.0;
         let mut cached_key = (i32::MIN, i32::MIN);

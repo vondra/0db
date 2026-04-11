@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useMemo } from 'react'
+import { Tooltip } from '@base-ui/react/tooltip'
 import AboutPage from './components/AboutPage'
 import MapView from './components/MapView'
 import SearchBar from './components/SearchBar'
@@ -184,6 +185,7 @@ export default function App() {
   }, [syncUrl])
 
   return (
+    <Tooltip.Provider>
     <div className="relative h-screen w-screen overflow-hidden">
       <SearchBar
         onSelect={setSelectedLocation}
@@ -303,5 +305,6 @@ export default function App() {
         onHighlight={setHighlightGeometry}
       />
     </div>
+    </Tooltip.Provider>
   )
 }

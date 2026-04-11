@@ -188,7 +188,7 @@ fn compute_roads(
 
     use std::collections::HashMap;
 
-    // Group segments by osm_id: accumulate energy + collect geometry
+    // Group segments by (ref, name, class): accumulate energy + collect geometry
     struct RoadAccum {
         class_name: &'static str,
         display_name: String,
@@ -199,6 +199,33 @@ fn compute_roads(
         closest_cp_lat: f64,
         closest_cp_lon: f64,
         closest_src_height: f64,
+        // Closest-segment metadata (for popup)
+        closest_segment_idx: i16,
+        closest_aadt_light_raw: i32,
+        closest_aadt_medium_raw: i32,
+        closest_aadt_heavy_raw: i32,
+        closest_aadt_moto_raw: i32,
+        closest_aadt_light_effective: f64,
+        closest_aadt_medium_effective: f64,
+        closest_aadt_heavy_effective: f64,
+        closest_aadt_moto_effective: f64,
+        closest_traffic_source: &'static str, // "census" | "default_by_class"
+        closest_speed_posted: u8,
+        closest_speed_used: f64,
+        closest_speed_source: &'static str,   // "osm_posted" | "default_by_class" | "roundabout_cap"
+        closest_surface_type: u8,
+        closest_surface_corr_db: f64,
+        closest_lanes: u8,
+        closest_oneway: bool,
+        // Aggregation across all grouped segments
+        segment_count: u32,
+        total_length_m: f64,
+        bridge_count: u32,
+        // Group-level screening obstacle histogram (popup transparency)
+        obstacle_segment_count: u32,
+        obstacle_height_sum: f64,
+        obstacle_max_height: f64,
+        obstacle_max_segment_idx: i16,
         // Per-period variant energies (full, free-field, no_terrain, no_screening, no_vegetation)
         variants: [PropagationVariants; 3], // day, evening, night
         emission_energy: f64,
@@ -248,9 +275,12 @@ fn compute_roads(
             if seg.junction == 1 { base.min(30.0) } else { base }
         };
         let surf_corr = SURFACE_CORR.get(seg.surface_type as usize).copied().unwrap_or(0.0);
-        // Bridge: hard surface below → G=0 (no ground absorption)
+        // Bridge: hard surface below → G=0 (no ground absorption).
+        // Otherwise: line-averaged G from source to receiver (IMD is oversampled at 30 m).
+        // Replaces single-point sample at receiver — better matches ISO 9613-2 §7.3.1
+        // mean-region intent without the full 3-region complexity.
         let ground_g = if seg.bridge { 0.0 }
-            else { rasters.ground_g(receiver.lat, receiver.lon) };
+            else { rasters.ground_g_path(seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon) };
         let flc = geo::finite_line_correction(seg.length_m as f64, seg.dist_m, seg.fraction);
 
         // Early exit: skip if free-field < threshold (matching pipeline)
@@ -331,11 +361,44 @@ fn compute_roads(
                 min_dist: f64::MAX, min_d_slant: 0.0, min_ground_g: 0.5,
                 closest_cp_lat: seg.cp_lat, closest_cp_lon: seg.cp_lon,
                 closest_src_height: src_alt,
+                closest_segment_idx: 0,
+                closest_aadt_light_raw: 0, closest_aadt_medium_raw: 0,
+                closest_aadt_heavy_raw: 0, closest_aadt_moto_raw: 0,
+                closest_aadt_light_effective: 0.0, closest_aadt_medium_effective: 0.0,
+                closest_aadt_heavy_effective: 0.0, closest_aadt_moto_effective: 0.0,
+                closest_traffic_source: "default_by_class",
+                closest_speed_posted: 0, closest_speed_used: 0.0,
+                closest_speed_source: "default_by_class",
+                closest_surface_type: 0, closest_surface_corr_db: 0.0,
+                closest_lanes: 0, closest_oneway: false,
+                segment_count: 0, total_length_m: 0.0, bridge_count: 0,
+                obstacle_segment_count: 0, obstacle_height_sum: 0.0,
+                obstacle_max_height: 0.0, obstacle_max_segment_idx: 0,
                 variants: [PropagationVariants::default(), PropagationVariants::default(), PropagationVariants::default()],
                 emission_energy: 0.0,
                 line_coords: Vec::new(),
             }
         });
+        // Aggregation across all grouped segments (independent of closest check)
+        acc.segment_count += 1;
+        acc.total_length_m += seg.length_m as f64;
+        if seg.bridge { acc.bridge_count += 1; }
+        // Cheap group-level obstacle histogram — another tile-cached scan of the
+        // same path as screening_atten just computed. Popup shows "N of M segments
+        // had obstacles on path" based on this.
+        {
+            let (seg_max_bh, _) = rasters.max_building_along_path(
+                seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon, seg.dist_m, 0.0,
+            );
+            if seg_max_bh > 2.0 {
+                acc.obstacle_segment_count += 1;
+                acc.obstacle_height_sum += seg_max_bh;
+                if seg_max_bh > acc.obstacle_max_height {
+                    acc.obstacle_max_height = seg_max_bh;
+                    acc.obstacle_max_segment_idx = seg.segment_idx;
+                }
+            }
+        }
         // Apply fade-out factor to energy (linear scale) before accumulation
         for pi in 0..3 {
             if fade_factor < 1.0 { seg_variants[pi].scale(fade_factor); }
@@ -349,6 +412,38 @@ fn compute_roads(
             acc.closest_cp_lat = seg.cp_lat;
             acc.closest_cp_lon = seg.cp_lon;
             acc.closest_src_height = src_alt;
+            // Metadata for popup: raw + effective values at the closest microsegment
+            acc.closest_segment_idx = seg.segment_idx;
+            acc.closest_aadt_light_raw = seg.aadt_light;
+            acc.closest_aadt_medium_raw = seg.aadt_medium;
+            acc.closest_aadt_heavy_raw = seg.aadt_heavy;
+            acc.closest_aadt_moto_raw = seg.aadt_moto;
+            acc.closest_aadt_light_effective = light;
+            acc.closest_aadt_medium_effective = medium;
+            acc.closest_aadt_heavy_effective = heavy;
+            acc.closest_aadt_moto_effective = moto;
+            acc.closest_traffic_source = if seg.traffic_source == 1 && seg.aadt_light > 0 {
+                "census"
+            } else {
+                "default_by_class"
+            };
+            acc.closest_speed_posted = seg.speed_limit;
+            acc.closest_speed_used = speed;
+            acc.closest_speed_source = if seg.junction == 1 {
+                if speed < (if seg.speed_limit > 0 { seg.speed_limit as f64 } else { default_speed(class_name) }) {
+                    "roundabout_cap"
+                } else {
+                    "osm_posted"
+                }
+            } else if seg.speed_limit > 0 {
+                "osm_posted"
+            } else {
+                "default_by_class"
+            };
+            acc.closest_surface_type = seg.surface_type;
+            acc.closest_surface_corr_db = surf_corr;
+            acc.closest_lanes = seg.lanes;
+            acc.closest_oneway = seg.oneway;
         }
         // Each segment is an independent 2-point LineString; no osm_id regrouping needed.
         acc.line_coords.push([[seg.start_lon, seg.start_lat], [seg.end_lon, seg.end_lat]]);
@@ -394,6 +489,37 @@ fn compute_roads(
         let screening_adj = (road_periods.lden_db - no_screening_lden).min(0.0);
         let veg_adj = (road_periods.lden_db - no_veg_lden).min(0.0);
 
+        let road_meta = RoadMetadata {
+            aadt_light_raw: acc.closest_aadt_light_raw,
+            aadt_medium_raw: acc.closest_aadt_medium_raw,
+            aadt_heavy_raw: acc.closest_aadt_heavy_raw,
+            aadt_moto_raw: acc.closest_aadt_moto_raw,
+            traffic_source: acc.closest_traffic_source,
+            speed_posted_kmh: acc.closest_speed_posted,
+            aadt_light_effective: acc.closest_aadt_light_effective,
+            aadt_medium_effective: acc.closest_aadt_medium_effective,
+            aadt_heavy_effective: acc.closest_aadt_heavy_effective,
+            aadt_moto_effective: acc.closest_aadt_moto_effective,
+            speed_kmh: acc.closest_speed_used,
+            speed_source: acc.closest_speed_source,
+            road_class: acc.class_name,
+            surface: surface_name(acc.closest_surface_type),
+            surface_corr_db: acc.closest_surface_corr_db,
+            lanes: acc.closest_lanes,
+            oneway: acc.closest_oneway,
+            closest_segment_idx: acc.closest_segment_idx,
+            closest_distance_m: acc.min_dist,
+            segment_count: acc.segment_count,
+            total_length_m: acc.total_length_m,
+            bridge_count: acc.bridge_count,
+            obstacle_segment_count: acc.obstacle_segment_count,
+            obstacle_avg_height_m: if acc.obstacle_segment_count > 0 {
+                (acc.obstacle_height_sum / acc.obstacle_segment_count as f64 * 10.0).round() / 10.0
+            } else { 0.0 },
+            obstacle_max_height_m: (acc.obstacle_max_height * 10.0).round() / 10.0,
+            obstacle_max_segment_idx: acc.obstacle_max_segment_idx,
+        };
+
         contributors.push(Contributor {
             osm_id: Some(acc.first_osm_id),
             geometry,
@@ -409,18 +535,22 @@ fn compute_roads(
                 delta_m: nearest_terrain.delta_m,
                 is_double: nearest_terrain.is_double,
                 attenuation_db: (terrain_adj * 10.0).round() / 10.0,
+                profile_points: nearest_terrain.profile_points,
             },
             screening: ScreeningBreakdown {
                 building_path_m: nearest_screening.building_path_m,
                 attenuation_db: (screening_adj * 10.0).round() / 10.0,
+                obstacle: nearest_screening.obstacle,
             },
             vegetation: VegetationBreakdown {
                 forest_depth_m: nearest_veg.forest_depth_m,
                 attenuation_db: (veg_adj * 10.0).round() / 10.0,
+                sampled_path_m: nearest_veg.sampled_path_m,
             },
             received_bands: std::array::from_fn(|j| {
                 10.0 * acc.variants[0].band_energy[j].max(1e-30).log10()
             }),
+            metadata: Some(SourceMetadata::Road(road_meta)),
         });
     }
 
@@ -451,11 +581,34 @@ fn compute_railways(
     struct RailAccum {
         name: String,
         rail_type: RailType,
+        rail_type_u8: u8,
+        usage_u8: u8,
         first_osm_id: i64,
         min_dist: f64,
         min_d_slant: f64,
         min_ground_g: f64,
         cp_lat: f64, cp_lon: f64, src_height: f64,
+        // Closest-segment metadata (for popup)
+        closest_trains_passenger_raw: i32,
+        closest_trains_freight_raw: i32,
+        closest_trains_passenger_effective: f64,
+        closest_trains_freight_effective: f64,
+        closest_trains_passenger_source: &'static str,
+        closest_trains_freight_source: &'static str,
+        closest_maxspeed_posted: u8,
+        closest_speed_used: f64,
+        closest_speed_source: &'static str,
+        closest_service: bool,
+        closest_highspeed: bool,
+        closest_parallel_divisor: u8,
+        // Aggregation
+        segment_count: u32,
+        total_length_m: f64,
+        // Group-level screening obstacle histogram
+        obstacle_segment_count: u32,
+        obstacle_height_sum: f64,
+        obstacle_max_height: f64,
+        obstacle_max_segment_idx: i16,
         variants: [PropagationVariants; 3],
         emission_energy: f64,
         line_coords: Vec<[[f64; 2]; 2]>,
@@ -495,7 +648,9 @@ fn compute_railways(
         let rcv_alt = receiver.altitude_m();
 
         // Bridge: hard surface below → G=0 (no ground absorption). ISO 9613-2 §7.3.1
-        let ground_g = if seg.bridge { 0.0 } else { rasters.ground_g(receiver.lat, receiver.lon) };
+        // Otherwise: line-averaged G from source to receiver.
+        let ground_g = if seg.bridge { 0.0 }
+            else { rasters.ground_g_path(seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon) };
         let flc = geo::finite_line_correction(seg.length_m as f64, seg.dist_m, seg.fraction);
 
         // Per-segment path effects
@@ -546,13 +701,41 @@ fn compute_railways(
                     String::new()
                 }
             },
-            rail_type, first_osm_id: seg.osm_id,
+            rail_type, rail_type_u8: seg.rail_type, usage_u8: seg.usage,
+            first_osm_id: seg.osm_id,
             min_dist: f64::MAX, min_d_slant: 0.0, min_ground_g: 0.5,
             cp_lat: seg.cp_lat, cp_lon: seg.cp_lon, src_height: src_alt,
+            closest_trains_passenger_raw: 0, closest_trains_freight_raw: 0,
+            closest_trains_passenger_effective: 0.0, closest_trains_freight_effective: 0.0,
+            closest_trains_passenger_source: "default_by_type",
+            closest_trains_freight_source: "default_by_type",
+            closest_maxspeed_posted: 0, closest_speed_used: 0.0,
+            closest_speed_source: "type_default",
+            closest_service: false, closest_highspeed: false, closest_parallel_divisor: 1,
+            segment_count: 0, total_length_m: 0.0,
+            obstacle_segment_count: 0, obstacle_height_sum: 0.0,
+            obstacle_max_height: 0.0, obstacle_max_segment_idx: 0,
             variants: [PropagationVariants::default(), PropagationVariants::default(), PropagationVariants::default()],
             emission_energy: 0.0, line_coords: Vec::new(),
             has_bridge: false,
         });
+        // Aggregation
+        acc.segment_count += 1;
+        acc.total_length_m += seg.length_m as f64;
+        // Group-level obstacle histogram
+        {
+            let (seg_max_bh, _) = rasters.max_building_along_path(
+                seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon, seg.dist_m, 0.0,
+            );
+            if seg_max_bh > 2.0 {
+                acc.obstacle_segment_count += 1;
+                acc.obstacle_height_sum += seg_max_bh;
+                if seg_max_bh > acc.obstacle_max_height {
+                    acc.obstacle_max_height = seg_max_bh;
+                    acc.obstacle_max_segment_idx = seg.segment_idx;
+                }
+            }
+        }
         if fade_factor < 1.0 { for pi in 0..3 { seg_variants[pi].scale(fade_factor); } }
         for pi in 0..3 { acc.variants[pi].add(&seg_variants[pi]); }
         acc.emission_energy += day_emission_energy * fade_factor;
@@ -564,6 +747,29 @@ fn compute_railways(
             acc.cp_lat = seg.cp_lat;
             acc.cp_lon = seg.cp_lon;
             acc.src_height = src_alt;
+            // Closest-segment metadata for popup
+            acc.closest_trains_passenger_raw = seg.trains_passenger;
+            acc.closest_trains_freight_raw = seg.trains_freight;
+            acc.closest_trains_passenger_effective = q_pax;
+            acc.closest_trains_freight_effective = q_frt;
+            acc.closest_trains_passenger_source = match seg.trains_passenger_source {
+                0 => "arrow",
+                _ => "default_by_type",
+            };
+            acc.closest_trains_freight_source = match seg.trains_freight_source {
+                0 => "arrow",
+                _ => "default_by_type",
+            };
+            acc.closest_maxspeed_posted = seg.maxspeed;
+            acc.closest_speed_used = speed;
+            acc.closest_speed_source = match seg.speed_source {
+                0 => "osm_maxspeed",
+                1 => "highspeed_default",
+                _ => "type_default",
+            };
+            acc.closest_service = seg.service;
+            acc.closest_highspeed = seg.highspeed;
+            acc.closest_parallel_divisor = seg.parallel_divisor.max(1);
         }
         acc.line_coords.push([[seg.start_lon, seg.start_lat], [seg.end_lon, seg.end_lat]]);
     }
@@ -587,6 +793,32 @@ fn compute_railways(
 
         let rail_effects = compute_path_effects(rasters, barriers, acc.cp_lat, acc.cp_lon, acc.src_height, receiver, acc.min_dist, 0.0);
 
+        let rail_meta = RailMetadata {
+            trains_passenger_raw: acc.closest_trains_passenger_raw,
+            trains_freight_raw: acc.closest_trains_freight_raw,
+            trains_passenger_source: acc.closest_trains_passenger_source,
+            trains_freight_source: acc.closest_trains_freight_source,
+            maxspeed_posted_kmh: acc.closest_maxspeed_posted,
+            trains_passenger_effective: acc.closest_trains_passenger_effective,
+            trains_freight_effective: acc.closest_trains_freight_effective,
+            speed_kmh: acc.closest_speed_used,
+            speed_source: acc.closest_speed_source,
+            rail_type: rail_type_name(acc.rail_type_u8),
+            usage: rail_usage_name(acc.usage_u8),
+            service: acc.closest_service,
+            highspeed: acc.closest_highspeed,
+            parallel_divisor: acc.closest_parallel_divisor,
+            bridge: acc.has_bridge,
+            segment_count: acc.segment_count,
+            total_length_m: acc.total_length_m,
+            obstacle_segment_count: acc.obstacle_segment_count,
+            obstacle_avg_height_m: if acc.obstacle_segment_count > 0 {
+                (acc.obstacle_height_sum / acc.obstacle_segment_count as f64 * 10.0).round() / 10.0
+            } else { 0.0 },
+            obstacle_max_height_m: (acc.obstacle_max_height * 10.0).round() / 10.0,
+            obstacle_max_segment_idx: acc.obstacle_max_segment_idx,
+        };
+
         contributors.push(Contributor {
             osm_id: Some(acc.first_osm_id), geometry,
             source_type: "railway".to_string(),
@@ -605,6 +837,7 @@ fn compute_railways(
             received_bands: std::array::from_fn(|j| {
                 10.0 * acc.variants[0].band_energy[j].max(1e-30).log10()
             }),
+            metadata: Some(SourceMetadata::Rail(rail_meta)),
         });
     }
 
@@ -748,26 +981,47 @@ fn compute_point_sources(
 
         let pt_effects = compute_path_effects(rasters, barriers, acc.lat, acc.lon, acc.src_height, receiver, acc.min_dist, acc.exclusion_radius_m as f64);
 
+        let subtype_name: &'static str = if source_type_name == "industrial" {
+            match acc.subtype {
+                0 => "industrial_area", 1 => "quarry", 2 => "farm",
+                3 => "factory", 4 => "wastewater",
+                10 => "wind_turbine",
+                _ => "industrial_area",
+            }
+        } else {
+            match acc.subtype {
+                0 => "residential_multi", 1 => "commercial", 2 => "warehouse",
+                3 => "education", 4 => "healthcare", 5 => "worship",
+                6 => "hospitality", 7 => "garage", 8 => "farm",
+                9 => "public",
+                _ => "default",
+            }
+        };
+
+        // Build per-source metadata (popup only)
+        let metadata = if source_type_name == "industrial" {
+            Some(SourceMetadata::Industrial(IndustrialMetadata {
+                area_m2: 0.0,       // derived per-point; aggregate unavailable at this level
+                source_type: subtype_name,
+                nace: None,
+                grid_point_count: 0,  // not tracked in accum yet
+            }))
+        } else {
+            // building
+            Some(SourceMetadata::Building(BuildingMetadata {
+                height_m: (acc.src_height - rasters.elevation(acc.lat, acc.lon)).max(0.0),
+                floors: 0,  // not preserved after emission calc
+                area_m2: 0.0,
+                building_type: subtype_name,
+                address: acc.name.clone(),
+            }))
+        };
+
         contributors.push(Contributor {
             osm_id: Some(*osm_id), geometry,
             source_type: source_type_name.to_string(),
             name: acc.name.clone(),
-            subtype: if source_type_name == "industrial" {
-                match acc.subtype {
-                    0 => "industrial_area", 1 => "quarry", 2 => "farm",
-                    3 => "factory", 4 => "wastewater",
-                    10 => "wind_turbine",
-                    _ => "industrial_area",
-                }
-            } else {
-                match acc.subtype {
-                    0 => "residential_multi", 1 => "commercial", 2 => "warehouse",
-                    3 => "education", 4 => "healthcare", 5 => "worship",
-                    6 => "hospitality", 7 => "garage", 8 => "farm",
-                    9 => "public",
-                    _ => "default",
-                }
-            }.to_string(),
+            subtype: subtype_name.to_string(),
             distance_m: acc.min_dist,
             periods: pt_periods, periods_free: free_periods,
             emission_db: 10.0 * acc.emission_energy.max(1e-12).log10(),
@@ -778,6 +1032,7 @@ fn compute_point_sources(
             received_bands: std::array::from_fn(|j| {
                 10.0 * acc.variants[0].band_energy[j].max(1e-30).log10()
             }),
+            metadata,
         });
     }
 
@@ -909,27 +1164,7 @@ fn compute_aircraft(
 
     let flights_per_day = flights.len() as f64 / n_days_f;
 
-    // Aircraft summary contributor with v33 metadata format for frontend
-    contributors.insert(0, Contributor {
-        osm_id: None, geometry: None,
-        baseline: PropagationBaseline::default(),
-        terrain: TerrainBreakdown::default(),
-        screening: ScreeningBreakdown::default(),
-        vegetation: VegetationBreakdown::default(),
-        source_type: "aircraft".to_string(),
-        name: format!("{:.0} flights/day", flights_per_day),
-        subtype: "aircraft".to_string(),
-        distance_m: 0.0,
-        periods: total.clone(),
-        periods_free: total.clone(),
-        emission_db: total.lden_db,
-        received_bands: [0.0; NUM_BANDS],
-    });
-
-    // Inject v33 metadata into first contributor (JSON serialization picks it up)
-    // The frontend reads these fields from contributor.metadata
-    // We'll add them in source-reader's JSON serialization layer
-    // Store band stats for the source-reader to serialize
+    // Build aircraft band data first so we can attach it to the contributor's typed metadata.
     let band_data = AircraftBandData {
         l_day: ld, l_evening: le, l_night: ln,
         lmax_peak: if global_peak_lmax > -900.0 { Some(global_peak_lmax) } else { None },
@@ -945,6 +1180,26 @@ fn compute_aircraft(
         disruptive_avg_altitude_m: if band_disruptive.count > 0.0 { band_disruptive.alt_sum / band_disruptive.count } else { 0.0 },
         disruptive_top_aircraft: band_disruptive.top_type().to_string(),
     };
+
+    // Aircraft summary contributor — typed AircraftMetadata carries band data via SourceMetadata enum
+    contributors.insert(0, Contributor {
+        osm_id: None, geometry: None,
+        baseline: PropagationBaseline::default(),
+        terrain: TerrainBreakdown::default(),
+        screening: ScreeningBreakdown::default(),
+        vegetation: VegetationBreakdown::default(),
+        source_type: "aircraft".to_string(),
+        name: format!("{:.0} flights/day", flights_per_day),
+        subtype: "aircraft".to_string(),
+        distance_m: 0.0,
+        periods: total.clone(),
+        periods_free: total.clone(),
+        emission_db: total.lden_db,
+        received_bands: [0.0; NUM_BANDS],
+        metadata: Some(SourceMetadata::Aircraft(AircraftMetadata {
+            band_data: band_data.clone(),
+        })),
+    });
 
     contributors.sort_by(|a, b| b.periods.lden_db.partial_cmp(&a.periods.lden_db).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -983,6 +1238,37 @@ fn default_speed(class: &str) -> f64 {
     }
 }
 
+fn surface_name(surface_type: u8) -> &'static str {
+    match surface_type {
+        0 => "asphalt",
+        1 => "paving",
+        2 => "concrete",
+        3 => "unpaved",
+        4 => "gravel",
+        _ => "asphalt",
+    }
+}
+
+fn rail_type_name(rt: u8) -> &'static str {
+    match rt {
+        0 => "rail",
+        1 => "tram",
+        2 => "light_rail",
+        3 => "narrow_gauge",
+        4 => "funicular",
+        _ => "rail",
+    }
+}
+
+fn rail_usage_name(u: u8) -> &'static str {
+    match u {
+        0 => "main",
+        1 => "branch",
+        2 => "industrial",
+        _ => "main",
+    }
+}
+
 /// Compute terrain/screening/vegetation path effects for one source-receiver pair.
 /// Returns (TerrainBreakdown, ScreeningBreakdown, VegetationBreakdown).
 fn compute_path_effects(
@@ -995,13 +1281,13 @@ fn compute_path_effects(
     let rcv_alt = receiver.altitude_m();
 
     // Single-pass variants that return both attenuation and metadata
-    let (terrain_atten, terrain_delta, terrain_is_double) =
+    let (terrain_atten, terrain_delta, terrain_is_double, terrain_profile_points) =
         propagation::path_effects::terrain_attenuation_with_meta(
             rasters, src_lat, src_lon, receiver.lat, receiver.lon,
             src_height, rcv_alt, dist_m,
         );
 
-    let (screening_atten, max_bh) =
+    let (screening_atten, obstacle_trace) =
         propagation::path_effects::screening_attenuation_with_meta(
             rasters, barriers, src_lat, src_lon, receiver.lat, receiver.lon,
             src_height, rcv_alt, dist_m, exclusion_radius_m,
@@ -1010,23 +1296,25 @@ fn compute_path_effects(
     let veg_atten = propagation::path_effects::vegetation_attenuation_path(
         rasters, src_lat, src_lon, receiver.lat, receiver.lon, dist_m,
     );
-    let forest_depth = if dist_m <= 500.0 {
-        rasters.vegetation_depth(src_lat, src_lon, receiver.lat, receiver.lon)
-    } else { 0.0 };
+    let forest_depth = rasters.vegetation_depth(src_lat, src_lon, receiver.lat, receiver.lon);
+    let sampled_path_m = dist_m;
 
     (
         TerrainBreakdown {
             delta_m: (terrain_delta * 100.0).round() / 100.0,
             is_double: terrain_is_double,
             attenuation_db: -(terrain_atten[4] * 10.0).round() / 10.0,
+            profile_points: terrain_profile_points,
         },
         ScreeningBreakdown {
-            building_path_m: (max_bh * 10.0).round() / 10.0,
+            building_path_m: (obstacle_trace.height_m * 10.0).round() / 10.0,
             attenuation_db: -(screening_atten[4] * 10.0).round() / 10.0,
+            obstacle: if obstacle_trace.kind == "none" { None } else { Some(obstacle_trace) },
         },
         VegetationBreakdown {
             forest_depth_m: (forest_depth * 10.0).round() / 10.0,
             attenuation_db: -(veg_atten[4] * 10.0).round() / 10.0,
+            sampled_path_m: (sampled_path_m * 10.0).round() / 10.0,
         },
     )
 }
@@ -1103,6 +1391,8 @@ mod tests {
             name: String::new(), rail_ref: String::new(),
             dist_m: 200.0, cp_lat: 50.08, cp_lon: 14.42, fraction: 0.5,
             bridge: false, tunnel: false,
+            service: false, highspeed: false, parallel_divisor: 1,
+            speed_source: 0, trains_passenger_source: 0, trains_freight_source: 0,
         }];
 
         let result = compute_at_point(&receiver, &roads, &railways, &[], &[], &[], &[], &MockRasters, &ComputeConfig::default());
@@ -1217,6 +1507,8 @@ mod tests {
             name: String::new(), rail_ref: String::new(),
             dist_m: 200.0, cp_lat: 50.08, cp_lon: 14.42, fraction: 0.5,
             bridge: false, tunnel: false,
+            service: false, highspeed: false, parallel_divisor: 1,
+            speed_source: 0, trains_passenger_source: 0, trains_freight_source: 0,
         }];
         let aircraft = vec![AircraftSegment {
             flight_id: 1, profile_idx: 0, is_departure: false,

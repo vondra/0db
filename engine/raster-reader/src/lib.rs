@@ -117,13 +117,17 @@ impl RasterSampler for RealRasters {
         &self, src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64,
         dist_m: f64, excl_start_m: f64,
     ) -> (f64, f64) {
-        // Same 50m sampling as default, but uses tile-cached lookups to avoid
-        // repeated OnceLock atomic loads within the same 1° tile.
-        // Adaptive step: 50m at <1km, 150m at 1-3km, 300m at >3km
-        let step = if dist_m <= 1000.0 { 50.0 }
-            else if dist_m <= 3000.0 { 150.0 }
-            else { 300.0 };
-        let n = ((dist_m / step).ceil() as usize).clamp(2, 200);
+        // Adaptive step locked to raster cell multiples (Overture 30 m):
+        //   ≤1 km  → 1× cell  (~30.7 m, full resolution)
+        //   ≤3 km  → 3× cell  (~92 m)
+        //   >3 km  → 6× cell  (~184 m)
+        // Fine cadence catches obstacles consistent with the 30 m building raster;
+        // tile-cached lookups keep per-sample cost near zero.
+        let cell_m = 110_540.0 / 3600.0;
+        let step = if dist_m <= 1000.0 { cell_m }
+            else if dist_m <= 3000.0 { cell_m * 3.0 }
+            else { cell_m * 6.0 };
+        let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
         let mut max_bh = 0.0f64;
         let mut max_t = 0.5;
         let mut cached_key = (i32::MIN, i32::MIN);
@@ -137,6 +141,33 @@ impl RasterSampler for RealRasters {
             if bh > max_bh { max_bh = bh; max_t = t; }
         }
         (max_bh, max_t)
+    }
+
+    fn max_building_along_path_stats(
+        &self, src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64,
+        dist_m: f64, excl_start_m: f64,
+    ) -> (f64, f64, u32, f64) {
+        // Same scan as max_building_along_path but returns sample count + step for popup transparency.
+        let cell_m = 110_540.0 / 3600.0;
+        let step = if dist_m <= 1000.0 { cell_m }
+            else if dist_m <= 3000.0 { cell_m * 3.0 }
+            else { cell_m * 6.0 };
+        let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
+        let mut max_bh = 0.0f64;
+        let mut max_t = 0.5;
+        let mut taken: u32 = 0;
+        let mut cached_key = (i32::MIN, i32::MIN);
+        let mut cached_tile = None;
+        for k in 1..n {
+            let t = k as f64 / n as f64;
+            if excl_start_m > 0.0 && t * dist_m < excl_start_m { continue; }
+            let lat = src_lat + t * (rcv_lat - src_lat);
+            let lon = src_lon + t * (rcv_lon - src_lon);
+            let bh = self.building.sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
+            taken += 1;
+            if bh > max_bh { max_bh = bh; max_t = t; }
+        }
+        (max_bh, max_t, taken, step)
     }
 }
 
