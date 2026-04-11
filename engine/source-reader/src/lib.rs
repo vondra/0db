@@ -175,8 +175,16 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
             let rt = noise_compute::emission::railway::RailType::from_u8(r.rail_type);
             let (def_pax, def_frt) = noise_compute::emission::railway::default_traffic(rt, r.usage);
             let def_speed = noise_compute::emission::railway::default_speed(rt);
-            // Service tracks (yard/siding/spur): 2% traffic (minimal shunting)
             let svc_factor = if r.service > 0 { 0.02 } else { 1.0 };
+            let divisor = r.parallel_divisor.max(1) as f64;
+            let sf = svc_factor / divisor;
+
+            // Enriched counts from Arrow, with defaults fallback (matching pipeline)
+            let q_pax = if r.trains_passenger > 0 { r.trains_passenger as f64 } else { def_pax };
+            let q_frt = if r.trains_freight > 0 { r.trains_freight as f64 } else { def_frt };
+            let speed = if r.maxspeed > 0 { r.maxspeed as f64 }
+                else if r.highspeed { 300.0 }
+                else { def_speed };
 
             all_railways.push(noise_compute::types::RailSegment {
                 osm_id: r.osm_id,
@@ -187,9 +195,9 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                 rail_type: r.rail_type,
                 usage: r.usage,
                 maxspeed: r.maxspeed,
-                trains_passenger: (def_pax * svc_factor) as i32,
-                trains_freight: (def_frt * svc_factor) as i32,
-                speed_kmh: if r.maxspeed > 0 { r.maxspeed } else { def_speed as u8 },
+                trains_passenger: (q_pax * sf) as i32,
+                trains_freight: (q_frt * sf) as i32,
+                speed_kmh: speed as u8,
                 track_count: 1,
                 name: r.name.clone(),
                 rail_ref: r.rail_ref.clone(),

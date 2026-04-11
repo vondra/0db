@@ -232,6 +232,10 @@ pub struct RailResult {
     pub bridge: bool,
     pub tunnel: bool,
     pub service: u8,
+    pub highspeed: bool,
+    pub trains_passenger: i32,
+    pub trains_freight: i32,
+    pub parallel_divisor: u8,
     pub dist_m: f64,
     pub cp_lat: f64, pub cp_lon: f64,
     pub fraction: f64,
@@ -263,6 +267,10 @@ pub fn query_railways_from_batches(
         let bridge_col = col_bool(batch, "bridge");
         let tunnel_col = col_bool(batch, "tunnel");
         let service_col = col_u8(batch, "service");
+        let highspeed_col = col_bool(batch, "highspeed");
+        let trains_pax = col_i32(batch, "trains_passenger");
+        let trains_frt = col_i32(batch, "trains_freight");
+        let par_div = col_u8(batch, "parallel_divisor");
 
         for i in 0..n {
             let s_lat = slat.value(i);
@@ -294,6 +302,10 @@ pub fn query_railways_from_batches(
                 bridge: bridge_col.map(|a| a.value(i)).unwrap_or(false),
                 tunnel: tunnel_col.map(|a| a.value(i)).unwrap_or(false),
                 service: service_col.map(|a| a.value(i)).unwrap_or(0),
+                highspeed: highspeed_col.map(|a| a.value(i)).unwrap_or(false),
+                trains_passenger: trains_pax.map(|a| a.value(i)).unwrap_or(0),
+                trains_freight: trains_frt.map(|a| a.value(i)).unwrap_or(0),
+                parallel_divisor: par_div.map(|a| a.value(i)).unwrap_or(1),
                 dist_m: cp.dist_m, cp_lat: cp.lat, cp_lon: cp.lon, fraction: cp.fraction,
             });
         }

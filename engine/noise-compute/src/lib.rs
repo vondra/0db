@@ -634,13 +634,12 @@ fn compute_point_sources(
     let ground_g = rasters.ground_g(receiver.lat, receiver.lon);
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
-    for src in sources {
-        // Match pipeline max_radius (5km for industrial, 2km for buildings).
-        // WHY: popup had 3km cutoff while pipeline used 5km → popup missed sources
-        // that pipeline included, causing "no sources" in popup but visible noise in tiles.
-        if src.dist_m > 5000.0 { continue; }
+    // Building max 2km (matching pipeline per-building cutoff), industrial 5km
+    let max_d = if source_type_name == "building" { 2000.0 } else { 5000.0 };
 
-        let max_d = 5000.0;
+    for src in sources {
+        if src.dist_m > max_d { continue; }
+
         let fade_factor = geo::fade_factor(src.dist_m, max_d);
 
         let src_alt = rasters.elevation(src.lat, src.lon) + src.source_height_m as f64;
