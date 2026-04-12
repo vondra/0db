@@ -79,7 +79,7 @@ interface IndSite {
   lon: number
   name: string
   fuel: string
-  nace2: string
+  nace: string
   source: string
 }
 
@@ -101,7 +101,7 @@ function loadCnehermal(): IndSite[] {
       lat, lon,
       name: (p.NOMBRE || 'CL thermal plant').toString(),
       fuel,
-      nace2: '35',
+      nace: '351100',
       source: `CNE Centrales (${fuel})`,
     })
   }
@@ -127,7 +127,7 @@ function loadGemPlants(): IndSite[] {
       lat, lon,
       name: (p.Plant___Project_name || 'CL plant').toString(),
       fuel,
-      nace2: '35',
+      nace: '351100',
       source: `GEM CL (${fuel})`,
     })
   }
@@ -153,7 +153,7 @@ function loadMiningTailings(): IndSite[] {
       lat, lon,
       name: `${p.NOMBRE_FAE || 'CL mine'} (${p.NOMBRE_EMP || ''})`,
       fuel: recurso,
-      nace2: '07',  // Mining of metal ores
+      nace: '07',  // Mining of metal ores
       source: `SERNAGEOMIN Catastro Relaves (${recurso})`,
     })
   }
@@ -179,7 +179,7 @@ function loadSubstations(): IndSite[] {
       lat, lon,
       name: (p.NOMBRE || 'CL substation').toString(),
       fuel: `${tension}kV`,
-      nace2: '35',
+      nace: '351100',
       source: `CNE Substations (${tension}kV)`,
     })
   }
@@ -276,7 +276,7 @@ async function main() {
         if (best) {
           const id = String(osmId.get(i))
           if (!lookup[id]) newEntries++
-          lookup[id] = { nace2: best.nace2, name: best.name, source: best.source }
+          lookup[id] = { nace: best.nace, name: best.name, source: best.source }
           matched++
           const family = best.source.split(' ')[0]
           bySource[family] = (bySource[family] || 0) + 1

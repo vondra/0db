@@ -54,6 +54,22 @@ Source: VIA Rail GTFS from viarail.ca (current). 313 stops, 64 daily trains acro
 - **Railway**: Amtrak + VIA Rail real train frequencies; all other rail uses OSM defaults
 - **Traffic**: OSM road class defaults (no AADT enrichment yet)
 
+## Per-country enrichment status
+
+1. **Guatemala** ✅ — 53 GEM plants / 2,783 MW. Pueblo Viejo 300 MW hydro. Sugar bagasse cogeneration (15 plants). FEGUA railway defunct 2007. Chicken buses + mototaxis. **2.69M roads (94%)**. See [Guatemala](gt).
+2. **Honduras** ✅ — 44 plants / 2,721 MW. El Cajón hydro. Maquila/banana. CA-5 corridor 45% heavy. **1.39M roads (73%)**. See [Honduras](hn).
+3. **El Salvador** ✅ — 60 plants / 2,563 MW. **World #9 geothermal** (Ahuachapán, Berlín). Bitcoin legal tender. **73k roads (9% — GT overlap)**. See [El Salvador](sv).
+4. **Nicaragua** ✅ — 31 plants / 1,033 MW. San Jacinto-Tizate geothermal. Lake Nicaragua. **297k roads (33%)**. See [Nicaragua](ni).
+5. **Costa Rica** ✅ — 45 plants / 2,514 MW. **99% renewable!** Reventazón 305 MW. No army since 1948. **715k roads (97%)**. See [Costa Rica](cr).
+6. **Panama** ✅ — 70 plants / 3,711 MW. **Panama Canal.** Fortuna 300 MW. Panama Metro 2014. **436k roads (92%)**. See [Panama](pa).
+7. **Cuba** ✅ — 38 plants / 2,891 MW. Soviet-era thermal. **Only Caribbean operational railway** (Havana↔Santiago). Vintage cars. **699k roads (100%)**. See [Cuba](cu).
+8. **Jamaica** ✅ — 13 plants / 885 MW. Bauxite/alumina. Old Harbour oil. Left-hand drive. **501k roads (100%)**. See [Jamaica](jm).
+9. **Haiti** ✅ — **0 GEM plants.** Poorest Western Hemisphere. Tap-tap buses. **488k roads (98%)**. See [Haiti](ht).
+10. **Dominican Republic** ✅ — 73 plants / 6,132 MW. **Largest Caribbean fleet.** Santo Domingo Metro 2009. Punta Cana. **949k roads (94%)**. See [Dominican Republic](do).
+11. **Trinidad and Tobago** ✅ — 17 plants / 2,057 MW. Point Lisas complex. Atlantic LNG. **0 roads (VE overlap)**. See [Trinidad and Tobago](tt).
+12. **Bahamas** ✅ — 2 plants / 184 MW. 700 islands. Tourism/cruise. **1.07M roads (77%)**. See [Bahamas](bs).
+13. **Barbados** ✅ — 11 plants / 83 MW. Smallest area enriched (432 km²). **23k roads (100%)**. See [Barbados](bb).
+
 ## Methodology
 
 Same as global: CNOSSOS-EU emission + ISO 9613-2 propagation.

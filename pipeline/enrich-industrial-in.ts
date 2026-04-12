@@ -245,7 +245,7 @@ async function main() {
         if (best) {
           const id = String(osmId.get(i))
           if (!lookup[id]) newEntries++
-          lookup[id] = { nace2: best.nace, name: best.name, source: best.source }
+          lookup[id] = { nace: best.nace, name: best.name, source: best.source }
           matched++
         }
       }

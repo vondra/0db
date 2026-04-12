@@ -108,6 +108,18 @@ Train frequencies from public GTFS feeds: DELFI (DE), opentransportdata.swiss (C
 - **Finland railway**: National GTFS feed contains only bus data. Finnish rail operator VR publishes data separately.
 - **Traffic outside 36 cities**: Roads outside EU city traffic coverage use default AADT by road class.
 
+## Non-EU per-country enrichment
+
+Enriched European countries outside the EU continental dataset:
+
+- **Serbia, Bosnia, Montenegro, North Macedonia, Albania, Kosovo** (Western Balkans 6) — GEM + corridor railway defaults. See individual pages.
+- **Ukraine, Belarus, Moldova** — GEM + corridor defaults. See individual pages.
+- **Iceland** — GEM (100% renewable). No railway (never had one). See [Iceland](is).
+- **Andorra** ✅ — 2 GEM plants / 46 MW (FEDA hydro). Pyrenees duty-free. **29k roads (68%)**. See [Andorra](ad).
+- **Monaco** ✅ — 0 GEM plants. F1 Grand Prix. **0 roads (FR overlap)**. See [Monaco](mc).
+- **San Marino** ✅ — 0 GEM plants. Oldest republic (301 AD). **0 roads (IT overlap)**. See [San Marino](sm).
+- **Liechtenstein** ✅ — 0 GEM plants. Double-landlocked. Banking. **0 roads (CH/AT overlap)**. See [Liechtenstein](li).
+
 ## Validation
 
 Model predictions are validated against reference measurements:

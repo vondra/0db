@@ -96,18 +96,18 @@ function pointInRing(lat: number, lon: number, ring: [number, number][]): boolea
 }
 
 interface Site {
-  lat: number; lon: number; name: string; nace2: string; source: string
+  lat: number; lon: number; name: string; nace: string; source: string
 }
 
 interface PolySite {
   rings: [number, number][][]
   bbox: [number, number, number, number]
   name: string
-  nace2: string
+  nace: string
   source: string
 }
 
-function loadPoints(path: string, nameField: string, nace2: string, source: string,
+function loadPoints(path: string, nameField: string, nace: string, source: string,
                     statusField?: string, statusOK?: string[]): Site[] {
   const full = resolve(CACHE_DIR, path)
   if (!existsSync(full)) return []
@@ -127,14 +127,14 @@ function loadPoints(path: string, nameField: string, nace2: string, source: stri
     out.push({
       lat, lon,
       name: (p[nameField] || 'PE site').toString(),
-      nace2,
+      nace,
       source,
     })
   }
   return out
 }
 
-function loadPolys(path: string, nameField: string, nace2: string, source: string,
+function loadPolys(path: string, nameField: string, nace: string, source: string,
                    statusField?: string, statusOK?: string[]): PolySite[] {
   const full = resolve(CACHE_DIR, path)
   if (!existsSync(full)) return []
@@ -168,7 +168,7 @@ function loadPolys(path: string, nameField: string, nace2: string, source: strin
         rings: poly,
         bbox: [minLat, minLon, maxLat, maxLon],
         name,
-        nace2,
+        nace,
         source,
       })
     }
@@ -296,7 +296,7 @@ async function main() {
         if (lat == null || lon == null) continue
         if (!inBbox(lat, lon, PE_BBOX) || inExcluded(lat, lon)) continue
 
-        let chosen: { nace2: string; name: string; source: string } | null = null
+        let chosen: { nace: string; name: string; source: string } | null = null
 
         // 1. Point-in-polygon for PERUMIN mining polygons (priority order)
         const polyKey = `${Math.floor(lat * 2)}_${Math.floor(lon * 2)}`
@@ -305,7 +305,7 @@ async function main() {
           for (const p of cell) {
             if (lat < p.bbox[0] || lat > p.bbox[2] || lon < p.bbox[1] || lon > p.bbox[3]) continue
             if (pointInRing(lat, lon, p.rings[0])) {
-              chosen = { nace2: p.nace2, name: p.name, source: p.source }
+              chosen = { nace: p.nace, name: p.name, source: p.source }
               break
             }
           }
@@ -328,7 +328,7 @@ async function main() {
             }
           }
           if (best) {
-            chosen = { nace2: best.nace2, name: best.name, source: best.source }
+            chosen = { nace: best.nace, name: best.name, source: best.source }
           }
         }
 

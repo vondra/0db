@@ -86,14 +86,14 @@ function pointInRing(lat: number, lon: number, ring: [number, number][]): boolea
 }
 
 interface Site {
-  lat: number; lon: number; name: string; nace2: string; source: string
+  lat: number; lon: number; name: string; nace: string; source: string
 }
 
 interface PolySite {
   rings: [number, number][][]  // [outer, hole1, hole2, ...] but we treat all as outer
   bbox: [number, number, number, number]  // minLat, minLon, maxLat, maxLon
   name: string
-  nace2: string
+  nace: string
   source: string
 }
 
@@ -115,7 +115,7 @@ function loadGemPlants(): Site[] {
     out.push({
       lat, lon,
       name: (p.Plant___Project_name || 'CO plant').toString(),
-      nace2: '35',
+      nace: '351100',
       source: `GEM CO (${fuel})`,
     })
   }
@@ -151,7 +151,7 @@ function loadMiningPolys(): PolySite[] {
     // Only enrich active mines (Explotación + Construcción)
     if (!/Explotaci|Construcci/i.test(etapa)) continue
     const minerales = (p.MINERALES || '').toString()
-    const nace2 = classifyMineral(minerales)
+    const nace = classifyMineral(minerales)
     const name = `Mina ${(p.MUNICIPIOS || '').toString().split(',')[0]} (${minerales.slice(0, 30)})`
     for (const poly of polys) {
       if (!poly || poly.length === 0) continue
@@ -169,7 +169,7 @@ function loadMiningPolys(): PolySite[] {
         rings: poly,
         bbox: [minLat, minLon, maxLat, maxLon],
         name,
-        nace2,
+        nace,
         source: `ANM CO mining (${minerales.slice(0, 20)})`,
       })
     }
@@ -210,7 +210,7 @@ function loadOilGasBlocks(): PolySite[] {
         rings: poly,
         bbox: [minLat, minLon, maxLat, maxLon],
         name,
-        nace2: '06',  // Extraction of crude petroleum and natural gas
+        nace: '06',  // Extraction of crude petroleum and natural gas
         source: `ANH CO oil/gas (${cuenca})`,
       })
     }
@@ -296,7 +296,7 @@ async function main() {
         if (lat == null || lon == null) continue
         if (!inBbox(lat, lon, CO_BBOX) || inExcluded(lat, lon)) continue
 
-        let chosen: { nace2: string; name: string; source: string } | null = null
+        let chosen: { nace: string; name: string; source: string } | null = null
 
         // 1. Point-in-polygon for ANM mining + ANH oil/gas
         const polyKey = `${Math.floor(lat * 2)}_${Math.floor(lon * 2)}`
@@ -306,7 +306,7 @@ async function main() {
             if (lat < p.bbox[0] || lat > p.bbox[2] || lon < p.bbox[1] || lon > p.bbox[3]) continue
             // Test against outer ring of first polygon
             if (pointInRing(lat, lon, p.rings[0])) {
-              chosen = { nace2: p.nace2, name: p.name, source: p.source }
+              chosen = { nace: p.nace, name: p.name, source: p.source }
               break
             }
           }
@@ -329,7 +329,7 @@ async function main() {
             }
           }
           if (best) {
-            chosen = { nace2: best.nace2, name: best.name, source: best.source }
+            chosen = { nace: best.nace, name: best.name, source: best.source }
           }
         }
 

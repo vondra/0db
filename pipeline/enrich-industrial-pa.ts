@@ -1,0 +1,183 @@
+/**
+ * Enrich PA industrial with GEM Global Integrated Power (Panama filter).
+ *
+ * ASEP (Autoridad Nacional de los Servicios Públicos) and ETESA publish some
+ * plant data but not as open machine-readable geospatial. GEM is the most
+ * complete machine-readable source.
+ *
+ * Source:
+ *   - **GEM Global Integrated Power v1** (Country_area='Panama'):
+ *     70 operating plants, ~3,711 MW total
+ *
+ *   Notable operating plants:
+ *     **Fortuna hydro 300 MW**           (hydro — Chiriquí, Barú watershed; IBD-backed 1984)
+ *     **Bayano hydro 260 MW**            (hydro — Río Bayano, Chepo; reservoir near Panama City)
+ *     **Chan 75 hydro 222 MW**           (hydro — Bocas del Toro, PROISA; ITAIPU-era tech)
+ *     **Barro Blanco hydro 28 MW**       (hydro — Río Tabasará, Chiriquí; controversial)
+ *     **AES Chiriquí hydro 80 MW**       (hydro — Río Chiriquí, David area; AES Corp)
+ *     **Costa Norte LNG 381 MW**         (gas — Bahía Las Minas, Colón; AES; main peaker)
+ *     **Bahía Las Minas thermal 300 MW** (HFO — Colón; reserve + Canal ship power)
+ *     **Las Minas solar ~100 MW**        (solar — Veraguas lowlands)
+ *     **Monte Lirio hydro 59 MW**        (hydro — Bocas del Toro, San Lorenzo)
+ *     **Bajo de Mina wind ~80 MW**       (wind — Veraguas coast, Guanico ridge)
+ *
+ * Non-power industrial (OSM only):
+ *   - **Panama Canal** — world's most important shipping waterway; Panama Canal
+ *     Authority (ACP); 14,000+ transits/year; third lane expansion completed 2016;
+ *     Panamax/New Panamax locks; Gatún Lake is the reservoir
+ *   - **Logistics/Ports** — Colón Free Zone (CFZ, world's #2 free trade zone after
+ *     Hong Kong); Manzanillo, Cristóbal, Balboa, Pacific ports; DP World Balboa
+ *   - **Banking** — Panama City financial center; >80 banks; Panamá papers center
+ *   - **Copper mining** — Cobre Panamá (First Quantum, Minera Panamá); Donoso,
+ *     Colón; ~320,000 tons Cu/year; largest new mine in Western Hemisphere (2023);
+ *     ***Note: suspended Dec 2023 by Supreme Court following protests***
+ *   - **Banana** — Bocas del Toro (CHIQUITA/Fyffes Armuelles legacy, mostly
+ *     abandoned); Chiriquí (Barú, Gualaca); limited production now
+ *   - **Sugar** — La Villa (Herrera province, INGENIO LA VICTORIA); some ethanol
+ *   - **Shrimp** — Gulf of Chiriquí and Gulf of Panama; export to US/EU
+ *   - **Coffee** — Boquete (Chiriquí Highlands, Volcán Barú); Geisha variety
+ *     origin; world's most expensive coffee auction prices; specialty market
+ *
+ * PA_BBOX: [minLat=7.2, minLon=-83.1, maxLat=9.7, maxLon=-77.1]
+ *
+ * Usage:
+ *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-pa.ts
+ */
+
+import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { tableFromIPC } from 'apache-arrow'
+import { cellToLatLng } from 'h3-js'
+
+const YEAR = process.env.DATA_YEAR || '2025'
+const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
+const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/pa`)
+const NACE_LOOKUP_PATH = resolve(import.meta.dirname, `../data/prepared/nace-lookup.json`)
+
+// Panama bbox: [minLat, minLon, maxLat, maxLon]
+const PA_BBOX: [number, number, number, number] = [7.2, -83.1, 9.7, -77.1]
+
+function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
+  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
+}
+
+function flatDistM(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
+  const dx = (lon2 - lon1) * 111320 * cosLat
+  const dy = (lat2 - lat1) * 110540
+  return Math.sqrt(dx * dx + dy * dy)
+}
+
+interface IndSite { lat: number; lon: number; name: string; fuel: string }
+
+function loadGemPlants(): IndSite[] {
+  const path = resolve(CACHE_DIR, 'power-plants-gem.geojson')
+  if (!existsSync(path)) return []
+  const fc = JSON.parse(readFileSync(path, 'utf-8'))
+  const out: IndSite[] = []
+  for (const f of fc.features || []) {
+    const g = f.geometry
+    if (!g || g.type !== 'Point') continue
+    const [lon, lat] = g.coordinates || []
+    if (lat == null || lon == null) continue
+    if (!inBbox(lat, lon, PA_BBOX)) continue
+    const p = f.properties || {}
+    const status = (p.Status || '').toString().toLowerCase()
+    if (!status.includes('operating')) continue
+    out.push({
+      lat, lon,
+      name: (p.Plant___Project_name || 'PA plant').toString(),
+      fuel: (p.Type || 'unknown').toString().toLowerCase(),
+    })
+  }
+  return out
+}
+
+async function main() {
+  console.log(`=== PA Industrial Enrichment — GEM Global Integrated Power (${YEAR}) ===\n`)
+
+  const plants = loadGemPlants()
+  const fuelCounts: Record<string, number> = {}
+  for (const p of plants) fuelCounts[p.fuel] = (fuelCounts[p.fuel] || 0) + 1
+  console.log(`  GEM operating plants in PA: ${plants.length}`)
+  for (const [f, c] of Object.entries(fuelCounts).sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${f.padEnd(15)} ${c}`)
+  }
+
+  const grid = new Map<string, IndSite[]>()
+  for (const s of plants) {
+    const key = `${Math.floor(s.lat * 10)}_${Math.floor(s.lon * 10)}`
+    if (!grid.has(key)) grid.set(key, [])
+    grid.get(key)!.push(s)
+  }
+
+  let existing: Record<string, any> = {}
+  if (existsSync(NACE_LOOKUP_PATH)) {
+    try { existing = JSON.parse(readFileSync(NACE_LOOKUP_PATH, 'utf-8')) } catch {}
+  }
+  console.log(`\n  Existing nace-lookup entries: ${Object.keys(existing).length}`)
+
+  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
+  const hexDirs: string[] = []
+  for (const hex of allHexes) {
+    try {
+      const [lat, lon] = cellToLatLng(hex)
+      if (inBbox(lat, lon, PA_BBOX) && existsSync(resolve(H3R4_DIR, hex, 'industrial.arrow'))) hexDirs.push(hex)
+    } catch {}
+  }
+  console.log(`  PA-bbox hexes with industrial.arrow: ${hexDirs.length}\n`)
+
+  let totalOsm = 0, matched = 0, newEntries = 0
+  const lookup: Record<string, any> = { ...existing }
+
+  for (const hex of hexDirs) {
+    try {
+      const buf = readFileSync(resolve(H3R4_DIR, hex, 'industrial.arrow'))
+      const table = tableFromIPC(buf)
+      const n = table.numRows
+      if (n === 0) continue
+      const osmId = table.getChild('osm_id')
+      const centroidLat = table.getChild('centroid_lat') ?? table.getChild('lat')
+      const centroidLon = table.getChild('centroid_lon') ?? table.getChild('lon')
+      if (!osmId || !centroidLat || !centroidLon) continue
+      for (let i = 0; i < n; i++) {
+        totalOsm++
+        const lat = centroidLat.get(i) as number
+        const lon = centroidLon.get(i) as number
+        if (lat == null || lon == null) continue
+        if (!inBbox(lat, lon, PA_BBOX)) continue
+        const searchRadius = 2000
+        const baseLat = Math.floor(lat * 10)
+        const baseLon = Math.floor(lon * 10)
+        let best: IndSite | null = null
+        let bestDist = searchRadius
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const cell = grid.get(`${baseLat + dy}_${baseLon + dx}`)
+            if (!cell) continue
+            for (const s of cell) {
+              const d = flatDistM(lat, lon, s.lat, s.lon)
+              if (d < bestDist) { bestDist = d; best = s }
+            }
+          }
+        }
+        if (best) {
+          const id = String(osmId.get(i))
+          if (!lookup[id]) newEntries++
+          const naceCode = best.fuel.includes('solar') ? '359900' : best.fuel.includes('wind') ? '351200' : '351100'
+          lookup[id] = { nace: naceCode, name: best.name, source: `GEM PA (${best.fuel})` }
+          matched++
+        }
+      }
+    } catch {}
+  }
+
+  writeFileSync(NACE_LOOKUP_PATH, JSON.stringify(lookup, null, 2))
+  console.log(`=== Results ===`)
+  console.log(`  OSM industrial sites scanned: ${totalOsm.toLocaleString()}`)
+  console.log(`  Matched:                      ${matched.toLocaleString()}`)
+  console.log(`  New nace-lookup entries:      ${newEntries.toLocaleString()}`)
+  console.log(`  Total nace-lookup entries:    ${Object.keys(lookup).length.toLocaleString()}`)
+}
+
+main().catch(err => { console.error('Error:', err); process.exit(1) })

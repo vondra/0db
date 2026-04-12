@@ -79,7 +79,7 @@ function flatDistM(lat1: number, lon1: number, lat2: number, lon2: number): numb
 }
 
 interface IndSite {
-  lat: number; lon: number; name: string; nace2: string; source: string
+  lat: number; lon: number; name: string; nace: string; source: string
 }
 
 function loadEskomPlants(): IndSite[] {
@@ -104,7 +104,7 @@ function loadEskomPlants(): IndSite[] {
     out.push({
       lat, lon,
       name: (p.NAME || 'ZA Eskom plant').toString(),
-      nace2: '35',
+      nace: '351100',
       source: `Eskom UP (${fuel})`,
     })
   }
@@ -129,7 +129,7 @@ function loadGemPlants(): IndSite[] {
     out.push({
       lat, lon,
       name: (p.Plant___Project_name || 'ZA plant').toString(),
-      nace2: '35',
+      nace: '351100',
       source: `GEM ZA (${fuel})`,
     })
   }
@@ -155,7 +155,7 @@ function loadCoalMines(): IndSite[] {
     out.push({
       lat, lon,
       name: `${p.Mine_Name || 'ZA coal mine'} (${mtype}, ${prov})`,
-      nace2: '05',  // Mining of coal and lignite
+      nace: '05',  // Mining of coal and lignite
       source: `GEM Coal Mines ZA (${mtype})`,
     })
   }
@@ -249,7 +249,7 @@ async function main() {
         if (best) {
           const id = String(osmId.get(i))
           if (!lookup[id]) newEntries++
-          lookup[id] = { nace2: best.nace2, name: best.name, source: best.source }
+          lookup[id] = { nace: best.nace, name: best.name, source: best.source }
           matched++
           const family = best.source.split(' ')[0]
           bySource[family] = (bySource[family] || 0) + 1

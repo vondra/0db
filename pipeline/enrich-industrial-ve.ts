@@ -71,7 +71,7 @@ function flatDistM(lat1: number, lon1: number, lat2: number, lon2: number): numb
 }
 
 interface IndSite {
-  lat: number; lon: number; name: string; nace2: string; source: string
+  lat: number; lon: number; name: string; nace: string; source: string
 }
 
 function loadVePowerPlants(): IndSite[] {
@@ -93,7 +93,7 @@ function loadVePowerPlants(): IndSite[] {
     out.push({
       lat, lon,
       name: `${p.PLANTA || 'VE plant'} (${p.PROPIEDAD || '?'})`,
-      nace2: '35',
+      nace: '351100',
       source: `VE360 power (${p.PROPIEDAD || '?'})`,
     })
   }
@@ -115,7 +115,7 @@ function loadVeSubstations(): IndSite[] {
     out.push({
       lat, lon,
       name: (p.NOMBRE || p.Nombre || p.nombre || 'VE substation').toString(),
-      nace2: '35',
+      nace: '351100',
       source: 'VE360 substation',
     })
   }
@@ -137,7 +137,7 @@ function loadVeOilWells(): IndSite[] {
     out.push({
       lat, lon,
       name: (p.NOMBRE || p.Nombre || p.nombre || 'VE oil well').toString(),
-      nace2: '06',  // Extraction of crude petroleum and natural gas
+      nace: '06',  // Extraction of crude petroleum and natural gas
       source: 'VE360 oil well',
     })
   }
@@ -159,7 +159,7 @@ function loadVeOilPlants(): IndSite[] {
     out.push({
       lat, lon,
       name: (p.NOMBRE || p.Nombre || p.nombre || 'VE oil plant').toString(),
-      nace2: '19',  // Manufacture of coke and refined petroleum products
+      nace: '19',  // Manufacture of coke and refined petroleum products
       source: 'VE360 oil plant',
     })
   }
@@ -184,7 +184,7 @@ function loadGemPlants(): IndSite[] {
     out.push({
       lat, lon,
       name: (p.Plant___Project_name || 'VE plant').toString(),
-      nace2: '35',
+      nace: '351100',
       source: `GEM VE (${fuel})`,
     })
   }
@@ -284,7 +284,7 @@ async function main() {
         if (best) {
           const id = String(osmId.get(i))
           if (!lookup[id]) newEntries++
-          lookup[id] = { nace2: best.nace2, name: best.name, source: best.source }
+          lookup[id] = { nace: best.nace, name: best.name, source: best.source }
           matched++
           const family = best.source.split(' ')[0]
           bySource[family] = (bySource[family] || 0) + 1

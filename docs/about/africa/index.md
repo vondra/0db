@@ -69,6 +69,18 @@ No usable datasets found. Research conducted 2026-04-10:
 
 29. **Republic of Congo** ✅ — Direction des Routes publishes nothing. GEM (Country_area='Republic of the Congo') — 7 plants / ~730 MW — **CEC Pointe-Noire gas complex ~534 MW** (3 units + CNGCC 50, powered by offshore associated gas — TotalEnergies/ENI) + **Imboulou 120 MW + Moukoukoulou 74 MW** hydro + Kabo 2 MW solar. **CFCO Brazzaville↔Pointe-Noire ~510 km** (meter gauge, **built 1921-1934 French colonial forced labor — 17,000-23,000 worker deaths**) + **Bilinga↔Mbinda manganese branch** (connects to Gabon Transgabonais). **Brazzaville ~2M** — directly across Congo River from Kinshasa (17M DRC). **Pointe-Noire ~1.2M** — Atlantic oil port. Significant African oil producer (offshore). Northern tropical rainforest (Sangha UNESCO). SARIS Nkayi sugar. Sassou-Nguesso — longest-ruling African leader. **~77k road segments enriched (6% of bbox — heavy CD/DRC overlap preserved)**. See [Republic of Congo page](cg).
 
+30. **Eritrea** ✅ — 5 GEM plants / 99 MW. "North Korea of Africa" — most isolated. Italian colonial Asmara↔Massawa railway (heritage tourist only). **494k roads (52%)**. See [Eritrea](er).
+31. **Djibouti** ✅ — 2 GEM plants / 167 MW. Foreign military base hub (US/France/China/Japan). Addis-Djibouti Railway handled by ET. **55k roads (89%)**. See [Djibouti](dj).
+32. **Somalia** ✅ — 7 GEM plants / 94 MW. Failed state since 1991. Al-Shabaab. Somaliland de facto independent. No railway. **953k roads (88%)**. See [Somalia](so).
+33. **South Sudan** ✅ — 5 GEM plants / 137 MW. World's newest country (2011). Civil war 2013-2020. No railway. Worst infrastructure. **757k roads (65%)**. See [South Sudan](ss).
+34. **Sudan** ✅ — 26 GEM plants / 4,150 MW. **Merowe Dam 1,250 MW** (Nile). SRC railway ~5,000 km (deteriorated). Civil war since April 2023 (RSF vs SAF). Darfur crisis. **2.22M roads (58%)**. See [Sudan](sd).
+35. **Libya** ✅ — 72 GEM plants / **14,417 MW** (massive gas fleet). **Africa's largest proven oil reserves.** Railway projects all suspended since 2011. Two rival governments. Civil war since 2011. **2.25M roads (94%)**. See [Libya](ly).
+
+36. **Seychelles** ✅ — 4 GEM plants / 72 MW. Victoria = world's smallest capital. Highest GDP/capita in Africa. **31k roads (100%)**. See [Seychelles](sc).
+37. **Comoros** ✅ — 1 GEM plant / 3 MW. Ylang-ylang #1 producer. Mayotte still French. **30k roads (77%)**. See [Comoros](km).
+38. **Cabo Verde** ✅ — 8 GEM plants / 46 MW. Wind+solar. Cesária Évora. Portuguese-speaking. **86k roads (100%)**. See [Cabo Verde](cv).
+39. **São Tomé and Príncipe** ✅ — 0 GEM plants. Cocoa. Africa's 2nd smallest. **15k roads (100%)**. See [São Tomé](st).
+
 ## Methodology
 
 Same as global: CNOSSOS-EU emission + ISO 9613-2 propagation.

@@ -262,7 +262,8 @@ async function main() {
         if (best) {
           const id = String(osmId.get(i))
           if (!lookup[id]) newEntries++
-          lookup[id] = { nace2: '35', name: best.name, source: `${best.source} (${best.fuel})` }
+          const naceCode = (best.fuel || '').includes('solar') ? '359900' : (best.fuel || '').includes('wind') ? '351200' : '351100'
+          lookup[id] = { nace: naceCode, name: best.name, source: `${best.source} (${best.fuel})` }
           matched++
           const family = best.source.split(' ')[0]
           bySource[family] = (bySource[family] || 0) + 1

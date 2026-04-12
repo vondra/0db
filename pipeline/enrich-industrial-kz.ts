@@ -171,7 +171,8 @@ async function main() {
         if (best) {
           const id = String(osmId.get(i))
           if (!lookup[id]) newEntries++
-          lookup[id] = { nace2: '35', name: best.name, source: `GEM KZ (${best.fuel})` }
+          const naceCode = best.fuel.includes('solar') ? '359900' : best.fuel.includes('wind') ? '351200' : '351100'
+          lookup[id] = { nace: naceCode, name: best.name, source: `GEM KZ (${best.fuel})` }
           matched++
         }
       }
