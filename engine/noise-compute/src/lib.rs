@@ -78,7 +78,7 @@ pub fn compute_at_point(
     if !roads.is_empty() {
         let (road_periods, road_contributors) = compute_roads(receiver, roads, barriers, rasters);
         source_results.push(SourceResult {
-            source_type: "road".to_string(),
+            source_type: SourceKind::Road,
             periods: road_periods.clone(),
             segment_count: roads.len(),
             displayed_count: present::display_count(&road_contributors),
@@ -90,7 +90,7 @@ pub fn compute_at_point(
     if !railways.is_empty() {
         let (rail_periods, rail_contributors) = compute_railways(receiver, railways, barriers, rasters);
         source_results.push(SourceResult {
-            source_type: "railway".to_string(),
+            source_type: SourceKind::Railway,
             periods: rail_periods,
             segment_count: railways.len(),
             displayed_count: present::display_count(&rail_contributors),
@@ -101,10 +101,10 @@ pub fn compute_at_point(
     // ── Settlement (buildings) ──
     if !buildings.is_empty() {
         let (bld_periods, bld_contributors) = compute_point_sources(
-            receiver, buildings, barriers, rasters, "building",
+            receiver, buildings, barriers, rasters, SourceKind::Building,
         );
         source_results.push(SourceResult {
-            source_type: "building".to_string(),
+            source_type: SourceKind::Building,
             periods: bld_periods,
             segment_count: buildings.len(),
             displayed_count: present::display_count(&bld_contributors),
@@ -115,10 +115,10 @@ pub fn compute_at_point(
     // ── Industrial ──
     if !industrial.is_empty() {
         let (ind_periods, ind_contributors) = compute_point_sources(
-            receiver, industrial, barriers, rasters, "industrial",
+            receiver, industrial, barriers, rasters, SourceKind::Industrial,
         );
         source_results.push(SourceResult {
-            source_type: "industrial".to_string(),
+            source_type: SourceKind::Industrial,
             periods: ind_periods,
             segment_count: industrial.len(),
             displayed_count: present::display_count(&ind_contributors),
@@ -133,7 +133,7 @@ pub fn compute_at_point(
         );
         if air_periods.lden_db > f64::NEG_INFINITY {
             source_results.push(SourceResult {
-                source_type: "aircraft".to_string(),
+                source_type: SourceKind::Aircraft,
                 periods: air_periods,
                 segment_count: aircraft.len(),
                 displayed_count: present::display_count(&air_contributors),
@@ -489,7 +489,7 @@ fn compute_roads(
         contributors.push(Contributor {
             osm_id: Some(acc.first_osm_id),
             geometry,
-            source_type: "road".to_string(),
+            source_type: SourceKind::Road,
             name: acc.display_name.clone(),
             subtype: acc.class_name.to_string(),
             distance_m: acc.min_dist,
@@ -786,7 +786,7 @@ fn compute_railways(
 
         contributors.push(Contributor {
             osm_id: Some(acc.first_osm_id), geometry,
-            source_type: "railway".to_string(),
+            source_type: SourceKind::Railway,
             name: if acc.name.is_empty() { String::new() } else { acc.name.clone() },
             subtype: {
                 let base = format!("{:?}", acc.rail_type);
@@ -825,7 +825,7 @@ fn compute_point_sources(
     sources: &[PointSource],
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
-    source_type_name: &str,
+    source_kind: SourceKind,
 ) -> (NoisePeriods, Vec<Contributor>) {
     use std::collections::HashMap;
 
@@ -940,7 +940,7 @@ fn compute_point_sources(
 
         let pt_effects = compute_path_effects(rasters, barriers, acc.lat, acc.lon, acc.src_height, receiver, acc.min_dist, acc.exclusion_radius_m as f64);
 
-        let subtype_name: &'static str = if source_type_name == "industrial" {
+        let subtype_name: &'static str = if source_kind == SourceKind::Industrial {
             match acc.subtype {
                 0 => "industrial_area", 1 => "quarry", 2 => "farm",
                 3 => "factory", 4 => "wastewater",
@@ -958,7 +958,7 @@ fn compute_point_sources(
         };
 
         // Build per-source metadata (popup only)
-        let metadata = if source_type_name == "industrial" {
+        let metadata = if source_kind == SourceKind::Industrial {
             Some(SourceMetadata::Industrial(IndustrialMetadata {
                 area_m2: 0.0,       // derived per-point; aggregate unavailable at this level
                 source_type: subtype_name,
@@ -978,7 +978,7 @@ fn compute_point_sources(
 
         contributors.push(Contributor {
             osm_id: Some(*osm_id), geometry,
-            source_type: source_type_name.to_string(),
+            source_type: source_kind,
             name: acc.name.clone(),
             subtype: subtype_name.to_string(),
             distance_m: acc.min_dist,
@@ -1146,7 +1146,7 @@ fn compute_aircraft(
         terrain: TerrainBreakdown::default(),
         screening: ScreeningBreakdown::default(),
         vegetation: VegetationBreakdown::default(),
-        source_type: "aircraft".to_string(),
+        source_type: SourceKind::Aircraft,
         name: format!("{:.0} flights/day", flights_per_day),
         subtype: "aircraft".to_string(),
         distance_m: 0.0,
@@ -1298,7 +1298,7 @@ mod tests {
 
         // Should have at least one source result
         assert_eq!(result.sources.len(), 1);
-        assert_eq!(result.sources[0].source_type, "road");
+        assert_eq!(result.sources[0].source_type, SourceKind::Road);
 
         println!("Motorway 500m: Ld={:.1} Le={:.1} Ln={:.1} Lden={:.1}",
             result.total.ld_db, result.total.le_db, result.total.ln_db, result.total.lden_db);
@@ -1409,7 +1409,7 @@ mod tests {
             "Aircraft Lden: expected 35-75, got {:.1}", result.total.lden_db);
 
         assert_eq!(result.sources.len(), 1);
-        assert_eq!(result.sources[0].source_type, "aircraft");
+        assert_eq!(result.sources[0].source_type, SourceKind::Aircraft);
 
         // Day should be louder than night (more flights)
         assert!(result.total.ld_db > result.total.ln_db || result.total.ln_db == f64::NEG_INFINITY,

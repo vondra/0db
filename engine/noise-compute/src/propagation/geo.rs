@@ -16,6 +16,15 @@ pub fn slant_dist(d_horizontal: f64, source_alt: f64, receiver_alt: f64) -> f64 
     (d_horizontal * d_horizontal + dz * dz).sqrt()
 }
 
+/// Result of closest-point-on-segment computation.
+#[derive(Debug, Clone, Copy)]
+pub struct ClosestPoint {
+    pub lat: f64,
+    pub lon: f64,
+    pub dist_m: f64,
+    pub fraction: f64, // 0.0 = at start, 1.0 = at end
+}
+
 /// Horizontal distance from a point to a line segment.
 /// Returns (distance_m, closest_point_lat, closest_point_lon, fraction 0-1).
 pub fn point_to_segment(
@@ -49,6 +58,16 @@ pub fn point_to_segment(
     let cp_lon = a_lon + t * (b_lon - a_lon);
 
     (dist, cp_lat, cp_lon, t)
+}
+
+/// Find closest point on a line segment to a given point (struct return variant).
+pub fn closest_point_on_segment(
+    p_lat: f64, p_lon: f64,
+    a_lat: f64, a_lon: f64,
+    b_lat: f64, b_lon: f64,
+) -> ClosestPoint {
+    let (dist_m, lat, lon, fraction) = point_to_segment(p_lat, p_lon, a_lat, a_lon, b_lat, b_lon);
+    ClosestPoint { lat, lon, dist_m, fraction }
 }
 
 /// Smooth fade-out factor for the last 20% of a source's max range.

@@ -89,6 +89,22 @@ pub fn collect_sources_at_point(h3r4_dir: &Path, lat: f64, lng: f64) -> Result<P
     let data_dir = h3r4_dir.parent().and_then(|p| p.parent()).unwrap_or(Path::new("."));
     let nace_lookup = load_nace_lookup_json(&data_dir.join("nace-lookup.json"));
 
+    let loaded: Vec<hex_store::HexData> = hex_ids.iter()
+        .map(|id| load_hex(&h3r4_dir.join(id).to_string_lossy()))
+        .collect::<Result<_, _>>()?;
+    let refs: Vec<&hex_store::HexData> = loaded.iter().collect();
+
+    Ok(collect_from_hex_data(&refs, &nace_lookup, lat, lng))
+}
+
+/// Shared source collection logic. Takes pre-loaded hex data + NACE lookup.
+/// Both `collect_sources_at_point` and `query_noise_at_point` delegate here.
+fn collect_from_hex_data(
+    hex_data: &[&hex_store::HexData],
+    nace_lookup: &HashMap<i64, u8>,
+    lat: f64,
+    lng: f64,
+) -> PointQueryData {
     let mut all_roads = Vec::new();
     let mut all_railways = Vec::new();
     let mut all_buildings = Vec::new();
@@ -97,25 +113,18 @@ pub fn collect_sources_at_point(h3r4_dir: &Path, lat: f64, lng: f64) -> Result<P
     let mut all_aircraft = Vec::new();
 
     let mut date_ids = std::collections::HashSet::new();
-    for hex_id in &hex_ids {
-        let dir = h3r4_dir.join(hex_id);
-        let data = load_hex(&dir.to_string_lossy())?;
+    for data in hex_data {
         for batch in &data.aircraft_batches {
             if let Some(did) = batch.column_by_name("date_id")
                 .and_then(|c| c.as_any().downcast_ref::<arrow::array::Int16Array>())
             {
-                for i in 0..did.len() {
-                    date_ids.insert(did.value(i));
-                }
+                for i in 0..did.len() { date_ids.insert(did.value(i)); }
             }
         }
     }
     let n_days = if date_ids.is_empty() { 365 } else { date_ids.len() as u16 };
 
-    for hex_id in &hex_ids {
-        let dir = h3r4_dir.join(hex_id);
-        let data = load_hex(&dir.to_string_lossy())?;
-
+    for data in hex_data {
         let railways = query_railways_from_batches(&data.railway_batches, lat, lng, 8000.0);
         for r in railways {
             let norm = noise_compute::normalize::normalize_rail(noise_compute::normalize::RawRailInput {
@@ -296,6 +305,8 @@ pub fn collect_sources_at_point(h3r4_dir: &Path, lat: f64, lng: f64) -> Result<P
             }
         }
 
+        // 10 km matches the road source radius — barriers along the full source→receiver
+        // path are needed for screening, not just near the receiver.
         let barriers = query_barriers_from_batches(&data.barrier_batches, lat, lng, 10_000.0);
         for b in barriers {
             all_barriers.push(noise_compute::types::Barrier {
@@ -325,7 +336,7 @@ pub fn collect_sources_at_point(h3r4_dir: &Path, lat: f64, lng: f64) -> Result<P
         }
     }
 
-    Ok(PointQueryData {
+    PointQueryData {
         roads: all_roads,
         railways: all_railways,
         buildings: all_buildings,
@@ -333,7 +344,7 @@ pub fn collect_sources_at_point(h3r4_dir: &Path, lat: f64, lng: f64) -> Result<P
         aircraft: all_aircraft,
         barriers: all_barriers,
         n_days,
-    })
+    }
 }
 
 #[cfg(feature = "node")]
@@ -423,244 +434,17 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
     let hex_ids = geo::grid_disk_r4(lat, lng);
     let mut store = STORE.write().map_err(|e| Error::new(Status::GenericFailure, format!("{e}")))?;
 
-    let mut all_roads = Vec::new();
-    let mut all_railways = Vec::new();
-    let mut all_buildings = Vec::new();
-    let mut all_industrial: Vec<noise_compute::types::PointSource> = Vec::new();
-    let mut all_barriers = Vec::new();
-    let mut all_aircraft = Vec::new();
-    let n_days: u16 = {
-        let mut date_ids = std::collections::HashSet::new();
-        for hex_id in &hex_ids {
-            let data = store.ensure_hex(hex_id);
-            for batch in &data.aircraft_batches {
-                if let Some(did) = batch.column_by_name("date_id")
-                    .and_then(|c| c.as_any().downcast_ref::<arrow::array::Int16Array>())
-                {
-                    for i in 0..did.len() { date_ids.insert(did.value(i)); }
-                }
-            }
-        }
-        if date_ids.is_empty() { 365 } else { date_ids.len() as u16 }
-    };
+    // Pre-load all hexes, then collect refs for the shared helper.
+    for hex_id in &hex_ids { store.ensure_hex(hex_id); }
+    let hex_refs: Vec<&hex_store::HexData> = hex_ids.iter()
+        .filter_map(|id| store.hexes.get(id.as_str()))
+        .collect();
 
-    for hex_id in &hex_ids {
-        let data = store.ensure_hex(hex_id);
-
-        // Railways
-        let railways = query_railways_from_batches(&data.railway_batches, lat, lng, 8000.0);
-        for r in railways {
-            let norm = noise_compute::normalize::normalize_rail(noise_compute::normalize::RawRailInput {
-                rail_type: r.rail_type,
-                usage: r.usage,
-                maxspeed: r.maxspeed,
-                service: r.service,
-                highspeed: r.highspeed,
-                trains_passenger: r.trains_passenger,
-                trains_freight: r.trains_freight,
-                parallel_divisor: r.parallel_divisor,
-            });
-            let trains_passenger_source: u8 = if r.trains_passenger > 0 { 0 } else { 1 };
-            let trains_freight_source: u8 = if r.trains_freight > 0 { 0 } else { 1 };
-            let speed_source: u8 = if r.maxspeed > 0 {
-                0
-            } else if r.highspeed {
-                1
-            } else {
-                2
-            };
-
-            all_railways.push(noise_compute::types::RailSegment {
-                osm_id: r.osm_id,
-                segment_idx: r.segment_idx,
-                start_lat: r.start_lat, start_lon: r.start_lon,
-                end_lat: r.end_lat, end_lon: r.end_lon,
-                length_m: r.length_m,
-                rail_type: r.rail_type,
-                usage: r.usage,
-                maxspeed: r.maxspeed,
-                trains_passenger: norm.popup_passenger_per_day(),
-                trains_freight: norm.popup_freight_per_day(),
-                speed_kmh: norm.speed_kmh as u8,
-                track_count: 1,
-                name: r.name.clone(),
-                rail_ref: r.rail_ref.clone(),
-                bridge: r.bridge,
-                tunnel: r.tunnel,
-                service: r.service > 0,
-                highspeed: r.highspeed,
-                parallel_divisor: r.parallel_divisor.max(1),
-                speed_source,
-                trains_passenger_source,
-                trains_freight_source,
-                dist_m: r.dist_m,
-                cp_lat: r.cp_lat, cp_lon: r.cp_lon,
-                fraction: r.fraction,
-            });
-        }
-
-        let roads = query_roads_from_batches(&data.road_batches, lat, lng, 10000.0);
-        for r in roads {
-            all_roads.push(noise_compute::types::RoadSegment {
-                osm_id: r.osm_id,
-                segment_idx: r.segment_idx,
-                start_lat: r.start_lat, start_lon: r.start_lon,
-                end_lat: r.end_lat, end_lon: r.end_lon,
-                length_m: r.length_m,
-                road_class: r.road_class,
-                speed_limit: r.speed_limit,
-                surface_type: r.surface_type,
-                oneway: r.oneway,
-                lanes: r.lanes,
-                aadt_light: r.aadt_light,
-                aadt_medium: r.aadt_medium,
-                aadt_heavy: r.aadt_heavy,
-                aadt_moto: r.aadt_moto,
-                traffic_source: r.traffic_source,
-                name: r.name.clone(),
-                road_ref: r.road_ref.clone(),
-                bridge: r.bridge,
-                tunnel: r.tunnel,
-                access: r.access,
-                junction: r.junction,
-                dist_m: r.dist_m,
-                cp_lat: r.cp_lat, cp_lon: r.cp_lon,
-                fraction: r.fraction,
-            });
-        }
-
-        let buildings = query_buildings_from_batches(&data.building_batches, lat, lng, 2000.0);
-        for b in buildings {
-            let display_name = if !b.name.is_empty() {
-                b.name.clone()
-            } else if !b.addr_street.is_empty() {
-                if !b.addr_housenumber.is_empty() {
-                    format!("{} {}", b.addr_street, b.addr_housenumber)
-                } else {
-                    b.addr_street.clone()
-                }
-            } else {
-                String::new()
-            };
-
-            let prepared_points = noise_compute::normalize::prepare_building_points(
-                noise_compute::normalize::RawBuildingInput {
-                    centroid_lat: b.centroid_lat,
-                    centroid_lon: b.centroid_lon,
-                    height_m: b.height,
-                    floors: b.floors,
-                    building_type: b.building_type,
-                    area_m2: (b.area_m2 > 0.0).then_some(b.area_m2 as f64),
-                    polygon_wkb: &b.polygon_wkb,
-                },
-            );
-            for prepared in prepared_points {
-                let pt_dist = crate::geo::flat_dist(lat, lng, prepared.lat, prepared.lon);
-                all_buildings.push(prepared.with_metadata(
-                    b.osm_id,
-                    b.building_type,
-                    display_name.clone(),
-                    b.polygon_wkb.clone(),
-                    pt_dist,
-                ));
-            }
-        }
-
-        for batch in &data.industrial_batches {
-            let n = batch.num_rows();
-            let clat: Option<&arrow::array::Float64Array> = batch.column_by_name("centroid_lat").and_then(|c| c.as_any().downcast_ref());
-            let clon: Option<&arrow::array::Float64Array> = batch.column_by_name("centroid_lon").and_then(|c| c.as_any().downcast_ref());
-            let (Some(clat), Some(clon)) = (clat, clon) else { continue };
-            let stype: Option<&arrow::array::UInt8Array> = batch.column_by_name("source_type").and_then(|c| c.as_any().downcast_ref());
-            let hub_h: Option<&arrow::array::Float32Array> = batch.column_by_name("hub_height").and_then(|c| c.as_any().downcast_ref());
-            let power: Option<&arrow::array::Float32Array> = batch.column_by_name("rated_power_kw").and_then(|c| c.as_any().downcast_ref());
-            let ind_name: Option<&arrow::array::StringArray> = batch.column_by_name("name").and_then(|c| c.as_any().downcast_ref());
-            let wkb_col: Option<&arrow::array::BinaryArray> = batch.column_by_name("polygon_wkb").and_then(|c| c.as_any().downcast_ref());
-            let area_col: Option<&arrow::array::Float32Array> = batch.column_by_name("area_m2").and_then(|c| c.as_any().downcast_ref());
-
-            for i in 0..n {
-                let c_lat = clat.value(i);
-                let c_lon = clon.value(i);
-                let dist = crate::geo::flat_dist(lat, lng, c_lat, c_lon);
-                if dist > 5000.0 { continue; }
-
-                let st = stype.map(|a| a.value(i)).unwrap_or(0);
-                let iname = ind_name.map(|a| a.value(i).to_string()).unwrap_or_default();
-                let osm_id = batch.column_by_name("osm_id").and_then(|c| c.as_any().downcast_ref::<arrow::array::Int64Array>()).map(|a| a.value(i)).unwrap_or(0);
-
-                let wkb_hex = if st == 10 {
-                    String::new()
-                } else {
-                    wkb_col.map(|a| hex_encode(a.value(i))).unwrap_or_default()
-                };
-                let area_m2 = area_col.and_then(|a| {
-                    let v = a.value(i);
-                    if v > 0.0 { Some(v as f64) } else { None }
-                });
-                let prepared_points = noise_compute::normalize::prepare_industrial_points(
-                    noise_compute::normalize::RawIndustrialInput {
-                        centroid_lat: c_lat,
-                        centroid_lon: c_lon,
-                        source_type: st,
-                        hub_height_m: hub_h.and_then(|a| {
-                            let value = a.value(i);
-                            if value > 0.0 { Some(value) } else { None }
-                        }),
-                        rated_power_kw: power.and_then(|a| {
-                            let value = a.value(i);
-                            if value > 0.0 { Some(value) } else { None }
-                        }),
-                        area_m2,
-                        polygon_wkb: &wkb_hex,
-                        nace_2digit: NACE_LOOKUP.get().and_then(|lookup| lookup.get(&osm_id)).copied(),
-                    },
-                );
-                for prepared in prepared_points {
-                    let pt_dist = crate::geo::flat_dist(lat, lng, prepared.lat, prepared.lon);
-                    all_industrial.push(prepared.with_metadata(
-                        osm_id,
-                        st,
-                        iname.clone(),
-                        wkb_hex.clone(),
-                        pt_dist,
-                    ));
-                }
-            }
-        }
-
-        // 10 km matches the road source radius — barriers along the full source→receiver
-        // path are needed for screening, not just near the receiver.
-        let barriers = query_barriers_from_batches(&data.barrier_batches, lat, lng, 10_000.0);
-        for b in barriers {
-            all_barriers.push(noise_compute::types::Barrier {
-                osm_id: b.osm_id,
-                height_m: b.height,
-                lat: b.lat, lon: b.lon,
-                dist_m: b.dist_m,
-            });
-        }
-
-        // Aircraft segments (all segments in hex — Doc 29 handles distance cutoff)
-        let aircraft = query_aircraft_from_batches(&data.aircraft_batches, lat, lng);
-        for a in aircraft {
-            all_aircraft.push(noise_compute::types::AircraftSegment {
-                flight_id: a.flight_id,
-                profile_idx: a.profile_idx,
-                is_departure: a.is_departure,
-                period: a.period,
-                date_id: a.date_id,
-                start_lat: a.start_lat, start_lon: a.start_lon,
-                start_alt_m: a.start_alt_m,
-                end_lat: a.end_lat, end_lon: a.end_lon,
-                end_alt_m: a.end_alt_m,
-                speed_kt: a.speed_kt,
-                segment_length_m: a.segment_length_m,
-            });
-        }
-    }
+    let empty_nace = HashMap::new();
+    let nace = NACE_LOOKUP.get().unwrap_or(&empty_nace);
+    let sources = collect_from_hex_data(&hex_refs, nace, lat, lng);
 
     // Build receiver
-    // Use real rasters if available, otherwise stub
     let stub = StubRasters;
     let real_rasters = RASTERS.get();
     let rasters: &dyn noise_compute::types::RasterSampler = match real_rasters {
@@ -670,19 +454,18 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
     let elevation = rasters.elevation(lat, lng);
     let receiver = noise_compute::types::Receiver::new(lat, lng, elevation);
 
-    // Compute noise
     let config = noise_compute::types::ComputeConfig {
-        n_days,
+        n_days: sources.n_days,
         ..Default::default()
     };
     let result = noise_compute::compute_at_point(
         &receiver,
-        &all_roads,
-        &all_railways,
-        &all_buildings,
-        &all_industrial,
-        &all_aircraft,
-        &all_barriers,
+        &sources.roads,
+        &sources.railways,
+        &sources.buildings,
+        &sources.industrial,
+        &sources.aircraft,
+        &sources.barriers,
         rasters,
         &config,
     );

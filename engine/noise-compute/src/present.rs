@@ -24,7 +24,7 @@ pub fn finalize_popup_contributors(mut contributors: Vec<Contributor>, top_n: us
     let mut seen_types = HashSet::new();
     let mut guaranteed = Vec::new();
     for contributor in &contributors {
-        if seen_types.insert(contributor.source_type.clone()) {
+        if seen_types.insert(contributor.source_type) {
             guaranteed.push(contributor.clone());
         }
     }
@@ -42,13 +42,13 @@ pub fn finalize_popup_contributors(mut contributors: Vec<Contributor>, top_n: us
 mod tests {
     use super::*;
     use crate::types::{
-        Contributor, NoisePeriods, PropagationBaseline, ScreeningBreakdown, TerrainBreakdown,
-        VegetationBreakdown,
+        Contributor, NoisePeriods, PropagationBaseline, ScreeningBreakdown, SourceKind,
+        TerrainBreakdown, VegetationBreakdown,
     };
 
-    fn contributor(source_type: &str, lden_db: f64) -> Contributor {
+    fn contributor(source_type: SourceKind, lden_db: f64) -> Contributor {
         Contributor {
-            source_type: source_type.to_string(),
+            source_type,
             osm_id: None,
             name: String::new(),
             subtype: String::new(),
@@ -70,18 +70,18 @@ mod tests {
     fn filters_negative_contributors_but_keeps_one_per_type_after_top_n() {
         let shown = finalize_popup_contributors(
             vec![
-                contributor("road", 12.0),
-                contributor("road", 11.0),
-                contributor("railway", 10.0),
-                contributor("industrial", 9.0),
-                contributor("building", -1.0),
+                contributor(SourceKind::Road, 12.0),
+                contributor(SourceKind::Road, 11.0),
+                contributor(SourceKind::Railway, 10.0),
+                contributor(SourceKind::Industrial, 9.0),
+                contributor(SourceKind::Building, -1.0),
             ],
             2,
         );
         assert_eq!(shown.len(), 4);
         assert!(shown.iter().all(|c| c.periods.lden_db >= 0.0));
-        assert!(shown.iter().any(|c| c.source_type == "road"));
-        assert!(shown.iter().any(|c| c.source_type == "railway"));
-        assert!(shown.iter().any(|c| c.source_type == "industrial"));
+        assert!(shown.iter().any(|c| c.source_type == SourceKind::Road));
+        assert!(shown.iter().any(|c| c.source_type == SourceKind::Railway));
+        assert!(shown.iter().any(|c| c.source_type == SourceKind::Industrial));
     }
 }
