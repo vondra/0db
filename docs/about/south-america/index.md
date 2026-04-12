@@ -1,12 +1,12 @@
 ---
 title: South America
-intro: Noise mapping overview for South America — per-country enrichment available for Brazil, Argentina, Chile, Colombia, Peru, Ecuador, Uruguay, and Paraguay.
+intro: Noise mapping overview for South America — per-country enrichment available for 9 Hispanic/Lusophone countries (BR, AR, CL, CO, PE, EC, UY, PY, BO).
 map: { center: [-60, -15], zoom: 3 }
 ---
 
 ## Data situation
 
-South America has no continent-wide open data initiatives for transport or environment. Transit operators rarely publish GTFS feeds, and national traffic count data is not openly available across the continent. **However, per-country enrichment has been completed for Brazil, Argentina, Chile, Colombia, Peru, Ecuador, Uruguay, and Paraguay**, each leveraging country-specific open data portals (DNIT/SIGACONTROL for Brazil, IGN GeoServer/IDE Transporte for Argentina, MOP Vialidad/CNE/SERNAGEOMIN for Chile, INVIAS/ANM/ANH for Colombia, MTC Provías/INGEMMET/PERUMIN for Peru, CONGOPE/GEM for Ecuador, GEM-only for Uruguay, MOPC KMZ/GEM for Paraguay).
+South America has no continent-wide open data initiatives for transport or environment. Transit operators rarely publish GTFS feeds, and national traffic count data is not openly available across the continent. **However, per-country enrichment has been completed for all 9 Hispanic/Lusophone South American countries** (Brazil, Argentina, Chile, Colombia, Peru, Ecuador, Uruguay, Paraguay, Bolivia), each leveraging country-specific open data portals (DNIT/SIGACONTROL for Brazil, IGN GeoServer/IDE Transporte for Argentina, MOP Vialidad/CNE/SERNAGEOMIN for Chile, INVIAS/ANM/ANH for Colombia, MTC Provías/INGEMMET/PERUMIN for Peru, CONGOPE/GEM for Ecuador, GEM-only for Uruguay, MOPC KMZ/GEM for Paraguay, MHE GeoServer/ABC community mirror for Bolivia).
 
 ## Continental enrichment
 
@@ -47,7 +47,9 @@ No multi-country datasets found. Research conducted 2026-04-10:
 6. **Ecuador** ✅ — CONGOPE Red Vial Ecuador (28,328 polylines covering national + 24 GAD provincial networks, **densest rural network in pipeline**), Red Vial Estatal (711 polylines with ARTERIAL/COLECTORA classification), **Metro de Quito Line 1 (opened Dec 2023 — Ecuador's first metro)**, GEM 70 operating plants (hydropower-dominated, Coca Codo Sinclair 1,500 MW). **2.4M road segments enriched (90% of bbox — highest rate in pipeline)**. No per-segment IMD/AADT. See [Ecuador page](ec).
 7. **Uruguay** ✅ — Class defaults only (MTOP GeoServer TCP/WAF-blocked — has TPDA tramos 2004-2017 + full Caminería Nacional + AFE rail geometry but all unreachable), Ferrocarril Central (273 km UPM2 pulp corridor opened 2023), GEM 64 operating (world's highest wind penetration per capita). All 3 pulp mills captured. 0.5M road segments enriched. See [Uruguay page](uy).
 8. **Paraguay** ✅ — MOPC Rutas Nacionales KMZ (22 routes PY01–PY22, ~8,780 km) + minimal rail (essentially no operational rail) + GEM with **cross-border Itaipú (14 GW, flagged as Brazil) + Yacyretá (3.1 GW, flagged as Argentina) captured for PY context**. **1.33M road segments enriched (95.78% — highest rate in pipeline)**. Gran Asunción (~2.3M) is the only real metro. See [Paraguay page](py).
-9. **Venezuela, Bolivia, Guyana, Suriname** — pending.
+9. **Bolivia** ✅ — ABC Red Vial Fundamental (79 polylines community mirror, partial) + WCS RED_VIAL (556 primary roads) + tri-regional class defaults (Altiplano/Valles/Llanos) + two disjoint rail networks (FCA western + FCO eastern) + **MHE GeoServer** — richest Bolivian geodata with SIN 47 + AIS 35 + substations 230 + transmission 291. GeoBolivia SDI was shut down March 2023. 2.4M road segments enriched (74% of bbox). See [Bolivia page](bo).
+10. **Venezuela** ✅ — All government portals blocked due to post-2014 crisis. **VE360 community mirror** (`proyecto.ve360`) preserves complete SIGOT 2013-2019 dataset: Vialidad 15,528 roads + Metro/Sistema Ferroviario 145 (Caracas Metro + Ezequiel Zamora + Ferrominera Orinoco iron ore corridor) + Power 289 (filter `OPERACIÓN_ACTUAL_MW > 0`: only **25% actually operating** — reflects collapse) + **20,714 oil wells** + 209 substations + 2,269 oil pipelines + 148 gas flares + Guri 10.2 GW from GEM. 1.2M road segments enriched (32% of bbox — low because Essequibo + Colombian Llanos are large exclusion zones). See [Venezuela page](ve).
+11. **Guyana, Suriname** — pending.
 
 ## Methodology
 

@@ -1,0 +1,183 @@
+/**
+ * Enrich MN industrial with GEM Global Integrated Power (Mongolia filter).
+ *
+ * Source:
+ *   - **GEM Global Integrated Power v1** (Country_area='Mongolia'):
+ *     81 total / 25 operating / ~1.41 GW
+ *     Operating fuel: coal 13 (DOMINANT), wind 3, solar 9
+ *
+ *   Top operating plants:
+ *     **Ulaanbaatar-4 CHP ~889 MW total** (7 units, Soviet-era combined heat &
+ *                                           power — coal is non-negotiable in
+ *                                           extreme continental winters −40 °C)
+ *     **Buuruljuut 150 MW** (coal CHP, central Mongolia)
+ *     **Dornod 86 MW** (coal CHP, eastern Mongolia / Choibalsan area)
+ *     **Darkhan 35 MW** + **Erdenet 35 MW** (coal CHP, industrial cities)
+ *     **Sainshand Wind 55 MW** + **Salkhit Wind 50 MW** + **Tsetsii Wind 50 MW**
+ *
+ * Non-power industrial (OSM only):
+ *   - **Oyu Tolgoi** (Rio Tinto/Turquoise Hill, South Gobi) — world's largest
+ *     known copper-gold deposit; $12B underground expansion opened 2023
+ *   - **Erdenet Copper** (Erdenet city, Orkhon aimag) — one of world's top 10
+ *     copper mines; entire city of ~100k built around the mine
+ *   - **Tavan Tolgoi** (South Gobi, Mongolian state) — world's largest untapped
+ *     coking coal deposit
+ *   - **Cashmere processing** — Mongolia produces ~40% of world's cashmere
+ *     (Gobi, SPS, Buyan cashmere factories in Ulaanbaatar)
+ *   - **Darkhan industrial zone** — metallurgy, cement, food processing
+ *   - **NO oil refinery** — Mongolia imports all petroleum products from Russia
+ *
+ * Usage:
+ *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-mn.ts
+ */
+
+import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { tableFromIPC } from 'apache-arrow'
+import { cellToLatLng } from 'h3-js'
+
+const YEAR = process.env.DATA_YEAR || '2025'
+const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
+const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/mn`)
+const NACE_LOOKUP_PATH = resolve(import.meta.dirname, `../data/prepared/nace-lookup.json`)
+
+// Mongolia bbox [minLat, minLon, maxLat, maxLon]
+const MN_BBOX: [number, number, number, number] = [41.5, 87.7, 52.2, 119.9]
+
+const EXCLUDE_ZONES: Array<[number, number, number, number]> = [
+  // Russia N — above lat 50.5
+  [50.5, 87.7, 52.2, 119.9],
+  // China S (west of 110) — below lat 42.5
+  [41.5, 87.7, 42.5, 110.0],
+  // China S (east of 110, Gobi border area) — below lat 42.0
+  [41.5, 110.0, 42.0, 119.9],
+]
+
+function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
+  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
+}
+function inExcluded(lat: number, lon: number): boolean {
+  for (const b of EXCLUDE_ZONES) if (inBbox(lat, lon, b)) return true
+  return false
+}
+function flatDistM(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
+  const dx = (lon2 - lon1) * 111320 * cosLat
+  const dy = (lat2 - lat1) * 110540
+  return Math.sqrt(dx * dx + dy * dy)
+}
+
+interface IndSite { lat: number; lon: number; name: string; fuel: string }
+
+function loadGemPlants(): IndSite[] {
+  const path = resolve(CACHE_DIR, 'power-plants-gem.geojson')
+  if (!existsSync(path)) return []
+  const fc = JSON.parse(readFileSync(path, 'utf-8'))
+  const out: IndSite[] = []
+  for (const f of fc.features || []) {
+    const g = f.geometry
+    if (!g || g.type !== 'Point') continue
+    const [lon, lat] = g.coordinates || []
+    if (lat == null || lon == null) continue
+    if (!inBbox(lat, lon, MN_BBOX) || inExcluded(lat, lon)) continue
+    const p = f.properties || {}
+    const status = (p.Status || '').toString().toLowerCase()
+    if (!status.includes('operating')) continue
+    out.push({
+      lat, lon,
+      name: (p.Plant___Project_name || 'MN plant').toString(),
+      fuel: (p.Type || 'unknown').toString().toLowerCase(),
+    })
+  }
+  return out
+}
+
+async function main() {
+  console.log(`=== MN Industrial Enrichment — GEM Global Integrated Power (${YEAR}) ===\n`)
+
+  const plants = loadGemPlants()
+  const fuelCounts: Record<string, number> = {}
+  for (const p of plants) fuelCounts[p.fuel] = (fuelCounts[p.fuel] || 0) + 1
+  console.log(`  GEM operating plants in MN: ${plants.length}`)
+  for (const [f, c] of Object.entries(fuelCounts).sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${f.padEnd(15)} ${c}`)
+  }
+
+  const grid = new Map<string, IndSite[]>()
+  for (const s of plants) {
+    const key = `${Math.floor(s.lat * 10)}_${Math.floor(s.lon * 10)}`
+    if (!grid.has(key)) grid.set(key, [])
+    grid.get(key)!.push(s)
+  }
+
+  let existing: Record<string, any> = {}
+  if (existsSync(NACE_LOOKUP_PATH)) {
+    try { existing = JSON.parse(readFileSync(NACE_LOOKUP_PATH, 'utf-8')) } catch {}
+  }
+  console.log(`\n  Existing nace-lookup entries: ${Object.keys(existing).length}`)
+
+  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
+  const hexDirs: string[] = []
+  for (const hex of allHexes) {
+    try {
+      const [lat, lon] = cellToLatLng(hex)
+      if (inBbox(lat, lon, MN_BBOX) && existsSync(resolve(H3R4_DIR, hex, 'industrial.arrow'))) hexDirs.push(hex)
+    } catch {}
+  }
+  console.log(`  MN-bbox hexes with industrial.arrow: ${hexDirs.length}\n`)
+
+  let totalOsm = 0, matched = 0, newEntries = 0
+  const lookup: Record<string, any> = { ...existing }
+
+  for (const hex of hexDirs) {
+    try {
+      const buf = readFileSync(resolve(H3R4_DIR, hex, 'industrial.arrow'))
+      const table = tableFromIPC(buf)
+      const n = table.numRows
+      if (n === 0) continue
+      const osmId = table.getChild('osm_id')
+      const centroidLat = table.getChild('centroid_lat') ?? table.getChild('lat')
+      const centroidLon = table.getChild('centroid_lon') ?? table.getChild('lon')
+      if (!osmId || !centroidLat || !centroidLon) continue
+
+      for (let i = 0; i < n; i++) {
+        totalOsm++
+        const lat = centroidLat.get(i) as number
+        const lon = centroidLon.get(i) as number
+        if (lat == null || lon == null) continue
+        if (!inBbox(lat, lon, MN_BBOX) || inExcluded(lat, lon)) continue
+
+        const searchRadius = 2000
+        const baseLat = Math.floor(lat * 10)
+        const baseLon = Math.floor(lon * 10)
+        let best: IndSite | null = null
+        let bestDist = searchRadius
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const cell = grid.get(`${baseLat + dy}_${baseLon + dx}`)
+            if (!cell) continue
+            for (const s of cell) {
+              const d = flatDistM(lat, lon, s.lat, s.lon)
+              if (d < bestDist) { bestDist = d; best = s }
+            }
+          }
+        }
+        if (best) {
+          const id = String(osmId.get(i))
+          if (!lookup[id]) newEntries++
+          lookup[id] = { nace2: '35', name: best.name, source: `GEM MN (${best.fuel})` }
+          matched++
+        }
+      }
+    } catch {}
+  }
+
+  writeFileSync(NACE_LOOKUP_PATH, JSON.stringify(lookup, null, 2))
+  console.log(`=== Results ===`)
+  console.log(`  OSM industrial sites scanned: ${totalOsm.toLocaleString()}`)
+  console.log(`  Matched:                      ${matched.toLocaleString()}`)
+  console.log(`  New nace-lookup entries:      ${newEntries.toLocaleString()}`)
+  console.log(`  Total nace-lookup entries:    ${Object.keys(lookup).length.toLocaleString()}`)
+}
+
+main().catch(err => { console.error('Error:', err); process.exit(1) })
