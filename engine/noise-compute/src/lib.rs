@@ -573,6 +573,8 @@ fn compute_roads(
             acc.dominant_aadt_moto_effective = moto;
             acc.dominant_traffic_source = if seg.traffic_source == 1 && seg.aadt_light > 0 {
                 "census"
+            } else if seg.traffic_source > 1 && seg.aadt_light > 0 {
+                "estimated"
             } else {
                 "default_by_class"
             };
