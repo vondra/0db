@@ -64,6 +64,9 @@ export default function App() {
   const [realEstateFilters, setRealEstateFilters] = useState<RealEstateFilters>({
     enabled: false, propertyType: 'all', listingType: 'all', maxNoise: 35,
   })
+  const [rasterOverlays, setRasterOverlays] = useState<Record<string, boolean>>({
+    dem: false, building: false, forest: false,
+  })
 
   const mapViewRef = useRef({ lat: initial.lat, lng: initial.lng, zoom: initial.zoom })
   const sourceModesRef = useRef(sourceModes)
@@ -218,6 +221,8 @@ export default function App() {
               onQuietThresholdChange={handleQuietThresholdChange}
               realEstateFilters={realEstateFilters}
               onRealEstateChange={setRealEstateFilters}
+              rasterOverlays={rasterOverlays}
+              onRasterOverlayChange={setRasterOverlays}
             />
           </div>
           <div className="pointer-events-auto">
@@ -253,6 +258,7 @@ export default function App() {
         quietThreshold={quietThreshold}
         highlightGeometry={highlightGeometry}
         realEstateFilters={realEstateFilters}
+        rasterOverlays={rasterOverlays}
       />
 
       {/* Mobile: layers toggle button */}
@@ -288,6 +294,8 @@ export default function App() {
           onQuietThresholdChange={handleQuietThresholdChange}
           realEstateFilters={realEstateFilters}
           onRealEstateChange={setRealEstateFilters}
+          rasterOverlays={rasterOverlays}
+          onRasterOverlayChange={setRasterOverlays}
         />
       </div>
 

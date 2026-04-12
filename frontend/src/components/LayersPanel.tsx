@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react'
 import SourceToggles from './SourceToggles'
 import OverlayControls from './OverlayControls'
 import SoundPathSection from './SoundPathSection'
+import AdvancedSection from './AdvancedSection'
 import type { RealEstateFilters } from './RealEstateLayer'
 import type { SourceMode } from '../hooks/useUrlState'
 
@@ -20,6 +21,8 @@ interface LayersPanelProps {
   onQuietThresholdChange: (threshold: number) => void
   realEstateFilters: RealEstateFilters
   onRealEstateChange: (filters: RealEstateFilters) => void
+  rasterOverlays: Record<string, boolean>
+  onRasterOverlayChange: (overlays: Record<string, boolean>) => void
 }
 
 export default function LayersPanel({
@@ -29,6 +32,7 @@ export default function LayersPanel({
   quietClustersEnabled, onQuietClustersChange,
   quietThreshold, onQuietThresholdChange,
   realEstateFilters, onRealEstateChange,
+  rasterOverlays, onRasterOverlayChange,
 }: LayersPanelProps) {
   const [dismissing, setDismissing] = useState(false)
   const [dragOffset, setDragOffset] = useState(0)
@@ -107,6 +111,11 @@ export default function LayersPanel({
       <SoundPathSection
         propagationFactors={propagationFactors}
         onPropagationChange={onPropagationChange}
+      />
+      <div className="my-2 border-t border-border" />
+      <AdvancedSection
+        rasterOverlays={rasterOverlays}
+        onRasterOverlayChange={onRasterOverlayChange}
       />
     </div>
   )

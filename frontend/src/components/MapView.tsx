@@ -8,6 +8,7 @@ import QuietClustersLayer from './QuietClustersLayer'
 import ContributorHighlight from './ContributorHighlight'
 import RealEstateLayer from './RealEstateLayer'
 import IsochronLayer from './IsochronLayer'
+import RasterOverlayLayer from './RasterOverlayLayer'
 import MapStateSync from './MapStateSync'
 import { DEFAULT_BASEMAP, getBasemapStyle, type BasemapId } from '../utils/basemaps'
 import type { HexFeature } from './HexLayer'
@@ -36,13 +37,14 @@ interface MapViewProps {
   highlightGeometry?: any | null
   isochronGeojson?: GeoJSON.Feature | null
   realEstateFilters?: import('./RealEstateLayer').RealEstateFilters
+  rasterOverlays?: Record<string, boolean>
 }
 
 export default function MapView({
   selectedLocation, initialCenter, initialZoom, activeSources, sourceModes, propagationFactors,
   basemap, onViewChange, onHexData, onDetailData, onDetailPositionChange,
   initialDetailPosition, onSelectedPointChange,
-  hexData, quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters,
+  hexData, quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters, rasterOverlays,
 }: MapViewProps) {
   const center = initialCenter ?? [49.8, 15.5]
   const zoom = initialZoom ?? 8
@@ -78,6 +80,7 @@ export default function MapView({
       <QuietClustersLayer hexFeatures={hexData ?? []} enabled={quietClustersEnabled ?? false} threshold={quietThreshold ?? 35} />
       <ContributorHighlight geometry={highlightGeometry ?? null} />
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} />}
+      <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
       <IsochronLayer geojson={isochronGeojson ?? null} />
       <FlyToLocation location={selectedLocation ?? null} onArrived={handleArrived} />
       <DetailPopup

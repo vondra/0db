@@ -56,13 +56,41 @@ pub fn industrial_profile(site_type: u8) -> IndustrialProfile {
     }
 }
 
-/// Get profile by NACE 2-digit sector code.
-/// WHY: OSM source_type only gives 5 coarse categories. NACE codes from IRZ/E-PRTR
-/// enable sector-specific profiles (metallurgy ≠ warehouse ≠ power plant).
+/// Get profile by NACE 4-digit sector code.
+/// WHY: OSM source_type only gives 5 coarse categories. NACE codes from IRZ/E-PRTR/GEM
+/// enable sector-specific profiles (metallurgy ≠ warehouse ≠ solar farm).
+/// 4-digit resolution distinguishes solar (3512, quiet) from thermal power (3511, loud).
 /// Values from docs/about/index.md emission tables, calibrated against SHM 2022.
 /// Sources: EU 2000/14/EC equipment limits, 3M Noise Navigator, FHWA RCNM.
-pub fn nace_profile(nace_2digit: u8) -> Option<IndustrialProfile> {
-    Some(match nace_2digit {
+pub fn nace_profile(nace_4digit: u16) -> Option<IndustrialProfile> {
+    // Try 4-digit match first (more specific), then fall back to 2-digit.
+    // NOTE: NACE 3512 ("renewable") mixes solar, wind, and hydro in nace-lookup.json.
+    // Wind turbines are safe (source_type=10 early-returns before NACE is checked).
+    // But hydro would wrongly get the solar profile, so we use a synthetic code 3599
+    // for confirmed solar plants only. Enrichment scripts must write '359900' for solar.
+    match nace_4digit {
+        // Solar farms — inverters only, ~45-55 dB Lw, zero at night.
+        // Synthetic NACE 3599 (not real NACE) to avoid 3512 which mixes renewables.
+        3599 => return Some(IndustrialProfile {
+            base_lw: 55.0,
+            spectrum: [-8.0, -5.0, -2.0, 0.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -3.0, night_offset: -50.0, // effectively silent at night
+        }),
+        // Thermal/nuclear power — turbines, cooling towers, transformers
+        3511 => return Some(IndustrialProfile {
+            base_lw: 97.0, spectrum: [-2.0, 0.0, 1.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -1.0, night_offset: -2.0, // near 24/7
+        }),
+        // Hydro power — turbines, spillways
+        3512 => return Some(IndustrialProfile {
+            base_lw: 90.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: 0.0, night_offset: 0.0, // 24/7 baseload
+        }),
+        _ => {}
+    }
+    // Fall back to 2-digit match
+    let nace_2 = nace_4digit / 100;
+    Some(match nace_2 {
         // Heavy industry — high base Lw
         // Calibrated against Czech SHM 2022 + Irish Cement EIS (120.8 dBA plant total).
         8 => IndustrialProfile { // Mining/quarrying
@@ -110,8 +138,8 @@ pub fn nace_profile(nace_2digit: u8) -> Option<IndustrialProfile> {
             base_lw: 93.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -5.0, night_offset: -12.0,
         },
-        // Energy/utilities
-        35 => IndustrialProfile { // Power generation — turbines, transformers
+        // Energy/utilities — generic NACE 35 (not matched by 4-digit above)
+        35 => IndustrialProfile { // Power generation — turbines, transformers (fallback)
             base_lw: 97.0, spectrum: [-2.0, 0.0, 1.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -1.0, night_offset: -2.0, // near 24/7
         },

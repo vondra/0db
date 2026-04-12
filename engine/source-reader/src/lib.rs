@@ -33,7 +33,7 @@ static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::Onc
 // NACE 2-digit code per osm_id, populated from data/prepared/nace-lookup.json.
 // Enables sector-specific industrial emission profiles over generic landuse=industrial.
 #[cfg(feature = "node")]
-static NACE_LOOKUP: std::sync::OnceLock<HashMap<i64, u8>> = std::sync::OnceLock::new();
+static NACE_LOOKUP: std::sync::OnceLock<HashMap<i64, u16>> = std::sync::OnceLock::new();
 
 #[cfg(feature = "node")]
 struct HexStore {
@@ -80,7 +80,7 @@ pub struct PointQueryData {
     pub n_days: u16,
 }
 
-fn load_nace_lookup_json(nace_path: &Path) -> HashMap<i64, u8> {
+fn load_nace_lookup_json(nace_path: &Path) -> HashMap<i64, u16> {
     if !nace_path.exists() {
         return HashMap::new();
     }
@@ -95,9 +95,9 @@ fn load_nace_lookup_json(nace_path: &Path) -> HashMap<i64, u8> {
             val.get("nace").and_then(|v| v.as_str()),
         ) {
             if let Ok(nace_full) = nace_str.parse::<u32>() {
-                let nace_2 = (nace_full / 10000) as u8;
-                if nace_2 > 0 {
-                    lookup.insert(osm_id, nace_2);
+                let nace_4 = (nace_full / 100) as u16;
+                if nace_4 > 0 {
+                    lookup.insert(osm_id, nace_4);
                 }
             }
         }
@@ -130,7 +130,7 @@ pub fn collect_sources_at_point(
 /// Both `collect_sources_at_point` and `query_noise_at_point` delegate here.
 fn collect_from_hex_data(
     hex_data: &[&hex_store::HexData],
-    nace_lookup: &HashMap<i64, u8>,
+    nace_lookup: &HashMap<i64, u16>,
     lat: f64,
     lng: f64,
 ) -> PointQueryData {
@@ -375,7 +375,7 @@ fn collect_from_hex_data(
                         }),
                         area_m2,
                         polygon_wkb: &wkb_hex,
-                        nace_2digit: nace_lookup.get(&osm_id).copied(),
+                        nace_4digit: nace_lookup.get(&osm_id).copied(),
                     },
                 );
                 for prepared in prepared_points {
