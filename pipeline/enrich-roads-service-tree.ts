@@ -301,42 +301,14 @@ function findLeafBranches(
     }
   }
 
-  // Detect loop cul-de-sacs and embedded loops:
-  // After dead-end walks, remaining unclaimed segments may form loops (turnaround
-  // circles, lollipop streets, short residential connectors between junctions).
-  // Find connected groups of unclaimed segments and enrich each if short enough.
-  const claimed = new Set<number>()
-  for (const b of branches) for (const s of b.segments) claimed.add(s)
-
-  const unclaimedSet = new Set(comp.segments.filter(s => !claimed.has(s)))
-  if (unclaimedSet.size > 0) {
-    // Find connected sub-groups of unclaimed segments
-    const visited = new Set<number>()
-    for (const seed of unclaimedSet) {
-      if (visited.has(seed)) continue
-      const group: number[] = []
-      const q = [seed]
-      visited.add(seed)
-      while (q.length > 0) {
-        const seg = q.shift()!
-        group.push(seg)
-        const [sk, ek] = segToNodes[seg]
-        for (const nk of [sk, ek]) {
-          const edges = localAdj.get(nk)
-          if (!edges) continue
-          for (const adj of edges) {
-            if (unclaimedSet.has(adj) && !visited.has(adj)) {
-              visited.add(adj)
-              q.push(adj)
-            }
-          }
-        }
-      }
-      let totalLen = 0
-      for (const seg of group) totalLen += (lengthCol.get(seg) as number) ?? 0
-      if (totalLen <= MAX_BRANCH_LENGTH_M) {
-        branches.push({ segments: group, lengthM: totalLen })
-      }
+  // Detect pure loop cul-de-sacs: components with NO dead-ends where all
+  // segments form a loop attached to the main network. Mixed components
+  // (dead-ends + loops) keep their loops at the default AADT.
+  if (deadEnds.length === 0 && comp.segments.length > 0) {
+    let totalLen = 0
+    for (const seg of comp.segments) totalLen += (lengthCol.get(seg) as number) ?? 0
+    if (totalLen <= MAX_BRANCH_LENGTH_M) {
+      branches.push({ segments: [...comp.segments], lengthM: totalLen })
     }
   }
 
