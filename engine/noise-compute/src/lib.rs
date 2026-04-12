@@ -1177,10 +1177,8 @@ fn compute_point_sources(
 
         let src_alt = rasters.elevation(src.lat, src.lon) + src.source_height_m as f64;
         let rcv_alt = receiver.altitude_m();
-        let d_slant = geo::slant_dist(src.dist_m, src_alt, rcv_alt);
-        if d_slant < 1.0 {
-            continue;
-        }
+        let prop_dist = geo::effective_area_source_dist(src.dist_m, src.exclusion_radius_m as f64);
+        let d_slant = geo::slant_dist(prop_dist, src_alt, rcv_alt).max(1.0);
 
         // Early exit: skip if free-field < threshold (matching pipeline)
         {

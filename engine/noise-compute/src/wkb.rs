@@ -222,11 +222,14 @@ pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
     let lat_step = spacing_m / 110_540.0;
     let lon_step = spacing_m / (111_320.0 * mid_lat.to_radians().cos().max(0.1));
 
-    // Generate grid — exclude points inside courtyards (inner rings)
+    // Generate grid with GLOBAL phase — snap to nearest grid line, not polygon bbox.
+    // This prevents raster-pattern artifacts from per-polygon grid alignment.
     let mut points = Vec::new();
-    let mut lat = min_lat + lat_step / 2.0;
+    let lat_start = (min_lat / lat_step).floor() * lat_step + lat_step / 2.0;
+    let lon_start = (min_lon / lon_step).floor() * lon_step + lon_step / 2.0;
+    let mut lat = lat_start;
     while lat <= max_lat {
-        let mut lon = min_lon + lon_step / 2.0;
+        let mut lon = lon_start;
         while lon <= max_lon {
             if point_in_polygon(lat, lon, &coords)
                 && !holes.iter().any(|h| point_in_polygon(lat, lon, h))
@@ -239,6 +242,73 @@ pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
     }
 
     // Fallback: at least the centroid
+    if points.is_empty() {
+        let clat = coords.iter().map(|c| c.0).sum::<f64>() / coords.len() as f64;
+        let clon = coords.iter().map(|c| c.1).sum::<f64>() / coords.len() as f64;
+        points.push((clat, clon));
+    }
+
+    points
+}
+
+/// Generate H3 res-11 cell centers inside a WKB polygon.
+/// Scans bbox on ~40m grid, snaps each point to its H3 res-11 cell center,
+/// deduplicates, and filters by polygon containment.
+pub fn wkb_h3_grid_points(wkb_hex: &str) -> Vec<(f64, f64)> {
+    use h3o::{LatLng, Resolution};
+    use std::collections::HashSet;
+
+    let (coords, holes) = match parse_wkb_polygon_with_holes(wkb_hex) {
+        Some(c) => c,
+        None => match parse_wkb_polygon_coords(wkb_hex) {
+            Some(c) => (c, vec![]),
+            None => return vec![],
+        },
+    };
+    if coords.is_empty() {
+        return vec![];
+    }
+
+    let mut min_lat = f64::MAX;
+    let mut max_lat = f64::MIN;
+    let mut min_lon = f64::MAX;
+    let mut max_lon = f64::MIN;
+    for &(lat, lon) in &coords {
+        if lat < min_lat { min_lat = lat; }
+        if lat > max_lat { max_lat = lat; }
+        if lon < min_lon { min_lon = lon; }
+        if lon > max_lon { max_lon = lon; }
+    }
+
+    // Scan step 20m — must be < half of H3 res-11 row spacing (~43m) to hit every cell
+    let mid_lat = (min_lat + max_lat) / 2.0;
+    let lat_step = 20.0 / 110_540.0;
+    let lon_step = 20.0 / (111_320.0 * mid_lat.to_radians().cos().max(0.1));
+
+    let mut seen = HashSet::new();
+    let mut points = Vec::new();
+    let mut lat = min_lat;
+    while lat <= max_lat {
+        let mut lon = min_lon;
+        while lon <= max_lon {
+            if let Ok(ll) = LatLng::new(lat, lon) {
+                let cell = ll.to_cell(Resolution::Eleven);
+                if seen.insert(cell) {
+                    let center = LatLng::from(cell);
+                    let clat = center.lat();
+                    let clon = center.lng();
+                    if point_in_polygon(clat, clon, &coords)
+                        && !holes.iter().any(|h| point_in_polygon(clat, clon, h))
+                    {
+                        points.push((clat, clon));
+                    }
+                }
+            }
+            lon += lon_step;
+        }
+        lat += lat_step;
+    }
+
     if points.is_empty() {
         let clat = coords.iter().map(|c| c.0).sum::<f64>() / coords.len() as f64;
         let clon = coords.iter().map(|c| c.1).sum::<f64>() / coords.len() as f64;

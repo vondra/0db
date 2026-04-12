@@ -16,6 +16,19 @@ pub fn slant_dist(d_horizontal: f64, source_alt: f64, receiver_alt: f64) -> f64 
     (d_horizontal * d_horizontal + dz * dz).sqrt()
 }
 
+/// Effective propagation distance for discretized area sources.
+/// Clamps distance to exclusion_radius (= equivalent area-patch radius)
+/// to prevent 1/r² singularity when receiver is inside the source polygon.
+/// For pure point sources (exclusion_radius_m = 0), returns dist_m unchanged.
+#[inline]
+pub fn effective_area_source_dist(dist_m: f64, exclusion_radius_m: f64) -> f64 {
+    if exclusion_radius_m > 0.0 {
+        dist_m.max(exclusion_radius_m)
+    } else {
+        dist_m
+    }
+}
+
 /// Result of closest-point-on-segment computation.
 #[derive(Debug, Clone, Copy)]
 pub struct ClosestPoint {

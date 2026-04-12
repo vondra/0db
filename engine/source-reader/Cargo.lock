@@ -619,6 +619,7 @@ dependencies = [
 name = "noise-compute"
 version = "0.1.0"
 dependencies = [
+ "h3o",
  "serde",
  "serde_json",
 ]
