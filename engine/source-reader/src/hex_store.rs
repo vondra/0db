@@ -790,8 +790,9 @@ pub struct AircraftResult {
 /// Query aircraft segments from batches. No distance filter — Doc 29 handles cutoff internally.
 pub fn query_aircraft_from_batches(
     batches: &[RecordBatch],
-    _lat: f64,
-    _lon: f64,
+    lat: f64,
+    lon: f64,
+    max_radius_m: f64,
 ) -> Vec<AircraftResult> {
     let mut results = Vec::new();
 
@@ -819,6 +820,32 @@ pub fn query_aircraft_from_batches(
         };
 
         for i in 0..n {
+            let start_lat = slat.value(i);
+            let start_lon = slon.value(i);
+            let end_lat = elat.value(i);
+            let end_lon = elon.value(i);
+
+            // Keep popup semantics aligned with Doc 29 12 km cutoff, but filter before
+            // expensive airport-ground matching. The midpoint box is a cheap first pass;
+            // closest-point distance is the conservative geometric gate.
+            let mid_lat = (start_lat + end_lat) * 0.5;
+            let mid_lon = (start_lon + end_lon) * 0.5;
+            let dlat = (lat - mid_lat).abs() * 110_540.0;
+            if dlat > max_radius_m * 1.5 {
+                continue;
+            }
+            let dlon = (lon - mid_lon).abs() * 111_320.0 * mid_lat.to_radians().cos();
+            if dlon > max_radius_m * 1.5 {
+                continue;
+            }
+
+            let cp = crate::geo::closest_point_on_segment(
+                lat, lon, start_lat, start_lon, end_lat, end_lon,
+            );
+            if cp.dist_m > max_radius_m {
+                continue;
+            }
+
             results.push(AircraftResult {
                 flight_id: fid.value(i),
                 profile_idx: pidx.map(|a| a.value(i)).unwrap_or(7),
@@ -826,11 +853,11 @@ pub fn query_aircraft_from_batches(
                 on_ground: on_ground.map(|a| a.value(i)).unwrap_or(false),
                 period: per.map(|a| a.value(i)).unwrap_or(0),
                 date_id: did.map(|a| a.value(i)).unwrap_or(0),
-                start_lat: slat.value(i),
-                start_lon: slon.value(i),
+                start_lat,
+                start_lon,
                 start_alt_m: salt.map(|a| a.value(i)).unwrap_or(0.0),
-                end_lat: elat.value(i),
-                end_lon: elon.value(i),
+                end_lat,
+                end_lon,
                 end_alt_m: ealt.map(|a| a.value(i)).unwrap_or(0.0),
                 speed_kt: spd.map(|a| a.value(i)).unwrap_or(0.0),
                 segment_length_m: slen.map(|a| a.value(i)).unwrap_or(0.0),

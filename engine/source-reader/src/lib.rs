@@ -16,12 +16,10 @@ use std::sync::RwLock;
 #[cfg(feature = "node")]
 use hex_store::HexData;
 use hex_store::{
-    hex_encode, load_airport_areas_from_batches, load_airport_lines_from_batches, load_hex,
-    query_aircraft_from_batches, query_barriers_from_batches, query_buildings_from_batches,
+    hex_encode, load_hex, query_aircraft_from_batches, query_airport_areas_from_batches,
+    query_airport_lines_from_batches, query_barriers_from_batches, query_buildings_from_batches,
     query_railways_from_batches, query_roads_from_batches,
 };
-#[cfg(feature = "node")]
-use hex_store::{query_airport_areas_from_batches, query_airport_lines_from_batches};
 
 #[cfg(feature = "node")]
 static STORE: std::sync::LazyLock<RwLock<HexStore>> =
@@ -34,6 +32,9 @@ static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::Onc
 // Enables sector-specific industrial emission profiles over generic landuse=industrial.
 #[cfg(feature = "node")]
 static NACE_LOOKUP: std::sync::OnceLock<HashMap<i64, u16>> = std::sync::OnceLock::new();
+
+const AIRCRAFT_QUERY_MAX_RADIUS_M: f64 = 12_000.0;
+const AIRPORT_CONTEXT_RADIUS_M: f64 = 20_000.0;
 
 #[cfg(feature = "node")]
 struct HexStore {
@@ -116,6 +117,7 @@ pub fn collect_sources_at_point(
         .and_then(|p| p.parent())
         .unwrap_or(Path::new("."));
     let nace_lookup = load_nace_lookup_json(&data_dir.join("nace-lookup.json"));
+    let rasters = raster_reader::RealRasters::new(data_dir);
 
     let loaded: Vec<hex_store::HexData> = hex_ids
         .iter()
@@ -123,7 +125,13 @@ pub fn collect_sources_at_point(
         .collect::<Result<_, _>>()?;
     let refs: Vec<&hex_store::HexData> = loaded.iter().collect();
 
-    Ok(collect_from_hex_data(&refs, &nace_lookup, lat, lng))
+    Ok(collect_from_hex_data(
+        &refs,
+        &nace_lookup,
+        lat,
+        lng,
+        &rasters,
+    ))
 }
 
 /// Shared source collection logic. Takes pre-loaded hex data + NACE lookup.
@@ -133,6 +141,7 @@ fn collect_from_hex_data(
     nace_lookup: &HashMap<i64, u16>,
     lat: f64,
     lng: f64,
+    rasters: &dyn noise_compute::types::RasterSampler,
 ) -> PointQueryData {
     let mut all_roads = Vec::new();
     let mut all_railways = Vec::new();
@@ -163,8 +172,40 @@ fn collect_from_hex_data(
     };
 
     for data in hex_data {
-        all_airport_lines.extend(load_airport_lines_from_batches(&data.airport_line_batches));
-        all_airport_areas.extend(load_airport_areas_from_batches(&data.airport_area_batches));
+        let airport_lines = query_airport_lines_from_batches(
+            &data.airport_line_batches,
+            lat,
+            lng,
+            AIRPORT_CONTEXT_RADIUS_M,
+        );
+        for line in airport_lines {
+            all_airport_lines.push(noise_compute::types::AirportLine {
+                osm_id: line.osm_id,
+                aeroway_type: line.aeroway_type,
+                start_lat: line.start_lat,
+                start_lon: line.start_lon,
+                end_lat: line.end_lat,
+                end_lon: line.end_lon,
+                width_m: line.width_m,
+            });
+        }
+
+        let airport_areas = query_airport_areas_from_batches(
+            &data.airport_area_batches,
+            lat,
+            lng,
+            AIRPORT_CONTEXT_RADIUS_M,
+        );
+        for area in airport_areas {
+            all_airport_areas.push(noise_compute::types::AirportArea {
+                osm_id: area.osm_id,
+                aeroway_type: area.aeroway_type,
+                centroid_lat: area.centroid_lat,
+                centroid_lon: area.centroid_lon,
+                polygon_wkb: area.polygon_wkb,
+                area_m2: area.area_m2,
+            });
+        }
     }
 
     for data in hex_data {
@@ -404,7 +445,12 @@ fn collect_from_hex_data(
             });
         }
 
-        let aircraft = query_aircraft_from_batches(&data.aircraft_batches, lat, lng);
+        let aircraft = query_aircraft_from_batches(
+            &data.aircraft_batches,
+            lat,
+            lng,
+            AIRCRAFT_QUERY_MAX_RADIUS_M,
+        );
         for a in aircraft {
             let mut seg = noise_compute::types::AircraftSegment {
                 flight_id: a.flight_id,
@@ -423,11 +469,15 @@ fn collect_from_hex_data(
                 segment_length_m: a.segment_length_m,
                 ground_context: noise_compute::emission::aircraft::GROUND_CONTEXT_NONE,
             };
-            seg.ground_context = noise_compute::emission::aircraft::segment_ground_context(
-                &seg,
-                &all_airport_lines,
-                &all_airport_areas,
-            );
+            let needs_ground_context = seg.on_ground
+                || noise_compute::emission::aircraft::is_low_agl_segment_raw(&seg, rasters);
+            if needs_ground_context {
+                seg.ground_context = noise_compute::emission::aircraft::segment_ground_context(
+                    &seg,
+                    &all_airport_lines,
+                    &all_airport_areas,
+                );
+            }
             all_aircraft.push(seg);
         }
     }
@@ -605,15 +655,16 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
 
     let empty_nace = HashMap::new();
     let nace = NACE_LOOKUP.get().unwrap_or(&empty_nace);
-    let sources = collect_from_hex_data(&hex_refs, nace, lat, lng);
-
-    // Build receiver
     let stub = StubRasters;
     let real_rasters = RASTERS.get();
     let rasters: &dyn noise_compute::types::RasterSampler = match real_rasters {
         Some(r) => r,
         None => &stub,
     };
+    let sources = collect_from_hex_data(&hex_refs, nace, lat, lng, rasters);
+    drop(store);
+
+    // Build receiver
     let elevation = rasters.elevation(lat, lng);
     let receiver = noise_compute::types::Receiver::new(lat, lng, elevation);
 
