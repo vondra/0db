@@ -3,62 +3,124 @@
  */
 
 import type { FastifyInstance } from 'fastify'
+import { Worker } from 'node:worker_threads'
 import { resolve } from 'node:path'
-import { existsSync, lstatSync, unlinkSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { getElevation } from '../engine/dem-reader.js'
-
-const req = createRequire(import.meta.url)
-let sourceModule: {
-  sourceInit: (dir: string) => string
-  queryNoiseAtPoint: (lat: number, lng: number) => string
-} | null = null
 
 const SOURCE_READER_PATH = resolve(import.meta.dirname, '../../../engine/source-reader/target/release/libsource_reader.so')
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = process.env.H3R4_DIR || resolve(import.meta.dirname, `../../../data/prepared/${YEAR}/h3r4`)
+const WORKER_URL = new URL('../workers/noise-onfly-worker.mjs', import.meta.url)
+const NOISE_ONFLY_TIMEOUT_MS = Number(process.env.NOISE_ONFLY_TIMEOUT_MS || '8000')
 
-try {
-  const { copyFileSync, statSync } = await import('node:fs')
-  const nodePath = SOURCE_READER_PATH.replace('.so', '.node')
+type WorkerReply = {
+  id: number
+  ok: boolean
+  resultJson?: string
+  error?: string
+}
 
-  if (!existsSync(SOURCE_READER_PATH)) {
-    throw new Error(
-      `libsource_reader.so not found — run: cd engine/source-reader && cargo build --release`,
-    )
+type PendingQuery = {
+  resolve: (resultJson: string) => void
+  reject: (err: Error) => void
+  timer: NodeJS.Timeout
+}
+
+let worker: Worker | null = null
+let nextRequestId = 1
+const pendingQueries = new Map<number, PendingQuery>()
+
+function rejectAllPending(err: Error): void {
+  for (const { reject, timer } of pendingQueries.values()) {
+    clearTimeout(timer)
+    reject(err)
+  }
+  pendingQueries.clear()
+}
+
+async function disposeWorker(): Promise<void> {
+  const current = worker
+  worker = null
+  if (!current) {
+    return
+  }
+  try {
+    await current.terminate()
+  } catch {
+    // ignore terminate failures during worker recycling
+  }
+}
+
+function ensureWorker(): Worker {
+  if (worker) {
+    return worker
   }
 
-  if (existsSync(nodePath) && lstatSync(nodePath).isSymbolicLink()) {
-    unlinkSync(nodePath)
-  }
+  const current = new Worker(WORKER_URL, {
+    workerData: {
+      sourceReaderPath: SOURCE_READER_PATH,
+      h3r4Dir: H3R4_DIR,
+    },
+  })
 
-  // Always copy so every server start dlopens the latest cargo build.
-  // The prior guarded copy kept a stale .node once it existed.
-  copyFileSync(SOURCE_READER_PATH, nodePath)
+  current.on('message', (message: WorkerReply) => {
+    const pending = pendingQueries.get(message.id)
+    if (!pending) {
+      return
+    }
+    pendingQueries.delete(message.id)
+    clearTimeout(pending.timer)
+    if (message.ok && message.resultJson !== undefined) {
+      pending.resolve(message.resultJson)
+    } else {
+      pending.reject(new Error(message.error || 'noise-onfly worker failed'))
+    }
+  })
 
-  const st = statSync(SOURCE_READER_PATH)
-  console.log(
-    `noise-onfly-v2: loaded ${nodePath} ` +
-    `(mtime=${st.mtime.toISOString()} size=${st.size})`,
-  )
+  current.on('error', (err) => {
+    if (worker === current) {
+      worker = null
+    }
+    rejectAllPending(err instanceof Error ? err : new Error(String(err)))
+  })
 
-  sourceModule = req(nodePath)
-  if (sourceModule && existsSync(H3R4_DIR)) {
-    const msg = sourceModule.sourceInit(H3R4_DIR)
-    console.log(`noise-onfly-v2: ${msg}`)
-  }
-} catch (err) {
-  console.warn('noise-onfly-v2: source-reader not available:', (err as Error).message)
+  current.on('exit', (code) => {
+    if (worker === current) {
+      worker = null
+    }
+    if (code !== 0) {
+      rejectAllPending(new Error(`noise-onfly worker exited with code ${code}`))
+    }
+  })
+
+  worker = current
+  return current
+}
+
+async function queryNoiseAtPoint(lat: number, lng: number): Promise<string> {
+  const current = ensureWorker()
+  const id = nextRequestId++
+
+  return await new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingQueries.delete(id)
+      void disposeWorker()
+      reject(new Error(`noise-onfly timeout after ${NOISE_ONFLY_TIMEOUT_MS} ms`))
+    }, NOISE_ONFLY_TIMEOUT_MS)
+
+    pendingQueries.set(id, { resolve, reject, timer })
+    current.postMessage({ id, lat, lng })
+  })
 }
 
 export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
+  app.addHook('onClose', async () => {
+    await disposeWorker()
+  })
+
   app.get<{ Querystring: { lat?: string; lng?: string } }>(
     '/api/noise-onfly-v2',
     async (request, reply) => {
-      if (!sourceModule) {
-        return reply.status(503).send({ error: 'source-reader not initialized' })
-      }
-
       const lat = parseFloat(request.query.lat ?? '')
       const lng = parseFloat(request.query.lng ?? '')
       if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
@@ -68,7 +130,7 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
       const t0 = Date.now()
 
       try {
-        const resultJson = sourceModule.queryNoiseAtPoint(lat, lng)
+        const resultJson = await queryNoiseAtPoint(lat, lng)
         const raw = JSON.parse(resultJson)
         const elapsed = Date.now() - t0
 
@@ -122,7 +184,9 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
           compute_time_ms: elapsed,
         })
       } catch (err) {
-        return reply.status(500).send({ error: (err as Error).message })
+        const message = (err as Error).message
+        const statusCode = message.includes('timeout') ? 504 : 500
+        return reply.status(statusCode).send({ error: message })
       }
     }
   )
