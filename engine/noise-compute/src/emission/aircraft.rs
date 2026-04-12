@@ -341,18 +341,144 @@ pub fn period_leq(total_energy: f64, n_days: f64, period_seconds: f64) -> f64 {
 // Single-segment SEL computation
 // ═══════════════════════════════════════════════════════════════════════════
 
-use crate::types::{AircraftSegment, RasterSampler};
+use crate::propagation::geo;
+use crate::types::{AircraftSegment, AirportArea, AirportLine, RasterSampler};
 
 /// Runtime fallback for stale prepared ADS-B data that still contains taxi or
 /// runway-roll segments. The authoritative fix is extractor-side `on_ground`
 /// filtering, but until the full dataset is rebuilt we also reject segments
 /// whose both endpoints stay close to local terrain.
 pub const GROUND_STALE_MAX_AGL_M: f64 = 15.0;
+pub const GROUND_CONTEXT_NONE: u8 = 0;
+pub const GROUND_CONTEXT_AIRPORT_LINE: u8 = 1;
+pub const GROUND_CONTEXT_AIRPORT_AREA: u8 = 2;
+
+const AEROWAY_RUNWAY: u8 = 0;
+const AEROWAY_TAXIWAY: u8 = 1;
+const AEROWAY_APRON: u8 = 2;
+const AEROWAY_HELIPAD: u8 = 3;
+const AEROWAY_HELIPORT: u8 = 4;
+const AEROWAY_AERODROME: u8 = 5;
+const AEROWAY_STOPWAY: u8 = 6;
+
+pub fn segment_ground_context(
+    seg: &AircraftSegment,
+    airport_lines: &[AirportLine],
+    airport_areas: &[AirportArea],
+) -> u8 {
+    let sample_points = [
+        (seg.start_lat, seg.start_lon),
+        (
+            (seg.start_lat + seg.end_lat) * 0.5,
+            (seg.start_lon + seg.end_lon) * 0.5,
+        ),
+        (seg.end_lat, seg.end_lon),
+    ];
+
+    if sample_points
+        .iter()
+        .any(|&(lat, lon)| point_matches_airport_area(lat, lon, airport_areas))
+    {
+        return GROUND_CONTEXT_AIRPORT_AREA;
+    }
+    if sample_points
+        .iter()
+        .any(|&(lat, lon)| point_matches_airport_line(lat, lon, airport_lines))
+    {
+        return GROUND_CONTEXT_AIRPORT_LINE;
+    }
+    GROUND_CONTEXT_NONE
+}
 
 pub fn is_ground_stale_segment(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
+    if seg.on_ground {
+        return seg.ground_context == GROUND_CONTEXT_NONE;
+    }
+    if seg.ground_context != GROUND_CONTEXT_NONE {
+        return false;
+    }
+    is_low_agl_segment_raw(seg, rasters)
+}
+
+pub fn is_low_agl_segment_raw(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
     let start_agl = seg.start_alt_m as f64 - rasters.elevation(seg.start_lat, seg.start_lon);
     let end_agl = seg.end_alt_m as f64 - rasters.elevation(seg.end_lat, seg.end_lon);
     start_agl <= GROUND_STALE_MAX_AGL_M && end_agl <= GROUND_STALE_MAX_AGL_M
+}
+
+fn point_matches_airport_line(lat: f64, lon: f64, airport_lines: &[AirportLine]) -> bool {
+    airport_lines.iter().any(|line| {
+        let cp = geo::closest_point_on_segment(
+            lat,
+            lon,
+            line.start_lat,
+            line.start_lon,
+            line.end_lat,
+            line.end_lon,
+        );
+        cp.dist_m <= airport_line_match_radius_m(line)
+    })
+}
+
+fn airport_line_match_radius_m(line: &AirportLine) -> f64 {
+    let width_half_m = if line.width_m > 0.0 {
+        line.width_m as f64 * 0.5
+    } else {
+        default_airport_line_width_m(line.aeroway_type) * 0.5
+    };
+    width_half_m
+        + match line.aeroway_type {
+            AEROWAY_RUNWAY | AEROWAY_STOPWAY => 45.0,
+            AEROWAY_TAXIWAY => 25.0,
+            _ => 20.0,
+        }
+}
+
+fn default_airport_line_width_m(aeroway_type: u8) -> f64 {
+    match aeroway_type {
+        AEROWAY_RUNWAY | AEROWAY_STOPWAY => 45.0,
+        AEROWAY_TAXIWAY => 18.0,
+        _ => 20.0,
+    }
+}
+
+fn point_matches_airport_area(lat: f64, lon: f64, airport_areas: &[AirportArea]) -> bool {
+    airport_areas
+        .iter()
+        .any(|area| airport_area_contains_point(area, lat, lon))
+}
+
+fn airport_area_contains_point(area: &AirportArea, lat: f64, lon: f64) -> bool {
+    let centroid_dist_m = geo::flat_dist(lat, lon, area.centroid_lat, area.centroid_lon);
+    if centroid_dist_m > airport_area_prune_radius_m(area) {
+        return false;
+    }
+    if !area.polygon_wkb.is_empty() {
+        return crate::wkb::wkb_contains_point(&area.polygon_wkb, lat, lon);
+    }
+    centroid_dist_m <= airport_area_fallback_radius_m(area)
+}
+
+fn airport_area_prune_radius_m(area: &AirportArea) -> f64 {
+    airport_area_fallback_radius_m(area) * 3.0 + 150.0
+}
+
+fn airport_area_fallback_radius_m(area: &AirportArea) -> f64 {
+    let area_radius = if area.area_m2 > 0.0 {
+        (area.area_m2 as f64 / std::f64::consts::PI).sqrt()
+    } else {
+        0.0
+    };
+    let min_radius = match area.aeroway_type {
+        AEROWAY_RUNWAY | AEROWAY_STOPWAY => 120.0,
+        AEROWAY_TAXIWAY => 60.0,
+        AEROWAY_APRON => 120.0,
+        AEROWAY_HELIPAD => 25.0,
+        AEROWAY_HELIPORT => 50.0,
+        AEROWAY_AERODROME => 300.0,
+        _ => 60.0,
+    };
+    area_radius.max(min_radius)
 }
 
 /// Compute SEL for a single aircraft segment at a receiver point.
@@ -580,6 +706,7 @@ mod tests {
             flight_id: 1,
             profile_idx: 0,
             is_departure: false,
+            on_ground: false,
             period: 0,
             date_id: 0,
             start_lat: 50.0,
@@ -590,6 +717,7 @@ mod tests {
             end_alt_m: 900.0,
             speed_kt: 150.0,
             segment_length_m: 1100.0,
+            ground_context: GROUND_CONTEXT_NONE,
         };
         let result = segment_sel(&seg, 50.005, 14.005, 300.0);
         assert!(result.is_some(), "should compute SEL for nearby segment");
@@ -608,6 +736,7 @@ mod tests {
             flight_id: 1,
             profile_idx: 0,
             is_departure: false,
+            on_ground: false,
             period: 0,
             date_id: 0,
             start_lat: 51.0,
@@ -618,6 +747,7 @@ mod tests {
             end_alt_m: 10000.0,
             speed_kt: 250.0,
             segment_length_m: 1100.0,
+            ground_context: GROUND_CONTEXT_NONE,
         };
         let result = segment_sel(&seg, 50.0, 14.0, 300.0);
         assert!(result.is_none(), "should be None for far segment");
@@ -662,6 +792,7 @@ mod tests {
             flight_id: 1,
             profile_idx: 7,
             is_departure: false,
+            on_ground: false,
             period: 0,
             date_id: 0,
             start_lat: 50.0,
@@ -672,6 +803,7 @@ mod tests {
             end_alt_m: 259.0,
             speed_kt: 35.0,
             segment_length_m: 300.0,
+            ground_context: GROUND_CONTEXT_NONE,
         };
         assert!(is_ground_stale_segment(&seg, &FlatGround));
 
@@ -681,5 +813,70 @@ mod tests {
             ..seg
         };
         assert!(!is_ground_stale_segment(&airborne, &FlatGround));
+    }
+
+    #[test]
+    fn test_airport_runway_context_keeps_ground_segment() {
+        let mut seg = AircraftSegment {
+            flight_id: 1,
+            profile_idx: 7,
+            is_departure: false,
+            on_ground: false,
+            period: 0,
+            date_id: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            start_alt_m: 252.0,
+            end_lat: 50.0008,
+            end_lon: 14.0,
+            end_alt_m: 255.0,
+            speed_kt: 35.0,
+            segment_length_m: 90.0,
+            ground_context: GROUND_CONTEXT_NONE,
+        };
+        let airport_lines = vec![AirportLine {
+            osm_id: 1,
+            aeroway_type: AEROWAY_RUNWAY,
+            start_lat: 49.999,
+            start_lon: 14.0,
+            end_lat: 50.002,
+            end_lon: 14.0,
+            width_m: 45.0,
+        }];
+        seg.ground_context = segment_ground_context(&seg, &airport_lines, &[]);
+        assert_eq!(seg.ground_context, GROUND_CONTEXT_AIRPORT_LINE);
+        assert!(!is_ground_stale_segment(&seg, &FlatGround));
+    }
+
+    #[test]
+    fn test_airport_area_context_keeps_ground_segment() {
+        let mut seg = AircraftSegment {
+            flight_id: 1,
+            profile_idx: 7,
+            is_departure: false,
+            on_ground: false,
+            period: 0,
+            date_id: 0,
+            start_lat: 50.0001,
+            start_lon: 14.0001,
+            start_alt_m: 252.0,
+            end_lat: 50.0002,
+            end_lon: 14.0002,
+            end_alt_m: 253.0,
+            speed_kt: 20.0,
+            segment_length_m: 20.0,
+            ground_context: GROUND_CONTEXT_NONE,
+        };
+        let airport_areas = vec![AirportArea {
+            osm_id: 2,
+            aeroway_type: AEROWAY_HELIPAD,
+            centroid_lat: 50.00015,
+            centroid_lon: 14.00015,
+            polygon_wkb: String::new(),
+            area_m2: 400.0,
+        }];
+        seg.ground_context = segment_ground_context(&seg, &[], &airport_areas);
+        assert_eq!(seg.ground_context, GROUND_CONTEXT_AIRPORT_AREA);
+        assert!(!is_ground_stale_segment(&seg, &FlatGround));
     }
 }

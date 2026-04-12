@@ -60,14 +60,21 @@ impl Spiller {
         self.writers.entry(key).or_insert_with(|| {
             let path = self.dir.join(format!("{}_{:03}.tsv", ftype, bucket));
             let file = File::create(&path).expect("cannot create spill file");
-            BucketFile { writer: BufWriter::with_capacity(1 << 20, file) }
+            BucketFile {
+                writer: BufWriter::with_capacity(1 << 20, file),
+            }
         })
     }
 
     /// Emit a linear segment (road, railway, barrier).
     pub fn emit_segment(
-        &mut self, ftype: &FeatureType, hex_id: u64, osm_id: i64,
-        seg_idx: i16, seg: &([f64; 2], [f64; 2], f32), tags: &Tags,
+        &mut self,
+        ftype: &FeatureType,
+        hex_id: u64,
+        osm_id: i64,
+        seg_idx: i16,
+        seg: &([f64; 2], [f64; 2], f32),
+        tags: &Tags,
     ) {
         // H3 res-4 IDs have lower 28 bits = 0xFFFFFFF → shift right before modulo
         let bucket = ((hex_id >> 28) as usize) % self.num_buckets;
@@ -75,26 +82,46 @@ impl Spiller {
 
         // TSV: hex_id, osm_id, seg_idx, start_lat, start_lon, end_lat, end_lon, length_m, tags...
         let w = &mut self.get_writer(name, bucket).writer;
-        let _ = write!(w, "{}\t{}\t{}\t{:.7}\t{:.7}\t{:.7}\t{:.7}\t{:.1}",
-            hex_id, osm_id, seg_idx,
-            seg.0[0], seg.0[1], seg.1[0], seg.1[1], seg.2);
+        let _ = write!(
+            w,
+            "{}\t{}\t{}\t{:.7}\t{:.7}\t{:.7}\t{:.7}\t{:.1}",
+            hex_id, osm_id, seg_idx, seg.0[0], seg.0[1], seg.1[0], seg.1[1], seg.2
+        );
 
         // Append feature-specific tags as key=value pairs
         match ftype {
             FeatureType::Road => {
                 let highway = tags.get("highway").map(|s| s.as_str()).unwrap_or("");
-                let bridge = matches!(tags.get("bridge").map(|s| s.as_str()), Some("yes" | "viaduct" | "cantilever" | "movable"));
-                let tunnel = matches!(tags.get("tunnel").map(|s| s.as_str()), Some("yes" | "building_passage" | "culvert"));
+                let bridge = matches!(
+                    tags.get("bridge").map(|s| s.as_str()),
+                    Some("yes" | "viaduct" | "cantilever" | "movable")
+                );
+                let tunnel = matches!(
+                    tags.get("tunnel").map(|s| s.as_str()),
+                    Some("yes" | "building_passage" | "culvert")
+                );
                 let toll = tags.get("toll").map(|s| s.as_str()) == Some("yes");
                 let lit = match tags.get("lit").map(|s| s.as_str()) {
-                    Some("yes") => 1u8, Some("no") => 2, _ => 0, // 0=unknown
+                    Some("yes") => 1u8,
+                    Some("no") => 2,
+                    _ => 0, // 0=unknown
                 };
-                let _ = write!(w, "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                let _ = write!(
+                    w,
+                    "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     classify::road_class(highway),
-                    tags.get("maxspeed").and_then(|s| s.parse::<u8>().ok()).unwrap_or(0),
+                    tags.get("maxspeed")
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or(0),
                     classify::surface_type(tags.get("surface").map(|s| s.as_str())),
-                    if tags.get("oneway").map(|s| s.as_str()) == Some("yes") { 1 } else { 0 },
-                    tags.get("lanes").and_then(|s| s.parse::<u8>().ok()).unwrap_or(0),
+                    if tags.get("oneway").map(|s| s.as_str()) == Some("yes") {
+                        1
+                    } else {
+                        0
+                    },
+                    tags.get("lanes")
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or(0),
                     tags.get("name").unwrap_or(&String::new()),
                     tags.get("ref").unwrap_or(&String::new()),
                     if bridge { 1 } else { 0 },
@@ -102,7 +129,10 @@ impl Spiller {
                     if toll { 1 } else { 0 },
                     lit,
                     classify::junction_type(tags.get("junction").map(|s| s.as_str())),
-                    classify::access_type(tags.get("access").map(|s| s.as_str()), tags.get("motor_vehicle").map(|s| s.as_str())),
+                    classify::access_type(
+                        tags.get("access").map(|s| s.as_str()),
+                        tags.get("motor_vehicle").map(|s| s.as_str())
+                    ),
                 );
             }
             FeatureType::Railway => {
@@ -112,26 +142,71 @@ impl Spiller {
                     Some("no") => 2,
                     _ => 0, // unknown
                 };
-                let gauge = tags.get("gauge").and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
-                let bridge = matches!(tags.get("bridge").map(|s| s.as_str()), Some("yes" | "viaduct" | "cantilever" | "movable"));
-                let tunnel = matches!(tags.get("tunnel").map(|s| s.as_str()), Some("yes" | "building_passage" | "culvert"));
-                let _ = write!(w, "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                let gauge = tags
+                    .get("gauge")
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(0);
+                let bridge = matches!(
+                    tags.get("bridge").map(|s| s.as_str()),
+                    Some("yes" | "viaduct" | "cantilever" | "movable")
+                );
+                let tunnel = matches!(
+                    tags.get("tunnel").map(|s| s.as_str()),
+                    Some("yes" | "building_passage" | "culvert")
+                );
+                let _ = write!(
+                    w,
+                    "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     classify::rail_type(railway),
                     classify::rail_usage_type(tags.get("usage").map(|s| s.as_str())),
-                    tags.get("maxspeed").and_then(|s| s.parse::<u8>().ok()).unwrap_or(0),
+                    tags.get("maxspeed")
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or(0),
                     tags.get("name").unwrap_or(&String::new()),
                     tags.get("ref").unwrap_or(&String::new()),
                     electrified,
                     gauge,
                     if bridge { 1 } else { 0 },
                     if tunnel { 1 } else { 0 },
-                    if tags.get("highspeed").map(|s| s.as_str()) == Some("yes") { 1 } else { 0 },
+                    if tags.get("highspeed").map(|s| s.as_str()) == Some("yes") {
+                        1
+                    } else {
+                        0
+                    },
                     classify::rail_service_type(tags.get("service").map(|s| s.as_str())),
                 );
             }
+            FeatureType::AirportLine => {
+                let airport_ref = tags
+                    .get("ref")
+                    .or_else(|| tags.get("local_ref"))
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                let width_m = classify::parse_width_m(tags.get("width").map(|s| s.as_str()))
+                    .map(|v| format!("{v:.1}"))
+                    .unwrap_or_default();
+                let _ = write!(
+                    w,
+                    "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    classify::aeroway_type(tags),
+                    tags.get("name").map(|s| s.as_str()).unwrap_or(""),
+                    airport_ref,
+                    tags.get("icao").map(|s| s.as_str()).unwrap_or(""),
+                    tags.get("iata").map(|s| s.as_str()).unwrap_or(""),
+                    tags.get("operator").map(|s| s.as_str()).unwrap_or(""),
+                    tags.get("surface").map(|s| s.as_str()).unwrap_or(""),
+                    width_m,
+                    tags.get("aerodrome:type").map(|s| s.as_str()).unwrap_or(""),
+                    tags.get("access").map(|s| s.as_str()).unwrap_or(""),
+                );
+            }
             FeatureType::Barrier => {
-                let _ = write!(w, "\t{}\t{}",
-                    tags.get("height").and_then(|s| s.parse::<f32>().ok()).unwrap_or(3.0),
+                let _ = write!(
+                    w,
+                    "\t{}\t{}",
+                    tags.get("height")
+                        .and_then(|s| s.parse::<f32>().ok())
+                        .unwrap_or(3.0),
                     classify::barrier_material_type(tags.get("material").map(|s| s.as_str())),
                 );
             }
@@ -143,8 +218,14 @@ impl Spiller {
 
     /// Emit a polygon/point feature (building, industrial, wind turbine).
     pub fn emit_polygon(
-        &mut self, ftype: &FeatureType, hex_id: u64, osm_id: i64,
-        clat: f64, clon: f64, tags: &Tags, wkb: Option<&[u8]>,
+        &mut self,
+        ftype: &FeatureType,
+        hex_id: u64,
+        osm_id: i64,
+        clat: f64,
+        clon: f64,
+        tags: &Tags,
+        wkb: Option<&[u8]>,
     ) {
         // H3 res-4 IDs have lower 28 bits = 0xFFFFFFF → shift right before modulo
         let bucket = ((hex_id >> 28) as usize) % self.num_buckets;
@@ -158,25 +239,66 @@ impl Spiller {
                 // Use amenity/shop/healthcare tags to override building type classification.
                 // WHY: building=yes + amenity=school → type 3 (school), not 0 (residential).
                 let bt = building_type_from_tags(tags);
-                let _ = write!(w, "\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                let _ = write!(
+                    w,
+                    "\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     bt,
-                    tags.get("building:use").map(|s| building_use(s)).unwrap_or(0),
-                    tags.get("height").and_then(|s| parse_height(s)).unwrap_or(0.0),
-                    tags.get("building:levels").and_then(|s| s.parse::<u8>().ok()).unwrap_or(0),
+                    tags.get("building:use")
+                        .map(|s| building_use(s))
+                        .unwrap_or(0),
+                    tags.get("height")
+                        .and_then(|s| parse_height(s))
+                        .unwrap_or(0.0),
+                    tags.get("building:levels")
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or(0),
                     tags.get("name").unwrap_or(&String::new()),
                     tags.get("addr:street").unwrap_or(&String::new()),
                     tags.get("addr:housenumber").unwrap_or(&String::new()),
                 );
             }
             FeatureType::Industrial | FeatureType::WindTurbine => {
-                let src_type: u8 = if matches!(ftype, FeatureType::WindTurbine) { 10 } // wind_turbine
-                    else { site_type_from_tags(tags) };
-                let _ = write!(w, "\t{}\t{}\t{}\t{}\t{}",
+                let src_type: u8 = if matches!(ftype, FeatureType::WindTurbine) {
+                    10
+                }
+                // wind_turbine
+                else {
+                    site_type_from_tags(tags)
+                };
+                let _ = write!(
+                    w,
+                    "\t{}\t{}\t{}\t{}\t{}",
                     src_type,
                     0u8, // site_subtype (TODO)
                     tags.get("name").unwrap_or(&String::new()),
-                    tags.get("height").and_then(|s| parse_height(s)).unwrap_or(0.0),
+                    tags.get("height")
+                        .and_then(|s| parse_height(s))
+                        .unwrap_or(0.0),
                     parse_power_kw(tags.get("generator:output:electricity").map(|s| s.as_str())),
+                );
+            }
+            FeatureType::AirportArea => {
+                let airport_ref = tags
+                    .get("ref")
+                    .or_else(|| tags.get("local_ref"))
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                let width_m = classify::parse_width_m(tags.get("width").map(|s| s.as_str()))
+                    .map(|v| format!("{v:.1}"))
+                    .unwrap_or_default();
+                let _ = write!(
+                    w,
+                    "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    classify::aeroway_type(tags),
+                    tags.get("name").map(|s| s.as_str()).unwrap_or(""),
+                    airport_ref,
+                    tags.get("icao").map(|s| s.as_str()).unwrap_or(""),
+                    tags.get("iata").map(|s| s.as_str()).unwrap_or(""),
+                    tags.get("operator").map(|s| s.as_str()).unwrap_or(""),
+                    tags.get("surface").map(|s| s.as_str()).unwrap_or(""),
+                    width_m,
+                    tags.get("aerodrome:type").map(|s| s.as_str()).unwrap_or(""),
+                    tags.get("access").map(|s| s.as_str()).unwrap_or(""),
                 );
             }
             _ => {}
@@ -219,7 +341,9 @@ fn building_type_from_tags(tags: &Tags) -> u8 {
         }
     }
     if let Some(shop) = tags.get("shop") {
-        if !shop.is_empty() { return 1; } // any shop = commercial
+        if !shop.is_empty() {
+            return 1;
+        } // any shop = commercial
     }
     if let Some(healthcare) = tags.get("healthcare") {
         match healthcare.as_str() {
@@ -289,7 +413,10 @@ fn site_type_from_tags(tags: &Tags) -> u8 {
 }
 
 fn parse_height(val: &str) -> Option<f32> {
-    val.trim_end_matches(" m").trim_end_matches("m").parse().ok()
+    val.trim_end_matches(" m")
+        .trim_end_matches("m")
+        .parse()
+        .ok()
 }
 
 fn parse_power_kw(val: Option<&str>) -> f32 {
@@ -312,7 +439,9 @@ mod hex {
     }
 
     pub fn decode(s: &str) -> Option<Vec<u8>> {
-        if s.len() % 2 != 0 || s.is_empty() { return None; }
+        if s.len() % 2 != 0 || s.is_empty() {
+            return None;
+        }
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())

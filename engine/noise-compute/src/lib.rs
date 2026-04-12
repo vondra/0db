@@ -2055,6 +2055,7 @@ mod tests {
                     flight_id: flight,
                     profile_idx: 0, // B738
                     is_departure: false,
+                    on_ground: false,
                     period,
                     date_id,
                     start_lat: 50.08 + 0.003 * s as f64,
@@ -2065,6 +2066,7 @@ mod tests {
                     end_alt_m: 500.0 - 50.0 * (s + 1) as f32,
                     speed_kt: 150.0,
                     segment_length_m: 330.0,
+                    ground_context: emission::aircraft::GROUND_CONTEXT_NONE,
                 });
             }
         }
@@ -2179,6 +2181,7 @@ mod tests {
             flight_id: 1,
             profile_idx: 0,
             is_departure: false,
+            on_ground: false,
             period: 0,
             date_id: 0,
             start_lat: 50.08,
@@ -2189,6 +2192,7 @@ mod tests {
             end_alt_m: 400.0,
             speed_kt: 150.0,
             segment_length_m: 1100.0,
+            ground_context: emission::aircraft::GROUND_CONTEXT_NONE,
         }];
 
         let config = ComputeConfig {

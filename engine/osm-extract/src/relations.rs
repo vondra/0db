@@ -4,12 +4,12 @@
 //! Pass 1: As ways are processed, cache geometries for relation members.
 //!         When all members of a relation are collected, assemble the polygon.
 
+use anyhow::Result;
+use osmpbf::{Element, ElementReader, RelMemberType};
 use std::collections::HashMap;
 use std::path::Path;
-use osmpbf::{ElementReader, Element, RelMemberType};
-use anyhow::Result;
 
-use crate::classify::{self, FeatureType, Tags};
+use crate::classify::{FeatureType, Tags};
 
 /// Info about a relation we care about.
 #[derive(Clone)]
@@ -28,7 +28,7 @@ pub struct RelationManifest {
     pub relations: HashMap<i64, RelationInfo>,
 }
 
-/// Pass 0: Scan PBF for multipolygon relations containing buildings/industrial.
+/// Pass 0: Scan PBF for multipolygon relations containing buildings/industrial/airports.
 pub fn scan_relations(pbf_path: &Path) -> Result<RelationManifest> {
     let mut relations: HashMap<i64, RelationInfo> = HashMap::new();
     let mut way_to_relations: HashMap<i64, Vec<(i64, String)>> = HashMap::new();
@@ -42,15 +42,26 @@ pub fn scan_relations(pbf_path: &Path) -> Result<RelationManifest> {
             let tag = |k: &str| tags.iter().find(|(key, _)| *key == k).map(|(_, v)| *v);
 
             // Only multipolygon relations
-            if tag("type") != Some("multipolygon") { return; }
+            if tag("type") != Some("multipolygon") {
+                return;
+            }
 
             // Classify by tags on the relation itself
             let ftype = if tag("building").is_some() {
                 Some(FeatureType::Building)
-            } else if matches!(tag("landuse"), Some("industrial") | Some("quarry") | Some("farmyard")) {
+            } else if matches!(
+                tag("landuse"),
+                Some("industrial") | Some("quarry") | Some("farmyard")
+            ) {
                 Some(FeatureType::Industrial)
             } else if matches!(tag("man_made"), Some("works") | Some("wastewater_plant")) {
                 Some(FeatureType::Industrial)
+            } else if matches!(
+                tag("aeroway"),
+                Some("runway" | "taxiway" | "apron" | "helipad" | "aerodrome" | "stopway")
+            ) || tag("amenity") == Some("heliport")
+            {
+                Some(FeatureType::AirportArea)
             } else {
                 None
             };
@@ -70,28 +81,38 @@ pub fn scan_relations(pbf_path: &Path) -> Result<RelationManifest> {
                 if member.member_type == RelMemberType::Way {
                     let role = member.role().unwrap_or("outer").to_string();
                     member_ways.push((member.member_id, role.clone()));
-                    way_to_relations.entry(member.member_id)
+                    way_to_relations
+                        .entry(member.member_id)
                         .or_default()
                         .push((rel.id(), role));
                 }
             }
 
             if !member_ways.is_empty() {
-                relations.insert(rel.id(), RelationInfo {
-                    relation_id: rel.id(),
-                    feature_type: ftype,
-                    tags: rel_tags,
-                    member_ways,
-                });
+                relations.insert(
+                    rel.id(),
+                    RelationInfo {
+                        relation_id: rel.id(),
+                        feature_type: ftype,
+                        tags: rel_tags,
+                        member_ways,
+                    },
+                );
                 rel_count += 1;
             }
         }
     })?;
 
-    eprintln!("  Pass 0: {} multipolygon relations, {} member ways",
-        rel_count, way_to_relations.len());
+    eprintln!(
+        "  Pass 0: {} multipolygon relations, {} member ways",
+        rel_count,
+        way_to_relations.len()
+    );
 
-    Ok(RelationManifest { way_to_relations, relations })
+    Ok(RelationManifest {
+        way_to_relations,
+        relations,
+    })
 }
 
 /// Accumulates way geometries for relation assembly.
@@ -115,8 +136,12 @@ impl RelationAssembler {
     }
 
     /// Record a way's geometry. Returns list of relation_ids that are now complete.
-    pub fn add_way(&mut self, way_id: i64, coords: Vec<[f64; 2]>,
-                   manifest: &RelationManifest) -> Vec<i64> {
+    pub fn add_way(
+        &mut self,
+        way_id: i64,
+        coords: Vec<[f64; 2]>,
+        manifest: &RelationManifest,
+    ) -> Vec<i64> {
         self.way_geoms.insert(way_id, coords);
 
         let mut completed = Vec::new();
@@ -135,9 +160,11 @@ impl RelationAssembler {
 
     /// Assemble a completed relation into a polygon.
     /// Returns (outer_ring_coords, tags, feature_type) or None if assembly fails.
-    pub fn assemble(&self, rel_id: i64, manifest: &RelationManifest)
-        -> Option<(Vec<[f64; 2]>, Tags, FeatureType)>
-    {
+    pub fn assemble(
+        &self,
+        rel_id: i64,
+        manifest: &RelationManifest,
+    ) -> Option<(Vec<[f64; 2]>, Tags, FeatureType)> {
         let info = manifest.relations.get(&rel_id)?;
 
         // Collect outer rings' coordinates
@@ -150,11 +177,15 @@ impl RelationAssembler {
             }
         }
 
-        if outer_coords.is_empty() { return None; }
+        if outer_coords.is_empty() {
+            return None;
+        }
 
         // Try to merge outer ways into a single ring
         let merged = merge_rings(&outer_coords);
-        if merged.is_empty() { return None; }
+        if merged.is_empty() {
+            return None;
+        }
 
         Some((merged, info.tags.clone(), info.feature_type.clone()))
     }
@@ -164,10 +195,14 @@ impl RelationAssembler {
         if let Some(info) = manifest.relations.get(&rel_id) {
             for (way_id, _) in &info.member_ways {
                 // Only remove if this way isn't needed by other pending relations
-                let still_needed = manifest.way_to_relations.get(way_id)
-                    .map(|rels| rels.iter().any(|(rid, _)| {
-                        *rid != rel_id && self.pending_count.get(rid).copied().unwrap_or(0) > 0
-                    }))
+                let still_needed = manifest
+                    .way_to_relations
+                    .get(way_id)
+                    .map(|rels| {
+                        rels.iter().any(|(rid, _)| {
+                            *rid != rel_id && self.pending_count.get(rid).copied().unwrap_or(0) > 0
+                        })
+                    })
                     .unwrap_or(false);
                 if !still_needed {
                     self.way_geoms.remove(way_id);
@@ -196,12 +231,12 @@ fn merge_rings(ways: &[Vec<[f64; 2]>]) -> Vec<[f64; 2]> {
     while !remaining.is_empty() && iters < max_iters {
         iters += 1;
         let tail = *result.last().unwrap();
-        let head = result[0];
-
         // Find a way that connects to our tail
         let mut found = None;
         for (i, way) in remaining.iter().enumerate() {
-            if way.is_empty() { continue; }
+            if way.is_empty() {
+                continue;
+            }
             let way_head = way[0];
             let way_tail = *way.last().unwrap();
 
@@ -219,7 +254,9 @@ fn merge_rings(ways: &[Vec<[f64; 2]>]) -> Vec<[f64; 2]> {
         match found {
             Some((idx, reverse)) => {
                 let mut way = remaining.remove(idx);
-                if reverse { way.reverse(); }
+                if reverse {
+                    way.reverse();
+                }
                 // Skip first point (duplicate of our tail)
                 if !way.is_empty() {
                     result.extend_from_slice(&way[1..]);

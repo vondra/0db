@@ -6,16 +6,16 @@
 //!   Pass 2: Stream ways + relations → classify, resolve, microsegment, assemble multipolygons
 //!   Spill to 256 intermediate buckets, then finalize → per-hex Arrow IPC
 
-mod node_cache;
 mod classify;
+mod finalize;
 mod microsegment;
+mod node_cache;
 mod relations;
 mod spill;
-mod finalize;
 
 use anyhow::Result;
 use clap::Parser;
-use osmpbf::{ElementReader, Element};
+use osmpbf::{Element, ElementReader};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -49,7 +49,11 @@ fn main() -> Result<()> {
 
         let t_fin = Instant::now();
         let hex_count = finalize::finalize(&cli.spill_dir, &cli.output, cli.num_buckets)?;
-        eprintln!("  {} hex dirs in {:.1}s", hex_count, t_fin.elapsed().as_secs_f64());
+        eprintln!(
+            "  {} hex dirs in {:.1}s",
+            hex_count,
+            t_fin.elapsed().as_secs_f64()
+        );
 
         // Don't clean up spill (user may want to re-run)
         eprintln!("\n=== Done: {:.1}s ===", t0.elapsed().as_secs_f64());
@@ -67,7 +71,11 @@ fn main() -> Result<()> {
     eprintln!("\n── Pass 1: Node cache ──");
     let t1 = Instant::now();
     let cache = node_cache::NodeCache::build(&cli.input, &cli.node_cache)?;
-    eprintln!("  {} nodes in {:.1}s", cache.count(), t1.elapsed().as_secs_f64());
+    eprintln!(
+        "  {} nodes in {:.1}s",
+        cache.count(),
+        t1.elapsed().as_secs_f64()
+    );
 
     // ── Pass 2: Extract features ──
     eprintln!("\n── Pass 2: Extract → spill ──");
@@ -85,14 +93,16 @@ fn main() -> Result<()> {
             Element::Way(way) => {
                 ways_total += 1;
                 if ways_total % 2_000_000 == 0 {
-                    eprintln!("  {:.1}M ways, {:.1}M features, {} rels assembled...",
-                        ways_total as f64 / 1e6, features_total as f64 / 1e6, rels_assembled);
+                    eprintln!(
+                        "  {:.1}M ways, {:.1}M features, {} rels assembled...",
+                        ways_total as f64 / 1e6,
+                        features_total as f64 / 1e6,
+                        rels_assembled
+                    );
                 }
 
                 // Resolve coordinates
-                let coords: Vec<[f64; 2]> = way.refs()
-                    .filter_map(|nid| cache.get(nid))
-                    .collect();
+                let coords: Vec<[f64; 2]> = way.refs().filter_map(|nid| cache.get(nid)).collect();
 
                 // Check if this way is a member of any multipolygon relation
                 let is_relation_member = manifest.way_to_relations.contains_key(&way.id());
@@ -107,26 +117,71 @@ fn main() -> Result<()> {
                                     let mut t = classify::Tags::new();
                                     for (k, v) in &tags {
                                         // Copy amenity/shop/healthcare/tourism/leisure from relation tags.
-                                // WHY: Large buildings (hospitals, schools, malls) are often multipolygon
-                                // relations. Without these tags, building_type_from_tags() can't classify
-                                // them correctly — a hospital gets type 0 (residential) instead of 4.
-                                if matches!(k.as_str(), "building" | "building:use" | "height" |
-                                                     "building:levels" | "name" | "addr:street" | "addr:housenumber" |
-                                                     "amenity" | "shop" | "healthcare" | "tourism" | "leisure") {
+                                        // WHY: Large buildings (hospitals, schools, malls) are often multipolygon
+                                        // relations. Without these tags, building_type_from_tags() can't classify
+                                        // them correctly — a hospital gets type 0 (residential) instead of 4.
+                                        if matches!(
+                                            k.as_str(),
+                                            "building"
+                                                | "building:use"
+                                                | "height"
+                                                | "building:levels"
+                                                | "name"
+                                                | "addr:street"
+                                                | "addr:housenumber"
+                                                | "amenity"
+                                                | "shop"
+                                                | "healthcare"
+                                                | "tourism"
+                                                | "leisure"
+                                        ) {
                                             t.insert(k.clone(), v.clone());
                                         }
                                     }
-                                    if !t.contains_key("building") { t.insert("building".into(), "yes".into()); }
+                                    if !t.contains_key("building") {
+                                        t.insert("building".into(), "yes".into());
+                                    }
                                     t
                                 }
                                 classify::FeatureType::Industrial => {
                                     let mut t = classify::Tags::new();
                                     for (k, v) in &tags {
                                         // Copy operator/product/industrial from relation tags.
-                                // WHY: Large industrial complexes are multipolygon relations.
-                                // These tags enable NACE sector matching for emission profiles.
-                                if matches!(k.as_str(), "landuse" | "man_made" | "name" |
-                                                     "operator" | "product" | "industrial") {
+                                        // WHY: Large industrial complexes are multipolygon relations.
+                                        // These tags enable NACE sector matching for emission profiles.
+                                        if matches!(
+                                            k.as_str(),
+                                            "landuse"
+                                                | "man_made"
+                                                | "name"
+                                                | "operator"
+                                                | "product"
+                                                | "industrial"
+                                        ) {
+                                            t.insert(k.clone(), v.clone());
+                                        }
+                                    }
+                                    t
+                                }
+                                classify::FeatureType::AirportArea => {
+                                    let mut t = classify::Tags::new();
+                                    for (k, v) in &tags {
+                                        if matches!(
+                                            k.as_str(),
+                                            "aeroway"
+                                                | "name"
+                                                | "ref"
+                                                | "local_ref"
+                                                | "icao"
+                                                | "iata"
+                                                | "operator"
+                                                | "surface"
+                                                | "width"
+                                                | "access"
+                                                | "aerodrome"
+                                                | "aerodrome:type"
+                                                | "amenity"
+                                        ) {
                                             t.insert(k.clone(), v.clone());
                                         }
                                     }
@@ -137,9 +192,20 @@ fn main() -> Result<()> {
 
                             let (clat, clon) = centroid(&ring);
                             if let Some(hex) = h3_res4(clat, clon) {
-                                let wkb = if ring.len() >= 3 { Some(coords_to_wkb(&ring)) } else { None };
-                                spiller.emit_polygon(&ftype, hex, rel_id, clat, clon,
-                                    &extracted_tags, wkb.as_deref());
+                                let wkb = if ring.len() >= 3 {
+                                    Some(coords_to_wkb(&ring))
+                                } else {
+                                    None
+                                };
+                                spiller.emit_polygon(
+                                    &ftype,
+                                    hex,
+                                    rel_id,
+                                    clat,
+                                    clon,
+                                    &extracted_tags,
+                                    wkb.as_deref(),
+                                );
                                 features_total += 1;
                                 rels_assembled += 1;
                             }
@@ -152,14 +218,33 @@ fn main() -> Result<()> {
                 // (a way can be both a relation member AND a standalone feature,
                 //  but usually relation members don't have building= tags themselves)
                 if let Some(ftype) = classify::classify_way(&way) {
+                    let ftype = if matches!(ftype, classify::FeatureType::AirportLine)
+                        && is_closed_ring(&coords)
+                    {
+                        classify::FeatureType::AirportArea
+                    } else {
+                        ftype
+                    };
+
                     // Skip if this way is an outer member of a building/industrial relation
                     // (the relation's tags take precedence)
-                    if is_relation_member && matches!(ftype, classify::FeatureType::Building | classify::FeatureType::Industrial) {
+                    if is_relation_member
+                        && matches!(
+                            ftype,
+                            classify::FeatureType::Building
+                                | classify::FeatureType::Industrial
+                                | classify::FeatureType::AirportArea
+                        )
+                    {
                         return;
                     }
 
-                    if ftype.is_linear() && coords.len() < 2 { return; }
-                    if coords.is_empty() { return; }
+                    if ftype.is_linear() && coords.len() < 2 {
+                        return;
+                    }
+                    if coords.is_empty() {
+                        return;
+                    }
 
                     let tags = classify::extract_way_tags(&way, &ftype);
 
@@ -177,8 +262,20 @@ fn main() -> Result<()> {
                     } else {
                         let (clat, clon) = centroid(&coords);
                         if let Some(hex) = h3_res4(clat, clon) {
-                            let wkb = if coords.len() >= 3 { Some(coords_to_wkb(&coords)) } else { None };
-                            spiller.emit_polygon(&ftype, hex, way.id(), clat, clon, &tags, wkb.as_deref());
+                            let wkb = if coords.len() >= 3 {
+                                Some(coords_to_wkb(&coords))
+                            } else {
+                                None
+                            };
+                            spiller.emit_polygon(
+                                &ftype,
+                                hex,
+                                way.id(),
+                                clat,
+                                clon,
+                                &tags,
+                                wkb.as_deref(),
+                            );
                             features_total += 1;
                         }
                     }
@@ -189,8 +286,28 @@ fn main() -> Result<()> {
                     if let Some(hex) = h3_res4(node.lat(), node.lon()) {
                         let tags = classify::extract_turbine_tags_node(&node);
                         spiller.emit_polygon(
-                            &classify::FeatureType::WindTurbine, hex, node.id(),
-                            node.lat(), node.lon(), &tags, None,
+                            &classify::FeatureType::WindTurbine,
+                            hex,
+                            node.id(),
+                            node.lat(),
+                            node.lon(),
+                            &tags,
+                            None,
+                        );
+                        features_total += 1;
+                    }
+                }
+                if classify::is_airport_node(&node) {
+                    if let Some(hex) = h3_res4(node.lat(), node.lon()) {
+                        let tags = classify::extract_airport_tags_node(&node);
+                        spiller.emit_polygon(
+                            &classify::FeatureType::AirportArea,
+                            hex,
+                            node.id(),
+                            node.lat(),
+                            node.lon(),
+                            &tags,
+                            None,
                         );
                         features_total += 1;
                     }
@@ -201,8 +318,28 @@ fn main() -> Result<()> {
                     if let Some(hex) = h3_res4(node.lat(), node.lon()) {
                         let tags = classify::extract_turbine_tags_dense(&node);
                         spiller.emit_polygon(
-                            &classify::FeatureType::WindTurbine, hex, node.id(),
-                            node.lat(), node.lon(), &tags, None,
+                            &classify::FeatureType::WindTurbine,
+                            hex,
+                            node.id(),
+                            node.lat(),
+                            node.lon(),
+                            &tags,
+                            None,
+                        );
+                        features_total += 1;
+                    }
+                }
+                if classify::is_airport_dense(&node) {
+                    if let Some(hex) = h3_res4(node.lat(), node.lon()) {
+                        let tags = classify::extract_airport_tags_dense(&node);
+                        spiller.emit_polygon(
+                            &classify::FeatureType::AirportArea,
+                            hex,
+                            node.id(),
+                            node.lat(),
+                            node.lon(),
+                            &tags,
+                            None,
                         );
                         features_total += 1;
                     }
@@ -213,8 +350,13 @@ fn main() -> Result<()> {
     })?;
 
     spiller.flush_all()?;
-    eprintln!("  {:.1}M ways → {:.1}M features ({} multipolygon rels) in {:.1}s",
-        ways_total as f64 / 1e6, features_total as f64 / 1e6, rels_assembled, t2.elapsed().as_secs_f64());
+    eprintln!(
+        "  {:.1}M ways → {:.1}M features ({} multipolygon rels) in {:.1}s",
+        ways_total as f64 / 1e6,
+        features_total as f64 / 1e6,
+        rels_assembled,
+        t2.elapsed().as_secs_f64()
+    );
 
     // Free node cache before finalize (saves ~64 GB disk for planet)
     drop(cache);
@@ -227,7 +369,11 @@ fn main() -> Result<()> {
     eprintln!("\n── Finalize ──");
     let t3 = Instant::now();
     let hex_count = finalize::finalize(&cli.spill_dir, &cli.output, cli.num_buckets)?;
-    eprintln!("  {} hex dirs in {:.1}s", hex_count, t3.elapsed().as_secs_f64());
+    eprintln!(
+        "  {} hex dirs in {:.1}s",
+        hex_count,
+        t3.elapsed().as_secs_f64()
+    );
 
     // node cache already deleted after Pass 2
     std::fs::remove_dir_all(&cli.spill_dir).ok();
@@ -243,8 +389,19 @@ fn h3_res4(lat: f64, lon: f64) -> Option<u64> {
 
 fn centroid(coords: &[[f64; 2]]) -> (f64, f64) {
     let n = coords.len() as f64;
-    (coords.iter().map(|c| c[0]).sum::<f64>() / n,
-     coords.iter().map(|c| c[1]).sum::<f64>() / n)
+    (
+        coords.iter().map(|c| c[0]).sum::<f64>() / n,
+        coords.iter().map(|c| c[1]).sum::<f64>() / n,
+    )
+}
+
+fn is_closed_ring(coords: &[[f64; 2]]) -> bool {
+    if coords.len() < 4 {
+        return false;
+    }
+    let first = coords[0];
+    let last = coords[coords.len() - 1];
+    (first[0] - last[0]).abs() < 1e-7 && (first[1] - last[1]).abs() < 1e-7
 }
 
 fn coords_to_wkb(coords: &[[f64; 2]]) -> Vec<u8> {

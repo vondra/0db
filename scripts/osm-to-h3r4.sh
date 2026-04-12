@@ -9,10 +9,17 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
 YEAR="${DATA_YEAR:-2025}"
-PBF_FILE="data/source/osm/${YEAR}/planet-latest.osm.pbf"
-OUTPUT_DIR="data/prepared/${YEAR}/h3r4"
-NODE_CACHE="/tmp/osm_nodes.cache"
-SPILL_DIR="/tmp/osm_spill"
+DATA_ROOT="${DATA_ROOT:-$PROJECT_DIR/data}"
+if [[ -d /mnt/data ]]; then
+    DEFAULT_SCRATCH_ROOT="/mnt/data/tmp/quietmap"
+else
+    DEFAULT_SCRATCH_ROOT="/tmp/quietmap"
+fi
+SCRATCH_ROOT="${SCRATCH_ROOT:-$DEFAULT_SCRATCH_ROOT}"
+PBF_FILE="${PBF_FILE:-$DATA_ROOT/source/osm/${YEAR}/planet-latest.osm.pbf}"
+OUTPUT_DIR="${OUTPUT_DIR:-$DATA_ROOT/prepared/${YEAR}/h3r4}"
+NODE_CACHE="${NODE_CACHE:-$SCRATCH_ROOT/osm_nodes.cache}"
+SPILL_DIR="${SPILL_DIR:-$SCRATCH_ROOT/osm_spill}"
 BINARY="engine/osm-extract/target/release/osm-to-h3r4"
 
 log() { echo "[osm] $(date '+%H:%M:%S') $*"; }
@@ -30,14 +37,15 @@ fi
 PBF_SIZE=$(stat --printf='%s' "$PBF_FILE")
 PBF_SIZE_HR=$(numfmt --to=iec-i --suffix=B "$PBF_SIZE")
 
+mkdir -p "$OUTPUT_DIR" "$(dirname "$NODE_CACHE")" "$SPILL_DIR"
+
 log "=== OSM extraction ==="
 log "  Input:      $PBF_FILE ($PBF_SIZE_HR)"
 log "  Output:     $OUTPUT_DIR"
+log "  Scratch:    $SCRATCH_ROOT"
 log "  Node cache: $NODE_CACHE"
 log "  Spill dir:  $SPILL_DIR"
-log "  Disk free:  $(df -h "$HOME" --output=avail | tail -1 | xargs)"
-
-mkdir -p "$OUTPUT_DIR"
+log "  Disk free:  output $(df -h "$OUTPUT_DIR" --output=avail | tail -1 | xargs) | scratch $(df -h "$SCRATCH_ROOT" --output=avail | tail -1 | xargs)"
 
 T_START=$(date +%s)
 
@@ -52,8 +60,9 @@ T_START=$(date +%s)
         CACHE_SIZE=0
         [ -f "$NODE_CACHE" ] && CACHE_SIZE=$(stat --printf='%s' "$NODE_CACHE" 2>/dev/null || echo 0)
         CACHE_HR=$(numfmt --to=iec-i --suffix=B "$CACHE_SIZE" 2>/dev/null || echo "?")
-        DISK_FREE=$(df -h "$HOME" --output=avail | tail -1 | xargs)
-        log "  progress: $ELAPSED_HR | hexes $HEX_COUNT | node-cache $CACHE_HR | disk $DISK_FREE"
+        DISK_FREE_OUTPUT=$(df -h "$OUTPUT_DIR" --output=avail | tail -1 | xargs)
+        DISK_FREE_SCRATCH=$(df -h "$SCRATCH_ROOT" --output=avail | tail -1 | xargs)
+        log "  progress: $ELAPSED_HR | hexes $HEX_COUNT | node-cache $CACHE_HR | output $DISK_FREE_OUTPUT | scratch $DISK_FREE_SCRATCH"
     done
 ) &
 MONITOR_PID=$!
@@ -80,4 +89,4 @@ log ""
 log "=== OSM extraction DONE ==="
 log "  $HEX_COUNT hex directories, $OUTPUT_SIZE total"
 log "  Time: $(printf '%dh%02dm%02ds' $((T_ELAPSED/3600)) $(((T_ELAPSED%3600)/60)) $((T_ELAPSED%60)))"
-log "  Disk free: $(df -h "$HOME" --output=avail | tail -1 | xargs)"
+log "  Disk free: output $(df -h "$OUTPUT_DIR" --output=avail | tail -1 | xargs) | scratch $(df -h "$SCRATCH_ROOT" --output=avail | tail -1 | xargs)"
