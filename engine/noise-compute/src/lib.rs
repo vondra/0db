@@ -1205,7 +1205,7 @@ fn rail_usage_name(u: u8) -> &'static str {
 
 /// Compute terrain/screening/vegetation path effects for one source-receiver pair.
 /// Returns (TerrainBreakdown, ScreeningBreakdown, VegetationBreakdown).
-fn compute_path_effects(
+pub fn compute_path_effects(
     rasters: &dyn RasterSampler,
     barriers: &[Barrier],
     src_lat: f64, src_lon: f64, src_height: f64,

@@ -13,7 +13,7 @@ use napi_derive::napi;
 #[cfg(feature = "node")]
 use napi::{Error, Status};
 
-use hex_store::{load_hex, query_roads_from_batches, query_railways_from_batches, query_buildings_from_batches, query_barriers_from_batches, query_aircraft_from_batches};
+use hex_store::{load_hex, query_roads_from_batches, query_railways_from_batches, query_buildings_from_batches, query_barriers_from_batches, query_aircraft_from_batches, hex_encode};
 #[cfg(feature = "node")]
 use hex_store::HexData;
 
@@ -24,10 +24,8 @@ static STORE: std::sync::LazyLock<RwLock<HexStore>> =
 #[cfg(feature = "node")]
 static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::OnceLock::new();
 
-// NACE lookup: osm_id → nace_2digit code (from IRZ/E-PRTR enrichment).
-// WHY: OSM gives generic "landuse=industrial". NACE enables sector-specific
-// emission profiles (metallurgy 78 dB vs warehouse 60 dB).
-// Loaded from data/prepared/nace-lookup.json during source_init.
+// NACE 2-digit code per osm_id, populated from data/prepared/nace-lookup.json.
+// Enables sector-specific industrial emission profiles over generic landuse=industrial.
 #[cfg(feature = "node")]
 static NACE_LOOKUP: std::sync::OnceLock<HashMap<i64, u8>> = std::sync::OnceLock::new();
 
@@ -246,6 +244,7 @@ pub fn collect_sources_at_point(h3r4_dir: &Path, lat: f64, lng: f64) -> Result<P
             let power: Option<&arrow::array::Float32Array> = batch.column_by_name("rated_power_kw").and_then(|c| c.as_any().downcast_ref());
             let ind_name: Option<&arrow::array::StringArray> = batch.column_by_name("name").and_then(|c| c.as_any().downcast_ref());
             let wkb_col: Option<&arrow::array::BinaryArray> = batch.column_by_name("polygon_wkb").and_then(|c| c.as_any().downcast_ref());
+            let area_col: Option<&arrow::array::Float32Array> = batch.column_by_name("area_m2").and_then(|c| c.as_any().downcast_ref());
 
             for i in 0..n {
                 let c_lat = clat.value(i);
@@ -256,10 +255,15 @@ pub fn collect_sources_at_point(h3r4_dir: &Path, lat: f64, lng: f64) -> Result<P
                 let st = stype.map(|a| a.value(i)).unwrap_or(0);
                 let iname = ind_name.map(|a| a.value(i).to_string()).unwrap_or_default();
                 let osm_id = batch.column_by_name("osm_id").and_then(|c| c.as_any().downcast_ref::<arrow::array::Int64Array>()).map(|a| a.value(i)).unwrap_or(0);
-                let wkb_hex = wkb_col.map(|a| {
-                    let b = a.value(i);
-                    b.iter().map(|byte| format!("{:02x}", byte)).collect::<String>()
-                }).unwrap_or_default();
+                let wkb_hex = if st == 10 {
+                    String::new()
+                } else {
+                    wkb_col.map(|a| hex_encode(a.value(i))).unwrap_or_default()
+                };
+                let area_m2 = area_col.and_then(|a| {
+                    let v = a.value(i);
+                    if v > 0.0 { Some(v as f64) } else { None }
+                });
 
                 let prepared_points = noise_compute::normalize::prepare_industrial_points(
                     noise_compute::normalize::RawIndustrialInput {
@@ -274,6 +278,7 @@ pub fn collect_sources_at_point(h3r4_dir: &Path, lat: f64, lng: f64) -> Result<P
                             let value = a.value(i);
                             if value > 0.0 { Some(value) } else { None }
                         }),
+                        area_m2,
                         polygon_wkb: &wkb_hex,
                         nace_2digit: nace_lookup.get(&osm_id).copied(),
                     },
@@ -418,14 +423,12 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
     let hex_ids = geo::grid_disk_r4(lat, lng);
     let mut store = STORE.write().map_err(|e| Error::new(Status::GenericFailure, format!("{e}")))?;
 
-    // Collect all sources from 7 hexes
     let mut all_roads = Vec::new();
     let mut all_railways = Vec::new();
     let mut all_buildings = Vec::new();
     let mut all_industrial: Vec<noise_compute::types::PointSource> = Vec::new();
     let mut all_barriers = Vec::new();
     let mut all_aircraft = Vec::new();
-    // Derive n_days from actual aircraft data (count unique date_ids across all hexes)
     let n_days: u16 = {
         let mut date_ids = std::collections::HashSet::new();
         for hex_id in &hex_ids {
@@ -496,7 +499,6 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
             });
         }
 
-        // Roads with distances pre-computed
         let roads = query_roads_from_batches(&data.road_batches, lat, lng, 10000.0);
         for r in roads {
             all_roads.push(noise_compute::types::RoadSegment {
@@ -527,10 +529,8 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
             });
         }
 
-        // Buildings → PointSource (settlement)
         let buildings = query_buildings_from_batches(&data.building_batches, lat, lng, 2000.0);
         for b in buildings {
-            // Build display name: "Name" or "Street Nr" or building type
             let display_name = if !b.name.is_empty() {
                 b.name.clone()
             } else if !b.addr_street.is_empty() {
@@ -566,7 +566,6 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
             }
         }
 
-        // Industrial → PointSource
         for batch in &data.industrial_batches {
             let n = batch.num_rows();
             let clat: Option<&arrow::array::Float64Array> = batch.column_by_name("centroid_lat").and_then(|c| c.as_any().downcast_ref());
@@ -576,11 +575,8 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
             let hub_h: Option<&arrow::array::Float32Array> = batch.column_by_name("hub_height").and_then(|c| c.as_any().downcast_ref());
             let power: Option<&arrow::array::Float32Array> = batch.column_by_name("rated_power_kw").and_then(|c| c.as_any().downcast_ref());
             let ind_name: Option<&arrow::array::StringArray> = batch.column_by_name("name").and_then(|c| c.as_any().downcast_ref());
-            // Read WKB polygon for area calculation and map display
-            // WHY: Industrial area was hardcoded to 10000 m², making Spolana (500K m²)
-            // have same emission as a small recycling yard. Now we compute real area from WKB.
-            // REVIEWED: GPT-5.4 + Gemini 3.1 Pro confirmed WKB area approach.
             let wkb_col: Option<&arrow::array::BinaryArray> = batch.column_by_name("polygon_wkb").and_then(|c| c.as_any().downcast_ref());
+            let area_col: Option<&arrow::array::Float32Array> = batch.column_by_name("area_m2").and_then(|c| c.as_any().downcast_ref());
 
             for i in 0..n {
                 let c_lat = clat.value(i);
@@ -592,11 +588,15 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                 let iname = ind_name.map(|a| a.value(i).to_string()).unwrap_or_default();
                 let osm_id = batch.column_by_name("osm_id").and_then(|c| c.as_any().downcast_ref::<arrow::array::Int64Array>()).map(|a| a.value(i)).unwrap_or(0);
 
-                // Get WKB hex string for polygon display + area calculation
-                let wkb_hex = wkb_col.map(|a| {
-                    let b = a.value(i);
-                    b.iter().map(|byte| format!("{:02x}", byte)).collect::<String>()
-                }).unwrap_or_default();
+                let wkb_hex = if st == 10 {
+                    String::new()
+                } else {
+                    wkb_col.map(|a| hex_encode(a.value(i))).unwrap_or_default()
+                };
+                let area_m2 = area_col.and_then(|a| {
+                    let v = a.value(i);
+                    if v > 0.0 { Some(v as f64) } else { None }
+                });
                 let prepared_points = noise_compute::normalize::prepare_industrial_points(
                     noise_compute::normalize::RawIndustrialInput {
                         centroid_lat: c_lat,
@@ -610,6 +610,7 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
                             let value = a.value(i);
                             if value > 0.0 { Some(value) } else { None }
                         }),
+                        area_m2,
                         polygon_wkb: &wkb_hex,
                         nace_2digit: NACE_LOOKUP.get().and_then(|lookup| lookup.get(&osm_id)).copied(),
                     },
@@ -627,10 +628,8 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
             }
         }
 
-        // Load barriers within 10km (matching road source radius).
-        // WHY: Previously 500m only loaded barriers near the receiver. But screening
-        // checks barriers along the ENTIRE source→receiver path. A barrier near a highway
-        // 5km away was silently dropped, causing popup/tile disagreement.
+        // 10 km matches the road source radius — barriers along the full source→receiver
+        // path are needed for screening, not just near the receiver.
         let barriers = query_barriers_from_batches(&data.barrier_batches, lat, lng, 10_000.0);
         for b in barriers {
             all_barriers.push(noise_compute::types::Barrier {

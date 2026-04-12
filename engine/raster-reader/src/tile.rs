@@ -339,23 +339,18 @@ impl TileStore {
         }
     }
 
-    /// Sample with tile caching — avoids repeated OnceLock lookups when consecutive
-    /// samples fall within the same 1° tile (common for path sampling).
+    /// Sample with tile caching — avoids repeated tile-slot lookups and Arc refcount
+    /// bumps when consecutive samples fall within the same 1° tile (common in path
+    /// sampling). Cache hit path touches zero atomics.
     #[inline]
-    /// Sample with tile caching — avoids repeated OnceLock lookups when consecutive
-    /// samples fall within the same 1° tile.
     pub(crate) fn sample_cached(&self, lat: f64, lon: f64, cached_key: &mut (i32, i32), cached_tile: &mut Option<Arc<RawTile>>) -> f64 {
         let (lat_int, lon_int, frac_lat, frac_lon) = Self::to_tile_key(lat, lon);
-        let tile = if (lat_int, lon_int) == *cached_key {
-            cached_tile.clone()
-        } else {
+        if (lat_int, lon_int) != *cached_key {
             *cached_key = (lat_int, lon_int);
-            let t = self.get_tile_fast(lat_int, lon_int).or_else(|| self.get_tile(lat_int, lon_int));
-            *cached_tile = t.clone();
-            t
-        };
-        match tile {
-            Some(t) => self.sample_tile(&t, frac_lat, frac_lon),
+            *cached_tile = self.get_tile_fast(lat_int, lon_int).or_else(|| self.get_tile(lat_int, lon_int));
+        }
+        match cached_tile.as_deref() {
+            Some(t) => self.sample_tile(t, frac_lat, frac_lon),
             None => self.default_value,
         }
     }
