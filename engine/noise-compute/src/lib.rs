@@ -267,7 +267,9 @@ fn compute_roads(
         emission_energy: f64,
         line_coords: Vec<[[f64; 2]; 2]>,
     }
-    // Group by (ref, name, class) — not osm_id — so "D1" becomes one contributor
+    // Group by (ref, name, class) — not osm_id — so "D1" becomes one contributor.
+    // For unnamed roads (ref="" && name=""): group per osm_id (like railway)
+    // to avoid merging all unnamed residential streets into one mega-contributor.
     let mut roads_by_key: HashMap<(String, String, u8), RoadAccum> = HashMap::new();
 
     for seg in roads {
@@ -423,7 +425,14 @@ fn compute_roads(
             seg.road_ref.clone()
         };
 
-        let key = (effective_ref.clone(), seg.name.clone(), seg.road_class);
+        // For unnamed roads: group per osm_id (like railway), not catch-all
+        let key_ref = if effective_ref.is_empty() && seg.name.is_empty() {
+            format!("osm:{}", seg.osm_id)
+        } else {
+            effective_ref.clone()
+        };
+
+        let key = (key_ref.clone(), seg.name.clone(), seg.road_class);
         let acc = roads_by_key.entry(key).or_insert_with(|| {
             let display_name = if !effective_ref.is_empty() && !seg.name.is_empty() {
                 format!("{} — {}", effective_ref, seg.name)
@@ -432,15 +441,23 @@ fn compute_roads(
             } else if !seg.name.is_empty() {
                 seg.name.clone()
             } else {
-                // Fallback based on class
-                match class_idx {
-                    0 => "Motorway".to_string(),
-                    1 => "Trunk road".to_string(),
-                    2 => "Primary road".to_string(),
-                    3 => "Secondary road".to_string(),
-                    4 => "Tertiary road".to_string(),
-                    5 => "Local road".to_string(),
-                    _ => "Road".to_string(),
+                // Fallback with distance badge for unnamed roads
+                let class_label = match class_idx {
+                    0 => "Motorway",
+                    1 => "Trunk road",
+                    2 => "Primary road",
+                    3 => "Secondary road",
+                    4 => "Tertiary road",
+                    5 => "Local road",
+                    _ => "Road",
+                };
+                let dist = seg.dist_m;
+                if dist < 100.0 {
+                    format!("{} ({}m)", class_label, dist as u32)
+                } else if dist < 1000.0 {
+                    format!("{} ({}m)", class_label, (dist / 10.0).round() as u32 * 10)
+                } else {
+                    format!("{} ({:.1}km)", class_label, dist / 1000.0)
                 }
             };
             RoadAccum {

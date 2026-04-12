@@ -716,7 +716,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
               {lineRow(
                 <MetricLabel term="emission" />,
                 <DataPoint title="CNOSSOS-EU line-source emission" text={emissionText}>
-                  {c.emission_db.toFixed(1)} dB{c.source_type === 'road' || c.source_type === 'railway' ? '/m' : ''}
+                  {c.emission_db.toFixed(1)} dB
                 </DataPoint>,
               )}
               <div className="mt-1.5 mb-0.5 pt-1 border-t border-border/40">

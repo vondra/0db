@@ -13,6 +13,9 @@ pub fn display_count(contributors: &[Contributor]) -> usize {
 }
 
 pub fn finalize_popup_contributors(mut contributors: Vec<Contributor>, top_n: usize) -> Vec<Contributor> {
+    use std::collections::HashMap;
+    use crate::types::SourceKind;
+
     contributors.retain(is_displayable);
     contributors.sort_by(|a, b| {
         b.periods
@@ -30,6 +33,17 @@ pub fn finalize_popup_contributors(mut contributors: Vec<Contributor>, top_n: us
     }
 
     contributors.truncate(top_n);
+
+    // Cap per source type: max 5 road/railway entries to avoid flooding popup
+    // with 20+ unnamed "Local road" entries from per-osm_id grouping
+    let max_per_type = 5;
+    let mut type_counts: HashMap<SourceKind, usize> = HashMap::new();
+    contributors.retain(|c| {
+        let count = type_counts.entry(c.source_type).or_insert(0);
+        *count += 1;
+        *count <= max_per_type
+    });
+
     for contributor in guaranteed {
         if !contributors.iter().any(|existing| existing.source_type == contributor.source_type) {
             contributors.push(contributor);
