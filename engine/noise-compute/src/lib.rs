@@ -222,34 +222,41 @@ fn compute_roads(
         class_name: &'static str,
         display_name: String,
         first_osm_id: i64,
+        // Closest segment (for distance display, baseline, path-effect context)
         min_dist: f64,
         min_d_slant: f64,
         min_ground_g: f64,
         closest_cp_lat: f64,
         closest_cp_lon: f64,
         closest_src_height: f64,
-        // Closest-segment metadata (for popup)
-        closest_segment_idx: i16,
-        closest_aadt_light_raw: i32,
-        closest_aadt_medium_raw: i32,
-        closest_aadt_heavy_raw: i32,
-        closest_aadt_moto_raw: i32,
-        closest_aadt_light_effective: f64,
-        closest_aadt_medium_effective: f64,
-        closest_aadt_heavy_effective: f64,
-        closest_aadt_moto_effective: f64,
-        closest_traffic_source: &'static str, // "census" | "default_by_class"
-        closest_speed_posted: u8,
-        closest_speed_used: f64,
-        closest_speed_source: &'static str, // "osm_posted" | "default_by_class" | "roundabout_cap"
-        closest_surface_type: u8,
-        closest_surface_corr_db: f64,
-        closest_lanes: u8,
-        closest_oneway: bool,
+        // Dominant-segment metadata (highest received energy — what drives the result)
+        dominant_energy: f64,
+        dominant_segment_idx: i16,
+        dominant_distance_m: f64,
+        dominant_aadt_light_raw: i32,
+        dominant_aadt_medium_raw: i32,
+        dominant_aadt_heavy_raw: i32,
+        dominant_aadt_moto_raw: i32,
+        dominant_aadt_light_effective: f64,
+        dominant_aadt_medium_effective: f64,
+        dominant_aadt_heavy_effective: f64,
+        dominant_aadt_moto_effective: f64,
+        dominant_traffic_source: &'static str, // "census" | "default_by_class"
+        dominant_speed_posted: u8,
+        dominant_speed_used: f64,
+        dominant_speed_source: &'static str, // "osm_posted" | "default_by_class" | "roundabout_cap"
+        dominant_surface_type: u8,
+        dominant_surface_corr_db: f64,
+        dominant_lanes: u8,
+        dominant_oneway: bool,
         // Aggregation across all grouped segments
         segment_count: u32,
         total_length_m: f64,
         bridge_count: u32,
+        speed_min: f64,
+        speed_max: f64,
+        oneway_segment_count: u32,
+        twoway_segment_count: u32,
         // Group-level screening obstacle histogram (popup transparency)
         obstacle_segment_count: u32,
         obstacle_height_sum: f64,
@@ -446,26 +453,32 @@ fn compute_roads(
                 closest_cp_lat: seg.cp_lat,
                 closest_cp_lon: seg.cp_lon,
                 closest_src_height: src_alt,
-                closest_segment_idx: 0,
-                closest_aadt_light_raw: 0,
-                closest_aadt_medium_raw: 0,
-                closest_aadt_heavy_raw: 0,
-                closest_aadt_moto_raw: 0,
-                closest_aadt_light_effective: 0.0,
-                closest_aadt_medium_effective: 0.0,
-                closest_aadt_heavy_effective: 0.0,
-                closest_aadt_moto_effective: 0.0,
-                closest_traffic_source: "default_by_class",
-                closest_speed_posted: 0,
-                closest_speed_used: 0.0,
-                closest_speed_source: "default_by_class",
-                closest_surface_type: 0,
-                closest_surface_corr_db: 0.0,
-                closest_lanes: 0,
-                closest_oneway: false,
+                dominant_energy: 0.0,
+                dominant_segment_idx: 0,
+                dominant_distance_m: 0.0,
+                dominant_aadt_light_raw: 0,
+                dominant_aadt_medium_raw: 0,
+                dominant_aadt_heavy_raw: 0,
+                dominant_aadt_moto_raw: 0,
+                dominant_aadt_light_effective: 0.0,
+                dominant_aadt_medium_effective: 0.0,
+                dominant_aadt_heavy_effective: 0.0,
+                dominant_aadt_moto_effective: 0.0,
+                dominant_traffic_source: "default_by_class",
+                dominant_speed_posted: 0,
+                dominant_speed_used: 0.0,
+                dominant_speed_source: "default_by_class",
+                dominant_surface_type: 0,
+                dominant_surface_corr_db: 0.0,
+                dominant_lanes: 0,
+                dominant_oneway: false,
                 segment_count: 0,
                 total_length_m: 0.0,
                 bridge_count: 0,
+                speed_min: f64::MAX,
+                speed_max: 0.0,
+                oneway_segment_count: 0,
+                twoway_segment_count: 0,
                 obstacle_segment_count: 0,
                 obstacle_height_sum: 0.0,
                 obstacle_max_height: 0.0,
@@ -514,6 +527,11 @@ fn compute_roads(
             acc.variants[pi].add(&seg_variants[pi]);
         }
         acc.emission_energy += day_emission_energy * fade_factor;
+        // Aggregate stats across all segments
+        if speed < acc.speed_min { acc.speed_min = speed; }
+        if speed > acc.speed_max { acc.speed_max = speed; }
+        if seg.oneway { acc.oneway_segment_count += 1; } else { acc.twoway_segment_count += 1; }
+        // Closest segment — for distance display, baseline, and path-effect context
         if seg.dist_m < acc.min_dist {
             acc.min_dist = seg.dist_m;
             acc.min_d_slant = d_slant;
@@ -521,24 +539,29 @@ fn compute_roads(
             acc.closest_cp_lat = seg.cp_lat;
             acc.closest_cp_lon = seg.cp_lon;
             acc.closest_src_height = src_alt;
-            // Metadata for popup: raw + effective values at the closest microsegment
-            acc.closest_segment_idx = seg.segment_idx;
-            acc.closest_aadt_light_raw = seg.aadt_light;
-            acc.closest_aadt_medium_raw = seg.aadt_medium;
-            acc.closest_aadt_heavy_raw = seg.aadt_heavy;
-            acc.closest_aadt_moto_raw = seg.aadt_moto;
-            acc.closest_aadt_light_effective = light;
-            acc.closest_aadt_medium_effective = medium;
-            acc.closest_aadt_heavy_effective = heavy;
-            acc.closest_aadt_moto_effective = moto;
-            acc.closest_traffic_source = if seg.traffic_source == 1 && seg.aadt_light > 0 {
+        }
+        // Dominant segment — highest received energy, drives the popup metadata
+        let seg_received_energy: f64 = seg_variants[0].full_energy * fade_factor;
+        if seg_received_energy > acc.dominant_energy {
+            acc.dominant_energy = seg_received_energy;
+            acc.dominant_segment_idx = seg.segment_idx;
+            acc.dominant_distance_m = seg.dist_m;
+            acc.dominant_aadt_light_raw = seg.aadt_light;
+            acc.dominant_aadt_medium_raw = seg.aadt_medium;
+            acc.dominant_aadt_heavy_raw = seg.aadt_heavy;
+            acc.dominant_aadt_moto_raw = seg.aadt_moto;
+            acc.dominant_aadt_light_effective = light;
+            acc.dominant_aadt_medium_effective = medium;
+            acc.dominant_aadt_heavy_effective = heavy;
+            acc.dominant_aadt_moto_effective = moto;
+            acc.dominant_traffic_source = if seg.traffic_source == 1 && seg.aadt_light > 0 {
                 "census"
             } else {
                 "default_by_class"
             };
-            acc.closest_speed_posted = seg.speed_limit;
-            acc.closest_speed_used = speed;
-            acc.closest_speed_source = if seg.junction == 1 {
+            acc.dominant_speed_posted = seg.speed_limit;
+            acc.dominant_speed_used = speed;
+            acc.dominant_speed_source = if seg.junction == 1 {
                 if speed < base_speed {
                     "roundabout_cap"
                 } else {
@@ -549,10 +572,10 @@ fn compute_roads(
             } else {
                 "default_by_class"
             };
-            acc.closest_surface_type = seg.surface_type;
-            acc.closest_surface_corr_db = surf_corr;
-            acc.closest_lanes = seg.lanes;
-            acc.closest_oneway = seg.oneway;
+            acc.dominant_surface_type = seg.surface_type;
+            acc.dominant_surface_corr_db = surf_corr;
+            acc.dominant_lanes = seg.lanes;
+            acc.dominant_oneway = seg.oneway;
         }
         // Each segment is an independent 2-point LineString; no osm_id regrouping needed.
         acc.line_coords
@@ -612,25 +635,30 @@ fn compute_roads(
         let veg_adj = (road_periods.lden_db - no_veg_lden).min(0.0);
 
         let road_meta = RoadMetadata {
-            aadt_light_raw: acc.closest_aadt_light_raw,
-            aadt_medium_raw: acc.closest_aadt_medium_raw,
-            aadt_heavy_raw: acc.closest_aadt_heavy_raw,
-            aadt_moto_raw: acc.closest_aadt_moto_raw,
-            traffic_source: acc.closest_traffic_source,
-            speed_posted_kmh: acc.closest_speed_posted,
-            aadt_light_effective: acc.closest_aadt_light_effective,
-            aadt_medium_effective: acc.closest_aadt_medium_effective,
-            aadt_heavy_effective: acc.closest_aadt_heavy_effective,
-            aadt_moto_effective: acc.closest_aadt_moto_effective,
-            speed_kmh: acc.closest_speed_used,
-            speed_source: acc.closest_speed_source,
+            aadt_light_raw: acc.dominant_aadt_light_raw,
+            aadt_medium_raw: acc.dominant_aadt_medium_raw,
+            aadt_heavy_raw: acc.dominant_aadt_heavy_raw,
+            aadt_moto_raw: acc.dominant_aadt_moto_raw,
+            traffic_source: acc.dominant_traffic_source,
+            speed_posted_kmh: acc.dominant_speed_posted,
+            aadt_light_effective: acc.dominant_aadt_light_effective,
+            aadt_medium_effective: acc.dominant_aadt_medium_effective,
+            aadt_heavy_effective: acc.dominant_aadt_heavy_effective,
+            aadt_moto_effective: acc.dominant_aadt_moto_effective,
+            speed_kmh: acc.dominant_speed_used,
+            speed_source: acc.dominant_speed_source,
             road_class: acc.class_name,
-            surface: surface_name(acc.closest_surface_type),
-            surface_corr_db: acc.closest_surface_corr_db,
-            lanes: acc.closest_lanes,
-            oneway: acc.closest_oneway,
-            closest_segment_idx: acc.closest_segment_idx,
+            surface: surface_name(acc.dominant_surface_type),
+            surface_corr_db: acc.dominant_surface_corr_db,
+            lanes: acc.dominant_lanes,
+            oneway: acc.dominant_oneway,
+            dominant_segment_idx: acc.dominant_segment_idx,
+            dominant_distance_m: acc.dominant_distance_m,
             closest_distance_m: acc.min_dist,
+            speed_min_kmh: acc.speed_min,
+            speed_max_kmh: acc.speed_max,
+            oneway_segment_count: acc.oneway_segment_count,
+            twoway_segment_count: acc.twoway_segment_count,
             segment_count: acc.segment_count,
             total_length_m: acc.total_length_m,
             bridge_count: acc.bridge_count,

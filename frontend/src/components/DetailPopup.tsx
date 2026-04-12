@@ -51,8 +51,13 @@ interface RoadMetadata {
   surface_corr_db: number
   lanes: number
   oneway: boolean
-  closest_segment_idx: number
+  dominant_segment_idx: number
+  dominant_distance_m: number
   closest_distance_m: number
+  speed_min_kmh: number
+  speed_max_kmh: number
+  oneway_segment_count: number
+  twoway_segment_count: number
   segment_count: number
   total_length_m: number
   bridge_count: number
@@ -355,15 +360,17 @@ function MetadataRows({ c }: { c: Contributor }) {
   if (m.kind === 'road') {
     const effTotal = m.aadt_light_effective + m.aadt_medium_effective + m.aadt_heavy_effective + m.aadt_moto_effective
     const rawTotal = m.aadt_light_raw + m.aadt_medium_raw + m.aadt_heavy_raw + m.aadt_moto_raw
+    const hasSpeedRange = m.speed_min_kmh < m.speed_max_kmh
     const speedText = txtTable([
       ['Source', m.speed_source.replace(/_/g, ' ')],
       ['Posted maxspeed', m.speed_posted_kmh > 0 ? `${m.speed_posted_kmh} km/h` : '— (none)'],
       ['Class default', m.road_class],
       { sep: true },
-      ['Effective', `${m.speed_kmh.toFixed(0)} km/h`],
+      ['Dominant seg.', `${m.speed_kmh.toFixed(0)} km/h`],
+      ...(hasSpeedRange ? [['Range (group)', `${m.speed_min_kmh.toFixed(0)}–${m.speed_max_kmh.toFixed(0)} km/h`] as [string, string]] : []),
       '',
-      'Engine uses posted maxspeed when available,',
-      'else falls back to per-class default.',
+      'Values from the loudest segment.',
+      ...(hasSpeedRange ? ['Speed varies across grouped segments.'] : []),
     ], 18, 12)
     const trafficText = txtTable([
       ['Source', m.traffic_source === 'census' ? 'CZ ŘSD 2020' : `default ${m.road_class}`],
@@ -383,29 +390,35 @@ function MetadataRows({ c }: { c: Contributor }) {
       { sep: true },
       ['  Total effective', `${fmtInt(effTotal)}/day`],
       '',
-      `(at closest segment, ${Math.round(m.closest_distance_m)} m away)`,
+      `(at dominant segment, ${Math.round(m.dominant_distance_m)} m away)`,
     ], 18, 12)
     const segmentsText = txtTable([
       ['Microsegments', String(m.segment_count)],
       ['Total length', `${(m.total_length_m / 1000).toFixed(2)} km`],
-      ['Closest segment', `#${m.closest_segment_idx}`],
-      ['  at distance', `${Math.round(m.closest_distance_m)} m`],
+      ['Closest point', `${Math.round(m.closest_distance_m)} m`],
+      ['Dominant seg.', `#${m.dominant_segment_idx} (${Math.round(m.dominant_distance_m)} m)`],
       ...(m.bridge_count > 0 ? [['Bridge segments', String(m.bridge_count)] as [string, string]] : []),
       '',
       'Grouped by ref + name + class.',
+      'Metadata from loudest segment.',
     ], 18, 12)
+    const hasMixedOneway = m.oneway_segment_count > 0 && m.twoway_segment_count > 0
     const surfaceText = txtTable([
       ['Type', m.surface],
       ['Rolling correction', `${fmt(m.surface_corr_db)} dB`],
       ['Lanes', String(m.lanes)],
       ['Oneway', m.oneway ? 'yes' : 'no'],
+      ...(hasMixedOneway ? [
+        '',
+        `Group: ${m.oneway_segment_count} oneway + ${m.twoway_segment_count} two-way segs`,
+      ] : []),
     ], 18, 12)
     return (
       <>
         {lineRow(
           <MetricLabel term="speed" />,
           <DataPoint title="Speed used in CNOSSOS emission" text={speedText}>
-            {m.speed_kmh.toFixed(0)} km/h
+            {hasSpeedRange ? `${m.speed_min_kmh.toFixed(0)}–${m.speed_max_kmh.toFixed(0)}` : m.speed_kmh.toFixed(0)} km/h
           </DataPoint>,
         )}
         {lineRow(
