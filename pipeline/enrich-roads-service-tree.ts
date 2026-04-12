@@ -278,29 +278,38 @@ function findLeafBranches(
 
     while (true) {
       const edges = localAdj.get(current)!
-      // Pick the next edge (not the one we came from)
       const nextSeg = edges.find(e => e !== prevSeg)
       if (nextSeg === undefined) break
 
       branch.push(nextSeg)
       totalLen += (lengthCol.get(nextSeg) as number) ?? 0
-      if (totalLen > MAX_BRANCH_LENGTH_M) break // cap per branch
+      if (totalLen > MAX_BRANCH_LENGTH_M) break
 
-      // Move to the other end of this segment
       const [sKey, eKey] = segToNodes[nextSeg]
       const nextNode = (sKey === current) ? eKey : sKey
       prevSeg = nextSeg
       current = nextNode
 
-      // Stop conditions:
       const nextEdges = localAdj.get(current)
-      if (!nextEdges || nextEdges.length !== 2) break // junction (3+) or dead-end (1) or root
+      if (!nextEdges || nextEdges.length !== 2) break
       const fullNode = nodes.get(current)!
-      if (fullNode.degree > nextEdges.length) break // root node (touches non-eligible roads)
+      if (fullNode.degree > nextEdges.length) break
     }
 
     if (branch.length > 0) {
       branches.push({ segments: branch, lengthM: totalLen })
+    }
+  }
+
+  // Detect loop cul-de-sacs: components with exactly 1 root node where all
+  // non-root nodes have exactly 2 local edges (forming a loop or lollipop).
+  // These have no degree-1 dead-ends so the walk above misses them.
+  if (deadEnds.length === 0 && comp.rootNodes.size >= 1) {
+    // All segments in the component form a loop (or loops) attached to root(s)
+    let totalLen = 0
+    for (const seg of comp.segments) totalLen += (lengthCol.get(seg) as number) ?? 0
+    if (totalLen <= MAX_BRANCH_LENGTH_M) {
+      branches.push({ segments: [...comp.segments], lengthM: totalLen })
     }
   }
 

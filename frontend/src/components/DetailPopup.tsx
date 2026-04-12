@@ -682,9 +682,9 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
           <span className="font-medium truncate flex-1">
             {isAircraft
               ? 'Aircraft'
-              : c.name && c.name !== subtypeLabel(c.source_type, c.subtype)
+              : c.name && !c.name.startsWith(subtypeLabel(c.source_type, c.subtype))
                 ? `${c.name} — ${subtypeLabel(c.source_type, c.subtype)}`
-                : subtypeLabel(c.source_type, c.subtype)}
+                : (c.name || subtypeLabel(c.source_type, c.subtype))}
           </span>
           {!isAircraft && (
             <span className="text-muted-foreground/60 shrink-0">{formatDist(c.distance_m)}</span>
