@@ -181,11 +181,11 @@ C₃ accounts for thick barriers: 1.0 when edges are far apart, up to 3.0 when c
 Terrain profile sampled from DEM (Copernicus GLO-30 primary, SRTM fallback). Receiver at **4.0m** above ground.
 
 ### 3.6 Building screening (ISO 9613-2, per-band)
-Samples building height every ~50m along source-receiver path. Finds tallest building above line-of-sight, then computes path difference using full 3D geometry:
+Samples building height from Overture Maps 30m raster every ~50m along source-receiver path. Finds tallest building above line-of-sight, then computes path difference using full 3D geometry:
 ```
 S = (0, src_elev),  B = (d_horiz, bld_top),  R = (dist_m, rcv_alt)
 δ_bld = |S→B| + |B→R| - |S→R|    (3D detour minus direct slant path)
-A_screen,i = min(10, 10 × log₁₀(3 + 20 × δ_bld × f[i] / 340))
+A_screen,i = min(20, 10 × log₁₀(3 + 20 × δ_bld × f[i] / 340))
 ```
 
 ### 3.7 Vegetation (ISO 9613-2:2024 A.2.2)
@@ -356,7 +356,7 @@ ISO 9613-2 point source.
 | **Surface correction** | One scalar ΔL_WR per surface type | CNOSSOS Table F-4: per-band αm + βm, speed-dependent | ±1 dB. Our scalars are band-averaged approximations. |
 | **Ground effect** | CF[i] × G lookup | CNOSSOS §2.5.15-18: geometry-dependent Aground with height substitutions, separate source/middle/receiver zones | ±2 dB in complex terrain. Our CF model matches NoiseModelling v5 simplification. |
 | **Diffraction** | 10·log₁₀(3 + C₃·20·δ·f/340), caps 20/25 dB, C₃ for double edges | CNOSSOS §2.5.21-23: Rayleigh criterion, C'' convexity factor, ground-barrier interaction | ±3 dB behind barriers. C₃ now implemented; C'' convexity still simplified. |
-| **Building screening** | Max building height along path → per-band diffraction | ISO 9613-2: explicit obstacle modelling per edge | ±3 dB in complex urban. Our approach samples raster, not individual building edges. |
+| **Building screening** | Max building height along path (Overture 30m raster) → per-band diffraction, cap 20 dB | ISO 9613-2: explicit obstacle modelling per edge | ±3 dB in complex urban. Our approach samples raster, not individual building edges. |
 | **Urban reflection** | Per-receiver enclosure boost +0-5 dB | ISO 9613-2 §7.5: image-source reflection model | ±2 dB. Standard requires full reflection geometry, we use heuristic. |
 | **Meteorology** | NOT IMPLEMENTED (P_FAV exists but unused) | ISO 9613-2: Cmet = C₀(1 - 10·h_s/r), subtracted from downwind | ±2 dB at long range. TODO: implement. |
 | **Road categories** | 4 categories (no 4a mopeds, no 5) | CNOSSOS: 5 categories (4a, 4b, 5) | <0.5 dB. Mopeds rare, cat 5 is open. |
