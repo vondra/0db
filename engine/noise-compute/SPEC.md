@@ -295,9 +295,15 @@ Penalty: +5 dB evening, +10 dB night.
 
 ---
 
-## 5. Aircraft (Doc 29 4th Edition)
+## 5. Aircraft
 
-SEPARATE from ISO 9613-2. Doc 29 is empirical NPD-based, not path-tracing.
+Current public `aircraft` layer is a HYBRID of:
+- **Airborne overflights**: Doc 29-inspired empirical NPD model
+- **Airport ground ops**: runway / taxi / apron line sources propagated through Section 3 ISO 9613-2 path effects
+
+### 5.1 Airborne aircraft (Doc 29 4th Edition)
+
+SEPARATE from ISO 9613-2. Airborne Doc 29 is empirical NPD-based, not path-tracing.
 
 ### Master equation (Eq. 4-8b)
 ```
@@ -320,9 +326,13 @@ d_p = slant distance at CPA. β = elevation angle.
 - unknown / unmapped typecode falls back to **Generic**
 - `is_departure` is inferred from median climb rate (`ROCD > 500 fpm`)
 - day/evening/night period is approximated from timestamp using **UTC+1**
+- airport context uses `airport_lines.arrow` + `airport_areas.arrow`
+- candidate airport-ground segments are those with:
+  - `on_ground = true`, or
+  - both endpoints within **60 m AGL**
 - stale ground / taxi remnants are filtered by:
-  - `on_ground` flag outside airport context
-  - fallback low-AGL test (`<= 15 m AGL`) outside airport context
+  - `on_ground` with **no airport context**
+  - fallback low-AGL test (`<= 15 m AGL`) with **no airport context**
 
 ### Per-period energy
 ```
@@ -337,6 +347,64 @@ T_day = 43200s, T_evening = 14400s, T_night = 28800s
 
 ### Octave bands
 ❌ BROADBAND ONLY. NPD returns single SEL value. Do not fabricate per-band data.
+
+### 5.2 Airport ground ops (current implementation)
+
+Airport ground ops are a separate submodel inside the `aircraft` layer.
+
+Inputs:
+- observed ADS-B segments flagged `on_ground` or low-AGL near airports
+- airport geometry from `airport_lines.arrow` and `airport_areas.arrow`
+
+Ground-context classification:
+- contexts: `airport_line`, `airport_area`, `inferred`
+- airport line matching uses OSM width when present, otherwise default widths:
+  - runway / stopway **45 m**
+  - taxiway **18 m**
+- airport areas use polygon containment when available, otherwise area-based fallback radii
+- repeated multi-day clusters of `on_ground` segments with no OSM match can be upgraded to `inferred` airport context
+
+Ground-ops classes:
+- **runway_roll**
+- **taxi**
+- **apron_movement**
+
+Class fallback without explicit aeroway match:
+- `speed >= 40 kt` or `segment_length >= 500 m` → runway_roll
+- `speed >= 8 kt` → taxi
+- otherwise apron_movement
+
+Synthetic fill of missing ground coverage:
+- airports are grouped from airport lines / areas by airport key or coarse spatial cluster
+- only enabled when observed flights for a group >= **12**
+- missing coverage scale = `1 - covered_observed / all_observed`
+- if missing coverage > **5%**, synthetic surface segments are emitted from airport geometry:
+  - runway share **70%** at **70 kt**
+  - taxiway share **20%** at **18 kt**
+  - apron share **10%** at **12 kt**
+  - helipad / heliport apron speed **6 kt**
+- apron polygons are sampled on ~**90 m** grid, capped at **8** points
+- apron point emitters become short **24 m** micro-segments
+- tiny synthetic weights `< 0.05` are dropped
+
+Ground-ops line-source emission:
+- source height = **4.0 m**
+- profile-specific reference SEL table by aircraft family × class (`runway / taxi / apron`)
+- runway departure gets **+2 dB**
+- speed adjustment relative to nominal class speed is clamped to **±3 dB**
+- max radius:
+  - runway_roll **5 km**
+  - taxi **2.5 km**
+  - apron_movement **1.5 km**
+
+Ground-ops propagation:
+- converted to octave-band line-source emission
+- then propagated with the same Section 3 engine as other ground line sources
+- terrain / screening / vegetation ARE applied
+
+Pipeline/output note:
+- batch tiles merge airborne + ground ops into one `aircraft` layer (`source_type = 4`)
+- aircraft `.adj.bin` tiles are NOT currently emitted, even though popup breakdown computes path-effect variants for airport ground ops
 
 ---
 
@@ -485,6 +553,8 @@ ISO 9613-2 point source.
 | **Industrial profiles** | `nace_4digit -> site_subtype -> source_type` fallback chain | Standard inventories usually use audited source inventories / measured facility data | Keeps global coverage, but facility class can be approximate when registry match is missing. |
 | **Aircraft NPD** | 8 proxy profiles + heuristic typecode mapping | Doc 29: official ANP database | ±3 dB per aircraft type. We approximate, not certify. |
 | **Aircraft local time / ground filtering** | UTC+1 period approximation + airport-context stale-ground filter | Operational studies use airport-local time and curated trajectory cleaning | Timing and near-runway behaviour can be biased. |
+| **Aircraft ground ops** | ADS-B low-AGL / on-ground segments matched to airport geometry, plus synthetic runway/taxi/apron fill when coverage is incomplete | Airport studies usually use curated surface movement inventories and local operations data | Near-runway levels depend on airport geometry quality and ADS-B ground coverage. |
+| **Aircraft tile adjustments** | Aircraft ground propagation could expose separate terrain / screening / vegetation variants | Batch `aircraft` tiles currently bake ground-ops path effects into final Lden and do not emit `.adj.bin` | Map propagation toggles cannot isolate aircraft ground-ops attenuation separately. |
 | **Bridge/tunnel** | Bridge G=0, tunnel skip | No standard specifies this directly | Physically correct — bridge is hard surface, tunnel contains sound. |
 | **Oneway roads** | AADT × 0.5 | No standard | Approximation: one-way carries ~50% of two-way equivalent. |
 | **Private / service access heuristics** | Private roads ×0.1, service rail ×0.02 | No standard | Atlas-scale approximation where access restrictions imply low traffic. |

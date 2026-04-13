@@ -150,16 +150,16 @@ Source height: 0.5 m (CNOSSOS-EU §2.7.1, wheel-rail contact).
 
 ### Aircraft
 
-Aircraft noise uses real flight trajectories from ADS-B radar data, processed through NPD (Noise-Power-Distance) profiles inspired by ECAC Doc 29. Unlike roads and railways, aircraft propagation uses empirical NPD tables — not ISO 9613-2 physics.
+The aircraft layer combines two models: airborne overflights from ADS-B radar trajectories, processed through NPD (Noise-Power-Distance) profiles inspired by ECAC Doc 29, and airport ground operations (runway roll, taxi, apron movement) inferred from airport geometry and low-altitude ADS-B traces. The map shows both together; the popup splits them into airborne and ground ops.
 
-- **Data:** ADS-B trajectories from [adsb.lol](https://adsb.lol) (full year, all altitudes)
+- **Data:** ADS-B trajectories from [adsb.lol](https://adsb.lol) (full year, all altitudes) + airport runway / taxiway / apron geometry from OpenStreetMap
 - **8 proxy aircraft profiles:** B738, A320, A321, Widebody, Turboprop, BizJet, Light GA, Generic
-- **Limitations:** Aircraft type is approximated by 8 proxy profiles, the model is broadband (not octave-band), and period assignment uses simplified local-time conversion. This is useful for atlas-scale patterns, not certified airport contouring.
+- **Limitations:** Airborne aircraft type is approximated by 8 proxy profiles, airport ground ops are partly inferred or synthetically backfilled when surface coverage is incomplete, and period assignment uses simplified local-time conversion. This is useful for atlas-scale patterns, not certified airport contouring.
 
 <details>
-<summary>Technical: aircraft noise model (Doc 29-inspired)</summary>
+<summary>Technical: aircraft layer (Doc 29 + airport ground ops)</summary>
 
-**Inspired by:** [ECAC Doc 29](https://www.ecac-ceac.org/activities/environment/european-aviation-and-environment-working-group-eaeg/airmod) ([Vol 1](../standards/ecac-doc-29-vol1.pdf) · [Vol 2](../standards/ecac-doc-29-vol2.pdf) · [Vol 3](../standards/ecac-doc-29-vol3.pdf)). Not a certified implementation.
+**Airborne model inspired by:** [ECAC Doc 29](https://www.ecac-ceac.org/activities/environment/european-aviation-and-environment-working-group-eaeg/airmod) ([Vol 1](../standards/ecac-doc-29-vol1.pdf) · [Vol 2](../standards/ecac-doc-29-vol2.pdf) · [Vol 3](../standards/ecac-doc-29-vol3.pdf)). Not a certified implementation.
 
 Per-segment SEL at receiver:
 ```
@@ -187,6 +187,8 @@ where:
 These are project approximations, not official ANP data. Approach vs departure is inferred from climb/descent rate, and unknown typecodes fall back to a generic narrowbody-like profile.
 
 Airport-aware filtering removes obvious off-airport taxi remnants from ADS-B traces, but this is still not a certified airport ground-noise model.
+
+**Airport ground ops:** Low-altitude or on-ground ADS-B segments are matched to runway, taxiway and apron geometry. When observed surface coverage is incomplete, the model adds synthetic airport surface movements weighted by the airport layout. Those ground movements are then propagated as ordinary line sources with terrain, screening and vegetation, unlike airborne overflights.
 
 **Lden:** Per-period (day 12h, evening 4h +5 dB, night 8h +10 dB), standard [END 2002/49/EC](../standards/end-2002-49-ec.pdf).
 
@@ -300,7 +302,7 @@ Sound gets quieter as it travels. On flat open ground, a road drops about 3 dB e
 
 We simulate these effects for every source-receiver pair using [ISO 9613-2](https://www.iso.org/standard/74047.html) ([PDF](../standards/iso-9613-2-2024.pdf)) and [CNOSSOS-EU](https://eur-lex.europa.eu/eli/dir_del/2021/1226) ([PDF](../standards/cnossos-eu-2021-1226.pdf)), computed per 8 octave bands (63–8000 Hz), then A-weighted.
 
-All ground sources (road, railway, industrial, settlement) use the same propagation engine. Aircraft uses NPD tables where atmospheric absorption is already included.
+Road, railway, industrial, settlement, and aircraft ground ops use the same propagation engine. Airborne aircraft uses NPD tables where atmospheric absorption is already included.
 
 | Effect | What it does | Data source | Max effect | Toggleable |
 |--------|-------------|-------------|-----------|-----------|
@@ -432,7 +434,7 @@ Green (quiet, ~10 dB) → yellow (~45 dB) → orange (~55 dB) → red (~65 dB) �
 ### Toggles
 
 - **Source layers:** Roads, Railways, Aircraft, Buildings, Industrial — each toggleable independently
-- **Propagation effects:** Terrain, Screening (buildings + reflections), Vegetation — toggle off to see noise without that attenuation
+- **Propagation effects:** Terrain, Screening (buildings + reflections), Vegetation — toggle off to see noise without that attenuation on layers that expose propagation adjustments; aircraft popup still breaks out airport ground ops separately
 - **Overlays:** Quiet zones (areas below a threshold), Properties (real estate filtered by noise)
 
 ---
@@ -470,6 +472,7 @@ This model is an engineering approximation for a continental-scale noise atlas �
 | Aircraft type mapping | Doc 29 / ANP: aircraft-specific certified profiles | 8 proxy NPD profiles mapped from ADS-B typecodes | Roughly ±3 dB by aircraft family |
 | Aircraft timing | Airport-local time and operational preprocessing | Day/evening/night inferred with simplified UTC+1 conversion | Time-band bias outside Central Europe |
 | Aircraft ground preprocessing | Curated airport trajectory cleaning | Airport-aware ADS-B filtering removes obvious stale ground segments | Near-runway bias still possible |
+| Aircraft ground operations | Surface movement inventories and airport-local operational data | ADS-B low-altitude / on-ground segments matched to airport geometry, with synthetic runway/taxi/apron fill when coverage is incomplete | Near-runway levels depend on airport geometry quality and ADS-B surface coverage |
 | Receiver grid | END: facade receivers (4 m height, 2 m from wall) | H3 res-11 hex centers (24 m edge, 4 m height) | Area average, not per-facade |
 | Road corrections | CNOSSOS-EU: gradient, intersection, temperature | Not implemented | ±1–3 dB on steep/cold roads |
 | Building reflections | ISO 9613-2 §7.5: image-source ray tracing | Simplified: local enclosure heuristic, 0–5 dB boost | May underestimate in complex geometries |
@@ -499,6 +502,6 @@ Quiet Map is an open-source project. All computations are transparent and reprod
 - **Building height:** [Overture Maps](https://overturemaps.org/) building raster (30m), derived from Overture building footprints and height tags
 - **Land cover & vegetation:** [ESA WorldCover 2021](https://worldcover2021.esa.int/) (ESA, CC BY 4.0)
 - **Ground imperviousness:** [Copernicus Imperviousness Density](https://land.copernicus.eu/en/products/high-resolution-layer-imperviousness) (EEA, Europe)
-- **Road & railway data:** © [OpenStreetMap](https://www.openstreetmap.org/) contributors (ODbL)
+- **Road, railway & airport geometry:** © [OpenStreetMap](https://www.openstreetmap.org/) contributors (ODbL)
 - **Flight data:** [adsb.lol](https://adsb.lol/) (ADS-B community feeds)
 - **Map rendering:** [MapLibre GL JS](https://maplibre.org/) (open source)
