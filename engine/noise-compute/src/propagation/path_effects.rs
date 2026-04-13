@@ -10,8 +10,7 @@ use super::{diffraction, screening, vegetation};
 /// Compute terrain diffraction attenuation per band.
 ///
 /// Uses 5-point LOS fast-path check. If no obstruction detected, returns zero.
-/// Only computed for distances < 2000m (beyond that, terrain effect is negligible
-/// relative to geometric divergence).
+/// Applied at all distances — a hill at 3km still blocks sound.
 pub fn terrain_attenuation(
     rasters: &dyn RasterSampler,
     src_lat: f64, src_lon: f64,
@@ -82,7 +81,7 @@ pub fn screening_attenuation(
     let mut barrier_max_h = 0.0;
     let mut barrier_max_t = 0.5;
     for barrier in barriers {
-        if barrier.dist_m > dist_m + 100.0 { continue; }
+        if barrier.dist_m > dist_m + 100.0 { break; }
         let bx_m = (barrier.lon - src_lon) * meters_per_deg_lon;
         let by_m = (barrier.lat - src_lat) * 110_540.0;
         let t = (bx_m * path_dx_m + by_m * path_dy_m) / path_len_sq_m;
@@ -196,7 +195,7 @@ pub fn screening_attenuation_with_meta(
     let mut barrier_max_h = 0.0;
     let mut barrier_max_t = 0.5;
     for barrier in barriers {
-        if barrier.dist_m > dist_m + 100.0 { continue; }
+        if barrier.dist_m > dist_m + 100.0 { break; }
         let bx_m = (barrier.lon - src_lon) * meters_per_deg_lon;
         let by_m = (barrier.lat - src_lat) * 110_540.0;
         let t = (bx_m * path_dx_m + by_m * path_dy_m) / path_len_sq_m;

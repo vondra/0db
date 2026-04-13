@@ -426,6 +426,10 @@ fn collect_from_hex_data(
             });
         }
 
+        let airport_index = noise_compute::emission::aircraft::AirportIndex::new(
+            &all_airport_lines,
+            &all_airport_areas,
+        );
         let aircraft = query_aircraft_from_batches(
             &data.aircraft_batches,
             lat,
@@ -453,15 +457,13 @@ fn collect_from_hex_data(
             let needs_ground_context = seg.on_ground
                 || noise_compute::emission::aircraft::is_low_agl_segment_raw(&seg, rasters);
             if needs_ground_context {
-                seg.ground_context = noise_compute::emission::aircraft::segment_ground_context(
-                    &seg,
-                    &all_airport_lines,
-                    &all_airport_areas,
-                );
+                seg.ground_context = airport_index.ground_context(&seg);
             }
             all_aircraft.push(seg);
         }
     }
+
+    all_barriers.sort_unstable_by(|a, b| a.dist_m.partial_cmp(&b.dist_m).unwrap_or(std::cmp::Ordering::Equal));
 
     PointQueryData {
         roads: all_roads,
