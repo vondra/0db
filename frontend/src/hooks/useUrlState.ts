@@ -7,7 +7,7 @@ const DEFAULT_ZOOM = 8
 const ALL_SOURCE_IDS = ['road', 'railway', 'aircraft', 'building', 'industrial']
 export const ALL_PROPAGATION_IDS = ['terrain', 'screening', 'vegetation']
 
-export type SourceMode = 'off' | '0db' | 'shm' | 'diff'
+export type SourceMode = 'off' | '0db' | 'end' | 'diff'
 
 export interface UrlState {
   lat: number
@@ -64,7 +64,7 @@ function parseHash(): UrlState {
   if (smParam) {
     for (const entry of smParam.split(',')) {
       const [id, mode] = entry.split(':')
-      if (ALL_SOURCE_IDS.includes(id) && ['shm', 'diff'].includes(mode)) {
+      if (ALL_SOURCE_IDS.includes(id) && ['end', 'diff'].includes(mode)) {
         sourceModes[id] = mode as SourceMode
       }
     }

@@ -7,22 +7,22 @@ interface Source {
   label: string
   tooltip: string
   icon: ReactNode
-  hasShmModes: boolean
+  hasEndModes: boolean
 }
 
 const SOURCES: Source[] = [
-  { id: 'road', label: 'Roads', tooltip: 'Car, truck, and motorcycle traffic noise', icon: <Car className="size-4" />, hasShmModes: true },
-  { id: 'railway', label: 'Railways', tooltip: 'Trains, trams, and freight lines', icon: <TrainFront className="size-4" />, hasShmModes: true },
-  { id: 'aircraft', label: 'Aircraft', tooltip: 'Flight paths from ADS-B radar data', icon: <Plane className="size-4" />, hasShmModes: true },
-  { id: 'building', label: 'Buildings', tooltip: 'Everyday building noise — HVAC, activity, deliveries', icon: <Building2 className="size-4" />, hasShmModes: false },
-  { id: 'industrial', label: 'Industrial', tooltip: 'Factories, power plants, quarries', icon: <Factory className="size-4" />, hasShmModes: true },
+  { id: 'road', label: 'Roads', tooltip: 'Car, truck, and motorcycle traffic noise', icon: <Car className="size-4" />, hasEndModes: true },
+  { id: 'railway', label: 'Railways', tooltip: 'Trains, trams, and freight lines', icon: <TrainFront className="size-4" />, hasEndModes: true },
+  { id: 'aircraft', label: 'Aircraft', tooltip: 'Flight paths from ADS-B radar data', icon: <Plane className="size-4" />, hasEndModes: true },
+  { id: 'building', label: 'Buildings', tooltip: 'Everyday building noise — HVAC, activity, deliveries', icon: <Building2 className="size-4" />, hasEndModes: false },
+  { id: 'industrial', label: 'Industrial', tooltip: 'Factories, power plants, quarries', icon: <Factory className="size-4" />, hasEndModes: true },
 ]
 
 export const ALL_SOURCE_IDS = SOURCES.map(s => s.id)
 
-const SHM_MODES: { mode: SourceMode; label: string }[] = [
+const END_MODES: { mode: SourceMode; label: string }[] = [
   { mode: '0db', label: '0db' },
-  { mode: 'shm', label: 'SHM' },
+  { mode: 'end', label: 'END' },
   { mode: 'diff', label: 'Diff' },
 ]
 
@@ -40,7 +40,7 @@ export default function SourceToggles({ activeSources, sourceModes, onToggleSour
         const active = activeSources.has(source.id)
         const currentMode = sourceModes[source.id] ?? '0db'
 
-        if (!source.hasShmModes) {
+        if (!source.hasEndModes) {
           // Buildings: simple on/off toggle (same as before)
           return (
             <button
@@ -88,7 +88,7 @@ export default function SourceToggles({ activeSources, sourceModes, onToggleSour
             </button>
             <span className="flex-1" />
             <span className="flex gap-0.5">
-              {SHM_MODES.map(({ mode, label }) => {
+              {END_MODES.map(({ mode, label }) => {
                 const isActive = active && currentMode === mode
                 return (
                   <button
