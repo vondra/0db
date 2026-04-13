@@ -1118,16 +1118,11 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
         <div className="flex items-baseline gap-1.5 text-xs px-0">
           <span className="font-medium truncate flex-1">
             {isAircraft
-              ? (c.name || (aircraftAirborne ? 'Aircraft - airborne' : 'Aircraft - ground ops'))
-              : c.name && !c.name.startsWith(subtypeLabel(c.source_type, c.subtype))
-                ? `${c.name} — ${subtypeLabel(c.source_type, c.subtype)}`
-                : (c.name || subtypeLabel(c.source_type, c.subtype))}
+              ? (c.name || (aircraftAirborne ? 'Airborne aircraft' : 'Ground operations'))
+              : (c.name || subtypeLabel(c.source_type, c.subtype))}
           </span>
           {(!isAircraft || aircraftGroundOps) && (
             <span className="text-muted-foreground/60 shrink-0">{formatDist(c.distance_m)}</span>
-          )}
-          {tier1Summary && (
-            <span className="text-muted-foreground/60 shrink-0 text-[10px]">{tier1Summary}</span>
           )}
           <span
             className="font-bold shrink-0 ml-1"
@@ -1145,6 +1140,13 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
 
       {expanded && (
         <div className="mt-1 ml-5 mb-1 text-[11px] leading-relaxed font-mono text-muted-foreground">
+          {/* Source type + activity summary — hidden from collapsed row */}
+          {!isAircraft && c.name && (
+            <div className="text-muted-foreground/60 mb-0.5">{subtypeLabel(c.source_type, c.subtype)}</div>
+          )}
+          {tier1Summary && (
+            <div className="text-muted-foreground/60 mb-0.5">{tier1Summary}</div>
+          )}
           {aircraftAirborne ? (
             <>
               {lineRow('Observed flights/day', aircraftAirborne.observed_flights_per_day.toFixed(1))}
@@ -1275,7 +1277,7 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
                 {data.total_lden.toFixed(1)} dB
               </DataPoint>
             </span>
-            <div className="text-right">
+            <div className="text-right pr-6">
               <div className="text-xs text-muted-foreground/60 font-mono leading-tight">
                 {data.h3_center[0].toFixed(4)}, {data.h3_center[1].toFixed(4)}
               </div>
