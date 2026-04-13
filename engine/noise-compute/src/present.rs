@@ -12,9 +12,12 @@ pub fn display_count(contributors: &[Contributor]) -> usize {
     contributors.iter().filter(|c| is_displayable(c)).count()
 }
 
-pub fn finalize_popup_contributors(mut contributors: Vec<Contributor>, top_n: usize) -> Vec<Contributor> {
-    use std::collections::HashMap;
+pub fn finalize_popup_contributors(
+    mut contributors: Vec<Contributor>,
+    top_n: usize,
+) -> Vec<Contributor> {
     use crate::types::SourceKind;
+    use std::collections::HashMap;
 
     contributors.retain(is_displayable);
     contributors.sort_by(|a, b| {
@@ -45,7 +48,10 @@ pub fn finalize_popup_contributors(mut contributors: Vec<Contributor>, top_n: us
     });
 
     for contributor in guaranteed {
-        if !contributors.iter().any(|existing| existing.source_type == contributor.source_type) {
+        if !contributors
+            .iter()
+            .any(|existing| existing.source_type == contributor.source_type)
+        {
             contributors.push(contributor);
         }
     }
@@ -67,8 +73,18 @@ mod tests {
             name: String::new(),
             subtype: String::new(),
             distance_m: 0.0,
-            periods: NoisePeriods { ld_db: lden_db, le_db: lden_db, ln_db: lden_db, lden_db },
-            periods_free: NoisePeriods { ld_db: lden_db, le_db: lden_db, ln_db: lden_db, lden_db },
+            periods: NoisePeriods {
+                ld_db: lden_db,
+                le_db: lden_db,
+                ln_db: lden_db,
+                lden_db,
+            },
+            periods_free: NoisePeriods {
+                ld_db: lden_db,
+                le_db: lden_db,
+                ln_db: lden_db,
+                lden_db,
+            },
             emission_db: 0.0,
             baseline: PropagationBaseline::default(),
             terrain: TerrainBreakdown::default(),
@@ -96,6 +112,8 @@ mod tests {
         assert!(shown.iter().all(|c| c.periods.lden_db >= 0.0));
         assert!(shown.iter().any(|c| c.source_type == SourceKind::Road));
         assert!(shown.iter().any(|c| c.source_type == SourceKind::Railway));
-        assert!(shown.iter().any(|c| c.source_type == SourceKind::Industrial));
+        assert!(shown
+            .iter()
+            .any(|c| c.source_type == SourceKind::Industrial));
     }
 }

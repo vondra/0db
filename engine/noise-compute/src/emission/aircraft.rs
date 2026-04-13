@@ -9,6 +9,7 @@
 //!
 //! Ported from V33 engine (backend/native/noise-engine-v33/src/).
 
+use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -341,17 +342,28 @@ pub fn period_leq(total_energy: f64, n_days: f64, period_seconds: f64) -> f64 {
 // Single-segment SEL computation
 // ═══════════════════════════════════════════════════════════════════════════
 
+use crate::constants::{ALPHA_ATM, A_WEIGHTING};
 use crate::propagation::geo;
-use crate::types::{AircraftSegment, AirportArea, AirportLine, RasterSampler};
+use crate::types::{
+    AircraftSegment, AirportArea, AirportLine, RasterSampler, NUM_BANDS,
+    default_receiver_altitude_m,
+};
 
 /// Runtime fallback for stale prepared ADS-B data that still contains taxi or
 /// runway-roll segments. The authoritative fix is extractor-side `on_ground`
 /// filtering, but until the full dataset is rebuilt we also reject segments
 /// whose both endpoints stay close to local terrain.
 pub const GROUND_STALE_MAX_AGL_M: f64 = 15.0;
+pub const AIRPORT_GROUND_MAX_AGL_M: f64 = 60.0;
 pub const GROUND_CONTEXT_NONE: u8 = 0;
 pub const GROUND_CONTEXT_AIRPORT_LINE: u8 = 1;
 pub const GROUND_CONTEXT_AIRPORT_AREA: u8 = 2;
+pub const GROUND_CONTEXT_INFERRED: u8 = 3;
+pub const GROUND_OPS_KIND_NONE: u8 = 0;
+pub const GROUND_OPS_KIND_RUNWAY_ROLL: u8 = 1;
+pub const GROUND_OPS_KIND_TAXI: u8 = 2;
+pub const GROUND_OPS_KIND_APRON_MOVEMENT: u8 = 3;
+pub const GROUND_OPS_SOURCE_HEIGHT_M: f64 = 4.0;
 
 const AEROWAY_RUNWAY: u8 = 0;
 const AEROWAY_TAXIWAY: u8 = 1;
@@ -360,6 +372,206 @@ const AEROWAY_HELIPAD: u8 = 3;
 const AEROWAY_HELIPORT: u8 = 4;
 const AEROWAY_AERODROME: u8 = 5;
 const AEROWAY_STOPWAY: u8 = 6;
+const AIRPORT_MATCH_CELL_DEG: f64 = 250.0 / 111_320.0;
+const SURFACE_TRAFFIC_RADIUS_M: f64 = 2_500.0;
+const SURFACE_TRAFFIC_MAX_AGL_M: f64 = 600.0;
+const SURFACE_MIN_OBSERVED_FLIGHTS: usize = 12;
+const SURFACE_SYNTH_MIN_WEIGHT: f64 = 0.05;
+const SURFACE_RUNWAY_SHARE: f64 = 0.70;
+const SURFACE_TAXIWAY_SHARE: f64 = 0.20;
+const SURFACE_APRON_SHARE: f64 = 0.10;
+const SURFACE_RUNWAY_SPEED_KT: f32 = 70.0;
+const SURFACE_TAXIWAY_SPEED_KT: f32 = 18.0;
+const SURFACE_APRON_SPEED_KT: f32 = 12.0;
+const SURFACE_HELIPAD_SPEED_KT: f32 = 6.0;
+const SURFACE_AREA_POINT_SPACING_M: f64 = 90.0;
+const SURFACE_AREA_POINT_MAX: usize = 8;
+const SURFACE_POINT_SEGMENT_M: f64 = 24.0;
+const SURFACE_FLIGHT_ID_BASE: u64 = 0xff00_0000_0000_0000;
+const GROUND_OPS_REF_OFFSET_M: f64 = 25.0;
+const GROUND_OPS_SPEED_CLAMP_DB: f64 = 3.0;
+const GROUND_OPS_RUNWAY_DEPARTURE_BONUS_DB: f64 = 2.0;
+const GROUND_OPS_RUNWAY_SPECTRUM_SHAPE: [f64; NUM_BANDS] = [17.0, 14.0, 11.0, 8.0, 5.0, 2.0, -1.0, -5.0];
+const GROUND_OPS_TAXI_SPECTRUM_SHAPE: [f64; NUM_BANDS] = [14.0, 11.0, 8.0, 5.0, 2.0, 0.0, -3.0, -7.0];
+const GROUND_OPS_APRON_SPECTRUM_SHAPE: [f64; NUM_BANDS] =
+    [12.0, 9.0, 6.0, 3.0, 1.0, -1.0, -4.0, -8.0];
+const GROUND_OPS_REFERENCE_SEL_DB: [[f64; 3]; 8] = [
+    [104.0, 92.0, 86.0], // B738
+    [103.0, 91.0, 85.0], // A320
+    [105.0, 93.0, 87.0], // A321
+    [108.0, 96.0, 90.0], // Widebody
+    [97.0, 86.0, 80.0],  // Turboprop
+    [99.0, 88.0, 82.0],  // BizJet
+    [92.0, 82.0, 76.0],  // LightGA + Rotorcraft
+    [102.0, 90.0, 84.0], // Generic
+];
+const INFERRED_GROUND_CELL_M: f64 = 250.0;
+const INFERRED_GROUND_SUPPORT_RADIUS_M: f64 = 600.0;
+const INFERRED_GROUND_NEIGHBOR_CELLS: i32 = 3;
+const INFERRED_GROUND_MIN_EXTENT_M: f64 = 180.0;
+const INFERRED_GROUND_MIN_DAYS_FLOOR: usize = 2;
+const INFERRED_GROUND_MIN_DAY_RATIO: f64 = 0.01;
+const INFERRED_GROUND_MIN_FLIGHTS_FLOOR: usize = 6;
+const INFERRED_GROUND_MIN_SEGMENTS_FLOOR: usize = 8;
+const INFERRED_GROUND_MIN_SEGMENT_M: f32 = 80.0;
+const INFERRED_GROUND_MAX_SEGMENT_M: f32 = 6_000.0;
+const INFERRED_GROUND_MIN_SPEED_KT: f32 = 3.0;
+const INFERRED_GROUND_MAX_SPEED_KT: f32 = 80.0;
+
+pub struct AirportMatcher<'a> {
+    airport_lines: &'a [AirportLine],
+    airport_areas: &'a [AirportArea],
+    line_index: HashMap<(i32, i32), Vec<usize>>,
+    area_index: HashMap<(i32, i32), Vec<usize>>,
+}
+
+impl<'a> AirportMatcher<'a> {
+    pub fn new(airport_lines: &'a [AirportLine], airport_areas: &'a [AirportArea]) -> Self {
+        let mut line_index = HashMap::new();
+        for (idx, line) in airport_lines.iter().enumerate() {
+            let pad_m = airport_line_match_radius_m(line);
+            let center_lat = (line.start_lat + line.end_lat) * 0.5;
+            let lon_pad_deg = meters_to_lon_deg(center_lat, pad_m);
+            let lat_pad_deg = meters_to_lat_deg(pad_m);
+            let min_lat = line.start_lat.min(line.end_lat) - lat_pad_deg;
+            let max_lat = line.start_lat.max(line.end_lat) + lat_pad_deg;
+            let min_lon = line.start_lon.min(line.end_lon) - lon_pad_deg;
+            let max_lon = line.start_lon.max(line.end_lon) + lon_pad_deg;
+            insert_bbox_cells(&mut line_index, min_lat, max_lat, min_lon, max_lon, idx);
+        }
+
+        let mut area_index = HashMap::new();
+        for (idx, area) in airport_areas.iter().enumerate() {
+            let pad_m = airport_area_prune_radius_m(area);
+            let lon_pad_deg = meters_to_lon_deg(area.centroid_lat, pad_m);
+            let lat_pad_deg = meters_to_lat_deg(pad_m);
+            insert_bbox_cells(
+                &mut area_index,
+                area.centroid_lat - lat_pad_deg,
+                area.centroid_lat + lat_pad_deg,
+                area.centroid_lon - lon_pad_deg,
+                area.centroid_lon + lon_pad_deg,
+                idx,
+            );
+        }
+
+        Self {
+            airport_lines,
+            airport_areas,
+            line_index,
+            area_index,
+        }
+    }
+
+    pub fn segment_ground_context(&self, seg: &AircraftSegment) -> u8 {
+        let sample_points = [
+            (seg.start_lat, seg.start_lon),
+            (
+                (seg.start_lat + seg.end_lat) * 0.5,
+                (seg.start_lon + seg.end_lon) * 0.5,
+            ),
+            (seg.end_lat, seg.end_lon),
+        ];
+
+        if sample_points
+            .iter()
+            .any(|&(lat, lon)| self.point_matches_airport_area(lat, lon))
+        {
+            return GROUND_CONTEXT_AIRPORT_AREA;
+        }
+        if sample_points
+            .iter()
+            .any(|&(lat, lon)| self.point_matches_airport_line(lat, lon))
+        {
+            return GROUND_CONTEXT_AIRPORT_LINE;
+        }
+        GROUND_CONTEXT_NONE
+    }
+
+    pub fn segment_ground_ops_kind(&self, seg: &AircraftSegment) -> u8 {
+        let sample_points = [
+            (seg.start_lat, seg.start_lon),
+            (
+                (seg.start_lat + seg.end_lat) * 0.5,
+                (seg.start_lon + seg.end_lon) * 0.5,
+            ),
+            (seg.end_lat, seg.end_lon),
+        ];
+
+        let mut best_kind = GROUND_OPS_KIND_NONE;
+        for &(lat, lon) in &sample_points {
+            best_kind = pick_stronger_ground_ops_kind(best_kind, self.point_ground_ops_kind(lat, lon));
+        }
+        if best_kind != GROUND_OPS_KIND_NONE {
+            return best_kind;
+        }
+        if seg.ground_context != GROUND_CONTEXT_NONE || seg.on_ground || seg.surface_model {
+            return ground_ops_kind_fallback(seg);
+        }
+        GROUND_OPS_KIND_NONE
+    }
+
+    fn point_matches_airport_line(&self, lat: f64, lon: f64) -> bool {
+        self.line_index
+            .get(&airport_match_cell(lat, lon))
+            .into_iter()
+            .flat_map(|indices| indices.iter().copied())
+            .any(|idx| {
+                let line = &self.airport_lines[idx];
+                let cp = geo::closest_point_on_segment(
+                    lat,
+                    lon,
+                    line.start_lat,
+                    line.start_lon,
+                    line.end_lat,
+                    line.end_lon,
+                );
+                cp.dist_m <= airport_line_match_radius_m(line)
+            })
+    }
+
+    fn point_matches_airport_area(&self, lat: f64, lon: f64) -> bool {
+        self.area_index
+            .get(&airport_match_cell(lat, lon))
+            .into_iter()
+            .flat_map(|indices| indices.iter().copied())
+            .any(|idx| airport_area_contains_point(&self.airport_areas[idx], lat, lon))
+    }
+
+    fn point_ground_ops_kind(&self, lat: f64, lon: f64) -> u8 {
+        let mut best_kind = GROUND_OPS_KIND_NONE;
+        if let Some(indices) = self.area_index.get(&airport_match_cell(lat, lon)) {
+            for &idx in indices {
+                if airport_area_contains_point(&self.airport_areas[idx], lat, lon) {
+                    best_kind = pick_stronger_ground_ops_kind(
+                        best_kind,
+                        ground_ops_kind_from_aeroway_type(self.airport_areas[idx].aeroway_type),
+                    );
+                }
+            }
+        }
+        if let Some(indices) = self.line_index.get(&airport_match_cell(lat, lon)) {
+            for &idx in indices {
+                let line = &self.airport_lines[idx];
+                let cp = geo::closest_point_on_segment(
+                    lat,
+                    lon,
+                    line.start_lat,
+                    line.start_lon,
+                    line.end_lat,
+                    line.end_lon,
+                );
+                if cp.dist_m <= airport_line_match_radius_m(line) {
+                    best_kind = pick_stronger_ground_ops_kind(
+                        best_kind,
+                        ground_ops_kind_from_aeroway_type(line.aeroway_type),
+                    );
+                }
+            }
+        }
+        best_kind
+    }
+}
 
 /// Pre-indexed airport geometries with AABB pre-filter.
 /// Build once per hex, reuse for all 2M+ segments — avoids O(segments × geometries) brute-force.
@@ -449,7 +661,7 @@ impl<'a> AirportIndex<'a> {
 
         if sample_points
             .iter()
-            .any(|&(lat, lon)| point_matches_airport_area(lat, lon, self.areas))
+            .any(|&(lat, lon)| self.point_matches_airport_area(lat, lon))
         {
             return GROUND_CONTEXT_AIRPORT_AREA;
         }
@@ -460,6 +672,51 @@ impl<'a> AirportIndex<'a> {
             return GROUND_CONTEXT_AIRPORT_LINE;
         }
         GROUND_CONTEXT_NONE
+    }
+
+    pub fn ground_ops_kind(&self, seg: &AircraftSegment) -> u8 {
+        if self.is_empty() {
+            return if seg.on_ground || seg.surface_model {
+                ground_ops_kind_fallback(seg)
+            } else {
+                GROUND_OPS_KIND_NONE
+            };
+        }
+        let seg_lat_min = seg.start_lat.min(seg.end_lat);
+        let seg_lat_max = seg.start_lat.max(seg.end_lat);
+        let seg_lon_min = seg.start_lon.min(seg.end_lon);
+        let seg_lon_max = seg.start_lon.max(seg.end_lon);
+        if seg_lat_max < self.global_lat_min
+            || seg_lat_min > self.global_lat_max
+            || seg_lon_max < self.global_lon_min
+            || seg_lon_min > self.global_lon_max
+        {
+            return if seg.on_ground || seg.surface_model {
+                ground_ops_kind_fallback(seg)
+            } else {
+                GROUND_OPS_KIND_NONE
+            };
+        }
+
+        let sample_points = [
+            (seg.start_lat, seg.start_lon),
+            (
+                (seg.start_lat + seg.end_lat) * 0.5,
+                (seg.start_lon + seg.end_lon) * 0.5,
+            ),
+            (seg.end_lat, seg.end_lon),
+        ];
+        let mut best_kind = GROUND_OPS_KIND_NONE;
+        for &(lat, lon) in &sample_points {
+            best_kind = pick_stronger_ground_ops_kind(best_kind, self.point_ground_ops_kind(lat, lon));
+        }
+        if best_kind != GROUND_OPS_KIND_NONE {
+            return best_kind;
+        }
+        if seg.ground_context != GROUND_CONTEXT_NONE || seg.on_ground || seg.surface_model {
+            return ground_ops_kind_fallback(seg);
+        }
+        GROUND_OPS_KIND_NONE
     }
 
     fn point_matches_line(&self, lat: f64, lon: f64) -> bool {
@@ -482,6 +739,45 @@ impl<'a> AirportIndex<'a> {
         }
         false
     }
+
+    fn point_matches_airport_area(&self, lat: f64, lon: f64) -> bool {
+        self.areas
+            .iter()
+            .any(|area| airport_area_contains_point(area, lat, lon))
+    }
+
+    fn point_ground_ops_kind(&self, lat: f64, lon: f64) -> u8 {
+        let mut best_kind = GROUND_OPS_KIND_NONE;
+        for area in self.areas {
+            if airport_area_contains_point(area, lat, lon) {
+                best_kind = pick_stronger_ground_ops_kind(
+                    best_kind,
+                    ground_ops_kind_from_aeroway_type(area.aeroway_type),
+                );
+            }
+        }
+        for (i, line) in self.lines.iter().enumerate() {
+            let bb = &self.line_bbox[i];
+            if lat < bb[0] || lat > bb[1] || lon < bb[2] || lon > bb[3] {
+                continue;
+            }
+            let cp = geo::closest_point_on_segment(
+                lat,
+                lon,
+                line.start_lat,
+                line.start_lon,
+                line.end_lat,
+                line.end_lon,
+            );
+            if cp.dist_m <= airport_line_match_radius_m(line) {
+                best_kind = pick_stronger_ground_ops_kind(
+                    best_kind,
+                    ground_ops_kind_from_aeroway_type(line.aeroway_type),
+                );
+            }
+        }
+        best_kind
+    }
 }
 
 pub fn segment_ground_context(
@@ -489,28 +785,180 @@ pub fn segment_ground_context(
     airport_lines: &[AirportLine],
     airport_areas: &[AirportArea],
 ) -> u8 {
-    let sample_points = [
-        (seg.start_lat, seg.start_lon),
-        (
-            (seg.start_lat + seg.end_lat) * 0.5,
-            (seg.start_lon + seg.end_lon) * 0.5,
-        ),
-        (seg.end_lat, seg.end_lon),
-    ];
+    AirportMatcher::new(airport_lines, airport_areas).segment_ground_context(seg)
+}
 
-    if sample_points
-        .iter()
-        .any(|&(lat, lon)| point_matches_airport_area(lat, lon, airport_areas))
-    {
-        return GROUND_CONTEXT_AIRPORT_AREA;
+pub fn segment_ground_ops_kind(
+    seg: &AircraftSegment,
+    airport_lines: &[AirportLine],
+    airport_areas: &[AirportArea],
+) -> u8 {
+    AirportMatcher::new(airport_lines, airport_areas).segment_ground_ops_kind(seg)
+}
+
+pub fn is_ground_ops_segment(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
+    seg.surface_model || is_airport_ground_segment(seg, rasters)
+}
+
+pub fn resolve_ground_ops_kind(seg: &AircraftSegment) -> u8 {
+    if seg.ground_ops_kind != GROUND_OPS_KIND_NONE {
+        seg.ground_ops_kind
+    } else if seg.ground_context != GROUND_CONTEXT_NONE || seg.on_ground || seg.surface_model {
+        ground_ops_kind_fallback(seg)
+    } else {
+        GROUND_OPS_KIND_NONE
     }
-    if sample_points
-        .iter()
-        .any(|&(lat, lon)| point_matches_airport_line(lat, lon, airport_lines))
-    {
-        return GROUND_CONTEXT_AIRPORT_LINE;
+}
+
+fn pick_stronger_ground_ops_kind(current: u8, candidate: u8) -> u8 {
+    if ground_ops_kind_priority(candidate) > ground_ops_kind_priority(current) {
+        candidate
+    } else {
+        current
     }
-    GROUND_CONTEXT_NONE
+}
+
+fn ground_ops_kind_priority(kind: u8) -> u8 {
+    match kind {
+        GROUND_OPS_KIND_RUNWAY_ROLL => 3,
+        GROUND_OPS_KIND_TAXI => 2,
+        GROUND_OPS_KIND_APRON_MOVEMENT => 1,
+        _ => 0,
+    }
+}
+
+fn ground_ops_kind_from_aeroway_type(aeroway_type: u8) -> u8 {
+    match aeroway_type {
+        AEROWAY_RUNWAY | AEROWAY_STOPWAY => GROUND_OPS_KIND_RUNWAY_ROLL,
+        AEROWAY_TAXIWAY => GROUND_OPS_KIND_TAXI,
+        AEROWAY_APRON | AEROWAY_HELIPAD | AEROWAY_HELIPORT => GROUND_OPS_KIND_APRON_MOVEMENT,
+        _ => GROUND_OPS_KIND_NONE,
+    }
+}
+
+fn ground_ops_kind_fallback(seg: &AircraftSegment) -> u8 {
+    if seg.speed_kt >= 40.0 || seg.segment_length_m >= 500.0 {
+        GROUND_OPS_KIND_RUNWAY_ROLL
+    } else if seg.speed_kt >= 8.0 {
+        GROUND_OPS_KIND_TAXI
+    } else {
+        GROUND_OPS_KIND_APRON_MOVEMENT
+    }
+}
+
+pub fn infer_repeated_ground_context(segments: &mut [AircraftSegment], n_days: u16) -> usize {
+    #[derive(Clone, Copy)]
+    struct Candidate {
+        seg_idx: usize,
+        flight_id: u64,
+        date_id: i16,
+        mid_lat: f64,
+        mid_lon: f64,
+    }
+
+    let mut candidates = Vec::new();
+    let mut cell_index: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+
+    for (seg_idx, seg) in segments.iter().enumerate() {
+        if !is_inferred_ground_candidate(seg) {
+            continue;
+        }
+        let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
+        let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
+        let candidate_idx = candidates.len();
+        candidates.push(Candidate {
+            seg_idx,
+            flight_id: seg.flight_id,
+            date_id: seg.date_id,
+            mid_lat,
+            mid_lon,
+        });
+        cell_index
+            .entry(inferred_ground_cell(mid_lat, mid_lon))
+            .or_default()
+            .push(candidate_idx);
+    }
+
+    if candidates.len() < INFERRED_GROUND_MIN_SEGMENTS_FLOOR {
+        return 0;
+    }
+
+    let min_days = ((n_days as f64) * INFERRED_GROUND_MIN_DAY_RATIO)
+        .ceil()
+        .max(INFERRED_GROUND_MIN_DAYS_FLOOR as f64) as usize;
+    let min_flights = (min_days * 2).max(INFERRED_GROUND_MIN_FLIGHTS_FLOOR);
+    let min_segments = (min_days * 2).max(INFERRED_GROUND_MIN_SEGMENTS_FLOOR);
+    let mut marked = Vec::new();
+
+    for cand in &candidates {
+        let (cy, cx) = inferred_ground_cell(cand.mid_lat, cand.mid_lon);
+        let mut support_segments = 0usize;
+        let mut support_days: HashSet<i16> = HashSet::new();
+        let mut support_flights: HashSet<u64> = HashSet::new();
+        let mut lat_min = cand.mid_lat;
+        let mut lat_max = cand.mid_lat;
+        let mut lon_min = cand.mid_lon;
+        let mut lon_max = cand.mid_lon;
+
+        for y in cy - INFERRED_GROUND_NEIGHBOR_CELLS..=cy + INFERRED_GROUND_NEIGHBOR_CELLS {
+            for x in cx - INFERRED_GROUND_NEIGHBOR_CELLS..=cx + INFERRED_GROUND_NEIGHBOR_CELLS {
+                let Some(neighbors) = cell_index.get(&(y, x)) else {
+                    continue;
+                };
+                for &other_idx in neighbors {
+                    let other = candidates[other_idx];
+                    if geo::flat_dist(cand.mid_lat, cand.mid_lon, other.mid_lat, other.mid_lon)
+                        > INFERRED_GROUND_SUPPORT_RADIUS_M
+                    {
+                        continue;
+                    }
+                    support_segments += 1;
+                    support_days.insert(other.date_id);
+                    support_flights.insert(other.flight_id);
+                    lat_min = lat_min.min(other.mid_lat);
+                    lat_max = lat_max.max(other.mid_lat);
+                    lon_min = lon_min.min(other.mid_lon);
+                    lon_max = lon_max.max(other.mid_lon);
+                }
+            }
+        }
+
+        let extent_m = geo::flat_dist(lat_min, lon_min, lat_max, lon_max);
+        if support_segments < min_segments
+            || support_days.len() < min_days
+            || support_flights.len() < min_flights
+            || extent_m < INFERRED_GROUND_MIN_EXTENT_M
+        {
+            continue;
+        }
+        marked.push(cand.seg_idx);
+    }
+
+    marked.sort_unstable();
+    marked.dedup();
+    for seg_idx in &marked {
+        segments[*seg_idx].ground_context = GROUND_CONTEXT_INFERRED;
+    }
+    marked.len()
+}
+
+fn is_inferred_ground_candidate(seg: &AircraftSegment) -> bool {
+    seg.on_ground
+        && !seg.surface_model
+        && seg.ground_context == GROUND_CONTEXT_NONE
+        && seg.segment_length_m >= INFERRED_GROUND_MIN_SEGMENT_M
+        && seg.segment_length_m <= INFERRED_GROUND_MAX_SEGMENT_M
+        && seg.speed_kt >= INFERRED_GROUND_MIN_SPEED_KT
+        && seg.speed_kt <= INFERRED_GROUND_MAX_SPEED_KT
+        && seg.count_weight > 0.0
+}
+
+fn inferred_ground_cell(lat: f64, lon: f64) -> (i32, i32) {
+    let cell_deg = INFERRED_GROUND_CELL_M / 111_320.0;
+    (
+        (lat / cell_deg).floor() as i32,
+        (lon / cell_deg).floor() as i32,
+    )
 }
 
 pub fn is_ground_stale_segment(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
@@ -524,23 +972,36 @@ pub fn is_ground_stale_segment(seg: &AircraftSegment, rasters: &dyn RasterSample
 }
 
 pub fn is_low_agl_segment_raw(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
-    let start_agl = seg.start_alt_m as f64 - rasters.elevation(seg.start_lat, seg.start_lon);
-    let end_agl = seg.end_alt_m as f64 - rasters.elevation(seg.end_lat, seg.end_lon);
+    let (start_agl, end_agl) = segment_agl(seg, rasters);
     start_agl <= GROUND_STALE_MAX_AGL_M && end_agl <= GROUND_STALE_MAX_AGL_M
 }
 
-fn point_matches_airport_line(lat: f64, lon: f64, airport_lines: &[AirportLine]) -> bool {
-    airport_lines.iter().any(|line| {
-        let cp = geo::closest_point_on_segment(
-            lat,
-            lon,
-            line.start_lat,
-            line.start_lon,
-            line.end_lat,
-            line.end_lon,
-        );
-        cp.dist_m <= airport_line_match_radius_m(line)
-    })
+pub fn is_airport_ground_segment(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
+    if seg.ground_context == GROUND_CONTEXT_NONE {
+        return false;
+    }
+    if seg.on_ground {
+        return true;
+    }
+    let (start_agl, end_agl) = segment_agl(seg, rasters);
+    start_agl <= AIRPORT_GROUND_MAX_AGL_M && end_agl <= AIRPORT_GROUND_MAX_AGL_M
+}
+
+pub fn is_airport_context_candidate_raw(
+    seg: &AircraftSegment,
+    rasters: &dyn RasterSampler,
+) -> bool {
+    if seg.on_ground {
+        return true;
+    }
+    let (start_agl, end_agl) = segment_agl(seg, rasters);
+    start_agl <= AIRPORT_GROUND_MAX_AGL_M && end_agl <= AIRPORT_GROUND_MAX_AGL_M
+}
+
+fn segment_agl(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> (f64, f64) {
+    let start_agl = seg.start_alt_m as f64 - rasters.elevation(seg.start_lat, seg.start_lon);
+    let end_agl = seg.end_alt_m as f64 - rasters.elevation(seg.end_lat, seg.end_lon);
+    (start_agl, end_agl)
 }
 
 fn airport_line_match_radius_m(line: &AirportLine) -> f64 {
@@ -563,12 +1024,6 @@ fn default_airport_line_width_m(aeroway_type: u8) -> f64 {
         AEROWAY_TAXIWAY => 18.0,
         _ => 20.0,
     }
-}
-
-fn point_matches_airport_area(lat: f64, lon: f64, airport_areas: &[AirportArea]) -> bool {
-    airport_areas
-        .iter()
-        .any(|area| airport_area_contains_point(area, lat, lon))
 }
 
 fn airport_area_contains_point(area: &AirportArea, lat: f64, lon: f64) -> bool {
@@ -604,6 +1059,691 @@ fn airport_area_fallback_radius_m(area: &AirportArea) -> f64 {
     area_radius.max(min_radius)
 }
 
+fn airport_match_cell(lat: f64, lon: f64) -> (i32, i32) {
+    (
+        (lat / AIRPORT_MATCH_CELL_DEG).floor() as i32,
+        (lon / AIRPORT_MATCH_CELL_DEG).floor() as i32,
+    )
+}
+
+fn meters_to_lat_deg(meters: f64) -> f64 {
+    meters / 110_540.0
+}
+
+fn meters_to_lon_deg(lat: f64, meters: f64) -> f64 {
+    let cos_lat = lat.to_radians().cos().abs().max(0.2);
+    meters / (111_320.0 * cos_lat)
+}
+
+fn insert_bbox_cells(
+    index: &mut HashMap<(i32, i32), Vec<usize>>,
+    min_lat: f64,
+    max_lat: f64,
+    min_lon: f64,
+    max_lon: f64,
+    item_idx: usize,
+) {
+    let y0 = (min_lat / AIRPORT_MATCH_CELL_DEG).floor() as i32;
+    let y1 = (max_lat / AIRPORT_MATCH_CELL_DEG).floor() as i32;
+    let x0 = (min_lon / AIRPORT_MATCH_CELL_DEG).floor() as i32;
+    let x1 = (max_lon / AIRPORT_MATCH_CELL_DEG).floor() as i32;
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            index.entry((y, x)).or_default().push(item_idx);
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SurfaceEmitter {
+    start_lat: f64,
+    start_lon: f64,
+    end_lat: f64,
+    end_lon: f64,
+    segment_length_m: f64,
+    speed_kt: f32,
+    ground_context: u8,
+    ground_ops_kind: u8,
+    weight: f64,
+}
+
+pub struct GroundOpsLineEmission {
+    pub kind: u8,
+    pub source_height_m: f64,
+    pub max_radius_m: f64,
+    pub emission_day: [f32; NUM_BANDS],
+    pub emission_evening: [f32; NUM_BANDS],
+    pub emission_night: [f32; NUM_BANDS],
+}
+
+#[derive(Clone, Copy)]
+struct GroundOpsModel {
+    ref_sel_db: f64,
+    spectrum_shape: [f64; NUM_BANDS],
+    max_radius_m: f64,
+}
+
+#[derive(Clone, Copy)]
+struct SurfaceFlightObs {
+    flight_id: u64,
+    profile_idx: u8,
+    period: u8,
+    is_departure: bool,
+    score: f64,
+    has_ground_coverage: bool,
+}
+
+struct SurfaceGroup<'a> {
+    name: String,
+    airport_key: String,
+    centroid_lat: f64,
+    centroid_lon: f64,
+    match_radius_m: f64,
+    lines: Vec<&'a AirportLine>,
+    areas: Vec<&'a AirportArea>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AirportGroundGroup {
+    pub name: String,
+    pub airport_key: String,
+    pub centroid_lat: f64,
+    pub centroid_lon: f64,
+    pub match_radius_m: f64,
+}
+
+pub fn airport_ground_groups(
+    airport_lines: &[AirportLine],
+    airport_areas: &[AirportArea],
+) -> Vec<AirportGroundGroup> {
+    build_surface_groups(airport_lines, airport_areas)
+        .into_iter()
+        .map(|g| AirportGroundGroup {
+            name: g.name,
+            airport_key: g.airport_key,
+            centroid_lat: g.centroid_lat,
+            centroid_lon: g.centroid_lon,
+            match_radius_m: g.match_radius_m,
+        })
+        .collect()
+}
+
+pub fn assign_segment_to_airport_group(
+    seg: &AircraftSegment,
+    groups: &[AirportGroundGroup],
+    rasters: &dyn RasterSampler,
+) -> Option<usize> {
+    if groups.is_empty() {
+        return None;
+    }
+    let (start_agl, end_agl) = segment_agl(seg, rasters);
+    let max_agl = start_agl.max(end_agl);
+    if !seg.on_ground && !seg.surface_model && max_agl > SURFACE_TRAFFIC_MAX_AGL_M {
+        return None;
+    }
+    let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
+    let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
+    let mut best_idx = None;
+    let mut best_score = f64::MAX;
+    for (idx, group) in groups.iter().enumerate() {
+        let dist_m = geo::flat_dist(mid_lat, mid_lon, group.centroid_lat, group.centroid_lon);
+        if dist_m > group.match_radius_m {
+            continue;
+        }
+        let score = dist_m + max_agl.max(0.0) * 0.35;
+        if score < best_score {
+            best_score = score;
+            best_idx = Some(idx);
+        }
+    }
+    best_idx
+}
+
+pub fn synthesize_airport_surface_segments(
+    aircraft: &[AircraftSegment],
+    airport_lines: &[AirportLine],
+    airport_areas: &[AirportArea],
+    rasters: &dyn RasterSampler,
+    _n_days: u16,
+) -> Vec<AircraftSegment> {
+    if aircraft.is_empty() || (airport_lines.is_empty() && airport_areas.is_empty()) {
+        return Vec::new();
+    }
+
+    let groups = build_surface_groups(airport_lines, airport_areas);
+    if groups.is_empty() {
+        return Vec::new();
+    }
+
+    let mut group_obs: Vec<HashMap<u64, SurfaceFlightObs>> =
+        (0..groups.len()).map(|_| HashMap::new()).collect();
+
+    for seg in aircraft {
+        if seg.surface_model {
+            continue;
+        }
+        let (start_agl, end_agl) = segment_agl(seg, rasters);
+        let max_agl = start_agl.max(end_agl);
+        if !seg.on_ground && max_agl > SURFACE_TRAFFIC_MAX_AGL_M {
+            continue;
+        }
+
+        let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
+        let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
+        let mut best_idx = None;
+        let mut best_score = f64::MAX;
+
+        for (idx, group) in groups.iter().enumerate() {
+            let dist_m = geo::flat_dist(mid_lat, mid_lon, group.centroid_lat, group.centroid_lon);
+            if dist_m > group.match_radius_m {
+                continue;
+            }
+            let score = dist_m + max_agl.max(0.0) * 0.35;
+            if score < best_score {
+                best_score = score;
+                best_idx = Some(idx);
+            }
+        }
+
+        let Some(group_idx) = best_idx else {
+            continue;
+        };
+        let covered = seg.on_ground || is_airport_ground_segment(seg, rasters);
+        let entry = group_obs[group_idx]
+            .entry(seg.flight_id)
+            .or_insert(SurfaceFlightObs {
+                flight_id: seg.flight_id,
+                profile_idx: seg.profile_idx,
+                period: seg.period.min(2),
+                is_departure: seg.is_departure,
+                score: best_score,
+                has_ground_coverage: covered,
+            });
+        if best_score < entry.score {
+            *entry = SurfaceFlightObs {
+                flight_id: seg.flight_id,
+                profile_idx: seg.profile_idx,
+                period: seg.period.min(2),
+                is_departure: seg.is_departure,
+                score: best_score,
+                has_ground_coverage: entry.has_ground_coverage || covered,
+            };
+        } else if covered {
+            entry.has_ground_coverage = true;
+        }
+    }
+
+    let mut next_flight_id = SURFACE_FLIGHT_ID_BASE;
+    let mut out = Vec::new();
+
+    for (group, obs_map) in groups.iter().zip(group_obs.iter()) {
+        let observed = obs_map.len();
+        if observed < SURFACE_MIN_OBSERVED_FLIGHTS {
+            continue;
+        }
+
+        let covered = obs_map
+            .values()
+            .filter(|obs| obs.has_ground_coverage)
+            .count();
+        let missing_scale = (1.0 - covered as f64 / observed as f64).clamp(0.0, 1.0);
+        if missing_scale <= 0.05 {
+            continue;
+        }
+
+        let emitters = build_surface_emitters(group);
+        if emitters.is_empty() {
+            continue;
+        }
+
+        let mut buckets: HashMap<(u8, u8, bool), usize> = HashMap::new();
+        let mut seen = HashSet::with_capacity(obs_map.len());
+        for obs in obs_map.values() {
+            if !seen.insert(obs.flight_id) {
+                continue;
+            }
+            *buckets
+                .entry((obs.period.min(2), obs.profile_idx.min(7), obs.is_departure))
+                .or_default() += 1;
+        }
+
+        for ((period, profile_idx, is_departure), count) in buckets {
+            let bucket_weight = count as f64 * missing_scale;
+            if bucket_weight <= 0.0 {
+                continue;
+            }
+            for emitter in &emitters {
+                let count_weight = bucket_weight * emitter.weight;
+                if count_weight < SURFACE_SYNTH_MIN_WEIGHT {
+                    continue;
+                }
+                out.push(AircraftSegment {
+                    flight_id: next_flight_id,
+                    profile_idx,
+                    is_departure,
+                    on_ground: true,
+                    period,
+                    date_id: 0,
+                    start_lat: emitter.start_lat,
+                    start_lon: emitter.start_lon,
+                    start_alt_m: 0.0,
+                    end_lat: emitter.end_lat,
+                    end_lon: emitter.end_lon,
+                    end_alt_m: 0.0,
+                    speed_kt: emitter.speed_kt,
+                    segment_length_m: emitter.segment_length_m as f32,
+                    count_weight: count_weight as f32,
+                    surface_model: true,
+                    ground_context: emitter.ground_context,
+                    ground_ops_kind: emitter.ground_ops_kind,
+                });
+                next_flight_id = next_flight_id.wrapping_add(1);
+            }
+        }
+    }
+
+    out
+}
+
+fn build_surface_groups<'a>(
+    airport_lines: &'a [AirportLine],
+    airport_areas: &'a [AirportArea],
+) -> Vec<SurfaceGroup<'a>> {
+    #[derive(Default)]
+    struct GroupAccum<'a> {
+        name: String,
+        airport_key: String,
+        centroid_lat_sum: f64,
+        centroid_lon_sum: f64,
+        weight_sum: f64,
+        lines: Vec<&'a AirportLine>,
+        areas: Vec<&'a AirportArea>,
+    }
+
+    let mut groups: HashMap<String, GroupAccum<'a>> = HashMap::new();
+
+    for line in airport_lines {
+        let mid_lat = (line.start_lat + line.end_lat) * 0.5;
+        let mid_lon = (line.start_lon + line.end_lon) * 0.5;
+        let weight = line_length_weight(line);
+        let key = if !line.airport_key.is_empty() {
+            format!("id:{}", line.airport_key)
+        } else {
+            format!(
+                "cluster:{:.3}:{:.3}",
+                (mid_lat / 0.02).round(),
+                (mid_lon / 0.03).round()
+            )
+        };
+        let entry = groups.entry(key).or_default();
+        if entry.name.is_empty() && !line.name.is_empty() {
+            entry.name = line.name.clone();
+        }
+        if entry.airport_key.is_empty() && !line.airport_key.is_empty() {
+            entry.airport_key = line.airport_key.clone();
+        }
+        entry.centroid_lat_sum += mid_lat * weight;
+        entry.centroid_lon_sum += mid_lon * weight;
+        entry.weight_sum += weight;
+        entry.lines.push(line);
+    }
+
+    for area in airport_areas {
+        let weight = area_weight_measure(area);
+        let key = if !area.airport_key.is_empty() {
+            format!("id:{}", area.airport_key)
+        } else {
+            format!(
+                "cluster:{:.3}:{:.3}",
+                (area.centroid_lat / 0.02).round(),
+                (area.centroid_lon / 0.03).round()
+            )
+        };
+        let entry = groups.entry(key).or_default();
+        if entry.name.is_empty() && !area.name.is_empty() {
+            entry.name = area.name.clone();
+        }
+        if entry.airport_key.is_empty() && !area.airport_key.is_empty() {
+            entry.airport_key = area.airport_key.clone();
+        }
+        entry.centroid_lat_sum += area.centroid_lat * weight;
+        entry.centroid_lon_sum += area.centroid_lon * weight;
+        entry.weight_sum += weight;
+        entry.areas.push(area);
+    }
+
+    let mut out = Vec::with_capacity(groups.len());
+    for (_key, group) in groups {
+        if group.weight_sum <= 0.0 {
+            continue;
+        }
+        let centroid_lat = group.centroid_lat_sum / group.weight_sum;
+        let centroid_lon = group.centroid_lon_sum / group.weight_sum;
+        let mut extent_m = 0.0f64;
+        for line in &group.lines {
+            let mid_lat = (line.start_lat + line.end_lat) * 0.5;
+            let mid_lon = (line.start_lon + line.end_lon) * 0.5;
+            extent_m = extent_m.max(geo::flat_dist(mid_lat, mid_lon, centroid_lat, centroid_lon));
+        }
+        for area in &group.areas {
+            extent_m = extent_m.max(geo::flat_dist(
+                area.centroid_lat,
+                area.centroid_lon,
+                centroid_lat,
+                centroid_lon,
+            ));
+        }
+        out.push(SurfaceGroup {
+            name: group.name,
+            airport_key: group.airport_key,
+            centroid_lat,
+            centroid_lon,
+            match_radius_m: SURFACE_TRAFFIC_RADIUS_M + extent_m,
+            lines: group.lines,
+            areas: group.areas,
+        });
+    }
+
+    out.sort_by(|a, b| a.airport_key.cmp(&b.airport_key).then(a.name.cmp(&b.name)));
+    out
+}
+
+fn build_surface_emitters(group: &SurfaceGroup<'_>) -> Vec<SurfaceEmitter> {
+    let runway_lines: Vec<&AirportLine> = group
+        .lines
+        .iter()
+        .copied()
+        .filter(|line| matches!(line.aeroway_type, AEROWAY_RUNWAY | AEROWAY_STOPWAY))
+        .collect();
+    let taxi_lines: Vec<&AirportLine> = group
+        .lines
+        .iter()
+        .copied()
+        .filter(|line| line.aeroway_type == AEROWAY_TAXIWAY)
+        .collect();
+    let apron_areas: Vec<&AirportArea> = group
+        .areas
+        .iter()
+        .copied()
+        .filter(|area| {
+            matches!(
+                area.aeroway_type,
+                AEROWAY_APRON | AEROWAY_HELIPAD | AEROWAY_HELIPORT
+            )
+        })
+        .collect();
+
+    let mut categories = Vec::new();
+    if !runway_lines.is_empty() {
+        categories.push((
+            SURFACE_RUNWAY_SHARE,
+            build_line_emitters(&runway_lines, SURFACE_RUNWAY_SPEED_KT),
+        ));
+    }
+    if !taxi_lines.is_empty() {
+        categories.push((
+            SURFACE_TAXIWAY_SHARE,
+            build_line_emitters(&taxi_lines, SURFACE_TAXIWAY_SPEED_KT),
+        ));
+    }
+    if !apron_areas.is_empty() {
+        categories.push((SURFACE_APRON_SHARE, build_area_emitters(&apron_areas)));
+    }
+    if categories.is_empty() {
+        return Vec::new();
+    }
+
+    let total_share: f64 = categories.iter().map(|(share, _)| *share).sum();
+    let mut out = Vec::new();
+    for (share, mut emitters) in categories {
+        let category_share = share / total_share.max(1e-6);
+        let weight_sum: f64 = emitters.iter().map(|e| e.weight.max(0.0)).sum();
+        if weight_sum <= 0.0 {
+            continue;
+        }
+        for emitter in &mut emitters {
+            emitter.weight = category_share * emitter.weight / weight_sum;
+        }
+        out.extend(emitters);
+    }
+    out
+}
+
+fn build_line_emitters(lines: &[&AirportLine], speed_kt: f32) -> Vec<SurfaceEmitter> {
+    lines
+        .iter()
+        .map(|line| {
+            let segment_length_m =
+                geo::flat_dist(line.start_lat, line.start_lon, line.end_lat, line.end_lon)
+                    .max(10.0);
+            SurfaceEmitter {
+                start_lat: line.start_lat,
+                start_lon: line.start_lon,
+                end_lat: line.end_lat,
+                end_lon: line.end_lon,
+                segment_length_m,
+                speed_kt,
+                ground_context: GROUND_CONTEXT_AIRPORT_LINE,
+                ground_ops_kind: ground_ops_kind_from_aeroway_type(line.aeroway_type),
+                weight: line_length_weight(line),
+            }
+        })
+        .collect()
+}
+
+fn build_area_emitters(areas: &[&AirportArea]) -> Vec<SurfaceEmitter> {
+    let mut emitters = Vec::new();
+    for area in areas {
+        let speed_kt = if matches!(area.aeroway_type, AEROWAY_HELIPAD | AEROWAY_HELIPORT) {
+            SURFACE_HELIPAD_SPEED_KT
+        } else {
+            SURFACE_APRON_SPEED_KT
+        };
+        let points = surface_area_points(area);
+        if points.is_empty() {
+            continue;
+        }
+        let point_weight = area_weight_measure(area) / points.len() as f64;
+        for (lat, lon) in points {
+            let lon_off = meters_to_lon_deg(lat, SURFACE_POINT_SEGMENT_M * 0.5);
+            let segment_length_m = geo::flat_dist(lat, lon - lon_off, lat, lon + lon_off).max(10.0);
+            emitters.push(SurfaceEmitter {
+                start_lat: lat,
+                start_lon: lon - lon_off,
+                end_lat: lat,
+                end_lon: lon + lon_off,
+                segment_length_m,
+                speed_kt,
+                ground_context: GROUND_CONTEXT_AIRPORT_AREA,
+                ground_ops_kind: ground_ops_kind_from_aeroway_type(area.aeroway_type),
+                weight: point_weight,
+            });
+        }
+    }
+    emitters
+}
+
+fn surface_area_points(area: &AirportArea) -> Vec<(f64, f64)> {
+    if !area.polygon_wkb.is_empty() {
+        let mut points =
+            crate::wkb::wkb_grid_points(&area.polygon_wkb, SURFACE_AREA_POINT_SPACING_M);
+        if points.len() > SURFACE_AREA_POINT_MAX {
+            let step = points.len() as f64 / SURFACE_AREA_POINT_MAX as f64;
+            let mut sampled = Vec::with_capacity(SURFACE_AREA_POINT_MAX);
+            let mut cursor = 0.0f64;
+            while sampled.len() < SURFACE_AREA_POINT_MAX {
+                let idx = cursor.floor() as usize;
+                if let Some(pt) = points.get(idx) {
+                    sampled.push(*pt);
+                }
+                cursor += step;
+            }
+            points = sampled;
+        }
+        if !points.is_empty() {
+            return points;
+        }
+    }
+    vec![(area.centroid_lat, area.centroid_lon)]
+}
+
+fn line_length_weight(line: &AirportLine) -> f64 {
+    geo::flat_dist(line.start_lat, line.start_lon, line.end_lat, line.end_lon).max(30.0)
+}
+
+fn area_weight_measure(area: &AirportArea) -> f64 {
+    if area.area_m2 > 0.0 {
+        area.area_m2 as f64
+    } else {
+        5_000.0
+    }
+}
+
+pub fn build_ground_ops_line_emission(
+    seg: &AircraftSegment,
+    rasters: &dyn RasterSampler,
+    n_days: u16,
+) -> Option<GroundOpsLineEmission> {
+    if !is_ground_ops_segment(seg, rasters) || n_days == 0 {
+        return None;
+    }
+
+    let kind = resolve_ground_ops_kind(seg);
+    if kind == GROUND_OPS_KIND_NONE {
+        return None;
+    }
+    let model = ground_ops_model(seg, kind);
+
+    let ((ref_lat, ref_lon), ref_dist_m, ref_fraction) = ground_ops_reference_point(seg);
+    let cp = geo::closest_point_on_segment(
+        ref_lat,
+        ref_lon,
+        seg.start_lat,
+        seg.start_lon,
+        seg.end_lat,
+        seg.end_lon,
+    );
+    let cp_elev = rasters.elevation(cp.lat, cp.lon) + GROUND_OPS_SOURCE_HEIGHT_M;
+    let ref_ground_elev = rasters.elevation(ref_lat, ref_lon);
+    let ref_receiver_alt = default_receiver_altitude_m(ref_ground_elev);
+    let d_slant = geo::slant_dist(ref_dist_m, cp_elev, ref_receiver_alt).max(1.0);
+    let flc = geo::finite_line_correction(seg.segment_length_m as f64, ref_dist_m, ref_fraction);
+    let geo_div = 10.0 * (2.0 * PI * d_slant).log10();
+    let d_over_1000 = d_slant / 1000.0;
+    let leq_ref = period_leq(
+        (model.ref_sel_db * std::f64::consts::LN_10 * 0.1).exp() * seg.count_weight.max(0.0) as f64,
+        n_days as f64,
+        PERIOD_SECONDS[seg.period.min(2) as usize],
+    );
+    if !leq_ref.is_finite() {
+        return None;
+    }
+
+    let template_total = template_a_weighted_total(model.spectrum_shape, d_over_1000);
+    let total_emission = leq_ref + geo_div - flc - template_total;
+    let active = std::array::from_fn(|i| {
+        (total_emission + model.spectrum_shape[i]) as f32
+    });
+    let silent = [f32::NEG_INFINITY; NUM_BANDS];
+    let (emission_day, emission_evening, emission_night) = match seg.period.min(2) {
+        0 => (active, silent, silent),
+        1 => (silent, active, silent),
+        _ => (silent, silent, active),
+    };
+
+    Some(GroundOpsLineEmission {
+        kind,
+        source_height_m: GROUND_OPS_SOURCE_HEIGHT_M,
+        max_radius_m: model.max_radius_m,
+        emission_day,
+        emission_evening,
+        emission_night,
+    })
+}
+
+fn ground_ops_reference_point(seg: &AircraftSegment) -> ((f64, f64), f64, f64) {
+    let cp = geo::closest_point_on_segment(
+        (seg.start_lat + seg.end_lat) * 0.5,
+        (seg.start_lon + seg.end_lon) * 0.5,
+        seg.start_lat,
+        seg.start_lon,
+        seg.end_lat,
+        seg.end_lon,
+    );
+    let cp_lat = cp.lat;
+    let cp_lon = cp.lon;
+    let dx_m = geo::flat_dist(cp_lat, cp_lon, cp_lat, seg.end_lon)
+        * if seg.end_lon >= seg.start_lon { 1.0 } else { -1.0 };
+    let dy_m = geo::flat_dist(cp_lat, cp_lon, seg.end_lat, cp_lon)
+        * if seg.end_lat >= seg.start_lat { 1.0 } else { -1.0 };
+    let seg_len_m = (dx_m * dx_m + dy_m * dy_m).sqrt().max(1.0);
+    let nx_m = -dy_m / seg_len_m;
+    let ny_m = dx_m / seg_len_m;
+    let ref_lat = cp_lat + meters_to_lat_deg(ny_m * GROUND_OPS_REF_OFFSET_M);
+    let ref_lon = cp_lon + meters_to_lon_deg(cp_lat, nx_m * GROUND_OPS_REF_OFFSET_M);
+    ((ref_lat, ref_lon), GROUND_OPS_REF_OFFSET_M, cp.fraction)
+}
+
+fn ground_ops_max_radius_m(kind: u8) -> f64 {
+    match kind {
+        GROUND_OPS_KIND_RUNWAY_ROLL => 5_000.0,
+        GROUND_OPS_KIND_TAXI => 2_500.0,
+        GROUND_OPS_KIND_APRON_MOVEMENT => 1_500.0,
+        _ => 1_500.0,
+    }
+}
+
+fn template_a_weighted_total(shape: [f64; NUM_BANDS], d_over_1000: f64) -> f64 {
+    let c = std::f64::consts::LN_10 * 0.1;
+    let energy: f64 = (0..NUM_BANDS)
+        .map(|i| (shape[i] - ALPHA_ATM[i] * d_over_1000 + A_WEIGHTING[i]) * c)
+        .map(f64::exp)
+        .sum();
+    10.0 * energy.max(1e-30).log10()
+}
+
+fn ground_ops_model(seg: &AircraftSegment, kind: u8) -> GroundOpsModel {
+    let kind_idx = ground_ops_kind_index(kind);
+    let pidx = seg.profile_idx.min(7) as usize;
+    let mut ref_sel_db = GROUND_OPS_REFERENCE_SEL_DB[pidx][kind_idx];
+    if kind == GROUND_OPS_KIND_RUNWAY_ROLL && seg.is_departure {
+        ref_sel_db += GROUND_OPS_RUNWAY_DEPARTURE_BONUS_DB;
+    }
+
+    let nominal_speed_kt = match kind {
+        GROUND_OPS_KIND_RUNWAY_ROLL => SURFACE_RUNWAY_SPEED_KT as f64,
+        GROUND_OPS_KIND_TAXI => SURFACE_TAXIWAY_SPEED_KT as f64,
+        GROUND_OPS_KIND_APRON_MOVEMENT => SURFACE_APRON_SPEED_KT as f64,
+        _ => SURFACE_APRON_SPEED_KT as f64,
+    };
+    if seg.speed_kt > 1.0 {
+        let speed_adjust_db = 10.0 * ((seg.speed_kt as f64) / nominal_speed_kt.max(1.0)).log10();
+        ref_sel_db += speed_adjust_db.clamp(-GROUND_OPS_SPEED_CLAMP_DB, GROUND_OPS_SPEED_CLAMP_DB);
+    }
+
+    let spectrum_shape = match kind {
+        GROUND_OPS_KIND_RUNWAY_ROLL => GROUND_OPS_RUNWAY_SPECTRUM_SHAPE,
+        GROUND_OPS_KIND_TAXI => GROUND_OPS_TAXI_SPECTRUM_SHAPE,
+        GROUND_OPS_KIND_APRON_MOVEMENT => GROUND_OPS_APRON_SPECTRUM_SHAPE,
+        _ => GROUND_OPS_APRON_SPECTRUM_SHAPE,
+    };
+
+    GroundOpsModel {
+        ref_sel_db,
+        spectrum_shape,
+        max_radius_m: ground_ops_max_radius_m(kind),
+    }
+}
+
+fn ground_ops_kind_index(kind: u8) -> usize {
+    match kind {
+        GROUND_OPS_KIND_RUNWAY_ROLL => 0,
+        GROUND_OPS_KIND_TAXI => 1,
+        GROUND_OPS_KIND_APRON_MOVEMENT => 2,
+        _ => 2,
+    }
+}
+
 /// Compute SEL for a single aircraft segment at a receiver point.
 /// Returns (SEL_dB, CpaResult) or None if segment is too far / inaudible.
 pub fn segment_sel(
@@ -611,6 +1751,39 @@ pub fn segment_sel(
     rx_lat: f64,
     rx_lon: f64,
     rx_elev_m: f64,
+) -> Option<(f64, CpaResult)> {
+    segment_sel_with_overrides(
+        seg,
+        rx_lat,
+        rx_lon,
+        rx_elev_m,
+        seg.start_alt_m as f64,
+        seg.end_alt_m as f64,
+        false,
+    )
+}
+
+pub fn segment_sel_airport_ground(
+    seg: &AircraftSegment,
+    rx_lat: f64,
+    rx_lon: f64,
+    rx_elev_m: f64,
+    rasters: &dyn RasterSampler,
+) -> Option<(f64, CpaResult)> {
+    let start_alt_m =
+        (seg.start_alt_m as f64).max(rasters.elevation(seg.start_lat, seg.start_lon) + 4.0);
+    let end_alt_m = (seg.end_alt_m as f64).max(rasters.elevation(seg.end_lat, seg.end_lon) + 4.0);
+    segment_sel_with_overrides(seg, rx_lat, rx_lon, rx_elev_m, start_alt_m, end_alt_m, true)
+}
+
+fn segment_sel_with_overrides(
+    seg: &AircraftSegment,
+    rx_lat: f64,
+    rx_lon: f64,
+    rx_elev_m: f64,
+    start_alt_m: f64,
+    end_alt_m: f64,
+    airport_ground_mode: bool,
 ) -> Option<(f64, CpaResult)> {
     let profile = &PROFILES[seg.profile_idx.min(7) as usize];
 
@@ -620,10 +1793,10 @@ pub fn segment_sel(
         rx_elev_m,
         seg.start_lat,
         seg.start_lon,
-        seg.start_alt_m as f64,
+        start_alt_m,
         seg.end_lat,
         seg.end_lon,
-        seg.end_alt_m as f64,
+        end_alt_m,
     );
 
     // Skip beyond 12km (unified popup + pipeline cutoff)
@@ -642,7 +1815,11 @@ pub fn segment_sel(
     // WHY: Profile 6 is a mixed bucket (C172, PA28 + helicopters). Old code skipped lateral
     // attenuation for ALL profile 6, overestimating fixed-wing GA noise by up to 10.9 dB.
     // Helicopters technically don't have lateral attenuation, but they're ~10% of profile 6.
-    let lambda = lateral_attenuation(cpa.beta_deg, cpa.lateral_m);
+    let lambda = if airport_ground_mode {
+        0.0
+    } else {
+        lateral_attenuation(cpa.beta_deg, cpa.lateral_m)
+    };
 
     let di = delta_i(cpa.beta_deg, profile.installation);
 
@@ -841,6 +2018,9 @@ mod tests {
             speed_kt: 150.0,
             segment_length_m: 1100.0,
             ground_context: GROUND_CONTEXT_NONE,
+            ground_ops_kind: GROUND_OPS_KIND_NONE,
+            count_weight: 1.0,
+            surface_model: false,
         };
         let result = segment_sel(&seg, 50.005, 14.005, 300.0);
         assert!(result.is_some(), "should compute SEL for nearby segment");
@@ -871,6 +2051,9 @@ mod tests {
             speed_kt: 250.0,
             segment_length_m: 1100.0,
             ground_context: GROUND_CONTEXT_NONE,
+            ground_ops_kind: GROUND_OPS_KIND_NONE,
+            count_weight: 1.0,
+            surface_model: false,
         };
         let result = segment_sel(&seg, 50.0, 14.0, 300.0);
         assert!(result.is_none(), "should be None for far segment");
@@ -927,6 +2110,9 @@ mod tests {
             speed_kt: 35.0,
             segment_length_m: 300.0,
             ground_context: GROUND_CONTEXT_NONE,
+            ground_ops_kind: GROUND_OPS_KIND_NONE,
+            count_weight: 1.0,
+            surface_model: false,
         };
         assert!(is_ground_stale_segment(&seg, &FlatGround));
 
@@ -956,6 +2142,9 @@ mod tests {
             speed_kt: 35.0,
             segment_length_m: 90.0,
             ground_context: GROUND_CONTEXT_NONE,
+            ground_ops_kind: GROUND_OPS_KIND_NONE,
+            count_weight: 1.0,
+            surface_model: false,
         };
         let airport_lines = vec![AirportLine {
             osm_id: 1,
@@ -965,6 +2154,8 @@ mod tests {
             end_lat: 50.002,
             end_lon: 14.0,
             width_m: 45.0,
+            name: String::new(),
+            airport_key: String::new(),
         }];
         seg.ground_context = segment_ground_context(&seg, &airport_lines, &[]);
         assert_eq!(seg.ground_context, GROUND_CONTEXT_AIRPORT_LINE);
@@ -989,6 +2180,9 @@ mod tests {
             speed_kt: 20.0,
             segment_length_m: 20.0,
             ground_context: GROUND_CONTEXT_NONE,
+            ground_ops_kind: GROUND_OPS_KIND_NONE,
+            count_weight: 1.0,
+            surface_model: false,
         };
         let airport_areas = vec![AirportArea {
             osm_id: 2,
@@ -997,9 +2191,268 @@ mod tests {
             centroid_lon: 14.00015,
             polygon_wkb: String::new(),
             area_m2: 400.0,
+            name: String::new(),
+            airport_key: String::new(),
         }];
         seg.ground_context = segment_ground_context(&seg, &[], &airport_areas);
         assert_eq!(seg.ground_context, GROUND_CONTEXT_AIRPORT_AREA);
         assert!(!is_ground_stale_segment(&seg, &FlatGround));
+    }
+
+    #[test]
+    fn test_airport_ground_segment_detection() {
+        let off_airport = AircraftSegment {
+            flight_id: 1,
+            profile_idx: 7,
+            is_departure: false,
+            on_ground: false,
+            period: 0,
+            date_id: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            start_alt_m: 252.0,
+            end_lat: 50.0008,
+            end_lon: 14.0,
+            end_alt_m: 255.0,
+            speed_kt: 35.0,
+            segment_length_m: 90.0,
+            ground_context: GROUND_CONTEXT_NONE,
+            ground_ops_kind: GROUND_OPS_KIND_NONE,
+            count_weight: 1.0,
+            surface_model: false,
+        };
+        assert!(!is_airport_ground_segment(&off_airport, &FlatGround));
+
+        let airport_ground = AircraftSegment {
+            ground_context: GROUND_CONTEXT_AIRPORT_LINE,
+            ..off_airport
+        };
+        assert!(is_airport_ground_segment(&airport_ground, &FlatGround));
+        assert!(is_airport_context_candidate_raw(
+            &airport_ground,
+            &FlatGround
+        ));
+    }
+
+    #[test]
+    fn test_airport_ground_sel_recovers_bad_altitude() {
+        let seg = AircraftSegment {
+            flight_id: 1,
+            profile_idx: 7,
+            is_departure: false,
+            on_ground: false,
+            period: 0,
+            date_id: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            start_alt_m: 200.0,
+            end_lat: 50.0008,
+            end_lon: 14.0,
+            end_alt_m: 200.0,
+            speed_kt: 35.0,
+            segment_length_m: 90.0,
+            ground_context: GROUND_CONTEXT_AIRPORT_LINE,
+            ground_ops_kind: GROUND_OPS_KIND_NONE,
+            count_weight: 1.0,
+            surface_model: false,
+        };
+
+        let normal = segment_sel(&seg, 50.0004, 14.0, 254.0)
+            .expect("baseline airport segment should still compute")
+            .0;
+        let corrected = segment_sel_airport_ground(&seg, 50.0004, 14.0, 254.0, &FlatGround)
+            .expect("airport ground override should compute")
+            .0;
+
+        assert!(
+            corrected > normal + 10.0,
+            "normal={normal:.2} corrected={corrected:.2}"
+        );
+    }
+
+    #[test]
+    fn test_ground_ops_model_uses_kind_specific_reference_sel() {
+        let mut seg = AircraftSegment {
+            flight_id: 1,
+            profile_idx: 6,
+            is_departure: false,
+            on_ground: true,
+            period: 0,
+            date_id: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            start_alt_m: 0.0,
+            end_lat: 50.005,
+            end_lon: 14.0,
+            end_alt_m: 0.0,
+            speed_kt: SURFACE_RUNWAY_SPEED_KT,
+            segment_length_m: 550.0,
+            ground_context: GROUND_CONTEXT_AIRPORT_LINE,
+            ground_ops_kind: GROUND_OPS_KIND_RUNWAY_ROLL,
+            count_weight: 1.0,
+            surface_model: false,
+        };
+
+        let runway_arr = ground_ops_model(&seg, GROUND_OPS_KIND_RUNWAY_ROLL);
+        assert!((runway_arr.ref_sel_db - 92.0).abs() < 0.01);
+        assert_eq!(runway_arr.max_radius_m, 5_000.0);
+
+        seg.is_departure = true;
+        let runway_dep = ground_ops_model(&seg, GROUND_OPS_KIND_RUNWAY_ROLL);
+        assert!((runway_dep.ref_sel_db - 94.0).abs() < 0.01);
+
+        seg.speed_kt = SURFACE_TAXIWAY_SPEED_KT;
+        let taxi = ground_ops_model(&seg, GROUND_OPS_KIND_TAXI);
+        assert!((taxi.ref_sel_db - 82.0).abs() < 0.01);
+        assert_eq!(taxi.max_radius_m, 2_500.0);
+
+        seg.speed_kt = SURFACE_APRON_SPEED_KT;
+        let apron = ground_ops_model(&seg, GROUND_OPS_KIND_APRON_MOVEMENT);
+        assert!((apron.ref_sel_db - 76.0).abs() < 0.01);
+        assert_eq!(apron.max_radius_m, 1_500.0);
+    }
+
+    #[test]
+    fn test_ground_ops_model_avoids_doc29_near_field_extrapolation() {
+        let seg = AircraftSegment {
+            flight_id: 1,
+            profile_idx: 7,
+            is_departure: false,
+            on_ground: true,
+            period: 0,
+            date_id: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            start_alt_m: 0.0,
+            end_lat: 50.006,
+            end_lon: 14.0,
+            end_alt_m: 0.0,
+            speed_kt: SURFACE_RUNWAY_SPEED_KT,
+            segment_length_m: 650.0,
+            ground_context: GROUND_CONTEXT_AIRPORT_LINE,
+            ground_ops_kind: GROUND_OPS_KIND_RUNWAY_ROLL,
+            count_weight: 1.0,
+            surface_model: false,
+        };
+        let rasters = FlatGround;
+        let model = ground_ops_model(&seg, GROUND_OPS_KIND_RUNWAY_ROLL);
+        let rx_lat = (seg.start_lat + seg.end_lat) * 0.5;
+        let rx_lon = seg.start_lon + meters_to_lon_deg(rx_lat, 5.0);
+        let rx_alt = default_receiver_altitude_m(rasters.elevation(rx_lat, rx_lon));
+        let doc29_sel = segment_sel_airport_ground(&seg, rx_lat, rx_lon, rx_alt, &rasters)
+            .expect("Doc 29 runway reference SEL should compute")
+            .0;
+
+        assert!(
+            model.ref_sel_db + 8.0 < doc29_sel,
+            "ground model should stay well below near-field airborne extrapolation, model={:.2} doc29_near={:.2}",
+            model.ref_sel_db,
+            doc29_sel
+        );
+    }
+
+    #[test]
+    fn test_ground_ops_model_speed_adjust_is_clamped() {
+        let fast_seg = AircraftSegment {
+            flight_id: 1,
+            profile_idx: 6,
+            is_departure: false,
+            on_ground: true,
+            period: 0,
+            date_id: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            start_alt_m: 0.0,
+            end_lat: 50.002,
+            end_lon: 14.0,
+            end_alt_m: 0.0,
+            speed_kt: 240.0,
+            segment_length_m: 220.0,
+            ground_context: GROUND_CONTEXT_AIRPORT_LINE,
+            ground_ops_kind: GROUND_OPS_KIND_TAXI,
+            count_weight: 1.0,
+            surface_model: false,
+        };
+        let slow_seg = AircraftSegment {
+            speed_kt: 1.5,
+            ..fast_seg
+        };
+
+        let fast = ground_ops_model(&fast_seg, GROUND_OPS_KIND_TAXI);
+        let slow = ground_ops_model(&slow_seg, GROUND_OPS_KIND_TAXI);
+
+        assert!((fast.ref_sel_db - (82.0 + GROUND_OPS_SPEED_CLAMP_DB)).abs() < 0.01);
+        assert!((slow.ref_sel_db - (82.0 - GROUND_OPS_SPEED_CLAMP_DB)).abs() < 0.01);
+    }
+
+    fn test_seg(
+        flight_id: u64,
+        date_id: i16,
+        start_lat: f64,
+        start_lon: f64,
+        end_lat: f64,
+        end_lon: f64,
+    ) -> AircraftSegment {
+        AircraftSegment {
+            flight_id,
+            profile_idx: 7,
+            is_departure: false,
+            on_ground: true,
+            period: 0,
+            date_id,
+            start_lat,
+            start_lon,
+            start_alt_m: 0.0,
+            end_lat,
+            end_lon,
+            end_alt_m: 0.0,
+            speed_kt: 24.0,
+            segment_length_m: 260.0,
+            ground_context: GROUND_CONTEXT_NONE,
+            ground_ops_kind: GROUND_OPS_KIND_NONE,
+            count_weight: 1.0,
+            surface_model: false,
+        }
+    }
+
+    #[test]
+    fn test_infer_repeated_ground_context_marks_multi_day_cluster() {
+        let mut segments = vec![
+            test_seg(1, 10, 50.0000, 14.0000, 50.0015, 14.0000),
+            test_seg(2, 11, 50.0001, 14.0004, 50.0016, 14.0004),
+            test_seg(3, 12, 50.0002, 14.0008, 50.0017, 14.0008),
+            test_seg(4, 13, 50.0003, 14.0012, 50.0018, 14.0012),
+            test_seg(5, 10, 50.0004, 14.0016, 50.0019, 14.0016),
+            test_seg(6, 11, 50.0005, 14.0020, 50.0020, 14.0020),
+            test_seg(7, 12, 50.0006, 14.0024, 50.0021, 14.0024),
+            test_seg(8, 13, 50.0007, 14.0028, 50.0022, 14.0028),
+        ];
+
+        let inferred = infer_repeated_ground_context(&mut segments, 365);
+        assert_eq!(inferred, segments.len());
+        assert!(segments
+            .iter()
+            .all(|seg| seg.ground_context == GROUND_CONTEXT_INFERRED));
+        assert!(segments.iter().all(|seg| !is_ground_stale_segment(seg, &FlatGround)));
+    }
+
+    #[test]
+    fn test_infer_repeated_ground_context_rejects_single_day_strip() {
+        let mut segments = vec![
+            test_seg(1, 10, 50.0000, 14.0000, 50.0015, 14.0000),
+            test_seg(2, 10, 50.0002, 14.0003, 50.0017, 14.0003),
+            test_seg(3, 10, 50.0004, 14.0006, 50.0019, 14.0006),
+            test_seg(4, 10, 50.0006, 14.0009, 50.0021, 14.0009),
+            test_seg(5, 10, 50.0008, 14.0012, 50.0023, 14.0012),
+            test_seg(6, 10, 50.0010, 14.0015, 50.0025, 14.0015),
+            test_seg(7, 10, 50.0012, 14.0018, 50.0027, 14.0018),
+            test_seg(8, 10, 50.0014, 14.0021, 50.0029, 14.0021),
+        ];
+
+        let inferred = infer_repeated_ground_context(&mut segments, 365);
+        assert_eq!(inferred, 0);
+        assert!(segments
+            .iter()
+            .all(|seg| seg.ground_context == GROUND_CONTEXT_NONE));
     }
 }

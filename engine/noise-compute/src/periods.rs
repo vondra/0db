@@ -9,9 +9,8 @@ use crate::types::NoisePeriods;
 /// Penalty: +5 dB evening, +10 dB night.
 pub fn compute_lden(ld: f64, le: f64, ln: f64) -> f64 {
     let c = std::f64::consts::LN_10 * 0.1;
-    let energy = 12.0 * (ld * c).exp()
-        + 4.0 * ((le + 5.0) * c).exp()
-        + 8.0 * ((ln + 10.0) * c).exp();
+    let energy =
+        12.0 * (ld * c).exp() + 4.0 * ((le + 5.0) * c).exp() + 8.0 * ((ln + 10.0) * c).exp();
     10.0 * (energy / 24.0).log10()
 }
 
@@ -27,7 +26,9 @@ pub fn periods(ld: f64, le: f64, ln: f64) -> NoisePeriods {
 
 /// Sum energy from multiple NoisePeriods (e.g., combining sources).
 pub fn sum_periods(items: &[NoisePeriods]) -> NoisePeriods {
-    if items.is_empty() { return NoisePeriods::silence(); }
+    if items.is_empty() {
+        return NoisePeriods::silence();
+    }
 
     let ld = energy_sum(items.iter().map(|p| p.ld_db));
     let le = energy_sum(items.iter().map(|p| p.le_db));
@@ -43,7 +44,11 @@ fn energy_sum(values: impl Iterator<Item = f64>) -> f64 {
         .filter(|v| v.is_finite())
         .map(|v| (v * c).exp())
         .sum();
-    if sum > 0.0 { 10.0 * sum.log10() } else { f64::NEG_INFINITY }
+    if sum > 0.0 {
+        10.0 * sum.log10()
+    } else {
+        f64::NEG_INFINITY
+    }
 }
 
 #[cfg(test)]
@@ -54,7 +59,11 @@ mod tests {
     fn test_lden_k8() {
         // K8: Ld=60, Le=55, Ln=50 → Lden=60.00
         let lden = compute_lden(60.0, 55.0, 50.0);
-        assert!((lden - 60.00).abs() < 0.01, "K8: expected 60.00, got {:.2}", lden);
+        assert!(
+            (lden - 60.00).abs() < 0.01,
+            "K8: expected 60.00, got {:.2}",
+            lden
+        );
     }
 
     #[test]

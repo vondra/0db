@@ -84,7 +84,7 @@ export const METRIC_DEFS: Record<string, MetricDef> = {
   aircraft: {
     label: "Aircraft",
     description:
-      "Aircraft noise uses Doc 29 empirical NPD tables and is not subject to ISO 9613-2 propagation effects. Flights are binned by Lmax into disruptive / audible / faint bands.",
+      "Aircraft popup is split into airborne and ground ops. Airborne uses Doc 29 empirical NPD tables from observed ADS-B flight events. Ground ops uses airport movement line sources with terrain, screening, and vegetation propagation so runway/taxi/apron activity can be read separately from overflights.",
     standard: "ECAC Doc 29 4th Edition",
   },
   distance: {

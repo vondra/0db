@@ -23,35 +23,39 @@ struct RailVehicleCoeffs {
 const FREIGHT: RailVehicleCoeffs = RailVehicleCoeffs {
     a_rolling: [10.2, 23.3, 38.2, 40.3, 57.9, 66.4, 68.5, 58.3],
     a_traction: [30.0, 28.0, 25.0, 22.0, 20.0, 15.0, 10.0, 5.0],
-    v_ref: 80.0, v_max: 120.0,
+    v_ref: 80.0,
+    v_max: 120.0,
 };
 
 const PASSENGER: RailVehicleCoeffs = RailVehicleCoeffs {
     a_rolling: [18.8, 30.3, 41.8, 41.6, 54.4, 57.3, 61.5, 56.7],
     a_traction: [35.0, 32.0, 30.0, 28.0, 25.0, 20.0, 15.0, 8.0],
-    v_ref: 100.0, v_max: 200.0,
+    v_ref: 100.0,
+    v_max: 200.0,
 };
 
 const TRAM: RailVehicleCoeffs = RailVehicleCoeffs {
     a_rolling: [16.9, 27.1, 40.2, 41.4, 52.6, 53.2, 55.3, 51.0],
     a_traction: [30.0, 28.0, 26.0, 24.0, 22.0, 18.0, 12.0, 5.0],
-    v_ref: 50.0, v_max: 70.0,
+    v_ref: 50.0,
+    v_max: 70.0,
 };
 
 const LIGHT_RAIL: RailVehicleCoeffs = RailVehicleCoeffs {
     a_rolling: [16.9, 27.1, 40.2, 41.4, 52.6, 53.2, 55.3, 51.0],
     a_traction: [38.0, 35.0, 33.0, 30.0, 27.0, 22.0, 16.0, 8.0],
-    v_ref: 80.0, v_max: 120.0,
+    v_ref: 80.0,
+    v_max: 120.0,
 };
 
 /// Rail vehicle type (matches rail_type field in Arrow IPC).
 #[derive(Debug, Clone, Copy)]
 pub enum RailType {
-    Rail,       // 0 — mixed passenger/freight
-    Tram,       // 1
-    LightRail,  // 2
-    NarrowGauge,// 3
-    Funicular,  // 4
+    Rail,        // 0 — mixed passenger/freight
+    Tram,        // 1
+    LightRail,   // 2
+    NarrowGauge, // 3
+    Funicular,   // 4
 }
 
 impl RailType {
@@ -120,7 +124,11 @@ pub fn railway_emission(
 
     let mut result = [f64::NEG_INFINITY; NUM_BANDS];
     for i in 0..NUM_BANDS {
-        result[i] = if total_energy[i] > 0.0 { 10.0 * total_energy[i].log10() } else { f64::NEG_INFINITY };
+        result[i] = if total_energy[i] > 0.0 {
+            10.0 * total_energy[i].log10()
+        } else {
+            f64::NEG_INFINITY
+        };
     }
     result
 }
@@ -129,15 +137,15 @@ pub fn railway_emission(
 /// Returns (passenger_per_day, freight_per_day).
 pub fn default_traffic(rail_type: RailType, usage: u8) -> (f64, f64) {
     match rail_type {
-        RailType::Tram => (120.0, 0.0),        // urban tram: ~120 services/day
-        RailType::LightRail => (80.0, 0.0),     // light rail: ~80/day
-        RailType::NarrowGauge => (10.0, 0.0),   // narrow gauge: tourist/local
-        RailType::Funicular => (40.0, 0.0),      // funicular: frequent but short
+        RailType::Tram => (120.0, 0.0),       // urban tram: ~120 services/day
+        RailType::LightRail => (80.0, 0.0),   // light rail: ~80/day
+        RailType::NarrowGauge => (10.0, 0.0), // narrow gauge: tourist/local
+        RailType::Funicular => (40.0, 0.0),   // funicular: frequent but short
         RailType::Rail => match usage {
-            0 => (80.0, 20.0),   // main line: 80 passenger + 20 freight
-            1 => (30.0, 5.0),    // branch: 30 passenger + 5 freight
-            2 => (0.0, 15.0),    // industrial siding: freight only
-            _ => (40.0, 10.0),   // unknown: moderate
+            0 => (80.0, 20.0), // main line: 80 passenger + 20 freight
+            1 => (30.0, 5.0),  // branch: 30 passenger + 5 freight
+            2 => (0.0, 15.0),  // industrial siding: freight only
+            _ => (40.0, 10.0), // unknown: moderate
         },
     }
 }
@@ -164,7 +172,11 @@ mod tests {
         let bands = railway_emission(RailType::Rail, 100.0, 50.0, 0.0);
         let aw = a_weighted_total(&bands);
         // Expected: moderate level (~55-75 dB/m for suburban rail with 50 trains)
-        assert!(aw > 50.0 && aw < 85.0, "passenger 100km/h 50 trains: {:.1}", aw);
+        assert!(
+            aw > 50.0 && aw < 85.0,
+            "passenger 100km/h 50 trains: {:.1}",
+            aw
+        );
     }
 
     #[test]
@@ -174,7 +186,12 @@ mod tests {
         let frt = railway_emission(RailType::Rail, 80.0, 0.0, 20.0);
         let pax_aw = a_weighted_total(&pax);
         let frt_aw = a_weighted_total(&frt);
-        assert!(frt_aw > pax_aw, "freight ({:.1}) should be louder than passenger ({:.1})", frt_aw, pax_aw);
+        assert!(
+            frt_aw > pax_aw,
+            "freight ({:.1}) should be louder than passenger ({:.1})",
+            frt_aw,
+            pax_aw
+        );
     }
 
     #[test]

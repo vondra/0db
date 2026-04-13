@@ -7,13 +7,16 @@ use serde::Serialize;
 /// Confidence assessment for a noise computation.
 #[derive(Debug, Clone, Serialize)]
 pub struct Confidence {
-    pub overall: f64,           // 0.0 (no data) to 1.0 (full census + validation)
-    pub notes: Vec<String>,     // human-readable notes
+    pub overall: f64,       // 0.0 (no data) to 1.0 (full census + validation)
+    pub notes: Vec<String>, // human-readable notes
 }
 
 impl Confidence {
     pub fn new() -> Self {
-        Confidence { overall: 0.5, notes: Vec::new() }
+        Confidence {
+            overall: 0.5,
+            notes: Vec::new(),
+        }
     }
 
     pub fn add_note(&mut self, note: &str) {

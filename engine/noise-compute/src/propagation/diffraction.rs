@@ -10,9 +10,9 @@ use crate::types::NUM_BANDS;
 
 /// Result of path difference computation.
 pub struct DiffractionResult {
-    pub delta: f64,          // path difference in meters
-    pub is_double: bool,     // true = two edges
-    pub edge_distance: f64,  // distance between edges (for C₃), 0 for single
+    pub delta: f64,         // path difference in meters
+    pub is_double: bool,    // true = two edges
+    pub edge_distance: f64, // distance between edges (for C₃), 0 for single
 }
 
 /// Compute double path difference from elevation profile.
@@ -28,7 +28,11 @@ pub fn compute_path_difference(
 ) -> DiffractionResult {
     let n = profile.len();
     if n < 3 || total_dist < 30.0 {
-        return DiffractionResult { delta: 0.0, is_double: false, edge_distance: 0.0 };
+        return DiffractionResult {
+            delta: 0.0,
+            is_double: false,
+            edge_distance: 0.0,
+        };
     }
 
     let src_elev = profile[0] + source_height;
@@ -60,7 +64,11 @@ pub fn compute_path_difference(
     }
 
     if edge1 < 0 || edge2 < 0 {
-        return DiffractionResult { delta: 0.0, is_double: false, edge_distance: 0.0 };
+        return DiffractionResult {
+            delta: 0.0,
+            is_double: false,
+            edge_distance: 0.0,
+        };
     }
 
     let e1 = edge1 as usize;
@@ -70,17 +78,29 @@ pub fn compute_path_difference(
     let los1 = src_elev + (rcv_elev - src_elev) * (e1 as f64 / (n - 1) as f64);
     let los2 = src_elev + (rcv_elev - src_elev) * (e2 as f64 / (n - 1) as f64);
     if profile[e1] <= los1 && profile[e2] <= los2 {
-        return DiffractionResult { delta: 0.0, is_double: false, edge_distance: 0.0 };
+        return DiffractionResult {
+            delta: 0.0,
+            is_double: false,
+            edge_distance: 0.0,
+        };
     }
 
     let dsr = ((total_dist * total_dist) + (rcv_elev - src_elev).powi(2)).sqrt();
 
     // Same edge or adjacent → single diffraction
     if e1 >= e2 || e2 - e1 <= 1 {
-        let idx = if (profile[e1] - los1) >= (profile[e2] - los2) { e1 } else { e2 };
+        let idx = if (profile[e1] - los1) >= (profile[e2] - los2) {
+            e1
+        } else {
+            e2
+        };
         let los_idx = src_elev + (rcv_elev - src_elev) * (idx as f64 / (n - 1) as f64);
         if profile[idx] <= los_idx {
-            return DiffractionResult { delta: 0.0, is_double: false, edge_distance: 0.0 };
+            return DiffractionResult {
+                delta: 0.0,
+                is_double: false,
+                edge_distance: 0.0,
+            };
         }
 
         let d_sg = idx as f64 * step_dist;
@@ -88,7 +108,11 @@ pub fn compute_path_difference(
         let top = profile[idx];
         let d_sb = (d_sg * d_sg + (top - src_elev).powi(2)).sqrt();
         let d_br = (d_rg * d_rg + (top - rcv_elev).powi(2)).sqrt();
-        return DiffractionResult { delta: d_sb + d_br - dsr, is_double: false, edge_distance: 0.0 };
+        return DiffractionResult {
+            delta: d_sb + d_br - dsr,
+            is_double: false,
+            edge_distance: 0.0,
+        };
     }
 
     // Double diffraction: two distinct edges
@@ -110,7 +134,11 @@ pub fn compute_path_difference(
     let d_e2r = (d2r * d2r + (top2 - rcv_elev).powi(2)).sqrt();
 
     let delta = (d_se1 + d_e1e2 + d_e2r - dsr).max(0.0);
-    DiffractionResult { delta, is_double: true, edge_distance: d_e1e2 }
+    DiffractionResult {
+        delta,
+        is_double: true,
+        edge_distance: d_e1e2,
+    }
 }
 
 /// Compute diffraction attenuation per band from path difference.
@@ -121,11 +149,21 @@ pub fn diffraction_attenuation(delta: f64, is_double: bool) -> [f64; NUM_BANDS] 
 }
 
 /// Full version with edge distance for C₃ computation.
-pub fn diffraction_attenuation_with_edge(delta: f64, is_double: bool, edge_distance: f64) -> [f64; NUM_BANDS] {
-    let cap = if is_double { DOUBLE_DIFF_CAP } else { SINGLE_DIFF_CAP };
+pub fn diffraction_attenuation_with_edge(
+    delta: f64,
+    is_double: bool,
+    edge_distance: f64,
+) -> [f64; NUM_BANDS] {
+    let cap = if is_double {
+        DOUBLE_DIFF_CAP
+    } else {
+        SINGLE_DIFF_CAP
+    };
     let mut atten = [0.0f64; NUM_BANDS];
 
-    if delta <= 0.0 { return atten; }
+    if delta <= 0.0 {
+        return atten;
+    }
 
     for i in 0..NUM_BANDS {
         let c3 = if is_double && edge_distance > 0.01 {
@@ -171,8 +209,11 @@ mod tests {
         // K6: Single barrier, δ=0.5m → expected 15.28 dB at 1kHz
         let atten = diffraction_attenuation(0.5, false);
         let at_1khz = atten[4]; // 1000 Hz band
-        assert!((at_1khz - 15.28).abs() < 1.0,
-            "K6 1kHz: expected ~15.28, got {:.2}", at_1khz);
+        assert!(
+            (at_1khz - 15.28).abs() < 1.0,
+            "K6 1kHz: expected ~15.28, got {:.2}",
+            at_1khz
+        );
     }
 
     #[test]
@@ -182,7 +223,10 @@ mod tests {
         let at_1khz = atten[4];
         // Double cap = 25 dB; at δ=1, 1kHz: 10·log₁₀(3 + 20×1×1000/340) = 10·log₁₀(61.8) = 17.9
         // so expect ~17.9 dB (our reference says 16.30 at A-weighted aggregate)
-        assert!(at_1khz > 14.0 && at_1khz < 20.0,
-            "K7 1kHz: expected ~17.9, got {:.2}", at_1khz);
+        assert!(
+            at_1khz > 14.0 && at_1khz < 20.0,
+            "K7 1kHz: expected ~17.9, got {:.2}",
+            at_1khz
+        );
     }
 }

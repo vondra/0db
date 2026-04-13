@@ -42,8 +42,8 @@ pub const DOUBLE_DIFF_CAP: f64 = 25.0;
 pub const MAX_SCREENING: f64 = 20.0;
 
 /// Source heights [m].
-pub const SOURCE_HEIGHT_ROAD: f64 = 0.05;    // CNOSSOS-EU §2.4.1
-pub const SOURCE_HEIGHT_RAIL: f64 = 0.5;     // CNOSSOS-EU §2.7.1
+pub const SOURCE_HEIGHT_ROAD: f64 = 0.05; // CNOSSOS-EU §2.4.1
+pub const SOURCE_HEIGHT_RAIL: f64 = 0.5; // CNOSSOS-EU §2.7.1
 pub const SOURCE_HEIGHT_INDUSTRIAL_OPEN: f64 = 1.5;
 pub const SOURCE_HEIGHT_INDUSTRIAL_ENCLOSED: f64 = 4.0;
 
@@ -55,9 +55,9 @@ pub const HEAVY_SPEED_CAP: f64 = 80.0;
 
 /// Road surface corrections [dB] applied to rolling noise only.
 pub const SURFACE_CORR: [f64; 5] = [
-    0.0,  // 0: asphalt (reference)
-    4.0,  // 1: sett/cobblestone
-    4.0,  // 2: cobblestone/paving stones
-    1.0,  // 3: concrete
-    2.0,  // 4: gravel/unpaved
+    0.0, // 0: asphalt (reference)
+    4.0, // 1: sett/cobblestone
+    4.0, // 2: cobblestone/paving stones
+    1.0, // 3: concrete
+    2.0, // 4: gravel/unpaved
 ];

@@ -8,6 +8,7 @@ mod hex_store;
 use napi::{Error, Status};
 #[cfg(feature = "node")]
 use napi_derive::napi;
+#[cfg(feature = "node")]
 use std::collections::HashMap;
 use std::path::Path;
 #[cfg(feature = "node")]
@@ -16,9 +17,9 @@ use std::sync::RwLock;
 #[cfg(feature = "node")]
 use hex_store::HexData;
 use hex_store::{
-    hex_encode, load_hex, query_aircraft_from_batches, query_airport_areas_from_batches,
-    query_airport_lines_from_batches, query_barriers_from_batches, query_buildings_from_batches,
-    query_railways_from_batches, query_roads_from_batches,
+    hex_encode, load_hex, query_airport_areas_from_batches, query_airport_lines_from_batches,
+    query_barriers_from_batches, query_buildings_from_batches, query_railways_from_batches,
+    query_roads_from_batches, visit_aircraft_from_batches,
 };
 
 #[cfg(feature = "node")]
@@ -32,7 +33,18 @@ static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::Onc
 // No global lookup needed at runtime.
 
 const AIRCRAFT_QUERY_MAX_RADIUS_M: f64 = 12_000.0;
-const AIRPORT_CONTEXT_RADIUS_M: f64 = 20_000.0;
+const AIRPORT_CONTEXT_RADIUS_M: f64 = 5_000.0;
+
+fn airport_key(name: &str, _airport_ref: &str, icao: &str, iata: &str) -> String {
+    let key = if !icao.is_empty() {
+        icao
+    } else if !iata.is_empty() {
+        iata
+    } else {
+        name
+    };
+    key.trim().to_string()
+}
 
 #[cfg(feature = "node")]
 struct HexStore {
@@ -116,6 +128,7 @@ fn collect_from_hex_data(
     lng: f64,
     rasters: &dyn noise_compute::types::RasterSampler,
 ) -> PointQueryData {
+    let receiver_elev_m = rasters.elevation(lat, lng);
     let mut all_roads = Vec::new();
     let mut all_railways = Vec::new();
     let mut all_buildings = Vec::new();
@@ -124,9 +137,16 @@ fn collect_from_hex_data(
     let mut all_aircraft = Vec::new();
     let mut all_airport_lines = Vec::new();
     let mut all_airport_areas = Vec::new();
+    let mut saw_aircraft_batches = false;
+    let mut all_aircraft_ground_v2 = true;
 
     let mut date_ids = std::collections::HashSet::new();
     for data in hex_data {
+        if !data.aircraft_batches.is_empty() {
+            saw_aircraft_batches = true;
+            all_aircraft_ground_v2 &=
+                hex_store::aircraft_ground_model_v2(&data.aircraft_batches);
+        }
         for batch in &data.aircraft_batches {
             if let Some(did) = batch
                 .column_by_name("date_id")
@@ -155,6 +175,8 @@ fn collect_from_hex_data(
             all_airport_lines.push(noise_compute::types::AirportLine {
                 osm_id: line.osm_id,
                 aeroway_type: line.aeroway_type,
+                name: line.name.clone(),
+                airport_key: airport_key(&line.name, &line.airport_ref, &line.icao, &line.iata),
                 start_lat: line.start_lat,
                 start_lon: line.start_lon,
                 end_lat: line.end_lat,
@@ -173,6 +195,8 @@ fn collect_from_hex_data(
             all_airport_areas.push(noise_compute::types::AirportArea {
                 osm_id: area.osm_id,
                 aeroway_type: area.aeroway_type,
+                name: area.name.clone(),
+                airport_key: airport_key(&area.name, &area.airport_ref, &area.icao, &area.iata),
                 centroid_lat: area.centroid_lat,
                 centroid_lon: area.centroid_lon,
                 polygon_wkb: area.polygon_wkb,
@@ -180,6 +204,10 @@ fn collect_from_hex_data(
             });
         }
     }
+    let airport_matcher = noise_compute::emission::aircraft::AirportMatcher::new(
+        &all_airport_lines,
+        &all_airport_areas,
+    );
 
     for data in hex_data {
         let railways = query_railways_from_batches(&data.railway_batches, lat, lng, 8000.0);
@@ -426,44 +454,75 @@ fn collect_from_hex_data(
             });
         }
 
-        let airport_index = noise_compute::emission::aircraft::AirportIndex::new(
-            &all_airport_lines,
-            &all_airport_areas,
-        );
-        let aircraft = query_aircraft_from_batches(
+        visit_aircraft_from_batches(
             &data.aircraft_batches,
             lat,
             lng,
             AIRCRAFT_QUERY_MAX_RADIUS_M,
+            receiver_elev_m,
+            |a| {
+                let mut seg = noise_compute::types::AircraftSegment {
+                    flight_id: a.flight_id,
+                    profile_idx: a.profile_idx,
+                    is_departure: a.is_departure,
+                    on_ground: a.on_ground,
+                    period: a.period,
+                    date_id: a.date_id,
+                    start_lat: a.start_lat,
+                    start_lon: a.start_lon,
+                    start_alt_m: a.start_alt_m,
+                    end_lat: a.end_lat,
+                    end_lon: a.end_lon,
+                    end_alt_m: a.end_alt_m,
+                    speed_kt: a.speed_kt,
+                    segment_length_m: a.segment_length_m,
+                    count_weight: 1.0,
+                    surface_model: false,
+                    ground_context: noise_compute::emission::aircraft::GROUND_CONTEXT_NONE,
+                    ground_ops_kind: noise_compute::emission::aircraft::GROUND_OPS_KIND_NONE,
+                };
+                let needs_ground_context =
+                    noise_compute::emission::aircraft::is_airport_context_candidate_raw(
+                        &seg, rasters,
+                    );
+                if needs_ground_context {
+                    seg.ground_context = airport_matcher.segment_ground_context(&seg);
+                    seg.ground_ops_kind = airport_matcher.segment_ground_ops_kind(&seg);
+                }
+                all_aircraft.push(seg);
+            },
         );
-        for a in aircraft {
-            let mut seg = noise_compute::types::AircraftSegment {
-                flight_id: a.flight_id,
-                profile_idx: a.profile_idx,
-                is_departure: a.is_departure,
-                on_ground: a.on_ground,
-                period: a.period,
-                date_id: a.date_id,
-                start_lat: a.start_lat,
-                start_lon: a.start_lon,
-                start_alt_m: a.start_alt_m,
-                end_lat: a.end_lat,
-                end_lon: a.end_lon,
-                end_alt_m: a.end_alt_m,
-                speed_kt: a.speed_kt,
-                segment_length_m: a.segment_length_m,
-                ground_context: noise_compute::emission::aircraft::GROUND_CONTEXT_NONE,
-            };
-            let needs_ground_context = seg.on_ground
-                || noise_compute::emission::aircraft::is_low_agl_segment_raw(&seg, rasters);
-            if needs_ground_context {
-                seg.ground_context = airport_index.ground_context(&seg);
-            }
-            all_aircraft.push(seg);
-        }
     }
 
-    all_barriers.sort_unstable_by(|a, b| a.dist_m.partial_cmp(&b.dist_m).unwrap_or(std::cmp::Ordering::Equal));
+    if saw_aircraft_batches && all_aircraft_ground_v2 {
+        noise_compute::emission::aircraft::infer_repeated_ground_context(&mut all_aircraft, n_days);
+    }
+    for seg in &mut all_aircraft {
+        if seg.ground_ops_kind == noise_compute::emission::aircraft::GROUND_OPS_KIND_NONE
+            && seg.ground_context != noise_compute::emission::aircraft::GROUND_CONTEXT_NONE
+        {
+            seg.ground_ops_kind = noise_compute::emission::aircraft::resolve_ground_ops_kind(seg);
+        }
+    }
+    all_aircraft.retain(|seg| {
+        !noise_compute::emission::aircraft::is_ground_stale_segment(seg, rasters)
+    });
+
+    let mut airport_surface =
+        noise_compute::emission::aircraft::synthesize_airport_surface_segments(
+            &all_aircraft,
+            &all_airport_lines,
+            &all_airport_areas,
+            rasters,
+            n_days,
+        );
+    all_aircraft.append(&mut airport_surface);
+
+    all_barriers.sort_unstable_by(|a, b| {
+        a.dist_m
+            .partial_cmp(&b.dist_m)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     PointQueryData {
         roads: all_roads,
@@ -649,13 +708,15 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
         n_days: sources.n_days,
         ..Default::default()
     };
-    let result = noise_compute::compute_at_point(
+    let result = noise_compute::compute_at_point_with_airports(
         &receiver,
         &sources.roads,
         &sources.railways,
         &sources.buildings,
         &sources.industrial,
         &sources.aircraft,
+        &sources.airport_lines,
+        &sources.airport_areas,
         &sources.barriers,
         rasters,
         &config,

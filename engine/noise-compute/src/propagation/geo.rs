@@ -41,9 +41,12 @@ pub struct ClosestPoint {
 /// Horizontal distance from a point to a line segment.
 /// Returns (distance_m, closest_point_lat, closest_point_lon, fraction 0-1).
 pub fn point_to_segment(
-    p_lat: f64, p_lon: f64,
-    a_lat: f64, a_lon: f64,
-    b_lat: f64, b_lon: f64,
+    p_lat: f64,
+    p_lon: f64,
+    a_lat: f64,
+    a_lon: f64,
+    b_lat: f64,
+    b_lon: f64,
 ) -> (f64, f64, f64, f64) {
     let mid_lat = ((a_lat + b_lat) / 2.0).to_radians();
     let cos_lat = mid_lat.cos();
@@ -75,12 +78,20 @@ pub fn point_to_segment(
 
 /// Find closest point on a line segment to a given point (struct return variant).
 pub fn closest_point_on_segment(
-    p_lat: f64, p_lon: f64,
-    a_lat: f64, a_lon: f64,
-    b_lat: f64, b_lon: f64,
+    p_lat: f64,
+    p_lon: f64,
+    a_lat: f64,
+    a_lon: f64,
+    b_lat: f64,
+    b_lon: f64,
 ) -> ClosestPoint {
     let (dist_m, lat, lon, fraction) = point_to_segment(p_lat, p_lon, a_lat, a_lon, b_lat, b_lon);
-    ClosestPoint { lat, lon, dist_m, fraction }
+    ClosestPoint {
+        lat,
+        lon,
+        dist_m,
+        fraction,
+    }
 }
 
 /// Smooth fade-out factor for the last 20% of a source's max range.
@@ -115,7 +126,7 @@ pub fn below_free_field_threshold(max_emission_db: f64, dist_m: f64, threshold_d
 pub fn finite_line_correction(
     seg_length_m: f64,
     d_perp_horizontal: f64,
-    fraction: f64,  // 0-1 position of closest point along segment
+    fraction: f64, // 0-1 position of closest point along segment
 ) -> f64 {
     if seg_length_m < 0.1 || d_perp_horizontal < 0.1 {
         return 0.0;

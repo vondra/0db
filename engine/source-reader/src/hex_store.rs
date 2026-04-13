@@ -108,6 +108,17 @@ fn load_arrow_mmap(path: &Path, mmaps: &mut Vec<Arc<Mmap>>) -> Vec<RecordBatch> 
     batches
 }
 
+pub fn aircraft_ground_model_v2(batches: &[RecordBatch]) -> bool {
+    batches.iter().any(|batch| {
+        batch
+            .schema_ref()
+            .metadata()
+            .get("aircraft_ground_model")
+            .map(|v| v == "v2")
+            .unwrap_or(false)
+    })
+}
+
 // ── Query helpers: iterate over mmap'd Arrow columns directly ──
 
 /// Road segment query result (references into mmap'd data, minimal copy).
@@ -190,6 +201,26 @@ pub fn query_roads_from_batches(
         };
 
         for i in 0..n {
+            let raw = noise_compute::normalize::RawRoadInput {
+                road_class: rclass.map(|a| a.value(i)).unwrap_or(0),
+                speed_limit: speed.map(|a| a.value(i)).unwrap_or(0),
+                surface_type: surface.map(|a| a.value(i)).unwrap_or(0),
+                oneway: ow.map(|a| a.value(i)).unwrap_or(false),
+                lanes: lanes.map(|a| a.value(i)).unwrap_or(0),
+                aadt_light: aadt_l.map(|a| a.value(i)).unwrap_or(0),
+                aadt_medium: aadt_m.map(|a| a.value(i)).unwrap_or(0),
+                aadt_heavy: aadt_h.map(|a| a.value(i)).unwrap_or(0),
+                aadt_moto: aadt_mo.map(|a| a.value(i)).unwrap_or(0),
+                traffic_source: tsrc.map(|a| a.value(i)).unwrap_or(0),
+                tunnel: tunnel_col.map(|a| a.value(i)).unwrap_or(false),
+                access: access_col.map(|a| a.value(i)).unwrap_or(0),
+                junction: junction_col.map(|a| a.value(i)).unwrap_or(0),
+            };
+            let Some(norm) = noise_compute::normalize::normalize_road(raw) else {
+                continue;
+            };
+            let effective_radius = max_radius.min(norm.max_distance_m);
+
             let s_lat = slat.value(i);
             let s_lon = slon.value(i);
             let e_lat = elat.value(i);
@@ -199,17 +230,17 @@ pub fn query_roads_from_batches(
             let mid_lat = (s_lat + e_lat) / 2.0;
             let mid_lon = (s_lon + e_lon) / 2.0;
             let dlat = (lat - mid_lat).abs() * 110_540.0;
-            if dlat > max_radius * 1.5 {
+            if dlat > effective_radius * 1.5 {
                 continue;
             }
             let dlon = (lon - mid_lon).abs() * 111_320.0 * mid_lat.to_radians().cos();
-            if dlon > max_radius * 1.5 {
+            if dlon > effective_radius * 1.5 {
                 continue;
             }
 
             // Exact closest point on segment
             let cp = crate::geo::closest_point_on_segment(lat, lon, s_lat, s_lon, e_lat, e_lon);
-            if cp.dist_m > max_radius {
+            if cp.dist_m > effective_radius {
                 continue;
             }
 
@@ -221,22 +252,22 @@ pub fn query_roads_from_batches(
                 end_lat: e_lat,
                 end_lon: e_lon,
                 length_m: len.map(|a| a.value(i)).unwrap_or(0.0),
-                road_class: rclass.map(|a| a.value(i)).unwrap_or(0),
-                speed_limit: speed.map(|a| a.value(i)).unwrap_or(0),
-                surface_type: surface.map(|a| a.value(i)).unwrap_or(0),
-                oneway: ow.map(|a| a.value(i)).unwrap_or(false),
-                lanes: lanes.map(|a| a.value(i)).unwrap_or(0),
+                road_class: raw.road_class,
+                speed_limit: raw.speed_limit,
+                surface_type: raw.surface_type,
+                oneway: raw.oneway,
+                lanes: raw.lanes,
                 name: name.map(|a| a.value(i).to_string()).unwrap_or_default(),
                 road_ref: road_ref.map(|a| a.value(i).to_string()).unwrap_or_default(),
                 bridge: bridge_col.map(|a| a.value(i)).unwrap_or(false),
-                tunnel: tunnel_col.map(|a| a.value(i)).unwrap_or(false),
-                access: access_col.map(|a| a.value(i)).unwrap_or(0),
-                junction: junction_col.map(|a| a.value(i)).unwrap_or(0),
-                aadt_light: aadt_l.map(|a| a.value(i)).unwrap_or(0),
-                aadt_medium: aadt_m.map(|a| a.value(i)).unwrap_or(0),
-                aadt_heavy: aadt_h.map(|a| a.value(i)).unwrap_or(0),
-                aadt_moto: aadt_mo.map(|a| a.value(i)).unwrap_or(0),
-                traffic_source: tsrc.map(|a| a.value(i)).unwrap_or(0),
+                tunnel: raw.tunnel,
+                access: raw.access,
+                junction: raw.junction,
+                aadt_light: raw.aadt_light,
+                aadt_medium: raw.aadt_medium,
+                aadt_heavy: raw.aadt_heavy,
+                aadt_moto: raw.aadt_moto,
+                traffic_source: raw.traffic_source,
                 dist_m: cp.dist_m,
                 cp_lat: cp.lat,
                 cp_lon: cp.lon,
@@ -439,9 +470,21 @@ pub fn query_buildings_from_batches(
     results
 }
 
+#[allow(dead_code)]
 pub fn load_airport_lines_from_batches(
     batches: &[RecordBatch],
 ) -> Vec<noise_compute::types::AirportLine> {
+    fn airport_key(name: &str, _airport_ref: &str, icao: &str, iata: &str) -> String {
+        let key = if !icao.is_empty() {
+            icao
+        } else if !iata.is_empty() {
+            iata
+        } else {
+            name
+        };
+        key.trim().to_string()
+    }
+
     let mut results = Vec::new();
 
     for batch in batches {
@@ -453,6 +496,10 @@ pub fn load_airport_lines_from_batches(
         let elon = col_f64(batch, "end_lon");
         let aeroway_type = col_u8(batch, "aeroway_type");
         let width_m = col_f32(batch, "width_m");
+        let name = col_str(batch, "name");
+        let airport_ref = col_str(batch, "ref");
+        let icao = col_str(batch, "icao");
+        let iata = col_str(batch, "iata");
 
         let (Some(osm_id), Some(slat), Some(slon), Some(elat), Some(elon)) =
             (osm_id, slat, slon, elat, elon)
@@ -464,6 +511,13 @@ pub fn load_airport_lines_from_batches(
             results.push(noise_compute::types::AirportLine {
                 osm_id: osm_id.value(i),
                 aeroway_type: aeroway_type.map(|a| a.value(i)).unwrap_or(255),
+                name: name.map(|a| a.value(i).to_string()).unwrap_or_default(),
+                airport_key: airport_key(
+                    name.map(|a| a.value(i)).unwrap_or(""),
+                    airport_ref.map(|a| a.value(i)).unwrap_or(""),
+                    icao.map(|a| a.value(i)).unwrap_or(""),
+                    iata.map(|a| a.value(i)).unwrap_or(""),
+                ),
                 start_lat: slat.value(i),
                 start_lon: slon.value(i),
                 end_lat: elat.value(i),
@@ -476,9 +530,21 @@ pub fn load_airport_lines_from_batches(
     results
 }
 
+#[allow(dead_code)]
 pub fn load_airport_areas_from_batches(
     batches: &[RecordBatch],
 ) -> Vec<noise_compute::types::AirportArea> {
+    fn airport_key(name: &str, _airport_ref: &str, icao: &str, iata: &str) -> String {
+        let key = if !icao.is_empty() {
+            icao
+        } else if !iata.is_empty() {
+            iata
+        } else {
+            name
+        };
+        key.trim().to_string()
+    }
+
     let mut results = Vec::new();
 
     for batch in batches {
@@ -487,6 +553,10 @@ pub fn load_airport_areas_from_batches(
         let clat = col_f64(batch, "centroid_lat");
         let clon = col_f64(batch, "centroid_lon");
         let aeroway_type = col_u8(batch, "aeroway_type");
+        let name = col_str(batch, "name");
+        let airport_ref = col_str(batch, "ref");
+        let icao = col_str(batch, "icao");
+        let iata = col_str(batch, "iata");
         let wkb = col_binary(batch, "polygon_wkb");
         let area_m2 = col_f32(batch, "area_m2");
 
@@ -498,6 +568,13 @@ pub fn load_airport_areas_from_batches(
             results.push(noise_compute::types::AirportArea {
                 osm_id: osm_id.value(i),
                 aeroway_type: aeroway_type.map(|a| a.value(i)).unwrap_or(255),
+                name: name.map(|a| a.value(i).to_string()).unwrap_or_default(),
+                airport_key: airport_key(
+                    name.map(|a| a.value(i)).unwrap_or(""),
+                    airport_ref.map(|a| a.value(i)).unwrap_or(""),
+                    icao.map(|a| a.value(i)).unwrap_or(""),
+                    iata.map(|a| a.value(i)).unwrap_or(""),
+                ),
                 centroid_lat: clat.value(i),
                 centroid_lon: clon.value(i),
                 polygon_wkb: wkb.map(|a| hex_encode(a.value(i))).unwrap_or_default(),
@@ -787,15 +864,17 @@ pub struct AircraftResult {
     pub segment_length_m: f32,
 }
 
-/// Query aircraft segments from batches. No distance filter — Doc 29 handles cutoff internally.
-pub fn query_aircraft_from_batches(
+pub fn visit_aircraft_from_batches<F>(
     batches: &[RecordBatch],
     lat: f64,
     lon: f64,
     max_radius_m: f64,
-) -> Vec<AircraftResult> {
-    let mut results = Vec::new();
-
+    receiver_elev_m: f64,
+    mut visit: F,
+) where
+    F: FnMut(AircraftResult),
+{
+    let lat_pad_deg = max_radius_m / 110_540.0;
     for batch in batches {
         let n = batch.num_rows();
         let fid = col_u64(batch, "flight_id");
@@ -813,8 +892,8 @@ pub fn query_aircraft_from_batches(
         let spd = col_f32(batch, "speed_kt");
         let slen = col_f32(batch, "segment_length_m");
 
-        let (Some(fid), Some(slat), Some(slon), Some(elat), Some(elon)) =
-            (fid, slat, slon, elat, elon)
+        let (Some(fid), Some(slat), Some(slon), Some(salt), Some(elat), Some(elon), Some(ealt)) =
+            (fid, slat, slon, salt, elat, elon, ealt)
         else {
             continue;
         };
@@ -822,8 +901,31 @@ pub fn query_aircraft_from_batches(
         for i in 0..n {
             let start_lat = slat.value(i);
             let start_lon = slon.value(i);
+            let start_alt_m = salt.value(i);
             let end_lat = elat.value(i);
             let end_lon = elon.value(i);
+            let end_alt_m = ealt.value(i);
+            let on_ground_val = on_ground.map(|a| a.value(i)).unwrap_or(false);
+            let speed_kt_val = spd.map(|a| a.value(i)).unwrap_or(0.0);
+
+            let max_alt_m = start_alt_m.max(end_alt_m) as f64;
+            if max_alt_m < receiver_elev_m - 100.0 && !on_ground_val && speed_kt_val < 60.0 {
+                continue;
+            }
+
+            let min_lat = start_lat.min(end_lat);
+            let max_lat = start_lat.max(end_lat);
+            if lat < min_lat - lat_pad_deg || lat > max_lat + lat_pad_deg {
+                continue;
+            }
+            let ref_lat = (min_lat + max_lat + lat) / 3.0;
+            let lon_pad_deg =
+                max_radius_m / (111_320.0 * ref_lat.to_radians().cos().abs().max(0.2));
+            let min_lon = start_lon.min(end_lon);
+            let max_lon = start_lon.max(end_lon);
+            if lon < min_lon - lon_pad_deg || lon > max_lon + lon_pad_deg {
+                continue;
+            }
 
             // Keep popup semantics aligned with Doc 29 12 km cutoff, but filter before
             // expensive airport-ground matching. The midpoint box is a cheap first pass;
@@ -846,25 +948,39 @@ pub fn query_aircraft_from_batches(
                 continue;
             }
 
-            results.push(AircraftResult {
+            visit(AircraftResult {
                 flight_id: fid.value(i),
                 profile_idx: pidx.map(|a| a.value(i)).unwrap_or(7),
                 is_departure: dep.map(|a| a.value(i)).unwrap_or(false),
-                on_ground: on_ground.map(|a| a.value(i)).unwrap_or(false),
+                on_ground: on_ground_val,
                 period: per.map(|a| a.value(i)).unwrap_or(0),
                 date_id: did.map(|a| a.value(i)).unwrap_or(0),
                 start_lat,
                 start_lon,
-                start_alt_m: salt.map(|a| a.value(i)).unwrap_or(0.0),
+                start_alt_m,
                 end_lat,
                 end_lon,
-                end_alt_m: ealt.map(|a| a.value(i)).unwrap_or(0.0),
-                speed_kt: spd.map(|a| a.value(i)).unwrap_or(0.0),
+                end_alt_m,
+                speed_kt: speed_kt_val,
                 segment_length_m: slen.map(|a| a.value(i)).unwrap_or(0.0),
             });
         }
     }
+}
 
+/// Query aircraft segments from batches. No distance filter — Doc 29 handles cutoff internally.
+#[allow(dead_code)]
+pub fn query_aircraft_from_batches(
+    batches: &[RecordBatch],
+    lat: f64,
+    lon: f64,
+    max_radius_m: f64,
+    receiver_elev_m: f64,
+) -> Vec<AircraftResult> {
+    let mut results = Vec::new();
+    visit_aircraft_from_batches(batches, lat, lon, max_radius_m, receiver_elev_m, |row| {
+        results.push(row)
+    });
     results
 }
 

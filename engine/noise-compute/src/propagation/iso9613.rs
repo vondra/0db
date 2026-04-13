@@ -19,7 +19,7 @@ pub(crate) fn fast_exp_f64(x: f64) -> f64 {
     let r = x - n_f * std::f64::consts::LN_2;
     // 5th-order Taylor: e^r ≈ 1 + r + r²/2 + r³/6 + r⁴/24 + r⁵/120
     let r2 = r * r;
-    let poly = 1.0 + r + r2 * (0.5 + r * (1.0/6.0 + r * (1.0/24.0 + r * (1.0/120.0))));
+    let poly = 1.0 + r + r2 * (0.5 + r * (1.0 / 6.0 + r * (1.0 / 24.0 + r * (1.0 / 120.0))));
     // Reconstruct: e^x = poly * 2^n via bit manipulation
     let n = n_f as i64;
     let bits = ((1023 + n) as u64) << 52;
@@ -38,7 +38,11 @@ pub enum SourceGeometry {
 
 /// Compute propagation baseline breakdown for contributor tooltip.
 /// Returns separate geometric, atmospheric, ground components (all negative = loss).
-pub fn compute_baseline(d_slant: f64, source_geom: SourceGeometry, ground_g: f64) -> crate::types::PropagationBaseline {
+pub fn compute_baseline(
+    d_slant: f64,
+    source_geom: SourceGeometry,
+    ground_g: f64,
+) -> crate::types::PropagationBaseline {
     let d = d_slant.max(1.0);
 
     let geometric_db = -match source_geom {
@@ -97,7 +101,8 @@ pub fn propagate_bands(
     let d_over_1000 = d_slant / 1000.0;
 
     for i in 0..NUM_BANDS {
-        bands[i] = emission_bands[i] - geo_div - ALPHA_ATM[i] * d_over_1000 - GROUND_CF[i] * ground_g;
+        bands[i] =
+            emission_bands[i] - geo_div - ALPHA_ATM[i] * d_over_1000 - GROUND_CF[i] * ground_g;
     }
 
     let a_weighted = a_weighted_total(&bands);
@@ -108,10 +113,16 @@ pub fn propagate_bands(
 /// L_A = 10 × log₁₀(Σ 10^((L_i + A_i) / 10))
 pub fn a_weighted_total(bands: &[f64; NUM_BANDS]) -> f64 {
     let c = std::f64::consts::LN_10 * 0.1;
-    let energy: f64 = bands.iter().enumerate()
+    let energy: f64 = bands
+        .iter()
+        .enumerate()
         .map(|(i, &level)| fast_exp_f64((level + A_WEIGHTING[i]) * c))
         .sum();
-    if energy > 0.0 { 10.0 * energy.log10() } else { f64::NEG_INFINITY }
+    if energy > 0.0 {
+        10.0 * energy.log10()
+    } else {
+        f64::NEG_INFINITY
+    }
 }
 
 /// Compute 5 propagation variants in a single pass (for pipeline batch output).
@@ -136,11 +147,11 @@ pub fn propagate_variants(
     d_slant: f64,
     source_geom: SourceGeometry,
     ground_g: f64,
-    terrain_atten: &[f64; NUM_BANDS],     // per-band terrain diffraction (positive = dB removed)
-    screening_atten: &[f64; NUM_BANDS],   // per-band building screening
-    vegetation_atten: &[f64; NUM_BANDS],  // per-band vegetation attenuation
-    reflection_boost_db: f64,             // scalar urban reflection boost (positive = dB added)
-    finite_line_corr: f64,                // FLC in dB (negative), 0 for point sources
+    terrain_atten: &[f64; NUM_BANDS], // per-band terrain diffraction (positive = dB removed)
+    screening_atten: &[f64; NUM_BANDS], // per-band building screening
+    vegetation_atten: &[f64; NUM_BANDS], // per-band vegetation attenuation
+    reflection_boost_db: f64,         // scalar urban reflection boost (positive = dB added)
+    finite_line_corr: f64,            // FLC in dB (negative), 0 for point sources
 ) -> crate::types::PropagationVariants {
     let mut full_energy = 0.0f64;
     let mut free_energy = 0.0f64;
@@ -173,24 +184,39 @@ pub fn propagate_variants(
         // Without barriers, use A_gr directly (which can be negative = amplification
         // for soft ground at low frequencies like 63/125 Hz).
         // WHY: a_gr.max(0.0) discarded low-frequency ground amplification in open fields.
-        let ground_or_bar_full = if a_bar_full > 0.0 { a_gr.max(a_bar_full) } else { a_gr };
-        let ground_or_bar_no_terrain = if a_bar_no_terrain > 0.0 { a_gr.max(a_bar_no_terrain) } else { a_gr };
-        let ground_or_bar_no_screening = if a_bar_no_screening > 0.0 { a_gr.max(a_bar_no_screening) } else { a_gr };
+        let ground_or_bar_full = if a_bar_full > 0.0 {
+            a_gr.max(a_bar_full)
+        } else {
+            a_gr
+        };
+        let ground_or_bar_no_terrain = if a_bar_no_terrain > 0.0 {
+            a_gr.max(a_bar_no_terrain)
+        } else {
+            a_gr
+        };
+        let ground_or_bar_no_screening = if a_bar_no_screening > 0.0 {
+            a_gr.max(a_bar_no_screening)
+        } else {
+            a_gr
+        };
 
         // Free-field: ground only, no barriers, no vegetation
         let free = base_no_ground - a_gr + finite_line_corr;
 
         // Full: ground-or-barrier + vegetation + reflection + FLC
         let full = base_no_ground - ground_or_bar_full - vegetation_atten[i]
-                   + reflection_boost_db + finite_line_corr;
+            + reflection_boost_db
+            + finite_line_corr;
 
         // Variants: remove one factor at a time
         let no_terrain = base_no_ground - ground_or_bar_no_terrain - vegetation_atten[i]
-                         + reflection_boost_db + finite_line_corr;
+            + reflection_boost_db
+            + finite_line_corr;
         let no_screening = base_no_ground - ground_or_bar_no_screening - vegetation_atten[i]
-                           + reflection_boost_db + finite_line_corr;
-        let no_vegetation = base_no_ground - ground_or_bar_full
-                            + reflection_boost_db + finite_line_corr;
+            + reflection_boost_db
+            + finite_line_corr;
+        let no_vegetation =
+            base_no_ground - ground_or_bar_full + reflection_boost_db + finite_line_corr;
 
         // A-weight and convert to linear energy via fast_exp (polynomial approx)
         // 10^((x+aw)/10) = e^((x+aw) * ln(10)/10)
@@ -236,8 +262,9 @@ pub fn propagate_single(
     let d_over_1000 = d_slant / 1000.0;
     let c = std::f64::consts::LN_10 * 0.1;
     for i in 0..NUM_BANDS {
-        let level = emission_bands[i] - geo_div - ALPHA_ATM[i] * d_over_1000
-                    - GROUND_CF[i] * ground_g + finite_line_corr;
+        let level =
+            emission_bands[i] - geo_div - ALPHA_ATM[i] * d_over_1000 - GROUND_CF[i] * ground_g
+                + finite_line_corr;
         let e = fast_exp_f64((level + A_WEIGHTING[i]) * c);
         energy += e;
         band_energy[i] = e;
@@ -271,9 +298,13 @@ mod tests {
         let attenuation = em_aw - result.a_weighted;
 
         // Allow ±1 dB tolerance (our emission approximation, not exact CNOSSOS coefficients)
-        assert!((attenuation - 28.58).abs() < 1.5,
+        assert!(
+            (attenuation - 28.58).abs() < 1.5,
             "K4: expected ~28.58, got {:.2} (emission_aw={:.2}, received_aw={:.2})",
-            attenuation, em_aw, result.a_weighted);
+            attenuation,
+            em_aw,
+            result.a_weighted
+        );
     }
 
     #[test]
@@ -286,8 +317,11 @@ mod tests {
 
         // Ground effect delta should be ~3 dB (K5 reference: 3.08 dB)
         let delta = hard.a_weighted - soft.a_weighted;
-        assert!(delta > 1.0 && delta < 6.0,
-            "Ground effect delta: expected ~3 dB, got {:.2}", delta);
+        assert!(
+            delta > 1.0 && delta < 6.0,
+            "Ground effect delta: expected ~3 dB, got {:.2}",
+            delta
+        );
     }
 
     #[test]
@@ -301,8 +335,10 @@ mod tests {
         // Point = 20·log₁₀(100)+11 = 51.0 dB
         // Line = 10·log₁₀(2π·100) = 27.98 dB
         // Point attenuates ~23 dB more
-        assert!(line.a_weighted > point.a_weighted,
-            "Line should be louder than point at same distance");
+        assert!(
+            line.a_weighted > point.a_weighted,
+            "Line should be louder than point at same distance"
+        );
         let diff = line.a_weighted - point.a_weighted;
         assert!(diff > 20.0 && diff < 26.0, "diff={:.1}", diff);
     }
@@ -315,13 +351,24 @@ mod tests {
 
         let bands = propagate_bands(&emission, 100.0, SourceGeometry::Line, 0.5);
         let variants = propagate_variants(
-            &emission, 100.0, SourceGeometry::Line, 0.5,
-            &zero, &zero, &zero, 0.0, 0.0,
+            &emission,
+            100.0,
+            SourceGeometry::Line,
+            0.5,
+            &zero,
+            &zero,
+            &zero,
+            0.0,
+            0.0,
         );
 
         let full_db = crate::types::PropagationVariants::to_db(variants.full_energy);
-        assert!((full_db - bands.a_weighted).abs() < 0.01,
-            "full={:.2} vs bands={:.2}", full_db, bands.a_weighted);
+        assert!(
+            (full_db - bands.a_weighted).abs() < 0.01,
+            "full={:.2} vs bands={:.2}",
+            full_db,
+            bands.a_weighted
+        );
     }
 
     #[test]
@@ -331,14 +378,25 @@ mod tests {
         let zero = [0.0f64; NUM_BANDS];
 
         let v = propagate_variants(
-            &emission, 200.0, SourceGeometry::Point, 0.5,
-            &zero, &zero, &zero, 0.0, 0.0,
+            &emission,
+            200.0,
+            SourceGeometry::Point,
+            0.5,
+            &zero,
+            &zero,
+            &zero,
+            0.0,
+            0.0,
         );
 
         let full_db = crate::types::PropagationVariants::to_db(v.full_energy);
         let free_db = crate::types::PropagationVariants::to_db(v.free_field_energy);
-        assert!((full_db - free_db).abs() < 0.01,
-            "full={:.2} free={:.2} should be equal with zero atten", full_db, free_db);
+        assert!(
+            (full_db - free_db).abs() < 0.01,
+            "full={:.2} free={:.2} should be equal with zero atten",
+            full_db,
+            free_db
+        );
     }
 
     #[test]
@@ -350,8 +408,15 @@ mod tests {
 
         // With big barrier: should use barrier (15 dB), NOT ground+barrier (18 dB)
         let v = propagate_variants(
-            &emission, 200.0, SourceGeometry::Line, 1.0, // soft ground G=1 → A_gr ~3 dB
-            &big_barrier, &zero, &zero, 0.0, 0.0,
+            &emission,
+            200.0,
+            SourceGeometry::Line,
+            1.0, // soft ground G=1 → A_gr ~3 dB
+            &big_barrier,
+            &zero,
+            &zero,
+            0.0,
+            0.0,
         );
         // Free-field uses ground only
         let free_db = crate::types::PropagationVariants::to_db(v.free_field_energy);
@@ -360,8 +425,11 @@ mod tests {
         // Barrier effect: free - full ≈ 15 - 3 = 12 dB (barrier minus ground, since max() picks barrier)
         // If we had A_gr + A_bar (bug): free - full ≈ 15 + 3 - 3 = 15 dB (over-attenuated)
         let effect = free_db - full_db;
-        assert!(effect > 8.0 && effect < 14.0,
-            "barrier effect = {:.1} dB, expected ~12 (not ~15 if double-counted)", effect);
+        assert!(
+            effect > 8.0 && effect < 14.0,
+            "barrier effect = {:.1} dB, expected ~12 (not ~15 if double-counted)",
+            effect
+        );
     }
 
     #[test]
@@ -372,16 +440,26 @@ mod tests {
         let small_barrier = [1.0; NUM_BANDS]; // 1 dB barrier (smaller than ground ~3 dB)
 
         let v = propagate_variants(
-            &emission, 200.0, SourceGeometry::Line, 1.0, // soft ground G=1 → A_gr ~3 dB
-            &small_barrier, &zero, &zero, 0.0, 0.0,
+            &emission,
+            200.0,
+            SourceGeometry::Line,
+            1.0, // soft ground G=1 → A_gr ~3 dB
+            &small_barrier,
+            &zero,
+            &zero,
+            0.0,
+            0.0,
         );
         let free_db = crate::types::PropagationVariants::to_db(v.free_field_energy);
         let full_db = crate::types::PropagationVariants::to_db(v.full_energy);
 
         // Ground wins: effect should be ~0 (full uses max(3, 1) = 3 = same as free's ground)
         let effect = free_db - full_db;
-        assert!(effect.abs() < 1.0,
-            "small barrier effect = {:.1} dB, expected ~0 (ground dominates)", effect);
+        assert!(
+            effect.abs() < 1.0,
+            "small barrier effect = {:.1} dB, expected ~0 (ground dominates)",
+            effect
+        );
     }
 
     #[test]
@@ -391,18 +469,33 @@ mod tests {
         let terrain = [5.0; NUM_BANDS]; // 5 dB terrain diffraction per band
 
         let v = propagate_variants(
-            &emission, 200.0, SourceGeometry::Line, 0.5,
-            &terrain, &zero, &zero, 0.0, -3.0,
+            &emission,
+            200.0,
+            SourceGeometry::Line,
+            0.5,
+            &terrain,
+            &zero,
+            &zero,
+            0.0,
+            -3.0,
         );
 
         let full_db = crate::types::PropagationVariants::to_db(v.full_energy);
         let no_terrain_db = crate::types::PropagationVariants::to_db(v.no_terrain_energy);
 
         // Without terrain should be louder
-        assert!(no_terrain_db > full_db, "no_terrain={:.1} should be louder than full={:.1}", no_terrain_db, full_db);
+        assert!(
+            no_terrain_db > full_db,
+            "no_terrain={:.1} should be louder than full={:.1}",
+            no_terrain_db,
+            full_db
+        );
         // Difference should be roughly 5 dB (not exact due to A-weighting)
-        assert!((no_terrain_db - full_db) > 2.0 && (no_terrain_db - full_db) < 8.0,
-            "terrain effect = {:.1} dB", no_terrain_db - full_db);
+        assert!(
+            (no_terrain_db - full_db) > 2.0 && (no_terrain_db - full_db) < 8.0,
+            "terrain effect = {:.1} dB",
+            no_terrain_db - full_db
+        );
     }
 
     #[test]
@@ -419,20 +512,29 @@ mod tests {
             }
             x += 0.01;
         }
-        assert!(worst_db < 0.01,
-            "fast_exp_f64 worst-case error {:.6} dB exceeds 0.01 dB bound", worst_db);
+        assert!(
+            worst_db < 0.01,
+            "fast_exp_f64 worst-case error {:.6} dB exceeds 0.01 dB bound",
+            worst_db
+        );
     }
 
     #[test]
     fn test_variants_add() {
         let mut a = crate::types::PropagationVariants {
-            full_energy: 1.0, free_field_energy: 2.0,
-            no_terrain_energy: 3.0, no_screening_energy: 4.0, no_vegetation_energy: 5.0,
+            full_energy: 1.0,
+            free_field_energy: 2.0,
+            no_terrain_energy: 3.0,
+            no_screening_energy: 4.0,
+            no_vegetation_energy: 5.0,
             band_energy: [0.0; crate::types::NUM_BANDS],
         };
         let b = crate::types::PropagationVariants {
-            full_energy: 10.0, free_field_energy: 20.0,
-            no_terrain_energy: 30.0, no_screening_energy: 40.0, no_vegetation_energy: 50.0,
+            full_energy: 10.0,
+            free_field_energy: 20.0,
+            no_terrain_energy: 30.0,
+            no_screening_energy: 40.0,
+            no_vegetation_energy: 50.0,
             band_energy: [0.0; crate::types::NUM_BANDS],
         };
         a.add(&b);

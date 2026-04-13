@@ -22,6 +22,32 @@ interface PropagationBaseline {
   total_db: number
 }
 
+interface NoisePeriodsData {
+  ld_db: number
+  le_db: number
+  ln_db: number
+  lden_db: number
+}
+
+interface TerrainBreakdownData {
+  delta_m: number
+  is_double: boolean
+  attenuation_db: number
+  profile_points: number
+}
+
+interface ScreeningBreakdownData {
+  building_path_m: number
+  attenuation_db: number
+  obstacle: ScreeningObstacleTrace | null
+}
+
+interface VegetationBreakdownData {
+  forest_depth_m: number
+  attenuation_db: number
+  sampled_path_m: number
+}
+
 interface ScreeningObstacleTrace {
   kind: 'building' | 'barrier' | 'none'
   height_m: number
@@ -109,27 +135,57 @@ interface IndustrialMetadata {
   grid_point_count: number
 }
 
-interface AircraftBandData {
-  l_day: number
-  l_evening: number
-  l_night: number
-  lmax_peak: number | null
-  flights_per_day: number
+interface AircraftEventBandStats {
+  observed_events_per_day: number
+  avg_altitude_m: number
+  top_aircraft: string
+}
+
+interface AircraftAirborneDetail {
+  periods: NoisePeriodsData
+  observed_flights_per_day: number
   helicopter_flights_per_day: number
-  faint_flights_per_day: number
-  faint_avg_altitude_m: number
-  faint_top_aircraft: string
-  audible_flights_per_day: number
-  audible_avg_altitude_m: number
-  audible_top_aircraft: string
-  disruptive_flights_per_day: number
-  disruptive_avg_altitude_m: number
-  disruptive_top_aircraft: string
+  lmax_peak: number | null
+  faint: AircraftEventBandStats
+  audible: AircraftEventBandStats
+  disruptive: AircraftEventBandStats
+}
+
+interface AircraftGroundOpsClassDetail {
+  periods: NoisePeriodsData
+  observed_movements_per_day: number
+  modeled_movements_per_day: number
+}
+
+interface AircraftGroundOpsDetail {
+  periods: NoisePeriodsData
+  periods_free: NoisePeriodsData
+  observed_movements_per_day: number
+  modeled_movements_per_day: number
+  distance_m: number
+  emission_db: number
+  received_bands: number[]
+  runway_roll: AircraftGroundOpsClassDetail
+  taxi: AircraftGroundOpsClassDetail
+  apron_movement: AircraftGroundOpsClassDetail
+  baseline: PropagationBaseline
+  terrain: TerrainBreakdownData
+  screening: ScreeningBreakdownData
+  vegetation: VegetationBreakdownData
+}
+
+interface AircraftBandData {
+  airborne: AircraftAirborneDetail
+  ground_ops: AircraftGroundOpsDetail
 }
 
 interface AircraftMetadata {
   kind: 'aircraft'
-  band_data: AircraftBandData
+  variant: 'airborne' | 'ground_ops'
+  airport_name?: string | null
+  airport_key?: string | null
+  airborne?: AircraftAirborneDetail | null
+  ground_ops?: AircraftGroundOpsDetail | null
 }
 
 type SourceMetadata =
@@ -225,50 +281,47 @@ function txtTable(rows: Array<[string, string] | { sep: true } | string>, labelW
 }
 
 function AircraftDetail({ d }: { d: AircraftBandData }) {
+  const airborne = d.airborne
+  const groundOps = d.ground_ops
   const bands: Array<{ label: string; key: 'disruptive' | 'audible' | 'faint'; color: string; descr: string }> = [
     { label: '>60 dB', key: 'disruptive', color: '#ef4444', descr: 'disruptive — clearly audible indoor with windows open, may interrupt sleep / conversation' },
     { label: '>45 dB', key: 'audible', color: '#f59e0b', descr: 'audible — clearly hearable outdoor in quiet rural background' },
     { label: '>30 dB', key: 'faint', color: '#6b7280', descr: 'faint — at the edge of perception, only noticeable in very quiet conditions' },
   ]
+  const movementRows: Array<{ label: string; data: AircraftGroundOpsClassDetail }> = [
+    { label: 'Runway roll', data: groundOps.runway_roll },
+    { label: 'Taxi', data: groundOps.taxi },
+    { label: 'Apron movement', data: groundOps.apron_movement },
+  ]
 
-  const peakLmaxText = d.lmax_peak != null
+  const peakLmaxText = airborne.lmax_peak != null
     ? txtTable([
-        ['Peak Lmax', `${d.lmax_peak.toFixed(1)} dB`],
+        ['Peak Lmax', `${airborne.lmax_peak.toFixed(1)} dB`],
         '',
         'Single-event maximum noise level',
-        'across all flights at this point.',
+        'across observed ADS-B flights',
+        'at this point.',
         'Doc 29 NPD interpolation from the',
         'closest point of approach (CPA),',
         'with installation + atmospheric',
-        'corrections. Slant distance + speed',
-        'enter the Lmax curve.',
+        'corrections. Ground ops are not',
+        'part of this peak metric.',
       ], 18, 12)
     : ''
-
-  const periodText = txtTable([
-    ['Day (07–19)', `${d.l_day.toFixed(1)} dB`],
-    ['Evening (19–23)', `${d.l_evening.toFixed(1)} dB`],
-    ['Night (23–07)', `${d.l_night.toFixed(1)} dB`],
-    '',
-    'Period Leq from Doc 29 SEL energies,',
-    'normalized over the dataset days.',
-    'Lden = 10·log10[(12·10^(Ld/10) +',
-    '4·10^((Le+5)/10) + 8·10^((Ln+10)/10))/24]',
-    '(EU END 2002/49/EC).',
-  ], 18, 12)
 
   function bandText(b: typeof bands[number], fpd: number, alt: number, top: string) {
     return txtTable([
       ['Band threshold', `Lmax > ${b.label.replace('>', '').trim()}`],
-      ['Flights/day', fpd.toFixed(1)],
+      ['Observed events/day', fpd.toFixed(1)],
       ['Avg altitude', `${alt.toFixed(0)} m`],
       ['Top aircraft', top],
       '',
       b.descr,
       '',
-      'Flights/day = unique flight count',
-      `whose peak Lmax exceeds ${b.label.trim()},`,
-      'divided by dataset days.',
+      'Observed events/day = unique ADS-B',
+      'flight events whose peak Lmax',
+      `exceeds ${b.label.trim()}, divided by`,
+      'dataset days.',
       'Avg altitude = mean CPA altitude',
       'across those flights. Top aircraft',
       'is the most common Doc 29 profile.',
@@ -277,47 +330,74 @@ function AircraftDetail({ d }: { d: AircraftBandData }) {
 
   return (
     <div className="mt-1 mb-1">
-      {d.lmax_peak != null && (
+      <div className="text-[11px] font-medium mb-1">Aircraft - airborne</div>
+      <div className="flex justify-between text-[11px] mb-1">
+        <HoverText title={"Observed flights/day\n\nUnique airborne ADS-B flight events that contribute at this point, normalized by dataset day count."}>
+          Observed flights/day
+        </HoverText>
+        <HoverText
+          title={txtTable([
+            ['Observed flights/day', airborne.observed_flights_per_day.toFixed(1)],
+            ['Helicopters/day', airborne.helicopter_flights_per_day.toFixed(1)],
+            '',
+            'Airborne section uses observed',
+            'ADS-B flight events only.',
+          ], 20, 12)}
+          className="text-foreground no-underline"
+        >
+          {airborne.observed_flights_per_day.toFixed(1)}
+        </HoverText>
+      </div>
+      {airborne.lmax_peak != null && (
         <div className="flex justify-between text-[11px] mb-1">
-          <HoverText title={"Peak Lmax\n\nLoudest single-event level among all\nflights observed at this point.\nMeasured per Doc 29 NPD curves at CPA."}>
+          <HoverText title={"Peak Lmax\n\nLoudest single airborne event among observed ADS-B flights at this point."}>
             Peak Lmax
           </HoverText>
           <HoverText title={peakLmaxText} className="text-foreground font-bold no-underline">
-            {d.lmax_peak.toFixed(1)} dB
+            {airborne.lmax_peak.toFixed(1)} dB
           </HoverText>
         </div>
       )}
       <div className="flex justify-between text-[11px] mb-1">
-        <HoverText title={"Day / Evening / Night\n\nTime-weighted average noise level over\nstandard EU END periods (07–19, 19–23,\n23–07). Each is the integrated SEL\nenergy normalized to period seconds."}>
+        <HoverText title={"Day / Evening / Night\n\nAirborne Doc 29 model over standard EU END periods (07–19, 19–23, 23–07)."}>
           Day/Evening/Night
         </HoverText>
-        <HoverText title={periodText} className="text-foreground no-underline">
-          {d.l_day.toFixed(1)}/{d.l_evening.toFixed(1)}/{d.l_night.toFixed(1)} dB
+        <HoverText
+          title={txtTable([
+            ['Day (07–19)', `${airborne.periods.ld_db.toFixed(1)} dB`],
+            ['Evening (19–23)', `${airborne.periods.le_db.toFixed(1)} dB`],
+            ['Night (23–07)', `${airborne.periods.ln_db.toFixed(1)} dB`],
+            ['Lden', `${airborne.periods.lden_db.toFixed(1)} dB`],
+          ], 18, 12)}
+          className="text-foreground no-underline"
+        >
+          {airborne.periods.ld_db.toFixed(1)}/{airborne.periods.le_db.toFixed(1)}/{airborne.periods.ln_db.toFixed(1)} dB
         </HoverText>
       </div>
       <table className="w-full text-[10px] mt-1">
         <thead>
           <tr className="text-muted-foreground/60">
             <th className="text-left font-normal pb-0.5">
-              <HoverText title={"Band\n\nClassification by single-event Lmax peak:\n>60 dB disruptive, >45 dB audible,\n>30 dB faint. Each flight is counted in\nALL bands its Lmax exceeds."}>Band</HoverText>
+              <HoverText title={"Band\n\nClassification of observed ADS-B flight\nevents by single-event Lmax peak:\n>60 dB disruptive, >45 dB audible,\n>30 dB faint. Each observed flight is\ncounted in ALL bands its Lmax exceeds."}>Band</HoverText>
             </th>
             <th className="text-right font-normal pb-0.5">
-              <HoverText title={"Flights/day\n\nNumber of unique flights whose peak\nLmax falls above the band threshold,\ndivided by the dataset day count."}>Flights/day</HoverText>
+              <HoverText title={"Observed airborne events/day\n\nNumber of unique observed ADS-B flights whose peak Lmax falls above the band threshold, divided by the dataset day count."}>Observed/day</HoverText>
             </th>
             <th className="text-right font-normal pb-0.5">
-              <HoverText title={"Average altitude\n\nMean above-ground altitude at the\nclosest point of approach (CPA) for\nflights in this band."}>Avg alt</HoverText>
+              <HoverText title={"Average altitude\n\nMean above-ground altitude at the\nclosest point of approach (CPA) for\nobserved ADS-B flights in this band."}>Avg alt</HoverText>
             </th>
             <th className="text-right font-normal pb-0.5">
-              <HoverText title={"Top aircraft type\n\nMost common Doc 29 profile (B738, A320,\nA321, Widebody, Turboprop, BizJet,\nLightGA, etc.) among flights in this band."}>Top type</HoverText>
+              <HoverText title={"Top aircraft type\n\nMost common Doc 29 profile (B738, A320,\nA321, Widebody, Turboprop, BizJet,\nLightGA, etc.) among observed ADS-B\nflights in this band."}>Top type</HoverText>
             </th>
           </tr>
         </thead>
         <tbody>
           {bands.map(b => {
-            const fpd = d[`${b.key}_flights_per_day`]
+            const bucket = airborne[b.key]
+            const fpd = bucket.observed_events_per_day
             if (fpd === 0) return null
-            const alt = d[`${b.key}_avg_altitude_m`]
-            const top = d[`${b.key}_top_aircraft`]
+            const alt = bucket.avg_altitude_m
+            const top = bucket.top_aircraft
             return (
               <tr key={b.key}>
                 <td style={{ color: b.color }} className="font-medium">
@@ -339,6 +419,66 @@ function AircraftDetail({ d }: { d: AircraftBandData }) {
           })}
         </tbody>
       </table>
+
+      <div className="text-[11px] font-medium mt-3 mb-1">Aircraft - ground ops</div>
+      <div className="flex justify-between text-[11px] mb-1">
+        <HoverText title={"Observed movements/day\n\nObserved ground movements from ADS-B tracks on runway, taxiway or apron near this point."}>
+          Observed movements/day
+        </HoverText>
+        <HoverText className="text-foreground no-underline" title={"Observed ground movements/day from ADS-B tracks."}>
+          {groundOps.observed_movements_per_day.toFixed(1)}
+        </HoverText>
+      </div>
+      <div className="flex justify-between text-[11px] mb-1">
+        <HoverText title={"Modeled movements/day\n\nSynthetic airport ground movements added where observed taxi or runway-roll coverage is incomplete."}>
+          Modeled movements/day
+        </HoverText>
+        <HoverText className="text-foreground no-underline" title={"Synthetic ground movements/day added by the airport ground-ops model."}>
+          {groundOps.modeled_movements_per_day.toFixed(1)}
+        </HoverText>
+      </div>
+      <div className="flex justify-between text-[11px] mb-1">
+        <HoverText title={"Day / Evening / Night\n\nGround ops propagated as line sources with terrain, screening and vegetation path effects."}>
+          Day/Evening/Night
+        </HoverText>
+        <HoverText
+          className="text-foreground no-underline"
+          title={txtTable([
+            ['Day (07–19)', `${groundOps.periods.ld_db.toFixed(1)} dB`],
+            ['Evening (19–23)', `${groundOps.periods.le_db.toFixed(1)} dB`],
+            ['Night (23–07)', `${groundOps.periods.ln_db.toFixed(1)} dB`],
+            ['Lden', `${groundOps.periods.lden_db.toFixed(1)} dB`],
+          ], 18, 12)}
+        >
+          {groundOps.periods.ld_db.toFixed(1)}/{groundOps.periods.le_db.toFixed(1)}/{groundOps.periods.ln_db.toFixed(1)} dB
+        </HoverText>
+      </div>
+      <table className="w-full text-[10px] mt-1">
+        <thead>
+          <tr className="text-muted-foreground/60">
+            <th className="text-left font-normal pb-0.5">Class</th>
+            <th className="text-right font-normal pb-0.5">Observed/day</th>
+            <th className="text-right font-normal pb-0.5">Modeled/day</th>
+            <th className="text-right font-normal pb-0.5">Lden</th>
+          </tr>
+        </thead>
+        <tbody>
+          {movementRows.map(row => (
+            <tr key={row.label}>
+              <td>{row.label}</td>
+              <td className="text-right">{row.data.observed_movements_per_day.toFixed(1)}</td>
+              <td className="text-right">{row.data.modeled_movements_per_day.toFixed(1)}</td>
+              <td className="text-right">{Number.isFinite(row.data.periods.lden_db) ? `${row.data.periods.lden_db.toFixed(1)} dB` : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="text-[10px] mt-2 space-y-0.5 text-muted-foreground/80">
+        {lineRow('Baseline attenuation', `${fmt(groundOps.baseline.total_db)} dB`, true)}
+        {lineRow('Terrain', `${fmt(groundOps.terrain.attenuation_db)} dB`, true)}
+        {lineRow('Screening', `${fmt(groundOps.screening.attenuation_db)} dB`, true)}
+        {lineRow('Vegetation', `${fmt(groundOps.vegetation.attenuation_db)} dB`, true)}
+      </div>
     </div>
   )
 }
@@ -348,6 +488,254 @@ function lineRow(label: ReactNode, value: ReactNode, muted?: boolean) {
     <div className={`flex justify-between ${muted ? 'text-muted-foreground/40' : ''}`}>
       <span>{label}</span>
       <span className={muted ? '' : 'text-foreground'}>{value}</span>
+    </div>
+  )
+}
+
+function formatBandArray(bands: number[]): string {
+  return `[${bands.map(b => Number.isFinite(b) ? Math.round(b).toString() : '—').join(' ')}]`
+}
+
+function baselineTooltip(baseline: PropagationBaseline): string {
+  return txtTable([
+    ['Geometric divergence', `${fmt(baseline.geometric_db)} dB`],
+    ['Atmospheric absorption', `${fmt(baseline.atmospheric_db)} dB`],
+    [`Ground effect G=${baseline.ground_factor.toFixed(1)}`, `${fmt(baseline.ground_db)} dB`],
+    { sep: true },
+    ['Total', `${fmt(baseline.total_db)} dB`],
+  ])
+}
+
+function terrainTooltip(terrain: TerrainBreakdownData): string {
+  return terrain.delta_m > 0
+    ? txtTable([
+        ['Path difference δ', `${terrain.delta_m.toFixed(2)} m`],
+        ['Diffraction', terrain.is_double ? 'double edge' : 'single edge'],
+        ['DEM points', String(terrain.profile_points)],
+        { sep: true },
+        ['Attenuation', `${fmt(terrain.attenuation_db)} dB`],
+      ], 18, 14)
+    : txtTable([
+        'No terrain obstruction.',
+        '',
+        'Path stayed clear in DEM profile.',
+      ], 18, 12)
+}
+
+function screeningTooltip(screening: ScreeningBreakdownData): string {
+  const rows: Array<[string, string] | { sep: true } | string> = []
+  if (screening.obstacle && screening.obstacle.kind !== 'none') {
+    rows.push(
+      ['Obstacle kind', screening.obstacle.kind],
+      ['Height', `${screening.obstacle.height_m.toFixed(1)} m`],
+      ['Position', `${(screening.obstacle.t * 100).toFixed(0)}% of path`],
+      ['Above LoS', `${screening.obstacle.screen_h_m.toFixed(1)} m`],
+      ['Fresnel δ', `${screening.obstacle.delta_m.toFixed(2)} m`],
+    )
+  } else {
+    rows.push(['Obstacle', 'none on path'])
+  }
+  rows.push({ sep: true }, ['Aggregate attenuation', `${fmt(screening.attenuation_db)} dB`])
+  return txtTable(rows, 18, 14)
+}
+
+function vegetationTooltip(vegetation: VegetationBreakdownData): string {
+  return vegetation.sampled_path_m > 0
+    ? txtTable([
+        ['Forest depth', `${vegetation.forest_depth_m.toFixed(0)} m`],
+        ['Path sampled', `${vegetation.sampled_path_m.toFixed(0)} m`],
+        { sep: true },
+        ['Attenuation', `${fmt(vegetation.attenuation_db)} dB`],
+      ], 18, 14)
+    : 'Vegetation skipped'
+}
+
+function AircraftAirborneRow({ d }: { d: AircraftBandData }) {
+  const [expanded, setExpanded] = useState(false)
+  const airborne = d.airborne
+  const ldenBreakdownText = txtTable([
+    ['Day (07–19)', `${airborne.periods.ld_db.toFixed(1)} dB`],
+    ['Evening (19–23)', `${airborne.periods.le_db.toFixed(1)} dB`],
+    ['Night (23–07)', `${airborne.periods.ln_db.toFixed(1)} dB`],
+    { sep: true },
+    ['→ Final Lden', `${airborne.periods.lden_db.toFixed(1)} dB`],
+  ], 14, 9)
+  const bands: Array<{ label: string; bucket: AircraftEventBandStats; color: string }> = [
+    { label: '>60 dB', bucket: airborne.disruptive, color: '#ef4444' },
+    { label: '>45 dB', bucket: airborne.audible, color: '#f59e0b' },
+    { label: '>30 dB', bucket: airborne.faint, color: '#6b7280' },
+  ]
+
+  return (
+    <div className="border-b border-border/50 last:border-b-0">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={(e) => {
+          e.stopPropagation()
+          setExpanded(!expanded)
+        }}
+        className="w-full py-1.5 text-left cursor-pointer hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        <div className="flex items-baseline gap-1.5 text-xs px-0">
+          <span className="font-medium truncate flex-1">Aircraft - airborne</span>
+          <span className="text-muted-foreground/60 shrink-0 text-[10px]">
+            {airborne.observed_flights_per_day.toFixed(0)} flights/day
+          </span>
+          <span
+            className="font-bold shrink-0 ml-1"
+            style={{ color: ldenToColor(airborne.periods.lden_db) }}
+          >
+            <DataPoint title="Airborne aircraft Lden" text={ldenBreakdownText}>
+              {airborne.periods.lden_db.toFixed(1)} dB
+            </DataPoint>
+          </span>
+          <span className="text-[10px] text-muted-foreground/40 shrink-0">
+            {expanded ? '\u25B2' : '\u25BC'}
+          </span>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="mt-1 ml-5 mb-1 text-[11px] leading-relaxed font-mono text-muted-foreground">
+          {lineRow('Observed flights/day', airborne.observed_flights_per_day.toFixed(1))}
+          {lineRow('Helicopters/day', airborne.helicopter_flights_per_day.toFixed(1))}
+          {airborne.lmax_peak != null && lineRow('Peak Lmax', `${airborne.lmax_peak.toFixed(1)} dB`)}
+          {lineRow('Day/Evening/Night', `${airborne.periods.ld_db.toFixed(1)}/${airborne.periods.le_db.toFixed(1)}/${airborne.periods.ln_db.toFixed(1)} dB`)}
+          <table className="w-full text-[10px] mt-1">
+            <thead>
+              <tr className="text-muted-foreground/60">
+                <th className="text-left font-normal pb-0.5">Band</th>
+                <th className="text-right font-normal pb-0.5">Events/day</th>
+                <th className="text-right font-normal pb-0.5">Avg alt</th>
+                <th className="text-right font-normal pb-0.5">Top type</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bands.map(({ label, bucket, color }) => (
+                bucket.observed_events_per_day > 0 ? (
+                  <tr key={label}>
+                    <td style={{ color }} className="font-medium">{label}</td>
+                    <td className="text-right">{bucket.observed_events_per_day.toFixed(0)}</td>
+                    <td className="text-right">{bucket.avg_altitude_m.toFixed(0)} m</td>
+                    <td className="text-right">{bucket.top_aircraft}</td>
+                  </tr>
+                ) : null
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AircraftGroundOpsRow({ d }: { d: AircraftBandData }) {
+  const [expanded, setExpanded] = useState(false)
+  const ground = d.ground_ops
+  const movementSummary = ground.observed_movements_per_day + ground.modeled_movements_per_day
+  const ldenBreakdownText = txtTable([
+    ['Free field', `${ground.periods_free.lden_db.toFixed(1)} dB`],
+    ['Terrain', `${fmt(ground.terrain.attenuation_db)} dB`],
+    ['Screening', `${fmt(ground.screening.attenuation_db)} dB`],
+    ['Vegetation', `${fmt(ground.vegetation.attenuation_db)} dB`],
+    { sep: true },
+    ['→ Final Lden', `${ground.periods.lden_db.toFixed(1)} dB`],
+  ], 14, 9)
+  const emissionText = txtTable([
+    'Airport ground-ops line source',
+    'Observed + modeled runway/taxi/apron',
+    '',
+    { sep: true },
+    ['Total', `${ground.emission_db.toFixed(1)} dB`],
+  ], 18, 12)
+
+  return (
+    <div className="border-b border-border/50 last:border-b-0">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={(e) => {
+          e.stopPropagation()
+          setExpanded(!expanded)
+        }}
+        className="w-full py-1.5 text-left cursor-pointer hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        <div className="flex items-baseline gap-1.5 text-xs px-0">
+          <span className="font-medium truncate flex-1">Aircraft - ground ops</span>
+          <span className="text-muted-foreground/60 shrink-0">{formatDist(ground.distance_m)}</span>
+          <span className="text-muted-foreground/60 shrink-0 text-[10px]">
+            {movementSummary.toFixed(0)} moves/day
+          </span>
+          <span
+            className="font-bold shrink-0 ml-1"
+            style={{ color: ldenToColor(ground.periods.lden_db) }}
+          >
+            <DataPoint title="Aircraft ground-ops Lden breakdown" text={ldenBreakdownText}>
+              {ground.periods.lden_db.toFixed(1)} dB
+            </DataPoint>
+          </span>
+          <span className="text-[10px] text-muted-foreground/40 shrink-0">
+            {expanded ? '\u25B2' : '\u25BC'}
+          </span>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="mt-1 ml-5 mb-1 text-[11px] leading-relaxed font-mono text-muted-foreground">
+          {lineRow('Observed movements/day', ground.observed_movements_per_day.toFixed(1))}
+          {lineRow('Modeled movements/day', ground.modeled_movements_per_day.toFixed(1))}
+          {lineRow('Runway roll', `${ground.runway_roll.observed_movements_per_day.toFixed(1)} obs + ${ground.runway_roll.modeled_movements_per_day.toFixed(1)} model`)}
+          {lineRow('Taxi', `${ground.taxi.observed_movements_per_day.toFixed(1)} obs + ${ground.taxi.modeled_movements_per_day.toFixed(1)} model`)}
+          {lineRow('Apron movement', `${ground.apron_movement.observed_movements_per_day.toFixed(1)} obs + ${ground.apron_movement.modeled_movements_per_day.toFixed(1)} model`)}
+          {lineRow(
+            <MetricLabel term="emission" />,
+            <DataPoint title="Ground-ops source emission" text={emissionText}>
+              {ground.emission_db.toFixed(1)} dB
+            </DataPoint>,
+          )}
+          <div className="mt-1.5 mb-0.5 pt-1 border-t border-border/40">
+            <div className="text-[9px] uppercase tracking-[0.08em] text-muted-foreground/70">
+              Sound path
+            </div>
+          </div>
+          {lineRow(
+            <MetricLabel term="baseline" />,
+            <DataPoint title="Baseline propagation breakdown" text={baselineTooltip(ground.baseline)}>
+              {fmt(ground.baseline.total_db)} dB
+            </DataPoint>,
+          )}
+          {lineRow(
+            <MetricLabel term="terrain" />,
+            <DataPoint title="Terrain diffraction" text={terrainTooltip(ground.terrain)}>
+              <span className={ground.terrain.attenuation_db < -0.5 ? '' : 'text-muted-foreground/40'}>
+                {fmt(ground.terrain.attenuation_db)} dB
+              </span>
+            </DataPoint>,
+          )}
+          {lineRow(
+            <MetricLabel term="screening" />,
+            <DataPoint title="Screening obstacle" text={screeningTooltip(ground.screening)}>
+              <span className={ground.screening.attenuation_db < -0.5 ? '' : 'text-muted-foreground/40'}>
+                {fmt(ground.screening.attenuation_db)} dB
+              </span>
+            </DataPoint>,
+          )}
+          {lineRow(
+            <MetricLabel term="vegetation" />,
+            <DataPoint title="Vegetation attenuation" text={vegetationTooltip(ground.vegetation)}>
+              <span className={ground.vegetation.attenuation_db < -0.5 ? '' : 'text-muted-foreground/40'}>
+                {fmt(ground.vegetation.attenuation_db)} dB
+              </span>
+            </DataPoint>,
+          )}
+          <div className="mt-1 text-[10px] text-muted-foreground/60">
+            <MetricLabel term="per_band">
+              {formatBandArray(ground.received_bands)}
+            </MetricLabel>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -519,13 +907,38 @@ function MetadataRows({ c }: { c: Contributor }) {
     )
   }
 
+  if (m.kind === 'aircraft') {
+    if (m.variant !== 'ground_ops' || !m.ground_ops) return null
+    const g = m.ground_ops
+    return (
+      <>
+        {lineRow('Observed movements/day', g.observed_movements_per_day.toFixed(1))}
+        {lineRow('Modeled movements/day', g.modeled_movements_per_day.toFixed(1))}
+        {lineRow(
+          'Runway roll',
+          `${g.runway_roll.observed_movements_per_day.toFixed(1)} obs + ${g.runway_roll.modeled_movements_per_day.toFixed(1)} model`,
+        )}
+        {lineRow(
+          'Taxi',
+          `${g.taxi.observed_movements_per_day.toFixed(1)} obs + ${g.taxi.modeled_movements_per_day.toFixed(1)} model`,
+        )}
+        {lineRow(
+          'Apron movement',
+          `${g.apron_movement.observed_movements_per_day.toFixed(1)} obs + ${g.apron_movement.modeled_movements_per_day.toFixed(1)} model`,
+        )}
+      </>
+    )
+  }
+
   return null
 }
 
 function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry: any | null) => void }) {
   const [expanded, setExpanded] = useState(false)
   const isAircraft = c.metadata?.kind === 'aircraft'
-  const aircraftBand = isAircraft ? (c.metadata as AircraftMetadata).band_data : null
+  const aircraftMeta = isAircraft ? (c.metadata as AircraftMetadata) : null
+  const aircraftAirborne = aircraftMeta?.variant === 'airborne' ? (aircraftMeta.airborne ?? null) : null
+  const aircraftGroundOps = aircraftMeta?.variant === 'ground_ops' ? (aircraftMeta.ground_ops ?? null) : null
 
   // Tier 1 summary chip: AADT for roads, trains for rails, flights for aircraft
   const tier1Summary: string | null = (() => {
@@ -539,23 +952,47 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
       const eff = m.trains_passenger_effective + m.trains_freight_effective
       return eff > 0 ? `${fmtInt(eff)} trains/day` : null
     }
-    if (m.kind === 'aircraft') {
-      return `${m.band_data.flights_per_day.toFixed(0)} flights/day`
+    if (m.kind === 'aircraft' && m.variant === 'airborne' && m.airborne) {
+      const flights = m.airborne.observed_flights_per_day
+      return flights > 0 ? `${flights.toFixed(flights >= 10 ? 0 : 1)} flights/day` : null
+    }
+    if (m.kind === 'aircraft' && m.variant === 'ground_ops' && m.ground_ops) {
+      const moves = m.ground_ops.observed_movements_per_day + m.ground_ops.modeled_movements_per_day
+      return moves > 0 ? `${moves.toFixed(moves >= 10 ? 0 : 1)} moves/day` : null
     }
     return null
   })()
 
-  const ldenBreakdownText = txtTable([
-    ['Free field', `${c.received_lden_free.toFixed(1)} dB`],
-    ['Terrain', `${fmt(c.terrain.attenuation_db)} dB`],
-    ['Screening', `${fmt(c.screening.attenuation_db)} dB`],
-    ['Vegetation', `${fmt(c.vegetation.attenuation_db)} dB`],
-    { sep: true },
-    ['→ Final Lden', `${c.received_lden.toFixed(1)} dB`],
-  ], 14, 9)
+  const ldenBreakdownText = aircraftAirborne
+    ? txtTable([
+        ['Day (07–19)', `${aircraftAirborne.periods.ld_db.toFixed(1)} dB`],
+        ['Evening (19–23)', `${aircraftAirborne.periods.le_db.toFixed(1)} dB`],
+        ['Night (23–07)', `${aircraftAirborne.periods.ln_db.toFixed(1)} dB`],
+        { sep: true },
+        ['→ Final Lden', `${aircraftAirborne.periods.lden_db.toFixed(1)} dB`],
+      ], 14, 9)
+    : txtTable([
+        ['Free field', `${c.received_lden_free.toFixed(1)} dB`],
+        ['Terrain', `${fmt(c.terrain.attenuation_db)} dB`],
+        ['Screening', `${fmt(c.screening.attenuation_db)} dB`],
+        ['Vegetation', `${fmt(c.vegetation.attenuation_db)} dB`],
+        { sep: true },
+        ['→ Final Lden', `${c.received_lden.toFixed(1)} dB`],
+      ], 14, 9)
 
   const emissionText = (() => {
     const m = c.metadata
+    if (m?.kind === 'aircraft' && m.variant === 'ground_ops' && m.ground_ops) {
+      return txtTable([
+        'Airport ground operations',
+        'Runway roll + taxi + apron',
+        '',
+        ['Observed', `${m.ground_ops.observed_movements_per_day.toFixed(1)}/day`],
+        ['Modeled', `${m.ground_ops.modeled_movements_per_day.toFixed(1)}/day`],
+        { sep: true },
+        ['Line source', `${c.emission_db.toFixed(1)} dB`],
+      ], 18, 14)
+    }
     if (m?.kind === 'road') {
       return txtTable([
         'CNOSSOS-EU rolling + propulsion',
@@ -681,12 +1118,12 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
         <div className="flex items-baseline gap-1.5 text-xs px-0">
           <span className="font-medium truncate flex-1">
             {isAircraft
-              ? 'Aircraft'
+              ? (c.name || (aircraftAirborne ? 'Aircraft - airborne' : 'Aircraft - ground ops'))
               : c.name && !c.name.startsWith(subtypeLabel(c.source_type, c.subtype))
                 ? `${c.name} — ${subtypeLabel(c.source_type, c.subtype)}`
                 : (c.name || subtypeLabel(c.source_type, c.subtype))}
           </span>
-          {!isAircraft && (
+          {(!isAircraft || aircraftGroundOps) && (
             <span className="text-muted-foreground/60 shrink-0">{formatDist(c.distance_m)}</span>
           )}
           {tier1Summary && (
@@ -708,8 +1145,42 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
 
       {expanded && (
         <div className="mt-1 ml-5 mb-1 text-[11px] leading-relaxed font-mono text-muted-foreground">
-          {isAircraft && aircraftBand ? (
-            <AircraftDetail d={aircraftBand} />
+          {aircraftAirborne ? (
+            <>
+              {lineRow('Observed flights/day', aircraftAirborne.observed_flights_per_day.toFixed(1))}
+              {lineRow('Helicopters/day', aircraftAirborne.helicopter_flights_per_day.toFixed(1))}
+              {aircraftAirborne.lmax_peak != null && lineRow('Peak Lmax', `${aircraftAirborne.lmax_peak.toFixed(1)} dB`)}
+              {lineRow(
+                'Day/Evening/Night',
+                `${aircraftAirborne.periods.ld_db.toFixed(1)}/${aircraftAirborne.periods.le_db.toFixed(1)}/${aircraftAirborne.periods.ln_db.toFixed(1)} dB`,
+              )}
+              <table className="w-full text-[10px] mt-1">
+                <thead>
+                  <tr className="text-muted-foreground/60">
+                    <th className="text-left font-normal pb-0.5">Band</th>
+                    <th className="text-right font-normal pb-0.5">Events/day</th>
+                    <th className="text-right font-normal pb-0.5">Avg alt</th>
+                    <th className="text-right font-normal pb-0.5">Top type</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { label: '>60 dB', bucket: aircraftAirborne.disruptive, color: '#ef4444' },
+                    { label: '>45 dB', bucket: aircraftAirborne.audible, color: '#f59e0b' },
+                    { label: '>30 dB', bucket: aircraftAirborne.faint, color: '#6b7280' },
+                  ].map(({ label, bucket, color }) => (
+                    bucket.observed_events_per_day > 0 ? (
+                      <tr key={label}>
+                        <td style={{ color }} className="font-medium">{label}</td>
+                        <td className="text-right">{bucket.observed_events_per_day.toFixed(0)}</td>
+                        <td className="text-right">{bucket.avg_altitude_m.toFixed(0)} m</td>
+                        <td className="text-right">{bucket.top_aircraft}</td>
+                      </tr>
+                    ) : null
+                  ))}
+                </tbody>
+              </table>
+            </>
           ) : (
             <>
               <MetadataRows c={c} />
@@ -757,7 +1228,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
             </>
           )}
 
-          {!isAircraft && c.received_bands && c.received_bands.length === 8 && c.received_bands.some(b => b !== 0) && (
+          {!aircraftAirborne && c.received_bands && c.received_bands.length === 8 && c.received_bands.some(b => b !== 0) && (
             <div className="mt-1 text-[10px] text-muted-foreground/60">
               <MetricLabel term="per_band">
                 [{c.received_bands.map(b => Math.round(b)).join(' ')}]

@@ -4,8 +4,8 @@
 //! and vegetation attenuation for a single source-receiver pair.
 //! Returns per-band [f64; NUM_BANDS] attenuation arrays.
 
-use crate::types::{NUM_BANDS, RasterSampler, Barrier, ScreeningObstacleTrace};
 use super::{diffraction, screening, vegetation};
+use crate::types::{Barrier, RasterSampler, ScreeningObstacleTrace, NUM_BANDS};
 
 /// Compute terrain diffraction attenuation per band.
 ///
@@ -13,9 +13,12 @@ use super::{diffraction, screening, vegetation};
 /// Applied at all distances — a hill at 3km still blocks sound.
 pub fn terrain_attenuation(
     rasters: &dyn RasterSampler,
-    src_lat: f64, src_lon: f64,
-    rcv_lat: f64, rcv_lon: f64,
-    src_elev: f64, rcv_alt: f64,
+    src_lat: f64,
+    src_lon: f64,
+    rcv_lat: f64,
+    rcv_lon: f64,
+    src_elev: f64,
+    rcv_alt: f64,
     dist_m: f64,
 ) -> [f64; NUM_BANDS] {
     // 5-point LOS check (25%, 50%, 75%)
@@ -27,7 +30,9 @@ pub fn terrain_attenuation(
         elev > los
     });
 
-    if !hill_detected { return [0.0; NUM_BANDS]; }
+    if !hill_detected {
+        return [0.0; NUM_BANDS];
+    }
 
     // Hill detected — full terrain profile
     let profile = rasters.terrain_profile(src_lat, src_lon, rcv_lat, rcv_lon, 0);
@@ -60,9 +65,12 @@ pub fn terrain_attenuation(
 pub fn screening_attenuation(
     rasters: &dyn RasterSampler,
     barriers: &[Barrier],
-    src_lat: f64, src_lon: f64,
-    rcv_lat: f64, rcv_lon: f64,
-    src_elev: f64, rcv_alt: f64,
+    src_lat: f64,
+    src_lon: f64,
+    rcv_lat: f64,
+    rcv_lon: f64,
+    src_elev: f64,
+    rcv_alt: f64,
     dist_m: f64,
     exclusion_radius_m: f64,
 ) -> [f64; NUM_BANDS] {
@@ -81,11 +89,15 @@ pub fn screening_attenuation(
     let mut barrier_max_h = 0.0;
     let mut barrier_max_t = 0.5;
     for barrier in barriers {
-        if barrier.dist_m > dist_m + 100.0 { break; }
+        if barrier.dist_m > dist_m + 100.0 {
+            break;
+        }
         let bx_m = (barrier.lon - src_lon) * meters_per_deg_lon;
         let by_m = (barrier.lat - src_lat) * 110_540.0;
         let t = (bx_m * path_dx_m + by_m * path_dy_m) / path_len_sq_m;
-        if t < 0.01 || t > 0.99 { continue; }
+        if t < 0.01 || t > 0.99 {
+            continue;
+        }
         let perp_dx_m = bx_m - t * path_dx_m;
         let perp_dy_m = by_m - t * path_dy_m;
         let perp_sq_m = perp_dx_m * perp_dx_m + perp_dy_m * perp_dy_m;
@@ -97,21 +109,19 @@ pub fn screening_attenuation(
 
     // Scan the whole path once for the tallest building candidate.
     // A sparse 25/50/75 probe can miss real blockers between probe points.
-    let (mut max_bh, mut max_bh_t) = rasters.max_building_along_path(
-        src_lat, src_lon, rcv_lat, rcv_lon, dist_m, excl_limit,
-    );
+    let (mut max_bh, mut max_bh_t) =
+        rasters.max_building_along_path(src_lat, src_lon, rcv_lat, rcv_lon, dist_m, excl_limit);
 
     if barrier_max_h > max_bh {
         max_bh = barrier_max_h;
         max_bh_t = barrier_max_t;
     }
 
-    if max_bh <= 0.0 { return [0.0; NUM_BANDS]; }
+    if max_bh <= 0.0 {
+        return [0.0; NUM_BANDS];
+    }
 
-    let bld_ground = rasters.elevation(
-        src_lat + max_bh_t * dlat,
-        src_lon + max_bh_t * dlon,
-    );
+    let bld_ground = rasters.elevation(src_lat + max_bh_t * dlat, src_lon + max_bh_t * dlon);
     let bld_top = bld_ground + max_bh;
     let los_height = src_elev + (rcv_alt - src_elev) * max_bh_t;
     let screen_h = bld_top - los_height; // vertical height above line-of-sight
@@ -119,11 +129,11 @@ pub fn screening_attenuation(
     if screen_h > 0.0 {
         // δ = |S→B| + |B→R| - |S→R| using full 3D coordinates.
         // S = (0, src_elev), B = (d_horiz_to_bld, bld_top), R = (dist_m, rcv_alt).
-        let d1_h = max_bh_t * dist_m;           // horizontal: source → building
-        let d2_h = (1.0 - max_bh_t) * dist_m;   // horizontal: building → receiver
-        let dz_sb = bld_top - src_elev;          // vertical: source → building top
-        let dz_br = rcv_alt - bld_top;           // vertical: building top → receiver
-        let dz_sr = rcv_alt - src_elev;          // vertical: source → receiver
+        let d1_h = max_bh_t * dist_m; // horizontal: source → building
+        let d2_h = (1.0 - max_bh_t) * dist_m; // horizontal: building → receiver
+        let dz_sb = bld_top - src_elev; // vertical: source → building top
+        let dz_br = rcv_alt - bld_top; // vertical: building top → receiver
+        let dz_sr = rcv_alt - src_elev; // vertical: source → receiver
         let d_sb = (d1_h * d1_h + dz_sb * dz_sb).sqrt();
         let d_br = (d2_h * d2_h + dz_br * dz_br).sqrt();
         let d_sr = (dist_m * dist_m + dz_sr * dz_sr).sqrt();
@@ -141,9 +151,12 @@ pub fn screening_attenuation(
 /// occur when calling terrain_attenuation() then extracting metadata separately.
 pub fn terrain_attenuation_with_meta(
     rasters: &dyn RasterSampler,
-    src_lat: f64, src_lon: f64,
-    rcv_lat: f64, rcv_lon: f64,
-    src_elev: f64, rcv_alt: f64,
+    src_lat: f64,
+    src_lon: f64,
+    rcv_lat: f64,
+    rcv_lon: f64,
+    src_elev: f64,
+    rcv_alt: f64,
     dist_m: f64,
 ) -> ([f64; NUM_BANDS], f64, bool, u32) {
     let hill_detected = [0.25, 0.5, 0.75].iter().any(|&t| {
@@ -154,7 +167,9 @@ pub fn terrain_attenuation_with_meta(
         elev > los
     });
 
-    if !hill_detected { return ([0.0; NUM_BANDS], 0.0, false, 0); }
+    if !hill_detected {
+        return ([0.0; NUM_BANDS], 0.0, false, 0);
+    }
 
     let profile = rasters.terrain_profile(src_lat, src_lon, rcv_lat, rcv_lon, 0);
     let profile_points = profile.len() as u32;
@@ -162,7 +177,11 @@ pub fn terrain_attenuation_with_meta(
     let src_agl = (src_elev - src_ground).max(0.05);
     let rcv_agl = crate::constants::DEFAULT_RECEIVER_HEIGHT;
     let diff = diffraction::compute_path_difference(&profile, dist_m, src_agl, rcv_agl);
-    let atten = diffraction::diffraction_attenuation_with_edge(diff.delta, diff.is_double, diff.edge_distance);
+    let atten = diffraction::diffraction_attenuation_with_edge(
+        diff.delta,
+        diff.is_double,
+        diff.edge_distance,
+    );
     (atten, diff.delta, diff.is_double, profile_points)
 }
 
@@ -175,9 +194,12 @@ pub fn terrain_attenuation_with_meta(
 pub fn screening_attenuation_with_meta(
     rasters: &dyn RasterSampler,
     barriers: &[Barrier],
-    src_lat: f64, src_lon: f64,
-    rcv_lat: f64, rcv_lon: f64,
-    src_elev: f64, rcv_alt: f64,
+    src_lat: f64,
+    src_lon: f64,
+    rcv_lat: f64,
+    rcv_lon: f64,
+    src_elev: f64,
+    rcv_alt: f64,
     dist_m: f64,
     exclusion_radius_m: f64,
 ) -> ([f64; NUM_BANDS], ScreeningObstacleTrace) {
@@ -195,11 +217,15 @@ pub fn screening_attenuation_with_meta(
     let mut barrier_max_h = 0.0;
     let mut barrier_max_t = 0.5;
     for barrier in barriers {
-        if barrier.dist_m > dist_m + 100.0 { break; }
+        if barrier.dist_m > dist_m + 100.0 {
+            break;
+        }
         let bx_m = (barrier.lon - src_lon) * meters_per_deg_lon;
         let by_m = (barrier.lat - src_lat) * 110_540.0;
         let t = (bx_m * path_dx_m + by_m * path_dy_m) / path_len_sq_m;
-        if t < 0.01 || t > 0.99 { continue; }
+        if t < 0.01 || t > 0.99 {
+            continue;
+        }
         let perp_dx_m = bx_m - t * path_dx_m;
         let perp_dy_m = by_m - t * path_dy_m;
         let perp_sq_m = perp_dx_m * perp_dx_m + perp_dy_m * perp_dy_m;
@@ -209,9 +235,8 @@ pub fn screening_attenuation_with_meta(
         }
     }
 
-    let (raster_bh, raster_t, samples_taken, step_m) = rasters.max_building_along_path_stats(
-        src_lat, src_lon, rcv_lat, rcv_lon, dist_m, excl_limit,
-    );
+    let (raster_bh, raster_t, samples_taken, step_m) = rasters
+        .max_building_along_path_stats(src_lat, src_lon, rcv_lat, rcv_lon, dist_m, excl_limit);
 
     // Pick the winner and remember its kind for the popup trace.
     let (max_bh, max_bh_t, kind): (f64, f64, &'static str) = if barrier_max_h > raster_bh {
@@ -223,16 +248,21 @@ pub fn screening_attenuation_with_meta(
     };
 
     if max_bh <= 0.0 {
-        return ([0.0; NUM_BANDS], ScreeningObstacleTrace {
-            kind: "none", height_m: 0.0, t: 0.0, screen_h_m: 0.0, delta_m: 0.0,
-            samples_taken, step_m,
-        });
+        return (
+            [0.0; NUM_BANDS],
+            ScreeningObstacleTrace {
+                kind: "none",
+                height_m: 0.0,
+                t: 0.0,
+                screen_h_m: 0.0,
+                delta_m: 0.0,
+                samples_taken,
+                step_m,
+            },
+        );
     }
 
-    let bld_ground = rasters.elevation(
-        src_lat + max_bh_t * dlat,
-        src_lon + max_bh_t * dlon,
-    );
+    let bld_ground = rasters.elevation(src_lat + max_bh_t * dlat, src_lon + max_bh_t * dlon);
     let bld_top = bld_ground + max_bh;
     let los_height = src_elev + (rcv_alt - src_elev) * max_bh_t;
     let screen_h = bld_top - los_height;
@@ -248,15 +278,25 @@ pub fn screening_attenuation_with_meta(
         let d_sr = (dist_m * dist_m + dz_sr * dz_sr).sqrt();
         let delta = (d_sb + d_br - d_sr).max(0.0);
         let trace = ScreeningObstacleTrace {
-            kind, height_m: max_bh, t: max_bh_t, screen_h_m: screen_h, delta_m: delta,
-            samples_taken, step_m,
+            kind,
+            height_m: max_bh,
+            t: max_bh_t,
+            screen_h_m: screen_h,
+            delta_m: delta,
+            samples_taken,
+            step_m,
         };
         (screening::building_screening(delta), trace)
     } else {
         // Obstacle exists but below line-of-sight — no Fresnel screening.
         let trace = ScreeningObstacleTrace {
-            kind, height_m: max_bh, t: max_bh_t, screen_h_m: screen_h, delta_m: 0.0,
-            samples_taken, step_m,
+            kind,
+            height_m: max_bh,
+            t: max_bh_t,
+            screen_h_m: screen_h,
+            delta_m: 0.0,
+            samples_taken,
+            step_m,
         };
         ([0.0; NUM_BANDS], trace)
     }
@@ -271,8 +311,10 @@ pub fn screening_attenuation_with_meta(
 /// so even multi-kilometre paths through forest don't produce unbounded effects.
 pub fn vegetation_attenuation_path(
     rasters: &dyn RasterSampler,
-    src_lat: f64, src_lon: f64,
-    rcv_lat: f64, rcv_lon: f64,
+    src_lat: f64,
+    src_lon: f64,
+    rcv_lat: f64,
+    rcv_lon: f64,
     _dist_m: f64,
 ) -> [f64; NUM_BANDS] {
     let forest_depth = rasters.vegetation_depth(src_lat, src_lon, rcv_lat, rcv_lon);
@@ -289,15 +331,34 @@ mod tests {
     }
 
     impl RasterSampler for SingleBuildingRaster {
-        fn elevation(&self, _lat: f64, _lon: f64) -> f64 { 0.0 }
-        fn building_height(&self, _lat: f64, _lon: f64) -> f64 { 0.0 }
-        fn vegetation_depth(&self, _lat1: f64, _lon1: f64, _lat2: f64, _lon2: f64) -> f64 { 0.0 }
-        fn ground_g(&self, _lat: f64, _lon: f64) -> f64 { 0.0 }
-        fn ground_g_path(&self, _lat1: f64, _lon1: f64, _lat2: f64, _lon2: f64) -> f64 { 0.0 }
-        fn terrain_profile(&self, _lat1: f64, _lon1: f64, _lat2: f64, _lon2: f64, _steps: usize) -> Vec<f64> {
+        fn elevation(&self, _lat: f64, _lon: f64) -> f64 {
+            0.0
+        }
+        fn building_height(&self, _lat: f64, _lon: f64) -> f64 {
+            0.0
+        }
+        fn vegetation_depth(&self, _lat1: f64, _lon1: f64, _lat2: f64, _lon2: f64) -> f64 {
+            0.0
+        }
+        fn ground_g(&self, _lat: f64, _lon: f64) -> f64 {
+            0.0
+        }
+        fn ground_g_path(&self, _lat1: f64, _lon1: f64, _lat2: f64, _lon2: f64) -> f64 {
+            0.0
+        }
+        fn terrain_profile(
+            &self,
+            _lat1: f64,
+            _lon1: f64,
+            _lat2: f64,
+            _lon2: f64,
+            _steps: usize,
+        ) -> Vec<f64> {
             vec![0.0, 0.0]
         }
-        fn building_enclosure(&self, _lat: f64, _lon: f64) -> f64 { 0.0 }
+        fn building_enclosure(&self, _lat: f64, _lon: f64) -> f64 {
+            0.0
+        }
 
         fn max_building_along_path(
             &self,
@@ -323,15 +384,7 @@ mod tests {
             building_height_m: 20.0,
         };
 
-        let atten = screening_attenuation(
-            &raster,
-            &[],
-            0.0, 0.0,
-            0.0, 0.01,
-            1.0, 1.0,
-            1000.0,
-            0.0,
-        );
+        let atten = screening_attenuation(&raster, &[], 0.0, 0.0, 0.0, 0.01, 1.0, 1.0, 1000.0, 0.0);
 
         assert!(
             atten.iter().any(|&a| a > 0.0),

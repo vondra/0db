@@ -274,10 +274,18 @@ pub fn wkb_h3_grid_points(wkb_hex: &str) -> Vec<(f64, f64)> {
     let mut min_lon = f64::MAX;
     let mut max_lon = f64::MIN;
     for &(lat, lon) in &coords {
-        if lat < min_lat { min_lat = lat; }
-        if lat > max_lat { max_lat = lat; }
-        if lon < min_lon { min_lon = lon; }
-        if lon > max_lon { max_lon = lon; }
+        if lat < min_lat {
+            min_lat = lat;
+        }
+        if lat > max_lat {
+            max_lat = lat;
+        }
+        if lon < min_lon {
+            min_lon = lon;
+        }
+        if lon > max_lon {
+            max_lon = lon;
+        }
     }
 
     // Scan step 20m — must be < half of H3 res-11 row spacing (~43m) to hit every cell

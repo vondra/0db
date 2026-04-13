@@ -11,9 +11,9 @@
 //! Line source power per meter:
 //!   L_W'/m,i = L_W,i + 10×log₁₀(Q/1000)  where Q = veh/hour
 
-use crate::types::NUM_BANDS;
 use crate::constants::*;
 use crate::propagation::iso9613::fast_exp_f64;
+use crate::types::NUM_BANDS;
 
 /// CNOSSOS coefficients per vehicle category.
 struct CnossosCoeffs {
@@ -82,7 +82,11 @@ impl VehicleCategory {
 /// Surface correction is applied to rolling noise BEFORE combining with propulsion.
 /// Keeping the result in energy avoids a hot dB -> energy round-trip in
 /// `line_source_emission()`.
-fn vehicle_emission_energy_bands(category: VehicleCategory, speed: f64, surface_corr: f64) -> [f64; NUM_BANDS] {
+fn vehicle_emission_energy_bands(
+    category: VehicleCategory,
+    speed: f64,
+    surface_corr: f64,
+) -> [f64; NUM_BANDS] {
     let c = category.coeffs();
     let v = speed.clamp(20.0, 130.0);
     let log_ratio = (v / V_REF_ROAD).log10();
@@ -110,7 +114,9 @@ pub fn line_source_emission(flows: &[CategoryFlow], surface_corr_db: f64) -> [f6
     let mut total = [f64::NEG_INFINITY; NUM_BANDS];
 
     for flow in flows {
-        if flow.q_per_hour <= 0.0 { continue; }
+        if flow.q_per_hour <= 0.0 {
+            continue;
+        }
 
         let speed = match flow.category {
             VehicleCategory::Heavy => flow.speed_kmh.min(HEAVY_SPEED_CAP),
@@ -136,28 +142,65 @@ pub fn line_source_emission(flows: &[CategoryFlow], surface_corr_db: f64) -> [f6
     }
     // Convert energy sums back to dB
     for i in 0..NUM_BANDS {
-        total[i] = if total[i] > 0.0 { 10.0 * total[i].log10() } else { f64::NEG_INFINITY };
+        total[i] = if total[i] > 0.0 {
+            10.0 * total[i].log10()
+        } else {
+            f64::NEG_INFINITY
+        };
     }
     total
 }
 
 /// Build flows from AADT + speed + period distribution.
 pub fn build_period_flows(
-    aadt_light: f64, aadt_medium: f64, aadt_heavy: f64, aadt_moto: f64,
-    speed_kmh: f64, period_pct: f64, period_hours: f64,
+    aadt_light: f64,
+    aadt_medium: f64,
+    aadt_heavy: f64,
+    aadt_moto: f64,
+    speed_kmh: f64,
+    period_pct: f64,
+    period_hours: f64,
 ) -> Vec<CategoryFlow> {
     let q = period_pct / period_hours;
     vec![
-        CategoryFlow { q_per_hour: aadt_light * q, speed_kmh, category: VehicleCategory::Light },
-        CategoryFlow { q_per_hour: aadt_medium * q, speed_kmh, category: VehicleCategory::Medium },
-        CategoryFlow { q_per_hour: aadt_heavy * q, speed_kmh, category: VehicleCategory::Heavy },
-        CategoryFlow { q_per_hour: aadt_moto * q, speed_kmh, category: VehicleCategory::Motorcycle },
+        CategoryFlow {
+            q_per_hour: aadt_light * q,
+            speed_kmh,
+            category: VehicleCategory::Light,
+        },
+        CategoryFlow {
+            q_per_hour: aadt_medium * q,
+            speed_kmh,
+            category: VehicleCategory::Medium,
+        },
+        CategoryFlow {
+            q_per_hour: aadt_heavy * q,
+            speed_kmh,
+            category: VehicleCategory::Heavy,
+        },
+        CategoryFlow {
+            q_per_hour: aadt_moto * q,
+            speed_kmh,
+            category: VehicleCategory::Motorcycle,
+        },
     ]
 }
 
-pub struct TimeDist { pub day_pct: f64, pub evening_pct: f64, pub night_pct: f64 }
-pub const TIME_DIST_MOTORWAY: TimeDist = TimeDist { day_pct: 0.65, evening_pct: 0.20, night_pct: 0.15 };
-pub const TIME_DIST_URBAN: TimeDist = TimeDist { day_pct: 0.70, evening_pct: 0.18, night_pct: 0.12 };
+pub struct TimeDist {
+    pub day_pct: f64,
+    pub evening_pct: f64,
+    pub night_pct: f64,
+}
+pub const TIME_DIST_MOTORWAY: TimeDist = TimeDist {
+    day_pct: 0.65,
+    evening_pct: 0.20,
+    night_pct: 0.15,
+};
+pub const TIME_DIST_URBAN: TimeDist = TimeDist {
+    day_pct: 0.70,
+    evening_pct: 0.18,
+    night_pct: 0.12,
+};
 
 #[cfg(test)]
 mod tests {
@@ -167,39 +210,75 @@ mod tests {
     #[test]
     fn test_k1_road_emission() {
         let q_day = 10000.0 * 0.70 / 12.0;
-        let flows = vec![CategoryFlow { q_per_hour: q_day, speed_kmh: 50.0, category: VehicleCategory::Light }];
+        let flows = vec![CategoryFlow {
+            q_per_hour: q_day,
+            speed_kmh: 50.0,
+            category: VehicleCategory::Light,
+        }];
         let bands = line_source_emission(&flows, 0.0);
         let aw = a_weighted_total(&bands);
-        assert!((aw - 79.11).abs() < 0.15, "K1: expected 79.11, got {:.2}", aw);
+        assert!(
+            (aw - 79.11).abs() < 0.15,
+            "K1: expected 79.11, got {:.2}",
+            aw
+        );
     }
 
     #[test]
     fn test_k2_heavy_cobblestone() {
         let q_day = 500.0 * 0.70 / 12.0;
-        let flows = vec![CategoryFlow { q_per_hour: q_day, speed_kmh: 80.0, category: VehicleCategory::Heavy }];
+        let flows = vec![CategoryFlow {
+            q_per_hour: q_day,
+            speed_kmh: 80.0,
+            category: VehicleCategory::Heavy,
+        }];
         let bands = line_source_emission(&flows, 4.0);
         let aw = a_weighted_total(&bands);
-        assert!((aw - 80.07).abs() < 0.15, "K2: expected 80.07, got {:.2}", aw);
+        assert!(
+            (aw - 80.07).abs() < 0.15,
+            "K2: expected 80.07, got {:.2}",
+            aw
+        );
     }
 
     #[test]
     fn test_surface_only_rolling() {
-        let flows = vec![CategoryFlow { q_per_hour: 100.0, speed_kmh: 50.0, category: VehicleCategory::Motorcycle }];
+        let flows = vec![CategoryFlow {
+            q_per_hour: 100.0,
+            speed_kmh: 50.0,
+            category: VehicleCategory::Motorcycle,
+        }];
         let without = line_source_emission(&flows, 0.0);
         let with = line_source_emission(&flows, 4.0);
         for i in 0..NUM_BANDS {
-            assert!((without[i] - with[i]).abs() < 0.01, "Band {}: surfCorr affected moto", i);
+            assert!(
+                (without[i] - with[i]).abs() < 0.01,
+                "Band {}: surfCorr affected moto",
+                i
+            );
         }
     }
 
     #[test]
     fn test_heavy_speed_cap() {
-        let f120 = vec![CategoryFlow { q_per_hour: 100.0, speed_kmh: 120.0, category: VehicleCategory::Heavy }];
-        let f80 = vec![CategoryFlow { q_per_hour: 100.0, speed_kmh: 80.0, category: VehicleCategory::Heavy }];
+        let f120 = vec![CategoryFlow {
+            q_per_hour: 100.0,
+            speed_kmh: 120.0,
+            category: VehicleCategory::Heavy,
+        }];
+        let f80 = vec![CategoryFlow {
+            q_per_hour: 100.0,
+            speed_kmh: 80.0,
+            category: VehicleCategory::Heavy,
+        }];
         let em120 = line_source_emission(&f120, 0.0);
         let em80 = line_source_emission(&f80, 0.0);
         for i in 0..NUM_BANDS {
-            assert!((em120[i] - em80[i]).abs() < 0.01, "Band {}: heavy cap failed", i);
+            assert!(
+                (em120[i] - em80[i]).abs() < 0.01,
+                "Band {}: heavy cap failed",
+                i
+            );
         }
     }
 }
