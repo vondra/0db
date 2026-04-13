@@ -15,6 +15,14 @@ indicatif = "0.17"
 rayon = "1"
 noise-compute = { path = "../noise-compute" }
 
+[[bin]]
+name = "osm-to-h3r4"
+path = "src/main.rs"
+
+[[bin]]
+name = "extract-subtypes"
+path = "src/bin/extract-subtypes.rs"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

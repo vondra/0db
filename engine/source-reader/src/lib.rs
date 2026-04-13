@@ -393,11 +393,16 @@ fn collect_from_hex_data(
                     }
                 });
 
+                let sub = batch.column_by_name("site_subtype")
+                    .and_then(|c| c.as_any().downcast_ref::<arrow::array::UInt8Array>())
+                    .map(|a| a.value(i))
+                    .unwrap_or(0);
                 let prepared_points = noise_compute::normalize::prepare_industrial_points(
                     noise_compute::normalize::RawIndustrialInput {
                         centroid_lat: c_lat,
                         centroid_lon: c_lon,
                         source_type: st,
+                        site_subtype: sub,
                         hub_height_m: hub_h.and_then(|a| {
                             let value = a.value(i);
                             if value > 0.0 {

@@ -269,7 +269,7 @@ impl Spiller {
                     w,
                     "\t{}\t{}\t{}\t{}\t{}",
                     src_type,
-                    0u8, // site_subtype (TODO)
+                    site_subtype_from_tags(tags),
                     tags.get("name").unwrap_or(&String::new()),
                     tags.get("height")
                         .and_then(|s| parse_height(s))
@@ -410,6 +410,74 @@ fn site_type_from_tags(tags: &Tags) -> u8 {
         }
     }
     0
+}
+
+/// Classify industrial site subtype from OSM `industrial=*` and `product=*` tags.
+/// Pipeline-worker uses this to infer NACE when nace-lookup.json has no entry.
+///
+/// Values:
+///   0 = unknown/generic industrial (default 93 dB)
+///   1 = warehouse/logistics (quiet — 75 dB)
+///   2 = factory/works (loud — 95 dB)
+///   3 = mine/quarry (very loud — 99 dB)
+///   4 = chemical/refinery (90 dB)
+///   5 = cement/mineral (100 dB)
+///   6 = metal/steel/smelter (100 dB)
+///   7 = food/brewery/mill (88 dB)
+///   8 = wood/sawmill/paper (90 dB)
+///   9 = waste/recycling (93 dB)
+///  10 = farm/agriculture (70 dB)
+///  11 = office/commercial (60 dB)
+///  12 = port/shipyard (92 dB)
+fn site_subtype_from_tags(tags: &Tags) -> u8 {
+    // Check industrial=* tag (most specific)
+    if let Some(ind) = tags.get("industrial") {
+        match ind.as_str() {
+            "warehouse" | "depot" | "logistics" => return 1,
+            "factory" | "manufacturing" => return 2,
+            "mine" | "quarry" | "open_pit" => return 3,
+            "oil" | "chemical" | "refinery" | "gas" => return 4,
+            "cement" | "glass" | "brickyard" | "ceramics" => return 5,
+            "steelmaking" | "smelting" | "foundry" | "metal" | "aluminium" | "iron" => return 6,
+            "brewery" | "winery" | "distillery" | "bakery" | "food" | "slaughterhouse" | "sugar" => return 7,
+            "sawmill" | "timber" | "lumber" | "paper" | "pulp" | "woodworking" => return 8,
+            "scrap_yard" | "recycling" | "waste" | "landfill" => return 9,
+            "farm" | "agriculture" | "horticulture" | "greenhouse" => return 10,
+            "port" | "shipyard" | "boatyard" | "dock" => return 12,
+            _ => {}
+        }
+    }
+    // Check product=* tag
+    if let Some(prod) = tags.get("product") {
+        let p = prod.to_lowercase();
+        if p.contains("cement") || p.contains("concrete") || p.contains("brick") || p.contains("glass") || p.contains("ceramic") || p.contains("tile") { return 5; }
+        if p.contains("steel") || p.contains("iron") || p.contains("alumin") || p.contains("copper") || p.contains("metal") || p.contains("zinc") { return 6; }
+        if p.contains("chemical") || p.contains("petrol") || p.contains("oil") || p.contains("fuel") || p.contains("plastic") || p.contains("fertiliz") { return 4; }
+        if p.contains("food") || p.contains("sugar") || p.contains("beer") || p.contains("wine") || p.contains("flour") || p.contains("dairy") || p.contains("meat") { return 7; }
+        if p.contains("wood") || p.contains("paper") || p.contains("timber") || p.contains("lumber") || p.contains("pulp") { return 8; }
+    }
+    // Check man_made=* for additional classification
+    // NOTE: wastewater_plant intentionally NOT classified — it has a dedicated
+    // source_type=4 profile (89 dB, 24/7) which is more accurate than waste subtype=9 (93 dB).
+    if let Some(mm) = tags.get("man_made") {
+        match mm.as_str() {
+            "works" => return 2,
+            _ => {}
+        }
+    }
+    // Check landuse refinements
+    if let Some(lu) = tags.get("landuse") {
+        match lu.as_str() {
+            "farmyard" | "farmland" => return 10,
+            "quarry" => return 3,
+            _ => {}
+        }
+    }
+    // Check building=office in industrial context
+    if tags.get("office").is_some() {
+        return 11;
+    }
+    0 // unknown — will use default 93 dB
 }
 
 fn parse_height(val: &str) -> Option<f32> {

@@ -168,6 +168,65 @@ pub fn nace_profile(nace_4digit: u16) -> Option<IndustrialProfile> {
     })
 }
 
+/// Get profile by site_subtype from OSM tags (industrial=*, product=*).
+/// Fallback between nace_profile (most specific) and industrial_profile (coarsest).
+/// Subtype values set by osm-extract site_subtype_from_tags().
+pub fn subtype_profile(subtype: u8) -> Option<IndustrialProfile> {
+    let spec = [-3.0, -1.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0]; // generic industrial
+    match subtype {
+        0 => None, // unknown — fall through to source_type
+        1 => Some(IndustrialProfile { // warehouse/logistics — quiet
+            base_lw: 75.0, spectrum: [-5.0, -3.0, -1.0, 0.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -5.0, night_offset: -15.0,
+        }),
+        2 => Some(IndustrialProfile { // factory/works — generic loud
+            base_lw: 95.0, spectrum: spec,
+            evening_offset: -3.0, night_offset: -6.0,
+        }),
+        3 => Some(IndustrialProfile { // mine/quarry — very loud
+            base_lw: 99.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -2.0, -5.0, -8.0],
+            evening_offset: -5.0, night_offset: -20.0, // daytime only
+        }),
+        4 => Some(IndustrialProfile { // chemical/refinery
+            base_lw: 90.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -1.0, night_offset: -3.0, // 24/7
+        }),
+        5 => Some(IndustrialProfile { // cement/mineral — very loud
+            base_lw: 100.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -2.0, -5.0, -8.0],
+            evening_offset: -1.0, night_offset: -3.0, // 24/7
+        }),
+        6 => Some(IndustrialProfile { // metal/steel/smelter — very loud
+            base_lw: 100.0, spectrum: [-2.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
+            evening_offset: -1.0, night_offset: -3.0, // 24/7
+        }),
+        7 => Some(IndustrialProfile { // food/brewery — moderate
+            base_lw: 88.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -3.0, night_offset: -10.0,
+        }),
+        8 => Some(IndustrialProfile { // wood/sawmill — moderate-loud
+            base_lw: 90.0, spectrum: spec,
+            evening_offset: -5.0, night_offset: -15.0,
+        }),
+        9 => Some(IndustrialProfile { // waste/recycling
+            base_lw: 93.0, spectrum: spec,
+            evening_offset: -3.0, night_offset: -6.0,
+        }),
+        10 => Some(IndustrialProfile { // farm/agriculture — quiet
+            base_lw: 70.0, spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -5.0, night_offset: -15.0,
+        }),
+        11 => Some(IndustrialProfile { // office/commercial — very quiet
+            base_lw: 60.0, spectrum: [-5.0, -3.0, -1.0, 0.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -5.0, night_offset: -20.0,
+        }),
+        12 => Some(IndustrialProfile { // port/shipyard
+            base_lw: 92.0, spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -3.0, night_offset: -6.0,
+        }),
+        _ => None,
+    }
+}
+
 /// Compute industrial Lw from profile and site area.
 /// Area capped at 500,000 m² (50 ha) — larger OSM polygons contain buffer zones,
 /// not additional emission sources.
