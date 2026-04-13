@@ -1,11 +1,12 @@
 /**
- * Service-tree AADT enrichment for residential roads.
+ * Service-tree AADT enrichment for residential roads (v2: flow accumulation).
  *
- * Builds a road graph per H3R4 hex, finds leaf branches (dead-end residential
- * chains), counts nearby building dwellings, and computes AADT from dwelling
- * count instead of the flat default (500 veh/day).
+ * Assigns each building to its nearest eligible segment, then uses multi-source
+ * Dijkstra from root nodes (where residential meets higher-class roads) to orient
+ * traffic flow. Accumulates trips bottom-up from leaves toward roots — dead-end
+ * streets get only their local buildings, collector roads accumulate sub-branches.
  *
- * Only modifies: road_class >= 5 AND traffic_source == 0 AND on a leaf branch.
+ * Only modifies: road_class >= 5 AND traffic_source == 0.
  * Sets traffic_source = 2 (heuristic estimate).
  *
  * Usage:
@@ -23,12 +24,10 @@ const PREFIX = process.argv.includes('--prefix') ? process.argv[process.argv.ind
 
 const GRID_CELL = 0.0005       // building grid cell size in degrees (~55m at equator)
 const MAX_BUFFER_M = 50        // building search radius in meters
-const MAX_BRANCH_LENGTH_M = 5000   // 5km per leaf branch — skip obviously misclassified long roads
 const TRIPS_PER_DWELLING = 6
 const MIN_AADT = 20
 
 // Vehicle split matching engine defaults for residential (480/5/10/5 ≈ 96/1/2/1)
-const SPLIT_LIGHT = 0.96
 const SPLIT_MEDIUM = 0.01
 const SPLIT_HEAVY = 0.02
 const SPLIT_MOTO = 0.01
@@ -68,30 +67,66 @@ function gridKey(lat: number, lon: number): string {
 
 function estimateDwellings(buildingType: number, floors: number, areaMr2: number | null): number {
   const area = areaMr2 ?? 100
-  // Check building_type FIRST, then floors
-  if (buildingType === 1) return Math.min(Math.ceil(area / 50), 200)   // commercial
-  if (buildingType === 2) return Math.min(Math.ceil(area / 100), 200)  // industrial
-  if (buildingType === 7) return 1                                     // garage
-  if (buildingType === 8) return Math.min(Math.ceil(area / 100), 200)  // farm
-  // Residential (type 0) or anything else
+  if (buildingType === 1) return Math.min(Math.ceil(area / 50), 200)
+  if (buildingType === 2) return Math.min(Math.ceil(area / 100), 200)
+  if (buildingType === 7) return 1
+  if (buildingType === 8) return Math.min(Math.ceil(area / 100), 200)
   if (floors > 0) return Math.min(Math.max(1, Math.floor(floors * area / 80)), 200)
   return 1
 }
 
-function computeAADT(dwellings: number): { light: number; medium: number; heavy: number; moto: number } {
-  const total = Math.max(dwellings * TRIPS_PER_DWELLING, MIN_AADT)
+function splitAADT(totalTrips: number): { light: number; medium: number; heavy: number; moto: number } {
+  const total = Math.max(totalTrips, MIN_AADT)
   const medium = Math.round(total * SPLIT_MEDIUM)
   const heavy = Math.round(total * SPLIT_HEAVY)
   const moto = Math.round(total * SPLIT_MOTO)
-  const light = total - medium - heavy - moto // remainder to light, guarantees exact sum
+  const light = total - medium - heavy - moto
   return { light, medium, heavy, moto }
+}
+
+// ---------- Min-heap for Dijkstra ----------
+
+class MinHeap {
+  private data: { dist: number; node: string }[] = []
+
+  push(dist: number, node: string) {
+    this.data.push({ dist, node })
+    let i = this.data.length - 1
+    while (i > 0) {
+      const p = (i - 1) >> 1
+      if (this.data[p].dist <= this.data[i].dist) break
+      ;[this.data[p], this.data[i]] = [this.data[i], this.data[p]]
+      i = p
+    }
+  }
+
+  pop(): { dist: number; node: string } {
+    const top = this.data[0]
+    const last = this.data.pop()!
+    if (this.data.length > 0) {
+      this.data[0] = last
+      let i = 0
+      while (true) {
+        let smallest = i
+        const l = 2 * i + 1, r = 2 * i + 2
+        if (l < this.data.length && this.data[l].dist < this.data[smallest].dist) smallest = l
+        if (r < this.data.length && this.data[r].dist < this.data[smallest].dist) smallest = r
+        if (smallest === i) break
+        ;[this.data[i], this.data[smallest]] = [this.data[smallest], this.data[i]]
+        i = smallest
+      }
+    }
+    return top
+  }
+
+  get size() { return this.data.length }
 }
 
 // ---------- Graph ----------
 
 interface GraphNode {
-  degree: number           // total degree (all road classes)
-  eligibleEdges: number[]  // segment indices that are eligible (residential, traffic_source==0)
+  degree: number
+  eligibleEdges: number[]
 }
 
 function buildGraph(table: any) {
@@ -105,7 +140,7 @@ function buildGraph(table: any) {
 
   const nodes = new Map<string, GraphNode>()
   const segToNodes: [string, string][] = new Array(n)
-  const eligible = new Uint8Array(n) // 1 = eligible for enrichment
+  const eligible = new Uint8Array(n)
 
   function getOrCreate(key: string): GraphNode {
     let nd = nodes.get(key)
@@ -120,7 +155,6 @@ function buildGraph(table: any) {
 
     const sNode = getOrCreate(sKey)
     const eNode = getOrCreate(eKey)
-    // All segments contribute to degree
     sNode.degree++
     eNode.degree++
 
@@ -139,8 +173,8 @@ function buildGraph(table: any) {
 // ---------- Connected components ----------
 
 interface Component {
-  segments: number[]        // segment indices
-  rootNodes: Set<string>    // nodes connecting to non-residential network
+  segments: number[]
+  rootNodes: Set<string>
 }
 
 function findComponents(
@@ -148,13 +182,12 @@ function findComponents(
   segToNodes: [string, string][],
   eligible: Uint8Array
 ): Component[] {
-  const visited = new Set<number>() // visited segment indices
+  const visited = new Set<number>()
   const components: Component[] = []
 
   for (let i = 0; i < eligible.length; i++) {
     if (!eligible[i] || visited.has(i)) continue
 
-    // BFS from segment i
     const comp: Component = { segments: [], rootNodes: new Set() }
     const queue: number[] = [i]
     visited.add(i)
@@ -166,12 +199,9 @@ function findComponents(
       const [sKey, eKey] = segToNodes[seg]
       for (const nk of [sKey, eKey]) {
         const node = nodes.get(nk)!
-        // A root node has connections to non-eligible roads (degree > eligible edges count at this node)
-        const eligibleDegree = node.eligibleEdges.length
-        if (node.degree > eligibleDegree) {
+        if (node.degree > node.eligibleEdges.length) {
           comp.rootNodes.add(nk)
         }
-        // Traverse to adjacent eligible segments
         for (const adj of node.eligibleEdges) {
           if (!visited.has(adj)) {
             visited.add(adj)
@@ -232,107 +262,40 @@ function buildBuildingGrid(table: any): BuildingGrid {
   return { grid, lats, lons, types, floors: flrs, areas }
 }
 
+// ---------- Flow accumulation per component ----------
 
-// ---------- Leaf branch finding within a component ----------
-
-interface LeafBranch {
-  segments: number[]
-  lengthM: number
-}
-
-function findLeafBranches(
+function flowAccumulate(
   comp: Component,
   nodes: Map<string, GraphNode>,
   segToNodes: [string, string][],
-  lengthCol: any
-): LeafBranch[] {
-  const branches: LeafBranch[] = []
-
-  // Build component-local adjacency: node -> eligible edges within this component
+  startLat: any, startLon: any, endLat: any, endLon: any,
+  lengthCol: any,
+  bg: BuildingGrid
+): Map<number, number> {
+  // Build component-local adjacency
   const localAdj = new Map<string, number[]>()
+  const compNodes = new Set<string>()
   for (const seg of comp.segments) {
     const [sKey, eKey] = segToNodes[seg]
     for (const nk of [sKey, eKey]) {
+      compNodes.add(nk)
       let list = localAdj.get(nk)
       if (!list) { list = []; localAdj.set(nk, list) }
       list.push(seg)
     }
   }
 
-  // Find dead-end nodes: degree 1 in the FULL graph AND connected to an eligible edge
-  const deadEnds: string[] = []
-  for (const [nk, edges] of localAdj) {
-    const fullNode = nodes.get(nk)!
-    if (fullNode.degree === 1 && edges.length === 1) {
-      deadEnds.push(nk)
-    }
-  }
+  // --- Step 1: Assign buildings to nearest segment (once per building) ---
+  const bestSeg = new Map<number, number>()
+  const bestDist = new Map<number, number>()
 
-  // Walk from each dead-end through degree-2 (in local adj) nodes
-  // until hitting a node with 3+ local edges (internal junction) or a root node
-  for (const start of deadEnds) {
-    const branch: number[] = []
-    let totalLen = 0
-    let current = start
-    let prevSeg = -1
-
-    while (true) {
-      const edges = localAdj.get(current)!
-      const nextSeg = edges.find(e => e !== prevSeg)
-      if (nextSeg === undefined) break
-
-      branch.push(nextSeg)
-      totalLen += (lengthCol.get(nextSeg) as number) ?? 0
-      if (totalLen > MAX_BRANCH_LENGTH_M) break
-
-      const [sKey, eKey] = segToNodes[nextSeg]
-      const nextNode = (sKey === current) ? eKey : sKey
-      prevSeg = nextSeg
-      current = nextNode
-
-      const nextEdges = localAdj.get(current)
-      if (!nextEdges || nextEdges.length !== 2) break
-      const fullNode = nodes.get(current)!
-      if (fullNode.degree > nextEdges.length) break
-    }
-
-    if (branch.length > 0) {
-      branches.push({ segments: branch, lengthM: totalLen })
-    }
-  }
-
-  // Detect pure loop cul-de-sacs: components with NO dead-ends where all
-  // segments form a loop attached to the main network. Mixed components
-  // (dead-ends + loops) keep their loops at the default AADT.
-  if (deadEnds.length === 0 && comp.segments.length > 0) {
-    let totalLen = 0
-    for (const seg of comp.segments) totalLen += (lengthCol.get(seg) as number) ?? 0
-    if (totalLen <= MAX_BRANCH_LENGTH_M) {
-      branches.push({ segments: [...comp.segments], lengthM: totalLen })
-    }
-  }
-
-  return branches
-}
-
-// ---------- Count dwellings for a set of segments ----------
-
-function countBranchDwellings(
-  segments: number[],
-  startLat: any, startLon: any, endLat: any, endLon: any,
-  bg: BuildingGrid
-): number {
-  const seen = new Set<number>()
-  let totalDwellings = 0
-
-  // Compute representative latitude for grid search radius
-  let sumLat = 0
-  for (const seg of segments) sumLat += startLat.get(seg) as number
-  const avgLat = sumLat / segments.length
+  let sumLat = 0, segCount = 0
+  for (const seg of comp.segments) { sumLat += startLat.get(seg) as number; segCount++ }
+  const avgLat = sumLat / segCount
   const lonCells = Math.ceil(MAX_BUFFER_M / (111320 * GRID_CELL * Math.cos(avgLat * Math.PI / 180)))
   const latCells = Math.ceil(MAX_BUFFER_M / (110540 * GRID_CELL))
 
-  for (const seg of segments) {
+  for (const seg of comp.segments) {
     const sLat = startLat.get(seg) as number
     const sLon = startLon.get(seg) as number
     const eLat = endLat.get(seg) as number
@@ -354,23 +317,92 @@ function countBranchDwellings(
         const buildings = bg.grid.get(key)
         if (!buildings) continue
         for (const bi of buildings) {
-          if (seen.has(bi)) continue
           const dist = pointToSegmentDist(bg.lats[bi], bg.lons[bi], sLat, sLon, eLat, eLon)
-          if (dist <= MAX_BUFFER_M) {
-            seen.add(bi)
-            totalDwellings += estimateDwellings(bg.types[bi], bg.floors[bi], bg.areas[bi])
+          if (dist <= MAX_BUFFER_M && dist < (bestDist.get(bi) ?? Infinity)) {
+            bestDist.set(bi, dist)
+            bestSeg.set(bi, seg)
           }
         }
       }
     }
   }
 
-  return totalDwellings
+  // Compute local trips per segment
+  const segFlow = new Map<number, number>()
+  for (const seg of comp.segments) segFlow.set(seg, 0)
+  for (const [bi, seg] of bestSeg) {
+    const dw = estimateDwellings(bg.types[bi], bg.floors[bi], bg.areas[bi])
+    segFlow.set(seg, segFlow.get(seg)! + dw * TRIPS_PER_DWELLING)
+  }
+
+  // --- Step 2: Multi-source Dijkstra from root nodes ---
+  const dist = new Map<string, number>()
+  const downSeg = new Map<string, number>()
+  for (const nk of compNodes) dist.set(nk, Infinity)
+
+  const roots = comp.rootNodes
+  if (roots.size === 0) {
+    // Isolated: pick highest-degree node as pseudo-root
+    let best = '', bestDeg = -1
+    for (const nk of compNodes) {
+      const d = localAdj.get(nk)!.length
+      if (d > bestDeg) { bestDeg = d; best = nk }
+    }
+    roots.add(best)
+  }
+
+  const pq = new MinHeap()
+  for (const r of roots) { dist.set(r, 0); pq.push(0, r) }
+
+  while (pq.size > 0) {
+    const { dist: d, node: u } = pq.pop()
+    if (d > dist.get(u)!) continue
+
+    const edges = localAdj.get(u)
+    if (!edges) continue
+    for (const seg of edges) {
+      const [sKey, eKey] = segToNodes[seg]
+      const v = (sKey === u) ? eKey : sKey
+      const len = Math.max(1, (lengthCol.get(seg) as number) ?? 1)
+      const newDist = dist.get(u)! + len
+      if (newDist < dist.get(v)!) {
+        dist.set(v, newDist)
+        downSeg.set(v, seg)
+        pq.push(newDist, v)
+      }
+    }
+  }
+
+  // --- Step 3: Bottom-up accumulation ---
+  const sortedNodes = Array.from(compNodes).sort((a, b) => dist.get(b)! - dist.get(a)!)
+
+  for (const u of sortedNodes) {
+    // Sum flow arriving at u from upstream segments (where u is the "lower" end)
+    let inflow = 0
+    const edges = localAdj.get(u)
+    if (!edges) continue
+    for (const seg of edges) {
+      const [sKey, eKey] = segToNodes[seg]
+      const other = (sKey === u) ? eKey : sKey
+      // This segment flows toward u if u is closer to root (lower dist)
+      if (dist.get(other)! > dist.get(u)!) {
+        inflow += segFlow.get(seg)!
+      }
+    }
+
+    // Push inflow into the downstream segment
+    const dSeg = downSeg.get(u)
+    if (dSeg !== undefined) {
+      segFlow.set(dSeg, segFlow.get(dSeg)! + inflow)
+    }
+  }
+
+  return segFlow
 }
 
 // ---------- Process one hex ----------
 
-function processHex(hexId: string): { enriched: number; totalResidential: number; compStats: { dwellings: number; aadtTotal: number; segments: number }[] } | null {
+function processHex(hexId: string): { enriched: number; totalResidential: number } | null {
   const roadsPath = resolve(H3R4_DIR, hexId, 'roads.arrow')
   const buildingsPath = resolve(H3R4_DIR, hexId, 'buildings.arrow')
   if (!existsSync(roadsPath) || !existsSync(buildingsPath)) return null
@@ -382,57 +414,30 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   const buildingTable = tableFromIPC(readFileSync(buildingsPath))
   if (buildingTable.numRows === 0) return null
 
-  // Build graph
   const { nodes, segToNodes, eligible } = buildGraph(roadTable)
 
-  // Count eligible segments
   let eligibleCount = 0
   for (let i = 0; i < n; i++) if (eligible[i]) eligibleCount++
   if (eligibleCount === 0) return null
 
-  // Find connected components
   const components = findComponents(nodes, segToNodes, eligible)
   if (components.length === 0) return null
 
-  // Build building spatial grid
   const bg = buildBuildingGrid(buildingTable)
-
-  // Get column refs
   const startLat = roadTable.getChild('start_lat')!
   const startLon = roadTable.getChild('start_lon')!
   const endLat = roadTable.getChild('end_lat')!
   const endLon = roadTable.getChild('end_lon')!
   const lengthCol = roadTable.getChild('length_m')!
 
-  // For each component, find leaf branches and compute per-branch AADT
-  // Segments on multiple branches get summed dwellings
-  const segDwellings = new Map<number, number>()
-  const compStats: { dwellings: number; aadtTotal: number; segments: number }[] = []
+  // Flow accumulation per component
+  const segAADT = new Map<number, { light: number; medium: number; heavy: number; moto: number }>()
 
   for (const comp of components) {
-    // Small components (all segments form a simple dead-end chain): treat as one branch
-    const branches = findLeafBranches(comp, nodes, segToNodes, lengthCol)
-
-    if (branches.length === 0) {
-      // No dead-ends — this is a through-residential component, skip
-      continue
+    const segFlow = flowAccumulate(comp, nodes, segToNodes, startLat, startLon, endLat, endLon, lengthCol, bg)
+    for (const [seg, trips] of segFlow) {
+      segAADT.set(seg, splitAADT(trips))
     }
-
-    for (const branch of branches) {
-      const dwellings = countBranchDwellings(branch.segments, startLat, startLon, endLat, endLon, bg)
-      for (const seg of branch.segments) {
-        segDwellings.set(seg, (segDwellings.get(seg) ?? 0) + dwellings)
-      }
-      const aadt = computeAADT(dwellings)
-      const aadtTotal = aadt.light + aadt.medium + aadt.heavy + aadt.moto
-      compStats.push({ dwellings, aadtTotal, segments: branch.segments.length })
-    }
-  }
-
-  // Convert dwellings to AADT per segment
-  const segAADT = new Map<number, { light: number; medium: number; heavy: number; moto: number }>()
-  for (const [seg, dw] of segDwellings) {
-    segAADT.set(seg, computeAADT(dw))
   }
 
   if (segAADT.size === 0) return null
@@ -468,7 +473,6 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
     enriched++
   }
 
-  // Build new table
   const columns: Record<string, any> = {}
   for (const field of roadTable.schema.fields) {
     if (['traffic_source', 'aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto'].includes(field.name)) continue
@@ -482,7 +486,7 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   const newTable = makeTable(columns)
   writeFileSync(roadsPath, Buffer.from(tableToIPC(newTable, 'file')))
 
-  return { enriched, totalResidential: eligibleCount, compStats }
+  return { enriched, totalResidential: eligibleCount }
 }
 
 // ---------- Main ----------
@@ -499,7 +503,7 @@ function main() {
     return true
   })
 
-  console.log(`Service-tree AADT enrichment`)
+  console.log(`Service-tree AADT enrichment (v2: flow accumulation)`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
   console.log(`  Hexes: ${hexDirs.length}${PREFIX ? ` (prefix: ${PREFIX})` : ''}`)
 
@@ -510,9 +514,6 @@ function main() {
   let totalSegmentsEnriched = 0
   let totalResidential = 0
 
-  // AADT distribution
-  const allAadts: { aadt: number; dwellings: number; segments: number; hex: string }[] = []
-
   for (let hi = 0; hi < hexDirs.length; hi++) {
     const hexId = hexDirs[hi]
     const result = processHex(hexId)
@@ -521,9 +522,6 @@ function main() {
       hexesEnriched++
       totalSegmentsEnriched += result.enriched
       totalResidential += result.totalResidential
-      for (const cs of result.compStats) {
-        allAadts.push({ aadt: cs.aadtTotal, dwellings: cs.dwellings, segments: cs.segments, hex: hexId })
-      }
     }
     hexesProcessed++
 
@@ -541,38 +539,6 @@ function main() {
   console.log(`  Segments: ${totalSegmentsEnriched} enriched / ${totalResidential} eligible residential`)
   if (totalResidential > 0) {
     console.log(`  Coverage: ${(totalSegmentsEnriched / totalResidential * 100).toFixed(1)}%`)
-  }
-
-  if (allAadts.length > 0) {
-    // Distribution histogram
-    const buckets = [20, 50, 100, 200, 500, 1000]
-    const counts = new Array(buckets.length + 1).fill(0)
-    for (const a of allAadts) {
-      let placed = false
-      for (let b = 0; b < buckets.length; b++) {
-        if (a.aadt <= buckets[b]) { counts[b]++; placed = true; break }
-      }
-      if (!placed) counts[buckets.length]++
-    }
-    console.log(`\n  AADT distribution (${allAadts.length} components):`)
-    for (let b = 0; b < buckets.length; b++) {
-      const lo = b === 0 ? 0 : buckets[b - 1] + 1
-      console.log(`    ${String(lo).padStart(5)}-${String(buckets[b]).padStart(5)}: ${counts[b]}`)
-    }
-    console.log(`    ${String(buckets[buckets.length - 1] + 1).padStart(5)}+     : ${counts[buckets.length]}`)
-
-    // Top 20 lowest
-    allAadts.sort((a, b) => a.aadt - b.aadt)
-    console.log(`\n  Top 20 lowest AADT:`)
-    for (const a of allAadts.slice(0, 20)) {
-      console.log(`    AADT ${String(a.aadt).padStart(5)} | ${String(a.dwellings).padStart(4)} dwellings | ${String(a.segments).padStart(4)} segs | ${a.hex}`)
-    }
-
-    // Top 20 highest
-    console.log(`\n  Top 20 highest AADT:`)
-    for (const a of allAadts.slice(-20).reverse()) {
-      console.log(`    AADT ${String(a.aadt).padStart(5)} | ${String(a.dwellings).padStart(4)} dwellings | ${String(a.segments).padStart(4)} segs | ${a.hex}`)
-    }
   }
 }
 
