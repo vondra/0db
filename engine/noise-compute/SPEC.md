@@ -28,7 +28,7 @@ A = [-26.2, -16.1, -8.6, -3.2, 0.0, 1.2, 1.0, -1.1] dB
 ### Vegetation attenuation (ISO 9613-2:2024 Annex A.2.2)
 ```
 α_veg = [0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.09, 0.12] dB/m
-max: 15 dB per band
+max = [4, 6, 8, 10, 12, 16, 18, 24] dB per band
 ```
 
 ### Ground correction factors (CNOSSOS-EU §2.5.15)
@@ -70,7 +70,7 @@ Coefficients A_P, B_P from CNOSSOS-EU Table 2.3.b.
 
 ### Surface correction (CNOSSOS-EU §2.4.8)
 ```
-L_WR,i += ΔL_WR    (applied to rolling noise only, per band)
+L_WR,i += ΔL_WR    (same scalar applied to rolling noise only in all bands)
 ```
 | Surface | ΔL_WR |
 |---------|-------|
@@ -97,10 +97,28 @@ where Q = vehicles/hour, v = speed in km/h. The `1/(1000·v)` term converts flow
 L_W_total,i = 10 × log₁₀(Σ_cat 10^(L_W'/m,cat,i / 10))
 ```
 
+### Input priority (current implementation)
+1. If Arrow contains `aadt_*` and `traffic_source > 0`, use those flows.
+   - `traffic_source = 1`: matched census / external enrichment
+   - `traffic_source > 1`: heuristic estimate (for example service-tree on local streets)
+2. Otherwise use `default_road_traffic(road_class)`.
+
+Speed priority:
+- `maxspeed` from OSM if present
+- otherwise `default_road_speed(road_class)`
+
+Surface priority:
+- recognized OSM `surface=*`
+- otherwise asphalt (`ΔL_WR = 0`)
+
 ### Period traffic
-Day (07-19), Evening (19-23), Night (23-07). Traffic flow Q differs per period:
-- From census: actual day/evening/night split
-- Default: TIME_DIST_MOTORWAY or TIME_DIST_URBAN ratios
+Day (07-19), Evening (19-23), Night (23-07).
+
+Current implementation ALWAYS splits AADT by fixed class-based ratios:
+- motorway / trunk: **65 / 20 / 15**
+- primary / secondary / tertiary / residential / living_street: **70 / 18 / 12**
+
+Note: even when daily AADT comes from real census/enrichment data, per-period road counts are not currently measured from source data.
 
 ---
 
@@ -111,7 +129,8 @@ h_s = 0.5 m (wheel-rail contact)
 
 ### Emission per band
 ```
-L_W,i = A_rolling,i + 30 × log₁₀(v / v_ref) + 10 × log₁₀(Q)
+L_vehicle,i = 10 × log₁₀(10^((A_rolling,i + 30 × log₁₀(v / v_ref))/10) + 10^(A_traction,i / 10))
+L_W,i = L_vehicle,i + 10 × log₁₀(Q)
 ```
 where:
 - A_rolling from RMR reference spectrum per vehicle type
@@ -119,9 +138,25 @@ where:
 - Q = trains per day for this vehicle type
 - 30 = B_rolling exponent (speed-dependent rolling noise)
 
+### Input priority (current implementation)
+Passenger / freight counts:
+1. `trains_passenger`, `trains_freight` from Arrow if `> 0`
+2. otherwise `default_traffic(rail_type, usage)`
+
+Speed:
+1. OSM `maxspeed` if present
+2. otherwise `300 km/h` when `highspeed=true`
+3. otherwise `default_speed(rail_type)`
+
+Post-adjustments applied even on real counts:
+- `service > 0` → counts × **0.02**
+- `parallel_divisor > 1` → counts divided by that factor
+
 ### Period traffic
-True per-period: separate passenger/freight counts × period distribution.
-NOT fixed -3/-8 dB offsets.
+Current implementation uses a fixed passenger/freight split for both real and default daily counts:
+- day: **65%**
+- evening: **20%**
+- night: **15%**
 
 ---
 
@@ -150,9 +185,18 @@ A_atm,i = α_atm,i × d_slant / 1000    [dB]
 ```
 A_ground,i = CF[i] × G
 ```
-G = path-averaged ground factor (from IMD raster). G=0 hard, G=1 soft.
+where G = `1 - IMD/100`, from the imperviousness raster. G=0 hard, G=1 soft.
 
-With barrier (CNOSSOS-EU §2.5.21-22): ground effect fades linearly as diffraction increases.
+Current implementation nuance:
+- popup / source-reader line-source evaluation uses **path-averaged** `G_path`
+- pipeline batch worker currently uses **receiver-local** `G` for both line and point sources
+
+Barrier interaction:
+```
+A_ground_or_barrier,i = max(A_ground,i, A_terrain,i + A_screen,i)   if barrier exists
+                      = A_ground,i                                   otherwise
+```
+Ground and barrier attenuation are **not** added together.
 
 ### 3.4 Finite-line correction (line sources only)
 Uses **HORIZONTAL** distance and angle subtended:
@@ -181,7 +225,15 @@ C₃ accounts for thick barriers: 1.0 when edges are far apart, up to 3.0 when c
 Terrain profile sampled from DEM (Copernicus GLO-30 primary, SRTM fallback). Receiver at **4.0m** above ground.
 
 ### 3.6 Building screening (ISO 9613-2, per-band)
-Samples building height from Overture Maps 30m raster every ~50m along source-receiver path. Finds tallest building above line-of-sight, then computes path difference using full 3D geometry:
+Samples Overture Maps 30m building raster along the full source-receiver path.
+
+Current implementation:
+- sampling step is adaptive: about **30 m** up to 1 km, **90 m** up to 3 km, **180 m** beyond
+- explicit `noise_barrier` geometries compete with raster buildings
+- the dominant obstacle is the **tallest candidate on the path**, not an explicit multi-edge building model
+- for industrial sources, screening samples inside the source's own footprint are skipped via an exclusion radius
+
+Then path difference is computed using full 3D geometry:
 ```
 S = (0, src_elev),  B = (d_horiz, bld_top),  R = (dist_m, rcv_alt)
 δ_bld = |S→B| + |B→R| - |S→R|    (3D detour minus direct slant path)
@@ -190,43 +242,43 @@ A_screen,i = min(20, 10 × log₁₀(3 + 20 × δ_bld × f[i] / 340))
 
 ### 3.7 Vegetation (ISO 9613-2:2024 A.2.2)
 ```
-A_veg,i = min(15, α_veg[i] × depth_m)
+A_veg,i = min(MAX_VEG_ATTEN[i], α_veg[i] × depth_m)
 ```
 where depth_m = cumulative forest depth along source-receiver path.
 
 ### 3.8 Urban reflection (ISO 9613-2 §7.5)
 Per-RECEIVER boost based on building enclosure:
 ```
-A_refl = -(number_of_enclosed_directions × 1.5)    [dB, max -5]
+A_refl = clamp(enclosure_db, 0, 5)    [dB]
 ```
-Sampled from building height raster in 8 directions around receiver.
-Applied ONCE per receiver, not per source-receiver path.
+Current implementation estimates `enclosure_db` from local building density in a 3×3 raster sample around the receiver, then applies it ONCE per receiver, not per source-receiver path.
 
 ### 3.9 Favourable meteorological conditions (CNOSSOS-EU §2.5.21)
-❌ NOT IMPLEMENTED. P_FAV=0.5 constant exists but is not used in propagation.
-Planned formula:
-```
-boost = min(3, max(0, (d - 50) × 0.01))    [dB]
-multiplier = P_FAV × 10^(boost/10) + (1 - P_FAV)
-where P_FAV = 0.5 (Central Europe default)
-```
+❌ NOT IMPLEMENTED.
+
+`P_FAV = 0.5` constant exists in code, but no wind / inversion / favourable-propagation correction is applied in current propagation.
 
 ### 3.10 Transport-specific adjustments
 Applied in pipeline and popup:
 - **Bridge**: G=0 (hard surface, overrides IMD raster)
 - **Tunnel**: segment skipped entirely (sound contained inside)
 - **Oneway road**: AADT × 0.5 (approximation: half the traffic of two-way)
-- **Service railway** (yard/siding/spur): 2% of default traffic
+- **Private road access**: AADT × 0.1
+- **Road access=no / motor_vehicle=no**: segment skipped
+- **Destination road access**: currently NO reduction
 - **Junction**: speed capped at 30 km/h (roundabouts)
-- **Private/destination access**: 10% of default traffic
+- **Service railway** (yard/siding/spur): counts × 0.02
+- **Parallel railway ways**: counts divided by `parallel_divisor`
 - **Industrial exclusion radius**: R=√(area/π) — buildings within R of source point are not counted as screening (prevents self-screening from source's own footprint)
 
-### 3.10 Total received level per band
+### 3.11 Total received level per band
 ```
-L_received,i = L_emission,i - A_div,i - A_atm,i - A_ground,i - A_bar,i - A_screen,i - A_veg,i + A_refl + FLC
+L_received,i = L_emission,i - A_div,i - A_atm,i - A_ground_or_barrier,i - A_veg,i + A_refl + FLC
+
+where A_ground_or_barrier,i = max(A_ground,i, A_terrain,i + A_screen,i) if barrier exists
 ```
 
-### 3.11 A-weighted total
+### 3.12 A-weighted total
 ```
 L_A = 10 × log₁₀(Σ_i 10^((L_received,i + A[i]) / 10))
 ```
@@ -262,9 +314,19 @@ SEL_seg = L_E(d_p) + ΔV + ΔI(φ) - Λ(β, l) + ΔF
 CPA (Closest Point of Approach) computed on segment EXTENSION (unclamped).
 d_p = slant distance at CPA. β = elevation angle.
 
-### Per-flight energy
+### Input and preprocessing (current implementation)
+- ADS-B supplies real segment geometry, altitude, speed, timestamp, and often `on_ground`
+- aircraft `typecode` is mapped to one of **8 proxy NPD profiles**
+- unknown / unmapped typecode falls back to **Generic**
+- `is_departure` is inferred from median climb rate (`ROCD > 500 fpm`)
+- day/evening/night period is approximated from timestamp using **UTC+1**
+- stale ground / taxi remnants are filtered by:
+  - `on_ground` flag outside airport context
+  - fallback low-AGL test (`<= 15 m AGL`) outside airport context
+
+### Per-period energy
 ```
-E_flight = Σ_segments 10^(SEL_seg / 10)
+E_period = Σ_segments_in_period 10^(SEL_seg / 10)
 ```
 
 ### Per-period Leq (§5, Eq. 5-1)
@@ -282,31 +344,53 @@ T_day = 43200s, T_evening = 14400s, T_night = 28800s
 
 ### Source geometry
 Receives PRE-DISCRETIZED point sources. Discretization done at import:
-- Small (<10K m²): centroid
-- Large open (quarry): interior grid (N = area/5000, max 200)
-- Large enclosed (factory): perimeter (25m spacing) + interior
+- **Wind turbine**: single point at centroid
+- **Non-wind, area ≤ 5000 m²**: centroid
+- **Non-wind, area > 5000 m² and polygon available**: H3 interior grid points
+- fallback to centroid if polygon/grid generation fails
 - Energy split: Lw_per_point = Lw_total - 10×log₁₀(N_points)
+
+Each discretized point also carries:
+```
+R_excl = √(area_per_point / π)
+```
+This exclusion radius is used only for self-screening suppression.
 
 ### Emission
 ```
 Lw = baseLw + 10 × log₁₀(min(area_m², 500000) / 10000)
 ```
-baseLw from NACE code profile (calibrated against Czech SHM 2022):
+Current profile priority:
+1. `nace_4digit` baked into `industrial.arrow`
+2. OSM-derived `site_subtype`
+3. coarse `source_type`
+
+baseLw from NACE / subtype / source-type profile (calibrated against Czech SHM 2022):
 - Heavy industry (cement, steel, power): 99-100 dB
 - Medium industry (chemical, food): 88-95 dB
 - Light industry (warehouse, commercial): 70-86 dB
 Area scaling capped at 50 ha (500,000 m²) to prevent OSM polygon artifacts.
 
+Area priority:
+1. `area_m2` from Arrow if present
+2. polygon area from WKB
+3. fallback `10000 m²`
+
 ### Source height
-- Heavy industry (NACE 8/23/24/35): 10m
-- Other industrial: 5m
-- Wind turbine: hub_height
+- quarry (`source_type = 1`): 8m
+- heavy industry (NACE 8/23/24/35): 10m
+- other industrial: 5m
+- wind turbine: `hub_height`
 
 ### Wind turbines (IEC 61400-11)
 ```
 Lw = rating_lookup(rated_power_kw)    [98-107 dB by power class]
 ```
 Spectrum: [-2, -1, 0, 1, 1, 0, -2, -5] dB relative to broadband.
+
+Fallbacks:
+- `hub_height` default = **80 m**
+- `rated_power_kw` default = **2000 kW**
 
 ### Propagation
 ISO 9613-2 point source (same as roads but with point-source divergence).
@@ -316,15 +400,46 @@ ISO 9613-2 point source (same as roads but with point-source divergence).
 ## 7. Settlement (buildings)
 
 ### Source geometry
-PRE-DISCRETIZED at import. Small buildings = centroid. Large = facade points.
+PRE-DISCRETIZED at import.
+
+Current implementation:
+- small / missing-polygon buildings: centroid
+- buildings with `area > 2000 m²` and polygon available: interior grid at **30 m** spacing
+- if grid generation yields only one point, fallback to centroid
+
+Each source gets a fade-out radius from emitted Lw, capped at **2 km**.
 
 ### Emission (custom model, NOT standardized)
 ```
 Lw = 10 × log₁₀(10^(Lw_fixed/10) + GFA × 10^(Lw_per_m²/10))
 where GFA = area_m² × floors
 ```
-11 building classes: residential, commercial, school, hospital, etc.
-Spectral shapes: HVAC_DOMINANT, HUMAN_ACTIVITY, MIXED_URBAN, BROADBAND.
+Current implementation has **10 building classes + default fallback**:
+- residential
+- commercial
+- warehouse / industrial building
+- school
+- hospital
+- church / worship
+- hotel
+- garage / parking
+- farm building
+- public / civic
+
+Type priority:
+1. `amenity` / `shop` / `healthcare` / `tourism` / `leisure`
+2. fallback to `building=*`
+3. default residential
+
+Geometry priority:
+1. `height`
+2. `floors × 3 m`
+3. fallback `8 m`
+
+Area priority:
+1. `area_m2` from Arrow
+2. polygon area from WKB
+3. fallback `100 m²`
 
 ### Source height
 height/2 (mid-facade). Consistent in emission AND propagation (fix V33 mismatch).
@@ -353,17 +468,24 @@ ISO 9613-2 point source.
 | Simplification | What we do | What the standard says | Impact |
 |---|---|---|---|
 | **Line source + FLC** | Cylindrical divergence + end-angle finite-line correction | ISO 9613-2: point sources only, subdivide line into representative points | ±1-2 dB near segment endpoints. Standard practice in noise mapping software. |
+| **Road inputs** | Real `aadt_*` if present, otherwise class defaults; local heuristics may write `traffic_source > 1` | CNOSSOS expects external traffic inputs, not atlas-side fallback heuristics | Coverage stays global, but low-class roads may be approximate where counts are missing. |
+| **Road period split** | Fixed 65/20/15 or 70/18/12 split of daily AADT | Regulatory workflows may use measured day/evening/night counts | Bias possible on commuter / nightlife corridors. |
 | **Surface correction** | One scalar ΔL_WR per surface type | CNOSSOS Table F-4: per-band αm + βm, speed-dependent | ±1 dB. Our scalars are band-averaged approximations. |
-| **Ground effect** | CF[i] × G lookup | CNOSSOS §2.5.15-18: geometry-dependent Aground with height substitutions, separate source/middle/receiver zones | ±2 dB in complex terrain. Our CF model matches NoiseModelling v5 simplification. |
+| **Ground effect** | CF[i] × G lookup; popup may use path-averaged G, pipeline currently uses receiver-local G | CNOSSOS §2.5.15-18: geometry-dependent Aground with height substitutions, separate source/middle/receiver zones | ±2 dB in complex terrain / mixed ground. |
 | **Diffraction** | 10·log₁₀(3 + C₃·20·δ·f/340), caps 20/25 dB, C₃ for double edges | CNOSSOS §2.5.21-23: Rayleigh criterion, C'' convexity factor, ground-barrier interaction | ±3 dB behind barriers. C₃ now implemented; C'' convexity still simplified. |
-| **Building screening** | Max building height along path (Overture 30m raster) → per-band diffraction, cap 20 dB | ISO 9613-2: explicit obstacle modelling per edge | ±3 dB in complex urban. Our approach samples raster, not individual building edges. |
-| **Urban reflection** | Per-receiver enclosure boost +0-5 dB | ISO 9613-2 §7.5: image-source reflection model | ±2 dB. Standard requires full reflection geometry, we use heuristic. |
+| **Building / barrier screening** | Tallest raster obstacle or explicit noise barrier along the path | ISO 9613-2: explicit obstacle modelling per edge / geometry | ±3 dB in complex urban. Our approach samples raster, not individual building edges. |
+| **Urban reflection** | Per-receiver enclosure boost +0-5 dB | ISO 9613-2 §7.5: image-source reflection model | ±2 dB. Standard requires full reflection geometry, we use a local heuristic. |
 | **Meteorology** | NOT IMPLEMENTED (P_FAV exists but unused) | ISO 9613-2: Cmet = C₀(1 - 10·h_s/r), subtracted from downwind | ±2 dB at long range. TODO: implement. |
-| **Road categories** | 4 categories (no 4a mopeds, no 5) | CNOSSOS: 5 categories (4a, 4b, 5) | <0.5 dB. Mopeds rare, cat 5 is open. |
-| **Railway emission** | Simplified RMR (one rolling spectrum per type) | CNOSSOS Annex IV: component-based (roughness, transfer function per rail/wheel type) | ±2 dB. We use aggregate reference spectra, not full component model. |
+| **Road categories** | 4 categories (no 4a mopeds, no 5) | CNOSSOS: 5 categories (4a, 4b, 5) | <0.5 dB. Vehicle mix is slightly flattened. |
+| **Road corrections** | No gradient / intersection / temperature corrections | CNOSSOS includes extra source-side corrections | ±1-3 dB on steep links, cold weather, or stop-go junctions. |
+| **Railway emission** | Simplified RMR (one rolling spectrum per type, train/day scaling) | CNOSSOS Annex IV: component-based (roughness, transfer function per rail/wheel type) | ±2 dB. We use aggregate reference spectra, not full component model. |
+| **Railway period split** | Fixed 65/20/15 split of daily passenger/freight counts | Measured per-period rail traffic would be more accurate | Night freight corridors can be biased if only daily counts are known. |
 | **Receiver height** | 4.0m (END facade) | END: 4.0m (facade). ISO: variable. | Matches END standard. |
-| **Aircraft NPD** | 8 proxy profiles | Doc 29: official ANP database | ±3 dB per aircraft type. We approximate, not certify. |
+| **Settlement noise** | Custom per-building source model | END / CNOSSOS do not standardize this source class | Useful for atlas context, but not regulatory-comparable. |
+| **Industrial profiles** | `nace_4digit -> site_subtype -> source_type` fallback chain | Standard inventories usually use audited source inventories / measured facility data | Keeps global coverage, but facility class can be approximate when registry match is missing. |
+| **Aircraft NPD** | 8 proxy profiles + heuristic typecode mapping | Doc 29: official ANP database | ±3 dB per aircraft type. We approximate, not certify. |
+| **Aircraft local time / ground filtering** | UTC+1 period approximation + airport-context stale-ground filter | Operational studies use airport-local time and curated trajectory cleaning | Timing and near-runway behaviour can be biased. |
 | **Bridge/tunnel** | Bridge G=0, tunnel skip | No standard specifies this directly | Physically correct — bridge is hard surface, tunnel contains sound. |
 | **Oneway roads** | AADT × 0.5 | No standard | Approximation: one-way carries ~50% of two-way equivalent. |
-| **Service railway** | 2% of default traffic | No standard | Yard/siding/spur tracks have minimal scheduled traffic. |
+| **Private / service access heuristics** | Private roads ×0.1, service rail ×0.02 | No standard | Atlas-scale approximation where access restrictions imply low traffic. |
 | **Industrial self-screening** | Exclusion radius R=√(area/π) | ISO 9613-2: explicit geometry | Prevents false screening from source's own building footprint. |
