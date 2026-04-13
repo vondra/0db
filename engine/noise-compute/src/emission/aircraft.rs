@@ -361,6 +361,129 @@ const AEROWAY_HELIPORT: u8 = 4;
 const AEROWAY_AERODROME: u8 = 5;
 const AEROWAY_STOPWAY: u8 = 6;
 
+/// Pre-indexed airport geometries with AABB pre-filter.
+/// Build once per hex, reuse for all 2M+ segments — avoids O(segments × geometries) brute-force.
+pub struct AirportIndex<'a> {
+    lines: &'a [AirportLine],
+    areas: &'a [AirportArea],
+    // Global AABB (all geometries, padded) — rejects 90%+ of segments in O(1)
+    global_lat_min: f64,
+    global_lat_max: f64,
+    global_lon_min: f64,
+    global_lon_max: f64,
+    // Per-line precomputed AABBs (padded by match radius)
+    line_bbox: Vec<[f64; 4]>, // [lat_min, lat_max, lon_min, lon_max]
+}
+
+impl<'a> AirportIndex<'a> {
+    pub fn new(lines: &'a [AirportLine], areas: &'a [AirportArea]) -> Self {
+        let mut g_lat_min = f64::MAX;
+        let mut g_lat_max = f64::MIN;
+        let mut g_lon_min = f64::MAX;
+        let mut g_lon_max = f64::MIN;
+
+        let line_bbox: Vec<[f64; 4]> = lines
+            .iter()
+            .map(|line| {
+                let r_deg = airport_line_match_radius_m(line) / 111_000.0 + 0.0002;
+                let lat_min = line.start_lat.min(line.end_lat) - r_deg;
+                let lat_max = line.start_lat.max(line.end_lat) + r_deg;
+                let lon_min = line.start_lon.min(line.end_lon) - r_deg;
+                let lon_max = line.start_lon.max(line.end_lon) + r_deg;
+                g_lat_min = g_lat_min.min(lat_min);
+                g_lat_max = g_lat_max.max(lat_max);
+                g_lon_min = g_lon_min.min(lon_min);
+                g_lon_max = g_lon_max.max(lon_max);
+                [lat_min, lat_max, lon_min, lon_max]
+            })
+            .collect();
+
+        for area in areas {
+            let r_deg = airport_area_prune_radius_m(area) / 111_000.0 + 0.0002;
+            g_lat_min = g_lat_min.min(area.centroid_lat - r_deg);
+            g_lat_max = g_lat_max.max(area.centroid_lat + r_deg);
+            g_lon_min = g_lon_min.min(area.centroid_lon - r_deg);
+            g_lon_max = g_lon_max.max(area.centroid_lon + r_deg);
+        }
+
+        AirportIndex {
+            lines,
+            areas,
+            global_lat_min: g_lat_min,
+            global_lat_max: g_lat_max,
+            global_lon_min: g_lon_min,
+            global_lon_max: g_lon_max,
+            line_bbox,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty() && self.areas.is_empty()
+    }
+
+    pub fn ground_context(&self, seg: &AircraftSegment) -> u8 {
+        if self.is_empty() {
+            return GROUND_CONTEXT_NONE;
+        }
+        // Global AABB reject — eliminates segments far from any airport
+        let seg_lat_min = seg.start_lat.min(seg.end_lat);
+        let seg_lat_max = seg.start_lat.max(seg.end_lat);
+        let seg_lon_min = seg.start_lon.min(seg.end_lon);
+        let seg_lon_max = seg.start_lon.max(seg.end_lon);
+        if seg_lat_max < self.global_lat_min
+            || seg_lat_min > self.global_lat_max
+            || seg_lon_max < self.global_lon_min
+            || seg_lon_min > self.global_lon_max
+        {
+            return GROUND_CONTEXT_NONE;
+        }
+
+        let sample_points = [
+            (seg.start_lat, seg.start_lon),
+            (
+                (seg.start_lat + seg.end_lat) * 0.5,
+                (seg.start_lon + seg.end_lon) * 0.5,
+            ),
+            (seg.end_lat, seg.end_lon),
+        ];
+
+        if sample_points
+            .iter()
+            .any(|&(lat, lon)| point_matches_airport_area(lat, lon, self.areas))
+        {
+            return GROUND_CONTEXT_AIRPORT_AREA;
+        }
+        if sample_points
+            .iter()
+            .any(|&(lat, lon)| self.point_matches_line(lat, lon))
+        {
+            return GROUND_CONTEXT_AIRPORT_LINE;
+        }
+        GROUND_CONTEXT_NONE
+    }
+
+    fn point_matches_line(&self, lat: f64, lon: f64) -> bool {
+        for (i, line) in self.lines.iter().enumerate() {
+            let bb = &self.line_bbox[i];
+            if lat < bb[0] || lat > bb[1] || lon < bb[2] || lon > bb[3] {
+                continue;
+            }
+            let cp = geo::closest_point_on_segment(
+                lat,
+                lon,
+                line.start_lat,
+                line.start_lon,
+                line.end_lat,
+                line.end_lon,
+            );
+            if cp.dist_m <= airport_line_match_radius_m(line) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 pub fn segment_ground_context(
     seg: &AircraftSegment,
     airport_lines: &[AirportLine],
