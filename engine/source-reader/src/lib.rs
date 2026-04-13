@@ -28,10 +28,8 @@ static STORE: std::sync::LazyLock<RwLock<HexStore>> =
 #[cfg(feature = "node")]
 static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::OnceLock::new();
 
-// NACE 2-digit code per osm_id, populated from data/prepared/nace-lookup.json.
-// Enables sector-specific industrial emission profiles over generic landuse=industrial.
-#[cfg(feature = "node")]
-static NACE_LOOKUP: std::sync::OnceLock<HashMap<i64, u16>> = std::sync::OnceLock::new();
+// NACE codes are now baked into industrial.arrow (nace_4digit UInt16 column).
+// No global lookup needed at runtime.
 
 const AIRCRAFT_QUERY_MAX_RADIUS_M: f64 = 12_000.0;
 const AIRPORT_CONTEXT_RADIUS_M: f64 = 20_000.0;
@@ -81,30 +79,7 @@ pub struct PointQueryData {
     pub n_days: u16,
 }
 
-fn load_nace_lookup_json(nace_path: &Path) -> HashMap<i64, u16> {
-    if !nace_path.exists() {
-        return HashMap::new();
-    }
-
-    let json_str = std::fs::read_to_string(nace_path).unwrap_or_default();
-    let raw: HashMap<String, serde_json::Value> =
-        serde_json::from_str(&json_str).unwrap_or_default();
-    let mut lookup = HashMap::new();
-    for (osm_id_str, val) in &raw {
-        if let (Ok(osm_id), Some(nace_str)) = (
-            osm_id_str.parse::<i64>(),
-            val.get("nace").and_then(|v| v.as_str()),
-        ) {
-            if let Ok(nace_full) = nace_str.parse::<u32>() {
-                let nace_4 = (nace_full / 100) as u16;
-                if nace_4 > 0 {
-                    lookup.insert(osm_id, nace_4);
-                }
-            }
-        }
-    }
-    lookup
-}
+// load_nace_lookup_json removed — NACE codes baked into industrial.arrow
 
 pub fn collect_sources_at_point(
     h3r4_dir: &Path,
@@ -116,7 +91,6 @@ pub fn collect_sources_at_point(
         .parent()
         .and_then(|p| p.parent())
         .unwrap_or(Path::new("."));
-    let nace_lookup = load_nace_lookup_json(&data_dir.join("nace-lookup.json"));
     let rasters = raster_reader::RealRasters::new(data_dir);
 
     let loaded: Vec<hex_store::HexData> = hex_ids
@@ -127,18 +101,17 @@ pub fn collect_sources_at_point(
 
     Ok(collect_from_hex_data(
         &refs,
-        &nace_lookup,
         lat,
         lng,
         &rasters,
     ))
 }
 
-/// Shared source collection logic. Takes pre-loaded hex data + NACE lookup.
+/// Shared source collection logic. Takes pre-loaded hex data.
 /// Both `collect_sources_at_point` and `query_noise_at_point` delegate here.
+/// NACE codes are read directly from industrial.arrow nace_4digit column.
 fn collect_from_hex_data(
     hex_data: &[&hex_store::HexData],
-    nace_lookup: &HashMap<i64, u16>,
     lat: f64,
     lng: f64,
     rasters: &dyn noise_compute::types::RasterSampler,
@@ -421,7 +394,10 @@ fn collect_from_hex_data(
                         }),
                         area_m2,
                         polygon_wkb: &wkb_hex,
-                        nace_4digit: nace_lookup.get(&osm_id).copied(),
+                        nace_4digit: batch.column_by_name("nace_4digit")
+                            .and_then(|c| c.as_any().downcast_ref::<arrow::array::UInt16Array>())
+                            .map(|a| a.value(i))
+                            .filter(|&v| v > 0),
                     },
                 );
                 for prepared in prepared_points {
@@ -519,15 +495,11 @@ pub fn source_init(h3r4_dir: String) -> napi::Result<String> {
     let has_dem = rasters.has_data();
     RASTERS.set(rasters).ok();
 
-    // Load NACE lookup from JSON (at data/prepared/nace-lookup.json)
-    let nace_lookup = load_nace_lookup_json(&data_dir.join("nace-lookup.json"));
-    let nace_count = nace_lookup.len();
-    NACE_LOOKUP.set(nace_lookup).ok();
+    // NACE codes are baked into industrial.arrow — no global JSON needed
 
     Ok(format!(
-        "source-reader initialized: {h3r4_dir} (DEM: {}, NACE: {})",
+        "source-reader initialized: {h3r4_dir} (DEM: {})",
         if has_dem { "loaded" } else { "stub" },
-        nace_count
     ))
 }
 
@@ -658,15 +630,13 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
         .filter_map(|id| store.hexes.get(id.as_str()))
         .collect();
 
-    let empty_nace = HashMap::new();
-    let nace = NACE_LOOKUP.get().unwrap_or(&empty_nace);
     let stub = StubRasters;
     let real_rasters = RASTERS.get();
     let rasters: &dyn noise_compute::types::RasterSampler = match real_rasters {
         Some(r) => r,
         None => &stub,
     };
-    let sources = collect_from_hex_data(&hex_refs, nace, lat, lng, rasters);
+    let sources = collect_from_hex_data(&hex_refs, lat, lng, rasters);
     drop(store);
 
     // Build receiver
