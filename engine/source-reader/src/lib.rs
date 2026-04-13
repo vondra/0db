@@ -663,7 +663,7 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
 }
 
 /// Stub raster sampler — flat terrain, no buildings, no vegetation.
-/// TODO: Replace with real SRTM/Copernicus raster reader.
+/// Used as fallback when DEM/raster tiles are not available on disk.
 #[cfg(feature = "node")]
 struct StubRasters;
 
