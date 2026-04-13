@@ -82,3 +82,14 @@ export const DIFF_COLOR_STOPS: [number, string][] = [
   [10,  '#d73027'],
   [15,  '#7f0000'],
 ]
+
+// Precomputed RGBA for diff stops (parsed once at import time)
+export const DIFF_RGBA_STOPS: [number, number, number, number, number][] = DIFF_COLOR_STOPS.map(
+  ([db, hex]) => [
+    db,
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+    180,
+  ]
+)

@@ -141,7 +141,7 @@ export default function SearchBar({ onSelect, onIsochronToggle, isochronActive, 
         >
           {results.map((r, i) => (
             <li
-              key={i}
+              key={`${r.lat}:${r.lon}:${r.display_name}`}
               role="option"
               aria-selected={i === highlighted}
               onClick={() => handleSelect(r)}

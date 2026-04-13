@@ -107,6 +107,16 @@ export async function searchRoutes(app: FastifyInstance) {
       if (cache.size > 1000) {
         const now = Date.now()
         for (const [k, v] of cache) { if (v.expires < now) cache.delete(k) }
+        // Hard cap: if still over limit after expiry sweep, drop oldest entries
+        if (cache.size > 1000) {
+          const excess = cache.size - 800
+          let removed = 0
+          for (const k of cache.keys()) {
+            if (removed >= excess) break
+            cache.delete(k)
+            removed++
+          }
+        }
       }
 
       return reply.send(results)

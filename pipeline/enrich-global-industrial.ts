@@ -158,7 +158,7 @@ async function parseGppd(csvText: string): Promise<Facility[]> {
     if (fuel === 'Nuclear') nace = '351100'
     else if (fuel === 'Hydro') nace = '351200'
     else if (fuel === 'Wind') nace = '351200'
-    else if (fuel === 'Solar') nace = '351200'
+    else if (fuel === 'Solar') nace = '359900'
     else if (fuel === 'Gas' || fuel === 'Oil') nace = '351100'
     else if (fuel === 'Coal' || fuel === 'Petcoke') nace = '351100'
     else if (fuel === 'Biomass' || fuel === 'Waste') nace = '351100'

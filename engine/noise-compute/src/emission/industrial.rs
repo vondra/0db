@@ -59,7 +59,7 @@ pub fn industrial_profile(site_type: u8) -> IndustrialProfile {
 /// Get profile by NACE 4-digit sector code.
 /// WHY: OSM source_type only gives 5 coarse categories. NACE codes from IRZ/E-PRTR/GEM
 /// enable sector-specific profiles (metallurgy ≠ warehouse ≠ solar farm).
-/// 4-digit resolution distinguishes solar (3512, quiet) from thermal power (3511, loud).
+/// 4-digit resolution distinguishes solar (3599, quiet) from thermal power (3511, loud).
 /// Values from docs/about/index.md emission tables, calibrated against SHM 2022.
 /// Sources: EU 2000/14/EC equipment limits, 3M Noise Navigator, FHWA RCNM.
 pub fn nace_profile(nace_4digit: u16) -> Option<IndustrialProfile> {

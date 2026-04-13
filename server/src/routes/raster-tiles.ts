@@ -6,12 +6,12 @@ const MIN_ZOOM = 6
 const MAX_ZOOM = 16
 const CACHE_MAX = 500
 
+// Map preserves insertion order; delete+re-set promotes to end = O(1) LRU
 const pngCache = new Map<string, Buffer>()
-const pngLru: string[] = []
 
 export async function rasterTileRoutes(app: FastifyInstance): Promise<void> {
   // Preload barrier segments async — doesn't block server startup or event loop
-  preloadBarriers().catch(() => {})
+  preloadBarriers().catch(err => console.error('barrier preload failed:', err))
   app.get<{ Params: { layer: string; z: string; x: string; y: string } }>(
     '/api/raster/:layer/:z/:x/:y.png',
     async (request, reply) => {
@@ -35,12 +35,14 @@ export async function rasterTileRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const cacheKey = `${layer}/${z}/${x}/${y}`
-      if (pngCache.has(cacheKey)) {
-        const idx = pngLru.indexOf(cacheKey)
-        if (idx !== -1) { pngLru.splice(idx, 1); pngLru.push(cacheKey) }
+      const cached = pngCache.get(cacheKey)
+      if (cached !== undefined) {
+        // Promote to newest: delete + re-set = O(1) LRU via Map insertion order
+        pngCache.delete(cacheKey)
+        pngCache.set(cacheKey, cached)
         reply.header('Content-Type', 'image/png')
         reply.header('Cache-Control', 'public, max-age=86400')
-        return pngCache.get(cacheKey)
+        return cached
       }
 
       let png: Buffer
@@ -50,12 +52,12 @@ export async function rasterTileRoutes(app: FastifyInstance): Promise<void> {
         png = getEmptyPng()
       }
 
-      if (pngLru.length >= CACHE_MAX) {
-        const evict = pngLru.shift()!
-        pngCache.delete(evict)
-      }
       pngCache.set(cacheKey, png)
-      pngLru.push(cacheKey)
+      if (pngCache.size > CACHE_MAX) {
+        // Evict oldest (first key in insertion order)
+        const oldest = pngCache.keys().next().value!
+        pngCache.delete(oldest)
+      }
 
       reply.header('Content-Type', 'image/png')
       reply.header('Cache-Control', 'public, max-age=86400')

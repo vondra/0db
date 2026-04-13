@@ -20,21 +20,20 @@ const BUILDING_DIR = join(DATA_DIR, 'rasters', 'building')
 const FOREST_DIR = join(DATA_DIR, 'rasters', 'forest')
 
 const MAX_TILES_PER_LAYER = 5
-const tileCache = new Map<string, SourceTile | null>()
-const tileLru: string[] = []
+// Per-layer Map for O(1) LRU via insertion order (delete + re-set promotes)
+const tileCacheByLayer = new Map<LayerId, Map<string, SourceTile | null>>()
+
+function getLayerCache(layer: LayerId): Map<string, SourceTile | null> {
+  let m = tileCacheByLayer.get(layer)
+  if (!m) { m = new Map(); tileCacheByLayer.set(layer, m) }
+  return m
+}
 
 function evictIfNeeded(layer: LayerId): void {
-  const prefix = layer + ':'
-  let count = 0
-  for (const k of tileLru) {
-    if (k.startsWith(prefix)) count++
-  }
-  while (count >= MAX_TILES_PER_LAYER) {
-    const idx = tileLru.findIndex(k => k.startsWith(prefix))
-    if (idx === -1) break
-    const key = tileLru.splice(idx, 1)[0]
-    tileCache.delete(key)
-    count--
+  const cache = getLayerCache(layer)
+  while (cache.size >= MAX_TILES_PER_LAYER) {
+    const oldest = cache.keys().next().value!
+    cache.delete(oldest)
   }
 }
 
@@ -45,11 +44,14 @@ function tileName(latInt: number, lonInt: number, ext: string): string {
 }
 
 async function readSourceTile(layer: LayerId, latInt: number, lonInt: number): Promise<SourceTile | null> {
-  const cacheKey = `${layer}:${latInt}:${lonInt}`
-  if (tileCache.has(cacheKey)) {
-    const idx = tileLru.indexOf(cacheKey)
-    if (idx !== -1) { tileLru.splice(idx, 1); tileLru.push(cacheKey) }
-    return tileCache.get(cacheKey)!
+  const cache = getLayerCache(layer)
+  const cacheKey = `${latInt}:${lonInt}`
+  const cached = cache.get(cacheKey)
+  if (cached !== undefined) {
+    // Promote to newest
+    cache.delete(cacheKey)
+    cache.set(cacheKey, cached)
+    return cached
   }
 
   let tilePath: string | null = null
@@ -67,7 +69,7 @@ async function readSourceTile(layer: LayerId, latInt: number, lonInt: number): P
   }
 
   if (!tilePath) {
-    tileCache.set(cacheKey, null)
+    cache.set(cacheKey, null)
     return null
   }
 
@@ -88,8 +90,7 @@ async function readSourceTile(layer: LayerId, latInt: number, lonInt: number): P
     tile = { data, samples: Math.round(Math.sqrt(data.length)) }
   }
 
-  tileCache.set(cacheKey, tile)
-  tileLru.push(cacheKey)
+  cache.set(cacheKey, tile)
   return tile
 }
 

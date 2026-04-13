@@ -17,11 +17,12 @@ import type { HexFeature } from './components/HexLayer'
 import { DEFAULT_BASEMAP, type BasemapId } from './utils/basemaps'
 
 export default function App() {
-  if (window.location.pathname.startsWith('/about')) {
+  const isAbout = window.location.pathname.startsWith('/about')
+  const { initial, updateUrl } = useUrlState()
+
+  if (isAbout) {
     return <AboutPage />
   }
-
-  const { initial, updateUrl } = useUrlState()
 
   const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
   const [layersOpen, setLayersOpen] = useState(false)

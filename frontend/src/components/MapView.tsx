@@ -76,7 +76,7 @@ export default function MapView({
         basemapId={bm}
         quietClustersEnabled={quietClustersEnabled}
       />
-      <HexHoverTooltip activeSources={activeSources} propagationFactors={propagationFactors} />
+      <HexHoverTooltip />
       <QuietClustersLayer hexFeatures={hexData ?? []} enabled={quietClustersEnabled ?? false} threshold={quietThreshold ?? 35} />
       <ContributorHighlight geometry={highlightGeometry ?? null} />
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} />}

@@ -48,11 +48,15 @@ export async function isochronRoutes(app: FastifyInstance) {
         )
 
         // Return the largest polygon
-        let largest = results[0]
+        const valid = results.filter(f => f != null)
+        if (valid.length === 0) {
+          return reply.status(502).send({ error: 'Valhalla returned no features' })
+        }
+        let largest = valid[0]
         let maxCoords = countCoords(largest)
-        for (let i = 1; i < results.length; i++) {
-          const c = countCoords(results[i])
-          if (c > maxCoords) { largest = results[i]; maxCoords = c }
+        for (let i = 1; i < valid.length; i++) {
+          const c = countCoords(valid[i])
+          if (c > maxCoords) { largest = valid[i]; maxCoords = c }
         }
 
         return { ...largest, properties: { ...largest.properties, modes: modeList, time: timeNum } }
