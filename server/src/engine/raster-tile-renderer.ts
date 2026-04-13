@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { deflateSync, crc32 } from 'node:zlib'
+import { tableFromIPC } from 'apache-arrow'
 
-type LayerId = 'dem' | 'building' | 'forest'
+type LayerId = 'dem' | 'building' | 'forest' | 'barriers'
 
 interface SourceTile {
   data: Int16Array | Uint8Array
@@ -158,6 +159,169 @@ function forestColor(v: number): [number, number, number, number] {
   return [0x2d, 0x6a, 0x4f, 150]
 }
 
+// --- Barrier data (vector lines from Arrow files) ---
+
+interface BarrierSegment {
+  startLat: number; startLon: number
+  endLat: number; endLon: number
+  height: number
+}
+
+let barrierSegments: BarrierSegment[] | null = null
+
+let barrierLoadPromise: Promise<BarrierSegment[]> | null = null
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+async function loadAllBarriersAsync(): Promise<BarrierSegment[]> {
+  if (barrierSegments) return barrierSegments
+  const h3r4Dir = join(DATA_DIR, process.env.DATA_YEAR || '2025', 'h3r4')
+  const result: BarrierSegment[] = []
+  if (!existsSync(h3r4Dir)) { barrierSegments = result; return result }
+  const hexDirs = readdirSync(h3r4Dir)
+  let filesProcessed = 0
+  for (const hex of hexDirs) {
+    const fp = join(h3r4Dir, hex, 'barriers.arrow')
+    if (!existsSync(fp)) continue
+    try {
+      const buf = await readFile(fp)
+      const table = tableFromIPC(buf)
+      const slat = table.getChild('start_lat')
+      const slon = table.getChild('start_lon')
+      const elat = table.getChild('end_lat')
+      const elon = table.getChild('end_lon')
+      const height = table.getChild('height')
+      if (!slat || !slon || !elat || !elon) continue
+      for (let i = 0; i < table.numRows; i++) {
+        result.push({
+          startLat: slat.get(i), startLon: slon.get(i),
+          endLat: elat.get(i), endLon: elon.get(i),
+          height: height?.get(i) ?? 3.0,
+        })
+      }
+    } catch { /* skip corrupt files */ }
+    // Yield to event loop every 50 files so server stays responsive
+    if (++filesProcessed % 50 === 0) await yieldToEventLoop()
+  }
+  barrierSegments = result
+  console.log(`barriers: loaded ${result.length} segments from ${h3r4Dir}`)
+  return result
+}
+
+function loadAllBarriers(): BarrierSegment[] {
+  return barrierSegments ?? []
+}
+
+// Spatial index: barriers bucketed by 1° lat/lon cell for fast tile lookup
+let barrierIndex: Map<string, BarrierSegment[]> | null = null
+
+function getBarriersInBbox(south: number, north: number, west: number, east: number): BarrierSegment[] {
+  const all = loadAllBarriers()
+  if (all.length === 0) return []
+
+  if (!barrierIndex) {
+    barrierIndex = new Map()
+    for (const seg of all) {
+      const midLat = (seg.startLat + seg.endLat) / 2
+      const midLon = (seg.startLon + seg.endLon) / 2
+      const key = `${Math.floor(midLat)}:${Math.floor(midLon)}`
+      let bucket = barrierIndex.get(key)
+      if (!bucket) { bucket = []; barrierIndex.set(key, bucket) }
+      bucket.push(seg)
+    }
+  }
+
+  const result: BarrierSegment[] = []
+  for (let lat = Math.floor(south); lat <= Math.floor(north); lat++) {
+    for (let lon = Math.floor(west); lon <= Math.floor(east); lon++) {
+      const bucket = barrierIndex.get(`${lat}:${lon}`)
+      if (bucket) {
+        for (const seg of bucket) {
+          const midLat = (seg.startLat + seg.endLat) / 2
+          const midLon = (seg.startLon + seg.endLon) / 2
+          if (midLat >= south && midLat <= north && midLon >= west && midLon <= east) {
+            result.push(seg)
+          }
+        }
+      }
+    }
+  }
+  return result
+}
+
+async function renderBarrierTile(z: number, x: number, y: number): Promise<Buffer> {
+  if (!barrierSegments) await preloadBarriers()
+  const { latNorth, latSouth, lonWest, lonEast } = tileToLatLonBbox(z, x, y)
+  const barriers = getBarriersInBbox(latSouth, latNorth, lonWest, lonEast)
+  if (barriers.length === 0) return getEmptyPng()
+
+  const W = 256
+  const pixels = Buffer.alloc(W * W * 4)
+  const mercYNorth = Math.log(Math.tan(Math.PI / 4 + (latNorth * Math.PI) / 360))
+  const mercYSouth = Math.log(Math.tan(Math.PI / 4 + (latSouth * Math.PI) / 360))
+
+  const lineWidth = Math.max(2, Math.min(6, z - 10))
+
+  for (const seg of barriers) {
+    // Convert lat/lon to pixel coordinates
+    const mercY1 = Math.log(Math.tan(Math.PI / 4 + (seg.startLat * Math.PI) / 360))
+    const mercY2 = Math.log(Math.tan(Math.PI / 4 + (seg.endLat * Math.PI) / 360))
+    const px1 = Math.round(((seg.startLon - lonWest) / (lonEast - lonWest)) * W)
+    const py1 = Math.round(((mercY1 - mercYNorth) / (mercYSouth - mercYNorth)) * W)
+    const px2 = Math.round(((seg.endLon - lonWest) / (lonEast - lonWest)) * W)
+    const py2 = Math.round(((mercY2 - mercYNorth) / (mercYSouth - mercYNorth)) * W)
+
+    // Color by height: magenta, brighter = taller
+    const h = Math.min(seg.height, 10)
+    const intensity = Math.round(150 + (h / 10) * 105) // 150-255
+    const r = intensity
+    const g = 30
+    const b = intensity
+
+    // Draw line with Bresenham + thickness
+    drawThickLine(pixels, W, px1, py1, px2, py2, r, g, b, 220, lineWidth)
+  }
+
+  return encodePNG(W, W, pixels)
+}
+
+function drawThickLine(
+  pixels: Buffer, W: number,
+  x0: number, y0: number, x1: number, y1: number,
+  r: number, g: number, b: number, a: number,
+  thickness: number,
+) {
+  const half = Math.floor(thickness / 2)
+  const dx = Math.abs(x1 - x0)
+  const dy = Math.abs(y1 - y0)
+  const sx = x0 < x1 ? 1 : -1
+  const sy = y0 < y1 ? 1 : -1
+  let err = dx - dy
+  let cx = x0, cy = y0
+
+  for (let step = 0; step <= dx + dy; step++) {
+    for (let t = -half; t <= half; t++) {
+      if (dx >= dy) {
+        setPixel(pixels, W, cx, cy + t, r, g, b, a)
+      } else {
+        setPixel(pixels, W, cx + t, cy, r, g, b, a)
+      }
+    }
+    if (cx === x1 && cy === y1) break
+    const e2 = 2 * err
+    if (e2 > -dy) { err -= dy; cx += sx }
+    if (e2 < dx) { err += dx; cy += sy }
+  }
+}
+
+function setPixel(pixels: Buffer, W: number, x: number, y: number, r: number, g: number, b: number, a: number) {
+  if (x < 0 || x >= W || y < 0 || y >= W) return
+  const off = (y * W + x) * 4
+  pixels[off] = r; pixels[off + 1] = g; pixels[off + 2] = b; pixels[off + 3] = a
+}
+
 function tileToLatLonBbox(z: number, x: number, y: number) {
   const n = 2 ** z
   const lonWest = (x / n) * 360 - 180
@@ -189,6 +353,8 @@ async function collectSourceTiles(
 }
 
 export async function renderTile(layer: LayerId, z: number, x: number, y: number): Promise<Buffer> {
+  if (layer === 'barriers') return renderBarrierTile(z, x, y)
+
   const { latNorth, latSouth, lonWest, lonEast } = tileToLatLonBbox(z, x, y)
   const mercYNorth = Math.log(Math.tan(Math.PI / 4 + (latNorth * Math.PI) / 360))
   const mercYSouth = Math.log(Math.tan(Math.PI / 4 + (latSouth * Math.PI) / 360))
@@ -276,4 +442,12 @@ export function getEmptyPng(): Buffer {
     emptyPng = encodePNG(256, 256, Buffer.alloc(256 * 256 * 4))
   }
   return emptyPng
+}
+
+/// Preload barriers at server start (async — doesn't block event loop).
+export async function preloadBarriers(): Promise<void> {
+  if (!barrierLoadPromise) {
+    barrierLoadPromise = loadAllBarriersAsync()
+  }
+  await barrierLoadPromise
 }

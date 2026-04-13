@@ -65,7 +65,7 @@ export default function App() {
     enabled: false, propertyType: 'all', listingType: 'all', maxNoise: 35,
   })
   const [rasterOverlays, setRasterOverlays] = useState<Record<string, boolean>>({
-    dem: false, building: false, forest: false,
+    dem: false, building: false, forest: false, barriers: false,
   })
 
   const mapViewRef = useRef({ lat: initial.lat, lng: initial.lng, zoom: initial.zoom })

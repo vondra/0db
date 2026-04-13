@@ -8,6 +8,7 @@ const LAYERS = [
   { id: 'dem', minzoom: 6 },
   { id: 'building', minzoom: 10 },
   { id: 'forest', minzoom: 8 },
+  { id: 'barriers', minzoom: 12 },
 ] as const
 
 export default function RasterOverlayLayer({ visibleLayers }: RasterOverlayLayerProps) {

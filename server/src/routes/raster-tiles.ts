@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
-import { renderTile, getEmptyPng } from '../engine/raster-tile-renderer.js'
+import { renderTile, getEmptyPng, preloadBarriers } from '../engine/raster-tile-renderer.js'
 
-const VALID_LAYERS = new Set(['dem', 'building', 'forest'])
+const VALID_LAYERS = new Set(['dem', 'building', 'forest', 'barriers'])
 const MIN_ZOOM = 6
 const MAX_ZOOM = 16
 const CACHE_MAX = 500
@@ -10,6 +10,8 @@ const pngCache = new Map<string, Buffer>()
 const pngLru: string[] = []
 
 export async function rasterTileRoutes(app: FastifyInstance): Promise<void> {
+  // Preload barrier segments async — doesn't block server startup or event loop
+  preloadBarriers().catch(() => {})
   app.get<{ Params: { layer: string; z: string; x: string; y: string } }>(
     '/api/raster/:layer/:z/:x/:y.png',
     async (request, reply) => {
