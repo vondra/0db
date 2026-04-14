@@ -511,10 +511,26 @@ fn collect_from_hex_data(
             rstar::RTree::bulk_load(entries)
         });
 
-        let radius_deg = AIRCRAFT_QUERY_MAX_RADIUS_M / 111_320.0;
-        let radius_deg_2 = radius_deg * radius_deg;
-        for entry in tree.locate_within_distance([lat, lng], radius_deg_2) {
-            all_aircraft.push(cached_segs[entry.cache_idx].clone());
+        // To guarantee 100% accuracy matching the original flat_dist logic:
+        // 1. Calculate latitude/longitude bounding box accounting for projection.
+        let radius_lat_deg = AIRCRAFT_QUERY_MAX_RADIUS_M / 111_320.0;
+        let cos_lat = lat.to_radians().cos().max(0.01);
+        let radius_lon_deg = radius_lat_deg / cos_lat;
+        
+        let env = rstar::AABB::from_corners(
+            [lat - radius_lat_deg, lng - radius_lon_deg],
+            [lat + radius_lat_deg, lng + radius_lon_deg],
+        );
+
+        // 2. Query R-Tree and rigorously filter by exact flat_dist
+        for entry in tree.locate_in_envelope_intersecting(&env) {
+            let seg = &cached_segs[entry.cache_idx];
+            let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
+            let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
+            let dist_m = crate::geo::flat_dist(lat, lng, mid_lat, mid_lon);
+            if dist_m <= AIRCRAFT_QUERY_MAX_RADIUS_M {
+                all_aircraft.push(seg.clone());
+            }
         }
     }
 
