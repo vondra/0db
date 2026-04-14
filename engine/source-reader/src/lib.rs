@@ -138,14 +138,14 @@ fn collect_from_hex_data(
     let mut all_airport_lines = Vec::new();
     let mut all_airport_areas = Vec::new();
     let mut saw_aircraft_batches = false;
-    let mut all_aircraft_ground_v2 = true;
+    let mut any_aircraft_needs_runtime_ground_prepare = false;
 
     let mut date_ids = std::collections::HashSet::new();
     for data in hex_data {
         if !data.aircraft_batches.is_empty() {
             saw_aircraft_batches = true;
-            all_aircraft_ground_v2 &=
-                hex_store::aircraft_ground_model_v2(&data.aircraft_batches);
+            any_aircraft_needs_runtime_ground_prepare |=
+                !hex_store::aircraft_has_precomputed_ground(&data.aircraft_batches);
         }
         for batch in &data.aircraft_batches {
             if let Some(did) = batch
@@ -204,11 +204,6 @@ fn collect_from_hex_data(
             });
         }
     }
-    let airport_matcher = noise_compute::emission::aircraft::AirportMatcher::new(
-        &all_airport_lines,
-        &all_airport_areas,
-    );
-
     for data in hex_data {
         let railways = query_railways_from_batches(&data.railway_batches, lat, lng, 8000.0);
         for r in railways {
@@ -461,7 +456,7 @@ fn collect_from_hex_data(
             AIRCRAFT_QUERY_MAX_RADIUS_M,
             receiver_elev_m,
             |a| {
-                let mut seg = noise_compute::types::AircraftSegment {
+                let seg = noise_compute::types::AircraftSegment {
                     flight_id: a.flight_id,
                     profile_idx: a.profile_idx,
                     is_departure: a.is_departure,
@@ -478,31 +473,22 @@ fn collect_from_hex_data(
                     segment_length_m: a.segment_length_m,
                     count_weight: 1.0,
                     surface_model: false,
-                    ground_context: noise_compute::emission::aircraft::GROUND_CONTEXT_NONE,
-                    ground_ops_kind: noise_compute::emission::aircraft::GROUND_OPS_KIND_NONE,
+                    ground_context: a.ground_context,
+                    ground_ops_kind: a.ground_ops_kind,
                 };
-                let needs_ground_context =
-                    noise_compute::emission::aircraft::is_airport_context_candidate_raw(
-                        &seg, rasters,
-                    );
-                if needs_ground_context {
-                    seg.ground_context = airport_matcher.segment_ground_context(&seg);
-                    seg.ground_ops_kind = airport_matcher.segment_ground_ops_kind(&seg);
-                }
                 all_aircraft.push(seg);
             },
         );
     }
 
-    if saw_aircraft_batches && all_aircraft_ground_v2 {
-        noise_compute::emission::aircraft::infer_repeated_ground_context(&mut all_aircraft, n_days);
-    }
-    for seg in &mut all_aircraft {
-        if seg.ground_ops_kind == noise_compute::emission::aircraft::GROUND_OPS_KIND_NONE
-            && seg.ground_context != noise_compute::emission::aircraft::GROUND_CONTEXT_NONE
-        {
-            seg.ground_ops_kind = noise_compute::emission::aircraft::resolve_ground_ops_kind(seg);
-        }
+    if saw_aircraft_batches && any_aircraft_needs_runtime_ground_prepare {
+        noise_compute::emission::aircraft::prepare_ground_context(
+            &mut all_aircraft,
+            &all_airport_lines,
+            &all_airport_areas,
+            rasters,
+            n_days,
+        );
     }
     all_aircraft.retain(|seg| {
         !noise_compute::emission::aircraft::is_ground_stale_segment(seg, rasters)

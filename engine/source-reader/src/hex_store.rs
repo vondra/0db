@@ -119,6 +119,13 @@ pub fn aircraft_ground_model_v2(batches: &[RecordBatch]) -> bool {
     })
 }
 
+pub fn aircraft_has_precomputed_ground(batches: &[RecordBatch]) -> bool {
+    batches.iter().any(|batch| {
+        batch.column_by_name("ground_context").is_some()
+            && batch.column_by_name("ground_ops_kind").is_some()
+    })
+}
+
 // ── Query helpers: iterate over mmap'd Arrow columns directly ──
 
 /// Road segment query result (references into mmap'd data, minimal copy).
@@ -862,6 +869,8 @@ pub struct AircraftResult {
     pub end_alt_m: f32,
     pub speed_kt: f32,
     pub segment_length_m: f32,
+    pub ground_context: u8,
+    pub ground_ops_kind: u8,
 }
 
 pub fn visit_aircraft_from_batches<F>(
@@ -891,6 +900,8 @@ pub fn visit_aircraft_from_batches<F>(
         let ealt = col_f32(batch, "end_alt_m");
         let spd = col_f32(batch, "speed_kt");
         let slen = col_f32(batch, "segment_length_m");
+        let gctx = col_u8(batch, "ground_context");
+        let gkind = col_u8(batch, "ground_ops_kind");
 
         let (Some(fid), Some(slat), Some(slon), Some(salt), Some(elat), Some(elon), Some(ealt)) =
             (fid, slat, slon, salt, elat, elon, ealt)
@@ -963,6 +974,8 @@ pub fn visit_aircraft_from_batches<F>(
                 end_alt_m,
                 speed_kt: speed_kt_val,
                 segment_length_m: slen.map(|a| a.value(i)).unwrap_or(0.0),
+                ground_context: gctx.map(|a| a.value(i)).unwrap_or(0),
+                ground_ops_kind: gkind.map(|a| a.value(i)).unwrap_or(0),
             });
         }
     }

@@ -942,6 +942,57 @@ pub fn infer_repeated_ground_context(segments: &mut [AircraftSegment], n_days: u
     marked.len()
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GroundPreparationStats {
+    pub airport_context_marked: usize,
+    pub inferred_context_marked: usize,
+    pub resolved_ops_kind: usize,
+}
+
+pub fn prepare_ground_context(
+    segments: &mut [AircraftSegment],
+    airport_lines: &[AirportLine],
+    airport_areas: &[AirportArea],
+    rasters: &dyn RasterSampler,
+    n_days: u16,
+) -> GroundPreparationStats {
+    let matcher = AirportMatcher::new(airport_lines, airport_areas);
+    let mut stats = GroundPreparationStats::default();
+
+    for seg in segments.iter_mut() {
+        if seg.surface_model || seg.ground_context != GROUND_CONTEXT_NONE {
+            continue;
+        }
+        if !is_airport_context_candidate_raw(seg, rasters) {
+            continue;
+        }
+        let context = matcher.segment_ground_context(seg);
+        if context == GROUND_CONTEXT_NONE {
+            continue;
+        }
+        seg.ground_context = context;
+        if seg.ground_ops_kind == GROUND_OPS_KIND_NONE {
+            seg.ground_ops_kind = matcher.segment_ground_ops_kind(seg);
+        }
+        stats.airport_context_marked += 1;
+    }
+
+    stats.inferred_context_marked = infer_repeated_ground_context(segments, n_days);
+
+    for seg in segments.iter_mut() {
+        if seg.ground_ops_kind == GROUND_OPS_KIND_NONE && seg.ground_context != GROUND_CONTEXT_NONE
+        {
+            let kind = resolve_ground_ops_kind(seg);
+            if kind != GROUND_OPS_KIND_NONE {
+                seg.ground_ops_kind = kind;
+                stats.resolved_ops_kind += 1;
+            }
+        }
+    }
+
+    stats
+}
+
 fn is_inferred_ground_candidate(seg: &AircraftSegment) -> bool {
     seg.on_ground
         && !seg.surface_model
