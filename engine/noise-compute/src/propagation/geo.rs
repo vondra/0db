@@ -94,17 +94,14 @@ pub fn closest_point_on_segment(
     }
 }
 
-/// Smooth fade-out factor for the last 20% of a source's max range.
-/// Prevents hard-edge artifacts on the map at cutoff boundaries.
-/// Returns 1.0 within 80% of range, linearly fades to 0.0 at max_range.
+/// DEPRECATED — always returns 1.0. The fade-out at source max_radius was
+/// a visual hack (smooth map edge) that systematically deleted the last
+/// 20 % of physical tail, producing false-quiet regions near cutoff
+/// boundaries. Removed so Lden at cutoff is the honest physics value.
+/// Frontend should smooth in rendering if sharp edges become a UX concern.
 #[inline]
-pub fn fade_factor(dist_m: f64, max_range_m: f64) -> f64 {
-    let fade_start = max_range_m * 0.8;
-    if dist_m <= fade_start {
-        1.0
-    } else {
-        1.0 - (dist_m - fade_start) / (max_range_m - fade_start)
-    }
+pub fn fade_factor(_dist_m: f64, _max_range_m: f64) -> f64 {
+    1.0
 }
 
 /// A-weighted conservative atmospheric absorption coefficient (dB/m).

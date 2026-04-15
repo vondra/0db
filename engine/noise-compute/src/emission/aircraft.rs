@@ -1746,9 +1746,11 @@ fn ground_ops_reference_point(seg: &AircraftSegment) -> ((f64, f64), f64, f64) {
 }
 
 fn ground_ops_max_radius_m(kind: u8) -> f64 {
+    // Sized so a realistic-loudest operation leaves ≤ 20 dB Lden at cutoff
+    // (free-field, flat ground) — i.e. below rural-night background.
     match kind {
-        GROUND_OPS_KIND_RUNWAY_ROLL => 5_000.0,
-        GROUND_OPS_KIND_TAXI => 2_500.0,
+        GROUND_OPS_KIND_RUNWAY_ROLL => 7_000.0,
+        GROUND_OPS_KIND_TAXI => 3_000.0,
         GROUND_OPS_KIND_APRON_MOVEMENT => 1_500.0,
         _ => 1_500.0,
     }
@@ -1860,8 +1862,9 @@ fn segment_sel_with_overrides(
         end_alt_m,
     );
 
-    // Skip beyond 12km (unified popup + pipeline cutoff)
-    if cpa.d_p_m > 12000.0 {
+    // Skip beyond 16 km (unified popup + pipeline cutoff). Sized so a
+    // narrowbody arrival ~500 m AGL leaves ≤ 20 dB Lden at cutoff.
+    if cpa.d_p_m > 16000.0 {
         return None;
     }
 
