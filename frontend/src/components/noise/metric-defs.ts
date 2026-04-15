@@ -28,8 +28,8 @@ export const METRIC_DEFS: Record<string, MetricDef> = {
   aadt: {
     label: "Traffic",
     description:
-      "Annual Average Daily Traffic — vehicles per 24 h averaged over the year. Sourced from Czech ŘSD CSD 2020 census where available, otherwise CNOSSOS road-class defaults.",
-    standard: "CZ ŘSD CSD / CNOSSOS defaults",
+      "Annual Average Daily Traffic — vehicles per 24 h averaged over the year. Uses matched external traffic datasets where available, otherwise local service-road estimates or CNOSSOS road-class defaults.",
+    standard: "Matched traffic datasets / service-tree estimate / CNOSSOS defaults",
   },
   trains: {
     label: "Trains/day",

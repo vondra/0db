@@ -277,7 +277,7 @@ fn compute_roads(
         dominant_aadt_medium_effective: f64,
         dominant_aadt_heavy_effective: f64,
         dominant_aadt_moto_effective: f64,
-        dominant_traffic_source: &'static str, // "census" | "default_by_class"
+        dominant_traffic_source: &'static str, // "matched_external" | "estimated_service_tree" | "default_by_class"
         dominant_speed_posted: u8,
         dominant_speed_used: f64,
         dominant_speed_source: &'static str, // "osm_posted" | "default_by_class" | "roundabout_cap"
@@ -616,9 +616,9 @@ fn compute_roads(
             acc.dominant_aadt_heavy_effective = heavy;
             acc.dominant_aadt_moto_effective = moto;
             acc.dominant_traffic_source = if seg.traffic_source == 1 && seg.aadt_light > 0 {
-                "census"
-            } else if seg.traffic_source > 1 && seg.aadt_light > 0 {
-                "estimated"
+                "matched_external"
+            } else if seg.traffic_source == 2 && seg.aadt_light > 0 {
+                "estimated_service_tree"
             } else {
                 "default_by_class"
             };

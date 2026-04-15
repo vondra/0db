@@ -99,8 +99,9 @@ L_W_total,i = 10 × log₁₀(Σ_cat 10^(L_W'/m,cat,i / 10))
 
 ### Input priority (current implementation)
 1. If Arrow contains `aadt_*` and `traffic_source > 0`, use those flows.
-   - `traffic_source = 1`: matched census / external enrichment
-   - `traffic_source > 1`: heuristic estimate (for example service-tree on local streets)
+   - `traffic_source = 1`: matched external traffic dataset
+   - `traffic_source = 2`: service-tree estimate on local streets
+   - `traffic_source > 2`: reserved for other heuristic estimates
 2. Otherwise use `default_road_traffic(road_class)`.
 
 Speed priority:

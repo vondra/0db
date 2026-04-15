@@ -64,7 +64,7 @@ interface RoadMetadata {
   aadt_medium_raw: number
   aadt_heavy_raw: number
   aadt_moto_raw: number
-  traffic_source: 'census' | 'default_by_class'
+  traffic_source: 'matched_external' | 'estimated_service_tree' | 'default_by_class'
   speed_posted_kmh: number
   aadt_light_effective: number
   aadt_medium_effective: number
@@ -262,6 +262,12 @@ function fmtCompact(v: number): string {
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`
   if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k`
   return Math.round(v).toString()
+}
+
+function roadTrafficSourceLabel(source: RoadMetadata['traffic_source'], roadClass: string): string {
+  if (source === 'matched_external') return 'matched traffic dataset'
+  if (source === 'estimated_service_tree') return 'estimated local traffic'
+  return `default ${roadClass}`
 }
 
 /**
@@ -761,7 +767,10 @@ function MetadataRows({ c }: { c: Contributor }) {
       ...(hasSpeedRange ? ['Speed varies across grouped segments.'] : []),
     ], 18, 12)
     const trafficText = txtTable([
-      ['Source', m.traffic_source === 'census' ? 'CZ ŘSD 2020' : `default ${m.road_class}`],
+      ['Source', roadTrafficSourceLabel(m.traffic_source, m.road_class)],
+      ...(m.traffic_source === 'estimated_service_tree'
+        ? [['', 'service-tree model'] as [string, string]]
+        : []),
       '',
       'Raw daily (from Arrow):',
       ['  Light', fmtInt(m.aadt_light_raw)],

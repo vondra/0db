@@ -10,6 +10,8 @@ cd "$PROJECT_DIR"
 
 YEAR="${DATA_YEAR:-2025}"
 DATA_ROOT="${DATA_ROOT:-$PROJECT_DIR/data}"
+RUN_SERVICE_TREE="${RUN_SERVICE_TREE:-1}"
+STAMP_ROAD_METADATA="${STAMP_ROAD_METADATA:-1}"
 if [[ -d /mnt/data ]]; then
     DEFAULT_SCRATCH_ROOT="/mnt/data/tmp/quietmap"
 else
@@ -21,6 +23,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-$DATA_ROOT/prepared/${YEAR}/h3r4}"
 NODE_CACHE="${NODE_CACHE:-$SCRATCH_ROOT/osm_nodes.cache}"
 SPILL_DIR="${SPILL_DIR:-$SCRATCH_ROOT/osm_spill}"
 BINARY="engine/osm-extract/target/release/osm-to-h3r4"
+ROAD_ARROW_UPGRADE_BIN="engine/source-reader/target/release/road-arrow-upgrade"
 
 log() { echo "[osm] $(date '+%H:%M:%S') $*"; }
 
@@ -84,6 +87,36 @@ OUTPUT_SIZE=$(du -sh "$OUTPUT_DIR" 2>/dev/null | cut -f1)
 log ""
 log "Cleaning up node cache ..."
 rm -f "$NODE_CACHE"
+
+if [ "$RUN_SERVICE_TREE" = "1" ]; then
+    if [ ! -d "$PROJECT_DIR/pipeline/node_modules" ]; then
+        log ""
+        log "Installing pipeline dependencies ..."
+        npm --prefix "$PROJECT_DIR/pipeline" ci \
+            2>&1 | while IFS= read -r line; do log "  $line"; done
+    fi
+
+    log ""
+    log "Running service-tree road enrichment ..."
+    (
+        cd "$PROJECT_DIR/pipeline"
+        DATA_YEAR="$YEAR" npx tsx enrich-roads-service-tree.ts
+    ) 2>&1 | while IFS= read -r line; do log "  $line"; done
+
+    if [ "$STAMP_ROAD_METADATA" = "1" ]; then
+        if [ ! -f "$ROAD_ARROW_UPGRADE_BIN" ]; then
+            log ""
+            log "Building road-arrow-upgrade ..."
+            cargo build --release --manifest-path engine/source-reader/Cargo.toml --bin road-arrow-upgrade \
+                2>&1 | while IFS= read -r line; do log "  $line"; done
+        fi
+
+        log ""
+        log "Stamping road Arrow provenance ..."
+        "$ROAD_ARROW_UPGRADE_BIN" "$OUTPUT_DIR" \
+            2>&1 | while IFS= read -r line; do log "  $line"; done
+    fi
+fi
 
 log ""
 log "=== OSM extraction DONE ==="
