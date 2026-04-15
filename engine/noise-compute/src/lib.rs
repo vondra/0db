@@ -873,7 +873,8 @@ fn compute_railways(
 
         // Early exit: skip if free-field < threshold (matching pipeline)
         {
-            let ee = railway::railway_emission(rail_type, speed, q_pax * day_pct, q_frt * day_pct);
+            let ee =
+                railway::railway_emission(rail_type, speed, q_pax * day_pct, q_frt * day_pct, 12.0);
             let me = ee.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             if geo::below_free_field_threshold_line(me, seg.dist_m, 0.0) {
                 continue;
@@ -929,8 +930,15 @@ fn compute_railways(
             PropagationVariants::default(),
         ];
         let mut day_emission_energy = 0.0f64;
+        let period_hours = [12.0f64, 4.0, 8.0];
         for (pi, pct) in [day_pct, eve_pct, night_pct].iter().enumerate() {
-            let emission = railway::railway_emission(rail_type, speed, q_pax * pct, q_frt * pct);
+            let emission = railway::railway_emission(
+                rail_type,
+                speed,
+                q_pax * pct,
+                q_frt * pct,
+                period_hours[pi],
+            );
             let v = iso9613::propagate_variants(
                 &emission,
                 d_slant,

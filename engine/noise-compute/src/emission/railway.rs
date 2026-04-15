@@ -1,13 +1,22 @@
-//! CNOSSOS-EU Annex IV railway emission (RMR model).
+//! CNOSSOS-EU Annex IV railway emission — calibrated simplification.
 //!
 //! Per-band: rolling + traction. Speed-dependent rolling.
 //! L_roll(f) = A_rolling(f) + 30 × log₁₀(v / v_ref)
 //! L_traction(f) = A_traction(f)  [constant]
 //! L_total(f) = 10×log₁₀(10^(L_roll/10) + 10^(L_traction/10))
 //!
-//! Line source: L_W'/m = L_total + 10×log₁₀(Q)
-//! Note: uses direct train-count scaling, not density-per-meter Q/(1000×v).
-//! This is an intentional simplification for atlas-scale computation.
+//! Line source density (CNOSSOS Annex IV, NoiseModelling-compatible):
+//!   L_W'/m = L_total + 10·log₁₀(Q / (T_h × 1000 × v))
+//! where Q = trains in period, T_h = period hours, v = km/h.
+//!
+//! Prior revision used `10·log₁₀(Q_per_day)` and treated SRM II `a_r`
+//! coefficients as sound-power levels. The coefficients peaked at 4 kHz —
+//! a band with 22 dB/km atmospheric absorption — so rail emission was
+//! systematically destroyed at range (the atmosphere ate the signal before
+//! the receiver could). Coefficients below are entire-train A-weighted
+//! L_W values peaked at 500-1000 Hz (physical rail spectrum per ISO 3095
+//! / CNOSSOS), scaled so a typical mainline corridor matches EU END
+//! reference levels in the 0-5 km range.
 
 use crate::types::NUM_BANDS;
 
@@ -21,29 +30,31 @@ struct RailVehicleCoeffs {
 }
 
 const FREIGHT: RailVehicleCoeffs = RailVehicleCoeffs {
-    a_rolling: [10.2, 23.3, 38.2, 40.3, 57.9, 66.4, 68.5, 58.3],
-    a_traction: [30.0, 28.0, 25.0, 22.0, 20.0, 15.0, 10.0, 5.0],
+    a_rolling: [110.0, 118.0, 126.0, 130.0, 131.0, 128.0, 120.0, 110.0],
+    a_traction: [115.0, 113.0, 110.0, 105.0, 100.0, 95.0, 90.0, 85.0],
     v_ref: 80.0,
     v_max: 120.0,
 };
 
 const PASSENGER: RailVehicleCoeffs = RailVehicleCoeffs {
-    a_rolling: [18.8, 30.3, 41.8, 41.6, 54.4, 57.3, 61.5, 56.7],
-    a_traction: [35.0, 32.0, 30.0, 28.0, 25.0, 20.0, 15.0, 8.0],
+    a_rolling: [105.0, 112.0, 118.0, 122.0, 125.0, 122.0, 115.0, 105.0],
+    a_traction: [100.0, 98.0, 95.0, 92.0, 88.0, 84.0, 78.0, 70.0],
     v_ref: 100.0,
-    v_max: 200.0,
+    // 300 km/h high-speed: rolling scales via 30·log10(v/v_ref) — not a
+    // dedicated aerodynamic model, but avoids the old silent clamp at 200.
+    v_max: 300.0,
 };
 
 const TRAM: RailVehicleCoeffs = RailVehicleCoeffs {
-    a_rolling: [16.9, 27.1, 40.2, 41.4, 52.6, 53.2, 55.3, 51.0],
-    a_traction: [30.0, 28.0, 26.0, 24.0, 22.0, 18.0, 12.0, 5.0],
+    a_rolling: [98.0, 105.0, 110.0, 114.0, 117.0, 114.0, 107.0, 97.0],
+    a_traction: [105.0, 103.0, 100.0, 97.0, 93.0, 89.0, 83.0, 75.0],
     v_ref: 50.0,
     v_max: 70.0,
 };
 
 const LIGHT_RAIL: RailVehicleCoeffs = RailVehicleCoeffs {
-    a_rolling: [16.9, 27.1, 40.2, 41.4, 52.6, 53.2, 55.3, 51.0],
-    a_traction: [38.0, 35.0, 33.0, 30.0, 27.0, 22.0, 16.0, 8.0],
+    a_rolling: [100.0, 107.0, 112.0, 116.0, 119.0, 116.0, 109.0, 99.0],
+    a_traction: [108.0, 106.0, 103.0, 100.0, 96.0, 92.0, 86.0, 78.0],
     v_ref: 80.0,
     v_max: 120.0,
 };
@@ -85,38 +96,38 @@ fn vehicle_emission(coeffs: &RailVehicleCoeffs, speed_kmh: f64) -> [f64; NUM_BAN
     bands
 }
 
-/// Compute railway line source emission per meter [dB/m].
+/// Compute railway line source emission per meter [dB/m] as Leq over `period_hours`.
 ///
-/// Combines passenger and freight contributions.
-/// Q = trains per day (not per hour). Scaling: `10×log₁₀(Q)` added to per-train emission.
-/// (Unlike roads where density = Q/(1000×v), railways use total train count directly.)
+/// CNOSSOS Annex IV density: `L_W/m = L_W_per_train + 10·log₁₀(Q / (T × 1000 × v))`
+/// where Q = trains in the period, T = period hours (12 day / 4 evening / 8 night),
+/// v = km/h. Callers pass the per-period train subset and the period length.
 pub fn railway_emission(
     rail_type: RailType,
     speed_kmh: f64,
-    trains_passenger_per_day: f64,
-    trains_freight_per_day: f64,
+    trains_passenger: f64,
+    trains_freight: f64,
+    period_hours: f64,
 ) -> [f64; NUM_BANDS] {
     let v = speed_kmh.max(20.0);
+    let flow_denom = (period_hours.max(0.1) * 1000.0 * v).max(1.0);
     let mut total_energy = [0.0f64; NUM_BANDS];
 
-    // Passenger contribution: per-train Lw/m + 10×log₁₀(Q)
-    if trains_passenger_per_day > 0.0 {
+    if trains_passenger > 0.0 {
         let coeffs = match rail_type {
             RailType::Tram => &TRAM,
             RailType::LightRail | RailType::NarrowGauge => &LIGHT_RAIL,
             _ => &PASSENGER,
         };
         let per_train = vehicle_emission(coeffs, v);
-        let q_corr = 10.0 * trains_passenger_per_day.log10();
+        let q_corr = 10.0 * (trains_passenger / flow_denom).log10();
         for i in 0..NUM_BANDS {
             total_energy[i] += ((per_train[i] + q_corr) * std::f64::consts::LN_10 * 0.1).exp();
         }
     }
 
-    // Freight contribution
-    if trains_freight_per_day > 0.0 {
+    if trains_freight > 0.0 {
         let per_train = vehicle_emission(&FREIGHT, v.min(FREIGHT.v_max));
-        let q_corr = 10.0 * trains_freight_per_day.log10();
+        let q_corr = 10.0 * (trains_freight / flow_denom).log10();
         for i in 0..NUM_BANDS {
             total_energy[i] += ((per_train[i] + q_corr) * std::f64::consts::LN_10 * 0.1).exp();
         }
@@ -166,12 +177,15 @@ mod tests {
     use super::*;
     use crate::propagation::iso9613::a_weighted_total;
 
+    // 24h is used as "day-equivalent total" so old tests remain comparable.
+    const DAY_H: f64 = 24.0;
+
     #[test]
     fn test_passenger_100kmh() {
-        // 50 passenger trains/day at 100 km/h
-        let bands = railway_emission(RailType::Rail, 100.0, 50.0, 0.0);
+        // 50 passenger trains/day at 100 km/h — Leq over 24 h
+        let bands = railway_emission(RailType::Rail, 100.0, 50.0, 0.0, DAY_H);
         let aw = a_weighted_total(&bands);
-        // Expected: moderate level (~55-75 dB/m for suburban rail with 50 trains)
+        // Expected: 50-85 dB(A)/m for suburban rail.
         assert!(
             aw > 50.0 && aw < 85.0,
             "passenger 100km/h 50 trains: {:.1}",
@@ -182,8 +196,8 @@ mod tests {
     #[test]
     fn test_freight_louder() {
         // Freight should be louder than passenger at same Q and speed
-        let pax = railway_emission(RailType::Rail, 80.0, 20.0, 0.0);
-        let frt = railway_emission(RailType::Rail, 80.0, 0.0, 20.0);
+        let pax = railway_emission(RailType::Rail, 80.0, 20.0, 0.0, DAY_H);
+        let frt = railway_emission(RailType::Rail, 80.0, 0.0, 20.0, DAY_H);
         let pax_aw = a_weighted_total(&pax);
         let frt_aw = a_weighted_total(&frt);
         assert!(
@@ -197,8 +211,23 @@ mod tests {
     #[test]
     fn test_tram_lower_speed() {
         // 100 trams/day at 40 km/h
-        let bands = railway_emission(RailType::Tram, 40.0, 100.0, 0.0);
+        let bands = railway_emission(RailType::Tram, 40.0, 100.0, 0.0, DAY_H);
         let aw = a_weighted_total(&bands);
         assert!(aw > 50.0 && aw < 85.0, "tram 40km/h 100 trams: {:.1}", aw);
+    }
+
+    #[test]
+    fn test_leq_day_vs_night_same_count() {
+        // Same trains passed per period — shorter period means higher hourly flow,
+        // so Leq over 4 h (evening) is louder than Leq over 12 h (day).
+        let day = a_weighted_total(&railway_emission(
+            RailType::Rail, 100.0, 100.0, 10.0, 12.0,
+        ));
+        let eve = a_weighted_total(&railway_emission(
+            RailType::Rail, 100.0, 100.0, 10.0, 4.0,
+        ));
+        let diff = eve - day;
+        // +10·log10(12/4) ≈ 4.77 dB expected
+        assert!((diff - 4.77).abs() < 0.1, "expected +4.77 dB, got {:.2}", diff);
     }
 }
