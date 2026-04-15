@@ -107,13 +107,26 @@ pub fn fade_factor(dist_m: f64, max_range_m: f64) -> f64 {
     }
 }
 
-/// Check if a source is too weak to contribute at this distance.
+/// Check if a point source is too weak to contribute at this distance.
 /// Geometric divergence alone attenuates by ~20*log10(d) + 11 dB;
 /// path effects only attenuate further. Returns true if max emission
 /// minus geometric divergence is already below threshold.
 #[inline]
 pub fn below_free_field_threshold(max_emission_db: f64, dist_m: f64, threshold_db: f64) -> bool {
     let geo_approx = 20.0 * dist_m.log10() + 11.0;
+    max_emission_db - geo_approx < threshold_db
+}
+
+/// Check if a line source is too weak to contribute at this distance.
+/// Cylindrical divergence: L_r = L_W - 10*log10(d) - 8.
+/// Tighter (less conservative) than the point-source bound for line emitters.
+#[inline]
+pub fn below_free_field_threshold_line(
+    max_emission_db: f64,
+    dist_m: f64,
+    threshold_db: f64,
+) -> bool {
+    let geo_approx = 10.0 * dist_m.log10() + 8.0;
     max_emission_db - geo_approx < threshold_db
 }
 

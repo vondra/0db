@@ -890,7 +890,17 @@ pub fn infer_repeated_ground_context(segments: &mut [AircraftSegment], n_days: u
     let min_segments = (min_days * 2).max(INFERRED_GROUND_MIN_SEGMENTS_FLOOR);
     let mut marked = Vec::new();
 
-    for cand in &candidates {
+    eprintln!(
+        "  [Aircraft] infer_repeated_ground_context: starting with {} candidates",
+        candidates.len()
+    );
+    let mut last_log = std::time::Instant::now();
+
+    for (i, cand) in candidates.iter().enumerate() {
+        if last_log.elapsed().as_secs() >= 5 {
+            eprintln!("  [Aircraft] infer progress: {}/{}", i, candidates.len());
+            last_log = std::time::Instant::now();
+        }
         let (cy, cx) = inferred_ground_cell(cand.mid_lat, cand.mid_lon);
         let mut support_segments = 0usize;
         let mut support_days: HashSet<i16> = HashSet::new();

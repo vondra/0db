@@ -362,7 +362,7 @@ fn compute_roads(
             );
             let ee = road::line_source_emission(&ef, surf_corr);
             let me = ee.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            if geo::below_free_field_threshold(me, seg.dist_m, 0.0) {
+            if geo::below_free_field_threshold_line(me, seg.dist_m, 0.0) {
                 continue;
             }
         }
@@ -875,7 +875,7 @@ fn compute_railways(
         {
             let ee = railway::railway_emission(rail_type, speed, q_pax * day_pct, q_frt * day_pct);
             let me = ee.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            if geo::below_free_field_threshold(me, seg.dist_m, 0.0) {
+            if geo::below_free_field_threshold_line(me, seg.dist_m, 0.0) {
                 continue;
             }
         }
@@ -1715,7 +1715,7 @@ fn compute_aircraft(
                 .chain(line_emission.emission_night.iter())
                 .copied()
                 .fold(f32::NEG_INFINITY, f32::max) as f64;
-            if geo::below_free_field_threshold(max_em, dist_m, 0.0) {
+            if geo::below_free_field_threshold_line(max_em, dist_m, 0.0) {
                 continue;
             }
 
