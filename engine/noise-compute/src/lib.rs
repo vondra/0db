@@ -318,8 +318,6 @@ fn compute_roads(
             continue;
         }
 
-        let fade_factor = geo::fade_factor(seg.dist_m, max_d);
-
         let src_elev = rasters.elevation(seg.cp_lat, seg.cp_lon);
         let src_alt = src_elev + norm.source_height_m;
         let rcv_alt = receiver.altitude_m();
@@ -572,14 +570,10 @@ fn compute_roads(
                 }
             }
         }
-        // Apply fade-out factor to energy (linear scale) before accumulation
         for pi in 0..3 {
-            if fade_factor < 1.0 {
-                seg_variants[pi].scale(fade_factor);
-            }
             acc.variants[pi].add(&seg_variants[pi]);
         }
-        acc.emission_energy += day_emission_energy * fade_factor;
+        acc.emission_energy += day_emission_energy;
         // Aggregate stats across all segments
         if speed < acc.speed_min {
             acc.speed_min = speed;
@@ -602,7 +596,7 @@ fn compute_roads(
             acc.closest_src_height = src_alt;
         }
         // Dominant segment — highest received energy, drives the popup metadata
-        let seg_received_energy: f64 = seg_variants[0].full_energy * fade_factor;
+        let seg_received_energy: f64 = seg_variants[0].full_energy;
         if seg_received_energy > acc.dominant_energy {
             acc.dominant_energy = seg_received_energy;
             acc.dominant_segment_idx = seg.segment_idx;
@@ -850,8 +844,6 @@ fn compute_railways(
             continue;
         }
 
-        let fade_factor = geo::fade_factor(seg.dist_m, 8000.0);
-
         let src_elev = rasters.elevation(seg.cp_lat, seg.cp_lon);
         let src_alt = src_elev + SOURCE_HEIGHT_RAIL;
         let d_slant = geo::slant_dist(seg.dist_m, src_alt, receiver.altitude_m());
@@ -1040,15 +1032,10 @@ fn compute_railways(
                 }
             }
         }
-        if fade_factor < 1.0 {
-            for pi in 0..3 {
-                seg_variants[pi].scale(fade_factor);
-            }
-        }
         for pi in 0..3 {
             acc.variants[pi].add(&seg_variants[pi]);
         }
-        acc.emission_energy += day_emission_energy * fade_factor;
+        acc.emission_energy += day_emission_energy;
         if seg.bridge {
             acc.has_bridge = true;
         }
@@ -1227,8 +1214,6 @@ fn compute_point_sources(
             continue;
         }
 
-        let fade_factor = geo::fade_factor(src.dist_m, max_d);
-
         let src_alt = rasters.elevation(src.lat, src.lon) + src.source_height_m as f64;
         let rcv_alt = receiver.altitude_m();
         let prop_dist = geo::effective_area_source_dist(src.dist_m, src.exclusion_radius_m as f64);
@@ -1274,7 +1259,7 @@ fn compute_point_sources(
             src.dist_m,
         );
 
-        let mut v_day = iso9613::propagate_variants(
+        let v_day = iso9613::propagate_variants(
             &src.lw_day.map(|v| v as f64),
             d_slant,
             SourceGeometry::Point,
@@ -1285,7 +1270,7 @@ fn compute_point_sources(
             reflection,
             0.0,
         );
-        let mut v_eve = iso9613::propagate_variants(
+        let v_eve = iso9613::propagate_variants(
             &src.lw_evening.map(|v| v as f64),
             d_slant,
             SourceGeometry::Point,
@@ -1296,7 +1281,7 @@ fn compute_point_sources(
             reflection,
             0.0,
         );
-        let mut v_night = iso9613::propagate_variants(
+        let v_night = iso9613::propagate_variants(
             &src.lw_night.map(|v| v as f64),
             d_slant,
             SourceGeometry::Point,
@@ -1334,15 +1319,10 @@ fn compute_point_sources(
             emission_energy: 0.0,
             polygon_wkb: src.polygon_wkb.clone(),
         });
-        if fade_factor < 1.0 {
-            v_day.scale(fade_factor);
-            v_eve.scale(fade_factor);
-            v_night.scale(fade_factor);
-        }
         acc.variants[0].add(&v_day);
         acc.variants[1].add(&v_eve);
         acc.variants[2].add(&v_night);
-        acc.emission_energy += day_em * fade_factor;
+        acc.emission_energy += day_em;
         if src.dist_m < acc.min_dist {
             acc.min_dist = src.dist_m;
             acc.min_d_slant = d_slant;
@@ -1731,7 +1711,6 @@ fn compute_aircraft(
             let d_slant = geo::slant_dist(dist_m, cp_elev, receiver.altitude_m()).max(1.0);
             let ground_g = rasters.ground_g_path(cp.lat, cp.lon, receiver.lat, receiver.lon);
             let flc = geo::finite_line_correction(seg.segment_length_m as f64, dist_m, cp.fraction);
-            let fade_factor = geo::fade_factor(dist_m, line_emission.max_radius_m);
             let terrain_atten = propagation::path_effects::terrain_attenuation(
                 rasters,
                 cp.lat,
@@ -1769,7 +1748,7 @@ fn compute_aircraft(
                 std::array::from_fn(|i| line_emission.emission_night[i] as f64),
             ];
             for (pi, emission) in emissions.iter().enumerate() {
-                let mut v = iso9613::propagate_variants(
+                let v = iso9613::propagate_variants(
                     emission,
                     d_slant,
                     SourceGeometry::Line,
@@ -1780,9 +1759,6 @@ fn compute_aircraft(
                     reflection,
                     flc,
                 );
-                if fade_factor < 1.0 {
-                    v.scale(fade_factor);
-                }
                 ground_variants[pi].add(&v);
                 ground_kind_variants[kind_idx][pi].add(&v);
                 airport_acc.variants[pi].add(&v);

@@ -94,16 +94,6 @@ pub fn closest_point_on_segment(
     }
 }
 
-/// DEPRECATED — always returns 1.0. The fade-out at source max_radius was
-/// a visual hack (smooth map edge) that systematically deleted the last
-/// 20 % of physical tail, producing false-quiet regions near cutoff
-/// boundaries. Removed so Lden at cutoff is the honest physics value.
-/// Frontend should smooth in rendering if sharp edges become a UX concern.
-#[inline]
-pub fn fade_factor(_dist_m: f64, _max_range_m: f64) -> f64 {
-    1.0
-}
-
 /// A-weighted conservative atmospheric absorption coefficient (dB/m).
 /// ISO 9613-1 at 15 °C / 70 % RH, dB/km per octave band: 63 Hz ≈ 0.1,
 /// 500 Hz ≈ 1.7, 1 kHz ≈ 5, 2 kHz ≈ 10. Road and rail A-weighted energy
