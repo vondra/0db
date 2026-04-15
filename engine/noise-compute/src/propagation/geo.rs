@@ -107,19 +107,30 @@ pub fn fade_factor(dist_m: f64, max_range_m: f64) -> f64 {
     }
 }
 
+/// A-weighted conservative atmospheric absorption coefficient (dB/m).
+/// ISO 9613-1 at 15 °C / 70 % RH, dB/km per octave band: 63 Hz ≈ 0.1,
+/// 500 Hz ≈ 1.7, 1 kHz ≈ 5, 2 kHz ≈ 10. Road and rail A-weighted energy
+/// is dominated by 500 Hz – 2 kHz, giving an effective A-weighted α of
+/// roughly 3 – 5 dB/km. 2 dB/km (= 0.002 dB/m) leaves ≥ 1 dB safety
+/// margin so the cutoff never discards a contribution that would reach
+/// the threshold in reality.
+pub const ATM_ALPHA_A_WEIGHTED: f64 = 0.002;
+
 /// Check if a point source is too weak to contribute at this distance.
-/// Geometric divergence alone attenuates by ~20*log10(d) + 11 dB;
-/// path effects only attenuate further. Returns true if max emission
-/// minus geometric divergence is already below threshold.
+/// Geometric divergence ~20*log10(d) + 11 dB plus conservative A-weighted
+/// atmospheric absorption. Path effects (ground, screening, vegetation)
+/// only attenuate further, so if this bound is already below threshold
+/// the ray-cast can be skipped without loss.
 #[inline]
 pub fn below_free_field_threshold(max_emission_db: f64, dist_m: f64, threshold_db: f64) -> bool {
     let geo_approx = 20.0 * dist_m.log10() + 11.0;
-    max_emission_db - geo_approx < threshold_db
+    let atm_approx = ATM_ALPHA_A_WEIGHTED * dist_m;
+    max_emission_db - geo_approx - atm_approx < threshold_db
 }
 
 /// Check if a line source is too weak to contribute at this distance.
-/// Cylindrical divergence: L_r = L_W - 10*log10(d) - 8.
-/// Tighter (less conservative) than the point-source bound for line emitters.
+/// Cylindrical divergence L_r = L_W - 10*log10(d) - 8 plus conservative
+/// A-weighted atmospheric absorption. Tighter than the point-source bound.
 #[inline]
 pub fn below_free_field_threshold_line(
     max_emission_db: f64,
@@ -127,7 +138,8 @@ pub fn below_free_field_threshold_line(
     threshold_db: f64,
 ) -> bool {
     let geo_approx = 10.0 * dist_m.log10() + 8.0;
-    max_emission_db - geo_approx < threshold_db
+    let atm_approx = ATM_ALPHA_A_WEIGHTED * dist_m;
+    max_emission_db - geo_approx - atm_approx < threshold_db
 }
 
 /// Finite-line correction using HORIZONTAL distance and end angles.
