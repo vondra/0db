@@ -133,13 +133,9 @@ pub fn building_emission_bands(profile: &BuildingProfile, lw: f64) -> [f64; NUM_
 }
 
 /// Max distance at which building is audible (inverse of free-field propagation).
+/// Lp(d) = Lw - 20·log₁₀(d) - 11 = 0 → d = 10^((Lw-11)/20).
 pub fn building_max_dist(lw: f64) -> f64 {
-    if lw < 25.0 {
-        return 0.0;
-    }
-    // Lp(d) = Lw - 20·log₁₀(d) - 11 = 0 → d = 10^((Lw-11)/20)
-    let d = 10f64.powf((lw - 11.0) / 20.0);
-    d.min(2000.0)
+    10f64.powf((lw - 11.0) / 20.0).min(2000.0)
 }
 
 #[cfg(test)]
@@ -170,7 +166,9 @@ mod tests {
 
     #[test]
     fn test_max_dist() {
-        assert_eq!(building_max_dist(20.0), 0.0); // too quiet
+        // Very quiet: d < R11 pixel pitch → invisible on heatmap but not rejected.
+        let d_quiet = building_max_dist(20.0);
+        assert!(d_quiet > 0.0 && d_quiet < 5.0, "quiet d={:.2}", d_quiet);
         let d = building_max_dist(50.0);
         assert!(d > 50.0 && d < 500.0, "d={:.0}", d);
         assert_eq!(building_max_dist(90.0), 2000.0); // capped
