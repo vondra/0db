@@ -449,36 +449,73 @@ fn collect_from_hex_data(
             });
         }
 
-        visit_aircraft_from_batches(
-            &data.aircraft_batches,
-            lat,
-            lng,
-            AIRCRAFT_QUERY_MAX_RADIUS_M,
-            receiver_elev_m,
-            |a| {
-                let seg = noise_compute::types::AircraftSegment {
-                    flight_id: a.flight_id,
-                    profile_idx: a.profile_idx,
-                    is_departure: a.is_departure,
-                    on_ground: a.on_ground,
-                    period: a.period,
-                    date_id: a.date_id,
-                    start_lat: a.start_lat,
-                    start_lon: a.start_lon,
-                    start_alt_m: a.start_alt_m,
-                    end_lat: a.end_lat,
-                    end_lon: a.end_lon,
-                    end_alt_m: a.end_alt_m,
-                    speed_kt: a.speed_kt,
-                    segment_length_m: a.segment_length_m,
-                    count_weight: 1.0,
-                    surface_model: false,
-                    ground_context: a.ground_context,
-                    ground_ops_kind: a.ground_ops_kind,
-                };
-                all_aircraft.push(seg);
-            },
-        );
+        let cached_segs = data.aircraft_cache.get_or_init(|| {
+            let mut hex_aircraft = Vec::new();
+            
+            for batch in &data.aircraft_batches {
+                let n = batch.num_rows();
+                let fid = hex_store::col_u64(batch, "flight_id");
+                let pidx = hex_store::col_u8(batch, "profile_idx");
+                let dep = hex_store::col_bool(batch, "is_departure");
+                let on_ground = hex_store::col_bool(batch, "on_ground");
+                let per = hex_store::col_u8(batch, "period");
+                let did = hex_store::col_i16(batch, "date_id");
+                let slat = hex_store::col_f64(batch, "start_lat");
+                let slon = hex_store::col_f64(batch, "start_lon");
+                let salt = hex_store::col_f32(batch, "start_alt_m");
+                let elat = hex_store::col_f64(batch, "end_lat");
+                let elon = hex_store::col_f64(batch, "end_lon");
+                let ealt = hex_store::col_f32(batch, "end_alt_m");
+                let spd = hex_store::col_f32(batch, "speed_kt");
+                let slen = hex_store::col_f32(batch, "segment_length_m");
+                let gctx = hex_store::col_u8(batch, "ground_context");
+                let gops = hex_store::col_u8(batch, "ground_ops_kind");
+
+                let (Some(fid), Some(slat), Some(slon), Some(salt), Some(elat), Some(elon), Some(ealt)) =
+                    (fid, slat, slon, salt, elat, elon, ealt) else { continue; };
+
+                for i in 0..n {
+                    hex_aircraft.push(noise_compute::types::AircraftSegment {
+                        flight_id: fid.value(i),
+                        profile_idx: pidx.map(|a| a.value(i)).unwrap_or(0),
+                        is_departure: dep.map(|a| a.value(i)).unwrap_or(false),
+                        on_ground: on_ground.map(|a| a.value(i)).unwrap_or(false),
+                        period: per.map(|a| a.value(i)).unwrap_or(0),
+                        date_id: did.map(|a| a.value(i)).unwrap_or(0),
+                        start_lat: slat.value(i),
+                        start_lon: slon.value(i),
+                        start_alt_m: salt.value(i),
+                        end_lat: elat.value(i),
+                        end_lon: elon.value(i),
+                        end_alt_m: ealt.value(i),
+                        speed_kt: spd.map(|a| a.value(i)).unwrap_or(0.0),
+                        segment_length_m: slen.map(|a| a.value(i)).unwrap_or(0.0),
+                        count_weight: 1.0,
+                        surface_model: false,
+                        ground_context: gctx.map(|a| a.value(i)).unwrap_or(noise_compute::emission::aircraft::GROUND_CONTEXT_NONE),
+                        ground_ops_kind: gops.map(|a| a.value(i)).unwrap_or(noise_compute::emission::aircraft::GROUND_OPS_KIND_NONE),
+                    });
+                }
+            }
+            hex_aircraft
+        });
+
+        let tree = data.aircraft_tree.get_or_init(|| {
+            let entries = cached_segs.iter().enumerate().map(|(idx, seg)| {
+                hex_store::AircraftEntry {
+                    cache_idx: idx,
+                    lat: (seg.start_lat + seg.end_lat) * 0.5,
+                    lon: (seg.start_lon + seg.end_lon) * 0.5,
+                }
+            }).collect();
+            rstar::RTree::bulk_load(entries)
+        });
+
+        let radius_deg = AIRCRAFT_QUERY_MAX_RADIUS_M / 111_320.0;
+        let radius_deg_2 = radius_deg * radius_deg;
+        for entry in tree.locate_within_distance([lat, lng], radius_deg_2) {
+            all_aircraft.push(cached_segs[entry.cache_idx].clone());
+        }
     }
 
     if saw_aircraft_batches && any_aircraft_needs_runtime_ground_prepare {

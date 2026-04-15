@@ -10,7 +10,30 @@ use memmap2::Mmap;
 use std::fs::File;
 use std::io::Cursor;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use rstar::RTree;
+
+#[derive(Clone, Copy, Debug)]
+pub struct AircraftEntry {
+    pub cache_idx: usize,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+impl rstar::RTreeObject for AircraftEntry {
+    type Envelope = rstar::AABB<[f64; 2]>;
+    fn envelope(&self) -> Self::Envelope {
+        rstar::AABB::from_point([self.lat, self.lon])
+    }
+}
+
+impl rstar::PointDistance for AircraftEntry {
+    fn distance_2(&self, point: &[f64; 2]) -> f64 {
+        let d_lat = self.lat - point[0];
+        let d_lon = self.lon - point[1];
+        d_lat * d_lat + d_lon * d_lon
+    }
+}
 
 /// All source data for one H3 res-4 hex — mmap'd Arrow IPC files.
 pub struct HexData {
@@ -25,6 +48,8 @@ pub struct HexData {
     pub barrier_batches: Vec<RecordBatch>,
     pub industrial_batches: Vec<RecordBatch>,
     pub aircraft_batches: Vec<RecordBatch>,
+    pub aircraft_cache: OnceLock<Vec<noise_compute::types::AircraftSegment>>,
+    pub aircraft_tree: OnceLock<RTree<AircraftEntry>>,
 }
 
 impl HexData {
@@ -39,6 +64,8 @@ impl HexData {
             barrier_batches: vec![],
             industrial_batches: vec![],
             aircraft_batches: vec![],
+            aircraft_cache: OnceLock::new(),
+            aircraft_tree: OnceLock::new(),
         }
     }
 }
@@ -71,6 +98,8 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
         barrier_batches,
         industrial_batches,
         aircraft_batches,
+        aircraft_cache: OnceLock::new(),
+        aircraft_tree: OnceLock::new(),
     })
 }
 
@@ -999,34 +1028,34 @@ pub fn query_aircraft_from_batches(
 
 // ── Column accessors ──
 
-fn col_u64<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a UInt64Array> {
+pub fn col_u64<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a UInt64Array> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
-fn col_i64<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Int64Array> {
+pub fn col_i64<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Int64Array> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
-fn col_i32<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Int32Array> {
+pub fn col_i32<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Int32Array> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
-fn col_i16<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Int16Array> {
+pub fn col_i16<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Int16Array> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
-fn col_f64<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Float64Array> {
+pub fn col_f64<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Float64Array> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
-fn col_f32<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Float32Array> {
+pub fn col_f32<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Float32Array> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
-fn col_u8<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a UInt8Array> {
+pub fn col_u8<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a UInt8Array> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
-fn col_bool<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a BooleanArray> {
+pub fn col_bool<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a BooleanArray> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
-fn col_str<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a StringArray> {
+pub fn col_str<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a StringArray> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
-fn col_binary<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a BinaryArray> {
+pub fn col_binary<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a BinaryArray> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
 
