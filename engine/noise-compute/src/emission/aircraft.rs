@@ -1749,10 +1749,10 @@ fn ground_ops_max_radius_m(kind: u8) -> f64 {
     // Sized so a realistic-loudest operation leaves ≤ 20 dB Lden at cutoff
     // (free-field, flat ground) — i.e. below rural-night background.
     match kind {
-        GROUND_OPS_KIND_RUNWAY_ROLL => 7_000.0,
-        GROUND_OPS_KIND_TAXI => 3_000.0,
-        GROUND_OPS_KIND_APRON_MOVEMENT => 1_500.0,
-        _ => 1_500.0,
+        GROUND_OPS_KIND_RUNWAY_ROLL => crate::constants::GROUND_OPS_RUNWAY_MAX_RADIUS,
+        GROUND_OPS_KIND_TAXI => crate::constants::GROUND_OPS_TAXI_MAX_RADIUS,
+        GROUND_OPS_KIND_APRON_MOVEMENT => crate::constants::GROUND_OPS_APRON_MAX_RADIUS,
+        _ => crate::constants::GROUND_OPS_APRON_MAX_RADIUS,
     }
 }
 
@@ -1862,9 +1862,9 @@ fn segment_sel_with_overrides(
         end_alt_m,
     );
 
-    // Skip beyond 16 km (unified popup + pipeline cutoff). Sized so a
+    // Skip beyond AIRCRAFT_AIRBORNE_MAX_RADIUS (14 km). Sized so a
     // narrowbody arrival ~500 m AGL leaves ≤ 20 dB Lden at cutoff.
-    if cpa.d_p_m > 16000.0 {
+    if cpa.d_p_m > crate::constants::AIRCRAFT_AIRBORNE_MAX_RADIUS {
         return None;
     }
 
@@ -2359,7 +2359,7 @@ mod tests {
 
         let runway_arr = ground_ops_model(&seg, GROUND_OPS_KIND_RUNWAY_ROLL);
         assert!((runway_arr.ref_sel_db - 92.0).abs() < 0.01);
-        assert_eq!(runway_arr.max_radius_m, 5_000.0);
+        assert_eq!(runway_arr.max_radius_m, 7_000.0);
 
         seg.is_departure = true;
         let runway_dep = ground_ops_model(&seg, GROUND_OPS_KIND_RUNWAY_ROLL);
@@ -2368,7 +2368,7 @@ mod tests {
         seg.speed_kt = SURFACE_TAXIWAY_SPEED_KT;
         let taxi = ground_ops_model(&seg, GROUND_OPS_KIND_TAXI);
         assert!((taxi.ref_sel_db - 82.0).abs() < 0.01);
-        assert_eq!(taxi.max_radius_m, 2_500.0);
+        assert_eq!(taxi.max_radius_m, 3_000.0);
 
         seg.speed_kt = SURFACE_APRON_SPEED_KT;
         let apron = ground_ops_model(&seg, GROUND_OPS_KIND_APRON_MOVEMENT);

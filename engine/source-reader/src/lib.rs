@@ -205,7 +205,7 @@ fn collect_from_hex_data(
         }
     }
     for data in hex_data {
-        let railways = query_railways_from_batches(&data.railway_batches, lat, lng, 8000.0);
+        let railways = query_railways_from_batches(&data.railway_batches, lat, lng, noise_compute::constants::RAILWAY_MAX_RADIUS);
         for r in railways {
             let norm =
                 noise_compute::normalize::normalize_rail(noise_compute::normalize::RawRailInput {
@@ -260,7 +260,7 @@ fn collect_from_hex_data(
             });
         }
 
-        let roads = query_roads_from_batches(&data.road_batches, lat, lng, 10000.0);
+        let roads = query_roads_from_batches(&data.road_batches, lat, lng, noise_compute::constants::ROAD_MAX_RADIUS[0]);
         for r in roads {
             all_roads.push(noise_compute::types::RoadSegment {
                 osm_id: r.osm_id,

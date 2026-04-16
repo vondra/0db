@@ -140,10 +140,9 @@ impl RasterSampler for RealRasters {
         //   >3 km  → 6× cell  (~184 m)
         // Fine cadence catches obstacles consistent with the 30 m building raster;
         // tile-cached lookups keep per-sample cost near zero.
-        let cell_m = 110_540.0 / 3600.0;
-        let step = if dist_m <= 1000.0 { cell_m }
-            else if dist_m <= 3000.0 { cell_m * 3.0 }
-            else { cell_m * 6.0 };
+                let step = if dist_m <= 1000.0 { CELL_M }
+            else if dist_m <= 3000.0 { CELL_M * 3.0 }
+            else { CELL_M * 6.0 };
         let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
         let mut max_bh = 0.0f64;
         let mut max_t = 0.5;
@@ -165,10 +164,9 @@ impl RasterSampler for RealRasters {
         dist_m: f64, excl_start_m: f64,
     ) -> (f64, f64, u32, f64) {
         // Same scan as max_building_along_path but returns sample count + step for popup transparency.
-        let cell_m = 110_540.0 / 3600.0;
-        let step = if dist_m <= 1000.0 { cell_m }
-            else if dist_m <= 3000.0 { cell_m * 3.0 }
-            else { cell_m * 6.0 };
+                let step = if dist_m <= 1000.0 { CELL_M }
+            else if dist_m <= 3000.0 { CELL_M * 3.0 }
+            else { CELL_M * 6.0 };
         let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
         let mut max_bh = 0.0f64;
         let mut max_t = 0.5;
@@ -189,6 +187,73 @@ impl RasterSampler for RealRasters {
 }
 
 
+
+
+/// Bilateral adaptive t-values: dense at source+receiver ends, coarse in middle.
+/// Physical rationale: obstacles near endpoints dominate ISO 9613-2 path effects.
+/// Raster cell size in degrees (~30.7m at equator).
+const CELL_DEG: f64 = 1.0 / 3600.0;
+/// Raster cell size in meters (~30.7m).
+const CELL_M: f64 = 110_540.0 / 3600.0;
+
+/// Bilateral adaptive t-values: dense at source+receiver ends, coarse in middle.
+/// Uses caller-provided buffer to avoid heap allocation on hot path.
+fn bilateral_steps_into(dist_m: f64, buf: &mut Vec<f64>) {
+    buf.clear();
+
+    if dist_m <= CELL_M * 10.0 {
+        let n = (dist_m / CELL_M).ceil().max(3.0) as usize;
+        for i in 0..n {
+            buf.push(i as f64 / (n - 1).max(1) as f64);
+        }
+        return;
+    }
+
+    buf.push(0.0);
+
+    let levels = [CELL_M, CELL_M * 2.0, CELL_M * 4.0, CELL_M * 8.0];
+    let reps = 3usize;
+
+    // Forward from source
+    let mut pos = 0.0_f64;
+    for &step in &levels {
+        for _ in 0..reps {
+            pos += step;
+            if pos >= dist_m * 0.5 { break; }
+            buf.push(pos / dist_m);
+        }
+        if pos >= dist_m * 0.5 { break; }
+    }
+    let fwd_end = pos.min(dist_m * 0.5) / dist_m;
+
+    // Fill middle with coarsest step
+    let coarse = levels[levels.len() - 1].min(dist_m * 0.25);
+    let mut mid = fwd_end;
+    let bwd_start_approx = 1.0 - fwd_end;
+    while mid < bwd_start_approx - 0.0001 {
+        mid += coarse / dist_m;
+        if mid < bwd_start_approx { buf.push(mid); }
+    }
+
+    // Backward from receiver (mirror of forward, reversed)
+    let mut back_count = 0usize;
+    pos = 0.0;
+    for &step in &levels {
+        for _ in 0..reps {
+            pos += step;
+            if pos >= dist_m * 0.5 { break; }
+            buf.push(1.0 - pos / dist_m);
+            back_count += 1;
+        }
+        if pos >= dist_m * 0.5 { break; }
+    }
+    // Reverse just the back portion (it was pushed in decreasing order)
+    let back_start = buf.len() - back_count;
+    buf[back_start..].reverse();
+
+    buf.push(1.0);
+    buf.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+}
 
 /// L3-cache-resident cropped raster grid for pipeline compute.
 ///
@@ -294,17 +359,16 @@ impl noise_compute::types::RasterSampler for FusedGrid {
         let dlat = (lat2 - lat1) * 110_540.0;
         let dlon = (lon2 - lon1) * 111_320.0 * ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
         let dist_m = (dlat * dlat + dlon * dlon).sqrt();
-        let cell_m = 110_540.0 / 3600.0;
-        let steps = (dist_m / cell_m).ceil().max(3.0) as usize;
-        let step_m = dist_m / steps.max(1) as f64;
+        let mut steps_buf = Vec::with_capacity(64);
+        bilateral_steps_into(dist_m, &mut steps_buf);
         let mut total = 0.0;
         let mut run = 0.0;
-        for i in 0..steps {
-            let t = i as f64 / (steps - 1).max(1) as f64;
-            let lat = lat1 + t * (lat2 - lat1);
-            let lon = lon1 + t * (lon2 - lon1);
+        for w in steps_buf.windows(2) {
+            let actual_step = (w[1] - w[0]) * dist_m;
+            let lat = lat1 + w[1] * (lat2 - lat1);
+            let lon = lon1 + w[1] * (lon2 - lon1);
             if self.pixel(lat, lon).forest > 0 {
-                run += step_m;
+                run += actual_step;
             } else {
                 if run >= 10.0 { total += run; }
                 run = 0.0;
@@ -323,16 +387,15 @@ impl noise_compute::types::RasterSampler for FusedGrid {
         let dlat = (lat2 - lat1) * 110_540.0;
         let dlon = (lon2 - lon1) * 111_320.0 * ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
         let dist_m = (dlat * dlat + dlon * dlon).sqrt();
-        let cell_m = 110_540.0 / 3600.0;
-        let steps = (dist_m / cell_m).ceil().max(3.0) as usize;
+        let mut steps_buf = Vec::with_capacity(64);
+        bilateral_steps_into(dist_m, &mut steps_buf);
         let mut sum = 0.0;
-        for i in 0..steps {
-            let t = i as f64 / (steps - 1).max(1) as f64;
+        for &t in &steps_buf {
             let lat = lat1 + t * (lat2 - lat1);
             let lon = lon1 + t * (lon2 - lon1);
             sum += self.pixel(lat, lon).imd as f64;
         }
-        let avg = sum / steps.max(1) as f64;
+        let avg = sum / steps_buf.len().max(1) as f64;
         (1.0 - avg / 100.0).clamp(0.0, 1.0)
     }
 
@@ -340,14 +403,10 @@ impl noise_compute::types::RasterSampler for FusedGrid {
         let dlat = (lat2 - lat1) * 110_540.0;
         let dlon = (lon2 - lon1) * 111_320.0 * ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
         let dist_m = (dlat * dlat + dlon * dlon).sqrt();
-        let cell_m = 110_540.0 / 3600.0;
-        let step_m = if dist_m <= 1000.0 { cell_m }
-            else if dist_m <= 3000.0 { cell_m * 3.0 }
-            else { cell_m * 6.0 };
-        let n = (dist_m / step_m).ceil().max(3.0) as usize;
-        let mut profile = Vec::with_capacity(n);
-        for i in 0..n {
-            let t = i as f64 / (n - 1).max(1) as f64;
+        let mut steps_buf = Vec::with_capacity(64);
+        bilateral_steps_into(dist_m, &mut steps_buf);
+        let mut profile = Vec::with_capacity(steps_buf.len());
+        for &t in &steps_buf {
             let lat = lat1 + t * (lat2 - lat1);
             let lon = lon1 + t * (lon2 - lon1);
             profile.push(self.elevation_bilinear(lat, lon));
@@ -374,15 +433,12 @@ impl noise_compute::types::RasterSampler for FusedGrid {
         &self, src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64,
         dist_m: f64, excl_start_m: f64,
     ) -> (f64, f64) {
-        let cell_m = 110_540.0 / 3600.0;
-        let step = if dist_m <= 1000.0 { cell_m }
-            else if dist_m <= 3000.0 { cell_m * 3.0 }
-            else { cell_m * 6.0 };
-        let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
+        let mut steps_buf = Vec::with_capacity(64);
+        bilateral_steps_into(dist_m, &mut steps_buf);
         let mut max_bh = 0.0f64;
         let mut max_t = 0.5;
-        for k in 1..n {
-            let t = k as f64 / n as f64;
+        for &t in &steps_buf {
+            if t <= 0.0 || t >= 1.0 { continue; }
             if excl_start_m > 0.0 && t * dist_m < excl_start_m { continue; }
             let lat = src_lat + t * (rcv_lat - src_lat);
             let lon = src_lon + t * (rcv_lon - src_lon);
