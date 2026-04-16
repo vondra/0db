@@ -1542,6 +1542,7 @@ fn compute_aircraft(
         cp_lat: f64,
         cp_lon: f64,
         src_height: f64,
+        line_coords: Vec<Vec<[f64; 2]>>,
     }
     impl GroundAirportAccum {
         fn new(name: String, airport_key: String, receiver: &Receiver) -> Self {
@@ -1557,6 +1558,7 @@ fn compute_aircraft(
                 modeled_total: 0.0,
                 modeled_by_kind: [0.0; 3],
                 emission_energy: 0.0,
+                line_coords: Vec::new(),
                 min_dist: f64::INFINITY,
                 min_d_slant: f64::INFINITY,
                 min_ground_g: 0.5,
@@ -1654,6 +1656,14 @@ fn compute_aircraft(
             let airport_acc = ground_by_airport
                 .entry(group_key.clone())
                 .or_insert_with(|| GroundAirportAccum::new(group_name.clone(), group_key, receiver));
+
+            // Collect segment geometry for popup highlight (cap at 200 to avoid huge JSON)
+            if airport_acc.line_coords.len() < 200 {
+                airport_acc.line_coords.push(vec![
+                    [seg.start_lon, seg.start_lat],
+                    [seg.end_lon, seg.end_lat],
+                ]);
+            }
 
             if weight > 0.0 {
                 let source_energy: f64 = line_emission
@@ -2153,9 +2163,14 @@ fn compute_aircraft(
                 ..vegetation_meta
             },
         };
+        let ground_geometry = if !acc.line_coords.is_empty() {
+            Some(serde_json::json!({"type": "MultiLineString", "coordinates": acc.line_coords}))
+        } else {
+            None
+        };
         contributors.push(Contributor {
             osm_id: None,
-            geometry: None,
+            geometry: ground_geometry,
             baseline: detail.baseline.clone(),
             terrain: detail.terrain.clone(),
             screening: detail.screening.clone(),
