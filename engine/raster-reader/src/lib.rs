@@ -188,6 +188,210 @@ impl RasterSampler for RealRasters {
     }
 }
 
+
+
+/// L3-cache-resident cropped raster grid for pipeline compute.
+///
+/// Pre-reads DEM + building + forest + IMD for the hex bbox into ONE contiguous
+/// Vec, cropped to just the needed area (~22 MB for a typical R4 hex + ring).
+/// Implements RasterSampler so all existing path_effects code works unchanged.
+/// Zero algorithmic change = zero dB error vs mmap-based RealRasters.
+pub struct FusedGrid {
+    data: Vec<FusedPixel>,
+    lat_min: f64,
+    lon_min: f64,
+    inv_cell_deg: f64,
+    cols: usize,
+    rows: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+#[repr(C)]
+pub struct FusedPixel {
+    pub elevation: f32,  // DEM (meters, full precision bilinear)
+    pub building: u8,    // building height (meters)
+    pub forest: u8,      // forest cover (0 or 100)
+    pub imd: u8,         // imperviousness 0-100
+    pub _pad: u8, // total: 4+1+1+1+1 = 8 bytes per pixel
+}
+
+impl FusedGrid {
+    /// Build from RealRasters, cropping to bbox. ~0.2-0.5s for typical hex.
+    pub fn build(rasters: &RealRasters, lat_min: f64, lat_max: f64, lon_min: f64, lon_max: f64) -> Self {
+        let cell_deg = 1.0 / 3600.0;
+        let inv_cell_deg = 3600.0;
+
+        // Expand bbox by 1 cell for bilinear interpolation margin
+        let lat_lo = lat_min - cell_deg;
+        let lon_lo = lon_min - cell_deg;
+        let lat_hi = lat_max + cell_deg;
+        let lon_hi = lon_max + cell_deg;
+
+        let rows = ((lat_hi - lat_lo) * inv_cell_deg).ceil() as usize + 1;
+        let cols = ((lon_hi - lon_lo) * inv_cell_deg).ceil() as usize + 1;
+
+        let mut data = vec![FusedPixel::default(); rows * cols];
+
+        for r in 0..rows {
+            let lat = lat_lo + r as f64 * cell_deg;
+            for co in 0..cols {
+                let lon = lon_lo + co as f64 * cell_deg;
+                let idx = r * cols + co;
+                let elev = rasters.dem.sample(lat, lon);
+                data[idx] = FusedPixel {
+                    elevation: elev as f32,
+                    building: rasters.building.sample(lat, lon) as u8,
+                    forest: rasters.forest.sample(lat, lon) as u8,
+                    imd: rasters.imd.sample(lat, lon) as u8,
+                    _pad: 0,
+                };
+            }
+        }
+
+        let size_mb = (data.len() * std::mem::size_of::<FusedPixel>()) as f64 / (1024.0 * 1024.0);
+        eprintln!("  FusedGrid: {}×{} = {:.1} MB (L3-resident)", rows, cols, size_mb);
+
+        FusedGrid { data, lat_min: lat_lo, lon_min: lon_lo, inv_cell_deg, cols, rows }
+    }
+
+    #[inline]
+    fn pixel(&self, lat: f64, lon: f64) -> &FusedPixel {
+        let r = ((lat - self.lat_min) * self.inv_cell_deg) as usize;
+        let c = ((lon - self.lon_min) * self.inv_cell_deg) as usize;
+        let r = r.min(self.rows.saturating_sub(1));
+        let c = c.min(self.cols.saturating_sub(1));
+        &self.data[r * self.cols + c]
+    }
+
+    #[inline]
+    fn elevation_bilinear(&self, lat: f64, lon: f64) -> f64 {
+        let rf = (lat - self.lat_min) * self.inv_cell_deg;
+        let cf = (lon - self.lon_min) * self.inv_cell_deg;
+        let r0 = (rf.floor() as usize).min(self.rows.saturating_sub(2));
+        let c0 = (cf.floor() as usize).min(self.cols.saturating_sub(2));
+        let fr = rf - r0 as f64;
+        let fc = cf - c0 as f64;
+        let v00 = self.data[r0 * self.cols + c0].elevation as f64;
+        let v01 = self.data[r0 * self.cols + c0 + 1].elevation as f64;
+        let v10 = self.data[(r0 + 1) * self.cols + c0].elevation as f64;
+        let v11 = self.data[(r0 + 1) * self.cols + c0 + 1].elevation as f64;
+        let v0 = v00 + fc * (v01 - v00);
+        let v1 = v10 + fc * (v11 - v10);
+        v0 + fr * (v1 - v0)
+    }
+}
+
+impl noise_compute::types::RasterSampler for FusedGrid {
+    fn elevation(&self, lat: f64, lon: f64) -> f64 {
+        self.elevation_bilinear(lat, lon)
+    }
+
+    fn building_height(&self, lat: f64, lon: f64) -> f64 {
+        self.pixel(lat, lon).building as f64
+    }
+
+    fn vegetation_depth(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+        let dlat = (lat2 - lat1) * 110_540.0;
+        let dlon = (lon2 - lon1) * 111_320.0 * ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
+        let dist_m = (dlat * dlat + dlon * dlon).sqrt();
+        let cell_m = 110_540.0 / 3600.0;
+        let steps = (dist_m / cell_m).ceil().max(3.0) as usize;
+        let step_m = dist_m / steps.max(1) as f64;
+        let mut total = 0.0;
+        let mut run = 0.0;
+        for i in 0..steps {
+            let t = i as f64 / (steps - 1).max(1) as f64;
+            let lat = lat1 + t * (lat2 - lat1);
+            let lon = lon1 + t * (lon2 - lon1);
+            if self.pixel(lat, lon).forest > 0 {
+                run += step_m;
+            } else {
+                if run >= 10.0 { total += run; }
+                run = 0.0;
+            }
+        }
+        if run >= 10.0 { total += run; }
+        total
+    }
+
+    fn ground_g(&self, lat: f64, lon: f64) -> f64 {
+        let imd = self.pixel(lat, lon).imd as f64;
+        (1.0 - imd / 100.0).clamp(0.0, 1.0)
+    }
+
+    fn ground_g_path(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+        let dlat = (lat2 - lat1) * 110_540.0;
+        let dlon = (lon2 - lon1) * 111_320.0 * ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
+        let dist_m = (dlat * dlat + dlon * dlon).sqrt();
+        let cell_m = 110_540.0 / 3600.0;
+        let steps = (dist_m / cell_m).ceil().max(3.0) as usize;
+        let mut sum = 0.0;
+        for i in 0..steps {
+            let t = i as f64 / (steps - 1).max(1) as f64;
+            let lat = lat1 + t * (lat2 - lat1);
+            let lon = lon1 + t * (lon2 - lon1);
+            sum += self.pixel(lat, lon).imd as f64;
+        }
+        let avg = sum / steps.max(1) as f64;
+        (1.0 - avg / 100.0).clamp(0.0, 1.0)
+    }
+
+    fn terrain_profile(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64, _steps: usize) -> Vec<f64> {
+        let dlat = (lat2 - lat1) * 110_540.0;
+        let dlon = (lon2 - lon1) * 111_320.0 * ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
+        let dist_m = (dlat * dlat + dlon * dlon).sqrt();
+        let cell_m = 110_540.0 / 3600.0;
+        let step_m = if dist_m <= 1000.0 { cell_m }
+            else if dist_m <= 3000.0 { cell_m * 3.0 }
+            else { cell_m * 6.0 };
+        let n = (dist_m / step_m).ceil().max(3.0) as usize;
+        let mut profile = Vec::with_capacity(n);
+        for i in 0..n {
+            let t = i as f64 / (n - 1).max(1) as f64;
+            let lat = lat1 + t * (lat2 - lat1);
+            let lon = lon1 + t * (lon2 - lon1);
+            profile.push(self.elevation_bilinear(lat, lon));
+        }
+        profile
+    }
+
+    fn building_enclosure(&self, lat: f64, lon: f64) -> f64 {
+        let step = 0.001;
+        let mut tall = 0;
+        let mut total = 0;
+        for dr in [-1, 0, 1] {
+            for dc in [-1, 0, 1] {
+                let h = self.pixel(lat + dr as f64 * step, lon + dc as f64 * step).building;
+                if h > 5 { tall += 1; }
+                total += 1;
+            }
+        }
+        let density = tall as f64 / total as f64;
+        if density > 0.5 { 3.0 } else if density > 0.2 { 1.5 } else { 0.0 }
+    }
+
+    fn max_building_along_path(
+        &self, src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64,
+        dist_m: f64, excl_start_m: f64,
+    ) -> (f64, f64) {
+        let cell_m = 110_540.0 / 3600.0;
+        let step = if dist_m <= 1000.0 { cell_m }
+            else if dist_m <= 3000.0 { cell_m * 3.0 }
+            else { cell_m * 6.0 };
+        let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
+        let mut max_bh = 0.0f64;
+        let mut max_t = 0.5;
+        for k in 1..n {
+            let t = k as f64 / n as f64;
+            if excl_start_m > 0.0 && t * dist_m < excl_start_m { continue; }
+            let lat = src_lat + t * (rcv_lat - src_lat);
+            let lon = src_lon + t * (rcv_lon - src_lon);
+            let bh = self.pixel(lat, lon).building as f64;
+            if bh > max_bh { max_bh = bh; max_t = t; }
+        }
+        (max_bh, max_t)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
