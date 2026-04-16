@@ -140,7 +140,7 @@ impl RasterSampler for RealRasters {
         //   >3 km  → 6× cell  (~184 m)
         // Fine cadence catches obstacles consistent with the 30 m building raster;
         // tile-cached lookups keep per-sample cost near zero.
-                let step = if dist_m <= 1000.0 { CELL_M }
+        let step = if dist_m <= 1000.0 { CELL_M }
             else if dist_m <= 3000.0 { CELL_M * 3.0 }
             else { CELL_M * 6.0 };
         let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
@@ -164,7 +164,7 @@ impl RasterSampler for RealRasters {
         dist_m: f64, excl_start_m: f64,
     ) -> (f64, f64, u32, f64) {
         // Same scan as max_building_along_path but returns sample count + step for popup transparency.
-                let step = if dist_m <= 1000.0 { CELL_M }
+        let step = if dist_m <= 1000.0 { CELL_M }
             else if dist_m <= 3000.0 { CELL_M * 3.0 }
             else { CELL_M * 6.0 };
         let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
@@ -186,13 +186,6 @@ impl RasterSampler for RealRasters {
     }
 }
 
-
-
-
-/// Bilateral adaptive t-values: dense at source+receiver ends, coarse in middle.
-/// Physical rationale: obstacles near endpoints dominate ISO 9613-2 path effects.
-/// Raster cell size in degrees (~30.7m at equator).
-const CELL_DEG: f64 = 1.0 / 3600.0;
 /// Raster cell size in meters (~30.7m).
 const CELL_M: f64 = 110_540.0 / 3600.0;
 

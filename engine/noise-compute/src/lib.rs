@@ -1548,7 +1548,7 @@ fn compute_aircraft(
         cp_lat: f64,
         cp_lon: f64,
         src_height: f64,
-        line_coords: Vec<Vec<[f64; 2]>>,
+        line_coords: Vec<[[f64; 2]; 2]>,
     }
     impl GroundAirportAccum {
         fn new(name: String, airport_key: String, receiver: &Receiver) -> Self {
@@ -1694,7 +1694,7 @@ fn compute_aircraft(
 
             // Collect segment geometry for popup highlight (cap at 200 to avoid huge JSON)
             if airport_acc.line_coords.len() < 200 {
-                airport_acc.line_coords.push(vec![
+                airport_acc.line_coords.push([
                     [seg.start_lon, seg.start_lat],
                     [seg.end_lon, seg.end_lat],
                 ]);
