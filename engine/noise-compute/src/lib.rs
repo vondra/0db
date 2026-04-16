@@ -1498,7 +1498,13 @@ fn compute_aircraft(
     struct FlightAccum {
         period_energy: [f64; 3],
         peak_lmax: f64,
+        peak_sel: f64,
         min_dist_m: f64,
+        peak_altitude_m: f64,
+        peak_period: u8,
+        peak_date_id: i16,
+        peak_seg_start: [f64; 2], // [lon, lat]
+        peak_seg_end: [f64; 2],
         profile_idx: u8,
         flight_weight: f64,
     }
@@ -1590,6 +1596,35 @@ fn compute_aircraft(
     for seg in segments {
         if aircraft::is_ground_stale_segment(seg, rasters) {
             continue;
+        }
+
+        // ADS-B data quality filters (applied before any acoustic computation).
+        if !seg.on_ground {
+            let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
+            let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
+            let terrain = rasters.elevation(mid_lat, mid_lon);
+            let max_alt = (seg.start_alt_m as f64).max(seg.end_alt_m as f64);
+
+            // Filter 1: underground — max altitude < terrain - 30m.
+            if max_alt < terrain - 30.0 {
+                continue;
+            }
+
+            // Filter 2: jet profiles (0-3) below 80 kt = physically impossible.
+            if seg.profile_idx <= 3 && (seg.speed_kt as f64) < 80.0 {
+                continue;
+            }
+
+            // Filter 3: jet profiles (0-3) below 150m AGL outside airport vicinity.
+            // Real widebody/narrowbody only goes below 150m AGL on final approach
+            // within ~5 km of a runway. No DEM-based airport check here, but
+            // ground_context != NONE means the segment is near a known airport.
+            if seg.profile_idx <= 3
+                && seg.ground_context == emission::aircraft::GROUND_CONTEXT_NONE
+                && max_alt < terrain + 150.0
+            {
+                continue;
+            }
         }
 
         if let Some(line_emission) = aircraft::build_ground_ops_line_emission(seg, rasters, n_days) {
@@ -1808,7 +1843,13 @@ fn compute_aircraft(
         let acc = flights.entry(seg.flight_id).or_insert(FlightAccum {
             period_energy: [0.0; 3],
             peak_lmax: -999.0,
+            peak_sel: -999.0,
             min_dist_m: f64::MAX,
+            peak_altitude_m: 0.0,
+            peak_period: 0,
+            peak_date_id: 0,
+            peak_seg_start: [0.0; 2],
+            peak_seg_end: [0.0; 2],
             profile_idx: seg.profile_idx,
             flight_weight: weight,
         });
@@ -1816,6 +1857,12 @@ fn compute_aircraft(
         let lmax = sel - 12.0;
         if lmax > acc.peak_lmax {
             acc.peak_lmax = lmax;
+            acc.peak_sel = sel;
+            acc.peak_altitude_m = cpa.relative_alt_m;
+            acc.peak_period = seg.period;
+            acc.peak_date_id = seg.date_id;
+            acc.peak_seg_start = [seg.start_lon, seg.start_lat];
+            acc.peak_seg_end = [seg.end_lon, seg.end_lat];
         }
         if cpa.d_p_m < acc.min_dist_m {
             acc.min_dist_m = cpa.d_p_m;
@@ -1934,6 +1981,50 @@ fn compute_aircraft(
     });
     let flights_per_day = flights.values().map(|acc| acc.flight_weight).sum::<f64>() / n_days_f;
 
+    // date_id (days since 2020-01-01) → "YYYY-MM-DD"
+    let date_from_id = |date_id: i16| -> String {
+        let mut rem = date_id as i32;
+        let mut y = 2020i32;
+        loop {
+            let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+            let yd = if leap { 366 } else { 365 };
+            if rem < yd { break; }
+            rem -= yd;
+            y += 1;
+        }
+        let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+        let mdays: [i32; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let mut m = 0usize;
+        while m < 12 && rem >= mdays[m] { rem -= mdays[m]; m += 1; }
+        format!("{:04}-{:02}-{:02}", y, m + 1, rem + 1)
+    };
+
+    // Top flights by Lden energy contribution (for popup diagnostics)
+    let total_lden_energy: f64 = airborne_energy.iter().sum();
+    let top_flights = if total_lden_energy > 0.0 {
+        let mut flight_entries: Vec<_> = flights.values().collect();
+        flight_entries.sort_by(|a, b| {
+            let ea: f64 = a.period_energy.iter().sum();
+            let eb: f64 = b.period_energy.iter().sum();
+            eb.partial_cmp(&ea).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        flight_entries.iter().take(5).map(|f| {
+            let flight_energy: f64 = f.period_energy.iter().sum();
+            types::AircraftTopFlight {
+                lmax_db: if f.peak_lmax > -900.0 { (f.peak_lmax * 10.0).round() / 10.0 } else { 0.0 },
+                cpa_distance_m: (f.min_dist_m * 10.0).round() / 10.0,
+                altitude_m: (f.peak_altitude_m * 10.0).round() / 10.0,
+                period: f.peak_period,
+                date: date_from_id(f.peak_date_id),
+                profile: aircraft::PROFILES[f.profile_idx.min(7) as usize].name.to_string(),
+                energy_pct: (flight_energy / total_lden_energy * 1000.0).round() / 10.0,
+                geometry: [f.peak_seg_start, f.peak_seg_end],
+            }
+        }).collect()
+    } else {
+        Vec::new()
+    };
+
     let band_data = AircraftBandData {
         airborne: AircraftAirborneDetail {
             periods: airborne_periods.clone(),
@@ -1971,6 +2062,7 @@ fn compute_aircraft(
                 },
                 top_aircraft: band_disruptive.top_type().to_string(),
             },
+            top_flights,
         },
         ground_ops: AircraftGroundOpsDetail {
             periods: ground_periods.clone(),

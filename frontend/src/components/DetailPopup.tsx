@@ -141,6 +141,17 @@ interface AircraftEventBandStats {
   top_aircraft: string
 }
 
+interface AircraftTopFlight {
+  lmax_db: number
+  cpa_distance_m: number
+  altitude_m: number
+  period: number // 0=day, 1=evening, 2=night
+  date: string // "YYYY-MM-DD"
+  profile: string
+  energy_pct: number
+  geometry: [[number, number], [number, number]]
+}
+
 interface AircraftAirborneDetail {
   periods: NoisePeriodsData
   observed_flights_per_day: number
@@ -149,6 +160,7 @@ interface AircraftAirborneDetail {
   faint: AircraftEventBandStats
   audible: AircraftEventBandStats
   disruptive: AircraftEventBandStats
+  top_flights?: AircraftTopFlight[]
 }
 
 interface AircraftGroundOpsClassDetail {
@@ -426,6 +438,46 @@ function AircraftDetail({ d }: { d: AircraftBandData }) {
         </tbody>
       </table>
 
+      {airborne.top_flights && airborne.top_flights.length > 0 && (
+        <>
+          <div className="text-[11px] font-medium mt-3 mb-1">
+            <HoverText title={"Top flights by energy\n\nThe loudest individual flights ranked by their share of total airborne Lden energy. Shows peak Lmax, closest point of approach (CPA) distance, altitude above receiver, time period, and aircraft type."}>
+              Top flights
+            </HoverText>
+          </div>
+          <table className="w-full text-[10px] border-collapse">
+            <thead>
+              <tr className="text-muted-foreground/60">
+                <th className="text-left font-normal pb-0.5">#</th>
+                <th className="text-right font-normal pb-0.5">Lmax</th>
+                <th className="text-right font-normal pb-0.5">CPA</th>
+                <th className="text-right font-normal pb-0.5">Alt</th>
+                <th className="text-right font-normal pb-0.5">Period</th>
+                <th className="text-right font-normal pb-0.5">Type</th>
+                <th className="text-right font-normal pb-0.5">Energy</th>
+              </tr>
+            </thead>
+            <tbody>
+              {airborne.top_flights.map((f, i) => {
+                const periodLabel = ['Day', 'Eve', 'Night'][f.period] ?? '?'
+                const periodColor = f.period === 2 ? '#818cf8' : f.period === 1 ? '#f59e0b' : undefined
+                return (
+                  <tr key={i}>
+                    <td>{i + 1}</td>
+                    <td className="text-right font-medium">{f.lmax_db.toFixed(0)}</td>
+                    <td className="text-right">{f.cpa_distance_m < 1000 ? `${f.cpa_distance_m.toFixed(0)} m` : `${(f.cpa_distance_m / 1000).toFixed(1)} km`}</td>
+                    <td className="text-right">{f.altitude_m.toFixed(0)} m</td>
+                    <td className="text-right" style={periodColor ? { color: periodColor } : undefined}>{periodLabel}</td>
+                    <td className="text-right">{f.profile}</td>
+                    <td className="text-right text-muted-foreground">{f.energy_pct.toFixed(0)}%</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
+
       <div className="text-[11px] font-medium mt-3 mb-1">Aircraft - ground ops</div>
       <div className="flex justify-between text-[11px] mb-1">
         <HoverText title={"Observed movements/day\n\nObserved ground movements from ADS-B tracks on runway, taxiway or apron near this point."}>
@@ -630,6 +682,42 @@ function AircraftAirborneRow({ d }: { d: AircraftBandData }) {
               ))}
             </tbody>
           </table>
+          {airborne.top_flights && airborne.top_flights.length > 0 && (
+            <>
+              <div className="font-medium mt-2 mb-0.5 text-foreground/70">Top flights</div>
+              <table className="w-full text-[10px]">
+                <thead>
+                  <tr className="text-muted-foreground/60">
+                    <th className="text-left font-normal pb-0.5">#</th>
+                    <th className="text-right font-normal pb-0.5">Lmax</th>
+                    <th className="text-right font-normal pb-0.5">CPA</th>
+                    <th className="text-right font-normal pb-0.5">Alt</th>
+                    <th className="text-right font-normal pb-0.5">Date</th>
+                    <th className="text-right font-normal pb-0.5">Type</th>
+                    <th className="text-right font-normal pb-0.5">%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {airborne.top_flights.map((f, i) => {
+                    const periodLabel = ['Day', 'Eve', 'Night'][f.period] ?? '?'
+                    const periodColor = f.period === 2 ? '#818cf8' : f.period === 1 ? '#f59e0b' : undefined
+                    const dateShort = f.date ? f.date.slice(5) : ''
+                    return (
+                      <tr key={i}>
+                        <td>{i + 1}</td>
+                        <td className="text-right font-medium">{f.lmax_db.toFixed(0)}</td>
+                        <td className="text-right">{f.cpa_distance_m < 1000 ? `${f.cpa_distance_m.toFixed(0)} m` : `${(f.cpa_distance_m / 1000).toFixed(1)} km`}</td>
+                        <td className="text-right">{f.altitude_m.toFixed(0)} m</td>
+                        <td className="text-right" style={periodColor ? { color: periodColor } : undefined}>{dateShort} {periodLabel}</td>
+                        <td className="text-right">{f.profile}</td>
+                        <td className="text-right text-muted-foreground/60">{f.energy_pct.toFixed(0)}%</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -1158,7 +1246,6 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
           )}
           {aircraftAirborne ? (
             <>
-              {lineRow('Observed flights/day', aircraftAirborne.observed_flights_per_day.toFixed(1))}
               {lineRow('Helicopters/day', aircraftAirborne.helicopter_flights_per_day.toFixed(1))}
               {aircraftAirborne.lmax_peak != null && lineRow('Peak Lmax', `${aircraftAirborne.lmax_peak.toFixed(1)} dB`)}
               {lineRow(
@@ -1191,6 +1278,62 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                   ))}
                 </tbody>
               </table>
+              {aircraftAirborne.top_flights && aircraftAirborne.top_flights.length > 0 && (
+                <>
+                  <div className="font-medium mt-2 mb-0.5 text-foreground/70 text-[10px]">
+                    <HoverText title={"Top flights by energy\n\nThe loudest individual ADS-B flights ranked by their share of total airborne Lden energy at this point. Each row is one unique flight observation.\n\nUseful for diagnosing why noise is unexpectedly high — e.g. a single low-altitude night flight dominating total energy."}>
+                      Top flights
+                    </HoverText>
+                  </div>
+                  <table className="w-full text-[10px]">
+                    <thead>
+                      <tr className="text-muted-foreground/60">
+                        <th className="text-left font-normal pb-0.5">#</th>
+                        <th className="text-right font-normal pb-0.5">
+                          <HoverText title={"Lmax (dB)\n\nPeak single-event maximum sound level for this flight at this point.\nComputed as SEL − 12 dB (typical exposure duration correction).\nHigher Lmax = louder individual flyover."}>Lmax</HoverText>
+                        </th>
+                        <th className="text-right font-normal pb-0.5">
+                          <HoverText title={"CPA distance (m)\n\nClosest Point of Approach — the shortest 3D slant distance from the flight track to this receiver point.\nComputed on the infinite line extension of the segment (Doc 29 §4.4.1).\nSmaller CPA = louder."}>CPA</HoverText>
+                        </th>
+                        <th className="text-right font-normal pb-0.5">
+                          <HoverText title={"Altitude (m)\n\nAircraft altitude above receiver at the closest point of approach.\nDerived from ADS-B barometric altitude minus receiver ground elevation.\nVery low values (<100 m) may indicate ADS-B altitude glitches."}>Alt</HoverText>
+                        </th>
+                        <th className="text-right font-normal pb-0.5">
+                          <HoverText title={"Date & period\n\nDate of the peak segment and CNOSSOS time period:\n  Day = 07:00–19:00\n  Evening = 19:00–23:00\n  Night = 23:00–07:00\nNight events get +10 dB penalty in Lden calculation.\n\nNote: period is approximate (UTC+1), not local timezone."}>Date</HoverText>
+                        </th>
+                        <th className="text-right font-normal pb-0.5">
+                          <HoverText title={"Aircraft type\n\nDoc 29 NPD profile category assigned during ADS-B processing:\n  B738 = Boeing 737 family\n  A320/A321 = Airbus narrowbody\n  Widebody = large twin-aisle\n  Turboprop = propeller transport\n  BizJet = business jet\n  LightGA = light GA + rotorcraft\n  Generic = unclassified"}>Type</HoverText>
+                        </th>
+                        <th className="text-right font-normal pb-0.5">
+                          <HoverText title={"Energy share (%)\n\nThis flight's contribution to total airborne Lden energy.\n100% = this single flight causes all airborne noise.\nEnergy is in linear (not dB) scale, so a flight with 90%\ndominates even if other flights have similar Lmax."}>%</HoverText>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {aircraftAirborne.top_flights.map((f, i) => {
+                        const periodLabel = ['Day', 'Eve', 'Night'][f.period] ?? '?'
+                        const periodColor = f.period === 2 ? '#818cf8' : f.period === 1 ? '#f59e0b' : undefined
+                        const dateShort = f.date ? f.date.slice(5) : '' // "MM-DD"
+                        return (
+                          <tr key={i}>
+                            <td>{i + 1}</td>
+                            <td className="text-right font-medium">{f.lmax_db.toFixed(0)}</td>
+                            <td className="text-right">{f.cpa_distance_m < 1000 ? `${f.cpa_distance_m.toFixed(0)} m` : `${(f.cpa_distance_m / 1000).toFixed(1)} km`}</td>
+                            <td className="text-right">{f.altitude_m.toFixed(0)} m</td>
+                            <td className="text-right" style={periodColor ? { color: periodColor } : undefined}>
+                              <HoverText title={`${f.date}\n${['Day (07–19)', 'Evening (19–23)', 'Night (23–07)'][f.period] ?? '?'}`} className="no-underline">
+                                {dateShort} {periodLabel}
+                              </HoverText>
+                            </td>
+                            <td className="text-right">{f.profile}</td>
+                            <td className="text-right text-muted-foreground/60">{f.energy_pct.toFixed(0)}%</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </>
+              )}
             </>
           ) : (
             <>
