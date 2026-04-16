@@ -6,116 +6,42 @@ import type { FastifyInstance } from 'fastify'
 import { Worker } from 'node:worker_threads'
 import { resolve } from 'node:path'
 import { getElevation } from '../engine/dem-reader.js'
+import {
+  NoiseOnflyRequestError,
+  NoiseOnflySupervisor,
+} from '../engine/noise-onfly-supervisor.js'
 
 const SOURCE_READER_PATH = resolve(import.meta.dirname, '../../../engine/source-reader/target/release/libsource_reader.so')
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = process.env.H3R4_DIR || resolve(import.meta.dirname, `../../../data/prepared/${YEAR}/h3r4`)
 const WORKER_URL = new URL('../workers/noise-onfly-worker.mjs', import.meta.url)
-const NOISE_ONFLY_TIMEOUT_MS = Number(process.env.NOISE_ONFLY_TIMEOUT_MS || '8000')
+const NOISE_ONFLY_WORK_TIMEOUT_MS = Number(process.env.NOISE_ONFLY_WORK_TIMEOUT_MS || '30000')
+const NOISE_ONFLY_QUEUE_TIMEOUT_MS = Number(process.env.NOISE_ONFLY_QUEUE_TIMEOUT_MS || '10000')
+const NOISE_ONFLY_MAX_QUEUE = Number(process.env.NOISE_ONFLY_MAX_QUEUE || '8')
 
-type WorkerReply = {
-  id: number
-  ok: boolean
-  resultJson?: string
-  error?: string
-}
-
-type PendingQuery = {
-  resolve: (resultJson: string) => void
-  reject: (err: Error) => void
-  timer: NodeJS.Timeout
-}
-
-let worker: Worker | null = null
-let nextRequestId = 1
-const pendingQueries = new Map<number, PendingQuery>()
-
-function rejectAllPending(err: Error): void {
-  for (const { reject, timer } of pendingQueries.values()) {
-    clearTimeout(timer)
-    reject(err)
-  }
-  pendingQueries.clear()
-}
-
-async function disposeWorker(): Promise<void> {
-  const current = worker
-  worker = null
-  if (!current) {
-    return
-  }
-  try {
-    await current.terminate()
-  } catch {
-    // ignore terminate failures during worker recycling
-  }
-}
-
-function ensureWorker(): Worker {
-  if (worker) {
-    return worker
-  }
-
-  const current = new Worker(WORKER_URL, {
-    workerData: {
-      sourceReaderPath: SOURCE_READER_PATH,
-      h3r4Dir: H3R4_DIR,
+export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
+  const supervisor = new NoiseOnflySupervisor({
+    createWorker: () =>
+      new Worker(WORKER_URL, {
+        workerData: {
+          sourceReaderPath: SOURCE_READER_PATH,
+          h3r4Dir: H3R4_DIR,
+        },
+      }),
+    maxQueue: NOISE_ONFLY_MAX_QUEUE,
+    queueTimeoutMs: NOISE_ONFLY_QUEUE_TIMEOUT_MS,
+    workTimeoutMs: NOISE_ONFLY_WORK_TIMEOUT_MS,
+    logger: (level, message, meta) => {
+      if (meta) {
+        app.log[level](meta, message)
+        return
+      }
+      app.log[level](message)
     },
   })
 
-  current.on('message', (message: WorkerReply) => {
-    const pending = pendingQueries.get(message.id)
-    if (!pending) {
-      return
-    }
-    pendingQueries.delete(message.id)
-    clearTimeout(pending.timer)
-    if (message.ok && message.resultJson !== undefined) {
-      pending.resolve(message.resultJson)
-    } else {
-      pending.reject(new Error(message.error || 'noise-onfly worker failed'))
-    }
-  })
-
-  current.on('error', (err) => {
-    if (worker === current) {
-      worker = null
-    }
-    rejectAllPending(err instanceof Error ? err : new Error(String(err)))
-  })
-
-  current.on('exit', (code) => {
-    if (worker === current) {
-      worker = null
-    }
-    if (code !== 0) {
-      rejectAllPending(new Error(`noise-onfly worker exited with code ${code}`))
-    }
-  })
-
-  worker = current
-  return current
-}
-
-async function queryNoiseAtPoint(lat: number, lng: number): Promise<string> {
-  const current = ensureWorker()
-  const id = nextRequestId++
-
-  return await new Promise<string>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pendingQueries.delete(id)
-      void disposeWorker()
-      reject(new Error(`noise-onfly timeout after ${NOISE_ONFLY_TIMEOUT_MS} ms`))
-    }, NOISE_ONFLY_TIMEOUT_MS)
-
-    pendingQueries.set(id, { resolve, reject, timer })
-    current.postMessage({ id, lat, lng })
-  })
-}
-
-export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
   app.addHook('onClose', async () => {
-    await disposeWorker()
+    await supervisor.close()
   })
 
   app.get<{ Querystring: { lat?: string; lng?: string } }>(
@@ -128,9 +54,14 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
       }
 
       const t0 = Date.now()
+      const abortController = new AbortController()
+      const onClose = () => {
+        abortController.abort()
+      }
+      request.raw.once('close', onClose)
 
       try {
-        const resultJson = await queryNoiseAtPoint(lat, lng)
+        const resultJson = await supervisor.queryNoiseAtPoint(lat, lng, abortController.signal)
         const raw = JSON.parse(resultJson)
         const elapsed = Date.now() - t0
 
@@ -184,9 +115,19 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
           compute_time_ms: elapsed,
         })
       } catch (err) {
-        const message = (err as Error).message
-        const statusCode = message.includes('timeout') ? 504 : 500
+        if (abortController.signal.aborted || request.raw.aborted || request.raw.destroyed) {
+          return
+        }
+        const error = err instanceof Error ? err : new Error(String(err))
+        const message = error.message
+        const statusCode = err instanceof NoiseOnflyRequestError
+          ? err.statusCode
+          : message.includes('timeout')
+            ? 504
+            : 500
         return reply.status(statusCode).send({ error: message })
+      } finally {
+        request.raw.removeListener('close', onClose)
       }
     }
   )

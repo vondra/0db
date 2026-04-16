@@ -1,5 +1,5 @@
 import { parentPort, threadId, workerData } from 'node:worker_threads'
-import { copyFileSync, existsSync, lstatSync, statSync, unlinkSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 
@@ -17,6 +17,20 @@ if (!existsSync(sourceReaderPath)) {
 
 if (existsSync(nodePath) && lstatSync(nodePath).isSymbolicLink()) {
   unlinkSync(nodePath)
+}
+
+for (const entry of readdirSync(sourceReaderDir)) {
+  if (!entry.startsWith('libsource_reader.worker-') || !entry.endsWith('.node')) {
+    continue
+  }
+  if (entry === `libsource_reader.worker-${threadId}.node`) {
+    continue
+  }
+  try {
+    unlinkSync(resolve(sourceReaderDir, entry))
+  } catch {
+    // ignore stale addon cleanup failures
+  }
 }
 
 copyFileSync(sourceReaderPath, nodePath)
