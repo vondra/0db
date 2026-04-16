@@ -40,7 +40,7 @@ pub fn terrain_attenuation(
     let src_agl = (src_elev - src_ground).max(0.05);
     let rcv_agl = crate::constants::DEFAULT_RECEIVER_HEIGHT;
     let diff = diffraction::compute_path_difference(&profile, dist_m, src_agl, rcv_agl);
-    diffraction::diffraction_attenuation_with_edge(diff.delta, diff.is_double, diff.edge_distance)
+    diffraction::diffraction_attenuation_rayleigh(&diff)
 }
 
 /// Compute building screening attenuation per band.
@@ -177,11 +177,7 @@ pub fn terrain_attenuation_with_meta(
     let src_agl = (src_elev - src_ground).max(0.05);
     let rcv_agl = crate::constants::DEFAULT_RECEIVER_HEIGHT;
     let diff = diffraction::compute_path_difference(&profile, dist_m, src_agl, rcv_agl);
-    let atten = diffraction::diffraction_attenuation_with_edge(
-        diff.delta,
-        diff.is_double,
-        diff.edge_distance,
-    );
+    let atten = diffraction::diffraction_attenuation_rayleigh(&diff);
     (atten, diff.delta, diff.is_double, profile_points)
 }
 

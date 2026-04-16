@@ -215,18 +215,31 @@ FLC = 10 × log₁₀(θ / π)                  [dB, always ≤ 0]
 ```
 Note: Uses HORIZONTAL distances, not 3D slant. This is a fix from V33/V44 which incorrectly used 3D.
 
-### 3.5 Terrain diffraction (ISO 9613-2 §7.3/7.4)
+### 3.5 Terrain diffraction (ISO 9613-2 §7.3/7.4 + CNOSSOS-EU §2.5.6(c))
 ```
 δ = path_via_edges - direct_path    [m]
 
 Single edge (§7.3):
 A_bar,i = min(20, 10 × log₁₀(3 + 20 × δ × f[i] / 340))
 
-Double edge (§7.4):
+Double edge (§7.4 / CNOSSOS §2.5.23):
 C₃ = (1 + (5λ/e)²) / (1/3 + (5λ/e)²)    where e = edge-to-edge distance, λ = 340/f[i]
 A_bar,i = min(25, 10 × log₁₀(3 + C₃ × 20 × δ × f[i] / 340))
+
+Rayleigh gate (CNOSSOS-EU §2.5.6(c)):
+if δ ≤ λ/4 − δ*  then  A_bar,i = 0
 ```
-C₃ accounts for thick barriers: 1.0 when edges are far apart, up to 3.0 when close.
+C₃ (identical to CNOSSOS `C"`) accounts for thick barriers: 1.0 when edges are far apart, up to 3.0 when close.
+
+δ* is the path-length difference computed using the same dominant edge D but with mirror source S\* and mirror receiver R\* reflected **vertically** across their respective mean ground planes. Each mean ground plane is an unweighted least-squares line fit over the DEM profile samples on that side (including D itself). D is chosen as the edge with the larger excess above the direct line of sight (this matches the single-edge path difference and is well-defined in the double-edge case).
+
+Simplifications vs. strict CNOSSOS:
+- We use **vertical** reflection across the fitted plane (standard acoustic practice in NMPB / NoiseModelling), not perpendicular-to-plane.
+- The **−λ/20** near-miss clause is not implemented — the 5-point LOS fast-path in `path_effects.rs` and the early return in `compute_path_difference` collapse all non-blocked paths to zero before diffraction is considered.
+- `Δground` additive combination (CNOSSOS §2.5.31) is not implemented — we still combine ground and barrier via `max(A_ground, A_terrain + A_screen)` in §3.3.
+- Favourable-conditions curved rays (§2.5.24) are not implemented — see §3.9.
+- Lateral diffraction around vertical edges (§2.5.6(i)) is not implemented.
+
 Terrain profile sampled from DEM (Copernicus GLO-30 primary, SRTM fallback). Receiver at **4.0m** above ground.
 
 ### 3.6 Building screening (ISO 9613-2, per-band)
@@ -549,7 +562,7 @@ ISO 9613-2 point source.
 | **Road period split** | Fixed 65/20/15 or 70/18/12 split of daily AADT | Regulatory workflows may use measured day/evening/night counts | Bias possible on commuter / nightlife corridors. |
 | **Surface correction** | One scalar ΔL_WR per surface type | CNOSSOS Table F-4: per-band αm + βm, speed-dependent | ±1 dB. Our scalars are band-averaged approximations. |
 | **Ground effect** | CF[i] × G lookup; popup may use path-averaged G, pipeline currently uses receiver-local G | CNOSSOS §2.5.15-18: geometry-dependent Aground with height substitutions, separate source/middle/receiver zones | ±2 dB in complex terrain / mixed ground. |
-| **Diffraction** | 10·log₁₀(3 + C₃·20·δ·f/340), caps 20/25 dB, C₃ for double edges | CNOSSOS §2.5.21-23: Rayleigh criterion, C'' convexity factor, ground-barrier interaction | ±3 dB behind barriers. C₃ now implemented; C'' convexity still simplified. |
+| **Diffraction** | 10·log₁₀(3 + C₃·20·δ·f/340), caps 20/25 dB, C₃ for double edges, Rayleigh gate per band via δ* with vertical mirroring across OLS-fitted per-side mean ground planes | CNOSSOS §2.5.6(c): Rayleigh criterion; §2.5.23: C" (identical to our C₃); §2.5.31: Δground additive combination; §2.5.24: favourable-conditions curved rays | ±1 dB behind shallow hills at low bands. Not implemented: Δground additive combination, curved rays, −λ/20 near-miss clause, lateral diffraction. |
 | **Building / barrier screening** | Tallest raster obstacle or explicit noise barrier along the path | ISO 9613-2: explicit obstacle modelling per edge / geometry | ±3 dB in complex urban. Our approach samples raster, not individual building edges. |
 | **Urban reflection** | Per-receiver enclosure boost +0-5 dB | ISO 9613-2 §7.5: image-source reflection model | ±2 dB. Standard requires full reflection geometry, we use a local heuristic. |
 | **Meteorology** | NOT IMPLEMENTED (P_FAV exists but unused) | ISO 9613-2: Cmet = C₀(1 - 10·h_s/r), subtracted from downwind | ±2 dB at long range. TODO: implement. |
