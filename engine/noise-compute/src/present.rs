@@ -1,7 +1,5 @@
 //! Popup presentation helpers — display filtering and top-N selection.
 
-use std::collections::HashSet;
-
 use crate::types::Contributor;
 
 pub fn is_displayable(contributor: &Contributor) -> bool {
@@ -16,9 +14,6 @@ pub fn finalize_popup_contributors(
     mut contributors: Vec<Contributor>,
     top_n: usize,
 ) -> Vec<Contributor> {
-    use crate::types::SourceKind;
-    use std::collections::HashMap;
-
     contributors.retain(is_displayable);
     contributors.sort_by(|a, b| {
         b.periods
@@ -26,35 +21,7 @@ pub fn finalize_popup_contributors(
             .partial_cmp(&a.periods.lden_db)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-
-    let mut seen_types = HashSet::new();
-    let mut guaranteed = Vec::new();
-    for contributor in &contributors {
-        if seen_types.insert(contributor.source_type) {
-            guaranteed.push(contributor.clone());
-        }
-    }
-
     contributors.truncate(top_n);
-
-    // Cap per source type: max 5 road/railway entries to avoid flooding popup
-    // with 20+ unnamed "Local road" entries from per-osm_id grouping
-    let max_per_type = 5;
-    let mut type_counts: HashMap<SourceKind, usize> = HashMap::new();
-    contributors.retain(|c| {
-        let count = type_counts.entry(c.source_type).or_insert(0);
-        *count += 1;
-        *count <= max_per_type
-    });
-
-    for contributor in guaranteed {
-        if !contributors
-            .iter()
-            .any(|existing| existing.source_type == contributor.source_type)
-        {
-            contributors.push(contributor);
-        }
-    }
     contributors
 }
 
@@ -97,23 +64,19 @@ mod tests {
     }
 
     #[test]
-    fn filters_negative_contributors_but_keeps_one_per_type_after_top_n() {
+    fn sorts_by_lden_drops_negative_and_truncates() {
         let shown = finalize_popup_contributors(
             vec![
-                contributor(SourceKind::Road, 12.0),
                 contributor(SourceKind::Road, 11.0),
+                contributor(SourceKind::Road, 12.0),
                 contributor(SourceKind::Railway, 10.0),
                 contributor(SourceKind::Industrial, 9.0),
                 contributor(SourceKind::Building, -1.0),
             ],
             2,
         );
-        assert_eq!(shown.len(), 4);
-        assert!(shown.iter().all(|c| c.periods.lden_db >= 0.0));
-        assert!(shown.iter().any(|c| c.source_type == SourceKind::Road));
-        assert!(shown.iter().any(|c| c.source_type == SourceKind::Railway));
-        assert!(shown
-            .iter()
-            .any(|c| c.source_type == SourceKind::Industrial));
+        assert_eq!(shown.len(), 2);
+        assert_eq!(shown[0].periods.lden_db, 12.0);
+        assert_eq!(shown[1].periods.lden_db, 11.0);
     }
 }

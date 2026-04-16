@@ -214,7 +214,7 @@ pub fn compute_at_point_with_airports(
             .collect::<Vec<_>>(),
     );
 
-    all_contributors = present::finalize_popup_contributors(all_contributors, config.top_n);
+    all_contributors = present::finalize_popup_contributors(all_contributors, 30);
 
     // Confidence assessment
     let has_census = roads.iter().any(|r| r.traffic_source == 1);

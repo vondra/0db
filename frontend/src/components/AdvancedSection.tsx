@@ -14,7 +14,7 @@ interface AdvancedSectionProps {
 }
 
 export default function AdvancedSection({ rasterOverlays, onRasterOverlayChange }: AdvancedSectionProps) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(() => OVERLAYS.some(o => rasterOverlays[o.id]))
 
   return (
     <div>

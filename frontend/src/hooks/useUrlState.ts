@@ -6,6 +6,7 @@ const DEFAULT_LNG = 15.5
 const DEFAULT_ZOOM = 8
 const ALL_SOURCE_IDS = ['road', 'railway', 'aircraft', 'building', 'industrial']
 export const ALL_PROPAGATION_IDS = ['terrain', 'screening', 'vegetation']
+export const ALL_RASTER_OVERLAY_IDS = ['dem', 'building', 'forest', 'barriers']
 
 export type SourceMode = 'off' | '0db' | 'end' | 'diff'
 
@@ -20,6 +21,11 @@ export interface UrlState {
   detailPosition: { lat: number; lng: number } | null
   propagationDisabled: string[]
   basemap: BasemapId
+  rasterOverlays: Record<string, boolean>
+}
+
+const EMPTY_RASTER_OVERLAYS: Record<string, boolean> = {
+  dem: false, building: false, forest: false, barriers: false,
 }
 
 function parseHash(): UrlState {
@@ -36,6 +42,7 @@ function parseHash(): UrlState {
       detailPosition: null,
       propagationDisabled: [],
       basemap: DEFAULT_BASEMAP,
+      rasterOverlays: { ...EMPTY_RASTER_OVERLAYS },
     }
   }
 
@@ -74,6 +81,13 @@ function parseHash(): UrlState {
     ? params.get('layers')!.split(',').filter(s => ALL_SOURCE_IDS.includes(s))
     : [...ALL_SOURCE_IDS]
 
+  const rasterOverlays: Record<string, boolean> = { ...EMPTY_RASTER_OVERLAYS }
+  if (params.has('ro')) {
+    for (const id of params.get('ro')!.split(',')) {
+      if (ALL_RASTER_OVERLAY_IDS.includes(id)) rasterOverlays[id] = true
+    }
+  }
+
   return {
     lat: parseFloat(params.get('lat') || '') || DEFAULT_LAT,
     lng: parseFloat(params.get('lng') || '') || DEFAULT_LNG,
@@ -85,6 +99,7 @@ function parseHash(): UrlState {
     detailPosition,
     basemap: (params.get('bm') as BasemapId) || DEFAULT_BASEMAP,
     propagationDisabled,
+    rasterOverlays,
   }
 }
 
@@ -99,6 +114,7 @@ export function buildHash(state: {
   detailPosition?: { lat: number; lng: number } | null
   propagationDisabled?: string[]
   basemap?: BasemapId
+  rasterOverlays?: Record<string, boolean>
 }): string {
   const parts: string[] = [
     `lat=${state.lat.toFixed(4)}`,
@@ -142,6 +158,13 @@ export function buildHash(state: {
     parts.push(`pd=${pd.join(',')}`)
   }
 
+  if (state.rasterOverlays) {
+    const active = ALL_RASTER_OVERLAY_IDS.filter(id => state.rasterOverlays![id])
+    if (active.length > 0) {
+      parts.push(`ro=${active.join(',')}`)
+    }
+  }
+
   return '#' + parts.join('&')
 }
 
@@ -160,6 +183,7 @@ export function useUrlState() {
     detailPosition?: { lat: number; lng: number } | null
     propagationDisabled?: string[]
     basemap?: BasemapId
+    rasterOverlays?: Record<string, boolean>
   }) => {
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(() => {

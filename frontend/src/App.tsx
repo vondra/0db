@@ -65,9 +65,11 @@ export default function App() {
   const [realEstateFilters, setRealEstateFilters] = useState<RealEstateFilters>({
     enabled: false, propertyType: 'all', listingType: 'all', maxNoise: 35,
   })
-  const [rasterOverlays, setRasterOverlays] = useState<Record<string, boolean>>({
-    dem: false, building: false, forest: false, barriers: false,
-  })
+  const [rasterOverlays, setRasterOverlays] = useState<Record<string, boolean>>(
+    initial.rasterOverlays ?? { dem: false, building: false, forest: false, barriers: false }
+  )
+  const rasterOverlaysRef = useRef(rasterOverlays)
+  rasterOverlaysRef.current = rasterOverlays
 
   const mapViewRef = useRef({ lat: initial.lat, lng: initial.lng, zoom: initial.zoom })
   const sourceModesRef = useRef(sourceModes)
@@ -88,6 +90,7 @@ export default function App() {
     detailPosition: { lat: number; lng: number } | null
     propagationDisabled: string[]
     basemap: BasemapId
+    rasterOverlays: Record<string, boolean>
   }>) => {
     const v = mapViewRef.current
     const modes = overrides?.sourceModes ?? sourceModesRef.current
@@ -109,8 +112,15 @@ export default function App() {
       detailPosition: overrides?.detailPosition ?? null,
       propagationDisabled: overrides?.propagationDisabled ?? disabledFactors,
       basemap: overrides?.basemap ?? basemapRef.current,
+      rasterOverlays: overrides?.rasterOverlays ?? rasterOverlaysRef.current,
     })
   }, [updateUrl])
+
+  const handleRasterOverlaysChange = useCallback((next: Record<string, boolean>) => {
+    setRasterOverlays(next)
+    rasterOverlaysRef.current = next
+    syncUrl({ rasterOverlays: next })
+  }, [syncUrl])
 
   const handleViewChange = useCallback((lat: number, lng: number, zoom: number) => {
     mapViewRef.current = { lat, lng, zoom }
@@ -223,7 +233,7 @@ export default function App() {
               realEstateFilters={realEstateFilters}
               onRealEstateChange={setRealEstateFilters}
               rasterOverlays={rasterOverlays}
-              onRasterOverlayChange={setRasterOverlays}
+              onRasterOverlayChange={handleRasterOverlaysChange}
             />
           </div>
           <div className="pointer-events-auto">
@@ -296,7 +306,7 @@ export default function App() {
           realEstateFilters={realEstateFilters}
           onRealEstateChange={setRealEstateFilters}
           rasterOverlays={rasterOverlays}
-          onRasterOverlayChange={setRasterOverlays}
+          onRasterOverlayChange={handleRasterOverlaysChange}
         />
       </div>
 
