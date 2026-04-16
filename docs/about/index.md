@@ -374,7 +374,7 @@ Noise barriers compete with raster buildings as candidate screening obstacles. B
 </details>
 
 <details>
-<summary>Technical: vegetation attenuation (ISO 9613-2 A.2.2)</summary>
+<summary>Technical: vegetation attenuation (ISO 9613-2 A.2.2, Central Europe calibration)</summary>
 
 Forest depth measured by sampling WorldCover forest layer along propagation path.
 
@@ -382,10 +382,12 @@ Per-band attenuation rates and caps:
 
 | | 63 Hz | 125 Hz | 250 Hz | 500 Hz | 1 kHz | 2 kHz | 4 kHz | 8 kHz |
 |--|-------|--------|--------|--------|-------|-------|-------|-------|
-| dB/m | 0.02 | 0.03 | 0.04 | 0.05 | 0.06 | 0.08 | 0.09 | 0.12 |
-| Max | 4 dB | 6 dB | 8 dB | 10 dB | 12 dB | 16 dB | 18 dB | 24 dB |
+| dB/m | 0.01 | 0.015 | 0.02 | 0.025 | 0.03 | 0.04 | 0.045 | 0.06 |
+| Max | 2 dB | 3 dB | 4 dB | 5 dB | 6 dB | 8 dB | 9 dB | 12 dB |
 
-Example: 100m of forest → 2 dB at 63 Hz, 6 dB at 1 kHz, 12 dB at 8 kHz.
+Example: 100m of forest → 1 dB at 63 Hz, 3 dB at 1 kHz, 6 dB at 8 kHz.
+
+Values are half of ISO 9613-2 A.2.2 defaults, calibrated for average Central European mixed forest canopy density (~50%). The binary WorldCover forest raster applies uniform attenuation to any pixel with ≥ 10% tree cover; the scalar compensates for over-application in sparse or partially-covered areas. Future continuous-density approach planned in `docs/future-plans/forest-continuous-density.md`.
 
 </details>
 

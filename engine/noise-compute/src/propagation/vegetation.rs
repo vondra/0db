@@ -27,23 +27,21 @@ mod tests {
         assert_eq!(a, [0.0; NUM_BANDS]);
     }
 
+    // Expected values are ISO 9613-2 × 0.5 Central Europe calibration (see constants.rs).
+
     #[test]
     fn test_100m_forest() {
         let a = vegetation_attenuation(100.0);
-        // 1 kHz: 0.06 × 100 = 6 dB
-        assert!((a[4] - 6.0).abs() < 0.01);
-        // 8 kHz: 0.12 × 100 = 12 dB
-        assert!((a[7] - 12.0).abs() < 0.01);
+        assert!((a[4] - 3.0).abs() < 0.01);
+        assert!((a[7] - 6.0).abs() < 0.01);
     }
 
     #[test]
     fn test_per_band_cap() {
+        // 500 m exceeds the 200 m effective-depth ceiling → every band clamps to MAX_VEG_ATTEN.
         let a = vegetation_attenuation(500.0);
-        // 8 kHz: 0.12 × 500 = 60 → capped to 24 (ISO Table A.1: 200m × 0.12)
-        assert_eq!(a[7], 24.0);
-        // 63 Hz: 0.02 × 500 = 10 → capped to 4
-        assert_eq!(a[0], 4.0);
-        // 1 kHz: 0.06 × 500 = 30 → capped to 12
-        assert_eq!(a[4], 12.0);
+        assert_eq!(a[7], 12.0);
+        assert_eq!(a[0], 2.0);
+        assert_eq!(a[4], 6.0);
     }
 }

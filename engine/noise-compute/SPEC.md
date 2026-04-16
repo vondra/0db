@@ -25,11 +25,15 @@ A = [-26.2, -16.1, -8.6, -3.2, 0.0, 1.2, 1.0, -1.1] dB
 α_atm = [0.1, 0.4, 1.0, 1.9, 3.7, 8.7, 22.0, 58.4] dB/km
 ```
 
-### Vegetation attenuation (ISO 9613-2:2024 Annex A.2.2)
+### Vegetation attenuation (ISO 9613-2:2024 Annex A.2.2 × 0.5 Central Europe calibration)
 ```
-α_veg = [0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.09, 0.12] dB/m
-max = [4, 6, 8, 10, 12, 16, 18, 24] dB per band
+α_veg = [0.01, 0.015, 0.02, 0.025, 0.03, 0.04, 0.045, 0.06] dB/m
+max = [2, 3, 4, 5, 6, 8, 9, 12] dB per band
 ```
+Reason for × 0.5: ESA WorldCover class 10 covers canopy ≥ 10 %; ISO A.2.2 calibrated for dense
+foliage in full leaf. Scalar approximates average Central European mixed forest canopy density
+(~50 %). See `docs/future-plans/forest-continuous-density.md` for the continuous-density plan
+(Copernicus HRL TCD + Hansen GFC) that replaces the scalar with per-pixel canopy fraction.
 
 ### Ground correction factors (CNOSSOS-EU §2.5.15)
 ```
@@ -241,11 +245,15 @@ S = (0, src_elev),  B = (d_horiz, bld_top),  R = (dist_m, rcv_alt)
 A_screen,i = min(20, 10 × log₁₀(3 + 20 × δ_bld × f[i] / 340))
 ```
 
-### 3.7 Vegetation (ISO 9613-2:2024 A.2.2)
+### 3.7 Vegetation (ISO 9613-2:2024 A.2.2, Central Europe × 0.5 calibration)
 ```
 A_veg,i = min(MAX_VEG_ATTEN[i], α_veg[i] × depth_m)
 ```
 where depth_m = cumulative forest depth along source-receiver path.
+
+Constants (`ALPHA_VEG`, `MAX_VEG_ATTEN`) are ISO 9613-2:2024 Table A.1 values × 0.5 — see
+the constants block at the top of this SPEC. Rationale: binary WorldCover forest raster
+treats any canopy ≥ 10 % as dense foliage; scalar compensates for over-application.
 
 ### 3.8 Urban reflection (ISO 9613-2 §7.5)
 Per-RECEIVER boost based on building enclosure:
