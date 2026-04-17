@@ -355,7 +355,8 @@ function roadTrafficSourceLabel(source: RoadMetadata['traffic_source'], roadClas
  * Renders with monospace columns: label padded, value right-aligned.
  * Use \n joins for multi-line. Uses U+2500 box-drawing character for separators.
  */
-function txtTable(rows: Array<[string, string] | { sep: true } | string>, labelWidth = 22, valueWidth = 11): string {
+type TableRow = readonly [string, string] | { sep: true } | string
+function txtTable(rows: TableRow[], labelWidth = 22, valueWidth = 11): string {
   return rows
     .map(r => {
       if (typeof r === 'string') return r
@@ -395,29 +396,35 @@ function MetadataRows({ c }: { c: Contributor }) {
       'Values from the loudest segment.',
       ...(hasSpeedRange ? ['Speed varies across grouped segments.'] : []),
     ], 18, 12)
+    const adjRatio = rawTotal > 0 ? effTotal / rawTotal : 1
+    const hasAdjustment = Math.abs(adjRatio - 1) > 0.01
+    const knownFactor = m.oneway ? 0.5 : 1.0
+    const residualRatio = adjRatio / knownFactor
+    const hasResidual = Math.abs(residualRatio - 1) > 0.01
     const trafficText = txtTable([
       ['Source', roadTrafficSourceLabel(m.traffic_source, m.road_class)],
-      ...(m.traffic_source === 'estimated_service_tree'
-        ? [['', 'service-tree model'] as [string, string]]
+      ...(m.traffic_source === 'estimated_service_tree' ? [['', 'service-tree model']] : []),
+      '',
+      'Daily traffic (both directions):',
+      ...(m.aadt_light_raw > 0 ? [['  Light', fmtInt(m.aadt_light_raw)]] : []),
+      ...(m.aadt_medium_raw > 0 ? [['  Medium', fmtInt(m.aadt_medium_raw)]] : []),
+      ...(m.aadt_heavy_raw > 0 ? [['  Heavy', fmtInt(m.aadt_heavy_raw)]] : []),
+      ...(m.aadt_moto_raw > 0 ? [['  Moto', fmtInt(m.aadt_moto_raw)]] : []),
+      { sep: true },
+      ['  Total', `${fmtInt(rawTotal)}/day`],
+      ...(hasAdjustment
+        ? [
+            '',
+            'Adjustments (per OSM way):',
+            ...(m.oneway ? [['  One-way', '÷2 (dual-carriageway)']] : []),
+            ...(hasResidual ? [['  Other', `×${residualRatio.toFixed(2)} (access/lanes)`]] : []),
+            { sep: true },
+            ['  Per way', `${fmtInt(effTotal)}/day`],
+          ]
         : []),
       '',
-      'Raw daily (from Arrow):',
-      ['  Light', fmtInt(m.aadt_light_raw)],
-      ['  Medium', fmtInt(m.aadt_medium_raw)],
-      ['  Heavy', fmtInt(m.aadt_heavy_raw)],
-      ['  Moto', fmtInt(m.aadt_moto_raw)],
-      ['  Total raw', `${fmtInt(rawTotal)}/day`],
-      '',
-      'Effective (post oneway/access/lanes):',
-      ['  Light', fmtInt(m.aadt_light_effective)],
-      ['  Medium', fmtInt(m.aadt_medium_effective)],
-      ['  Heavy', fmtInt(m.aadt_heavy_effective)],
-      ['  Moto', fmtInt(m.aadt_moto_effective)],
-      { sep: true },
-      ['  Total effective', `${fmtInt(effTotal)}/day`],
-      '',
-      `(at dominant segment, ${Math.round(m.dominant_distance_m)} m away)`,
-    ], 18, 12)
+      `(dominant segment, ${Math.round(m.dominant_distance_m)} m away)`,
+    ] as TableRow[], 18, 12)
     const segmentsText = txtTable([
       ['Microsegments', String(m.segment_count)],
       ['Total length', `${(m.total_length_m / 1000).toFixed(2)} km`],
@@ -450,7 +457,7 @@ function MetadataRows({ c }: { c: Contributor }) {
         {lineRow(
           <MetricLabel term="aadt">Traffic</MetricLabel>,
           <DataPoint title="CNOSSOS vehicle flow" text={trafficText}>
-            {fmtCompact(effTotal)}/day
+            {fmtCompact(rawTotal)}/day
           </DataPoint>,
         )}
         {lineRow(
@@ -471,6 +478,7 @@ function MetadataRows({ c }: { c: Contributor }) {
 
   if (m.kind === 'rail') {
     const effTotal = m.trains_passenger_effective + m.trains_freight_effective
+    const rawTotal = m.trains_passenger_raw + m.trains_freight_raw
     const speedText = txtTable([
       ['Source', m.speed_source.replace(/_/g, ' ')],
       ['Posted maxspeed', m.maxspeed_posted_kmh > 0 ? `${m.maxspeed_posted_kmh} km/h` : '— (none)'],
@@ -480,23 +488,34 @@ function MetadataRows({ c }: { c: Contributor }) {
       { sep: true },
       ['Effective', `${m.speed_kmh.toFixed(0)} km/h`],
     ], 18, 14)
+    const hasRailAdjustment = m.service || m.parallel_divisor > 1
     const trainsText = txtTable([
-      'Passenger trains:',
-      ['  Raw', fmtInt(m.trains_passenger_raw)],
-      ['  Effective', fmtInt(m.trains_passenger_effective)],
-      ['  Source', m.trains_passenger_source === 'arrow' ? 'CZPTT' : 'default'],
-      '',
-      'Freight trains:',
-      ['  Raw', fmtInt(m.trains_freight_raw)],
-      ['  Effective', fmtInt(m.trains_freight_effective)],
-      ['  Source', m.trains_freight_source === 'arrow' ? 'E-PRTR' : 'default'],
-      '',
-      ...(m.service ? ['Service track: ×0.02 factor applied'] : []),
-      ...(m.parallel_divisor > 1 ? [`Parallel divisor: ÷${m.parallel_divisor}`] : []),
-      ...(m.service || m.parallel_divisor > 1 ? [''] : []),
+      'Daily trains (full line):',
+      ...(m.trains_passenger_raw > 0
+        ? [
+            ['  Passenger', fmtInt(m.trains_passenger_raw)],
+            ['    source', m.trains_passenger_source === 'arrow' ? 'CZPTT' : 'default'],
+          ]
+        : []),
+      ...(m.trains_freight_raw > 0
+        ? [
+            ['  Freight', fmtInt(m.trains_freight_raw)],
+            ['    source', m.trains_freight_source === 'arrow' ? 'E-PRTR' : 'default'],
+          ]
+        : []),
       { sep: true },
-      ['Total effective', `${fmtInt(effTotal)}/day`],
-    ], 18, 12)
+      ['  Total', `${fmtInt(rawTotal)}/day`],
+      ...(hasRailAdjustment
+        ? [
+            '',
+            'Adjustments (per track):',
+            ...(m.service ? [['  Service track', '×0.02']] : []),
+            ...(m.parallel_divisor > 1 ? [['  Parallel tracks', `÷${m.parallel_divisor}`]] : []),
+            { sep: true },
+            ['  Per track', `${fmtInt(effTotal)}/day`],
+          ]
+        : []),
+    ] as TableRow[], 18, 12)
     const segmentsText = txtTable([
       ['Microsegments', String(m.segment_count)],
       ['Total length', `${(m.total_length_m / 1000).toFixed(2)} km`],
@@ -513,7 +532,7 @@ function MetadataRows({ c }: { c: Contributor }) {
         {lineRow(
           <MetricLabel term="trains">Trains/day</MetricLabel>,
           <DataPoint title="Daily train count" text={trainsText}>
-            {fmtInt(effTotal)}/day
+            {fmtInt(rawTotal)}/day
           </DataPoint>,
         )}
         {lineRow(
@@ -583,12 +602,12 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
     const m = c.metadata
     if (!m) return null
     if (m.kind === 'road') {
-      const eff = m.aadt_light_effective + m.aadt_medium_effective + m.aadt_heavy_effective + m.aadt_moto_effective
-      return eff > 0 ? `${fmtCompact(eff)} veh/day` : null
+      const raw = m.aadt_light_raw + m.aadt_medium_raw + m.aadt_heavy_raw + m.aadt_moto_raw
+      return raw > 0 ? `${fmtCompact(raw)} veh/day` : null
     }
     if (m.kind === 'rail') {
-      const eff = m.trains_passenger_effective + m.trains_freight_effective
-      return eff > 0 ? `${fmtInt(eff)} trains/day` : null
+      const raw = m.trains_passenger_raw + m.trains_freight_raw
+      return raw > 0 ? `${fmtInt(raw)} trains/day` : null
     }
     if (m.kind === 'aircraft' && m.variant === 'airborne' && m.airborne) {
       const flights = m.airborne.observed_flights_per_day
