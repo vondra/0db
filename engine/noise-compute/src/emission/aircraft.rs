@@ -16,6 +16,14 @@ use std::f64::consts::PI;
 // NPD tables (Doc 29 §4.2)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// NPD SEL threshold for per-profile reach calculation.
+/// At this raw NPD SEL, a segment's contribution is negligible (< 0.15 dB on total Lden).
+pub const AIRCRAFT_NPD_REACH_THRESHOLD_DB: f64 = 40.0;
+
+/// Hard cap on per-profile slant reach (meters). Prevents CSR grid explosion.
+/// Same as current prefilter for jets — no CSR memory regression.
+pub const AIRCRAFT_NPD_REACH_CAP_M: f64 = 10_000.0;
+
 /// Standard NPD distances in feet (Doc 29 §4.2, 10 points).
 #[allow(dead_code)]
 const NPD_DIST_FT: [f64; 10] = [
@@ -129,6 +137,45 @@ pub static PROFILES: [NpdProfile; 8] = [
         installation: Installation::Wing,
     },
 ];
+
+impl NpdProfile {
+    /// Slant distance (meters) at which raw NPD SEL drops to `threshold_db`.
+    /// Uses log-linear extrapolation beyond the last NPD table point (25,000 ft).
+    /// Capped at `AIRCRAFT_NPD_REACH_CAP_M` to prevent CSR grid explosion.
+    pub fn estimate_reach_m(&self, threshold_db: f64, is_departure: bool) -> f64 {
+        let sel = if is_departure {
+            &self.departure_sel
+        } else {
+            &self.approach_sel
+        };
+        let last = sel.len() - 1;
+
+        // Threshold louder than closest NPD point → minimal reach
+        if threshold_db >= sel[0] {
+            return NPD_DIST_FT[0] / FT_PER_M;
+        }
+
+        // Threshold below last NPD point → extrapolate
+        if threshold_db <= sel[last] {
+            let slope = (sel[last] - sel[last - 1]) / (LOG_DIST[last] - LOG_DIST[last - 1]);
+            if slope >= -1.0 {
+                return AIRCRAFT_NPD_REACH_CAP_M;
+            }
+            let log_d = LOG_DIST[last] + (threshold_db - sel[last]) / slope;
+            return (10.0_f64.powf(log_d) / FT_PER_M).min(AIRCRAFT_NPD_REACH_CAP_M);
+        }
+
+        // Interpolate within table
+        for i in 0..last {
+            if threshold_db >= sel[i + 1] {
+                let frac = (threshold_db - sel[i]) / (sel[i + 1] - sel[i]);
+                let log_d = LOG_DIST[i] + frac * (LOG_DIST[i + 1] - LOG_DIST[i]);
+                return (10.0_f64.powf(log_d) / FT_PER_M).min(AIRCRAFT_NPD_REACH_CAP_M);
+            }
+        }
+        AIRCRAFT_NPD_REACH_CAP_M
+    }
+}
 
 /// Interpolate SEL at a given slant distance (Doc 29 §4.2, Eq. 4-4/4-5).
 /// Log-linear interpolation in distance.
@@ -1862,9 +1909,9 @@ fn segment_sel_with_overrides(
         end_alt_m,
     );
 
-    // Skip beyond AIRCRAFT_AIRBORNE_MAX_RADIUS (14 km). Sized so a
-    // narrowbody arrival ~500 m AGL leaves ≤ 20 dB Lden at cutoff.
-    if cpa.d_p_m > crate::constants::AIRCRAFT_AIRBORNE_MAX_RADIUS {
+    // Skip beyond per-profile NPD reach. Replaces the old fixed 14 km cutoff
+    // with profile-aware distance: LightGA ~6 km, jets capped at 10 km.
+    if cpa.d_p_m > profile.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, seg.is_departure) {
         return None;
     }
 
@@ -2518,5 +2565,54 @@ mod tests {
         assert!(segments
             .iter()
             .all(|seg| seg.ground_context == GROUND_CONTEXT_NONE));
+    }
+
+    // ── estimate_reach_m ──
+
+    #[test]
+    fn test_estimate_reach_lightga_shorter_than_jets() {
+        let lightga = PROFILES[6].estimate_reach_m(40.0, false);
+        let b738 = PROFILES[0].estimate_reach_m(40.0, false);
+        assert!(
+            lightga < b738,
+            "LightGA reach ({lightga:.0}) should be shorter than B738 ({b738:.0})"
+        );
+        assert!(lightga > 5_000.0 && lightga < 8_000.0,
+            "LightGA approach reach at 40dB should be ~6km, got {lightga:.0}");
+    }
+
+    #[test]
+    fn test_estimate_reach_jets_hit_cap() {
+        for i in 0..5 {
+            let reach = PROFILES[i].estimate_reach_m(40.0, false);
+            assert!(
+                (reach - AIRCRAFT_NPD_REACH_CAP_M).abs() < 1.0,
+                "Profile {} approach should hit cap, got {reach:.0}",
+                PROFILES[i].name
+            );
+        }
+    }
+
+    #[test]
+    fn test_estimate_reach_departure_ge_approach() {
+        for profile in &PROFILES {
+            let dep = profile.estimate_reach_m(40.0, true);
+            let app = profile.estimate_reach_m(40.0, false);
+            assert!(
+                dep >= app - 1.0,
+                "{}: departure reach ({dep:.0}) should >= approach ({app:.0})",
+                profile.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_estimate_reach_higher_threshold_shorter() {
+        let reach_40 = PROFILES[6].estimate_reach_m(40.0, false);
+        let reach_50 = PROFILES[6].estimate_reach_m(50.0, false);
+        assert!(
+            reach_50 < reach_40,
+            "Higher threshold should give shorter reach: 50dB={reach_50:.0} vs 40dB={reach_40:.0}"
+        );
     }
 }

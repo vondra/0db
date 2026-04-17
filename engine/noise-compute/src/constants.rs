@@ -83,9 +83,6 @@ pub const ROAD_MAX_RADIUS: [f64; 7] = [
 /// Railway max propagation radius (all types).
 pub const RAILWAY_MAX_RADIUS: f64 = 6_000.0;
 
-/// Aircraft airborne max horizontal CPA distance.
-pub const AIRCRAFT_AIRBORNE_MAX_RADIUS: f64 = 14_000.0;
-
 /// Industrial point source max radius.
 pub const INDUSTRIAL_MAX_RADIUS: f64 = 3_000.0;
 

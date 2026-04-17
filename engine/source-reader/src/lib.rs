@@ -32,7 +32,8 @@ static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::Onc
 // NACE codes are now baked into industrial.arrow (nace_4digit UInt16 column).
 // No global lookup needed at runtime.
 
-const AIRCRAFT_QUERY_MAX_RADIUS_M: f64 = 16_000.0;
+const AIRCRAFT_QUERY_MAX_RADIUS_M: f64 =
+    noise_compute::emission::aircraft::AIRCRAFT_NPD_REACH_CAP_M;
 const AIRPORT_CONTEXT_RADIUS_M: f64 = 5_000.0;
 
 fn airport_key(name: &str, _airport_ref: &str, icao: &str, iata: &str) -> String {
