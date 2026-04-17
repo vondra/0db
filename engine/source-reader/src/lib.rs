@@ -502,18 +502,22 @@ fn collect_from_hex_data(
         });
 
         let tree = data.aircraft_tree.get_or_init(|| {
-            let entries = cached_segs.iter().enumerate().map(|(idx, seg)| {
-                // Index by full segment bbox (not midpoint). This ensures long
-                // segments crossing the receiver's area are found even if their
-                // midpoint is far away.
-                hex_store::AircraftEntry {
+            // Index by full segment bbox (not midpoint) so long segments whose
+            // midpoint sits far from the receiver still get discovered. Skip
+            // antimeridian crossings (|Δlon| > 180°) — they would collapse to a
+            // global bbox and match every query. After the 10 km extraction cap
+            // this is just a defensive guard; a legitimate 10 km segment spans
+            // at most ~0.5° longitude even near the poles.
+            let entries: Vec<_> = cached_segs.iter().enumerate()
+                .filter(|(_, seg)| (seg.start_lon - seg.end_lon).abs() <= 180.0)
+                .map(|(idx, seg)| hex_store::AircraftEntry {
                     cache_idx: idx,
                     min_lat: seg.start_lat.min(seg.end_lat) as f64,
                     min_lon: seg.start_lon.min(seg.end_lon) as f64,
                     max_lat: seg.start_lat.max(seg.end_lat) as f64,
                     max_lon: seg.start_lon.max(seg.end_lon) as f64,
-                }
-            }).collect();
+                })
+                .collect();
             rstar::RTree::bulk_load(entries)
         });
 

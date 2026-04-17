@@ -620,213 +620,6 @@ impl<'a> AirportMatcher<'a> {
     }
 }
 
-/// Pre-indexed airport geometries with AABB pre-filter.
-/// Build once per hex, reuse for all 2M+ segments — avoids O(segments × geometries) brute-force.
-pub struct AirportIndex<'a> {
-    lines: &'a [AirportLine],
-    areas: &'a [AirportArea],
-    // Global AABB (all geometries, padded) — rejects 90%+ of segments in O(1)
-    global_lat_min: f64,
-    global_lat_max: f64,
-    global_lon_min: f64,
-    global_lon_max: f64,
-    // Per-line precomputed AABBs (padded by match radius)
-    line_bbox: Vec<[f64; 4]>, // [lat_min, lat_max, lon_min, lon_max]
-}
-
-impl<'a> AirportIndex<'a> {
-    pub fn new(lines: &'a [AirportLine], areas: &'a [AirportArea]) -> Self {
-        let mut g_lat_min = f64::MAX;
-        let mut g_lat_max = f64::MIN;
-        let mut g_lon_min = f64::MAX;
-        let mut g_lon_max = f64::MIN;
-
-        let line_bbox: Vec<[f64; 4]> = lines
-            .iter()
-            .map(|line| {
-                let r_deg = airport_line_match_radius_m(line) / 111_000.0 + 0.0002;
-                let lat_min = line.start_lat.min(line.end_lat) - r_deg;
-                let lat_max = line.start_lat.max(line.end_lat) + r_deg;
-                let lon_min = line.start_lon.min(line.end_lon) - r_deg;
-                let lon_max = line.start_lon.max(line.end_lon) + r_deg;
-                g_lat_min = g_lat_min.min(lat_min);
-                g_lat_max = g_lat_max.max(lat_max);
-                g_lon_min = g_lon_min.min(lon_min);
-                g_lon_max = g_lon_max.max(lon_max);
-                [lat_min, lat_max, lon_min, lon_max]
-            })
-            .collect();
-
-        for area in areas {
-            let r_deg = airport_area_prune_radius_m(area) / 111_000.0 + 0.0002;
-            g_lat_min = g_lat_min.min(area.centroid_lat - r_deg);
-            g_lat_max = g_lat_max.max(area.centroid_lat + r_deg);
-            g_lon_min = g_lon_min.min(area.centroid_lon - r_deg);
-            g_lon_max = g_lon_max.max(area.centroid_lon + r_deg);
-        }
-
-        AirportIndex {
-            lines,
-            areas,
-            global_lat_min: g_lat_min,
-            global_lat_max: g_lat_max,
-            global_lon_min: g_lon_min,
-            global_lon_max: g_lon_max,
-            line_bbox,
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.lines.is_empty() && self.areas.is_empty()
-    }
-
-    pub fn ground_context(&self, seg: &AircraftSegment) -> u8 {
-        if self.is_empty() {
-            return GROUND_CONTEXT_NONE;
-        }
-        // Global AABB reject — eliminates segments far from any airport
-        let seg_lat_min = seg.start_lat.min(seg.end_lat);
-        let seg_lat_max = seg.start_lat.max(seg.end_lat);
-        let seg_lon_min = seg.start_lon.min(seg.end_lon);
-        let seg_lon_max = seg.start_lon.max(seg.end_lon);
-        if seg_lat_max < self.global_lat_min
-            || seg_lat_min > self.global_lat_max
-            || seg_lon_max < self.global_lon_min
-            || seg_lon_min > self.global_lon_max
-        {
-            return GROUND_CONTEXT_NONE;
-        }
-
-        let sample_points = [
-            (seg.start_lat, seg.start_lon),
-            (
-                (seg.start_lat + seg.end_lat) * 0.5,
-                (seg.start_lon + seg.end_lon) * 0.5,
-            ),
-            (seg.end_lat, seg.end_lon),
-        ];
-
-        if sample_points
-            .iter()
-            .any(|&(lat, lon)| self.point_matches_airport_area(lat, lon))
-        {
-            return GROUND_CONTEXT_AIRPORT_AREA;
-        }
-        if sample_points
-            .iter()
-            .any(|&(lat, lon)| self.point_matches_line(lat, lon))
-        {
-            return GROUND_CONTEXT_AIRPORT_LINE;
-        }
-        GROUND_CONTEXT_NONE
-    }
-
-    pub fn ground_ops_kind(&self, seg: &AircraftSegment) -> u8 {
-        if self.is_empty() {
-            return if seg.on_ground || seg.surface_model {
-                ground_ops_kind_fallback(seg)
-            } else {
-                GROUND_OPS_KIND_NONE
-            };
-        }
-        let seg_lat_min = seg.start_lat.min(seg.end_lat);
-        let seg_lat_max = seg.start_lat.max(seg.end_lat);
-        let seg_lon_min = seg.start_lon.min(seg.end_lon);
-        let seg_lon_max = seg.start_lon.max(seg.end_lon);
-        if seg_lat_max < self.global_lat_min
-            || seg_lat_min > self.global_lat_max
-            || seg_lon_max < self.global_lon_min
-            || seg_lon_min > self.global_lon_max
-        {
-            return if seg.on_ground || seg.surface_model {
-                ground_ops_kind_fallback(seg)
-            } else {
-                GROUND_OPS_KIND_NONE
-            };
-        }
-
-        let sample_points = [
-            (seg.start_lat, seg.start_lon),
-            (
-                (seg.start_lat + seg.end_lat) * 0.5,
-                (seg.start_lon + seg.end_lon) * 0.5,
-            ),
-            (seg.end_lat, seg.end_lon),
-        ];
-        let mut best_kind = GROUND_OPS_KIND_NONE;
-        for &(lat, lon) in &sample_points {
-            best_kind = pick_stronger_ground_ops_kind(best_kind, self.point_ground_ops_kind(lat, lon));
-        }
-        if best_kind != GROUND_OPS_KIND_NONE {
-            return best_kind;
-        }
-        if seg.ground_context != GROUND_CONTEXT_NONE || seg.on_ground || seg.surface_model {
-            return ground_ops_kind_fallback(seg);
-        }
-        GROUND_OPS_KIND_NONE
-    }
-
-    fn point_matches_line(&self, lat: f64, lon: f64) -> bool {
-        for (i, line) in self.lines.iter().enumerate() {
-            let bb = &self.line_bbox[i];
-            if lat < bb[0] || lat > bb[1] || lon < bb[2] || lon > bb[3] {
-                continue;
-            }
-            let cp = geo::closest_point_on_segment(
-                lat,
-                lon,
-                line.start_lat,
-                line.start_lon,
-                line.end_lat,
-                line.end_lon,
-            );
-            if cp.dist_m <= airport_line_match_radius_m(line) {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn point_matches_airport_area(&self, lat: f64, lon: f64) -> bool {
-        self.areas
-            .iter()
-            .any(|area| airport_area_contains_point(area, lat, lon))
-    }
-
-    fn point_ground_ops_kind(&self, lat: f64, lon: f64) -> u8 {
-        let mut best_kind = GROUND_OPS_KIND_NONE;
-        for area in self.areas {
-            if airport_area_contains_point(area, lat, lon) {
-                best_kind = pick_stronger_ground_ops_kind(
-                    best_kind,
-                    ground_ops_kind_from_aeroway_type(area.aeroway_type),
-                );
-            }
-        }
-        for (i, line) in self.lines.iter().enumerate() {
-            let bb = &self.line_bbox[i];
-            if lat < bb[0] || lat > bb[1] || lon < bb[2] || lon > bb[3] {
-                continue;
-            }
-            let cp = geo::closest_point_on_segment(
-                lat,
-                lon,
-                line.start_lat,
-                line.start_lon,
-                line.end_lat,
-                line.end_lon,
-            );
-            if cp.dist_m <= airport_line_match_radius_m(line) {
-                best_kind = pick_stronger_ground_ops_kind(
-                    best_kind,
-                    ground_ops_kind_from_aeroway_type(line.aeroway_type),
-                );
-            }
-        }
-        best_kind
-    }
-}
-
 pub fn segment_ground_context(
     seg: &AircraftSegment,
     airport_lines: &[AirportLine],
@@ -1078,101 +871,81 @@ fn inferred_ground_cell(lat: f64, lon: f64) -> (i32, i32) {
 /// Used by both pipeline (ProjectedAircraft::from_segments) and popup
 /// (segment loading after R-tree query). Single source of truth.
 pub fn is_valid_airborne_segment(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
-    // Ground segments pass this filter (they're handled by ground ops submodel)
+    // Ground / airport-context segments handled by ground ops submodel.
     if seg.on_ground || seg.ground_context != GROUND_CONTEXT_NONE {
         return true;
     }
 
+    // Jet-like profiles (B738, A320, A321, Widebody, BizJet, Generic).
+    // Turboprop (4) and LightGA+Rotorcraft (6) may legitimately fly slow and low.
+    let is_fixed_wing_jet = matches!(seg.profile_idx, 0 | 1 | 2 | 3 | 5 | 7);
+
+    // Cheap speed check for jets before expensive raster lookups.
+    if is_fixed_wing_jet && (seg.speed_kt as f64) < 80.0 {
+        return false;
+    }
+
+    // ── Universal impossibility checks (apply to all airborne profiles) ──
     let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
     let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
-    let terrain = rasters.elevation(mid_lat, mid_lon);
+    let terrain_mid = rasters.elevation(mid_lat, mid_lon);
     let max_alt = (seg.start_alt_m as f64).max(seg.end_alt_m as f64);
 
-    // Underground: altitude well below terrain → radar echo
-    if max_alt < terrain - 30.0 {
+    if max_alt < terrain_mid - 30.0 {
         return false;
     }
 
-    // Jet-like profiles (B738, A320, A321, Widebody, BizJet, Generic).
-    // Turboprop (4) and LightGA+Rotorcraft (6) are allowed to fly slow and low.
-    let is_fixed_wing_jet = matches!(seg.profile_idx, 0 | 1 | 2 | 3 | 5 | 7);
-    if !is_fixed_wing_jet {
-        return true;
-    }
-
-    // Jet flying < 80 kt: impossible ADS-B speed decode
-    if (seg.speed_kt as f64) < 80.0 {
-        return false;
-    }
-
-    // Jet < 150m AGL outside airport: radar echo or altitude decode error
-    if max_alt < terrain + 150.0 {
-        return false;
-    }
-
-    let start_agl = (seg.start_alt_m as f64) - rasters.elevation(seg.start_lat, seg.start_lon);
-    let end_agl = (seg.end_alt_m as f64) - rasters.elevation(seg.end_lat, seg.end_lon);
-    let length_m = seg.segment_length_m as f64;
-
-    // Reject if either endpoint is underground or near sea level with
-    // terrain well above (= below ground). Aircraft altitudes are MSL,
-    // so negative means subsea = impossible.
-    if (seg.start_alt_m as f64) < 0.0 || (seg.end_alt_m as f64) < 0.0 {
-        return false;
-    }
+    // Endpoint AGL < -30 m handles subsea-level airports (Schiphol -4m, Atyrau
+    // -22m, Caspian-basin sites) via DEM-relative terrain rather than global MSL.
+    let (start_agl, end_agl) = segment_agl(seg, rasters);
     if start_agl < -30.0 || end_agl < -30.0 {
         return false;
     }
 
-    // For LONG segments only (>30km): reject if the line (infinite extension)
-    // would put the aircraft below sea level within ±50% of its own length.
-    // Short segments with steep descent (e.g., 1 km final approach from 500 m
-    // to 170 m) correctly extrapolate to negative at t=1.5 but represent
-    // legitimate flight. The check is meaningful only when the segment
-    // actually spans enough distance that its linear altitude profile is
-    // an accurate flight-path model.
-    if length_m > 30_000.0 {
-        let alt_at = |t: f64| -> f64 {
-            (seg.start_alt_m as f64)
-                + ((seg.end_alt_m as f64) - (seg.start_alt_m as f64)) * t
-        };
-        if alt_at(-0.5) < 0.0 || alt_at(1.5) < 0.0 {
-            return false;
-        }
-    }
-
-    // Long segment at low altitude on both ends = ADS-B extraction artifact
-    // (missing intermediate points merged into one segment).
-    if length_m > 30_000.0 && start_agl < 2000.0 && end_agl < 2000.0 {
-        return false;
-    }
-
-    // Long segment with one endpoint near ground and the other at cruise =
-    // ADS-B stitching takeoff/landing points across a big trace gap. Real
-    // climb/descent profiles don't span 100+ km with one endpoint < 1 km AGL.
-    // This produces spurious CPA altitudes BELOW terrain when the infinite-line
-    // CPA is extrapolated beyond the low endpoint.
-    if length_m > 100_000.0
-        && (start_agl.min(end_agl) < 1000.0)
-        && (start_agl.max(end_agl) > 3000.0)
-    {
-        return false;
-    }
-
-    // Any segment going "under terrain" along its linear interpolation at
-    // sample points along its length. Sample at 25%, 50%, 75% — if any is
-    // > 30 m underground, segment geometry is physically impossible.
+    // Line goes under terrain along its 25%/75% interpolation (midpoint already
+    // covered by the max_alt < terrain-30 check above).
     let sl = seg.start_lat as f64;
     let sn = seg.start_lon as f64;
     let el = seg.end_lat as f64;
     let en = seg.end_lon as f64;
     let sa = seg.start_alt_m as f64;
     let ea = seg.end_alt_m as f64;
-    for frac in [0.25_f64, 0.5, 0.75] {
+    for frac in [0.25_f64, 0.75] {
         let lat = sl + (el - sl) * frac;
         let lon = sn + (en - sn) * frac;
         let alt = sa + (ea - sa) * frac;
         if alt < rasters.elevation(lat, lon) - 30.0 {
+            return false;
+        }
+    }
+
+    if !is_fixed_wing_jet {
+        return true;
+    }
+
+    // ── Jet-only rules below ──
+
+    // Jet < 150m AGL outside airport: radar echo or altitude decode error.
+    if max_alt < terrain_mid + 150.0 {
+        return false;
+    }
+
+    // After the 10 km extraction cap these long-segment guards fire only on
+    // legacy pre-cap data. Kept as defence-in-depth; remove once all Arrow files
+    // have been re-extracted.
+    let length_m = seg.segment_length_m as f64;
+    if length_m > 30_000.0 {
+        let alt_at = |t: f64| sa + (ea - sa) * t;
+        if alt_at(-0.5) < 0.0 || alt_at(1.5) < 0.0 {
+            return false;
+        }
+        if start_agl < 2000.0 && end_agl < 2000.0 {
+            return false;
+        }
+        if length_m > 100_000.0
+            && start_agl.min(end_agl) < 1000.0
+            && start_agl.max(end_agl) > 3000.0
+        {
             return false;
         }
     }
@@ -2024,21 +1797,6 @@ fn segment_sel_with_overrides(
     // with profile-aware distance: LightGA ~6 km, jets capped at 10 km.
     if cpa.d_p_m > profile.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, seg.is_departure) {
         return None;
-    }
-
-    // Reject ADS-B line-extrapolation artifacts:
-    // - Aircraft > 50 m below receiver ground.
-    // - Jet-like (non-propeller) profile flying < 30 m AGL outside airports.
-    //   (Turboprops + LightGA/Rotorcraft can legitimately fly low.)
-    if !airport_ground_mode {
-        if cpa.relative_alt_m < -50.0 {
-            return None;
-        }
-        if !matches!(profile.installation, Installation::Propeller)
-            && cpa.relative_alt_m < 30.0
-        {
-            return None;
-        }
     }
 
     // NPD lookup

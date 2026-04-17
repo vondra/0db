@@ -335,8 +335,13 @@ SEL_seg = L_E(d_p) + ΔV + ΔI(φ) - Λ(β, l) + ΔF
 - **L_E**: NPD lookup at slant distance d_p (feet). 8 proxy profiles.
 - **ΔV**: Speed/duration correction (Eq. 4-14)
 - **ΔI**: Engine installation angle correction (Eq. 4-15)
-- **Λ**: Lateral attenuation (Eq. 4-18/19), NOT for helicopters
+- **Λ**: Lateral attenuation (Eq. 4-18/19), applied to all profiles including rotorcraft (see note below)
 - **ΔF**: Finite segment dipole correction (Eq. 4-20, full α/(1+α²) terms)
+
+Lateral attenuation note: profile 6 is a mixed LightGA+Rotorcraft bucket. Doc 29
+skips Λ for rotorcraft, but our implementation applies it to profile 6 because
+fixed-wing GA dominates the bucket; skipping Λ overestimates GA noise by up to
+~11 dB at low β. A pure-helicopter cluster submodel would split this correctly.
 
 ### Geometry (§4.4.1)
 CPA (Closest Point of Approach) computed on segment EXTENSION (unclamped).
@@ -345,9 +350,10 @@ d_p = slant distance at CPA. β = elevation angle.
 ### Input and preprocessing (current implementation)
 - ADS-B supplies real segment geometry, altitude, speed, timestamp, and often `on_ground`
 - aircraft `typecode` is mapped to one of **8 proxy NPD profiles**
-- unknown / unmapped typecode falls back to **Generic**
+- unknown / unmapped typecode falls back to **Generic** (profile 7)
 - `is_departure` is inferred from median climb rate (`ROCD > 500 fpm`)
 - day/evening/night period is approximated from timestamp using **UTC+1**
+  (global atlas TODO: convert to receiver-local time at tile generation)
 - airport context uses `airport_lines.arrow` + `airport_areas.arrow`
 - candidate airport-ground segments are those with:
   - `on_ground = true`, or
@@ -355,6 +361,62 @@ d_p = slant distance at CPA. β = elevation angle.
 - stale ground / taxi remnants are filtered by:
   - `on_ground` with **no airport context**
   - fallback low-AGL test (`<= 15 m AGL`) with **no airport context**
+- **segment length cap at extraction: 10 km** (`MAX_SEGMENT_LENGTH_M`). Longer
+  cruise segments from sparse traces are split along actual trace points (no
+  synthetic interpolation). Legacy pre-cap data can still contain longer segments.
+
+### Data-quality gating (`is_valid_airborne_segment`)
+Shared single-source-of-truth filter used by both pipeline and popup. Applied
+to airborne segments (`on_ground = false`, `ground_context = NONE`). Ground and
+airport-context segments bypass this filter (handled by the ground-ops submodel).
+
+Universal impossibility checks (all airborne profiles):
+- **midpoint underground**: `max(start_alt, end_alt) < midpoint_terrain - 30 m`
+- **endpoint AGL**: `start_agl < -30 m` or `end_agl < -30 m` (DEM-relative, so
+  subsea-level airports like Schiphol/Atyrau pass the filter)
+- **line goes under terrain**: 25%/75% interpolated samples ≤ terrain - 30 m
+
+Jet-only (profiles 0, 1, 2, 3, 5, 7; Turboprop/LightGA/Rotorcraft exempt):
+- **impossible jet speed**: `speed_kt < 80`
+- **jet too low**: `max_alt < midpoint_terrain + 150 m`
+- **legacy long-segment stitching guards** (legacy pre-10-km-cap data):
+  - 30 km line extrapolation crossing sea level within ±50% of length
+  - 30 km segment with both endpoints under 2000 m AGL
+  - 100 km segment mixing near-ground and cruise altitudes
+
+Per-receiver CPA rejection: none. An earlier filter at CPA rel_alt < -50 m /
+jet rel_alt < 30 m AGL was removed after independent review showed it created
+spatial discontinuities for receivers above flights in hilly terrain. The
+source-side DEM checks above and the 10 km segment cap cover the ADS-B
+extrapolation cases the per-receiver filter was designed for.
+
+### Pipeline approximations (batch kernel only; popup uses exact NPD)
+- `fast_atan`: Padé [3/2] approximation, max error 0.0034 rad (~0.19°).
+- `fast_delta_f`: ΔF via `fast_atan`, max error < 0.05 dB per segment.
+- `fast_lateral_attenuation`: Λ with `fast_atan` (no `atan2`).
+- NPD LUT: 64-bin log₁₀(d_ft) table spanning 2.0 to 5.5, linear interp.
+- Combined max error vs exact NPD: ~0.15 dB per segment.
+
+### Cross-flight bucket merge (pipeline-only)
+After ring-1 R4 load, airborne segments are merged into buckets keyed by
+quantized geometry + profile + direction + period + speed. `count_weight` is
+summed across the bucket (exact annual energy for acoustically-identical flights).
+
+Bucket widths (calibrated against ±50-100 m ADS-B jitter):
+- lat/lon: ~100 m (factor 1113)
+- altitude: 60 m
+- speed: 20 kt
+
+`date_id` is NOT part of the key — output tiles are permanently annual. Sub-annual
+reporting would require reintroducing date_id OR running the pipeline on daily
+partitions. Popup reads raw per-flight segments for the "top flights" UI.
+
+### Cross-hex visibility (ring-1 loading)
+Pipeline loads the target R4 hex plus its 6 H3 grid-disk ring-1 neighbors before
+filtering segments by target-hex bounding capsule. Popup uses the same data via
+bbox-indexed R-tree (not midpoint) so long/cross-hex segments are always found.
+Antimeridian-crossing segments (|Δlon| > 180°) are excluded from the R-tree to
+avoid degenerate global bboxes.
 
 ### Per-period energy
 ```

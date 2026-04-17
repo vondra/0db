@@ -1597,34 +1597,8 @@ fn compute_aircraft(
         if aircraft::is_ground_stale_segment(seg, rasters) {
             continue;
         }
-
-        // ADS-B data quality filters (applied before any acoustic computation).
-        if !seg.on_ground {
-            let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
-            let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
-            let terrain = rasters.elevation(mid_lat, mid_lon);
-            let max_alt = (seg.start_alt_m as f64).max(seg.end_alt_m as f64);
-
-            // Filter 1: underground — max altitude < terrain - 30m.
-            if max_alt < terrain - 30.0 {
-                continue;
-            }
-
-            // Filter 2: jet profiles (0-3) below 80 kt = physically impossible.
-            if seg.profile_idx <= 3 && (seg.speed_kt as f64) < 80.0 {
-                continue;
-            }
-
-            // Filter 3: jet profiles (0-3) below 150m AGL outside airport vicinity.
-            // Real widebody/narrowbody only goes below 150m AGL on final approach
-            // within ~5 km of a runway. No DEM-based airport check here, but
-            // ground_context != NONE means the segment is near a known airport.
-            if seg.profile_idx <= 3
-                && seg.ground_context == emission::aircraft::GROUND_CONTEXT_NONE
-                && max_alt < terrain + 150.0
-            {
-                continue;
-            }
+        if !aircraft::is_valid_airborne_segment(seg, rasters) {
+            continue;
         }
 
         if let Some(line_emission) = aircraft::build_ground_ops_line_emission(seg, rasters, n_days) {
