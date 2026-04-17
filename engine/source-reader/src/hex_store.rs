@@ -16,22 +16,20 @@ use rstar::RTree;
 #[derive(Clone, Copy, Debug)]
 pub struct AircraftEntry {
     pub cache_idx: usize,
-    pub lat: f64,
-    pub lon: f64,
+    /// Segment bounding box corners in (lat, lon). min = SW, max = NE.
+    pub min_lat: f64,
+    pub min_lon: f64,
+    pub max_lat: f64,
+    pub max_lon: f64,
 }
 
 impl rstar::RTreeObject for AircraftEntry {
     type Envelope = rstar::AABB<[f64; 2]>;
     fn envelope(&self) -> Self::Envelope {
-        rstar::AABB::from_point([self.lat, self.lon])
-    }
-}
-
-impl rstar::PointDistance for AircraftEntry {
-    fn distance_2(&self, point: &[f64; 2]) -> f64 {
-        let d_lat = self.lat - point[0];
-        let d_lon = self.lon - point[1];
-        d_lat * d_lat + d_lon * d_lon
+        rstar::AABB::from_corners(
+            [self.min_lat, self.min_lon],
+            [self.max_lat, self.max_lon],
+        )
     }
 }
 

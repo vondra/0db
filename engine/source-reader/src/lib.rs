@@ -503,35 +503,38 @@ fn collect_from_hex_data(
 
         let tree = data.aircraft_tree.get_or_init(|| {
             let entries = cached_segs.iter().enumerate().map(|(idx, seg)| {
+                // Index by full segment bbox (not midpoint). This ensures long
+                // segments crossing the receiver's area are found even if their
+                // midpoint is far away.
                 hex_store::AircraftEntry {
                     cache_idx: idx,
-                    lat: (seg.start_lat + seg.end_lat) * 0.5,
-                    lon: (seg.start_lon + seg.end_lon) * 0.5,
+                    min_lat: seg.start_lat.min(seg.end_lat) as f64,
+                    min_lon: seg.start_lon.min(seg.end_lon) as f64,
+                    max_lat: seg.start_lat.max(seg.end_lat) as f64,
+                    max_lon: seg.start_lon.max(seg.end_lon) as f64,
                 }
             }).collect();
             rstar::RTree::bulk_load(entries)
         });
 
-        // To guarantee 100% accuracy matching the original flat_dist logic:
-        // 1. Calculate latitude/longitude bounding box accounting for projection.
+        // Query envelope: receiver ± AIRCRAFT_QUERY_MAX_RADIUS_M. R-tree returns
+        // segments whose bbox intersects this envelope — correct for any segment
+        // length. Final accurate filter (CPA ≤ per-profile reach) happens inside
+        // `segment_sel_with_overrides`.
         let radius_lat_deg = AIRCRAFT_QUERY_MAX_RADIUS_M / 111_320.0;
         let cos_lat = lat.to_radians().cos().max(0.01);
         let radius_lon_deg = radius_lat_deg / cos_lat;
-        
+
         let env = rstar::AABB::from_corners(
             [lat - radius_lat_deg, lng - radius_lon_deg],
             [lat + radius_lat_deg, lng + radius_lon_deg],
         );
 
-        // 2. Query R-Tree and rigorously filter by exact flat_dist
         for entry in tree.locate_in_envelope_intersecting(&env) {
             let seg = &cached_segs[entry.cache_idx];
-            let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
-            let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
-            let dist_m = crate::geo::flat_dist(lat, lng, mid_lat, mid_lon);
-            if dist_m <= AIRCRAFT_QUERY_MAX_RADIUS_M {
-                all_aircraft.push(seg.clone());
-            }
+            // Keep: accurate per-profile rejection happens downstream in
+            // segment_sel_with_overrides (CPA > reach → dropped).
+            all_aircraft.push(seg.clone());
         }
     }
 
