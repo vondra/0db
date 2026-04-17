@@ -1110,14 +1110,44 @@ pub fn is_valid_airborne_segment(seg: &AircraftSegment, rasters: &dyn RasterSamp
         return false;
     }
 
-    // Long segment at low altitude = ADS-B extraction artifact (missing
-    // intermediate points merged into one segment). Real jets don't cruise
-    // for 30 km below 2000m AGL. We observed 453 km segments with both
-    // endpoints < 1000m AGL causing 100+ dB spurious overflight artifacts.
     let start_agl = (seg.start_alt_m as f64) - rasters.elevation(seg.start_lat, seg.start_lon);
     let end_agl = (seg.end_alt_m as f64) - rasters.elevation(seg.end_lat, seg.end_lon);
-    if (seg.segment_length_m as f64) > 30_000.0 && start_agl < 2000.0 && end_agl < 2000.0 {
+    let length_m = seg.segment_length_m as f64;
+
+    // Long segment at low altitude on both ends = ADS-B extraction artifact
+    // (missing intermediate points merged into one segment).
+    if length_m > 30_000.0 && start_agl < 2000.0 && end_agl < 2000.0 {
         return false;
+    }
+
+    // Long segment with one endpoint near ground and the other at cruise =
+    // ADS-B stitching takeoff/landing points across a big trace gap. Real
+    // climb/descent profiles don't span 100+ km with one endpoint < 1 km AGL.
+    // This produces spurious CPA altitudes BELOW terrain when the infinite-line
+    // CPA is extrapolated beyond the low endpoint.
+    if length_m > 100_000.0
+        && (start_agl.min(end_agl) < 1000.0)
+        && (start_agl.max(end_agl) > 3000.0)
+    {
+        return false;
+    }
+
+    // Any segment going "under terrain" along its linear interpolation at
+    // sample points along its length. Sample at 25%, 50%, 75% — if any is
+    // > 30 m underground, segment geometry is physically impossible.
+    let sl = seg.start_lat as f64;
+    let sn = seg.start_lon as f64;
+    let el = seg.end_lat as f64;
+    let en = seg.end_lon as f64;
+    let sa = seg.start_alt_m as f64;
+    let ea = seg.end_alt_m as f64;
+    for frac in [0.25_f64, 0.5, 0.75] {
+        let lat = sl + (el - sl) * frac;
+        let lon = sn + (en - sn) * frac;
+        let alt = sa + (ea - sa) * frac;
+        if alt < rasters.elevation(lat, lon) - 30.0 {
+            return false;
+        }
     }
 
     true
