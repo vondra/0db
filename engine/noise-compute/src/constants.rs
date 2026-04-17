@@ -72,7 +72,7 @@ pub const SURFACE_CORR: [f64; 5] = [
 /// Road max propagation radius by road_class index (0=motorway .. 6=living_street).
 pub const ROAD_MAX_RADIUS: [f64; 7] = [
     10_000.0, // 0: motorway
-     5_000.0, // 1: trunk
+     6_000.0, // 1: trunk
      5_000.0, // 2: primary
      3_000.0, // 3: secondary
      1_500.0, // 4: tertiary
@@ -87,9 +87,9 @@ pub const RAILWAY_MAX_RADIUS: f64 = 6_000.0;
 pub const AIRCRAFT_AIRBORNE_MAX_RADIUS: f64 = 14_000.0;
 
 /// Industrial point source max radius.
-pub const INDUSTRIAL_MAX_RADIUS: f64 = 5_000.0;
+pub const INDUSTRIAL_MAX_RADIUS: f64 = 3_000.0;
 
 /// Aircraft ground ops max radii.
-pub const GROUND_OPS_RUNWAY_MAX_RADIUS: f64 = 7_000.0;
+pub const GROUND_OPS_RUNWAY_MAX_RADIUS: f64 = 5_000.0;
 pub const GROUND_OPS_TAXI_MAX_RADIUS: f64 = 3_000.0;
 pub const GROUND_OPS_APRON_MAX_RADIUS: f64 = 1_500.0;

@@ -2359,7 +2359,7 @@ mod tests {
 
         let runway_arr = ground_ops_model(&seg, GROUND_OPS_KIND_RUNWAY_ROLL);
         assert!((runway_arr.ref_sel_db - 92.0).abs() < 0.01);
-        assert_eq!(runway_arr.max_radius_m, 7_000.0);
+        assert_eq!(runway_arr.max_radius_m, 5_000.0);
 
         seg.is_departure = true;
         let runway_dep = ground_ops_model(&seg, GROUND_OPS_KIND_RUNWAY_ROLL);
