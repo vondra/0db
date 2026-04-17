@@ -1114,6 +1114,29 @@ pub fn is_valid_airborne_segment(seg: &AircraftSegment, rasters: &dyn RasterSamp
     let end_agl = (seg.end_alt_m as f64) - rasters.elevation(seg.end_lat, seg.end_lon);
     let length_m = seg.segment_length_m as f64;
 
+    // Reject if either endpoint is underground or near sea level with
+    // terrain well above (= below ground). Aircraft altitudes are MSL,
+    // so negative means subsea = impossible.
+    if (seg.start_alt_m as f64) < 0.0 || (seg.end_alt_m as f64) < 0.0 {
+        return false;
+    }
+    if start_agl < -30.0 || end_agl < -30.0 {
+        return false;
+    }
+
+    // Reject segments whose line (infinite extension) would put the aircraft
+    // below sea level within ±50% of its own length. This catches ADS-B
+    // traces that merge cruise-level and ground-level points across big gaps,
+    // producing linear altitude gradients so steep that the line's extension
+    // dips below MSL near the segment — whose CPA (which Doc 29 computes on
+    // the infinite line) then reports nonsensical underground positions.
+    let alt_at = |t: f64| -> f64 {
+        (seg.start_alt_m as f64) + ((seg.end_alt_m as f64) - (seg.start_alt_m as f64)) * t
+    };
+    if alt_at(-0.5) < 0.0 || alt_at(1.5) < 0.0 {
+        return false;
+    }
+
     // Long segment at low altitude on both ends = ADS-B extraction artifact
     // (missing intermediate points merged into one segment).
     if length_m > 30_000.0 && start_agl < 2000.0 && end_agl < 2000.0 {
@@ -1997,6 +2020,21 @@ fn segment_sel_with_overrides(
     // with profile-aware distance: LightGA ~6 km, jets capped at 10 km.
     if cpa.d_p_m > profile.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, seg.is_departure) {
         return None;
+    }
+
+    // Reject ADS-B line-extrapolation artifacts:
+    // - Aircraft > 50 m below receiver ground.
+    // - Jet-like (non-propeller) profile flying < 30 m AGL outside airports.
+    //   (Turboprops + LightGA/Rotorcraft can legitimately fly low.)
+    if !airport_ground_mode {
+        if cpa.relative_alt_m < -50.0 {
+            return None;
+        }
+        if !matches!(profile.installation, Installation::Propeller)
+            && cpa.relative_alt_m < 30.0
+        {
+            return None;
+        }
     }
 
     // NPD lookup
