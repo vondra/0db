@@ -1124,17 +1124,21 @@ pub fn is_valid_airborne_segment(seg: &AircraftSegment, rasters: &dyn RasterSamp
         return false;
     }
 
-    // Reject segments whose line (infinite extension) would put the aircraft
-    // below sea level within ±50% of its own length. This catches ADS-B
-    // traces that merge cruise-level and ground-level points across big gaps,
-    // producing linear altitude gradients so steep that the line's extension
-    // dips below MSL near the segment — whose CPA (which Doc 29 computes on
-    // the infinite line) then reports nonsensical underground positions.
-    let alt_at = |t: f64| -> f64 {
-        (seg.start_alt_m as f64) + ((seg.end_alt_m as f64) - (seg.start_alt_m as f64)) * t
-    };
-    if alt_at(-0.5) < 0.0 || alt_at(1.5) < 0.0 {
-        return false;
+    // For LONG segments only (>30km): reject if the line (infinite extension)
+    // would put the aircraft below sea level within ±50% of its own length.
+    // Short segments with steep descent (e.g., 1 km final approach from 500 m
+    // to 170 m) correctly extrapolate to negative at t=1.5 but represent
+    // legitimate flight. The check is meaningful only when the segment
+    // actually spans enough distance that its linear altitude profile is
+    // an accurate flight-path model.
+    if length_m > 30_000.0 {
+        let alt_at = |t: f64| -> f64 {
+            (seg.start_alt_m as f64)
+                + ((seg.end_alt_m as f64) - (seg.start_alt_m as f64)) * t
+        };
+        if alt_at(-0.5) < 0.0 || alt_at(1.5) < 0.0 {
+            return false;
+        }
     }
 
     // Long segment at low altitude on both ends = ADS-B extraction artifact
