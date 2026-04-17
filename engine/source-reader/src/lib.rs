@@ -547,8 +547,10 @@ fn collect_from_hex_data(
             n_days,
         );
     }
+    // Same data-quality filter as pipeline. Source of truth in noise-compute.
     all_aircraft.retain(|seg| {
         !noise_compute::emission::aircraft::is_ground_stale_segment(seg, rasters)
+            && noise_compute::emission::aircraft::is_valid_airborne_segment(seg, rasters)
     });
 
     let mut airport_surface =

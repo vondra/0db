@@ -1069,6 +1069,60 @@ fn inferred_ground_cell(lat: f64, lon: f64) -> (i32, i32) {
     )
 }
 
+/// Filter obviously-invalid airborne ADS-B segments.
+/// Returns false for segments that pipeline AND popup should skip:
+/// - Max altitude below terrain - 30m (underground / radar echo)
+/// - Jet-like profile (not Turboprop, not LightGA/helicopter) flying < 80 kt (impossible)
+/// - Jet-like profile < 150m AGL outside any airport context (radar echo / decode error)
+///
+/// Used by both pipeline (ProjectedAircraft::from_segments) and popup
+/// (segment loading after R-tree query). Single source of truth.
+pub fn is_valid_airborne_segment(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
+    // Ground segments pass this filter (they're handled by ground ops submodel)
+    if seg.on_ground || seg.ground_context != GROUND_CONTEXT_NONE {
+        return true;
+    }
+
+    let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
+    let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
+    let terrain = rasters.elevation(mid_lat, mid_lon);
+    let max_alt = (seg.start_alt_m as f64).max(seg.end_alt_m as f64);
+
+    // Underground: altitude well below terrain → radar echo
+    if max_alt < terrain - 30.0 {
+        return false;
+    }
+
+    // Jet-like profiles (B738, A320, A321, Widebody, BizJet, Generic).
+    // Turboprop (4) and LightGA+Rotorcraft (6) are allowed to fly slow and low.
+    let is_fixed_wing_jet = matches!(seg.profile_idx, 0 | 1 | 2 | 3 | 5 | 7);
+    if !is_fixed_wing_jet {
+        return true;
+    }
+
+    // Jet flying < 80 kt: impossible ADS-B speed decode
+    if (seg.speed_kt as f64) < 80.0 {
+        return false;
+    }
+
+    // Jet < 150m AGL outside airport: radar echo or altitude decode error
+    if max_alt < terrain + 150.0 {
+        return false;
+    }
+
+    // Long segment at low altitude = ADS-B extraction artifact (missing
+    // intermediate points merged into one segment). Real jets don't cruise
+    // for 30 km below 2000m AGL. We observed 453 km segments with both
+    // endpoints < 1000m AGL causing 100+ dB spurious overflight artifacts.
+    let start_agl = (seg.start_alt_m as f64) - rasters.elevation(seg.start_lat, seg.start_lon);
+    let end_agl = (seg.end_alt_m as f64) - rasters.elevation(seg.end_lat, seg.end_lon);
+    if (seg.segment_length_m as f64) > 30_000.0 && start_agl < 2000.0 && end_agl < 2000.0 {
+        return false;
+    }
+
+    true
+}
+
 pub fn is_ground_stale_segment(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
     if seg.on_ground {
         return seg.ground_context == GROUND_CONTEXT_NONE;
