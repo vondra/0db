@@ -65,19 +65,16 @@ impl HexStore {
     }
 
     fn ensure_hex(&mut self, hex_id: &str) -> &HexData {
-        if !self.hexes.contains_key(hex_id) {
+        self.hexes.entry(hex_id.to_string()).or_insert_with(|| {
             let dir = format!("{}/{}", self.h3r4_dir, hex_id);
             match load_hex(&dir) {
-                Ok(data) => {
-                    self.hexes.insert(hex_id.to_string(), data);
-                }
+                Ok(data) => data,
                 Err(e) => {
                     eprintln!("  source-reader: failed to load hex {}: {}", hex_id, e);
-                    self.hexes.insert(hex_id.to_string(), HexData::empty());
+                    HexData::empty()
                 }
             }
-        }
-        self.hexes.get(hex_id).unwrap()
+        })
     }
 }
 
