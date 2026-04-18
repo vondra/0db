@@ -102,22 +102,45 @@ L_W_total,i = 10 × log₁₀(Σ_cat 10^(L_W'/m,cat,i / 10))
 ```
 
 ### Input priority (current implementation)
-1. If Arrow contains `aadt_*` and `traffic_source > 0`, use those flows.
+1. If Arrow contains `aadt_*` and `traffic_source > 0` **and** `aadt_light > 0`, use those flows (oneway × 0.5, private-access × 0.1 still applied).
    - `traffic_source = 1`: matched external traffic dataset
    - `traffic_source = 2`: service-tree estimate on local streets
    - `traffic_source > 2`: reserved for other heuristic estimates
-2. Otherwise use `default_road_traffic(road_class)`.
+2. Otherwise use `default_road_traffic(road_class)` combined with the lane-ratio boost (see below).
 
 Speed priority:
 - `maxspeed` from OSM if present
-- otherwise `default_road_speed(road_class)`
+- otherwise `default_road_speed(road_class)` (see table)
+- junction flag caps speed at 30 km/h (roundabouts)
 
 Surface priority:
 - recognized OSM `surface=*`
 - otherwise asphalt (`ΔL_WR = 0`)
 
+### Default traffic per `road_class` (used when `traffic_source = 0` or `aadt_light = 0`)
+| `class_idx` | Name | Light | Medium | Heavy | Moto |
+|-------------|------|-------|--------|-------|------|
+| 0 | motorway | 21600 | 2400 | 5700 | 300 |
+| 1 | trunk | 11700 | 1200 | 1800 | 300 |
+| 2 | primary | 7470 | 540 | 810 | 180 |
+| 3 | secondary | 2640 | 120 | 180 | 60 |
+| 4 | tertiary | 720 | 26 | 38 | 16 |
+| 5 | residential / living_street | 480 | 5 | 10 | 5 |
+| 6 | unknown | 98 | 0 | 1 | 1 |
+
+### Default speeds per `road_class`
+motorway 100 / trunk 70 / primary 50 / secondary 50 / tertiary 50 / residential 30 / living_street 20 km/h.
+
+### Lane-ratio boost (applied ONLY on defaults, not on Arrow AADT)
+When Arrow traffic is missing and a default is used, per-lane count is boosted above 2 lanes:
+- motorway 3-lane oneway × 1.42
+- primary 3-lane two-way × 1.37; 4-lane × 2.13
+- secondary 3-lane two-way × 1.83
+
+2-lane segments, residential and living_street classes: no boost. This lane boost is NEVER applied on real Arrow AADT (it already reflects the observed lane layout).
+
 ### Period traffic
-Day (07-19), Evening (19-23), Night (23-07).
+Day (07–19 / 12 h), Evening (19–23 / 4 h), Night (23–07 / 8 h).
 
 Current implementation ALWAYS splits AADT by fixed class-based ratios:
 - motorway / trunk: **65 / 20 / 15**
@@ -135,33 +158,61 @@ h_s = 0.5 m (wheel-rail contact)
 ### Emission per band
 ```
 L_vehicle,i = 10 × log₁₀(10^((A_rolling,i + 30 × log₁₀(v / v_ref))/10) + 10^(A_traction,i / 10))
-L_W,i = L_vehicle,i + 10 × log₁₀(Q)
+L_W'/m,i   = L_vehicle,i + 10 × log₁₀(Q / (T_h × 1000 × v))
 ```
 where:
-- A_rolling from RMR reference spectrum per vehicle type
-- v_ref depends on vehicle type (100 km/h passenger, 80 km/h freight, 50 km/h tram)
-- Q = trains per day for this vehicle type
-- 30 = B_rolling exponent (speed-dependent rolling noise)
+- A_rolling / A_traction: entire-train A-weighted reference spectrum per vehicle type, peaked at 500–1000 Hz (ISO 3095 / CNOSSOS rail spectrum)
+- v in km/h, clamped to `[20, v_max]`
+- v_ref per vehicle type (see Rail vehicle types below)
+- Q = trains **in the period** after the 65 / 20 / 15 day-evening-night split of the daily count
+- T_h = period hours: 12 day / 4 evening / 8 night
+- B_rolling = 30 (speed-dependent rolling noise exponent)
+
+This is the CNOSSOS Annex IV line-source density (NoiseModelling-compatible).
+
+**Known issue / history**: a prior revision used `L_W = L_vehicle + 10·log₁₀(Q_per_day)` with SRM-II-style coefficients peaked at 4 kHz. Because 4 kHz carries ~22 dB/km atmospheric absorption, rail signal collapsed at range. Current coefficients are calibrated so a typical mainline corridor matches EU END reference levels in the 0–5 km range. See the header comment in `src/emission/railway.rs`.
+
+### Rail vehicle types
+| `rail_type` | Enum | v_ref (km/h) | v_max (km/h) | Coefficient table |
+|-------------|------|--------------|--------------|-------------------|
+| 0 | Rail (mixed pax + freight) | 100 (pax) / 80 (frt) | 300 / 120 | PASSENGER + FREIGHT |
+| 1 | Tram | 50 | 70 | TRAM |
+| 2 | LightRail | 80 | 120 | LIGHT_RAIL |
+| 3 | NarrowGauge | 80 | 120 | LIGHT_RAIL (reused) |
+| 4 | Funicular | 100 | 300 | PASSENGER (fallback) |
+
+High-speed passenger (`v > 200 km/h`) is served by the passenger rolling spectrum scaled via `30·log₁₀(v/v_ref)` — not a dedicated aerodynamic model.
 
 ### Input priority (current implementation)
 Passenger / freight counts:
 1. `trains_passenger`, `trains_freight` from Arrow if `> 0`
-2. otherwise `default_traffic(rail_type, usage)`
+2. otherwise `default_traffic(rail_type, usage)` (see table below)
 
 Speed:
 1. OSM `maxspeed` if present
 2. otherwise `300 km/h` when `highspeed=true`
-3. otherwise `default_speed(rail_type)`
+3. otherwise `default_speed(rail_type)` (see table below)
 
 Post-adjustments applied even on real counts:
 - `service > 0` → counts × **0.02**
 - `parallel_divisor > 1` → counts divided by that factor
 
+### Default train counts and speeds (when Arrow `trains_* = 0`)
+| `rail_type` | `usage` | pax/day | frt/day | Default speed |
+|-------------|---------|---------|---------|---------------|
+| Rail (0) | 0 (main) | 80 | 20 | 80 km/h |
+| Rail (0) | 1 (branch) | 30 | 5 | 80 km/h |
+| Rail (0) | 2 (siding) | 0 | 15 | 80 km/h |
+| Rail (0) | other | 40 | 10 | 80 km/h |
+| Tram (1) | any | 120 | 0 | 40 km/h |
+| LightRail (2) | any | 80 | 0 | 60 km/h |
+| NarrowGauge (3) | any | 10 | 0 | 40 km/h |
+| Funicular (4) | any | 40 | 0 | 20 km/h |
+
 ### Period traffic
-Current implementation uses a fixed passenger/freight split for both real and default daily counts:
-- day: **65%**
-- evening: **20%**
-- night: **15%**
+Day (07–19 / 12 h), Evening (19–23 / 4 h), Night (23–07 / 8 h).
+
+Fixed **65 / 20 / 15** split is applied **identically** to daily passenger and freight counts — there is no separate asymmetric split for night-biased freight even where it would be realistic. (Note: the `lden_free_distances` offline benchmark in `pipeline-worker` uses a different asymmetric split for sensitivity analysis; that split is not production.)
 
 ---
 
@@ -285,13 +336,19 @@ Applied in pipeline and popup:
 - **Bridge**: G=0 (hard surface, overrides IMD raster)
 - **Tunnel**: segment skipped entirely (sound contained inside)
 - **Oneway road**: AADT × 0.5 (approximation: half the traffic of two-way)
-- **Private road access**: AADT × 0.1
-- **Road access=no / motor_vehicle=no**: segment skipped
-- **Destination road access**: currently NO reduction
 - **Junction**: speed capped at 30 km/h (roundabouts)
 - **Service railway** (yard/siding/spur): counts × 0.02
 - **Parallel railway ways**: counts divided by `parallel_divisor`
 - **Industrial exclusion radius**: R=√(area/π) — buildings within R of source point are not counted as screening (prevents self-screening from source's own footprint)
+
+Road `access` column (u8) encoding:
+| code | OSM meaning | Effect |
+|------|-------------|--------|
+| 0 | public / default | no change |
+| 1 | private | AADT × 0.1 |
+| 2 | no / `motor_vehicle=no` | segment skipped |
+| 3 | destination | no reduction applied (known simplification) |
+| 4 | other restricted | segment skipped |
 
 ### 3.11 Total received level per band
 ```
