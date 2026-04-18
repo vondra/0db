@@ -567,7 +567,7 @@ Ground-ops line-source emission:
 - speed adjustment relative to nominal class speed is clamped to **±3 dB**
 - max radius:
   - runway_roll **5 km**
-  - taxi **2.5 km**
+  - taxi **3 km**
   - apron_movement **1.5 km**
 
 Ground-ops propagation:
