@@ -19,7 +19,7 @@ use hex_store::HexData;
 use hex_store::{
     hex_encode, load_hex, query_airport_areas_from_batches, query_airport_lines_from_batches,
     query_barriers_from_batches, query_buildings_from_batches, query_railways_from_batches,
-    query_roads_from_batches, visit_aircraft_from_batches,
+    query_roads_from_batches,
 };
 
 #[cfg(feature = "node")]
@@ -128,7 +128,6 @@ pub fn collect_from_hex_data(
     lng: f64,
     rasters: &dyn noise_compute::types::RasterSampler,
 ) -> PointQueryData {
-    let receiver_elev_m = rasters.elevation(lat, lng);
     let mut all_roads = Vec::new();
     let mut all_railways = Vec::new();
     let mut all_buildings = Vec::new();
