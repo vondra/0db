@@ -117,17 +117,24 @@ Per vehicle type, per band:
 L_roll(f)    = A_rolling(f) + 30 × log₁₀(v / v_ref)   [rolling noise, speed-dependent]
 L_traction(f) = A_traction(f)                           [traction noise, constant]
 L_total(f)   = 10 × log₁₀(10^(L_roll/10) + 10^(L_traction/10))
-L_line(f)    = L_total(f) + 10 × log₁₀(Q)              [Q = trains per day]
+L_W'/m(f)    = L_total(f) + 10 × log₁₀(Q / (T_h × 1000 × v))
 ```
+where `Q` = trains **in the period** (after the 65/20/15 split of the daily count),
+`T_h` = period hours (12 day / 4 evening / 8 night), `v` = km/h. This is the
+CNOSSOS Annex IV / NoiseModelling-compatible line density — per-hour flow,
+not per-day total.
 
 **Rail vehicle types:**
 
 | Type | Used for | v_ref | v_max | Brake type |
 |------|----------|-------|-------|-----------|
-| Passenger | Mainline coaches + electric loco | 100 km/h | 200 km/h | Disc |
+| Passenger | Mainline coaches + electric loco | 100 km/h | 300 km/h | Disc |
 | Freight | Block-braked freight wagons | 80 km/h | 120 km/h | Cast iron (loudest) |
 | Tram | Urban trams | 50 km/h | 70 km/h | Disc |
-| Light rail / DMU | Light rail, narrow gauge | 80 km/h | 120 km/h | Disc |
+| Light rail / DMU | Light rail, narrow gauge (reuses LightRail coefficients) | 80 km/h | 120 km/h | Disc |
+
+High-speed passenger above 200 km/h uses the same rolling spectrum scaled by
+`30·log₁₀(v/v_ref)` — not a dedicated aerodynamic model.
 
 **Default train frequencies** (when no line counts are available):
 
@@ -136,12 +143,13 @@ L_line(f)    = L_total(f) + 10 × log₁₀(Q)              [Q = trains per day]
 | Main line | 80 | 20 | 80 km/h |
 | Branch | 30 | 5 | 80 km/h |
 | Industrial siding | 0 | 15 | 80 km/h |
+| Rail, unknown usage | 40 | 10 | 80 km/h |
 | Tram | 120 | 0 | 40 km/h |
 | Light rail | 80 | 0 | 60 km/h |
 | Narrow gauge | 10 | 0 | 40 km/h |
 | Funicular | 40 | 0 | 20 km/h |
 
-If a line already has passenger/freight counts in the Arrow data, those counts override the defaults above. Day/evening/night is still split by a fixed 65/20/15 ratio.
+If a line already has passenger/freight counts in the Arrow data, those counts override the defaults above. Day/evening/night is still split by a fixed 65/20/15 ratio, applied identically to passenger and freight.
 
 Finite-line correction: `10 × log₁₀((θ) / π)` where θ = viewing angle from receiver.
 Source height: 0.5 m (CNOSSOS-EU §2.7.1, wheel-rail contact).

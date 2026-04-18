@@ -14,6 +14,8 @@ path = "src/lib.rs"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 h3o = "0.7"
+# SIMD for propagate_variants 8-band inner loop (stable, AVX2/AVX-512 with scalar fallback)
+wide = "0.7"
 
 [dev-dependencies]
 # For unit tests

@@ -1,8 +1,8 @@
 //! source-reader: mmap'd Arrow IPC reader for noise popup.
 //! Zero-copy: data stays in mmap'd pages, queries iterate directly over Arrow columns.
 
-mod geo;
-mod hex_store;
+pub mod geo;
+pub mod hex_store;
 
 #[cfg(feature = "node")]
 use napi::{Error, Status};
@@ -19,7 +19,7 @@ use hex_store::HexData;
 use hex_store::{
     hex_encode, load_hex, query_airport_areas_from_batches, query_airport_lines_from_batches,
     query_barriers_from_batches, query_buildings_from_batches, query_railways_from_batches,
-    query_roads_from_batches, visit_aircraft_from_batches,
+    query_roads_from_batches,
 };
 
 #[cfg(feature = "node")]
@@ -35,6 +35,8 @@ static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::Onc
 const AIRCRAFT_QUERY_MAX_RADIUS_M: f64 =
     noise_compute::emission::aircraft::AIRCRAFT_NPD_REACH_CAP_M;
 const AIRPORT_CONTEXT_RADIUS_M: f64 = 5_000.0;
+const BUILDING_QUERY_RADIUS_M: f64 = 2_000.0;
+const INDUSTRIAL_QUERY_RADIUS_M: f64 = 5_000.0;
 
 fn airport_key(name: &str, _airport_ref: &str, icao: &str, iata: &str) -> String {
     let key = if !icao.is_empty() {
@@ -63,19 +65,16 @@ impl HexStore {
     }
 
     fn ensure_hex(&mut self, hex_id: &str) -> &HexData {
-        if !self.hexes.contains_key(hex_id) {
+        self.hexes.entry(hex_id.to_string()).or_insert_with(|| {
             let dir = format!("{}/{}", self.h3r4_dir, hex_id);
             match load_hex(&dir) {
-                Ok(data) => {
-                    self.hexes.insert(hex_id.to_string(), data);
-                }
+                Ok(data) => data,
                 Err(e) => {
                     eprintln!("  source-reader: failed to load hex {}: {}", hex_id, e);
-                    self.hexes.insert(hex_id.to_string(), HexData::empty());
+                    HexData::empty()
                 }
             }
-        }
-        self.hexes.get(hex_id).unwrap()
+        })
     }
 }
 
@@ -123,13 +122,12 @@ pub fn collect_sources_at_point(
 /// Shared source collection logic. Takes pre-loaded hex data.
 /// Both `collect_sources_at_point` and `query_noise_at_point` delegate here.
 /// NACE codes are read directly from industrial.arrow nace_4digit column.
-fn collect_from_hex_data(
+pub fn collect_from_hex_data(
     hex_data: &[&hex_store::HexData],
     lat: f64,
     lng: f64,
     rasters: &dyn noise_compute::types::RasterSampler,
 ) -> PointQueryData {
-    let receiver_elev_m = rasters.elevation(lat, lng);
     let mut all_roads = Vec::new();
     let mut all_railways = Vec::new();
     let mut all_buildings = Vec::new();
@@ -308,7 +306,12 @@ fn collect_from_hex_data(
             });
         }
 
-        let buildings = query_buildings_from_batches(&data.building_batches, lat, lng, 2000.0);
+        let buildings = query_buildings_from_batches(
+            &data.building_batches,
+            lat,
+            lng,
+            BUILDING_QUERY_RADIUS_M,
+        );
         for b in buildings {
             let display_name = if !b.name.is_empty() {
                 b.name.clone()
@@ -379,7 +382,7 @@ fn collect_from_hex_data(
                 let c_lat = clat.value(i);
                 let c_lon = clon.value(i);
                 let dist = crate::geo::flat_dist(lat, lng, c_lat, c_lon);
-                if dist > 5000.0 {
+                if dist > INDUSTRIAL_QUERY_RADIUS_M {
                     continue;
                 }
 

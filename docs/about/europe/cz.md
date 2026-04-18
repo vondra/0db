@@ -17,7 +17,7 @@ map: { center: [15.5, 49.8], zoom: 7 }
 - **Result**: 528,123 Czech railway segments enriched with real passenger train counts (34.7% coverage on segments in matched hexes)
 - **Busiest**: Praha hl.n. ↔ Pha hl.n. Lc105-102 at 276 trains/day, Brno hl.n. přednádr. ↔ Brno hl.n. at 246/day
 - **[SŽ maximum line speeds](https://provoz.spravazeleznic.cz/portal/Show.aspx?path=/Data/Mapy/rychlosti.pdf)** — "Největší traťové rychlosti" map, used alongside OSM `maxspeed` tags
-- **Speed-dependent emission** using CNOSSOS-EU Annex IV / RMR: `Lw/m = Lw0 + 10·log₁₀(Q) + 30·log₁₀(v/v_ref)` where Q = trains/day from CZPTT, v = line speed
+- **Speed-dependent emission** using CNOSSOS-EU Annex IV / RMR: `Lw'/m = Lw0 + 10·log₁₀(Q / (T·1000·v)) + 30·log₁₀(v/v_ref)` where `Q` = trains in the period (daily count split 65/20/15 day/evening/night), `T` = period hours, `v` = line speed in km/h. See `engine/noise-compute/SPEC.md §2` for the full derivation.
 - Typical Czech corridor speeds: I. corridor (Praha–Brno) up to 160 km/h, regional lines 80–100 km/h, tram 40–60 km/h
 - Vehicle mapping: RegioPanter/RegioShuttle → RMR Cat-8a (disc-braked EMU), older coaches → Cat-1 (cast iron), freight → Cat-4 (block-braked wagons — realistic for current Czech fleet)
 
