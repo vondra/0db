@@ -7,13 +7,21 @@ use crate::constants::*;
 use crate::types::NUM_BANDS;
 use wide::{f64x4, CmpGt};
 
+// Clamp bounds for fast_exp: just inside the f64 subnormal/overflow edges
+// (e^±88 ≈ 1.65e38 / 6e-39). Acoustic energies stay comfortably inside, but
+// clamping guards against propagating NaN from garbage upstream.
+const EXP_CLAMP_LO: f64 = -87.0;
+const EXP_CLAMP_HI: f64 = 88.0;
+// IEEE 754 double precision exponent bias — used to reconstruct 2^n from
+// an integer exponent via raw bit manipulation.
+const F64_EXPONENT_BIAS: i64 = 1023;
+
 /// Fast exp() approximation using range reduction + 5th-order polynomial.
 /// Worst-case error < 0.001 dB in the acoustic energy domain (|x| < 20).
 /// Replaces 40× std::exp() per source-receiver pair in propagate_variants().
 #[inline(always)]
 pub(crate) fn fast_exp_f64(x: f64) -> f64 {
-    // Clamp to avoid overflow/underflow (acoustic range: ~[-50, +20])
-    let x = x.max(-87.0).min(88.0);
+    let x = x.max(EXP_CLAMP_LO).min(EXP_CLAMP_HI);
     // Range reduction: e^x = 2^(x/ln2) = 2^n * e^r where |r| <= ln(2)/2
     let inv_ln2 = std::f64::consts::LOG2_E; // 1/ln(2)
     let n_f = (x * inv_ln2).round();
@@ -21,37 +29,42 @@ pub(crate) fn fast_exp_f64(x: f64) -> f64 {
     // 5th-order Taylor: e^r ≈ 1 + r + r²/2 + r³/6 + r⁴/24 + r⁵/120
     let r2 = r * r;
     let poly = 1.0 + r + r2 * (0.5 + r * (1.0 / 6.0 + r * (1.0 / 24.0 + r * (1.0 / 120.0))));
-    // Reconstruct: e^x = poly * 2^n via bit manipulation
-    let n = n_f as i64;
-    let bits = ((1023 + n) as u64) << 52;
-    let scale = f64::from_bits(bits);
+    let scale = pow2_from_int(n_f as i64);
     poly * scale
 }
 
-/// SIMD variant of `fast_exp_f64` operating on 4 lanes. Same polynomial, same error bounds.
-/// Per-lane bit manipulation for the 2^n reconstruction is done on the extracted array.
+/// Reconstruct 2^n for integer n in the valid f64 exponent range via
+/// direct IEEE 754 bit manipulation (shift the biased exponent into place).
+#[inline(always)]
+fn pow2_from_int(n: i64) -> f64 {
+    f64::from_bits(((F64_EXPONENT_BIAS + n) as u64) << 52)
+}
+
+/// SIMD variant of `fast_exp_f64` on 4 lanes. Same polynomial, same error bounds.
+/// The `2^n` reconstruction is the only part that can't stay in-lane (bit
+/// manipulation on the raw exponent bytes), so we extract and rebuild once.
 #[inline(always)]
 fn fast_exp_f64x4(x: f64x4) -> f64x4 {
-    let x = x.fast_max(f64x4::splat(-87.0)).fast_min(f64x4::splat(88.0));
+    let x = x
+        .fast_max(f64x4::splat(EXP_CLAMP_LO))
+        .fast_min(f64x4::splat(EXP_CLAMP_HI));
     let inv_ln2 = f64x4::splat(std::f64::consts::LOG2_E);
     let ln2 = f64x4::splat(std::f64::consts::LN_2);
     let n_f = (x * inv_ln2).round();
     let r = x - n_f * ln2;
     let r2 = r * r;
-    // 5th-order Taylor, Horner form
     let c5 = f64x4::splat(1.0 / 120.0);
     let c4 = f64x4::splat(1.0 / 24.0);
     let c3 = f64x4::splat(1.0 / 6.0);
     let c2 = f64x4::splat(0.5);
     let one = f64x4::splat(1.0);
     let poly = one + r + r2 * (c2 + r * (c3 + r * (c4 + r * c5)));
-    // Scale factor 2^n — per-lane bit manipulation (can't be done as f64x4 ops directly).
-    let n_arr = n_f.to_array();
+    let n = n_f.to_array();
     let scale = f64x4::from([
-        f64::from_bits(((1023 + n_arr[0] as i64) as u64) << 52),
-        f64::from_bits(((1023 + n_arr[1] as i64) as u64) << 52),
-        f64::from_bits(((1023 + n_arr[2] as i64) as u64) << 52),
-        f64::from_bits(((1023 + n_arr[3] as i64) as u64) << 52),
+        pow2_from_int(n[0] as i64),
+        pow2_from_int(n[1] as i64),
+        pow2_from_int(n[2] as i64),
+        pow2_from_int(n[3] as i64),
     ]);
     poly * scale
 }

@@ -243,9 +243,12 @@ A_ground,i = CF[i] × G
 ```
 where G = `1 - IMD/100`, from the imperviousness raster. G=0 hard, G=1 soft.
 
-Current implementation nuance:
-- popup / source-reader line-source evaluation uses **path-averaged** `G_path`
-- pipeline batch worker currently uses **receiver-local** `G` for both line and point sources
+Current implementation:
+- **Line sources** (roads, railways, aircraft-ground): both popup and pipeline
+  use **path-averaged** `G_path` from closest-point to receiver — identical
+  evaluation at an R11 hex center.
+- **Point sources** (buildings, industrial): both popup and pipeline use
+  **receiver-local** `G` at the receiver coordinate — also identical.
 
 Barrier interaction:
 ```
@@ -618,7 +621,7 @@ ISO 9613-2 point source.
 | **Road inputs** | Real `aadt_*` if present, otherwise class defaults; local heuristics may write `traffic_source > 1` | CNOSSOS expects external traffic inputs, not atlas-side fallback heuristics | Coverage stays global, but low-class roads may be approximate where counts are missing. |
 | **Road period split** | Fixed 65/20/15 or 70/18/12 split of daily AADT | Regulatory workflows may use measured day/evening/night counts | Bias possible on commuter / nightlife corridors. |
 | **Surface correction** | One scalar ΔL_WR per surface type | CNOSSOS Table F-4: per-band αm + βm, speed-dependent | ±1 dB. Our scalars are band-averaged approximations. |
-| **Ground effect** | CF[i] × G lookup; popup may use path-averaged G, pipeline currently uses receiver-local G | CNOSSOS §2.5.15-18: geometry-dependent Aground with height substitutions, separate source/middle/receiver zones | ±2 dB in complex terrain / mixed ground. |
+| **Ground effect** | CF[i] × G lookup; path-averaged G for line sources, receiver-local G for point sources (popup and pipeline match in both cases) | CNOSSOS §2.5.15-18: geometry-dependent Aground with height substitutions, separate source/middle/receiver zones | ±2 dB in complex terrain / mixed ground. |
 | **Diffraction** | 10·log₁₀(3 + C₃·20·δ·f/340), caps 20/25 dB, C₃ for double edges, Rayleigh gate per band via δ* with vertical mirroring across OLS-fitted per-side mean ground planes | CNOSSOS §2.5.6(c): Rayleigh criterion; §2.5.23: C" (identical to our C₃); §2.5.31: Δground additive combination; §2.5.24: favourable-conditions curved rays | ±1 dB behind shallow hills at low bands. Not implemented: Δground additive combination, curved rays, −λ/20 near-miss clause, lateral diffraction. |
 | **Building / barrier screening** | Tallest raster obstacle or explicit noise barrier along the path | ISO 9613-2: explicit obstacle modelling per edge / geometry | ±3 dB in complex urban. Our approach samples raster, not individual building edges. |
 | **Urban reflection** | Per-receiver enclosure boost +0-5 dB | ISO 9613-2 §7.5: image-source reflection model | ±2 dB. Standard requires full reflection geometry, we use a local heuristic. |
