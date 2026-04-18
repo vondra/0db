@@ -5,6 +5,7 @@
 
 use crate::constants::*;
 use crate::types::NUM_BANDS;
+use wide::{f64x4, CmpGt};
 
 /// Fast exp() approximation using range reduction + 5th-order polynomial.
 /// Worst-case error < 0.001 dB in the acoustic energy domain (|x| < 20).
@@ -24,6 +25,34 @@ pub(crate) fn fast_exp_f64(x: f64) -> f64 {
     let n = n_f as i64;
     let bits = ((1023 + n) as u64) << 52;
     let scale = f64::from_bits(bits);
+    poly * scale
+}
+
+/// SIMD variant of `fast_exp_f64` operating on 4 lanes. Same polynomial, same error bounds.
+/// Per-lane bit manipulation for the 2^n reconstruction is done on the extracted array.
+#[inline(always)]
+fn fast_exp_f64x4(x: f64x4) -> f64x4 {
+    let x = x.fast_max(f64x4::splat(-87.0)).fast_min(f64x4::splat(88.0));
+    let inv_ln2 = f64x4::splat(std::f64::consts::LOG2_E);
+    let ln2 = f64x4::splat(std::f64::consts::LN_2);
+    let n_f = (x * inv_ln2).round();
+    let r = x - n_f * ln2;
+    let r2 = r * r;
+    // 5th-order Taylor, Horner form
+    let c5 = f64x4::splat(1.0 / 120.0);
+    let c4 = f64x4::splat(1.0 / 24.0);
+    let c3 = f64x4::splat(1.0 / 6.0);
+    let c2 = f64x4::splat(0.5);
+    let one = f64x4::splat(1.0);
+    let poly = one + r + r2 * (c2 + r * (c3 + r * (c4 + r * c5)));
+    // Scale factor 2^n — per-lane bit manipulation (can't be done as f64x4 ops directly).
+    let n_arr = n_f.to_array();
+    let scale = f64x4::from([
+        f64::from_bits(((1023 + n_arr[0] as i64) as u64) << 52),
+        f64::from_bits(((1023 + n_arr[1] as i64) as u64) << 52),
+        f64::from_bits(((1023 + n_arr[2] as i64) as u64) << 52),
+        f64::from_bits(((1023 + n_arr[3] as i64) as u64) << 52),
+    ]);
     poly * scale
 }
 
@@ -168,67 +197,68 @@ pub fn propagate_variants(
     };
     let d_over_1000 = d_slant / 1000.0;
 
-    for i in 0..NUM_BANDS {
-        // Base WITHOUT ground: emission - divergence - atmospheric
-        let base_no_ground = emission_bands[i] - geo_div - ALPHA_ATM[i] * d_over_1000;
+    // Per-pair scalar broadcasts.
+    let geo_v = f64x4::splat(geo_div);
+    let d1000_v = f64x4::splat(d_over_1000);
+    let g_v = f64x4::splat(ground_g);
+    let refl_v = f64x4::splat(reflection_boost_db);
+    let flc_v = f64x4::splat(finite_line_corr);
+    let zero_v = f64x4::splat(0.0);
+    let c_ln10_10 = f64x4::splat(std::f64::consts::LN_10 * 0.1);
 
-        // Ground effect (A_gr)
-        let a_gr = GROUND_CF[i] * ground_g;
-
-        // Barrier attenuation (A_bar) = terrain + screening combined
-        let a_bar_full = terrain_atten[i] + screening_atten[i];
-        let a_bar_no_terrain = screening_atten[i];
-        let a_bar_no_screening = terrain_atten[i];
-
-        // ISO 9613-2 §7.3.1: max(A_gr, A_bar) ONLY when a barrier exists.
-        // Without barriers, use A_gr directly (which can be negative = amplification
-        // for soft ground at low frequencies like 63/125 Hz).
-        // WHY: a_gr.max(0.0) discarded low-frequency ground amplification in open fields.
-        let ground_or_bar_full = if a_bar_full > 0.0 {
-            a_gr.max(a_bar_full)
-        } else {
-            a_gr
+    // Two 4-lane halves cover all 8 bands. ISO 9613-2 §7.3.1 max(A_gr, A_bar) rule
+    // applied only when A_bar > 0 — otherwise A_gr passes through (can be negative
+    // for soft ground at 63/125 Hz).
+    for half in 0..2 {
+        let lo = half * 4;
+        let load4 = |arr: &[f64; NUM_BANDS]| -> f64x4 {
+            f64x4::from([arr[lo], arr[lo + 1], arr[lo + 2], arr[lo + 3]])
         };
-        let ground_or_bar_no_terrain = if a_bar_no_terrain > 0.0 {
-            a_gr.max(a_bar_no_terrain)
-        } else {
-            a_gr
-        };
-        let ground_or_bar_no_screening = if a_bar_no_screening > 0.0 {
-            a_gr.max(a_bar_no_screening)
-        } else {
-            a_gr
-        };
+        let emission_v = load4(emission_bands);
+        let alpha_v = load4(&ALPHA_ATM);
+        let cf_v = load4(&GROUND_CF);
+        let aw_v = load4(&A_WEIGHTING);
+        let terr_v = load4(terrain_atten);
+        let scr_v = load4(screening_atten);
+        let veg_v = load4(vegetation_atten);
 
-        // Free-field: ground only, no barriers, no vegetation
-        let free = base_no_ground - a_gr + finite_line_corr;
+        let base = emission_v - geo_v - alpha_v * d1000_v;
+        let a_gr = cf_v * g_v;
 
-        // Full: ground-or-barrier + vegetation + reflection + FLC
-        let full = base_no_ground - ground_or_bar_full - vegetation_atten[i]
-            + reflection_boost_db
-            + finite_line_corr;
+        let a_bar_full = terr_v + scr_v;
+        let gob_full = a_bar_full
+            .cmp_gt(zero_v)
+            .blend(a_gr.fast_max(a_bar_full), a_gr);
+        let gob_nt = scr_v.cmp_gt(zero_v).blend(a_gr.fast_max(scr_v), a_gr);
+        let gob_ns = terr_v.cmp_gt(zero_v).blend(a_gr.fast_max(terr_v), a_gr);
 
-        // Variants: remove one factor at a time
-        let no_terrain = base_no_ground - ground_or_bar_no_terrain - vegetation_atten[i]
-            + reflection_boost_db
-            + finite_line_corr;
-        let no_screening = base_no_ground - ground_or_bar_no_screening - vegetation_atten[i]
-            + reflection_boost_db
-            + finite_line_corr;
-        let no_vegetation =
-            base_no_ground - ground_or_bar_full + reflection_boost_db + finite_line_corr;
+        let free = base - a_gr + flc_v;
+        let full = base - gob_full - veg_v + refl_v + flc_v;
+        let no_t = base - gob_nt - veg_v + refl_v + flc_v;
+        let no_s = base - gob_ns - veg_v + refl_v + flc_v;
+        let no_v = base - gob_full + refl_v + flc_v;
 
-        // A-weight and convert to linear energy via fast_exp (polynomial approx)
-        // 10^((x+aw)/10) = e^((x+aw) * ln(10)/10)
-        let aw = A_WEIGHTING[i];
-        let c = std::f64::consts::LN_10 * 0.1;
-        let full_aw = fast_exp_f64((full + aw) * c);
-        full_energy += full_aw;
-        band_energy[i] = full_aw;
-        free_energy += fast_exp_f64((free + aw) * c);
-        no_terrain_energy += fast_exp_f64((no_terrain + aw) * c);
-        no_screening_energy += fast_exp_f64((no_screening + aw) * c);
-        no_vegetation_energy += fast_exp_f64((no_vegetation + aw) * c);
+        let full_e = fast_exp_f64x4((full + aw_v) * c_ln10_10);
+        let free_e = fast_exp_f64x4((free + aw_v) * c_ln10_10);
+        let no_t_e = fast_exp_f64x4((no_t + aw_v) * c_ln10_10);
+        let no_s_e = fast_exp_f64x4((no_s + aw_v) * c_ln10_10);
+        let no_v_e = fast_exp_f64x4((no_v + aw_v) * c_ln10_10);
+
+        let full_arr = full_e.to_array();
+        full_energy += full_arr[0] + full_arr[1] + full_arr[2] + full_arr[3];
+        band_energy[lo] = full_arr[0];
+        band_energy[lo + 1] = full_arr[1];
+        band_energy[lo + 2] = full_arr[2];
+        band_energy[lo + 3] = full_arr[3];
+
+        let free_arr = free_e.to_array();
+        free_energy += free_arr[0] + free_arr[1] + free_arr[2] + free_arr[3];
+        let no_t_arr = no_t_e.to_array();
+        no_terrain_energy += no_t_arr[0] + no_t_arr[1] + no_t_arr[2] + no_t_arr[3];
+        let no_s_arr = no_s_e.to_array();
+        no_screening_energy += no_s_arr[0] + no_s_arr[1] + no_s_arr[2] + no_s_arr[3];
+        let no_v_arr = no_v_e.to_array();
+        no_vegetation_energy += no_v_arr[0] + no_v_arr[1] + no_v_arr[2] + no_v_arr[3];
     }
 
     crate::types::PropagationVariants {
