@@ -48,6 +48,18 @@ pub const MAX_SCREENING: f64 = 20.0;
 pub const SOURCE_HEIGHT_ROAD: f64 = 0.05; // CNOSSOS-EU §2.4.1
 pub const SOURCE_HEIGHT_RAIL: f64 = 0.5; // CNOSSOS-EU §2.7.1
 pub const SOURCE_HEIGHT_INDUSTRIAL_OPEN: f64 = 1.5;
+
+/// Meters per degree of latitude (spherical approximation).
+pub const M_PER_DEG_LAT: f64 = 110_540.0;
+/// Meters per degree of longitude at the equator (multiply by `cos(lat)` for
+/// a given latitude via [`m_per_deg_lon`]).
+pub const M_PER_DEG_LON_EQ: f64 = 111_320.0;
+
+/// Meters per degree of longitude at `lat_rad` radians.
+#[inline]
+pub fn m_per_deg_lon(lat_rad: f64) -> f64 {
+    M_PER_DEG_LON_EQ * lat_rad.cos()
+}
 pub const SOURCE_HEIGHT_INDUSTRIAL_ENCLOSED: f64 = 4.0;
 
 /// CNOSSOS road emission reference speed [km/h].

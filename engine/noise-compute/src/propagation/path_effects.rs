@@ -5,6 +5,7 @@
 //! Returns per-band [f64; NUM_BANDS] attenuation arrays.
 
 use super::{diffraction, screening, vegetation};
+use crate::constants::{M_PER_DEG_LAT, M_PER_DEG_LON_EQ};
 use crate::types::{Barrier, RasterSampler, ScreeningObstacleTrace, NUM_BANDS};
 
 /// Compute terrain diffraction attenuation per band.
@@ -80,9 +81,9 @@ pub fn screening_attenuation(
     let dlat = rcv_lat - src_lat;
     let dlon = rcv_lon - src_lon;
     let mid_lat_rad = ((src_lat + rcv_lat) * 0.5).to_radians();
-    let meters_per_deg_lon = 111_320.0 * mid_lat_rad.cos();
+    let meters_per_deg_lon = M_PER_DEG_LON_EQ * mid_lat_rad.cos();
     let path_dx_m = dlon * meters_per_deg_lon;
-    let path_dy_m = dlat * 110_540.0;
+    let path_dy_m = dlat * M_PER_DEG_LAT;
     let path_len_sq_m = (path_dx_m * path_dx_m + path_dy_m * path_dy_m).max(1e-12);
     let barrier_hit_radius_sq = 50.0 * 50.0;
 
@@ -93,7 +94,7 @@ pub fn screening_attenuation(
             break;
         }
         let bx_m = (barrier.lon - src_lon) * meters_per_deg_lon;
-        let by_m = (barrier.lat - src_lat) * 110_540.0;
+        let by_m = (barrier.lat - src_lat) * M_PER_DEG_LAT;
         let t = (bx_m * path_dx_m + by_m * path_dy_m) / path_len_sq_m;
         if t < 0.01 || t > 0.99 {
             continue;
@@ -204,9 +205,9 @@ pub fn screening_attenuation_with_meta(
     let dlat = rcv_lat - src_lat;
     let dlon = rcv_lon - src_lon;
     let mid_lat_rad = ((src_lat + rcv_lat) * 0.5).to_radians();
-    let meters_per_deg_lon = 111_320.0 * mid_lat_rad.cos();
+    let meters_per_deg_lon = M_PER_DEG_LON_EQ * mid_lat_rad.cos();
     let path_dx_m = dlon * meters_per_deg_lon;
-    let path_dy_m = dlat * 110_540.0;
+    let path_dy_m = dlat * M_PER_DEG_LAT;
     let path_len_sq_m = (path_dx_m * path_dx_m + path_dy_m * path_dy_m).max(1e-12);
     let barrier_hit_radius_sq = 50.0 * 50.0;
 
@@ -217,7 +218,7 @@ pub fn screening_attenuation_with_meta(
             break;
         }
         let bx_m = (barrier.lon - src_lon) * meters_per_deg_lon;
-        let by_m = (barrier.lat - src_lat) * 110_540.0;
+        let by_m = (barrier.lat - src_lat) * M_PER_DEG_LAT;
         let t = (bx_m * path_dx_m + by_m * path_dy_m) / path_len_sq_m;
         if t < 0.01 || t > 0.99 {
             continue;

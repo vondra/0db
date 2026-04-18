@@ -35,6 +35,8 @@ static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::Onc
 const AIRCRAFT_QUERY_MAX_RADIUS_M: f64 =
     noise_compute::emission::aircraft::AIRCRAFT_NPD_REACH_CAP_M;
 const AIRPORT_CONTEXT_RADIUS_M: f64 = 5_000.0;
+const BUILDING_QUERY_RADIUS_M: f64 = 2_000.0;
+const INDUSTRIAL_QUERY_RADIUS_M: f64 = 5_000.0;
 
 fn airport_key(name: &str, _airport_ref: &str, icao: &str, iata: &str) -> String {
     let key = if !icao.is_empty() {
@@ -294,7 +296,12 @@ pub fn collect_from_hex_data(
             });
         }
 
-        let buildings = query_buildings_from_batches(&data.building_batches, lat, lng, 2000.0);
+        let buildings = query_buildings_from_batches(
+            &data.building_batches,
+            lat,
+            lng,
+            BUILDING_QUERY_RADIUS_M,
+        );
         for b in buildings {
             let display_name = if !b.name.is_empty() {
                 b.name.clone()
@@ -365,7 +372,7 @@ pub fn collect_from_hex_data(
                 let c_lat = clat.value(i);
                 let c_lon = clon.value(i);
                 let dist = crate::geo::flat_dist(lat, lng, c_lat, c_lon);
-                if dist > 5000.0 {
+                if dist > INDUSTRIAL_QUERY_RADIUS_M {
                     continue;
                 }
 

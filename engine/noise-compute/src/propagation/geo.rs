@@ -1,11 +1,12 @@
 //! Geometric utilities for noise propagation.
 
+use crate::constants::{m_per_deg_lon, M_PER_DEG_LAT};
+
 /// Flat-earth distance in meters (accurate <0.3% at <50km).
 pub fn flat_dist(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let mid_lat = ((lat1 + lat2) / 2.0).to_radians();
-    let cos_lat = mid_lat.cos();
-    let dx = (lon2 - lon1) * 111_320.0 * cos_lat;
-    let dy = (lat2 - lat1) * 110_540.0;
+    let dx = (lon2 - lon1) * m_per_deg_lon(mid_lat);
+    let dy = (lat2 - lat1) * M_PER_DEG_LAT;
     (dx * dx + dy * dy).sqrt()
 }
 
@@ -49,13 +50,13 @@ pub fn point_to_segment(
     b_lon: f64,
 ) -> (f64, f64, f64, f64) {
     let mid_lat = ((a_lat + b_lat) / 2.0).to_radians();
-    let cos_lat = mid_lat.cos();
+    let m_lon = m_per_deg_lon(mid_lat);
 
     // Project to local meters (A at origin)
-    let bx = (b_lon - a_lon) * 111_320.0 * cos_lat;
-    let by = (b_lat - a_lat) * 110_540.0;
-    let px = (p_lon - a_lon) * 111_320.0 * cos_lat;
-    let py = (p_lat - a_lat) * 110_540.0;
+    let bx = (b_lon - a_lon) * m_lon;
+    let by = (b_lat - a_lat) * M_PER_DEG_LAT;
+    let px = (p_lon - a_lon) * m_lon;
+    let py = (p_lat - a_lat) * M_PER_DEG_LAT;
 
     let ab_len_sq = bx * bx + by * by;
     let t = if ab_len_sq < 1e-10 {

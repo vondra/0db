@@ -12,6 +12,8 @@
 //! more accurate. For continental scale this is acceptable (<5% error).
 //! Future: osm-extract should pre-compute area_m2 in metric CRS.
 
+use crate::constants::{M_PER_DEG_LAT, M_PER_DEG_LON_EQ};
+
 /// Compute area in m² from hex-encoded WKB polygon.
 /// Returns None if WKB is invalid, too short, or not a Polygon/MultiPolygon.
 pub fn wkb_area_m2(wkb_hex: &str) -> Option<f64> {
@@ -137,7 +139,7 @@ fn ring_area_offset(
         let xj = lons[j] * cos_lat;
         area_deg2 += xi * lats[j] - xj * lats[i];
     }
-    let outer_area = (area_deg2 / 2.0).abs() * 110_540.0 * 111_320.0;
+    let outer_area = (area_deg2 / 2.0).abs() * M_PER_DEG_LAT * M_PER_DEG_LON_EQ;
 
     // Subtract inner rings (courtyards, holes).
     // WHY: Buildings with courtyards had full outer area → Lw overestimated by ~3 dB.
@@ -164,7 +166,7 @@ fn ring_area_offset(
             let j = (i + 1) % rp;
             h_area += h_lons[i] * cos_lat * h_lats[j] - h_lons[j] * cos_lat * h_lats[i];
         }
-        hole_area += (h_area / 2.0).abs() * 110_540.0 * 111_320.0;
+        hole_area += (h_area / 2.0).abs() * M_PER_DEG_LAT * M_PER_DEG_LON_EQ;
     }
 
     let area_m2 = (outer_area - hole_area).max(1.0);
@@ -219,8 +221,8 @@ pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
 
     // Convert spacing to degrees
     let mid_lat = (min_lat + max_lat) / 2.0;
-    let lat_step = spacing_m / 110_540.0;
-    let lon_step = spacing_m / (111_320.0 * mid_lat.to_radians().cos().max(0.1));
+    let lat_step = spacing_m / M_PER_DEG_LAT;
+    let lon_step = spacing_m / (M_PER_DEG_LON_EQ * mid_lat.to_radians().cos().max(0.1));
 
     // Generate grid with GLOBAL phase — snap to nearest grid line, not polygon bbox.
     // This prevents raster-pattern artifacts from per-polygon grid alignment.
@@ -290,8 +292,8 @@ pub fn wkb_h3_grid_points(wkb_hex: &str) -> Vec<(f64, f64)> {
 
     // Scan step 20m — must be < half of H3 res-11 row spacing (~43m) to hit every cell
     let mid_lat = (min_lat + max_lat) / 2.0;
-    let lat_step = 20.0 / 110_540.0;
-    let lon_step = 20.0 / (111_320.0 * mid_lat.to_radians().cos().max(0.1));
+    let lat_step = 20.0 / M_PER_DEG_LAT;
+    let lon_step = 20.0 / (M_PER_DEG_LON_EQ * mid_lat.to_radians().cos().max(0.1));
 
     let mut seen = HashSet::new();
     let mut points = Vec::new();
