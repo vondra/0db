@@ -257,21 +257,29 @@ pub fn compute_cpa(
     let seg_len_sq = dx * dx + dy * dy;
     let seg_len = seg_len_sq.sqrt().max(1.0);
 
-    // Parametric projection — NO CLAMP
-    let t = if seg_len_sq > 1e-6 {
+    // Unclamped parametric projection on the infinite line.
+    let t_unclamped = if seg_len_sq > 1e-6 {
         -(x1 * dx + y1 * dy) / seg_len_sq
     } else {
         0.5
     };
 
-    let cx = x1 + t * dx;
-    let cy = y1 + t * dy;
+    // Clamp to the observed segment for acoustic geometry: when the foot of
+    // perpendicular falls outside [0, 1] the aircraft actually left the track
+    // (e.g., touchdown = no flight past t=1). Using endpoint-clamped d_p,
+    // lateral, rel_alt, β prevents extrapolation creating fictitious close
+    // passes at touchdown-adjacent receivers. Unclamped q is still used for
+    // ΔF (the finite-segment dipole correction integrates along the full line).
+    let t_geom = t_unclamped.clamp(0.0, 1.0);
+
+    let cx = x1 + t_geom * dx;
+    let cy = y1 + t_geom * dy;
     let lateral_m = (cx * cx + cy * cy).sqrt();
 
-    let alt_at_foot = s1_alt_m + t * (s2_alt_m - s1_alt_m);
+    let alt_at_foot = s1_alt_m + t_geom * (s2_alt_m - s1_alt_m);
     let relative_alt_m = alt_at_foot - rx_elev_m;
     let d_p_m = (lateral_m * lateral_m + relative_alt_m * relative_alt_m).sqrt();
-    let q_m = t * seg_len;
+    let q_m = t_unclamped * seg_len;
 
     let beta_deg = if lateral_m > 0.01 || relative_alt_m.abs() > 0.01 {
         relative_alt_m.atan2(lateral_m).to_degrees()
@@ -805,6 +813,7 @@ pub fn prepare_ground_context(
     airport_areas: &[AirportArea],
     rasters: &dyn RasterSampler,
     n_days: u16,
+    enable_inference: bool,
 ) -> GroundPreparationStats {
     let matcher = AirportMatcher::new(airport_lines, airport_areas);
     let mut stats = GroundPreparationStats::default();
@@ -827,7 +836,15 @@ pub fn prepare_ground_context(
         stats.airport_context_marked += 1;
     }
 
-    stats.inferred_context_marked = infer_repeated_ground_context(segments, n_days);
+    // `infer_repeated_ground_context` is an O(N log N) multi-day clustering pass
+    // that discovers unmapped grass strips / informal heliports from repeated
+    // stopped low-AGL traces. It takes minutes on airport-area hexes (336k+
+    // candidates) and MUST be skipped on the popup path (single-point query)
+    // to keep interactive latency sub-second. Pipeline tiles still run it so
+    // the inferred strips show up on the atlas.
+    if enable_inference {
+        stats.inferred_context_marked = infer_repeated_ground_context(segments, n_days);
+    }
 
     for seg in segments.iter_mut() {
         if seg.ground_ops_kind == GROUND_OPS_KIND_NONE && seg.ground_context != GROUND_CONTEXT_NONE

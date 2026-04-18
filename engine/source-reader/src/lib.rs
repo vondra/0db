@@ -543,12 +543,17 @@ fn collect_from_hex_data(
     }
 
     if saw_aircraft_batches && any_aircraft_needs_runtime_ground_prepare {
+        // Popup path: skip `infer_repeated_ground_context` — its O(N log N)
+        // multi-day clustering costs minutes at airport hexes (336 k+ candidates
+        // at Prague) and blocks the 10 s popup timeout. The pipeline still runs
+        // inference so unmapped grass-strip surfaces still appear on tiles.
         noise_compute::emission::aircraft::prepare_ground_context(
             &mut all_aircraft,
             &all_airport_lines,
             &all_airport_areas,
             rasters,
             n_days,
+            false,
         );
     }
     // Same data-quality filter as pipeline. Source of truth in noise-compute.

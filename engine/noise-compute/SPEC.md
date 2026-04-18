@@ -387,8 +387,28 @@ Jet-only (profiles 0, 1, 2, 3, 5, 7; Turboprop/LightGA/Rotorcraft exempt):
 Per-receiver CPA rejection: none. An earlier filter at CPA rel_alt < -50 m /
 jet rel_alt < 30 m AGL was removed after independent review showed it created
 spatial discontinuities for receivers above flights in hilly terrain. The
-source-side DEM checks above and the 10 km segment cap cover the ADS-B
-extrapolation cases the per-receiver filter was designed for.
+source-side DEM checks above, the 10 km segment cap, and the endpoint-clamped
+CPA geometry below cover the ADS-B extrapolation cases the per-receiver filter
+was designed for.
+
+### Endpoint-clamped CPA geometry (Λ, ΔI, NPD)
+`compute_cpa` and the pipeline fast kernel clamp the parametric foot of
+perpendicular `t` to `[0, 1]` for d_p, lateral distance, relative altitude,
+and β. The unclamped value is retained only for the ΔF finite-segment
+correction (`q = t · seg_len`).
+
+Why: ADS-B traces for landings end at touchdown; the infinite-line extension
+past segment end places the aircraft at fictitious altitudes and distances.
+A receiver standing ~90 m from a runway end saw the aircraft extrapolated to
+a 17.8 m perpendicular foot at ≈0 m AGL — producing 109 dB NPD and one single
+landing on one day dominating 88 % of annual Lden at that cell. Endpoint-
+clamping treats the aircraft as actually stopped at touchdown, producing the
+correct ~95 dB NPD at 91 m and removing the artifact.
+
+Legit cases are unaffected because their CPA foot falls inside `[0, 1]`:
+cruise overflights, Schiphol-style sub-sea landings (CPA sits within the
+descent segment), and hill-top receivers with aircraft in a valley (CPA sits
+within the cruise segment).
 
 ### Pipeline approximations (batch kernel only; popup uses exact NPD)
 - `fast_atan`: Padé [3/2] approximation, max error 0.0034 rad (~0.19°).
