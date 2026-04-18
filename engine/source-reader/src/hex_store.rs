@@ -153,6 +153,187 @@ pub fn aircraft_has_precomputed_ground(batches: &[RecordBatch]) -> bool {
     })
 }
 
+/// Detect v4 bucketed schema via metadata (`aircraft_ground_model == "v4"`)
+/// or by presence of the bucketed column names. v4 buckets need a different
+/// loader that expands `count_weight` and treats `bucket_start_*` as segment
+/// geometry fields.
+pub fn aircraft_is_v4(batches: &[RecordBatch]) -> bool {
+    batches.iter().any(|batch| {
+        batch
+            .schema_ref()
+            .metadata()
+            .get("aircraft_ground_model")
+            .map(|v| v == "v4")
+            .unwrap_or(false)
+            || batch.column_by_name("bucket_start_lat").is_some()
+    })
+}
+
+/// Unified aircraft loader. Reads v2/v3 per-flight or v4 bucketed aircraft
+/// arrows and returns a `Vec<AircraftSegment>` suitable for downstream Doc 29
+/// consumers (each bucket becomes one segment with `count_weight` carrying
+/// the aggregate weight). Works for both the runtime popup path and the
+/// pipeline batch path.
+pub fn load_aircraft_segments_unified(
+    batches: &[RecordBatch],
+) -> Vec<noise_compute::types::AircraftSegment> {
+    use arrow::array::*;
+    use noise_compute::emission::aircraft::{GROUND_CONTEXT_NONE, GROUND_OPS_KIND_NONE};
+    use noise_compute::types::AircraftSegment;
+
+    const BUCKET_KIND_AIRBORNE: u8 = 0;
+    const BUCKET_KIND_GROUND_SYNTH: u8 = 2;
+
+    let mut out: Vec<AircraftSegment> = Vec::new();
+
+    for batch in batches {
+        let n = batch.num_rows();
+        if n == 0 {
+            continue;
+        }
+
+        let is_v4 = batch.column_by_name("bucket_start_lat").is_some();
+        let slat_name = if is_v4 { "bucket_start_lat" } else { "start_lat" };
+        let slon_name = if is_v4 { "bucket_start_lon" } else { "start_lon" };
+        let salt_name = if is_v4 { "bucket_start_alt_m" } else { "start_alt_m" };
+        let elat_name = if is_v4 { "bucket_end_lat" } else { "end_lat" };
+        let elon_name = if is_v4 { "bucket_end_lon" } else { "end_lon" };
+        let ealt_name = if is_v4 { "bucket_end_alt_m" } else { "end_alt_m" };
+
+        let slat = batch
+            .column_by_name(slat_name)
+            .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
+        let slon = batch
+            .column_by_name(slon_name)
+            .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
+        let salt = batch
+            .column_by_name(salt_name)
+            .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+        let elat = batch
+            .column_by_name(elat_name)
+            .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
+        let elon = batch
+            .column_by_name(elon_name)
+            .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
+        let ealt = batch
+            .column_by_name(ealt_name)
+            .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+
+        let (Some(slat), Some(slon), Some(salt), Some(elat), Some(elon), Some(ealt)) =
+            (slat, slon, salt, elat, elon, ealt)
+        else {
+            continue;
+        };
+
+        let pidx = batch
+            .column_by_name("profile_idx")
+            .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
+        let dep = batch
+            .column_by_name("is_departure")
+            .and_then(|c| c.as_any().downcast_ref::<BooleanArray>());
+        let per = batch
+            .column_by_name("period")
+            .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
+        let spd = batch
+            .column_by_name("speed_kt")
+            .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+        let slen = batch
+            .column_by_name("segment_length_m")
+            .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+        let gctx = batch
+            .column_by_name("ground_context")
+            .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
+        let gkind = batch
+            .column_by_name("ground_ops_kind")
+            .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
+        let cw = batch
+            .column_by_name("count_weight")
+            .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+
+        // v2/v3-only columns
+        let fid = batch
+            .column_by_name("flight_id")
+            .and_then(|c| c.as_any().downcast_ref::<UInt64Array>());
+        let did = batch
+            .column_by_name("date_id")
+            .and_then(|c| c.as_any().downcast_ref::<Int16Array>());
+        let on_ground_col = batch
+            .column_by_name("on_ground")
+            .and_then(|c| c.as_any().downcast_ref::<BooleanArray>());
+
+        // v4-only columns
+        let peak_did = batch
+            .column_by_name("peak_date_id")
+            .and_then(|c| c.as_any().downcast_ref::<Int16Array>());
+        let bkind = batch
+            .column_by_name("bucket_kind")
+            .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
+        let fids_top = batch
+            .column_by_name("flight_ids_top")
+            .and_then(|c| c.as_any().downcast_ref::<ListArray>());
+
+        for i in 0..n {
+            let bucket_kind = bkind.map(|a| a.value(i)).unwrap_or(BUCKET_KIND_AIRBORNE);
+            let on_ground = if is_v4 {
+                bucket_kind != BUCKET_KIND_AIRBORNE
+            } else {
+                on_ground_col.map(|a| a.value(i)).unwrap_or(false)
+            };
+            let surface_model = is_v4 && bucket_kind == BUCKET_KIND_GROUND_SYNTH;
+            let flight_id: u64 = if let Some(fid) = fid {
+                fid.value(i)
+            } else if let Some(list) = fids_top {
+                if list.is_null(i) {
+                    0
+                } else {
+                    let sub = list.value(i);
+                    if sub.len() == 0 {
+                        0
+                    } else {
+                        sub.as_any()
+                            .downcast_ref::<UInt64Array>()
+                            .map(|a| a.value(0))
+                            .unwrap_or(0)
+                    }
+                }
+            } else {
+                0
+            };
+            let date_id = if let Some(did) = did {
+                did.value(i)
+            } else if let Some(pd) = peak_did {
+                pd.value(i)
+            } else {
+                0
+            };
+            let count_weight = cw.map(|a| a.value(i)).unwrap_or(1.0);
+
+            out.push(AircraftSegment {
+                flight_id,
+                profile_idx: pidx.map(|a| a.value(i)).unwrap_or(7),
+                is_departure: dep.map(|a| a.value(i)).unwrap_or(false),
+                on_ground,
+                period: per.map(|a| a.value(i)).unwrap_or(0),
+                date_id,
+                start_lat: slat.value(i),
+                start_lon: slon.value(i),
+                start_alt_m: salt.value(i),
+                end_lat: elat.value(i),
+                end_lon: elon.value(i),
+                end_alt_m: ealt.value(i),
+                speed_kt: spd.map(|a| a.value(i)).unwrap_or(0.0),
+                segment_length_m: slen.map(|a| a.value(i)).unwrap_or(0.0),
+                count_weight,
+                surface_model,
+                ground_context: gctx.map(|a| a.value(i)).unwrap_or(GROUND_CONTEXT_NONE),
+                ground_ops_kind: gkind.map(|a| a.value(i)).unwrap_or(GROUND_OPS_KIND_NONE),
+            });
+        }
+    }
+
+    out
+}
+
 // ── Query helpers: iterate over mmap'd Arrow columns directly ──
 
 /// Road segment query result (references into mmap'd data, minimal copy).

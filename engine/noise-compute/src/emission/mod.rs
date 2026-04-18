@@ -1,4 +1,5 @@
 pub mod aircraft;
+pub mod aircraft_bucket;
 pub mod industrial;
 pub mod railway;
 pub mod road;
