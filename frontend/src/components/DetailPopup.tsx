@@ -406,23 +406,37 @@ function MetadataRows({ c }: { c: Contributor }) {
       ['Source', roadTrafficSourceLabel(m.traffic_source, m.road_class)],
       ...(m.traffic_source === 'estimated_service_tree' ? [['', 'service-tree model']] : []),
       '',
-      'Daily traffic (both directions):',
-      ...(m.aadt_light_raw > 0 ? [['  Light', fmtInt(m.aadt_light_raw)]] : []),
-      ...(m.aadt_medium_raw > 0 ? [['  Medium', fmtInt(m.aadt_medium_raw)]] : []),
-      ...(m.aadt_heavy_raw > 0 ? [['  Heavy', fmtInt(m.aadt_heavy_raw)]] : []),
-      ...(m.aadt_moto_raw > 0 ? [['  Moto', fmtInt(m.aadt_moto_raw)]] : []),
-      { sep: true },
-      ['  Total', `${fmtInt(rawTotal)}/day`],
-      ...(hasAdjustment
+      ...(rawTotal > 0
         ? [
-            '',
-            'Adjustments (per OSM way):',
-            ...(m.oneway ? [['  One-way', '÷2 (dual-carriageway)']] : []),
-            ...(hasResidual ? [['  Other', `×${residualRatio.toFixed(2)} (access/lanes)`]] : []),
+            'Daily traffic (both directions):',
+            ...(m.aadt_light_raw > 0 ? [['  Light', fmtInt(m.aadt_light_raw)] as [string, string]] : []),
+            ...(m.aadt_medium_raw > 0 ? [['  Medium', fmtInt(m.aadt_medium_raw)] as [string, string]] : []),
+            ...(m.aadt_heavy_raw > 0 ? [['  Heavy', fmtInt(m.aadt_heavy_raw)] as [string, string]] : []),
+            ...(m.aadt_moto_raw > 0 ? [['  Moto', fmtInt(m.aadt_moto_raw)] as [string, string]] : []),
             { sep: true },
-            ['  Per way', `${fmtInt(effTotal)}/day`],
+            ['  Total', `${fmtInt(rawTotal)}/day`] as [string, string],
+            ...(hasAdjustment
+              ? [
+                  '',
+                  'Adjustments (per OSM way):',
+                  ...(m.oneway ? [['  One-way', '÷2 (dual-carriageway)'] as [string, string]] : []),
+                  ...(hasResidual ? [['  Other', `×${residualRatio.toFixed(2)} (access/lanes)`] as [string, string]] : []),
+                  { sep: true },
+                  ['  Per way', `${fmtInt(effTotal)}/day`] as [string, string],
+                ]
+              : []),
           ]
-        : []),
+        : [
+            '* class default applied (no census match)',
+            '',
+            'Daily traffic (both directions):',
+            ...(m.aadt_light_effective > 0 ? [['  Light', fmtInt(Math.round(m.aadt_light_effective))] as [string, string]] : []),
+            ...(m.aadt_medium_effective > 0 ? [['  Medium', fmtInt(Math.round(m.aadt_medium_effective))] as [string, string]] : []),
+            ...(m.aadt_heavy_effective > 0 ? [['  Heavy', fmtInt(Math.round(m.aadt_heavy_effective))] as [string, string]] : []),
+            ...(m.aadt_moto_effective > 0 ? [['  Moto', fmtInt(Math.round(m.aadt_moto_effective))] as [string, string]] : []),
+            { sep: true },
+            ['  Total', `~${fmtInt(Math.round(effTotal))}/day`] as [string, string],
+          ]),
       '',
       `(dominant segment, ${Math.round(m.dominant_distance_m)} m away)`,
     ] as TableRow[], 18, 12)
@@ -458,7 +472,9 @@ function MetadataRows({ c }: { c: Contributor }) {
         {lineRow(
           <MetricLabel term="aadt">Traffic</MetricLabel>,
           <DataPoint title="CNOSSOS vehicle flow" text={trafficText}>
-            {fmtCompact(rawTotal)}/day
+            {rawTotal > 0
+              ? `${fmtCompact(rawTotal)}/day`
+              : `~${fmtCompact(Math.round(effTotal))}/day*`}
           </DataPoint>,
         )}
         {lineRow(
