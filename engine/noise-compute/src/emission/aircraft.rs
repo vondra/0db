@@ -228,6 +228,10 @@ pub struct CpaResult {
     pub relative_alt_m: f64, // signed altitude at foot relative to receiver
     pub beta_deg: f64,       // elevation angle from ground plane
     pub seg_len_m: f64,      // segment length
+    pub t: f64,              // parametric projection (0..1 inside segment, else extrapolation)
+    pub foot_lat: f64,       // lat of perpendicular foot (for DEM lookup)
+    pub foot_lon: f64,       // lon of perpendicular foot
+    pub alt_at_foot_m: f64,  // absolute MSL altitude at foot (interpolated along segment line)
 }
 
 /// Compute CPA on INFINITE segment extension (Doc 29 §4.4.1).
@@ -257,35 +261,31 @@ pub fn compute_cpa(
     let seg_len_sq = dx * dx + dy * dy;
     let seg_len = seg_len_sq.sqrt().max(1.0);
 
-    // Unclamped parametric projection on the infinite line.
-    let t_unclamped = if seg_len_sq > 1e-6 {
+    // Parametric projection — NO CLAMP (infinite-line CPA per Doc 29).
+    let t = if seg_len_sq > 1e-6 {
         -(x1 * dx + y1 * dy) / seg_len_sq
     } else {
         0.5
     };
 
-    // Clamp to the observed segment for acoustic geometry: when the foot of
-    // perpendicular falls outside [0, 1] the aircraft actually left the track
-    // (e.g., touchdown = no flight past t=1). Using endpoint-clamped d_p,
-    // lateral, rel_alt, β prevents extrapolation creating fictitious close
-    // passes at touchdown-adjacent receivers. Unclamped q is still used for
-    // ΔF (the finite-segment dipole correction integrates along the full line).
-    let t_geom = t_unclamped.clamp(0.0, 1.0);
-
-    let cx = x1 + t_geom * dx;
-    let cy = y1 + t_geom * dy;
+    let cx = x1 + t * dx;
+    let cy = y1 + t * dy;
     let lateral_m = (cx * cx + cy * cy).sqrt();
 
-    let alt_at_foot = s1_alt_m + t_geom * (s2_alt_m - s1_alt_m);
+    let alt_at_foot = s1_alt_m + t * (s2_alt_m - s1_alt_m);
     let relative_alt_m = alt_at_foot - rx_elev_m;
     let d_p_m = (lateral_m * lateral_m + relative_alt_m * relative_alt_m).sqrt();
-    let q_m = t_unclamped * seg_len;
+    let q_m = t * seg_len;
 
     let beta_deg = if lateral_m > 0.01 || relative_alt_m.abs() > 0.01 {
         relative_alt_m.atan2(lateral_m).to_degrees()
     } else {
         90.0
     };
+
+    // Foot lat/lon: reverse-project cx, cy (meters from receiver) to degrees.
+    let foot_lat = rx_lat + cy / M_PER_DEG_LAT;
+    let foot_lon = rx_lon + cx / m_per_deg_lon;
 
     CpaResult {
         q_m,
@@ -294,6 +294,10 @@ pub fn compute_cpa(
         relative_alt_m,
         beta_deg,
         seg_len_m: seg_len,
+        t,
+        foot_lat,
+        foot_lon,
+        alt_at_foot_m: alt_at_foot,
     }
 }
 
@@ -1762,6 +1766,7 @@ pub fn segment_sel(
     rx_lat: f64,
     rx_lon: f64,
     rx_elev_m: f64,
+    rasters: &dyn RasterSampler,
 ) -> Option<(f64, CpaResult)> {
     segment_sel_with_overrides(
         seg,
@@ -1771,6 +1776,7 @@ pub fn segment_sel(
         seg.start_alt_m as f64,
         seg.end_alt_m as f64,
         false,
+        Some(rasters),
     )
 }
 
@@ -1784,7 +1790,16 @@ pub fn segment_sel_airport_ground(
     let start_alt_m =
         (seg.start_alt_m as f64).max(rasters.elevation(seg.start_lat, seg.start_lon) + 4.0);
     let end_alt_m = (seg.end_alt_m as f64).max(rasters.elevation(seg.end_lat, seg.end_lon) + 4.0);
-    segment_sel_with_overrides(seg, rx_lat, rx_lon, rx_elev_m, start_alt_m, end_alt_m, true)
+    segment_sel_with_overrides(
+        seg,
+        rx_lat,
+        rx_lon,
+        rx_elev_m,
+        start_alt_m,
+        end_alt_m,
+        true,
+        None,
+    )
 }
 
 fn segment_sel_with_overrides(
@@ -1795,6 +1810,7 @@ fn segment_sel_with_overrides(
     start_alt_m: f64,
     end_alt_m: f64,
     airport_ground_mode: bool,
+    rasters: Option<&dyn RasterSampler>,
 ) -> Option<(f64, CpaResult)> {
     let profile = &PROFILES[seg.profile_idx.min(7) as usize];
 
@@ -1814,6 +1830,22 @@ fn segment_sel_with_overrides(
     // with profile-aware distance: LightGA ~6 km, jets capped at 10 km.
     if cpa.d_p_m > profile.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, seg.is_departure) {
         return None;
+    }
+
+    // Filter D: reject per-receiver sub-terrain extrapolation.
+    // When the CPA foot falls outside the observed segment (t ∉ [0,1]) and the
+    // linearly-extrapolated altitude at that foot is > 30 m below terrain, the
+    // aircraft was never there — this is a straight-line projection past the
+    // real trajectory. Kept at 30 m so ship halls / below-hill receivers with
+    // true low-altitude flyovers aren't rejected. Airport-ground mode skips
+    // (rasters = None) since short taxi/takeoff segments are already matched.
+    if let Some(r) = rasters {
+        if cpa.t < 0.0 || cpa.t > 1.0 {
+            let terrain = r.elevation(cpa.foot_lat, cpa.foot_lon);
+            if cpa.alt_at_foot_m < terrain - 30.0 {
+                return None;
+            }
+        }
     }
 
     // NPD lookup
@@ -2034,7 +2066,7 @@ mod tests {
             count_weight: 1.0,
             surface_model: false,
         };
-        let result = segment_sel(&seg, 50.005, 14.005, 300.0);
+        let result = segment_sel(&seg, 50.005, 14.005, 300.0, &FlatGround);
         assert!(result.is_some(), "should compute SEL for nearby segment");
         let (sel, cpa) = result.unwrap();
         assert!(sel > 50.0 && sel < 110.0, "SEL = {sel}");
@@ -2067,7 +2099,7 @@ mod tests {
             count_weight: 1.0,
             surface_model: false,
         };
-        let result = segment_sel(&seg, 50.0, 14.0, 300.0);
+        let result = segment_sel(&seg, 50.0, 14.0, 300.0, &FlatGround);
         assert!(result.is_none(), "should be None for far segment");
     }
 
@@ -2269,7 +2301,7 @@ mod tests {
             surface_model: false,
         };
 
-        let normal = segment_sel(&seg, 50.0004, 14.0, 254.0)
+        let normal = segment_sel(&seg, 50.0004, 14.0, 254.0, &FlatGround)
             .expect("baseline airport segment should still compute")
             .0;
         let corrected = segment_sel_airport_ground(&seg, 50.0004, 14.0, 254.0, &FlatGround)

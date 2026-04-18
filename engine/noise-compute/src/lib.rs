@@ -1803,7 +1803,7 @@ fn compute_aircraft(
             continue;
         }
 
-        let (sel, cpa) = match aircraft::segment_sel(seg, receiver.lat, receiver.lon, rx_elev) {
+        let (sel, cpa) = match aircraft::segment_sel(seg, receiver.lat, receiver.lon, rx_elev, rasters) {
             Some(v) => v,
             None => continue,
         };
