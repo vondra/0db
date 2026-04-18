@@ -1,8 +1,8 @@
 //! source-reader: mmap'd Arrow IPC reader for noise popup.
 //! Zero-copy: data stays in mmap'd pages, queries iterate directly over Arrow columns.
 
-mod geo;
-mod hex_store;
+pub mod geo;
+pub mod hex_store;
 
 #[cfg(feature = "node")]
 use napi::{Error, Status};
@@ -123,7 +123,7 @@ pub fn collect_sources_at_point(
 /// Shared source collection logic. Takes pre-loaded hex data.
 /// Both `collect_sources_at_point` and `query_noise_at_point` delegate here.
 /// NACE codes are read directly from industrial.arrow nace_4digit column.
-fn collect_from_hex_data(
+pub fn collect_from_hex_data(
     hex_data: &[&hex_store::HexData],
     lat: f64,
     lng: f64,
