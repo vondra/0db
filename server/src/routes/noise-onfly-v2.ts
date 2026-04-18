@@ -112,6 +112,7 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
           total_lden_free: raw.total_free?.lden_db ?? null,
           sources,
           top_contributors: topContributors,
+          other_sources_lden: raw.other_sources_lden ?? null,
           compute_time_ms: elapsed,
         })
       } catch (err) {

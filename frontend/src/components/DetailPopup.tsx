@@ -229,6 +229,7 @@ export interface NoiseComputeData {
   total_lden_free: number | null
   sources: SourceSummary[]
   top_contributors: Contributor[]
+  other_sources_lden: number | null
   compute_time_ms: number
 }
 
@@ -952,6 +953,12 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
             {(maxSources ? data.top_contributors.slice(0, maxSources) : data.top_contributors).map((c, i) => (
               <ContributorRow key={`${c.source_type}-${c.osm_id}-${i}`} c={c} onToggle={onHighlight} />
             ))}
+            {data.other_sources_lden !== null && Number.isFinite(data.other_sources_lden) && (
+              <div className="flex items-center justify-between px-1 py-1 border-t border-border/40 text-[11px] text-muted-foreground">
+                <span className="italic">Other sources</span>
+                <span className="font-mono">{data.other_sources_lden.toFixed(1)} dB</span>
+              </div>
+            )}
           </div>
         </>
       ) : (

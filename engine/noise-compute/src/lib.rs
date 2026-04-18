@@ -214,7 +214,9 @@ pub fn compute_at_point_with_airports(
             .collect::<Vec<_>>(),
     );
 
-    all_contributors = present::finalize_popup_contributors(all_contributors, 30);
+    let finalized = present::finalize_popup_contributors(all_contributors, 30);
+    all_contributors = finalized.shown;
+    let other_sources_lden = finalized.other_lden_db;
 
     // Confidence assessment
     let has_census = roads.iter().any(|r| r.traffic_source == 1);
@@ -237,6 +239,7 @@ pub fn compute_at_point_with_airports(
         total,
         sources: source_results,
         contributors: all_contributors,
+        other_sources_lden,
         confidence: conf,
         aircraft_detail: aircraft_band_data,
     }
