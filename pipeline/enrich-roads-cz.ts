@@ -11,8 +11,12 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
+
+const MY_DATASET_ID = DATASETS_BY_KEY.get('cz-rsd-scitani')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -144,12 +148,29 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
     const endLon = table.getChild('end_lon')!
     const roadClassCol = table.getChild('road_class')
 
-    // New traffic columns
+    // Seed output columns from existing Arrow state; priority rule decides per row.
+    const existingAadtLight = table.getChild('aadt_light')
+    const existingAadtMedium = table.getChild('aadt_medium')
+    const existingAadtHeavy = table.getChild('aadt_heavy')
+    const existingAadtMoto = table.getChild('aadt_moto')
+    const existingTrafficSource = table.getChild('traffic_source')
+    const existingDatasetId = table.getChild('roads_dataset_id')
+
     const aadtLight = new Int32Array(n)
     const aadtMedium = new Int32Array(n)
     const aadtHeavy = new Int32Array(n)
     const aadtMoto = new Int32Array(n)
     const trafficSource = new Uint8Array(n)
+    const datasetId = new Uint16Array(n)
+
+    for (let i = 0; i < n; i++) {
+      aadtLight[i] = existingAadtLight ? (existingAadtLight.get(i) as number) ?? 0 : 0
+      aadtMedium[i] = existingAadtMedium ? (existingAadtMedium.get(i) as number) ?? 0 : 0
+      aadtHeavy[i] = existingAadtHeavy ? (existingAadtHeavy.get(i) as number) ?? 0 : 0
+      aadtMoto[i] = existingAadtMoto ? (existingAadtMoto.get(i) as number) ?? 0 : 0
+      trafficSource[i] = existingTrafficSource ? (existingTrafficSource.get(i) as number) ?? 0 : 0
+      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+    }
 
     let hexMatched = 0
 
@@ -157,6 +178,9 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
       const roadClass = roadClassCol ? (roadClassCol.get(i) as number) : 5
       if (!matchByClass.has(roadClass)) matchByClass.set(roadClass, { matched: 0, total: 0 })
       matchByClass.get(roadClass)!.total++
+
+      // Priority gate: if a higher-priority dataset already owns this row, leave it.
+      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
 
       // Ref match is MANDATORY — no proximity-only fallback
       const osmRef = refCol ? (refCol.get(i) as string | null) : null
@@ -182,6 +206,7 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
       // Max 10km — avoid wrong matches on same-numbered roads far away
       if (bestDist > 10_000) continue
 
+      // Whole-row atomic write — payload + dataset_id together.
       // Do NOT halve for oneway — ŘSD = bidirectional total,
       // pipeline-worker already applies oneway_factor=0.5 (arrow.rs:81)
       aadtLight[i] = best.aadt_light
@@ -189,6 +214,7 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
       aadtHeavy[i] = best.aadt_heavy
       aadtMoto[i] = best.aadt_moto
       trafficSource[i] = 1
+      datasetId[i] = MY_DATASET_ID
       hexMatched++
       matchByClass.get(roadClass)!.matched++
     }
@@ -207,6 +233,7 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
     columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
     columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
     columns['traffic_source'] = vectorFromArray(trafficSource, new Uint8())
+    columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
 
     const newTable = makeTable(columns)
     // MUST use 'file' format — Rust FileReader requires ARROW1 magic bytes.
