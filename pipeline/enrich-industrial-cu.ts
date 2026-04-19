@@ -32,15 +32,16 @@
  *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-cu.ts
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC } from 'apache-arrow'
+import { tableFromIPC, makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/cu`)
-const NACE_LOOKUP_PATH = resolve(import.meta.dirname, `../data/prepared/nace-lookup.json`)
 
 const CU_BBOX: [number, number, number, number] = [19.8, -85.0, 23.3, -74.1]
 
@@ -98,11 +99,7 @@ async function main() {
     grid.get(key)!.push(s)
   }
 
-  let existing: Record<string, any> = {}
-  if (existsSync(NACE_LOOKUP_PATH)) {
-    try { existing = JSON.parse(readFileSync(NACE_LOOKUP_PATH, 'utf-8')) } catch {}
-  }
-  console.log(`\n  Existing nace-lookup entries: ${Object.keys(existing).length}`)
+  const MY_DATASET_ID = DATASETS_BY_KEY.get('cu-industrial')!.id
 
   const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
   const hexDirs: string[] = []
@@ -115,56 +112,80 @@ async function main() {
   console.log(`  CU-bbox hexes with industrial.arrow: ${hexDirs.length}\n`)
 
   let totalOsm = 0, matched = 0, newEntries = 0
-  const lookup: Record<string, any> = { ...existing }
 
   for (const hex of hexDirs) {
+    const arrowPath = resolve(H3R4_DIR, hex, 'industrial.arrow')
+    if (!existsSync(arrowPath)) continue
     try {
-      const buf = readFileSync(resolve(H3R4_DIR, hex, 'industrial.arrow'))
-      const table = tableFromIPC(buf)
-      const n = table.numRows
-      if (n === 0) continue
-      const osmId = table.getChild('osm_id')
-      const centroidLat = table.getChild('centroid_lat') ?? table.getChild('lat')
-      const centroidLon = table.getChild('centroid_lon') ?? table.getChild('lon')
-      if (!osmId || !centroidLat || !centroidLon) continue
-      for (let i = 0; i < n; i++) {
-        totalOsm++
-        const lat = centroidLat.get(i) as number
-        const lon = centroidLon.get(i) as number
-        if (lat == null || lon == null) continue
-        if (!inCuba(lat, lon)) continue
-        const searchRadius = 2000
-        const baseLat = Math.floor(lat * 10)
-        const baseLon = Math.floor(lon * 10)
-        let best: IndSite | null = null
-        let bestDist = searchRadius
-        for (let dy = -2; dy <= 2; dy++) {
-          for (let dx = -2; dx <= 2; dx++) {
-            const cell = grid.get(`${baseLat + dy}_${baseLon + dx}`)
-            if (!cell) continue
-            for (const s of cell) {
-              const d = flatDistM(lat, lon, s.lat, s.lon)
-              if (d < bestDist) { bestDist = d; best = s }
+      await withArrowWrite(arrowPath, table => {
+        const n = table.numRows
+        if (n === 0) return table
+        const osmId = table.getChild('osm_id')
+        const centroidLat = table.getChild('centroid_lat') ?? table.getChild('lat')
+        const centroidLon = table.getChild('centroid_lon') ?? table.getChild('lon')
+        const existingNaceCol = table.getChild('nace_4digit')
+        const existingDatasetIdCol = table.getChild('industrial_dataset_id')
+        if (!osmId || !centroidLat || !centroidLon) return table
+        const newNace = new Uint16Array(n)
+        const newDatasetId = new Uint16Array(n)
+        const existingDatasetId = new Uint16Array(n)
+        for (let j = 0; j < n; j++) {
+          newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
+          existingDatasetId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
+          newDatasetId[j] = existingDatasetId[j]
+        }
+        let anyChanged = false
+        for (let i = 0; i < n; i++) {
+          totalOsm++
+          const lat = centroidLat.get(i) as number
+          const lon = centroidLon.get(i) as number
+          if (lat == null || lon == null) continue
+          if (!inCuba(lat, lon)) continue
+          const searchRadius = 2000
+          const baseLat = Math.floor(lat * 10)
+          const baseLon = Math.floor(lon * 10)
+          let best: IndSite | null = null
+          let bestDist = searchRadius
+          for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
+              const cell = grid.get(`${baseLat + dy}_${baseLon + dx}`)
+              if (!cell) continue
+              for (const s of cell) {
+                const d = flatDistM(lat, lon, s.lat, s.lon)
+                if (d < bestDist) { bestDist = d; best = s }
+              }
+            }
+          }
+          if (best) {
+            const nace6 = best.fuel.includes('solar') ? 359900 : best.fuel.includes('wind') ? 351200 : 351100
+            const nace4 = Math.floor(nace6 / 100)
+            const existingId = existingDatasetId[i]
+            if (shouldOverwrite(existingId, MY_DATASET_ID)) {
+              newNace[i] = nace4
+              newDatasetId[i] = MY_DATASET_ID
+              if (existingId === 0) newEntries++
+              matched++
+              anyChanged = true
             }
           }
         }
-        if (best) {
-          const id = String(osmId.get(i))
-          if (!lookup[id]) newEntries++
-          const naceCode = best.fuel.includes('solar') ? '359900' : best.fuel.includes('wind') ? '351200' : '351100'
-          lookup[id] = { nace: naceCode, name: best.name, source: `GEM CU (${best.fuel})` }
-          matched++
+        if (!anyChanged) return table
+        const columns: Record<string, any> = {}
+        for (const field of table.schema.fields) {
+          if (field.name === 'nace_4digit' || field.name === 'industrial_dataset_id') continue
+          columns[field.name] = table.getChild(field.name)!
         }
-      }
+        columns['nace_4digit'] = vectorFromArray(Array.from(newNace), new Uint16())
+        columns['industrial_dataset_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
+        return makeTable(columns)
+      })
     } catch {}
   }
 
-  writeFileSync(NACE_LOOKUP_PATH, JSON.stringify(lookup, null, 2))
   console.log(`=== Results ===`)
   console.log(`  OSM industrial sites scanned: ${totalOsm.toLocaleString()}`)
   console.log(`  Matched:                      ${matched.toLocaleString()}`)
-  console.log(`  New nace-lookup entries:      ${newEntries.toLocaleString()}`)
-  console.log(`  Total nace-lookup entries:    ${Object.keys(lookup).length.toLocaleString()}`)
+  console.log(`  New/updated arrow rows:       ${newEntries.toLocaleString()}`)
 }
 
 main().catch(err => { console.error('Error:', err); process.exit(1) })

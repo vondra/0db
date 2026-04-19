@@ -38,15 +38,16 @@
  *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-co.ts
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC } from 'apache-arrow'
+import { tableFromIPC, makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/co`)
-const NACE_LOOKUP_PATH = resolve(import.meta.dirname, `../data/prepared/nace-lookup.json`)
 
 const CO_BBOX: [number, number, number, number] = [-4.3, -82.0, 13.5, -66.8]
 
@@ -258,11 +259,7 @@ async function main() {
   for (const p of oilGasPolys) registerPoly(p)
   console.log(`  Polygon grid cells: ${polyGrid.size}`)
 
-  let existing: Record<string, any> = {}
-  if (existsSync(NACE_LOOKUP_PATH)) {
-    try { existing = JSON.parse(readFileSync(NACE_LOOKUP_PATH, 'utf-8')) } catch {}
-  }
-  console.log(`  Existing nace-lookup entries: ${Object.keys(existing).length}`)
+  const MY_DATASET_ID = DATASETS_BY_KEY.get('co-industrial')!.id
 
   const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
   const hexDirs: string[] = []
@@ -276,76 +273,103 @@ async function main() {
 
   let totalOsm = 0, matched = 0, newEntries = 0
   const bySource: Record<string, number> = {}
-  const lookup: Record<string, any> = { ...existing }
 
   for (const hex of hexDirs) {
+    const arrowPath = resolve(H3R4_DIR, hex, 'industrial.arrow')
+    if (!existsSync(arrowPath)) continue
     try {
-      const buf = readFileSync(resolve(H3R4_DIR, hex, 'industrial.arrow'))
-      const table = tableFromIPC(buf)
-      const n = table.numRows
-      if (n === 0) continue
-      const osmId = table.getChild('osm_id')
-      const centroidLat = table.getChild('centroid_lat') ?? table.getChild('lat')
-      const centroidLon = table.getChild('centroid_lon') ?? table.getChild('lon')
-      if (!osmId || !centroidLat || !centroidLon) continue
-
-      for (let i = 0; i < n; i++) {
-        totalOsm++
-        const lat = centroidLat.get(i) as number
-        const lon = centroidLon.get(i) as number
-        if (lat == null || lon == null) continue
-        if (!inBbox(lat, lon, CO_BBOX) || inExcluded(lat, lon)) continue
-
-        let chosen: { nace: string; name: string; source: string } | null = null
-
-        // 1. Point-in-polygon for ANM mining + ANH oil/gas
-        const polyKey = `${Math.floor(lat * 2)}_${Math.floor(lon * 2)}`
-        const cell = polyGrid.get(polyKey)
-        if (cell) {
-          for (const p of cell) {
-            if (lat < p.bbox[0] || lat > p.bbox[2] || lon < p.bbox[1] || lon > p.bbox[3]) continue
-            // Test against outer ring of first polygon
-            if (pointInRing(lat, lon, p.rings[0])) {
-              chosen = { nace: p.nace, name: p.name, source: p.source }
-              break
-            }
-          }
+      await withArrowWrite(arrowPath, table => {
+        const n = table.numRows
+        if (n === 0) return table
+        const osmId = table.getChild('osm_id')
+        const centroidLat = table.getChild('centroid_lat') ?? table.getChild('lat')
+        const centroidLon = table.getChild('centroid_lon') ?? table.getChild('lon')
+        const existingNaceCol = table.getChild('nace_4digit')
+        const existingDatasetIdCol = table.getChild('industrial_dataset_id')
+        if (!osmId || !centroidLat || !centroidLon) return table
+        const newNace = new Uint16Array(n)
+        const newDatasetId = new Uint16Array(n)
+        const existingDatasetId = new Uint16Array(n)
+        for (let j = 0; j < n; j++) {
+          newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
+          existingDatasetId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
+          newDatasetId[j] = existingDatasetId[j]
         }
+        let anyChanged = false
 
-        // 2. Nearest GEM power plant within 2 km
-        if (!chosen) {
-          const baseLat = Math.floor(lat * 10)
-          const baseLon = Math.floor(lon * 10)
-          let best: Site | null = null
-          let bestDist = 2000
-          for (let dy = -2; dy <= 2; dy++) {
-            for (let dx = -2; dx <= 2; dx++) {
-              const c = pointGrid.get(`${baseLat + dy}_${baseLon + dx}`)
-              if (!c) continue
-              for (const s of c) {
-                const d = flatDistM(lat, lon, s.lat, s.lon)
-                if (d < bestDist) { bestDist = d; best = s }
+        for (let i = 0; i < n; i++) {
+          totalOsm++
+          const lat = centroidLat.get(i) as number
+          const lon = centroidLon.get(i) as number
+          if (lat == null || lon == null) continue
+          if (!inBbox(lat, lon, CO_BBOX) || inExcluded(lat, lon)) continue
+
+          let chosen: { nace: string; source: string } | null = null
+
+          // 1. Point-in-polygon for ANM mining + ANH oil/gas
+          const polyKey = `${Math.floor(lat * 2)}_${Math.floor(lon * 2)}`
+          const cell = polyGrid.get(polyKey)
+          if (cell) {
+            for (const p of cell) {
+              if (lat < p.bbox[0] || lat > p.bbox[2] || lon < p.bbox[1] || lon > p.bbox[3]) continue
+              if (pointInRing(lat, lon, p.rings[0])) {
+                chosen = { nace: p.nace, source: p.source }
+                break
               }
             }
           }
-          if (best) {
-            chosen = { nace: best.nace, name: best.name, source: best.source }
+
+          // 2. Nearest GEM power plant within 2 km
+          if (!chosen) {
+            const baseLat = Math.floor(lat * 10)
+            const baseLon = Math.floor(lon * 10)
+            let best: Site | null = null
+            let bestDist = 2000
+            for (let dy = -2; dy <= 2; dy++) {
+              for (let dx = -2; dx <= 2; dx++) {
+                const c = pointGrid.get(`${baseLat + dy}_${baseLon + dx}`)
+                if (!c) continue
+                for (const s of c) {
+                  const d = flatDistM(lat, lon, s.lat, s.lon)
+                  if (d < bestDist) { bestDist = d; best = s }
+                }
+              }
+            }
+            if (best) {
+              chosen = { nace: best.nace, source: best.source }
+            }
+          }
+
+          if (chosen) {
+            // ANM mining yields 2-digit NACE codes ('05', '07', '08'); pad to 6-digit before truncating.
+            const nace6Raw = chosen.nace.length < 6 ? (chosen.nace + '0000').substring(0, 6) : chosen.nace
+            const nace6 = parseInt(nace6Raw, 10) || 0
+            const nace4 = Math.floor(nace6 / 100)
+            const existingId = existingDatasetId[i]
+            if (shouldOverwrite(existingId, MY_DATASET_ID)) {
+              newNace[i] = nace4
+              newDatasetId[i] = MY_DATASET_ID
+              if (existingId === 0) newEntries++
+              matched++
+              anyChanged = true
+              const family = chosen.source.split(' ')[0]
+              bySource[family] = (bySource[family] || 0) + 1
+            }
           }
         }
-
-        if (chosen) {
-          const id = String(osmId.get(i))
-          if (!lookup[id]) newEntries++
-          lookup[id] = chosen
-          matched++
-          const family = chosen.source.split(' ')[0]
-          bySource[family] = (bySource[family] || 0) + 1
+        if (!anyChanged) return table
+        const columns: Record<string, any> = {}
+        for (const field of table.schema.fields) {
+          if (field.name === 'nace_4digit' || field.name === 'industrial_dataset_id') continue
+          columns[field.name] = table.getChild(field.name)!
         }
-      }
+        columns['nace_4digit'] = vectorFromArray(Array.from(newNace), new Uint16())
+        columns['industrial_dataset_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
+        return makeTable(columns)
+      })
     } catch {}
   }
 
-  writeFileSync(NACE_LOOKUP_PATH, JSON.stringify(lookup, null, 2))
   console.log(`=== Results ===`)
   console.log(`  OSM industrial sites scanned: ${totalOsm.toLocaleString()}`)
   console.log(`  Matched:                      ${matched.toLocaleString()}`)
@@ -353,8 +377,7 @@ async function main() {
   for (const [k, v] of Object.entries(bySource).sort((a, b) => b[1] - a[1])) {
     console.log(`    ${k.padEnd(15)} ${v}`)
   }
-  console.log(`  New nace-lookup entries:      ${newEntries.toLocaleString()}`)
-  console.log(`  Total nace-lookup entries:    ${Object.keys(lookup).length.toLocaleString()}`)
+  console.log(`  New/updated arrow rows:       ${newEntries.toLocaleString()}`)
 }
 
 main().catch(err => { console.error('Error:', err); process.exit(1) })
