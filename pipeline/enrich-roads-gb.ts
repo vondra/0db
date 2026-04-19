@@ -18,8 +18,12 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
-import { tableFromIPC, tableToIPC, vectorFromArray, Int32, Uint8 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, Int32, Uint8, Uint16 } from 'apache-arrow'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
+
+const MY_DATASET_ID = DATASETS_BY_KEY.get('gb-national-roads')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -175,6 +179,7 @@ async function enrichArrows(points: CountPoint[]) {
     const endLats = table.getChild('end_lat')
     const endLons = table.getChild('end_lon')
     const existingSource = table.getChild('traffic_source')
+    const existingDatasetId = table.getChild('roads_dataset_id')
 
     if (!startLats || !startLons) continue
 
@@ -183,6 +188,7 @@ async function enrichArrows(points: CountPoint[]) {
     const aadtHeavy = new Int32Array(numRows)
     const aadtMoto = new Int32Array(numRows)
     const trafficSource = new Uint8Array(numRows)
+    const datasetId = new Uint16Array(numRows)
     let hexMatched = 0
 
     for (let i = 0; i < numRows; i++) {
@@ -194,6 +200,7 @@ async function enrichArrows(points: CountPoint[]) {
         aadtHeavy[i] = table.getChild('aadt_heavy')?.get(i) ?? 0
         aadtMoto[i] = table.getChild('aadt_moto')?.get(i) ?? 0
         trafficSource[i] = 1
+        datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
         preserved++
         continue
       }
@@ -219,6 +226,7 @@ async function enrichArrows(points: CountPoint[]) {
         aadtHeavy[i] = best.aadt_heavy
         aadtMoto[i] = best.aadt_moto
         trafficSource[i] = 1
+        datasetId[i] = MY_DATASET_ID
         hexMatched++
         matched++
       }
@@ -227,7 +235,7 @@ async function enrichArrows(points: CountPoint[]) {
     if (hexMatched > 0) {
       const columns: Record<string, any> = {}
       for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'traffic_source'].includes(field.name)) continue
+        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'traffic_source', 'roads_dataset_id'].includes(field.name)) continue
         columns[field.name] = table.getChild(field.name)!
       }
       columns['aadt_light'] = vectorFromArray(Array.from(aadtLight), new Int32())
@@ -235,6 +243,8 @@ async function enrichArrows(points: CountPoint[]) {
       columns['aadt_heavy'] = vectorFromArray(Array.from(aadtHeavy), new Int32())
       columns['aadt_moto'] = vectorFromArray(Array.from(aadtMoto), new Int32())
       columns['traffic_source'] = vectorFromArray(Array.from(trafficSource), new Uint8())
+
+      columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
       const enriched = new table.constructor(columns)
       writeFileSync(arrowPath, tableToIPC(enriched, 'file'))
       hexesUpdated++

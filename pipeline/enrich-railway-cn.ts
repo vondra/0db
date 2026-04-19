@@ -69,8 +69,12 @@
 
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
+
+const MY_DATASET_ID = DATASETS_BY_KEY.get('cn-national-railway')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -306,12 +310,16 @@ async function main() {
     const serviceCol = table.getChild('service')
     const existingPax = table.getChild('trains_passenger')
     const existingFrt = table.getChild('trains_freight')
+    const existingDatasetId = table.getChild('railways_dataset_id')
 
     const trainsPax = new Int32Array(n)
     const trainsFrt = new Int32Array(n)
+    const datasetId = new Uint16Array(n)
     for (let i = 0; i < n; i++) {
       trainsPax[i] = (existingPax?.get(i) as number) ?? 0
       trainsFrt[i] = (existingFrt?.get(i) as number) ?? 0
+
+      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
     }
     totalRails += n
 
@@ -319,7 +327,7 @@ async function main() {
     for (let i = 0; i < n; i++) {
       const service = (serviceCol?.get(i) as number) ?? 0
       if (service > 0) { skippedService++; continue }
-      if (trainsPax[i] > 0 || trainsFrt[i] > 0) { alreadyEnriched++; continue }
+      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -347,6 +355,7 @@ async function main() {
       }
       trainsPax[i] = pax
       trainsFrt[i] = frt
+      datasetId[i] = MY_DATASET_ID
       hexMatched++
     }
 
@@ -358,6 +367,8 @@ async function main() {
       }
       columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
       columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
+
+      columns['railways_dataset_id'] = vectorFromArray(datasetId, new Uint16())
       const newTable = makeTable(columns)
       writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
       hexesUpdated++

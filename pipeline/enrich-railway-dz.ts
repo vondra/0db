@@ -56,8 +56,12 @@
 
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
+
+const MY_DATASET_ID = DATASETS_BY_KEY.get('dz-national-railway')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -157,19 +161,23 @@ async function main() {
 
     const existingPax = table.getChild('trains_passenger')
     const existingFrt = table.getChild('trains_freight')
+    const existingDatasetId = table.getChild('railways_dataset_id')
 
     const pax = new Int32Array(n)
     const frt = new Int32Array(n)
+    const datasetId = new Uint16Array(n)
     for (let i = 0; i < n; i++) {
       pax[i] = (existingPax?.get(i) as number) ?? 0
       frt[i] = (existingFrt?.get(i) as number) ?? 0
+
+      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
     }
 
     totalSeg += n
     let hexMatched = 0
 
     for (let i = 0; i < n; i++) {
-      if (pax[i] > 0 || frt[i] > 0) { alreadyEnriched++; continue }
+      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -184,6 +192,7 @@ async function main() {
       const c = classifyRail(midLat, midLon)
       pax[i] = c.pax
       frt[i] = c.frt
+      datasetId[i] = MY_DATASET_ID
       zoneCounts[c.zone] = (zoneCounts[c.zone] || 0) + 1
       hexMatched++
       matched++
@@ -192,11 +201,13 @@ async function main() {
     if (hexMatched > 0) {
       const columns: Record<string, any> = {}
       for (const field of table.schema.fields) {
-        if (['trains_passenger', 'trains_freight'].includes(field.name)) continue
+        if (['trains_passenger', 'trains_freight', 'railways_dataset_id'].includes(field.name)) continue
         columns[field.name] = table.getChild(field.name)!
       }
       columns['trains_passenger'] = vectorFromArray(pax, new Int32())
       columns['trains_freight'] = vectorFromArray(frt, new Int32())
+
+      columns['railways_dataset_id'] = vectorFromArray(datasetId, new Uint16())
       const newTable = makeTable(columns)
       writeFileSync(rp, Buffer.from(tableToIPC(newTable, 'file')))
       hexesUpdated++

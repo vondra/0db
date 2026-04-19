@@ -43,7 +43,9 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { createReadStream } from 'node:fs'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite } from './lib/provenance.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -274,7 +276,12 @@ function enrichHexes(lookup: CensusLookup, allSegments: CensusSegment[]): void {
     const aadtMedium = new Int32Array(n)
     const aadtHeavy = new Int32Array(n)
     const aadtMoto = new Int32Array(n)
+    const existingDatasetId = table.getChild('roads_dataset_id')
     const trafficSource = new Uint8Array(n)
+    const datasetId = new Uint16Array(n)
+    for (let i = 0; i < n; i++) {
+      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+    }
 
     let hexMatched = 0
 
@@ -313,6 +320,7 @@ function enrichHexes(lookup: CensusLookup, allSegments: CensusSegment[]): void {
       aadtHeavy[i] = best.aadt_heavy
       aadtMoto[i] = 0
       trafficSource[i] = 1
+      datasetId[i] = MY_DATASET_ID
       hexMatched++
       matchByClass.get(roadClass)!.matched++
     }
@@ -328,6 +336,8 @@ function enrichHexes(lookup: CensusLookup, allSegments: CensusSegment[]): void {
     columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
     columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
     columns['traffic_source'] = vectorFromArray(trafficSource, new Uint8())
+
+    columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
 
     const newTable = makeTable(columns)
     writeFileSync(roadsPath, Buffer.from(tableToIPC(newTable, 'file')))
@@ -463,6 +473,8 @@ async function main() {
 
 // Clean up temp file
 import { unlinkSync } from 'node:fs'
+
+const MY_DATASET_ID = DATASETS_BY_KEY.get('jp-national-roads')!.id
 try { unlinkSync(resolve(import.meta.dirname, 'check_roads_tmp.ts')) } catch {}
 
 main().catch(err => { console.error('Error:', err); process.exit(1) })

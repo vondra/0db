@@ -25,8 +25,12 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
+
+const MY_DATASET_ID = DATASETS_BY_KEY.get('it-national-roads')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -243,21 +247,24 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
     // Read existing enrichment columns
     const existingAadtLight = table.getChild('aadt_light')
     const existingTrafficSource = table.getChild('traffic_source')
+    const existingDatasetId = table.getChild('roads_dataset_id')
 
     const aadtLight = new Int32Array(n)
     const trafficSource = new Uint8Array(n)
+    const datasetId = new Uint16Array(n)
 
     // Preserve existing enrichments
     for (let i = 0; i < n; i++) {
       aadtLight[i] = existingAadtLight ? (existingAadtLight.get(i) as number ?? 0) : 0
       trafficSource[i] = existingTrafficSource ? (existingTrafficSource.get(i) as number ?? 0) : 0
+      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
     }
 
     let hexMatched = 0
 
     for (let i = 0; i < n; i++) {
       // Skip already enriched
-      if (trafficSource[i] > 0) continue
+      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
 
       const roadClass = roadClassCol ? (roadClassCol.get(i) as number) : 5
       if (!matchByClass.has(roadClass)) matchByClass.set(roadClass, { matched: 0, total: 0 })
@@ -289,6 +296,7 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
 
       aadtLight[i] = best.aadt
       trafficSource[i] = 1
+      datasetId[i] = MY_DATASET_ID
       hexMatched++
       matchByClass.get(roadClass)!.matched++
     }
@@ -303,6 +311,8 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
     }
     columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
     columns['traffic_source'] = vectorFromArray(trafficSource, new Uint8())
+
+    columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
 
     const newTable = makeTable(columns)
     // MUST use 'file' format — Rust FileReader requires ARROW1 magic bytes

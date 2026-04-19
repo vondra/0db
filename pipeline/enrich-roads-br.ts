@@ -51,8 +51,12 @@
 
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
+
+const MY_DATASET_ID = DATASETS_BY_KEY.get('br-national-roads')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -311,18 +315,21 @@ async function main() {
     const roadClass = table.getChild('road_class')!
 
     const existingSource = table.getChild('traffic_source')
+    const existingDatasetId = table.getChild('roads_dataset_id')
     const existingLight = table.getChild('aadt_light')
     const existingMed = table.getChild('aadt_medium')
     const existingHvy = table.getChild('aadt_heavy')
     const existingMoto = table.getChild('aadt_moto')
 
     const trafficSource = new Uint8Array(n)
+    const datasetId = new Uint16Array(n)
     const aadtLight = new Int32Array(n)
     const aadtMedium = new Int32Array(n)
     const aadtHeavy = new Int32Array(n)
     const aadtMoto = new Int32Array(n)
     for (let i = 0; i < n; i++) {
       trafficSource[i] = (existingSource?.get(i) as number) ?? 0
+      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
       aadtLight[i] = (existingLight?.get(i) as number) ?? 0
       aadtMedium[i] = (existingMed?.get(i) as number) ?? 0
       aadtHeavy[i] = (existingHvy?.get(i) as number) ?? 0
@@ -333,7 +340,7 @@ async function main() {
     let hexMatched = 0
 
     for (let i = 0; i < n; i++) {
-      if (trafficSource[i] > 0) { alreadyEnriched++; continue }
+      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) { alreadyEnriched++; continue }
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -369,16 +376,19 @@ async function main() {
       aadtHeavy[i] = split.heavy
       aadtMoto[i] = split.moto
       trafficSource[i] = 1
+      datasetId[i] = MY_DATASET_ID
       hexMatched++
     }
 
     if (hexMatched > 0) {
       const columns: Record<string, any> = {}
       for (const field of table.schema.fields) {
-        if (['traffic_source', 'aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto'].includes(field.name)) continue
+        if (['traffic_source', 'aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'roads_dataset_id'].includes(field.name)) continue
         columns[field.name] = table.getChild(field.name)!
       }
       columns['traffic_source'] = vectorFromArray(trafficSource, new Uint8())
+
+      columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
       columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
       columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
       columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())

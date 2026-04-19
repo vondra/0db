@@ -17,8 +17,12 @@
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
+
+const MY_DATASET_ID = DATASETS_BY_KEY.get('nz-national-roads')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -180,6 +184,7 @@ async function enrichArrows(sites: NzRoadSegment[]): Promise<void> {
     const endLats = table.getChild('end_lat')
     const endLons = table.getChild('end_lon')
     const existingSource = table.getChild('traffic_source')
+    const existingDatasetId = table.getChild('roads_dataset_id')
     const existingLight = table.getChild('aadt_light')
     const existingMedium = table.getChild('aadt_medium')
     const existingHeavy = table.getChild('aadt_heavy')
@@ -192,6 +197,7 @@ async function enrichArrows(sites: NzRoadSegment[]): Promise<void> {
     const aadtHeavy = new Int32Array(numRows)
     const aadtMoto = new Int32Array(numRows)
     const trafficSource = new Uint8Array(numRows)
+    const datasetId = new Uint16Array(numRows)
     let hexMatched = 0
 
     for (let i = 0; i < numRows; i++) {
@@ -203,6 +209,7 @@ async function enrichArrows(sites: NzRoadSegment[]): Promise<void> {
         aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
         aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
         trafficSource[i] = 1
+        datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
         preserved++
         continue
       }
@@ -236,6 +243,7 @@ async function enrichArrows(sites: NzRoadSegment[]): Promise<void> {
         aadtHeavy[i] = best.aadt_heavy
         aadtMoto[i] = best.aadt_moto
         trafficSource[i] = 1
+        datasetId[i] = MY_DATASET_ID
         hexMatched++
         matched++
       }
@@ -244,7 +252,7 @@ async function enrichArrows(sites: NzRoadSegment[]): Promise<void> {
     if (hexMatched > 0) {
       const columns: Record<string, any> = {}
       for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'traffic_source'].includes(field.name)) continue
+        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'traffic_source', 'roads_dataset_id'].includes(field.name)) continue
         columns[field.name] = table.getChild(field.name)!
       }
       columns['aadt_light'] = vectorFromArray(Array.from(aadtLight), new Int32())
@@ -252,6 +260,8 @@ async function enrichArrows(sites: NzRoadSegment[]): Promise<void> {
       columns['aadt_heavy'] = vectorFromArray(Array.from(aadtHeavy), new Int32())
       columns['aadt_moto'] = vectorFromArray(Array.from(aadtMoto), new Int32())
       columns['traffic_source'] = vectorFromArray(Array.from(trafficSource), new Uint8())
+
+      columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
       const enriched = makeTable(columns)
       writeFileSync(arrowPath, Buffer.from(tableToIPC(enriched, 'file')))
       hexesUpdated++
