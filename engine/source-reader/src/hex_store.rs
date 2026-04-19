@@ -363,6 +363,7 @@ pub struct RoadResult {
     pub aadt_heavy: i32,
     pub aadt_moto: i32,
     pub traffic_source: u8,
+    pub dataset_id: u16,
     pub dist_m: f64,
     pub cp_lat: f64,
     pub cp_lon: f64,
@@ -407,6 +408,7 @@ pub fn query_roads_from_batches(
         let aadt_h = col_i32(batch, "aadt_heavy");
         let aadt_mo = col_i32(batch, "aadt_moto");
         let tsrc = col_u8(batch, "traffic_source");
+        let dataset_id_col = col_u16(batch, "roads_dataset_id");
 
         // All required columns must be present
         let (Some(osm_id), Some(slat), Some(slon), Some(elat), Some(elon)) =
@@ -483,6 +485,7 @@ pub fn query_roads_from_batches(
                 aadt_heavy: raw.aadt_heavy,
                 aadt_moto: raw.aadt_moto,
                 traffic_source: raw.traffic_source,
+                dataset_id: dataset_id_col.map(|a| a.value(i)).unwrap_or(0),
                 dist_m: cp.dist_m,
                 cp_lat: cp.lat,
                 cp_lon: cp.lon,
@@ -1226,6 +1229,9 @@ pub fn col_f32<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Float32Array> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
 pub fn col_u8<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a UInt8Array> {
+    b.column_by_name(name)?.as_any().downcast_ref()
+}
+pub fn col_u16<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a UInt16Array> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
 pub fn col_bool<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a BooleanArray> {

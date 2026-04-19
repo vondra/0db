@@ -266,6 +266,7 @@ pub fn collect_from_hex_data(
                 speed_source,
                 trains_passenger_source,
                 trains_freight_source,
+                dataset_id: 0, // TODO: RailResult doesn't yet carry dataset_id; defaults until rail reader wired
                 dist_m: r.dist_m,
                 cp_lat: r.cp_lat,
                 cp_lon: r.cp_lon,
@@ -293,6 +294,7 @@ pub fn collect_from_hex_data(
                 aadt_heavy: r.aadt_heavy,
                 aadt_moto: r.aadt_moto,
                 traffic_source: r.traffic_source,
+                dataset_id: r.dataset_id,
                 name: r.name.clone(),
                 road_ref: r.road_ref.clone(),
                 bridge: r.bridge,

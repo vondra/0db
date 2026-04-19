@@ -10,6 +10,21 @@ import {
   NoiseOnflyRequestError,
   NoiseOnflySupervisor,
 } from '../engine/noise-onfly-supervisor.js'
+import { DATASETS_BY_ID } from '../../../pipeline/lib/enrichment-datasets.js'
+
+/**
+ * Build a compact provenance object for popup display. `dataset_id = 0` returns
+ * the seeded "Unspecified / pre-provenance legacy" entry — never undefined so the
+ * frontend never crashes on a missing lookup.
+ */
+function lookupProvenance(datasetId: number | null | undefined):
+  | { name: string; year: number | null; license: string | null; url: string | null }
+  | null {
+  if (datasetId == null) return null
+  const d = DATASETS_BY_ID.get(datasetId) ?? DATASETS_BY_ID.get(0)
+  if (!d) return null
+  return { name: d.name, year: d.year, license: d.license, url: d.url }
+}
 
 const SOURCE_READER_PATH = resolve(import.meta.dirname, '../../../engine/source-reader/target/release/libsource_reader.so')
 const YEAR = process.env.DATA_YEAR || '2025'
@@ -80,13 +95,21 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
         // so no flattening needed here.
         const topContributors = (raw.contributors ?? []).map((c: any) => {
           const screeningRaw = c.screening ?? { building_path_m: 0, attenuation_db: 0 }
+          // Attach human-readable provenance from the central registry. Looks up by
+          // dominant_dataset_id (road) / dataset_id (rail/point); missing → unspecified.
+          const meta = c.metadata ? { ...c.metadata } : null
+          if (meta) {
+            const rawId =
+              meta.dominant_dataset_id ?? meta.dataset_id ?? null
+            meta.provenance = lookupProvenance(rawId)
+          }
           return {
             source_type: c.source_type,
             osm_id: c.osm_id ?? null,
             name: c.name ?? '',
             subtype: c.subtype ?? '',
             distance_m: Math.round(c.distance_m ?? 0),
-            metadata: c.metadata ?? null,
+            metadata: meta,
             emission_db: c.emission_db ?? 0,
             emission_bands: c.emission_bands ?? [],
             baseline: c.baseline ?? { geometric_db: 0, atmospheric_db: 0, ground_factor: 0.5, ground_db: 0, total_db: 0 },

@@ -281,6 +281,7 @@ fn compute_roads(
         dominant_aadt_heavy_effective: f64,
         dominant_aadt_moto_effective: f64,
         dominant_traffic_source: &'static str, // "matched_external" | "estimated_service_tree" | "default_by_class"
+        dominant_dataset_id: u16,              // dataset identity from pipeline/lib/enrichment-datasets.ts
         dominant_speed_posted: u8,
         dominant_speed_used: f64,
         dominant_speed_source: &'static str, // "osm_posted" | "default_by_class" | "roundabout_cap"
@@ -519,6 +520,7 @@ fn compute_roads(
                 dominant_aadt_heavy_effective: 0.0,
                 dominant_aadt_moto_effective: 0.0,
                 dominant_traffic_source: "default_by_class",
+                dominant_dataset_id: 0,
                 dominant_speed_posted: 0,
                 dominant_speed_used: 0.0,
                 dominant_speed_source: "default_by_class",
@@ -619,6 +621,7 @@ fn compute_roads(
             } else {
                 "default_by_class"
             };
+            acc.dominant_dataset_id = seg.dataset_id;
             acc.dominant_speed_posted = seg.speed_limit;
             acc.dominant_speed_used = speed;
             acc.dominant_speed_source = if seg.junction == 1 {
@@ -700,6 +703,7 @@ fn compute_roads(
             aadt_heavy_raw: acc.dominant_aadt_heavy_raw,
             aadt_moto_raw: acc.dominant_aadt_moto_raw,
             traffic_source: acc.dominant_traffic_source,
+            dominant_dataset_id: acc.dominant_dataset_id,
             speed_posted_kmh: acc.dominant_speed_posted,
             aadt_light_effective: acc.dominant_aadt_light_effective,
             aadt_medium_effective: acc.dominant_aadt_medium_effective,
@@ -813,6 +817,7 @@ fn compute_railways(
         closest_trains_freight_effective: f64,
         closest_trains_passenger_source: &'static str,
         closest_trains_freight_source: &'static str,
+        closest_dataset_id: u16,
         closest_maxspeed_posted: u8,
         closest_speed_used: f64,
         closest_speed_source: &'static str,
@@ -992,6 +997,7 @@ fn compute_railways(
             closest_trains_freight_effective: 0.0,
             closest_trains_passenger_source: "default_by_type",
             closest_trains_freight_source: "default_by_type",
+            closest_dataset_id: 0,
             closest_maxspeed_posted: 0,
             closest_speed_used: 0.0,
             closest_speed_source: "type_default",
@@ -1062,6 +1068,7 @@ fn compute_railways(
                 0 => "arrow",
                 _ => "default_by_type",
             };
+            acc.closest_dataset_id = seg.dataset_id;
             acc.closest_maxspeed_posted = seg.maxspeed;
             acc.closest_speed_used = speed;
             acc.closest_speed_source = match seg.speed_source {
@@ -1111,6 +1118,7 @@ fn compute_railways(
             trains_freight_raw: acc.closest_trains_freight_raw,
             trains_passenger_source: acc.closest_trains_passenger_source,
             trains_freight_source: acc.closest_trains_freight_source,
+            dataset_id: acc.closest_dataset_id,
             maxspeed_posted_kmh: acc.closest_maxspeed_posted,
             trains_passenger_effective: acc.closest_trains_passenger_effective,
             trains_freight_effective: acc.closest_trains_freight_effective,

@@ -58,6 +58,13 @@ interface ScreeningObstacleTrace {
   step_m: number
 }
 
+interface DatasetProvenance {
+  name: string
+  year: number | null
+  license: string | null
+  url: string | null
+}
+
 interface RoadMetadata {
   kind: 'road'
   aadt_light_raw: number
@@ -65,6 +72,8 @@ interface RoadMetadata {
   aadt_heavy_raw: number
   aadt_moto_raw: number
   traffic_source: 'matched_external' | 'estimated_service_tree' | 'default_by_class'
+  dominant_dataset_id?: number
+  provenance?: DatasetProvenance | null
   speed_posted_kmh: number
   aadt_light_effective: number
   aadt_medium_effective: number
@@ -351,6 +360,16 @@ function roadTrafficSourceLabel(source: RoadMetadata['traffic_source'], roadClas
   return `default ${roadClass}`
 }
 
+/** Human-readable single line for dataset provenance, shown below the generic source label. */
+function provenanceLabel(p: DatasetProvenance | null | undefined): string {
+  if (!p) return ''
+  const parts: string[] = [p.name]
+  if (p.year != null) parts.push(`(${p.year})`)
+  if (p.license) parts.push(`· ${p.license}`)
+  if (p.url) parts.push(`· ${p.url}`)
+  return parts.join(' ')
+}
+
 /**
  * Build a 2-column table-like text block for native title= tooltips.
  * Renders with monospace columns: label padded, value right-aligned.
@@ -404,6 +423,7 @@ function MetadataRows({ c }: { c: Contributor }) {
     const hasResidual = Math.abs(residualRatio - 1) > 0.01
     const trafficText = txtTable([
       ['Source', roadTrafficSourceLabel(m.traffic_source, m.road_class)],
+      ...(m.provenance ? [['Dataset', provenanceLabel(m.provenance)] as [string, string]] : []),
       ...(m.traffic_source === 'estimated_service_tree' ? [['', 'service-tree model']] : []),
       '',
       ...(rawTotal > 0
