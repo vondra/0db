@@ -18,10 +18,17 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, Int32, Uint8 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import proj4 from 'proj4'
 import { cellToLatLng } from 'h3-js'
+
+// CensusSection.ref starts with 'A' for Autobahn, 'B' for Bundesstraßen — pick per row.
+const AUTOBAHN_DATASET_ID = DATASETS_BY_KEY.get('de-bast-autobahn')!.id
+const BUNDESSTR_DATASET_ID = DATASETS_BY_KEY.get('de-bast-bundesstrassen')!.id
+const MY_DATASET_ID = AUTOBAHN_DATASET_ID  // default for gating; actual write picks per row
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -276,6 +283,11 @@ async function enrichArrows(sections: CensusSection[]) {
     const endLons = table.getChild('end_lon')
     const roadClasses = table.getChild('road_class')
     const existingSource = table.getChild('traffic_source')
+    const existingLight = table.getChild('aadt_light')
+    const existingMedium = table.getChild('aadt_medium')
+    const existingHeavy = table.getChild('aadt_heavy')
+    const existingMoto = table.getChild('aadt_moto')
+    const existingDatasetId = table.getChild('roads_dataset_id')
 
     if (!osmIds || !startLats || !startLons) continue
 
@@ -285,6 +297,17 @@ async function enrichArrows(sections: CensusSection[]) {
     const aadtHeavy = new Int32Array(numRows)
     const aadtMoto = new Int32Array(numRows)
     const trafficSource = new Uint8Array(numRows)
+    const datasetId = new Uint16Array(numRows)
+
+    // Seed output columns from existing Arrow state; priority rule decides per row.
+    for (let i = 0; i < numRows; i++) {
+      aadtLight[i] = (existingLight?.get(i) as number) ?? 0
+      aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
+      aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
+      aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
+      trafficSource[i] = (existingSource?.get(i) as number) ?? 0
+      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+    }
 
     let hexMatched = 0
 
@@ -294,16 +317,10 @@ async function enrichArrows(sections: CensusSection[]) {
       matchByClass[className].total++
       totalSegments++
 
-      // Preserve existing country-level enrichment
-      const existingSrc = existingSource?.get(i) ?? 0
-      if (existingSrc === 1) {
-        // Copy existing values
-        aadtLight[i] = table.getChild('aadt_light')?.get(i) ?? 0
-        aadtMedium[i] = table.getChild('aadt_medium')?.get(i) ?? 0
-        aadtHeavy[i] = table.getChild('aadt_heavy')?.get(i) ?? 0
-        aadtMoto[i] = table.getChild('aadt_moto')?.get(i) ?? 0
-        trafficSource[i] = 1
-        preservedSegments++
+      // Priority gate: if a higher-priority dataset already owns this row, leave it.
+      // Both BASt ids have priority 80, so gating with MY_DATASET_ID is representative.
+      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) {
+        if (datasetId[i] !== 0) preservedSegments++
         continue
       }
 
@@ -351,11 +368,15 @@ async function enrichArrows(sections: CensusSection[]) {
       // Apply match (within reasonable distance)
       const maxMatchDist = normRef ? 15000 : 2000  // 15km for ref-matched, 2km for proximity-only
       if (bestSection && bestDist < maxMatchDist) {
+        // Whole-row atomic write — payload + dataset_id together.
+        // Pick dataset per row based on ref prefix: A* = Autobahn, B* = Bundesstraßen.
+        const pickedId = bestSection.ref.startsWith('A') ? AUTOBAHN_DATASET_ID : BUNDESSTR_DATASET_ID
         aadtLight[i] = bestSection.aadt_light
         aadtMedium[i] = bestSection.aadt_medium
         aadtHeavy[i] = bestSection.aadt_heavy
         aadtMoto[i] = bestSection.aadt_moto
         trafficSource[i] = 1
+        datasetId[i] = pickedId
         hexMatched++
         matchedSegments++
         matchByClass[className].matched++
@@ -366,7 +387,7 @@ async function enrichArrows(sections: CensusSection[]) {
       // Rebuild table with enrichment columns
       const columns: Record<string, any> = {}
       for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'traffic_source'].includes(field.name)) continue
+        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'traffic_source', 'roads_dataset_id'].includes(field.name)) continue
         columns[field.name] = table.getChild(field.name)!
       }
       columns['aadt_light'] = vectorFromArray(Array.from(aadtLight), new Int32())
@@ -374,8 +395,9 @@ async function enrichArrows(sections: CensusSection[]) {
       columns['aadt_heavy'] = vectorFromArray(Array.from(aadtHeavy), new Int32())
       columns['aadt_moto'] = vectorFromArray(Array.from(aadtMoto), new Int32())
       columns['traffic_source'] = vectorFromArray(Array.from(trafficSource), new Uint8())
+      columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
 
-      const enrichedTable = new table.constructor(columns)
+      const enrichedTable = makeTable(columns)
       const outBuf = tableToIPC(enrichedTable, 'file')
       writeFileSync(arrowPath, outBuf)
       hexesUpdated++

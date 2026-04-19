@@ -15,8 +15,12 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
+
+const MY_DATASET_ID = DATASETS_BY_KEY.get('service-tree-heuristic')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -136,7 +140,7 @@ function buildGraph(table: any) {
   const endLat = table.getChild('end_lat')!
   const endLon = table.getChild('end_lon')!
   const roadClass = table.getChild('road_class')!
-  const existingSrc = table.getChild('traffic_source')
+  const existingDatasetId = table.getChild('roads_dataset_id')
 
   const nodes = new Map<string, GraphNode>()
   const segToNodes: [string, string][] = new Array(n)
@@ -159,8 +163,10 @@ function buildGraph(table: any) {
     eNode.degree++
 
     const cls = (roadClass.get(i) as number) ?? 5
-    const src = (existingSrc?.get(i) as number) ?? 0
-    if (cls >= 5 && src === 0) {
+    const existingId = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+    // Only residential (class >= 5) and only where this heuristic can overwrite the row
+    // (empty slot or lower-priority dataset). service-tree priority is low (10).
+    if (cls >= 5 && shouldOverwrite(existingId, MY_DATASET_ID)) {
       eligible[i] = 1
       sNode.eligibleEdges.push(i)
       eNode.eligibleEdges.push(i)
@@ -448,12 +454,14 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   const existingMed = roadTable.getChild('aadt_medium')
   const existingHvy = roadTable.getChild('aadt_heavy')
   const existingMoto = roadTable.getChild('aadt_moto')
+  const existingDatasetId = roadTable.getChild('roads_dataset_id')
 
   const trafficSource = new Uint8Array(n)
   const aadtLight = new Int32Array(n)
   const aadtMedium = new Int32Array(n)
   const aadtHeavy = new Int32Array(n)
   const aadtMoto = new Int32Array(n)
+  const datasetId = new Uint16Array(n)
 
   for (let i = 0; i < n; i++) {
     trafficSource[i] = (existingSource?.get(i) as number) ?? 0
@@ -461,21 +469,26 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
     aadtMedium[i] = (existingMed?.get(i) as number) ?? 0
     aadtHeavy[i] = (existingHvy?.get(i) as number) ?? 0
     aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
+    datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
   }
 
   let enriched = 0
   for (const [seg, aadt] of segAADT) {
+    // Eligibility was already gated via shouldOverwrite() in buildGraph().
+    // Whole-row atomic write — payload + dataset_id together.
+    if (!shouldOverwrite(datasetId[seg], MY_DATASET_ID)) continue
     aadtLight[seg] = aadt.light
     aadtMedium[seg] = aadt.medium
     aadtHeavy[seg] = aadt.heavy
     aadtMoto[seg] = aadt.moto
     trafficSource[seg] = 2
+    datasetId[seg] = MY_DATASET_ID
     enriched++
   }
 
   const columns: Record<string, any> = {}
   for (const field of roadTable.schema.fields) {
-    if (['traffic_source', 'aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto'].includes(field.name)) continue
+    if (['traffic_source', 'aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'roads_dataset_id'].includes(field.name)) continue
     columns[field.name] = roadTable.getChild(field.name)!
   }
   columns['traffic_source'] = vectorFromArray(trafficSource, new Uint8())
@@ -483,6 +496,7 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
   columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
   columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
+  columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
   const newTable = makeTable(columns)
   writeFileSync(roadsPath, Buffer.from(tableToIPC(newTable, 'file')))
 
