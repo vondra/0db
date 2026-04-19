@@ -91,7 +91,7 @@ pub struct PointQueryData {
     pub n_days: u16,
 }
 
-// load_nace_lookup_json removed — NACE codes baked into industrial.arrow
+// NACE codes are written directly into industrial.arrow by enrichment scripts.
 
 pub fn collect_sources_at_point(
     h3r4_dir: &Path,

@@ -91,7 +91,7 @@ European noise data is enriched at three levels: global baseline → continental
 |---------|----------|--------|--------|
 | **EU city traffic (AADT)** | 36 cities across 15 countries | Road segments get real traffic counts instead of defaults | Applied — 335K+ segments |
 | **GTFS railway timetables** | DE, CH, AT, NL, SE, NO, BE (7 feeds) | Railway segments get real train frequencies | Applied — 130K+ segments |
-| **GPPD power plants** | 34,936 plants worldwide (EU subset) | Industrial sites get NACE 35 classification | Applied — via nace-lookup.json |
+| **GPPD power plants** | 34,936 plants worldwide (EU subset) | Industrial sites get NACE 35 classification | Applied — direct to industrial.arrow |
 | **Copernicus IMD** | Europe-wide 10m raster | Ground effect G-factor overlay on WorldCover | Applied — in raster pipeline |
 
 ### EU city traffic

@@ -6,7 +6,7 @@
  * power to ~30% of the population, mostly from small diesel generators and
  * a handful of micro-hydro sites. No plant meets GEM's reporting threshold.
  *
- * This script will find 0 GEM plants and produce 0 new nace-lookup entries.
+ * This script will find 0 GEM plants and produce 0 NACE updates.
  * It still runs cleanly and logs correct totals.
  *
  * Non-power industrial (OSM only):

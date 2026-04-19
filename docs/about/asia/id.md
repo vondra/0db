@@ -106,7 +106,7 @@ GHSL Built-H + Overture Maps Foundation global baseline. Microsoft contributed I
 ### Enrichment result
 - 20,784 OSM industrial sites scanned across 962 hexes
 - 511 matched to GEM (2.5% match rate — lower than India/China because Indonesian OSM industrial tagging is more diffuse across thousands of islands)
-- 438 new NACE entries added to `nace-lookup.json`
+- 438 new NACE entries written directly to `industrial.arrow` (`nace_4digit` column)
 
 ### Major Indonesian industrial noise sources (not in GEM)
 

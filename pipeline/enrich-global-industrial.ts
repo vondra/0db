@@ -2,12 +2,15 @@
  * Global industrial enrichment: GPPD (power plants) + E-PRTR (EU facilities).
  *
  * Downloads two global/EU datasets, spatial-joins to OSM industrial polygons,
- * writes combined nace-lookup.json sidecar for pipeline-worker and source-reader.
+ * and writes nace_4digit + industrial_dataset_id directly into industrial.arrow.
  *
  * WHY: OSM only gives generic "landuse=industrial". GPPD provides ~35K power plants
  * worldwide (→ NACE 35, electricity generation). E-PRTR provides ~30K EU regulated
  * facilities with actual NACE codes. Together they dramatically improve sector-specific
  * industrial noise emission profiles globally.
+ *
+ * Dataset provenance is written per-row; priority resolution keeps higher-priority
+ * national entries intact (cz-irz > europe-eprtr > global-gppd).
  *
  * Usage:
  *   cd pipeline && npx tsx enrich-global-industrial.ts
@@ -17,15 +20,16 @@
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC } from 'apache-arrow'
+import { makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
 import { latLngToCell } from 'h3-js'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, '../data/enrichment/global')
 const GPPD_CACHE = resolve(CACHE_DIR, 'gppd.csv')
 const EPRTR_CACHE = resolve(CACHE_DIR, 'eprtr-facilities.csv')
-const NACE_OUTPUT = resolve(import.meta.dirname, '../data/prepared/nace-lookup.json')
 
 const forceDownload = process.argv.includes('--force-download')
 const enrichOnly = process.argv.includes('--enrich-only')
@@ -33,11 +37,13 @@ const enrichOnly = process.argv.includes('--enrich-only')
 const GPPD_URL = 'https://raw.githubusercontent.com/wri/global-power-plant-database/master/output_database/global_power_plant_database.csv'
 
 // E-PRTR facility data — European Pollutant Release and Transfer Register
-// Primary: EEA industrial reporting database download
 const EPRTR_URLS = [
   'https://industry.eea.europa.eu/api/v1/download/facilities?format=csv',
   'https://industry.eea.europa.eu/download?format=csv',
 ]
+
+const GPPD_DATASET_ID = DATASETS_BY_KEY.get('global-gppd')!.id
+const EPRTR_DATASET_ID = DATASETS_BY_KEY.get('europe-eprtr')!.id
 
 // ── Types ──
 
@@ -93,7 +99,6 @@ async function downloadEprtr(): Promise<string | null> {
     return readFileSync(EPRTR_CACHE, 'utf-8')
   }
 
-  // Try multiple URLs — EEA API changes occasionally
   for (const url of EPRTR_URLS) {
     console.log(`  Trying E-PRTR download: ${url}`)
     try {
@@ -108,7 +113,6 @@ async function downloadEprtr(): Promise<string | null> {
       const contentType = res.headers.get('content-type') || ''
       const text = await res.text()
 
-      // Validate it looks like CSV (at least has commas and multiple lines)
       const lines = text.split('\n').filter(l => l.trim().length > 0)
       if (lines.length < 10 || !lines[0].includes(',')) {
         console.log(`    Response doesn't look like CSV (${lines.length} lines, content-type: ${contentType}) — trying next`)
@@ -176,7 +180,6 @@ async function parseGppd(csvText: string): Promise<Facility[]> {
 async function parseEprtr(csvText: string): Promise<Facility[]> {
   const { parse } = await import('csv-parse/sync')
 
-  // E-PRTR CSV may use different delimiters — try semicolon first (common in EU data), then comma
   let records: Record<string, string>[]
   try {
     records = parse(csvText, {
@@ -187,7 +190,6 @@ async function parseEprtr(csvText: string): Promise<Facility[]> {
       delimiter: ',',
     }) as Record<string, string>[]
 
-    // If first record has very few keys, try semicolon
     if (records.length > 0 && Object.keys(records[0]).length < 3) {
       records = parse(csvText, {
         columns: true,
@@ -198,7 +200,6 @@ async function parseEprtr(csvText: string): Promise<Facility[]> {
       }) as Record<string, string>[]
     }
   } catch {
-    // Fallback to semicolon
     records = parse(csvText, {
       columns: true,
       skip_empty_lines: true,
@@ -211,7 +212,6 @@ async function parseEprtr(csvText: string): Promise<Facility[]> {
   const cols = Object.keys(records[0] || {})
   console.log(`  E-PRTR: ${records.length} raw records, columns: ${cols.slice(0, 8).join(', ')}...`)
 
-  // Find relevant columns — E-PRTR uses various naming conventions
   const latCol = cols.find(c => /^(lat|y_?coord|facility_?lat)/i.test(c)) || ''
   const lonCol = cols.find(c => /^(lon|long|x_?coord|facility_?lon)/i.test(c)) || ''
   const nameCol = cols.find(c => /^(facility_?name|name|facilityname)/i.test(c)) || ''
@@ -219,7 +219,6 @@ async function parseEprtr(csvText: string): Promise<Facility[]> {
 
   if (!latCol || !lonCol) {
     console.log(`  WARN: E-PRTR — could not identify lat/lon columns: ${cols.join(', ')}`)
-    // Try alternative column patterns
     const latCol2 = cols.find(c => c.toLowerCase().includes('lat'))
     const lonCol2 = cols.find(c => c.toLowerCase().includes('lon'))
     if (latCol2 && lonCol2) {
@@ -241,26 +240,21 @@ function parseEprtrWithCols(records: Record<string, string>[], latCol: string, l
     const lat = parseFloat((r[latCol] || '').replace(',', '.'))
     const lon = parseFloat((r[lonCol] || '').replace(',', '.'))
     if (!lat || !lon || isNaN(lat) || isNaN(lon)) continue
-    // Sanity: lat in [-90,90], lon in [-180,180]
     if (Math.abs(lat) > 90 || Math.abs(lon) > 180) continue
 
     const name = (r[nameCol] || '').trim()
     let nace = (r[naceCol] || '').trim()
 
-    // Normalize NACE code to 6-digit format
-    // E-PRTR may have "24.10", "2410", "C24.10", "NACE 24.10", etc.
-    nace = nace.replace(/^[A-Z]\s*/i, '')        // strip section letter
-    nace = nace.replace(/^NACE\s*/i, '')          // strip "NACE" prefix
-    nace = nace.replace(/\./g, '')                 // remove dots: "24.10" → "2410"
-    nace = nace.replace(/[^0-9]/g, '')             // strip non-digits
+    nace = nace.replace(/^[A-Z]\s*/i, '')
+    nace = nace.replace(/^NACE\s*/i, '')
+    nace = nace.replace(/\./g, '')
+    nace = nace.replace(/[^0-9]/g, '')
 
     if (!nace || nace.length < 2) continue
 
-    // Pad to 6 digits: "2410" → "241000", "24" → "240000"
     while (nace.length < 6) nace += '0'
     if (nace.length > 6) nace = nace.substring(0, 6)
 
-    // Validate: first two digits should be a valid NACE division (01-99)
     const div = parseInt(nace.substring(0, 2), 10)
     if (div < 1 || div > 99) continue
 
@@ -279,7 +273,6 @@ function groupByHex(facilities: Facility[]): Map<string, Facility[]> {
 
   for (const fac of facilities) {
     try {
-      // latLngToCell at resolution 4 → H3R4 hex
       const h3r4 = latLngToCell(fac.lat, fac.lon, 4)
       if (!byHex.has(h3r4)) byHex.set(h3r4, [])
       byHex.get(h3r4)!.push(fac)
@@ -295,12 +288,15 @@ function groupByHex(facilities: Facility[]): Map<string, Facility[]> {
 
 // ── Step 6: Spatial join to OSM industrial polygons ──
 
-function enrichHexes(facByHex: Map<string, Facility[]>): Record<string, { nace: string; name: string }> {
+async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
+  totalIndustrial: number
+  totalMatched: number
+  hexesWithMatches: number
+  hexesProcessed: number
+}> {
   const hexDirs = readdirSync(H3R4_DIR).filter(d =>
-    d.length === 15 && d.endsWith('ffffffff')
+    d.length === 15 && d.endsWith('ffffffff'),
   )
-
-  const lookup: Record<string, { nace: string; name: string }> = {}
 
   let totalIndustrial = 0
   let totalMatched = 0
@@ -312,7 +308,6 @@ function enrichHexes(facByHex: Map<string, Facility[]>): Record<string, { nace: 
   for (const hexId of hexDirs) {
     hexesProcessed++
 
-    // Progress every 10 seconds
     const now = Date.now()
     if (now - lastLog >= 10_000) {
       const pct = (hexesProcessed / hexDirs.length * 100).toFixed(1)
@@ -321,62 +316,81 @@ function enrichHexes(facByHex: Map<string, Facility[]>): Record<string, { nace: 
       lastLog = now
     }
 
-    // Check if any facilities fall in this hex
     const hexFacilities = facByHex.get(hexId)
     if (!hexFacilities || hexFacilities.length === 0) continue
 
     const indPath = resolve(H3R4_DIR, hexId, 'industrial.arrow')
     if (!existsSync(indPath)) continue
 
-    let table
     try {
-      const buf = readFileSync(indPath)
-      table = tableFromIPC(buf)
+      await withArrowWrite(indPath, table => {
+        const n = table.numRows
+        if (n === 0) return table
+        totalIndustrial += n
+
+        const clat = table.getChild('centroid_lat')
+        const clon = table.getChild('centroid_lon')
+        const osmIds = table.getChild('osm_id')
+        const existingNaceCol = table.getChild('nace_4digit')
+        const existingDatasetIdCol = table.getChild('industrial_dataset_id')
+        if (!clat || !clon || !osmIds) return table
+
+        const newNace = new Uint16Array(n)
+        const newDatasetId = new Uint16Array(n)
+        const existingDatasetId = new Uint16Array(n)
+        for (let j = 0; j < n; j++) {
+          newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
+          existingDatasetId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
+          newDatasetId[j] = existingDatasetId[j]
+        }
+        let hexMatched = 0
+        let anyChanged = false
+
+        for (let i = 0; i < n; i++) {
+          const lat = clat.get(i) as number
+          const lon = clon.get(i) as number
+
+          let bestDist = 500
+          let bestFac: Facility | null = null
+
+          for (const fac of hexFacilities) {
+            const d = flatDist(lat, lon, fac.lat, fac.lon)
+            if (d < bestDist) {
+              bestDist = d
+              bestFac = fac
+            }
+          }
+
+          if (bestFac) {
+            const nace6 = parseInt(bestFac.nace, 10) || 0
+            const nace4 = Math.floor(nace6 / 100)
+            const myId = bestFac.source === 'eprtr' ? EPRTR_DATASET_ID : GPPD_DATASET_ID
+            const existingId = existingDatasetId[i]
+            if (shouldOverwrite(existingId, myId)) {
+              newNace[i] = nace4
+              newDatasetId[i] = myId
+              hexMatched++
+              totalMatched++
+              anyChanged = true
+            }
+          }
+        }
+
+        if (hexMatched > 0) hexesWithMatches++
+        if (!anyChanged) return table
+
+        const columns: Record<string, any> = {}
+        for (const field of table.schema.fields) {
+          if (field.name === 'nace_4digit' || field.name === 'industrial_dataset_id') continue
+          columns[field.name] = table.getChild(field.name)!
+        }
+        columns['nace_4digit'] = vectorFromArray(Array.from(newNace), new Uint16())
+        columns['industrial_dataset_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
+        return makeTable(columns)
+      })
     } catch (err: any) {
-      console.log(`  WARN: Failed to read ${indPath}: ${err.message}`)
-      continue
+      console.log(`  WARN: Failed to process ${indPath}: ${err.message}`)
     }
-
-    const n = table.numRows
-    if (n === 0) continue
-    totalIndustrial += n
-
-    const clat = table.getChild('centroid_lat')
-    const clon = table.getChild('centroid_lon')
-    const osmIds = table.getChild('osm_id')
-    if (!clat || !clon || !osmIds) continue
-
-    let hexMatched = 0
-
-    for (let i = 0; i < n; i++) {
-      const lat = clat.get(i) as number
-      const lon = clon.get(i) as number
-      const osmId = osmIds.get(i)
-      if (osmId === null || osmId === undefined) continue
-
-      let bestDist = 500  // 500m max proximity
-      let bestFac: Facility | null = null
-
-      for (const fac of hexFacilities) {
-        const d = flatDist(lat, lon, fac.lat, fac.lon)
-        if (d < bestDist) {
-          bestDist = d
-          bestFac = fac
-        }
-      }
-
-      if (bestFac) {
-        const key = String(osmId)
-        // E-PRTR has real NACE codes — prefer over GPPD's generic NACE 35
-        if (!lookup[key] || (bestFac.source === 'eprtr' && lookup[key])) {
-          lookup[key] = { nace: bestFac.nace, name: bestFac.name }
-        }
-        hexMatched++
-        totalMatched++
-      }
-    }
-
-    if (hexMatched > 0) hexesWithMatches++
   }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
@@ -384,32 +398,9 @@ function enrichHexes(facByHex: Map<string, Facility[]>): Record<string, { nace: 
   console.log(`  Hexes scanned: ${hexesProcessed} (${hexesWithMatches} with matches)`)
   console.log(`  Industrial sites scanned: ${totalIndustrial}`)
   console.log(`  Matches (facility → OSM polygon within 500m): ${totalMatched}`)
-  console.log(`  Unique OSM IDs in lookup: ${Object.keys(lookup).length}`)
   console.log(`  Time: ${elapsed}s`)
 
-  return lookup
-}
-
-// ── Step 7: Merge with existing nace-lookup.json ──
-
-function mergeAndWrite(newLookup: Record<string, { nace: string; name: string }>): void {
-  let existing: Record<string, { nace: string; name: string }> = {}
-  if (existsSync(NACE_OUTPUT)) {
-    try {
-      existing = JSON.parse(readFileSync(NACE_OUTPUT, 'utf-8'))
-      console.log(`  Existing nace-lookup.json: ${Object.keys(existing).length} entries`)
-    } catch {
-      console.log('  WARN: Could not parse existing nace-lookup.json — starting fresh')
-    }
-  }
-
-  // Merge: new entries override existing (global enrichment is re-runnable)
-  const merged = { ...existing, ...newLookup }
-  const dir = resolve(NACE_OUTPUT, '..')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(NACE_OUTPUT, JSON.stringify(merged, null, 2))
-  console.log(`  Written ${Object.keys(merged).length} entries to ${NACE_OUTPUT}`)
-  console.log(`    (${Object.keys(newLookup).length} from this run, ${Object.keys(existing).length} previously existing)`)
+  return { totalIndustrial, totalMatched, hexesWithMatches, hexesProcessed }
 }
 
 // ── Main ──
@@ -418,8 +409,7 @@ async function main() {
   console.log(`=== Global Industrial Enrichment (GPPD + E-PRTR) ===\n`)
   console.log(`  DATA_YEAR: ${YEAR}`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
-  console.log(`  Cache dir: ${CACHE_DIR}`)
-  console.log(`  Output: ${NACE_OUTPUT}\n`)
+  console.log(`  Cache dir: ${CACHE_DIR}\n`)
 
   if (!existsSync(H3R4_DIR)) {
     console.error(`ERROR: H3R4 directory not found: ${H3R4_DIR}`)
@@ -456,13 +446,9 @@ async function main() {
   console.log('\n--- Step 5: Group by H3R4 hex ---')
   const facByHex = groupByHex(allFacilities)
 
-  // ── Spatial join ──
+  // ── Spatial join (writes directly into industrial.arrow) ──
   console.log('\n--- Step 6: Spatial join to OSM industrial polygons ---')
-  const lookup = enrichHexes(facByHex)
-
-  // ── Write output ──
-  console.log('\n--- Step 7: Write nace-lookup.json ---')
-  mergeAndWrite(lookup)
+  await enrichHexes(facByHex)
 
   // ── Provenance ──
   const provPath = resolve(CACHE_DIR, 'provenance.md')
@@ -475,8 +461,8 @@ async function main() {
 ## Matching
 - Spatial join: facility lat/lon → nearest OSM industrial polygon centroid within 500m
 - H3R4 pre-filter: only compare facilities and polygons in the same H3 resolution-4 hex
-- ${Object.keys(lookup).length} OSM industrial sites enriched with NACE codes
-- E-PRTR preferred over GPPD when both match the same OSM polygon (real NACE vs generic 35)
+- Written directly to industrial.arrow per-row (nace_4digit + industrial_dataset_id)
+- Dataset priority preserves national registries (cz-irz > europe-eprtr > global-gppd)
 
 ## Gaps
 - E-PRTR covers EU only — rest of world relies on GPPD (power plants only)

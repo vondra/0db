@@ -17,7 +17,6 @@ import {
   shouldOverwrite,
   updateRow,
   withArrowWrite,
-  withNaceLookupLock,
 } from './provenance.js'
 import {
   makeTable,
@@ -131,65 +130,3 @@ test('withArrowWrite round-trips a table and atomically replaces it', async () =
   }
 })
 
-// ─── withNaceLookupLock ─────────────────────────────────────────────────────
-
-test('withNaceLookupLock creates file if missing + persists mutations', async () => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nace-prov-'))
-  const lookupPath = path.join(tmpDir, 'nace-lookup.json')
-  try {
-    await withNaceLookupLock(lookupPath, lookup => {
-      assert.deepStrictEqual(lookup, {})
-      lookup['osm-123'] = { nace: '35.11', name: 'Power plant', dataset_id: 300 }
-    })
-    const reread = JSON.parse(await fs.readFile(lookupPath, 'utf8'))
-    assert.strictEqual(reread['osm-123'].dataset_id, 300)
-  } finally {
-    await fs.rm(tmpDir, { recursive: true })
-  }
-})
-
-test('withNaceLookupLock: higher-priority dataset overwrites lower-priority', async () => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nace-prov-'))
-  const lookupPath = path.join(tmpDir, 'nace-lookup.json')
-  try {
-    await fs.writeFile(
-      lookupPath,
-      JSON.stringify({ 'osm-1': { nace: '35.11', dataset_id: 300 } }),
-    )
-    await withNaceLookupLock(lookupPath, lookup => {
-      const newId = 320 // cz-irz priority 80 beats gppd(300) priority 50
-      const existing = (lookup['osm-1'].dataset_id as number) ?? 0
-      if (shouldOverwrite(existing, newId)) {
-        lookup['osm-1'] = { nace: '35.11', name: 'IRZ plant', dataset_id: newId }
-      }
-    })
-    const reread = JSON.parse(await fs.readFile(lookupPath, 'utf8'))
-    assert.strictEqual(reread['osm-1'].dataset_id, 320)
-  } finally {
-    await fs.rm(tmpDir, { recursive: true })
-  }
-})
-
-test('withNaceLookupLock serializes concurrent locks (no interleaving)', async () => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nace-race-'))
-  const lookupPath = path.join(tmpDir, 'nace-lookup.json')
-  try {
-    await fs.writeFile(lookupPath, '{}')
-    const trace: string[] = []
-    const caller = (name: string, ms: number) =>
-      withNaceLookupLock(lookupPath, async lookup => {
-        trace.push(`${name}:start`)
-        await new Promise(r => setTimeout(r, ms))
-        lookup[name] = { name, dataset_id: 300 }
-        trace.push(`${name}:end`)
-      })
-    await Promise.all([caller('A', 30), caller('B', 10)])
-
-    const aIdx = trace.indexOf('A:start')
-    const bIdx = trace.indexOf('B:start')
-    assert.strictEqual(trace[aIdx + 1], 'A:end', 'caller A interleaved')
-    assert.strictEqual(trace[bIdx + 1], 'B:end', 'caller B interleaved')
-  } finally {
-    await fs.rm(tmpDir, { recursive: true })
-  }
-})

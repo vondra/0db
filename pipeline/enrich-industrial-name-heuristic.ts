@@ -2,33 +2,36 @@
  * OSM industrial name heuristic — global NACE code assignment.
  *
  * Assigns NACE codes to OSM industrial sites that have a `name` field but no
- * existing entry in nace-lookup.json.  Uses keyword matching on the lowercased
+ * existing higher-priority entry. Uses keyword matching on the lowercased
  * name, first match wins (rules ordered from specific to generic).
  *
  * Targets the ~461k sites that have names but no NACE code assigned yet.
  * Sites with neither name nor NACE (2.6M) stay at the pipeline default (93 dB).
  *
  * Strategy:
- *   - Load existing nace-lookup.json
  *   - Scan ALL h3r4 hexes globally that contain industrial.arrow
- *   - For each OSM site WITHOUT an existing entry, check the name field
+ *   - For each OSM site, check the name field
  *   - Apply keyword rules in order — first match wins
- *   - Write new entries to nace-lookup.json
- *   - Skip if entry already exists (preserves GEM / E-PRTR / national entries)
+ *   - Write nace_4digit + industrial_dataset_id directly to the arrow via
+ *     withArrowWrite(). The dataset priority check preserves higher-authority
+ *     entries (national registries, E-PRTR, GEM).
  *
  * Usage:
  *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-name-heuristic.ts
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
+import { readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC } from 'apache-arrow'
+import { makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
-const NACE_LOOKUP_PATH = resolve(import.meta.dirname, '../data/prepared/nace-lookup.json')
 
 const PROGRESS_INTERVAL_MS = 10_000
+
+const MY_DATASET_ID = DATASETS_BY_KEY.get('industrial-name-heuristic')!.id
 
 // ── Keyword → NACE rules ──
 // Order matters: first match wins.  More specific keywords before generic ones.
@@ -157,7 +160,6 @@ function matchName(name: string): NameRule | null {
 async function main() {
   console.log(`=== OSM Industrial Name Heuristic — Global (${YEAR}) ===\n`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
-  console.log(`  Lookup:   ${NACE_LOOKUP_PATH}`)
   console.log(`  Rules:    ${NAME_RULES.length}`)
   console.log()
 
@@ -165,15 +167,6 @@ async function main() {
     console.error(`ERROR: H3R4 directory not found: ${H3R4_DIR}`)
     process.exit(1)
   }
-
-  // ── Load existing lookup ──
-  let lookup: Record<string, { nace: string; name: string; source?: string }> = {}
-  if (existsSync(NACE_LOOKUP_PATH)) {
-    try {
-      lookup = JSON.parse(readFileSync(NACE_LOOKUP_PATH, 'utf-8'))
-    } catch { /* start fresh */ }
-  }
-  console.log(`  Existing nace-lookup entries: ${Object.keys(lookup).length.toLocaleString()}\n`)
 
   // ── Scan all hexes globally ──
   console.log('--- Scanning all H3R4 hexes for industrial.arrow ---')
@@ -207,45 +200,59 @@ async function main() {
     if (!existsSync(indPath)) continue
     hexesWithIndustrial++
 
-    let table
     try {
-      const buf = readFileSync(indPath)
-      table = tableFromIPC(buf)
-    } catch { continue }
+      await withArrowWrite(indPath, table => {
+        const n = table.numRows
+        if (n === 0) return table
+        totalOsmSites += n
 
-    const n = table.numRows
-    if (n === 0) continue
-    totalOsmSites += n
+        const osmId = table.getChild('osm_id')
+        const nameCol = table.getChild('name')
+        const existingNaceCol = table.getChild('nace_4digit')
+        const existingDatasetIdCol = table.getChild('industrial_dataset_id')
+        if (!osmId || !nameCol) return table
 
-    const osmId = table.getChild('osm_id')
-    const nameCol = table.getChild('name')
-    if (!osmId || !nameCol) continue
+        const newNace = new Uint16Array(n)
+        const newDatasetId = new Uint16Array(n)
+        const existingDatasetId = new Uint16Array(n)
+        for (let j = 0; j < n; j++) {
+          newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
+          existingDatasetId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
+          newDatasetId[j] = existingDatasetId[j]
+        }
+        let anyChanged = false
 
-    for (let i = 0; i < n; i++) {
-      const id = String(osmId.get(i))
+        for (let i = 0; i < n; i++) {
+          const rawName = nameCol.get(i) as string | null
+          if (!rawName || rawName.trim() === '') continue
+          totalWithName++
 
-      // Skip — preserve existing entries (GEM, E-PRTR, national registries)
-      if (lookup[id]) continue
+          const rule = matchName(rawName)
+          if (!rule) continue
 
-      const rawName = nameCol.get(i) as string | null
-      if (!rawName || rawName.trim() === '') continue
-      totalWithName++
-
-      const rule = matchName(rawName)
-      if (!rule) continue
-
-      lookup[id] = {
-        nace:   rule.nace,
-        name:   rawName.trim(),
-        source: `OSM name heuristic (${rule.label})`,
-      }
-      newEntries++
-      labelCounts[rule.label] = (labelCounts[rule.label] ?? 0) + 1
-    }
+          const nace6 = parseInt(rule.nace, 10) || 0
+          const nace4 = Math.floor(nace6 / 100)
+          const existingId = existingDatasetId[i]
+          if (shouldOverwrite(existingId, MY_DATASET_ID)) {
+            newNace[i] = nace4
+            newDatasetId[i] = MY_DATASET_ID
+            if (existingId === 0) newEntries++
+            labelCounts[rule.label] = (labelCounts[rule.label] ?? 0) + 1
+            anyChanged = true
+          }
+        }
+        if (!anyChanged) return table
+        const columns: Record<string, any> = {}
+        for (const field of table.schema.fields) {
+          if (field.name === 'nace_4digit' || field.name === 'industrial_dataset_id') continue
+          columns[field.name] = table.getChild(field.name)!
+        }
+        columns['nace_4digit'] = vectorFromArray(Array.from(newNace), new Uint16())
+        columns['industrial_dataset_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
+        return makeTable(columns)
+      })
+    } catch { /* continue */ }
   }
-
-  // ── Write output ──
-  writeFileSync(NACE_LOOKUP_PATH, JSON.stringify(lookup, null, 2))
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
   console.log()
@@ -254,10 +261,8 @@ async function main() {
   console.log(`  Hexes with industrial:     ${hexesWithIndustrial.toLocaleString()}`)
   console.log(`  OSM industrial sites seen: ${totalOsmSites.toLocaleString()}`)
   console.log(`  Sites with a name:         ${totalWithName.toLocaleString()}`)
-  console.log(`  New nace-lookup entries:   ${newEntries.toLocaleString()}`)
-  console.log(`  Total nace-lookup entries: ${Object.keys(lookup).length.toLocaleString()}`)
+  console.log(`  New/updated arrow rows:    ${newEntries.toLocaleString()}`)
   console.log(`  Time: ${elapsed}s`)
-  console.log(`  Written: ${NACE_LOOKUP_PATH}`)
 
   if (Object.keys(labelCounts).length > 0) {
     console.log()

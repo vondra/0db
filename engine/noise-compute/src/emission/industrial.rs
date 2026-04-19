@@ -78,10 +78,10 @@ pub fn industrial_profile(site_type: u8) -> IndustrialProfile {
 /// Sources: EU 2000/14/EC equipment limits, 3M Noise Navigator, FHWA RCNM.
 pub fn nace_profile(nace_4digit: u16) -> Option<IndustrialProfile> {
     // Try 4-digit match first (more specific), then fall back to 2-digit.
-    // NOTE: NACE 3512 ("renewable") mixes solar, wind, and hydro in nace-lookup.json.
+    // NOTE: NACE 3512 ("renewable") mixes solar, wind, and hydro in upstream source data.
     // Wind turbines are safe (source_type=10 early-returns before NACE is checked).
     // But hydro would wrongly get the solar profile, so we use a synthetic code 3599
-    // for confirmed solar plants only. Enrichment scripts must write '359900' for solar.
+    // for confirmed solar plants only. Enrichment scripts must write 3599 (=360000/100) for solar.
     match nace_4digit {
         // Solar farms — inverters only, ~45-55 dB Lw, zero at night.
         // Synthetic NACE 3599 (not real NACE) to avoid 3512 which mixes renewables.

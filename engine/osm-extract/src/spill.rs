@@ -413,7 +413,8 @@ fn site_type_from_tags(tags: &Tags) -> u8 {
 }
 
 /// Classify industrial site subtype from OSM `industrial=*` and `product=*` tags.
-/// Pipeline-worker uses this to infer NACE when nace-lookup.json has no entry.
+/// Pipeline-worker uses this to infer NACE when industrial.arrow has no enriched
+/// `nace_4digit` code.
 ///
 /// Values:
 ///   0 = unknown/generic industrial (default 93 dB)

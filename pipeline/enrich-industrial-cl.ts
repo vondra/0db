@@ -316,7 +316,7 @@ async function main() {
   for (const [k, v] of Object.entries(bySource).sort((a, b) => b[1] - a[1])) {
     console.log(`    ${k.padEnd(15)} ${v}`)
   }
-  console.log(`  New nace-lookup entries:      ${newEntries.toLocaleString()}`)
+  console.log(`  New/updated arrow rows:       ${newEntries.toLocaleString()}`)
 }
 
 main().catch(err => { console.error('Error:', err); process.exit(1) })

@@ -178,8 +178,8 @@ GHSL Built-H R2023A 100 m global raster + Overture Maps Foundation building foot
 
 - **100,096 OSM industrial sites** scanned across 2,288 IN-bbox hexes
 - **5,397 matched** to Living Atlas (priority: cement > power > park)
-- **4,636 new NACE entries** added to `nace-lookup.json`
-- Total `nace-lookup.json` entries after IN: 122,197
+- **4,636 new NACE entries** written to `industrial.arrow` `nace_4digit` column
+- Total enriched `nace_4digit` entries after IN: 122,197
 
 ## Validation
 

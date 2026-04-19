@@ -186,7 +186,7 @@ async function main() {
   console.log(`\n=== Results ===`)
   console.log(`  OSM industrial sites scanned: ${totalOsm.toLocaleString()}`)
   console.log(`  Matched to GEM:               ${matched.toLocaleString()}`)
-  console.log(`  New nace-lookup entries:      ${newEntries.toLocaleString()}`)
+  console.log(`  New/updated arrow rows:       ${newEntries.toLocaleString()}`)
 }
 
 main().catch(err => { console.error('Error:', err); process.exit(1) })

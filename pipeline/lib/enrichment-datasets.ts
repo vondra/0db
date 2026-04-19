@@ -1,8 +1,8 @@
 /**
  * Central registry of data sources used to enrich roads, railways, buildings,
- * and industrial layers. Each row in an Arrow file (or nace-lookup.json entry)
- * carries a `dataset_id` pointing back here, so the popup can show the user
- * which dataset contributed the data.
+ * and industrial layers. Each row in an Arrow file carries a `dataset_id`
+ * pointing back here, so the popup can show the user which dataset contributed
+ * the data.
  *
  * Conventions:
  *   - `id` is globally unique, monotonically assigned, NEVER recycled.

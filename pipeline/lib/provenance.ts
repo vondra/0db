@@ -1,13 +1,10 @@
 /**
  * Write-side helpers for dataset provenance on enrichment scripts.
  *
- * Two storage paths:
- *  - Arrow files (roads, railways, buildings, industrial):
- *    - `shouldOverwrite()` / `updateRow()` gate the whole-row update (payload + id together).
- *    - `withArrowWrite()` wraps read-modify-write with `flock + tmp + rename`.
- *  - `nace-lookup.json` side-file (industrial):
- *    - `withNaceLookupLock()` is a BATCH wrapper: lock once, read once, apply N decisions
- *      in memory, write once, unlock. Per-row flock would be O(N) I/O.
+ * All enrichment layers (roads, railways, buildings, industrial) now live in
+ * per-hex Arrow files:
+ *  - `shouldOverwrite()` / `updateRow()` gate the whole-row update (payload + id together).
+ *  - `withArrowWrite()` wraps read-modify-write with `flock + tmp + rename`.
  *
  * Callers declare their dataset id at the top of the script and pass the helper
  * a callback that writes the value columns only if the helper decided to overwrite.
@@ -114,39 +111,3 @@ export async function withArrowWrite(
   }
 }
 
-/**
- * Industrial side-file wrapper. Acquires the lock ONCE for the whole script body,
- * hands the mutable lookup dictionary to the callback, writes + releases at end.
- * The caller iterates its own records inside `fn` and mutates `lookup` freely;
- * there is no per-entry helper because that would force O(N) file I/O.
- *
- * The caller is responsible for deciding per entry via `shouldOverwrite()` against
- * the entry's existing `dataset_id` (see usage examples in the plan §3).
- */
-export async function withNaceLookupLock<T = void>(
-  lookupPath: string,
-  fn: (lookup: Record<string, Record<string, unknown>>) => Promise<T> | T,
-): Promise<T> {
-  const lockPath = `${lookupPath}.lock`
-  const tmpPath = `${lookupPath}.tmp`
-  await acquireLock(lockPath)
-  try {
-    let parsed: Record<string, Record<string, unknown>>
-    try {
-      const raw = await fs.readFile(lookupPath, 'utf8')
-      parsed = JSON.parse(raw) as Record<string, Record<string, unknown>>
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        parsed = {}
-      } else {
-        throw err
-      }
-    }
-    const result = await fn(parsed)
-    await fs.writeFile(tmpPath, JSON.stringify(parsed, null, 2))
-    await fs.rename(tmpPath, lookupPath)
-    return result
-  } finally {
-    await releaseLock(lockPath)
-  }
-}
