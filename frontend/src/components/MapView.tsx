@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import Map, { NavigationControl } from 'react-map-gl/maplibre'
+import type { StyleSpecification } from 'maplibre-gl'
 import HexLayer from './HexLayer'
 import HexHoverTooltip from './HexHoverTooltip'
 import FlyToLocation from './FlyToLocation'
@@ -10,7 +11,7 @@ import RealEstateLayer from './RealEstateLayer'
 import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
 import MapStateSync from './MapStateSync'
-import { DEFAULT_BASEMAP, getBasemapStyle, type BasemapId } from '../utils/basemaps'
+import { DEFAULT_BASEMAP, loadBasemapStyle, type BasemapId } from '../utils/basemaps'
 import type { HexFeature } from './HexLayer'
 import type { SelectedLocation } from './FlyToLocation'
 import type { NoiseComputeData } from './DetailPopup'
@@ -50,10 +51,25 @@ export default function MapView({
   const zoom = initialZoom ?? 8
   const bm = basemap ?? DEFAULT_BASEMAP
   const [flyToPos, setFlyToPos] = useState<{ lat: number; lng: number } | null>(null)
+  const [mapStyle, setMapStyle] = useState<string | StyleSpecification | null>(null)
 
   const handleArrived = useCallback((pos: { lat: number; lng: number }) => {
     setFlyToPos(pos)
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void loadBasemapStyle(bm).then((style) => {
+      if (!cancelled) setMapStyle(style)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [bm])
+
+  if (!mapStyle) {
+    return <div className="h-full w-full bg-[#fafaf8]" />
+  }
 
   return (
     <Map
@@ -63,7 +79,8 @@ export default function MapView({
         zoom,
       }}
       style={{ width: '100%', height: '100%' }}
-      mapStyle={getBasemapStyle(bm)}
+      mapStyle={mapStyle}
+      fadeDuration={0}
       maxZoom={16}
       attributionControl={false}
     >

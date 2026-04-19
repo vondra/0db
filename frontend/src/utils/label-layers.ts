@@ -1787,7 +1787,6 @@ const POSITRON_SYMBOL_LAYERS: any[] =
   }
 ]
 
-
 function adaptPaint(paint: Record<string, any>, basemapId: BasemapId): Record<string, any> {
   const p = { ...paint }
   if (basemapId === 'standard') {
