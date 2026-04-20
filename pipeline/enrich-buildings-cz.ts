@@ -12,7 +12,11 @@
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Uint8 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Uint8, Uint16 } from 'apache-arrow'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite } from './lib/provenance.js'
+
+const MY_DATASET_ID = DATASETS_BY_KEY.get('cz-ruian-vfr')!.id
 import proj4 from 'proj4'
 
 // Define S-JTSK (EPSG:5514) projection
@@ -228,10 +232,12 @@ function enrichHexes(ruianBuildings: RuianBuilding[]): void {
     const clon = table.getChild('centroid_lon')!
     const existingFloors = table.getChild('floors')
     const existingType = table.getChild('building_type')
+    const existingDatasetId = table.getChild('buildings_dataset_id')
 
     // New columns (copy existing, override where RÚIAN has data)
     const newFloors = new Uint8Array(n)
     const newType = new Uint8Array(n)
+    const newDatasetId = new Uint16Array(n)
     let hexEnriched = 0
 
     for (let i = 0; i < n; i++) {
@@ -239,8 +245,13 @@ function enrichHexes(ruianBuildings: RuianBuilding[]): void {
       const lon = clon.get(i) as number
       const curFloors = existingFloors ? (existingFloors.get(i) as number) : 0
       const curType = existingType ? (existingType.get(i) as number) : 0
+      const curDatasetId = existingDatasetId ? (existingDatasetId.get(i) as number) : 0
       newFloors[i] = curFloors
       newType[i] = curType
+      newDatasetId[i] = curDatasetId
+
+      // Priority gate: skip if a higher-priority dataset owns this row.
+      if (!shouldOverwrite(curDatasetId, MY_DATASET_ID)) continue
 
       // Find nearest RÚIAN building within 30m
       const gridKey = `${Math.floor(lat * 100)}_${Math.floor(lon * 100)}`
@@ -262,6 +273,7 @@ function enrichHexes(ruianBuildings: RuianBuilding[]): void {
 
       if (bestRuian) {
         hexEnriched++
+        newDatasetId[i] = MY_DATASET_ID
         // Fill floors if missing in OSM
         if (curFloors === 0 && bestRuian.floors > 0) {
           newFloors[i] = Math.min(bestRuian.floors, 255)
@@ -281,15 +293,17 @@ function enrichHexes(ruianBuildings: RuianBuilding[]): void {
     if (hexEnriched === 0) continue
     totalEnriched += hexEnriched
 
-    // Copy all columns + overwrite floors and building_type
+    // Copy all columns + overwrite floors, building_type, dataset_id
     const columns: Record<string, any> = {}
     for (const field of table.schema.fields) {
       if (field.name === 'floors') continue
       if (field.name === 'building_type') continue
+      if (field.name === 'buildings_dataset_id') continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['floors'] = vectorFromArray(newFloors, new Uint8())
     columns['building_type'] = vectorFromArray(newType, new Uint8())
+    columns['buildings_dataset_id'] = vectorFromArray(newDatasetId, new Uint16())
 
     const newTable = makeTable(columns)
     writeFileSync(bldPath, Buffer.from(tableToIPC(newTable, 'file')))
