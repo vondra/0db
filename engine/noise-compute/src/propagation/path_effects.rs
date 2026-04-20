@@ -314,10 +314,10 @@ mod tests {
 
     #[test]
     fn flat_terrain_returns_zero_attenuation() {
-        let p = build_flat_profile(1000.0, 10.0);
+        let mut p = build_flat_profile(1000.0, 10.0);
         let src_elev = 10.05;
         let rcv_alt = 11.5;
-        let (atten, delta, _, _) = terrain_attenuation_with_meta(&p, src_elev, rcv_alt);
+        let (atten, delta, _, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
         assert_eq!(delta, 0.0, "flat profile should not diffract");
         assert!(atten.iter().all(|&a| a == 0.0));
     }
@@ -341,7 +341,7 @@ mod tests {
 
         let src_elev = 10.05;
         let rcv_alt = 11.5;
-        let (_, delta, _, _) = terrain_attenuation_with_meta(&p, src_elev, rcv_alt);
+        let (_, delta, _, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
         assert!(delta > 0.0, "ridge at t=0.35 must trigger diffraction");
     }
 
@@ -363,7 +363,7 @@ mod tests {
 
         let src_elev = 10.05;
         let rcv_alt = 11.5;
-        let (_, delta, _, _) = terrain_attenuation_with_meta(&p, src_elev, rcv_alt);
+        let (_, delta, _, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
         assert!(delta > 0.0, "cliff at t=0.03 must be caught");
     }
 
@@ -384,7 +384,7 @@ mod tests {
 
         let src_elev = 10.05;
         let rcv_alt = 11.5;
-        let (_, delta, _, _) = terrain_attenuation_with_meta(&p, src_elev, rcv_alt);
+        let (_, delta, _, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
         assert!(delta > 0.0, "terrace at t=0.97 must be caught");
     }
 

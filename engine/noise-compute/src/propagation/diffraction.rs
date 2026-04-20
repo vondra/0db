@@ -186,13 +186,11 @@ fn compute_delta_star(
     let d_sg = t[d_idx] * total_dist;
     let d_rg = (1.0 - t[d_idx]) * total_dist;
 
-    // Fit on x coordinates in meters. For the receiver side, re-origin x so the
-    // ground plane is parameterised as z(x) = a·x + b with x=0 at the edge.
-    let xs_src: Vec<f64> = (0..=d_idx).map(|i| t[i] * total_dist).collect();
-    let xs_rcv: Vec<f64> = (d_idx..n).map(|i| (t[i] - t[d_idx]) * total_dist).collect();
-
-    let (_, b_src) = fit_plane(&xs_src, &profile[..=d_idx]);
-    let (a_rcv, b_rcv) = fit_plane(&xs_rcv, &profile[d_idx..]);
+    // Fit on x coordinates in meters, computed on the fly from `t` to avoid
+    // per-call Vec allocations. Receiver side re-origins x so z(x)=a·x+b with
+    // x=0 at the edge.
+    let (_, b_src) = fit_plane(&t[..=d_idx], &profile[..=d_idx], 0.0, total_dist);
+    let (a_rcv, b_rcv) = fit_plane(&t[d_idx..], &profile[d_idx..], t[d_idx], total_dist);
     let plane_rcv_at_end = a_rcv * d_rg + b_rcv;
 
     let s_star_z = 2.0 * b_src - (profile[0] + source_height);
@@ -205,10 +203,13 @@ fn compute_delta_star(
     (d_sd + d_dr - d_sr).max(0.0)
 }
 
-/// Unweighted least-squares line fit z = a·x + b over arbitrary x coordinates.
-fn fit_plane(xs: &[f64], zs: &[f64]) -> (f64, f64) {
+/// Unweighted least-squares line fit z = a·x + b where x = (t[i] − t_offset)·total_dist.
+///
+/// Avoids the intermediate Vec<f64> of the old `fit_plane(&[xs], &[zs])` by
+/// computing x on the fly from the t slice.
+fn fit_plane(ts: &[f64], zs: &[f64], t_offset: f64, total_dist: f64) -> (f64, f64) {
     let n = zs.len() as f64;
-    debug_assert_eq!(xs.len(), zs.len());
+    debug_assert_eq!(ts.len(), zs.len());
     if n < 1.0 {
         return (0.0, 0.0);
     }
@@ -216,7 +217,8 @@ fn fit_plane(xs: &[f64], zs: &[f64]) -> (f64, f64) {
     let mut sz = 0.0_f64;
     let mut sxx = 0.0_f64;
     let mut sxz = 0.0_f64;
-    for (&x, &z) in xs.iter().zip(zs.iter()) {
+    for (&ti, &z) in ts.iter().zip(zs.iter()) {
+        let x = (ti - t_offset) * total_dist;
         sx += x;
         sz += z;
         sxx += x * x;
