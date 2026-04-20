@@ -13,7 +13,7 @@ import { useUrlState, type SourceMode } from './hooks/useUrlState'
 import type { SelectedLocation } from './components/FlyToLocation'
 import type { RealEstateFilters } from './components/RealEstateLayer'
 import type { NoiseComputeData } from './components/DetailPopup'
-import type { HexFeature } from './components/HexLayer'
+import type { QuietHex, QuietHexUpdate } from './components/HexLayer'
 import { DEFAULT_BASEMAP, type BasemapId } from './utils/basemaps'
 
 export default function App() {
@@ -58,7 +58,9 @@ export default function App() {
   const [detailPosition, setDetailPosition] = useState<{ lat: number; lng: number } | null>(initial.detailPosition)
   const [noiseDetailData, setNoiseDetailData] = useState<NoiseComputeData | null>(null)
   const [highlightGeometry, setHighlightGeometry] = useState<any | null>(null)
-  const [hexData, setHexData] = useState<HexFeature[]>([])
+  const [quietHexData, setQuietHexData] = useState<QuietHex[]>([])
+  const [quietVisible, setQuietVisible] = useState(false)
+  const [quietDataRes, setQuietDataRes] = useState<number | null>(null)
   const [quietClustersEnabled, setQuietClustersEnabled] = useState(initial.quietClusters)
   const [quietThreshold, setQuietThreshold] = useState(initial.quietThreshold ?? 35)
   const [basemap, setBasemap] = useState<BasemapId>(initial.basemap ?? DEFAULT_BASEMAP)
@@ -78,6 +80,7 @@ export default function App() {
   const quietClustersRef = useRef(quietClustersEnabled)
   const quietThresholdRef = useRef(quietThreshold)
   const basemapRef = useRef(basemap)
+  const quietDataResRef = useRef<number | null>(null)
 
   const syncUrl = useCallback((overrides?: Partial<{
     layers: Set<string>
@@ -128,6 +131,7 @@ export default function App() {
   }, [syncUrl])
 
   const handleToggleSource = useCallback((sourceId: string) => {
+    setQuietVisible(false)
     setSourceModes(prev => {
       const current = prev[sourceId] ?? '0db'
       const next = { ...prev, [sourceId]: current === 'off' ? '0db' : 'off' as SourceMode }
@@ -137,6 +141,7 @@ export default function App() {
   }, [syncUrl])
 
   const handleSourceModeChange = useCallback((sourceId: string, mode: SourceMode) => {
+    setQuietVisible(false)
     setSourceModes(prev => {
       const next = { ...prev, [sourceId]: mode }
       syncUrl({ sourceModes: next })
@@ -145,6 +150,7 @@ export default function App() {
   }, [syncUrl])
 
   const handlePropagationChange = useCallback((factors: Record<string, boolean>) => {
+    setQuietVisible(false)
     setPropagationFactors(factors)
     propagationRef.current = factors
     const disabled = Object.entries(factors)
@@ -154,6 +160,7 @@ export default function App() {
   }, [syncUrl])
 
   const handleQuietClustersChange = useCallback((enabled: boolean) => {
+    setQuietVisible(false)
     setQuietClustersEnabled(enabled)
     quietClustersRef.current = enabled
     syncUrl({ quietClusters: enabled })
@@ -164,6 +171,20 @@ export default function App() {
     quietThresholdRef.current = threshold
     syncUrl({ quietThreshold: threshold })
   }, [syncUrl])
+
+  const handleQuietHexUpdate = useCallback((update: QuietHexUpdate) => {
+    if (update.phase === 'interactive') {
+      if (quietDataResRef.current !== update.dataRes) {
+        setQuietVisible(false)
+      }
+      return
+    }
+
+    quietDataResRef.current = update.dataRes
+    setQuietHexData(update.hexes)
+    setQuietDataRes(update.dataRes)
+    setQuietVisible(true)
+  }, [])
 
   const handleDetailPositionChange = useCallback((pos: { lat: number; lng: number } | null) => {
     setDetailPosition(pos)
@@ -260,11 +281,13 @@ export default function App() {
         basemap={basemap}
         isochronGeojson={isochronGeojson}
         onViewChange={handleViewChange}
-        onHexData={setHexData}
+        onQuietHexUpdate={handleQuietHexUpdate}
         onDetailData={handleDetailData}
         onDetailPositionChange={handleDetailPositionChange}
         initialDetailPosition={initial.detailPosition}
-        hexData={hexData}
+        quietHexData={quietHexData}
+        quietVisible={quietVisible}
+        quietDataRes={quietDataRes}
         quietClustersEnabled={quietClustersEnabled}
         quietThreshold={quietThreshold}
         highlightGeometry={highlightGeometry}

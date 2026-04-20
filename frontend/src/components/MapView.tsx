@@ -12,7 +12,7 @@ import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
 import MapStateSync from './MapStateSync'
 import { DEFAULT_BASEMAP, loadBasemapStyle, type BasemapId } from '../utils/basemaps'
-import type { HexFeature } from './HexLayer'
+import type { QuietHex, QuietHexUpdate } from './HexLayer'
 import type { SelectedLocation } from './FlyToLocation'
 import type { NoiseComputeData } from './DetailPopup'
 import type { SourceMode } from '../hooks/useUrlState'
@@ -27,12 +27,14 @@ interface MapViewProps {
   propagationFactors?: Record<string, boolean>
   basemap?: BasemapId
   onViewChange?: (lat: number, lng: number, zoom: number) => void
-  onHexData?: (features: HexFeature[]) => void
+  onQuietHexUpdate?: (update: QuietHexUpdate) => void
   onDetailData?: (data: NoiseComputeData | null) => void
   onDetailPositionChange?: (pos: { lat: number; lng: number } | null) => void
   initialDetailPosition?: { lat: number; lng: number } | null
   onSelectedPointChange?: (point: { lat: number; lng: number } | null) => void
-  hexData?: HexFeature[]
+  quietHexData?: QuietHex[]
+  quietVisible?: boolean
+  quietDataRes?: number | null
   quietClustersEnabled?: boolean
   quietThreshold?: number
   highlightGeometry?: any | null
@@ -43,9 +45,9 @@ interface MapViewProps {
 
 export default function MapView({
   selectedLocation, initialCenter, initialZoom, activeSources, sourceModes, propagationFactors,
-  basemap, onViewChange, onHexData, onDetailData, onDetailPositionChange,
+  basemap, onViewChange, onQuietHexUpdate, onDetailData, onDetailPositionChange,
   initialDetailPosition, onSelectedPointChange,
-  hexData, quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters, rasterOverlays,
+  quietHexData, quietVisible, quietDataRes, quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters, rasterOverlays,
 }: MapViewProps) {
   const center = initialCenter ?? [49.8, 15.5]
   const zoom = initialZoom ?? 8
@@ -89,12 +91,16 @@ export default function MapView({
         activeSources={activeSources}
         sourceModes={sourceModes}
         propagationFactors={propagationFactors}
-        onHexData={onHexData}
+        onQuietHexUpdate={onQuietHexUpdate}
         basemapId={bm}
         quietClustersEnabled={quietClustersEnabled}
       />
       <HexHoverTooltip />
-      <QuietClustersLayer hexFeatures={hexData ?? []} enabled={quietClustersEnabled ?? false} threshold={quietThreshold ?? 35} />
+      <QuietClustersLayer
+        hexData={quietHexData ?? []}
+        enabled={(quietClustersEnabled ?? false) && (quietVisible ?? false) && quietDataRes !== null}
+        threshold={quietThreshold ?? 35}
+      />
       <ContributorHighlight geometry={highlightGeometry ?? null} />
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} />}
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
