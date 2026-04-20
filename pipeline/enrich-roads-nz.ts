@@ -198,18 +198,24 @@ async function enrichArrows(sites: NzRoadSegment[]): Promise<void> {
     const aadtMoto = new Int32Array(numRows)
     const trafficSource = new Uint8Array(numRows)
     const datasetId = new Uint16Array(numRows)
+
+    // Seed output arrays from existing values so non-matched rows are never
+    // clobbered back to zero. Per-row writes happen only on match + gate pass.
+    for (let i = 0; i < numRows; i++) {
+      aadtLight[i] = (existingLight?.get(i) as number) ?? 0
+      aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
+      aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
+      aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
+      trafficSource[i] = (existingSource?.get(i) as number) ?? 0
+      datasetId[i] = (existingDatasetId?.get(i) as number) ?? 0
+    }
     let hexMatched = 0
 
     for (let i = 0; i < numRows; i++) {
       totalSeg++
-      const existingSrc = (existingSource?.get(i) as number) ?? 0
-      if (existingSrc === 1) {
-        aadtLight[i] = (existingLight?.get(i) as number) ?? 0
-        aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
-        aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
-        aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-        trafficSource[i] = 1
-        datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      // Priority gate: preserve existing if it has higher priority than self.
+      const existingId = datasetId[i]
+      if (!shouldOverwrite(existingId, MY_DATASET_ID)) {
         preserved++
         continue
       }
