@@ -343,12 +343,6 @@ fn compute_roads(
             default_speed(class_name)
         };
         let surf_corr = norm.surf_corr_db;
-        // Bridge: hard surface below → G=0 (no ground absorption)
-        let ground_g = if seg.bridge {
-            0.0
-        } else {
-            rasters.ground_g_path(seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon)
-        };
         let flc = geo::finite_line_correction(seg.length_m as f64, seg.dist_m, seg.fraction);
 
         // Early exit: skip if free-field < threshold (matching pipeline)
@@ -369,37 +363,32 @@ fn compute_roads(
             }
         }
 
-        // Per-segment path effects
-        let terrain_atten = propagation::path_effects::terrain_attenuation(
-            rasters,
+        // Unified path profile — sampled once, shared across all path-effect calls.
+        let mut path_profile = propagation::PathProfile::new();
+        rasters.build_path_profile(
             seg.cp_lat,
             seg.cp_lon,
             receiver.lat,
             receiver.lon,
-            src_alt,
-            rcv_alt,
             seg.dist_m,
+            &mut path_profile,
         );
+        // Bridge: hard surface below → G=0 (no ground absorption)
+        let ground_g = if seg.bridge {
+            0.0
+        } else {
+            propagation::path_effects::ground_g_from_profile(&path_profile)
+        };
+        let terrain_atten =
+            propagation::path_effects::terrain_attenuation(&path_profile, src_alt, rcv_alt);
         let screening_atten = propagation::path_effects::screening_attenuation(
-            rasters,
+            &path_profile,
             barriers,
-            seg.cp_lat,
-            seg.cp_lon,
-            receiver.lat,
-            receiver.lon,
             src_alt,
             rcv_alt,
-            seg.dist_m,
             0.0, // roads: no exclusion radius
         );
-        let veg_atten = propagation::path_effects::vegetation_attenuation_path(
-            rasters,
-            seg.cp_lat,
-            seg.cp_lon,
-            receiver.lat,
-            receiver.lon,
-            seg.dist_m,
-        );
+        let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
         let mut seg_variants = [
             PropagationVariants::default(),
@@ -882,47 +871,34 @@ fn compute_railways(
         }
 
         let rcv_alt = receiver.altitude_m();
+        let flc = geo::finite_line_correction(seg.length_m as f64, seg.dist_m, seg.fraction);
 
-        // Bridge: hard surface below → G=0 (no ground absorption). ISO 9613-2 §7.3.1
-        // Otherwise: line-averaged G from source to receiver.
+        // Unified path profile — one sampling, four rasters.
+        let mut path_profile = propagation::PathProfile::new();
+        rasters.build_path_profile(
+            seg.cp_lat,
+            seg.cp_lon,
+            receiver.lat,
+            receiver.lon,
+            seg.dist_m,
+            &mut path_profile,
+        );
+        // Bridge: hard surface below → G=0. Otherwise line-averaged G along path.
         let ground_g = if seg.bridge {
             0.0
         } else {
-            rasters.ground_g_path(seg.cp_lat, seg.cp_lon, receiver.lat, receiver.lon)
+            propagation::path_effects::ground_g_from_profile(&path_profile)
         };
-        let flc = geo::finite_line_correction(seg.length_m as f64, seg.dist_m, seg.fraction);
-
-        // Per-segment path effects
-        let terrain_atten = propagation::path_effects::terrain_attenuation(
-            rasters,
-            seg.cp_lat,
-            seg.cp_lon,
-            receiver.lat,
-            receiver.lon,
-            src_alt,
-            rcv_alt,
-            seg.dist_m,
-        );
+        let terrain_atten =
+            propagation::path_effects::terrain_attenuation(&path_profile, src_alt, rcv_alt);
         let screening_atten = propagation::path_effects::screening_attenuation(
-            rasters,
+            &path_profile,
             barriers,
-            seg.cp_lat,
-            seg.cp_lon,
-            receiver.lat,
-            receiver.lon,
             src_alt,
             rcv_alt,
-            seg.dist_m,
             0.0, // railways: no exclusion radius
         );
-        let veg_atten = propagation::path_effects::vegetation_attenuation_path(
-            rasters,
-            seg.cp_lat,
-            seg.cp_lon,
-            receiver.lat,
-            receiver.lon,
-            seg.dist_m,
-        );
+        let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
         let mut seg_variants = [
             PropagationVariants::default(),
@@ -1238,37 +1214,26 @@ fn compute_point_sources(
             }
         }
 
-        // Per-source path effects
-        let terrain_atten = propagation::path_effects::terrain_attenuation(
-            rasters,
+        // Unified path profile — one sampling, all path effects read from it.
+        let mut path_profile = propagation::PathProfile::new();
+        rasters.build_path_profile(
             src.lat,
             src.lon,
             receiver.lat,
             receiver.lon,
-            src_alt,
-            rcv_alt,
             src.dist_m,
+            &mut path_profile,
         );
+        let terrain_atten =
+            propagation::path_effects::terrain_attenuation(&path_profile, src_alt, rcv_alt);
         let screening_atten = propagation::path_effects::screening_attenuation(
-            rasters,
+            &path_profile,
             barriers,
-            src.lat,
-            src.lon,
-            receiver.lat,
-            receiver.lon,
             src_alt,
             rcv_alt,
-            src.dist_m,
             src.exclusion_radius_m as f64,
         );
-        let veg_atten = propagation::path_effects::vegetation_attenuation_path(
-            rasters,
-            src.lat,
-            src.lon,
-            receiver.lat,
-            receiver.lon,
-            src.dist_m,
-        );
+        let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
         let v_day = iso9613::propagate_variants(
             &src.lw_day.map(|v| v as f64),
@@ -1739,38 +1704,31 @@ fn compute_aircraft(
 
             let cp_elev = rasters.elevation(cp.lat, cp.lon) + line_emission.source_height_m;
             let d_slant = geo::slant_dist(dist_m, cp_elev, receiver.altitude_m()).max(1.0);
-            let ground_g = rasters.ground_g_path(cp.lat, cp.lon, receiver.lat, receiver.lon);
             let flc = geo::finite_line_correction(seg.segment_length_m as f64, dist_m, cp.fraction);
-            let terrain_atten = propagation::path_effects::terrain_attenuation(
-                rasters,
+
+            let mut path_profile = propagation::PathProfile::new();
+            rasters.build_path_profile(
                 cp.lat,
                 cp.lon,
                 receiver.lat,
                 receiver.lon,
+                dist_m,
+                &mut path_profile,
+            );
+            let ground_g = propagation::path_effects::ground_g_from_profile(&path_profile);
+            let terrain_atten = propagation::path_effects::terrain_attenuation(
+                &path_profile,
                 cp_elev,
                 receiver.altitude_m(),
-                dist_m,
             );
             let screening_atten = propagation::path_effects::screening_attenuation(
-                rasters,
+                &path_profile,
                 barriers,
-                cp.lat,
-                cp.lon,
-                receiver.lat,
-                receiver.lon,
                 cp_elev,
                 receiver.altitude_m(),
-                dist_m,
                 0.0,
             );
-            let veg_atten = propagation::path_effects::vegetation_attenuation_path(
-                rasters,
-                cp.lat,
-                cp.lon,
-                receiver.lat,
-                receiver.lon,
-                dist_m,
-            );
+            let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
             let emissions = [
                 std::array::from_fn(|i| line_emission.emission_day[i] as f64),
@@ -2331,42 +2289,34 @@ pub fn compute_path_effects(
 ) -> (TerrainBreakdown, ScreeningBreakdown, VegetationBreakdown) {
     let rcv_alt = receiver.altitude_m();
 
-    // Single-pass variants that return both attenuation and metadata
-    let (terrain_atten, terrain_delta, terrain_is_double, terrain_profile_points) =
-        propagation::path_effects::terrain_attenuation_with_meta(
-            rasters,
-            src_lat,
-            src_lon,
-            receiver.lat,
-            receiver.lon,
-            src_height,
-            rcv_alt,
-            dist_m,
-        );
-
-    let (screening_atten, obstacle_trace) =
-        propagation::path_effects::screening_attenuation_with_meta(
-            rasters,
-            barriers,
-            src_lat,
-            src_lon,
-            receiver.lat,
-            receiver.lon,
-            src_height,
-            rcv_alt,
-            dist_m,
-            exclusion_radius_m,
-        );
-
-    let veg_atten = propagation::path_effects::vegetation_attenuation_path(
-        rasters,
+    // Unified path profile — one sampling, all four rasters + all metadata.
+    let mut path_profile = propagation::PathProfile::new();
+    rasters.build_path_profile(
         src_lat,
         src_lon,
         receiver.lat,
         receiver.lon,
         dist_m,
+        &mut path_profile,
     );
-    let forest_depth = rasters.vegetation_depth(src_lat, src_lon, receiver.lat, receiver.lon);
+
+    let (terrain_atten, terrain_delta, terrain_is_double, terrain_profile_points) =
+        propagation::path_effects::terrain_attenuation_with_meta(&path_profile, src_height, rcv_alt);
+
+    let (screening_atten, obstacle_trace) = propagation::path_effects::screening_attenuation_with_meta(
+        &path_profile,
+        barriers,
+        src_height,
+        rcv_alt,
+        exclusion_radius_m,
+    );
+
+    let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
+    let forest_depth = propagation::path_profile::vegetation_run_length(
+        &path_profile.t,
+        &path_profile.forest_u8,
+        path_profile.dist_m,
+    );
     let sampled_path_m = dist_m;
 
     (
@@ -2406,17 +2356,8 @@ mod tests {
         fn building_height(&self, _lat: f64, _lon: f64) -> f64 {
             0.0
         }
-        fn vegetation_depth(&self, _: f64, _: f64, _: f64, _: f64) -> f64 {
-            0.0
-        }
         fn ground_g(&self, _: f64, _: f64) -> f64 {
             0.5
-        }
-        fn ground_g_path(&self, _: f64, _: f64, _: f64, _: f64) -> f64 {
-            0.5
-        }
-        fn terrain_profile(&self, _: f64, _: f64, _: f64, _: f64, steps: usize) -> Vec<f64> {
-            vec![200.0; steps]
         }
         fn building_enclosure(&self, _: f64, _: f64) -> f64 {
             0.0
@@ -2444,6 +2385,7 @@ mod tests {
             aadt_heavy: 0,
             aadt_moto: 0,
             traffic_source: 0, // defaults
+            dataset_id: 0,
             dist_m: 500.0,
             cp_lat: 50.08,
             cp_lon: 14.42,
@@ -2514,6 +2456,7 @@ mod tests {
             aadt_heavy: 0,
             aadt_moto: 0,
             traffic_source: 0,
+            dataset_id: 0,
             dist_m: 100.0,
             cp_lat: 50.08,
             cp_lon: 14.42,
@@ -2554,6 +2497,7 @@ mod tests {
             speed_source: 0,
             trains_passenger_source: 0,
             trains_freight_source: 0,
+            dataset_id: 0,
         }];
 
         let result = compute_at_point(
@@ -2636,6 +2580,7 @@ mod tests {
             aadt_heavy: 0,
             aadt_moto: 0,
             traffic_source: 0,
+            dataset_id: 0,
             dist_m: 15.0,
             cp_lat: 50.08,
             cp_lon: 14.42,
@@ -2777,6 +2722,7 @@ mod tests {
             aadt_heavy: 0,
             aadt_moto: 0,
             traffic_source: 0,
+            dataset_id: 0,
             dist_m: 100.0,
             cp_lat: 50.08,
             cp_lon: 14.42,
@@ -2817,6 +2763,7 @@ mod tests {
             speed_source: 0,
             trains_passenger_source: 0,
             trains_freight_source: 0,
+            dataset_id: 0,
         }];
         let aircraft = vec![AircraftSegment {
             flight_id: 1,

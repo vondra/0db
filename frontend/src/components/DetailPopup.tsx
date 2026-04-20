@@ -732,19 +732,21 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
         ['Path difference δ', `${c.terrain.delta_m.toFixed(2)} m`],
         ['Diffraction', c.terrain.is_double ? 'double edge' : 'single edge'],
         ['DEM points', String(c.terrain.profile_points)],
-        ['Cadence', '30/92/184 m'],
+        ['Cadence', 'bilateral 30/60/120/240 m'],
         { sep: true },
         ['Attenuation', `${fmt(c.terrain.attenuation_db)} dB`],
         '',
         'ISO 9613-2 §7.3 + C₃ frequency term',
         'Copernicus GLO-30 DEM (30 m raster).',
+        'Unified bilateral sampler — SPEC §3.5a.',
       ], 18, 14)
     : txtTable([
         'No terrain obstruction.',
         '',
-        '5-point fast LOS check at',
-        '25/50/75 % of path — all clear,',
-        'so terrain skipped.',
+        'Unified bilateral sampler scanned the',
+        'full path (30/60/120/240 m cadence,',
+        'dense near source + receiver); no',
+        'sample sits above the line of sight.',
       ], 18, 12)
 
   const screeningText = (() => {
@@ -779,7 +781,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
       }
     }
     rows.push({ sep: true }, ['Aggregate attenuation', `${fmt(c.screening.attenuation_db)} dB`])
-    rows.push('', '30 m building raster, 1D nearest', 'sample (no lateral search).')
+    rows.push('', 'Overture 30 m building raster,', 'sampled via unified bilateral path', 'profile (SPEC §3.5a).')
     return txtTable(rows, 22, 14)
   })()
 
@@ -790,9 +792,10 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
         { sep: true },
         ['Attenuation', `${fmt(c.vegetation.attenuation_db)} dB`],
         '',
-        'WorldCover 30 m raster.',
-        'Contiguous >10 m sections only.',
-        'ISO 9613-2 §A.2.2 (capped 200 m).',
+        'WorldCover 30 m raster, sampled via',
+        'unified bilateral path profile; forest',
+        'runs <10 m discarded (ISO 9613-2 §A.2.2,',
+        'capped 200 m). SPEC §3.5a.',
       ], 18, 14)
     : "Vegetation skipped\n(segment beyond model's applicable distance)."
 

@@ -86,13 +86,6 @@ impl RasterSampler for RealRasters {
         self.building.sample(lat, lon)
     }
 
-    fn vegetation_depth(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
-        // Cumulative forest depth: cells with value > 0 count as forest
-        // (handles both binary (0/1) and percentage (0-100) rasters)
-        // Minimum contiguous depth 10m (no scattered trees)
-        self.forest.cumulative_along_path(lat1, lon1, lat2, lon2, 0.5)
-    }
-
     fn ground_g(&self, lat: f64, lon: f64) -> f64 {
         // IMD 0=natural(soft), 100=impervious(hard)
         // G: 0=hard, 1=soft → G = 1.0 - IMD/100
@@ -101,15 +94,6 @@ impl RasterSampler for RealRasters {
         // Old code returned 0.5 for IMD=0, halving ground attenuation in rural areas.
         let imd = self.imd.sample(lat, lon);
         (1.0 - imd / 100.0).clamp(0.0, 1.0)
-    }
-
-    fn ground_g_path(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
-        let avg_imd = self.imd.avg_along_path(lat1, lon1, lat2, lon2);
-        (1.0 - avg_imd / 100.0).clamp(0.0, 1.0)
-    }
-
-    fn terrain_profile(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64, _steps: usize) -> Vec<f64> {
-        self.dem.profile_along_path(lat1, lon1, lat2, lon2)
     }
 
     fn building_enclosure(&self, lat: f64, lon: f64) -> f64 {
@@ -184,69 +168,59 @@ impl RasterSampler for RealRasters {
         }
         (max_bh, max_t, taken, step)
     }
+
+    fn build_path_profile(
+        &self,
+        src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64, dist_m: f64,
+        out: &mut noise_compute::propagation::PathProfile,
+    ) {
+        out.clear();
+        out.dist_m = dist_m;
+        out.src_lat = src_lat;
+        out.src_lon = src_lon;
+        out.rcv_lat = rcv_lat;
+        out.rcv_lon = rcv_lon;
+
+        noise_compute::propagation::path_profile::fill_t_values(dist_m, &mut out.t);
+
+        let n = out.t.len();
+        out.elevation_m.reserve(n);
+        out.building_h_m.reserve(n);
+        out.forest_u8.reserve(n);
+        out.imd_u8.reserve(n);
+
+        // Per-raster tile caches — each warms on the first sample in a tile,
+        // stays warm while consecutive samples fall in the same 1° tile.
+        let mut dem_key = (i32::MIN, i32::MIN);
+        let mut dem_tile = None;
+        let mut bld_key = (i32::MIN, i32::MIN);
+        let mut bld_tile = None;
+        let mut for_key = (i32::MIN, i32::MIN);
+        let mut for_tile = None;
+        let mut imd_key = (i32::MIN, i32::MIN);
+        let mut imd_tile = None;
+
+        for &t in &out.t {
+            let lat = src_lat + t * (rcv_lat - src_lat);
+            let lon = src_lon + t * (rcv_lon - src_lon);
+            let elev = self.dem.sample_cached(lat, lon, &mut dem_key, &mut dem_tile);
+            let bh = self.building.sample_cached(lat, lon, &mut bld_key, &mut bld_tile);
+            let fr = self.forest.sample_cached(lat, lon, &mut for_key, &mut for_tile);
+            let imd = self.imd.sample_cached(lat, lon, &mut imd_key, &mut imd_tile);
+            out.elevation_m.push(elev as f32);
+            out.building_h_m.push(bh.clamp(0.0, 255.0) as u8);
+            out.forest_u8.push(fr.clamp(0.0, 255.0) as u8);
+            out.imd_u8.push(imd.clamp(0.0, 255.0) as u8);
+        }
+
+        out.step_m_med = noise_compute::propagation::path_profile::median_step_m(&out.t, dist_m);
+    }
 }
 
-/// Raster cell size in meters (~30.7m).
+/// Raster cell size in meters (~30.7m). Kept for callers that need it as a
+/// constant; the bilateral cadence itself lives in
+/// `noise_compute::propagation::path_profile::fill_t_values`.
 const CELL_M: f64 = 110_540.0 / 3600.0;
-
-/// Bilateral adaptive t-values: dense at source+receiver ends, coarse in middle.
-/// Uses caller-provided buffer to avoid heap allocation on hot path.
-fn bilateral_steps_into(dist_m: f64, buf: &mut Vec<f64>) {
-    buf.clear();
-
-    if dist_m <= CELL_M * 10.0 {
-        let n = (dist_m / CELL_M).ceil().max(3.0) as usize;
-        for i in 0..n {
-            buf.push(i as f64 / (n - 1).max(1) as f64);
-        }
-        return;
-    }
-
-    buf.push(0.0);
-
-    let levels = [CELL_M, CELL_M * 2.0, CELL_M * 4.0, CELL_M * 8.0];
-    let reps = 3usize;
-
-    // Forward from source
-    let mut pos = 0.0_f64;
-    for &step in &levels {
-        for _ in 0..reps {
-            pos += step;
-            if pos >= dist_m * 0.5 { break; }
-            buf.push(pos / dist_m);
-        }
-        if pos >= dist_m * 0.5 { break; }
-    }
-    let fwd_end = pos.min(dist_m * 0.5) / dist_m;
-
-    // Fill middle with coarsest step
-    let coarse = levels[levels.len() - 1].min(dist_m * 0.25);
-    let mut mid = fwd_end;
-    let bwd_start_approx = 1.0 - fwd_end;
-    while mid < bwd_start_approx - 0.0001 {
-        mid += coarse / dist_m;
-        if mid < bwd_start_approx { buf.push(mid); }
-    }
-
-    // Backward from receiver (mirror of forward, reversed)
-    let mut back_count = 0usize;
-    pos = 0.0;
-    for &step in &levels {
-        for _ in 0..reps {
-            pos += step;
-            if pos >= dist_m * 0.5 { break; }
-            buf.push(1.0 - pos / dist_m);
-            back_count += 1;
-        }
-        if pos >= dist_m * 0.5 { break; }
-    }
-    // Reverse just the back portion (it was pushed in decreasing order)
-    let back_start = buf.len() - back_count;
-    buf[back_start..].reverse();
-
-    buf.push(1.0);
-    buf.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
-}
 
 /// L3-cache-resident cropped raster grid for pipeline compute.
 ///
@@ -348,63 +322,9 @@ impl noise_compute::types::RasterSampler for FusedGrid {
         self.pixel(lat, lon).building as f64
     }
 
-    fn vegetation_depth(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
-        let dlat = (lat2 - lat1) * 110_540.0;
-        let dlon = (lon2 - lon1) * 111_320.0 * ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
-        let dist_m = (dlat * dlat + dlon * dlon).sqrt();
-        let mut steps_buf = Vec::with_capacity(64);
-        bilateral_steps_into(dist_m, &mut steps_buf);
-        let mut total = 0.0;
-        let mut run = 0.0;
-        for w in steps_buf.windows(2) {
-            let actual_step = (w[1] - w[0]) * dist_m;
-            let lat = lat1 + w[1] * (lat2 - lat1);
-            let lon = lon1 + w[1] * (lon2 - lon1);
-            if self.pixel(lat, lon).forest > 0 {
-                run += actual_step;
-            } else {
-                if run >= 10.0 { total += run; }
-                run = 0.0;
-            }
-        }
-        if run >= 10.0 { total += run; }
-        total
-    }
-
     fn ground_g(&self, lat: f64, lon: f64) -> f64 {
         let imd = self.pixel(lat, lon).imd as f64;
         (1.0 - imd / 100.0).clamp(0.0, 1.0)
-    }
-
-    fn ground_g_path(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
-        let dlat = (lat2 - lat1) * 110_540.0;
-        let dlon = (lon2 - lon1) * 111_320.0 * ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
-        let dist_m = (dlat * dlat + dlon * dlon).sqrt();
-        let mut steps_buf = Vec::with_capacity(64);
-        bilateral_steps_into(dist_m, &mut steps_buf);
-        let mut sum = 0.0;
-        for &t in &steps_buf {
-            let lat = lat1 + t * (lat2 - lat1);
-            let lon = lon1 + t * (lon2 - lon1);
-            sum += self.pixel(lat, lon).imd as f64;
-        }
-        let avg = sum / steps_buf.len().max(1) as f64;
-        (1.0 - avg / 100.0).clamp(0.0, 1.0)
-    }
-
-    fn terrain_profile(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64, _steps: usize) -> Vec<f64> {
-        let dlat = (lat2 - lat1) * 110_540.0;
-        let dlon = (lon2 - lon1) * 111_320.0 * ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
-        let dist_m = (dlat * dlat + dlon * dlon).sqrt();
-        let mut steps_buf = Vec::with_capacity(64);
-        bilateral_steps_into(dist_m, &mut steps_buf);
-        let mut profile = Vec::with_capacity(steps_buf.len());
-        for &t in &steps_buf {
-            let lat = lat1 + t * (lat2 - lat1);
-            let lon = lon1 + t * (lon2 - lon1);
-            profile.push(self.elevation_bilinear(lat, lon));
-        }
-        profile
     }
 
     fn building_enclosure(&self, lat: f64, lon: f64) -> f64 {
@@ -427,7 +347,7 @@ impl noise_compute::types::RasterSampler for FusedGrid {
         dist_m: f64, excl_start_m: f64,
     ) -> (f64, f64) {
         let mut steps_buf = Vec::with_capacity(64);
-        bilateral_steps_into(dist_m, &mut steps_buf);
+        noise_compute::propagation::path_profile::fill_t_values(dist_m, &mut steps_buf);
         let mut max_bh = 0.0f64;
         let mut max_t = 0.5;
         for &t in &steps_buf {
@@ -439,6 +359,41 @@ impl noise_compute::types::RasterSampler for FusedGrid {
             if bh > max_bh { max_bh = bh; max_t = t; }
         }
         (max_bh, max_t)
+    }
+
+    fn build_path_profile(
+        &self,
+        src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64, dist_m: f64,
+        out: &mut noise_compute::propagation::PathProfile,
+    ) {
+        out.clear();
+        out.dist_m = dist_m;
+        out.src_lat = src_lat;
+        out.src_lon = src_lon;
+        out.rcv_lat = rcv_lat;
+        out.rcv_lon = rcv_lon;
+
+        noise_compute::propagation::path_profile::fill_t_values(dist_m, &mut out.t);
+
+        let n = out.t.len();
+        out.elevation_m.reserve(n);
+        out.building_h_m.reserve(n);
+        out.forest_u8.reserve(n);
+        out.imd_u8.reserve(n);
+
+        // Single pixel deref yields building/forest/IMD from the same L3 cache
+        // line; DEM is bilinearly interpolated over the 4 neighbouring pixels.
+        for &t in &out.t {
+            let lat = src_lat + t * (rcv_lat - src_lat);
+            let lon = src_lon + t * (rcv_lon - src_lon);
+            out.elevation_m.push(self.elevation_bilinear(lat, lon) as f32);
+            let px = self.pixel(lat, lon);
+            out.building_h_m.push(px.building);
+            out.forest_u8.push(px.forest);
+            out.imd_u8.push(px.imd);
+        }
+
+        out.step_m_med = noise_compute::propagation::path_profile::median_step_m(&out.t, dist_m);
     }
 }
 #[cfg(test)]

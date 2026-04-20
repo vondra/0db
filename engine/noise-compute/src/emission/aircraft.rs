@@ -2112,24 +2112,8 @@ mod tests {
         fn building_height(&self, _lat: f64, _lon: f64) -> f64 {
             0.0
         }
-        fn vegetation_depth(&self, _lat1: f64, _lon1: f64, _lat2: f64, _lon2: f64) -> f64 {
-            0.0
-        }
         fn ground_g(&self, _lat: f64, _lon: f64) -> f64 {
             0.0
-        }
-        fn ground_g_path(&self, _lat1: f64, _lon1: f64, _lat2: f64, _lon2: f64) -> f64 {
-            0.0
-        }
-        fn terrain_profile(
-            &self,
-            _lat1: f64,
-            _lon1: f64,
-            _lat2: f64,
-            _lon2: f64,
-            _steps: usize,
-        ) -> Vec<f64> {
-            vec![]
         }
         fn building_enclosure(&self, _lat: f64, _lon: f64) -> f64 {
             0.0

@@ -289,23 +289,32 @@ C₃ (identical to CNOSSOS `C"`) accounts for thick barriers: 1.0 when edges are
 
 Simplifications vs. strict CNOSSOS:
 - We use **vertical** reflection across the fitted plane (standard acoustic practice in NMPB / NoiseModelling), not perpendicular-to-plane.
-- The **−λ/20** near-miss clause is not implemented — the 5-point LOS fast-path in `path_effects.rs` and the early return in `compute_path_difference` collapse all non-blocked paths to zero before diffraction is considered.
+- The **−λ/20** near-miss clause is not implemented — `compute_path_difference` early-returns zero when no sampled elevation sits above the line-of-sight, collapsing all non-blocked paths to zero before diffraction is considered.
 - `Δground` additive combination (CNOSSOS §2.5.31) is not implemented — we still combine ground and barrier via `max(A_ground, A_terrain + A_screen)` in §3.3.
 - Favourable-conditions curved rays (§2.5.24) are not implemented — see §3.9.
 - Lateral diffraction around vertical edges (§2.5.6(i)) is not implemented.
 
-Terrain profile sampled from DEM (Copernicus GLO-30 primary, SRTM fallback). Receiver at **4.0m** above ground.
+See §3.5a for the shared path-sampling scheme.
+
+### 3.5a Unified path sampler
+
+DEM, Overture building height, WorldCover forest cover and IMD imperviousness are all sampled along the source→receiver line by a single bilateral cadence. Density is highest near the two endpoints (where obstacles diffract sound most severely) and coarsest in the middle (where a missed feature still lies well below the line of sight):
+
+- three probes at 30 m from each end
+- three probes at 60 m from each end
+- three probes at 120 m from each end
+- 240 m steps through the middle for paths longer than ~1.2 km
+
+Both endpoints (t=0 and t=1) are included. Paths ≤ ~310 m collapse to uniform 30 m stepping. The scheme is implemented in `propagation::path_profile::fill_t_values` and used by `RasterSampler::build_path_profile`.
+
+Terrain diffraction, building screening, vegetation depth, and ground-effect G all read from the same `PathProfile` — no separate walk. The previous 3-point fast-LOS gate at t∈{0.25, 0.5, 0.75} is gone; terrain short-circuits on an in-profile scan (no extra raster taps).
+
+Ground G and vegetation depth are **path integrals**; they weight samples by interval length so non-uniform bilateral spacing doesn't bias the endpoints.
 
 ### 3.6 Building screening (ISO 9613-2, per-band)
-Samples Overture Maps 30m building raster along the full source-receiver path.
+Samples Overture Maps 30m building raster at the same bilateral cadence (§3.5a). The dominant obstacle is the tallest candidate on the path above line-of-sight. Explicit `noise_barrier` geometries compete with raster buildings. For industrial sources, screening samples inside the source's own footprint are skipped via an exclusion radius.
 
-Current implementation:
-- sampling step is adaptive: about **30 m** up to 1 km, **90 m** up to 3 km, **180 m** beyond
-- explicit `noise_barrier` geometries compete with raster buildings
-- the dominant obstacle is the **tallest candidate on the path**, not an explicit multi-edge building model
-- for industrial sources, screening samples inside the source's own footprint are skipped via an exclusion radius
-
-Then path difference is computed using full 3D geometry:
+Path difference is computed using full 3D geometry:
 ```
 S = (0, src_elev),  B = (d_horiz, bld_top),  R = (dist_m, rcv_alt)
 δ_bld = |S→B| + |B→R| - |S→R|    (3D detour minus direct slant path)
@@ -316,7 +325,7 @@ A_screen,i = min(20, 10 × log₁₀(3 + 20 × δ_bld × f[i] / 340))
 ```
 A_veg,i = min(MAX_VEG_ATTEN[i], α_veg[i] × depth_m)
 ```
-where depth_m = cumulative forest depth along source-receiver path.
+where depth_m = cumulative forest depth along source-receiver path, integrated trapezoidally over intervals where the WorldCover raster is forested (see §3.5a). Contiguous runs shorter than 10 m are discarded to avoid scattered-tree false positives.
 
 Constants (`ALPHA_VEG`, `MAX_VEG_ATTEN`) are ISO 9613-2:2024 Table A.1 values × 0.5 — see
 the constants block at the top of this SPEC. Rationale: binary WorldCover forest raster

@@ -781,17 +781,8 @@ impl RasterSampler for StubRasters {
     fn building_height(&self, _: f64, _: f64) -> f64 {
         0.0
     }
-    fn vegetation_depth(&self, _: f64, _: f64, _: f64, _: f64) -> f64 {
-        0.0
-    }
     fn ground_g(&self, _: f64, _: f64) -> f64 {
         0.5
-    }
-    fn ground_g_path(&self, _: f64, _: f64, _: f64, _: f64) -> f64 {
-        0.5
-    }
-    fn terrain_profile(&self, _: f64, _: f64, _: f64, _: f64, steps: usize) -> Vec<f64> {
-        vec![200.0; steps]
     }
     fn building_enclosure(&self, _: f64, _: f64) -> f64 {
         0.0

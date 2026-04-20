@@ -21,16 +21,19 @@ pub struct DiffractionResult {
 
 /// Compute double path difference from elevation profile.
 ///
-/// Profile: array of elevations from source to receiver, evenly spaced.
-/// Source at profile[0] + source_height.
-/// Receiver at profile[last] + receiver_height.
+/// `t`: fractional positions 0..=1 along the path (non-uniform cadence OK).
+/// `profile`: ground elevation at each t. `t.len() == profile.len()`, includes
+/// t=0 (source foot) and t=1 (receiver foot).
+/// Source at profile[0] + source_height. Receiver at profile[last] + receiver_height.
 pub fn compute_path_difference(
+    t: &[f64],
     profile: &[f64],
     total_dist: f64,
     source_height: f64,
     receiver_height: f64,
 ) -> DiffractionResult {
     let n = profile.len();
+    debug_assert_eq!(t.len(), n, "t and profile must have same length");
     if n < 3 || total_dist < 30.0 {
         return DiffractionResult {
             delta: 0.0,
@@ -42,13 +45,15 @@ pub fn compute_path_difference(
 
     let src_elev = profile[0] + source_height;
     let rcv_elev = profile[n - 1] + receiver_height;
-    let step_dist = total_dist / (n - 1) as f64;
 
-    // Find source-side edge (steepest upward angle from source)
+    // Find source-side edge (steepest upward angle from source).
     let mut max_angle_src = f64::NEG_INFINITY;
     let mut edge1: i32 = -1;
     for i in 1..n - 1 {
-        let dh = i as f64 * step_dist;
+        let dh = t[i] * total_dist;
+        if dh < 1e-6 {
+            continue;
+        }
         let angle = (profile[i] - src_elev) / dh;
         if angle > max_angle_src {
             max_angle_src = angle;
@@ -56,11 +61,14 @@ pub fn compute_path_difference(
         }
     }
 
-    // Find receiver-side edge (steepest upward angle from receiver)
+    // Find receiver-side edge (steepest upward angle from receiver).
     let mut max_angle_rcv = f64::NEG_INFINITY;
     let mut edge2: i32 = -1;
     for i in (1..n - 1).rev() {
-        let dh = (n - 1 - i) as f64 * step_dist;
+        let dh = (1.0 - t[i]) * total_dist;
+        if dh < 1e-6 {
+            continue;
+        }
         let angle = (profile[i] - rcv_elev) / dh;
         if angle > max_angle_rcv {
             max_angle_rcv = angle;
@@ -80,9 +88,9 @@ pub fn compute_path_difference(
     let e1 = edge1 as usize;
     let e2 = edge2 as usize;
 
-    // Check if edges are above line-of-sight
-    let los1 = src_elev + (rcv_elev - src_elev) * (e1 as f64 / (n - 1) as f64);
-    let los2 = src_elev + (rcv_elev - src_elev) * (e2 as f64 / (n - 1) as f64);
+    // Check if edges are above line-of-sight.
+    let los1 = src_elev + (rcv_elev - src_elev) * t[e1];
+    let los2 = src_elev + (rcv_elev - src_elev) * t[e2];
     if profile[e1] <= los1 && profile[e2] <= los2 {
         return DiffractionResult {
             delta: 0.0,
@@ -94,14 +102,14 @@ pub fn compute_path_difference(
 
     let dsr = ((total_dist * total_dist) + (rcv_elev - src_elev).powi(2)).sqrt();
 
-    // Same edge or adjacent → single diffraction
+    // Same edge or adjacent → single diffraction.
     if e1 >= e2 || e2 - e1 <= 1 {
         let idx = if (profile[e1] - los1) >= (profile[e2] - los2) {
             e1
         } else {
             e2
         };
-        let los_idx = src_elev + (rcv_elev - src_elev) * (idx as f64 / (n - 1) as f64);
+        let los_idx = src_elev + (rcv_elev - src_elev) * t[idx];
         if profile[idx] <= los_idx {
             return DiffractionResult {
                 delta: 0.0,
@@ -111,13 +119,14 @@ pub fn compute_path_difference(
             };
         }
 
-        let d_sg = idx as f64 * step_dist;
-        let d_rg = (n - 1 - idx) as f64 * step_dist;
+        let d_sg = t[idx] * total_dist;
+        let d_rg = (1.0 - t[idx]) * total_dist;
         let top = profile[idx];
         let d_sb = (d_sg * d_sg + (top - src_elev).powi(2)).sqrt();
         let d_br = (d_rg * d_rg + (top - rcv_elev).powi(2)).sqrt();
 
-        let delta_star = compute_delta_star(profile, idx, total_dist, source_height, receiver_height);
+        let delta_star =
+            compute_delta_star(t, profile, idx, total_dist, source_height, receiver_height);
 
         return DiffractionResult {
             delta: d_sb + d_br - dsr,
@@ -127,10 +136,10 @@ pub fn compute_path_difference(
         };
     }
 
-    // Double diffraction: two distinct edges
+    // Double diffraction: two distinct edges.
     let top1 = profile[e1];
     let top2 = profile[e2];
-    let d1 = e1 as f64 * step_dist;
+    let d1 = t[e1] * total_dist;
 
     let d_se1 = (d1 * d1 + (top1 - src_elev).powi(2)).sqrt();
 
@@ -139,17 +148,18 @@ pub fn compute_path_difference(
     // The old code followed the terrain surface (dipping into valleys),
     // grossly overestimating the path difference and over-attenuating
     // noise behind double hills (up to 25 dB cap).
-    let d2 = e2 as f64 * step_dist;
+    let d2 = t[e2] * total_dist;
     let d_e1e2 = ((d2 - d1).powi(2) + (top2 - top1).powi(2)).sqrt();
 
-    let d2r = (n - 1 - e2) as f64 * step_dist;
+    let d2r = (1.0 - t[e2]) * total_dist;
     let d_e2r = (d2r * d2r + (top2 - rcv_elev).powi(2)).sqrt();
 
     let delta = (d_se1 + d_e1e2 + d_e2r - dsr).max(0.0);
 
     // CNOSSOS §2.5.6(c) "same edge D": pick the edge with the larger excess above LOS.
     let d_idx = if profile[e1] - los1 >= profile[e2] - los2 { e1 } else { e2 };
-    let delta_star = compute_delta_star(profile, d_idx, total_dist, source_height, receiver_height);
+    let delta_star =
+        compute_delta_star(t, profile, d_idx, total_dist, source_height, receiver_height);
 
     DiffractionResult {
         delta,
@@ -165,6 +175,7 @@ pub fn compute_path_difference(
 /// (including edge D), reflects source and receiver vertically across those
 /// planes (NMPB convention), returns δ* = |S*D| + |DR*| − |S*R*|.
 fn compute_delta_star(
+    t: &[f64],
     profile: &[f64],
     d_idx: usize,
     total_dist: f64,
@@ -172,12 +183,16 @@ fn compute_delta_star(
     receiver_height: f64,
 ) -> f64 {
     let n = profile.len();
-    let step_dist = total_dist / (n - 1) as f64;
-    let d_sg = d_idx as f64 * step_dist;
-    let d_rg = (n - 1 - d_idx) as f64 * step_dist;
+    let d_sg = t[d_idx] * total_dist;
+    let d_rg = (1.0 - t[d_idx]) * total_dist;
 
-    let (_, b_src) = fit_plane(&profile[..=d_idx], step_dist);
-    let (a_rcv, b_rcv) = fit_plane(&profile[d_idx..], step_dist);
+    // Fit on x coordinates in meters. For the receiver side, re-origin x so the
+    // ground plane is parameterised as z(x) = a·x + b with x=0 at the edge.
+    let xs_src: Vec<f64> = (0..=d_idx).map(|i| t[i] * total_dist).collect();
+    let xs_rcv: Vec<f64> = (d_idx..n).map(|i| (t[i] - t[d_idx]) * total_dist).collect();
+
+    let (_, b_src) = fit_plane(&xs_src, &profile[..=d_idx]);
+    let (a_rcv, b_rcv) = fit_plane(&xs_rcv, &profile[d_idx..]);
     let plane_rcv_at_end = a_rcv * d_rg + b_rcv;
 
     let s_star_z = 2.0 * b_src - (profile[0] + source_height);
@@ -190,10 +205,10 @@ fn compute_delta_star(
     (d_sd + d_dr - d_sr).max(0.0)
 }
 
-/// Unweighted least-squares line fit z = a·x + b.
-/// `step_dist` is the horizontal spacing of samples in `zs`.
-fn fit_plane(zs: &[f64], step_dist: f64) -> (f64, f64) {
+/// Unweighted least-squares line fit z = a·x + b over arbitrary x coordinates.
+fn fit_plane(xs: &[f64], zs: &[f64]) -> (f64, f64) {
     let n = zs.len() as f64;
+    debug_assert_eq!(xs.len(), zs.len());
     if n < 1.0 {
         return (0.0, 0.0);
     }
@@ -201,8 +216,7 @@ fn fit_plane(zs: &[f64], step_dist: f64) -> (f64, f64) {
     let mut sz = 0.0_f64;
     let mut sxx = 0.0_f64;
     let mut sxz = 0.0_f64;
-    for (i, &z) in zs.iter().enumerate() {
-        let x = i as f64 * step_dist;
+    for (&x, &z) in xs.iter().zip(zs.iter()) {
         sx += x;
         sz += z;
         sxx += x * x;
@@ -277,11 +291,18 @@ pub fn diffraction_attenuation_rayleigh(result: &DiffractionResult) -> [f64; NUM
 mod tests {
     use super::*;
 
+    /// Build a uniform t-array for `n` samples, matching the old evenly-spaced
+    /// convention. Used by tests that exercise legacy behaviour.
+    fn uniform_t(n: usize) -> Vec<f64> {
+        (0..n).map(|i| i as f64 / (n - 1).max(1) as f64).collect()
+    }
+
     #[test]
     fn test_no_obstruction() {
         // Flat profile: no diffraction
         let profile = vec![100.0; 10];
-        let result = compute_path_difference(&profile, 500.0, 0.05, 1.5);
+        let t = uniform_t(10);
+        let result = compute_path_difference(&t, &profile, 500.0, 0.05, 1.5);
         assert_eq!(result.delta, 0.0);
         assert_eq!(result.delta_star, 0.0);
     }
@@ -291,10 +312,45 @@ mod tests {
         // Hill in the middle
         let mut profile = vec![100.0; 10];
         profile[5] = 110.0; // 10m hill at midpoint
-        let result = compute_path_difference(&profile, 500.0, 0.05, 1.5);
+        let t = uniform_t(10);
+        let result = compute_path_difference(&t, &profile, 500.0, 0.05, 1.5);
         assert!(result.delta > 0.0, "should detect hill");
         assert!(!result.is_double);
         assert!(result.delta_star > 0.0, "delta_star should be positive for a real hill");
+    }
+
+    #[test]
+    fn test_uniform_vs_bilateral_stable() {
+        // Same physical profile, sampled with uniform vs bilateral t — δ must agree.
+        // Create a hill at 50% of a 1000 m path, sample at 11 uniform points then
+        // at 11 non-uniform points that still hit the hilltop.
+        let total_dist = 1000.0;
+        // Uniform: 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
+        let t_uniform = uniform_t(11);
+        let prof_uniform: Vec<f64> = t_uniform
+            .iter()
+            .map(|&tt| if (tt - 0.5_f64).abs() < 1e-9 { 115.0_f64 } else { 100.0_f64 })
+            .collect();
+        let r_uniform = compute_path_difference(&t_uniform, &prof_uniform, total_dist, 0.05, 1.5);
+
+        // Bilateral-ish: dense near ends, coarse in middle — still hits t=0.5 exactly.
+        let t_bilat = vec![0.0, 0.03, 0.06, 0.1, 0.25, 0.5, 0.75, 0.9, 0.94, 0.97, 1.0];
+        let prof_bilat: Vec<f64> = t_bilat
+            .iter()
+            .map(|&tt| if (tt - 0.5_f64).abs() < 1e-9 { 115.0_f64 } else { 100.0_f64 })
+            .collect();
+        let r_bilat = compute_path_difference(&t_bilat, &prof_bilat, total_dist, 0.05, 1.5);
+
+        assert!(r_uniform.delta > 0.0);
+        assert!(r_bilat.delta > 0.0);
+        let rel_err = (r_uniform.delta - r_bilat.delta).abs() / r_uniform.delta;
+        assert!(
+            rel_err < 0.02,
+            "δ must be stable across cadences: uniform={:.4}, bilateral={:.4}, rel_err={:.3}",
+            r_uniform.delta,
+            r_bilat.delta,
+            rel_err
+        );
     }
 
     #[test]
@@ -327,7 +383,8 @@ mod tests {
         let n = 61;
         let mut profile = vec![400.0_f64; n];
         profile[n / 2] = 419.0;
-        let result = compute_path_difference(&profile, 1850.0, 0.05, 4.0);
+        let t = uniform_t(n);
+        let result = compute_path_difference(&t, &profile, 1850.0, 0.05, 4.0);
         assert!(result.delta > 0.0);
         assert!(result.delta_star > 0.0);
 
@@ -369,7 +426,8 @@ mod tests {
         let n = 31;
         let mut profile = vec![100.0_f64; n];
         profile[n / 2] = 100.2;
-        let result = compute_path_difference(&profile, 300.0, 10.0, 4.0);
+        let t = uniform_t(n);
+        let result = compute_path_difference(&t, &profile, 300.0, 10.0, 4.0);
         if result.delta > 0.0 {
             assert_gate_invariant(&result);
         }
@@ -382,7 +440,8 @@ mod tests {
         let mut profile = vec![100.0_f64; n];
         profile[3] = 105.0;
         profile[17] = 115.0;
-        let result = compute_path_difference(&profile, 600.0, 0.05, 4.0);
+        let t = uniform_t(n);
+        let result = compute_path_difference(&t, &profile, 600.0, 0.05, 4.0);
         assert!(result.is_double, "should be detected as double diffraction");
         assert!(result.delta > 0.0);
         assert!(result.delta_star > 0.0);
