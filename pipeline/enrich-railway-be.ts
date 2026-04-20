@@ -1,7 +1,7 @@
 /**
  * Enrich BE railways.arrow with urban metro/tram GTFS feeds.
  *
- * Continental SNCB national rail is already applied via enrich-global-transit.ts.
+ * Continental SNCB national rail is already applied via enrich-railway-europe.ts.
  * This script ADDS Brussels (STIB), Flanders (De Lijn tram), and Wallonia (TEC
  * tram/light rail) urban rail/tram coverage to existing SNCB enrichment.
  *

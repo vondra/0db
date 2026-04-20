@@ -6,8 +6,8 @@
  * matches GTFS stops to OSM railway segments by proximity, writes
  * trains_passenger + trains_freight columns.
  *
- * This is a standalone Italy-specific version of the global transit enrichment,
- * following the same pattern as enrich-railway-cz.ts and enrich-global-transit.ts.
+ * This is a standalone Italy-specific version of the continental transit enrichment,
+ * following the same pattern as enrich-railway-cz.ts and enrich-railway-europe.ts.
  *
  * Usage:
  *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-it.ts

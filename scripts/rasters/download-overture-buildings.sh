@@ -48,9 +48,22 @@ fi
 
 mkdir -p "$PARQUET_DIR" "$RASTER_DIR"
 
-# ── Build tile list from parquet cache (downloaded Overture tiles) ──────
+# ── Build tile list ─────────────────────────────────────────────────────
+# Primary: parquets already downloaded (resume path).
+# Fallback: GHSL footprint (tiles where buildings were ever observed) — this
+# is the initial seed for a fresh run before any parquets have been cached.
 TILE_LIST="/tmp/overture_bld_tiles.txt"
-ls "$PARQUET_DIR"/*.parquet 2>/dev/null | sed 's/.*\///; s/\.parquet//' | sort > "$TILE_LIST"
+GHSL_SEED="data/enrichment/global/overture-buildings/ghsl-backup"
+if ls "$PARQUET_DIR"/*.parquet &>/dev/null; then
+    ls "$PARQUET_DIR"/*.parquet | sed 's/.*\///; s/\.parquet//' | sort > "$TILE_LIST"
+elif ls "$GHSL_SEED"/*.raw &>/dev/null; then
+    log "Seeding tile list from GHSL footprint: $GHSL_SEED"
+    ls "$GHSL_SEED"/*.raw | sed 's/.*\///; s/\.raw//' | sort > "$TILE_LIST"
+else
+    log "No parquet cache and no GHSL seed — cannot determine tile list"
+    rm -f "$TILE_LIST"
+    exit 1
+fi
 
 if [ -n "$FILTER_PREFIX" ]; then
     grep "^${FILTER_PREFIX}" "$TILE_LIST" > "${TILE_LIST}.filtered" || true
@@ -59,7 +72,7 @@ fi
 
 TOTAL=$(wc -l < "$TILE_LIST")
 if [ "$TOTAL" -eq 0 ]; then
-    log "No tiles to process (no GHSL tiles found or prefix matched nothing)"
+    log "No tiles to process (prefix matched nothing)"
     rm -f "$TILE_LIST"
     exit 0
 fi
