@@ -381,16 +381,34 @@ impl noise_compute::types::RasterSampler for FusedGrid {
         out.forest_u8.reserve(n);
         out.imd_u8.reserve(n);
 
-        // Single pixel deref yields building/forest/IMD from the same L3 cache
-        // line; DEM is bilinearly interpolated over the 4 neighbouring pixels.
+        // Fused per-t fetch: compute (r0, c0) once, read the four neighbouring
+        // FusedPixels once, bilinearly blend elevation and take the top-left
+        // pixel (the existing `self.pixel()` convention) for the categorical
+        // layers. Eliminates the redundant row/col computation and pointer
+        // dereference that `elevation_bilinear` + `pixel` did separately.
+        let row_max = self.rows.saturating_sub(2);
+        let col_max = self.cols.saturating_sub(2);
         for &t in &out.t {
             let lat = src_lat + t * (rcv_lat - src_lat);
             let lon = src_lon + t * (rcv_lon - src_lon);
-            out.elevation_m.push(self.elevation_bilinear(lat, lon) as f32);
-            let px = self.pixel(lat, lon);
-            out.building_h_m.push(px.building);
-            out.forest_u8.push(px.forest);
-            out.imd_u8.push(px.imd);
+            let rf = (lat - self.lat_min) * self.inv_cell_deg;
+            let cf = (lon - self.lon_min) * self.inv_cell_deg;
+            let r0 = (rf.floor() as usize).min(row_max);
+            let c0 = (cf.floor() as usize).min(col_max);
+            let fr = rf - r0 as f64;
+            let fc = cf - c0 as f64;
+            let base = r0 * self.cols + c0;
+            let px00 = self.data[base];
+            let px01 = self.data[base + 1];
+            let px10 = self.data[base + self.cols];
+            let px11 = self.data[base + self.cols + 1];
+
+            let v0 = px00.elevation as f64 + fc * (px01.elevation as f64 - px00.elevation as f64);
+            let v1 = px10.elevation as f64 + fc * (px11.elevation as f64 - px10.elevation as f64);
+            out.elevation_m.push((v0 + fr * (v1 - v0)) as f32);
+            out.building_h_m.push(px00.building);
+            out.forest_u8.push(px00.forest);
+            out.imd_u8.push(px00.imd);
         }
 
         out.step_m_med = noise_compute::propagation::path_profile::median_step_m(&out.t, dist_m);
