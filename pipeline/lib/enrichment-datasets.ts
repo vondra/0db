@@ -8,8 +8,15 @@
  *   - `id` is globally unique, monotonically assigned, NEVER recycled.
  *     Allocate with `npx tsx pipeline/lib/allocate-dataset-id.ts <layer> <key>`.
  *   - `key` is a stable slug; also unique.
- *   - `priority`: global datasets 50, national authority 80 (wins over global),
- *     regional/city 20, heuristic/synthetic 10, legacy sentinel 0.
+ *   - `priority` = how authoritative the source is for the area it covers:
+ *       80  national authority    (per-country census, cadastre, pollutant registry)
+ *       70  continental / multi-country measured
+ *           (E-PRTR EU-wide, EU city traffic 36 cities, GTFS feeds)
+ *       50  global measured baseline, coarse but worldwide
+ *           (Overture buildings, Copernicus DEM, GPPD power plants)
+ *       10  heuristic / synthetic inference
+ *       0   legacy sentinel ("unspecified")
+ *     Higher priority wins. Ties broken by higher id (deterministic).
  *   - ID = 0 is reserved for "unspecified" — pre-provenance legacy rows.
  *
  * See plan at /home/vondra/.claude/plans/cached-gliding-kettle.md for rationale.
@@ -39,7 +46,7 @@ export const DATASETS: Dataset[] = [
     priority: 0,
   },
 
-  // ── Roads: global ──
+  // ── Roads: continental ──
   {
     id: 10,
     layer: 'roads',
@@ -48,7 +55,7 @@ export const DATASETS: Dataset[] = [
     year: 2023,
     license: 'CC-BY-4.0',
     url: 'https://github.com/XavB64/traffic-volume-data-EU-cities',
-    priority: 50,
+    priority: 70,
   },
   {
     id: 11,
@@ -113,16 +120,16 @@ export const DATASETS: Dataset[] = [
     priority: 80,
   },
 
-  // ── Railways: global ──
+  // ── Railways: continental ──
   {
     id: 100,
     layer: 'railways',
     key: 'global-gtfs-transit',
-    name: 'Global GTFS transit feeds',
+    name: 'Continental GTFS transit feeds (aggregated; mostly Europe + AU/IN)',
     year: 2025,
     license: 'mixed (per-operator)',
     url: null,
-    priority: 50,
+    priority: 70,
   },
 
   // ── Railways: national ──
@@ -137,7 +144,7 @@ export const DATASETS: Dataset[] = [
     priority: 80,
   },
 
-  // ── Buildings ──
+  // ── Buildings: national ──
   {
     id: 200,
     layer: 'buildings',
@@ -3661,6 +3668,30 @@ export const DATASETS: Dataset[] = [
     license: 'project-internal',
     url: null,
     priority: 10,
+  },
+
+  // ── Global raster baselines ──
+  // Not per-row arrow provenance (rasters have no row ids); registered here
+  // for completeness so docs/UI can reference the source by name.
+  {
+    id: 9001,
+    layer: 'buildings',
+    key: 'global-overture',
+    name: 'Overture Maps buildings (MS/Google/Meta)',
+    year: 2024,
+    license: 'CDLA-Permissive-2.0',
+    url: 'https://overturemaps.org/',
+    priority: 50,
+  },
+  {
+    id: 9002,
+    layer: 'any',
+    key: 'global-copernicus-glo30',
+    name: 'Copernicus GLO-30 DEM',
+    year: 2021,
+    license: 'CC-BY-4.0',
+    url: 'https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model',
+    priority: 50,
   },
 ]
 
