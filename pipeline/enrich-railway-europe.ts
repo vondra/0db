@@ -22,8 +22,12 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, create
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
 import { latLngToCell } from 'h3-js'
+import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { shouldOverwrite } from './lib/provenance.js'
+
+const MY_DATASET_ID = DATASETS_BY_KEY.get('global-gtfs-transit')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -816,14 +820,18 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     // Read existing enrichment columns if present
     const existingPax = table.getChild('trains_passenger')
     const existingFrt = table.getChild('trains_freight')
+    const existingDatasetId = table.getChild('railways_dataset_id')
 
     const trainsPax = new Int32Array(n)
     const trainsFrt = new Int32Array(n)
+    const datasetId = new Uint16Array(n)
 
-    // Copy existing values (preserve prior enrichments, e.g. from enrich-railway-cz.ts)
+    // Seed output arrays from existing values so we never clobber prior
+    // higher-priority enrichment (e.g. national GTFS from enrich-railway-cz).
     for (let i = 0; i < n; i++) {
       trainsPax[i] = existingPax ? (existingPax.get(i) as number ?? 0) : 0
       trainsFrt[i] = existingFrt ? (existingFrt.get(i) as number ?? 0) : 0
+      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number ?? 0) : 0
       if (trainsPax[i] > 0 || trainsFrt[i] > 0) totalPreExisting++
     }
 
@@ -844,8 +852,8 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
       const service = serviceCol ? (serviceCol.get(i) as number ?? 0) : 0
       if (service > 0) continue
 
-      // Skip segments that already have enrichment from a country-specific script
-      if (trainsPax[i] > 0 || trainsFrt[i] > 0) continue
+      // Priority gate: preserve higher-priority existing (e.g. national GTFS).
+      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -880,6 +888,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
 
       trainsPax[i] = bestStop.trains_passenger
       trainsFrt[i] = bestStop.trains_freight
+      datasetId[i] = MY_DATASET_ID
       hexMatched++
     }
 
@@ -890,10 +899,12 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     for (const field of table.schema.fields) {
       if (field.name === 'trains_passenger') continue
       if (field.name === 'trains_freight') continue
+      if (field.name === 'railways_dataset_id') continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
     columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
+    columns['railways_dataset_id'] = vectorFromArray(datasetId, new Uint16())
 
     const newTable = makeTable(columns)
     // MUST use 'file' format — Rust FileReader requires ARROW1 magic bytes
