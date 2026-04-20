@@ -380,7 +380,7 @@ fn compute_roads(
             propagation::path_effects::ground_g_from_profile(&path_profile)
         };
         let terrain_atten =
-            propagation::path_effects::terrain_attenuation(&path_profile, src_alt, rcv_alt);
+            propagation::path_effects::terrain_attenuation(&mut path_profile, src_alt, rcv_alt);
         let screening_atten = propagation::path_effects::screening_attenuation(
             &path_profile,
             barriers,
@@ -890,7 +890,7 @@ fn compute_railways(
             propagation::path_effects::ground_g_from_profile(&path_profile)
         };
         let terrain_atten =
-            propagation::path_effects::terrain_attenuation(&path_profile, src_alt, rcv_alt);
+            propagation::path_effects::terrain_attenuation(&mut path_profile, src_alt, rcv_alt);
         let screening_atten = propagation::path_effects::screening_attenuation(
             &path_profile,
             barriers,
@@ -1225,7 +1225,7 @@ fn compute_point_sources(
             &mut path_profile,
         );
         let terrain_atten =
-            propagation::path_effects::terrain_attenuation(&path_profile, src_alt, rcv_alt);
+            propagation::path_effects::terrain_attenuation(&mut path_profile, src_alt, rcv_alt);
         let screening_atten = propagation::path_effects::screening_attenuation(
             &path_profile,
             barriers,
@@ -1717,7 +1717,7 @@ fn compute_aircraft(
             );
             let ground_g = propagation::path_effects::ground_g_from_profile(&path_profile);
             let terrain_atten = propagation::path_effects::terrain_attenuation(
-                &path_profile,
+                &mut path_profile,
                 cp_elev,
                 receiver.altitude_m(),
             );
@@ -2301,7 +2301,7 @@ pub fn compute_path_effects(
     );
 
     let (terrain_atten, terrain_delta, terrain_is_double, terrain_profile_points) =
-        propagation::path_effects::terrain_attenuation_with_meta(&path_profile, src_height, rcv_alt);
+        propagation::path_effects::terrain_attenuation_with_meta(&mut path_profile, src_height, rcv_alt);
 
     let (screening_atten, obstacle_trace) = propagation::path_effects::screening_attenuation_with_meta(
         &path_profile,

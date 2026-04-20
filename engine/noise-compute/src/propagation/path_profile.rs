@@ -44,6 +44,10 @@ pub struct PathProfile {
     pub src_lon: f64,
     pub rcv_lat: f64,
     pub rcv_lon: f64,
+    /// Scratch buffer for callers that need f64-typed elevation (e.g.
+    /// `diffraction::compute_path_difference`). Grown on first use, reused
+    /// across subsequent calls via `elevation_f64()`.
+    pub elevation_f64_scratch: Vec<f64>,
 }
 
 impl PathProfile {
@@ -58,12 +62,27 @@ impl PathProfile {
         self.building_h_m.clear();
         self.forest_u8.clear();
         self.imd_u8.clear();
+        self.elevation_f64_scratch.clear();
         self.dist_m = 0.0;
         self.step_m_med = 0.0;
         self.src_lat = 0.0;
         self.src_lon = 0.0;
         self.rcv_lat = 0.0;
         self.rcv_lon = 0.0;
+    }
+
+    /// Populate (if needed) and return the f64 elevation scratch buffer,
+    /// converted from `elevation_m`. Reuses capacity across calls.
+    ///
+    /// Free function so callers can use split borrows — the scratch field
+    /// can be borrowed mutably while other `PathProfile` fields stay
+    /// available for read-only access.
+    pub fn elevation_f64_from<'a>(scratch: &'a mut Vec<f64>, src: &[f32]) -> &'a [f64] {
+        if scratch.len() != src.len() {
+            scratch.clear();
+            scratch.extend(src.iter().map(|&e| e as f64));
+        }
+        scratch.as_slice()
     }
 
     #[inline]

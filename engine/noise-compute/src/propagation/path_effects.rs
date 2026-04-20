@@ -21,8 +21,11 @@ use crate::types::{Barrier, ScreeningObstacleTrace, NUM_BANDS};
 /// Applies a cheap in-profile "any sample above LoS" scan to short-circuit when
 /// no obstruction exists (the previous sparse 3-point gate is gone — it shared
 /// the bilateral cadence's blind zones near endpoints).
+///
+/// Takes `&mut PathProfile` so an internal f64 scratch buffer can be reused
+/// across calls instead of allocating per path.
 pub fn terrain_attenuation(
-    profile: &PathProfile,
+    profile: &mut PathProfile,
     src_elev: f64,
     rcv_alt: f64,
 ) -> [f64; NUM_BANDS] {
@@ -32,7 +35,7 @@ pub fn terrain_attenuation(
 
 /// Terrain attenuation + metadata for popup tooltips (δ, is_double, profile_points).
 pub fn terrain_attenuation_with_meta(
-    profile: &PathProfile,
+    profile: &mut PathProfile,
     src_elev: f64,
     rcv_alt: f64,
 ) -> ([f64; NUM_BANDS], f64, bool, u32) {
@@ -60,16 +63,22 @@ pub fn terrain_attenuation_with_meta(
     let src_h = (src_elev - src_ground).max(0.05);
     let rcv_ground = profile.elevation_m[n - 1] as f64;
     let rcv_h = (rcv_alt - rcv_ground).max(crate::constants::DEFAULT_RECEIVER_HEIGHT.min(0.5));
+    let dist_m = profile.dist_m;
 
-    let prof_f64: Vec<f64> = profile.elevation_m.iter().map(|&e| e as f64).collect();
+    // Lazy-populated f64 elevation buffer — reuses capacity across calls.
+    // Split-borrow: `elevation_f64_scratch` is mutably borrowed by the helper,
+    // while `t` and `elevation_m` stay available for shared access.
+    let PathProfile {
+        t,
+        elevation_m,
+        elevation_f64_scratch,
+        ..
+    } = profile;
+    let prof_f64 =
+        PathProfile::elevation_f64_from(elevation_f64_scratch, elevation_m);
 
-    let diff = diffraction::compute_path_difference(
-        &profile.t,
-        &prof_f64,
-        profile.dist_m,
-        src_h,
-        rcv_h,
-    );
+    let diff =
+        diffraction::compute_path_difference(t, prof_f64, dist_m, src_h, rcv_h);
     let atten = diffraction::diffraction_attenuation_rayleigh(&diff);
     (atten, diff.delta, diff.is_double, n as u32)
 }
