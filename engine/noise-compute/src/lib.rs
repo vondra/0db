@@ -881,8 +881,8 @@ fn compute_railways(
         cp_lon: f64,
         src_height: f64,
         // Closest-segment metadata (for popup)
-        closest_trains_passenger_raw: i32,
-        closest_trains_freight_raw: i32,
+        closest_trains_passenger_raw: f64,
+        closest_trains_freight_raw: f64,
         closest_trains_passenger_effective: f64,
         closest_trains_freight_effective: f64,
         closest_trains_passenger_source: &'static str,
@@ -1057,8 +1057,8 @@ fn compute_railways(
             cp_lat: seg.cp_lat,
             cp_lon: seg.cp_lon,
             src_height: src_alt,
-            closest_trains_passenger_raw: 0,
-            closest_trains_freight_raw: 0,
+            closest_trains_passenger_raw: 0.0,
+            closest_trains_freight_raw: 0.0,
             closest_trains_passenger_effective: 0.0,
             closest_trains_freight_effective: 0.0,
             closest_trains_passenger_source: "default_by_type",
@@ -1124,9 +1124,8 @@ fn compute_railways(
             acc.cp_lon = seg.cp_lon;
             acc.src_height = src_alt;
             // Closest-segment metadata for popup
-            // Round for the i32 display field; emission above used the full f64.
-            acc.closest_trains_passenger_raw = seg.trains_passenger.round() as i32;
-            acc.closest_trains_freight_raw = seg.trains_freight.round() as i32;
+            acc.closest_trains_passenger_raw = seg.trains_passenger;
+            acc.closest_trains_freight_raw = seg.trains_freight;
             acc.closest_trains_passenger_effective = q_pax;
             acc.closest_trains_freight_effective = q_frt;
             acc.closest_trains_passenger_source = match seg.trains_passenger_source {
