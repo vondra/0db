@@ -97,7 +97,7 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
         // Aircraft metadata is now Rust-side `SourceMetadata::Aircraft` (not a server-side bag),
         // so no flattening needed here.
         const topContributors = (raw.contributors ?? []).map((c: any) => {
-          const screeningRaw = c.screening ?? { building_path_m: 0, attenuation_db: 0 }
+          const screeningRaw = c.screening ?? { building_path_m: 0 }
           // Attach human-readable provenance from the central registry. Looks up by
           // dominant_dataset_id (road) / dataset_id (rail/point); missing → unspecified.
           const meta = c.metadata ? { ...c.metadata } : null
@@ -115,14 +115,18 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
             metadata: meta,
             emission_db: c.emission_db ?? 0,
             emission_bands: c.emission_bands ?? [],
-            baseline: c.baseline ?? { geometric_db: 0, atmospheric_db: 0, ground_factor: 0.5, ground_db: 0, total_db: 0 },
-            terrain: c.terrain ?? { delta_m: 0, is_double: false, attenuation_db: 0 },
+            baseline: c.baseline ?? { geometric_db: 0, ground_factor: 0.5 },
+            terrain: c.terrain ?? { delta_m: 0, is_double: false, profile_points: 0 },
             screening: {
               building_path_m: screeningRaw.building_path_m ?? 0,
-              attenuation_db: screeningRaw.attenuation_db ?? 0,
               obstacle: screeningRaw.obstacle ?? null,
             },
-            vegetation: c.vegetation ?? { forest_depth_m: 0, attenuation_db: 0 },
+            vegetation: c.vegetation ?? { forest_depth_m: 0, sampled_path_m: 0 },
+            terrain_impact_db: c.terrain_impact_db ?? 0,
+            screening_impact_db: c.screening_impact_db ?? 0,
+            vegetation_impact_db: c.vegetation_impact_db ?? 0,
+            atmospheric_impact_db: c.atmospheric_impact_db ?? 0,
+            ground_impact_db: c.ground_impact_db ?? 0,
             received_lden: Math.round((c.periods?.lden_db ?? c.received_lden ?? 0) * 10) / 10,
             received_lden_free: Math.round((c.periods_free?.lden_db ?? c.received_lden_free ?? 0) * 10) / 10,
             received_bands: c.received_bands ?? [],

@@ -10,11 +10,10 @@ export interface SourceSummary {
 }
 
 export interface PropagationBaseline {
+  /** Divergence loss at the closest segment (≤ 0). */
   geometric_db: number
-  atmospheric_db: number
+  /** G value the engine read from the raster at the closest segment (0..1). */
   ground_factor: number
-  ground_db: number
-  total_db: number
 }
 
 export interface NoisePeriodsData {
@@ -27,19 +26,16 @@ export interface NoisePeriodsData {
 export interface TerrainBreakdownData {
   delta_m: number
   is_double: boolean
-  attenuation_db: number
   profile_points: number
 }
 
 export interface ScreeningBreakdownData {
   building_path_m: number
-  attenuation_db: number
   obstacle: ScreeningObstacleTrace | null
 }
 
 export interface VegetationBreakdownData {
   forest_depth_m: number
-  attenuation_db: number
   sampled_path_m: number
 }
 
@@ -188,6 +184,12 @@ export interface AircraftGroundOpsDetail {
   terrain: TerrainBreakdownData
   screening: ScreeningBreakdownData
   vegetation: VegetationBreakdownData
+  /** A-weighted ΔL_A per effect (≤ 0 except ground which is signed). */
+  terrain_impact_db: number
+  screening_impact_db: number
+  vegetation_impact_db: number
+  atmospheric_impact_db: number
+  ground_impact_db: number
 }
 
 export interface AircraftMetadata {
@@ -216,9 +218,17 @@ export interface Contributor {
   emission_db: number
   emission_bands: number[]
   baseline: PropagationBaseline
-  terrain: { delta_m: number; is_double: boolean; attenuation_db: number; profile_points: number }
-  screening: { building_path_m: number; attenuation_db: number; obstacle: ScreeningObstacleTrace | null }
-  vegetation: { forest_depth_m: number; attenuation_db: number; sampled_path_m: number }
+  terrain: TerrainBreakdownData
+  screening: ScreeningBreakdownData
+  vegetation: VegetationBreakdownData
+  /** A-weighted ΔL_A per effect: full_lden − no_effect_lden. ≤ 0 except
+   * `ground_impact_db` which is signed (over soft ground at 63/125 Hz CF[i]
+   * is negative, so the ground term can BOOST LF energy). */
+  terrain_impact_db: number
+  screening_impact_db: number
+  vegetation_impact_db: number
+  atmospheric_impact_db: number
+  ground_impact_db: number
   received_lden: number
   received_lden_free: number
   received_bands: number[]
@@ -264,6 +274,10 @@ export interface LdenVariants {
   no_terrain: number
   no_screening: number
   no_vegetation: number
+  /** Signed: soft ground at 63/125 Hz has CF[i] < 0, so `no_ground < full`
+   * is possible (ground boosts LF there). */
+  no_ground: number
+  no_atmospheric: number
 }
 
 export interface ForestRun {
@@ -423,7 +437,6 @@ export interface AirborneTrace {
   n_days_normalized: number
   geometry: [[number, number], [number, number]]
   received_lden: number
-  received_bands: number[]
 }
 
 export interface SegmentTracesSummary {

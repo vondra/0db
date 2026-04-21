@@ -372,9 +372,9 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
       ], 14, 9)
     : txtTable([
         ['Free field', `${c.received_lden_free.toFixed(1)} dB`],
-        ['Terrain', `${fmt(c.terrain.attenuation_db)} dB`],
-        ['Screening', `${fmt(c.screening.attenuation_db)} dB`],
-        ['Vegetation', `${fmt(c.vegetation.attenuation_db)} dB`],
+        ['Terrain', `${fmt(c.terrain_impact_db)} dB`],
+        ['Screening', `${fmt(c.screening_impact_db)} dB`],
+        ['Vegetation', `${fmt(c.vegetation_impact_db)} dB`],
         { sep: true },
         ['→ Final Lden', `${c.received_lden.toFixed(1)} dB`],
       ], 14, 9)
@@ -426,11 +426,36 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
 
   const baselineText = txtTable([
     ['Geometric divergence', `${fmt(c.baseline.geometric_db)} dB`],
-    ['Atmospheric absorption', `${fmt(c.baseline.atmospheric_db)} dB`],
-    [`Ground effect G=${c.baseline.ground_factor.toFixed(1)}`, `${fmt(c.baseline.ground_db)} dB`],
+    [`Ground factor G`, c.baseline.ground_factor.toFixed(2)],
+    '',
+    'Divergence is closest-segment only. For',
+    'the energy-weighted effect across all',
+    'grouped segments, see the per-effect',
+    'rows below (A-weighted ΔL_A).',
+  ], 22, 14)
+
+  const atmosphericText = txtTable([
+    ['Distance', `${c.distance_m.toFixed(0)} m (closest)`],
     { sep: true },
-    ['Total', `${fmt(c.baseline.total_db)} dB`],
-  ])
+    ['A-weighted ΔL_A', `${fmt(c.atmospheric_impact_db)} dB`],
+    '',
+    'ISO 9613-2 §7.2 atmospheric absorption',
+    '(humid air, 15 °C, 70 % RH). Energy-',
+    'weighted across all grouped segments —',
+    "full_lden − no_atmospheric_lden.",
+  ], 22, 14)
+
+  const groundText = txtTable([
+    [`G at closest segment`, c.baseline.ground_factor.toFixed(2)],
+    { sep: true },
+    ['A-weighted ΔL_A', `${fmt(c.ground_impact_db)} dB`],
+    '',
+    'ISO 9613-2 §7.3 ground effect.',
+    'Signed: over soft ground at 63/125 Hz,',
+    'CF[i] < 0 — ground BOOSTS LF energy, so',
+    'no_ground can be quieter than full',
+    '(positive ΔL_A means ground added dB).',
+  ], 22, 14)
 
   const terrainText = c.terrain.delta_m > 0
     ? txtTable([
@@ -439,7 +464,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
         ['DEM points', String(c.terrain.profile_points)],
         ['Cadence', 'bilateral 30/60/120/240 m'],
         { sep: true },
-        ['Attenuation', `${fmt(c.terrain.attenuation_db)} dB`],
+        ['A-weighted ΔL_A', `${fmt(c.terrain_impact_db)} dB`],
         '',
         'ISO 9613-2 §7.3 + C₃ frequency term',
         'Copernicus GLO-30 DEM (30 m raster).',
@@ -485,7 +510,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
         rows.push(['  With obstacle', '0 (all clear)'])
       }
     }
-    rows.push({ sep: true }, ['Aggregate attenuation', `${fmt(c.screening.attenuation_db)} dB`])
+    rows.push({ sep: true }, ['A-weighted ΔL_A', `${fmt(c.screening_impact_db)} dB`])
     rows.push('', 'Overture 30 m building raster,', 'sampled via unified bilateral path', 'profile (SPEC §3.5a).')
     return txtTable(rows, 22, 14)
   })()
@@ -495,7 +520,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
         ['Forest depth', `${c.vegetation.forest_depth_m.toFixed(0)} m`],
         ['Path sampled', `${c.vegetation.sampled_path_m.toFixed(0)} m`],
         { sep: true },
-        ['Attenuation', `${fmt(c.vegetation.attenuation_db)} dB`],
+        ['A-weighted ΔL_A', `${fmt(c.vegetation_impact_db)} dB`],
         '',
         'WorldCover 30 m raster, sampled via',
         'unified bilateral path profile; forest',
@@ -602,30 +627,46 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
               {lineRow(
                 <MetricLabel term="baseline" />,
                 <DataPoint title="Baseline propagation breakdown" text={baselineText}>
-                  {fmt(c.baseline.total_db)} dB
+                  {fmt(c.baseline.geometric_db)} dB
+                </DataPoint>,
+              )}
+              {lineRow(
+                'Atmospheric',
+                <DataPoint title="Atmospheric absorption (A-weighted)" text={atmosphericText}>
+                  <span className={c.atmospheric_impact_db < -0.05 ? '' : 'text-muted-foreground/40'}>
+                    {fmt(c.atmospheric_impact_db)} dB
+                  </span>
+                </DataPoint>,
+              )}
+              {lineRow(
+                `Ground (G=${c.baseline.ground_factor.toFixed(1)})`,
+                <DataPoint title="Ground effect (signed A-weighted ΔL_A)" text={groundText}>
+                  <span className={Math.abs(c.ground_impact_db) < 0.05 ? 'text-muted-foreground/40' : ''}>
+                    {fmt(c.ground_impact_db)} dB
+                  </span>
                 </DataPoint>,
               )}
               {lineRow(
                 <MetricLabel term="terrain" />,
                 <DataPoint title="Terrain diffraction" text={terrainText}>
-                  <span className={c.terrain.attenuation_db < -0.5 ? '' : 'text-muted-foreground/40'}>
-                    {fmt(c.terrain.attenuation_db)} dB
+                  <span className={c.terrain_impact_db < -0.5 ? '' : 'text-muted-foreground/40'}>
+                    {fmt(c.terrain_impact_db)} dB
                   </span>
                 </DataPoint>,
               )}
               {lineRow(
                 <MetricLabel term="screening" />,
                 <DataPoint title="Screening obstacle" text={screeningText}>
-                  <span className={c.screening.attenuation_db < -0.5 ? '' : 'text-muted-foreground/40'}>
-                    {fmt(c.screening.attenuation_db)} dB
+                  <span className={c.screening_impact_db < -0.5 ? '' : 'text-muted-foreground/40'}>
+                    {fmt(c.screening_impact_db)} dB
                   </span>
                 </DataPoint>,
               )}
               {lineRow(
                 <MetricLabel term="vegetation" />,
                 <DataPoint title="Vegetation attenuation" text={vegetationText}>
-                  <span className={c.vegetation.attenuation_db < -0.5 ? '' : 'text-muted-foreground/40'}>
-                    {fmt(c.vegetation.attenuation_db)} dB
+                  <span className={c.vegetation_impact_db < -0.5 ? '' : 'text-muted-foreground/40'}>
+                    {fmt(c.vegetation_impact_db)} dB
                   </span>
                 </DataPoint>,
               )}

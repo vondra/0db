@@ -47,6 +47,8 @@ pub fn variants_to_lden(variants: &[PropagationVariants; 3]) -> LdenVariants {
         no_terrain: lden_of(|v| v.no_terrain_energy),
         no_screening: lden_of(|v| v.no_screening_energy),
         no_vegetation: lden_of(|v| v.no_vegetation_energy),
+        no_ground: lden_of(|v| v.no_ground_energy),
+        no_atmospheric: lden_of(|v| v.no_atmospheric_energy),
     }
 }
 

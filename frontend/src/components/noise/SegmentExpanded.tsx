@@ -75,46 +75,53 @@ function InlineTable({ rows }: { rows: [string, React.ReactNode][] }) {
 function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
   const { baseline, terrain, screening, vegetation, ground, received_lden } = trace
   const TOOLTIP_NOTE =
-    'Scalar above is A-weighted Lden delta from variant comparison. Per-band values below are the raw attenuations the engine applied — the arrow (←) marks 1 kHz for orientation, but the scalar itself is a dB(A) sum, not a single band.'
+    'Scalar above is A-weighted ΔL_A from variant comparison (full − no_effect). Per-band values below are the raw attenuations the engine applied — the arrow (←) marks 1 kHz for orientation, but the scalar is a dB(A) sum.'
   const rows: [string, React.ReactNode][] = [
     ['Geometric divergence', fmtDb(-baseline.geometric_db)],
-    [
-      'Atmospheric (at 1 kHz)',
-      <HoverText
-        title={bandsTooltip(baseline.atmospheric_bands, {
-          title: 'Atmospheric absorption (ISO 9613-2 §7.2) — per band',
-          signed: true,
-          highlightIdx: 4,
-          note:
-            'Frequency-dependent (α_atm × d/1000). Engine applies per band before A-weighting; display scalar is 1 kHz only.',
-        })}
-      >
-        {fmtDb(-baseline.atmospheric_bands[4])}
-      </HoverText>,
-    ],
     ['Ground factor G', baseline.ground_factor_g.toFixed(2)],
     ['Source height', `${baseline.source_height_m.toFixed(1)} m`],
     ['Finite-line correction', fmtDb(baseline.finite_line_corr_db)],
   ]
 
-  // A-weighted Lden impacts from PropagationVariants. Negative = effect
-  // reduced Lden. Semantics per ISO 9613-2: attenuation is defined per
-  // octave band; the only physically meaningful single-number summary is
-  // ΔL_A = L_A(no effect) − L_A(with effect), which is exactly what the
-  // engine's variant energies give us in A-weighted terms.
+  // A-weighted ΔL_A per effect. All but `groundDelta` are ≤ 0 by physics
+  // (atm / vegetation absorb, terrain / screening ≥ 0 per band ⇒ removing
+  // them can only make things louder). `groundDelta` is SIGNED — soft ground
+  // at 63/125 Hz has CF[i] < 0, so removing the ground term can make the
+  // result quieter (i.e. ground was boosting LF).
   const terrainDelta = received_lden.full - received_lden.no_terrain
   const screeningDelta = received_lden.full - received_lden.no_screening
   const vegetationDelta = received_lden.full - received_lden.no_vegetation
+  const groundDelta = received_lden.full - received_lden.no_ground
+  const atmosphericDelta = received_lden.full - received_lden.no_atmospheric
   const totalPathDelta = received_lden.full - received_lden.free_field
 
-  // Per-band (raw) max-rule applied as the engine does it — for tooltip only.
-  const groundOrBarrierBands: number[] = baseline.atmospheric_bands.map((_, i) => {
-    const bar = terrain.attenuation_bands[i] + screening.attenuation_bands[i]
-    return bar > 0 ? Math.max(ground.attenuation_bands[i], bar) : ground.attenuation_bands[i]
-  })
-  const totalPathBands = groundOrBarrierBands.map((gob, i) => gob + vegetation.attenuation_bands[i])
-
   const effects: [string, React.ReactNode][] = [
+    [
+      'Atmospheric impact',
+      <HoverText
+        title={bandsTooltip(baseline.atmospheric_bands, {
+          title: 'Atmospheric absorption (ISO 9613-2 §7.2) — per band',
+          signed: true,
+          highlightIdx: 4,
+          note: TOOLTIP_NOTE,
+        })}
+      >
+        <span>{fmtDb(atmosphericDelta)} (A)</span>
+      </HoverText>,
+    ],
+    [
+      'Ground impact',
+      <HoverText
+        title={bandsTooltip(ground.attenuation_bands, {
+          title: `Ground effect — per band (G = ${ground.factor_g.toFixed(2)})`,
+          highlightIdx: 4,
+          note:
+            'SIGNED: over soft ground CF[i] < 0 at 63/125 Hz, so ground can BOOST LF energy. Positive ΔL_A here means ground added dB (no_ground is quieter than full).',
+        })}
+      >
+        <span>{fmtDb(groundDelta)} (A) · G = {ground.factor_g.toFixed(2)}</span>
+      </HoverText>,
+    ],
     [
       'Terrain impact',
       <HoverText
@@ -168,42 +175,9 @@ function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
       </HoverText>,
     ],
     [
-      'Ground (per band only)',
-      <HoverText
-        title={bandsTooltip(ground.attenuation_bands, {
-          title: `Ground effect — per band (G = ${ground.factor_g.toFixed(2)})`,
-          highlightIdx: 4,
-          note:
-            'Engine has no "no_ground" variant, so no A-weighted Lden delta is available. Per-band: CF[i] × G. Soft ground (G → 1) can ADD sound at 63/125 Hz (negative values are standard).',
-        })}
-      >
-        <span className="text-muted-foreground/70">
-          G = {ground.factor_g.toFixed(2)} · hover for bands
-        </span>
-      </HoverText>,
-    ],
-    [
-      'Applied ground + barrier (per band)',
-      <HoverText
-        title={bandsTooltip(groundOrBarrierBands, {
-          title: 'Engine applies max(A_gr, A_terrain + A_screening) per band',
-          highlightIdx: 4,
-          note: MAX_RULE_FORMULA,
-        })}
-      >
-        <span className="text-muted-foreground/70">
-          hover for per-band max(A_gr, A_ter+A_scr)
-        </span>
-      </HoverText>,
-    ],
-    [
       'Total path effect',
       <HoverText
-        title={bandsTooltip(totalPathBands, {
-          title: 'All path effects combined — per band (ground_or_barrier + vegetation)',
-          highlightIdx: 4,
-          note: 'Scalar above = full − free_field (A-weighted Lden delta including ground + barriers + vegetation + reflection boost).',
-        })}
+        title={MAX_RULE_FORMULA}
       >
         <span className="font-medium">
           {fmtDb(totalPathDelta)} (A) · full vs free-field Lden
@@ -218,10 +192,10 @@ function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
       <div className="h-1" />
       <InlineTable rows={effects} />
       <div className="mt-1 text-[9px] text-muted-foreground/50">
-        Received Lden = {received_lden.full.toFixed(1)} dB(A) · free-field {received_lden.free_field.toFixed(1)} dB(A) · path-effect delta {fmtDb(totalPathDelta)}.
-        <br />
-        ISO 9613-2 §7.3.1: engine applies <code>max(A_gr, A_ter+A_scr)</code> per band, then adds vegetation;{' '}
-        impacts above are <code>Lden_full − Lden_no_X</code> from the engine's variant comparison.
+        Impacts are <code>L_A(full) − L_A(no_X)</code> from the engine's
+        7-variant comparison. Ground is signed (CF[i] can be negative at
+        63/125 Hz over soft ground). ISO 9613-2 §7.3.1: engine applies
+        {' '}<code>max(A_gr, A_ter+A_scr)</code> per band, then adds vegetation.
       </div>
     </Section>
   )
@@ -283,6 +257,8 @@ function VariantComparison({ trace }: { trace: SegmentTrace }) {
     ['No terrain', received_lden.no_terrain],
     ['No screening', received_lden.no_screening],
     ['No vegetation', received_lden.no_vegetation],
+    ['No ground', received_lden.no_ground],
+    ['No atmospheric', received_lden.no_atmospheric],
   ]
   return (
     <Section title="Variant comparison">

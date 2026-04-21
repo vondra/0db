@@ -78,42 +78,24 @@ pub enum SourceGeometry {
     Point,
 }
 
-/// Compute propagation baseline breakdown for contributor tooltip.
-/// Returns separate geometric, atmospheric, ground components (all negative = loss).
+/// Propagation baseline tied to the closest segment — divergence + the ground
+/// factor the engine read from the raster. Atmospheric and ground *impacts*
+/// belong on the Contributor (energy-weighted across all segments, derived
+/// from [`propagate_variants_full`] deltas), not here.
 pub fn compute_baseline(
     d_slant: f64,
     source_geom: SourceGeometry,
     ground_g: f64,
 ) -> crate::types::PropagationBaseline {
     let d = d_slant.max(1.0);
-
     let geometric_db = -match source_geom {
         SourceGeometry::Line => 10.0 * (2.0 * std::f64::consts::PI * d).log10(),
         SourceGeometry::Point => 20.0 * d.log10() + 11.0,
     };
-
-    // A-weighted average atmospheric absorption (use 1kHz band as representative)
-    let atmospheric_db = -(ALPHA_ATM[4] * d / 1000.0);
-
-    // Ground effect (A-weighted average using 1kHz band)
-    let ground_db = -(GROUND_CF[4] * ground_g);
-
-    let total_db = geometric_db + atmospheric_db + ground_db;
-
     crate::types::PropagationBaseline {
         geometric_db: (geometric_db * 10.0).round() / 10.0,
-        atmospheric_db: (atmospheric_db * 10.0).round() / 10.0,
         ground_factor: ground_g,
-        ground_db: (ground_db * 10.0).round() / 10.0,
-        total_db: (total_db * 10.0).round() / 10.0,
     }
-}
-
-/// Estimate A-weighted ground effect for max(A_gr, A_bar) rule.
-/// Returns negative value (attenuation) matching what propagate_bands applies.
-pub fn ground_effect_estimate(ground_g: f64) -> f64 {
-    // A-weighted average of GROUND_CF[i] * ground_g, using 1kHz band as representative
-    -(GROUND_CF[4] * ground_g)
 }
 
 /// Propagation result per band.
@@ -167,42 +149,43 @@ pub fn a_weighted_total(bands: &[f64; NUM_BANDS]) -> f64 {
     }
 }
 
-/// Compute 5 propagation variants in a single pass (for pipeline batch output).
+/// ISO 9613-2 propagation core — computes 5 or 7 propagation variants in a
+/// single SIMD pass.
 ///
-/// Returns linear energy values (not dB). Caller accumulates across sources,
-/// then converts to dB at the end.
+/// `FULL=false` is the pipeline path: 5 variants (full / free_field / no_terrain
+/// / no_screening / no_vegetation). Pipeline tile output only reads `full_energy`
+/// + `free_field_energy` + `band_energy`; the other variants feed per-effect
+/// contribution visualizations.
 ///
-/// The 5 variants differ only in which attenuation factors are included:
-/// - full: base + terrain + screening + vegetation + reflection + FLC
-/// - free_field: base only (div + atm + ground)
-/// - no_terrain: full minus terrain
-/// - no_screening: full minus screening
-/// - no_vegetation: full minus vegetation
-/// ISO 9613-2 propagation with 5 variants.
+/// `FULL=true` is the popup path: adds `no_ground` and `no_atmospheric` so the
+/// contributor detail can compute A-weighted `ΔL_A` per effect. LLVM
+/// monomorphizes the const generic so the pipeline path pays no cost for the
+/// extra variants.
 ///
-/// **Ground/barrier interaction (ISO 9613-2 §7.3.1):**
-/// When barriers (terrain diffraction + building screening) are present,
-/// barrier attenuation REPLACES ground effect: use max(A_gr, A_bar), not A_gr + A_bar.
-/// Vegetation is independent and always additive (ISO 9613-2:2024 A.2.2).
-pub fn propagate_variants(
+/// **Ground/barrier interaction (ISO 9613-2 §7.3.1):** when barriers (terrain
+/// diffraction + building screening) are present, barrier attenuation REPLACES
+/// ground effect: use `max(A_gr, A_bar)`, not `A_gr + A_bar`. Vegetation is
+/// independent and always additive (ISO 9613-2:2024 A.2.2).
+fn propagate_variants_impl<const FULL: bool>(
     emission_bands: &[f64; NUM_BANDS],
     d_slant: f64,
     source_geom: SourceGeometry,
     ground_g: f64,
-    terrain_atten: &[f64; NUM_BANDS], // per-band terrain diffraction (positive = dB removed)
-    screening_atten: &[f64; NUM_BANDS], // per-band building screening
-    vegetation_atten: &[f64; NUM_BANDS], // per-band vegetation attenuation
-    reflection_boost_db: f64,         // scalar urban reflection boost (positive = dB added)
-    finite_line_corr: f64,            // FLC in dB (negative), 0 for point sources
+    terrain_atten: &[f64; NUM_BANDS],
+    screening_atten: &[f64; NUM_BANDS],
+    vegetation_atten: &[f64; NUM_BANDS],
+    reflection_boost_db: f64,
+    finite_line_corr: f64,
 ) -> crate::types::PropagationVariants {
     let mut full_energy = 0.0f64;
     let mut free_energy = 0.0f64;
     let mut no_terrain_energy = 0.0f64;
     let mut no_screening_energy = 0.0f64;
     let mut no_vegetation_energy = 0.0f64;
+    let mut no_ground_energy = 0.0f64;
+    let mut no_atmospheric_energy = 0.0f64;
     let mut band_energy = [0.0f64; NUM_BANDS];
 
-    // Geometric divergence depends only on distance, not frequency — compute once.
     let d = d_slant.max(1.0);
     let geo_div = match source_geom {
         SourceGeometry::Line => 10.0 * (2.0 * std::f64::consts::PI * d).log10(),
@@ -210,7 +193,6 @@ pub fn propagate_variants(
     };
     let d_over_1000 = d_slant / 1000.0;
 
-    // Per-pair scalar broadcasts.
     let geo_v = f64x4::splat(geo_div);
     let d1000_v = f64x4::splat(d_over_1000);
     let g_v = f64x4::splat(ground_g);
@@ -219,9 +201,6 @@ pub fn propagate_variants(
     let zero_v = f64x4::splat(0.0);
     let c_ln10_10 = f64x4::splat(std::f64::consts::LN_10 * 0.1);
 
-    // Two 4-lane halves cover all 8 bands. ISO 9613-2 §7.3.1 max(A_gr, A_bar) rule
-    // applied only when A_bar > 0 — otherwise A_gr passes through (can be negative
-    // for soft ground at 63/125 Hz).
     for half in 0..2 {
         let lo = half * 4;
         let load4 = |arr: &[f64; NUM_BANDS]| -> f64x4 {
@@ -272,6 +251,25 @@ pub fn propagate_variants(
         no_screening_energy += no_s_arr[0] + no_s_arr[1] + no_s_arr[2] + no_s_arr[3];
         let no_v_arr = no_v_e.to_array();
         no_vegetation_energy += no_v_arr[0] + no_v_arr[1] + no_v_arr[2] + no_v_arr[3];
+
+        if FULL {
+            // `no_ground`: replace ground/barrier max() with just the barrier
+            // term (ground set to 0). When no barrier, gob_no_g = 0 → path
+            // keeps veg/refl/flc only. Over soft ground at 63/125 Hz CF[i] is
+            // negative (LF boost), so `no_ground` can be LOUDER than `full` —
+            // callers must not clamp the signed delta.
+            let gob_no_g = a_bar_full.cmp_gt(zero_v).blend(a_bar_full, zero_v);
+            let no_g = base - gob_no_g - veg_v + refl_v + flc_v;
+            // `no_atmospheric`: full + atm added back per band.
+            let no_a = full + alpha_v * d1000_v;
+
+            let no_g_e = fast_exp_f64x4((no_g + aw_v) * c_ln10_10);
+            let no_a_e = fast_exp_f64x4((no_a + aw_v) * c_ln10_10);
+            let no_g_arr = no_g_e.to_array();
+            no_ground_energy += no_g_arr[0] + no_g_arr[1] + no_g_arr[2] + no_g_arr[3];
+            let no_a_arr = no_a_e.to_array();
+            no_atmospheric_energy += no_a_arr[0] + no_a_arr[1] + no_a_arr[2] + no_a_arr[3];
+        }
     }
 
     crate::types::PropagationVariants {
@@ -280,46 +278,67 @@ pub fn propagate_variants(
         no_terrain_energy,
         no_screening_energy,
         no_vegetation_energy,
+        no_ground_energy,
+        no_atmospheric_energy,
         band_energy,
     }
 }
 
-/// Fast path for StubRasters (Phase 1): all attenuations are zero, so all 5 variants are identical.
-/// Computes a single energy value and fills all variant fields with it.
-/// 5× fewer powf calls (8 instead of 40 per source-receiver pair).
+/// Pipeline kernel — 5 variants, no per-effect ground/atmospheric breakdown.
+/// Hot path in `pipeline-worker` batch compute; popup callers use
+/// `propagate_variants_full` instead.
 #[inline]
-pub fn propagate_single(
+pub fn propagate_variants(
     emission_bands: &[f64; NUM_BANDS],
     d_slant: f64,
     source_geom: SourceGeometry,
     ground_g: f64,
+    terrain_atten: &[f64; NUM_BANDS],
+    screening_atten: &[f64; NUM_BANDS],
+    vegetation_atten: &[f64; NUM_BANDS],
+    reflection_boost_db: f64,
     finite_line_corr: f64,
 ) -> crate::types::PropagationVariants {
-    let mut energy = 0.0f64;
-    let mut band_energy = [0.0f64; NUM_BANDS];
-    let d = d_slant.max(1.0);
-    let geo_div = match source_geom {
-        SourceGeometry::Line => 10.0 * (2.0 * std::f64::consts::PI * d).log10(),
-        SourceGeometry::Point => 20.0 * d.log10() + 11.0,
-    };
-    let d_over_1000 = d_slant / 1000.0;
-    let c = std::f64::consts::LN_10 * 0.1;
-    for i in 0..NUM_BANDS {
-        let level =
-            emission_bands[i] - geo_div - ALPHA_ATM[i] * d_over_1000 - GROUND_CF[i] * ground_g
-                + finite_line_corr;
-        let e = fast_exp_f64((level + A_WEIGHTING[i]) * c);
-        energy += e;
-        band_energy[i] = e;
-    }
-    crate::types::PropagationVariants {
-        full_energy: energy,
-        free_field_energy: energy,
-        no_terrain_energy: energy,
-        no_screening_energy: energy,
-        no_vegetation_energy: energy,
-        band_energy,
-    }
+    propagate_variants_impl::<false>(
+        emission_bands,
+        d_slant,
+        source_geom,
+        ground_g,
+        terrain_atten,
+        screening_atten,
+        vegetation_atten,
+        reflection_boost_db,
+        finite_line_corr,
+    )
+}
+
+/// Popup kernel — 7 variants including `no_ground` and `no_atmospheric` so the
+/// contributor detail can derive A-weighted `ΔL_A` per effect. Pays ~40% more
+/// per-band work than the pipeline kernel; never call from the pipeline hot
+/// path.
+#[inline]
+pub fn propagate_variants_full(
+    emission_bands: &[f64; NUM_BANDS],
+    d_slant: f64,
+    source_geom: SourceGeometry,
+    ground_g: f64,
+    terrain_atten: &[f64; NUM_BANDS],
+    screening_atten: &[f64; NUM_BANDS],
+    vegetation_atten: &[f64; NUM_BANDS],
+    reflection_boost_db: f64,
+    finite_line_corr: f64,
+) -> crate::types::PropagationVariants {
+    propagate_variants_impl::<true>(
+        emission_bands,
+        d_slant,
+        source_geom,
+        ground_g,
+        terrain_atten,
+        screening_atten,
+        vegetation_atten,
+        reflection_boost_db,
+        finite_line_corr,
+    )
 }
 
 #[cfg(test)]
@@ -563,6 +582,121 @@ mod tests {
     }
 
     #[test]
+    fn test_pipeline_full_agree_on_shared_variants() {
+        // Split kernel contract: `propagate_variants` (pipeline path,
+        // FULL=false) and `propagate_variants_full` (popup path, FULL=true)
+        // MUST produce byte-identical energies for the 5 shared variants.
+        // Guards the pipeline hash-regression invariant.
+        let emission = [65.0, 70.0, 73.0, 74.0, 73.0, 70.0, 65.0, 58.0];
+        let terrain = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        let screening = [1.5; NUM_BANDS];
+        let vegetation = [0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        for geom in [SourceGeometry::Line, SourceGeometry::Point] {
+            for &g in &[0.0, 0.5, 1.0] {
+                let pipe = propagate_variants(
+                    &emission,
+                    150.0,
+                    geom,
+                    g,
+                    &terrain,
+                    &screening,
+                    &vegetation,
+                    0.5,
+                    -2.0,
+                );
+                let full = propagate_variants_full(
+                    &emission,
+                    150.0,
+                    geom,
+                    g,
+                    &terrain,
+                    &screening,
+                    &vegetation,
+                    0.5,
+                    -2.0,
+                );
+                assert_eq!(pipe.full_energy.to_bits(), full.full_energy.to_bits());
+                assert_eq!(
+                    pipe.free_field_energy.to_bits(),
+                    full.free_field_energy.to_bits()
+                );
+                assert_eq!(
+                    pipe.no_terrain_energy.to_bits(),
+                    full.no_terrain_energy.to_bits()
+                );
+                assert_eq!(
+                    pipe.no_screening_energy.to_bits(),
+                    full.no_screening_energy.to_bits()
+                );
+                assert_eq!(
+                    pipe.no_vegetation_energy.to_bits(),
+                    full.no_vegetation_energy.to_bits()
+                );
+                for i in 0..NUM_BANDS {
+                    assert_eq!(
+                        pipe.band_energy[i].to_bits(),
+                        full.band_energy[i].to_bits()
+                    );
+                }
+                // Pipeline path leaves no_ground / no_atmospheric at zero;
+                // popup path populates them.
+                assert_eq!(pipe.no_ground_energy, 0.0);
+                assert_eq!(pipe.no_atmospheric_energy, 0.0);
+                assert!(full.no_ground_energy > 0.0);
+                assert!(full.no_atmospheric_energy > 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_variants_full_monotonicity() {
+        // ISO 9613-2 physical invariants:
+        //  - atm / vegetation absorb per band → removing them ⇒ LOUDER
+        //  - terrain / screening ≥ 0 per band → removing them ⇒ LOUDER
+        //  - ground is signed (CF[i] < 0 at 63/125 Hz over soft ground) →
+        //    removing it can be QUIETER; never assert a bound.
+        let emission = [70.0; NUM_BANDS];
+        let zero = [0.0f64; NUM_BANDS];
+        let terrain = [4.0; NUM_BANDS];
+        let screening = [2.0; NUM_BANDS];
+        let vegetation = [3.0; NUM_BANDS];
+        let v = propagate_variants_full(
+            &emission,
+            500.0,
+            SourceGeometry::Line,
+            0.3,
+            &terrain,
+            &screening,
+            &vegetation,
+            0.0,
+            -1.0,
+        );
+        assert!(v.no_terrain_energy > v.full_energy);
+        assert!(v.no_screening_energy > v.full_energy);
+        assert!(v.no_vegetation_energy > v.full_energy);
+        assert!(v.no_atmospheric_energy > v.full_energy);
+        // Sanity: no_ground is finite (sign unrestricted).
+        assert!(v.no_ground_energy.is_finite() && v.no_ground_energy > 0.0);
+
+        // Zero-attenuation case: no_terrain / no_screening / no_vegetation
+        // collapse onto `full` (removing a zero effect changes nothing).
+        let v0 = propagate_variants_full(
+            &emission,
+            500.0,
+            SourceGeometry::Line,
+            0.3,
+            &zero,
+            &zero,
+            &zero,
+            0.0,
+            -1.0,
+        );
+        assert!((v0.no_terrain_energy - v0.full_energy).abs() < 1e-9 * v0.full_energy);
+        assert!((v0.no_screening_energy - v0.full_energy).abs() < 1e-9 * v0.full_energy);
+        assert!((v0.no_vegetation_energy - v0.full_energy).abs() < 1e-9 * v0.full_energy);
+    }
+
+    #[test]
     fn test_variants_add() {
         let mut a = crate::types::PropagationVariants {
             full_energy: 1.0,
@@ -570,6 +704,8 @@ mod tests {
             no_terrain_energy: 3.0,
             no_screening_energy: 4.0,
             no_vegetation_energy: 5.0,
+            no_ground_energy: 6.0,
+            no_atmospheric_energy: 7.0,
             band_energy: [0.0; crate::types::NUM_BANDS],
         };
         let b = crate::types::PropagationVariants {
@@ -578,6 +714,8 @@ mod tests {
             no_terrain_energy: 30.0,
             no_screening_energy: 40.0,
             no_vegetation_energy: 50.0,
+            no_ground_energy: 60.0,
+            no_atmospheric_energy: 70.0,
             band_energy: [0.0; crate::types::NUM_BANDS],
         };
         a.add(&b);

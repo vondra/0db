@@ -29,6 +29,26 @@ use traces::{
 };
 use types::*;
 
+/// Round to one decimal place (0.1 dB granularity — matches UI precision).
+#[inline]
+fn round1(v: f64) -> f64 {
+    (v * 10.0).round() / 10.0
+}
+
+/// Aircraft ground-ops A-weighted impact scalar. Aircraft uses Doc 29 period
+/// normalization (not the ISO 9613 Lden weights that `lden_from_periods`
+/// assumes), so the impact delta is computed from `periods_from_normalized`
+/// Lden values passed in. `signed=true` for ground (CF[i] < 0 at 63/125 Hz
+/// can boost LF); otherwise the delta is clamped to ≤ 0.
+#[inline]
+fn aircraft_impact(full: &NoisePeriods, no_effect: &NoisePeriods, signed: bool) -> f64 {
+    if !full.lden_db.is_finite() {
+        return 0.0;
+    }
+    let d = full.lden_db - no_effect.lden_db;
+    round1(if signed { d } else { d.min(0.0) })
+}
+
 /// Decode WKB hex string (Polygon type 3) to GeoJSON.
 /// WKB format: byte_order(1) + type(4) + num_rings(4) + [num_points(4) + [x(8)+y(8)]*N]*R
 fn wkb_to_geojson(hex: &str) -> Option<serde_json::Value> {
@@ -436,7 +456,7 @@ fn compute_roads(
         {
             let flows = road::build_period_flows(light, medium, heavy, moto, speed, *pct, *hours);
             let emission = road::line_source_emission(&flows, surf_corr);
-            let v = iso9613::propagate_variants(
+            let v = iso9613::propagate_variants_full(
                 &emission,
                 d_slant,
                 SourceGeometry::Line,
@@ -737,20 +757,8 @@ fn compute_roads(
             None
         };
 
-        // Aggregate path effect deltas from accumulated PropagationVariants
-        let lden_of = |f: fn(&PropagationVariants) -> f64| {
-            PropagationVariants::lden_from_periods(
-                &acc.variants[0],
-                &acc.variants[1],
-                &acc.variants[2],
-                f,
-            )
-        };
-        let no_terrain_lden = lden_of(|v| v.no_terrain_energy);
-        let no_screening_lden = lden_of(|v| v.no_screening_energy);
-        let no_veg_lden = lden_of(|v| v.no_vegetation_energy);
+        let impacts = PropagationVariants::impact_deltas(&acc.variants, road_periods.lden_db);
 
-        // Nearest segment metadata (for informational display — delta, building height, forest depth)
         let (nearest_terrain, nearest_screening, nearest_veg) = compute_path_effects(
             rasters,
             barriers,
@@ -761,11 +769,6 @@ fn compute_roads(
             acc.min_dist,
             0.0,
         );
-
-        // Use aggregate Lden deltas for attenuation, nearest-segment metadata for context
-        let terrain_adj = (road_periods.lden_db - no_terrain_lden).min(0.0);
-        let screening_adj = (road_periods.lden_db - no_screening_lden).min(0.0);
-        let veg_adj = (road_periods.lden_db - no_veg_lden).min(0.0);
 
         let road_meta = RoadMetadata {
             aadt_light_raw: acc.dominant_aadt_light_raw,
@@ -821,22 +824,14 @@ fn compute_roads(
                 SourceGeometry::Line,
                 acc.min_ground_g,
             ),
-            terrain: TerrainBreakdown {
-                delta_m: nearest_terrain.delta_m,
-                is_double: nearest_terrain.is_double,
-                attenuation_db: (terrain_adj * 10.0).round() / 10.0,
-                profile_points: nearest_terrain.profile_points,
-            },
-            screening: ScreeningBreakdown {
-                building_path_m: nearest_screening.building_path_m,
-                attenuation_db: (screening_adj * 10.0).round() / 10.0,
-                obstacle: nearest_screening.obstacle,
-            },
-            vegetation: VegetationBreakdown {
-                forest_depth_m: nearest_veg.forest_depth_m,
-                attenuation_db: (veg_adj * 10.0).round() / 10.0,
-                sampled_path_m: nearest_veg.sampled_path_m,
-            },
+            terrain: nearest_terrain,
+            screening: nearest_screening,
+            vegetation: nearest_veg,
+            terrain_impact_db: round1(impacts.terrain),
+            screening_impact_db: round1(impacts.screening),
+            vegetation_impact_db: round1(impacts.vegetation),
+            atmospheric_impact_db: round1(impacts.atmospheric),
+            ground_impact_db: round1(impacts.ground),
             received_bands: std::array::from_fn(|j| {
                 10.0 * acc.variants[0].band_energy[j].max(1e-30).log10()
             }),
@@ -1005,7 +1000,7 @@ fn compute_railways(
                 q_frt * pct,
                 period_hours[pi],
             );
-            let v = iso9613::propagate_variants(
+            let v = iso9613::propagate_variants_full(
                 &emission,
                 d_slant,
                 SourceGeometry::Line,
@@ -1224,6 +1219,8 @@ fn compute_railways(
             0.0,
         );
 
+        let impacts = PropagationVariants::impact_deltas(&acc.variants, rail_periods.lden_db);
+
         let rail_meta = RailMetadata {
             trains_passenger_raw: acc.closest_trains_passenger_raw,
             trains_freight_raw: acc.closest_trains_freight_raw,
@@ -1282,6 +1279,11 @@ fn compute_railways(
             terrain: rail_effects.0,
             screening: rail_effects.1,
             vegetation: rail_effects.2,
+            terrain_impact_db: round1(impacts.terrain),
+            screening_impact_db: round1(impacts.screening),
+            vegetation_impact_db: round1(impacts.vegetation),
+            atmospheric_impact_db: round1(impacts.atmospheric),
+            ground_impact_db: round1(impacts.ground),
             received_bands: std::array::from_fn(|j| {
                 10.0 * acc.variants[0].band_energy[j].max(1e-30).log10()
             }),
@@ -1376,7 +1378,7 @@ fn compute_point_sources(
             );
         let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
-        let v_day = iso9613::propagate_variants(
+        let v_day = iso9613::propagate_variants_full(
             &src.lw_day.map(|v| v as f64),
             d_slant,
             SourceGeometry::Point,
@@ -1387,7 +1389,7 @@ fn compute_point_sources(
             reflection,
             0.0,
         );
-        let v_eve = iso9613::propagate_variants(
+        let v_eve = iso9613::propagate_variants_full(
             &src.lw_evening.map(|v| v as f64),
             d_slant,
             SourceGeometry::Point,
@@ -1398,7 +1400,7 @@ fn compute_point_sources(
             reflection,
             0.0,
         );
-        let v_night = iso9613::propagate_variants(
+        let v_night = iso9613::propagate_variants_full(
             &src.lw_night.map(|v| v as f64),
             d_slant,
             SourceGeometry::Point,
@@ -1514,6 +1516,8 @@ fn compute_point_sources(
             acc.exclusion_radius_m as f64,
         );
 
+        let impacts = PropagationVariants::impact_deltas(&acc.variants, pt_periods.lden_db);
+
         let subtype_name: &'static str = if source_kind == SourceKind::Industrial {
             industrial_type_name(acc.subtype)
         } else {
@@ -1557,6 +1561,11 @@ fn compute_point_sources(
             terrain: pt_effects.0,
             screening: pt_effects.1,
             vegetation: pt_effects.2,
+            terrain_impact_db: round1(impacts.terrain),
+            screening_impact_db: round1(impacts.screening),
+            vegetation_impact_db: round1(impacts.vegetation),
+            atmospheric_impact_db: round1(impacts.atmospheric),
+            ground_impact_db: round1(impacts.ground),
             received_bands: std::array::from_fn(|j| {
                 10.0 * acc.variants[0].band_energy[j].max(1e-30).log10()
             }),
@@ -1597,7 +1606,6 @@ fn compute_aircraft(
     let rx_elev = receiver.altitude_m();
     let n_days_f = (n_days as f64).max(1.0);
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
-    let round1 = |v: f64| (v * 10.0).round() / 10.0;
     let periods_from_doc29_energy = |energy: [f64; 3]| -> NoisePeriods {
         if energy.iter().sum::<f64>() <= 0.0 {
             return NoisePeriods::silence();
@@ -1896,7 +1904,7 @@ fn compute_aircraft(
                 PropagationVariants::default(),
             ];
             for (pi, emission) in emissions.iter().enumerate() {
-                let v = iso9613::propagate_variants(
+                let v = iso9613::propagate_variants_full(
                     emission,
                     d_slant,
                     SourceGeometry::Line,
@@ -2066,10 +2074,8 @@ fn compute_aircraft(
             band_disruptive.profile_counts[pidx] += acc.flight_weight.round().max(1.0) as u32;
         }
 
-        // Popup tee-off: AirborneTrace per flight. Doc 29 produces no per-band
-        // spectrum for airborne sources, so `received_bands` is filled with
-        // the flight's scalar Lden — frontend keeps its band-layout consistent
-        // but the per-band detail is not physically meaningful here.
+        // Popup tee-off: AirborneTrace per flight. Doc 29 is scalar-SEL only —
+        // no per-band spectrum is physically meaningful for airborne aircraft.
         if let Some(t) = traces.as_deref_mut() {
             let ld = aircraft::period_leq(acc.period_energy[0], n_days_f, aircraft::PERIOD_SECONDS[0]);
             let le = aircraft::period_leq(acc.period_energy[1], n_days_f, aircraft::PERIOD_SECONDS[1]);
@@ -2100,7 +2106,6 @@ fn compute_aircraft(
                     [acc.peak_seg_end[1], acc.peak_seg_end[0]],
                 ],
                 received_lden: lden,
-                received_bands: std::array::from_fn(|_| lden),
             });
         }
     }
@@ -2149,6 +2154,16 @@ fn compute_aircraft(
         ground_variants[0].no_vegetation_energy,
         ground_variants[1].no_vegetation_energy,
         ground_variants[2].no_vegetation_energy,
+    ]);
+    let ground_no_ground = periods_from_normalized([
+        ground_variants[0].no_ground_energy,
+        ground_variants[1].no_ground_energy,
+        ground_variants[2].no_ground_energy,
+    ]);
+    let ground_no_atmospheric = periods_from_normalized([
+        ground_variants[0].no_atmospheric_energy,
+        ground_variants[1].no_atmospheric_energy,
+        ground_variants[2].no_atmospheric_energy,
     ]);
     let ground_periods_free = periods_from_normalized([
         ground_variants[0].free_field_energy,
@@ -2267,36 +2282,22 @@ fn compute_aircraft(
             } else {
                 PropagationBaseline::default()
             },
-            terrain: TerrainBreakdown {
-                attenuation_db: if ground_periods.lden_db.is_finite() {
-                    round1((ground_periods.lden_db - ground_no_terrain.lden_db).min(0.0))
-                } else {
-                    0.0
-                },
-                ..ground_terrain_meta
-            },
-            screening: ScreeningBreakdown {
-                attenuation_db: if ground_periods.lden_db.is_finite() {
-                    round1((ground_periods.lden_db - ground_no_screening.lden_db).min(0.0))
-                } else {
-                    0.0
-                },
-                ..ground_screening_meta
-            },
-            vegetation: VegetationBreakdown {
-                attenuation_db: if ground_periods.lden_db.is_finite() {
-                    round1((ground_periods.lden_db - ground_no_vegetation.lden_db).min(0.0))
-                } else {
-                    0.0
-                },
-                ..ground_vegetation_meta
-            },
+            terrain: ground_terrain_meta,
+            screening: ground_screening_meta,
+            vegetation: ground_vegetation_meta,
+            terrain_impact_db: aircraft_impact(&ground_periods, &ground_no_terrain, false),
+            screening_impact_db: aircraft_impact(&ground_periods, &ground_no_screening, false),
+            vegetation_impact_db: aircraft_impact(&ground_periods, &ground_no_vegetation, false),
+            atmospheric_impact_db: aircraft_impact(&ground_periods, &ground_no_atmospheric, false),
+            ground_impact_db: aircraft_impact(&ground_periods, &ground_no_ground, true),
         },
     };
 
     let mut contributors = Vec::new();
 
     if airborne_periods.lden_db.is_finite() {
+        // Doc 29 airborne has no ISO 9613-2 path effects — all impact
+        // scalars are zero (scalar SEL propagation only).
         contributors.push(Contributor {
             osm_id: None,
             geometry: None,
@@ -2304,6 +2305,11 @@ fn compute_aircraft(
             terrain: TerrainBreakdown::default(),
             screening: ScreeningBreakdown::default(),
             vegetation: VegetationBreakdown::default(),
+            terrain_impact_db: 0.0,
+            screening_impact_db: 0.0,
+            vegetation_impact_db: 0.0,
+            atmospheric_impact_db: 0.0,
+            ground_impact_db: 0.0,
             source_type: SourceKind::Aircraft,
             name: "Aircraft - airborne".to_string(),
             subtype: "airborne".to_string(),
@@ -2353,6 +2359,24 @@ fn compute_aircraft(
             acc.variants[1].no_vegetation_energy,
             acc.variants[2].no_vegetation_energy,
         ]);
+        let airport_no_ground = periods_from_normalized([
+            acc.variants[0].no_ground_energy,
+            acc.variants[1].no_ground_energy,
+            acc.variants[2].no_ground_energy,
+        ]);
+        let airport_no_atmospheric = periods_from_normalized([
+            acc.variants[0].no_atmospheric_energy,
+            acc.variants[1].no_atmospheric_energy,
+            acc.variants[2].no_atmospheric_energy,
+        ]);
+        let airport_terrain_impact = aircraft_impact(&airport_periods, &airport_no_terrain, false);
+        let airport_screening_impact =
+            aircraft_impact(&airport_periods, &airport_no_screening, false);
+        let airport_vegetation_impact =
+            aircraft_impact(&airport_periods, &airport_no_vegetation, false);
+        let airport_atmospheric_impact =
+            aircraft_impact(&airport_periods, &airport_no_atmospheric, false);
+        let airport_ground_impact = aircraft_impact(&airport_periods, &airport_no_ground, true);
         let (terrain_meta, screening_meta, vegetation_meta) = compute_path_effects(
             rasters,
             barriers,
@@ -2409,22 +2433,14 @@ fn compute_aircraft(
                 modeled_movements_per_day: acc.modeled_by_kind[2] / n_days_f,
             },
             baseline: baseline.clone(),
-            terrain: TerrainBreakdown {
-                attenuation_db: round1((airport_periods.lden_db - airport_no_terrain.lden_db).min(0.0)),
-                ..terrain_meta
-            },
-            screening: ScreeningBreakdown {
-                attenuation_db: round1(
-                    (airport_periods.lden_db - airport_no_screening.lden_db).min(0.0),
-                ),
-                ..screening_meta
-            },
-            vegetation: VegetationBreakdown {
-                attenuation_db: round1(
-                    (airport_periods.lden_db - airport_no_vegetation.lden_db).min(0.0),
-                ),
-                ..vegetation_meta
-            },
+            terrain: terrain_meta,
+            screening: screening_meta,
+            vegetation: vegetation_meta,
+            terrain_impact_db: airport_terrain_impact,
+            screening_impact_db: airport_screening_impact,
+            vegetation_impact_db: airport_vegetation_impact,
+            atmospheric_impact_db: airport_atmospheric_impact,
+            ground_impact_db: airport_ground_impact,
         };
         let ground_geometry = if !acc.line_coords.is_empty() {
             Some(serde_json::json!({"type": "MultiLineString", "coordinates": acc.line_coords}))
@@ -2438,6 +2454,11 @@ fn compute_aircraft(
             terrain: detail.terrain.clone(),
             screening: detail.screening.clone(),
             vegetation: detail.vegetation.clone(),
+            terrain_impact_db: detail.terrain_impact_db,
+            screening_impact_db: detail.screening_impact_db,
+            vegetation_impact_db: detail.vegetation_impact_db,
+            atmospheric_impact_db: detail.atmospheric_impact_db,
+            ground_impact_db: detail.ground_impact_db,
             source_type: SourceKind::Aircraft,
             name: format!("Aircraft - ground ops — {}", display_name),
             subtype: "ground_ops".to_string(),
@@ -2556,10 +2577,13 @@ pub fn compute_path_effects(
         &mut path_profile,
     );
 
-    let (terrain_atten, terrain_delta, terrain_is_double, terrain_profile_points) =
+    // Metadata only — the per-band attenuation arrays are consumed inside
+    // `propagate_variants_full`; popup derives A-weighted `ΔL_A` from the
+    // Contributor-level variant Lden deltas instead of any scalar here.
+    let (_terrain_atten, terrain_delta, terrain_is_double, terrain_profile_points) =
         propagation::path_effects::terrain_attenuation_with_meta(&mut path_profile, src_height, rcv_alt);
 
-    let (screening_atten, obstacle_trace) = propagation::path_effects::screening_attenuation_with_meta(
+    let (_screening_atten, obstacle_trace) = propagation::path_effects::screening_attenuation_with_meta(
         &path_profile,
         barriers,
         src_height,
@@ -2567,7 +2591,6 @@ pub fn compute_path_effects(
         exclusion_radius_m,
     );
 
-    let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
     let forest_depth = propagation::path_profile::vegetation_run_length(
         &path_profile.t,
         &path_profile.forest_u8,
@@ -2579,12 +2602,10 @@ pub fn compute_path_effects(
         TerrainBreakdown {
             delta_m: (terrain_delta * 100.0).round() / 100.0,
             is_double: terrain_is_double,
-            attenuation_db: -(terrain_atten[4] * 10.0).round() / 10.0,
             profile_points: terrain_profile_points,
         },
         ScreeningBreakdown {
             building_path_m: (obstacle_trace.height_m * 10.0).round() / 10.0,
-            attenuation_db: -(screening_atten[4] * 10.0).round() / 10.0,
             obstacle: if obstacle_trace.kind == "none" {
                 None
             } else {
@@ -2593,7 +2614,6 @@ pub fn compute_path_effects(
         },
         VegetationBreakdown {
             forest_depth_m: (forest_depth * 10.0).round() / 10.0,
-            attenuation_db: -(veg_atten[4] * 10.0).round() / 10.0,
             sampled_path_m: (sampled_path_m * 10.0).round() / 10.0,
         },
     )
