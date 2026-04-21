@@ -14,7 +14,7 @@
  *   DATA_YEAR=2025 npx tsx pipeline/enrich-buildings-es.ts --enrich-only
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, openSync, writeSync, closeSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { createReadStream } from 'node:fs'
@@ -111,11 +111,11 @@ interface CatastroBuilding {
 async function downloadCatastro(): Promise<CatastroBuilding[]> {
   if (!forceDownload && existsSync(CACHE_FILE)) {
     console.log(`  Using cached Catastro data: ${CACHE_FILE}`)
-    return JSON.parse(readFileSync(CACHE_FILE, 'utf-8'))
+    return await readCacheStreaming(CACHE_FILE)
   }
   if (enrichOnly) {
     if (!existsSync(CACHE_FILE)) { console.error('ERROR: --enrich-only but no cache'); process.exit(1) }
-    return JSON.parse(readFileSync(CACHE_FILE, 'utf-8'))
+    return await readCacheStreaming(CACHE_FILE)
   }
 
   mkdirSync(CACHE_DIR, { recursive: true })
@@ -306,10 +306,58 @@ async function downloadCatastro(): Promise<CatastroBuilding[]> {
   }
 
   console.log(`\n  Total: ${allBuildings.length.toLocaleString()} buildings from ${processed} provinces (${errors} errors)`)
-  writeFileSync(CACHE_FILE, JSON.stringify(allBuildings))
+  // Node's JSON.stringify hits V8 string length limit (~512 MB) around
+  // 16-20 M building objects. With ~33 M buildings from the full Spain
+  // download we need to write in chunks to avoid "Invalid string length".
+  writeBuildingsChunked(CACHE_FILE, allBuildings)
   console.log(`  Cached to ${CACHE_FILE}`)
 
   return allBuildings
+}
+
+/**
+ * JSONL writer — one building per line. Avoids V8's ~512 MB string length
+ * limit that blows up on a single-string JSON array for 34 M buildings
+ * (~2 GB). JSONL streams through createReadStream+createInterface.
+ *
+ * Back-compat: if the existing cache is a legacy single-array JSON
+ * (starts with '['), readCacheStreaming falls back to one JSON.parse of
+ * the 512 MB head — which only works if someone has a smaller, older
+ * cache. Fresh runs always produce JSONL.
+ */
+function writeBuildingsChunked(path: string, items: CatastroBuilding[]): void {
+  const fd = openSync(path, 'w')
+  try {
+    for (let i = 0; i < items.length; i++) {
+      writeSync(fd, JSON.stringify(items[i]) + '\n')
+    }
+  } finally {
+    closeSync(fd)
+  }
+}
+
+async function readCacheStreaming(path: string): Promise<CatastroBuilding[]> {
+  const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
+  const out: CatastroBuilding[] = []
+  let firstLine = true
+  for await (const raw of rl) {
+    const line = raw.trim()
+    if (!line) continue
+    if (firstLine) {
+      firstLine = false
+      // Legacy single-array JSON cache — not streamable, bail and tell user.
+      if (line.startsWith('[{')) {
+        throw new Error(`Legacy single-array JSON cache detected at ${path}. Delete it and re-run with --force-download (new format is JSONL).`)
+      }
+    }
+    // Strip stray leading/trailing commas/brackets from legacy remnants.
+    const clean = line.replace(/^[\[,]+/, '').replace(/[,\]]+$/, '')
+    if (!clean || clean === '[' || clean === ']') continue
+    try {
+      out.push(JSON.parse(clean) as CatastroBuilding)
+    } catch { /* skip malformed */ }
+  }
+  return out
 }
 
 /**
@@ -402,18 +450,19 @@ async function parseGmlBuildings(gmlPath: string): Promise<CatastroBuilding[]> {
             if (count > 0) { lat = sumLat / count; lon = sumLon / count }
           }
         } else {
-          // UTM — Spanish national catastro publishes in UTM:
-          //   EPSG:25828 (zone 28N, Canary Islands)
-          //   EPSG:25829 (zone 29N, Galicia)
-          //   EPSG:25830 (zone 30N, mainland Spain)
-          //   EPSG:25831 (zone 31N, Catalonia)
+          // UTM — Spanish Catastro CRS varies by region:
+          //   EPSG:25828-25831 (ETRS89 UTM zones 28N-31N, mainland + Baleares)
+          //   EPSG:32628       (WGS84  UTM zone 28N, Canary Islands — Las Palmas 35, Tenerife 38)
           // posList is (easting northing) pairs in meters.
-          const zoneMatch = srs.match(/2583[0-9]|2582[89]/)
-          if (zoneMatch && coords.length >= 4) {
-            const epsg = `EPSG:${zoneMatch[0]}`
+          const mETRS = srs.match(/(2583[0-9]|2582[89])/)
+          const mWGS  = srs.match(/(326[0-9][0-9])/)
+          const code = mETRS ? mETRS[1] : (mWGS ? mWGS[1] : null)
+          if (code && coords.length >= 4) {
+            const epsg = `EPSG:${code}`
             if (!proj4.defs(epsg)) {
-              const zone = parseInt(epsg.slice(-2))
-              proj4.defs(epsg, `+proj=utm +zone=${zone} +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs`)
+              const zone = parseInt(code.slice(-2))
+              const ellps = code.startsWith('326') ? 'WGS84' : 'GRS80'
+              proj4.defs(epsg, `+proj=utm +zone=${zone} +ellps=${ellps} +towgs84=0,0,0,0,0,0,0 +units=m +no_defs`)
             }
             let sumEast = 0, sumNorth = 0, count = 0
             for (let i = 0; i < coords.length - 1; i += 2) {
