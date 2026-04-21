@@ -83,6 +83,10 @@ export default function MapView({
       fadeDuration={0}
       maxZoom={16}
       attributionControl={{ compact: true }}
+      // Defaults (deceleration 2500, maxSpeed 1400) give ~1.25 s inertia on a medium
+      // flick — too sluggish. 4000 / 1100 lands around ~780 ms, between the default
+      // and a Google-Maps-snappy feel.
+      dragPan={{ deceleration: 4000, maxSpeed: 1100 }}
     >
       <NavigationControl position="bottom-left" showCompass={false} />
       <HexLayer
