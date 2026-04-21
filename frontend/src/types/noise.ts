@@ -235,4 +235,204 @@ export interface NoiseComputeData {
   top_contributors: Contributor[]
   other_sources_lden: number | null
   compute_time_ms: number
+  segments?: SegmentTrace[]
+  airborne_traces?: AirborneTrace[]
+  segments_meta?: SegmentTracesSummary | null
+}
+
+// Per-segment traces — popup "view into the engine's guts". Mirrors
+// `engine/noise-compute/src/types.rs` (SegmentTrace, AirborneTrace, …).
+
+export type SegmentKind =
+  | 'road'
+  | 'railway'
+  | 'aircraft_ground'
+  | 'aircraft_airborne'
+  | 'building'
+  | 'industrial'
+
+export interface PerPeriod<T> {
+  day: T
+  evening: T
+  night: T
+}
+
+export interface LdenVariants {
+  full: number
+  /** Divergence + atmospheric + ground only, no path effects. */
+  free_field: number
+  no_terrain: number
+  no_screening: number
+  no_vegetation: number
+}
+
+export interface ForestRun {
+  t_start: number
+  t_end: number
+  len_m: number
+}
+
+export interface PathProfileTrace {
+  t: number[]
+  elevation_m: number[]
+  building_h_m: number[]
+  forest_u8: number[]
+  imd_u8: number[]
+  dist_m: number
+  step_m_med: number
+  src_lat: number
+  src_lon: number
+  rcv_lat: number
+  rcv_lon: number
+  src_alt_m: number
+  rcv_alt_m: number
+}
+
+export interface BaselineTrace {
+  geometric_db: number
+  atmospheric_bands: number[]
+  ground_factor_g: number
+  source_height_m: number
+  finite_line_corr_db: number
+}
+
+export interface TerrainTrace {
+  delta_m: number
+  is_double: boolean
+  attenuation_bands: number[]
+  attenuation_db_a: number
+  edge_apex_t: number | null
+  edge_apex_elev_m: number | null
+}
+
+export interface ScreeningTrace {
+  attenuation_bands: number[]
+  attenuation_db_a: number
+  obstacle: ScreeningObstacleTrace | null
+}
+
+export interface VegetationTrace {
+  forest_depth_m: number
+  sampled_path_m: number
+  attenuation_bands: number[]
+  attenuation_db_a: number
+  forest_runs: ForestRun[]
+}
+
+export interface GroundTrace {
+  factor_g: number
+  attenuation_bands: number[]
+  attenuation_db_a: number
+}
+
+export type EmissionTrace =
+  | {
+      kind: 'road'
+      aadt_light: number
+      aadt_medium: number
+      aadt_heavy: number
+      aadt_moto: number
+      speed_kmh: number
+      surface_corr_db: number
+      road_class: string
+      bridge: boolean
+      tunnel: boolean
+      oneway: boolean
+      lanes: number
+    }
+  | {
+      kind: 'railway'
+      trains_passenger: number
+      trains_freight: number
+      speed_kmh: number
+      bridge: boolean
+      highspeed: boolean
+      rail_type: string
+      service: boolean
+    }
+  | {
+      kind: 'aircraft_ground'
+      class: 'runway' | 'taxi' | 'apron'
+      observed_movements: number
+      modeled_movements: number
+    }
+  | {
+      kind: 'building'
+      building_type: string
+      height_m: number
+      floors: number
+      area_m2: number
+    }
+  | {
+      kind: 'industrial'
+      source_type: string
+      area_m2: number
+      nace: string | null
+      hub_height_m: number | null
+      rated_power_kw: number | null
+      effective_area_source_dist_m: number
+    }
+
+export interface SegmentTrace {
+  /**
+   * Engine SourceKind. `'aircraft'` here is ground ops only — airborne
+   * aircraft are emitted via `AirborneTrace` with Doc 29 primitives. The UI
+   * splits these into `SegmentKind = 'aircraft_ground' | 'aircraft_airborne'`
+   * via `traceKind()` in SegmentList.
+   */
+  kind: 'road' | 'railway' | 'building' | 'industrial' | 'aircraft'
+  osm_id: number | null
+  segment_idx: number
+  name: string
+  subtype: string
+  is_dominant_of_group: boolean
+  start_lat: number
+  start_lon: number
+  end_lat: number
+  end_lon: number
+  cp_lat: number
+  cp_lon: number
+  length_m: number
+  dist_m: number
+  d_slant_m: number
+  bridge: boolean
+  tunnel: boolean
+  emission: EmissionTrace
+  lw_bands: PerPeriod<number[]>
+  lw_db_a: PerPeriod<number>
+  baseline: BaselineTrace
+  path_profile: PathProfileTrace
+  terrain: TerrainTrace
+  screening: ScreeningTrace
+  vegetation: VegetationTrace
+  ground: GroundTrace
+  received_bands: PerPeriod<number[]>
+  received_lden: LdenVariants
+}
+
+export interface AirborneTrace {
+  flight_id: number
+  date: string
+  period: 0 | 1 | 2
+  profile: string
+  lmax_db: number
+  sel_db: number
+  cpa_distance_m: number
+  altitude_m_at_cpa: number
+  elevation_angle_deg: number
+  n_days_normalized: number
+  geometry: [[number, number], [number, number]]
+  received_lden: number
+  received_bands: number[]
+}
+
+export interface SegmentTracesSummary {
+  total_count: number
+  truncated: boolean
+  road_count: number
+  railway_count: number
+  aircraft_ground_count: number
+  aircraft_airborne_count: number
+  building_count: number
+  industrial_count: number
 }

@@ -1,9 +1,12 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { useMap, Source, Layer } from 'react-map-gl/maplibre'
 import { ldenToColor } from '../utils/noise-colors'
 import { MetricLabel, DataPoint } from './noise/noise-tooltips'
 import { HoverText } from './ui/info-tip'
 import { fmt, fmtInt, fmtCompact, formatCpa, txtTable, type TableRow } from '../utils/formatters'
+import { formatDist, lineRow, SOURCE_LABELS, subtypeLabel } from './noise/shared'
+import { SegmentList } from './noise/SegmentList'
+import { TabStrip, type PopupTab } from './noise/TabStrip'
 import type {
   DatasetProvenance,
   RoadMetadata,
@@ -82,29 +85,6 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
   )
 }
 
-const SOURCE_LABELS: Record<string, string> = {
-  road: 'Roads', railway: 'Railways', aircraft: 'Aircraft',
-  industrial: 'Industrial', building: 'Buildings',
-}
-
-const SUBTYPE_LABELS: Record<string, Record<string, string>> = {
-  road: { motorway: 'Motorway', trunk: 'Trunk road', primary: 'Primary road', secondary: 'Secondary road', tertiary: 'Tertiary road', residential: 'Local road', living_street: 'Living street' },
-  railway: { freight_corridor: 'Freight railway', passenger: 'Railway', tram: 'Tram', light_rail: 'Light rail', Rail: 'Railway', Tram: 'Tram', LightRail: 'Light rail', NarrowGauge: 'Narrow gauge', Funicular: 'Funicular', 'Rail (bridge)': 'Railway (bridge)', 'Tram (bridge)': 'Tram (bridge)', 'LightRail (bridge)': 'Light rail (bridge)', 'NarrowGauge (bridge)': 'Narrow gauge (bridge)' },
-  industrial: { industrial_area: 'Industrial area', quarry: 'Quarry', farm: 'Farm', factory: 'Factory', wastewater: 'Wastewater plant', wind_turbine: 'Wind turbine' },
-  building: { residential_multi: 'Apartment building', residential_single: 'House', commercial: 'Commercial / retail', warehouse: 'Warehouse', education: 'School / kindergarten', healthcare: 'Hospital / clinic', worship: 'Church', public: 'Public building', hospitality: 'Restaurant / bar', garage: 'Garage / parking', farm: 'Farm building', default: 'Building' },
-  aircraft: { mixed: 'Aircraft', aircraft: 'Aircraft' },
-}
-
-function subtypeLabel(sourceType: string, subtype: string): string {
-  return SUBTYPE_LABELS[sourceType]?.[subtype] || subtype.replace(/_/g, ' ')
-}
-
-function formatDist(m: number): string {
-  if (m === 0) return 'overhead'
-  if (m < 1000) return `${m} m`
-  return `${(m / 1000).toFixed(1)} km`
-}
-
 function roadTrafficSourceLabel(source: RoadMetadata['traffic_source'], roadClass: string): string {
   if (source === 'matched_external') return 'matched traffic dataset'
   if (source === 'estimated_service_tree') return 'estimated local traffic'
@@ -119,15 +99,6 @@ function provenanceLabel(p: DatasetProvenance | null | undefined): string {
   if (p.license) parts.push(`· ${p.license}`)
   if (p.url) parts.push(`· ${p.url}`)
   return parts.join(' ')
-}
-
-function lineRow(label: ReactNode, value: ReactNode, muted?: boolean) {
-  return (
-    <div className={`flex justify-between ${muted ? 'text-muted-foreground/40' : ''}`}>
-      <span>{label}</span>
-      <span className={muted ? '' : 'text-foreground'}>{value}</span>
-    </div>
-  )
 }
 
 /** Pretty renderer for source-specific metadata (typed per discriminant). */
@@ -694,6 +665,11 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
       ], 14, 9)
     : ''
 
+  const segmentsTotal = data.segments_meta?.total_count ?? (data.segments?.length ?? 0)
+  const hasSegmentsTab = segmentsTotal > 0 || (data.airborne_traces?.length ?? 0) > 0
+  const [tab, setTab] = useState<PopupTab>('sources')
+  const showSegments = tab === 'segments' && hasSegmentsTab
+
   return (
     <div data-testid="detail-popup" role="dialog" className="px-2.5 pt-1 pb-2" onClick={(e) => e.stopPropagation()}>
       {data.total_lden != null ? (
@@ -717,19 +693,41 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
               )}
             </div>
           </div>
-          <div className="border-b border-border pb-0.5 mb-0.5">
-            <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-              Noise sources ({data.top_contributors.length})
-            </span>
-          </div>
+          {hasSegmentsTab ? (
+            <TabStrip
+              active={tab}
+              sourceCount={data.top_contributors.length}
+              segmentCount={segmentsTotal}
+              onChange={setTab}
+            />
+          ) : (
+            <div className="border-b border-border pb-0.5 mb-0.5">
+              <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                Noise sources ({data.top_contributors.length})
+              </span>
+            </div>
+          )}
           <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 400px)' }}>
-            {(maxSources ? data.top_contributors.slice(0, maxSources) : data.top_contributors).map((c, i) => (
-              <ContributorRow key={`${c.source_type}-${c.osm_id}-${i}`} c={c} onToggle={onHighlight} />
-            ))}
-            {data.other_sources_lden !== null && Number.isFinite(data.other_sources_lden) && (
-              <div className="flex items-center justify-between px-1 py-1 border-t border-border/40 text-[11px] text-muted-foreground">
-                <span className="italic">Other sources</span>
-                <span className="font-mono">{data.other_sources_lden.toFixed(1)} dB</span>
+            {/* Both tabs stay mounted so per-row state (expanded) survives tab switches. */}
+            <div style={{ display: showSegments ? 'none' : 'block' }}>
+              {(maxSources ? data.top_contributors.slice(0, maxSources) : data.top_contributors).map((c, i) => (
+                <ContributorRow key={`${c.source_type}-${c.osm_id}-${i}`} c={c} onToggle={onHighlight} />
+              ))}
+              {data.other_sources_lden !== null && Number.isFinite(data.other_sources_lden) && (
+                <div className="flex items-center justify-between px-1 py-1 border-t border-border/40 text-[11px] text-muted-foreground">
+                  <span className="italic">Other sources</span>
+                  <span className="font-mono">{data.other_sources_lden.toFixed(1)} dB</span>
+                </div>
+              )}
+            </div>
+            {hasSegmentsTab && (
+              <div style={{ display: showSegments ? 'block' : 'none' }}>
+                <SegmentList
+                  segments={data.segments ?? []}
+                  airborne={data.airborne_traces ?? []}
+                  meta={data.segments_meta ?? null}
+                  onHighlight={onHighlight}
+                />
               </div>
             )}
           </div>
