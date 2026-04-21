@@ -221,8 +221,124 @@ pub fn baseline_trace(
     }
 }
 
-use crate::types::{EmissionTrace, PointSource, RailSegment, RoadSegment, SegmentTrace, SourceKind};
+use crate::types::{
+    AircraftSegment, EmissionTrace, PointSource, RailSegment, RoadSegment, SegmentTrace,
+    SourceKind,
+};
 use crate::{building_type_name, industrial_type_name, rail_type_name};
+
+fn ground_ops_class_name(kind_idx: usize) -> &'static str {
+    match kind_idx {
+        0 => "runway",
+        1 => "taxi",
+        2 => "apron",
+        _ => "ground_ops",
+    }
+}
+
+pub(crate) struct BuildAircraftGroundTrace<'a> {
+    pub seg: &'a AircraftSegment,
+    pub cp_lat: f64,
+    pub cp_lon: f64,
+    pub src_alt: f64,
+    pub rcv_alt: f64,
+    pub d_slant: f64,
+    pub flc: f64,
+    pub ground_g: f64,
+    pub kind_idx: usize, // 0=runway, 1=taxi, 2=apron
+    pub path_profile: PathProfile,
+    pub terrain_atten: [f64; NUM_BANDS],
+    pub terrain_delta: f64,
+    pub terrain_is_double: bool,
+    pub screening_atten: [f64; NUM_BANDS],
+    pub obstacle_trace: ScreeningObstacleTrace,
+    pub veg_atten: [f64; NUM_BANDS],
+    pub seg_variants: [PropagationVariants; 3],
+    pub lw_bands: [[f64; NUM_BANDS]; 3],
+}
+
+pub(crate) fn build_aircraft_ground_segment_trace(
+    inputs: BuildAircraftGroundTrace<'_>,
+) -> SegmentTrace {
+    let BuildAircraftGroundTrace {
+        seg,
+        cp_lat,
+        cp_lon,
+        src_alt,
+        rcv_alt,
+        d_slant,
+        flc,
+        ground_g,
+        kind_idx,
+        path_profile,
+        terrain_atten,
+        terrain_delta,
+        terrain_is_double,
+        screening_atten,
+        obstacle_trace,
+        veg_atten,
+        seg_variants,
+        lw_bands,
+    } = inputs;
+
+    let class = ground_ops_class_name(kind_idx);
+    // One "segment" per aircraft-observed ground-ops slice. Use flight_id as
+    // the display-stable osm_id; segment_idx synthesised from profile + on_ground
+    // flag so list keys stay unique even if a flight touches multiple kinds.
+    let seg_idx = ((seg.profile_idx as i16) << 8)
+        | (if seg.on_ground { 1 } else { 0 } << 4)
+        | (kind_idx as i16);
+
+    let vegetation = vegetation_trace(
+        veg_atten,
+        &path_profile.t,
+        &path_profile.forest_u8,
+        path_profile.dist_m,
+    );
+
+    SegmentTrace {
+        kind: SourceKind::Aircraft,
+        osm_id: Some(seg.flight_id as i64),
+        segment_idx: seg_idx,
+        name: format!("{} ops", class),
+        subtype: class.to_string(),
+        is_dominant_of_group: false,
+        start_lat: seg.start_lat,
+        start_lon: seg.start_lon,
+        end_lat: seg.end_lat,
+        end_lon: seg.end_lon,
+        cp_lat,
+        cp_lon,
+        length_m: seg.segment_length_m as f64,
+        dist_m: path_profile.dist_m,
+        d_slant_m: d_slant,
+        bridge: false,
+        tunnel: false,
+        emission: EmissionTrace::AircraftGround {
+            class,
+            observed_movements: if seg.surface_model { 0.0 } else { seg.count_weight.max(0.0) as f64 },
+            modeled_movements: if seg.surface_model { seg.count_weight.max(0.0) as f64 } else { 0.0 },
+        },
+        lw_bands: PerPeriod {
+            day: lw_bands[0],
+            evening: lw_bands[1],
+            night: lw_bands[2],
+        },
+        lw_db_a: PerPeriod {
+            day: iso9613::a_weighted_total(&lw_bands[0]),
+            evening: iso9613::a_weighted_total(&lw_bands[1]),
+            night: iso9613::a_weighted_total(&lw_bands[2]),
+        },
+        baseline: baseline_trace(d_slant, src_alt, ground_g, flc, iso9613::SourceGeometry::Line),
+        path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
+        terrain: terrain_trace(terrain_atten, terrain_delta, terrain_is_double),
+        screening: screening_trace(screening_atten, obstacle_trace),
+        vegetation,
+        ground: ground_trace(ground_g),
+        received_bands: variants_to_received_bands(&seg_variants),
+        received_lden: variants_to_lden(&seg_variants),
+    }
+}
 
 /// Inputs for building a per-segment road trace. Keyword-struct style to avoid
 /// a 30-argument function. Consumed (not borrowed) for heavy fields that can

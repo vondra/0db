@@ -23,8 +23,9 @@ use emission::road::{self};
 use propagation::geo;
 use propagation::iso9613::{self, SourceGeometry};
 use traces::{
-    build_point_segment_trace, build_rail_segment_trace, build_road_segment_trace, BuildPointTrace,
-    BuildRailTrace, BuildRoadTrace,
+    build_aircraft_ground_segment_trace, build_point_segment_trace, build_rail_segment_trace,
+    build_road_segment_trace, BuildAircraftGroundTrace, BuildPointTrace, BuildRailTrace,
+    BuildRoadTrace,
 };
 use types::*;
 
@@ -1587,8 +1588,9 @@ fn compute_aircraft(
     n_days: u16,
     mut traces: Option<&mut TraceCollector>,
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
-    // TODO: populate ground ops as SegmentTrace (ISO 9613 path effects).
-    // Airborne aircraft are teed off below as AirborneTrace (Doc 29 — no path profile).
+    // Ground ops traces are teed off inline (line source via ISO 9613),
+    // airborne traces inside the per-flight stats loop below (Doc 29 — no
+    // path profile).
     use emission::aircraft;
     use std::collections::{HashMap, HashSet};
 
@@ -1867,24 +1869,31 @@ fn compute_aircraft(
                 &mut path_profile,
             );
             let ground_g = propagation::path_effects::ground_g_from_profile(&path_profile);
-            let terrain_atten = propagation::path_effects::terrain_attenuation(
-                &mut path_profile,
-                cp_elev,
-                receiver.altitude_m(),
-            );
-            let screening_atten = propagation::path_effects::screening_attenuation(
-                &path_profile,
-                barriers,
-                cp_elev,
-                receiver.altitude_m(),
-                0.0,
-            );
+            let (terrain_atten, terrain_delta, terrain_is_double, _) =
+                propagation::path_effects::terrain_attenuation_with_meta(
+                    &mut path_profile,
+                    cp_elev,
+                    receiver.altitude_m(),
+                );
+            let (screening_atten, obstacle_trace) =
+                propagation::path_effects::screening_attenuation_with_meta(
+                    &path_profile,
+                    barriers,
+                    cp_elev,
+                    receiver.altitude_m(),
+                    0.0,
+                );
             let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
             let emissions = [
                 std::array::from_fn(|i| line_emission.emission_day[i] as f64),
                 std::array::from_fn(|i| line_emission.emission_evening[i] as f64),
                 std::array::from_fn(|i| line_emission.emission_night[i] as f64),
+            ];
+            let mut seg_variants = [
+                PropagationVariants::default(),
+                PropagationVariants::default(),
+                PropagationVariants::default(),
             ];
             for (pi, emission) in emissions.iter().enumerate() {
                 let v = iso9613::propagate_variants(
@@ -1898,10 +1907,34 @@ fn compute_aircraft(
                     reflection,
                     flc,
                 );
+                seg_variants[pi].add(&v);
                 ground_variants[pi].add(&v);
                 ground_kind_variants[kind_idx][pi].add(&v);
                 airport_acc.variants[pi].add(&v);
                 airport_acc.kind_variants[kind_idx][pi].add(&v);
+            }
+
+            if let Some(t) = traces.as_deref_mut() {
+                t.segments.push(build_aircraft_ground_segment_trace(BuildAircraftGroundTrace {
+                    seg,
+                    cp_lat: cp.lat,
+                    cp_lon: cp.lon,
+                    src_alt: cp_elev,
+                    rcv_alt: receiver.altitude_m(),
+                    d_slant,
+                    flc,
+                    ground_g,
+                    kind_idx,
+                    path_profile: std::mem::take(&mut path_profile),
+                    terrain_atten,
+                    terrain_delta,
+                    terrain_is_double,
+                    screening_atten,
+                    obstacle_trace,
+                    veg_atten,
+                    seg_variants,
+                    lw_bands: emissions,
+                }));
             }
 
             if dist_m < ground_min_dist {
