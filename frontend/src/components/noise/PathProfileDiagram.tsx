@@ -174,19 +174,19 @@ export function PathProfileDiagram({
     return rects
   }, [trace, n, xOf, yOf])
 
-  // Hover scrub: nearest sample by x.
+  // Hover/touch scrub: nearest sample by x. Pointer events so the tooltip
+  // works with both mouse and touch (mobile popup).
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
-  const handleMove = (evt: React.MouseEvent<SVGSVGElement>) => {
+  const scrubAt = (clientX: number, clientY: number) => {
     const svg = svgRef.current
     if (!svg) return
     const pt = svg.createSVGPoint()
-    pt.x = evt.clientX
-    pt.y = evt.clientY
+    pt.x = clientX
+    pt.y = clientY
     const ctm = svg.getScreenCTM()
     if (!ctm) return
     const p = pt.matrixTransform(ctm.inverse())
-    // Map SVG x back to fractional path position.
     const t = (p.x - PAD_L) / PLOT_W
     let bestI = 0
     let bestDist = Infinity
@@ -198,6 +198,18 @@ export function PathProfileDiagram({
       }
     }
     setHoverIdx(bestI)
+  }
+  const handlePointerMove = (evt: React.PointerEvent<SVGSVGElement>) => {
+    scrubAt(evt.clientX, evt.clientY)
+  }
+  const handlePointerDown = (evt: React.PointerEvent<SVGSVGElement>) => {
+    // Touch devices: tap-then-drag. Capture pointer so moves outside the SVG
+    // still feed the scrub bar until the finger lifts.
+    evt.currentTarget.setPointerCapture?.(evt.pointerId)
+    scrubAt(evt.clientX, evt.clientY)
+  }
+  const handlePointerUp = (evt: React.PointerEvent<SVGSVGElement>) => {
+    evt.currentTarget.releasePointerCapture?.(evt.pointerId)
   }
   const handleLeave = () => setHoverIdx(null)
 
@@ -232,10 +244,12 @@ export function PathProfileDiagram({
         ref={svgRef}
         viewBox={`0 0 ${VB_W} ${VB_H}`}
         preserveAspectRatio="none"
-        className="w-full"
+        className="w-full touch-none"
         style={{ height: 220 }}
-        onMouseMove={handleMove}
-        onMouseLeave={handleLeave}
+        onPointerMove={handlePointerMove}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handleLeave}
       >
         {/* Plot area background */}
         <rect x={PAD_L} y={PAD_T} width={PLOT_W} height={PLOT_H} fill="var(--color-background, #fafafa)" />
