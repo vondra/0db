@@ -48,12 +48,16 @@ export function SegmentList({
   meta,
   receiverLatLon,
   onHighlight,
+  onShowAll,
+  loadingFull = false,
 }: {
   segments: SegmentTrace[]
   airborne: AirborneTrace[]
   meta: SegmentTracesSummary | null
   receiverLatLon: [number, number]
   onHighlight?: (geometry: unknown | null) => void
+  onShowAll?: () => void | Promise<void>
+  loadingFull?: boolean
 }) {
   const [enabled, setEnabled] = useState<Record<SegmentKind, boolean>>(() =>
     Object.fromEntries(KIND_FILTERS.map(k => [k.key, true])) as Record<SegmentKind, boolean>,
@@ -126,14 +130,15 @@ export function SegmentList({
       {truncated && (
         <div className="flex items-center justify-between border-t border-border/40 py-1 text-[10px] text-muted-foreground">
           <span>
-            Showing {shownCount} of {totalCount.toLocaleString()}
+            Showing {shownCount.toLocaleString()} of {totalCount.toLocaleString()}
           </span>
           <button
-            disabled
-            className="px-1.5 py-0.5 border border-border/60 rounded text-muted-foreground/50 cursor-not-allowed"
-            title="Not wired up yet — full segment list requires a second fetch (Milník E)."
+            disabled={loadingFull || !onShowAll}
+            onClick={() => void onShowAll?.()}
+            className="px-1.5 py-0.5 border border-border/60 rounded hover:bg-foreground/[0.03] disabled:text-muted-foreground/50 disabled:cursor-not-allowed"
+            title="Fetches the full segment list — can be several MB at airport points."
           >
-            Show all
+            {loadingFull ? 'Loading…' : 'Show all'}
           </button>
         </div>
       )}

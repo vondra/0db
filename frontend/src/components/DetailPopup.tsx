@@ -665,10 +665,43 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
       ], 14, 9)
     : ''
 
-  const segmentsTotal = data.segments_meta?.total_count ?? (data.segments?.length ?? 0)
-  const hasSegmentsTab = segmentsTotal > 0 || (data.airborne_traces?.length ?? 0) > 0
   const [tab, setTab] = useState<PopupTab>('sources')
+  const [fullSegments, setFullSegments] = useState<{
+    segments: NoiseComputeData['segments']
+    airborne: NoiseComputeData['airborne_traces']
+    meta: NoiseComputeData['segments_meta']
+  } | null>(null)
+  const [loadingFull, setLoadingFull] = useState(false)
+  // Reset augmented data whenever the user clicks a new point.
+  useEffect(() => {
+    setFullSegments(null)
+    setLoadingFull(false)
+  }, [data.h3_center[0], data.h3_center[1]])
+
+  const displaySegments = fullSegments?.segments ?? data.segments ?? []
+  const displayAirborne = fullSegments?.airborne ?? data.airborne_traces ?? []
+  const displayMeta = fullSegments?.meta ?? data.segments_meta ?? null
+  const segmentsTotal = displayMeta?.total_count ?? displaySegments.length
+  const hasSegmentsTab = segmentsTotal > 0 || displayAirborne.length > 0
   const showSegments = tab === 'segments' && hasSegmentsTab
+
+  const handleShowAll = async () => {
+    if (loadingFull) return
+    setLoadingFull(true)
+    try {
+      const [lat, lng] = data.h3_center
+      const r = await fetch(`/api/noise-onfly-v2?lat=${lat}&lng=${lng}&full=1`)
+      if (!r.ok) throw new Error(`fetch failed: ${r.status}`)
+      const next = (await r.json()) as NoiseComputeData
+      setFullSegments({
+        segments: next.segments ?? [],
+        airborne: next.airborne_traces ?? [],
+        meta: next.segments_meta ?? null,
+      })
+    } finally {
+      setLoadingFull(false)
+    }
+  }
 
   return (
     <div data-testid="detail-popup" role="dialog" className="px-2.5 pt-1 pb-2" onClick={(e) => e.stopPropagation()}>
@@ -723,11 +756,13 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
             {hasSegmentsTab && (
               <div style={{ display: showSegments ? 'block' : 'none' }}>
                 <SegmentList
-                  segments={data.segments ?? []}
-                  airborne={data.airborne_traces ?? []}
-                  meta={data.segments_meta ?? null}
+                  segments={displaySegments}
+                  airborne={displayAirborne}
+                  meta={displayMeta}
                   receiverLatLon={data.h3_center}
                   onHighlight={onHighlight}
+                  onShowAll={handleShowAll}
+                  loadingFull={loadingFull}
                 />
               </div>
             )}

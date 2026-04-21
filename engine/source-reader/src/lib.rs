@@ -644,6 +644,21 @@ pub fn reload_hexes(hex_ids: Vec<String>) -> napi::Result<u32> {
 #[cfg(feature = "node")]
 #[napi]
 pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
+    query_noise_impl(lat, lng, SEGMENT_TOP_K_PER_KIND)
+}
+
+/// Variant of `query_noise_at_point` with a much higher per-kind segment cap
+/// (1000 instead of 150). Called from the popup's "Show all" button — the
+/// fully-unfiltered airborne set at an airport is millions of segments, far
+/// beyond what a browser can parse or what NAPI's string return can carry.
+#[cfg(feature = "node")]
+#[napi]
+pub fn query_noise_at_point_unfiltered(lat: f64, lng: f64) -> napi::Result<String> {
+    query_noise_impl(lat, lng, SEGMENT_TOP_K_PER_KIND_FULL)
+}
+
+#[cfg(feature = "node")]
+fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<String> {
     let hex_ids = geo::grid_disk_r4(lat, lng);
     let mut store = STORE
         .write()
@@ -691,10 +706,7 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
         Some(&mut traces),
     );
 
-    // Top-K cap: keep the 150 loudest segments per kind, sorted desc by
-    // received_lden.full so the popup's Segments tab shows the meaningful ones
-    // even on aircraft-heavy points (airports).
-    let summary = apply_segment_top_k(&mut traces);
+    let summary = apply_segment_top_k_with_cap(&mut traces, top_k_per_kind);
     result.segments = std::mem::take(&mut traces.segments);
     result.airborne_traces = std::mem::take(&mut traces.airborne);
     result.segments_meta = Some(summary);
@@ -705,9 +717,16 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
 #[cfg(feature = "node")]
 const SEGMENT_TOP_K_PER_KIND: usize = 150;
 
+/// Upper bound for the "Show all" response. Higher than the default cap but
+/// still bounded — NAPI's string return cannot carry the full airport payload
+/// (millions of segments) and browsers can't parse it either.
 #[cfg(feature = "node")]
-fn apply_segment_top_k(
+const SEGMENT_TOP_K_PER_KIND_FULL: usize = 1000;
+
+#[cfg(feature = "node")]
+fn apply_segment_top_k_with_cap(
     traces: &mut noise_compute::types::TraceCollector,
+    per_kind_cap: usize,
 ) -> noise_compute::types::SegmentTracesSummary {
     use noise_compute::types::{SegmentTracesSummary, SourceKind};
 
@@ -728,7 +747,7 @@ fn apply_segment_top_k(
     let mut per_kind: std::collections::HashMap<SourceKind, u32> = std::collections::HashMap::new();
     for seg in std::mem::take(&mut traces.segments) {
         let count = per_kind.entry(seg.kind).or_insert(0);
-        if (*count as usize) < SEGMENT_TOP_K_PER_KIND {
+        if (*count as usize) < per_kind_cap {
             *count += 1;
             kept.push(seg);
         } else {
@@ -743,8 +762,8 @@ fn apply_segment_top_k(
     summary.building_count = *per_kind.get(&SourceKind::Building).unwrap_or(&0);
     summary.industrial_count = *per_kind.get(&SourceKind::Industrial).unwrap_or(&0);
 
-    if traces.airborne.len() > SEGMENT_TOP_K_PER_KIND {
-        traces.airborne.truncate(SEGMENT_TOP_K_PER_KIND);
+    if traces.airborne.len() > per_kind_cap {
+        traces.airborne.truncate(per_kind_cap);
         summary.truncated = true;
     }
     summary.aircraft_airborne_count = traces.airborne.len() as u32;

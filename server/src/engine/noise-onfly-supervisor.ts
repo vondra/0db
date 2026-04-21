@@ -7,8 +7,10 @@ export type NoiseOnflyWorkerReply = {
   error?: string
 }
 
+export type NoiseOnflyOp = 'point' | 'unfiltered'
+
 export interface NoiseOnflyWorker {
-  postMessage(message: { id: number; lat: number; lng: number }): void
+  postMessage(message: { id: number; lat: number; lng: number; op?: NoiseOnflyOp }): void
   terminate(): Promise<number>
   on(event: 'message', listener: (message: NoiseOnflyWorkerReply) => void): this
   on(event: 'error', listener: (err: Error) => void): this
@@ -39,6 +41,7 @@ type RequestEntry = {
   id: number
   lat: number
   lng: number
+  op: NoiseOnflyOp
   resolve: (resultJson: string) => void
   reject: (err: Error) => void
   queueTimer: NodeJS.Timeout | null
@@ -115,6 +118,14 @@ export class NoiseOnflySupervisor {
   }
 
   async queryNoiseAtPoint(lat: number, lng: number, signal?: AbortSignal): Promise<string> {
+    return this.enqueue(lat, lng, 'point', signal)
+  }
+
+  async queryNoiseAtPointUnfiltered(lat: number, lng: number, signal?: AbortSignal): Promise<string> {
+    return this.enqueue(lat, lng, 'unfiltered', signal)
+  }
+
+  private async enqueue(lat: number, lng: number, op: NoiseOnflyOp, signal?: AbortSignal): Promise<string> {
     if (this.closed) {
       throw unavailableError('noise-onfly supervisor is shutting down')
     }
@@ -131,6 +142,7 @@ export class NoiseOnflySupervisor {
         id: this.nextRequestId++,
         lat,
         lng,
+        op,
         resolve,
         reject,
         queueTimer: null,
@@ -236,7 +248,7 @@ export class NoiseOnflySupervisor {
     })
 
     try {
-      worker.postMessage({ id: entry.id, lat: entry.lat, lng: entry.lng })
+      worker.postMessage({ id: entry.id, lat: entry.lat, lng: entry.lng, op: entry.op })
     } catch (error) {
       this.finishActiveSlot(entry)
       this.rejectClient(entry, unavailableError(`noise-onfly dispatch failed: ${toError(error).message}`))

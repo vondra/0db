@@ -59,7 +59,7 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
     await supervisor.close()
   })
 
-  app.get<{ Querystring: { lat?: string; lng?: string } }>(
+  app.get<{ Querystring: { lat?: string; lng?: string; full?: string } }>(
     '/api/noise-onfly-v2',
     async (request, reply) => {
       const lat = parseFloat(request.query.lat ?? '')
@@ -67,6 +67,7 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
       if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
         return reply.status(400).send({ error: 'valid lat and lng required' })
       }
+      const full = request.query.full === '1' || request.query.full === 'true'
 
       const t0 = Date.now()
       const abortController = new AbortController()
@@ -76,7 +77,9 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
       request.raw.once('close', onClose)
 
       try {
-        const resultJson = await supervisor.queryNoiseAtPoint(lat, lng, abortController.signal)
+        const resultJson = full
+          ? await supervisor.queryNoiseAtPointUnfiltered(lat, lng, abortController.signal)
+          : await supervisor.queryNoiseAtPoint(lat, lng, abortController.signal)
         const raw = JSON.parse(resultJson)
         const elapsed = Date.now() - t0
 

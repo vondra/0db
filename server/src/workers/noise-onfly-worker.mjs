@@ -47,9 +47,12 @@ if (existsSync(h3r4Dir)) {
   console.log(`noise-onfly-worker: ${msg}`)
 }
 
-parentPort?.on('message', ({ id, lat, lng }) => {
+parentPort?.on('message', ({ id, lat, lng, op }) => {
   try {
-    const resultJson = sourceModule.queryNoiseAtPoint(lat, lng)
+    const fn = op === 'unfiltered'
+      ? sourceModule.queryNoiseAtPointUnfiltered
+      : sourceModule.queryNoiseAtPoint
+    const resultJson = fn(lat, lng)
     parentPort?.postMessage({ id, ok: true, resultJson })
   } catch (err) {
     parentPort?.postMessage({
