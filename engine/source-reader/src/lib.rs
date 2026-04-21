@@ -675,7 +675,8 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
         n_days: sources.n_days,
         ..Default::default()
     };
-    let result = noise_compute::compute_at_point_with_airports(
+    let mut traces = noise_compute::types::TraceCollector::new();
+    let mut result = noise_compute::compute_at_point_with_airports(
         &receiver,
         &sources.roads,
         &sources.railways,
@@ -687,10 +688,70 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
         &sources.barriers,
         rasters,
         &config,
+        Some(&mut traces),
     );
+
+    // Top-K cap: keep the 150 loudest segments per kind, sorted desc by
+    // received_lden.full so the popup's Segments tab shows the meaningful ones
+    // even on aircraft-heavy points (airports).
+    let summary = apply_segment_top_k(&mut traces);
+    result.segments = std::mem::take(&mut traces.segments);
+    result.airborne_traces = std::mem::take(&mut traces.airborne);
+    result.segments_meta = Some(summary);
 
     Ok(serde_json::to_string(&result).unwrap())
 }
+
+#[cfg(feature = "node")]
+const SEGMENT_TOP_K_PER_KIND: usize = 150;
+
+#[cfg(feature = "node")]
+fn apply_segment_top_k(
+    traces: &mut noise_compute::types::TraceCollector,
+) -> noise_compute::types::SegmentTracesSummary {
+    use noise_compute::types::{SegmentTracesSummary, SourceKind};
+
+    let mut summary = SegmentTracesSummary {
+        total_count: (traces.segments.len() + traces.airborne.len()) as u32,
+        truncated: false,
+        ..Default::default()
+    };
+
+    traces
+        .segments
+        .sort_unstable_by(|a, b| b.received_lden.full.partial_cmp(&a.received_lden.full).unwrap_or(std::cmp::Ordering::Equal));
+    traces
+        .airborne
+        .sort_unstable_by(|a, b| b.received_lden.partial_cmp(&a.received_lden).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut kept: Vec<noise_compute::types::SegmentTrace> = Vec::new();
+    let mut per_kind: std::collections::HashMap<SourceKind, u32> = std::collections::HashMap::new();
+    for seg in std::mem::take(&mut traces.segments) {
+        let count = per_kind.entry(seg.kind).or_insert(0);
+        if (*count as usize) < SEGMENT_TOP_K_PER_KIND {
+            *count += 1;
+            kept.push(seg);
+        } else {
+            summary.truncated = true;
+        }
+    }
+    traces.segments = kept;
+
+    summary.road_count = *per_kind.get(&SourceKind::Road).unwrap_or(&0);
+    summary.railway_count = *per_kind.get(&SourceKind::Railway).unwrap_or(&0);
+    summary.aircraft_ground_count = *per_kind.get(&SourceKind::Aircraft).unwrap_or(&0);
+    summary.building_count = *per_kind.get(&SourceKind::Building).unwrap_or(&0);
+    summary.industrial_count = *per_kind.get(&SourceKind::Industrial).unwrap_or(&0);
+
+    if traces.airborne.len() > SEGMENT_TOP_K_PER_KIND {
+        traces.airborne.truncate(SEGMENT_TOP_K_PER_KIND);
+        summary.truncated = true;
+    }
+    summary.aircraft_airborne_count = traces.airborne.len() as u32;
+
+    summary
+}
+
 
 /// Stub raster sampler — flat terrain, no buildings, no vegetation.
 /// Used as fallback when DEM/raster tiles are not available on disk.

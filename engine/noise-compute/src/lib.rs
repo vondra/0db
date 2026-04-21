@@ -14,6 +14,7 @@ pub mod normalize;
 pub mod periods;
 pub mod present;
 pub mod propagation;
+pub mod traces;
 pub mod types;
 pub mod wkb;
 
@@ -21,6 +22,10 @@ use constants::*;
 use emission::road::{self};
 use propagation::geo;
 use propagation::iso9613::{self, SourceGeometry};
+use traces::{
+    build_point_segment_trace, build_rail_segment_trace, build_road_segment_trace, BuildPointTrace,
+    BuildRailTrace, BuildRoadTrace,
+};
 use types::*;
 
 /// Decode WKB hex string (Polygon type 3) to GeoJSON.
@@ -106,6 +111,7 @@ pub fn compute_at_point(
         barriers,
         rasters,
         config,
+        None,
     )
 }
 
@@ -121,6 +127,7 @@ pub fn compute_at_point_with_airports(
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
     config: &ComputeConfig,
+    mut traces: Option<&mut TraceCollector>,
 ) -> NoiseResult {
     let mut source_results = Vec::new();
     let mut all_contributors = Vec::new();
@@ -128,7 +135,8 @@ pub fn compute_at_point_with_airports(
 
     // ── Roads ──
     if !roads.is_empty() {
-        let (road_periods, road_contributors) = compute_roads(receiver, roads, barriers, rasters);
+        let (road_periods, road_contributors) =
+            compute_roads(receiver, roads, barriers, rasters, traces.as_deref_mut());
         source_results.push(SourceResult {
             source_type: SourceKind::Road,
             periods: road_periods.clone(),
@@ -141,7 +149,7 @@ pub fn compute_at_point_with_airports(
     // ── Railways ──
     if !railways.is_empty() {
         let (rail_periods, rail_contributors) =
-            compute_railways(receiver, railways, barriers, rasters);
+            compute_railways(receiver, railways, barriers, rasters, traces.as_deref_mut());
         source_results.push(SourceResult {
             source_type: SourceKind::Railway,
             periods: rail_periods,
@@ -153,8 +161,14 @@ pub fn compute_at_point_with_airports(
 
     // ── Settlement (buildings) ──
     if !buildings.is_empty() {
-        let (bld_periods, bld_contributors) =
-            compute_point_sources(receiver, buildings, barriers, rasters, SourceKind::Building);
+        let (bld_periods, bld_contributors) = compute_point_sources(
+            receiver,
+            buildings,
+            barriers,
+            rasters,
+            SourceKind::Building,
+            traces.as_deref_mut(),
+        );
         source_results.push(SourceResult {
             source_type: SourceKind::Building,
             periods: bld_periods,
@@ -172,6 +186,7 @@ pub fn compute_at_point_with_airports(
             barriers,
             rasters,
             SourceKind::Industrial,
+            traces.as_deref_mut(),
         );
         source_results.push(SourceResult {
             source_type: SourceKind::Industrial,
@@ -184,16 +199,16 @@ pub fn compute_at_point_with_airports(
 
     // ── Aircraft (Doc 29 — SEPARATE from ISO 9613-2) ──
     if !aircraft.is_empty() {
-        let (air_periods, air_contributors, band_data) =
-            compute_aircraft(
-                receiver,
-                aircraft,
-                airport_lines,
-                airport_areas,
-                barriers,
-                rasters,
-                config.n_days,
-            );
+        let (air_periods, air_contributors, band_data) = compute_aircraft(
+            receiver,
+            aircraft,
+            airport_lines,
+            airport_areas,
+            barriers,
+            rasters,
+            config.n_days,
+            traces.as_deref_mut(),
+        );
         if air_periods.lden_db > f64::NEG_INFINITY {
             source_results.push(SourceResult {
                 source_type: SourceKind::Aircraft,
@@ -242,6 +257,9 @@ pub fn compute_at_point_with_airports(
         other_sources_lden,
         confidence: conf,
         aircraft_detail: aircraft_band_data,
+        segments: Vec::new(),
+        airborne_traces: Vec::new(),
+        segments_meta: None,
     }
 }
 
@@ -251,6 +269,7 @@ fn compute_roads(
     roads: &[RoadSegment],
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
+    mut traces: Option<&mut TraceCollector>,
 ) -> (NoisePeriods, Vec<Contributor>) {
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
@@ -306,6 +325,10 @@ fn compute_roads(
         variants: [PropagationVariants; 3], // day, evening, night
         emission_energy: f64,
         line_coords: Vec<[[f64; 2]; 2]>,
+        // Index into the caller's traces.segments Vec of the dominant-segment
+        // trace (highest received energy). Populated only when a TraceCollector
+        // is active; flipped to `is_dominant_of_group = true` at the end.
+        dominant_trace_idx: Option<usize>,
     }
     // Group by (ref, name, class) — not osm_id — so "D1" becomes one contributor.
     // For unnamed roads (ref="" && name=""): group per osm_id (like railway)
@@ -379,15 +402,20 @@ fn compute_roads(
         } else {
             propagation::path_effects::ground_g_from_profile(&path_profile)
         };
-        let terrain_atten =
-            propagation::path_effects::terrain_attenuation(&mut path_profile, src_alt, rcv_alt);
-        let screening_atten = propagation::path_effects::screening_attenuation(
-            &path_profile,
-            barriers,
-            src_alt,
-            rcv_alt,
-            0.0, // roads: no exclusion radius
-        );
+        let (terrain_atten, terrain_delta, terrain_is_double, _terrain_profile_points) =
+            propagation::path_effects::terrain_attenuation_with_meta(
+                &mut path_profile,
+                src_alt,
+                rcv_alt,
+            );
+        let (screening_atten, obstacle_trace) =
+            propagation::path_effects::screening_attenuation_with_meta(
+                &path_profile,
+                barriers,
+                src_alt,
+                rcv_alt,
+                0.0, // roads: no exclusion radius
+            );
         let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
         let mut seg_variants = [
@@ -396,6 +424,7 @@ fn compute_roads(
             PropagationVariants::default(),
         ];
         let mut day_emission_energy = 0.0f64;
+        let mut period_emissions: [[f64; NUM_BANDS]; 3] = [[0.0; NUM_BANDS]; 3];
         for (pi, (pct, hours)) in [
             (time_dist.day_pct, 12.0),
             (time_dist.evening_pct, 4.0),
@@ -425,6 +454,7 @@ fn compute_roads(
                     );
                 }
             }
+            period_emissions[pi] = emission;
         }
 
         // Group by (ref, name, class) — all "D1 motorway" segments → one contributor
@@ -535,6 +565,7 @@ fn compute_roads(
                 ],
                 emission_energy: 0.0,
                 line_coords: Vec::new(),
+                dominant_trace_idx: None,
             }
         });
         // Aggregation across all grouped segments (independent of closest check)
@@ -589,9 +620,47 @@ fn compute_roads(
             acc.closest_cp_lon = seg.cp_lon;
             acc.closest_src_height = src_alt;
         }
+        // Popup trace: push a SegmentTrace for this segment if the caller wants
+        // per-segment engine state. `std::mem::take` consumes the path_profile
+        // (not reused below) so the trace owns the sample arrays without clone.
+        let pushed_trace_idx: Option<usize> = if let Some(t) = traces.as_deref_mut() {
+            let trace = build_road_segment_trace(BuildRoadTrace {
+                seg,
+                class_name,
+                src_alt,
+                rcv_alt,
+                d_slant,
+                flc,
+                ground_g,
+                light,
+                medium,
+                heavy,
+                moto,
+                speed_kmh: speed,
+                surf_corr,
+                path_profile: std::mem::take(&mut path_profile),
+                terrain_atten,
+                terrain_delta,
+                terrain_is_double,
+                screening_atten,
+                obstacle_trace,
+                veg_atten,
+                seg_variants,
+                lw_bands: period_emissions,
+            });
+            let idx = t.segments.len();
+            t.segments.push(trace);
+            Some(idx)
+        } else {
+            None
+        };
+
         // Dominant segment — highest received energy, drives the popup metadata
         let seg_received_energy: f64 = seg_variants[0].full_energy;
         if seg_received_energy > acc.dominant_energy {
+            if let Some(idx) = pushed_trace_idx {
+                acc.dominant_trace_idx = Some(idx);
+            }
             acc.dominant_energy = seg_received_energy;
             acc.dominant_segment_idx = seg.segment_idx;
             acc.dominant_distance_m = seg.dist_m;
@@ -632,6 +701,17 @@ fn compute_roads(
         // Each segment is an independent 2-point LineString; no osm_id regrouping needed.
         acc.line_coords
             .push([[seg.start_lon, seg.start_lat], [seg.end_lon, seg.end_lat]]);
+    }
+
+    // Mark the dominant-of-group traces now that all segments are processed.
+    if let Some(t) = traces.as_deref_mut() {
+        for acc in roads_by_key.values() {
+            if let Some(idx) = acc.dominant_trace_idx {
+                if let Some(tr) = t.segments.get_mut(idx) {
+                    tr.is_dominant_of_group = true;
+                }
+            }
+        }
     }
 
     // Emit grouped contributors
@@ -783,6 +863,7 @@ fn compute_railways(
     railways: &[RailSegment],
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
+    mut traces: Option<&mut TraceCollector>,
 ) -> (NoisePeriods, Vec<Contributor>) {
     use emission::railway::{self, RailType};
     use std::collections::HashMap;
@@ -825,6 +906,8 @@ fn compute_railways(
         emission_energy: f64,
         line_coords: Vec<[[f64; 2]; 2]>,
         has_bridge: bool,
+        dominant_energy: f64,
+        dominant_trace_idx: Option<usize>,
     }
     let mut rails_by_key: HashMap<(String, u8), RailAccum> = HashMap::new();
 
@@ -889,15 +972,20 @@ fn compute_railways(
         } else {
             propagation::path_effects::ground_g_from_profile(&path_profile)
         };
-        let terrain_atten =
-            propagation::path_effects::terrain_attenuation(&mut path_profile, src_alt, rcv_alt);
-        let screening_atten = propagation::path_effects::screening_attenuation(
-            &path_profile,
-            barriers,
-            src_alt,
-            rcv_alt,
-            0.0, // railways: no exclusion radius
-        );
+        let (terrain_atten, terrain_delta, terrain_is_double, _terrain_profile_points) =
+            propagation::path_effects::terrain_attenuation_with_meta(
+                &mut path_profile,
+                src_alt,
+                rcv_alt,
+            );
+        let (screening_atten, obstacle_trace) =
+            propagation::path_effects::screening_attenuation_with_meta(
+                &path_profile,
+                barriers,
+                src_alt,
+                rcv_alt,
+                0.0, // railways: no exclusion radius
+            );
         let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
         let mut seg_variants = [
@@ -907,6 +995,7 @@ fn compute_railways(
         ];
         let mut day_emission_energy = 0.0f64;
         let period_hours = [12.0f64, 4.0, 8.0];
+        let mut period_emissions: [[f64; NUM_BANDS]; 3] = [[0.0; NUM_BANDS]; 3];
         for (pi, pct) in [day_pct, eve_pct, night_pct].iter().enumerate() {
             let emission = railway::railway_emission(
                 rail_type,
@@ -934,6 +1023,7 @@ fn compute_railways(
                     );
                 }
             }
+            period_emissions[pi] = emission;
         }
 
         // Group by (ref, name, type). When both ref+name empty, group by osm_id
@@ -994,6 +1084,8 @@ fn compute_railways(
             emission_energy: 0.0,
             line_coords: Vec::new(),
             has_bridge: false,
+            dominant_energy: 0.0,
+            dominant_trace_idx: None,
         });
         // Aggregation
         acc.segment_count += 1;
@@ -1059,6 +1151,48 @@ fn compute_railways(
         }
         acc.line_coords
             .push([[seg.start_lon, seg.start_lat], [seg.end_lon, seg.end_lat]]);
+
+        // Popup trace: push per-segment trace + track the dominant one for this
+        // group so we can flip is_dominant_of_group once the loop finishes.
+        if let Some(t) = traces.as_deref_mut() {
+            let trace = build_rail_segment_trace(BuildRailTrace {
+                seg,
+                src_alt,
+                rcv_alt,
+                d_slant,
+                flc,
+                ground_g,
+                q_pax,
+                q_frt,
+                speed_kmh: speed,
+                path_profile: std::mem::take(&mut path_profile),
+                terrain_atten,
+                terrain_delta,
+                terrain_is_double,
+                screening_atten,
+                obstacle_trace,
+                veg_atten,
+                seg_variants,
+                lw_bands: period_emissions,
+            });
+            let trace_idx = t.segments.len();
+            t.segments.push(trace);
+            let seg_energy: f64 = seg_variants[0].full_energy;
+            if seg_energy > acc.dominant_energy {
+                    acc.dominant_energy = seg_energy;
+                acc.dominant_trace_idx = Some(trace_idx);
+            }
+        }
+    }
+
+    if let Some(t) = traces.as_deref_mut() {
+        for acc in rails_by_key.values() {
+            if let Some(idx) = acc.dominant_trace_idx {
+                if let Some(tr) = t.segments.get_mut(idx) {
+                    tr.is_dominant_of_group = true;
+                }
+            }
+        }
     }
 
     let mut contributors = Vec::new();
@@ -1175,6 +1309,7 @@ fn compute_point_sources(
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
     source_kind: SourceKind,
+    mut traces: Option<&mut TraceCollector>,
 ) -> (NoisePeriods, Vec<Contributor>) {
     use std::collections::HashMap;
 
@@ -1225,15 +1360,20 @@ fn compute_point_sources(
             src.dist_m,
             &mut path_profile,
         );
-        let terrain_atten =
-            propagation::path_effects::terrain_attenuation(&mut path_profile, src_alt, rcv_alt);
-        let screening_atten = propagation::path_effects::screening_attenuation(
-            &path_profile,
-            barriers,
-            src_alt,
-            rcv_alt,
-            src.exclusion_radius_m as f64,
-        );
+        let (terrain_atten, terrain_delta, terrain_is_double, _terrain_profile_points) =
+            propagation::path_effects::terrain_attenuation_with_meta(
+                &mut path_profile,
+                src_alt,
+                rcv_alt,
+            );
+        let (screening_atten, obstacle_trace) =
+            propagation::path_effects::screening_attenuation_with_meta(
+                &path_profile,
+                barriers,
+                src_alt,
+                rcv_alt,
+                src.exclusion_radius_m as f64,
+            );
         let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
         let v_day = iso9613::propagate_variants(
@@ -1309,6 +1449,34 @@ fn compute_point_sources(
             acc.src_height = src_alt;
             acc.exclusion_radius_m = src.exclusion_radius_m;
         }
+
+        if let Some(t) = traces.as_deref_mut() {
+            let seg_variants = [v_day, v_eve, v_night];
+            let lw_bands: [[f64; NUM_BANDS]; 3] = [
+                std::array::from_fn(|i| src.lw_day[i] as f64),
+                std::array::from_fn(|i| src.lw_evening[i] as f64),
+                std::array::from_fn(|i| src.lw_night[i] as f64),
+            ];
+            let trace = build_point_segment_trace(BuildPointTrace {
+                src,
+                source_kind,
+                src_alt,
+                rcv_alt,
+                d_slant,
+                prop_dist,
+                ground_g,
+                path_profile: std::mem::take(&mut path_profile),
+                terrain_atten,
+                terrain_delta,
+                terrain_is_double,
+                screening_atten,
+                obstacle_trace,
+                veg_atten,
+                seg_variants,
+                lw_bands,
+            });
+            t.segments.push(trace);
+        }
     }
 
     let mut contributors = Vec::new();
@@ -1347,29 +1515,9 @@ fn compute_point_sources(
         );
 
         let subtype_name: &'static str = if source_kind == SourceKind::Industrial {
-            match acc.subtype {
-                0 => "industrial_area",
-                1 => "quarry",
-                2 => "farm",
-                3 => "factory",
-                4 => "wastewater",
-                10 => "wind_turbine",
-                _ => "industrial_area",
-            }
+            industrial_type_name(acc.subtype)
         } else {
-            match acc.subtype {
-                0 => "residential_multi",
-                1 => "commercial",
-                2 => "warehouse",
-                3 => "education",
-                4 => "healthcare",
-                5 => "worship",
-                6 => "hospitality",
-                7 => "garage",
-                8 => "farm",
-                9 => "public",
-                _ => "default",
-            }
+            building_type_name(acc.subtype)
         };
 
         // Build per-source metadata (popup only)
@@ -1438,7 +1586,9 @@ fn compute_aircraft(
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
     n_days: u16,
+    _traces: Option<&mut TraceCollector>,
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
+    // TODO: populate TraceCollector (airborne via Doc 29, ground ops via ISO 9613).
     use emission::aircraft;
     use std::collections::{HashMap, HashSet};
 
@@ -2256,7 +2406,7 @@ fn surface_name(surface_type: u8) -> &'static str {
     }
 }
 
-fn rail_type_name(rt: u8) -> &'static str {
+pub(crate) fn rail_type_name(rt: u8) -> &'static str {
     match rt {
         0 => "rail",
         1 => "tram",
@@ -2273,6 +2423,34 @@ fn rail_usage_name(u: u8) -> &'static str {
         1 => "branch",
         2 => "industrial",
         _ => "main",
+    }
+}
+
+pub(crate) fn building_type_name(bt: u8) -> &'static str {
+    match bt {
+        0 => "residential_multi",
+        1 => "commercial",
+        2 => "warehouse",
+        3 => "education",
+        4 => "healthcare",
+        5 => "worship",
+        6 => "hospitality",
+        7 => "garage",
+        8 => "farm",
+        9 => "public",
+        _ => "default",
+    }
+}
+
+pub(crate) fn industrial_type_name(st: u8) -> &'static str {
+    match st {
+        0 => "industrial_area",
+        1 => "quarry",
+        2 => "farm",
+        3 => "factory",
+        4 => "wastewater",
+        10 => "wind_turbine",
+        _ => "industrial_area",
     }
 }
 
