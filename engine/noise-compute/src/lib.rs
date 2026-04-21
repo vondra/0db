@@ -223,7 +223,7 @@ pub fn compute_at_point_with_airports(
     let has_railway = !railways.is_empty()
         && railways
             .iter()
-            .any(|r| r.trains_passenger > 0 || r.trains_freight > 0);
+            .any(|r| r.trains_passenger > 0.0 || r.trains_freight > 0.0);
     let has_aircraft = !aircraft.is_empty();
     let has_terrain = rasters.elevation(receiver.lat, receiver.lon) != 200.0; // StubRasters returns 200.0
     let has_building_heights = rasters.building_height(receiver.lat, receiver.lon) != 0.0;
@@ -854,8 +854,8 @@ fn compute_railways(
         } else {
             80.0
         };
-        let q_pax = seg.trains_passenger.max(0) as f64;
-        let q_frt = seg.trains_freight.max(0) as f64;
+        let q_pax = seg.trains_passenger.max(0.0);
+        let q_frt = seg.trains_freight.max(0.0);
         if q_pax + q_frt <= 0.0 {
             continue;
         }
@@ -1032,8 +1032,9 @@ fn compute_railways(
             acc.cp_lon = seg.cp_lon;
             acc.src_height = src_alt;
             // Closest-segment metadata for popup
-            acc.closest_trains_passenger_raw = seg.trains_passenger;
-            acc.closest_trains_freight_raw = seg.trains_freight;
+            // Round for the i32 display field; emission above used the full f64.
+            acc.closest_trains_passenger_raw = seg.trains_passenger.round() as i32;
+            acc.closest_trains_freight_raw = seg.trains_freight.round() as i32;
             acc.closest_trains_passenger_effective = q_pax;
             acc.closest_trains_freight_effective = q_frt;
             acc.closest_trains_passenger_source = match seg.trains_passenger_source {
@@ -2479,8 +2480,8 @@ mod tests {
             rail_type: 0,
             usage: 0,
             maxspeed: 100,
-            trains_passenger: 80,
-            trains_freight: 20,
+            trains_passenger: 80.0,
+            trains_freight: 20.0,
             speed_kmh: 100,
             track_count: 2,
             name: String::new(),
@@ -2745,8 +2746,8 @@ mod tests {
             rail_type: 0,
             usage: 0,
             maxspeed: 100,
-            trains_passenger: 80,
-            trains_freight: 20,
+            trains_passenger: 80.0,
+            trains_freight: 20.0,
             speed_kmh: 100,
             track_count: 2,
             name: String::new(),
