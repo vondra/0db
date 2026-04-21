@@ -10,6 +10,29 @@ const PERIOD_ROWS = [
   { key: 'night', label: 'Night (23–07)', weight: 8 },
 ] as const
 
+const BAND_FREQS = [63, 125, 250, 500, 1000, 2000, 4000, 8000] as const
+const BAND_LABELS = ['63 Hz', '125 Hz', '250 Hz', '500 Hz', '1 kHz', '2 kHz', '4 kHz', '8 kHz'] as const
+
+function bandsTooltip(
+  bands: readonly number[],
+  {
+    title,
+    signed = true,
+    highlightIdx = 4,
+    note,
+  }: { title: string; signed?: boolean; highlightIdx?: number; note?: string } = { title: '' },
+) {
+  const lines = bands.map((v, i) => {
+    const label = BAND_LABELS[i] ?? `${BAND_FREQS[i]} Hz`
+    const sign = signed && v > 0 ? '+' : ''
+    const mark = i === highlightIdx ? ' ←' : ''
+    return `  ${label.padEnd(8)} ${sign}${v.toFixed(2).padStart(7)} dB${mark}`
+  })
+  const header = title ? `${title}\n\n` : ''
+  const footer = note ? `\n\n${note}` : ''
+  return `${header}${lines.join('\n')}${footer}`
+}
+
 const LDEN_FORMULA =
   'Lden = 10·log₁₀( (12·10^(Ld/10) + 4·10^((Le+5)/10) + 8·10^((Ln+10)/10)) / 24 )\n' +
   'Evening +5 dB and night +10 dB are the CNOSSOS penalties.'
@@ -51,9 +74,23 @@ function InlineTable({ rows }: { rows: [string, React.ReactNode][] }) {
 
 function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
   const { baseline, terrain, screening, vegetation, ground, received_lden } = trace
+  const SCALAR_NOTE =
+    'Scalar shown = 1 kHz band (←). Hover any dB row for the full per-band breakdown.'
   const rows: [string, React.ReactNode][] = [
     ['Geometric divergence', fmtDb(-baseline.geometric_db)],
-    ['Atmospheric (1 kHz)', fmtDb(-baseline.atmospheric_bands[4])],
+    [
+      'Atmospheric',
+      <HoverText
+        title={bandsTooltip(baseline.atmospheric_bands, {
+          title: 'Atmospheric absorption (ISO 9613-2 §7.2)',
+          signed: true,
+          highlightIdx: 4,
+          note: SCALAR_NOTE,
+        })}
+      >
+        {fmtDb(-baseline.atmospheric_bands[4])}
+      </HoverText>,
+    ],
     ['Ground factor G', baseline.ground_factor_g.toFixed(2)],
     ['Source height', `${baseline.source_height_m.toFixed(1)} m`],
     ['Finite-line correction', fmtDb(baseline.finite_line_corr_db)],
@@ -71,29 +108,73 @@ function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
   const barrierWins = hasBarrier && aBarMag >= aGrMag
   const aTotalPath = aGroundOrBarrier + aVegMag
 
+  const groundOrBarrierBands: number[] = baseline.atmospheric_bands.map((_, i) => {
+    const bar = terrain.attenuation_bands[i] + screening.attenuation_bands[i]
+    return bar > 0 ? Math.max(ground.attenuation_bands[i], bar) : ground.attenuation_bands[i]
+  })
+  const totalPathBands = groundOrBarrierBands.map((gob, i) => gob + vegetation.attenuation_bands[i])
+
   const effects: [string, React.ReactNode][] = [
     [
       'Terrain',
-      <>
-        {fmtDb(terrain.attenuation_db_a)} · δ {terrain.delta_m.toFixed(2)} m
-        {terrain.is_double ? ' (double)' : ''}
-      </>,
+      <HoverText
+        title={bandsTooltip(terrain.attenuation_bands, {
+          title: `Terrain diffraction (δ = ${terrain.delta_m.toFixed(2)} m${terrain.is_double ? ', double' : ''})`,
+          highlightIdx: 4,
+          note: SCALAR_NOTE,
+        })}
+      >
+        <span>
+          {fmtDb(terrain.attenuation_db_a)} · δ {terrain.delta_m.toFixed(2)} m
+          {terrain.is_double ? ' (double)' : ''}
+        </span>
+      </HoverText>,
     ],
     [
       'Building screening',
-      screening.obstacle ? (
-        <>
-          {fmtDb(screening.attenuation_db_a)} · {screening.obstacle.kind} {screening.obstacle.height_m.toFixed(1)} m
-          @ t={screening.obstacle.t.toFixed(2)}
-        </>
-      ) : (
-        fmtDb(screening.attenuation_db_a)
-      ),
+      <HoverText
+        title={bandsTooltip(screening.attenuation_bands, {
+          title: screening.obstacle
+            ? `Building screening (${screening.obstacle.kind} ${screening.obstacle.height_m.toFixed(1)} m @ t=${screening.obstacle.t.toFixed(2)})`
+            : 'Building screening',
+          highlightIdx: 4,
+          note: SCALAR_NOTE,
+        })}
+      >
+        <span>
+          {screening.obstacle ? (
+            <>
+              {fmtDb(screening.attenuation_db_a)} · {screening.obstacle.kind} {screening.obstacle.height_m.toFixed(1)} m
+              @ t={screening.obstacle.t.toFixed(2)}
+            </>
+          ) : (
+            fmtDb(screening.attenuation_db_a)
+          )}
+        </span>
+      </HoverText>,
     ],
-    ['Ground (A_gr)', fmtDb(ground.attenuation_db_a)],
+    [
+      'Ground (A_gr)',
+      <HoverText
+        title={bandsTooltip(ground.attenuation_bands, {
+          title: `Ground effect (G = ${ground.factor_g.toFixed(2)})`,
+          highlightIdx: 4,
+          note:
+            'CF[i] × G per band. Soft ground can ADD sound at low freqs (negative values at 63/125 Hz are normal).',
+        })}
+      >
+        {fmtDb(ground.attenuation_db_a)}
+      </HoverText>,
+    ],
     [
       hasBarrier ? 'Ground or barrier' : 'Ground (applied)',
-      <HoverText title={MAX_RULE_FORMULA}>
+      <HoverText
+        title={bandsTooltip(groundOrBarrierBands, {
+          title: `Applied ground/barrier (${hasBarrier ? (barrierWins ? 'barrier wins' : 'ground wins') : 'no barrier — ground'})`,
+          highlightIdx: 4,
+          note: MAX_RULE_FORMULA,
+        })}
+      >
         <span>
           {fmtDb(-aGroundOrBarrier)}
           {hasBarrier && (
@@ -110,19 +191,35 @@ function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
     ],
     [
       'Vegetation',
-      <>
-        {fmtDb(vegetation.attenuation_db_a)} · {vegetation.forest_depth_m.toFixed(0)} m forest ·{' '}
-        {vegetation.forest_runs.length} run{vegetation.forest_runs.length === 1 ? '' : 's'}
-      </>,
+      <HoverText
+        title={bandsTooltip(vegetation.attenuation_bands, {
+          title: `Vegetation (${vegetation.forest_depth_m.toFixed(0)} m forest · ${vegetation.forest_runs.length} run${vegetation.forest_runs.length === 1 ? '' : 's'})`,
+          highlightIdx: 4,
+          note: SCALAR_NOTE,
+        })}
+      >
+        <span>
+          {fmtDb(vegetation.attenuation_db_a)} · {vegetation.forest_depth_m.toFixed(0)} m forest ·{' '}
+          {vegetation.forest_runs.length} run{vegetation.forest_runs.length === 1 ? '' : 's'}
+        </span>
+      </HoverText>,
     ],
     [
       'Total path effect',
-      <span className="font-medium">
-        {fmtDb(-aTotalPath)}
-        <span className="text-muted-foreground/50">
-          {' '}(= ground_or_barrier {aGroundOrBarrier.toFixed(1)} + vegetation {aVegMag.toFixed(1)})
+      <HoverText
+        title={bandsTooltip(totalPathBands, {
+          title: 'Total path attenuation = ground_or_barrier + vegetation',
+          highlightIdx: 4,
+          note: SCALAR_NOTE,
+        })}
+      >
+        <span className="font-medium">
+          {fmtDb(-aTotalPath)}
+          <span className="text-muted-foreground/50">
+            {' '}(= ground_or_barrier {aGroundOrBarrier.toFixed(1)} + vegetation {aVegMag.toFixed(1)})
+          </span>
         </span>
-      </span>,
+      </HoverText>,
     ],
   ]
   return (
