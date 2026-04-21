@@ -14,7 +14,7 @@ import MapStateSync from './MapStateSync'
 import { DEFAULT_BASEMAP, loadBasemapStyle, type BasemapId } from '../utils/basemaps'
 import type { QuietHex, QuietHexUpdate } from './HexLayer'
 import type { SelectedLocation } from './FlyToLocation'
-import type { NoiseComputeData } from './DetailPopup'
+import type { NoiseComputeData } from '../types/noise'
 import type { SourceMode } from '../hooks/useUrlState'
 import 'maplibre-gl/dist/maplibre-gl.css'
 

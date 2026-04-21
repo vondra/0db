@@ -13,7 +13,7 @@ import FloatingCard from './components/FloatingCard'
 import { useUrlState, type SourceMode } from './hooks/useUrlState'
 import type { SelectedLocation } from './components/FlyToLocation'
 import type { RealEstateFilters, Property } from './components/RealEstateLayer'
-import type { NoiseComputeData } from './components/DetailPopup'
+import type { NoiseComputeData } from './types/noise'
 import type { QuietHex, QuietHexUpdate } from './components/HexLayer'
 import { DEFAULT_BASEMAP, type BasemapId } from './utils/basemaps'
 

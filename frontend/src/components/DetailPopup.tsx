@@ -6,17 +6,12 @@ import { HoverText } from './ui/info-tip'
 import { fmt, fmtInt, fmtCompact, formatCpa, txtTable, type TableRow } from '../utils/formatters'
 import type {
   DatasetProvenance,
-  SourceSummary,
   RoadMetadata,
   AircraftTopFlight,
   AircraftMetadata,
   Contributor,
   NoiseComputeData,
 } from '../types/noise'
-
-// Re-export the primary response type so existing `from './DetailPopup'` imports
-// in other modules keep working until we migrate all call sites.
-export type { NoiseComputeData }
 
 // ── Shared constants ──
 
@@ -86,8 +81,6 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
     </>
   )
 }
-
-export type { Contributor, SourceSummary }
 
 const SOURCE_LABELS: Record<string, string> = {
   road: 'Roads', railway: 'Railways', aircraft: 'Aircraft',

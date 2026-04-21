@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import FloatingCard from './FloatingCard'
 import { NoiseDetailContent } from './DetailPopup'
-import type { NoiseComputeData } from './DetailPopup'
+import type { NoiseComputeData } from '../types/noise'
 
 interface DetailCardProps {
   noiseData: NoiseComputeData | null

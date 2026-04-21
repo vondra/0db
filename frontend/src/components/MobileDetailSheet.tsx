@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { NoiseDetailContent } from './DetailPopup'
-import type { NoiseComputeData } from './DetailPopup'
+import type { NoiseComputeData } from '../types/noise'
 
 interface MobileDetailSheetProps {
   data: NoiseComputeData | null
