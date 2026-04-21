@@ -66,14 +66,19 @@ function parseHash(): UrlState {
     : []
 
   // Parse source modes: sm=road:shm,railway:diff
+  // Single-diff invariant — only the first 'diff' wins; later diff entries coerced to '0db'.
   const sourceModes: Record<string, SourceMode> = {}
   const smParam = params.get('sm')
   if (smParam) {
+    let diffSeen = false
     for (const entry of smParam.split(',')) {
       const [id, mode] = entry.split(':')
-      if (ALL_SOURCE_IDS.includes(id) && ['end', 'diff'].includes(mode)) {
-        sourceModes[id] = mode as SourceMode
+      if (!ALL_SOURCE_IDS.includes(id) || !['end', 'diff'].includes(mode)) continue
+      if (mode === 'diff') {
+        if (diffSeen) continue
+        diffSeen = true
       }
+      sourceModes[id] = mode as SourceMode
     }
   }
 
@@ -88,10 +93,14 @@ function parseHash(): UrlState {
     }
   }
 
+  const parsedLat = parseFloat(params.get('lat') || '')
+  const parsedLng = parseFloat(params.get('lng') || '')
+  const parsedZoom = parseFloat(params.get('z') || '')
+
   return {
-    lat: parseFloat(params.get('lat') || '') || DEFAULT_LAT,
-    lng: parseFloat(params.get('lng') || '') || DEFAULT_LNG,
-    zoom: parseFloat(params.get('z') || '') || DEFAULT_ZOOM,
+    lat: Number.isFinite(parsedLat) ? parsedLat : DEFAULT_LAT,
+    lng: Number.isFinite(parsedLng) ? parsedLng : DEFAULT_LNG,
+    zoom: Number.isFinite(parsedZoom) ? parsedZoom : DEFAULT_ZOOM,
     layers,
     sourceModes,
     quietClusters: params.get('qc') === '1',

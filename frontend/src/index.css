@@ -43,11 +43,6 @@ html, body {
   border-top-color: #fff !important;
 }
 
-/* Hide default attribution — license info is on /about page */
-.maplibregl-ctrl-attrib {
-  display: none !important;
-}
-
 .maplibregl-ctrl-bottom-left {
   bottom: 10px !important;
 }
