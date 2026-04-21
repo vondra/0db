@@ -85,3 +85,32 @@ export function lineRow(label: ReactNode, value: ReactNode, muted?: boolean) {
     </div>
   )
 }
+
+export const PERIOD_LABELS = ['Day', 'Eve', 'Night'] as const
+
+/** Shared palette for source/receiver/obstacle markers across noise SVG diagrams. */
+export const DIAGRAM_COLORS = {
+  source: '#2563eb',
+  receiver: '#dc2626',
+  terrain: '#8a6a3d',
+  forest: '#3f7a3d',
+  apex: '#16a34a',
+} as const
+
+/**
+ * GeoJSON LineString from two lat/lon pairs (input order [lat, lon]). Used to
+ * highlight a segment's or flight's geometry on the map; output coordinate
+ * order is [lon, lat] to match GeoJSON conventions.
+ */
+export function lineStringFromLatLon(
+  start: readonly [number, number],
+  end: readonly [number, number],
+): { type: 'LineString'; coordinates: [number, number][] } {
+  return {
+    type: 'LineString',
+    coordinates: [
+      [start[1], start[0]],
+      [end[1], end[0]],
+    ],
+  }
+}

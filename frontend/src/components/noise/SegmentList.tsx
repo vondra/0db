@@ -5,7 +5,7 @@ import type {
   SegmentTrace,
   SegmentTracesSummary,
 } from '../../types/noise'
-import { formatCpa } from '../../utils/formatters'
+import { AirborneRow } from './AirborneRow'
 import { SegmentRow } from './SegmentRow'
 
 const DIVERGENCE_BANNER =
@@ -46,11 +46,13 @@ export function SegmentList({
   segments,
   airborne,
   meta,
+  receiverLatLon,
   onHighlight,
 }: {
   segments: SegmentTrace[]
   airborne: AirborneTrace[]
   meta: SegmentTracesSummary | null
+  receiverLatLon: [number, number]
   onHighlight?: (geometry: unknown | null) => void
 }) {
   const [enabled, setEnabled] = useState<Record<SegmentKind, boolean>>(() =>
@@ -112,7 +114,12 @@ export function SegmentList({
               onHighlight={onHighlight}
             />
           ) : (
-            <AirborneRow key={`a-${e.trace.flight_id}-${e.trace.period}`} trace={e.trace} />
+            <AirborneRow
+              key={`a-${e.trace.flight_id}-${e.trace.period}`}
+              trace={e.trace}
+              receiverLatLon={receiverLatLon}
+              onHighlight={onHighlight}
+            />
           ),
         )}
       </div>
@@ -134,17 +141,3 @@ export function SegmentList({
   )
 }
 
-// Placeholder until Milník E — airborne rows get their own component + diagram.
-function AirborneRow({ trace }: { trace: AirborneTrace }) {
-  const periodLabel = ['Day', 'Eve', 'Night'][trace.period] ?? '?'
-  return (
-    <div className="flex items-center justify-between px-1 py-0.5 text-[11px] border-b border-border/40">
-      <span className="truncate">
-        <span className="text-muted-foreground">airborne</span> · {trace.profile} · {periodLabel}
-      </span>
-      <span className="font-mono text-muted-foreground">
-        {formatCpa(trace.cpa_distance_m)} · {trace.received_lden.toFixed(1)} dB
-      </span>
-    </div>
-  )
-}

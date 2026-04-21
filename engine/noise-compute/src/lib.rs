@@ -1586,9 +1586,10 @@ fn compute_aircraft(
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
     n_days: u16,
-    _traces: Option<&mut TraceCollector>,
+    mut traces: Option<&mut TraceCollector>,
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
-    // TODO: populate TraceCollector (airborne via Doc 29, ground ops via ISO 9613).
+    // TODO: populate ground ops as SegmentTrace (ISO 9613 path effects).
+    // Airborne aircraft are teed off below as AirborneTrace (Doc 29 — no path profile).
     use emission::aircraft;
     use std::collections::{HashMap, HashSet};
 
@@ -1971,13 +1972,37 @@ fn compute_aircraft(
         return (NoisePeriods::silence(), Vec::new(), AircraftBandData::default());
     }
 
+    // date_id (days since 2020-01-01) → "YYYY-MM-DD". Defined here (before the
+    // single flights-iteration loop below) so AirborneTrace push can use it.
+    let date_from_id = |date_id: i16| -> String {
+        let mut rem = date_id as i32;
+        let mut y = 2020i32;
+        loop {
+            let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+            let yd = if leap { 366 } else { 365 };
+            if rem < yd {
+                break;
+            }
+            rem -= yd;
+            y += 1;
+        }
+        let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+        let mdays: [i32; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let mut m = 0usize;
+        while m < 12 && rem >= mdays[m] {
+            rem -= mdays[m];
+            m += 1;
+        }
+        format!("{:04}-{:02}-{:02}", y, m + 1, rem + 1)
+    };
+
     let mut airborne_energy = [0.0f64; 3];
     let mut band_faint = BandStats::new();
     let mut band_audible = BandStats::new();
     let mut band_disruptive = BandStats::new();
     let mut helicopter_count = 0.0f64;
     let mut global_peak_lmax = f64::NEG_INFINITY;
-    for acc in flights.values() {
+    for (&flight_id, acc) in flights.iter() {
         for p in 0..3 {
             airborne_energy[p] += acc.period_energy[p];
         }
@@ -2007,6 +2032,44 @@ fn compute_aircraft(
             band_disruptive.count += acc.flight_weight;
             band_disruptive.alt_sum += avg_alt * acc.flight_weight;
             band_disruptive.profile_counts[pidx] += acc.flight_weight.round().max(1.0) as u32;
+        }
+
+        // Popup tee-off: AirborneTrace per flight. Doc 29 produces no per-band
+        // spectrum for airborne sources, so `received_bands` is filled with
+        // the flight's scalar Lden — frontend keeps its band-layout consistent
+        // but the per-band detail is not physically meaningful here.
+        if let Some(t) = traces.as_deref_mut() {
+            let ld = aircraft::period_leq(acc.period_energy[0], n_days_f, aircraft::PERIOD_SECONDS[0]);
+            let le = aircraft::period_leq(acc.period_energy[1], n_days_f, aircraft::PERIOD_SECONDS[1]);
+            let ln = aircraft::period_leq(acc.period_energy[2], n_days_f, aircraft::PERIOD_SECONDS[2]);
+            let lden = crate::periods::compute_lden(ld, le, ln);
+
+            // Elevation angle is approximate: peak_altitude_m and min_dist_m may
+            // come from different segments of the same flight (peak tracks the
+            // loudest Lmax, min_dist tracks the closest CPA). Clamp ratio to 1.0
+            // so the asin stays finite; we lose some accuracy when alt > cpa.
+            let cpa = acc.min_dist_m.max(1.0);
+            let elevation_angle_deg =
+                (acc.peak_altitude_m / cpa).clamp(-1.0, 1.0).asin().to_degrees();
+
+            t.airborne.push(AirborneTrace {
+                flight_id,
+                date: date_from_id(acc.peak_date_id),
+                period: acc.peak_period,
+                profile: aircraft::PROFILES[acc.profile_idx.min(7) as usize].name.to_string(),
+                lmax_db: if acc.peak_lmax > -900.0 { round1(acc.peak_lmax) } else { 0.0 },
+                sel_db: if acc.peak_sel > -900.0 { round1(acc.peak_sel) } else { 0.0 },
+                cpa_distance_m: round1(acc.min_dist_m),
+                altitude_m_at_cpa: round1(acc.peak_altitude_m),
+                elevation_angle_deg: round1(elevation_angle_deg),
+                n_days_normalized: n_days_f,
+                geometry: [
+                    [acc.peak_seg_start[1], acc.peak_seg_start[0]],
+                    [acc.peak_seg_end[1], acc.peak_seg_end[0]],
+                ],
+                received_lden: lden,
+                received_bands: std::array::from_fn(|_| lden),
+            });
         }
     }
 
@@ -2074,24 +2137,6 @@ fn compute_aircraft(
         }
     });
     let flights_per_day = flights.values().map(|acc| acc.flight_weight).sum::<f64>() / n_days_f;
-
-    // date_id (days since 2020-01-01) → "YYYY-MM-DD"
-    let date_from_id = |date_id: i16| -> String {
-        let mut rem = date_id as i32;
-        let mut y = 2020i32;
-        loop {
-            let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
-            let yd = if leap { 366 } else { 365 };
-            if rem < yd { break; }
-            rem -= yd;
-            y += 1;
-        }
-        let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
-        let mdays: [i32; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-        let mut m = 0usize;
-        while m < 12 && rem >= mdays[m] { rem -= mdays[m]; m += 1; }
-        format!("{:04}-{:02}-{:02}", y, m + 1, rem + 1)
-    };
 
     // Top flights by Lden energy contribution (for popup diagnostics)
     let total_lden_energy: f64 = airborne_energy.iter().sum();

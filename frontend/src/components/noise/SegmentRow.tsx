@@ -3,7 +3,7 @@ import type { SegmentTrace } from '../../types/noise'
 import { HoverText } from '../ui/info-tip'
 import { ldenToColor } from '../../utils/noise-colors'
 import { SegmentExpanded } from './SegmentExpanded'
-import { SOURCE_LABELS, formatDist, subtypeLabel } from './shared'
+import { SOURCE_LABELS, formatDist, lineStringFromLatLon, subtypeLabel } from './shared'
 
 function segmentName(t: SegmentTrace): string {
   if (t.name && t.name.length > 0) return t.name
@@ -11,18 +11,10 @@ function segmentName(t: SegmentTrace): string {
 }
 
 function highlightGeometry(t: SegmentTrace) {
-  // Line sources: 2-point LineString between segment endpoints.
-  // Point sources (building/industrial): a Point at (start_lat, start_lon).
   if (t.kind === 'building' || t.kind === 'industrial') {
     return { type: 'Point', coordinates: [t.start_lon, t.start_lat] }
   }
-  return {
-    type: 'LineString',
-    coordinates: [
-      [t.start_lon, t.start_lat],
-      [t.end_lon, t.end_lat],
-    ],
-  }
+  return lineStringFromLatLon([t.start_lat, t.start_lon], [t.end_lat, t.end_lon])
 }
 
 const POWER_SUM_HINT =

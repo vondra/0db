@@ -726,6 +726,7 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
                   segments={data.segments ?? []}
                   airborne={data.airborne_traces ?? []}
                   meta={data.segments_meta ?? null}
+                  receiverLatLon={data.h3_center}
                   onHighlight={onHighlight}
                 />
               </div>
