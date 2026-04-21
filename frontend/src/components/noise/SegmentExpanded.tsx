@@ -58,6 +58,19 @@ function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
     ['Source height', `${baseline.source_height_m.toFixed(1)} m`],
     ['Finite-line correction', fmtDb(baseline.finite_line_corr_db)],
   ]
+  // Work in positive magnitudes (dB removed) — easier to reason about the
+  // max rule. attenuation_db_a is negative when an effect removes sound, so
+  // we flip the sign here.
+  const aGrMag = -ground.attenuation_db_a
+  const aTerMag = -terrain.attenuation_db_a
+  const aScrMag = -screening.attenuation_db_a
+  const aVegMag = -vegetation.attenuation_db_a
+  const aBarMag = aTerMag + aScrMag
+  const hasBarrier = aBarMag > 0
+  const aGroundOrBarrier = hasBarrier ? Math.max(aGrMag, aBarMag) : aGrMag
+  const barrierWins = hasBarrier && aBarMag >= aGrMag
+  const aTotalPath = aGroundOrBarrier + aVegMag
+
   const effects: [string, React.ReactNode][] = [
     [
       'Terrain',
@@ -77,6 +90,24 @@ function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
         fmtDb(screening.attenuation_db_a)
       ),
     ],
+    ['Ground (A_gr)', fmtDb(ground.attenuation_db_a)],
+    [
+      hasBarrier ? 'Ground or barrier' : 'Ground (applied)',
+      <HoverText title={MAX_RULE_FORMULA}>
+        <span>
+          {fmtDb(-aGroundOrBarrier)}
+          {hasBarrier && (
+            <span className="text-muted-foreground/50">
+              {' '}
+              = max(A_gr={aGrMag.toFixed(1)}, A_ter+A_scr={aBarMag.toFixed(1)}) ·{' '}
+              <span className={barrierWins ? 'text-amber-500' : 'text-emerald-500'}>
+                {barrierWins ? 'barrier' : 'ground'} wins
+              </span>
+            </span>
+          )}
+        </span>
+      </HoverText>,
+    ],
     [
       'Vegetation',
       <>
@@ -84,7 +115,15 @@ function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
         {vegetation.forest_runs.length} run{vegetation.forest_runs.length === 1 ? '' : 's'}
       </>,
     ],
-    ['Ground (A_gr)', fmtDb(ground.attenuation_db_a)],
+    [
+      'Total path effect',
+      <span className="font-medium">
+        {fmtDb(-aTotalPath)}
+        <span className="text-muted-foreground/50">
+          {' '}(= ground_or_barrier {aGroundOrBarrier.toFixed(1)} + vegetation {aVegMag.toFixed(1)})
+        </span>
+      </span>,
+    ],
   ]
   return (
     <Section title="Baseline & path effects">
@@ -92,9 +131,7 @@ function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
       <div className="h-1" />
       <InlineTable rows={effects} />
       <div className="mt-1 text-[9px] text-muted-foreground/50">
-        <HoverText title={MAX_RULE_FORMULA}>
-          Applied ground vs barrier rule: max(A_gr, A_ter+A_scr). Received Lden = {received_lden.full.toFixed(1)} dB.
-        </HoverText>
+        Received Lden (full) = {received_lden.full.toFixed(1)} dB · free-field {received_lden.free_field.toFixed(1)} dB · delta {(received_lden.full - received_lden.free_field).toFixed(1)} dB.
       </div>
     </Section>
   )
