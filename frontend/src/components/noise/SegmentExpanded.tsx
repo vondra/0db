@@ -74,18 +74,19 @@ function InlineTable({ rows }: { rows: [string, React.ReactNode][] }) {
 
 function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
   const { baseline, terrain, screening, vegetation, ground, received_lden } = trace
-  const SCALAR_NOTE =
-    'Scalar shown = 1 kHz band (←). Hover any dB row for the full per-band breakdown.'
+  const TOOLTIP_NOTE =
+    'Scalar above is A-weighted Lden delta from variant comparison. Per-band values below are the raw attenuations the engine applied — the arrow (←) marks 1 kHz for orientation, but the scalar itself is a dB(A) sum, not a single band.'
   const rows: [string, React.ReactNode][] = [
     ['Geometric divergence', fmtDb(-baseline.geometric_db)],
     [
-      'Atmospheric',
+      'Atmospheric (at 1 kHz)',
       <HoverText
         title={bandsTooltip(baseline.atmospheric_bands, {
-          title: 'Atmospheric absorption (ISO 9613-2 §7.2)',
+          title: 'Atmospheric absorption (ISO 9613-2 §7.2) — per band',
           signed: true,
           highlightIdx: 4,
-          note: SCALAR_NOTE,
+          note:
+            'Frequency-dependent (α_atm × d/1000). Engine applies per band before A-weighting; display scalar is 1 kHz only.',
         })}
       >
         {fmtDb(-baseline.atmospheric_bands[4])}
@@ -95,19 +96,18 @@ function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
     ['Source height', `${baseline.source_height_m.toFixed(1)} m`],
     ['Finite-line correction', fmtDb(baseline.finite_line_corr_db)],
   ]
-  // Work in positive magnitudes (dB removed) — easier to reason about the
-  // max rule. attenuation_db_a is negative when an effect removes sound, so
-  // we flip the sign here.
-  const aGrMag = -ground.attenuation_db_a
-  const aTerMag = -terrain.attenuation_db_a
-  const aScrMag = -screening.attenuation_db_a
-  const aVegMag = -vegetation.attenuation_db_a
-  const aBarMag = aTerMag + aScrMag
-  const hasBarrier = aBarMag > 0
-  const aGroundOrBarrier = hasBarrier ? Math.max(aGrMag, aBarMag) : aGrMag
-  const barrierWins = hasBarrier && aBarMag >= aGrMag
-  const aTotalPath = aGroundOrBarrier + aVegMag
 
+  // A-weighted Lden impacts from PropagationVariants. Negative = effect
+  // reduced Lden. Semantics per ISO 9613-2: attenuation is defined per
+  // octave band; the only physically meaningful single-number summary is
+  // ΔL_A = L_A(no effect) − L_A(with effect), which is exactly what the
+  // engine's variant energies give us in A-weighted terms.
+  const terrainDelta = received_lden.full - received_lden.no_terrain
+  const screeningDelta = received_lden.full - received_lden.no_screening
+  const vegetationDelta = received_lden.full - received_lden.no_vegetation
+  const totalPathDelta = received_lden.full - received_lden.free_field
+
+  // Per-band (raw) max-rule applied as the engine does it — for tooltip only.
   const groundOrBarrierBands: number[] = baseline.atmospheric_bands.map((_, i) => {
     const bar = terrain.attenuation_bands[i] + screening.attenuation_bands[i]
     return bar > 0 ? Math.max(ground.attenuation_bands[i], bar) : ground.attenuation_bands[i]
@@ -116,91 +116,83 @@ function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
 
   const effects: [string, React.ReactNode][] = [
     [
-      'Terrain',
+      'Terrain impact',
       <HoverText
         title={bandsTooltip(terrain.attenuation_bands, {
-          title: `Terrain diffraction (δ = ${terrain.delta_m.toFixed(2)} m${terrain.is_double ? ', double' : ''})`,
+          title: `Terrain diffraction — per band (δ = ${terrain.delta_m.toFixed(2)} m${terrain.is_double ? ', double' : ''})`,
           highlightIdx: 4,
-          note: SCALAR_NOTE,
+          note: TOOLTIP_NOTE,
         })}
       >
         <span>
-          {fmtDb(terrain.attenuation_db_a)} · δ {terrain.delta_m.toFixed(2)} m
+          {fmtDb(terrainDelta)} (A) · δ {terrain.delta_m.toFixed(2)} m
           {terrain.is_double ? ' (double)' : ''}
         </span>
       </HoverText>,
     ],
     [
-      'Building screening',
+      'Building screening impact',
       <HoverText
         title={bandsTooltip(screening.attenuation_bands, {
           title: screening.obstacle
-            ? `Building screening (${screening.obstacle.kind} ${screening.obstacle.height_m.toFixed(1)} m @ t=${screening.obstacle.t.toFixed(2)})`
-            : 'Building screening',
+            ? `Building screening — per band (${screening.obstacle.kind} ${screening.obstacle.height_m.toFixed(1)} m @ t=${screening.obstacle.t.toFixed(2)})`
+            : 'Building screening — per band',
           highlightIdx: 4,
-          note: SCALAR_NOTE,
+          note: TOOLTIP_NOTE,
         })}
       >
         <span>
+          {fmtDb(screeningDelta)} (A)
           {screening.obstacle ? (
             <>
-              {fmtDb(screening.attenuation_db_a)} · {screening.obstacle.kind} {screening.obstacle.height_m.toFixed(1)} m
-              @ t={screening.obstacle.t.toFixed(2)}
+              {' '}· {screening.obstacle.kind} {screening.obstacle.height_m.toFixed(1)} m @ t=
+              {screening.obstacle.t.toFixed(2)}
             </>
-          ) : (
-            fmtDb(screening.attenuation_db_a)
-          )}
+          ) : null}
         </span>
       </HoverText>,
     ],
     [
-      'Ground (A_gr)',
+      'Vegetation impact',
       <HoverText
-        title={bandsTooltip(ground.attenuation_bands, {
-          title: `Ground effect (G = ${ground.factor_g.toFixed(2)})`,
+        title={bandsTooltip(vegetation.attenuation_bands, {
+          title: `Vegetation — per band (${vegetation.forest_depth_m.toFixed(0)} m forest · ${vegetation.forest_runs.length} run${vegetation.forest_runs.length === 1 ? '' : 's'})`,
           highlightIdx: 4,
-          note:
-            'CF[i] × G per band. Soft ground can ADD sound at low freqs (negative values at 63/125 Hz are normal).',
+          note: TOOLTIP_NOTE,
         })}
       >
-        {fmtDb(ground.attenuation_db_a)}
+        <span>
+          {fmtDb(vegetationDelta)} (A) · {vegetation.forest_depth_m.toFixed(0)} m forest ·{' '}
+          {vegetation.forest_runs.length} run{vegetation.forest_runs.length === 1 ? '' : 's'}
+        </span>
       </HoverText>,
     ],
     [
-      hasBarrier ? 'Ground or barrier' : 'Ground (applied)',
+      'Ground (per band only)',
+      <HoverText
+        title={bandsTooltip(ground.attenuation_bands, {
+          title: `Ground effect — per band (G = ${ground.factor_g.toFixed(2)})`,
+          highlightIdx: 4,
+          note:
+            'Engine has no "no_ground" variant, so no A-weighted Lden delta is available. Per-band: CF[i] × G. Soft ground (G → 1) can ADD sound at 63/125 Hz (negative values are standard).',
+        })}
+      >
+        <span className="text-muted-foreground/70">
+          G = {ground.factor_g.toFixed(2)} · hover for bands
+        </span>
+      </HoverText>,
+    ],
+    [
+      'Applied ground + barrier (per band)',
       <HoverText
         title={bandsTooltip(groundOrBarrierBands, {
-          title: `Applied ground/barrier (${hasBarrier ? (barrierWins ? 'barrier wins' : 'ground wins') : 'no barrier — ground'})`,
+          title: 'Engine applies max(A_gr, A_terrain + A_screening) per band',
           highlightIdx: 4,
           note: MAX_RULE_FORMULA,
         })}
       >
-        <span>
-          {fmtDb(-aGroundOrBarrier)}
-          {hasBarrier && (
-            <span className="text-muted-foreground/50">
-              {' '}
-              = max(A_gr={aGrMag.toFixed(1)}, A_ter+A_scr={aBarMag.toFixed(1)}) ·{' '}
-              <span className={barrierWins ? 'text-amber-500' : 'text-emerald-500'}>
-                {barrierWins ? 'barrier' : 'ground'} wins
-              </span>
-            </span>
-          )}
-        </span>
-      </HoverText>,
-    ],
-    [
-      'Vegetation',
-      <HoverText
-        title={bandsTooltip(vegetation.attenuation_bands, {
-          title: `Vegetation (${vegetation.forest_depth_m.toFixed(0)} m forest · ${vegetation.forest_runs.length} run${vegetation.forest_runs.length === 1 ? '' : 's'})`,
-          highlightIdx: 4,
-          note: SCALAR_NOTE,
-        })}
-      >
-        <span>
-          {fmtDb(vegetation.attenuation_db_a)} · {vegetation.forest_depth_m.toFixed(0)} m forest ·{' '}
-          {vegetation.forest_runs.length} run{vegetation.forest_runs.length === 1 ? '' : 's'}
+        <span className="text-muted-foreground/70">
+          hover for per-band max(A_gr, A_ter+A_scr)
         </span>
       </HoverText>,
     ],
@@ -208,27 +200,28 @@ function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
       'Total path effect',
       <HoverText
         title={bandsTooltip(totalPathBands, {
-          title: 'Total path attenuation = ground_or_barrier + vegetation',
+          title: 'All path effects combined — per band (ground_or_barrier + vegetation)',
           highlightIdx: 4,
-          note: SCALAR_NOTE,
+          note: 'Scalar above = full − free_field (A-weighted Lden delta including ground + barriers + vegetation + reflection boost).',
         })}
       >
         <span className="font-medium">
-          {fmtDb(-aTotalPath)}
-          <span className="text-muted-foreground/50">
-            {' '}(= ground_or_barrier {aGroundOrBarrier.toFixed(1)} + vegetation {aVegMag.toFixed(1)})
-          </span>
+          {fmtDb(totalPathDelta)} (A) · full vs free-field Lden
         </span>
       </HoverText>,
     ],
   ]
+
   return (
     <Section title="Baseline & path effects">
       <InlineTable rows={rows} />
       <div className="h-1" />
       <InlineTable rows={effects} />
       <div className="mt-1 text-[9px] text-muted-foreground/50">
-        Received Lden (full) = {received_lden.full.toFixed(1)} dB · free-field {received_lden.free_field.toFixed(1)} dB · delta {(received_lden.full - received_lden.free_field).toFixed(1)} dB.
+        Received Lden = {received_lden.full.toFixed(1)} dB(A) · free-field {received_lden.free_field.toFixed(1)} dB(A) · path-effect delta {fmtDb(totalPathDelta)}.
+        <br />
+        ISO 9613-2 §7.3.1: engine applies <code>max(A_gr, A_ter+A_scr)</code> per band, then adds vegetation;{' '}
+        impacts above are <code>Lden_full − Lden_no_X</code> from the engine's variant comparison.
       </div>
     </Section>
   )
