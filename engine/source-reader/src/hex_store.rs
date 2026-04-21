@@ -135,45 +135,9 @@ fn load_arrow_mmap(path: &Path, mmaps: &mut Vec<Arc<Mmap>>) -> Vec<RecordBatch> 
     batches
 }
 
-pub fn aircraft_ground_model_v2(batches: &[RecordBatch]) -> bool {
-    batches.iter().any(|batch| {
-        batch
-            .schema_ref()
-            .metadata()
-            .get("aircraft_ground_model")
-            .map(|v| v == "v2")
-            .unwrap_or(false)
-    })
-}
-
-pub fn aircraft_has_precomputed_ground(batches: &[RecordBatch]) -> bool {
-    batches.iter().any(|batch| {
-        batch.column_by_name("ground_context").is_some()
-            && batch.column_by_name("ground_ops_kind").is_some()
-    })
-}
-
-/// Detect v4 bucketed schema via metadata (`aircraft_ground_model == "v4"`)
-/// or by presence of the bucketed column names. v4 buckets need a different
-/// loader that expands `count_weight` and treats `bucket_start_*` as segment
-/// geometry fields.
-pub fn aircraft_is_v4(batches: &[RecordBatch]) -> bool {
-    batches.iter().any(|batch| {
-        batch
-            .schema_ref()
-            .metadata()
-            .get("aircraft_ground_model")
-            .map(|v| v == "v4")
-            .unwrap_or(false)
-            || batch.column_by_name("bucket_start_lat").is_some()
-    })
-}
-
-/// Unified aircraft loader. Reads v2/v3 per-flight or v4 bucketed aircraft
-/// arrows and returns a `Vec<AircraftSegment>` suitable for downstream Doc 29
-/// consumers (each bucket becomes one segment with `count_weight` carrying
-/// the aggregate weight). Works for both the runtime popup path and the
-/// pipeline batch path.
+/// Load aircraft segments from v4 bucketed arrow files. Each row is one bucket
+/// (= aggregated segment with `count_weight` carrying the aggregate weight).
+/// Returns a `Vec<AircraftSegment>` for downstream Doc 29 consumers.
 pub fn load_aircraft_segments_unified(
     batches: &[RecordBatch],
 ) -> Vec<noise_compute::types::AircraftSegment> {
@@ -192,31 +156,23 @@ pub fn load_aircraft_segments_unified(
             continue;
         }
 
-        let is_v4 = batch.column_by_name("bucket_start_lat").is_some();
-        let slat_name = if is_v4 { "bucket_start_lat" } else { "start_lat" };
-        let slon_name = if is_v4 { "bucket_start_lon" } else { "start_lon" };
-        let salt_name = if is_v4 { "bucket_start_alt_m" } else { "start_alt_m" };
-        let elat_name = if is_v4 { "bucket_end_lat" } else { "end_lat" };
-        let elon_name = if is_v4 { "bucket_end_lon" } else { "end_lon" };
-        let ealt_name = if is_v4 { "bucket_end_alt_m" } else { "end_alt_m" };
-
         let slat = batch
-            .column_by_name(slat_name)
+            .column_by_name("bucket_start_lat")
             .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
         let slon = batch
-            .column_by_name(slon_name)
+            .column_by_name("bucket_start_lon")
             .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
         let salt = batch
-            .column_by_name(salt_name)
+            .column_by_name("bucket_start_alt_m")
             .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
         let elat = batch
-            .column_by_name(elat_name)
+            .column_by_name("bucket_end_lat")
             .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
         let elon = batch
-            .column_by_name(elon_name)
+            .column_by_name("bucket_end_lon")
             .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
         let ealt = batch
-            .column_by_name(ealt_name)
+            .column_by_name("bucket_end_alt_m")
             .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
 
         let (Some(slat), Some(slon), Some(salt), Some(elat), Some(elon), Some(ealt)) =
@@ -249,19 +205,6 @@ pub fn load_aircraft_segments_unified(
         let cw = batch
             .column_by_name("count_weight")
             .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
-
-        // v2/v3-only columns
-        let fid = batch
-            .column_by_name("flight_id")
-            .and_then(|c| c.as_any().downcast_ref::<UInt64Array>());
-        let did = batch
-            .column_by_name("date_id")
-            .and_then(|c| c.as_any().downcast_ref::<Int16Array>());
-        let on_ground_col = batch
-            .column_by_name("on_ground")
-            .and_then(|c| c.as_any().downcast_ref::<BooleanArray>());
-
-        // v4-only columns
         let peak_did = batch
             .column_by_name("peak_date_id")
             .and_then(|c| c.as_any().downcast_ref::<Int16Array>());
@@ -274,38 +217,25 @@ pub fn load_aircraft_segments_unified(
 
         for i in 0..n {
             let bucket_kind = bkind.map(|a| a.value(i)).unwrap_or(BUCKET_KIND_AIRBORNE);
-            let on_ground = if is_v4 {
-                bucket_kind != BUCKET_KIND_AIRBORNE
-            } else {
-                on_ground_col.map(|a| a.value(i)).unwrap_or(false)
-            };
-            let surface_model = is_v4 && bucket_kind == BUCKET_KIND_GROUND_SYNTH;
-            let flight_id: u64 = if let Some(fid) = fid {
-                fid.value(i)
-            } else if let Some(list) = fids_top {
-                if list.is_null(i) {
-                    0
-                } else {
-                    let sub = list.value(i);
-                    if sub.len() == 0 {
-                        0
+            let on_ground = bucket_kind != BUCKET_KIND_AIRBORNE;
+            let surface_model = bucket_kind == BUCKET_KIND_GROUND_SYNTH;
+            let flight_id: u64 = fids_top
+                .and_then(|list| {
+                    if list.is_null(i) {
+                        None
                     } else {
-                        sub.as_any()
-                            .downcast_ref::<UInt64Array>()
-                            .map(|a| a.value(0))
-                            .unwrap_or(0)
+                        let sub = list.value(i);
+                        if sub.len() == 0 {
+                            None
+                        } else {
+                            sub.as_any()
+                                .downcast_ref::<UInt64Array>()
+                                .map(|a| a.value(0))
+                        }
                     }
-                }
-            } else {
-                0
-            };
-            let date_id = if let Some(did) = did {
-                did.value(i)
-            } else if let Some(pd) = peak_did {
-                pd.value(i)
-            } else {
-                0
-            };
+                })
+                .unwrap_or(0);
+            let date_id = peak_did.map(|a| a.value(i)).unwrap_or(0);
             let count_weight = cw.map(|a| a.value(i)).unwrap_or(1.0);
 
             out.push(AircraftSegment {
@@ -1066,156 +996,8 @@ pub fn query_barriers_from_batches(
     results
 }
 
-/// Aircraft segment result.
-#[derive(serde::Serialize)]
-pub struct AircraftResult {
-    pub flight_id: u64,
-    pub profile_idx: u8,
-    pub is_departure: bool,
-    pub on_ground: bool,
-    pub period: u8,
-    pub date_id: i16,
-    pub start_lat: f64,
-    pub start_lon: f64,
-    pub start_alt_m: f32,
-    pub end_lat: f64,
-    pub end_lon: f64,
-    pub end_alt_m: f32,
-    pub speed_kt: f32,
-    pub segment_length_m: f32,
-    pub ground_context: u8,
-    pub ground_ops_kind: u8,
-}
-
-pub fn visit_aircraft_from_batches<F>(
-    batches: &[RecordBatch],
-    lat: f64,
-    lon: f64,
-    max_radius_m: f64,
-    receiver_elev_m: f64,
-    mut visit: F,
-) where
-    F: FnMut(AircraftResult),
-{
-    let lat_pad_deg = max_radius_m / 110_540.0;
-    for batch in batches {
-        let n = batch.num_rows();
-        let fid = col_u64(batch, "flight_id");
-        let pidx = col_u8(batch, "profile_idx");
-        let dep = col_bool(batch, "is_departure");
-        let on_ground = col_bool(batch, "on_ground");
-        let per = col_u8(batch, "period");
-        let did = col_i16(batch, "date_id");
-        let slat = col_f64(batch, "start_lat");
-        let slon = col_f64(batch, "start_lon");
-        let salt = col_f32(batch, "start_alt_m");
-        let elat = col_f64(batch, "end_lat");
-        let elon = col_f64(batch, "end_lon");
-        let ealt = col_f32(batch, "end_alt_m");
-        let spd = col_f32(batch, "speed_kt");
-        let slen = col_f32(batch, "segment_length_m");
-        let gctx = col_u8(batch, "ground_context");
-        let gkind = col_u8(batch, "ground_ops_kind");
-
-        let (Some(fid), Some(slat), Some(slon), Some(salt), Some(elat), Some(elon), Some(ealt)) =
-            (fid, slat, slon, salt, elat, elon, ealt)
-        else {
-            continue;
-        };
-
-        for i in 0..n {
-            let start_lat = slat.value(i);
-            let start_lon = slon.value(i);
-            let start_alt_m = salt.value(i);
-            let end_lat = elat.value(i);
-            let end_lon = elon.value(i);
-            let end_alt_m = ealt.value(i);
-            let on_ground_val = on_ground.map(|a| a.value(i)).unwrap_or(false);
-            let speed_kt_val = spd.map(|a| a.value(i)).unwrap_or(0.0);
-
-            let max_alt_m = start_alt_m.max(end_alt_m) as f64;
-            if max_alt_m < receiver_elev_m - 100.0 && !on_ground_val && speed_kt_val < 60.0 {
-                continue;
-            }
-
-            let min_lat = start_lat.min(end_lat);
-            let max_lat = start_lat.max(end_lat);
-            if lat < min_lat - lat_pad_deg || lat > max_lat + lat_pad_deg {
-                continue;
-            }
-            let ref_lat = (min_lat + max_lat + lat) / 3.0;
-            let lon_pad_deg =
-                max_radius_m / (111_320.0 * ref_lat.to_radians().cos().abs().max(0.2));
-            let min_lon = start_lon.min(end_lon);
-            let max_lon = start_lon.max(end_lon);
-            if lon < min_lon - lon_pad_deg || lon > max_lon + lon_pad_deg {
-                continue;
-            }
-
-            // Keep popup semantics aligned with Doc 29 12 km cutoff, but filter before
-            // expensive airport-ground matching. The midpoint box is a cheap first pass;
-            // closest-point distance is the conservative geometric gate.
-            let mid_lat = (start_lat + end_lat) * 0.5;
-            let mid_lon = (start_lon + end_lon) * 0.5;
-            let dlat = (lat - mid_lat).abs() * 110_540.0;
-            if dlat > max_radius_m * 1.5 {
-                continue;
-            }
-            let dlon = (lon - mid_lon).abs() * 111_320.0 * mid_lat.to_radians().cos();
-            if dlon > max_radius_m * 1.5 {
-                continue;
-            }
-
-            let cp = crate::geo::closest_point_on_segment(
-                lat, lon, start_lat, start_lon, end_lat, end_lon,
-            );
-            if cp.dist_m > max_radius_m {
-                continue;
-            }
-
-            visit(AircraftResult {
-                flight_id: fid.value(i),
-                profile_idx: pidx.map(|a| a.value(i)).unwrap_or(7),
-                is_departure: dep.map(|a| a.value(i)).unwrap_or(false),
-                on_ground: on_ground_val,
-                period: per.map(|a| a.value(i)).unwrap_or(0),
-                date_id: did.map(|a| a.value(i)).unwrap_or(0),
-                start_lat,
-                start_lon,
-                start_alt_m,
-                end_lat,
-                end_lon,
-                end_alt_m,
-                speed_kt: speed_kt_val,
-                segment_length_m: slen.map(|a| a.value(i)).unwrap_or(0.0),
-                ground_context: gctx.map(|a| a.value(i)).unwrap_or(0),
-                ground_ops_kind: gkind.map(|a| a.value(i)).unwrap_or(0),
-            });
-        }
-    }
-}
-
-/// Query aircraft segments from batches. No distance filter — Doc 29 handles cutoff internally.
-#[allow(dead_code)]
-pub fn query_aircraft_from_batches(
-    batches: &[RecordBatch],
-    lat: f64,
-    lon: f64,
-    max_radius_m: f64,
-    receiver_elev_m: f64,
-) -> Vec<AircraftResult> {
-    let mut results = Vec::new();
-    visit_aircraft_from_batches(batches, lat, lon, max_radius_m, receiver_elev_m, |row| {
-        results.push(row)
-    });
-    results
-}
-
 // ── Column accessors ──
 
-pub fn col_u64<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a UInt64Array> {
-    b.column_by_name(name)?.as_any().downcast_ref()
-}
 pub fn col_i64<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Int64Array> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }

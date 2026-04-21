@@ -99,24 +99,13 @@ pub fn collect_sources_at_point(
     lng: f64,
 ) -> Result<PointQueryData, String> {
     let hex_ids = geo::grid_disk_r4(lat, lng);
-    let data_dir = h3r4_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .unwrap_or(Path::new("."));
-    let rasters = raster_reader::RealRasters::new(data_dir);
-
     let loaded: Vec<hex_store::HexData> = hex_ids
         .iter()
         .map(|id| load_hex(&h3r4_dir.join(id).to_string_lossy()))
         .collect::<Result<_, _>>()?;
     let refs: Vec<&hex_store::HexData> = loaded.iter().collect();
 
-    Ok(collect_from_hex_data(
-        &refs,
-        lat,
-        lng,
-        &rasters,
-    ))
+    Ok(collect_from_hex_data(&refs, lat, lng))
 }
 
 /// Shared source collection logic. Takes pre-loaded hex data.
@@ -126,7 +115,6 @@ pub fn collect_from_hex_data(
     hex_data: &[&hex_store::HexData],
     lat: f64,
     lng: f64,
-    rasters: &dyn noise_compute::types::RasterSampler,
 ) -> PointQueryData {
     let mut all_roads = Vec::new();
     let mut all_railways = Vec::new();
@@ -136,24 +124,11 @@ pub fn collect_from_hex_data(
     let mut all_aircraft = Vec::new();
     let mut all_airport_lines = Vec::new();
     let mut all_airport_areas = Vec::new();
-    let mut saw_aircraft_batches = false;
-    let mut any_aircraft_needs_runtime_ground_prepare = false;
-    let mut any_aircraft_is_v4 = false;
 
     let mut date_ids = std::collections::HashSet::new();
     let mut n_days_from_metadata: Option<u16> = None;
     for data in hex_data {
-        if !data.aircraft_batches.is_empty() {
-            saw_aircraft_batches = true;
-            let is_v4 = hex_store::aircraft_is_v4(&data.aircraft_batches);
-            any_aircraft_is_v4 |= is_v4;
-            if !is_v4 {
-                any_aircraft_needs_runtime_ground_prepare |=
-                    !hex_store::aircraft_has_precomputed_ground(&data.aircraft_batches);
-            }
-        }
         for batch in &data.aircraft_batches {
-            // v4 stores n_days in metadata; prefer that when available.
             if let Some(md) = batch.schema_ref().metadata().get("n_days") {
                 if let Ok(v) = md.parse::<u16>() {
                     n_days_from_metadata = Some(n_days_from_metadata.map(|m| m.max(v)).unwrap_or(v));
@@ -469,21 +444,13 @@ pub fn collect_from_hex_data(
             });
         }
 
-        // Unified loader handles both v2/v3 per-flight arrows and v4 bucketed
-        // arrows (detected by presence of `bucket_start_lat` column). For v4
-        // data, `count_weight > 1` carries the merged event count and
-        // `ground_context`/`ground_ops_kind` are already baked.
         let cached_segs = data
             .aircraft_cache
             .get_or_init(|| hex_store::load_aircraft_segments_unified(&data.aircraft_batches));
 
         let tree = data.aircraft_tree.get_or_init(|| {
-            // Index by full segment bbox (not midpoint) so long segments whose
-            // midpoint sits far from the receiver still get discovered. Skip
-            // antimeridian crossings (|Δlon| > 180°) — they would collapse to a
-            // global bbox and match every query. After the 10 km extraction cap
-            // this is just a defensive guard; a legitimate 10 km segment spans
-            // at most ~0.5° longitude even near the poles.
+            // Skip antimeridian crossings (|Δlon| > 180°) — they would collapse to a
+            // global bbox and match every query.
             let entries: Vec<_> = cached_segs.iter().enumerate()
                 .filter(|(_, seg)| (seg.start_lon - seg.end_lon).abs() <= 180.0)
                 .map(|(idx, seg)| hex_store::AircraftEntry {
@@ -516,46 +483,6 @@ pub fn collect_from_hex_data(
             // segment_sel_with_overrides (CPA > reach → dropped).
             all_aircraft.push(seg.clone());
         }
-    }
-
-    if saw_aircraft_batches && any_aircraft_needs_runtime_ground_prepare && !any_aircraft_is_v4 {
-        // Popup path: skip `infer_repeated_ground_context` — its O(N log N)
-        // multi-day clustering costs minutes at airport hexes (336 k+ candidates
-        // at Prague) and blocks the 10 s popup timeout. The pipeline still runs
-        // inference so unmapped grass-strip surfaces still appear on tiles.
-        //
-        // For v4 data this entire step is skipped: ground_context is baked at
-        // offline build time (aircraft-to-v4).
-        noise_compute::emission::aircraft::prepare_ground_context(
-            &mut all_aircraft,
-            &all_airport_lines,
-            &all_airport_areas,
-            rasters,
-            n_days,
-            false,
-        );
-    }
-    // v4 data is already filtered + synthesized at offline build time —
-    // runtime filter would double-filter and double-synthesize.
-    if !any_aircraft_is_v4 {
-        all_aircraft.retain(|seg| {
-            !noise_compute::emission::aircraft::is_ground_stale_segment(seg, rasters)
-                && noise_compute::emission::aircraft::is_valid_airborne_segment(seg, rasters)
-        });
-    }
-
-    // v4 already includes synthesized segments (bucket_kind=2). Skip runtime
-    // synthesis to avoid duplication.
-    if !any_aircraft_is_v4 {
-        let mut airport_surface =
-            noise_compute::emission::aircraft::synthesize_airport_surface_segments(
-                &all_aircraft,
-                &all_airport_lines,
-                &all_airport_areas,
-                rasters,
-                n_days,
-            );
-        all_aircraft.append(&mut airport_surface);
     }
 
     all_barriers.sort_unstable_by(|a, b| {
@@ -737,7 +664,7 @@ pub fn query_noise_at_point(lat: f64, lng: f64) -> napi::Result<String> {
         Some(r) => r,
         None => &stub,
     };
-    let sources = collect_from_hex_data(&hex_refs, lat, lng, rasters);
+    let sources = collect_from_hex_data(&hex_refs, lat, lng);
     drop(store);
 
     // Build receiver

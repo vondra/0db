@@ -632,22 +632,6 @@ impl<'a> AirportMatcher<'a> {
     }
 }
 
-pub fn segment_ground_context(
-    seg: &AircraftSegment,
-    airport_lines: &[AirportLine],
-    airport_areas: &[AirportArea],
-) -> u8 {
-    AirportMatcher::new(airport_lines, airport_areas).segment_ground_context(seg)
-}
-
-pub fn segment_ground_ops_kind(
-    seg: &AircraftSegment,
-    airport_lines: &[AirportLine],
-    airport_areas: &[AirportArea],
-) -> u8 {
-    AirportMatcher::new(airport_lines, airport_areas).segment_ground_ops_kind(seg)
-}
-
 pub fn is_ground_ops_segment(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
     seg.surface_model || is_airport_ground_segment(seg, rasters)
 }
@@ -949,26 +933,6 @@ pub fn is_valid_airborne_segment(seg: &AircraftSegment, rasters: &dyn RasterSamp
     // Jet < 150m AGL outside airport: radar echo or altitude decode error.
     if max_alt < terrain_mid + 150.0 {
         return false;
-    }
-
-    // After the 10 km extraction cap these long-segment guards fire only on
-    // legacy pre-cap data. Kept as defence-in-depth; remove once all Arrow files
-    // have been re-extracted.
-    let length_m = seg.segment_length_m as f64;
-    if length_m > 30_000.0 {
-        let alt_at = |t: f64| sa + (ea - sa) * t;
-        if alt_at(-0.5) < 0.0 || alt_at(1.5) < 0.0 {
-            return false;
-        }
-        if start_agl < 2000.0 && end_agl < 2000.0 {
-            return false;
-        }
-        if length_m > 100_000.0
-            && start_agl.min(end_agl) < 1000.0
-            && start_agl.max(end_agl) > 3000.0
-        {
-            return false;
-        }
     }
 
     true
@@ -2185,7 +2149,7 @@ mod tests {
             name: String::new(),
             airport_key: String::new(),
         }];
-        seg.ground_context = segment_ground_context(&seg, &airport_lines, &[]);
+        seg.ground_context = AirportMatcher::new(&airport_lines, &[]).segment_ground_context(&seg);
         assert_eq!(seg.ground_context, GROUND_CONTEXT_AIRPORT_LINE);
         assert!(!is_ground_stale_segment(&seg, &FlatGround));
     }
@@ -2222,7 +2186,7 @@ mod tests {
             name: String::new(),
             airport_key: String::new(),
         }];
-        seg.ground_context = segment_ground_context(&seg, &[], &airport_areas);
+        seg.ground_context = AirportMatcher::new(&[], &airport_areas).segment_ground_context(&seg);
         assert_eq!(seg.ground_context, GROUND_CONTEXT_AIRPORT_AREA);
         assert!(!is_ground_stale_segment(&seg, &FlatGround));
     }
