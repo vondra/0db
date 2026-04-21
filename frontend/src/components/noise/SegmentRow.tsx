@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { SegmentTrace } from '../../types/noise'
 import { HoverText } from '../ui/info-tip'
 import { ldenToColor } from '../../utils/noise-colors'
+import { SegmentExpanded } from './SegmentExpanded'
 import { SOURCE_LABELS, formatDist, subtypeLabel } from './shared'
 
 function segmentName(t: SegmentTrace): string {
@@ -75,12 +76,7 @@ export function SegmentRow({
           <span className="text-muted-foreground/40">{expanded ? '▴' : '▾'}</span>
         </span>
       </button>
-      {expanded && (
-        <div className="px-1 pb-1 text-[10px] text-muted-foreground/80">
-          {/* Milník D will populate: PathProfileDiagram + aggregate attenuations + per-period table + emission breakdown. */}
-          <span className="italic">Diagram + breakdowns coming in Milník D.</span>
-        </div>
-      )}
+      {expanded && <SegmentExpanded trace={trace} />}
     </div>
   )
 }
