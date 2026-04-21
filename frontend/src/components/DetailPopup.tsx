@@ -3,253 +3,25 @@ import { useMap, Source, Layer } from 'react-map-gl/maplibre'
 import { ldenToColor } from '../utils/noise-colors'
 import { MetricLabel, DataPoint } from './noise/noise-tooltips'
 import { HoverText } from './ui/info-tip'
+import { fmt, fmtInt, fmtCompact, formatCpa, txtTable, type TableRow } from '../utils/formatters'
+import type {
+  DatasetProvenance,
+  SourceSummary,
+  RoadMetadata,
+  AircraftTopFlight,
+  AircraftMetadata,
+  Contributor,
+  NoiseComputeData,
+} from '../types/noise'
 
-// ── Types matching /api/noise-onfly-v2 response ──
-
-interface SourceSummary {
-  source_type: string
-  lden: number | null
-  lden_free: number | null
-  segment_count: number
-  displayed_count: number
-}
-
-interface PropagationBaseline {
-  geometric_db: number
-  atmospheric_db: number
-  ground_factor: number
-  ground_db: number
-  total_db: number
-}
-
-interface NoisePeriodsData {
-  ld_db: number
-  le_db: number
-  ln_db: number
-  lden_db: number
-}
-
-interface TerrainBreakdownData {
-  delta_m: number
-  is_double: boolean
-  attenuation_db: number
-  profile_points: number
-}
-
-interface ScreeningBreakdownData {
-  building_path_m: number
-  attenuation_db: number
-  obstacle: ScreeningObstacleTrace | null
-}
-
-interface VegetationBreakdownData {
-  forest_depth_m: number
-  attenuation_db: number
-  sampled_path_m: number
-}
-
-interface ScreeningObstacleTrace {
-  kind: 'building' | 'barrier' | 'none'
-  height_m: number
-  t: number
-  screen_h_m: number
-  delta_m: number
-  samples_taken: number
-  step_m: number
-}
-
-interface DatasetProvenance {
-  name: string
-  year: number | null
-  license: string | null
-  url: string | null
-}
-
-interface RoadMetadata {
-  kind: 'road'
-  aadt_light_raw: number
-  aadt_medium_raw: number
-  aadt_heavy_raw: number
-  aadt_moto_raw: number
-  traffic_source: 'matched_external' | 'estimated_service_tree' | 'default_by_class'
-  dominant_dataset_id?: number
-  provenance?: DatasetProvenance | null
-  speed_posted_kmh: number
-  aadt_light_effective: number
-  aadt_medium_effective: number
-  aadt_heavy_effective: number
-  aadt_moto_effective: number
-  speed_kmh: number
-  speed_source: 'osm_posted' | 'default_by_class' | 'roundabout_cap'
-  road_class: string
-  surface: string
-  surface_corr_db: number
-  lanes: number
-  oneway: boolean
-  dominant_segment_idx: number
-  dominant_distance_m: number
-  closest_distance_m: number
-  speed_min_kmh: number
-  speed_max_kmh: number
-  oneway_segment_count: number
-  twoway_segment_count: number
-  segment_count: number
-  total_length_m: number
-  bridge_count: number
-  obstacle_segment_count: number
-  obstacle_avg_height_m: number
-  obstacle_max_height_m: number
-  obstacle_max_segment_idx: number
-}
-
-interface RailMetadata {
-  kind: 'rail'
-  trains_passenger_raw: number
-  trains_freight_raw: number
-  trains_passenger_source: 'arrow' | 'default_by_type'
-  trains_freight_source: 'arrow' | 'default_by_type'
-  maxspeed_posted_kmh: number
-  trains_passenger_effective: number
-  trains_freight_effective: number
-  speed_kmh: number
-  speed_source: 'osm_maxspeed' | 'highspeed_default' | 'type_default'
-  rail_type: string
-  usage: string
-  service: boolean
-  highspeed: boolean
-  parallel_divisor: number
-  bridge: boolean
-  segment_count: number
-  total_length_m: number
-  obstacle_segment_count: number
-  obstacle_avg_height_m: number
-  obstacle_max_height_m: number
-  obstacle_max_segment_idx: number
-}
-
-interface BuildingMetadata {
-  kind: 'building'
-  height_m: number
-  floors: number
-  area_m2: number
-  building_type: string
-  address: string
-}
-
-interface IndustrialMetadata {
-  kind: 'industrial'
-  area_m2: number
-  source_type: string
-  nace: string | null
-  grid_point_count: number
-}
-
-interface AircraftEventBandStats {
-  observed_events_per_day: number
-  avg_altitude_m: number
-  top_aircraft: string
-}
-
-interface AircraftTopFlight {
-  lmax_db: number
-  cpa_distance_m: number
-  altitude_m: number
-  period: number // 0=day, 1=evening, 2=night
-  date: string // "YYYY-MM-DD"
-  profile: string
-  energy_pct: number
-  geometry: [[number, number], [number, number]]
-}
-
-interface AircraftAirborneDetail {
-  periods: NoisePeriodsData
-  observed_flights_per_day: number
-  helicopter_flights_per_day: number
-  lmax_peak: number | null
-  faint: AircraftEventBandStats
-  audible: AircraftEventBandStats
-  disruptive: AircraftEventBandStats
-  top_flights?: AircraftTopFlight[]
-}
-
-interface AircraftGroundOpsClassDetail {
-  periods: NoisePeriodsData
-  observed_movements_per_day: number
-  modeled_movements_per_day: number
-}
-
-interface AircraftGroundOpsDetail {
-  periods: NoisePeriodsData
-  periods_free: NoisePeriodsData
-  observed_movements_per_day: number
-  modeled_movements_per_day: number
-  distance_m: number
-  emission_db: number
-  received_bands: number[]
-  runway_roll: AircraftGroundOpsClassDetail
-  taxi: AircraftGroundOpsClassDetail
-  apron_movement: AircraftGroundOpsClassDetail
-  baseline: PropagationBaseline
-  terrain: TerrainBreakdownData
-  screening: ScreeningBreakdownData
-  vegetation: VegetationBreakdownData
-}
-
-interface AircraftMetadata {
-  kind: 'aircraft'
-  variant: 'airborne' | 'ground_ops'
-  airport_name?: string | null
-  airport_key?: string | null
-  airborne?: AircraftAirborneDetail | null
-  ground_ops?: AircraftGroundOpsDetail | null
-}
-
-type SourceMetadata =
-  | RoadMetadata
-  | RailMetadata
-  | BuildingMetadata
-  | IndustrialMetadata
-  | AircraftMetadata
-
-interface Contributor {
-  source_type: string
-  osm_id: number | null
-  name: string
-  subtype: string
-  distance_m: number
-  metadata: SourceMetadata | null
-  emission_db: number
-  emission_bands: number[]
-  baseline: PropagationBaseline
-  terrain: { delta_m: number; is_double: boolean; attenuation_db: number; profile_points: number }
-  screening: { building_path_m: number; attenuation_db: number; obstacle: ScreeningObstacleTrace | null }
-  vegetation: { forest_depth_m: number; attenuation_db: number; sampled_path_m: number }
-  received_lden: number
-  received_lden_free: number
-  received_bands: number[]
-  geometry: any | null
-}
-
-export interface NoiseComputeData {
-  h3_index: string
-  h3_center: [number, number]
-  elevation_m: number
-  total_lden: number | null
-  total_lden_free: number | null
-  sources: SourceSummary[]
-  top_contributors: Contributor[]
-  other_sources_lden: number | null
-  compute_time_ms: number
-}
+// Re-export the primary response type so existing `from './DetailPopup'` imports
+// in other modules keep working until we migrate all call sites.
+export type { NoiseComputeData }
 
 // ── Shared constants ──
 
 const PERIOD_LABELS = ['Day', 'Eve', 'Night'] as const
 const PERIOD_COLORS: Record<number, string | undefined> = { 2: '#818cf8', 1: '#f59e0b' }
-
-function formatCpa(m: number): string {
-  return m < 1000 ? `${m.toFixed(0)} m` : `${(m / 1000).toFixed(1)} km`
-}
 
 function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; detailed?: boolean }) {
   if (!flights.length) return null
@@ -340,20 +112,6 @@ function formatDist(m: number): string {
   return `${(m / 1000).toFixed(1)} km`
 }
 
-function fmt(v: number): string {
-  return v > 0 ? `+${v.toFixed(1)}` : v.toFixed(1)
-}
-
-function fmtInt(v: number): string {
-  return Math.round(v).toLocaleString('en-US')
-}
-
-function fmtCompact(v: number): string {
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`
-  if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k`
-  return Math.round(v).toString()
-}
-
 function roadTrafficSourceLabel(source: RoadMetadata['traffic_source'], roadClass: string): string {
   if (source === 'matched_external') return 'matched traffic dataset'
   if (source === 'estimated_service_tree') return 'estimated local traffic'
@@ -368,23 +126,6 @@ function provenanceLabel(p: DatasetProvenance | null | undefined): string {
   if (p.license) parts.push(`· ${p.license}`)
   if (p.url) parts.push(`· ${p.url}`)
   return parts.join(' ')
-}
-
-/**
- * Build a 2-column table-like text block for native title= tooltips.
- * Renders with monospace columns: label padded, value right-aligned.
- * Use \n joins for multi-line. Uses U+2500 box-drawing character for separators.
- */
-type TableRow = readonly [string, string] | { sep: true } | string
-function txtTable(rows: TableRow[], labelWidth = 22, valueWidth = 11): string {
-  return rows
-    .map(r => {
-      if (typeof r === 'string') return r
-      if ('sep' in r) return '─'.repeat(labelWidth) + '  ' + '─'.repeat(valueWidth)
-      const [label, value] = r
-      return label.padEnd(labelWidth) + '  ' + value.padStart(valueWidth)
-    })
-    .join('\n')
 }
 
 function lineRow(label: ReactNode, value: ReactNode, muted?: boolean) {
@@ -1008,16 +749,14 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
 }
 
 interface DetailPopupProps {
+  detailPosition: { lat: number; lng: number } | null
   triggerPosition: { lat: number; lng: number } | null
   onDetailData?: (data: NoiseComputeData | null) => void
   onDetailPositionChange?: (pos: { lat: number; lng: number } | null) => void
-  initialDetailPosition?: { lat: number; lng: number } | null
-  onSelectedPointChange?: (point: { lat: number; lng: number } | null) => void
 }
 
-export default function DetailPopup({ triggerPosition, onDetailData, onDetailPositionChange, initialDetailPosition, onSelectedPointChange }: DetailPopupProps) {
+export default function DetailPopup({ detailPosition, triggerPosition, onDetailData, onDetailPositionChange }: DetailPopupProps) {
   const { current: map } = useMap()
-  const [activePos, setActivePos] = useState<{ lat: number; lng: number } | null>(initialDetailPosition ?? null)
 
   useEffect(() => {
     if (!map) return
@@ -1035,9 +774,7 @@ export default function DetailPopup({ triggerPosition, onDetailData, onDetailPos
       }
       if ((e.originalEvent.target as HTMLElement).closest('.maplibregl-popup')) return
 
-      const pos = { lat: e.lngLat.lat, lng: e.lngLat.lng }
-      setActivePos(pos)
-      onDetailPositionChange?.(pos)
+      onDetailPositionChange?.({ lat: e.lngLat.lat, lng: e.lngLat.lng })
     }
 
     map.on('mousedown', onMouseDown)
@@ -1049,30 +786,32 @@ export default function DetailPopup({ triggerPosition, onDetailData, onDetailPos
   }, [map, onDetailPositionChange])
 
   useEffect(() => {
-    if (triggerPosition) {
-      setActivePos(triggerPosition)
-      onDetailPositionChange?.(triggerPosition)
-    }
+    if (triggerPosition) onDetailPositionChange?.(triggerPosition)
   }, [triggerPosition, onDetailPositionChange])
 
   useEffect(() => {
-    if (!activePos || !map) return
-    onSelectedPointChange?.(activePos)
+    if (!detailPosition || !map) return
 
     const controller = new AbortController()
-    fetch(`/api/noise-onfly-v2?lat=${activePos.lat}&lng=${activePos.lng}`, { signal: controller.signal })
+    fetch(`/api/noise-onfly-v2?lat=${detailPosition.lat}&lng=${detailPosition.lng}`, { signal: controller.signal })
       .then(res => { if (!res.ok) throw new Error(`API ${res.status}`); return res.json() })
       .then((data: NoiseComputeData) => onDetailData?.(data))
-      .catch(err => { if (err.name !== 'AbortError') console.error(err) })
+      .catch(err => {
+        if (err.name === 'AbortError') return
+        console.error(err)
+        // Clear stale selection so UI doesn't stick on a failed point.
+        onDetailData?.(null)
+        onDetailPositionChange?.(null)
+      })
 
     return () => controller.abort()
-  }, [activePos, map, onDetailData])
+  }, [detailPosition, map, onDetailData, onDetailPositionChange])
 
   return (
     <>
-      {activePos && (
+      {detailPosition && (
         <Source id="clicked-point" type="geojson" data={{
-          type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [activePos.lng, activePos.lat] }
+          type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [detailPosition.lng, detailPosition.lat] }
         }}>
           <Layer id="clicked-point-marker" type="circle" paint={{
             'circle-radius': 6, 'circle-color': '#3b82f6', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2,

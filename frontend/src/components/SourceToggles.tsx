@@ -27,18 +27,17 @@ const END_MODES: { mode: SourceMode; label: string }[] = [
 ]
 
 interface SourceTogglesProps {
-  activeSources: Set<string>
   sourceModes: Record<string, SourceMode>
   onToggleSource: (sourceId: string) => void
   onSourceModeChange: (sourceId: string, mode: SourceMode) => void
 }
 
-export default function SourceToggles({ activeSources, sourceModes, onToggleSource, onSourceModeChange }: SourceTogglesProps) {
+export default function SourceToggles({ sourceModes, onToggleSource, onSourceModeChange }: SourceTogglesProps) {
   return (
     <div data-testid="layers-panel">
       {SOURCES.map(source => {
-        const active = activeSources.has(source.id)
-        const currentMode = sourceModes[source.id] ?? '0db'
+        const currentMode = sourceModes[source.id] ?? 'off'
+        const active = currentMode !== 'off'
 
         if (!source.hasEndModes) {
           // Buildings: simple on/off toggle (same as before)

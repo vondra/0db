@@ -1,39 +1,12 @@
 import { useState, useRef, useCallback } from 'react'
-import SourceToggles from './SourceToggles'
-import OverlayControls from './OverlayControls'
-import SoundPathSection from './SoundPathSection'
-import AdvancedSection from './AdvancedSection'
-import type { RealEstateFilters } from './RealEstateLayer'
-import type { SourceMode } from '../hooks/useUrlState'
+import LayerControlsBody, { type LayerControlsBodyProps } from './LayerControlsBody'
 
-interface LayersPanelProps {
+interface LayersPanelProps extends LayerControlsBodyProps {
   open: boolean
   onClose: () => void
-  activeSources: Set<string>
-  sourceModes: Record<string, SourceMode>
-  onToggleSource: (sourceId: string) => void
-  onSourceModeChange: (sourceId: string, mode: SourceMode) => void
-  propagationFactors: Record<string, boolean>
-  onPropagationChange: (factors: Record<string, boolean>) => void
-  quietClustersEnabled: boolean
-  onQuietClustersChange: (enabled: boolean) => void
-  quietThreshold: number
-  onQuietThresholdChange: (threshold: number) => void
-  realEstateFilters: RealEstateFilters
-  onRealEstateChange: (filters: RealEstateFilters) => void
-  rasterOverlays: Record<string, boolean>
-  onRasterOverlayChange: (overlays: Record<string, boolean>) => void
 }
 
-export default function LayersPanel({
-  open, onClose,
-  activeSources, sourceModes, onToggleSource, onSourceModeChange,
-  propagationFactors, onPropagationChange,
-  quietClustersEnabled, onQuietClustersChange,
-  quietThreshold, onQuietThresholdChange,
-  realEstateFilters, onRealEstateChange,
-  rasterOverlays, onRasterOverlayChange,
-}: LayersPanelProps) {
+export default function LayersPanel({ open, onClose, ...body }: LayersPanelProps) {
   const [dismissing, setDismissing] = useState(false)
   const [dragOffset, setDragOffset] = useState(0)
   const dragRef = useRef({ startY: 0, isDragging: false })
@@ -97,26 +70,7 @@ export default function LayersPanel({
         <div className="w-10 h-1 bg-muted-foreground/30 rounded-full" />
       </div>
 
-      <SourceToggles activeSources={activeSources} sourceModes={sourceModes} onToggleSource={onToggleSource} onSourceModeChange={onSourceModeChange} />
-      <div className="my-2 border-t border-border" />
-      <OverlayControls
-        quietClustersEnabled={quietClustersEnabled}
-        onQuietClustersChange={onQuietClustersChange}
-        quietThreshold={quietThreshold}
-        onQuietThresholdChange={onQuietThresholdChange}
-        realEstateFilters={realEstateFilters}
-        onRealEstateChange={onRealEstateChange}
-      />
-      <div className="my-2 border-t border-border" />
-      <SoundPathSection
-        propagationFactors={propagationFactors}
-        onPropagationChange={onPropagationChange}
-      />
-      <div className="my-2 border-t border-border" />
-      <AdvancedSection
-        rasterOverlays={rasterOverlays}
-        onRasterOverlayChange={onRasterOverlayChange}
-      />
+      <LayerControlsBody {...body} dividerSpacing="comfortable" />
     </div>
   )
 }

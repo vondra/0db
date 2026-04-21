@@ -22,7 +22,6 @@ interface MapViewProps {
   selectedLocation?: SelectedLocation | null
   initialCenter?: [number, number]
   initialZoom?: number
-  activeSources?: Set<string>
   sourceModes?: Record<string, SourceMode>
   propagationFactors?: Record<string, boolean>
   basemap?: BasemapId
@@ -30,8 +29,7 @@ interface MapViewProps {
   onQuietHexUpdate?: (update: QuietHexUpdate) => void
   onDetailData?: (data: NoiseComputeData | null) => void
   onDetailPositionChange?: (pos: { lat: number; lng: number } | null) => void
-  initialDetailPosition?: { lat: number; lng: number } | null
-  onSelectedPointChange?: (point: { lat: number; lng: number } | null) => void
+  detailPosition?: { lat: number; lng: number } | null
   quietHexData?: QuietHex[]
   quietVisible?: boolean
   quietDataRes?: number | null
@@ -40,14 +38,14 @@ interface MapViewProps {
   highlightGeometry?: any | null
   isochronGeojson?: GeoJSON.Feature | null
   realEstateFilters?: import('./RealEstateLayer').RealEstateFilters
+  onPropertySelect?: (property: import('./RealEstateLayer').Property | null) => void
   rasterOverlays?: Record<string, boolean>
 }
 
 export default function MapView({
-  selectedLocation, initialCenter, initialZoom, activeSources, sourceModes, propagationFactors,
-  basemap, onViewChange, onQuietHexUpdate, onDetailData, onDetailPositionChange,
-  initialDetailPosition, onSelectedPointChange,
-  quietHexData, quietVisible, quietDataRes, quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters, rasterOverlays,
+  selectedLocation, initialCenter, initialZoom, sourceModes, propagationFactors,
+  basemap, onViewChange, onQuietHexUpdate, onDetailData, onDetailPositionChange, detailPosition,
+  quietHexData, quietVisible, quietDataRes, quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters, onPropertySelect, rasterOverlays,
 }: MapViewProps) {
   const center = initialCenter ?? [49.8, 15.5]
   const zoom = initialZoom ?? 8
@@ -84,11 +82,10 @@ export default function MapView({
       mapStyle={mapStyle}
       fadeDuration={0}
       maxZoom={16}
-      attributionControl={false}
+      attributionControl={{ compact: true }}
     >
       <NavigationControl position="bottom-left" showCompass={false} />
       <HexLayer
-        activeSources={activeSources}
         sourceModes={sourceModes}
         propagationFactors={propagationFactors}
         onQuietHexUpdate={onQuietHexUpdate}
@@ -102,16 +99,15 @@ export default function MapView({
         threshold={quietThreshold ?? 35}
       />
       <ContributorHighlight geometry={highlightGeometry ?? null} />
-      {realEstateFilters && <RealEstateLayer filters={realEstateFilters} />}
+      {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
       <IsochronLayer geojson={isochronGeojson ?? null} />
       <FlyToLocation location={selectedLocation ?? null} onArrived={handleArrived} />
       <DetailPopup
+        detailPosition={detailPosition ?? null}
         triggerPosition={flyToPos}
         onDetailData={onDetailData}
         onDetailPositionChange={onDetailPositionChange}
-        initialDetailPosition={initialDetailPosition}
-        onSelectedPointChange={onSelectedPointChange}
       />
       {onViewChange && <MapStateSync onViewChange={onViewChange} />}
     </Map>

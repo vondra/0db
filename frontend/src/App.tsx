@@ -1,6 +1,5 @@
-import { useState, useCallback, useRef, useMemo } from 'react'
+import { useState, useCallback, useRef, lazy, Suspense } from 'react'
 import { Tooltip } from '@base-ui/react/tooltip'
-import AboutPage from './components/AboutPage'
 import MapView from './components/MapView'
 import SearchBar from './components/SearchBar'
 import IsochronPanel from './components/IsochronPanel'
@@ -9,19 +8,27 @@ import DetailCard from './components/DetailCard'
 import LayersPanel from './components/LayersPanel'
 import MobileDetailSheet from './components/MobileDetailSheet'
 import BasemapBar from './components/BasemapBar'
+import PropertyCard from './components/PropertyCard'
+import FloatingCard from './components/FloatingCard'
 import { useUrlState, type SourceMode } from './hooks/useUrlState'
 import type { SelectedLocation } from './components/FlyToLocation'
-import type { RealEstateFilters } from './components/RealEstateLayer'
+import type { RealEstateFilters, Property } from './components/RealEstateLayer'
 import type { NoiseComputeData } from './components/DetailPopup'
 import type { QuietHex, QuietHexUpdate } from './components/HexLayer'
 import { DEFAULT_BASEMAP, type BasemapId } from './utils/basemaps'
+
+const AboutPage = lazy(() => import('./components/AboutPage'))
 
 export default function App() {
   const isAbout = window.location.pathname.startsWith('/about')
   const { initial, updateUrl } = useUrlState()
 
   if (isAbout) {
-    return <AboutPage />
+    return (
+      <Suspense fallback={<div className="h-screen w-screen bg-[#fafaf8]" />}>
+        <AboutPage />
+      </Suspense>
+    )
   }
 
   const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
@@ -40,10 +47,6 @@ export default function App() {
     return modes
   })
 
-  // Derive activeSources for backwards compat — memoize to avoid new Set reference each render
-  const activeSources = useMemo(() => new Set(
-    Object.entries(sourceModes).filter(([, m]) => m !== 'off').map(([id]) => id)
-  ), [sourceModes])
   const [propagationFactors, setPropagationFactors] = useState<Record<string, boolean>>(() => {
     const factors: Record<string, boolean> = {
       terrain: true,
@@ -67,6 +70,7 @@ export default function App() {
   const [realEstateFilters, setRealEstateFilters] = useState<RealEstateFilters>({
     enabled: false, propertyType: 'all', listingType: 'all', maxNoise: 35,
   })
+  const [selectedProperty, setSelectedProperty] = useState<Property | null>(null)
   const [rasterOverlays, setRasterOverlays] = useState<Record<string, boolean>>(
     initial.rasterOverlays ?? { dem: false, building: false, forest: false, barriers: false }
   )
@@ -144,6 +148,13 @@ export default function App() {
     setQuietVisible(false)
     setSourceModes(prev => {
       const next = { ...prev, [sourceId]: mode }
+      // Enforce single-diff: demote any other source currently in 'diff' to '0db'.
+      // HexLayer only renders the first diff source; multi-diff would silently drop the rest.
+      if (mode === 'diff') {
+        for (const [id, m] of Object.entries(prev)) {
+          if (id !== sourceId && m === 'diff') next[id] = '0db'
+        }
+      }
       syncUrl({ sourceModes: next })
       return next
     })
@@ -241,7 +252,6 @@ export default function App() {
         <div className="hidden md:flex absolute top-3 right-3 flex-col gap-2 w-[320px]">
           <div className="pointer-events-auto">
             <ControlCard
-              activeSources={activeSources}
               sourceModes={sourceModes}
               onToggleSource={handleToggleSource}
               onSourceModeChange={handleSourceModeChange}
@@ -264,6 +274,16 @@ export default function App() {
               onHighlight={setHighlightGeometry}
             />
           </div>
+          {selectedProperty && (
+            <div className="pointer-events-auto">
+              <FloatingCard>
+                <PropertyCard
+                  property={selectedProperty}
+                  onClose={() => setSelectedProperty(null)}
+                />
+              </FloatingCard>
+            </div>
+          )}
         </div>
 
         <div className="pointer-events-auto">
@@ -275,7 +295,6 @@ export default function App() {
         selectedLocation={selectedLocation}
         initialCenter={[initial.lat, initial.lng]}
         initialZoom={initial.zoom}
-        activeSources={activeSources}
         sourceModes={sourceModes}
         propagationFactors={propagationFactors}
         basemap={basemap}
@@ -284,7 +303,7 @@ export default function App() {
         onQuietHexUpdate={handleQuietHexUpdate}
         onDetailData={handleDetailData}
         onDetailPositionChange={handleDetailPositionChange}
-        initialDetailPosition={initial.detailPosition}
+        detailPosition={detailPosition}
         quietHexData={quietHexData}
         quietVisible={quietVisible}
         quietDataRes={quietDataRes}
@@ -292,6 +311,7 @@ export default function App() {
         quietThreshold={quietThreshold}
         highlightGeometry={highlightGeometry}
         realEstateFilters={realEstateFilters}
+        onPropertySelect={setSelectedProperty}
         rasterOverlays={rasterOverlays}
       />
 
@@ -316,7 +336,6 @@ export default function App() {
         <LayersPanel
           open={layersOpen}
           onClose={() => setLayersOpen(false)}
-          activeSources={activeSources}
           sourceModes={sourceModes}
           onToggleSource={handleToggleSource}
           onSourceModeChange={handleSourceModeChange}

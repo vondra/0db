@@ -1,38 +1,11 @@
 import { useState } from 'react'
 import { ChevronUp, Layers3 } from 'lucide-react'
 import FloatingCard from './FloatingCard'
-import SourceToggles from './SourceToggles'
-import OverlayControls from './OverlayControls'
-import SoundPathSection from './SoundPathSection'
-import AdvancedSection from './AdvancedSection'
-import type { RealEstateFilters } from './RealEstateLayer'
-import type { SourceMode } from '../hooks/useUrlState'
+import LayerControlsBody, { type LayerControlsBodyProps } from './LayerControlsBody'
 
-interface ControlCardProps {
-  activeSources: Set<string>
-  sourceModes: Record<string, SourceMode>
-  onToggleSource: (sourceId: string) => void
-  onSourceModeChange: (sourceId: string, mode: SourceMode) => void
-  propagationFactors: Record<string, boolean>
-  onPropagationChange: (factors: Record<string, boolean>) => void
-  quietClustersEnabled: boolean
-  onQuietClustersChange: (enabled: boolean) => void
-  quietThreshold: number
-  onQuietThresholdChange: (threshold: number) => void
-  realEstateFilters: RealEstateFilters
-  onRealEstateChange: (filters: RealEstateFilters) => void
-  rasterOverlays: Record<string, boolean>
-  onRasterOverlayChange: (overlays: Record<string, boolean>) => void
-}
+type ControlCardProps = LayerControlsBodyProps
 
-export default function ControlCard({
-  activeSources, sourceModes, onToggleSource, onSourceModeChange,
-  propagationFactors, onPropagationChange,
-  quietClustersEnabled, onQuietClustersChange,
-  quietThreshold, onQuietThresholdChange,
-  realEstateFilters, onRealEstateChange,
-  rasterOverlays, onRasterOverlayChange,
-}: ControlCardProps) {
+export default function ControlCard(props: ControlCardProps) {
   const [collapsed, setCollapsed] = useState(false)
 
   if (collapsed) {
@@ -60,32 +33,7 @@ export default function ControlCard({
         <ChevronUp className="size-3.5" />
       </button>
 
-      <SourceToggles activeSources={activeSources} sourceModes={sourceModes} onToggleSource={onToggleSource} onSourceModeChange={onSourceModeChange} />
-
-      <div className="my-1.5 border-t border-border" />
-
-      <OverlayControls
-        quietClustersEnabled={quietClustersEnabled}
-        onQuietClustersChange={onQuietClustersChange}
-        quietThreshold={quietThreshold}
-        onQuietThresholdChange={onQuietThresholdChange}
-        realEstateFilters={realEstateFilters}
-        onRealEstateChange={onRealEstateChange}
-      />
-
-      <div className="my-1.5 border-t border-border" />
-
-      <SoundPathSection
-        propagationFactors={propagationFactors}
-        onPropagationChange={onPropagationChange}
-      />
-
-      <div className="my-1.5 border-t border-border" />
-
-      <AdvancedSection
-        rasterOverlays={rasterOverlays}
-        onRasterOverlayChange={onRasterOverlayChange}
-      />
+      <LayerControlsBody {...props} dividerSpacing="compact" />
     </FloatingCard>
   )
 }
