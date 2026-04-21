@@ -20,6 +20,7 @@ import { execSync } from 'node:child_process'
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Uint8, Uint16 } from 'apache-arrow'
+import proj4 from 'proj4'
 import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
 import { shouldOverwrite } from './lib/provenance.js'
 
@@ -35,20 +36,67 @@ const forceDownload = process.argv.includes('--force-download')
 
 const ATOM_URL = 'https://www.catastro.hacienda.gob.es/INSPIRE/buildings/ES.SDGC.BU.atom.xml'
 
-// Key provinces to process (Catastro uses 2-digit province codes)
-// Each province has a GML download in the ATOM feed
+// Spanish Catastro uses 2-digit INE province codes.
+// National Catastro (catastro.hacienda.gob.es) covers everything EXCEPT
+// País Vasco (01 Álava, 20 Gipuzkoa, 48 Bizkaia) and Navarra (31) —
+// those regions have their own foral cadastres. We include 48 anyway
+// because it's present in the ATOM feed (foral Bizkaia INSPIRE service).
 const TARGET_PROVINCES: { code: string; name: string }[] = [
-  { code: '28', name: 'Madrid' },
-  { code: '08', name: 'Barcelona' },
-  { code: '46', name: 'Valencia' },
-  { code: '41', name: 'Sevilla' },
-  { code: '50', name: 'Zaragoza' },
-  { code: '29', name: 'Malaga' },
-  { code: '48', name: 'Bizkaia' },       // Bilbao
+  { code: '01', name: 'Araba' },
+  { code: '02', name: 'Albacete' },
   { code: '03', name: 'Alicante' },
+  { code: '04', name: 'Almeria' },
+  { code: '05', name: 'Avila' },
+  { code: '06', name: 'Badajoz' },
+  { code: '07', name: 'Baleares' },
+  { code: '08', name: 'Barcelona' },
+  { code: '09', name: 'Burgos' },
+  { code: '10', name: 'Caceres' },
+  { code: '11', name: 'Cadiz' },
+  { code: '12', name: 'Castellon' },
+  { code: '13', name: 'Ciudad Real' },
+  { code: '14', name: 'Cordoba' },
+  { code: '15', name: 'A Coruna' },
+  { code: '16', name: 'Cuenca' },
+  { code: '17', name: 'Girona' },
+  { code: '18', name: 'Granada' },
+  { code: '19', name: 'Guadalajara' },
+  { code: '20', name: 'Gipuzkoa' },
+  { code: '21', name: 'Huelva' },
+  { code: '22', name: 'Huesca' },
+  { code: '23', name: 'Jaen' },
+  { code: '24', name: 'Leon' },
+  { code: '25', name: 'Lleida' },
+  { code: '26', name: 'La Rioja' },
+  { code: '27', name: 'Lugo' },
+  { code: '28', name: 'Madrid' },
+  { code: '29', name: 'Malaga' },
+  { code: '30', name: 'Murcia' },
+  { code: '31', name: 'Navarra' },
+  { code: '32', name: 'Ourense' },
+  { code: '33', name: 'Asturias' },
+  { code: '34', name: 'Palencia' },
+  { code: '35', name: 'Las Palmas' },           // Gran Canaria, Fuerteventura, Lanzarote
+  { code: '36', name: 'Pontevedra' },
+  { code: '37', name: 'Salamanca' },
+  { code: '38', name: 'Santa Cruz de Tenerife' }, // Tenerife, La Palma, La Gomera, El Hierro
+  { code: '39', name: 'Cantabria' },
+  { code: '40', name: 'Segovia' },
+  { code: '41', name: 'Sevilla' },
+  { code: '42', name: 'Soria' },
+  { code: '43', name: 'Tarragona' },
+  { code: '44', name: 'Teruel' },
+  { code: '45', name: 'Toledo' },
+  { code: '46', name: 'Valencia' },
+  { code: '47', name: 'Valladolid' },
+  { code: '48', name: 'Bizkaia' },
+  { code: '49', name: 'Zamora' },
+  { code: '50', name: 'Zaragoza' },
+  { code: '51', name: 'Ceuta' },
+  { code: '52', name: 'Melilla' },
 ]
 
-const CONCURRENCY = 4
+const CONCURRENCY = 2
 
 // ── Types ──
 
@@ -72,11 +120,14 @@ async function downloadCatastro(): Promise<CatastroBuilding[]> {
 
   mkdirSync(CACHE_DIR, { recursive: true })
 
-  // Step 1a: Download the ATOM feed to discover per-province URLs
+  // Step 1a: Download the ATOM feed to discover per-province URLs.
+  // Catastro INSPIRE ATOM feeds are served as ISO-8859-1 ("encoding="ISO-8859-1"
+  // in the XML prolog). fetch().text() would mojibake Ñ/É in URL paths,
+  // breaking downloads for every municipality with a non-ASCII name.
   console.log('  Downloading Catastro INSPIRE ATOM feed...')
   const atomRes = await fetch(ATOM_URL, { signal: AbortSignal.timeout(60_000) })
   if (!atomRes.ok) throw new Error(`ATOM feed download failed: ${atomRes.status}`)
-  const atomXml = await atomRes.text()
+  const atomXml = new TextDecoder('iso-8859-1').decode(await atomRes.arrayBuffer())
   console.log(`  ATOM feed: ${(atomXml.length / 1024).toFixed(0)} KB`)
 
   // Parse province feed URLs from ATOM
@@ -141,7 +192,8 @@ async function downloadCatastro(): Promise<CatastroBuilding[]> {
         errors++
         continue
       }
-      const provAtom = await provRes.text()
+      // Sub-feeds are also ISO-8859-1; decode with the right codec.
+      const provAtom = new TextDecoder('iso-8859-1').decode(await provRes.arrayBuffer())
 
       // Extract municipality GML zip URLs from province feed
       // Catastro structure: each entry has <link> to a ZIP containing GML
@@ -167,6 +219,7 @@ async function downloadCatastro(): Promise<CatastroBuilding[]> {
       }
 
       console.log(`  [${prov.code}] ${muniUrls.length} municipality GML ZIPs found`)
+      if (muniUrls.length > 0) console.log(`    first URL: ${muniUrls[0].url}`)
 
       // Download and parse in batches
       let provBuildings = 0
@@ -175,12 +228,33 @@ async function downloadCatastro(): Promise<CatastroBuilding[]> {
 
         const fetches = await Promise.allSettled(
           batch.map(async ({ code, url }) => {
-            const res = await fetch(url, { signal: AbortSignal.timeout(120_000) })
-            if (!res.ok) return { code, buf: null }
-            const buf = Buffer.from(await res.arrayBuffer())
-            return { code, buf }
+            const encodedUrl = encodeURI(url)
+            try {
+              // catastro.hacienda.gob.es throttles/drops Node's default
+              // User-Agent ("undici/..."). A browser-like UA passes the WAF.
+              const res = await fetch(encodedUrl, {
+                signal: AbortSignal.timeout(60_000),
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+                  'Accept': 'application/zip, */*',
+                },
+              })
+              if (!res.ok) { console.log(`    HTTP ${res.status} ${code}`); return { code, buf: null } }
+              const buf = Buffer.from(await res.arrayBuffer())
+              if (buf.length < 1000 || !(buf[0] === 0x50 && buf[1] === 0x4b)) {
+                console.log(`    BAD ${code}: len=${buf.length} magic=${buf.slice(0,4).toString('hex')}`)
+                return { code, buf: null }
+              }
+              return { code, buf }
+            } catch (e) {
+              console.log(`    ERR ${code}: ${(e as Error).message}`)
+              return { code, buf: null }
+            }
           })
         )
+        // 200ms breath between batches — WAF drops sustained rapid-fire
+        // requests even with a good User-Agent.
+        await new Promise(r => setTimeout(r, 200))
 
         for (const r of fetches) {
           if (r.status !== 'fulfilled' || !r.value.buf) { errors++; continue }
@@ -252,10 +326,13 @@ async function parseGmlBuildings(gmlPath: string): Promise<CatastroBuilding[]> {
   const stat = readFileSync(gmlPath)
   const gml = stat.toString('utf-8')
 
-  // Try matching building blocks with numberOfFloorsAboveGround
-  // Pattern 1: bu-ext:BuildingExtended or bu-core2d:Building members
-  // The GML namespace varies, so use flexible regex
-  const buildingRegex = /<(?:[\w-]+:)?(?:Building|BuildingExtended)\b[^>]*>([\s\S]*?)<\/(?:[\w-]+:)?(?:Building|BuildingExtended)>/g
+  // Try matching building blocks with numberOfFloorsAboveGround.
+  // INSPIRE BU model: building.gml outer polygons usually have no floor data
+  // (nil=unpopulated); BuildingPart.gml interior subdivisions carry the
+  // actual numberOfFloorsAboveGround integers. We match both + BuildingExtended.
+  // \b after Building is insufficient since "BuildingPart" and "BuildingExtended"
+  // both start with "Building"; list all three explicitly and anchor on '\b' after.
+  const buildingRegex = /<(?:[\w-]+:)?(?:BuildingExtended|BuildingPart|Building)\b[^>]*>([\s\S]*?)<\/(?:[\w-]+:)?(?:BuildingExtended|BuildingPart|Building)>/g
   let m
   while ((m = buildingRegex.exec(gml)) !== null) {
     const block = m[1]
@@ -311,7 +388,6 @@ async function parseGmlBuildings(gmlPath: string): Promise<CatastroBuilding[]> {
           // Geographic coords: pairs of (lat, lon) or (lon, lat)
           if (coords.length >= 4) {
             let sumLat = 0, sumLon = 0, count = 0
-            // Determine axis order from first coordinate pair
             const first = coords[0]
             const isLatFirst = first > 20 && first < 50
 
@@ -323,13 +399,34 @@ async function parseGmlBuildings(gmlPath: string): Promise<CatastroBuilding[]> {
               else { sumLon += a; sumLat += b }
               count++
             }
+            if (count > 0) { lat = sumLat / count; lon = sumLon / count }
+          }
+        } else {
+          // UTM — Spanish national catastro publishes in UTM:
+          //   EPSG:25828 (zone 28N, Canary Islands)
+          //   EPSG:25829 (zone 29N, Galicia)
+          //   EPSG:25830 (zone 30N, mainland Spain)
+          //   EPSG:25831 (zone 31N, Catalonia)
+          // posList is (easting northing) pairs in meters.
+          const zoneMatch = srs.match(/2583[0-9]|2582[89]/)
+          if (zoneMatch && coords.length >= 4) {
+            const epsg = `EPSG:${zoneMatch[0]}`
+            if (!proj4.defs(epsg)) {
+              const zone = parseInt(epsg.slice(-2))
+              proj4.defs(epsg, `+proj=utm +zone=${zone} +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs`)
+            }
+            let sumEast = 0, sumNorth = 0, count = 0
+            for (let i = 0; i < coords.length - 1; i += 2) {
+              const e = coords[i], n = coords[i + 1]
+              if (isNaN(e) || isNaN(n)) continue
+              sumEast += e; sumNorth += n; count++
+            }
             if (count > 0) {
-              lat = sumLat / count
-              lon = sumLon / count
+              const [lonOut, latOut] = proj4(epsg, 'EPSG:4326', [sumEast / count, sumNorth / count])
+              lon = lonOut; lat = latOut
             }
           }
         }
-        // UTM coords skipped in v1
       }
     }
 
