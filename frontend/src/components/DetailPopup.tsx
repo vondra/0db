@@ -109,13 +109,8 @@ function MetadataRows({ c }: { c: Contributor }) {
       'Values from the loudest segment.',
       ...(hasSpeedRange ? ['Speed varies across grouped segments.'] : []),
     ], 18, 12)
-    // Effective vs nominal ratio — when a per-way factor fires (oneway, access,
-    // lane_ratio) the engine models fewer vehicles per OSM way than the road
-    // total. Only disclose when the divergence is > 1 %.
     const effRatio = nomTotal > 0 ? effTotal / nomTotal : 1
     const hasPerWayDiscount = Math.abs(effRatio - 1) > 0.01
-    const accessFactorLabel = (accessKind: string, factor: number): string =>
-      `× ${factor.toFixed(2)} ${accessKind}`
     const knownOneway = m.oneway ? 0.5 : 1.0
     const residualRatio = effRatio / knownOneway
     const hasResidual = Math.abs(residualRatio - 1) > 0.01
@@ -136,8 +131,8 @@ function MetadataRows({ c }: { c: Contributor }) {
             '',
             'Engine models per OSM way:',
             ['  Per way', `${fmtInt(Math.round(effTotal))}/day`] as [string, string],
-            ...(m.oneway ? [['  ', accessFactorLabel('one-way split', 0.5)] as [string, string]] : []),
-            ...(hasResidual ? [['  ', accessFactorLabel('access / lanes', residualRatio)] as [string, string]] : []),
+            ...(m.oneway ? [['  ', '× 0.50 one-way split'] as [string, string]] : []),
+            ...(hasResidual ? [['  ', `× ${residualRatio.toFixed(2)} access / lanes`] as [string, string]] : []),
           ]
         : []),
       '',

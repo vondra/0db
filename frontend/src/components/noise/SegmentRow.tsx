@@ -32,8 +32,6 @@ export function SegmentRow({
   const [expanded, setExpanded] = useState(false)
   const lden = trace.received_lden.full
   const subtype = subtypeLabel(trace.kind, trace.subtype)
-  // Engine can emit names like "motorway_link osm:123" when a way has no ref
-  // or name tag. Don't repeat the subtype on the subtitle line in that case.
   const headingName = segmentName(trace)
   const showSubtype = !headingName.toLowerCase().startsWith(String(trace.subtype).toLowerCase())
 

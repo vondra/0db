@@ -16,6 +16,19 @@ pub fn bands_energy_to_db(bands: &[f64; NUM_BANDS]) -> [f64; NUM_BANDS] {
     std::array::from_fn(|j| 10.0 * bands[j].max(1e-30).log10())
 }
 
+/// Trace name for unnamed + ref-less OSM ways. Prefixing the class/type name
+/// means SegmentRow shows a useful subtype hint instead of a bare "osm:<id>".
+#[inline]
+fn seg_name_from_tags(ref_tag: &str, name_tag: &str, subtype: &str, osm_id: i64) -> String {
+    if !ref_tag.is_empty() {
+        ref_tag.to_string()
+    } else if !name_tag.is_empty() {
+        name_tag.to_string()
+    } else {
+        format!("{} osm:{}", subtype, osm_id)
+    }
+}
+
 /// A-weighted dB(A) summary of a per-band *level* array (emission Lw or
 /// received bands). Matches `iso9613::a_weighted_total` which is the same
 /// aggregation the pipeline uses for totals.
@@ -521,13 +534,7 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
     } = inputs;
 
     let rail_type = rail_type_name(seg.rail_type);
-    let seg_name = if !seg.rail_ref.is_empty() {
-        seg.rail_ref.clone()
-    } else if !seg.name.is_empty() {
-        seg.name.clone()
-    } else {
-        format!("{} osm:{}", rail_type, seg.osm_id)
-    };
+    let seg_name = seg_name_from_tags(&seg.rail_ref, &seg.name, rail_type, seg.osm_id);
 
     let vegetation = vegetation_trace(
         veg_atten,
@@ -619,17 +626,7 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
         lw_bands,
     } = inputs;
 
-    // Unnamed + ref-less segments used to fall back to "osm:<id>" alone,
-    // which rendered as a bare id in SegmentRow with the class hidden in the
-    // subtype line. Prefix the class name so the row says "motorway_link
-    // osm:123" instead of "osm:123".
-    let seg_name = if !seg.road_ref.is_empty() {
-        seg.road_ref.clone()
-    } else if !seg.name.is_empty() {
-        seg.name.clone()
-    } else {
-        format!("{} osm:{}", class_name, seg.osm_id)
-    };
+    let seg_name = seg_name_from_tags(&seg.road_ref, &seg.name, class_name, seg.osm_id);
 
     let traffic_source = if seg.traffic_source == 1 && seg.aadt_light > 0 {
         "matched_external"

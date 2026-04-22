@@ -72,6 +72,15 @@ export function subtypeLabel(sourceType: string, subtype: string): string {
   return SUBTYPE_LABELS[sourceType]?.[subtype] || subtype.replace(/_/g, ' ')
 }
 
+const LINE_SOURCE_KINDS = new Set(['road', 'railway', 'aircraft_ground'])
+
+/** True for sources modelled as line sources (Lw expressed as per-meter
+ * density L'w in dB(A)/m). Point sources (building / industrial) and
+ * airborne aircraft (Doc 29 SEL) return false. */
+export function isLineSourceKind(kind: string): boolean {
+  return LINE_SOURCE_KINDS.has(kind)
+}
+
 export function formatDist(m: number): string {
   if (m === 0) return 'overhead'
   if (m < 1000) return `${m} m`

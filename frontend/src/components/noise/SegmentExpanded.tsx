@@ -3,7 +3,13 @@ import type { EmissionTrace, SegmentTrace } from '../../types/noise'
 import { ldenToColor } from '../../utils/noise-colors'
 import { HoverText } from '../ui/info-tip'
 import { PathProfileDiagram } from './PathProfileDiagram'
-import { PERIOD_LABELS_DETAIL, PERIOD_TOOLTIP, roadSourceDescription, railTrainSourceLine } from './shared'
+import {
+  PERIOD_LABELS_DETAIL,
+  PERIOD_TOOLTIP,
+  isLineSourceKind,
+  roadSourceDescription,
+  railTrainSourceLine,
+} from './shared'
 
 // CNOSSOS period weights (hours in each bucket, out of 24). Labels
 // share PERIOD_LABELS_DETAIL with other tabs so the wording matches.
@@ -69,7 +75,10 @@ function InlineTable({ rows }: { rows: [string | React.ReactNode, React.ReactNod
 function Section1Source({ trace }: { trace: SegmentTrace }) {
   const emissionRowsList = useMemo(() => emissionInputRows(trace.emission), [trace.emission])
   const lwRow = useMemo(() => computeLwRow(trace), [trace])
-  const rows = lwRow ? [...emissionRowsList, lwRow] : emissionRowsList
+  const rows = useMemo(
+    () => (lwRow ? [...emissionRowsList, lwRow] : emissionRowsList),
+    [emissionRowsList, lwRow],
+  )
   return (
     <Section>
       <InlineTable rows={rows} />
@@ -77,31 +86,41 @@ function Section1Source({ trace }: { trace: SegmentTrace }) {
   )
 }
 
-// Compute the Lw emission row. Line sources (road / railway / aircraft_ground)
-// have a per-meter line-source power density L'w [dB(A)/m]; point sources
-// (building / industrial) have a total Lw [dB(A)]. Airborne aircraft skip —
-// SEL/Lmax instead of Lw, but they render via AirborneRow, not SegmentExpanded.
+const LW_LINE_SOURCE = {
+  unit: 'dB(A)/m',
+  symbol: "L'w",
+  label: "L'w (day)",
+  desc: 'line-source power density',
+} as const
+const LW_POINT_SOURCE = {
+  unit: 'dB(A)',
+  symbol: 'Lw',
+  label: 'Lw (day)',
+  desc: 'point-source sound power',
+} as const
+const POINT_SOURCE_KINDS = new Set(['building', 'industrial'])
+
 function computeLwRow(trace: SegmentTrace): [React.ReactNode, React.ReactNode] | null {
   const lw = trace.lw_db_a
   if (!lw) return null
   const kind = trace.emission.kind
-  const isLineSource = kind === 'road' || kind === 'railway' || kind === 'aircraft_ground'
-  const isPointSource = kind === 'building' || kind === 'industrial'
-  if (!isLineSource && !isPointSource) return null
-  const unit = isLineSource ? 'dB(A)/m' : 'dB(A)'
-  const label = isLineSource ? "L'w (day)" : 'Lw (day)'
-  const symbol = isLineSource ? "L'w" : 'Lw'
+  const cfg = isLineSourceKind(kind)
+    ? LW_LINE_SOURCE
+    : POINT_SOURCE_KINDS.has(kind)
+      ? LW_POINT_SOURCE
+      : null
+  if (!cfg) return null
   const tooltip =
-    `${symbol} — ${isLineSource ? 'line-source power density' : 'point-source sound power'}, A-weighted\n\n` +
-    `  day      ${lw.day.toFixed(1).padStart(6)} ${unit}\n` +
-    `  evening  ${lw.evening.toFixed(1).padStart(6)} ${unit}\n` +
-    `  night    ${lw.night.toFixed(1).padStart(6)} ${unit}\n\n` +
+    `${cfg.symbol} — ${cfg.desc}, A-weighted\n\n` +
+    `  day      ${lw.day.toFixed(1).padStart(6)} ${cfg.unit}\n` +
+    `  evening  ${lw.evening.toFixed(1).padStart(6)} ${cfg.unit}\n` +
+    `  night    ${lw.night.toFixed(1).padStart(6)} ${cfg.unit}\n\n` +
     `Day value is representative (longest, loudest period for\nmost sources). Per-band values live in §5 under "Emission".`
   return [
     <HoverText title={tooltip} className="no-underline">
-      <span className="cursor-help">{label}</span>
+      <span className="cursor-help">{cfg.label}</span>
     </HoverText>,
-    `${lw.day.toFixed(1)} ${unit}`,
+    `${lw.day.toFixed(1)} ${cfg.unit}`,
   ]
 }
 
