@@ -25,15 +25,13 @@ function bandsTooltip(
   {
     title,
     signed = true,
-    highlightIdx = 4,
     note,
-  }: { title: string; signed?: boolean; highlightIdx?: number; note?: string } = { title: '' },
+  }: { title: string; signed?: boolean; note?: string } = { title: '' },
 ) {
   const lines = bands.map((v, i) => {
     const label = BAND_LABELS[i] ?? `${BAND_FREQS[i]} Hz`
     const sign = signed && v > 0 ? '+' : ''
-    const mark = i === highlightIdx ? ' ←' : ''
-    return `  ${label.padEnd(8)} ${sign}${v.toFixed(2).padStart(7)} dB${mark}`
+    return `  ${label.padEnd(8)} ${sign}${v.toFixed(2).padStart(7)} dB`
   })
   const header = title ? `${title}\n\n` : ''
   const footer = note ? `\n\n${note}` : ''
@@ -206,7 +204,6 @@ function Section2Baseline({ trace }: { trace: SegmentTrace }) {
               title={bandsTooltip(baseline.atmospheric_bands, {
                 title: 'Atmospheric absorption — α[i] × d/1000 per band',
                 signed: true,
-                highlightIdx: 4,
                 note:
                   'ISO 9613-2 §7.2 standard atmosphere (15 °C, 70 % RH). Higher\nfrequencies absorb more. Scalar above is A-weighted ΔL_A from\nthe full vs no_atmospheric variant comparison.',
               })}
@@ -239,7 +236,6 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
       <HoverText
         title={bandsTooltip(ground.attenuation_bands, {
           title: `Ground effect — per band (G = ${ground.factor_g.toFixed(2)})`,
-          highlightIdx: 4,
           note:
             'SIGNED: over soft ground CF[i] < 0 at 63/125 Hz, so ground can\nBOOST LF energy. Positive ΔL_A means ground added dB.',
         })}
@@ -254,8 +250,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           title: `Terrain diffraction — per band (δ = ${terrain.delta_m.toFixed(2)} m${
             terrain.is_double ? ', double' : ''
           })`,
-          highlightIdx: 4,
-          note: 'Fresnel/Pierce model. δ = path difference at the apex.',
+          note: 'Fresnel/Pierce model. δ = path difference at the apex.\nScalar above = A-weighted ΔL_A (full − no_terrain Lden).',
         })}
       >
         <span className="cursor-help">
@@ -272,8 +267,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
                 1,
               )} m @ t=${screening.obstacle.t.toFixed(2)})`
             : 'Building screening — per band',
-          highlightIdx: 4,
-          note: 'Same Fresnel model applied to building rooftops.',
+          note: 'Same Fresnel model applied to building rooftops.\nScalar above = A-weighted ΔL_A (full − no_screening Lden).',
         })}
       >
         <span className="cursor-help">
@@ -291,8 +285,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           title: `Vegetation — per band (${vegetation.forest_depth_m.toFixed(0)} m forest · ${
             vegetation.forest_runs.length
           } run${vegetation.forest_runs.length === 1 ? '' : 's'})`,
-          highlightIdx: 4,
-          note: 'ISO 9613-2 §A.2.2: per-band absorption × min(forest_depth, 200 m).',
+          note: 'ISO 9613-2 §A.2.2: per-band absorption × min(forest_depth, 200 m).\nScalar above = A-weighted ΔL_A (full − no_vegetation Lden).',
         })}
       >
         <span className="cursor-help">
@@ -368,7 +361,7 @@ function Section5Lden({ trace }: { trace: SegmentTrace }) {
                   title={bandsTooltip(p.lwBands, {
                     title: `${p.label} — Lw per band`,
                     signed: false,
-                    highlightIdx: 4,
+                    note: 'Scalar above = A-weighted sum of all 8 bands (dB(A)).',
                   })}
                                  >
                   {fmtDb(p.lw, { signed: false })}
@@ -379,7 +372,7 @@ function Section5Lden({ trace }: { trace: SegmentTrace }) {
                   title={bandsTooltip(p.lrecBands, {
                     title: `${p.label} — L_received per band`,
                     signed: false,
-                    highlightIdx: 4,
+                    note: 'Scalar above = A-weighted sum of all 8 bands (dB(A)).',
                   })}
                                  >
                   {fmtDb(p.lrec, { signed: false })}
