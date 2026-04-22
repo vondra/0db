@@ -507,13 +507,17 @@ fn compute_roads(
         };
 
         let key = (key_ref.clone(), seg.name.clone(), seg.road_class);
+        let link_suffix = match class_idx {
+            10 | 11 | 12 => " (link)",
+            _ => "",
+        };
         let acc = roads_by_key.entry(key).or_insert_with(|| {
             let display_name = if !effective_ref.is_empty() && !seg.name.is_empty() {
-                format!("{} — {}", effective_ref, seg.name)
+                format!("{} — {}{}", effective_ref, seg.name, link_suffix)
             } else if !effective_ref.is_empty() {
-                effective_ref.clone()
+                format!("{}{}", effective_ref, link_suffix)
             } else if !seg.name.is_empty() {
-                seg.name.clone()
+                format!("{}{}", seg.name, link_suffix)
             } else {
                 // Fallback with distance badge for unnamed roads
                 let class_label = match class_idx {
@@ -523,6 +527,13 @@ fn compute_roads(
                     3 => "Secondary road",
                     4 => "Tertiary road",
                     5 => "Local road",
+                    6 => "Living street",
+                    7 => "Service road",
+                    8 => "Track",
+                    9 => "Unclassified road",
+                    10 => "Motorway link",
+                    11 => "Trunk link",
+                    12 => "Primary link",
                     _ => "Road",
                 };
                 let dist = seg.dist_m;

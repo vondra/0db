@@ -82,8 +82,9 @@ pub const SURFACE_CORR: [f64; 5] = [
 // source-reader (popup) all reference these constants.
 
 /// Road max propagation radius by road_class index
-/// (0=motorway .. 6=living_street, 7=service, 8=track, 9=unclassified).
-pub const ROAD_MAX_RADIUS: [f64; 10] = [
+/// (0=motorway .. 6=living_street, 7=service, 8=track, 9=unclassified,
+///  10=motorway_link, 11=trunk_link, 12=primary_link).
+pub const ROAD_MAX_RADIUS: [f64; 13] = [
     10_000.0, // 0: motorway
      7_000.0, // 1: trunk
      5_000.0, // 2: primary
@@ -94,6 +95,9 @@ pub const ROAD_MAX_RADIUS: [f64; 10] = [
        500.0, // 7: service (parking aisles, driveways)
        300.0, // 8: track (agricultural / forestry)
      2_000.0, // 9: unclassified (rural connector between villages)
+     1_200.0, // 10: motorway_link (ramp — 20 % traffic, shorter audible reach)
+       900.0, // 11: trunk_link
+       600.0, // 12: primary_link
 ];
 
 /// Railway max propagation radius (all types).

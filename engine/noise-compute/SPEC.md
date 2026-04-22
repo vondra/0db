@@ -125,11 +125,19 @@ Surface priority:
 | 2 | primary | 7470 | 540 | 810 | 180 |
 | 3 | secondary | 2640 | 120 | 180 | 60 |
 | 4 | tertiary | 720 | 26 | 38 | 16 |
-| 5 | residential / living_street | 480 | 5 | 10 | 5 |
-| 6 | unknown | 98 | 0 | 1 | 1 |
+| 5 | residential | 480 | 5 | 10 | 5 |
+| 6 | living_street | 98 | 0 | 1 | 1 |
+| 7 | service | 240 | 2 | 5 | 3 |
+| 8 | track | 4 | 0 | 1 | 0 |
+| 9 | unclassified | 1200 | 30 | 80 | 30 |
+| 10 | motorway_link | 4320 | 480 | 1140 | 60 |
+| 11 | trunk_link | 2340 | 240 | 360 | 60 |
+| 12 | primary_link | 1494 | 108 | 162 | 36 |
 
 ### Default speeds per `road_class`
-motorway 100 / trunk 70 / primary 50 / secondary 50 / tertiary 50 / residential 30 / living_street 20 km/h.
+motorway 100 / trunk 70 / primary 50 / secondary 50 / tertiary 50 / residential 30 /
+living_street 20 / service 20 / track 20 / unclassified 50 /
+motorway_link 60 / trunk_link 50 / primary_link 50 km/h.
 
 ### Lane-ratio boost (applied ONLY on defaults, not on Arrow AADT)
 When Arrow traffic is missing and a default is used, per-lane count is boosted above 2 lanes:
@@ -143,8 +151,9 @@ When Arrow traffic is missing and a default is used, per-lane count is boosted a
 Day (07–19 / 12 h), Evening (19–23 / 4 h), Night (23–07 / 8 h).
 
 Current implementation ALWAYS splits AADT by fixed class-based ratios:
-- motorway / trunk: **65 / 20 / 15**
-- primary / secondary / tertiary / residential / living_street: **70 / 18 / 12**
+- motorway / trunk / motorway_link / trunk_link: **65 / 20 / 15**
+- all other classes (primary / secondary / tertiary / residential / living_street /
+  service / track / unclassified / primary_link): **70 / 18 / 12**
 
 Note: even when daily AADT comes from real census/enrichment data, per-period road counts are not currently measured from source data.
 
@@ -377,13 +386,25 @@ Road `road_class` column (u8) encoding:
 | 0 | motorway |
 | 1 | trunk |
 | 2 | primary |
-| 3 | secondary |
-| 4 | tertiary |
+| 3 | secondary (incl. secondary_link) |
+| 4 | tertiary (incl. tertiary_link) |
 | 5 | residential |
 | 6 | living_street |
 | 7 | service (parking aisles, driveways) |
 | 8 | track (agricultural / forestry) |
 | 9 | unclassified (rural connector) |
+| 10 | motorway_link |
+| 11 | trunk_link |
+| 12 | primary_link |
+
+Links (codes 10-12, OSM `*_link` — slip roads / on-/off-ramps) share the
+mainline motorway/trunk day-evening-night split (65/20/15) but carry 20 % of
+the mainline default AADT and a lower default speed — see the traffic/speed
+tables above. Rationale: HCM 7 / FEHRL / CERTU put on-/off-ramp flow at
+10-30 % of the connected mainline; 20 % is the defensible middle, and
+national censuses never publish link-level AADT separately. `secondary_link`
+and `tertiary_link` stay on the mainline codes (3/4) because their flow is
+closer to regular urban streets.
 
 For `highway=track`, if the `surface` tag is missing the extractor defaults to
 `unpaved` (+3 dB rolling correction), reflecting OSM convention that tracks
