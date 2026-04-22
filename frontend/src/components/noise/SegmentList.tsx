@@ -11,7 +11,7 @@ import { SegmentRow } from './SegmentRow'
 const KIND_FILTERS: { key: SegmentKind; label: string }[] = [
   { key: 'road', label: 'Roads' },
   { key: 'railway', label: 'Rails' },
-  { key: 'aircraft_ground', label: 'Aircraft ground' },
+  { key: 'aircraft_ground', label: 'GroundOps' },
   { key: 'aircraft_airborne', label: 'Airborne' },
   { key: 'building', label: 'Buildings' },
   { key: 'industrial', label: 'Industrial' },
@@ -26,6 +26,14 @@ function traceKind(t: SegmentTrace): SegmentKind {
   // Aircraft here means ground ops — airborne aircraft come through airborne_traces separately.
   if (t.kind === 'aircraft') return 'aircraft_ground'
   return t.kind as SegmentKind
+}
+
+// Unique React key. Point sources (buildings, industrial sites) are
+// discretized into multiple grid points sharing one parent osm_id and
+// segment_idx=0; without coords in the key, React collapses them into a
+// single component and filter toggles fall over.
+function segmentRowKey(t: SegmentTrace): string {
+  return `s-${t.osm_id ?? 'pt'}-${t.segment_idx}-${t.cp_lat.toFixed(6)},${t.cp_lon.toFixed(6)}`
 }
 
 function countsByKind(meta: SegmentTracesSummary | null | undefined) {
@@ -83,7 +91,7 @@ export function SegmentList({
 
   return (
     <div>
-      <div className="flex gap-1 pb-1 overflow-x-auto whitespace-nowrap -mx-1 px-1 scrollbar-thin">
+      <div className="flex gap-0.5 pb-1 whitespace-nowrap">
         {KIND_FILTERS.map(({ key, label }) => {
           const kindCount = counts[key]
           if (kindCount === 0 && shownCount > 0) return null
@@ -94,7 +102,7 @@ export function SegmentList({
               type="button"
               onClick={() => setEnabled(e => ({ ...e, [key]: !e[key] }))}
               title={`${label} — ${kindCount} segment${kindCount === 1 ? '' : 's'} (click to ${on ? 'hide' : 'show'})`}
-              className={`text-[10px] px-1.5 py-0.5 rounded border shrink-0 transition-colors ${
+              className={`text-[9px] leading-none px-1 py-0.5 rounded border shrink-0 transition-colors ${
                 on
                   ? 'border-foreground/80 text-foreground bg-foreground/10'
                   : 'border-border/50 text-muted-foreground/40 line-through hover:text-foreground'
@@ -109,7 +117,7 @@ export function SegmentList({
         {entries.map(e =>
           e.kind === 'segment' ? (
             <SegmentRow
-              key={`s-${e.trace.osm_id ?? 'pt'}-${e.trace.segment_idx}`}
+              key={segmentRowKey(e.trace)}
               trace={e.trace}
               onHighlight={onHighlight}
             />
