@@ -47,13 +47,16 @@ export function SegmentRow({
         className="w-full flex items-center justify-between gap-2 px-1 py-0.5 text-[11px] hover:bg-foreground/[0.03] text-left"
       >
         <span className="flex items-center gap-1 min-w-0 flex-1">
-          {trace.is_dominant_of_group && (
-            <span className="text-[10px] text-amber-500" title="Dominant segment of its Noise source group">
-              ★
-            </span>
-          )}
           <span className="truncate">
             <span className="text-foreground">{segmentName(trace)}</span>
+            {trace.is_dominant_of_group && (
+              <span
+                className="text-[9px] text-amber-500/80 ml-0.5"
+                title="Dominant segment of its Noise source group"
+              >
+                ⋆
+              </span>
+            )}
             <span className="text-muted-foreground/60"> · {subtype}</span>
           </span>
         </span>
