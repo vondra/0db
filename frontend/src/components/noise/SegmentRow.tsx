@@ -51,10 +51,10 @@ export function SegmentRow({
             <span className="text-foreground">{segmentName(trace)}</span>
             {trace.is_dominant_of_group && (
               <span
-                className="text-[9px] text-amber-500/80 ml-0.5"
+                className="text-[10px] text-amber-500 ml-0.5"
                 title="Dominant segment of its Noise source group"
               >
-                ⋆
+                ⭑
               </span>
             )}
             <span className="text-muted-foreground/60"> · {subtype}</span>
