@@ -66,6 +66,10 @@ export interface RoadMetadata {
   dominant_dataset_id?: number
   provenance?: DatasetProvenance | null
   speed_posted_kmh: number
+  aadt_light_nominal: number
+  aadt_medium_nominal: number
+  aadt_heavy_nominal: number
+  aadt_moto_nominal: number
   aadt_light_effective: number
   aadt_medium_effective: number
   aadt_heavy_effective: number

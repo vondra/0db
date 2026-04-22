@@ -316,6 +316,10 @@ fn compute_roads(
         dominant_aadt_medium_raw: i32,
         dominant_aadt_heavy_raw: i32,
         dominant_aadt_moto_raw: i32,
+        dominant_aadt_light_nominal: f64,
+        dominant_aadt_medium_nominal: f64,
+        dominant_aadt_heavy_nominal: f64,
+        dominant_aadt_moto_nominal: f64,
         dominant_aadt_light_effective: f64,
         dominant_aadt_medium_effective: f64,
         dominant_aadt_heavy_effective: f64,
@@ -562,6 +566,10 @@ fn compute_roads(
                 dominant_aadt_medium_raw: 0,
                 dominant_aadt_heavy_raw: 0,
                 dominant_aadt_moto_raw: 0,
+                dominant_aadt_light_nominal: 0.0,
+                dominant_aadt_medium_nominal: 0.0,
+                dominant_aadt_heavy_nominal: 0.0,
+                dominant_aadt_moto_nominal: 0.0,
                 dominant_aadt_light_effective: 0.0,
                 dominant_aadt_medium_effective: 0.0,
                 dominant_aadt_heavy_effective: 0.0,
@@ -696,6 +704,18 @@ fn compute_roads(
             acc.dominant_aadt_medium_raw = seg.aadt_medium;
             acc.dominant_aadt_heavy_raw = seg.aadt_heavy;
             acc.dominant_aadt_moto_raw = seg.aadt_moto;
+            let (nom_l, nom_m, nom_h, nom_x) = normalize::nominal_road_aadt(
+                seg.road_class,
+                seg.traffic_source,
+                seg.aadt_light,
+                seg.aadt_medium,
+                seg.aadt_heavy,
+                seg.aadt_moto,
+            );
+            acc.dominant_aadt_light_nominal = nom_l;
+            acc.dominant_aadt_medium_nominal = nom_m;
+            acc.dominant_aadt_heavy_nominal = nom_h;
+            acc.dominant_aadt_moto_nominal = nom_x;
             acc.dominant_aadt_light_effective = light;
             acc.dominant_aadt_medium_effective = medium;
             acc.dominant_aadt_heavy_effective = heavy;
@@ -785,6 +805,10 @@ fn compute_roads(
             traffic_source: acc.dominant_traffic_source,
             dominant_dataset_id: acc.dominant_dataset_id,
             speed_posted_kmh: acc.dominant_speed_posted,
+            aadt_light_nominal: acc.dominant_aadt_light_nominal,
+            aadt_medium_nominal: acc.dominant_aadt_medium_nominal,
+            aadt_heavy_nominal: acc.dominant_aadt_heavy_nominal,
+            aadt_moto_nominal: acc.dominant_aadt_moto_nominal,
             aadt_light_effective: acc.dominant_aadt_light_effective,
             aadt_medium_effective: acc.dominant_aadt_medium_effective,
             aadt_heavy_effective: acc.dominant_aadt_heavy_effective,
