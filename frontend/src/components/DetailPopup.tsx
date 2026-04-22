@@ -192,6 +192,9 @@ function MetadataRows({ c }: { c: Contributor }) {
   if (m.kind === 'rail') {
     const effTotal = m.trains_passenger_effective + m.trains_freight_effective
     const rawTotal = m.trains_passenger_raw + m.trains_freight_raw
+    const nomTotal = rawTotal > 0 ? rawTotal : effTotal
+    const isDefault = m.trains_passenger_source === 'default_by_type'
+      && m.trains_freight_source === 'default_by_type'
     const speedText = txtTable([
       ['Source', m.speed_source.replace(/_/g, ' ')],
       ['Posted maxspeed', m.maxspeed_posted_kmh > 0 ? `${m.maxspeed_posted_kmh} km/h` : '— (none)'],
@@ -201,7 +204,8 @@ function MetadataRows({ c }: { c: Contributor }) {
       { sep: true },
       ['Effective', `${m.speed_kmh.toFixed(0)} km/h`],
     ], 18, 14)
-    const hasRailAdjustment = m.service || m.parallel_divisor > 1
+    const trackRatio = nomTotal > 0 ? effTotal / nomTotal : 1
+    const hasPerTrackDiscount = Math.abs(trackRatio - 1) > 0.01
     const paxSrcLines = m.trains_passenger_raw > 0
       ? [
           'Passenger source:',
@@ -216,22 +220,24 @@ function MetadataRows({ c }: { c: Contributor }) {
           '',
         ]
       : []
+    const paxCount = m.trains_passenger_raw > 0 ? m.trains_passenger_raw : m.trains_passenger_effective
+    const frtCount = m.trains_freight_raw > 0 ? m.trains_freight_raw : m.trains_freight_effective
     const trainsText = txtTable([
       ...paxSrcLines,
       ...frtSrcLines,
-      'Daily trains (full line):',
-      ...(m.trains_passenger_raw > 0 ? [['  Passenger', fmtInt(m.trains_passenger_raw)] as [string, string]] : []),
-      ...(m.trains_freight_raw > 0 ? [['  Freight', fmtInt(m.trains_freight_raw)] as [string, string]] : []),
+      'Daily trains (full line, both directions):',
+      ...(paxCount > 0 ? [['  Passenger', fmtInt(Math.round(paxCount))] as [string, string]] : []),
+      ...(frtCount > 0 ? [['  Freight', fmtInt(Math.round(frtCount))] as [string, string]] : []),
       { sep: true },
-      ['  Total', `${fmtInt(rawTotal)}/day`],
-      ...(hasRailAdjustment
+      ['  Total', `${fmtInt(Math.round(nomTotal))}/day${isDefault ? '*' : ''}`],
+      ...(isDefault ? ['', '* class default (no timetable match)'] : []),
+      ...(hasPerTrackDiscount
         ? [
             '',
-            'Adjustments (per track):',
-            ...(m.service ? [['  Service track', '×0.02']] : []),
-            ...(m.parallel_divisor > 1 ? [['  Parallel tracks', `÷${m.parallel_divisor}`]] : []),
-            { sep: true },
-            ['  Per track', `${fmtInt(effTotal)}/day`],
+            'Engine models per track:',
+            ['  Per track', `${fmtInt(Math.round(effTotal))}/day`] as [string, string],
+            ...(m.service ? [['  ', '× 0.02 service track'] as [string, string]] : []),
+            ...(m.parallel_divisor > 1 ? [['  ', `÷ ${m.parallel_divisor} parallel tracks`] as [string, string]] : []),
           ]
         : []),
     ] as TableRow[], 18, 12)
@@ -251,7 +257,7 @@ function MetadataRows({ c }: { c: Contributor }) {
         {lineRow(
           <MetricLabel term="trains">Trains/day</MetricLabel>,
           <DataPoint title="Daily train count" text={trainsText}>
-            {fmtInt(rawTotal)}/day
+            {`${fmtInt(Math.round(nomTotal))}/day${isDefault ? '*' : ''}`}
           </DataPoint>,
         )}
         {lineRow(
@@ -265,44 +271,69 @@ function MetadataRows({ c }: { c: Contributor }) {
   }
 
   if (m.kind === 'building') {
+    const buildingText = txtTable([
+      ['Type', m.building_type],
+      ['Height', `${m.height_m.toFixed(1)} m`],
+      ...(m.floors > 0 ? [['Floors', String(m.floors)] as [string, string]] : []),
+      ...(m.area_m2 > 0 ? [['Footprint', `${Math.round(m.area_m2).toLocaleString()} m²`] as [string, string]] : []),
+      ...(m.address ? ['', `Address: ${m.address}`] : []),
+    ], 14, 20)
     return lineRow(
       'Building',
-      <span>{m.building_type} · {m.height_m.toFixed(0)} m{m.floors > 0 ? ` · ${m.floors} floors` : ''}</span>,
+      <DataPoint title="Building metadata" text={buildingText}>
+        {m.building_type} · {m.height_m.toFixed(0)} m{m.floors > 0 ? ` · ${m.floors} fl.` : ''}
+      </DataPoint>,
     )
   }
 
   if (m.kind === 'industrial') {
-    // No 'Industrial industrial_area' duplicate — the row title (subtypeLabel) already says the type.
-    // Show only structured metadata that adds info.
-    return (
-      <>
-        {m.area_m2 > 0 && lineRow('Area', `${Math.round(m.area_m2).toLocaleString()} m²`)}
-        {m.nace && lineRow('NACE', m.nace)}
-        {m.grid_point_count > 0 && lineRow('Grid points', String(m.grid_point_count))}
-      </>
+    const hasDetail = m.nace || m.grid_point_count > 0
+    const siteText = txtTable([
+      ['Type', m.source_type.replace(/_/g, ' ')],
+      ...(m.area_m2 > 0 ? [['Area', `${Math.round(m.area_m2).toLocaleString()} m²`] as [string, string]] : []),
+      ...(m.nace ? [['NACE', m.nace] as [string, string]] : []),
+      ...(m.grid_point_count > 0 ? [['Grid points', String(m.grid_point_count)] as [string, string]] : []),
+      ...(m.grid_point_count > 1
+        ? ['', 'Large sites discretized into an H3 grid.', 'Each point carries Lw − 10·log₁₀(N).']
+        : []),
+    ], 16, 16)
+    const summary = m.area_m2 > 0
+      ? `${Math.round(m.area_m2).toLocaleString()} m²`
+      : m.source_type.replace(/_/g, ' ')
+    if (!hasDetail && !(m.area_m2 > 0)) return null
+    return lineRow(
+      'Industrial',
+      <DataPoint title="Industrial site metadata" text={siteText}>
+        {summary}
+      </DataPoint>,
     )
   }
 
   if (m.kind === 'aircraft') {
     if (m.variant !== 'ground_ops' || !m.ground_ops) return null
     const g = m.ground_ops
-    return (
-      <>
-        {lineRow('Observed movements/day', g.observed_movements_per_day.toFixed(1))}
-        {lineRow('Modeled movements/day', g.modeled_movements_per_day.toFixed(1))}
-        {lineRow(
-          'Runway roll',
-          `${g.runway_roll.observed_movements_per_day.toFixed(1)} obs + ${g.runway_roll.modeled_movements_per_day.toFixed(1)} model`,
-        )}
-        {lineRow(
-          'Taxi',
-          `${g.taxi.observed_movements_per_day.toFixed(1)} obs + ${g.taxi.modeled_movements_per_day.toFixed(1)} model`,
-        )}
-        {lineRow(
-          'Apron movement',
-          `${g.apron_movement.observed_movements_per_day.toFixed(1)} obs + ${g.apron_movement.modeled_movements_per_day.toFixed(1)} model`,
-        )}
-      </>
+    const total = g.observed_movements_per_day + g.modeled_movements_per_day
+    const hasModeled = g.modeled_movements_per_day > 0.01
+    const movementsText = txtTable([
+      'Airport ground operations per day.',
+      'Observed from ADS-B where visible; the',
+      'rest comes from the airport-surface model.',
+      '',
+      ['Observed', `${g.observed_movements_per_day.toFixed(1)}/day`],
+      ...(hasModeled ? [['Modeled', `${g.modeled_movements_per_day.toFixed(1)}/day`] as [string, string]] : []),
+      { sep: true },
+      ['Total', `${total.toFixed(1)}/day`],
+      '',
+      'Per class:',
+      ['  Runway roll', `${(g.runway_roll.observed_movements_per_day + g.runway_roll.modeled_movements_per_day).toFixed(1)}/day`],
+      ['  Taxi', `${(g.taxi.observed_movements_per_day + g.taxi.modeled_movements_per_day).toFixed(1)}/day`],
+      ['  Apron', `${(g.apron_movement.observed_movements_per_day + g.apron_movement.modeled_movements_per_day).toFixed(1)}/day`],
+    ] as TableRow[], 16, 12)
+    return lineRow(
+      'Ground movements',
+      <DataPoint title="Airport ground ops per day" text={movementsText}>
+        {`${total.toFixed(1)}/day`}
+      </DataPoint>,
     )
   }
 
