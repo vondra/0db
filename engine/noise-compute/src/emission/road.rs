@@ -260,6 +260,25 @@ mod tests {
     }
 
     #[test]
+    fn test_low_speed_light_vehicle_bounded() {
+        // Lock CNOSSOS rolling-formula output at v=20 km/h (the extractor's
+        // service/track default). Rolling drops ~16 dB below the 70 km/h
+        // reference; total emission stays bounded. Any refactor that unbounds
+        // this should break this test.
+        let flows = vec![CategoryFlow {
+            q_per_hour: 100.0,
+            speed_kmh: 20.0,
+            category: VehicleCategory::Light,
+        }];
+        let aw = a_weighted_total(&line_source_emission(&flows, 0.0));
+        assert!(
+            (aw - 66.17).abs() < 0.15,
+            "low-speed light at 20 km/h: expected 66.17, got {:.2}",
+            aw
+        );
+    }
+
+    #[test]
     fn test_heavy_speed_cap() {
         let f120 = vec![CategoryFlow {
             q_per_hour: 100.0,

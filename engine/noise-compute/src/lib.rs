@@ -381,11 +381,7 @@ fn compute_roads(
         let heavy = norm.heavy_aadt;
         let moto = norm.moto_aadt;
         let speed = norm.speed_kmh;
-        let base_speed = if seg.speed_limit > 0 {
-            seg.speed_limit as f64
-        } else {
-            default_speed(class_name)
-        };
+        let base_speed = norm.base_speed_kmh;
         let surf_corr = norm.surf_corr_db;
         let flc = geo::finite_line_correction(seg.length_m as f64, seg.dist_m, seg.fraction);
 
@@ -2478,19 +2474,6 @@ fn compute_aircraft(
     }
 
     (total, contributors, band_data)
-}
-
-fn default_speed(class: &str) -> f64 {
-    match class {
-        "motorway" => 100.0,
-        "trunk" => 70.0,
-        "primary" => 50.0,
-        "secondary" => 50.0,
-        "tertiary" => 50.0,
-        "residential" => 30.0,
-        "living_street" => 20.0,
-        _ => 50.0,
-    }
 }
 
 pub(crate) fn surface_name(surface_type: u8) -> &'static str {

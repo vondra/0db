@@ -92,6 +92,13 @@ impl Spiller {
         match ftype {
             FeatureType::Road => {
                 let highway = tags.get("highway").map(|s| s.as_str()).unwrap_or("");
+                // highway=track is physically unpaved by OSM convention — default
+                // the surface when unspecified. +3 dB rolling correction is material
+                // (see SURFACE_CORR in noise-compute/constants.rs).
+                let surface = tags
+                    .get("surface")
+                    .map(|s| s.as_str())
+                    .or_else(|| (highway == "track").then_some("unpaved"));
                 let bridge = matches!(
                     tags.get("bridge").map(|s| s.as_str()),
                     Some("yes" | "viaduct" | "cantilever" | "movable")
@@ -113,7 +120,7 @@ impl Spiller {
                     tags.get("maxspeed")
                         .and_then(|s| s.parse::<u8>().ok())
                         .unwrap_or(0),
-                    classify::surface_type(tags.get("surface").map(|s| s.as_str())),
+                    classify::surface_type(surface),
                     if tags.get("oneway").map(|s| s.as_str()) == Some("yes") {
                         1
                     } else {
@@ -131,7 +138,8 @@ impl Spiller {
                     classify::junction_type(tags.get("junction").map(|s| s.as_str())),
                     classify::access_type(
                         tags.get("access").map(|s| s.as_str()),
-                        tags.get("motor_vehicle").map(|s| s.as_str())
+                        tags.get("motor_vehicle").map(|s| s.as_str()),
+                        tags.get("vehicle").map(|s| s.as_str()),
                     ),
                 );
             }

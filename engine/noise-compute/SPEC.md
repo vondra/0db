@@ -353,14 +353,41 @@ Applied in pipeline and popup:
 - **Parallel railway ways**: counts divided by `parallel_divisor`
 - **Industrial exclusion radius**: R=√(area/π) — buildings within R of source point are not counted as screening (prevents self-screening from source's own footprint)
 
-Road `access` column (u8) encoding:
+Road `access` column (u8) encoding. Extractor resolves the mode-specific chain
+(`motor_vehicle` > `vehicle` > `access`) — the most specific OSM key wins. When
+`traffic_source == 1` (measured AADT), the reduction is bypassed because the
+observation already reflects any restriction.
+
 | code | OSM meaning | Effect |
 |------|-------------|--------|
-| 0 | public / default | no change |
+| 0 | public / untagged | no change |
 | 1 | private | AADT × 0.1 |
-| 2 | no / `motor_vehicle=no` | segment skipped |
-| 3 | destination | no reduction applied (known simplification) |
-| 4 | other restricted | segment skipped |
+| 2 | no | segment skipped |
+| 3 | destination | AADT × 0.5 |
+| 4 | motor_vehicle_no (legacy, pre-B extracts) | segment skipped |
+| 5 | permissive | AADT × 0.9 |
+| 6 | customers | AADT × 0.3 |
+| 7 | agricultural | AADT × 0.1 (heuristic) |
+| 8 | forestry | AADT × 0.08 (heuristic) |
+
+Road `road_class` column (u8) encoding:
+
+| code | OSM highway |
+|------|-------------|
+| 0 | motorway |
+| 1 | trunk |
+| 2 | primary |
+| 3 | secondary |
+| 4 | tertiary |
+| 5 | residential |
+| 6 | living_street |
+| 7 | service (parking aisles, driveways) |
+| 8 | track (agricultural / forestry) |
+| 9 | unclassified (rural connector) |
+
+For `highway=track`, if the `surface` tag is missing the extractor defaults to
+`unpaved` (+3 dB rolling correction), reflecting OSM convention that tracks
+are physically unpaved.
 
 ### 3.11 Total received level per band
 ```
