@@ -8,14 +8,11 @@ import type {
 import { AirborneRow } from './AirborneRow'
 import { SegmentRow } from './SegmentRow'
 
-const DIVERGENCE_BANNER =
-  'Values from on-the-fly popup compute; may differ slightly from atlas tiles due to pooling/threshold orchestration.'
-
 const KIND_FILTERS: { key: SegmentKind; label: string }[] = [
   { key: 'road', label: 'Roads' },
   { key: 'railway', label: 'Rails' },
-  { key: 'aircraft_ground', label: 'Ac. ground' },
-  { key: 'aircraft_airborne', label: 'Ac. airborne' },
+  { key: 'aircraft_ground', label: 'Aircraft ground' },
+  { key: 'aircraft_airborne', label: 'Airborne' },
   { key: 'building', label: 'Buildings' },
   { key: 'industrial', label: 'Industrial' },
 ]
@@ -86,10 +83,7 @@ export function SegmentList({
 
   return (
     <div>
-      <div className="text-[10px] text-muted-foreground/70 italic py-1">
-        {DIVERGENCE_BANNER}
-      </div>
-      <div className="flex flex-wrap gap-1 pb-1">
+      <div className="flex gap-1 pb-1 overflow-x-auto whitespace-nowrap -mx-1 px-1 scrollbar-thin">
         {KIND_FILTERS.map(({ key, label }) => {
           const kindCount = counts[key]
           if (kindCount === 0 && shownCount > 0) return null
@@ -97,14 +91,16 @@ export function SegmentList({
           return (
             <button
               key={key}
+              type="button"
               onClick={() => setEnabled(e => ({ ...e, [key]: !e[key] }))}
-              className={`text-[10px] px-1.5 py-0.5 rounded border ${
+              title={`${label} — ${kindCount} segment${kindCount === 1 ? '' : 's'} (click to ${on ? 'hide' : 'show'})`}
+              className={`text-[10px] px-1.5 py-0.5 rounded border shrink-0 transition-colors ${
                 on
-                  ? 'border-foreground/60 text-foreground bg-foreground/5'
-                  : 'border-border text-muted-foreground/60 hover:text-foreground'
+                  ? 'border-foreground/80 text-foreground bg-foreground/10'
+                  : 'border-border/50 text-muted-foreground/40 line-through hover:text-foreground'
               }`}
             >
-              {label} ({kindCount})
+              {label}
             </button>
           )
         })}
