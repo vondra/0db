@@ -99,6 +99,8 @@ export interface RailMetadata {
   trains_freight_raw: number
   trains_passenger_source: 'arrow' | 'default_by_type'
   trains_freight_source: 'arrow' | 'default_by_type'
+  dataset_id?: number
+  provenance?: DatasetProvenance | null
   maxspeed_posted_kmh: number
   trains_passenger_effective: number
   trains_freight_effective: number
@@ -348,6 +350,10 @@ export type EmissionTrace =
       aadt_moto: number
       speed_kmh: number
       surface_corr_db: number
+      surface: string
+      traffic_source: 'matched_external' | 'estimated_service_tree' | 'default_by_class'
+      dataset_id: number
+      provenance?: DatasetProvenance | null
       road_class: string
       bridge: boolean
       tunnel: boolean
@@ -358,6 +364,10 @@ export type EmissionTrace =
       kind: 'railway'
       trains_passenger: number
       trains_freight: number
+      trains_passenger_source: 'arrow' | 'default_by_type'
+      trains_freight_source: 'arrow' | 'default_by_type'
+      dataset_id: number
+      provenance?: DatasetProvenance | null
       speed_kmh: number
       bridge: boolean
       highspeed: boolean

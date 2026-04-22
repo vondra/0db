@@ -2493,7 +2493,7 @@ fn default_speed(class: &str) -> f64 {
     }
 }
 
-fn surface_name(surface_type: u8) -> &'static str {
+pub(crate) fn surface_name(surface_type: u8) -> &'static str {
     match surface_type {
         0 => "asphalt",
         1 => "paving",

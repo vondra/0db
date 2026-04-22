@@ -4,12 +4,10 @@ import { ldenToColor } from '../utils/noise-colors'
 import { MetricLabel, DataPoint } from './noise/noise-tooltips'
 import { HoverText } from './ui/info-tip'
 import { fmt, fmtInt, fmtCompact, formatCpa, txtTable, type TableRow } from '../utils/formatters'
-import { formatDist, lineRow, SOURCE_LABELS, subtypeLabel } from './noise/shared'
+import { formatDist, lineRow, railTrainSourceLine, roadSourceDescription, SOURCE_LABELS, subtypeLabel } from './noise/shared'
 import { SegmentList } from './noise/SegmentList'
 import { TabStrip, type PopupTab } from './noise/TabStrip'
 import type {
-  DatasetProvenance,
-  RoadMetadata,
   AircraftTopFlight,
   AircraftMetadata,
   Contributor,
@@ -70,7 +68,7 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
                 <td className="text-right">{f.altitude_m.toFixed(0)} m</td>
                 <td className="text-right" style={periodColor ? { color: periodColor } : undefined}>
                   {detailed ? (
-                    <HoverText title={`${f.date}\n${PERIOD_LABELS_DETAIL[f.period] ?? '?'}`} className="no-underline">
+                    <HoverText title={`${f.date}\n${PERIOD_LABELS_DETAIL[f.period] ?? '?'}`}>
                       {dateShort} {periodLabel}
                     </HoverText>
                   ) : `${dateShort} ${periodLabel}`}
@@ -86,21 +84,9 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
   )
 }
 
-function roadTrafficSourceLabel(source: RoadMetadata['traffic_source'], roadClass: string): string {
-  if (source === 'matched_external') return 'matched traffic dataset'
-  if (source === 'estimated_service_tree') return 'estimated local traffic'
-  return `default ${roadClass}`
-}
-
-/** Human-readable single line for dataset provenance, shown below the generic source label. */
-function provenanceLabel(p: DatasetProvenance | null | undefined): string {
-  if (!p) return ''
-  const parts: string[] = [p.name]
-  if (p.year != null) parts.push(`(${p.year})`)
-  if (p.license) parts.push(`· ${p.license}`)
-  if (p.url) parts.push(`· ${p.url}`)
-  return parts.join(' ')
-}
+// Road traffic source / rail train source helpers live in shared.tsx so the
+// same tooltip wording is used by both the Noise sources tab (here) and
+// the Noise segments tab (SegmentExpanded).
 
 /** Pretty renderer for source-specific metadata (typed per discriminant). */
 function MetadataRows({ c }: { c: Contributor }) {
@@ -127,10 +113,9 @@ function MetadataRows({ c }: { c: Contributor }) {
     const knownFactor = m.oneway ? 0.5 : 1.0
     const residualRatio = adjRatio / knownFactor
     const hasResidual = Math.abs(residualRatio - 1) > 0.01
+    const sourceLines = roadSourceDescription(m.traffic_source, m.provenance, m.road_class).split('\n')
     const trafficText = txtTable([
-      ['Source', roadTrafficSourceLabel(m.traffic_source, m.road_class)],
-      ...(m.provenance ? [['Dataset', provenanceLabel(m.provenance)] as [string, string]] : []),
-      ...(m.traffic_source === 'estimated_service_tree' ? [['', 'service-tree model']] : []),
+      ...sourceLines,
       '',
       ...(rawTotal > 0
         ? [
@@ -232,20 +217,26 @@ function MetadataRows({ c }: { c: Contributor }) {
       ['Effective', `${m.speed_kmh.toFixed(0)} km/h`],
     ], 18, 14)
     const hasRailAdjustment = m.service || m.parallel_divisor > 1
+    const paxSrcLines = m.trains_passenger_raw > 0
+      ? [
+          'Passenger source:',
+          ...railTrainSourceLine(m.trains_passenger_source, m.provenance, m.rail_type).split('\n').map(l => '  ' + l),
+          '',
+        ]
+      : []
+    const frtSrcLines = m.trains_freight_raw > 0
+      ? [
+          'Freight source:',
+          ...railTrainSourceLine(m.trains_freight_source, m.provenance, m.rail_type).split('\n').map(l => '  ' + l),
+          '',
+        ]
+      : []
     const trainsText = txtTable([
+      ...paxSrcLines,
+      ...frtSrcLines,
       'Daily trains (full line):',
-      ...(m.trains_passenger_raw > 0
-        ? [
-            ['  Passenger', fmtInt(m.trains_passenger_raw)],
-            ['    source', m.trains_passenger_source === 'arrow' ? 'CZPTT' : 'default'],
-          ]
-        : []),
-      ...(m.trains_freight_raw > 0
-        ? [
-            ['  Freight', fmtInt(m.trains_freight_raw)],
-            ['    source', m.trains_freight_source === 'arrow' ? 'E-PRTR' : 'default'],
-          ]
-        : []),
+      ...(m.trains_passenger_raw > 0 ? [['  Passenger', fmtInt(m.trains_passenger_raw)] as [string, string]] : []),
+      ...(m.trains_freight_raw > 0 ? [['  Freight', fmtInt(m.trains_freight_raw)] as [string, string]] : []),
       { sep: true },
       ['  Total', `${fmtInt(rawTotal)}/day`],
       ...(hasRailAdjustment
@@ -339,29 +330,6 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
   const aircraftMeta = isAircraft ? (c.metadata as AircraftMetadata) : null
   const aircraftAirborne = aircraftMeta?.variant === 'airborne' ? (aircraftMeta.airborne ?? null) : null
   const aircraftGroundOps = aircraftMeta?.variant === 'ground_ops' ? (aircraftMeta.ground_ops ?? null) : null
-
-  // Tier 1 summary chip: AADT for roads, trains for rails, flights for aircraft
-  const tier1Summary: string | null = (() => {
-    const m = c.metadata
-    if (!m) return null
-    if (m.kind === 'road') {
-      const raw = m.aadt_light_raw + m.aadt_medium_raw + m.aadt_heavy_raw + m.aadt_moto_raw
-      return raw > 0 ? `${fmtCompact(raw)} veh/day` : null
-    }
-    if (m.kind === 'rail') {
-      const raw = m.trains_passenger_raw + m.trains_freight_raw
-      return raw > 0 ? `${fmtInt(raw)} trains/day` : null
-    }
-    if (m.kind === 'aircraft' && m.variant === 'airborne' && m.airborne) {
-      const flights = m.airborne.observed_flights_per_day
-      return flights > 0 ? `${flights.toFixed(flights >= 10 ? 0 : 1)} flights/day` : null
-    }
-    if (m.kind === 'aircraft' && m.variant === 'ground_ops' && m.ground_ops) {
-      const moves = m.ground_ops.observed_movements_per_day + m.ground_ops.modeled_movements_per_day
-      return moves > 0 ? `${moves.toFixed(moves >= 10 ? 0 : 1)} moves/day` : null
-    }
-    return null
-  })()
 
   const ldenBreakdownText = aircraftAirborne
     ? txtTable([
@@ -549,11 +517,15 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
               ? (c.name || (aircraftAirborne ? 'Airborne aircraft' : 'Ground operations'))
               : (c.name || subtypeLabel(c.source_type, c.subtype))}
           </span>
-          {(!isAircraft || aircraftGroundOps) && (
-            <span className="text-muted-foreground/60 shrink-0">{formatDist(c.distance_m)}</span>
+          {(!isAircraft || aircraftGroundOps) ? (
+            <span className="text-muted-foreground/60 shrink-0 w-14 text-right tabular-nums">
+              {formatDist(c.distance_m)}
+            </span>
+          ) : (
+            <span className="shrink-0 w-14" aria-hidden="true" />
           )}
           <span
-            className="font-bold shrink-0 ml-1"
+            className="font-bold shrink-0 w-14 text-right tabular-nums"
             style={{ color: ldenToColor(c.received_lden) }}
           >
             <DataPoint title="Lden breakdown" text={ldenBreakdownText}>
@@ -567,13 +539,12 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
       </button>
 
       {expanded && (
-        <div className="mt-1 ml-5 mb-1 text-[11px] leading-relaxed font-mono text-muted-foreground">
-          {/* Source type + activity summary — hidden from collapsed row */}
+        <div className="mt-1 ml-2 mr-4 mb-1 text-[11px] leading-relaxed font-mono text-muted-foreground">
+          {/* Source type — hidden from collapsed row. Traffic / Trains /
+              Flights counts are rendered by MetadataRows below, so no
+              separate "48 veh/day" line here. */}
           {!isAircraft && c.name && (
             <div className="text-muted-foreground/60 mb-0.5">{subtypeLabel(c.source_type, c.subtype)}</div>
-          )}
-          {tier1Summary && (
-            <div className="text-muted-foreground/60 mb-0.5">{tier1Summary}</div>
           )}
           {aircraftAirborne ? (
             <>
@@ -789,9 +760,15 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
                 <ContributorRow key={`${c.source_type}-${c.osm_id}-${i}`} c={c} onToggle={onHighlight} />
               ))}
               {data.other_sources_lden !== null && Number.isFinite(data.other_sources_lden) && (
-                <div className="flex items-center justify-between px-1 py-1 border-t border-border/40 text-[11px] text-muted-foreground">
-                  <span className="italic">Other sources</span>
-                  <span className="font-mono">{data.other_sources_lden.toFixed(1)} dB</span>
+                <div className="flex items-baseline gap-1.5 px-0 py-1.5 border-t border-border/40 text-xs italic text-muted-foreground/70">
+                  <span className="truncate flex-1">Other sources</span>
+                  {/* Distance-column placeholder — keeps dB aligned with contributor rows above. */}
+                  <span className="shrink-0 w-14" aria-hidden="true" />
+                  <span className="shrink-0 w-14 text-right tabular-nums">
+                    {data.other_sources_lden.toFixed(1)} dB
+                  </span>
+                  {/* Chevron-sized spacer so the right edge matches contributor rows. */}
+                  <span aria-hidden="true" className="text-[10px] shrink-0 invisible">▼</span>
                 </div>
               )}
             </div>

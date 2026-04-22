@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import type { DatasetProvenance } from '../../types/noise'
 
 // Vocabulary shared across Sources (ContributorRow) and Segments
 // (SegmentRow) tabs in the noise detail popup. Kept in one place so the
@@ -117,6 +118,72 @@ export const DIAGRAM_COLORS = {
   forest: '#3f7a3d',
   apex: '#16a34a',
 } as const
+
+// ── Provenance helpers — one unified "Source:" description shared by the
+// Noise-sources and Noise-segments tabs so wording stays identical. The
+// segments tab uses the same tooltip text as its parent contributor; only
+// the granularity differs (per-segment vs grouped-segment aggregates).
+
+export type RoadTrafficSource =
+  | 'matched_external'
+  | 'estimated_service_tree'
+  | 'default_by_class'
+
+export type RailTrainSource = 'arrow' | 'default_by_type'
+
+function formatProv(p: DatasetProvenance | null | undefined): string {
+  if (!p) return ''
+  const parts: string[] = [p.name]
+  if (p.year != null) parts.push(`(${p.year})`)
+  if (p.license) parts.push(`· ${p.license}`)
+  return parts.join(' ')
+}
+
+/** Road traffic source block. Lines stay ≤ 50 chars so they never wrap in
+ * the 28 rem tooltip. Pattern: "Source:" headline, optional URL, one tiny
+ * parenthetical method hint. No deep indent, no wrapping. */
+export function roadSourceDescription(
+  trafficSource: RoadTrafficSource,
+  provenance: DatasetProvenance | null | undefined,
+  roadClass: string,
+): string {
+  if (trafficSource === 'matched_external' && provenance) {
+    const url = provenance.url ? `\n  ${provenance.url}` : ''
+    return (
+      `Source: ${formatProv(provenance)}${url}\n` +
+      `  (measured AADT per OSM way)`
+    )
+  }
+  if (trafficSource === 'estimated_service_tree') {
+    return (
+      `Source: Service-tree heuristic — ${roadClass} class\n` +
+      `  (AADT inherited from upstream higher-class road)`
+    )
+  }
+  return (
+    `Source: CNOSSOS Annex II default — ${roadClass} class\n` +
+    `  (no enrichment data in this area)`
+  )
+}
+
+/** Rail train source block for one category. Same ≤ 50 chars rule. */
+export function railTrainSourceLine(
+  source: RailTrainSource,
+  provenance: DatasetProvenance | null | undefined,
+  railType: string,
+): string {
+  if (source === 'arrow' && provenance) {
+    const url = provenance.url ? `\n  ${provenance.url}` : ''
+    return (
+      `${formatProv(provenance)}${url}\n` +
+      `  (measured daily count per OSM way)`
+    )
+  }
+  return (
+    `CNOSSOS Annex IV default — ${railType}\n` +
+    `  (no enrichment data)`
+  )
+}
 
 /**
  * GeoJSON LineString from two lat/lon pairs (input order [lat, lon]). Used to

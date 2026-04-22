@@ -1,5 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
-import type { PathProfileTrace, ScreeningObstacleTrace } from '../../types/noise'
+import type { PathProfileTrace } from '../../types/noise'
+import { HoverText } from '../ui/info-tip'
+import { DIAGRAM_COLORS, formatDist } from './shared'
 
 const VB_W = 600
 const VB_H = 220
@@ -12,60 +14,45 @@ const PLOT_H = VB_H - PAD_T - PAD_B
 
 const MIN_BUILDING_PX = 4
 
+// Forest shades used only here (canopy + highlight). The shared
+// DIAGRAM_COLORS.forest is a mid-green; we also need a lighter shade
+// for the center tuft so it reads as layered vegetation.
+const FOREST_CANOPY = '#2d6b2d'
+const FOREST_HIGHLIGHT = '#3a843a'
+
 function niceTickStep(range: number): number {
+  // ×1 / ×0.5 / ×0.2 produced up to 10 ticks on paths in the 1–2 × 10^k
+  // range (e.g. 18 m → 0, 2, 4 … 18) — too crowded for narrow popups.
   if (range <= 0) return 1
   const pow = Math.pow(10, Math.floor(Math.log10(range)))
   const norm = range / pow
-  if (norm >= 5) return pow * 1
-  if (norm >= 2) return pow * 0.5
-  return pow * 0.2
+  if (norm >= 5) return pow * 2
+  if (norm >= 2) return pow * 1
+  return pow * 0.5
 }
 
-function imdColor(imd: number): string {
-  // IMD is the Copernicus Imperviousness-Density raster (0 = fully
-  // natural / soft ground, 100 = fully sealed / hard). Engine inverts
-  // it to the CNOSSOS ground factor G = 1 − imd/100.
-  const t = imd / 100
-  const r = Math.round(110 + t * (155 - 110))
-  const g = Math.round(85 + t * (155 - 85))
-  const b = Math.round(55 + t * (155 - 55))
-  return `rgb(${r},${g},${b})`
+// Qualitative ground-hardness bands. The ridge polyline is split into
+// runs of consecutive segments sharing a bucket, each rendered with
+// the bucket's dasharray — so the terrain line itself encodes ground
+// type: dotted = soft, dashed = mixed, solid = hard.
+function imdBucket(imd: number): { label: string; dash: string | undefined } {
+  if (imd <= 33) return { label: 'soft', dash: '1 5' }
+  if (imd <= 66) return { label: 'mixed', dash: '5 4' }
+  return { label: 'hard', dash: undefined }
 }
 
-/** Qualitative ground-hardness word for the scrub tooltip. Bands match the
- * common CNOSSOS bucketing used in site-survey reports. */
 function imdLabel(imd: number): string {
-  if (imd <= 15) return 'soft'
-  if (imd <= 50) return 'mixed'
-  if (imd <= 85) return 'hard'
-  return 'sealed'
-}
-
-/** Linear interpolation of the profile's elevation_m at fractional t ∈ [0, 1]. */
-function interpElevation(t: readonly number[], elev: readonly number[], tQuery: number): number {
-  if (t.length === 0) return 0
-  if (tQuery <= t[0]) return elev[0]
-  if (tQuery >= t[t.length - 1]) return elev[t.length - 1]
-  for (let i = 0; i + 1 < t.length; i++) {
-    if (t[i] <= tQuery && t[i + 1] >= tQuery) {
-      const span = t[i + 1] - t[i]
-      const frac = span > 0 ? (tQuery - t[i]) / span : 0
-      return elev[i] + frac * (elev[i + 1] - elev[i])
-    }
-  }
-  return elev[elev.length - 1]
+  return imdBucket(imd).label
 }
 
 export interface PathProfileDiagramProps {
   trace: PathProfileTrace
-  obstacle?: ScreeningObstacleTrace | null
   terrainEdgeApexT?: number | null
   terrainEdgeApexElev?: number | null
 }
 
 export function PathProfileDiagram({
   trace,
-  obstacle,
   terrainEdgeApexT,
   terrainEdgeApexElev,
 }: PathProfileDiagramProps) {
@@ -79,23 +66,21 @@ export function PathProfileDiagram({
       const maxBld = Math.max(...trace.building_h_m.map(v => Number(v) || 0), 0)
       const rawMin = Math.min(...elevs, trace.src_alt_m - maxBld)
       const rawMax = Math.max(...elevs, trace.src_alt_m, trace.rcv_alt_m)
-      // Pad so the profile doesn't kiss the viewport and so buildings fit.
       const elevPad = Math.max((rawMax - rawMin) * 0.1, 2)
       const eMin = rawMin - elevPad
       const eMax = rawMax + maxBld + elevPad
 
       const range = Math.max(eMax - eMin, 1)
-      const native = PLOT_H / range
-      // Guarantee at least 4 px for min 1 m building so short obstacles stay
-      // visible even on kilometre-long paths.
-      const forBuildings = MIN_BUILDING_PX / Math.max(1, 1)
-      const scale = Math.max(native, forBuildings)
-      const exag = scale / native
+      // Native scale: X-axis baseline coincides with the lowest sample.
+      // Short buildings get MIN_BUILDING_PX inside the building-rect
+      // loop so they stay visible when the vertical pixels-per-metre
+      // ratio is small.
+      const scale = PLOT_H / range
+      const exag = 1
 
       const xOf = (t: number) => PAD_L + Math.max(0, Math.min(1, t)) * PLOT_W
       const yOf = (elevM: number) => PAD_T + (eMax - elevM) * scale
 
-      // Nice distance ticks (0, 200, 400 … m) up to dist_m.
       const step = niceTickStep(dist)
       const ticks: number[] = []
       for (let d = 0; d <= dist + step * 0.5; d += step) {
@@ -103,65 +88,47 @@ export function PathProfileDiagram({
         if (ticks.length > 12) break
       }
 
-      return {
-        elevMin: eMin,
-        elevMax: eMax,
-        exaggeration: exag,
-        xOf,
-        yOf,
-        xAxisTicks: ticks,
-      }
+      return { elevMin: eMin, elevMax: eMax, exaggeration: exag, xOf, yOf, xAxisTicks: ticks }
     }, [trace, dist])
 
-  // Elevation area polygon.
-  const elevPath = useMemo(() => {
-    const pts: string[] = []
-    for (let i = 0; i < n; i++) {
-      pts.push(`${xOf(trace.t[i]).toFixed(2)},${yOf(trace.elevation_m[i]).toFixed(2)}`)
-    }
-    return `M ${pts.join(' L ')} L ${xOf(1).toFixed(2)},${(PAD_T + PLOT_H).toFixed(2)} L ${xOf(0).toFixed(2)},${(PAD_T + PLOT_H).toFixed(2)} Z`
-  }, [trace, n, xOf, yOf])
-
-  const elevLine = useMemo(() => {
-    const pts: string[] = []
-    for (let i = 0; i < n; i++) {
-      pts.push(`${xOf(trace.t[i]).toFixed(2)},${yOf(trace.elevation_m[i]).toFixed(2)}`)
-    }
-    return `M ${pts.join(' L ')}`
-  }, [trace, n, xOf, yOf])
-
-  // Ground strip (below the elevation curve) coloured per sample by IMD.
-  const groundStripSegments = useMemo(() => {
-    const segs: { x1: number; x2: number; y: number; color: string }[] = []
-    for (let i = 0; i + 1 < n; i++) {
-      const x1 = xOf(trace.t[i])
-      const x2 = xOf(trace.t[i + 1])
-      const y = PAD_T + PLOT_H - 2
-      segs.push({ x1, x2, y, color: imdColor(trace.imd_u8[i]) })
-    }
-    return segs
-  }, [trace, n, xOf])
-
-  // Forest intervals: contiguous runs where forest_u8[i] > 0.
-  const forestRects = useMemo(() => {
-    const rects: { x: number; w: number }[] = []
-    let i = 0
-    while (i < n) {
-      if (trace.forest_u8[i] > 0) {
-        let j = i
-        while (j < n && trace.forest_u8[j] > 0) j++
-        const x1 = xOf(trace.t[i])
-        const x2 = xOf(trace.t[Math.min(j, n - 1)])
-        rects.push({ x: x1, w: Math.max(x2 - x1, 1) })
-        i = j
+  // Runs of consecutive segments sharing a ground-hardness bucket share
+  // one polyline, so the dash pattern accumulates along the combined
+  // length even when individual inter-sample segments are only a couple
+  // of pixels wide. Segment bucket = avg IMD of its endpoints.
+  const ridgeGroups = useMemo(() => {
+    if (n < 2) return [] as Array<{ points: string; dash: string | undefined }>
+    const bucketDashAt = (seg: number) =>
+      imdBucket((trace.imd_u8[seg] + trace.imd_u8[seg + 1]) / 2).dash
+    const pt = (i: number) =>
+      `${xOf(trace.t[i]).toFixed(2)},${yOf(trace.elevation_m[i]).toFixed(2)}`
+    const groups: Array<{ points: string; dash: string | undefined }> = []
+    let runDash = bucketDashAt(0)
+    let runPoints: string[] = [pt(0), pt(1)]
+    for (let seg = 1; seg + 1 < n; seg++) {
+      const segDash = bucketDashAt(seg)
+      if (segDash === runDash) {
+        runPoints.push(pt(seg + 1))
       } else {
-        i++
+        groups.push({ points: runPoints.join(' '), dash: runDash })
+        runPoints = [pt(seg), pt(seg + 1)]
+        runDash = segDash
       }
     }
-    return rects
-  }, [trace, n, xOf])
+    groups.push({ points: runPoints.join(' '), dash: runDash })
+    return groups
+  }, [trace, n, xOf, yOf])
 
-  // Building rectangles — one per sample with building_h_m > 0.
+  const forestTufts = useMemo(() => {
+    const out: { x: number; baseY: number }[] = []
+    const stride = Math.max(1, Math.floor(n / 25))
+    for (let i = 0; i < n; i += stride) {
+      if (trace.forest_u8[i] > 0) {
+        out.push({ x: xOf(trace.t[i]), baseY: yOf(trace.elevation_m[i]) })
+      }
+    }
+    return out
+  }, [trace, n, xOf, yOf])
+
   const buildingRects = useMemo(() => {
     const rects: { x: number; y: number; w: number; h: number }[] = []
     for (let i = 0; i < n; i++) {
@@ -183,8 +150,6 @@ export function PathProfileDiagram({
     return rects
   }, [trace, n, xOf, yOf])
 
-  // Hover/touch scrub: nearest sample by x. Pointer events so the tooltip
-  // works with both mouse and touch (mobile popup).
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
   const scrubAt = (clientX: number, clientY: number) => {
@@ -212,8 +177,7 @@ export function PathProfileDiagram({
     scrubAt(evt.clientX, evt.clientY)
   }
   const handlePointerDown = (evt: React.PointerEvent<SVGSVGElement>) => {
-    // Touch devices: tap-then-drag. Capture pointer so moves outside the SVG
-    // still feed the scrub bar until the finger lifts.
+    // Touch: capture so moves outside the SVG still feed the scrub bar.
     evt.currentTarget.setPointerCapture?.(evt.pointerId)
     scrubAt(evt.clientX, evt.clientY)
   }
@@ -234,72 +198,136 @@ export function PathProfileDiagram({
   const rcvX = xOf(1)
   const srcY = yOf(trace.src_alt_m)
   // `trace.rcv_alt_m` already includes the receiver listening height
-  // (engine returns ground + height_m via Receiver::altitude_m), so the
-  // marker sits AT the LoS endpoint. The pre-existing `+ receiverListeningHeightM`
-  // double-counted the offset and pulled the marker above the dashed
-  // line of sight, leaving an "orange-looking" stub above the receiver.
+  // (engine returns ground + height_m via Receiver::altitude_m).
   const rcvY = yOf(trace.rcv_alt_m)
-
-  const obstacleMarker = obstacle && obstacle.kind !== 'none' ? obstacle : null
-  const obsX = obstacleMarker ? xOf(obstacleMarker.t) : null
-  const obsY = obstacleMarker
-    ? yOf(
-        interpElevation(trace.t, trace.elevation_m, obstacleMarker.t) + obstacleMarker.height_m,
-      )
-    : null
 
   const apexX = terrainEdgeApexT != null ? xOf(terrainEdgeApexT) : null
   const apexY = terrainEdgeApexElev != null ? yOf(terrainEdgeApexElev) : null
 
+  const groundTooltip =
+    'Ground hardness from Copernicus Imperviousness Density\n' +
+    '(0 = natural soil, 100 = fully sealed).\n' +
+    'CNOSSOS ground factor G = 1 − IMD / 100.\n\n' +
+    'Buckets: soft ≤ 33, mixed 34–66, hard ≥ 67.'
+
+  // Scrub columns — fixed `w-[Nch]` widths (max of label or worst-case
+  // value) so hover doesn't reflow the row. `justify-between` spreads
+  // the leftover slack as uniform gaps.
+  const readoutColumns: Array<{
+    w: string
+    label: string
+    labelTooltip?: string
+    tabular: boolean
+    value: string
+  }> = [
+    {
+      w: 'w-[8ch]',
+      label: 'Distance',
+      tabular: true,
+      value: hoverIdx != null ? `${Math.round(trace.t[hoverIdx] * dist)} m` : '—',
+    },
+    {
+      w: 'w-[6ch]',
+      label: 'Elev',
+      tabular: true,
+      value: hoverIdx != null ? `${trace.elevation_m[hoverIdx].toFixed(0)} m` : '—',
+    },
+    {
+      w: 'w-[8ch]',
+      label: 'Building',
+      tabular: true,
+      value: hoverIdx != null ? `${trace.building_h_m[hoverIdx]} m` : '—',
+    },
+    {
+      w: 'w-[6ch]',
+      label: 'Forest',
+      tabular: false,
+      value: hoverIdx != null ? (trace.forest_u8[hoverIdx] > 0 ? 'yes' : 'no') : '—',
+    },
+    {
+      w: 'w-[8ch]',
+      label: 'Ground',
+      labelTooltip: groundTooltip,
+      tabular: true,
+      value: hoverIdx != null
+        ? `${imdLabel(trace.imd_u8[hoverIdx])} ${trace.imd_u8[hoverIdx]}`
+        : '—',
+    },
+  ]
+
   return (
-    <div className="relative">
+    <div className="relative mt-1">
+      <div className="mb-0.5 flex justify-between text-[11px] leading-tight text-muted-foreground/70">
+        {readoutColumns.map(col => (
+          <div key={col.label} className={`flex flex-col shrink-0 ${col.w}`}>
+            {col.labelTooltip ? (
+              <HoverText title={col.labelTooltip}><span>{col.label}</span></HoverText>
+            ) : (
+              <span>{col.label}</span>
+            )}
+            <span className={col.tabular ? 'tabular-nums' : undefined}>{col.value}</span>
+          </div>
+        ))}
+      </div>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${VB_W} ${VB_H}`}
         preserveAspectRatio="xMidYMid meet"
-        className="w-full touch-none [&_line]:[vector-effect:non-scaling-stroke] [&_path]:[vector-effect:non-scaling-stroke]"
-        style={{ height: 'auto', minHeight: 180, maxHeight: 260 }}
+        className="w-full touch-none block [&_line]:[vector-effect:non-scaling-stroke] [&_path]:[vector-effect:non-scaling-stroke] [&_polyline]:[vector-effect:non-scaling-stroke]"
+        style={{ height: 'auto', maxHeight: 260 }}
         onPointerMove={handlePointerMove}
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerLeave={handleLeave}
       >
-        {/* Plot area background */}
         <rect x={PAD_L} y={PAD_T} width={PLOT_W} height={PLOT_H} fill="var(--color-background, #fafafa)" />
 
-        {/* Ground strip (IMD colour) */}
-        {groundStripSegments.map((s, i) => (
-          <line
-            key={`g-${i}`}
-            x1={s.x1}
-            x2={s.x2}
-            y1={s.y}
-            y2={s.y}
-            stroke={s.color}
-            strokeWidth={5}
+        {/* Terrain ridge — one polyline per same-bucket run; dash pattern
+            encodes ground hardness (solid=hard, dashed=mixed, dotted=soft). */}
+        {ridgeGroups.map((g, i) => (
+          <polyline
+            key={`rg-${i}`}
+            points={g.points}
+            fill="none"
+            stroke={DIAGRAM_COLORS.terrain}
+            strokeWidth={1.75}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            strokeDasharray={g.dash}
           />
         ))}
 
-        {/* Forest bands under the elevation curve */}
-        {forestRects.map((r, i) => (
-          <rect
-            key={`f-${i}`}
-            x={r.x}
-            y={PAD_T + PLOT_H - 8}
-            width={r.w}
-            height={6}
-            fill="#3f7a3d"
-            opacity={0.35}
-          />
+        {forestTufts.map((t, i) => (
+          <g key={`tu-${i}`}>
+            <polygon
+              points={`${t.x - 6},${t.baseY - 14} ${t.x - 12},${t.baseY} ${t.x},${t.baseY}`}
+              fill={FOREST_CANOPY}
+            />
+            <polygon
+              points={`${t.x + 6},${t.baseY - 14} ${t.x},${t.baseY} ${t.x + 12},${t.baseY}`}
+              fill={FOREST_CANOPY}
+            />
+            <polygon
+              points={`${t.x},${t.baseY - 22} ${t.x - 8},${t.baseY} ${t.x + 8},${t.baseY}`}
+              fill={FOREST_HIGHLIGHT}
+            />
+          </g>
         ))}
 
-        {/* Elevation area */}
-        <path d={elevPath} fill="rgba(120,90,55,0.12)" />
-        <path d={elevLine} fill="none" stroke="#8a6a3d" strokeWidth={1.5} />
-
-        {/* Buildings */}
         {buildingRects.map((r, i) => (
-          <rect key={`b-${i}`} x={r.x} y={r.y} width={r.w} height={r.h} fill="rgba(120,120,120,0.7)" />
+          <g key={`b-${i}`}>
+            <rect x={r.x} y={r.y} width={r.w} height={r.h} fill="rgba(120,120,120,0.7)" />
+            {r.h >= 8 && (
+              <line
+                x1={r.x}
+                y1={r.y + r.h / 2}
+                x2={r.x + r.w}
+                y2={r.y + r.h / 2}
+                stroke="rgba(255,255,255,0.5)"
+                strokeWidth={0.75}
+              />
+            )}
+          </g>
         ))}
 
         {/* Line of sight (source → receiver) */}
@@ -314,40 +342,37 @@ export function PathProfileDiagram({
           strokeWidth={1.25}
         />
 
-        {/* Terrain edge apex */}
+        {/* One ring per raster sample actually read by the engine along
+            the path. Skip i=0 (source) and i=n-1 (receiver) — they get
+            their own filled blue/red markers below. Drawn before the
+            apex so the green apex dot paints on top when they coincide. */}
+        {Array.from({ length: Math.max(0, n - 2) }, (_, k) => k + 1).map(i => (
+          <circle
+            key={`sp-${i}`}
+            cx={xOf(trace.t[i])}
+            cy={yOf(trace.elevation_m[i])}
+            r={4}
+            fill="#fafafa"
+            stroke="#4a3a1d"
+            strokeWidth={1.5}
+          />
+        ))}
+
         {apexX != null && apexY != null && (
           <g>
-            <circle cx={apexX} cy={apexY} r={4} fill="#16a34a" />
-            <text x={apexX + 6} y={apexY - 5} fontSize={16} fill="#16a34a">
+            <circle cx={apexX} cy={apexY} r={4} fill={DIAGRAM_COLORS.apex} />
+            <text x={apexX + 6} y={apexY - 5} fontSize={23} fill={DIAGRAM_COLORS.apex}>
               apex
             </text>
           </g>
         )}
 
-        {/* Obstacle marker */}
-        {obsX != null && obsY != null && (
-          <g>
-            <line x1={obsX - 6} y1={obsY - 6} x2={obsX + 6} y2={obsY + 6} stroke="#dc2626" strokeWidth={2} />
-            <line x1={obsX - 6} y1={obsY + 6} x2={obsX + 6} y2={obsY - 6} stroke="#dc2626" strokeWidth={2} />
-          </g>
-        )}
+        <circle cx={srcX} cy={srcY} r={4} fill={DIAGRAM_COLORS.source} />
+        <line x1={srcX} y1={srcY} x2={srcX} y2={yOf(trace.elevation_m[0])} stroke={DIAGRAM_COLORS.source} strokeWidth={1.5} />
 
-        {/* Source marker */}
-        <circle cx={srcX} cy={srcY} r={4} fill="#2563eb" />
-        <line x1={srcX} y1={srcY} x2={srcX} y2={yOf(trace.elevation_m[0])} stroke="#2563eb" strokeWidth={1.5} />
+        <circle cx={rcvX} cy={rcvY} r={4} fill={DIAGRAM_COLORS.receiver} />
+        <line x1={rcvX} y1={rcvY} x2={rcvX} y2={yOf(trace.elevation_m[n - 1])} stroke={DIAGRAM_COLORS.receiver} strokeWidth={1.5} />
 
-        {/* Receiver marker — sits at the LoS endpoint (rcv_alt_m already
-            includes the listening height), with a thin stick down to the
-            ground for spatial context. */}
-        <circle cx={rcvX} cy={rcvY} r={4} fill="#dc2626" />
-        <line x1={rcvX} y1={rcvY} x2={rcvX} y2={yOf(trace.elevation_m[n - 1])} stroke="#dc2626" strokeWidth={1.5} />
-
-        {/* Sample dots on terrain line */}
-        {Array.from({ length: n }).map((_, i) => (
-          <circle key={`s-${i}`} cx={xOf(trace.t[i])} cy={yOf(trace.elevation_m[i])} r={1.5} fill="#8a6a3d" />
-        ))}
-
-        {/* Scrub bar */}
         {hoverIdx != null && (
           <line
             x1={xOf(trace.t[hoverIdx])}
@@ -360,65 +385,33 @@ export function PathProfileDiagram({
           />
         )}
 
-        {/* X axis */}
         <line x1={PAD_L} y1={PAD_T + PLOT_H} x2={PAD_L + PLOT_W} y2={PAD_T + PLOT_H} stroke="currentColor" strokeOpacity={0.5} strokeWidth={1.25} />
         {xAxisTicks.map(d => {
           const tx = PAD_L + (d / dist) * PLOT_W
           return (
             <g key={`xt-${d}`}>
               <line x1={tx} y1={PAD_T + PLOT_H} x2={tx} y2={PAD_T + PLOT_H + 4} stroke="currentColor" strokeOpacity={0.5} />
-              <text x={tx} y={PAD_T + PLOT_H + 20} textAnchor="middle" fontSize={16} fill="currentColor" opacity={0.75}>
-                {d >= 1000 ? `${(d / 1000).toFixed(1)} km` : `${Math.round(d)} m`}
+              <text x={tx} y={PAD_T + PLOT_H + 22} textAnchor="middle" fontSize={23} fill="currentColor" opacity={0.75}>
+                {formatDist(Math.round(d))}
               </text>
             </g>
           )
         })}
 
-        {/* Y axis (elev) */}
-        <text x={6} y={PAD_T + 14} fontSize={16} fill="currentColor" opacity={0.75}>
+        <text x={6} y={PAD_T + 14} fontSize={23} fill="currentColor" opacity={0.75}>
           {elevMax.toFixed(0)} m
         </text>
-        <text x={6} y={PAD_T + PLOT_H - 2} fontSize={16} fill="currentColor" opacity={0.75}>
+        <text x={6} y={PAD_T + PLOT_H - 2} fontSize={23} fill="currentColor" opacity={0.75}>
           {elevMin.toFixed(0)} m
         </text>
 
-        {/* Vertical exaggeration badge */}
         {exaggeration > 1.05 && (
-          <text x={PAD_L + PLOT_W - 4} y={PAD_T + 14} textAnchor="end" fontSize={16} fill="currentColor" opacity={0.65}>
+          <text x={PAD_L + PLOT_W - 4} y={PAD_T + 14} textAnchor="end" fontSize={23} fill="currentColor" opacity={0.65}>
             ×{exaggeration.toFixed(1)} vert
           </text>
         )}
       </svg>
 
-      {/* HTML scrub tooltip — rendered outside the SVG so the font stays at
-          native browser pixels regardless of the viewBox scaling. */}
-      {hoverIdx != null && (
-        <div
-          className="absolute top-1 left-1 pointer-events-none rounded border border-border/40 bg-background/95 px-1.5 py-0.5 text-[10px] leading-snug"
-        >
-          <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0 font-mono">
-            <span className="text-muted-foreground/70">Dist</span>
-            <span className="text-right">{Math.round(trace.t[hoverIdx] * dist)} m</span>
-            <span className="text-muted-foreground/70">Elev</span>
-            <span className="text-right">{trace.elevation_m[hoverIdx].toFixed(0)} m</span>
-            <span className="text-muted-foreground/70">Building</span>
-            <span className="text-right">{trace.building_h_m[hoverIdx]} m</span>
-            <span className="text-muted-foreground/70">Forest</span>
-            <span className="text-right">{trace.forest_u8[hoverIdx] > 0 ? 'yes' : 'no'}</span>
-            <span
-              className="text-muted-foreground/70"
-              title={'Ground hardness from Copernicus Imperviousness Density\n' +
-                '(0 = natural soil, 100 = fully sealed).\n' +
-                'CNOSSOS ground factor G = 1 − IMD / 100.'}
-            >
-              Ground
-            </span>
-            <span className="text-right">
-              {imdLabel(trace.imd_u8[hoverIdx])} ({trace.imd_u8[hoverIdx]})
-            </span>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

@@ -25,10 +25,10 @@ export default function DetailCard({ noiseData, onNoiseClose, onHighlight }: Det
     <FloatingCard className="relative p-0 max-h-[50vh] overflow-y-auto" ref={scrollRef}>
       <button
         onClick={onNoiseClose}
-        className="absolute top-2 right-2 z-10 p-1 rounded-lg hover:bg-black/5 text-muted-foreground hover:text-foreground"
+        className="absolute top-1 right-1.5 z-10 p-1 rounded-md hover:bg-black/5 text-muted-foreground hover:text-foreground"
         aria-label="Close"
       >
-        <X className="size-4" />
+        <X className="size-3.5" />
       </button>
 
       <NoiseDetailContent data={noiseData} onHighlight={onHighlight} />

@@ -52,6 +52,13 @@ export function HoverText({
     }, 120)
   }, [])
 
+  // Cancel any pending close on unmount so the 120 ms delayed setState
+  // never fires on a torn-down component (fast popup close while hover is
+  // scheduled to hide).
+  useEffect(() => () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
+  }, [])
+
   // Measure tooltip after first render, place it correctly inside viewport.
   useLayoutEffect(() => {
     if (!open || !triggerRef.current || !tooltipRef.current) return
@@ -155,10 +162,10 @@ export function HoverText({
             zIndex: 9999,
             pointerEvents: "none",
             opacity: pos.ready ? 1 : 0,
-            // 28rem (~448px) fits all column-aligned tables (≤40 chars at 11 px
-            // monospace ≈ 280 px) AND forces long single-sentence descriptions
-            // to wrap at word boundaries.
-            maxWidth: "min(28rem, calc(100vw - 16px))",
+            // 34 rem (~544 px) comfortably fits long provenance lines like
+            // "Polish Trains unified GTFS (Kuranowski/PKP PLK) (2025) · CC-BY-4.0"
+            // (~74 chars at 11 px monospace ≈ 490 px) without wrapping.
+            maxWidth: "min(34rem, calc(100vw - 16px))",
             maxHeight: `calc(100vh - 16px)`,
             overflow: "auto",
           }}

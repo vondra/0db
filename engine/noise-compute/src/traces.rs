@@ -571,6 +571,9 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
         emission: EmissionTrace::Railway {
             trains_passenger: q_pax,
             trains_freight: q_frt,
+            trains_passenger_source: if seg.trains_passenger_source == 0 { "arrow" } else { "default_by_type" },
+            trains_freight_source: if seg.trains_freight_source == 0 { "arrow" } else { "default_by_type" },
+            dataset_id: seg.dataset_id,
             speed_kmh,
             bridge: seg.bridge,
             highspeed: seg.highspeed,
@@ -638,6 +641,13 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
         format!("osm:{}", seg.osm_id)
     };
 
+    let traffic_source = if seg.traffic_source == 1 && seg.aadt_light > 0 {
+        "matched_external"
+    } else if seg.traffic_source == 2 && seg.aadt_light > 0 {
+        "estimated_service_tree"
+    } else {
+        "default_by_class"
+    };
     let emission = EmissionTrace::Road {
         aadt_light: light,
         aadt_medium: medium,
@@ -645,6 +655,9 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
         aadt_moto: moto,
         speed_kmh,
         surface_corr_db: surf_corr,
+        surface: crate::surface_name(seg.surface_type),
+        traffic_source,
+        dataset_id: seg.dataset_id,
         road_class: class_name,
         bridge: seg.bridge,
         tunnel: seg.tunnel,

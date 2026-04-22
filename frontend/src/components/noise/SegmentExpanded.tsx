@@ -1,24 +1,24 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { EmissionTrace, SegmentTrace } from '../../types/noise'
 import { ldenToColor } from '../../utils/noise-colors'
 import { HoverText } from '../ui/info-tip'
 import { PathProfileDiagram } from './PathProfileDiagram'
-import { PERIOD_TOOLTIP } from './shared'
+import { PERIOD_LABELS_DETAIL, PERIOD_TOOLTIP, roadSourceDescription, railTrainSourceLine } from './shared'
 
+// CNOSSOS period weights (hours in each bucket, out of 24). Labels
+// share PERIOD_LABELS_DETAIL with other tabs so the wording matches.
 const PERIOD_ROWS = [
-  { key: 'day', label: 'Day (07–19)', weight: 12 },
-  { key: 'evening', label: 'Evening (19–23)', weight: 4 },
-  { key: 'night', label: 'Night (23–07)', weight: 8 },
+  { key: 'day', label: PERIOD_LABELS_DETAIL[0], weight: 12 },
+  { key: 'evening', label: PERIOD_LABELS_DETAIL[1], weight: 4 },
+  { key: 'night', label: PERIOD_LABELS_DETAIL[2], weight: 8 },
 ] as const
-
-const IMPACTS_TOOLTIP =
-  'Impacts are L_A(full) − L_A(no_X) from the engine\'s 7-variant\n' +
-  'comparison. Ground is signed (CF[i] can be negative at 63/125 Hz\n' +
-  'over soft ground). ISO 9613-2 §7.3.1: engine applies\n' +
-  'max(A_gr, A_ter+A_scr) per band, then adds vegetation.'
 
 const BAND_FREQS = [63, 125, 250, 500, 1000, 2000, 4000, 8000] as const
 const BAND_LABELS = ['63 Hz', '125 Hz', '250 Hz', '500 Hz', '1 kHz', '2 kHz', '4 kHz', '8 kHz'] as const
+
+const LDEN_FORMULA =
+  'Lden = 10·log₁₀( (12·10^(Ld/10) + 4·10^((Le+5)/10) + 8·10^((Ln+10)/10)) / 24 )\n' +
+  'Evening +5 dB and night +10 dB are the CNOSSOS penalties.'
 
 function bandsTooltip(
   bands: readonly number[],
@@ -40,282 +40,75 @@ function bandsTooltip(
   return `${header}${lines.join('\n')}${footer}`
 }
 
-const LDEN_FORMULA =
-  'Lden = 10·log₁₀( (12·10^(Ld/10) + 4·10^((Le+5)/10) + 8·10^((Ln+10)/10)) / 24 )\n' +
-  'Evening +5 dB and night +10 dB are the CNOSSOS penalties.'
-
-const MAX_RULE_FORMULA =
-  'ISO 9613-2 §7.3.1: when a barrier (terrain or building) is present,\n' +
-  'ground attenuation is REPLACED by max(A_ground, A_terrain+A_screening).\n' +
-  'Vegetation is always additive.'
-
 function fmtDb(v: number, { signed = true, digits = 1 } = {}): string {
   if (!Number.isFinite(v)) return '—'
   const sign = signed && v > 0 ? '+' : ''
   return `${sign}${v.toFixed(digits)} dB`
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="mt-1.5">
-      <div className="text-[9px] uppercase tracking-[0.08em] text-muted-foreground/70 mb-0.5">
-        {title}
-      </div>
-      {children}
-    </div>
-  )
+// Bare visual block — no header. Spacing alone separates §1/§2/§3/§4/§5.
+function Section({ children }: { children: React.ReactNode }) {
+  return <div className="mt-3">{children}</div>
 }
 
-function InlineTable({ rows }: { rows: [string, React.ReactNode][] }) {
+function InlineTable({ rows }: { rows: [string | React.ReactNode, React.ReactNode][] }) {
   return (
-    <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[10px]">
+    <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
       {rows.map(([k, v], i) => (
         <div key={i} className="contents">
           <span className="text-muted-foreground/70 whitespace-nowrap">{k}</span>
-          <span className="text-foreground font-mono text-right">{v}</span>
+          <span className="text-foreground text-right tabular-nums">{v}</span>
         </div>
       ))}
     </div>
   )
 }
 
-function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
-  const { baseline, terrain, screening, vegetation, ground, received_lden } = trace
-  const TOOLTIP_NOTE =
-    'Scalar above is A-weighted ΔL_A from variant comparison (full − no_effect). Per-band values below are the raw attenuations the engine applied — the arrow (←) marks 1 kHz for orientation, but the scalar is a dB(A) sum.'
-  const rows: [string, React.ReactNode][] = [
-    ['Geometric divergence', fmtDb(-baseline.geometric_db)],
-    ['Ground factor G', baseline.ground_factor_g.toFixed(2)],
-    ['Source height', `${baseline.source_height_m.toFixed(1)} m`],
-    ['Finite-line correction', fmtDb(baseline.finite_line_corr_db)],
-  ]
+// ────────────────────────────────────────────────────────────────────────────
+// §1 Source — Lw emission (what the source emits)
+// ────────────────────────────────────────────────────────────────────────────
 
-  // A-weighted ΔL_A per effect. All but `groundDelta` are ≤ 0 by physics
-  // (atm / vegetation absorb, terrain / screening ≥ 0 per band ⇒ removing
-  // them can only make things louder). `groundDelta` is SIGNED — soft ground
-  // at 63/125 Hz has CF[i] < 0, so removing the ground term can make the
-  // result quieter (i.e. ground was boosting LF).
-  const terrainDelta = received_lden.full - received_lden.no_terrain
-  const screeningDelta = received_lden.full - received_lden.no_screening
-  const vegetationDelta = received_lden.full - received_lden.no_vegetation
-  const groundDelta = received_lden.full - received_lden.no_ground
-  const atmosphericDelta = received_lden.full - received_lden.no_atmospheric
-  const totalPathDelta = received_lden.full - received_lden.free_field
-
-  const effects: [string, React.ReactNode][] = [
-    [
-      'Atmospheric impact',
-      <HoverText
-        title={bandsTooltip(baseline.atmospheric_bands, {
-          title: 'Atmospheric absorption (ISO 9613-2 §7.2) — per band',
-          signed: true,
-          highlightIdx: 4,
-          note: TOOLTIP_NOTE,
-        })}
-      >
-        <span>{fmtDb(atmosphericDelta)} (A)</span>
-      </HoverText>,
-    ],
-    [
-      'Ground impact',
-      <HoverText
-        title={bandsTooltip(ground.attenuation_bands, {
-          title: `Ground effect — per band (G = ${ground.factor_g.toFixed(2)})`,
-          highlightIdx: 4,
-          note:
-            'SIGNED: over soft ground CF[i] < 0 at 63/125 Hz, so ground can BOOST LF energy. Positive ΔL_A here means ground added dB (no_ground is quieter than full).',
-        })}
-      >
-        <span>{fmtDb(groundDelta)} (A) · G = {ground.factor_g.toFixed(2)}</span>
-      </HoverText>,
-    ],
-    [
-      'Terrain impact',
-      <HoverText
-        title={bandsTooltip(terrain.attenuation_bands, {
-          title: `Terrain diffraction — per band (δ = ${terrain.delta_m.toFixed(2)} m${terrain.is_double ? ', double' : ''})`,
-          highlightIdx: 4,
-          note: TOOLTIP_NOTE,
-        })}
-      >
-        <span>
-          {fmtDb(terrainDelta)} (A) · δ {terrain.delta_m.toFixed(2)} m
-          {terrain.is_double ? ' (double)' : ''}
-        </span>
-      </HoverText>,
-    ],
-    [
-      'Building screening impact',
-      <HoverText
-        title={bandsTooltip(screening.attenuation_bands, {
-          title: screening.obstacle
-            ? `Building screening — per band (${screening.obstacle.kind} ${screening.obstacle.height_m.toFixed(1)} m @ t=${screening.obstacle.t.toFixed(2)})`
-            : 'Building screening — per band',
-          highlightIdx: 4,
-          note: TOOLTIP_NOTE,
-        })}
-      >
-        <span>
-          {fmtDb(screeningDelta)} (A)
-          {screening.obstacle ? (
-            <>
-              {' '}· {screening.obstacle.kind} {screening.obstacle.height_m.toFixed(1)} m @ t=
-              {screening.obstacle.t.toFixed(2)}
-            </>
-          ) : null}
-        </span>
-      </HoverText>,
-    ],
-    [
-      'Vegetation impact',
-      <HoverText
-        title={bandsTooltip(vegetation.attenuation_bands, {
-          title: `Vegetation — per band (${vegetation.forest_depth_m.toFixed(0)} m forest · ${vegetation.forest_runs.length} run${vegetation.forest_runs.length === 1 ? '' : 's'})`,
-          highlightIdx: 4,
-          note: TOOLTIP_NOTE,
-        })}
-      >
-        <span>
-          {fmtDb(vegetationDelta)} (A) · {vegetation.forest_depth_m.toFixed(0)} m forest ·{' '}
-          {vegetation.forest_runs.length} run{vegetation.forest_runs.length === 1 ? '' : 's'}
-        </span>
-      </HoverText>,
-    ],
-    [
-      'Total path effect',
-      <HoverText
-        title={MAX_RULE_FORMULA}
-      >
-        <span className="font-medium">
-          {fmtDb(totalPathDelta)} (A) · full vs free-field Lden
-        </span>
-      </HoverText>,
-    ],
-  ]
-
+function Section1Source({ trace }: { trace: SegmentTrace }) {
+  const emissionRowsList = useMemo(() => emissionInputRows(trace.emission), [trace.emission])
   return (
-    <SectionWithHint title="Baseline & path effects" hint={IMPACTS_TOOLTIP}>
-      <InlineTable rows={rows} />
-      <div className="h-1" />
-      <InlineTable rows={effects} />
-    </SectionWithHint>
-  )
-}
-
-function SectionWithHint({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
-  return (
-    <div className="mt-1.5">
-      <HoverText title={hint}>
-        <span className="text-[9px] uppercase tracking-[0.08em] text-muted-foreground/70 mb-0.5 inline-block">
-          {title}
-        </span>
-      </HoverText>
-      {children}
-    </div>
-  )
-}
-
-function PeriodTable({ trace }: { trace: SegmentTrace }) {
-  const periodCells = useMemo(
-    () =>
-      PERIOD_ROWS.map(p => {
-        const bands = trace.received_bands[p.key]
-        const energy = bands.reduce((a, b) => a + Math.pow(10, b / 10), 0)
-        return {
-          ...p,
-          lw: trace.lw_db_a[p.key],
-          lrec: 10 * Math.log10(Math.max(energy, 1e-30)),
-        }
-      }),
-    [trace.lw_db_a, trace.received_bands],
-  )
-  return (
-    <Section title="Periods">
-      <table className="w-full text-[10px] font-mono">
-        <thead>
-          <tr className="text-muted-foreground/60">
-            <th className="text-left font-normal pb-0.5">Period</th>
-            <th className="text-right font-normal pb-0.5">Lw (A)</th>
-            <th className="text-right font-normal pb-0.5">Lrec (A)</th>
-            <th className="text-right font-normal pb-0.5">hours</th>
-          </tr>
-        </thead>
-        <tbody>
-          {periodCells.map(p => (
-            <tr key={p.key}>
-              <td>{p.label}</td>
-              <td className="text-right">{fmtDb(p.lw, { signed: false })}</td>
-              <td className="text-right">{fmtDb(p.lrec, { signed: false })}</td>
-              <td className="text-right text-muted-foreground/50">{p.weight} h</td>
-            </tr>
-          ))}
-          <tr className="border-t border-border/40">
-            <td>
-              <HoverText title={`${LDEN_FORMULA}\n\n${PERIOD_TOOLTIP}`}>Lden</HoverText>
-            </td>
-            <td colSpan={3} className="text-right font-medium" style={{ color: ldenToColor(trace.received_lden.full) }}>
-              {trace.received_lden.full.toFixed(1)} dB
-            </td>
-          </tr>
-        </tbody>
-      </table>
+    <Section>
+      <InlineTable rows={emissionRowsList} />
     </Section>
   )
 }
 
-function VariantComparison({ trace }: { trace: SegmentTrace }) {
-  const { received_lden } = trace
-  const rows: [string, number][] = [
-    ['Full', received_lden.full],
-    ['Free field', received_lden.free_field],
-    ['No terrain', received_lden.no_terrain],
-    ['No screening', received_lden.no_screening],
-    ['No vegetation', received_lden.no_vegetation],
-    ['No ground', received_lden.no_ground],
-    ['No atmospheric', received_lden.no_atmospheric],
-  ]
-  return (
-    <Section title="Variant comparison">
-      <div className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-0.5 text-[10px] font-mono">
-        {rows.map(([label, v], i) => {
-          const delta = v - received_lden.full
-          return (
-            <div key={i} className="contents">
-              <span className="text-muted-foreground/70">{label}</span>
-              <span className="text-right">{fmtDb(v, { signed: false })}</span>
-              <span className="text-right text-muted-foreground/50">
-                {label === 'Full' ? '' : delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-    </Section>
-  )
-}
-
-function EmissionBreakdown({ emission }: { emission: EmissionTrace }) {
-  const rows = useMemo(() => emissionRows(emission), [emission])
-  return (
-    <Section title="Emission inputs">
-      <InlineTable rows={rows} />
-    </Section>
-  )
-}
-
-function emissionRows(e: EmissionTrace): [string, React.ReactNode][] {
+function emissionInputRows(e: EmissionTrace): [React.ReactNode, React.ReactNode][] {
   switch (e.kind) {
     case 'road': {
       const total = e.aadt_light + e.aadt_medium + e.aadt_heavy + e.aadt_moto
+      const trafficText =
+        roadSourceDescription(e.traffic_source, e.provenance, e.road_class) +
+        `\n\n` +
+        `Daily traffic (per OSM way):\n` +
+        (e.aadt_light > 0 ? `  Light    ${Math.round(e.aadt_light)}\n` : '') +
+        (e.aadt_medium > 0 ? `  Medium   ${Math.round(e.aadt_medium)}\n` : '') +
+        (e.aadt_heavy > 0 ? `  Heavy    ${Math.round(e.aadt_heavy)}\n` : '') +
+        (e.aadt_moto > 0 ? `  Moto     ${Math.round(e.aadt_moto)}\n` : '') +
+        `  ──────────────\n  Total    ${Math.round(total)}/day`
+      const surfaceText =
+        `Source: OSM surface=${e.surface}\n\n` +
+        `CNOSSOS Annex II rolling-noise correction relative to the standard\n` +
+        `asphalt baseline (0 dB). ${e.surface} → ${fmtDb(e.surface_corr_db)}.`
       return [
-        [
-          'AADT (effective)',
-          `light ${Math.round(e.aadt_light)} · med ${Math.round(e.aadt_medium)} · heavy ${Math.round(
-            e.aadt_heavy,
-          )} · moto ${Math.round(e.aadt_moto)} = ${Math.round(total)}/day`,
-        ],
         ['Speed', `${e.speed_kmh.toFixed(0)} km/h`],
-        ['Surface correction', fmtDb(e.surface_corr_db)],
+        [
+          'Traffic',
+          <HoverText title={trafficText} className="no-underline">
+            {Math.round(total)}/day
+          </HoverText>,
+        ],
+        [
+          'Surface',
+          <HoverText title={surfaceText} className="no-underline">
+            {e.surface}
+            {e.surface_corr_db !== 0 ? ` (${fmtDb(e.surface_corr_db)})` : ''}
+          </HoverText>,
+        ],
         ['Class', e.road_class],
         [
           'Flags',
@@ -326,10 +119,36 @@ function emissionRows(e: EmissionTrace): [string, React.ReactNode][] {
       ]
     }
     case 'railway': {
+      const total = e.trains_passenger + e.trains_freight
+      // Label on its own line so long dataset names can never collide with
+      // the prefix and trigger mid-word wraps.
+      const paxSrc = e.trains_passenger > 0
+        ? `Passenger source:\n  ${railTrainSourceLine(e.trains_passenger_source, e.provenance, e.rail_type).split('\n').join('\n  ')}\n\n`
+        : ''
+      const frtSrc = e.trains_freight > 0
+        ? `Freight source:\n  ${railTrainSourceLine(e.trains_freight_source, e.provenance, e.rail_type).split('\n').join('\n  ')}\n\n`
+        : ''
+      const countLines =
+        (e.trains_passenger > 0 ? `  Passenger  ${e.trains_passenger.toFixed(1).padStart(6)}\n` : '') +
+        (e.trains_freight > 0 ? `  Freight    ${e.trains_freight.toFixed(1).padStart(6)}\n` : '')
+      const trainsText =
+        paxSrc +
+        frtSrc +
+        `Daily trains (per track):\n` +
+        countLines +
+        `  ──────────────\n  Total      ${total.toFixed(1).padStart(6)}/day`
       return [
-        ['Trains (pax / freight)', `${e.trains_passenger.toFixed(1)} / ${e.trains_freight.toFixed(1)} per day`],
         ['Speed', `${e.speed_kmh.toFixed(0)} km/h`],
-        ['Type', `${e.rail_type}${e.highspeed ? ' · highspeed' : ''}${e.service ? ' · service' : ''}`],
+        [
+          'Trains',
+          <HoverText title={trainsText} className="no-underline">
+            {total.toFixed(1)}/day
+          </HoverText>,
+        ],
+        [
+          'Type',
+          `${e.rail_type}${e.highspeed ? ' · highspeed' : ''}${e.service ? ' · service' : ''}`,
+        ],
         ['Bridge', e.bridge ? 'yes' : 'no'],
       ]
     }
@@ -360,19 +179,294 @@ function emissionRows(e: EmissionTrace): [string, React.ReactNode][] {
   }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// §2 Baseline — path-independent (distance only, no terrain/obstacles)
+// ────────────────────────────────────────────────────────────────────────────
+
+function Section2Baseline({ trace }: { trace: SegmentTrace }) {
+  const { baseline, received_lden } = trace
+  const atmosphericDelta = received_lden.full - received_lden.no_atmospheric
+
+  const slantSame = Math.abs(trace.d_slant_m - trace.dist_m) < 0.5
+  const distRow: [string, React.ReactNode] = [
+    'Distance',
+    slantSame
+      ? `${trace.dist_m.toFixed(0)} m`
+      : `${trace.dist_m.toFixed(0)} m (slant ${trace.d_slant_m.toFixed(0)} m)`,
+  ]
+  return (
+    <Section>
+      <InlineTable
+        rows={[
+          distRow,
+          ['Source height', `${baseline.source_height_m.toFixed(1)} m`],
+          ['Geometric divergence', fmtDb(-baseline.geometric_db)],
+          [
+            <HoverText
+              title={bandsTooltip(baseline.atmospheric_bands, {
+                title: 'Atmospheric absorption — α[i] × d/1000 per band',
+                signed: true,
+                highlightIdx: 4,
+                note:
+                  'ISO 9613-2 §7.2 standard atmosphere (15 °C, 70 % RH). Higher\nfrequencies absorb more. Scalar above is A-weighted ΔL_A from\nthe full vs no_atmospheric variant comparison.',
+              })}
+            >
+              <span className="cursor-help">Atmospheric impact</span>
+            </HoverText>,
+            fmtDb(atmosphericDelta),
+          ],
+        ]}
+      />
+    </Section>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// §4 Path effects — derived from the path geometry (terrain, ground, etc.)
+// ────────────────────────────────────────────────────────────────────────────
+
+function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
+  const { baseline, terrain, screening, vegetation, ground, received_lden } = trace
+
+  const groundDelta = received_lden.full - received_lden.no_ground
+  const terrainDelta = received_lden.full - received_lden.no_terrain
+  const screeningDelta = received_lden.full - received_lden.no_screening
+  const vegetationDelta = received_lden.full - received_lden.no_vegetation
+  const totalPathDelta = received_lden.full - received_lden.free_field
+
+  const rows: [React.ReactNode, React.ReactNode][] = [
+    [
+      <HoverText
+        title={bandsTooltip(ground.attenuation_bands, {
+          title: `Ground effect — per band (G = ${ground.factor_g.toFixed(2)})`,
+          highlightIdx: 4,
+          note:
+            'SIGNED: over soft ground CF[i] < 0 at 63/125 Hz, so ground can\nBOOST LF energy. Positive ΔL_A means ground added dB.',
+        })}
+      >
+        <span className="cursor-help">Ground (G={ground.factor_g.toFixed(2)})</span>
+      </HoverText>,
+      fmtDb(groundDelta),
+    ],
+    [
+      <HoverText
+        title={bandsTooltip(terrain.attenuation_bands, {
+          title: `Terrain diffraction — per band (δ = ${terrain.delta_m.toFixed(2)} m${
+            terrain.is_double ? ', double' : ''
+          })`,
+          highlightIdx: 4,
+          note: 'Fresnel/Pierce model. δ = path difference at the apex.',
+        })}
+      >
+        <span className="cursor-help">
+          Terrain {terrain.delta_m > 0 ? `(δ ${terrain.delta_m.toFixed(2)} m${terrain.is_double ? ' ×2' : ''})` : '(none)'}
+        </span>
+      </HoverText>,
+      fmtDb(terrainDelta),
+    ],
+    [
+      <HoverText
+        title={bandsTooltip(screening.attenuation_bands, {
+          title: screening.obstacle
+            ? `Building screening — per band (${screening.obstacle.kind} ${screening.obstacle.height_m.toFixed(
+                1,
+              )} m @ t=${screening.obstacle.t.toFixed(2)})`
+            : 'Building screening — per band',
+          highlightIdx: 4,
+          note: 'Same Fresnel model applied to building rooftops.',
+        })}
+      >
+        <span className="cursor-help">
+          Screening
+          {screening.obstacle
+            ? ` (${screening.obstacle.kind} ${screening.obstacle.height_m.toFixed(1)} m)`
+            : ' (none)'}
+        </span>
+      </HoverText>,
+      fmtDb(screeningDelta),
+    ],
+    [
+      <HoverText
+        title={bandsTooltip(vegetation.attenuation_bands, {
+          title: `Vegetation — per band (${vegetation.forest_depth_m.toFixed(0)} m forest · ${
+            vegetation.forest_runs.length
+          } run${vegetation.forest_runs.length === 1 ? '' : 's'})`,
+          highlightIdx: 4,
+          note: 'ISO 9613-2 §A.2.2: per-band absorption × min(forest_depth, 200 m).',
+        })}
+      >
+        <span className="cursor-help">
+          Vegetation
+          {vegetation.forest_depth_m > 0
+            ? ` (${vegetation.forest_depth_m.toFixed(0)} m forest)`
+            : ' (none)'}
+        </span>
+      </HoverText>,
+      fmtDb(vegetationDelta),
+    ],
+  ]
+
+  if (Math.abs(baseline.finite_line_corr_db) > 0.05) {
+    rows.push([
+      <HoverText title="Finite-line correction — applies to line sources (roads, rails). Compensates for the segment's finite angular extent at the receiver.">
+        <span className="cursor-help">Finite-line correction</span>
+      </HoverText>,
+      fmtDb(baseline.finite_line_corr_db),
+    ])
+  }
+
+  return (
+    <Section>
+      <InlineTable rows={rows} />
+      <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 border-t border-border/40 pt-0.5">
+        <span className="text-muted-foreground/70 font-medium">Total path effect</span>
+        <span className="text-foreground font-mono font-medium text-right">
+          {fmtDb(totalPathDelta)}
+        </span>
+      </div>
+    </Section>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// §5 Lden — A-weighting + period weighting → final number
+// ────────────────────────────────────────────────────────────────────────────
+
+function Section5Lden({ trace }: { trace: SegmentTrace }) {
+  const periodCells = useMemo(
+    () =>
+      PERIOD_ROWS.map(p => {
+        const bands = trace.received_bands[p.key]
+        const energy = bands.reduce((a, b) => a + Math.pow(10, b / 10), 0)
+        return {
+          ...p,
+          lw: trace.lw_db_a[p.key],
+          lwBands: trace.lw_bands[p.key],
+          lrec: 10 * Math.log10(Math.max(energy, 1e-30)),
+          lrecBands: bands,
+        }
+      }),
+    [trace.lw_db_a, trace.lw_bands, trace.received_bands],
+  )
+  return (
+    <Section>
+      <table className="w-full tabular-nums">
+        <thead>
+          <tr className="text-muted-foreground/60">
+            <th className="text-left font-normal pb-0.5">Period</th>
+            <th className="text-right font-normal pb-0.5">Lw (A)</th>
+            <th className="text-right font-normal pb-0.5">L_rec (A)</th>
+            <th className="text-right font-normal pb-0.5">hours</th>
+          </tr>
+        </thead>
+        <tbody>
+          {periodCells.map(p => (
+            <tr key={p.key}>
+              <td className="text-muted-foreground/80">{p.label}</td>
+              <td className="text-right">
+                <HoverText
+                  title={bandsTooltip(p.lwBands, {
+                    title: `${p.label} — Lw per band`,
+                    signed: false,
+                    highlightIdx: 4,
+                  })}
+                                 >
+                  {fmtDb(p.lw, { signed: false })}
+                </HoverText>
+              </td>
+              <td className="text-right">
+                <HoverText
+                  title={bandsTooltip(p.lrecBands, {
+                    title: `${p.label} — L_received per band`,
+                    signed: false,
+                    highlightIdx: 4,
+                  })}
+                                 >
+                  {fmtDb(p.lrec, { signed: false })}
+                </HoverText>
+              </td>
+              <td className="text-right text-muted-foreground/50">{p.weight} h</td>
+            </tr>
+          ))}
+          <tr className="border-t border-border/40">
+            <td>
+              <HoverText title={`${LDEN_FORMULA}\n\n${PERIOD_TOOLTIP}`}>Lden</HoverText>
+            </td>
+            <td colSpan={3} className="text-right font-medium" style={{ color: ldenToColor(trace.received_lden.full) }}>
+              {trace.received_lden.full.toFixed(1)} dB
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </Section>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// §6 What-if comparison — collapsed by default
+// ────────────────────────────────────────────────────────────────────────────
+
+function Section6Variants({ trace }: { trace: SegmentTrace }) {
+  const [open, setOpen] = useState(false)
+  const { received_lden } = trace
+  const rows: [string, number][] = [
+    ['Full', received_lden.full],
+    ['Free field', received_lden.free_field],
+    ['No terrain', received_lden.no_terrain],
+    ['No screening', received_lden.no_screening],
+    ['No vegetation', received_lden.no_vegetation],
+    ['No ground', received_lden.no_ground],
+    ['No atmospheric', received_lden.no_atmospheric],
+  ]
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="text-[9px] uppercase tracking-[0.08em] text-muted-foreground/70 hover:text-foreground inline-flex items-center gap-1"
+      >
+        <span>{open ? '▾' : '▸'}</span>
+        <span>What-if</span>
+      </button>
+      {open && (
+        <div className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-0.5 tabular-nums mt-0.5">
+          {rows.map(([label, v], i) => {
+            const delta = v - received_lden.full
+            return (
+              <div key={i} className="contents">
+                <span className="text-muted-foreground/70">{label}</span>
+                <span className="text-right">{fmtDb(v, { signed: false })}</span>
+                <span className="text-right text-muted-foreground/50">
+                  {label === 'Full' ? '' : delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Main expanded view — physics chain order
+// ────────────────────────────────────────────────────────────────────────────
+
 export function SegmentExpanded({ trace }: { trace: SegmentTrace }) {
   return (
-    <div className="px-1 pb-2 text-[10px] text-muted-foreground/90">
-      <PathProfileDiagram
-        trace={trace.path_profile}
-        obstacle={trace.screening.obstacle}
-        terrainEdgeApexT={trace.terrain.edge_apex_t}
-        terrainEdgeApexElev={trace.terrain.edge_apex_elev_m}
-      />
-      <AggregateAttenuations trace={trace} />
-      <PeriodTable trace={trace} />
-      <VariantComparison trace={trace} />
-      <EmissionBreakdown emission={trace.emission} />
+    <div className="ml-2 mr-4 pb-2 text-[11px] leading-relaxed font-mono text-muted-foreground">
+      <Section1Source trace={trace} />
+      <Section2Baseline trace={trace} />
+      <Section>
+        <PathProfileDiagram
+          trace={trace.path_profile}
+          terrainEdgeApexT={trace.terrain.edge_apex_t}
+          terrainEdgeApexElev={trace.terrain.edge_apex_elev_m}
+        />
+      </Section>
+      <Section4PathEffects trace={trace} />
+      <Section5Lden trace={trace} />
+      <Section6Variants trace={trace} />
     </div>
   )
 }

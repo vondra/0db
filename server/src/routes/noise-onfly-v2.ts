@@ -96,6 +96,16 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
         // Typed metadata (SourceMetadata enum from Rust) flows through unchanged.
         // Aircraft metadata is now Rust-side `SourceMetadata::Aircraft` (not a server-side bag),
         // so no flattening needed here.
+        // Enrich each road/rail segment trace with provenance once (mirror
+        // of the contributor-level lookup below; both share the central
+        // registry so wording stays consistent).
+        for (const s of (raw.segments ?? [])) {
+          const em = s?.emission
+          if (em && (em.kind === 'road' || em.kind === 'railway') && em.dataset_id != null) {
+            em.provenance = lookupProvenance(em.dataset_id)
+          }
+        }
+
         const topContributors = (raw.contributors ?? []).map((c: any) => {
           const screeningRaw = c.screening ?? { building_path_m: 0 }
           // Attach human-readable provenance from the central registry. Looks up by

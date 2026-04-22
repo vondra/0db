@@ -43,11 +43,11 @@ export function SegmentRow({
     <div className="border-b border-border/30 last:border-b-0">
       <button
         onClick={handleToggle}
-        className="w-full flex items-center justify-between gap-2 px-1 py-0.5 text-[11px] hover:bg-foreground/[0.03] text-left"
+        className="w-full py-1 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
       >
-        <span className="flex items-center gap-1 min-w-0 flex-1">
-          <span className="truncate">
-            <span className="text-foreground">{segmentName(trace)}</span>
+        <div className="flex items-baseline gap-1.5 text-xs px-0">
+          <span className="truncate flex-1">
+            <span className="font-medium text-foreground">{segmentName(trace)}</span>
             {trace.is_dominant_of_group && (
               <span
                 className="text-[10px] text-amber-500 ml-0.5"
@@ -58,16 +58,21 @@ export function SegmentRow({
             )}
             <span className="text-muted-foreground/60"> · {subtype}</span>
           </span>
-        </span>
-        <span className="flex items-center gap-2 shrink-0 font-mono text-muted-foreground/80 text-[10px]">
-          <span>{formatDist(Math.round(trace.dist_m))}</span>
-          <HoverText title={POWER_SUM_HINT} className="no-underline">
-            <span style={{ color: ldenToColor(lden) }} className="font-medium">
+          <span className="text-muted-foreground/60 shrink-0 w-14 text-right tabular-nums">
+            {formatDist(Math.round(trace.dist_m))}
+          </span>
+          <HoverText title={POWER_SUM_HINT}>
+            <span
+              className="font-medium shrink-0 w-14 text-right tabular-nums inline-block"
+              style={{ color: ldenToColor(lden) }}
+            >
               {lden.toFixed(1)} dB
             </span>
           </HoverText>
-          <span className="text-muted-foreground/40">{expanded ? '▴' : '▾'}</span>
-        </span>
+          <span className="text-[10px] text-muted-foreground/40 shrink-0">
+            {expanded ? '▲' : '▼'}
+          </span>
+        </div>
       </button>
       {expanded && <SegmentExpanded trace={trace} />}
     </div>

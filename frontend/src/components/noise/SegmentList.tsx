@@ -9,8 +9,8 @@ import { AirborneRow } from './AirborneRow'
 import { SegmentRow } from './SegmentRow'
 
 const KIND_FILTERS: { key: SegmentKind; label: string }[] = [
-  { key: 'road', label: 'Roads' },
-  { key: 'railway', label: 'Rails' },
+  { key: 'road', label: 'Road' },
+  { key: 'railway', label: 'Rail' },
   { key: 'aircraft_ground', label: 'GroundOps' },
   { key: 'aircraft_airborne', label: 'Airborne' },
   { key: 'building', label: 'Buildings' },
@@ -96,7 +96,7 @@ export function SegmentList({
 
   return (
     <div>
-      <div className="flex gap-1 mt-1 mb-1.5 whitespace-nowrap">
+      <div className="flex mt-1 mb-1.5 whitespace-nowrap text-[11px] bg-muted/30 rounded py-1 -mx-1 divide-x divide-foreground/25 overflow-x-auto">
         {KIND_FILTERS.map(({ key, label }) => {
           const kindCount = counts[key]
           if (kindCount === 0 && shownCount > 0) return null
@@ -107,10 +107,10 @@ export function SegmentList({
               type="button"
               onClick={() => setEnabled(e => ({ ...e, [key]: !e[key] }))}
               title={`${label} — ${kindCount} segment${kindCount === 1 ? '' : 's'} (click to ${on ? 'hide' : 'show'})`}
-              className={`text-[10px] leading-tight px-1.5 py-0.5 rounded-md border shrink-0 transition-colors ${
+              className={`shrink-0 px-1 transition-colors ${
                 on
-                  ? 'border-foreground bg-foreground/[0.08] text-foreground'
-                  : 'border-border text-muted-foreground/50 line-through hover:text-foreground hover:border-foreground/40'
+                  ? 'text-foreground hover:text-foreground/80'
+                  : 'text-muted-foreground/40 line-through hover:text-foreground'
               }`}
             >
               {label}
