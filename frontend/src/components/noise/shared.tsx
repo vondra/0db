@@ -86,7 +86,28 @@ export function lineRow(label: ReactNode, value: ReactNode, muted?: boolean) {
   )
 }
 
-export const PERIOD_LABELS = ['Day', 'Eve', 'Night'] as const
+export const PERIOD_LABELS = ['Day', 'Evening', 'Night'] as const
+
+/** Full label with hours for tables / tooltips. */
+export const PERIOD_LABELS_DETAIL = [
+  'Day (07–19)',
+  'Evening (19–23)',
+  'Night (23–07)',
+] as const
+
+/** Tooltip explaining the CNOSSOS day/evening/night convention plus the
+ * engine's TZ approximation (fixed UTC+1, no DST — see
+ * `engine/adsb-to-h3r4/src/segment.rs::period_from_timestamp`). */
+export const PERIOD_TOOLTIP =
+  'CNOSSOS-EU period buckets:\n' +
+  '  Day      07:00–19:00\n' +
+  '  Evening  19:00–23:00 (+5 dB penalty)\n' +
+  '  Night    23:00–07:00 (+10 dB penalty)\n\n' +
+  'Aircraft periods are approximate: the engine applies a fixed\n' +
+  'UTC+1 offset for all flights worldwide and does not switch to\n' +
+  'CEST during DST (acceptable error band ≤ 1 h). Road/rail traffic\n' +
+  'periods come from CNOSSOS day/evening/night percentages, not raw\n' +
+  'timestamps, so DST does not apply there.'
 
 /** Shared palette for source/receiver/obstacle markers across noise SVG diagrams. */
 export const DIAGRAM_COLORS = {

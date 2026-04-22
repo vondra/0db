@@ -96,7 +96,7 @@ export function SegmentList({
 
   return (
     <div>
-      <div className="flex gap-0.5 pb-1 whitespace-nowrap">
+      <div className="flex gap-1 mt-1 mb-1.5 whitespace-nowrap">
         {KIND_FILTERS.map(({ key, label }) => {
           const kindCount = counts[key]
           if (kindCount === 0 && shownCount > 0) return null
@@ -107,10 +107,10 @@ export function SegmentList({
               type="button"
               onClick={() => setEnabled(e => ({ ...e, [key]: !e[key] }))}
               title={`${label} — ${kindCount} segment${kindCount === 1 ? '' : 's'} (click to ${on ? 'hide' : 'show'})`}
-              className={`text-[9px] leading-none px-1 py-0.5 rounded border shrink-0 transition-colors ${
+              className={`text-[10px] leading-tight px-1.5 py-0.5 rounded-md border shrink-0 transition-colors ${
                 on
-                  ? 'border-foreground/80 text-foreground bg-foreground/10'
-                  : 'border-border/50 text-muted-foreground/40 line-through hover:text-foreground'
+                  ? 'border-foreground bg-foreground/[0.08] text-foreground'
+                  : 'border-border text-muted-foreground/50 line-through hover:text-foreground hover:border-foreground/40'
               }`}
             >
               {label}

@@ -3,12 +3,19 @@ import type { EmissionTrace, SegmentTrace } from '../../types/noise'
 import { ldenToColor } from '../../utils/noise-colors'
 import { HoverText } from '../ui/info-tip'
 import { PathProfileDiagram } from './PathProfileDiagram'
+import { PERIOD_TOOLTIP } from './shared'
 
 const PERIOD_ROWS = [
   { key: 'day', label: 'Day (07–19)', weight: 12 },
   { key: 'evening', label: 'Evening (19–23)', weight: 4 },
   { key: 'night', label: 'Night (23–07)', weight: 8 },
 ] as const
+
+const IMPACTS_TOOLTIP =
+  'Impacts are L_A(full) − L_A(no_X) from the engine\'s 7-variant\n' +
+  'comparison. Ground is signed (CF[i] can be negative at 63/125 Hz\n' +
+  'over soft ground). ISO 9613-2 §7.3.1: engine applies\n' +
+  'max(A_gr, A_ter+A_scr) per band, then adds vegetation.'
 
 const BAND_FREQS = [63, 125, 250, 500, 1000, 2000, 4000, 8000] as const
 const BAND_LABELS = ['63 Hz', '125 Hz', '250 Hz', '500 Hz', '1 kHz', '2 kHz', '4 kHz', '8 kHz'] as const
@@ -187,17 +194,24 @@ function AggregateAttenuations({ trace }: { trace: SegmentTrace }) {
   ]
 
   return (
-    <Section title="Baseline & path effects">
+    <SectionWithHint title="Baseline & path effects" hint={IMPACTS_TOOLTIP}>
       <InlineTable rows={rows} />
       <div className="h-1" />
       <InlineTable rows={effects} />
-      <div className="mt-1 text-[9px] text-muted-foreground/50">
-        Impacts are <code>L_A(full) − L_A(no_X)</code> from the engine's
-        7-variant comparison. Ground is signed (CF[i] can be negative at
-        63/125 Hz over soft ground). ISO 9613-2 §7.3.1: engine applies
-        {' '}<code>max(A_gr, A_ter+A_scr)</code> per band, then adds vegetation.
-      </div>
-    </Section>
+    </SectionWithHint>
+  )
+}
+
+function SectionWithHint({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
+  return (
+    <div className="mt-1.5">
+      <HoverText title={hint}>
+        <span className="text-[9px] uppercase tracking-[0.08em] text-muted-foreground/70 mb-0.5 inline-block">
+          {title}
+        </span>
+      </HoverText>
+      {children}
+    </div>
   )
 }
 
@@ -237,7 +251,7 @@ function PeriodTable({ trace }: { trace: SegmentTrace }) {
           ))}
           <tr className="border-t border-border/40">
             <td>
-              <HoverText title={LDEN_FORMULA}>Lden</HoverText>
+              <HoverText title={`${LDEN_FORMULA}\n\n${PERIOD_TOOLTIP}`}>Lden</HoverText>
             </td>
             <td colSpan={3} className="text-right font-medium" style={{ color: ldenToColor(trace.received_lden.full) }}>
               {trace.received_lden.full.toFixed(1)} dB

@@ -32,7 +32,6 @@ export function SegmentRow({
   const [expanded, setExpanded] = useState(false)
   const lden = trace.received_lden.full
   const subtype = subtypeLabel(trace.kind, trace.subtype)
-  const lengthText = trace.length_m > 0 ? `${Math.round(trace.length_m)} m` : null
 
   const handleToggle = () => {
     const next = !expanded
@@ -62,7 +61,6 @@ export function SegmentRow({
         </span>
         <span className="flex items-center gap-2 shrink-0 font-mono text-muted-foreground/80 text-[10px]">
           <span>{formatDist(Math.round(trace.dist_m))}</span>
-          {lengthText && <span>{lengthText}</span>}
           <HoverText title={POWER_SUM_HINT} className="no-underline">
             <span style={{ color: ldenToColor(lden) }} className="font-medium">
               {lden.toFixed(1)} dB

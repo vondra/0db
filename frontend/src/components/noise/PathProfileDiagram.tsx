@@ -50,7 +50,6 @@ export interface PathProfileDiagramProps {
   obstacle?: ScreeningObstacleTrace | null
   terrainEdgeApexT?: number | null
   terrainEdgeApexElev?: number | null
-  receiverListeningHeightM?: number
 }
 
 export function PathProfileDiagram({
@@ -58,7 +57,6 @@ export function PathProfileDiagram({
   obstacle,
   terrainEdgeApexT,
   terrainEdgeApexElev,
-  receiverListeningHeightM = 4,
 }: PathProfileDiagramProps) {
   const n = trace.t.length
   const dist = Math.max(trace.dist_m, 1)
@@ -224,8 +222,12 @@ export function PathProfileDiagram({
   const srcX = xOf(0)
   const rcvX = xOf(1)
   const srcY = yOf(trace.src_alt_m)
+  // `trace.rcv_alt_m` already includes the receiver listening height
+  // (engine returns ground + height_m via Receiver::altitude_m), so the
+  // marker sits AT the LoS endpoint. The pre-existing `+ receiverListeningHeightM`
+  // double-counted the offset and pulled the marker above the dashed
+  // line of sight, leaving an "orange-looking" stub above the receiver.
   const rcvY = yOf(trace.rcv_alt_m)
-  const rcvListenY = yOf(trace.rcv_alt_m + receiverListeningHeightM)
 
   const obstacleMarker = obstacle && obstacle.kind !== 'none' ? obstacle : null
   const obsX = obstacleMarker ? xOf(obstacleMarker.t) : null
@@ -243,9 +245,9 @@ export function PathProfileDiagram({
       <svg
         ref={svgRef}
         viewBox={`0 0 ${VB_W} ${VB_H}`}
-        preserveAspectRatio="none"
+        preserveAspectRatio="xMidYMid meet"
         className="w-full touch-none"
-        style={{ height: 220 }}
+        style={{ height: 'auto', maxHeight: 260 }}
         onPointerMove={handlePointerMove}
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
@@ -305,7 +307,7 @@ export function PathProfileDiagram({
         {apexX != null && apexY != null && (
           <g>
             <circle cx={apexX} cy={apexY} r={3.5} fill="#16a34a" />
-            <text x={apexX + 5} y={apexY - 4} fontSize={9} fill="#16a34a">
+            <text x={apexX + 5} y={apexY - 4} fontSize={11} fill="#16a34a">
               apex
             </text>
           </g>
@@ -323,9 +325,11 @@ export function PathProfileDiagram({
         <circle cx={srcX} cy={srcY} r={3.5} fill="#2563eb" />
         <line x1={srcX} y1={srcY} x2={srcX} y2={yOf(trace.elevation_m[0])} stroke="#2563eb" strokeWidth={1} />
 
-        {/* Receiver marker at listening height */}
-        <circle cx={rcvX} cy={rcvListenY} r={3.5} fill="#dc2626" />
-        <line x1={rcvX} y1={rcvListenY} x2={rcvX} y2={yOf(trace.elevation_m[n - 1])} stroke="#dc2626" strokeWidth={1} />
+        {/* Receiver marker — sits at the LoS endpoint (rcv_alt_m already
+            includes the listening height), with a thin stick down to the
+            ground for spatial context. */}
+        <circle cx={rcvX} cy={rcvY} r={3.5} fill="#dc2626" />
+        <line x1={rcvX} y1={rcvY} x2={rcvX} y2={yOf(trace.elevation_m[n - 1])} stroke="#dc2626" strokeWidth={1} />
 
         {/* Sample dots on terrain line */}
         {Array.from({ length: n }).map((_, i) => (
@@ -352,7 +356,7 @@ export function PathProfileDiagram({
           return (
             <g key={`xt-${d}`}>
               <line x1={tx} y1={PAD_T + PLOT_H} x2={tx} y2={PAD_T + PLOT_H + 3} stroke="currentColor" strokeOpacity={0.4} />
-              <text x={tx} y={PAD_T + PLOT_H + 14} textAnchor="middle" fontSize={9} fill="currentColor" opacity={0.6}>
+              <text x={tx} y={PAD_T + PLOT_H + 14} textAnchor="middle" fontSize={11} fill="currentColor" opacity={0.6}>
                 {d >= 1000 ? `${(d / 1000).toFixed(1)} km` : `${Math.round(d)} m`}
               </text>
             </g>
@@ -360,16 +364,16 @@ export function PathProfileDiagram({
         })}
 
         {/* Y axis (elev) */}
-        <text x={6} y={PAD_T + 10} fontSize={9} fill="currentColor" opacity={0.55}>
+        <text x={6} y={PAD_T + 10} fontSize={11} fill="currentColor" opacity={0.55}>
           {elevMax.toFixed(0)} m
         </text>
-        <text x={6} y={PAD_T + PLOT_H - 2} fontSize={9} fill="currentColor" opacity={0.55}>
+        <text x={6} y={PAD_T + PLOT_H - 2} fontSize={11} fill="currentColor" opacity={0.55}>
           {elevMin.toFixed(0)} m
         </text>
 
         {/* Vertical exaggeration badge */}
         {exaggeration > 1.05 && (
-          <text x={PAD_L + PLOT_W - 4} y={PAD_T + 10} textAnchor="end" fontSize={9} fill="currentColor" opacity={0.55}>
+          <text x={PAD_L + PLOT_W - 4} y={PAD_T + 10} textAnchor="end" fontSize={11} fill="currentColor" opacity={0.55}>
             ×{exaggeration.toFixed(1)} vert
           </text>
         )}
@@ -379,23 +383,23 @@ export function PathProfileDiagram({
             <rect
               x={PAD_L + 4}
               y={PAD_T + 4}
-              width={170}
-              height={54}
+              width={210}
+              height={62}
               fill="var(--color-background, #fff)"
               stroke="currentColor"
               strokeOpacity={0.25}
               opacity={0.95}
             />
-            <text x={PAD_L + 10} y={PAD_T + 16} fontSize={9.5} fill="currentColor" fontFamily="ui-monospace, monospace">
+            <text x={PAD_L + 10} y={PAD_T + 16} fontSize={11} fill="currentColor">
               d = {Math.round(trace.t[hoverIdx] * dist)} m
             </text>
-            <text x={PAD_L + 10} y={PAD_T + 28} fontSize={9.5} fill="currentColor" fontFamily="ui-monospace, monospace">
+            <text x={PAD_L + 10} y={PAD_T + 30} fontSize={11} fill="currentColor">
               elev {trace.elevation_m[hoverIdx].toFixed(0)} m · bldg {trace.building_h_m[hoverIdx]} m
             </text>
-            <text x={PAD_L + 10} y={PAD_T + 40} fontSize={9.5} fill="currentColor" fontFamily="ui-monospace, monospace">
+            <text x={PAD_L + 10} y={PAD_T + 44} fontSize={11} fill="currentColor">
               forest {trace.forest_u8[hoverIdx] > 0 ? 'yes' : 'no'} · imd {trace.imd_u8[hoverIdx]}
             </text>
-            <text x={PAD_L + 10} y={PAD_T + 52} fontSize={8.5} fill="currentColor" opacity={0.55} fontFamily="ui-monospace, monospace">
+            <text x={PAD_L + 10} y={PAD_T + 56} fontSize={10} fill="currentColor" opacity={0.55}>
               sample #{hoverIdx + 1}/{n} · step ~{Math.round(trace.step_m_med)} m
             </text>
           </g>

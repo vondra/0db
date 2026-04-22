@@ -18,7 +18,8 @@ import type {
 
 // ── Shared constants ──
 
-const PERIOD_LABELS = ['Day', 'Eve', 'Night'] as const
+import { PERIOD_LABELS, PERIOD_LABELS_DETAIL, PERIOD_TOOLTIP } from './noise/shared'
+
 const PERIOD_COLORS: Record<number, string | undefined> = { 2: '#818cf8', 1: '#f59e0b' }
 
 function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; detailed?: boolean }) {
@@ -46,7 +47,7 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
               {detailed ? <HoverText title={"Altitude (m)\n\nAircraft altitude above receiver at the closest point of approach.\nDerived from ADS-B barometric altitude minus receiver ground elevation.\nVery low values (<100 m) may indicate ADS-B altitude glitches."}>Alt</HoverText> : 'Alt'}
             </th>
             <th className="text-right font-normal pb-0.5">
-              {detailed ? <HoverText title={"Date & period\n\nDate of the peak segment and CNOSSOS time period:\n  Day = 07:00–19:00\n  Evening = 19:00–23:00\n  Night = 23:00–07:00\nNight events get +10 dB penalty in Lden calculation.\n\nNote: period is approximate (UTC+1), not local timezone."}>Date</HoverText> : 'Date'}
+              {detailed ? <HoverText title={`Date & period\n\n${PERIOD_TOOLTIP}`}>Date</HoverText> : 'Date'}
             </th>
             <th className="text-right font-normal pb-0.5">
               {detailed ? <HoverText title={"Aircraft type\n\nDoc 29 NPD profile category assigned during ADS-B processing:\n  B738 = Boeing 737 family\n  A320/A321 = Airbus narrowbody\n  Widebody = large twin-aisle\n  Turboprop = propeller transport\n  BizJet = business jet\n  LightGA = light GA + rotorcraft\n  Generic = unclassified"}>Type</HoverText> : 'Type'}
@@ -69,7 +70,7 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
                 <td className="text-right">{f.altitude_m.toFixed(0)} m</td>
                 <td className="text-right" style={periodColor ? { color: periodColor } : undefined}>
                   {detailed ? (
-                    <HoverText title={`${f.date}\n${['Day (07–19)', 'Evening (19–23)', 'Night (23–07)'][f.period] ?? '?'}`} className="no-underline">
+                    <HoverText title={`${f.date}\n${PERIOD_LABELS_DETAIL[f.period] ?? '?'}`} className="no-underline">
                       {dateShort} {periodLabel}
                     </HoverText>
                   ) : `${dateShort} ${periodLabel}`}
