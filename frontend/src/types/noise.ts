@@ -316,14 +316,12 @@ export interface TerrainTrace {
   delta_m: number
   is_double: boolean
   attenuation_bands: number[]
-  attenuation_db_a: number
   edge_apex_t: number | null
   edge_apex_elev_m: number | null
 }
 
 export interface ScreeningTrace {
   attenuation_bands: number[]
-  attenuation_db_a: number
   obstacle: ScreeningObstacleTrace | null
 }
 
@@ -331,14 +329,12 @@ export interface VegetationTrace {
   forest_depth_m: number
   sampled_path_m: number
   attenuation_bands: number[]
-  attenuation_db_a: number
   forest_runs: ForestRun[]
 }
 
 export interface GroundTrace {
   factor_g: number
   attenuation_bands: number[]
-  attenuation_db_a: number
 }
 
 export type EmissionTrace =

@@ -23,16 +23,6 @@ pub fn bands_to_db_a(bands: &[f64; NUM_BANDS]) -> f64 {
     iso9613::a_weighted_total(bands)
 }
 
-/// Single-number summary of a per-band *attenuation* array, using the 1 kHz
-/// band (index 4) as representative with sign flipped (negative = dB removed).
-/// Matches the scalar convention in `TerrainBreakdown::attenuation_db` etc.
-/// A true A-weighted attenuation is `no_effect_lden − full_lden` from
-/// `LdenVariants`; the band-4 scalar here is a cheap proxy that matches what
-/// the grouped Contributor tooltip shows.
-pub fn atten_bands_scalar_db(bands: &[f64; NUM_BANDS]) -> f64 {
-    -bands[4]
-}
-
 /// Lden under each propagation-variant hypothesis (full / free-field /
 /// no_terrain / no_screening / no_vegetation). Uses the existing
 /// `PropagationVariants::lden_from_periods` helper, so values match what the
@@ -150,7 +140,6 @@ pub fn terrain_trace(
     TerrainTrace {
         delta_m,
         is_double,
-        attenuation_db_a: atten_bands_scalar_db(&atten_bands),
         attenuation_bands: atten_bands,
         edge_apex_t: None,
         edge_apex_elev_m: None,
@@ -164,7 +153,6 @@ pub fn screening_trace(
     obstacle: ScreeningObstacleTrace,
 ) -> ScreeningTrace {
     ScreeningTrace {
-        attenuation_db_a: atten_bands_scalar_db(&atten_bands),
         attenuation_bands: atten_bands,
         obstacle: if obstacle.kind == "none" { None } else { Some(obstacle) },
     }
@@ -183,7 +171,6 @@ pub fn vegetation_trace(
     VegetationTrace {
         forest_depth_m,
         sampled_path_m: dist_m,
-        attenuation_db_a: atten_bands_scalar_db(&atten_bands),
         attenuation_bands: atten_bands,
         forest_runs,
     }
@@ -195,7 +182,6 @@ pub fn ground_trace(factor_g: f64) -> GroundTrace {
     let attenuation_bands = ground_atten_bands(factor_g);
     GroundTrace {
         factor_g,
-        attenuation_db_a: atten_bands_scalar_db(&attenuation_bands),
         attenuation_bands,
     }
 }
@@ -715,5 +701,40 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
         ground: ground_trace(ground_g),
         received_bands: variants_to_received_bands(&seg_variants),
         received_lden: variants_to_lden(&seg_variants),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ScreeningObstacleTrace;
+    use serde::Serialize;
+
+    // Guard regression: traces carry only per-band attenuation, no band[4] proxy.
+    fn assert_bands_no_scalar<T: Serialize>(value: &T) {
+        let json = serde_json::to_string(value).unwrap();
+        assert!(json.contains("attenuation_bands"));
+        assert!(!json.contains("attenuation_db_a"));
+    }
+
+    #[test]
+    fn terrain_trace_shape() {
+        assert_bands_no_scalar(&terrain_trace([0.0; NUM_BANDS], 0.0, false));
+    }
+
+    #[test]
+    fn screening_trace_shape() {
+        let obstacle = ScreeningObstacleTrace { kind: "none", ..Default::default() };
+        assert_bands_no_scalar(&screening_trace([0.0; NUM_BANDS], obstacle));
+    }
+
+    #[test]
+    fn vegetation_trace_shape() {
+        assert_bands_no_scalar(&vegetation_trace([0.0; NUM_BANDS], &[], &[], 0.0));
+    }
+
+    #[test]
+    fn ground_trace_shape() {
+        assert_bands_no_scalar(&ground_trace(0.5));
     }
 }
