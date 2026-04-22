@@ -94,8 +94,9 @@ function MetadataRows({ c }: { c: Contributor }) {
   if (!m) return null
 
   if (m.kind === 'road') {
+    const nomTotal = m.aadt_light_nominal + m.aadt_medium_nominal + m.aadt_heavy_nominal + m.aadt_moto_nominal
     const effTotal = m.aadt_light_effective + m.aadt_medium_effective + m.aadt_heavy_effective + m.aadt_moto_effective
-    const rawTotal = m.aadt_light_raw + m.aadt_medium_raw + m.aadt_heavy_raw + m.aadt_moto_raw
+    const isDefault = m.traffic_source === 'default_by_class'
     const hasSpeedRange = m.speed_min_kmh < m.speed_max_kmh
     const speedText = txtTable([
       ['Source', m.speed_source.replace(/_/g, ' ')],
@@ -108,46 +109,37 @@ function MetadataRows({ c }: { c: Contributor }) {
       'Values from the loudest segment.',
       ...(hasSpeedRange ? ['Speed varies across grouped segments.'] : []),
     ], 18, 12)
-    const adjRatio = rawTotal > 0 ? effTotal / rawTotal : 1
-    const hasAdjustment = Math.abs(adjRatio - 1) > 0.01
-    const knownFactor = m.oneway ? 0.5 : 1.0
-    const residualRatio = adjRatio / knownFactor
+    // Effective vs nominal ratio — when a per-way factor fires (oneway, access,
+    // lane_ratio) the engine models fewer vehicles per OSM way than the road
+    // total. Only disclose when the divergence is > 1 %.
+    const effRatio = nomTotal > 0 ? effTotal / nomTotal : 1
+    const hasPerWayDiscount = Math.abs(effRatio - 1) > 0.01
+    const accessFactorLabel = (accessKind: string, factor: number): string =>
+      `× ${factor.toFixed(2)} ${accessKind}`
+    const knownOneway = m.oneway ? 0.5 : 1.0
+    const residualRatio = effRatio / knownOneway
     const hasResidual = Math.abs(residualRatio - 1) > 0.01
     const sourceLines = roadSourceDescription(m.traffic_source, m.provenance, m.road_class).split('\n')
     const trafficText = txtTable([
       ...sourceLines,
       '',
-      ...(rawTotal > 0
+      'Daily traffic (road total, both directions):',
+      ...(m.aadt_light_nominal > 0 ? [['  Light', fmtInt(Math.round(m.aadt_light_nominal))] as [string, string]] : []),
+      ...(m.aadt_medium_nominal > 0 ? [['  Medium', fmtInt(Math.round(m.aadt_medium_nominal))] as [string, string]] : []),
+      ...(m.aadt_heavy_nominal > 0 ? [['  Heavy', fmtInt(Math.round(m.aadt_heavy_nominal))] as [string, string]] : []),
+      ...(m.aadt_moto_nominal > 0 ? [['  Moto', fmtInt(Math.round(m.aadt_moto_nominal))] as [string, string]] : []),
+      { sep: true },
+      ['  Total', `${fmtInt(Math.round(nomTotal))}/day${isDefault ? '*' : ''}`] as [string, string],
+      ...(isDefault ? ['', '* class default (no census match for this segment)'] : []),
+      ...(hasPerWayDiscount
         ? [
-            'Daily traffic (both directions):',
-            ...(m.aadt_light_raw > 0 ? [['  Light', fmtInt(m.aadt_light_raw)] as [string, string]] : []),
-            ...(m.aadt_medium_raw > 0 ? [['  Medium', fmtInt(m.aadt_medium_raw)] as [string, string]] : []),
-            ...(m.aadt_heavy_raw > 0 ? [['  Heavy', fmtInt(m.aadt_heavy_raw)] as [string, string]] : []),
-            ...(m.aadt_moto_raw > 0 ? [['  Moto', fmtInt(m.aadt_moto_raw)] as [string, string]] : []),
-            { sep: true },
-            ['  Total', `${fmtInt(rawTotal)}/day`] as [string, string],
-            ...(hasAdjustment
-              ? [
-                  '',
-                  'Adjustments (per OSM way):',
-                  ...(m.oneway ? [['  One-way', '÷2 (dual-carriageway)'] as [string, string]] : []),
-                  ...(hasResidual ? [['  Other', `×${residualRatio.toFixed(2)} (access/lanes)`] as [string, string]] : []),
-                  { sep: true },
-                  ['  Per way', `${fmtInt(effTotal)}/day`] as [string, string],
-                ]
-              : []),
-          ]
-        : [
-            '* class default applied (no census match)',
             '',
-            'Daily traffic (both directions):',
-            ...(m.aadt_light_effective > 0 ? [['  Light', fmtInt(Math.round(m.aadt_light_effective))] as [string, string]] : []),
-            ...(m.aadt_medium_effective > 0 ? [['  Medium', fmtInt(Math.round(m.aadt_medium_effective))] as [string, string]] : []),
-            ...(m.aadt_heavy_effective > 0 ? [['  Heavy', fmtInt(Math.round(m.aadt_heavy_effective))] as [string, string]] : []),
-            ...(m.aadt_moto_effective > 0 ? [['  Moto', fmtInt(Math.round(m.aadt_moto_effective))] as [string, string]] : []),
-            { sep: true },
-            ['  Total', `~${fmtInt(Math.round(effTotal))}/day`] as [string, string],
-          ]),
+            'Engine models per OSM way:',
+            ['  Per way', `${fmtInt(Math.round(effTotal))}/day`] as [string, string],
+            ...(m.oneway ? [['  ', accessFactorLabel('one-way split', 0.5)] as [string, string]] : []),
+            ...(hasResidual ? [['  ', accessFactorLabel('access / lanes', residualRatio)] as [string, string]] : []),
+          ]
+        : []),
       '',
       `(dominant segment, ${Math.round(m.dominant_distance_m)} m away)`,
     ] as TableRow[], 18, 12)
@@ -183,9 +175,7 @@ function MetadataRows({ c }: { c: Contributor }) {
         {lineRow(
           <MetricLabel term="aadt">Traffic</MetricLabel>,
           <DataPoint title="CNOSSOS vehicle flow" text={trafficText}>
-            {rawTotal > 0
-              ? `${fmtCompact(rawTotal)}/day`
-              : `~${fmtCompact(Math.round(effTotal))}/day*`}
+            {`${fmtCompact(Math.round(nomTotal))}/day${isDefault ? '*' : ''}`}
           </DataPoint>,
         )}
         {lineRow(
