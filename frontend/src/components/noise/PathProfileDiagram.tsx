@@ -22,12 +22,23 @@ function niceTickStep(range: number): number {
 }
 
 function imdColor(imd: number): string {
-  // 0 = soft (earth/brown), 100 = hard (grey). CNOSSOS convention.
+  // IMD is the Copernicus Imperviousness-Density raster (0 = fully
+  // natural / soft ground, 100 = fully sealed / hard). Engine inverts
+  // it to the CNOSSOS ground factor G = 1 − imd/100.
   const t = imd / 100
   const r = Math.round(110 + t * (155 - 110))
   const g = Math.round(85 + t * (155 - 85))
   const b = Math.round(55 + t * (155 - 55))
   return `rgb(${r},${g},${b})`
+}
+
+/** Qualitative ground-hardness word for the scrub tooltip. Bands match the
+ * common CNOSSOS bucketing used in site-survey reports. */
+function imdLabel(imd: number): string {
+  if (imd <= 15) return 'soft'
+  if (imd <= 50) return 'mixed'
+  if (imd <= 85) return 'hard'
+  return 'sealed'
 }
 
 /** Linear interpolation of the profile's elevation_m at fractional t ∈ [0, 1]. */
@@ -307,7 +318,7 @@ export function PathProfileDiagram({
         {apexX != null && apexY != null && (
           <g>
             <circle cx={apexX} cy={apexY} r={3.5} fill="#16a34a" />
-            <text x={apexX + 5} y={apexY - 4} fontSize={11} fill="#16a34a">
+            <text x={apexX + 5} y={apexY - 4} fontSize={14} fill="#16a34a">
               apex
             </text>
           </g>
@@ -356,7 +367,7 @@ export function PathProfileDiagram({
           return (
             <g key={`xt-${d}`}>
               <line x1={tx} y1={PAD_T + PLOT_H} x2={tx} y2={PAD_T + PLOT_H + 3} stroke="currentColor" strokeOpacity={0.4} />
-              <text x={tx} y={PAD_T + PLOT_H + 14} textAnchor="middle" fontSize={11} fill="currentColor" opacity={0.6}>
+              <text x={tx} y={PAD_T + PLOT_H + 18} textAnchor="middle" fontSize={14} fill="currentColor" opacity={0.7}>
                 {d >= 1000 ? `${(d / 1000).toFixed(1)} km` : `${Math.round(d)} m`}
               </text>
             </g>
@@ -364,47 +375,51 @@ export function PathProfileDiagram({
         })}
 
         {/* Y axis (elev) */}
-        <text x={6} y={PAD_T + 10} fontSize={11} fill="currentColor" opacity={0.55}>
+        <text x={6} y={PAD_T + 12} fontSize={14} fill="currentColor" opacity={0.7}>
           {elevMax.toFixed(0)} m
         </text>
-        <text x={6} y={PAD_T + PLOT_H - 2} fontSize={11} fill="currentColor" opacity={0.55}>
+        <text x={6} y={PAD_T + PLOT_H - 2} fontSize={14} fill="currentColor" opacity={0.7}>
           {elevMin.toFixed(0)} m
         </text>
 
         {/* Vertical exaggeration badge */}
         {exaggeration > 1.05 && (
-          <text x={PAD_L + PLOT_W - 4} y={PAD_T + 10} textAnchor="end" fontSize={11} fill="currentColor" opacity={0.55}>
+          <text x={PAD_L + PLOT_W - 4} y={PAD_T + 12} textAnchor="end" fontSize={14} fill="currentColor" opacity={0.6}>
             ×{exaggeration.toFixed(1)} vert
           </text>
         )}
-
-        {hoverIdx != null && (
-          <g>
-            <rect
-              x={PAD_L + 4}
-              y={PAD_T + 4}
-              width={210}
-              height={62}
-              fill="var(--color-background, #fff)"
-              stroke="currentColor"
-              strokeOpacity={0.25}
-              opacity={0.95}
-            />
-            <text x={PAD_L + 10} y={PAD_T + 16} fontSize={11} fill="currentColor">
-              d = {Math.round(trace.t[hoverIdx] * dist)} m
-            </text>
-            <text x={PAD_L + 10} y={PAD_T + 30} fontSize={11} fill="currentColor">
-              elev {trace.elevation_m[hoverIdx].toFixed(0)} m · bldg {trace.building_h_m[hoverIdx]} m
-            </text>
-            <text x={PAD_L + 10} y={PAD_T + 44} fontSize={11} fill="currentColor">
-              forest {trace.forest_u8[hoverIdx] > 0 ? 'yes' : 'no'} · imd {trace.imd_u8[hoverIdx]}
-            </text>
-            <text x={PAD_L + 10} y={PAD_T + 56} fontSize={10} fill="currentColor" opacity={0.55}>
-              sample #{hoverIdx + 1}/{n} · step ~{Math.round(trace.step_m_med)} m
-            </text>
-          </g>
-        )}
       </svg>
+
+      {/* HTML scrub tooltip — rendered outside the SVG so the font stays at
+          native browser pixels regardless of the viewBox scaling. */}
+      {hoverIdx != null && (
+        <div
+          className="absolute top-1 left-1 pointer-events-none rounded border border-border/50 bg-background/95 shadow-sm px-2 py-1.5 text-[11px] leading-snug"
+          style={{ minWidth: 170 }}
+        >
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 font-mono">
+            <span className="text-muted-foreground/70">Distance</span>
+            <span className="text-right">{Math.round(trace.t[hoverIdx] * dist)} m</span>
+            <span className="text-muted-foreground/70">Elevation</span>
+            <span className="text-right">{trace.elevation_m[hoverIdx].toFixed(0)} m</span>
+            <span className="text-muted-foreground/70">Building</span>
+            <span className="text-right">{trace.building_h_m[hoverIdx]} m</span>
+            <span className="text-muted-foreground/70">Forest</span>
+            <span className="text-right">{trace.forest_u8[hoverIdx] > 0 ? 'yes' : 'no'}</span>
+            <span
+              className="text-muted-foreground/70"
+              title={'Ground hardness derived from Copernicus Imperviousness\n' +
+                'Density (0 = natural soil, 100 = fully sealed).\n' +
+                'CNOSSOS ground factor G = 1 − IMD / 100.'}
+            >
+              Ground
+            </span>
+            <span className="text-right">
+              {imdLabel(trace.imd_u8[hoverIdx])} (IMD {trace.imd_u8[hoverIdx]})
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
