@@ -1,49 +1,64 @@
 import type { FastifyInstance } from 'fastify'
-import { renderTile, getEmptyPng, preloadBarriers } from '../engine/raster-tile-renderer.js'
+import { renderTile, renderDataTile, getEmptyPng, preloadBarriers } from '../engine/raster-tile-renderer.js'
 
 const VALID_LAYERS = new Set(['dem', 'building', 'forest', 'barriers'])
+const VALID_DATA_LAYERS = new Set(['dem', 'building', 'forest'])
 const MIN_ZOOM = 6
 const MAX_ZOOM = 16
 const CACHE_MAX = 500
 
-// Map preserves insertion order; delete+re-set promotes to end = O(1) LRU
+// Map insertion order = LRU order; `delete + set` promotes to newest in O(1).
 const pngCache = new Map<string, Buffer>()
+const dataCache = new Map<string, Buffer>()
+
+function lruGet(cache: Map<string, Buffer>, key: string): Buffer | undefined {
+  const v = cache.get(key)
+  if (v === undefined) return undefined
+  cache.delete(key)
+  cache.set(key, v)
+  return v
+}
+
+function lruSet(cache: Map<string, Buffer>, key: string, value: Buffer): void {
+  cache.set(key, value)
+  while (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next().value
+    if (oldest === undefined) break
+    cache.delete(oldest)
+  }
+}
+
+function parseTileParams(
+  params: { layer: string; z: string; x: string; y: string },
+  validLayers: Set<string>,
+): { layer: string; z: number; x: number; y: number } | string {
+  const { layer, z: zStr, x: xStr, y: yStr } = params
+  if (!validLayers.has(layer)) return 'Invalid layer'
+  const z = Number(zStr); const x = Number(xStr); const y = Number(yStr)
+  if (!Number.isInteger(z) || z < MIN_ZOOM || z > MAX_ZOOM) return 'Invalid zoom'
+  const max = 2 ** z
+  if (!Number.isInteger(x) || x < 0 || x >= max || !Number.isInteger(y) || y < 0 || y >= max) {
+    return 'Invalid coordinates'
+  }
+  return { layer, z, x, y }
+}
 
 export async function rasterTileRoutes(app: FastifyInstance): Promise<void> {
-  // Preload barrier segments async — doesn't block server startup or event loop
   preloadBarriers().catch(err => console.error('barrier preload failed:', err))
+
   app.get<{ Params: { layer: string; z: string; x: string; y: string } }>(
     '/api/raster/:layer/:z/:x/:y.png',
     async (request, reply) => {
-      const { layer, z: zStr, x: xStr } = request.params
-      const yStr = request.params.y
-
-      if (!VALID_LAYERS.has(layer)) {
-        return reply.code(400).send('Invalid layer')
-      }
-
-      const z = Number(zStr)
-      const x = Number(xStr)
-      const y = Number(yStr)
-
-      if (!Number.isInteger(z) || z < MIN_ZOOM || z > MAX_ZOOM) {
-        return reply.code(400).send('Invalid zoom')
-      }
-      const max = 2 ** z
-      if (!Number.isInteger(x) || x < 0 || x >= max || !Number.isInteger(y) || y < 0 || y >= max) {
-        return reply.code(400).send('Invalid coordinates')
-      }
+      const parsed = parseTileParams(request.params, VALID_LAYERS)
+      if (typeof parsed === 'string') return reply.code(400).send(parsed)
+      const { layer, z, x, y } = parsed
 
       const cacheKey = `${layer}/${z}/${x}/${y}`
-      const cached = pngCache.get(cacheKey)
-      if (cached !== undefined) {
-        // Promote to newest: delete + re-set = O(1) LRU via Map insertion order
-        pngCache.delete(cacheKey)
-        pngCache.set(cacheKey, cached)
-        reply.header('Content-Type', 'image/png')
-        reply.header('Cache-Control', 'public, max-age=86400')
-        return cached
-      }
+      reply.header('Content-Type', 'image/png')
+      reply.header('Cache-Control', 'public, max-age=86400')
+
+      const cached = lruGet(pngCache, cacheKey)
+      if (cached !== undefined) return cached
 
       let png: Buffer
       try {
@@ -51,17 +66,31 @@ export async function rasterTileRoutes(app: FastifyInstance): Promise<void> {
       } catch {
         png = getEmptyPng()
       }
-
-      pngCache.set(cacheKey, png)
-      if (pngCache.size > CACHE_MAX) {
-        // Evict oldest (first key in insertion order)
-        const oldest = pngCache.keys().next().value!
-        pngCache.delete(oldest)
-      }
-
-      reply.header('Content-Type', 'image/png')
-      reply.header('Cache-Control', 'public, max-age=86400')
+      lruSet(pngCache, cacheKey, png)
       return png
+    },
+  )
+
+  // Raw cell-value tiles for the hover cell inspector. Same z/x/y grid as
+  // the PNG endpoint; payload is Int16 (DEM) / u8 (building, forest) so the
+  // client can look up per-cell values locally without per-hover round-trips.
+  app.get<{ Params: { layer: string; z: string; x: string; y: string } }>(
+    '/api/raster-data/:layer/:z/:x/:y.bin',
+    async (request, reply) => {
+      const parsed = parseTileParams(request.params, VALID_DATA_LAYERS)
+      if (typeof parsed === 'string') return reply.code(400).send(parsed)
+      const { layer, z, x, y } = parsed
+
+      const cacheKey = `${layer}/${z}/${x}/${y}`
+      reply.header('Content-Type', 'application/octet-stream')
+      reply.header('Cache-Control', 'public, max-age=86400')
+
+      const cached = lruGet(dataCache, cacheKey)
+      if (cached !== undefined) return cached
+
+      const data = await renderDataTile(layer as 'dem' | 'building' | 'forest', z, x, y)
+      lruSet(dataCache, cacheKey, data)
+      return data
     },
   )
 }

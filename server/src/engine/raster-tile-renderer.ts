@@ -323,7 +323,7 @@ function setPixel(pixels: Buffer, W: number, x: number, y: number, r: number, g:
   pixels[off] = r; pixels[off + 1] = g; pixels[off + 2] = b; pixels[off + 3] = a
 }
 
-function tileToLatLonBbox(z: number, x: number, y: number) {
+export function tileToLatLonBbox(z: number, x: number, y: number) {
   const n = 2 ** z
   const lonWest = (x / n) * 360 - 180
   const lonEast = ((x + 1) / n) * 360 - 180
@@ -392,6 +392,60 @@ export async function renderTile(layer: LayerId, z: number, x: number, y: number
   }
 
   return encodePNG(W, W, pixels)
+}
+
+// 64×64 = 4 KB (u8) / 8 KB (i16) per tile. Matches the PNG bbox so the
+// client can sample by pixel coord from either endpoint interchangeably.
+export const DATA_TILE_SIZE = 64
+
+/**
+ * Raw raster values for a map tile — DEM as Int16 big-endian (metres,
+ * signed), building / forest as u8. Nearest-neighbour from the 1° source
+ * tile. Caller sets content-type.
+ */
+export async function renderDataTile(
+  layer: 'dem' | 'building' | 'forest',
+  z: number,
+  x: number,
+  y: number,
+): Promise<Buffer> {
+  const { latNorth, latSouth, lonWest, lonEast } = tileToLatLonBbox(z, x, y)
+  const mercYNorth = Math.log(Math.tan(Math.PI / 4 + (latNorth * Math.PI) / 360))
+  const mercYSouth = Math.log(Math.tan(Math.PI / 4 + (latSouth * Math.PI) / 360))
+  const sourceTiles = await collectSourceTiles(layer, latSouth, latNorth, lonWest, lonEast)
+
+  const N = DATA_TILE_SIZE
+  const bytesPerValue = layer === 'dem' ? 2 : 1
+  const buf = Buffer.alloc(N * N * bytesPerValue)
+
+  for (let py = 0; py < N; py++) {
+    const fracY = (py + 0.5) / N
+    const mercY = mercYNorth + fracY * (mercYSouth - mercYNorth)
+    const lat = (2 * Math.atan(Math.exp(mercY)) - Math.PI / 2) * (180 / Math.PI)
+    const latInt = Math.floor(lat)
+    const fracLat = lat - latInt
+    for (let px = 0; px < N; px++) {
+      const lon = lonWest + ((px + 0.5) / N) * (lonEast - lonWest)
+      const lonInt = Math.floor(lon)
+      const tile = sourceTiles.get(`${latInt}:${lonInt}`)
+      let value = 0
+      if (tile) {
+        const fracLon = lon - lonInt
+        value = sampleNearest(tile, fracLat, fracLon)
+      }
+      const idx = py * N + px
+      if (layer === 'dem') {
+        // Negative values are valid (below sea level) on Copernicus DEM.
+        const v = Math.max(-32768, Math.min(32767, Math.round(value)))
+        buf[idx * 2] = (v >> 8) & 0xff
+        buf[idx * 2 + 1] = v & 0xff
+      } else {
+        buf[idx] = Math.max(0, Math.min(255, Math.round(value)))
+      }
+    }
+  }
+
+  return buf
 }
 
 function encodePNG(width: number, height: number, rgba: Buffer): Buffer {
