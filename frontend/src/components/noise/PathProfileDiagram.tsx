@@ -257,8 +257,8 @@ export function PathProfileDiagram({
         ref={svgRef}
         viewBox={`0 0 ${VB_W} ${VB_H}`}
         preserveAspectRatio="xMidYMid meet"
-        className="w-full touch-none"
-        style={{ height: 'auto', maxHeight: 260 }}
+        className="w-full touch-none [&_line]:[vector-effect:non-scaling-stroke] [&_path]:[vector-effect:non-scaling-stroke]"
+        style={{ height: 'auto', minHeight: 180, maxHeight: 260 }}
         onPointerMove={handlePointerMove}
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
@@ -295,7 +295,7 @@ export function PathProfileDiagram({
 
         {/* Elevation area */}
         <path d={elevPath} fill="rgba(120,90,55,0.12)" />
-        <path d={elevLine} fill="none" stroke="#8a6a3d" strokeWidth={1.2} />
+        <path d={elevLine} fill="none" stroke="#8a6a3d" strokeWidth={1.5} />
 
         {/* Buildings */}
         {buildingRects.map((r, i) => (
@@ -309,16 +309,16 @@ export function PathProfileDiagram({
           x2={rcvX}
           y2={rcvY}
           stroke="currentColor"
-          strokeOpacity={0.35}
-          strokeDasharray="3 3"
-          strokeWidth={1}
+          strokeOpacity={0.45}
+          strokeDasharray="4 3"
+          strokeWidth={1.25}
         />
 
         {/* Terrain edge apex */}
         {apexX != null && apexY != null && (
           <g>
-            <circle cx={apexX} cy={apexY} r={3.5} fill="#16a34a" />
-            <text x={apexX + 5} y={apexY - 4} fontSize={14} fill="#16a34a">
+            <circle cx={apexX} cy={apexY} r={4} fill="#16a34a" />
+            <text x={apexX + 6} y={apexY - 5} fontSize={16} fill="#16a34a">
               apex
             </text>
           </g>
@@ -327,24 +327,24 @@ export function PathProfileDiagram({
         {/* Obstacle marker */}
         {obsX != null && obsY != null && (
           <g>
-            <line x1={obsX - 5} y1={obsY - 5} x2={obsX + 5} y2={obsY + 5} stroke="#dc2626" strokeWidth={1.5} />
-            <line x1={obsX - 5} y1={obsY + 5} x2={obsX + 5} y2={obsY - 5} stroke="#dc2626" strokeWidth={1.5} />
+            <line x1={obsX - 6} y1={obsY - 6} x2={obsX + 6} y2={obsY + 6} stroke="#dc2626" strokeWidth={2} />
+            <line x1={obsX - 6} y1={obsY + 6} x2={obsX + 6} y2={obsY - 6} stroke="#dc2626" strokeWidth={2} />
           </g>
         )}
 
         {/* Source marker */}
-        <circle cx={srcX} cy={srcY} r={3.5} fill="#2563eb" />
-        <line x1={srcX} y1={srcY} x2={srcX} y2={yOf(trace.elevation_m[0])} stroke="#2563eb" strokeWidth={1} />
+        <circle cx={srcX} cy={srcY} r={4} fill="#2563eb" />
+        <line x1={srcX} y1={srcY} x2={srcX} y2={yOf(trace.elevation_m[0])} stroke="#2563eb" strokeWidth={1.5} />
 
         {/* Receiver marker — sits at the LoS endpoint (rcv_alt_m already
             includes the listening height), with a thin stick down to the
             ground for spatial context. */}
-        <circle cx={rcvX} cy={rcvY} r={3.5} fill="#dc2626" />
-        <line x1={rcvX} y1={rcvY} x2={rcvX} y2={yOf(trace.elevation_m[n - 1])} stroke="#dc2626" strokeWidth={1} />
+        <circle cx={rcvX} cy={rcvY} r={4} fill="#dc2626" />
+        <line x1={rcvX} y1={rcvY} x2={rcvX} y2={yOf(trace.elevation_m[n - 1])} stroke="#dc2626" strokeWidth={1.5} />
 
         {/* Sample dots on terrain line */}
         {Array.from({ length: n }).map((_, i) => (
-          <circle key={`s-${i}`} cx={xOf(trace.t[i])} cy={yOf(trace.elevation_m[i])} r={1.2} fill="#8a6a3d" />
+          <circle key={`s-${i}`} cx={xOf(trace.t[i])} cy={yOf(trace.elevation_m[i])} r={1.5} fill="#8a6a3d" />
         ))}
 
         {/* Scrub bar */}
@@ -355,19 +355,19 @@ export function PathProfileDiagram({
             x2={xOf(trace.t[hoverIdx])}
             y2={PAD_T + PLOT_H}
             stroke="currentColor"
-            strokeOpacity={0.25}
-            strokeWidth={1}
+            strokeOpacity={0.35}
+            strokeWidth={1.25}
           />
         )}
 
         {/* X axis */}
-        <line x1={PAD_L} y1={PAD_T + PLOT_H} x2={PAD_L + PLOT_W} y2={PAD_T + PLOT_H} stroke="currentColor" strokeOpacity={0.4} />
+        <line x1={PAD_L} y1={PAD_T + PLOT_H} x2={PAD_L + PLOT_W} y2={PAD_T + PLOT_H} stroke="currentColor" strokeOpacity={0.5} strokeWidth={1.25} />
         {xAxisTicks.map(d => {
           const tx = PAD_L + (d / dist) * PLOT_W
           return (
             <g key={`xt-${d}`}>
-              <line x1={tx} y1={PAD_T + PLOT_H} x2={tx} y2={PAD_T + PLOT_H + 3} stroke="currentColor" strokeOpacity={0.4} />
-              <text x={tx} y={PAD_T + PLOT_H + 18} textAnchor="middle" fontSize={14} fill="currentColor" opacity={0.7}>
+              <line x1={tx} y1={PAD_T + PLOT_H} x2={tx} y2={PAD_T + PLOT_H + 4} stroke="currentColor" strokeOpacity={0.5} />
+              <text x={tx} y={PAD_T + PLOT_H + 20} textAnchor="middle" fontSize={16} fill="currentColor" opacity={0.75}>
                 {d >= 1000 ? `${(d / 1000).toFixed(1)} km` : `${Math.round(d)} m`}
               </text>
             </g>
@@ -375,16 +375,16 @@ export function PathProfileDiagram({
         })}
 
         {/* Y axis (elev) */}
-        <text x={6} y={PAD_T + 12} fontSize={14} fill="currentColor" opacity={0.7}>
+        <text x={6} y={PAD_T + 14} fontSize={16} fill="currentColor" opacity={0.75}>
           {elevMax.toFixed(0)} m
         </text>
-        <text x={6} y={PAD_T + PLOT_H - 2} fontSize={14} fill="currentColor" opacity={0.7}>
+        <text x={6} y={PAD_T + PLOT_H - 2} fontSize={16} fill="currentColor" opacity={0.75}>
           {elevMin.toFixed(0)} m
         </text>
 
         {/* Vertical exaggeration badge */}
         {exaggeration > 1.05 && (
-          <text x={PAD_L + PLOT_W - 4} y={PAD_T + 12} textAnchor="end" fontSize={14} fill="currentColor" opacity={0.6}>
+          <text x={PAD_L + PLOT_W - 4} y={PAD_T + 14} textAnchor="end" fontSize={16} fill="currentColor" opacity={0.65}>
             ×{exaggeration.toFixed(1)} vert
           </text>
         )}
@@ -394,13 +394,12 @@ export function PathProfileDiagram({
           native browser pixels regardless of the viewBox scaling. */}
       {hoverIdx != null && (
         <div
-          className="absolute top-1 left-1 pointer-events-none rounded border border-border/50 bg-background/95 shadow-sm px-2 py-1.5 text-[11px] leading-snug"
-          style={{ minWidth: 170 }}
+          className="absolute top-1 left-1 pointer-events-none rounded border border-border/40 bg-background/95 px-1.5 py-0.5 text-[10px] leading-snug"
         >
-          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 font-mono">
-            <span className="text-muted-foreground/70">Distance</span>
+          <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0 font-mono">
+            <span className="text-muted-foreground/70">Dist</span>
             <span className="text-right">{Math.round(trace.t[hoverIdx] * dist)} m</span>
-            <span className="text-muted-foreground/70">Elevation</span>
+            <span className="text-muted-foreground/70">Elev</span>
             <span className="text-right">{trace.elevation_m[hoverIdx].toFixed(0)} m</span>
             <span className="text-muted-foreground/70">Building</span>
             <span className="text-right">{trace.building_h_m[hoverIdx]} m</span>
@@ -408,14 +407,14 @@ export function PathProfileDiagram({
             <span className="text-right">{trace.forest_u8[hoverIdx] > 0 ? 'yes' : 'no'}</span>
             <span
               className="text-muted-foreground/70"
-              title={'Ground hardness derived from Copernicus Imperviousness\n' +
-                'Density (0 = natural soil, 100 = fully sealed).\n' +
+              title={'Ground hardness from Copernicus Imperviousness Density\n' +
+                '(0 = natural soil, 100 = fully sealed).\n' +
                 'CNOSSOS ground factor G = 1 − IMD / 100.'}
             >
               Ground
             </span>
             <span className="text-right">
-              {imdLabel(trace.imd_u8[hoverIdx])} (IMD {trace.imd_u8[hoverIdx]})
+              {imdLabel(trace.imd_u8[hoverIdx])} ({trace.imd_u8[hoverIdx]})
             </span>
           </div>
         </div>
