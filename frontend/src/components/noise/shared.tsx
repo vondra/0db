@@ -96,19 +96,18 @@ export const PERIOD_LABELS_DETAIL = [
   'Night (23–07)',
 ] as const
 
-/** Tooltip explaining the CNOSSOS day/evening/night convention plus the
- * engine's TZ approximation (fixed UTC+1, no DST — see
- * `engine/adsb-to-h3r4/src/segment.rs::period_from_timestamp`). */
+/** Tooltip explaining the CNOSSOS day/evening/night convention.
+ * Aircraft periods come from the segment midpoint via IANA timezone + DST
+ * (see `engine/adsb-to-h3r4/src/segment.rs::period_from_timestamp`). */
 export const PERIOD_TOOLTIP =
-  'CNOSSOS-EU period buckets:\n' +
+  'CNOSSOS-EU period buckets (local wall-clock time):\n' +
   '  Day      07:00–19:00\n' +
   '  Evening  19:00–23:00 (+5 dB penalty)\n' +
   '  Night    23:00–07:00 (+10 dB penalty)\n\n' +
-  'Aircraft periods are approximate: the engine applies a fixed\n' +
-  'UTC+1 offset for all flights worldwide and does not switch to\n' +
-  'CEST during DST (acceptable error band ≤ 1 h). Road/rail traffic\n' +
-  'periods come from CNOSSOS day/evening/night percentages, not raw\n' +
-  'timestamps, so DST does not apply there.'
+  'Aircraft: each segment is classified from its midpoint lat/lon\n' +
+  'via the IANA timezone at that coordinate (DST-aware). Road/rail\n' +
+  'periods come from CNOSSOS day/evening/night percentages of daily\n' +
+  'flow, not per-vehicle timestamps.'
 
 /** Shared palette for source/receiver/obstacle markers across noise SVG diagrams. */
 export const DIAGRAM_COLORS = {

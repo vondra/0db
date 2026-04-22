@@ -448,8 +448,11 @@ d_p = slant distance at CPA. β = elevation angle.
 - aircraft `typecode` is mapped to one of **8 proxy NPD profiles**
 - unknown / unmapped typecode falls back to **Generic** (profile 7)
 - `is_departure` is inferred from median climb rate (`ROCD > 500 fpm`)
-- day/evening/night period is approximated from timestamp using **UTC+1**
-  (global atlas TODO: convert to receiver-local time at tile generation)
+- day/evening/night period is derived from the segment-midpoint coordinate via
+  **tzf-rs IANA timezone lookup + chrono-tz** (DST-aware UTC → local wall-clock).
+  Boundaries follow END 2002/49/EC defaults: day [07:00, 19:00), evening
+  [19:00, 23:00), night [23:00, 07:00). Historical DST rules come from
+  tzdata 2024a+.
 - airport context uses `airport_lines.arrow` + `airport_areas.arrow`
 - candidate airport-ground segments are those with:
   - `on_ground = true`, or
@@ -761,7 +764,7 @@ ISO 9613-2 point source.
 | **Settlement noise** | Custom per-building source model | END / CNOSSOS do not standardize this source class | Useful for atlas context, but not regulatory-comparable. |
 | **Industrial profiles** | `nace_4digit -> site_subtype -> source_type` fallback chain | Standard inventories usually use audited source inventories / measured facility data | Keeps global coverage, but facility class can be approximate when registry match is missing. |
 | **Aircraft NPD** | 8 proxy profiles + heuristic typecode mapping | Doc 29: official ANP database | ±3 dB per aircraft type. We approximate, not certify. |
-| **Aircraft local time / ground filtering** | UTC+1 period approximation + airport-context stale-ground filter | Operational studies use airport-local time and curated trajectory cleaning | Timing and near-runway behaviour can be biased. |
+| **Aircraft local time / ground filtering** | Per-coordinate IANA TZ lookup (tzf-rs + chrono-tz, DST-aware) + airport-context stale-ground filter | Operational studies use airport-local time (same principle) and curated trajectory cleaning | Near-runway behaviour can still be biased by trajectory-cleaning simplifications. |
 | **Aircraft ground ops** | ADS-B low-AGL / on-ground segments matched to airport geometry, plus synthetic runway/taxi/apron fill when coverage is incomplete | Airport studies usually use curated surface movement inventories and local operations data | Near-runway levels depend on airport geometry quality and ADS-B ground coverage. |
 | **Aircraft tile adjustments** | Aircraft ground propagation could expose separate terrain / screening / vegetation variants | Batch `aircraft` tiles currently bake ground-ops path effects into final Lden and do not emit `.adj.bin` | Map propagation toggles cannot isolate aircraft ground-ops attenuation separately. |
 | **Bridge/tunnel** | Bridge G=0, tunnel skip | No standard specifies this directly | Physically correct — bridge is hard surface, tunnel contains sound. |

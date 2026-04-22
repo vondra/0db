@@ -162,7 +162,7 @@ The aircraft layer combines two models: airborne overflights from ADS-B radar tr
 
 - **Data:** ADS-B trajectories from [adsb.lol](https://adsb.lol) (full year, all altitudes) + airport runway / taxiway / apron geometry from OpenStreetMap
 - **8 proxy aircraft profiles:** B738, A320, A321, Widebody, Turboprop, BizJet, Light GA, Generic
-- **Limitations:** Airborne aircraft type is approximated by 8 proxy profiles, airport ground ops are partly inferred or synthetically backfilled when surface coverage is incomplete, and period assignment uses simplified local-time conversion. This is useful for atlas-scale patterns, not certified airport contouring.
+- **Limitations:** Airborne aircraft type is approximated by 8 proxy profiles, and airport ground ops are partly inferred or synthetically backfilled when surface coverage is incomplete. Day/evening/night periods are derived from the segment-midpoint coordinate using an IANA timezone database (DST-aware). This is useful for atlas-scale patterns, not certified airport contouring.
 
 <details>
 <summary>Technical: aircraft layer (Doc 29 + airport ground ops)</summary>
@@ -480,7 +480,7 @@ This model is an engineering approximation for a continental-scale noise atlas �
 | Source height (roads) | CNOSSOS-EU: 0.05 m (rolling) / 0.30 m (propulsion) | 0.05 m for both | Minor — propulsion height difference negligible at atlas scale |
 | Terrain profile | Professional SW: 5–10 m spacing | Adaptive 30 m spacing (8–50 points) | May miss narrow barriers (<30 m wide) |
 | Aircraft type mapping | Doc 29 / ANP: aircraft-specific certified profiles | 8 proxy NPD profiles mapped from ADS-B typecodes | Roughly ±3 dB by aircraft family |
-| Aircraft timing | Airport-local time and operational preprocessing | Day/evening/night inferred with simplified UTC+1 conversion | Time-band bias outside Central Europe |
+| Aircraft timing | Airport-local time and operational preprocessing | Segment midpoint → IANA timezone (tzf-rs) → DST-aware local time (chrono-tz); END default period boundaries | Global local time; only airport-local operational-preprocessing differences remain |
 | Aircraft ground preprocessing | Curated airport trajectory cleaning | Airport-aware ADS-B filtering removes obvious stale ground segments | Near-runway bias still possible |
 | Aircraft ground operations | Surface movement inventories and airport-local operational data | ADS-B low-altitude / on-ground segments matched to airport geometry, with synthetic runway/taxi/apron fill when coverage is incomplete | Near-runway levels depend on airport geometry quality and ADS-B surface coverage |
 | Receiver grid | END: facade receivers (4 m height, 2 m from wall) | H3 res-11 hex centers (24 m edge, 4 m height) | Area average, not per-facade |
