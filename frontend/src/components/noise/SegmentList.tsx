@@ -30,10 +30,15 @@ function traceKind(t: SegmentTrace): SegmentKind {
 
 // Unique React key. Point sources (buildings, industrial sites) are
 // discretized into multiple grid points sharing one parent osm_id and
-// segment_idx=0; without coords in the key, React collapses them into a
-// single component and filter toggles fall over.
+// segment_idx=0; aircraft ground ops emit the same physical segment
+// per movement-kind so even (osm_id, segment_idx, cp_lat, cp_lon) can
+// repeat with different `received_lden`. Including the received Lden
+// keeps each row's React identity unique across all known engine
+// duplicates.
 function segmentRowKey(t: SegmentTrace): string {
-  return `s-${t.osm_id ?? 'pt'}-${t.segment_idx}-${t.cp_lat.toFixed(6)},${t.cp_lon.toFixed(6)}`
+  const rl = t.received_lden.full
+  const rlKey = Number.isFinite(rl) ? rl.toFixed(2) : 'na'
+  return `s-${t.osm_id ?? 'pt'}-${t.segment_idx}-${t.cp_lat.toFixed(6)},${t.cp_lon.toFixed(6)}-${rlKey}`
 }
 
 function countsByKind(meta: SegmentTracesSummary | null | undefined) {
