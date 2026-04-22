@@ -68,11 +68,41 @@ function InlineTable({ rows }: { rows: [string | React.ReactNode, React.ReactNod
 
 function Section1Source({ trace }: { trace: SegmentTrace }) {
   const emissionRowsList = useMemo(() => emissionInputRows(trace.emission), [trace.emission])
+  const lwRow = useMemo(() => computeLwRow(trace), [trace])
+  const rows = lwRow ? [...emissionRowsList, lwRow] : emissionRowsList
   return (
     <Section>
-      <InlineTable rows={emissionRowsList} />
+      <InlineTable rows={rows} />
     </Section>
   )
+}
+
+// Compute the Lw emission row. Line sources (road / railway / aircraft_ground)
+// have a per-meter line-source power density L'w [dB(A)/m]; point sources
+// (building / industrial) have a total Lw [dB(A)]. Airborne aircraft skip —
+// SEL/Lmax instead of Lw, but they render via AirborneRow, not SegmentExpanded.
+function computeLwRow(trace: SegmentTrace): [React.ReactNode, React.ReactNode] | null {
+  const lw = trace.lw_db_a
+  if (!lw) return null
+  const kind = trace.emission.kind
+  const isLineSource = kind === 'road' || kind === 'railway' || kind === 'aircraft_ground'
+  const isPointSource = kind === 'building' || kind === 'industrial'
+  if (!isLineSource && !isPointSource) return null
+  const unit = isLineSource ? 'dB(A)/m' : 'dB(A)'
+  const label = isLineSource ? "L'w (day)" : 'Lw (day)'
+  const symbol = isLineSource ? "L'w" : 'Lw'
+  const tooltip =
+    `${symbol} — ${isLineSource ? 'line-source power density' : 'point-source sound power'}, A-weighted\n\n` +
+    `  day      ${lw.day.toFixed(1).padStart(6)} ${unit}\n` +
+    `  evening  ${lw.evening.toFixed(1).padStart(6)} ${unit}\n` +
+    `  night    ${lw.night.toFixed(1).padStart(6)} ${unit}\n\n` +
+    `Day value is representative (longest, loudest period for\nmost sources). Per-band values live in §5 under "Emission".`
+  return [
+    <HoverText title={tooltip} className="no-underline">
+      <span className="cursor-help">{label}</span>
+    </HoverText>,
+    `${lw.day.toFixed(1)} ${unit}`,
+  ]
 }
 
 function emissionInputRows(e: EmissionTrace): [React.ReactNode, React.ReactNode][] {

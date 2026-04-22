@@ -526,7 +526,7 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
     } else if !seg.name.is_empty() {
         seg.name.clone()
     } else {
-        format!("osm:{}", seg.osm_id)
+        format!("{} osm:{}", rail_type, seg.osm_id)
     };
 
     let vegetation = vegetation_trace(
@@ -619,12 +619,16 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
         lw_bands,
     } = inputs;
 
+    // Unnamed + ref-less segments used to fall back to "osm:<id>" alone,
+    // which rendered as a bare id in SegmentRow with the class hidden in the
+    // subtype line. Prefix the class name so the row says "motorway_link
+    // osm:123" instead of "osm:123".
     let seg_name = if !seg.road_ref.is_empty() {
         seg.road_ref.clone()
     } else if !seg.name.is_empty() {
         seg.name.clone()
     } else {
-        format!("osm:{}", seg.osm_id)
+        format!("{} osm:{}", class_name, seg.osm_id)
     };
 
     let traffic_source = if seg.traffic_source == 1 && seg.aadt_light > 0 {

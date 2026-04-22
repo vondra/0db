@@ -32,6 +32,10 @@ export function SegmentRow({
   const [expanded, setExpanded] = useState(false)
   const lden = trace.received_lden.full
   const subtype = subtypeLabel(trace.kind, trace.subtype)
+  // Engine can emit names like "motorway_link osm:123" when a way has no ref
+  // or name tag. Don't repeat the subtype on the subtitle line in that case.
+  const headingName = segmentName(trace)
+  const showSubtype = !headingName.toLowerCase().startsWith(String(trace.subtype).toLowerCase())
 
   const handleToggle = () => {
     const next = !expanded
@@ -47,7 +51,7 @@ export function SegmentRow({
       >
         <div className="flex items-baseline gap-1.5 text-xs px-0">
           <span className="truncate flex-1">
-            <span className="font-medium text-foreground">{segmentName(trace)}</span>
+            <span className="font-medium text-foreground">{headingName}</span>
             {trace.is_dominant_of_group && (
               <span
                 className="text-[10px] text-amber-500 ml-0.5"
@@ -56,7 +60,7 @@ export function SegmentRow({
                 ⭑
               </span>
             )}
-            <span className="text-muted-foreground/60"> · {subtype}</span>
+            {showSubtype && <span className="text-muted-foreground/60"> · {subtype}</span>}
           </span>
           <span className="text-muted-foreground/60 shrink-0 w-14 text-right tabular-nums">
             {formatDist(Math.round(trace.dist_m))}
