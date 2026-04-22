@@ -25,6 +25,9 @@ h3o = "0.7"
 noise-compute = { path = "../noise-compute" }
 raster-reader = { path = "../raster-reader" }
 rayon = "1"
+# Used only by `src/bin/aircraft-ground-stats.rs` for `segment`/`trace` types.
+# Not pulled into the NAPI cdylib — bin targets link independently.
+adsb-to-h3r4 = { path = "../adsb-to-h3r4" }
 
 [build-dependencies]
 napi-build = "2"
