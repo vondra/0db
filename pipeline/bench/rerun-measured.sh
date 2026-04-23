@@ -38,7 +38,12 @@ export -f run_one
 export DATA_YEAR LOG_DIR
 
 # ── Discover surviving scripts ──
-ROADS=$(ls pipeline/enrich-roads-*.ts 2>/dev/null)
+# service-tree is excluded: it is an estimated (not measured) source and is
+# already run at the tail of scripts/osm-to-h3r4.sh immediately after the
+# planet extract, where it has the freshest road_class / oneway state. Re-
+# running it here would duplicate a 3 h job. rerun-measured handles ONLY
+# measured / census / cadastre enrichers.
+ROADS=$(ls pipeline/enrich-roads-*.ts 2>/dev/null | grep -v '/enrich-roads-service-tree\.ts$')
 RAILWAYS=$(ls pipeline/enrich-railway-*.ts 2>/dev/null)
 BUILDINGS=$(ls pipeline/enrich-buildings-*.ts 2>/dev/null)
 INDUSTRIAL=$(ls pipeline/enrich-industrial-*.ts 2>/dev/null)
