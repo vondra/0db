@@ -142,38 +142,63 @@ fn city_default(city_id: u16, class: u8) -> Option<Aadt> {
 }
 
 // ─── Country defaults ──────────────────────────────────────────────────────
-// ISO-3166 alpha-2 keyed. Values reflect country-level "rural" tier from each
-// national enricher's CLASS_AADT × splitVehicles(tier=0).
+// Two-layer policy:
+//   (a) Explicit arm for a country whose national road enricher publishes
+//       per-class AADT (currently BR rural + TH rural). Takes priority.
+//   (b) Data-driven fallback from `country_defaults_generated::country_scale`
+//       — World Bank GDP-per-capita-PPP ratio vs DE, clamped [0.15, 1.3],
+//       applied to motorway/trunk/primary/link classes. Local roads
+//       (class 3-9) stay at WORLD regardless.
 //
-// Countries without an arm here fall through to continent / world defaults —
-// more arms will be added as enrichers get audited in Phase A.1 (BO, CL, CN,
-// CO, EC, ID, IN, PE, PH, PY, VE remaining).
+// The generated table (224 countries, WB 2022) replaces the earlier
+// hand-curated tier buckets — refresh via
+// `node scripts/fetch-wb-country-data.mjs && node scripts/gen-country-defaults-rs.mjs`.
+// Empirical basis: Dargay, Gately & Sommer 2007 "Vehicle Ownership and
+// Income Growth, Worldwide" — motorization ~ sqrt(GDP_PPP) over the mid
+// range with saturation at the high end.
+
+/// Classes whose default AADT scales with country GDP — motorway, trunk,
+/// primary and their ramp classes. Local roads (3-9) stay at WORLD because
+/// informal transport, cycling and pedestrian traffic decorrelate local
+/// AADT from GDP.
+const GDP_SCALED_CLASSES: &[u8] = &[0, 1, 2, 10, 11, 12];
 
 fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
+    // (a) Explicit data-driven arms — BR, TH rural from national enrichers.
     match (iso, class) {
         // ─── Brazil rural (tier 0) — split 60/10/25/5 ────────────────────
         // Source: pipeline/enrich-roads-br.ts CLASS_AADT rural × splitVehicles(tier=0).
-        (b"BR", 0) => Some((30000.0, 5000.0, 12500.0, 2500.0)), // 50k motorway
-        (b"BR", 1) => Some((15000.0, 2500.0, 6250.0, 1250.0)),  // 25k trunk
-        (b"BR", 2) => Some((7200.0, 1200.0, 3000.0, 600.0)),    // 12k primary
-        (b"BR", 3) => Some((3000.0, 500.0, 1250.0, 250.0)),     // 5k secondary
-        (b"BR", 4) => Some((1200.0, 200.0, 500.0, 100.0)),      // 2k tertiary
-        (b"BR", 5) => Some((600.0, 100.0, 250.0, 50.0)),        // 1k residential
-        (b"BR", 6) => Some((240.0, 40.0, 100.0, 20.0)),         // 400 living_street
+        (b"BR", 0) => return Some((30000.0, 5000.0, 12500.0, 2500.0)), // 50k motorway
+        (b"BR", 1) => return Some((15000.0, 2500.0, 6250.0, 1250.0)),  // 25k trunk
+        (b"BR", 2) => return Some((7200.0, 1200.0, 3000.0, 600.0)),    // 12k primary
+        (b"BR", 3) => return Some((3000.0, 500.0, 1250.0, 250.0)),     // 5k secondary
+        (b"BR", 4) => return Some((1200.0, 200.0, 500.0, 100.0)),      // 2k tertiary
+        (b"BR", 5) => return Some((600.0, 100.0, 250.0, 50.0)),        // 1k residential
+        (b"BR", 6) => return Some((240.0, 40.0, 100.0, 20.0)),         // 400 living_street
 
         // ─── Thailand rural — split 62/10/13/15 ───────────────────────────
         // Source: pipeline/enrich-roads-th.ts THAI_RURAL class defaults
         // × thaiClassSplit(isBangkok=false). Rural baseline, Bangkok hex
         // overrides via CITY_BANGKOK above.
-        (b"TH", 0) => Some((37200.0, 6000.0, 7800.0, 9000.0)),  // 60k motorway
-        (b"TH", 1) => Some((18600.0, 3000.0, 3900.0, 4500.0)),  // 30k trunk
-        (b"TH", 2) => Some((9300.0, 1500.0, 1950.0, 2250.0)),   // 15k primary
-        (b"TH", 3) => Some((3720.0, 600.0, 780.0, 900.0)),      // 6k secondary
-        (b"TH", 4) => Some((1550.0, 250.0, 325.0, 375.0)),      // 2.5k tertiary
-        (b"TH", 5) => Some((744.0, 120.0, 156.0, 180.0)),       // 1.2k residential
+        (b"TH", 0) => return Some((37200.0, 6000.0, 7800.0, 9000.0)),  // 60k motorway
+        (b"TH", 1) => return Some((18600.0, 3000.0, 3900.0, 4500.0)),  // 30k trunk
+        (b"TH", 2) => return Some((9300.0, 1500.0, 1950.0, 2250.0)),   // 15k primary
+        (b"TH", 3) => return Some((3720.0, 600.0, 780.0, 900.0)),      // 6k secondary
+        (b"TH", 4) => return Some((1550.0, 250.0, 325.0, 375.0)),      // 2.5k tertiary
+        (b"TH", 5) => return Some((744.0, 120.0, 156.0, 180.0)),       // 1.2k residential
 
-        _ => None,
+        _ => {}
     }
+
+    // (b) WB GDP-scaled fallback from WORLD_DEFAULT.
+    if !GDP_SCALED_CLASSES.contains(&class) {
+        // Local roads: don't scale with GDP.
+        return None;
+    }
+    let scale = crate::country_defaults_generated::country_scale(iso)?;
+    let class_idx = (class as usize).min(WORLD_DEFAULT.len() - 1);
+    let base = WORLD_DEFAULT[class_idx];
+    Some((base.0 * scale, base.1 * scale, base.2 * scale, base.3 * scale))
 }
 
 // ─── Continent defaults ────────────────────────────────────────────────────
@@ -182,12 +207,18 @@ fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
 // default is lower).
 
 fn continent_default(continent: Continent, class: u8) -> Option<Aadt> {
-    match (continent, class) {
-        // Africa — sparser motorway + heavier reliance on unpaved arterials.
-        // Tuned by eye (/gg plan v5) pending per-country audits.
-        (Continent::Africa, 0) => Some((5760.0, 1040.0, 880.0, 320.0)), // ~8k motorway (ca. 30 % of world default)
-        _ => None,
+    // Reached only when country arm returned None (usually because the
+    // ISO is not in the WB dataset or the class isn't GDP-scaled).
+    // We still apply continent scaling for GDP-scaled classes because
+    // those are the ones where the signal matters — local roads fall
+    // through to WORLD_DEFAULT.
+    if !GDP_SCALED_CLASSES.contains(&class) {
+        return None;
     }
+    let scale = crate::country_defaults_generated::continent_scale(continent)?;
+    let class_idx = (class as usize).min(WORLD_DEFAULT.len() - 1);
+    let base = WORLD_DEFAULT[class_idx];
+    Some((base.0 * scale, base.1 * scale, base.2 * scale, base.3 * scale))
 }
 
 #[cfg(test)]
@@ -212,10 +243,12 @@ mod tests {
     }
 
     #[test]
-    fn world_default_fallback_for_missing_country() {
-        // Unclassified country (US has no arm today) → WORLD_DEFAULT.
+    fn us_scales_close_to_world_via_gdp() {
+        // US GDP_PPP ~ $75k ≈ 1.09 × DE → sqrt scale ≈ 1.04
         let a = admin_for(b"US", 0, Continent::NorthAmerica);
-        assert_eq!(resolve_traffic_default(0, a), WORLD_DEFAULT[0]);
+        let (l, m, h, x) = resolve_traffic_default(0, a);
+        let total = l + m + h + x;
+        assert!(total > 28_000.0 && total < 35_000.0, "US motorway ≈ 31k, got {}", total);
     }
 
     #[test]
@@ -273,10 +306,12 @@ mod tests {
     }
 
     #[test]
-    fn africa_continent_overrides_world_for_missing_country() {
-        // Algeria has no arm today — should get Africa continent default.
+    fn dz_algeria_scales_from_gdp() {
+        // Algeria GDP_PPP ~$13k → sqrt(13/69) ≈ 0.43 → motorway ~13k
         let a = admin_for(b"DZ", 0, Continent::Africa);
-        assert_eq!(resolve_traffic_default(0, a), (5760.0, 1040.0, 880.0, 320.0));
+        let (l, m, h, x) = resolve_traffic_default(0, a);
+        let total = l + m + h + x;
+        assert!(total > 10_000.0 && total < 16_000.0, "DZ motorway ≈ 13k, got {}", total);
     }
 
     #[test]
@@ -284,5 +319,69 @@ mod tests {
         // Classes ≥ 13 clamp to primary_link (class 12) as deterministic fallback.
         let v = resolve_traffic_default(200, Admin::UNKNOWN);
         assert_eq!(v, WORLD_DEFAULT[12]);
+    }
+
+    // ── WB-backed country scaling tests (plan v5 §I.3) ────────────────────
+    #[test]
+    fn de_reference_motorway_matches_world() {
+        // DE is the reference for GDP_PPP scaling → scale ≈ 1.0
+        let a = admin_for(b"DE", 0, Continent::Europe);
+        let (l, m, h, x) = resolve_traffic_default(0, a);
+        let total = l + m + h + x;
+        assert!((total - 30000.0).abs() < 100.0, "DE motorway ≈ 30k, got {}", total);
+    }
+
+    #[test]
+    fn low_gdp_country_scales_down_motorway() {
+        // NG (Nigeria) $5.5k PPP → sqrt(5500/69000) ≈ 0.28, expected motorway
+        // total ≈ 0.28 × 30000 = 8400. Accept ±15 % tolerance for WB data drift.
+        let a = admin_for(b"NG", 0, Continent::Africa);
+        let (l, m, h, x) = resolve_traffic_default(0, a);
+        let total = l + m + h + x;
+        assert!(total > 5000.0 && total < 12000.0, "NG motorway in [5k,12k], got {}", total);
+    }
+
+    #[test]
+    fn country_local_roads_are_not_scaled() {
+        // Classes ≥ 3 never scale by GDP — they go straight to WORLD.
+        for iso in [b"NG", b"IN", b"LU", b"DE"] {
+            for class in [3u8, 4, 5, 6, 7, 8, 9] {
+                let a = admin_for(iso, 0, Continent::Unknown);
+                assert_eq!(
+                    resolve_traffic_default(class, a),
+                    WORLD_DEFAULT[class as usize],
+                    "{:?} class={} should be WORLD",
+                    std::str::from_utf8(iso).unwrap(),
+                    class
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_country_falls_through_to_continent_or_world() {
+        // ZZ is an invalid ISO — the country_scale table returns None.
+        // Continent::Unknown → cascade lands on WORLD.
+        let a = admin_for(b"ZZ", 0, Continent::Unknown);
+        assert_eq!(resolve_traffic_default(0, a), WORLD_DEFAULT[0]);
+    }
+
+    #[test]
+    fn continent_arm_applies_gdp_scale() {
+        // Unknown ISO in Africa continent → Africa pop-weighted scale.
+        // Africa mean scale ≈ 0.29 → motorway ≈ 8.7k.
+        let a = admin_for(b"ZZ", 0, Continent::Africa);
+        let (l, m, h, x) = resolve_traffic_default(0, a);
+        let total = l + m + h + x;
+        assert!(total > 5000.0 && total < 12000.0, "Africa continent mtw in [5k,12k], got {}", total);
+    }
+
+    #[test]
+    fn explicit_br_takes_priority_over_gdp_scale() {
+        // BR is in WB dataset (would give ~15k motorway from sqrt(17k/69k) × 30k ≈ 15k),
+        // but the explicit arm is 50k — that must win.
+        let a = admin_for(b"BR", 0, Continent::SouthAmerica);
+        let (l, m, h, x) = resolve_traffic_default(0, a);
+        assert!((l + m + h + x - 50000.0).abs() < 1.0);
     }
 }

@@ -10,6 +10,7 @@
 pub mod admin;
 pub mod confidence;
 pub mod constants;
+pub mod country_defaults_generated;
 pub mod defaults;
 pub mod emission;
 pub mod normalize;
