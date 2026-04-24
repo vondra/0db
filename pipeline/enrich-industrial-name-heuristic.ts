@@ -23,7 +23,7 @@
 import { readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
@@ -31,7 +31,7 @@ const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 const PROGRESS_INTERVAL_MS = 10_000
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('industrial-name-heuristic')!.id
+const MY_SOURCE_ID = SOURCES_BY_KEY.get('industrial-name-heuristic')!.id
 
 // ── Keyword → NACE rules ──
 // Order matters: first match wins.  More specific keywords before generic ones.
@@ -233,9 +233,9 @@ async function main() {
           const nace6 = parseInt(rule.nace, 10) || 0
           const nace4 = Math.floor(nace6 / 100)
           const existingId = existingSourceId[i]
-          if (shouldOverwrite(existingId, MY_DATASET_ID)) {
+          if (shouldOverwrite(existingId, MY_SOURCE_ID)) {
             newNace[i] = nace4
-            newDatasetId[i] = MY_DATASET_ID
+            newDatasetId[i] = MY_SOURCE_ID
             if (existingId === 0) newEntries++
             labelCounts[rule.label] = (labelCounts[rule.label] ?? 0) + 1
             anyChanged = true

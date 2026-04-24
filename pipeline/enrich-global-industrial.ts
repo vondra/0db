@@ -22,7 +22,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 
 import { resolve } from 'node:path'
 import { makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
 import { latLngToCell } from 'h3-js'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
@@ -42,8 +42,8 @@ const EPRTR_URLS = [
   'https://industry.eea.europa.eu/download?format=csv',
 ]
 
-const GPPD_DATASET_ID = DATASETS_BY_KEY.get('global-gppd')!.id
-const EPRTR_DATASET_ID = DATASETS_BY_KEY.get('europe-eprtr')!.id
+const GPPD_DATASET_ID = SOURCES_BY_KEY.get('global-gppd')!.id
+const EPRTR_DATASET_ID = SOURCES_BY_KEY.get('europe-eprtr')!.id
 
 // ── Types ──
 
