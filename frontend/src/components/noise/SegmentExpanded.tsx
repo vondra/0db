@@ -433,20 +433,6 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
       )}
       <HoverText
         title={
-          'Combined terrain + building + barrier screening (SPEC §3.5b).\n' +
-          'Single Fresnel pass over composite top profile = elevation +\n' +
-          'max(building, barrier). A_terrain + A_screen ≡ A_combined — the two\n' +
-          'rows above are an engine decomposition, not two independent Fresnels.\n' +
-          'δ* OLS fit stays on bare-earth elevation for correct ground-reflection\n' +
-          'physics.'
-        }
-      >
-        <div className="mt-0.5 text-[10px] text-muted-foreground italic cursor-help">
-          Terrain + screening computed as one combined diffraction (§3.5b).
-        </div>
-      </HoverText>
-      <HoverText
-        title={
           'Total path effect = full − free_field Lden.\n\n' +
           'Covers terrain + screening + vegetation only — the obstruction\n' +
           'rows above. Ground and finite-line correction are part of the\n' +
