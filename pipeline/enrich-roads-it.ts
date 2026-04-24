@@ -26,11 +26,11 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('it-national-roads')!.id
+const MY_SOURCE_ID = SOURCES_BY_KEY.get('it-national-roads')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -262,7 +262,7 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
 
     for (let i = 0; i < n; i++) {
       // Skip already enriched
-      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
 
       const roadClass = roadClassCol ? (roadClassCol.get(i) as number) : 5
       if (!matchByClass.has(roadClass)) matchByClass.set(roadClass, { matched: 0, total: 0 })
@@ -293,7 +293,7 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
       if (bestDist > 30_000) continue
 
       aadtLight[i] = best.aadt
-      sourceId[i] = MY_DATASET_ID
+      sourceId[i] = MY_SOURCE_ID
       hexMatched++
       matchByClass.get(roadClass)!.matched++
     }

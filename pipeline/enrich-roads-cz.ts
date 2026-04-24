@@ -11,12 +11,12 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('cz-rsd-scitani')!.id
+const MY_SOURCE_ID = SOURCES_BY_KEY.get('cz-rsd-scitani')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -178,7 +178,7 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
       matchByClass.get(roadClass)!.total++
 
       // Priority gate: if a higher-priority dataset already owns this row, leave it.
-      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
 
       // Ref match is MANDATORY — no proximity-only fallback
       const osmRef = refCol ? (refCol.get(i) as string | null) : null
@@ -211,7 +211,7 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
       aadtMedium[i] = best.aadt_medium
       aadtHeavy[i] = best.aadt_heavy
       aadtMoto[i] = best.aadt_moto
-      sourceId[i] = MY_DATASET_ID
+      sourceId[i] = MY_SOURCE_ID
       hexMatched++
       matchByClass.get(roadClass)!.matched++
     }

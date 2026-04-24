@@ -22,10 +22,10 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { latLngToCell } from 'h3-js'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('eu-city-traffic')!.id
+const MY_SOURCE_ID = SOURCES_BY_KEY.get('eu-city-traffic')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -338,7 +338,7 @@ function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
       matchByClass.get(roadClass)!.total++
 
       // Priority check: if a higher-priority dataset already owns this row, leave it alone.
-      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) {
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) {
         if (sourceId[i] !== 0) {
           matchByClass.get(roadClass)!.matched++
           hexMatched++
@@ -380,7 +380,7 @@ function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
       aadtMedium[i] = 0  // dataset doesn't distinguish medium vehicles
       aadtHeavy[i] = Math.max(0, Math.round(record.truckAadt * dirFactor))
       aadtMoto[i] = Math.max(0, Math.round(record.twoWheelAadt * dirFactor))
-      sourceId[i] = MY_DATASET_ID
+      sourceId[i] = MY_SOURCE_ID
       hexMatched++
       matchByClass.get(roadClass)!.matched++
     }

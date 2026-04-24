@@ -56,11 +56,11 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('cl-national-roads')!.id
+const MY_SOURCE_ID = SOURCES_BY_KEY.get('cl-national-roads')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -414,7 +414,7 @@ async function main() {
     let hexMatched = 0
 
     for (let i = 0; i < n; i++) {
-      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) { alreadyEnriched++; continue }
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) { alreadyEnriched++; continue }
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -456,7 +456,7 @@ async function main() {
       aadtMedium[i] = split.medium
       aadtHeavy[i] = split.heavy
       aadtMoto[i] = split.moto
-      sourceId[i] = MY_DATASET_ID
+      sourceId[i] = MY_SOURCE_ID
       hexMatched++
     }
 

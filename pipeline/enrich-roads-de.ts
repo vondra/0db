@@ -18,7 +18,7 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
@@ -26,9 +26,9 @@ import proj4 from 'proj4'
 import { cellToLatLng } from 'h3-js'
 
 // CensusSection.ref starts with 'A' for Autobahn, 'B' for Bundesstraßen — pick per row.
-const AUTOBAHN_DATASET_ID = DATASETS_BY_KEY.get('de-bast-autobahn')!.id
-const BUNDESSTR_DATASET_ID = DATASETS_BY_KEY.get('de-bast-bundesstrassen')!.id
-const MY_DATASET_ID = AUTOBAHN_DATASET_ID  // default for gating; actual write picks per row
+const AUTOBAHN_DATASET_ID = SOURCES_BY_KEY.get('de-bast-autobahn')!.id
+const BUNDESSTR_DATASET_ID = SOURCES_BY_KEY.get('de-bast-bundesstrassen')!.id
+const MY_SOURCE_ID = AUTOBAHN_DATASET_ID  // default for gating; actual write picks per row
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -315,8 +315,8 @@ async function enrichArrows(sections: CensusSection[]) {
       totalSegments++
 
       // Priority gate: if a higher-priority dataset already owns this row, leave it.
-      // Both BASt ids have priority 80, so gating with MY_DATASET_ID is representative.
-      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) {
+      // Both BASt ids have priority 80, so gating with MY_SOURCE_ID is representative.
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) {
         if (sourceId[i] !== 0) preservedSegments++
         continue
       }
