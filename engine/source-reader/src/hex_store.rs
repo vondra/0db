@@ -214,6 +214,9 @@ pub fn load_aircraft_segments_unified(
         let fids_top = batch
             .column_by_name("flight_ids_top")
             .and_then(|c| c.as_any().downcast_ref::<ListArray>());
+        let sid = batch
+            .column_by_name("source_id")
+            .and_then(|c| c.as_any().downcast_ref::<UInt16Array>());
 
         for i in 0..n {
             let bucket_kind = bkind.map(|a| a.value(i)).unwrap_or(BUCKET_KIND_AIRBORNE);
@@ -257,7 +260,7 @@ pub fn load_aircraft_segments_unified(
                 surface_model,
                 ground_context: gctx.map(|a| a.value(i)).unwrap_or(GROUND_CONTEXT_NONE),
                 ground_ops_kind: gkind.map(|a| a.value(i)).unwrap_or(GROUND_OPS_KIND_NONE),
-                source_id: 1,
+                source_id: sid.map(|a| a.value(i)).unwrap_or(1),
             });
         }
     }

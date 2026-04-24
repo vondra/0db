@@ -129,6 +129,16 @@ pub const SOURCES: &[Source] = &[
         year: None,
     },
     Source {
+        id: 1,
+        key: "global-adsb-planet",
+        provenance: Provenance::GlobalMeasured,
+        layer: "aircraft",
+        name: "ADSBexchange planet TAR archives",
+        license: Some("CC-BY-SA-4.0"),
+        url: Some("https://www.adsbexchange.com/"),
+        year: Some(2024),
+    },
+    Source {
         id: 10,
         key: "eu-city-traffic",
         provenance: Provenance::ContinentalMeasured,

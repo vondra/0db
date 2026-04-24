@@ -24,7 +24,7 @@
 
 export interface Dataset {
   id: number
-  layer: 'roads' | 'railways' | 'buildings' | 'industrial' | 'any'
+  layer: 'roads' | 'railways' | 'buildings' | 'industrial' | 'aircraft' | 'any'
   key: string
   name: string
   year: number | null
@@ -44,6 +44,21 @@ export const DATASETS: Dataset[] = [
     license: null,
     url: null,
     priority: 0,
+  },
+
+  // ── Aircraft: ADS-B observational (plan v5 Phase C.1) ──
+  // Single aircraft source today — every row in per-hex aircraft.arrow
+  // produced by adsb-to-h3r4 stamps source_id = 1. Kept a fixed low id so
+  // the Rust writer can use a const, not a dynamic lookup.
+  {
+    id: 1,
+    layer: 'aircraft',
+    key: 'global-adsb-planet',
+    name: 'ADSBexchange planet TAR archives',
+    year: 2024,
+    license: 'CC-BY-SA-4.0',
+    url: 'https://www.adsbexchange.com/',
+    priority: 50,
   },
 
   // ── Roads: continental ──
