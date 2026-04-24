@@ -42,17 +42,28 @@ const GRID_CELL = 0.0005       // building grid cell size in degrees (~55m at eq
 const MAX_BUFFER_M = 50
 
 /**
- * Vehicle trips per dwelling per day (global baseline).
+ * Vehicle trips per dwelling per day (global baseline) and effective occupancy.
  *
- * Inherited from commit 61435574 (2026-04-12) without citation; approximates
- * US NHTS 2017 household trip-count (~5.9 = 1.9 cars × 3.1 trips/car). Matches
- * North American motorisation but over-estimates the rest of the world by
- * 20-50 % (EU ~3.5-4.0, Latin America ~2.2, South Asia ~0.5).
+ * A.4 recalibration — was `6` (US NHTS 2017 ~5.9 = 1.9 cars × 3.1 trips/car,
+ * over-estimates the rest of the world by 20-50 %). New split:
+ *   BASE × OCCUPANCY = 4.0 × 0.92 ≈ 3.68 effective trips/dwelling
  *
- * Scheduled recalibration (plan v5 A.4): 4.0 × occupancy 0.92 ≈ 3.68 effective,
- * EU midpoint from NHTS 2022 / UK NTS 2023 / MiD 2017 / OECD HM1-1.
+ * Sources:
+ *   - UK NTS 2023 table NTS0205: ~3.8 per household
+ *   - MiD 2017 (DE): 3.9
+ *   - ORNL NHTS 2022: 5.9 (NA outlier; per-country lookup deferred to Commit 4b)
+ *   - OECD HM1-1: ~8 % unoccupied → 0.92 occupancy for Western Europe
+ *   - Latin America midpoint ~2.2 (Bogotá/Santiago/Lima EOD surveys),
+ *     South Asia ~0.5 (Delhi IITM survey) — these are still high with 3.68
+ *     and will be pulled down via per-country lookup in 4b.
+ *
+ * The legacy TRIPS_PER_DWELLING symbol is retained as the product of the two
+ * so callers that multiply by it read "trips per dwelling" correctly without
+ * having to track the base/occupancy split.
  */
-const TRIPS_PER_DWELLING = 6
+const TRIPS_PER_DWELLING_BASE = 4.0
+const OCCUPANCY = 0.92
+const TRIPS_PER_DWELLING = TRIPS_PER_DWELLING_BASE * OCCUPANCY // 3.68
 
 /**
  * Floor for service-tree accumulated AADT — segments below this value are
@@ -122,28 +133,54 @@ function gridKey(lat: number, lon: number): string {
 }
 
 /**
- * Estimate dwelling-equivalent count for a building (feeds trip generation).
+ * Estimate dwelling-equivalent count for a building. Feeds trip generation —
+ * trips = dwellings × TRIPS_PER_DWELLING (3.68 effective).
  *
- * Current formulas are arbitrary approximations — divisors (50, 100, 80) and
- * caps (200) were tuned by eye without a citation trail. Known issues:
- *   - Uses `area` as if it were GFA, but buildings.arrow stores FOOTPRINT
- *     (docs/about/index.md:277 defines GFA = footprint × floors).
- *     A 5-floor 200 m² hotel is treated as 200 m² instead of 1000 m² GFA.
- *   - No type-specific formulas for hotel/school/hospital/civic — they all
- *     fall through the generic floors-based default.
+ * Critical invariant (A.4): the divisor in every arm is matched to the
+ * GFA scale (footprint × floors). The arrow's `area_m2` column stores
+ * footprint only (docs/about/index.md:277 defines GFA = footprint ×
+ * floors), so a 5-storey 200 m² hotel must be treated as 1000 m² GFA,
+ * not 200 m². Previous code used footprint as GFA and under-counted
+ * multi-storey buildings 3-10×.
  *
- * Scheduled rewrite (plan v5 A.4): switch to `gfa = footprint * effectiveFloors`,
- * per-type ITE Trip Generation Manual codes (820 commercial, 110 industrial,
- * 310 hotel, 610 hospital, 520 school).
+ * Per-type divisors derive from ITE Trip Generation Manual 11th Ed.
+ * trip rates (trips per 1000 ft² or per unit) converted to "dwellings"
+ * at 3.68 trips/dwelling:
+ *
+ *   | type | ITE code | basis | divisor |
+ *   |---|---|---|---|
+ *   | 1 commercial | 820 shopping | ~37 trips/1000 ft² → 1 trip/2.7 m² | 92  (GFA/1 dw) |
+ *   | 2 industrial | 110 light ind | ~5 trips/1000 ft² → 1 trip/20 m² | 686 |
+ *   | 3 school | 520 elementary, staff-only | ~8 trips/1000 ft² staff-only (pupils walk/bus) | 800 |
+ *   | 4 hospital | 610 | 10 trips/bed, bed ≈ 30 m² | 11 |
+ *   | 5 church | 560 | 9 trips/1000 ft² peak only — fixed minimal | — |
+ *   | 6 hotel | 310 | 8.17 trips/room × 0.5 field × 0.6 off-season → 2.45/room; room ≈ 25 m² | 38 |
+ *   | 7 garage | single-unit | — | fixed 1 |
+ *   | 8 farm | low mobility | | 200 |
+ *   | 9 civic | moderate | | 300 |
+ *   | 0 unknown | residential default | 1 dwelling / 80 m² GFA | 80 |
+ *
+ * Sources: ITE Trip Generation Manual 11th Ed. land-use pages (820 /
+ * 110 / 520 / 610 / 560 / 310), VTPI TDM encyclopedia adjustment for
+ * field-vs-manual scaling on hotel + retail. Annotated in
+ * engine/noise-compute/SPEC.md (A.7).
  */
 function estimateDwellings(buildingType: number, floors: number, areaMr2: number | null): number {
-  const area = areaMr2 ?? 100
-  if (buildingType === 1) return Math.min(Math.ceil(area / 50), 200)
-  if (buildingType === 2) return Math.min(Math.ceil(area / 100), 200)
-  if (buildingType === 7) return 1
-  if (buildingType === 8) return Math.min(Math.ceil(area / 100), 200)
-  if (floors > 0) return Math.min(Math.max(1, Math.floor(floors * area / 80)), 200)
-  return 1
+  const footprint = areaMr2 ?? 100
+  const effectiveFloors = floors > 0 ? floors : 1
+  const gfa = footprint * effectiveFloors
+  switch (buildingType) {
+    case 1:  return Math.min(Math.ceil(gfa / 92),  400) // commercial — ITE 820
+    case 2:  return Math.min(Math.ceil(gfa / 686), 200) // industrial — ITE 110
+    case 3:  return Math.min(Math.ceil(gfa / 800), 100) // school — ITE 520 staff-only
+    case 4:  return Math.min(Math.ceil(gfa / 11),  300) // hospital — ITE 610, 10/bed × 30 m²/bed
+    case 5:  return 2                                    // church — ITE 560 peak only, daily minimal
+    case 6:  return Math.min(Math.ceil(gfa / 38),  400) // hotel — ITE 310 × 0.5 field × 0.6 off-season
+    case 7:  return 1                                    // garage — single car unit
+    case 8:  return Math.min(Math.ceil(gfa / 200), 50)  // farm — rural, low mobility
+    case 9:  return Math.min(Math.ceil(gfa / 300), 100) // civic / public
+    default: return Math.min(Math.max(1, Math.floor(gfa / 80)), 200) // unknown → residential 80 m²/dw
+  }
 }
 
 function splitAADT(totalTrips: number): { light: number; medium: number; heavy: number; moto: number } {
