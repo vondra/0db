@@ -1,0 +1,1955 @@
+{
+  "source": "Wikipedia",
+  "pages": [
+    "https://en.wikipedia.org/wiki/List_of_countries_and_territories_by_motor_vehicles_per_capita",
+    "https://en.wikipedia.org/wiki/List_of_countries_by_road_network_size"
+  ],
+  "fetched_at": "2026-04-24T21:42:40.320Z",
+  "countries": {
+    "AD": {
+      "vehicles_per_1000": 1214,
+      "total_vehicles": 98183,
+      "population": 80856,
+      "road_total_km": 320,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 306.8
+    },
+    "AE": {
+      "vehicles_per_1000": 376,
+      "total_vehicles": 3391125,
+      "population": 9030873,
+      "road_total_km": 4080,
+      "road_paved_km": 4080,
+      "expressway_km": 253,
+      "vehicles_per_km": 831.2
+    },
+    "AF": {
+      "vehicles_per_1000": 55,
+      "total_vehicles": 2342543,
+      "population": 42647492,
+      "road_total_km": 34903,
+      "road_paved_km": 17903,
+      "expressway_km": null,
+      "vehicles_per_km": 130.8
+    },
+    "AG": {
+      "vehicles_per_1000": 598,
+      "total_vehicles": 54891,
+      "population": 91846,
+      "road_total_km": 1170,
+      "road_paved_km": 386,
+      "expressway_km": null,
+      "vehicles_per_km": 142.2
+    },
+    "AI": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 175,
+      "road_paved_km": 82,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "AL": {
+      "vehicles_per_1000": 328,
+      "total_vehicles": 867765,
+      "population": 2811655,
+      "road_total_km": 3945,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 220
+    },
+    "AM": {
+      "vehicles_per_1000": 303,
+      "total_vehicles": 900692,
+      "population": 2973841,
+      "road_total_km": 7700,
+      "road_paved_km": 3780,
+      "expressway_km": null,
+      "vehicles_per_km": 238.3
+    },
+    "AO": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 76000,
+      "road_paved_km": 13680,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "AR": {
+      "vehicles_per_1000": 493,
+      "total_vehicles": 21633587,
+      "population": 43900314,
+      "road_total_km": 240000,
+      "road_paved_km": 81355,
+      "expressway_km": 4423,
+      "vehicles_per_km": 265.9
+    },
+    "AS": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 241,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "AT": {
+      "vehicles_per_1000": 569,
+      "total_vehicles": 5185006,
+      "population": 9104772,
+      "road_total_km": 126400,
+      "road_paved_km": null,
+      "expressway_km": 2021,
+      "vehicles_per_km": 41
+    },
+    "AU": {
+      "vehicles_per_1000": 776,
+      "total_vehicles": 20142942,
+      "population": 25956418,
+      "road_total_km": 977874,
+      "road_paved_km": 403214,
+      "expressway_km": 1716,
+      "vehicles_per_km": 50
+    },
+    "AZ": {
+      "vehicles_per_1000": 169,
+      "total_vehicles": 1738940,
+      "population": 10318207,
+      "road_total_km": 77824,
+      "road_paved_km": 20524,
+      "expressway_km": null,
+      "vehicles_per_km": 84.7
+    },
+    "BA": {
+      "vehicles_per_1000": 321,
+      "total_vehicles": 978229,
+      "population": 3473003,
+      "road_total_km": 22926,
+      "road_paved_km": 19426,
+      "expressway_km": null,
+      "vehicles_per_km": 50.4
+    },
+    "BB": {
+      "vehicles_per_1000": 425,
+      "total_vehicles": 120000,
+      "population": 282318,
+      "road_total_km": 1700,
+      "road_paved_km": 1700,
+      "expressway_km": null,
+      "vehicles_per_km": 70.6
+    },
+    "BD": {
+      "vehicles_per_1000": 34,
+      "total_vehicles": 5982765,
+      "population": 173562364,
+      "road_total_km": 369105,
+      "road_paved_km": 110311,
+      "expressway_km": 55,
+      "vehicles_per_km": 54.2
+    },
+    "BE": {
+      "vehicles_per_1000": 513,
+      "total_vehicles": 6977664,
+      "population": 11641820,
+      "road_total_km": 118414,
+      "road_paved_km": 118414,
+      "expressway_km": 1747,
+      "vehicles_per_km": 58.9
+    },
+    "BF": {
+      "vehicles_per_1000": 112,
+      "total_vehicles": 2106292,
+      "population": 18777487,
+      "road_total_km": 15304,
+      "road_paved_km": 3642,
+      "expressway_km": null,
+      "vehicles_per_km": 578.3
+    },
+    "BG": {
+      "vehicles_per_1000": 484,
+      "total_vehicles": 3006215,
+      "population": 6447710,
+      "road_total_km": 19512,
+      "road_paved_km": 19235,
+      "expressway_km": 863,
+      "vehicles_per_km": 156.3
+    },
+    "BH": {
+      "vehicles_per_1000": 476,
+      "total_vehicles": 747350,
+      "population": 1569666,
+      "road_total_km": 4122,
+      "road_paved_km": 3392,
+      "expressway_km": null,
+      "vehicles_per_km": 220.3
+    },
+    "BI": {
+      "vehicles_per_1000": 9.7,
+      "total_vehicles": 111236,
+      "population": 11506762,
+      "road_total_km": 12322,
+      "road_paved_km": 1500,
+      "expressway_km": null,
+      "vehicles_per_km": 74.2
+    },
+    "BJ": {
+      "vehicles_per_1000": 40,
+      "total_vehicles": 469761,
+      "population": 11697842,
+      "road_total_km": 16000,
+      "road_paved_km": 1400,
+      "expressway_km": null,
+      "vehicles_per_km": 335.5
+    },
+    "BM": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 447,
+      "road_paved_km": 447,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "BN": {
+      "vehicles_per_1000": 805,
+      "total_vehicles": 475000,
+      "population": 455370,
+      "road_total_km": 2976,
+      "road_paved_km": 2559,
+      "expressway_km": null,
+      "vehicles_per_km": 185.6
+    },
+    "BO": {
+      "vehicles_per_1000": 153,
+      "total_vehicles": 1711005,
+      "population": 11180020,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "BR": {
+      "vehicles_per_1000": 462,
+      "total_vehicles": 93867016,
+      "population": 203218114,
+      "road_total_km": 2000000,
+      "road_paved_km": 214000,
+      "expressway_km": 17000,
+      "vehicles_per_km": 438.6
+    },
+    "BS": {
+      "vehicles_per_1000": 650,
+      "total_vehicles": 260000,
+      "population": 397539,
+      "road_total_km": 2700,
+      "road_paved_km": 1620,
+      "expressway_km": null,
+      "vehicles_per_km": 160.5
+    },
+    "BT": {
+      "vehicles_per_1000": 162,
+      "total_vehicles": 126501,
+      "population": 780915,
+      "road_total_km": 12205,
+      "road_paved_km": 437,
+      "expressway_km": null,
+      "vehicles_per_km": 289.5
+    },
+    "BW": {
+      "vehicles_per_1000": 292,
+      "total_vehicles": 653274,
+      "population": 2234776,
+      "road_total_km": 31747,
+      "road_paved_km": 9810,
+      "expressway_km": null,
+      "vehicles_per_km": 66.6
+    },
+    "BZ": {
+      "vehicles_per_1000": 189,
+      "total_vehicles": 56094,
+      "population": 296100,
+      "road_total_km": 3281,
+      "road_paved_km": 601,
+      "expressway_km": null,
+      "vehicles_per_km": 93.3
+    },
+    "CA": {
+      "vehicles_per_1000": 677,
+      "total_vehicles": 26302526,
+      "population": 38831259,
+      "road_total_km": 1042300,
+      "road_paved_km": 415600,
+      "expressway_km": 17041,
+      "vehicles_per_km": 63.3
+    },
+    "CD": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 152373,
+      "road_paved_km": 3047,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "CF": {
+      "vehicles_per_1000": 8.1,
+      "total_vehicles": 37475,
+      "population": 4623182,
+      "road_total_km": 24000,
+      "road_paved_km": 700,
+      "expressway_km": null,
+      "vehicles_per_km": 53.5
+    },
+    "CG": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 23324,
+      "road_paved_km": 3111,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "CH": {
+      "vehicles_per_1000": 542,
+      "total_vehicles": 5301789,
+      "population": 8792182,
+      "road_total_km": 84114,
+      "road_paved_km": null,
+      "expressway_km": 2021,
+      "vehicles_per_km": 63
+    },
+    "CI": {
+      "vehicles_per_1000": 35,
+      "total_vehicles": 905537,
+      "population": 25989405,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "CK": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 295,
+      "road_paved_km": 207,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "CL": {
+      "vehicles_per_1000": 312,
+      "total_vehicles": 6100000,
+      "population": 19553037,
+      "road_total_km": 85983,
+      "road_paved_km": 21289,
+      "expressway_km": 3347,
+      "vehicles_per_km": 286.5
+    },
+    "CM": {
+      "vehicles_per_1000": 32,
+      "total_vehicles": 758145,
+      "population": 23454162,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "CN": {
+      "vehicles_per_1000": 251,
+      "total_vehicles": 353000000,
+      "population": 1408280000,
+      "road_total_km": 5490400,
+      "road_paved_km": 5344700,
+      "expressway_km": 190700,
+      "vehicles_per_km": 66
+    },
+    "CO": {
+      "vehicles_per_1000": 280,
+      "total_vehicles": 13477996,
+      "population": 48131078,
+      "road_total_km": 204389,
+      "road_paved_km": 32280,
+      "expressway_km": 2100,
+      "vehicles_per_km": 417.5
+    },
+    "CR": {
+      "vehicles_per_1000": 514,
+      "total_vehicles": 2600000,
+      "population": 5059988,
+      "road_total_km": 5035,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 516.4
+    },
+    "CU": {
+      "vehicles_per_1000": 56,
+      "total_vehicles": 633369,
+      "population": 11265612,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "CV": {
+      "vehicles_per_1000": 127,
+      "total_vehicles": 64955,
+      "population": 512554,
+      "road_total_km": 1350,
+      "road_paved_km": 932,
+      "expressway_km": null,
+      "vehicles_per_km": 69.7
+    },
+    "CW": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 550,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "CY": {
+      "vehicles_per_1000": 661,
+      "total_vehicles": 724925,
+      "population": 1331370,
+      "road_total_km": 19901,
+      "road_paved_km": 12901,
+      "expressway_km": 272,
+      "vehicles_per_km": 56.2
+    },
+    "CZ": {
+      "vehicles_per_1000": 608,
+      "total_vehicles": 7082522,
+      "population": 10673213,
+      "road_total_km": 55744,
+      "road_paved_km": 55744,
+      "expressway_km": null,
+      "vehicles_per_km": 127.1
+    },
+    "DE": {
+      "vehicles_per_1000": 590,
+      "total_vehicles": 52714433,
+      "population": 84086227,
+      "road_total_km": 830000,
+      "road_paved_km": 830000,
+      "expressway_km": 16365,
+      "vehicles_per_km": 63.5
+    },
+    "DJ": {
+      "vehicles_per_1000": 35,
+      "total_vehicles": 40000,
+      "population": 1137096,
+      "road_total_km": 2893,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 13.8
+    },
+    "DK": {
+      "vehicles_per_1000": 478,
+      "total_vehicles": 3222575,
+      "population": 5948137,
+      "road_total_km": 73574,
+      "road_paved_km": null,
+      "expressway_km": 2010,
+      "vehicles_per_km": 43.8
+    },
+    "DM": {
+      "vehicles_per_1000": 271,
+      "total_vehicles": 18311,
+      "population": 67573,
+      "road_total_km": 1512,
+      "road_paved_km": 762,
+      "expressway_km": null,
+      "vehicles_per_km": 24
+    },
+    "DO": {
+      "vehicles_per_1000": 513,
+      "total_vehicles": 5810888,
+      "population": 11331266,
+      "road_total_km": 19705,
+      "road_paved_km": 9872,
+      "expressway_km": null,
+      "vehicles_per_km": 588.6
+    },
+    "DZ": {
+      "vehicles_per_1000": 176,
+      "total_vehicles": 7731664,
+      "population": 44042091,
+      "road_total_km": 141000,
+      "road_paved_km": 117000,
+      "expressway_km": null,
+      "vehicles_per_km": 66.1
+    },
+    "EC": {
+      "vehicles_per_1000": 143,
+      "total_vehicles": 2535853,
+      "population": 17682455,
+      "road_total_km": 43216,
+      "road_paved_km": 8161,
+      "expressway_km": null,
+      "vehicles_per_km": 310.7
+    },
+    "EE": {
+      "vehicles_per_1000": 635,
+      "total_vehicles": 998852,
+      "population": 1350092,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "EG": {
+      "vehicles_per_1000": 87,
+      "total_vehicles": 9950000,
+      "population": 114535772,
+      "road_total_km": 325250,
+      "road_paved_km": 240000,
+      "expressway_km": 1034,
+      "vehicles_per_km": 41.5
+    },
+    "ER": {
+      "vehicles_per_1000": 23,
+      "total_vehicles": 72405,
+      "population": 3124698,
+      "road_total_km": 16000,
+      "road_paved_km": 1600,
+      "expressway_km": null,
+      "vehicles_per_km": 45.3
+    },
+    "ES": {
+      "vehicles_per_1000": 544,
+      "total_vehicles": 30724166,
+      "population": 47828383,
+      "road_total_km": 683175,
+      "road_paved_km": 683175,
+      "expressway_km": 17228,
+      "vehicles_per_km": 45
+    },
+    "ET": {
+      "vehicles_per_1000": 10,
+      "total_vehicles": 1200110,
+      "population": 118917672,
+      "road_total_km": 120171,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 10
+    },
+    "FI": {
+      "vehicles_per_1000": 666,
+      "total_vehicles": 4221852,
+      "population": 5617311,
+      "road_total_km": 454000,
+      "road_paved_km": 78000,
+      "expressway_km": 863,
+      "vehicles_per_km": 54.1
+    },
+    "FJ": {
+      "vehicles_per_1000": 142,
+      "total_vehicles": 130000,
+      "population": 914963,
+      "road_total_km": 3440,
+      "road_paved_km": 1686,
+      "expressway_km": null,
+      "vehicles_per_km": 77.1
+    },
+    "FK": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 440,
+      "road_paved_km": 50,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "FO": {
+      "vehicles_per_1000": 522,
+      "total_vehicles": 28562,
+      "population": 54714,
+      "road_total_km": 960,
+      "road_paved_km": 500,
+      "expressway_km": null,
+      "vehicles_per_km": 57.1
+    },
+    "FR": {
+      "vehicles_per_1000": 579,
+      "total_vehicles": 44444965,
+      "population": 66277409,
+      "road_total_km": 1053215,
+      "road_paved_km": 1053215,
+      "expressway_km": 11671,
+      "vehicles_per_km": 42.2
+    },
+    "GA": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 14300,
+      "road_paved_km": 900,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "GB": {
+      "vehicles_per_1000": 603,
+      "total_vehicles": 41700000,
+      "population": 69138192,
+      "road_total_km": 424129,
+      "road_paved_km": 424129,
+      "expressway_km": 3701,
+      "vehicles_per_km": 98.3
+    },
+    "GD": {
+      "vehicles_per_1000": 237,
+      "total_vehicles": 27266,
+      "population": 115130,
+      "road_total_km": 1127,
+      "road_paved_km": 902,
+      "expressway_km": null,
+      "vehicles_per_km": 30.2
+    },
+    "GE": {
+      "vehicles_per_1000": 414,
+      "total_vehicles": 1680400,
+      "population": 3807492,
+      "road_total_km": 20295,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 82.8
+    },
+    "GG": {
+      "vehicles_per_1000": 1389,
+      "total_vehicles": 88532,
+      "population": 63726,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "GH": {
+      "vehicles_per_1000": 70,
+      "total_vehicles": 2066943,
+      "population": 29356742,
+      "road_total_km": 109515,
+      "road_paved_km": 13787,
+      "expressway_km": null,
+      "vehicles_per_km": 149.9
+    },
+    "GI": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 29,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "GL": {
+      "vehicles_per_1000": 126,
+      "total_vehicles": 7054,
+      "population": 55923,
+      "road_total_km": 500,
+      "road_paved_km": 500,
+      "expressway_km": null,
+      "vehicles_per_km": 14.1
+    },
+    "GM": {
+      "vehicles_per_1000": 78,
+      "total_vehicles": 200000,
+      "population": 2576010,
+      "road_total_km": 2977,
+      "road_paved_km": 518,
+      "expressway_km": null,
+      "vehicles_per_km": 386.1
+    },
+    "GN": {
+      "vehicles_per_1000": 22,
+      "total_vehicles": 259731,
+      "population": 12073030,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "GQ": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 2880,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "GR": {
+      "vehicles_per_1000": 579,
+      "total_vehicles": 5777241,
+      "population": 10412480,
+      "road_total_km": 117000,
+      "road_paved_km": 117000,
+      "expressway_km": 2368,
+      "vehicles_per_km": 49.4
+    },
+    "GT": {
+      "vehicles_per_1000": 200,
+      "total_vehicles": 3250194,
+      "population": 16268760,
+      "road_total_km": 17621,
+      "road_paved_km": 7489,
+      "expressway_km": null,
+      "vehicles_per_km": 434
+    },
+    "GU": {
+      "vehicles_per_1000": 775,
+      "total_vehicles": 125455,
+      "population": 161808,
+      "road_total_km": 1045,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 120.1
+    },
+    "GW": {
+      "vehicles_per_1000": 34,
+      "total_vehicles": 62239,
+      "population": 1831894,
+      "road_total_km": 4400,
+      "road_paved_km": 453,
+      "expressway_km": null,
+      "vehicles_per_km": 137.4
+    },
+    "GY": {
+      "vehicles_per_1000": 171,
+      "total_vehicles": 128000,
+      "population": 749257,
+      "road_total_km": 3995,
+      "road_paved_km": 799,
+      "expressway_km": null,
+      "vehicles_per_km": 160.2
+    },
+    "HK": {
+      "vehicles_per_1000": 124,
+      "total_vehicles": 925171,
+      "population": 7465915,
+      "road_total_km": 2107,
+      "road_paved_km": 2107,
+      "expressway_km": null,
+      "vehicles_per_km": 439.1
+    },
+    "HN": {
+      "vehicles_per_1000": 180,
+      "total_vehicles": 1694504,
+      "population": 9412380,
+      "road_total_km": 14742,
+      "road_paved_km": 3367,
+      "expressway_km": null,
+      "vehicles_per_km": 503.3
+    },
+    "HR": {
+      "vehicles_per_1000": 513,
+      "total_vehicles": 2070123,
+      "population": 3907027,
+      "road_total_km": 26958,
+      "road_paved_km": 0,
+      "expressway_km": 1416,
+      "vehicles_per_km": 76.8
+    },
+    "HT": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 4266,
+      "road_paved_km": 768,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "HU": {
+      "vehicles_per_1000": 447,
+      "total_vehicles": 4763466,
+      "population": 9684306,
+      "road_total_km": 210791,
+      "road_paved_km": 77087,
+      "expressway_km": 1481,
+      "vehicles_per_km": 61.8
+    },
+    "ID": {
+      "vehicles_per_1000": 100,
+      "total_vehicles": 23050000,
+      "population": 281190067,
+      "road_total_km": 548097,
+      "road_paved_km": 329189,
+      "expressway_km": 3092,
+      "vehicles_per_km": 70
+    },
+    "IE": {
+      "vehicles_per_1000": 466,
+      "total_vehicles": 2737924,
+      "population": 5110016,
+      "road_total_km": 99830,
+      "road_paved_km": 99830,
+      "expressway_km": null,
+      "vehicles_per_km": 27.4
+    },
+    "IL": {
+      "vehicles_per_1000": 439,
+      "total_vehicles": 4000000,
+      "population": 9103151,
+      "road_total_km": 20391,
+      "road_paved_km": 20391,
+      "expressway_km": 449,
+      "vehicles_per_km": 196.2
+    },
+    "IM": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 1107,
+      "road_paved_km": 500,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "IN": {
+      "vehicles_per_1000": 38,
+      "total_vehicles": 50000000,
+      "population": 1328024498,
+      "road_total_km": 6617100,
+      "road_paved_km": 4500000,
+      "expressway_km": 6059,
+      "vehicles_per_km": 70,
+      "source_override": "national_in",
+      "override_note": "Wikipedia 50M excludes ~263M registered 2W (MoRTH 2022). 313M / 4.5M paved ≈ 70."
+    },
+    "IQ": {
+      "vehicles_per_1000": 112,
+      "total_vehicles": 4715000,
+      "population": 42116605,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "IR": {
+      "vehicles_per_1000": 182,
+      "total_vehicles": 15963000,
+      "population": 87723443,
+      "road_total_km": 223485,
+      "road_paved_km": 195485,
+      "expressway_km": null,
+      "vehicles_per_km": 81.7
+    },
+    "IS": {
+      "vehicles_per_1000": 639,
+      "total_vehicles": 306563,
+      "population": 393396,
+      "road_total_km": 12898,
+      "road_paved_km": 5647,
+      "expressway_km": null,
+      "vehicles_per_km": 54.3
+    },
+    "IT": {
+      "vehicles_per_1000": 701,
+      "total_vehicles": 44888074,
+      "population": 59619115,
+      "road_total_km": 487700,
+      "road_paved_km": 487700,
+      "expressway_km": 6700,
+      "vehicles_per_km": 92
+    },
+    "JE": {
+      "vehicles_per_1000": 1234,
+      "total_vehicles": 127911,
+      "population": 103675,
+      "road_total_km": 576,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 222.1
+    },
+    "JM": {
+      "vehicles_per_1000": 203,
+      "total_vehicles": 575041,
+      "population": 2839144,
+      "road_total_km": 22121,
+      "road_paved_km": 16148,
+      "expressway_km": 44,
+      "vehicles_per_km": 35.6
+    },
+    "JO": {
+      "vehicles_per_1000": 173,
+      "total_vehicles": 2000000,
+      "population": 11552876,
+      "road_total_km": 7203,
+      "road_paved_km": 7203,
+      "expressway_km": null,
+      "vehicles_per_km": 277.7
+    },
+    "JP": {
+      "vehicles_per_1000": 670,
+      "total_vehicles": 82876295,
+      "population": 123753041,
+      "road_total_km": 1218772,
+      "road_paved_km": 992835,
+      "expressway_km": 30469,
+      "vehicles_per_km": 83.5
+    },
+    "KE": {
+      "vehicles_per_1000": 62,
+      "total_vehicles": 2979910,
+      "population": 48139687,
+      "road_total_km": 177800,
+      "road_paved_km": 14420,
+      "expressway_km": null,
+      "vehicles_per_km": 206.7
+    },
+    "KG": {
+      "vehicles_per_1000": 200,
+      "total_vehicles": 1300000,
+      "population": 6494035,
+      "road_total_km": 34000,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 38.2
+    },
+    "KH": {
+      "vehicles_per_1000": 21,
+      "total_vehicles": 370000,
+      "population": 17423881,
+      "road_total_km": 55000,
+      "road_paved_km": 12239,
+      "expressway_km": null,
+      "vehicles_per_km": 30.2
+    },
+    "KI": {
+      "vehicles_per_1000": 31,
+      "total_vehicles": 3706,
+      "population": 120275,
+      "road_total_km": 670,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 5.5
+    },
+    "KM": {
+      "vehicles_per_1000": 47,
+      "total_vehicles": 34898,
+      "population": 741741,
+      "road_total_km": 880,
+      "road_paved_km": 673,
+      "expressway_km": null,
+      "vehicles_per_km": 51.9
+    },
+    "KN": {
+      "vehicles_per_1000": 543,
+      "total_vehicles": 25374,
+      "population": 46758,
+      "road_total_km": 383,
+      "road_paved_km": 163,
+      "expressway_km": null,
+      "vehicles_per_km": 155.7
+    },
+    "KP": {
+      "vehicles_per_1000": 1.1,
+      "total_vehicles": 30000,
+      "population": 26498823,
+      "road_total_km": 25554,
+      "road_paved_km": 724,
+      "expressway_km": null,
+      "vehicles_per_km": 41.4
+    },
+    "KR": {
+      "vehicles_per_1000": 501,
+      "total_vehicles": 25949201,
+      "population": 51748739,
+      "road_total_km": 110714,
+      "road_paved_km": 92795,
+      "expressway_km": 4767,
+      "vehicles_per_km": 279.6
+    },
+    "KW": {
+      "vehicles_per_1000": 521,
+      "total_vehicles": 2522933,
+      "population": 4838782,
+      "road_total_km": 5749,
+      "road_paved_km": 4887,
+      "expressway_km": null,
+      "vehicles_per_km": 516.3
+    },
+    "KY": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 785,
+      "road_paved_km": 785,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "KZ": {
+      "vehicles_per_1000": 250,
+      "total_vehicles": 5085400,
+      "population": 20330104,
+      "road_total_km": 95409,
+      "road_paved_km": 13787,
+      "expressway_km": null,
+      "vehicles_per_km": 368.9
+    },
+    "LA": {
+      "vehicles_per_1000": 412,
+      "total_vehicles": 3116550,
+      "population": 7559008,
+      "road_total_km": 39586,
+      "road_paved_km": 5415,
+      "expressway_km": null,
+      "vehicles_per_km": 575.5
+    },
+    "LB": {
+      "vehicles_per_1000": 295,
+      "total_vehicles": 1866407,
+      "population": 6323060,
+      "road_total_km": 21705,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 86
+    },
+    "LC": {
+      "vehicles_per_1000": 203,
+      "total_vehicles": 35681,
+      "population": 175646,
+      "road_total_km": 1210,
+      "road_paved_km": 847,
+      "expressway_km": null,
+      "vehicles_per_km": 42.1
+    },
+    "LI": {
+      "vehicles_per_1000": 767,
+      "total_vehicles": 31340,
+      "population": 39870,
+      "road_total_km": 630,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 49.7
+    },
+    "LK": {
+      "vehicles_per_1000": 366,
+      "total_vehicles": 8352213,
+      "population": 22834965,
+      "road_total_km": 114093,
+      "road_paved_km": 16977,
+      "expressway_km": null,
+      "vehicles_per_km": 492
+    },
+    "LR": {
+      "vehicles_per_1000": 248,
+      "total_vehicles": 1085075,
+      "population": 4373044,
+      "road_total_km": 10600,
+      "road_paved_km": 657,
+      "expressway_km": null,
+      "vehicles_per_km": 150,
+      "source_override": "ceic_lr",
+      "override_note": "Wikipedia vehicles_per_1000 of 248 looks high; CEIC 2015 reports ~63k registered. Use 150 as a middle estimate — still hits upper clamp."
+    },
+    "LS": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 5940,
+      "road_paved_km": 1069,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "LT": {
+      "vehicles_per_1000": 598,
+      "total_vehicles": 1811748,
+      "population": 2816920,
+      "road_total_km": 84166,
+      "road_paved_km": 72297,
+      "expressway_km": 309,
+      "vehicles_per_km": 25.1
+    },
+    "LU": {
+      "vehicles_per_1000": 670,
+      "total_vehicles": 550580,
+      "population": 673036,
+      "road_total_km": 2875,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 191.5
+    },
+    "LV": {
+      "vehicles_per_1000": 424,
+      "total_vehicles": 871153,
+      "population": 1881063,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "LY": {
+      "vehicles_per_1000": 463,
+      "total_vehicles": 3260000,
+      "population": 7045399,
+      "road_total_km": 37000,
+      "road_paved_km": 34000,
+      "expressway_km": null,
+      "vehicles_per_km": 95.9
+    },
+    "MA": {
+      "vehicles_per_1000": 113,
+      "total_vehicles": 4120000,
+      "population": 36584208,
+      "road_total_km": 57334,
+      "road_paved_km": 45240,
+      "expressway_km": null,
+      "vehicles_per_km": 91.1
+    },
+    "MC": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 77,
+      "road_paved_km": 77,
+      "expressway_km": 10,
+      "vehicles_per_km": null
+    },
+    "MD": {
+      "vehicles_per_1000": 354,
+      "total_vehicles": 982349,
+      "population": 3039985,
+      "road_total_km": 9352,
+      "road_paved_km": 8835,
+      "expressway_km": null,
+      "vehicles_per_km": 111.2
+    },
+    "ME": {
+      "vehicles_per_1000": 417,
+      "total_vehicles": 242599,
+      "population": 616695,
+      "road_total_km": 7762,
+      "road_paved_km": 7141,
+      "expressway_km": null,
+      "vehicles_per_km": 34
+    },
+    "MG": {
+      "vehicles_per_1000": 9.3,
+      "total_vehicles": 236979,
+      "population": 25426703,
+      "road_total_km": 31640,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 7.5
+    },
+    "MH": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 2028,
+      "road_paved_km": 75,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "MK": {
+      "vehicles_per_1000": 318,
+      "total_vehicles": 483482,
+      "population": 1837114,
+      "road_total_km": 14182,
+      "road_paved_km": 9633,
+      "expressway_km": 312,
+      "vehicles_per_km": 50.2
+    },
+    "ML": {
+      "vehicles_per_1000": 19,
+      "total_vehicles": 344345,
+      "population": 18593022,
+      "road_total_km": 139107,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 2.5
+    },
+    "MM": {
+      "vehicles_per_1000": 132,
+      "total_vehicles": 7138410,
+      "population": 54133798,
+      "road_total_km": 157000,
+      "road_paved_km": 34700,
+      "expressway_km": null,
+      "vehicles_per_km": 205.7
+    },
+    "MN": {
+      "vehicles_per_1000": 347,
+      "total_vehicles": 1192520,
+      "population": 3431933,
+      "road_total_km": 113200,
+      "road_paved_km": 10600,
+      "expressway_km": null,
+      "vehicles_per_km": 112.5
+    },
+    "MO": {
+      "vehicles_per_1000": 353,
+      "total_vehicles": 251867,
+      "population": 713912,
+      "road_total_km": 428,
+      "road_paved_km": 428,
+      "expressway_km": null,
+      "vehicles_per_km": 588.5
+    },
+    "MP": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 536,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "MR": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 12253,
+      "road_paved_km": 3988,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "MT": {
+      "vehicles_per_1000": 576,
+      "total_vehicles": 438567,
+      "population": 532956,
+      "road_total_km": 2254,
+      "road_paved_km": 1973,
+      "expressway_km": null,
+      "vehicles_per_km": 222.3
+    },
+    "MU": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 2428,
+      "road_paved_km": 2379,
+      "expressway_km": 99,
+      "vehicles_per_km": null
+    },
+    "MV": {
+      "vehicles_per_1000": 250,
+      "total_vehicles": 131000,
+      "population": 524107,
+      "road_total_km": 93,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 1408.6
+    },
+    "MW": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 15452,
+      "road_paved_km": 4074,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "MX": {
+      "vehicles_per_1000": 312,
+      "total_vehicles": 40524791,
+      "population": 129739759,
+      "road_total_km": 836603,
+      "road_paved_km": 175526,
+      "expressway_km": 11094,
+      "vehicles_per_km": 230.9
+    },
+    "MY": {
+      "vehicles_per_1000": 1102,
+      "total_vehicles": 38700000,
+      "population": 35126298,
+      "road_total_km": 279862,
+      "road_paved_km": 198932,
+      "expressway_km": 5027,
+      "vehicles_per_km": 194.5
+    },
+    "MZ": {
+      "vehicles_per_1000": 26,
+      "total_vehicles": 698864,
+      "population": 27337105,
+      "road_total_km": 31083,
+      "road_paved_km": 7365,
+      "expressway_km": null,
+      "vehicles_per_km": 94.9
+    },
+    "NA": {
+      "vehicles_per_1000": 148,
+      "total_vehicles": 418292,
+      "population": 2506853,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "NC": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 5622,
+      "road_paved_km": 0,
+      "expressway_km": 31.5,
+      "vehicles_per_km": null
+    },
+    "NE": {
+      "vehicles_per_1000": 21,
+      "total_vehicles": 436420,
+      "population": 20685754,
+      "road_total_km": 18949,
+      "road_paved_km": 3912,
+      "expressway_km": null,
+      "vehicles_per_km": 111.6
+    },
+    "NG": {
+      "vehicles_per_1000": 59,
+      "total_vehicles": 13500000,
+      "population": 218529287,
+      "road_total_km": 195000,
+      "road_paved_km": 60000,
+      "expressway_km": null,
+      "vehicles_per_km": 225
+    },
+    "NI": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 23897,
+      "road_paved_km": 3346,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "NL": {
+      "vehicles_per_1000": 513,
+      "total_vehicles": 10062194,
+      "population": 17904421,
+      "road_total_km": 141820,
+      "road_paved_km": null,
+      "expressway_km": 2022,
+      "vehicles_per_km": 71
+    },
+    "NO": {
+      "vehicles_per_1000": 517,
+      "total_vehicles": 3469692,
+      "population": 5519167,
+      "road_total_km": 97746,
+      "road_paved_km": null,
+      "expressway_km": 2025,
+      "vehicles_per_km": 35.5
+    },
+    "NP": {
+      "vehicles_per_1000": 84,
+      "total_vehicles": 2339169,
+      "population": 27823629,
+      "road_total_km": 80078,
+      "road_paved_km": 19163,
+      "expressway_km": null,
+      "vehicles_per_km": 122.1
+    },
+    "NR": {
+      "vehicles_per_1000": 424,
+      "total_vehicles": 5000,
+      "population": 11801,
+      "road_total_km": 30,
+      "road_paved_km": 24,
+      "expressway_km": null,
+      "vehicles_per_km": 208.3
+    },
+    "NU": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 234,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "NZ": {
+      "vehicles_per_1000": 817,
+      "total_vehicles": 4646350,
+      "population": 5334200,
+      "road_total_km": 96817,
+      "road_paved_km": 64957,
+      "expressway_km": 232,
+      "vehicles_per_km": 71.5,
+      "source_override": "national_nz",
+      "override_note": "Wikipedia scraper read 470k (missing comma). NZTA Dec 2023 = 4,646,350."
+    },
+    "OM": {
+      "vehicles_per_1000": 323,
+      "total_vehicles": 1704873,
+      "population": 5281538,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "PA": {
+      "vehicles_per_1000": 320,
+      "total_vehicles": 1288573,
+      "population": 4029087,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "PE": {
+      "vehicles_per_1000": 182,
+      "total_vehicles": 5604789,
+      "population": 30866494,
+      "road_total_km": 175589,
+      "road_paved_km": 29579,
+      "expressway_km": 827,
+      "vehicles_per_km": 189.5
+    },
+    "PF": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 2590,
+      "road_paved_km": 1735,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "PG": {
+      "vehicles_per_1000": 11,
+      "total_vehicles": 100993,
+      "population": 8961718,
+      "road_total_km": 9349,
+      "road_paved_km": 3000,
+      "expressway_km": null,
+      "vehicles_per_km": 33.7
+    },
+    "PH": {
+      "vehicles_per_1000": 180,
+      "total_vehicles": 20465515,
+      "population": 113964339,
+      "road_total_km": 216387,
+      "road_paved_km": 61093,
+      "expressway_km": 626,
+      "vehicles_per_km": 335
+    },
+    "PK": {
+      "vehicles_per_1000": 121,
+      "total_vehicles": 30000000,
+      "population": 247504496,
+      "road_total_km": 264175,
+      "road_paved_km": 185463,
+      "expressway_km": 2567,
+      "vehicles_per_km": 161.8
+    },
+    "PL": {
+      "vehicles_per_1000": 629,
+      "total_vehicles": 25757062,
+      "population": 38385739,
+      "road_total_km": 429800,
+      "road_paved_km": 293800,
+      "expressway_km": 5310,
+      "vehicles_per_km": 87.7
+    },
+    "PR": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 26862,
+      "road_paved_km": 0,
+      "expressway_km": 454,
+      "vehicles_per_km": null
+    },
+    "PS": {
+      "vehicles_per_1000": 59,
+      "total_vehicles": 268365,
+      "population": 4521565,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "PT": {
+      "vehicles_per_1000": 567,
+      "total_vehicles": 7198871,
+      "population": 10417073,
+      "road_total_km": 82900,
+      "road_paved_km": 71294,
+      "expressway_km": 3113,
+      "vehicles_per_km": 101,
+      "source_override": "national_pt",
+      "override_note": "Wikipedia roads table missed Portugal; CIA Factbook 71,294 paved. 7.2M / 71.3k = 101."
+    },
+    "PY": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 16630,
+      "road_paved_km": null,
+      "expressway_km": 2023,
+      "vehicles_per_km": null
+    },
+    "QA": {
+      "vehicles_per_1000": 512,
+      "total_vehicles": 1330487,
+      "population": 2599372,
+      "road_total_km": 7039,
+      "road_paved_km": 7039,
+      "expressway_km": null,
+      "vehicles_per_km": 189
+    },
+    "RO": {
+      "vehicles_per_1000": 444,
+      "total_vehicles": 9148003,
+      "population": 19166773,
+      "road_total_km": 86847,
+      "road_paved_km": 65315,
+      "expressway_km": 1418,
+      "vehicles_per_km": 140.1
+    },
+    "RS": {
+      "vehicles_per_1000": 377,
+      "total_vehicles": 2389105,
+      "population": 6641197,
+      "road_total_km": 45419,
+      "road_paved_km": 45419,
+      "expressway_km": 1048,
+      "vehicles_per_km": 52.6
+    },
+    "RU": {
+      "vehicles_per_1000": 364,
+      "total_vehicles": 53000000,
+      "population": 145440501,
+      "road_total_km": 1579291,
+      "road_paved_km": 1124116,
+      "expressway_km": 4923,
+      "vehicles_per_km": 47.1
+    },
+    "RW": {
+      "vehicles_per_1000": 20,
+      "total_vehicles": 264524,
+      "population": 13065837,
+      "road_total_km": 4700,
+      "road_paved_km": 1534,
+      "expressway_km": null,
+      "vehicles_per_km": 172.4
+    },
+    "SA": {
+      "vehicles_per_1000": 224,
+      "total_vehicles": 6895799,
+      "population": 30717809,
+      "road_total_km": 221372,
+      "road_paved_km": 47529,
+      "expressway_km": 3891,
+      "vehicles_per_km": 145.1
+    },
+    "SB": {
+      "vehicles_per_1000": 21,
+      "total_vehicles": 11000,
+      "population": 532968,
+      "road_total_km": 1390,
+      "road_paved_km": 34,
+      "expressway_km": null,
+      "vehicles_per_km": 323.5
+    },
+    "SC": {
+      "vehicles_per_1000": 210,
+      "total_vehicles": 23076,
+      "population": 109821,
+      "road_total_km": 526,
+      "road_paved_km": 514,
+      "expressway_km": null,
+      "vehicles_per_km": 44.9
+    },
+    "SD": {
+      "vehicles_per_1000": 30,
+      "total_vehicles": 1252740,
+      "population": 41259892,
+      "road_total_km": 31000,
+      "road_paved_km": 8000,
+      "expressway_km": null,
+      "vehicles_per_km": 156.6
+    },
+    "SE": {
+      "vehicles_per_1000": 470,
+      "total_vehicles": 5682251,
+      "population": 10487338,
+      "road_total_km": 573134,
+      "road_paved_km": 140100,
+      "expressway_km": 2050,
+      "vehicles_per_km": 40.6
+    },
+    "SG": {
+      "vehicles_per_1000": 172,
+      "total_vehicles": 996732,
+      "population": 5789090,
+      "road_total_km": 3500,
+      "road_paved_km": 3500,
+      "expressway_km": 164,
+      "vehicles_per_km": 284.8
+    },
+    "SI": {
+      "vehicles_per_1000": 587,
+      "total_vehicles": 1228051,
+      "population": 2115228,
+      "road_total_km": 38985,
+      "road_paved_km": 38985,
+      "expressway_km": 769,
+      "vehicles_per_km": 31.5
+    },
+    "SK": {
+      "vehicles_per_1000": 502,
+      "total_vehicles": 3286249,
+      "population": 5450626,
+      "road_total_km": 38985,
+      "road_paved_km": 56926,
+      "expressway_km": null,
+      "vehicles_per_km": 57.7
+    },
+    "SL": {
+      "vehicles_per_1000": 41,
+      "total_vehicles": 300000,
+      "population": 7379299,
+      "road_total_km": 11700,
+      "road_paved_km": 1051,
+      "expressway_km": null,
+      "vehicles_per_km": 285.4
+    },
+    "SM": {
+      "vehicles_per_1000": 1606,
+      "total_vehicles": 53940,
+      "population": 33581,
+      "road_total_km": 292,
+      "road_paved_km": 292,
+      "expressway_km": null,
+      "vehicles_per_km": 184.7
+    },
+    "SN": {
+      "vehicles_per_1000": 32,
+      "total_vehicles": 468051,
+      "population": 14593331,
+      "road_total_km": 16665,
+      "road_paved_km": 6126,
+      "expressway_km": 241,
+      "vehicles_per_km": 76.4
+    },
+    "SO": {
+      "vehicles_per_1000": 4.5,
+      "total_vehicles": 59457,
+      "population": 13339491,
+      "road_total_km": 15000,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 4
+    },
+    "SR": {
+      "vehicles_per_1000": 394,
+      "total_vehicles": 241391,
+      "population": 612317,
+      "road_total_km": 4304,
+      "road_paved_km": 1119,
+      "expressway_km": null,
+      "vehicles_per_km": 215.7
+    },
+    "ST": {
+      "vehicles_per_1000": 165,
+      "total_vehicles": 34050,
+      "population": 206971,
+      "road_total_km": 1300,
+      "road_paved_km": 230,
+      "expressway_km": null,
+      "vehicles_per_km": 148
+    },
+    "SV": {
+      "vehicles_per_1000": 163,
+      "total_vehicles": 1008080,
+      "population": 6200800,
+      "road_total_km": 9012,
+      "road_paved_km": 5341,
+      "expressway_km": null,
+      "vehicles_per_km": 188.7
+    },
+    "SX": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 53,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "SY": {
+      "vehicles_per_1000": 466,
+      "total_vehicles": 9810000,
+      "population": 21049429,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "SZ": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 3769,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "TC": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 121,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "TD": {
+      "vehicles_per_1000": 74,
+      "total_vehicles": 1124000,
+      "population": 15114655,
+      "road_total_km": 40000,
+      "road_paved_km": 25000,
+      "expressway_km": null,
+      "vehicles_per_km": 45
+    },
+    "TG": {
+      "vehicles_per_1000": 8.2,
+      "total_vehicles": 64118,
+      "population": 7858289,
+      "road_total_km": 11734,
+      "road_paved_km": 1794,
+      "expressway_km": null,
+      "vehicles_per_km": 35.7
+    },
+    "TH": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 702989,
+      "road_paved_km": null,
+      "expressway_km": 2020,
+      "vehicles_per_km": null
+    },
+    "TJ": {
+      "vehicles_per_1000": 50,
+      "total_vehicles": 439972,
+      "population": 8865631,
+      "road_total_km": 30000,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 14.7
+    },
+    "TL": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 6040,
+      "road_paved_km": 2600,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "TN": {
+      "vehicles_per_1000": 175,
+      "total_vehicles": 2015601,
+      "population": 11528674,
+      "road_total_km": 19750,
+      "road_paved_km": 12750,
+      "expressway_km": null,
+      "vehicles_per_km": 158.1
+    },
+    "TO": {
+      "vehicles_per_1000": 158,
+      "total_vehicles": 16717,
+      "population": 105567,
+      "road_total_km": 680,
+      "road_paved_km": 184,
+      "expressway_km": null,
+      "vehicles_per_km": 90.9
+    },
+    "TR": {
+      "vehicles_per_1000": 354,
+      "total_vehicles": 30261176,
+      "population": 85372377,
+      "road_total_km": 438633,
+      "road_paved_km": 344403,
+      "expressway_km": 3796,
+      "vehicles_per_km": 87.9
+    },
+    "TT": {
+      "vehicles_per_1000": 582,
+      "total_vehicles": 831803,
+      "population": 1429189,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "TV": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 8,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "TW": {
+      "vehicles_per_1000": 999,
+      "total_vehicles": 23353315,
+      "population": 23374742,
+      "road_total_km": 41475,
+      "road_paved_km": 42793,
+      "expressway_km": 1053,
+      "vehicles_per_km": 545.7
+    },
+    "TZ": {
+      "vehicles_per_1000": 40,
+      "total_vehicles": 2163623,
+      "population": 53824013,
+      "road_total_km": 145203,
+      "road_paved_km": 11201,
+      "expressway_km": null,
+      "vehicles_per_km": 193.2
+    },
+    "UA": {
+      "vehicles_per_1000": 237,
+      "total_vehicles": 10500000,
+      "population": 44298640,
+      "road_total_km": 169694,
+      "road_paved_km": 166095,
+      "expressway_km": 17,
+      "vehicles_per_km": 63.2
+    },
+    "UG": {
+      "vehicles_per_1000": 41,
+      "total_vehicles": 1594962,
+      "population": 38799152,
+      "road_total_km": 146000,
+      "road_paved_km": 4257,
+      "expressway_km": null,
+      "vehicles_per_km": 374.7
+    },
+    "US": {
+      "vehicles_per_1000": 779,
+      "total_vehicles": 259238294,
+      "population": 333287557,
+      "road_total_km": 6586610,
+      "road_paved_km": 4304715,
+      "expressway_km": 76334,
+      "vehicles_per_km": 60.2
+    },
+    "UY": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 77732,
+      "road_paved_km": 7743,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "UZ": {
+      "vehicles_per_1000": 87,
+      "total_vehicles": 3051734,
+      "population": 34938956,
+      "road_total_km": 209496,
+      "road_paved_km": 120289,
+      "expressway_km": 0,
+      "vehicles_per_km": 25.4
+    },
+    "VA": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 9,
+      "road_paved_km": 9,
+      "expressway_km": 9,
+      "vehicles_per_km": null
+    },
+    "VE": {
+      "vehicles_per_1000": 149,
+      "total_vehicles": 4235000,
+      "population": 28444078,
+      "road_total_km": 96189,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": 44
+    },
+    "VG": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 200,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "VI": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 1260,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "VN": {
+      "vehicles_per_1000": 43,
+      "total_vehicles": 4180480,
+      "population": 98079191,
+      "road_total_km": 570448,
+      "road_paved_km": 280663,
+      "expressway_km": 1276,
+      "vehicles_per_km": 289,
+      "source_override": "national_vn",
+      "override_note": "Wikipedia 4.18M excludes 74M registered 2W (Vietnamnet 2024). 78M / 280k paved ≈ 289."
+    },
+    "VU": {
+      "vehicles_per_1000": null,
+      "total_vehicles": null,
+      "population": null,
+      "road_total_km": 1070,
+      "road_paved_km": 256,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "WS": {
+      "vehicles_per_1000": 124,
+      "total_vehicles": 25235,
+      "population": 203499,
+      "road_total_km": 1150,
+      "road_paved_km": 0,
+      "expressway_km": null,
+      "vehicles_per_km": 21.9
+    },
+    "XK": {
+      "vehicles_per_1000": 232,
+      "total_vehicles": 460105,
+      "population": 1700031,
+      "road_total_km": null,
+      "road_paved_km": null,
+      "expressway_km": null,
+      "vehicles_per_km": null
+    },
+    "ZA": {
+      "vehicles_per_1000": 208,
+      "total_vehicles": 13304703,
+      "population": 64007187,
+      "road_total_km": 750000,
+      "road_paved_km": 158124,
+      "expressway_km": 1927,
+      "vehicles_per_km": 84.1
+    },
+    "ZM": {
+      "vehicles_per_1000": 45,
+      "total_vehicles": 853909,
+      "population": 19059395,
+      "road_total_km": 67671,
+      "road_paved_km": 14888,
+      "expressway_km": null,
+      "vehicles_per_km": 57.4
+    },
+    "ZW": {
+      "vehicles_per_1000": 91,
+      "total_vehicles": 1467955,
+      "population": 16069056,
+      "road_total_km": 97267,
+      "road_paved_km": 18481,
+      "expressway_km": null,
+      "vehicles_per_km": 79.4
+    }
+  }
+}

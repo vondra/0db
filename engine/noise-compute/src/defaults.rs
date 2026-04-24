@@ -146,21 +146,24 @@ fn city_default(city_id: u16, class: u8) -> Option<Aadt> {
 //   (a) Explicit arm for a country whose national road enricher publishes
 //       per-class AADT (currently BR rural + TH rural). Takes priority.
 //   (b) Data-driven fallback from `country_defaults_generated::country_scale`
-//       — World Bank GDP-per-capita-PPP ratio vs DE, clamped [0.15, 1.3],
-//       applied to motorway/trunk/primary/link classes. Local roads
-//       (class 3-9) stay at WORLD regardless.
+//       — Wikipedia vehicles_per_km ratio vs DE (wiki-sourced, ~160
+//       countries), or World Bank pop_density fallback (~80 more).
+//       Clamped to [0.7, 1.3], applied to motorway/trunk/primary/link
+//       classes. Local roads (class 3-9) stay at WORLD regardless.
 //
-// The generated table (224 countries, WB 2022) replaces the earlier
-// hand-curated tier buckets — refresh via
-// `node scripts/fetch-wb-country-data.mjs && node scripts/gen-country-defaults-rs.mjs`.
-// Empirical basis: Dargay, Gately & Sommer 2007 "Vehicle Ownership and
-// Income Growth, Worldwide" — motorization ~ sqrt(GDP_PPP) over the mid
-// range with saturation at the high end.
+// Refresh via:
+//   node scripts/fetch-wb-country-data.mjs
+//   node scripts/fetch-wiki-roads-fleet.mjs
+//   node scripts/gen-country-defaults-rs.mjs
+// Empirical basis: direct fleet / paved_km is the AADT denominator
+// itself — Wikipedia gives both signals for ~160 countries so we sidestep
+// the need for a proxy. For the remaining ~80 we still use pop_density
+// (weak but positive correlation with motorway fleet-per-km).
 
-/// Classes whose default AADT scales with country GDP — motorway, trunk,
-/// primary and their ramp classes. Local roads (3-9) stay at WORLD because
-/// informal transport, cycling and pedestrian traffic decorrelate local
-/// AADT from GDP.
+/// Classes whose default AADT scales with country traffic intensity
+/// (motorway, trunk, primary, and their ramp classes). Local roads (3-9)
+/// stay at WORLD — informal transport, cycling, pedestrian share
+/// decorrelate local AADT from motorway AADT.
 const GDP_SCALED_CLASSES: &[u8] = &[0, 1, 2, 10, 11, 12];
 
 fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
@@ -243,13 +246,13 @@ mod tests {
     }
 
     #[test]
-    fn us_scales_below_world_via_sparse_density() {
-        // US pop_density ~37/km² (sparse relative to EU) → scale ≈ 0.89
-        // → motorway ≈ 27k. (I.3 density-based, ±30% band.)
+    fn us_scales_close_to_world_via_wiki_vpk() {
+        // US vehicles_per_km ≈ 60.2 (Wikipedia 2024) ≈ DE's 63.5 → scale ≈ 0.98
+        // → motorway ≈ 29k. (I.3 refined, wiki-sourced.)
         let a = admin_for(b"US", 0, Continent::NorthAmerica);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 24_000.0 && total < 30_000.0, "US motorway ≈ 27k, got {}", total);
+        assert!(total > 28_000.0 && total < 30_000.0, "US motorway ≈ 29k, got {}", total);
     }
 
     #[test]
@@ -307,13 +310,14 @@ mod tests {
     }
 
     #[test]
-    fn dz_algeria_scales_from_density() {
-        // Algeria density ~19/km² (sparse) → density-based scale ≈ 0.77
-        // → motorway ≈ 23k. (I.3 density-based.)
+    fn dz_algeria_scales_from_wiki_vpk() {
+        // Algeria vehicles_per_km ≈ 66.1 (Wikipedia) ≈ DE → scale ≈ 1.02
+        // → motorway ≈ 30.5k. (I.3 refined, wiki-sourced — replaces
+        // the old density-only heuristic which under-ranked Algeria.)
         let a = admin_for(b"DZ", 0, Continent::Africa);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 20_000.0 && total < 26_000.0, "DZ motorway ≈ 23k, got {}", total);
+        assert!(total > 29_000.0 && total < 32_000.0, "DZ motorway ≈ 30.5k, got {}", total);
     }
 
     #[test]
@@ -323,34 +327,66 @@ mod tests {
         assert_eq!(v, WORLD_DEFAULT[12]);
     }
 
-    // ── Density-based country scaling tests (plan v5 §I.3 revised) ──────
+    // ── Wiki-vpk country scaling tests (plan v5 §I.3 refined) ───────────
     #[test]
-    fn de_dense_country_hits_upper_clamp() {
-        // DE density 238/km² → tanh ≈ 0.96 → scale clamps at 1.3 → 39k.
+    fn de_reference_country_at_world_default() {
+        // DE vehicles_per_km = 63.5 = reference → scale = 1.0 → motorway ≈ 30k.
+        // (I.3 refined: DE is the calibration reference for wiki scale.)
         let a = admin_for(b"DE", 0, Continent::Europe);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 37_000.0 && total < 40_000.0, "DE motorway ≈ 39k, got {}", total);
+        assert!((total - 30_000.0).abs() < 100.0, "DE motorway ≈ 30k, got {}", total);
     }
 
     #[test]
-    fn high_density_country_scales_up() {
-        // NG (Nigeria) density ~230/km² → scale ≈ 1.3 (upper clamp)
-        // → motorway ≈ 39k. Data-driven: dense networks concentrate traffic.
+    fn sg_hits_upper_clamp() {
+        // SG vehicles_per_km ≈ 285 (Wikipedia) → tanh hits 1.3 clamp
+        // → motorway ≈ 39k. City-state with short dense network.
+        let a = admin_for(b"SG", 0, Continent::Asia);
+        let (l, m, h, x) = resolve_traffic_default(0, a);
+        let total = l + m + h + x;
+        assert!(total > 38_000.0 && total < 40_000.0, "SG motorway ≈ 39k, got {}", total);
+    }
+
+    #[test]
+    fn no_norway_scales_down_via_wiki_vpk() {
+        // NO vehicles_per_km ≈ 35.5 (Wikipedia) → log2(35.5/63.5) ≈ -0.84
+        // → scale ≈ 0.79 → motorway ≈ 24k. Sparse network, moderate fleet.
+        let a = admin_for(b"NO", 0, Continent::Europe);
+        let (l, m, h, x) = resolve_traffic_default(0, a);
+        let total = l + m + h + x;
+        assert!(total > 22_000.0 && total < 25_000.0, "NO motorway ≈ 24k, got {}", total);
+    }
+
+    #[test]
+    fn et_hits_lower_clamp_via_wiki_vpk() {
+        // ET (Ethiopia) vehicles_per_km ≈ 10 (Wikipedia) → hits 0.7 clamp
+        // → motorway ≈ 21k. One of the lowest-motorization countries.
+        let a = admin_for(b"ET", 0, Continent::Africa);
+        let (l, m, h, x) = resolve_traffic_default(0, a);
+        let total = l + m + h + x;
+        assert!(total > 20_000.0 && total < 22_000.0, "ET motorway ≈ 21k, got {}", total);
+    }
+
+    #[test]
+    fn ng_hits_upper_clamp_via_wiki_vpk() {
+        // NG vehicles_per_km ≈ 225 (Wikipedia: 13.5M vehicles, 60k paved)
+        // → scale 1.285 → motorway ≈ 38.5k.
         let a = admin_for(b"NG", 0, Continent::Africa);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 36_000.0 && total < 40_000.0, "NG motorway ≈ 39k, got {}", total);
+        assert!(total > 37_000.0 && total < 40_000.0, "NG motorway ≈ 38.5k, got {}", total);
     }
 
     #[test]
-    fn sparse_country_scales_down() {
-        // MN (Mongolia) density ~2/km² → tanh → scale 0.70 (lower clamp)
-        // → motorway ≈ 21k. Matches user's Norway-Egypt intuition.
-        let a = admin_for(b"MN", 0, Continent::Asia);
+    fn density_fallback_still_active_for_missing_wiki() {
+        // Kuwait is in wiki, Angola isn't (vehicles_per_km=null). Angola
+        // should fall back to density-based scale from WB.
+        // AO density ≈ 28.6/km² → scale ≈ 0.76 → motorway ≈ 23k.
+        let a = admin_for(b"AO", 0, Continent::Africa);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 19_000.0 && total < 23_000.0, "MN motorway ≈ 21k, got {}", total);
+        assert!(total > 21_000.0 && total < 25_000.0, "AO motorway ≈ 23k (density fallback), got {}", total);
     }
 
     #[test]
@@ -379,13 +415,13 @@ mod tests {
     }
 
     #[test]
-    fn continent_arm_applies_density_scale() {
-        // Unknown ISO in Africa continent → Africa pop-weighted density scale.
-        // Africa mean scale ≈ 1.065 → motorway ≈ 32k.
+    fn continent_arm_applies_scale() {
+        // Unknown ISO in Africa continent → Africa pop-weighted mean scale.
+        // Africa mean ≈ 1.057 (wiki+density blend) → motorway ≈ 31.7k.
         let a = admin_for(b"ZZ", 0, Continent::Africa);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 30_000.0 && total < 34_000.0, "Africa continent mtw ≈ 32k, got {}", total);
+        assert!(total > 30_000.0 && total < 33_000.0, "Africa continent mtw ≈ 31.7k, got {}", total);
     }
 
     #[test]

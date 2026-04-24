@@ -1,56 +1,56 @@
 #!/usr/bin/env node
 // Generate engine/noise-compute/src/country_defaults_generated.rs from
-// World Bank country data (see scripts/fetch-wb-country-data.mjs).
+// World Bank country data (scripts/fetch-wb-country-data.mjs) + Wikipedia
+// vehicles/roads data (scripts/fetch-wiki-roads-fleet.mjs).
 //
-// Per-country motorway AADT scale factor (plan v5 §I.3 revised):
-//   scale(country) = clamp(0.7, 1.3,
-//                          1.0 + 0.3 * tanh(log2(density / WORLD_MEDIAN_DENSITY)))
+// Per-country motorway AADT scale factor (plan v5 §I.3 refined):
 //
-// Why density (not GDP):
-// AADT on an existing road is fleet/km, not wealth. Wealth drives
-// motorization, but fleet gets diluted by road network length.
-// Norway is wealthy + sparse → low AADT. Egypt is poor + dense →
-// high AADT. GDP mis-ranks both. Population density is the best
-// single signal we have through WB API (road_km + fleet have been
-// discontinued since 2011).
+//   (1) If wiki-roads-fleet.json has vehicles_per_km for the country:
+//         scale = clamp(0.7, 1.3,
+//                       1.0 + 0.3 * tanh(log2(vpk / DE_vpk)))
+//       where DE_vpk = 63.5 vehicles/km (Wikipedia, Germany 2024).
+//       This is the direct signal: fleet / paved_km (or total_km when
+//       paved unavailable) — exactly the AADT denominator we want.
 //
-// tanh smooths the log-ratio (Singapore at 8000/km² doesn't get a
-// runaway factor). ±30% band per explicit user request — in the
-// absence of fleet/road_km data, a tight band avoids over-confident
-// departures from WORLD_DEFAULT.
+//   (2) Else (ISO absent from wiki, or wiki vehicles_per_km is null):
+//         scale = clamp(0.7, 1.3,
+//                       1.0 + 0.3 * tanh(log2(density / 60)))
+//       density from World Bank pop_density. Density is a weak proxy —
+//       wealthier + denser → more motorization + concentrated fleet —
+//       but it's all we have when Wikipedia doesn't report both signals.
 //
-// WORLD_MEDIAN_DENSITY = 60 people/km² (approx median of the ~240
-// countries in wb-country-2022.json).
-//
-// Future refinement (see scripts/fetch-wiki-roads-fleet.mjs, plan v5 §I.3b):
-// when real vehicles_per_km data is available from Wikipedia or a
-// national agency, override the density fallback with an explicit
-// entry. Implemented via a wiki-sourced explicit_arm layer in
-// country_defaults_generated.rs.
+// tanh smooths log-ratio so extreme values don't explode. ±30% band is
+// conservative — Wikipedia road_paved_km is noisy (Brazil only reports
+// federal/state paved, not local; Costa Rica reports 0 paved; some
+// countries' fleet counts exclude 2-wheelers). Tight clamp prevents any
+// single bad number from dominating.
 //
 // Applied to classes 0 (motorway), 1 (trunk), 2 (primary) and the ramp
-// classes 10-12. Local classes 3-9 stay at WORLD — local AADT doesn't
-// correlate tightly with GDP (informal transport, pedestrians, bicycles).
+// classes 10-12. Local classes 3-9 stay at WORLD — local AADT depends
+// on informal transport, pedestrian share, and bike-path availability,
+// all of which decorrelate from motorway AADT.
 //
-// Continent defaults are generated as population-weighted averages of
-// their countries' scale factors, for hexes whose country arm isn't
-// populated (micro-states, ocean-side hexes near dual boundaries).
+// Continent defaults are population-weighted averages of their countries'
+// scale factors, for hexes whose country arm isn't populated (micro-
+// states, ocean-side hexes near dual boundaries).
 //
 // Usage:
 //   cd /home/vondra/0db-app && node scripts/gen-country-defaults-rs.mjs
 //
-// Commit both the input JSON and the generated .rs file.
+// Commit both input JSONs and the generated .rs file.
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const INPUT = resolve(ROOT, 'scripts', 'wb-country-2022.json')
+const WB_INPUT = resolve(ROOT, 'scripts', 'wb-country-2022.json')
+const WIKI_INPUT = resolve(ROOT, 'scripts', 'wiki-roads-fleet.json')
 const OUTPUT = resolve(ROOT, 'engine', 'noise-compute', 'src', 'country_defaults_generated.rs')
 
-const WORLD_MEDIAN_DENSITY = 60.0  // people/km², ~median of populated countries
-const SCALE_MIN = 0.7               // ±30% band per user's conservative guidance
+const DE_VPK = 63.5                  // Germany vehicles/paved_km, Wikipedia 2024 — reference
+const WORLD_MEDIAN_DENSITY = 60.0    // people/km², ~median of populated countries
+const SCALE_MIN = 0.7                // ±30% band
 const SCALE_MAX = 1.3
 const SCALE_SPAN = (SCALE_MAX - SCALE_MIN) / 2  // 0.3 — tanh amplitude
 
@@ -72,40 +72,82 @@ function isoContinent(iso) {
   return null
 }
 
-const data = JSON.parse(readFileSync(INPUT, 'utf8'))
-const countries = data.countries
+const wb = JSON.parse(readFileSync(WB_INPUT, 'utf8'))
+const wiki = JSON.parse(readFileSync(WIKI_INPUT, 'utf8'))
+const wbCountries = wb.countries
+const wikiCountries = wiki.countries
 
-// ── Per-country scaling factor (density-based, tanh-smoothed) ───────────
-// scale = 1.0 + SCALE_SPAN * tanh(log2(density / WORLD_MEDIAN_DENSITY))
-// Falls into [SCALE_MIN, SCALE_MAX] asymptotically; clamp only guards
-// against infinities (e.g. Vatican pop_density 1800+, Macao 21000+).
-function densityScale(density) {
-  if (density == null || density <= 0) return null
-  const ratio = density / WORLD_MEDIAN_DENSITY
+// ── Scaling formulas ────────────────────────────────────────────────────
+// Both tanh-based, clamped to [SCALE_MIN, SCALE_MAX]. Rounded to 3 d.p.
+// for stable diffs in the generated file.
+
+function tanhScale(ratio) {
   const raw = 1.0 + SCALE_SPAN * Math.tanh(Math.log2(ratio))
   const clamped = Math.max(SCALE_MIN, Math.min(SCALE_MAX, raw))
   return Math.round(clamped * 1000) / 1000
 }
 
-const countryScale = {}       // iso → scale ∈ [SCALE_MIN, SCALE_MAX]
-const unscaled = []           // iso with no density data
-for (const [iso, row] of Object.entries(countries)) {
-  const scale = densityScale(row.pop_density)
-  if (scale == null) { unscaled.push(iso); continue }
-  countryScale[iso] = scale
+function wikiScale(vpk) {
+  if (vpk == null || vpk <= 0) return null
+  return tanhScale(vpk / DE_VPK)
 }
 
+function densityScale(density) {
+  if (density == null || density <= 0) return null
+  return tanhScale(density / WORLD_MEDIAN_DENSITY)
+}
+
+// ── Resolve per-country scale (wiki preferred, density fallback) ────────
+const countryInfo = {}  // iso → { scale, source: 'wiki'|'density', vpk?, density? }
+for (const iso of Object.keys(wbCountries)) {
+  const w = wikiCountries[iso]
+  const vpk = w?.vehicles_per_km
+  if (vpk != null && vpk > 0) {
+    countryInfo[iso] = {
+      scale: wikiScale(vpk),
+      source: 'wiki',
+      vpk,
+      sourceOverride: w.source_override || null,
+    }
+    continue
+  }
+  const dens = wbCountries[iso].pop_density
+  const s = densityScale(dens)
+  if (s != null) {
+    countryInfo[iso] = { scale: s, source: 'density', density: dens }
+  }
+  // else: unscaled — no entry emitted, lookup returns None
+}
+
+// Also add wiki-only countries that are missing from WB (e.g. small
+// territories): these won't have admin hits in most cases but keeping
+// symmetry is clean.
+for (const iso of Object.keys(wikiCountries)) {
+  if (countryInfo[iso]) continue
+  const w = wikiCountries[iso]
+  if (w.vehicles_per_km != null && w.vehicles_per_km > 0) {
+    countryInfo[iso] = {
+      scale: wikiScale(w.vehicles_per_km),
+      source: 'wiki',
+      vpk: w.vehicles_per_km,
+      sourceOverride: w.source_override || null,
+    }
+  }
+}
+
+const sortedCountries = Object.keys(countryInfo).sort()
+const wikiCount = sortedCountries.filter(iso => countryInfo[iso].source === 'wiki').length
+const densityCount = sortedCountries.filter(iso => countryInfo[iso].source === 'density').length
+
 // ── Continent averages (population-weighted) ─────────────────────────────
-const contAccum = {}  // continent → { sumWeightedScale, sumWeight, scaledN, allN }
-for (const [iso, row] of Object.entries(countries)) {
+const contAccum = {}
+for (const [iso, info] of Object.entries(countryInfo)) {
   const cont = isoContinent(iso)
   if (!cont) continue
-  if (!contAccum[cont]) contAccum[cont] = { weighted: 0, weight: 0, scaledN: 0, allN: 0 }
-  contAccum[cont].allN += 1
-  const scale = countryScale[iso]
-  const pop = row.population
-  if (scale == null || pop == null) continue
-  contAccum[cont].weighted += scale * pop
+  if (!contAccum[cont]) contAccum[cont] = { weighted: 0, weight: 0, scaledN: 0 }
+  const pop = wbCountries[iso]?.population
+  if (pop == null) continue
+  contAccum[cont].weighted += info.scale * pop
   contAccum[cont].weight += pop
   contAccum[cont].scaledN += 1
 }
@@ -116,55 +158,78 @@ for (const [cont, a] of Object.entries(contAccum)) {
   }
 }
 
-// ── Emit Rust ────────────────────────────────────────────────────────────
-const sortedCountries = Object.keys(countryScale).sort()
+// ── Scale summary stats for log ────────────────────────────────────────
+const scales = sortedCountries.map(iso => countryInfo[iso].scale).sort((a, b) => a - b)
+const minScale = scales[0]
+const maxScale = scales[scales.length - 1]
+const medianScale = scales[Math.floor(scales.length / 2)]
 
+// ── Emit Rust ────────────────────────────────────────────────────────────
 const out = []
 out.push(`//! Per-country and per-continent AADT scale factors relative to
-//! WORLD_DEFAULT. Generated from \`scripts/wb-country-${data.year}.json\`
-//! by \`scripts/gen-country-defaults-rs.mjs\`.
+//! WORLD_DEFAULT. Generated from \`scripts/wb-country-${wb.year}.json\`
+//! and \`scripts/wiki-roads-fleet.json\` by
+//! \`scripts/gen-country-defaults-rs.mjs\`.
 //!
-//! Source: World Bank indicator \`EN.POP.DNST\` (people per km², ${data.year}).
+//! Sources:
+//!   - Wikipedia *List of countries and territories by motor vehicles per
+//!     capita* + *List of countries by road network size* → direct
+//!     fleet / paved_km ratio (\`vehicles_per_km\`, ~160 countries).
+//!   - World Bank \`EN.POP.DNST\` (people per km², ${wb.year}) — fallback
+//!     for countries Wikipedia misses (~60 more).
 //!
-//! Method (plan v5 §I.3, density-based):
-//!   scale(country) = clamp(${SCALE_MIN.toFixed(1)}, ${SCALE_MAX.toFixed(1)},
-//!                          1.0 + ${SCALE_SPAN.toFixed(1)} × tanh(log₂(density / ${WORLD_MEDIAN_DENSITY.toFixed(0)})))
+//! Method (plan v5 §I.3 refined):
+//!   If wiki has vehicles_per_km:
+//!     scale = clamp(${SCALE_MIN.toFixed(1)}, ${SCALE_MAX.toFixed(1)},
+//!                   1.0 + ${SCALE_SPAN.toFixed(1)} × tanh(log₂(vpk / ${DE_VPK})))
+//!   Else (density fallback):
+//!     scale = clamp(${SCALE_MIN.toFixed(1)}, ${SCALE_MAX.toFixed(1)},
+//!                   1.0 + ${SCALE_SPAN.toFixed(1)} × tanh(log₂(density / ${WORLD_MEDIAN_DENSITY.toFixed(0)})))
 //!
-//! Why population density:
-//!   AADT on an existing road is vehicle fleet / road km. Wealth drives
-//!   motorization but sparse networks (Norway, Canada) dilute AADT and
-//!   dense networks (Egypt, India) concentrate it. Density is the best
-//!   single proxy we can pull from WB API; direct road_km + fleet have
-//!   been discontinued since 2011.
+//! Why vehicles_per_km (plan v5 §I.3 refined, was density-only):
+//!   AADT on an existing road is vehicle fleet / road km. Wikipedia gives
+//!   both signals directly for ~160 countries. Density was a proxy when
+//!   only WB API was available (WB discontinued road_km + fleet
+//!   indicators in 2011). With Wikipedia the proxy becomes direct.
 //!
-//!   tanh smooths the log-ratio so Singapore (8000/km²) and Macao
-//!   (21000/km²) don't explode the scale. ±30% band is deliberately
-//!   conservative — in the absence of direct fleet/road data we prefer
-//!   modest departures from WORLD_DEFAULT over overconfident ones.
+//!   ±30% clamp is intentional — Wikipedia \`road_paved_km\` is noisy:
+//!   BR reports only federal/state paved (under-counts ×10), some
+//!   countries report zero paved (CR, TH, NO) forcing fallback to total,
+//!   and fleet columns in developing countries often exclude 2-wheelers
+//!   (IN, VN) — we override these per \`source_override\` annotation in
+//!   wiki-roads-fleet.json where a better value is known.
 //!
 //! Applied to motorway/trunk/primary/link classes (0/1/2/10/11/12) in
 //! \`defaults.rs::country_default\`. Local road classes (3-9) stay at
-//! WORLD_DEFAULT — density is still a weak signal for local streets,
-//! whose AADT depends more on informal transport + pedestrian share.
+//! WORLD_DEFAULT — motorway-scale doesn't predict residential AADT.
 //!
 //! Continent scales are population-weighted averages of their countries'
 //! factors (reaches only hexes whose country centroid fell outside every
 //! Natural Earth polygon, e.g. contested boundaries, micro-ocean cells).
 //!
 //! To refresh:
-//!   node scripts/fetch-wb-country-data.mjs ${data.year}
+//!   node scripts/fetch-wb-country-data.mjs ${wb.year}
+//!   node scripts/fetch-wiki-roads-fleet.mjs
 //!   node scripts/gen-country-defaults-rs.mjs
-//!   # commit both JSON + this file
+//!   # commit all three JSONs + this file
 
 use crate::admin::Continent;
 
-/// Per-country scale factor vs WORLD_DEFAULT motorway. ${sortedCountries.length} entries.
+/// Per-country scale factor vs WORLD_DEFAULT motorway. ${sortedCountries.length} entries
+/// (${wikiCount} from Wikipedia vehicles_per_km, ${densityCount} from WB density fallback).
 pub const COUNTRY_SCALES: &[(&[u8; 2], f64)] = &[`)
 
 for (const iso of sortedCountries) {
-  const scale = countryScale[iso]
-  const dens = countries[iso].pop_density?.toFixed(1) ?? '?'
-  out.push(`    (b"${iso}", ${scale.toFixed(3)}), // pop_density ${data.year} ${dens}/km²`)
+  const info = countryInfo[iso]
+  let comment
+  if (info.source === 'wiki') {
+    const tag = info.sourceOverride ? ` [${info.sourceOverride}]` : ''
+    comment = `wiki vpk=${info.vpk.toFixed(1)}${tag}`
+  } else {
+    const dens = info.density?.toFixed(1) ?? '?'
+    comment = `density ${dens}/km²`
+  }
+  out.push(`    (b"${iso}", ${info.scale.toFixed(3)}), // ${comment}`)
 }
 
 out.push('];')
@@ -191,11 +256,20 @@ out.push('')
 
 writeFileSync(OUTPUT, out.join('\n') + '\n')
 console.log(`Wrote ${OUTPUT}`)
-console.log(`  countries scaled: ${sortedCountries.length}`)
-console.log(`  countries without GDP: ${unscaled.length} (${unscaled.slice(0, 10).join(', ')}...)`)
-console.log(`  continents: ${Object.keys(continentScale).join(', ')}`)
-console.log('\n  Continent scales:')
+console.log(`  countries scaled total:   ${sortedCountries.length}`)
+console.log(`  wiki-sourced (vpk):       ${wikiCount}`)
+console.log(`  density-sourced fallback: ${densityCount}`)
+console.log(`  scale min/median/max:     ${minScale}/${medianScale}/${maxScale}`)
+console.log('\n  Continent scales (pop-weighted):')
 for (const [c, s] of Object.entries(continentScale).sort()) {
   const a = contAccum[c]
-  console.log(`    ${c.padEnd(14)} ${s.toFixed(3)}  (${a.scaledN}/${a.allN} countries, ${(a.weight/1e6).toFixed(0)}M pop)`)
+  console.log(`    ${c.padEnd(14)} ${s.toFixed(3)}  (${a.scaledN} countries, ${(a.weight / 1e6).toFixed(0)}M pop)`)
+}
+// Spot-check reference countries
+console.log('\n  Reference countries:')
+for (const iso of ['DE', 'US', 'NO', 'SG', 'IN', 'NG', 'BR', 'DZ', 'MN', 'AU', 'CN', 'FR', 'GB', 'IT']) {
+  const info = countryInfo[iso]
+  if (!info) { console.log(`    ${iso}: [missing]`); continue }
+  const src = info.source === 'wiki' ? `vpk=${info.vpk}` : `dens=${info.density?.toFixed(1)}`
+  console.log(`    ${iso}: ${info.scale.toFixed(3)}  (${info.source}, ${src})`)
 }

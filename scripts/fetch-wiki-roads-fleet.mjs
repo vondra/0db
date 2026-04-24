@@ -119,12 +119,17 @@ const NAME_TO_ISO = {
 }
 
 function stripHtml(s) {
-  return s.replace(/<[^>]+>/g, '').replace(/&#91;/g, '[').replace(/&#93;/g, ']')
-    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim()
+  return s
+    .replace(/<[^>]+>/g, '')
+    .replace(/&#91;/g, '[').replace(/&#93;/g, ']')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+    .replace(/&#160;/g, ' ')  // non-breaking space entity used in roads table
+    .trim()
 }
 
 function cleanNumber(s) {
-  const cleaned = s.replace(/,/g, '').replace(/\[.*?\]/g, '').replace(/\s/g, '')
+  if (s == null) return null
+  const cleaned = String(s).replace(/,/g, '').replace(/\[.*?\]/g, '').replace(/\s/g, '')
   const n = Number(cleaned)
   return Number.isFinite(n) ? n : null
 }
