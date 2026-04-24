@@ -206,15 +206,39 @@ export function PathProfileDiagram({
   // (engine returns ground + height_m via Receiver::altitude_m).
   const rcvY = yOf(trace.rcv_alt_m)
 
-  // Minimal single-apex render for now: use the dominant edge (max LOS excess).
-  // P3 enhances to multi-apex with E₁/E₂/E₃ labels and dominant-vs-subdominant
-  // styling.
-  const dominantEdge =
-    terrainEdges && terrainEdges.length > 0
-      ? terrainEdges[Math.min(dominantEdgeIdx ?? 0, terrainEdges.length - 1)]
-      : null
-  const apexX = dominantEdge != null ? xOf(dominantEdge.t) : null
-  const apexY = dominantEdge != null ? yOf(dominantEdge.elevation_m) : null
+  // Multi-apex rendering: one marker per diffraction edge (N ≤ 3). The edge
+  // with max LOS excess (engine's δ* anchor) gets a filled dot; the others
+  // are outline-only so the dominant one reads visually. Labels E₁/E₂/E₃
+  // use subscript Unicode. When two adjacent markers are < 30 px apart we
+  // drop the non-dominant label to avoid collision.
+  const apexMarkers = useMemo(() => {
+    if (!terrainEdges || terrainEdges.length === 0) return []
+    const dominantIdx = Math.min(
+      Math.max(dominantEdgeIdx ?? 0, 0),
+      terrainEdges.length - 1,
+    )
+    const SUB = ['₁', '₂', '₃'] // subscript 1-3
+    const placed = terrainEdges.map((e, i) => ({
+      i,
+      isDominant: i === dominantIdx,
+      label: `E${SUB[i] ?? String(i + 1)}`,
+      x: xOf(e.t),
+      y: yOf(e.elevation_m),
+    }))
+    // Drop subdominant labels that crowd a dominant one.
+    const MIN_LABEL_GAP = 30
+    for (const m of placed) {
+      if (m.isDominant) continue
+      for (const n of placed) {
+        if (n === m || !n.isDominant) continue
+        if (Math.abs(n.x - m.x) < MIN_LABEL_GAP) {
+          ;(m as typeof m & { hideLabel?: boolean }).hideLabel = true
+          break
+        }
+      }
+    }
+    return placed as Array<(typeof placed)[number] & { hideLabel?: boolean }>
+  }, [terrainEdges, dominantEdgeIdx, xOf, yOf])
 
   const groundTooltip =
     'Ground hardness from Copernicus Imperviousness Density\n' +
@@ -370,14 +394,29 @@ export function PathProfileDiagram({
           />
         ))}
 
-        {apexX != null && apexY != null && (
-          <g>
-            <circle cx={apexX} cy={apexY} r={4} fill={DIAGRAM_COLORS.apex} />
-            <text x={apexX + 6} y={apexY - 5} fontSize={23} fill={DIAGRAM_COLORS.apex}>
-              apex
-            </text>
+        {apexMarkers.map(m => (
+          <g key={`apex-${m.i}`}>
+            <circle
+              cx={m.x}
+              cy={m.y}
+              r={4}
+              fill={m.isDominant ? DIAGRAM_COLORS.apex : '#fafafa'}
+              stroke={DIAGRAM_COLORS.apex}
+              strokeWidth={1.75}
+            />
+            {!m.hideLabel && (
+              <text
+                x={m.x + 6}
+                y={m.y - 5}
+                fontSize={23}
+                fill={DIAGRAM_COLORS.apex}
+                fontWeight={m.isDominant ? 600 : 400}
+              >
+                {m.label}
+              </text>
+            )}
           </g>
-        )}
+        ))}
 
         <circle cx={srcX} cy={srcY} r={4} fill={DIAGRAM_COLORS.source} />
         <line x1={srcX} y1={srcY} x2={srcX} y2={yOf(trace.elevation_m[0])} stroke={DIAGRAM_COLORS.source} strokeWidth={1.5} />

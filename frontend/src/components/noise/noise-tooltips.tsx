@@ -6,19 +6,33 @@ import { METRIC_DEFS, type MetricTerm } from "./metric-defs"
 /**
  * MetricLabel — wraps a metric term from METRIC_DEFS with a native title
  * tooltip showing its definition. Use for column labels like "Screening".
+ *
+ * `mode` controls which copy variant is shown:
+ * - `'public'` (default) — uses `descriptionPublic` if present, else
+ *   falls back to `description`. Drops the `(standard)` footer.
+ *   Used by the Noise Sources tab (ContributorRow) for lay-audience
+ *   readability.
+ * - `'technical'` — uses `description` (formulas, CNOSSOS citations,
+ *   fine print). Appends `(standard)` when present. Used by the Noise
+ *   Segments tab (SegmentExpanded) for pro-debug fidelity.
  */
 export function MetricLabel({
   term,
   children,
+  mode = "public",
 }: {
   term: MetricTerm
   children?: ReactNode
+  mode?: "public" | "technical"
 }) {
   const def = METRIC_DEFS[term]
   if (!def) return <span>{children ?? term}</span>
-  const titleText = [def.label, def.description, def.standard ? `(${def.standard})` : null]
-    .filter(Boolean)
-    .join("\n")
+  const description = mode === "technical"
+    ? def.description
+    : def.descriptionPublic ?? def.description
+  const parts: Array<string | null | undefined> = [def.label, description]
+  if (mode === "technical" && def.standard) parts.push(`(${def.standard})`)
+  const titleText = parts.filter(Boolean).join("\n")
   return <HoverText title={titleText}>{children ?? def.label}</HoverText>
 }
 

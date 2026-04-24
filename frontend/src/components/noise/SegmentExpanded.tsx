@@ -294,38 +294,74 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
       fmtDb(groundDelta),
     ],
     [
-      <HoverText
-        title={bandsTooltip(terrain.attenuation_bands, {
-          title: `Terrain diffraction — per band (δ = ${terrain.delta_m.toFixed(2)} m${
-            terrain.is_double ? ', double' : ''
-          })`,
-          note: 'Fresnel/Pierce model. δ = path difference at the apex.\nScalar above = A-weighted ΔL_A (full − no_terrain Lden).',
-        })}
-      >
-        <span className="cursor-help">
-          Terrain {terrain.delta_m > 0 ? `(δ ${terrain.delta_m.toFixed(2)} m${terrain.is_double ? ' ×2' : ''})` : '(none)'}
-        </span>
-      </HoverText>,
+      (() => {
+        // "single / double / triple edge" per engine's n_edges (is_double alone
+        // can't tell N=2 from N=3 — both set is_double=true for back-compat).
+        const edgeLabel =
+          terrain.n_edges === 1 ? 'single edge'
+          : terrain.n_edges === 2 ? 'double edge'
+          : terrain.n_edges === 3 ? 'triple edge'
+          : null
+        const deltaStr = terrain.delta_m > 0
+          ? `δ = ${terrain.delta_m.toFixed(2)} m${edgeLabel ? `, ${edgeLabel}` : ''}`
+          : 'no obstruction'
+        const triple = terrain.n_edges === 3
+          ? '\n\nN=3 cascade (project simplification): δ = |S→E₁|+|E₁→E₂|+|E₂→E₃|+|E₃→R|−|S→R|, e = |E₁→E₃|, cap 25 dB.'
+          : ''
+        const rayleigh = terrain.delta_star_m > 0
+          ? `\n\nRayleigh δ* = ${terrain.delta_star_m.toFixed(2)} m — per-band gate: bands with δ ≤ λ/4 − δ* are zeroed (CNOSSOS §2.5.6(c)).`
+          : ''
+        const title =
+          `Terrain diffraction — per band (${deltaStr})\n` +
+          '\nFresnel / Maekawa model. δ = path difference at the apex.' +
+          '\nScalar above = A-weighted ΔL_A (full − no_terrain Lden).' +
+          triple +
+          rayleigh
+        return (
+          <HoverText title={bandsTooltip(terrain.attenuation_bands, { title })}>
+            <span className="cursor-help">
+              Terrain {edgeLabel
+                ? `(δ ${terrain.delta_m.toFixed(2)} m, ${edgeLabel})`
+                : '(none)'}
+            </span>
+          </HoverText>
+        )
+      })(),
       fmtDb(terrainDelta),
     ],
     [
-      <HoverText
-        title={bandsTooltip(screening.attenuation_bands, {
-          title: screening.obstacle
-            ? `Building screening — per band (${screening.obstacle.kind} ${screening.obstacle.height_m.toFixed(
-                1,
-              )} m @ t=${screening.obstacle.t.toFixed(2)})`
-            : 'Building screening — per band',
-          note: 'Same Fresnel model applied to building rooftops.\nScalar above = A-weighted ΔL_A (full − no_screening Lden).',
-        })}
-      >
-        <span className="cursor-help">
-          Screening
-          {screening.obstacle
-            ? ` (${screening.obstacle.kind} ${screening.obstacle.height_m.toFixed(1)} m)`
-            : ' (none)'}
-        </span>
-      </HoverText>,
+      (() => {
+        // "N diffraction edges" — NOT "N obstacles" (one edge can be a
+        // bare-earth hill with kind='terrain').
+        const obs = screening.obstacle
+        const edgeCount = obs?.n_edges ?? 0
+        const screenLabel = obs
+          ? edgeCount > 1
+            ? `${edgeCount} diffraction edges`
+            : `${obs.kind} ${obs.height_m.toFixed(1)} m`
+          : 'none'
+        const edgesDetail = obs && obs.edges.length > 0
+          ? '\n\nEdges:' + obs.edges
+              .map((e, i) => {
+                const kind = e.kind
+                const h = kind === 'terrain' ? 'hill peak' : `${kind} ${e.height_m.toFixed(1)} m`
+                return `\n  E${['₁','₂','₃'][i] ?? i + 1}  ${h}  @ t=${e.t.toFixed(2)}  (+${e.screen_h_m.toFixed(1)} m above LOS)`
+              })
+              .join('')
+          : ''
+        const title =
+          `Screening (combined terrain + buildings + barriers) — per band\n` +
+          (obs ? `Representative obstacle: ${obs.kind} ${obs.height_m.toFixed(1)} m @ t=${obs.t.toFixed(2)}\n` : '') +
+          '\nCombined diffraction over composite top profile = elevation + max(building, barrier).' +
+          '\nSingle Fresnel pass — A_terrain + A_screen ≡ A_combined (SPEC §3.5b, anti-double-count).' +
+          '\nScalar above = A-weighted ΔL_A (full − no_screening Lden).' +
+          edgesDetail
+        return (
+          <HoverText title={bandsTooltip(screening.attenuation_bands, { title })}>
+            <span className="cursor-help">Screening ({screenLabel})</span>
+          </HoverText>
+        )
+      })(),
       fmtDb(screeningDelta),
     ],
     [
@@ -357,9 +393,44 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
     ])
   }
 
+  // Rayleigh gate indicator: which bands the engine zeroed by the CNOSSOS
+  // §2.5.6(c) δ ≤ λ/4 − δ* rule. We read the engine's per-band output
+  // (zero where δ_m > 0 means the gate fired) — no re-derivation.
+  const gatedBands = terrain.delta_m > 0 && terrain.delta_star_m > 0
+    ? BAND_LABELS.filter((_, i) => terrain.attenuation_bands[i] === 0)
+    : []
+
   return (
     <Section>
       <InlineTable rows={rows} />
+      {gatedBands.length > 0 && (
+        <HoverText
+          title={
+            `Rayleigh gate — CNOSSOS §2.5.6(c) per-band condition δ ≤ λ/4 − δ*.\n` +
+            `Engine computed δ* = ${terrain.delta_star_m.toFixed(2)} m for the dominant edge\n` +
+            `(mirror fit over bare-earth OLS planes). Bands that fail the test\n` +
+            `contribute 0 dB of diffraction attenuation in the total.`
+          }
+        >
+          <div className="mt-0.5 text-[10px] text-muted-foreground italic cursor-help">
+            Rayleigh gate zeroed: {gatedBands.join(', ')}
+          </div>
+        </HoverText>
+      )}
+      <HoverText
+        title={
+          'Combined terrain + building + barrier screening (SPEC §3.5b).\n' +
+          'Single Fresnel pass over composite top profile = elevation +\n' +
+          'max(building, barrier). A_terrain + A_screen ≡ A_combined — the two\n' +
+          'rows above are an engine decomposition, not two independent Fresnels.\n' +
+          'δ* OLS fit stays on bare-earth elevation for correct ground-reflection\n' +
+          'physics.'
+        }
+      >
+        <div className="mt-0.5 text-[10px] text-muted-foreground italic cursor-help">
+          Terrain + screening computed as one combined diffraction (§3.5b).
+        </div>
+      </HoverText>
       <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 border-t border-border/40 pt-0.5">
         <span className="text-muted-foreground/70 font-medium">Total path effect</span>
         <span className="text-foreground font-mono font-medium text-right">
@@ -505,6 +576,19 @@ export function SegmentExpanded({ trace }: { trace: SegmentTrace }) {
           terrainEdges={trace.terrain.edges}
           dominantEdgeIdx={trace.terrain.dominant_edge_idx}
         />
+        <HoverText
+          title={
+            'Bilateral cadence: one 10 m near-probe at each end (berm catch),\n' +
+            'then three samples at 30 m / 60 m / 120 m, then 240 m through the\n' +
+            'middle. step_m_med is the median inter-sample gap the engine saw\n' +
+            '(propagation::path_profile::fill_t_values).'
+          }
+        >
+          <div className="mt-0.5 text-[10px] text-muted-foreground italic cursor-help">
+            Profile: {trace.path_profile.t.length} samples · median step{' '}
+            {trace.path_profile.step_m_med.toFixed(1)} m
+          </div>
+        </HoverText>
       </Section>
       <Section4PathEffects trace={trace} />
       <Section5Lden trace={trace} />

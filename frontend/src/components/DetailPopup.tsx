@@ -85,8 +85,11 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
 }
 
 // Road traffic source / rail train source helpers live in shared.tsx so the
-// same tooltip wording is used by both the Noise sources tab (here) and
-// the Noise segments tab (SegmentExpanded).
+// same source-attribution wording is reused here and in the Noise segments
+// tab (SegmentExpanded). The per-effect propagation tooltips differ by tab:
+// ContributorRow uses `MetricLabel` default mode='public' (plain-language
+// descriptions from `descriptionPublic`); SegmentExpanded uses inline
+// HoverText with full technical detail (formulas, δ*, Rayleigh gate).
 
 /** Pretty renderer for source-specific metadata (typed per discriminant). */
 function MetadataRows({ c }: { c: Contributor }) {

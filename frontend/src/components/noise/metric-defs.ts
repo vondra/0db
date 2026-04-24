@@ -8,7 +8,13 @@
 
 export type MetricDef = {
   label: string
+  /** Technical description: formulas, standards citations, fine print.
+   * Used by the Noise Segments tab (pro debug) via `MetricLabel mode='technical'`. */
   description: string
+  /** Public-facing description: plain language, no formulas, no jargon.
+   * Used by the Noise Sources tab (public) via `MetricLabel mode='public'`
+   * (default). Falls back to `description` when omitted. */
+  descriptionPublic?: string
   standard?: string
 }
 
@@ -56,19 +62,25 @@ export const METRIC_DEFS: Record<string, MetricDef> = {
   terrain: {
     label: "Terrain",
     description:
-      "Attenuation from the ground blocking or diffracting the direct sound path (e.g. hills, embankments). Full-path DEM profile fed into Fresnel diffraction with C₃ frequency term.",
-    standard: "ISO 9613-2 §7.3 with C₃",
+      "Terrain diffraction via Maekawa/Fresnel (ISO 9613-2 §7.3/7.4), up to 3 edges from the upper convex hull of the DEM profile above line-of-sight. CNOSSOS §2.5.6(c) Rayleigh δ* gate zeroes bands where δ ≤ λ/4 − δ*. Combined with building/barrier screening in a single Fresnel pass (SPEC §3.5b, anti-double-count).",
+    descriptionPublic:
+      "A hill between the noise source and you reduces noise by diffracting sound over it. The taller and closer the hill, the more it helps.",
+    standard: "ISO 9613-2 §7.3/7.4 + CNOSSOS-EU §2.5.6(c)",
   },
   screening: {
     label: "Screening",
     description:
-      "Attenuation from the single dominant obstacle blocking the source→receiver line-of-sight — either a tall building or an explicit noise barrier. The engine picks the tallest sample along the path.",
-    standard: "ISO 9613-2 §7.3, CNOSSOS-EU 3D δ geometry",
+      "Increment of the combined terrain + building + barrier diffraction over pure-terrain (A_terrain + A_screen ≡ A_combined, SPEC §3.5b — not a second independent Fresnel). The engine scans the Overture building raster + any explicit noise barriers along the path and merges the tallest top into the composite profile. One edge in the composite may be a bare-earth hill — UI labels it 'terrain' then.",
+    descriptionPublic:
+      "Buildings and noise barriers between the source and you reduce noise by blocking the direct line of sight.",
+    standard: "ISO 9613-2 §7.3 + CNOSSOS-EU §2.5.6(c)",
   },
   vegetation: {
     label: "Vegetation",
     description:
-      "Attenuation from dense forest along the sound path. Capped at ~200 m effective depth per ISO 9613-2 Table A.1.",
+      "Attenuation from dense forest along the sound path, integrated trapezoidally over the WorldCover forest raster. Capped at ~200 m effective depth per ISO 9613-2 Table A.1. Scalar × 0.5 Central-Europe calibration for the binary-forest raster.",
+    descriptionPublic:
+      "Trees between the source and you absorb some of the noise. Dense forest works best; scattered trees barely help.",
     standard: "ISO 9613-2 §A.2.2",
   },
   per_band: {
