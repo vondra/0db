@@ -3,7 +3,7 @@
  *
  * Downloads tramos.js (JS-wrapped GeoJSON) from mapatrafico.transportes.gob.es,
  * parses 7,289 per-segment AADT records covering all autovías + autopistas + N-roads,
- * matches by ref + midpoint proximity, writes aadt_light/medium/heavy/moto + traffic_source.
+ * matches by ref + midpoint proximity, writes aadt_light/medium/heavy/moto + source_id.
  *
  * Source: https://mapatrafico.transportes.gob.es/2022/Visor/datos/GIS/tramos.js
  * License: open data Ministerio de Transportes y Movilidad Sostenible

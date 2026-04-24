@@ -6,10 +6,10 @@
  * traffic flow. Accumulates trips bottom-up from leaves toward roots — dead-end
  * streets get only their local buildings, collector roads accumulate sub-branches.
  *
- * Only modifies: road_class in [5..9] (local roads) AND traffic_source == 0.
+ * Only modifies: road_class in [5..9] (local roads) AND source_id == 0.
  * Excludes motorway_link / trunk_link / primary_link (10/11/12) — those carry
  * highway flow that residential accumulation drastically undercounts.
- * Sets traffic_source = 2 (heuristic estimate).
+ * Sets source_id = service-tree-heuristic registry id (heuristic estimate).
  *
  * Usage:
  *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-service-tree.ts
@@ -590,7 +590,6 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   if (segAADT.size === 0) return null
 
   // Write back — EC pattern: copy existing values first
-  const existingSource = roadTable.getChild('traffic_source')
   const existingLight = roadTable.getChild('aadt_light')
   const existingMed = roadTable.getChild('aadt_medium')
   const existingHvy = roadTable.getChild('aadt_heavy')

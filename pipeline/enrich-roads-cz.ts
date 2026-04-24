@@ -2,7 +2,7 @@
  * Enrich CZ roads.arrow with ŘSD traffic census data (AADT per vehicle class).
  *
  * Downloads from ŘSD ArcGIS REST API, caches locally, matches to OSM roads
- * by ref tag + proximity, adds aadt_* columns + traffic_source=1 to Arrow.
+ * by ref tag + proximity, adds aadt_* columns + source_id to Arrow.
  *
  * Usage:
  *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-cz.ts
@@ -153,7 +153,6 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
     const existingAadtMedium = table.getChild('aadt_medium')
     const existingAadtHeavy = table.getChild('aadt_heavy')
     const existingAadtMoto = table.getChild('aadt_moto')
-    const existingTrafficSource = table.getChild('traffic_source')
     const existingSourceId = table.getChild('source_id')
 
     const aadtLight = new Int32Array(n)

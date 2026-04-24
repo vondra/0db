@@ -2,7 +2,7 @@
  * Continental road enrichment (Europe): EU city traffic volume dataset.
  *
  * Downloads harmonized traffic data from 36 European cities (Nature Scientific Data, 2025),
- * matches to OSM road segments by osm_id, writes aadt_light + aadt_heavy + traffic_source=1
+ * matches to OSM road segments by osm_id, writes aadt_light + aadt_heavy + source_id
  * into roads.arrow for each matching H3R4 hex.
  *
  * Dataset: "Harmonized Annual Averaged Traffic Data at Street Segment Level for European Cities"
@@ -310,7 +310,6 @@ function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
     const existingAadtMedium = table.getChild('aadt_medium')
     const existingAadtHeavy = table.getChild('aadt_heavy')
     const existingAadtMoto = table.getChild('aadt_moto')
-    const existingTrafficSource = table.getChild('traffic_source')
     const existingSourceId = table.getChild('source_id')
 
     // Seed output columns from whatever's already in the Arrow (per-row state).
@@ -496,7 +495,7 @@ async function main() {
 ## Matching
 - Direct osm_id join (dataset already matched to OSM way IDs)
 - ${totalMatched} segments enriched across ${hexesUpdated} H3R4 hexes
-- Preserves existing country-specific enrichment (traffic_source=1 from prior runs)
+- Preserves existing country-specific enrichment (higher-rank source_id from prior runs)
 - Directional correction: raw_oneway=true measurements doubled to bidirectional total
 - AADT split: light = total - truck - 2wheel; heavy = TR_AADT; moto = 2W_AADT
 

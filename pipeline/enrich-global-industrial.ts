@@ -2,7 +2,7 @@
  * Global industrial enrichment: GPPD (power plants) + E-PRTR (EU facilities).
  *
  * Downloads two global/EU datasets, spatial-joins to OSM industrial polygons,
- * and writes nace_4digit + industrial_dataset_id directly into industrial.arrow.
+ * and writes nace_4digit + source_id directly into industrial.arrow.
  *
  * WHY: OSM only gives generic "landuse=industrial". GPPD provides ~35K power plants
  * worldwide (→ NACE 35, electricity generation). E-PRTR provides ~30K EU regulated
@@ -461,7 +461,7 @@ async function main() {
 ## Matching
 - Spatial join: facility lat/lon → nearest OSM industrial polygon centroid within 500m
 - H3R4 pre-filter: only compare facilities and polygons in the same H3 resolution-4 hex
-- Written directly to industrial.arrow per-row (nace_4digit + industrial_dataset_id)
+- Written directly to industrial.arrow per-row (nace_4digit + source_id)
 - Dataset priority preserves national registries (cz-irz > europe-eprtr > global-gppd)
 
 ## Gaps

@@ -1,9 +1,11 @@
 /**
  * Calibrate lane-based AADT scaling ratios from enriched census data.
  *
- * Reads all enriched roads.arrow (traffic_source=1), deduplicates by census
- * section, computes MEDIAN total AADT per (road_class × lanes × oneway) bucket,
- * and outputs ratio table relative to 2-lane baseline.
+ * Reads all roads.arrow rows whose `source_id` maps to a measured
+ * Provenance tier (national / continental / global-measured), deduplicates
+ * by census section, computes MEDIAN total AADT per
+ * (road_class × lanes × oneway) bucket, and outputs the ratio table
+ * relative to the 2-lane baseline.
  *
  * Output: ratio table as JSON + Rust const for pipeline-worker.
  *
@@ -14,6 +16,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tableFromIPC } from 'apache-arrow'
+import { SOURCES_BY_ID, PROVENANCE_RANK } from './lib/sources.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -61,16 +64,18 @@ function main(): void {
     const rc = t.getChild('road_class')
     const ln = t.getChild('lanes')
     const ow = t.getChild('oneway')
-    const ts = t.getChild('traffic_source')
+    const sid = t.getChild('source_id')
     const al = t.getChild('aadt_light')
     const am = t.getChild('aadt_medium')
     const ah = t.getChild('aadt_heavy')
     const mo = t.getChild('aadt_moto')
     const ref = t.getChild('ref')
-    if (!rc || !ts || !al) continue
+    if (!rc || !sid || !al) continue
 
     for (let i = 0; i < t.numRows; i++) {
-      if (!ts || ts.get(i) !== 1) continue
+      const src = SOURCES_BY_ID.get(sid.get(i) as number)
+      // Only measured data (global-measured and above) enters the calibration.
+      if (!src || PROVENANCE_RANK[src.provenance] < PROVENANCE_RANK['global-measured']) continue
       if (!al || al.get(i) <= 0) continue
 
       const roadClass = rc.get(i) as number

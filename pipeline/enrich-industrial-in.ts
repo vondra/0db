@@ -18,7 +18,7 @@
  * 3. **Cement Plants in India 2024** — 341 plants (polygons, with capacity).
  *    URL: `livingatlas.esri.in/server/rest/services/Cement_Plants_in_India_2024/MapServer/0`
  *
- * This script writes `nace_4digit` + `industrial_dataset_id` directly into
+ * This script writes `nace_4digit` + `source_id` directly into
  * `industrial.arrow` for:
  *   - Power plants → NACE 35 (electricity generation)
  *   - Cement plants → NACE 23 (manufacture of non-metallic mineral products)

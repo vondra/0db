@@ -3,7 +3,7 @@
  *
  * Downloads shapefile from MIT open data portal, converts to GeoJSON via ogr2ogr,
  * parses monitoring station points (Strada + TGM value), matches to OSM road
- * segments by road ref + proximity, adds aadt_light + traffic_source=1 to Arrow.
+ * segments by road ref + proximity, adds aadt_light + source_id to Arrow.
  *
  * Data format: 767 monitoring stations (Point geometry in UTM 32N), each with:
  *   Strada — road ref (e.g. "A1", "SS106", "RA05")
@@ -246,7 +246,6 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
 
     // Read existing enrichment columns
     const existingAadtLight = table.getChild('aadt_light')
-    const existingTrafficSource = table.getChild('traffic_source')
     const existingSourceId = table.getChild('source_id')
 
     const aadtLight = new Int32Array(n)
@@ -303,7 +302,7 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
     // Copy ALL existing columns by iterating schema
     const columns: Record<string, any> = {}
     for (const field of table.schema.fields) {
-      if (field.name === 'aadt_light' || field.name === 'traffic_source') continue
+      if (field.name === 'aadt_light' || field.name === 'source_id') continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())

@@ -12,7 +12,7 @@
  *   - Scan ALL h3r4 hexes globally that contain industrial.arrow
  *   - For each OSM site, check the name field
  *   - Apply keyword rules in order — first match wins
- *   - Write nace_4digit + industrial_dataset_id directly to the arrow via
+ *   - Write nace_4digit + source_id directly to the arrow via
  *     withArrowWrite(). The dataset priority check preserves higher-authority
  *     entries (national registries, E-PRTR, GEM).
  *
