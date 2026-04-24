@@ -41,12 +41,36 @@ export interface VegetationBreakdownData {
 
 export interface ScreeningObstacleTrace {
   kind: 'building' | 'barrier' | 'none'
+  /** Height of the DOMINANT (max LOS excess) sample — not the leftmost. */
   height_m: number
+  /** Fractional position (0..1) of the dominant sample along the path. */
   t: number
   screen_h_m: number
   delta_m: number
   samples_taken: number
   step_m: number
+  /** Number of diffraction edges in the combined terrain+building+barrier
+   * result (0..=3). When > 1 the popup should label "N diffraction edges",
+   * NOT "N obstacles" — one edge may be a bare-earth hill (kind: 'terrain'). */
+  n_edges: number
+  /** Per-edge detail when `n_edges > 0`. Leftmost-first by t.
+   * Dominant edge (popup highlights) = whichever has max `screen_h_m`. */
+  edges: ObstacleEdge[]
+}
+
+export interface ObstacleEdge {
+  /** 'terrain' = bare-earth hill (no building/barrier on top at this edge). */
+  kind: 'terrain' | 'building' | 'barrier'
+  t: number
+  /** Building or barrier height above ground; 0 for 'terrain' kind. */
+  height_m: number
+  /** Edge-top minus line-of-sight (excess above LOS). */
+  screen_h_m: number
+}
+
+export interface EdgePoint {
+  t: number
+  elevation_m: number
 }
 
 export interface DatasetProvenance {
@@ -318,10 +342,23 @@ export interface BaselineTrace {
 
 export interface TerrainTrace {
   delta_m: number
+  /** Back-compat flag: true for 2 OR 3 edges. UI should read `n_edges`
+   * for the exact count (single / double / triple). */
   is_double: boolean
   attenuation_bands: number[]
-  edge_apex_t: number | null
-  edge_apex_elev_m: number | null
+  /** Number of diffraction edges (0, 1, 2, or 3). */
+  n_edges: number
+  /** Edge vertices from the upper-convex-hull algorithm. Length == n_edges. */
+  edges: EdgePoint[]
+  /** CNOSSOS §2.5.6(c) Rayleigh δ* — path difference over the dominant edge
+   * with mirror source/receiver across the bare-earth mean-ground planes.
+   * Zero when there is no obstruction. Feeds the per-band `δ ≤ λ/4 − δ*` gate. */
+  delta_star_m: number
+  /** First-to-last edge distance |E₁→Eₙ| (metres) — feeds CNOSSOS C₃.
+   * Zero for single-edge or no-edge results. */
+  edge_distance_m: number
+  /** Index into `edges` of the edge with max LOS excess. 0 when n_edges == 0. */
+  dominant_edge_idx: number
 }
 
 export interface ScreeningTrace {

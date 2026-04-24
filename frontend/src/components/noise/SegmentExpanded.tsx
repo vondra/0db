@@ -502,8 +502,8 @@ export function SegmentExpanded({ trace }: { trace: SegmentTrace }) {
       <Section>
         <PathProfileDiagram
           trace={trace.path_profile}
-          terrainEdgeApexT={trace.terrain.edge_apex_t}
-          terrainEdgeApexElev={trace.terrain.edge_apex_elev_m}
+          terrainEdges={trace.terrain.edges}
+          dominantEdgeIdx={trace.terrain.dominant_edge_idx}
         />
       </Section>
       <Section4PathEffects trace={trace} />

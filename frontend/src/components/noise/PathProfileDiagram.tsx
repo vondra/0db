@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import type { PathProfileTrace } from '../../types/noise'
+import type { EdgePoint, PathProfileTrace } from '../../types/noise'
 import { HoverText } from '../ui/info-tip'
 import { DIAGRAM_COLORS, formatDist } from './shared'
 
@@ -47,14 +47,19 @@ function imdLabel(imd: number): string {
 
 export interface PathProfileDiagramProps {
   trace: PathProfileTrace
-  terrainEdgeApexT?: number | null
-  terrainEdgeApexElev?: number | null
+  /** Engine-detected diffraction edges (upper convex hull of elevation profile
+   * above LOS). Length matches `TerrainTrace.n_edges`. When undefined / empty
+   * no apex marker is drawn. */
+  terrainEdges?: EdgePoint[]
+  /** Index into `terrainEdges` of the edge with maximum LOS excess
+   * (= engine's δ* anchor). UI highlights this one. */
+  dominantEdgeIdx?: number
 }
 
 export function PathProfileDiagram({
   trace,
-  terrainEdgeApexT,
-  terrainEdgeApexElev,
+  terrainEdges,
+  dominantEdgeIdx,
 }: PathProfileDiagramProps) {
   const n = trace.t.length
   const dist = Math.max(trace.dist_m, 1)
@@ -201,8 +206,15 @@ export function PathProfileDiagram({
   // (engine returns ground + height_m via Receiver::altitude_m).
   const rcvY = yOf(trace.rcv_alt_m)
 
-  const apexX = terrainEdgeApexT != null ? xOf(terrainEdgeApexT) : null
-  const apexY = terrainEdgeApexElev != null ? yOf(terrainEdgeApexElev) : null
+  // Minimal single-apex render for now: use the dominant edge (max LOS excess).
+  // P3 enhances to multi-apex with E₁/E₂/E₃ labels and dominant-vs-subdominant
+  // styling.
+  const dominantEdge =
+    terrainEdges && terrainEdges.length > 0
+      ? terrainEdges[Math.min(dominantEdgeIdx ?? 0, terrainEdges.length - 1)]
+      : null
+  const apexX = dominantEdge != null ? xOf(dominantEdge.t) : null
+  const apexY = dominantEdge != null ? yOf(dominantEdge.elevation_m) : null
 
   const groundTooltip =
     'Ground hardness from Copernicus Imperviousness Density\n' +
