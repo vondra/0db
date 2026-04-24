@@ -261,10 +261,6 @@ function nearest(midLat: number, midLon: number, grid: Map<string, RoadFeat[]>, 
 }
 
 // Indonesian class defaults (fallback)
-const CLASS_AADT: Record<number, number> = {
-  0: 50000, 1: 20000, 2: 10000, 3: 4000, 4: 1500, 5: 800, 6: 300,
-}
-
 function tierMultiplier(tier: 0 | 1 | 2): number {
   return tier === 1 ? 2.0 : tier === 2 ? 1.4 : 1.0
 }
@@ -423,11 +419,7 @@ async function main() {
       }
 
       // Tier D: CNOSSOS class defaults
-      if (!source) {
-        aadt = (CLASS_AADT[cls] ?? 800) * mult
-        source = 'class'
-        matchedClass++
-      }
+      if (!source) continue  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
       const split = splitVehicles(aadt, tier)
       aadtLight[i] = split.light

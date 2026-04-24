@@ -277,10 +277,6 @@ const HWY_AADT: Record<string, number> = {
   'Ferry': 0,
 }
 
-const CLASS_AADT: Record<number, number> = {
-  0: 60000, 1: 25000, 2: 12000, 3: 5000, 4: 2000, 5: 1000, 6: 400,
-}
-
 function tierMultiplier(tier: 0 | 1 | 2): number {
   return tier === 1 ? 2.0 : tier === 2 ? 1.4 : 1.0
 }
@@ -393,10 +389,7 @@ async function main() {
         }
       }
       // Tier 2: class defaults
-      if (aadt === 0) {
-        aadt = (CLASS_AADT[cls] ?? 1000) * mult
-        matchedClass++
-      }
+      if (aadt === 0) continue  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
       const split = splitVehicles(aadt, tier)
       aadtLight[i] = split.light

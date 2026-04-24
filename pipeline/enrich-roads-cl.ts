@@ -300,10 +300,6 @@ function nearestTmda(midLat: number, midLon: number, grid: Map<string, TmdaFeat[
   return best
 }
 
-const CLASS_AADT: Record<number, number> = {
-  0: 50000, 1: 18000, 2: 9000, 3: 4000, 4: 1800, 5: 800, 6: 350,
-}
-
 function redVialAadt(feat: RedVialFeat): number {
   const paved = /asfalto|hormigon|pavi|pav/i.test(feat.carpeta)
   if (!paved) return 1500
@@ -453,10 +449,7 @@ async function main() {
         }
       }
       // 3. Chilean class default
-      if (aadt === 0) {
-        aadt = (CLASS_AADT[cls] ?? 600) * mult
-        matchedClass++
-      }
+      if (aadt === 0) continue  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
       const split = splitVehicles(aadt, tier, mining && tier === 0)
       aadtLight[i] = split.light

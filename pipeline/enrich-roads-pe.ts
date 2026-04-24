@@ -454,13 +454,7 @@ async function main() {
         }
       }
       // 2. Peruvian regional class default
-      if (aadt === 0) {
-        const CLASS_AADT = region === 'costa' ? CLASS_AADT_COSTA
-          : region === 'sierra' ? CLASS_AADT_SIERRA
-            : CLASS_AADT_SELVA
-        aadt = (CLASS_AADT[cls] ?? 300) * mult
-        matchedClass++
-      }
+      if (aadt === 0) continue  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
       const split = splitVehicles(aadt, tier, region, mining && tier === 0)
       aadtLight[i] = split.light

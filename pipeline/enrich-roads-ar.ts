@@ -256,10 +256,6 @@ function nearestLine<T extends { coords: [number, number][] }>(
   return best ? { feat: best, dist: bestDist } : null
 }
 
-const CLASS_AADT: Record<number, number> = {
-  0: 45000, 1: 18000, 2: 9000, 3: 4000, 4: 1800, 5: 800, 6: 350,
-}
-
 function dnvAadt(feat: DnvFeat): number {
   const paved = /pavi/i.test(feat.superficie)
   if (!paved) return 3000
@@ -399,10 +395,7 @@ async function main() {
         }
       }
       // 3. Argentine class default
-      if (aadt === 0) {
-        aadt = (CLASS_AADT[cls] ?? 600) * mult
-        matchedClass++
-      }
+      if (aadt === 0) continue  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
       const split = splitVehicles(aadt, tier)
       aadtLight[i] = split.light

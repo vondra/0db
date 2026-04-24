@@ -244,10 +244,6 @@ function nearestDnit(midLat: number, midLon: number, grid: Map<string, DnitFeat[
   return best
 }
 
-const CLASS_AADT: Record<number, number> = {
-  0: 50000, 1: 25000, 2: 12000, 3: 5000, 4: 2000, 5: 1000, 6: 400,
-}
-
 function dnitAadt(feat: DnitFeat): number {
   const paved = feat.surficie === 'PAV' || feat.surficie === 'PAVI'
   if (!paved) return 3000
@@ -360,10 +356,7 @@ async function main() {
           matchedDnit++
         }
       }
-      if (aadt === 0) {
-        aadt = (CLASS_AADT[cls] ?? 800) * mult
-        matchedClass++
-      }
+      if (aadt === 0) continue  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
       const split = splitVehicles(aadt, tier)
       aadtLight[i] = split.light

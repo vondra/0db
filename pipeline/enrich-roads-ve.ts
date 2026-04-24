@@ -219,10 +219,6 @@ function nearestRoad(midLat: number, midLon: number, grid: Map<string, VeFeat[]>
   return best
 }
 
-const CLASS_AADT: Record<number, number> = {
-  0: 30000, 1: 10000, 2: 5000, 3: 2500, 4: 1200, 5: 600, 6: 250,
-}
-
 function vialidadAadt(feat: VeFeat): number {
   const t = feat.tipo.toLowerCase()
   if (/autopista/.test(t)) return 22000
@@ -349,10 +345,7 @@ async function main() {
           matchedSpatial++
         }
       }
-      if (aadt === 0) {
-        aadt = (CLASS_AADT[cls] ?? 300) * mult
-        matchedClass++
-      }
+      if (aadt === 0) continue  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
       const split = splitVehicles(aadt, tier)
       aadtLight[i] = split.light

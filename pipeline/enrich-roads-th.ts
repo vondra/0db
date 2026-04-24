@@ -368,15 +368,9 @@ async function main() {
         }
       }
 
-      // Tier 4: Thailand class defaults
-      if (!source) {
-        const def = TH_DEFAULTS[cls] || TH_DEFAULTS[5]
-        const aadt = isBkk ? def.bkk : def.aadt
-        const split = thaiClassSplit(aadt, isBkk)
-        aadtLi = split.light; aadtMe = split.medium; aadtHv = split.heavy; aadtMo = split.moto
-        source = 'default'
-        matchedClassDefault++
-      }
+      // A.1: no spatial or ref match → leave source_id = 0, engine applies
+      // country-tier cascade (TH rural + Bangkok city overrides in defaults.rs).
+      if (!source) continue
 
       aadtLight[i] = aadtLi
       aadtMedium[i] = aadtMe

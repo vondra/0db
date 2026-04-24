@@ -205,10 +205,6 @@ function nearestRoad(midLat: number, midLon: number, grid: Map<string, MopcFeat[
   return best
 }
 
-const CLASS_AADT: Record<number, number> = {
-  0: 30000, 1: 10000, 2: 5000, 3: 2500, 4: 1200, 5: 600, 6: 250,
-}
-
 function mopcAadt(feat: MopcFeat): number {
   const sup = feat.tipoSup.toUpperCase()
   if (/^PCA$/.test(sup)) return 12000  // fully paved
@@ -340,10 +336,7 @@ async function main() {
         }
       }
       // 2. Paraguayan class default
-      if (aadt === 0) {
-        aadt = (CLASS_AADT[cls] ?? 400) * mult
-        matchedClass++
-      }
+      if (aadt === 0) continue  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
       const split = splitVehicles(aadt, tier, chaco)
       aadtLight[i] = split.light

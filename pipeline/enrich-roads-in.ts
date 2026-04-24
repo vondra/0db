@@ -249,16 +249,6 @@ const BHARATMALA_AADT: Record<string, number> = {
   'Ring Road': 50000,
 }
 
-const CLASS_AADT: Record<number, number> = {
-  0: 70000,  // motorway
-  1: 30000,  // trunk
-  2: 12000,  // primary
-  3: 5000,   // secondary
-  4: 2000,   // tertiary
-  5: 1000,   // residential
-  6: 400,    // service
-}
-
 function tierMultiplier(tier: 0 | 1 | 2): number {
   return tier === 1 ? 2.0 : tier === 2 ? 1.3 : 1.0
 }
@@ -388,11 +378,7 @@ async function main() {
       }
 
       // Tier 2: Indian class defaults
-      if (!matchedBy) {
-        aadt = (CLASS_AADT[cls] ?? 1000) * mult
-        matchedBy = 'class'
-        matchedClassDefault++
-      }
+      if (!matchedBy) continue  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
       const split = splitVehicles(aadt, tier)
       aadtLight[i] = split.light

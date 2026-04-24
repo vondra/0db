@@ -289,10 +289,6 @@ function nearestLine<T extends { coords: [number, number][] }>(
   return best ? { feat: best, dist: bestDist } : null
 }
 
-const CLASS_AADT: Record<number, number> = {
-  0: 35000, 1: 12000, 2: 6000, 3: 3000, 4: 1500, 5: 700, 6: 300,
-}
-
 function rvnAadt(feat: RvnFeat): number {
   const paved = feat.superficie === '1'
   if (!paved) return 1500
@@ -459,11 +455,7 @@ async function main() {
         }
       }
       // 3. Colombian class default
-      if (!split) {
-        const aadt = (CLASS_AADT[cls] ?? 500) * mult
-        split = splitVehiclesDefault(aadt, tier, coal)
-        matchedClass++
-      }
+      if (!split) continue  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
       aadtLight[i] = split.light
       aadtMedium[i] = split.medium
