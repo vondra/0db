@@ -360,7 +360,8 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           title: `A_gr per band — CF[i] × G (G = ${ground.factor_g.toFixed(2)})`,
           signed: true,
           note:
-            `G = 1 − IMD/${Math.round((1 - ground.factor_g) * 100)}. Hard=0, soft=1.\n` +
+            'G is path-averaged from the receiver\'s imperviousness raster\n' +
+            '(0 = hard, 1 = soft).\n' +
             'Scalar = A-weighted ΔL_A (full − no_ground Lden).',
         })}
       >
@@ -571,13 +572,13 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
       <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 border-t border-border/40 pt-0.5">
         <HoverText
           title={
-            'Total obstruction effect — the combined impact of hills,\n' +
-            'buildings, barriers, and forest between source and receiver,\n' +
-            'compared to the same path with none of those in the way.\n\n' +
-            'Baseline corrections (divergence, atmospheric, ground,\n' +
-            'reflection, FLC) are NOT counted here — they belong to the\n' +
-            'free-field reference, not to obstruction. 0 dB means the\n' +
-            'path is clear.'
+            'Engine variant delta: full Lden − free-field Lden.\n\n' +
+            'Free-field covers divergence + atmospheric + ground + FLC\n' +
+            '(iso9613.rs:253). Everything else applied in Full shows up\n' +
+            'here: terrain diffraction (A_bar), building/barrier screening\n' +
+            '(A_bar increment), foliage (A_fol), and — when non-zero —\n' +
+            'the urban reflection boost (A_refl). 0 dB means no obstruction\n' +
+            'and no reflection changed the outcome.'
           }
         >
           <span className="text-muted-foreground/70 font-medium cursor-help">Total obstruction effect</span>
@@ -587,8 +588,10 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
             `received_lden.full − received_lden.free_field\n` +
             `= ${received_lden.full.toFixed(2)} − ${received_lden.free_field.toFixed(2)}\n` +
             `= ${totalPathDelta.toFixed(2)} dB (A-weighted).\n\n` +
-            'Equivalent to A_bar (terrain + building/barrier) + A_fol\n' +
-            '(foliage) combined, in A-weighted Lden space.'
+            'Covers obstructions (A_bar terrain + A_bar building +\n' +
+            'A_fol foliage) and — when non-zero — the urban reflection\n' +
+            'boost (A_refl), since reflection is applied in Full but\n' +
+            'not in free_field.'
           }
         >
           <span className="text-foreground font-mono font-medium text-right cursor-help">
@@ -700,11 +703,15 @@ function Section5Lden({ trace }: { trace: SegmentTrace }) {
             >
               <HoverText
                 title={
-                  `Lden = 10·log₁₀((12·10^(Ld/10) + 4·10^((Le+5)/10) + 8·10^((Ln+10)/10)) / 24)\n\n` +
-                  `  Ld = ${periodCells[0].lrec.toFixed(1)} dB(A) × 12 h\n` +
-                  `  Le = ${periodCells[1].lrec.toFixed(1)} dB(A) × 4 h (+5 penalty)\n` +
-                  `  Ln = ${periodCells[2].lrec.toFixed(1)} dB(A) × 8 h (+10 penalty)\n\n` +
-                  `→ Lden = ${trace.received_lden.full.toFixed(2)} dB.\n\n` +
+                  `received_lden.full = ${trace.received_lden.full.toFixed(2)} dB (engine scalar).\n\n` +
+                  'Formula:\n' +
+                  '  Lden = 10·log₁₀((12·10^(Ld/10)\n' +
+                  '              + 4·10^((Le+5)/10)\n' +
+                  '              + 8·10^((Ln+10)/10)) / 24)\n\n' +
+                  'Ld / Le / Ln are the per-period L_rec(A) rows above\n' +
+                  '(day / evening / night). Engine sums per-band received\n' +
+                  'energies into each period\'s A-weighted total, then the\n' +
+                  'weighted log-sum into Lden.\n\n' +
                   PERIOD_TOOLTIP
                 }
               >
@@ -732,9 +739,12 @@ function Section6Variants({ trace }: { trace: SegmentTrace }) {
     [
       'Free field',
       received_lden.free_field,
-      'Lden with NO terrain, screening, or foliage obstructions.\n' +
-      'Baseline corrections (div + atm + ground + FLC + reflection)\n' +
-      'are still applied. Δ vs Full = combined obstruction effect.',
+      'Engine variant: full − obstructions − reflection.\n' +
+      'Computed as base − A_gr + A_flc (iso9613.rs:253) —\n' +
+      'includes divergence, atmospheric, ground, and finite-line\n' +
+      'correction, but NOT terrain/screening/foliage obstructions\n' +
+      'and NOT urban reflection. Δ vs Full = combined effect of\n' +
+      'obstructions plus reflection at this receiver.',
     ],
     [
       'No terrain',

@@ -182,8 +182,10 @@ pub fn ground_trace(factor_g: f64) -> GroundTrace {
 }
 
 /// Build a `BaselineTrace` from the slant distance, source height, ground G,
-/// finite-line correction, and urban reflection boost. Mirrors the terms
-/// `propagate_variants_full` applies in the free-field baseline.
+/// finite-line correction, and urban reflection boost. The reflection boost
+/// is included here for trace-API completeness even though the internal
+/// `free_field` variant (see iso9613.rs) excludes it; popup derives the
+/// per-receiver A_refl display from this field directly.
 pub fn baseline_trace(
     d_slant_m: f64,
     source_height_m: f64,
