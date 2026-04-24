@@ -279,21 +279,16 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
   const terrainDelta = received_lden.full - received_lden.no_terrain
   const screeningDelta = received_lden.full - received_lden.no_screening
   const vegetationDelta = received_lden.full - received_lden.no_vegetation
+  // Engine definition: free_field = div + atm + ground + flc (no terrain,
+  // screening, vegetation). So `full − free_field` is exactly the
+  // obstruction-path component — NOT the sum of every row below. Ground and
+  // FLC are part of the free-field baseline; showing them in the table is
+  // for transparency, not as sum-terms feeding `totalPathDelta`.
   const totalPathDelta = received_lden.full - received_lden.free_field
 
-  const rows: [React.ReactNode, React.ReactNode][] = [
-    [
-      <HoverText
-        title={bandsTooltip(ground.attenuation_bands, {
-          title: `Ground effect — per band (G = ${ground.factor_g.toFixed(2)})`,
-          note:
-            'SIGNED: over soft ground CF[i] < 0 at 63/125 Hz, so ground can\nBOOST LF energy. Positive ΔL_A means ground added dB.',
-        })}
-      >
-        <span className="cursor-help">Ground (G={ground.factor_g.toFixed(2)})</span>
-      </HoverText>,
-      fmtDb(groundDelta),
-    ],
+  // Path-obstruction rows that compose `totalPathDelta` (terrain + screening
+  // + vegetation). Rendered first.
+  const obstructionRows: [React.ReactNode, React.ReactNode][] = [
     [
       (() => {
         // "single / double / triple edge" per engine's n_edges (is_double alone
@@ -385,9 +380,27 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
     ],
   ]
 
+  // Baseline-correction rows shown for transparency. Always applied but part
+  // of the free-field baseline (ground) or geometric correction (FLC), so
+  // they do NOT feed `totalPathDelta` — hence they sit below the total
+  // separator with an italic label.
+  const baselineRows: [React.ReactNode, React.ReactNode][] = [
+    [
+      <HoverText
+        title={bandsTooltip(ground.attenuation_bands, {
+          title: `Ground effect — per band (G = ${ground.factor_g.toFixed(2)})`,
+          note:
+            'SIGNED: over soft ground CF[i] < 0 at 63/125 Hz, so ground can\nBOOST LF energy. Positive ΔL_A means ground added dB.\nPart of free-field baseline, not the obstruction total above.',
+        })}
+      >
+        <span className="cursor-help">Ground (G={ground.factor_g.toFixed(2)})</span>
+      </HoverText>,
+      fmtDb(groundDelta),
+    ],
+  ]
   if (Math.abs(baseline.finite_line_corr_db) > 0.05) {
-    rows.push([
-      <HoverText title="Finite-line correction — applies to line sources (roads, rails). Compensates for the segment's finite angular extent at the receiver.">
+    baselineRows.push([
+      <HoverText title="Finite-line correction — applies to line sources (roads, rails). Compensates for the segment's finite angular extent at the receiver. Part of free-field baseline, not the obstruction total above.">
         <span className="cursor-help">Finite-line correction</span>
       </HoverText>,
       fmtDb(baseline.finite_line_corr_db),
@@ -403,7 +416,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
 
   return (
     <Section>
-      <InlineTable rows={rows} />
+      <InlineTable rows={obstructionRows} />
       {gatedBands.length > 0 && (
         <HoverText
           title={
@@ -432,12 +445,27 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           Terrain + screening computed as one combined diffraction (§3.5b).
         </div>
       </HoverText>
-      <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 border-t border-border/40 pt-0.5">
-        <span className="text-muted-foreground/70 font-medium">Total path effect</span>
-        <span className="text-foreground font-mono font-medium text-right">
-          {fmtDb(totalPathDelta)}
-        </span>
+      <HoverText
+        title={
+          'Total path effect = full − free_field Lden.\n\n' +
+          'Covers terrain + screening + vegetation only — the obstruction\n' +
+          'rows above. Ground and finite-line correction are part of the\n' +
+          'free-field baseline (and shown below), so they do NOT feed this\n' +
+          'total. When there is no hill, building, or forest between the\n' +
+          'source and the receiver this is 0 dB by definition.'
+        }
+      >
+        <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 border-t border-border/40 pt-0.5 cursor-help">
+          <span className="text-muted-foreground/70 font-medium">Total path effect</span>
+          <span className="text-foreground font-mono font-medium text-right">
+            {fmtDb(totalPathDelta)}
+          </span>
+        </div>
+      </HoverText>
+      <div className="mt-1.5 text-[10px] text-muted-foreground/70 italic">
+        Baseline corrections (part of free-field, not in total above):
       </div>
+      <InlineTable rows={baselineRows} />
     </Section>
   )
 }
