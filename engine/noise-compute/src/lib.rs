@@ -479,13 +479,22 @@ fn compute_roads(
         }
 
         // Group by (ref, name, class) — all "D1 motorway" segments → one contributor
-        // Ramp merging: motorway/trunk with no ref → find nearest with ref
-        let effective_ref = if seg.road_ref.is_empty() && class_idx <= 1 {
-            // Look for nearest motorway/trunk segment with ref
+        // Ref inheritance: an orphan mainline or its link inherits the ref of
+        // the nearest mainline that carries one. Link classes 10/11/12 map to
+        // their mainline parents 0/1/2 (so a GC-1 on-ramp with no OSM ref=* tag
+        // groups under "GC-1 (link)" instead of "osm:123").
+        let infer_target_class = match class_idx {
+            0 | 10 => Some(0),
+            1 | 11 => Some(1),
+            2 | 12 => Some(2),
+            _ => None,
+        };
+        let effective_ref = if seg.road_ref.is_empty() && infer_target_class.is_some() {
+            let target = infer_target_class.unwrap();
             let mut best_ref = String::new();
             let mut best_dist = f64::MAX;
             for other in roads.iter() {
-                if other.road_class as usize > 1 {
+                if (other.road_class as usize) != target {
                     continue;
                 }
                 if other.road_ref.is_empty() {
