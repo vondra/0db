@@ -23,10 +23,6 @@ const PERIOD_ROWS = [
 const BAND_FREQS = [63, 125, 250, 500, 1000, 2000, 4000, 8000] as const
 const BAND_LABELS = ['63 Hz', '125 Hz', '250 Hz', '500 Hz', '1 kHz', '2 kHz', '4 kHz', '8 kHz'] as const
 
-const LDEN_FORMULA =
-  'Lden = 10·log₁₀( (12·10^(Ld/10) + 4·10^((Le+5)/10) + 8·10^((Ln+10)/10)) / 24 )\n' +
-  'Evening +5 dB and night +10 dB are the CNOSSOS penalties.'
-
 function bandsTooltip(
   bands: readonly number[],
   {
@@ -146,17 +142,24 @@ function computeLwRow(trace: SegmentTrace): [React.ReactNode, React.ReactNode] |
       ? LW_POINT_SOURCE
       : null
   if (!cfg) return null
-  const tooltip =
-    `${cfg.symbol} — ${cfg.desc}, A-weighted\n\n` +
+  const labelConcept =
+    `${cfg.symbol} — ${cfg.desc}, A-weighted. Sound power at the\n` +
+    'source before any propagation is applied. CNOSSOS-EU Annex II\n' +
+    '(road, railway) / project emission model (building, industrial).'
+  const valueComputation =
+    `Per-period ${cfg.symbol}:\n\n` +
     `  day      ${lw.day.toFixed(1).padStart(6)} ${cfg.unit}\n` +
     `  evening  ${lw.evening.toFixed(1).padStart(6)} ${cfg.unit}\n` +
     `  night    ${lw.night.toFixed(1).padStart(6)} ${cfg.unit}\n\n` +
-    `Day value is representative (longest, loudest period for\nmost sources). Per-band values live in §5 under "Emission".`
+    `Day shown is the representative period. Per-band L_w lives\n` +
+    'in §5 under "Lw (A)" — hover each period cell there.'
   return [
-    <HoverText title={tooltip} className="no-underline">
+    <HoverText title={labelConcept} className="no-underline">
       <span className="cursor-help">{cfg.label}</span>
     </HoverText>,
-    `${lw.day.toFixed(1)} ${cfg.unit}`,
+    <HoverText title={valueComputation} className="no-underline">
+      <span className="cursor-help">{`${lw.day.toFixed(1)} ${cfg.unit}`}</span>
+    </HoverText>,
   ]
 }
 
@@ -290,71 +293,104 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
   const totalPathDelta = received_lden.full - received_lden.free_field
 
   // Baseline corrections — ordered per ISO 9613-2 §7.1 → §7.5 then FLC.
-  // Row labels stay plain; the formal A_xxx symbols and standard references
-  // live inside tooltips so the visible column reads as UI text, not
-  // engineering notation.
+  // Split-tooltip rule: LABEL tooltip = concept only (what the term is +
+  // standard symbol); VALUE tooltip = how this specific number was
+  // computed (engine source, per-band breakdown where applicable,
+  // variant-delta origin). Plain labels, symbols live only in tooltips.
   const baselineRows: [React.ReactNode, React.ReactNode][] = [
     [
       <HoverText
         title={
-          'A_div — Geometric divergence (ISO 9613-2 §7.1 / CNOSSOS §2.5.9).\n\n' +
-          'Inverse-distance spreading of the source power. Line sources use\n' +
-          '10·log₁₀(2π·d_slant) cylindrical divergence; point sources use\n' +
-          '20·log₁₀(d_slant) + 11 spherical + 11 dB point-to-line adapter.\n' +
-          'Scalar below is the engine-emitted baseline.geometric_db value\n' +
-          '(sign-flipped here because it subtracts from Lw).'
+          'A_div — Geometric divergence (ISO 9613-2 §7.1).\n\n' +
+          'Inverse-distance spreading of the source power. Always applied,\n' +
+          'grows with distance. Line sources: cylindrical spreading; point\n' +
+          'sources: spherical spreading plus a source-geometry adapter.'
         }
       >
         <span className="cursor-help">Geometric divergence</span>
       </HoverText>,
-      fmtDb(-baseline.geometric_db),
+      <HoverText
+        title={
+          `baseline.geometric_db = ${baseline.geometric_db.toFixed(2)} dB (engine scalar).\n\n` +
+          'Formula: line → 10·log₁₀(2π·d_slant);\n' +
+          '        point → 20·log₁₀(d_slant) + 11.\n' +
+          `d_slant = ${trace.d_slant_m.toFixed(1)} m.\n` +
+          'Sign-flipped here because it subtracts from L_w.'
+        }
+      >
+        <span className="cursor-help">{fmtDb(-baseline.geometric_db)}</span>
+      </HoverText>,
     ],
     [
       <HoverText
-        title={bandsTooltip(baseline.atmospheric_bands, {
-          title: 'A_atm — Atmospheric absorption (ISO 9613-2 §7.2)',
-          signed: true,
-          note:
-            'A_atm[i] = α[i] × d_slant / 1000. Standard atmosphere\n' +
-            '(15 °C, 70 % RH). Higher frequencies absorb more. Scalar below\n' +
-            'is the A-weighted ΔL_A = full − no_atmospheric Lden.',
-        })}
+        title={
+          'A_atm — Atmospheric absorption (ISO 9613-2 §7.2).\n\n' +
+          'Frequency-dependent air absorption. Standard atmosphere\n' +
+          '(15 °C, 70 % RH). Higher frequencies attenuate much more\n' +
+          'per kilometre than low frequencies.'
+        }
       >
         <span className="cursor-help">Atmospheric absorption</span>
       </HoverText>,
-      fmtDb(atmosphericDelta),
+      <HoverText
+        title={bandsTooltip(baseline.atmospheric_bands, {
+          title: 'A_atm per band — α[i] × d_slant / 1000',
+          signed: true,
+          note:
+            `d_slant = ${trace.d_slant_m.toFixed(1)} m.\n` +
+            'Scalar = A-weighted ΔL_A (full − no_atmospheric Lden).',
+        })}
+      >
+        <span className="cursor-help">{fmtDb(atmosphericDelta)}</span>
+      </HoverText>,
     ],
     [
       <HoverText
-        title={bandsTooltip(ground.attenuation_bands, {
-          title: `A_gr — Ground effect per band (G = ${ground.factor_g.toFixed(2)})`,
-          note:
-            'ISO 9613-2 §7.3.1 / CNOSSOS-EU §2.5.15: A_gr[i] = CF[i] × G,\n' +
-            'where G = 1 − IMD/100 (hard ↔ soft ground). SIGNED: CF[i] < 0 at\n' +
-            '63/125 Hz over soft ground, so A_gr can BOOST LF energy.\n' +
-            'Scalar below is the A-weighted ΔL_A (full − no_ground Lden).',
-        })}
+        title={
+          'A_gr — Ground effect (ISO 9613-2 §7.3.1 / CNOSSOS §2.5.15).\n\n' +
+          'Interaction of direct + ground-reflected rays — destructive at\n' +
+          'mid bands, constructive at LF over soft ground. SIGNED: over\n' +
+          'soft ground (G → 1) the 63/125 Hz bands can BOOST energy.'
+        }
       >
         <span className="cursor-help">Ground effect (G={ground.factor_g.toFixed(2)})</span>
       </HoverText>,
-      fmtDb(groundDelta),
+      <HoverText
+        title={bandsTooltip(ground.attenuation_bands, {
+          title: `A_gr per band — CF[i] × G (G = ${ground.factor_g.toFixed(2)})`,
+          signed: true,
+          note:
+            `G = 1 − IMD/${Math.round((1 - ground.factor_g) * 100)}. Hard=0, soft=1.\n` +
+            'Scalar = A-weighted ΔL_A (full − no_ground Lden).',
+        })}
+      >
+        <span className="cursor-help">{fmtDb(groundDelta)}</span>
+      </HoverText>,
     ],
   ]
   if (baseline.reflection_boost_db > 0.05) {
     baselineRows.push([
       <HoverText
         title={
-          'A_refl — Urban reflection boost (ISO 9613-2 §7.5 / CNOSSOS-EU §2.5.18).\n\n' +
-          'Per-receiver boost 0..5 dB based on local building enclosure\n' +
-          '(3×3 building raster around the receiver). Applied once per\n' +
-          'receiver, same scalar for every segment at this point. Sign is\n' +
-          'positive — reflections add energy to the received level.\n' +
-          'Value shown is the engine-emitted baseline.reflection_boost_db.'
+          'A_refl — Urban reflection boost (ISO 9613-2 §7.5).\n\n' +
+          'Per-receiver 0..5 dB boost from local building enclosure\n' +
+          '(3×3 raster around the receiver). Reflected energy adds to\n' +
+          'the direct path — always positive, same scalar for every\n' +
+          'segment at this receiver.'
         }
       >
         <span className="cursor-help">Urban reflection</span>
       </HoverText>,
-      `+${baseline.reflection_boost_db.toFixed(1)} dB`,
+      <HoverText
+        title={
+          `baseline.reflection_boost_db = +${baseline.reflection_boost_db.toFixed(2)} dB (engine scalar).\n\n` +
+          'Computed once per receiver from the local building_enclosure()\n' +
+          'raster probe and clamped 0..5 dB. Not a variant delta — the\n' +
+          'same value appears on every segment at this point.'
+        }
+      >
+        <span className="cursor-help">+{baseline.reflection_boost_db.toFixed(1)} dB</span>
+      </HoverText>,
     ])
   }
   if (Math.abs(baseline.finite_line_corr_db) > 0.05) {
@@ -362,102 +398,116 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
       <HoverText
         title={
           'A_flc — Finite-line correction.\n\n' +
-          'Line-source only (roads, railways). Compensates for the segment\n' +
-          'subtending a finite angle at the receiver instead of the infinite\n' +
-          'line assumed by cylindrical divergence. NoiseModelling / LIMA /\n' +
-          'SoundPLAN all apply an equivalent correction; not a stand-alone\n' +
-          'ISO term but standard practice (NMPB, CNOSSOS line-source workflow).'
+          'Line sources only (roads, railways). Compensates for the\n' +
+          'segment subtending a finite angle at the receiver instead\n' +
+          'of the infinite line assumed by cylindrical divergence.\n' +
+          'Standard practice in NMPB / NoiseModelling / CNOSSOS.'
         }
       >
         <span className="cursor-help">Finite-line correction</span>
       </HoverText>,
-      fmtDb(baseline.finite_line_corr_db),
+      <HoverText
+        title={
+          `baseline.finite_line_corr_db = ${baseline.finite_line_corr_db.toFixed(2)} dB (engine scalar).\n\n` +
+          'Computed from the segment endpoint geometry at the receiver —\n' +
+          'closer / shorter segments subtend less angle and attenuate\n' +
+          'more than the infinite-line approximation predicts.'
+        }
+      >
+        <span className="cursor-help">{fmtDb(baseline.finite_line_corr_db)}</span>
+      </HoverText>,
     ])
   }
 
   // Obstruction rows — terrain + screening + vegetation. Compose totalPathDelta.
+  // Same split rule: LABEL concept, VALUE computation details.
   const obstructionRows: [React.ReactNode, React.ReactNode][] = [
-    [
-      (() => {
-        const edgeLabel =
-          terrain.n_edges === 1 ? 'single edge'
-          : terrain.n_edges === 2 ? 'double edge'
-          : terrain.n_edges === 3 ? 'triple edge'
-          : null
-        const deltaStr = terrain.delta_m > 0
-          ? `δ = ${terrain.delta_m.toFixed(2)} m${edgeLabel ? `, ${edgeLabel}` : ''}`
-          : 'no obstruction'
-        const triple = terrain.n_edges === 3
-          ? '\n\nN=3 cascade (project simplification): δ = |S→E₁|+|E₁→E₂|+|E₂→E₃|+|E₃→R|−|S→R|, e = |E₁→E₃|, cap 25 dB.'
-          : ''
-        const title =
-          `A_bar — Terrain diffraction, per band (${deltaStr})\n\n` +
-          'ISO 9613-2 §7.4 (Maekawa barrier formula, C₃ frequency term).\n' +
-          'Engine scans the upper convex hull of the DEM profile above\n' +
-          'LOS, keeps up to 3 edges. Scalar below = A-weighted ΔL_A\n' +
-          '(full − no_terrain Lden). Rayleigh δ* gate is reported on its\n' +
-          'own row below when it zeroes any band.' +
-          triple
-        return (
-          <HoverText title={bandsTooltip(terrain.attenuation_bands, { title })}>
-            <span className="cursor-help">
-              Terrain diffraction{edgeLabel
-                ? ` (δ ${terrain.delta_m.toFixed(2)} m, ${edgeLabel})`
-                : ' (none)'}
-            </span>
-          </HoverText>
-        )
-      })(),
-      fmtDb(terrainDelta),
-    ],
-    [
-      (() => {
-        const obs = screening.obstacle
-        const edgeCount = obs?.n_edges ?? 0
-        const screenLabel = obs
-          ? edgeCount > 1
-            ? `${edgeCount} diffraction edges`
-            : `${obs.kind} ${obs.height_m.toFixed(1)} m`
-          : 'none'
-        const edgesDetail = obs && obs.edges.length > 0
-          ? '\n\nEdges:' + obs.edges
-              .map((e, i) => {
-                const kind = e.kind
-                const h = kind === 'terrain' ? 'hill peak' : `${kind} ${e.height_m.toFixed(1)} m`
-                return `\n  E${EDGE_SUBSCRIPTS[i] ?? i + 1}  ${h}  @ t=${e.t.toFixed(2)}  (+${e.screen_h_m.toFixed(1)} m above LOS)`
-              })
-              .join('')
-          : ''
-        const title =
-          `A_bar — Building/barrier screening component, per band\n\n` +
-          (obs ? `Representative obstacle: ${obs.kind} ${obs.height_m.toFixed(1)} m @ t=${obs.t.toFixed(2)}\n\n` : '') +
-          'Engine runs ONE combined diffraction (SPEC §3.5b) over the\n' +
-          'composite top profile = elevation + max(building, barrier).\n' +
-          'This row is the increment of that combined A_bar over the pure-\n' +
-          'terrain component above (A_terrain + A_screen ≡ A_combined,\n' +
-          'anti-double-count). Scalar below = A-weighted ΔL_A\n' +
-          '(full − no_screening Lden).' +
-          edgesDetail
-        return (
-          <HoverText title={bandsTooltip(screening.attenuation_bands, { title })}>
-            <span className="cursor-help">Building/barrier ({screenLabel})</span>
-          </HoverText>
-        )
-      })(),
-      fmtDb(screeningDelta),
-    ],
+    (() => {
+      const edgeLabel =
+        terrain.n_edges === 1 ? 'single edge'
+        : terrain.n_edges === 2 ? 'double edge'
+        : terrain.n_edges === 3 ? 'triple edge'
+        : null
+      const labelTooltip =
+        'A_bar — Terrain diffraction (ISO 9613-2 §7.4 / CNOSSOS §2.5.6).\n\n' +
+        'Sound bending over hills, cuttings, berms — any DEM feature\n' +
+        'above the line-of-sight. Maekawa formula per band with a C₃\n' +
+        'frequency term. Engine picks up to 3 edges from the upper\n' +
+        'convex hull of the profile; N = 3 triggers a project-specific\n' +
+        'cascade variant.'
+      const deltaStr = terrain.delta_m > 0
+        ? `δ = ${terrain.delta_m.toFixed(2)} m, ${edgeLabel ?? 'N edges'}`
+        : 'no obstruction'
+      const triple = terrain.n_edges === 3
+        ? '\n\nN=3 cascade δ = |S→E₁|+|E₁→E₂|+|E₂→E₃|+|E₃→R|−|S→R|,\ne = |E₁→E₃|, cap 25 dB.'
+        : ''
+      const valueTooltip =
+        `${deltaStr}.\n\n` +
+        'Maekawa per-band output below.\n' +
+        'Scalar = A-weighted ΔL_A (full − no_terrain Lden).\n' +
+        'Rayleigh δ* gate is reported on its own row when it zeroes any band.' +
+        triple
+      return [
+        <HoverText title={labelTooltip}>
+          <span className="cursor-help">
+            Terrain diffraction{edgeLabel
+              ? ` (δ ${terrain.delta_m.toFixed(2)} m, ${edgeLabel})`
+              : ' (none)'}
+          </span>
+        </HoverText>,
+        <HoverText title={bandsTooltip(terrain.attenuation_bands, { title: valueTooltip })}>
+          <span className="cursor-help">{fmtDb(terrainDelta)}</span>
+        </HoverText>,
+      ]
+    })(),
+    (() => {
+      const obs = screening.obstacle
+      const edgeCount = obs?.n_edges ?? 0
+      const screenLabel = obs
+        ? edgeCount > 1
+          ? `${edgeCount} diffraction edges`
+          : `${obs.kind} ${obs.height_m.toFixed(1)} m`
+        : 'none'
+      const labelTooltip =
+        'A_bar — Building / barrier screening component (SPEC §3.5b).\n\n' +
+        'Engine runs ONE combined diffraction over a composite top\n' +
+        'profile = elevation + max(building, barrier). This row is the\n' +
+        'increment of that combined A_bar over the pure-terrain\n' +
+        'component above. A_terrain + A_screen ≡ A_combined — the two\n' +
+        'rows are engine decomposition, not two independent Fresnels.'
+      const edgesDetail = obs && obs.edges.length > 0
+        ? '\n\nEdges:' + obs.edges
+            .map((e, i) => {
+              const kind = e.kind
+              const h = kind === 'terrain' ? 'hill peak' : `${kind} ${e.height_m.toFixed(1)} m`
+              return `\n  E${EDGE_SUBSCRIPTS[i] ?? i + 1}  ${h}  @ t=${e.t.toFixed(2)}  (+${e.screen_h_m.toFixed(1)} m above LOS)`
+            })
+            .join('')
+        : ''
+      const valueTooltip =
+        (obs ? `Representative: ${obs.kind} ${obs.height_m.toFixed(1)} m @ t=${obs.t.toFixed(2)}.\n\n` : '') +
+        'Per-band increment below.\n' +
+        'Scalar = A-weighted ΔL_A (full − no_screening Lden).' +
+        edgesDetail
+      return [
+        <HoverText title={labelTooltip}>
+          <span className="cursor-help">Building/barrier ({screenLabel})</span>
+        </HoverText>,
+        <HoverText title={bandsTooltip(screening.attenuation_bands, { title: valueTooltip })}>
+          <span className="cursor-help">{fmtDb(screeningDelta)}</span>
+        </HoverText>,
+      ]
+    })(),
     [
       <HoverText
-        title={bandsTooltip(vegetation.attenuation_bands, {
-          title: `A_fol — Foliage (vegetation), per band (${vegetation.forest_depth_m.toFixed(0)} m forest · ${
-            vegetation.forest_runs.length
-          } run${vegetation.forest_runs.length === 1 ? '' : 's'})`,
-          note:
-            'ISO 9613-2:2024 Annex A.2.2 (foliage attenuation). Per-band\n' +
-            'coefficient × min(forest_depth, 200 m). Project applies a ×0.5\n' +
-            'Central-Europe calibration for the binary WorldCover raster.\n' +
-            'Scalar below = A-weighted ΔL_A (full − no_vegetation Lden).',
-        })}
+        title={
+          'A_fol — Foliage / vegetation (ISO 9613-2:2024 Annex A.2.2).\n\n' +
+          'Dense forest along the path absorbs mid-to-high frequencies.\n' +
+          'Capped at ~200 m effective depth. Project applies a ×0.5\n' +
+          'Central-Europe calibration because the WorldCover raster is\n' +
+          'binary (any canopy → forest), so pure foliage density is\n' +
+          'overcounted without the scalar.'
+        }
       >
         <span className="cursor-help">
           Foliage
@@ -466,7 +516,17 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
             : ' (none)'}
         </span>
       </HoverText>,
-      fmtDb(vegetationDelta),
+      <HoverText
+        title={bandsTooltip(vegetation.attenuation_bands, {
+          title: `A_fol per band — α_veg[i] × min(depth, 200 m)`,
+          note:
+            `Forest depth: ${vegetation.forest_depth_m.toFixed(0)} m across ${vegetation.forest_runs.length} run${vegetation.forest_runs.length === 1 ? '' : 's'}.\n` +
+            'Already includes the ×0.5 Central-Europe calibration.\n' +
+            'Scalar = A-weighted ΔL_A (full − no_vegetation Lden).',
+        })}
+      >
+        <span className="cursor-help">{fmtDb(vegetationDelta)}</span>
+      </HoverText>,
     ],
   ]
 
@@ -508,24 +568,34 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           </div>
         </HoverText>
       )}
-      <HoverText
-        title={
-          'Total obstruction effect = full Lden − free-field Lden.\n\n' +
-          'Covers A_bar (terrain + building/barrier diffraction) + A_fol\n' +
-          '(foliage) — the obstruction rows directly above. A_div, A_atm,\n' +
-          'A_gr, A_flc and A_refl are baseline corrections already inside\n' +
-          'the free-field; they do NOT feed this total. 0 dB means no hill,\n' +
-          'building, barrier, or forest between source and receiver changed\n' +
-          'the outcome.'
-        }
-      >
-        <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 border-t border-border/40 pt-0.5 cursor-help">
-          <span className="text-muted-foreground/70 font-medium">Total obstruction effect</span>
-          <span className="text-foreground font-mono font-medium text-right">
+      <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 border-t border-border/40 pt-0.5">
+        <HoverText
+          title={
+            'Total obstruction effect — the combined impact of hills,\n' +
+            'buildings, barriers, and forest between source and receiver,\n' +
+            'compared to the same path with none of those in the way.\n\n' +
+            'Baseline corrections (divergence, atmospheric, ground,\n' +
+            'reflection, FLC) are NOT counted here — they belong to the\n' +
+            'free-field reference, not to obstruction. 0 dB means the\n' +
+            'path is clear.'
+          }
+        >
+          <span className="text-muted-foreground/70 font-medium cursor-help">Total obstruction effect</span>
+        </HoverText>
+        <HoverText
+          title={
+            `received_lden.full − received_lden.free_field\n` +
+            `= ${received_lden.full.toFixed(2)} − ${received_lden.free_field.toFixed(2)}\n` +
+            `= ${totalPathDelta.toFixed(2)} dB (A-weighted).\n\n` +
+            'Equivalent to A_bar (terrain + building/barrier) + A_fol\n' +
+            '(foliage) combined, in A-weighted Lden space.'
+          }
+        >
+          <span className="text-foreground font-mono font-medium text-right cursor-help">
             {fmtDb(totalPathDelta)}
           </span>
-        </div>
-      </HoverText>
+        </HoverText>
+      </div>
     </Section>
   )
 }
@@ -556,8 +626,28 @@ function Section5Lden({ trace }: { trace: SegmentTrace }) {
         <thead>
           <tr className="text-muted-foreground/60">
             <th className="text-left font-normal pb-0.5">Period</th>
-            <th className="text-right font-normal pb-0.5">Lw (A)</th>
-            <th className="text-right font-normal pb-0.5">L_rec (A)</th>
+            <th className="text-right font-normal pb-0.5">
+              <HoverText
+                title={
+                  'L_w — A-weighted sound power level at the source,\n' +
+                  'per period. Line sources: dB(A)/m; point sources: dB(A).\n' +
+                  'CNOSSOS D/E/N split applied (12/4/8 hour buckets).'
+                }
+              >
+                <span className="cursor-help">Lw (A)</span>
+              </HoverText>
+            </th>
+            <th className="text-right font-normal pb-0.5">
+              <HoverText
+                title={
+                  'L_rec — A-weighted received level at this point, per\n' +
+                  'period. = L_w − (all propagation terms). What someone\n' +
+                  "standing here would actually hear during that period."
+                }
+              >
+                <span className="cursor-help">L_rec (A)</span>
+              </HoverText>
+            </th>
             <th className="text-right font-normal pb-0.5">hours</th>
           </tr>
         </thead>
@@ -592,10 +682,34 @@ function Section5Lden({ trace }: { trace: SegmentTrace }) {
           ))}
           <tr className="border-t border-border/40">
             <td>
-              <HoverText title={`${LDEN_FORMULA}\n\n${PERIOD_TOOLTIP}`}>Lden</HoverText>
+              <HoverText
+                title={
+                  'L_den — Day-Evening-Night weighted 24 h noise level.\n' +
+                  'Standard END 2002/49/EC metric. Evening gets a +5 dB\n' +
+                  'penalty, night +10 dB to reflect higher annoyance.\n' +
+                  'Hover the value for the exact formula applied here.'
+                }
+              >
+                <span className="cursor-help">Lden</span>
+              </HoverText>
             </td>
-            <td colSpan={3} className="text-right font-medium" style={{ color: ldenToColor(trace.received_lden.full) }}>
-              {trace.received_lden.full.toFixed(1)} dB
+            <td
+              colSpan={3}
+              className="text-right font-medium"
+              style={{ color: ldenToColor(trace.received_lden.full) }}
+            >
+              <HoverText
+                title={
+                  `Lden = 10·log₁₀((12·10^(Ld/10) + 4·10^((Le+5)/10) + 8·10^((Ln+10)/10)) / 24)\n\n` +
+                  `  Ld = ${periodCells[0].lrec.toFixed(1)} dB(A) × 12 h\n` +
+                  `  Le = ${periodCells[1].lrec.toFixed(1)} dB(A) × 4 h (+5 penalty)\n` +
+                  `  Ln = ${periodCells[2].lrec.toFixed(1)} dB(A) × 8 h (+10 penalty)\n\n` +
+                  `→ Lden = ${trace.received_lden.full.toFixed(2)} dB.\n\n` +
+                  PERIOD_TOOLTIP
+                }
+              >
+                <span className="cursor-help">{trace.received_lden.full.toFixed(1)} dB</span>
+              </HoverText>
             </td>
           </tr>
         </tbody>
@@ -614,13 +728,46 @@ function Section6Variants({ trace }: { trace: SegmentTrace }) {
   // "Full" removed — it duplicates the Lden shown in the collapsed header
   // and at the bottom of §5. The delta column anchors against received_lden.full
   // so the label is still the reference, just not rendered as its own row.
-  const rows: [string, number][] = [
-    ['Free field', received_lden.free_field],
-    ['No terrain', received_lden.no_terrain],
-    ['No screening', received_lden.no_screening],
-    ['No vegetation', received_lden.no_vegetation],
-    ['No ground', received_lden.no_ground],
-    ['No atmospheric', received_lden.no_atmospheric],
+  const rows: [string, number, string][] = [
+    [
+      'Free field',
+      received_lden.free_field,
+      'Lden with NO terrain, screening, or foliage obstructions.\n' +
+      'Baseline corrections (div + atm + ground + FLC + reflection)\n' +
+      'are still applied. Δ vs Full = combined obstruction effect.',
+    ],
+    [
+      'No terrain',
+      received_lden.no_terrain,
+      'Lden recalculated without terrain diffraction (A_bar, terrain\n' +
+      'component only — building/barrier screening still applied).\n' +
+      'Δ vs Full = what the hill contributed.',
+    ],
+    [
+      'No screening',
+      received_lden.no_screening,
+      'Lden without the building/barrier component of combined\n' +
+      'diffraction. Δ vs Full = how much the tallest obstacle helped.',
+    ],
+    [
+      'No vegetation',
+      received_lden.no_vegetation,
+      'Lden without A_fol foliage attenuation. Δ vs Full = forest\n' +
+      'contribution to noise reduction along this path.',
+    ],
+    [
+      'No ground',
+      received_lden.no_ground,
+      'Lden without A_gr ground effect. SIGNED: over soft ground,\n' +
+      'removing it may INCREASE Lden (LF boost disappears), so Δ\n' +
+      'can be either sign.',
+    ],
+    [
+      'No atmospheric',
+      received_lden.no_atmospheric,
+      'Lden without atmospheric absorption (air = perfectly\n' +
+      'transmitting). Δ vs Full = what the air ate, mainly HF.',
+    ],
   ]
   return (
     <div className="mt-2">
@@ -639,11 +786,13 @@ function Section6Variants({ trace }: { trace: SegmentTrace }) {
             the full {received_lden.full.toFixed(1)} dB shown above.
           </div>
           <div className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-0.5 tabular-nums mt-0.5">
-            {rows.map(([label, v], i) => {
+            {rows.map(([label, v, conceptTooltip], i) => {
               const delta = v - received_lden.full
               return (
                 <div key={i} className="contents">
-                  <span className="text-muted-foreground/70">{label}</span>
+                  <HoverText title={conceptTooltip}>
+                    <span className="text-muted-foreground/70 cursor-help">{label}</span>
+                  </HoverText>
                   <span className="text-right">{fmtDb(v, { signed: false })}</span>
                   <span className="text-right text-muted-foreground/50">
                     {delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)}
