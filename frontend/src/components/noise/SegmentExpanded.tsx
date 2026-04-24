@@ -232,9 +232,7 @@ function emissionInputRows(e: EmissionTrace): [React.ReactNode, React.ReactNode]
 // ────────────────────────────────────────────────────────────────────────────
 
 function Section2Baseline({ trace }: { trace: SegmentTrace }) {
-  const { baseline, received_lden } = trace
-  const atmosphericDelta = received_lden.full - received_lden.no_atmospheric
-
+  const { baseline } = trace
   const slantSame = Math.abs(trace.d_slant_m - trace.dist_m) < 0.5
   const distRow: [string, React.ReactNode] = [
     'Distance',
@@ -248,20 +246,6 @@ function Section2Baseline({ trace }: { trace: SegmentTrace }) {
         rows={[
           distRow,
           ['Source height', `${baseline.source_height_m.toFixed(1)} m`],
-          ['Geometric divergence', fmtDb(-baseline.geometric_db)],
-          [
-            <HoverText
-              title={bandsTooltip(baseline.atmospheric_bands, {
-                title: 'Atmospheric absorption — α[i] × d/1000 per band',
-                signed: true,
-                note:
-                  'ISO 9613-2 §7.2 standard atmosphere (15 °C, 70 % RH). Higher\nfrequencies absorb more. Scalar above is A-weighted ΔL_A from\nthe full vs no_atmospheric variant comparison.',
-              })}
-            >
-              <span className="cursor-help">Atmospheric impact</span>
-            </HoverText>,
-            fmtDb(atmosphericDelta),
-          ],
         ]}
       />
     </Section>
@@ -276,23 +260,106 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
   const { baseline, terrain, screening, vegetation, ground, received_lden } = trace
 
   const groundDelta = received_lden.full - received_lden.no_ground
+  const atmosphericDelta = received_lden.full - received_lden.no_atmospheric
   const terrainDelta = received_lden.full - received_lden.no_terrain
   const screeningDelta = received_lden.full - received_lden.no_screening
   const vegetationDelta = received_lden.full - received_lden.no_vegetation
-  // Engine definition: free_field = div + atm + ground + flc (no terrain,
-  // screening, vegetation). So `full − free_field` is exactly the
-  // obstruction-path component — NOT the sum of every row below. Ground and
-  // FLC are part of the free-field baseline; showing them in the table is
-  // for transparency, not as sum-terms feeding `totalPathDelta`.
+  // Engine (iso9613.rs): free_field = base − A_gr + A_flc (+ refl_v). Total
+  // obstruction delta = full − free_field = A_bar + A_fol contributions.
+  // A_div, A_atm, A_gr, A_flc, A_refl are baseline corrections — shown above
+  // the Total for transparency, not as sum-terms feeding it.
   const totalPathDelta = received_lden.full - received_lden.free_field
 
-  // Path-obstruction rows that compose `totalPathDelta` (terrain + screening
-  // + vegetation). Rendered first.
+  // Baseline corrections — ordered per ISO 9613-2 §7.1 → §7.5 then FLC.
+  // Row labels stay plain; the formal A_xxx symbols and standard references
+  // live inside tooltips so the visible column reads as UI text, not
+  // engineering notation.
+  const baselineRows: [React.ReactNode, React.ReactNode][] = [
+    [
+      <HoverText
+        title={
+          'A_div — Geometric divergence (ISO 9613-2 §7.1 / CNOSSOS §2.5.9).\n\n' +
+          'Inverse-distance spreading of the source power. Line sources use\n' +
+          '10·log₁₀(2π·d_slant) cylindrical divergence; point sources use\n' +
+          '20·log₁₀(d_slant) + 11 spherical + 11 dB point-to-line adapter.\n' +
+          'Scalar below is the engine-emitted baseline.geometric_db value\n' +
+          '(sign-flipped here because it subtracts from Lw).'
+        }
+      >
+        <span className="cursor-help">Geometric divergence</span>
+      </HoverText>,
+      fmtDb(-baseline.geometric_db),
+    ],
+    [
+      <HoverText
+        title={bandsTooltip(baseline.atmospheric_bands, {
+          title: 'A_atm — Atmospheric absorption (ISO 9613-2 §7.2)',
+          signed: true,
+          note:
+            'A_atm[i] = α[i] × d_slant / 1000. Standard atmosphere\n' +
+            '(15 °C, 70 % RH). Higher frequencies absorb more. Scalar below\n' +
+            'is the A-weighted ΔL_A = full − no_atmospheric Lden.',
+        })}
+      >
+        <span className="cursor-help">Atmospheric absorption</span>
+      </HoverText>,
+      fmtDb(atmosphericDelta),
+    ],
+    [
+      <HoverText
+        title={bandsTooltip(ground.attenuation_bands, {
+          title: `A_gr — Ground effect per band (G = ${ground.factor_g.toFixed(2)})`,
+          note:
+            'ISO 9613-2 §7.3.1 / CNOSSOS-EU §2.5.15: A_gr[i] = CF[i] × G,\n' +
+            'where G = 1 − IMD/100 (hard ↔ soft ground). SIGNED: CF[i] < 0 at\n' +
+            '63/125 Hz over soft ground, so A_gr can BOOST LF energy.\n' +
+            'Scalar below is the A-weighted ΔL_A (full − no_ground Lden).',
+        })}
+      >
+        <span className="cursor-help">Ground effect (G={ground.factor_g.toFixed(2)})</span>
+      </HoverText>,
+      fmtDb(groundDelta),
+    ],
+  ]
+  if (baseline.reflection_boost_db > 0.05) {
+    baselineRows.push([
+      <HoverText
+        title={
+          'A_refl — Urban reflection boost (ISO 9613-2 §7.5 / CNOSSOS-EU §2.5.18).\n\n' +
+          'Per-receiver boost 0..5 dB based on local building enclosure\n' +
+          '(3×3 building raster around the receiver). Applied once per\n' +
+          'receiver, same scalar for every segment at this point. Sign is\n' +
+          'positive — reflections add energy to the received level.\n' +
+          'Value shown is the engine-emitted baseline.reflection_boost_db.'
+        }
+      >
+        <span className="cursor-help">Urban reflection</span>
+      </HoverText>,
+      `+${baseline.reflection_boost_db.toFixed(1)} dB`,
+    ])
+  }
+  if (Math.abs(baseline.finite_line_corr_db) > 0.05) {
+    baselineRows.push([
+      <HoverText
+        title={
+          'A_flc — Finite-line correction.\n\n' +
+          'Line-source only (roads, railways). Compensates for the segment\n' +
+          'subtending a finite angle at the receiver instead of the infinite\n' +
+          'line assumed by cylindrical divergence. NoiseModelling / LIMA /\n' +
+          'SoundPLAN all apply an equivalent correction; not a stand-alone\n' +
+          'ISO term but standard practice (NMPB, CNOSSOS line-source workflow).'
+        }
+      >
+        <span className="cursor-help">Finite-line correction</span>
+      </HoverText>,
+      fmtDb(baseline.finite_line_corr_db),
+    ])
+  }
+
+  // Obstruction rows — terrain + screening + vegetation. Compose totalPathDelta.
   const obstructionRows: [React.ReactNode, React.ReactNode][] = [
     [
       (() => {
-        // "single / double / triple edge" per engine's n_edges (is_double alone
-        // can't tell N=2 from N=3 — both set is_double=true for back-compat).
         const edgeLabel =
           terrain.n_edges === 1 ? 'single edge'
           : terrain.n_edges === 2 ? 'double edge'
@@ -305,20 +372,22 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           ? '\n\nN=3 cascade (project simplification): δ = |S→E₁|+|E₁→E₂|+|E₂→E₃|+|E₃→R|−|S→R|, e = |E₁→E₃|, cap 25 dB.'
           : ''
         const rayleigh = terrain.delta_star_m > 0
-          ? `\n\nRayleigh δ* = ${terrain.delta_star_m.toFixed(2)} m — per-band gate: bands with δ ≤ λ/4 − δ* are zeroed (CNOSSOS §2.5.6(c)).`
+          ? `\n\nRayleigh δ* = ${terrain.delta_star_m.toFixed(2)} m — per-band gate: bands with δ ≤ λ/4 − δ* are zeroed.`
           : ''
         const title =
-          `Terrain diffraction — per band (${deltaStr})\n` +
-          '\nFresnel / Maekawa model. δ = path difference at the apex.' +
-          '\nScalar above = A-weighted ΔL_A (full − no_terrain Lden).' +
+          `A_bar — Terrain diffraction, per band (${deltaStr})\n\n` +
+          'ISO 9613-2 §7.4 (Maekawa barrier formula, C₃ frequency term) +\n' +
+          'CNOSSOS-EU §2.5.6(c) Rayleigh δ* gate. Engine scans the upper\n' +
+          'convex hull of the DEM profile above LOS, keeps up to 3 edges.\n' +
+          'Scalar below = A-weighted ΔL_A (full − no_terrain Lden).' +
           triple +
           rayleigh
         return (
           <HoverText title={bandsTooltip(terrain.attenuation_bands, { title })}>
             <span className="cursor-help">
-              Terrain {edgeLabel
-                ? `(δ ${terrain.delta_m.toFixed(2)} m, ${edgeLabel})`
-                : '(none)'}
+              Terrain diffraction{edgeLabel
+                ? ` (δ ${terrain.delta_m.toFixed(2)} m, ${edgeLabel})`
+                : ' (none)'}
             </span>
           </HoverText>
         )
@@ -327,8 +396,6 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
     ],
     [
       (() => {
-        // "N diffraction edges" — NOT "N obstacles" (one edge can be a
-        // bare-earth hill with kind='terrain').
         const obs = screening.obstacle
         const edgeCount = obs?.n_edges ?? 0
         const screenLabel = obs
@@ -346,15 +413,18 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
               .join('')
           : ''
         const title =
-          `Screening (combined terrain + buildings + barriers) — per band\n` +
-          (obs ? `Representative obstacle: ${obs.kind} ${obs.height_m.toFixed(1)} m @ t=${obs.t.toFixed(2)}\n` : '') +
-          '\nCombined diffraction over composite top profile = elevation + max(building, barrier).' +
-          '\nSingle Fresnel pass — A_terrain + A_screen ≡ A_combined (SPEC §3.5b, anti-double-count).' +
-          '\nScalar above = A-weighted ΔL_A (full − no_screening Lden).' +
+          `A_bar — Building/barrier screening component, per band\n\n` +
+          (obs ? `Representative obstacle: ${obs.kind} ${obs.height_m.toFixed(1)} m @ t=${obs.t.toFixed(2)}\n\n` : '') +
+          'Engine runs ONE combined diffraction (SPEC §3.5b) over the\n' +
+          'composite top profile = elevation + max(building, barrier).\n' +
+          'This row is the increment of that combined A_bar over the pure-\n' +
+          'terrain component above (A_terrain + A_screen ≡ A_combined,\n' +
+          'anti-double-count). Scalar below = A-weighted ΔL_A\n' +
+          '(full − no_screening Lden).' +
           edgesDetail
         return (
           <HoverText title={bandsTooltip(screening.attenuation_bands, { title })}>
-            <span className="cursor-help">Screening ({screenLabel})</span>
+            <span className="cursor-help">Building/barrier ({screenLabel})</span>
           </HoverText>
         )
       })(),
@@ -363,14 +433,18 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
     [
       <HoverText
         title={bandsTooltip(vegetation.attenuation_bands, {
-          title: `Vegetation — per band (${vegetation.forest_depth_m.toFixed(0)} m forest · ${
+          title: `A_fol — Foliage (vegetation), per band (${vegetation.forest_depth_m.toFixed(0)} m forest · ${
             vegetation.forest_runs.length
           } run${vegetation.forest_runs.length === 1 ? '' : 's'})`,
-          note: 'ISO 9613-2 §A.2.2: per-band absorption × min(forest_depth, 200 m).\nScalar above = A-weighted ΔL_A (full − no_vegetation Lden).',
+          note:
+            'ISO 9613-2:2024 Annex A.2.2 (foliage attenuation). Per-band\n' +
+            'coefficient × min(forest_depth, 200 m). Project applies a ×0.5\n' +
+            'Central-Europe calibration for the binary WorldCover raster.\n' +
+            'Scalar below = A-weighted ΔL_A (full − no_vegetation Lden).',
         })}
       >
         <span className="cursor-help">
-          Vegetation
+          Foliage
           {vegetation.forest_depth_m > 0
             ? ` (${vegetation.forest_depth_m.toFixed(0)} m forest)`
             : ' (none)'}
@@ -380,42 +454,17 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
     ],
   ]
 
-  // Baseline-correction rows shown for transparency. Always applied but part
-  // of the free-field baseline (ground) or geometric correction (FLC), so
-  // they do NOT feed `totalPathDelta` — hence they sit below the total
-  // separator with an italic label.
-  const baselineRows: [React.ReactNode, React.ReactNode][] = [
-    [
-      <HoverText
-        title={bandsTooltip(ground.attenuation_bands, {
-          title: `Ground effect — per band (G = ${ground.factor_g.toFixed(2)})`,
-          note:
-            'SIGNED: over soft ground CF[i] < 0 at 63/125 Hz, so ground can\nBOOST LF energy. Positive ΔL_A means ground added dB.\nPart of free-field baseline, not the obstruction total above.',
-        })}
-      >
-        <span className="cursor-help">Ground (G={ground.factor_g.toFixed(2)})</span>
-      </HoverText>,
-      fmtDb(groundDelta),
-    ],
-  ]
-  if (Math.abs(baseline.finite_line_corr_db) > 0.05) {
-    baselineRows.push([
-      <HoverText title="Finite-line correction — applies to line sources (roads, rails). Compensates for the segment's finite angular extent at the receiver. Part of free-field baseline, not the obstruction total above.">
-        <span className="cursor-help">Finite-line correction</span>
-      </HoverText>,
-      fmtDb(baseline.finite_line_corr_db),
-    ])
-  }
-
   // Rayleigh gate indicator: which bands the engine zeroed by the CNOSSOS
-  // §2.5.6(c) δ ≤ λ/4 − δ* rule. We read the engine's per-band output
-  // (zero where δ_m > 0 means the gate fired) — no re-derivation.
+  // §2.5.6(c) δ ≤ λ/4 − δ* rule. Read from engine's zeroed bands — no
+  // re-derivation.
   const gatedBands = terrain.delta_m > 0 && terrain.delta_star_m > 0
     ? BAND_LABELS.filter((_, i) => terrain.attenuation_bands[i] === 0)
     : []
 
   return (
     <Section>
+      <InlineTable rows={baselineRows} />
+      <div className="h-3" aria-hidden="true" />
       <InlineTable rows={obstructionRows} />
       {gatedBands.length > 0 && (
         <HoverText
@@ -433,25 +482,22 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
       )}
       <HoverText
         title={
-          'Total path effect = full − free_field Lden.\n\n' +
-          'Covers terrain + screening + vegetation only — the obstruction\n' +
-          'rows above. Ground and finite-line correction are part of the\n' +
-          'free-field baseline (and shown below), so they do NOT feed this\n' +
-          'total. When there is no hill, building, or forest between the\n' +
-          'source and the receiver this is 0 dB by definition.'
+          'Total obstruction effect = full Lden − free-field Lden.\n\n' +
+          'Covers A_bar (terrain + building/barrier diffraction) + A_fol\n' +
+          '(foliage) — the obstruction rows directly above. A_div, A_atm,\n' +
+          'A_gr, A_flc and A_refl are baseline corrections already inside\n' +
+          'the free-field; they do NOT feed this total. 0 dB means no hill,\n' +
+          'building, barrier, or forest between source and receiver changed\n' +
+          'the outcome.'
         }
       >
         <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 border-t border-border/40 pt-0.5 cursor-help">
-          <span className="text-muted-foreground/70 font-medium">Total path effect</span>
+          <span className="text-muted-foreground/70 font-medium">Total obstruction effect</span>
           <span className="text-foreground font-mono font-medium text-right">
             {fmtDb(totalPathDelta)}
           </span>
         </div>
       </HoverText>
-      <div className="mt-1.5 text-[10px] text-muted-foreground/70 italic">
-        Baseline corrections (part of free-field, not in total above):
-      </div>
-      <InlineTable rows={baselineRows} />
     </Section>
   )
 }
