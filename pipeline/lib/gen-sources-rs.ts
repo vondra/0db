@@ -176,7 +176,12 @@ pub fn provenance_of(id: u16) -> Provenance {
 }
 `
 
-const entries = SOURCES.map((s) => {
+// Defence in depth — `get_source` in Rust uses binary_search_by_key, which
+// requires the emitted array to be sorted by id. We sort here so a
+// developer grouping new entries by country / layer in enrichment-datasets.ts
+// can't silently break the lookup.
+const sortedSources = [...SOURCES].sort((a, b) => a.id - b.id)
+const entries = sortedSources.map((s) => {
   return `    Source {
         id: ${s.id},
         key: ${rustStr(s.key)},
