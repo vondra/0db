@@ -166,15 +166,10 @@ function buildGraph(table: any) {
 
     const cls = (roadClass.get(i) as number) ?? 5
     const existingId = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
-    // Only local roads (residential, living_street, service, track, unclassified)
-    // and only where this heuristic can overwrite the row (empty slot or lower-
-    // priority dataset). service-tree priority is low (10).
-    //
-    // Excludes motorway_link / trunk_link / primary_link (codes 10-12). Those
-    // carry highway-derived traffic — flow accumulation from local residential
-    // dwellings undercounts them by ~100× (a GC-1 on-ramp got 20/day here vs
-    // 6000/day from the class-default 20 % mainline heuristic that kicks in
-    // when traffic_source stays 0).
+    // Local roads only (class 5..9). Excludes link classes 10-12: residential
+    // flow accumulation drastically undercounts highway-derived ramp traffic,
+    // so those stay at traffic_source=0 and fall through to the 20 %-of-mainline
+    // class default.
     if (cls >= 5 && cls <= 9 && shouldOverwrite(existingId, MY_DATASET_ID)) {
       eligible[i] = 1
       sNode.eligibleEdges.push(i)

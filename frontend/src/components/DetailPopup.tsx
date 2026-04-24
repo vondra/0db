@@ -224,22 +224,26 @@ function MetadataRows({ c }: { c: Contributor }) {
       : []
     const paxCount = m.trains_passenger_raw > 0 ? m.trains_passenger_raw : m.trains_passenger_effective
     const frtCount = m.trains_freight_raw > 0 ? m.trains_freight_raw : m.trains_freight_effective
+    const paxEff = m.trains_passenger_effective
+    const frtEff = m.trains_freight_effective
     const trainsText = txtTable([
       ...paxSrcLines,
       ...frtSrcLines,
-      'Daily trains (full line, both directions):',
-      ...(paxCount > 0 ? [['  Passenger', fmtInt(Math.round(paxCount))] as [string, string]] : []),
-      ...(frtCount > 0 ? [['  Freight', fmtInt(Math.round(frtCount))] as [string, string]] : []),
+      'CNOSSOS line-source trains (feeds Lw):',
+      ...(paxEff > 0 ? [['  Passenger', fmtInt(Math.round(paxEff))] as [string, string]] : []),
+      ...(frtEff > 0 ? [['  Freight', fmtInt(Math.round(frtEff))] as [string, string]] : []),
       { sep: true },
-      ['  Total', `${fmtInt(Math.round(nomTotal))}/day${isDefault ? '*' : ''}`],
+      ['  Total', `${fmtInt(Math.round(effTotal))}/day${isDefault ? '*' : ''}`],
       ...(isDefault ? ['', '* class default (no timetable match)'] : []),
       ...(hasPerTrackDiscount
         ? [
             '',
-            'Engine models per track:',
-            ['  Per track', `${fmtInt(Math.round(effTotal))}/day`] as [string, string],
+            'Full-line trains (both directions):',
+            ['  Nominal', `${fmtInt(Math.round(nomTotal))}/day`] as [string, string],
             ...(m.service ? [['  ', '× 0.02 service track'] as [string, string]] : []),
             ...(m.parallel_divisor > 1 ? [['  ', `÷ ${m.parallel_divisor} parallel tracks`] as [string, string]] : []),
+            { sep: true },
+            ['  Per track (Lw input)', `${fmtInt(Math.round(effTotal))}/day`] as [string, string],
           ]
         : []),
     ] as TableRow[], 18, 12)
