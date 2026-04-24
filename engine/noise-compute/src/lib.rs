@@ -365,8 +365,14 @@ fn compute_roads(
     // to avoid merging all unnamed residential streets into one mega-contributor.
     let mut roads_by_key: HashMap<(String, String, u8), RoadAccum> = HashMap::new();
 
+    // Admin resolved once per compute_roads call — receiver position is
+    // constant across segments. Uses the process-wide admin table
+    // (see admin::init_admin_table at pipeline-worker/source-reader init).
+    // Falls back to Admin::UNKNOWN → WORLD_DEFAULT when uninitialised.
+    let admin = crate::admin::admin_for_latlng(receiver.lat, receiver.lon);
+
     for seg in roads {
-        let Some(norm) = normalize::normalize_road_segment(seg, crate::admin::Admin::UNKNOWN)
+        let Some(norm) = normalize::normalize_road_segment(seg, admin)
         else {
             continue;
         };

@@ -312,6 +312,10 @@ pub fn query_roads_from_batches(
 ) -> Vec<RoadResult> {
     let mut results = Vec::new();
 
+    // Admin resolved once per popup call — lat/lng is the query centre.
+    // Falls back to UNKNOWN → WORLD_DEFAULT when the table isn't loaded.
+    let admin = noise_compute::admin::admin_for_latlng(lat, lon);
+
     for batch in batches {
         let n = batch.num_rows();
         let osm_id = col_i64(batch, "osm_id");
@@ -369,10 +373,7 @@ pub fn query_roads_from_batches(
                 access: access_col.map(|a| a.value(i)).unwrap_or(0),
                 junction: junction_col.map(|a| a.value(i)).unwrap_or(0),
             };
-            let Some(norm) = noise_compute::normalize::normalize_road(
-                raw,
-                noise_compute::admin::Admin::UNKNOWN,
-            ) else {
+            let Some(norm) = noise_compute::normalize::normalize_road(raw, admin) else {
                 continue;
             };
             let effective_radius = max_radius.min(norm.max_distance_m);

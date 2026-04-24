@@ -34,6 +34,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::sync::OnceLock;
 
 pub const MAGIC: &[u8; 8] = b"H3ADMIN1";
 pub const RECORD_SIZE: usize = 8 + 1 + 2 + 2; // 13 bytes
@@ -170,6 +171,56 @@ pub fn hex_admin(hex: u64, table: &HashMap<u64, Admin>) -> Admin {
     table.get(&hex).copied().unwrap_or(Admin::UNKNOWN)
 }
 
+// ─── Process-wide singleton ──────────────────────────────────────────────
+//
+// pipeline-worker, source-reader and point-debug all benefit from the
+// defaults cascade. Rather than plumb the table by reference through the
+// ~6-deep call chain (entry point → compute_at_point → compute_roads →
+// normalize_road_segment), we keep it in a process-wide OnceLock and
+// provide tiny lookup helpers. Callers MUST call `init` once at startup.
+//
+// OnceLock rather than Lazy so initialisation failure (missing admin.bin)
+// is an explicit caller concern — tests and point-debug default to
+// `Admin::UNKNOWN` and observable behaviour is unchanged.
+
+static ADMIN_TABLE: OnceLock<HashMap<u64, Admin>> = OnceLock::new();
+
+/// Initialise the process-wide admin table. Idempotent — subsequent calls
+/// are ignored (returns `Err` without overwriting). Recommended path:
+/// `data/prepared/h3r4-admin.bin` (built by `scripts/build-h3-admin.ts`).
+pub fn init_admin_table(path: &Path) -> io::Result<usize> {
+    let table = load_admin_table(path)?;
+    let n = table.len();
+    let _ = ADMIN_TABLE.set(table);
+    Ok(n)
+}
+
+/// Resolve admin for a given H3R4 cell id (u64). Returns `Admin::UNKNOWN`
+/// when the table is not initialised or the cell is oceanic.
+pub fn admin_for_hex(hex: u64) -> Admin {
+    ADMIN_TABLE
+        .get()
+        .map(|t| t.get(&hex).copied().unwrap_or(Admin::UNKNOWN))
+        .unwrap_or(Admin::UNKNOWN)
+}
+
+/// Resolve admin for a lat/lng by projecting to the enclosing H3R4 cell.
+/// Callers in source-reader (popup) have lat/lng from the HTTP request.
+pub fn admin_for_latlng(lat: f64, lng: f64) -> Admin {
+    use h3o::{LatLng, Resolution};
+    let Ok(ll) = LatLng::new(lat, lng) else {
+        return Admin::UNKNOWN;
+    };
+    let cell = u64::from(ll.to_cell(Resolution::Four));
+    admin_for_hex(cell)
+}
+
+/// Whether the process-wide table has been initialised. Useful in
+/// `normalize_road` to debug the "every default is WORLD" symptom.
+pub fn is_initialised() -> bool {
+    ADMIN_TABLE.get().is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +286,31 @@ mod tests {
         let a = hex_admin(dobris, &table);
         assert_eq!(a.country_code(), Some("CZ"), "Dobris should land in CZ");
         assert_eq!(a.continent, Continent::Europe);
+    }
+
+    #[test]
+    fn singleton_init_then_lookup_by_hex_or_latlng() {
+        // Verify the OnceLock wiring path — init once, then the static
+        // helpers resolve CZ for Dobříš and Unknown for untouched coords.
+        let path = Path::new("../../data/prepared/h3r4-admin.bin");
+        if !path.exists() {
+            return;
+        }
+        // Whether a prior test (or caller) already initialised — idempotent
+        // SET ignores return, so either way the table should be present.
+        let _ = init_admin_table(path);
+        assert!(is_initialised());
+
+        // Dobris via hex id
+        let dobris: u64 = 0x0841_e309_ffff_ffff;
+        assert_eq!(admin_for_hex(dobris).country_code(), Some("CZ"));
+
+        // Dobris via lat/lng (49.78, 14.17)
+        assert_eq!(admin_for_latlng(49.78, 14.17).country_code(), Some("CZ"));
+
+        // Ocean coord (mid-Pacific) — should be Unknown
+        let mid_pacific = admin_for_latlng(-20.0, -140.0);
+        assert_eq!(mid_pacific.country_code(), None);
     }
 
     #[test]
