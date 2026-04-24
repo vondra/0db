@@ -258,7 +258,9 @@ pub fn compute_at_point_with_airports(
     let other_sources_lden = finalized.other_lden_db;
 
     // Confidence assessment
-    let has_census = roads.iter().any(|r| r.traffic_source == 1);
+    let has_census = roads
+        .iter()
+        .any(|r| sources::provenance_of(r.dataset_id).is_measured());
     let has_railway = !railways.is_empty()
         && railways
             .iter()
@@ -716,9 +718,10 @@ fn compute_roads(
             acc.dominant_aadt_medium_raw = seg.aadt_medium;
             acc.dominant_aadt_heavy_raw = seg.aadt_heavy;
             acc.dominant_aadt_moto_raw = seg.aadt_moto;
+            let provenance = sources::provenance_of(seg.dataset_id);
             let (nom_l, nom_m, nom_h, nom_x) = normalize::nominal_road_aadt(
                 seg.road_class,
-                seg.traffic_source,
+                provenance,
                 seg.aadt_light,
                 seg.aadt_medium,
                 seg.aadt_heavy,
@@ -732,10 +735,8 @@ fn compute_roads(
             acc.dominant_aadt_medium_effective = medium;
             acc.dominant_aadt_heavy_effective = heavy;
             acc.dominant_aadt_moto_effective = moto;
-            acc.dominant_traffic_source = if seg.traffic_source == 1 && seg.aadt_light > 0 {
-                "matched_external"
-            } else if seg.traffic_source == 2 && seg.aadt_light > 0 {
-                "estimated_service_tree"
+            acc.dominant_traffic_source = if provenance.has_data() && seg.aadt_light > 0 {
+                provenance.legacy_traffic_source_str()
             } else {
                 "default_by_class"
             };

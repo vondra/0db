@@ -101,6 +101,39 @@ impl Provenance {
             Self::None => "none",
         }
     }
+
+    /// True if this source represents real measured data (national,
+    /// continental or global-scale observational). Used by \`access_factor\`
+    /// to pass through measured AADT without re-applying access multipliers
+    /// (the measurement already reflects the restriction).
+    pub fn is_measured(self) -> bool {
+        matches!(
+            self,
+            Self::NationalMeasured | Self::ContinentalMeasured | Self::GlobalMeasured
+        )
+    }
+
+    /// True if the row carries any enricher-written data (anything except
+    /// the \`None\` sentinel). Equivalent to the legacy \`traffic_source > 0\`
+    /// check, derivable from \`dataset_id\` via \`provenance_of()\`.
+    pub fn has_data(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    /// Legacy string form for the JSON API contract
+    /// (\`frontend/src/types/noise.ts::traffic_source\` union). Folds the six
+    /// Provenance variants into the three strings the frontend currently
+    /// understands. When F.4 lands (ts-rs derivation), the frontend will
+    /// switch to the full \`as_str()\` form and this helper goes away.
+    pub fn legacy_traffic_source_str(self) -> &'static str {
+        match self {
+            Self::NationalMeasured | Self::ContinentalMeasured | Self::GlobalMeasured => {
+                "matched_external"
+            }
+            Self::Heuristic => "estimated_service_tree",
+            Self::Baseline | Self::None => "default_by_class",
+        }
+    }
 }
 
 /// One enrichment dataset. Mirrors the TypeScript \`Source\` interface.

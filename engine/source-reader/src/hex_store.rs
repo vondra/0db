@@ -337,6 +337,11 @@ pub fn query_roads_from_batches(
         let aadt_m = col_i32(batch, "aadt_medium");
         let aadt_h = col_i32(batch, "aadt_heavy");
         let aadt_mo = col_i32(batch, "aadt_moto");
+        // traffic_source column is still written to the arrow by the enrichers,
+        // but the engine no longer uses it — provenance is derived from
+        // roads_dataset_id via noise_compute::sources::provenance_of() (plan
+        // v5 Commit 0.3: single source of truth, dataset_id carries both
+        // identity and kind).
         let tsrc = col_u8(batch, "traffic_source");
         let dataset_id_col = col_u16(batch, "roads_dataset_id");
 
@@ -348,6 +353,7 @@ pub fn query_roads_from_batches(
         };
 
         for i in 0..n {
+            let dataset_id = dataset_id_col.map(|a| a.value(i)).unwrap_or(0);
             let raw = noise_compute::normalize::RawRoadInput {
                 road_class: rclass.map(|a| a.value(i)).unwrap_or(0),
                 speed_limit: speed.map(|a| a.value(i)).unwrap_or(0),
@@ -358,7 +364,7 @@ pub fn query_roads_from_batches(
                 aadt_medium: aadt_m.map(|a| a.value(i)).unwrap_or(0),
                 aadt_heavy: aadt_h.map(|a| a.value(i)).unwrap_or(0),
                 aadt_moto: aadt_mo.map(|a| a.value(i)).unwrap_or(0),
-                traffic_source: tsrc.map(|a| a.value(i)).unwrap_or(0),
+                provenance: noise_compute::sources::provenance_of(dataset_id),
                 tunnel: tunnel_col.map(|a| a.value(i)).unwrap_or(false),
                 access: access_col.map(|a| a.value(i)).unwrap_or(0),
                 junction: junction_col.map(|a| a.value(i)).unwrap_or(0),
@@ -414,8 +420,8 @@ pub fn query_roads_from_batches(
                 aadt_medium: raw.aadt_medium,
                 aadt_heavy: raw.aadt_heavy,
                 aadt_moto: raw.aadt_moto,
-                traffic_source: raw.traffic_source,
-                dataset_id: dataset_id_col.map(|a| a.value(i)).unwrap_or(0),
+                traffic_source: tsrc.map(|a| a.value(i)).unwrap_or(0),
+                dataset_id,
                 dist_m: cp.dist_m,
                 cp_lat: cp.lat,
                 cp_lon: cp.lon,

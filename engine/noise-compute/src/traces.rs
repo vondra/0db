@@ -609,10 +609,9 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
 
     let seg_name = seg_name_from_tags(&seg.road_ref, &seg.name, class_name, seg.osm_id);
 
-    let traffic_source = if seg.traffic_source == 1 && seg.aadt_light > 0 {
-        "matched_external"
-    } else if seg.traffic_source == 2 && seg.aadt_light > 0 {
-        "estimated_service_tree"
+    let provenance = crate::sources::provenance_of(seg.dataset_id);
+    let traffic_source = if provenance.has_data() && seg.aadt_light > 0 {
+        provenance.legacy_traffic_source_str()
     } else {
         "default_by_class"
     };
