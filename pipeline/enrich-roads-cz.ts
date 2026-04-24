@@ -154,22 +154,20 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
     const existingAadtHeavy = table.getChild('aadt_heavy')
     const existingAadtMoto = table.getChild('aadt_moto')
     const existingTrafficSource = table.getChild('traffic_source')
-    const existingDatasetId = table.getChild('roads_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const aadtLight = new Int32Array(n)
     const aadtMedium = new Int32Array(n)
     const aadtHeavy = new Int32Array(n)
     const aadtMoto = new Int32Array(n)
-    const trafficSource = new Uint8Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
 
     for (let i = 0; i < n; i++) {
       aadtLight[i] = existingAadtLight ? (existingAadtLight.get(i) as number) ?? 0 : 0
       aadtMedium[i] = existingAadtMedium ? (existingAadtMedium.get(i) as number) ?? 0 : 0
       aadtHeavy[i] = existingAadtHeavy ? (existingAadtHeavy.get(i) as number) ?? 0 : 0
       aadtMoto[i] = existingAadtMoto ? (existingAadtMoto.get(i) as number) ?? 0 : 0
-      trafficSource[i] = existingTrafficSource ? (existingTrafficSource.get(i) as number) ?? 0 : 0
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
 
     let hexMatched = 0
@@ -180,7 +178,7 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
       matchByClass.get(roadClass)!.total++
 
       // Priority gate: if a higher-priority dataset already owns this row, leave it.
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) continue
 
       // Ref match is MANDATORY — no proximity-only fallback
       const osmRef = refCol ? (refCol.get(i) as string | null) : null
@@ -213,8 +211,7 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
       aadtMedium[i] = best.aadt_medium
       aadtHeavy[i] = best.aadt_heavy
       aadtMoto[i] = best.aadt_moto
-      trafficSource[i] = 1
-      datasetId[i] = MY_DATASET_ID
+      sourceId[i] = MY_DATASET_ID
       hexMatched++
       matchByClass.get(roadClass)!.matched++
     }
@@ -232,8 +229,7 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
     columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
     columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
     columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
-    columns['traffic_source'] = vectorFromArray(trafficSource, new Uint8())
-    columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
 
     const newTable = makeTable(columns)
     // MUST use 'file' format — Rust FileReader requires ARROW1 magic bytes.

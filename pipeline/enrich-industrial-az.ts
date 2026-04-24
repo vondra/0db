@@ -150,15 +150,15 @@ async function main() {
         const centroidLat = table.getChild('centroid_lat') ?? table.getChild('lat')
         const centroidLon = table.getChild('centroid_lon') ?? table.getChild('lon')
         const existingNaceCol = table.getChild('nace_4digit')
-        const existingDatasetIdCol = table.getChild('industrial_dataset_id')
+        const existingDatasetIdCol = table.getChild('source_id')
         if (!osmId || !centroidLat || !centroidLon) return table
         const newNace = new Uint16Array(n)
         const newDatasetId = new Uint16Array(n)
-        const existingDatasetId = new Uint16Array(n)
+        const existingSourceId = new Uint16Array(n)
         for (let j = 0; j < n; j++) {
           newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
-          existingDatasetId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
-          newDatasetId[j] = existingDatasetId[j]
+          existingSourceId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
+          newDatasetId[j] = existingSourceId[j]
         }
         let anyChanged = false
 
@@ -187,7 +187,7 @@ async function main() {
           if (best) {
             const nace6 = best.fuel.includes('solar') ? 359900 : best.fuel.includes('wind') ? 351200 : 351100
             const nace4 = Math.floor(nace6 / 100)
-            const existingId = existingDatasetId[i]
+            const existingId = existingSourceId[i]
             if (shouldOverwrite(existingId, MY_DATASET_ID)) {
               newNace[i] = nace4
               newDatasetId[i] = MY_DATASET_ID
@@ -200,11 +200,11 @@ async function main() {
         if (!anyChanged) return table
         const columns: Record<string, any> = {}
         for (const field of table.schema.fields) {
-          if (field.name === 'nace_4digit' || field.name === 'industrial_dataset_id') continue
+          if (field.name === 'nace_4digit' || field.name === 'source_id') continue
           columns[field.name] = table.getChild(field.name)!
         }
         columns['nace_4digit'] = vectorFromArray(Array.from(newNace), new Uint16())
-        columns['industrial_dataset_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
+        columns['source_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
         return makeTable(columns)
       })
     } catch {}

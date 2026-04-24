@@ -311,7 +311,7 @@ function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
     const existingAadtHeavy = table.getChild('aadt_heavy')
     const existingAadtMoto = table.getChild('aadt_moto')
     const existingTrafficSource = table.getChild('traffic_source')
-    const existingDatasetId = table.getChild('roads_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     // Seed output columns from whatever's already in the Arrow (per-row state).
     // `shouldOverwrite()` then decides if we replace with eu-city-traffic data.
@@ -319,16 +319,14 @@ function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
     const aadtMedium = new Int32Array(n)
     const aadtHeavy = new Int32Array(n)
     const aadtMoto = new Int32Array(n)
-    const trafficSource = new Uint8Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
 
     for (let i = 0; i < n; i++) {
       aadtLight[i] = existingAadtLight ? (existingAadtLight.get(i) as number) ?? 0 : 0
       aadtMedium[i] = existingAadtMedium ? (existingAadtMedium.get(i) as number) ?? 0 : 0
       aadtHeavy[i] = existingAadtHeavy ? (existingAadtHeavy.get(i) as number) ?? 0 : 0
       aadtMoto[i] = existingAadtMoto ? (existingAadtMoto.get(i) as number) ?? 0 : 0
-      trafficSource[i] = existingTrafficSource ? (existingTrafficSource.get(i) as number) ?? 0 : 0
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
 
     let hexMatched = 0
@@ -340,8 +338,8 @@ function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
       matchByClass.get(roadClass)!.total++
 
       // Priority check: if a higher-priority dataset already owns this row, leave it alone.
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) {
-        if (datasetId[i] !== 0) {
+      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) {
+        if (sourceId[i] !== 0) {
           matchByClass.get(roadClass)!.matched++
           hexMatched++
         }
@@ -382,8 +380,7 @@ function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
       aadtMedium[i] = 0  // dataset doesn't distinguish medium vehicles
       aadtHeavy[i] = Math.max(0, Math.round(record.truckAadt * dirFactor))
       aadtMoto[i] = Math.max(0, Math.round(record.twoWheelAadt * dirFactor))
-      trafficSource[i] = 1
-      datasetId[i] = MY_DATASET_ID
+      sourceId[i] = MY_DATASET_ID
       hexMatched++
       matchByClass.get(roadClass)!.matched++
     }
@@ -401,8 +398,7 @@ function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
     columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
     columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
     columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
-    columns['traffic_source'] = vectorFromArray(trafficSource, new Uint8())
-    columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
 
     const newTable = makeTable(columns)
     // MUST use 'file' format — Rust FileReader requires ARROW1 magic bytes

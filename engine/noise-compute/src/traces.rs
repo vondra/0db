@@ -547,7 +547,7 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
             trains_freight: q_frt,
             trains_passenger_source: if seg.trains_passenger_source == 0 { "arrow" } else { "default_by_type" },
             trains_freight_source: if seg.trains_freight_source == 0 { "arrow" } else { "default_by_type" },
-            dataset_id: seg.dataset_id,
+            source_id: seg.source_id,
             speed_kmh,
             bridge: seg.bridge,
             highspeed: seg.highspeed,
@@ -609,7 +609,7 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
 
     let seg_name = seg_name_from_tags(&seg.road_ref, &seg.name, class_name, seg.osm_id);
 
-    let provenance = crate::sources::provenance_of(seg.dataset_id);
+    let provenance = crate::sources::provenance_of(seg.source_id);
     let traffic_source = if provenance.has_data() && seg.aadt_light > 0 {
         provenance.legacy_traffic_source_str()
     } else {
@@ -624,7 +624,7 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
         surface_corr_db: surf_corr,
         surface: crate::surface_name(seg.surface_type),
         traffic_source,
-        dataset_id: seg.dataset_id,
+        source_id: seg.source_id,
         road_class: class_name,
         bridge: seg.bridge,
         tunnel: seg.tunnel,

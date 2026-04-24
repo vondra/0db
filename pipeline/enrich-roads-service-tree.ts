@@ -189,7 +189,7 @@ function buildGraph(table: any) {
   const endLat = table.getChild('end_lat')!
   const endLon = table.getChild('end_lon')!
   const roadClass = table.getChild('road_class')!
-  const existingDatasetId = table.getChild('roads_dataset_id')
+  const existingSourceId = table.getChild('source_id')
 
   const nodes = new Map<string, GraphNode>()
   const segToNodes: [string, string][] = new Array(n)
@@ -212,7 +212,7 @@ function buildGraph(table: any) {
     eNode.degree++
 
     const cls = (roadClass.get(i) as number) ?? 5
-    const existingId = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+    const existingId = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     // Local roads only (class 5..9). Excludes link classes 10-12: residential
     // flow accumulation drastically undercounts highway-derived ramp traffic,
     // so those stay at traffic_source=0 and fall through to the 20 %-of-mainline
@@ -505,49 +505,44 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   const existingMed = roadTable.getChild('aadt_medium')
   const existingHvy = roadTable.getChild('aadt_heavy')
   const existingMoto = roadTable.getChild('aadt_moto')
-  const existingDatasetId = roadTable.getChild('roads_dataset_id')
-
-  const trafficSource = new Uint8Array(n)
+  const existingSourceId = roadTable.getChild('source_id')
   const aadtLight = new Int32Array(n)
   const aadtMedium = new Int32Array(n)
   const aadtHeavy = new Int32Array(n)
   const aadtMoto = new Int32Array(n)
-  const datasetId = new Uint16Array(n)
+  const sourceId = new Uint16Array(n)
 
   for (let i = 0; i < n; i++) {
-    trafficSource[i] = (existingSource?.get(i) as number) ?? 0
     aadtLight[i] = (existingLight?.get(i) as number) ?? 0
     aadtMedium[i] = (existingMed?.get(i) as number) ?? 0
     aadtHeavy[i] = (existingHvy?.get(i) as number) ?? 0
     aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-    datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+    sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
   }
 
   let enriched = 0
   for (const [seg, aadt] of segAADT) {
     // Eligibility was already gated via shouldOverwrite() in buildGraph().
     // Whole-row atomic write — payload + dataset_id together.
-    if (!shouldOverwrite(datasetId[seg], MY_DATASET_ID)) continue
+    if (!shouldOverwrite(sourceId[seg], MY_DATASET_ID)) continue
     aadtLight[seg] = aadt.light
     aadtMedium[seg] = aadt.medium
     aadtHeavy[seg] = aadt.heavy
     aadtMoto[seg] = aadt.moto
-    trafficSource[seg] = 2
-    datasetId[seg] = MY_DATASET_ID
+    sourceId[seg] = MY_DATASET_ID
     enriched++
   }
 
   const columns: Record<string, any> = {}
   for (const field of roadTable.schema.fields) {
-    if (['traffic_source', 'aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'roads_dataset_id'].includes(field.name)) continue
+    if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
     columns[field.name] = roadTable.getChild(field.name)!
   }
-  columns['traffic_source'] = vectorFromArray(trafficSource, new Uint8())
   columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
   columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
   columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
   columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
-  columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+  columns['source_id'] = vectorFromArray(sourceId, new Uint16())
   const newTable = makeTable(columns)
   writeFileSync(roadsPath, Buffer.from(tableToIPC(newTable, 'file')))
 

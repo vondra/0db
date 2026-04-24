@@ -232,7 +232,7 @@ function enrichHexes(ruianBuildings: RuianBuilding[]): void {
     const clon = table.getChild('centroid_lon')!
     const existingFloors = table.getChild('floors')
     const existingType = table.getChild('building_type')
-    const existingDatasetId = table.getChild('buildings_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     // New columns (copy existing, override where RÚIAN has data)
     const newFloors = new Uint8Array(n)
@@ -245,7 +245,7 @@ function enrichHexes(ruianBuildings: RuianBuilding[]): void {
       const lon = clon.get(i) as number
       const curFloors = existingFloors ? (existingFloors.get(i) as number) : 0
       const curType = existingType ? (existingType.get(i) as number) : 0
-      const curDatasetId = existingDatasetId ? (existingDatasetId.get(i) as number) : 0
+      const curDatasetId = existingSourceId ? (existingSourceId.get(i) as number) : 0
       newFloors[i] = curFloors
       newType[i] = curType
       newDatasetId[i] = curDatasetId
@@ -298,12 +298,12 @@ function enrichHexes(ruianBuildings: RuianBuilding[]): void {
     for (const field of table.schema.fields) {
       if (field.name === 'floors') continue
       if (field.name === 'building_type') continue
-      if (field.name === 'buildings_dataset_id') continue
+      if (field.name === 'source_id') continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['floors'] = vectorFromArray(newFloors, new Uint8())
     columns['building_type'] = vectorFromArray(newType, new Uint8())
-    columns['buildings_dataset_id'] = vectorFromArray(newDatasetId, new Uint16())
+    columns['source_id'] = vectorFromArray(newDatasetId, new Uint16())
 
     const newTable = makeTable(columns)
     writeFileSync(bldPath, Buffer.from(tableToIPC(newTable, 'file')))

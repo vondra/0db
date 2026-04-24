@@ -659,17 +659,17 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     // Read existing enrichment columns
     const existingPax = table.getChild('trains_passenger')
     const existingFrt = table.getChild('trains_freight')
-    const existingDatasetId = table.getChild('railways_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const trainsPax = new Int32Array(n)
     const trainsFrt = new Int32Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
 
     for (let i = 0; i < n; i++) {
       trainsPax[i] = existingPax ? (existingPax.get(i) as number ?? 0) : 0
       trainsFrt[i] = existingFrt ? (existingFrt.get(i) as number ?? 0) : 0
 
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
       if (trainsPax[i] > 0 || trainsFrt[i] > 0) totalPreExisting++
     }
 
@@ -691,7 +691,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
       if (service > 0) continue
 
       // Skip segments already enriched
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) continue
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -723,7 +723,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
 
       trainsPax[i] = bestStop.trains_passenger
       trainsFrt[i] = bestStop.trains_freight
-      datasetId[i] = MY_DATASET_ID
+      sourceId[i] = MY_DATASET_ID
       hexMatched++
     }
 
@@ -734,13 +734,13 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     for (const field of table.schema.fields) {
       if (field.name === 'trains_passenger') continue
       if (field.name === 'trains_freight') continue
-      if (field.name === 'railways_dataset_id') continue
+      if (field.name === 'source_id') continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
     columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
 
-    columns['railways_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
 
     const newTable = makeTable(columns)
     // MUST use 'file' format — Rust FileReader requires ARROW1 magic bytes

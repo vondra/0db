@@ -1313,6 +1313,7 @@ pub fn synthesize_airport_surface_segments(
                     surface_model: true,
                     ground_context: emitter.ground_context,
                     ground_ops_kind: emitter.ground_ops_kind,
+                    source_id: 1,
                 });
                 next_flight_id = next_flight_id.wrapping_add(1);
             }
@@ -2029,6 +2030,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: 1,
         };
         let result = segment_sel(&seg, 50.005, 14.005, 300.0, &FlatGround);
         assert!(result.is_some(), "should compute SEL for nearby segment");
@@ -2062,6 +2064,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: 1,
         };
         let result = segment_sel(&seg, 50.0, 14.0, 300.0, &FlatGround);
         assert!(result.is_none(), "should be None for far segment");
@@ -2105,6 +2108,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: 1,
         };
         assert!(is_ground_stale_segment(&seg, &FlatGround));
 
@@ -2112,7 +2116,7 @@ mod tests {
             start_alt_m: 320.0,
             end_alt_m: 340.0,
             ..seg
-        };
+            };
         assert!(!is_ground_stale_segment(&airborne, &FlatGround));
     }
 
@@ -2137,6 +2141,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: 1,
         };
         let airport_lines = vec![AirportLine {
             osm_id: 1,
@@ -2175,6 +2180,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: 1,
         };
         let airport_areas = vec![AirportArea {
             osm_id: 2,
@@ -2212,13 +2218,14 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: 1,
         };
         assert!(!is_airport_ground_segment(&off_airport, &FlatGround));
 
         let airport_ground = AircraftSegment {
             ground_context: GROUND_CONTEXT_AIRPORT_LINE,
             ..off_airport
-        };
+            };
         assert!(is_airport_ground_segment(&airport_ground, &FlatGround));
         assert!(is_airport_context_candidate_raw(
             &airport_ground,
@@ -2247,6 +2254,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: 1,
         };
 
         let normal = segment_sel(&seg, 50.0004, 14.0, 254.0, &FlatGround)
@@ -2283,6 +2291,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_RUNWAY_ROLL,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: 1,
         };
 
         let runway_arr = ground_ops_model(&seg, GROUND_OPS_KIND_RUNWAY_ROLL);
@@ -2325,6 +2334,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_RUNWAY_ROLL,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: 1,
         };
         let rasters = FlatGround;
         let model = ground_ops_model(&seg, GROUND_OPS_KIND_RUNWAY_ROLL);
@@ -2364,11 +2374,12 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_TAXI,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: 1,
         };
         let slow_seg = AircraftSegment {
             speed_kt: 1.5,
             ..fast_seg
-        };
+            };
 
         let fast = ground_ops_model(&fast_seg, GROUND_OPS_KIND_TAXI);
         let slow = ground_ops_model(&slow_seg, GROUND_OPS_KIND_TAXI);
@@ -2404,6 +2415,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: 1,
         }
     }
 

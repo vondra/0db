@@ -363,11 +363,11 @@ function enrichHexes(
     // Seed output columns from existing Arrow state; priority rule decides per row.
     const existingTrainsPax = table.getChild('trains_passenger')
     const existingTrainsFrt = table.getChild('trains_freight')
-    const existingDatasetId = table.getChild('railways_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const trainsPax = new Int32Array(n)
     const trainsFrt = new Int32Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
     const matchedKeys: string[] = new Array(n).fill('')
     const mids: { lat: number; lon: number }[] = new Array(n)
     let hexMatched = 0
@@ -375,7 +375,7 @@ function enrichHexes(
     for (let i = 0; i < n; i++) {
       trainsPax[i] = (existingTrainsPax?.get(i) as number) ?? 0
       trainsFrt[i] = (existingTrainsFrt?.get(i) as number) ?? 0
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
 
     for (let i = 0; i < n; i++) {
@@ -388,7 +388,7 @@ function enrichHexes(
       mids[i] = { lat: midLat, lon: midLon }
 
       // Priority gate: if a higher-priority dataset already owns this row, leave it.
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) continue
 
       let bestDist = 5000
       let bestSeg: SegmentCount | null = null
@@ -409,7 +409,7 @@ function enrichHexes(
         // Whole-row atomic write — payload + dataset_id together.
         trainsPax[i] = bestSeg.passenger
         trainsFrt[i] = bestSeg.freight
-        datasetId[i] = MY_DATASET_ID
+        sourceId[i] = MY_DATASET_ID
         matchedKeys[i] = bestKey
         hexMatched++
       }
@@ -460,13 +460,13 @@ function enrichHexes(
     // Copy all existing columns + add train counts + parallel_divisor + dataset_id
     const columns: Record<string, any> = {}
     for (const field of table.schema.fields) {
-      if (['trains_passenger', 'trains_freight', 'parallel_divisor', 'railways_dataset_id'].includes(field.name)) continue
+      if (['trains_passenger', 'trains_freight', 'parallel_divisor', 'source_id'].includes(field.name)) continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
     columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
     columns['parallel_divisor'] = vectorFromArray(parallelDiv, new Uint8())
-    columns['railways_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
 
     const newTable = makeTable(columns)
     writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))

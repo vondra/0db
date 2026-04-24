@@ -526,7 +526,7 @@ function enrichHexes(catastroBuildings: CatastroBuilding[]): void {
     const clat = table.getChild('centroid_lat')!
     const clon = table.getChild('centroid_lon')!
     const existingFloors = table.getChild('floors')
-    const existingDatasetId = table.getChild('buildings_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const newFloors = new Uint8Array(n)
     const newDatasetId = new Uint16Array(n)
@@ -536,7 +536,7 @@ function enrichHexes(catastroBuildings: CatastroBuilding[]): void {
       const lat = clat.get(i) as number
       const lon = clon.get(i) as number
       const curFloors = existingFloors ? (existingFloors.get(i) as number) : 0
-      const curDatasetId = existingDatasetId ? (existingDatasetId.get(i) as number) : 0
+      const curDatasetId = existingSourceId ? (existingSourceId.get(i) as number) : 0
       newFloors[i] = curFloors
       newDatasetId[i] = curDatasetId
 
@@ -579,11 +579,11 @@ function enrichHexes(catastroBuildings: CatastroBuilding[]): void {
     const columns: Record<string, any> = {}
     for (const field of table.schema.fields) {
       if (field.name === 'floors') continue
-      if (field.name === 'buildings_dataset_id') continue
+      if (field.name === 'source_id') continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['floors'] = vectorFromArray(newFloors, new Uint8())
-    columns['buildings_dataset_id'] = vectorFromArray(newDatasetId, new Uint16())
+    columns['source_id'] = vectorFromArray(newDatasetId, new Uint16())
 
     const newTable = makeTable(columns)
     writeFileSync(bldPath, Buffer.from(tableToIPC(newTable, 'file')))

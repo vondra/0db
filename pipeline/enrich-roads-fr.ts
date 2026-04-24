@@ -209,12 +209,11 @@ async function enrichArrows(sections: CensusSection[]) {
     const startLons = table.getChild('start_lon')
     const endLats = table.getChild('end_lat')
     const endLons = table.getChild('end_lon')
-    const existingSource = table.getChild('traffic_source')
     const existingLight = table.getChild('aadt_light')
     const existingMedium = table.getChild('aadt_medium')
     const existingHeavy = table.getChild('aadt_heavy')
     const existingMoto = table.getChild('aadt_moto')
-    const existingDatasetId = table.getChild('roads_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     if (!startLats || !startLons) continue
 
@@ -222,8 +221,7 @@ async function enrichArrows(sections: CensusSection[]) {
     const aadtMedium = new Int32Array(numRows)
     const aadtHeavy = new Int32Array(numRows)
     const aadtMoto = new Int32Array(numRows)
-    const trafficSource = new Uint8Array(numRows)
-    const datasetId = new Uint16Array(numRows)
+    const sourceId = new Uint16Array(numRows)
     let hexMatched = 0
 
     // Seed output columns from existing Arrow state; priority rule decides per row.
@@ -232,16 +230,15 @@ async function enrichArrows(sections: CensusSection[]) {
       aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
       aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
       aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-      trafficSource[i] = (existingSource?.get(i) as number) ?? 0
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
 
     for (let i = 0; i < numRows; i++) {
       totalSeg++
 
       // Priority gate: if a higher-priority dataset already owns this row, leave it.
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) {
-        if (datasetId[i] !== 0) preserved++
+      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) {
+        if (sourceId[i] !== 0) preserved++
         continue
       }
 
@@ -267,8 +264,7 @@ async function enrichArrows(sections: CensusSection[]) {
         aadtMedium[i] = best.aadt_medium
         aadtHeavy[i] = best.aadt_heavy
         aadtMoto[i] = best.aadt_moto
-        trafficSource[i] = 1
-        datasetId[i] = MY_DATASET_ID
+        sourceId[i] = MY_DATASET_ID
         hexMatched++
         matched++
       }
@@ -277,15 +273,14 @@ async function enrichArrows(sections: CensusSection[]) {
     if (hexMatched > 0) {
       const columns: Record<string, any> = {}
       for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'traffic_source', 'roads_dataset_id'].includes(field.name)) continue
+        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
         columns[field.name] = table.getChild(field.name)!
       }
       columns['aadt_light'] = vectorFromArray(Array.from(aadtLight), new Int32())
       columns['aadt_medium'] = vectorFromArray(Array.from(aadtMedium), new Int32())
       columns['aadt_heavy'] = vectorFromArray(Array.from(aadtHeavy), new Int32())
       columns['aadt_moto'] = vectorFromArray(Array.from(aadtMoto), new Int32())
-      columns['traffic_source'] = vectorFromArray(Array.from(trafficSource), new Uint8())
-      columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
       const enriched = makeTable(columns)
       writeFileSync(arrowPath, tableToIPC(enriched, 'file'))
       hexesUpdated++

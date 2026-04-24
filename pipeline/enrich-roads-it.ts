@@ -247,24 +247,22 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
     // Read existing enrichment columns
     const existingAadtLight = table.getChild('aadt_light')
     const existingTrafficSource = table.getChild('traffic_source')
-    const existingDatasetId = table.getChild('roads_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const aadtLight = new Int32Array(n)
-    const trafficSource = new Uint8Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
 
     // Preserve existing enrichments
     for (let i = 0; i < n; i++) {
       aadtLight[i] = existingAadtLight ? (existingAadtLight.get(i) as number ?? 0) : 0
-      trafficSource[i] = existingTrafficSource ? (existingTrafficSource.get(i) as number ?? 0) : 0
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
 
     let hexMatched = 0
 
     for (let i = 0; i < n; i++) {
       // Skip already enriched
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) continue
 
       const roadClass = roadClassCol ? (roadClassCol.get(i) as number) : 5
       if (!matchByClass.has(roadClass)) matchByClass.set(roadClass, { matched: 0, total: 0 })
@@ -295,8 +293,7 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
       if (bestDist > 30_000) continue
 
       aadtLight[i] = best.aadt
-      trafficSource[i] = 1
-      datasetId[i] = MY_DATASET_ID
+      sourceId[i] = MY_DATASET_ID
       hexMatched++
       matchByClass.get(roadClass)!.matched++
     }
@@ -310,9 +307,8 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
       columns[field.name] = table.getChild(field.name)!
     }
     columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-    columns['traffic_source'] = vectorFromArray(trafficSource, new Uint8())
 
-    columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
 
     const newTable = makeTable(columns)
     // MUST use 'file' format — Rust FileReader requires ARROW1 magic bytes

@@ -84,16 +84,16 @@ async function main() {
     const serviceCol = table.getChild('service')
     const existingPax = table.getChild('trains_passenger')
     const existingFrt = table.getChild('trains_freight')
-    const existingDatasetId = table.getChild('railways_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const trainsPax = new Int32Array(numRows)
     const trainsFrt = new Int32Array(numRows)
-    const datasetId = new Uint16Array(numRows)
+    const sourceId = new Uint16Array(numRows)
     for (let i = 0; i < numRows; i++) {
       trainsPax[i] = (existingPax?.get(i) as number) ?? 0
       trainsFrt[i] = (existingFrt?.get(i) as number) ?? 0
 
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
 
     let hexMatched = 0
@@ -101,7 +101,7 @@ async function main() {
       totalRails++
       const service = (serviceCol?.get(i) as number) ?? 0
       if (service > 0) { skippedService++; continue }
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) continue
 
       const rt = (railTypeCol?.get(i) as number) ?? 0
       const us = (usageCol?.get(i) as number) ?? 0
@@ -121,7 +121,7 @@ async function main() {
       columns['trains_passenger'] = vectorFromArray(Array.from(trainsPax), new Int32())
       columns['trains_freight'] = vectorFromArray(Array.from(trainsFrt), new Int32())
 
-      columns['railways_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
       const enriched = makeTable(columns)
       writeFileSync(arrowPath, Buffer.from(tableToIPC(enriched, 'file')))
       hexesUpdated++

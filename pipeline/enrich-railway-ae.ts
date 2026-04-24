@@ -555,12 +555,12 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     const serviceCol = table.getChild('service')
 
     // Always overwrite (fresh enrichment per run — this script owns AE railways)
-    const existingDatasetId = table.getChild('railways_dataset_id')
+    const existingSourceId = table.getChild('source_id')
     const trainsPax = new Int32Array(n)
     const trainsFrt = new Int32Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
     for (let i = 0; i < n; i++) {
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
 
     totalRails += n
@@ -618,7 +618,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
         if (bestStop) {
           trainsPax[i] = bestStop.trains_passenger
           trainsFrt[i] = bestStop.trains_freight
-          datasetId[i] = MY_DATASET_ID
+          sourceId[i] = MY_DATASET_ID
           hexMatched++
           matchedFromGtfs++
           continue
@@ -629,7 +629,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
       const def = defaultTrains(rt, us)
       trainsPax[i] = def.pax
       trainsFrt[i] = def.frt
-      datasetId[i] = MY_DATASET_ID
+      sourceId[i] = MY_DATASET_ID
       hexMatched++
       matchedFromDefaults++
     }
@@ -640,13 +640,13 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     for (const field of table.schema.fields) {
       if (field.name === 'trains_passenger') continue
       if (field.name === 'trains_freight') continue
-      if (field.name === 'railways_dataset_id') continue
+      if (field.name === 'source_id') continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
     columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
 
-    columns['railways_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
 
     const newTable = makeTable(columns)
     writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))

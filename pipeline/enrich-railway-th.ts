@@ -442,16 +442,16 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     const serviceCol = table.getChild('service')
     const existingPax = table.getChild('trains_passenger')
     const existingFrt = table.getChild('trains_freight')
-    const existingDatasetId = table.getChild('railways_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const trainsPax = new Int32Array(n)
     const trainsFrt = new Int32Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
     for (let i = 0; i < n; i++) {
       trainsPax[i] = (existingPax?.get(i) as number) ?? 0
       trainsFrt[i] = (existingFrt?.get(i) as number) ?? 0
 
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
     totalRails += n
 
@@ -473,7 +473,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     for (let i = 0; i < n; i++) {
       const service = (serviceCol?.get(i) as number) ?? 0
       if (service > 0) { skippedService++; continue }
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) continue
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -510,7 +510,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
         if (bestStop) {
           trainsPax[i] = bestStop.trains_passenger
           trainsFrt[i] = bestStop.trains_freight
-          datasetId[i] = MY_DATASET_ID
+          sourceId[i] = MY_DATASET_ID
           hexMatched++
           matchedGtfs++
           continue
@@ -521,7 +521,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
       const def = defaultTrains(rt, us)
       trainsPax[i] = def.pax
       trainsFrt[i] = def.frt
-      datasetId[i] = MY_DATASET_ID
+      sourceId[i] = MY_DATASET_ID
       hexMatched++
       matchedDefaults++
     }
@@ -535,7 +535,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
       columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
       columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
 
-      columns['railways_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
       const newTable = makeTable(columns)
       writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
       hexesUpdated++
