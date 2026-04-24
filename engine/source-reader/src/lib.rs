@@ -738,7 +738,7 @@ fn apply_segment_top_k_with_cap(
     traces: &mut noise_compute::types::TraceCollector,
     per_kind_cap: usize,
 ) -> noise_compute::types::SegmentTracesSummary {
-    use noise_compute::types::{SegmentTracesSummary, SourceKind};
+    use noise_compute::types::{SegmentTracesSummary, LayerKind};
 
     let mut summary = SegmentTracesSummary {
         total_count: (traces.segments.len() + traces.airborne.len()) as u32,
@@ -754,7 +754,7 @@ fn apply_segment_top_k_with_cap(
         .sort_unstable_by(|a, b| b.received_lden.partial_cmp(&a.received_lden).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut kept: Vec<noise_compute::types::SegmentTrace> = Vec::new();
-    let mut per_kind: std::collections::HashMap<SourceKind, u32> = std::collections::HashMap::new();
+    let mut per_kind: std::collections::HashMap<LayerKind, u32> = std::collections::HashMap::new();
     for seg in std::mem::take(&mut traces.segments) {
         let count = per_kind.entry(seg.kind).or_insert(0);
         if (*count as usize) < per_kind_cap {
@@ -766,11 +766,11 @@ fn apply_segment_top_k_with_cap(
     }
     traces.segments = kept;
 
-    summary.road_count = *per_kind.get(&SourceKind::Road).unwrap_or(&0);
-    summary.railway_count = *per_kind.get(&SourceKind::Railway).unwrap_or(&0);
-    summary.aircraft_ground_count = *per_kind.get(&SourceKind::Aircraft).unwrap_or(&0);
-    summary.building_count = *per_kind.get(&SourceKind::Building).unwrap_or(&0);
-    summary.industrial_count = *per_kind.get(&SourceKind::Industrial).unwrap_or(&0);
+    summary.road_count = *per_kind.get(&LayerKind::Road).unwrap_or(&0);
+    summary.railway_count = *per_kind.get(&LayerKind::Railway).unwrap_or(&0);
+    summary.aircraft_ground_count = *per_kind.get(&LayerKind::Aircraft).unwrap_or(&0);
+    summary.building_count = *per_kind.get(&LayerKind::Building).unwrap_or(&0);
+    summary.industrial_count = *per_kind.get(&LayerKind::Industrial).unwrap_or(&0);
 
     if traces.airborne.len() > per_kind_cap {
         traces.airborne.truncate(per_kind_cap);

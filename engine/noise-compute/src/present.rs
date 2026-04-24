@@ -58,11 +58,11 @@ pub fn finalize_popup_contributors(
 mod tests {
     use super::*;
     use crate::types::{
-        Contributor, NoisePeriods, PropagationBaseline, ScreeningBreakdown, SourceKind,
+        Contributor, NoisePeriods, PropagationBaseline, ScreeningBreakdown, LayerKind,
         TerrainBreakdown, VegetationBreakdown,
     };
 
-    fn contributor(source_type: SourceKind, lden_db: f64) -> Contributor {
+    fn contributor(source_type: LayerKind, lden_db: f64) -> Contributor {
         Contributor {
             source_type,
             osm_id: None,
@@ -101,11 +101,11 @@ mod tests {
     fn sorts_by_lden_drops_negative_and_truncates() {
         let r = finalize_popup_contributors(
             vec![
-                contributor(SourceKind::Road, 11.0),
-                contributor(SourceKind::Road, 12.0),
-                contributor(SourceKind::Railway, 10.0),
-                contributor(SourceKind::Industrial, 9.0),
-                contributor(SourceKind::Building, -1.0),
+                contributor(LayerKind::Road, 11.0),
+                contributor(LayerKind::Road, 12.0),
+                contributor(LayerKind::Railway, 10.0),
+                contributor(LayerKind::Industrial, 9.0),
+                contributor(LayerKind::Building, -1.0),
             ],
             2,
         );
@@ -124,8 +124,8 @@ mod tests {
     fn other_lden_neg_inf_when_all_shown() {
         let r = finalize_popup_contributors(
             vec![
-                contributor(SourceKind::Road, 10.0),
-                contributor(SourceKind::Railway, 5.0),
+                contributor(LayerKind::Road, 10.0),
+                contributor(LayerKind::Railway, 5.0),
             ],
             30,
         );
@@ -137,9 +137,9 @@ mod tests {
     fn other_lden_sums_only_below_threshold() {
         let r = finalize_popup_contributors(
             vec![
-                contributor(SourceKind::Road, -5.0),
-                contributor(SourceKind::Road, -10.0),
-                contributor(SourceKind::Railway, -2.0),
+                contributor(LayerKind::Road, -5.0),
+                contributor(LayerKind::Road, -10.0),
+                contributor(LayerKind::Railway, -2.0),
             ],
             30,
         );

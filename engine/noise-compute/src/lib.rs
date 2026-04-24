@@ -162,7 +162,7 @@ pub fn compute_at_point_with_airports(
         let (road_periods, road_contributors) =
             compute_roads(receiver, roads, barriers, rasters, traces.as_deref_mut());
         source_results.push(SourceResult {
-            source_type: SourceKind::Road,
+            source_type: LayerKind::Road,
             periods: road_periods.clone(),
             segment_count: roads.len(),
             displayed_count: present::display_count(&road_contributors),
@@ -175,7 +175,7 @@ pub fn compute_at_point_with_airports(
         let (rail_periods, rail_contributors) =
             compute_railways(receiver, railways, barriers, rasters, traces.as_deref_mut());
         source_results.push(SourceResult {
-            source_type: SourceKind::Railway,
+            source_type: LayerKind::Railway,
             periods: rail_periods,
             segment_count: railways.len(),
             displayed_count: present::display_count(&rail_contributors),
@@ -190,11 +190,11 @@ pub fn compute_at_point_with_airports(
             buildings,
             barriers,
             rasters,
-            SourceKind::Building,
+            LayerKind::Building,
             traces.as_deref_mut(),
         );
         source_results.push(SourceResult {
-            source_type: SourceKind::Building,
+            source_type: LayerKind::Building,
             periods: bld_periods,
             segment_count: buildings.len(),
             displayed_count: present::display_count(&bld_contributors),
@@ -209,11 +209,11 @@ pub fn compute_at_point_with_airports(
             industrial,
             barriers,
             rasters,
-            SourceKind::Industrial,
+            LayerKind::Industrial,
             traces.as_deref_mut(),
         );
         source_results.push(SourceResult {
-            source_type: SourceKind::Industrial,
+            source_type: LayerKind::Industrial,
             periods: ind_periods,
             segment_count: industrial.len(),
             displayed_count: present::display_count(&ind_contributors),
@@ -235,7 +235,7 @@ pub fn compute_at_point_with_airports(
         );
         if air_periods.lden_db > f64::NEG_INFINITY {
             source_results.push(SourceResult {
-                source_type: SourceKind::Aircraft,
+                source_type: LayerKind::Aircraft,
                 periods: air_periods,
                 segment_count: aircraft.len(),
                 displayed_count: present::display_count(&air_contributors),
@@ -863,7 +863,7 @@ fn compute_roads(
         contributors.push(Contributor {
             osm_id: Some(acc.first_osm_id),
             geometry,
-            source_type: SourceKind::Road,
+            source_type: LayerKind::Road,
             name: acc.display_name.clone(),
             subtype: acc.class_name.to_string(),
             distance_m: acc.min_dist,
@@ -1304,7 +1304,7 @@ fn compute_railways(
         contributors.push(Contributor {
             osm_id: Some(acc.first_osm_id),
             geometry,
-            source_type: SourceKind::Railway,
+            source_type: LayerKind::Railway,
             name: if acc.name.is_empty() {
                 String::new()
             } else {
@@ -1361,7 +1361,7 @@ fn compute_point_sources(
     sources: &[PointSource],
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
-    source_kind: SourceKind,
+    source_kind: LayerKind,
     mut traces: Option<&mut TraceCollector>,
 ) -> (NoisePeriods, Vec<Contributor>) {
     use std::collections::HashMap;
@@ -1569,14 +1569,14 @@ fn compute_point_sources(
 
         let impacts = PropagationVariants::impact_deltas(&acc.variants, pt_periods.lden_db);
 
-        let subtype_name: &'static str = if source_kind == SourceKind::Industrial {
+        let subtype_name: &'static str = if source_kind == LayerKind::Industrial {
             industrial_type_name(acc.subtype)
         } else {
             building_type_name(acc.subtype)
         };
 
         // Build per-source metadata (popup only)
-        let metadata = if source_kind == SourceKind::Industrial {
+        let metadata = if source_kind == LayerKind::Industrial {
             Some(SourceMetadata::Industrial(IndustrialMetadata {
                 area_m2: 0.0, // derived per-point; aggregate unavailable at this level
                 source_type: subtype_name,
@@ -2361,7 +2361,7 @@ fn compute_aircraft(
             vegetation_impact_db: 0.0,
             atmospheric_impact_db: 0.0,
             ground_impact_db: 0.0,
-            source_type: SourceKind::Aircraft,
+            source_type: LayerKind::Aircraft,
             name: "Aircraft - airborne".to_string(),
             subtype: "airborne".to_string(),
             distance_m: 0.0,
@@ -2510,7 +2510,7 @@ fn compute_aircraft(
             vegetation_impact_db: detail.vegetation_impact_db,
             atmospheric_impact_db: detail.atmospheric_impact_db,
             ground_impact_db: detail.ground_impact_db,
-            source_type: SourceKind::Aircraft,
+            source_type: LayerKind::Aircraft,
             name: format!("Aircraft - ground ops — {}", display_name),
             subtype: "ground_ops".to_string(),
             distance_m: detail.distance_m,
@@ -2742,7 +2742,7 @@ mod tests {
 
         // Should have at least one source result
         assert_eq!(result.sources.len(), 1);
-        assert_eq!(result.sources[0].source_type, SourceKind::Road);
+        assert_eq!(result.sources[0].source_type, LayerKind::Road);
 
         println!(
             "Motorway 500m: Ld={:.1} Le={:.1} Ln={:.1} Lden={:.1}",
@@ -2995,7 +2995,7 @@ mod tests {
         );
 
         assert_eq!(result.sources.len(), 1);
-        assert_eq!(result.sources[0].source_type, SourceKind::Aircraft);
+        assert_eq!(result.sources[0].source_type, LayerKind::Aircraft);
 
         // Day should be louder than night (more flights)
         assert!(

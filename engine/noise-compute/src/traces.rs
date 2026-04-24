@@ -211,7 +211,7 @@ pub fn baseline_trace(
 
 use crate::types::{
     AircraftSegment, EmissionTrace, PointSource, RailSegment, RoadSegment, SegmentTrace,
-    SourceKind,
+    LayerKind,
 };
 use crate::{building_type_name, industrial_type_name, rail_type_name};
 
@@ -283,7 +283,7 @@ pub(crate) fn build_aircraft_ground_segment_trace(
     );
 
     SegmentTrace {
-        kind: SourceKind::Aircraft,
+        kind: LayerKind::Aircraft,
         osm_id: Some(seg.flight_id as i64),
         segment_idx: seg_idx,
         name: format!("{} ops", class),
@@ -355,7 +355,7 @@ pub(crate) struct BuildRoadTrace<'a> {
 
 pub(crate) struct BuildPointTrace<'a> {
     pub src: &'a PointSource,
-    pub source_kind: SourceKind,
+    pub source_kind: LayerKind,
     pub src_alt: f64,
     pub rcv_alt: f64,
     pub d_slant: f64,
@@ -391,7 +391,7 @@ pub(crate) fn build_point_segment_trace(inputs: BuildPointTrace<'_>) -> SegmentT
     } = inputs;
 
     let (subtype_label, emission) = match source_kind {
-        SourceKind::Industrial => {
+        LayerKind::Industrial => {
             let label = industrial_type_name(src.source_type);
             (
                 label,
@@ -525,7 +525,7 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
     );
 
     SegmentTrace {
-        kind: SourceKind::Railway,
+        kind: LayerKind::Railway,
         osm_id: Some(seg.osm_id),
         segment_idx: seg.segment_idx,
         name: seg_name,
@@ -640,7 +640,7 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
     );
 
     SegmentTrace {
-        kind: SourceKind::Road,
+        kind: LayerKind::Road,
         osm_id: Some(seg.osm_id),
         segment_idx: seg.segment_idx,
         name: seg_name,
