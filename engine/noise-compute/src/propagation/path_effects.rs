@@ -11,7 +11,7 @@ use super::diffraction;
 use super::path_profile::{path_integral_u8, vegetation_run_length, PathProfile};
 use super::vegetation;
 use crate::constants::{M_PER_DEG_LAT, M_PER_DEG_LON_EQ};
-use crate::types::{Barrier, ScreeningObstacleTrace, NUM_BANDS};
+use crate::types::{Barrier, EdgePoint, ObstacleEdge, ScreeningObstacleTrace, TerrainTrace, NUM_BANDS};
 
 /// Terrain diffraction attenuation per band from a `PathProfile`.
 ///
@@ -29,18 +29,39 @@ pub fn terrain_attenuation(
     src_elev: f64,
     rcv_alt: f64,
 ) -> [f64; NUM_BANDS] {
-    let (atten, _, _, _) = terrain_attenuation_with_meta(profile, src_elev, rcv_alt);
-    atten
+    let (trace, _) = terrain_attenuation_with_meta(profile, src_elev, rcv_alt);
+    trace.attenuation_bands
 }
 
-/// Terrain attenuation + metadata for popup tooltips (δ, is_double, profile_points).
+#[inline]
+fn empty_terrain_trace() -> TerrainTrace {
+    TerrainTrace {
+        delta_m: 0.0,
+        is_double: false,
+        attenuation_bands: [0.0; NUM_BANDS],
+        n_edges: 0,
+        edges: Vec::new(),
+        delta_star_m: 0.0,
+        edge_distance_m: 0.0,
+        dominant_edge_idx: 0,
+    }
+}
+
+/// Terrain attenuation + full multi-edge trace for popup tooltips.
+///
+/// Returns `(trace, profile_points)` where `trace` contains per-band
+/// attenuation, the diffraction δ, Rayleigh δ\*, first-to-last edge
+/// distance, N ∈ {0, 1, 2, 3} edge count, and the list of edges found by
+/// the upper-convex-hull algorithm (see `diffraction::compute_path_difference`).
+/// `profile_points` is the raw sample count the engine scanned — surfaced to
+/// popup as transparency metadata.
 pub fn terrain_attenuation_with_meta(
     profile: &mut PathProfile,
     src_elev: f64,
     rcv_alt: f64,
-) -> ([f64; NUM_BANDS], f64, bool, u32) {
+) -> (TerrainTrace, u32) {
     if profile.t.len() < 3 || profile.dist_m < 30.0 {
-        return ([0.0; NUM_BANDS], 0.0, false, 0);
+        return (empty_terrain_trace(), 0);
     }
 
     // Fast-path scan — zero extra raster reads, elevation is already buffered.
@@ -52,7 +73,7 @@ pub fn terrain_attenuation_with_meta(
         .any(|(&t, &e)| (e as f64) > src_elev + dz_total * t);
 
     if !hill {
-        return ([0.0; NUM_BANDS], 0.0, false, 0);
+        return (empty_terrain_trace(), 0);
     }
 
     // Rebuild a full-precision f64 elevation profile in diffraction units
@@ -80,7 +101,51 @@ pub fn terrain_attenuation_with_meta(
     let diff =
         diffraction::compute_path_difference(t, prof_f64, dist_m, src_h, rcv_h);
     let atten = diffraction::diffraction_attenuation_rayleigh(&diff);
-    (atten, diff.delta, diff.is_double, n as u32)
+
+    // Materialise edges. `edge_indices[..n_edges]` are valid; anything beyond
+    // is uninitialised (filled with 0 but semantically meaningless).
+    let n_edges = diff.n_edges as usize;
+    let mut edges: Vec<EdgePoint> = Vec::with_capacity(n_edges);
+    for k in 0..n_edges {
+        let idx = diff.edge_indices[k];
+        edges.push(EdgePoint {
+            t: t[idx],
+            elevation_m: prof_f64[idx],
+        });
+    }
+
+    // Dominant = max LOS excess. Matches the `d_idx` selection inside
+    // `diffraction::compute_double_edge` / `compute_triple_edge` so the popup
+    // SVG highlights the same edge the Rayleigh δ* was anchored at.
+    let src_abs = src_ground + src_h;
+    let rcv_abs = rcv_ground + rcv_h;
+    let dominant_edge_idx = if edges.is_empty() {
+        0u8
+    } else {
+        let mut best_idx = 0usize;
+        let mut best_excess = f64::NEG_INFINITY;
+        for (k, e) in edges.iter().enumerate() {
+            let los = src_abs + (rcv_abs - src_abs) * e.t;
+            let excess = e.elevation_m - los;
+            if excess > best_excess {
+                best_excess = excess;
+                best_idx = k;
+            }
+        }
+        best_idx as u8
+    };
+
+    let trace = TerrainTrace {
+        delta_m: diff.delta,
+        is_double: diff.is_double,
+        attenuation_bands: atten,
+        n_edges: diff.n_edges,
+        edges,
+        delta_star_m: diff.delta_star,
+        edge_distance_m: diff.edge_distance,
+        dominant_edge_idx,
+    };
+    (trace, n as u32)
 }
 
 /// Building screening attenuation per band from a `PathProfile`.
@@ -137,7 +202,7 @@ pub fn screening_attenuation_with_meta(
     // Copy scalars before the later split-borrow of `profile` via destructure.
     let step_m_med = profile.step_m_med as f64;
 
-    let empty_trace = ScreeningObstacleTrace {
+    let make_empty = || ScreeningObstacleTrace {
         kind: "none",
         height_m: 0.0,
         t: 0.0,
@@ -145,10 +210,12 @@ pub fn screening_attenuation_with_meta(
         delta_m: 0.0,
         samples_taken: 0,
         step_m: step_m_med,
+        n_edges: 0,
+        edges: Vec::new(),
     };
 
     if n < 3 || dist_m < 30.0 {
-        return ([0.0; NUM_BANDS], empty_trace);
+        return ([0.0; NUM_BANDS], make_empty());
     }
 
     // 1. Barriers — project each onto path, map to nearest sample index.
@@ -243,13 +310,9 @@ pub fn screening_attenuation_with_meta(
 
     // If nothing above ground along the path: zero attenuation, none trace.
     if dominant_composite_excess <= 0.0 {
-        return (
-            [0.0; NUM_BANDS],
-            ScreeningObstacleTrace {
-                samples_taken,
-                ..empty_trace
-            },
-        );
+        let mut tr = make_empty();
+        tr.samples_taken = samples_taken;
+        return ([0.0; NUM_BANDS], tr);
     }
 
     // 4. Convert absolute altitudes to per-end heights above bare-earth for
@@ -272,25 +335,50 @@ pub fn screening_attenuation_with_meta(
         atten_screen[i] = (atten_combined[i] - terrain_atten[i]).max(0.0);
     }
 
-    // 8. Trace: dominant edge from combined result, or highest composite
-    //    excess sample (fallback). Kind reflects which source won at idx.
-    let (edge_idx, trace_kind, trace_height) = if res_combined.n_edges > 0 {
-        let idx = res_combined.edge_indices[0];
-        // Decide kind by which source dominates the composite top at this idx.
+    // 7. Materialise per-edge ObstacleEdge list from the combined result.
+    //    `edge_indices[..n_edges]` are sorted leftmost-to-rightmost in `t`.
+    //    Per-edge `kind` is decided by which source dominates at the edge
+    //    sample: pure bare-earth = "terrain", barrier > building = "barrier",
+    //    otherwise "building".
+    let n_edges_val = res_combined.n_edges as usize;
+    let mut edges: Vec<ObstacleEdge> = Vec::with_capacity(n_edges_val);
+    let mut dom_k = 0usize;
+    let mut dom_excess = f64::NEG_INFINITY;
+    for k in 0..n_edges_val {
+        let idx = res_combined.edge_indices[k];
+        let above = (composite_h_scratch[idx] - elevation_f64[idx]).max(0.0);
         let building = building_h_m[idx] as f64;
         let barrier = barrier_at[idx] as f64;
-        let above = (composite_h_scratch[idx] - elevation_f64[idx]).max(0.0);
-        let kind = if above == 0.0 {
+        let kind: &'static str = if above <= 0.0 {
             "terrain"
         } else if barrier > building {
             "barrier"
         } else {
             "building"
         };
-        (idx, kind, above)
+        let los_i = src_elev + (rcv_alt - src_elev) * t[idx];
+        let screen = composite_h_scratch[idx] - los_i;
+        if screen > dom_excess {
+            dom_excess = screen;
+            dom_k = k;
+        }
+        edges.push(ObstacleEdge {
+            kind,
+            t: t[idx],
+            height_m: if kind == "terrain" { 0.0 } else { above },
+            screen_h_m: screen,
+        });
+    }
+
+    // 8. Representative obstacle = dominant-excess edge (if edges exist),
+    //    else fall back to the composite-dominant sample scanned earlier.
+    //    Using max-excess (not leftmost) matches the physical blocker that
+    //    the CNOSSOS Rayleigh δ* fit anchored against inside diffraction.rs.
+    let (edge_idx, trace_kind, trace_height) = if !edges.is_empty() {
+        let idx = res_combined.edge_indices[dom_k];
+        let e = &edges[dom_k];
+        (idx, e.kind, e.height_m)
     } else {
-        // No edge in combined but we saw a building/barrier above LOS — keep
-        // the dominant-by-excess sample.
         let kind = if barrier_wins_at_dominant { "barrier" } else { "building" };
         let above = (composite_h_scratch[dominant_idx] - elevation_f64[dominant_idx]).max(0.0);
         (dominant_idx, kind, above)
@@ -309,6 +397,8 @@ pub fn screening_attenuation_with_meta(
         delta_m,
         samples_taken,
         step_m: step_m_med,
+        n_edges: res_combined.n_edges,
+        edges,
     };
 
     (atten_screen, trace)
@@ -386,9 +476,11 @@ mod tests {
         let mut p = build_flat_profile(1000.0, 10.0);
         let src_elev = 10.05;
         let rcv_alt = 11.5;
-        let (atten, delta, _, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
-        assert_eq!(delta, 0.0, "flat profile should not diffract");
-        assert!(atten.iter().all(|&a| a == 0.0));
+        let (trace, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
+        assert_eq!(trace.delta_m, 0.0, "flat profile should not diffract");
+        assert_eq!(trace.n_edges, 0);
+        assert!(trace.edges.is_empty());
+        assert!(trace.attenuation_bands.iter().all(|&a| a == 0.0));
     }
 
     #[test]
@@ -410,8 +502,10 @@ mod tests {
 
         let src_elev = 10.05;
         let rcv_alt = 11.5;
-        let (_, delta, _, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
-        assert!(delta > 0.0, "ridge at t=0.35 must trigger diffraction");
+        let (trace, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
+        assert!(trace.delta_m > 0.0, "ridge at t=0.35 must trigger diffraction");
+        assert!(trace.n_edges >= 1, "expected at least one diffraction edge");
+        assert_eq!(trace.edges.len(), trace.n_edges as usize, "edges vec must match n_edges");
     }
 
     #[test]
@@ -432,8 +526,8 @@ mod tests {
 
         let src_elev = 10.05;
         let rcv_alt = 11.5;
-        let (_, delta, _, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
-        assert!(delta > 0.0, "cliff at t=0.03 must be caught");
+        let (trace, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
+        assert!(trace.delta_m > 0.0, "cliff at t=0.03 must be caught");
     }
 
     #[test]
@@ -453,8 +547,8 @@ mod tests {
 
         let src_elev = 10.05;
         let rcv_alt = 11.5;
-        let (_, delta, _, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
-        assert!(delta > 0.0, "terrace at t=0.97 must be caught");
+        let (trace, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
+        assert!(trace.delta_m > 0.0, "terrace at t=0.97 must be caught");
     }
 
     #[test]
@@ -475,9 +569,48 @@ mod tests {
             screening_attenuation_with_meta(&mut p, &[], 0.01, 1.5, 0.0, &terrain_atten);
         assert_eq!(trace.kind, "building");
         assert!(trace.height_m == 20.0);
+        assert_eq!(trace.edges.len(), trace.n_edges as usize, "edges vec must match n_edges");
         assert!(
             atten.iter().any(|&a| a > 0.0),
             "building at t=0.4 should produce screening"
         );
+    }
+
+    #[test]
+    fn combined_edge_on_naked_hill_is_kind_terrain() {
+        // A bare-earth hill at t=0.5 with no buildings anywhere. The composite
+        // edge should be kind="terrain" (not "building") since the composite
+        // top at that sample equals the DEM elevation (above_ground == 0).
+        let mut p = build_flat_profile(1500.0, 10.0);
+        let (spike, _) = p
+            .t
+            .iter()
+            .enumerate()
+            .min_by(|(_, &a), (_, &b)| {
+                ((a - 0.5).abs()).partial_cmp(&((b - 0.5).abs())).unwrap()
+            })
+            .unwrap();
+        p.elevation_m[spike] = 40.0;
+        // building_h_m all zero — guaranteed by build_flat_profile.
+        let (terrain_trace, _) = terrain_attenuation_with_meta(&mut p, 10.05, 11.5);
+        let (_atten, screening_trace) = screening_attenuation_with_meta(
+            &mut p,
+            &[],
+            10.05,
+            11.5,
+            0.0,
+            &terrain_trace.attenuation_bands,
+        );
+        if screening_trace.n_edges > 0 {
+            // Every edge in this geometry must be "terrain".
+            for edge in &screening_trace.edges {
+                assert_eq!(
+                    edge.kind, "terrain",
+                    "bare-earth hill edge must be kind=terrain, got {}",
+                    edge.kind
+                );
+                assert_eq!(edge.height_m, 0.0, "terrain kind must have height_m=0");
+            }
+        }
     }
 }

@@ -423,7 +423,7 @@ fn compute_roads(
         } else {
             propagation::path_effects::ground_g_from_profile(&path_profile)
         };
-        let (terrain_atten, terrain_delta, terrain_is_double, _terrain_profile_points) =
+        let (terrain, _terrain_profile_points) =
             propagation::path_effects::terrain_attenuation_with_meta(
                 &mut path_profile,
                 src_alt,
@@ -436,7 +436,7 @@ fn compute_roads(
                 src_alt,
                 rcv_alt,
                 0.0, // roads: no exclusion radius
-                &terrain_atten,
+                &terrain.attenuation_bands,
             );
         let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
@@ -462,7 +462,7 @@ fn compute_roads(
                 d_slant,
                 SourceGeometry::Line,
                 ground_g,
-                &terrain_atten,
+                &terrain.attenuation_bands,
                 &screening_atten,
                 &veg_atten,
                 reflection,
@@ -685,9 +685,7 @@ fn compute_roads(
                 speed_kmh: speed,
                 surf_corr,
                 path_profile: std::mem::take(&mut path_profile),
-                terrain_atten,
-                terrain_delta,
-                terrain_is_double,
+                terrain,
                 screening_atten,
                 obstacle_trace,
                 veg_atten,
@@ -1009,7 +1007,7 @@ fn compute_railways(
         } else {
             propagation::path_effects::ground_g_from_profile(&path_profile)
         };
-        let (terrain_atten, terrain_delta, terrain_is_double, _terrain_profile_points) =
+        let (terrain, _terrain_profile_points) =
             propagation::path_effects::terrain_attenuation_with_meta(
                 &mut path_profile,
                 src_alt,
@@ -1022,7 +1020,7 @@ fn compute_railways(
                 src_alt,
                 rcv_alt,
                 0.0, // railways: no exclusion radius
-                &terrain_atten,
+                &terrain.attenuation_bands,
             );
         let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
@@ -1047,7 +1045,7 @@ fn compute_railways(
                 d_slant,
                 SourceGeometry::Line,
                 ground_g,
-                &terrain_atten,
+                &terrain.attenuation_bands,
                 &screening_atten,
                 &veg_atten,
                 reflection,
@@ -1203,9 +1201,7 @@ fn compute_railways(
                 q_frt,
                 speed_kmh: speed,
                 path_profile: std::mem::take(&mut path_profile),
-                terrain_atten,
-                terrain_delta,
-                terrain_is_double,
+                terrain,
                 screening_atten,
                 obstacle_trace,
                 veg_atten,
@@ -1404,7 +1400,7 @@ fn compute_point_sources(
             src.dist_m,
             &mut path_profile,
         );
-        let (terrain_atten, terrain_delta, terrain_is_double, _terrain_profile_points) =
+        let (terrain, _terrain_profile_points) =
             propagation::path_effects::terrain_attenuation_with_meta(
                 &mut path_profile,
                 src_alt,
@@ -1417,7 +1413,7 @@ fn compute_point_sources(
                 src_alt,
                 rcv_alt,
                 src.exclusion_radius_m as f64,
-                &terrain_atten,
+                &terrain.attenuation_bands,
             );
         let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
@@ -1426,7 +1422,7 @@ fn compute_point_sources(
             d_slant,
             SourceGeometry::Point,
             ground_g,
-            &terrain_atten,
+            &terrain.attenuation_bands,
             &screening_atten,
             &veg_atten,
             reflection,
@@ -1437,7 +1433,7 @@ fn compute_point_sources(
             d_slant,
             SourceGeometry::Point,
             ground_g,
-            &terrain_atten,
+            &terrain.attenuation_bands,
             &screening_atten,
             &veg_atten,
             reflection,
@@ -1448,7 +1444,7 @@ fn compute_point_sources(
             d_slant,
             SourceGeometry::Point,
             ground_g,
-            &terrain_atten,
+            &terrain.attenuation_bands,
             &screening_atten,
             &veg_atten,
             reflection,
@@ -1511,9 +1507,7 @@ fn compute_point_sources(
                 prop_dist,
                 ground_g,
                 path_profile: std::mem::take(&mut path_profile),
-                terrain_atten,
-                terrain_delta,
-                terrain_is_double,
+                terrain,
                 screening_atten,
                 obstacle_trace,
                 veg_atten,
@@ -1920,7 +1914,7 @@ fn compute_aircraft(
                 &mut path_profile,
             );
             let ground_g = propagation::path_effects::ground_g_from_profile(&path_profile);
-            let (terrain_atten, terrain_delta, terrain_is_double, _) =
+            let (terrain, _) =
                 propagation::path_effects::terrain_attenuation_with_meta(
                     &mut path_profile,
                     cp_elev,
@@ -1933,7 +1927,7 @@ fn compute_aircraft(
                     cp_elev,
                     receiver.altitude_m(),
                     0.0,
-                    &terrain_atten,
+                    &terrain.attenuation_bands,
                 );
             let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
 
@@ -1953,7 +1947,7 @@ fn compute_aircraft(
                     d_slant,
                     SourceGeometry::Line,
                     ground_g,
-                    &terrain_atten,
+                    &terrain.attenuation_bands,
                     &screening_atten,
                     &veg_atten,
                     reflection,
@@ -1978,9 +1972,7 @@ fn compute_aircraft(
                     ground_g,
                     kind_idx,
                     path_profile: std::mem::take(&mut path_profile),
-                    terrain_atten,
-                    terrain_delta,
-                    terrain_is_double,
+                    terrain,
                     screening_atten,
                     obstacle_trace,
                     veg_atten,
@@ -2611,7 +2603,7 @@ pub fn compute_path_effects(
     // Metadata only — the per-band attenuation arrays are consumed inside
     // `propagate_variants_full`; popup derives A-weighted `ΔL_A` from the
     // Contributor-level variant Lden deltas instead of any scalar here.
-    let (terrain_atten, terrain_delta, terrain_is_double, terrain_profile_points) =
+    let (terrain, terrain_profile_points) =
         propagation::path_effects::terrain_attenuation_with_meta(&mut path_profile, src_height, rcv_alt);
 
     let (_screening_atten, obstacle_trace) = propagation::path_effects::screening_attenuation_with_meta(
@@ -2620,9 +2612,8 @@ pub fn compute_path_effects(
         src_height,
         rcv_alt,
         exclusion_radius_m,
-        &terrain_atten,
+        &terrain.attenuation_bands,
     );
-    let _ = terrain_atten;
 
     let forest_depth = propagation::path_profile::vegetation_run_length(
         &path_profile.t,
@@ -2633,8 +2624,8 @@ pub fn compute_path_effects(
 
     (
         TerrainBreakdown {
-            delta_m: (terrain_delta * 100.0).round() / 100.0,
-            is_double: terrain_is_double,
+            delta_m: (terrain.delta_m * 100.0).round() / 100.0,
+            is_double: terrain.is_double,
             profile_points: terrain_profile_points,
         },
         ScreeningBreakdown {

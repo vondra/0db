@@ -141,24 +141,6 @@ pub fn vegetation_runs_and_depth(t: &[f64], forest: &[u8], dist_m: f64) -> (Vec<
     (runs, total_depth)
 }
 
-/// Build a `TerrainTrace` from the values already returned by
-/// `terrain_attenuation_with_meta`. The edge-apex position is not currently
-/// exposed by that function — populated with `None` until the propagation
-/// module learns to report it.
-pub fn terrain_trace(
-    atten_bands: [f64; NUM_BANDS],
-    delta_m: f64,
-    is_double: bool,
-) -> TerrainTrace {
-    TerrainTrace {
-        delta_m,
-        is_double,
-        attenuation_bands: atten_bands,
-        edge_apex_t: None,
-        edge_apex_elev_m: None,
-    }
-}
-
 /// Build a `ScreeningTrace` from the values already returned by
 /// `screening_attenuation_with_meta`.
 pub fn screening_trace(
@@ -248,9 +230,7 @@ pub(crate) struct BuildAircraftGroundTrace<'a> {
     pub ground_g: f64,
     pub kind_idx: usize, // 0=runway, 1=taxi, 2=apron
     pub path_profile: PathProfile,
-    pub terrain_atten: [f64; NUM_BANDS],
-    pub terrain_delta: f64,
-    pub terrain_is_double: bool,
+    pub terrain: TerrainTrace,
     pub screening_atten: [f64; NUM_BANDS],
     pub obstacle_trace: ScreeningObstacleTrace,
     pub veg_atten: [f64; NUM_BANDS],
@@ -272,9 +252,7 @@ pub(crate) fn build_aircraft_ground_segment_trace(
         ground_g,
         kind_idx,
         path_profile,
-        terrain_atten,
-        terrain_delta,
-        terrain_is_double,
+        terrain,
         screening_atten,
         obstacle_trace,
         veg_atten,
@@ -332,7 +310,7 @@ pub(crate) fn build_aircraft_ground_segment_trace(
         },
         baseline: baseline_trace(d_slant, src_alt, ground_g, flc, iso9613::SourceGeometry::Line),
         path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
-        terrain: terrain_trace(terrain_atten, terrain_delta, terrain_is_double),
+        terrain,
         screening: screening_trace(screening_atten, obstacle_trace),
         vegetation,
         ground: ground_trace(ground_g),
@@ -359,9 +337,7 @@ pub(crate) struct BuildRoadTrace<'a> {
     pub speed_kmh: f64,
     pub surf_corr: f64,
     pub path_profile: PathProfile,
-    pub terrain_atten: [f64; NUM_BANDS],
-    pub terrain_delta: f64,
-    pub terrain_is_double: bool,
+    pub terrain: TerrainTrace,
     pub screening_atten: [f64; NUM_BANDS],
     pub obstacle_trace: ScreeningObstacleTrace,
     pub veg_atten: [f64; NUM_BANDS],
@@ -378,9 +354,7 @@ pub(crate) struct BuildPointTrace<'a> {
     pub prop_dist: f64,
     pub ground_g: f64,
     pub path_profile: PathProfile,
-    pub terrain_atten: [f64; NUM_BANDS],
-    pub terrain_delta: f64,
-    pub terrain_is_double: bool,
+    pub terrain: TerrainTrace,
     pub screening_atten: [f64; NUM_BANDS],
     pub obstacle_trace: ScreeningObstacleTrace,
     pub veg_atten: [f64; NUM_BANDS],
@@ -398,9 +372,7 @@ pub(crate) fn build_point_segment_trace(inputs: BuildPointTrace<'_>) -> SegmentT
         prop_dist,
         ground_g,
         path_profile,
-        terrain_atten,
-        terrain_delta,
-        terrain_is_double,
+        terrain,
         screening_atten,
         obstacle_trace,
         veg_atten,
@@ -481,7 +453,7 @@ pub(crate) fn build_point_segment_trace(inputs: BuildPointTrace<'_>) -> SegmentT
             iso9613::SourceGeometry::Point,
         ),
         path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
-        terrain: terrain_trace(terrain_atten, terrain_delta, terrain_is_double),
+        terrain,
         screening: screening_trace(screening_atten, obstacle_trace),
         vegetation,
         ground: ground_trace(ground_g),
@@ -501,9 +473,7 @@ pub(crate) struct BuildRailTrace<'a> {
     pub q_frt: f64,
     pub speed_kmh: f64,
     pub path_profile: PathProfile,
-    pub terrain_atten: [f64; NUM_BANDS],
-    pub terrain_delta: f64,
-    pub terrain_is_double: bool,
+    pub terrain: TerrainTrace,
     pub screening_atten: [f64; NUM_BANDS],
     pub obstacle_trace: ScreeningObstacleTrace,
     pub veg_atten: [f64; NUM_BANDS],
@@ -523,9 +493,7 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
         q_frt,
         speed_kmh,
         path_profile,
-        terrain_atten,
-        terrain_delta,
-        terrain_is_double,
+        terrain,
         screening_atten,
         obstacle_trace,
         veg_atten,
@@ -591,7 +559,7 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
             iso9613::SourceGeometry::Line,
         ),
         path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
-        terrain: terrain_trace(terrain_atten, terrain_delta, terrain_is_double),
+        terrain,
         screening: screening_trace(screening_atten, obstacle_trace),
         vegetation,
         ground: ground_trace(ground_g),
@@ -616,9 +584,7 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
         speed_kmh,
         surf_corr,
         path_profile,
-        terrain_atten,
-        terrain_delta,
-        terrain_is_double,
+        terrain,
         screening_atten,
         obstacle_trace,
         veg_atten,
@@ -696,7 +662,7 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
             iso9613::SourceGeometry::Line,
         ),
         path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
-        terrain: terrain_trace(terrain_atten, terrain_delta, terrain_is_double),
+        terrain,
         screening: screening_trace(screening_atten, obstacle_trace),
         vegetation,
         ground: ground_trace(ground_g),
@@ -720,7 +686,45 @@ mod tests {
 
     #[test]
     fn terrain_trace_shape() {
-        assert_bands_no_scalar(&terrain_trace([0.0; NUM_BANDS], 0.0, false));
+        let trace = TerrainTrace {
+            delta_m: 0.0,
+            is_double: false,
+            attenuation_bands: [0.0; NUM_BANDS],
+            n_edges: 0,
+            edges: Vec::new(),
+            delta_star_m: 0.0,
+            edge_distance_m: 0.0,
+            dominant_edge_idx: 0,
+        };
+        assert_bands_no_scalar(&trace);
+    }
+
+    #[test]
+    fn terrain_trace_edges_match_n_edges() {
+        // Shape guarantee: edges.len() == n_edges after serde round-trip.
+        use crate::types::EdgePoint;
+        let trace = TerrainTrace {
+            delta_m: 0.5,
+            is_double: true,
+            attenuation_bands: [1.0; NUM_BANDS],
+            n_edges: 3,
+            edges: vec![
+                EdgePoint { t: 0.2, elevation_m: 120.0 },
+                EdgePoint { t: 0.5, elevation_m: 140.0 },
+                EdgePoint { t: 0.8, elevation_m: 130.0 },
+            ],
+            delta_star_m: 0.12,
+            edge_distance_m: 900.0,
+            dominant_edge_idx: 1,
+        };
+        let json = serde_json::to_string(&trace).unwrap();
+        let roundtrip: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let edges_len = roundtrip["edges"].as_array().unwrap().len();
+        let n_edges = roundtrip["n_edges"].as_u64().unwrap();
+        assert_eq!(
+            edges_len as u64, n_edges,
+            "edges.len() must match n_edges after serde"
+        );
     }
 
     #[test]
