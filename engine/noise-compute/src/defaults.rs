@@ -243,12 +243,13 @@ mod tests {
     }
 
     #[test]
-    fn us_scales_close_to_world_via_gdp() {
-        // US GDP_PPP ~ $75k ≈ 1.09 × DE → sqrt scale ≈ 1.04
+    fn us_scales_below_world_via_sparse_density() {
+        // US pop_density ~37/km² (sparse relative to EU) → scale ≈ 0.89
+        // → motorway ≈ 27k. (I.3 density-based, ±30% band.)
         let a = admin_for(b"US", 0, Continent::NorthAmerica);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 28_000.0 && total < 35_000.0, "US motorway ≈ 31k, got {}", total);
+        assert!(total > 24_000.0 && total < 30_000.0, "US motorway ≈ 27k, got {}", total);
     }
 
     #[test]
@@ -306,12 +307,13 @@ mod tests {
     }
 
     #[test]
-    fn dz_algeria_scales_from_gdp() {
-        // Algeria GDP_PPP ~$13k → sqrt(13/69) ≈ 0.43 → motorway ~13k
+    fn dz_algeria_scales_from_density() {
+        // Algeria density ~19/km² (sparse) → density-based scale ≈ 0.77
+        // → motorway ≈ 23k. (I.3 density-based.)
         let a = admin_for(b"DZ", 0, Continent::Africa);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 10_000.0 && total < 16_000.0, "DZ motorway ≈ 13k, got {}", total);
+        assert!(total > 20_000.0 && total < 26_000.0, "DZ motorway ≈ 23k, got {}", total);
     }
 
     #[test]
@@ -321,24 +323,34 @@ mod tests {
         assert_eq!(v, WORLD_DEFAULT[12]);
     }
 
-    // ── WB-backed country scaling tests (plan v5 §I.3) ────────────────────
+    // ── Density-based country scaling tests (plan v5 §I.3 revised) ──────
     #[test]
-    fn de_reference_motorway_matches_world() {
-        // DE is the reference for GDP_PPP scaling → scale ≈ 1.0
+    fn de_dense_country_hits_upper_clamp() {
+        // DE density 238/km² → tanh ≈ 0.96 → scale clamps at 1.3 → 39k.
         let a = admin_for(b"DE", 0, Continent::Europe);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!((total - 30000.0).abs() < 100.0, "DE motorway ≈ 30k, got {}", total);
+        assert!(total > 37_000.0 && total < 40_000.0, "DE motorway ≈ 39k, got {}", total);
     }
 
     #[test]
-    fn low_gdp_country_scales_down_motorway() {
-        // NG (Nigeria) $5.5k PPP → sqrt(5500/69000) ≈ 0.28, expected motorway
-        // total ≈ 0.28 × 30000 = 8400. Accept ±15 % tolerance for WB data drift.
+    fn high_density_country_scales_up() {
+        // NG (Nigeria) density ~230/km² → scale ≈ 1.3 (upper clamp)
+        // → motorway ≈ 39k. Data-driven: dense networks concentrate traffic.
         let a = admin_for(b"NG", 0, Continent::Africa);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 5000.0 && total < 12000.0, "NG motorway in [5k,12k], got {}", total);
+        assert!(total > 36_000.0 && total < 40_000.0, "NG motorway ≈ 39k, got {}", total);
+    }
+
+    #[test]
+    fn sparse_country_scales_down() {
+        // MN (Mongolia) density ~2/km² → tanh → scale 0.70 (lower clamp)
+        // → motorway ≈ 21k. Matches user's Norway-Egypt intuition.
+        let a = admin_for(b"MN", 0, Continent::Asia);
+        let (l, m, h, x) = resolve_traffic_default(0, a);
+        let total = l + m + h + x;
+        assert!(total > 19_000.0 && total < 23_000.0, "MN motorway ≈ 21k, got {}", total);
     }
 
     #[test]
@@ -367,13 +379,13 @@ mod tests {
     }
 
     #[test]
-    fn continent_arm_applies_gdp_scale() {
-        // Unknown ISO in Africa continent → Africa pop-weighted scale.
-        // Africa mean scale ≈ 0.29 → motorway ≈ 8.7k.
+    fn continent_arm_applies_density_scale() {
+        // Unknown ISO in Africa continent → Africa pop-weighted density scale.
+        // Africa mean scale ≈ 1.065 → motorway ≈ 32k.
         let a = admin_for(b"ZZ", 0, Continent::Africa);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 5000.0 && total < 12000.0, "Africa continent mtw in [5k,12k], got {}", total);
+        assert!(total > 30_000.0 && total < 34_000.0, "Africa continent mtw ≈ 32k, got {}", total);
     }
 
     #[test]
