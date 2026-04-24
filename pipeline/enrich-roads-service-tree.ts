@@ -6,7 +6,9 @@
  * traffic flow. Accumulates trips bottom-up from leaves toward roots — dead-end
  * streets get only their local buildings, collector roads accumulate sub-branches.
  *
- * Only modifies: road_class >= 5 AND traffic_source == 0.
+ * Only modifies: road_class in [5..9] (local roads) AND traffic_source == 0.
+ * Excludes motorway_link / trunk_link / primary_link (10/11/12) — those carry
+ * highway flow that residential accumulation drastically undercounts.
  * Sets traffic_source = 2 (heuristic estimate).
  *
  * Usage:
@@ -164,9 +166,16 @@ function buildGraph(table: any) {
 
     const cls = (roadClass.get(i) as number) ?? 5
     const existingId = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
-    // Only residential (class >= 5) and only where this heuristic can overwrite the row
-    // (empty slot or lower-priority dataset). service-tree priority is low (10).
-    if (cls >= 5 && shouldOverwrite(existingId, MY_DATASET_ID)) {
+    // Only local roads (residential, living_street, service, track, unclassified)
+    // and only where this heuristic can overwrite the row (empty slot or lower-
+    // priority dataset). service-tree priority is low (10).
+    //
+    // Excludes motorway_link / trunk_link / primary_link (codes 10-12). Those
+    // carry highway-derived traffic — flow accumulation from local residential
+    // dwellings undercounts them by ~100× (a GC-1 on-ramp got 20/day here vs
+    // 6000/day from the class-default 20 % mainline heuristic that kicks in
+    // when traffic_source stays 0).
+    if (cls >= 5 && cls <= 9 && shouldOverwrite(existingId, MY_DATASET_ID)) {
       eligible[i] = 1
       sNode.eligibleEdges.push(i)
       eNode.eligibleEdges.push(i)
