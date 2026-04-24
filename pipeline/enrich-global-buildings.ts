@@ -18,7 +18,7 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const PARQUET_DIR = resolve(ROOT, 'data/enrichment/global/overture-buildings/parquet')
@@ -29,7 +29,7 @@ const CACHE_DIR = resolve(ROOT, 'data/enrichment/global/overture-buildings')
 const DOWNLOAD_SH = resolve(ROOT, 'scripts/rasters/download-overture-buildings.sh')
 const MERGE_SH = resolve(ROOT, 'scripts/rasters/merge-building-tiles.sh')
 
-const DATASET = DATASETS_BY_KEY.get('global-overture')!
+const DATASET = SOURCES_BY_KEY.get('global-overture')!
 
 const args = process.argv.slice(2)
 const prefixIdx = args.indexOf('--prefix')

@@ -21,10 +21,10 @@ import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Uint8, Uint16 } from 'apache-arrow'
 import proj4 from 'proj4'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('es-catastro')!.id
+const MY_SOURCE_ID = SOURCES_BY_KEY.get('es-catastro')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -541,7 +541,7 @@ function enrichHexes(catastroBuildings: CatastroBuilding[]): void {
       newDatasetId[i] = curDatasetId
 
       // Priority gate: skip if a higher-priority dataset owns this row.
-      if (!shouldOverwrite(curDatasetId, MY_DATASET_ID)) continue
+      if (!shouldOverwrite(curDatasetId, MY_SOURCE_ID)) continue
       // Only enrich if floors are missing and within Spain
       if (curFloors > 0) continue
       if (lat < 27 || lat > 44 || lon < -19 || lon > 5) continue
@@ -567,7 +567,7 @@ function enrichHexes(catastroBuildings: CatastroBuilding[]): void {
 
       if (bestFloors > 0) {
         newFloors[i] = Math.min(bestFloors, 255)
-        newDatasetId[i] = MY_DATASET_ID
+        newDatasetId[i] = MY_SOURCE_ID
         hexEnriched++
         floorsAdded++
       }

@@ -13,10 +13,10 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Uint8, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('cz-ruian-vfr')!.id
+const MY_SOURCE_ID = SOURCES_BY_KEY.get('cz-ruian-vfr')!.id
 import proj4 from 'proj4'
 
 // Define S-JTSK (EPSG:5514) projection
@@ -251,7 +251,7 @@ function enrichHexes(ruianBuildings: RuianBuilding[]): void {
       newDatasetId[i] = curDatasetId
 
       // Priority gate: skip if a higher-priority dataset owns this row.
-      if (!shouldOverwrite(curDatasetId, MY_DATASET_ID)) continue
+      if (!shouldOverwrite(curDatasetId, MY_SOURCE_ID)) continue
 
       // Find nearest RÚIAN building within 30m
       const gridKey = `${Math.floor(lat * 100)}_${Math.floor(lon * 100)}`
@@ -273,7 +273,7 @@ function enrichHexes(ruianBuildings: RuianBuilding[]): void {
 
       if (bestRuian) {
         hexEnriched++
-        newDatasetId[i] = MY_DATASET_ID
+        newDatasetId[i] = MY_SOURCE_ID
         // Fill floors if missing in OSM
         if (curFloors === 0 && bestRuian.floors > 0) {
           newFloors[i] = Math.min(bestRuian.floors, 255)
