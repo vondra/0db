@@ -7,6 +7,7 @@
 //! - `compute_at_point()` — single receiver (popup)
 //! - `compute_batch()` — many receivers (pipeline)
 
+pub mod admin;
 pub mod confidence;
 pub mod constants;
 pub mod emission;
