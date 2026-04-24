@@ -420,13 +420,14 @@ Road `road_class` column (u8) encoding:
 | 12 | primary_link |
 
 Links (codes 10-12, OSM `*_link` — slip roads / on-/off-ramps) share the
-mainline motorway/trunk day-evening-night split (65/20/15) but carry 20 % of
+mainline motorway/trunk day-evening-night split (65/20/15) but carry 15 % of
 the mainline default AADT and a lower default speed — see the traffic/speed
 tables above. Rationale: HCM 7 / FEHRL / CERTU put on-/off-ramp flow at
-10-30 % of the connected mainline; 20 % is the defensible middle, and
-national censuses never publish link-level AADT separately. `secondary_link`
-and `tertiary_link` stay on the mainline codes (3/4) because their flow is
-closer to regular urban streets.
+10-30 % of the connected mainline; 15 % sits at the lower-realistic end of
+that range and matches Pasito Blanco GC-1 popup validation (user perceived
+the previous 20 % default as too loud). National censuses never publish
+link-level AADT separately. `secondary_link` and `tertiary_link` stay on the
+mainline codes (3/4) because their flow is closer to regular urban streets.
 
 For `highway=track`, if the `surface` tag is missing the extractor defaults to
 `unpaved` (+3 dB rolling correction), reflecting OSM convention that tracks
