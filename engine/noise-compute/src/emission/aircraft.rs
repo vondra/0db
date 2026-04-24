@@ -21,10 +21,11 @@ use std::sync::OnceLock;
 /// At this raw NPD SEL, a segment's contribution is negligible (< 0.15 dB on total Lden).
 pub const AIRCRAFT_NPD_REACH_THRESHOLD_DB: f64 = 40.0;
 
-/// Hard cap on per-profile slant reach (meters). Covers widebody departure
-/// reach at the 40 dB threshold (~15.5 km) without clamping, and bounds
-/// CSR grid and r-tree query area to a manageable size.
-pub const AIRCRAFT_NPD_REACH_CAP_M: f64 = 16_000.0;
+/// Hard cap on per-profile slant reach (meters). Bounds CSR grid and r-tree
+/// query area. With the physics tail, jets still contribute audible energy
+/// well past this cap (widebody departure @ 40 dB ~ 15.5 km); the cap is
+/// tuned for runtime budget, not physical threshold.
+pub const AIRCRAFT_NPD_REACH_CAP_M: f64 = 10_000.0;
 
 /// Reference slant (meters) at the last NPD table point (25 000 ft). Anchor
 /// for physics-based extrapolation of SEL beyond the table.
