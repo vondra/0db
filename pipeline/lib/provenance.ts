@@ -12,30 +12,22 @@
 
 import { promises as fs } from 'node:fs'
 import { tableFromIPC, tableToIPC, type Table } from 'apache-arrow'
-import { DATASETS_BY_ID } from './enrichment-datasets.js'
+import { shouldOverwrite } from './sources.js'
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Priority-based overwrite decision
+// Overwrite decision (re-exported from sources.ts for a stable call site)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Returns true if `selfId` should win over the `existingId` already in this row.
+ * Gate for enricher writes. Returns true if `selfId` should win over the
+ * row's current `existingId`. See `./sources.ts::shouldOverwrite` for the
+ * full rule list (provenance rank → year → id tiebreaks, with idempotent
+ * and empty-slot early returns).
  *
- * Rules (in order):
- *   - empty slot (existing=0) → overwrite
- *   - idempotent re-run (existing=self) → overwrite (safe — same data source)
- *   - unknown id in registry → overwrite (defensive: treat as legacy)
- *   - strict priority comparison
- *   - tie on priority → higher id wins (deterministic, order-independent)
+ * Kept here as a re-export so existing callers
+ * (`import { shouldOverwrite } from './lib/provenance.js'`) are unchanged.
  */
-export function shouldOverwrite(existingId: number, selfId: number): boolean {
-  if (existingId === 0 || existingId === selfId) return true
-  const existing = DATASETS_BY_ID.get(existingId)
-  const self = DATASETS_BY_ID.get(selfId)
-  if (!existing || !self) return true
-  if (self.priority !== existing.priority) return self.priority > existing.priority
-  return self.id > existing.id
-}
+export { shouldOverwrite }
 
 /**
  * Gates a row update: writes payload + provenance atomically only if self wins.
