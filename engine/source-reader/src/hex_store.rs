@@ -517,7 +517,7 @@ pub fn query_railways_from_batches(
         let trains_pax = col_i32(batch, "trains_passenger");
         let trains_frt = col_i32(batch, "trains_freight");
         let par_div = col_u8(batch, "parallel_divisor");
-        let dataset_id_col = col_u16(batch, "source_id");
+        let source_id_col = col_u16(batch, "source_id");
 
         for i in 0..n {
             let s_lat = slat.value(i);
@@ -561,7 +561,7 @@ pub fn query_railways_from_batches(
                 trains_passenger: trains_pax.map(|a| a.value(i)).unwrap_or(0),
                 trains_freight: trains_frt.map(|a| a.value(i)).unwrap_or(0),
                 parallel_divisor: par_div.map(|a| a.value(i)).unwrap_or(1),
-                source_id: dataset_id_col.map(|a| a.value(i)).unwrap_or(0),
+                source_id: source_id_col.map(|a| a.value(i)).unwrap_or(0),
                 dist_m: cp.dist_m,
                 cp_lat: cp.lat,
                 cp_lon: cp.lon,

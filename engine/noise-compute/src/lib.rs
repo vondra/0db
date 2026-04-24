@@ -2655,6 +2655,7 @@ pub fn compute_path_effects(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sources::AIRCRAFT_ADSB_SOURCE_ID;
 
     /// Mock raster sampler for testing.
     struct MockRasters;
@@ -2959,7 +2960,7 @@ mod tests {
                     ground_ops_kind: emission::aircraft::GROUND_OPS_KIND_NONE,
                     count_weight: 1.0,
                     surface_model: false,
-                    source_id: 1,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
                 });
             }
         }
@@ -3090,7 +3091,7 @@ mod tests {
             ground_ops_kind: emission::aircraft::GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
-                    source_id: 1,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         }];
 
         let config = ComputeConfig {
@@ -3181,5 +3182,15 @@ mod sources_tests {
     fn provenance_of_unknown_id_is_none() {
         assert_eq!(provenance_of(0), Provenance::None);
         assert_eq!(provenance_of(u16::MAX), Provenance::None);
+    }
+
+    #[test]
+    fn sources_sorted_by_id_for_binary_search() {
+        // get_source uses binary_search_by_key; the generator emits SOURCES
+        // in id-ascending order. Lock the invariant so a hand-edit to
+        // sources.rs (or a reordered DATASETS) can't silently break lookup.
+        for pair in SOURCES.windows(2) {
+            assert!(pair[0].id < pair[1].id, "SOURCES not sorted by id: {} then {}", pair[0].id, pair[1].id);
+        }
     }
 }

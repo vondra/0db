@@ -107,9 +107,20 @@ impl Source {
     pub const UNSPECIFIED: Source = SOURCES[0];
 }
 
-/// Linear scan by id. ~200 entries, called once per popup — O(n) is fine.
+/// Fixed source id for the single aircraft observational dataset
+/// (`global-adsb-planet`). Avoids scattering the magic literal `1`
+/// across every aircraft writer / reader.
+pub const AIRCRAFT_ADSB_SOURCE_ID: u16 = 1;
+
+/// Binary search by id — SOURCES is emitted sorted by id (generator
+/// preserves TS `DATASETS` order, which is id-ascending). Called per
+/// road / rail / industrial row in pipeline-worker + source-reader hot
+/// paths, so O(log N) beats the previous O(N).
 pub fn get_source(id: u16) -> Option<&'static Source> {
-    SOURCES.iter().find(|s| s.id == id)
+    SOURCES
+        .binary_search_by_key(&id, |s| s.id)
+        .ok()
+        .map(|idx| &SOURCES[idx])
 }
 
 /// Shorthand for the common "what's the provenance of this stamp" lookup.
