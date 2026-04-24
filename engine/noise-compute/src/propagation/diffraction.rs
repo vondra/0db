@@ -2,8 +2,11 @@
 //!
 //! Single diffraction (one edge, §7.3): max 20 dB
 //! Double diffraction (two edges, §7.4): max 25 dB
+//! Triple diffraction (three edges, project simplification — SPEC.md): max 25 dB
 //!
-//! Uses receiver height parameter (not hardcoded).
+//! Edge detection: upper convex hull of the sampled (t·dist, elevation) profile,
+//! filtered to samples above the source→receiver line-of-sight. Up to 3 edges
+//! kept (top-3 by LOS excess, then re-hulled for geometric validity).
 
 use crate::constants::*;
 use crate::types::NUM_BANDS;
@@ -11,20 +14,31 @@ use crate::types::NUM_BANDS;
 /// Result of path difference computation.
 pub struct DiffractionResult {
     pub delta: f64,         // path difference in meters
-    pub is_double: bool,    // true = two edges
-    pub edge_distance: f64, // distance between edges (for C₃), 0 for single
+    pub is_double: bool,    // true for 2 or 3 edges (back-compat)
+    pub edge_distance: f64, // N=2: |E1→E2|; N=3: |E1→E3| (first-to-last); 0 for single
     /// CNOSSOS-EU §2.5.6(c) Rayleigh δ*: path difference over the dominant edge
     /// with mirror source/receiver reflected across the per-side mean ground
     /// planes. 0.0 when there is no obstruction.
     pub delta_star: f64,
+    /// Number of diffraction edges found (0, 1, 2, or 3).
+    pub n_edges: u8,
+    /// Profile sample indexes of the edges (first `n_edges` entries valid).
+    pub edge_indices: [usize; 3],
 }
 
-/// Compute double path difference from elevation profile.
-///
-/// `t`: fractional positions 0..=1 along the path (non-uniform cadence OK).
-/// `profile`: ground elevation at each t. `t.len() == profile.len()`, includes
-/// t=0 (source foot) and t=1 (receiver foot).
-/// Source at profile[0] + source_height. Receiver at profile[last] + receiver_height.
+#[inline]
+fn empty_result() -> DiffractionResult {
+    DiffractionResult {
+        delta: 0.0,
+        is_double: false,
+        edge_distance: 0.0,
+        delta_star: 0.0,
+        n_edges: 0,
+        edge_indices: [0; 3],
+    }
+}
+
+/// Compute path difference over a single elevation profile.
 pub fn compute_path_difference(
     t: &[f64],
     profile: &[f64],
@@ -32,148 +46,267 @@ pub fn compute_path_difference(
     source_height: f64,
     receiver_height: f64,
 ) -> DiffractionResult {
-    let n = profile.len();
-    debug_assert_eq!(t.len(), n, "t and profile must have same length");
+    compute_path_difference_with_ols(t, profile, profile, total_dist, source_height, receiver_height)
+}
+
+/// Compute path difference with separate profiles for edge detection vs. OLS
+/// mean-ground fit.
+///
+/// `edge_profile`: profile used for edge finding + δ geometry (may include
+///   building heights as a composite top).
+/// `ols_profile`: profile used for the CNOSSOS §2.5.6(c) δ* mean-ground fit —
+///   **must be bare-earth elevation** even when edges come from a composite.
+pub fn compute_path_difference_with_ols(
+    t: &[f64],
+    edge_profile: &[f64],
+    ols_profile: &[f64],
+    total_dist: f64,
+    source_height: f64,
+    receiver_height: f64,
+) -> DiffractionResult {
+    let n = edge_profile.len();
+    debug_assert_eq!(t.len(), n, "t and edge_profile must have same length");
+    debug_assert_eq!(ols_profile.len(), n, "ols_profile length must match");
     if n < 3 || total_dist < 30.0 {
-        return DiffractionResult {
-            delta: 0.0,
-            is_double: false,
-            edge_distance: 0.0,
-            delta_star: 0.0,
-        };
+        return empty_result();
     }
 
-    let src_elev = profile[0] + source_height;
-    let rcv_elev = profile[n - 1] + receiver_height;
+    let src_elev = ols_profile[0] + source_height;
+    let rcv_elev = ols_profile[n - 1] + receiver_height;
 
-    // Find source-side edge (steepest upward angle from source).
-    let mut max_angle_src = f64::NEG_INFINITY;
-    let mut edge1: i32 = -1;
-    for i in 1..n - 1 {
-        let dh = t[i] * total_dist;
-        if dh < 1e-6 {
-            continue;
-        }
-        let angle = (profile[i] - src_elev) / dh;
-        if angle > max_angle_src {
-            max_angle_src = angle;
-            edge1 = i as i32;
+    // Upper convex hull over (t·dist, edge_profile).
+    let hull = upper_convex_hull(t, edge_profile, total_dist);
+
+    // Filter hull to middle vertices above the source→receiver LOS.
+    let mut candidates: Vec<usize> = hull
+        .into_iter()
+        .filter(|&i| i != 0 && i != n - 1)
+        .filter(|&i| edge_profile[i] > src_elev + (rcv_elev - src_elev) * t[i])
+        .collect();
+
+    if candidates.is_empty() {
+        return empty_result();
+    }
+
+    // Cap at 3 edges — project simplification (SPEC.md). Drop lowest-excess,
+    // then re-hull on {top_3 ∪ endpoints} to guarantee geometric validity.
+    if candidates.len() > 3 {
+        let mut by_excess: Vec<(usize, f64)> = candidates
+            .iter()
+            .map(|&i| {
+                let los = src_elev + (rcv_elev - src_elev) * t[i];
+                (i, edge_profile[i] - los)
+            })
+            .collect();
+        by_excess.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        by_excess.truncate(3);
+        let mut top3: Vec<usize> = by_excess.into_iter().map(|(i, _)| i).collect();
+        top3.sort();
+        candidates = rehull_over_points(&top3, t, edge_profile, total_dist, src_elev, rcv_elev, n);
+        if candidates.is_empty() {
+            return empty_result();
         }
     }
 
-    // Find receiver-side edge (steepest upward angle from receiver).
-    let mut max_angle_rcv = f64::NEG_INFINITY;
-    let mut edge2: i32 = -1;
-    for i in (1..n - 1).rev() {
-        let dh = (1.0 - t[i]) * total_dist;
-        if dh < 1e-6 {
-            continue;
-        }
-        let angle = (profile[i] - rcv_elev) / dh;
-        if angle > max_angle_rcv {
-            max_angle_rcv = angle;
-            edge2 = i as i32;
-        }
-    }
-
-    if edge1 < 0 || edge2 < 0 {
-        return DiffractionResult {
-            delta: 0.0,
-            is_double: false,
-            edge_distance: 0.0,
-            delta_star: 0.0,
-        };
-    }
-
-    let e1 = edge1 as usize;
-    let e2 = edge2 as usize;
-
-    // Check if edges are above line-of-sight.
-    let los1 = src_elev + (rcv_elev - src_elev) * t[e1];
-    let los2 = src_elev + (rcv_elev - src_elev) * t[e2];
-    if profile[e1] <= los1 && profile[e2] <= los2 {
-        return DiffractionResult {
-            delta: 0.0,
-            is_double: false,
-            edge_distance: 0.0,
-            delta_star: 0.0,
-        };
+    // Adjacent-edge collapse: treat as single diffraction at higher-excess index.
+    if candidates.len() >= 2 && candidates[1] - candidates[0] <= 1 {
+        let e1 = candidates[0];
+        let e2 = candidates[1];
+        let los1 = src_elev + (rcv_elev - src_elev) * t[e1];
+        let los2 = src_elev + (rcv_elev - src_elev) * t[e2];
+        let pick = if (edge_profile[e1] - los1) >= (edge_profile[e2] - los2) { e1 } else { e2 };
+        candidates = vec![pick];
     }
 
     let dsr = ((total_dist * total_dist) + (rcv_elev - src_elev).powi(2)).sqrt();
 
-    // Same edge or adjacent → single diffraction.
-    if e1 >= e2 || e2 - e1 <= 1 {
-        let idx = if (profile[e1] - los1) >= (profile[e2] - los2) {
-            e1
-        } else {
-            e2
-        };
-        let los_idx = src_elev + (rcv_elev - src_elev) * t[idx];
-        if profile[idx] <= los_idx {
-            return DiffractionResult {
-                delta: 0.0,
-                is_double: false,
-                edge_distance: 0.0,
-                delta_star: 0.0,
-            };
-        }
-
-        let d_sg = t[idx] * total_dist;
-        let d_rg = (1.0 - t[idx]) * total_dist;
-        let top = profile[idx];
-        let d_sb = (d_sg * d_sg + (top - src_elev).powi(2)).sqrt();
-        let d_br = (d_rg * d_rg + (top - rcv_elev).powi(2)).sqrt();
-
-        let delta_star =
-            compute_delta_star(t, profile, idx, total_dist, source_height, receiver_height);
-
-        return DiffractionResult {
-            delta: d_sb + d_br - dsr,
-            is_double: false,
-            edge_distance: 0.0,
-            delta_star,
-        };
+    match candidates.len() {
+        0 => empty_result(),
+        1 => compute_single_edge(t, edge_profile, ols_profile, total_dist, candidates[0],
+            src_elev, rcv_elev, dsr, source_height, receiver_height),
+        2 => compute_double_edge(t, edge_profile, ols_profile, total_dist, candidates[0], candidates[1],
+            src_elev, rcv_elev, dsr, source_height, receiver_height),
+        3 => compute_triple_edge(t, edge_profile, ols_profile, total_dist, candidates[0], candidates[1], candidates[2],
+            src_elev, rcv_elev, dsr, source_height, receiver_height),
+        _ => empty_result(),
     }
+}
 
-    // Double diffraction: two distinct edges.
-    let top1 = profile[e1];
-    let top2 = profile[e2];
+/// Upper convex hull via Andrew's monotone chain.
+#[inline]
+fn upper_convex_hull(t: &[f64], profile: &[f64], total_dist: f64) -> Vec<usize> {
+    let n = profile.len();
+    let mut hull: Vec<usize> = Vec::with_capacity(n);
+    for i in 0..n {
+        let px = t[i] * total_dist;
+        let py = profile[i];
+        while hull.len() >= 2 {
+            let a = hull[hull.len() - 2];
+            let b = hull[hull.len() - 1];
+            let ax = t[a] * total_dist;
+            let ay = profile[a];
+            let bx = t[b] * total_dist;
+            let by = profile[b];
+            let cross = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+            if cross >= 0.0 {
+                hull.pop();
+            } else {
+                break;
+            }
+        }
+        hull.push(i);
+    }
+    hull
+}
+
+/// After top-3 truncation, rebuild the hull over {endpoints ∪ top_3}.
+fn rehull_over_points(
+    top3: &[usize],
+    t: &[f64],
+    profile: &[f64],
+    total_dist: f64,
+    src_elev: f64,
+    rcv_elev: f64,
+    n: usize,
+) -> Vec<usize> {
+    let mut idx = vec![0usize];
+    idx.extend_from_slice(top3);
+    idx.push(n - 1);
+    let mut xs = Vec::with_capacity(idx.len());
+    let mut ys = Vec::with_capacity(idx.len());
+    for (k, &i) in idx.iter().enumerate() {
+        xs.push(t[i] * total_dist);
+        let h = if k == 0 {
+            src_elev
+        } else if k == idx.len() - 1 {
+            rcv_elev
+        } else {
+            profile[i]
+        };
+        ys.push(h);
+    }
+    let mut hull: Vec<usize> = Vec::with_capacity(idx.len());
+    for k in 0..idx.len() {
+        while hull.len() >= 2 {
+            let a = hull[hull.len() - 2];
+            let b = hull[hull.len() - 1];
+            let cross = (xs[b] - xs[a]) * (ys[k] - ys[a]) - (ys[b] - ys[a]) * (xs[k] - xs[a]);
+            if cross >= 0.0 {
+                hull.pop();
+            } else {
+                break;
+            }
+        }
+        hull.push(k);
+    }
+    hull.into_iter()
+        .filter(|&k| k != 0 && k != idx.len() - 1)
+        .map(|k| idx[k])
+        .collect()
+}
+
+fn compute_single_edge(
+    t: &[f64], edge_profile: &[f64], ols_profile: &[f64], total_dist: f64, idx: usize,
+    src_elev: f64, rcv_elev: f64, dsr: f64,
+    source_height: f64, receiver_height: f64,
+) -> DiffractionResult {
+    let los = src_elev + (rcv_elev - src_elev) * t[idx];
+    if edge_profile[idx] <= los {
+        return empty_result();
+    }
+    let d_sg = t[idx] * total_dist;
+    let d_rg = (1.0 - t[idx]) * total_dist;
+    let top = edge_profile[idx];
+    let d_sb = (d_sg * d_sg + (top - src_elev).powi(2)).sqrt();
+    let d_br = (d_rg * d_rg + (top - rcv_elev).powi(2)).sqrt();
+    let delta_star =
+        compute_delta_star(t, ols_profile, idx, total_dist, source_height, receiver_height);
+    DiffractionResult {
+        delta: d_sb + d_br - dsr,
+        is_double: false,
+        edge_distance: 0.0,
+        delta_star,
+        n_edges: 1,
+        edge_indices: [idx, 0, 0],
+    }
+}
+
+fn compute_double_edge(
+    t: &[f64], edge_profile: &[f64], ols_profile: &[f64], total_dist: f64, e1: usize, e2: usize,
+    src_elev: f64, rcv_elev: f64, dsr: f64,
+    source_height: f64, receiver_height: f64,
+) -> DiffractionResult {
+    let top1 = edge_profile[e1];
+    let top2 = edge_profile[e2];
     let d1 = t[e1] * total_dist;
-
-    let d_se1 = (d1 * d1 + (top1 - src_elev).powi(2)).sqrt();
-
-    // Edge-to-edge: straight-line through air (NOT along ground contour).
-    // WHY: Sound travels in a straight line between diffraction edges.
-    // The old code followed the terrain surface (dipping into valleys),
-    // grossly overestimating the path difference and over-attenuating
-    // noise behind double hills (up to 25 dB cap).
     let d2 = t[e2] * total_dist;
+    let d_se1 = (d1 * d1 + (top1 - src_elev).powi(2)).sqrt();
     let d_e1e2 = ((d2 - d1).powi(2) + (top2 - top1).powi(2)).sqrt();
-
     let d2r = (1.0 - t[e2]) * total_dist;
     let d_e2r = (d2r * d2r + (top2 - rcv_elev).powi(2)).sqrt();
-
     let delta = (d_se1 + d_e1e2 + d_e2r - dsr).max(0.0);
 
-    // CNOSSOS §2.5.6(c) "same edge D": pick the edge with the larger excess above LOS.
-    let d_idx = if profile[e1] - los1 >= profile[e2] - los2 { e1 } else { e2 };
+    let los1 = src_elev + (rcv_elev - src_elev) * t[e1];
+    let los2 = src_elev + (rcv_elev - src_elev) * t[e2];
+    let d_idx = if edge_profile[e1] - los1 >= edge_profile[e2] - los2 { e1 } else { e2 };
     let delta_star =
-        compute_delta_star(t, profile, d_idx, total_dist, source_height, receiver_height);
+        compute_delta_star(t, ols_profile, d_idx, total_dist, source_height, receiver_height);
 
     DiffractionResult {
         delta,
         is_double: true,
         edge_distance: d_e1e2,
         delta_star,
+        n_edges: 2,
+        edge_indices: [e1, e2, 0],
+    }
+}
+
+/// Triple-edge cascade. ISO/CNOSSOS silent for N=3; project simplification.
+/// `e` for C₃ is first-to-last path distance.
+fn compute_triple_edge(
+    t: &[f64], edge_profile: &[f64], ols_profile: &[f64], total_dist: f64, e1: usize, e2: usize, e3: usize,
+    src_elev: f64, rcv_elev: f64, dsr: f64,
+    source_height: f64, receiver_height: f64,
+) -> DiffractionResult {
+    let top1 = edge_profile[e1];
+    let top2 = edge_profile[e2];
+    let top3 = edge_profile[e3];
+    let d1 = t[e1] * total_dist;
+    let d2 = t[e2] * total_dist;
+    let d3 = t[e3] * total_dist;
+
+    let d_se1 = (d1 * d1 + (top1 - src_elev).powi(2)).sqrt();
+    let d_e1e2 = ((d2 - d1).powi(2) + (top2 - top1).powi(2)).sqrt();
+    let d_e2e3 = ((d3 - d2).powi(2) + (top3 - top2).powi(2)).sqrt();
+    let d_e3r = ((total_dist - d3).powi(2) + (top3 - rcv_elev).powi(2)).sqrt();
+    let delta = (d_se1 + d_e1e2 + d_e2e3 + d_e3r - dsr).max(0.0);
+
+    let e_first_to_last = ((d3 - d1).powi(2) + (top3 - top1).powi(2)).sqrt();
+
+    let los1 = src_elev + (rcv_elev - src_elev) * t[e1];
+    let los2 = src_elev + (rcv_elev - src_elev) * t[e2];
+    let los3 = src_elev + (rcv_elev - src_elev) * t[e3];
+    let exc1 = edge_profile[e1] - los1;
+    let exc2 = edge_profile[e2] - los2;
+    let exc3 = edge_profile[e3] - los3;
+    let d_idx = if exc1 >= exc2 && exc1 >= exc3 { e1 }
+        else if exc2 >= exc3 { e2 }
+        else { e3 };
+    let delta_star =
+        compute_delta_star(t, ols_profile, d_idx, total_dist, source_height, receiver_height);
+
+    DiffractionResult {
+        delta,
+        is_double: true,
+        edge_distance: e_first_to_last,
+        delta_star,
+        n_edges: 3,
+        edge_indices: [e1, e2, e3],
     }
 }
 
 /// CNOSSOS-EU §2.5.6(c) Rayleigh δ*.
-///
-/// Fits per-side mean ground planes by unweighted OLS over DEM samples
-/// (including edge D), reflects source and receiver vertically across those
-/// planes (NMPB convention), returns δ* = |S*D| + |DR*| − |S*R*|.
 fn compute_delta_star(
     t: &[f64],
     profile: &[f64],
@@ -186,9 +319,6 @@ fn compute_delta_star(
     let d_sg = t[d_idx] * total_dist;
     let d_rg = (1.0 - t[d_idx]) * total_dist;
 
-    // Fit on x coordinates in meters, computed on the fly from `t` to avoid
-    // per-call Vec allocations. Receiver side re-origins x so z(x)=a·x+b with
-    // x=0 at the edge.
     let (_, b_src) = fit_plane(&t[..=d_idx], &profile[..=d_idx], 0.0, total_dist);
     let (a_rcv, b_rcv) = fit_plane(&t[d_idx..], &profile[d_idx..], t[d_idx], total_dist);
     let plane_rcv_at_end = a_rcv * d_rg + b_rcv;
@@ -203,10 +333,6 @@ fn compute_delta_star(
     (d_sd + d_dr - d_sr).max(0.0)
 }
 
-/// Unweighted least-squares line fit z = a·x + b where x = (t[i] − t_offset)·total_dist.
-///
-/// Avoids the intermediate Vec<f64> of the old `fit_plane(&[xs], &[zs])` by
-/// computing x on the fly from the t slice.
 fn fit_plane(ts: &[f64], zs: &[f64], t_offset: f64, total_dist: f64) -> (f64, f64) {
     let n = zs.len() as f64;
     debug_assert_eq!(ts.len(), zs.len());
@@ -226,7 +352,6 @@ fn fit_plane(ts: &[f64], zs: &[f64], t_offset: f64, total_dist: f64) -> (f64, f6
     }
     let denom = n * sxx - sx * sx;
     if denom.abs() < 1e-9 {
-        // Degenerate (n==1 or all samples at same x): horizontal plane at mean z.
         return (0.0, sz / n);
     }
     let a = (n * sxz - sx * sz) / denom;
@@ -234,11 +359,6 @@ fn fit_plane(ts: &[f64], zs: &[f64], t_offset: f64, total_dist: f64) -> (f64, f6
     (a, b)
 }
 
-/// Maekawa diffraction per band with optional Rayleigh gate.
-///
-/// When `delta_star == f64::INFINITY` the gate is always open (legacy
-/// knife-edge path used by K6/K7). Otherwise CNOSSOS-EU §2.5.6(c) applies:
-/// bands with `δ ≤ λ/4 − δ*` are set to 0 dB.
 fn maekawa_bands(
     delta: f64,
     is_double: bool,
@@ -256,7 +376,8 @@ fn maekawa_bands(
         if delta <= lambda / 4.0 - delta_star {
             continue;
         }
-        let c3 = if is_double && edge_distance > 0.01 {
+        // CNOSSOS §2.5.23: C'' = 1 when the edge-span e ≤ 0.3 m (noise floor).
+        let c3 = if is_double && edge_distance > 0.3 {
             let r = 5.0 * lambda / edge_distance;
             let r2 = r * r;
             (1.0 + r2) / (1.0 / 3.0 + r2)
@@ -269,9 +390,6 @@ fn maekawa_bands(
     atten
 }
 
-/// Pure Maekawa knife-edge attenuation (no Rayleigh gate).
-/// C₃ correction for double edges (ISO 9613-2 §7.4 / CNOSSOS §2.5.23):
-/// C₃ = (1 + (5λ/e)²) / (1/3 + (5λ/e)²) where e = distance between edges.
 pub fn diffraction_attenuation(delta: f64, is_double: bool) -> [f64; NUM_BANDS] {
     maekawa_bands(delta, is_double, 0.0, f64::INFINITY)
 }
@@ -284,7 +402,6 @@ pub fn diffraction_attenuation_with_edge(
     maekawa_bands(delta, is_double, edge_distance, f64::INFINITY)
 }
 
-/// Maekawa with CNOSSOS-EU §2.5.6(c) Rayleigh gate per band.
 pub fn diffraction_attenuation_rayleigh(result: &DiffractionResult) -> [f64; NUM_BANDS] {
     maekawa_bands(result.delta, result.is_double, result.edge_distance, result.delta_star)
 }
@@ -293,15 +410,12 @@ pub fn diffraction_attenuation_rayleigh(result: &DiffractionResult) -> [f64; NUM
 mod tests {
     use super::*;
 
-    /// Build a uniform t-array for `n` samples, matching the old evenly-spaced
-    /// convention. Used by tests that exercise legacy behaviour.
     fn uniform_t(n: usize) -> Vec<f64> {
         (0..n).map(|i| i as f64 / (n - 1).max(1) as f64).collect()
     }
 
     #[test]
     fn test_no_obstruction() {
-        // Flat profile: no diffraction
         let profile = vec![100.0; 10];
         let t = uniform_t(10);
         let result = compute_path_difference(&t, &profile, 500.0, 0.05, 1.5);
@@ -311,23 +425,18 @@ mod tests {
 
     #[test]
     fn test_single_hill() {
-        // Hill in the middle
         let mut profile = vec![100.0; 10];
-        profile[5] = 110.0; // 10m hill at midpoint
+        profile[5] = 110.0;
         let t = uniform_t(10);
         let result = compute_path_difference(&t, &profile, 500.0, 0.05, 1.5);
         assert!(result.delta > 0.0, "should detect hill");
         assert!(!result.is_double);
-        assert!(result.delta_star > 0.0, "delta_star should be positive for a real hill");
+        assert!(result.delta_star > 0.0);
     }
 
     #[test]
     fn test_uniform_vs_bilateral_stable() {
-        // Same physical profile, sampled with uniform vs bilateral t — δ must agree.
-        // Create a hill at 50% of a 1000 m path, sample at 11 uniform points then
-        // at 11 non-uniform points that still hit the hilltop.
         let total_dist = 1000.0;
-        // Uniform: 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
         let t_uniform = uniform_t(11);
         let prof_uniform: Vec<f64> = t_uniform
             .iter()
@@ -335,7 +444,6 @@ mod tests {
             .collect();
         let r_uniform = compute_path_difference(&t_uniform, &prof_uniform, total_dist, 0.05, 1.5);
 
-        // Bilateral-ish: dense near ends, coarse in middle — still hits t=0.5 exactly.
         let t_bilat = vec![0.0, 0.03, 0.06, 0.1, 0.25, 0.5, 0.75, 0.9, 0.94, 0.97, 1.0];
         let prof_bilat: Vec<f64> = t_bilat
             .iter()
@@ -357,9 +465,8 @@ mod tests {
 
     #[test]
     fn test_k6_barrier_atten() {
-        // K6: Single barrier, δ=0.5m → expected 15.28 dB at 1kHz
         let atten = diffraction_attenuation(0.5, false);
-        let at_1khz = atten[4]; // 1000 Hz band
+        let at_1khz = atten[4];
         assert!(
             (at_1khz - 15.28).abs() < 1.0,
             "K6 1kHz: expected ~15.28, got {:.2}",
@@ -369,17 +476,20 @@ mod tests {
 
     #[test]
     fn test_k7_double_barrier() {
-        // K7: Double barrier, δ=1.0m → expected ~16.30 dB at 1kHz
+        // Maekawa component only (δ=1.0 m, 25 dB cap). The system-level K7
+        // vector in SPEC.md (16.30 dB) folds in G=0.5 ground effect over a
+        // full 200 m propagation; this unit test checks just the band math.
+        // At 1 kHz with C₃=1 (edge_distance=0 → C'' floor), a_bar =
+        // 10·log10(3 + 20·1.0·1000/340) ≈ 17.91 dB.
         let atten = diffraction_attenuation(1.0, true);
         let at_1khz = atten[4];
         assert!(
             at_1khz > 14.0 && at_1khz < 20.0,
-            "K7 1kHz: expected ~17.9, got {:.2}",
+            "K7 Maekawa 1kHz: expected ~17.9, got {:.2}",
             at_1khz
         );
     }
 
-    /// K9: Kytín-like shallow hill (δ ≈ 0.4 m, δ* ≈ 0.5 m) — 63 Hz is gated, 1 kHz passes.
     #[test]
     fn test_k9_rayleigh_gate_shallow_hill() {
         let n = 61;
@@ -399,7 +509,6 @@ mod tests {
         assert!(atten[4] > 5.0, "1 kHz should pass gate, got {:.3} dB", atten[4]);
     }
 
-    /// Invariant: gated[i] == pure[i] where the gate passes, else 0.
     fn assert_gate_invariant(result: &DiffractionResult) {
         let gated = diffraction_attenuation_rayleigh(result);
         let pure = diffraction_attenuation_with_edge(
@@ -422,7 +531,6 @@ mod tests {
         }
     }
 
-    /// K10: high industrial source — large δ* makes the Rayleigh gate a no-op.
     #[test]
     fn test_k10_rayleigh_noop_high_source() {
         let n = 31;
@@ -435,7 +543,6 @@ mod tests {
         }
     }
 
-    /// K11: double-edge — D selection picks the edge with larger excess above LOS.
     #[test]
     fn test_k11_double_edge_d_selection() {
         let n = 21;
@@ -445,8 +552,64 @@ mod tests {
         let t = uniform_t(n);
         let result = compute_path_difference(&t, &profile, 600.0, 0.05, 4.0);
         assert!(result.is_double, "should be detected as double diffraction");
+        assert_eq!(result.n_edges, 2);
         assert!(result.delta > 0.0);
         assert!(result.delta_star > 0.0);
         assert_gate_invariant(&result);
+    }
+
+    #[test]
+    fn test_k12_triple_edge_cascade() {
+        let n = 31;
+        let mut profile = vec![100.0_f64; n];
+        profile[5] = 112.0;
+        profile[15] = 115.0;
+        profile[25] = 110.0;
+        let t = uniform_t(n);
+        let result = compute_path_difference(&t, &profile, 1500.0, 0.05, 4.0);
+        assert_eq!(result.n_edges, 3, "should find three edges (got {})", result.n_edges);
+        assert!(result.is_double, "triple diffraction keeps is_double=true for back-compat");
+        assert!(result.delta > 0.0);
+        assert!(result.delta_star > 0.0);
+        let d1 = t[result.edge_indices[0]] * 1500.0;
+        let d3 = t[result.edge_indices[2]] * 1500.0;
+        let top1 = profile[result.edge_indices[0]];
+        let top3 = profile[result.edge_indices[2]];
+        let expected_e = ((d3 - d1).powi(2) + (top3 - top1).powi(2)).sqrt();
+        assert!(
+            (result.edge_distance - expected_e).abs() < 0.01,
+            "edge_distance should be first-to-last, got {:.3} expected {:.3}",
+            result.edge_distance,
+            expected_e
+        );
+        assert_gate_invariant(&result);
+    }
+
+    #[test]
+    fn test_hull_drops_subdominant_middle_peak() {
+        let n = 21;
+        let mut profile = vec![100.0_f64; n];
+        profile[6] = 105.0;
+        profile[10] = 130.0;
+        let t = uniform_t(n);
+        let result = compute_path_difference(&t, &profile, 1000.0, 0.05, 4.0);
+        assert_eq!(result.n_edges, 1, "subdominant bump must not become a hull edge");
+        assert_eq!(result.edge_indices[0], 10);
+    }
+
+    #[test]
+    fn test_c3_floor_short_edge_distance() {
+        let a_01 = maekawa_bands(0.1, true, 0.1, 0.0);
+        let a_025 = maekawa_bands(0.1, true, 0.25, 0.0);
+        let a_029 = maekawa_bands(0.1, true, 0.29, 0.0);
+        for i in 0..NUM_BANDS {
+            assert!(
+                (a_01[i] - a_025[i]).abs() < 1e-9 && (a_01[i] - a_029[i]).abs() < 1e-9,
+                "band {i}: C3 must be 1 across e ∈ [0.1, 0.29], got {:.4}/{:.4}/{:.4}",
+                a_01[i], a_025[i], a_029[i]
+            );
+        }
+        let a_large_e = maekawa_bands(0.1, true, 100.0, 0.0);
+        assert!(a_large_e[4] > a_01[4] + 1.0, "C3 effect above 0.3 m must be visible");
     }
 }

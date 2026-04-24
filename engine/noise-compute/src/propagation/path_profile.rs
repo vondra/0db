@@ -1,11 +1,12 @@
 //! Unified path sampler.
 //!
 //! A single bilateral cadence samples DEM, building height, forest cover and
-//! ground-type along every source→receiver line: three probes at 30 m from each
-//! end, then three at 60 m, three at 120 m, then 240 m steps until the middle.
-//! Density is highest near source and receiver — where obstacles diffract sound
-//! most severely — and coarsest in the middle, where a missed hill would still
-//! lie well below the line of sight.
+//! ground-type along every source→receiver line: a 10 m near-probe at each
+//! end (berm-case capture), three probes at 30 m, three at 60 m, three at
+//! 120 m, then 240 m steps until the middle. Density is highest near source
+//! and receiver — where obstacles diffract sound most severely — and coarsest
+//! in the middle, where a missed hill would still lie well below the line
+//! of sight.
 //!
 //! Terrain diffraction, building screening, vegetation depth and ground effect
 //! all read from the same profile. The previous 3-point fast-LOS gate at
@@ -19,6 +20,30 @@ use crate::types::RasterSampler;
 
 /// Raster cell size in meters (~30.7m) — 1 arc-second at the equator.
 pub const CELL_M: f64 = 110_540.0 / 3600.0;
+
+/// Near-endpoint probe offset (meters). A sample at `NEAR_OFFSET_M` from each
+/// end catches obstacles close to the source/receiver that would otherwise
+/// fall between t=0 and the first regular 30m sample (e.g. highway berms
+/// 5-15m from the road). At the default 30m DEM resolution, a 10m probe on
+/// E-W paths hits the cell adjacent to the source ~50% of the time, and on
+/// N-S paths the bilinear interpolation still shifts the elevation value
+/// enough to be useful for edge detection.
+pub const NEAR_OFFSET_M: f64 = 10.0;
+
+/// Minimum LOS excess (m) for a mid-path peak to qualify as a diffraction
+/// edge candidate. Below this, sub-metre terrain ripples would pollute the
+/// profile without meaningfully changing δ. The Maekawa δ from a peak of
+/// height h mid-path scales as h²/L — a 1 m peak on a 5 km path gives
+/// δ ≈ 0.2 mm, i.e. <0.01 dB at 1 kHz. 2 m is the cheapest threshold that
+/// preserves real road-berm / retaining-wall scale features while
+/// eliminating pixel-level noise peaks that bloat the profile.
+pub const PEAK_EXCESS_MIN_M: f32 = 2.0;
+
+/// Maximum number of peaks kept per path. Matches the downstream convex-hull
+/// top-3 cap in `diffraction::compute_path_difference_with_ols` — keeping
+/// more here just bloats the profile for elements that are deterministically
+/// discarded during edge selection.
+pub const PEAK_MAX_COUNT: usize = 3;
 
 /// Unified path profile: one bilateral sample set, all four rasters.
 ///
@@ -48,6 +73,10 @@ pub struct PathProfile {
     /// `diffraction::compute_path_difference`). Grown on first use, reused
     /// across subsequent calls via `elevation_f64()`.
     pub elevation_f64_scratch: Vec<f64>,
+    /// Scratch buffer for the composite top profile (elevation + building_h +
+    /// barriers) used by `screening_attenuation_with_meta`. Amortized across
+    /// paths.
+    pub composite_h_scratch: Vec<f64>,
 }
 
 impl PathProfile {
@@ -63,6 +92,7 @@ impl PathProfile {
         self.forest_u8.clear();
         self.imd_u8.clear();
         self.elevation_f64_scratch.clear();
+        self.composite_h_scratch.clear();
         self.dist_m = 0.0;
         self.step_m_med = 0.0;
         self.src_lat = 0.0;
@@ -98,32 +128,64 @@ impl PathProfile {
 
 /// Bilateral adaptive t-values for a path of `dist_m` meters.
 ///
-/// Pattern (≥310 m paths): three samples at 30 m from each end, then three at
-/// 60 m, three at 120 m, then 240 m steps through the middle, mirrored. Always
-/// includes t=0.0 and t=1.0. Sample count for a 10 km path ≈ 54.
+/// Pattern (≥310 m paths): one 10 m near-probe at each end (berm-case catch),
+/// then three samples at 30 m, three at 60 m, three at 120 m, then 240 m
+/// steps through the middle, mirrored. Always includes t=0.0 and t=1.0.
+/// Sample count for a 10 km path ≈ 56.
 ///
 /// For short paths (≤10 cells ≈ 307 m) the cadence collapses to uniform 30 m
-/// stepping so diffraction short-circuits don't lose precision.
+/// stepping plus the 10 m near-probes. Paths shorter than 3×NEAR_OFFSET_M
+/// (30 m) skip the near-probes entirely so they don't collapse toward the
+/// midpoint.
 ///
 /// Output buffer is cleared before writing.
 pub fn fill_t_values(dist_m: f64, buf: &mut Vec<f64>) {
     buf.clear();
 
+    // Near-endpoint probe at 10m — only emitted when there's room (≥3×NEAR_OFFSET
+    // so the probe doesn't collapse toward the midpoint). Skipped for paths
+    // shorter than 30m.
+    let emit_near = dist_m >= 3.0 * NEAR_OFFSET_M;
+    let near_t = NEAR_OFFSET_M / dist_m;
+
     if dist_m <= CELL_M * 10.0 {
+        // Short path: uniform stepping + optional 10m probe at each end.
         let n = (dist_m / CELL_M).ceil().max(3.0) as usize;
-        for i in 0..n {
-            buf.push(i as f64 / (n - 1).max(1) as f64);
+        buf.push(0.0);
+        if emit_near {
+            buf.push(near_t);
         }
+        for i in 1..n.saturating_sub(1) {
+            let t = i as f64 / (n - 1) as f64;
+            // Skip uniform sample if it's within 3m of a near-endpoint probe.
+            if emit_near
+                && ((t - near_t).abs() * dist_m < 3.0
+                    || ((1.0 - t) - near_t).abs() * dist_m < 3.0)
+            {
+                continue;
+            }
+            buf.push(t);
+        }
+        if emit_near {
+            buf.push(1.0 - near_t);
+        }
+        buf.push(1.0);
+        buf.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
         return;
     }
 
     buf.push(0.0);
+    if emit_near {
+        buf.push(near_t);
+    }
 
     let levels = [CELL_M, CELL_M * 2.0, CELL_M * 4.0, CELL_M * 8.0];
     let reps = 3usize;
 
-    // Forward from source.
-    let mut pos = 0.0_f64;
+    // Forward from source — ramp starts *after* the 10m near-probe so the
+    // first ramp sample lands at 10 + 30 = 40m (vs. 30m before), which costs
+    // nothing: we already have a sample at 10m.
+    let mut pos = if emit_near { NEAR_OFFSET_M } else { 0.0 };
     for &step in &levels {
         for _ in 0..reps {
             pos += step;
@@ -151,7 +213,7 @@ pub fn fill_t_values(dist_m: f64, buf: &mut Vec<f64>) {
 
     // Backward from receiver (mirror of forward, reversed).
     let mut back_count = 0usize;
-    pos = 0.0;
+    pos = if emit_near { NEAR_OFFSET_M } else { 0.0 };
     for &step in &levels {
         for _ in 0..reps {
             pos += step;
@@ -168,6 +230,9 @@ pub fn fill_t_values(dist_m: f64, buf: &mut Vec<f64>) {
     let back_start = buf.len() - back_count;
     buf[back_start..].reverse();
 
+    if emit_near {
+        buf.push(1.0 - near_t);
+    }
     buf.push(1.0);
     buf.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
 }
@@ -297,11 +362,13 @@ mod tests {
         assert!(buf.first().copied().unwrap() == 0.0);
         assert!((*buf.last().unwrap() - 1.0).abs() < 1e-9);
         assert!(buf.len() >= 3);
-        // Uniform: consecutive diffs are equal.
-        let d0 = buf[1] - buf[0];
+        // Monotonic + first sample at 0, last at 1.
         for w in buf.windows(2) {
-            assert!((w[1] - w[0] - d0).abs() < 1e-9);
+            assert!(w[1] > w[0], "non-monotonic: {:?}", buf);
         }
+        // With 10 m near-probes, first gap is ≤ 10 m + tolerance.
+        let first_gap_m = (buf[1] - buf[0]) * 200.0;
+        assert!(first_gap_m <= NEAR_OFFSET_M + 1.0, "first gap ≤ 10m, got {first_gap_m}");
     }
 
     #[test]
@@ -310,12 +377,54 @@ mod tests {
         fill_t_values(5000.0, &mut buf);
         assert_eq!(buf[0], 0.0);
         assert!((*buf.last().unwrap() - 1.0).abs() < 1e-9);
-        // First two gaps should be CELL_M (≈30 m / 5000 ≈ 0.006).
+        // First gap is the 10m near-probe.
         let first_gap = (buf[1] - buf[0]) * 5000.0;
-        assert!((first_gap - CELL_M).abs() < 1.0, "first gap ~30m, got {first_gap}");
-        // Last two gaps should also be CELL_M (symmetric).
+        assert!(
+            (first_gap - NEAR_OFFSET_M).abs() < 1.0,
+            "first gap should be 10m near-probe, got {first_gap}"
+        );
+        // Last gap is symmetric.
         let last_gap = (*buf.last().unwrap() - buf[buf.len() - 2]) * 5000.0;
-        assert!((last_gap - CELL_M).abs() < 1.0, "last gap ~30m, got {last_gap}");
+        assert!(
+            (last_gap - NEAR_OFFSET_M).abs() < 1.0,
+            "last gap should be 10m, got {last_gap}"
+        );
+        // Second gap (10m probe → first ramp sample) should be ≈ CELL_M (30m).
+        let second_gap = (buf[2] - buf[1]) * 5000.0;
+        assert!(
+            (second_gap - CELL_M).abs() < 1.0,
+            "second gap should be ~30m, got {second_gap}"
+        );
+    }
+
+    #[test]
+    fn near_probe_at_10m_from_both_ends() {
+        for dist in &[50.0, 100.0, 300.0, 1000.0, 10_000.0] {
+            let mut buf = Vec::new();
+            fill_t_values(*dist, &mut buf);
+            let first_probe_m = buf[1] * dist;
+            let last_probe_m = (1.0 - buf[buf.len() - 2]) * dist;
+            assert!(
+                (first_probe_m - NEAR_OFFSET_M).abs() < 1.0,
+                "D={dist}: near-source probe at {first_probe_m}m"
+            );
+            assert!(
+                (last_probe_m - NEAR_OFFSET_M).abs() < 1.0,
+                "D={dist}: near-receiver probe at {last_probe_m}m"
+            );
+        }
+    }
+
+    #[test]
+    fn very_short_path_skips_near_probe() {
+        // D < 3×NEAR_OFFSET (30 m) → no 10m probe, just uniform.
+        let mut buf = Vec::new();
+        fill_t_values(25.0, &mut buf);
+        assert_eq!(buf[0], 0.0);
+        assert!((*buf.last().unwrap() - 1.0).abs() < 1e-9);
+        // No 10m probe at t ≈ 0.4 (10/25).
+        let has_near = buf.iter().any(|&t| ((t * 25.0) - 10.0).abs() < 0.5);
+        assert!(!has_near, "D=25m should not emit 10m probe, got {:?}", buf);
     }
 
     #[test]

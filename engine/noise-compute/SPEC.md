@@ -289,12 +289,25 @@ Double edge (§7.4 / CNOSSOS §2.5.23):
 C₃ = (1 + (5λ/e)²) / (1/3 + (5λ/e)²)    where e = edge-to-edge distance, λ = 340/f[i]
 A_bar,i = min(25, 10 × log₁₀(3 + C₃ × 20 × δ × f[i] / 340))
 
+Triple edge (project simplification — ISO/CNOSSOS silent for N=3):
+δ = |S→E1| + |E1→E2| + |E2→E3| + |E3→R| − |S→R|
+e = |E1 → E3|    first-to-last edge path distance (per CNOSSOS wording for multiple diffraction)
+A_bar,i = min(25, 10 × log₁₀(3 + C₃ × 20 × δ × f[i] / 340))
+
+C'' = 1 floor (CNOSSOS §2.5.23): C₃ is clamped to 1 when e ≤ 0.3 m.
+
 Rayleigh gate (CNOSSOS-EU §2.5.6(c)):
 if δ ≤ λ/4 − δ*  then  A_bar,i = 0
 ```
 C₃ (identical to CNOSSOS `C"`) accounts for thick barriers: 1.0 when edges are far apart, up to 3.0 when close.
 
-δ* is the path-length difference computed using the same dominant edge D but with mirror source S\* and mirror receiver R\* reflected **vertically** across their respective mean ground planes. Each mean ground plane is an unweighted least-squares line fit over the DEM profile samples on that side (including D itself). D is chosen as the edge with the larger excess above the direct line of sight (this matches the single-edge path difference and is well-defined in the double-edge case).
+**Edge selection (N ∈ {1, 2, 3}):** upper convex hull of the sampled (t·dist, elevation) profile, filtered to samples above the source→receiver line-of-sight. If more than 3 hull vertices remain, keep the top-3 by LOS excess and rebuild the hull over `{endpoints ∪ top-3}` to guarantee a geometrically valid S→E1→…→R path (no straight-line segment dips below the dropped vertex's terrain).
+
+**3-edge cap is a project simplification.** ISO 9613-2 §7.4 defines cascade Fresnel for N≤2; CNOSSOS-EU §2.5.6 describes the shape of the multiple-diffraction correction without explicitly capping the edge count. Our N=3 implementation uses the first-to-last path distance as `e` and the double-edge 25 dB cap. N=3 covers practically all real terrain profiles within ~10 km; beyond that the Rayleigh gate typically dominates and the correction saturates.
+
+δ* is the path-length difference computed using the same dominant edge D but with mirror source S\* and mirror receiver R\* reflected **vertically** across their respective mean ground planes. Each mean ground plane is an unweighted least-squares line fit over the DEM profile samples on that side (including D itself). D is chosen as the edge with the larger excess above the direct line of sight (for N≥2 this is the edge with the largest LOS excess of all).
+
+**δ\* fits on bare-earth elevation only.** When the combined-screening entrypoint (`combined` terrain+building+barrier top profile) invokes diffraction, δ* continues to fit on `elevation_m` so the mean-ground planes represent the *ground reflection* surface that CNOSSOS §2.5.6(c) physically defines. Feeding building heights to the OLS fit would drag the mean-ground plane up to rooftops and silently break ground-reflection physics.
 
 Simplifications vs. strict CNOSSOS:
 - We use **vertical** reflection across the fitted plane (standard acoustic practice in NMPB / NoiseModelling), not perpendicular-to-plane.
@@ -302,6 +315,7 @@ Simplifications vs. strict CNOSSOS:
 - `Δground` additive combination (CNOSSOS §2.5.31) is not implemented — we still combine ground and barrier via `max(A_ground, A_terrain + A_screen)` in §3.3.
 - Favourable-conditions curved rays (§2.5.24) are not implemented — see §3.9.
 - Lateral diffraction around vertical edges (§2.5.6(i)) is not implemented.
+- **Multi-edge capped at N=3** (project simplification, see above).
 
 See §3.5a for the shared path-sampling scheme.
 
@@ -309,26 +323,34 @@ See §3.5a for the shared path-sampling scheme.
 
 DEM, Overture building height, WorldCover forest cover and IMD imperviousness are all sampled along the source→receiver line by a single bilateral cadence. Density is highest near the two endpoints (where obstacles diffract sound most severely) and coarsest in the middle (where a missed feature still lies well below the line of sight):
 
+- **near-endpoint probe at 10 m from each end** (berm-case fix: catches obstacles 5-15 m from the road that would fall between t=0 and the first 30 m sample)
 - three probes at 30 m from each end
 - three probes at 60 m from each end
 - three probes at 120 m from each end
 - 240 m steps through the middle for paths longer than ~1.2 km
 
-Both endpoints (t=0 and t=1) are included. Paths ≤ ~310 m collapse to uniform 30 m stepping. The scheme is implemented in `propagation::path_profile::fill_t_values` and used by `RasterSampler::build_path_profile`.
+Both endpoints (t=0 and t=1) are included. Paths ≤ ~310 m collapse to uniform 30 m stepping plus the 10 m near-probes. Paths < 30 m skip the near-probes (they would collapse toward the midpoint). The scheme is implemented in `propagation::path_profile::fill_t_values` and used by `RasterSampler::build_path_profile`.
+
+**Why 10 m specifically.** At the default 30.7 m DEM cell size, sub-cell offsets give progressively less new information per raster read: 2-5 m always reads the same cell, 30 m always reaches the adjacent cell. 10 m is the sweet spot — on E-W paths it crosses to the adjacent cell ~50 % of the time (at ~50° N, lon-cell ≈ 19.8 m), and on N-S paths the bilinear interpolation still shifts the elevation enough to matter for edge detection. Also coincides with the 10 m minimum-forest-run used in `vegetation_run_length`.
+
+**Fundamental raster limit:** a berm narrower than a single DEM cell (~20-30 m) on the edge of the source cell is invisible regardless of sampling strategy. Higher-resolution DEMs (USGS 3DEP 10 m, national lidars 1-5 m) are the only fix.
 
 Terrain diffraction, building screening, vegetation depth, and ground-effect G all read from the same `PathProfile` — no separate walk. The previous 3-point fast-LOS gate at t∈{0.25, 0.5, 0.75} is gone; terrain short-circuits on an in-profile scan (no extra raster taps).
+
+### 3.5b Combined terrain + building + barrier screening (P2 anti-double-count)
+
+Before: `A_terrain_Fresnel(bare_earth) + A_screen_Fresnel(buildings_alone)`. When a building sat on a hill, both terms claimed full Fresnel diffraction → **double-count of up to 10 dB**.
+
+Now: a single composite top profile merges `elevation + max(building_h, barrier_h)` (with `exclusion_radius_m` zeroing out buildings near the source). Diffraction is computed **once** over this composite (edges + δ), with the δ* OLS mean-ground fit still on bare-earth `elevation_m`. The caller-facing API preserves `terrain_attenuation` (bare-earth only) and `screening_attenuation` (combined − terrain, clamped ≥ 0), so the downstream `A_terrain + A_screen` sum in `iso9613.rs` naturally equals the combined attenuation with no double-count. `no_terrain` and `no_screening` hypotheticals used for the popup "impact" breakdown remain meaningful: the impact of terrain equals `full − no_terrain`, which equals the per-band `atten_terrain`.
 
 Ground G and vegetation depth are **path integrals**; they weight samples by interval length so non-uniform bilateral spacing doesn't bias the endpoints.
 
 ### 3.6 Building screening (ISO 9613-2, per-band)
-Samples Overture Maps 30m building raster at the same bilateral cadence (§3.5a). The dominant obstacle is the tallest candidate on the path above line-of-sight. Explicit `noise_barrier` geometries compete with raster buildings. For industrial sources, screening samples inside the source's own footprint are skipped via an exclusion radius.
+Samples Overture Maps 30m building raster at the same bilateral cadence (§3.5a). Explicit `noise_barrier` geometries compete with raster buildings. For industrial sources, screening samples inside the source's own footprint are skipped via an exclusion radius.
 
-Path difference is computed using full 3D geometry:
-```
-S = (0, src_elev),  B = (d_horiz, bld_top),  R = (dist_m, rcv_alt)
-δ_bld = |S→B| + |B→R| - |S→R|    (3D detour minus direct slant path)
-A_screen,i = min(20, 10 × log₁₀(3 + 20 × δ_bld × f[i] / 340))
-```
+**Screening is not computed standalone.** Buildings and barriers are merged into the §3.5b composite top profile (`elevation + max(building_h, barrier_h)`) and diffraction is computed once by the §3.5 multi-edge algorithm (upper convex hull, up to 3 edges, CNOSSOS C₃ / Rayleigh gate). The per-band screening cap inherits from §3.5 — 20 dB when the composite yields a single edge, 25 dB for 2–3 edges — not a dedicated building-only cap.
+
+The popup-facing `screening_attenuation` value returned by the engine is the increment of the combined result over bare-earth terrain diffraction, i.e. `atten_combined − atten_terrain` (clamped ≥ 0). With that definition `A_terrain + A_screen ≡ A_combined`, which is what §3.3 feeds into the ground/barrier combination. See §3.5b for the motivating double-count problem the merge fixes.
 
 ### 3.7 Vegetation (ISO 9613-2:2024 A.2.2, Central Europe × 0.5 calibration)
 ```
