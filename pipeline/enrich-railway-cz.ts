@@ -13,14 +13,14 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('cz-szcd-gtfs')!.id
+const MY_SOURCE_ID = SOURCES_BY_KEY.get('cz-szcd-gtfs')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -388,7 +388,7 @@ function enrichHexes(
       mids[i] = { lat: midLat, lon: midLon }
 
       // Priority gate: if a higher-priority dataset already owns this row, leave it.
-      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
 
       let bestDist = 5000
       let bestSeg: SegmentCount | null = null
@@ -409,7 +409,7 @@ function enrichHexes(
         // Whole-row atomic write — payload + dataset_id together.
         trainsPax[i] = bestSeg.passenger
         trainsFrt[i] = bestSeg.freight
-        sourceId[i] = MY_DATASET_ID
+        sourceId[i] = MY_SOURCE_ID
         matchedKeys[i] = bestKey
         hexMatched++
       }

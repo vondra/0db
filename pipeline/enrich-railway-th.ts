@@ -37,11 +37,11 @@ import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { latLngToCell, cellToLatLng } from 'h3-js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('th-national-railway')!.id
+const MY_SOURCE_ID = SOURCES_BY_KEY.get('th-national-railway')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -473,7 +473,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     for (let i = 0; i < n; i++) {
       const service = (serviceCol?.get(i) as number) ?? 0
       if (service > 0) { skippedService++; continue }
-      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -510,7 +510,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
         if (bestStop) {
           trainsPax[i] = bestStop.trains_passenger
           trainsFrt[i] = bestStop.trains_freight
-          sourceId[i] = MY_DATASET_ID
+          sourceId[i] = MY_SOURCE_ID
           hexMatched++
           matchedGtfs++
           continue
@@ -521,7 +521,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
       const def = defaultTrains(rt, us)
       trainsPax[i] = def.pax
       trainsFrt[i] = def.frt
-      sourceId[i] = MY_DATASET_ID
+      sourceId[i] = MY_SOURCE_ID
       hexMatched++
       matchedDefaults++
     }

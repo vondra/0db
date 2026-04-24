@@ -20,11 +20,11 @@ import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { latLngToCell } from 'h3-js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('au-national-railway')!.id
+const MY_SOURCE_ID = SOURCES_BY_KEY.get('au-national-railway')!.id
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -653,7 +653,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
       if (service > 0) continue
 
       // Skip segments already enriched
-      if (!shouldOverwrite(sourceId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -685,7 +685,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
 
       trainsPax[i] = bestStop.trains_passenger
       trainsFrt[i] = bestStop.trains_freight
-      sourceId[i] = MY_DATASET_ID
+      sourceId[i] = MY_SOURCE_ID
       hexMatched++
     }
 
