@@ -59,12 +59,28 @@ export const METRIC_DEFS: Record<string, MetricDef> = {
       "Sum of geometric divergence (distance losses), atmospheric absorption, and ground effect — the attenuation you get over flat uniform terrain.",
     standard: "ISO 9613-2 §7",
   },
+  atmospheric: {
+    label: "Atmospheric absorption",
+    description:
+      "α[i] × d_slant / 1000 per band. Standard atmosphere (15 °C, 70 % RH). Scalar shown is A-weighted ΔL_A = full − no_atmospheric Lden.",
+    descriptionPublic:
+      "Atmospheric absorption (ISO 9613-2 §7.2). Air absorbs sound over distance — most noticeably at high frequencies.",
+    standard: "ISO 9613-2 §7.2",
+  },
+  ground: {
+    label: "Ground effect",
+    description:
+      "CF[i] × G per band, where G = 1 − IMD/100 (hard ↔ soft). Signed — over soft ground CF[i] < 0 at 63/125 Hz, so A_gr can BOOST LF energy. Scalar shown is A-weighted ΔL_A (full − no_ground Lden).",
+    descriptionPublic:
+      "Ground effect (ISO 9613-2 §7.3 / CNOSSOS §2.5.15). Interaction of direct and ground-reflected rays; soft ground (fields, grass) absorbs more than hard ground (asphalt) and can slightly boost low bass.",
+    standard: "ISO 9613-2 §7.3.1 + CNOSSOS-EU §2.5.15",
+  },
   terrain: {
     label: "Terrain",
     description:
       "Terrain diffraction via Maekawa/Fresnel (ISO 9613-2 §7.3/7.4), up to 3 edges from the upper convex hull of the DEM profile above line-of-sight. CNOSSOS §2.5.6(c) Rayleigh δ* gate zeroes bands where δ ≤ λ/4 − δ*. Combined with building/barrier screening in a single Fresnel pass (SPEC §3.5b, anti-double-count).",
     descriptionPublic:
-      "A hill between the noise source and you reduces noise by diffracting sound over it. The taller and closer the hill, the more it helps.",
+      "Terrain diffraction (ISO 9613-2 §7.4 / CNOSSOS §2.5.6). Hills or embankments between source and receiver bend sound over the top — taller and closer to the path means more reduction.",
     standard: "ISO 9613-2 §7.3/7.4 + CNOSSOS-EU §2.5.6(c)",
   },
   screening: {
@@ -72,7 +88,7 @@ export const METRIC_DEFS: Record<string, MetricDef> = {
     description:
       "Increment of the combined terrain + building + barrier diffraction over pure-terrain (A_terrain + A_screen ≡ A_combined, SPEC §3.5b — not a second independent Fresnel). The engine scans the Overture building raster + any explicit noise barriers along the path and merges the tallest top into the composite profile. One edge in the composite may be a bare-earth hill — UI labels it 'terrain' then.",
     descriptionPublic:
-      "Buildings and noise barriers between the source and you reduce noise by blocking the direct line of sight.",
+      "Building / barrier screening (ISO 9613-2 §7.4 + CNOSSOS §2.5.6). Buildings and noise barriers on the path block the direct line of sight; engine combines with terrain in a single diffraction model.",
     standard: "ISO 9613-2 §7.3 + CNOSSOS-EU §2.5.6(c)",
   },
   vegetation: {
@@ -80,7 +96,7 @@ export const METRIC_DEFS: Record<string, MetricDef> = {
     description:
       "Attenuation from dense forest along the sound path, integrated trapezoidally over the WorldCover forest raster. Capped at ~200 m effective depth per ISO 9613-2 Table A.1. Scalar × 0.5 Central-Europe calibration for the binary-forest raster.",
     descriptionPublic:
-      "Trees between the source and you absorb some of the noise. Dense forest works best; scattered trees barely help.",
+      "Foliage attenuation (ISO 9613-2 Annex A.2.2). Dense forest along the path absorbs sound; scattered or thin trees contribute little.",
     standard: "ISO 9613-2 §A.2.2",
   },
   per_band: {
