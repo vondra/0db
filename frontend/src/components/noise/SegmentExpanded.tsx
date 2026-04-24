@@ -111,9 +111,7 @@ function computeSourceHeightRow(trace: SegmentTrace): [React.ReactNode, React.Re
     'diffraction S/R anchor points.' +
     slantNote
   return [
-    <HoverText title={tooltip}>
-      <span className="cursor-help">Source height</span>
-    </HoverText>,
+    <HoverText title={tooltip}>Source height</HoverText>,
     `${h.toFixed(1)} m`,
   ]
 }
@@ -154,12 +152,8 @@ function computeLwRow(trace: SegmentTrace): [React.ReactNode, React.ReactNode] |
     `Day shown is the representative period. Per-band L_w lives\n` +
     'in §5 under "Lw (A)" — hover each period cell there.'
   return [
-    <HoverText title={labelConcept}>
-      <span className="cursor-help">{cfg.label}</span>
-    </HoverText>,
-    <HoverText title={valueComputation}>
-      <span className="cursor-help">{`${lw.day.toFixed(1)} ${cfg.unit}`}</span>
-    </HoverText>,
+    <HoverText title={labelConcept}>{cfg.label}</HoverText>,
+    <HoverText title={valueComputation}>{`${lw.day.toFixed(1)} ${cfg.unit}`}</HoverText>,
   ]
 }
 
@@ -307,7 +301,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           'sources: spherical spreading plus a source-geometry adapter.'
         }
       >
-        <span className="cursor-help">Geometric divergence</span>
+        Geometric divergence
       </HoverText>,
       <HoverText
         title={
@@ -318,7 +312,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           'Sign-flipped here because it subtracts from L_w.'
         }
       >
-        <span className="cursor-help">{fmtDb(-baseline.geometric_db)}</span>
+        {fmtDb(-baseline.geometric_db)}
       </HoverText>,
     ],
     [
@@ -330,7 +324,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           'per kilometre than low frequencies.'
         }
       >
-        <span className="cursor-help">Atmospheric absorption</span>
+        Atmospheric absorption
       </HoverText>,
       <HoverText
         title={bandsTooltip(baseline.atmospheric_bands, {
@@ -341,7 +335,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
             'Scalar = A-weighted ΔL_A (full − no_atmospheric Lden).',
         })}
       >
-        <span className="cursor-help">{fmtDb(atmosphericDelta)}</span>
+        {fmtDb(atmosphericDelta)}
       </HoverText>,
     ],
     [
@@ -353,7 +347,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           'soft ground (G → 1) the 63/125 Hz bands can BOOST energy.'
         }
       >
-        <span className="cursor-help">Ground effect (G={ground.factor_g.toFixed(2)})</span>
+        Ground effect (G={ground.factor_g.toFixed(2)})
       </HoverText>,
       <HoverText
         title={bandsTooltip(ground.attenuation_bands, {
@@ -365,7 +359,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
             'Scalar = A-weighted ΔL_A (full − no_ground Lden).',
         })}
       >
-        <span className="cursor-help">{fmtDb(groundDelta)}</span>
+        {fmtDb(groundDelta)}
       </HoverText>,
     ],
   ]
@@ -380,7 +374,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           'segment at this receiver.'
         }
       >
-        <span className="cursor-help">Urban reflection</span>
+        Urban reflection
       </HoverText>,
       <HoverText
         title={
@@ -390,7 +384,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           'same value appears on every segment at this point.'
         }
       >
-        <span className="cursor-help">+{baseline.reflection_boost_db.toFixed(1)} dB</span>
+        +{baseline.reflection_boost_db.toFixed(1)} dB
       </HoverText>,
     ])
   }
@@ -405,7 +399,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           'Standard practice in NMPB / NoiseModelling / CNOSSOS.'
         }
       >
-        <span className="cursor-help">Finite-line correction</span>
+        Finite-line correction
       </HoverText>,
       <HoverText
         title={
@@ -415,7 +409,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           'more than the infinite-line approximation predicts.'
         }
       >
-        <span className="cursor-help">{fmtDb(baseline.finite_line_corr_db)}</span>
+        {fmtDb(baseline.finite_line_corr_db)}
       </HoverText>,
     ])
   }
@@ -450,14 +444,12 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
         triple
       return [
         <HoverText title={labelTooltip}>
-          <span className="cursor-help">
-            Terrain diffraction{edgeLabel
-              ? ` (δ ${terrain.delta_m.toFixed(2)} m, ${edgeLabel})`
-              : ' (none)'}
-          </span>
+          Terrain diffraction{edgeLabel
+            ? ` (δ ${terrain.delta_m.toFixed(2)} m, ${edgeLabel})`
+            : ' (none)'}
         </HoverText>,
         <HoverText title={bandsTooltip(terrain.attenuation_bands, { title: valueTooltip })}>
-          <span className="cursor-help">{fmtDb(terrainDelta)}</span>
+          {fmtDb(terrainDelta)}
         </HoverText>,
       ]
     })(),
@@ -491,11 +483,9 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
         'Scalar = A-weighted ΔL_A (full − no_screening Lden).' +
         edgesDetail
       return [
-        <HoverText title={labelTooltip}>
-          <span className="cursor-help">Building/barrier ({screenLabel})</span>
-        </HoverText>,
+        <HoverText title={labelTooltip}>Building/barrier ({screenLabel})</HoverText>,
         <HoverText title={bandsTooltip(screening.attenuation_bands, { title: valueTooltip })}>
-          <span className="cursor-help">{fmtDb(screeningDelta)}</span>
+          {fmtDb(screeningDelta)}
         </HoverText>,
       ]
     })(),
@@ -510,12 +500,10 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
           'overcounted without the scalar.'
         }
       >
-        <span className="cursor-help">
-          Foliage
-          {vegetation.forest_depth_m > 0
-            ? ` (${vegetation.forest_depth_m.toFixed(0)} m forest, 0.5× adj.)`
-            : ' (none)'}
-        </span>
+        Foliage
+        {vegetation.forest_depth_m > 0
+          ? ` (${vegetation.forest_depth_m.toFixed(0)} m forest, 0.5× adj.)`
+          : ' (none)'}
       </HoverText>,
       <HoverText
         title={bandsTooltip(vegetation.attenuation_bands, {
@@ -526,7 +514,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
             'Scalar = A-weighted ΔL_A (full − no_vegetation Lden).',
         })}
       >
-        <span className="cursor-help">{fmtDb(vegetationDelta)}</span>
+        {fmtDb(vegetationDelta)}
       </HoverText>,
     ],
   ]
@@ -564,7 +552,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
             `contribute 0 dB of diffraction attenuation in the total.`
           }
         >
-          <div className="mt-0.5 text-[10px] text-muted-foreground italic cursor-help">
+          <div className="mt-0.5 text-[10px] text-muted-foreground italic">
             Rayleigh gate zeroed: {gatedBands.join(', ')}
           </div>
         </HoverText>
@@ -639,7 +627,7 @@ function Section5Lden({ trace }: { trace: SegmentTrace }) {
                   'CNOSSOS D/E/N split applied (12/4/8 hour buckets).'
                 }
               >
-                <span className="cursor-help">Lw (A)</span>
+                Lw (A)
               </HoverText>
             </th>
             <th className="text-right font-normal pb-0.5">
@@ -650,7 +638,7 @@ function Section5Lden({ trace }: { trace: SegmentTrace }) {
                   "standing here would actually hear during that period."
                 }
               >
-                <span className="cursor-help">L_rec (A)</span>
+                L_rec (A)
               </HoverText>
             </th>
             <th className="text-right font-normal pb-0.5">hours</th>
@@ -695,7 +683,7 @@ function Section5Lden({ trace }: { trace: SegmentTrace }) {
                   'Hover the value for the exact formula applied here.'
                 }
               >
-                <span className="cursor-help">Lden</span>
+                Lden
               </HoverText>
             </td>
             <td
@@ -717,7 +705,7 @@ function Section5Lden({ trace }: { trace: SegmentTrace }) {
                   PERIOD_TOOLTIP
                 }
               >
-                <span className="cursor-help">{trace.received_lden.full.toFixed(1)} dB</span>
+                {trace.received_lden.full.toFixed(1)} dB
               </HoverText>
             </td>
           </tr>
@@ -842,7 +830,7 @@ export function SegmentExpanded({ trace }: { trace: SegmentTrace }) {
             '(propagation::path_profile::fill_t_values).'
           }
         >
-          <div className="mt-0.5 text-[10px] text-muted-foreground italic cursor-help">
+          <div className="mt-0.5 text-[10px] text-muted-foreground italic">
             Profile: {trace.path_profile.t.length} samples · median step{' '}
             {trace.path_profile.step_m_med.toFixed(1)} m
           </div>
