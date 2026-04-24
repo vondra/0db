@@ -484,6 +484,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore]  // requires ../../source-data/dem/srtm fixtures
     fn test_srtm_brno() {
         // Real SRTM tile for Brno area
         let store = TileStore::new(

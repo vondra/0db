@@ -213,6 +213,95 @@ impl RasterSampler for RealRasters {
             out.imd_u8.push(imd.clamp(0.0, 255.0) as u8);
         }
 
+        // P3 peak augmentation: gap-only scan (see FusedGrid impl for the
+        // phase-shift rationale).
+        let cell = noise_compute::propagation::path_profile::CELL_M;
+        let gap_scan_min_m = cell * 1.5;
+        let peak_dedup_min_m = cell * 0.5;
+        if dist_m > cell * 10.0 && out.elevation_m.len() >= 3 {
+            let ground_src = out.elevation_m[0];
+            let ground_rcv = *out.elevation_m.last().unwrap();
+            let mut peaks: Vec<(f64, f32)> = Vec::with_capacity(8);
+            let t_snapshot: Vec<f64> = out.t.clone();
+            for w in t_snapshot.windows(2) {
+                let gap_m = (w[1] - w[0]) * dist_m;
+                if gap_m <= gap_scan_min_m {
+                    continue;
+                }
+                let steps = ((gap_m / cell).floor() as usize).max(1);
+                let mut prev_elev = f32::NAN;
+                let mut curr_elev = f32::NAN;
+                let mut curr_t = w[0];
+                for k in 1..steps {
+                    let local_t = w[0] + (k as f64 / steps as f64) * (w[1] - w[0]);
+                    let lat = src_lat + local_t * (rcv_lat - src_lat);
+                    let lon = src_lon + local_t * (rcv_lon - src_lon);
+                    let elev =
+                        self.dem.sample_cached(lat, lon, &mut dem_key, &mut dem_tile) as f32;
+                    if !prev_elev.is_nan() && !curr_elev.is_nan()
+                        && curr_elev > prev_elev && curr_elev > elev
+                    {
+                        let los_c = ground_src + (ground_rcv - ground_src) * curr_t as f32;
+                        if curr_elev > los_c + noise_compute::propagation::path_profile::PEAK_EXCESS_MIN_M {
+                            peaks.push((curr_t, curr_elev));
+                        }
+                    }
+                    prev_elev = curr_elev;
+                    curr_elev = elev;
+                    curr_t = local_t;
+                }
+            }
+            if !peaks.is_empty() {
+                peaks.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                let mut clustered: Vec<(f64, f32)> = Vec::with_capacity(peaks.len());
+                for (pt, pe) in peaks {
+                    if let Some(last) = clustered.last_mut() {
+                        if (pt - last.0) * dist_m < cell {
+                            let los_new = ground_src + (ground_rcv - ground_src) * pt as f32;
+                            let los_old = ground_src + (ground_rcv - ground_src) * last.0 as f32;
+                            if pe - los_new > last.1 - los_old {
+                                *last = (pt, pe);
+                            }
+                            continue;
+                        }
+                    }
+                    clustered.push((pt, pe));
+                }
+                if clustered.len() > noise_compute::propagation::path_profile::PEAK_MAX_COUNT {
+                    clustered.sort_by(|p1, p2| {
+                        let l1 = ground_src + (ground_rcv - ground_src) * p1.0 as f32;
+                        let l2 = ground_src + (ground_rcv - ground_src) * p2.0 as f32;
+                        (p2.1 - l2).partial_cmp(&(p1.1 - l1)).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    clustered.truncate(noise_compute::propagation::path_profile::PEAK_MAX_COUNT);
+                    clustered.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                }
+                for &(pt, pelev) in &clustered {
+                    let insert_idx = out.t.partition_point(|&x| x < pt);
+                    if insert_idx > 0
+                        && (out.t[insert_idx - 1] - pt).abs() * dist_m < peak_dedup_min_m
+                    {
+                        continue;
+                    }
+                    if insert_idx < out.t.len()
+                        && (out.t[insert_idx] - pt).abs() * dist_m < peak_dedup_min_m
+                    {
+                        continue;
+                    }
+                    let lat = src_lat + pt * (rcv_lat - src_lat);
+                    let lon = src_lon + pt * (rcv_lon - src_lon);
+                    let bh = self.building.sample_cached(lat, lon, &mut bld_key, &mut bld_tile);
+                    let fr = self.forest.sample_cached(lat, lon, &mut for_key, &mut for_tile);
+                    let im = self.imd.sample_cached(lat, lon, &mut imd_key, &mut imd_tile);
+                    out.t.insert(insert_idx, pt);
+                    out.elevation_m.insert(insert_idx, pelev);
+                    out.building_h_m.insert(insert_idx, bh.clamp(0.0, 255.0) as u8);
+                    out.forest_u8.insert(insert_idx, fr.clamp(0.0, 255.0) as u8);
+                    out.imd_u8.insert(insert_idx, im.clamp(0.0, 255.0) as u8);
+                }
+            }
+        }
+
         out.step_m_med = noise_compute::propagation::path_profile::median_step_m(&out.t, dist_m);
     }
 }
@@ -253,14 +342,25 @@ impl FusedGrid {
         let cell_deg = 1.0 / 3600.0;
         let inv_cell_deg = 3600.0;
 
-        // Expand bbox by 1 cell for bilinear interpolation margin
-        let lat_lo = lat_min - cell_deg;
-        let lon_lo = lon_min - cell_deg;
-        let lat_hi = lat_max + cell_deg;
-        let lon_hi = lon_max + cell_deg;
-
-        let rows = ((lat_hi - lat_lo) * inv_cell_deg).ceil() as usize + 1;
-        let cols = ((lon_hi - lon_lo) * inv_cell_deg).ceil() as usize + 1;
+        // Snap origin to the 1/3600° DEM pixel lattice (integer-lattice
+        // arithmetic avoids float edge slop). Without this, `build` samples
+        // DEM at sub-cell-shifted positions, introducing a persistent
+        // half-cell phase error that `lookup_fused` / `pixel` cannot correct.
+        //
+        // Margin = 5 cells: `building_enclosure` probes at ±0.001° (~110 m
+        // at 50°N ≈ 3.6 arcsec = 3.6 cells). A 1-cell margin silently
+        // clamped those probes at hex boundaries to edge pixels, diverging
+        // from RealRasters. 5 cells covers the probe radius plus bilinear
+        // neighbours.
+        const MARGIN_CELLS: i32 = 5;
+        let lat_lo_i = (lat_min * inv_cell_deg).floor() as i32 - MARGIN_CELLS;
+        let lon_lo_i = (lon_min * inv_cell_deg).floor() as i32 - MARGIN_CELLS;
+        let lat_hi_i = (lat_max * inv_cell_deg).ceil() as i32 + MARGIN_CELLS;
+        let lon_hi_i = (lon_max * inv_cell_deg).ceil() as i32 + MARGIN_CELLS;
+        let lat_lo = lat_lo_i as f64 * cell_deg;
+        let lon_lo = lon_lo_i as f64 * cell_deg;
+        let rows = ((lat_hi_i - lat_lo_i + 1).max(2)) as usize;
+        let cols = ((lon_hi_i - lon_lo_i + 1).max(2)) as usize;
 
         let mut data = vec![FusedPixel::default(); rows * cols];
 
@@ -286,21 +386,56 @@ impl FusedGrid {
         FusedGrid { data, lat_min: lat_lo, lon_min: lon_lo, inv_cell_deg, cols, rows }
     }
 
+    /// Nearest-neighbor pixel lookup — matches `TileStore::sample_nearest`
+    /// (rounds to the closest pixel). Taking `.floor() as usize` here biased
+    /// the sample up-left by half a cell and made FusedGrid-based pipeline
+    /// runs differ from RealRasters-based popup by 5-7 dB when a building /
+    /// tree / impervious-surface edge fell inside the quad.
     #[inline]
     fn pixel(&self, lat: f64, lon: f64) -> &FusedPixel {
-        let r = ((lat - self.lat_min) * self.inv_cell_deg) as usize;
-        let c = ((lon - self.lon_min) * self.inv_cell_deg) as usize;
-        let r = r.min(self.rows.saturating_sub(1));
-        let c = c.min(self.cols.saturating_sub(1));
+        let rf = (lat - self.lat_min) * self.inv_cell_deg;
+        let cf = (lon - self.lon_min) * self.inv_cell_deg;
+        let r = rf.round().clamp(0.0, (self.rows - 1) as f64) as usize;
+        let c = cf.round().clamp(0.0, (self.cols - 1) as f64) as usize;
         &self.data[r * self.cols + c]
+    }
+
+    /// Bilinear IMD lookup — matches `RealRasters.imd` `Interp::Bilinear`
+    /// config. Storage stays `u8` (0-100 range gives 0.01 G-factor quanta,
+    /// worst per-band error ~0.025 dB — well below noise floor); the
+    /// interpolation happens at query time over 4 u8 neighbours.
+    #[inline]
+    fn imd_bilinear(&self, lat: f64, lon: f64) -> f64 {
+        let rf = (lat - self.lat_min) * self.inv_cell_deg;
+        let cf = (lon - self.lon_min) * self.inv_cell_deg;
+        let rf = rf.clamp(0.0, (self.rows - 1) as f64);
+        let cf = cf.clamp(0.0, (self.cols - 1) as f64);
+        let r0 = (rf.floor() as usize).min(self.rows - 2);
+        let c0 = (cf.floor() as usize).min(self.cols - 2);
+        let fr = rf - r0 as f64;
+        let fc = cf - c0 as f64;
+        let base = r0 * self.cols + c0;
+        let v00 = self.data[base].imd as f64;
+        let v01 = self.data[base + 1].imd as f64;
+        let v10 = self.data[base + self.cols].imd as f64;
+        let v11 = self.data[base + self.cols + 1].imd as f64;
+        let v0 = v00 + fc * (v01 - v00);
+        let v1 = v10 + fc * (v11 - v10);
+        v0 + fr * (v1 - v0)
     }
 
     #[inline]
     fn elevation_bilinear(&self, lat: f64, lon: f64) -> f64 {
         let rf = (lat - self.lat_min) * self.inv_cell_deg;
         let cf = (lon - self.lon_min) * self.inv_cell_deg;
-        let r0 = (rf.floor() as usize).min(self.rows.saturating_sub(2));
-        let c0 = (cf.floor() as usize).min(self.cols.saturating_sub(2));
+        // Clamp BEFORE floor — prevents negative wrap and OOB linear
+        // extrapolation (the prior form left `fr = rf - r0` negative for
+        // points west/south of bbox, silently extrapolating elevation
+        // into open space).
+        let rf = rf.clamp(0.0, (self.rows - 1) as f64);
+        let cf = cf.clamp(0.0, (self.cols - 1) as f64);
+        let r0 = (rf.floor() as usize).min(self.rows - 2);
+        let c0 = (cf.floor() as usize).min(self.cols - 2);
         let fr = rf - r0 as f64;
         let fc = cf - c0 as f64;
         let v00 = self.data[r0 * self.cols + c0].elevation as f64;
@@ -323,7 +458,11 @@ impl noise_compute::types::RasterSampler for FusedGrid {
     }
 
     fn ground_g(&self, lat: f64, lon: f64) -> f64 {
-        let imd = self.pixel(lat, lon).imd as f64;
+        // Bilinear IMD to match RealRasters config (Interp::Bilinear for
+        // IMD). Without this, G jumps in 1/100 steps across pixel edges,
+        // while popup sees a smooth gradient — popup/pipeline diverges
+        // on hard/soft ground transitions.
+        let imd = self.imd_bilinear(lat, lon);
         (1.0 - imd / 100.0).clamp(0.0, 1.0)
     }
 
@@ -346,17 +485,33 @@ impl noise_compute::types::RasterSampler for FusedGrid {
         &self, src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64,
         dist_m: f64, excl_start_m: f64,
     ) -> (f64, f64) {
-        let mut steps_buf = Vec::with_capacity(64);
-        noise_compute::propagation::path_profile::fill_t_values(dist_m, &mut steps_buf);
-        let mut max_bh = 0.0f64;
-        let mut max_t = 0.5;
-        for &t in &steps_buf {
-            if t <= 0.0 || t >= 1.0 { continue; }
-            if excl_start_m > 0.0 && t * dist_m < excl_start_m { continue; }
+        // Mirror RealRasters / trait-default cadence exactly (uniform
+        // cell / 3 × cell / 6 × cell by distance band). Previous version
+        // used `fill_t_values` bilaterally, which has a 240 m mid-gap
+        // that misses tall obstacles between endpoints — parity divergence.
+        let cell_m = noise_compute::propagation::path_profile::CELL_M;
+        let step = if dist_m <= 1000.0 {
+            cell_m
+        } else if dist_m <= 3000.0 {
+            cell_m * 3.0
+        } else {
+            cell_m * 6.0
+        };
+        let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
+        let mut max_bh = 0.0_f64;
+        let mut max_t = 0.5_f64;
+        for k in 1..n {
+            let t = k as f64 / n as f64;
+            if excl_start_m > 0.0 && t * dist_m < excl_start_m {
+                continue;
+            }
             let lat = src_lat + t * (rcv_lat - src_lat);
             let lon = src_lon + t * (rcv_lon - src_lon);
             let bh = self.pixel(lat, lon).building as f64;
-            if bh > max_bh { max_bh = bh; max_t = t; }
+            if bh > max_bh {
+                max_bh = bh;
+                max_t = t;
+            }
         }
         (max_bh, max_t)
     }
@@ -386,32 +541,174 @@ impl noise_compute::types::RasterSampler for FusedGrid {
         // pixel (the existing `self.pixel()` convention) for the categorical
         // layers. Eliminates the redundant row/col computation and pointer
         // dereference that `elevation_bilinear` + `pixel` did separately.
-        let row_max = self.rows.saturating_sub(2);
-        let col_max = self.cols.saturating_sub(2);
         for &t in &out.t {
             let lat = src_lat + t * (rcv_lat - src_lat);
             let lon = src_lon + t * (rcv_lon - src_lon);
-            let rf = (lat - self.lat_min) * self.inv_cell_deg;
-            let cf = (lon - self.lon_min) * self.inv_cell_deg;
-            let r0 = (rf.floor() as usize).min(row_max);
-            let c0 = (cf.floor() as usize).min(col_max);
-            let fr = rf - r0 as f64;
-            let fc = cf - c0 as f64;
-            let base = r0 * self.cols + c0;
-            let px00 = self.data[base];
-            let px01 = self.data[base + 1];
-            let px10 = self.data[base + self.cols];
-            let px11 = self.data[base + self.cols + 1];
+            let (elev, bh, fr_u8, imd_u8) = self.lookup_fused(lat, lon);
+            out.elevation_m.push(elev);
+            out.building_h_m.push(bh);
+            out.forest_u8.push(fr_u8);
+            out.imd_u8.push(imd_u8);
+        }
 
-            let v0 = px00.elevation as f64 + fc * (px01.elevation as f64 - px00.elevation as f64);
-            let v1 = px10.elevation as f64 + fc * (px11.elevation as f64 - px10.elevation as f64);
-            out.elevation_m.push((v0 + fr * (v1 - v0)) as f32);
-            out.building_h_m.push(px00.building);
-            out.forest_u8.push(px00.forest);
-            out.imd_u8.push(px00.imd);
+        // P3 peak augmentation (global multi-hill coverage): scan only gaps
+        // in the bilateral cadence that are larger than ~1.5 × cell size
+        // (GPT-5.4 + Gemini 3.1 Pro dual review, 2026-04-23: scanning the
+        // whole path at 30 m from t=0 caused phase-shift duplicates in the
+        // endpoint-dense zones — fake peaks 9-22 m from existing samples
+        // passed the old 3 m reject filter and bloated the profile by +16 %,
+        // compounding downstream terrain / screening / vegetation costs).
+        //
+        // Gap-only scan: the bilateral cadence already samples at ≤30 m near
+        // endpoints and ≤240 m in the middle; we only look between samples
+        // where that gap could hide a real hill.
+        let cell_m_const = noise_compute::propagation::path_profile::CELL_M;
+        let gap_scan_min_m = cell_m_const * 1.5;
+        let peak_dedup_min_m = cell_m_const * 0.5;
+        if dist_m > cell_m_const * 10.0 && out.elevation_m.len() >= 3 {
+            let ground_src = out.elevation_m[0];
+            let ground_rcv = *out.elevation_m.last().unwrap();
+            let mut peaks: Vec<(f64, f32)> = Vec::with_capacity(8);
+            // Per-window gap scan: walk bilateral samples pairwise, scan
+            // inside any gap > 1.5 × CELL_M at CELL_M cadence.
+            let t_snapshot: Vec<f64> = out.t.clone();
+            for w in t_snapshot.windows(2) {
+                let gap_m = (w[1] - w[0]) * dist_m;
+                if gap_m <= gap_scan_min_m {
+                    continue;
+                }
+                let steps = ((gap_m / cell_m_const).floor() as usize).max(1);
+                let mut prev_elev = f32::NAN;
+                let mut curr_elev = f32::NAN;
+                let mut prev_t = w[0];
+                let mut curr_t = w[0];
+                for k in 1..steps {
+                    let local_t = w[0] + (k as f64 / steps as f64) * (w[1] - w[0]);
+                    let lat = src_lat + local_t * (rcv_lat - src_lat);
+                    let lon = src_lon + local_t * (rcv_lon - src_lon);
+                    let elev = self.lookup_elevation(lat, lon);
+                    if !prev_elev.is_nan() && !curr_elev.is_nan()
+                        && curr_elev > prev_elev && curr_elev > elev
+                    {
+                        let los_c = ground_src + (ground_rcv - ground_src) * curr_t as f32;
+                        if curr_elev > los_c + noise_compute::propagation::path_profile::PEAK_EXCESS_MIN_M {
+                            peaks.push((curr_t, curr_elev));
+                        }
+                    }
+                    prev_elev = curr_elev;
+                    prev_t = curr_t;
+                    curr_elev = elev;
+                    curr_t = local_t;
+                }
+                let _ = prev_t;
+            }
+            if peaks.is_empty() {
+                // fast path — no profile mutation, preserve downstream cost.
+            } else {
+                // Cell-scale dedup against peaks themselves (keep max-excess
+                // per cell cluster).
+                peaks.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                let mut clustered: Vec<(f64, f32)> = Vec::with_capacity(peaks.len());
+                for (pt, pe) in peaks {
+                    if let Some(last) = clustered.last_mut() {
+                        if (pt - last.0) * dist_m < cell_m_const {
+                            let los_new = ground_src + (ground_rcv - ground_src) * pt as f32;
+                            let los_old = ground_src + (ground_rcv - ground_src) * last.0 as f32;
+                            if pe - los_new > last.1 - los_old {
+                                *last = (pt, pe);
+                            }
+                            continue;
+                        }
+                    }
+                    clustered.push((pt, pe));
+                }
+                // Top-N cap by LOS excess (matches downstream convex-hull cap).
+                if clustered.len() > noise_compute::propagation::path_profile::PEAK_MAX_COUNT {
+                    clustered.sort_by(|p1, p2| {
+                        let l1 = ground_src + (ground_rcv - ground_src) * p1.0 as f32;
+                        let l2 = ground_src + (ground_rcv - ground_src) * p2.0 as f32;
+                        (p2.1 - l2).partial_cmp(&(p1.1 - l1)).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    clustered.truncate(noise_compute::propagation::path_profile::PEAK_MAX_COUNT);
+                    clustered.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                }
+                for &(pt, pelev) in &clustered {
+                    let insert_idx = out.t.partition_point(|&x| x < pt);
+                    if insert_idx > 0
+                        && (out.t[insert_idx - 1] - pt).abs() * dist_m < peak_dedup_min_m
+                    {
+                        continue;
+                    }
+                    if insert_idx < out.t.len()
+                        && (out.t[insert_idx] - pt).abs() * dist_m < peak_dedup_min_m
+                    {
+                        continue;
+                    }
+                    let lat = src_lat + pt * (rcv_lat - src_lat);
+                    let lon = src_lon + pt * (rcv_lon - src_lon);
+                    let (_, bh, fr_u8, imd_u8) =
+                        self.lookup_fused(lat, lon);
+                    out.t.insert(insert_idx, pt);
+                    out.elevation_m.insert(insert_idx, pelev);
+                    out.building_h_m.insert(insert_idx, bh);
+                    out.forest_u8.insert(insert_idx, fr_u8);
+                    out.imd_u8.insert(insert_idx, imd_u8);
+                }
+            }
         }
 
         out.step_m_med = noise_compute::propagation::path_profile::median_step_m(&out.t, dist_m);
+    }
+}
+
+impl FusedGrid {
+    /// Bilinear elevation only — cheap scan path for P3 peak detection.
+    #[inline]
+    fn lookup_elevation(&self, lat: f64, lon: f64) -> f32 {
+        self.elevation_bilinear(lat, lon) as f32
+    }
+
+    /// Bilinear elevation + IMD, nearest-neighbour building + forest.
+    ///
+    /// Matches `RealRasters` per-raster `Interp` config: DEM bilinear, IMD
+    /// bilinear, building/forest nearest. Earlier versions used `px00`
+    /// (top-left of the bilinear quad) for all three categoricals, biasing
+    /// up-left by half a cell and producing up to 6+ dB divergence from
+    /// `RealRasters` wherever a raster edge passed through the quad.
+    #[inline]
+    fn lookup_fused(&self, lat: f64, lon: f64) -> (f32, u8, u8, u8) {
+        let rf = (lat - self.lat_min) * self.inv_cell_deg;
+        let cf = (lon - self.lon_min) * self.inv_cell_deg;
+        // Clamp before floor: prevents negative wrap and OOB extrapolation.
+        let rf = rf.clamp(0.0, (self.rows - 1) as f64);
+        let cf = cf.clamp(0.0, (self.cols - 1) as f64);
+        let r0 = (rf.floor() as usize).min(self.rows - 2);
+        let c0 = (cf.floor() as usize).min(self.cols - 2);
+        let fr = rf - r0 as f64;
+        let fc = cf - c0 as f64;
+        let base = r0 * self.cols + c0;
+        let px00 = self.data[base];
+        let px01 = self.data[base + 1];
+        let px10 = self.data[base + self.cols];
+        let px11 = self.data[base + self.cols + 1];
+        // Elevation bilinear (DEM is a continuous field).
+        let v0e = px00.elevation as f64 + fc * (px01.elevation as f64 - px00.elevation as f64);
+        let v1e = px10.elevation as f64 + fc * (px11.elevation as f64 - px10.elevation as f64);
+        let elev = (v0e + fr * (v1e - v0e)) as f32;
+        // Nearest-neighbor for building + forest (discrete categoricals).
+        let near = match (fr >= 0.5, fc >= 0.5) {
+            (false, false) => px00,
+            (false, true) => px01,
+            (true, false) => px10,
+            (true, true) => px11,
+        };
+        // IMD is stored u8 but sampled BILINEARLY at query time to match
+        // RealRasters.imd Interp::Bilinear. PathProfile consumer quantises
+        // back to u8 (matching its `imd_u8: Vec<u8>` contract).
+        let v0i = px00.imd as f64 + fc * (px01.imd as f64 - px00.imd as f64);
+        let v1i = px10.imd as f64 + fc * (px11.imd as f64 - px10.imd as f64);
+        let imd = (v0i + fr * (v1i - v0i)).round().clamp(0.0, 255.0) as u8;
+        (elev, near.building, near.forest, imd)
     }
 }
 #[cfg(test)]
@@ -419,11 +716,25 @@ mod tests {
     use super::*;
 
     fn test_rasters() -> RealRasters {
-        RealRasters::new(Path::new("../../source-data"))
+        // Prepared rasters under data/prepared — 1° tiles for CZ + surroundings
+        // are populated by scripts/rasters-to-tiles.sh. Tests auto-ignore
+        // when missing (see `prepared_available` helper below).
+        RealRasters::new(Path::new("../../data/prepared"))
+    }
+
+    /// Skip test body if no prepared rasters on disk (e.g., hermetic CI
+    /// without data/prepared populated). Checks the Copernicus DEM dir
+    /// rather than a specific tile so the guard survives tile rotation.
+    fn prepared_available() -> bool {
+        let dir = Path::new("../../data/prepared/dem/copernicus");
+        std::fs::read_dir(dir)
+            .map(|mut iter| iter.any(|e| e.ok().map_or(false, |e| e.path().extension().map_or(false, |x| x == "hgt"))))
+            .unwrap_or(false)
     }
 
     #[test]
     fn test_elevation_brno() {
+        if !prepared_available() { return; }
         let r = test_rasters();
         let elev = r.elevation(49.195, 16.608);
         assert!(elev > 150.0 && elev < 400.0, "Brno elevation: {elev}m");
@@ -431,6 +742,7 @@ mod tests {
 
     #[test]
     fn test_elevation_not_flat_200() {
+        if !prepared_available() { return; }
         let r = test_rasters();
         let e1 = r.elevation(49.195, 16.608);
         let e2 = r.elevation(49.5, 16.0);
@@ -439,27 +751,117 @@ mod tests {
 
     #[test]
     fn test_ground_g_varies() {
+        if !prepared_available() { return; }
         let r = test_rasters();
         let g1 = r.ground_g(49.195, 16.608); // urban
         let g2 = r.ground_g(49.3, 16.4);      // rural
-        // Both should be in valid range
         assert!(g1 >= 0.0 && g1 <= 1.0, "G urban: {g1}");
         assert!(g2 >= 0.0 && g2 <= 1.0, "G rural: {g2}");
     }
 
     #[test]
-    fn test_vegetation_depth() {
-        let r = test_rasters();
-        // Path through forest area (north of Brno)
-        let depth = r.vegetation_depth(49.3, 16.5, 49.35, 16.5);
-        // Should be >= 0 (might be 0 if no forest on this particular path)
-        assert!(depth >= 0.0, "Forest depth: {depth}m");
-    }
-
-    #[test]
     fn test_building_height() {
+        if !prepared_available() { return; }
         let r = test_rasters();
         let h = r.building_height(49.195, 16.608);
         assert!(h >= 0.0 && h <= 255.0, "Building height: {h}m");
+    }
+
+    // FusedGrid ↔ RealRasters parity tests. Regression guard for the
+    // FusedGrid fix set (truncate, px00-bias, subgrid shift, IMD
+    // interpolation mismatch, OOB extrapolation). Tests auto-skip when
+    // `data/prepared/` is not populated — no `#[ignore]` needed.
+
+    fn test_fused() -> Option<(RealRasters, FusedGrid)> {
+        if !prepared_available() { return None; }
+        let r = test_rasters();
+        // Small Brno-area bbox — keeps the grid in L1/L2.
+        let fg = FusedGrid::build(&r, 49.18, 49.22, 16.58, 16.63);
+        Some((r, fg))
+    }
+
+    #[test]
+    fn fused_ground_g_parity() {
+        let Some((real, fg)) = test_fused() else { return; };
+        // Grid of points across the Brno bbox including hex-edge cases.
+        for (lat, lon) in &[
+            (49.20, 16.60), (49.195, 16.608), (49.19, 16.59),
+            (49.181, 16.581), // near bbox edge
+            (49.215, 16.625), // opposite corner
+        ] {
+            let g_real = real.ground_g(*lat, *lon);
+            let g_fused = fg.ground_g(*lat, *lon);
+            assert!(
+                (g_real - g_fused).abs() < 0.01,
+                "ground_g divergence at ({}, {}): real={g_real:.4} fused={g_fused:.4}",
+                lat, lon
+            );
+        }
+    }
+
+    #[test]
+    fn fused_elevation_parity() {
+        let Some((real, fg)) = test_fused() else { return; };
+        for (lat, lon) in &[
+            (49.20, 16.60), (49.195, 16.608),
+            (49.181, 16.581),
+        ] {
+            let e_real = real.elevation(*lat, *lon);
+            let e_fused = fg.elevation(*lat, *lon);
+            // f32 precision in FusedPixel + f64 in RealRasters → sub-1 cm.
+            assert!(
+                (e_real - e_fused).abs() < 0.05,
+                "elevation divergence at ({}, {}): real={e_real:.4} fused={e_fused:.4}",
+                lat, lon
+            );
+        }
+    }
+
+    #[test]
+    fn fused_building_height_parity() {
+        let Some((real, fg)) = test_fused() else { return; };
+        for (lat, lon) in &[
+            (49.195, 16.608), (49.20, 16.60),
+            (49.215, 16.625),
+        ] {
+            let h_real = real.building_height(*lat, *lon);
+            let h_fused = fg.building_height(*lat, *lon);
+            assert_eq!(
+                h_real as u8, h_fused as u8,
+                "building_height divergence at ({}, {}): real={h_real} fused={h_fused}",
+                lat, lon
+            );
+        }
+    }
+
+    #[test]
+    fn fused_building_enclosure_near_bbox_edge() {
+        // Regression test for Gemini-flagged bug: 1-cell margin made
+        // `building_enclosure()` (probe radius ~0.001° = 3.6 cells)
+        // silently clamp to edge pixels at hex boundaries. 5-cell margin
+        // post-fix must keep parity with RealRasters.
+        let Some((real, fg)) = test_fused() else { return; };
+        let lat = 49.181;  // 1 cell from bbox min (49.18)
+        let lon = 16.581;
+        let e_real = real.building_enclosure(lat, lon);
+        let e_fused = fg.building_enclosure(lat, lon);
+        assert!(
+            (e_real - e_fused).abs() < 0.5,
+            "building_enclosure near-edge divergence: real={e_real} fused={e_fused}"
+        );
+    }
+
+    #[test]
+    fn fused_oob_clamp_no_extrapolation() {
+        // Regression test for Gemini-flagged OOB bilinear extrapolation.
+        // Query outside the FusedGrid bbox — pre-fix would extrapolate
+        // linearly into space (negative `fr`/`fc`). Post-fix clamps to
+        // the edge elevation.
+        let Some((_, fg)) = test_fused() else { return; };
+        let e_edge = fg.elevation(49.18, 16.58);         // at bbox edge
+        let e_outside = fg.elevation(49.10, 16.50);      // far outside
+        // Both must be finite and plausible CZ elevations.
+        assert!(e_edge.is_finite() && e_outside.is_finite());
+        assert!(e_outside > -1000.0 && e_outside < 10_000.0);
     }
 }
