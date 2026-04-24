@@ -111,7 +111,7 @@ function computeSourceHeightRow(trace: SegmentTrace): [React.ReactNode, React.Re
     'diffraction S/R anchor points.' +
     slantNote
   return [
-    <HoverText title={tooltip} className="no-underline">
+    <HoverText title={tooltip}>
       <span className="cursor-help">Source height</span>
     </HoverText>,
     `${h.toFixed(1)} m`,
@@ -154,10 +154,10 @@ function computeLwRow(trace: SegmentTrace): [React.ReactNode, React.ReactNode] |
     `Day shown is the representative period. Per-band L_w lives\n` +
     'in §5 under "Lw (A)" — hover each period cell there.'
   return [
-    <HoverText title={labelConcept} className="no-underline">
+    <HoverText title={labelConcept}>
       <span className="cursor-help">{cfg.label}</span>
     </HoverText>,
-    <HoverText title={valueComputation} className="no-underline">
+    <HoverText title={valueComputation}>
       <span className="cursor-help">{`${lw.day.toFixed(1)} ${cfg.unit}`}</span>
     </HoverText>,
   ]
@@ -184,13 +184,13 @@ function emissionInputRows(e: EmissionTrace): [React.ReactNode, React.ReactNode]
         ['Speed', `${e.speed_kmh.toFixed(0)} km/h`],
         [
           'Traffic',
-          <HoverText title={trafficText} className="no-underline">
+          <HoverText title={trafficText}>
             {Math.round(total)}/day
           </HoverText>,
         ],
         [
           'Surface',
-          <HoverText title={surfaceText} className="no-underline">
+          <HoverText title={surfaceText}>
             {e.surface}
             {e.surface_corr_db !== 0 ? ` (${fmtDb(e.surface_corr_db)})` : ''}
           </HoverText>,
@@ -227,7 +227,7 @@ function emissionInputRows(e: EmissionTrace): [React.ReactNode, React.ReactNode]
         ['Speed', `${e.speed_kmh.toFixed(0)} km/h`],
         [
           'Trains',
-          <HoverText title={trainsText} className="no-underline">
+          <HoverText title={trainsText}>
             {total.toFixed(1)}/day
           </HoverText>,
         ],
@@ -540,18 +540,18 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
 
   return (
     <Section>
-      <HoverText
-        title={
-          'Baseline corrections: ISO 9613-2 §7 + CNOSSOS-EU §2.5.\n' +
-          'Obstructions: ISO 9613-2 §7.4 Maekawa barrier formula +\n' +
-          'CNOSSOS-EU §2.5.6(c) Rayleigh δ* gate. Hover individual rows\n' +
-          'for concept + value breakdown.'
-        }
-      >
-        <div className="mb-0.5 text-[10px] text-muted-foreground/70 italic cursor-help">
-          Attenuations per ISO 9613-2 + CNOSSOS-EU; hover rows for detail.
-        </div>
-      </HoverText>
+      <div className="text-muted-foreground/60 font-normal pb-0.5">
+        <HoverText
+          title={
+            'Baseline corrections: ISO 9613-2 §7 + CNOSSOS-EU §2.5.\n' +
+            'Obstructions: ISO 9613-2 §7.4 Maekawa barrier formula +\n' +
+            'CNOSSOS-EU §2.5.6(c) Rayleigh δ* gate. Hover individual rows\n' +
+            'for concept + value breakdown.'
+          }
+        >
+          Attenuations
+        </HoverText>
+      </div>
       <InlineTable rows={baselineRows} />
       <div className="h-2" aria-hidden="true" />
       <InlineTable rows={obstructionRows} />
@@ -570,34 +570,36 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
         </HoverText>
       )}
       <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 border-t border-border/40 pt-0.5">
-        <HoverText
-          title={
-            'Engine variant delta: full Lden − free-field Lden.\n\n' +
-            'Free-field covers divergence + atmospheric + ground + FLC\n' +
-            '(iso9613.rs:253). Everything else applied in Full shows up\n' +
-            'here: terrain diffraction (A_bar), building/barrier screening\n' +
-            '(A_bar increment), foliage (A_fol), and — when non-zero —\n' +
-            'the urban reflection boost (A_refl). 0 dB means no obstruction\n' +
-            'and no reflection changed the outcome.'
-          }
-        >
-          <span className="text-muted-foreground/70 font-medium cursor-help">Total obstruction effect</span>
-        </HoverText>
-        <HoverText
-          title={
-            `received_lden.full − received_lden.free_field\n` +
-            `= ${received_lden.full.toFixed(2)} − ${received_lden.free_field.toFixed(2)}\n` +
-            `= ${totalPathDelta.toFixed(2)} dB (A-weighted).\n\n` +
-            'Covers obstructions (A_bar terrain + A_bar building +\n' +
-            'A_fol foliage) and — when non-zero — the urban reflection\n' +
-            'boost (A_refl), since reflection is applied in Full but\n' +
-            'not in free_field.'
-          }
-        >
-          <span className="text-foreground font-mono font-medium text-right cursor-help">
+        <span className="text-muted-foreground/70 font-medium">
+          <HoverText
+            title={
+              'Engine variant delta: full Lden − free-field Lden.\n\n' +
+              'Free-field covers divergence + atmospheric + ground + FLC\n' +
+              '(iso9613.rs:253). Everything else applied in Full shows up\n' +
+              'here: terrain diffraction (A_bar), building/barrier screening\n' +
+              '(A_bar increment), foliage (A_fol), and — when non-zero —\n' +
+              'the urban reflection boost (A_refl). 0 dB means no obstruction\n' +
+              'and no reflection changed the outcome.'
+            }
+          >
+            Total obstruction effect
+          </HoverText>
+        </span>
+        <span className="text-foreground font-mono font-medium text-right">
+          <HoverText
+            title={
+              `received_lden.full − received_lden.free_field\n` +
+              `= ${received_lden.full.toFixed(2)} − ${received_lden.free_field.toFixed(2)}\n` +
+              `= ${totalPathDelta.toFixed(2)} dB (A-weighted).\n\n` +
+              'Covers obstructions (A_bar terrain + A_bar building +\n' +
+              'A_fol foliage) and — when non-zero — the urban reflection\n' +
+              'boost (A_refl), since reflection is applied in Full but\n' +
+              'not in free_field.'
+            }
+          >
             {fmtDb(totalPathDelta)}
-          </span>
-        </HoverText>
+          </HoverText>
+        </span>
       </div>
     </Section>
   )
@@ -779,6 +781,11 @@ function Section6Variants({ trace }: { trace: SegmentTrace }) {
       'transmitting). Δ vs Full = what the air ate, mainly HF.',
     ],
   ]
+  const whatIfTooltip =
+    `Deltas below = Lden when removing each effect, compared to\n` +
+    `the full ${received_lden.full.toFixed(1)} dB shown above. Each row\n` +
+    `is an engine variant (no_terrain / no_screening / …) from\n` +
+    `iso9613.rs; Δ quantifies what that effect contributes.`
   return (
     <div className="mt-2">
       <button
@@ -787,31 +794,27 @@ function Section6Variants({ trace }: { trace: SegmentTrace }) {
         className="text-[9px] uppercase tracking-[0.08em] text-muted-foreground/70 hover:text-foreground inline-flex items-center gap-1"
       >
         <span>{open ? '▾' : '▸'}</span>
-        <span>What-if</span>
+        <HoverText title={whatIfTooltip}>
+          <span>What-if</span>
+        </HoverText>
       </button>
       {open && (
-        <>
-          <div className="mt-0.5 text-[10px] text-muted-foreground/70 italic">
-            Deltas below = Lden when removing each effect, compared to
-            the full {received_lden.full.toFixed(1)} dB shown above.
-          </div>
-          <div className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-0.5 tabular-nums mt-0.5">
-            {rows.map(([label, v, conceptTooltip], i) => {
-              const delta = v - received_lden.full
-              return (
-                <div key={i} className="contents">
-                  <HoverText title={conceptTooltip}>
-                    <span className="text-muted-foreground/70 cursor-help">{label}</span>
-                  </HoverText>
-                  <span className="text-right">{fmtDb(v, { signed: false })}</span>
-                  <span className="text-right text-muted-foreground/50">
-                    {delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        </>
+        <div className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-0.5 tabular-nums mt-0.5">
+          {rows.map(([label, v, conceptTooltip], i) => {
+            const delta = v - received_lden.full
+            return (
+              <div key={i} className="contents">
+                <HoverText title={conceptTooltip}>
+                  <span className="text-muted-foreground/70">{label}</span>
+                </HoverText>
+                <span className="text-right">{fmtDb(v, { signed: false })}</span>
+                <span className="text-right text-muted-foreground/50">
+                  {delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)}
+                </span>
+              </div>
+            )
+          })}
+        </div>
       )}
     </div>
   )
