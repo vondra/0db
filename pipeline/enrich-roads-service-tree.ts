@@ -29,11 +29,43 @@ const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const PREFIX = process.argv.includes('--prefix') ? process.argv[process.argv.indexOf('--prefix') + 1] : ''
 
 const GRID_CELL = 0.0005       // building grid cell size in degrees (~55m at equator)
-const MAX_BUFFER_M = 50        // building search radius in meters
+
+/**
+ * Building search radius in meters — only buildings within this distance of an
+ * eligible road segment are attributed to it.
+ *
+ * Arbitrary; tuned by eye to approximate "one block frontage" (typical suburban
+ * plot depth + setback). No standard backs this specific number — it is a
+ * trade-off between capturing legitimate frontage and avoiding over-assignment
+ * in dense grids.
+ */
+const MAX_BUFFER_M = 50
+
+/**
+ * Vehicle trips per dwelling per day (global baseline).
+ *
+ * Inherited from commit 61435574 (2026-04-12) without citation; approximates
+ * US NHTS 2017 household trip-count (~5.9 = 1.9 cars × 3.1 trips/car). Matches
+ * North American motorisation but over-estimates the rest of the world by
+ * 20-50 % (EU ~3.5-4.0, Latin America ~2.2, South Asia ~0.5).
+ *
+ * Scheduled recalibration (plan v5 A.4): 4.0 × occupancy 0.92 ≈ 3.68 effective,
+ * EU midpoint from NHTS 2022 / UK NTS 2023 / MiD 2017 / OECD HM1-1.
+ */
 const TRIPS_PER_DWELLING = 6
+
+/**
+ * Floor for service-tree accumulated AADT — segments below this value are
+ * clamped up to avoid degenerate 0-traffic rows.
+ *
+ * Arbitrary; chosen so the quietest dead-end cul-de-sac still emits at
+ * a plausible "a few cars a day" level instead of zero.
+ */
 const MIN_AADT = 20
 
 // Vehicle split matching engine defaults for residential (480/5/10/5 ≈ 96/1/2/1)
+// Inherited from normalize.rs::default_road_traffic(5); arbitrary fit to
+// CNOSSOS-EU typical values, not from a measurement source.
 const SPLIT_MEDIUM = 0.01
 const SPLIT_HEAVY = 0.02
 const SPLIT_MOTO = 0.01
@@ -71,6 +103,21 @@ function gridKey(lat: number, lon: number): string {
   return `${Math.floor(lat / GRID_CELL)}_${Math.floor(lon / GRID_CELL)}`
 }
 
+/**
+ * Estimate dwelling-equivalent count for a building (feeds trip generation).
+ *
+ * Current formulas are arbitrary approximations — divisors (50, 100, 80) and
+ * caps (200) were tuned by eye without a citation trail. Known issues:
+ *   - Uses `area` as if it were GFA, but buildings.arrow stores FOOTPRINT
+ *     (docs/about/index.md:277 defines GFA = footprint × floors).
+ *     A 5-floor 200 m² hotel is treated as 200 m² instead of 1000 m² GFA.
+ *   - No type-specific formulas for hotel/school/hospital/civic — they all
+ *     fall through the generic floors-based default.
+ *
+ * Scheduled rewrite (plan v5 A.4): switch to `gfa = footprint * effectiveFloors`,
+ * per-type ITE Trip Generation Manual codes (820 commercial, 110 industrial,
+ * 310 hotel, 610 hospital, 520 school).
+ */
 function estimateDwellings(buildingType: number, floors: number, areaMr2: number | null): number {
   const area = areaMr2 ?? 100
   if (buildingType === 1) return Math.min(Math.ceil(area / 50), 200)
