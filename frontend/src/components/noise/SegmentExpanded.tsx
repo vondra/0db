@@ -76,15 +76,50 @@ function InlineTable({ rows }: { rows: [string | React.ReactNode, React.ReactNod
 function Section1Source({ trace }: { trace: SegmentTrace }) {
   const emissionRowsList = useMemo(() => emissionInputRows(trace.emission), [trace.emission])
   const lwRow = useMemo(() => computeLwRow(trace), [trace])
+  const sourceHeightRow = useMemo(() => computeSourceHeightRow(trace), [trace])
   const rows = useMemo(
-    () => (lwRow ? [...emissionRowsList, lwRow] : emissionRowsList),
-    [emissionRowsList, lwRow],
+    () => {
+      const out: [React.ReactNode, React.ReactNode][] = [...emissionRowsList]
+      if (lwRow) out.push(lwRow)
+      out.push(sourceHeightRow)
+      return out
+    },
+    [emissionRowsList, lwRow, sourceHeightRow],
   )
   return (
     <Section>
       <InlineTable rows={rows} />
     </Section>
   )
+}
+
+// Source height is the single row inherited from the removed §2 Baseline
+// section — value is a per-source-type model constant (road 0.05 m wheel,
+// rail 0.5 m wheel-rail, building mid-facade, industrial varies, aircraft
+// ground 4 m), not a computed field. Tooltip explains the convention.
+function computeSourceHeightRow(trace: SegmentTrace): [React.ReactNode, React.ReactNode] {
+  const h = trace.baseline.source_height_m
+  const slantSame = Math.abs(trace.d_slant_m - trace.dist_m) < 0.5
+  const slantNote = slantSame
+    ? ''
+    : `\n\nSlant distance: ${trace.d_slant_m.toFixed(0)} m vs horizontal ${trace.dist_m.toFixed(0)} m — the vertical offset from source height contributes.`
+  const tooltip =
+    'Source height above ground — model constant per source type:\n' +
+    '  road       0.05 m   (wheel/tyre contact)\n' +
+    '  railway    0.5 m    (wheel-rail contact)\n' +
+    '  aircraft   4.0 m    (ground ops)\n' +
+    '  building   height/2 (mid-facade)\n' +
+    '  industrial varies   (5 m other / 8 m quarry / 10 m heavy NACE;\n' +
+    '                       wind turbine = hub height)\n\n' +
+    `Feeds geometric divergence (d_slant = √(d_horizontal² + Δh²)) and\n` +
+    'diffraction S/R anchor points.' +
+    slantNote
+  return [
+    <HoverText title={tooltip} className="no-underline">
+      <span className="cursor-help">Source height</span>
+    </HoverText>,
+    `${h.toFixed(1)} m`,
+  ]
 }
 
 const LW_LINE_SOURCE = {
@@ -215,45 +250,29 @@ function emissionInputRows(e: EmissionTrace): [React.ReactNode, React.ReactNode]
       ]
     }
     case 'industrial': {
-      return [
+      const rows: [React.ReactNode, React.ReactNode][] = [
         ['Source type', e.source_type],
         ['Area', e.area_m2 > 0 ? `${Math.round(e.area_m2)} m²` : '—'],
         ['NACE', e.nace ?? '—'],
-        ['Hub height', e.hub_height_m != null ? `${e.hub_height_m.toFixed(1)} m` : '—'],
-        ['Rated power', e.rated_power_kw != null ? `${Math.round(e.rated_power_kw)} kW` : '—'],
-        ['Effective source dist', `${e.effective_area_source_dist_m.toFixed(0)} m`],
       ]
+      // Wind-turbine-only fields — non-wind industrials send null/0, row
+      // adds no value there.
+      if (e.hub_height_m != null && e.hub_height_m > 0) {
+        rows.push(['Hub height', `${e.hub_height_m.toFixed(1)} m`])
+      }
+      if (e.rated_power_kw != null && e.rated_power_kw > 0) {
+        rows.push(['Rated power', `${Math.round(e.rated_power_kw)} kW`])
+      }
+      rows.push(['Effective source dist', `${e.effective_area_source_dist_m.toFixed(0)} m`])
+      return rows
     }
   }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// §2 Baseline — path-independent (distance only, no terrain/obstacles)
-// ────────────────────────────────────────────────────────────────────────────
-
-function Section2Baseline({ trace }: { trace: SegmentTrace }) {
-  const { baseline } = trace
-  const slantSame = Math.abs(trace.d_slant_m - trace.dist_m) < 0.5
-  const distRow: [string, React.ReactNode] = [
-    'Distance',
-    slantSame
-      ? `${trace.dist_m.toFixed(0)} m`
-      : `${trace.dist_m.toFixed(0)} m (slant ${trace.d_slant_m.toFixed(0)} m)`,
-  ]
-  return (
-    <Section>
-      <InlineTable
-        rows={[
-          distRow,
-          ['Source height', `${baseline.source_height_m.toFixed(1)} m`],
-        ]}
-      />
-    </Section>
-  )
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// §4 Path effects — derived from the path geometry (terrain, ground, etc.)
+// §2 Path effects — derived from the path geometry (terrain, ground, etc.)
+// Former §2 Baseline (Distance + Source height) removed: distance lives in
+// the collapsed header, source height moved into §1 as a model-constant row.
 // ────────────────────────────────────────────────────────────────────────────
 
 function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
@@ -371,17 +390,14 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
         const triple = terrain.n_edges === 3
           ? '\n\nN=3 cascade (project simplification): δ = |S→E₁|+|E₁→E₂|+|E₂→E₃|+|E₃→R|−|S→R|, e = |E₁→E₃|, cap 25 dB.'
           : ''
-        const rayleigh = terrain.delta_star_m > 0
-          ? `\n\nRayleigh δ* = ${terrain.delta_star_m.toFixed(2)} m — per-band gate: bands with δ ≤ λ/4 − δ* are zeroed.`
-          : ''
         const title =
           `A_bar — Terrain diffraction, per band (${deltaStr})\n\n` +
-          'ISO 9613-2 §7.4 (Maekawa barrier formula, C₃ frequency term) +\n' +
-          'CNOSSOS-EU §2.5.6(c) Rayleigh δ* gate. Engine scans the upper\n' +
-          'convex hull of the DEM profile above LOS, keeps up to 3 edges.\n' +
-          'Scalar below = A-weighted ΔL_A (full − no_terrain Lden).' +
-          triple +
-          rayleigh
+          'ISO 9613-2 §7.4 (Maekawa barrier formula, C₃ frequency term).\n' +
+          'Engine scans the upper convex hull of the DEM profile above\n' +
+          'LOS, keeps up to 3 edges. Scalar below = A-weighted ΔL_A\n' +
+          '(full − no_terrain Lden). Rayleigh δ* gate is reported on its\n' +
+          'own row below when it zeroes any band.' +
+          triple
         return (
           <HoverText title={bandsTooltip(terrain.attenuation_bands, { title })}>
             <span className="cursor-help">
@@ -446,7 +462,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
         <span className="cursor-help">
           Foliage
           {vegetation.forest_depth_m > 0
-            ? ` (${vegetation.forest_depth_m.toFixed(0)} m forest)`
+            ? ` (${vegetation.forest_depth_m.toFixed(0)} m forest, 0.5× adj.)`
             : ' (none)'}
         </span>
       </HoverText>,
@@ -463,8 +479,20 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
 
   return (
     <Section>
+      <HoverText
+        title={
+          'Baseline corrections: ISO 9613-2 §7 + CNOSSOS-EU §2.5.\n' +
+          'Obstructions: ISO 9613-2 §7.4 Maekawa barrier formula +\n' +
+          'CNOSSOS-EU §2.5.6(c) Rayleigh δ* gate. Hover individual rows\n' +
+          'for concept + value breakdown.'
+        }
+      >
+        <div className="mb-0.5 text-[10px] text-muted-foreground/70 italic cursor-help">
+          Attenuations per ISO 9613-2 + CNOSSOS-EU; hover rows for detail.
+        </div>
+      </HoverText>
       <InlineTable rows={baselineRows} />
-      <div className="h-3" aria-hidden="true" />
+      <div className="h-2" aria-hidden="true" />
       <InlineTable rows={obstructionRows} />
       {gatedBands.length > 0 && (
         <HoverText
@@ -583,8 +611,10 @@ function Section5Lden({ trace }: { trace: SegmentTrace }) {
 function Section6Variants({ trace }: { trace: SegmentTrace }) {
   const [open, setOpen] = useState(false)
   const { received_lden } = trace
+  // "Full" removed — it duplicates the Lden shown in the collapsed header
+  // and at the bottom of §5. The delta column anchors against received_lden.full
+  // so the label is still the reference, just not rendered as its own row.
   const rows: [string, number][] = [
-    ['Full', received_lden.full],
     ['Free field', received_lden.free_field],
     ['No terrain', received_lden.no_terrain],
     ['No screening', received_lden.no_screening],
@@ -603,20 +633,26 @@ function Section6Variants({ trace }: { trace: SegmentTrace }) {
         <span>What-if</span>
       </button>
       {open && (
-        <div className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-0.5 tabular-nums mt-0.5">
-          {rows.map(([label, v], i) => {
-            const delta = v - received_lden.full
-            return (
-              <div key={i} className="contents">
-                <span className="text-muted-foreground/70">{label}</span>
-                <span className="text-right">{fmtDb(v, { signed: false })}</span>
-                <span className="text-right text-muted-foreground/50">
-                  {label === 'Full' ? '' : delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)}
-                </span>
-              </div>
-            )
-          })}
-        </div>
+        <>
+          <div className="mt-0.5 text-[10px] text-muted-foreground/70 italic">
+            Deltas below = Lden when removing each effect, compared to
+            the full {received_lden.full.toFixed(1)} dB shown above.
+          </div>
+          <div className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-0.5 tabular-nums mt-0.5">
+            {rows.map(([label, v], i) => {
+              const delta = v - received_lden.full
+              return (
+                <div key={i} className="contents">
+                  <span className="text-muted-foreground/70">{label}</span>
+                  <span className="text-right">{fmtDb(v, { signed: false })}</span>
+                  <span className="text-right text-muted-foreground/50">
+                    {delta > 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </>
       )}
     </div>
   )
@@ -630,7 +666,6 @@ export function SegmentExpanded({ trace }: { trace: SegmentTrace }) {
   return (
     <div className="ml-2 mr-4 pb-2 text-[11px] leading-relaxed font-mono text-muted-foreground">
       <Section1Source trace={trace} />
-      <Section2Baseline trace={trace} />
       <Section>
         <PathProfileDiagram
           trace={trace.path_profile}
