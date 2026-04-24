@@ -118,21 +118,23 @@ function MetadataRows({ c }: { c: Contributor }) {
     const trafficText = txtTable([
       ...sourceLines,
       '',
-      'Daily traffic (road total, both directions):',
-      ...(m.aadt_light_nominal > 0 ? [['  Light', fmtInt(Math.round(m.aadt_light_nominal))] as [string, string]] : []),
-      ...(m.aadt_medium_nominal > 0 ? [['  Medium', fmtInt(Math.round(m.aadt_medium_nominal))] as [string, string]] : []),
-      ...(m.aadt_heavy_nominal > 0 ? [['  Heavy', fmtInt(Math.round(m.aadt_heavy_nominal))] as [string, string]] : []),
-      ...(m.aadt_moto_nominal > 0 ? [['  Moto', fmtInt(Math.round(m.aadt_moto_nominal))] as [string, string]] : []),
+      'CNOSSOS line-source flow (feeds Lw):',
+      ...(m.aadt_light_effective > 0 ? [['  Light', fmtInt(Math.round(m.aadt_light_effective))] as [string, string]] : []),
+      ...(m.aadt_medium_effective > 0 ? [['  Medium', fmtInt(Math.round(m.aadt_medium_effective))] as [string, string]] : []),
+      ...(m.aadt_heavy_effective > 0 ? [['  Heavy', fmtInt(Math.round(m.aadt_heavy_effective))] as [string, string]] : []),
+      ...(m.aadt_moto_effective > 0 ? [['  Moto', fmtInt(Math.round(m.aadt_moto_effective))] as [string, string]] : []),
       { sep: true },
-      ['  Total', `${fmtInt(Math.round(nomTotal))}/day${isDefault ? '*' : ''}`] as [string, string],
+      ['  Total', `${fmtInt(Math.round(effTotal))}/day${isDefault ? '*' : ''}`] as [string, string],
       ...(isDefault ? ['', '* class default (no census match for this segment)'] : []),
       ...(hasPerWayDiscount
         ? [
             '',
-            'Engine models per OSM way:',
-            ['  Per way', `${fmtInt(Math.round(effTotal))}/day`] as [string, string],
+            'Road total (both directions):',
+            ['  Nominal', `${fmtInt(Math.round(nomTotal))}/day`] as [string, string],
             ...(m.oneway ? [['  ', '× 0.50 one-way split'] as [string, string]] : []),
             ...(hasResidual ? [['  ', `× ${residualRatio.toFixed(2)} access / lanes`] as [string, string]] : []),
+            { sep: true },
+            ['  Per way (Lw input)', `${fmtInt(Math.round(effTotal))}/day`] as [string, string],
           ]
         : []),
       '',
@@ -169,8 +171,8 @@ function MetadataRows({ c }: { c: Contributor }) {
         )}
         {lineRow(
           <MetricLabel term="aadt">Traffic</MetricLabel>,
-          <DataPoint title="CNOSSOS vehicle flow" text={trafficText}>
-            {`${fmtCompact(Math.round(nomTotal))}/day${isDefault ? '*' : ''}`}
+          <DataPoint title="CNOSSOS vehicle flow (Lw input)" text={trafficText}>
+            {`${fmtCompact(Math.round(effTotal))}/day${isDefault ? '*' : ''}`}
           </DataPoint>,
         )}
         {lineRow(
@@ -256,8 +258,8 @@ function MetadataRows({ c }: { c: Contributor }) {
         )}
         {lineRow(
           <MetricLabel term="trains">Trains/day</MetricLabel>,
-          <DataPoint title="Daily train count" text={trainsText}>
-            {`${fmtInt(Math.round(nomTotal))}/day${isDefault ? '*' : ''}`}
+          <DataPoint title="Daily train count (Lw input)" text={trainsText}>
+            {`${fmtInt(Math.round(effTotal))}/day${isDefault ? '*' : ''}`}
           </DataPoint>,
         )}
         {lineRow(
