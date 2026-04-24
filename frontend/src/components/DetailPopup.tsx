@@ -96,6 +96,12 @@ function MetadataRows({ c }: { c: Contributor }) {
   if (m.kind === 'road') {
     const nomTotal = m.aadt_light_nominal + m.aadt_medium_nominal + m.aadt_heavy_nominal + m.aadt_moto_nominal
     const effTotal = m.aadt_light_effective + m.aadt_medium_effective + m.aadt_heavy_effective + m.aadt_moto_effective
+    // Whole-road total after access/lane coefficients but BEFORE the one-way
+    // split (which is a CNOSSOS per-line-source modeling artefact, not a real
+    // traffic reduction). For a two-way road it equals effective; for a
+    // dual-carriageway mapped as two OSM ways it sums both directions back.
+    const onewayFactor = m.oneway ? 0.5 : 1.0
+    const wholeRoadTotal = effTotal / onewayFactor
     const isDefault = m.traffic_source === 'default_by_class'
     const hasSpeedRange = m.speed_min_kmh < m.speed_max_kmh
     const speedText = txtTable([
@@ -109,32 +115,40 @@ function MetadataRows({ c }: { c: Contributor }) {
       'Values from the loudest segment.',
       ...(hasSpeedRange ? ['Speed varies across grouped segments.'] : []),
     ], 18, 12)
-    const effRatio = nomTotal > 0 ? effTotal / nomTotal : 1
-    const hasPerWayDiscount = Math.abs(effRatio - 1) > 0.01
-    const knownOneway = m.oneway ? 0.5 : 1.0
-    const residualRatio = effRatio / knownOneway
-    const hasResidual = Math.abs(residualRatio - 1) > 0.01
+    const nomToEff = nomTotal > 0 ? effTotal / nomTotal : 1
+    const accessLaneRatio = nomToEff / onewayFactor
+    const hasAccessLane = Math.abs(accessLaneRatio - 1) > 0.01
+    // Per-category whole-road (= effective / oneway_factor)
+    const wholeLight = m.aadt_light_effective / onewayFactor
+    const wholeMedium = m.aadt_medium_effective / onewayFactor
+    const wholeHeavy = m.aadt_heavy_effective / onewayFactor
+    const wholeMoto = m.aadt_moto_effective / onewayFactor
     const sourceLines = roadSourceDescription(m.traffic_source, m.provenance, m.road_class).split('\n')
     const trafficText = txtTable([
       ...sourceLines,
       '',
-      'CNOSSOS line-source flow (feeds Lw):',
-      ...(m.aadt_light_effective > 0 ? [['  Light', fmtInt(Math.round(m.aadt_light_effective))] as [string, string]] : []),
-      ...(m.aadt_medium_effective > 0 ? [['  Medium', fmtInt(Math.round(m.aadt_medium_effective))] as [string, string]] : []),
-      ...(m.aadt_heavy_effective > 0 ? [['  Heavy', fmtInt(Math.round(m.aadt_heavy_effective))] as [string, string]] : []),
-      ...(m.aadt_moto_effective > 0 ? [['  Moto', fmtInt(Math.round(m.aadt_moto_effective))] as [string, string]] : []),
+      'Whole road (both directions):',
+      ...(wholeLight > 0 ? [['  Light', fmtInt(Math.round(wholeLight))] as [string, string]] : []),
+      ...(wholeMedium > 0 ? [['  Medium', fmtInt(Math.round(wholeMedium))] as [string, string]] : []),
+      ...(wholeHeavy > 0 ? [['  Heavy', fmtInt(Math.round(wholeHeavy))] as [string, string]] : []),
+      ...(wholeMoto > 0 ? [['  Moto', fmtInt(Math.round(wholeMoto))] as [string, string]] : []),
       { sep: true },
-      ['  Total', `${fmtInt(Math.round(effTotal))}/day${isDefault ? '*' : ''}`] as [string, string],
+      ['  Total', `${fmtInt(Math.round(wholeRoadTotal))}/day${isDefault ? '*' : ''}`] as [string, string],
       ...(isDefault ? ['', '* class default (no census match for this segment)'] : []),
-      ...(hasPerWayDiscount
+      ...(hasAccessLane
         ? [
             '',
-            'Road total (both directions):',
+            'Nominal → whole-road adjustments:',
             ['  Nominal', `${fmtInt(Math.round(nomTotal))}/day`] as [string, string],
-            ...(m.oneway ? [['  ', '× 0.50 one-way split'] as [string, string]] : []),
-            ...(hasResidual ? [['  ', `× ${residualRatio.toFixed(2)} access / lanes`] as [string, string]] : []),
+            ['  ', `× ${accessLaneRatio.toFixed(2)} access / lanes`] as [string, string],
             { sep: true },
-            ['  Per way (Lw input)', `${fmtInt(Math.round(effTotal))}/day`] as [string, string],
+            ['  Whole road', `${fmtInt(Math.round(wholeRoadTotal))}/day`] as [string, string],
+          ]
+        : []),
+      ...(m.oneway
+        ? [
+            '',
+            `One-way ÷ 2 → Lw input per OSM way: ${fmtInt(Math.round(effTotal))}/day`,
           ]
         : []),
       '',
@@ -171,8 +185,8 @@ function MetadataRows({ c }: { c: Contributor }) {
         )}
         {lineRow(
           <MetricLabel term="aadt">Traffic</MetricLabel>,
-          <DataPoint title="CNOSSOS vehicle flow (Lw input)" text={trafficText}>
-            {`${fmtCompact(Math.round(effTotal))}/day${isDefault ? '*' : ''}`}
+          <DataPoint title="Daily road traffic (both directions)" text={trafficText}>
+            {`${fmtCompact(Math.round(wholeRoadTotal))}/day${isDefault ? '*' : ''}`}
           </DataPoint>,
         )}
         {lineRow(
@@ -195,6 +209,11 @@ function MetadataRows({ c }: { c: Contributor }) {
     const effTotal = m.trains_passenger_effective + m.trains_freight_effective
     const rawTotal = m.trains_passenger_raw + m.trains_freight_raw
     const nomTotal = rawTotal > 0 ? rawTotal : effTotal
+    // Whole-line trains (pre-parallel-divisor split). For single-track line
+    // equals effective; for a two-track line mapped as two parallel OSM ways
+    // sums both tracks back into the full-line figure.
+    const parallelDivisor = Math.max(1, m.parallel_divisor || 1)
+    const wholeLineTrains = effTotal * parallelDivisor
     const isDefault = m.trains_passenger_source === 'default_by_type'
       && m.trains_freight_source === 'default_by_type'
     const speedText = txtTable([
@@ -226,22 +245,24 @@ function MetadataRows({ c }: { c: Contributor }) {
     const frtCount = m.trains_freight_raw > 0 ? m.trains_freight_raw : m.trains_freight_effective
     const paxEff = m.trains_passenger_effective
     const frtEff = m.trains_freight_effective
+    const paxWhole = paxEff * parallelDivisor
+    const frtWhole = frtEff * parallelDivisor
     const trainsText = txtTable([
       ...paxSrcLines,
       ...frtSrcLines,
-      'CNOSSOS line-source trains (feeds Lw):',
-      ...(paxEff > 0 ? [['  Passenger', fmtInt(Math.round(paxEff))] as [string, string]] : []),
-      ...(frtEff > 0 ? [['  Freight', fmtInt(Math.round(frtEff))] as [string, string]] : []),
+      'Whole line (both directions):',
+      ...(paxWhole > 0 ? [['  Passenger', fmtInt(Math.round(paxWhole))] as [string, string]] : []),
+      ...(frtWhole > 0 ? [['  Freight', fmtInt(Math.round(frtWhole))] as [string, string]] : []),
       { sep: true },
-      ['  Total', `${fmtInt(Math.round(effTotal))}/day${isDefault ? '*' : ''}`],
+      ['  Total', `${fmtInt(Math.round(wholeLineTrains))}/day${isDefault ? '*' : ''}`],
       ...(isDefault ? ['', '* class default (no timetable match)'] : []),
-      ...(hasPerTrackDiscount
+      ...(hasPerTrackDiscount || m.service
         ? [
             '',
-            'Full-line trains (both directions):',
+            'Adjustments:',
             ['  Nominal', `${fmtInt(Math.round(nomTotal))}/day`] as [string, string],
             ...(m.service ? [['  ', '× 0.02 service track'] as [string, string]] : []),
-            ...(m.parallel_divisor > 1 ? [['  ', `÷ ${m.parallel_divisor} parallel tracks`] as [string, string]] : []),
+            ...(m.parallel_divisor > 1 ? [['  ', `÷ ${m.parallel_divisor} parallel tracks (Lw per track)`] as [string, string]] : []),
             { sep: true },
             ['  Per track (Lw input)', `${fmtInt(Math.round(effTotal))}/day`] as [string, string],
           ]
@@ -262,8 +283,8 @@ function MetadataRows({ c }: { c: Contributor }) {
         )}
         {lineRow(
           <MetricLabel term="trains">Trains/day</MetricLabel>,
-          <DataPoint title="Daily train count (Lw input)" text={trainsText}>
-            {`${fmtInt(Math.round(effTotal))}/day${isDefault ? '*' : ''}`}
+          <DataPoint title="Daily train count (whole line, both directions)" text={trainsText}>
+            {`${fmtInt(Math.round(wholeLineTrains))}/day${isDefault ? '*' : ''}`}
           </DataPoint>,
         )}
         {lineRow(
