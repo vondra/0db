@@ -366,7 +366,8 @@ fn compute_roads(
     let mut roads_by_key: HashMap<(String, String, u8), RoadAccum> = HashMap::new();
 
     for seg in roads {
-        let Some(norm) = normalize::normalize_road_segment(seg) else {
+        let Some(norm) = normalize::normalize_road_segment(seg, crate::admin::Admin::UNKNOWN)
+        else {
             continue;
         };
         let class_idx = norm.class_idx;

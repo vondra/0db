@@ -369,7 +369,10 @@ pub fn query_roads_from_batches(
                 access: access_col.map(|a| a.value(i)).unwrap_or(0),
                 junction: junction_col.map(|a| a.value(i)).unwrap_or(0),
             };
-            let Some(norm) = noise_compute::normalize::normalize_road(raw) else {
+            let Some(norm) = noise_compute::normalize::normalize_road(
+                raw,
+                noise_compute::admin::Admin::UNKNOWN,
+            ) else {
                 continue;
             };
             let effective_radius = max_radius.min(norm.max_distance_m);
