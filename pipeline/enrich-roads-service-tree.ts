@@ -63,6 +63,24 @@ const TRIPS_PER_DWELLING = 6
  */
 const MIN_AADT = 20
 
+/**
+ * A.3: per-class upper bound on service-tree accumulated trips. Not a
+ * hierarchy-correct cap (1200 residential > 800 tertiary default is
+ * intentional — dense urban residentials in Prague Karlín / Madrid Centro
+ * reach 1500-2000 genuinely). This is a "pragmatic maximum" — anything
+ * above it almost certainly means flow routing put too much through the
+ * wrong segment. Missing classes (7 service, 8 track excluded entirely,
+ * 10-12 links excluded) have no cap and won't be stamped.
+ *
+ * Ratios to `default_road_traffic` in engine: 5 residential 2.4×,
+ * 6 living_street 2.5×, 9 unclassified 1.5×.
+ */
+const SERVICE_TREE_CAP_PER_CLASS: Record<number, number> = {
+  5: 1200,
+  6: 250,
+  9: 2000,
+}
+
 // Vehicle split matching engine defaults for residential (480/5/10/5 ≈ 96/1/2/1)
 // Inherited from normalize.rs::default_road_traffic(5); arbitrary fit to
 // CNOSSOS-EU typical values, not from a measurement source.
@@ -213,11 +231,20 @@ function buildGraph(table: any) {
 
     const cls = (roadClass.get(i) as number) ?? 5
     const existingId = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-    // Local roads only (class 5..9). Excludes link classes 10-12: residential
-    // flow accumulation drastically undercounts highway-derived ramp traffic,
-    // so those stay at traffic_source=0 and fall through to the 20 %-of-mainline
-    // class default.
-    if (cls >= 5 && cls <= 9 && shouldOverwrite(existingId, MY_DATASET_ID)) {
+    // Eligibility — local roads only (class 5..9), plus the cls !== 8 guard
+    // added in A.3: gravel tracks next to a few cottages used to pick up
+    // ~24/day from dwelling flow accumulation (real value ~1/day). Leaving
+    // tracks at source_id = 0 drops them to the class-default 5/day in the
+    // engine cascade; the A.5 implicit-agricultural factor × 0.1 brings that
+    // down to ~0.5/day effective.
+    //
+    // Service roads (cls 7) stay eligible because residential driveways tag as
+    // `highway=service` and do legitimately carry apartment-block flow.
+    //
+    // Link classes 10-12 excluded: residential flow accumulation drastically
+    // undercounts highway-derived ramp traffic, so those stay at source_id=0
+    // and fall through to the 15 %-of-mainline class default.
+    if (cls >= 5 && cls !== 8 && cls <= 9 && shouldOverwrite(existingId, MY_DATASET_ID)) {
       eligible[i] = 1
       sNode.eligibleEdges.push(i)
       eNode.eligibleEdges.push(i)
@@ -321,57 +348,45 @@ function buildBuildingGrid(table: any): BuildingGrid {
 
 // ---------- Flow accumulation per component ----------
 
-function flowAccumulate(
-  comp: Component,
-  nodes: Map<string, GraphNode>,
-  segToNodes: [string, string][],
+/**
+ * Assign every building to its single nearest eligible segment across the
+ * whole hex (A.3: global bestSeg). Previously this ran per-component, so a
+ * building within 50 m of segments in two disconnected components was
+ * counted in each — inflating flow on both sides of a primary-road split.
+ * One pass over all eligible segments + bucketed building grid.
+ *
+ * Returns `buildingIdx → segIdx` map. Buildings outside MAX_BUFFER_M from
+ * every eligible segment are omitted.
+ */
+function assignBuildingsGlobally(
+  eligibleSegments: number[],
   startLat: any, startLon: any, endLat: any, endLon: any,
-  lengthCol: any,
-  bg: BuildingGrid
+  bg: BuildingGrid,
 ): Map<number, number> {
-  // Build component-local adjacency
-  const localAdj = new Map<string, number[]>()
-  const compNodes = new Set<string>()
-  for (const seg of comp.segments) {
-    const [sKey, eKey] = segToNodes[seg]
-    for (const nk of [sKey, eKey]) {
-      compNodes.add(nk)
-      let list = localAdj.get(nk)
-      if (!list) { list = []; localAdj.set(nk, list) }
-      list.push(seg)
-    }
-  }
-
-  // --- Step 1: Assign buildings to nearest segment (once per building) ---
   const bestSeg = new Map<number, number>()
   const bestDist = new Map<number, number>()
 
   let sumLat = 0, segCount = 0
-  for (const seg of comp.segments) { sumLat += startLat.get(seg) as number; segCount++ }
+  for (const seg of eligibleSegments) { sumLat += startLat.get(seg) as number; segCount++ }
+  if (segCount === 0) return bestSeg
   const avgLat = sumLat / segCount
   const lonCells = Math.ceil(MAX_BUFFER_M / (111320 * GRID_CELL * Math.cos(avgLat * Math.PI / 180)))
   const latCells = Math.ceil(MAX_BUFFER_M / (110540 * GRID_CELL))
 
-  for (const seg of comp.segments) {
+  for (const seg of eligibleSegments) {
     const sLat = startLat.get(seg) as number
     const sLon = startLon.get(seg) as number
     const eLat = endLat.get(seg) as number
     const eLon = endLon.get(seg) as number
 
-    const minLat = Math.min(sLat, eLat)
-    const maxLat = Math.max(sLat, eLat)
-    const minLon = Math.min(sLon, eLon)
-    const maxLon = Math.max(sLon, eLon)
-
-    const gMinLat = Math.floor(minLat / GRID_CELL) - latCells
-    const gMaxLat = Math.floor(maxLat / GRID_CELL) + latCells
-    const gMinLon = Math.floor(minLon / GRID_CELL) - lonCells
-    const gMaxLon = Math.floor(maxLon / GRID_CELL) + lonCells
+    const gMinLat = Math.floor(Math.min(sLat, eLat) / GRID_CELL) - latCells
+    const gMaxLat = Math.floor(Math.max(sLat, eLat) / GRID_CELL) + latCells
+    const gMinLon = Math.floor(Math.min(sLon, eLon) / GRID_CELL) - lonCells
+    const gMaxLon = Math.floor(Math.max(sLon, eLon) / GRID_CELL) + lonCells
 
     for (let gLat = gMinLat; gLat <= gMaxLat; gLat++) {
       for (let gLon = gMinLon; gLon <= gMaxLon; gLon++) {
-        const key = `${gLat}_${gLon}`
-        const buildings = bg.grid.get(key)
+        const buildings = bg.grid.get(`${gLat}_${gLon}`)
         if (!buildings) continue
         for (const bi of buildings) {
           const dist = pointToSegmentDist(bg.lats[bi], bg.lons[bi], sLat, sLon, eLat, eLon)
@@ -383,11 +398,37 @@ function flowAccumulate(
       }
     }
   }
+  return bestSeg
+}
 
-  // Compute local trips per segment
+function flowAccumulate(
+  comp: Component,
+  segToNodes: [string, string][],
+  lengthCol: any,
+  bg: BuildingGrid,
+  globalBestSeg: Map<number, number>,
+): Map<number, number> {
+  // Build component-local adjacency
+  const localAdj = new Map<string, number[]>()
+  const compNodes = new Set<string>()
+  const compSegSet = new Set<number>(comp.segments)
+  for (const seg of comp.segments) {
+    const [sKey, eKey] = segToNodes[seg]
+    for (const nk of [sKey, eKey]) {
+      compNodes.add(nk)
+      let list = localAdj.get(nk)
+      if (!list) { list = []; localAdj.set(nk, list) }
+      list.push(seg)
+    }
+  }
+
+  // --- Step 1: per-component local trips (A.3: subset globalBestSeg to
+  // this component's own segments — gate prevents `segFlow.get(alienSeg)`
+  // returning undefined, which would propagate as NaN) ---
   const segFlow = new Map<number, number>()
   for (const seg of comp.segments) segFlow.set(seg, 0)
-  for (const [bi, seg] of bestSeg) {
+  for (const [bi, seg] of globalBestSeg) {
+    if (!compSegSet.has(seg)) continue
     const dw = estimateDwellings(bg.types[bi], bg.floors[bi], bg.areas[bi])
     segFlow.set(seg, segFlow.get(seg)! + dw * TRIPS_PER_DWELLING)
   }
@@ -487,13 +528,25 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   const endLon = roadTable.getChild('end_lon')!
   const lengthCol = roadTable.getChild('length_m')!
 
-  // Flow accumulation per component
-  const segAADT = new Map<number, { light: number; medium: number; heavy: number; moto: number }>()
+  // A.3: global building→segment assignment. One pass over every eligible
+  // segment across all components — each building now lands on exactly one
+  // segment, no more double-counting across primary-road-split components.
+  const eligibleSegments: number[] = []
+  for (const comp of components) eligibleSegments.push(...comp.segments)
+  const globalBestSeg = assignBuildingsGlobally(
+    eligibleSegments, startLat, startLon, endLat, endLon, bg,
+  )
 
+  // Flow accumulation per component (each sees only buildings whose best
+  // segment belongs to it — Set-based gate inside flowAccumulate).
+  const segAADT = new Map<number, { light: number; medium: number; heavy: number; moto: number }>()
   for (const comp of components) {
-    const segFlow = flowAccumulate(comp, nodes, segToNodes, startLat, startLon, endLat, endLon, lengthCol, bg)
+    const segFlow = flowAccumulate(comp, segToNodes, lengthCol, bg, globalBestSeg)
+    const roadClassCol = roadTable.getChild('road_class')
     for (const [seg, trips] of segFlow) {
-      segAADT.set(seg, splitAADT(trips))
+      const cls = (roadClassCol?.get(seg) as number) ?? 5
+      const capped = Math.min(trips, SERVICE_TREE_CAP_PER_CLASS[cls] ?? Infinity)
+      segAADT.set(seg, splitAADT(capped))
     }
   }
 
