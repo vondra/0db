@@ -338,6 +338,9 @@ export interface BaselineTrace {
   ground_factor_g: number
   source_height_m: number
   finite_line_corr_db: number
+  /** Urban reflection boost (ISO 9613-2 §7.5 / CNOSSOS-EU §2.5.18),
+   *  clamped 0..5 dB. Per-receiver scalar — same for every segment. */
+  reflection_boost_db: number
 }
 
 export interface TerrainTrace {

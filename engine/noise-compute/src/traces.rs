@@ -182,12 +182,14 @@ pub fn ground_trace(factor_g: f64) -> GroundTrace {
 }
 
 /// Build a `BaselineTrace` from the slant distance, source height, ground G,
-/// and finite-line correction. Mirrors the terms used in `propagate_variants`.
+/// finite-line correction, and urban reflection boost. Mirrors the terms
+/// `propagate_variants_full` applies in the free-field baseline.
 pub fn baseline_trace(
     d_slant_m: f64,
     source_height_m: f64,
     ground_g: f64,
     finite_line_corr_db: f64,
+    reflection_boost_db: f64,
     source_geometry: iso9613::SourceGeometry,
 ) -> BaselineTrace {
     let d = d_slant_m.max(1.0);
@@ -201,6 +203,7 @@ pub fn baseline_trace(
         ground_factor_g: ground_g,
         source_height_m,
         finite_line_corr_db,
+        reflection_boost_db,
     }
 }
 
@@ -228,6 +231,7 @@ pub(crate) struct BuildAircraftGroundTrace<'a> {
     pub d_slant: f64,
     pub flc: f64,
     pub ground_g: f64,
+    pub reflection_boost_db: f64,
     pub kind_idx: usize, // 0=runway, 1=taxi, 2=apron
     pub path_profile: PathProfile,
     pub terrain: TerrainTrace,
@@ -250,6 +254,7 @@ pub(crate) fn build_aircraft_ground_segment_trace(
         d_slant,
         flc,
         ground_g,
+        reflection_boost_db,
         kind_idx,
         path_profile,
         terrain,
@@ -308,7 +313,7 @@ pub(crate) fn build_aircraft_ground_segment_trace(
             evening: iso9613::a_weighted_total(&lw_bands[1]),
             night: iso9613::a_weighted_total(&lw_bands[2]),
         },
-        baseline: baseline_trace(d_slant, src_alt, ground_g, flc, iso9613::SourceGeometry::Line),
+        baseline: baseline_trace(d_slant, src_alt, ground_g, flc, reflection_boost_db, iso9613::SourceGeometry::Line),
         path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
         terrain,
         screening: screening_trace(screening_atten, obstacle_trace),
@@ -330,6 +335,7 @@ pub(crate) struct BuildRoadTrace<'a> {
     pub d_slant: f64,
     pub flc: f64,
     pub ground_g: f64,
+    pub reflection_boost_db: f64,
     pub light: f64,
     pub medium: f64,
     pub heavy: f64,
@@ -353,6 +359,7 @@ pub(crate) struct BuildPointTrace<'a> {
     pub d_slant: f64,
     pub prop_dist: f64,
     pub ground_g: f64,
+    pub reflection_boost_db: f64,
     pub path_profile: PathProfile,
     pub terrain: TerrainTrace,
     pub screening_atten: [f64; NUM_BANDS],
@@ -371,6 +378,7 @@ pub(crate) fn build_point_segment_trace(inputs: BuildPointTrace<'_>) -> SegmentT
         d_slant,
         prop_dist,
         ground_g,
+        reflection_boost_db,
         path_profile,
         terrain,
         screening_atten,
@@ -450,6 +458,7 @@ pub(crate) fn build_point_segment_trace(inputs: BuildPointTrace<'_>) -> SegmentT
             src_alt,
             ground_g,
             0.0,
+            reflection_boost_db,
             iso9613::SourceGeometry::Point,
         ),
         path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
@@ -469,6 +478,7 @@ pub(crate) struct BuildRailTrace<'a> {
     pub d_slant: f64,
     pub flc: f64,
     pub ground_g: f64,
+    pub reflection_boost_db: f64,
     pub q_pax: f64,
     pub q_frt: f64,
     pub speed_kmh: f64,
@@ -489,6 +499,7 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
         d_slant,
         flc,
         ground_g,
+        reflection_boost_db,
         q_pax,
         q_frt,
         speed_kmh,
@@ -556,6 +567,7 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
             src_alt,
             ground_g,
             flc,
+            reflection_boost_db,
             iso9613::SourceGeometry::Line,
         ),
         path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
@@ -577,6 +589,7 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
         d_slant,
         flc,
         ground_g,
+        reflection_boost_db,
         light,
         medium,
         heavy,
@@ -659,6 +672,7 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
             src_alt,
             ground_g,
             flc,
+            reflection_boost_db,
             iso9613::SourceGeometry::Line,
         ),
         path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
