@@ -127,6 +127,12 @@ export const DIAGRAM_COLORS = {
   apex: '#16a34a',
 } as const
 
+/** Unicode subscripts for diffraction-edge labels E₁ / E₂ / E₃. CNOSSOS
+ * multi-edge diffraction caps N at 3 (SPEC §3.5); beyond that the caller
+ * falls back to base-10 digits. Shared by `PathProfileDiagram` (SVG
+ * apex markers) and `SegmentExpanded` (edges-detail tooltip). */
+export const EDGE_SUBSCRIPTS = ['₁', '₂', '₃'] as const
+
 // ── Provenance helpers — one unified "Source:" description shared by the
 // Noise-sources and Noise-segments tabs so wording stays identical. The
 // segments tab uses the same tooltip text as its parent contributor; only

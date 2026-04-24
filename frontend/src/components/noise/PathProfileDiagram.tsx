@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import type { EdgePoint, PathProfileTrace } from '../../types/noise'
 import { HoverText } from '../ui/info-tip'
-import { DIAGRAM_COLORS, formatDist } from './shared'
+import { DIAGRAM_COLORS, EDGE_SUBSCRIPTS, formatDist } from './shared'
 
 const VB_W = 600
 const VB_H = 220
@@ -217,11 +217,10 @@ export function PathProfileDiagram({
       Math.max(dominantEdgeIdx ?? 0, 0),
       terrainEdges.length - 1,
     )
-    const SUB = ['₁', '₂', '₃'] // subscript 1-3
     const placed = terrainEdges.map((e, i) => ({
       i,
       isDominant: i === dominantIdx,
-      label: `E${SUB[i] ?? String(i + 1)}`,
+      label: `E${EDGE_SUBSCRIPTS[i] ?? String(i + 1)}`,
       x: xOf(e.t),
       y: yOf(e.elevation_m),
     }))

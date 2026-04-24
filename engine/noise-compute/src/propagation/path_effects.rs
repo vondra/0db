@@ -24,13 +24,18 @@ use crate::types::{Barrier, EdgePoint, ObstacleEdge, ScreeningObstacleTrace, Ter
 ///
 /// Takes `&mut PathProfile` so an internal f64 scratch buffer can be reused
 /// across calls instead of allocating per path.
+///
+/// Fast path: no trace metadata built, no `Vec<EdgePoint>` allocation.
+/// Pipeline-worker's hot loop uses this; popup uses `_with_meta`.
 pub fn terrain_attenuation(
     profile: &mut PathProfile,
     src_elev: f64,
     rcv_alt: f64,
 ) -> [f64; NUM_BANDS] {
-    let (trace, _) = terrain_attenuation_with_meta(profile, src_elev, rcv_alt);
-    trace.attenuation_bands
+    match compute_terrain_diffraction(profile, src_elev, rcv_alt) {
+        None => [0.0; NUM_BANDS],
+        Some(res) => diffraction::diffraction_attenuation_rayleigh(&res.diff),
+    }
 }
 
 #[inline]
@@ -47,6 +52,65 @@ fn empty_terrain_trace() -> TerrainTrace {
     }
 }
 
+/// Shared intermediate between `terrain_attenuation` and `_with_meta`.
+/// Carries the raw `DiffractionResult` plus the source/receiver absolute
+/// altitudes needed by the meta path to compute the dominant-edge LOS.
+struct TerrainDiffraction<'a> {
+    diff: crate::propagation::diffraction::DiffractionResult,
+    /// Profile passed through as f64 — valid only for the duration of the
+    /// caller's borrow of `profile.elevation_f64_scratch`.
+    prof_f64: &'a [f64],
+    t: &'a [f64],
+    src_abs: f64,
+    rcv_abs: f64,
+    n: usize,
+}
+
+fn compute_terrain_diffraction<'a>(
+    profile: &'a mut PathProfile,
+    src_elev: f64,
+    rcv_alt: f64,
+) -> Option<TerrainDiffraction<'a>> {
+    if profile.t.len() < 3 || profile.dist_m < 30.0 {
+        return None;
+    }
+    let dz_total = rcv_alt - src_elev;
+    let hill = profile
+        .t
+        .iter()
+        .zip(profile.elevation_m.iter())
+        .any(|(&t, &e)| (e as f64) > src_elev + dz_total * t);
+    if !hill {
+        return None;
+    }
+
+    // Absolute altitudes are what diffraction integrates against; per-end
+    // heights above ground feed the mirror-fit δ* computation.
+    let n = profile.t.len();
+    let src_ground = profile.elevation_m[0] as f64;
+    let src_h = (src_elev - src_ground).max(0.05);
+    let rcv_ground = profile.elevation_m[n - 1] as f64;
+    let rcv_h = (rcv_alt - rcv_ground).max(crate::constants::DEFAULT_RECEIVER_HEIGHT.min(0.5));
+    let dist_m = profile.dist_m;
+
+    let PathProfile {
+        t,
+        elevation_m,
+        elevation_f64_scratch,
+        ..
+    } = profile;
+    let prof_f64 = PathProfile::elevation_f64_from(elevation_f64_scratch, elevation_m);
+    let diff = diffraction::compute_path_difference(t, prof_f64, dist_m, src_h, rcv_h);
+    Some(TerrainDiffraction {
+        diff,
+        prof_f64,
+        t,
+        src_abs: src_ground + src_h,
+        rcv_abs: rcv_ground + rcv_h,
+        n,
+    })
+}
+
 /// Terrain attenuation + full multi-edge trace for popup tooltips.
 ///
 /// Returns `(trace, profile_points)` where `trace` contains per-band
@@ -60,80 +124,32 @@ pub fn terrain_attenuation_with_meta(
     src_elev: f64,
     rcv_alt: f64,
 ) -> (TerrainTrace, u32) {
-    if profile.t.len() < 3 || profile.dist_m < 30.0 {
+    let Some(res) = compute_terrain_diffraction(profile, src_elev, rcv_alt) else {
         return (empty_terrain_trace(), 0);
-    }
-
-    // Fast-path scan — zero extra raster reads, elevation is already buffered.
-    let dz_total = rcv_alt - src_elev;
-    let hill = profile
-        .t
-        .iter()
-        .zip(profile.elevation_m.iter())
-        .any(|(&t, &e)| (e as f64) > src_elev + dz_total * t);
-
-    if !hill {
-        return (empty_terrain_trace(), 0);
-    }
-
-    // Rebuild a full-precision f64 elevation profile in diffraction units
-    // (absolute metres) — source and receiver anchors use the provided
-    // altitudes to preserve receiver/source height-above-ground.
-    let n = profile.t.len();
-    let src_ground = profile.elevation_m[0] as f64;
-    let src_h = (src_elev - src_ground).max(0.05);
-    let rcv_ground = profile.elevation_m[n - 1] as f64;
-    let rcv_h = (rcv_alt - rcv_ground).max(crate::constants::DEFAULT_RECEIVER_HEIGHT.min(0.5));
-    let dist_m = profile.dist_m;
-
-    // Lazy-populated f64 elevation buffer — reuses capacity across calls.
-    // Split-borrow: `elevation_f64_scratch` is mutably borrowed by the helper,
-    // while `t` and `elevation_m` stay available for shared access.
-    let PathProfile {
-        t,
-        elevation_m,
-        elevation_f64_scratch,
-        ..
-    } = profile;
-    let prof_f64 =
-        PathProfile::elevation_f64_from(elevation_f64_scratch, elevation_m);
-
-    let diff =
-        diffraction::compute_path_difference(t, prof_f64, dist_m, src_h, rcv_h);
+    };
+    let TerrainDiffraction { diff, prof_f64, t, src_abs, rcv_abs, n } = res;
     let atten = diffraction::diffraction_attenuation_rayleigh(&diff);
 
-    // Materialise edges. `edge_indices[..n_edges]` are valid; anything beyond
-    // is uninitialised (filled with 0 but semantically meaningless).
+    // Single pass: materialise edges + track dominant (max LOS excess).
+    // Matches the `d_idx` selection inside `diffraction::compute_double_edge`
+    // and `compute_triple_edge` so the popup SVG highlights the same edge
+    // the Rayleigh δ* mirror fit was anchored at.
     let n_edges = diff.n_edges as usize;
     let mut edges: Vec<EdgePoint> = Vec::with_capacity(n_edges);
+    let mut best_idx = 0usize;
+    let mut best_excess = f64::NEG_INFINITY;
     for k in 0..n_edges {
         let idx = diff.edge_indices[k];
-        edges.push(EdgePoint {
-            t: t[idx],
-            elevation_m: prof_f64[idx],
-        });
-    }
-
-    // Dominant = max LOS excess. Matches the `d_idx` selection inside
-    // `diffraction::compute_double_edge` / `compute_triple_edge` so the popup
-    // SVG highlights the same edge the Rayleigh δ* was anchored at.
-    let src_abs = src_ground + src_h;
-    let rcv_abs = rcv_ground + rcv_h;
-    let dominant_edge_idx = if edges.is_empty() {
-        0u8
-    } else {
-        let mut best_idx = 0usize;
-        let mut best_excess = f64::NEG_INFINITY;
-        for (k, e) in edges.iter().enumerate() {
-            let los = src_abs + (rcv_abs - src_abs) * e.t;
-            let excess = e.elevation_m - los;
-            if excess > best_excess {
-                best_excess = excess;
-                best_idx = k;
-            }
+        let ti = t[idx];
+        let elev = prof_f64[idx];
+        let los = src_abs + (rcv_abs - src_abs) * ti;
+        let excess = elev - los;
+        if excess > best_excess {
+            best_excess = excess;
+            best_idx = k;
         }
-        best_idx as u8
-    };
+        edges.push(EdgePoint { t: ti, elevation_m: elev });
+    }
 
     let trace = TerrainTrace {
         delta_m: diff.delta,
@@ -143,7 +159,7 @@ pub fn terrain_attenuation_with_meta(
         edges,
         delta_star_m: diff.delta_star,
         edge_distance_m: diff.edge_distance,
-        dominant_edge_idx,
+        dominant_edge_idx: best_idx as u8,
     };
     (trace, n as u32)
 }

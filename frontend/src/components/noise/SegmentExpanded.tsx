@@ -4,6 +4,7 @@ import { ldenToColor } from '../../utils/noise-colors'
 import { HoverText } from '../ui/info-tip'
 import { PathProfileDiagram } from './PathProfileDiagram'
 import {
+  EDGE_SUBSCRIPTS,
   PERIOD_LABELS_DETAIL,
   PERIOD_TOOLTIP,
   isLineSourceKind,
@@ -345,7 +346,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
               .map((e, i) => {
                 const kind = e.kind
                 const h = kind === 'terrain' ? 'hill peak' : `${kind} ${e.height_m.toFixed(1)} m`
-                return `\n  E${['₁','₂','₃'][i] ?? i + 1}  ${h}  @ t=${e.t.toFixed(2)}  (+${e.screen_h_m.toFixed(1)} m above LOS)`
+                return `\n  E${EDGE_SUBSCRIPTS[i] ?? i + 1}  ${h}  @ t=${e.t.toFixed(2)}  (+${e.screen_h_m.toFixed(1)} m above LOS)`
               })
               .join('')
           : ''
