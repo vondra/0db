@@ -31,14 +31,23 @@ const PREFIX = process.argv.includes('--prefix') ? process.argv[process.argv.ind
 const GRID_CELL = 0.0005       // building grid cell size in degrees (~55m at equator)
 
 /**
- * Pack a (lat_idx, lon_idx) cell into one number for `Map<number, number[]>`
- * lookup. The hot loop in `assignBuildingsGlobally` visits hundreds of
- * millions of cells per dense hex; a numeric key avoids the per-iteration
- * string allocation that template literals incur. `1_500_001` exceeds the
- * full lon_idx span at this `GRID_CELL` (= 720 000 from -180° to +180°),
- * so each (lat_idx, lon_idx) pair yields a unique key without collision.
+ * Pack a (lat_idx, lon_idx) cell into one Smi-fitting number for
+ * `Map<number, number[]>` lookup. The hot loop in `assignBuildingsGlobally`
+ * visits hundreds of millions of cells per dense hex; a numeric key avoids
+ * the string allocation a template literal would incur, and a *Smi-shaped*
+ * numeric key avoids V8 promoting the Map to HeapNumber comparisons.
+ *
+ * Each component (latLocal, lonLocal) gets `GRID_KEY_BITS` of room. With
+ * 14 bits per axis we can address ~16 k cells per dimension — at GRID_CELL
+ * = 0.0005° that's ~880 km, far more than any single H3 r4 hex (~24 km).
+ *
+ * Indices are stored RELATIVE to a per-hex origin computed in
+ * `buildBuildingGrid`, so they're always positive and stay well below
+ * the bit limit. `(latLocal << GRID_KEY_BITS) | lonLocal` produces a
+ * 28-bit unsigned value — comfortably inside V8's 31-bit Smi range.
  */
-const GRID_KEY_SCALE = 1_500_001
+const GRID_KEY_BITS = 14
+const GRID_KEY_MASK = (1 << GRID_KEY_BITS) - 1
 
 /**
  * Building search radius in meters — only buildings within this distance of an
@@ -138,8 +147,8 @@ function nodeKey(lat: number, lon: number): string {
   return `${lat.toFixed(5)}_${lon.toFixed(5)}`
 }
 
-function gridKey(lat: number, lon: number): number {
-  return Math.floor(lat / GRID_CELL) * GRID_KEY_SCALE + Math.floor(lon / GRID_CELL)
+function packGridKey(latLocal: number, lonLocal: number): number {
+  return (latLocal << GRID_KEY_BITS) | (lonLocal & GRID_KEY_MASK)
 }
 
 /**
@@ -357,6 +366,10 @@ interface BuildingGrid {
   types: Uint8Array
   floors: Uint8Array
   areas: (number | null)[]
+  // Per-hex local-coord origin (cell indices). Subtract before packing into
+  // the grid key so values stay small and the resulting key fits V8 Smi.
+  latOriginIdx: number
+  lonOriginIdx: number
 }
 
 function buildBuildingGrid(table: any): BuildingGrid {
@@ -372,8 +385,11 @@ function buildBuildingGrid(table: any): BuildingGrid {
   const types = new Uint8Array(n)
   const flrs = new Uint8Array(n)
   const areas: (number | null)[] = new Array(n)
-  const grid = new Map<number, number[]>()
 
+  // First pass: load coords + payload, track min cell idx for the per-hex
+  // origin used by the Smi-fitting grid key.
+  let minLatIdx = Infinity
+  let minLonIdx = Infinity
   for (let i = 0; i < n; i++) {
     const lat = latCol.get(i) as number
     const lon = lonCol.get(i) as number
@@ -383,14 +399,28 @@ function buildBuildingGrid(table: any): BuildingGrid {
     flrs[i] = (floorCol.get(i) as number) ?? 0
     const a = areaCol?.get(i)
     areas[i] = a != null ? a as number : null
+    const li = Math.floor(lat / GRID_CELL)
+    const oi = Math.floor(lon / GRID_CELL)
+    if (li < minLatIdx) minLatIdx = li
+    if (oi < minLonIdx) minLonIdx = oi
+  }
+  // Pull origin one cell below the min so the segment-bbox lookup buffer
+  // (latCells / lonCells) never produces a negative local coord.
+  const latOriginIdx = (Number.isFinite(minLatIdx) ? minLatIdx : 0) - 1
+  const lonOriginIdx = (Number.isFinite(minLonIdx) ? minLonIdx : 0) - 1
 
-    const key = gridKey(lat, lon)
+  // Second pass: bucket into the grid using local indices.
+  const grid = new Map<number, number[]>()
+  for (let i = 0; i < n; i++) {
+    const latLocal = Math.floor(lats[i] / GRID_CELL) - latOriginIdx
+    const lonLocal = Math.floor(lons[i] / GRID_CELL) - lonOriginIdx
+    const key = packGridKey(latLocal, lonLocal)
     let list = grid.get(key)
     if (!list) { list = []; grid.set(key, list) }
     list.push(i)
   }
 
-  return { grid, lats, lons, types, floors: flrs, areas }
+  return { grid, lats, lons, types, floors: flrs, areas, latOriginIdx, lonOriginIdx }
 }
 
 // ---------- Flow accumulation per component ----------
@@ -402,8 +432,11 @@ function buildBuildingGrid(table: any): BuildingGrid {
  * counted in each — inflating flow on both sides of a primary-road split.
  * One pass over all eligible segments + bucketed building grid.
  *
- * Returns `buildingIdx → segIdx` map. Buildings outside MAX_BUFFER_M from
- * every eligible segment are omitted.
+ * Returns `segIdx → totalDwellings` map (sum of `estimateDwellings` for
+ * every building whose closest eligible segment is `segIdx`). Buildings
+ * outside MAX_BUFFER_M from every eligible segment are simply omitted from
+ * the totals. Per-component consumers (`flowAccumulate`) then look up
+ * dwellings by segment in O(1) instead of re-iterating every building.
  */
 function assignBuildingsGlobally(
   eligibleSegments: number[],
@@ -428,6 +461,8 @@ function assignBuildingsGlobally(
   const lats = bg.lats
   const lons = bg.lons
   const gridMap = bg.grid
+  const latOff = bg.latOriginIdx
+  const lonOff = bg.lonOriginIdx
 
   for (const seg of eligibleSegments) {
     const sLat = startLat.get(seg) as number
@@ -441,9 +476,9 @@ function assignBuildingsGlobally(
     const gMaxLon = Math.floor(Math.max(sLon, eLon) / GRID_CELL) + lonCells
 
     for (let gLat = gMinLat; gLat <= gMaxLat; gLat++) {
-      const latPart = gLat * GRID_KEY_SCALE
+      const latPart = (gLat - latOff) << GRID_KEY_BITS
       for (let gLon = gMinLon; gLon <= gMaxLon; gLon++) {
-        const buildings = gridMap.get(latPart + gLon)
+        const buildings = gridMap.get(latPart | ((gLon - lonOff) & GRID_KEY_MASK))
         if (!buildings) continue
         for (let k = 0; k < buildings.length; k++) {
           const bi = buildings[k]
@@ -457,14 +492,18 @@ function assignBuildingsGlobally(
     }
   }
 
-  // Materialise as Map for the per-component consumer (only assigned entries).
-  // O(n) one-shot; trivial vs the segment×building inner loop.
-  const result = new Map<number, number>()
+  // Aggregate to `seg → totalDwellings` in one O(n) walk so each component
+  // consumer can read its segments by O(1) lookup instead of iterating
+  // every building. estimateDwellings is invoked once per assigned building
+  // (was once per component-membership previously, same total).
+  const segDwellings = new Map<number, number>()
   for (let bi = 0; bi < n; bi++) {
     const seg = bestSegArr[bi]
-    if (seg >= 0) result.set(bi, seg)
+    if (seg < 0) continue
+    const dw = estimateDwellings(bg.types[bi], bg.floors[bi], bg.areas[bi])
+    segDwellings.set(seg, (segDwellings.get(seg) ?? 0) + dw)
   }
-  return result
+  return segDwellings
 }
 
 function flowAccumulate(
@@ -472,12 +511,11 @@ function flowAccumulate(
   segToNodes: [string, string][],
   lengthCol: any,
   bg: BuildingGrid,
-  globalBestSeg: Map<number, number>,
+  segDwellingsGlobal: Map<number, number>,
 ): Map<number, number> {
   // Build component-local adjacency
   const localAdj = new Map<string, number[]>()
   const compNodes = new Set<string>()
-  const compSegSet = new Set<number>(comp.segments)
   for (const seg of comp.segments) {
     const [sKey, eKey] = segToNodes[seg]
     for (const nk of [sKey, eKey]) {
@@ -488,23 +526,17 @@ function flowAccumulate(
     }
   }
 
-  // --- Step 1: per-component local trips (subset globalBestSeg to this
-  // component's own segments — the `compSegSet.has(seg)` gate prevents
-  // `segFlow.get(alienSeg)` returning undefined and propagating as NaN).
-  //
-  // Sum integer dwellings first and multiply by TRIPS_PER_DWELLING once
-  // per segment so segFlow does not depend on the (now ascending-index)
-  // iteration order of `globalBestSeg` — integer addition is associative,
-  // floats aren't.
-  const segDwellings = new Map<number, number>()
-  for (const seg of comp.segments) segDwellings.set(seg, 0)
-  for (const [bi, seg] of globalBestSeg) {
-    if (!compSegSet.has(seg)) continue
-    const dw = estimateDwellings(bg.types[bi], bg.floors[bi], bg.areas[bi])
-    segDwellings.set(seg, segDwellings.get(seg)! + dw)
-  }
+  // --- Step 1: pull per-component local trips out of the global
+  // segment→dwelling map. Each segment is only ever in one component's
+  // segments list, so this is a direct lookup. Multiplying integer
+  // dwellings by TRIPS_PER_DWELLING once per segment keeps segFlow
+  // independent of building-iteration order (integer addition associative,
+  // floats aren't).
   const segFlow = new Map<number, number>()
-  for (const [seg, dw] of segDwellings) segFlow.set(seg, dw * TRIPS_PER_DWELLING)
+  for (const seg of comp.segments) {
+    const dw = segDwellingsGlobal.get(seg) ?? 0
+    segFlow.set(seg, dw * TRIPS_PER_DWELLING)
+  }
 
   // --- Step 2: Multi-source Dijkstra from root nodes ---
   const dist = new Map<string, number>()
