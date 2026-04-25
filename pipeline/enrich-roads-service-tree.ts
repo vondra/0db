@@ -31,6 +31,16 @@ const PREFIX = process.argv.includes('--prefix') ? process.argv[process.argv.ind
 const GRID_CELL = 0.0005       // building grid cell size in degrees (~55m at equator)
 
 /**
+ * Pack a (lat_idx, lon_idx) cell into one number for `Map<number, number[]>`
+ * lookup. The hot loop in `assignBuildingsGlobally` visits hundreds of
+ * millions of cells per dense hex; a numeric key avoids the per-iteration
+ * string allocation that template literals incur. `1_500_001` exceeds the
+ * full lon_idx span at this `GRID_CELL` (= 720 000 from -180° to +180°),
+ * so each (lat_idx, lon_idx) pair yields a unique key without collision.
+ */
+const GRID_KEY_SCALE = 1_500_001
+
+/**
  * Building search radius in meters — only buildings within this distance of an
  * eligible road segment are attributed to it.
  *
@@ -128,8 +138,8 @@ function nodeKey(lat: number, lon: number): string {
   return `${lat.toFixed(5)}_${lon.toFixed(5)}`
 }
 
-function gridKey(lat: number, lon: number): string {
-  return `${Math.floor(lat / GRID_CELL)}_${Math.floor(lon / GRID_CELL)}`
+function gridKey(lat: number, lon: number): number {
+  return Math.floor(lat / GRID_CELL) * GRID_KEY_SCALE + Math.floor(lon / GRID_CELL)
 }
 
 /**
@@ -341,7 +351,7 @@ function findComponents(
 // ---------- Building spatial grid ----------
 
 interface BuildingGrid {
-  grid: Map<string, number[]>
+  grid: Map<number, number[]>
   lats: Float64Array
   lons: Float64Array
   types: Uint8Array
@@ -362,7 +372,7 @@ function buildBuildingGrid(table: any): BuildingGrid {
   const types = new Uint8Array(n)
   const flrs = new Uint8Array(n)
   const areas: (number | null)[] = new Array(n)
-  const grid = new Map<string, number[]>()
+  const grid = new Map<number, number[]>()
 
   for (let i = 0; i < n; i++) {
     const lat = latCol.get(i) as number
@@ -400,15 +410,24 @@ function assignBuildingsGlobally(
   startLat: any, startLon: any, endLat: any, endLon: any,
   bg: BuildingGrid,
 ): Map<number, number> {
-  const bestSeg = new Map<number, number>()
-  const bestDist = new Map<number, number>()
+  // Hot path runs hundreds of millions of building × segment distance checks
+  // for dense urban hexes; TypedArray access avoids the per-iteration hash
+  // and allocation overhead Map.get/set incur on a numeric key.
+  const n = bg.lats.length
+  const bestSegArr = new Int32Array(n).fill(-1)
+  const bestDistArr = new Float64Array(n)
+  bestDistArr.fill(Infinity)
 
   let sumLat = 0, segCount = 0
   for (const seg of eligibleSegments) { sumLat += startLat.get(seg) as number; segCount++ }
-  if (segCount === 0) return bestSeg
+  if (segCount === 0) return new Map()
   const avgLat = sumLat / segCount
   const lonCells = Math.ceil(MAX_BUFFER_M / (111320 * GRID_CELL * Math.cos(avgLat * Math.PI / 180)))
   const latCells = Math.ceil(MAX_BUFFER_M / (110540 * GRID_CELL))
+
+  const lats = bg.lats
+  const lons = bg.lons
+  const gridMap = bg.grid
 
   for (const seg of eligibleSegments) {
     const sLat = startLat.get(seg) as number
@@ -422,20 +441,30 @@ function assignBuildingsGlobally(
     const gMaxLon = Math.floor(Math.max(sLon, eLon) / GRID_CELL) + lonCells
 
     for (let gLat = gMinLat; gLat <= gMaxLat; gLat++) {
+      const latPart = gLat * GRID_KEY_SCALE
       for (let gLon = gMinLon; gLon <= gMaxLon; gLon++) {
-        const buildings = bg.grid.get(`${gLat}_${gLon}`)
+        const buildings = gridMap.get(latPart + gLon)
         if (!buildings) continue
-        for (const bi of buildings) {
-          const dist = pointToSegmentDist(bg.lats[bi], bg.lons[bi], sLat, sLon, eLat, eLon)
-          if (dist <= MAX_BUFFER_M && dist < (bestDist.get(bi) ?? Infinity)) {
-            bestDist.set(bi, dist)
-            bestSeg.set(bi, seg)
+        for (let k = 0; k < buildings.length; k++) {
+          const bi = buildings[k]
+          const dist = pointToSegmentDist(lats[bi], lons[bi], sLat, sLon, eLat, eLon)
+          if (dist <= MAX_BUFFER_M && dist < bestDistArr[bi]) {
+            bestDistArr[bi] = dist
+            bestSegArr[bi] = seg
           }
         }
       }
     }
   }
-  return bestSeg
+
+  // Materialise as Map for the per-component consumer (only assigned entries).
+  // O(n) one-shot; trivial vs the segment×building inner loop.
+  const result = new Map<number, number>()
+  for (let bi = 0; bi < n; bi++) {
+    const seg = bestSegArr[bi]
+    if (seg >= 0) result.set(bi, seg)
+  }
+  return result
 }
 
 function flowAccumulate(
@@ -461,14 +490,22 @@ function flowAccumulate(
 
   // --- Step 1: per-component local trips (A.3: subset globalBestSeg to
   // this component's own segments — gate prevents `segFlow.get(alienSeg)`
-  // returning undefined, which would propagate as NaN) ---
-  const segFlow = new Map<number, number>()
-  for (const seg of comp.segments) segFlow.set(seg, 0)
+  // returning undefined, which would propagate as NaN).
+  //
+  // Accumulate integer dwellings first, then multiply by TRIPS_PER_DWELLING
+  // once per segment. Integer addition is associative so segFlow does not
+  // depend on the iteration order of `globalBestSeg` — important now that
+  // the upstream typed-array assignment iterates building indices in
+  // ascending order rather than first-discovery order.
+  const segDwellings = new Map<number, number>()
+  for (const seg of comp.segments) segDwellings.set(seg, 0)
   for (const [bi, seg] of globalBestSeg) {
     if (!compSegSet.has(seg)) continue
     const dw = estimateDwellings(bg.types[bi], bg.floors[bi], bg.areas[bi])
-    segFlow.set(seg, segFlow.get(seg)! + dw * TRIPS_PER_DWELLING)
+    segDwellings.set(seg, segDwellings.get(seg)! + dw)
   }
+  const segFlow = new Map<number, number>()
+  for (const [seg, dw] of segDwellings) segFlow.set(seg, dw * TRIPS_PER_DWELLING)
 
   // --- Step 2: Multi-source Dijkstra from root nodes ---
   const dist = new Map<string, number>()
@@ -568,8 +605,16 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   // A.3: global building→segment assignment. One pass over every eligible
   // segment across all components — each building now lands on exactly one
   // segment, no more double-counting across primary-road-split components.
-  const eligibleSegments: number[] = []
-  for (const comp of components) eligibleSegments.push(...comp.segments)
+  // (Spread `push(...comp.segments)` overflows the V8 call stack when a
+  // single urban component holds >100 k segments — use explicit loops.)
+  let eligibleCapacity = 0
+  for (const comp of components) eligibleCapacity += comp.segments.length
+  const eligibleSegments: number[] = new Array(eligibleCapacity)
+  let writeIdx = 0
+  for (const comp of components) {
+    const segs = comp.segments
+    for (let i = 0; i < segs.length; i++) eligibleSegments[writeIdx++] = segs[i]
+  }
   const globalBestSeg = assignBuildingsGlobally(
     eligibleSegments, startLat, startLon, endLat, endLon, bg,
   )
@@ -646,24 +691,30 @@ function main() {
     process.exit(1)
   }
 
+  // Sort explicit so START_INDEX is reproducible across runs (readdirSync
+  // alphabetical order isn't filesystem-guaranteed).
   const hexDirs = readdirSync(H3R4_DIR).filter(d => {
     if (d.startsWith('.')) return false
     if (PREFIX && !d.startsWith(PREFIX)) return false
     return true
-  })
+  }).sort()
+  const rawStart = parseInt(process.env.START_INDEX || '0', 10)
+  const START_INDEX = Number.isFinite(rawStart)
+    ? Math.min(Math.max(0, rawStart), hexDirs.length)
+    : 0
 
   console.log(`Service-tree AADT enrichment (v2: flow accumulation)`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
-  console.log(`  Hexes: ${hexDirs.length}${PREFIX ? ` (prefix: ${PREFIX})` : ''}`)
+  console.log(`  Hexes: ${hexDirs.length}${PREFIX ? ` (prefix: ${PREFIX})` : ''}${START_INDEX > 0 ? ` (resume from #${START_INDEX})` : ''}`)
 
   const startTime = Date.now()
   let lastProgress = startTime
-  let hexesProcessed = 0
+  let hexesProcessed = START_INDEX
   let hexesEnriched = 0
   let totalSegmentsEnriched = 0
   let totalResidential = 0
 
-  for (let hi = 0; hi < hexDirs.length; hi++) {
+  for (let hi = START_INDEX; hi < hexDirs.length; hi++) {
     const hexId = hexDirs[hi]
     const result = processHex(hexId)
 
