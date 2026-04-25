@@ -91,24 +91,48 @@ const AIRPORT_CONTEXT_RADIUS_M: f64 = 5_000.0;
 const BUILDING_QUERY_RADIUS_M: f64 = 2_000.0;
 const INDUSTRIAL_QUERY_RADIUS_M: f64 = 5_000.0;
 
-/// Try to read the on-disk PALT file persisted by the pipeline run. Returns
-/// `None` if the file is missing, malformed, or PALT_DIR isn't configured —
-/// the caller falls back to runtime build in those cases.
+/// Try to read the on-disk PALT file persisted by the pipeline run.
+/// Returns `None` if `PALT_DIR` isn't configured or the file is missing
+/// — both are normal "no precomputed raster yet, fall back to runtime
+/// build" signals. Decode failures and unexpected I/O errors log the
+/// path so corruption / permission issues don't silently masquerade as
+/// the missing-file case.
 #[cfg(feature = "node")]
 fn try_load_palt_from_disk(r4_hex: h3o::CellIndex) -> Option<PaltRaster> {
     let dir = PALT_DIR.get()?;
     let path = dir.join(format!("{:015x}.bin", u64::from(r4_hex)));
-    let bytes = std::fs::read(&path).ok()?;
-    let raster = noise_compute::palt_io::decode(&bytes).ok()?;
-    Some(std::sync::Arc::new(raster))
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            eprintln!("PALT read {} failed: {e}", path.display());
+            return None;
+        }
+    };
+    match noise_compute::palt_io::decode(&bytes) {
+        Ok(r) => Some(std::sync::Arc::new(r)),
+        Err(e) => {
+            eprintln!(
+                "PALT decode {} failed: {e} ({} bytes)",
+                path.display(),
+                bytes.len()
+            );
+            None
+        }
+    }
 }
 
 /// Lookup-or-build PALT raster for an R4 hex. Order of attempts:
 ///   1. In-process LRU cache — microsecond hit.
-///   2. On-disk file written by the pipeline — fast read, decode in ms.
-///   3. Runtime build via `segments_fn` closure — last resort, ~5-15 s.
-/// Result of (2) and (3) is inserted into the LRU so subsequent queries
-/// in the same R4 stay in (1).
+///   2. On-disk file written by the pipeline — single-threaded read +
+///      decode (~ms for 76 KB), so it runs OUTSIDE the build lock.
+///      Cold popups on different R4s with precomputed files don't
+///      serialize on each other.
+///   3. Runtime build via `segments_fn` closure — rayon-saturating
+///      (~5-15 s), gated by the global build lock so 8 simultaneous
+///      cold queries don't split cores N ways and run N× longer.
+/// Steps (2) and (3) populate the LRU; subsequent queries in the same
+/// R4 stay in (1).
 #[cfg(feature = "node")]
 fn get_or_build_palt_raster_lazy<F>(
     r4_hex: h3o::CellIndex,
@@ -122,17 +146,18 @@ where
     if let Some(r) = PALT_CACHE.lock().unwrap().get(&key) {
         return r.clone();
     }
-    // Cache miss. Hold the build lock so concurrent cold-path queries
-    // serialize on the build (one rayon-saturating build at a time, not
-    // N split across N×fewer cores). Re-check the cache after acquiring —
-    // a sibling thread may have finished building while we waited.
-    let _build_guard = PALT_BUILD_LOCK.lock().unwrap();
-    if let Some(r) = PALT_CACHE.lock().unwrap().get(&key) {
-        return r.clone();
-    }
     if let Some(arc) = try_load_palt_from_disk(r4_hex) {
         PALT_CACHE.lock().unwrap().put(key, arc.clone());
         return arc;
+    }
+    // Runtime build — rayon-saturates all cores, so serialize concurrent
+    // misses on this lock. Re-check the LRU after acquiring (sibling
+    // thread may have already built); the disk path doesn't need a
+    // re-probe because pipeline writes happen between runs, not at
+    // popup time.
+    let _build_guard = PALT_BUILD_LOCK.lock().unwrap();
+    if let Some(r) = PALT_CACHE.lock().unwrap().get(&key) {
+        return r.clone();
     }
     let segments = segments_fn();
     let raster = noise_compute::emission::aircraft::build_high_alt_r8_raster(
@@ -628,33 +653,58 @@ pub fn source_init(h3r4_dir: String) -> napi::Result<String> {
     let has_dem = rasters.has_data();
     RASTERS.set(rasters).ok();
 
-    // PALT lives under tiles/{year}/h3-tiles/r8/aircraft_palt/. Year is
-    // the directory name one level up from h3r4_dir
-    // (`.../data/prepared/{year}/h3r4`); the data root is one more level
-    // up (`.../data`).
-    let year = h3r4_path
-        .parent()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("2025");
-    let data_root = data_dir
-        .parent()
-        .unwrap_or(std::path::Path::new("."))
-        .to_path_buf();
-    let palt_dir = data_root
-        .join("tiles")
-        .join(year)
-        .join("h3-tiles")
-        .join("r8")
-        .join("aircraft_palt");
-    PALT_DIR.set(palt_dir).ok();
+    // PALT lives under tiles/{year}/h3-tiles/r8/aircraft_palt/. Derive
+    // the path from `h3r4_dir`'s expected `.../data/prepared/{year}/h3r4`
+    // layout. If the layout doesn't match (symlink, custom mount,
+    // dev-fixture), leave `PALT_DIR` unset — popup queries fall back to
+    // runtime build, but we log it in the init message so the operator
+    // notices the cold-path regression instead of debugging via
+    // wall-clock complaints.
+    let palt_status = match derive_palt_dir(h3r4_path) {
+        Some(dir) => {
+            let s = format!("PALT enabled at {}", dir.display());
+            PALT_DIR.set(dir).ok();
+            s
+        }
+        None => format!(
+            "PALT disabled — h3r4_dir layout not recognised ({h3r4_dir} doesn't match \
+             '.../data/prepared/{{year}}/h3r4'); popup will runtime-build the raster"
+        ),
+    };
 
     // NACE codes are baked into industrial.arrow — no global JSON needed
 
     Ok(format!(
-        "source-reader initialized: {h3r4_dir} (DEM: {})",
+        "source-reader initialized: {h3r4_dir} (DEM: {}; {palt_status})",
         if has_dem { "loaded" } else { "stub" },
     ))
+}
+
+/// Derive the on-disk PALT directory from the conventional h3r4 layout
+/// `.../data/prepared/{year}/h3r4`. Returns `None` when the path
+/// doesn't have at least the `prepared/{year}/h3r4` tail — caller logs
+/// and continues with PALT disabled.
+#[cfg(feature = "node")]
+fn derive_palt_dir(h3r4_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let canonical = std::fs::canonicalize(h3r4_path).ok()?;
+    let year_dir = canonical.parent()?;
+    let prepared_dir = year_dir.parent()?;
+    let data_root = prepared_dir.parent()?;
+    if year_dir.file_name()?.to_str().is_none()
+        || prepared_dir.file_name()?.to_str()? != "prepared"
+        || canonical.file_name()?.to_str()? != "h3r4"
+    {
+        return None;
+    }
+    let year = year_dir.file_name()?.to_str()?;
+    Some(
+        data_root
+            .join("tiles")
+            .join(year)
+            .join("h3-tiles")
+            .join("r8")
+            .join("aircraft_palt"),
+    )
 }
 
 #[cfg(feature = "node")]
