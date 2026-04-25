@@ -119,19 +119,57 @@ const SPLIT_HEAVY = 0.02
 const SPLIT_MOTO = 0.01
 
 // ---------- Geometry ----------
+//
+// Service-tree's hot building-assignment loop runs ~3.7 G distance probes
+// for a Jakarta-class hex. To avoid paying `Math.cos` + degree→metre
+// arithmetic per probe, the inner loop runs in *pre-projected* metres:
+// `buildBuildingGrid` materialises `xs/ys` `Float64Array` once using a
+// single hex-level cosLat from the average building latitude, and
+// `assignBuildingsGlobally` projects segment endpoints the same way.
+// Within a 24 km H3 r4 hex cosLat varies <0.05 % — well under the 50 m
+// `MAX_BUFFER_M` heuristic — so the assignment is bit-identical.
+
+const M_PER_DEG_LAT = 110540
 
 function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
   const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
+  const dy = (lat2 - lat1) * M_PER_DEG_LAT
   return Math.sqrt(dx * dx + dy * dy)
 }
 
+/**
+ * Distance from point `p` to segment `a → b`, all coordinates already
+ * projected to local metres by the caller. Pure subtract/multiply/dot;
+ * no trig, no degree→metre conversion.
+ */
+function pointToSegmentDistXY(
+  px: number, py: number,
+  ax: number, ay: number,
+  bx: number, by: number,
+): number {
+  const dx = bx - ax, dy = by - ay
+  const lenSq = dx * dx + dy * dy
+  if (lenSq < 1e-6) {
+    const ex = px - ax, ey = py - ay
+    return Math.sqrt(ex * ex + ey * ey)
+  }
+  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq
+  t = Math.max(0, Math.min(1, t))
+  const cx = ax + t * dx, cy = ay + t * dy
+  const ex = px - cx, ey = py - cy
+  return Math.sqrt(ex * ex + ey * ey)
+}
+
+/** Degree-input wrapper around `pointToSegmentDistXY` — projects on the
+ *  fly using a per-call cosLat. Kept for callers without a hex-level
+ *  cosLat handy; the hot loop in `assignBuildingsGlobally` uses the
+ *  pre-projected variant instead. */
 function pointToSegmentDist(pLat: number, pLon: number, aLat: number, aLon: number, bLat: number, bLon: number): number {
   const cosLat = Math.cos(pLat * Math.PI / 180)
-  const px = pLon * 111320 * cosLat, py = pLat * 110540
-  const ax = aLon * 111320 * cosLat, ay = aLat * 110540
-  const bx = bLon * 111320 * cosLat, by = bLat * 110540
+  const px = pLon * 111320 * cosLat, py = pLat * M_PER_DEG_LAT
+  const ax = aLon * 111320 * cosLat, ay = aLat * M_PER_DEG_LAT
+  const bx = bLon * 111320 * cosLat, by = bLat * M_PER_DEG_LAT
   const dx = bx - ax, dy = by - ay
   const lenSq = dx * dx + dy * dy
   if (lenSq < 1e-6) return flatDist(pLat, pLon, aLat, aLon)
@@ -374,6 +412,15 @@ interface BuildingGrid {
   grid: Map<number, number[]>
   lats: Float64Array
   lons: Float64Array
+  /** Pre-projected building coords in metres (using the per-hex `mPerDegLon`).
+   *  Inner loop reads these instead of `lats/lons` so it never has to call
+   *  `Math.cos` or multiply by `111320 * cosLat` per probe. */
+  xs: Float64Array
+  ys: Float64Array
+  /** Hex-level metres-per-degree-longitude — `Math.cos(avgLat) * 111_320`.
+   *  Caller projects segment endpoints with the same factor so building
+   *  and segment coords share the same local frame. */
+  mPerDegLon: number
   types: Uint8Array
   floors: Uint8Array
   areas: (number | null)[]
@@ -398,9 +445,11 @@ function buildBuildingGrid(table: any): BuildingGrid {
   const areas: (number | null)[] = new Array(n)
 
   // First pass: load coords + payload, track min cell idx for the per-hex
-  // origin used by the Smi-fitting grid key.
+  // origin used by the Smi-fitting grid key, and accumulate the latitude
+  // sum so we can derive a single `cosLat` for the whole hex.
   let minLatIdx = Infinity
   let minLonIdx = Infinity
+  let latSum = 0
   for (let i = 0; i < n; i++) {
     const lat = latCol.get(i) as number
     const lon = lonCol.get(i) as number
@@ -414,15 +463,26 @@ function buildBuildingGrid(table: any): BuildingGrid {
     const oi = Math.floor(lon / GRID_CELL)
     if (li < minLatIdx) minLatIdx = li
     if (oi < minLonIdx) minLonIdx = oi
+    latSum += lat
   }
   // Pull origin one cell below the min so the segment-bbox lookup buffer
   // (latCells / lonCells) never produces a negative local coord.
   const latOriginIdx = (Number.isFinite(minLatIdx) ? minLatIdx : 0) - 1
   const lonOriginIdx = (Number.isFinite(minLonIdx) ? minLonIdx : 0) - 1
 
-  // Second pass: bucket into the grid using local indices.
+  // One cosLat for the whole hex. Across a 24 km r4 hex (≈0.22° lat span)
+  // cos varies <0.05 % — well under the 50 m MAX_BUFFER_M threshold.
+  const avgLat = n > 0 ? latSum / n : 0
+  const mPerDegLon = 111320 * Math.cos(avgLat * Math.PI / 180)
+
+  // Second pass: pre-project every building into local metres + bucket
+  // into the grid using local cell indices.
+  const xs = new Float64Array(n)
+  const ys = new Float64Array(n)
   const grid = new Map<number, number[]>()
   for (let i = 0; i < n; i++) {
+    xs[i] = lons[i] * mPerDegLon
+    ys[i] = lats[i] * M_PER_DEG_LAT
     const latLocal = Math.floor(lats[i] / GRID_CELL) - latOriginIdx
     const lonLocal = Math.floor(lons[i] / GRID_CELL) - lonOriginIdx
     const key = packGridKey(latLocal, lonLocal)
@@ -431,7 +491,11 @@ function buildBuildingGrid(table: any): BuildingGrid {
     list.push(i)
   }
 
-  return { grid, lats, lons, types, floors: flrs, areas, latOriginIdx, lonOriginIdx }
+  return {
+    grid, lats, lons, xs, ys, mPerDegLon,
+    types, floors: flrs, areas,
+    latOriginIdx, lonOriginIdx,
+  }
 }
 
 // ---------- Flow accumulation per component ----------
@@ -462,15 +526,19 @@ function assignBuildingsGlobally(
   const bestDistArr = new Float64Array(n)
   bestDistArr.fill(Infinity)
 
-  let sumLat = 0, segCount = 0
-  for (const seg of eligibleSegments) { sumLat += startLat.get(seg) as number; segCount++ }
-  if (segCount === 0) return new Map()
-  const avgLat = sumLat / segCount
-  const lonCells = Math.ceil(MAX_BUFFER_M / (111320 * GRID_CELL * Math.cos(avgLat * Math.PI / 180)))
-  const latCells = Math.ceil(MAX_BUFFER_M / (110540 * GRID_CELL))
+  if (eligibleSegments.length === 0) return new Map()
 
-  const lats = bg.lats
-  const lons = bg.lons
+  // Bbox padding for the segment-cell scan: how many ±cells we have to
+  // visit to cover MAX_BUFFER_M of slop in each direction. Uses the same
+  // hex-level `mPerDegLon` (= 111_320 × cosLat) the building xs were
+  // projected with — keeps the bbox check coordinate-consistent with the
+  // distance check below.
+  const lonCells = Math.ceil(MAX_BUFFER_M / (bg.mPerDegLon * GRID_CELL))
+  const latCells = Math.ceil(MAX_BUFFER_M / (M_PER_DEG_LAT * GRID_CELL))
+
+  const xs = bg.xs
+  const ys = bg.ys
+  const mLon = bg.mPerDegLon
   const gridMap = bg.grid
   const latOff = bg.latOriginIdx
   const lonOff = bg.lonOriginIdx
@@ -480,6 +548,13 @@ function assignBuildingsGlobally(
     const sLon = startLon.get(seg) as number
     const eLat = endLat.get(seg) as number
     const eLon = endLon.get(seg) as number
+
+    // Project segment endpoints once per segment. Inner loop now operates
+    // entirely in metres — pure subtract/multiply/sqrt, zero trig.
+    const sx = sLon * mLon
+    const sy = sLat * M_PER_DEG_LAT
+    const ex = eLon * mLon
+    const ey = eLat * M_PER_DEG_LAT
 
     const gMinLat = Math.floor(Math.min(sLat, eLat) / GRID_CELL) - latCells
     const gMaxLat = Math.floor(Math.max(sLat, eLat) / GRID_CELL) + latCells
@@ -493,7 +568,7 @@ function assignBuildingsGlobally(
         if (!buildings) continue
         for (let k = 0; k < buildings.length; k++) {
           const bi = buildings[k]
-          const dist = pointToSegmentDist(lats[bi], lons[bi], sLat, sLon, eLat, eLon)
+          const dist = pointToSegmentDistXY(xs[bi], ys[bi], sx, sy, ex, ey)
           if (dist <= MAX_BUFFER_M && dist < bestDistArr[bi]) {
             bestDistArr[bi] = dist
             bestSegArr[bi] = seg
