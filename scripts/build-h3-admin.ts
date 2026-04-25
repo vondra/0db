@@ -81,10 +81,15 @@ function continentIdFromNE(ne: string): number {
 
 // ─── Natural Earth loading ─────────────────────────────────────────────────
 
+interface CountryPolygon {
+  outer: number[][]      // outer ring [[lon, lat], ...]
+  holes: number[][][]    // 0..N hole rings, same format
+}
+
 interface CountryFeature {
-  iso: string          // ISO alpha-2 ("CZ", "BR", ...)
-  continent: number    // continent id
-  rings: number[][][]  // polygon rings: [ [[x,y],...], ... ] — MultiPolygon flattened
+  iso: string                // ISO alpha-2 ("CZ", "BR", ...)
+  continent: number          // continent id
+  polygons: CountryPolygon[] // 1 entry for Polygon, N for MultiPolygon
 }
 
 async function loadNaturalEarth(): Promise<CountryFeature[]> {
@@ -105,21 +110,30 @@ async function loadNaturalEarth(): Promise<CountryFeature[]> {
     if (!iso || iso === '-99') continue  // NE uses "-99" for disputed
     const continent = continentIdFromNE(f.properties.CONTINENT)
     const geom = f.geometry
-    const rings: number[][][] = []
+    // GeoJSON layout:
+    //   Polygon       coordinates = [outer, hole1, hole2, ...]
+    //   MultiPolygon  coordinates = [[outer1, h1.1, h1.2, ...], [outer2, h2.1, ...]]
+    // Holes are LOAD-BEARING for enclaves: South Africa's polygon carries
+    // Lesotho as a hole, so dropping holes silently routes Lesotho hexes
+    // to ZA. Same story for San Marino + Vatican inside IT.
+    const polygons: CountryPolygon[] = []
     if (geom.type === 'Polygon') {
-      // rings[0] = outer, rings[1..] = holes — we accept all as outer (simpler PIP, ignore holes)
-      rings.push(geom.coordinates[0])
+      const [outer, ...holes] = geom.coordinates as number[][][]
+      polygons.push({ outer, holes })
     } else if (geom.type === 'MultiPolygon') {
-      for (const poly of geom.coordinates) rings.push(poly[0])
+      for (const poly of geom.coordinates as number[][][][]) {
+        const [outer, ...holes] = poly
+        polygons.push({ outer, holes })
+      }
     }
-    features.push({ iso, continent, rings })
+    features.push({ iso, continent, polygons })
   }
   return features
 }
 
 // ─── Point-in-polygon (hand-rolled ray-casting) ────────────────────────────
 
-/** Ray-cast PIP for a simple polygon (ring is [[lon, lat], ...]). */
+/** Ray-cast PIP for a simple ring (ring is [[lon, lat], ...]). */
 function pointInRing(lon: number, lat: number, ring: number[][]): boolean {
   let inside = false
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -132,8 +146,17 @@ function pointInRing(lon: number, lat: number, ring: number[][]): boolean {
   return inside
 }
 
+/** Inside the polygon's outer ring AND outside every hole ring. */
+function pointInPolygon(lon: number, lat: number, p: CountryPolygon): boolean {
+  if (!pointInRing(lon, lat, p.outer)) return false
+  for (const hole of p.holes) {
+    if (pointInRing(lon, lat, hole)) return false
+  }
+  return true
+}
+
 function pointInCountry(lon: number, lat: number, f: CountryFeature): boolean {
-  for (const ring of f.rings) if (pointInRing(lon, lat, ring)) return true
+  for (const p of f.polygons) if (pointInPolygon(lon, lat, p)) return true
   return false
 }
 
