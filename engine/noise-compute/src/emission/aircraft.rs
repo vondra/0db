@@ -21,12 +21,29 @@ use std::sync::OnceLock;
 /// At this raw NPD SEL, a segment's contribution is negligible (< 0.15 dB on total Lden).
 pub const AIRCRAFT_NPD_REACH_THRESHOLD_DB: f64 = 40.0;
 
-/// Hard cap on per-profile slant reach (meters). Bounds CSR grid and r-tree
-/// query area. With the physics tail (`alpha_eff`), jets stay above 40 dB
-/// SEL out to ~15.5 km. Cap raised to 16 km in iteration C2: the closed-
-/// form far-field kernel (segments above the NPD table) is cheap enough
-/// that the wider reach fits inside the +10 % runtime budget.
+/// Hard cap on per-profile **slant** reach (meters). Used by
+/// `Profile::estimate_reach_m` to bound the bisection in the physics
+/// tail and by the per-segment slant-vs-reach test inside the
+/// pipeline scatter and popup compute paths. With the physics tail
+/// (`alpha_eff`), jets stay above 40 dB SEL out to ~15.5 km slant.
+/// Numerically equal to `AIRCRAFT_MAX_HORIZONTAL_REACH_M` because at
+/// altitude 0 horizontal = slant, but they're conceptually different —
+/// callers should pick the constant that matches the geometry they're
+/// filtering on.
 pub const AIRCRAFT_NPD_REACH_CAP_M: f64 = 16_000.0;
+
+/// Hard cap on **horizontal** distance (meters) at which an airborne
+/// segment can be audible at 40 dB SEL, regardless of altitude. Used
+/// by:
+///   * `source-reader` r-tree query envelope
+///   * `build_high_alt_r8_raster` bbox prefilter on segment-cell pairs
+///   * any other "is this segment within range of the receiver" filter
+///     that operates on horizontal distance
+/// For altitudes above 0 the actual horizontal reach is bounded by
+/// `sqrt(slant_cap² − alt²)`, so this constant is the upper envelope —
+/// safe to use for prefilters, but the per-profile slant test inside
+/// the kernel does the exact rejection.
+pub const AIRCRAFT_MAX_HORIZONTAL_REACH_M: f64 = 16_000.0;
 
 /// Slant threshold above which `segment_energy_fast` and
 /// `segment_sel_with_overrides` switch to the closed-form far-field kernel
@@ -1160,11 +1177,19 @@ fn airport_match_cell(lat: f64, lon: f64) -> (i32, i32) {
     )
 }
 
-pub(crate) fn meters_to_lat_deg(meters: f64) -> f64 {
+/// Meters → degrees of latitude (constant ≈ 110 540 m / deg, valid to
+/// within ~0.6 % anywhere on Earth). Use for any latitude bounding box
+/// where the exact geodesic isn't worth the cost.
+pub fn meters_to_lat_deg(meters: f64) -> f64 {
     meters / 110_540.0
 }
 
-pub(crate) fn meters_to_lon_deg(lat: f64, meters: f64) -> f64 {
+/// Meters → degrees of longitude at a given latitude. Includes a
+/// `cos.max(0.2)` clamp that bounds the conversion factor at ~78°
+/// latitude — above that the cosine collapses and the bbox would
+/// over-fetch enormously. Aircraft cruise tracks live well below that
+/// limit, so the clamp is a safety net rather than a routine concern.
+pub fn meters_to_lon_deg(lat: f64, meters: f64) -> f64 {
     let cos_lat = lat.to_radians().cos().abs().max(0.2);
     meters / (111_320.0 * cos_lat)
 }
@@ -1914,7 +1939,10 @@ pub fn build_high_alt_r8_raster(
     // centre lat/lon, ground elevation, and the longitude-degree variant of
     // the cap (cos(lat)-scaled) so the inner loop runs no `cos()` per
     // (segment, cell) pair.
-    let cap_deg_lat = meters_to_lat_deg(AIRCRAFT_NPD_REACH_CAP_M);
+    // Bbox prefilter operates on horizontal distance — use the
+    // horizontal cap, not the slant cap. They're numerically equal
+    // today but the geometry is what's being filtered here.
+    let cap_deg_lat = meters_to_lat_deg(AIRCRAFT_MAX_HORIZONTAL_REACH_M);
     let cell_centers: Vec<(u64, f64, f64, f64, f64)> = r4_hex
         .children(h3o::Resolution::Eight)
         .map(|c| {
@@ -1922,7 +1950,7 @@ pub fn build_high_alt_r8_raster(
             let lat = ll.lat();
             let lon = ll.lng();
             let elev = rasters.elevation(lat, lon);
-            let cap_deg_lon = meters_to_lon_deg(lat, AIRCRAFT_NPD_REACH_CAP_M);
+            let cap_deg_lon = meters_to_lon_deg(lat, AIRCRAFT_MAX_HORIZONTAL_REACH_M);
             (u64::from(c), lat, lon, elev, cap_deg_lon)
         })
         .collect();

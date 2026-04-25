@@ -78,15 +78,16 @@ static PALT_BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 // NACE codes are now baked into industrial.arrow (nace_4digit UInt16 column).
 // No global lookup needed at runtime.
 
-// Aircraft r-tree query radius — must match the slant cap so popup PALT
-// build sees the same segment set as the pipeline build (which loads
-// from-disk without r-tree filter). At 10 km the popup PALT was missing
-// 10-16 km horizontal cruise tracks that the pipeline raster did
-// include, opening a 3 dB parity gap. Per-segment Phase 1 work for
+// Aircraft r-tree query envelope is a **horizontal** bbox in lat/lon
+// space, so it uses the horizontal-reach cap (not the slant cap, even
+// though they're numerically equal today). At 10 km the popup PALT was
+// missing 10-16 km horizontal cruise tracks that the pipeline raster
+// did include, opening a 3 dB parity gap; this constant must stay >=
+// the pipeline's horizontal reach. Per-segment Phase 1 work for the
 // 10-16 km range is rejected by `segment_sel`'s slant>reach test
 // regardless of r-tree returning the segment.
 const AIRCRAFT_QUERY_MAX_RADIUS_M: f64 =
-    noise_compute::emission::aircraft::AIRCRAFT_NPD_REACH_CAP_M;
+    noise_compute::emission::aircraft::AIRCRAFT_MAX_HORIZONTAL_REACH_M;
 const AIRPORT_CONTEXT_RADIUS_M: f64 = 5_000.0;
 const BUILDING_QUERY_RADIUS_M: f64 = 2_000.0;
 const INDUSTRIAL_QUERY_RADIUS_M: f64 = 5_000.0;
@@ -594,13 +595,13 @@ pub fn collect_from_hex_data(
             rstar::RTree::bulk_load(entries)
         });
 
-        // Query envelope: receiver ± AIRCRAFT_QUERY_MAX_RADIUS_M. R-tree returns
-        // segments whose bbox intersects this envelope — correct for any segment
-        // length. Final accurate filter (CPA ≤ per-profile reach) happens inside
-        // `segment_sel_with_overrides`.
-        let radius_lat_deg = AIRCRAFT_QUERY_MAX_RADIUS_M / 111_320.0;
-        let cos_lat = lat.to_radians().cos().max(0.01);
-        let radius_lon_deg = radius_lat_deg / cos_lat;
+        // Query envelope: receiver ± AIRCRAFT_QUERY_MAX_RADIUS_M (horizontal).
+        // R-tree returns segments whose bbox intersects this envelope — correct
+        // for any segment length. Final accurate filter (CPA ≤ per-profile
+        // reach) happens inside `segment_sel_with_overrides`.
+        use noise_compute::emission::aircraft::{meters_to_lat_deg, meters_to_lon_deg};
+        let radius_lat_deg = meters_to_lat_deg(AIRCRAFT_QUERY_MAX_RADIUS_M);
+        let radius_lon_deg = meters_to_lon_deg(lat, AIRCRAFT_QUERY_MAX_RADIUS_M);
 
         let env = rstar::AABB::from_corners(
             [lat - radius_lat_deg, lng - radius_lon_deg],
