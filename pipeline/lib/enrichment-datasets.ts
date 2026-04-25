@@ -725,9 +725,8 @@ export const DATASETS: Dataset[] = [
   },
 ]
 
-/** Fast lookups — built once at module load. */
-export const DATASETS_BY_ID = new Map<number, Dataset>(DATASETS.map(d => [d.id, d]))
-export const DATASETS_BY_KEY = new Map<string, Dataset>(DATASETS.map(d => [d.key, d]))
-
-/** Convenience: returns the seeded "unspecified" entry (always id=0). */
-export const UNSPECIFIED: Dataset = DATASETS_BY_ID.get(0)!
+// `DATASETS_BY_ID` / `DATASETS_BY_KEY` / `UNSPECIFIED` were the legacy
+// fast-lookup exports; everything has now migrated to the
+// provenance-aware `SOURCES_BY_*` registry in `pipeline/lib/sources.ts`.
+// `DATASETS` and `Dataset` remain the single source of truth for the raw
+// rows the new registry layers on top of.
