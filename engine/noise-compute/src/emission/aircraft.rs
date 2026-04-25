@@ -98,9 +98,20 @@ pub struct NpdProfile {
     pub v_ref_kt: f64,
     pub d_bar_m: f64,
     pub installation: Installation,
-    /// Effective A-weighted atmospheric absorption coefficients (dB/m),
-    /// lazily derived from the last three NPD points (see `compute_alpha_eff`).
-    /// Stored per-direction because departure SEL tables drop faster than
+    /// **NPD-tail residual coefficient** (dB/m), lazily back-fitted from the
+    /// last three NPD points (see `compute_alpha_eff`). NOT a generic
+    /// atmospheric-absorption value — it is the slope that, when paired
+    /// with the `−20·log10(d/d_ref)` term in `interpolate_sel_logd`,
+    /// reproduces the observed NPD curve through (10 k, 16 k, 25 k) ft.
+    /// In effect it absorbs *both* atmospheric absorption *and* any
+    /// residual divergence mismatch between Doc 29 NPD's empirical SEL
+    /// slope and the spherical-spreading anchor — so the numerical value
+    /// (jets ≈ 0.8–1.1 dB/km) is in the same ballpark as ISO 9613-1
+    /// broadband α for typical aircraft spectra at standard atmosphere,
+    /// but they are not interchangeable: swapping in an external ISO
+    /// 9613-1 α (or scaling by a real atmosphere profile) will give
+    /// wrong SEL because the divergence term double-counts. Stored
+    /// per-direction because departure SEL tables drop faster than
     /// approach in the tail for most profiles.
     alpha_eff_approach: OnceLock<f64>,
     alpha_eff_departure: OnceLock<f64>,
@@ -202,12 +213,23 @@ pub static PROFILES: [NpdProfile; 8] = [
     },
 ];
 
-/// Back-out effective broadband atmospheric absorption coefficient (dB/m)
-/// from the three tail NPD points. Fits `residual_i = sel_i + 20·log10(d_i / d_ref)`
-/// to `residual(d) = C − α·d` by least squares over (10 000, 16 000, 25 000) ft.
+/// Back-out the NPD-tail residual coefficient (dB/m) for the physics-form
+/// extrapolation `SEL = SEL_ref − 20·log10(d/d_ref) − α · (d − d_ref)`
+/// used beyond 25 000 ft. After removing the spherical-spreading anchor
+/// `−20·log10(d/d_ref)` from each tail point, fits the residual linearly
+/// in `d` by least squares over (10 000, 16 000, 25 000) ft.
 ///
-/// Captures the profile's own measured spectral + humidity characteristics.
-/// Typical values: jets ~0.8–1.1 dB/km, turboprops / LightGA ~0.6–0.9 dB/km.
+/// **What this is, and what it isn't.** It is *not* a generic ISO 9613-1
+/// broadband atmospheric-absorption coefficient. It is the slope that
+/// reproduces this profile's own NPD curve when the tail is paired with
+/// the `−20·log10` divergence term. It happens to land in the same range
+/// as ISO 9613-1 broadband α for typical aircraft spectra at standard
+/// atmosphere — jets ≈ 0.8–1.1 dB/km, turboprops / LightGA ≈ 0.6–0.9
+/// dB/km — but the two are *not* interchangeable. Doc 29 Vol 2
+/// Appendix F prescribes exactly this form for extrapolation beyond the
+/// last NPD point; any change to the divergence term (e.g. swapping for
+/// `−10·log10`) requires re-fitting α on the same form, not borrowing α
+/// from another standard.
 fn compute_alpha_eff(sel: &[f64; 10]) -> f64 {
     let d_m = [
         NPD_DIST_FT[7] / FT_PER_M, // 10 000 ft → 3 048 m
@@ -233,8 +255,10 @@ fn compute_alpha_eff(sel: &[f64; 10]) -> f64 {
 }
 
 impl NpdProfile {
-    /// Effective A-weighted atmospheric absorption coefficient (dB/m) derived
-    /// from the NPD table tail. Cached per (profile, direction) on first use.
+    /// NPD-tail residual coefficient (dB/m), back-fitted from this profile's
+    /// last three NPD points — see `compute_alpha_eff` for the warning that
+    /// this is *not* a swap-in replacement for ISO 9613-1 atmospheric α.
+    /// Cached per (profile, direction) on first use.
     #[inline]
     pub fn alpha_eff(&self, is_departure: bool) -> f64 {
         if is_departure {
