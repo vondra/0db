@@ -118,8 +118,8 @@ async function main() {
         if (field.name === 'trains_passenger' || field.name === 'trains_freight') continue
         columns[field.name] = table.getChild(field.name)!
       }
-      columns['trains_passenger'] = vectorFromArray(Array.from(trainsPax), new Int32())
-      columns['trains_freight'] = vectorFromArray(Array.from(trainsFrt), new Int32())
+      columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
+      columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
 
       columns['source_id'] = vectorFromArray(sourceId, new Uint16())
       const enriched = makeTable(columns)

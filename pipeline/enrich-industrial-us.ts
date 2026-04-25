@@ -182,8 +182,8 @@ async function main() {
         if (field.name === 'hub_height' || field.name === 'rated_power_kw') continue
         columns[field.name] = table.getChild(field.name)!
       }
-      columns['hub_height'] = vectorFromArray(Array.from(hubHeights), new Float32())
-      columns['rated_power_kw'] = vectorFromArray(Array.from(ratedPowers), new Float32())
+      columns['hub_height'] = vectorFromArray(hubHeights, new Float32())
+      columns['rated_power_kw'] = vectorFromArray(ratedPowers, new Float32())
       const enriched = makeTable(columns)
       writeFileSync(arrowPath, Buffer.from(tableToIPC(enriched, 'file')))
       hexesUpdated++

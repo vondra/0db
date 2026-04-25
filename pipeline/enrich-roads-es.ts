@@ -296,10 +296,10 @@ async function enrichArrows(sections: TramoSection[]): Promise<void> {
         if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
         columns[field.name] = table.getChild(field.name)!
       }
-      columns['aadt_light'] = vectorFromArray(Array.from(aadtLight), new Int32())
-      columns['aadt_medium'] = vectorFromArray(Array.from(aadtMedium), new Int32())
-      columns['aadt_heavy'] = vectorFromArray(Array.from(aadtHeavy), new Int32())
-      columns['aadt_moto'] = vectorFromArray(Array.from(aadtMoto), new Int32())
+      columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
+      columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
+      columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
+      columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
 
       columns['source_id'] = vectorFromArray(sourceId, new Uint16())
       const enriched = makeTable(columns)

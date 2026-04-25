@@ -182,8 +182,8 @@ async function main() {
           if (field.name === 'nace_4digit' || field.name === 'source_id') continue
           columns[field.name] = table.getChild(field.name)!
         }
-        columns['nace_4digit'] = vectorFromArray(Array.from(newNace), new Uint16())
-        columns['source_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
+        columns['nace_4digit'] = vectorFromArray(newNace, new Uint16())
+        columns['source_id'] = vectorFromArray(newDatasetId, new Uint16())
         return makeTable(columns)
       })
     } catch {}
