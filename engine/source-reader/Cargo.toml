@@ -26,6 +26,7 @@ noise-compute = { path = "../noise-compute" }
 raster-reader = { path = "../raster-reader" }
 rayon = "1"
 adsb-to-h3r4 = { path = "../adsb-to-h3r4" }
+aircraft-tracks = { path = "../aircraft-tracks" }
 
 [build-dependencies]
 napi-build = "2"

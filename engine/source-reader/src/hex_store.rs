@@ -84,7 +84,15 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
     let building_batches = load_arrow_mmap(&path.join("buildings.arrow"), &mut mmaps);
     let barrier_batches = load_arrow_mmap(&path.join("barriers.arrow"), &mut mmaps);
     let industrial_batches = load_arrow_mmap(&path.join("industrial.arrow"), &mut mmaps);
-    let aircraft_batches = load_arrow_mmap(&path.join("aircraft.arrow"), &mut mmaps);
+    // Prefer v5 three-phase format if present; fall back to v4-bucketed.
+    // The dispatch happens in `load_aircraft_segments_unified` by reading
+    // the `schema_version` metadata key.
+    let v5_path = path.join("aircraft-v5.arrow");
+    let aircraft_batches = if v5_path.exists() {
+        load_arrow_mmap(&v5_path, &mut mmaps)
+    } else {
+        load_arrow_mmap(&path.join("aircraft.arrow"), &mut mmaps)
+    };
 
     Ok(HexData {
         _mmaps: mmaps,
@@ -135,10 +143,27 @@ fn load_arrow_mmap(path: &Path, mmaps: &mut Vec<Arc<Mmap>>) -> Vec<RecordBatch> 
     batches
 }
 
-/// Load aircraft segments from v4 bucketed arrow files. Each row is one bucket
-/// (= aggregated segment with `count_weight` carrying the aggregate weight).
-/// Returns a `Vec<AircraftSegment>` for downstream Doc 29 consumers.
+/// Load aircraft segments from on-disk arrow batches. Detects schema by
+/// looking for the v5 `phase` column; falls back to the v4-bucketed reader.
+///
+/// In both formats one returned `AircraftSegment` represents one row — for
+/// v5 cruise rows the rep_line is the geometry and `count_weight` carries
+/// the line-density factor `sum_length / rep_len`, so the existing Doc 29
+/// kernel multiplies by it and produces the same `NPD × ΔF × density`
+/// energy as `compute_cruise_at_receiver` would.
 pub fn load_aircraft_segments_unified(
+    batches: &[RecordBatch],
+) -> Vec<noise_compute::types::AircraftSegment> {
+    let is_v5 = batches.first().is_some_and(|b| b.schema().column_with_name("phase").is_some());
+    if is_v5 {
+        aircraft_tracks::output::load_v5_as_aircraft_segments(batches)
+    } else {
+        load_aircraft_segments_v4_bucketed(batches)
+    }
+}
+
+/// v4-bucketed reader (legacy). One row per bucket (= aggregated segment).
+fn load_aircraft_segments_v4_bucketed(
     batches: &[RecordBatch],
 ) -> Vec<noise_compute::types::AircraftSegment> {
     use arrow::array::*;

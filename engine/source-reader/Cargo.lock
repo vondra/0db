@@ -50,6 +50,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "aircraft-tracks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "chrono",
+ "chrono-tz",
+ "clap",
+ "flate2",
+ "h3o",
+ "memmap2",
+ "noise-compute",
+ "raster-reader",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tar",
+ "tzf-rs",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1456,6 +1477,7 @@ name = "source-reader"
 version = "0.1.0"
 dependencies = [
  "adsb-to-h3r4",
+ "aircraft-tracks",
  "anyhow",
  "arrow",
  "flate2",
