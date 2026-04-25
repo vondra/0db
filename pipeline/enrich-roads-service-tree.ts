@@ -488,15 +488,14 @@ function flowAccumulate(
     }
   }
 
-  // --- Step 1: per-component local trips (A.3: subset globalBestSeg to
-  // this component's own segments — gate prevents `segFlow.get(alienSeg)`
-  // returning undefined, which would propagate as NaN).
+  // --- Step 1: per-component local trips (subset globalBestSeg to this
+  // component's own segments — the `compSegSet.has(seg)` gate prevents
+  // `segFlow.get(alienSeg)` returning undefined and propagating as NaN).
   //
-  // Accumulate integer dwellings first, then multiply by TRIPS_PER_DWELLING
-  // once per segment. Integer addition is associative so segFlow does not
-  // depend on the iteration order of `globalBestSeg` — important now that
-  // the upstream typed-array assignment iterates building indices in
-  // ascending order rather than first-discovery order.
+  // Sum integer dwellings first and multiply by TRIPS_PER_DWELLING once
+  // per segment so segFlow does not depend on the (now ascending-index)
+  // iteration order of `globalBestSeg` — integer addition is associative,
+  // floats aren't.
   const segDwellings = new Map<number, number>()
   for (const seg of comp.segments) segDwellings.set(seg, 0)
   for (const [bi, seg] of globalBestSeg) {

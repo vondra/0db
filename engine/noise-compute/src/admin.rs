@@ -185,10 +185,10 @@ pub fn hex_admin(hex: u64, table: &HashMap<u64, Admin>) -> Admin {
 
 static ADMIN_TABLE: OnceLock<HashMap<u64, Admin>> = OnceLock::new();
 
-/// Initialise the process-wide admin table. Idempotent: skips both the
-/// disk read and the parse on second-and-later calls (e.g. NAPI hot
-/// reload), returning the already-loaded entry count. Recommended path:
-/// `data/prepared/h3r4-admin.bin` (built by `scripts/build-h3-admin.ts`).
+/// Initialise the process-wide admin table. Idempotent: subsequent calls
+/// short-circuit before touching the disk and return the already-loaded
+/// entry count. Recommended path: `data/prepared/h3r4-admin.bin` (built
+/// by `scripts/build-h3-admin.ts`).
 pub fn init_admin_table(path: &Path) -> io::Result<usize> {
     if let Some(existing) = ADMIN_TABLE.get() {
         return Ok(existing.len());
@@ -230,21 +230,22 @@ pub fn is_initialised() -> bool {
 /// Per CLAUDE.md, admin.bin is year-independent (like rasters/DEM) and lives
 /// at `data/prepared/h3r4-admin.bin`. Callers pass the year-scoped h3r4 dir
 /// (e.g. `data/prepared/2025/h3r4`); we walk up two levels to land on
-/// `data/prepared`. Falls back to immediate parent for non-year-scoped
-/// layouts (legacy / tests). Returns the first path that exists; if neither
-/// exists, returns the year-independent location (caller logs the soft-fail).
+/// `data/prepared`. Falls back to the immediate parent for non-year-scoped
+/// layouts (legacy / tests). Returns the first existing path; if none
+/// exists, returns the year-independent location (caller logs the
+/// soft-fail).
 pub fn default_admin_path(h3r4_dir: &Path) -> std::path::PathBuf {
     let year_independent = h3r4_dir
         .parent()
         .and_then(|p| p.parent())
         .map(|p| p.join("h3r4-admin.bin"));
     let year_scoped = h3r4_dir.parent().map(|p| p.join("h3r4-admin.bin"));
-    if let Some(p) = year_independent.as_ref() {
+    if let Some(p) = &year_independent {
         if p.exists() {
             return p.clone();
         }
     }
-    if let Some(p) = year_scoped.as_ref() {
+    if let Some(p) = &year_scoped {
         if p.exists() {
             return p.clone();
         }
