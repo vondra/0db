@@ -11,6 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
+use std::sync::OnceLock;
 
 use crate::sources::AIRCRAFT_ADSB_SOURCE_ID;
 
@@ -22,12 +23,51 @@ use crate::sources::AIRCRAFT_ADSB_SOURCE_ID;
 /// At this raw NPD SEL, a segment's contribution is negligible (< 0.15 dB on total Lden).
 pub const AIRCRAFT_NPD_REACH_THRESHOLD_DB: f64 = 40.0;
 
-/// Hard cap on per-profile slant reach (meters). Prevents CSR grid explosion.
-/// Same as current prefilter for jets — no CSR memory regression.
-pub const AIRCRAFT_NPD_REACH_CAP_M: f64 = 10_000.0;
+/// Hard cap on per-profile **slant** reach (meters). Used by
+/// `Profile::estimate_reach_m` to bound the bisection in the physics
+/// tail and by the per-segment slant-vs-reach test inside the
+/// pipeline scatter and popup compute paths. With the physics tail
+/// (`alpha_eff`), jets stay above 40 dB SEL out to ~15.5 km slant.
+/// Numerically equal to `AIRCRAFT_MAX_HORIZONTAL_REACH_M` because at
+/// altitude 0 horizontal = slant, but they're conceptually different —
+/// callers should pick the constant that matches the geometry they're
+/// filtering on.
+pub const AIRCRAFT_NPD_REACH_CAP_M: f64 = 16_000.0;
+
+/// Hard cap on **horizontal** distance (meters) at which an airborne
+/// segment can be audible at 40 dB SEL, regardless of altitude. Used
+/// by:
+///   * `source-reader` r-tree query envelope
+///   * `build_high_alt_r8_raster` bbox prefilter on segment-cell pairs
+///   * any other "is this segment within range of the receiver" filter
+///     that operates on horizontal distance
+/// For altitudes above 0 the actual horizontal reach is bounded by
+/// `sqrt(slant_cap² − alt²)`, so this constant is the upper envelope —
+/// safe to use for prefilters, but the per-profile slant test inside
+/// the kernel does the exact rejection.
+pub const AIRCRAFT_MAX_HORIZONTAL_REACH_M: f64 = 16_000.0;
+
+/// Slant threshold above which `segment_energy_fast` and
+/// `segment_sel_with_overrides` switch to the closed-form far-field kernel
+/// (CFFK). The corrections that the per-segment Doc 29 path applies
+/// (ΔI, ΔF, lateral attenuation) are all bounded:
+///   - λ is identically 0 for elevation angle β > 50° (already gated).
+///   - ΔI peaks at ~0.4 dB for wing, ~0.8 dB for fuselage, and is < 0.3 dB
+///     for typical FL330+ overhead geometries.
+///   - ΔF approaches 0 dB for segments where the CPA is interior to the
+///     segment and the segment is several `d_bar` long — true for almost
+///     all cruise segments.
+/// At 25 000 ft / 7 620 m we're at the last NPD table point, beyond which
+/// the slope is already a physical extrapolation. Switching to the closed
+/// form there is cheap (1 log + 1 mul + 1 add) and matches the Doc 29
+/// reference within ~0.3 dB.
+pub const AIRCRAFT_FAR_FIELD_THRESHOLD_M: f64 = 7620.0;
+
+/// Reference slant (meters) at the last NPD table point (25 000 ft). Anchor
+/// for physics-based extrapolation of SEL beyond the table.
+pub const AIRCRAFT_NPD_REF_SLANT_M: f64 = 7620.0;
 
 /// Standard NPD distances in feet (Doc 29 §4.2, 10 points).
-#[allow(dead_code)]
 const NPD_DIST_FT: [f64; 10] = [
     200.0, 400.0, 630.0, 1000.0, 2000.0, 4000.0, 6310.0, 10000.0, 16000.0, 25000.0,
 ];
@@ -58,6 +98,12 @@ pub struct NpdProfile {
     pub v_ref_kt: f64,
     pub d_bar_m: f64,
     pub installation: Installation,
+    /// Effective A-weighted atmospheric absorption coefficients (dB/m),
+    /// lazily derived from the last three NPD points (see `compute_alpha_eff`).
+    /// Stored per-direction because departure SEL tables drop faster than
+    /// approach in the tail for most profiles.
+    alpha_eff_approach: OnceLock<f64>,
+    alpha_eff_departure: OnceLock<f64>,
 }
 
 /// 8 proxy profiles (index matches parquet profile_idx 0-7).
@@ -70,6 +116,8 @@ pub static PROFILES: [NpdProfile; 8] = [
         v_ref_kt: 160.0,
         d_bar_m: 370.0,
         installation: Installation::Wing,
+        alpha_eff_approach: OnceLock::new(),
+        alpha_eff_departure: OnceLock::new(),
     },
     // 1: A320 (Airbus A319/A320/BCS)
     NpdProfile {
@@ -79,6 +127,8 @@ pub static PROFILES: [NpdProfile; 8] = [
         v_ref_kt: 160.0,
         d_bar_m: 370.0,
         installation: Installation::Wing,
+        alpha_eff_approach: OnceLock::new(),
+        alpha_eff_departure: OnceLock::new(),
     },
     // 2: A321 (A321, B757)
     NpdProfile {
@@ -90,6 +140,8 @@ pub static PROFILES: [NpdProfile; 8] = [
         v_ref_kt: 160.0,
         d_bar_m: 370.0,
         installation: Installation::Wing,
+        alpha_eff_approach: OnceLock::new(),
+        alpha_eff_departure: OnceLock::new(),
     },
     // 3: Widebody (B777/787/747, A330/340/350/380)
     NpdProfile {
@@ -101,6 +153,8 @@ pub static PROFILES: [NpdProfile; 8] = [
         v_ref_kt: 160.0,
         d_bar_m: 370.0,
         installation: Installation::Wing,
+        alpha_eff_approach: OnceLock::new(),
+        alpha_eff_departure: OnceLock::new(),
     },
     // 4: Turboprop (ATR, Dash 8, L410)
     NpdProfile {
@@ -110,6 +164,8 @@ pub static PROFILES: [NpdProfile; 8] = [
         v_ref_kt: 130.0,
         d_bar_m: 261.0,
         installation: Installation::Propeller,
+        alpha_eff_approach: OnceLock::new(),
+        alpha_eff_departure: OnceLock::new(),
     },
     // 5: BizJet / Regional Jet (E-Jets, CRJ, Citations)
     NpdProfile {
@@ -119,6 +175,8 @@ pub static PROFILES: [NpdProfile; 8] = [
         v_ref_kt: 160.0,
         d_bar_m: 370.0,
         installation: Installation::Fuselage,
+        alpha_eff_approach: OnceLock::new(),
+        alpha_eff_departure: OnceLock::new(),
     },
     // 6: LightGA + Rotorcraft (C172, PA28, helicopters)
     NpdProfile {
@@ -128,6 +186,8 @@ pub static PROFILES: [NpdProfile; 8] = [
         v_ref_kt: 90.0,
         d_bar_m: 208.0,
         installation: Installation::Propeller,
+        alpha_eff_approach: OnceLock::new(),
+        alpha_eff_departure: OnceLock::new(),
     },
     // 7: Generic (unmapped typecodes — B738-equivalent)
     NpdProfile {
@@ -137,13 +197,62 @@ pub static PROFILES: [NpdProfile; 8] = [
         v_ref_kt: 160.0,
         d_bar_m: 370.0,
         installation: Installation::Wing,
+        alpha_eff_approach: OnceLock::new(),
+        alpha_eff_departure: OnceLock::new(),
     },
 ];
 
+/// Back-out effective broadband atmospheric absorption coefficient (dB/m)
+/// from the three tail NPD points. Fits `residual_i = sel_i + 20·log10(d_i / d_ref)`
+/// to `residual(d) = C − α·d` by least squares over (10 000, 16 000, 25 000) ft.
+///
+/// Captures the profile's own measured spectral + humidity characteristics.
+/// Typical values: jets ~0.8–1.1 dB/km, turboprops / LightGA ~0.6–0.9 dB/km.
+fn compute_alpha_eff(sel: &[f64; 10]) -> f64 {
+    let d_m = [
+        NPD_DIST_FT[7] / FT_PER_M, // 10 000 ft → 3 048 m
+        NPD_DIST_FT[8] / FT_PER_M, // 16 000 ft → 4 877 m
+        NPD_DIST_FT[9] / FT_PER_M, // 25 000 ft → 7 620 m (= AIRCRAFT_NPD_REF_SLANT_M)
+    ];
+    let residuals = [
+        sel[7] + 20.0 * (d_m[0] / AIRCRAFT_NPD_REF_SLANT_M).log10(),
+        sel[8] + 20.0 * (d_m[1] / AIRCRAFT_NPD_REF_SLANT_M).log10(),
+        sel[9],
+    ];
+    let n = 3.0_f64;
+    let sx: f64 = d_m.iter().sum();
+    let sy: f64 = residuals.iter().sum();
+    let sxx: f64 = d_m.iter().map(|x| x * x).sum();
+    let sxy: f64 = d_m
+        .iter()
+        .zip(residuals.iter())
+        .map(|(x, y)| x * y)
+        .sum();
+    let slope = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+    (-slope).max(0.0)
+}
+
 impl NpdProfile {
+    /// Effective A-weighted atmospheric absorption coefficient (dB/m) derived
+    /// from the NPD table tail. Cached per (profile, direction) on first use.
+    #[inline]
+    pub fn alpha_eff(&self, is_departure: bool) -> f64 {
+        if is_departure {
+            *self
+                .alpha_eff_departure
+                .get_or_init(|| compute_alpha_eff(&self.departure_sel))
+        } else {
+            *self
+                .alpha_eff_approach
+                .get_or_init(|| compute_alpha_eff(&self.approach_sel))
+        }
+    }
+
     /// Slant distance (meters) at which raw NPD SEL drops to `threshold_db`.
-    /// Uses log-linear extrapolation beyond the last NPD table point (25,000 ft).
-    /// Capped at `AIRCRAFT_NPD_REACH_CAP_M` to prevent CSR grid explosion.
+    /// Log-linear interpolation within the NPD table; physics-based
+    /// extrapolation beyond 25 000 ft using per-profile `alpha_eff`
+    /// (`SEL = SEL_ref − 20·log10(d/d_ref) − α·(d − d_ref)`). Capped at
+    /// `AIRCRAFT_NPD_REACH_CAP_M`.
     pub fn estimate_reach_m(&self, threshold_db: f64, is_departure: bool) -> f64 {
         let sel = if is_departure {
             &self.departure_sel
@@ -152,30 +261,49 @@ impl NpdProfile {
         };
         let last = sel.len() - 1;
 
-        // Threshold louder than closest NPD point → minimal reach
+        // Threshold louder than closest NPD point → minimal reach.
         if threshold_db >= sel[0] {
             return NPD_DIST_FT[0] / FT_PER_M;
         }
 
-        // Threshold below last NPD point → extrapolate
-        if threshold_db <= sel[last] {
-            let slope = (sel[last] - sel[last - 1]) / (LOG_DIST[last] - LOG_DIST[last - 1]);
-            if slope >= -1.0 {
-                return AIRCRAFT_NPD_REACH_CAP_M;
+        // Inside the NPD table: log-linear interpolation.
+        if threshold_db > sel[last] {
+            for i in 0..last {
+                if threshold_db >= sel[i + 1] {
+                    let frac = (threshold_db - sel[i]) / (sel[i + 1] - sel[i]);
+                    let log_d = LOG_DIST[i] + frac * (LOG_DIST[i + 1] - LOG_DIST[i]);
+                    return (10.0_f64.powf(log_d) / FT_PER_M).min(AIRCRAFT_NPD_REACH_CAP_M);
+                }
             }
-            let log_d = LOG_DIST[last] + (threshold_db - sel[last]) / slope;
-            return (10.0_f64.powf(log_d) / FT_PER_M).min(AIRCRAFT_NPD_REACH_CAP_M);
+            return AIRCRAFT_NPD_REACH_CAP_M;
         }
 
-        // Interpolate within table
-        for i in 0..last {
-            if threshold_db >= sel[i + 1] {
-                let frac = (threshold_db - sel[i]) / (sel[i + 1] - sel[i]);
-                let log_d = LOG_DIST[i] + frac * (LOG_DIST[i + 1] - LOG_DIST[i]);
-                return (10.0_f64.powf(log_d) / FT_PER_M).min(AIRCRAFT_NPD_REACH_CAP_M);
+        // Beyond the table: bisect the physics kernel in [d_ref, cap]. Kernel
+        // is strictly monotone decreasing, so a zero crossing exists when
+        // SEL(cap) < threshold; otherwise clamp at the cap.
+        let alpha = self.alpha_eff(is_departure);
+        let sel_at = |d: f64| {
+            sel[last]
+                - 20.0 * (d / AIRCRAFT_NPD_REF_SLANT_M).log10()
+                - alpha * (d - AIRCRAFT_NPD_REF_SLANT_M)
+        };
+        if sel_at(AIRCRAFT_NPD_REACH_CAP_M) >= threshold_db {
+            return AIRCRAFT_NPD_REACH_CAP_M;
+        }
+        let mut lo = AIRCRAFT_NPD_REF_SLANT_M;
+        let mut hi = AIRCRAFT_NPD_REACH_CAP_M;
+        for _ in 0..32 {
+            let mid = 0.5 * (lo + hi);
+            if sel_at(mid) > threshold_db {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+            if (hi - lo) < 0.5 {
+                break;
             }
         }
-        AIRCRAFT_NPD_REACH_CAP_M
+        0.5 * (lo + hi)
     }
 }
 
@@ -202,9 +330,15 @@ pub fn interpolate_sel_logd(profile: &NpdProfile, log_d: f64, is_departure: bool
         let slope = (sel[1] - sel[0]) / (LOG_DIST[1] - LOG_DIST[0]);
         return sel[0] + slope * (log_d - LOG_DIST[0]);
     }
+    // Beyond the last NPD point: physics-based extrapolation. Atmospheric
+    // absorption is linear in meters, so the log-linear Doc 29 slope
+    // underestimates loss at large slant. Use spherical divergence
+    // (−20·log10) + per-profile α_eff·(d − d_ref). See `compute_alpha_eff`.
     if log_d >= LOG_DIST[last] {
-        let slope = (sel[last] - sel[last - 1]) / (LOG_DIST[last] - LOG_DIST[last - 1]);
-        return sel[last] + slope * (log_d - LOG_DIST[last]);
+        let slant_m = 10.0_f64.powf(log_d) / FT_PER_M;
+        let geo = 20.0 * (slant_m / AIRCRAFT_NPD_REF_SLANT_M).log10();
+        let atm = profile.alpha_eff(is_departure) * (slant_m - AIRCRAFT_NPD_REF_SLANT_M);
+        return sel[last] - geo - atm;
     }
 
     for i in 0..last {
@@ -1045,13 +1179,31 @@ fn airport_match_cell(lat: f64, lon: f64) -> (i32, i32) {
     )
 }
 
-fn meters_to_lat_deg(meters: f64) -> f64 {
+/// Meters → degrees of latitude (constant ≈ 110 540 m / deg, valid to
+/// within ~0.6 % anywhere on Earth). Use for any latitude bounding box
+/// where the exact geodesic isn't worth the cost.
+pub fn meters_to_lat_deg(meters: f64) -> f64 {
     meters / 110_540.0
 }
 
-fn meters_to_lon_deg(lat: f64, meters: f64) -> f64 {
+/// Meters → degrees of longitude at a given latitude. Includes a
+/// `cos.max(0.2)` clamp that bounds the conversion factor at ~78°
+/// latitude — above that the cosine collapses and the bbox would
+/// over-fetch enormously. Aircraft cruise tracks live well below that
+/// limit, so the clamp is a safety net rather than a routine concern.
+pub fn meters_to_lon_deg(lat: f64, meters: f64) -> f64 {
     let cos_lat = lat.to_radians().cos().abs().max(0.2);
     meters / (111_320.0 * cos_lat)
+}
+
+/// PALT membership predicate: `true` when the segment's energy is
+/// accumulated into `build_high_alt_r8_raster`'s cell at `ground_elev_m`.
+/// Both popup and pipeline use this test to skip the per-segment path,
+/// and the build uses its negation. Keeping the predicate in one place
+/// makes popup ↔ pipeline parity textual rather than coincidental.
+#[inline]
+pub fn segment_in_palt_raster(seg_min_alt_m: f64, ground_elev_m: f64) -> bool {
+    seg_min_alt_m - ground_elev_m > AIRCRAFT_FAR_FIELD_THRESHOLD_M
 }
 
 fn insert_bbox_cells(
@@ -1747,6 +1899,143 @@ pub fn segment_sel(
     )
 }
 
+/// Build an R8-resolution energy raster for high-altitude aircraft
+/// segments — the PALT path. Both popup and pipeline call this with the
+/// same data and the same constants, so the resulting raster (and thus
+/// the per-receiver energy contribution from cruise-altitude overflights)
+/// is identical on both sides — popup ↔ pipeline parity holds by
+/// construction.
+///
+/// **Why a raster.** Cap = 16 km plus per-segment Phase 1 evaluation
+/// blew the +10 % runtime budget by ~2× (see
+/// `docs/validation/aircraft-perf-iteration.md`, attempts A4 / A5).
+/// Aircraft above ~7.62 km contribute nearly position-invariant energy
+/// across an R8 group (slant variation ≤ 0.4 dB across the ~1 km group
+/// span vs ≥ 7.6 km altitude). Evaluating once per R8 cell instead of
+/// once per R11 receiver collapses 343 redundant kernel calls to one.
+///
+/// **Far-field gate.** A segment is "high-altitude for this cell" when
+/// its minimum endpoint altitude is at least
+/// `AIRCRAFT_FAR_FIELD_THRESHOLD_M` (7 620 m, the last NPD table point)
+/// above the cell's ground elevation. Segments fail the gate from
+/// elevated hex-edge cells (e.g., Brdy at 800 m): they fall through to
+/// the per-receiver Phase 1 path, where the full Doc 29 corrections
+/// run.
+///
+/// **Caller integration.** The pipeline scatter loop should skip any
+/// segment whose `min_alt > AIRCRAFT_FAR_FIELD_THRESHOLD_M` (well above
+/// the hex centre's ground elevation) — those are already in the raster
+/// — and add `raster[r8_id][period]` to every receiver in the R8 group.
+/// The popup query computes the receiver's R11 → R8 parent and adds the
+/// same lookup. Both sides land on identical per-receiver totals.
+///
+/// Cost: ~5 s wall-time per R4 hex on 16 cores (5 B segment-cell pair
+/// candidates × cheap distance prefilter, ~5 % survive to the kernel).
+pub fn build_high_alt_r8_raster(
+    segments: &[AircraftSegment],
+    r4_hex: h3o::CellIndex,
+    rasters: &dyn RasterSampler,
+) -> std::collections::HashMap<u64, [f64; 3]> {
+    use std::collections::HashMap;
+
+    // R8 cells inside the current R4 hex (2401 cells). Per cell we precompute
+    // centre lat/lon, ground elevation, and the longitude-degree variant of
+    // the cap (cos(lat)-scaled) so the inner loop runs no `cos()` per
+    // (segment, cell) pair.
+    // Bbox prefilter operates on horizontal distance — use the
+    // horizontal cap, not the slant cap. They're numerically equal
+    // today but the geometry is what's being filtered here.
+    let cap_deg_lat = meters_to_lat_deg(AIRCRAFT_MAX_HORIZONTAL_REACH_M);
+    let cell_centers: Vec<(u64, f64, f64, f64, f64)> = r4_hex
+        .children(h3o::Resolution::Eight)
+        .map(|c| {
+            let ll = h3o::LatLng::from(c);
+            let lat = ll.lat();
+            let lon = ll.lng();
+            let elev = rasters.elevation(lat, lon);
+            let cap_deg_lon = meters_to_lon_deg(lat, AIRCRAFT_MAX_HORIZONTAL_REACH_M);
+            (u64::from(c), lat, lon, elev, cap_deg_lon)
+        })
+        .collect();
+    let min_cell_elev = cell_centers
+        .iter()
+        .map(|(_, _, _, e, _)| *e)
+        .fold(f64::INFINITY, f64::min);
+    let pre_alt_threshold = min_cell_elev + AIRCRAFT_FAR_FIELD_THRESHOLD_M;
+
+    // Parallel fold-reduce over segments. Each thread folds into its own
+    // local HashMap; final reduce merges them. Sequential build was 30+ s
+    // per R4 — over the Fastify popup worker timeout. The pre-filter
+    // against the lowest cell elevation drops segments whose min altitude
+    // can't possibly clear the gate for any cell in this R4.
+    use rayon::prelude::*;
+    segments
+        .par_iter()
+        .filter(|seg| {
+            !seg.on_ground
+                && seg.ground_context == GROUND_CONTEXT_NONE
+                && seg.count_weight > 0.0
+                && (seg.start_alt_m.min(seg.end_alt_m) as f64) > pre_alt_threshold
+        })
+        .fold(
+            HashMap::<u64, [f64; 3]>::new,
+            |mut local, seg| {
+                let count_weight = seg.count_weight as f64;
+                let period = seg.period.min(2) as usize;
+                let seg_min_alt = seg.start_alt_m.min(seg.end_alt_m) as f64;
+                let seg_lat_min = seg.start_lat.min(seg.end_lat);
+                let seg_lat_max = seg.start_lat.max(seg.end_lat);
+                let seg_lon_min = seg.start_lon.min(seg.end_lon);
+                let seg_lon_max = seg.start_lon.max(seg.end_lon);
+
+                for (cell_id, cell_lat, cell_lon, cell_elev, cap_deg_lon) in &cell_centers {
+                    if !segment_in_palt_raster(seg_min_alt, *cell_elev) {
+                        continue;
+                    }
+                    if *cell_lat < seg_lat_min - cap_deg_lat
+                        || *cell_lat > seg_lat_max + cap_deg_lat
+                    {
+                        continue;
+                    }
+                    if *cell_lon < seg_lon_min - cap_deg_lon
+                        || *cell_lon > seg_lon_max + cap_deg_lon
+                    {
+                        continue;
+                    }
+                    let Some((sel, _cpa)) = segment_sel_with_overrides(
+                        seg,
+                        *cell_lat,
+                        *cell_lon,
+                        *cell_elev,
+                        seg.start_alt_m as f64,
+                        seg.end_alt_m as f64,
+                        false,
+                        None,
+                    ) else {
+                        continue;
+                    };
+                    let energy =
+                        (sel * std::f64::consts::LN_10 * 0.1).exp() * count_weight;
+                    let entry = local.entry(*cell_id).or_insert([0.0; 3]);
+                    entry[period] += energy;
+                }
+                local
+            },
+        )
+        .reduce(
+            HashMap::<u64, [f64; 3]>::new,
+            |mut a, b| {
+                for (k, v) in b {
+                    let entry = a.entry(k).or_insert([0.0; 3]);
+                    entry[0] += v[0];
+                    entry[1] += v[1];
+                    entry[2] += v[2];
+                }
+                a
+            },
+        )
+}
+
 pub fn segment_sel_airport_ground(
     seg: &AircraftSegment,
     rx_lat: f64,
@@ -1815,11 +2104,34 @@ fn segment_sel_with_overrides(
         }
     }
 
-    // NPD lookup
+    // NPD lookup (covers physics tail beyond 25 000 ft via per-profile alpha_eff).
     let sel_npd = interpolate_sel(profile, cpa.d_p_m * FT_PER_M, seg.is_departure);
 
-    // Corrections
+    // Speed correction is the only correction that survives at cruise — for a
+    // jet at 450 kt vs the 160 kt NPD reference it is −4.5 dB, far too large
+    // to drop. Always evaluate it.
     let dv = delta_v(seg.speed_kt as f64, profile);
+
+    // CFFK fast path: above the NPD table boundary (slant > 7.62 km) the
+    // remaining Doc 29 corrections are all bounded sub-dB and dominated by
+    // pure geometry / atmospheric absorption baked into the NPD tail:
+    //   - lateral attenuation λ is identically 0 for elevation angle > 50°,
+    //     and any cruise overhead geometry has β > 50°;
+    //   - ΔI peaks at ~0.4 dB for wing-installed types and falls to 0 at
+    //     β = 90° — the typical cruise overhead;
+    //   - ΔF approaches 0 dB for segments where the CPA is interior and the
+    //     segment is several `d_bar` long, both true for cruise.
+    // Skip them. Validates against full Doc 29 within ~0.3 dB at slant ≥
+    // 7.62 km. Pipeline's `segment_energy_fast` mirrors this branch.
+    if cpa.d_p_m > AIRCRAFT_FAR_FIELD_THRESHOLD_M {
+        let sel = sel_npd + dv;
+        if sel < 20.0 {
+            return None;
+        }
+        return Some((sel, cpa));
+    }
+
+    // Near-field path: full Doc 29 corrections.
     let df = delta_f(cpa.q_m, cpa.seg_len_m, profile.d_bar_m);
 
     // Lateral attenuation applied to all profiles including profile 6 (LightGA+Rotorcraft).
@@ -1869,8 +2181,65 @@ mod tests {
 
     #[test]
     fn test_npd_extrapolation_above() {
+        // 50 000 ft = 15 240 m slant, beyond the NPD table. B738 approach:
+        //   54 − 20·log10(15240/7620) − α·(15240 − 7620)
+        // With α ≈ 0.00088 dB/m (back-out from B738 tail) gives ≈ 41 dB.
+        // Under the old log-linear extrapolation this was ≈ 47 dB — physics
+        // drops faster because atmospheric absorption is linear in meters.
         let sel = interpolate_sel(&PROFILES[0], 50000.0, false);
-        assert!(sel < 54.0, "Should extrapolate below 54, got {sel}");
+        assert!(
+            sel < 45.0 && sel > 30.0,
+            "Physics extrapolation @ 15 km should be 30–45 dB, got {sel}"
+        );
+    }
+
+    #[test]
+    fn test_npd_continuity_at_tail() {
+        // At exactly 25 000 ft the physics formula collapses to sel[last]
+        // (log10(1) = 0, d − d_ref = 0). Guards against slope mismatch at the
+        // table/extrapolation boundary.
+        for profile in &PROFILES {
+            for is_dep in [false, true] {
+                let tail_sel = if is_dep {
+                    profile.departure_sel[9]
+                } else {
+                    profile.approach_sel[9]
+                };
+                let computed = interpolate_sel(profile, 25000.0, is_dep);
+                assert!(
+                    (computed - tail_sel).abs() < 0.05,
+                    "{} {} @ 25 000 ft: expected {tail_sel}, got {computed}",
+                    profile.name,
+                    if is_dep { "dep" } else { "app" }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_alpha_eff_back_out() {
+        // Each profile's α_eff should be positive and in a physically sane
+        // range for aircraft cruise spectrum at typical atmosphere
+        // (0.3–2.0 dB/km = 0.0003–0.0020 dB/m).
+        for profile in &PROFILES {
+            for is_dep in [false, true] {
+                let alpha = profile.alpha_eff(is_dep);
+                assert!(
+                    alpha >= 0.0003 && alpha <= 0.0020,
+                    "{} {} α_eff = {alpha:.6} dB/m, expected 0.0003..0.0020",
+                    profile.name,
+                    if is_dep { "dep" } else { "app" }
+                );
+            }
+        }
+        // B738 approach: back-out from [66, 60, 54] with 20·log10 residuals
+        // gives α ≈ 0.00088 dB/m. Pin it so a future NPD change that breaks
+        // the calibration gets caught.
+        let b738_app = PROFILES[0].alpha_eff(false);
+        assert!(
+            (b738_app - 0.00088).abs() < 0.0002,
+            "B738 approach α_eff expected ~0.00088, got {b738_app:.5}"
+        );
     }
 
     // ── CPA geometry ──
@@ -2477,15 +2846,34 @@ mod tests {
     }
 
     #[test]
-    fn test_estimate_reach_jets_hit_cap() {
-        for i in 0..5 {
-            let reach = PROFILES[i].estimate_reach_m(40.0, false);
+    fn test_estimate_reach_jets_physics() {
+        // Under the physics kernel, per-profile reach at the 40 dB threshold
+        // is bounded by spherical divergence + per-profile α. Widebody
+        // (SEL_ref=58 approach, 62 departure) has the longest reach.
+        let names_and_reaches: Vec<_> = (0..5)
+            .map(|i| {
+                (
+                    PROFILES[i].name,
+                    PROFILES[i].estimate_reach_m(40.0, false),
+                )
+            })
+            .collect();
+        for (name, reach) in &names_and_reaches {
             assert!(
-                (reach - AIRCRAFT_NPD_REACH_CAP_M).abs() < 1.0,
-                "Profile {} approach should hit cap, got {reach:.0}",
-                PROFILES[i].name
+                *reach > 8_000.0 && *reach <= AIRCRAFT_NPD_REACH_CAP_M,
+                "{name} approach reach at 40 dB should be 8–16 km, got {reach:.0}"
             );
         }
+        // Monotone by SEL_ref: louder ref → longer reach. A320 ≤ B738 ≤ A321
+        // ≤ Widebody (SEL_ref: 53, 54, 55, 58 on approach).
+        let a320 = PROFILES[1].estimate_reach_m(40.0, false);
+        let b738 = PROFILES[0].estimate_reach_m(40.0, false);
+        let a321 = PROFILES[2].estimate_reach_m(40.0, false);
+        let wide = PROFILES[3].estimate_reach_m(40.0, false);
+        assert!(
+            a320 <= b738 + 1.0 && b738 <= a321 + 1.0 && a321 <= wide + 1.0,
+            "reaches not monotone by SEL_ref: A320={a320:.0} B738={b738:.0} A321={a321:.0} Widebody={wide:.0}"
+        );
     }
 
     #[test]

@@ -29,14 +29,145 @@ static STORE: std::sync::LazyLock<RwLock<HexStore>> =
 #[cfg(feature = "node")]
 static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::OnceLock::new();
 
+// Directory where the pipeline persists PALT R8 rasters
+// (`tiles/{year}/h3-tiles/r8/aircraft_palt/{R4_HEX}.bin`). Set in
+// `source_init` from the `h3r4_dir` argument (which encodes the year);
+// when present, popup queries mmap-decode this file instead of building
+// the raster at runtime.
+#[cfg(feature = "node")]
+static PALT_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+// PALT (R8 energy raster for cruise-altitude aircraft) cache, keyed by R4
+// hex u64. First popup query in an R4 pays the build cost (~3-5 s for a
+// busy enroute hex); subsequent queries — including all R11s within the
+// same R4, the common case for browsing one map area — reuse the cached
+// `Arc<HashMap>` via a read-lock + clone.
+//
+// LRU-bounded so a long-running 24/7 server doesn't grow without limit
+// (Czech ~80 R4 hexes ≈ 4 MB; EU ~1k; world ~25k populated × ~25 KB ≈
+// 600 MB unbounded). Capacity 1024 covers EU comfortably; entries past
+// that get evicted least-recently-used and the next query rebuilds.
+//
+// Race semantics: two threads racing on the same key both build (one
+// wasted ~3-5 s) — `lru::LruCache::push` collapses to a single canonical
+// entry. Acceptable for popup workload (single NAPI thread per worker).
+#[cfg(feature = "node")]
+type PaltRaster = std::sync::Arc<std::collections::HashMap<u64, [f64; 3]>>;
+
+#[cfg(feature = "node")]
+const PALT_CACHE_CAPACITY: std::num::NonZeroUsize =
+    match std::num::NonZeroUsize::new(1024) {
+        Some(n) => n,
+        None => unreachable!(),
+    };
+
+#[cfg(feature = "node")]
+static PALT_CACHE: std::sync::LazyLock<std::sync::Mutex<lru::LruCache<u64, PaltRaster>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(lru::LruCache::new(PALT_CACHE_CAPACITY)));
+
+// Global serializer for PALT raster builds. Each build saturates all CPU
+// cores via rayon — running N builds in parallel just splits cores N ways
+// and runs N× longer wall-clock with no throughput gain. Holding this
+// while building means concurrent cold-path queries (8 simultaneous
+// popups on a fresh R4) wait for one build instead of duplicating it.
+// The lock is dropped before lookup, so unrelated read paths never block
+// on it.
+#[cfg(feature = "node")]
+static PALT_BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 // NACE codes are now baked into industrial.arrow (nace_4digit UInt16 column).
 // No global lookup needed at runtime.
 
+// Aircraft r-tree query envelope is a **horizontal** bbox in lat/lon
+// space, so it uses the horizontal-reach cap (not the slant cap, even
+// though they're numerically equal today). At 10 km the popup PALT was
+// missing 10-16 km horizontal cruise tracks that the pipeline raster
+// did include, opening a 3 dB parity gap; this constant must stay >=
+// the pipeline's horizontal reach. Per-segment Phase 1 work for the
+// 10-16 km range is rejected by `segment_sel`'s slant>reach test
+// regardless of r-tree returning the segment.
 const AIRCRAFT_QUERY_MAX_RADIUS_M: f64 =
-    noise_compute::emission::aircraft::AIRCRAFT_NPD_REACH_CAP_M;
+    noise_compute::emission::aircraft::AIRCRAFT_MAX_HORIZONTAL_REACH_M;
 const AIRPORT_CONTEXT_RADIUS_M: f64 = 5_000.0;
 const BUILDING_QUERY_RADIUS_M: f64 = 2_000.0;
 const INDUSTRIAL_QUERY_RADIUS_M: f64 = 5_000.0;
+
+/// Try to read the on-disk PALT file persisted by the pipeline run.
+/// Returns `None` if `PALT_DIR` isn't configured or the file is missing
+/// — both are normal "no precomputed raster yet, fall back to runtime
+/// build" signals. Decode failures and unexpected I/O errors log the
+/// path so corruption / permission issues don't silently masquerade as
+/// the missing-file case.
+#[cfg(feature = "node")]
+fn try_load_palt_from_disk(r4_hex: h3o::CellIndex) -> Option<PaltRaster> {
+    let dir = PALT_DIR.get()?;
+    let path = dir.join(format!("{:015x}.bin", u64::from(r4_hex)));
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            eprintln!("PALT read {} failed: {e}", path.display());
+            return None;
+        }
+    };
+    match noise_compute::palt_io::decode(&bytes) {
+        Ok(r) => Some(std::sync::Arc::new(r)),
+        Err(e) => {
+            eprintln!(
+                "PALT decode {} failed: {e} ({} bytes)",
+                path.display(),
+                bytes.len()
+            );
+            None
+        }
+    }
+}
+
+/// Lookup-or-build PALT raster for an R4 hex. Order of attempts:
+///   1. In-process LRU cache — microsecond hit.
+///   2. On-disk file written by the pipeline — single-threaded read +
+///      decode (~ms for 76 KB), so it runs OUTSIDE the build lock.
+///      Cold popups on different R4s with precomputed files don't
+///      serialize on each other.
+///   3. Runtime build via `segments_fn` closure — rayon-saturating
+///      (~5-15 s), gated by the global build lock so 8 simultaneous
+///      cold queries don't split cores N ways and run N× longer.
+/// Steps (2) and (3) populate the LRU; subsequent queries in the same
+/// R4 stay in (1).
+#[cfg(feature = "node")]
+fn get_or_build_palt_raster_lazy<F>(
+    r4_hex: h3o::CellIndex,
+    rasters: &dyn noise_compute::types::RasterSampler,
+    segments_fn: F,
+) -> PaltRaster
+where
+    F: FnOnce() -> Vec<noise_compute::types::AircraftSegment>,
+{
+    let key = u64::from(r4_hex);
+    if let Some(r) = PALT_CACHE.lock().unwrap().get(&key) {
+        return r.clone();
+    }
+    if let Some(arc) = try_load_palt_from_disk(r4_hex) {
+        PALT_CACHE.lock().unwrap().put(key, arc.clone());
+        return arc;
+    }
+    // Runtime build — rayon-saturates all cores, so serialize concurrent
+    // misses on this lock. Re-check the LRU after acquiring (sibling
+    // thread may have already built); the disk path doesn't need a
+    // re-probe because pipeline writes happen between runs, not at
+    // popup time.
+    let _build_guard = PALT_BUILD_LOCK.lock().unwrap();
+    if let Some(r) = PALT_CACHE.lock().unwrap().get(&key) {
+        return r.clone();
+    }
+    let segments = segments_fn();
+    let raster = noise_compute::emission::aircraft::build_high_alt_r8_raster(
+        &segments, r4_hex, rasters,
+    );
+    let arc: PaltRaster = std::sync::Arc::new(raster);
+    PALT_CACHE.lock().unwrap().put(key, arc.clone());
+    arc
+}
 
 fn airport_key(name: &str, _airport_ref: &str, icao: &str, iata: &str) -> String {
     let key = if !icao.is_empty() {
@@ -463,13 +594,13 @@ pub fn collect_from_hex_data(
             rstar::RTree::bulk_load(entries)
         });
 
-        // Query envelope: receiver ± AIRCRAFT_QUERY_MAX_RADIUS_M. R-tree returns
-        // segments whose bbox intersects this envelope — correct for any segment
-        // length. Final accurate filter (CPA ≤ per-profile reach) happens inside
-        // `segment_sel_with_overrides`.
-        let radius_lat_deg = AIRCRAFT_QUERY_MAX_RADIUS_M / 111_320.0;
-        let cos_lat = lat.to_radians().cos().max(0.01);
-        let radius_lon_deg = radius_lat_deg / cos_lat;
+        // Query envelope: receiver ± AIRCRAFT_QUERY_MAX_RADIUS_M (horizontal).
+        // R-tree returns segments whose bbox intersects this envelope — correct
+        // for any segment length. Final accurate filter (CPA ≤ per-profile
+        // reach) happens inside `segment_sel_with_overrides`.
+        use noise_compute::emission::aircraft::{meters_to_lat_deg, meters_to_lon_deg};
+        let radius_lat_deg = meters_to_lat_deg(AIRCRAFT_QUERY_MAX_RADIUS_M);
+        let radius_lon_deg = meters_to_lon_deg(lat, AIRCRAFT_QUERY_MAX_RADIUS_M);
 
         let env = rstar::AABB::from_corners(
             [lat - radius_lat_deg, lng - radius_lon_deg],
@@ -522,6 +653,25 @@ pub fn source_init(h3r4_dir: String) -> napi::Result<String> {
     let has_dem = rasters.has_data();
     RASTERS.set(rasters).ok();
 
+    // PALT lives under tiles/{year}/h3-tiles/r8/aircraft_palt/. Derive
+    // the path from `h3r4_dir`'s expected `.../data/prepared/{year}/h3r4`
+    // layout. If the layout doesn't match (symlink, custom mount,
+    // dev-fixture), leave `PALT_DIR` unset — popup queries fall back to
+    // runtime build, but we log it in the init message so the operator
+    // notices the cold-path regression instead of debugging via
+    // wall-clock complaints.
+    let palt_status = match derive_palt_dir(h3r4_path) {
+        Some(dir) => {
+            let s = format!("PALT enabled at {}", dir.display());
+            PALT_DIR.set(dir).ok();
+            s
+        }
+        None => format!(
+            "PALT disabled — h3r4_dir layout not recognised ({h3r4_dir} doesn't match \
+             '.../data/prepared/{{year}}/h3r4'); popup will runtime-build the raster"
+        ),
+    };
+
     // NACE codes are baked into industrial.arrow — no global JSON needed
 
     // Admin table for the defaults cascade (plan v5 §F.3). File lives
@@ -534,10 +684,36 @@ pub fn source_init(h3r4_dir: String) -> napi::Result<String> {
     };
 
     Ok(format!(
-        "source-reader initialized: {h3r4_dir} (DEM: {}, admin: {})",
+        "source-reader initialized: {h3r4_dir} (DEM: {}; admin: {admin_status}; {palt_status})",
         if has_dem { "loaded" } else { "stub" },
-        admin_status,
     ))
+}
+
+/// Derive the on-disk PALT directory from the conventional h3r4 layout
+/// `.../data/prepared/{year}/h3r4`. Returns `None` when the path
+/// doesn't have at least the `prepared/{year}/h3r4` tail — caller logs
+/// and continues with PALT disabled.
+#[cfg(feature = "node")]
+fn derive_palt_dir(h3r4_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let canonical = std::fs::canonicalize(h3r4_path).ok()?;
+    let year_dir = canonical.parent()?;
+    let prepared_dir = year_dir.parent()?;
+    let data_root = prepared_dir.parent()?;
+    if year_dir.file_name()?.to_str().is_none()
+        || prepared_dir.file_name()?.to_str()? != "prepared"
+        || canonical.file_name()?.to_str()? != "h3r4"
+    {
+        return None;
+    }
+    let year = year_dir.file_name()?.to_str()?;
+    Some(
+        data_root
+            .join("tiles")
+            .join(year)
+            .join("h3-tiles")
+            .join("r8")
+            .join("aircraft_palt"),
+    )
 }
 
 #[cfg(feature = "node")]
@@ -689,7 +865,49 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         None => &stub,
     };
     let sources = collect_from_hex_data(&hex_refs, lat, lng);
+
+    // PALT raster cache key + miss-only aircraft snapshot. The cache
+    // *hit* path never copies the 5 M-segment hex-ring union — only a
+    // miss pays that cost, and the snapshot completes before we drop the
+    // store lock so the build runs against a static `Vec` without
+    // holding any shared lock.
+    let palt_r4 = h3o::LatLng::new(lat, lng).ok().and_then(|ll| {
+        ll.to_cell(h3o::Resolution::Eleven)
+            .parent(h3o::Resolution::Four)
+    });
+    let palt_aircraft_snapshot: Option<Vec<noise_compute::types::AircraftSegment>> = palt_r4
+        .filter(|r4_cell| {
+            !PALT_CACHE
+                .lock()
+                .unwrap()
+                .contains(&u64::from(*r4_cell))
+        })
+        .map(|_| {
+            // Full-ring aircraft union — pipeline build feeds the same
+            // unfiltered set, so cells on the far side of the R4 see the
+            // same segments. Feeding the r-tree-filtered `sources.aircraft`
+            // (bounded to 16 km of the click) here would miss long-range
+            // cruise tracks for cells past 16 km, and cache-hits from a
+            // different click in the same R4 would silently inherit the
+            // stale raster.
+            hex_refs
+                .iter()
+                .flat_map(|d| {
+                    d.aircraft_cache
+                        .get_or_init(|| {
+                            hex_store::load_aircraft_segments_unified(&d.aircraft_batches)
+                        })
+                        .iter()
+                        .cloned()
+                })
+                .collect()
+        });
     drop(store);
+    let palt_raster = palt_r4.map(|r4_cell| {
+        get_or_build_palt_raster_lazy(r4_cell, rasters, || {
+            palt_aircraft_snapshot.unwrap_or_default()
+        })
+    });
 
     // Build receiver
     let elevation = rasters.elevation(lat, lng);
@@ -699,8 +917,9 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         n_days: sources.n_days,
         ..Default::default()
     };
+
     let mut traces = noise_compute::types::TraceCollector::new();
-    let mut result = noise_compute::compute_at_point_with_airports(
+    let mut result = noise_compute::compute_at_point_with_airports_palt(
         &receiver,
         &sources.roads,
         &sources.railways,
@@ -713,6 +932,7 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         rasters,
         &config,
         Some(&mut traces),
+        palt_raster.as_deref(),
     );
 
     let summary = apply_segment_top_k_with_cap(&mut traces, top_k_per_kind);
