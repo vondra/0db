@@ -1160,25 +1160,13 @@ fn airport_match_cell(lat: f64, lon: f64) -> (i32, i32) {
     )
 }
 
-pub fn meters_to_lat_deg(meters: f64) -> f64 {
+pub(crate) fn meters_to_lat_deg(meters: f64) -> f64 {
     meters / 110_540.0
 }
 
-pub fn meters_to_lon_deg(lat: f64, meters: f64) -> f64 {
+pub(crate) fn meters_to_lon_deg(lat: f64, meters: f64) -> f64 {
     let cos_lat = lat.to_radians().cos().abs().max(0.2);
     meters / (111_320.0 * cos_lat)
-}
-
-/// R8 parent cell-centre ground elevation for `(lat, lon)`. Used by the
-/// PALT skip gate on both popup and pipeline sides — both must consume
-/// this exact value (computed from the R8 cell centre, not the receiver
-/// or the group mean) for `build_high_alt_r8_raster` to round-trip
-/// without parity drift on hex-edge cells.
-pub fn r8_cell_center_elev(rasters: &dyn RasterSampler, lat: f64, lon: f64) -> Option<f64> {
-    let ll = h3o::LatLng::new(lat, lon).ok()?;
-    let cell = ll.to_cell(h3o::Resolution::Eight);
-    let centre = h3o::LatLng::from(cell);
-    Some(rasters.elevation(centre.lat(), centre.lng()))
 }
 
 /// PALT membership predicate: `true` when the segment's energy is

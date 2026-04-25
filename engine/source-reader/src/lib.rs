@@ -33,18 +33,39 @@ static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::Onc
 // hex u64. First popup query in an R4 pays the build cost (~3-5 s for a
 // busy enroute hex); subsequent queries — including all R11s within the
 // same R4, the common case for browsing one map area — reuse the cached
-// `Arc<HashMap>` via O(1) read-lock + clone. Cache lifetime = process
-// lifetime; restart the server after refreshing ADS-B data.
+// `Arc<HashMap>` via a read-lock + clone.
 //
-// Race-safe via `entry::or_insert_with` on the write side: if two threads
-// simultaneously miss the same R4, both will build (one is wasted), but
-// only the first insertion wins and both end up with the same Arc.
+// LRU-bounded so a long-running 24/7 server doesn't grow without limit
+// (Czech ~80 R4 hexes ≈ 4 MB; EU ~1k; world ~25k populated × ~25 KB ≈
+// 600 MB unbounded). Capacity 1024 covers EU comfortably; entries past
+// that get evicted least-recently-used and the next query rebuilds.
+//
+// Race semantics: two threads racing on the same key both build (one
+// wasted ~3-5 s) — `lru::LruCache::push` collapses to a single canonical
+// entry. Acceptable for popup workload (single NAPI thread per worker).
 #[cfg(feature = "node")]
 type PaltRaster = std::sync::Arc<std::collections::HashMap<u64, [f64; 3]>>;
 
 #[cfg(feature = "node")]
-static PALT_CACHE: std::sync::LazyLock<RwLock<HashMap<u64, PaltRaster>>> =
-    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+const PALT_CACHE_CAPACITY: std::num::NonZeroUsize =
+    match std::num::NonZeroUsize::new(1024) {
+        Some(n) => n,
+        None => unreachable!(),
+    };
+
+#[cfg(feature = "node")]
+static PALT_CACHE: std::sync::LazyLock<std::sync::Mutex<lru::LruCache<u64, PaltRaster>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(lru::LruCache::new(PALT_CACHE_CAPACITY)));
+
+// Global serializer for PALT raster builds. Each build saturates all CPU
+// cores via rayon — running N builds in parallel just splits cores N ways
+// and runs N× longer wall-clock with no throughput gain. Holding this
+// while building means concurrent cold-path queries (8 simultaneous
+// popups on a fresh R4) wait for one build instead of duplicating it.
+// The lock is dropped before lookup, so unrelated read paths never block
+// on it.
+#[cfg(feature = "node")]
+static PALT_BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 // NACE codes are now baked into industrial.arrow (nace_4digit UInt16 column).
 // No global lookup needed at runtime.
@@ -62,29 +83,36 @@ const AIRPORT_CONTEXT_RADIUS_M: f64 = 5_000.0;
 const BUILDING_QUERY_RADIUS_M: f64 = 2_000.0;
 const INDUSTRIAL_QUERY_RADIUS_M: f64 = 5_000.0;
 
+/// Lookup-or-build PALT raster for an R4 hex. Segments come from a closure
+/// invoked only on cache miss — keeps cache hits in the microsecond range.
 #[cfg(feature = "node")]
-fn get_or_build_palt_raster(
+fn get_or_build_palt_raster_lazy<F>(
     r4_hex: h3o::CellIndex,
-    segments: &[noise_compute::types::AircraftSegment],
     rasters: &dyn noise_compute::types::RasterSampler,
-) -> PaltRaster {
+    segments_fn: F,
+) -> PaltRaster
+where
+    F: FnOnce() -> Vec<noise_compute::types::AircraftSegment>,
+{
     let key = u64::from(r4_hex);
-    if let Some(r) = PALT_CACHE.read().unwrap().get(&key) {
+    if let Some(r) = PALT_CACHE.lock().unwrap().get(&key) {
         return r.clone();
     }
-    // Build outside any lock so parallel queries on different R4 hexes don't
-    // serialize. If a sibling thread races us on the same R4, both build
-    // (one wasted) but `or_insert_with` keeps a single canonical entry.
+    // Cache miss. Hold the build lock so concurrent cold-path queries
+    // serialize on the build (one rayon-saturating build at a time, not
+    // N split across N×fewer cores). Re-check the cache after acquiring —
+    // a sibling thread may have finished building while we waited.
+    let _build_guard = PALT_BUILD_LOCK.lock().unwrap();
+    if let Some(r) = PALT_CACHE.lock().unwrap().get(&key) {
+        return r.clone();
+    }
+    let segments = segments_fn();
     let raster = noise_compute::emission::aircraft::build_high_alt_r8_raster(
-        segments, r4_hex, rasters,
+        &segments, r4_hex, rasters,
     );
     let arc: PaltRaster = std::sync::Arc::new(raster);
-    PALT_CACHE
-        .write()
-        .unwrap()
-        .entry(key)
-        .or_insert_with(|| arc.clone())
-        .clone()
+    PALT_CACHE.lock().unwrap().put(key, arc.clone());
+    arc
 }
 
 fn airport_key(name: &str, _airport_ref: &str, icao: &str, iata: &str) -> String {
@@ -729,7 +757,49 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         None => &stub,
     };
     let sources = collect_from_hex_data(&hex_refs, lat, lng);
+
+    // PALT raster cache key + miss-only aircraft snapshot. The cache
+    // *hit* path never copies the 5 M-segment hex-ring union — only a
+    // miss pays that cost, and the snapshot completes before we drop the
+    // store lock so the build runs against a static `Vec` without
+    // holding any shared lock.
+    let palt_r4 = h3o::LatLng::new(lat, lng).ok().and_then(|ll| {
+        ll.to_cell(h3o::Resolution::Eleven)
+            .parent(h3o::Resolution::Four)
+    });
+    let palt_aircraft_snapshot: Option<Vec<noise_compute::types::AircraftSegment>> = palt_r4
+        .filter(|r4_cell| {
+            !PALT_CACHE
+                .lock()
+                .unwrap()
+                .contains(&u64::from(*r4_cell))
+        })
+        .map(|_| {
+            // Full-ring aircraft union — pipeline build feeds the same
+            // unfiltered set, so cells on the far side of the R4 see the
+            // same segments. Feeding the r-tree-filtered `sources.aircraft`
+            // (bounded to 16 km of the click) here would miss long-range
+            // cruise tracks for cells past 16 km, and cache-hits from a
+            // different click in the same R4 would silently inherit the
+            // stale raster.
+            hex_refs
+                .iter()
+                .flat_map(|d| {
+                    d.aircraft_cache
+                        .get_or_init(|| {
+                            hex_store::load_aircraft_segments_unified(&d.aircraft_batches)
+                        })
+                        .iter()
+                        .cloned()
+                })
+                .collect()
+        });
     drop(store);
+    let palt_raster = palt_r4.map(|r4_cell| {
+        get_or_build_palt_raster_lazy(r4_cell, rasters, || {
+            palt_aircraft_snapshot.unwrap_or_default()
+        })
+    });
 
     // Build receiver
     let elevation = rasters.elevation(lat, lng);
@@ -738,21 +808,6 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
     let config = noise_compute::types::ComputeConfig {
         n_days: sources.n_days,
         ..Default::default()
-    };
-
-    // PALT raster lookup-or-build (cached per R4). First query in an R4
-    // pays ~3-5 s of Doc 29 evaluation × 2401 R8 cells × hundreds of
-    // cruise-altitude segments; later queries clone the Arc and return in
-    // microseconds. Pipeline + popup share the same builder and constants,
-    // so the resulting raster is identical and tile parity holds by
-    // construction.
-    let palt_raster = match h3o::LatLng::new(lat, lng) {
-        Ok(ll) => Some(get_or_build_palt_raster(
-            ll.to_cell(h3o::Resolution::Four),
-            &sources.aircraft,
-            rasters,
-        )),
-        Err(_) => None,
     };
 
     let mut traces = noise_compute::types::TraceCollector::new();

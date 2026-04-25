@@ -1690,15 +1690,21 @@ fn compute_aircraft(
     let n_days_f = (n_days as f64).max(1.0);
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
-    // PALT skip gate uses the receiver's R8 cell-centre elevation so it
-    // matches `build_high_alt_r8_raster` (which iterates by R8 cell).
-    // Falling back to `rx_elev` would skip 100-200 m more aggressively
-    // than the raster build at hex-edge cells (Brdy ≈ 600 m on a cell
-    // whose centre is ≈ 400 m), double-counting that band.
-    let palt_gate_elev = if aircraft_r8_raster.is_some() {
-        aircraft::r8_cell_center_elev(rasters, receiver.lat, receiver.lon).unwrap_or(rx_elev)
-    } else {
-        rx_elev
+    // Receiver's R8 cell, derived via R11→R8 hierarchy so popup matches
+    // pipeline's `group.res8_parent` at H3 boundaries (where the direct
+    // `LatLng→R8` and `LatLng→R11→R8` paths can disagree). Used both for
+    // the PALT skip gate (cell-centre elevation) and for the raster
+    // lookup at the bottom of this function — computing once here keeps
+    // both consumers in sync by construction.
+    let receiver_r8 = h3o::LatLng::new(receiver.lat, receiver.lon)
+        .ok()
+        .and_then(|ll| ll.to_cell(h3o::Resolution::Eleven).parent(h3o::Resolution::Eight));
+    let palt_gate_elev = match (aircraft_r8_raster, receiver_r8) {
+        (Some(_), Some(cell)) => {
+            let centre = h3o::LatLng::from(cell);
+            rasters.elevation(centre.lat(), centre.lng())
+        }
+        _ => rx_elev,
     };
     let periods_from_doc29_energy = |energy: [f64; 3]| -> NoisePeriods {
         if energy.iter().sum::<f64>() <= 0.0 {
@@ -2214,14 +2220,11 @@ fn compute_aircraft(
     // both consult the same raster (built by `build_high_alt_r8_raster`)
     // for FL340+ overflights, so per-receiver totals match within the LUT/
     // approximation noise of the per-segment kernels.
-    if let Some(raster) = aircraft_r8_raster {
-        if let Ok(ll) = h3o::LatLng::new(receiver.lat, receiver.lon) {
-            let r8_cell = ll.to_cell(h3o::Resolution::Eight);
-            if let Some(energies) = raster.get(&u64::from(r8_cell)) {
-                airborne_energy[0] += energies[0];
-                airborne_energy[1] += energies[1];
-                airborne_energy[2] += energies[2];
-            }
+    if let (Some(raster), Some(cell)) = (aircraft_r8_raster, receiver_r8) {
+        if let Some(energies) = raster.get(&u64::from(cell)) {
+            airborne_energy[0] += energies[0];
+            airborne_energy[1] += energies[1];
+            airborne_energy[2] += energies[2];
         }
     }
 
