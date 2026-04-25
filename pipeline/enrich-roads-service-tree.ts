@@ -510,7 +510,6 @@ function flowAccumulate(
   comp: Component,
   segToNodes: [string, string][],
   lengthCol: any,
-  bg: BuildingGrid,
   segDwellingsGlobal: Map<number, number>,
 ): Map<number, number> {
   // Build component-local adjacency
@@ -654,7 +653,7 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   // segment belongs to it — Set-based gate inside flowAccumulate).
   const segAADT = new Map<number, { light: number; medium: number; heavy: number; moto: number }>()
   for (const comp of components) {
-    const segFlow = flowAccumulate(comp, segToNodes, lengthCol, bg, globalBestSeg)
+    const segFlow = flowAccumulate(comp, segToNodes, lengthCol, globalBestSeg)
     const roadClassCol = roadTable.getChild('road_class')
     for (const [seg, trips] of segFlow) {
       const cls = (roadClassCol?.get(seg) as number) ?? 5

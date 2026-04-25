@@ -48,9 +48,8 @@ pub const WORLD_DEFAULT: [Aadt; 13] = [
     (240.0, 2.0, 5.0, 3.0),            // 7 service: parking aisles, driveways
     (4.0, 0.0, 1.0, 0.0),              // 8 track: tractor + occasional delivery
     (1200.0, 30.0, 80.0, 30.0),        // 9 unclassified: rural connector
-    // Ramps — 15 % of respective mainline (HCM 7 / FEHRL / CERTU lower-range).
-    // Previously 20 %; A.6 lowers to 15 % after Pasito Blanco GC-1 validation
-    // (user reported 6000/day link seemed too loud; 4500/day matches perception).
+    // Ramps — 15 % of the respective mainline (HCM 7 / FEHRL / CERTU
+    // lower-range typical, calibrated against Pasito Blanco GC-1 popup).
     (3240.0, 360.0, 855.0, 45.0),      // 10 motorway_link — 4500
     (1755.0, 180.0, 270.0, 45.0),      // 11 trunk_link    — 2250
     (1120.5, 81.0, 121.5, 27.0),       // 12 primary_link  — 1350
