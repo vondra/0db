@@ -734,6 +734,7 @@ fn compute_roads(
                 seg.aadt_medium,
                 seg.aadt_heavy,
                 seg.aadt_moto,
+                admin,
             );
             acc.dominant_aadt_light_nominal = nom_l;
             acc.dominant_aadt_medium_nominal = nom_m;
