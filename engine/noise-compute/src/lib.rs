@@ -8,6 +8,7 @@
 //! - `compute_batch()` — many receivers (pipeline)
 
 pub mod admin;
+pub mod city_consts_generated;
 pub mod confidence;
 pub mod constants;
 pub mod country_defaults_generated;
