@@ -21,35 +21,12 @@ use std::sync::OnceLock;
 /// At this raw NPD SEL, a segment's contribution is negligible (< 0.15 dB on total Lden).
 pub const AIRCRAFT_NPD_REACH_THRESHOLD_DB: f64 = 40.0;
 
-/// Hard cap on per-profile **slant** reach (meters). Used internally by
-/// `estimate_reach_m` to bound the bisection in the physics tail
-/// (`alpha_eff`); jets stay above 40 dB SEL out to ~15.5 km slant. Most
-/// callers should use `AIRCRAFT_MAX_HORIZONTAL_REACH_M` instead — the
-/// pipeline + r-tree filter on horizontal distance, which is what
-/// `Profile::estimate_horizontal_reach_m` returns.
+/// Hard cap on per-profile slant reach (meters). Bounds CSR grid and r-tree
+/// query area. With the physics tail (`alpha_eff`), jets stay above 40 dB
+/// SEL out to ~15.5 km. Cap raised to 16 km in iteration C2: the closed-
+/// form far-field kernel (segments above the NPD table) is cheap enough
+/// that the wider reach fits inside the +10 % runtime budget.
 pub const AIRCRAFT_NPD_REACH_CAP_M: f64 = 16_000.0;
-
-/// Single canonical filter cap for aircraft: maximum **horizontal** distance
-/// (meters) at which any segment can be audible at 40 dB SEL, regardless of
-/// altitude. Used by:
-///   - `source-reader` r-tree query box
-///   - per-segment horizontal-reach clamp in `ProjectedAircraft::from_segments`
-///   - PALT raster build cell selection
-/// Aligned with `AIRCRAFT_NPD_REACH_CAP_M` because the slant cap is the
-/// hardest possible upper bound on horizontal distance (an aircraft directly
-/// overhead has horizontal distance 0; the worst case for horizontal extent
-/// is altitude 0 + slant cap, which clamps to this value).
-pub const AIRCRAFT_MAX_HORIZONTAL_REACH_M: f64 = 16_000.0;
-
-/// Drop airborne segments whose **lower** altitude exceeds this threshold.
-/// FL490 (14 900 m) is above the audible range for every NPD profile in
-/// the table — at this altitude even a B777 has at most ~5.8 km horizontal
-/// reach, well inside the typical separation between cruise tracks; the
-/// total weighted contribution from FL490+ in a 14-day Czech sample is
-/// 8 segments / 1 weighted event, less than 0.001 % of the dataset.
-/// Dropping cleans up the long tail of the slant-vs-horizontal mismatch
-/// without measurable Lden impact.
-pub const AIRCRAFT_MAX_ALTITUDE_M: f64 = 14_900.0;
 
 /// Slant threshold above which `segment_energy_fast` and
 /// `segment_sel_with_overrides` switch to the closed-form far-field kernel
@@ -308,27 +285,6 @@ impl NpdProfile {
             }
         }
         0.5 * (lo + hi)
-    }
-
-    /// Horizontal reach (meters) of a segment at altitude `alt_above_receiver_m`
-    /// at the configured 40 dB SEL threshold. Combines the per-profile slant
-    /// reach (from `estimate_reach_m`) with Pythagoras and clamps to the
-    /// horizontal cap. Returns 0 if the slant reach is shorter than the
-    /// altitude itself (segment unreachable from any horizontal distance).
-    ///
-    /// Use this for r-tree queries and per-segment candidate filters — it's
-    /// the single canonical "is this segment reachable" answer in horizontal
-    /// terms, replacing the old slant-vs-horizontal duality.
-    #[inline]
-    pub fn estimate_horizontal_reach_m(&self, alt_above_receiver_m: f64, is_departure: bool) -> f64 {
-        let slant_reach = self.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, is_departure);
-        let alt = alt_above_receiver_m.max(0.0);
-        if alt >= slant_reach {
-            return 0.0;
-        }
-        (slant_reach * slant_reach - alt * alt)
-            .sqrt()
-            .min(AIRCRAFT_MAX_HORIZONTAL_REACH_M)
     }
 }
 
@@ -1204,13 +1160,35 @@ fn airport_match_cell(lat: f64, lon: f64) -> (i32, i32) {
     )
 }
 
-fn meters_to_lat_deg(meters: f64) -> f64 {
+pub fn meters_to_lat_deg(meters: f64) -> f64 {
     meters / 110_540.0
 }
 
-fn meters_to_lon_deg(lat: f64, meters: f64) -> f64 {
+pub fn meters_to_lon_deg(lat: f64, meters: f64) -> f64 {
     let cos_lat = lat.to_radians().cos().abs().max(0.2);
     meters / (111_320.0 * cos_lat)
+}
+
+/// R8 parent cell-centre ground elevation for `(lat, lon)`. Used by the
+/// PALT skip gate on both popup and pipeline sides — both must consume
+/// this exact value (computed from the R8 cell centre, not the receiver
+/// or the group mean) for `build_high_alt_r8_raster` to round-trip
+/// without parity drift on hex-edge cells.
+pub fn r8_cell_center_elev(rasters: &dyn RasterSampler, lat: f64, lon: f64) -> Option<f64> {
+    let ll = h3o::LatLng::new(lat, lon).ok()?;
+    let cell = ll.to_cell(h3o::Resolution::Eight);
+    let centre = h3o::LatLng::from(cell);
+    Some(rasters.elevation(centre.lat(), centre.lng()))
+}
+
+/// PALT membership predicate: `true` when the segment's energy is
+/// accumulated into `build_high_alt_r8_raster`'s cell at `ground_elev_m`.
+/// Both popup and pipeline use this test to skip the per-segment path,
+/// and the build uses its negation. Keeping the predicate in one place
+/// makes popup ↔ pipeline parity textual rather than coincidental.
+#[inline]
+pub fn segment_in_palt_raster(seg_min_alt_m: f64, ground_elev_m: f64) -> bool {
+    seg_min_alt_m - ground_elev_m > AIRCRAFT_FAR_FIELD_THRESHOLD_M
 }
 
 fn insert_bbox_cells(
@@ -1939,63 +1917,60 @@ pub fn segment_sel(
 /// candidates × cheap distance prefilter, ~5 % survive to the kernel).
 pub fn build_high_alt_r8_raster(
     segments: &[AircraftSegment],
-    n_days: u16,
     r4_hex: h3o::CellIndex,
     rasters: &dyn RasterSampler,
 ) -> std::collections::HashMap<u64, [f64; 3]> {
     use std::collections::HashMap;
 
-    let n_days_f = n_days as f64;
-
-    // R8 cells inside the current R4 hex (2401 cells). For each cell, cache
-    // its centre lat/lon and ground elevation — the receiver position used
-    // by `segment_sel_with_overrides`.
-    let cell_centers: Vec<(u64, f64, f64, f64)> = r4_hex
+    // R8 cells inside the current R4 hex (2401 cells). Per cell we precompute
+    // centre lat/lon, ground elevation, and the longitude-degree variant of
+    // the cap (cos(lat)-scaled) so the inner loop runs no `cos()` per
+    // (segment, cell) pair.
+    let cap_deg_lat = meters_to_lat_deg(AIRCRAFT_NPD_REACH_CAP_M);
+    let cell_centers: Vec<(u64, f64, f64, f64, f64)> = r4_hex
         .children(h3o::Resolution::Eight)
         .map(|c| {
             let ll = h3o::LatLng::from(c);
             let lat = ll.lat();
             let lon = ll.lng();
             let elev = rasters.elevation(lat, lon);
-            (u64::from(c), lat, lon, elev)
+            let cap_deg_lon = meters_to_lon_deg(lat, AIRCRAFT_NPD_REACH_CAP_M);
+            (u64::from(c), lat, lon, elev, cap_deg_lon)
         })
         .collect();
+    let min_cell_elev = cell_centers
+        .iter()
+        .map(|(_, _, _, e, _)| *e)
+        .fold(f64::INFINITY, f64::min);
+    let pre_alt_threshold = min_cell_elev + AIRCRAFT_FAR_FIELD_THRESHOLD_M;
 
-    // Bbox prefilter conversion factor — see comment below.
-    const LAT_M_PER_DEG: f64 = 111_320.0;
-    let cap_deg_lat = AIRCRAFT_NPD_REACH_CAP_M / LAT_M_PER_DEG;
-    let _ = n_days_f; // pipeline-side will apply n_days/period_sec at lookup
-
-    // Parallel reduction over segments. Each thread folds into its own
-    // local HashMap; final reduce merges them. Without this, 567 k segments
-    // × 2401 R8 cells (after bbox prefilter ~5 % survive) × CPA + LUT was
-    // 30 s wall on Dobříš — over the Fastify popup worker timeout.
+    // Parallel fold-reduce over segments. Each thread folds into its own
+    // local HashMap; final reduce merges them. Sequential build was 30+ s
+    // per R4 — over the Fastify popup worker timeout. The pre-filter
+    // against the lowest cell elevation drops segments whose min altitude
+    // can't possibly clear the gate for any cell in this R4.
     use rayon::prelude::*;
-    let raster: HashMap<u64, [f64; 3]> = segments
+    segments
         .par_iter()
         .filter(|seg| {
             !seg.on_ground
                 && seg.ground_context == GROUND_CONTEXT_NONE
                 && seg.count_weight > 0.0
+                && (seg.start_alt_m.min(seg.end_alt_m) as f64) > pre_alt_threshold
         })
         .fold(
-            std::collections::HashMap::<u64, [f64; 3]>::new,
+            HashMap::<u64, [f64; 3]>::new,
             |mut local, seg| {
-                let count_weight = (seg.count_weight as f64).max(0.0);
-                if count_weight <= 0.0 {
-                    return local;
-                }
+                let count_weight = seg.count_weight as f64;
                 let period = seg.period.min(2) as usize;
                 let seg_min_alt = seg.start_alt_m.min(seg.end_alt_m) as f64;
-
                 let seg_lat_min = seg.start_lat.min(seg.end_lat);
                 let seg_lat_max = seg.start_lat.max(seg.end_lat);
                 let seg_lon_min = seg.start_lon.min(seg.end_lon);
                 let seg_lon_max = seg.start_lon.max(seg.end_lon);
 
-                for (cell_id, cell_lat, cell_lon, cell_elev) in &cell_centers {
-                    let alt_above = seg_min_alt - cell_elev;
-                    if alt_above <= AIRCRAFT_FAR_FIELD_THRESHOLD_M {
+                for (cell_id, cell_lat, cell_lon, cell_elev, cap_deg_lon) in &cell_centers {
+                    if !segment_in_palt_raster(seg_min_alt, *cell_elev) {
                         continue;
                     }
                     if *cell_lat < seg_lat_min - cap_deg_lat
@@ -2003,8 +1978,6 @@ pub fn build_high_alt_r8_raster(
                     {
                         continue;
                     }
-                    let cos_lat = cell_lat.to_radians().cos().max(0.01);
-                    let cap_deg_lon = cap_deg_lat / cos_lat;
                     if *cell_lon < seg_lon_min - cap_deg_lon
                         || *cell_lon > seg_lon_max + cap_deg_lon
                     {
@@ -2022,7 +1995,8 @@ pub fn build_high_alt_r8_raster(
                     ) else {
                         continue;
                     };
-                    let energy = (sel * 0.230258509299_f64).exp() * count_weight;
+                    let energy =
+                        (sel * std::f64::consts::LN_10 * 0.1).exp() * count_weight;
                     let entry = local.entry(*cell_id).or_insert([0.0; 3]);
                     entry[period] += energy;
                 }
@@ -2030,7 +2004,7 @@ pub fn build_high_alt_r8_raster(
             },
         )
         .reduce(
-            std::collections::HashMap::<u64, [f64; 3]>::new,
+            HashMap::<u64, [f64; 3]>::new,
             |mut a, b| {
                 for (k, v) in b {
                     let entry = a.entry(k).or_insert([0.0; 3]);
@@ -2040,9 +2014,7 @@ pub fn build_high_alt_r8_raster(
                 }
                 a
             },
-        );
-
-    raster
+        )
 }
 
 pub fn segment_sel_airport_ground(

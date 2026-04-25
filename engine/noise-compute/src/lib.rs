@@ -1690,22 +1690,13 @@ fn compute_aircraft(
     let n_days_f = (n_days as f64).max(1.0);
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
-    // PALT skip gate: when a raster is supplied, segments above this
-    // elevation threshold are in the raster and skipped per-segment. Use
-    // the receiver's R8 cell centre elevation so the gate matches
-    // `build_high_alt_r8_raster`, which iterates by R8 cell. At hex-edge
-    // receivers (Brdy ≈ 600 m on a cell whose centre elev is ≈ 400 m)
-    // using `rx_elev` here would skip 200 m more aggressively than the
-    // raster build did, double-counting that band.
-    let palt_gate_elev: f64 = if aircraft_r8_raster.is_some() {
-        match h3o::LatLng::new(receiver.lat, receiver.lon) {
-            Ok(ll) => {
-                let r8_cell = ll.to_cell(h3o::Resolution::Eight);
-                let center = h3o::LatLng::from(r8_cell);
-                rasters.elevation(center.lat(), center.lng())
-            }
-            Err(_) => rx_elev,
-        }
+    // PALT skip gate uses the receiver's R8 cell-centre elevation so it
+    // matches `build_high_alt_r8_raster` (which iterates by R8 cell).
+    // Falling back to `rx_elev` would skip 100-200 m more aggressively
+    // than the raster build at hex-edge cells (Brdy ≈ 600 m on a cell
+    // whose centre is ≈ 400 m), double-counting that band.
+    let palt_gate_elev = if aircraft_r8_raster.is_some() {
+        aircraft::r8_cell_center_elev(rasters, receiver.lat, receiver.lon).unwrap_or(rx_elev)
     } else {
         rx_elev
     };
@@ -2067,18 +2058,9 @@ fn compute_aircraft(
             continue;
         }
 
-        // PALT skip: when a raster is supplied, segments more than
-        // `AIRCRAFT_FAR_FIELD_THRESHOLD_M` above the **R8 cell ground
-        // elevation** are already accumulated into the R8 raster — adding
-        // them via the per-segment path would double-count. The gate uses
-        // the cell's elevation (not the receiver's exact elevation) to
-        // match `build_high_alt_r8_raster`, which iterates per R8 cell;
-        // matching the gate guarantees popup ↔ pipeline parity at hex-edge
-        // receivers where rx_elev can differ from cell_elev by hundreds of
-        // metres (Brdy: cell_elev ≈ 400 m, rx_elev ≈ 600 m).
         if aircraft_r8_raster.is_some() {
-            let seg_min_alt = (seg.start_alt_m.min(seg.end_alt_m)) as f64;
-            if seg_min_alt - palt_gate_elev > aircraft::AIRCRAFT_FAR_FIELD_THRESHOLD_M {
+            let seg_min_alt = seg.start_alt_m.min(seg.end_alt_m) as f64;
+            if aircraft::segment_in_palt_raster(seg_min_alt, palt_gate_elev) {
                 continue;
             }
         }

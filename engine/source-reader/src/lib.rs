@@ -66,19 +66,17 @@ const INDUSTRIAL_QUERY_RADIUS_M: f64 = 5_000.0;
 fn get_or_build_palt_raster(
     r4_hex: h3o::CellIndex,
     segments: &[noise_compute::types::AircraftSegment],
-    n_days: u16,
     rasters: &dyn noise_compute::types::RasterSampler,
 ) -> PaltRaster {
     let key = u64::from(r4_hex);
     if let Some(r) = PALT_CACHE.read().unwrap().get(&key) {
         return r.clone();
     }
-    // Cache miss — build outside any lock so parallel queries on different
-    // R4 hexes don't serialize. If a sibling thread races us on the same
-    // R4, both build (one wasted) but `or_insert_with` keeps a single
-    // canonical entry.
+    // Build outside any lock so parallel queries on different R4 hexes don't
+    // serialize. If a sibling thread races us on the same R4, both build
+    // (one wasted) but `or_insert_with` keeps a single canonical entry.
     let raster = noise_compute::emission::aircraft::build_high_alt_r8_raster(
-        segments, n_days, r4_hex, rasters,
+        segments, r4_hex, rasters,
     );
     let arc: PaltRaster = std::sync::Arc::new(raster);
     PALT_CACHE
@@ -752,7 +750,6 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         Ok(ll) => Some(get_or_build_palt_raster(
             ll.to_cell(h3o::Resolution::Four),
             &sources.aircraft,
-            sources.n_days,
             rasters,
         )),
         Err(_) => None,
