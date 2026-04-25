@@ -31,6 +31,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
+import { flatDistM, inBbox } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -38,17 +39,6 @@ const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/cv`)
 
 // Cabo Verde bbox: [minLat, minLon, maxLat, maxLon]
 const CV_BBOX: [number, number, number, number] = [14.8, -25.4, 17.2, -22.6]
-
-function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
-  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
-}
-
-function flatDistM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
 
 interface IndSite { lat: number; lon: number; name: string; fuel: string }
 

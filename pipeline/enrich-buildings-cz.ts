@@ -19,6 +19,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 const MY_SOURCE_ID = SOURCE_ID_CZ_RUIAN_VFR
 import proj4 from 'proj4'
 import { SOURCE_ID_CZ_RUIAN_VFR } from './lib/source-ids.generated.js'
+import { flatDist } from './lib/spatial.js'
 
 // Define S-JTSK (EPSG:5514) projection
 proj4.defs('EPSG:5514', '+proj=krovak +lat_0=49.5 +lon_0=24.83333333333333 +alpha=30.28813975277778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel +towgs84=570.8,85.7,462.8,4.998,1.587,5.261,3.56 +units=m +no_defs')
@@ -316,13 +317,6 @@ function enrichHexes(ruianBuildings: RuianBuilding[]): void {
   console.log(`  ${floorsAdded} floors added (were missing in OSM)`)
   console.log(`  ${typeRefined} building types refined from RÚIAN`)
   console.log(`  ${hexesUpdated} / ${hexDirs.length} hexes updated`)
-}
-
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
 }
 
 // ── Main ──

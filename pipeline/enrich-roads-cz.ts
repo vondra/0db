@@ -16,6 +16,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCE_ID_CZ_RSD_SCITANI } from './lib/source-ids.generated.js'
+import { flatDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CZ_RSD_SCITANI
 
@@ -278,13 +279,6 @@ function normalizeOsmRef(ref: string): string {
 }
 
 /** Flat-earth distance in meters */
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-
 // ── Main ──
 
 async function main() {

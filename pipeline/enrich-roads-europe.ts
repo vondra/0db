@@ -25,6 +25,7 @@ import { latLngToCell } from 'h3-js'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_EU_CITY_TRAFFIC } from './lib/source-ids.generated.js'
+import { flatDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_EU_CITY_TRAFFIC
 
@@ -89,12 +90,6 @@ interface TrafficRecord {
   isOneway: boolean     // raw_oneway — if true, AADT is one-direction only
   lat: number
   lon: number
-}
-
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const dy = (lat2 - lat1) * 110540
-  const dx = (lon2 - lon1) * 111320 * Math.cos((lat1 + lat2) * 0.5 * Math.PI / 180)
-  return Math.sqrt(dx * dx + dy * dy)
 }
 
 // ── Step 1: Download GeoJSON files ──

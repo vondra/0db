@@ -23,6 +23,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GB_NATIONAL_ROADS } from './lib/source-ids.generated.js'
+import { haversineM } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_GB_NATIONAL_ROADS
 
@@ -132,14 +133,6 @@ function parseCsv(csvPath: string): CountPoint[] {
   console.log(`  ${points.length} count points (most recent year per point)`)
   console.log(`  By category: M=${points.filter(p=>p.road_category==='M').length} A=${points.filter(p=>p.road_category==='PA'||p.road_category==='TA').length} B=${points.filter(p=>p.road_category==='PB'||p.road_category==='TB').length}`)
   return points
-}
-
-function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLon = (lon2 - lon1) * Math.PI / 180
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 async function enrichArrows(points: CountPoint[]) {

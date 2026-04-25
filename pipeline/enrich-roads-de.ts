@@ -25,6 +25,7 @@ import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uin
 import proj4 from 'proj4'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_DE_BAST_AUTOBAHN, SOURCE_ID_DE_BAST_BUNDESSTRASSEN } from './lib/source-ids.generated.js'
+import { haversineM } from './lib/spatial.js'
 
 // CensusSection.ref starts with 'A' for Autobahn, 'B' for Bundesstraßen — pick per row.
 const AUTOBAHN_DATASET_ID = SOURCE_ID_DE_BAST_AUTOBAHN
@@ -219,14 +220,6 @@ function findNearby(grid: Map<string, CensusSection[]>, lat: number, lon: number
     }
   }
   return result
-}
-
-function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLon = (lon2 - lon1) * Math.PI / 180
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 // ── Step 3: Enrich Arrow files ──

@@ -21,6 +21,7 @@ import { cellToLatLng } from 'h3-js'
 import * as XLSX from 'xlsx'
 import shp from 'shpjs'
 import { SOURCE_ID_PL_NATIONAL_ROADS } from './lib/source-ids.generated.js'
+import { haversineM } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_PL_NATIONAL_ROADS
 
@@ -313,15 +314,6 @@ function makeFromTotal(nr2020: string, ref: string, lat: number, lon: number, to
 }
 
 // ── Step 4: enrich roads.arrow ──
-
-function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLon = (lon2 - lon1) * Math.PI / 180
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-}
 
 async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
   // Index by ref

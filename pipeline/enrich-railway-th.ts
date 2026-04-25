@@ -41,6 +41,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { latLngToCell, cellToLatLng } from 'h3-js'
 import { SOURCE_ID_TH_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
+import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_TH_NATIONAL_RAILWAY
 
@@ -65,9 +66,6 @@ const EXCLUDE_ZONES: Array<{ name: string; bbox: [number, number, number, number
   { name: 'Vietnam',  bbox: [8.0, 104.5, 23.5, 109.5] },
   { name: 'Malaysia', bbox: [1.0, 99.5, 6.3, 104.5] },
 ]
-function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
-  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
-}
 function inExclusion(lat: number, lon: number): boolean {
   for (const z of EXCLUDE_ZONES) if (inBbox(lat, lon, z.bbox)) return true
   return false
@@ -372,30 +370,6 @@ function defaultTrains(railType: number, usage: number): { pax: number; frt: num
   if (usage === 1) return { pax: 6, frt: 4 }       // SRT branch line
   if (usage === 2) return { pax: 0, frt: 8 }       // industrial
   return { pax: 20, frt: 10 }                      // SRT main line (Bangkok↔Chiang Mai etc.)
-}
-
-// Geometry helpers
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-function pointToSegmentDist(pLat: number, pLon: number, aLat: number, aLon: number, bLat: number, bLon: number): number {
-  const cosLat = Math.cos(pLat * Math.PI / 180)
-  const px = pLon * 111320 * cosLat
-  const py = pLat * 110540
-  const ax = aLon * 111320 * cosLat
-  const ay = aLat * 110540
-  const bx = bLon * 111320 * cosLat
-  const by = bLat * 110540
-  const dx = bx - ax, dy = by - ay
-  const lenSq = dx * dx + dy * dy
-  if (lenSq < 1e-6) return flatDist(pLat, pLon, aLat, aLon)
-  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq
-  t = Math.max(0, Math.min(1, t))
-  const cx = ax + t * dx, cy = ay + t * dy
-  return Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy))
 }
 
 function enrichHexes(allStopCounts: StopTrainCount[]): void {

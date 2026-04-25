@@ -48,27 +48,17 @@ import { resolve } from 'node:path'
 import { tableFromIPC, makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
+import { inBbox } from './lib/spatial.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
+import { flatDistM } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/nc`)
 
 // New Caledonia — island chain, simple bbox, no antimeridian issues, no neighbour excludes.
-const NC_BBOX = { minLat: -23.0, minLon: 163.5, maxLat: -19.5, maxLon: 168.5 }
-
-function inBbox(lat: number, lon: number, bbox: typeof NC_BBOX): boolean {
-  return lat >= bbox.minLat && lat <= bbox.maxLat &&
-         lon >= bbox.minLon && lon <= bbox.maxLon
-}
-
-function flatDistM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
+const NC_BBOX: readonly [number, number, number, number] = [-23.0, 163.5, -19.5, 168.5]
 
 interface IndSite { lat: number; lon: number; name: string; fuel: string }
 

@@ -22,6 +22,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCE_ID_SERVICE_TREE_HEURISTIC } from './lib/source-ids.generated.js'
+import { pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_SERVICE_TREE_HEURISTIC
 
@@ -166,20 +167,6 @@ function pointToSegmentDistXY(
  *  fly using a per-call cosLat. Kept for callers without a hex-level
  *  cosLat handy; the hot loop in `assignBuildingsGlobally` uses the
  *  pre-projected variant instead. */
-function pointToSegmentDist(pLat: number, pLon: number, aLat: number, aLon: number, bLat: number, bLon: number): number {
-  const cosLat = Math.cos(pLat * Math.PI / 180)
-  const px = pLon * 111320 * cosLat, py = pLat * M_PER_DEG_LAT
-  const ax = aLon * 111320 * cosLat, ay = aLat * M_PER_DEG_LAT
-  const bx = bLon * 111320 * cosLat, by = bLat * M_PER_DEG_LAT
-  const dx = bx - ax, dy = by - ay
-  const lenSq = dx * dx + dy * dy
-  if (lenSq < 1e-6) return flatDist(pLat, pLon, aLat, aLon)
-  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq
-  t = Math.max(0, Math.min(1, t))
-  const cx = ax + t * dx, cy = ay + t * dy
-  return Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy))
-}
-
 // ---------- Helpers ----------
 
 function nodeKey(lat: number, lon: number): string {

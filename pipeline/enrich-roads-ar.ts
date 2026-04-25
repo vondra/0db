@@ -55,6 +55,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_AR_NATIONAL_ROADS } from './lib/source-ids.generated.js'
+import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_AR_NATIONAL_ROADS
 
@@ -111,9 +112,6 @@ const TIER2_CITIES: Array<{ name: string; bbox: [number, number, number, number]
   { name: 'Formosa',         bbox: [-26.25, -58.25, -26.12, -58.10] },
 ]
 
-function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
-  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
-}
 function inAnyZone(lat: number, lon: number): boolean {
   for (const z of EXCLUDE_ZONES) if (inBbox(lat, lon, z.bbox)) return true
   return false
@@ -124,26 +122,6 @@ function cityTier(lat: number, lon: number): 0 | 1 | 2 {
   return 0
 }
 
-// Geometry helpers (planar approx, accurate at AR latitudes)
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-function pointToSegmentDist(pLat: number, pLon: number, aLat: number, aLon: number, bLat: number, bLon: number): number {
-  const cosLat = Math.cos(pLat * Math.PI / 180)
-  const px = pLon * 111320 * cosLat, py = pLat * 110540
-  const ax = aLon * 111320 * cosLat, ay = aLat * 110540
-  const bx = bLon * 111320 * cosLat, by = bLat * 110540
-  const dx = bx - ax, dy = by - ay
-  const lenSq = dx * dx + dy * dy
-  if (lenSq < 1e-6) return flatDist(pLat, pLon, aLat, aLon)
-  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq
-  t = Math.max(0, Math.min(1, t))
-  const cx = ax + t * dx, cy = ay + t * dy
-  return Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy))
-}
 function pointToPolylineDist(pLat: number, pLon: number, coords: [number, number][]): number {
   let best = Infinity
   for (let i = 0; i < coords.length - 1; i++) {

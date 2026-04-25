@@ -39,6 +39,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
+import { flatDistM } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -48,13 +49,6 @@ const CU_BBOX: [number, number, number, number] = [19.8, -85.0, 23.3, -74.1]
 
 function inCuba(lat: number, lon: number): boolean {
   return lat >= CU_BBOX[0] && lat <= CU_BBOX[2] && lon >= CU_BBOX[1] && lon <= CU_BBOX[3]
-}
-
-function flatDistM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
 }
 
 interface IndSite { lat: number; lon: number; name: string; fuel: string }

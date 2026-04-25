@@ -48,6 +48,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
+import { flatDistM, inBbox, pointInRing } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -70,33 +71,10 @@ const EXCLUDE_ZONES: Array<[number, number, number, number]> = [
   [-22.0, -75.0, -17.5, -68.5],
 ]
 
-function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
-  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
-}
 function inExcluded(lat: number, lon: number): boolean {
   for (const b of EXCLUDE_ZONES) if (inBbox(lat, lon, b)) return true
   return false
 }
-function flatDistM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-
-// Point-in-polygon (ray casting)
-function pointInRing(lat: number, lon: number, ring: [number, number][]): boolean {
-  let inside = false
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const xi = ring[i][0], yi = ring[i][1]
-    const xj = ring[j][0], yj = ring[j][1]
-    const intersect = ((yi > lat) !== (yj > lat)) &&
-      (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)
-    if (intersect) inside = !inside
-  }
-  return inside
-}
-
 interface Site {
   lat: number; lon: number; name: string; nace: string; source: string
 }
@@ -313,7 +291,7 @@ async function main() {
           if (cell) {
             for (const p of cell) {
               if (lat < p.bbox[0] || lat > p.bbox[2] || lon < p.bbox[1] || lon > p.bbox[3]) continue
-              if (pointInRing(lat, lon, p.rings[0])) {
+              if (pointInRing(lon, lat, p.rings[0])) {
                 chosen = { nace: p.nace, source: p.source }
                 break
               }

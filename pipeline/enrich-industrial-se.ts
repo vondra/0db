@@ -22,6 +22,7 @@ import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Float32 } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
 import shp from 'shpjs'
+import { haversineM } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -109,15 +110,6 @@ function buildGrid(turbines: WindTurbine[]): Map<string, WindTurbine[]> {
     grid.get(key)!.push(t)
   }
   return grid
-}
-
-function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLon = (lon2 - lon1) * Math.PI / 180
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 async function main() {

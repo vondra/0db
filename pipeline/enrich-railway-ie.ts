@@ -21,6 +21,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { latLngToCell } from 'h3-js'
 import { SOURCE_ID_IE_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
+import { flatDist, pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_IE_NATIONAL_RAILWAY
 
@@ -530,41 +531,7 @@ function mergeStopCounts(perFeedCounts: StopTrainCount[][]): StopTrainCount[] {
 
 // ── Step 3: Match stops to railway segments and write Arrow ──
 
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-
 /** Distance from point to line segment in meters */
-function pointToSegmentDist(
-  pLat: number, pLon: number,
-  aLat: number, aLon: number,
-  bLat: number, bLon: number,
-): number {
-  const cosLat = Math.cos(pLat * Math.PI / 180)
-  const px = pLon * 111320 * cosLat
-  const py = pLat * 110540
-  const ax = aLon * 111320 * cosLat
-  const ay = aLat * 110540
-  const bx = bLon * 111320 * cosLat
-  const by = bLat * 110540
-
-  const dx = bx - ax
-  const dy = by - ay
-  const lenSq = dx * dx + dy * dy
-  if (lenSq < 1e-6) return flatDist(pLat, pLon, aLat, aLon)
-
-  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq
-  t = Math.max(0, Math.min(1, t))
-  const cx = ax + t * dx
-  const cy = ay + t * dy
-  const ddx = px - cx
-  const ddy = py - cy
-  return Math.sqrt(ddx * ddx + ddy * ddy)
-}
-
 function enrichHexes(allStopCounts: StopTrainCount[]): void {
   // Group stops by H3R4 hex
   const stopsByHex = new Map<string, StopTrainCount[]>()

@@ -24,6 +24,7 @@ import proj4 from 'proj4'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_ES_CATASTRO } from './lib/source-ids.generated.js'
+import { flatDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_ES_CATASTRO
 
@@ -491,13 +492,6 @@ async function parseGmlBuildings(gmlPath: string): Promise<CatastroBuilding[]> {
 }
 
 // ── Step 2: Enrich buildings.arrow ──
-
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
 
 function enrichHexes(catastroBuildings: CatastroBuilding[]): void {
   // Build spatial index: 0.01 deg grid (~1km cells)

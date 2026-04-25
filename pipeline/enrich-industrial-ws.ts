@@ -43,25 +43,14 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
+import { flatDistM, inBbox } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/ws`)
 
 // Samoa — standard bbox, no antimeridian issues. No neighbor excludes (island nation).
-const WS_BBOX = { minLat: -14.1, minLon: -172.8, maxLat: -13.4, maxLon: -171.2 }
-
-function inBbox(lat: number, lon: number, bbox: typeof WS_BBOX): boolean {
-  return lat >= bbox.minLat && lat <= bbox.maxLat &&
-         lon >= bbox.minLon && lon <= bbox.maxLon
-}
-
-function flatDistM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
+const WS_BBOX: readonly [number, number, number, number] = [-14.1, -172.8, -13.4, -171.2]
 
 interface IndSite { lat: number; lon: number; name: string; fuel: string }
 

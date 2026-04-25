@@ -59,6 +59,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_TH_NATIONAL_ROADS } from './lib/source-ids.generated.js'
+import { inBbox } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_TH_NATIONAL_ROADS
 
@@ -90,9 +91,6 @@ const EXCLUDE_ZONES: Array<{ name: string; bbox: [number, number, number, number
 // Bangkok urban bbox (×1.5 AADT multiplier)
 const BANGKOK_BBOX: [number, number, number, number] = [13.5, 100.3, 14.2, 100.9]
 
-function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
-  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
-}
 function inAnyZone(lat: number, lon: number): boolean {
   for (const z of EXCLUDE_ZONES) if (inBbox(lat, lon, z.bbox)) return true
   return false

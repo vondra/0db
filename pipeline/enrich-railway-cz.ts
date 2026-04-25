@@ -20,6 +20,7 @@ import { execSync } from 'node:child_process'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_CZ_SZCD_GTFS } from './lib/source-ids.generated.js'
+import { flatDist, pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CZ_SZCD_GTFS
 
@@ -238,34 +239,7 @@ async function getStationGPS(): Promise<Map<string, StationGPS>> {
 
 // ── Step 3: Match CZPTT station-pairs to OSM railway segments ──
 
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-
 /** Distance from point P to line segment A→B in meters (flat-earth). */
-function pointToSegmentDist(
-  pLat: number, pLon: number,
-  aLat: number, aLon: number,
-  bLat: number, bLon: number,
-): number {
-  const cosLat = Math.cos((pLat + (aLat + bLat) / 2) / 2 * Math.PI / 180)
-  // Convert to local meters relative to P
-  const ax = (aLon - pLon) * 111320 * cosLat
-  const ay = (aLat - pLat) * 110540
-  const bx = (bLon - pLon) * 111320 * cosLat
-  const by = (bLat - pLat) * 110540
-  const dx = bx - ax, dy = by - ay
-  const lenSq = dx * dx + dy * dy
-  if (lenSq < 1) return Math.sqrt(ax * ax + ay * ay) // degenerate (A≈B)
-  // Project P onto AB, clamp t to [0,1]
-  const t = Math.max(0, Math.min(1, (-ax * dx + -ay * dy) / lenSq))
-  const cx = ax + t * dx, cy = ay + t * dy
-  return Math.sqrt(cx * cx + cy * cy)
-}
-
 /** Normalize station name for fuzzy matching */
 function normName(s: string): string {
   return s.toLowerCase()
