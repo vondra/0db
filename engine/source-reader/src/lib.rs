@@ -29,6 +29,14 @@ static STORE: std::sync::LazyLock<RwLock<HexStore>> =
 #[cfg(feature = "node")]
 static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::OnceLock::new();
 
+// Directory where the pipeline persists PALT R8 rasters
+// (`tiles/{year}/h3-tiles/r8/aircraft_palt/{R4_HEX}.bin`). Set in
+// `source_init` from the `h3r4_dir` argument (which encodes the year);
+// when present, popup queries mmap-decode this file instead of building
+// the raster at runtime.
+#[cfg(feature = "node")]
+static PALT_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
 // PALT (R8 energy raster for cruise-altitude aircraft) cache, keyed by R4
 // hex u64. First popup query in an R4 pays the build cost (~3-5 s for a
 // busy enroute hex); subsequent queries — including all R11s within the
@@ -83,8 +91,24 @@ const AIRPORT_CONTEXT_RADIUS_M: f64 = 5_000.0;
 const BUILDING_QUERY_RADIUS_M: f64 = 2_000.0;
 const INDUSTRIAL_QUERY_RADIUS_M: f64 = 5_000.0;
 
-/// Lookup-or-build PALT raster for an R4 hex. Segments come from a closure
-/// invoked only on cache miss — keeps cache hits in the microsecond range.
+/// Try to read the on-disk PALT file persisted by the pipeline run. Returns
+/// `None` if the file is missing, malformed, or PALT_DIR isn't configured —
+/// the caller falls back to runtime build in those cases.
+#[cfg(feature = "node")]
+fn try_load_palt_from_disk(r4_hex: h3o::CellIndex) -> Option<PaltRaster> {
+    let dir = PALT_DIR.get()?;
+    let path = dir.join(format!("{:015x}.bin", u64::from(r4_hex)));
+    let bytes = std::fs::read(&path).ok()?;
+    let raster = noise_compute::palt_io::decode(&bytes).ok()?;
+    Some(std::sync::Arc::new(raster))
+}
+
+/// Lookup-or-build PALT raster for an R4 hex. Order of attempts:
+///   1. In-process LRU cache — microsecond hit.
+///   2. On-disk file written by the pipeline — fast read, decode in ms.
+///   3. Runtime build via `segments_fn` closure — last resort, ~5-15 s.
+/// Result of (2) and (3) is inserted into the LRU so subsequent queries
+/// in the same R4 stay in (1).
 #[cfg(feature = "node")]
 fn get_or_build_palt_raster_lazy<F>(
     r4_hex: h3o::CellIndex,
@@ -105,6 +129,10 @@ where
     let _build_guard = PALT_BUILD_LOCK.lock().unwrap();
     if let Some(r) = PALT_CACHE.lock().unwrap().get(&key) {
         return r.clone();
+    }
+    if let Some(arc) = try_load_palt_from_disk(r4_hex) {
+        PALT_CACHE.lock().unwrap().put(key, arc.clone());
+        return arc;
     }
     let segments = segments_fn();
     let raster = noise_compute::emission::aircraft::build_high_alt_r8_raster(
@@ -599,6 +627,27 @@ pub fn source_init(h3r4_dir: String) -> napi::Result<String> {
     let rasters = raster_reader::RealRasters::new(data_dir);
     let has_dem = rasters.has_data();
     RASTERS.set(rasters).ok();
+
+    // PALT lives under tiles/{year}/h3-tiles/r8/aircraft_palt/. Year is
+    // the directory name one level up from h3r4_dir
+    // (`.../data/prepared/{year}/h3r4`); the data root is one more level
+    // up (`.../data`).
+    let year = h3r4_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("2025");
+    let data_root = data_dir
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    let palt_dir = data_root
+        .join("tiles")
+        .join(year)
+        .join("h3-tiles")
+        .join("r8")
+        .join("aircraft_palt");
+    PALT_DIR.set(palt_dir).ok();
 
     // NACE codes are baked into industrial.arrow — no global JSON needed
 
