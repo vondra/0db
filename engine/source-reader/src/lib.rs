@@ -525,10 +525,9 @@ pub fn source_init(h3r4_dir: String) -> napi::Result<String> {
     // NACE codes are baked into industrial.arrow — no global JSON needed
 
     // Admin table for the defaults cascade (plan v5 §F.3). File lives
-    // at data/prepared/h3r4-admin.bin (built by scripts/build-h3-admin.ts).
+    // at data/prepared/h3r4-admin.bin (year-independent, like rasters/DEM).
     // Soft-fail — missing file just leaves the cascade in WORLD arm.
-    let admin_bin = h3r4_path.parent().unwrap_or(Path::new("data/prepared"))
-        .join("h3r4-admin.bin");
+    let admin_bin = noise_compute::admin::default_admin_path(h3r4_path);
     let admin_status = match noise_compute::admin::init_admin_table(&admin_bin) {
         Ok(n) => format!("loaded {n} entries"),
         Err(e) => format!("unavailable ({e})"),
