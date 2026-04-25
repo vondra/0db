@@ -163,7 +163,17 @@ fn city_default(city_id: u16, class: u8) -> Option<Aadt> {
 /// (motorway, trunk, primary, and their ramp classes). Local roads (3-9)
 /// stay at WORLD — informal transport, cycling, pedestrian share
 /// decorrelate local AADT from motorway AADT.
-const GDP_SCALED_CLASSES: &[u8] = &[0, 1, 2, 10, 11, 12];
+///
+/// Encoded as a bitmask (1 << class) for O(1) set membership: each
+/// `country_default` call shaves ~6 cmp branches off the hot fallback
+/// path that fires for every `source_id == 0` segment.
+const GDP_SCALED_MASK: u16 = (1 << 0) | (1 << 1) | (1 << 2)
+    | (1 << 10) | (1 << 11) | (1 << 12);
+
+#[inline]
+fn is_traffic_scaled(class: u8) -> bool {
+    class < 16 && (GDP_SCALED_MASK >> class) & 1 != 0
+}
 
 fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
     // (a) Explicit data-driven arms — BR, TH rural from national enrichers.
@@ -193,7 +203,7 @@ fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
     }
 
     // (b) WB GDP-scaled fallback from WORLD_DEFAULT.
-    if !GDP_SCALED_CLASSES.contains(&class) {
+    if !is_traffic_scaled(class) {
         // Local roads: don't scale with GDP.
         return None;
     }
@@ -214,7 +224,7 @@ fn continent_default(continent: Continent, class: u8) -> Option<Aadt> {
     // We still apply continent scaling for GDP-scaled classes because
     // those are the ones where the signal matters — local roads fall
     // through to WORLD_DEFAULT.
-    if !GDP_SCALED_CLASSES.contains(&class) {
+    if !is_traffic_scaled(class) {
         return None;
     }
     let scale = crate::country_defaults_generated::continent_scale(continent)?;

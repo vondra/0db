@@ -322,18 +322,27 @@ function findComponents(
   segToNodes: [string, string][],
   eligible: Uint8Array
 ): Component[] {
-  const visited = new Set<number>()
+  // Visited as Uint8Array (one byte per segment) — `Set<number>.has/add` runs
+  // ~5–10× slower for the millions of probes a dense urban hex incurs.
+  const visited = new Uint8Array(eligible.length)
   const components: Component[] = []
 
+  // Queue is a plain array indexed by `head` so we never call `Array.shift()`
+  // — V8's shift is O(n) per call, which made `findComponents` O(N²) on
+  // giant components and was the dominant cost on dense urban hexes.
+  const queue: number[] = []
+
   for (let i = 0; i < eligible.length; i++) {
-    if (!eligible[i] || visited.has(i)) continue
+    if (!eligible[i] || visited[i]) continue
 
     const comp: Component = { segments: [], rootNodes: new Set() }
-    const queue: number[] = [i]
-    visited.add(i)
+    queue.length = 0
+    queue.push(i)
+    visited[i] = 1
 
-    while (queue.length > 0) {
-      const seg = queue.shift()!
+    let head = 0
+    while (head < queue.length) {
+      const seg = queue[head++]
       comp.segments.push(seg)
 
       const [sKey, eKey] = segToNodes[seg]
@@ -342,9 +351,11 @@ function findComponents(
         if (node.degree > node.eligibleEdges.length) {
           comp.rootNodes.add(nk)
         }
-        for (const adj of node.eligibleEdges) {
-          if (!visited.has(adj)) {
-            visited.add(adj)
+        const edges = node.eligibleEdges
+        for (let k = 0; k < edges.length; k++) {
+          const adj = edges[k]
+          if (!visited[adj]) {
+            visited[adj] = 1
             queue.push(adj)
           }
         }
