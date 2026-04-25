@@ -252,9 +252,9 @@ function splitAADT(totalTrips: number): { light: number; medium: number; heavy: 
 // ---------- Min-heap for Dijkstra ----------
 
 class MinHeap {
-  private data: { dist: number; node: string }[] = []
+  private data: { dist: number; node: number }[] = []
 
-  push(dist: number, node: string) {
+  push(dist: number, node: number) {
     this.data.push({ dist, node })
     let i = this.data.length - 1
     while (i > 0) {
@@ -265,7 +265,7 @@ class MinHeap {
     }
   }
 
-  pop(): { dist: number; node: string } {
+  pop(): { dist: number; node: number } {
     const top = this.data[0]
     const last = this.data.pop()!
     if (this.data.length > 0) {
@@ -288,13 +288,24 @@ class MinHeap {
 }
 
 // ---------- Graph ----------
+//
+// Nodes are interned to dense integer ids during `buildGraph`; everything
+// downstream addresses them via `Int32Array` instead of string keys. For a
+// 100 k-segment Praha hex that is ~7-10 MB of template-literal strings and
+// ~1.5 M Map-of-string operations the engine no longer pays per pass.
 
 interface GraphNode {
   degree: number
   eligibleEdges: number[]
 }
 
-function buildGraph(table: any) {
+interface Graph {
+  nodes: GraphNode[]                    // indexed by node id
+  segNodeIds: Int32Array                // length 2*n: [start_id, end_id, …]
+  eligible: Uint8Array                  // 1 byte per segment
+}
+
+function buildGraph(table: any): Graph {
   const n = table.numRows
   const startLat = table.getChild('start_lat')!
   const startLon = table.getChild('start_lon')!
@@ -303,25 +314,35 @@ function buildGraph(table: any) {
   const roadClass = table.getChild('road_class')!
   const existingSourceId = table.getChild('source_id')
 
-  const nodes = new Map<string, GraphNode>()
-  const segToNodes: [string, string][] = new Array(n)
-  const eligible = new Uint8Array(n)
+  // Intern (lat, lon) pairs into dense ids 0..numNodes-1. The string key
+  // is only used during construction; the rest of the pipeline never sees
+  // it again.
+  const nodeIdByKey = new Map<string, number>()
+  const nodes: GraphNode[] = []
 
-  function getOrCreate(key: string): GraphNode {
-    let nd = nodes.get(key)
-    if (!nd) { nd = { degree: 0, eligibleEdges: [] }; nodes.set(key, nd) }
-    return nd
+  function internNode(key: string): number {
+    let id = nodeIdByKey.get(key)
+    if (id === undefined) {
+      id = nodes.length
+      nodes.push({ degree: 0, eligibleEdges: [] })
+      nodeIdByKey.set(key, id)
+    }
+    return id
   }
+
+  const segNodeIds = new Int32Array(n * 2)
+  const eligible = new Uint8Array(n)
 
   for (let i = 0; i < n; i++) {
     const sKey = nodeKey(startLat.get(i) as number, startLon.get(i) as number)
     const eKey = nodeKey(endLat.get(i) as number, endLon.get(i) as number)
-    segToNodes[i] = [sKey, eKey]
+    const sId = internNode(sKey)
+    const eId = internNode(eKey)
+    segNodeIds[i * 2] = sId
+    segNodeIds[i * 2 + 1] = eId
 
-    const sNode = getOrCreate(sKey)
-    const eNode = getOrCreate(eKey)
-    sNode.degree++
-    eNode.degree++
+    nodes[sId].degree++
+    nodes[eId].degree++
 
     const cls = (roadClass.get(i) as number) ?? 5
     const existingId = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
@@ -340,26 +361,23 @@ function buildGraph(table: any) {
     // and fall through to the 15 %-of-mainline class default.
     if (cls >= 5 && cls !== 8 && cls <= 9 && shouldOverwrite(existingId, MY_SOURCE_ID)) {
       eligible[i] = 1
-      sNode.eligibleEdges.push(i)
-      eNode.eligibleEdges.push(i)
+      nodes[sId].eligibleEdges.push(i)
+      nodes[eId].eligibleEdges.push(i)
     }
   }
 
-  return { nodes, segToNodes, eligible }
+  return { nodes, segNodeIds, eligible }
 }
 
 // ---------- Connected components ----------
 
 interface Component {
   segments: number[]
-  rootNodes: Set<string>
+  rootNodes: Set<number>     // global node ids; small per component
 }
 
-function findComponents(
-  nodes: Map<string, GraphNode>,
-  segToNodes: [string, string][],
-  eligible: Uint8Array
-): Component[] {
+function findComponents(graph: Graph): Component[] {
+  const { nodes, segNodeIds, eligible } = graph
   // Visited as Uint8Array (one byte per segment) — `Set<number>.has/add` runs
   // ~5–10× slower for the millions of probes a dense urban hex incurs.
   const visited = new Uint8Array(eligible.length)
@@ -383,11 +401,13 @@ function findComponents(
       const seg = queue[head++]
       comp.segments.push(seg)
 
-      const [sKey, eKey] = segToNodes[seg]
-      for (const nk of [sKey, eKey]) {
-        const node = nodes.get(nk)!
+      const sId = segNodeIds[seg * 2]
+      const eId = segNodeIds[seg * 2 + 1]
+      for (let endSel = 0; endSel < 2; endSel++) {
+        const nodeId = endSel === 0 ? sId : eId
+        const node = nodes[nodeId]
         if (node.degree > node.eligibleEdges.length) {
-          comp.rootNodes.add(nk)
+          comp.rootNodes.add(nodeId)
         }
         const edges = node.eligibleEdges
         for (let k = 0; k < edges.length; k++) {
@@ -594,22 +614,47 @@ function assignBuildingsGlobally(
 
 function flowAccumulate(
   comp: Component,
-  segToNodes: [string, string][],
+  segNodeIds: Int32Array,
   lengthCol: any,
   segDwellingsGlobal: Map<number, number>,
 ): Map<number, number> {
-  // Build component-local adjacency
-  const localAdj = new Map<string, number[]>()
-  const compNodes = new Set<string>()
-  for (const seg of comp.segments) {
-    const [sKey, eKey] = segToNodes[seg]
-    for (const nk of [sKey, eKey]) {
-      compNodes.add(nk)
-      let list = localAdj.get(nk)
-      if (!list) { list = []; localAdj.set(nk, list) }
-      list.push(seg)
+  // Component-local node ids: dense 0..K-1, mapped from the global ids
+  // that appear in this component's segments. Per-component dense ids let
+  // the Dijkstra distance / parent / sorted state live in `Float64Array`
+  // / `Int32Array` instead of `Map<string, …>`, which was the hottest
+  // remaining service-tree path on dense urban hexes.
+  const globalToLocal = new Map<number, number>()
+  const localToGlobal: number[] = []
+  const localAdj: number[][] = []
+  function intern(globalId: number): number {
+    let local = globalToLocal.get(globalId)
+    if (local === undefined) {
+      local = localToGlobal.length
+      localToGlobal.push(globalId)
+      localAdj.push([])
+      globalToLocal.set(globalId, local)
     }
+    return local
   }
+
+  // Build component-local adjacency keyed by dense local ids.
+  const segLocalEnds: { a: number; b: number }[] = new Array(comp.segments.length)
+  for (let i = 0; i < comp.segments.length; i++) {
+    const seg = comp.segments[i]
+    const a = intern(segNodeIds[seg * 2])
+    const b = intern(segNodeIds[seg * 2 + 1])
+    segLocalEnds[i] = { a, b }
+    localAdj[a].push(seg)
+    localAdj[b].push(seg)
+  }
+  // segIdx -> (localA, localB): keyed by global seg index so Step 2/3 can
+  // look up the two endpoints without touching the global Int32Array.
+  const segLocalLookup = new Map<number, { a: number; b: number }>()
+  for (let i = 0; i < comp.segments.length; i++) {
+    segLocalLookup.set(comp.segments[i], segLocalEnds[i])
+  }
+
+  const numLocal = localToGlobal.length
 
   // --- Step 1: pull per-component local trips out of the global
   // segment→dwelling map. Each segment is only ever in one component's
@@ -624,63 +669,76 @@ function flowAccumulate(
   }
 
   // --- Step 2: Multi-source Dijkstra from root nodes ---
-  const dist = new Map<string, number>()
-  const downSeg = new Map<string, number>()
-  for (const nk of compNodes) dist.set(nk, Infinity)
+  const dist = new Float64Array(numLocal)
+  dist.fill(Infinity)
+  const downSeg = new Int32Array(numLocal)
+  downSeg.fill(-1)
 
-  const roots = comp.rootNodes
-  if (roots.size === 0) {
-    // Isolated: pick highest-degree node as pseudo-root
-    let best = '', bestDeg = -1
-    for (const nk of compNodes) {
-      const d = localAdj.get(nk)!.length
-      if (d > bestDeg) { bestDeg = d; best = nk }
+  // Translate root nodes to local ids; also handle the "no roots → pick
+  // highest-degree node as pseudo-root" fallback in local space.
+  const localRoots: number[] = []
+  for (const globalId of comp.rootNodes) {
+    const local = globalToLocal.get(globalId)
+    if (local !== undefined) localRoots.push(local)
+  }
+  if (localRoots.length === 0) {
+    let best = 0, bestDeg = -1
+    for (let l = 0; l < numLocal; l++) {
+      const d = localAdj[l].length
+      if (d > bestDeg) { bestDeg = d; best = l }
     }
-    roots.add(best)
+    localRoots.push(best)
   }
 
   const pq = new MinHeap()
-  for (const r of roots) { dist.set(r, 0); pq.push(0, r) }
+  for (const r of localRoots) { dist[r] = 0; pq.push(0, r) }
 
   while (pq.size > 0) {
     const { dist: d, node: u } = pq.pop()
-    if (d > dist.get(u)!) continue
+    if (d > dist[u]) continue
 
-    const edges = localAdj.get(u)
-    if (!edges) continue
-    for (const seg of edges) {
-      const [sKey, eKey] = segToNodes[seg]
-      const v = (sKey === u) ? eKey : sKey
+    const edges = localAdj[u]
+    for (let k = 0; k < edges.length; k++) {
+      const seg = edges[k]
+      const ends = segLocalLookup.get(seg)!
+      const v = ends.a === u ? ends.b : ends.a
       const len = Math.max(1, (lengthCol.get(seg) as number) ?? 1)
-      const newDist = dist.get(u)! + len
-      if (newDist < dist.get(v)!) {
-        dist.set(v, newDist)
-        downSeg.set(v, seg)
+      const newDist = d + len
+      if (newDist < dist[v]) {
+        dist[v] = newDist
+        downSeg[v] = seg
         pq.push(newDist, v)
       }
     }
   }
 
   // --- Step 3: Bottom-up accumulation ---
-  const sortedNodes = Array.from(compNodes).sort((a, b) => dist.get(b)! - dist.get(a)!)
+  // Indices 0..numLocal-1 sorted by descending dist — leaves first, roots
+  // last. Backed by an `Int32Array` so the sort comparator only touches
+  // primitive Float64 reads.
+  const sortedLocals = new Int32Array(numLocal)
+  for (let i = 0; i < numLocal; i++) sortedLocals[i] = i
+  // Convert to a regular array for sort (TypedArray sort is numeric-only;
+  // we want comparator-based descending-by-dist). Numeric ids → no string
+  // hash work in the comparator.
+  const sortedArr = Array.from(sortedLocals)
+  sortedArr.sort((a, b) => dist[b] - dist[a])
 
-  for (const u of sortedNodes) {
-    // Sum flow arriving at u from upstream segments (where u is the "lower" end)
+  for (const u of sortedArr) {
     let inflow = 0
-    const edges = localAdj.get(u)
-    if (!edges) continue
-    for (const seg of edges) {
-      const [sKey, eKey] = segToNodes[seg]
-      const other = (sKey === u) ? eKey : sKey
-      // This segment flows toward u if u is closer to root (lower dist)
-      if (dist.get(other)! > dist.get(u)!) {
+    const edges = localAdj[u]
+    const distU = dist[u]
+    for (let k = 0; k < edges.length; k++) {
+      const seg = edges[k]
+      const ends = segLocalLookup.get(seg)!
+      const other = ends.a === u ? ends.b : ends.a
+      if (dist[other] > distU) {
         inflow += segFlow.get(seg)!
       }
     }
 
-    // Push inflow into the downstream segment
-    const dSeg = downSeg.get(u)
-    if (dSeg !== undefined) {
+    const dSeg = downSeg[u]
+    if (dSeg !== -1) {
       segFlow.set(dSeg, segFlow.get(dSeg)! + inflow)
     }
   }
@@ -702,13 +760,13 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   const buildingTable = tableFromIPC(readFileSync(buildingsPath))
   if (buildingTable.numRows === 0) return null
 
-  const { nodes, segToNodes, eligible } = buildGraph(roadTable)
+  const graph = buildGraph(roadTable)
 
   let eligibleCount = 0
-  for (let i = 0; i < n; i++) if (eligible[i]) eligibleCount++
+  for (let i = 0; i < n; i++) if (graph.eligible[i]) eligibleCount++
   if (eligibleCount === 0) return null
 
-  const components = findComponents(nodes, segToNodes, eligible)
+  const components = findComponents(graph)
   if (components.length === 0) return null
 
   const bg = buildBuildingGrid(buildingTable)
@@ -735,11 +793,11 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
     eligibleSegments, startLat, startLon, endLat, endLon, bg,
   )
 
-  // Flow accumulation per component (each sees only buildings whose best
-  // segment belongs to it — Set-based gate inside flowAccumulate).
+  // Flow accumulation per component, reading the precomputed seg→dwellings
+  // map by direct lookup (no per-component re-scan of every building).
   const segAADT = new Map<number, { light: number; medium: number; heavy: number; moto: number }>()
   for (const comp of components) {
-    const segFlow = flowAccumulate(comp, segToNodes, lengthCol, globalBestSeg)
+    const segFlow = flowAccumulate(comp, graph.segNodeIds, lengthCol, globalBestSeg)
     const roadClassCol = roadTable.getChild('road_class')
     for (const [seg, trips] of segFlow) {
       const cls = (roadClassCol?.get(seg) as number) ?? 5
