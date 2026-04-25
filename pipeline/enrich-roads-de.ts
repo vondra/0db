@@ -24,10 +24,11 @@ import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import proj4 from 'proj4'
 import { cellToLatLng } from 'h3-js'
+import { SOURCE_ID_DE_BAST_AUTOBAHN, SOURCE_ID_DE_BAST_BUNDESSTRASSEN } from './lib/source-ids.generated.js'
 
 // CensusSection.ref starts with 'A' for Autobahn, 'B' for Bundesstraßen — pick per row.
-const AUTOBAHN_DATASET_ID = SOURCES_BY_KEY.get('de-bast-autobahn')!.id
-const BUNDESSTR_DATASET_ID = SOURCES_BY_KEY.get('de-bast-bundesstrassen')!.id
+const AUTOBAHN_DATASET_ID = SOURCE_ID_DE_BAST_AUTOBAHN
+const BUNDESSTR_DATASET_ID = SOURCE_ID_DE_BAST_BUNDESSTRASSEN
 const MY_SOURCE_ID = AUTOBAHN_DATASET_ID  // default for gating; actual write picks per row
 
 const YEAR = process.env.DATA_YEAR || '2025'

@@ -16,8 +16,9 @@ import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import proj4 from 'proj4'
 import { cellToLatLng } from 'h3-js'
+import { SOURCE_ID_FR_CEREMA_TMJA } from './lib/source-ids.generated.js'
 
-const MY_SOURCE_ID = SOURCES_BY_KEY.get('fr-cerema-tmja')!.id
+const MY_SOURCE_ID = SOURCE_ID_FR_CEREMA_TMJA
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)

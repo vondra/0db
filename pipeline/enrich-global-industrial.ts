@@ -24,6 +24,7 @@ import { makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
 import { latLngToCell } from 'h3-js'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
+import { SOURCE_ID_EUROPE_EPRTR, SOURCE_ID_GLOBAL_GPPD } from './lib/source-ids.generated.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -42,8 +43,8 @@ const EPRTR_URLS = [
   'https://industry.eea.europa.eu/download?format=csv',
 ]
 
-const GPPD_DATASET_ID = SOURCES_BY_KEY.get('global-gppd')!.id
-const EPRTR_DATASET_ID = SOURCES_BY_KEY.get('europe-eprtr')!.id
+const GPPD_DATASET_ID = SOURCE_ID_GLOBAL_GPPD
+const EPRTR_DATASET_ID = SOURCE_ID_EUROPE_EPRTR
 
 // ── Types ──
 

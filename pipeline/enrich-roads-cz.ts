@@ -15,8 +15,9 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
+import { SOURCE_ID_CZ_RSD_SCITANI } from './lib/source-ids.generated.js'
 
-const MY_SOURCE_ID = SOURCES_BY_KEY.get('cz-rsd-scitani')!.id
+const MY_SOURCE_ID = SOURCE_ID_CZ_RSD_SCITANI
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)

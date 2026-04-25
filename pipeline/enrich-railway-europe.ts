@@ -26,8 +26,9 @@ import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } f
 import { latLngToCell } from 'h3-js'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
+import { SOURCE_ID_GLOBAL_GTFS_TRANSIT } from './lib/source-ids.generated.js'
 
-const MY_SOURCE_ID = SOURCES_BY_KEY.get('global-gtfs-transit')!.id
+const MY_SOURCE_ID = SOURCE_ID_GLOBAL_GTFS_TRANSIT
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)

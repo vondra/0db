@@ -20,8 +20,9 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import * as XLSX from 'xlsx'
 import shp from 'shpjs'
+import { SOURCE_ID_PL_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 
-const MY_SOURCE_ID = SOURCES_BY_KEY.get('pl-national-roads')!.id
+const MY_SOURCE_ID = SOURCE_ID_PL_NATIONAL_ROADS
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)

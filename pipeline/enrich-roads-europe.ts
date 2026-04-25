@@ -24,8 +24,9 @@ import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uin
 import { latLngToCell } from 'h3-js'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
+import { SOURCE_ID_EU_CITY_TRAFFIC } from './lib/source-ids.generated.js'
 
-const MY_SOURCE_ID = SOURCES_BY_KEY.get('eu-city-traffic')!.id
+const MY_SOURCE_ID = SOURCE_ID_EU_CITY_TRAFFIC
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)

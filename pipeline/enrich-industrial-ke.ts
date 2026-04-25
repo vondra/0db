@@ -40,6 +40,7 @@ import { tableFromIPC, makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
+import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -118,7 +119,7 @@ async function main() {
     grid.get(key)!.push(s)
   }
 
-  const MY_SOURCE_ID = SOURCES_BY_KEY.get('global-industrial-national-mix')!.id
+  const MY_SOURCE_ID = SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX
 
   const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
   const hexDirs: string[] = []

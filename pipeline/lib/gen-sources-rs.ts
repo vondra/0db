@@ -22,6 +22,16 @@ import { SOURCES, type Provenance } from './sources.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const OUTPUT_PATH = resolve(__dirname, '../../engine/noise-compute/src/sources.rs')
+const TS_OUTPUT_PATH = resolve(__dirname, 'source-ids.generated.ts')
+
+/** Convert a source `key` into a SCREAMING_SNAKE TS / Rust identifier:
+ *  `'cz-rsd-scitani'` → `'CZ_RSD_SCITANI'`. */
+function keyToConstName(key: string): string {
+  return key
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase()
+}
 
 const PROVENANCE_TO_RUST: Record<Provenance, string> = {
   'national-measured': 'Provenance::NationalMeasured',
@@ -204,4 +214,42 @@ writeFileSync(OUTPUT_PATH, output)
 console.log(
   `✓ Generated ${OUTPUT_PATH} with ${SOURCES.length} entries ` +
     `(${output.length.toLocaleString()} bytes).`,
+)
+
+// ── TypeScript per-source-id constants ────────────────────────────────────
+//
+// Enrichers that previously did `SOURCE_ID_CZ_RSD_SCITANI`
+// import a typed constant instead, so a key rename is a compile-time error
+// instead of a runtime crash.
+
+const tsLines: string[] = [
+  '// AUTO-GENERATED — DO NOT EDIT.',
+  '//',
+  '// Per-source-id constants emitted from `pipeline/lib/sources.ts` by',
+  '// `pipeline/lib/gen-sources-rs.ts`. Re-run via `npm run gen:sources`',
+  '// (from `pipeline/`) and commit both this file and `sources.rs`.',
+  '',
+]
+
+// Detect duplicate ids / clashing const names eagerly — the registry rules
+// enforce id uniqueness, but a typo in two source keys could collapse to
+// the same identifier and trip a compile error downstream.
+const namesSeen = new Map<string, string>()
+for (const s of sortedSources) {
+  const name = `SOURCE_ID_${keyToConstName(s.key)}`
+  const dup = namesSeen.get(name)
+  if (dup !== undefined) {
+    console.error(
+      `ERROR: duplicate constant name ${name} for keys '${s.key}' vs '${dup}'`,
+    )
+    process.exit(1)
+  }
+  namesSeen.set(name, s.key)
+  tsLines.push(`export const ${name} = ${s.id} as const // ${s.key}`)
+}
+tsLines.push('')
+
+writeFileSync(TS_OUTPUT_PATH, tsLines.join('\n'))
+console.log(
+  `✓ Generated ${TS_OUTPUT_PATH} with ${SOURCES.length} typed constants.`,
 )

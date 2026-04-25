@@ -15,6 +15,7 @@ import {
   Uint16,
 } from 'apache-arrow'
 import { SOURCES_BY_KEY } from '../lib/sources.js'
+import { SOURCE_ID_SERVICE_TREE_HEURISTIC } from '../lib/source-ids.generated.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -22,7 +23,7 @@ const PREFIX = process.argv.includes('--prefix')
   ? process.argv[process.argv.indexOf('--prefix') + 1]
   : ''
 
-const SERVICE_TREE_DATASET_ID = SOURCES_BY_KEY.get('service-tree-heuristic')!.id
+const SERVICE_TREE_DATASET_ID = SOURCE_ID_SERVICE_TREE_HEURISTIC
 
 const hexDirs = readdirSync(DIR)
   .filter((h) => /^[0-9a-f]{15}$/.test(h))

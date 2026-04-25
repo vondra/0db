@@ -16,8 +16,9 @@ import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Uint8, Uint16 } f
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 
-const MY_SOURCE_ID = SOURCES_BY_KEY.get('cz-ruian-vfr')!.id
+const MY_SOURCE_ID = SOURCE_ID_CZ_RUIAN_VFR
 import proj4 from 'proj4'
+import { SOURCE_ID_CZ_RUIAN_VFR } from './lib/source-ids.generated.js'
 
 // Define S-JTSK (EPSG:5514) projection
 proj4.defs('EPSG:5514', '+proj=krovak +lat_0=49.5 +lon_0=24.83333333333333 +alpha=30.28813975277778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel +towgs84=570.8,85.7,462.8,4.998,1.587,5.261,3.56 +units=m +no_defs')

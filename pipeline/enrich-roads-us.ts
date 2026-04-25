@@ -28,8 +28,9 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
+import { SOURCE_ID_US_FHWA_HPMS } from './lib/source-ids.generated.js'
 
-const MY_SOURCE_ID = SOURCES_BY_KEY.get('us-fhwa-hpms')!.id
+const MY_SOURCE_ID = SOURCE_ID_US_FHWA_HPMS
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)

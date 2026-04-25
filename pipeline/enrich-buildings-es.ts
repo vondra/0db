@@ -23,8 +23,9 @@ import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Uint8, Uint16 } f
 import proj4 from 'proj4'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
+import { SOURCE_ID_ES_CATASTRO } from './lib/source-ids.generated.js'
 
-const MY_SOURCE_ID = SOURCES_BY_KEY.get('es-catastro')!.id
+const MY_SOURCE_ID = SOURCE_ID_ES_CATASTRO
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
