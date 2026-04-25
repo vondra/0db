@@ -21,10 +21,12 @@ import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Uint8, Uint16 } from 'apache-arrow'
 import proj4 from 'proj4'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
+import { SOURCE_ID_ES_CATASTRO } from './lib/source-ids.generated.js'
+import { flatDist } from './lib/spatial.js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('es-catastro')!.id
+const MY_SOURCE_ID = SOURCE_ID_ES_CATASTRO
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -491,13 +493,6 @@ async function parseGmlBuildings(gmlPath: string): Promise<CatastroBuilding[]> {
 
 // ── Step 2: Enrich buildings.arrow ──
 
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-
 function enrichHexes(catastroBuildings: CatastroBuilding[]): void {
   // Build spatial index: 0.01 deg grid (~1km cells)
   const grid = new Map<string, CatastroBuilding[]>()
@@ -526,7 +521,7 @@ function enrichHexes(catastroBuildings: CatastroBuilding[]): void {
     const clat = table.getChild('centroid_lat')!
     const clon = table.getChild('centroid_lon')!
     const existingFloors = table.getChild('floors')
-    const existingDatasetId = table.getChild('buildings_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const newFloors = new Uint8Array(n)
     const newDatasetId = new Uint16Array(n)
@@ -536,12 +531,12 @@ function enrichHexes(catastroBuildings: CatastroBuilding[]): void {
       const lat = clat.get(i) as number
       const lon = clon.get(i) as number
       const curFloors = existingFloors ? (existingFloors.get(i) as number) : 0
-      const curDatasetId = existingDatasetId ? (existingDatasetId.get(i) as number) : 0
+      const curDatasetId = existingSourceId ? (existingSourceId.get(i) as number) : 0
       newFloors[i] = curFloors
       newDatasetId[i] = curDatasetId
 
       // Priority gate: skip if a higher-priority dataset owns this row.
-      if (!shouldOverwrite(curDatasetId, MY_DATASET_ID)) continue
+      if (!shouldOverwrite(curDatasetId, MY_SOURCE_ID)) continue
       // Only enrich if floors are missing and within Spain
       if (curFloors > 0) continue
       if (lat < 27 || lat > 44 || lon < -19 || lon > 5) continue
@@ -567,7 +562,7 @@ function enrichHexes(catastroBuildings: CatastroBuilding[]): void {
 
       if (bestFloors > 0) {
         newFloors[i] = Math.min(bestFloors, 255)
-        newDatasetId[i] = MY_DATASET_ID
+        newDatasetId[i] = MY_SOURCE_ID
         hexEnriched++
         floorsAdded++
       }
@@ -579,11 +574,11 @@ function enrichHexes(catastroBuildings: CatastroBuilding[]): void {
     const columns: Record<string, any> = {}
     for (const field of table.schema.fields) {
       if (field.name === 'floors') continue
-      if (field.name === 'buildings_dataset_id') continue
+      if (field.name === 'source_id') continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['floors'] = vectorFromArray(newFloors, new Uint8())
-    columns['buildings_dataset_id'] = vectorFromArray(newDatasetId, new Uint16())
+    columns['source_id'] = vectorFromArray(newDatasetId, new Uint16())
 
     const newTable = makeTable(columns)
     writeFileSync(bldPath, Buffer.from(tableToIPC(newTable, 'file')))

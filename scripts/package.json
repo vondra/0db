@@ -1,6 +1,12 @@
 {
   "type": "module",
+  "scripts": {
+    "build:h3-admin": "tsx build-h3-admin.ts"
+  },
   "dependencies": {
     "h3-js": "^4.4.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
   }
 }

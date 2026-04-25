@@ -27,6 +27,10 @@ raster-reader = { path = "../raster-reader" }
 rayon = "1"
 adsb-to-h3r4 = { path = "../adsb-to-h3r4" }
 aircraft-tracks = { path = "../aircraft-tracks" }
+# LRU bound for PALT_CACHE — keeps memory under control on a 24/7 server
+# that browses globally (Czech alone has ~80 R4 hexes; EU ~1k; world ~25 k
+# populated). At ~25 KB per cached raster, capacity 1024 ≈ 25 MB worst case.
+lru = "0.12"
 
 [build-dependencies]
 napi-build = "2"

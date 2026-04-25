@@ -17,7 +17,7 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { execSync, spawnSync } from 'node:child_process'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const SRC_DIR = resolve(ROOT, 'data/source/dem/copernicus-glo30')
@@ -26,7 +26,7 @@ const CACHE_DIR = resolve(ROOT, 'data/enrichment/global/copernicus-dem')
 const DOWNLOAD_SH = resolve(ROOT, 'scripts/rasters/download-copernicus-dem.sh')
 const CONVERT_SH = resolve(ROOT, 'scripts/rasters/convert-dem-copernicus.sh')
 
-const DATASET = DATASETS_BY_KEY.get('global-copernicus-glo30')!
+const DATASET = SOURCES_BY_KEY.get('global-copernicus-glo30')!
 const doDownload = process.argv.includes('--download')
 
 function countTiles(dir: string, ext: string): number {

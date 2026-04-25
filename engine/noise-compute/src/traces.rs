@@ -211,7 +211,7 @@ pub fn baseline_trace(
 
 use crate::types::{
     AircraftSegment, EmissionTrace, PointSource, RailSegment, RoadSegment, SegmentTrace,
-    SourceKind,
+    LayerKind,
 };
 use crate::{building_type_name, industrial_type_name, rail_type_name};
 
@@ -283,7 +283,7 @@ pub(crate) fn build_aircraft_ground_segment_trace(
     );
 
     SegmentTrace {
-        kind: SourceKind::Aircraft,
+        kind: LayerKind::Aircraft,
         osm_id: Some(seg.flight_id as i64),
         segment_idx: seg_idx,
         name: format!("{} ops", class),
@@ -355,7 +355,7 @@ pub(crate) struct BuildRoadTrace<'a> {
 
 pub(crate) struct BuildPointTrace<'a> {
     pub src: &'a PointSource,
-    pub source_kind: SourceKind,
+    pub source_kind: LayerKind,
     pub src_alt: f64,
     pub rcv_alt: f64,
     pub d_slant: f64,
@@ -391,7 +391,7 @@ pub(crate) fn build_point_segment_trace(inputs: BuildPointTrace<'_>) -> SegmentT
     } = inputs;
 
     let (subtype_label, emission) = match source_kind {
-        SourceKind::Industrial => {
+        LayerKind::Industrial => {
             let label = industrial_type_name(src.source_type);
             (
                 label,
@@ -525,7 +525,7 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
     );
 
     SegmentTrace {
-        kind: SourceKind::Railway,
+        kind: LayerKind::Railway,
         osm_id: Some(seg.osm_id),
         segment_idx: seg.segment_idx,
         name: seg_name,
@@ -547,7 +547,7 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
             trains_freight: q_frt,
             trains_passenger_source: if seg.trains_passenger_source == 0 { "arrow" } else { "default_by_type" },
             trains_freight_source: if seg.trains_freight_source == 0 { "arrow" } else { "default_by_type" },
-            dataset_id: seg.dataset_id,
+            source_id: seg.source_id,
             speed_kmh,
             bridge: seg.bridge,
             highspeed: seg.highspeed,
@@ -609,10 +609,9 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
 
     let seg_name = seg_name_from_tags(&seg.road_ref, &seg.name, class_name, seg.osm_id);
 
-    let traffic_source = if seg.traffic_source == 1 && seg.aadt_light > 0 {
-        "matched_external"
-    } else if seg.traffic_source == 2 && seg.aadt_light > 0 {
-        "estimated_service_tree"
+    let provenance = crate::sources::provenance_of(seg.source_id);
+    let traffic_source = if provenance.has_data() && seg.aadt_light > 0 {
+        provenance.legacy_traffic_source_str()
     } else {
         "default_by_class"
     };
@@ -625,7 +624,7 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
         surface_corr_db: surf_corr,
         surface: crate::surface_name(seg.surface_type),
         traffic_source,
-        dataset_id: seg.dataset_id,
+        source_id: seg.source_id,
         road_class: class_name,
         bridge: seg.bridge,
         tunnel: seg.tunnel,
@@ -641,7 +640,7 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
     );
 
     SegmentTrace {
-        kind: SourceKind::Road,
+        kind: LayerKind::Road,
         osm_id: Some(seg.osm_id),
         segment_idx: seg.segment_idx,
         name: seg_name,

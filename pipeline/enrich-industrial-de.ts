@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, Float32 } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
+import { haversineM } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -56,14 +57,6 @@ function buildGrid(turbines: MastrTurbine[]): Map<string, MastrTurbine[]> {
     grid.set(key, list)
   }
   return grid
-}
-
-function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLon = (lon2 - lon1) * Math.PI / 180
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 async function main() {
@@ -162,8 +155,8 @@ async function main() {
         if (field.name === 'hub_height' || field.name === 'rated_power_kw') continue
         columns[field.name] = table.getChild(field.name)!
       }
-      columns['hub_height'] = vectorFromArray(Array.from(hubHeights), new Float32())
-      columns['rated_power_kw'] = vectorFromArray(Array.from(ratedPowers), new Float32())
+      columns['hub_height'] = vectorFromArray(hubHeights, new Float32())
+      columns['rated_power_kw'] = vectorFromArray(ratedPowers, new Float32())
       const enriched = new table.constructor(columns)
       writeFileSync(arrowPath, tableToIPC(enriched, 'file'))
       hexesUpdated++

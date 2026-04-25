@@ -1,0 +1,71 @@
+// AUTO-GENERATED — DO NOT EDIT.
+//
+// Per-source-id constants emitted from `pipeline/lib/sources.ts` by
+// `pipeline/lib/gen-sources-rs.ts`. Re-run via `npm run gen:sources`
+// (from `pipeline/`) and commit both this file and `sources.rs`.
+
+export const SOURCE_ID_UNSPECIFIED = 0 as const // unspecified
+export const SOURCE_ID_GLOBAL_ADSB_PLANET = 1 as const // global-adsb-planet
+export const SOURCE_ID_EU_CITY_TRAFFIC = 10 as const // eu-city-traffic
+export const SOURCE_ID_SERVICE_TREE_HEURISTIC = 11 as const // service-tree-heuristic
+export const SOURCE_ID_CZ_RSD_SCITANI = 20 as const // cz-rsd-scitani
+export const SOURCE_ID_US_FHWA_HPMS = 21 as const // us-fhwa-hpms
+export const SOURCE_ID_DE_BAST_AUTOBAHN = 22 as const // de-bast-autobahn
+export const SOURCE_ID_DE_BAST_BUNDESSTRASSEN = 23 as const // de-bast-bundesstrassen
+export const SOURCE_ID_FR_CEREMA_TMJA = 24 as const // fr-cerema-tmja
+export const SOURCE_ID_GLOBAL_GTFS_TRANSIT = 100 as const // global-gtfs-transit
+export const SOURCE_ID_CZ_SZCD_GTFS = 110 as const // cz-szcd-gtfs
+export const SOURCE_ID_CZ_RUIAN_VFR = 200 as const // cz-ruian-vfr
+export const SOURCE_ID_ES_CATASTRO = 201 as const // es-catastro
+export const SOURCE_ID_GLOBAL_GPPD = 300 as const // global-gppd
+export const SOURCE_ID_GLOBAL_USWTDB = 301 as const // global-uswtdb
+export const SOURCE_ID_EUROPE_EPRTR = 310 as const // europe-eprtr
+export const SOURCE_ID_CZ_IRZ = 320 as const // cz-irz
+export const SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX = 330 as const // global-industrial-national-mix
+export const SOURCE_ID_AR_NATIONAL_ROADS = 1004 as const // ar-national-roads
+export const SOURCE_ID_BO_NATIONAL_ROADS = 1013 as const // bo-national-roads
+export const SOURCE_ID_BR_NATIONAL_ROADS = 1014 as const // br-national-roads
+export const SOURCE_ID_CA_NATIONAL_ROADS = 1019 as const // ca-national-roads
+export const SOURCE_ID_CL_NATIONAL_ROADS = 1023 as const // cl-national-roads
+export const SOURCE_ID_CN_NATIONAL_ROADS = 1025 as const // cn-national-roads
+export const SOURCE_ID_CO_NATIONAL_ROADS = 1026 as const // co-national-roads
+export const SOURCE_ID_DK_NATIONAL_ROADS = 1031 as const // dk-national-roads
+export const SOURCE_ID_EC_NATIONAL_ROADS = 1034 as const // ec-national-roads
+export const SOURCE_ID_ES_NATIONAL_ROADS = 1037 as const // es-national-roads
+export const SOURCE_ID_FI_NATIONAL_ROADS = 1039 as const // fi-national-roads
+export const SOURCE_ID_GB_NATIONAL_ROADS = 1041 as const // gb-national-roads
+export const SOURCE_ID_ID_NATIONAL_ROADS = 1048 as const // id-national-roads
+export const SOURCE_ID_IE_NATIONAL_ROADS = 1049 as const // ie-national-roads
+export const SOURCE_ID_IN_NATIONAL_ROADS = 1050 as const // in-national-roads
+export const SOURCE_ID_IT_NATIONAL_ROADS = 1054 as const // it-national-roads
+export const SOURCE_ID_NO_NATIONAL_ROADS = 1088 as const // no-national-roads
+export const SOURCE_ID_NZ_NATIONAL_ROADS = 1090 as const // nz-national-roads
+export const SOURCE_ID_PE_NATIONAL_ROADS = 1093 as const // pe-national-roads
+export const SOURCE_ID_PH_NATIONAL_ROADS = 1095 as const // ph-national-roads
+export const SOURCE_ID_PL_NATIONAL_ROADS = 1097 as const // pl-national-roads
+export const SOURCE_ID_PY_NATIONAL_ROADS = 1098 as const // py-national-roads
+export const SOURCE_ID_SA_NATIONAL_ROADS = 1102 as const // sa-national-roads
+export const SOURCE_ID_TH_NATIONAL_ROADS = 1113 as const // th-national-roads
+export const SOURCE_ID_VE_NATIONAL_ROADS = 1124 as const // ve-national-roads
+export const SOURCE_ID_AE_NATIONAL_RAILWAY = 2000 as const // ae-national-railway
+export const SOURCE_ID_AR_NATIONAL_RAILWAY = 2004 as const // ar-national-railway
+export const SOURCE_ID_AU_NATIONAL_RAILWAY = 2005 as const // au-national-railway
+export const SOURCE_ID_BE_NATIONAL_RAILWAY = 2009 as const // be-national-railway
+export const SOURCE_ID_CA_NATIONAL_RAILWAY = 2015 as const // ca-national-railway
+export const SOURCE_ID_CN_NATIONAL_RAILWAY = 2021 as const // cn-national-railway
+export const SOURCE_ID_DK_NATIONAL_RAILWAY = 2024 as const // dk-national-railway
+export const SOURCE_ID_ES_NATIONAL_RAILWAY = 2028 as const // es-national-railway
+export const SOURCE_ID_FI_NATIONAL_RAILWAY = 2030 as const // fi-national-railway
+export const SOURCE_ID_IE_NATIONAL_RAILWAY = 2035 as const // ie-national-railway
+export const SOURCE_ID_IL_NATIONAL_RAILWAY = 2036 as const // il-national-railway
+export const SOURCE_ID_IN_NATIONAL_RAILWAY = 2037 as const // in-national-railway
+export const SOURCE_ID_IT_NATIONAL_RAILWAY = 2040 as const // it-national-railway
+export const SOURCE_ID_KR_NATIONAL_RAILWAY = 2044 as const // kr-national-railway
+export const SOURCE_ID_MX_NATIONAL_RAILWAY = 2057 as const // mx-national-railway
+export const SOURCE_ID_PL_NATIONAL_RAILWAY = 2066 as const // pl-national-railway
+export const SOURCE_ID_PT_NATIONAL_RAILWAY = 2067 as const // pt-national-railway
+export const SOURCE_ID_SE_NATIONAL_RAILWAY = 2073 as const // se-national-railway
+export const SOURCE_ID_TH_NATIONAL_RAILWAY = 2075 as const // th-national-railway
+export const SOURCE_ID_INDUSTRIAL_NAME_HEURISTIC = 9000 as const // industrial-name-heuristic
+export const SOURCE_ID_GLOBAL_OVERTURE = 9001 as const // global-overture
+export const SOURCE_ID_GLOBAL_COPERNICUS_GLO30 = 9002 as const // global-copernicus-glo30

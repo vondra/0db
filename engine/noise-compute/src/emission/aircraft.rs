@@ -13,6 +13,8 @@ use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
+use crate::sources::AIRCRAFT_ADSB_SOURCE_ID;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // NPD tables (Doc 29 §4.2)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -21,11 +23,45 @@ use std::sync::OnceLock;
 /// At this raw NPD SEL, a segment's contribution is negligible (< 0.15 dB on total Lden).
 pub const AIRCRAFT_NPD_REACH_THRESHOLD_DB: f64 = 40.0;
 
-/// Hard cap on per-profile slant reach (meters). Bounds CSR grid and r-tree
-/// query area. With the physics tail, jets still contribute audible energy
-/// well past this cap (widebody departure @ 40 dB ~ 15.5 km); the cap is
-/// tuned for runtime budget, not physical threshold.
-pub const AIRCRAFT_NPD_REACH_CAP_M: f64 = 10_000.0;
+/// Hard cap on per-profile **slant** reach (meters). Used by
+/// `Profile::estimate_reach_m` to bound the bisection in the physics
+/// tail and by the per-segment slant-vs-reach test inside the
+/// pipeline scatter and popup compute paths. With the physics tail
+/// (`alpha_eff`), jets stay above 40 dB SEL out to ~15.5 km slant.
+/// Numerically equal to `AIRCRAFT_MAX_HORIZONTAL_REACH_M` because at
+/// altitude 0 horizontal = slant, but they're conceptually different —
+/// callers should pick the constant that matches the geometry they're
+/// filtering on.
+pub const AIRCRAFT_NPD_REACH_CAP_M: f64 = 16_000.0;
+
+/// Hard cap on **horizontal** distance (meters) at which an airborne
+/// segment can be audible at 40 dB SEL, regardless of altitude. Used
+/// by:
+///   * `source-reader` r-tree query envelope
+///   * `build_high_alt_r8_raster` bbox prefilter on segment-cell pairs
+///   * any other "is this segment within range of the receiver" filter
+///     that operates on horizontal distance
+/// For altitudes above 0 the actual horizontal reach is bounded by
+/// `sqrt(slant_cap² − alt²)`, so this constant is the upper envelope —
+/// safe to use for prefilters, but the per-profile slant test inside
+/// the kernel does the exact rejection.
+pub const AIRCRAFT_MAX_HORIZONTAL_REACH_M: f64 = 16_000.0;
+
+/// Slant threshold above which `segment_energy_fast` and
+/// `segment_sel_with_overrides` switch to the closed-form far-field kernel
+/// (CFFK). The corrections that the per-segment Doc 29 path applies
+/// (ΔI, ΔF, lateral attenuation) are all bounded:
+///   - λ is identically 0 for elevation angle β > 50° (already gated).
+///   - ΔI peaks at ~0.4 dB for wing, ~0.8 dB for fuselage, and is < 0.3 dB
+///     for typical FL330+ overhead geometries.
+///   - ΔF approaches 0 dB for segments where the CPA is interior to the
+///     segment and the segment is several `d_bar` long — true for almost
+///     all cruise segments.
+/// At 25 000 ft / 7 620 m we're at the last NPD table point, beyond which
+/// the slope is already a physical extrapolation. Switching to the closed
+/// form there is cheap (1 log + 1 mul + 1 add) and matches the Doc 29
+/// reference within ~0.3 dB.
+pub const AIRCRAFT_FAR_FIELD_THRESHOLD_M: f64 = 7620.0;
 
 /// Reference slant (meters) at the last NPD table point (25 000 ft). Anchor
 /// for physics-based extrapolation of SEL beyond the table.
@@ -1143,13 +1179,31 @@ fn airport_match_cell(lat: f64, lon: f64) -> (i32, i32) {
     )
 }
 
-fn meters_to_lat_deg(meters: f64) -> f64 {
+/// Meters → degrees of latitude (constant ≈ 110 540 m / deg, valid to
+/// within ~0.6 % anywhere on Earth). Use for any latitude bounding box
+/// where the exact geodesic isn't worth the cost.
+pub fn meters_to_lat_deg(meters: f64) -> f64 {
     meters / 110_540.0
 }
 
-fn meters_to_lon_deg(lat: f64, meters: f64) -> f64 {
+/// Meters → degrees of longitude at a given latitude. Includes a
+/// `cos.max(0.2)` clamp that bounds the conversion factor at ~78°
+/// latitude — above that the cosine collapses and the bbox would
+/// over-fetch enormously. Aircraft cruise tracks live well below that
+/// limit, so the clamp is a safety net rather than a routine concern.
+pub fn meters_to_lon_deg(lat: f64, meters: f64) -> f64 {
     let cos_lat = lat.to_radians().cos().abs().max(0.2);
     meters / (111_320.0 * cos_lat)
+}
+
+/// PALT membership predicate: `true` when the segment's energy is
+/// accumulated into `build_high_alt_r8_raster`'s cell at `ground_elev_m`.
+/// Both popup and pipeline use this test to skip the per-segment path,
+/// and the build uses its negation. Keeping the predicate in one place
+/// makes popup ↔ pipeline parity textual rather than coincidental.
+#[inline]
+pub fn segment_in_palt_raster(seg_min_alt_m: f64, ground_elev_m: f64) -> bool {
+    seg_min_alt_m - ground_elev_m > AIRCRAFT_FAR_FIELD_THRESHOLD_M
 }
 
 fn insert_bbox_cells(
@@ -1413,6 +1467,7 @@ pub fn synthesize_airport_surface_segments(
                     surface_model: true,
                     ground_context: emitter.ground_context,
                     ground_ops_kind: emitter.ground_ops_kind,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
                 });
                 next_flight_id = next_flight_id.wrapping_add(1);
             }
@@ -1844,6 +1899,143 @@ pub fn segment_sel(
     )
 }
 
+/// Build an R8-resolution energy raster for high-altitude aircraft
+/// segments — the PALT path. Both popup and pipeline call this with the
+/// same data and the same constants, so the resulting raster (and thus
+/// the per-receiver energy contribution from cruise-altitude overflights)
+/// is identical on both sides — popup ↔ pipeline parity holds by
+/// construction.
+///
+/// **Why a raster.** Cap = 16 km plus per-segment Phase 1 evaluation
+/// blew the +10 % runtime budget by ~2× (see
+/// `docs/validation/aircraft-perf-iteration.md`, attempts A4 / A5).
+/// Aircraft above ~7.62 km contribute nearly position-invariant energy
+/// across an R8 group (slant variation ≤ 0.4 dB across the ~1 km group
+/// span vs ≥ 7.6 km altitude). Evaluating once per R8 cell instead of
+/// once per R11 receiver collapses 343 redundant kernel calls to one.
+///
+/// **Far-field gate.** A segment is "high-altitude for this cell" when
+/// its minimum endpoint altitude is at least
+/// `AIRCRAFT_FAR_FIELD_THRESHOLD_M` (7 620 m, the last NPD table point)
+/// above the cell's ground elevation. Segments fail the gate from
+/// elevated hex-edge cells (e.g., Brdy at 800 m): they fall through to
+/// the per-receiver Phase 1 path, where the full Doc 29 corrections
+/// run.
+///
+/// **Caller integration.** The pipeline scatter loop should skip any
+/// segment whose `min_alt > AIRCRAFT_FAR_FIELD_THRESHOLD_M` (well above
+/// the hex centre's ground elevation) — those are already in the raster
+/// — and add `raster[r8_id][period]` to every receiver in the R8 group.
+/// The popup query computes the receiver's R11 → R8 parent and adds the
+/// same lookup. Both sides land on identical per-receiver totals.
+///
+/// Cost: ~5 s wall-time per R4 hex on 16 cores (5 B segment-cell pair
+/// candidates × cheap distance prefilter, ~5 % survive to the kernel).
+pub fn build_high_alt_r8_raster(
+    segments: &[AircraftSegment],
+    r4_hex: h3o::CellIndex,
+    rasters: &dyn RasterSampler,
+) -> std::collections::HashMap<u64, [f64; 3]> {
+    use std::collections::HashMap;
+
+    // R8 cells inside the current R4 hex (2401 cells). Per cell we precompute
+    // centre lat/lon, ground elevation, and the longitude-degree variant of
+    // the cap (cos(lat)-scaled) so the inner loop runs no `cos()` per
+    // (segment, cell) pair.
+    // Bbox prefilter operates on horizontal distance — use the
+    // horizontal cap, not the slant cap. They're numerically equal
+    // today but the geometry is what's being filtered here.
+    let cap_deg_lat = meters_to_lat_deg(AIRCRAFT_MAX_HORIZONTAL_REACH_M);
+    let cell_centers: Vec<(u64, f64, f64, f64, f64)> = r4_hex
+        .children(h3o::Resolution::Eight)
+        .map(|c| {
+            let ll = h3o::LatLng::from(c);
+            let lat = ll.lat();
+            let lon = ll.lng();
+            let elev = rasters.elevation(lat, lon);
+            let cap_deg_lon = meters_to_lon_deg(lat, AIRCRAFT_MAX_HORIZONTAL_REACH_M);
+            (u64::from(c), lat, lon, elev, cap_deg_lon)
+        })
+        .collect();
+    let min_cell_elev = cell_centers
+        .iter()
+        .map(|(_, _, _, e, _)| *e)
+        .fold(f64::INFINITY, f64::min);
+    let pre_alt_threshold = min_cell_elev + AIRCRAFT_FAR_FIELD_THRESHOLD_M;
+
+    // Parallel fold-reduce over segments. Each thread folds into its own
+    // local HashMap; final reduce merges them. Sequential build was 30+ s
+    // per R4 — over the Fastify popup worker timeout. The pre-filter
+    // against the lowest cell elevation drops segments whose min altitude
+    // can't possibly clear the gate for any cell in this R4.
+    use rayon::prelude::*;
+    segments
+        .par_iter()
+        .filter(|seg| {
+            !seg.on_ground
+                && seg.ground_context == GROUND_CONTEXT_NONE
+                && seg.count_weight > 0.0
+                && (seg.start_alt_m.min(seg.end_alt_m) as f64) > pre_alt_threshold
+        })
+        .fold(
+            HashMap::<u64, [f64; 3]>::new,
+            |mut local, seg| {
+                let count_weight = seg.count_weight as f64;
+                let period = seg.period.min(2) as usize;
+                let seg_min_alt = seg.start_alt_m.min(seg.end_alt_m) as f64;
+                let seg_lat_min = seg.start_lat.min(seg.end_lat);
+                let seg_lat_max = seg.start_lat.max(seg.end_lat);
+                let seg_lon_min = seg.start_lon.min(seg.end_lon);
+                let seg_lon_max = seg.start_lon.max(seg.end_lon);
+
+                for (cell_id, cell_lat, cell_lon, cell_elev, cap_deg_lon) in &cell_centers {
+                    if !segment_in_palt_raster(seg_min_alt, *cell_elev) {
+                        continue;
+                    }
+                    if *cell_lat < seg_lat_min - cap_deg_lat
+                        || *cell_lat > seg_lat_max + cap_deg_lat
+                    {
+                        continue;
+                    }
+                    if *cell_lon < seg_lon_min - cap_deg_lon
+                        || *cell_lon > seg_lon_max + cap_deg_lon
+                    {
+                        continue;
+                    }
+                    let Some((sel, _cpa)) = segment_sel_with_overrides(
+                        seg,
+                        *cell_lat,
+                        *cell_lon,
+                        *cell_elev,
+                        seg.start_alt_m as f64,
+                        seg.end_alt_m as f64,
+                        false,
+                        None,
+                    ) else {
+                        continue;
+                    };
+                    let energy =
+                        (sel * std::f64::consts::LN_10 * 0.1).exp() * count_weight;
+                    let entry = local.entry(*cell_id).or_insert([0.0; 3]);
+                    entry[period] += energy;
+                }
+                local
+            },
+        )
+        .reduce(
+            HashMap::<u64, [f64; 3]>::new,
+            |mut a, b| {
+                for (k, v) in b {
+                    let entry = a.entry(k).or_insert([0.0; 3]);
+                    entry[0] += v[0];
+                    entry[1] += v[1];
+                    entry[2] += v[2];
+                }
+                a
+            },
+        )
+}
+
 pub fn segment_sel_airport_ground(
     seg: &AircraftSegment,
     rx_lat: f64,
@@ -1912,11 +2104,34 @@ fn segment_sel_with_overrides(
         }
     }
 
-    // NPD lookup
+    // NPD lookup (covers physics tail beyond 25 000 ft via per-profile alpha_eff).
     let sel_npd = interpolate_sel(profile, cpa.d_p_m * FT_PER_M, seg.is_departure);
 
-    // Corrections
+    // Speed correction is the only correction that survives at cruise — for a
+    // jet at 450 kt vs the 160 kt NPD reference it is −4.5 dB, far too large
+    // to drop. Always evaluate it.
     let dv = delta_v(seg.speed_kt as f64, profile);
+
+    // CFFK fast path: above the NPD table boundary (slant > 7.62 km) the
+    // remaining Doc 29 corrections are all bounded sub-dB and dominated by
+    // pure geometry / atmospheric absorption baked into the NPD tail:
+    //   - lateral attenuation λ is identically 0 for elevation angle > 50°,
+    //     and any cruise overhead geometry has β > 50°;
+    //   - ΔI peaks at ~0.4 dB for wing-installed types and falls to 0 at
+    //     β = 90° — the typical cruise overhead;
+    //   - ΔF approaches 0 dB for segments where the CPA is interior and the
+    //     segment is several `d_bar` long, both true for cruise.
+    // Skip them. Validates against full Doc 29 within ~0.3 dB at slant ≥
+    // 7.62 km. Pipeline's `segment_energy_fast` mirrors this branch.
+    if cpa.d_p_m > AIRCRAFT_FAR_FIELD_THRESHOLD_M {
+        let sel = sel_npd + dv;
+        if sel < 20.0 {
+            return None;
+        }
+        return Some((sel, cpa));
+    }
+
+    // Near-field path: full Doc 29 corrections.
     let df = delta_f(cpa.q_m, cpa.seg_len_m, profile.d_bar_m);
 
     // Lateral attenuation applied to all profiles including profile 6 (LightGA+Rotorcraft).
@@ -2186,6 +2401,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         };
         let result = segment_sel(&seg, 50.005, 14.005, 300.0, &FlatGround);
         assert!(result.is_some(), "should compute SEL for nearby segment");
@@ -2219,6 +2435,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         };
         let result = segment_sel(&seg, 50.0, 14.0, 300.0, &FlatGround);
         assert!(result.is_none(), "should be None for far segment");
@@ -2262,6 +2479,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         };
         assert!(is_ground_stale_segment(&seg, &FlatGround));
 
@@ -2269,7 +2487,7 @@ mod tests {
             start_alt_m: 320.0,
             end_alt_m: 340.0,
             ..seg
-        };
+            };
         assert!(!is_ground_stale_segment(&airborne, &FlatGround));
     }
 
@@ -2294,6 +2512,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         };
         let airport_lines = vec![AirportLine {
             osm_id: 1,
@@ -2332,6 +2551,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         };
         let airport_areas = vec![AirportArea {
             osm_id: 2,
@@ -2369,13 +2589,14 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         };
         assert!(!is_airport_ground_segment(&off_airport, &FlatGround));
 
         let airport_ground = AircraftSegment {
             ground_context: GROUND_CONTEXT_AIRPORT_LINE,
             ..off_airport
-        };
+            };
         assert!(is_airport_ground_segment(&airport_ground, &FlatGround));
         assert!(is_airport_context_candidate_raw(
             &airport_ground,
@@ -2404,6 +2625,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         };
 
         let normal = segment_sel(&seg, 50.0004, 14.0, 254.0, &FlatGround)
@@ -2440,6 +2662,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_RUNWAY_ROLL,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         };
 
         let runway_arr = ground_ops_model(&seg, GROUND_OPS_KIND_RUNWAY_ROLL);
@@ -2482,6 +2705,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_RUNWAY_ROLL,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         };
         let rasters = FlatGround;
         let model = ground_ops_model(&seg, GROUND_OPS_KIND_RUNWAY_ROLL);
@@ -2521,11 +2745,12 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_TAXI,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         };
         let slow_seg = AircraftSegment {
             speed_kt: 1.5,
             ..fast_seg
-        };
+            };
 
         let fast = ground_ops_model(&fast_seg, GROUND_OPS_KIND_TAXI);
         let slow = ground_ops_model(&slow_seg, GROUND_OPS_KIND_TAXI);
@@ -2561,6 +2786,7 @@ mod tests {
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         }
     }
 

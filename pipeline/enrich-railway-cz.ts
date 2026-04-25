@@ -13,14 +13,16 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
+import { SOURCE_ID_CZ_SZCD_GTFS } from './lib/source-ids.generated.js'
+import { flatDist, pointToSegmentDist } from './lib/spatial.js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('cz-szcd-gtfs')!.id
+const MY_SOURCE_ID = SOURCE_ID_CZ_SZCD_GTFS
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -237,34 +239,7 @@ async function getStationGPS(): Promise<Map<string, StationGPS>> {
 
 // ── Step 3: Match CZPTT station-pairs to OSM railway segments ──
 
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-
 /** Distance from point P to line segment A→B in meters (flat-earth). */
-function pointToSegmentDist(
-  pLat: number, pLon: number,
-  aLat: number, aLon: number,
-  bLat: number, bLon: number,
-): number {
-  const cosLat = Math.cos((pLat + (aLat + bLat) / 2) / 2 * Math.PI / 180)
-  // Convert to local meters relative to P
-  const ax = (aLon - pLon) * 111320 * cosLat
-  const ay = (aLat - pLat) * 110540
-  const bx = (bLon - pLon) * 111320 * cosLat
-  const by = (bLat - pLat) * 110540
-  const dx = bx - ax, dy = by - ay
-  const lenSq = dx * dx + dy * dy
-  if (lenSq < 1) return Math.sqrt(ax * ax + ay * ay) // degenerate (A≈B)
-  // Project P onto AB, clamp t to [0,1]
-  const t = Math.max(0, Math.min(1, (-ax * dx + -ay * dy) / lenSq))
-  const cx = ax + t * dx, cy = ay + t * dy
-  return Math.sqrt(cx * cx + cy * cy)
-}
-
 /** Normalize station name for fuzzy matching */
 function normName(s: string): string {
   return s.toLowerCase()
@@ -363,11 +338,11 @@ function enrichHexes(
     // Seed output columns from existing Arrow state; priority rule decides per row.
     const existingTrainsPax = table.getChild('trains_passenger')
     const existingTrainsFrt = table.getChild('trains_freight')
-    const existingDatasetId = table.getChild('railways_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const trainsPax = new Int32Array(n)
     const trainsFrt = new Int32Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
     const matchedKeys: string[] = new Array(n).fill('')
     const mids: { lat: number; lon: number }[] = new Array(n)
     let hexMatched = 0
@@ -375,7 +350,7 @@ function enrichHexes(
     for (let i = 0; i < n; i++) {
       trainsPax[i] = (existingTrainsPax?.get(i) as number) ?? 0
       trainsFrt[i] = (existingTrainsFrt?.get(i) as number) ?? 0
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
 
     for (let i = 0; i < n; i++) {
@@ -388,7 +363,7 @@ function enrichHexes(
       mids[i] = { lat: midLat, lon: midLon }
 
       // Priority gate: if a higher-priority dataset already owns this row, leave it.
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
 
       let bestDist = 5000
       let bestSeg: SegmentCount | null = null
@@ -409,7 +384,7 @@ function enrichHexes(
         // Whole-row atomic write — payload + dataset_id together.
         trainsPax[i] = bestSeg.passenger
         trainsFrt[i] = bestSeg.freight
-        datasetId[i] = MY_DATASET_ID
+        sourceId[i] = MY_SOURCE_ID
         matchedKeys[i] = bestKey
         hexMatched++
       }
@@ -460,13 +435,13 @@ function enrichHexes(
     // Copy all existing columns + add train counts + parallel_divisor + dataset_id
     const columns: Record<string, any> = {}
     for (const field of table.schema.fields) {
-      if (['trains_passenger', 'trains_freight', 'parallel_divisor', 'railways_dataset_id'].includes(field.name)) continue
+      if (['trains_passenger', 'trains_freight', 'parallel_divisor', 'source_id'].includes(field.name)) continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
     columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
     columns['parallel_divisor'] = vectorFromArray(parallelDiv, new Uint8())
-    columns['railways_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
 
     const newTable = makeTable(columns)
     writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))

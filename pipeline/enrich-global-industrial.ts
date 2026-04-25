@@ -2,7 +2,7 @@
  * Global industrial enrichment: GPPD (power plants) + E-PRTR (EU facilities).
  *
  * Downloads two global/EU datasets, spatial-joins to OSM industrial polygons,
- * and writes nace_4digit + industrial_dataset_id directly into industrial.arrow.
+ * and writes nace_4digit + source_id directly into industrial.arrow.
  *
  * WHY: OSM only gives generic "landuse=industrial". GPPD provides ~35K power plants
  * worldwide (→ NACE 35, electricity generation). E-PRTR provides ~30K EU regulated
@@ -22,8 +22,10 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 
 import { resolve } from 'node:path'
 import { makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
 import { latLngToCell } from 'h3-js'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
+import { SOURCE_ID_EUROPE_EPRTR, SOURCE_ID_GLOBAL_GPPD } from './lib/source-ids.generated.js'
+import { flatDist } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -42,8 +44,8 @@ const EPRTR_URLS = [
   'https://industry.eea.europa.eu/download?format=csv',
 ]
 
-const GPPD_DATASET_ID = DATASETS_BY_KEY.get('global-gppd')!.id
-const EPRTR_DATASET_ID = DATASETS_BY_KEY.get('europe-eprtr')!.id
+const GPPD_DATASET_ID = SOURCE_ID_GLOBAL_GPPD
+const EPRTR_DATASET_ID = SOURCE_ID_EUROPE_EPRTR
 
 // ── Types ──
 
@@ -56,13 +58,6 @@ interface Facility {
 }
 
 // ── Flat-earth distance (meters) ──
-
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
 
 // ── Step 1: Download GPPD ──
 
@@ -332,16 +327,16 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
         const clon = table.getChild('centroid_lon')
         const osmIds = table.getChild('osm_id')
         const existingNaceCol = table.getChild('nace_4digit')
-        const existingDatasetIdCol = table.getChild('industrial_dataset_id')
+        const existingDatasetIdCol = table.getChild('source_id')
         if (!clat || !clon || !osmIds) return table
 
         const newNace = new Uint16Array(n)
         const newDatasetId = new Uint16Array(n)
-        const existingDatasetId = new Uint16Array(n)
+        const existingSourceId = new Uint16Array(n)
         for (let j = 0; j < n; j++) {
           newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
-          existingDatasetId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
-          newDatasetId[j] = existingDatasetId[j]
+          existingSourceId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
+          newDatasetId[j] = existingSourceId[j]
         }
         let hexMatched = 0
         let anyChanged = false
@@ -365,7 +360,7 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
             const nace6 = parseInt(bestFac.nace, 10) || 0
             const nace4 = Math.floor(nace6 / 100)
             const myId = bestFac.source === 'eprtr' ? EPRTR_DATASET_ID : GPPD_DATASET_ID
-            const existingId = existingDatasetId[i]
+            const existingId = existingSourceId[i]
             if (shouldOverwrite(existingId, myId)) {
               newNace[i] = nace4
               newDatasetId[i] = myId
@@ -381,11 +376,11 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
 
         const columns: Record<string, any> = {}
         for (const field of table.schema.fields) {
-          if (field.name === 'nace_4digit' || field.name === 'industrial_dataset_id') continue
+          if (field.name === 'nace_4digit' || field.name === 'source_id') continue
           columns[field.name] = table.getChild(field.name)!
         }
-        columns['nace_4digit'] = vectorFromArray(Array.from(newNace), new Uint16())
-        columns['industrial_dataset_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
+        columns['nace_4digit'] = vectorFromArray(newNace, new Uint16())
+        columns['source_id'] = vectorFromArray(newDatasetId, new Uint16())
         return makeTable(columns)
       })
     } catch (err: any) {
@@ -461,7 +456,7 @@ async function main() {
 ## Matching
 - Spatial join: facility lat/lon → nearest OSM industrial polygon centroid within 500m
 - H3R4 pre-filter: only compare facilities and polygons in the same H3 resolution-4 hex
-- Written directly to industrial.arrow per-row (nace_4digit + industrial_dataset_id)
+- Written directly to industrial.arrow per-row (nace_4digit + source_id)
 - Dataset priority preserves national registries (cz-irz > europe-eprtr > global-gppd)
 
 ## Gaps

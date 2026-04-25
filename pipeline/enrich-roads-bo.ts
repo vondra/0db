@@ -61,11 +61,13 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
+import { SOURCE_ID_BO_NATIONAL_ROADS } from './lib/source-ids.generated.js'
+import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('bo-national-roads')!.id
+const MY_SOURCE_ID = SOURCE_ID_BO_NATIONAL_ROADS
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -116,9 +118,6 @@ const MINING_CORRIDORS: Array<[number, number, number, number]> = [
   [-21.5, -68.0, -19.0, -65.5],
 ]
 
-function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
-  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
-}
 function inAnyZone(lat: number, lon: number): boolean {
   for (const z of EXCLUDE_ZONES) if (inBbox(lat, lon, z.bbox)) return true
   return false
@@ -143,26 +142,6 @@ function boRegion(lat: number, lon: number): 'altiplano' | 'valles' | 'llanos' {
   return 'valles'
 }
 
-// Geometry
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-function pointToSegmentDist(pLat: number, pLon: number, aLat: number, aLon: number, bLat: number, bLon: number): number {
-  const cosLat = Math.cos(pLat * Math.PI / 180)
-  const px = pLon * 111320 * cosLat, py = pLat * 110540
-  const ax = aLon * 111320 * cosLat, ay = aLat * 110540
-  const bx = bLon * 111320 * cosLat, by = bLat * 110540
-  const dx = bx - ax, dy = by - ay
-  const lenSq = dx * dx + dy * dy
-  if (lenSq < 1e-6) return flatDist(pLat, pLon, aLat, aLon)
-  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq
-  t = Math.max(0, Math.min(1, t))
-  const cx = ax + t * dx, cy = ay + t * dy
-  return Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy))
-}
 function pointToPolylineDist(pLat: number, pLon: number, coords: [number, number][]): number {
   let best = Infinity
   for (let i = 0; i < coords.length - 1; i++) {
@@ -350,23 +329,18 @@ async function main() {
     const endLat = table.getChild('end_lat')!
     const endLon = table.getChild('end_lon')!
     const roadClass = table.getChild('road_class')!
-
-    const existingSource = table.getChild('traffic_source')
-    const existingDatasetId = table.getChild('roads_dataset_id')
+    const existingSourceId = table.getChild('source_id')
     const existingLight = table.getChild('aadt_light')
     const existingMed = table.getChild('aadt_medium')
     const existingHvy = table.getChild('aadt_heavy')
     const existingMoto = table.getChild('aadt_moto')
-
-    const trafficSource = new Uint8Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
     const aadtLight = new Int32Array(n)
     const aadtMedium = new Int32Array(n)
     const aadtHeavy = new Int32Array(n)
     const aadtMoto = new Int32Array(n)
     for (let i = 0; i < n; i++) {
-      trafficSource[i] = (existingSource?.get(i) as number) ?? 0
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
       aadtLight[i] = (existingLight?.get(i) as number) ?? 0
       aadtMedium[i] = (existingMed?.get(i) as number) ?? 0
       aadtHeavy[i] = (existingHvy?.get(i) as number) ?? 0
@@ -377,7 +351,7 @@ async function main() {
     let hexMatched = 0
 
     for (let i = 0; i < n; i++) {
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) { alreadyEnriched++; continue }
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) { alreadyEnriched++; continue }
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -403,33 +377,25 @@ async function main() {
           matchedSpatial++
         }
       }
-      if (aadt === 0) {
-        const CLASS_AADT = region === 'altiplano' ? CLASS_AADT_ALT
-          : region === 'valles' ? CLASS_AADT_VALLES
-            : CLASS_AADT_LLANOS
-        aadt = (CLASS_AADT[cls] ?? 300) * mult
-        matchedClass++
-      }
+      if (aadt === 0) continue  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
       const split = splitVehicles(aadt, tier, region, mining && tier === 0)
       aadtLight[i] = split.light
       aadtMedium[i] = split.medium
       aadtHeavy[i] = split.heavy
       aadtMoto[i] = split.moto
-      trafficSource[i] = 1
-      datasetId[i] = MY_DATASET_ID
+      sourceId[i] = MY_SOURCE_ID
       hexMatched++
     }
 
     if (hexMatched > 0) {
       const columns: Record<string, any> = {}
       for (const field of table.schema.fields) {
-        if (['traffic_source', 'aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'roads_dataset_id'].includes(field.name)) continue
+        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
         columns[field.name] = table.getChild(field.name)!
       }
-      columns['traffic_source'] = vectorFromArray(trafficSource, new Uint8())
 
-      columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
       columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
       columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
       columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())

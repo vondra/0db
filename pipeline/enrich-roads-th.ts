@@ -55,11 +55,13 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
+import { SOURCE_ID_TH_NATIONAL_ROADS } from './lib/source-ids.generated.js'
+import { inBbox } from './lib/spatial.js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('th-national-roads')!.id
+const MY_SOURCE_ID = SOURCE_ID_TH_NATIONAL_ROADS
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -89,9 +91,6 @@ const EXCLUDE_ZONES: Array<{ name: string; bbox: [number, number, number, number
 // Bangkok urban bbox (×1.5 AADT multiplier)
 const BANGKOK_BBOX: [number, number, number, number] = [13.5, 100.3, 14.2, 100.9]
 
-function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
-  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
-}
 function inAnyZone(lat: number, lon: number): boolean {
   for (const z of EXCLUDE_ZONES) if (inBbox(lat, lon, z.bbox)) return true
   return false
@@ -284,23 +283,18 @@ async function main() {
     const endLon = table.getChild('end_lon')!
     const refCol = table.getChild('ref')
     const roadClass = table.getChild('road_class')!
-
-    const existingSource = table.getChild('traffic_source')
-    const existingDatasetId = table.getChild('roads_dataset_id')
+    const existingSourceId = table.getChild('source_id')
     const existingLight = table.getChild('aadt_light')
     const existingMed = table.getChild('aadt_medium')
     const existingHvy = table.getChild('aadt_heavy')
     const existingMoto = table.getChild('aadt_moto')
-
-    const trafficSource = new Uint8Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
     const aadtLight = new Int32Array(n)
     const aadtMedium = new Int32Array(n)
     const aadtHeavy = new Int32Array(n)
     const aadtMoto = new Int32Array(n)
     for (let i = 0; i < n; i++) {
-      trafficSource[i] = (existingSource?.get(i) as number) ?? 0
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
       aadtLight[i] = (existingLight?.get(i) as number) ?? 0
       aadtMedium[i] = (existingMed?.get(i) as number) ?? 0
       aadtHeavy[i] = (existingHvy?.get(i) as number) ?? 0
@@ -311,7 +305,7 @@ async function main() {
     let hexMatched = 0
 
     for (let i = 0; i < n; i++) {
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) { alreadyEnriched++; continue }
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) { alreadyEnriched++; continue }
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -373,34 +367,26 @@ async function main() {
         }
       }
 
-      // Tier 4: Thailand class defaults
-      if (!source) {
-        const def = TH_DEFAULTS[cls] || TH_DEFAULTS[5]
-        const aadt = isBkk ? def.bkk : def.aadt
-        const split = thaiClassSplit(aadt, isBkk)
-        aadtLi = split.light; aadtMe = split.medium; aadtHv = split.heavy; aadtMo = split.moto
-        source = 'default'
-        matchedClassDefault++
-      }
+      // A.1: no spatial or ref match → leave source_id = 0, engine applies
+      // country-tier cascade (TH rural + Bangkok city overrides in defaults.rs).
+      if (!source) continue
 
       aadtLight[i] = aadtLi
       aadtMedium[i] = aadtMe
       aadtHeavy[i] = aadtHv
       aadtMoto[i] = aadtMo
-      trafficSource[i] = 1
-      datasetId[i] = MY_DATASET_ID
+      sourceId[i] = MY_SOURCE_ID
       hexMatched++
     }
 
     if (hexMatched > 0) {
       const columns: Record<string, any> = {}
       for (const field of table.schema.fields) {
-        if (['traffic_source', 'aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'roads_dataset_id'].includes(field.name)) continue
+        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
         columns[field.name] = table.getChild(field.name)!
       }
-      columns['traffic_source'] = vectorFromArray(trafficSource, new Uint8())
 
-      columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
       columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
       columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
       columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())

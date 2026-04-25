@@ -10,20 +10,20 @@ import {
   NoiseOnflyRequestError,
   NoiseOnflySupervisor,
 } from '../engine/noise-onfly-supervisor.js'
-import { DATASETS_BY_ID } from '../../../pipeline/lib/enrichment-datasets.js'
+import { SOURCES_BY_ID } from '../../../pipeline/lib/sources.js'
 
 /**
- * Build a compact provenance object for popup display. `dataset_id = 0` returns
- * the seeded "Unspecified / pre-provenance legacy" entry — never undefined so the
- * frontend never crashes on a missing lookup.
+ * Build a compact provenance object for popup display. `source_id = 0` returns
+ * the seeded "Unspecified / pre-provenance legacy" entry — never undefined so
+ * the frontend never crashes on a missing lookup.
  */
-function lookupProvenance(datasetId: number | null | undefined):
+function lookupProvenance(sourceId: number | null | undefined):
   | { name: string; year: number | null; license: string | null; url: string | null }
   | null {
-  if (datasetId == null) return null
-  const d = DATASETS_BY_ID.get(datasetId) ?? DATASETS_BY_ID.get(0)
-  if (!d) return null
-  return { name: d.name, year: d.year, license: d.license, url: d.url }
+  if (sourceId == null) return null
+  const src = SOURCES_BY_ID.get(sourceId) ?? SOURCES_BY_ID.get(0)
+  if (!src) return null
+  return { name: src.name, year: src.year, license: src.license, url: src.url }
 }
 
 const SOURCE_READER_PATH = resolve(import.meta.dirname, '../../../engine/source-reader/target/release/libsource_reader.so')

@@ -3,7 +3,7 @@
  *
  * Downloads shapefile from MIT open data portal, converts to GeoJSON via ogr2ogr,
  * parses monitoring station points (Strada + TGM value), matches to OSM road
- * segments by road ref + proximity, adds aadt_light + traffic_source=1 to Arrow.
+ * segments by road ref + proximity, adds aadt_light + source_id to Arrow.
  *
  * Data format: 767 monitoring stations (Point geometry in UTM 32N), each with:
  *   Strada — road ref (e.g. "A1", "SS106", "RA05")
@@ -26,11 +26,13 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
+import { SOURCE_ID_IT_NATIONAL_ROADS } from './lib/source-ids.generated.js'
+import { flatDist } from './lib/spatial.js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('it-national-roads')!.id
+const MY_SOURCE_ID = SOURCE_ID_IT_NATIONAL_ROADS
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -246,25 +248,22 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
 
     // Read existing enrichment columns
     const existingAadtLight = table.getChild('aadt_light')
-    const existingTrafficSource = table.getChild('traffic_source')
-    const existingDatasetId = table.getChild('roads_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const aadtLight = new Int32Array(n)
-    const trafficSource = new Uint8Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
 
     // Preserve existing enrichments
     for (let i = 0; i < n; i++) {
       aadtLight[i] = existingAadtLight ? (existingAadtLight.get(i) as number ?? 0) : 0
-      trafficSource[i] = existingTrafficSource ? (existingTrafficSource.get(i) as number ?? 0) : 0
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
 
     let hexMatched = 0
 
     for (let i = 0; i < n; i++) {
       // Skip already enriched
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
 
       const roadClass = roadClassCol ? (roadClassCol.get(i) as number) : 5
       if (!matchByClass.has(roadClass)) matchByClass.set(roadClass, { matched: 0, total: 0 })
@@ -295,8 +294,7 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
       if (bestDist > 30_000) continue
 
       aadtLight[i] = best.aadt
-      trafficSource[i] = 1
-      datasetId[i] = MY_DATASET_ID
+      sourceId[i] = MY_SOURCE_ID
       hexMatched++
       matchByClass.get(roadClass)!.matched++
     }
@@ -306,13 +304,12 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
     // Copy ALL existing columns by iterating schema
     const columns: Record<string, any> = {}
     for (const field of table.schema.fields) {
-      if (field.name === 'aadt_light' || field.name === 'traffic_source') continue
+      if (field.name === 'aadt_light' || field.name === 'source_id') continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-    columns['traffic_source'] = vectorFromArray(trafficSource, new Uint8())
 
-    columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
 
     const newTable = makeTable(columns)
     // MUST use 'file' format — Rust FileReader requires ARROW1 magic bytes
@@ -405,13 +402,6 @@ function normalizeOsmRef(ref: string): string {
 }
 
 /** Flat-earth distance in meters */
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-
 // ── Main ──
 
 async function main() {

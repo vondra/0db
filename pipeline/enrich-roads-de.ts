@@ -18,17 +18,19 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import proj4 from 'proj4'
 import { cellToLatLng } from 'h3-js'
+import { SOURCE_ID_DE_BAST_AUTOBAHN, SOURCE_ID_DE_BAST_BUNDESSTRASSEN } from './lib/source-ids.generated.js'
+import { haversineM } from './lib/spatial.js'
 
 // CensusSection.ref starts with 'A' for Autobahn, 'B' for Bundesstraßen — pick per row.
-const AUTOBAHN_DATASET_ID = DATASETS_BY_KEY.get('de-bast-autobahn')!.id
-const BUNDESSTR_DATASET_ID = DATASETS_BY_KEY.get('de-bast-bundesstrassen')!.id
-const MY_DATASET_ID = AUTOBAHN_DATASET_ID  // default for gating; actual write picks per row
+const AUTOBAHN_DATASET_ID = SOURCE_ID_DE_BAST_AUTOBAHN
+const BUNDESSTR_DATASET_ID = SOURCE_ID_DE_BAST_BUNDESSTRASSEN
+const MY_SOURCE_ID = AUTOBAHN_DATASET_ID  // default for gating; actual write picks per row
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -220,14 +222,6 @@ function findNearby(grid: Map<string, CensusSection[]>, lat: number, lon: number
   return result
 }
 
-function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLon = (lon2 - lon1) * Math.PI / 180
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-}
-
 // ── Step 3: Enrich Arrow files ──
 
 async function enrichArrows(sections: CensusSection[]) {
@@ -282,12 +276,11 @@ async function enrichArrows(sections: CensusSection[]) {
     const endLats = table.getChild('end_lat')
     const endLons = table.getChild('end_lon')
     const roadClasses = table.getChild('road_class')
-    const existingSource = table.getChild('traffic_source')
     const existingLight = table.getChild('aadt_light')
     const existingMedium = table.getChild('aadt_medium')
     const existingHeavy = table.getChild('aadt_heavy')
     const existingMoto = table.getChild('aadt_moto')
-    const existingDatasetId = table.getChild('roads_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     if (!osmIds || !startLats || !startLons) continue
 
@@ -296,8 +289,7 @@ async function enrichArrows(sections: CensusSection[]) {
     const aadtMedium = new Int32Array(numRows)
     const aadtHeavy = new Int32Array(numRows)
     const aadtMoto = new Int32Array(numRows)
-    const trafficSource = new Uint8Array(numRows)
-    const datasetId = new Uint16Array(numRows)
+    const sourceId = new Uint16Array(numRows)
 
     // Seed output columns from existing Arrow state; priority rule decides per row.
     for (let i = 0; i < numRows; i++) {
@@ -305,8 +297,7 @@ async function enrichArrows(sections: CensusSection[]) {
       aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
       aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
       aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-      trafficSource[i] = (existingSource?.get(i) as number) ?? 0
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
 
     let hexMatched = 0
@@ -318,9 +309,9 @@ async function enrichArrows(sections: CensusSection[]) {
       totalSegments++
 
       // Priority gate: if a higher-priority dataset already owns this row, leave it.
-      // Both BASt ids have priority 80, so gating with MY_DATASET_ID is representative.
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) {
-        if (datasetId[i] !== 0) preservedSegments++
+      // Both BASt ids have priority 80, so gating with MY_SOURCE_ID is representative.
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) {
+        if (sourceId[i] !== 0) preservedSegments++
         continue
       }
 
@@ -375,8 +366,7 @@ async function enrichArrows(sections: CensusSection[]) {
         aadtMedium[i] = bestSection.aadt_medium
         aadtHeavy[i] = bestSection.aadt_heavy
         aadtMoto[i] = bestSection.aadt_moto
-        trafficSource[i] = 1
-        datasetId[i] = pickedId
+        sourceId[i] = pickedId
         hexMatched++
         matchedSegments++
         matchByClass[className].matched++
@@ -387,15 +377,14 @@ async function enrichArrows(sections: CensusSection[]) {
       // Rebuild table with enrichment columns
       const columns: Record<string, any> = {}
       for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'traffic_source', 'roads_dataset_id'].includes(field.name)) continue
+        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
         columns[field.name] = table.getChild(field.name)!
       }
-      columns['aadt_light'] = vectorFromArray(Array.from(aadtLight), new Int32())
-      columns['aadt_medium'] = vectorFromArray(Array.from(aadtMedium), new Int32())
-      columns['aadt_heavy'] = vectorFromArray(Array.from(aadtHeavy), new Int32())
-      columns['aadt_moto'] = vectorFromArray(Array.from(aadtMoto), new Int32())
-      columns['traffic_source'] = vectorFromArray(Array.from(trafficSource), new Uint8())
-      columns['roads_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+      columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
+      columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
+      columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
+      columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
+      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
 
       const enrichedTable = makeTable(columns)
       const outBuf = tableToIPC(enrichedTable, 'file')

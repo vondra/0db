@@ -37,11 +37,13 @@ import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { latLngToCell, cellToLatLng } from 'h3-js'
+import { SOURCE_ID_TH_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
+import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('th-national-railway')!.id
+const MY_SOURCE_ID = SOURCE_ID_TH_NATIONAL_RAILWAY
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -64,9 +66,6 @@ const EXCLUDE_ZONES: Array<{ name: string; bbox: [number, number, number, number
   { name: 'Vietnam',  bbox: [8.0, 104.5, 23.5, 109.5] },
   { name: 'Malaysia', bbox: [1.0, 99.5, 6.3, 104.5] },
 ]
-function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
-  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
-}
 function inExclusion(lat: number, lon: number): boolean {
   for (const z of EXCLUDE_ZONES) if (inBbox(lat, lon, z.bbox)) return true
   return false
@@ -373,30 +372,6 @@ function defaultTrains(railType: number, usage: number): { pax: number; frt: num
   return { pax: 20, frt: 10 }                      // SRT main line (Bangkok↔Chiang Mai etc.)
 }
 
-// Geometry helpers
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-function pointToSegmentDist(pLat: number, pLon: number, aLat: number, aLon: number, bLat: number, bLon: number): number {
-  const cosLat = Math.cos(pLat * Math.PI / 180)
-  const px = pLon * 111320 * cosLat
-  const py = pLat * 110540
-  const ax = aLon * 111320 * cosLat
-  const ay = aLat * 110540
-  const bx = bLon * 111320 * cosLat
-  const by = bLat * 110540
-  const dx = bx - ax, dy = by - ay
-  const lenSq = dx * dx + dy * dy
-  if (lenSq < 1e-6) return flatDist(pLat, pLon, aLat, aLon)
-  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq
-  t = Math.max(0, Math.min(1, t))
-  const cx = ax + t * dx, cy = ay + t * dy
-  return Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy))
-}
-
 function enrichHexes(allStopCounts: StopTrainCount[]): void {
   // Index stops by (hex, family)
   const stopsByHexFam = new Map<string, StopTrainCount[]>()
@@ -442,16 +417,16 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     const serviceCol = table.getChild('service')
     const existingPax = table.getChild('trains_passenger')
     const existingFrt = table.getChild('trains_freight')
-    const existingDatasetId = table.getChild('railways_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const trainsPax = new Int32Array(n)
     const trainsFrt = new Int32Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
     for (let i = 0; i < n; i++) {
       trainsPax[i] = (existingPax?.get(i) as number) ?? 0
       trainsFrt[i] = (existingFrt?.get(i) as number) ?? 0
 
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
     totalRails += n
 
@@ -473,7 +448,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     for (let i = 0; i < n; i++) {
       const service = (serviceCol?.get(i) as number) ?? 0
       if (service > 0) { skippedService++; continue }
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -510,7 +485,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
         if (bestStop) {
           trainsPax[i] = bestStop.trains_passenger
           trainsFrt[i] = bestStop.trains_freight
-          datasetId[i] = MY_DATASET_ID
+          sourceId[i] = MY_SOURCE_ID
           hexMatched++
           matchedGtfs++
           continue
@@ -521,7 +496,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
       const def = defaultTrains(rt, us)
       trainsPax[i] = def.pax
       trainsFrt[i] = def.frt
-      datasetId[i] = MY_DATASET_ID
+      sourceId[i] = MY_SOURCE_ID
       hexMatched++
       matchedDefaults++
     }
@@ -535,7 +510,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
       columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
       columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
 
-      columns['railways_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
       const newTable = makeTable(columns)
       writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
       hexesUpdated++

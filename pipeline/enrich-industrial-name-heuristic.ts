@@ -12,7 +12,7 @@
  *   - Scan ALL h3r4 hexes globally that contain industrial.arrow
  *   - For each OSM site, check the name field
  *   - Apply keyword rules in order — first match wins
- *   - Write nace_4digit + industrial_dataset_id directly to the arrow via
+ *   - Write nace_4digit + source_id directly to the arrow via
  *     withArrowWrite(). The dataset priority check preserves higher-authority
  *     entries (national registries, E-PRTR, GEM).
  *
@@ -23,15 +23,16 @@
 import { readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
+import { SOURCE_ID_INDUSTRIAL_NAME_HEURISTIC } from './lib/source-ids.generated.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 const PROGRESS_INTERVAL_MS = 10_000
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('industrial-name-heuristic')!.id
+const MY_SOURCE_ID = SOURCE_ID_INDUSTRIAL_NAME_HEURISTIC
 
 // ── Keyword → NACE rules ──
 // Order matters: first match wins.  More specific keywords before generic ones.
@@ -209,16 +210,16 @@ async function main() {
         const osmId = table.getChild('osm_id')
         const nameCol = table.getChild('name')
         const existingNaceCol = table.getChild('nace_4digit')
-        const existingDatasetIdCol = table.getChild('industrial_dataset_id')
+        const existingDatasetIdCol = table.getChild('source_id')
         if (!osmId || !nameCol) return table
 
         const newNace = new Uint16Array(n)
         const newDatasetId = new Uint16Array(n)
-        const existingDatasetId = new Uint16Array(n)
+        const existingSourceId = new Uint16Array(n)
         for (let j = 0; j < n; j++) {
           newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
-          existingDatasetId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
-          newDatasetId[j] = existingDatasetId[j]
+          existingSourceId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
+          newDatasetId[j] = existingSourceId[j]
         }
         let anyChanged = false
 
@@ -232,10 +233,10 @@ async function main() {
 
           const nace6 = parseInt(rule.nace, 10) || 0
           const nace4 = Math.floor(nace6 / 100)
-          const existingId = existingDatasetId[i]
-          if (shouldOverwrite(existingId, MY_DATASET_ID)) {
+          const existingId = existingSourceId[i]
+          if (shouldOverwrite(existingId, MY_SOURCE_ID)) {
             newNace[i] = nace4
-            newDatasetId[i] = MY_DATASET_ID
+            newDatasetId[i] = MY_SOURCE_ID
             if (existingId === 0) newEntries++
             labelCounts[rule.label] = (labelCounts[rule.label] ?? 0) + 1
             anyChanged = true
@@ -244,11 +245,11 @@ async function main() {
         if (!anyChanged) return table
         const columns: Record<string, any> = {}
         for (const field of table.schema.fields) {
-          if (field.name === 'nace_4digit' || field.name === 'industrial_dataset_id') continue
+          if (field.name === 'nace_4digit' || field.name === 'source_id') continue
           columns[field.name] = table.getChild(field.name)!
         }
-        columns['nace_4digit'] = vectorFromArray(Array.from(newNace), new Uint16())
-        columns['industrial_dataset_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
+        columns['nace_4digit'] = vectorFromArray(newNace, new Uint16())
+        columns['source_id'] = vectorFromArray(newDatasetId, new Uint16())
         return makeTable(columns)
       })
     } catch { /* continue */ }

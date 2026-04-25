@@ -172,8 +172,7 @@ pub struct RoadResult {
     pub aadt_medium: i32,
     pub aadt_heavy: i32,
     pub aadt_moto: i32,
-    pub traffic_source: u8,
-    pub dataset_id: u16,
+    pub source_id: u16,
     pub dist_m: f64,
     pub cp_lat: f64,
     pub cp_lon: f64,
@@ -188,6 +187,10 @@ pub fn query_roads_from_batches(
     max_radius: f64,
 ) -> Vec<RoadResult> {
     let mut results = Vec::new();
+
+    // Admin resolved once per popup call — lat/lng is the query centre.
+    // Falls back to UNKNOWN → WORLD_DEFAULT when the table isn't loaded.
+    let admin = noise_compute::admin::admin_for_latlng(lat, lon);
 
     for batch in batches {
         let n = batch.num_rows();
@@ -217,8 +220,10 @@ pub fn query_roads_from_batches(
         let aadt_m = col_i32(batch, "aadt_medium");
         let aadt_h = col_i32(batch, "aadt_heavy");
         let aadt_mo = col_i32(batch, "aadt_moto");
-        let tsrc = col_u8(batch, "traffic_source");
-        let dataset_id_col = col_u16(batch, "roads_dataset_id");
+        // Arrow schema v5 (plan Commit 0.3): single source_id column replaces
+        // the legacy (roads_dataset_id, traffic_source) pair. Provenance is
+        // looked up via noise_compute::sources::provenance_of(source_id).
+        let source_id_col = col_u16(batch, "source_id");
 
         // All required columns must be present
         let (Some(osm_id), Some(slat), Some(slon), Some(elat), Some(elon)) =
@@ -228,6 +233,7 @@ pub fn query_roads_from_batches(
         };
 
         for i in 0..n {
+            let source_id = source_id_col.map(|a| a.value(i)).unwrap_or(0);
             let raw = noise_compute::normalize::RawRoadInput {
                 road_class: rclass.map(|a| a.value(i)).unwrap_or(0),
                 speed_limit: speed.map(|a| a.value(i)).unwrap_or(0),
@@ -238,12 +244,12 @@ pub fn query_roads_from_batches(
                 aadt_medium: aadt_m.map(|a| a.value(i)).unwrap_or(0),
                 aadt_heavy: aadt_h.map(|a| a.value(i)).unwrap_or(0),
                 aadt_moto: aadt_mo.map(|a| a.value(i)).unwrap_or(0),
-                traffic_source: tsrc.map(|a| a.value(i)).unwrap_or(0),
+                provenance: noise_compute::sources::provenance_of(source_id),
                 tunnel: tunnel_col.map(|a| a.value(i)).unwrap_or(false),
                 access: access_col.map(|a| a.value(i)).unwrap_or(0),
                 junction: junction_col.map(|a| a.value(i)).unwrap_or(0),
             };
-            let Some(norm) = noise_compute::normalize::normalize_road(raw) else {
+            let Some(norm) = noise_compute::normalize::normalize_road(raw, admin) else {
                 continue;
             };
             let effective_radius = max_radius.min(norm.max_distance_m);
@@ -294,8 +300,7 @@ pub fn query_roads_from_batches(
                 aadt_medium: raw.aadt_medium,
                 aadt_heavy: raw.aadt_heavy,
                 aadt_moto: raw.aadt_moto,
-                traffic_source: raw.traffic_source,
-                dataset_id: dataset_id_col.map(|a| a.value(i)).unwrap_or(0),
+                source_id,
                 dist_m: cp.dist_m,
                 cp_lat: cp.lat,
                 cp_lon: cp.lon,
@@ -346,7 +351,7 @@ pub struct RailResult {
     pub trains_passenger: i32,
     pub trains_freight: i32,
     pub parallel_divisor: u8,
-    pub dataset_id: u16,
+    pub source_id: u16,
     pub dist_m: f64,
     pub cp_lat: f64,
     pub cp_lon: f64,
@@ -389,7 +394,7 @@ pub fn query_railways_from_batches(
         let trains_pax = col_i32(batch, "trains_passenger");
         let trains_frt = col_i32(batch, "trains_freight");
         let par_div = col_u8(batch, "parallel_divisor");
-        let dataset_id_col = col_u16(batch, "railways_dataset_id");
+        let source_id_col = col_u16(batch, "source_id");
 
         for i in 0..n {
             let s_lat = slat.value(i);
@@ -433,7 +438,7 @@ pub fn query_railways_from_batches(
                 trains_passenger: trains_pax.map(|a| a.value(i)).unwrap_or(0),
                 trains_freight: trains_frt.map(|a| a.value(i)).unwrap_or(0),
                 parallel_divisor: par_div.map(|a| a.value(i)).unwrap_or(1),
-                dataset_id: dataset_id_col.map(|a| a.value(i)).unwrap_or(0),
+                source_id: source_id_col.map(|a| a.value(i)).unwrap_or(0),
                 dist_m: cp.dist_m,
                 cp_lat: cp.lat,
                 cp_lon: cp.lon,

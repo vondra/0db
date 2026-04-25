@@ -17,11 +17,13 @@ import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { latLngToCell } from 'h3-js'
+import { SOURCE_ID_ES_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
+import { flatDist, pointToSegmentDist } from './lib/spatial.js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('es-national-railway')!.id
+const MY_SOURCE_ID = SOURCE_ID_ES_NATIONAL_RAILWAY
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -540,40 +542,6 @@ function mergeStopCounts(perFeed: StopTrainCount[][]): StopTrainCount[] {
 
 // ── Step 3: Match stops to railway segments ──
 
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-
-function pointToSegmentDist(
-  pLat: number, pLon: number,
-  aLat: number, aLon: number,
-  bLat: number, bLon: number,
-): number {
-  const cosLat = Math.cos(pLat * Math.PI / 180)
-  const px = pLon * 111320 * cosLat
-  const py = pLat * 110540
-  const ax = aLon * 111320 * cosLat
-  const ay = aLat * 110540
-  const bx = bLon * 111320 * cosLat
-  const by = bLat * 110540
-
-  const dx = bx - ax
-  const dy = by - ay
-  const lenSq = dx * dx + dy * dy
-  if (lenSq < 1e-6) return flatDist(pLat, pLon, aLat, aLon)
-
-  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq
-  t = Math.max(0, Math.min(1, t))
-  const cx = ax + t * dx
-  const cy = ay + t * dy
-  const ddx = px - cx
-  const ddy = py - cy
-  return Math.sqrt(ddx * ddx + ddy * ddy)
-}
-
 function enrichHexes(allStopCounts: StopTrainCount[]): void {
   // Group stops by H3R4 hex
   const stopsByHex = new Map<string, StopTrainCount[]>()
@@ -614,17 +582,17 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
 
     const existingPax = table.getChild('trains_passenger')
     const existingFrt = table.getChild('trains_freight')
-    const existingDatasetId = table.getChild('railways_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const trainsPax = new Int32Array(n)
     const trainsFrt = new Int32Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
 
     for (let i = 0; i < n; i++) {
       trainsPax[i] = existingPax ? (existingPax.get(i) as number ?? 0) : 0
       trainsFrt[i] = existingFrt ? (existingFrt.get(i) as number ?? 0) : 0
 
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
       if (trainsPax[i] > 0 || trainsFrt[i] > 0) totalPreExisting++
     }
 
@@ -643,7 +611,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     for (let i = 0; i < n; i++) {
       const service = serviceCol ? (serviceCol.get(i) as number ?? 0) : 0
       if (service > 0) continue
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -674,7 +642,7 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
 
       trainsPax[i] = bestStop.trains_passenger
       trainsFrt[i] = bestStop.trains_freight
-      datasetId[i] = MY_DATASET_ID
+      sourceId[i] = MY_SOURCE_ID
       hexMatched++
     }
 
@@ -684,13 +652,13 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     for (const field of table.schema.fields) {
       if (field.name === 'trains_passenger') continue
       if (field.name === 'trains_freight') continue
-      if (field.name === 'railways_dataset_id') continue
+      if (field.name === 'source_id') continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
     columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
 
-    columns['railways_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
 
     const newTable = makeTable(columns)
     writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))

@@ -119,6 +119,16 @@ if [ "$RUN_SERVICE_TREE" = "1" ]; then
 fi
 
 log ""
+log "Building H3R4 → admin lookup table (data/prepared/h3r4-admin.bin) ..."
+(
+    cd "$SCRIPT_DIR"
+    if [ ! -d node_modules ]; then
+        npm ci 2>&1 | while IFS= read -r line; do log "    $line"; done
+    fi
+    DATA_YEAR="$YEAR" npm run build:h3-admin
+) 2>&1 | while IFS= read -r line; do log "  $line"; done
+
+log ""
 log "=== OSM extraction DONE ==="
 log "  $HEX_COUNT hex directories, $OUTPUT_SIZE total"
 log "  Time: $(printf '%dh%02dm%02ds' $((T_ELAPSED/3600)) $(((T_ELAPSED%3600)/60)) $((T_ELAPSED%60)))"

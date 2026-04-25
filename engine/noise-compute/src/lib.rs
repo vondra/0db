@@ -7,13 +7,19 @@
 //! - `compute_at_point()` — single receiver (popup)
 //! - `compute_batch()` — many receivers (pipeline)
 
+pub mod admin;
+pub mod city_consts_generated;
 pub mod confidence;
 pub mod constants;
+pub mod country_defaults_generated;
+pub mod defaults;
 pub mod emission;
 pub mod normalize;
+pub mod palt_io;
 pub mod periods;
 pub mod present;
 pub mod propagation;
+pub mod sources;
 pub mod traces;
 pub mod types;
 pub mod wkb;
@@ -150,6 +156,47 @@ pub fn compute_at_point_with_airports(
     config: &ComputeConfig,
     mut traces: Option<&mut TraceCollector>,
 ) -> NoiseResult {
+    compute_at_point_with_airports_palt(
+        receiver,
+        roads,
+        railways,
+        buildings,
+        industrial,
+        aircraft,
+        airport_lines,
+        airport_areas,
+        barriers,
+        rasters,
+        config,
+        traces.as_deref_mut(),
+        None,
+    )
+}
+
+/// Internal: same as `compute_at_point_with_airports` but takes an optional
+/// pre-baked R8 energy raster for cruise-altitude segments (PALT). When
+/// `aircraft_r8_raster` is `Some(_)`, segments with min_alt above
+/// `AIRCRAFT_FAR_FIELD_THRESHOLD_M` over the receiver are skipped from the
+/// per-segment loop and their cumulative energy comes from the raster
+/// lookup at the receiver's R8 cell. The popup query path uses this so it
+/// gets the *same* per-receiver totals as the pipeline (which also passes
+/// the raster — see `pipeline-worker/src/compute/aircraft.rs::
+/// compute_group_aircraft_scatter_accums`).
+pub fn compute_at_point_with_airports_palt(
+    receiver: &Receiver,
+    roads: &[RoadSegment],
+    railways: &[RailSegment],
+    buildings: &[PointSource],
+    industrial: &[PointSource],
+    aircraft: &[AircraftSegment],
+    airport_lines: &[AirportLine],
+    airport_areas: &[AirportArea],
+    barriers: &[Barrier],
+    rasters: &dyn RasterSampler,
+    config: &ComputeConfig,
+    mut traces: Option<&mut TraceCollector>,
+    aircraft_r8_raster: Option<&std::collections::HashMap<u64, [f64; 3]>>,
+) -> NoiseResult {
     let mut source_results = Vec::new();
     let mut all_contributors = Vec::new();
     let mut aircraft_band_data: Option<AircraftBandData> = None;
@@ -159,7 +206,7 @@ pub fn compute_at_point_with_airports(
         let (road_periods, road_contributors) =
             compute_roads(receiver, roads, barriers, rasters, traces.as_deref_mut());
         source_results.push(SourceResult {
-            source_type: SourceKind::Road,
+            source_type: LayerKind::Road,
             periods: road_periods.clone(),
             segment_count: roads.len(),
             displayed_count: present::display_count(&road_contributors),
@@ -172,7 +219,7 @@ pub fn compute_at_point_with_airports(
         let (rail_periods, rail_contributors) =
             compute_railways(receiver, railways, barriers, rasters, traces.as_deref_mut());
         source_results.push(SourceResult {
-            source_type: SourceKind::Railway,
+            source_type: LayerKind::Railway,
             periods: rail_periods,
             segment_count: railways.len(),
             displayed_count: present::display_count(&rail_contributors),
@@ -187,11 +234,11 @@ pub fn compute_at_point_with_airports(
             buildings,
             barriers,
             rasters,
-            SourceKind::Building,
+            LayerKind::Building,
             traces.as_deref_mut(),
         );
         source_results.push(SourceResult {
-            source_type: SourceKind::Building,
+            source_type: LayerKind::Building,
             periods: bld_periods,
             segment_count: buildings.len(),
             displayed_count: present::display_count(&bld_contributors),
@@ -206,11 +253,11 @@ pub fn compute_at_point_with_airports(
             industrial,
             barriers,
             rasters,
-            SourceKind::Industrial,
+            LayerKind::Industrial,
             traces.as_deref_mut(),
         );
         source_results.push(SourceResult {
-            source_type: SourceKind::Industrial,
+            source_type: LayerKind::Industrial,
             periods: ind_periods,
             segment_count: industrial.len(),
             displayed_count: present::display_count(&ind_contributors),
@@ -219,7 +266,7 @@ pub fn compute_at_point_with_airports(
     }
 
     // ── Aircraft (Doc 29 — SEPARATE from ISO 9613-2) ──
-    if !aircraft.is_empty() {
+    if !aircraft.is_empty() || aircraft_r8_raster.map_or(false, |r| !r.is_empty()) {
         let (air_periods, air_contributors, band_data) = compute_aircraft(
             receiver,
             aircraft,
@@ -229,10 +276,11 @@ pub fn compute_at_point_with_airports(
             rasters,
             config.n_days,
             traces.as_deref_mut(),
+            aircraft_r8_raster,
         );
         if air_periods.lden_db > f64::NEG_INFINITY {
             source_results.push(SourceResult {
-                source_type: SourceKind::Aircraft,
+                source_type: LayerKind::Aircraft,
                 periods: air_periods,
                 segment_count: aircraft.len(),
                 displayed_count: present::display_count(&air_contributors),
@@ -255,7 +303,9 @@ pub fn compute_at_point_with_airports(
     let other_sources_lden = finalized.other_lden_db;
 
     // Confidence assessment
-    let has_census = roads.iter().any(|r| r.traffic_source == 1);
+    let has_census = roads
+        .iter()
+        .any(|r| sources::provenance_of(r.source_id).is_measured());
     let has_railway = !railways.is_empty()
         && railways
             .iter()
@@ -325,7 +375,7 @@ fn compute_roads(
         dominant_aadt_heavy_effective: f64,
         dominant_aadt_moto_effective: f64,
         dominant_traffic_source: &'static str, // "matched_external" | "estimated_service_tree" | "default_by_class"
-        dominant_dataset_id: u16,              // dataset identity from pipeline/lib/enrichment-datasets.ts
+        dominant_source_id: u16,              // dataset identity from pipeline/lib/enrichment-datasets.ts
         dominant_speed_posted: u8,
         dominant_speed_used: f64,
         dominant_speed_source: &'static str, // "osm_posted" | "default_by_class" | "roundabout_cap"
@@ -360,8 +410,15 @@ fn compute_roads(
     // to avoid merging all unnamed residential streets into one mega-contributor.
     let mut roads_by_key: HashMap<(String, String, u8), RoadAccum> = HashMap::new();
 
+    // Admin resolved once per compute_roads call — receiver position is
+    // constant across segments. Uses the process-wide admin table
+    // (see admin::init_admin_table at pipeline-worker/source-reader init).
+    // Falls back to Admin::UNKNOWN → WORLD_DEFAULT when uninitialised.
+    let admin = crate::admin::admin_for_latlng(receiver.lat, receiver.lon);
+
     for seg in roads {
-        let Some(norm) = normalize::normalize_road_segment(seg) else {
+        let Some(norm) = normalize::normalize_road_segment(seg, admin)
+        else {
             continue;
         };
         let class_idx = norm.class_idx;
@@ -585,7 +642,7 @@ fn compute_roads(
                 dominant_aadt_heavy_effective: 0.0,
                 dominant_aadt_moto_effective: 0.0,
                 dominant_traffic_source: "default_by_class",
-                dominant_dataset_id: 0,
+                dominant_source_id: 0,
                 dominant_speed_posted: 0,
                 dominant_speed_used: 0.0,
                 dominant_speed_source: "default_by_class",
@@ -713,13 +770,15 @@ fn compute_roads(
             acc.dominant_aadt_medium_raw = seg.aadt_medium;
             acc.dominant_aadt_heavy_raw = seg.aadt_heavy;
             acc.dominant_aadt_moto_raw = seg.aadt_moto;
+            let provenance = sources::provenance_of(seg.source_id);
             let (nom_l, nom_m, nom_h, nom_x) = normalize::nominal_road_aadt(
                 seg.road_class,
-                seg.traffic_source,
+                provenance,
                 seg.aadt_light,
                 seg.aadt_medium,
                 seg.aadt_heavy,
                 seg.aadt_moto,
+                admin,
             );
             acc.dominant_aadt_light_nominal = nom_l;
             acc.dominant_aadt_medium_nominal = nom_m;
@@ -729,14 +788,12 @@ fn compute_roads(
             acc.dominant_aadt_medium_effective = medium;
             acc.dominant_aadt_heavy_effective = heavy;
             acc.dominant_aadt_moto_effective = moto;
-            acc.dominant_traffic_source = if seg.traffic_source == 1 && seg.aadt_light > 0 {
-                "matched_external"
-            } else if seg.traffic_source == 2 && seg.aadt_light > 0 {
-                "estimated_service_tree"
+            acc.dominant_traffic_source = if provenance.has_data() && seg.aadt_light > 0 {
+                provenance.legacy_traffic_source_str()
             } else {
                 "default_by_class"
             };
-            acc.dominant_dataset_id = seg.dataset_id;
+            acc.dominant_source_id = seg.source_id;
             acc.dominant_speed_posted = seg.speed_limit;
             acc.dominant_speed_used = speed;
             acc.dominant_speed_source = if seg.junction == 1 {
@@ -812,7 +869,7 @@ fn compute_roads(
             aadt_heavy_raw: acc.dominant_aadt_heavy_raw,
             aadt_moto_raw: acc.dominant_aadt_moto_raw,
             traffic_source: acc.dominant_traffic_source,
-            dominant_dataset_id: acc.dominant_dataset_id,
+            dominant_source_id: acc.dominant_source_id,
             speed_posted_kmh: acc.dominant_speed_posted,
             aadt_light_nominal: acc.dominant_aadt_light_nominal,
             aadt_medium_nominal: acc.dominant_aadt_medium_nominal,
@@ -852,7 +909,7 @@ fn compute_roads(
         contributors.push(Contributor {
             osm_id: Some(acc.first_osm_id),
             geometry,
-            source_type: SourceKind::Road,
+            source_type: LayerKind::Road,
             name: acc.display_name.clone(),
             subtype: acc.class_name.to_string(),
             distance_m: acc.min_dist,
@@ -923,7 +980,7 @@ fn compute_railways(
         closest_trains_freight_effective: f64,
         closest_trains_passenger_source: &'static str,
         closest_trains_freight_source: &'static str,
-        closest_dataset_id: u16,
+        closest_source_id: u16,
         closest_maxspeed_posted: u8,
         closest_speed_used: f64,
         closest_speed_source: &'static str,
@@ -1100,7 +1157,7 @@ fn compute_railways(
             closest_trains_freight_effective: 0.0,
             closest_trains_passenger_source: "default_by_type",
             closest_trains_freight_source: "default_by_type",
-            closest_dataset_id: 0,
+            closest_source_id: 0,
             closest_maxspeed_posted: 0,
             closest_speed_used: 0.0,
             closest_speed_source: "type_default",
@@ -1173,7 +1230,7 @@ fn compute_railways(
                 0 => "arrow",
                 _ => "default_by_type",
             };
-            acc.closest_dataset_id = seg.dataset_id;
+            acc.closest_source_id = seg.source_id;
             acc.closest_maxspeed_posted = seg.maxspeed;
             acc.closest_speed_used = speed;
             acc.closest_speed_source = match seg.speed_source {
@@ -1266,7 +1323,7 @@ fn compute_railways(
             trains_freight_raw: acc.closest_trains_freight_raw,
             trains_passenger_source: acc.closest_trains_passenger_source,
             trains_freight_source: acc.closest_trains_freight_source,
-            dataset_id: acc.closest_dataset_id,
+            source_id: acc.closest_source_id,
             maxspeed_posted_kmh: acc.closest_maxspeed_posted,
             trains_passenger_effective: acc.closest_trains_passenger_effective,
             trains_freight_effective: acc.closest_trains_freight_effective,
@@ -1293,7 +1350,7 @@ fn compute_railways(
         contributors.push(Contributor {
             osm_id: Some(acc.first_osm_id),
             geometry,
-            source_type: SourceKind::Railway,
+            source_type: LayerKind::Railway,
             name: if acc.name.is_empty() {
                 String::new()
             } else {
@@ -1350,7 +1407,7 @@ fn compute_point_sources(
     sources: &[PointSource],
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
-    source_kind: SourceKind,
+    source_kind: LayerKind,
     mut traces: Option<&mut TraceCollector>,
 ) -> (NoisePeriods, Vec<Contributor>) {
     use std::collections::HashMap;
@@ -1558,14 +1615,14 @@ fn compute_point_sources(
 
         let impacts = PropagationVariants::impact_deltas(&acc.variants, pt_periods.lden_db);
 
-        let subtype_name: &'static str = if source_kind == SourceKind::Industrial {
+        let subtype_name: &'static str = if source_kind == LayerKind::Industrial {
             industrial_type_name(acc.subtype)
         } else {
             building_type_name(acc.subtype)
         };
 
         // Build per-source metadata (popup only)
-        let metadata = if source_kind == SourceKind::Industrial {
+        let metadata = if source_kind == LayerKind::Industrial {
             Some(SourceMetadata::Industrial(IndustrialMetadata {
                 area_m2: 0.0, // derived per-point; aggregate unavailable at this level
                 source_type: subtype_name,
@@ -1636,6 +1693,7 @@ fn compute_aircraft(
     rasters: &dyn RasterSampler,
     n_days: u16,
     mut traces: Option<&mut TraceCollector>,
+    aircraft_r8_raster: Option<&std::collections::HashMap<u64, [f64; 3]>>,
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
     // Ground ops traces are teed off inline (line source via ISO 9613),
     // airborne traces inside the per-flight stats loop below (Doc 29 — no
@@ -1646,6 +1704,23 @@ fn compute_aircraft(
     let rx_elev = receiver.altitude_m();
     let n_days_f = (n_days as f64).max(1.0);
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
+
+    // Receiver's R8 cell, derived via R11→R8 hierarchy so popup matches
+    // pipeline's `group.res8_parent` at H3 boundaries (where the direct
+    // `LatLng→R8` and `LatLng→R11→R8` paths can disagree). Used both for
+    // the PALT skip gate (cell-centre elevation) and for the raster
+    // lookup at the bottom of this function — computing once here keeps
+    // both consumers in sync by construction.
+    let receiver_r8 = h3o::LatLng::new(receiver.lat, receiver.lon)
+        .ok()
+        .and_then(|ll| ll.to_cell(h3o::Resolution::Eleven).parent(h3o::Resolution::Eight));
+    let palt_gate_elev = match (aircraft_r8_raster, receiver_r8) {
+        (Some(_), Some(cell)) => {
+            let centre = h3o::LatLng::from(cell);
+            rasters.elevation(centre.lat(), centre.lng())
+        }
+        _ => rx_elev,
+    };
     let periods_from_doc29_energy = |energy: [f64; 3]| -> NoisePeriods {
         if energy.iter().sum::<f64>() <= 0.0 {
             return NoisePeriods::silence();
@@ -2004,6 +2079,12 @@ fn compute_aircraft(
             continue;
         }
 
+        if aircraft_r8_raster.is_some() {
+            let seg_min_alt = seg.start_alt_m.min(seg.end_alt_m) as f64;
+            if aircraft::segment_in_palt_raster(seg_min_alt, palt_gate_elev) {
+                continue;
+            }
+        }
         let (sel, cpa) = match aircraft::segment_sel(seg, receiver.lat, receiver.lon, rx_elev, rasters) {
             Some(v) => v,
             None => continue,
@@ -2147,6 +2228,18 @@ fn compute_aircraft(
                 ],
                 received_lden: lden,
             });
+        }
+    }
+
+    // PALT raster contribution at the receiver's R8 cell. Popup and pipeline
+    // both consult the same raster (built by `build_high_alt_r8_raster`)
+    // for FL340+ overflights, so per-receiver totals match within the LUT/
+    // approximation noise of the per-segment kernels.
+    if let (Some(raster), Some(cell)) = (aircraft_r8_raster, receiver_r8) {
+        if let Some(energies) = raster.get(&u64::from(cell)) {
+            airborne_energy[0] += energies[0];
+            airborne_energy[1] += energies[1];
+            airborne_energy[2] += energies[2];
         }
     }
 
@@ -2350,7 +2443,7 @@ fn compute_aircraft(
             vegetation_impact_db: 0.0,
             atmospheric_impact_db: 0.0,
             ground_impact_db: 0.0,
-            source_type: SourceKind::Aircraft,
+            source_type: LayerKind::Aircraft,
             name: "Aircraft - airborne".to_string(),
             subtype: "airborne".to_string(),
             distance_m: 0.0,
@@ -2499,7 +2592,7 @@ fn compute_aircraft(
             vegetation_impact_db: detail.vegetation_impact_db,
             atmospheric_impact_db: detail.atmospheric_impact_db,
             ground_impact_db: detail.ground_impact_db,
-            source_type: SourceKind::Aircraft,
+            source_type: LayerKind::Aircraft,
             name: format!("Aircraft - ground ops — {}", display_name),
             subtype: "ground_ops".to_string(),
             distance_m: detail.distance_m,
@@ -2650,6 +2743,7 @@ pub fn compute_path_effects(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sources::AIRCRAFT_ADSB_SOURCE_ID;
 
     /// Mock raster sampler for testing.
     struct MockRasters;
@@ -2687,9 +2781,8 @@ mod tests {
             aadt_light: 0,
             aadt_medium: 0,
             aadt_heavy: 0,
-            aadt_moto: 0,
-            traffic_source: 0, // defaults
-            dataset_id: 0,
+            aadt_moto: 0, // defaults
+            source_id: 0,
             dist_m: 500.0,
             cp_lat: 50.08,
             cp_lon: 14.42,
@@ -2731,7 +2824,7 @@ mod tests {
 
         // Should have at least one source result
         assert_eq!(result.sources.len(), 1);
-        assert_eq!(result.sources[0].source_type, SourceKind::Road);
+        assert_eq!(result.sources[0].source_type, LayerKind::Road);
 
         println!(
             "Motorway 500m: Ld={:.1} Le={:.1} Ln={:.1} Lden={:.1}",
@@ -2759,8 +2852,7 @@ mod tests {
             aadt_medium: 0,
             aadt_heavy: 0,
             aadt_moto: 0,
-            traffic_source: 0,
-            dataset_id: 0,
+            source_id: 0,
             dist_m: 100.0,
             cp_lat: 50.08,
             cp_lon: 14.42,
@@ -2801,7 +2893,7 @@ mod tests {
             speed_source: 0,
             trains_passenger_source: 0,
             trains_freight_source: 0,
-            dataset_id: 0,
+            source_id: 0,
         }];
 
         let result = compute_at_point(
@@ -2883,8 +2975,7 @@ mod tests {
             aadt_medium: 0,
             aadt_heavy: 0,
             aadt_moto: 0,
-            traffic_source: 0,
-            dataset_id: 0,
+            source_id: 0,
             dist_m: 15.0,
             cp_lat: 50.08,
             cp_lon: 14.42,
@@ -2957,6 +3048,7 @@ mod tests {
                     ground_ops_kind: emission::aircraft::GROUND_OPS_KIND_NONE,
                     count_weight: 1.0,
                     surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
                 });
             }
         }
@@ -2985,7 +3077,7 @@ mod tests {
         );
 
         assert_eq!(result.sources.len(), 1);
-        assert_eq!(result.sources[0].source_type, SourceKind::Aircraft);
+        assert_eq!(result.sources[0].source_type, LayerKind::Aircraft);
 
         // Day should be louder than night (more flights)
         assert!(
@@ -3025,8 +3117,7 @@ mod tests {
             aadt_medium: 0,
             aadt_heavy: 0,
             aadt_moto: 0,
-            traffic_source: 0,
-            dataset_id: 0,
+            source_id: 0,
             dist_m: 100.0,
             cp_lat: 50.08,
             cp_lon: 14.42,
@@ -3067,7 +3158,7 @@ mod tests {
             speed_source: 0,
             trains_passenger_source: 0,
             trains_freight_source: 0,
-            dataset_id: 0,
+            source_id: 0,
         }];
         let aircraft = vec![AircraftSegment {
             flight_id: 1,
@@ -3088,6 +3179,7 @@ mod tests {
             ground_ops_kind: emission::aircraft::GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
+                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
         }];
 
         let config = ComputeConfig {
@@ -3126,5 +3218,67 @@ mod tests {
             println!("  {}: Lden={:.1}", s.source_type, s.periods.lden_db);
         }
         println!("  TOTAL: Lden={:.1}", result.total.lden_db);
+    }
+}
+
+#[cfg(test)]
+mod sources_tests {
+    use crate::sources::{get_source, provenance_of, Provenance, Source, SOURCES};
+
+    #[test]
+    fn unspecified_is_id_zero_sentinel() {
+        let s = &SOURCES[0];
+        assert_eq!(s.id, 0);
+        assert_eq!(s.key, "unspecified");
+        assert_eq!(s.provenance, Provenance::None);
+        assert_eq!(Source::UNSPECIFIED.id, 0);
+    }
+
+    #[test]
+    fn no_duplicate_ids() {
+        let mut seen = std::collections::HashSet::new();
+        for s in SOURCES {
+            assert!(seen.insert(s.id), "duplicate id={} (key={})", s.id, s.key);
+        }
+    }
+
+    #[test]
+    fn no_duplicate_keys() {
+        let mut seen = std::collections::HashSet::new();
+        for s in SOURCES {
+            assert!(seen.insert(s.key), "duplicate key={} (id={})", s.key, s.id);
+        }
+    }
+
+    #[test]
+    fn provenance_rank_monotonic() {
+        assert!(Provenance::NationalMeasured.rank() > Provenance::ContinentalMeasured.rank());
+        assert!(Provenance::ContinentalMeasured.rank() > Provenance::GlobalMeasured.rank());
+        assert!(Provenance::GlobalMeasured.rank() > Provenance::Heuristic.rank());
+        assert!(Provenance::Heuristic.rank() > Provenance::Baseline.rank());
+        assert!(Provenance::Baseline.rank() > Provenance::None.rank());
+    }
+
+    #[test]
+    fn get_source_looks_up_by_id() {
+        let rsd = get_source(20).expect("cz-rsd (id=20) must exist");
+        assert_eq!(rsd.key, "cz-rsd-scitani");
+        assert_eq!(rsd.provenance, Provenance::NationalMeasured);
+    }
+
+    #[test]
+    fn provenance_of_unknown_id_is_none() {
+        assert_eq!(provenance_of(0), Provenance::None);
+        assert_eq!(provenance_of(u16::MAX), Provenance::None);
+    }
+
+    #[test]
+    fn sources_sorted_by_id_for_binary_search() {
+        // get_source uses binary_search_by_key; the generator emits SOURCES
+        // in id-ascending order. Lock the invariant so a hand-edit to
+        // sources.rs (or a reordered DATASETS) can't silently break lookup.
+        for pair in SOURCES.windows(2) {
+            assert!(pair[0].id < pair[1].id, "SOURCES not sorted by id: {} then {}", pair[0].id, pair[1].id);
+        }
     }
 }

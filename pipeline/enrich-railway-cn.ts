@@ -70,11 +70,13 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
+import { SOURCE_ID_CN_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
+import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
 
-const MY_DATASET_ID = DATASETS_BY_KEY.get('cn-national-railway')!.id
+const MY_SOURCE_ID = SOURCE_ID_CN_NATIONAL_RAILWAY
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -101,33 +103,11 @@ const EXCLUDE_ZONES: Array<{ name: string; bbox: [number, number, number, number
   { name: 'Taiwan', bbox: [21.8, 119.5, 25.5, 122.1] },
 ]
 
-function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
-  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
-}
 function inExclusion(lat: number, lon: number): boolean {
   for (const z of EXCLUDE_ZONES) if (inBbox(lat, lon, z.bbox)) return true
   return false
 }
 
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
-}
-function pointToSegmentDist(pLat: number, pLon: number, aLat: number, aLon: number, bLat: number, bLon: number): number {
-  const cosLat = Math.cos(pLat * Math.PI / 180)
-  const px = pLon * 111320 * cosLat, py = pLat * 110540
-  const ax = aLon * 111320 * cosLat, ay = aLat * 110540
-  const bx = bLon * 111320 * cosLat, by = bLat * 110540
-  const dx = bx - ax, dy = by - ay
-  const lenSq = dx * dx + dy * dy
-  if (lenSq < 1e-6) return flatDist(pLat, pLon, aLat, aLon)
-  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq
-  t = Math.max(0, Math.min(1, t))
-  const cx = ax + t * dx, cy = ay + t * dy
-  return Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy))
-}
 function pointToPolylineDist(pLat: number, pLon: number, coords: [number, number][]): number {
   let best = Infinity
   for (let i = 0; i < coords.length - 1; i++) {
@@ -310,16 +290,16 @@ async function main() {
     const serviceCol = table.getChild('service')
     const existingPax = table.getChild('trains_passenger')
     const existingFrt = table.getChild('trains_freight')
-    const existingDatasetId = table.getChild('railways_dataset_id')
+    const existingSourceId = table.getChild('source_id')
 
     const trainsPax = new Int32Array(n)
     const trainsFrt = new Int32Array(n)
-    const datasetId = new Uint16Array(n)
+    const sourceId = new Uint16Array(n)
     for (let i = 0; i < n; i++) {
       trainsPax[i] = (existingPax?.get(i) as number) ?? 0
       trainsFrt[i] = (existingFrt?.get(i) as number) ?? 0
 
-      datasetId[i] = existingDatasetId ? (existingDatasetId.get(i) as number) ?? 0 : 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
     totalRails += n
 
@@ -327,7 +307,7 @@ async function main() {
     for (let i = 0; i < n; i++) {
       const service = (serviceCol?.get(i) as number) ?? 0
       if (service > 0) { skippedService++; continue }
-      if (!shouldOverwrite(datasetId[i], MY_DATASET_ID)) continue
+      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
 
       const sLat = startLat.get(i) as number
       const sLon = startLon.get(i) as number
@@ -355,7 +335,7 @@ async function main() {
       }
       trainsPax[i] = pax
       trainsFrt[i] = frt
-      datasetId[i] = MY_DATASET_ID
+      sourceId[i] = MY_SOURCE_ID
       hexMatched++
     }
 
@@ -368,7 +348,7 @@ async function main() {
       columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
       columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
 
-      columns['railways_dataset_id'] = vectorFromArray(datasetId, new Uint16())
+      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
       const newTable = makeTable(columns)
       writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
       hexesUpdated++

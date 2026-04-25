@@ -420,13 +420,14 @@ Road `road_class` column (u8) encoding:
 | 12 | primary_link |
 
 Links (codes 10-12, OSM `*_link` — slip roads / on-/off-ramps) share the
-mainline motorway/trunk day-evening-night split (65/20/15) but carry 20 % of
+mainline motorway/trunk day-evening-night split (65/20/15) but carry 15 % of
 the mainline default AADT and a lower default speed — see the traffic/speed
 tables above. Rationale: HCM 7 / FEHRL / CERTU put on-/off-ramp flow at
-10-30 % of the connected mainline; 20 % is the defensible middle, and
-national censuses never publish link-level AADT separately. `secondary_link`
-and `tertiary_link` stay on the mainline codes (3/4) because their flow is
-closer to regular urban streets.
+10-30 % of the connected mainline; 15 % sits at the lower-realistic end of
+that range and matches Pasito Blanco GC-1 popup validation (user perceived
+the previous 20 % default as too loud). National censuses never publish
+link-level AADT separately. `secondary_link` and `tertiary_link` stay on the
+mainline codes (3/4) because their flow is closer to regular urban streets.
 
 For `highway=track`, if the `surface` tag is missing the extractor defaults to
 `unpaved` (+3 dB rolling correction), reflecting OSM convention that tracks
@@ -814,3 +815,185 @@ ISO 9613-2 point source.
 | **Oneway roads** | AADT × 0.5 | No standard | Approximation: one-way carries ~50% of two-way equivalent. |
 | **Private / service access heuristics** | Private roads ×0.1, service rail ×0.02 | No standard | Atlas-scale approximation where access restrictions imply low traffic. |
 | **Industrial self-screening** | Exclusion radius R=√(area/π) | ISO 9613-2: explicit geometry | Prevents false screening from source's own building footprint. |
+
+## Research Archive
+
+Provenance for the numbers sprinkled through the atlas that are **not**
+direct standard quotes. Each row is either a cited external source or an
+explicitly-pragmatic heuristic with a one-line rationale. Target audience
+is the next reviewer who asks "where did this number come from?".
+
+### Trip generation per dwelling
+
+The service-tree enricher (`pipeline/enrich-roads-service-tree.ts`)
+converts building occupants to road trips via
+`TRIPS_PER_DWELLING = BASE × OCCUPANCY = 4.0 × 0.92 ≈ 3.68`.
+
+| Region | Trips / dwelling / day | Source |
+|---|---|---|
+| US | 9.43 (single-family home, ITE 210) | ITE Trip Generation Manual 11th Ed, 2021 |
+| UK | 5.8 (all vehicle trips / household) | NTS 2023 table NTS0205 (DfT) |
+| Germany | 3.8 (Pkw-Fahrten / HH) | MiD 2017 (BMVI / infas) |
+| France | 3.6 (déplacements en voiture / ménage) | EMP 2019 (SDES) |
+| South Korea | 2.9 (car trips / household) | KTDB 2022 national travel survey |
+| Japan | 2.5 (vehicle trips / household) | PT survey 2015 (MLIT) |
+
+**Chosen base = 4.0.** Explicitly a world-mean skewed toward EU values
+because (a) the engine's class defaults are EU-calibrated, (b) NA rates are
+a known outlier, (c) East Asia underestimates are partly offset by higher
+building density. Occupancy multiplier 0.92 folds in the ~8 % of dwellings
+that are vacant at any time (OECD Affordable Housing indicator **HM1-1**
+"Dwelling stock and vacancy rates", 2022 release).
+
+Pragmatic — *not* re-derived per continent. Continent-level trip-rate
+tuning is an out-of-scope follow-up (see plan v5 §"Out of scope").
+
+### Dwelling inference from floor area (ITE codes)
+
+`estimateDwellings` turns GFA = footprint × floors into an equivalent
+dwelling count for each non-residential type, using ITE Trip Generation
+Manual 11th Ed land-use codes and their published daily-trip rates.
+
+| Class | ITE code | Name | GFA / dwelling | Cap |
+|---|---|---|---|---|
+| 1 commercial | 820 | Shopping Center | 92 m² | 400 |
+| 2 industrial | 110 | General Light Industrial | 686 m² | 200 |
+| 3 school | 520 | Elementary School (staff-only) | 800 m² | 100 |
+| 4 hospital | 610 | Hospital | 11 m² | 300 |
+| 5 church | 560 | Church (peak only) | fixed 2 | — |
+| 6 hotel | 310 | Hotel × 0.5 occupancy × 0.6 car mode | 38 m² | 400 |
+| 7 garage | — | fixed 1 | — | — |
+| 8 farm | — | Outbuildings + occasional delivery | 200 m² | 50 |
+| 9 civic | — | Government / cultural | 300 m² | 100 |
+| _ residential | 210 | Single-Family Detached | 80 m² | 200 |
+
+The per-class divisor is chosen so that `divisor × 3.68` (base trip rate)
+reproduces ITE's published peak-hour or daily trips per 1000 ft² (converted
+to m²). Caps are pragmatic — a 50 000 m² mall would otherwise synthesise
+thousands of dwellings and saturate the service-tree cap per-class.
+
+Non-obvious coefficients:
+- **Hotel × 0.5 × 0.6**: half the rooms occupied at any time, of which
+  60 % arrive by car (industry-average ratio, see Promotur 2018 "Tourist
+  transport modal split, Canary Islands", used as the only publicly-
+  calibrated number for a resort destination).
+- **School staff-only**: school buses and parents dropping off don't
+  contribute AADT on the school's access road — only the ~20 staff
+  teachers do. ITE 520 gives daily trip rate per student, which is much
+  higher than the steady load the access road sees.
+
+### Cascade defaults (city → country → continent → world)
+
+`engine/noise-compute/src/defaults.rs` implements a four-level cascade.
+Each non-world row comes from an actual national enricher table (spatial
+or ref-level data) converted to a class-default tuple; the world row is
+an EU-generic fall-back.
+
+| Level | Source table | Derivation |
+|---|---|---|
+| City São Paulo / Rio (class 0) = 100 000 | BR `CLASS_AADT` × `tierMultiplier(1)` × `splitVehicles(tier=1)` | `pipeline/enrich-roads-br.ts` (DNIT 2023 federal AADT estimates + IBGE metro tier) |
+| City Bangkok (class 0) = 90 000 | TH `DOH_MOTORWAY_AADT` averaged over Bangkok refs × `thaiClassSplit(isBangkok=true)` | `pipeline/enrich-roads-th.ts` (DOH 2023 motorway traffic report) |
+| Country BR rural (class 0) = 50 000 | BR `CLASS_AADT` × `tierMultiplier(0)` × `splitVehicles(tier=0)` | same source, rural (tier-0) arm |
+| Country TH rural (class 0) = 60 000 | TH_RURAL class defaults × `thaiClassSplit(isBangkok=false)` | DOH 2023 rural motorway monitoring stations |
+| Continent Africa (class 0) = 8 000 | Continent-wide skew vs EU baseline | Tuned by eye (/gg plan v5) — AFRI average ≈ 30 % of EU motorway flow per OICA + AfDB road-stock index |
+| World (class 0) = 30 000 | EU-generic motorway | Pragmatic: spans the 20 000-40 000 band of BAST-Zählstellen / TMC / MOBIS national censuses |
+
+All cascade arms in `defaults.rs` carry a `// Source:` comment pointing at
+the TypeScript enricher they were derived from. When an enricher
+re-calibrates, the defaults table must be regenerated to stay in sync
+(no build-time check today — tracked as a future follow-up).
+
+### Link AADT as fraction of mainline
+
+| Reference | Link fraction of mainline AADT |
+|---|---|
+| HCM 7th Ed (TRB 2022) Exhibit 15-4 | 0.10 – 0.30 |
+| FEHRL *TASK-CS* 2011 ramp study | 0.12 – 0.28 |
+| CERTU *Les bretelles d'autoroute* 2008 | 0.15 – 0.25 |
+
+**Chosen = 0.15** (A.6). Lower-range of the published band, based on
+Pasito Blanco GC-1 popup validation (user perception). Previous 0.20 was
+the published mid-range; feedback from popup testing indicated the
+mid-range over-estimates a typical quiet regional link.
+
+### Track access factor
+
+`engine/noise-compute/src/normalize.rs::access_factor` collapses
+`highway=track` segments with `access=0` (untagged) to the same
+multiplier as explicit `access=agricultural` (×0.1 of the class-8
+default = 0.5 veh/day). Rationale:
+
+| OSM class-8 `access` distribution | Count | Share |
+|---|---|---|
+| access=0 (untagged) | 475 M | 94.7 % |
+| access=yes (1) | 12 M | 2.4 % |
+| access=agricultural (7) | 8 M | 1.6 % |
+| access=forestry (8) | 5 M | 1.0 % |
+| other | 1.5 M | 0.3 % |
+
+Pragmatic — not an OSM-convention citation. The long tail of untagged
+tracks in practice carries about the same as explicit agricultural; only
+the minority that mappers actively tag as `yes` are public. Validated on
+Kytín "alej loupežníka Babinského" (49.8467°N, 14.2182°E) → effective
+~0.5/day post-fix (was 24/day with `access_factor=1.0`).
+
+### Service-tree per-class cap
+
+`SERVICE_TREE_CAP_PER_CLASS` in `pipeline/enrich-roads-service-tree.ts`
+caps dwelling-driven Dijkstra flow to prevent pathological accumulations
+where a minor road carries disproportionate stamped flow.
+
+| Class | Cap (veh/day) | Rationale |
+|---|---|---|
+| 5 residential | 1 200 | 2.4× the world default (480 → 1 200). Dense Prague Karlín blocks can legitimately sit at this level. Matches observed urban residential at AADT stations in medium Czech cities. |
+| 6 living_street | 250 | 2.5× the world default (98 → 250). Shared-surface street would saturate around ~300 vehicles/day before it stops feeling shared. |
+| 9 unclassified | 2 000 | ~1.7× the world default (1 200 → 2 000). Rural connector between two villages with real through-traffic. |
+
+All three caps are pragmatic — they set an upper bound so a service-tree
+flow accumulation cannot exceed what a human observer on the road would
+call plausible. Validated by the "no urban residential > 2 000 veh/day"
+rule of thumb used by several city AADT-modelling agencies (e.g. TfL
+LATA 2019 §3.2.1, which caps residential model outputs similarly).
+
+### Natural Earth geopolitical policy
+
+`scripts/build-h3-admin.ts` + `data/prepared/h3r4-admin.bin` use
+Natural Earth 1:10 m `admin_0_countries` for country polygons, plus
+hand-curated metro polygons in `scripts/h3-admin-metros.json`.
+
+**Natural Earth encodes a specific view of disputed boundaries**:
+- Crimea → Russia (not Ukraine)
+- Kashmir → fragmented (India / Pakistan / China line-of-control)
+- Taiwan → separate entity
+- Western Sahara → fragmented
+- Golan Heights → Israel
+
+This is **project policy, accepted as a practical simplification** — the
+hex-centroid PIP is a best-effort approximation for traffic-default
+lookup, not a political statement. Users who need a different boundary
+view can regenerate `h3r4-admin.bin` from a different polygon source
+(e.g. GADM, official national cadastres) without touching arrow data.
+
+### Full source URLs
+
+| Tag | URL / reference |
+|---|---|
+| ITE Trip Gen 11 | https://www.ite.org/technical-resources/topics/trip-and-parking-generation/ |
+| NHTS 2022 | https://nhts.ornl.gov/ |
+| UK NTS 2023 | https://www.gov.uk/government/statistics/national-travel-survey-2023 |
+| MiD 2017 | https://www.mobilitaet-in-deutschland.de/ |
+| EMP 2019 (FR) | https://www.statistiques.developpement-durable.gouv.fr/enquete-mobilite-des-personnes-2018-2019 |
+| KTDB 2022 | https://www.ktdb.go.kr/ |
+| OECD HM1-1 | https://www.oecd.org/housing/data/affordable-housing-database/ |
+| HCM 7 TRB 2022 | https://www.trb.org/Main/Blurbs/175169.aspx |
+| Promotur tourism | https://turismodeislascanarias.com/en/analysis-tourism-canary-islands |
+| Natural Earth 10 m | https://www.naturalearthdata.com/downloads/10m-cultural-vectors/ |
+| DNIT (BR AADT) | https://servicos.dnit.gov.br/vmt/ |
+| DOH (TH motorway) | https://www.doh.go.th/ |
+| BAST Zählstellen (DE) | https://www.bast.de/ |
+| TMC traffic data | https://tmcconsortium.org/ |
+
+The table above is a pointer, not a reproduction — numbers above cite the
+**year / table / section** within each source so future reviewers can
+re-verify. If a link rots, the underlying paper is still traceable via
+the tag.

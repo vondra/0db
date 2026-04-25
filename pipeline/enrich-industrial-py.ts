@@ -33,9 +33,11 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tableFromIPC, makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
-import { DATASETS_BY_KEY } from './lib/enrichment-datasets.js'
+import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
+import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
+import { flatDistM, inBbox } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2025'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -63,16 +65,6 @@ function inPyOrBorder(lat: number, lon: number): boolean {
     if (lat >= b[0] && lat <= b[2] && lon >= b[1] && lon <= b[3]) return false
   }
   return true
-}
-
-function inBbox(lat: number, lon: number, bbox: [number, number, number, number]): boolean {
-  return lat >= bbox[0] && lat <= bbox[2] && lon >= bbox[1] && lon <= bbox[3]
-}
-function flatDistM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * 110540
-  return Math.sqrt(dx * dx + dy * dy)
 }
 
 interface IndSite { lat: number; lon: number; name: string; fuel: string }
@@ -132,7 +124,7 @@ async function main() {
     grid.get(key)!.push(s)
   }
 
-  const MY_DATASET_ID = DATASETS_BY_KEY.get('py-industrial')!.id
+  const MY_SOURCE_ID = SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX
 
   const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
   const hexDirs: string[] = []
@@ -157,15 +149,15 @@ async function main() {
         const centroidLat = table.getChild('centroid_lat') ?? table.getChild('lat')
         const centroidLon = table.getChild('centroid_lon') ?? table.getChild('lon')
         const existingNaceCol = table.getChild('nace_4digit')
-        const existingDatasetIdCol = table.getChild('industrial_dataset_id')
+        const existingDatasetIdCol = table.getChild('source_id')
         if (!osmId || !centroidLat || !centroidLon) return table
         const newNace = new Uint16Array(n)
         const newDatasetId = new Uint16Array(n)
-        const existingDatasetId = new Uint16Array(n)
+        const existingSourceId = new Uint16Array(n)
         for (let j = 0; j < n; j++) {
           newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
-          existingDatasetId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
-          newDatasetId[j] = existingDatasetId[j]
+          existingSourceId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
+          newDatasetId[j] = existingSourceId[j]
         }
         let anyChanged = false
 
@@ -194,10 +186,10 @@ async function main() {
           if (best) {
             const nace6 = best.fuel.includes('solar') ? 359900 : best.fuel.includes('wind') ? 351200 : 351100
             const nace4 = Math.floor(nace6 / 100)
-            const existingId = existingDatasetId[i]
-            if (shouldOverwrite(existingId, MY_DATASET_ID)) {
+            const existingId = existingSourceId[i]
+            if (shouldOverwrite(existingId, MY_SOURCE_ID)) {
               newNace[i] = nace4
-              newDatasetId[i] = MY_DATASET_ID
+              newDatasetId[i] = MY_SOURCE_ID
               if (existingId === 0) newEntries++
               matched++
               anyChanged = true
@@ -207,11 +199,11 @@ async function main() {
         if (!anyChanged) return table
         const columns: Record<string, any> = {}
         for (const field of table.schema.fields) {
-          if (field.name === 'nace_4digit' || field.name === 'industrial_dataset_id') continue
+          if (field.name === 'nace_4digit' || field.name === 'source_id') continue
           columns[field.name] = table.getChild(field.name)!
         }
-        columns['nace_4digit'] = vectorFromArray(Array.from(newNace), new Uint16())
-        columns['industrial_dataset_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
+        columns['nace_4digit'] = vectorFromArray(newNace, new Uint16())
+        columns['source_id'] = vectorFromArray(newDatasetId, new Uint16())
         return makeTable(columns)
       })
     } catch {}
