@@ -150,6 +150,47 @@ pub fn compute_at_point_with_airports(
     config: &ComputeConfig,
     mut traces: Option<&mut TraceCollector>,
 ) -> NoiseResult {
+    compute_at_point_with_airports_palt(
+        receiver,
+        roads,
+        railways,
+        buildings,
+        industrial,
+        aircraft,
+        airport_lines,
+        airport_areas,
+        barriers,
+        rasters,
+        config,
+        traces.as_deref_mut(),
+        None,
+    )
+}
+
+/// Internal: same as `compute_at_point_with_airports` but takes an optional
+/// pre-baked R8 energy raster for cruise-altitude segments (PALT). When
+/// `aircraft_r8_raster` is `Some(_)`, segments with min_alt above
+/// `AIRCRAFT_FAR_FIELD_THRESHOLD_M` over the receiver are skipped from the
+/// per-segment loop and their cumulative energy comes from the raster
+/// lookup at the receiver's R8 cell. The popup query path uses this so it
+/// gets the *same* per-receiver totals as the pipeline (which also passes
+/// the raster — see `pipeline-worker/src/compute/aircraft.rs::
+/// compute_group_aircraft_scatter_accums`).
+pub fn compute_at_point_with_airports_palt(
+    receiver: &Receiver,
+    roads: &[RoadSegment],
+    railways: &[RailSegment],
+    buildings: &[PointSource],
+    industrial: &[PointSource],
+    aircraft: &[AircraftSegment],
+    airport_lines: &[AirportLine],
+    airport_areas: &[AirportArea],
+    barriers: &[Barrier],
+    rasters: &dyn RasterSampler,
+    config: &ComputeConfig,
+    mut traces: Option<&mut TraceCollector>,
+    aircraft_r8_raster: Option<&std::collections::HashMap<u64, [f64; 3]>>,
+) -> NoiseResult {
     let mut source_results = Vec::new();
     let mut all_contributors = Vec::new();
     let mut aircraft_band_data: Option<AircraftBandData> = None;
@@ -219,7 +260,7 @@ pub fn compute_at_point_with_airports(
     }
 
     // ── Aircraft (Doc 29 — SEPARATE from ISO 9613-2) ──
-    if !aircraft.is_empty() {
+    if !aircraft.is_empty() || aircraft_r8_raster.map_or(false, |r| !r.is_empty()) {
         let (air_periods, air_contributors, band_data) = compute_aircraft(
             receiver,
             aircraft,
@@ -229,6 +270,7 @@ pub fn compute_at_point_with_airports(
             rasters,
             config.n_days,
             traces.as_deref_mut(),
+            aircraft_r8_raster,
         );
         if air_periods.lden_db > f64::NEG_INFINITY {
             source_results.push(SourceResult {
@@ -1636,6 +1678,7 @@ fn compute_aircraft(
     rasters: &dyn RasterSampler,
     n_days: u16,
     mut traces: Option<&mut TraceCollector>,
+    aircraft_r8_raster: Option<&std::collections::HashMap<u64, [f64; 3]>>,
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
     // Ground ops traces are teed off inline (line source via ISO 9613),
     // airborne traces inside the per-flight stats loop below (Doc 29 — no
@@ -1646,6 +1689,26 @@ fn compute_aircraft(
     let rx_elev = receiver.altitude_m();
     let n_days_f = (n_days as f64).max(1.0);
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
+
+    // PALT skip gate: when a raster is supplied, segments above this
+    // elevation threshold are in the raster and skipped per-segment. Use
+    // the receiver's R8 cell centre elevation so the gate matches
+    // `build_high_alt_r8_raster`, which iterates by R8 cell. At hex-edge
+    // receivers (Brdy ≈ 600 m on a cell whose centre elev is ≈ 400 m)
+    // using `rx_elev` here would skip 200 m more aggressively than the
+    // raster build did, double-counting that band.
+    let palt_gate_elev: f64 = if aircraft_r8_raster.is_some() {
+        match h3o::LatLng::new(receiver.lat, receiver.lon) {
+            Ok(ll) => {
+                let r8_cell = ll.to_cell(h3o::Resolution::Eight);
+                let center = h3o::LatLng::from(r8_cell);
+                rasters.elevation(center.lat(), center.lng())
+            }
+            Err(_) => rx_elev,
+        }
+    } else {
+        rx_elev
+    };
     let periods_from_doc29_energy = |energy: [f64; 3]| -> NoisePeriods {
         if energy.iter().sum::<f64>() <= 0.0 {
             return NoisePeriods::silence();
@@ -2004,6 +2067,21 @@ fn compute_aircraft(
             continue;
         }
 
+        // PALT skip: when a raster is supplied, segments more than
+        // `AIRCRAFT_FAR_FIELD_THRESHOLD_M` above the **R8 cell ground
+        // elevation** are already accumulated into the R8 raster — adding
+        // them via the per-segment path would double-count. The gate uses
+        // the cell's elevation (not the receiver's exact elevation) to
+        // match `build_high_alt_r8_raster`, which iterates per R8 cell;
+        // matching the gate guarantees popup ↔ pipeline parity at hex-edge
+        // receivers where rx_elev can differ from cell_elev by hundreds of
+        // metres (Brdy: cell_elev ≈ 400 m, rx_elev ≈ 600 m).
+        if aircraft_r8_raster.is_some() {
+            let seg_min_alt = (seg.start_alt_m.min(seg.end_alt_m)) as f64;
+            if seg_min_alt - palt_gate_elev > aircraft::AIRCRAFT_FAR_FIELD_THRESHOLD_M {
+                continue;
+            }
+        }
         let (sel, cpa) = match aircraft::segment_sel(seg, receiver.lat, receiver.lon, rx_elev, rasters) {
             Some(v) => v,
             None => continue,
@@ -2147,6 +2225,21 @@ fn compute_aircraft(
                 ],
                 received_lden: lden,
             });
+        }
+    }
+
+    // PALT raster contribution at the receiver's R8 cell. Popup and pipeline
+    // both consult the same raster (built by `build_high_alt_r8_raster`)
+    // for FL340+ overflights, so per-receiver totals match within the LUT/
+    // approximation noise of the per-segment kernels.
+    if let Some(raster) = aircraft_r8_raster {
+        if let Ok(ll) = h3o::LatLng::new(receiver.lat, receiver.lon) {
+            let r8_cell = ll.to_cell(h3o::Resolution::Eight);
+            if let Some(energies) = raster.get(&u64::from(r8_cell)) {
+                airborne_energy[0] += energies[0];
+                airborne_energy[1] += energies[1];
+                airborne_energy[2] += energies[2];
+            }
         }
     }
 

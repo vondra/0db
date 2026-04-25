@@ -16,6 +16,10 @@ serde_json = "1"
 h3o = "0.7"
 # SIMD for propagate_variants 8-band inner loop (stable, AVX2/AVX-512 with scalar fallback)
 wide = "0.7"
+# Parallel iteration for PALT raster build — popup latency is bounded by
+# Fastify's per-request worker timeout, sequential build was 30+ s on busy
+# enroute hexes.
+rayon = "1"
 
 [dev-dependencies]
 # For unit tests

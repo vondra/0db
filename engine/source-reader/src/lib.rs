@@ -29,14 +29,65 @@ static STORE: std::sync::LazyLock<RwLock<HexStore>> =
 #[cfg(feature = "node")]
 static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::OnceLock::new();
 
+// PALT (R8 energy raster for cruise-altitude aircraft) cache, keyed by R4
+// hex u64. First popup query in an R4 pays the build cost (~3-5 s for a
+// busy enroute hex); subsequent queries — including all R11s within the
+// same R4, the common case for browsing one map area — reuse the cached
+// `Arc<HashMap>` via O(1) read-lock + clone. Cache lifetime = process
+// lifetime; restart the server after refreshing ADS-B data.
+//
+// Race-safe via `entry::or_insert_with` on the write side: if two threads
+// simultaneously miss the same R4, both will build (one is wasted), but
+// only the first insertion wins and both end up with the same Arc.
+#[cfg(feature = "node")]
+type PaltRaster = std::sync::Arc<std::collections::HashMap<u64, [f64; 3]>>;
+
+#[cfg(feature = "node")]
+static PALT_CACHE: std::sync::LazyLock<RwLock<HashMap<u64, PaltRaster>>> =
+    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+
 // NACE codes are now baked into industrial.arrow (nace_4digit UInt16 column).
 // No global lookup needed at runtime.
 
+// Aircraft r-tree query radius — must match the slant cap so popup PALT
+// build sees the same segment set as the pipeline build (which loads
+// from-disk without r-tree filter). At 10 km the popup PALT was missing
+// 10-16 km horizontal cruise tracks that the pipeline raster did
+// include, opening a 3 dB parity gap. Per-segment Phase 1 work for
+// 10-16 km range is rejected by `segment_sel`'s slant>reach test
+// regardless of r-tree returning the segment.
 const AIRCRAFT_QUERY_MAX_RADIUS_M: f64 =
     noise_compute::emission::aircraft::AIRCRAFT_NPD_REACH_CAP_M;
 const AIRPORT_CONTEXT_RADIUS_M: f64 = 5_000.0;
 const BUILDING_QUERY_RADIUS_M: f64 = 2_000.0;
 const INDUSTRIAL_QUERY_RADIUS_M: f64 = 5_000.0;
+
+#[cfg(feature = "node")]
+fn get_or_build_palt_raster(
+    r4_hex: h3o::CellIndex,
+    segments: &[noise_compute::types::AircraftSegment],
+    n_days: u16,
+    rasters: &dyn noise_compute::types::RasterSampler,
+) -> PaltRaster {
+    let key = u64::from(r4_hex);
+    if let Some(r) = PALT_CACHE.read().unwrap().get(&key) {
+        return r.clone();
+    }
+    // Cache miss — build outside any lock so parallel queries on different
+    // R4 hexes don't serialize. If a sibling thread races us on the same
+    // R4, both build (one wasted) but `or_insert_with` keeps a single
+    // canonical entry.
+    let raster = noise_compute::emission::aircraft::build_high_alt_r8_raster(
+        segments, n_days, r4_hex, rasters,
+    );
+    let arc: PaltRaster = std::sync::Arc::new(raster);
+    PALT_CACHE
+        .write()
+        .unwrap()
+        .entry(key)
+        .or_insert_with(|| arc.clone())
+        .clone()
+}
 
 fn airport_key(name: &str, _airport_ref: &str, icao: &str, iata: &str) -> String {
     let key = if !icao.is_empty() {
@@ -690,8 +741,25 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         n_days: sources.n_days,
         ..Default::default()
     };
+
+    // PALT raster lookup-or-build (cached per R4). First query in an R4
+    // pays ~3-5 s of Doc 29 evaluation × 2401 R8 cells × hundreds of
+    // cruise-altitude segments; later queries clone the Arc and return in
+    // microseconds. Pipeline + popup share the same builder and constants,
+    // so the resulting raster is identical and tile parity holds by
+    // construction.
+    let palt_raster = match h3o::LatLng::new(lat, lng) {
+        Ok(ll) => Some(get_or_build_palt_raster(
+            ll.to_cell(h3o::Resolution::Four),
+            &sources.aircraft,
+            sources.n_days,
+            rasters,
+        )),
+        Err(_) => None,
+    };
+
     let mut traces = noise_compute::types::TraceCollector::new();
-    let mut result = noise_compute::compute_at_point_with_airports(
+    let mut result = noise_compute::compute_at_point_with_airports_palt(
         &receiver,
         &sources.roads,
         &sources.railways,
@@ -704,6 +772,7 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         rasters,
         &config,
         Some(&mut traces),
+        palt_raster.as_deref(),
     );
 
     let summary = apply_segment_top_k_with_cap(&mut traces, top_k_per_kind);
