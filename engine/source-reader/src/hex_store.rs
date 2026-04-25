@@ -84,15 +84,8 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
     let building_batches = load_arrow_mmap(&path.join("buildings.arrow"), &mut mmaps);
     let barrier_batches = load_arrow_mmap(&path.join("barriers.arrow"), &mut mmaps);
     let industrial_batches = load_arrow_mmap(&path.join("industrial.arrow"), &mut mmaps);
-    // Prefer v5 three-phase format if present; fall back to v4-bucketed.
-    // The dispatch happens in `load_aircraft_segments_unified` by reading
-    // the `schema_version` metadata key.
-    let v5_path = path.join("aircraft-v5.arrow");
-    let aircraft_batches = if v5_path.exists() {
-        load_arrow_mmap(&v5_path, &mut mmaps)
-    } else {
-        load_arrow_mmap(&path.join("aircraft.arrow"), &mut mmaps)
-    };
+    let aircraft_batches =
+        load_arrow_mmap(&aircraft_tracks::output::aircraft_arrow_path(path), &mut mmaps);
 
     Ok(HexData {
         _mmaps: mmaps,
@@ -143,150 +136,12 @@ fn load_arrow_mmap(path: &Path, mmaps: &mut Vec<Arc<Mmap>>) -> Vec<RecordBatch> 
     batches
 }
 
-/// Load aircraft segments from on-disk arrow batches. Detects schema by
-/// looking for the v5 `phase` column; falls back to the v4-bucketed reader.
-///
-/// In both formats one returned `AircraftSegment` represents one row — for
-/// v5 cruise rows the rep_line is the geometry and `count_weight` carries
-/// the line-density factor `sum_length / rep_len`, so the existing Doc 29
-/// kernel multiplies by it and produces the same `NPD × ΔF × density`
-/// energy as `compute_cruise_at_receiver` would.
+/// Load aircraft segments from on-disk arrow batches — thin wrapper that
+/// delegates to the auto-dispatch v5/v4 reader in `aircraft_tracks::output`.
 pub fn load_aircraft_segments_unified(
     batches: &[RecordBatch],
 ) -> Vec<noise_compute::types::AircraftSegment> {
-    let is_v5 = batches.first().is_some_and(|b| b.schema().column_with_name("phase").is_some());
-    if is_v5 {
-        aircraft_tracks::output::load_v5_as_aircraft_segments(batches)
-    } else {
-        load_aircraft_segments_v4_bucketed(batches)
-    }
-}
-
-/// v4-bucketed reader (legacy). One row per bucket (= aggregated segment).
-fn load_aircraft_segments_v4_bucketed(
-    batches: &[RecordBatch],
-) -> Vec<noise_compute::types::AircraftSegment> {
-    use arrow::array::*;
-    use noise_compute::emission::aircraft::{GROUND_CONTEXT_NONE, GROUND_OPS_KIND_NONE};
-    use noise_compute::types::AircraftSegment;
-
-    const BUCKET_KIND_AIRBORNE: u8 = 0;
-    const BUCKET_KIND_GROUND_SYNTH: u8 = 2;
-
-    let mut out: Vec<AircraftSegment> = Vec::new();
-
-    for batch in batches {
-        let n = batch.num_rows();
-        if n == 0 {
-            continue;
-        }
-
-        let slat = batch
-            .column_by_name("bucket_start_lat")
-            .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
-        let slon = batch
-            .column_by_name("bucket_start_lon")
-            .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
-        let salt = batch
-            .column_by_name("bucket_start_alt_m")
-            .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
-        let elat = batch
-            .column_by_name("bucket_end_lat")
-            .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
-        let elon = batch
-            .column_by_name("bucket_end_lon")
-            .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
-        let ealt = batch
-            .column_by_name("bucket_end_alt_m")
-            .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
-
-        let (Some(slat), Some(slon), Some(salt), Some(elat), Some(elon), Some(ealt)) =
-            (slat, slon, salt, elat, elon, ealt)
-        else {
-            continue;
-        };
-
-        let pidx = batch
-            .column_by_name("profile_idx")
-            .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
-        let dep = batch
-            .column_by_name("is_departure")
-            .and_then(|c| c.as_any().downcast_ref::<BooleanArray>());
-        let per = batch
-            .column_by_name("period")
-            .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
-        let spd = batch
-            .column_by_name("speed_kt")
-            .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
-        let slen = batch
-            .column_by_name("segment_length_m")
-            .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
-        let gctx = batch
-            .column_by_name("ground_context")
-            .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
-        let gkind = batch
-            .column_by_name("ground_ops_kind")
-            .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
-        let cw = batch
-            .column_by_name("count_weight")
-            .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
-        let peak_did = batch
-            .column_by_name("peak_date_id")
-            .and_then(|c| c.as_any().downcast_ref::<Int16Array>());
-        let bkind = batch
-            .column_by_name("bucket_kind")
-            .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
-        let fids_top = batch
-            .column_by_name("flight_ids_top")
-            .and_then(|c| c.as_any().downcast_ref::<ListArray>());
-
-        for i in 0..n {
-            let bucket_kind = bkind.map(|a| a.value(i)).unwrap_or(BUCKET_KIND_AIRBORNE);
-            let on_ground = bucket_kind != BUCKET_KIND_AIRBORNE;
-            let surface_model = bucket_kind == BUCKET_KIND_GROUND_SYNTH;
-            let flight_id: u64 = fids_top
-                .and_then(|list| {
-                    if list.is_null(i) {
-                        None
-                    } else {
-                        let sub = list.value(i);
-                        if sub.len() == 0 {
-                            None
-                        } else {
-                            sub.as_any()
-                                .downcast_ref::<UInt64Array>()
-                                .map(|a| a.value(0))
-                        }
-                    }
-                })
-                .unwrap_or(0);
-            let date_id = peak_did.map(|a| a.value(i)).unwrap_or(0);
-            let count_weight = cw.map(|a| a.value(i)).unwrap_or(1.0);
-
-            out.push(AircraftSegment {
-                flight_id,
-                profile_idx: pidx.map(|a| a.value(i)).unwrap_or(7),
-                is_departure: dep.map(|a| a.value(i)).unwrap_or(false),
-                on_ground,
-                period: per.map(|a| a.value(i)).unwrap_or(0),
-                date_id,
-                start_lat: slat.value(i),
-                start_lon: slon.value(i),
-                start_alt_m: salt.value(i),
-                end_lat: elat.value(i),
-                end_lon: elon.value(i),
-                end_alt_m: ealt.value(i),
-                speed_kt: spd.map(|a| a.value(i)).unwrap_or(0.0),
-                segment_length_m: slen.map(|a| a.value(i)).unwrap_or(0.0),
-                count_weight,
-                surface_model,
-                ground_context: gctx.map(|a| a.value(i)).unwrap_or(GROUND_CONTEXT_NONE),
-                ground_ops_kind: gkind.map(|a| a.value(i)).unwrap_or(GROUND_OPS_KIND_NONE),
-            });
-        }
-    }
-
-    out
+    aircraft_tracks::output::load_aircraft_segments(batches)
 }
 
 // ── Query helpers: iterate over mmap'd Arrow columns directly ──
