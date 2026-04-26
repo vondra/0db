@@ -233,6 +233,27 @@ pub fn query_roads_from_batches(
         };
 
         for i in 0..n {
+            // Cheap bbox reject FIRST, before the per-row normalize cascade.
+            // ~99% of rows are far from the popup point (popup hits ~1-2 k of
+            // ~900 k road segments per R4 ring); running normalize_road on all
+            // of them was the dominant cost in collect_from_hex_data
+            // (~160 ms warm). max_radius is the upper bound — final accept
+            // uses effective_radius after normalize.
+            let s_lat = slat.value(i);
+            let e_lat = elat.value(i);
+            let mid_lat = (s_lat + e_lat) * 0.5;
+            let dlat = (lat - mid_lat).abs() * 110_540.0;
+            if dlat > max_radius * 1.5 {
+                continue;
+            }
+            let s_lon = slon.value(i);
+            let e_lon = elon.value(i);
+            let mid_lon = (s_lon + e_lon) * 0.5;
+            let dlon = (lon - mid_lon).abs() * 111_320.0 * mid_lat.to_radians().cos();
+            if dlon > max_radius * 1.5 {
+                continue;
+            }
+
             let source_id = source_id_col.map(|a| a.value(i)).unwrap_or(0);
             let raw = noise_compute::normalize::RawRoadInput {
                 road_class: rclass.map(|a| a.value(i)).unwrap_or(0),
@@ -254,20 +275,8 @@ pub fn query_roads_from_batches(
             };
             let effective_radius = max_radius.min(norm.max_distance_m);
 
-            let s_lat = slat.value(i);
-            let s_lon = slon.value(i);
-            let e_lat = elat.value(i);
-            let e_lon = elon.value(i);
-
-            // Quick bbox reject
-            let mid_lat = (s_lat + e_lat) / 2.0;
-            let mid_lon = (s_lon + e_lon) / 2.0;
-            let dlat = (lat - mid_lat).abs() * 110_540.0;
-            if dlat > effective_radius * 1.5 {
-                continue;
-            }
-            let dlon = (lon - mid_lon).abs() * 111_320.0 * mid_lat.to_radians().cos();
-            if dlon > effective_radius * 1.5 {
+            // Tighter bbox reject using effective_radius (per-class).
+            if dlat > effective_radius * 1.5 || dlon > effective_radius * 1.5 {
                 continue;
             }
 
