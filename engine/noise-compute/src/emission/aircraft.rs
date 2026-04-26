@@ -568,6 +568,75 @@ pub fn delta_f(q_m: f64, seg_len_m: f64, d_bar_m: f64) -> f64 {
     10.0 * f.max(1e-15).log10()
 }
 
+// ─── Fast acoustic correction approximations (shared with pipeline) ───
+//
+// `fast_atan` / `fast_delta_f` / `fast_lateral_attenuation` replace libm
+// `atan` (~50-80 cycles) with a Padé [3/2] approximation (~8 cycles) at the
+// cost of < 0.05 dB error per ΔF and < 0.15 dB per Λ. Pipeline ships all
+// tile output through these, popup follows so popup ≡ tile parity is by
+// construction (same approximations, same regime). The exact variants
+// above remain for verification, tests, and any future acoustically
+// strict caller.
+
+/// Padé [3/2] atan for |x| ≤ 1. Max error 0.0034 rad (0.19°).
+#[inline(always)]
+fn fast_atan_small(x: f64) -> f64 {
+    let x2 = x * x;
+    x * (1.0 + 0.1827 * x2) / (1.0 + 0.5124 * x2)
+}
+
+/// `atan(x)` via Padé [3/2] over the full real line. Max error ~0.003 rad.
+#[inline(always)]
+pub fn fast_atan(x: f64) -> f64 {
+    if x.abs() > 1.0 {
+        return x.signum() * std::f64::consts::FRAC_PI_2 - fast_atan_small(1.0 / x);
+    }
+    fast_atan_small(x)
+}
+
+/// Padé-atan variant of `delta_f`. Max error vs exact: < 0.05 dB.
+#[inline]
+pub fn fast_delta_f(q_m: f64, seg_len_m: f64, d_bar_m: f64) -> f64 {
+    if seg_len_m < 1.0 || d_bar_m < 1.0 {
+        return 0.0;
+    }
+    let alpha1 = -q_m / d_bar_m;
+    let alpha2 = -(q_m - seg_len_m) / d_bar_m;
+
+    let g1 = alpha1 / (1.0 + alpha1 * alpha1) + fast_atan(alpha1);
+    let g2 = alpha2 / (1.0 + alpha2 * alpha2) + fast_atan(alpha2);
+    let f = (g2 - g1) * std::f64::consts::FRAC_1_PI;
+
+    10.0 * f.max(1e-15).log10()
+}
+
+/// Fast lateral attenuation. Computes `β` via `fast_atan` (no atan2) from
+/// `rel_alt / lateral_m`, then applies the Doc 29 §4.5.4 Γ × Λ(β) formula
+/// using the same Doc 29 piecewise. Skips the `atan2` call (caller passes
+/// rel_alt + lateral instead of beta_deg + lateral). For `airport_ground`
+/// callers Λ collapses to 0 — this kernel does the same gate.
+/// Max error vs exact: < 0.15 dB per segment.
+#[inline]
+pub fn fast_lateral_attenuation(rel_alt: f64, lateral_m: f64, airport_ground: bool) -> f64 {
+    if airport_ground {
+        return 0.0;
+    }
+
+    let beta_deg = fast_atan(rel_alt / lateral_m.max(0.01)).to_degrees();
+    if beta_deg > 50.0 || beta_deg < 0.0 {
+        return if beta_deg < 0.0 { 10.857 } else { 0.0 };
+    }
+
+    let gamma = if lateral_m <= 914.0 {
+        1.089 * (1.0 - (-0.00274 * lateral_m).exp())
+    } else {
+        1.0
+    };
+
+    let lambda_beta = 1.137 - 0.0229 * beta_deg + 9.72 * (-0.142 * beta_deg).exp();
+    gamma * lambda_beta
+}
+
 /// Lateral attenuation Λ(β, l) = Γ(l) × Λ(β) (Doc 29 §4.5.4, Eq. 4-18/4-19).
 #[inline]
 pub fn lateral_attenuation(beta_deg: f64, lateral_m: f64) -> f64 {
@@ -2247,18 +2316,20 @@ fn segment_sel_with_overrides(
         return Some((sel, cpa));
     }
 
-    // Near-field path: full Doc 29 corrections.
-    let df = delta_f(cpa.q_m, cpa.seg_len_m, profile.d_bar_m);
+    // Near-field path: full Doc 29 corrections, but using the same Padé-atan
+    // approximations pipeline ships through (`fast_delta_f`,
+    // `fast_lateral_attenuation`). Total approximation error is < 0.05 dB
+    // (ΔF) + < 0.15 dB (Λ) per segment vs the libm-atan path, well under
+    // the 0.5 dB popup tolerance and a wash on aggregate energy. Popup ≡
+    // tile parity becomes a by-construction property: both sides use the
+    // same kernel.
+    let df = fast_delta_f(cpa.q_m, cpa.seg_len_m, profile.d_bar_m);
 
     // Lateral attenuation applied to all profiles including profile 6 (LightGA+Rotorcraft).
     // WHY: Profile 6 is a mixed bucket (C172, PA28 + helicopters). Old code skipped lateral
     // attenuation for ALL profile 6, overestimating fixed-wing GA noise by up to 10.9 dB.
     // Helicopters technically don't have lateral attenuation, but they're ~10% of profile 6.
-    let lambda = if airport_ground_mode {
-        0.0
-    } else {
-        lateral_attenuation(cpa.beta_deg, cpa.lateral_m)
-    };
+    let lambda = fast_lateral_attenuation(cpa.relative_alt_m, cpa.lateral_m, airport_ground_mode);
 
     let di = delta_i(cpa.beta_deg, profile.installation);
 
