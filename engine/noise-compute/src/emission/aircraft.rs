@@ -475,11 +475,20 @@ pub static REACH_SQ_TABLE: LazyLock<[[f64; 2]; 8]> = LazyLock::new(|| {
     })
 });
 
-/// Cheap conservative lower bound on segment-to-receiver slant² distance.
-/// Skips raster sampling, NPD interpolation, atan2, and foot reverse-projection
-/// that the full `segment_sel_with_overrides` does. Safe as a pre-filter — the
-/// returned value is **always ≤** the slant² that would have been computed by
-/// the full kernel, so rejecting on `> reach²` never drops a real contributor.
+/// Slant² from receiver to the segment evaluated at the same unclamped CPA
+/// foot the airborne kernel uses (`segment_energy_kernel`). Conservative
+/// pre-filter for the source-reader R-tree loop: rejecting on `> reach²`
+/// never drops a real contributor because both this helper and the kernel
+/// use identical lateral CPA + altitude-extrapolation geometry, so they
+/// produce the same `slant²` for the same `(seg, receiver)`. The kernel
+/// can still drop the segment via Filter D — that path stays in the
+/// kernel; the pre-filter never falsely rejects.
+///
+/// Earlier versions clamped altitude to `[min_alt, max_alt]`, which over-
+/// estimated slant² for descending/ascending segments whose extrapolated
+/// CPA foot crossed receiver elevation. /gg consensus (Codex + Gemini)
+/// caught the false-negative band; this formulation matches the kernel
+/// exactly.
 ///
 /// `cos_lat` is hoisted by the caller (one cos per query, not per segment).
 #[inline]
@@ -509,23 +518,16 @@ pub fn segment_min_slant_sq(
     let cy = y1 + t * dy;
     let lateral_sq = cx * cx + cy * cy;
 
-    // Min |alt - rx_elev| over the segment line. Altitude varies linearly
-    // along the segment, so the minimum distance is 0 if rx ∈ [min_alt,
-    // max_alt], else the closer endpoint's altitude difference. Squaring
-    // gives a lower bound on the squared vertical contribution to slant²
-    // at *any* point on the line — safe because the pre-filter never
-    // overestimates slant.
-    let min_alt = seg.start_alt_m.min(seg.end_alt_m) as f64;
-    let max_alt = seg.start_alt_m.max(seg.end_alt_m) as f64;
-    let alt_diff_min = if rx_elev_m < min_alt {
-        min_alt - rx_elev_m
-    } else if rx_elev_m > max_alt {
-        rx_elev_m - max_alt
-    } else {
-        0.0
-    };
+    // Altitude at the lateral CPA foot — same unclamped-t extrapolation
+    // the kernel does. Safe because both sides round-trip through the
+    // same arithmetic: any segment the pre-filter accepts is one the
+    // kernel will at least *evaluate* (Filter D / SEL gates may still
+    // reject downstream).
+    let start_alt = seg.start_alt_m as f64;
+    let sdz = seg.end_alt_m as f64 - start_alt;
+    let rel_alt = start_alt + t * sdz - rx_elev_m;
 
-    lateral_sq + alt_diff_min * alt_diff_min
+    lateral_sq + rel_alt * rel_alt
 }
 
 /// CPA result for one segment-receiver pair.
@@ -779,6 +781,7 @@ pub fn segment_energy_kernel(
     inv_lsq: f64,
     slen: f64,
     rcv_elev: f64,
+    npd_luts: &NpdLuts,
     profile_idx: usize,
     is_dep: bool,
     seg_dv: f64,
@@ -818,7 +821,10 @@ pub fn segment_energy_kernel(
     // the libm log10 division by ln(10) — saves a few cycles per call,
     // pipeline already shipped this way.
     let log_d = d_ft.log2() * 0.301029995664_f64;
-    let sel_npd = NpdLuts::shared().lookup(profile_idx, is_dep, log_d);
+    // Caller-hoisted `&NpdLuts` reference — keeps the OnceLock Acquire load
+    // out of the per-receiver inner loop (would otherwise fence SIMD /
+    // pipelining across 100 k-segment × 343-receiver scatters).
+    let sel_npd = npd_luts.lookup(profile_idx, is_dep, log_d);
 
     // CFFK fast path: above 7.62 km slant the per-segment corrections
     // (ΔF, Λ, ΔI) collapse to within fractions of a dB. Skip them and
@@ -2685,6 +2691,11 @@ fn segment_sel_with_overrides(
 
     let reach_sq = REACH_SQ_TABLE[profile_idx][seg.is_departure as usize];
 
+    // Popup is single-receiver — `shared()` is hit once per segment but
+    // the LazyLock Acquire fence still serialises with the kernel's
+    // log2 / mul / lookup. Hoist out so the kernel signature matches
+    // pipeline's batch use, where the same hoist saves N×343 atomic
+    // loads per scatter.
     let kernel = segment_energy_kernel(
         ax,
         ay,
@@ -2695,6 +2706,7 @@ fn segment_sel_with_overrides(
         inv_lsq,
         slen,
         rx_elev_m,
+        NpdLuts::shared(),
         profile_idx,
         seg.is_departure,
         dv,

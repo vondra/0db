@@ -242,17 +242,21 @@ pub fn collect_sources_at_point(
 /// Aircraft R-tree pre-filter config. Both fields gate the same per-segment
 /// loop in `collect_from_hex_data`, but they reject different sets:
 /// - per-profile reach (always when `Some(_)` is passed): drops airborne
-///   segments whose minimum-slant lower bound exceeds the profile's reach².
-/// - PALT skip (when `palt_enabled` is true): drops airborne non-ground
-///   segments whose `min_alt > rx_elev + AIRCRAFT_FAR_FIELD_THRESHOLD_M`,
-///   matching the kernel's PALT-raster gate at
-///   `noise-compute::compute_at_point_with_airports_palt`. Those segments
-///   would have been hit-`continue`-d in compute anyway; pre-filtering at
-///   collect skips the ~88-byte clone and the kernel iteration.
+///   segments whose slant² (kernel-matched, unclamped CPA) exceeds the
+///   profile's reach².
+/// - PALT skip (when `palt_gate_elev_m` is `Some`): drops airborne non-
+///   ground segments whose `min_alt > palt_gate_elev_m + AIRCRAFT_FAR_FIELD_THRESHOLD_M`.
+///   The gate elevation must be the **R8 cell-center** elevation —
+///   `compute_at_point_with_airports_palt` builds `palt_gate_elev` the
+///   same way (`engine/noise-compute/src/lib.rs` near `palt_gate_elev =
+///   match (aircraft_r8_raster, receiver_r8) { ... }`). Using receiver
+///   ground elevation here would be more aggressive than the kernel for
+///   receivers in valleys (rx < cell-center), dropping segments the
+///   kernel + PALT raster would have routed correctly.
 #[derive(Clone, Copy, Debug)]
 pub struct AircraftPrefilter {
     pub rx_elev_m: f64,
-    pub palt_enabled: bool,
+    pub palt_gate_elev_m: Option<f64>,
 }
 
 /// Shared source collection logic. Takes pre-loaded hex data.
@@ -638,16 +642,18 @@ pub fn collect_from_hex_data(
             [lat + radius_lat_deg, lng + radius_lon_deg],
         );
 
-        // Pre-filter is gated on the caller passing receiver context —
-        // without `rx_elev_m` the slant lower bound and PALT gate elevation
-        // can't be computed safely.
+        // Pre-filter is gated on the caller passing receiver context. The
+        // PALT cutoff is built off the **R8 cell-center elevation** the
+        // caller provides (`palt_gate_elev_m`) — same reference the
+        // kernel uses at `compute_at_point_with_airports_palt`. Falling
+        // back to receiver ground elevation here would drop segments the
+        // kernel + PALT raster would correctly route.
         let prefilter_ctx = prefilter.map(|p| {
             (
                 p.rx_elev_m,
                 lat.to_radians().cos().max(0.2),
-                p.palt_enabled.then(|| {
-                    p.rx_elev_m
-                        + noise_compute::emission::aircraft::AIRCRAFT_FAR_FIELD_THRESHOLD_M
+                p.palt_gate_elev_m.map(|gate_elev| {
+                    gate_elev + noise_compute::emission::aircraft::AIRCRAFT_FAR_FIELD_THRESHOLD_M
                 }),
             )
         });
@@ -943,16 +949,22 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
     // lower bounds against. With the stub rasters (offline tests), elevation
     // is 0.0 and the pre-filter still runs but is slightly less aggressive.
     let elevation = rasters.elevation(lat, lng);
-    // PALT raster will be used iff `PALT_DIR` is configured at startup AND
-    // the receiver maps to a valid R4 hex. When both true, the kernel
-    // would skip airborne-cruise segments above
-    // `rx_elev + AIRCRAFT_FAR_FIELD_THRESHOLD_M` anyway — pre-filter them
-    // here to save the clone.
-    let palt_enabled = PALT_DIR.get().is_some()
-        && h3o::LatLng::new(lat, lng)
+    // PALT gate elevation must use the **R8 cell-center** (same reference
+    // the kernel uses at `compute_at_point_with_airports_palt`). For a
+    // receiver in a valley `rx_elev < cell_center_elev` — using rx_elev
+    // here would drop segments at altitudes the kernel + PALT raster
+    // would correctly route.
+    let palt_gate_elev_m = if PALT_DIR.get().is_some() {
+        h3o::LatLng::new(lat, lng)
             .ok()
-            .and_then(|ll| ll.to_cell(h3o::Resolution::Eleven).parent(h3o::Resolution::Four))
-            .is_some();
+            .and_then(|ll| ll.to_cell(h3o::Resolution::Eleven).parent(h3o::Resolution::Eight))
+            .map(|cell| {
+                let centre = h3o::LatLng::from(cell);
+                rasters.elevation(centre.lat(), centre.lng())
+            })
+    } else {
+        None
+    };
     let t_load = t_start.elapsed();
     let sources = collect_from_hex_data(
         &hex_refs,
@@ -960,7 +972,7 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         lng,
         Some(AircraftPrefilter {
             rx_elev_m: elevation,
-            palt_enabled,
+            palt_gate_elev_m,
         }),
     );
     let t_collect = t_start.elapsed() - t_load;
