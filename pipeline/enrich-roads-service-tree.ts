@@ -110,6 +110,7 @@ const MIN_AADT = 20
 const SERVICE_TREE_CAP_PER_CLASS: Record<number, number> = {
   5: 1200,
   6: 250,
+  7: 200,
   9: 2000,
 }
 
@@ -285,6 +286,14 @@ class MinHeap {
 interface GraphNode {
   degree: number
   eligibleEdges: number[]
+  // True iff the node touches a real motor-vehicle exit (higher-class road or
+  // link: cls 0–4, 10–12). Without this flag, `findComponents` treated any
+  // non-eligible edge as an exit — including tracks (cls 8) and pedestrian
+  // ways. A service road that dead-ends at a `highway=track` stub then got
+  // marked as an exit, and `flowAccumulate` pumped the entire residential
+  // sub-tree's traffic through it on the way to that fake root. Real example:
+  // Pasito Blanco service road OSM 69951934 inflated from ~30 trips/day to 1700+.
+  hasExitEdge: boolean
 }
 
 interface Graph {
@@ -312,7 +321,7 @@ function buildGraph(table: any): Graph {
     let id = nodeIdByKey.get(key)
     if (id === undefined) {
       id = nodes.length
-      nodes.push({ degree: 0, eligibleEdges: [] })
+      nodes.push({ degree: 0, eligibleEdges: [], hasExitEdge: false })
       nodeIdByKey.set(key, id)
     }
     return id
@@ -351,6 +360,12 @@ function buildGraph(table: any): Graph {
       eligible[i] = 1
       nodes[sId].eligibleEdges.push(i)
       nodes[eId].eligibleEdges.push(i)
+    } else if (cls < 5 || (cls >= 10 && cls <= 12)) {
+      // Higher-class motor road (motorway, trunk, primary, secondary,
+      // tertiary) or any link — flow can legitimately exit local network here.
+      // Tracks (cls=8) explicitly excluded: not real exits, see GraphNode comment.
+      nodes[sId].hasExitEdge = true
+      nodes[eId].hasExitEdge = true
     }
   }
 
@@ -394,7 +409,7 @@ function findComponents(graph: Graph): Component[] {
       for (let endSel = 0; endSel < 2; endSel++) {
         const nodeId = endSel === 0 ? sId : eId
         const node = nodes[nodeId]
-        if (node.degree > node.eligibleEdges.length) {
+        if (node.hasExitEdge) {
           comp.rootNodes.add(nodeId)
         }
         const edges = node.eligibleEdges
@@ -784,9 +799,20 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   // Flow accumulation per component, reading the precomputed seg→dwellings
   // map by direct lookup (no per-component re-scan of every building).
   const segAADT = new Map<number, { light: number; medium: number; heavy: number; moto: number }>()
+  const TARGET_OSM = process.env.DEBUG_OSM_ID ? Number(process.env.DEBUG_OSM_ID) : null
+  const osmIdCol = roadTable.getChild('osm_id')
   for (const comp of components) {
     const segFlow = flowAccumulate(comp, graph.segNodeIds, lengthCol, globalBestSeg)
     const roadClassCol = roadTable.getChild('road_class')
+    if (TARGET_OSM !== null && osmIdCol) {
+      for (const [seg, trips] of segFlow) {
+        if (Number(osmIdCol.get(seg)) === TARGET_OSM) {
+          const localDw = globalBestSeg.get(seg) ?? 0
+          const localTrips = localDw * TRIPS_PER_DWELLING
+          console.log(`  [DEBUG seg ${seg} osm=${TARGET_OSM}] local_dw=${localDw} local_trips=${localTrips.toFixed(1)} TOTAL_FLOW=${trips.toFixed(0)} through_flow=${(trips - localTrips).toFixed(0)}`)
+        }
+      }
+    }
     for (const [seg, trips] of segFlow) {
       const cls = (roadClassCol?.get(seg) as number) ?? 5
       const capped = Math.min(trips, SERVICE_TREE_CAP_PER_CLASS[cls] ?? Infinity)
