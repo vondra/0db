@@ -657,6 +657,10 @@ pub fn collect_from_hex_data(
                 }),
             )
         });
+        // Hoist the LazyLock deref once — for ~232 k segments at airport
+        // density the per-iteration `&*REACH_SQ_TABLE` would issue an
+        // Acquire load on every byte-compare-cheap inner loop iteration.
+        let reach_sq_table: &[[f64; 2]; 8] = &REACH_SQ_TABLE;
 
         for entry in tree.locate_in_envelope_intersecting(&env) {
             let seg = &cached_segs[entry.cache_idx];
@@ -676,7 +680,7 @@ pub fn collect_from_hex_data(
                         }
                     }
                     let slant_sq = segment_min_slant_sq(seg, lat, lng, rx_elev, cos_lat);
-                    let reach_sq = REACH_SQ_TABLE[seg.profile_idx.min(7) as usize]
+                    let reach_sq = reach_sq_table[seg.profile_idx.min(7) as usize]
                         [seg.is_departure as usize];
                     if slant_sq > reach_sq {
                         continue;
@@ -949,6 +953,13 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
     // lower bounds against. With the stub rasters (offline tests), elevation
     // is 0.0 and the pre-filter still runs but is slightly less aggressive.
     let elevation = rasters.elevation(lat, lng);
+    // Pre-filter slant bound has to use the same reference the kernel
+    // uses — `Receiver::altitude_m()` adds DEFAULT_RECEIVER_HEIGHT (4 m)
+    // to the ground elevation, so the kernel evaluates `rel_alt` against
+    // ground+4 not raw ground. Using `elevation` directly here biased
+    // the pre-filter slant high by 8·rel_alt + 16 ≈ 64 k m² for cruise,
+    // which could falsely drop segments at the reach boundary.
+    let receiver_alt_m = noise_compute::types::default_receiver_altitude_m(elevation);
     // PALT gate elevation must use the **R8 cell-center** (same reference
     // the kernel uses at `compute_at_point_with_airports_palt`). For a
     // receiver in a valley `rx_elev < cell_center_elev` — using rx_elev
@@ -971,7 +982,7 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         lat,
         lng,
         Some(AircraftPrefilter {
-            rx_elev_m: elevation,
+            rx_elev_m: receiver_alt_m,
             palt_gate_elev_m,
         }),
     );

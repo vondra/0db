@@ -509,20 +509,22 @@ pub fn segment_min_slant_sq(
     let dx = x2 - x1;
     let dy = y2 - y1;
     let seg_len_sq = dx * dx + dy * dy;
-    let t = if seg_len_sq > 1e-6 {
-        -(x1 * dx + y1 * dy) / seg_len_sq
-    } else {
-        0.5
-    };
+    // Same `inv_lsq * ...` formulation the kernel uses (FP-equivalent to
+    // `... / seg_len_sq` only modulo 1 ULP, so we mirror exactly). For
+    // degenerate segments (sub-mm horizontal length) `inv_lsq = 0` makes
+    // `t = 0`, which is also what the kernel sees — pre-filter never
+    // takes a different branch from the kernel.
+    let inv_lsq = if seg_len_sq > 1e-6 { 1.0 / seg_len_sq } else { 0.0 };
+    let t = -(x1 * dx + y1 * dy) * inv_lsq;
     let cx = x1 + t * dx;
     let cy = y1 + t * dy;
     let lateral_sq = cx * cx + cy * cy;
 
     // Altitude at the lateral CPA foot — same unclamped-t extrapolation
-    // the kernel does. Safe because both sides round-trip through the
-    // same arithmetic: any segment the pre-filter accepts is one the
-    // kernel will at least *evaluate* (Filter D / SEL gates may still
-    // reject downstream).
+    // the kernel does. Both sides round-trip through identical
+    // arithmetic: any segment the pre-filter accepts is one the kernel
+    // will at least *evaluate* (Filter D / SEL gates may still reject
+    // downstream).
     let start_alt = seg.start_alt_m as f64;
     let sdz = seg.end_alt_m as f64 - start_alt;
     let rel_alt = start_alt + t * sdz - rx_elev_m;
@@ -2299,14 +2301,17 @@ pub fn bucket_ground_ops(
         } else {
             2u8
         };
-        // Same coord-rounding factor `aircraft_bucket::GROUND_LAT_LON_FACTOR`
-        // uses for cross-flight bucket merging — keep them in lockstep so
-        // bucket boundaries are consistent across both aggregation passes.
+        // Same coord-rounding factor AND policy (`.round() as i32`) as
+        // `aircraft_bucket::ground_key`. Bare `as i32` truncates toward
+        // zero, which would split bucket boundaries differently from
+        // the extraction-time merger and silently misalign popup
+        // bucketing with the persisted aircraft buckets.
+        let factor = crate::emission::aircraft_bucket::GROUND_LAT_LON_FACTOR;
         let key = (
-            (seg.start_lat * crate::emission::aircraft_bucket::GROUND_LAT_LON_FACTOR) as i32,
-            (seg.start_lon * crate::emission::aircraft_bucket::GROUND_LAT_LON_FACTOR) as i32,
-            (seg.end_lat * crate::emission::aircraft_bucket::GROUND_LAT_LON_FACTOR) as i32,
-            (seg.end_lon * crate::emission::aircraft_bucket::GROUND_LAT_LON_FACTOR) as i32,
+            (seg.start_lat * factor).round() as i32,
+            (seg.start_lon * factor).round() as i32,
+            (seg.end_lat * factor).round() as i32,
+            (seg.end_lon * factor).round() as i32,
             kind_class,
         );
         let bucket = buckets.entry(key).or_insert_with(|| GroundOpsBucket {
@@ -2458,6 +2463,11 @@ fn ground_ops_kind_index(kind: u8) -> usize {
 
 /// Compute SEL for a single aircraft segment at a receiver point.
 /// Returns (SEL_dB, CpaResult) or None if segment is too far / inaudible.
+///
+/// Convenience entry point for low-frequency callers (tests, single-shot
+/// queries). Pays one `NpdLuts::shared()` Acquire load per call. Hot
+/// users (popup per-segment loop, PALT raster scatter) should hoist the
+/// `&NpdLuts` reference and call `segment_sel_with_luts` directly.
 pub fn segment_sel(
     seg: &AircraftSegment,
     rx_lat: f64,
@@ -2474,6 +2484,32 @@ pub fn segment_sel(
         seg.end_alt_m as f64,
         false,
         Some(rasters),
+        NpdLuts::shared(),
+    )
+}
+
+/// Hot-path variant of `segment_sel` that accepts a caller-hoisted
+/// `&NpdLuts`. Use this from inside per-segment loops to avoid an
+/// `OnceLock::get_or_init` Acquire load on every call. Same return
+/// semantics as `segment_sel`.
+pub fn segment_sel_with_luts(
+    seg: &AircraftSegment,
+    rx_lat: f64,
+    rx_lon: f64,
+    rx_elev_m: f64,
+    rasters: &dyn RasterSampler,
+    npd_luts: &NpdLuts,
+) -> Option<(f64, CpaResult)> {
+    segment_sel_with_overrides(
+        seg,
+        rx_lat,
+        rx_lon,
+        rx_elev_m,
+        seg.start_alt_m as f64,
+        seg.end_alt_m as f64,
+        false,
+        Some(rasters),
+        npd_luts,
     )
 }
 
@@ -2546,6 +2582,12 @@ pub fn build_high_alt_r8_raster(
     // per R4 — over the Fastify popup worker timeout. The pre-filter
     // against the lowest cell elevation drops segments whose min altitude
     // can't possibly clear the gate for any cell in this R4.
+    //
+    // `NpdLuts::shared()` hoisted once before the par_iter so the kernel
+    // call inside the (segment × cell) inner loop sees a `&NpdLuts`
+    // reference instead of paying an `OnceLock::get_or_init` Acquire on
+    // each of the ~12 M (segment-cell) pairs at Ruzyně cold-build.
+    let npd_luts = NpdLuts::shared();
     use rayon::prelude::*;
     segments
         .par_iter()
@@ -2589,6 +2631,7 @@ pub fn build_high_alt_r8_raster(
                         seg.end_alt_m as f64,
                         false,
                         None,
+                        npd_luts,
                     ) else {
                         continue;
                     };
@@ -2633,6 +2676,7 @@ pub fn segment_sel_airport_ground(
         end_alt_m,
         true,
         None,
+        NpdLuts::shared(),
     )
 }
 
@@ -2645,6 +2689,7 @@ fn segment_sel_with_overrides(
     end_alt_m: f64,
     airport_ground_mode: bool,
     rasters: Option<&dyn RasterSampler>,
+    npd_luts: &NpdLuts,
 ) -> Option<(f64, CpaResult)> {
     let profile_idx = seg.profile_idx.min(7) as usize;
     let profile = &PROFILES[profile_idx];
@@ -2691,11 +2736,8 @@ fn segment_sel_with_overrides(
 
     let reach_sq = REACH_SQ_TABLE[profile_idx][seg.is_departure as usize];
 
-    // Popup is single-receiver — `shared()` is hit once per segment but
-    // the LazyLock Acquire fence still serialises with the kernel's
-    // log2 / mul / lookup. Hoist out so the kernel signature matches
-    // pipeline's batch use, where the same hoist saves N×343 atomic
-    // loads per scatter.
+    // Caller hoists `&NpdLuts` outside the per-segment loop so the
+    // OnceLock Acquire load doesn't serialise the kernel inner math.
     let kernel = segment_energy_kernel(
         ax,
         ay,
@@ -2706,7 +2748,7 @@ fn segment_sel_with_overrides(
         inv_lsq,
         slen,
         rx_elev_m,
-        NpdLuts::shared(),
+        npd_luts,
         profile_idx,
         seg.is_departure,
         dv,

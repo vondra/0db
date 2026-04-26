@@ -1867,6 +1867,12 @@ fn compute_aircraft(
         Vec::new()
     };
 
+    // Hoist NpdLuts reference once per query — kernel inner math then sees
+    // a plain `&NpdLuts` instead of paying an `OnceLock` Acquire load on
+    // every (segment × receiver) call. Saves up to 100 k atomic loads per
+    // popup at airport-scale densities.
+    let npd_luts = aircraft::NpdLuts::shared();
+
     for seg in segments {
         if aircraft::is_ground_stale_segment(seg, rasters) {
             continue;
@@ -1880,14 +1886,20 @@ fn compute_aircraft(
             continue;
         }
 
-
         if aircraft_r8_raster.is_some() {
             let seg_min_alt = seg.start_alt_m.min(seg.end_alt_m) as f64;
             if aircraft::segment_in_palt_raster(seg_min_alt, palt_gate_elev) {
                 continue;
             }
         }
-        let (sel, cpa) = match aircraft::segment_sel(seg, receiver.lat, receiver.lon, rx_elev, rasters) {
+        let (sel, cpa) = match aircraft::segment_sel_with_luts(
+            seg,
+            receiver.lat,
+            receiver.lon,
+            rx_elev,
+            rasters,
+            npd_luts,
+        ) {
             Some(v) => v,
             None => continue,
         };
