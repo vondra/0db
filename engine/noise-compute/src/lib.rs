@@ -1852,7 +1852,20 @@ fn compute_aircraft(
     // work that previously ran per segment. Pipeline already ships with
     // the same bucketing; this puts popup on the same line-source regime,
     // and parity becomes a structural property.
-    let ground_buckets = aircraft::bucket_ground_ops(segments, rasters, n_days);
+    //
+    // Cheap pre-gate: skip the HashMap allocation when there is no
+    // ground-context segment in this query (Dobříš and other rural
+    // receivers — most popup queries). The scan is O(n) byte compares,
+    // dominated by branch prediction; cheaper than `bucket_ground_ops`
+    // even at zero-bucket queries because of the avoided allocator hit.
+    let has_ground_candidate = segments.iter().any(|s| {
+        s.ground_context != aircraft::GROUND_CONTEXT_NONE || s.surface_model || s.on_ground
+    });
+    let ground_buckets = if has_ground_candidate {
+        aircraft::bucket_ground_ops(segments, rasters, n_days)
+    } else {
+        Vec::new()
+    };
 
     for seg in segments {
         if aircraft::is_ground_stale_segment(seg, rasters) {
@@ -1917,13 +1930,11 @@ fn compute_aircraft(
         }
     }
 
-    // ─── Ground-ops buckets → propagate once per bucket ───
-    //
     // Pipeline-shape accumulation: each bucket is one line source carrying
     // the energy of N (~5-10) co-located ADS-B segments. Path effects
     // (build_path_profile, terrain, screening, vegetation) computed once
-    // per bucket instead of once per segment — the popup-side equivalent
-    // of pipeline's bucketed scatter at `pipeline-worker/src/main.rs`.
+    // per bucket instead of once per segment — popup mirror of pipeline's
+    // bucketed scatter at `pipeline-worker/src/main.rs`.
     for bucket in &ground_buckets {
         let kind_idx = (bucket.kind.saturating_sub(1) as usize).min(2);
         let mid_lat = (bucket.start_lat + bucket.end_lat) * 0.5;

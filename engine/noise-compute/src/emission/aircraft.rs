@@ -339,9 +339,9 @@ pub fn interpolate_sel(profile: &NpdProfile, slant_ft: f64, is_departure: bool) 
     interpolate_sel_logd(profile, log_d, is_departure)
 }
 
-// ─── NPD lookup table (shared by pipeline + popup hot paths) ───
-//
-// Pre-built at first access from `interpolate_sel_logd`. 128 bins keep the
+// NPD lookup table — pre-built at first access from `interpolate_sel_logd`.
+// Shared by popup `segment_sel_with_overrides` and pipeline-worker scatter.
+// 128 bins keep the
 // linear-log interpolation sag < 0.05 dB against the convex physics tail
 // (`−20·log10(d) − α·d` beyond 25 000 ft) where the linear-in-meters
 // absorption curves downward faster than log-linear between bin anchors.
@@ -453,7 +453,12 @@ pub fn interpolate_sel_logd(profile: &NpdProfile, log_d: f64, is_departure: bool
 // CPA geometry (Doc 29 §4.4.1)
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub const M_PER_DEG_LAT: f64 = 111_132.92;
+// Doc 29 reference value — slightly higher precision than the
+// crate-wide `crate::constants::M_PER_DEG_LAT` (110_540.0) used by the
+// general geo helpers. Kept module-private so the two never get
+// imported under the same path; aircraft kernels stay on this value
+// because compute_cpa was authored against it.
+const M_PER_DEG_LAT: f64 = 111_132.92;
 
 /// Per-profile reach² (m²) at the standard 40 dB SEL threshold, indexed
 /// `[profile_idx][is_departure as usize]`. Pre-built at first access so the
@@ -636,8 +641,6 @@ pub fn delta_f(q_m: f64, seg_len_m: f64, d_bar_m: f64) -> f64 {
     10.0 * f.max(1e-15).log10()
 }
 
-// ─── Fast acoustic correction approximations (shared with pipeline) ───
-//
 // `fast_atan` / `fast_delta_f` / `fast_lateral_attenuation` replace libm
 // `atan` (~50-80 cycles) with a Padé [3/2] approximation (~8 cycles) at the
 // cost of < 0.05 dB error per ΔF and < 0.15 dB per Λ. Pipeline ships all
@@ -705,24 +708,19 @@ pub fn fast_lateral_attenuation(rel_alt: f64, lateral_m: f64, airport_ground: bo
     gamma * lambda_beta
 }
 
-// ─── Shared airborne kernel (popup + pipeline single source of truth) ───
-
-/// Installation code packed for the inline ΔI formula.
-/// 0 = Wing, 1 = Fuselage, 2 = Propeller (ΔI = 0).
-pub const INST_WING: u8 = 0;
-pub const INST_FUSELAGE: u8 = 1;
-pub const INST_PROPELLER: u8 = 2;
-
-/// Per-installation `(di_a, di_b, di_c)` constants for the inline ΔI formula.
-/// Avoids the trig-heavy `delta_i(beta_deg, ...)` call by working off
-/// `u² = sin²(β) = rel_alt²/slant²` directly. Output matches `delta_i`
-/// to FP rounding for the same `(rel_alt, slant)` pair.
+/// Per-installation `(installation, di_a, di_b, di_c)` constants for the
+/// inline ΔI formula in `segment_energy_kernel`. Returning the `Installation`
+/// echo lets pipeline's SoA build store both the enum and the trig
+/// coefficients in one call. Output of the inline formula matches
+/// `delta_i(beta_deg, installation)` to FP rounding for the same
+/// `(rel_alt, slant)` pair, so swapping in this fast path doesn't move
+/// popup ↔ tile parity.
 #[inline]
-pub fn delta_i_constants(installation: Installation) -> (u8, f64, f64, f64) {
+pub fn delta_i_constants(installation: Installation) -> (Installation, f64, f64, f64) {
     match installation {
-        Installation::Wing => (INST_WING, 0.0039, 0.062, 0.8786),
-        Installation::Fuselage => (INST_FUSELAGE, 0.1225, 0.329, 1.0),
-        Installation::Propeller => (INST_PROPELLER, 0.0, 0.0, 1.0),
+        Installation::Wing => (Installation::Wing, 0.0039, 0.062, 0.8786),
+        Installation::Fuselage => (Installation::Fuselage, 0.1225, 0.329, 1.0),
+        Installation::Propeller => (Installation::Propeller, 0.0, 0.0, 1.0),
     }
 }
 
@@ -785,7 +783,7 @@ pub fn segment_energy_kernel(
     is_dep: bool,
     seg_dv: f64,
     d_bar_m: f64,
-    inst: u8,
+    inst: Installation,
     di_a: f64,
     di_b: f64,
     di_c: f64,
@@ -854,7 +852,7 @@ pub fn segment_energy_kernel(
     // Inline ΔI: works off u² = rel_alt²/slant² (= sin²β) instead of trig
     // on β. Identical math to `delta_i(beta_deg, installation)` for the
     // same (rel_alt, slant) — verified to FP rounding.
-    let di = if inst == INST_PROPELLER {
+    let di = if matches!(inst, Installation::Propeller) {
         0.0
     } else {
         let rel_alt_di = rel_alt.max(0.0);
@@ -2295,11 +2293,14 @@ pub fn bucket_ground_ops(
         } else {
             2u8
         };
+        // Same coord-rounding factor `aircraft_bucket::GROUND_LAT_LON_FACTOR`
+        // uses for cross-flight bucket merging — keep them in lockstep so
+        // bucket boundaries are consistent across both aggregation passes.
         let key = (
-            (seg.start_lat * 3333.0) as i32,
-            (seg.start_lon * 3333.0) as i32,
-            (seg.end_lat * 3333.0) as i32,
-            (seg.end_lon * 3333.0) as i32,
+            (seg.start_lat * crate::emission::aircraft_bucket::GROUND_LAT_LON_FACTOR) as i32,
+            (seg.start_lon * crate::emission::aircraft_bucket::GROUND_LAT_LON_FACTOR) as i32,
+            (seg.end_lat * crate::emission::aircraft_bucket::GROUND_LAT_LON_FACTOR) as i32,
+            (seg.end_lon * crate::emission::aircraft_bucket::GROUND_LAT_LON_FACTOR) as i32,
             kind_class,
         );
         let bucket = buckets.entry(key).or_insert_with(|| GroundOpsBucket {
