@@ -52,11 +52,33 @@ type RequestEntry = {
   clientSettled: boolean
 }
 
+/**
+ * One slot in the worker pool. Each slot owns at most one live worker and
+ * at most one active request at any time. The queue is shared across all
+ * slots; dispatching picks the first idle slot.
+ */
+type Slot = {
+  index: number
+  worker: NoiseOnflyWorker | null
+  active: RequestEntry | null
+  recyclingWorker: NoiseOnflyWorker | null
+  recycling: Promise<void> | null
+}
+
 export type NoiseOnflySupervisorConfig = {
   createWorker: NoiseOnflyWorkerFactory
   maxQueue: number
   queueTimeoutMs: number
   workTimeoutMs: number
+  /**
+   * Number of parallel NAPI workers. Default 1 (FIFO single-threaded —
+   * preserves legacy behaviour and unit-test expectations). Set > 1 in
+   * production to handle concurrent users without queueing — each worker
+   * holds its own ~200 MB Rust state (PALT_CACHE LRU, R-trees) so memory
+   * scales linearly with pool size; mmap'd Arrow + DEM rasters are shared
+   * via OS page cache and don't duplicate.
+   */
+  poolSize?: number
   logger?: SupervisorLogger
 }
 
@@ -100,11 +122,8 @@ export class NoiseOnflySupervisor {
   private readonly queueTimeoutMs: number
   private readonly workTimeoutMs: number
   private readonly logger?: SupervisorLogger
+  private readonly slots: Slot[]
 
-  private worker: NoiseOnflyWorker | null = null
-  private recyclingWorker: NoiseOnflyWorker | null = null
-  private recycling: Promise<void> | null = null
-  private active: RequestEntry | null = null
   private readonly queue: RequestEntry[] = []
   private nextRequestId = 1
   private closed = false
@@ -115,6 +134,14 @@ export class NoiseOnflySupervisor {
     this.queueTimeoutMs = Math.max(1, config.queueTimeoutMs)
     this.workTimeoutMs = Math.max(1, config.workTimeoutMs)
     this.logger = config.logger
+    const poolSize = Math.max(1, config.poolSize ?? 1)
+    this.slots = Array.from({ length: poolSize }, (_, index) => ({
+      index,
+      worker: null,
+      active: null,
+      recyclingWorker: null,
+      recycling: null,
+    }))
   }
 
   async queryNoiseAtPoint(lat: number, lng: number, signal?: AbortSignal): Promise<string> {
@@ -132,7 +159,7 @@ export class NoiseOnflySupervisor {
     if (this.queue.length >= this.maxQueue) {
       this.log('warn', 'noise-onfly queue full', {
         queue_length: this.queue.length,
-        active_request_id: this.active?.id ?? null,
+        active_requests: this.activeRequestIds(),
       })
       throw queueFullError()
     }
@@ -186,50 +213,58 @@ export class NoiseOnflySupervisor {
       this.rejectClient(entry, shutdownError)
     }
 
-    const active = this.active
-    this.active = null
-    if (active) {
-      this.clearWorkTimer(active)
-      active.worker = null
-      this.detachAbortListener(active)
-      this.rejectClient(active, shutdownError)
-    }
-
-    if (this.recycling) {
-      await this.recycling
-    }
-
-    const current = this.worker
-    this.worker = null
-    if (current) {
-      try {
-        await current.terminate()
-      } catch {
-        // ignore terminate failures during shutdown
+    for (const slot of this.slots) {
+      const active = slot.active
+      slot.active = null
+      if (active) {
+        this.clearWorkTimer(active)
+        active.worker = null
+        this.detachAbortListener(active)
+        this.rejectClient(active, shutdownError)
+      }
+      if (slot.recycling) {
+        await slot.recycling
+      }
+      const current = slot.worker
+      slot.worker = null
+      if (current) {
+        try {
+          await current.terminate()
+        } catch {
+          // ignore terminate failures during shutdown
+        }
       }
     }
   }
 
   private startNextIfPossible(): void {
-    if (this.closed || this.active || this.recycling) {
+    if (this.closed) {
       return
     }
+    while (this.queue.length > 0) {
+      const slot = this.slots.find((s) => !s.active && !s.recycling)
+      if (!slot) {
+        return
+      }
 
-    const entry = this.queue.shift()
-    if (!entry) {
-      return
+      const entry = this.queue.shift()
+      if (!entry) {
+        return
+      }
+      if (entry.clientSettled) {
+        // Aborted between enqueue and dispatch; try the next entry on this slot.
+        continue
+      }
+
+      this.clearQueueTimer(entry)
+      this.dispatchToSlot(slot, entry)
     }
+  }
 
-    if (entry.clientSettled) {
-      queueMicrotask(() => this.startNextIfPossible())
-      return
-    }
-
-    this.clearQueueTimer(entry)
-
+  private dispatchToSlot(slot: Slot, entry: RequestEntry): void {
     let worker: NoiseOnflyWorker
     try {
-      worker = this.ensureWorker()
+      worker = this.ensureWorker(slot)
     } catch (error) {
       this.rejectClient(entry, unavailableError(`noise-onfly worker spawn failed: ${toError(error).message}`))
       queueMicrotask(() => this.startNextIfPossible())
@@ -238,54 +273,64 @@ export class NoiseOnflySupervisor {
 
     entry.worker = worker
     entry.workTimer = setTimeout(() => {
-      void this.handleWorkTimeout(entry.id)
+      void this.handleWorkTimeout(slot, entry.id)
     }, this.workTimeoutMs)
-    this.active = entry
+    slot.active = entry
 
     this.log('info', 'noise-onfly dispatched request', {
       request_id: entry.id,
+      slot: slot.index,
       queue_length: this.queue.length,
     })
 
     try {
       worker.postMessage({ id: entry.id, lat: entry.lat, lng: entry.lng, op: entry.op })
     } catch (error) {
-      this.finishActiveSlot(entry)
+      this.finishActiveSlot(slot, entry)
       this.rejectClient(entry, unavailableError(`noise-onfly dispatch failed: ${toError(error).message}`))
-      void this.recycleWorker(worker, 'dispatch_failed')
+      void this.recycleWorker(slot, worker, 'dispatch_failed')
     }
   }
 
-  private ensureWorker(): NoiseOnflyWorker {
-    if (this.worker) {
-      return this.worker
+  private ensureWorker(slot: Slot): NoiseOnflyWorker {
+    if (slot.worker) {
+      return slot.worker
     }
 
     const current = this.createWorker()
     current.on('message', (message) => {
-      this.handleWorkerMessage(current, message)
+      this.handleWorkerMessage(slot, current, message)
     })
     current.on('error', (err) => {
-      void this.handleWorkerError(current, err)
+      void this.handleWorkerError(slot, current, err)
     })
     current.on('exit', (code) => {
-      void this.handleWorkerExit(current, code)
+      void this.handleWorkerExit(slot, current, code)
     })
 
-    this.worker = current
-    this.log('info', 'noise-onfly worker spawned')
+    slot.worker = current
+    this.log('info', 'noise-onfly worker spawned', { slot: slot.index })
     return current
   }
 
-  private handleWorkerMessage(current: NoiseOnflyWorker, message: NoiseOnflyWorkerReply): void {
-    if (this.recyclingWorker === current) {
+  private slotForActiveWorker(worker: NoiseOnflyWorker): Slot | null {
+    return this.slots.find((s) => s.active?.worker === worker) ?? null
+  }
+
+  private handleWorkerMessage(
+    slot: Slot,
+    current: NoiseOnflyWorker,
+    message: NoiseOnflyWorkerReply,
+  ): void {
+    if (slot.recyclingWorker === current) {
       return
     }
 
-    const active = this.active
+    const active = slot.active
     if (!active || active.worker !== current) {
       this.log('warn', 'noise-onfly received stray worker message', {
         request_id: message.id,
+        slot: slot.index,
       })
       return
     }
@@ -293,11 +338,12 @@ export class NoiseOnflySupervisor {
       this.log('warn', 'noise-onfly worker reply id mismatch', {
         active_request_id: active.id,
         reply_request_id: message.id,
+        slot: slot.index,
       })
       return
     }
 
-    this.finishActiveSlot(active)
+    this.finishActiveSlot(slot, active)
     if (message.ok && message.resultJson !== undefined) {
       this.resolveClient(active, message.resultJson)
     } else {
@@ -313,55 +359,65 @@ export class NoiseOnflySupervisor {
     queueMicrotask(() => this.startNextIfPossible())
   }
 
-  private async handleWorkerError(current: NoiseOnflyWorker, err: Error): Promise<void> {
-    if (this.recyclingWorker === current) {
+  private async handleWorkerError(
+    slot: Slot,
+    current: NoiseOnflyWorker,
+    err: Error,
+  ): Promise<void> {
+    if (slot.recyclingWorker === current) {
       return
     }
-    if (this.worker !== current && this.active?.worker !== current) {
+    if (slot.worker !== current && slot.active?.worker !== current) {
       return
     }
 
     this.log('warn', 'noise-onfly worker error', {
       error: err.message,
-      active_request_id: this.active?.id ?? null,
+      slot: slot.index,
+      active_request_id: slot.active?.id ?? null,
     })
 
-    const active = this.active?.worker === current ? this.active : null
+    const active = slot.active?.worker === current ? slot.active : null
     if (active) {
-      this.finishActiveSlot(active)
+      this.finishActiveSlot(slot, active)
       this.rejectClient(active, unavailableError(`noise-onfly worker error: ${err.message}`))
     }
 
-    await this.recycleWorker(current, 'worker_error')
+    await this.recycleWorker(slot, current, 'worker_error')
   }
 
-  private async handleWorkerExit(current: NoiseOnflyWorker, code: number): Promise<void> {
-    if (this.recyclingWorker === current) {
+  private async handleWorkerExit(
+    slot: Slot,
+    current: NoiseOnflyWorker,
+    code: number,
+  ): Promise<void> {
+    if (slot.recyclingWorker === current) {
       return
     }
-    if (this.worker !== current && this.active?.worker !== current) {
+    if (slot.worker !== current && slot.active?.worker !== current) {
       return
     }
 
     this.log(code === 0 ? 'info' : 'warn', 'noise-onfly worker exited', {
       exit_code: code,
-      active_request_id: this.active?.id ?? null,
+      slot: slot.index,
+      active_request_id: slot.active?.id ?? null,
     })
 
-    const active = this.active?.worker === current ? this.active : null
+    const active = slot.active?.worker === current ? slot.active : null
     if (active) {
-      this.finishActiveSlot(active)
+      this.finishActiveSlot(slot, active)
       this.rejectClient(
         active,
         unavailableError(`noise-onfly worker exited with code ${code}`),
       )
     }
 
-    await this.recycleWorker(current, 'worker_exit', { skipTerminate: true })
+    await this.recycleWorker(slot, current, 'worker_exit', { skipTerminate: true })
   }
 
-  private async handleWorkTimeout(requestId: number): Promise<void> {
-    const active = this.active
+  private async handleWorkTimeout(slot: Slot, requestId: number): Promise<void> {
+    const active = slot.active
     if (!active || active.id !== requestId) {
       return
     }
@@ -372,12 +428,13 @@ export class NoiseOnflySupervisor {
 
     this.log('warn', 'noise-onfly request timed out', {
       request_id: active.id,
+      slot: slot.index,
       queue_length: this.queue.length,
     })
 
-    this.finishActiveSlot(active)
+    this.finishActiveSlot(slot, active)
     this.rejectClient(active, workTimeoutError(this.workTimeoutMs))
-    await this.recycleWorker(current, 'request_timeout')
+    await this.recycleWorker(slot, current, 'request_timeout')
   }
 
   private handleQueueTimeout(requestId: number): void {
@@ -397,13 +454,17 @@ export class NoiseOnflySupervisor {
   }
 
   private handleAbort(entry: RequestEntry): void {
-    if (this.active?.id === entry.id) {
-      this.detachAbortListener(entry)
-      this.rejectClient(entry, abortError())
-      this.log('info', 'noise-onfly active request aborted', {
-        request_id: entry.id,
-      })
-      return
+    if (entry.worker) {
+      const slot = this.slotForActiveWorker(entry.worker)
+      if (slot && slot.active?.id === entry.id) {
+        this.detachAbortListener(entry)
+        this.rejectClient(entry, abortError())
+        this.log('info', 'noise-onfly active request aborted', {
+          request_id: entry.id,
+          slot: slot.index,
+        })
+        return
+      }
     }
 
     const queueIndex = this.queue.findIndex((candidate) => candidate.id === entry.id)
@@ -422,51 +483,55 @@ export class NoiseOnflySupervisor {
   }
 
   private async recycleWorker(
+    slot: Slot,
     current: NoiseOnflyWorker,
     reason: string,
     options: { skipTerminate?: boolean } = {},
   ): Promise<void> {
-    if (this.recycling) {
-      return await this.recycling
+    if (slot.recycling) {
+      return await slot.recycling
     }
 
-    if (this.worker === current) {
-      this.worker = null
+    if (slot.worker === current) {
+      slot.worker = null
     }
-    this.recyclingWorker = current
+    slot.recyclingWorker = current
     this.log('warn', 'noise-onfly recycling worker', {
       reason,
+      slot: slot.index,
       queue_length: this.queue.length,
     })
 
-    this.recycling = (async () => {
+    slot.recycling = (async () => {
       if (!options.skipTerminate) {
         try {
           await current.terminate()
         } catch (error) {
           this.log('warn', 'noise-onfly worker terminate failed', {
             reason,
+            slot: slot.index,
             error: toError(error).message,
           })
         }
       }
     })().finally(() => {
-      if (this.recyclingWorker === current) {
-        this.recyclingWorker = null
+      if (slot.recyclingWorker === current) {
+        slot.recyclingWorker = null
       }
-      this.recycling = null
+      slot.recycling = null
       this.log('info', 'noise-onfly worker recycle complete', {
+        slot: slot.index,
         queue_length: this.queue.length,
       })
       this.startNextIfPossible()
     })
 
-    await this.recycling
+    await slot.recycling
   }
 
-  private finishActiveSlot(entry: RequestEntry): void {
-    if (this.active?.id === entry.id) {
-      this.active = null
+  private finishActiveSlot(slot: Slot, entry: RequestEntry): void {
+    if (slot.active?.id === entry.id) {
+      slot.active = null
     }
     this.clearWorkTimer(entry)
     entry.worker = null
@@ -510,6 +575,14 @@ export class NoiseOnflySupervisor {
     entry.clientSettled = true
     this.detachAbortListener(entry)
     entry.reject(err)
+  }
+
+  private activeRequestIds(): number[] {
+    const ids: number[] = []
+    for (const slot of this.slots) {
+      if (slot.active) ids.push(slot.active.id)
+    }
+    return ids
   }
 
   private log(level: SupervisorLogLevel, message: string, meta?: Record<string, unknown>): void {
