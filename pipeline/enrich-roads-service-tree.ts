@@ -22,7 +22,6 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCE_ID_SERVICE_TREE_HEURISTIC } from './lib/source-ids.generated.js'
-import { pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_SERVICE_TREE_HEURISTIC
 
@@ -142,14 +141,8 @@ const SPLIT_MOTO = 0.01
 // Within a 24 km H3 r4 hex cosLat varies <0.05 % — well under the 50 m
 // `MAX_BUFFER_M` heuristic — so the assignment is bit-identical.
 
+const M_PER_DEG_LON_EQUATOR = 111320
 const M_PER_DEG_LAT = 110540
-
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * M_PER_DEG_LAT
-  return Math.sqrt(dx * dx + dy * dy)
-}
 
 /**
  * Distance from point `p` to segment `a → b`, all coordinates already
@@ -173,12 +166,6 @@ function pointToSegmentDistXY(
   const ex = px - cx, ey = py - cy
   return Math.sqrt(ex * ex + ey * ey)
 }
-
-/** Degree-input wrapper around `pointToSegmentDistXY` — projects on the
- *  fly using a per-call cosLat. Kept for callers without a hex-level
- *  cosLat handy; the hot loop in `assignBuildingsGlobally` uses the
- *  pre-projected variant instead. */
-// ---------- Helpers ----------
 
 function nodeKey(lat: number, lon: number): string {
   return `${lat.toFixed(5)}_${lon.toFixed(5)}`
@@ -295,16 +282,10 @@ class MinHeap {
 
 export interface GraphNode {
   eligibleEdges: number[]
-  // True iff the node touches a real motor-vehicle exit. Three sources:
-  //   - higher-class motor road (cls 0–4: motorway/trunk/primary/secondary/tertiary)
-  //   - link (cls 10–12: motorway_link/trunk_link/primary_link)
-  //   - non-overwriteable local road (cls 5–9 except 8 with measured AADT)
-  // Without this flag, `findComponents` treated any non-eligible edge as an
-  // exit — including tracks (cls 8) and pedestrian ways. A service road that
-  // dead-ends at a `highway=track` stub got marked as an exit and
-  // `flowAccumulate` pumped the entire residential sub-tree's traffic
-  // through it. Real example: Pasito Blanco service road OSM 69951934
-  // inflated from ~30 trips/day to 1700+.
+  // True iff the node touches a real motor-vehicle exit. Tracks (cls 8) are
+  // NOT exits — counting them was the Pasito Blanco bug where service road
+  // OSM 69951934 inflated from ~30 trips/day to 1700+ via fake-root flow.
+  // See buildGraph() for the three sources that flip this flag.
   hasExitEdge: boolean
 }
 
@@ -352,36 +333,21 @@ export function buildGraph(table: any): Graph {
 
     const cls = (roadClass.get(i) as number) ?? 5
     const existingId = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-    // Eligibility — local roads only (class 5..9), plus the cls !== 8 guard
-    // added in A.3: gravel tracks next to a few cottages used to pick up
-    // ~24/day from dwelling flow accumulation (real value ~1/day). Leaving
-    // tracks at source_id = 0 drops them to the class-default 5/day in the
-    // engine cascade; the A.5 implicit-agricultural factor × 0.1 brings that
-    // down to ~0.5/day effective.
-    //
-    // Service roads (cls 7) stay eligible because residential driveways tag as
-    // `highway=service` and do legitimately carry apartment-block flow.
-    //
-    // Link classes 10-12 excluded: residential flow accumulation drastically
-    // undercounts highway-derived ramp traffic, so those stay at source_id=0
-    // and fall through to the 15 %-of-mainline class default.
-    if (cls >= 5 && cls !== 8 && cls <= 9 && shouldOverwrite(existingId, MY_SOURCE_ID)) {
+    // Eligibility (in routing graph): local motor cls 5–9 *except* track. A.3:
+    // tracks would pick up ~24/day from flow accumulation against a real ~1/day.
+    // Links 10–12 excluded too — residential accumulation undercounts highway-
+    // derived ramp traffic, so they stay at source_id=0 → engine class default.
+    const isLocalMotor = cls >= 5 && cls <= 9 && cls !== 8
+    if (isLocalMotor && shouldOverwrite(existingId, MY_SOURCE_ID)) {
       eligible[i] = 1
       nodes[sId].eligibleEdges.push(i)
       nodes[eId].eligibleEdges.push(i)
-    } else if (cls < 5 || (cls >= 10 && cls <= 12)) {
-      // Higher-class motor road (motorway, trunk, primary, secondary,
-      // tertiary) or any link — flow can legitimately exit local network here.
-      // Tracks (cls=8) explicitly excluded: not real exits, see GraphNode comment.
-      nodes[sId].hasExitEdge = true
-      nodes[eId].hasExitEdge = true
-    } else if (cls >= 5 && cls !== 8 && cls <= 9) {
-      // Local road (cls 5–9 except track) with measured AADT (`shouldOverwrite`
-      // returned false). Not in our routing graph but still a real motor exit:
-      // a service-tree cluster bounded by, say, an eu-city-traffic-stamped
-      // residential collector should flow OUT to that collector, not have its
-      // pseudo-root pulled to an internal hub. Without this branch a measured
-      // boundary becomes invisible to root detection — flow inverts.
+    } else if (cls < 5 || (cls >= 10 && cls <= 12) || isLocalMotor) {
+      // Real motor exit. Three sources fold here:
+      //   - higher-class road (cls 0–4) or link (cls 10–12)
+      //   - local motor non-overwriteable by us (already filled by measured
+      //     source) — must still root the adjacent service-tree component, else
+      //     pseudo-root pulls flow inward instead of out toward the measured neighbour.
       nodes[sId].hasExitEdge = true
       nodes[eId].hasExitEdge = true
     }
@@ -514,7 +480,7 @@ export function buildBuildingGrid(table: any): BuildingGrid {
   // One cosLat for the whole hex. Across a 24 km r4 hex (≈0.22° lat span)
   // cos varies <0.05 % — well under the 50 m MAX_BUFFER_M threshold.
   const avgLat = n > 0 ? latSum / n : 0
-  const mPerDegLon = 111320 * Math.cos(avgLat * Math.PI / 180)
+  const mPerDegLon = M_PER_DEG_LON_EQUATOR * Math.cos(avgLat * Math.PI / 180)
 
   // Second pass: pre-project every building into local metres + bucket
   // into the grid using local cell indices.
@@ -767,6 +733,28 @@ export function flowAccumulate(
   return segFlow
 }
 
+// ---------- Debug hook ----------
+
+function parseDebugOsmId(): number | null {
+  const raw = process.env.DEBUG_OSM_ID
+  if (!raw) return null
+  const n = Number(raw)
+  if (!Number.isFinite(n)) {
+    console.error(`[service-tree] DEBUG_OSM_ID=${raw} not numeric — ignored`)
+    return null
+  }
+  return n
+}
+
+function debugFlow(segFlow: Map<number, number>, osmIdCol: any, target: number, segDw: Map<number, number>) {
+  for (const [seg, trips] of segFlow) {
+    if (Number(osmIdCol.get(seg)) !== target) continue
+    const localDw = segDw.get(seg) ?? 0
+    const localTrips = localDw * TRIPS_PER_DWELLING
+    console.error(`  [DEBUG seg ${seg} osm=${target}] local_dw=${localDw} local_trips=${localTrips.toFixed(1)} TOTAL_FLOW=${trips.toFixed(0)} through_flow=${(trips - localTrips).toFixed(0)}`)
+  }
+}
+
 // ---------- Process one hex ----------
 
 function processHex(hexId: string): { enriched: number; totalResidential: number } | null {
@@ -817,20 +805,12 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   // Flow accumulation per component, reading the precomputed seg→dwellings
   // map by direct lookup (no per-component re-scan of every building).
   const segAADT = new Map<number, { light: number; medium: number; heavy: number; moto: number }>()
-  const TARGET_OSM = process.env.DEBUG_OSM_ID ? Number(process.env.DEBUG_OSM_ID) : null
-  const osmIdCol = roadTable.getChild('osm_id')
+  const roadClassCol = roadTable.getChild('road_class')
+  const debugTarget = parseDebugOsmId()
+  const osmIdCol = debugTarget !== null ? roadTable.getChild('osm_id') : undefined
   for (const comp of components) {
     const segFlow = flowAccumulate(comp, graph.segNodeIds, lengthCol, globalBestSeg)
-    const roadClassCol = roadTable.getChild('road_class')
-    if (TARGET_OSM !== null && osmIdCol) {
-      for (const [seg, trips] of segFlow) {
-        if (Number(osmIdCol.get(seg)) === TARGET_OSM) {
-          const localDw = globalBestSeg.get(seg) ?? 0
-          const localTrips = localDw * TRIPS_PER_DWELLING
-          console.log(`  [DEBUG seg ${seg} osm=${TARGET_OSM}] local_dw=${localDw} local_trips=${localTrips.toFixed(1)} TOTAL_FLOW=${trips.toFixed(0)} through_flow=${(trips - localTrips).toFixed(0)}`)
-        }
-      }
-    }
+    if (osmIdCol) debugFlow(segFlow, osmIdCol, debugTarget!, globalBestSeg)
     for (const [seg, trips] of segFlow) {
       const cls = (roadClassCol?.get(seg) as number) ?? 5
       const capped = Math.min(trips, SERVICE_TREE_CAP_PER_CLASS[cls] ?? Infinity)
