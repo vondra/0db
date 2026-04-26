@@ -2090,14 +2090,21 @@ fn segment_sel_with_overrides(
 
     // Filter D: reject per-receiver sub-terrain extrapolation.
     // When the CPA foot falls outside the observed segment (t ∉ [0,1]) and the
-    // linearly-extrapolated altitude at that foot is > 30 m below terrain, the
-    // aircraft was never there — this is a straight-line projection past the
-    // real trajectory. Kept at 30 m so ship halls / below-hill receivers with
-    // true low-altitude flyovers aren't rejected. Airport-ground mode skips
-    // (rasters = None) since short taxi/takeoff segments are already matched.
+    // linearly-extrapolated altitude at that foot is > 30 m below the terrain
+    // *at the nearest segment endpoint*, the aircraft was never there. We
+    // sample at the endpoint, not at the extrapolated foot, to match pipeline
+    // (`pipeline-worker/src/compute/aircraft.rs:289-296`) — sampling at the
+    // foot uses terrain that the aircraft never overflew (often a hill past
+    // the trajectory), causing systematic 0.5–1 dB drift between popup and
+    // pipeline on rural fixture points.
     if let Some(r) = rasters {
-        if cpa.t < 0.0 || cpa.t > 1.0 {
-            let terrain = r.elevation(cpa.foot_lat, cpa.foot_lon);
+        if cpa.t < 0.0 {
+            let terrain = r.elevation(seg.start_lat, seg.start_lon);
+            if cpa.alt_at_foot_m < terrain - 30.0 {
+                return None;
+            }
+        } else if cpa.t > 1.0 {
+            let terrain = r.elevation(seg.end_lat, seg.end_lon);
             if cpa.alt_at_foot_m < terrain - 30.0 {
                 return None;
             }
