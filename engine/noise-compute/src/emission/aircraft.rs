@@ -705,6 +705,191 @@ pub fn fast_lateral_attenuation(rel_alt: f64, lateral_m: f64, airport_ground: bo
     gamma * lambda_beta
 }
 
+// ─── Shared airborne kernel (popup + pipeline single source of truth) ───
+
+/// Installation code packed for the inline ΔI formula.
+/// 0 = Wing, 1 = Fuselage, 2 = Propeller (ΔI = 0).
+pub const INST_WING: u8 = 0;
+pub const INST_FUSELAGE: u8 = 1;
+pub const INST_PROPELLER: u8 = 2;
+
+/// Per-installation `(di_a, di_b, di_c)` constants for the inline ΔI formula.
+/// Avoids the trig-heavy `delta_i(beta_deg, ...)` call by working off
+/// `u² = sin²(β) = rel_alt²/slant²` directly. Output matches `delta_i`
+/// to FP rounding for the same `(rel_alt, slant)` pair.
+#[inline]
+pub fn delta_i_constants(installation: Installation) -> (u8, f64, f64, f64) {
+    match installation {
+        Installation::Wing => (INST_WING, 0.0039, 0.062, 0.8786),
+        Installation::Fuselage => (INST_FUSELAGE, 0.1225, 0.329, 1.0),
+        Installation::Propeller => (INST_PROPELLER, 0.0, 0.0, 1.0),
+    }
+}
+
+/// Output of the shared airborne kernel. Energy is what pipeline
+/// accumulates; SEL + a few CPA fields cover everything popup needs for
+/// trace bookkeeping (peak altitude, min slant) without rebuilding a
+/// separate per-segment CPA pass.
+#[derive(Clone, Copy, Debug)]
+pub struct AircraftKernelResult {
+    /// `exp(SEL · ln(10) · 0.1)` — accumulator-ready energy.
+    pub energy: f64,
+    /// SEL in dB after Doc 29 master Eq. 4-8b.
+    pub sel: f64,
+    /// Slant distance from receiver to CPA foot.
+    pub d_p_m: f64,
+    /// Signed altitude at CPA foot relative to `rcv_elev`.
+    pub rel_alt_m: f64,
+    /// Signed parametric distance from segment start to CPA foot.
+    pub q_m: f64,
+    /// Segment length (input echo).
+    pub seg_len_m: f64,
+    /// Horizontal CPA distance (perpendicular to ground track).
+    pub lateral_m: f64,
+    /// Elevation angle β from ground plane (degrees). For CFFK fast-path
+    /// hits we don't need β to compute λ, so the kernel sets it to a
+    /// 90° sentinel rather than paying for `fast_atan` — popup callers
+    /// that need β at cruise distance recompute it themselves.
+    pub beta_deg: f64,
+    /// Unclamped parametric projection (foot in [0,1] = inside segment).
+    pub t: f64,
+}
+
+/// Shared Doc 29 per-segment kernel: CPA → reach gate → Filter D → NPD →
+/// CFFK fast path or full ΔF / Λ / ΔI corrections → SEL → energy. Inputs
+/// are pre-projected by the caller (receiver-local meters), so popup pays
+/// one cos/sin per receiver and pipeline pays them once at
+/// `ProjectedAircraft::build`. All approximations match the previously
+/// pipeline-internal `segment_energy_fast` exactly:
+/// - NPD via 128-bin LUT (`NpdLuts::shared()`),
+/// - ΔF via `fast_delta_f` (Padé-atan),
+/// - Λ via `fast_lateral_attenuation` (no atan2),
+/// - ΔI via the inline `u²/v²` form (no trig).
+///
+/// This is the single canonical airborne kernel. Both the popup wrapper
+/// (`segment_sel_with_overrides`) and pipeline-worker's
+/// `segment_energy_fast` delegate here.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+pub fn segment_energy_kernel(
+    ax: f64,
+    ay: f64,
+    sdx: f64,
+    sdy: f64,
+    sdz: f64,
+    sz1: f64,
+    inv_lsq: f64,
+    slen: f64,
+    rcv_elev: f64,
+    profile_idx: usize,
+    is_dep: bool,
+    seg_dv: f64,
+    d_bar_m: f64,
+    inst: u8,
+    di_a: f64,
+    di_b: f64,
+    di_c: f64,
+    airport_ground: bool,
+    reach_sq: f64,
+    terrain_start_cut_m: f64,
+    terrain_end_cut_m: f64,
+) -> Option<AircraftKernelResult> {
+    let t = -(ax * sdx + ay * sdy) * inv_lsq;
+    let cpx = ax + t * sdx;
+    let cpy = ay + t * sdy;
+    let lateral_sq = cpx * cpx + cpy * cpy;
+
+    let rel_alt = sz1 + t * sdz - rcv_elev;
+    let slant_sq = lateral_sq + rel_alt * rel_alt;
+    if slant_sq > reach_sq {
+        return None;
+    }
+
+    // Filter D: reject sub-terrain extrapolation past observed endpoints.
+    if t < 0.0 {
+        if sz1 + t * sdz < terrain_start_cut_m {
+            return None;
+        }
+    } else if t > 1.0 && sz1 + t * sdz < terrain_end_cut_m {
+        return None;
+    }
+
+    let d_p_m = slant_sq.sqrt();
+    let d_ft = (d_p_m * FT_PER_M).max(100.0);
+    // log2 × log10(2) is identical to log10 to f64 precision and skips
+    // the libm log10 division by ln(10) — saves a few cycles per call,
+    // pipeline already shipped this way.
+    let log_d = d_ft.log2() * 0.301029995664_f64;
+    let sel_npd = NpdLuts::shared().lookup(profile_idx, is_dep, log_d);
+
+    // CFFK fast path: above 7.62 km slant the per-segment corrections
+    // (ΔF, Λ, ΔI) collapse to within fractions of a dB. Skip them and
+    // pay only NPD lookup + Δv. Validates against full Doc 29 within
+    // ~0.3 dB at slant ≥ 7.62 km.
+    if d_p_m > AIRCRAFT_FAR_FIELD_THRESHOLD_M {
+        let sel = sel_npd + seg_dv;
+        if sel < 20.0 {
+            return None;
+        }
+        let energy = (sel * std::f64::consts::LN_10 * 0.1).exp();
+        return Some(AircraftKernelResult {
+            energy,
+            sel,
+            d_p_m,
+            rel_alt_m: rel_alt,
+            q_m: t * slen,
+            seg_len_m: slen,
+            lateral_m: lateral_sq.sqrt(),
+            beta_deg: 90.0, // CFFK doesn't need β; sentinel
+            t,
+        });
+    }
+
+    let q_m = t * slen;
+    let df = fast_delta_f(q_m, slen, d_bar_m);
+
+    let lateral_m = lateral_sq.sqrt();
+    let lambda = fast_lateral_attenuation(rel_alt, lateral_m, airport_ground);
+
+    // Inline ΔI: works off u² = rel_alt²/slant² (= sin²β) instead of trig
+    // on β. Identical math to `delta_i(beta_deg, installation)` for the
+    // same (rel_alt, slant) — verified to FP rounding.
+    let di = if inst == INST_PROPELLER {
+        0.0
+    } else {
+        let rel_alt_di = rel_alt.max(0.0);
+        let u2 = (rel_alt_di * rel_alt_di) / slant_sq.max(1e-12);
+        let v2 = 1.0 - u2;
+        let x = di_a * v2 + u2;
+        let den = di_c * (4.0 * u2 * v2) + (v2 - u2) * (v2 - u2);
+        if den > 0.0 && x > 0.0 {
+            // 4.342944819032518 = 10 / ln(10) → converts ln to dB.
+            4.342944819032518_f64 * (di_b * x.ln() - den.ln())
+        } else {
+            0.0
+        }
+    };
+
+    let sel = sel_npd + seg_dv + di - lambda + df;
+    if sel < 20.0 {
+        return None;
+    }
+    let energy = (sel * std::f64::consts::LN_10 * 0.1).exp();
+    let beta_deg = fast_atan(rel_alt / lateral_m.max(0.01)).to_degrees();
+
+    Some(AircraftKernelResult {
+        energy,
+        sel,
+        d_p_m,
+        rel_alt_m: rel_alt,
+        q_m,
+        seg_len_m: slen,
+        lateral_m,
+        beta_deg,
+        t,
+    })
+}
+
 /// Lateral attenuation Λ(β, l) = Γ(l) × Λ(β) (Doc 29 §4.5.4, Eq. 4-18/4-19).
 #[inline]
 pub fn lateral_attenuation(beta_deg: f64, lateral_m: f64) -> f64 {
@@ -2304,110 +2489,95 @@ fn segment_sel_with_overrides(
     airport_ground_mode: bool,
     rasters: Option<&dyn RasterSampler>,
 ) -> Option<(f64, CpaResult)> {
-    let profile = &PROFILES[seg.profile_idx.min(7) as usize];
+    let profile_idx = seg.profile_idx.min(7) as usize;
+    let profile = &PROFILES[profile_idx];
 
-    let cpa = compute_cpa(
-        rx_lat,
-        rx_lon,
-        rx_elev_m,
-        seg.start_lat,
-        seg.start_lon,
-        start_alt_m,
-        seg.end_lat,
-        seg.end_lon,
-        end_alt_m,
-    );
+    // Pre-project segment into receiver-local meters. Pipeline's
+    // ProjectedAircraft does this once at build (amortised over 343
+    // receivers per group); popup pays it per segment per query
+    // (single receiver), but the cos/lateral arithmetic here is
+    // ~20 ops — cheap compared to anything downstream.
+    let cos_lat = rx_lat.to_radians().cos().max(0.2);
+    let m_per_deg_lon = M_PER_DEG_LAT * cos_lat;
+    let ax = (seg.start_lon - rx_lon) * m_per_deg_lon;
+    let ay = (seg.start_lat - rx_lat) * M_PER_DEG_LAT;
+    let bx = (seg.end_lon - rx_lon) * m_per_deg_lon;
+    let by = (seg.end_lat - rx_lat) * M_PER_DEG_LAT;
+    let sdx = bx - ax;
+    let sdy = by - ay;
+    let seg_len_sq = sdx * sdx + sdy * sdy;
+    let slen = seg_len_sq.sqrt().max(1.0);
+    let inv_lsq = if seg_len_sq > 1e-6 { 1.0 / seg_len_sq } else { 0.0 };
+    let sdz = end_alt_m - start_alt_m;
 
-    // Skip beyond per-profile NPD reach. Replaces the old fixed 14 km cutoff
-    // with profile-aware distance: LightGA ~6 km, jets capped at 10 km.
-    if cpa.d_p_m > profile.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, seg.is_departure) {
-        return None;
-    }
-
-    // Filter D: reject per-receiver sub-terrain extrapolation.
-    // When the CPA foot falls outside the observed segment (t ∉ [0,1]) and the
-    // linearly-extrapolated altitude at that foot is > 30 m below the terrain
-    // *at the nearest segment endpoint*, the aircraft was never there. We
-    // sample at the endpoint, not at the extrapolated foot, to match pipeline
-    // (`pipeline-worker/src/compute/aircraft.rs:289-296`) — sampling at the
-    // foot uses terrain that the aircraft never overflew (often a hill past
-    // the trajectory), causing systematic 0.5–1 dB drift between popup and
-    // pipeline on rural fixture points.
-    if let Some(r) = rasters {
-        if cpa.t < 0.0 {
-            let terrain = r.elevation(seg.start_lat, seg.start_lon);
-            if cpa.alt_at_foot_m < terrain - 30.0 {
-                return None;
-            }
-        } else if cpa.t > 1.0 {
-            let terrain = r.elevation(seg.end_lat, seg.end_lon);
-            if cpa.alt_at_foot_m < terrain - 30.0 {
-                return None;
-            }
-        }
-    }
-
-    // NPD lookup via the 128-bin LUT shared with pipeline-worker. Covers the
-    // physics tail beyond 25 000 ft because the LUT is built off
-    // `interpolate_sel_logd`, which already extrapolates with per-profile
-    // alpha_eff. ~5 cycle lookup vs ~25 for the binary search; the only
-    // tradeoff is up to ~0.05 dB linear-log sag in the convex tail region.
-    let d_ft = (cpa.d_p_m * FT_PER_M).max(100.0);
-    let log_d = d_ft.log10();
-    let sel_npd = NpdLuts::shared().lookup(
-        seg.profile_idx.min(7) as usize,
-        seg.is_departure,
-        log_d,
-    );
-
-    // Speed correction is the only correction that survives at cruise — for a
-    // jet at 450 kt vs the 160 kt NPD reference it is −4.5 dB, far too large
-    // to drop. Always evaluate it.
+    // Per-profile constants — same values pipeline pre-computes in
+    // ProjectedAircraft. Cheap to recompute here for one segment.
+    let (inst_code, di_a, di_b, di_c) = delta_i_constants(profile.installation);
     let dv = delta_v(seg.speed_kt as f64, profile);
 
-    // CFFK fast path: above the NPD table boundary (slant > 7.62 km) the
-    // remaining Doc 29 corrections are all bounded sub-dB and dominated by
-    // pure geometry / atmospheric absorption baked into the NPD tail:
-    //   - lateral attenuation λ is identically 0 for elevation angle > 50°,
-    //     and any cruise overhead geometry has β > 50°;
-    //   - ΔI peaks at ~0.4 dB for wing-installed types and falls to 0 at
-    //     β = 90° — the typical cruise overhead;
-    //   - ΔF approaches 0 dB for segments where the CPA is interior and the
-    //     segment is several `d_bar` long, both true for cruise.
-    // Skip them. Validates against full Doc 29 within ~0.3 dB at slant ≥
-    // 7.62 km. Pipeline's `segment_energy_fast` mirrors this branch.
-    if cpa.d_p_m > AIRCRAFT_FAR_FIELD_THRESHOLD_M {
-        let sel = sel_npd + dv;
-        if sel < 20.0 {
-            return None;
-        }
-        return Some((sel, cpa));
-    }
+    // Filter D terrain cuts. Airport-ground bypasses Filter D — short
+    // taxi/runway segments are already validated by ground-context
+    // metadata. Without rasters access (offline tests, PALT-raster build
+    // pass when rasters is None), drop the gate by setting cuts to
+    // f64::MIN — matches the previous "no rasters → no Filter D"
+    // semantics.
+    let (terrain_start_cut_m, terrain_end_cut_m) =
+        if airport_ground_mode || rasters.is_none() {
+            (f64::MIN, f64::MIN)
+        } else {
+            let r = rasters.unwrap();
+            (
+                r.elevation(seg.start_lat, seg.start_lon) - 30.0,
+                r.elevation(seg.end_lat, seg.end_lon) - 30.0,
+            )
+        };
 
-    // Near-field path: full Doc 29 corrections, but using the same Padé-atan
-    // approximations pipeline ships through (`fast_delta_f`,
-    // `fast_lateral_attenuation`). Total approximation error is < 0.05 dB
-    // (ΔF) + < 0.15 dB (Λ) per segment vs the libm-atan path, well under
-    // the 0.5 dB popup tolerance and a wash on aggregate energy. Popup ≡
-    // tile parity becomes a by-construction property: both sides use the
-    // same kernel.
-    let df = fast_delta_f(cpa.q_m, cpa.seg_len_m, profile.d_bar_m);
+    let reach_sq = REACH_SQ_TABLE[profile_idx][seg.is_departure as usize];
 
-    // Lateral attenuation applied to all profiles including profile 6 (LightGA+Rotorcraft).
-    // WHY: Profile 6 is a mixed bucket (C172, PA28 + helicopters). Old code skipped lateral
-    // attenuation for ALL profile 6, overestimating fixed-wing GA noise by up to 10.9 dB.
-    // Helicopters technically don't have lateral attenuation, but they're ~10% of profile 6.
-    let lambda = fast_lateral_attenuation(cpa.relative_alt_m, cpa.lateral_m, airport_ground_mode);
+    let kernel = segment_energy_kernel(
+        ax,
+        ay,
+        sdx,
+        sdy,
+        sdz,
+        start_alt_m,
+        inv_lsq,
+        slen,
+        rx_elev_m,
+        profile_idx,
+        seg.is_departure,
+        dv,
+        profile.d_bar_m,
+        inst_code,
+        di_a,
+        di_b,
+        di_c,
+        airport_ground_mode,
+        reach_sq,
+        terrain_start_cut_m,
+        terrain_end_cut_m,
+    )?;
 
-    let di = delta_i(cpa.beta_deg, profile.installation);
+    // Build CpaResult for downstream consumers (popup trace, PALT
+    // raster build, tests). Kernel returns the energy-relevant fields;
+    // foot lat/lon and absolute alt-at-foot are reverse-projected here
+    // — popup uses foot for ground sampling, PALT raster uses none of
+    // them so the work only matters for popup.
+    let alt_at_foot_m = start_alt_m + kernel.t * sdz;
+    let cpa = CpaResult {
+        q_m: kernel.q_m,
+        d_p_m: kernel.d_p_m,
+        lateral_m: kernel.lateral_m,
+        relative_alt_m: kernel.rel_alt_m,
+        beta_deg: kernel.beta_deg,
+        seg_len_m: kernel.seg_len_m,
+        t: kernel.t,
+        foot_lat: rx_lat + (ay + kernel.t * sdy) / M_PER_DEG_LAT,
+        foot_lon: rx_lon + (ax + kernel.t * sdx) / m_per_deg_lon,
+        alt_at_foot_m,
+    };
 
-    // Master equation (Eq. 4-8b)
-    let sel = sel_npd + dv + di - lambda + df;
-
-    if sel < 20.0 {
-        return None;
-    }
-    Some((sel, cpa))
+    Some((kernel.sel, cpa))
 }
 
 #[cfg(test)]
