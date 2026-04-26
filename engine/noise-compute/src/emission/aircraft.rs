@@ -339,6 +339,81 @@ pub fn interpolate_sel(profile: &NpdProfile, slant_ft: f64, is_departure: bool) 
     interpolate_sel_logd(profile, log_d, is_departure)
 }
 
+// ─── NPD lookup table (shared by pipeline + popup hot paths) ───
+//
+// Pre-built at first access from `interpolate_sel_logd`. 128 bins keep the
+// linear-log interpolation sag < 0.05 dB against the convex physics tail
+// (`−20·log10(d) − α·d` beyond 25 000 ft) where the linear-in-meters
+// absorption curves downward faster than log-linear between bin anchors.
+//
+// Lookup cost: ~5 cycles (branchless index + 1 fmadd) vs ~25 for the binary
+// search inside `interpolate_sel_logd`. Pipeline batched scatter and popup
+// per-segment loop both call `NpdLuts::shared().lookup(...)` so SEL lookups
+// match by construction.
+
+pub const NPD_LUT_BINS: usize = 128;
+pub const NPD_LUT_LOG_MIN: f64 = 2.0; // log10(100 ft)
+pub const NPD_LUT_LOG_MAX: f64 = 5.5; // log10(316 k ft)
+pub const NPD_LUT_STEP: f64 = (NPD_LUT_LOG_MAX - NPD_LUT_LOG_MIN) / NPD_LUT_BINS as f64;
+pub const NPD_LUT_INV_STEP: f64 = NPD_LUT_BINS as f64 / (NPD_LUT_LOG_MAX - NPD_LUT_LOG_MIN);
+
+pub fn build_npd_lut(profile: &NpdProfile, is_departure: bool) -> [f64; NPD_LUT_BINS + 1] {
+    let mut lut = [0.0f64; NPD_LUT_BINS + 1];
+    for i in 0..=NPD_LUT_BINS {
+        let log_d = NPD_LUT_LOG_MIN + i as f64 * NPD_LUT_STEP;
+        lut[i] = interpolate_sel_logd(profile, log_d, is_departure);
+    }
+    lut
+}
+
+#[inline(always)]
+pub fn fast_npd_lookup(lut: &[f64; NPD_LUT_BINS + 1], log_d: f64) -> f64 {
+    // `.max(0.0)` guards against wrap-to-huge-usize when log_d dips fractionally
+    // below NPD_LUT_LOG_MIN due to float rounding at the 100 ft clamp boundary.
+    let t = ((log_d - NPD_LUT_LOG_MIN) * NPD_LUT_INV_STEP).max(0.0);
+    let idx = (t as usize).min(NPD_LUT_BINS - 1);
+    let frac = t - idx as f64;
+    lut[idx] + frac * (lut[idx + 1] - lut[idx])
+}
+
+/// All 16 NPD LUTs (8 profiles × 2 directions). Single global instance —
+/// built once on first access, reused across pipeline batches and popup
+/// queries.
+pub struct NpdLuts {
+    approach: [[f64; NPD_LUT_BINS + 1]; 8],
+    departure: [[f64; NPD_LUT_BINS + 1]; 8],
+}
+
+static NPD_LUTS: OnceLock<NpdLuts> = OnceLock::new();
+
+impl NpdLuts {
+    pub fn shared() -> &'static NpdLuts {
+        NPD_LUTS.get_or_init(NpdLuts::build)
+    }
+
+    fn build() -> Self {
+        let mut luts = NpdLuts {
+            approach: [[0.0; NPD_LUT_BINS + 1]; 8],
+            departure: [[0.0; NPD_LUT_BINS + 1]; 8],
+        };
+        for i in 0..8 {
+            luts.approach[i] = build_npd_lut(&PROFILES[i], false);
+            luts.departure[i] = build_npd_lut(&PROFILES[i], true);
+        }
+        luts
+    }
+
+    #[inline(always)]
+    pub fn lookup(&self, profile_idx: usize, is_dep: bool, log_d: f64) -> f64 {
+        let lut = if is_dep {
+            &self.departure[profile_idx]
+        } else {
+            &self.approach[profile_idx]
+        };
+        fast_npd_lookup(lut, log_d)
+    }
+}
+
 /// NPD interpolation using pre-computed log10(distance_ft).
 /// Avoids redundant log10 call when log_d is already available.
 #[inline(always)]
@@ -2135,8 +2210,18 @@ fn segment_sel_with_overrides(
         }
     }
 
-    // NPD lookup (covers physics tail beyond 25 000 ft via per-profile alpha_eff).
-    let sel_npd = interpolate_sel(profile, cpa.d_p_m * FT_PER_M, seg.is_departure);
+    // NPD lookup via the 128-bin LUT shared with pipeline-worker. Covers the
+    // physics tail beyond 25 000 ft because the LUT is built off
+    // `interpolate_sel_logd`, which already extrapolates with per-profile
+    // alpha_eff. ~5 cycle lookup vs ~25 for the binary search; the only
+    // tradeoff is up to ~0.05 dB linear-log sag in the convex tail region.
+    let d_ft = (cpa.d_p_m * FT_PER_M).max(100.0);
+    let log_d = d_ft.log10();
+    let sel_npd = NpdLuts::shared().lookup(
+        seg.profile_idx.min(7) as usize,
+        seg.is_departure,
+        log_d,
+    );
 
     // Speed correction is the only correction that survives at cruise — for a
     // jet at 450 kt vs the 160 kt NPD reference it is −4.5 dB, far too large
