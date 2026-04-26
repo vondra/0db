@@ -2214,6 +2214,156 @@ pub fn build_ground_ops_line_emission(
     })
 }
 
+/// Aggregated ground-ops line source. Many real ADS-B segments collapse into
+/// one bucket when they share the same ~30 m × ~30 m runway/taxi slot and
+/// the same kind. Energy is summed in linear space; downstream propagation
+/// runs once per bucket instead of once per segment, which is the popup
+/// 5-10× win at airports.
+///
+/// Trade-off: per-segment trace fidelity is lost (top-contributors UI now
+/// shows aggregated buckets), and path effects (terrain / screening / FLC /
+/// ground_g) are sampled along the *first* contributing segment's coords.
+/// At runway scale that's ~30 m worth of representative-coord drift —
+/// negligible for receivers > a few hundred metres from the runway and
+/// already accepted by pipeline tile output.
+#[derive(Clone, Debug)]
+pub struct GroundOpsBucket {
+    pub start_lat: f64,
+    pub start_lon: f64,
+    pub end_lat: f64,
+    pub end_lon: f64,
+    pub length_m: f32,
+    pub max_radius_m: f64,
+    pub source_height_m: f64,
+    /// Kind code (1 = runway roll, 2 = taxi, 3 = apron movement).
+    pub kind: u8,
+    /// Linear energy per band, summed across contributing segments. Convert
+    /// back to dB before feeding `iso9613::propagate_variants_full`.
+    pub em_day: [f64; NUM_BANDS],
+    pub em_eve: [f64; NUM_BANDS],
+    pub em_night: [f64; NUM_BANDS],
+    /// Total number of segments aggregated into this bucket.
+    pub count: u32,
+    /// Sum of `count_weight` for `surface_model = true` contributors. Drives
+    /// the "% synthetic" UI breakdown without needing per-segment iteration
+    /// at consume time.
+    pub modeled_weight: f64,
+    /// Same split keyed by `kind_idx = (kind − 1).min(2)`.
+    pub modeled_by_kind: [f64; 3],
+    /// Distinct ADS-B flight IDs that contributed observation-only segments
+    /// (`surface_model = false`). `Vec` not `HashSet` — popup keeps the
+    /// inner loop alloc-free; dedupe happens once at consume.
+    pub observed_flight_ids: Vec<u64>,
+    /// Same per-kind index split.
+    pub observed_by_kind: [Vec<u64>; 3],
+    /// Representative contributing segment — used by popup at consume time
+    /// for airport-group assignment (`assign_segment_to_airport_group` reads
+    /// `on_ground / surface_model / start_alt / end_alt / mid coords`) and
+    /// for "first seen" bookkeeping. Bucket key rounds coords to ~30 m so
+    /// any contributor would give the same airport-assignment answer.
+    pub representative_seg: AircraftSegment,
+}
+
+/// Aggregate a slice of `AircraftSegment`s into ground-ops buckets, mirroring
+/// `pipeline-worker/src/main.rs` ground-bucket pass. Segments that
+/// `build_ground_ops_line_emission` rejects (too high, no kind) are skipped;
+/// the caller still has them in `segments` and processes them via the
+/// airborne kernel.
+///
+/// Bucket key is `(round(start_lat·3333), round(start_lon·3333),
+/// round(end_lat·3333), round(end_lon·3333), kind_class)` with
+/// `kind_class = 0` (runway scale, max_radius ≥ 5 km), `1` (taxi-ish),
+/// `2` (apron). Same key shape pipeline-worker uses; popup ↔ tile parity
+/// stays a textual property.
+pub fn bucket_ground_ops(
+    segments: &[AircraftSegment],
+    rasters: &dyn RasterSampler,
+    n_days: u16,
+) -> Vec<GroundOpsBucket> {
+    use std::collections::HashMap;
+
+    let mut buckets: HashMap<(i32, i32, i32, i32, u8), GroundOpsBucket> = HashMap::new();
+
+    for seg in segments {
+        let Some(emission) = build_ground_ops_line_emission(seg, rasters, n_days) else {
+            continue;
+        };
+        let kind_class = if emission.max_radius_m >= 5_000.0 {
+            0u8
+        } else if emission.max_radius_m > 2_000.0 {
+            1u8
+        } else {
+            2u8
+        };
+        let key = (
+            (seg.start_lat * 3333.0) as i32,
+            (seg.start_lon * 3333.0) as i32,
+            (seg.end_lat * 3333.0) as i32,
+            (seg.end_lon * 3333.0) as i32,
+            kind_class,
+        );
+        let bucket = buckets.entry(key).or_insert_with(|| GroundOpsBucket {
+            start_lat: seg.start_lat,
+            start_lon: seg.start_lon,
+            end_lat: seg.end_lat,
+            end_lon: seg.end_lon,
+            length_m: seg.segment_length_m,
+            max_radius_m: emission.max_radius_m,
+            source_height_m: emission.source_height_m,
+            kind: emission.kind,
+            em_day: [0.0; NUM_BANDS],
+            em_eve: [0.0; NUM_BANDS],
+            em_night: [0.0; NUM_BANDS],
+            count: 0,
+            modeled_weight: 0.0,
+            modeled_by_kind: [0.0; 3],
+            observed_flight_ids: Vec::new(),
+            observed_by_kind: [Vec::new(), Vec::new(), Vec::new()],
+            representative_seg: seg.clone(),
+        });
+        for i in 0..NUM_BANDS {
+            if emission.emission_day[i].is_finite() {
+                bucket.em_day[i] +=
+                    (emission.emission_day[i] as f64 * std::f64::consts::LN_10 * 0.1).exp();
+            }
+            if emission.emission_evening[i].is_finite() {
+                bucket.em_eve[i] +=
+                    (emission.emission_evening[i] as f64 * std::f64::consts::LN_10 * 0.1).exp();
+            }
+            if emission.emission_night[i].is_finite() {
+                bucket.em_night[i] +=
+                    (emission.emission_night[i] as f64 * std::f64::consts::LN_10 * 0.1).exp();
+            }
+        }
+        bucket.count += 1;
+
+        let kind_idx = (emission.kind.saturating_sub(1) as usize).min(2);
+        let weight = seg.count_weight.max(0.0) as f64;
+        if seg.surface_model {
+            bucket.modeled_weight += weight;
+            bucket.modeled_by_kind[kind_idx] += weight;
+        } else {
+            bucket.observed_flight_ids.push(seg.flight_id);
+            bucket.observed_by_kind[kind_idx].push(seg.flight_id);
+        }
+    }
+
+    buckets.into_values().collect()
+}
+
+/// Convenience: convert a bucket's linear-energy bands back to dB SPL for
+/// downstream propagation. NEG_INFINITY for empty (zero-energy) bands.
+#[inline]
+pub fn ground_ops_bucket_emission_db(linear: &[f64; NUM_BANDS]) -> [f64; NUM_BANDS] {
+    std::array::from_fn(|i| {
+        if linear[i] > 0.0 {
+            10.0 * linear[i].log10()
+        } else {
+            f64::NEG_INFINITY
+        }
+    })
+}
+
 fn ground_ops_reference_point(seg: &AircraftSegment) -> ((f64, f64), f64, f64) {
     let cp = geo::closest_point_on_segment(
         (seg.start_lat + seg.end_lat) * 0.5,

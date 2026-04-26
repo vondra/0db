@@ -1845,6 +1845,15 @@ fn compute_aircraft(
     let mut ground_cp_lon = receiver.lon;
     let mut ground_src_height = receiver.altitude_m();
 
+    // Aggregate ground-ops segments into bucketed line sources up front.
+    // At airport receivers (Ruzyně) thousands of co-located ADS-B segments
+    // collapse into ~hundreds of buckets — propagating once per bucket
+    // saves the bulk of `propagate_variants_full` + `build_path_profile`
+    // work that previously ran per segment. Pipeline already ships with
+    // the same bucketing; this puts popup on the same line-source regime,
+    // and parity becomes a structural property.
+    let ground_buckets = aircraft::bucket_ground_ops(segments, rasters, n_days);
+
     for seg in segments {
         if aircraft::is_ground_stale_segment(seg, rasters) {
             continue;
@@ -1852,232 +1861,12 @@ fn compute_aircraft(
         if !aircraft::is_valid_airborne_segment(seg, rasters) {
             continue;
         }
-
-        if let Some(line_emission) = aircraft::build_ground_ops_line_emission(seg, rasters, n_days) {
-            let kind_idx = (line_emission.kind.saturating_sub(1) as usize).min(2);
-            let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
-            let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
-            let (group_name, group_key) =
-                if let Some(mut group_idx) =
-                    aircraft::assign_segment_to_airport_group(seg, &airport_groups, rasters)
-                {
-                    if airport_groups[group_idx].name.trim().is_empty()
-                        && airport_groups[group_idx].airport_key.trim().is_empty()
-                    {
-                        if let Some((resolved_idx, _)) = airport_groups
-                            .iter()
-                            .enumerate()
-                            .filter(|(idx, group)| {
-                                *idx != group_idx
-                                    && (!group.name.trim().is_empty()
-                                        || !group.airport_key.trim().is_empty())
-                            })
-                            .map(|(idx, group)| {
-                                (
-                                    idx,
-                                    geo::flat_dist(
-                                        airport_groups[group_idx].centroid_lat,
-                                        airport_groups[group_idx].centroid_lon,
-                                        group.centroid_lat,
-                                        group.centroid_lon,
-                                    ),
-                                )
-                            })
-                            .filter(|(_, dist_m)| *dist_m <= 2_500.0)
-                            .min_by(|a, b| {
-                                a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
-                            })
-                        {
-                            group_idx = resolved_idx;
-                        }
-                    }
-                    let group = &airport_groups[group_idx];
-                    let name = if !group.name.trim().is_empty() {
-                        group.name.clone()
-                    } else if !group.airport_key.trim().is_empty() {
-                        group.airport_key.clone()
-                    } else {
-                        format!("Airport {}", group_idx + 1)
-                    };
-                    let key = if !group.airport_key.trim().is_empty() {
-                        format!("airport:{}", group.airport_key)
-                    } else {
-                        format!("airport_idx:{group_idx}")
-                    };
-                    (name, key)
-                } else {
-                    let cell_lat = (mid_lat / 0.02).round() as i32;
-                    let cell_lon = (mid_lon / 0.03).round() as i32;
-                    (
-                        format!("Inferred airfield ({:.2}, {:.2})", mid_lat, mid_lon),
-                        format!("inferred:{cell_lat}:{cell_lon}"),
-                    )
-                };
-            let weight = seg.count_weight.max(0.0) as f64;
-            let airport_acc = ground_by_airport
-                .entry(group_key.clone())
-                .or_insert_with(|| GroundAirportAccum::new(group_name.clone(), group_key, receiver));
-
-            // Collect segment geometry for popup highlight (cap at 200 to avoid huge JSON)
-            if airport_acc.line_coords.len() < 200 {
-                airport_acc.line_coords.push([
-                    [seg.start_lon, seg.start_lat],
-                    [seg.end_lon, seg.end_lat],
-                ]);
-            }
-
-            if weight > 0.0 {
-                let source_energy: f64 = line_emission
-                    .emission_day
-                    .iter()
-                    .chain(line_emission.emission_evening.iter())
-                    .chain(line_emission.emission_night.iter())
-                    .filter_map(|db| {
-                        if db.is_finite() {
-                            Some(
-                                crate::propagation::iso9613::fast_exp_f64(
-                                    *db as f64 * std::f64::consts::LN_10 * 0.1,
-                                ),
-                            )
-                        } else {
-                            None
-                        }
-                    })
-                    .sum();
-                airport_acc.emission_energy += source_energy;
-                if seg.surface_model {
-                    ground_modeled_total += weight;
-                    ground_modeled_by_kind[kind_idx] += weight;
-                    airport_acc.modeled_total += weight;
-                    airport_acc.modeled_by_kind[kind_idx] += weight;
-                } else {
-                    ground_observed_any.insert(seg.flight_id);
-                    ground_observed_by_kind[kind_idx].insert(seg.flight_id);
-                    airport_acc.observed_any.insert(seg.flight_id);
-                    airport_acc.observed_by_kind[kind_idx].insert(seg.flight_id);
-                }
-            }
-
-            let cp = geo::closest_point_on_segment(
-                receiver.lat,
-                receiver.lon,
-                seg.start_lat,
-                seg.start_lon,
-                seg.end_lat,
-                seg.end_lon,
-            );
-            let dist_m = cp.dist_m;
-            let max_em = line_emission
-                .emission_day
-                .iter()
-                .chain(line_emission.emission_evening.iter())
-                .chain(line_emission.emission_night.iter())
-                .copied()
-                .fold(f32::NEG_INFINITY, f32::max) as f64;
-            if geo::below_free_field_threshold_line(max_em, dist_m, 0.0) {
-                continue;
-            }
-
-            let cp_elev = rasters.elevation(cp.lat, cp.lon) + line_emission.source_height_m;
-            let d_slant = geo::slant_dist(dist_m, cp_elev, receiver.altitude_m()).max(1.0);
-            let flc = geo::finite_line_correction(seg.segment_length_m as f64, dist_m, cp.fraction);
-
-            let mut path_profile = propagation::PathProfile::new();
-            rasters.build_path_profile(
-                cp.lat,
-                cp.lon,
-                receiver.lat,
-                receiver.lon,
-                dist_m,
-                &mut path_profile,
-            );
-            let ground_g = propagation::path_effects::ground_g_from_profile(&path_profile);
-            let (terrain, _) =
-                propagation::path_effects::terrain_attenuation_with_meta(
-                    &mut path_profile,
-                    cp_elev,
-                    receiver.altitude_m(),
-                );
-            let (screening_atten, obstacle_trace) =
-                propagation::path_effects::screening_attenuation_with_meta(
-        &mut path_profile,
-                    barriers,
-                    cp_elev,
-                    receiver.altitude_m(),
-                    0.0,
-                    &terrain.attenuation_bands,
-                );
-            let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
-
-            let emissions = [
-                std::array::from_fn(|i| line_emission.emission_day[i] as f64),
-                std::array::from_fn(|i| line_emission.emission_evening[i] as f64),
-                std::array::from_fn(|i| line_emission.emission_night[i] as f64),
-            ];
-            let mut seg_variants = [
-                PropagationVariants::default(),
-                PropagationVariants::default(),
-                PropagationVariants::default(),
-            ];
-            for (pi, emission) in emissions.iter().enumerate() {
-                let v = iso9613::propagate_variants_full(
-                    emission,
-                    d_slant,
-                    SourceGeometry::Line,
-                    ground_g,
-                    &terrain.attenuation_bands,
-                    &screening_atten,
-                    &veg_atten,
-                    reflection,
-                    flc,
-                );
-                seg_variants[pi].add(&v);
-                ground_variants[pi].add(&v);
-                ground_kind_variants[kind_idx][pi].add(&v);
-                airport_acc.variants[pi].add(&v);
-                airport_acc.kind_variants[kind_idx][pi].add(&v);
-            }
-
-            if let Some(t) = traces.as_deref_mut() {
-                t.segments.push(build_aircraft_ground_segment_trace(BuildAircraftGroundTrace {
-                    seg,
-                    cp_lat: cp.lat,
-                    cp_lon: cp.lon,
-                    src_alt: cp_elev,
-                    rcv_alt: receiver.altitude_m(),
-                    d_slant,
-                    flc,
-                    ground_g,
-                    reflection_boost_db: reflection,
-                    kind_idx,
-                    path_profile: std::mem::take(&mut path_profile),
-                    terrain,
-                    screening_atten,
-                    obstacle_trace,
-                    veg_atten,
-                    seg_variants,
-                    lw_bands: emissions,
-                }));
-            }
-
-            if dist_m < ground_min_dist {
-                ground_min_dist = dist_m;
-                ground_min_d_slant = d_slant;
-                ground_min_ground_g = ground_g;
-                ground_cp_lat = cp.lat;
-                ground_cp_lon = cp.lon;
-                ground_src_height = cp_elev;
-            }
-            if dist_m < airport_acc.min_dist {
-                airport_acc.min_dist = dist_m;
-                airport_acc.min_d_slant = d_slant;
-                airport_acc.min_ground_g = ground_g;
-                airport_acc.cp_lat = cp.lat;
-                airport_acc.cp_lon = cp.lon;
-                airport_acc.src_height = cp_elev;
-            }
+        // Ground-ops segments are accumulated into buckets above and
+        // processed in the post-loop. Skip here so we don't double-count.
+        if aircraft::is_ground_ops_segment(seg, rasters) {
             continue;
         }
+
 
         if aircraft_r8_raster.is_some() {
             let seg_min_alt = seg.start_alt_m.min(seg.end_alt_m) as f64;
@@ -2125,6 +1914,242 @@ fn compute_aircraft(
         }
         if weight > acc.flight_weight {
             acc.flight_weight = weight;
+        }
+    }
+
+    // ─── Ground-ops buckets → propagate once per bucket ───
+    //
+    // Pipeline-shape accumulation: each bucket is one line source carrying
+    // the energy of N (~5-10) co-located ADS-B segments. Path effects
+    // (build_path_profile, terrain, screening, vegetation) computed once
+    // per bucket instead of once per segment — the popup-side equivalent
+    // of pipeline's bucketed scatter at `pipeline-worker/src/main.rs`.
+    for bucket in &ground_buckets {
+        let kind_idx = (bucket.kind.saturating_sub(1) as usize).min(2);
+        let mid_lat = (bucket.start_lat + bucket.end_lat) * 0.5;
+        let mid_lon = (bucket.start_lon + bucket.end_lon) * 0.5;
+
+        let (group_name, group_key) = if let Some(mut group_idx) =
+            aircraft::assign_segment_to_airport_group(
+                &bucket.representative_seg,
+                &airport_groups,
+                rasters,
+            ) {
+            // Resolve unnamed groups by snapping to the nearest named group within 2.5 km.
+            // Same heuristic the per-segment code used; applied once per bucket here.
+            if airport_groups[group_idx].name.trim().is_empty()
+                && airport_groups[group_idx].airport_key.trim().is_empty()
+            {
+                if let Some((resolved_idx, _)) = airport_groups
+                    .iter()
+                    .enumerate()
+                    .filter(|(idx, group)| {
+                        *idx != group_idx
+                            && (!group.name.trim().is_empty()
+                                || !group.airport_key.trim().is_empty())
+                    })
+                    .map(|(idx, group)| {
+                        (
+                            idx,
+                            geo::flat_dist(
+                                airport_groups[group_idx].centroid_lat,
+                                airport_groups[group_idx].centroid_lon,
+                                group.centroid_lat,
+                                group.centroid_lon,
+                            ),
+                        )
+                    })
+                    .filter(|(_, dist_m)| *dist_m <= 2_500.0)
+                    .min_by(|a, b| {
+                        a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                {
+                    group_idx = resolved_idx;
+                }
+            }
+            let group = &airport_groups[group_idx];
+            let name = if !group.name.trim().is_empty() {
+                group.name.clone()
+            } else if !group.airport_key.trim().is_empty() {
+                group.airport_key.clone()
+            } else {
+                format!("Airport {}", group_idx + 1)
+            };
+            let key = if !group.airport_key.trim().is_empty() {
+                format!("airport:{}", group.airport_key)
+            } else {
+                format!("airport_idx:{group_idx}")
+            };
+            (name, key)
+        } else {
+            let cell_lat = (mid_lat / 0.02).round() as i32;
+            let cell_lon = (mid_lon / 0.03).round() as i32;
+            (
+                format!("Inferred airfield ({:.2}, {:.2})", mid_lat, mid_lon),
+                format!("inferred:{cell_lat}:{cell_lon}"),
+            )
+        };
+
+        let airport_acc = ground_by_airport
+            .entry(group_key.clone())
+            .or_insert_with(|| GroundAirportAccum::new(group_name.clone(), group_key, receiver));
+
+        if airport_acc.line_coords.len() < 200 {
+            airport_acc.line_coords.push([
+                [bucket.start_lon, bucket.start_lat],
+                [bucket.end_lon, bucket.end_lat],
+            ]);
+        }
+
+        // Bucket emission energy (linear) summed across all bands × periods.
+        let source_energy: f64 = bucket
+            .em_day
+            .iter()
+            .chain(bucket.em_eve.iter())
+            .chain(bucket.em_night.iter())
+            .copied()
+            .sum();
+        airport_acc.emission_energy += source_energy;
+
+        // Modeled (synthetic) vs observed (real ADS-B) attribution. Both
+        // counters were summed at bucket-build time; just propagate them
+        // to the per-airport and global accumulators.
+        ground_modeled_total += bucket.modeled_weight;
+        for k in 0..3 {
+            ground_modeled_by_kind[k] += bucket.modeled_by_kind[k];
+        }
+        airport_acc.modeled_total += bucket.modeled_weight;
+        for k in 0..3 {
+            airport_acc.modeled_by_kind[k] += bucket.modeled_by_kind[k];
+        }
+        for &fid in &bucket.observed_flight_ids {
+            ground_observed_any.insert(fid);
+            airport_acc.observed_any.insert(fid);
+        }
+        for k in 0..3 {
+            for &fid in &bucket.observed_by_kind[k] {
+                ground_observed_by_kind[k].insert(fid);
+                airport_acc.observed_by_kind[k].insert(fid);
+            }
+        }
+
+        // Convert linear bucket emission back to dB for the propagation
+        // chain (it expects dB SPL per band).
+        let emission_day_db = aircraft::ground_ops_bucket_emission_db(&bucket.em_day);
+        let emission_eve_db = aircraft::ground_ops_bucket_emission_db(&bucket.em_eve);
+        let emission_night_db = aircraft::ground_ops_bucket_emission_db(&bucket.em_night);
+
+        let cp = geo::closest_point_on_segment(
+            receiver.lat,
+            receiver.lon,
+            bucket.start_lat,
+            bucket.start_lon,
+            bucket.end_lat,
+            bucket.end_lon,
+        );
+        let dist_m = cp.dist_m;
+        let max_em = emission_day_db
+            .iter()
+            .chain(emission_eve_db.iter())
+            .chain(emission_night_db.iter())
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        if geo::below_free_field_threshold_line(max_em, dist_m, 0.0) {
+            continue;
+        }
+
+        let cp_elev = rasters.elevation(cp.lat, cp.lon) + bucket.source_height_m;
+        let d_slant = geo::slant_dist(dist_m, cp_elev, receiver.altitude_m()).max(1.0);
+        let flc = geo::finite_line_correction(bucket.length_m as f64, dist_m, cp.fraction);
+
+        let mut path_profile = propagation::PathProfile::new();
+        rasters.build_path_profile(
+            cp.lat,
+            cp.lon,
+            receiver.lat,
+            receiver.lon,
+            dist_m,
+            &mut path_profile,
+        );
+        let ground_g = propagation::path_effects::ground_g_from_profile(&path_profile);
+        let (terrain, _) = propagation::path_effects::terrain_attenuation_with_meta(
+            &mut path_profile,
+            cp_elev,
+            receiver.altitude_m(),
+        );
+        let (screening_atten, obstacle_trace) =
+            propagation::path_effects::screening_attenuation_with_meta(
+                &mut path_profile,
+                barriers,
+                cp_elev,
+                receiver.altitude_m(),
+                0.0,
+                &terrain.attenuation_bands,
+            );
+        let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
+
+        let emissions = [emission_day_db, emission_eve_db, emission_night_db];
+        let mut seg_variants = [
+            PropagationVariants::default(),
+            PropagationVariants::default(),
+            PropagationVariants::default(),
+        ];
+        for (pi, emission) in emissions.iter().enumerate() {
+            let v = iso9613::propagate_variants_full(
+                emission,
+                d_slant,
+                SourceGeometry::Line,
+                ground_g,
+                &terrain.attenuation_bands,
+                &screening_atten,
+                &veg_atten,
+                reflection,
+                flc,
+            );
+            seg_variants[pi].add(&v);
+            ground_variants[pi].add(&v);
+            ground_kind_variants[kind_idx][pi].add(&v);
+            airport_acc.variants[pi].add(&v);
+            airport_acc.kind_variants[kind_idx][pi].add(&v);
+        }
+
+        if let Some(t) = traces.as_deref_mut() {
+            t.segments.push(build_aircraft_ground_segment_trace(BuildAircraftGroundTrace {
+                seg: &bucket.representative_seg,
+                cp_lat: cp.lat,
+                cp_lon: cp.lon,
+                src_alt: cp_elev,
+                rcv_alt: receiver.altitude_m(),
+                d_slant,
+                flc,
+                ground_g,
+                reflection_boost_db: reflection,
+                kind_idx,
+                path_profile: std::mem::take(&mut path_profile),
+                terrain,
+                screening_atten,
+                obstacle_trace,
+                veg_atten,
+                seg_variants,
+                lw_bands: emissions,
+            }));
+        }
+
+        if dist_m < ground_min_dist {
+            ground_min_dist = dist_m;
+            ground_min_d_slant = d_slant;
+            ground_min_ground_g = ground_g;
+            ground_cp_lat = cp.lat;
+            ground_cp_lon = cp.lon;
+            ground_src_height = cp_elev;
+        }
+        if dist_m < airport_acc.min_dist {
+            airport_acc.min_dist = dist_m;
+            airport_acc.min_d_slant = d_slant;
+            airport_acc.min_ground_g = ground_g;
+            airport_acc.cp_lat = cp.lat;
+            airport_acc.cp_lon = cp.lon;
+            airport_acc.src_height = cp_elev;
         }
     }
 
