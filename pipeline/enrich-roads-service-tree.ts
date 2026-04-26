@@ -22,7 +22,6 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCE_ID_SERVICE_TREE_HEURISTIC } from './lib/source-ids.generated.js'
-import { pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_SERVICE_TREE_HEURISTIC
 
@@ -60,7 +59,7 @@ const GRID_KEY_MASK = (1 << GRID_KEY_BITS) - 1
  * trade-off between capturing legitimate frontage and avoiding over-assignment
  * in dense grids.
  */
-const MAX_BUFFER_M = 50
+export const MAX_BUFFER_M = 50
 
 /**
  * Vehicle trips per dwelling per day (global baseline) and effective occupancy.
@@ -84,7 +83,7 @@ const MAX_BUFFER_M = 50
  */
 const TRIPS_PER_DWELLING_BASE = 4.0
 const OCCUPANCY = 0.92
-const TRIPS_PER_DWELLING = TRIPS_PER_DWELLING_BASE * OCCUPANCY // 3.68
+export const TRIPS_PER_DWELLING = TRIPS_PER_DWELLING_BASE * OCCUPANCY // 3.68
 
 /**
  * Floor for service-tree accumulated AADT — segments below this value are
@@ -101,15 +100,26 @@ const MIN_AADT = 20
  * intentional — dense urban residentials in Prague Karlín / Madrid Centro
  * reach 1500-2000 genuinely). This is a "pragmatic maximum" — anything
  * above it almost certainly means flow routing put too much through the
- * wrong segment. Missing classes (7 service, 8 track excluded entirely,
- * 10-12 links excluded) have no cap and won't be stamped.
+ * wrong segment. Class 8 (track) is excluded from eligibility entirely; no
+ * cap entry needed.
  *
  * Ratios to `default_road_traffic` in engine: 5 residential 2.4×,
- * 6 living_street 2.5×, 9 unclassified 1.5×.
+ * 6 living_street 2.5×, 7 service 1.6×, 9 unclassified 1.5×.
+ *
+ * Class 7 (service) is the one calibration outlier in the dict: service
+ * roads cover everything from a 5-storey apartment driveway (~200 dw × 3.68
+ * = 700 trips genuine) to a 30 m parking aisle (~5 trips). The OSM `service=*`
+ * sub-tag would let us split these but the road schema doesn't preserve it
+ * (engine/osm-extract/src/finalize.rs:124). Without that signal we pick a
+ * cap of 400 — 1.6× the engine default of 250, leaves room for one mid-rise
+ * apartment block, hard-clamps the Pasito-class 1700+ runaway. Apartment
+ * driveways with >100 dw will still hit the cap; that's a known undercount
+ * pending OSM `service` sub-tag extraction.
  */
-const SERVICE_TREE_CAP_PER_CLASS: Record<number, number> = {
+export const SERVICE_TREE_CAP_PER_CLASS: Record<number, number> = {
   5: 1200,
   6: 250,
+  7: 400,
   9: 2000,
 }
 
@@ -131,14 +141,8 @@ const SPLIT_MOTO = 0.01
 // Within a 24 km H3 r4 hex cosLat varies <0.05 % — well under the 50 m
 // `MAX_BUFFER_M` heuristic — so the assignment is bit-identical.
 
+const M_PER_DEG_LON_EQUATOR = 111320
 const M_PER_DEG_LAT = 110540
-
-function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const cosLat = Math.cos((lat1 + lat2) / 2 * Math.PI / 180)
-  const dx = (lon2 - lon1) * 111320 * cosLat
-  const dy = (lat2 - lat1) * M_PER_DEG_LAT
-  return Math.sqrt(dx * dx + dy * dy)
-}
 
 /**
  * Distance from point `p` to segment `a → b`, all coordinates already
@@ -162,12 +166,6 @@ function pointToSegmentDistXY(
   const ex = px - cx, ey = py - cy
   return Math.sqrt(ex * ex + ey * ey)
 }
-
-/** Degree-input wrapper around `pointToSegmentDistXY` — projects on the
- *  fly using a per-call cosLat. Kept for callers without a hex-level
- *  cosLat handy; the hot loop in `assignBuildingsGlobally` uses the
- *  pre-projected variant instead. */
-// ---------- Helpers ----------
 
 function nodeKey(lat: number, lon: number): string {
   return `${lat.toFixed(5)}_${lon.toFixed(5)}`
@@ -210,7 +208,7 @@ function packGridKey(latLocal: number, lonLocal: number): number {
  * field-vs-manual scaling on hotel + retail. Annotated in
  * engine/noise-compute/SPEC.md (A.7).
  */
-function estimateDwellings(buildingType: number, floors: number, areaMr2: number | null): number {
+export function estimateDwellings(buildingType: number, floors: number, areaMr2: number | null): number {
   const footprint = areaMr2 ?? 100
   const effectiveFloors = floors > 0 ? floors : 1
   const gfa = footprint * effectiveFloors
@@ -228,7 +226,7 @@ function estimateDwellings(buildingType: number, floors: number, areaMr2: number
   }
 }
 
-function splitAADT(totalTrips: number): { light: number; medium: number; heavy: number; moto: number } {
+export function splitAADT(totalTrips: number): { light: number; medium: number; heavy: number; moto: number } {
   const total = Math.max(totalTrips, MIN_AADT)
   const medium = Math.round(total * SPLIT_MEDIUM)
   const heavy = Math.round(total * SPLIT_HEAVY)
@@ -282,18 +280,22 @@ class MinHeap {
 // 100 k-segment Praha hex that is ~7-10 MB of template-literal strings and
 // ~1.5 M Map-of-string operations the engine no longer pays per pass.
 
-interface GraphNode {
-  degree: number
+export interface GraphNode {
   eligibleEdges: number[]
+  // True iff the node touches a real motor-vehicle exit. Tracks (cls 8) are
+  // NOT exits — counting them was the Pasito Blanco bug where service road
+  // OSM 69951934 inflated from ~30 trips/day to 1700+ via fake-root flow.
+  // See buildGraph() for the three sources that flip this flag.
+  hasExitEdge: boolean
 }
 
-interface Graph {
+export interface Graph {
   nodes: GraphNode[]                    // indexed by node id
   segNodeIds: Int32Array                // length 2*n: [start_id, end_id, …]
   eligible: Uint8Array                  // 1 byte per segment
 }
 
-function buildGraph(table: any): Graph {
+export function buildGraph(table: any): Graph {
   const n = table.numRows
   const startLat = table.getChild('start_lat')!
   const startLon = table.getChild('start_lon')!
@@ -312,7 +314,7 @@ function buildGraph(table: any): Graph {
     let id = nodeIdByKey.get(key)
     if (id === undefined) {
       id = nodes.length
-      nodes.push({ degree: 0, eligibleEdges: [] })
+      nodes.push({ eligibleEdges: [], hasExitEdge: false })
       nodeIdByKey.set(key, id)
     }
     return id
@@ -329,28 +331,25 @@ function buildGraph(table: any): Graph {
     segNodeIds[i * 2] = sId
     segNodeIds[i * 2 + 1] = eId
 
-    nodes[sId].degree++
-    nodes[eId].degree++
-
     const cls = (roadClass.get(i) as number) ?? 5
     const existingId = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-    // Eligibility — local roads only (class 5..9), plus the cls !== 8 guard
-    // added in A.3: gravel tracks next to a few cottages used to pick up
-    // ~24/day from dwelling flow accumulation (real value ~1/day). Leaving
-    // tracks at source_id = 0 drops them to the class-default 5/day in the
-    // engine cascade; the A.5 implicit-agricultural factor × 0.1 brings that
-    // down to ~0.5/day effective.
-    //
-    // Service roads (cls 7) stay eligible because residential driveways tag as
-    // `highway=service` and do legitimately carry apartment-block flow.
-    //
-    // Link classes 10-12 excluded: residential flow accumulation drastically
-    // undercounts highway-derived ramp traffic, so those stay at source_id=0
-    // and fall through to the 15 %-of-mainline class default.
-    if (cls >= 5 && cls !== 8 && cls <= 9 && shouldOverwrite(existingId, MY_SOURCE_ID)) {
+    // Eligibility (in routing graph): local motor cls 5–9 *except* track. A.3:
+    // tracks would pick up ~24/day from flow accumulation against a real ~1/day.
+    // Links 10–12 excluded too — residential accumulation undercounts highway-
+    // derived ramp traffic, so they stay at source_id=0 → engine class default.
+    const isLocalMotor = cls >= 5 && cls <= 9 && cls !== 8
+    if (isLocalMotor && shouldOverwrite(existingId, MY_SOURCE_ID)) {
       eligible[i] = 1
       nodes[sId].eligibleEdges.push(i)
       nodes[eId].eligibleEdges.push(i)
+    } else if (cls < 5 || (cls >= 10 && cls <= 12) || isLocalMotor) {
+      // Real motor exit. Three sources fold here:
+      //   - higher-class road (cls 0–4) or link (cls 10–12)
+      //   - local motor non-overwriteable by us (already filled by measured
+      //     source) — must still root the adjacent service-tree component, else
+      //     pseudo-root pulls flow inward instead of out toward the measured neighbour.
+      nodes[sId].hasExitEdge = true
+      nodes[eId].hasExitEdge = true
     }
   }
 
@@ -359,12 +358,12 @@ function buildGraph(table: any): Graph {
 
 // ---------- Connected components ----------
 
-interface Component {
+export interface Component {
   segments: number[]
   rootNodes: Set<number>     // global node ids; small per component
 }
 
-function findComponents(graph: Graph): Component[] {
+export function findComponents(graph: Graph): Component[] {
   const { nodes, segNodeIds, eligible } = graph
   // Visited as Uint8Array (one byte per segment) — `Set<number>.has/add` runs
   // ~5–10× slower for the millions of probes a dense urban hex incurs.
@@ -394,7 +393,7 @@ function findComponents(graph: Graph): Component[] {
       for (let endSel = 0; endSel < 2; endSel++) {
         const nodeId = endSel === 0 ? sId : eId
         const node = nodes[nodeId]
-        if (node.degree > node.eligibleEdges.length) {
+        if (node.hasExitEdge) {
           comp.rootNodes.add(nodeId)
         }
         const edges = node.eligibleEdges
@@ -416,7 +415,7 @@ function findComponents(graph: Graph): Component[] {
 
 // ---------- Building spatial grid ----------
 
-interface BuildingGrid {
+export interface BuildingGrid {
   grid: Map<number, number[]>
   lats: Float64Array
   lons: Float64Array
@@ -438,7 +437,7 @@ interface BuildingGrid {
   lonOriginIdx: number
 }
 
-function buildBuildingGrid(table: any): BuildingGrid {
+export function buildBuildingGrid(table: any): BuildingGrid {
   const n = table.numRows
   const latCol = table.getChild('centroid_lat')!
   const lonCol = table.getChild('centroid_lon')!
@@ -481,7 +480,7 @@ function buildBuildingGrid(table: any): BuildingGrid {
   // One cosLat for the whole hex. Across a 24 km r4 hex (≈0.22° lat span)
   // cos varies <0.05 % — well under the 50 m MAX_BUFFER_M threshold.
   const avgLat = n > 0 ? latSum / n : 0
-  const mPerDegLon = 111320 * Math.cos(avgLat * Math.PI / 180)
+  const mPerDegLon = M_PER_DEG_LON_EQUATOR * Math.cos(avgLat * Math.PI / 180)
 
   // Second pass: pre-project every building into local metres + bucket
   // into the grid using local cell indices.
@@ -521,7 +520,7 @@ function buildBuildingGrid(table: any): BuildingGrid {
  * the totals. Per-component consumers (`flowAccumulate`) then look up
  * dwellings by segment in O(1) instead of re-iterating every building.
  */
-function assignBuildingsGlobally(
+export function assignBuildingsGlobally(
   eligibleSegments: number[],
   startLat: any, startLon: any, endLat: any, endLon: any,
   bg: BuildingGrid,
@@ -600,7 +599,7 @@ function assignBuildingsGlobally(
   return segDwellings
 }
 
-function flowAccumulate(
+export function flowAccumulate(
   comp: Component,
   segNodeIds: Int32Array,
   lengthCol: any,
@@ -734,6 +733,28 @@ function flowAccumulate(
   return segFlow
 }
 
+// ---------- Debug hook ----------
+
+function parseDebugOsmId(): number | null {
+  const raw = process.env.DEBUG_OSM_ID
+  if (!raw) return null
+  const n = Number(raw)
+  if (!Number.isFinite(n)) {
+    console.error(`[service-tree] DEBUG_OSM_ID=${raw} not numeric — ignored`)
+    return null
+  }
+  return n
+}
+
+function debugFlow(segFlow: Map<number, number>, osmIdCol: any, target: number, segDw: Map<number, number>) {
+  for (const [seg, trips] of segFlow) {
+    if (Number(osmIdCol.get(seg)) !== target) continue
+    const localDw = segDw.get(seg) ?? 0
+    const localTrips = localDw * TRIPS_PER_DWELLING
+    console.error(`  [DEBUG seg ${seg} osm=${target}] local_dw=${localDw} local_trips=${localTrips.toFixed(1)} TOTAL_FLOW=${trips.toFixed(0)} through_flow=${(trips - localTrips).toFixed(0)}`)
+  }
+}
+
 // ---------- Process one hex ----------
 
 function processHex(hexId: string): { enriched: number; totalResidential: number } | null {
@@ -784,9 +805,12 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   // Flow accumulation per component, reading the precomputed seg→dwellings
   // map by direct lookup (no per-component re-scan of every building).
   const segAADT = new Map<number, { light: number; medium: number; heavy: number; moto: number }>()
+  const roadClassCol = roadTable.getChild('road_class')
+  const debugTarget = parseDebugOsmId()
+  const osmIdCol = debugTarget !== null ? roadTable.getChild('osm_id') : undefined
   for (const comp of components) {
     const segFlow = flowAccumulate(comp, graph.segNodeIds, lengthCol, globalBestSeg)
-    const roadClassCol = roadTable.getChild('road_class')
+    if (osmIdCol) debugFlow(segFlow, osmIdCol, debugTarget!, globalBestSeg)
     for (const [seg, trips] of segFlow) {
       const cls = (roadClassCol?.get(seg) as number) ?? 5
       const capped = Math.min(trips, SERVICE_TREE_CAP_PER_CLASS[cls] ?? Infinity)
@@ -904,4 +928,7 @@ function main() {
   }
 }
 
-main()
+// Run main only when this file is invoked as a script — not when imported by tests.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main()
+}
