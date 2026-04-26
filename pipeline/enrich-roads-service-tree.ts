@@ -60,7 +60,7 @@ const GRID_KEY_MASK = (1 << GRID_KEY_BITS) - 1
  * trade-off between capturing legitimate frontage and avoiding over-assignment
  * in dense grids.
  */
-const MAX_BUFFER_M = 50
+export const MAX_BUFFER_M = 50
 
 /**
  * Vehicle trips per dwelling per day (global baseline) and effective occupancy.
@@ -84,7 +84,7 @@ const MAX_BUFFER_M = 50
  */
 const TRIPS_PER_DWELLING_BASE = 4.0
 const OCCUPANCY = 0.92
-const TRIPS_PER_DWELLING = TRIPS_PER_DWELLING_BASE * OCCUPANCY // 3.68
+export const TRIPS_PER_DWELLING = TRIPS_PER_DWELLING_BASE * OCCUPANCY // 3.68
 
 /**
  * Floor for service-tree accumulated AADT — segments below this value are
@@ -117,7 +117,7 @@ const MIN_AADT = 20
  * driveways with >100 dw will still hit the cap; that's a known undercount
  * pending OSM `service` sub-tag extraction.
  */
-const SERVICE_TREE_CAP_PER_CLASS: Record<number, number> = {
+export const SERVICE_TREE_CAP_PER_CLASS: Record<number, number> = {
   5: 1200,
   6: 250,
   7: 400,
@@ -221,7 +221,7 @@ function packGridKey(latLocal: number, lonLocal: number): number {
  * field-vs-manual scaling on hotel + retail. Annotated in
  * engine/noise-compute/SPEC.md (A.7).
  */
-function estimateDwellings(buildingType: number, floors: number, areaMr2: number | null): number {
+export function estimateDwellings(buildingType: number, floors: number, areaMr2: number | null): number {
   const footprint = areaMr2 ?? 100
   const effectiveFloors = floors > 0 ? floors : 1
   const gfa = footprint * effectiveFloors
@@ -239,7 +239,7 @@ function estimateDwellings(buildingType: number, floors: number, areaMr2: number
   }
 }
 
-function splitAADT(totalTrips: number): { light: number; medium: number; heavy: number; moto: number } {
+export function splitAADT(totalTrips: number): { light: number; medium: number; heavy: number; moto: number } {
   const total = Math.max(totalTrips, MIN_AADT)
   const medium = Math.round(total * SPLIT_MEDIUM)
   const heavy = Math.round(total * SPLIT_HEAVY)
@@ -293,7 +293,7 @@ class MinHeap {
 // 100 k-segment Praha hex that is ~7-10 MB of template-literal strings and
 // ~1.5 M Map-of-string operations the engine no longer pays per pass.
 
-interface GraphNode {
+export interface GraphNode {
   eligibleEdges: number[]
   // True iff the node touches a real motor-vehicle exit. Three sources:
   //   - higher-class motor road (cls 0–4: motorway/trunk/primary/secondary/tertiary)
@@ -308,13 +308,13 @@ interface GraphNode {
   hasExitEdge: boolean
 }
 
-interface Graph {
+export interface Graph {
   nodes: GraphNode[]                    // indexed by node id
   segNodeIds: Int32Array                // length 2*n: [start_id, end_id, …]
   eligible: Uint8Array                  // 1 byte per segment
 }
 
-function buildGraph(table: any): Graph {
+export function buildGraph(table: any): Graph {
   const n = table.numRows
   const startLat = table.getChild('start_lat')!
   const startLon = table.getChild('start_lon')!
@@ -392,12 +392,12 @@ function buildGraph(table: any): Graph {
 
 // ---------- Connected components ----------
 
-interface Component {
+export interface Component {
   segments: number[]
   rootNodes: Set<number>     // global node ids; small per component
 }
 
-function findComponents(graph: Graph): Component[] {
+export function findComponents(graph: Graph): Component[] {
   const { nodes, segNodeIds, eligible } = graph
   // Visited as Uint8Array (one byte per segment) — `Set<number>.has/add` runs
   // ~5–10× slower for the millions of probes a dense urban hex incurs.
@@ -449,7 +449,7 @@ function findComponents(graph: Graph): Component[] {
 
 // ---------- Building spatial grid ----------
 
-interface BuildingGrid {
+export interface BuildingGrid {
   grid: Map<number, number[]>
   lats: Float64Array
   lons: Float64Array
@@ -471,7 +471,7 @@ interface BuildingGrid {
   lonOriginIdx: number
 }
 
-function buildBuildingGrid(table: any): BuildingGrid {
+export function buildBuildingGrid(table: any): BuildingGrid {
   const n = table.numRows
   const latCol = table.getChild('centroid_lat')!
   const lonCol = table.getChild('centroid_lon')!
@@ -554,7 +554,7 @@ function buildBuildingGrid(table: any): BuildingGrid {
  * the totals. Per-component consumers (`flowAccumulate`) then look up
  * dwellings by segment in O(1) instead of re-iterating every building.
  */
-function assignBuildingsGlobally(
+export function assignBuildingsGlobally(
   eligibleSegments: number[],
   startLat: any, startLon: any, endLat: any, endLon: any,
   bg: BuildingGrid,
@@ -633,7 +633,7 @@ function assignBuildingsGlobally(
   return segDwellings
 }
 
-function flowAccumulate(
+export function flowAccumulate(
   comp: Component,
   segNodeIds: Int32Array,
   lengthCol: any,
@@ -948,4 +948,7 @@ function main() {
   }
 }
 
-main()
+// Run main only when this file is invoked as a script — not when imported by tests.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main()
+}
