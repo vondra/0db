@@ -101,16 +101,26 @@ const MIN_AADT = 20
  * intentional — dense urban residentials in Prague Karlín / Madrid Centro
  * reach 1500-2000 genuinely). This is a "pragmatic maximum" — anything
  * above it almost certainly means flow routing put too much through the
- * wrong segment. Missing classes (7 service, 8 track excluded entirely,
- * 10-12 links excluded) have no cap and won't be stamped.
+ * wrong segment. Class 8 (track) is excluded from eligibility entirely; no
+ * cap entry needed.
  *
  * Ratios to `default_road_traffic` in engine: 5 residential 2.4×,
- * 6 living_street 2.5×, 9 unclassified 1.5×.
+ * 6 living_street 2.5×, 7 service 1.6×, 9 unclassified 1.5×.
+ *
+ * Class 7 (service) is the one calibration outlier in the dict: service
+ * roads cover everything from a 5-storey apartment driveway (~200 dw × 3.68
+ * = 700 trips genuine) to a 30 m parking aisle (~5 trips). The OSM `service=*`
+ * sub-tag would let us split these but the road schema doesn't preserve it
+ * (engine/osm-extract/src/finalize.rs:124). Without that signal we pick a
+ * cap of 400 — 1.6× the engine default of 250, leaves room for one mid-rise
+ * apartment block, hard-clamps the Pasito-class 1700+ runaway. Apartment
+ * driveways with >100 dw will still hit the cap; that's a known undercount
+ * pending OSM `service` sub-tag extraction.
  */
 const SERVICE_TREE_CAP_PER_CLASS: Record<number, number> = {
   5: 1200,
   6: 250,
-  7: 200,
+  7: 400,
   9: 2000,
 }
 
@@ -284,15 +294,17 @@ class MinHeap {
 // ~1.5 M Map-of-string operations the engine no longer pays per pass.
 
 interface GraphNode {
-  degree: number
   eligibleEdges: number[]
-  // True iff the node touches a real motor-vehicle exit (higher-class road or
-  // link: cls 0–4, 10–12). Without this flag, `findComponents` treated any
-  // non-eligible edge as an exit — including tracks (cls 8) and pedestrian
-  // ways. A service road that dead-ends at a `highway=track` stub then got
-  // marked as an exit, and `flowAccumulate` pumped the entire residential
-  // sub-tree's traffic through it on the way to that fake root. Real example:
-  // Pasito Blanco service road OSM 69951934 inflated from ~30 trips/day to 1700+.
+  // True iff the node touches a real motor-vehicle exit. Three sources:
+  //   - higher-class motor road (cls 0–4: motorway/trunk/primary/secondary/tertiary)
+  //   - link (cls 10–12: motorway_link/trunk_link/primary_link)
+  //   - non-overwriteable local road (cls 5–9 except 8 with measured AADT)
+  // Without this flag, `findComponents` treated any non-eligible edge as an
+  // exit — including tracks (cls 8) and pedestrian ways. A service road that
+  // dead-ends at a `highway=track` stub got marked as an exit and
+  // `flowAccumulate` pumped the entire residential sub-tree's traffic
+  // through it. Real example: Pasito Blanco service road OSM 69951934
+  // inflated from ~30 trips/day to 1700+.
   hasExitEdge: boolean
 }
 
@@ -321,7 +333,7 @@ function buildGraph(table: any): Graph {
     let id = nodeIdByKey.get(key)
     if (id === undefined) {
       id = nodes.length
-      nodes.push({ degree: 0, eligibleEdges: [], hasExitEdge: false })
+      nodes.push({ eligibleEdges: [], hasExitEdge: false })
       nodeIdByKey.set(key, id)
     }
     return id
@@ -337,9 +349,6 @@ function buildGraph(table: any): Graph {
     const eId = internNode(eKey)
     segNodeIds[i * 2] = sId
     segNodeIds[i * 2 + 1] = eId
-
-    nodes[sId].degree++
-    nodes[eId].degree++
 
     const cls = (roadClass.get(i) as number) ?? 5
     const existingId = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
@@ -364,6 +373,15 @@ function buildGraph(table: any): Graph {
       // Higher-class motor road (motorway, trunk, primary, secondary,
       // tertiary) or any link — flow can legitimately exit local network here.
       // Tracks (cls=8) explicitly excluded: not real exits, see GraphNode comment.
+      nodes[sId].hasExitEdge = true
+      nodes[eId].hasExitEdge = true
+    } else if (cls >= 5 && cls !== 8 && cls <= 9) {
+      // Local road (cls 5–9 except track) with measured AADT (`shouldOverwrite`
+      // returned false). Not in our routing graph but still a real motor exit:
+      // a service-tree cluster bounded by, say, an eu-city-traffic-stamped
+      // residential collector should flow OUT to that collector, not have its
+      // pseudo-root pulled to an internal hub. Without this branch a measured
+      // boundary becomes invisible to root detection — flow inverts.
       nodes[sId].hasExitEdge = true
       nodes[eId].hasExitEdge = true
     }
