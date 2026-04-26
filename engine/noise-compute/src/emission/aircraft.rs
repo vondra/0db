@@ -11,7 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 use crate::sources::AIRCRAFT_ADSB_SOURCE_ID;
 
@@ -453,7 +453,75 @@ pub fn interpolate_sel_logd(profile: &NpdProfile, log_d: f64, is_departure: bool
 // CPA geometry (Doc 29 §4.4.1)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const M_PER_DEG_LAT: f64 = 111_132.92;
+pub const M_PER_DEG_LAT: f64 = 111_132.92;
+
+/// Per-profile reach² (m²) at the standard 40 dB SEL threshold, indexed
+/// `[profile_idx][is_departure as usize]`. Pre-built at first access so the
+/// hot-path R-tree pre-filter (popup `lib.rs`, pipeline group bbox) can drop
+/// segments via a squared-distance compare without invoking
+/// `Profile::estimate_reach_m` per segment.
+pub static REACH_SQ_TABLE: LazyLock<[[f64; 2]; 8]> = LazyLock::new(|| {
+    std::array::from_fn(|i| {
+        let p = &PROFILES[i];
+        [
+            p.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, false).powi(2),
+            p.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, true).powi(2),
+        ]
+    })
+});
+
+/// Cheap conservative lower bound on segment-to-receiver slant² distance.
+/// Skips raster sampling, NPD interpolation, atan2, and foot reverse-projection
+/// that the full `segment_sel_with_overrides` does. Safe as a pre-filter — the
+/// returned value is **always ≤** the slant² that would have been computed by
+/// the full kernel, so rejecting on `> reach²` never drops a real contributor.
+///
+/// `cos_lat` is hoisted by the caller (one cos per query, not per segment).
+#[inline]
+pub fn segment_min_slant_sq(
+    seg: &AircraftSegment,
+    rx_lat: f64,
+    rx_lon: f64,
+    rx_elev_m: f64,
+    cos_lat: f64,
+) -> f64 {
+    let m_per_deg_lon = M_PER_DEG_LAT * cos_lat;
+
+    let x1 = (seg.start_lon - rx_lon) * m_per_deg_lon;
+    let y1 = (seg.start_lat - rx_lat) * M_PER_DEG_LAT;
+    let x2 = (seg.end_lon - rx_lon) * m_per_deg_lon;
+    let y2 = (seg.end_lat - rx_lat) * M_PER_DEG_LAT;
+
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let seg_len_sq = dx * dx + dy * dy;
+    let t = if seg_len_sq > 1e-6 {
+        -(x1 * dx + y1 * dy) / seg_len_sq
+    } else {
+        0.5
+    };
+    let cx = x1 + t * dx;
+    let cy = y1 + t * dy;
+    let lateral_sq = cx * cx + cy * cy;
+
+    // Min |alt - rx_elev| over the segment line. Altitude varies linearly
+    // along the segment, so the minimum distance is 0 if rx ∈ [min_alt,
+    // max_alt], else the closer endpoint's altitude difference. Squaring
+    // gives a lower bound on the squared vertical contribution to slant²
+    // at *any* point on the line — safe because the pre-filter never
+    // overestimates slant.
+    let min_alt = seg.start_alt_m.min(seg.end_alt_m) as f64;
+    let max_alt = seg.start_alt_m.max(seg.end_alt_m) as f64;
+    let alt_diff_min = if rx_elev_m < min_alt {
+        min_alt - rx_elev_m
+    } else if rx_elev_m > max_alt {
+        rx_elev_m - max_alt
+    } else {
+        0.0
+    };
+
+    lateral_sq + alt_diff_min * alt_diff_min
+}
 
 /// CPA result for one segment-receiver pair.
 pub struct CpaResult {

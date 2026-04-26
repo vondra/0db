@@ -236,16 +236,38 @@ pub fn collect_sources_at_point(
         .collect::<Result<_, _>>()?;
     let refs: Vec<&hex_store::HexData> = loaded.iter().collect();
 
-    Ok(collect_from_hex_data(&refs, lat, lng))
+    Ok(collect_from_hex_data(&refs, lat, lng, None::<AircraftPrefilter>))
+}
+
+/// Aircraft R-tree pre-filter config. Both fields gate the same per-segment
+/// loop in `collect_from_hex_data`, but they reject different sets:
+/// - per-profile reach (always when `Some(_)` is passed): drops airborne
+///   segments whose minimum-slant lower bound exceeds the profile's reach².
+/// - PALT skip (when `palt_enabled` is true): drops airborne non-ground
+///   segments whose `min_alt > rx_elev + AIRCRAFT_FAR_FIELD_THRESHOLD_M`,
+///   matching the kernel's PALT-raster gate at
+///   `noise-compute::compute_at_point_with_airports_palt`. Those segments
+///   would have been hit-`continue`-d in compute anyway; pre-filtering at
+///   collect skips the ~88-byte clone and the kernel iteration.
+#[derive(Clone, Copy, Debug)]
+pub struct AircraftPrefilter {
+    pub rx_elev_m: f64,
+    pub palt_enabled: bool,
 }
 
 /// Shared source collection logic. Takes pre-loaded hex data.
 /// Both `collect_sources_at_point` and `query_noise_at_point` delegate here.
+///
+/// `prefilter`: see `AircraftPrefilter`. `None` falls back to the 16 km
+/// horizontal R-tree envelope only — used by the `point-debug` CLI and
+/// raw-arrow tests that don't have rasters access.
+///
 /// NACE codes are read directly from industrial.arrow nace_4digit column.
 pub fn collect_from_hex_data(
     hex_data: &[&hex_store::HexData],
     lat: f64,
     lng: f64,
+    prefilter: Option<AircraftPrefilter>,
 ) -> PointQueryData {
     let mut all_roads = Vec::new();
     let mut all_railways = Vec::new();
@@ -596,9 +618,18 @@ pub fn collect_from_hex_data(
 
         // Query envelope: receiver ± AIRCRAFT_QUERY_MAX_RADIUS_M (horizontal).
         // R-tree returns segments whose bbox intersects this envelope — correct
-        // for any segment length. Final accurate filter (CPA ≤ per-profile
-        // reach) happens inside `segment_sel_with_overrides`.
-        use noise_compute::emission::aircraft::{meters_to_lat_deg, meters_to_lon_deg};
+        // for any segment length. The exact CPA + per-profile reach test
+        // happens inside `segment_sel_with_overrides` downstream, but at busy
+        // traffic densities the envelope passes ~200 k segments per popup
+        // while only ~25 % are actually within per-profile reach. The cheap
+        // pre-filter below drops the rest before we pay the ~88-byte clone
+        // and the per-segment kernel call. Mirrors pipeline's group-level
+        // reach test (`pipeline-worker/src/compute/aircraft.rs:657-668`),
+        // single-receiver formulation.
+        use noise_compute::emission::aircraft::{
+            meters_to_lat_deg, meters_to_lon_deg, segment_min_slant_sq, GROUND_CONTEXT_NONE,
+            REACH_SQ_TABLE,
+        };
         let radius_lat_deg = meters_to_lat_deg(AIRCRAFT_QUERY_MAX_RADIUS_M);
         let radius_lon_deg = meters_to_lon_deg(lat, AIRCRAFT_QUERY_MAX_RADIUS_M);
 
@@ -607,10 +638,46 @@ pub fn collect_from_hex_data(
             [lat + radius_lat_deg, lng + radius_lon_deg],
         );
 
+        // Pre-filter is gated on the caller passing receiver context —
+        // without `rx_elev_m` the slant lower bound and PALT gate elevation
+        // can't be computed safely.
+        let prefilter_ctx = prefilter.map(|p| {
+            (
+                p.rx_elev_m,
+                lat.to_radians().cos().max(0.2),
+                p.palt_enabled.then(|| {
+                    p.rx_elev_m
+                        + noise_compute::emission::aircraft::AIRCRAFT_FAR_FIELD_THRESHOLD_M
+                }),
+            )
+        });
+
         for entry in tree.locate_in_envelope_intersecting(&env) {
             let seg = &cached_segs[entry.cache_idx];
-            // Keep: accurate per-profile rejection happens downstream in
-            // segment_sel_with_overrides (CPA > reach → dropped).
+
+            // Per-profile reach + PALT pre-filter for airborne segments only.
+            // Ground & airport-context segments use a separate emission path
+            // (`segment_sel_airport_ground`, ground bucketing) whose reach
+            // semantics differ — leave them untouched.
+            if let Some((rx_elev, cos_lat, palt_gate)) = prefilter_ctx {
+                if !seg.on_ground && seg.ground_context == GROUND_CONTEXT_NONE {
+                    // PALT skip: cruise above gate is handled by the
+                    // pre-built R8 raster, never via the per-segment kernel.
+                    if let Some(gate) = palt_gate {
+                        let seg_min_alt = seg.start_alt_m.min(seg.end_alt_m) as f64;
+                        if seg_min_alt > gate {
+                            continue;
+                        }
+                    }
+                    let slant_sq = segment_min_slant_sq(seg, lat, lng, rx_elev, cos_lat);
+                    let reach_sq = REACH_SQ_TABLE[seg.profile_idx.min(7) as usize]
+                        [seg.is_departure as usize];
+                    if slant_sq > reach_sq {
+                        continue;
+                    }
+                }
+            }
+
             all_aircraft.push(seg.clone());
         }
     }
@@ -844,6 +911,13 @@ pub fn query_noise_at_point_unfiltered(lat: f64, lng: f64) -> napi::Result<Strin
 
 #[cfg(feature = "node")]
 fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<String> {
+    // Per-stage timing probes (env-gated: `POPUP_TIMING=1` to enable). Inline
+    // `Instant::now()` is cheaper and less destructive than perf/flamegraph
+    // for popup-scale work, and lets us watch one number per stage land in
+    // the Fastify log per request.
+    let timing_on = std::env::var("POPUP_TIMING").as_deref() == Ok("1");
+    let t_start = std::time::Instant::now();
+
     let hex_ids = geo::grid_disk_r4(lat, lng);
     let mut store = STORE
         .write()
@@ -864,7 +938,32 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         Some(r) => r,
         None => &stub,
     };
-    let sources = collect_from_hex_data(&hex_refs, lat, lng);
+    // Sample receiver elevation up-front so the aircraft R-tree pre-filter
+    // (inside `collect_from_hex_data`) has a real `rx_elev` to bound slant
+    // lower bounds against. With the stub rasters (offline tests), elevation
+    // is 0.0 and the pre-filter still runs but is slightly less aggressive.
+    let elevation = rasters.elevation(lat, lng);
+    // PALT raster will be used iff `PALT_DIR` is configured at startup AND
+    // the receiver maps to a valid R4 hex. When both true, the kernel
+    // would skip airborne-cruise segments above
+    // `rx_elev + AIRCRAFT_FAR_FIELD_THRESHOLD_M` anyway — pre-filter them
+    // here to save the clone.
+    let palt_enabled = PALT_DIR.get().is_some()
+        && h3o::LatLng::new(lat, lng)
+            .ok()
+            .and_then(|ll| ll.to_cell(h3o::Resolution::Eleven).parent(h3o::Resolution::Four))
+            .is_some();
+    let t_load = t_start.elapsed();
+    let sources = collect_from_hex_data(
+        &hex_refs,
+        lat,
+        lng,
+        Some(AircraftPrefilter {
+            rx_elev_m: elevation,
+            palt_enabled,
+        }),
+    );
+    let t_collect = t_start.elapsed() - t_load;
 
     // PALT raster cache key + miss-only aircraft snapshot. The cache
     // *hit* path never copies the 5 M-segment hex-ring union — only a
@@ -908,15 +1007,19 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
             palt_aircraft_snapshot.unwrap_or_default()
         })
     });
+    let t_palt = t_start.elapsed() - t_load - t_collect;
 
-    // Build receiver
-    let elevation = rasters.elevation(lat, lng);
+    // Build receiver (elevation already sampled above for the collect pre-filter).
     let receiver = noise_compute::types::Receiver::new(lat, lng, elevation);
 
     let config = noise_compute::types::ComputeConfig {
         n_days: sources.n_days,
         ..Default::default()
     };
+
+    let n_aircraft = sources.aircraft.len();
+    let n_roads = sources.roads.len();
+    let n_railways = sources.railways.len();
 
     let mut traces = noise_compute::types::TraceCollector::new();
     let mut result = noise_compute::compute_at_point_with_airports_palt(
@@ -934,13 +1037,32 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         Some(&mut traces),
         palt_raster.as_deref(),
     );
+    let t_compute = t_start.elapsed() - t_load - t_collect - t_palt;
 
     let summary = apply_segment_top_k_with_cap(&mut traces, top_k_per_kind);
     result.segments = std::mem::take(&mut traces.segments);
     result.airborne_traces = std::mem::take(&mut traces.airborne);
     result.segments_meta = Some(summary);
 
-    Ok(serde_json::to_string(&result).unwrap())
+    let json = serde_json::to_string(&result).unwrap();
+    let t_total = t_start.elapsed();
+
+    if timing_on {
+        eprintln!(
+            "popup-timing total={:.0}ms load={:.0}ms collect={:.0}ms palt={:.0}ms compute={:.0}ms json={:.0}ms (rd={} rl={} ac={})",
+            t_total.as_secs_f64() * 1000.0,
+            t_load.as_secs_f64() * 1000.0,
+            t_collect.as_secs_f64() * 1000.0,
+            t_palt.as_secs_f64() * 1000.0,
+            t_compute.as_secs_f64() * 1000.0,
+            (t_total - t_load - t_collect - t_palt - t_compute).as_secs_f64() * 1000.0,
+            n_roads,
+            n_railways,
+            n_aircraft,
+        );
+    }
+
+    Ok(json)
 }
 
 #[cfg(feature = "node")]
