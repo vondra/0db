@@ -3,7 +3,7 @@ import { useMap, Source, Layer } from 'react-map-gl/maplibre'
 import { ldenToColor } from '../utils/noise-colors'
 import { MetricLabel, DataPoint } from './noise/noise-tooltips'
 import { HoverText } from './ui/info-tip'
-import { fmt, fmtInt, fmtCompact, formatCpa, txtTable, type TableRow } from '../utils/formatters'
+import { fmt, fmtDb, fmtDbValue, fmtFloat, fmtInt, fmtCompact, formatCpa, txtTable, type TableRow } from '../utils/formatters'
 import { formatDist, lineRow, railTrainSourceLine, roadSourceDescription, SOURCE_LABELS, subtypeLabel } from './noise/shared'
 import { SegmentList } from './noise/SegmentList'
 import { TabStrip, type PopupTab } from './noise/TabStrip'
@@ -342,22 +342,22 @@ function MetadataRows({ c }: { c: Contributor }) {
   if (m.kind === 'aircraft') {
     if (m.variant !== 'ground_ops' || !m.ground_ops) return null
     const g = m.ground_ops
-    const total = g.observed_movements_per_day + g.modeled_movements_per_day
-    const hasModeled = g.modeled_movements_per_day > 0.01
+    const total = (g.observed_movements_per_day ?? 0) + (g.modeled_movements_per_day ?? 0)
+    const hasModeled = (g.modeled_movements_per_day ?? 0) > 0.01
     const movementsText = txtTable([
       'Airport ground operations per day.',
       'Observed from ADS-B where visible; the',
       'rest comes from the airport-surface model.',
       '',
-      ['Observed', `${g.observed_movements_per_day.toFixed(1)}/day`],
-      ...(hasModeled ? [['Modeled', `${g.modeled_movements_per_day.toFixed(1)}/day`] as [string, string]] : []),
+      ['Observed', `${fmtFloat(g.observed_movements_per_day)}/day`],
+      ...(hasModeled ? [['Modeled', `${fmtFloat(g.modeled_movements_per_day)}/day`] as [string, string]] : []),
       { sep: true },
-      ['Total', `${total.toFixed(1)}/day`],
+      ['Total', `${fmtFloat(total)}/day`],
       '',
       'Per class:',
-      ['  Runway roll', `${(g.runway_roll.observed_movements_per_day + g.runway_roll.modeled_movements_per_day).toFixed(1)}/day`],
-      ['  Taxi', `${(g.taxi.observed_movements_per_day + g.taxi.modeled_movements_per_day).toFixed(1)}/day`],
-      ['  Apron', `${(g.apron_movement.observed_movements_per_day + g.apron_movement.modeled_movements_per_day).toFixed(1)}/day`],
+      ['  Runway roll', `${fmtFloat((g.runway_roll.observed_movements_per_day ?? 0) + (g.runway_roll.modeled_movements_per_day ?? 0))}/day`],
+      ['  Taxi', `${fmtFloat((g.taxi.observed_movements_per_day ?? 0) + (g.taxi.modeled_movements_per_day ?? 0))}/day`],
+      ['  Apron', `${fmtFloat((g.apron_movement.observed_movements_per_day ?? 0) + (g.apron_movement.modeled_movements_per_day ?? 0))}/day`],
     ] as TableRow[], 16, 12)
     return lineRow(
       'Ground movements',
@@ -379,11 +379,11 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
 
   const ldenBreakdownText = aircraftAirborne
     ? txtTable([
-        ['Day (07–19)', `${aircraftAirborne.periods.ld_db.toFixed(1)} dB`],
-        ['Evening (19–23)', `${aircraftAirborne.periods.le_db.toFixed(1)} dB`],
-        ['Night (23–07)', `${aircraftAirborne.periods.ln_db.toFixed(1)} dB`],
+        ['Day (07–19)', fmtDb(aircraftAirborne.periods.ld_db)],
+        ['Evening (19–23)', fmtDb(aircraftAirborne.periods.le_db)],
+        ['Night (23–07)', fmtDb(aircraftAirborne.periods.ln_db)],
         { sep: true },
-        ['→ Final Lden', `${aircraftAirborne.periods.lden_db.toFixed(1)} dB`],
+        ['→ Final Lden', fmtDb(aircraftAirborne.periods.lden_db)],
       ], 14, 9)
     : txtTable([
         ['Free field', `${c.received_lden_free.toFixed(1)} dB`],
@@ -401,8 +401,8 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
         'Airport ground operations',
         'Runway roll + taxi + apron',
         '',
-        ['Observed', `${m.ground_ops.observed_movements_per_day.toFixed(1)}/day`],
-        ['Modeled', `${m.ground_ops.modeled_movements_per_day.toFixed(1)}/day`],
+        ['Observed', `${fmtFloat(m.ground_ops.observed_movements_per_day)}/day`],
+        ['Modeled', `${fmtFloat(m.ground_ops.modeled_movements_per_day)}/day`],
         { sep: true },
         ['Line source', `${c.emission_db.toFixed(1)} dB`],
       ], 18, 14)
@@ -594,11 +594,14 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
           )}
           {aircraftAirborne ? (
             <>
-              {lineRow('Helicopters/day', aircraftAirborne.helicopter_flights_per_day.toFixed(1))}
+              {lineRow(
+                'Aircraft/heli (avg per day)',
+                `${aircraftAirborne.observed_flights_per_day.toFixed(1)}/${aircraftAirborne.helicopter_flights_per_day.toFixed(1)}`,
+              )}
               {aircraftAirborne.lmax_peak != null && lineRow('Peak Lmax', `${aircraftAirborne.lmax_peak.toFixed(1)} dB`)}
               {lineRow(
                 'Day/Evening/Night',
-                `${aircraftAirborne.periods.ld_db.toFixed(1)}/${aircraftAirborne.periods.le_db.toFixed(1)}/${aircraftAirborne.periods.ln_db.toFixed(1)} dB`,
+                `${fmtDbValue(aircraftAirborne.periods.ld_db)}/${fmtDbValue(aircraftAirborne.periods.le_db)}/${fmtDbValue(aircraftAirborne.periods.ln_db)} dB`,
               )}
               <table className="w-full text-[10px] mt-1">
                 <thead>

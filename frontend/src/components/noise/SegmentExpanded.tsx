@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { EmissionTrace, SegmentTrace } from '../../types/noise'
+import { fmtFloat } from '../../utils/formatters'
 import { ldenToColor } from '../../utils/noise-colors'
 import { HoverText } from '../ui/info-tip'
 import { PathProfileDiagram } from './PathProfileDiagram'
@@ -235,8 +236,8 @@ function emissionInputRows(e: EmissionTrace): [React.ReactNode, React.ReactNode]
     case 'aircraft_ground': {
       return [
         ['Class', e.class],
-        ['Observed movements', e.observed_movements.toFixed(1)],
-        ['Modeled movements', e.modeled_movements.toFixed(1)],
+        ['Observed movements', fmtFloat(e.observed_movements)],
+        ['Modeled movements', fmtFloat(e.modeled_movements)],
       ]
     }
     case 'building': {

@@ -17,10 +17,13 @@ export interface PropagationBaseline {
 }
 
 export interface NoisePeriodsData {
-  ld_db: number
-  le_db: number
-  ln_db: number
-  lden_db: number
+  // Engine emits f64::NEG_INFINITY for silent periods → serde_json renders
+  // those as JSON null. Use `fmtDb` / `fmtDbValue` from utils/formatters.ts
+  // to render — bare `.toFixed(1)` will crash at runtime.
+  ld_db: number | null
+  le_db: number | null
+  ln_db: number | null
+  lden_db: number | null
 }
 
 export interface TerrainBreakdownData {
@@ -195,15 +198,15 @@ export interface AircraftAirborneDetail {
 
 export interface AircraftGroundOpsClassDetail {
   periods: NoisePeriodsData
-  observed_movements_per_day: number
-  modeled_movements_per_day: number
+  observed_movements_per_day: number | null
+  modeled_movements_per_day: number | null
 }
 
 export interface AircraftGroundOpsDetail {
   periods: NoisePeriodsData
   periods_free: NoisePeriodsData
-  observed_movements_per_day: number
-  modeled_movements_per_day: number
+  observed_movements_per_day: number | null
+  modeled_movements_per_day: number | null
   distance_m: number
   emission_db: number
   received_bands: number[]
@@ -417,8 +420,11 @@ export type EmissionTrace =
   | {
       kind: 'aircraft_ground'
       class: 'runway' | 'taxi' | 'apron'
-      observed_movements: number
-      modeled_movements: number
+      // Engine emits NaN/Infinity for synthesized segments with no observed
+      // traffic, which serde_json maps to JSON null — see fmtFloat in
+      // utils/formatters.ts.
+      observed_movements: number | null
+      modeled_movements: number | null
     }
   | {
       kind: 'building'

@@ -5,6 +5,31 @@ export function fmt(v: number): string {
   return v > 0 ? `+${v.toFixed(1)}` : v.toFixed(1)
 }
 
+/**
+ * Lden-style dB value that may be null. Engine emits `f64::NEG_INFINITY`
+ * for silent periods (no energy) and serde_json maps non-finite floats to
+ * JSON `null`, so any `NoisePeriodsData` field may arrive null at runtime
+ * even though the TS type says `number`. Renders "—" for null/undefined,
+ * otherwise `12.3 dB`.
+ */
+export function fmtDb(v: number | null | undefined): string {
+  return v == null ? '—' : `${v.toFixed(1)} dB`
+}
+
+/** Same null handling as fmtDb but returns just the number — for composing
+ *  multi-value strings like "12.3/—/8.7 dB" without unit round-tripping. */
+export function fmtDbValue(v: number | null | undefined): string {
+  return v == null ? '—' : v.toFixed(1)
+}
+
+/** Generic float formatter that renders "—" for null/undefined. The Rust
+ *  side serializes non-finite f64 (e.g. NaN, ±Infinity from divisions over
+ *  empty datasets) to JSON null, so any per-flight or per-period count
+ *  field can arrive null even when typed `number`. */
+export function fmtFloat(v: number | null | undefined, digits = 1): string {
+  return v == null ? '—' : v.toFixed(digits)
+}
+
 /** Rounds to integer and formats with thousands separators. */
 export function fmtInt(v: number): string {
   return Math.round(v).toLocaleString('en-US')
