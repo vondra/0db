@@ -468,7 +468,9 @@ export interface SegmentTrace {
   bridge: boolean
   tunnel: boolean
   emission: EmissionTrace
-  lw_bands: PerPeriod<number[]>
+  // Band entries are null for periods with no emission (e.g. runway segments
+  // where day/evening had no observed traffic — see fmtDb / bandsTooltip).
+  lw_bands: PerPeriod<(number | null)[]>
   lw_db_a: PerPeriod<number>
   baseline: BaselineTrace
   path_profile: PathProfileTrace

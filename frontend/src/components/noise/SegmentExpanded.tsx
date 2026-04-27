@@ -25,15 +25,19 @@ const BAND_FREQS = [63, 125, 250, 500, 1000, 2000, 4000, 8000] as const
 const BAND_LABELS = ['63 Hz', '125 Hz', '250 Hz', '500 Hz', '1 kHz', '2 kHz', '4 kHz', '8 kHz'] as const
 
 function bandsTooltip(
-  bands: readonly number[],
+  bands: readonly (number | null)[],
   {
     title,
     signed = true,
     note,
   }: { title: string; signed?: boolean; note?: string } = { title: '' },
 ) {
+  // Period-keyed bands (lw_bands.day, etc.) are null when the period had no
+  // emission — runway segments often have day/evening null with night-only
+  // data. Render "—" instead of crashing on null.toFixed.
   const lines = bands.map((v, i) => {
     const label = BAND_LABELS[i] ?? `${BAND_FREQS[i]} Hz`
+    if (v == null) return `  ${label.padEnd(8)} ${'—'.padStart(7)}`
     const sign = signed && v > 0 ? '+' : ''
     return `  ${label.padEnd(8)} ${sign}${v.toFixed(2).padStart(7)} dB`
   })
