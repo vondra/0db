@@ -74,9 +74,9 @@ export type NoiseOnflySupervisorConfig = {
    * Number of parallel NAPI workers. Default 1 (FIFO single-threaded —
    * preserves legacy behaviour and unit-test expectations). Set > 1 in
    * production to handle concurrent users without queueing — each worker
-   * holds its own ~200 MB Rust state (PALT_CACHE LRU, R-trees) so memory
-   * scales linearly with pool size; mmap'd Arrow + DEM rasters are shared
-   * via OS page cache and don't duplicate.
+   * holds its own ~150 MB Rust state (R-trees per loaded R4) so memory
+   * scales linearly with pool size; mmap'd Arrow + DEM rasters are
+   * shared via OS page cache and don't duplicate.
    */
   poolSize?: number
   logger?: SupervisorLogger

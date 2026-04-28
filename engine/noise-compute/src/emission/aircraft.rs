@@ -36,15 +36,12 @@ pub const AIRCRAFT_NPD_REACH_CAP_M: f64 = 16_000.0;
 
 /// Hard cap on **horizontal** distance (meters) at which an airborne
 /// segment can be audible at 40 dB SEL, regardless of altitude. Used
-/// by:
-///   * `source-reader` r-tree query envelope
-///   * `build_high_alt_r8_raster` bbox prefilter on segment-cell pairs
-///   * any other "is this segment within range of the receiver" filter
-///     that operates on horizontal distance
-/// For altitudes above 0 the actual horizontal reach is bounded by
-/// `sqrt(slant_cap² − alt²)`, so this constant is the upper envelope —
-/// safe to use for prefilters, but the per-profile slant test inside
-/// the kernel does the exact rejection.
+/// by `source-reader` r-tree query envelopes and any other prefilter
+/// operating on horizontal distance. For altitudes above 0 the actual
+/// horizontal reach is bounded by `sqrt(slant_cap² − alt²)`, so this
+/// constant is the upper envelope — safe to use for prefilters, but
+/// the per-profile slant test inside the kernel does the exact
+/// rejection.
 pub const AIRCRAFT_MAX_HORIZONTAL_REACH_M: f64 = 16_000.0;
 
 /// Slant threshold above which `segment_energy_fast` and
@@ -1623,16 +1620,6 @@ pub fn meters_to_lon_deg(lat: f64, meters: f64) -> f64 {
     meters / (111_320.0 * cos_lat)
 }
 
-/// PALT membership predicate: `true` when the segment's energy is
-/// accumulated into `build_high_alt_r8_raster`'s cell at `ground_elev_m`.
-/// Both popup and pipeline use this test to skip the per-segment path,
-/// and the build uses its negation. Keeping the predicate in one place
-/// makes popup ↔ pipeline parity textual rather than coincidental.
-#[inline]
-pub fn segment_in_palt_raster(seg_min_alt_m: f64, ground_elev_m: f64) -> bool {
-    seg_min_alt_m - ground_elev_m > AIRCRAFT_FAR_FIELD_THRESHOLD_M
-}
-
 fn insert_bbox_cells(
     index: &mut HashMap<(i32, i32), Vec<usize>>,
     min_lat: f64,
@@ -2466,7 +2453,7 @@ fn ground_ops_kind_index(kind: u8) -> usize {
 ///
 /// Convenience entry point for low-frequency callers (tests, single-shot
 /// queries). Pays one `NpdLuts::shared()` Acquire load per call. Hot
-/// users (popup per-segment loop, PALT raster scatter) should hoist the
+/// users (popup per-segment loop, pipeline scatter) should hoist the
 /// `&NpdLuts` reference and call `segment_sel_with_luts` directly.
 pub fn segment_sel(
     seg: &AircraftSegment,
@@ -2483,7 +2470,7 @@ pub fn segment_sel(
         seg.start_alt_m as f64,
         seg.end_alt_m as f64,
         false,
-        Some(rasters),
+        rasters,
         NpdLuts::shared(),
     )
 }
@@ -2508,153 +2495,9 @@ pub fn segment_sel_with_luts(
         seg.start_alt_m as f64,
         seg.end_alt_m as f64,
         false,
-        Some(rasters),
+        rasters,
         npd_luts,
     )
-}
-
-/// Build an R8-resolution energy raster for high-altitude aircraft
-/// segments — the PALT path. Both popup and pipeline call this with the
-/// same data and the same constants, so the resulting raster (and thus
-/// the per-receiver energy contribution from cruise-altitude overflights)
-/// is identical on both sides — popup ↔ pipeline parity holds by
-/// construction.
-///
-/// **Why a raster.** Cap = 16 km plus per-segment Phase 1 evaluation
-/// blew the +10 % runtime budget by ~2× (see
-/// `docs/validation/aircraft-perf-iteration.md`, attempts A4 / A5).
-/// Aircraft above ~7.62 km contribute nearly position-invariant energy
-/// across an R8 group (slant variation ≤ 0.4 dB across the ~1 km group
-/// span vs ≥ 7.6 km altitude). Evaluating once per R8 cell instead of
-/// once per R11 receiver collapses 343 redundant kernel calls to one.
-///
-/// **Far-field gate.** A segment is "high-altitude for this cell" when
-/// its minimum endpoint altitude is at least
-/// `AIRCRAFT_FAR_FIELD_THRESHOLD_M` (7 620 m, the last NPD table point)
-/// above the cell's ground elevation. Segments fail the gate from
-/// elevated hex-edge cells (e.g., Brdy at 800 m): they fall through to
-/// the per-receiver Phase 1 path, where the full Doc 29 corrections
-/// run.
-///
-/// **Caller integration.** The pipeline scatter loop should skip any
-/// segment whose `min_alt > AIRCRAFT_FAR_FIELD_THRESHOLD_M` (well above
-/// the hex centre's ground elevation) — those are already in the raster
-/// — and add `raster[r8_id][period]` to every receiver in the R8 group.
-/// The popup query computes the receiver's R11 → R8 parent and adds the
-/// same lookup. Both sides land on identical per-receiver totals.
-///
-/// Cost: ~5 s wall-time per R4 hex on 16 cores (5 B segment-cell pair
-/// candidates × cheap distance prefilter, ~5 % survive to the kernel).
-pub fn build_high_alt_r8_raster(
-    segments: &[AircraftSegment],
-    r4_hex: h3o::CellIndex,
-    rasters: &dyn RasterSampler,
-) -> std::collections::HashMap<u64, [f64; 3]> {
-    use std::collections::HashMap;
-
-    // R8 cells inside the current R4 hex (2401 cells). Per cell we precompute
-    // centre lat/lon, ground elevation, and the longitude-degree variant of
-    // the cap (cos(lat)-scaled) so the inner loop runs no `cos()` per
-    // (segment, cell) pair.
-    // Bbox prefilter operates on horizontal distance — use the
-    // horizontal cap, not the slant cap. They're numerically equal
-    // today but the geometry is what's being filtered here.
-    let cap_deg_lat = meters_to_lat_deg(AIRCRAFT_MAX_HORIZONTAL_REACH_M);
-    let cell_centers: Vec<(u64, f64, f64, f64, f64)> = r4_hex
-        .children(h3o::Resolution::Eight)
-        .map(|c| {
-            let ll = h3o::LatLng::from(c);
-            let lat = ll.lat();
-            let lon = ll.lng();
-            let elev = rasters.elevation(lat, lon);
-            let cap_deg_lon = meters_to_lon_deg(lat, AIRCRAFT_MAX_HORIZONTAL_REACH_M);
-            (u64::from(c), lat, lon, elev, cap_deg_lon)
-        })
-        .collect();
-    let min_cell_elev = cell_centers
-        .iter()
-        .map(|(_, _, _, e, _)| *e)
-        .fold(f64::INFINITY, f64::min);
-    let pre_alt_threshold = min_cell_elev + AIRCRAFT_FAR_FIELD_THRESHOLD_M;
-
-    // Parallel fold-reduce over segments. Each thread folds into its own
-    // local HashMap; final reduce merges them. Sequential build was 30+ s
-    // per R4 — over the Fastify popup worker timeout. The pre-filter
-    // against the lowest cell elevation drops segments whose min altitude
-    // can't possibly clear the gate for any cell in this R4.
-    //
-    // `NpdLuts::shared()` hoisted once before the par_iter so the kernel
-    // call inside the (segment × cell) inner loop sees a `&NpdLuts`
-    // reference instead of paying an `OnceLock::get_or_init` Acquire on
-    // each of the ~12 M (segment-cell) pairs at Ruzyně cold-build.
-    let npd_luts = NpdLuts::shared();
-    use rayon::prelude::*;
-    segments
-        .par_iter()
-        .filter(|seg| {
-            !seg.on_ground
-                && seg.ground_context == GROUND_CONTEXT_NONE
-                && seg.count_weight > 0.0
-                && (seg.start_alt_m.min(seg.end_alt_m) as f64) > pre_alt_threshold
-        })
-        .fold(
-            HashMap::<u64, [f64; 3]>::new,
-            |mut local, seg| {
-                let count_weight = seg.count_weight as f64;
-                let period = seg.period.min(2) as usize;
-                let seg_min_alt = seg.start_alt_m.min(seg.end_alt_m) as f64;
-                let seg_lat_min = seg.start_lat.min(seg.end_lat);
-                let seg_lat_max = seg.start_lat.max(seg.end_lat);
-                let seg_lon_min = seg.start_lon.min(seg.end_lon);
-                let seg_lon_max = seg.start_lon.max(seg.end_lon);
-
-                for (cell_id, cell_lat, cell_lon, cell_elev, cap_deg_lon) in &cell_centers {
-                    if !segment_in_palt_raster(seg_min_alt, *cell_elev) {
-                        continue;
-                    }
-                    if *cell_lat < seg_lat_min - cap_deg_lat
-                        || *cell_lat > seg_lat_max + cap_deg_lat
-                    {
-                        continue;
-                    }
-                    if *cell_lon < seg_lon_min - cap_deg_lon
-                        || *cell_lon > seg_lon_max + cap_deg_lon
-                    {
-                        continue;
-                    }
-                    let Some((sel, _cpa)) = segment_sel_with_overrides(
-                        seg,
-                        *cell_lat,
-                        *cell_lon,
-                        *cell_elev,
-                        seg.start_alt_m as f64,
-                        seg.end_alt_m as f64,
-                        false,
-                        None,
-                        npd_luts,
-                    ) else {
-                        continue;
-                    };
-                    let energy =
-                        (sel * std::f64::consts::LN_10 * 0.1).exp() * count_weight;
-                    let entry = local.entry(*cell_id).or_insert([0.0; 3]);
-                    entry[period] += energy;
-                }
-                local
-            },
-        )
-        .reduce(
-            HashMap::<u64, [f64; 3]>::new,
-            |mut a, b| {
-                for (k, v) in b {
-                    let entry = a.entry(k).or_insert([0.0; 3]);
-                    entry[0] += v[0];
-                    entry[1] += v[1];
-                    entry[2] += v[2];
-                }
-                a
-            },
-        )
 }
 
 pub fn segment_sel_airport_ground(
@@ -2675,7 +2518,7 @@ pub fn segment_sel_airport_ground(
         start_alt_m,
         end_alt_m,
         true,
-        None,
+        rasters,
         NpdLuts::shared(),
     )
 }
@@ -2688,7 +2531,7 @@ fn segment_sel_with_overrides(
     start_alt_m: f64,
     end_alt_m: f64,
     airport_ground_mode: bool,
-    rasters: Option<&dyn RasterSampler>,
+    rasters: &dyn RasterSampler,
     npd_luts: &NpdLuts,
 ) -> Option<(f64, CpaResult)> {
     let profile_idx = seg.profile_idx.min(7) as usize;
@@ -2719,20 +2562,15 @@ fn segment_sel_with_overrides(
 
     // Filter D terrain cuts. Airport-ground bypasses Filter D — short
     // taxi/runway segments are already validated by ground-context
-    // metadata. Without rasters access (offline tests, PALT-raster build
-    // pass when rasters is None), drop the gate by setting cuts to
-    // f64::MIN — matches the previous "no rasters → no Filter D"
-    // semantics.
-    let (terrain_start_cut_m, terrain_end_cut_m) =
-        if airport_ground_mode || rasters.is_none() {
-            (f64::MIN, f64::MIN)
-        } else {
-            let r = rasters.unwrap();
-            (
-                r.elevation(seg.start_lat, seg.start_lon) - 30.0,
-                r.elevation(seg.end_lat, seg.end_lon) - 30.0,
-            )
-        };
+    // metadata, so the cuts are set to f64::MIN.
+    let (terrain_start_cut_m, terrain_end_cut_m) = if airport_ground_mode {
+        (f64::MIN, f64::MIN)
+    } else {
+        (
+            rasters.elevation(seg.start_lat, seg.start_lon) - 30.0,
+            rasters.elevation(seg.end_lat, seg.end_lon) - 30.0,
+        )
+    };
 
     let reach_sq = REACH_SQ_TABLE[profile_idx][seg.is_departure as usize];
 
@@ -2763,11 +2601,10 @@ fn segment_sel_with_overrides(
         terrain_end_cut_m,
     )?;
 
-    // Build CpaResult for downstream consumers (popup trace, PALT
-    // raster build, tests). Kernel returns the energy-relevant fields;
-    // foot lat/lon and absolute alt-at-foot are reverse-projected here
-    // — popup uses foot for ground sampling, PALT raster uses none of
-    // them so the work only matters for popup.
+    // Build CpaResult for downstream consumers (popup trace, tests).
+    // Kernel returns the energy-relevant fields; foot lat/lon and
+    // absolute alt-at-foot are reverse-projected here — popup uses
+    // foot for ground sampling.
     let alt_at_foot_m = start_alt_m + kernel.t * sdz;
     let cpa = CpaResult {
         q_m: kernel.q_m,
