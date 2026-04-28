@@ -198,6 +198,29 @@ pub static CLASS_OF_PROFILE: [u8; NUM_PROFILES] = [
     1, // FALLBACK → JET_NB_HB
 ];
 
+/// First profile_idx representing each noise class. Used by
+/// per-class lookups (REACH_SQ_TABLE) to pick a class
+/// representative without scanning CLASS_OF_PROFILE at runtime.
+pub static FIRST_PROFILE_OF_CLASS: [u8; NUM_CLASSES] = [
+    20, // JET_WB_2ENG → B772
+    0, // JET_NB_HB → B738
+    57, // JET_REG_FUSE → CRJ2
+    68, // JET_BIZ_FUSE → PC24
+    38, // JET_WB_3ENG → MD11
+    123, // JET_3ENG_FUSE → FALLBACK
+    41, // JET_WB_4ENG → B744
+    123, // JET_4ENG_LARGE → FALLBACK
+    84, // PISTON_SE_PROP → C172
+    123, // PISTON_TWIN_LARGE → FALLBACK
+    88, // PISTON_TWIN_SMALL → PA34
+    123, // PISTON_4ENG_LARGE → FALLBACK
+    123, // TURBOPROP_SE → FALLBACK
+    70, // TURBOPROP_LARGE → AT72
+    78, // TURBOPROP_TWIN_SMALL → L410
+    123, // TURBOPROP_4ENG → FALLBACK
+    102, // HELICOPTER → EC35
+];
+
 pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B738/737800",

@@ -478,6 +478,23 @@ def emit_rust(profiles: list[Profile], anp_sha: str) -> str:
         lines.append(f"    {cls_idx}, // {p.typecode} → {p.noise_class}")
     lines.append("];")
     lines.append("")
+
+    lines.append("/// First profile_idx representing each noise class. Used by")
+    lines.append("/// per-class lookups (REACH_SQ_TABLE) to pick a class")
+    lines.append("/// representative without scanning CLASS_OF_PROFILE at runtime.")
+    lines.append("pub static FIRST_PROFILE_OF_CLASS: [u8; NUM_CLASSES] = [")
+    first_of_class: dict[int, int] = {}
+    for i, p in enumerate(profiles):
+        cls_idx = CLASS_NAME_TO_IDX[p.noise_class]
+        if cls_idx not in first_of_class:
+            first_of_class[cls_idx] = i
+    for cls_idx in range(len(NOISE_CLASSES)):
+        rep = first_of_class.get(cls_idx, fallback_idx)
+        rep_typecode = profiles[rep].typecode if rep < len(profiles) else "FALLBACK"
+        cls_name = NOISE_CLASSES[cls_idx][0]
+        lines.append(f"    {rep}, // {cls_name} → {rep_typecode}")
+    lines.append("];")
+    lines.append("")
     lines.append("pub static PROFILES: [NpdProfile; NUM_PROFILES] = [")
     for p in profiles:
         approach = ', '.join(f'{v:.1f}' for v in p.approach_sel)

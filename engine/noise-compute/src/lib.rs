@@ -2211,7 +2211,7 @@ fn compute_aircraft(
                 flight_id,
                 date: date_from_id(acc.peak_date_id),
                 period: acc.peak_period,
-                profile: aircraft::PROFILES[(acc.profile_idx as usize).min(aircraft::NUM_PROFILES - 1)].name.to_string(),
+                profile: aircraft::PROFILES[aircraft::clamp_profile_idx(acc.profile_idx)].name.to_string(),
                 lmax_db: if acc.peak_lmax > -900.0 { round1(acc.peak_lmax) } else { 0.0 },
                 sel_db: if acc.peak_sel > -900.0 { round1(acc.peak_sel) } else { 0.0 },
                 cpa_distance_m: round1(acc.min_dist_m),
@@ -2319,7 +2319,7 @@ fn compute_aircraft(
                 altitude_m: (f.peak_altitude_m * 10.0).round() / 10.0,
                 period: f.peak_period,
                 date: date_from_id(f.peak_date_id),
-                profile: aircraft::PROFILES[(f.profile_idx as usize).min(aircraft::NUM_PROFILES - 1)].name.to_string(),
+                profile: aircraft::PROFILES[aircraft::clamp_profile_idx(f.profile_idx)].name.to_string(),
                 energy_pct: (flight_energy / total_lden_energy * 1000.0).round() / 10.0,
                 geometry: [f.peak_seg_start, f.peak_seg_end],
             }

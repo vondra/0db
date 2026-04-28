@@ -146,8 +146,27 @@ impl NpdProfile {
 pub use super::profiles_generated::{
     profile_idx, is_non_aircraft_typecode, noise_class_of,
     CLASS_NAMES, CLASS_OF_PROFILE, FALLBACK_NOISE_CLASS, FALLBACK_PROFILE_IDX,
-    GROUND_OPS_REFERENCE_SEL_DB, IS_JET, NUM_CLASSES, NUM_PROFILES, PROFILES,
+    FIRST_PROFILE_OF_CLASS, GROUND_OPS_REFERENCE_SEL_DB, IS_JET, NUM_CLASSES,
+    NUM_PROFILES, PROFILES,
 };
+
+/// Defensive clamp for `profile_idx` before indexing `PROFILES` /
+/// `NpdLuts`. Generator guarantees `profile_idx < NUM_PROFILES` for any
+/// typecode it emitted; this guard catches out-of-band data (legacy v4
+/// arrows extracted before the Tier 2 cutover) without panicking.
+#[inline]
+pub fn clamp_profile_idx(profile_idx: u8) -> usize {
+    (profile_idx as usize).min(NUM_PROFILES - 1)
+}
+
+/// Whether a profile's noise class is jet-classed. Routes through
+/// `IS_JET[noise_class]` so the predicate stays correct as the generator
+/// adds/reorders profiles. Used by airborne data-quality filters
+/// (jet-stall, jet-low-AGL).
+#[inline]
+pub fn is_jet_profile(profile_idx: u8) -> bool {
+    IS_JET[noise_class_of(profile_idx) as usize]
+}
 
 /// Back-out the NPD-tail residual coefficient (dB/m) for the physics-form
 /// extrapolation `SEL = SEL_ref − 20·log10(d/d_ref) − α · (d − d_ref)`
@@ -406,14 +425,9 @@ const M_PER_DEG_LAT: f64 = 111_132.92;
 /// (the per-segment slant test inside the kernel does the exact rejection).
 pub static REACH_SQ_TABLE: LazyLock<[[f64; 2]; NUM_CLASSES]> = LazyLock::new(|| {
     std::array::from_fn(|class_idx| {
-        // Pick the class's representative profile = first profile_idx with
-        // this class. Reach within a class differs by < 0.5 dB at the 40 dB
-        // SEL contour; the class rep is acoustically representative.
-        let rep_pidx = CLASS_OF_PROFILE
-            .iter()
-            .position(|&c| c as usize == class_idx)
-            .unwrap_or(FALLBACK_PROFILE_IDX as usize);
-        let p = &PROFILES[rep_pidx];
+        // Pre-computed class representative — see FIRST_PROFILE_OF_CLASS.
+        // Reach within a class differs by < 0.5 dB at the 40 dB SEL contour.
+        let p = &PROFILES[FIRST_PROFILE_OF_CLASS[class_idx] as usize];
         [
             p.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, false).powi(2),
             p.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, true).powi(2),
@@ -2577,7 +2591,7 @@ fn segment_sel_with_overrides(
     terrain_end_cut_m: f64,
     npd_luts: &NpdLuts,
 ) -> Option<(f64, CpaResult)> {
-    let profile_idx = (seg.profile_idx as usize).min(NUM_PROFILES - 1);
+    let profile_idx = clamp_profile_idx(seg.profile_idx);
     let profile = &PROFILES[profile_idx];
 
     // Pre-project segment into receiver-local meters. Pipeline's
