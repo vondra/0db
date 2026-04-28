@@ -737,16 +737,24 @@ pub fn source_init(h3r4_dir: String) -> napi::Result<String> {
     // runtime build, but we log it in the init message so the operator
     // notices the cold-path regression instead of debugging via
     // wall-clock complaints.
-    let palt_status = match derive_palt_dir(h3r4_path) {
-        Some(dir) => {
-            let s = format!("PALT enabled at {}", dir.display());
-            PALT_DIR.set(dir).ok();
-            s
+    // Measurement gate (Apr 26 2026 evening): `PALT_DISABLED=1` skips
+    // PALT_DIR registration so popup falls back to per-segment cruise
+    // for the duration of the v5+PALT vs v5-no-PALT timing study.
+    let palt_disabled = std::env::var("PALT_DISABLED").is_ok();
+    let palt_status = if palt_disabled {
+        "PALT disabled — PALT_DISABLED=1 (measurement)".to_string()
+    } else {
+        match derive_palt_dir(h3r4_path) {
+            Some(dir) => {
+                let s = format!("PALT enabled at {}", dir.display());
+                PALT_DIR.set(dir).ok();
+                s
+            }
+            None => format!(
+                "PALT disabled — h3r4_dir layout not recognised ({h3r4_dir} doesn't match \
+                 '.../data/prepared/{{year}}/h3r4'); popup will runtime-build the raster"
+            ),
         }
-        None => format!(
-            "PALT disabled — h3r4_dir layout not recognised ({h3r4_dir} doesn't match \
-             '.../data/prepared/{{year}}/h3r4'); popup will runtime-build the raster"
-        ),
     };
 
     // NACE codes are baked into industrial.arrow — no global JSON needed
