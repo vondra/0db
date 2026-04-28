@@ -1815,30 +1815,38 @@ fn compute_aircraft(
 
     for seg in segments {
         // Pipeline filters this at projection. Doing it first here too
-        // skips ~3 raster-elevation lookups + a kernel call for cruise
+        // skips ~5 raster-elevation lookups + a kernel call for cruise
         // rep-line rows whose density rounded to zero.
         let weight = seg.count_weight.max(0.0) as f64;
         if weight <= 0.0 {
             continue;
         }
-        if aircraft::is_ground_stale_segment(seg, rasters) {
-            continue;
-        }
-        if !aircraft::is_valid_airborne_segment(seg, rasters) {
-            continue;
-        }
-        // Ground-ops segments are accumulated into buckets above and
-        // processed in the post-loop. Skip here so we don't double-count.
+        // Ground-ops segments (surface_model flag or airport-ground class)
+        // accumulate into buckets earlier in this fn. Skip here so they
+        // don't double-count. Cheap path: returns on the surface_model
+        // flag or the ground_context byte without sampling rasters.
         if aircraft::is_ground_ops_segment(seg, rasters) {
             continue;
         }
+        // Sample terrain at five points along the segment in one batch.
+        // Old chain (`is_ground_stale` + `is_valid_airborne` + Filter D
+        // cuts in the kernel) sampled start/end three times each — nine
+        // lookups per typical airborne. Five-sample cache cuts that to
+        // five and feeds Filter D via segment_sel_with_terrain.
+        let terrain = aircraft::SegmentTerrain::sample(seg, rasters);
+        if aircraft::is_ground_stale_with_terrain(seg, &terrain) {
+            continue;
+        }
+        if !aircraft::is_valid_airborne_with_terrain(seg, &terrain) {
+            continue;
+        }
 
-        let (sel, cpa) = match aircraft::segment_sel_with_luts(
+        let (sel, cpa) = match aircraft::segment_sel_with_terrain(
             seg,
             receiver.lat,
             receiver.lon,
             rx_elev,
-            rasters,
+            &terrain,
             npd_luts,
         ) {
             Some(v) => v,

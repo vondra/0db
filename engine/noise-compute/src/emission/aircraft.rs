@@ -1427,6 +1427,38 @@ fn inferred_ground_cell(lat: f64, lon: f64) -> (i32, i32) {
     )
 }
 
+/// Cached terrain elevations sampled at five points along a segment
+/// (start, end, midpoint, ¼, ¾). Lets the popup hot loop run
+/// `is_ground_stale`, `is_valid_airborne`, and the kernel's Filter D
+/// cuts off one batch of `rasters.elevation()` calls instead of nine
+/// (start/end appear in all three predicates).
+#[derive(Clone, Copy, Debug)]
+pub struct SegmentTerrain {
+    pub start_elev: f64,
+    pub end_elev: f64,
+    pub mid_elev: f64,
+    pub q1_elev: f64,
+    pub q3_elev: f64,
+}
+
+impl SegmentTerrain {
+    pub fn sample(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> Self {
+        let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
+        let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
+        let q1_lat = seg.start_lat * 0.75 + seg.end_lat * 0.25;
+        let q1_lon = seg.start_lon * 0.75 + seg.end_lon * 0.25;
+        let q3_lat = seg.start_lat * 0.25 + seg.end_lat * 0.75;
+        let q3_lon = seg.start_lon * 0.25 + seg.end_lon * 0.75;
+        SegmentTerrain {
+            start_elev: rasters.elevation(seg.start_lat, seg.start_lon),
+            end_elev: rasters.elevation(seg.end_lat, seg.end_lon),
+            mid_elev: rasters.elevation(mid_lat, mid_lon),
+            q1_elev: rasters.elevation(q1_lat, q1_lon),
+            q3_elev: rasters.elevation(q3_lat, q3_lon),
+        }
+    }
+}
+
 /// Filter obviously-invalid airborne ADS-B segments.
 /// Returns false for segments that pipeline AND popup should skip:
 /// - Max altitude below terrain - 30m (underground / radar echo)
@@ -1511,6 +1543,50 @@ pub fn is_ground_stale_segment(seg: &AircraftSegment, rasters: &dyn RasterSample
 pub fn is_low_agl_segment_raw(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
     let (start_agl, end_agl) = segment_agl(seg, rasters);
     start_agl <= GROUND_STALE_MAX_AGL_M && end_agl <= GROUND_STALE_MAX_AGL_M
+}
+
+/// `is_ground_stale_segment` reading elevations from a `SegmentTerrain` cache.
+pub fn is_ground_stale_with_terrain(seg: &AircraftSegment, terrain: &SegmentTerrain) -> bool {
+    if seg.on_ground {
+        return seg.ground_context == GROUND_CONTEXT_NONE;
+    }
+    if seg.ground_context != GROUND_CONTEXT_NONE {
+        return false;
+    }
+    let start_agl = seg.start_alt_m as f64 - terrain.start_elev;
+    let end_agl = seg.end_alt_m as f64 - terrain.end_elev;
+    start_agl <= GROUND_STALE_MAX_AGL_M && end_agl <= GROUND_STALE_MAX_AGL_M
+}
+
+/// `is_valid_airborne_segment` reading elevations from a `SegmentTerrain` cache.
+pub fn is_valid_airborne_with_terrain(seg: &AircraftSegment, terrain: &SegmentTerrain) -> bool {
+    if seg.on_ground || seg.ground_context != GROUND_CONTEXT_NONE {
+        return true;
+    }
+    let is_fixed_wing_jet = matches!(seg.profile_idx, 0 | 1 | 2 | 3 | 5 | 7);
+    if is_fixed_wing_jet && (seg.speed_kt as f64) < 80.0 {
+        return false;
+    }
+    let max_alt = (seg.start_alt_m as f64).max(seg.end_alt_m as f64);
+    if max_alt < terrain.mid_elev - 30.0 {
+        return false;
+    }
+    let start_agl = seg.start_alt_m as f64 - terrain.start_elev;
+    let end_agl = seg.end_alt_m as f64 - terrain.end_elev;
+    if start_agl < -30.0 || end_agl < -30.0 {
+        return false;
+    }
+    let sa = seg.start_alt_m as f64;
+    let ea = seg.end_alt_m as f64;
+    let q1_alt = sa * 0.75 + ea * 0.25;
+    let q3_alt = sa * 0.25 + ea * 0.75;
+    if q1_alt < terrain.q1_elev - 30.0 || q3_alt < terrain.q3_elev - 30.0 {
+        return false;
+    }
+    if !is_fixed_wing_jet {
+        return true;
+    }
+    max_alt >= terrain.mid_elev + 150.0
 }
 
 pub fn is_airport_ground_segment(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
@@ -2462,6 +2538,8 @@ pub fn segment_sel(
     rx_elev_m: f64,
     rasters: &dyn RasterSampler,
 ) -> Option<(f64, CpaResult)> {
+    let terrain_start_cut_m = rasters.elevation(seg.start_lat, seg.start_lon) - 30.0;
+    let terrain_end_cut_m = rasters.elevation(seg.end_lat, seg.end_lon) - 30.0;
     segment_sel_with_overrides(
         seg,
         rx_lat,
@@ -2470,7 +2548,8 @@ pub fn segment_sel(
         seg.start_alt_m as f64,
         seg.end_alt_m as f64,
         false,
-        rasters,
+        terrain_start_cut_m,
+        terrain_end_cut_m,
         NpdLuts::shared(),
     )
 }
@@ -2487,6 +2566,8 @@ pub fn segment_sel_with_luts(
     rasters: &dyn RasterSampler,
     npd_luts: &NpdLuts,
 ) -> Option<(f64, CpaResult)> {
+    let terrain_start_cut_m = rasters.elevation(seg.start_lat, seg.start_lon) - 30.0;
+    let terrain_end_cut_m = rasters.elevation(seg.end_lat, seg.end_lon) - 30.0;
     segment_sel_with_overrides(
         seg,
         rx_lat,
@@ -2495,7 +2576,34 @@ pub fn segment_sel_with_luts(
         seg.start_alt_m as f64,
         seg.end_alt_m as f64,
         false,
-        rasters,
+        terrain_start_cut_m,
+        terrain_end_cut_m,
+        npd_luts,
+    )
+}
+
+/// Hottest-path variant: terrain cuts are derived from the caller's
+/// pre-sampled `SegmentTerrain` cache, skipping the two `rasters.elevation()`
+/// calls that `segment_sel_with_luts` pays per segment. Use when the caller
+/// already needed `SegmentTerrain` for predicate evaluation.
+pub fn segment_sel_with_terrain(
+    seg: &AircraftSegment,
+    rx_lat: f64,
+    rx_lon: f64,
+    rx_elev_m: f64,
+    terrain: &SegmentTerrain,
+    npd_luts: &NpdLuts,
+) -> Option<(f64, CpaResult)> {
+    segment_sel_with_overrides(
+        seg,
+        rx_lat,
+        rx_lon,
+        rx_elev_m,
+        seg.start_alt_m as f64,
+        seg.end_alt_m as f64,
+        false,
+        terrain.start_elev - 30.0,
+        terrain.end_elev - 30.0,
         npd_luts,
     )
 }
@@ -2510,6 +2618,8 @@ pub fn segment_sel_airport_ground(
     let start_alt_m =
         (seg.start_alt_m as f64).max(rasters.elevation(seg.start_lat, seg.start_lon) + 4.0);
     let end_alt_m = (seg.end_alt_m as f64).max(rasters.elevation(seg.end_lat, seg.end_lon) + 4.0);
+    // Filter D bypass: airport-ground segments are validated by
+    // ground-context metadata, so the kernel sees `f64::MIN` cuts.
     segment_sel_with_overrides(
         seg,
         rx_lat,
@@ -2518,7 +2628,8 @@ pub fn segment_sel_airport_ground(
         start_alt_m,
         end_alt_m,
         true,
-        rasters,
+        f64::MIN,
+        f64::MIN,
         NpdLuts::shared(),
     )
 }
@@ -2531,7 +2642,8 @@ fn segment_sel_with_overrides(
     start_alt_m: f64,
     end_alt_m: f64,
     airport_ground_mode: bool,
-    rasters: &dyn RasterSampler,
+    terrain_start_cut_m: f64,
+    terrain_end_cut_m: f64,
     npd_luts: &NpdLuts,
 ) -> Option<(f64, CpaResult)> {
     let profile_idx = seg.profile_idx.min(7) as usize;
@@ -2559,18 +2671,6 @@ fn segment_sel_with_overrides(
     // ProjectedAircraft. Cheap to recompute here for one segment.
     let (inst_code, di_a, di_b, di_c) = delta_i_constants(profile.installation);
     let dv = delta_v(seg.speed_kt as f64, profile);
-
-    // Filter D terrain cuts. Airport-ground bypasses Filter D — short
-    // taxi/runway segments are already validated by ground-context
-    // metadata, so the cuts are set to f64::MIN.
-    let (terrain_start_cut_m, terrain_end_cut_m) = if airport_ground_mode {
-        (f64::MIN, f64::MIN)
-    } else {
-        (
-            rasters.elevation(seg.start_lat, seg.start_lon) - 30.0,
-            rasters.elevation(seg.end_lat, seg.end_lon) - 30.0,
-        )
-    };
 
     let reach_sq = REACH_SQ_TABLE[profile_idx][seg.is_departure as usize];
 
