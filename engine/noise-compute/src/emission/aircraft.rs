@@ -114,6 +114,32 @@ pub struct NpdProfile {
     alpha_eff_departure: OnceLock<f64>,
 }
 
+impl NpdProfile {
+    /// Const constructor used by `profiles_generated.rs` (sibling module of
+    /// `emission`) to build the static `PROFILES` array. The two `OnceLock`
+    /// fields stay private to this module; the generator can't construct
+    /// them directly across module boundaries, so this fn is the bridge.
+    pub const fn new(
+        name: &'static str,
+        approach_sel: [f64; 10],
+        departure_sel: [f64; 10],
+        v_ref_kt: f64,
+        d_bar_m: f64,
+        installation: Installation,
+    ) -> Self {
+        NpdProfile {
+            name,
+            approach_sel,
+            departure_sel,
+            v_ref_kt,
+            d_bar_m,
+            installation,
+            alpha_eff_approach: OnceLock::new(),
+            alpha_eff_departure: OnceLock::new(),
+        }
+    }
+}
+
 /// 8 proxy profiles (index matches parquet profile_idx 0-7).
 pub static PROFILES: [NpdProfile; 8] = [
     // 0: B738 (Boeing 737 family)
