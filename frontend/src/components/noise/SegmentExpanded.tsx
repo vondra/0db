@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { EmissionTrace, SegmentTrace } from '../../types/noise'
+import { fmtFloat } from '../../utils/formatters'
 import { ldenToColor } from '../../utils/noise-colors'
 import { HoverText } from '../ui/info-tip'
 import { PathProfileDiagram } from './PathProfileDiagram'
@@ -24,15 +25,19 @@ const BAND_FREQS = [63, 125, 250, 500, 1000, 2000, 4000, 8000] as const
 const BAND_LABELS = ['63 Hz', '125 Hz', '250 Hz', '500 Hz', '1 kHz', '2 kHz', '4 kHz', '8 kHz'] as const
 
 function bandsTooltip(
-  bands: readonly number[],
+  bands: readonly (number | null)[],
   {
     title,
     signed = true,
     note,
   }: { title: string; signed?: boolean; note?: string } = { title: '' },
 ) {
+  // Period-keyed bands (lw_bands.day, etc.) are null when the period had no
+  // emission — runway segments often have day/evening null with night-only
+  // data. Render "—" instead of crashing on null.toFixed.
   const lines = bands.map((v, i) => {
     const label = BAND_LABELS[i] ?? `${BAND_FREQS[i]} Hz`
+    if (v == null) return `  ${label.padEnd(8)} ${'—'.padStart(7)}`
     const sign = signed && v > 0 ? '+' : ''
     return `  ${label.padEnd(8)} ${sign}${v.toFixed(2).padStart(7)} dB`
   })
@@ -235,8 +240,8 @@ function emissionInputRows(e: EmissionTrace): [React.ReactNode, React.ReactNode]
     case 'aircraft_ground': {
       return [
         ['Class', e.class],
-        ['Observed movements', e.observed_movements.toFixed(1)],
-        ['Modeled movements', e.modeled_movements.toFixed(1)],
+        ['Observed movements', fmtFloat(e.observed_movements)],
+        ['Modeled movements', fmtFloat(e.modeled_movements)],
       ]
     }
     case 'building': {
