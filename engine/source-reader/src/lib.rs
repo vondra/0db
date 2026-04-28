@@ -504,20 +504,24 @@ pub fn collect_from_hex_data(
         // Hoist the LazyLock deref once — for ~232 k segments at airport
         // density the per-iteration `&*REACH_SQ_TABLE` would issue an
         // Acquire load on every byte-compare-cheap inner loop iteration.
-        let reach_sq_table: &[[f64; 2]; 8] = &REACH_SQ_TABLE;
+        // Reach is per-noise-class (NUM_CLASSES granularity); R-tree envelope
+        // only needs class-coarse reach.
+        let reach_sq_table: &[[f64; 2]; noise_compute::emission::aircraft::NUM_CLASSES] =
+            &REACH_SQ_TABLE;
 
         for entry in tree.locate_in_envelope_intersecting(&env) {
             let seg = &cached_segs[entry.cache_idx];
 
-            // Per-profile reach pre-filter for airborne segments only.
-            // Ground & airport-context segments use a separate emission path
+            // Per-class reach pre-filter for airborne segments only. Ground
+            // & airport-context segments use a separate emission path
             // (`segment_sel_airport_ground`, ground bucketing) whose reach
             // semantics differ — leave them untouched.
             if let Some((rx_elev, cos_lat)) = prefilter_ctx {
                 if !seg.on_ground && seg.ground_context == GROUND_CONTEXT_NONE {
                     let slant_sq = segment_min_slant_sq(seg, lat, lng, rx_elev, cos_lat);
-                    let reach_sq = reach_sq_table[seg.profile_idx.min(7) as usize]
-                        [seg.is_departure as usize];
+                    let cls = noise_compute::emission::aircraft::noise_class_of(seg.profile_idx)
+                        as usize;
+                    let reach_sq = reach_sq_table[cls][seg.is_departure as usize];
                     if slant_sq > reach_sq {
                         continue;
                     }

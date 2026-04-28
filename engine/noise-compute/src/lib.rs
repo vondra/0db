@@ -1703,25 +1703,27 @@ fn compute_aircraft(
     struct BandStats {
         count: f64,
         alt_sum: f64,
-        profile_counts: [u32; 8],
+        // Per-noise-class counts (NUM_CLASSES). Bucket aggregation is at the
+        // class level (variant B), so "top type in this band" is class-level.
+        class_counts: [u32; aircraft::NUM_CLASSES],
     }
     impl BandStats {
         fn new() -> Self {
             Self {
                 count: 0.0,
                 alt_sum: 0.0,
-                profile_counts: [0; 8],
+                class_counts: [0; aircraft::NUM_CLASSES],
             }
         }
         fn top_type(&self) -> &'static str {
             let idx = self
-                .profile_counts
+                .class_counts
                 .iter()
                 .enumerate()
                 .max_by_key(|(_, c)| *c)
                 .map(|(i, _)| i)
-                .unwrap_or(7);
-            aircraft::PROFILES[idx].name
+                .unwrap_or(aircraft::FALLBACK_NOISE_CLASS as usize);
+            aircraft::CLASS_NAMES[idx]
         }
     }
     struct GroundAirportAccum {
@@ -2171,21 +2173,22 @@ fn compute_aircraft(
             helicopter_count += acc.flight_weight / n_days_f;
         }
         let avg_alt = acc.min_dist_m;
-        let pidx = acc.profile_idx.min(7) as usize;
+        let cls = aircraft::noise_class_of(acc.profile_idx) as usize;
+        let weight = acc.flight_weight.round().max(1.0) as u32;
         if acc.peak_lmax > 30.0 {
             band_faint.count += acc.flight_weight;
             band_faint.alt_sum += avg_alt * acc.flight_weight;
-            band_faint.profile_counts[pidx] += acc.flight_weight.round().max(1.0) as u32;
+            band_faint.class_counts[cls] += weight;
         }
         if acc.peak_lmax > 45.0 {
             band_audible.count += acc.flight_weight;
             band_audible.alt_sum += avg_alt * acc.flight_weight;
-            band_audible.profile_counts[pidx] += acc.flight_weight.round().max(1.0) as u32;
+            band_audible.class_counts[cls] += weight;
         }
         if acc.peak_lmax > 60.0 {
             band_disruptive.count += acc.flight_weight;
             band_disruptive.alt_sum += avg_alt * acc.flight_weight;
-            band_disruptive.profile_counts[pidx] += acc.flight_weight.round().max(1.0) as u32;
+            band_disruptive.class_counts[cls] += weight;
         }
 
         // Popup tee-off: AirborneTrace per flight. Doc 29 is scalar-SEL only —
@@ -2208,7 +2211,7 @@ fn compute_aircraft(
                 flight_id,
                 date: date_from_id(acc.peak_date_id),
                 period: acc.peak_period,
-                profile: aircraft::PROFILES[acc.profile_idx.min(7) as usize].name.to_string(),
+                profile: aircraft::PROFILES[(acc.profile_idx as usize).min(aircraft::NUM_PROFILES - 1)].name.to_string(),
                 lmax_db: if acc.peak_lmax > -900.0 { round1(acc.peak_lmax) } else { 0.0 },
                 sel_db: if acc.peak_sel > -900.0 { round1(acc.peak_sel) } else { 0.0 },
                 cpa_distance_m: round1(acc.min_dist_m),
@@ -2316,7 +2319,7 @@ fn compute_aircraft(
                 altitude_m: (f.peak_altitude_m * 10.0).round() / 10.0,
                 period: f.peak_period,
                 date: date_from_id(f.peak_date_id),
-                profile: aircraft::PROFILES[f.profile_idx.min(7) as usize].name.to_string(),
+                profile: aircraft::PROFILES[(f.profile_idx as usize).min(aircraft::NUM_PROFILES - 1)].name.to_string(),
                 energy_pct: (flight_energy / total_lden_energy * 1000.0).round() / 10.0,
                 geometry: [f.peak_seg_start, f.peak_seg_end],
             }
@@ -3050,10 +3053,12 @@ mod tests {
             &config,
         );
 
-        // 5 flights/day of B738 at ~700m lateral → expect ~45-65 dB Lden
+        // 5 flights/day of B738 at ~700m lateral → real ANP CF567B
+        // approach SEL is ~10 dB quieter than the placeholder it replaced,
+        // so the floor drops accordingly. Loosen lower bound vs Tier 1.
         assert!(
-            result.total.lden_db > 35.0 && result.total.lden_db < 75.0,
-            "Aircraft Lden: expected 35-75, got {:.1}",
+            result.total.lden_db > 25.0 && result.total.lden_db < 75.0,
+            "Aircraft Lden: expected 25-75, got {:.1}",
             result.total.lden_db
         );
 

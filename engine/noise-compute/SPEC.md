@@ -472,16 +472,18 @@ SEPARATE from ISO 9613-2. Airborne Doc 29 is empirical NPD-based, not path-traci
 SEL_seg = L_E(d_p) + ΔV + ΔI(φ) - Λ(β, l) + ΔF
 ```
 
-- **L_E**: NPD lookup at slant distance d_p (feet). 8 proxy profiles.
+- **L_E**: NPD lookup at slant distance d_p (feet). ~124 per-typecode profiles auto-generated from EASA ANP v2.3, bucketed at ~17 noise classes for aggregation. See `scripts/build-aircraft-profiles.py`.
 - **ΔV**: Speed/duration correction (Eq. 4-14)
 - **ΔI**: Engine installation angle correction (Eq. 4-15)
 - **Λ**: Lateral attenuation (Eq. 4-18/19), applied to all profiles including rotorcraft (see note below)
 - **ΔF**: Finite segment dipole correction (Eq. 4-20, full α/(1+α²) terms)
 
-Lateral attenuation note: profile 6 is a mixed LightGA+Rotorcraft bucket. Doc 29
-skips Λ for rotorcraft, but our implementation applies it to profile 6 because
-fixed-wing GA dominates the bucket; skipping Λ overestimates GA noise by up to
-~11 dB at low β. A pure-helicopter cluster submodel would split this correctly.
+Lateral attenuation note: helicopters land in their own `HELICOPTER` noise
+class (split out from PISTON_SE_PROP after the ANP-2.3-driven Tier 2
+expansion); we still apply Λ uniformly across all classes. Doc 29 skips Λ
+for rotorcraft, so our HELICOPTER-class results overestimate noise by up to
+~11 dB at low β. A pure-helicopter cluster submodel would split this
+correctly — TODO.
 
 ### Geometry (§4.4.1)
 CPA (Closest Point of Approach) computed on segment EXTENSION (unclamped).
@@ -489,8 +491,11 @@ d_p = slant distance at CPA. β = elevation angle.
 
 ### Input and preprocessing (current implementation)
 - ADS-B supplies real segment geometry, altitude, speed, timestamp, and often `on_ground`
-- aircraft `typecode` is mapped to one of **8 proxy NPD profiles**
-- unknown / unmapped typecode falls back to **Generic** (profile 7)
+- aircraft `typecode` is mapped to one of **~124 per-typecode NPD profiles**
+  (auto-generated from EASA ANP v2.3) clustered at ~17 noise classes for
+  bucket-key aggregation
+- unknown / unmapped typecode falls back to **`FALLBACK_PROFILE_IDX`** (a
+  B738/737800-equivalent profile)
 - `is_departure` is inferred from median climb rate (`ROCD > 500 fpm`)
 - day/evening/night period is derived from the segment-midpoint coordinate via
   **tzf-rs IANA timezone lookup + chrono-tz** (DST-aware UTC → local wall-clock).
@@ -807,7 +812,7 @@ ISO 9613-2 point source.
 | **Receiver height** | 4.0m (END facade) | END: 4.0m (facade). ISO: variable. | Matches END standard. |
 | **Settlement noise** | Custom per-building source model | END / CNOSSOS do not standardize this source class | Useful for atlas context, but not regulatory-comparable. |
 | **Industrial profiles** | `nace_4digit -> site_subtype -> source_type` fallback chain | Standard inventories usually use audited source inventories / measured facility data | Keeps global coverage, but facility class can be approximate when registry match is missing. |
-| **Aircraft NPD** | 8 proxy profiles + heuristic typecode mapping | Doc 29: official ANP database | ±3 dB per aircraft type. We approximate, not certify. |
+| **Aircraft NPD** | ~124 per-typecode profiles auto-generated from EASA ANP v2.3, ~17 noise classes for bucket aggregation | Doc 29: official ANP database with full procedural-step profiles, weights, aerodynamic coefficients | ±1-2 dB per aircraft type for ANP-mapped types; nearest-neighbor (e.g., A20N → A320-232) for variants ANP doesn't list. |
 | **Aircraft local time / ground filtering** | Per-coordinate IANA TZ lookup (tzf-rs + chrono-tz, DST-aware) + airport-context stale-ground filter | Operational studies use airport-local time (same principle) and curated trajectory cleaning | Near-runway behaviour can still be biased by trajectory-cleaning simplifications. |
 | **Aircraft ground ops** | ADS-B low-AGL / on-ground segments matched to airport geometry, plus synthetic runway/taxi/apron fill when coverage is incomplete | Airport studies usually use curated surface movement inventories and local operations data | Near-runway levels depend on airport geometry quality and ADS-B ground coverage. |
 | **Aircraft tile adjustments** | Aircraft ground propagation could expose separate terrain / screening / vegetation variants | Batch `aircraft` tiles currently bake ground-ops path effects into final Lden and do not emit `.adj.bin` | Map propagation toggles cannot isolate aircraft ground-ops attenuation separately. |

@@ -161,8 +161,8 @@ Source height: 0.5 m (CNOSSOS-EU §2.7.1, wheel-rail contact).
 The aircraft layer combines two models: airborne overflights from ADS-B radar trajectories, processed through NPD (Noise-Power-Distance) profiles inspired by ECAC Doc 29, and airport ground operations (runway roll, taxi, apron movement) inferred from airport geometry and low-altitude ADS-B traces. The map shows both together; the popup splits them into airborne and ground ops.
 
 - **Data:** ADS-B trajectories from [adsb.lol](https://adsb.lol) (full year, all altitudes) + airport runway / taxiway / apron geometry from OpenStreetMap
-- **8 proxy aircraft profiles:** B738, A320, A321, Widebody, Turboprop, BizJet, Light GA, Generic
-- **Limitations:** Airborne aircraft type is approximated by 8 proxy profiles, and airport ground ops are partly inferred or synthetically backfilled when surface coverage is incomplete. Day/evening/night periods are derived from the segment-midpoint coordinate using an IANA timezone database (DST-aware). This is useful for atlas-scale patterns, not certified airport contouring.
+- **~124 per-typecode aircraft profiles** auto-generated from EASA ANP v2.3 (Aircraft Noise and Performance database) — covers Boeing 737/747/757/767/777/787, Airbus A319/A320/A321/A330/A340/A350/A380, Embraer E-Jets, ATR, Dash 8, plus light GA and helicopter placeholders for types not in ANP
+- **Limitations:** Modern variants (737 MAX, A320neo, 787-9, A330neo) use nearest-neighbor mapping to the closest ANP entry; airport ground ops are partly inferred or synthetically backfilled when surface coverage is incomplete. Day/evening/night periods are derived from the segment-midpoint coordinate using an IANA timezone database (DST-aware). This is useful for atlas-scale patterns, not certified airport contouring.
 
 <details>
 <summary>Technical: aircraft layer (Doc 29 + airport ground ops)</summary>
@@ -479,7 +479,7 @@ This model is an engineering approximation for a continental-scale noise atlas �
 |------|-------------|-------|--------|
 | Source height (roads) | CNOSSOS-EU: 0.05 m (rolling) / 0.30 m (propulsion) | 0.05 m for both | Minor — propulsion height difference negligible at atlas scale |
 | Terrain profile | Professional SW: 5–10 m spacing | Adaptive 30 m spacing (8–50 points) | May miss narrow barriers (<30 m wide) |
-| Aircraft type mapping | Doc 29 / ANP: aircraft-specific certified profiles | 8 proxy NPD profiles mapped from ADS-B typecodes | Roughly ±3 dB by aircraft family |
+| Aircraft type mapping | Doc 29 / ANP: aircraft-specific certified profiles + procedural steps + weights | ~124 per-ICAO-typecode NPD profiles auto-generated from EASA ANP v2.3, bucketed at ~17 noise classes for aggregation | ±1-2 dB for ANP-listed types, ±2-3 dB for nearest-neighbor (e.g., A320neo → A320-232) |
 | Aircraft timing | Airport-local time and operational preprocessing | Segment midpoint → IANA timezone (tzf-rs) → DST-aware local time (chrono-tz); END default period boundaries | Global local time; only airport-local operational-preprocessing differences remain |
 | Aircraft ground preprocessing | Curated airport trajectory cleaning | Airport-aware ADS-B filtering removes obvious stale ground segments | Near-runway bias still possible |
 | Aircraft ground operations | Surface movement inventories and airport-local operational data | ADS-B low-altitude / on-ground segments matched to airport geometry, with synthetic runway/taxi/apron fill when coverage is incomplete | Near-runway levels depend on airport geometry quality and ADS-B surface coverage |

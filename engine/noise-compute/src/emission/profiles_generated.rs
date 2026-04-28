@@ -51,23 +51,23 @@ pub static IS_JET: [bool; NUM_CLASSES] = [
 
 /// Runway-roll, taxi, apron reference SEL (dB) at 25 m, per noise class.
 pub static GROUND_OPS_REFERENCE_SEL_DB: [[f64; 3]; NUM_CLASSES] = [
-    [116.8, 104.8, 98.8], // JET_WB_2ENG
-    [116.1, 104.1, 98.1], // JET_NB_HB
-    [108.8, 96.8, 90.8], // JET_REG_FUSE
-    [108.7, 96.7, 90.7], // JET_BIZ_FUSE
-    [120.9, 108.9, 102.9], // JET_WB_3ENG
-    [95.0, 83.0, 77.0], // JET_3ENG_FUSE
-    [121.2, 109.2, 103.2], // JET_WB_4ENG
-    [95.0, 83.0, 77.0], // JET_4ENG_LARGE
-    [95.7, 83.7, 77.7], // PISTON_SE_PROP
-    [95.0, 83.0, 77.0], // PISTON_TWIN_LARGE
-    [98.7, 86.7, 80.7], // PISTON_TWIN_SMALL
-    [95.0, 83.0, 77.0], // PISTON_4ENG_LARGE
+    [108.0, 96.0, 90.0], // JET_WB_2ENG
+    [104.0, 92.0, 86.0], // JET_NB_HB
+    [100.0, 88.0, 82.0], // JET_REG_FUSE
+    [99.0, 87.0, 81.0], // JET_BIZ_FUSE
+    [108.0, 96.0, 90.0], // JET_WB_3ENG
+    [102.0, 90.0, 84.0], // JET_3ENG_FUSE
+    [110.0, 98.0, 92.0], // JET_WB_4ENG
+    [106.0, 94.0, 88.0], // JET_4ENG_LARGE
+    [92.0, 80.0, 74.0], // PISTON_SE_PROP
+    [96.0, 84.0, 78.0], // PISTON_TWIN_LARGE
+    [93.0, 81.0, 75.0], // PISTON_TWIN_SMALL
+    [100.0, 88.0, 82.0], // PISTON_4ENG_LARGE
     [95.0, 83.0, 77.0], // TURBOPROP_SE
-    [99.7, 87.7, 81.7], // TURBOPROP_LARGE
-    [103.6, 91.6, 85.6], // TURBOPROP_TWIN_SMALL
-    [95.0, 83.0, 77.0], // TURBOPROP_4ENG
-    [101.7, 89.7, 83.7], // HELICOPTER
+    [97.0, 85.0, 79.0], // TURBOPROP_LARGE
+    [95.0, 83.0, 77.0], // TURBOPROP_TWIN_SMALL
+    [100.0, 88.0, 82.0], // TURBOPROP_4ENG
+    [94.0, 82.0, 76.0], // HELICOPTER
 ];
 
 /// Per-profile → noise class lookup (dense u8 index).
