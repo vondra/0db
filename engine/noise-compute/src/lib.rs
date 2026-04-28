@@ -1814,6 +1814,13 @@ fn compute_aircraft(
     let npd_luts = aircraft::NpdLuts::shared();
 
     for seg in segments {
+        // Pipeline filters this at projection. Doing it first here too
+        // skips ~3 raster-elevation lookups + a kernel call for cruise
+        // rep-line rows whose density rounded to zero.
+        let weight = seg.count_weight.max(0.0) as f64;
+        if weight <= 0.0 {
+            continue;
+        }
         if aircraft::is_ground_stale_segment(seg, rasters) {
             continue;
         }
@@ -1837,10 +1844,6 @@ fn compute_aircraft(
             Some(v) => v,
             None => continue,
         };
-        let weight = seg.count_weight.max(0.0) as f64;
-        if weight <= 0.0 {
-            continue;
-        }
         let energy =
             crate::propagation::iso9613::fast_exp_f64(sel * std::f64::consts::LN_10 * 0.1) * weight;
         let period = seg.period.min(2) as usize;
