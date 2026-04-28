@@ -1001,10 +1001,20 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
     // miss pays that cost, and the snapshot completes before we drop the
     // store lock so the build runs against a static `Vec` without
     // holding any shared lock.
-    let palt_r4 = h3o::LatLng::new(lat, lng).ok().and_then(|ll| {
-        ll.to_cell(h3o::Resolution::Eleven)
-            .parent(h3o::Resolution::Four)
-    });
+    // Gate the whole PALT pipeline (snapshot + raster build) on PALT_DIR,
+    // mirroring `palt_gate_elev_m` above. Without this, `PALT_DISABLED=1`
+    // disables the on-disk load and the collect-time skip but the runtime
+    // raster build still fires — kernel ends up double-counting cruise
+    // (phase=2 per-segment + raster lookup), which produced the 0.78 dB
+    // popup-tile drift in the noPALT measurement run.
+    let palt_r4 = if PALT_DIR.get().is_some() {
+        h3o::LatLng::new(lat, lng).ok().and_then(|ll| {
+            ll.to_cell(h3o::Resolution::Eleven)
+                .parent(h3o::Resolution::Four)
+        })
+    } else {
+        None
+    };
     let palt_aircraft_snapshot: Option<Vec<noise_compute::types::AircraftSegment>> = palt_r4
         .filter(|r4_cell| {
             !PALT_CACHE
