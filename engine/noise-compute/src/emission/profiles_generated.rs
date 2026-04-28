@@ -198,27 +198,29 @@ pub static CLASS_OF_PROFILE: [u8; NUM_PROFILES] = [
     1, // FALLBACK → JET_NB_HB
 ];
 
-/// First profile_idx representing each noise class. Used by
-/// per-class lookups (REACH_SQ_TABLE) to pick a class
-/// representative without scanning CLASS_OF_PROFILE at runtime.
+/// Class-loudest profile_idx for each noise class. Used by
+/// REACH_SQ_TABLE so the per-class pre-filter envelope covers
+/// the loudest same-class typecode (no false negatives drop
+/// valid contributors), and as the synth-surface representative.
+/// Loudness ranked by max-power departure SEL @ 200 ft.
 pub static FIRST_PROFILE_OF_CLASS: [u8; NUM_CLASSES] = [
-    20, // JET_WB_2ENG → B772
-    0, // JET_NB_HB → B738
-    57, // JET_REG_FUSE → CRJ2
-    68, // JET_BIZ_FUSE → PC24
-    38, // JET_WB_3ENG → MD11
-    123, // JET_3ENG_FUSE → FALLBACK
-    41, // JET_WB_4ENG → B744
-    123, // JET_4ENG_LARGE → FALLBACK
-    84, // PISTON_SE_PROP → C172
-    123, // PISTON_TWIN_LARGE → FALLBACK
-    88, // PISTON_TWIN_SMALL → PA34
-    123, // PISTON_4ENG_LARGE → FALLBACK
-    123, // TURBOPROP_SE → FALLBACK
-    70, // TURBOPROP_LARGE → AT72
-    78, // TURBOPROP_TWIN_SMALL → L410
-    123, // TURBOPROP_4ENG → FALLBACK
-    102, // HELICOPTER → EC35
+    22, // JET_WB_2ENG → B77W (dep@200ft=114.7 dB)
+    0, // JET_NB_HB → B738 (dep@200ft=108.4 dB)
+    69, // JET_REG_FUSE → LJ60 (dep@200ft=110.5 dB)
+    68, // JET_BIZ_FUSE → PC24 (dep@200ft=101.0 dB)
+    38, // JET_WB_3ENG → MD11 (dep@200ft=113.2 dB)
+    123, // JET_3ENG_FUSE → FALLBACK (dep@200ft=108.4 dB)
+    43, // JET_WB_4ENG → B741 (dep@200ft=120.2 dB)
+    123, // JET_4ENG_LARGE → FALLBACK (dep@200ft=108.4 dB)
+    84, // PISTON_SE_PROP → C172 (dep@200ft=88.0 dB)
+    123, // PISTON_TWIN_LARGE → FALLBACK (dep@200ft=108.4 dB)
+    88, // PISTON_TWIN_SMALL → PA34 (dep@200ft=91.0 dB)
+    123, // PISTON_4ENG_LARGE → FALLBACK (dep@200ft=108.4 dB)
+    123, // TURBOPROP_SE → FALLBACK (dep@200ft=108.4 dB)
+    70, // TURBOPROP_LARGE → AT72 (dep@200ft=92.0 dB)
+    78, // TURBOPROP_TWIN_SMALL → L410 (dep@200ft=95.9 dB)
+    123, // TURBOPROP_4ENG → FALLBACK (dep@200ft=108.4 dB)
+    102, // HELICOPTER → EC35 (dep@200ft=94.0 dB)
 ];
 
 pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
@@ -711,9 +713,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
         Installation::Fuselage,
     ),
     NpdProfile::new(
-        "CL60/CL600",
-        [90.2, 85.5, 82.1, 78.3, 72.0, 64.7, 59.4, 53.6, 47.4, 40.7],
-        [101.1, 96.8, 93.8, 90.5, 85.0, 78.6, 73.8, 68.4, 62.5, 55.6],
+        "CL60/CL601",
+        [90.9, 86.7, 83.3, 79.9, 74.1, 67.4, 62.4, 56.9, 50.7, 43.9],
+        [99.7, 95.2, 92.0, 88.5, 82.8, 76.3, 71.5, 66.1, 59.9, 52.7],
         160.0,
         370.0,
         Installation::Fuselage,
@@ -743,25 +745,25 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
         Installation::Fuselage,
     ),
     NpdProfile::new(
-        "GLF6/GIIB",
-        [89.4, 85.5, 82.5, 79.1, 73.3, 66.8, 62.1, 56.9, 51.3, 45.6],
-        [123.9, 120.0, 117.0, 113.6, 107.8, 101.3, 96.6, 91.4, 85.8, 80.1],
+        "GLF6/CL601",
+        [90.9, 86.7, 83.3, 79.9, 74.1, 67.4, 62.4, 56.9, 50.7, 43.9],
+        [99.7, 95.2, 92.0, 88.5, 82.8, 76.3, 71.5, 66.1, 59.9, 52.7],
         160.0,
         370.0,
         Installation::Fuselage,
     ),
     NpdProfile::new(
-        "GLF5/GIIB",
-        [89.4, 85.5, 82.5, 79.1, 73.3, 66.8, 62.1, 56.9, 51.3, 45.6],
-        [123.9, 120.0, 117.0, 113.6, 107.8, 101.3, 96.6, 91.4, 85.8, 80.1],
+        "GLF5/CL601",
+        [90.9, 86.7, 83.3, 79.9, 74.1, 67.4, 62.4, 56.9, 50.7, 43.9],
+        [99.7, 95.2, 92.0, 88.5, 82.8, 76.3, 71.5, 66.1, 59.9, 52.7],
         160.0,
         370.0,
         Installation::Fuselage,
     ),
     NpdProfile::new(
-        "FA7X/FAL20",
-        [100.7, 95.3, 91.2, 86.4, 78.7, 71.4, 66.2, 60.5, 54.4, 47.4],
-        [111.3, 106.4, 102.8, 99.0, 92.6, 85.1, 79.2, 72.7, 65.4, 57.4],
+        "FA7X/CL601",
+        [90.9, 86.7, 83.3, 79.9, 74.1, 67.4, 62.4, 56.9, 50.7, 43.9],
+        [99.7, 95.2, 92.0, 88.5, 82.8, 76.3, 71.5, 66.1, 59.9, 52.7],
         160.0,
         370.0,
         Installation::Fuselage,
@@ -772,7 +774,7 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
         [101.0, 96.0, 92.0, 88.0, 81.0, 74.0, 69.0, 63.0, 57.0, 51.0],
         140.0,
         320.0,
-        Installation::Wing,
+        Installation::Fuselage,
     ),
     NpdProfile::new(
         "LJ60/LEAR35",

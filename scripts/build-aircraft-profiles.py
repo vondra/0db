@@ -101,13 +101,14 @@ ICAO_TYPECODE_TO_ACFT_ID: list[tuple[str, str | None, str | None]] = [
     ("CRJ9", "CL601", None),             # CRJ-900 nearest
     ("EMJ", "EMB145", None),             # E145
     # ── business jets ─────────────────────────────────────────────────────
-    ("CL60", "CL600", None),             # Challenger 600
+    ("CL60", "CL601", None),             # Challenger 600 / 601 — pick CF34 over older ALF502L
     ("C56X", "CIT3", None),              # Citation Excel
     ("C680", "CIT3", None),              # Citation Sovereign nearest
-    ("GLEX", "CL601", None),             # Global Express nearest
-    ("GLF6", "GIIB", None),              # G650 nearest
-    ("GLF5", "GIIB", None),              # G550 nearest
-    ("FA7X", "FAL20", None),             # Falcon 7X nearest
+    ("GLEX", "CL601", None),             # Global Express nearest CF34 (BR710 isn't in ANP)
+    ("GLF6", "CL601", None),             # G650 — ANP only has 1970s GII Spey (~125 dB);
+                                         # CL601 CF34 is the closest MODERN turbofan (~100 dB)
+    ("GLF5", "CL601", None),             # G550 — same rationale as G650
+    ("FA7X", "CL601", None),             # Falcon 7X — modern triple-engine, FAL20 is 1970s Spey
     ("PC24", None, "JET_BIZ_FUSE"),      # PC-24 manual
     ("LJ60", "LEAR35", None),            # Learjet 60 nearest
     # ── turboprops large ──────────────────────────────────────────────────
@@ -324,12 +325,18 @@ def build_profiles(anp_dir: Path) -> list[Profile]:
     npd = load_npd(anp_dir)
     profiles: list[Profile] = []
 
+    # Manual placeholder installation: derive from the noise_class signature
+    # (Wing/Fuselage/Prop). For "manual" classes (HELICOPTER) that have no
+    # ANP signature, fall back to Prop (rotorcraft Λ behaviour is a TODO
+    # per SPEC.md — Wing would over-apply lateral attenuation, Prop is
+    # the closest single-Installation approximation).
+    class_lateral = {name: sig[3] for name, sig in NOISE_CLASSES if isinstance(sig, tuple)}
     for typecode, acft_id, manual_class in ICAO_TYPECODE_TO_ACFT_ID:
         if manual_class is not None:
             placeholder = MANUAL_PROFILES[manual_class]
             approach, departure, v_ref, d_bar = placeholder
             cls = MANUAL_PROFILE_TO_CLASS[manual_class]
-            inst = "Wing" if "JET" in cls else "Prop"
+            inst = class_lateral.get(cls, "Prop")
             profiles.append(Profile(
                 typecode=typecode,
                 name=f"{typecode}/{manual_class}",
@@ -479,20 +486,26 @@ def emit_rust(profiles: list[Profile], anp_sha: str) -> str:
     lines.append("];")
     lines.append("")
 
-    lines.append("/// First profile_idx representing each noise class. Used by")
-    lines.append("/// per-class lookups (REACH_SQ_TABLE) to pick a class")
-    lines.append("/// representative without scanning CLASS_OF_PROFILE at runtime.")
+    lines.append("/// Class-loudest profile_idx for each noise class. Used by")
+    lines.append("/// REACH_SQ_TABLE so the per-class pre-filter envelope covers")
+    lines.append("/// the loudest same-class typecode (no false negatives drop")
+    lines.append("/// valid contributors), and as the synth-surface representative.")
+    lines.append("/// Loudness ranked by max-power departure SEL @ 200 ft.")
     lines.append("pub static FIRST_PROFILE_OF_CLASS: [u8; NUM_CLASSES] = [")
-    first_of_class: dict[int, int] = {}
+    loudest_of_class: dict[int, tuple[int, float]] = {}
     for i, p in enumerate(profiles):
         cls_idx = CLASS_NAME_TO_IDX[p.noise_class]
-        if cls_idx not in first_of_class:
-            first_of_class[cls_idx] = i
+        loudness = p.departure_sel[0]
+        prev = loudest_of_class.get(cls_idx)
+        if prev is None or loudness > prev[1]:
+            loudest_of_class[cls_idx] = (i, loudness)
     for cls_idx in range(len(NOISE_CLASSES)):
-        rep = first_of_class.get(cls_idx, fallback_idx)
+        rep_tup = loudest_of_class.get(cls_idx)
+        rep = rep_tup[0] if rep_tup else fallback_idx
         rep_typecode = profiles[rep].typecode if rep < len(profiles) else "FALLBACK"
+        rep_db = profiles[rep].departure_sel[0] if rep < len(profiles) else 0.0
         cls_name = NOISE_CLASSES[cls_idx][0]
-        lines.append(f"    {rep}, // {cls_name} → {rep_typecode}")
+        lines.append(f"    {rep}, // {cls_name} → {rep_typecode} (dep@200ft={rep_db:.1f} dB)")
     lines.append("];")
     lines.append("")
     lines.append("pub static PROFILES: [NpdProfile; NUM_PROFILES] = [")

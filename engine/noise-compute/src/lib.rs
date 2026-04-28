@@ -2169,7 +2169,13 @@ fn compute_aircraft(
         if acc.peak_lmax > global_peak_lmax {
             global_peak_lmax = acc.peak_lmax;
         }
-        if acc.profile_idx == 6 {
+        // Helicopter class index is dynamic — look it up via the generated
+        // CLASS_NAMES table. The pre-Tier-2 hard-coded `profile_idx == 6`
+        // referred to the LightGA+Rotorcraft bucket; in Tier 2 helicopters
+        // are their own class (HELICOPTER) at the end of NOISE_CLASSES.
+        const HELICOPTER_CLASS_NAME: &str = "HELICOPTER";
+        let cls = aircraft::noise_class_of(acc.profile_idx) as usize;
+        if aircraft::CLASS_NAMES[cls] == HELICOPTER_CLASS_NAME {
             helicopter_count += acc.flight_weight / n_days_f;
         }
         let avg_alt = acc.min_dist_m;

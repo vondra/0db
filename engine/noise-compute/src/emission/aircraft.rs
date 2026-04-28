@@ -1873,11 +1873,17 @@ pub fn synthesize_airport_surface_segments(
                 .or_default() += 1;
         }
 
-        for ((period, profile_idx, is_departure), count) in buckets {
+        for ((period, class_idx, is_departure), count) in buckets {
             let bucket_weight = count as f64 * missing_scale;
             if bucket_weight <= 0.0 {
                 continue;
             }
+            // The bucket key destructured `class_idx` (was misnamed
+            // `profile_idx` pre-fix); look up the class's representative
+            // per-typecode profile so the synthesized segment carries a
+            // valid profile_idx for downstream `noise_class_of` /
+            // `clamp_profile_idx` callers.
+            let synth_profile_idx = FIRST_PROFILE_OF_CLASS[class_idx as usize];
             for emitter in &emitters {
                 let count_weight = bucket_weight * emitter.weight;
                 if count_weight < SURFACE_SYNTH_MIN_WEIGHT {
@@ -1885,7 +1891,7 @@ pub fn synthesize_airport_surface_segments(
                 }
                 out.push(AircraftSegment {
                     flight_id: next_flight_id,
-                    profile_idx,
+                    profile_idx: synth_profile_idx,
                     is_departure,
                     on_ground: true,
                     period,
@@ -2617,7 +2623,10 @@ fn segment_sel_with_overrides(
     let (inst_code, di_a, di_b, di_c) = delta_i_constants(profile.installation);
     let dv = delta_v(seg.speed_kt as f64, profile);
 
-    let reach_sq = REACH_SQ_TABLE[profile_idx][seg.is_departure as usize];
+    // REACH_SQ_TABLE is sized `NUM_CLASSES`, not `NUM_PROFILES` — index by
+    // noise_class. Indexing by raw profile_idx panics for profile_idx >= 17.
+    let reach_sq = REACH_SQ_TABLE[noise_class_of(seg.profile_idx) as usize]
+        [seg.is_departure as usize];
 
     // Caller hoists `&NpdLuts` outside the per-segment loop so the
     // OnceLock Acquire load doesn't serialise the kernel inner math.
