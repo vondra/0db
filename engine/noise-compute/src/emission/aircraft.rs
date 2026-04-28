@@ -538,9 +538,6 @@ pub struct CpaResult {
     pub beta_deg: f64,       // elevation angle from ground plane
     pub seg_len_m: f64,      // segment length
     pub t: f64,              // parametric projection (0..1 inside segment, else extrapolation)
-    pub foot_lat: f64,       // lat of perpendicular foot (for DEM lookup)
-    pub foot_lon: f64,       // lon of perpendicular foot
-    pub alt_at_foot_m: f64,  // absolute MSL altitude at foot (interpolated along segment line)
 }
 
 /// Compute CPA on INFINITE segment extension (Doc 29 §4.4.1).
@@ -581,8 +578,7 @@ pub fn compute_cpa(
     let cy = y1 + t * dy;
     let lateral_m = (cx * cx + cy * cy).sqrt();
 
-    let alt_at_foot = s1_alt_m + t * (s2_alt_m - s1_alt_m);
-    let relative_alt_m = alt_at_foot - rx_elev_m;
+    let relative_alt_m = s1_alt_m + t * (s2_alt_m - s1_alt_m) - rx_elev_m;
     let d_p_m = (lateral_m * lateral_m + relative_alt_m * relative_alt_m).sqrt();
     let q_m = t * seg_len;
 
@@ -592,10 +588,6 @@ pub fn compute_cpa(
         90.0
     };
 
-    // Foot lat/lon: reverse-project cx, cy (meters from receiver) to degrees.
-    let foot_lat = rx_lat + cy / M_PER_DEG_LAT;
-    let foot_lon = rx_lon + cx / m_per_deg_lon;
-
     CpaResult {
         q_m,
         d_p_m,
@@ -604,9 +596,6 @@ pub fn compute_cpa(
         beta_deg,
         seg_len_m: seg_len,
         t,
-        foot_lat,
-        foot_lon,
-        alt_at_foot_m: alt_at_foot,
     }
 }
 
@@ -2701,11 +2690,6 @@ fn segment_sel_with_overrides(
         terrain_end_cut_m,
     )?;
 
-    // Build CpaResult for downstream consumers (popup trace, tests).
-    // Kernel returns the energy-relevant fields; foot lat/lon and
-    // absolute alt-at-foot are reverse-projected here — popup uses
-    // foot for ground sampling.
-    let alt_at_foot_m = start_alt_m + kernel.t * sdz;
     let cpa = CpaResult {
         q_m: kernel.q_m,
         d_p_m: kernel.d_p_m,
@@ -2714,9 +2698,6 @@ fn segment_sel_with_overrides(
         beta_deg: kernel.beta_deg,
         seg_len_m: kernel.seg_len_m,
         t: kernel.t,
-        foot_lat: rx_lat + (ay + kernel.t * sdy) / M_PER_DEG_LAT,
-        foot_lon: rx_lon + (ax + kernel.t * sdx) / m_per_deg_lon,
-        alt_at_foot_m,
     };
 
     Some((kernel.sel, cpa))
