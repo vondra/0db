@@ -335,12 +335,8 @@ pub fn fast_npd_lookup(lut: &[f64; NPD_LUT_BINS + 1], log_d: f64) -> f64 {
 
 /// Per-noise-class NPD LUTs (NUM_CLASSES classes × 2 directions). Single
 /// global instance — built once on first access, reused across pipeline
-/// batches and popup queries. Sized by `NUM_CLASSES` because the kernel
-/// reads the SEL curve through the class anchor (see
-/// `CLASS_REP_PROFILE_IDX`), not directly per-typecode. Voronoi assignment
-/// makes every typecode share its anchor's NPD; collapsing 124 LUTs into
-/// 12 cuts the cache footprint ~10× and eliminates the first-in-wins bias
-/// previously baked into multi-typecode buckets.
+/// batches and popup queries. Sized by `NUM_CLASSES`: each class shares
+/// its Voronoi anchor's NPD curve, so one LUT per class is exact.
 pub struct NpdLuts {
     approach: Vec<[f64; NPD_LUT_BINS + 1]>,
     departure: Vec<[f64; NPD_LUT_BINS + 1]>,
@@ -1886,10 +1882,9 @@ pub fn synthesize_airport_surface_segments(
             if bucket_weight <= 0.0 {
                 continue;
             }
-            // Synth segment carries the class's anchor profile_idx so
-            // downstream `noise_class_of` / `clamp_profile_idx` callers see
-            // a valid id and the kernel resolves back to the same anchor
-            // NPD via `CLASS_REP_PROFILE_IDX[noise_class_of(idx)]`.
+            // Tag the synth segment with the class anchor so downstream
+            // `noise_class_of` / `clamp_profile_idx` resolve back to the
+            // same anchor NPD the kernel will use.
             let synth_profile_idx = CLASS_REP_PROFILE_IDX[class_idx as usize];
             for emitter in &emitters {
                 let count_weight = bucket_weight * emitter.weight;
@@ -2604,12 +2599,9 @@ fn segment_sel_with_overrides(
     terrain_end_cut_m: f64,
     npd_luts: &NpdLuts,
 ) -> Option<(f64, CpaResult)> {
-    // Voronoi class anchor: SEL/v_ref/d_bar/installation all come from the
-    // class's frozen anchor profile, not the per-typecode profile of this
-    // specific segment. Eliminates the first-in-wins bias from
-    // `BucketAccumulator` (rep_profile_idx pinned to whichever segment
-    // arrived first); per-segment acoustic error from this approximation
-    // is bounded by Voronoi cluster spread (avg 0.76 dB globally).
+    // SEL/v_ref/d_bar/installation come from the class's Voronoi anchor.
+    // Per-segment acoustic error vs the segment's own per-typecode profile
+    // is bounded by class spread (avg 0.76 dB across global traffic).
     let class_idx = noise_class_of(seg.profile_idx) as usize;
     let anchor_profile = &PROFILES[CLASS_REP_PROFILE_IDX[class_idx] as usize];
 
@@ -2636,9 +2628,10 @@ fn segment_sel_with_overrides(
     let (inst_code, di_a, di_b, di_c) = delta_i_constants(anchor_profile.installation);
     let dv = delta_v(seg.speed_kt as f64, anchor_profile);
 
-    // REACH_SQ_TABLE keyed by noise_class, sized NUM_CLASSES. Uses the
-    // loudest member's reach (LOUDEST_PROFILE_OF_CLASS) so the pre-filter
-    // envelope covers Voronoi-assigned outliers (e.g. B752 in WING_A320).
+    // REACH_SQ_TABLE uses the class's loudest-member reach (not the
+    // anchor's), so the pre-filter envelope covers Voronoi-assigned
+    // outliers like B752 in WING_A320 — a louder member must never be
+    // dropped at long range before the kernel sees it.
     let reach_sq = REACH_SQ_TABLE[class_idx][seg.is_departure as usize];
 
     // Caller hoists `&NpdLuts` outside the per-segment loop so the

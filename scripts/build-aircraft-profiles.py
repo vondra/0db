@@ -208,44 +208,36 @@ ICAO_TYPECODE_TO_ACFT_ID: list[tuple[str, str | None, str | None]] = [
 
 # ─── Manual placeholder profiles (for non-ANP types) ─────────────────────
 # Derived from Doc 29 Vol 3 reference curves (PROP) plus engineering judgment.
-# Format: (approach_sel[10], departure_sel[10], v_ref_kt, d_bar_m).
-MANUAL_PROFILES: dict[str, tuple[list[float], list[float], float, float]] = {
+# Tuple = (approach_sel[10], departure_sel[10], v_ref_kt, d_bar_m,
+#          installation, is_jet). Helicopters carry Installation::Propeller
+# because the Rust enum lacks a rotorcraft variant — rotor Λ behaviour is
+# a TODO per SPEC.md and Propeller is the closest single-Installation fit.
+MANUAL_PROFILES: dict[str, tuple[list[float], list[float], float, float, str, bool]] = {
+    # Single-engine piston (C172, PA28). Quiet, ~85 dB at 200 ft, fast roll-off.
     "PISTON_SE": (
-        # Single-engine piston (C172, PA28). Quiet, ~85 dB at 200 ft, fast roll-off.
         [85.0, 80.0, 76.0, 72.0, 65.0, 58.0, 53.0, 47.0, 41.0, 35.0],
         [88.0, 83.0, 79.0, 75.0, 68.0, 61.0, 56.0, 50.0, 44.0, 38.0],
-        90.0, 208.0,
+        90.0, 208.0, "Prop", False,
     ),
+    # Twin-engine piston (PA34, DA42). +3 dB vs single.
     "PISTON_TWIN": (
-        # Twin-engine piston (PA34, DA42). +3 dB vs single.
         [88.0, 83.0, 79.0, 75.0, 68.0, 61.0, 56.0, 50.0, 44.0, 38.0],
         [91.0, 86.0, 82.0, 78.0, 71.0, 64.0, 59.0, 53.0, 47.0, 41.0],
-        110.0, 220.0,
+        110.0, 220.0, "Prop", False,
     ),
+    # Helicopters: dominated by main-rotor blade-vortex interaction.
+    # Slower roll-off than fixed-wing prop. R44/EC135 typical.
     "HELICOPTER": (
-        # Helicopters: dominated by main-rotor blade-vortex interaction.
-        # Slower roll-off than fixed-wing prop. R44/EC135 typical.
         [92.0, 88.0, 85.0, 82.0, 76.0, 70.0, 65.0, 59.0, 53.0, 47.0],
         [94.0, 90.0, 87.0, 84.0, 78.0, 72.0, 67.0, 61.0, 55.0, 49.0],
-        100.0, 230.0,
+        100.0, 230.0, "Prop", False,
     ),
+    # PC-24 placeholder (no ANP entry). Light bizjet, fuselage-mounted.
     "JET_BIZ_FUSE": (
-        # PC-24 placeholder (no ANP entry). Light bizjet, fuselage-mounted.
         [98.0, 93.0, 89.0, 85.0, 78.0, 71.0, 66.0, 60.0, 54.0, 48.0],
         [101.0, 96.0, 92.0, 88.0, 81.0, 74.0, 69.0, 63.0, 57.0, 51.0],
-        140.0, 320.0,
+        140.0, 320.0, "Fuselage", True,
     ),
-}
-
-# Manual placeholder → installation. HELICOPTER lacks a Rust-enum variant
-# (Installation = {Wing, Fuselage, Propeller}); rotorcraft Λ behaviour is
-# a TODO per SPEC.md and Propeller is the closest single-Installation
-# approximation.
-MANUAL_INSTALLATION = {
-    "PISTON_SE":     "Prop",
-    "PISTON_TWIN":   "Prop",
-    "HELICOPTER":    "Prop",
-    "JET_BIZ_FUSE":  "Fuselage",
 }
 
 # ANP installation → Rust enum name
@@ -253,16 +245,6 @@ INSTALLATION_RUST = {
     "Wing":     "Installation::Wing",
     "Fuselage": "Installation::Fuselage",
     "Prop":     "Installation::Propeller",
-}
-
-# Rotorcraft typecodes — split into a dedicated noise class even though
-# Rust Installation::Propeller. Rotor noise has a distinct directivity
-# pattern that the per-typecode Λ model approximates poorly; isolating
-# them keeps the Voronoi assignment of fixed-wing props clean.
-HELICOPTER_TYPECODES = {
-    "EC35", "EC45", "EC55", "EC30", "EC20", "AS50", "AS55", "AS65",
-    "H500", "MD52", "B06", "B407", "B412", "R22", "R44", "R66",
-    "S76", "A109", "BK17", "B505", "GYRO",
 }
 
 # Voronoi anchor budget per Installation (sum = NUM_CLASSES).
@@ -296,8 +278,9 @@ class Profile:
     d_bar_m: float
     installation: str  # "Wing"/"Fuselage"/"Prop"
     proxy_source: str  # "Anp" / "Manual"
+    is_jet: bool
+    is_helo: bool
     # Filled during clustering:
-    is_helo: bool = False
     noise_class: int = -1   # 0..NUM_CLASSES-1, set by Voronoi assignment
 
     def feature(self) -> list[float]:
@@ -355,9 +338,7 @@ def build_profiles(anp_dir: Path) -> list[Profile]:
 
     for typecode, acft_id, manual_class in ICAO_TYPECODE_TO_ACFT_ID:
         if manual_class is not None:
-            placeholder = MANUAL_PROFILES[manual_class]
-            approach, departure, v_ref, d_bar = placeholder
-            inst = MANUAL_INSTALLATION[manual_class]
+            approach, departure, v_ref, d_bar, inst, is_jet = MANUAL_PROFILES[manual_class]
             profiles.append(Profile(
                 typecode=typecode,
                 name=f"{typecode}/{manual_class}",
@@ -367,6 +348,7 @@ def build_profiles(anp_dir: Path) -> list[Profile]:
                 d_bar_m=d_bar,
                 installation=inst,
                 proxy_source="Manual",
+                is_jet=is_jet,
                 is_helo=(manual_class == "HELICOPTER"),
             ))
             continue
@@ -396,6 +378,7 @@ def build_profiles(anp_dir: Path) -> list[Profile]:
             d_bar_m=d_bar,
             installation=acft.lateral,
             proxy_source="Anp",
+            is_jet=acft.engine_type == "Jet",
             is_helo=False,
         ))
 
@@ -566,29 +549,7 @@ def derive_ground_ops_per_class(profiles: list[Profile], anchors: list[AnchorCla
 
 
 def is_jet_per_class(profiles: list[Profile], anchors: list[AnchorClass]) -> list[bool]:
-    out: list[bool] = []
-    for a in anchors:
-        if a.install == "Helicopter":
-            out.append(False)
-            continue
-        # Anchor's proxy_source determines: ANP entries carry engine_type
-        # explicitly; Manual entries (PISTON_*, HELICOPTER, JET_BIZ_FUSE)
-        # we know are jet only for JET_BIZ_FUSE. We re-derive from the
-        # anchor profile's typecode rather than thread engine_type
-        # through Profile (cleaner).
-        anchor_p = profiles[a.anchor_idx]
-        if anchor_p.proxy_source == "Manual":
-            # The only jet manual placeholder is JET_BIZ_FUSE (PC24);
-            # the rest are pistons or helicopters.
-            out.append(anchor_p.typecode == "PC24")
-        else:
-            # ANP-derived → distinguish jets from turboprops by
-            # installation: turboprops are Propeller, jets are
-            # Wing/Fuselage. Mostly true at this granularity (per
-            # CLAUDE.md "is_jet[noise_class]" only used for synth
-            # surface ops weighting, where ±1 false-negative is OK).
-            out.append(anchor_p.installation in ("Wing", "Fuselage"))
-    return out
+    return [profiles[a.anchor_idx].is_jet for a in anchors]
 
 
 def emit_rust(
