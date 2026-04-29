@@ -140,14 +140,16 @@ impl NpdProfile {
     }
 }
 
-// Per-typecode NPD profiles + per-class metadata (NUM_CLASSES=17,
+// Per-typecode NPD profiles + per-class metadata (NUM_CLASSES=12,
 // NUM_PROFILES=124) come from `profiles_generated.rs`, auto-generated from
-// EASA ANP v2.3 by `scripts/build-aircraft-profiles.py`.
+// EASA ANP v2.3 + global traffic counts by
+// `scripts/build-aircraft-profiles.py`. Classes are Voronoi-assigned
+// over per-Installation anchor profiles (see generator docstring).
 pub use super::profiles_generated::{
     profile_idx, is_non_aircraft_typecode, noise_class_of,
-    CLASS_NAMES, CLASS_OF_PROFILE, FALLBACK_NOISE_CLASS, FALLBACK_PROFILE_IDX,
-    FIRST_PROFILE_OF_CLASS, GROUND_OPS_REFERENCE_SEL_DB, IS_JET, NUM_CLASSES,
-    NUM_PROFILES, PROFILES,
+    CLASS_NAMES, CLASS_OF_PROFILE, CLASS_REP_PROFILE_IDX, FALLBACK_NOISE_CLASS,
+    FALLBACK_PROFILE_IDX, GROUND_OPS_REFERENCE_SEL_DB, IS_JET,
+    LOUDEST_PROFILE_OF_CLASS, NUM_CLASSES, NUM_PROFILES, PROFILES,
 };
 
 /// Defensive clamp for `profile_idx` before indexing `PROFILES` /
@@ -331,11 +333,14 @@ pub fn fast_npd_lookup(lut: &[f64; NPD_LUT_BINS + 1], log_d: f64) -> f64 {
     lut[idx] + frac * (lut[idx + 1] - lut[idx])
 }
 
-/// Per-typecode NPD LUTs (NUM_PROFILES profiles × 2 directions). Single
+/// Per-noise-class NPD LUTs (NUM_CLASSES classes × 2 directions). Single
 /// global instance — built once on first access, reused across pipeline
-/// batches and popup queries. Sized by `NUM_PROFILES` because the kernel
-/// needs the fine-grained (per-typecode) NPD curve, even though bucket keys
-/// aggregate at the coarser `noise_class` level.
+/// batches and popup queries. Sized by `NUM_CLASSES` because the kernel
+/// reads the SEL curve through the class anchor (see
+/// `CLASS_REP_PROFILE_IDX`), not directly per-typecode. Voronoi assignment
+/// makes every typecode share its anchor's NPD; collapsing 124 LUTs into
+/// 12 cuts the cache footprint ~10× and eliminates the first-in-wins bias
+/// previously baked into multi-typecode buckets.
 pub struct NpdLuts {
     approach: Vec<[f64; NPD_LUT_BINS + 1]>,
     departure: Vec<[f64; NPD_LUT_BINS + 1]>,
@@ -349,21 +354,22 @@ impl NpdLuts {
     }
 
     fn build() -> Self {
-        let mut approach = Vec::with_capacity(NUM_PROFILES);
-        let mut departure = Vec::with_capacity(NUM_PROFILES);
-        for i in 0..NUM_PROFILES {
-            approach.push(build_npd_lut(&PROFILES[i], false));
-            departure.push(build_npd_lut(&PROFILES[i], true));
+        let mut approach = Vec::with_capacity(NUM_CLASSES);
+        let mut departure = Vec::with_capacity(NUM_CLASSES);
+        for class_idx in 0..NUM_CLASSES {
+            let anchor = &PROFILES[CLASS_REP_PROFILE_IDX[class_idx] as usize];
+            approach.push(build_npd_lut(anchor, false));
+            departure.push(build_npd_lut(anchor, true));
         }
         NpdLuts { approach, departure }
     }
 
     #[inline(always)]
-    pub fn lookup(&self, profile_idx: usize, is_dep: bool, log_d: f64) -> f64 {
+    pub fn lookup(&self, noise_class: usize, is_dep: bool, log_d: f64) -> f64 {
         let lut = if is_dep {
-            &self.departure[profile_idx]
+            &self.departure[noise_class]
         } else {
-            &self.approach[profile_idx]
+            &self.approach[noise_class]
         };
         fast_npd_lookup(lut, log_d)
     }
@@ -419,15 +425,17 @@ const M_PER_DEG_LAT: f64 = 111_132.92;
 /// `[noise_class][is_departure as usize]`. Pre-built at first access so the
 /// hot-path R-tree pre-filter (popup `lib.rs`, pipeline group bbox) can drop
 /// segments via a squared-distance compare without invoking
-/// `Profile::estimate_reach_m` per segment. Per-class (not per-typecode)
-/// because the R-tree envelope only needs the conservative class-max reach;
-/// per-typecode would expand to 124 entries with little prefilter benefit
-/// (the per-segment slant test inside the kernel does the exact rejection).
+/// `Profile::estimate_reach_m` per segment.
+///
+/// Indexed by `LOUDEST_PROFILE_OF_CLASS`, NOT the class anchor: the kernel
+/// computes SEL using anchor NPD (energy-mean of class), but the pre-filter
+/// must use the loudest member's NPD as the conservative envelope so
+/// segments from louder Voronoi-assigned typecodes (e.g. B752 in the
+/// WING_A320 class, B741 in WING_A21N) never get falsely rejected at long
+/// range.
 pub static REACH_SQ_TABLE: LazyLock<[[f64; 2]; NUM_CLASSES]> = LazyLock::new(|| {
     std::array::from_fn(|class_idx| {
-        // Pre-computed class representative — see FIRST_PROFILE_OF_CLASS.
-        // Reach within a class differs by < 0.5 dB at the 40 dB SEL contour.
-        let p = &PROFILES[FIRST_PROFILE_OF_CLASS[class_idx] as usize];
+        let p = &PROFILES[LOUDEST_PROFILE_OF_CLASS[class_idx] as usize];
         [
             p.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, false).powi(2),
             p.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, true).powi(2),
@@ -733,7 +741,7 @@ pub fn segment_energy_kernel(
     slen: f64,
     rcv_elev: f64,
     npd_luts: &NpdLuts,
-    profile_idx: usize,
+    noise_class: usize,
     is_dep: bool,
     seg_dv: f64,
     d_bar_m: f64,
@@ -775,7 +783,7 @@ pub fn segment_energy_kernel(
     // Caller-hoisted `&NpdLuts` reference — keeps the OnceLock Acquire load
     // out of the per-receiver inner loop (would otherwise fence SIMD /
     // pipelining across 100 k-segment × 343-receiver scatters).
-    let sel_npd = npd_luts.lookup(profile_idx, is_dep, log_d);
+    let sel_npd = npd_luts.lookup(noise_class, is_dep, log_d);
 
     // CFFK fast path: above 7.62 km slant the per-segment corrections
     // (ΔF, Λ, ΔI) collapse to within fractions of a dB. Skip them and
@@ -1878,12 +1886,11 @@ pub fn synthesize_airport_surface_segments(
             if bucket_weight <= 0.0 {
                 continue;
             }
-            // The bucket key destructured `class_idx` (was misnamed
-            // `profile_idx` pre-fix); look up the class's representative
-            // per-typecode profile so the synthesized segment carries a
-            // valid profile_idx for downstream `noise_class_of` /
-            // `clamp_profile_idx` callers.
-            let synth_profile_idx = FIRST_PROFILE_OF_CLASS[class_idx as usize];
+            // Synth segment carries the class's anchor profile_idx so
+            // downstream `noise_class_of` / `clamp_profile_idx` callers see
+            // a valid id and the kernel resolves back to the same anchor
+            // NPD via `CLASS_REP_PROFILE_IDX[noise_class_of(idx)]`.
+            let synth_profile_idx = CLASS_REP_PROFILE_IDX[class_idx as usize];
             for emitter in &emitters {
                 let count_weight = bucket_weight * emitter.weight;
                 if count_weight < SURFACE_SYNTH_MIN_WEIGHT {
@@ -2597,8 +2604,14 @@ fn segment_sel_with_overrides(
     terrain_end_cut_m: f64,
     npd_luts: &NpdLuts,
 ) -> Option<(f64, CpaResult)> {
-    let profile_idx = clamp_profile_idx(seg.profile_idx);
-    let profile = &PROFILES[profile_idx];
+    // Voronoi class anchor: SEL/v_ref/d_bar/installation all come from the
+    // class's frozen anchor profile, not the per-typecode profile of this
+    // specific segment. Eliminates the first-in-wins bias from
+    // `BucketAccumulator` (rep_profile_idx pinned to whichever segment
+    // arrived first); per-segment acoustic error from this approximation
+    // is bounded by Voronoi cluster spread (avg 0.76 dB globally).
+    let class_idx = noise_class_of(seg.profile_idx) as usize;
+    let anchor_profile = &PROFILES[CLASS_REP_PROFILE_IDX[class_idx] as usize];
 
     // Pre-project segment into receiver-local meters. Pipeline's
     // ProjectedAircraft does this once at build (amortised over 343
@@ -2618,15 +2631,15 @@ fn segment_sel_with_overrides(
     let inv_lsq = if seg_len_sq > 1e-6 { 1.0 / seg_len_sq } else { 0.0 };
     let sdz = end_alt_m - start_alt_m;
 
-    // Per-profile constants — same values pipeline pre-computes in
+    // Per-class constants — same values pipeline pre-computes in
     // ProjectedAircraft. Cheap to recompute here for one segment.
-    let (inst_code, di_a, di_b, di_c) = delta_i_constants(profile.installation);
-    let dv = delta_v(seg.speed_kt as f64, profile);
+    let (inst_code, di_a, di_b, di_c) = delta_i_constants(anchor_profile.installation);
+    let dv = delta_v(seg.speed_kt as f64, anchor_profile);
 
-    // REACH_SQ_TABLE is sized `NUM_CLASSES`, not `NUM_PROFILES` — index by
-    // noise_class. Indexing by raw profile_idx panics for profile_idx >= 17.
-    let reach_sq = REACH_SQ_TABLE[noise_class_of(seg.profile_idx) as usize]
-        [seg.is_departure as usize];
+    // REACH_SQ_TABLE keyed by noise_class, sized NUM_CLASSES. Uses the
+    // loudest member's reach (LOUDEST_PROFILE_OF_CLASS) so the pre-filter
+    // envelope covers Voronoi-assigned outliers (e.g. B752 in WING_A320).
+    let reach_sq = REACH_SQ_TABLE[class_idx][seg.is_departure as usize];
 
     // Caller hoists `&NpdLuts` outside the per-segment loop so the
     // OnceLock Acquire load doesn't serialise the kernel inner math.
@@ -2641,10 +2654,10 @@ fn segment_sel_with_overrides(
         slen,
         rx_elev_m,
         npd_luts,
-        profile_idx,
+        class_idx,
         seg.is_departure,
         dv,
-        profile.d_bar_m,
+        anchor_profile.d_bar_m,
         inst_code,
         di_a,
         di_b,
