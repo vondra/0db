@@ -1,226 +1,236 @@
-//! Auto-generated from EASA ANP v2.3 (sha256=fb122e3dce42733f).
-//! Regen: python scripts/build-aircraft-profiles.py --anp <DIR> > engine/noise-compute/src/emission/profiles_generated.rs
-//! DO NOT EDIT BY HAND.
+//! Auto-generated. DO NOT EDIT BY HAND.
+//!
+//! Inputs:
+//!   ANP v2.3:        sha256=fb122e3dce42733f
+//!   global counts:   sha256=6ea950b853cb3733 (4885163837 segments)
+//!
+//! Regen: python scripts/build-aircraft-profiles.py \
+//!         --anp <DIR> \
+//!         --counts scripts/aircraft-profiles-counts.json \
+//!         > engine/noise-compute/src/emission/profiles_generated.rs
 
 use super::aircraft::{Installation, NpdProfile};
 
 pub const NUM_PROFILES: usize = 124;
-pub const NUM_CLASSES: usize = 17;
+pub const NUM_CLASSES: usize = 12;
 pub const FALLBACK_PROFILE_IDX: u8 = 123;
-pub const FALLBACK_NOISE_CLASS: u8 = 1;
+pub const FALLBACK_NOISE_CLASS: u8 = 0;
 
 pub static CLASS_NAMES: [&str; NUM_CLASSES] = [
-    "JET_WB_2ENG",
-    "JET_NB_HB",
-    "JET_REG_FUSE",
-    "JET_BIZ_FUSE",
-    "JET_WB_3ENG",
-    "JET_3ENG_FUSE",
-    "JET_WB_4ENG",
-    "JET_4ENG_LARGE",
-    "PISTON_SE_PROP",
-    "PISTON_TWIN_LARGE",
-    "PISTON_TWIN_SMALL",
-    "PISTON_4ENG_LARGE",
-    "TURBOPROP_SE",
-    "TURBOPROP_LARGE",
-    "TURBOPROP_TWIN_SMALL",
-    "TURBOPROP_4ENG",
+    "WING_FALLBACK",
+    "WING_A320",
+    "WING_B738",
+    "WING_A21N",
+    "PROP_C172",
+    "WING_B789",
+    "WING_B38M",
+    "WING_A319",
+    "FUSE_CRJ9",
     "HELICOPTER",
+    "PROP_DH8D",
+    "FUSE_C56X",
 ];
 
 pub static IS_JET: [bool; NUM_CLASSES] = [
-    true, // JET_WB_2ENG
-    true, // JET_NB_HB
-    true, // JET_REG_FUSE
-    true, // JET_BIZ_FUSE
-    true, // JET_WB_3ENG
-    true, // JET_3ENG_FUSE
-    true, // JET_WB_4ENG
-    true, // JET_4ENG_LARGE
-    false, // PISTON_SE_PROP
-    false, // PISTON_TWIN_LARGE
-    false, // PISTON_TWIN_SMALL
-    false, // PISTON_4ENG_LARGE
-    false, // TURBOPROP_SE
-    false, // TURBOPROP_LARGE
-    false, // TURBOPROP_TWIN_SMALL
-    false, // TURBOPROP_4ENG
+    true, // WING_FALLBACK
+    true, // WING_A320
+    true, // WING_B738
+    true, // WING_A21N
+    false, // PROP_C172
+    true, // WING_B789
+    true, // WING_B38M
+    true, // WING_A319
+    true, // FUSE_CRJ9
     false, // HELICOPTER
+    false, // PROP_DH8D
+    true, // FUSE_C56X
 ];
 
 /// Runway-roll, taxi, apron reference SEL (dB) at 25 m, per noise class.
+/// Derived from the anchor profile's departure SEL @ 200 ft (runway proxy)
+/// minus standard 12 dB (taxi) / 18 dB (apron) offsets.
 pub static GROUND_OPS_REFERENCE_SEL_DB: [[f64; 3]; NUM_CLASSES] = [
-    [108.0, 96.0, 90.0], // JET_WB_2ENG
-    [104.0, 92.0, 86.0], // JET_NB_HB
-    [100.0, 88.0, 82.0], // JET_REG_FUSE
-    [99.0, 87.0, 81.0], // JET_BIZ_FUSE
-    [108.0, 96.0, 90.0], // JET_WB_3ENG
-    [102.0, 90.0, 84.0], // JET_3ENG_FUSE
-    [110.0, 98.0, 92.0], // JET_WB_4ENG
-    [106.0, 94.0, 88.0], // JET_4ENG_LARGE
-    [92.0, 80.0, 74.0], // PISTON_SE_PROP
-    [96.0, 84.0, 78.0], // PISTON_TWIN_LARGE
-    [93.0, 81.0, 75.0], // PISTON_TWIN_SMALL
-    [100.0, 88.0, 82.0], // PISTON_4ENG_LARGE
-    [95.0, 83.0, 77.0], // TURBOPROP_SE
-    [97.0, 85.0, 79.0], // TURBOPROP_LARGE
-    [95.0, 83.0, 77.0], // TURBOPROP_TWIN_SMALL
-    [100.0, 88.0, 82.0], // TURBOPROP_4ENG
+    [106.6, 94.6, 88.6], // WING_FALLBACK
+    [104.6, 92.6, 86.6], // WING_A320
+    [108.4, 96.4, 90.4], // WING_B738
+    [107.5, 95.5, 89.5], // WING_A21N
+    [88.0, 76.0, 70.0], // PROP_C172
+    [105.4, 93.4, 87.4], // WING_B789
+    [100.9, 88.9, 82.9], // WING_B38M
+    [103.9, 91.9, 85.9], // WING_A319
+    [99.7, 87.7, 81.7], // FUSE_CRJ9
     [94.0, 82.0, 76.0], // HELICOPTER
+    [92.0, 80.0, 74.0], // PROP_DH8D
+    [103.4, 91.4, 85.4], // FUSE_C56X
 ];
 
-/// Per-profile → noise class lookup (dense u8 index).
+/// Per-profile → noise class lookup (dense u8 index). Computed by
+/// Voronoi assignment to nearest anchor (L∞ on 20-D NPD vector,
+/// constrained to same Installation; helicopters pinned).
 pub static CLASS_OF_PROFILE: [u8; NUM_PROFILES] = [
-    1, // B738 → JET_NB_HB
-    1, // B739 → JET_NB_HB
-    1, // B737 → JET_NB_HB
-    1, // B734 → JET_NB_HB
-    1, // B735 → JET_NB_HB
-    1, // B733 → JET_NB_HB
-    1, // B736 → JET_NB_HB
-    1, // B38M → JET_NB_HB
-    1, // B39M → JET_NB_HB
-    1, // B37M → JET_NB_HB
-    1, // A320 → JET_NB_HB
-    1, // A20N → JET_NB_HB
-    1, // A319 → JET_NB_HB
-    1, // A19N → JET_NB_HB
-    1, // BCS3 → JET_NB_HB
-    1, // BCS1 → JET_NB_HB
-    1, // A321 → JET_NB_HB
-    1, // A21N → JET_NB_HB
-    1, // B752 → JET_NB_HB
-    1, // B753 → JET_NB_HB
-    0, // B772 → JET_WB_2ENG
-    0, // B773 → JET_WB_2ENG
-    0, // B77W → JET_WB_2ENG
-    0, // B77L → JET_WB_2ENG
-    0, // B77F → JET_WB_2ENG
-    0, // B788 → JET_WB_2ENG
-    0, // B789 → JET_WB_2ENG
-    0, // B78X → JET_WB_2ENG
-    0, // A332 → JET_WB_2ENG
-    0, // A333 → JET_WB_2ENG
-    0, // A338 → JET_WB_2ENG
-    0, // A339 → JET_WB_2ENG
-    0, // A359 → JET_WB_2ENG
-    0, // A35K → JET_WB_2ENG
-    0, // A306 → JET_WB_2ENG
-    0, // A310 → JET_WB_2ENG
-    0, // B763 → JET_WB_2ENG
-    0, // B764 → JET_WB_2ENG
-    4, // MD11 → JET_WB_3ENG
-    4, // DC10 → JET_WB_3ENG
-    4, // L101 → JET_WB_3ENG
-    6, // B744 → JET_WB_4ENG
-    6, // B748 → JET_WB_4ENG
-    6, // B741 → JET_WB_4ENG
-    6, // B742 → JET_WB_4ENG
-    6, // A342 → JET_WB_4ENG
-    6, // A343 → JET_WB_4ENG
-    6, // A346 → JET_WB_4ENG
-    6, // A388 → JET_WB_4ENG
-    6, // IL76 → JET_WB_4ENG
-    1, // E170 → JET_NB_HB
-    1, // E75L → JET_NB_HB
-    1, // E75S → JET_NB_HB
-    1, // E190 → JET_NB_HB
-    1, // E195 → JET_NB_HB
-    1, // E290 → JET_NB_HB
-    1, // E295 → JET_NB_HB
-    2, // CRJ2 → JET_REG_FUSE
-    2, // CRJ7 → JET_REG_FUSE
-    2, // CRJ9 → JET_REG_FUSE
-    2, // EMJ → JET_REG_FUSE
-    2, // CL60 → JET_REG_FUSE
-    2, // C56X → JET_REG_FUSE
-    2, // C680 → JET_REG_FUSE
-    2, // GLEX → JET_REG_FUSE
-    2, // GLF6 → JET_REG_FUSE
-    2, // GLF5 → JET_REG_FUSE
-    2, // FA7X → JET_REG_FUSE
-    3, // PC24 → JET_BIZ_FUSE
-    2, // LJ60 → JET_REG_FUSE
-    13, // AT72 → TURBOPROP_LARGE
-    13, // AT76 → TURBOPROP_LARGE
-    13, // AT43 → TURBOPROP_LARGE
-    13, // AT45 → TURBOPROP_LARGE
-    13, // DH8D → TURBOPROP_LARGE
-    13, // DH8C → TURBOPROP_LARGE
-    13, // DH8A → TURBOPROP_LARGE
-    13, // DH8B → TURBOPROP_LARGE
-    14, // L410 → TURBOPROP_TWIN_SMALL
-    14, // EN48 → TURBOPROP_TWIN_SMALL
-    13, // SF34 → TURBOPROP_LARGE
-    13, // F50 → TURBOPROP_LARGE
-    2, // F70 → JET_REG_FUSE
-    13, // JS41 → TURBOPROP_LARGE
-    8, // C172 → PISTON_SE_PROP
-    8, // C152 → PISTON_SE_PROP
-    8, // C182 → PISTON_SE_PROP
-    8, // PA28 → PISTON_SE_PROP
-    10, // PA34 → PISTON_TWIN_SMALL
-    8, // SR20 → PISTON_SE_PROP
-    8, // SR22 → PISTON_SE_PROP
-    8, // DA40 → PISTON_SE_PROP
-    10, // DA42 → PISTON_TWIN_SMALL
-    8, // P28A → PISTON_SE_PROP
-    8, // C210 → PISTON_SE_PROP
-    8, // BE36 → PISTON_SE_PROP
-    8, // M20P → PISTON_SE_PROP
-    8, // C206 → PISTON_SE_PROP
-    8, // PA32 → PISTON_SE_PROP
-    10, // PA44 → PISTON_TWIN_SMALL
-    8, // RV7 → PISTON_SE_PROP
-    8, // RV8 → PISTON_SE_PROP
-    16, // EC35 → HELICOPTER
-    16, // EC45 → HELICOPTER
-    16, // EC55 → HELICOPTER
-    16, // EC30 → HELICOPTER
-    16, // EC20 → HELICOPTER
-    16, // AS50 → HELICOPTER
-    16, // AS55 → HELICOPTER
-    16, // AS65 → HELICOPTER
-    16, // H500 → HELICOPTER
-    16, // MD52 → HELICOPTER
-    16, // B06 → HELICOPTER
-    16, // B407 → HELICOPTER
-    16, // B412 → HELICOPTER
-    16, // R22 → HELICOPTER
-    16, // R44 → HELICOPTER
-    16, // R66 → HELICOPTER
-    16, // S76 → HELICOPTER
-    16, // A109 → HELICOPTER
-    16, // BK17 → HELICOPTER
-    16, // B505 → HELICOPTER
-    16, // GYRO → HELICOPTER
-    1, // FALLBACK → JET_NB_HB
+    2, // B738 → WING_B738
+    2, // B739 → WING_B738
+    0, // B737 → WING_FALLBACK
+    0, // B734 → WING_FALLBACK
+    0, // B735 → WING_FALLBACK
+    0, // B733 → WING_FALLBACK
+    0, // B736 → WING_FALLBACK
+    6, // B38M → WING_B38M
+    6, // B39M → WING_B38M
+    6, // B37M → WING_B38M
+    1, // A320 → WING_A320
+    1, // A20N → WING_A320
+    7, // A319 → WING_A319
+    7, // A19N → WING_A319
+    7, // BCS3 → WING_A319
+    7, // BCS1 → WING_A319
+    3, // A321 → WING_A21N
+    3, // A21N → WING_A21N
+    1, // B752 → WING_A320
+    1, // B753 → WING_A320
+    5, // B772 → WING_B789
+    2, // B773 → WING_B738
+    0, // B77W → WING_FALLBACK
+    5, // B77L → WING_B789
+    2, // B77F → WING_B738
+    5, // B788 → WING_B789
+    5, // B789 → WING_B789
+    5, // B78X → WING_B789
+    2, // A332 → WING_B738
+    0, // A333 → WING_FALLBACK
+    0, // A338 → WING_FALLBACK
+    0, // A339 → WING_FALLBACK
+    1, // A359 → WING_A320
+    1, // A35K → WING_A320
+    2, // A306 → WING_B738
+    2, // A310 → WING_B738
+    5, // B763 → WING_B789
+    0, // B764 → WING_FALLBACK
+    0, // MD11 → WING_FALLBACK
+    5, // DC10 → WING_B789
+    5, // L101 → WING_B789
+    5, // B744 → WING_B789
+    5, // B748 → WING_B789
+    3, // B741 → WING_A21N
+    3, // B742 → WING_A21N
+    5, // A342 → WING_B789
+    5, // A343 → WING_B789
+    5, // A346 → WING_B789
+    0, // A388 → WING_FALLBACK
+    3, // IL76 → WING_A21N
+    1, // E170 → WING_A320
+    1, // E75L → WING_A320
+    1, // E75S → WING_A320
+    1, // E190 → WING_A320
+    1, // E195 → WING_A320
+    1, // E290 → WING_A320
+    1, // E295 → WING_A320
+    8, // CRJ2 → FUSE_CRJ9
+    8, // CRJ7 → FUSE_CRJ9
+    8, // CRJ9 → FUSE_CRJ9
+    8, // EMJ → FUSE_CRJ9
+    8, // CL60 → FUSE_CRJ9
+    11, // C56X → FUSE_C56X
+    11, // C680 → FUSE_C56X
+    8, // GLEX → FUSE_CRJ9
+    8, // GLF6 → FUSE_CRJ9
+    8, // GLF5 → FUSE_CRJ9
+    8, // FA7X → FUSE_CRJ9
+    8, // PC24 → FUSE_CRJ9
+    11, // LJ60 → FUSE_C56X
+    10, // AT72 → PROP_DH8D
+    10, // AT76 → PROP_DH8D
+    10, // AT43 → PROP_DH8D
+    10, // AT45 → PROP_DH8D
+    10, // DH8D → PROP_DH8D
+    10, // DH8C → PROP_DH8D
+    10, // DH8A → PROP_DH8D
+    10, // DH8B → PROP_DH8D
+    10, // L410 → PROP_DH8D
+    10, // EN48 → PROP_DH8D
+    10, // SF34 → PROP_DH8D
+    10, // F50 → PROP_DH8D
+    8, // F70 → FUSE_CRJ9
+    10, // JS41 → PROP_DH8D
+    4, // C172 → PROP_C172
+    4, // C152 → PROP_C172
+    4, // C182 → PROP_C172
+    4, // PA28 → PROP_C172
+    4, // PA34 → PROP_C172
+    4, // SR20 → PROP_C172
+    4, // SR22 → PROP_C172
+    4, // DA40 → PROP_C172
+    4, // DA42 → PROP_C172
+    4, // P28A → PROP_C172
+    4, // C210 → PROP_C172
+    4, // BE36 → PROP_C172
+    4, // M20P → PROP_C172
+    4, // C206 → PROP_C172
+    4, // PA32 → PROP_C172
+    4, // PA44 → PROP_C172
+    4, // RV7 → PROP_C172
+    4, // RV8 → PROP_C172
+    9, // EC35 → HELICOPTER
+    9, // EC45 → HELICOPTER
+    9, // EC55 → HELICOPTER
+    9, // EC30 → HELICOPTER
+    9, // EC20 → HELICOPTER
+    9, // AS50 → HELICOPTER
+    9, // AS55 → HELICOPTER
+    9, // AS65 → HELICOPTER
+    9, // H500 → HELICOPTER
+    9, // MD52 → HELICOPTER
+    9, // B06 → HELICOPTER
+    9, // B407 → HELICOPTER
+    9, // B412 → HELICOPTER
+    9, // R22 → HELICOPTER
+    9, // R44 → HELICOPTER
+    9, // R66 → HELICOPTER
+    9, // S76 → HELICOPTER
+    9, // A109 → HELICOPTER
+    9, // BK17 → HELICOPTER
+    9, // B505 → HELICOPTER
+    9, // GYRO → HELICOPTER
+    0, // FALLBACK → WING_FALLBACK
 ];
 
-/// Class-loudest profile_idx for each noise class. Used by
-/// REACH_SQ_TABLE so the per-class pre-filter envelope covers
-/// the loudest same-class typecode (no false negatives drop
-/// valid contributors), and as the synth-surface representative.
-/// Loudness ranked by max-power departure SEL @ 200 ft.
-pub static FIRST_PROFILE_OF_CLASS: [u8; NUM_CLASSES] = [
-    22, // JET_WB_2ENG → B77W (dep@200ft=114.7 dB)
-    0, // JET_NB_HB → B738 (dep@200ft=108.4 dB)
-    69, // JET_REG_FUSE → LJ60 (dep@200ft=110.5 dB)
-    68, // JET_BIZ_FUSE → PC24 (dep@200ft=101.0 dB)
-    38, // JET_WB_3ENG → MD11 (dep@200ft=113.2 dB)
-    123, // JET_3ENG_FUSE → FALLBACK (dep@200ft=108.4 dB)
-    43, // JET_WB_4ENG → B741 (dep@200ft=120.2 dB)
-    123, // JET_4ENG_LARGE → FALLBACK (dep@200ft=108.4 dB)
-    84, // PISTON_SE_PROP → C172 (dep@200ft=88.0 dB)
-    123, // PISTON_TWIN_LARGE → FALLBACK (dep@200ft=108.4 dB)
-    88, // PISTON_TWIN_SMALL → PA34 (dep@200ft=91.0 dB)
-    123, // PISTON_4ENG_LARGE → FALLBACK (dep@200ft=108.4 dB)
-    123, // TURBOPROP_SE → FALLBACK (dep@200ft=108.4 dB)
-    70, // TURBOPROP_LARGE → AT72 (dep@200ft=92.0 dB)
-    78, // TURBOPROP_TWIN_SMALL → L410 (dep@200ft=95.9 dB)
-    123, // TURBOPROP_4ENG → FALLBACK (dep@200ft=108.4 dB)
+/// Anchor profile_idx for each noise class. Anchor = exact NPD vector
+/// of the dominant traffic profile within the class (frozen). Used by
+/// the kernel hot path for SEL/v_ref/d_bar/installation lookup, by the
+/// synth surface emitter, and by popup display name.
+pub static CLASS_REP_PROFILE_IDX: [u8; NUM_CLASSES] = [
+    123, // WING_FALLBACK → FALLBACK
+    10, // WING_A320 → A320
+    0, // WING_B738 → B738
+    17, // WING_A21N → A21N
+    84, // PROP_C172 → C172
+    26, // WING_B789 → B789
+    7, // WING_B38M → B38M
+    12, // WING_A319 → A319
+    59, // FUSE_CRJ9 → CRJ9
+    107, // HELICOPTER → AS50
+    74, // PROP_DH8D → DH8D
+    62, // FUSE_C56X → C56X
+];
+
+/// Loudest profile_idx per class (by departure SEL @ 200 ft). Used
+/// ONLY by `REACH_SQ_TABLE` so the popup R-tree pre-filter envelope
+/// covers the loudest same-class typecode (no false negatives drop
+/// valid contributors). Differs from `CLASS_REP_PROFILE_IDX` when the
+/// anchor isn't the loudest member of its Voronoi class.
+pub static LOUDEST_PROFILE_OF_CLASS: [u8; NUM_CLASSES] = [
+    22, // WING_FALLBACK → B77W (dep@200ft=114.7 dB)
+    18, // WING_A320 → B752 (dep@200ft=105.5 dB)
+    28, // WING_B738 → A332 (dep@200ft=112.7 dB)
+    43, // WING_A21N → B741 (dep@200ft=120.2 dB)
+    88, // PROP_C172 → PA34 (dep@200ft=91.0 dB)
+    41, // WING_B789 → B744 (dep@200ft=113.5 dB)
+    7, // WING_B38M → B38M (dep@200ft=100.9 dB)
+    12, // WING_A319 → A319 (dep@200ft=103.9 dB)
+    57, // FUSE_CRJ9 → CRJ2 (dep@200ft=101.1 dB)
     102, // HELICOPTER → EC35 (dep@200ft=94.0 dB)
+    78, // PROP_DH8D → L410 (dep@200ft=95.9 dB)
+    69, // FUSE_C56X → LJ60 (dep@200ft=110.5 dB)
 ];
 
 pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
@@ -1210,8 +1220,8 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     ),
     NpdProfile::new(
         "FALLBACK/737800",
-        [94.5, 90.4, 87.4, 84.1, 78.7, 72.4, 67.5, 62.3, 54.9, 48.5],
-        [108.4, 104.5, 102.0, 99.3, 95.0, 89.9, 86.4, 81.5, 75.5, 69.5],
+        [94.5, 90.1, 87.0, 83.7, 78.3, 72.2, 67.5, 62.3, 56.4, 50.7],
+        [106.6, 102.6, 100.0, 97.1, 92.4, 86.9, 83.0, 78.1, 72.7, 67.3],
         160.0,
         370.0,
         Installation::Wing,
