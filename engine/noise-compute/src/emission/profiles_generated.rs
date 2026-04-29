@@ -47,21 +47,23 @@ pub static IS_JET: [bool; NUM_CLASSES] = [
 ];
 
 /// Runway-roll, taxi, apron reference SEL (dB) at 25 m, per noise class.
-/// Derived from the anchor profile's departure SEL @ 200 ft (runway proxy)
-/// minus standard 12 dB (taxi) / 18 dB (apron) offsets.
+/// Hand-tuned per anchor typecode (see `RUNWAY_DB_BY_ANCHOR` in the
+/// generator) — `dep@200ft` overestimates runway-roll by 6-10 dB because
+/// flyover NPDs don't include ground absorption / engine baffling.
+/// Standard offsets: taxi = runway − 12 dB, apron = runway − 18 dB.
 pub static GROUND_OPS_REFERENCE_SEL_DB: [[f64; 3]; NUM_CLASSES] = [
-    [106.6, 94.6, 88.6], // WING_FALLBACK
-    [104.6, 92.6, 86.6], // WING_A320
-    [108.4, 96.4, 90.4], // WING_B738
-    [107.5, 95.5, 89.5], // WING_A21N
-    [88.0, 76.0, 70.0], // PROP_C172
-    [105.4, 93.4, 87.4], // WING_B789
-    [100.9, 88.9, 82.9], // WING_B38M
-    [103.9, 91.9, 85.9], // WING_A319
-    [99.7, 87.7, 81.7], // FUSE_CRJ9
+    [104.0, 92.0, 86.0], // WING_FALLBACK
+    [104.0, 92.0, 86.0], // WING_A320
+    [104.0, 92.0, 86.0], // WING_B738
+    [104.0, 92.0, 86.0], // WING_A21N
+    [92.0, 80.0, 74.0], // PROP_C172
+    [108.0, 96.0, 90.0], // WING_B789
+    [104.0, 92.0, 86.0], // WING_B38M
+    [104.0, 92.0, 86.0], // WING_A319
+    [100.0, 88.0, 82.0], // FUSE_CRJ9
     [94.0, 82.0, 76.0], // HELICOPTER
-    [92.0, 80.0, 74.0], // PROP_DH8D
-    [103.4, 91.4, 85.4], // FUSE_C56X
+    [97.0, 85.0, 79.0], // PROP_DH8D
+    [99.0, 87.0, 81.0], // FUSE_C56X
 ];
 
 /// Per-profile → noise class lookup (dense u8 index). Computed by
@@ -211,26 +213,6 @@ pub static CLASS_REP_PROFILE_IDX: [u8; NUM_CLASSES] = [
     107, // HELICOPTER → AS50
     74, // PROP_DH8D → DH8D
     62, // FUSE_C56X → C56X
-];
-
-/// Loudest profile_idx per class (by departure SEL @ 200 ft). Used
-/// ONLY by `REACH_SQ_TABLE` so the popup R-tree pre-filter envelope
-/// covers the loudest same-class typecode (no false negatives drop
-/// valid contributors). Differs from `CLASS_REP_PROFILE_IDX` when the
-/// anchor isn't the loudest member of its Voronoi class.
-pub static LOUDEST_PROFILE_OF_CLASS: [u8; NUM_CLASSES] = [
-    22, // WING_FALLBACK → B77W (dep@200ft=114.7 dB)
-    18, // WING_A320 → B752 (dep@200ft=105.5 dB)
-    28, // WING_B738 → A332 (dep@200ft=112.7 dB)
-    43, // WING_A21N → B741 (dep@200ft=120.2 dB)
-    88, // PROP_C172 → PA34 (dep@200ft=91.0 dB)
-    41, // WING_B789 → B744 (dep@200ft=113.5 dB)
-    7, // WING_B38M → B38M (dep@200ft=100.9 dB)
-    12, // WING_A319 → A319 (dep@200ft=103.9 dB)
-    57, // FUSE_CRJ9 → CRJ2 (dep@200ft=101.1 dB)
-    102, // HELICOPTER → EC35 (dep@200ft=94.0 dB)
-    78, // PROP_DH8D → L410 (dep@200ft=95.9 dB)
-    69, // FUSE_C56X → LJ60 (dep@200ft=110.5 dB)
 ];
 
 pub static PROFILES: [NpdProfile; NUM_PROFILES] = [

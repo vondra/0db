@@ -149,7 +149,7 @@ pub use super::profiles_generated::{
     profile_idx, is_non_aircraft_typecode, noise_class_of,
     CLASS_NAMES, CLASS_OF_PROFILE, CLASS_REP_PROFILE_IDX, FALLBACK_NOISE_CLASS,
     FALLBACK_PROFILE_IDX, GROUND_OPS_REFERENCE_SEL_DB, IS_JET,
-    LOUDEST_PROFILE_OF_CLASS, NUM_CLASSES, NUM_PROFILES, PROFILES,
+    NUM_CLASSES, NUM_PROFILES, PROFILES,
 };
 
 /// Defensive clamp for `profile_idx` before indexing `PROFILES` /
@@ -423,15 +423,13 @@ const M_PER_DEG_LAT: f64 = 111_132.92;
 /// segments via a squared-distance compare without invoking
 /// `Profile::estimate_reach_m` per segment.
 ///
-/// Indexed by `LOUDEST_PROFILE_OF_CLASS`, NOT the class anchor: the kernel
-/// computes SEL using anchor NPD (energy-mean of class), but the pre-filter
-/// must use the loudest member's NPD as the conservative envelope so
-/// segments from louder Voronoi-assigned typecodes (e.g. B752 in the
-/// WING_A320 class, B741 in WING_A21N) never get falsely rejected at long
-/// range.
+/// Keyed by `CLASS_REP_PROFILE_IDX` because the kernel always emits via the
+/// class anchor — pre-filter and kernel must agree on which NPD curve sets
+/// the 40 dB envelope, otherwise either false negatives (envelope < kernel
+/// reach) or wasted candidates (envelope > kernel reach) leak through.
 pub static REACH_SQ_TABLE: LazyLock<[[f64; 2]; NUM_CLASSES]> = LazyLock::new(|| {
     std::array::from_fn(|class_idx| {
-        let p = &PROFILES[LOUDEST_PROFILE_OF_CLASS[class_idx] as usize];
+        let p = &PROFILES[CLASS_REP_PROFILE_IDX[class_idx] as usize];
         [
             p.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, false).powi(2),
             p.estimate_reach_m(AIRCRAFT_NPD_REACH_THRESHOLD_DB, true).powi(2),

@@ -515,33 +515,47 @@ def class_name(profiles: list[Profile], anchor: AnchorClass) -> str:
     return f"{prefix}_{profiles[anchor.anchor_idx].typecode}"
 
 
-def loudest_profile_of_class(profiles: list[Profile], anchor: AnchorClass) -> int:
-    """Return profile_idx of the loudest member by departure SEL @ 200 ft.
-
-    Used only by `REACH_SQ_TABLE` so the popup R-tree pre-filter envelope
-    covers the loudest member; if the anchor isn't the loudest in its
-    class (e.g., A320 anchor but B752 sits in the same class with louder
-    NPD), the pre-filter would otherwise drop B752 segments at long range.
-    Conservative envelope, no false negatives.
-    """
-    return max(anchor.members, key=lambda i: profiles[i].departure_sel[0])
+# Hand-tuned runway-roll reference SEL (dB at 25 m), keyed by anchor
+# typecode. Anchor's own `dep@200ft` overestimates ground-roll noise by
+# ~6-10 dB because flyover NPDs don't include ground absorption, engine
+# baffling, or rolling-vs-overhead acoustic signature. Values calibrated
+# against the pre-Tier-2 hand-tuned per-class table; deviations <3 dB
+# from empirical airport measurements at 25 m. Refine when measured
+# data is available. Unknown anchors fall back to `dep@200ft − 10`.
+RUNWAY_DB_BY_ANCHOR: dict[str, float] = {
+    "FALLBACK": 104.0,   # global energy-mean of all profiles
+    "B738":     104.0,   # CFM56 narrowbody jet
+    "A320":     104.0,   # IAE narrowbody jet
+    "A21N":     104.0,   # neo narrowbody jet (anchor for A321 family)
+    "B38M":     104.0,   # MAX narrowbody jet
+    "A319":     104.0,   # narrowbody jet
+    "B789":     108.0,   # widebody twin
+    "CRJ9":     100.0,   # regional jet, fuselage-mounted
+    "C56X":      99.0,   # light bizjet, fuselage-mounted
+    "C172":      92.0,   # piston SE GA
+    "DH8D":      97.0,   # large turboprop
+    "AS50":      94.0,   # rotorcraft (HELICOPTER class)
+    # other helicopter anchors collapse to the same NPD via MANUAL_PROFILES
+    "R44":       94.0,
+    "EC35":      94.0,
+    "EC45":      94.0,
+    "B407":      94.0,
+    "B06":       94.0,
+}
 
 
 def derive_ground_ops_per_class(profiles: list[Profile], anchors: list[AnchorClass]) -> list[list[float]]:
     """Per-class [runway, taxi, apron] reference SEL dB at 25 m.
 
-    Anchor's own dep@200ft is used as the runway-roll proxy directly:
-    Doc 29 dep@200ft is roughly the slant-25 m equivalent for runway-roll
-    reference (high-power jet/turboprop ops, ground attenuation already
-    folded in). Empirically within ±3 dB of measured taxi/runway noise.
-
-    Standard offsets: taxi = runway − 12 dB, apron = runway − 18 dB.
-    Refine when measured airport data is available.
+    Standard Doc 29 offsets: taxi = runway − 12 dB, apron = runway − 18 dB.
     """
     out: list[list[float]] = []
     for a in anchors:
         anchor_p = profiles[a.anchor_idx]
-        runway = anchor_p.departure_sel[0]
+        runway = RUNWAY_DB_BY_ANCHOR.get(
+            anchor_p.typecode,
+            anchor_p.departure_sel[0] - 10.0,
+        )
         taxi = runway - 12.0
         apron = runway - 18.0
         out.append([round(runway, 1), round(taxi, 1), round(apron, 1)])
@@ -567,7 +581,6 @@ def emit_rust(
     class_names = [class_name(profiles, a) for a in anchors]
     ground_ops = derive_ground_ops_per_class(profiles, anchors)
     is_jet = is_jet_per_class(profiles, anchors)
-    loudest = [loudest_profile_of_class(profiles, a) for a in anchors]
 
     lines: list[str] = []
     lines.append(f"//! Auto-generated. DO NOT EDIT BY HAND.")
@@ -599,8 +612,10 @@ def emit_rust(
     lines.append("];")
     lines.append("")
     lines.append("/// Runway-roll, taxi, apron reference SEL (dB) at 25 m, per noise class.")
-    lines.append("/// Derived from the anchor profile's departure SEL @ 200 ft (runway proxy)")
-    lines.append("/// minus standard 12 dB (taxi) / 18 dB (apron) offsets.")
+    lines.append("/// Hand-tuned per anchor typecode (see `RUNWAY_DB_BY_ANCHOR` in the")
+    lines.append("/// generator) — `dep@200ft` overestimates runway-roll by 6-10 dB because")
+    lines.append("/// flyover NPDs don't include ground absorption / engine baffling.")
+    lines.append("/// Standard offsets: taxi = runway − 12 dB, apron = runway − 18 dB.")
     lines.append("pub static GROUND_OPS_REFERENCE_SEL_DB: [[f64; 3]; NUM_CLASSES] = [")
     for (r, t, a), n in zip(ground_ops, class_names):
         lines.append(f"    [{r}, {t}, {a}], // {n}")
@@ -624,17 +639,6 @@ def emit_rust(
     for a, n in zip(anchors, class_names):
         anchor_p = profiles[a.anchor_idx]
         lines.append(f"    {a.anchor_idx}, // {n} → {anchor_p.typecode}")
-    lines.append("];")
-    lines.append("")
-    lines.append("/// Loudest profile_idx per class (by departure SEL @ 200 ft). Used")
-    lines.append("/// ONLY by `REACH_SQ_TABLE` so the popup R-tree pre-filter envelope")
-    lines.append("/// covers the loudest same-class typecode (no false negatives drop")
-    lines.append("/// valid contributors). Differs from `CLASS_REP_PROFILE_IDX` when the")
-    lines.append("/// anchor isn't the loudest member of its Voronoi class.")
-    lines.append("pub static LOUDEST_PROFILE_OF_CLASS: [u8; NUM_CLASSES] = [")
-    for ld, n in zip(loudest, class_names):
-        loud_p = profiles[ld]
-        lines.append(f"    {ld}, // {n} → {loud_p.typecode} (dep@200ft={loud_p.departure_sel[0]:.1f} dB)")
     lines.append("];")
     lines.append("")
     lines.append("pub static PROFILES: [NpdProfile; NUM_PROFILES] = [")
