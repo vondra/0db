@@ -76,14 +76,16 @@ ICAO_TYPECODE_TO_ACFT_ID: list[tuple[str, str | None, str | None]] = [
     ("B39M", "7378MAX", None),           # 737 MAX 9 nearest
     ("B37M", "7378MAX", None),           # 737 MAX 7 nearest
     ("A320", "A320-232", None),          # V2527-A5
-    ("A20N", "A320-232", None),          # A320neo nearest classic
+    # A20N: prefer EASA ANP v9 dedicated A320-270N (PW1100G GTF) — falls back
+    # to v2.3 A320-232 (V2527-A5) if v9 supplement absent.
+    ("A20N", "A320-270N", None),         # neo PW1100G (v9); fallback A320-232
     ("A319", "A319-131", None),          # V2522-A5
     ("A19N", "A319-131", None),          # A319neo nearest classic
     ("BCS3", "A319-131", None),          # A220-300 nearest narrowbody
     ("BCS1", "A319-131", None),          # A220-100 nearest narrowbody
     # ── stretched narrowbody / 757 ────────────────────────────────────────
     ("A321", "A321-232", None),          # V2530
-    ("A21N", "A321-232", None),          # A321neo nearest classic
+    ("A21N", "A321-270N", None),         # neo PW1100G (v9); fallback A321-232
     ("B752", "757PW", None),             # PW2037
     ("B753", "757PW", None),             # 757-300 nearest -200
     # ── widebody 2-engine ─────────────────────────────────────────────────
@@ -98,9 +100,9 @@ ICAO_TYPECODE_TO_ACFT_ID: list[tuple[str, str | None, str | None]] = [
     ("A332", "A330-301", None),          # CF6-80
     ("A333", "A330-343", None),          # Trent 772B
     ("A338", "A330-343", None),          # A330-800neo nearest classic
-    ("A339", "A330-343", None),          # A330-900neo nearest classic
+    ("A339", "A330-941", None),          # A330-900neo dedicated (v9); fallback A330-343
     ("A359", "A350-941", None),          # Trent XWB-84
-    ("A35K", "A350-941", None),          # A350-1000 nearest -900
+    ("A35K", "A350-1041", None),         # A350-1000 dedicated (v9); fallback A350-941
     ("A306", "A330-301", None),          # A300 nearest A330
     ("A310", "A330-301", None),          # A310 nearest A330
     ("B763", "767300", None),            # CF6-80A
@@ -125,8 +127,8 @@ ICAO_TYPECODE_TO_ACFT_ID: list[tuple[str, str | None, str | None]] = [
     ("E75S", "EMB175", None),
     ("E190", "EMB190", None),            # ERJ190 / CF34-10E
     ("E195", "EMB195", None),            # ERJ195
-    ("E290", "EMB190", None),            # E190-E2 nearest E1
-    ("E295", "EMB195", None),            # E195-E2 nearest E1
+    ("E290", "ERJ190-300", None),        # E190-E2 dedicated (v9); fallback EMB190
+    ("E295", "ERJ190-400", None),        # E195-E2 dedicated (v9); fallback EMB195
     ("CRJ2", "CL600", None),
     ("CRJ7", "CL601", None),
     ("CRJ9", "CL601", None),
@@ -313,6 +315,71 @@ def load_aircraft(anp_dir: Path) -> dict[str, AnpAcft]:
     return out
 
 
+def load_v9_supplement(v9_dir: Path | None) -> tuple[dict, dict, dict]:
+    """Load EASA ANP v9 supplement (April 2026) — 14 modern aircraft missing
+    from v2.3 (A320neo / A321neo / A330neo / A350-1000 / 787-9 / E2 family /
+    G650ER / Falcon 900EX). Returns (aircraft, sel_npd, lmax_npd) keyed by
+    v9 ACFT_ID — caller merges into the v2.3 dicts (v9 wins on conflicts).
+
+    Empty dicts when v9_dir is None — keeps the generator runnable without
+    the supplement so v2.3-only regen still succeeds.
+    """
+    if v9_dir is None:
+        return {}, {}, {}
+    import openpyxl  # local import — only needed when v9 is requested
+    aircraft: dict[str, AnpAcft] = {}
+    sel_npd: dict[tuple[str, str], list[tuple[float, list[float]]]] = {}
+    lmax_npd: dict[tuple[str, str], list[tuple[float, list[float]]]] = {}
+
+    # Aircraft sheet
+    wb = openpyxl.load_workbook(
+        v9_dir / "EASA_ANP_database_Aircraft_v9.xlsx", read_only=True, data_only=True
+    )
+    rows = list(wb.active.iter_rows(values_only=True))
+    col = {h: i for i, h in enumerate(rows[0])}
+    for row in rows[1:]:
+        if not row[col["ACFT_ID"]]:
+            continue
+        # v9 column "Wing" carries the lateral-directivity attribute
+        # (Wing / Fuselage). Translate to v2.3's `Lateral Directivity
+        # Identifier` semantics — same string, just different schema header.
+        aircraft[row[col["ACFT_ID"]]] = AnpAcft(
+            acft_id=str(row[col["ACFT_ID"]]),
+            npd_id=str(row[col["NPD_ID"]]),
+            engine_type=str(row[col["Engine Type"]]),
+            num_engines=int(row[col["Number Of Engines"]]),
+            weight_class=str(row[col["Weight Class"]]),
+            lateral=str(row[col["Wing"]]),
+            description=str(row[col["Description"]]),
+        )
+    wb.close()
+
+    # NPD sheet
+    wb = openpyxl.load_workbook(
+        v9_dir / "EASA_ANP_database_NPD_Data_v9.xlsx", read_only=True, data_only=True
+    )
+    rows = list(wb.active.iter_rows(values_only=True))
+    col = {h: i for i, h in enumerate(rows[0])}
+    cols = ["L_200ft", "L_400ft", "L_630ft", "L_1000ft", "L_2000ft",
+            "L_4000ft", "L_6300ft", "L_10000ft", "L_16000ft", "L_25000ft"]
+    for row in rows[1:]:
+        if not row[col["NPD_ID"]]:
+            continue
+        metric = row[col["Noise Metric"]]
+        target = sel_npd if metric == "SEL" else (lmax_npd if metric == "LAmax" else None)
+        if target is None:
+            continue
+        try:
+            vals = [float(row[col[c]]) for c in cols]
+            target.setdefault(
+                (str(row[col["NPD_ID"]]), str(row[col["Op Mode"]])), []
+            ).append((float(row[col["Power Setting"]]), vals))
+        except (TypeError, ValueError):
+            continue
+    wb.close()
+    return aircraft, sel_npd, lmax_npd
+
+
 def load_npd(
     anp_dir: Path, metric: str
 ) -> dict[tuple[str, str], list[tuple[float, list[float]]]]:
@@ -343,10 +410,18 @@ def select_sel(npd: dict, npd_id: str, op_mode: str, power: str) -> list[float]:
     return rows_sorted[0][1] if power == "low" else rows_sorted[-1][1]
 
 
-def build_profiles(anp_dir: Path) -> list[Profile]:
+def build_profiles(anp_dir: Path, v9_dir: Path | None = None) -> list[Profile]:
     aircraft = load_aircraft(anp_dir)
     sel_npd = load_npd(anp_dir, "SEL")
     lmax_npd = load_npd(anp_dir, "LAmax")
+    # Merge EASA ANP v9 supplement (April 2026) — adds 14 modern aircraft
+    # (A320neo / A321neo / A330neo / A350-1000 / 787-9 dedicated / E2 /
+    # G650ER / FAL900EX). v9 ACFT_IDs win on collision; ICAO_TYPECODE_TO_ACFT_ID
+    # below explicitly references v9 IDs for the typecodes that benefit.
+    v9_aircraft, v9_sel, v9_lmax = load_v9_supplement(v9_dir)
+    aircraft.update(v9_aircraft)
+    sel_npd.update(v9_sel)
+    lmax_npd.update(v9_lmax)
     profiles: list[Profile] = []
 
     for typecode, acft_id, manual_class in ICAO_TYPECODE_TO_ACFT_ID:
@@ -939,12 +1014,18 @@ def main():
     ap.add_argument("--counts", required=True,
                     help="Path to global traffic counts JSON "
                          "(scripts/aircraft-profiles-counts.json)")
+    ap.add_argument("--anp-v9-dir", default=None,
+                    help="Optional path to extracted EASA ANP v9 supplement "
+                         "(directory with EASA_ANP_database_*_v9.xlsx files)")
     ap.add_argument("-o", "--out", help="Output path (default: stdout)")
     args = ap.parse_args()
 
     anp_dir = Path(args.anp)
     if not (anp_dir / "ANP2.3_Aircraft.csv").exists():
         sys.exit(f"ANP CSVs not found in {anp_dir}")
+    v9_dir = Path(args.anp_v9_dir) if args.anp_v9_dir else None
+    if v9_dir is not None and not (v9_dir / "EASA_ANP_database_Aircraft_v9.xlsx").exists():
+        sys.exit(f"ANP v9 xlsx not found in {v9_dir}")
     counts_path = Path(args.counts)
     if not counts_path.exists():
         sys.exit(f"Counts JSON not found at {counts_path}")
@@ -961,7 +1042,7 @@ def main():
     counts: dict[int, int] = {int(k): int(v) for k, v in counts_raw.items()}
     counts_total = sum(counts.values())
 
-    profiles = build_profiles(anp_dir)
+    profiles = build_profiles(anp_dir, v9_dir)
     verify_anchors(profiles)
 
     # FALLBACK NPD must be the energy-mean BEFORE clustering, because
