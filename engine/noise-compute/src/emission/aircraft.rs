@@ -409,9 +409,12 @@ impl NpdLuts {
     }
 }
 
-/// Build a 128-bin LAmax LUT mirroring `build_npd_lut` for SEL. LAmax curves
-/// don't carry alpha_eff fits — beyond 25 000 ft we clamp at the last NPD
-/// point (LAmax there is well below per-event audibility for any receiver).
+/// Build a 128-bin LAmax LUT mirroring `build_npd_lut` for SEL. Beyond 25 000 ft
+/// we extrapolate via spherical divergence (`−20·log10(d/d_ref)`) plus the SEL
+/// per-profile `alpha_eff` for atmospheric absorption — peak SPL and integrated
+/// energy share the same source spectrum, so they share `alpha_eff`. (The prior
+/// clamp at the last NPD point would have overstated far-cruise LAmax by ~18 dB
+/// at 50 k ft slant — Codex/Gemini /gg flagged this as a popup-band false-positive.)
 pub fn build_lmax_lut(profile: &NpdProfile, is_departure: bool) -> [f64; NPD_LUT_BINS + 1] {
     let lmax = if is_departure {
         &profile.departure_lmax
@@ -428,11 +431,14 @@ pub fn build_lmax_lut(profile: &NpdProfile, is_departure: bool) -> [f64; NPD_LUT
             lut[i] = lmax[0] + slope * (log_d - LOG_DIST[0]);
             continue;
         }
-        // Above 25 000 ft: clamp at last NPD point — no alpha_eff
-        // extrapolation for LAmax (peak SPL drops faster than energy in
-        // the tail; clamp is conservative for the popup ranking use).
+        // Beyond the last NPD point (25 000 ft): physics-based extrapolation,
+        // mirroring `interpolate_sel_logd`. Atmospheric absorption is linear in
+        // metres, so the log-linear NPD slope underestimates loss at large slant.
         if log_d >= LOG_DIST[last] {
-            lut[i] = lmax[last];
+            let slant_m = 10.0_f64.powf(log_d) / FT_PER_M;
+            let geo = 20.0 * (slant_m / AIRCRAFT_NPD_REF_SLANT_M).log10();
+            let atm = profile.alpha_eff(is_departure) * (slant_m - AIRCRAFT_NPD_REF_SLANT_M);
+            lut[i] = lmax[last] - geo - atm;
             continue;
         }
         // Inside the table: log-linear interp between adjacent NPD points.
@@ -3596,9 +3602,17 @@ mod tests {
     fn test_similarity_fallback_top_unmapped() {
         let cases: &[(&str, &str)] = &[
             ("PC12", "DH8D"), // Pilatus PC-12 turboprop
-            ("C208", "C56X"), // Cessna 208 Caravan
-            ("BE20", "DH8D"), // King Air 200
-            ("BE35", "DH8D"), // Beech V35 Bonanza
+            ("C208", "DH8D"), // Cessna 208 Caravan — single-engine turboprop
+            ("C20T", "DH8D"), // Cessna 208 Caravan EX (turboprop) — tagged different
+            ("C441", "DH8D"), // Cessna 441 Conquest — twin turboprop
+            ("BE20", "DH8D"), // King Air 200 (turboprop)
+            // BE36 is in the strict ICAO_TYPECODE_TO_ACFT_ID table (its own ANP
+            // profile in PROP_C172 class), so it bypasses similarity_fallback
+            // entirely. The cases below exercise the fallback path only.
+            ("BE35", "C172"), // Beech V35 Bonanza — piston single (NOT a turboprop)
+            ("BE58", "C172"), // Beech Baron 58 — piston twin
+            ("BE76", "C172"), // Beech Duchess — piston twin
+            ("C130", "DH8D"), // C-130 Hercules — military 4-eng turboprop
             ("C150", "C172"), // Cessna 150
             ("C180", "C172"), // Cessna 180
             ("C185", "C172"), // Cessna 185
@@ -3607,6 +3621,8 @@ mod tests {
             ("CL35", "CRJ9"), // Bombardier Challenger 350
             ("E55P", "CRJ9"), // Embraer Phenom 300
             ("E545", "CRJ9"), // Embraer Legacy 450
+            ("E110", "DH8D"), // Embraer EMB-110 Bandeirante — twin turboprop
+            ("E120", "DH8D"), // Embraer EMB-120 Brasilia — twin turboprop
             ("GLF4", "CRJ9"), // Gulfstream G450
             ("F900", "CRJ9"), // Falcon 900
             ("F2TH", "CRJ9"), // Falcon 2000
@@ -3615,6 +3631,12 @@ mod tests {
             ("RV6", "C172"),  // Vans RV-6
             ("PA46", "C172"), // Piper PA-46 Malibu
             ("LJ45", "CRJ9"), // Learjet 45
+            ("B712", "CRJ9"), // Boeing 717-200 — rear-fuselage twin-jet (was
+                              //   wrongly matched as Beechcraft → DH8D before
+                              //   /gg DeepSeek caught the 10–15 dB under-estimate)
+            ("B461", "CRJ9"), // BAe 146-100 — 4-engine RJ (NOT a Bell helicopter)
+            ("B463", "CRJ9"), // BAe 146-300 — 4-engine RJ
+            ("RJ85", "CRJ9"), // Avro RJ85 — BAe 146 derivative
         ];
         for (typecode, expected_anchor) in cases {
             let got = profile_idx(typecode);

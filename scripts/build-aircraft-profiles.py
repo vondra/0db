@@ -702,8 +702,10 @@ def emit_rust(
     lines.append(f"//!")
     lines.append(f"//! Regen: python scripts/build-aircraft-profiles.py \\")
     lines.append(f"//!         --anp <DIR> \\")
+    lines.append(f"//!         --anp-v9-dir <DIR_V9> \\")
     lines.append(f"//!         --counts scripts/aircraft-profiles-counts.json \\")
-    lines.append(f"//!         > engine/noise-compute/src/emission/profiles_generated.rs")
+    lines.append(f"//!         --ts-out frontend/src/utils/profile-class.generated.ts \\")
+    lines.append(f"//!         -o engine/noise-compute/src/emission/profiles_generated.rs")
     lines.append("")
     lines.append("use super::aircraft::{Installation, NpdProfile};")
     lines.append("")
@@ -806,18 +808,58 @@ def emit_rust(
     lines.append("/// entries are exotic / military / experimental typecodes.")
     lines.append("fn similarity_fallback(typecode: &str) -> u8 {")
     lines.append("    let b = typecode.as_bytes();")
+    lines.append("    // C-130 Hercules and C-130J Super Hercules — military 4-engine turboprop")
+    lines.append("    // (would otherwise hit the C1xx Cessna piston bucket and produce a 20+ dB")
+    lines.append("    //  underestimate; DH8D anchor is the closest single-class fit).")
+    lines.append('    if matches!(b, b"C130" | b"C30J") {')
+    lines.append('        return profile_idx("DH8D");')
+    lines.append("    }")
     lines.append("    // Cessna piston singles (C150 / C152 / C170 / C172 / C177 / C180 / C182 / C185)")
     lines.append('    if matches!(b, [b\'C\', b\'1\', _, _]) {')
     lines.append('        return profile_idx("C172");')
     lines.append("    }")
-    lines.append("    // Cessna twin pistons / Caravans / business jets")
-    lines.append("    // (C20x Caravan, C25x Citation, C30x/C40x twins, C5xx, C6xx, C7xx)")
-    lines.append('    if matches!(b, [b\'C\', b\'2\'..=b\'7\', _, _]) {')
+    lines.append("    // Cessna single-engine turboprops — Caravan (C208/C20T) and Conquest (C441),")
+    lines.append("    // plus CASA C-212 (also turboprop). Carved out of the C2..7xx jet range")
+    lines.append("    // because the Caravan is the most common unmapped Cessna in ADSB scans.")
+    lines.append('    if matches!(b, b"C208" | b"C20T" | b"C212" | b"C441") {')
+    lines.append('        return profile_idx("DH8D");')
+    lines.append("    }")
+    lines.append("    // Cessna piston twins (C30x Skymaster, C310, C337, C340, C40x, C44x)")
+    lines.append("    // and remaining piston singles (C206/C207 Stationair, C210 Centurion).")
+    lines.append('    if matches!(b, [b\'C\', b\'2\', b\'0\', b\'6\' | b\'7\'] | [b\'C\', b\'2\', b\'1\', b\'0\']')
+    lines.append('                     | [b\'C\', b\'3\', _, _] | [b\'C\', b\'4\', _, _]) {')
+    lines.append('        return profile_idx("C172");')
+    lines.append("    }")
+    lines.append("    // Cessna business jets — Citation Mustang/CJ (C25x), Citation 5xx/6xx/7xx series.")
+    lines.append('    if matches!(b, [b\'C\', b\'2\', b\'5\', _] | [b\'C\', b\'5\', _, _]')
+    lines.append('                     | [b\'C\', b\'6\', _, _] | [b\'C\', b\'7\', _, _]) {')
     lines.append('        return profile_idx("C56X");')
     lines.append("    }")
-    lines.append("    // Beechcraft / King Air / Beech 1900-3500 — turboprop class")
-    lines.append('    if matches!(b, [b\'B\', b\'E\', _, _] | [b\'B\', b\'1\', b\'9\', b\'0\'] | [b\'B\', b\'3\', b\'5\', b\'0\'] | [b\'B\', b\'7\', b\'1\', b\'2\']) {')
+    lines.append("    // Beechcraft Bonanza/Baron/Duke piston singles + twins (BE19/23/24/3x/5x/6x/76/77/80/88).")
+    lines.append("    // Carved out of the BE turboprop bucket — Codex/Gemini /gg flagged BE35→DH8D as a")
+    lines.append("    // 10+ dB overestimate (Bonanza is a piston single, not a King Air).")
+    lines.append('    if matches!(b, [b\'B\', b\'E\', b\'1\', b\'9\']')
+    lines.append('                     | [b\'B\', b\'E\', b\'2\', b\'3\' | b\'4\']')
+    lines.append('                     | [b\'B\', b\'E\', b\'3\', _]')
+    lines.append('                     | [b\'B\', b\'E\', b\'5\', _]')
+    lines.append('                     | [b\'B\', b\'E\', b\'6\', _]')
+    lines.append('                     | [b\'B\', b\'E\', b\'7\', b\'6\' | b\'7\']')
+    lines.append('                     | b"BE17" | b"BE80" | b"BE88") {')
+    lines.append('        return profile_idx("C172");')
+    lines.append("    }")
+    lines.append("    // Beechcraft King Air turboprops (BE9x / BE10 / BE20), Beechjet (BE40, small jet)")
+    lines.append("    // and Beech 1900/350 commuter turboprops.")
+    lines.append('    if matches!(b, [b\'B\', b\'E\', b\'9\', _]')
+    lines.append('                     | b"BE10" | b"BE20" | b"BE40"')
+    lines.append('                     | [b\'B\', b\'1\', b\'9\', b\'0\']')
+    lines.append('                     | [b\'B\', b\'3\', b\'5\', b\'0\']) {')
     lines.append('        return profile_idx("DH8D");')
+    lines.append("    }")
+    lines.append("    // Boeing 717-200 (B712) — rear-fuselage twin-jet (MD-95 derivative), acoustically")
+    lines.append("    // close to FUSE_CRJ9 anchor (CRJ-900 family, also rear-fuselage twin). Carved")
+    lines.append("    // out before the BAe 146 / Bell helicopter B4xx pattern hits.")
+    lines.append('    if matches!(b, b"B712") {')
+    lines.append('        return profile_idx("CRJ9");')
     lines.append("    }")
     lines.append("    // Pilatus PC-12 / PC-7 turboprops")
     lines.append('    if matches!(b, [b\'P\', b\'C\', _, _]) {')
@@ -839,7 +881,13 @@ def emit_rust(
     lines.append('    if matches!(b, [b\'E\', _, _, b\'P\' | b\'L\']) {')
     lines.append('        return profile_idx("CRJ9");')
     lines.append("    }")
-    lines.append("    // Embraer ERJ-1xx / 1xx / E2 family")
+    lines.append("    // Embraer EMB-110 Bandeirante / EMB-120 Brasilia — twin turboprops.")
+    lines.append("    // Carved out before the E1xx jet pattern (would otherwise route to CRJ9 and")
+    lines.append("    // overstate by ~12 dB SEL on small commuter turboprops).")
+    lines.append('    if matches!(b, [b\'E\', b\'1\', b\'1\', _] | [b\'E\', b\'1\', b\'2\', _]) {')
+    lines.append('        return profile_idx("DH8D");')
+    lines.append("    }")
+    lines.append("    // Embraer ERJ-1xx / E170/190/195 / E2 family (E290/E295) — regional jets.")
     lines.append('    if matches!(b, [b\'E\', b\'1\' | b\'4\' | b\'5\', _, _]) {')
     lines.append('        return profile_idx("CRJ9");')
     lines.append("    }")
@@ -854,6 +902,12 @@ def emit_rust(
     lines.append("    // 3-char RV* codes (RV3 / RV4 / RV6 / RV7 / RV8 / RV9 — Vans homebuilt)")
     lines.append('    if matches!(b, [b\'R\', b\'V\', _]) {')
     lines.append('        return profile_idx("C172");')
+    lines.append("    }")
+    lines.append("    // BAe 146 / Avro RJ — 4-engine rear-fuselage regional jet")
+    lines.append("    // (carved out before the Bell B4xx helicopter pattern, which would otherwise")
+    lines.append("    //  route a 4-engine jet to a single-rotor helicopter — Codex/Gemini /gg flag).")
+    lines.append('    if matches!(b, b"B461" | b"B462" | b"B463" | b"B14R" | b"RJ70" | b"RJ85" | b"RJ1H") {')
+    lines.append('        return profile_idx("CRJ9");')
     lines.append("    }")
     lines.append("    // Helicopters: AS / EC / Bell / Sikorsky / Robinson / Leonardo / Airbus H-series")
     lines.append('    if matches!(b, [b\'A\', b\'S\', _, _] | [b\'E\', b\'C\', _, _]) {')
@@ -971,6 +1025,48 @@ def verify_voronoi(profiles: list[Profile], anchors: list[AnchorClass]) -> None:
         sys.exit(f"VORONOI FAIL: {total} assigned vs {n} profiles")
 
 
+def emit_ts(profiles: list[Profile], anchors: list[AnchorClass]) -> str:
+    """Generate `frontend/src/utils/profile-class.generated.ts`.
+
+    Mirrors `CLASS_OF_PROFILE` + `CLASS_REP_PROFILE_IDX` from the Rust
+    output so the React popup tooltip stays in sync with the Voronoi
+    clustering. Without this, any anchor reshuffle (e.g. EASA v9 supplement
+    promoting A20N/A21N to their own anchors) silently de-syncs the
+    tooltip until a human re-types the table by hand. The CI sweep
+    `python build-aircraft-profiles.py … --ts-out frontend/src/utils/profile-class.generated.ts && git diff --exit-code`
+    catches drift mechanically.
+    """
+    class_names = [class_name(profiles, a) for a in anchors]
+    lines: list[str] = []
+    lines.append("// Auto-generated by scripts/build-aircraft-profiles.py — DO NOT EDIT BY HAND.")
+    lines.append("//")
+    lines.append("// Mirrors `CLASS_OF_PROFILE` + `CLASS_REP_PROFILE_IDX` from")
+    lines.append("// `engine/noise-compute/src/emission/profiles_generated.rs`. Regenerate")
+    lines.append("// alongside the Rust file via the build-aircraft-profiles.py invocation")
+    lines.append("// (the `--ts-out` flag).")
+    lines.append("")
+    lines.append("/** ICAO typecode → noise-class label (Voronoi assignment). */")
+    lines.append("export const PROFILE_CLASS: Record<string, string> = {")
+    for p in profiles:
+        cls_name = class_names[p.noise_class]
+        lines.append(f"  {p.typecode}: '{cls_name}',")
+    lines.append("}")
+    lines.append("")
+    lines.append("/**")
+    lines.append(" * Class label → anchor profile (display typecode + whether the NPD curve")
+    lines.append(" * is the synthetic traffic-weighted energy-mean of all profiles, used")
+    lines.append(" * only for the FALLBACK anchor — every other class wraps a real ANP")
+    lines.append(" * profile).")
+    lines.append(" */")
+    lines.append("export const CLASS_ANCHOR: Record<string, { typecode: string; isEnergyMean: boolean }> = {")
+    for a, name in zip(anchors, class_names):
+        anchor_p = profiles[a.anchor_idx]
+        is_em = "true" if anchor_p.typecode == "FALLBACK" else "false"
+        lines.append(f"  {name}: {{ typecode: '{anchor_p.typecode}', isEnergyMean: {is_em} }},")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
 def emit_coverage_report(profiles: list[Profile], anchors: list[AnchorClass],
                           counts: dict[int, int]) -> str:
     total = sum(counts.values()) or 1
@@ -1028,6 +1124,9 @@ def main():
                     help="Optional path to extracted EASA ANP v9 supplement "
                          "(directory with EASA_ANP_database_*_v9.xlsx files)")
     ap.add_argument("-o", "--out", help="Output path (default: stdout)")
+    ap.add_argument("--ts-out", default=None,
+                    help="Optional path for the generated TypeScript class map "
+                         "(frontend/src/utils/profile-class.generated.ts)")
     args = ap.parse_args()
 
     anp_dir = Path(args.anp)
@@ -1073,6 +1172,8 @@ def main():
         Path(args.out).write_text(rust)
     else:
         sys.stdout.write(rust)
+    if args.ts_out:
+        Path(args.ts_out).write_text(emit_ts(profiles, anchors))
     sys.stderr.write(emit_coverage_report(profiles, anchors, counts))
 
 

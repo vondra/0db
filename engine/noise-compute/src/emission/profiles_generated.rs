@@ -6,8 +6,10 @@
 //!
 //! Regen: python scripts/build-aircraft-profiles.py \
 //!         --anp <DIR> \
+//!         --anp-v9-dir <DIR_V9> \
 //!         --counts scripts/aircraft-profiles-counts.json \
-//!         > engine/noise-compute/src/emission/profiles_generated.rs
+//!         --ts-out frontend/src/utils/profile-class.generated.ts \
+//!         -o engine/noise-compute/src/emission/profiles_generated.rs
 
 use super::aircraft::{Installation, NpdProfile};
 
@@ -1609,18 +1611,58 @@ pub fn profile_idx(typecode: &str) -> u8 {
 /// entries are exotic / military / experimental typecodes.
 fn similarity_fallback(typecode: &str) -> u8 {
     let b = typecode.as_bytes();
+    // C-130 Hercules and C-130J Super Hercules — military 4-engine turboprop
+    // (would otherwise hit the C1xx Cessna piston bucket and produce a 20+ dB
+    //  underestimate; DH8D anchor is the closest single-class fit).
+    if matches!(b, b"C130" | b"C30J") {
+        return profile_idx("DH8D");
+    }
     // Cessna piston singles (C150 / C152 / C170 / C172 / C177 / C180 / C182 / C185)
     if matches!(b, [b'C', b'1', _, _]) {
         return profile_idx("C172");
     }
-    // Cessna twin pistons / Caravans / business jets
-    // (C20x Caravan, C25x Citation, C30x/C40x twins, C5xx, C6xx, C7xx)
-    if matches!(b, [b'C', b'2'..=b'7', _, _]) {
+    // Cessna single-engine turboprops — Caravan (C208/C20T) and Conquest (C441),
+    // plus CASA C-212 (also turboprop). Carved out of the C2..7xx jet range
+    // because the Caravan is the most common unmapped Cessna in ADSB scans.
+    if matches!(b, b"C208" | b"C20T" | b"C212" | b"C441") {
+        return profile_idx("DH8D");
+    }
+    // Cessna piston twins (C30x Skymaster, C310, C337, C340, C40x, C44x)
+    // and remaining piston singles (C206/C207 Stationair, C210 Centurion).
+    if matches!(b, [b'C', b'2', b'0', b'6' | b'7'] | [b'C', b'2', b'1', b'0']
+                     | [b'C', b'3', _, _] | [b'C', b'4', _, _]) {
+        return profile_idx("C172");
+    }
+    // Cessna business jets — Citation Mustang/CJ (C25x), Citation 5xx/6xx/7xx series.
+    if matches!(b, [b'C', b'2', b'5', _] | [b'C', b'5', _, _]
+                     | [b'C', b'6', _, _] | [b'C', b'7', _, _]) {
         return profile_idx("C56X");
     }
-    // Beechcraft / King Air / Beech 1900-3500 — turboprop class
-    if matches!(b, [b'B', b'E', _, _] | [b'B', b'1', b'9', b'0'] | [b'B', b'3', b'5', b'0'] | [b'B', b'7', b'1', b'2']) {
+    // Beechcraft Bonanza/Baron/Duke piston singles + twins (BE19/23/24/3x/5x/6x/76/77/80/88).
+    // Carved out of the BE turboprop bucket — Codex/Gemini /gg flagged BE35→DH8D as a
+    // 10+ dB overestimate (Bonanza is a piston single, not a King Air).
+    if matches!(b, [b'B', b'E', b'1', b'9']
+                     | [b'B', b'E', b'2', b'3' | b'4']
+                     | [b'B', b'E', b'3', _]
+                     | [b'B', b'E', b'5', _]
+                     | [b'B', b'E', b'6', _]
+                     | [b'B', b'E', b'7', b'6' | b'7']
+                     | b"BE17" | b"BE80" | b"BE88") {
+        return profile_idx("C172");
+    }
+    // Beechcraft King Air turboprops (BE9x / BE10 / BE20), Beechjet (BE40, small jet)
+    // and Beech 1900/350 commuter turboprops.
+    if matches!(b, [b'B', b'E', b'9', _]
+                     | b"BE10" | b"BE20" | b"BE40"
+                     | [b'B', b'1', b'9', b'0']
+                     | [b'B', b'3', b'5', b'0']) {
         return profile_idx("DH8D");
+    }
+    // Boeing 717-200 (B712) — rear-fuselage twin-jet (MD-95 derivative), acoustically
+    // close to FUSE_CRJ9 anchor (CRJ-900 family, also rear-fuselage twin). Carved
+    // out before the BAe 146 / Bell helicopter B4xx pattern hits.
+    if matches!(b, b"B712") {
+        return profile_idx("CRJ9");
     }
     // Pilatus PC-12 / PC-7 turboprops
     if matches!(b, [b'P', b'C', _, _]) {
@@ -1642,7 +1684,13 @@ fn similarity_fallback(typecode: &str) -> u8 {
     if matches!(b, [b'E', _, _, b'P' | b'L']) {
         return profile_idx("CRJ9");
     }
-    // Embraer ERJ-1xx / 1xx / E2 family
+    // Embraer EMB-110 Bandeirante / EMB-120 Brasilia — twin turboprops.
+    // Carved out before the E1xx jet pattern (would otherwise route to CRJ9 and
+    // overstate by ~12 dB SEL on small commuter turboprops).
+    if matches!(b, [b'E', b'1', b'1', _] | [b'E', b'1', b'2', _]) {
+        return profile_idx("DH8D");
+    }
+    // Embraer ERJ-1xx / E170/190/195 / E2 family (E290/E295) — regional jets.
     if matches!(b, [b'E', b'1' | b'4' | b'5', _, _]) {
         return profile_idx("CRJ9");
     }
@@ -1657,6 +1705,12 @@ fn similarity_fallback(typecode: &str) -> u8 {
     // 3-char RV* codes (RV3 / RV4 / RV6 / RV7 / RV8 / RV9 — Vans homebuilt)
     if matches!(b, [b'R', b'V', _]) {
         return profile_idx("C172");
+    }
+    // BAe 146 / Avro RJ — 4-engine rear-fuselage regional jet
+    // (carved out before the Bell B4xx helicopter pattern, which would otherwise
+    //  route a 4-engine jet to a single-rotor helicopter — Codex/Gemini /gg flag).
+    if matches!(b, b"B461" | b"B462" | b"B463" | b"B14R" | b"RJ70" | b"RJ85" | b"RJ1H") {
+        return profile_idx("CRJ9");
     }
     // Helicopters: AS / EC / Bell / Sikorsky / Robinson / Leonardo / Airbus H-series
     if matches!(b, [b'A', b'S', _, _] | [b'E', b'C', _, _]) {
