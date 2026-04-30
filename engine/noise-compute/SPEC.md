@@ -609,6 +609,36 @@ T_day = 43200s, T_evening = 14400s, T_night = 28800s
 ### Octave bands
 ❌ BROADBAND ONLY. NPD returns single SEL value. Do not fabricate per-band data.
 
+### Per-event peak Lmax (informational only)
+
+The popup's per-flight `Lmax` and the band-classification thresholds (>30 / >45 / >60 dB) use a fixed-offset estimate:
+
+```
+Lmax_event ≈ SEL_segment − 12 dB
+```
+
+Implementation: `engine/noise-compute/src/lib.rs:1874`. `peak_lmax` per flight = max over all segments of `SEL_seg − 12`.
+
+**Why the constant 12 dB**: empirical mid-band of measured SEL−Lmax differences across jet flyover geometries:
+
+| Operation | SEL − Lmax (measured) | t_e (10-dB-down) |
+|-----------|----------------------:|-----------------:|
+| Low approach (≤1000 ft AGL, fast jet) | 8–10 dB | 5–10 s |
+| Typical climb / level overflight | 11–14 dB | 13–25 s |
+| Cruise overhead (FL250+) | 15–18 dB | 30–60 s |
+
+Sources: FAA AEDT Tech Manual §6.4, ICAO Doc 29 4th Ed §A.2.1.
+
+**Why a single constant rather than per-event computation**: EASA ANP v2.3 publishes separate Lmax NPD tables alongside SEL NPD tables. `scripts/build-aircraft-profiles.py` currently only ingests the SEL columns to keep `NpdProfile` memory and the kernel hot path minimal. Lmax is shown for context in the popup (loudest individual events, band classification) and is not used in the Lden energy integral, which is the primary product. Per-event accuracy of Lmax matters less than per-event accuracy of SEL.
+
+**Bias of the fixed offset**:
+- Cruise overheads at FL250+ (where measured SEL−Lmax ≈ 15–18 dB): we use −12 → **overestimates Lmax by 3–6 dB**
+- Low approaches (≤1000 ft AGL, where measured SEL−Lmax ≈ 8–10 dB): we use −12 → **underestimates Lmax by 2–4 dB**
+
+For typical operations the residual error is ≤2 dB.
+
+**TODO (Tier 3)**: ingest `lmax_app_sel` / `lmax_dep_sel` ANP columns, add `approach_lmax` / `departure_lmax` arrays to `NpdProfile`, build separate Lmax LUTs in `NpdLuts`, replace `sel - 12.0` with a true per-segment Lmax NPD lookup. This is a kernel-only change (no re-extract; aircraft.arrow stores per-segment SEL inputs that map to either curve).
+
 ### 5.2 Airport ground ops (current implementation)
 
 Airport ground ops are a separate submodel inside the `aircraft` layer.
