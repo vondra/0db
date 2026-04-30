@@ -47,6 +47,12 @@ export function formatCpa(m: number): string {
   return m < 1000 ? `${m.toFixed(0)} m` : `${(m / 1000).toFixed(1)} km`
 }
 
+/** Meters → kilometers, fixed digits, no unit suffix. Use when the unit
+ * lives in the column header to keep cell width minimal. */
+export function metersToKm(m: number, digits = 2): string {
+  return (m / 1000).toFixed(digits)
+}
+
 /**
  * Build a 2-column table-like text block for native title= tooltips.
  * Renders with monospace columns: label padded, value right-aligned.

@@ -3,7 +3,8 @@ import { useMap, Source, Layer } from 'react-map-gl/maplibre'
 import { ldenToColor } from '../utils/noise-colors'
 import { MetricLabel, DataPoint } from './noise/noise-tooltips'
 import { HoverText } from './ui/info-tip'
-import { fmt, fmtDb, fmtDbValue, fmtFloat, fmtInt, fmtCompact, formatCpa, txtTable, type TableRow } from '../utils/formatters'
+import { fmt, fmtDb, fmtDbValue, fmtFloat, fmtInt, fmtCompact, metersToKm, txtTable, type TableRow } from '../utils/formatters'
+import { aircraftTooltip, classToAnchorTypecode, parseProfileName } from '../utils/aircraft-types'
 import { formatDist, lineRow, railTrainSourceLine, roadSourceDescription, SOURCE_LABELS, subtypeLabel } from './noise/shared'
 import { SegmentList } from './noise/SegmentList'
 import { TabStrip, type PopupTab } from './noise/TabStrip'
@@ -31,50 +32,51 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
           </HoverText>
         ) : 'Top flights'}
       </div>
-      <table className="w-full text-[10px]">
+      <table className="w-full text-[10px] [&_th]:pl-2 [&_td]:pl-2 [&_:first-child]:pl-0">
         <thead>
-          <tr className="text-muted-foreground/60">
-            <th className="text-left font-normal pb-0.5">#</th>
-            <th className="text-right font-normal pb-0.5">
-              {detailed ? <HoverText title={"Lmax (dB)\n\nPeak single-event maximum sound level for this flight at this point.\nComputed as SEL − 12 dB (typical exposure duration correction).\nHigher Lmax = louder individual flyover."}>Lmax</HoverText> : 'Lmax'}
+          <tr className="text-muted-foreground/60 [&_th]:font-normal [&_th]:pb-0.5">
+            <th className="text-right">
+              {detailed ? <HoverText title={"Peak A-weighted SPL during this flyover.\n\nHardcoded approximation: Lmax = SEL − 12 dB. The 12 dB constant is the empirical mid-band of measured SEL−Lmax across jet flyovers (8–10 dB low approaches, 15–18 dB cruise overheads — FAA AEDT TM §6, Doc 29 §A.2.1).\n\nWhy hardcoded: EASA ANP v2.3 ships separate Lmax NPD tables but the generator only ingests SEL columns to keep the kernel hot path simple. Lmax here is informational (not used in the Lden integral).\n\nBias: overestimates cruise overhead Lmax by 3–6 dB, underestimates low-approach Lmax by 2–4 dB. See engine/noise-compute/SPEC.md §5.1."}>Lmax</HoverText> : 'Lmax'}
             </th>
-            <th className="text-right font-normal pb-0.5">
-              {detailed ? <HoverText title={"CPA distance (m)\n\nClosest Point of Approach — the shortest 3D slant distance from the flight track to this receiver point.\nComputed on the infinite line extension of the segment (Doc 29 §4.4.1).\nSmaller CPA = louder."}>CPA</HoverText> : 'CPA'}
+            <th className="text-right">
+              {detailed ? <HoverText title={"Closest Point of Approach — shortest 3D slant distance from the flight track to this receiver.\nComputed on the infinite line extension of the segment (Doc 29 §4.4.1).\nSmaller CPA = louder."}>CPA(km)</HoverText> : 'CPA(km)'}
             </th>
-            <th className="text-right font-normal pb-0.5">
-              {detailed ? <HoverText title={"Altitude (m)\n\nAircraft altitude above receiver at the closest point of approach.\nDerived from ADS-B barometric altitude minus receiver ground elevation.\nVery low values (<100 m) may indicate ADS-B altitude glitches."}>Alt</HoverText> : 'Alt'}
+            <th className="text-right">
+              {detailed ? <HoverText title={"Aircraft altitude above receiver at the closest point of approach.\nDerived from ADS-B barometric altitude minus receiver ground elevation.\nVery low values (<0.10 km) may indicate ADS-B altitude glitches."}>Alt(km)</HoverText> : 'Alt(km)'}
             </th>
-            <th className="text-right font-normal pb-0.5">
+            <th className="text-right">
               {detailed ? <HoverText title={`Date & period\n\n${PERIOD_TOOLTIP}`}>Date</HoverText> : 'Date'}
             </th>
-            <th className="text-right font-normal pb-0.5">
-              {detailed ? <HoverText title={"Aircraft type\n\nDoc 29 NPD profile category assigned during ADS-B processing:\n  B738 = Boeing 737 family\n  A320/A321 = Airbus narrowbody\n  Widebody = large twin-aisle\n  Turboprop = propeller transport\n  BizJet = business jet\n  LightGA = light GA + rotorcraft\n  Generic = unclassified"}>Type</HoverText> : 'Type'}
+            <th className="text-right">
+              {detailed ? <HoverText title={"Aircraft type (ICAO Doc 8643)\n\n4-letter ICAO designator parsed from this flight's NPD profile.\nHover the cell for the full model name + Voronoi anchor class.\n\n• B738 = Boeing 737-800\n• A320 = Airbus A320\n• PC12 = Pilatus PC-12\n• OTHER = typecode not in NPD database (energy-mean fallback)"}>Type</HoverText> : 'Type'}
             </th>
-            <th className="text-right font-normal pb-0.5">
+            <th className="text-right">
               {detailed ? <HoverText title={"Energy share (%)\n\nThis flight's contribution to total airborne Lden energy.\n100% = this single flight causes all airborne noise.\nEnergy is in linear (not dB) scale, so a flight with 90%\ndominates even if other flights have similar Lmax."}>%</HoverText> : '%'}
             </th>
           </tr>
         </thead>
         <tbody>
           {flights.map((f, i) => {
-            const periodLabel = PERIOD_LABELS[f.period] ?? '?'
+            const periodLetter = (PERIOD_LABELS[f.period] ?? '?').charAt(0)
             const periodColor = PERIOD_COLORS[f.period]
             const dateShort = f.date ? f.date.slice(5) : ''
+            const typecode = parseProfileName(f.profile)
             return (
-              <tr key={i}>
-                <td>{i + 1}</td>
-                <td className="text-right font-medium">{f.lmax_db.toFixed(0)}</td>
-                <td className="text-right">{formatCpa(f.cpa_distance_m)}</td>
-                <td className="text-right">{f.altitude_m.toFixed(0)} m</td>
-                <td className="text-right" style={periodColor ? { color: periodColor } : undefined}>
+              <tr key={i} className="[&_td]:text-right">
+                <td className="font-medium">{f.lmax_db.toFixed(0)}&nbsp;dB</td>
+                <td>{metersToKm(f.cpa_distance_m)}</td>
+                <td>{metersToKm(f.altitude_m)}</td>
+                <td style={periodColor ? { color: periodColor } : undefined}>
                   {detailed ? (
                     <HoverText title={`${f.date}\n${PERIOD_LABELS_DETAIL[f.period] ?? '?'}`}>
-                      {dateShort} {periodLabel}
+                      {dateShort} {periodLetter}
                     </HoverText>
-                  ) : `${dateShort} ${periodLabel}`}
+                  ) : `${dateShort} ${periodLetter}`}
                 </td>
-                <td className="text-right">{f.profile}</td>
-                <td className="text-right text-muted-foreground/60">{f.energy_pct.toFixed(0)}%</td>
+                <td>
+                  <HoverText title={aircraftTooltip(typecode)}>{typecode}</HoverText>
+                </td>
+                <td className="text-muted-foreground/60">{f.energy_pct.toFixed(0)}%</td>
               </tr>
             )
           })}
@@ -603,13 +605,21 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                 'Day/Evening/Night',
                 `${fmtDbValue(aircraftAirborne.periods.ld_db)}/${fmtDbValue(aircraftAirborne.periods.le_db)}/${fmtDbValue(aircraftAirborne.periods.ln_db)} dB`,
               )}
-              <table className="w-full text-[10px] mt-1">
+              <table className="w-full text-[10px] mt-1 [&_th]:pl-2 [&_td]:pl-2 [&_:first-child]:pl-0">
                 <thead>
-                  <tr className="text-muted-foreground/60">
-                    <th className="text-left font-normal pb-0.5">Band</th>
-                    <th className="text-right font-normal pb-0.5">Events/day</th>
-                    <th className="text-right font-normal pb-0.5">Avg alt</th>
-                    <th className="text-right font-normal pb-0.5">Top type</th>
+                  <tr className="text-muted-foreground/60 [&_th]:font-normal [&_th]:pb-0.5">
+                    <th className="text-left">
+                      <HoverText title={"Lmax threshold\n\nPer-event peak A-weighted SPL band (Lmax = SEL − 12 dB).\nA flight is counted in this band if its Lmax at this point exceeds the threshold."}>Lmax</HoverText>
+                    </th>
+                    <th className="text-right">
+                      <HoverText title={"Observed flights per day\n\nSegments contributing to this Lmax band, divided by n_days from the ADS-B archive (currently 365)."}>Flights/day</HoverText>
+                    </th>
+                    <th className="text-right">
+                      <HoverText title={"Mean aircraft altitude AMSL in this band.\nLow values indicate approach/departure traffic; high values indicate en-route cruise."}>Avg alt(km)</HoverText>
+                    </th>
+                    <th className="text-right">
+                      <HoverText title={"Anchor typecode of the dominant noise class in this band.\nThe class label CLASS_NAMES[noise_class] is shortened to its anchor 4-letter typecode (WING_B738 → B738).\nFALLBACK = traffic-weighted energy-mean class for typecodes not present in the NPD database."}>Top type</HoverText>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -617,16 +627,22 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                     { label: '>60 dB', bucket: aircraftAirborne.disruptive, color: '#ef4444' },
                     { label: '>45 dB', bucket: aircraftAirborne.audible, color: '#f59e0b' },
                     { label: '>30 dB', bucket: aircraftAirborne.faint, color: '#6b7280' },
-                  ].map(({ label, bucket, color }) => (
-                    bucket.observed_events_per_day > 0 ? (
-                      <tr key={label}>
-                        <td style={{ color }} className="font-medium">{label}</td>
-                        <td className="text-right">{bucket.observed_events_per_day.toFixed(0)}</td>
-                        <td className="text-right">{bucket.avg_altitude_m.toFixed(0)} m</td>
-                        <td className="text-right">{bucket.top_aircraft}</td>
+                  ].map(({ label, bucket, color }) => {
+                    if (bucket.observed_events_per_day <= 0) return null
+                    const anchor = classToAnchorTypecode(bucket.top_aircraft)
+                    return (
+                      <tr key={label} className="[&_td]:text-right">
+                        <td style={{ color }} className="font-medium !text-left">{label}</td>
+                        <td>{bucket.observed_events_per_day.toFixed(0)}</td>
+                        <td>{metersToKm(bucket.avg_altitude_m)}</td>
+                        <td>
+                          <HoverText title={aircraftTooltip(anchor, bucket.top_aircraft)}>
+                            {anchor}
+                          </HoverText>
+                        </td>
                       </tr>
-                    ) : null
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
               {aircraftAirborne.top_flights && <TopFlightsTable flights={aircraftAirborne.top_flights} detailed />}
