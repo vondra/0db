@@ -274,6 +274,8 @@ class Profile:
     name: str  # display name, e.g., "B738/737800"
     approach_sel: list[float]
     departure_sel: list[float]
+    approach_lmax: list[float]    # ANP LAmax NPD — peak A-weighted SPL per
+    departure_lmax: list[float]   # distance row, replaces hardcoded SEL−12 dB
     v_ref_kt: float
     d_bar_m: float
     installation: str  # "Wing"/"Fuselage"/"Prop"
@@ -284,7 +286,12 @@ class Profile:
     noise_class: int = -1   # 0..NUM_CLASSES-1, set by Voronoi assignment
 
     def feature(self) -> list[float]:
-        """20-D NPD vector used for L∞ similarity (Voronoi)."""
+        """20-D NPD vector used for L∞ similarity (Voronoi).
+
+        SEL only — Lmax is derived from same source physics and doesn't
+        add independent class-discrimination signal. Keeping SEL-only
+        also preserves the Tier 2.5 anchor selection.
+        """
         return list(self.approach_sel) + list(self.departure_sel)
 
 
@@ -306,24 +313,29 @@ def load_aircraft(anp_dir: Path) -> dict[str, AnpAcft]:
     return out
 
 
-def load_npd(anp_dir: Path) -> dict[tuple[str, str], list[tuple[float, list[float]]]]:
-    """(NPD_ID, Op Mode) → list of (Power Setting, [10 SEL dB])."""
+def load_npd(
+    anp_dir: Path, metric: str
+) -> dict[tuple[str, str], list[tuple[float, list[float]]]]:
+    """(NPD_ID, Op Mode) → list of (Power Setting, [10 dB values]) for the
+    given Noise Metric column. metric is one of: 'SEL', 'LAmax', 'EPNL',
+    'PNLTM'. Only SEL and LAmax are consumed by the kernel."""
     out: dict[tuple[str, str], list[tuple[float, list[float]]]] = {}
     with (anp_dir / "ANP2.3_NPD_data.csv").open() as fh:
         rdr = csv.DictReader(fh, delimiter=";")
         cols = ["L_200ft", "L_400ft", "L_630ft", "L_1000ft", "L_2000ft",
                 "L_4000ft", "L_6300ft", "L_10000ft", "L_16000ft", "L_25000ft"]
         for row in rdr:
-            if row["Noise Metric"] != "SEL":
+            if row["Noise Metric"] != metric:
                 continue
-            sels = [float(row[c]) for c in cols]
+            vals = [float(row[c]) for c in cols]
             key = (row["NPD_ID"], row["Op Mode"])
-            out.setdefault(key, []).append((float(row["Power Setting"]), sels))
+            out.setdefault(key, []).append((float(row["Power Setting"]), vals))
     return out
 
 
 def select_sel(npd: dict, npd_id: str, op_mode: str, power: str) -> list[float]:
-    """Pick representative SEL row. power='low' for approach, 'high' for departure."""
+    """Pick representative NPD row. power='low' for approach, 'high' for departure.
+    Works for both SEL and LAmax NPD dicts (same shape)."""
     rows = npd.get((npd_id, op_mode))
     if not rows:
         return [0.0] * 10
@@ -333,17 +345,24 @@ def select_sel(npd: dict, npd_id: str, op_mode: str, power: str) -> list[float]:
 
 def build_profiles(anp_dir: Path) -> list[Profile]:
     aircraft = load_aircraft(anp_dir)
-    npd = load_npd(anp_dir)
+    sel_npd = load_npd(anp_dir, "SEL")
+    lmax_npd = load_npd(anp_dir, "LAmax")
     profiles: list[Profile] = []
 
     for typecode, acft_id, manual_class in ICAO_TYPECODE_TO_ACFT_ID:
         if manual_class is not None:
             approach, departure, v_ref, d_bar, inst, is_jet = MANUAL_PROFILES[manual_class]
+            # Manual profiles (HELICOPTER, GA fallbacks) have no published
+            # LAmax NPD curve — use a conservative SEL−12 dB shift, matching
+            # the prior hardcoded approximation. Real LAmax NPD will land
+            # whenever EASA publishes rotorcraft Lmax data.
             profiles.append(Profile(
                 typecode=typecode,
                 name=f"{typecode}/{manual_class}",
                 approach_sel=list(approach),
                 departure_sel=list(departure),
+                approach_lmax=[s - 12.0 for s in approach],
+                departure_lmax=[s - 12.0 for s in departure],
                 v_ref_kt=v_ref,
                 d_bar_m=d_bar,
                 installation=inst,
@@ -358,8 +377,15 @@ def build_profiles(anp_dir: Path) -> list[Profile]:
                   file=sys.stderr)
             continue
         acft = aircraft[acft_id]
-        approach = select_sel(npd, acft.npd_id, "A", "low")
-        departure = select_sel(npd, acft.npd_id, "D", "high")
+        approach = select_sel(sel_npd, acft.npd_id, "A", "low")
+        departure = select_sel(sel_npd, acft.npd_id, "D", "high")
+        approach_lmax = select_sel(lmax_npd, acft.npd_id, "A", "low")
+        departure_lmax = select_sel(lmax_npd, acft.npd_id, "D", "high")
+        if not any(approach_lmax):
+            # ANP missing LAmax for this NPD_ID — fall back to SEL−12 dB.
+            approach_lmax = [s - 12.0 for s in approach]
+        if not any(departure_lmax):
+            departure_lmax = [s - 12.0 for s in departure]
         # v_ref / d_bar: Doc 29 standard reference values (160 kt / 370 m for
         # jets, 130 kt / 261 m for turboprops). ANP doesn't expose them
         # per-aircraft.
@@ -374,6 +400,8 @@ def build_profiles(anp_dir: Path) -> list[Profile]:
             name=f"{typecode}/{acft.acft_id}",
             approach_sel=approach,
             departure_sel=departure,
+            approach_lmax=approach_lmax,
+            departure_lmax=departure_lmax,
             v_ref_kt=v_ref,
             d_bar_m=d_bar,
             installation=acft.lateral,
@@ -387,7 +415,8 @@ def build_profiles(anp_dir: Path) -> list[Profile]:
 
 def recompute_fallback_npd(profiles: list[Profile], counts: dict[int, int]) -> None:
     """Replace FALLBACK NPD with traffic-weighted energy-mean of all
-    non-FALLBACK profiles. Operates in-place on `profiles`.
+    non-FALLBACK profiles. Operates in-place on `profiles` for both SEL
+    and LAmax NPD curves.
 
     Original FALLBACK NPD = B738 (proxy chosen at hand-curation time);
     that over-counts unmapped typecodes by ~2 dB at dep@1k vs the actual
@@ -401,21 +430,28 @@ def recompute_fallback_npd(profiles: list[Profile], counts: dict[int, int]) -> N
     if sum(weights) == 0:
         # No traffic data — keep the existing FALLBACK proxy values.
         return
-    n = 20  # 10 approach + 10 departure points
-    energy_sum = [0.0] * n
-    weight_sum = 0.0
-    for (_, p), w in zip(others, weights):
-        if w <= 0:
-            continue
-        feat = p.feature()
-        for k in range(n):
-            energy_sum[k] += w * (10.0 ** (feat[k] / 10.0))
-        weight_sum += w
-    energy_mean = [e / weight_sum for e in energy_sum]
-    fb_npd = [10.0 * math.log10(max(e, 1e-30)) for e in energy_mean]
+
+    def energy_mean(curves: list[list[float]]) -> list[float]:
+        n = len(curves[0])
+        energy_sum = [0.0] * n
+        weight_sum = 0.0
+        for c, w in zip(curves, weights):
+            if w <= 0:
+                continue
+            for k in range(n):
+                energy_sum[k] += w * (10.0 ** (c[k] / 10.0))
+            weight_sum += w
+        return [10.0 * math.log10(max(e / weight_sum, 1e-30)) for e in energy_sum]
+
     fb = profiles[fb_idx]
-    fb.approach_sel = fb_npd[:10]
-    fb.departure_sel = fb_npd[10:]
+    # SEL curves (approach + departure concatenated, 20-D feature)
+    sel_feat = energy_mean([p.feature() for _, p in others])
+    fb.approach_sel = sel_feat[:10]
+    fb.departure_sel = sel_feat[10:]
+    # LAmax curves — separate energy-mean since LAmax has independent
+    # per-event peak distribution.
+    fb.approach_lmax = energy_mean([p.approach_lmax for _, p in others])
+    fb.departure_lmax = energy_mean([p.departure_lmax for _, p in others])
 
 
 def linf(a: list[float], b: list[float]) -> float:
@@ -645,10 +681,14 @@ def emit_rust(
     for p in profiles:
         approach = ', '.join(f'{v:.1f}' for v in p.approach_sel)
         departure = ', '.join(f'{v:.1f}' for v in p.departure_sel)
+        approach_lmax = ', '.join(f'{v:.1f}' for v in p.approach_lmax)
+        departure_lmax = ', '.join(f'{v:.1f}' for v in p.departure_lmax)
         lines.append(f'    NpdProfile::new(')
         lines.append(f'        "{p.name}",')
         lines.append(f'        [{approach}],')
         lines.append(f'        [{departure}],')
+        lines.append(f'        [{approach_lmax}],')
+        lines.append(f'        [{departure_lmax}],')
         lines.append(f'        {p.v_ref_kt},')
         lines.append(f'        {p.d_bar_m},')
         lines.append(f'        {INSTALLATION_RUST[p.installation]},')

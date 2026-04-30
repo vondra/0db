@@ -1871,24 +1871,17 @@ fn compute_aircraft(
             flight_weight: weight,
         });
         acc.period_energy[period] += energy;
-        // Peak event Lmax estimate. EASA ANP v2.3 publishes BOTH SEL and
-        // Lmax NPD curves per profile, but `scripts/build-aircraft-profiles.py`
-        // only ingests the SEL columns — so we approximate
-        //   Lmax ≈ SEL − 12 dB
-        // The 12 dB constant is the empirical mid-band of measured SEL−Lmax
-        // differences across jet flyover geometries: 8–10 dB for low fast
-        // approaches, 11–14 dB for typical operations, 15–18 dB for high
-        // cruise overheads (FAA AEDT Tech Manual §6, ICAO Doc 29 §A.2.1).
-        // Reason for the simplification: Lmax is shown for context in the
-        // popup, not used in the Lden energy integral. Carrying separate
-        // Lmax LUTs would double NpdLuts memory and complicate the kernel
-        // for ≤2 dB of per-segment accuracy gain.
-        // Bias of the fixed offset:
-        //   • cruise overheads: overestimates Lmax by 3–6 dB
-        //   • low approaches:  underestimates Lmax by 2–4 dB
-        // Tier 3 follow-up: ingest Lmax NPD columns + add `approach_lmax` /
-        // `departure_lmax` LUTs. See SPEC.md §5.1.x and Tier 3 backlog.
-        let lmax = sel - 12.0;
+        // Peak event Lmax — looked up directly from the per-class LAmax NPD
+        // LUT at the segment's slant distance. Replaces the prior hardcoded
+        // `sel - 12.0` approximation that had ±5 dB bias across operations
+        // (Doc 29 §A.2.1 / FAA AEDT TM §6 measure SEL−Lmax = 8–18 dB
+        // depending on flight geometry). LAmax NPD is per-aircraft per-
+        // distance, so this fixes the systematic under/over-estimate of
+        // peak event noise without per-event ΔI/Λ corrections (those are
+        // < 0.5 dB at typical TMA approach β).
+        let class_idx = aircraft::noise_class_of(seg.profile_idx) as usize;
+        let log_d = (cpa.d_p_m * aircraft::FT_PER_M).max(100.0).log10();
+        let lmax = npd_luts.lookup_lmax(class_idx, seg.is_departure, log_d);
         if lmax > acc.peak_lmax {
             acc.peak_lmax = lmax;
             acc.peak_sel = sel;

@@ -88,10 +88,20 @@ pub enum Installation {
 }
 
 /// NPD profile definition.
+///
+/// SEL and LAmax NPD curves both come from EASA ANP v2.3 (the same
+/// `ANP2.3_NPD_data.csv` file with rows tagged "SEL" or "LAmax"). The
+/// generator ingests both; the kernel uses SEL for energy summation and
+/// LAmax for per-event peak ranking.
 pub struct NpdProfile {
     pub name: &'static str,
     pub approach_sel: [f64; 10],
     pub departure_sel: [f64; 10],
+    /// LAmax NPD — peak A-weighted SPL per Doc 29 distance row.
+    /// Replaces hardcoded `SEL − 12 dB` approximation that ignored
+    /// per-aircraft Lmax/SEL differences (range 8–18 dB across operations).
+    pub approach_lmax: [f64; 10],
+    pub departure_lmax: [f64; 10],
     pub v_ref_kt: f64,
     pub d_bar_m: f64,
     pub installation: Installation,
@@ -123,6 +133,8 @@ impl NpdProfile {
         name: &'static str,
         approach_sel: [f64; 10],
         departure_sel: [f64; 10],
+        approach_lmax: [f64; 10],
+        departure_lmax: [f64; 10],
         v_ref_kt: f64,
         d_bar_m: f64,
         installation: Installation,
@@ -131,6 +143,8 @@ impl NpdProfile {
             name,
             approach_sel,
             departure_sel,
+            approach_lmax,
+            departure_lmax,
             v_ref_kt,
             d_bar_m,
             installation,
@@ -333,13 +347,19 @@ pub fn fast_npd_lookup(lut: &[f64; NPD_LUT_BINS + 1], log_d: f64) -> f64 {
     lut[idx] + frac * (lut[idx + 1] - lut[idx])
 }
 
-/// Per-noise-class NPD LUTs (NUM_CLASSES classes × 2 directions). Single
-/// global instance — built once on first access, reused across pipeline
-/// batches and popup queries. Sized by `NUM_CLASSES`: each class shares
-/// its Voronoi anchor's NPD curve, so one LUT per class is exact.
+/// Per-noise-class NPD LUTs (NUM_CLASSES classes × 2 directions × 2 metrics).
+/// Single global instance — built once on first access, reused across
+/// pipeline batches and popup queries. Sized by `NUM_CLASSES`: each class
+/// shares its Voronoi anchor's NPD curve, so one LUT per class is exact.
+///
+/// SEL LUTs feed energy summation; LAmax LUTs feed per-event peak ranking
+/// (popup top-flights, band classification). LAmax replaces the hardcoded
+/// `sel - 12.0` approximation that had ±5 dB bias across operations.
 pub struct NpdLuts {
     approach: Vec<[f64; NPD_LUT_BINS + 1]>,
     departure: Vec<[f64; NPD_LUT_BINS + 1]>,
+    approach_lmax: Vec<[f64; NPD_LUT_BINS + 1]>,
+    departure_lmax: Vec<[f64; NPD_LUT_BINS + 1]>,
 }
 
 static NPD_LUTS: OnceLock<NpdLuts> = OnceLock::new();
@@ -352,12 +372,16 @@ impl NpdLuts {
     fn build() -> Self {
         let mut approach = Vec::with_capacity(NUM_CLASSES);
         let mut departure = Vec::with_capacity(NUM_CLASSES);
+        let mut approach_lmax = Vec::with_capacity(NUM_CLASSES);
+        let mut departure_lmax = Vec::with_capacity(NUM_CLASSES);
         for class_idx in 0..NUM_CLASSES {
             let anchor = &PROFILES[CLASS_REP_PROFILE_IDX[class_idx] as usize];
             approach.push(build_npd_lut(anchor, false));
             departure.push(build_npd_lut(anchor, true));
+            approach_lmax.push(build_lmax_lut(anchor, false));
+            departure_lmax.push(build_lmax_lut(anchor, true));
         }
-        NpdLuts { approach, departure }
+        NpdLuts { approach, departure, approach_lmax, departure_lmax }
     }
 
     #[inline(always)]
@@ -369,6 +393,58 @@ impl NpdLuts {
         };
         fast_npd_lookup(lut, log_d)
     }
+
+    /// Per-event peak A-weighted SPL (LAmax) lookup — replaces the prior
+    /// hardcoded `sel - 12.0` constant. Returns the value before any
+    /// per-segment ΔI / Λ corrections; callers may apply those if they
+    /// need full Doc 29 Eq. 4-12 fidelity (popup peak ranking does not).
+    #[inline(always)]
+    pub fn lookup_lmax(&self, noise_class: usize, is_dep: bool, log_d: f64) -> f64 {
+        let lut = if is_dep {
+            &self.departure_lmax[noise_class]
+        } else {
+            &self.approach_lmax[noise_class]
+        };
+        fast_npd_lookup(lut, log_d)
+    }
+}
+
+/// Build a 128-bin LAmax LUT mirroring `build_npd_lut` for SEL. LAmax curves
+/// don't carry alpha_eff fits — beyond 25 000 ft we clamp at the last NPD
+/// point (LAmax there is well below per-event audibility for any receiver).
+pub fn build_lmax_lut(profile: &NpdProfile, is_departure: bool) -> [f64; NPD_LUT_BINS + 1] {
+    let lmax = if is_departure {
+        &profile.departure_lmax
+    } else {
+        &profile.approach_lmax
+    };
+    let mut lut = [0.0f64; NPD_LUT_BINS + 1];
+    let last = lmax.len() - 1;
+    for i in 0..=NPD_LUT_BINS {
+        let log_d = NPD_LUT_LOG_MIN + i as f64 * NPD_LUT_STEP;
+        // Below 200 ft: use slope of first two points (matches SEL behaviour).
+        if log_d <= LOG_DIST[0] {
+            let slope = (lmax[1] - lmax[0]) / (LOG_DIST[1] - LOG_DIST[0]);
+            lut[i] = lmax[0] + slope * (log_d - LOG_DIST[0]);
+            continue;
+        }
+        // Above 25 000 ft: clamp at last NPD point — no alpha_eff
+        // extrapolation for LAmax (peak SPL drops faster than energy in
+        // the tail; clamp is conservative for the popup ranking use).
+        if log_d >= LOG_DIST[last] {
+            lut[i] = lmax[last];
+            continue;
+        }
+        // Inside the table: log-linear interp between adjacent NPD points.
+        for j in 0..last {
+            if log_d < LOG_DIST[j + 1] {
+                let frac = (log_d - LOG_DIST[j]) / (LOG_DIST[j + 1] - LOG_DIST[j]);
+                lut[i] = lmax[j] + frac * (lmax[j + 1] - lmax[j]);
+                break;
+            }
+        }
+    }
+    lut
 }
 
 /// NPD interpolation using pre-computed log10(distance_ft).
