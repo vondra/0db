@@ -3584,4 +3584,59 @@ mod tests {
             "Higher threshold should give shorter reach: 50dB={reach_50:.0} vs 40dB={reach_40:.0}"
         );
     }
+
+    /// `similarity_fallback` invoked via `profile_idx` for unmapped typecodes
+    /// must route real ADSB typecodes (sampled from the 24-day scan, top
+    /// unmapped by traffic) onto the closest anchor profile. Typecodes
+    /// already covered by the strict ICAO 4-letter match (R44, S76, AT72,
+    /// DH8C, etc.) are NOT in this list — those return their own idx
+    /// directly without invoking similarity_fallback. Drift here means a
+    /// real ICAO category got silently re-routed.
+    #[test]
+    fn test_similarity_fallback_top_unmapped() {
+        let cases: &[(&str, &str)] = &[
+            ("PC12", "DH8D"), // Pilatus PC-12 turboprop
+            ("C208", "C56X"), // Cessna 208 Caravan
+            ("BE20", "DH8D"), // King Air 200
+            ("BE35", "DH8D"), // Beech V35 Bonanza
+            ("C150", "C172"), // Cessna 150
+            ("C180", "C172"), // Cessna 180
+            ("C185", "C172"), // Cessna 185
+            ("S22T", "C172"), // Cirrus SR22T
+            ("CL30", "CRJ9"), // Bombardier Challenger 300
+            ("CL35", "CRJ9"), // Bombardier Challenger 350
+            ("E55P", "CRJ9"), // Embraer Phenom 300
+            ("E545", "CRJ9"), // Embraer Legacy 450
+            ("GLF4", "CRJ9"), // Gulfstream G450
+            ("F900", "CRJ9"), // Falcon 900
+            ("F2TH", "CRJ9"), // Falcon 2000
+            ("H125", "EC35"), // Airbus H125
+            ("H145", "EC35"), // Airbus H145
+            ("RV6", "C172"),  // Vans RV-6
+            ("PA46", "C172"), // Piper PA-46 Malibu
+            ("LJ45", "CRJ9"), // Learjet 45
+        ];
+        for (typecode, expected_anchor) in cases {
+            let got = profile_idx(typecode);
+            let expected = profile_idx(expected_anchor);
+            assert_eq!(
+                got, expected,
+                "{} → idx {} but expected anchor {} (idx {})",
+                typecode, got, expected_anchor, expected
+            );
+            assert_ne!(
+                got, FALLBACK_PROFILE_IDX,
+                "{} should not fall through to FALLBACK_PROFILE_IDX",
+                typecode
+            );
+        }
+    }
+
+    #[test]
+    fn test_similarity_fallback_unknown_still_fallback() {
+        // Truly exotic / military / experimental codes: still FALLBACK.
+        for typecode in ["XXXX", "ZZZ", "9999", "TUM", "EXOT"] {
+            assert_eq!(profile_idx(typecode), FALLBACK_PROFILE_IDX, "{}", typecode);
+        }
+    }
 }
