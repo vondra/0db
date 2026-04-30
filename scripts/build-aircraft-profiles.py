@@ -892,31 +892,41 @@ def emit_rust(
 # regresses (wrong column extraction, off-by-one Op Mode), `verify_anchors`
 # fails fast before writing the .rs file. Without these, /check-pipeline
 # can't catch ICAO mapping fat-fingers (parity test is blind).
-ANCHORS: list[tuple[str, str, int, float]] = [
+# (typecode, metric "SEL"|"LAmax", op_mode, idx, expected_dB)
+ANCHORS: list[tuple[str, str, str, int, float]] = [
     # B738 / 737800 / NPD CF567B / SEL D max-power (23500 lbs) col_4 (L_2000ft)
-    ("B738", "D", 4, 95.0),
+    ("B738", "SEL", "D", 4, 95.0),
     # A320 / A320-232 / NPD V2527A / SEL A min-power (2000 lbs) col_0 (L_200ft)
-    ("A320", "A", 0, 93.1),
+    ("A320", "SEL", "A", 0, 93.1),
     # B789 mapping → 7878R / NPD T1KBFP / SEL D max-power (65000 lbs) col_9 (L_25000ft)
-    ("B789", "D", 9, 68.2),
+    ("B789", "SEL", "D", 9, 68.2),
     # E190 / EMB190 / NPD CF3410E / SEL D max-power (15000 lbs) col_5 (L_4000ft)
-    ("E190", "D", 5, 84.1),
+    ("E190", "SEL", "D", 5, 84.1),
     # AT72 mapping → DHC830 / NPD PW120 / SEL D max-power (150) col_3 (L_1000ft)
-    ("AT72", "D", 3, 84.1),
+    ("AT72", "SEL", "D", 3, 84.1),
+    # B738 / CF567B / LAmax D max-power (23500 lbs) col_4 (L_2000ft) — guards
+    # against silent ANP LAmax column parsing regressions in 1c ingestion.
+    ("B738", "LAmax", "D", 4, 84.7),
 ]
 
 
 def verify_anchors(profiles: list[Profile]) -> None:
-    """Per-typecode anchor: catches CSV parsing regressions."""
+    """Per-typecode anchor: catches CSV parsing regressions for both SEL and
+    LAmax NPD column extraction. Each anchor pins ONE (metric, op_mode, idx)
+    cell to its EASA ANP v2.3 published value."""
     by_tc = {p.typecode: p for p in profiles}
-    for tc, op_mode, idx, expected in ANCHORS:
+    for tc, metric, op_mode, idx, expected in ANCHORS:
         if tc not in by_tc:
             sys.exit(f"ANCHOR FAIL: typecode {tc!r} not in profiles list")
         p = by_tc[tc]
-        actual = p.departure_sel[idx] if op_mode == "D" else p.approach_sel[idx]
+        if metric == "SEL":
+            curve = p.departure_sel if op_mode == "D" else p.approach_sel
+        else:  # LAmax
+            curve = p.departure_lmax if op_mode == "D" else p.approach_lmax
+        actual = curve[idx]
         if abs(actual - expected) > 0.01:
             sys.exit(
-                f"ANCHOR FAIL: {tc} {op_mode}[{idx}] = {actual} dB, "
+                f"ANCHOR FAIL: {tc} {metric} {op_mode}[{idx}] = {actual} dB, "
                 f"expected {expected} ± 0.01.\n"
                 f"  Mapped via ACFT_ID family; verify ICAO_TYPECODE_TO_ACFT_ID + "
                 f"NPD_data.csv column extraction logic."
