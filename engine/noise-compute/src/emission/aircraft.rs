@@ -642,9 +642,19 @@ pub fn fast_delta_f(q_m: f64, seg_len_m: f64, d_bar_m: f64) -> f64 {
 /// rel_alt + lateral instead of beta_deg + lateral). For `airport_ground`
 /// callers Λ collapses to 0 — this kernel does the same gate.
 /// Max error vs exact: < 0.15 dB per segment.
+///
+/// Λ(β) ≠ 0 only for **Wing-mounted jets** per Doc 29 §4.5.4 Eq. 4-19a /
+/// FAA AEDT TM §6.2.4. Fuselage-mounted engines and propeller installations
+/// (including helicopters) get Λ = 0 — engine-airframe geometry doesn't
+/// produce wing-shielding lateral attenuation in those cases.
 #[inline]
-pub fn fast_lateral_attenuation(rel_alt: f64, lateral_m: f64, airport_ground: bool) -> f64 {
-    if airport_ground {
+pub fn fast_lateral_attenuation(
+    rel_alt: f64,
+    lateral_m: f64,
+    airport_ground: bool,
+    installation: Installation,
+) -> f64 {
+    if airport_ground || !matches!(installation, Installation::Wing) {
         return 0.0;
     }
 
@@ -806,7 +816,7 @@ pub fn segment_energy_kernel(
     let df = fast_delta_f(q_m, slen, d_bar_m);
 
     let lateral_m = lateral_sq.sqrt();
-    let lambda = fast_lateral_attenuation(rel_alt, lateral_m, airport_ground);
+    let lambda = fast_lateral_attenuation(rel_alt, lateral_m, airport_ground, inst);
 
     // Inline ΔI: works off u² = rel_alt²/slant² (= sin²β) instead of trig
     // on β. Identical math to `delta_i(beta_deg, installation)` for the
@@ -848,8 +858,18 @@ pub fn segment_energy_kernel(
 }
 
 /// Lateral attenuation Λ(β, l) = Γ(l) × Λ(β) (Doc 29 §4.5.4, Eq. 4-18/4-19).
+///
+/// Only applied to **Wing-mounted jets** per Eq. 4-19a / FAA AEDT TM §6.2.4.
+/// Fuselage-mounted engines, propeller installations, and helicopters get
+/// Λ = 0 (no engine-wing shielding). The kernel callers must pass the
+/// segment's `Installation`; the `installation == Wing` gate is also a
+/// strict equivalent of the historical `delta_i_constants` check that
+/// already filtered Propeller out of ΔI.
 #[inline]
-pub fn lateral_attenuation(beta_deg: f64, lateral_m: f64) -> f64 {
+pub fn lateral_attenuation(beta_deg: f64, lateral_m: f64, installation: Installation) -> f64 {
+    if !matches!(installation, Installation::Wing) {
+        return 0.0;
+    }
     if beta_deg < 0.0 {
         return 10.857;
     }
@@ -2888,20 +2908,56 @@ mod tests {
 
     #[test]
     fn test_lateral_directly_below() {
-        let att = lateral_attenuation(90.0, 0.0);
+        let att = lateral_attenuation(90.0, 0.0, Installation::Wing);
         assert!(att.abs() < 0.01, "Expected 0, got {att}");
     }
 
     #[test]
     fn test_lateral_far_side() {
-        let att = lateral_attenuation(0.1, 2000.0);
+        let att = lateral_attenuation(0.1, 2000.0, Installation::Wing);
         assert!((att - 10.86).abs() < 0.2, "Expected ~10.86, got {att}");
     }
 
     #[test]
     fn test_lateral_negative_beta() {
-        let att = lateral_attenuation(-5.0, 100.0);
+        let att = lateral_attenuation(-5.0, 100.0, Installation::Wing);
         assert!((att - 10.857).abs() < 0.01);
+    }
+
+    /// Doc 29 §4.5.4 / FAA AEDT TM §6.2.4: Λ ≠ 0 only for Wing-mounted jets.
+    /// Fuselage / Propeller / Helicopter installations get Λ = 0 regardless
+    /// of β or lateral distance (no wing-shielding geometry to attenuate).
+    #[test]
+    fn test_lateral_non_wing_installations_zero() {
+        for beta in [0.1, 10.0, 30.0, 50.0, 90.0] {
+            for lat in [50.0, 500.0, 2000.0, 5000.0] {
+                assert_eq!(
+                    lateral_attenuation(beta, lat, Installation::Fuselage),
+                    0.0,
+                    "Fuselage Λ must be 0 (β={beta}, lat={lat})"
+                );
+                assert_eq!(
+                    lateral_attenuation(beta, lat, Installation::Propeller),
+                    0.0,
+                    "Propeller Λ must be 0 (β={beta}, lat={lat})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_fast_lateral_non_wing_installations_zero() {
+        // (rel_alt, lateral_m) covers β = 5° to β = 90°
+        for &(rel_alt, lat) in &[(50.0, 500.0), (200.0, 500.0), (1000.0, 500.0), (5000.0, 100.0)] {
+            assert_eq!(
+                fast_lateral_attenuation(rel_alt, lat, false, Installation::Fuselage),
+                0.0,
+            );
+            assert_eq!(
+                fast_lateral_attenuation(rel_alt, lat, false, Installation::Propeller),
+                0.0,
+            );
+        }
     }
 
     #[test]

@@ -475,15 +475,8 @@ SEL_seg = L_E(d_p) + ΔV + ΔI(φ) - Λ(β, l) + ΔF
 - **L_E**: NPD lookup at slant distance d_p (feet). ~124 per-typecode profiles auto-generated from EASA ANP v2.3, bucketed at ~17 noise classes for aggregation. See `scripts/build-aircraft-profiles.py`.
 - **ΔV**: Speed/duration correction (Eq. 4-14)
 - **ΔI**: Engine installation angle correction (Eq. 4-15)
-- **Λ**: Lateral attenuation (Eq. 4-18/19), applied to all profiles including rotorcraft (see note below)
+- **Λ**: Lateral attenuation (Eq. 4-18/19) — Wing-mounted jets only per Doc 29 §4.5.4 / FAA AEDT TM §6.2.4. Fuselage-mounted, propeller, and helicopter installations get Λ = 0 (gated by `installation` parameter in `fast_lateral_attenuation` / `lateral_attenuation`).
 - **ΔF**: Finite segment dipole correction (Eq. 4-20, full α/(1+α²) terms)
-
-Lateral attenuation note: helicopters land in their own `HELICOPTER` noise
-class (split out from PISTON_SE_PROP after the ANP-2.3-driven Tier 2
-expansion); we still apply Λ uniformly across all classes. Doc 29 skips Λ
-for rotorcraft, so our HELICOPTER-class results overestimate noise by up to
-~11 dB at low β. A pure-helicopter cluster submodel would split this
-correctly — TODO.
 
 ### Geometry (§4.4.1)
 CPA (Closest Point of Approach) computed on segment EXTENSION (unclamped).
