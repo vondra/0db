@@ -1700,6 +1700,12 @@ fn compute_aircraft(
         peak_seg_end: [f64; 2],
         profile_idx: u8,
         flight_weight: f64,
+        /// Set when this entry was created from a cruise bucket (i.e. the
+        /// scalar `seg.flight_id` was the bucket's first contributor). Lets
+        /// `flights_per_day` exclude cruise entries from the ground/airborne
+        /// count and route them through `cruise_unique` instead — the bucket
+        /// scalar over-counts because one real flight crosses many R5 cells.
+        is_cruise: bool,
     }
     struct BandStats {
         count: f64,
@@ -1771,6 +1777,12 @@ fn compute_aircraft(
     }
 
     let mut flights: HashMap<u64, FlightAccum> = HashMap::new();
+    // Cruise rows aggregate many real flights per bucket; popup must count
+    // unique flights via this set rather than `flights.len()` (the bucket-
+    // level scalar `flight_id` over-counts because one real flight crosses
+    // many R5 buckets in the popup reach radius). Energy still flows through
+    // the per-bucket compute path; only identity counting is separated.
+    let mut cruise_unique: HashSet<u64> = HashSet::new();
     let airport_groups = aircraft::airport_ground_groups(airport_lines, airport_areas);
     let mut ground_by_airport: HashMap<String, GroundAirportAccum> = HashMap::new();
     let mut ground_variants = [PropagationVariants::default(); 3];
@@ -1858,6 +1870,15 @@ fn compute_aircraft(
         let energy =
             crate::propagation::iso9613::fast_exp_f64(sel * std::f64::consts::LN_10 * 0.1) * weight;
         let period = seg.period.min(2) as usize;
+        // Cruise: collect every contributing real flight_id into the unique
+        // set so popup counters reflect actual flight count, not bucket count.
+        // Energy aggregation continues through the per-bucket scalar path.
+        let is_cruise = !seg.cruise_flight_ids.is_empty();
+        if is_cruise {
+            for &fid in &seg.cruise_flight_ids {
+                cruise_unique.insert(fid);
+            }
+        }
         let acc = flights.entry(seg.flight_id).or_insert(FlightAccum {
             period_energy: [0.0; 3],
             peak_lmax: -999.0,
@@ -1870,6 +1891,7 @@ fn compute_aircraft(
             peak_seg_end: [0.0; 2],
             profile_idx: seg.profile_idx,
             flight_weight: weight,
+            is_cruise,
         });
         acc.period_energy[period] += energy;
         // Peak event Lmax — looked up directly from the per-class LAmax NPD
@@ -2317,7 +2339,21 @@ fn compute_aircraft(
             f64::NEG_INFINITY
         }
     });
-    let flights_per_day = flights.values().map(|acc| acc.flight_weight).sum::<f64>() / n_days_f;
+    // Real flight count splits into:
+    //   * ground/airborne FlightAccum entries — sum of `flight_weight`
+    //     (max `count_weight` across that flight's segments) preserves the
+    //     synthetic-aggregate semantics where one segment with weight=N
+    //     stands for N operations (e.g. inferred runway-roll buckets).
+    //   * cruise unique contributors — counted via `cruise_unique` set
+    //     populated from per-bucket lists. Excludes FlightAccum entries
+    //     created by cruise buckets (bucket scalar fid was a contributor
+    //     and is already in `cruise_unique`).
+    let real_flights_weight: f64 = flights
+        .values()
+        .filter(|acc| !acc.is_cruise)
+        .map(|acc| acc.flight_weight)
+        .sum();
+    let flights_per_day = (real_flights_weight + cruise_unique.len() as f64) / n_days_f;
 
     // Top flights by Lden energy contribution (for popup diagnostics)
     let total_lden_energy: f64 = airborne_energy.iter().sum();
@@ -3050,6 +3086,7 @@ mod tests {
                     count_weight: 1.0,
                     surface_model: false,
                     source_id: AIRCRAFT_ADSB_SOURCE_ID,
+                    cruise_flight_ids: Vec::new(),
                 });
             }
         }
@@ -3182,7 +3219,8 @@ mod tests {
             ground_ops_kind: emission::aircraft::GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
             surface_model: false,
-                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
+            source_id: AIRCRAFT_ADSB_SOURCE_ID,
+            cruise_flight_ids: Vec::new(),
         }];
 
         let config = ComputeConfig {
