@@ -2246,6 +2246,14 @@ fn compute_aircraft(
             let elevation_angle_deg =
                 (acc.peak_altitude_m / cpa).clamp(-1.0, 1.0).asin().to_degrees();
 
+            let (icao_hex, start_unix, synthetic) = match crate::flight_id::unpack(flight_id) {
+                crate::flight_id::FlightIdKind::Real { icao24, start_unix } => (
+                    crate::flight_id::icao24_to_hex_lower(icao24),
+                    Some(start_unix),
+                    false,
+                ),
+                crate::flight_id::FlightIdKind::Synth { .. } => (String::new(), None, true),
+            };
             t.airborne.push(AirborneTrace {
                 flight_id,
                 date: date_from_id(acc.peak_date_id),
@@ -2262,6 +2270,9 @@ fn compute_aircraft(
                     [acc.peak_seg_end[1], acc.peak_seg_end[0]],
                 ],
                 received_lden: lden,
+                icao_hex,
+                start_unix,
+                synthetic,
             });
         }
     }
@@ -2355,17 +2366,34 @@ fn compute_aircraft(
         .sum();
     let flights_per_day = (real_flights_weight + cruise_unique.len() as f64) / n_days_f;
 
-    // Top flights by Lden energy contribution (for popup diagnostics)
+    // Top flights by Lden energy contribution (for popup diagnostics).
+    // Skip cruise bucket entries — they're per-bucket aggregates with synth
+    // scalar IDs, not real per-flight events; including them would surface
+    // a fake "Top flight" row labelled with synthesised time/icao.
     let total_lden_energy: f64 = airborne_energy.iter().sum();
     let top_flights = if total_lden_energy > 0.0 {
-        let mut flight_entries: Vec<_> = flights.values().collect();
+        let mut flight_entries: Vec<(u64, &FlightAccum)> = flights
+            .iter()
+            .filter(|(_, acc)| !acc.is_cruise)
+            .map(|(fid, acc)| (*fid, acc))
+            .collect();
         flight_entries.sort_by(|a, b| {
-            let ea: f64 = a.period_energy.iter().sum();
-            let eb: f64 = b.period_energy.iter().sum();
+            let ea: f64 = a.1.period_energy.iter().sum();
+            let eb: f64 = b.1.period_energy.iter().sum();
             eb.partial_cmp(&ea).unwrap_or(std::cmp::Ordering::Equal)
         });
-        flight_entries.iter().take(5).map(|f| {
+        flight_entries.iter().take(5).map(|(fid, f)| {
             let flight_energy: f64 = f.period_energy.iter().sum();
+            // Unpack the packed flight_id so popup gets real ICAO hex +
+            // timestamp without crossing the JSON / JS Number 53-bit boundary.
+            let (icao_hex, start_unix, synthetic) = match crate::flight_id::unpack(*fid) {
+                crate::flight_id::FlightIdKind::Real { icao24, start_unix } => (
+                    crate::flight_id::icao24_to_hex_lower(icao24),
+                    Some(start_unix),
+                    false,
+                ),
+                crate::flight_id::FlightIdKind::Synth { .. } => (String::new(), None, true),
+            };
             types::AircraftTopFlight {
                 lmax_db: if f.peak_lmax > -900.0 { (f.peak_lmax * 10.0).round() / 10.0 } else { 0.0 },
                 cpa_distance_m: (f.min_dist_m * 10.0).round() / 10.0,
@@ -2375,6 +2403,9 @@ fn compute_aircraft(
                 profile: aircraft::PROFILES[aircraft::clamp_profile_idx(f.profile_idx)].name.to_string(),
                 energy_pct: (flight_energy / total_lden_energy * 1000.0).round() / 10.0,
                 geometry: [f.peak_seg_start, f.peak_seg_end],
+                icao_hex,
+                start_unix,
+                synthetic,
             }
         }).collect()
     } else {

@@ -183,6 +183,27 @@ export interface AircraftTopFlight {
   profile: string
   energy_pct: number
   geometry: [[number, number], [number, number]]
+  /** ICAO 24-bit transponder address as 6-char lowercase hex
+   *  ("4b1805"); empty string for synthetic / surface buckets. */
+  icao_hex: string
+  /** Unix timestamp seconds of flight start. `null` for synthetic. */
+  start_unix: number | null
+  /** True for runway-spread surface synthesis or cruise bucket
+   *  aggregates; UI hides ICAO + time for these. */
+  synthetic: boolean
+}
+
+/** Server-side proxy response from `/api/aircraft/:hex` (hexdb.io). */
+export interface AircraftInfo {
+  hex: string
+  registration: string | null
+  icao_typecode: string | null
+  manufacturer: string | null
+  type: string | null
+  operator: string | null
+  operator_icao: string | null
+  source: 'hexdb' | 'unknown'
+  fetched_at: number
 }
 
 export interface AircraftAirborneDetail {
@@ -483,7 +504,9 @@ export interface SegmentTrace {
 }
 
 export interface AirborneTrace {
-  flight_id: number
+  // `flight_id` is intentionally NOT serialized server-side (`#[serde(skip)]`
+  // in noise-compute) because packed (icao24, ts32) values overflow JS
+  // `Number` once `icao24 >= 0x800000`. Use `icao_hex` + `start_unix` instead.
   date: string
   period: 0 | 1 | 2
   profile: string
@@ -495,6 +518,12 @@ export interface AirborneTrace {
   n_days_normalized: number
   geometry: [[number, number], [number, number]]
   received_lden: number
+  /** ICAO 24-bit hex (6 lowercase chars) or "" for synth. */
+  icao_hex: string
+  /** Unix seconds of flight start; null for synth. */
+  start_unix: number | null
+  /** True for surface model / cruise bucket synthesised IDs. */
+  synthetic: boolean
 }
 
 export interface SegmentTracesSummary {
