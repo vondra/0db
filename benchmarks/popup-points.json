@@ -1,1182 +1,802 @@
 [
  {
   "id": 1,
-  "lat": 49.858,
-  "lng": 14.2594,
-  "scenario": "d4_source",
-  "r11": "8b1e3084e294fff",
-  "r11_center_lat": 49.8580838,
-  "r11_center_lng": 14.2596589,
-  "note": "berm-d4 D\u00e1lnice point 1"
+  "lat": 49.79865188641795,
+  "lng": 14.197089199394213,
+  "scenario": "road_close_d4",
+  "r11": "8b1e3085a4c1fff",
+  "note": "5.1 m from D4 centerline"
  },
  {
   "id": 2,
-  "lat": 49.8586,
-  "lng": 14.2607,
-  "scenario": "d4_source",
-  "r11": "8b1e3084e286fff",
-  "r11_center_lat": 49.8585049,
-  "r11_center_lng": 14.2606837,
-  "note": "berm-d4 D\u00e1lnice point 2"
+  "lat": 49.824568701001795,
+  "lng": 14.229109314308674,
+  "scenario": "road_close_d4",
+  "r11": "8b1e3085831afff",
+  "note": "5.1 m from D4 centerline"
  },
  {
   "id": 3,
-  "lat": 49.8593,
-  "lng": 14.2624,
-  "scenario": "d4_source",
-  "r11": "8b1e3084e2a8fff",
-  "r11_center_lat": 49.8593471,
-  "r11_center_lng": 14.2627333,
-  "note": "berm-d4 D\u00e1lnice point 3"
+  "lat": 49.856090033740514,
+  "lng": 14.25662771166582,
+  "scenario": "road_close_d4",
+  "r11": "8b1e3084e676fff",
+  "note": "5.2 m from D4 centerline"
  },
  {
   "id": 4,
-  "lat": 49.8582,
-  "lng": 14.2591,
-  "scenario": "behind_berm",
-  "r11": "8b1e3084e749fff",
-  "r11_center_lat": 49.8580465,
-  "r11_center_lng": 14.2589615,
-  "note": "berm-d4 Na valu point 1"
+  "lat": 49.72314904368533,
+  "lng": 14.117100265064165,
+  "scenario": "road_close_d4",
+  "r11": "8b1e308dd922fff",
+  "note": "5.2 m from D4 centerline"
  },
  {
   "id": 5,
-  "lat": 49.8587,
-  "lng": 14.2602,
-  "scenario": "behind_berm",
-  "r11": "8b1e3084e2b1fff",
-  "r11_center_lat": 49.8588515,
-  "r11_center_lng": 14.2603135,
-  "note": "berm-d4 Na valu point 2"
+  "lat": 49.69327801899968,
+  "lng": 14.10111362447077,
+  "scenario": "road_far_d4",
+  "r11": "8b1e308d81b3fff",
+  "note": "1500 m from D4, no other line sources within 500 m"
  },
  {
   "id": 6,
-  "lat": 49.8593,
-  "lng": 14.2616,
-  "scenario": "behind_berm",
-  "r11": "8b1e3084e2a3fff",
-  "r11_center_lat": 49.8592725,
-  "r11_center_lng": 14.2613383,
-  "note": "berm-d4 Na valu point 3"
+  "lat": 49.70700237065435,
+  "lng": 14.063643192295928,
+  "scenario": "road_far_d4",
+  "r11": "8b1e308d13aafff",
+  "note": "1294 m from D4, no other line sources within 500 m"
  },
  {
   "id": 7,
-  "lat": 49.8587,
-  "lng": 14.2585,
-  "scenario": "behind_berm",
-  "r11": "8b1e3084e76bfff",
-  "r11_center_lat": 49.8587396,
-  "r11_center_lng": 14.258221,
-  "note": "berm-d4 Domky za valem 1"
+  "lat": 49.74071668679212,
+  "lng": 13.99665651588268,
+  "scenario": "road_secondary",
+  "r11": "8b1e308f230bfff",
+  "note": "0.0 m from tertiary road, >1.5 km from D4"
  },
  {
   "id": 8,
-  "lat": 49.8593,
-  "lng": 14.2597,
-  "scenario": "behind_berm",
-  "r11": "8b1e3084e2b5fff",
-  "r11_center_lat": 49.859198,
-  "r11_center_lng": 14.2599433,
-  "note": "berm-d4 Domky za valem 2"
+  "lat": 50.01214599431066,
+  "lng": 13.722640796894957,
+  "scenario": "road_secondary",
+  "r11": "8b1e3093419cfff",
+  "note": "0.0 m from tertiary road, >1.5 km from D4"
  },
  {
   "id": 9,
-  "lat": 49.8599,
-  "lng": 14.261,
-  "scenario": "behind_berm",
-  "r11": "8b1e3084e2a5fff",
-  "r11_center_lat": 49.8600029,
-  "r11_center_lng": 14.2612954,
-  "note": "berm-d4 Domky za valem 3"
+  "lat": 49.908457041639245,
+  "lng": 13.737907199455893,
+  "scenario": "road_secondary",
+  "r11": "8b1e309a114efff",
+  "note": "0.0 m from tertiary road, >1.5 km from D4"
  },
  {
   "id": 10,
-  "lat": 49.784228,
-  "lng": 14.201714,
-  "scenario": "d4_source",
-  "r11": "8b1e308e92e2fff",
-  "r11_center_lat": 49.7842207,
-  "r11_center_lng": 14.2014424,
-  "note": "on D4 highway asphalt"
+  "lat": 49.835182967604986,
+  "lng": 14.0341046442486,
+  "scenario": "railway_close",
+  "r11": "8b1e3080a14afff",
+  "note": "0.0 m from active rail track"
  },
  {
   "id": 11,
-  "lat": 49.781334,
-  "lng": 14.19463,
-  "scenario": "d4_source",
-  "r11": "8b1e308e9663fff",
-  "r11_center_lat": 49.7813049,
-  "r11_center_lng": 14.1949771,
-  "note": "on D4 highway asphalt"
+  "lat": 49.97235678856704,
+  "lng": 14.085479738514934,
+  "scenario": "railway_close",
+  "r11": "8b1e309437b6fff",
+  "note": "0.0 m from active rail track"
  },
  {
   "id": 12,
-  "lat": 49.78272,
-  "lng": 14.202232,
-  "scenario": "d4_source",
-  "r11": "8b1e308e92dcfff",
-  "r11_center_lat": 49.7827962,
-  "r11_center_lng": 14.2022259,
-  "note": "on D4 highway asphalt"
+  "lat": 49.79874565388696,
+  "lng": 14.239723380651602,
+  "scenario": "railway_close",
+  "r11": "8b1e3085b6abfff",
+  "note": "0.0 m from active rail track"
  },
  {
   "id": 13,
-  "lat": 49.80139,
-  "lng": 14.22829,
-  "scenario": "d4_source",
-  "r11": "8b1e3085b41afff",
-  "r11_center_lat": 49.8014178,
-  "r11_center_lng": 14.2280312,
-  "note": "on D4 highway asphalt"
+  "lat": 49.780158862632014,
+  "lng": 14.020042489475856,
+  "scenario": "aircraft_only",
+  "r11": "8b1e308f5159fff",
+  "note": "Brdy forest interior, no roads/rail within 500 m"
  },
  {
   "id": 14,
-  "lat": 49.79974,
-  "lng": 14.23314,
-  "scenario": "d4_source",
-  "r11": "8b1e3085b796fff",
-  "r11_center_lat": 49.7998711,
-  "r11_center_lng": 14.2333655,
-  "note": "on D4 highway asphalt"
+  "lat": 49.857628845480946,
+  "lng": 13.970140938341421,
+  "scenario": "aircraft_only",
+  "r11": "8b1e30800649fff",
+  "note": "Brdy forest interior, no roads/rail within 500 m"
  },
  {
   "id": 15,
-  "lat": 49.80009,
-  "lng": 14.24116,
-  "scenario": "d4_source",
-  "r11": "8b1e3085b61dfff",
-  "r11_center_lat": 49.8002822,
-  "r11_center_lng": 14.2410309,
-  "note": "on D4 highway asphalt"
+  "lat": 49.86242480602801,
+  "lng": 14.023328443428952,
+  "scenario": "aircraft_only",
+  "r11": "8b1e3080c45efff",
+  "note": "Brdy forest interior, no roads/rail within 500 m"
  },
  {
   "id": 16,
-  "lat": 49.80482,
-  "lng": 14.23485,
-  "scenario": "d4_source",
-  "r11": "8b1e3085b09efff",
-  "r11_center_lat": 49.8047155,
-  "r11_center_lng": 14.2348272,
-  "note": "on D4 highway asphalt"
+  "lat": 49.69849154924054,
+  "lng": 14.002768808742937,
+  "scenario": "industrial_kovohute",
+  "r11": "8b1e308d2970fff",
+  "note": "24 m from Kovohut\u011b recycling plant centroid"
  },
  {
   "id": 17,
-  "lat": 49.86499,
-  "lng": 14.2543,
-  "scenario": "behind_berm",
-  "r11": "8b1e3084e15dfff",
-  "r11_center_lat": 49.8651262,
-  "r11_center_lng": 14.2543468,
-  "note": "behind D4 earth berm, houses side; incl. berm-d4-dobris fixture"
+  "lat": 49.69856893575117,
+  "lng": 14.00415923893528,
+  "scenario": "industrial_kovohute",
+  "r11": "8b1e308d2944fff",
+  "note": "81 m from Kovohut\u011b recycling plant centroid"
  },
  {
   "id": 18,
-  "lat": 49.85305,
-  "lng": 14.25875,
-  "scenario": "behind_berm",
-  "r11": "8b1e3084e6c8fff",
-  "r11_center_lat": 49.8528964,
-  "r11_center_lng": 14.2585646,
-  "note": "behind D4 earth berm, houses side; incl. berm-d4-dobris fixture"
+  "lat": 49.699608251366946,
+  "lng": 14.003048331704596,
+  "scenario": "industrial_kovohute",
+  "r11": "8b1e308d62d9fff",
+  "note": "111 m from Kovohut\u011b recycling plant centroid"
  },
  {
   "id": 19,
-  "lat": 49.85316,
-  "lng": 14.25127,
-  "scenario": "behind_berm",
-  "r11": "8b1e3084e684fff",
-  "r11_center_lat": 49.8532538,
-  "r11_center_lng": 14.2515474,
-  "note": "behind D4 earth berm, houses side; incl. berm-d4-dobris fixture"
+  "lat": 49.81485408049484,
+  "lng": 14.218846462683144,
+  "scenario": "behind_berm_d4",
+  "r11": "8b1e30858695fff",
+  "note": "15.8 m behind D4 noise wall (22 m from D4)"
  },
  {
   "id": 20,
-  "lat": 49.8663,
-  "lng": 14.25321,
-  "scenario": "behind_berm",
-  "r11": "8b1e3084e144fff",
-  "r11_center_lat": 49.8661657,
-  "r11_center_lng": 14.253236,
-  "note": "behind D4 earth berm, houses side; incl. berm-d4-dobris fixture"
+  "lat": 49.814048332144615,
+  "lng": 14.217495896262141,
+  "scenario": "behind_berm_d4",
+  "r11": "8b1e3085aa65fff",
+  "note": "19.5 m behind D4 noise wall (27 m from D4)"
  },
  {
   "id": 21,
-  "lat": 49.85748,
-  "lng": 14.26156,
-  "scenario": "behind_berm",
-  "r11": "8b1e3084e298fff",
-  "r11_center_lat": 49.8574652,
-  "r11_center_lng": 14.2617943,
-  "note": "behind D4 earth berm, houses side; incl. berm-d4-dobris fixture"
+  "lat": 49.8136266981881,
+  "lng": 14.216472161477359,
+  "scenario": "behind_berm_d4",
+  "r11": "8b1e3085aa66fff",
+  "note": "22.2 m behind D4 noise wall (30 m from D4)"
  },
  {
   "id": 22,
-  "lat": 49.86336,
-  "lng": 14.26089,
-  "scenario": "behind_berm",
-  "r11": "8b1e3084e302fff",
-  "r11_center_lat": 49.8632709,
-  "r11_center_lng": 14.2607535,
-  "note": "behind D4 earth berm, houses side; incl. berm-d4-dobris fixture"
+  "lat": 49.815622321765446,
+  "lng": 14.219500106631127,
+  "scenario": "behind_berm_d4",
+  "r11": "8b1e30858684fff",
+  "note": "23.9 m behind D4 noise wall (31 m from D4)"
  },
  {
   "id": 23,
-  "lat": 49.71659,
-  "lng": 13.95902,
-  "scenario": "two_hills",
-  "r11": "8b1e30889404fff",
-  "r11_center_lat": 49.7166033,
-  "r11_center_lng": 13.9590822,
-  "note": "deep in Brdy, double ridge shielding"
+  "lat": 49.812745881681444,
+  "lng": 14.213727823513805,
+  "scenario": "behind_berm_d4",
+  "r11": "8b1e3085aa2afff",
+  "note": "28.3 m behind D4 noise wall (38 m from D4)"
  },
  {
   "id": 24,
-  "lat": 49.70649,
-  "lng": 13.91564,
-  "scenario": "two_hills",
-  "r11": "8b1e3088a8abfff",
-  "r11_center_lat": 49.7064418,
-  "r11_center_lng": 13.9154238,
-  "note": "deep in Brdy, double ridge shielding"
+  "lat": 49.780370340540316,
+  "lng": 14.170925392049222,
+  "scenario": "behind_house_urban",
+  "r11": "8b1e308eb961fff",
+  "note": "urban Dob\u0159\u00ed\u0161, building h~60 m on path to road 105 m away"
  },
  {
   "id": 25,
-  "lat": 49.68754,
-  "lng": 13.91488,
-  "scenario": "two_hills",
-  "r11": "8b1e30899a09fff",
-  "r11_center_lat": 49.6876919,
-  "r11_center_lng": 13.9148661,
-  "note": "deep in Brdy, double ridge shielding"
+  "lat": 49.78171909153388,
+  "lng": 14.16874838029655,
+  "scenario": "behind_house_urban",
+  "r11": "8b1e308e82c1fff",
+  "note": "urban Dob\u0159\u00ed\u0161, building h~30 m on path to road 63 m away"
  },
  {
   "id": 26,
-  "lat": 49.72163,
-  "lng": 13.98978,
-  "scenario": "two_hills",
-  "r11": "8b1e308d4526fff",
-  "r11_center_lat": 49.7216244,
-  "r11_center_lng": 13.9898187,
-  "note": "deep in Brdy, double ridge shielding"
+  "lat": 49.78116975384048,
+  "lng": 14.178913227653904,
+  "scenario": "behind_house_urban",
+  "r11": "8b1e308e9419fff",
+  "note": "urban Dob\u0159\u00ed\u0161, building h~15 m on path to road 102 m away"
  },
  {
   "id": 27,
-  "lat": 49.69551,
-  "lng": 13.996024,
-  "scenario": "two_hills",
-  "r11": "8b1e308d29b1fff",
-  "r11_center_lat": 49.6955632,
-  "r11_center_lng": 13.9963235,
-  "note": "deep in Brdy, double ridge shielding"
+  "lat": 49.6912769964762,
+  "lng": 14.098095247557382,
+  "scenario": "one_hill_shadow",
+  "r11": "8b1e308d8574fff",
+  "note": "1507 m from D4, 1 ridge in path"
  },
  {
   "id": 28,
-  "lat": 49.699508,
-  "lng": 13.978052,
-  "scenario": "two_hills",
-  "r11": "8b1e308d6405fff",
-  "r11_center_lat": 49.6996756,
-  "r11_center_lng": 13.9779305,
-  "note": "deep in Brdy, double ridge shielding"
+  "lat": 49.71481608359347,
+  "lng": 14.072237428147572,
+  "scenario": "one_hill_shadow",
+  "r11": "8b1e308dcd32fff",
+  "note": "1529 m from D4, 1 ridge in path"
  },
  {
   "id": 29,
-  "lat": 49.67685,
-  "lng": 13.91038,
-  "scenario": "two_hills",
-  "r11": "8b1e3089974bfff",
-  "r11_center_lat": 49.6767897,
-  "r11_center_lng": 13.9103262,
-  "note": "deep in Brdy, double ridge shielding"
+  "lat": 49.70089609733513,
+  "lng": 14.112863475112269,
+  "scenario": "one_hill_shadow",
+  "r11": "8b1e308d8b10fff",
+  "note": "1601 m from D4, 1 ridge in path"
  },
  {
   "id": 30,
-  "lat": 49.696082,
-  "lng": 13.973334,
-  "scenario": "two_hills",
-  "r11": "8b1e308d6494fff",
-  "r11_center_lat": 49.6961311,
-  "r11_center_lng": 13.9736177,
-  "note": "deep in Brdy, double ridge shielding"
+  "lat": 49.70138234300198,
+  "lng": 14.054916436758194,
+  "scenario": "one_hill_shadow",
+  "r11": "8b1e308d17abfff",
+  "note": "1505 m from D4, 1 ridge in path"
  },
  {
   "id": 31,
-  "lat": 49.76193,
-  "lng": 14.08446,
-  "scenario": "one_hill",
-  "r11": "8b1e308c4270fff",
-  "r11_center_lat": 49.7620764,
-  "r11_center_lng": 14.0843612,
-  "note": "single ridge between source and receiver"
+  "lat": 49.69027060538759,
+  "lng": 14.106529133788301,
+  "scenario": "two_hills_shadow",
+  "r11": "8b1e308d808afff",
+  "note": "2014 m from D4, 9 ridges in path"
  },
  {
   "id": 32,
-  "lat": 49.75657,
-  "lng": 14.04161,
-  "scenario": "one_hill",
-  "r11": "8b1e308f1748fff",
-  "r11_center_lat": 49.7564262,
-  "r11_center_lng": 14.0417608,
-  "note": "single ridge between source and receiver"
+  "lat": 49.71589593122493,
+  "lng": 14.065192293001457,
+  "scenario": "two_hills_shadow",
+  "r11": "8b1e308d1b52fff",
+  "note": "2017 m from D4, 3 ridges in path"
  },
  {
   "id": 33,
-  "lat": 49.75347,
-  "lng": 14.05904,
-  "scenario": "one_hill",
-  "r11": "8b1e308c6b22fff",
-  "r11_center_lat": 49.7533473,
-  "r11_center_lng": 14.0590573,
-  "note": "single ridge between source and receiver"
+  "lat": 49.70627312587091,
+  "lng": 14.050429698674566,
+  "scenario": "two_hills_shadow",
+  "r11": "8b1e308d10b6fff",
+  "note": "2020 m from D4, 2 ridges in path"
  },
  {
   "id": 34,
-  "lat": 49.7562,
-  "lng": 14.01671,
-  "scenario": "one_hill",
-  "r11": "8b1e308f02e8fff",
-  "r11_center_lat": 49.7561533,
-  "r11_center_lng": 14.0169905,
-  "note": "single ridge between source and receiver"
+  "lat": 49.68907337389564,
+  "lng": 14.111485823551474,
+  "scenario": "composite_obstruction",
+  "r11": "8b1e308d8771fff",
+  "note": "3 ridges, 1899 m forest, building h~6 m in path to D4 (2373 m)"
  },
  {
   "id": 35,
-  "lat": 49.77158,
-  "lng": 14.04527,
-  "scenario": "one_hill",
-  "r11": "8b1e308e24cafff",
-  "r11_center_lat": 49.7716617,
-  "r11_center_lng": 14.0453614,
-  "note": "single ridge between source and receiver"
+  "lat": 49.720049279310714,
+  "lng": 14.080642145192341,
+  "scenario": "composite_obstruction",
+  "r11": "8b1e308c2648fff",
+  "note": "3 ridges, 592 m forest, building h~6 m in path to D4 (1479 m)"
  },
  {
   "id": 36,
-  "lat": 49.77485,
-  "lng": 14.02705,
-  "scenario": "one_hill",
-  "r11": "8b1e308f52a1fff",
-  "r11_center_lat": 49.7750447,
-  "r11_center_lng": 14.0269941,
-  "note": "single ridge between source and receiver"
+  "lat": 49.70697793077199,
+  "lng": 14.116682741603428,
+  "scenario": "composite_obstruction",
+  "r11": "8b1e308dd472fff",
+  "note": "2 ridges, 500 m forest, building h~6 m in path to D4 (1250 m)"
  },
  {
   "id": 37,
-  "lat": 49.7682,
-  "lng": 14.05208,
-  "scenario": "one_hill",
-  "r11": "8b1e308c4d34fff",
-  "r11_center_lat": 49.7683532,
-  "r11_center_lng": 14.0518506,
-  "note": "single ridge between source and receiver"
+  "lat": 49.780716974539246,
+  "lng": 14.17055526587791,
+  "scenario": "urban_dobris_centre",
+  "r11": "8b1e308eb965fff",
+  "note": "central Dob\u0159\u00ed\u0161, 11 m from n\u00e1m\u011bst\u00ed"
  },
  {
   "id": 38,
-  "lat": 49.77189,
-  "lng": 14.05897,
-  "scenario": "one_hill",
-  "r11": "8b1e308e2658fff",
-  "r11_center_lat": 49.772046,
-  "r11_center_lng": 14.0589571,
-  "note": "single ridge between source and receiver"
+  "lat": 49.78056591669106,
+  "lng": 14.16776935335417,
+  "scenario": "urban_dobris_centre",
+  "r11": "8b1e308e82defff",
+  "note": "central Dob\u0159\u00ed\u0161, 189 m from n\u00e1m\u011bst\u00ed"
  },
  {
   "id": 39,
-  "lat": 49.98913,
-  "lng": 14.04191,
-  "scenario": "ruzyne_approach",
-  "r11": "8b1e30946753fff",
-  "r11_center_lat": 49.9889569,
-  "r11_center_lng": 14.0417259,
-  "note": "north of hex, under Ruzyn\u011b approach path"
+  "lat": 49.778870521163604,
+  "lng": 14.170316462249986,
+  "scenario": "urban_dobris_centre",
+  "r11": "8b1e308eb942fff",
+  "note": "central Dob\u0159\u00ed\u0161, 204 m from n\u00e1m\u011bst\u00ed"
  },
  {
   "id": 40,
-  "lat": 49.97325,
-  "lng": 14.00207,
-  "scenario": "ruzyne_approach",
-  "r11": "8b1e30954229fff",
-  "r11_center_lat": 49.9732069,
-  "r11_center_lng": 14.0017328,
-  "note": "north of hex, under Ruzyn\u011b approach path"
+  "lat": 49.782525624370656,
+  "lng": 14.170097581795009,
+  "scenario": "urban_dobris_centre",
+  "r11": "8b1e308e82e9fff",
+  "note": "central Dob\u0159\u00ed\u0161, 204 m from n\u00e1m\u011bst\u00ed"
  },
  {
   "id": 41,
-  "lat": 49.97923,
-  "lng": 14.05395,
-  "scenario": "ruzyne_approach",
-  "r11": "8b1e3094211bfff",
-  "r11_center_lat": 49.9790268,
-  "r11_center_lng": 14.0538988,
-  "note": "north of hex, under Ruzyn\u011b approach path"
+  "lat": 49.780867966681875,
+  "lng": 14.173341215777384,
+  "scenario": "urban_dobris_centre",
+  "r11": "8b1e308e9598fff",
+  "note": "central Dob\u0159\u00ed\u0161, 212 m from n\u00e1m\u011bst\u00ed"
  },
  {
   "id": 42,
-  "lat": 49.97671,
-  "lng": 14.09786,
-  "scenario": "ruzyne_approach",
-  "r11": "8b1e30943398fff",
-  "r11_center_lat": 49.9766918,
-  "r11_center_lng": 14.0978227,
-  "note": "north of hex, under Ruzyn\u011b approach path"
+  "lat": 49.91997573911271,
+  "lng": 14.205250447585488,
+  "scenario": "multi_source_balance",
+  "r11": "8b1e30863a31fff",
+  "note": "road 152 m, rail 107 m, under LKPR approach"
  },
  {
   "id": 43,
-  "lat": 50.01043,
-  "lng": 14.05939,
-  "scenario": "ruzyne_approach",
-  "r11": "8b1e30944392fff",
-  "r11_center_lat": 50.0104008,
-  "r11_center_lng": 14.059316,
-  "note": "north of hex, under Ruzyn\u011b approach path"
+  "lat": 49.853166954101596,
+  "lng": 14.101168448839328,
+  "scenario": "multi_source_balance",
+  "r11": "8b1e30854535fff",
+  "note": "road 161 m, rail 107 m, under LKPR approach"
  },
  {
   "id": 44,
-  "lat": 49.96468,
-  "lng": 14.09447,
-  "scenario": "ruzyne_approach",
-  "r11": "8b1e3095dc33fff",
-  "r11_center_lat": 49.964798,
-  "r11_center_lng": 14.0943482,
-  "note": "north of hex, under Ruzyn\u011b approach path"
+  "lat": 49.92921019223233,
+  "lng": 14.186493397407475,
+  "scenario": "multi_source_balance",
+  "r11": "8b1e30860385fff",
+  "note": "road 156 m, rail 119 m, under LKPR approach"
  },
  {
   "id": 45,
-  "lat": 49.99535,
-  "lng": 14.05935,
-  "scenario": "ruzyne_approach",
-  "r11": "8b1e30940c8bfff",
-  "r11_center_lat": 49.9954066,
-  "r11_center_lng": 14.0591914,
-  "note": "north of hex, under Ruzyn\u011b approach path"
+  "lat": 49.799828383396196,
+  "lng": 13.900076367828394,
+  "scenario": "brdy_silent",
+  "r11": "8b1e30813482fff",
+  "note": "deep Brdy forest, inf m from D4"
  },
  {
   "id": 46,
-  "lat": 49.96633,
-  "lng": 14.01037,
-  "scenario": "ruzyne_approach",
-  "r11": "8b1e3095549bfff",
-  "r11_center_lat": 49.9663845,
-  "r11_center_lng": 14.0105622,
-  "note": "north of hex, under Ruzyn\u011b approach path"
+  "lat": 49.77948398503733,
+  "lng": 13.929299470371639,
+  "scenario": "brdy_silent",
+  "r11": "8b1e308a8a6efff",
+  "note": "deep Brdy forest, 13858 m from D4"
  },
  {
   "id": 47,
-  "lat": 50.01089,
-  "lng": 14.06663,
-  "scenario": "ruzyne_approach",
-  "r11": "8b1e30944218fff",
-  "r11_center_lat": 50.0107862,
-  "r11_center_lng": 14.0663,
-  "note": "north of hex, under Ruzyn\u011b approach path"
+  "lat": 49.77589419905717,
+  "lng": 13.956757947671766,
+  "scenario": "brdy_silent",
+  "r11": "8b1e308a9335fff",
+  "note": "deep Brdy forest, 12137 m from D4"
  },
  {
   "id": 48,
-  "lat": 49.9878,
-  "lng": 14.0775,
-  "scenario": "ruzyne_approach",
-  "r11": "8b1e309406e1fff",
-  "r11_center_lat": 49.9880078,
-  "r11_center_lng": 14.0775129,
-  "note": "north of hex, under Ruzyn\u011b approach path"
+  "lat": 49.850477503617974,
+  "lng": 14.098884877535246,
+  "scenario": "r5_boundary",
+  "r11": "8b1e308545b5fff",
+  "note": "\u226425 m from R5 cell boundary inside Dob\u0159\u00ed\u0161 R4"
  },
  {
   "id": 49,
-  "lat": 49.69457,
-  "lng": 14.08623,
-  "scenario": "dlouha_lhota",
-  "r11": "8b1e308deacefff",
-  "r11_center_lat": 49.6946721,
-  "r11_center_lng": 14.0863761,
-  "note": "around Dlouh\u00e1 Lhota airport near P\u0159\u00edbram"
+  "lat": 49.882141006526574,
+  "lng": 14.061975016513998,
+  "scenario": "r5_boundary",
+  "r11": "8b1e3080d961fff",
+  "note": "\u226425 m from R5 cell boundary inside Dob\u0159\u00ed\u0161 R4"
  },
  {
   "id": 50,
-  "lat": 49.69624,
-  "lng": 14.0688,
-  "scenario": "dlouha_lhota",
-  "r11": "8b1e308de883fff",
-  "r11_center_lat": 49.6962576,
-  "r11_center_lng": 14.0684872,
-  "note": "around Dlouh\u00e1 Lhota airport near P\u0159\u00edbram"
+  "lat": 50.044960453865606,
+  "lng": 14.023527108938513,
+  "scenario": "random_cell",
+  "r11": "8b1e30966395fff",
+  "note": ""
  },
  {
   "id": 51,
-  "lat": 49.69617,
-  "lng": 14.11926,
-  "scenario": "dlouha_lhota",
-  "r11": "8b1e308d8adcfff",
-  "r11_center_lat": 49.696116,
-  "r11_center_lng": 14.1194332,
-  "note": "around Dlouh\u00e1 Lhota airport near P\u0159\u00edbram"
+  "lat": 49.88036589734191,
+  "lng": 13.834819515161321,
+  "scenario": "random_cell",
+  "r11": "8b1e3083689dfff",
+  "note": ""
  },
  {
   "id": 52,
-  "lat": 49.68971,
-  "lng": 14.08174,
-  "scenario": "dlouha_lhota",
-  "r11": "8b1e308de381fff",
-  "r11_center_lat": 49.689629,
-  "r11_center_lng": 14.0814505,
-  "note": "around Dlouh\u00e1 Lhota airport near P\u0159\u00edbram"
+  "lat": 49.83460958862125,
+  "lng": 14.056858340001611,
+  "scenario": "random_cell",
+  "r11": "8b1e3080bccdfff",
+  "note": ""
  },
  {
   "id": 53,
-  "lat": 49.69146,
-  "lng": 14.06767,
-  "scenario": "dlouha_lhota",
-  "r11": "8b1e308de186fff",
-  "r11_center_lat": 49.6914439,
-  "r11_center_lng": 14.067735,
-  "note": "around Dlouh\u00e1 Lhota airport near P\u0159\u00edbram"
+  "lat": 49.90910618836936,
+  "lng": 13.723881922476826,
+  "scenario": "random_cell",
+  "r11": "8b1e309a1c2dfff",
+  "note": ""
  },
  {
   "id": 54,
-  "lat": 49.69348,
-  "lng": 14.07115,
-  "scenario": "dlouha_lhota",
-  "r11": "8b1e308de11dfff",
-  "r11_center_lat": 49.6934839,
-  "r11_center_lng": 14.0714476,
-  "note": "around Dlouh\u00e1 Lhota airport near P\u0159\u00edbram"
+  "lat": 49.685215574893824,
+  "lng": 13.903517295963557,
+  "scenario": "random_cell",
+  "r11": "8b1e30899170fff",
+  "note": ""
  },
  {
   "id": 55,
-  "lat": 49.69005,
-  "lng": 14.08487,
-  "scenario": "dlouha_lhota",
-  "r11": "8b1e308de231fff",
-  "r11_center_lat": 49.6901668,
-  "r11_center_lng": 14.0845573,
-  "note": "around Dlouh\u00e1 Lhota airport near P\u0159\u00edbram"
+  "lat": 49.726144030427704,
+  "lng": 13.95255286351934,
+  "scenario": "random_cell",
+  "r11": "8b1e30889d33fff",
+  "note": ""
  },
  {
   "id": 56,
-  "lat": 49.69495,
-  "lng": 14.089,
-  "scenario": "dlouha_lhota",
-  "r11": "8b1e308d8d95fff",
-  "r11_center_lat": 49.6948248,
-  "r11_center_lng": 14.0891578,
-  "note": "around Dlouh\u00e1 Lhota airport near P\u0159\u00edbram"
+  "lat": 49.880066811681424,
+  "lng": 14.077491983612259,
+  "scenario": "random_cell",
+  "r11": "8b1e308766b5fff",
+  "note": ""
  },
  {
   "id": 57,
-  "lat": 49.68536,
-  "lng": 13.99572,
-  "scenario": "kovohute",
-  "r11": "8b1e308d2576fff",
-  "r11_center_lat": 49.6852427,
-  "r11_center_lng": 13.9955696,
-  "note": "Kovohut\u011b P\u0159\u00edbram industrial site"
+  "lat": 49.885992854954665,
+  "lng": 14.254167902413245,
+  "scenario": "random_cell",
+  "r11": "8b1e3084cd08fff",
+  "note": ""
  },
  {
   "id": 58,
-  "lat": 49.70344,
-  "lng": 14.01191,
-  "scenario": "kovohute",
-  "r11": "8b1e308d0554fff",
-  "r11_center_lat": 49.7034223,
-  "r11_center_lng": 14.0122302,
-  "note": "Kovohut\u011b P\u0159\u00edbram industrial site"
+  "lat": 49.80715984072632,
+  "lng": 13.702349744055386,
+  "scenario": "random_cell",
+  "r11": "8b1e3099e905fff",
+  "note": ""
  },
  {
   "id": 59,
-  "lat": 49.69657,
-  "lng": 14.02328,
-  "scenario": "kovohute",
-  "r11": "8b1e308d068cfff",
-  "r11_center_lat": 49.6966856,
-  "r11_center_lng": 14.0231117,
-  "note": "Kovohut\u011b P\u0159\u00edbram industrial site"
+  "lat": 49.86122056617766,
+  "lng": 13.865061340048461,
+  "scenario": "random_cell",
+  "r11": "8b1e30832a98fff",
+  "note": ""
  },
  {
   "id": 60,
-  "lat": 49.702,
-  "lng": 14.02118,
-  "scenario": "kovohute",
-  "r11": "8b1e308d0704fff",
-  "r11_center_lat": 49.7020761,
-  "r11_center_lng": 14.0210345,
-  "note": "Kovohut\u011b P\u0159\u00edbram industrial site"
+  "lat": 49.84564820723759,
+  "lng": 13.753227765693984,
+  "scenario": "random_cell",
+  "r11": "8b1e30981780fff",
+  "note": ""
  },
  {
   "id": 61,
-  "lat": 49.70293,
-  "lng": 13.99496,
-  "scenario": "kovohute",
-  "r11": "8b1e308d6381fff",
-  "r11_center_lat": 49.70284,
-  "r11_center_lng": 13.9951737,
-  "note": "Kovohut\u011b P\u0159\u00edbram industrial site"
+  "lat": 49.89577963091958,
+  "lng": 13.733851504829602,
+  "scenario": "random_cell",
+  "r11": "8b1e309a16b3fff",
+  "note": ""
  },
  {
   "id": 62,
-  "lat": 49.69271,
-  "lng": 14.00667,
-  "scenario": "kovohute",
-  "r11": "8b1e308d28c8fff",
-  "r11_center_lat": 49.6928321,
-  "r11_center_lng": 14.0066077,
-  "note": "Kovohut\u011b P\u0159\u00edbram industrial site"
+  "lat": 49.99105177922009,
+  "lng": 13.7558895739783,
+  "scenario": "random_cell",
+  "r11": "8b1e3093029cfff",
+  "note": ""
  },
  {
   "id": 63,
-  "lat": 49.76748,
-  "lng": 14.16887,
-  "scenario": "urban_dobris",
-  "r11": "8b1e308eb0a0fff",
-  "r11_center_lat": 49.7674064,
-  "r11_center_lng": 14.1685576,
-  "note": "Dob\u0159\u00ed\u0161 town centre + close villages"
+  "lat": 49.88972459993769,
+  "lng": 14.000648908928307,
+  "scenario": "random_cell",
+  "r11": "8b1e3082ad5dfff",
+  "note": ""
  },
  {
   "id": 64,
-  "lat": 49.78482,
-  "lng": 14.17477,
-  "scenario": "urban_dobris",
-  "r11": "8b1e308e9504fff",
-  "r11_center_lat": 49.7849828,
-  "r11_center_lng": 14.1748419,
-  "note": "Dob\u0159\u00ed\u0161 town centre + close villages"
+  "lat": 50.00172034201978,
+  "lng": 14.161115957793946,
+  "scenario": "random_cell",
+  "r11": "8b1e3094dc8cfff",
+  "note": ""
  },
  {
   "id": 65,
-  "lat": 49.78927,
-  "lng": 14.17731,
-  "scenario": "urban_dobris",
-  "r11": "8b1e308e9c0bfff",
-  "r11_center_lat": 49.7891352,
-  "r11_center_lng": 14.1770394,
-  "note": "Dob\u0159\u00ed\u0161 town centre + close villages"
+  "lat": 49.765426960120344,
+  "lng": 14.145623384576131,
+  "scenario": "random_cell",
+  "r11": "8b1e308ea3aafff",
+  "note": ""
  },
  {
   "id": 66,
-  "lat": 49.78444,
-  "lng": 14.15008,
-  "scenario": "urban_dobris",
-  "r11": "8b1e308e80a0fff",
-  "r11_center_lat": 49.7843906,
-  "r11_center_lng": 14.1504206,
-  "note": "Dob\u0159\u00ed\u0161 town centre + close villages"
+  "lat": 49.851620923519405,
+  "lng": 14.006869951195533,
+  "scenario": "random_cell",
+  "r11": "8b1e3080ec4bfff",
+  "note": ""
  },
  {
   "id": 67,
-  "lat": 49.78866,
-  "lng": 14.17273,
-  "scenario": "urban_dobris",
-  "r11": "8b1e308e9ca5fff",
-  "r11_center_lat": 49.7885244,
-  "r11_center_lng": 14.1725336,
-  "note": "Dob\u0159\u00ed\u0161 town centre + close villages"
+  "lat": 49.85089398780554,
+  "lng": 14.013556764282235,
+  "scenario": "random_cell",
+  "r11": "8b1e3080e028fff",
+  "note": ""
  },
  {
   "id": 68,
-  "lat": 49.77479,
-  "lng": 14.15588,
-  "scenario": "urban_dobris",
-  "r11": "8b1e308ebd24fff",
-  "r11_center_lat": 49.7747681,
-  "r11_center_lng": 14.1555407,
-  "note": "Dob\u0159\u00ed\u0161 town centre + close villages"
+  "lat": 49.92291494804061,
+  "lng": 14.03146805197154,
+  "scenario": "random_cell",
+  "r11": "8b1e3082dcc6fff",
+  "note": ""
  },
  {
   "id": 69,
-  "lat": 49.77102,
-  "lng": 14.14984,
-  "scenario": "urban_dobris",
-  "r11": "8b1e308eaaeefff",
-  "r11_center_lat": 49.7711565,
-  "r11_center_lng": 14.1498194,
-  "note": "Dob\u0159\u00ed\u0161 town centre + close villages"
+  "lat": 49.89888451619857,
+  "lng": 14.100128476663613,
+  "scenario": "random_cell",
+  "r11": "8b1e308746c5fff",
+  "note": ""
  },
  {
   "id": 70,
-  "lat": 49.77151,
-  "lng": 14.1786,
-  "scenario": "urban_dobris",
-  "r11": "8b1e308eba83fff",
-  "r11_center_lat": 49.771628,
-  "r11_center_lng": 14.1787847,
-  "note": "Dob\u0159\u00ed\u0161 town centre + close villages"
+  "lat": 49.72034625838441,
+  "lng": 13.862921718085383,
+  "scenario": "random_cell",
+  "r11": "8b1e3088388afff",
+  "note": ""
  },
  {
   "id": 71,
-  "lat": 49.76855,
-  "lng": 14.15591,
-  "scenario": "urban_dobris",
-  "r11": "8b1e308ebcb1fff",
-  "r11_center_lat": 49.768535,
-  "r11_center_lng": 14.1555658,
-  "note": "Dob\u0159\u00ed\u0161 town centre + close villages"
+  "lat": 49.91876181411917,
+  "lng": 13.879198500963108,
+  "scenario": "random_cell",
+  "r11": "8b1e3091ba10fff",
+  "note": ""
  },
  {
   "id": 72,
-  "lat": 49.78505,
-  "lng": 14.15452,
-  "scenario": "urban_dobris",
-  "r11": "8b1e308e8019fff",
-  "r11_center_lat": 49.7849643,
-  "r11_center_lng": 14.1542292,
-  "note": "Dob\u0159\u00ed\u0161 town centre + close villages"
+  "lat": 49.94017827546681,
+  "lng": 14.012896541043506,
+  "scenario": "random_cell",
+  "r11": "8b1e30953cf1fff",
+  "note": ""
  },
  {
   "id": 73,
-  "lat": 49.69654,
-  "lng": 13.86468,
-  "scenario": "brdy_silent",
-  "r11": "8b1e3089c22dfff",
-  "r11_center_lat": 49.6966005,
-  "r11_center_lng": 13.8647895,
-  "note": "Brdy forest, far from any source"
+  "lat": 49.876331479584735,
+  "lng": 14.023164751275605,
+  "scenario": "random_cell",
+  "r11": "8b1e3080c832fff",
+  "note": ""
  },
  {
   "id": 74,
-  "lat": 49.69447,
-  "lng": 13.95834,
-  "scenario": "brdy_silent",
-  "r11": "8b1e3088b6e5fff",
-  "r11_center_lat": 49.6945435,
-  "r11_center_lng": 13.9583717,
-  "note": "Brdy forest, far from any source"
+  "lat": 49.99536978360954,
+  "lng": 14.065149028087555,
+  "scenario": "random_cell",
+  "r11": "8b1e30940192fff",
+  "note": ""
  },
  {
   "id": 75,
-  "lat": 49.73783,
-  "lng": 13.90321,
-  "scenario": "brdy_silent",
-  "r11": "8b1e3088cc13fff",
-  "r11_center_lat": 49.7376791,
-  "r11_center_lng": 13.9033283,
-  "note": "Brdy forest, far from any source"
+  "lat": 49.90385927261314,
+  "lng": 14.25276514037651,
+  "scenario": "random_cell",
+  "r11": "8b1e3086ab95fff",
+  "note": ""
  },
  {
   "id": 76,
-  "lat": 49.71139,
-  "lng": 13.94086,
-  "scenario": "brdy_silent",
-  "r11": "8b1e30888652fff",
-  "r11_center_lat": 49.711547,
-  "r11_center_lng": 13.9409117,
-  "note": "Brdy forest, far from any source"
+  "lat": 49.83321690721189,
+  "lng": 13.646853294551885,
+  "scenario": "random_cell",
+  "r11": "8b1e30994a18fff",
+  "note": ""
  },
  {
   "id": 77,
-  "lat": 49.71144,
-  "lng": 13.93405,
-  "scenario": "brdy_silent",
-  "r11": "8b1e3088878afff",
-  "r11_center_lat": 49.7115413,
-  "r11_center_lng": 13.9342848,
-  "note": "Brdy forest, far from any source"
+  "lat": 50.02407755281029,
+  "lng": 14.16221934162127,
+  "scenario": "random_cell",
+  "r11": "8b1e3096bb8afff",
+  "note": ""
  },
  {
   "id": 78,
-  "lat": 49.74343,
-  "lng": 13.93848,
-  "scenario": "brdy_silent",
-  "r11": "8b1e3088dd72fff",
-  "r11_center_lat": 49.7433338,
-  "r11_center_lng": 13.9385615,
-  "note": "Brdy forest, far from any source"
+  "lat": 49.85193544127448,
+  "lng": 13.811502223479227,
+  "scenario": "random_cell",
+  "r11": "8b1e3098d436fff",
+  "note": ""
  },
  {
   "id": 79,
-  "lat": 49.71346,
-  "lng": 13.86482,
-  "scenario": "brdy_silent",
-  "r11": "8b1e30883081fff",
-  "r11_center_lat": 49.713499,
-  "r11_center_lng": 13.8651036,
-  "note": "Brdy forest, far from any source"
+  "lat": 49.995462556087894,
+  "lng": 13.74369850466906,
+  "scenario": "random_cell",
+  "r11": "8b1e30930016fff",
+  "note": ""
  },
  {
   "id": 80,
-  "lat": 49.68721,
-  "lng": 13.86837,
-  "scenario": "brdy_silent",
-  "r11": "8b1e3089880bfff",
-  "r11_center_lat": 49.6872501,
-  "r11_center_lng": 13.8681761,
-  "note": "Brdy forest, far from any source"
+  "lat": 49.787612599759704,
+  "lng": 14.196348637940671,
+  "scenario": "random_cell",
+  "r11": "8b1e308e9311fff",
+  "note": ""
  },
  {
   "id": 81,
-  "lat": 49.70946,
-  "lng": 13.92222,
-  "scenario": "brdy_silent",
-  "r11": "8b1e3088a86bfff",
-  "r11_center_lat": 49.7094131,
-  "r11_center_lng": 13.9225601,
-  "note": "Brdy forest, far from any source"
+  "lat": 49.90962450654956,
+  "lng": 14.135867369538433,
+  "scenario": "random_cell",
+  "r11": "8b1e308753a5fff",
+  "note": ""
  },
  {
   "id": 82,
-  "lat": 49.69682,
-  "lng": 13.94744,
-  "scenario": "brdy_silent",
-  "r11": "8b1e3088b451fff",
-  "r11_center_lat": 49.6968847,
-  "r11_center_lng": 13.9477626,
-  "note": "Brdy forest, far from any source"
+  "lat": 49.97931008372068,
+  "lng": 13.84415751749638,
+  "scenario": "random_cell",
+  "r11": "8b1e309002abfff",
+  "note": ""
  },
  {
   "id": 83,
-  "lat": 49.7336,
-  "lng": 13.90773,
-  "scenario": "brdy_silent",
-  "r11": "8b1e3088c554fff",
-  "r11_center_lat": 49.7335286,
-  "r11_center_lng": 13.9077783,
-  "note": "Brdy forest, far from any source"
+  "lat": 49.995043160760886,
+  "lng": 14.166074412495878,
+  "scenario": "random_cell",
+  "r11": "8b1e3094d4f5fff",
+  "note": ""
  },
  {
   "id": 84,
-  "lat": 49.69072,
-  "lng": 13.89529,
-  "scenario": "brdy_silent",
-  "r11": "8b1e308999a1fff",
-  "r11_center_lat": 49.6906353,
-  "r11_center_lng": 13.8955031,
-  "note": "Brdy forest, far from any source"
+  "lat": 49.65072820251987,
+  "lng": 13.858660357801197,
+  "scenario": "random_cell",
+  "r11": "8b1e3089a6dcfff",
+  "note": ""
  },
  {
   "id": 85,
-  "lat": 49.78413,
-  "lng": 14.17371,
-  "scenario": "behind_house",
-  "r11": "8b1e308e9514fff",
-  "r11_center_lat": 49.7841764,
-  "r11_center_lng": 14.1734926,
-  "note": "near-field shielding by buildings in town"
+  "lat": 49.851999392672056,
+  "lng": 13.948125579231766,
+  "scenario": "random_cell",
+  "r11": "8b1e30802b84fff",
+  "note": ""
  },
  {
   "id": 86,
-  "lat": 49.78136,
-  "lng": 14.17237,
-  "scenario": "behind_house",
-  "r11": "8b1e308e9591fff",
-  "r11_center_lat": 49.7811769,
-  "r11_center_lng": 14.1722746,
-  "note": "near-field shielding by buildings in town"
+  "lat": 49.86674336524397,
+  "lng": 13.757081041415503,
+  "scenario": "random_cell",
+  "r11": "8b1e309aa585fff",
+  "note": ""
  },
  {
   "id": 87,
-  "lat": 49.78881,
-  "lng": 14.16902,
-  "scenario": "behind_house",
-  "r11": "8b1e308e9d90fff",
-  "r11_center_lat": 49.7886822,
-  "r11_center_lng": 14.1686806,
-  "note": "near-field shielding by buildings in town"
+  "lat": 49.84301759694462,
+  "lng": 14.109828045921788,
+  "scenario": "random_cell",
+  "r11": "8b1e30856a2bfff",
+  "note": ""
  },
  {
   "id": 88,
-  "lat": 49.7891,
-  "lng": 14.16372,
-  "scenario": "behind_house",
-  "r11": "8b1e308e8af3fff",
-  "r11_center_lat": 49.7891486,
-  "r11_center_lng": 14.1637609,
-  "note": "near-field shielding by buildings in town"
+  "lat": 49.82197072431042,
+  "lng": 13.812748688746877,
+  "scenario": "random_cell",
+  "r11": "8b1e3098bcadfff",
+  "note": ""
  },
  {
   "id": 89,
-  "lat": 49.78715,
-  "lng": 14.16335,
-  "scenario": "behind_house",
-  "r11": "8b1e308e832efff",
-  "r11_center_lat": 49.7873024,
-  "r11_center_lng": 14.1635223,
-  "note": "near-field shielding by buildings in town"
+  "lat": 49.7757861380302,
+  "lng": 14.133821512324007,
+  "scenario": "random_cell",
+  "r11": "8b1e308ea820fff",
+  "note": ""
  },
  {
   "id": 90,
-  "lat": 49.79011,
-  "lng": 14.17039,
-  "scenario": "behind_house",
-  "r11": "8b1e308e9daefff",
-  "r11_center_lat": 49.7902574,
-  "r11_center_lng": 14.1706827,
-  "note": "near-field shielding by buildings in town"
+  "lat": 49.75724734135097,
+  "lng": 14.123416218024321,
+  "scenario": "random_cell",
+  "r11": "8b1e308c1861fff",
+  "note": ""
  },
  {
   "id": 91,
-  "lat": 49.78762,
-  "lng": 14.16673,
-  "scenario": "behind_house",
-  "r11": "8b1e308e8362fff",
-  "r11_center_lat": 49.7874914,
-  "r11_center_lng": 14.1670049,
-  "note": "near-field shielding by buildings in town"
+  "lat": 49.65479255417751,
+  "lng": 13.846204896602972,
+  "scenario": "random_cell",
+  "r11": "8b1e3089a4e5fff",
+  "note": ""
  },
  {
   "id": 92,
-  "lat": 49.78587,
-  "lng": 14.17343,
-  "scenario": "behind_house",
-  "r11": "8b1e308e9c9bfff",
-  "r11_center_lat": 49.7856383,
-  "r11_center_lng": 14.1734051,
-  "note": "near-field shielding by buildings in town"
+  "lat": 49.8537824696082,
+  "lng": 14.099032977380764,
+  "scenario": "random_cell",
+  "r11": "8b1e30854c93fff",
+  "note": ""
  },
  {
   "id": 93,
-  "lat": 49.94485,
-  "lng": 14.01368,
-  "scenario": "edge_cases",
-  "r11": "8b1e30953d40fff",
-  "r11_center_lat": 49.9449759,
-  "r11_center_lng": 14.0136476,
-  "note": "R4 hex boundary / R11 partition edge"
+  "lat": 49.87547772464348,
+  "lng": 14.134086421426376,
+  "scenario": "random_cell",
+  "r11": "8b1e30873075fff",
+  "note": ""
  },
  {
   "id": 94,
-  "lat": 49.89655,
-  "lng": 14.05271,
-  "scenario": "edge_cases",
-  "r11": "8b1e3082bb29fff",
-  "r11_center_lat": 49.8966581,
-  "r11_center_lng": 14.0530353,
-  "note": "R4 hex boundary / R11 partition edge"
+  "lat": 49.90038490431476,
+  "lng": 13.775492010932938,
+  "scenario": "random_cell",
+  "r11": "8b1e309ac655fff",
+  "note": ""
  },
  {
   "id": 95,
-  "lat": 49.90924,
-  "lng": 14.03718,
-  "scenario": "edge_cases",
-  "r11": "8b1e30828ae4fff",
-  "r11_center_lat": 49.9093261,
-  "r11_center_lng": 14.0372089,
-  "note": "R4 hex boundary / R11 partition edge"
+  "lat": 49.74529804365835,
+  "lng": 14.086083079764784,
+  "scenario": "random_cell",
+  "r11": "8b1e308c0013fff",
+  "note": ""
  },
  {
   "id": 96,
-  "lat": 49.90355,
-  "lng": 14.06024,
-  "scenario": "edge_cases",
-  "r11": "8b1e30829089fff",
-  "r11_center_lat": 49.9036485,
-  "r11_center_lng": 14.0603009,
-  "note": "R4 hex boundary / R11 partition edge"
+  "lat": 49.86327894345217,
+  "lng": 13.856192466206256,
+  "scenario": "random_cell",
+  "r11": "8b1e308328d3fff",
+  "note": ""
  },
  {
   "id": 97,
-  "lat": 49.90245,
-  "lng": 14.03005,
-  "scenario": "edge_cases",
-  "r11": "8b1e308280ccfff",
-  "r11_center_lat": 49.9023351,
-  "r11_center_lng": 14.0299456,
-  "note": "R4 hex boundary / R11 partition edge"
+  "lat": 49.914743280209905,
+  "lng": 14.049119896396032,
+  "scenario": "random_cell",
+  "r11": "8b1e3082d6edfff",
+  "note": ""
  },
  {
   "id": 98,
-  "lat": 49.92406,
-  "lng": 14.04366,
-  "scenario": "edge_cases",
-  "r11": "8b1e3082d02bfff",
-  "r11_center_lat": 49.9239558,
-  "r11_center_lng": 14.0436514,
-  "note": "R4 hex boundary / R11 partition edge"
+  "lat": 49.724435996686935,
+  "lng": 13.994179622450428,
+  "scenario": "random_cell",
+  "r11": "8b1e308d4cecfff",
+  "note": ""
  },
  {
   "id": 99,
-  "lat": 49.90587,
-  "lng": 14.04695,
-  "scenario": "edge_cases",
-  "r11": "8b1e30829c8cfff",
-  "r11_center_lat": 49.9058347,
-  "r11_center_lng": 14.0468712,
-  "note": "R4 hex boundary / R11 partition edge"
+  "lat": 49.87918934002771,
+  "lng": 13.884880376499405,
+  "scenario": "random_cell",
+  "r11": "8b1e3083032bfff",
+  "note": ""
  },
  {
   "id": 100,
-  "lat": 49.91762,
-  "lng": 14.01697,
-  "scenario": "edge_cases",
-  "r11": "8b1e3082c2a2fff",
-  "r11_center_lat": 49.9177257,
-  "r11_center_lng": 14.0170943,
-  "note": "R4 hex boundary / R11 partition edge"
- },
- {
-  "id": 101,
-  "lat": 49.788425,
-  "lng": 14.204465,
-  "scenario": "railway_track",
-  "r11": "8b1e308e9349fff",
-  "r11_center_lat": 49.7884103,
-  "r11_center_lng": 14.2043382,
-  "note": "on/next-to rail track near Dob\u0159\u00ed\u0161"
- },
- {
-  "id": 102,
-  "lat": 49.85808,
-  "lng": 14.27765,
-  "scenario": "railway_track",
-  "r11": "8b1e308484e6fff",
-  "r11_center_lat": 49.8579374,
-  "r11_center_lng": 14.2775096,
-  "note": "on/next-to rail track near Dob\u0159\u00ed\u0161"
- },
- {
-  "id": 103,
-  "lat": 49.85331,
-  "lng": 14.26866,
-  "scenario": "railway_track",
-  "r11": "8b1e3084a808fff",
-  "r11_center_lat": 49.8534179,
-  "r11_center_lng": 14.2683288,
-  "note": "on/next-to rail track near Dob\u0159\u00ed\u0161"
- },
- {
-  "id": 104,
-  "lat": 49.78792,
-  "lng": 14.19064,
-  "scenario": "railway_track",
-  "r11": "8b1e308e9073fff",
-  "r11_center_lat": 49.7880426,
-  "r11_center_lng": 14.1907322,
-  "note": "on/next-to rail track near Dob\u0159\u00ed\u0161"
- },
- {
-  "id": 105,
-  "lat": 49.68859,
-  "lng": 14.00373,
-  "scenario": "railway_track",
-  "r11": "8b1e308d2035fff",
-  "r11_center_lat": 49.688634,
-  "r11_center_lng": 14.0037291,
-  "note": "on/next-to rail track near P\u0159\u00edbram"
- },
- {
-  "id": 106,
-  "lat": 49.68956,
-  "lng": 14.00325,
-  "scenario": "railway_track",
-  "r11": "8b1e308d211dfff",
-  "r11_center_lat": 49.6897121,
-  "r11_center_lng": 14.0033134,
-  "note": "on/next-to rail track near P\u0159\u00edbram"
- },
- {
-  "id": 107,
-  "lat": 49.85403,
-  "lng": 14.26887,
-  "scenario": "railway_nearby",
-  "r11": "8b1e3084a876fff",
-  "r11_center_lat": 49.8541856,
-  "r11_center_lng": 14.2689834,
-  "note": "residential 30-80m from rail near Dob\u0159\u00ed\u0161"
- },
- {
-  "id": 108,
-  "lat": 49.84967,
-  "lng": 14.26016,
-  "scenario": "railway_nearby",
-  "r11": "8b1e3084ad59fff",
-  "r11_center_lat": 49.8497025,
-  "r11_center_lng": 14.2605013,
-  "note": "residential 30-80m from rail near Dob\u0159\u00ed\u0161"
- },
- {
-  "id": 109,
-  "lat": 49.79451,
-  "lng": 13.73674,
-  "scenario": "d4_bridge",
-  "r11": "8b1e30998460fff",
-  "r11_center_lat": 49.7944994,
-  "r11_center_lng": 13.7366927,
-  "note": "on or under D4 bridge (G=0 hard surface override)"
- },
- {
-  "id": 110,
-  "lat": 49.91477,
-  "lng": 13.99321,
-  "scenario": "d4_bridge",
-  "r11": "8b1e3082c59efff",
-  "r11_center_lat": 49.9145627,
-  "r11_center_lng": 13.9931506,
-  "note": "on or under D4 bridge (G=0 hard surface override)"
- },
- {
-  "id": 111,
-  "lat": 49.95685,
-  "lng": 14.0645,
-  "scenario": "d4_bridge",
-  "r11": "8b1e3095c425fff",
-  "r11_center_lat": 49.9569301,
-  "r11_center_lng": 14.0643675,
-  "note": "on or under D4 bridge (G=0 hard surface override)"
- },
- {
-  "id": 112,
-  "lat": 49.70514,
-  "lng": 14.0894,
-  "scenario": "road_primary",
-  "r11": "8b1e308dc702fff",
-  "r11_center_lat": 49.7051068,
-  "r11_center_lng": 14.0892298,
-  "note": "on primary road (mid AADT, typically 5-15k)"
- },
- {
-  "id": 113,
-  "lat": 49.70514,
-  "lng": 14.0894,
-  "scenario": "road_primary",
-  "r11": "8b1e308dc702fff",
-  "r11_center_lat": 49.7051068,
-  "r11_center_lng": 14.0892298,
-  "note": "on primary road (mid AADT, typically 5-15k)"
- },
- {
-  "id": 114,
-  "lat": 49.89324,
-  "lng": 13.70455,
-  "scenario": "road_secondary",
-  "r11": "8b1e309a06d0fff",
-  "r11_center_lat": 49.8933493,
-  "r11_center_lng": 13.7046566,
-  "note": "on secondary road (low-mid AADT, typically 1-5k)"
- },
- {
-  "id": 115,
-  "lat": 49.91158,
-  "lng": 13.688773,
-  "scenario": "road_secondary",
-  "r11": "8b1e309a46eafff",
-  "r11_center_lat": 49.9114504,
-  "r11_center_lng": 13.688772,
-  "note": "on secondary road (low-mid AADT, typically 1-5k)"
- },
- {
-  "id": 116,
-  "lat": 49.83672,
-  "lng": 14.26088,
-  "scenario": "road_rail_multi",
-  "r11": "8b1e3084a4d2fff",
-  "r11_center_lat": 49.8368995,
-  "r11_center_lng": 14.2609036,
-  "note": "Dob\u0159\u00ed\u0161 station area \u2014 rail + road simultaneous"
- },
- {
-  "id": 117,
-  "lat": 49.785264,
-  "lng": 14.205148,
-  "scenario": "road_rail_multi",
-  "r11": "8b1e308e9258fff",
-  "r11_center_lat": 49.7851395,
-  "r11_center_lng": 14.204882,
-  "note": "Dob\u0159\u00ed\u0161 station area \u2014 rail + road simultaneous"
- },
- {
-  "id": 118,
-  "lat": 49.84535,
-  "lng": 14.2549,
-  "scenario": "road_rail_multi",
-  "r11": "8b1e3084ac80fff",
-  "r11_center_lat": 49.8453679,
-  "r11_center_lng": 14.2548098,
-  "note": "Dob\u0159\u00ed\u0161 station area \u2014 rail + road simultaneous"
+  "lat": 49.71671301068755,
+  "lng": 14.16740146332926,
+  "scenario": "random_cell",
+  "r11": "8b1e308caad6fff",
+  "note": ""
  }
 ]
