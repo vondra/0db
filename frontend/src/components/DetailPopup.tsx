@@ -48,7 +48,7 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
               {detailed ? <HoverText title={`Date & period\n\n${PERIOD_TOOLTIP}`}>Date</HoverText> : 'Date'}
             </th>
             <th className="text-right">
-              {detailed ? <HoverText title={"Aircraft type (ICAO Doc 8643)\n\n4-letter ICAO designator parsed from this flight's NPD profile.\nHover the cell for the full model name + Voronoi anchor class.\n\n• B738 = Boeing 737-800\n• A320 = Airbus A320\n• PC12 = Pilatus PC-12\n• OTHER = typecode not in NPD database (energy-mean fallback)"}>Type</HoverText> : 'Type'}
+              {detailed ? <HoverText title={"Aircraft type + identity\n\nCell shows the 4-letter ICAO designator (B738, A320, …); hover for the full model name + ICAO 24-bit hex address (when ADS-B carried it). Click to open the trace on globe.adsb.lol — works for any flight whose timestamp falls inside ADS-B mirror retention.\n\n• Unknown = typecode not in NPD database (energy-mean fallback). Hover may still show ICAO hex if the transponder broadcast it."}>Aircraft</HoverText> : 'Aircraft'}
             </th>
             <th className="text-right">
               {detailed ? <HoverText title={"Energy share (%)\n\nThis flight's contribution to total airborne Lden energy.\n100% = this single flight causes all airborne noise.\nEnergy is in linear (not dB) scale, so a flight with 90%\ndominates even if other flights have similar Lmax."}>%</HoverText> : '%'}
@@ -60,7 +60,25 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
             const periodLetter = (PERIOD_LABELS[f.period] ?? '?').charAt(0)
             const periodColor = PERIOD_COLORS[f.period]
             const dateShort = f.date ? f.date.slice(5) : ''
-            const typecode = parseProfileName(f.profile)
+            const rawTypecode = parseProfileName(f.profile)
+            const typecodeDisplay = rawTypecode === 'FALLBACK' ? 'Unknown' : rawTypecode
+            const isSynth = f.synthetic
+            const icaoHex = f.icao_hex ? f.icao_hex.toUpperCase() : null
+            const exactTime = f.start_unix != null
+              ? new Date(f.start_unix * 1000).toISOString().replace('T', ' ').replace(/\..+/, ' UTC')
+              : null
+            const dateTooltip = exactTime
+              ? `${exactTime} (flight start)\n${PERIOD_LABELS_DETAIL[f.period] ?? '?'}`
+              : `${f.date}\n${PERIOD_LABELS_DETAIL[f.period] ?? '?'}`
+            const aircraftTooltipText = (() => {
+              const base = aircraftTooltip(rawTypecode)
+              if (icaoHex && !isSynth) return `${base}\n\nICAO hex: ${icaoHex}\nClick to open trace on globe.adsb.lol`
+              if (isSynth) return `${base}\n\nSynthetic surface / cruise bucket — no per-flight identity`
+              return base
+            })()
+            const globeHref = icaoHex && !isSynth && f.date
+              ? `https://globe.adsb.lol/?icao=${icaoHex}&showTrace=${f.date}`
+              : null
             return (
               <tr key={i} className="[&_td]:text-right">
                 <td className="font-medium">{f.lmax_db.toFixed(0)}&nbsp;dB</td>
@@ -68,13 +86,21 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
                 <td>{metersToKm(f.altitude_m)}</td>
                 <td style={periodColor ? { color: periodColor } : undefined}>
                   {detailed ? (
-                    <HoverText title={`${f.date}\n${PERIOD_LABELS_DETAIL[f.period] ?? '?'}`}>
+                    <HoverText title={dateTooltip}>
                       {dateShort} {periodLetter}
                     </HoverText>
                   ) : `${dateShort} ${periodLetter}`}
                 </td>
                 <td>
-                  <HoverText title={aircraftTooltip(typecode)}>{typecode}</HoverText>
+                  <HoverText title={aircraftTooltipText}>
+                    {globeHref ? (
+                      <a href={globeHref} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                        {typecodeDisplay}
+                      </a>
+                    ) : (
+                      typecodeDisplay
+                    )}
+                  </HoverText>
                 </td>
                 <td className="text-muted-foreground/60">{f.energy_pct.toFixed(0)}%</td>
               </tr>
@@ -618,7 +644,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                       <HoverText title={"Mean aircraft altitude AMSL in this band.\nLow values indicate approach/departure traffic; high values indicate en-route cruise."}>Avg alt(km)</HoverText>
                     </th>
                     <th className="text-right">
-                      <HoverText title={"Anchor typecode of the dominant noise class in this band.\nThe class label CLASS_NAMES[noise_class] is shortened to its anchor 4-letter typecode (WING_B738 → B738).\nFALLBACK = traffic-weighted energy-mean class for typecodes not present in the NPD database."}>Top type</HoverText>
+                      <HoverText title={"Dominant aircraft type in this band\n\nThe anchor typecode of the dominant noise class. CLASS_NAMES[noise_class] is shortened to its anchor 4-letter typecode (WING_B738 → B738).\nUnknown = traffic-weighted energy-mean class for typecodes not in the NPD database."}>Aircraft</HoverText>
                     </th>
                   </tr>
                 </thead>
@@ -630,6 +656,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                   ].map(({ label, bucket, color }) => {
                     if (bucket.observed_events_per_day <= 0) return null
                     const anchor = classToAnchorTypecode(bucket.top_aircraft)
+                    const anchorDisplay = anchor === 'FALLBACK' ? 'Unknown' : anchor
                     return (
                       <tr key={label} className="[&_td]:text-right">
                         <td style={{ color }} className="font-medium !text-left">{label}</td>
@@ -637,7 +664,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                         <td>{metersToKm(bucket.avg_altitude_m)}</td>
                         <td>
                           <HoverText title={aircraftTooltip(anchor, bucket.top_aircraft)}>
-                            {anchor}
+                            {anchorDisplay}
                           </HoverText>
                         </td>
                       </tr>
