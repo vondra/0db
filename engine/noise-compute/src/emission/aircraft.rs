@@ -814,6 +814,31 @@ pub struct AircraftKernelResult {
 /// This is the single canonical airborne kernel. Both the popup wrapper
 /// (`segment_sel_with_overrides`) and pipeline-worker's
 /// `segment_energy_fast` delegate here.
+///
+/// **Filter D** rejects per-(segment, receiver) pairs where BOTH the CPA
+/// foot `t` falls outside the observed endpoints (`t ∉ [0, 1]`, i.e. the
+/// implied aircraft position is a straight-line projection past the last
+/// trace sample) AND the linearly-extrapolated altitude at the foot is
+/// > 30 m below terrain at `(foot_lat, foot_lon)`. Airport-ground segments
+/// bypass the filter (they set `terrain_*_cut_m = f64::MIN`).
+///
+/// Why the `t ∈ [0, 1]` gate: legitimate cases keep CPA inside the
+/// observed segment (Schiphol-style sub-sea descents have CPA within the
+/// descent segment; hill-top receivers with aircraft in a valley have CPA
+/// within the cruise segment). Only fictional extrapolations past
+/// touchdown or beyond the last cruise sample can land outside `[0, 1]`.
+///
+/// Why the 30 m margin (encoded as `terrain_*_cut_m = terrain - 30 m`
+/// pre-computed at hex load): DEM error plus short-segment extrapolation
+/// uncertainty. A descending landing whose line would put the aircraft
+/// 200 m below ground at `t = 1.1` is clearly fiction; a cruise segment
+/// whose line grazes 5 m below a ridge at `t = 1.05` is likely real
+/// data-thinning.
+///
+/// Historical: an earlier blanket filter at `CPA rel_alt < -50 m` / jet
+/// `rel_alt < 30 m AGL` was tried and removed after independent review —
+/// it created spatial discontinuities for valid hill-top receivers.
+/// Filter D is the geometry-aware replacement.
 #[allow(clippy::too_many_arguments)]
 #[inline]
 pub fn segment_energy_kernel(

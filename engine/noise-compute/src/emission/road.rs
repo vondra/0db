@@ -9,7 +9,9 @@
 //!   L_W,i  = 10×log₁₀(10^(L_WR/10) + 10^(L_WP/10))
 //!
 //! Line source power per meter:
-//!   L_W'/m,i = L_W,i + 10×log₁₀(Q/1000)  where Q = veh/hour
+//!   L_W'/m,i = L_W,i + 10×log₁₀(Q/(1000·v))   where Q = veh/h, v = km/h
+//!
+//! The `1/(1000·v)` term converts flow + speed into vehicle density per metre.
 
 use crate::constants::*;
 use crate::propagation::iso9613::fast_exp_f64;

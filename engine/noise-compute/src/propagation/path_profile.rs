@@ -128,17 +128,20 @@ impl PathProfile {
 
 /// Bilateral adaptive t-values for a path of `dist_m` meters.
 ///
-/// Pattern (≥310 m paths): one 10 m near-probe at each end (berm-case catch),
-/// then three samples at 30 m, three at 60 m, three at 120 m, then 240 m
-/// steps through the middle, mirrored. Always includes t=0.0 and t=1.0.
-/// Sample count for a 10 km path ≈ 56.
+/// Pattern (≥310 m paths): one near-probe per end (`NEAR_OFFSET_M`), three
+/// samples at 30 m, three at 60 m, three at 120 m, then 240 m steps through
+/// the middle, mirrored. Always includes t=0.0 and t=1.0. Sample count for
+/// a 10 km path ≈ 56.
 ///
-/// For short paths (≤10 cells ≈ 307 m) the cadence collapses to uniform 30 m
-/// stepping plus the 10 m near-probes. Paths shorter than 3×NEAR_OFFSET_M
-/// (30 m) skip the near-probes entirely so they don't collapse toward the
-/// midpoint.
+/// Short paths (≤10 cells ≈ 307 m) collapse to uniform 30 m stepping plus
+/// the near-probes. Paths shorter than 3×NEAR_OFFSET_M skip the near-probes
+/// (they would collapse toward the midpoint). Output buffer is cleared
+/// before writing.
 ///
-/// Output buffer is cleared before writing.
+/// **Fundamental raster limit**: a berm narrower than a single DEM cell
+/// (~20-30 m) on the edge of the source cell is invisible regardless of
+/// sampling strategy. Higher-resolution DEMs (USGS 3DEP 10 m, national
+/// lidars 1-5 m) are the only fix.
 pub fn fill_t_values(dist_m: f64, buf: &mut Vec<f64>) {
     buf.clear();
 

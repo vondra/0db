@@ -194,8 +194,9 @@ pub fn screening_attenuation(
 /// `terrain_attenuation[_with_meta]` call on the same profile/source/receiver —
 /// reused here so we don't recompute bare-earth diffraction twice. In
 /// `iso9613.rs`, `A_terrain + A_screen` then equals the true combined
-/// attenuation, with no terrain+screening double-count when a building sits
-/// on a hill.
+/// attenuation, with no terrain+screening double-count (the pre-merge
+/// implementation could over-attenuate by up to 10 dB when a building sat
+/// on a hill — both terms then claimed full Fresnel diffraction).
 ///
 /// The δ* Rayleigh gate uses **bare-earth** elevation for the OLS mean-ground
 /// fit (CNOSSOS §2.5.6(c)). Feeding composite heights to OLS would drag the

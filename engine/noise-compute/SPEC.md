@@ -62,9 +62,7 @@ Note: Category 4a (mopeds) and 5 (open category) not implemented. Known simplifi
 ```
 L_WR,i = A_R,i + B_R,i × log₁₀(v / v_ref)
 ```
-where v_ref = 70 km/h. Coefficients A_R, B_R from CNOSSOS-EU Table 2.3.a.
-
-**Known issue:** Current coefficients may not match the latest CNOSSOS-EU 2019 amendment (2019/1010). Cat1 A_R at 63 Hz is 83.1 in our code vs 79.7 in the amended standard. Updating requires revalidation of all reference test cases (K1, K2).
+where v_ref = 70 km/h. Coefficients A_R, B_R from CNOSSOS-EU Annex II Table 2.3.a (2021/1226 consolidation).
 
 ### Propulsion noise per band
 ```
@@ -102,60 +100,21 @@ L_W_total,i = 10 × log₁₀(Σ_cat 10^(L_W'/m,cat,i / 10))
 ```
 
 ### Input priority (current implementation)
-1. If Arrow contains `aadt_*` and `traffic_source > 0` **and** `aadt_light > 0`, use those flows (oneway × 0.5, private-access × 0.1 still applied).
-   - `traffic_source = 1`: matched external traffic dataset
-   - `traffic_source = 2`: service-tree estimate on local streets
-   - `traffic_source > 2`: reserved for other heuristic estimates
+1. If Arrow has `aadt_*` with `aadt_light > 0` and the row's `provenance` (derived from `source_id` via `sources::provenance_of()`, see `Provenance` enum in `sources.rs`) is non-`None`, use those flows (oneway × 0.5 still applied; `access_factor` reductions are bypassed only for `Provenance::is_measured()` — i.e. `NationalMeasured`, `ContinentalMeasured`, `GlobalMeasured`. `Heuristic` and `Baseline` rows still get access reductions). Provenance values: `NationalMeasured`, `ContinentalMeasured`, `GlobalMeasured`, `Heuristic`, `Baseline`.
 2. Otherwise use `default_road_traffic(road_class)` combined with the lane-ratio boost (see below).
 
 Speed priority:
 - `maxspeed` from OSM if present
-- otherwise `default_road_speed(road_class)` (see table)
+- otherwise `default_road_speed(road_class)` (see `normalize.rs`)
 - junction flag caps speed at 30 km/h (roundabouts)
 
 Surface priority:
 - recognized OSM `surface=*`
 - otherwise asphalt (`ΔL_WR = 0`)
 
-### Default traffic per `road_class` (used when `traffic_source = 0` or `aadt_light = 0`)
-| `class_idx` | Name | Light | Medium | Heavy | Moto |
-|-------------|------|-------|--------|-------|------|
-| 0 | motorway | 21600 | 2400 | 5700 | 300 |
-| 1 | trunk | 11700 | 1200 | 1800 | 300 |
-| 2 | primary | 7470 | 540 | 810 | 180 |
-| 3 | secondary | 2640 | 120 | 180 | 60 |
-| 4 | tertiary | 720 | 26 | 38 | 16 |
-| 5 | residential | 480 | 5 | 10 | 5 |
-| 6 | living_street | 98 | 0 | 1 | 1 |
-| 7 | service | 240 | 2 | 5 | 3 |
-| 8 | track | 4 | 0 | 1 | 0 |
-| 9 | unclassified | 1200 | 30 | 80 | 30 |
-| 10 | motorway_link | 4320 | 480 | 1140 | 60 |
-| 11 | trunk_link | 2340 | 240 | 360 | 60 |
-| 12 | primary_link | 1494 | 108 | 162 | 36 |
+### Defaults, lane boost, period split
 
-### Default speeds per `road_class`
-motorway 100 / trunk 70 / primary 50 / secondary 50 / tertiary 50 / residential 30 /
-living_street 20 / service 20 / track 20 / unclassified 50 /
-motorway_link 60 / trunk_link 50 / primary_link 50 km/h.
-
-### Lane-ratio boost (applied ONLY on defaults, not on Arrow AADT)
-When Arrow traffic is missing and a default is used, per-lane count is boosted above 2 lanes:
-- motorway 3-lane oneway × 1.42
-- primary 3-lane two-way × 1.37; 4-lane × 2.13
-- secondary 3-lane two-way × 1.83
-
-2-lane segments, residential and living_street classes: no boost. This lane boost is NEVER applied on real Arrow AADT (it already reflects the observed lane layout).
-
-### Period traffic
-Day (07–19 / 12 h), Evening (19–23 / 4 h), Night (23–07 / 8 h).
-
-Current implementation ALWAYS splits AADT by fixed class-based ratios:
-- motorway / trunk / motorway_link / trunk_link: **65 / 20 / 15**
-- all other classes (primary / secondary / tertiary / residential / living_street /
-  service / track / unclassified / primary_link): **70 / 18 / 12**
-
-Note: even when daily AADT comes from real census/enrichment data, per-period road counts are not currently measured from source data.
+Per-class AADT defaults live in `defaults.rs` (`WORLD_DEFAULT` + city/country/continent cascade). Default speeds (`default_road_speed`) and lane-count boost above 2 lanes (`lane_ratio`) live in `normalize.rs`. Day/evening/night split (65/20/15 for motorway-class, 70/18/12 for everything else) lives in `emission/road.rs` (`TIME_DIST_MOTORWAY`, `TIME_DIST_URBAN`). Even with measured AADT, per-period counts use the same fixed split — sub-daily census data is not currently measured from source.
 
 ---
 
@@ -195,33 +154,23 @@ High-speed passenger (`v > 200 km/h`) is served by the passenger rolling spectru
 ### Input priority (current implementation)
 Passenger / freight counts:
 1. `trains_passenger`, `trains_freight` from Arrow if `> 0`
-2. otherwise `default_traffic(rail_type, usage)` (see table below)
+2. otherwise `default_traffic(rail_type, usage)` (see `railway.rs`)
 
 Speed:
 1. OSM `maxspeed` if present
 2. otherwise `300 km/h` when `highspeed=true`
-3. otherwise `default_speed(rail_type)` (see table below)
+3. otherwise `default_speed(rail_type)` (see `railway.rs`)
 
 Post-adjustments applied even on real counts:
 - `service > 0` → counts × **0.02**
 - `parallel_divisor > 1` → counts divided by that factor
 
-### Default train counts and speeds (when Arrow `trains_* = 0`)
-| `rail_type` | `usage` | pax/day | frt/day | Default speed |
-|-------------|---------|---------|---------|---------------|
-| Rail (0) | 0 (main) | 80 | 20 | 80 km/h |
-| Rail (0) | 1 (branch) | 30 | 5 | 80 km/h |
-| Rail (0) | 2 (siding) | 0 | 15 | 80 km/h |
-| Rail (0) | other | 40 | 10 | 80 km/h |
-| Tram (1) | any | 120 | 0 | 40 km/h |
-| LightRail (2) | any | 80 | 0 | 60 km/h |
-| NarrowGauge (3) | any | 10 | 0 | 40 km/h |
-| Funicular (4) | any | 40 | 0 | 20 km/h |
+### Defaults and period split
 
-### Period traffic
-Day (07–19 / 12 h), Evening (19–23 / 4 h), Night (23–07 / 8 h).
-
-Fixed **65 / 20 / 15** split is applied **identically** to daily passenger and freight counts — there is no separate asymmetric split for night-biased freight even where it would be realistic. (Note: the `lden_free_distances` offline benchmark in `pipeline-worker` uses a different asymmetric split for sensitivity analysis; that split is not production.)
+Per-`rail_type` × `usage` train-count and speed defaults: see
+`engine/noise-compute/src/emission/railway.rs`. Day/evening/night uses the
+same 65/20/15 split for passenger and freight — there is no asymmetric
+split for night-biased freight even where it would be realistic.
 
 ---
 
@@ -321,29 +270,11 @@ See §3.5a for the shared path-sampling scheme.
 
 ### 3.5a Unified path sampler
 
-DEM, Overture building height, WorldCover forest cover and IMD imperviousness are all sampled along the source→receiver line by a single bilateral cadence. Density is highest near the two endpoints (where obstacles diffract sound most severely) and coarsest in the middle (where a missed feature still lies well below the line of sight):
+DEM, Overture building height, WorldCover forest cover and IMD imperviousness are all sampled along the source→receiver line by a single bilateral cadence — density highest near endpoints (Fresnel zone narrowest), coarsest in the middle. Implementation + cadence rationale: `propagation::path_profile::fill_t_values`. Terrain diffraction, building screening, vegetation depth, and ground-effect G all read from the resulting `PathProfile`.
 
-- **near-endpoint probe at 10 m from each end** (berm-case fix: catches obstacles 5-15 m from the road that would fall between t=0 and the first 30 m sample)
-- three probes at 30 m from each end
-- three probes at 60 m from each end
-- three probes at 120 m from each end
-- 240 m steps through the middle for paths longer than ~1.2 km
+### 3.5b Combined terrain + building + barrier screening
 
-Both endpoints (t=0 and t=1) are included. Paths ≤ ~310 m collapse to uniform 30 m stepping plus the 10 m near-probes. Paths < 30 m skip the near-probes (they would collapse toward the midpoint). The scheme is implemented in `propagation::path_profile::fill_t_values` and used by `RasterSampler::build_path_profile`.
-
-**Why 10 m specifically.** At the default 30.7 m DEM cell size, sub-cell offsets give progressively less new information per raster read: 2-5 m always reads the same cell, 30 m always reaches the adjacent cell. 10 m is the sweet spot — on E-W paths it crosses to the adjacent cell ~50 % of the time (at ~50° N, lon-cell ≈ 19.8 m), and on N-S paths the bilinear interpolation still shifts the elevation enough to matter for edge detection. Also coincides with the 10 m minimum-forest-run used in `vegetation_run_length`.
-
-**Fundamental raster limit:** a berm narrower than a single DEM cell (~20-30 m) on the edge of the source cell is invisible regardless of sampling strategy. Higher-resolution DEMs (USGS 3DEP 10 m, national lidars 1-5 m) are the only fix.
-
-Terrain diffraction, building screening, vegetation depth, and ground-effect G all read from the same `PathProfile` — no separate walk. The previous 3-point fast-LOS gate at t∈{0.25, 0.5, 0.75} is gone; terrain short-circuits on an in-profile scan (no extra raster taps).
-
-### 3.5b Combined terrain + building + barrier screening (P2 anti-double-count)
-
-Before: `A_terrain_Fresnel(bare_earth) + A_screen_Fresnel(buildings_alone)`. When a building sat on a hill, both terms claimed full Fresnel diffraction → **double-count of up to 10 dB**.
-
-Now: a single composite top profile merges `elevation + max(building_h, barrier_h)` (with `exclusion_radius_m` zeroing out buildings near the source). Diffraction is computed **once** over this composite (edges + δ), with the δ* OLS mean-ground fit still on bare-earth `elevation_m`. The caller-facing API preserves `terrain_attenuation` (bare-earth only) and `screening_attenuation` (combined − terrain, clamped ≥ 0), so the downstream `A_terrain + A_screen` sum in `iso9613.rs` naturally equals the combined attenuation with no double-count. `no_terrain` and `no_screening` hypotheticals used for the popup "impact" breakdown remain meaningful: the impact of terrain equals `full − no_terrain`, which equals the per-band `atten_terrain`.
-
-Ground G and vegetation depth are **path integrals**; they weight samples by interval length so non-uniform bilateral spacing doesn't bias the endpoints.
+Diffraction is computed once over a composite top profile (`elevation + max(building_h, barrier_h)`), avoiding the terrain+screening double-count that would otherwise occur when a building sits on a hill. The δ* OLS mean-ground fit stays on bare-earth elevation. Implementation + caller API split (`terrain_attenuation` vs `screening_attenuation`): `propagation::path_effects::screening_attenuation_with_meta`. Ground G and vegetation depth are path integrals weighted by interval length so non-uniform bilateral spacing doesn't bias endpoints.
 
 ### 3.6 Building screening (ISO 9613-2, per-band)
 Samples Overture Maps 30m building raster at the same bilateral cadence (§3.5a). Explicit `noise_barrier` geometries compete with raster buildings. For industrial sources, screening samples inside the source's own footprint are skipped via an exclusion radius.
@@ -384,54 +315,9 @@ Applied in pipeline and popup:
 - **Parallel railway ways**: counts divided by `parallel_divisor`
 - **Industrial exclusion radius**: R=√(area/π) — buildings within R of source point are not counted as screening (prevents self-screening from source's own footprint)
 
-Road `access` column (u8) encoding. Extractor resolves the mode-specific chain
-(`motor_vehicle` > `vehicle` > `access`) — the most specific OSM key wins. When
-`traffic_source == 1` (measured AADT), the reduction is bypassed because the
-observation already reflects any restriction.
+Road `access` and `road_class` u8 enums (codes, OSM mappings, AADT-reduction factors): see `engine/osm-extract/src/classify.rs` and the consumer in `engine/noise-compute/src/normalize.rs::access_factor`. The reduction is bypassed only when `Provenance::is_measured()` is true (NationalMeasured / ContinentalMeasured / GlobalMeasured); `Heuristic`, `Baseline` and `None` rows still get access reductions.
 
-| code | OSM meaning | Effect |
-|------|-------------|--------|
-| 0 | public / untagged | no change |
-| 1 | private | AADT × 0.1 |
-| 2 | no | segment skipped |
-| 3 | destination | AADT × 0.5 |
-| 4 | motor_vehicle_no (legacy, pre-B extracts) | segment skipped |
-| 5 | permissive | AADT × 0.9 |
-| 6 | customers | AADT × 0.3 |
-| 7 | agricultural | AADT × 0.1 (heuristic) |
-| 8 | forestry | AADT × 0.08 (heuristic) |
-
-Road `road_class` column (u8) encoding:
-
-| code | OSM highway |
-|------|-------------|
-| 0 | motorway |
-| 1 | trunk |
-| 2 | primary |
-| 3 | secondary (incl. secondary_link) |
-| 4 | tertiary (incl. tertiary_link) |
-| 5 | residential |
-| 6 | living_street |
-| 7 | service (parking aisles, driveways) |
-| 8 | track (agricultural / forestry) |
-| 9 | unclassified (rural connector) |
-| 10 | motorway_link |
-| 11 | trunk_link |
-| 12 | primary_link |
-
-Links (codes 10-12, OSM `*_link` — slip roads / on-/off-ramps) share the
-mainline motorway/trunk day-evening-night split (65/20/15) but carry 15 % of
-the mainline default AADT and a lower default speed — see the traffic/speed
-tables above. Rationale: HCM 7 / FEHRL / CERTU put on-/off-ramp flow at
-10-30 % of the connected mainline; 15 % sits at the lower-realistic end of
-that range and matches Pasito Blanco GC-1 popup validation (user perceived
-the previous 20 % default as too loud). National censuses never publish
-link-level AADT separately. `secondary_link` and `tertiary_link` stay on the
-mainline codes (3/4) because their flow is closer to regular urban streets.
-
-For `highway=track`, if the `surface` tag is missing the extractor defaults to
-`unpaved` (+3 dB rolling correction), reflecting OSM convention that tracks
-are physically unpaved.
+Link rationale (codes 10-12, `*_link` slip roads / ramps carry 15% of mainline AADT — HCM 7 / FEHRL / CERTU lower-range, validated against Pasito Blanco GC-1 popup): see `defaults.rs` ramp rows. `secondary_link` / `tertiary_link` stay on mainline codes (3/4) because their flow is closer to regular urban streets. For `highway=track` without a `surface` tag, the extractor defaults to `unpaved` (+3 dB rolling correction).
 
 ### 3.11 Total received level per band
 ```
@@ -472,7 +358,7 @@ SEPARATE from ISO 9613-2. Airborne Doc 29 is empirical NPD-based, not path-traci
 SEL_seg = L_E(d_p) + ΔV + ΔI(φ) - Λ(β, l) + ΔF
 ```
 
-- **L_E**: NPD lookup at slant distance d_p (feet). ~124 per-typecode profiles auto-generated from EASA ANP v2.3, bucketed at ~17 noise classes for aggregation. See `scripts/build-aircraft-profiles.py`.
+- **L_E**: NPD lookup at slant distance d_p (feet). ~124 per-typecode profiles auto-generated from EASA ANP v2.3, bucketed at 12 aircraft noise classes for aggregation (`NUM_CLASSES` in `profiles_generated.rs`). See `scripts/build-aircraft-profiles.py`.
 - **ΔV**: Speed/duration correction (Eq. 4-14)
 - **ΔI**: Engine installation angle correction (Eq. 4-15)
 - **Λ**: Lateral attenuation (Eq. 4-18/19) — Wing-mounted jets only per Doc 29 §4.5.4 / FAA AEDT TM §6.2.4. Fuselage-mounted, propeller, and helicopter installations get Λ = 0 (gated by `installation` parameter in `fast_lateral_attenuation` / `lateral_attenuation`).
@@ -485,7 +371,7 @@ d_p = slant distance at CPA. β = elevation angle.
 ### Input and preprocessing (current implementation)
 - ADS-B supplies real segment geometry, altitude, speed, timestamp, and often `on_ground`
 - aircraft `typecode` is mapped to one of **~124 per-typecode NPD profiles**
-  (auto-generated from EASA ANP v2.3) clustered at ~17 noise classes for
+  (auto-generated from EASA ANP v2.3) clustered at 12 aircraft noise classes for
   bucket-key aggregation
 - unknown / unmapped typecode falls back to **`FALLBACK_PROFILE_IDX`** (a
   B738/737800-equivalent profile)
@@ -526,60 +412,32 @@ Jet-only (profiles 0, 1, 2, 3, 5, 7; Turboprop/LightGA/Rotorcraft exempt):
   - 100 km segment mixing near-ground and cruise altitudes
 
 ### Filter D — per-receiver sub-terrain extrapolation rejection
-`compute_cpa` uses the infinite-line (unclamped) CPA for all outputs: d_p,
-lateral, rel_alt, β, q. This is Doc 29 §4.4.1 verbatim. The unclamped parametric
-foot `t` is also returned in `CpaResult` for downstream filtering.
 
-Filter D (`segment_sel_with_overrides` in noise-compute, `segment_energy` and
-`segment_energy_fast` in pipeline-worker) rejects a (segment × receiver) pair
-when BOTH:
-1. `t ∉ [0, 1]` — the CPA foot falls outside the observed endpoints (the
-   implied aircraft position is a straight-line projection, not a recorded
-   trace sample), AND
-2. The linearly-extrapolated altitude at the foot is **> 30 m below terrain**
-   at `(foot_lat, foot_lon)`. Airport-ground segments bypass the filter.
+`compute_cpa` uses the infinite-line (unclamped) CPA for all outputs (Doc 29
+§4.4.1). Filter D then rejects (segment × receiver) pairs whose CPA foot falls
+outside the observed endpoints AND whose extrapolated altitude lies > 30 m below
+terrain. Airport-ground segments bypass the filter. Full rationale (geometry,
+30 m margin, replaced-blanket-filter history) lives in the rustdoc on
+`segment_energy_kernel` (`emission/aircraft.rs`).
 
-Why the `t ∈ [0, 1]` gate matters: legitimate cases keep their CPA inside the
-observed segment — Schiphol-style sub-sea descents (CPA within descent segment),
-hill-top receivers with aircraft in a valley (CPA within cruise segment). Only
-fictional extrapolations past touchdown or beyond the last cruise sample can
-land outside `[0, 1]`.
+### Shared kernel approximations
 
-Why the 30 m margin: DEM error plus short-segment extrapolation uncertainty.
-A descending landing whose line would put the aircraft 200 m below ground at
-t = 1.1 is clearly fiction; a cruise segment whose line grazes 5 m below a
-ridge at t = 1.05 is likely real data-thinning.
+The popup and the pipeline batch path use the same Doc 29 kernel
+(`segment_energy_kernel`); see its rustdoc for the four approximations
+(NPD via 128-bin LUT, ΔF via `fast_delta_f`, Λ via `fast_lateral_attenuation`,
+ΔI via inline `u²/v²`) and the < 0.15 dB per-segment combined error.
 
-Implementation cost: one branch per kernel call (always false for `t ∈ [0,1]`),
-plus two pre-computed `terrain_[start|end]_cut_m` thresholds per segment at hex
-load. Airborne pipeline segments hold these; ground segments set them to
-`f64::MIN` so the branch never fires.
+### Cross-flight bucket merge
 
-Historical note: an earlier blanket filter at `CPA rel_alt < -50 m` / jet
-`rel_alt < 30 m AGL` was tried and removed after independent review — it
-created spatial discontinuities for valid hill-top receivers. Filter D is
-the geometry-aware replacement.
-
-### Pipeline approximations (batch kernel only; popup uses exact NPD)
-- `fast_atan`: Padé [3/2] approximation, max error 0.0034 rad (~0.19°).
-- `fast_delta_f`: ΔF via `fast_atan`, max error < 0.05 dB per segment.
-- `fast_lateral_attenuation`: Λ with `fast_atan` (no `atan2`).
-- NPD LUT: 64-bin log₁₀(d_ft) table spanning 2.0 to 5.5, linear interp.
-- Combined max error vs exact NPD: ~0.15 dB per segment.
-
-### Cross-flight bucket merge (pipeline-only)
-After ring-1 R4 load, airborne segments are merged into buckets keyed by
-quantized geometry + profile + direction + period + speed. `count_weight` is
-summed across the bucket (exact annual energy for acoustically-identical flights).
-
-Bucket widths (calibrated against ±50-100 m ADS-B jitter):
-- lat/lon: ~100 m (factor 1113)
-- altitude: 60 m
-- speed: 20 kt
-
-`date_id` is NOT part of the key — output tiles are permanently annual. Sub-annual
-reporting would require reintroducing date_id OR running the pipeline on daily
-partitions. Popup reads raw per-flight segments for the "top flights" UI.
+Two paths exist: **v4** bucketed at ~100 m lat/lon × 60 m altitude × 20 kt
+(`engine/noise-compute/src/emission/aircraft_bucket.rs`, calibrated against
+±50-100 m ADS-B jitter), and **v5** bucketed at R5 hex × 12 noise classes ×
+heading × altitude bin (`engine/aircraft-tracks/src/aggregate.rs`).
+`count_weight` summed across the bucket gives exact annual energy for
+acoustically-identical flights. `date_id` is not in either key — output tiles
+are permanently annual; sub-annual reporting would require daily partitions.
+Popup reads the same arrow as the pipeline, so popup ↔ tile parity is a
+structural property of consuming the baked output.
 
 ### Cross-hex visibility (ring-1 loading)
 Pipeline loads the target R4 hex plus its 6 H3 grid-disk ring-1 neighbors before
@@ -804,12 +662,12 @@ ISO 9613-2 point source.
 | Simplification | What we do | What the standard says | Impact |
 |---|---|---|---|
 | **Line source + FLC** | Cylindrical divergence + end-angle finite-line correction | ISO 9613-2: point sources only, subdivide line into representative points | ±1-2 dB near segment endpoints. Standard practice in noise mapping software. |
-| **Road inputs** | Real `aadt_*` if present, otherwise class defaults; local heuristics may write `traffic_source > 1` | CNOSSOS expects external traffic inputs, not atlas-side fallback heuristics | Coverage stays global, but low-class roads may be approximate where counts are missing. |
+| **Road inputs** | Real `aadt_*` if present (any non-`None` `Provenance`), otherwise class defaults; local heuristics flagged as `Provenance::Heuristic` | CNOSSOS expects external traffic inputs, not atlas-side fallback heuristics | Coverage stays global, but low-class roads may be approximate where counts are missing. |
 | **Road period split** | Fixed 65/20/15 or 70/18/12 split of daily AADT | Regulatory workflows may use measured day/evening/night counts | Bias possible on commuter / nightlife corridors. |
 | **Surface correction** | One scalar ΔL_WR per surface type | CNOSSOS Table F-4: per-band αm + βm, speed-dependent | ±1 dB. Our scalars are band-averaged approximations. |
 | **Ground effect** | CF[i] × G lookup; path-averaged G for line sources, receiver-local G for point sources (popup and pipeline match in both cases) | CNOSSOS §2.5.15-18: geometry-dependent Aground with height substitutions, separate source/middle/receiver zones | ±2 dB in complex terrain / mixed ground. |
 | **Diffraction** | 10·log₁₀(3 + C₃·20·δ·f/340), caps 20/25 dB, C₃ for double edges, Rayleigh gate per band via δ* with vertical mirroring across OLS-fitted per-side mean ground planes | CNOSSOS §2.5.6(c): Rayleigh criterion; §2.5.23: C" (identical to our C₃); §2.5.31: Δground additive combination; §2.5.24: favourable-conditions curved rays | ±1 dB behind shallow hills at low bands. Not implemented: Δground additive combination, curved rays, −λ/20 near-miss clause, lateral diffraction. |
-| **Building / barrier screening** | Tallest raster obstacle or explicit noise barrier along the path | ISO 9613-2: explicit obstacle modelling per edge / geometry | ±3 dB in complex urban. Our approach samples raster, not individual building edges. |
+| **Building / barrier screening** | Composite top profile (`elevation + max(building_h, barrier_h)`) sampled at the unified bilateral cadence; upper-convex-hull edge detection up to 3 edges with CNOSSOS C″ | ISO 9613-2: explicit obstacle modelling per edge / geometry | ±3 dB in complex urban. Raster sampling, not individual building edges. |
 | **Urban reflection** | Per-receiver enclosure boost +0-5 dB | ISO 9613-2 §7.5: image-source reflection model | ±2 dB. Standard requires full reflection geometry, we use a local heuristic. |
 | **Meteorology** | NOT IMPLEMENTED (P_FAV exists but unused) | ISO 9613-2: Cmet = C₀(1 - 10·h_s/r), subtracted from downwind | ±2 dB at long range. TODO: implement. |
 | **Road categories** | 4 categories (no 4a mopeds, no 5) | CNOSSOS: 5 categories (4a, 4b, 5) | <0.5 dB. Vehicle mix is slightly flattened. |
@@ -819,7 +677,7 @@ ISO 9613-2 point source.
 | **Receiver height** | 4.0m (END facade) | END: 4.0m (facade). ISO: variable. | Matches END standard. |
 | **Settlement noise** | Custom per-building source model | END / CNOSSOS do not standardize this source class | Useful for atlas context, but not regulatory-comparable. |
 | **Industrial profiles** | `nace_4digit -> site_subtype -> source_type` fallback chain | Standard inventories usually use audited source inventories / measured facility data | Keeps global coverage, but facility class can be approximate when registry match is missing. |
-| **Aircraft NPD** | ~124 per-typecode profiles auto-generated from EASA ANP v2.3, ~17 noise classes for bucket aggregation | Doc 29: official ANP database with full procedural-step profiles, weights, aerodynamic coefficients | ±1-2 dB per aircraft type for ANP-mapped types; nearest-neighbor (e.g., A20N → A320-232) for variants ANP doesn't list. |
+| **Aircraft NPD** | ~124 per-typecode profiles auto-generated from EASA ANP v2.3, 12 aircraft noise classes for bucket aggregation | Doc 29: official ANP database with full procedural-step profiles, weights, aerodynamic coefficients | ±1-2 dB per aircraft type for ANP-mapped types; similarity_fallback for unmapped typecodes (~70-80% of long-tail traffic) routes to closest anchor by engine type / size class. |
 | **Aircraft local time / ground filtering** | Per-coordinate IANA TZ lookup (tzf-rs + chrono-tz, DST-aware) + airport-context stale-ground filter | Operational studies use airport-local time (same principle) and curated trajectory cleaning | Near-runway behaviour can still be biased by trajectory-cleaning simplifications. |
 | **Aircraft ground ops** | ADS-B low-AGL / on-ground segments matched to airport geometry, plus synthetic runway/taxi/apron fill when coverage is incomplete | Airport studies usually use curated surface movement inventories and local operations data | Near-runway levels depend on airport geometry quality and ADS-B ground coverage. |
 | **Aircraft tile adjustments** | Aircraft ground propagation could expose separate terrain / screening / vegetation variants | Batch `aircraft` tiles currently bake ground-ops path effects into final Lden and do not emit `.adj.bin` | Map propagation toggles cannot isolate aircraft ground-ops attenuation separately. |
@@ -907,7 +765,7 @@ an EU-generic fall-back.
 | City Bangkok (class 0) = 90 000 | TH `DOH_MOTORWAY_AADT` averaged over Bangkok refs × `thaiClassSplit(isBangkok=true)` | `pipeline/enrich-roads-th.ts` (DOH 2023 motorway traffic report) |
 | Country BR rural (class 0) = 50 000 | BR `CLASS_AADT` × `tierMultiplier(0)` × `splitVehicles(tier=0)` | same source, rural (tier-0) arm |
 | Country TH rural (class 0) = 60 000 | TH_RURAL class defaults × `thaiClassSplit(isBangkok=false)` | DOH 2023 rural motorway monitoring stations |
-| Continent Africa (class 0) = 8 000 | Continent-wide skew vs EU baseline | Tuned by eye (/gg plan v5) — AFRI average ≈ 30 % of EU motorway flow per OICA + AfDB road-stock index |
+| Continent Africa (class 0) ≈ 31 700 | EU baseline × continent_scale(Africa) = 30 000 × 1.057 | `country_defaults_generated.rs::continent_scale()`. Pop-density-weighted blend of wiki + density indexes (see `scripts/gen-country-defaults-rs.mjs`). |
 | World (class 0) = 30 000 | EU-generic motorway | Pragmatic: spans the 20 000-40 000 band of BAST-Zählstellen / TMC / MOBIS national censuses |
 
 All cascade arms in `defaults.rs` carry a `// Source:` comment pointing at
@@ -959,9 +817,10 @@ where a minor road carries disproportionate stamped flow.
 |---|---|---|
 | 5 residential | 1 200 | 2.4× the world default (480 → 1 200). Dense Prague Karlín blocks can legitimately sit at this level. Matches observed urban residential at AADT stations in medium Czech cities. |
 | 6 living_street | 250 | 2.5× the world default (98 → 250). Shared-surface street would saturate around ~300 vehicles/day before it stops feeling shared. |
+| 7 service | 400 | 1.7× the world default (240 → 400). Apartment driveway / parking aisle hard cap; OSM `service=*` sub-tag would let us split apartment driveway vs aisle but extractor doesn't preserve it. |
 | 9 unclassified | 2 000 | ~1.7× the world default (1 200 → 2 000). Rural connector between two villages with real through-traffic. |
 
-All three caps are pragmatic — they set an upper bound so a service-tree
+All four caps are pragmatic — they set an upper bound so a service-tree
 flow accumulation cannot exceed what a human observer on the road would
 call plausible. Validated by the "no urban residential > 2 000 veh/day"
 rule of thumb used by several city AADT-modelling agencies (e.g. TfL

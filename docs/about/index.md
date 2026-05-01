@@ -162,7 +162,7 @@ The aircraft layer combines two models: airborne overflights from ADS-B radar tr
 
 - **Data:** ADS-B trajectories from [adsb.lol](https://adsb.lol) (full year, all altitudes) + airport runway / taxiway / apron geometry from OpenStreetMap
 - **~124 per-typecode aircraft profiles** auto-generated from EASA ANP v2.3 (Aircraft Noise and Performance database) — covers Boeing 737/747/757/767/777/787, Airbus A319/A320/A321/A330/A340/A350/A380, Embraer E-Jets, ATR, Dash 8, plus light GA and helicopter placeholders for types not in ANP
-- **Limitations:** Modern variants (737 MAX, A320neo, 787-9, A330neo) use nearest-neighbor mapping to the closest ANP entry; airport ground ops are partly inferred or synthetically backfilled when surface coverage is incomplete. Day/evening/night periods are derived from the segment-midpoint coordinate using an IANA timezone database (DST-aware). This is useful for atlas-scale patterns, not certified airport contouring.
+- **Limitations:** Most modern jets (737 MAX, A320neo, A321neo) have dedicated profiles from EASA ANP v2.3 + supplementary v9 sources; the A220 family and other less-common variants fall back to a similarity-based mapping that picks the closest anchor by engine type and size class. Airport ground ops are partly inferred or synthetically backfilled when surface coverage is incomplete. Day/evening/night periods are derived from the segment-midpoint coordinate using an IANA timezone database (DST-aware). This is useful for atlas-scale patterns, not certified airport contouring.
 
 <details>
 <summary>Technical: aircraft layer (Doc 29 + airport ground ops)</summary>
@@ -180,19 +180,20 @@ where:
 - `Λ(β,l)` = lateral attenuation
 - `ΔF` = finite-segment correction
 
-**NPD proxy profiles** (SEL in dB at standard distances 200–25,000 ft):
+**Sample anchor profiles** (Approach SEL in dB at standard distances 200–25,000 ft, from `engine/noise-compute/src/emission/profiles_generated.rs` — selected examples from the 124-profile generated set):
 
-| Type | Example | Approach SEL (200–25000 ft) |
+| Class | Anchor | Approach SEL (200–25000 ft) |
 |------|---------|----------------------------|
-| Narrowbody | B738 | 104, 99, 95, 91, 84, 77, 72, 66, 60, 54 |
-| Narrowbody | A320 | 103, 98, 94, 90, 83, 76, 71, 65, 59, 53 |
-| Narrowbody | A321 | 105, 100, 96, 92, 85, 78, 73, 67, 61, 55 |
-| Widebody | B777/A330 | 108, 103, 99, 95, 88, 81, 76, 70, 64, 58 |
-| Turboprop | ATR/L410 | 96, 91, 87, 83, 76, 69, 64, 58, 52, 46 |
-| Business jet | CRJ/Citation | 99, 94, 90, 86, 79, 72, 67, 61, 55, 49 |
-| Light GA | Cessna 172 | 88, 83, 79, 75, 68, 61, 56, 50, 44, 38 |
+| Narrowbody jet | B738 | 94.5, 90.4, 87.4, 84.1, 78.7, 72.4, 67.5, 62.3, 54.9, 48.5 |
+| Narrowbody jet | A320 | 93.1, 89.1, 86.1, 82.9, 77.7, 71.7, 67.1, 61.9, 55.8, 49.2 |
+| Narrowbody jet | A321 | 94.6, 90.2, 86.9, 83.4, 77.7, 71.2, 66.2, 60.5, 54.3, 47.6 |
+| Regional jet | CRJ9 | 90.9, 86.7, 83.3, 79.9, 74.1, 67.4, 62.4, 56.9, 50.7, 43.9 |
+| Business jet | C56X (Citation) | 87.1, 82.9, 79.8, 76.4, 70.8, 64.3, 59.3, 53.8, 47.6, 41.0 |
+| Turboprop | DH8D (Dash 8) | 88.9, 84.4, 81.1, 77.7, 71.9, 65.8, 62.3, 58.7, 55.6, 52.8 |
+| Light GA | C172 (Cessna) | 85.0, 80.0, 76.0, 72.0, 65.0, 58.0, 53.0, 47.0, 41.0, 35.0 |
+| Helicopter | EC35 | 92.0, 88.0, 85.0, 82.0, 76.0, 70.0, 65.0, 59.0, 53.0, 47.0 |
 
-These are project approximations, not official ANP data. Approach vs departure is inferred from climb/descent rate, and unknown typecodes fall back to a generic narrowbody-like profile.
+Auto-generated from EASA ANP v2.3 (+ v9 supplement for modern types). Approach vs departure is inferred from climb/descent rate; unknown typecodes are mapped to the closest anchor by engine type and size class, ultimately to a generic narrowbody fallback for completely exotic codes.
 
 Airport-aware filtering removes obvious off-airport taxi remnants from ADS-B traces, but this is still not a certified airport ground-noise model.
 
@@ -319,7 +320,7 @@ Road, railway, industrial, settlement, and aircraft ground ops use the same prop
 | Ground | Soft ground (grass) absorbs; hard ground (asphalt) reflects | Copernicus IMD raster → G-factor | ~3 dB | No |
 | Terrain | Hills block sound via diffraction | Copernicus GLO-30 DEM (30m) | 20–25 dB | Yes |
 | Buildings | Buildings screen sound like walls | Overture building-height raster (30m) | 20 dB/band | Yes |
-| Vegetation | Forests absorb sound, especially high frequencies | ESA WorldCover 2021 | 4–24 dB/band | Yes |
+| Vegetation | Forests absorb sound, especially high frequencies | ESA WorldCover 2021 | 2–12 dB/band | Yes |
 | Reflections | Urban canyons bounce sound, increasing levels | Building enclosure heuristic | +5 dB | With screening |
 | Weather | Downwind/inversion conditions can carry sound further | Not currently modelled | — | No |
 
@@ -348,36 +349,23 @@ L_received,i = L_emission,i - A_div,i - A_atm,i - max(A_ground,i, A_terrain,i + 
 </details>
 
 <details>
-<summary>Technical: terrain diffraction (ISO 9613-2 §7.4)</summary>
+<summary>Technical: combined terrain + building + barrier diffraction (ISO 9613-2 §7.3 / 7.4 + CNOSSOS-EU §2.5.6)</summary>
 
-DEM profile sampled between source and receiver. Source heights: road 0.05 m, rail 0.5 m, point sources at structure height. Receiver height: 4.0 m.
+DEM, building heights and explicit noise barriers are merged into a single composite top-profile (`elevation + max(building_h, barrier_h)`) sampled along the source→receiver line. Diffraction is computed once over this composite, so a building sitting on a hill can no longer double-count Fresnel attenuation. Explicit roadside noise barriers compete with raster buildings as candidate edges. Source heights: road 0.05 m, rail 0.5 m, point sources at structure height. Receiver height: 4.0 m.
 
 Single diffraction:
 ```
-δ = d_source_barrier + d_barrier_receiver - d_direct  [path difference]
+δ = path_via_edge − direct_path
 A_bar = min(20, 10 × log₁₀(3 + 20 × δ × f / 340))   [per frequency]
 ```
 
-Double diffraction (two distinct edges):
+Double / triple diffraction (CNOSSOS C″ for thick barriers):
 ```
 C₃ = (1 + (5λ/e)²) / (1/3 + (5λ/e)²)
 A_bar = min(25, 10 × log₁₀(3 + C₃ × 20 × δ × f / 340))
 ```
 
-Terrain diffraction uses the DEM only. Explicit roadside noise barriers are handled separately in the screening step.
-
-</details>
-
-<details>
-<summary>Technical: building screening</summary>
-
-Buildings act as barriers. Max building height along source→receiver path used for diffraction calculation:
-```
-δ_bld = |S→B| + |B→R| - |S→R|    (3D detour vs direct slant path)
-A_screen = min(20, 10 × log₁₀(3 + 20 × δ_bld × f / 340))   [per band, max 20 dB]
-```
-
-Noise barriers compete with raster buildings as candidate screening obstacles. Building reflections (ISO 9613-2 §7.5) are approximated by local enclosure detection around the receiver → 0 to +5 dB boost in urban canyons.
+The popup splits the combined attenuation back into `terrain` (bare-earth diffraction) and `screening` (combined − terrain) for the impact-breakdown UI, but the underlying physics computes them together. Building reflections (ISO 9613-2 §7.5) are added separately as a 0-5 dB boost from local enclosure around the receiver.
 
 </details>
 
@@ -479,7 +467,7 @@ This model is an engineering approximation for a continental-scale noise atlas �
 |------|-------------|-------|--------|
 | Source height (roads) | CNOSSOS-EU: 0.05 m (rolling) / 0.30 m (propulsion) | 0.05 m for both | Minor — propulsion height difference negligible at atlas scale |
 | Terrain profile | Professional SW: 5–10 m spacing | Adaptive 30 m spacing (8–50 points) | May miss narrow barriers (<30 m wide) |
-| Aircraft type mapping | Doc 29 / ANP: aircraft-specific certified profiles + procedural steps + weights | ~124 per-ICAO-typecode NPD profiles auto-generated from EASA ANP v2.3, bucketed at ~17 noise classes for aggregation | ±1-2 dB for ANP-listed types, ±2-3 dB for nearest-neighbor (e.g., A320neo → A320-232) |
+| Aircraft type mapping | Doc 29 / ANP: aircraft-specific certified profiles + procedural steps + weights | ~124 per-ICAO-typecode NPD profiles auto-generated from EASA ANP v2.3 (+ v9 supplement), bucketed at 12 aircraft noise classes for aggregation | ±1-2 dB for ANP-mapped types; similarity_fallback for unmapped typecodes routes to closest anchor by engine/size class |
 | Aircraft timing | Airport-local time and operational preprocessing | Segment midpoint → IANA timezone (tzf-rs) → DST-aware local time (chrono-tz); END default period boundaries | Global local time; only airport-local operational-preprocessing differences remain |
 | Aircraft ground preprocessing | Curated airport trajectory cleaning | Airport-aware ADS-B filtering removes obvious stale ground segments | Near-runway bias still possible |
 | Aircraft ground operations | Surface movement inventories and airport-local operational data | ADS-B low-altitude / on-ground segments matched to airport geometry, with synthetic runway/taxi/apron fill when coverage is incomplete | Near-runway levels depend on airport geometry quality and ADS-B surface coverage |
