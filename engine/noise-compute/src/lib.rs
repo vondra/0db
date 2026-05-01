@@ -14,6 +14,7 @@ pub mod constants;
 pub mod country_defaults_generated;
 pub mod defaults;
 pub mod emission;
+pub mod flight_id;
 pub mod normalize;
 pub mod periods;
 pub mod present;

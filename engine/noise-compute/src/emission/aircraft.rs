@@ -1062,7 +1062,6 @@ const SURFACE_HELIPAD_SPEED_KT: f32 = 6.0;
 const SURFACE_AREA_POINT_SPACING_M: f64 = 90.0;
 const SURFACE_AREA_POINT_MAX: usize = 8;
 const SURFACE_POINT_SEGMENT_M: f64 = 24.0;
-pub const SURFACE_FLIGHT_ID_BASE: u64 = 0xff00_0000_0000_0000;
 const GROUND_OPS_REF_OFFSET_M: f64 = 25.0;
 const GROUND_OPS_SPEED_CLAMP_DB: f64 = 3.0;
 const GROUND_OPS_RUNWAY_DEPARTURE_BONUS_DB: f64 = 2.0;
@@ -1943,7 +1942,7 @@ pub fn synthesize_airport_surface_segments(
         }
     }
 
-    let mut next_flight_id = SURFACE_FLIGHT_ID_BASE;
+    let mut synth_seq: u64 = 0;
     let mut out = Vec::new();
 
     for (group, obs_map) in groups.iter().zip(group_obs.iter()) {
@@ -1992,7 +1991,7 @@ pub fn synthesize_airport_surface_segments(
                     continue;
                 }
                 out.push(AircraftSegment {
-                    flight_id: next_flight_id,
+                    flight_id: crate::flight_id::pack_synth(synth_seq),
                     profile_idx: synth_profile_idx,
                     is_departure,
                     on_ground: true,
@@ -2012,7 +2011,7 @@ pub fn synthesize_airport_surface_segments(
                     ground_ops_kind: emitter.ground_ops_kind,
                     source_id: AIRCRAFT_ADSB_SOURCE_ID,
                 });
-                next_flight_id = next_flight_id.wrapping_add(1);
+                synth_seq = synth_seq.wrapping_add(1);
             }
         }
     }
