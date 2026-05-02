@@ -840,6 +840,17 @@ fn apply_segment_top_k_with_cap(
         ..Default::default()
     };
 
+    let mut per_kind_total: std::collections::HashMap<LayerKind, u32> = std::collections::HashMap::new();
+    for seg in &traces.segments {
+        *per_kind_total.entry(seg.kind).or_insert(0) += 1;
+    }
+    summary.road_total = *per_kind_total.get(&LayerKind::Road).unwrap_or(&0);
+    summary.railway_total = *per_kind_total.get(&LayerKind::Railway).unwrap_or(&0);
+    summary.aircraft_ground_total = *per_kind_total.get(&LayerKind::Aircraft).unwrap_or(&0);
+    summary.building_total = *per_kind_total.get(&LayerKind::Building).unwrap_or(&0);
+    summary.industrial_total = *per_kind_total.get(&LayerKind::Industrial).unwrap_or(&0);
+    summary.aircraft_airborne_total = traces.airborne.len() as u32;
+
     traces
         .segments
         .sort_unstable_by(|a, b| b.received_lden.full.partial_cmp(&a.received_lden.full).unwrap_or(std::cmp::Ordering::Equal));

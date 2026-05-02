@@ -526,6 +526,11 @@ export interface AirborneTrace {
   synthetic: boolean
 }
 
+/** Per-kind segment counts. `*_count` is what the response includes
+ * (after the per-kind top-K cap); `*_total` is how many were actually
+ * computed and folded into Lden. Frontends render the pair as
+ * "shown / total" so users see how aggressively the response was
+ * truncated; Lden values themselves always reflect the full set. */
 export interface SegmentTracesSummary {
   total_count: number
   truncated: boolean
@@ -535,4 +540,10 @@ export interface SegmentTracesSummary {
   aircraft_airborne_count: number
   building_count: number
   industrial_count: number
+  road_total: number
+  railway_total: number
+  aircraft_ground_total: number
+  aircraft_airborne_total: number
+  building_total: number
+  industrial_total: number
 }

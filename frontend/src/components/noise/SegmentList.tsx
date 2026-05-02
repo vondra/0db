@@ -63,6 +63,17 @@ function countsByKind(meta: SegmentTracesSummary | null | undefined) {
   } as Record<SegmentKind, number>
 }
 
+function totalsByKind(meta: SegmentTracesSummary | null | undefined) {
+  return {
+    road: meta?.road_total ?? 0,
+    railway: meta?.railway_total ?? 0,
+    aircraft_ground: meta?.aircraft_ground_total ?? 0,
+    aircraft_airborne: meta?.aircraft_airborne_total ?? 0,
+    building: meta?.building_total ?? 0,
+    industrial: meta?.industrial_total ?? 0,
+  } as Record<SegmentKind, number>
+}
+
 export function SegmentList({
   segments,
   airborne,
@@ -85,6 +96,7 @@ export function SegmentList({
   )
 
   const counts = countsByKind(meta)
+  const totals = totalsByKind(meta)
 
   const entries = useMemo<UnifiedEntry[]>(() => {
     const rows: UnifiedEntry[] = []
@@ -110,14 +122,16 @@ export function SegmentList({
       <div className="flex mt-1 mb-1.5 whitespace-nowrap text-[11px] bg-muted/30 rounded py-1 -mx-1 divide-x divide-foreground/25 overflow-x-auto">
         {KIND_FILTERS.map(({ key, label }) => {
           const kindCount = counts[key]
+          const kindTotal = totals[key]
           if (kindCount === 0 && shownCount > 0) return null
           const on = enabled[key]
+          const countLabel = kindTotal > kindCount ? `${kindCount} of ${kindTotal}` : `${kindCount}`
           return (
             <button
               key={key}
               type="button"
               onClick={() => setEnabled(e => ({ ...e, [key]: !e[key] }))}
-              title={`${label} — ${kindCount} segment${kindCount === 1 ? '' : 's'} (click to ${on ? 'hide' : 'show'})`}
+              title={`${label} — ${countLabel} segment${kindTotal === 1 ? '' : 's'} (click to ${on ? 'hide' : 'show'})`}
               className={`shrink-0 px-1 transition-colors ${
                 on
                   ? 'text-foreground hover:text-foreground/80'
