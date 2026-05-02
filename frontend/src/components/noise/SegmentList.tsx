@@ -113,9 +113,15 @@ export function SegmentList({
     return rows
   }, [segments, airborne, enabled])
 
-  const shownCount = segments.length + airborne.length
-  const totalCount = meta?.total_count ?? shownCount
-  const truncated = meta?.truncated ?? false
+  // Strip should reflect the active toggle selection, not the global total.
+  let shownCount = 0
+  let totalCount = 0
+  for (const { key } of KIND_FILTERS) {
+    if (!enabled[key]) continue
+    shownCount += counts[key]
+    totalCount += totals[key]
+  }
+  const truncated = totalCount > shownCount
 
   return (
     <div>
