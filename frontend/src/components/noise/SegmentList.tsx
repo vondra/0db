@@ -41,6 +41,17 @@ function segmentRowKey(t: SegmentTrace): string {
   return `s-${t.osm_id ?? 'pt'}-${t.segment_idx}-${t.cp_lat.toFixed(6)},${t.cp_lon.toFixed(6)}-${rlKey}`
 }
 
+// Server omits `flight_id` (packed icao24+ts32 overflows JS Number — see
+// types/noise.ts comment), so the key falls back to per-trace identity.
+// Synth cruise buckets are keyed on (date, period, profile) by the engine;
+// received_lden tie-breaks the rare same-bucket-same-receiver collisions.
+function airborneRowKey(t: AirborneTrace): string {
+  if (t.icao_hex && t.start_unix != null) {
+    return `a-real-${t.icao_hex}-${t.start_unix}-${t.received_lden.toFixed(3)}`
+  }
+  return `a-synth-${t.date}-${t.period}-${t.profile}-${t.received_lden.toFixed(3)}`
+}
+
 function countsByKind(meta: SegmentTracesSummary | null | undefined) {
   return {
     road: meta?.road_count ?? 0,
@@ -128,7 +139,7 @@ export function SegmentList({
             />
           ) : (
             <AirborneRow
-              key={`a-${e.trace.flight_id}-${e.trace.period}`}
+              key={airborneRowKey(e.trace)}
               trace={e.trace}
               receiverLatLon={receiverLatLon}
               onHighlight={onHighlight}
