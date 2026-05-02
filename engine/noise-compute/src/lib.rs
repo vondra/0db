@@ -1702,9 +1702,10 @@ fn compute_aircraft(
         flight_weight: f64,
         /// Set when this entry was created from a cruise bucket (i.e. the
         /// scalar `seg.flight_id` was the bucket's first contributor). Lets
-        /// `flights_per_day` exclude cruise entries from the ground/airborne
-        /// count and route them through `cruise_unique` instead — the bucket
-        /// scalar over-counts because one real flight crosses many R5 cells.
+        /// `flights_per_day` and the band counters exclude cruise entries
+        /// from the ground/airborne path and route them through
+        /// `cruise_flight_stats` instead — the bucket scalar over-counts
+        /// because one real flight crosses many R5 cells.
         is_cruise: bool,
     }
     struct BandStats {
@@ -1721,6 +1722,15 @@ fn compute_aircraft(
                 alt_sum: 0.0,
                 class_counts: [0; aircraft::NUM_CLASSES],
             }
+        }
+        /// Add one event to this band. `count_w` and `alt_w_sum` are
+        /// caller-provided (callers weight differently: ground/airborne
+        /// uses `flight_weight` and `avg_alt * flight_weight`, cruise uses
+        /// 1.0 and the per-fid alt_at_peak directly).
+        fn add_event(&mut self, count_w: f64, alt_w_sum: f64, cls: usize, class_w: u32) {
+            self.count += count_w;
+            self.alt_sum += alt_w_sum;
+            self.class_counts[cls] += class_w;
         }
         fn top_type(&self) -> &'static str {
             let idx = self
@@ -1777,21 +1787,17 @@ fn compute_aircraft(
     }
 
     let mut flights: HashMap<u64, FlightAccum> = HashMap::new();
-    // Cruise rows aggregate many real flights per bucket; popup must count
-    // unique flights via this set rather than `flights.len()` (the bucket-
-    // level scalar `flight_id` over-counts because one real flight crosses
-    // many R5 buckets in the popup reach radius). Energy still flows through
-    // the per-bucket compute path; only identity counting is separated.
-    let mut cruise_unique: HashSet<u64> = HashSet::new();
-    // Same dedup for the >30/45/60 dB band counters: track each real cruise
-    // fid's max peak_lmax across all R5 buckets it crossed, plus the alt and
-    // class at that bucket. Without this, a single FL350 cruise flight that
-    // crosses 30 R5 hexes would add 30 to the band counts (one per bucket
-    // weighted by `flight_weight`) instead of 1.
+    // Cruise rows aggregate many real flights per bucket; one real flight
+    // crosses many R5 buckets in the popup reach radius, so popup counters
+    // must dedup by real fid (the bucket-level scalar `flight_id` over-
+    // counts). Energy still flows through the per-bucket compute path; only
+    // identity counting is separated. Per-fid max peak_lmax + alt + class
+    // also feed the >30/45/60 dB band counters so a single FL350 transit
+    // crossing 30 R5 hexes adds 1 to each band it crosses, not 30.
     struct CruiseFlightStats {
         peak_lmax: f64,
         alt_at_peak: f64,
-        class_at_peak: u8,
+        class_at_peak: usize,
     }
     let mut cruise_flight_stats: HashMap<u64, CruiseFlightStats> = HashMap::new();
     let airport_groups = aircraft::airport_ground_groups(airport_lines, airport_areas);
@@ -1881,15 +1887,7 @@ fn compute_aircraft(
         let energy =
             crate::propagation::iso9613::fast_exp_f64(sel * std::f64::consts::LN_10 * 0.1) * weight;
         let period = seg.period.min(2) as usize;
-        // Cruise: collect every contributing real flight_id into the unique
-        // set so popup counters reflect actual flight count, not bucket count.
-        // Energy aggregation continues through the per-bucket scalar path.
         let is_cruise = !seg.cruise_flight_ids.is_empty();
-        if is_cruise {
-            for &fid in &seg.cruise_flight_ids {
-                cruise_unique.insert(fid);
-            }
-        }
         let acc = flights.entry(seg.flight_id).or_insert(FlightAccum {
             period_energy: [0.0; 3],
             peak_lmax: -999.0,
@@ -1932,12 +1930,12 @@ fn compute_aircraft(
                     .or_insert(CruiseFlightStats {
                         peak_lmax: f64::NEG_INFINITY,
                         alt_at_peak: 0.0,
-                        class_at_peak: class_idx as u8,
+                        class_at_peak: class_idx,
                     });
                 if lmax > entry.peak_lmax {
                     entry.peak_lmax = lmax;
                     entry.alt_at_peak = cpa.relative_alt_m;
-                    entry.class_at_peak = class_idx as u8;
+                    entry.class_at_peak = class_idx;
                 }
             }
         }
@@ -2250,20 +2248,15 @@ fn compute_aircraft(
         let avg_alt = acc.min_dist_m;
         let cls = aircraft::noise_class_of(acc.profile_idx) as usize;
         let weight = acc.flight_weight.round().max(1.0) as u32;
+        let alt_w_sum = avg_alt * acc.flight_weight;
         if acc.peak_lmax > 30.0 {
-            band_faint.count += acc.flight_weight;
-            band_faint.alt_sum += avg_alt * acc.flight_weight;
-            band_faint.class_counts[cls] += weight;
-        }
-        if acc.peak_lmax > 45.0 {
-            band_audible.count += acc.flight_weight;
-            band_audible.alt_sum += avg_alt * acc.flight_weight;
-            band_audible.class_counts[cls] += weight;
-        }
-        if acc.peak_lmax > 60.0 {
-            band_disruptive.count += acc.flight_weight;
-            band_disruptive.alt_sum += avg_alt * acc.flight_weight;
-            band_disruptive.class_counts[cls] += weight;
+            band_faint.add_event(acc.flight_weight, alt_w_sum, cls, weight);
+            if acc.peak_lmax > 45.0 {
+                band_audible.add_event(acc.flight_weight, alt_w_sum, cls, weight);
+                if acc.peak_lmax > 60.0 {
+                    band_disruptive.add_event(acc.flight_weight, alt_w_sum, cls, weight);
+                }
+            }
         }
 
         // Popup tee-off: AirborneTrace per flight. Doc 29 is scalar-SEL only —
@@ -2319,19 +2312,13 @@ fn compute_aircraft(
     // FlightAccum loop above.
     for stats in cruise_flight_stats.values() {
         if stats.peak_lmax > 30.0 {
-            let cls = stats.class_at_peak as usize;
-            band_faint.count += 1.0;
-            band_faint.alt_sum += stats.alt_at_peak;
-            band_faint.class_counts[cls] += 1;
+            let cls = stats.class_at_peak;
+            band_faint.add_event(1.0, stats.alt_at_peak, cls, 1);
             if stats.peak_lmax > 45.0 {
-                band_audible.count += 1.0;
-                band_audible.alt_sum += stats.alt_at_peak;
-                band_audible.class_counts[cls] += 1;
-            }
-            if stats.peak_lmax > 60.0 {
-                band_disruptive.count += 1.0;
-                band_disruptive.alt_sum += stats.alt_at_peak;
-                band_disruptive.class_counts[cls] += 1;
+                band_audible.add_event(1.0, stats.alt_at_peak, cls, 1);
+                if stats.peak_lmax > 60.0 {
+                    band_disruptive.add_event(1.0, stats.alt_at_peak, cls, 1);
+                }
             }
         }
     }
@@ -2414,16 +2401,16 @@ fn compute_aircraft(
     //     (max `count_weight` across that flight's segments) preserves the
     //     synthetic-aggregate semantics where one segment with weight=N
     //     stands for N operations (e.g. inferred runway-roll buckets).
-    //   * cruise unique contributors — counted via `cruise_unique` set
-    //     populated from per-bucket lists. Excludes FlightAccum entries
-    //     created by cruise buckets (bucket scalar fid was a contributor
-    //     and is already in `cruise_unique`).
+    //   * cruise unique contributors — counted via `cruise_flight_stats`
+    //     keys, populated from per-bucket lists during the segment loop.
+    //     Excludes cruise FlightAccum entries (bucket scalar fid is a synth
+    //     value, not a real flight; the real fids are in cruise_flight_stats).
     let real_flights_weight: f64 = flights
         .values()
         .filter(|acc| !acc.is_cruise)
         .map(|acc| acc.flight_weight)
         .sum();
-    let flights_per_day = (real_flights_weight + cruise_unique.len() as f64) / n_days_f;
+    let flights_per_day = (real_flights_weight + cruise_flight_stats.len() as f64) / n_days_f;
 
     // Top flights by Lden energy contribution (for popup diagnostics).
     // Skip cruise bucket entries — they're per-bucket aggregates with synth
