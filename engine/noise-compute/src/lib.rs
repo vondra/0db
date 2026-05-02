@@ -1783,6 +1783,17 @@ fn compute_aircraft(
     // many R5 buckets in the popup reach radius). Energy still flows through
     // the per-bucket compute path; only identity counting is separated.
     let mut cruise_unique: HashSet<u64> = HashSet::new();
+    // Same dedup for the >30/45/60 dB band counters: track each real cruise
+    // fid's max peak_lmax across all R5 buckets it crossed, plus the alt and
+    // class at that bucket. Without this, a single FL350 cruise flight that
+    // crosses 30 R5 hexes would add 30 to the band counts (one per bucket
+    // weighted by `flight_weight`) instead of 1.
+    struct CruiseFlightStats {
+        peak_lmax: f64,
+        alt_at_peak: f64,
+        class_at_peak: u8,
+    }
+    let mut cruise_flight_stats: HashMap<u64, CruiseFlightStats> = HashMap::new();
     let airport_groups = aircraft::airport_ground_groups(airport_lines, airport_areas);
     let mut ground_by_airport: HashMap<String, GroundAirportAccum> = HashMap::new();
     let mut ground_variants = [PropagationVariants::default(); 3];
@@ -1913,6 +1924,22 @@ fn compute_aircraft(
             acc.peak_date_id = seg.date_id;
             acc.peak_seg_start = [seg.start_lon, seg.start_lat];
             acc.peak_seg_end = [seg.end_lon, seg.end_lat];
+        }
+        if is_cruise {
+            for &fid in &seg.cruise_flight_ids {
+                let entry = cruise_flight_stats
+                    .entry(fid)
+                    .or_insert(CruiseFlightStats {
+                        peak_lmax: f64::NEG_INFINITY,
+                        alt_at_peak: 0.0,
+                        class_at_peak: class_idx as u8,
+                    });
+                if lmax > entry.peak_lmax {
+                    entry.peak_lmax = lmax;
+                    entry.alt_at_peak = cpa.relative_alt_m;
+                    entry.class_at_peak = class_idx as u8;
+                }
+            }
         }
         if cpa.d_p_m < acc.min_dist_m {
             acc.min_dist_m = cpa.d_p_m;
@@ -2202,6 +2229,15 @@ fn compute_aircraft(
         if acc.peak_lmax > global_peak_lmax {
             global_peak_lmax = acc.peak_lmax;
         }
+        // Cruise FlightAccum entries are per-bucket, not per real flight: a
+        // single FL350 transit crosses ~30 R5 hexes and lands in 30 separate
+        // FlightAccum entries (each keyed by the bucket synth fid). Counting
+        // their `flight_weight` here would multi-count by the same factor
+        // that Etapa 2 already removed from `flights_per_day`. Cruise
+        // contributions are added separately below from `cruise_flight_stats`.
+        if acc.is_cruise {
+            continue;
+        }
         // Helicopter class index is dynamic — look it up via the generated
         // CLASS_NAMES table. The pre-Tier-2 hard-coded `profile_idx == 6`
         // referred to the LightGA+Rotorcraft bucket; in Tier 2 helicopters
@@ -2274,6 +2310,29 @@ fn compute_aircraft(
                 start_unix,
                 synthetic,
             });
+        }
+    }
+
+    // Cruise contributions to band counts: one count per unique real fid that
+    // crossed each band's peak threshold (max peak_lmax across all R5 buckets
+    // it appeared in). Replaces the per-bucket multi-count that ran in the
+    // FlightAccum loop above.
+    for stats in cruise_flight_stats.values() {
+        if stats.peak_lmax > 30.0 {
+            let cls = stats.class_at_peak as usize;
+            band_faint.count += 1.0;
+            band_faint.alt_sum += stats.alt_at_peak;
+            band_faint.class_counts[cls] += 1;
+            if stats.peak_lmax > 45.0 {
+                band_audible.count += 1.0;
+                band_audible.alt_sum += stats.alt_at_peak;
+                band_audible.class_counts[cls] += 1;
+            }
+            if stats.peak_lmax > 60.0 {
+                band_disruptive.count += 1.0;
+                band_disruptive.alt_sum += stats.alt_at_peak;
+                band_disruptive.class_counts[cls] += 1;
+            }
         }
     }
 
