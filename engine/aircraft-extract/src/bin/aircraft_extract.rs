@@ -53,6 +53,8 @@ enum Cmd {
         segments: PathBuf,
         #[arg(long)]
         h3r4_dir: PathBuf,
+        #[arg(long, default_value_t = 1)]
+        n_days: u16,
     },
     /// Stage 2B: segments → per-R4 cruise.arrow
     Stage2b {
@@ -60,6 +62,8 @@ enum Cmd {
         segments: PathBuf,
         #[arg(long)]
         h3r4_dir: PathBuf,
+        #[arg(long, default_value_t = 1)]
+        n_days: u16,
     },
     /// Stage 2C: segments → per-R4 ground.arrow
     Stage2c {
@@ -102,16 +106,16 @@ fn main() -> Result<()> {
             let n = run_stage_1(&flights_dir, &out, &day, &prepared_dir)?;
             eprintln!("[stage1] {day}: {n} segments");
         }
-        Cmd::Stage2a { segments, h3r4_dir } => {
+        Cmd::Stage2a { segments, h3r4_dir, n_days } => {
             let segs = aircraft_extract::arrow_io::read_segments(&segments)
                 .with_context(|| format!("read {}", segments.display()))?;
-            let n = run_stage_2a(&segs, &h3r4_dir)?;
+            let n = run_stage_2a(&segs, &h3r4_dir, n_days)?;
             eprintln!("[stage2a] {n} R4 hexes written");
         }
-        Cmd::Stage2b { segments, h3r4_dir } => {
+        Cmd::Stage2b { segments, h3r4_dir, n_days } => {
             let segs = aircraft_extract::arrow_io::read_segments(&segments)
                 .with_context(|| format!("read {}", segments.display()))?;
-            let n = run_stage_2b(&segs, &h3r4_dir)?;
+            let n = run_stage_2b(&segs, &h3r4_dir, n_days)?;
             eprintln!("[stage2b] {n} R4 hexes written");
         }
         Cmd::Stage2c { segments, h3r4_dir, prepared_dir, n_days } => {
@@ -155,9 +159,9 @@ fn main() -> Result<()> {
             }
 
             let t2a = Instant::now();
-            let r2a = run_stage_2a(&all_segments, &h3r4_dir)?;
+            let r2a = run_stage_2a(&all_segments, &h3r4_dir, n_days)?;
             let t2b = Instant::now();
-            let r2b = run_stage_2b(&all_segments, &h3r4_dir)?;
+            let r2b = run_stage_2b(&all_segments, &h3r4_dir, n_days)?;
             let t2c = Instant::now();
             let rasters = raster_reader::RealRasters::new(&prepared_dir);
             let r2c = run_stage_2c(&all_segments, &h3r4_dir, &rasters, n_days)?;

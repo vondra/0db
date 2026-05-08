@@ -19,6 +19,15 @@ fn base_metadata(extra: &[(&str, &str)]) -> HashMap<String, String> {
     md
 }
 
+/// Returns a clone of `schema` with `n_days` metadata stamped. Used by
+/// the writers to record the extraction window so the popup reader can
+/// recover the correct period normalization without scanning date_ids.
+pub fn with_n_days(schema: std::sync::Arc<arrow::datatypes::Schema>, n_days: u16) -> std::sync::Arc<arrow::datatypes::Schema> {
+    let mut md = schema.metadata().clone();
+    md.insert("n_days".to_string(), n_days.to_string());
+    std::sync::Arc::new((*schema).clone().with_metadata(md))
+}
+
 /// Stage 0 — `flights/<day>.arrow`. One row per (aircraft, day).
 pub fn flights_schema() -> Arc<Schema> {
     let pt_struct = DataType::Struct(Fields::from(vec![

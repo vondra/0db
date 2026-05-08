@@ -34,6 +34,13 @@ impl rstar::RTreeObject for AircraftEntry {
 }
 
 /// All source data for one H3 res-4 hex — mmap'd Arrow IPC files.
+///
+/// Aircraft layout: v6 cutover prefers three independent files
+/// (`airborne.arrow` / `cruise.arrow` / `ground.arrow`); when any are
+/// missing the loader falls back to the legacy `aircraft-v5.arrow` /
+/// `aircraft.arrow` single-file layout (see [`load_hex`]). Both layouts
+/// flow into the same `aircraft_cache: Vec<AircraftSegment>` consumed
+/// by `compute_aircraft`.
 pub struct HexData {
     _mmaps: Vec<Arc<Mmap>>,
     pub road_batches: Vec<RecordBatch>,
@@ -46,6 +53,12 @@ pub struct HexData {
     pub barrier_batches: Vec<RecordBatch>,
     pub industrial_batches: Vec<RecordBatch>,
     pub aircraft_batches: Vec<RecordBatch>,
+    /// Stage 2A airborne — v6 schema; empty when only legacy v5 file present.
+    pub aircraft_airborne_batches: Vec<RecordBatch>,
+    /// Stage 2B cruise — v6 schema.
+    pub aircraft_cruise_batches: Vec<RecordBatch>,
+    /// Stage 2C ground — v6 schema.
+    pub aircraft_ground_batches: Vec<RecordBatch>,
     pub aircraft_cache: OnceLock<Vec<noise_compute::types::AircraftSegment>>,
     pub aircraft_tree: OnceLock<RTree<AircraftEntry>>,
 }
@@ -62,6 +75,9 @@ impl HexData {
             barrier_batches: vec![],
             industrial_batches: vec![],
             aircraft_batches: vec![],
+            aircraft_airborne_batches: vec![],
+            aircraft_cruise_batches: vec![],
+            aircraft_ground_batches: vec![],
             aircraft_cache: OnceLock::new(),
             aircraft_tree: OnceLock::new(),
         }
@@ -84,8 +100,20 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
     let building_batches = load_arrow_mmap(&path.join("buildings.arrow"), &mut mmaps);
     let barrier_batches = load_arrow_mmap(&path.join("barriers.arrow"), &mut mmaps);
     let industrial_batches = load_arrow_mmap(&path.join("industrial.arrow"), &mut mmaps);
-    let aircraft_batches =
-        load_arrow_mmap(&aircraft_tracks::output::aircraft_arrow_path(path), &mut mmaps);
+    let aircraft_airborne_batches = load_arrow_mmap(&path.join("airborne.arrow"), &mut mmaps);
+    let aircraft_cruise_batches = load_arrow_mmap(&path.join("cruise.arrow"), &mut mmaps);
+    let aircraft_ground_batches = load_arrow_mmap(&path.join("ground.arrow"), &mut mmaps);
+    // v5/v4 fallback file — only loaded when v6 is absent. Lets the
+    // server serve a mixed-state filesystem (CZ R4s have v6, the rest
+    // still serve v5) until the global re-extract finishes.
+    let aircraft_batches = if aircraft_airborne_batches.is_empty()
+        && aircraft_cruise_batches.is_empty()
+        && aircraft_ground_batches.is_empty()
+    {
+        load_arrow_mmap(&aircraft_tracks::output::aircraft_arrow_path(path), &mut mmaps)
+    } else {
+        Vec::new()
+    };
 
     Ok(HexData {
         _mmaps: mmaps,
@@ -97,6 +125,9 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
         barrier_batches,
         industrial_batches,
         aircraft_batches,
+        aircraft_airborne_batches,
+        aircraft_cruise_batches,
+        aircraft_ground_batches,
         aircraft_cache: OnceLock::new(),
         aircraft_tree: OnceLock::new(),
     })
@@ -136,12 +167,233 @@ fn load_arrow_mmap(path: &Path, mmaps: &mut Vec<Arc<Mmap>>) -> Vec<RecordBatch> 
     batches
 }
 
-/// Load aircraft segments from on-disk arrow batches — thin wrapper that
-/// delegates to the auto-dispatch v5/v4 reader in `aircraft_tracks::output`.
+/// Load aircraft segments from on-disk arrow batches — v6 path
+/// preferred (three batch sets), v5/v4 fallback when v6 is absent.
 pub fn load_aircraft_segments_unified(
-    batches: &[RecordBatch],
+    legacy_batches: &[RecordBatch],
+    airborne_batches: &[RecordBatch],
+    cruise_batches: &[RecordBatch],
+    ground_batches: &[RecordBatch],
 ) -> Vec<noise_compute::types::AircraftSegment> {
-    aircraft_tracks::output::load_aircraft_segments(batches)
+    let v6_present = !airborne_batches.is_empty()
+        || !cruise_batches.is_empty()
+        || !ground_batches.is_empty();
+    if v6_present {
+        let mut out = Vec::new();
+        load_v6_airborne_into(airborne_batches, &mut out);
+        load_v6_cruise_into(cruise_batches, &mut out);
+        load_v6_ground_into(ground_batches, &mut out);
+        out
+    } else {
+        aircraft_tracks::output::load_aircraft_segments(legacy_batches)
+    }
+}
+
+fn load_v6_airborne_into(
+    batches: &[RecordBatch],
+    out: &mut Vec<noise_compute::types::AircraftSegment>,
+) {
+    use noise_compute::emission::aircraft::{GROUND_CONTEXT_NONE, GROUND_OPS_KIND_NONE};
+    use noise_compute::types::AircraftSegment;
+    for batch in batches {
+        let n = batch.num_rows();
+        if n == 0 {
+            continue;
+        }
+        let Some(flight_id) = column_u64(batch, "flight_id") else { continue };
+        let Some(profile_idx) = column_u8(batch, "profile_idx") else { continue };
+        let Some(source_id) = column_u8(batch, "source_id") else { continue };
+        let Some(sub_list) = column_list(batch, "sub_segments") else { continue };
+        let sub_struct = match sub_list.values().as_any().downcast_ref::<StructArray>() {
+            Some(s) => s,
+            None => continue,
+        };
+        let s_lat = sub_struct.column_by_name("start_lat").and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+        let s_lon = sub_struct.column_by_name("start_lon").and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+        let s_alt = sub_struct.column_by_name("start_alt_m").and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+        let e_lat = sub_struct.column_by_name("end_lat").and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+        let e_lon = sub_struct.column_by_name("end_lon").and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+        let e_alt = sub_struct.column_by_name("end_alt_m").and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+        let speed = sub_struct.column_by_name("speed_kt").and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+        let length = sub_struct.column_by_name("length_m").and_then(|c| c.as_any().downcast_ref::<Float32Array>());
+        let period = sub_struct.column_by_name("period").and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
+        let date_id = sub_struct.column_by_name("date_id").and_then(|c| c.as_any().downcast_ref::<Int16Array>());
+        let flags = sub_struct.column_by_name("flags").and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
+        let (Some(s_lat), Some(s_lon), Some(s_alt), Some(e_lat), Some(e_lon), Some(e_alt),
+             Some(speed), Some(length), Some(period), Some(date_id), Some(flags)) =
+            (s_lat, s_lon, s_alt, e_lat, e_lon, e_alt, speed, length, period, date_id, flags)
+        else { continue };
+        let offsets = sub_list.value_offsets();
+        for i in 0..n {
+            let fid = flight_id.value(i);
+            let prof = profile_idx.value(i);
+            let src = source_id.value(i) as u16;
+            let lo = offsets[i] as usize;
+            let hi = offsets[i + 1] as usize;
+            for j in lo..hi {
+                let f = flags.value(j);
+                let is_dep = f & 0b1 != 0;
+                out.push(AircraftSegment {
+                    flight_id: fid,
+                    profile_idx: prof,
+                    is_departure: is_dep,
+                    on_ground: false,
+                    period: period.value(j),
+                    date_id: date_id.value(j),
+                    start_lat: s_lat.value(j) as f64,
+                    start_lon: s_lon.value(j) as f64,
+                    start_alt_m: s_alt.value(j),
+                    end_lat: e_lat.value(j) as f64,
+                    end_lon: e_lon.value(j) as f64,
+                    end_alt_m: e_alt.value(j),
+                    speed_kt: speed.value(j),
+                    segment_length_m: length.value(j),
+                    count_weight: 1.0,
+                    surface_model: false,
+                    ground_context: GROUND_CONTEXT_NONE,
+                    ground_ops_kind: GROUND_OPS_KIND_NONE,
+                    source_id: src,
+                    cruise_flight_ids: Vec::new(),
+                });
+            }
+        }
+    }
+}
+
+fn load_v6_cruise_into(
+    batches: &[RecordBatch],
+    out: &mut Vec<noise_compute::types::AircraftSegment>,
+) {
+    use h3o::CellIndex;
+    use noise_compute::emission::aircraft::{GROUND_CONTEXT_NONE, GROUND_OPS_KIND_NONE};
+    use noise_compute::types::AircraftSegment;
+    for batch in batches {
+        let n = batch.num_rows();
+        if n == 0 {
+            continue;
+        }
+        let Some(r8_hex) = column_u64(batch, "r8_hex") else { continue };
+        let Some(rep_alt) = column_f32(batch, "rep_alt_m") else { continue };
+        let Some(rep_speed) = column_f32(batch, "rep_speed_kt") else { continue };
+        let Some(sum_len) = column_f32(batch, "sum_length_m") else { continue };
+        let Some(rep_len) = column_f32(batch, "rep_len_m") else { continue };
+        let Some(period) = column_u8(batch, "period") else { continue };
+        let Some(profile_idx) = column_u8(batch, "rep_profile_idx") else { continue };
+        let Some(source_id) = column_u8(batch, "source_id") else { continue };
+        let fid_list = column_list(batch, "cruise_flight_ids");
+
+        for i in 0..n {
+            let cell = match CellIndex::try_from(r8_hex.value(i)) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let centroid = h3o::LatLng::from(cell);
+            let (clat, clon) = (centroid.lat(), centroid.lng());
+            let rl = rep_len.value(i).max(1.0);
+            let alt = rep_alt.value(i);
+            let speed = rep_speed.value(i);
+            // Synthesise a tiny rep_line of length rep_len_m centred on
+            // the cell centroid, oriented east. Λ(β) is 0 at cruise
+            // overhead so the heading choice does not matter.
+            let half_lat_deg = (rl as f64 * 0.5) / 110_540.0;
+            let cruise_flight_ids = fid_list
+                .filter(|c| !c.is_null(i))
+                .and_then(|c| {
+                    let v = c.value(i);
+                    let u = v.as_any().downcast_ref::<UInt64Array>();
+                    u.map(|u| (0..u.len()).filter(|&j| !u.is_null(j)).map(|j| u.value(j)).collect::<Vec<u64>>())
+                })
+                .unwrap_or_default();
+            let count_weight = (sum_len.value(i) / rl).max(0.0);
+            // Use the first cruise flight ID as the scalar `flight_id`,
+            // matching v5 contract — popup keys distinct flights via
+            // `cruise_flight_ids` HashSet but legacy paths still inspect
+            // the scalar field.
+            let scalar_fid = cruise_flight_ids.first().copied().unwrap_or(0);
+            out.push(AircraftSegment {
+                flight_id: scalar_fid,
+                profile_idx: profile_idx.value(i),
+                is_departure: true, // Doc 29 §A.3.2 — cruise → Departure NPD
+                on_ground: false,
+                period: period.value(i),
+                date_id: 0,
+                start_lat: clat,
+                start_lon: clon,
+                start_alt_m: alt,
+                end_lat: clat + half_lat_deg,
+                end_lon: clon,
+                end_alt_m: alt,
+                speed_kt: speed,
+                segment_length_m: rl,
+                count_weight,
+                surface_model: false,
+                ground_context: GROUND_CONTEXT_NONE,
+                ground_ops_kind: GROUND_OPS_KIND_NONE,
+                source_id: source_id.value(i) as u16,
+                cruise_flight_ids,
+            });
+        }
+    }
+}
+
+fn load_v6_ground_into(
+    batches: &[RecordBatch],
+    out: &mut Vec<noise_compute::types::AircraftSegment>,
+) {
+    use noise_compute::emission::aircraft::{GROUND_CONTEXT_INFERRED, GROUND_OPS_KIND_NONE};
+    use noise_compute::types::AircraftSegment;
+    for batch in batches {
+        let n = batch.num_rows();
+        if n == 0 {
+            continue;
+        }
+        let Some(period) = column_u8(batch, "period") else { continue };
+        let Some(ops_kind) = column_u8(batch, "ops_kind") else { continue };
+        let Some(line_start_lat) = column_f32(batch, "line_start_lat") else { continue };
+        let Some(line_start_lon) = column_f32(batch, "line_start_lon") else { continue };
+        let Some(line_end_lat) = column_f32(batch, "line_end_lat") else { continue };
+        let Some(line_end_lon) = column_f32(batch, "line_end_lon") else { continue };
+        let Some(line_length) = column_f32(batch, "line_length_m") else { continue };
+        let Some(n_observed) = column_f32(batch, "n_observed_per_day") else { continue };
+        let Some(source_id) = column_u8(batch, "source_id") else { continue };
+        for i in 0..n {
+            out.push(AircraftSegment {
+                flight_id: 0,
+                profile_idx: 0,
+                is_departure: false,
+                on_ground: true,
+                period: period.value(i),
+                date_id: 0,
+                start_lat: line_start_lat.value(i) as f64,
+                start_lon: line_start_lon.value(i) as f64,
+                start_alt_m: 0.0,
+                end_lat: line_end_lat.value(i) as f64,
+                end_lon: line_end_lon.value(i) as f64,
+                end_alt_m: 0.0,
+                speed_kt: 0.0,
+                segment_length_m: line_length.value(i),
+                count_weight: n_observed.value(i).max(1.0),
+                surface_model: false,
+                ground_context: GROUND_CONTEXT_INFERRED,
+                ground_ops_kind: ops_kind.value(i),
+                source_id: source_id.value(i) as u16,
+                cruise_flight_ids: Vec::new(),
+            });
+        }
+    }
+}
+
+fn column_u64<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a UInt64Array> {
+    batch.column_by_name(name)?.as_any().downcast_ref::<UInt64Array>()
+}
+fn column_u8<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a UInt8Array> {
+    batch.column_by_name(name)?.as_any().downcast_ref::<UInt8Array>()
+}
+fn column_f32<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Float32Array> {
+    batch.column_by_name(name)?.as_any().downcast_ref::<Float32Array>()
+}
+fn column_list<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a ListArray> {
+    batch.column_by_name(name)?.as_any().downcast_ref::<ListArray>()
 }
 
 // ── Query helpers: iterate over mmap'd Arrow columns directly ──

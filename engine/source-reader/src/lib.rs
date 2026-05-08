@@ -142,21 +142,34 @@ pub fn collect_from_hex_data(
 
     let mut date_ids = std::collections::HashSet::new();
     let mut n_days_from_metadata: Option<u16> = None;
+    let scan_metadata = |batch: &arrow::record_batch::RecordBatch,
+                         n_days: &mut Option<u16>,
+                         date_ids: &mut std::collections::HashSet<i16>| {
+        if let Some(md) = batch.schema_ref().metadata().get("n_days") {
+            if let Ok(v) = md.parse::<u16>() {
+                *n_days = Some(n_days.map(|m| m.max(v)).unwrap_or(v));
+            }
+        }
+        if let Some(did) = batch
+            .column_by_name("date_id")
+            .and_then(|c| c.as_any().downcast_ref::<arrow::array::Int16Array>())
+        {
+            for i in 0..did.len() {
+                date_ids.insert(did.value(i));
+            }
+        }
+    };
     for data in hex_data {
         for batch in &data.aircraft_batches {
-            if let Some(md) = batch.schema_ref().metadata().get("n_days") {
-                if let Ok(v) = md.parse::<u16>() {
-                    n_days_from_metadata = Some(n_days_from_metadata.map(|m| m.max(v)).unwrap_or(v));
-                }
-            }
-            if let Some(did) = batch
-                .column_by_name("date_id")
-                .and_then(|c| c.as_any().downcast_ref::<arrow::array::Int16Array>())
-            {
-                for i in 0..did.len() {
-                    date_ids.insert(did.value(i));
-                }
-            }
+            scan_metadata(batch, &mut n_days_from_metadata, &mut date_ids);
+        }
+        for batch in data
+            .aircraft_airborne_batches
+            .iter()
+            .chain(data.aircraft_cruise_batches.iter())
+            .chain(data.aircraft_ground_batches.iter())
+        {
+            scan_metadata(batch, &mut n_days_from_metadata, &mut date_ids);
         }
     }
     let n_days = n_days_from_metadata.unwrap_or_else(|| {
@@ -458,9 +471,14 @@ pub fn collect_from_hex_data(
             });
         }
 
-        let cached_segs = data
-            .aircraft_cache
-            .get_or_init(|| hex_store::load_aircraft_segments_unified(&data.aircraft_batches));
+        let cached_segs = data.aircraft_cache.get_or_init(|| {
+            hex_store::load_aircraft_segments_unified(
+                &data.aircraft_batches,
+                &data.aircraft_airborne_batches,
+                &data.aircraft_cruise_batches,
+                &data.aircraft_ground_batches,
+            )
+        });
 
         let tree = data.aircraft_tree.get_or_init(|| {
             // Skip antimeridian crossings (|Δlon| > 180°) — they would collapse to a

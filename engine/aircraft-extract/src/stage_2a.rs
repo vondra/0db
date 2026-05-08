@@ -25,6 +25,7 @@ use crate::flight::{
 pub fn run_stage_2a(
     segments: &[FlightSegment],
     h3r4_dir: &Path,
+    n_days: u16,
 ) -> Result<usize> {
     let by_r4 = bucket_by_r4(segments);
     let r4s: Vec<u64> = by_r4.keys().copied().collect();
@@ -39,7 +40,7 @@ pub fn run_stage_2a(
         let hex_str = format!("{r4_hex:015x}");
         let dir = h3r4_dir.join(&hex_str);
         std::fs::create_dir_all(&dir)?;
-        write_airborne(&dir.join("airborne.arrow"), &events)
+        write_airborne(&dir.join("airborne.arrow"), &events, n_days)
     })?;
     Ok(n_r4)
 }
