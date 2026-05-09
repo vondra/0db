@@ -6,7 +6,7 @@
 //! aggregates produced by Stage 2A / 2B / 2C and serialised into the
 //! per-R4 Arrow files.
 
-use crate::trace::{CallsignChange, TracePoint};
+use crate::trace::TracePoint;
 
 /// Flight phase classification — from `classify`. Stored as `u8` in
 /// segments.arrow (`phase` column).
@@ -38,25 +38,24 @@ pub mod segment_flags {
     pub const SYNTHETIC: u8 = 1 << 2;
 }
 
-/// Stage 0 in-memory record. One per aircraft per day.
+/// Stage 0 in-memory record. One per telemetry-gap leg (presumed
+/// rotation) — a single `trace_full_<icao>.json` typically yields N
+/// `Flight`s, one per `FLIGHT_SPLIT_GAP_S`-separated chunk.
+/// `flight_id` is per-leg so popup dedup counts movements rather than
+/// aircraft-days; the trade-off is that a long mid-cruise coverage
+/// outage will produce two legs with distinct IDs (rare in EU ADS-B
+/// coverage; accepted as the price of correct turn-around counting).
 #[derive(Clone)]
 pub struct Flight {
     pub flight_id: u64,
-    /// Callsign effective at the first surviving (`point_is_sane`)
-    /// point — equivalent to `callsigns.first().value`. Kept as a
-    /// scalar for arrow round-trip continuity until M0b lands the full
-    /// transition list in the schema. Empty when no point carried
-    /// `flight` metadata.
+    /// Callsign active at the rotation's first point. Empty when no
+    /// point in the trace carried `flight` metadata.
     pub callsign: String,
     pub aircraft_type: String,
     pub profile_idx: u8,
     pub source_id: u8,
     pub origin: u8,
     pub points: Vec<TracePoint>,
-    /// Callsign transitions in `Flight.points` index space (rebased
-    /// through `point_is_sane`). Empty after arrow round-trip until
-    /// M0b extends the Stage 0 schema to persist them.
-    pub callsigns: Vec<CallsignChange>,
 }
 
 /// Stage 1 in-memory record. One per classified flight segment.

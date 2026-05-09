@@ -15,7 +15,7 @@ use crate::filters;
 use crate::flight::{Flight, FlightSegment};
 use crate::ground_inference::ground_flags;
 use crate::period::parse_date_id;
-use crate::segment::{build_segments, split_flights};
+use crate::segment::build_segments;
 use crate::trace::TracePoint;
 use noise_compute::types::RasterSampler;
 use raster_reader::RealRasters;
@@ -57,22 +57,18 @@ fn stage_1_one_flight(
     rasters: &RealRasters,
     date_id: i16,
 ) -> Vec<FlightSegment> {
-    let mut out = Vec::new();
-    for sub_pts in split_flights(&flight.points) {
-        out.extend(stage_1_one_subflight(
-            &sub_pts,
-            flight.flight_id,
-            flight.profile_idx,
-            flight.source_id,
-            flight.origin,
-            date_id,
-            rasters,
-        ));
-    }
-    out
+    classify_and_segment(
+        &flight.points,
+        flight.flight_id,
+        flight.profile_idx,
+        flight.source_id,
+        flight.origin,
+        date_id,
+        rasters,
+    )
 }
 
-fn stage_1_one_subflight(
+fn classify_and_segment(
     points: &[TracePoint],
     flight_id: u64,
     profile_idx: u8,
@@ -204,11 +200,6 @@ pub fn read_flights(path: &Path) -> Result<Vec<Flight>> {
                 source_id: src.value(i),
                 origin: orig.value(i),
                 points,
-                // Stage 0 currently persists only the first callsign;
-                // M0b will extend the schema with the full transition
-                // list. For now `read_flights` always reconstructs an
-                // empty list — Stage 1 doesn't yet use it.
-                callsigns: Vec::new(),
             });
         }
     }

@@ -61,7 +61,6 @@ mod tests {
             source_id: 0,
             origin: origin::OBSERVED,
             points: vec![pt(); n],
-            callsigns: Vec::new(),
         }
     }
 

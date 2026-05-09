@@ -75,9 +75,10 @@ pub struct AircraftTrace {
     pub icao24: String,
     pub aircraft_type: String,
     pub points: Vec<TracePoint>,
-    /// Callsign transitions in raw-trace `point_idx` order — **not yet
-    /// rebased** onto post-`point_is_sane` indices; consumers must use
-    /// [`Flight::callsigns`] (rebased) instead, or rebase themselves.
+    /// Callsign transitions in raw-trace `point_idx` order. The Stage 0
+    /// driver (`source_adsb_tar::trace_to_flight`) rebases these onto
+    /// post-`point_is_sane` indices and reduces them to one scalar
+    /// callsign per emitted [`Flight`].
     pub callsigns: Vec<CallsignChange>,
 }
 
