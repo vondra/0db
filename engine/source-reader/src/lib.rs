@@ -711,7 +711,6 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
 
     let summary = apply_segment_top_k_with_cap(&mut traces, top_k_per_kind);
     result.segments = std::mem::take(&mut traces.segments);
-    result.airborne_traces = std::mem::take(&mut traces.airborne);
     result.segments_meta = Some(summary);
 
     let json = serde_json::to_string(&result).unwrap();
@@ -751,35 +750,97 @@ fn apply_segment_top_k_with_cap(
     use noise_compute::types::{SegmentTracesSummary, LayerKind};
 
     let mut summary = SegmentTracesSummary {
-        total_count: (traces.segments.len() + traces.airborne.len()) as u32,
+        total_count: traces.segments.len() as u32,
         truncated: false,
         ..Default::default()
     };
 
+    // Aircraft segments are split by `aircraft_subtype`: 1 = ground
+    // path, 2 = airborne sub-segment, 3 = cruise R8 hex. Each gets
+    // its OWN cap bucket — cruise's `received_lden` (aggregate event
+    // energy) and airborne's (single-event SEL) live on different
+    // dB scales, so combining them into one bucket lets the louder
+    // scale crowd the quieter one out of the popup.
+    let aircraft_subtype_bucket = |seg: &noise_compute::types::SegmentTrace| -> Option<u8> {
+        if seg.kind != LayerKind::Aircraft {
+            return None;
+        }
+        match seg.aircraft_subtype {
+            1 => Some(1),
+            2 => Some(2),
+            3 => Some(3),
+            _ => None,
+        }
+    };
+
     let mut per_kind_total: std::collections::HashMap<LayerKind, u32> = std::collections::HashMap::new();
+    let mut aircraft_ground_total = 0u32;
+    let mut aircraft_airborne_subseg_total = 0u32;
+    let mut aircraft_cruise_total = 0u32;
     for seg in &traces.segments {
         *per_kind_total.entry(seg.kind).or_insert(0) += 1;
+        match aircraft_subtype_bucket(seg) {
+            Some(1) => aircraft_ground_total += 1,
+            Some(2) => aircraft_airborne_subseg_total += 1,
+            Some(3) => aircraft_cruise_total += 1,
+            _ => {}
+        }
     }
     summary.road_total = *per_kind_total.get(&LayerKind::Road).unwrap_or(&0);
     summary.railway_total = *per_kind_total.get(&LayerKind::Railway).unwrap_or(&0);
-    summary.aircraft_ground_total = *per_kind_total.get(&LayerKind::Aircraft).unwrap_or(&0);
+    summary.aircraft_ground_total = aircraft_ground_total;
     summary.building_total = *per_kind_total.get(&LayerKind::Building).unwrap_or(&0);
     summary.industrial_total = *per_kind_total.get(&LayerKind::Industrial).unwrap_or(&0);
-    summary.aircraft_airborne_total = traces.airborne.len() as u32;
+    // Cruise rows fold into the airborne counter per popup-tab
+    // convention (cruise lives under the Airborne tab in the UI).
+    summary.aircraft_airborne_total = aircraft_airborne_subseg_total + aircraft_cruise_total;
 
     traces
         .segments
         .sort_unstable_by(|a, b| b.received_lden.full.partial_cmp(&a.received_lden.full).unwrap_or(std::cmp::Ordering::Equal));
-    traces
-        .airborne
-        .sort_unstable_by(|a, b| b.received_lden.partial_cmp(&a.received_lden).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut kept: Vec<noise_compute::types::SegmentTrace> = Vec::new();
     let mut per_kind: std::collections::HashMap<LayerKind, u32> = std::collections::HashMap::new();
+    let mut aircraft_ground_count = 0u32;
+    let mut aircraft_airborne_subseg_count = 0u32;
+    let mut aircraft_cruise_count = 0u32;
     for seg in std::mem::take(&mut traces.segments) {
-        let count = per_kind.entry(seg.kind).or_insert(0);
-        if (*count as usize) < per_kind_cap {
-            *count += 1;
+        let cap_ok = match aircraft_subtype_bucket(&seg) {
+            Some(1) => {
+                if (aircraft_ground_count as usize) < per_kind_cap {
+                    aircraft_ground_count += 1;
+                    true
+                } else {
+                    false
+                }
+            }
+            Some(2) => {
+                if (aircraft_airborne_subseg_count as usize) < per_kind_cap {
+                    aircraft_airborne_subseg_count += 1;
+                    true
+                } else {
+                    false
+                }
+            }
+            Some(3) => {
+                if (aircraft_cruise_count as usize) < per_kind_cap {
+                    aircraft_cruise_count += 1;
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => {
+                let count = per_kind.entry(seg.kind).or_insert(0);
+                if (*count as usize) < per_kind_cap {
+                    *count += 1;
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+        if cap_ok {
             kept.push(seg);
         } else {
             summary.truncated = true;
@@ -789,15 +850,10 @@ fn apply_segment_top_k_with_cap(
 
     summary.road_count = *per_kind.get(&LayerKind::Road).unwrap_or(&0);
     summary.railway_count = *per_kind.get(&LayerKind::Railway).unwrap_or(&0);
-    summary.aircraft_ground_count = *per_kind.get(&LayerKind::Aircraft).unwrap_or(&0);
+    summary.aircraft_ground_count = aircraft_ground_count;
     summary.building_count = *per_kind.get(&LayerKind::Building).unwrap_or(&0);
     summary.industrial_count = *per_kind.get(&LayerKind::Industrial).unwrap_or(&0);
-
-    if traces.airborne.len() > per_kind_cap {
-        traces.airborne.truncate(per_kind_cap);
-        summary.truncated = true;
-    }
-    summary.aircraft_airborne_count = traces.airborne.len() as u32;
+    summary.aircraft_airborne_count = aircraft_airborne_subseg_count + aircraft_cruise_count;
 
     summary
 }

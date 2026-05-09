@@ -15,7 +15,7 @@ use crate::compute::aircraft_v6::views::CruiseRowView;
 use crate::emission::aircraft;
 use crate::flight_id::pack_synth;
 use crate::propagation::iso9613::fast_exp_f64;
-use crate::types::{AircraftSegment, RasterSampler, Receiver};
+use crate::types::{AircraftSegment, CruiseBucketBreakdown, RasterSampler, Receiver, TraceCollector};
 
 /// Slant floor (m) — clamps the receiver-overhead degenerate case so
 /// `1 / d²` doesn't blow up when the cruise rep-line passes directly
@@ -28,9 +28,23 @@ pub fn scatter(
     rasters: &dyn RasterSampler,
     flights: &mut HashMap<u64, FlightAccum>,
     cruise_flight_stats: &mut HashMap<u64, CruiseFlightStats>,
+    mut traces: Option<&mut TraceCollector>,
 ) {
     let rx_elev = receiver.altitude_m();
     let npd_luts = aircraft::NpdLuts::shared();
+    /// Per-R8-hex accumulator. One trace per hex at end of scatter;
+    /// `cruise_buckets` carries the per-bucket (FL × class × period
+    /// × is_dep) breakdown sorted by received_lden.
+    struct HexAccum {
+        n_unique_flights: std::collections::HashSet<u64>,
+        rep_alt_m: f32,
+        centroid_lat: f64,
+        centroid_lon: f64,
+        d_slant_m: f64,
+        received_energy: f64,
+        buckets: Vec<CruiseBucketBreakdown>,
+    }
+    let mut hex_accums: HashMap<u64, HexAccum> = HashMap::new();
 
     // R8-centre prefilter constants. rep_len_m is typically ~50 km
     // (Stage 2B uses source-segment length, not clip length), so the
@@ -162,6 +176,65 @@ pub fn scatter(
                 entry.alt_at_peak = cpa.relative_alt_m;
                 entry.class_at_peak = class_idx;
             }
+        }
+
+        if traces.is_some() {
+            // Per-bucket received_lden uses the row's energy density; the
+            // popup tab only renders relative ordering inside one hex,
+            // so a stable proxy (received_lden ≈ SEL on a per-event basis)
+            // is enough.
+            let received_lden = sel + 10.0 * density.max(1e-9).log10();
+            let entry = hex_accums.entry(row.r8_hex).or_insert(HexAccum {
+                n_unique_flights: std::collections::HashSet::new(),
+                rep_alt_m: row.rep_alt_m,
+                centroid_lat: lat,
+                centroid_lon: lon,
+                d_slant_m: cpa.d_p_m.max(SLANT_FLOOR_M),
+                received_energy: 0.0,
+                buckets: Vec::new(),
+            });
+            for &fid in row.cruise_flight_ids {
+                entry.n_unique_flights.insert(fid);
+            }
+            entry.received_energy += energy;
+            if cpa.d_p_m < entry.d_slant_m {
+                entry.d_slant_m = cpa.d_p_m.max(SLANT_FLOOR_M);
+            }
+            entry.buckets.push(CruiseBucketBreakdown {
+                class: row.class,
+                fl_bin: row.fl_bin,
+                period: row.period,
+                is_dep: (row.flags & 0b001) != 0,
+                n_flights: row.cruise_flight_ids.len() as u32,
+                received_lden,
+            });
+        }
+    }
+
+    if let Some(t) = traces.as_deref_mut() {
+        let mut hex_keys: Vec<u64> = hex_accums.keys().copied().collect();
+        hex_keys.sort();
+        for hex_key in hex_keys {
+            let mut acc = hex_accums.remove(&hex_key).unwrap();
+            acc.buckets.sort_by(|a, b| {
+                b.received_lden
+                    .partial_cmp(&a.received_lden)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let received_lden = crate::types::PropagationVariants::to_db(acc.received_energy);
+            t.segments
+                .push(crate::traces::build_aircraft_cruise_r8_trace(
+                    crate::traces::BuildAircraftCruiseR8Trace {
+                        r8_hex: hex_key,
+                        n_unique_flights: acc.n_unique_flights.len() as u32,
+                        rep_alt_m: acc.rep_alt_m,
+                        centroid_lat: acc.centroid_lat,
+                        centroid_lon: acc.centroid_lon,
+                        d_slant_m: acc.d_slant_m,
+                        received_lden,
+                        cruise_buckets: acc.buckets,
+                    },
+                ));
         }
     }
 }

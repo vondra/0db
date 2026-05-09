@@ -273,7 +273,6 @@ fn compute_at_point_inner(
         confidence: conf,
         aircraft_detail: aircraft_band_data,
         segments: Vec::new(),
-        airborne_traces: Vec::new(),
         segments_meta: None,
     }
 }

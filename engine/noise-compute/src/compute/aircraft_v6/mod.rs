@@ -54,7 +54,8 @@ pub fn compute_aircraft_v6(
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
     let n_days_f = (n_days as f64).max(1.0);
 
-    let flights = airborne::scatter(receiver, airborne_rows, rasters);
+    let mut traces = traces;
+    let flights = airborne::scatter(receiver, airborne_rows, rasters, traces.as_deref_mut());
     let mut cruise_flight_stats = HashMap::new();
     // Cruise gets its own FlightAccum table — the cruise synth fids
     // (`flight_id::pack_synth(idx)` with idx = row index) share the
@@ -74,6 +75,7 @@ pub fn compute_aircraft_v6(
         rasters,
         &mut cruise_flights,
         &mut cruise_flight_stats,
+        traces.as_deref_mut(),
     );
 
     let mut cruise_band = cruise::band_stats(&cruise_flight_stats);
@@ -82,10 +84,9 @@ pub fn compute_aircraft_v6(
         &cruise_flights,
         &mut cruise_band,
         n_days_f,
-        traces,
     );
 
-    let g_res = ground::run(receiver, ground_rows, barriers, rasters);
+    let g_res = ground::run(receiver, ground_rows, barriers, rasters, traces.as_deref_mut());
     let (ground_periods, ground_contribs, ground_detail) =
         ground::build_outputs(receiver, barriers, rasters, &g_res, n_days_f);
 
