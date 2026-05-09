@@ -1,6 +1,6 @@
-//! Arrow schemas for the five v8 artifacts. Every schema embeds
-//! `schema_version = "v8"` in metadata so the reader can refuse old
-//! v4/v5/v6/v7 layouts instead of silently mis-decoding them.
+//! Arrow schemas for the five v9 artifacts. Every schema embeds
+//! `schema_version = "v9"` in metadata so the reader can refuse old
+//! v4/v5/v6/v7/v8 layouts instead of silently mis-decoding them.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -215,9 +215,11 @@ pub fn ground_schema() -> Arc<Schema> {
 }
 
 /// Verify a loaded file's metadata matches the current
-/// [`SCHEMA_VERSION`]. Reader-side guard so stale (pre-v8) files raise
-/// a loud error instead of silently producing gibberish numbers.
-pub fn assert_schema_v8(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
+/// [`SCHEMA_VERSION`]. Reader-side guard so stale (pre-v9) files raise
+/// a loud error instead of silently producing gibberish numbers — a
+/// pre-S3 `v8` ground.arrow lacks the `profile_mix` column, and
+/// `col_list("profile_mix")` would otherwise silently drop the batch.
+pub fn assert_schema_v9(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
     match metadata.get("schema_version").map(String::as_str) {
         Some(SCHEMA_VERSION) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
@@ -232,7 +234,7 @@ pub fn assert_schema_v8(metadata: &HashMap<String, String>) -> anyhow::Result<()
 /// `dB_sum_v6_1`) — accepting them would feed the popup band levels
 /// off by roughly 10 dB.
 pub fn assert_ground_contract_v7_1(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
-    assert_schema_v8(metadata)?;
+    assert_schema_v9(metadata)?;
     match metadata.get("ground_contract").map(String::as_str) {
         Some(GROUND_CONTRACT_DB_SUM_V7_1) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
@@ -249,7 +251,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_carry_v7_metadata() {
+    fn all_schemas_carry_v9_metadata() {
         for s in [
             flights_schema(),
             segments_schema(),
@@ -258,24 +260,24 @@ mod tests {
             ground_schema(),
         ] {
             let md = s.metadata();
-            assert_eq!(md.get("schema_version").map(String::as_str), Some("v8"));
+            assert_eq!(md.get("schema_version").map(String::as_str), Some("v9"));
             assert!(md.contains_key("kind"));
         }
     }
 
     #[test]
-    fn assert_schema_v8_rejects_old_versions() {
-        for old in ["v4", "v5", "v6", "v7"] {
+    fn assert_schema_v9_rejects_old_versions() {
+        for old in ["v4", "v5", "v6", "v7", "v8"] {
             let md: HashMap<String, String> =
                 [("schema_version".into(), old.into())].into_iter().collect();
-            assert!(assert_schema_v8(&md).is_err(), "expected reject for {old}");
+            assert!(assert_schema_v9(&md).is_err(), "expected reject for {old}");
         }
     }
 
     #[test]
-    fn assert_schema_v8_rejects_missing_metadata() {
+    fn assert_schema_v9_rejects_missing_metadata() {
         let md: HashMap<String, String> = HashMap::new();
-        assert!(assert_schema_v8(&md).is_err());
+        assert!(assert_schema_v9(&md).is_err());
     }
 
     #[test]

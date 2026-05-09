@@ -80,6 +80,21 @@ pub struct CruiseRowView<'a> {
     pub cruise_flight_ids: &'a [u64],
 }
 
+/// One entry of a row's `profile_mix`: noise-class, share-of-row in
+/// [0, 1], and the 4-byte FixedSizeBinary ICAO typecode of the class
+/// anchor (`profile_typecode(CLASS_REP_PROFILE_IDX[class])`).
+///
+/// The popup re-derives its display typecode from `class` to keep
+/// one source of truth (see `top_profile_mix` in `ground.rs`); the
+/// `rep_typecode` column exists so external tools reading the arrow
+/// file directly (e.g. Python notebooks) don't repeat the lookup.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ProfileMixView {
+    pub class: u8,
+    pub share: f32,
+    pub rep_typecode: [u8; 4],
+}
+
 /// One row of `ground.arrow` (post-Stage-2C-v2). `em_*_bands` carry
 /// dB SPL per band per period — silent periods round-trip as
 /// `f32::NEG_INFINITY`. Energy was summed in linear space inside
@@ -102,6 +117,11 @@ pub struct GroundRowView<'a> {
     /// / n_days` — naive sum of `n_observed_per_day` across sub-buckets
     /// over-counts because one taxi-takeoff trace crosses many.
     pub observed_flight_ids: &'a [u64],
+    /// Per-class share-of-emission triples produced by the Stage 2C
+    /// bucketer. Empty for rows whose accumulator never saw a finite
+    /// emission band. Aggregated across an airport's rows (weighted
+    /// by row received energy) to feed the popup top-3 typecode list.
+    pub profile_mix: &'a [ProfileMixView],
     pub line_start_lat: f32,
     pub line_start_lon: f32,
     pub line_end_lat: f32,

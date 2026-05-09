@@ -422,6 +422,27 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
         ['→ Final Lden', `${c.received_lden.toFixed(1)} dB`],
       ], 14, 9)
 
+  // Engine already truncates to top-3 (`PROFILE_MIX_TOP_N`); no
+  // further slice needed. Single integer-percent format so the
+  // summary chip and the tooltip table never disagree on rounding
+  // (e.g. 91% vs 90.7% for the same share).
+  const profileMix = aircraftGroundOps?.profile_mix ?? []
+  const profileMixPct = (share: number) => `${Math.round(share * 100)}%`
+  const profileMixSummary = profileMix.length === 0
+    ? null
+    : profileMix.map((e) => `${e.rep_typecode} ${profileMixPct(e.share)}`).join(' · ')
+  const profileMixText = profileMix.length === 0
+    ? null
+    : txtTable([
+        'Top noise classes by',
+        'received energy at this point.',
+        '',
+        ...profileMix.map((e) => [e.rep_typecode, profileMixPct(e.share)] as [string, string]),
+        '',
+        'Each class is anchored on a',
+        'representative ICAO typecode.',
+      ], 18, 8)
+
   const emissionText = (() => {
     const m = c.metadata
     if (m?.kind === 'aircraft' && m.variant === 'ground_ops' && m.ground_ops) {
@@ -681,6 +702,12 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                 <MetricLabel term="emission" />,
                 <DataPoint title="CNOSSOS-EU line-source emission" text={emissionText}>
                   {c.emission_db.toFixed(1)} dB
+                </DataPoint>,
+              )}
+              {profileMixSummary && profileMixText && lineRow(
+                'Top types',
+                <DataPoint title="Profile mix at receiver" text={profileMixText}>
+                  <span className="tabular-nums">{profileMixSummary}</span>
                 </DataPoint>,
               )}
               <div className="mt-1.5 mb-0.5 pt-1 border-t border-border/40">

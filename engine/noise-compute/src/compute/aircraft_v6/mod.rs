@@ -32,7 +32,9 @@ pub mod ground;
 pub mod state;
 pub mod views;
 
-pub use views::{AirborneRowView, BBox, CruiseRowView, GroundRowView, SubSegmentSlice};
+pub use views::{
+    AirborneRowView, BBox, CruiseRowView, GroundRowView, ProfileMixView, SubSegmentSlice,
+};
 
 const NUM_BANDS: usize = 8;
 

@@ -171,6 +171,25 @@ pub fn clamp_profile_idx(profile_idx: u8) -> usize {
     (profile_idx as usize).min(NUM_PROFILES - 1)
 }
 
+/// ICAO typecode prefix of a `PROFILES[idx].name`. Profile names are
+/// stored as `"<icao_typecode>/<anp_designator>"` (e.g. `"B738/737800"`,
+/// `"EMJ/EMB145"`) by the generator so the original ANP source is
+/// traceable. The popup display only wants the 3-or-4-char ICAO
+/// typecode prefix — naive 4-byte slicing would emit `"EMJ/"` for
+/// 3-char codes. Returns `&'static str` so callers can dodge a
+/// `String` allocation in tight loops.
+///
+/// `profile_idx` is clamped at usize-precision; downcasting to u8
+/// first (`clamp_profile_idx(idx as u8)`) would silently fold every
+/// `idx ≥ 256` to `idx & 0xFF`, then clamp to NUM_PROFILES-1 — fine
+/// today (NUM_PROFILES = 124, so casting truncates at 256 anyway)
+/// but a footgun if NUM_PROFILES ever grows.
+pub fn profile_typecode(profile_idx: usize) -> &'static str {
+    let idx = profile_idx.min(NUM_PROFILES - 1);
+    let name = PROFILES[idx].name;
+    name.split('/').next().unwrap_or(name)
+}
+
 /// Decode an ICAO typecode stored as `FixedSizeBinary(4)` (ASCII,
 /// '\0'-padded — Stage 1's storage form) to a normal `String`. ICAO
 /// typecodes are 3-4 chars (e.g. "B738", "A320", "CRJ"); the trim

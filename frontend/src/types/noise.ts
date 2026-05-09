@@ -223,6 +223,14 @@ export interface AircraftGroundOpsClassDetail {
   modeled_movements_per_day: number | null
 }
 
+/** Ground-ops profile-mix entry: noise class, its share of linear
+ *  received energy, and the ICAO typecode of the class anchor. */
+export interface ProfileMixEntry {
+  class: number
+  share: number
+  rep_typecode: string
+}
+
 export interface AircraftGroundOpsDetail {
   periods: NoisePeriodsData
   periods_free: NoisePeriodsData
@@ -234,6 +242,10 @@ export interface AircraftGroundOpsDetail {
   runway_roll: AircraftGroundOpsClassDetail
   taxi: AircraftGroundOpsClassDetail
   apron_movement: AircraftGroundOpsClassDetail
+  /** Top-3 noise-class shares at this receiver. Optional because
+   *  `serde(skip_serializing_if = "Vec::is_empty")` omits the key
+   *  when no row contributed a class. */
+  profile_mix?: ProfileMixEntry[]
   baseline: PropagationBaseline
   terrain: TerrainBreakdownData
   screening: ScreeningBreakdownData

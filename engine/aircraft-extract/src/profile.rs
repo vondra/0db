@@ -6,7 +6,7 @@
 
 pub use noise_compute::emission::aircraft::{
     clamp_profile_idx, is_jet_profile, is_non_aircraft_typecode, noise_class_of, profile_idx,
-    CLASS_NAMES, CLASS_OF_PROFILE, CLASS_REP_PROFILE_IDX, FALLBACK_NOISE_CLASS,
+    profile_typecode, CLASS_NAMES, CLASS_OF_PROFILE, CLASS_REP_PROFILE_IDX, FALLBACK_NOISE_CLASS,
     FALLBACK_PROFILE_IDX, IS_JET, NUM_CLASSES, NUM_PROFILES, PROFILES,
 };
 
