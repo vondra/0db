@@ -142,9 +142,21 @@ pub fn cruise_schema() -> Arc<Schema> {
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[("kind", "cruise")])))
 }
 
-/// Stage 2C — `h3r4/<hex>/ground.arrow`. One row per OSM aeroway × kind
-/// × period × 100 m sub-bucket. Per-band linear emission `Lw` so the
-/// popup can call the same `propagate_variants_full` kernel as roads.
+/// Ground emission contract — band-energy semantics stamped into the
+/// ground.arrow metadata so a reader can refuse v6 ground files written
+/// before C1 (where Stage 2C v1 silently summed dB values as if they
+/// were linear). `dB_sum_v6_1` means each `em_*_bands[i]` stores the
+/// linear-energy-summed band level converted back to dB SPL: empty
+/// bands round-trip as `f32::NEG_INFINITY`, finite bands aggregate via
+/// `10*log10(Σ 10^(x/10))`. Period-silent rows still carry NEG_INFINITY
+/// arrays for the silent periods (one row × all three em arrays).
+pub const GROUND_CONTRACT_DB_SUM_V6_1: &str = "dB_sum_v6_1";
+
+/// Stage 2C — `h3r4/<hex>/ground.arrow`. One row per (osm_id × ops_kind
+/// × sub_bucket_idx); each row carries `em_day_bands` + `em_eve_bands`
+/// + `em_night_bands` (silent periods = `[NEG_INFINITY; 8]`). Per-band
+/// dB level so the popup can call `propagate_variants_full` directly
+/// after a dB→linear conversion just like the roads kernel does.
 pub fn ground_schema() -> Arc<Schema> {
     let bands_field = || {
         DataType::List(Arc::new(Field::new("item", DataType::Float32, false)))
@@ -158,7 +170,6 @@ pub fn ground_schema() -> Arc<Schema> {
         Field::new("osm_id", DataType::Int64, false),
         Field::new("airport_key", DataType::Utf8, false),
         Field::new("ops_kind", DataType::UInt8, false),
-        Field::new("period", DataType::UInt8, false),
         Field::new("sub_bucket_idx", DataType::UInt16, false),
         Field::new("em_day_bands", bands_field(), false),
         Field::new("em_eve_bands", bands_field(), false),
@@ -178,7 +189,10 @@ pub fn ground_schema() -> Arc<Schema> {
         Field::new("source_id", DataType::UInt8, false),
         Field::new("origin", DataType::UInt8, false),
     ];
-    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[("kind", "ground")])))
+    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
+        ("kind", "ground"),
+        ("ground_contract", GROUND_CONTRACT_DB_SUM_V6_1),
+    ])))
 }
 
 /// Verify a loaded file's metadata matches v6. Reader-side guard so
@@ -191,6 +205,22 @@ pub fn assert_v6(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
             "schema_version mismatch: expected {SCHEMA_VERSION}, got {other}"
         )),
         None => Err(anyhow::anyhow!("schema_version metadata missing")),
+    }
+}
+
+/// Verify a ground.arrow's metadata carries the `dB_sum_v6_1` energy
+/// contract. Pre-C1 v6 ground files lack this key (they summed dB as
+/// linear); rejecting them is the only safe migration path.
+pub fn assert_ground_contract_v6_1(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
+    assert_v6(metadata)?;
+    match metadata.get("ground_contract").map(String::as_str) {
+        Some(GROUND_CONTRACT_DB_SUM_V6_1) => Ok(()),
+        Some(other) => Err(anyhow::anyhow!(
+            "ground_contract mismatch: expected {GROUND_CONTRACT_DB_SUM_V6_1}, got {other}"
+        )),
+        None => Err(anyhow::anyhow!(
+            "ground_contract metadata missing — re-extract Stage 2C with C1 build"
+        )),
     }
 }
 
@@ -218,5 +248,40 @@ mod tests {
         let md: HashMap<String, String> =
             [("schema_version".into(), "v5".into())].into_iter().collect();
         assert!(assert_v6(&md).is_err());
+    }
+
+    #[test]
+    fn ground_schema_carries_ground_contract_metadata() {
+        let s = ground_schema();
+        assert_eq!(
+            s.metadata().get("ground_contract").map(String::as_str),
+            Some(GROUND_CONTRACT_DB_SUM_V6_1)
+        );
+    }
+
+    #[test]
+    fn ground_schema_drops_period_field() {
+        let s = ground_schema();
+        assert!(
+            s.field_with_name("period").is_err(),
+            "period must not appear in ground schema (each row carries em_day/eve/night)"
+        );
+    }
+
+    #[test]
+    fn assert_ground_contract_v6_1_rejects_pre_c1_files() {
+        let md: HashMap<String, String> = [
+            ("schema_version".into(), "v6".into()),
+            ("kind".into(), "ground".into()),
+        ]
+        .into_iter()
+        .collect();
+        assert!(assert_ground_contract_v6_1(&md).is_err());
+    }
+
+    #[test]
+    fn assert_ground_contract_v6_1_accepts_current_schema() {
+        let s = ground_schema();
+        assert!(assert_ground_contract_v6_1(s.metadata()).is_ok());
     }
 }

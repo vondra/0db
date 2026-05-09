@@ -137,13 +137,17 @@ pub struct CruiseBucket {
     pub origin: u8,
 }
 
-/// Stage 2C row — per (osm_aeroway × kind × period × 100 m sub-bucket).
+/// Stage 2C row — per (osm_id × ops_kind × sub_bucket_idx). Each row
+/// carries all three em_day/eve/night band arrays (silent periods are
+/// `[NEG_INFINITY; 8]`); period is therefore *not* in the bucket key.
+/// `n_observed_per_day` / `n_modeled_per_day` store the raw count over
+/// the extraction window and are divided by `n_days` at popup compute
+/// time (see `compute_aircraft_v6`).
 #[derive(Clone)]
 pub struct GroundLine {
     pub osm_id: i64,
     pub airport_key: String,
     pub ops_kind: u8,
-    pub period: u8,
     pub sub_bucket_idx: u16,
     pub em_day_bands: [f32; 8],
     pub em_eve_bands: [f32; 8],

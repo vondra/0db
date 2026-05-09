@@ -12,6 +12,7 @@
 //! Each schema sets `schema_version = "v6"` in its Arrow metadata so the
 //! reader can refuse v4/v5 inputs at load time.
 
+pub mod airport_io;
 pub mod arrow_io;
 pub mod arrow_schemas;
 pub mod classify;
