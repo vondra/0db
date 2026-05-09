@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use arrow::array::{
-    ArrayRef, Float32Array, Float32Builder, Int16Array, Int16Builder, UInt64Array, UInt64Builder,
-    UInt8Array, UInt8Builder,
+    ArrayRef, FixedSizeBinaryArray, FixedSizeBinaryBuilder, Float32Array, Float32Builder,
+    Int16Array, Int16Builder, StringArray, StringBuilder, UInt64Array, UInt64Builder, UInt8Array,
+    UInt8Builder,
 };
 use arrow::record_batch::RecordBatch;
 
@@ -19,6 +20,8 @@ pub fn write_segments(path: &Path, rows: &[FlightSegment]) -> Result<()> {
     let schema = arrow_schemas::segments_schema();
     let n = rows.len();
     let mut flight_id = UInt64Builder::with_capacity(n);
+    let mut callsign = StringBuilder::with_capacity(n, 8 * n);
+    let mut aircraft_type = FixedSizeBinaryBuilder::with_capacity(n, 4);
     let mut profile_idx = UInt8Builder::with_capacity(n);
     let mut source_id = UInt8Builder::with_capacity(n);
     let mut origin = UInt8Builder::with_capacity(n);
@@ -37,6 +40,8 @@ pub fn write_segments(path: &Path, rows: &[FlightSegment]) -> Result<()> {
     let mut agl = Float32Builder::with_capacity(n);
     for r in rows {
         flight_id.append_value(r.flight_id);
+        callsign.append_value(&r.callsign);
+        aircraft_type.append_value(r.aircraft_type)?;
         profile_idx.append_value(r.profile_idx);
         source_id.append_value(r.source_id);
         origin.append_value(r.origin);
@@ -56,6 +61,8 @@ pub fn write_segments(path: &Path, rows: &[FlightSegment]) -> Result<()> {
     }
     let columns: Vec<ArrayRef> = vec![
         Arc::new(flight_id.finish()),
+        Arc::new(callsign.finish()),
+        Arc::new(aircraft_type.finish()),
         Arc::new(profile_idx.finish()),
         Arc::new(source_id.finish()),
         Arc::new(origin.finish()),
@@ -86,6 +93,18 @@ pub fn read_segments(path: &Path) -> Result<Vec<FlightSegment>> {
             .unwrap()
             .as_any()
             .downcast_ref::<UInt64Array>()
+            .unwrap();
+        let callsign = b
+            .column_by_name("callsign")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let aircraft_type = b
+            .column_by_name("aircraft_type")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<FixedSizeBinaryArray>()
             .unwrap();
         let profile_idx = b
             .column_by_name("profile_idx")
@@ -184,8 +203,12 @@ pub fn read_segments(path: &Path) -> Result<Vec<FlightSegment>> {
             .downcast_ref::<Float32Array>()
             .unwrap();
         for i in 0..b.num_rows() {
+            let mut typecode = [0u8; 4];
+            typecode.copy_from_slice(aircraft_type.value(i));
             out.push(FlightSegment {
                 flight_id: flight_id.value(i),
+                callsign: callsign.value(i).to_string(),
+                aircraft_type: typecode,
                 profile_idx: profile_idx.value(i),
                 source_id: source_id.value(i),
                 origin: origin.value(i),
@@ -220,6 +243,8 @@ mod tests {
         let p = dir.path().join("segments.arrow");
         let segs = vec![FlightSegment {
             flight_id: 0xDEAD_BEEF,
+            callsign: "TVS100P".into(),
+            aircraft_type: *b"A320",
             profile_idx: 0,
             source_id: 0,
             origin: 0,
@@ -242,6 +267,8 @@ mod tests {
         assert_eq!(read.len(), 1);
         let r = &read[0];
         assert_eq!(r.flight_id, 0xDEAD_BEEF);
+        assert_eq!(r.callsign, "TVS100P");
+        assert_eq!(&r.aircraft_type, b"A320");
         assert_eq!(r.phase, Phase::Airborne);
         assert!((r.length_m - 300.0).abs() < 1e-3);
     }

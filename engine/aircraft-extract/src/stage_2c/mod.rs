@@ -135,6 +135,8 @@ mod tests {
 
     fn ground_segment(flight_id: u64, lat: f64, lon: f64) -> FlightSegment {
         FlightSegment {
+            callsign: String::new(),
+            aircraft_type: [0u8; 4],
             flight_id,
             profile_idx: 0,
             source_id: 0,

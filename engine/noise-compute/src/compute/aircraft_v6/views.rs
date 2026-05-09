@@ -43,10 +43,14 @@ pub struct BBox {
 
 /// One row of `airborne.arrow`. `flight_id` is the real ADS-B identity
 /// (or a synth id from `flight_id::pack_synth` for TIS-B / anonymous);
-/// the popup uses it for per-flight stats dedup.
+/// the popup uses it for per-flight stats dedup. `callsign` and
+/// `aircraft_type` give the popup display the real flight number /
+/// ICAO typecode (M1) instead of a profile-anchor placeholder.
 #[derive(Clone, Copy, Debug)]
 pub struct AirborneRowView<'a> {
     pub flight_id: u64,
+    pub callsign: &'a str,
+    pub aircraft_type: &'a [u8; 4],
     pub profile_idx: u8,
     pub source_id: u8,
     pub origin: u8,

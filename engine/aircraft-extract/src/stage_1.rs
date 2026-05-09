@@ -12,10 +12,10 @@ use rayon::prelude::*;
 use crate::arrow_io::{read_record_batches, write_segments};
 use crate::classify::{self, ClassifyInput};
 use crate::filters;
-use crate::flight::{Flight, FlightSegment};
+use crate::flight::{typecode_bytes, Flight, FlightSegment};
 use crate::ground_inference::ground_flags;
 use crate::period::parse_date_id;
-use crate::segment::build_segments;
+use crate::segment::{build_segments, SegmentMeta};
 use crate::trace::TracePoint;
 use noise_compute::types::RasterSampler;
 use raster_reader::RealRasters;
@@ -57,31 +57,11 @@ fn stage_1_one_flight(
     rasters: &RealRasters,
     date_id: i16,
 ) -> Vec<FlightSegment> {
-    classify_and_segment(
-        &flight.points,
-        flight.flight_id,
-        flight.profile_idx,
-        flight.source_id,
-        flight.origin,
-        date_id,
-        rasters,
-    )
-}
-
-fn classify_and_segment(
-    points: &[TracePoint],
-    flight_id: u64,
-    profile_idx: u8,
-    source_id: u8,
-    origin: u8,
-    date_id: i16,
-    rasters: &RealRasters,
-) -> Vec<FlightSegment> {
-    if points.len() < 2 {
+    if flight.points.len() < 2 {
         return Vec::new();
     }
 
-    let mut points = points.to_vec();
+    let mut points = flight.points.clone();
     // Ground-flagged points pin AGL = 0 (and skip the DEM lookup); without
     // this, `validate_flight_trajectory` would read `0 - elev` for any
     // landing roll above ~300 m AMSL and truncate the whole tail.
@@ -107,16 +87,16 @@ fn classify_and_segment(
         agl_m: &agl_m,
     });
 
-    build_segments(
-        &points,
-        &agl_m,
-        &phases,
-        flight_id,
-        profile_idx,
-        source_id,
-        origin,
+    let meta = SegmentMeta {
+        flight_id: flight.flight_id,
+        callsign: &flight.callsign,
+        aircraft_type: typecode_bytes(&flight.aircraft_type),
+        profile_idx: flight.profile_idx,
+        source_id: flight.source_id,
+        origin: flight.origin,
         date_id,
-    )
+    };
+    build_segments(&points, &agl_m, &phases, &meta)
 }
 
 fn bbox_of_flights(flights: &[Flight]) -> Option<(f64, f64, f64, f64)> {

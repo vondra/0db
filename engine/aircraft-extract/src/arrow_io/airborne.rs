@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use arrow::array::{
-    Array, ArrayRef, Float32Builder, Int16Builder, ListArray, StructArray, UInt64Builder,
-    UInt8Builder,
+    Array, ArrayRef, FixedSizeBinaryBuilder, Float32Builder, Int16Builder, ListArray, StringBuilder,
+    StructArray, UInt64Builder, UInt8Builder,
 };
 use arrow::buffer::OffsetBuffer;
 use arrow::datatypes::{DataType, Field};
@@ -21,6 +21,8 @@ pub fn write_airborne(path: &Path, rows: &[AirborneEvent], n_days: u16) -> Resul
     let schema = arrow_schemas::with_n_days(arrow_schemas::airborne_schema(), n_days);
     let n = rows.len();
     let mut flight_id = UInt64Builder::with_capacity(n);
+    let mut callsign = StringBuilder::with_capacity(n, 8 * n);
+    let mut aircraft_type = FixedSizeBinaryBuilder::with_capacity(n, 4);
     let mut profile_idx = UInt8Builder::with_capacity(n);
     let mut source_id = UInt8Builder::with_capacity(n);
     let mut origin = UInt8Builder::with_capacity(n);
@@ -42,6 +44,8 @@ pub fn write_airborne(path: &Path, rows: &[AirborneEvent], n_days: u16) -> Resul
     let mut total_subs = 0usize;
     for r in rows {
         flight_id.append_value(r.flight_id);
+        callsign.append_value(&r.callsign);
+        aircraft_type.append_value(r.aircraft_type)?;
         profile_idx.append_value(r.profile_idx);
         source_id.append_value(r.source_id);
         origin.append_value(r.origin);
@@ -114,6 +118,8 @@ pub fn write_airborne(path: &Path, rows: &[AirborneEvent], n_days: u16) -> Resul
 
     let columns: Vec<ArrayRef> = vec![
         Arc::new(flight_id.finish()),
+        Arc::new(callsign.finish()),
+        Arc::new(aircraft_type.finish()),
         Arc::new(profile_idx.finish()),
         Arc::new(source_id.finish()),
         Arc::new(origin.finish()),
@@ -141,6 +147,8 @@ mod tests {
         let p = dir.path().join("airborne.arrow");
         let evs = vec![AirborneEvent {
             flight_id: 1,
+            callsign: "TVS100P".into(),
+            aircraft_type: *b"A320",
             profile_idx: 0,
             source_id: 0,
             origin: 0,

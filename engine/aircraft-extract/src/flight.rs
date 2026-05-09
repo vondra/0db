@@ -38,6 +38,19 @@ pub mod segment_flags {
     pub const SYNTHETIC: u8 = 1 << 2;
 }
 
+/// Pack a variable-width ICAO typecode (`"A320"`, `"B738"`, `"PC12"`,
+/// `""`) into the canonical 4-byte FixedSizeBinary representation —
+/// truncated to 4 chars and zero-padded. The Arrow column type is
+/// `FixedSizeBinary(4)` so consumers can read it as `&[u8; 4]` without
+/// allocating. Empty / shorter codes round-trip as trailing `\0`.
+pub fn typecode_bytes(s: &str) -> [u8; 4] {
+    let mut out = [0u8; 4];
+    let bytes = s.as_bytes();
+    let n = bytes.len().min(4);
+    out[..n].copy_from_slice(&bytes[..n]);
+    out
+}
+
 /// Stage 0 in-memory record. One per telemetry-gap leg (presumed
 /// rotation) — a single `trace_full_<icao>.json` typically yields N
 /// `Flight`s, one per `FLIGHT_SPLIT_GAP_S`-separated chunk.
@@ -62,6 +75,8 @@ pub struct Flight {
 #[derive(Clone)]
 pub struct FlightSegment {
     pub flight_id: u64,
+    pub callsign: String,
+    pub aircraft_type: [u8; 4],
     pub profile_idx: u8,
     pub source_id: u8,
     pub origin: u8,
@@ -98,6 +113,8 @@ impl FlightSegment {
 #[derive(Clone)]
 pub struct AirborneEvent {
     pub flight_id: u64,
+    pub callsign: String,
+    pub aircraft_type: [u8; 4],
     pub profile_idx: u8,
     pub source_id: u8,
     pub origin: u8,

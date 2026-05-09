@@ -61,6 +61,8 @@ pub fn flights_schema() -> Arc<Schema> {
 pub fn segments_schema() -> Arc<Schema> {
     let fields = vec![
         Field::new("flight_id", DataType::UInt64, false),
+        Field::new("callsign", DataType::Utf8, false),
+        Field::new("aircraft_type", DataType::FixedSizeBinary(4), false),
         Field::new("profile_idx", DataType::UInt8, false),
         Field::new("source_id", DataType::UInt8, false),
         Field::new("origin", DataType::UInt8, false),
@@ -100,6 +102,8 @@ pub fn airborne_schema() -> Arc<Schema> {
     ]));
     let fields = vec![
         Field::new("flight_id", DataType::UInt64, false),
+        Field::new("callsign", DataType::Utf8, false),
+        Field::new("aircraft_type", DataType::FixedSizeBinary(4), false),
         Field::new("profile_idx", DataType::UInt8, false),
         Field::new("source_id", DataType::UInt8, false),
         Field::new("origin", DataType::UInt8, false),

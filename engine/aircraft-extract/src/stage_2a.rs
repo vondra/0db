@@ -82,6 +82,8 @@ fn aggregate_events_for_r4(segments: &[&FlightSegment]) -> Vec<AirborneEvent> {
 
 struct AirborneEventBuilder {
     flight_id: u64,
+    callsign: String,
+    aircraft_type: [u8; 4],
     profile_idx: u8,
     source_id: u8,
     origin: u8,
@@ -97,6 +99,8 @@ impl AirborneEventBuilder {
     fn new(seed: &FlightSegment) -> Self {
         Self {
             flight_id: seed.flight_id,
+            callsign: seed.callsign.clone(),
+            aircraft_type: seed.aircraft_type,
             profile_idx: seed.profile_idx,
             source_id: seed.source_id,
             origin: seed.origin,
@@ -147,6 +151,8 @@ impl AirborneEventBuilder {
     fn finish(self) -> AirborneEvent {
         AirborneEvent {
             flight_id: self.flight_id,
+            callsign: self.callsign,
+            aircraft_type: self.aircraft_type,
             profile_idx: self.profile_idx,
             source_id: self.source_id,
             origin: self.origin,
@@ -166,6 +172,8 @@ mod tests {
 
     fn seg(flight_id: u64, lat: f32, lon: f32) -> FlightSegment {
         FlightSegment {
+            callsign: String::new(),
+            aircraft_type: [0u8; 4],
             flight_id,
             profile_idx: 0,
             source_id: 0,

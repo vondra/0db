@@ -9,7 +9,7 @@
 use arrow::array::*;
 use noise_compute::compute::aircraft_v6::{AirborneRowView, BBox, SubSegmentSlice};
 
-use super::columns::{col_f32, col_list, col_u64, col_u8};
+use super::columns::{col_f32, col_fixed_size_binary, col_list, col_str, col_u64, col_u8};
 
 pub struct AirborneRowAccum {
     rows: Vec<OwnedAirborneRow>,
@@ -17,6 +17,8 @@ pub struct AirborneRowAccum {
 
 struct OwnedAirborneRow {
     flight_id: u64,
+    callsign: String,
+    aircraft_type: [u8; 4],
     profile_idx: u8,
     source_id: u8,
     origin: u8,
@@ -76,6 +78,8 @@ impl AirborneRowAccum {
                 continue;
             }
             let Some(flight_id) = col_u64(batch, "flight_id") else { continue };
+            let Some(callsign) = col_str(batch, "callsign") else { continue };
+            let Some(aircraft_type) = col_fixed_size_binary(batch, "aircraft_type") else { continue };
             let Some(profile_idx) = col_u8(batch, "profile_idx") else { continue };
             let Some(source_id) = col_u8(batch, "source_id") else { continue };
             let origin = col_u8(batch, "origin");
@@ -92,8 +96,12 @@ impl AirborneRowAccum {
             for i in 0..n {
                 let lo = offsets[i] as usize;
                 let hi = offsets[i + 1] as usize;
+                let mut typecode = [0u8; 4];
+                typecode.copy_from_slice(aircraft_type.value(i));
                 rows.push(OwnedAirborneRow {
                     flight_id: flight_id.value(i),
+                    callsign: callsign.value(i).to_string(),
+                    aircraft_type: typecode,
                     profile_idx: profile_idx.value(i),
                     source_id: source_id.value(i),
                     origin: origin.map(|a| a.value(i)).unwrap_or(0),
@@ -125,6 +133,8 @@ impl AirborneRowAccum {
             .iter()
             .map(|r| AirborneRowView {
                 flight_id: r.flight_id,
+                callsign: r.callsign.as_str(),
+                aircraft_type: &r.aircraft_type,
                 profile_idx: r.profile_idx,
                 source_id: r.source_id,
                 origin: r.origin,

@@ -27,3 +27,9 @@ pub fn col_str<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a StringArray
 pub fn col_list<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a ListArray> {
     batch.column_by_name(name)?.as_any().downcast_ref()
 }
+pub fn col_fixed_size_binary<'a>(
+    batch: &'a RecordBatch,
+    name: &str,
+) -> Option<&'a FixedSizeBinaryArray> {
+    batch.column_by_name(name)?.as_any().downcast_ref()
+}
