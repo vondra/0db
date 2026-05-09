@@ -422,22 +422,32 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
         ['→ Final Lden', `${c.received_lden.toFixed(1)} dB`],
       ], 14, 9)
 
-  // Engine already truncates to top-3 (`PROFILE_MIX_TOP_N`); no
-  // further slice needed. Single integer-percent format so the
-  // summary chip and the tooltip table never disagree on rounding
-  // (e.g. 91% vs 90.7% for the same share).
+  // Engine truncates to top-3 (`PROFILE_MIX_TOP_N`) WITHOUT
+  // renormalizing — shares stay absolute fractions of total
+  // ground-ops received energy. When the top-3 leaves a material
+  // tail (≥ 5 %), we render an "Other" entry so the chip sums to
+  // ~100 % and users don't read 91 % + 6 % + 2 % as a bug.
+  // /gg consensus (Gemini + DeepSeek + GPT-5.5).
   const profileMix = aircraftGroundOps?.profile_mix ?? []
   const profileMixPct = (share: number) => `${Math.round(share * 100)}%`
+  const profileMixOther = profileMix.length === 0
+    ? 0
+    : Math.max(0, 1 - profileMix.reduce((s, e) => s + e.share, 0))
+  const showOther = Math.round(profileMixOther * 100) >= 5
+  const profileMixDisplay: Array<[string, string]> = [
+    ...profileMix.map((e) => [e.rep_typecode, profileMixPct(e.share)] as [string, string]),
+    ...(showOther ? [['Other', profileMixPct(profileMixOther)] as [string, string]] : []),
+  ]
   const profileMixSummary = profileMix.length === 0
     ? null
-    : profileMix.map((e) => `${e.rep_typecode} ${profileMixPct(e.share)}`).join(' · ')
+    : profileMixDisplay.map(([code, pct]) => `${code} ${pct}`).join(' · ')
   const profileMixText = profileMix.length === 0
     ? null
     : txtTable([
         'Top noise classes by',
         'received energy at this point.',
         '',
-        ...profileMix.map((e) => [e.rep_typecode, profileMixPct(e.share)] as [string, string]),
+        ...profileMixDisplay,
         '',
         'Each class is anchored on a',
         'representative ICAO typecode.',
