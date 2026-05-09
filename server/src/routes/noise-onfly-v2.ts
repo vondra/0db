@@ -161,7 +161,6 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
           other_sources_lden: raw.other_sources_lden ?? null,
           compute_time_ms: elapsed,
           segments: raw.segments ?? [],
-          airborne_traces: raw.airborne_traces ?? [],
           segments_meta: raw.segments_meta ?? null,
         })
       } catch (err) {

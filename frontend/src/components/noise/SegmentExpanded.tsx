@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { EmissionTrace, SegmentTrace } from '../../types/noise'
+import type { SegmentTrace } from '../../types/noise'
 import { fmtFloat } from '../../utils/formatters'
 import { ldenToColor } from '../../utils/noise-colors'
 import { HoverText } from '../ui/info-tip'
@@ -75,7 +75,7 @@ function InlineTable({ rows }: { rows: [string | React.ReactNode, React.ReactNod
 // ────────────────────────────────────────────────────────────────────────────
 
 function Section1Source({ trace }: { trace: SegmentTrace }) {
-  const emissionRowsList = useMemo(() => emissionInputRows(trace.emission), [trace.emission])
+  const emissionRowsList = useMemo(() => emissionInputRows(trace), [trace])
   const lwRow = useMemo(() => computeLwRow(trace), [trace])
   const sourceHeightRow = useMemo(() => computeSourceHeightRow(trace), [trace])
   const rows = useMemo(
@@ -162,7 +162,8 @@ function computeLwRow(trace: SegmentTrace): [React.ReactNode, React.ReactNode] |
   ]
 }
 
-function emissionInputRows(e: EmissionTrace): [React.ReactNode, React.ReactNode][] {
+function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][] {
+  const e = t.emission
   switch (e.kind) {
     case 'road': {
       const total = e.aadt_light + e.aadt_medium + e.aadt_heavy + e.aadt_moto
@@ -238,11 +239,59 @@ function emissionInputRows(e: EmissionTrace): [React.ReactNode, React.ReactNode]
       ]
     }
     case 'aircraft_ground': {
-      return [
+      const rows: [React.ReactNode, React.ReactNode][] = [
         ['Class', e.class],
         ['Observed movements', fmtFloat(e.observed_movements)],
         ['Modeled movements', fmtFloat(e.modeled_movements)],
       ]
+      const lengths = t.length_m_per_kind
+      if (lengths) {
+        const [runway, taxi, apron] = lengths
+        const total = runway + taxi + apron
+        if (total > 0) {
+          const fmt = (v: number) =>
+            v >= 1000 ? `${(v / 1000).toFixed(1)} km` : `${Math.round(v)} m`
+          rows.push([
+            'Path lengths',
+            `runway ${fmt(runway)} · taxi ${fmt(taxi)} · apron ${fmt(apron)}`,
+          ])
+        }
+      }
+      return rows
+    }
+    case 'aircraft_airborne': {
+      // received_lden carries the single-event SEL (Doc 29 SEL chain).
+      // Surface it explicitly so users don't read it as a Lden value.
+      const sel = t.received_lden.full
+      return [
+        ['Class', e.class],
+        ['Callsign', e.callsign || '—'],
+        ['Aircraft', e.aircraft_type || '—'],
+        ['Event SEL', Number.isFinite(sel) ? `${sel.toFixed(1)} dB` : '—'],
+        ['CPA distance', `${Math.round(e.cpa_distance_m)} m`],
+        ['Altitude at CPA', `${Math.round(e.altitude_m_at_cpa)} m`],
+      ]
+    }
+    case 'aircraft_cruise': {
+      const rows: [React.ReactNode, React.ReactNode][] = [
+        ['R8 hex', e.r8_hex],
+        ['Unique flights', `${e.n_unique_flights}`],
+        ['Representative altitude', `${Math.round(e.rep_alt_m)} m`],
+      ]
+      const buckets = t.cruise_buckets
+      if (buckets && buckets.length > 0) {
+        const top = buckets.slice(0, 5)
+        const summary = top
+          .map(b => {
+            const period = ['day', 'eve', 'night'][b.period] ?? '?'
+            const dep = b.is_dep ? 'dep' : 'arr'
+            return `FL${b.fl_bin} · class ${b.class} · ${period} · ${dep} · ${b.n_flights}f · ${b.received_lden.toFixed(1)} dB`
+          })
+          .join('\n')
+        const more = buckets.length > 5 ? `\n… +${buckets.length - 5} more` : ''
+        rows.push(['Top buckets', <pre className="text-[10px] whitespace-pre-wrap">{summary}{more}</pre>])
+      }
+      return rows
     }
     case 'building': {
       return [
@@ -818,6 +867,21 @@ function Section6Variants({ trace }: { trace: SegmentTrace }) {
 // ────────────────────────────────────────────────────────────────────────────
 
 export function SegmentExpanded({ trace }: { trace: SegmentTrace }) {
+  // Airborne sub-segments and cruise R8 hexes use Doc 29 SEL chains —
+  // not ISO 9613-2 path effects — so the path-profile / terrain /
+  // screening / vegetation / per-band Lw / Lden sections render with
+  // empty / silent / uniform values that misrepresent the source.
+  // Render the emission-input section only for those sub-types and
+  // skip the ISO chain entirely.
+  const isAirborne =
+    trace.kind === 'aircraft' && (trace.aircraft_subtype === 2 || trace.aircraft_subtype === 3)
+  if (isAirborne) {
+    return (
+      <div className="ml-2 mr-4 pb-2 text-[11px] leading-relaxed font-mono text-muted-foreground">
+        <Section1Source trace={trace} />
+      </div>
+    )
+  }
   return (
     <div className="ml-2 mr-4 pb-2 text-[11px] leading-relaxed font-mono text-muted-foreground">
       <Section1Source trace={trace} />

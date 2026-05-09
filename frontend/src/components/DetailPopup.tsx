@@ -810,7 +810,6 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
   const [tab, setTab] = useState<PopupTab>('sources')
   const [fullSegments, setFullSegments] = useState<{
     segments: NoiseComputeData['segments']
-    airborne: NoiseComputeData['airborne_traces']
     meta: NoiseComputeData['segments_meta']
   } | null>(null)
   const [loadingFull, setLoadingFull] = useState(false)
@@ -821,10 +820,9 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
   }, [data.h3_center[0], data.h3_center[1]])
 
   const displaySegments = fullSegments?.segments ?? data.segments ?? []
-  const displayAirborne = fullSegments?.airborne ?? data.airborne_traces ?? []
   const displayMeta = fullSegments?.meta ?? data.segments_meta ?? null
   const segmentsTotal = displayMeta?.total_count ?? displaySegments.length
-  const hasSegmentsTab = segmentsTotal > 0 || displayAirborne.length > 0
+  const hasSegmentsTab = segmentsTotal > 0
   const showSegments = tab === 'segments' && hasSegmentsTab
 
   const handleShowAll = async () => {
@@ -837,7 +835,6 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
       const next = (await r.json()) as NoiseComputeData
       setFullSegments({
         segments: next.segments ?? [],
-        airborne: next.airborne_traces ?? [],
         meta: next.segments_meta ?? null,
       })
     } finally {
@@ -905,9 +902,7 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
               <div style={{ display: showSegments ? 'block' : 'none' }}>
                 <SegmentList
                   segments={displaySegments}
-                  airborne={displayAirborne}
                   meta={displayMeta}
-                  receiverLatLon={data.h3_center}
                   onHighlight={onHighlight}
                   onShowAll={handleShowAll}
                   loadingFull={loadingFull}

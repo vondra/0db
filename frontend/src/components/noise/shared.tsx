@@ -11,6 +11,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   aircraft: 'Aircraft',
   aircraft_ground: 'Aircraft (ground)',
   aircraft_airborne: 'Aircraft (airborne)',
+  aircraft_cruise: 'Aircraft (cruise)',
   industrial: 'Industrial',
   building: 'Buildings',
 }
@@ -79,6 +80,12 @@ const LINE_SOURCE_KINDS = new Set(['road', 'railway', 'aircraft_ground'])
  * airborne aircraft (Doc 29 SEL) return false. */
 export function isLineSourceKind(kind: string): boolean {
   return LINE_SOURCE_KINDS.has(kind)
+}
+
+/** GeoJSON convention is `[lon, lat]`; backend polylines and hex
+ * boundaries arrive as `[lat, lon]` tuples — flip in one place. */
+export function flipLatLon([lat, lon]: [number, number]): [number, number] {
+  return [lon, lat]
 }
 
 export function formatDist(m: number): string {

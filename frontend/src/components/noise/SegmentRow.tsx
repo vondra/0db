@@ -1,9 +1,9 @@
-import { useState } from 'react'
-import type { SegmentTrace } from '../../types/noise'
+import { memo, useState } from 'react'
+import { AIRCRAFT_SUBTYPE, type SegmentTrace } from '../../types/noise'
 import { HoverText } from '../ui/info-tip'
 import { ldenToColor } from '../../utils/noise-colors'
 import { SegmentExpanded } from './SegmentExpanded'
-import { SOURCE_LABELS, formatDist, lineStringFromLatLon, subtypeLabel } from './shared'
+import { SOURCE_LABELS, flipLatLon, formatDist, lineStringFromLatLon, subtypeLabel } from './shared'
 
 function segmentName(t: SegmentTrace): string {
   if (t.name && t.name.length > 0) return t.name
@@ -14,6 +14,22 @@ function highlightGeometry(t: SegmentTrace) {
   if (t.kind === 'building' || t.kind === 'industrial') {
     return { type: 'Point', coordinates: [t.start_lon, t.start_lat] }
   }
+  // Aircraft sub-types carry their own geometry shape:
+  //   GROUND = polyline → MultiLineString
+  //   AIRBORNE = start/end → LineString (fall-through)
+  //   CRUISE = hex_polygon → Polygon (ring already closed by backend)
+  if (t.kind === 'aircraft') {
+    if (t.aircraft_subtype === AIRCRAFT_SUBTYPE.GROUND && t.polyline && t.polyline.length >= 2) {
+      // One continuous ADS-B trajectory → single LineString. (If the
+      // polyline ever encodes disjoint runs we'd switch to
+      // MultiLineString; backend currently emits one trajectory per
+      // contiguous ground run, so LineString matches the source.)
+      return { type: 'LineString', coordinates: t.polyline.map(flipLatLon) }
+    }
+    if (t.aircraft_subtype === AIRCRAFT_SUBTYPE.CRUISE && t.hex_polygon && t.hex_polygon.length >= 4) {
+      return { type: 'Polygon', coordinates: [t.hex_polygon.map(flipLatLon)] }
+    }
+  }
   return lineStringFromLatLon([t.start_lat, t.start_lon], [t.end_lat, t.end_lon])
 }
 
@@ -22,7 +38,40 @@ const POWER_SUM_HINT =
   'Grouped "Noise source" Lden pools segments in energy, not dB:\n' +
   '  L_total = 10·log₁₀(Σᵢ 10^(Lᵢ/10))'
 
-export function SegmentRow({
+// Aircraft sub-types put non-Lden values into `received_lden`. The
+// tooltip and column hint below adapt per sub-type so users don't read
+// SEL or aggregate event energy as a true Lden contribution.
+const AIRBORNE_SEL_HINT =
+  'Single-event SEL — sound exposure level of one aircraft passing\n' +
+  '(Doc 29 SEL chain). NOT a Lden contribution; cross-flight Lden\n' +
+  'lives on the parent Aircraft (airborne) row.'
+
+const CRUISE_ENERGY_HINT =
+  'Aggregate event-energy dB across all flights crossing this R8\n' +
+  'cell over the extraction window. Sorts cruise hexes within the\n' +
+  'tab; not directly comparable to road / rail Lden.'
+
+// Cruise R8 hex traces hardcode horizontal `dist_m = 0` because the
+// receiver may sit anywhere inside the hex. Use slant distance there
+// so the row doesn't read "overhead" for a 10 km-distant cruise hex.
+function displayDistance(t: SegmentTrace): number {
+  if (t.kind === 'aircraft' && t.aircraft_subtype === AIRCRAFT_SUBTYPE.CRUISE) {
+    return t.d_slant_m
+  }
+  return t.dist_m
+}
+
+function receivedDbHint(t: SegmentTrace): string {
+  if (t.kind === 'aircraft') {
+    if (t.aircraft_subtype === 2) return AIRBORNE_SEL_HINT
+    if (t.aircraft_subtype === 3) return CRUISE_ENERGY_HINT
+  }
+  return POWER_SUM_HINT
+}
+
+export const SegmentRow = memo(SegmentRowImpl)
+
+function SegmentRowImpl({
   trace,
   onHighlight,
 }: {
@@ -61,9 +110,9 @@ export function SegmentRow({
             {showSubtype && <span className="text-muted-foreground/60"> · {subtype}</span>}
           </span>
           <span className="text-muted-foreground/60 shrink-0 w-14 text-right tabular-nums">
-            {formatDist(Math.round(trace.dist_m))}
+            {formatDist(Math.round(displayDistance(trace)))}
           </span>
-          <HoverText title={POWER_SUM_HINT}>
+          <HoverText title={receivedDbHint(trace)}>
             <span
               className="font-medium shrink-0 w-14 text-right tabular-nums inline-block"
               style={{ color: ldenToColor(lden) }}

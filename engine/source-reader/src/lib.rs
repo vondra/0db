@@ -791,9 +791,8 @@ fn apply_segment_top_k_with_cap(
     summary.aircraft_ground_total = aircraft_ground_total;
     summary.building_total = *per_kind_total.get(&LayerKind::Building).unwrap_or(&0);
     summary.industrial_total = *per_kind_total.get(&LayerKind::Industrial).unwrap_or(&0);
-    // Cruise rows fold into the airborne counter per popup-tab
-    // convention (cruise lives under the Airborne tab in the UI).
-    summary.aircraft_airborne_total = aircraft_airborne_subseg_total + aircraft_cruise_total;
+    summary.aircraft_airborne_total = aircraft_airborne_subseg_total;
+    summary.aircraft_cruise_total = aircraft_cruise_total;
 
     traces
         .segments
@@ -853,7 +852,8 @@ fn apply_segment_top_k_with_cap(
     summary.aircraft_ground_count = aircraft_ground_count;
     summary.building_count = *per_kind.get(&LayerKind::Building).unwrap_or(&0);
     summary.industrial_count = *per_kind.get(&LayerKind::Industrial).unwrap_or(&0);
-    summary.aircraft_airborne_count = aircraft_airborne_subseg_count + aircraft_cruise_count;
+    summary.aircraft_airborne_count = aircraft_airborne_subseg_count;
+    summary.aircraft_cruise_count = aircraft_cruise_count;
 
     summary
 }

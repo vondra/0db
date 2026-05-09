@@ -312,18 +312,21 @@ export interface NoiseComputeData {
   other_sources_lden: number | null
   compute_time_ms: number
   segments?: SegmentTrace[]
-  airborne_traces?: AirborneTrace[]
   segments_meta?: SegmentTracesSummary | null
 }
 
 // Per-segment traces — popup "view into the engine's guts". Mirrors
-// `engine/noise-compute/src/types.rs` (SegmentTrace, AirborneTrace, …).
+// `engine/noise-compute/src/types.rs::SegmentTrace`. Aircraft sub-types
+// (ground path / airborne sub-segment / cruise R8 hex) are split via
+// `SegmentTrace.aircraft_subtype`; SegmentKind below is the UI-side
+// dispatch label.
 
 export type SegmentKind =
   | 'road'
   | 'railway'
   | 'aircraft_ground'
   | 'aircraft_airborne'
+  | 'aircraft_cruise'
   | 'building'
   | 'industrial'
 
@@ -460,6 +463,20 @@ export type EmissionTrace =
       modeled_movements: number | null
     }
   | {
+      kind: 'aircraft_airborne'
+      class: string
+      callsign: string
+      aircraft_type: string
+      cpa_distance_m: number
+      altitude_m_at_cpa: number
+    }
+  | {
+      kind: 'aircraft_cruise'
+      r8_hex: string
+      n_unique_flights: number
+      rep_alt_m: number
+    }
+  | {
       kind: 'building'
       building_type: string
       height_m: number
@@ -476,12 +493,21 @@ export type EmissionTrace =
       effective_area_source_dist_m: number
     }
 
+/** One bucket inside a cruise R8 hex aggregate trace. */
+export interface CruiseBucketBreakdown {
+  class: number
+  fl_bin: number
+  period: number
+  is_dep: boolean
+  n_flights: number
+  received_lden: number
+}
+
 export interface SegmentTrace {
   /**
-   * Engine SourceKind. `'aircraft'` here is ground ops only — airborne
-   * aircraft are emitted via `AirborneTrace` with Doc 29 primitives. The UI
-   * splits these into `SegmentKind = 'aircraft_ground' | 'aircraft_airborne'`
-   * via `traceKind()` in SegmentList.
+   * Engine SourceKind. Aircraft splits further via `aircraft_subtype`:
+   * 1 = ground path, 2 = airborne sub-segment, 3 = cruise R8 hex.
+   * UI dispatch helper is `traceKind()` in `SegmentList`.
    */
   kind: 'road' | 'railway' | 'building' | 'industrial' | 'aircraft'
   osm_id: number | null
@@ -512,37 +538,36 @@ export interface SegmentTrace {
   vegetation: VegetationTrace
   ground: GroundTrace
   received_bands: PerPeriod<number[]>
+  /**
+   * Aircraft sub-types put non-Lden values here (airborne = single-event
+   * SEL, cruise = aggregate event-energy dB) in every variant slot. The
+   * column header in those tabs should read "Event SEL" / "Hex event
+   * energy", not "Lden". See backend types.rs for the full contract.
+   */
   received_lden: LdenVariants
-}
-
-export interface AirborneTrace {
-  // `flight_id` is intentionally NOT serialized server-side (`#[serde(skip)]`
-  // in noise-compute) because packed (icao24, ts32) values overflow JS
-  // `Number` once `icao24 >= 0x800000`. Use `icao_hex` + `start_unix` instead.
-  date: string
-  period: 0 | 1 | 2
-  profile: string
-  lmax_db: number
-  sel_db: number
-  cpa_distance_m: number
-  altitude_m_at_cpa: number
-  elevation_angle_deg: number
-  n_days_normalized: number
-  geometry: [[number, number], [number, number]]
-  received_lden: number
-  /** ICAO 24-bit hex (6 lowercase chars) or "" for synth. */
-  icao_hex: string
-  /** Unix seconds of flight start; null for synth. */
-  start_unix: number | null
-  /** True for surface model / cruise bucket synthesised IDs. */
-  synthetic: boolean
+  /** 0 = non-aircraft / unset, 1 = ground path, 2 = airborne sub-segment, 3 = cruise hex. */
+  aircraft_subtype?: number
+  /** Polyline of `[lat, lon]` pairs; aircraft ground paths only. */
+  polyline?: [number, number][]
+  /** Closed polygon ring (last vertex = first vertex); aircraft cruise hexes only. */
+  hex_polygon?: [number, number][]
+  /** Per-bucket breakdown inside a cruise hex; sorted by `received_lden` desc. */
+  cruise_buckets?: CruiseBucketBreakdown[]
+  /** Ground path `[runway, taxi, apron]` lengths in meters. */
+  length_m_per_kind?: [number, number, number]
 }
 
 /** Per-kind segment counts. `*_count` is what the response includes
  * (after the per-kind top-K cap); `*_total` is how many were actually
  * computed and folded into Lden. Frontends render the pair as
  * "shown / total" so users see how aggressively the response was
- * truncated; Lden values themselves always reflect the full set. */
+ * truncated; Lden values themselves always reflect the full set.
+ *
+ * Aircraft splits into three sub-buckets: ground path / airborne
+ * sub-segment / cruise R8 hex. Each is capped separately by the
+ * backend so a busy airport doesn't drown one tab in another's
+ * truncation; the popup renders three sub-tabs keyed off these
+ * counters directly. */
 export interface SegmentTracesSummary {
   total_count: number
   truncated: boolean
@@ -550,12 +575,26 @@ export interface SegmentTracesSummary {
   railway_count: number
   aircraft_ground_count: number
   aircraft_airborne_count: number
+  aircraft_cruise_count: number
   building_count: number
   industrial_count: number
   road_total: number
   railway_total: number
   aircraft_ground_total: number
   aircraft_airborne_total: number
+  aircraft_cruise_total: number
   building_total: number
   industrial_total: number
 }
+
+/**
+ * Aircraft sub-type discriminator on `SegmentTrace.aircraft_subtype`.
+ * Mirrors the `u8` values the backend stamps on each aircraft trace.
+ * Use this constant in switches instead of bare `1`/`2`/`3` so the
+ * dispatch sites stay in sync if the wire schema renumbers.
+ */
+export const AIRCRAFT_SUBTYPE = {
+  GROUND: 1,
+  AIRBORNE: 2,
+  CRUISE: 3,
+} as const

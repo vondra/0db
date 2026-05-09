@@ -42,11 +42,6 @@ export function fmtCompact(v: number): string {
   return Math.round(v).toString()
 }
 
-/** "123 m" below 1 km, "1.2 km" above. */
-export function formatCpa(m: number): string {
-  return m < 1000 ? `${m.toFixed(0)} m` : `${(m / 1000).toFixed(1)} km`
-}
-
 /** Meters → kilometers, fixed digits, no unit suffix. Use when the unit
  * lives in the column header to keep cell width minimal. */
 export function metersToKm(m: number, digits = 2): string {

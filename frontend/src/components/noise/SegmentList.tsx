@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react'
-import type {
-  AirborneTrace,
-  SegmentKind,
-  SegmentTrace,
-  SegmentTracesSummary,
+import {
+  AIRCRAFT_SUBTYPE,
+  type SegmentKind,
+  type SegmentTrace,
+  type SegmentTracesSummary,
 } from '../../types/noise'
-import { AirborneRow } from './AirborneRow'
 import { SegmentRow } from './SegmentRow'
 
 const KIND_FILTERS: { key: SegmentKind; label: string }[] = [
@@ -13,18 +12,32 @@ const KIND_FILTERS: { key: SegmentKind; label: string }[] = [
   { key: 'railway', label: 'Rail' },
   { key: 'aircraft_ground', label: 'GroundOps' },
   { key: 'aircraft_airborne', label: 'Airborne' },
+  { key: 'aircraft_cruise', label: 'Cruise' },
   { key: 'building', label: 'Buildings' },
   { key: 'industrial', label: 'Industrial' },
 ]
 
-type UnifiedEntry =
-  | { kind: 'segment'; trace: SegmentTrace; sortKey: number }
-  | { kind: 'airborne'; trace: AirborneTrace; sortKey: number }
+type UnifiedEntry = { trace: SegmentTrace; sortKey: number }
 
-function traceKind(t: SegmentTrace): SegmentKind {
-  // SegmentTrace.kind in the engine is SourceKind (Road/Railway/Building/Industrial/Aircraft).
-  // Aircraft here means ground ops — airborne aircraft come through airborne_traces separately.
-  if (t.kind === 'aircraft') return 'aircraft_ground'
+export function traceKind(t: SegmentTrace): SegmentKind {
+  if (t.kind === 'aircraft') {
+    switch (t.aircraft_subtype) {
+      case AIRCRAFT_SUBTYPE.GROUND:
+        return 'aircraft_ground'
+      case AIRCRAFT_SUBTYPE.AIRBORNE:
+        return 'aircraft_airborne'
+      case AIRCRAFT_SUBTYPE.CRUISE:
+        return 'aircraft_cruise'
+      default:
+        // Unknown subtype — backend-side schema drift. Fall back to
+        // ground so the row still renders and console-warn so
+        // operators see the regression in DevTools.
+        if (typeof console !== 'undefined') {
+          console.warn(`Unknown aircraft_subtype ${t.aircraft_subtype}; defaulting to ground.`)
+        }
+        return 'aircraft_ground'
+    }
+  }
   return t.kind as SegmentKind
 }
 
@@ -41,52 +54,29 @@ function segmentRowKey(t: SegmentTrace): string {
   return `s-${t.osm_id ?? 'pt'}-${t.segment_idx}-${t.cp_lat.toFixed(6)},${t.cp_lon.toFixed(6)}-${rlKey}`
 }
 
-// Server omits `flight_id` (packed icao24+ts32 overflows JS Number — see
-// types/noise.ts comment), so the key falls back to per-trace identity.
-// Synth cruise buckets are keyed on (date, period, profile) by the engine;
-// received_lden tie-breaks the rare same-bucket-same-receiver collisions.
-function airborneRowKey(t: AirborneTrace): string {
-  if (t.icao_hex && t.start_unix != null) {
-    return `a-real-${t.icao_hex}-${t.start_unix}-${t.received_lden.toFixed(3)}`
-  }
-  return `a-synth-${t.date}-${t.period}-${t.profile}-${t.received_lden.toFixed(3)}`
+const META_FIELD: Record<SegmentKind, { count: keyof SegmentTracesSummary; total: keyof SegmentTracesSummary }> = {
+  road: { count: 'road_count', total: 'road_total' },
+  railway: { count: 'railway_count', total: 'railway_total' },
+  aircraft_ground: { count: 'aircraft_ground_count', total: 'aircraft_ground_total' },
+  aircraft_airborne: { count: 'aircraft_airborne_count', total: 'aircraft_airborne_total' },
+  aircraft_cruise: { count: 'aircraft_cruise_count', total: 'aircraft_cruise_total' },
+  building: { count: 'building_count', total: 'building_total' },
+  industrial: { count: 'industrial_count', total: 'industrial_total' },
 }
 
-function countsByKind(meta: SegmentTracesSummary | null | undefined) {
-  return {
-    road: meta?.road_count ?? 0,
-    railway: meta?.railway_count ?? 0,
-    aircraft_ground: meta?.aircraft_ground_count ?? 0,
-    aircraft_airborne: meta?.aircraft_airborne_count ?? 0,
-    building: meta?.building_count ?? 0,
-    industrial: meta?.industrial_count ?? 0,
-  } as Record<SegmentKind, number>
-}
-
-function totalsByKind(meta: SegmentTracesSummary | null | undefined) {
-  return {
-    road: meta?.road_total ?? 0,
-    railway: meta?.railway_total ?? 0,
-    aircraft_ground: meta?.aircraft_ground_total ?? 0,
-    aircraft_airborne: meta?.aircraft_airborne_total ?? 0,
-    building: meta?.building_total ?? 0,
-    industrial: meta?.industrial_total ?? 0,
-  } as Record<SegmentKind, number>
+function metaCount(meta: SegmentTracesSummary | null | undefined, kind: SegmentKind, field: 'count' | 'total'): number {
+  return (meta?.[META_FIELD[kind][field]] as number | undefined) ?? 0
 }
 
 export function SegmentList({
   segments,
-  airborne,
   meta,
-  receiverLatLon,
   onHighlight,
   onShowAll,
   loadingFull = false,
 }: {
   segments: SegmentTrace[]
-  airborne: AirborneTrace[]
   meta: SegmentTracesSummary | null
-  receiverLatLon: [number, number]
   onHighlight?: (geometry: unknown | null) => void
   onShowAll?: () => void | Promise<void>
   loadingFull?: boolean
@@ -95,31 +85,28 @@ export function SegmentList({
     Object.fromEntries(KIND_FILTERS.map(k => [k.key, true])) as Record<SegmentKind, boolean>,
   )
 
-  const counts = countsByKind(meta)
-  const totals = totalsByKind(meta)
+  // Sort once when `segments` arrive — `enabled` toggles only filter
+  // the pre-sorted list and don't touch the sort cost.
+  const sortedSegments = useMemo<UnifiedEntry[]>(
+    () =>
+      segments
+        .map(s => ({ trace: s, sortKey: s.received_lden.full }))
+        .sort((x, y) => y.sortKey - x.sortKey),
+    [segments],
+  )
 
-  const entries = useMemo<UnifiedEntry[]>(() => {
-    const rows: UnifiedEntry[] = []
-    for (const s of segments) {
-      const kind = traceKind(s)
-      if (!enabled[kind]) continue
-      rows.push({ kind: 'segment', trace: s, sortKey: s.received_lden.full })
-    }
-    for (const a of airborne) {
-      if (!enabled.aircraft_airborne) continue
-      rows.push({ kind: 'airborne', trace: a, sortKey: a.received_lden })
-    }
-    rows.sort((x, y) => y.sortKey - x.sortKey)
-    return rows
-  }, [segments, airborne, enabled])
+  const entries = useMemo<UnifiedEntry[]>(
+    () => sortedSegments.filter(e => enabled[traceKind(e.trace)]),
+    [sortedSegments, enabled],
+  )
 
   // Strip should reflect the active toggle selection, not the global total.
   let shownCount = 0
   let totalCount = 0
   for (const { key } of KIND_FILTERS) {
     if (!enabled[key]) continue
-    shownCount += counts[key]
-    totalCount += totals[key]
+    shownCount += metaCount(meta, key, 'count')
+    totalCount += metaCount(meta, key, 'total')
   }
   const truncated = totalCount > shownCount
 
@@ -127,8 +114,8 @@ export function SegmentList({
     <div>
       <div className="flex mt-1 mb-1.5 whitespace-nowrap text-[11px] bg-muted/30 rounded py-1 -mx-1 divide-x divide-foreground/25 overflow-x-auto">
         {KIND_FILTERS.map(({ key, label }) => {
-          const kindCount = counts[key]
-          const kindTotal = totals[key]
+          const kindCount = metaCount(meta, key, 'count')
+          const kindTotal = metaCount(meta, key, 'total')
           // Empty kinds stay visible (greyed) so the user always sees
           // the full filter set — disappearing tabs on a sparse popup
           // looked unpredictable. Greyed-out + count=0 makes the
@@ -159,22 +146,13 @@ export function SegmentList({
         })}
       </div>
       <div>
-        {entries.map(e =>
-          e.kind === 'segment' ? (
-            <SegmentRow
-              key={segmentRowKey(e.trace)}
-              trace={e.trace}
-              onHighlight={onHighlight}
-            />
-          ) : (
-            <AirborneRow
-              key={airborneRowKey(e.trace)}
-              trace={e.trace}
-              receiverLatLon={receiverLatLon}
-              onHighlight={onHighlight}
-            />
-          ),
-        )}
+        {entries.map(e => (
+          <SegmentRow
+            key={segmentRowKey(e.trace)}
+            trace={e.trace}
+            onHighlight={onHighlight}
+          />
+        ))}
       </div>
       {truncated && (
         <div className="flex items-center justify-between border-t border-border/40 py-1 text-[10px] text-muted-foreground">
