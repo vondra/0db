@@ -32,46 +32,52 @@ pub fn scatter(
     let rx_elev = receiver.altitude_m();
     let npd_luts = aircraft::NpdLuts::shared();
 
-    // Receiver reach envelope on the R8 cell centre — skips rows whose
-    // synth segment is fully outside reach. The synth segment in the
-    // scatter below extends `half_len_m * sqrt(2)` from cell centre
-    // along the NE-SW diagonal (because lat_off and lon_off are both
-    // half_len_m / m_per_deg), so closest-segment-point ≥
-    // `dist_to_centre - half_len_m * sqrt(2)`. The kernel's per-row
-    // slant test would reject these anyway, but `segment_sel_with_terrain`
-    // is ~µs vs ~ns for this lat/lon test. rep_len_m is typically
-    // ~50 km (Stage 2B uses source-segment length, not clip length),
-    // so the cap dilates the 16 km horizontal reach to ~51 km in the
-    // worst case — still drops a meaningful share of the 7-R4 grid
-    // disk's ~350 k cruise rows for praha-150km × 7 days.
-    let lat_rad = receiver.lat.to_radians();
+    // R8-centre prefilter constants. rep_len_m is typically ~50 km
+    // (Stage 2B uses source-segment length, not clip length), so the
+    // cap dilates the 16 km horizontal reach to ~51 km worst case —
+    // still drops a meaningful share of the 7-R4 grid disk's ~350 k
+    // cruise rows for praha-150km × 7 days. Detailed math at the
+    // call site below.
     let m_per_lat = crate::constants::M_PER_DEG_LAT;
-    let m_per_lon = crate::constants::m_per_deg_lon(lat_rad);
+    let m_per_lon = crate::constants::m_per_deg_lon(receiver.lat.to_radians());
 
     for (idx, row) in rows.iter().enumerate() {
         let Some((lat, lon)) = r8_cell_center(row.r8_hex) else {
             continue;
         };
+        let rep_len_m = (row.rep_len_m as f64).max(SLANT_FLOOR_M);
+        let half_len_m = rep_len_m * 0.5;
+
+        // Distance prefilter: synth segment extends `half_len_m` along
+        // each axis (NE-SW diagonal), so the closest segment point is
+        // at least `dist_to_centre - half_len_m * sqrt(2)` from the
+        // receiver. Skip rows beyond reach + diagonal cap. The kernel's
+        // per-row slant test would reject these too, but this lat/lon
+        // test is ~ns vs ~µs for `segment_sel_with_terrain`.
+        // /gg (Codex) flagged that a naive `lon - receiver.lon` produces
+        // a ~360° false-negative for receivers near ±180° (a Pacific
+        // receiver vs an Asia source on the other side of the
+        // dateline). Wrap the lon delta to [-180, 180] so the test
+        // measures real great-circle longitude separation.
         let dlat_m = (lat - receiver.lat) * m_per_lat;
-        let dlon_m = (lon - receiver.lon) * m_per_lon;
+        let mut dlon = lon - receiver.lon;
+        if dlon > 180.0 {
+            dlon -= 360.0;
+        } else if dlon < -180.0 {
+            dlon += 360.0;
+        }
+        let dlon_m = dlon * m_per_lon;
         let dist2_m2 = dlat_m * dlat_m + dlon_m * dlon_m;
-        let half_len_m = (row.rep_len_m as f64).max(SLANT_FLOOR_M) * 0.5;
-        let half_seg_len_m = half_len_m * std::f64::consts::SQRT_2;
-        let cap_m = aircraft::AIRCRAFT_MAX_HORIZONTAL_REACH_M + half_seg_len_m;
+        let cap_m = aircraft::AIRCRAFT_MAX_HORIZONTAL_REACH_M + half_len_m * std::f64::consts::SQRT_2;
         if dist2_m2 > cap_m * cap_m {
             continue;
         }
-        let rl = (row.rep_len_m as f64).max(SLANT_FLOOR_M);
-        let half_len_m = rl * 0.5;
-        let lat_off = half_len_m / crate::constants::M_PER_DEG_LAT;
-        let lon_off = half_len_m / crate::constants::m_per_deg_lon(lat.to_radians());
-        // Density = sum_length / rep_len: how many representative
-        // segments' worth of cruise track this R8 bucket carries.
-        // Partial bucket transits (sum_length < rep_len) keep their
-        // fractional weight so an in-cell clipped 500 m of a 10 km
-        // segment is charged 0.05 events, not a full event. /gg
-        // (Codex) caught a prior `.max(1.0)` floor that over-counted
-        // cruise Lden across multi-cell tracks.
+
+        // Density = sum_length / rep_len: fractional weight of this
+        // representative segment carried by the bucket. Partial transits
+        // (sum_length < rep_len, e.g. 500 m of a 10 km segment clipped
+        // to one R8 cell) keep their 0.05× weight — no `.max(1.0)`
+        // floor, which a /gg review caught as a multi-cell over-count.
         let density = if row.rep_len_m > 0.0 {
             (row.sum_length_m / row.rep_len_m) as f64
         } else {
@@ -80,6 +86,8 @@ pub fn scatter(
         if density <= 0.0 {
             continue;
         }
+        let lat_off = half_len_m / crate::constants::M_PER_DEG_LAT;
+        let lon_off = half_len_m / crate::constants::m_per_deg_lon(lat.to_radians());
         let synth_fid = pack_synth(idx as u64);
         let seg = AircraftSegment {
             flight_id: synth_fid,
@@ -97,7 +105,7 @@ pub fn scatter(
             end_lon: lon + lon_off,
             end_alt_m: row.rep_alt_m,
             speed_kt: row.rep_speed_kt,
-            segment_length_m: rl as f32,
+            segment_length_m: rep_len_m as f32,
             count_weight: density as f32,
             surface_model: false,
             ground_context: aircraft::GROUND_CONTEXT_NONE,
