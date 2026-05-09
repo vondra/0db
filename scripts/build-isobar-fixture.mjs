@@ -28,6 +28,14 @@ function parseArgs(arr) {
   return out;
 }
 
+// Manual receivers for Gate C (component checks). Coordinates picked from
+// the 2022 master plan of LKPR Ruzyně to exercise specific physics gates:
+// R1 — first row of houses next to apron, must see ground_ops contributor.
+// RWY24 touchdown/mid/west — sweeps the ground-roll energy band.
+// Approach corridor 1/3 km east/west — checks the airborne descent gradient
+// (touchdown ≥ 1 km ≥ 3 km is the monotonic-gradient gate).
+// 2 km N/S residential — Doc 29 lateral attenuation in populated zones.
+// 7 km west rural — background floor far from any active runway.
 const RUZYNE_MANUAL = [
   { lat: 50.1188, lon: 14.2823, label: 'R1 main terminal area' },
   { lat: 50.116, lon: 14.281, label: 'RWY24 touchdown' },
@@ -52,9 +60,11 @@ function* iterRings(geom) {
   }
 }
 
+// Walk the ring with a stride so the n samples are spread around the
+// polygon perimeter rather than clustered near coordinate index 0.
 function pickPointsOnRing(ring, n) {
-  if (ring.length < 2) return [];
-  const stride = Math.max(1, Math.floor(ring.length / Math.max(1, n)));
+  if (ring.length < 2 || n <= 0) return [];
+  const stride = Math.max(1, Math.floor(ring.length / n));
   const out = [];
   for (let i = 0; out.length < n && i < ring.length; i += stride) {
     const [lon, lat] = ring[i];
@@ -63,59 +73,84 @@ function pickPointsOnRing(ring, n) {
   return out;
 }
 
+// SHM Lden band field name varies per layer release. Tolerate the common
+// spellings seen in geoportal.mzcr.cz exports across 2017/2022 vintages.
+function readLdenBand(props) {
+  return (
+    props.db_lo ?? props.dB_LO ?? props.level_db ??
+    props.lden_class ?? props.LDEN ?? props.lden
+  );
+}
+
+function isobarPointsForLevel(features, level, perLevel, inBbox) {
+  const out = [];
+  for (const f of features) {
+    if (out.length >= perLevel) break;
+    if (readLdenBand(f.properties ?? {}) !== level) continue;
+    for (const ring of iterRings(f.geometry)) {
+      if (out.length >= perLevel) break;
+      for (const p of pickPointsOnRing(ring, perLevel - out.length)) {
+        if (!inBbox(p.lat, p.lon)) continue;
+        out.push({ lat: p.lat, lon: p.lon, expected_db: level, label: `isobar L${level}` });
+        if (out.length >= perLevel) break;
+      }
+    }
+  }
+  return out;
+}
+
 function main() {
   const args = parseArgs(argv.slice(2));
   if (!args.shm || !args.output) {
-    console.error('usage: build-isobar-fixture.mjs --shm <geojson> --output <json> [--levels 50,55,60] [--per-level 5] [--bbox lon0,lat0,lon1,lat1]');
+    console.error('usage: build-isobar-fixture.mjs --shm <geojson> --output <json> [--levels 50,55,60] [--per-level 5] [--bbox latMin,lonMin,latMax,lonMax] [--no-manual]');
     exit(1);
   }
   const fc = JSON.parse(readFileSync(args.shm, 'utf8'));
-  const out = [];
-  const inBbox = (lat, lon) => {
-    if (!args.bbox) return true;
-    const [a, b, c, d] = args.bbox;
-    // bbox is lat,lon,lat,lon per plan
-    return lat >= a && lat <= c && lon >= b && lon <= d;
-  };
+  const features = fc.features ?? [];
+  // /gg (Codex) caught a silent-pass risk: an empty SHM file produced
+  // a zero-isobar fixture and Gate A then validated only the manual
+  // receivers and reported PASS on incomplete evidence. Fail loud
+  // when the input has no features.
+  if (features.length === 0) {
+    console.error(
+      `error: SHM file ${args.shm} has zero features. Re-run shm-paginate-fetch.py first?`
+    );
+    exit(1);
+  }
 
-  for (const level of args.levels) {
-    let kept = 0;
-    for (const f of fc.features ?? []) {
-      const props = f.properties ?? {};
-      // SHM convention: `Lden` band field varies per layer; tolerate
-      // common spellings (`db_lo`, `dB_LO`, `level_db`, `lden_class`).
-      const lvl =
-        props.db_lo ?? props.dB_LO ?? props.level_db ??
-        props.lden_class ?? props.LDEN ?? props.lden;
-      if (lvl !== level) continue;
-      for (const ring of iterRings(f.geometry)) {
-        const pts = pickPointsOnRing(ring, args.perLevel - kept);
-        for (const p of pts) {
-          if (!inBbox(p.lat, p.lon)) continue;
-          out.push({
-            lat: p.lat,
-            lon: p.lon,
-            expected_db: level,
-            label: `isobar L${level}`,
-          });
-          kept++;
-          if (kept >= args.perLevel) break;
-        }
-        if (kept >= args.perLevel) break;
+  // Plan §C5 Step 2 specifies bbox as `latMin,lonMin,latMax,lonMax`
+  // (e.g. `50.05,14.21,50.15,14.31` to clip to the LKPR Ruzyně extent).
+  const inBbox = args.bbox
+    ? (lat, lon) => {
+        const [latMin, lonMin, latMax, lonMax] = args.bbox;
+        return lat >= latMin && lat <= latMax && lon >= lonMin && lon <= lonMax;
       }
-      if (kept >= args.perLevel) break;
+    : () => true;
+
+  const out = [];
+  const underCovered = [];
+  for (const level of args.levels) {
+    const points = isobarPointsForLevel(features, level, args.perLevel, inBbox);
+    out.push(...points);
+    console.error(`level ${level}: ${points.length} points`);
+    if (points.length < args.perLevel) {
+      underCovered.push({ level, got: points.length });
     }
-    console.error(`level ${level}: ${kept} points`);
+  }
+  if (underCovered.length > 0) {
+    console.error(
+      `error: ${underCovered.length} level(s) under-covered: ` +
+        underCovered.map((u) => `L${u.level}=${u.got}/${args.perLevel}`).join(', ')
+    );
+    console.error(
+      'Gate A would otherwise pass on incomplete evidence — widen --bbox, lower --per-level, or supply a denser SHM extract.'
+    );
+    exit(1);
   }
 
   if (args.manual) {
     for (const m of RUZYNE_MANUAL) {
-      out.push({
-        lat: m.lat,
-        lon: m.lon,
-        expected_db: null,
-        label: m.label,
-      });
+      out.push({ lat: m.lat, lon: m.lon, expected_db: null, label: m.label });
     }
   }
 

@@ -30,12 +30,22 @@ from pathlib import Path
 
 
 def fetch_page(service: str, layer_id: int, params: dict, retries: int = 3) -> dict:
+    """Fetch one ArcGIS query page with exponential backoff on transient errors.
+
+    ArcGIS can return HTTP 200 with an `error` object inside the JSON body
+    instead of an HTTP error code. /gg (Codex) caught that this would
+    treat the error as a non-terminal page and silently truncate the
+    output. Surface the error so the caller fails loud.
+    """
     url = f"{service}/{layer_id}/query?{urllib.parse.urlencode(params)}"
-    last_err = None
+    last_err: Exception | None = None
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(url, timeout=120) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                body = json.loads(resp.read().decode("utf-8"))
+                if isinstance(body, dict) and "error" in body:
+                    raise RuntimeError(f"ArcGIS server error: {body['error']}")
+                return body
         except Exception as e:
             last_err = e
             print(f"  retry {attempt + 1}/{retries}: {e}", file=sys.stderr)
@@ -81,28 +91,35 @@ def main() -> int:
         "resultRecordCount": str(args.page_size),
     }
 
-    out_features = []
-    page = 0
-    while page < args.max_pages:
+    out_features: list[dict] = []
+    for page in range(args.max_pages):
         params = dict(base_params)
         params["resultOffset"] = str(page * args.page_size)
         print(f"page {page}: offset={params['resultOffset']}", file=sys.stderr)
         body = fetch_page(args.service, args.layer_id, params)
         feats = body.get("features", [])
         if not feats:
-            print(f"  empty page → done", file=sys.stderr)
+            print("  empty page -> done", file=sys.stderr)
             break
         out_features.extend(feats)
+        # ArcGIS may exceed the requested page size by a handful of records,
+        # but a short page always signals end-of-results.
         if len(feats) < args.page_size:
-            print(f"  partial page ({len(feats)}) → done", file=sys.stderr)
+            print(f"  partial page ({len(feats)}) -> done", file=sys.stderr)
             break
-        page += 1
+
+    if not out_features:
+        print(
+            "no features returned; check --layer-id (run `?f=json` discovery) and --bbox",
+            file=sys.stderr,
+        )
+        return 2
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fc = {"type": "FeatureCollection", "features": out_features}
     out_path.write_text(json.dumps(fc), encoding="utf-8")
-    print(f"wrote {len(out_features)} features → {out_path}", file=sys.stderr)
+    print(f"wrote {len(out_features)} features -> {out_path}", file=sys.stderr)
     return 0
 
 

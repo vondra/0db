@@ -16,17 +16,18 @@ LOG_DIR="logs"
 mkdir -p "$LOG_DIR"
 
 log() { echo "[main] $(date '+%Y-%m-%d %H:%M:%S') $*"; }
+disk_avail() { df -h "$HOME" --output=avail | tail -1 | xargs; }
 
 STEP="${1:-all}"
 case "$STEP" in
     all|rasters|aircraft|osm) ;;
-    *) echo "Usage: $0 [all|rasters|aircraft|osm]"; exit 1 ;;
+    *) echo "Usage: $0 [all|rasters|aircraft|osm]" >&2; exit 1 ;;
 esac
 
 log "========================================"
 log "  Extraction: step=$STEP"
 log "========================================"
-log "  Disk:  $(df -h "$HOME" --output=size,avail | tail -1 | xargs)"
+log "  Disk:  $(disk_avail) free"
 log "  CPUs:  $(nproc)"
 log "  RAM:   $(free -h | awk '/Mem:/{print $2}')"
 log ""
@@ -60,7 +61,7 @@ fi
 # ── Aircraft extract v6 (heavy, ~2-6h) ───────────────────────────────
 # Wait for OSM (if running) so airport_*.arrow exists before Stage 2C.
 if [ "$STEP" = "all" ] || [ "$STEP" = "aircraft" ]; then
-    if [ "${OSM_PID:-}" != "" ]; then
+    if [ -n "${OSM_PID:-}" ]; then
         log "Waiting for OSM (pid=$OSM_PID) before launching aircraft → $LOG_DIR/extraction-aircraft.log"
         ( wait "$OSM_PID" 2>/dev/null
           bash "$SCRIPT_DIR/run-aircraft-extract.sh"
@@ -81,30 +82,25 @@ fi
 log "${#PIDS[@]} tasks launched"
 log ""
 
-# ── Monitor ──────────────────────────────────────────────────────────
+# ── Monitor (every 5 min while any task runs) ────────────────────────
 (
     while true; do
+        sleep 300
         ANY_RUNNING=0
-        for pid in "${PIDS[@]}"; do
-            kill -0 "$pid" 2>/dev/null && ANY_RUNNING=1
-        done
-        [ "$ANY_RUNNING" -eq 0 ] && break
-
-        sleep 300  # every 5 min
-        NOW=$(date +%s)
-        ELAPSED=$((NOW - T_START))
-        ELAPSED_HR=$(printf '%dh%02dm' $((ELAPSED/3600)) $(((ELAPSED%3600)/60)))
-        DISK_FREE=$(df -h "$HOME" --output=avail | tail -1 | xargs)
-
         STATUS=""
         for i in "${!PIDS[@]}"; do
             if kill -0 "${PIDS[$i]}" 2>/dev/null; then
+                ANY_RUNNING=1
                 STATUS="$STATUS ${NAMES[$i]}:running"
             else
                 STATUS="$STATUS ${NAMES[$i]}:done"
             fi
         done
-        log "status ($ELAPSED_HR):$STATUS | disk $DISK_FREE"
+        [ "$ANY_RUNNING" -eq 0 ] && break
+
+        ELAPSED=$(( $(date +%s) - T_START ))
+        ELAPSED_HR=$(printf '%dh%02dm' $((ELAPSED/3600)) $(((ELAPSED%3600)/60)))
+        log "status ($ELAPSED_HR):$STATUS | disk $(disk_avail)"
     done
 ) &
 MONITOR_PID=$!
@@ -151,7 +147,6 @@ for rtype in dem/srtm rasters/building rasters/forest rasters/imd; do
     fi
 done
 
-log "  Disk free: $(df -h "$HOME" --output=avail | tail -1 | xargs)"
+log "  Disk free: $(disk_avail)"
 
-[ "$FAIL" -ne 0 ] && exit 1
-exit 0
+exit "$FAIL"

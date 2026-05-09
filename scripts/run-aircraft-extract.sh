@@ -21,17 +21,15 @@ WORK_DIR="${WORK_DIR:-/tmp/aircraft-extract-work}"
 DAYS="${DAYS:-}"
 
 log() { echo "[aircraft-extract] $(date '+%Y-%m-%d %H:%M:%S') $*"; }
+die() { log "ERROR: $*"; exit 1; }
 
 if [ -z "$DAYS" ]; then
     log "DAYS env var not set; deriving from ADSB_CACHE=$ADSB_CACHE"
-    if [ ! -d "$ADSB_CACHE" ]; then
-        log "ERROR: $ADSB_CACHE not found and DAYS not provided"
-        exit 1
-    fi
+    [ -d "$ADSB_CACHE" ] || die "$ADSB_CACHE not found and DAYS not provided"
     DAYS="$(find "$ADSB_CACHE" -maxdepth 2 -name '*.tar' -printf '%f\n' \
         | sed 's/\.tar$//' | sort -u | paste -sd,)"
 fi
-[ -z "$DAYS" ] && { log "ERROR: no days resolved"; exit 1; }
+[ -n "$DAYS" ] || die "no ADS-B TAR days resolved from $ADSB_CACHE"
 
 log "rebuilding aircraft-extract (release)"
 cargo build --release --manifest-path engine/aircraft-extract/Cargo.toml --bin aircraft-extract
