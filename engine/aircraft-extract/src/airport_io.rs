@@ -253,10 +253,18 @@ fn propagate_aerodrome_identity_to_lines(lines: &mut [AirportLine], areas: &[Air
             if cx > r {
                 continue;
             }
-            let inside = if !area.polygon_wkb.is_empty() {
-                noise_compute::wkb::wkb_contains_point(&area.polygon_wkb, mid_lat, mid_lon)
-            } else {
-                cx <= r
+            // Use the cached `ParsedPolygon` so the same WKB hex isn't
+            // re-parsed for every (line, area) pair (~5k lines × ~50
+            // areas per popup before this commit). `parsed_polygon`
+            // returns `None` for empty / malformed WKB; fall back to
+            // the centroid-radius gate then.
+            let inside = match area.parsed_polygon() {
+                Some(parsed) => noise_compute::wkb::rings_contain_any_point(
+                    &parsed.outer,
+                    &parsed.holes,
+                    &[(mid_lat, mid_lon)],
+                ),
+                None => cx <= r,
             };
             if !inside {
                 continue;

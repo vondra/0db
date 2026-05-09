@@ -1763,17 +1763,15 @@ pub fn airport_area_contains_any_of(area: &AirportArea, points: &[(f64, f64)]) -
     if n_survivors == 0 {
         return false;
     }
-    // Cached parse: first call per area parses the WKB once; subsequent
-    // calls (Stage 2C runs ~28k segments × ~50 areas per LKPR-7-R4 batch
-    // = ~10M repeats without the cache) get the parsed rings for free.
+    // Cached parse: first call per area parses the WKB once; Stage 2C
+    // and the popup hot loop reuse the same `ParsedPolygon` for every
+    // segment / receiver instead of re-parsing the hex per call.
     if let Some(parsed) = area.parsed_polygon() {
-        return survivors[..n_survivors].iter().any(|&(lat, lon)| {
-            crate::wkb::point_in_polygon(lat, lon, &parsed.outer)
-                && !parsed
-                    .holes
-                    .iter()
-                    .any(|h| crate::wkb::point_in_polygon(lat, lon, h))
-        });
+        return crate::wkb::rings_contain_any_point(
+            &parsed.outer,
+            &parsed.holes,
+            &survivors[..n_survivors],
+        );
     }
     any_within_fallback
 }

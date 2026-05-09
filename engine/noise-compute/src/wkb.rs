@@ -350,17 +350,30 @@ pub fn wkb_contains_any_point(wkb_hex: &str, points: &[(f64, f64)]) -> bool {
             None => return false,
         },
     };
+    rings_contain_any_point(&outer, &holes, points)
+}
+
+/// Test N points against an already-parsed (outer, holes) ring pair.
+/// Outer-ring containment with hole subtraction; ray-cast lives in
+/// [`point_in_polygon`]. Shared between [`wkb_contains_any_point`] and
+/// [`crate::types::AirportArea`]'s cached path so both call sites stay
+/// in lockstep on edge / on-vertex semantics.
+pub fn rings_contain_any_point(
+    outer: &[(f64, f64)],
+    holes: &[Vec<(f64, f64)>],
+    points: &[(f64, f64)],
+) -> bool {
     if outer.is_empty() {
         return false;
     }
     points.iter().any(|&(lat, lon)| {
-        point_in_polygon(lat, lon, &outer)
+        point_in_polygon(lat, lon, outer)
             && !holes.iter().any(|h| point_in_polygon(lat, lon, h))
     })
 }
 
 /// Parse WKB with inner rings (holes). Returns (outer_ring, vec_of_holes).
-pub fn parse_wkb_polygon_with_holes(
+pub(crate) fn parse_wkb_polygon_with_holes(
     wkb_hex: &str,
 ) -> Option<(Vec<(f64, f64)>, Vec<Vec<(f64, f64)>>)> {
     if wkb_hex.len() < 18 {
@@ -469,7 +482,7 @@ pub fn parse_wkb_polygon_with_holes(
 
 /// Parse WKB hex into outer ring coordinates as Vec<(lat, lon)>.
 /// Reuses same parsing logic as ring_area_offset (proven to work for area calculation).
-pub fn parse_wkb_polygon_coords(wkb_hex: &str) -> Option<Vec<(f64, f64)>> {
+pub(crate) fn parse_wkb_polygon_coords(wkb_hex: &str) -> Option<Vec<(f64, f64)>> {
     if wkb_hex.len() < 18 {
         return None;
     }
@@ -558,7 +571,7 @@ pub fn parse_wkb_polygon_coords(wkb_hex: &str) -> Option<Vec<(f64, f64)>> {
 }
 
 /// Ray-casting point-in-polygon test.
-pub fn point_in_polygon(lat: f64, lon: f64, poly: &[(f64, f64)]) -> bool {
+pub(crate) fn point_in_polygon(lat: f64, lon: f64, poly: &[(f64, f64)]) -> bool {
     let n = poly.len();
     let mut inside = false;
     let mut j = n - 1;
