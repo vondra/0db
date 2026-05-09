@@ -2,41 +2,45 @@
 //! popup arrows directly via typed column views (no Arrow / IPC
 //! dependency in noise-compute).
 //!
-//! Architecture: airborne + cruise rows are converted to
-//! `AircraftSegment`s and run through the existing
-//! [`compute_aircraft`] kernel (Doc 29 + segment-level NPD + per-flight
-//! stats + band counters). Ground rows skip that path entirely — Stage
-//! 2C v2 already aggregated per-bucket emission energy into the
-//! `em_*_bands` columns under the `dB_sum_v6_1` contract, so we feed
-//! those bands straight into [`propagate_variants_full`] without
-//! re-bucketing or re-computing reference SEL. This is the
-//! "n_days bifurcation" the plan calls out: airborne / cruise still
-//! divide by `n_days`, ground does not.
+//! Architecture: airborne, cruise and ground rows each scatter directly
+//! onto their own per-row kernels:
+//! * airborne: per-sub-segment Doc 29 SEL → `FlightAccum` per real fid
+//! * cruise:   per-bucket Doc 29 SEL × density → `FlightAccum` per
+//!             synth fid + `CruiseFlightStats` per real fid for band
+//!             counter dedup
+//! * ground:   per-row stored `em_*_bands` → `propagate_variants_full`
+//!             without re-bucketing or re-computing reference SEL
+//!             (the `dB_sum_v6_1` contract)
+//!
+//! No `AircraftSegment` `Vec` is allocated and no fallthrough to the
+//! legacy `compute_aircraft` function — that function is gone after
+//! C2/C4. The v6 path is the only popup contract.
+
+use std::collections::HashMap;
 
 use crate::compute_path_effects;
 use crate::periods;
 use crate::propagation::iso9613::{self, SourceGeometry};
 use crate::types::{
     AircraftBandData, AircraftGroundOpsClassDetail, AircraftGroundOpsDetail, AircraftMetadata,
-    AircraftSegment, Barrier, Contributor, LayerKind, NoisePeriods, PropagationBaseline,
-    PropagationVariants, RasterSampler, Receiver, ScreeningBreakdown, SourceMetadata,
-    TerrainBreakdown, TraceCollector, VegetationBreakdown,
+    Barrier, Contributor, LayerKind, NoisePeriods, PropagationBaseline, PropagationVariants,
+    RasterSampler, Receiver, ScreeningBreakdown, SourceMetadata, TerrainBreakdown,
+    TraceCollector, VegetationBreakdown,
 };
 
 pub mod airborne;
 pub mod cruise;
 pub mod ground;
+pub mod state;
 pub mod views;
 
 pub use views::{AirborneRowView, BBox, CruiseRowView, GroundRowView, SubSegmentSlice};
 
 const NUM_BANDS: usize = 8;
 
-/// Pure-view popup compute. The signature is the v6 contract; airborne
-/// + cruise rows are expanded into `AircraftSegment`s under the hood
-/// to reuse the existing kernel — that's a temporary bridge while the
-/// per-row kernel path is being built. Ground propagation already
-/// runs row-direct.
+/// Pure-view popup compute. Consumes typed slices borrowed from the v6
+/// popup arrows; emits `(NoisePeriods, Vec<Contributor>, AircraftBandData)`
+/// matching the legacy entry point's contract.
 pub fn compute_aircraft_v6(
     receiver: &Receiver,
     airborne_rows: &[AirborneRowView<'_>],
@@ -49,44 +53,62 @@ pub fn compute_aircraft_v6(
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
     let n_days_f = (n_days as f64).max(1.0);
 
-    let airborne_segs = airborne::expand(airborne_rows);
-    let cruise_segs = cruise::expand(cruise_rows);
-    let mut ac_segs: Vec<AircraftSegment> =
-        Vec::with_capacity(airborne_segs.len() + cruise_segs.len());
-    ac_segs.extend(airborne_segs);
-    ac_segs.extend(cruise_segs);
-
-    let (ac_periods, ac_contribs, ac_band_data) = crate::compute_aircraft(
+    let mut flights = airborne::scatter(receiver, airborne_rows, rasters);
+    let mut cruise_flight_stats = HashMap::new();
+    cruise::scatter(
         receiver,
-        &ac_segs,
-        &[],
-        &[],
-        barriers,
+        cruise_rows,
         rasters,
-        n_days,
-        traces,
+        &mut flights,
+        &mut cruise_flight_stats,
     );
 
-    let g_res = ground::run(receiver, ground_rows, barriers, rasters);
+    let mut cruise_band = cruise::band_stats(&cruise_flight_stats);
+    let (airborne_periods, _airborne_energy, airborne_detail) =
+        airborne::build_detail(&flights, &mut cruise_band, n_days_f, traces);
 
-    let (g_periods, g_contribs, g_band) =
+    let g_res = ground::run(receiver, ground_rows, barriers, rasters);
+    let (ground_periods, ground_contribs, ground_detail) =
         build_ground_outputs(receiver, barriers, rasters, &g_res, n_days_f);
 
-    let combined_periods =
-        combine_periods(&ac_band_data.airborne.periods, &g_periods, &ac_periods);
+    let combined_periods = combine_periods(&airborne_periods, &ground_periods);
+
     let mut contributors: Vec<Contributor> = Vec::new();
-    contributors.extend(ac_contribs.into_iter().filter(|c| {
-        c.subtype == "airborne"
-            || matches!(
-                c.metadata.as_ref(),
-                Some(SourceMetadata::Aircraft(meta)) if meta.variant == "airborne"
-            )
-    }));
-    contributors.extend(g_contribs);
+    if airborne_periods.lden_db.is_finite() {
+        contributors.push(Contributor {
+            osm_id: None,
+            geometry: None,
+            baseline: PropagationBaseline::default(),
+            terrain: TerrainBreakdown::default(),
+            screening: ScreeningBreakdown::default(),
+            vegetation: VegetationBreakdown::default(),
+            terrain_impact_db: 0.0,
+            screening_impact_db: 0.0,
+            vegetation_impact_db: 0.0,
+            atmospheric_impact_db: 0.0,
+            ground_impact_db: 0.0,
+            source_type: LayerKind::Aircraft,
+            name: "Aircraft - airborne".to_string(),
+            subtype: "airborne".to_string(),
+            distance_m: 0.0,
+            periods: airborne_periods.clone(),
+            periods_free: airborne_periods.clone(),
+            emission_db: airborne_periods.lden_db,
+            received_bands: [0.0; NUM_BANDS],
+            metadata: Some(SourceMetadata::Aircraft(AircraftMetadata {
+                variant: "airborne".to_string(),
+                airport_name: None,
+                airport_key: None,
+                airborne: Some(airborne_detail.clone()),
+                ground_ops: None,
+            })),
+        });
+    }
+    contributors.extend(ground_contribs);
 
     let band_data = AircraftBandData {
-        airborne: ac_band_data.airborne,
-        ground_ops: g_band,
+        airborne: airborne_detail,
+        ground_ops: ground_detail,
     };
 
     (combined_periods, contributors, band_data)
@@ -339,16 +361,9 @@ fn aircraft_impact(full: &NoisePeriods, no_effect: &NoisePeriods, signed: bool) 
     round1(if signed { d } else { d.min(0.0) })
 }
 
-/// Energy-sum the airborne+cruise periods (already daily-averaged
-/// inside `compute_aircraft` via Doc-29 normalization) with the v6
-/// ground periods. Falls back to the airborne-only result if ground
-/// is silent so callers still see a finite Lden when there are no
-/// ground rows.
-fn combine_periods(
-    airborne: &NoisePeriods,
-    ground: &NoisePeriods,
-    airborne_total: &NoisePeriods,
-) -> NoisePeriods {
+/// Energy-sum the airborne periods (already daily-averaged via Doc 29
+/// normalization in `airborne::build_detail`) with the v6 ground periods.
+fn combine_periods(airborne: &NoisePeriods, ground: &NoisePeriods) -> NoisePeriods {
     let to_lin = |db: f64| -> f64 {
         if db.is_finite() {
             (db * std::f64::consts::LN_10 * 0.1).exp()
@@ -367,7 +382,7 @@ fn combine_periods(
     let total_eve = to_lin(airborne.le_db) + to_lin(ground.le_db);
     let total_night = to_lin(airborne.ln_db) + to_lin(ground.ln_db);
     if total_day + total_eve + total_night <= 0.0 {
-        return airborne_total.clone();
+        return NoisePeriods::silence();
     }
     periods::periods(to_db(total_day), to_db(total_eve), to_db(total_night))
 }

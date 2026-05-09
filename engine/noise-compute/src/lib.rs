@@ -30,9 +30,8 @@ use emission::road::{self};
 use propagation::geo;
 use propagation::iso9613::{self, SourceGeometry};
 use traces::{
-    build_aircraft_ground_segment_trace, build_point_segment_trace, build_rail_segment_trace,
-    build_road_segment_trace, BuildAircraftGroundTrace, BuildPointTrace, BuildRailTrace,
-    BuildRoadTrace,
+    build_point_segment_trace, build_rail_segment_trace, build_road_segment_trace, BuildPointTrace,
+    BuildRailTrace, BuildRoadTrace,
 };
 use types::*;
 
@@ -40,20 +39,6 @@ use types::*;
 #[inline]
 fn round1(v: f64) -> f64 {
     (v * 10.0).round() / 10.0
-}
-
-/// Aircraft ground-ops A-weighted impact scalar. Aircraft uses Doc 29 period
-/// normalization (not the ISO 9613 Lden weights that `lden_from_periods`
-/// assumes), so the impact delta is computed from `periods_from_normalized`
-/// Lden values passed in. `signed=true` for ground (CF[i] < 0 at 63/125 Hz
-/// can boost LF); otherwise the delta is clamped to ≤ 0.
-#[inline]
-fn aircraft_impact(full: &NoisePeriods, no_effect: &NoisePeriods, signed: bool) -> f64 {
-    if !full.lden_db.is_finite() {
-        return 0.0;
-    }
-    let d = full.lden_db - no_effect.lden_db;
-    round1(if signed { d } else { d.min(0.0) })
 }
 
 /// Decode WKB hex string (Polygon type 3) to GeoJSON.
@@ -154,12 +139,12 @@ pub fn compute_at_point_with_airports(
     airport_areas: &[AirportArea],
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
-    config: &ComputeConfig,
+    _config: &ComputeConfig,
     mut traces: Option<&mut TraceCollector>,
 ) -> NoiseResult {
     let mut source_results = Vec::new();
     let mut all_contributors = Vec::new();
-    let mut aircraft_band_data: Option<AircraftBandData> = None;
+    let aircraft_band_data: Option<AircraftBandData> = None;
 
     // ── Roads ──
     if !roads.is_empty() {
@@ -226,28 +211,13 @@ pub fn compute_at_point_with_airports(
     }
 
     // ── Aircraft (Doc 29 — SEPARATE from ISO 9613-2) ──
-    if !aircraft.is_empty() {
-        let (air_periods, air_contributors, band_data) = compute_aircraft(
-            receiver,
-            aircraft,
-            airport_lines,
-            airport_areas,
-            barriers,
-            rasters,
-            config.n_days,
-            traces.as_deref_mut(),
-        );
-        if air_periods.lden_db > f64::NEG_INFINITY {
-            source_results.push(SourceResult {
-                source_type: LayerKind::Aircraft,
-                periods: air_periods,
-                segment_count: aircraft.len(),
-                displayed_count: present::display_count(&air_contributors),
-            });
-            all_contributors.extend(air_contributors);
-            aircraft_band_data = Some(band_data);
-        }
-    }
+    // Aircraft handling moved to `compute::aircraft_v6::compute_aircraft_v6`,
+    // which consumes popup arrows directly via typed views and reads
+    // ground em_*_bands under the dB_sum_v6_1 contract. The
+    // `aircraft` / `airport_lines` / `airport_areas` parameters are kept
+    // on this entry point for compatibility with existing callers and
+    // should always be empty — invoke `compute_aircraft_v6` afterwards.
+    let _ = (aircraft, airport_lines, airport_areas);
 
     // ── Total ──
     let total = periods::sum_periods(
@@ -1641,1092 +1611,6 @@ fn compute_point_sources(
     (periods::periods(ld, le, ln), contributors)
 }
 
-/// Compute aircraft noise (Doc 29 — SEPARATE from ISO 9613-2).
-/// Per-segment SEL → per-flight energy → period Leq → Lden.
-fn compute_aircraft(
-    receiver: &Receiver,
-    segments: &[AircraftSegment],
-    airport_lines: &[AirportLine],
-    airport_areas: &[AirportArea],
-    barriers: &[Barrier],
-    rasters: &dyn RasterSampler,
-    n_days: u16,
-    mut traces: Option<&mut TraceCollector>,
-) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
-    // Ground ops traces are teed off inline (line source via ISO 9613),
-    // airborne traces inside the per-flight stats loop below (Doc 29 — no
-    // path profile).
-    use emission::aircraft;
-    use std::collections::{HashMap, HashSet};
-
-    let rx_elev = receiver.altitude_m();
-    let n_days_f = (n_days as f64).max(1.0);
-    let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
-
-    let periods_from_doc29_energy = |energy: [f64; 3]| -> NoisePeriods {
-        if energy.iter().sum::<f64>() <= 0.0 {
-            return NoisePeriods::silence();
-        }
-        let ld = aircraft::period_leq(energy[0], n_days_f, aircraft::PERIOD_SECONDS[0]);
-        let le = aircraft::period_leq(energy[1], n_days_f, aircraft::PERIOD_SECONDS[1]);
-        let ln = aircraft::period_leq(energy[2], n_days_f, aircraft::PERIOD_SECONDS[2]);
-        periods::periods(ld, le, ln)
-    };
-    let periods_from_normalized = |energy: [f64; 3]| -> NoisePeriods {
-        if energy.iter().sum::<f64>() <= 0.0 {
-            return NoisePeriods::silence();
-        }
-        periods::periods(
-            PropagationVariants::to_db(energy[0]),
-            PropagationVariants::to_db(energy[1]),
-            PropagationVariants::to_db(energy[2]),
-        )
-    };
-    let periods_from_variants =
-        |variants: &[PropagationVariants; 3]| periods_from_normalized([
-            variants[0].full_energy,
-            variants[1].full_energy,
-            variants[2].full_energy,
-        ]);
-
-    struct FlightAccum {
-        period_energy: [f64; 3],
-        peak_lmax: f64,
-        peak_sel: f64,
-        min_dist_m: f64,
-        peak_altitude_m: f64,
-        peak_period: u8,
-        peak_date_id: i16,
-        peak_seg_start: [f64; 2], // [lon, lat]
-        peak_seg_end: [f64; 2],
-        profile_idx: u8,
-        flight_weight: f64,
-        /// Set when this entry was created from a cruise bucket (i.e. the
-        /// scalar `seg.flight_id` was the bucket's first contributor). Lets
-        /// `flights_per_day` and the band counters exclude cruise entries
-        /// from the ground/airborne path and route them through
-        /// `cruise_flight_stats` instead — the bucket scalar over-counts
-        /// because one real flight crosses many R5 cells.
-        is_cruise: bool,
-    }
-    struct BandStats {
-        count: f64,
-        alt_sum: f64,
-        // Per-noise-class counts (NUM_CLASSES). Bucket aggregation is at the
-        // class level (variant B), so "top type in this band" is class-level.
-        class_counts: [u32; aircraft::NUM_CLASSES],
-    }
-    impl BandStats {
-        fn new() -> Self {
-            Self {
-                count: 0.0,
-                alt_sum: 0.0,
-                class_counts: [0; aircraft::NUM_CLASSES],
-            }
-        }
-        /// Add one event to this band. `count_w` and `alt_w_sum` are
-        /// caller-provided (callers weight differently: ground/airborne
-        /// uses `flight_weight` and `avg_alt * flight_weight`, cruise uses
-        /// 1.0 and the per-fid alt_at_peak directly).
-        fn add_event(&mut self, count_w: f64, alt_w_sum: f64, cls: usize, class_w: u32) {
-            self.count += count_w;
-            self.alt_sum += alt_w_sum;
-            self.class_counts[cls] += class_w;
-        }
-        fn top_type(&self) -> &'static str {
-            let idx = self
-                .class_counts
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, c)| *c)
-                .map(|(i, _)| i)
-                .unwrap_or(aircraft::FALLBACK_NOISE_CLASS as usize);
-            aircraft::CLASS_NAMES[idx]
-        }
-    }
-    struct GroundAirportAccum {
-        name: String,
-        airport_key: String,
-        variants: [PropagationVariants; 3],
-        kind_variants: [[PropagationVariants; 3]; 3],
-        observed_any: HashSet<u64>,
-        observed_by_kind: [HashSet<u64>; 3],
-        modeled_total: f64,
-        modeled_by_kind: [f64; 3],
-        emission_energy: f64,
-        min_dist: f64,
-        min_d_slant: f64,
-        min_ground_g: f64,
-        cp_lat: f64,
-        cp_lon: f64,
-        src_height: f64,
-        line_coords: Vec<[[f64; 2]; 2]>,
-    }
-    impl GroundAirportAccum {
-        fn new(name: String, airport_key: String, receiver: &Receiver) -> Self {
-            Self {
-                name,
-                airport_key,
-                variants: std::array::from_fn(|_| PropagationVariants::default()),
-                kind_variants: std::array::from_fn(|_| {
-                    std::array::from_fn(|_| PropagationVariants::default())
-                }),
-                observed_any: HashSet::new(),
-                observed_by_kind: std::array::from_fn(|_| HashSet::new()),
-                modeled_total: 0.0,
-                modeled_by_kind: [0.0; 3],
-                emission_energy: 0.0,
-                line_coords: Vec::new(),
-                min_dist: f64::INFINITY,
-                min_d_slant: f64::INFINITY,
-                min_ground_g: 0.5,
-                cp_lat: receiver.lat,
-                cp_lon: receiver.lon,
-                src_height: receiver.altitude_m(),
-            }
-        }
-    }
-
-    let mut flights: HashMap<u64, FlightAccum> = HashMap::new();
-    // Cruise rows aggregate many real flights per bucket; one real flight
-    // crosses many R5 buckets in the popup reach radius, so popup counters
-    // must dedup by real fid (the bucket-level scalar `flight_id` over-
-    // counts). Energy still flows through the per-bucket compute path; only
-    // identity counting is separated. Per-fid max peak_lmax + alt + class
-    // also feed the >30/45/60 dB band counters so a single FL350 transit
-    // crossing 30 R5 hexes adds 1 to each band it crosses, not 30.
-    struct CruiseFlightStats {
-        peak_lmax: f64,
-        alt_at_peak: f64,
-        class_at_peak: usize,
-    }
-    let mut cruise_flight_stats: HashMap<u64, CruiseFlightStats> = HashMap::new();
-    let airport_groups = aircraft::airport_ground_groups(airport_lines, airport_areas);
-    let mut ground_by_airport: HashMap<String, GroundAirportAccum> = HashMap::new();
-    let mut ground_variants = [PropagationVariants::default(); 3];
-    let mut ground_kind_variants: [[PropagationVariants; 3]; 3] =
-        std::array::from_fn(|_| std::array::from_fn(|_| PropagationVariants::default()));
-    let mut ground_observed_any: HashSet<u64> = HashSet::new();
-    let mut ground_observed_by_kind: [HashSet<u64>; 3] =
-        std::array::from_fn(|_| HashSet::new());
-    let mut ground_modeled_total = 0.0f64;
-    let mut ground_modeled_by_kind = [0.0f64; 3];
-    let mut ground_min_dist = f64::INFINITY;
-    let mut ground_min_d_slant = f64::INFINITY;
-    let mut ground_min_ground_g = 0.5;
-    let mut ground_cp_lat = receiver.lat;
-    let mut ground_cp_lon = receiver.lon;
-    let mut ground_src_height = receiver.altitude_m();
-
-    // Aggregate ground-ops segments into bucketed line sources up front.
-    // At airport receivers (Ruzyně) thousands of co-located ADS-B segments
-    // collapse into ~hundreds of buckets — propagating once per bucket
-    // saves the bulk of `propagate_variants_full` + `build_path_profile`
-    // work that previously ran per segment. Pipeline already ships with
-    // the same bucketing; this puts popup on the same line-source regime,
-    // and parity becomes a structural property.
-    //
-    // Cheap pre-gate: skip the HashMap allocation when there is no
-    // ground-context segment in this query (Dobříš and other rural
-    // receivers — most popup queries). The scan is O(n) byte compares,
-    // dominated by branch prediction; cheaper than `bucket_ground_ops`
-    // even at zero-bucket queries because of the avoided allocator hit.
-    let has_ground_candidate = segments.iter().any(|s| {
-        s.ground_context != aircraft::GROUND_CONTEXT_NONE || s.surface_model || s.on_ground
-    });
-    let ground_buckets = if has_ground_candidate {
-        aircraft::bucket_ground_ops(segments, rasters, n_days)
-    } else {
-        Vec::new()
-    };
-
-    // Hoist NpdLuts reference once per query — kernel inner math then sees
-    // a plain `&NpdLuts` instead of paying an `OnceLock` Acquire load on
-    // every (segment × receiver) call. Saves up to 100 k atomic loads per
-    // popup at airport-scale densities.
-    let npd_luts = aircraft::NpdLuts::shared();
-
-    for seg in segments {
-        // Pipeline filters this at projection. Doing it first here too
-        // skips ~5 raster-elevation lookups + a kernel call for cruise
-        // rep-line rows whose density rounded to zero.
-        let weight = seg.count_weight.max(0.0) as f64;
-        if weight <= 0.0 {
-            continue;
-        }
-        // Ground-ops segments (surface_model flag or airport-ground class)
-        // accumulate into buckets earlier in this fn. Skip here so they
-        // don't double-count. Cheap path: returns on the surface_model
-        // flag or the ground_context byte without sampling rasters.
-        if aircraft::is_ground_ops_segment(seg, rasters) {
-            continue;
-        }
-        // Sample terrain at five points along the segment in one batch.
-        // Old chain (`is_ground_stale` + `is_valid_airborne` + Filter D
-        // cuts in the kernel) sampled start/end three times each — nine
-        // lookups per typical airborne. Five-sample cache cuts that to
-        // five and feeds Filter D via segment_sel_with_terrain.
-        let terrain = aircraft::SegmentTerrain::sample(seg, rasters);
-        if aircraft::is_ground_stale_with_terrain(seg, &terrain) {
-            continue;
-        }
-        if !aircraft::is_valid_airborne_with_terrain(seg, &terrain) {
-            continue;
-        }
-
-        let (sel, cpa) = match aircraft::segment_sel_with_terrain(
-            seg,
-            receiver.lat,
-            receiver.lon,
-            rx_elev,
-            &terrain,
-            npd_luts,
-        ) {
-            Some(v) => v,
-            None => continue,
-        };
-        let energy =
-            crate::propagation::iso9613::fast_exp_f64(sel * std::f64::consts::LN_10 * 0.1) * weight;
-        let period = seg.period.min(2) as usize;
-        let is_cruise = !seg.cruise_flight_ids.is_empty();
-        let acc = flights.entry(seg.flight_id).or_insert(FlightAccum {
-            period_energy: [0.0; 3],
-            peak_lmax: -999.0,
-            peak_sel: -999.0,
-            min_dist_m: f64::MAX,
-            peak_altitude_m: 0.0,
-            peak_period: 0,
-            peak_date_id: 0,
-            peak_seg_start: [0.0; 2],
-            peak_seg_end: [0.0; 2],
-            profile_idx: seg.profile_idx,
-            flight_weight: weight,
-            is_cruise,
-        });
-        acc.period_energy[period] += energy;
-        // Peak event Lmax — looked up directly from the per-class LAmax NPD
-        // LUT at the segment's slant distance. Replaces the prior hardcoded
-        // `sel - 12.0` approximation that had ±5 dB bias across operations
-        // (Doc 29 §A.2.1 / FAA AEDT TM §6 measure SEL−Lmax = 8–18 dB
-        // depending on flight geometry). LAmax NPD is per-aircraft per-
-        // distance, so this fixes the systematic under/over-estimate of
-        // peak event noise without per-event ΔI/Λ corrections (those are
-        // < 0.5 dB at typical TMA approach β).
-        let class_idx = aircraft::noise_class_of(seg.profile_idx) as usize;
-        let log_d = (cpa.d_p_m * aircraft::FT_PER_M).max(100.0).log10();
-        let lmax = npd_luts.lookup_lmax(class_idx, seg.is_departure, log_d);
-        if lmax > acc.peak_lmax {
-            acc.peak_lmax = lmax;
-            acc.peak_sel = sel;
-            acc.peak_altitude_m = cpa.relative_alt_m;
-            acc.peak_period = seg.period;
-            acc.peak_date_id = seg.date_id;
-            acc.peak_seg_start = [seg.start_lon, seg.start_lat];
-            acc.peak_seg_end = [seg.end_lon, seg.end_lat];
-        }
-        if is_cruise {
-            for &fid in &seg.cruise_flight_ids {
-                let entry = cruise_flight_stats
-                    .entry(fid)
-                    .or_insert(CruiseFlightStats {
-                        peak_lmax: f64::NEG_INFINITY,
-                        alt_at_peak: 0.0,
-                        class_at_peak: class_idx,
-                    });
-                if lmax > entry.peak_lmax {
-                    entry.peak_lmax = lmax;
-                    entry.alt_at_peak = cpa.relative_alt_m;
-                    entry.class_at_peak = class_idx;
-                }
-            }
-        }
-        if cpa.d_p_m < acc.min_dist_m {
-            acc.min_dist_m = cpa.d_p_m;
-        }
-        if weight > acc.flight_weight {
-            acc.flight_weight = weight;
-        }
-    }
-
-    // Pipeline-shape accumulation: each bucket is one line source carrying
-    // the energy of N (~5-10) co-located ADS-B segments. Path effects
-    // (build_path_profile, terrain, screening, vegetation) computed once
-    // per bucket instead of once per segment — popup mirror of pipeline's
-    // bucketed scatter at `pipeline-worker/src/main.rs`.
-    for bucket in &ground_buckets {
-        let kind_idx = (bucket.kind.saturating_sub(1) as usize).min(2);
-        let mid_lat = (bucket.start_lat + bucket.end_lat) * 0.5;
-        let mid_lon = (bucket.start_lon + bucket.end_lon) * 0.5;
-
-        let (group_name, group_key) = if let Some(mut group_idx) =
-            aircraft::assign_segment_to_airport_group(
-                &bucket.representative_seg,
-                &airport_groups,
-                rasters,
-            ) {
-            // Resolve unnamed groups by snapping to the nearest named group within 2.5 km.
-            // Same heuristic the per-segment code used; applied once per bucket here.
-            if airport_groups[group_idx].name.trim().is_empty()
-                && airport_groups[group_idx].airport_key.trim().is_empty()
-            {
-                if let Some((resolved_idx, _)) = airport_groups
-                    .iter()
-                    .enumerate()
-                    .filter(|(idx, group)| {
-                        *idx != group_idx
-                            && (!group.name.trim().is_empty()
-                                || !group.airport_key.trim().is_empty())
-                    })
-                    .map(|(idx, group)| {
-                        (
-                            idx,
-                            geo::flat_dist(
-                                airport_groups[group_idx].centroid_lat,
-                                airport_groups[group_idx].centroid_lon,
-                                group.centroid_lat,
-                                group.centroid_lon,
-                            ),
-                        )
-                    })
-                    .filter(|(_, dist_m)| *dist_m <= 2_500.0)
-                    .min_by(|a, b| {
-                        a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
-                    })
-                {
-                    group_idx = resolved_idx;
-                }
-            }
-            let group = &airport_groups[group_idx];
-            let name = if !group.name.trim().is_empty() {
-                group.name.clone()
-            } else if !group.airport_key.trim().is_empty() {
-                group.airport_key.clone()
-            } else {
-                format!("Airport {}", group_idx + 1)
-            };
-            let key = if !group.airport_key.trim().is_empty() {
-                format!("airport:{}", group.airport_key)
-            } else {
-                format!("airport_idx:{group_idx}")
-            };
-            (name, key)
-        } else {
-            let cell_lat = (mid_lat / 0.02).round() as i32;
-            let cell_lon = (mid_lon / 0.03).round() as i32;
-            (
-                format!("Inferred airfield ({:.2}, {:.2})", mid_lat, mid_lon),
-                format!("inferred:{cell_lat}:{cell_lon}"),
-            )
-        };
-
-        let airport_acc = ground_by_airport
-            .entry(group_key.clone())
-            .or_insert_with(|| GroundAirportAccum::new(group_name.clone(), group_key, receiver));
-
-        if airport_acc.line_coords.len() < 200 {
-            airport_acc.line_coords.push([
-                [bucket.start_lon, bucket.start_lat],
-                [bucket.end_lon, bucket.end_lat],
-            ]);
-        }
-
-        // Bucket emission energy (linear) summed across all bands × periods.
-        let source_energy: f64 = bucket
-            .em_day
-            .iter()
-            .chain(bucket.em_eve.iter())
-            .chain(bucket.em_night.iter())
-            .copied()
-            .sum();
-        airport_acc.emission_energy += source_energy;
-
-        // Modeled (synthetic) vs observed (real ADS-B) attribution. Both
-        // counters were summed at bucket-build time; just propagate them
-        // to the per-airport and global accumulators.
-        ground_modeled_total += bucket.modeled_weight;
-        for k in 0..3 {
-            ground_modeled_by_kind[k] += bucket.modeled_by_kind[k];
-        }
-        airport_acc.modeled_total += bucket.modeled_weight;
-        for k in 0..3 {
-            airport_acc.modeled_by_kind[k] += bucket.modeled_by_kind[k];
-        }
-        for &fid in &bucket.observed_flight_ids {
-            ground_observed_any.insert(fid);
-            airport_acc.observed_any.insert(fid);
-        }
-        for k in 0..3 {
-            for &fid in &bucket.observed_by_kind[k] {
-                ground_observed_by_kind[k].insert(fid);
-                airport_acc.observed_by_kind[k].insert(fid);
-            }
-        }
-
-        // Convert linear bucket emission back to dB for the propagation
-        // chain (it expects dB SPL per band).
-        let emission_day_db = aircraft::ground_ops_bucket_emission_db(&bucket.em_day);
-        let emission_eve_db = aircraft::ground_ops_bucket_emission_db(&bucket.em_eve);
-        let emission_night_db = aircraft::ground_ops_bucket_emission_db(&bucket.em_night);
-
-        let cp = geo::closest_point_on_segment(
-            receiver.lat,
-            receiver.lon,
-            bucket.start_lat,
-            bucket.start_lon,
-            bucket.end_lat,
-            bucket.end_lon,
-        );
-        let dist_m = cp.dist_m;
-        let max_em = emission_day_db
-            .iter()
-            .chain(emission_eve_db.iter())
-            .chain(emission_night_db.iter())
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max);
-        if geo::below_free_field_threshold_line(max_em, dist_m, 0.0) {
-            continue;
-        }
-
-        let cp_elev = rasters.elevation(cp.lat, cp.lon) + bucket.source_height_m;
-        let d_slant = geo::slant_dist(dist_m, cp_elev, receiver.altitude_m()).max(1.0);
-        let flc = geo::finite_line_correction(bucket.length_m as f64, dist_m, cp.fraction);
-
-        let mut path_profile = propagation::PathProfile::new();
-        rasters.build_path_profile(
-            cp.lat,
-            cp.lon,
-            receiver.lat,
-            receiver.lon,
-            dist_m,
-            &mut path_profile,
-        );
-        let ground_g = propagation::path_effects::ground_g_from_profile(&path_profile);
-        let (terrain, _) = propagation::path_effects::terrain_attenuation_with_meta(
-            &mut path_profile,
-            cp_elev,
-            receiver.altitude_m(),
-        );
-        let (screening_atten, obstacle_trace) =
-            propagation::path_effects::screening_attenuation_with_meta(
-                &mut path_profile,
-                barriers,
-                cp_elev,
-                receiver.altitude_m(),
-                0.0,
-                &terrain.attenuation_bands,
-            );
-        let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
-
-        let emissions = [emission_day_db, emission_eve_db, emission_night_db];
-        let mut seg_variants = [
-            PropagationVariants::default(),
-            PropagationVariants::default(),
-            PropagationVariants::default(),
-        ];
-        for (pi, emission) in emissions.iter().enumerate() {
-            let v = iso9613::propagate_variants_full(
-                emission,
-                d_slant,
-                SourceGeometry::Line,
-                ground_g,
-                &terrain.attenuation_bands,
-                &screening_atten,
-                &veg_atten,
-                reflection,
-                flc,
-            );
-            seg_variants[pi].add(&v);
-            ground_variants[pi].add(&v);
-            ground_kind_variants[kind_idx][pi].add(&v);
-            airport_acc.variants[pi].add(&v);
-            airport_acc.kind_variants[kind_idx][pi].add(&v);
-        }
-
-        if let Some(t) = traces.as_deref_mut() {
-            t.segments.push(build_aircraft_ground_segment_trace(BuildAircraftGroundTrace {
-                seg: &bucket.representative_seg,
-                cp_lat: cp.lat,
-                cp_lon: cp.lon,
-                src_alt: cp_elev,
-                rcv_alt: receiver.altitude_m(),
-                d_slant,
-                flc,
-                ground_g,
-                reflection_boost_db: reflection,
-                kind_idx,
-                path_profile: std::mem::take(&mut path_profile),
-                terrain,
-                screening_atten,
-                obstacle_trace,
-                veg_atten,
-                seg_variants,
-                lw_bands: emissions,
-            }));
-        }
-
-        if dist_m < ground_min_dist {
-            ground_min_dist = dist_m;
-            ground_min_d_slant = d_slant;
-            ground_min_ground_g = ground_g;
-            ground_cp_lat = cp.lat;
-            ground_cp_lon = cp.lon;
-            ground_src_height = cp_elev;
-        }
-        if dist_m < airport_acc.min_dist {
-            airport_acc.min_dist = dist_m;
-            airport_acc.min_d_slant = d_slant;
-            airport_acc.min_ground_g = ground_g;
-            airport_acc.cp_lat = cp.lat;
-            airport_acc.cp_lon = cp.lon;
-            airport_acc.src_height = cp_elev;
-        }
-    }
-
-    let ground_periods = periods_from_variants(&ground_variants);
-    if flights.is_empty() && !ground_periods.lden_db.is_finite() {
-        return (NoisePeriods::silence(), Vec::new(), AircraftBandData::default());
-    }
-
-    // date_id (days since 2020-01-01) → "YYYY-MM-DD". Defined here (before the
-    // single flights-iteration loop below) so AirborneTrace push can use it.
-    let date_from_id = |date_id: i16| -> String {
-        let mut rem = date_id as i32;
-        let mut y = 2020i32;
-        loop {
-            let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
-            let yd = if leap { 366 } else { 365 };
-            if rem < yd {
-                break;
-            }
-            rem -= yd;
-            y += 1;
-        }
-        let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
-        let mdays: [i32; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-        let mut m = 0usize;
-        while m < 12 && rem >= mdays[m] {
-            rem -= mdays[m];
-            m += 1;
-        }
-        format!("{:04}-{:02}-{:02}", y, m + 1, rem + 1)
-    };
-
-    let mut airborne_energy = [0.0f64; 3];
-    let mut band_faint = BandStats::new();
-    let mut band_audible = BandStats::new();
-    let mut band_disruptive = BandStats::new();
-    let mut helicopter_count = 0.0f64;
-    let mut global_peak_lmax = f64::NEG_INFINITY;
-    for (&flight_id, acc) in flights.iter() {
-        for p in 0..3 {
-            airborne_energy[p] += acc.period_energy[p];
-        }
-        let flight_energy: f64 = acc.period_energy.iter().sum();
-        if flight_energy <= 0.0 {
-            continue;
-        }
-        if acc.peak_lmax > global_peak_lmax {
-            global_peak_lmax = acc.peak_lmax;
-        }
-        // Cruise FlightAccum entries are per-bucket, not per real flight: a
-        // single FL350 transit crosses ~30 R5 hexes and lands in 30 separate
-        // FlightAccum entries (each keyed by the bucket synth fid). Counting
-        // their `flight_weight` here would multi-count by the same factor
-        // that Etapa 2 already removed from `flights_per_day`. Cruise
-        // contributions are added separately below from `cruise_flight_stats`.
-        if acc.is_cruise {
-            continue;
-        }
-        // Helicopter class index is dynamic — look it up via the generated
-        // CLASS_NAMES table. The pre-Tier-2 hard-coded `profile_idx == 6`
-        // referred to the LightGA+Rotorcraft bucket; in Tier 2 helicopters
-        // are their own class (HELICOPTER) at the end of NOISE_CLASSES.
-        const HELICOPTER_CLASS_NAME: &str = "HELICOPTER";
-        let cls = aircraft::noise_class_of(acc.profile_idx) as usize;
-        if aircraft::CLASS_NAMES[cls] == HELICOPTER_CLASS_NAME {
-            helicopter_count += acc.flight_weight / n_days_f;
-        }
-        let avg_alt = acc.min_dist_m;
-        let cls = aircraft::noise_class_of(acc.profile_idx) as usize;
-        let weight = acc.flight_weight.round().max(1.0) as u32;
-        let alt_w_sum = avg_alt * acc.flight_weight;
-        if acc.peak_lmax > 30.0 {
-            band_faint.add_event(acc.flight_weight, alt_w_sum, cls, weight);
-            if acc.peak_lmax > 45.0 {
-                band_audible.add_event(acc.flight_weight, alt_w_sum, cls, weight);
-                if acc.peak_lmax > 60.0 {
-                    band_disruptive.add_event(acc.flight_weight, alt_w_sum, cls, weight);
-                }
-            }
-        }
-
-        // Popup tee-off: AirborneTrace per flight. Doc 29 is scalar-SEL only —
-        // no per-band spectrum is physically meaningful for airborne aircraft.
-        if let Some(t) = traces.as_deref_mut() {
-            let ld = aircraft::period_leq(acc.period_energy[0], n_days_f, aircraft::PERIOD_SECONDS[0]);
-            let le = aircraft::period_leq(acc.period_energy[1], n_days_f, aircraft::PERIOD_SECONDS[1]);
-            let ln = aircraft::period_leq(acc.period_energy[2], n_days_f, aircraft::PERIOD_SECONDS[2]);
-            let lden = crate::periods::compute_lden(ld, le, ln);
-
-            // Elevation angle is approximate: peak_altitude_m and min_dist_m may
-            // come from different segments of the same flight (peak tracks the
-            // loudest Lmax, min_dist tracks the closest CPA). Clamp ratio to 1.0
-            // so the asin stays finite; we lose some accuracy when alt > cpa.
-            let cpa = acc.min_dist_m.max(1.0);
-            let elevation_angle_deg =
-                (acc.peak_altitude_m / cpa).clamp(-1.0, 1.0).asin().to_degrees();
-
-            let (icao_hex, start_unix, synthetic) = match crate::flight_id::unpack(flight_id) {
-                crate::flight_id::FlightIdKind::Real { icao24, start_unix } => (
-                    crate::flight_id::icao24_to_hex_lower(icao24),
-                    Some(start_unix),
-                    false,
-                ),
-                crate::flight_id::FlightIdKind::Synth { .. } => (String::new(), None, true),
-            };
-            t.airborne.push(AirborneTrace {
-                flight_id,
-                date: date_from_id(acc.peak_date_id),
-                period: acc.peak_period,
-                profile: aircraft::PROFILES[aircraft::clamp_profile_idx(acc.profile_idx)].name.to_string(),
-                lmax_db: if acc.peak_lmax > -900.0 { round1(acc.peak_lmax) } else { 0.0 },
-                sel_db: if acc.peak_sel > -900.0 { round1(acc.peak_sel) } else { 0.0 },
-                cpa_distance_m: round1(acc.min_dist_m),
-                altitude_m_at_cpa: round1(acc.peak_altitude_m),
-                elevation_angle_deg: round1(elevation_angle_deg),
-                n_days_normalized: n_days_f,
-                geometry: [
-                    [acc.peak_seg_start[1], acc.peak_seg_start[0]],
-                    [acc.peak_seg_end[1], acc.peak_seg_end[0]],
-                ],
-                received_lden: lden,
-                icao_hex,
-                start_unix,
-                synthetic,
-            });
-        }
-    }
-
-    // Cruise contributions to band counts: one count per unique real fid that
-    // crossed each band's peak threshold (max peak_lmax across all R5 buckets
-    // it appeared in). Replaces the per-bucket multi-count that ran in the
-    // FlightAccum loop above.
-    for stats in cruise_flight_stats.values() {
-        if stats.peak_lmax > 30.0 {
-            let cls = stats.class_at_peak;
-            band_faint.add_event(1.0, stats.alt_at_peak, cls, 1);
-            if stats.peak_lmax > 45.0 {
-                band_audible.add_event(1.0, stats.alt_at_peak, cls, 1);
-                if stats.peak_lmax > 60.0 {
-                    band_disruptive.add_event(1.0, stats.alt_at_peak, cls, 1);
-                }
-            }
-        }
-    }
-
-    let airborne_periods = periods_from_doc29_energy(airborne_energy);
-    let airborne_normalized: [f64; 3] = std::array::from_fn(|pi| {
-        if airborne_energy[pi] > 0.0 {
-            airborne_energy[pi] / (n_days_f * aircraft::PERIOD_SECONDS[pi])
-        } else {
-            0.0
-        }
-    });
-    let total = periods_from_normalized(std::array::from_fn(|pi| {
-        airborne_normalized[pi] + ground_variants[pi].full_energy
-    }));
-    let (ground_terrain_meta, ground_screening_meta, ground_vegetation_meta) =
-        if ground_min_dist.is_finite() {
-            compute_path_effects(
-                rasters,
-                barriers,
-                ground_cp_lat,
-                ground_cp_lon,
-                ground_src_height,
-                receiver,
-                ground_min_dist,
-                0.0,
-            )
-        } else {
-            (
-                TerrainBreakdown::default(),
-                ScreeningBreakdown::default(),
-                VegetationBreakdown::default(),
-            )
-        };
-    let ground_no_terrain = periods_from_normalized([
-        ground_variants[0].no_terrain_energy,
-        ground_variants[1].no_terrain_energy,
-        ground_variants[2].no_terrain_energy,
-    ]);
-    let ground_no_screening = periods_from_normalized([
-        ground_variants[0].no_screening_energy,
-        ground_variants[1].no_screening_energy,
-        ground_variants[2].no_screening_energy,
-    ]);
-    let ground_no_vegetation = periods_from_normalized([
-        ground_variants[0].no_vegetation_energy,
-        ground_variants[1].no_vegetation_energy,
-        ground_variants[2].no_vegetation_energy,
-    ]);
-    let ground_no_ground = periods_from_normalized([
-        ground_variants[0].no_ground_energy,
-        ground_variants[1].no_ground_energy,
-        ground_variants[2].no_ground_energy,
-    ]);
-    let ground_no_atmospheric = periods_from_normalized([
-        ground_variants[0].no_atmospheric_energy,
-        ground_variants[1].no_atmospheric_energy,
-        ground_variants[2].no_atmospheric_energy,
-    ]);
-    let ground_periods_free = periods_from_normalized([
-        ground_variants[0].free_field_energy,
-        ground_variants[1].free_field_energy,
-        ground_variants[2].free_field_energy,
-    ]);
-    let ground_emission_energy: f64 = ground_by_airport.values().map(|acc| acc.emission_energy).sum();
-    let ground_emission_db = if ground_emission_energy > 0.0 {
-        10.0 * ground_emission_energy.log10()
-    } else {
-        f64::NEG_INFINITY
-    };
-    let ground_received_bands = std::array::from_fn(|i| {
-        if ground_variants[0].band_energy[i] > 0.0 {
-            10.0 * ground_variants[0].band_energy[i].log10()
-        } else {
-            f64::NEG_INFINITY
-        }
-    });
-    // Real flight count splits into:
-    //   * ground/airborne FlightAccum entries — sum of `flight_weight`
-    //     (max `count_weight` across that flight's segments) preserves the
-    //     synthetic-aggregate semantics where one segment with weight=N
-    //     stands for N operations (e.g. inferred runway-roll buckets).
-    //   * cruise unique contributors — counted via `cruise_flight_stats`
-    //     keys, populated from per-bucket lists during the segment loop.
-    //     Excludes cruise FlightAccum entries (bucket scalar fid is a synth
-    //     value, not a real flight; the real fids are in cruise_flight_stats).
-    let real_flights_weight: f64 = flights
-        .values()
-        .filter(|acc| !acc.is_cruise)
-        .map(|acc| acc.flight_weight)
-        .sum();
-    let flights_per_day = (real_flights_weight + cruise_flight_stats.len() as f64) / n_days_f;
-
-    // Top flights by Lden energy contribution (for popup diagnostics).
-    // Skip cruise bucket entries — they're per-bucket aggregates with synth
-    // scalar IDs, not real per-flight events; including them would surface
-    // a fake "Top flight" row labelled with synthesised time/icao.
-    let total_lden_energy: f64 = airborne_energy.iter().sum();
-    let top_flights = if total_lden_energy > 0.0 {
-        let mut flight_entries: Vec<(u64, &FlightAccum)> = flights
-            .iter()
-            .filter(|(_, acc)| !acc.is_cruise)
-            .map(|(fid, acc)| (*fid, acc))
-            .collect();
-        flight_entries.sort_by(|a, b| {
-            let ea: f64 = a.1.period_energy.iter().sum();
-            let eb: f64 = b.1.period_energy.iter().sum();
-            eb.partial_cmp(&ea).unwrap_or(std::cmp::Ordering::Equal)
-        });
-        flight_entries.iter().take(5).map(|(fid, f)| {
-            let flight_energy: f64 = f.period_energy.iter().sum();
-            // Unpack the packed flight_id so popup gets real ICAO hex +
-            // timestamp without crossing the JSON / JS Number 53-bit boundary.
-            let (icao_hex, start_unix, synthetic) = match crate::flight_id::unpack(*fid) {
-                crate::flight_id::FlightIdKind::Real { icao24, start_unix } => (
-                    crate::flight_id::icao24_to_hex_lower(icao24),
-                    Some(start_unix),
-                    false,
-                ),
-                crate::flight_id::FlightIdKind::Synth { .. } => (String::new(), None, true),
-            };
-            types::AircraftTopFlight {
-                lmax_db: if f.peak_lmax > -900.0 { (f.peak_lmax * 10.0).round() / 10.0 } else { 0.0 },
-                cpa_distance_m: (f.min_dist_m * 10.0).round() / 10.0,
-                altitude_m: (f.peak_altitude_m * 10.0).round() / 10.0,
-                period: f.peak_period,
-                date: date_from_id(f.peak_date_id),
-                profile: aircraft::PROFILES[aircraft::clamp_profile_idx(f.profile_idx)].name.to_string(),
-                energy_pct: (flight_energy / total_lden_energy * 1000.0).round() / 10.0,
-                geometry: [f.peak_seg_start, f.peak_seg_end],
-                icao_hex,
-                start_unix,
-                synthetic,
-            }
-        }).collect()
-    } else {
-        Vec::new()
-    };
-
-    let band_data = AircraftBandData {
-        airborne: AircraftAirborneDetail {
-            periods: airborne_periods.clone(),
-            observed_flights_per_day: flights_per_day,
-            helicopter_flights_per_day: helicopter_count,
-            lmax_peak: if global_peak_lmax > -900.0 {
-                Some(global_peak_lmax)
-            } else {
-                None
-            },
-            faint: AircraftEventBandStats {
-                observed_events_per_day: band_faint.count / n_days_f,
-                avg_altitude_m: if band_faint.count > 0.0 {
-                    band_faint.alt_sum / band_faint.count
-                } else {
-                    0.0
-                },
-                top_aircraft: band_faint.top_type().to_string(),
-            },
-            audible: AircraftEventBandStats {
-                observed_events_per_day: band_audible.count / n_days_f,
-                avg_altitude_m: if band_audible.count > 0.0 {
-                    band_audible.alt_sum / band_audible.count
-                } else {
-                    0.0
-                },
-                top_aircraft: band_audible.top_type().to_string(),
-            },
-            disruptive: AircraftEventBandStats {
-                observed_events_per_day: band_disruptive.count / n_days_f,
-                avg_altitude_m: if band_disruptive.count > 0.0 {
-                    band_disruptive.alt_sum / band_disruptive.count
-                } else {
-                    0.0
-                },
-                top_aircraft: band_disruptive.top_type().to_string(),
-            },
-            top_flights,
-        },
-        ground_ops: AircraftGroundOpsDetail {
-            periods: ground_periods.clone(),
-            periods_free: ground_periods_free,
-            observed_movements_per_day: ground_observed_any.len() as f64 / n_days_f,
-            modeled_movements_per_day: ground_modeled_total / n_days_f,
-            distance_m: if ground_min_dist.is_finite() { ground_min_dist } else { 0.0 },
-            emission_db: ground_emission_db,
-            received_bands: ground_received_bands,
-            runway_roll: AircraftGroundOpsClassDetail {
-                periods: periods_from_variants(&ground_kind_variants[0]),
-                observed_movements_per_day: ground_observed_by_kind[0].len() as f64 / n_days_f,
-                modeled_movements_per_day: ground_modeled_by_kind[0] / n_days_f,
-            },
-            taxi: AircraftGroundOpsClassDetail {
-                periods: periods_from_variants(&ground_kind_variants[1]),
-                observed_movements_per_day: ground_observed_by_kind[1].len() as f64 / n_days_f,
-                modeled_movements_per_day: ground_modeled_by_kind[1] / n_days_f,
-            },
-            apron_movement: AircraftGroundOpsClassDetail {
-                periods: periods_from_variants(&ground_kind_variants[2]),
-                observed_movements_per_day: ground_observed_by_kind[2].len() as f64 / n_days_f,
-                modeled_movements_per_day: ground_modeled_by_kind[2] / n_days_f,
-            },
-            baseline: if ground_min_dist.is_finite() {
-                iso9613::compute_baseline(
-                    ground_min_d_slant,
-                    SourceGeometry::Line,
-                    ground_min_ground_g,
-                )
-            } else {
-                PropagationBaseline::default()
-            },
-            terrain: ground_terrain_meta,
-            screening: ground_screening_meta,
-            vegetation: ground_vegetation_meta,
-            terrain_impact_db: aircraft_impact(&ground_periods, &ground_no_terrain, false),
-            screening_impact_db: aircraft_impact(&ground_periods, &ground_no_screening, false),
-            vegetation_impact_db: aircraft_impact(&ground_periods, &ground_no_vegetation, false),
-            atmospheric_impact_db: aircraft_impact(&ground_periods, &ground_no_atmospheric, false),
-            ground_impact_db: aircraft_impact(&ground_periods, &ground_no_ground, true),
-        },
-    };
-
-    let mut contributors = Vec::new();
-
-    if airborne_periods.lden_db.is_finite() {
-        // Doc 29 airborne has no ISO 9613-2 path effects — all impact
-        // scalars are zero (scalar SEL propagation only).
-        contributors.push(Contributor {
-            osm_id: None,
-            geometry: None,
-            baseline: PropagationBaseline::default(),
-            terrain: TerrainBreakdown::default(),
-            screening: ScreeningBreakdown::default(),
-            vegetation: VegetationBreakdown::default(),
-            terrain_impact_db: 0.0,
-            screening_impact_db: 0.0,
-            vegetation_impact_db: 0.0,
-            atmospheric_impact_db: 0.0,
-            ground_impact_db: 0.0,
-            source_type: LayerKind::Aircraft,
-            name: "Aircraft - airborne".to_string(),
-            subtype: "airborne".to_string(),
-            distance_m: 0.0,
-            periods: airborne_periods.clone(),
-            periods_free: airborne_periods.clone(),
-            emission_db: airborne_periods.lden_db,
-            received_bands: [0.0; NUM_BANDS],
-            metadata: Some(SourceMetadata::Aircraft(AircraftMetadata {
-                variant: "airborne".to_string(),
-                airport_name: None,
-                airport_key: None,
-                airborne: Some(band_data.airborne.clone()),
-                ground_ops: None,
-            })),
-        });
-    }
-
-    let mut airport_keys: Vec<_> = ground_by_airport.keys().cloned().collect();
-    airport_keys.sort();
-    for airport_key in airport_keys {
-        let Some(acc) = ground_by_airport.get(&airport_key) else {
-            continue;
-        };
-        let airport_periods = periods_from_variants(&acc.variants);
-        if !airport_periods.lden_db.is_finite() {
-            continue;
-        }
-
-        let airport_periods_free = periods_from_normalized([
-            acc.variants[0].free_field_energy,
-            acc.variants[1].free_field_energy,
-            acc.variants[2].free_field_energy,
-        ]);
-        let airport_no_terrain = periods_from_normalized([
-            acc.variants[0].no_terrain_energy,
-            acc.variants[1].no_terrain_energy,
-            acc.variants[2].no_terrain_energy,
-        ]);
-        let airport_no_screening = periods_from_normalized([
-            acc.variants[0].no_screening_energy,
-            acc.variants[1].no_screening_energy,
-            acc.variants[2].no_screening_energy,
-        ]);
-        let airport_no_vegetation = periods_from_normalized([
-            acc.variants[0].no_vegetation_energy,
-            acc.variants[1].no_vegetation_energy,
-            acc.variants[2].no_vegetation_energy,
-        ]);
-        let airport_no_ground = periods_from_normalized([
-            acc.variants[0].no_ground_energy,
-            acc.variants[1].no_ground_energy,
-            acc.variants[2].no_ground_energy,
-        ]);
-        let airport_no_atmospheric = periods_from_normalized([
-            acc.variants[0].no_atmospheric_energy,
-            acc.variants[1].no_atmospheric_energy,
-            acc.variants[2].no_atmospheric_energy,
-        ]);
-        let airport_terrain_impact = aircraft_impact(&airport_periods, &airport_no_terrain, false);
-        let airport_screening_impact =
-            aircraft_impact(&airport_periods, &airport_no_screening, false);
-        let airport_vegetation_impact =
-            aircraft_impact(&airport_periods, &airport_no_vegetation, false);
-        let airport_atmospheric_impact =
-            aircraft_impact(&airport_periods, &airport_no_atmospheric, false);
-        let airport_ground_impact = aircraft_impact(&airport_periods, &airport_no_ground, true);
-        let (terrain_meta, screening_meta, vegetation_meta) = compute_path_effects(
-            rasters,
-            barriers,
-            acc.cp_lat,
-            acc.cp_lon,
-            acc.src_height,
-            receiver,
-            acc.min_dist,
-            0.0,
-        );
-        let baseline = iso9613::compute_baseline(
-            acc.min_d_slant,
-            SourceGeometry::Line,
-            acc.min_ground_g,
-        );
-        let received_bands = std::array::from_fn(|i| {
-            if acc.variants[0].band_energy[i] > 0.0 {
-                10.0 * acc.variants[0].band_energy[i].log10()
-            } else {
-                f64::NEG_INFINITY
-            }
-        });
-        let emission_db = if acc.emission_energy > 0.0 {
-            10.0 * acc.emission_energy.log10()
-        } else {
-            f64::NEG_INFINITY
-        };
-        let display_name = if !acc.name.trim().is_empty() {
-            acc.name.clone()
-        } else {
-            "Inferred airfield".to_string()
-        };
-        let detail = AircraftGroundOpsDetail {
-            periods: airport_periods.clone(),
-            periods_free: airport_periods_free.clone(),
-            observed_movements_per_day: acc.observed_any.len() as f64 / n_days_f,
-            modeled_movements_per_day: acc.modeled_total / n_days_f,
-            distance_m: acc.min_dist,
-            emission_db,
-            received_bands,
-            runway_roll: AircraftGroundOpsClassDetail {
-                periods: periods_from_variants(&acc.kind_variants[0]),
-                observed_movements_per_day: acc.observed_by_kind[0].len() as f64 / n_days_f,
-                modeled_movements_per_day: acc.modeled_by_kind[0] / n_days_f,
-            },
-            taxi: AircraftGroundOpsClassDetail {
-                periods: periods_from_variants(&acc.kind_variants[1]),
-                observed_movements_per_day: acc.observed_by_kind[1].len() as f64 / n_days_f,
-                modeled_movements_per_day: acc.modeled_by_kind[1] / n_days_f,
-            },
-            apron_movement: AircraftGroundOpsClassDetail {
-                periods: periods_from_variants(&acc.kind_variants[2]),
-                observed_movements_per_day: acc.observed_by_kind[2].len() as f64 / n_days_f,
-                modeled_movements_per_day: acc.modeled_by_kind[2] / n_days_f,
-            },
-            baseline: baseline.clone(),
-            terrain: terrain_meta,
-            screening: screening_meta,
-            vegetation: vegetation_meta,
-            terrain_impact_db: airport_terrain_impact,
-            screening_impact_db: airport_screening_impact,
-            vegetation_impact_db: airport_vegetation_impact,
-            atmospheric_impact_db: airport_atmospheric_impact,
-            ground_impact_db: airport_ground_impact,
-        };
-        let ground_geometry = if !acc.line_coords.is_empty() {
-            Some(serde_json::json!({"type": "MultiLineString", "coordinates": acc.line_coords}))
-        } else {
-            None
-        };
-        contributors.push(Contributor {
-            osm_id: None,
-            geometry: ground_geometry,
-            baseline: detail.baseline.clone(),
-            terrain: detail.terrain.clone(),
-            screening: detail.screening.clone(),
-            vegetation: detail.vegetation.clone(),
-            terrain_impact_db: detail.terrain_impact_db,
-            screening_impact_db: detail.screening_impact_db,
-            vegetation_impact_db: detail.vegetation_impact_db,
-            atmospheric_impact_db: detail.atmospheric_impact_db,
-            ground_impact_db: detail.ground_impact_db,
-            source_type: LayerKind::Aircraft,
-            name: format!("Aircraft - ground ops — {}", display_name),
-            subtype: "ground_ops".to_string(),
-            distance_m: detail.distance_m,
-            periods: airport_periods,
-            periods_free: airport_periods_free,
-            emission_db,
-            received_bands: detail.received_bands,
-            metadata: Some(SourceMetadata::Aircraft(AircraftMetadata {
-                variant: "ground_ops".to_string(),
-                airport_name: Some(display_name),
-                airport_key: Some(acc.airport_key.clone()),
-                airborne: None,
-                ground_ops: Some(detail),
-            })),
-        });
-    }
-
-    (total, contributors, band_data)
-}
 
 pub(crate) fn surface_name(surface_type: u8) -> &'static str {
     match surface_type {
@@ -3130,10 +2014,32 @@ mod tests {
 
     #[test]
     fn test_aircraft_end_to_end() {
+        // Aircraft path went via compute_aircraft_v6 in C2/C4 — the
+        // legacy compute_aircraft was deleted. Reconstruct the same
+        // 5 flights/day × 365 d B738 approach traffic as
+        // `AirborneRowView`s and assert Lden via the v6 entry point.
+        use crate::compute::aircraft_v6::{compute_aircraft_v6, AirborneRowView, BBox, SubSegmentSlice};
+
         let receiver = Receiver::new(50.08, 14.42, 200.0);
-        // Simulate 5 flights per day × 365 days = 1825 flights, each with 3 segments
-        let mut aircraft = Vec::new();
-        for flight in 0..1825u64 {
+        let total_flights = 1825u64;
+        let subs_per_flight = 3usize;
+        let total_subs = total_flights as usize * subs_per_flight;
+
+        let mut start_lat = Vec::with_capacity(total_subs);
+        let mut start_lon = Vec::with_capacity(total_subs);
+        let mut start_alt_m = Vec::with_capacity(total_subs);
+        let mut end_lat = Vec::with_capacity(total_subs);
+        let mut end_lon = Vec::with_capacity(total_subs);
+        let mut end_alt_m = Vec::with_capacity(total_subs);
+        let mut speed_kt = Vec::with_capacity(total_subs);
+        let mut length_m = Vec::with_capacity(total_subs);
+        let mut period_col = Vec::with_capacity(total_subs);
+        let mut date_id_col = Vec::with_capacity(total_subs);
+        let mut flags_col = Vec::with_capacity(total_subs);
+
+        // Column buffers above stay alive for the whole compute call —
+        // the row views borrow into them via slice indices.
+        for flight in 0..total_flights {
             let period = if flight % 100 < 65 {
                 0u8
             } else if flight % 100 < 85 {
@@ -3142,76 +2048,73 @@ mod tests {
                 2
             };
             let date_id = (flight / 5) as i16;
-            // Approach segments at ~300m altitude, 1km away
-            for s in 0..3 {
-                aircraft.push(AircraftSegment {
-                    flight_id: flight,
-                    profile_idx: 0, // B738
-                    is_departure: false,
-                    on_ground: false,
-                    period,
-                    date_id,
-                    start_lat: 50.08 + 0.003 * s as f64,
-                    start_lon: 14.43,
-                    start_alt_m: 500.0 - 50.0 * s as f32,
-                    end_lat: 50.08 + 0.003 * (s + 1) as f64,
-                    end_lon: 14.43,
-                    end_alt_m: 500.0 - 50.0 * (s + 1) as f32,
-                    speed_kt: 150.0,
-                    segment_length_m: 330.0,
-                    ground_context: emission::aircraft::GROUND_CONTEXT_NONE,
-                    ground_ops_kind: emission::aircraft::GROUND_OPS_KIND_NONE,
-                    count_weight: 1.0,
-                    surface_model: false,
-                    source_id: AIRCRAFT_ADSB_SOURCE_ID,
-                    cruise_flight_ids: Vec::new(),
-                });
+            for s in 0..subs_per_flight {
+                start_lat.push(50.08_f32 + 0.003 * s as f32);
+                start_lon.push(14.43_f32);
+                start_alt_m.push(500.0 - 50.0 * s as f32);
+                end_lat.push(50.08_f32 + 0.003 * (s + 1) as f32);
+                end_lon.push(14.43_f32);
+                end_alt_m.push(500.0 - 50.0 * (s + 1) as f32);
+                speed_kt.push(150.0);
+                length_m.push(330.0);
+                period_col.push(period);
+                date_id_col.push(date_id);
+                flags_col.push(0);
             }
         }
 
-        let config = ComputeConfig {
-            n_days: 365,
-            ..Default::default()
-        };
-        let result = compute_at_point(
+        // Build per-flight row views by slicing the shared buffers.
+        let mut row_views: Vec<AirborneRowView<'_>> = Vec::with_capacity(total_flights as usize);
+        for flight in 0..total_flights {
+            let lo = flight as usize * subs_per_flight;
+            let hi = lo + subs_per_flight;
+            row_views.push(AirborneRowView {
+                flight_id: flight,
+                profile_idx: 0,
+                source_id: AIRCRAFT_ADSB_SOURCE_ID as u8,
+                origin: 0,
+                sub_segments: SubSegmentSlice {
+                    start_lat: &start_lat[lo..hi],
+                    start_lon: &start_lon[lo..hi],
+                    start_alt_m: &start_alt_m[lo..hi],
+                    end_lat: &end_lat[lo..hi],
+                    end_lon: &end_lon[lo..hi],
+                    end_alt_m: &end_alt_m[lo..hi],
+                    speed_kt: &speed_kt[lo..hi],
+                    length_m: &length_m[lo..hi],
+                    period: &period_col[lo..hi],
+                    date_id: &date_id_col[lo..hi],
+                    flags: &flags_col[lo..hi],
+                },
+                bbox: BBox {
+                    min_lat: 50.08,
+                    max_lat: 50.10,
+                    min_lon: 14.43,
+                    max_lon: 14.44,
+                },
+            });
+        }
+        let (periods, _contribs, _band) = compute_aircraft_v6(
             &receiver,
+            &row_views,
             &[],
             &[],
-            &[],
-            &[],
-            &aircraft,
             &[],
             &MockRasters,
-            &config,
+            365,
+            None,
         );
 
-        // 5 flights/day of B738 at ~700m lateral → real ANP CF567B
-        // approach SEL is ~10 dB quieter than the placeholder it replaced,
-        // so the floor drops accordingly. Loosen lower bound vs Tier 1.
         assert!(
-            result.total.lden_db > 25.0 && result.total.lden_db < 75.0,
+            periods.lden_db > 25.0 && periods.lden_db < 75.0,
             "Aircraft Lden: expected 25-75, got {:.1}",
-            result.total.lden_db
+            periods.lden_db
         );
-
-        assert_eq!(result.sources.len(), 1);
-        assert_eq!(result.sources[0].source_type, LayerKind::Aircraft);
-
-        // Day should be louder than night (more flights)
         assert!(
-            result.total.ld_db > result.total.ln_db || result.total.ln_db == f64::NEG_INFINITY,
+            periods.ld_db > periods.ln_db || periods.ln_db == f64::NEG_INFINITY,
             "Day should be louder: Ld={:.1} Ln={:.1}",
-            result.total.ld_db,
-            result.total.ln_db
-        );
-
-        println!(
-            "Aircraft 5/day: Ld={:.1} Le={:.1} Ln={:.1} Lden={:.1} ({} contributors)",
-            result.total.ld_db,
-            result.total.le_db,
-            result.total.ln_db,
-            result.total.lden_db,
-            result.contributors.len()
+            periods.ld_db,
+            periods.ln_db
         );
     }
 
