@@ -1,6 +1,7 @@
 //! source-reader: mmap'd Arrow IPC reader for noise popup.
 //! Zero-copy: data stays in mmap'd pages, queries iterate directly over Arrow columns.
 
+pub mod aircraft_v6;
 pub mod geo;
 pub mod hex_store;
 
@@ -32,8 +33,6 @@ static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::Onc
 // NACE codes are now baked into industrial.arrow (nace_4digit UInt16 column).
 // No global lookup needed at runtime.
 
-const AIRCRAFT_QUERY_MAX_RADIUS_M: f64 =
-    noise_compute::emission::aircraft::AIRCRAFT_MAX_HORIZONTAL_REACH_M;
 const AIRPORT_CONTEXT_RADIUS_M: f64 = 5_000.0;
 const BUILDING_QUERY_RADIUS_M: f64 = 2_000.0;
 const INDUSTRIAL_QUERY_RADIUS_M: f64 = 5_000.0;
@@ -84,7 +83,11 @@ pub struct PointQueryData {
     pub railways: Vec<noise_compute::types::RailSegment>,
     pub buildings: Vec<noise_compute::types::PointSource>,
     pub industrial: Vec<noise_compute::types::PointSource>,
-    pub aircraft: Vec<noise_compute::types::AircraftSegment>,
+    /// v6 aircraft popup arrows. Rows are consumed via typed views in
+    /// `compute_aircraft_v6` — no AircraftSegment synthesis happens here.
+    pub aircraft_airborne_batches: Vec<arrow::record_batch::RecordBatch>,
+    pub aircraft_cruise_batches: Vec<arrow::record_batch::RecordBatch>,
+    pub aircraft_ground_batches: Vec<arrow::record_batch::RecordBatch>,
     pub airport_lines: Vec<noise_compute::types::AirportLine>,
     pub airport_areas: Vec<noise_compute::types::AirportArea>,
     pub barriers: Vec<noise_compute::types::Barrier>,
@@ -136,7 +139,9 @@ pub fn collect_from_hex_data(
     let mut all_buildings = Vec::new();
     let mut all_industrial = Vec::new();
     let mut all_barriers = Vec::new();
-    let mut all_aircraft = Vec::new();
+    let mut all_airborne_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
+    let mut all_cruise_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
+    let mut all_ground_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
     let mut all_airport_lines = Vec::new();
     let mut all_airport_areas = Vec::new();
 
@@ -160,9 +165,6 @@ pub fn collect_from_hex_data(
         }
     };
     for data in hex_data {
-        for batch in &data.aircraft_batches {
-            scan_metadata(batch, &mut n_days_from_metadata, &mut date_ids);
-        }
         for batch in data
             .aircraft_airborne_batches
             .iter()
@@ -471,84 +473,21 @@ pub fn collect_from_hex_data(
             });
         }
 
-        let cached_segs = data.aircraft_cache.get_or_init(|| {
-            hex_store::load_aircraft_segments_unified(
-                &data.aircraft_batches,
-                &data.aircraft_airborne_batches,
-                &data.aircraft_cruise_batches,
-                &data.aircraft_ground_batches,
-            )
-        });
-
-        let tree = data.aircraft_tree.get_or_init(|| {
-            // Skip antimeridian crossings (|Δlon| > 180°) — they would collapse to a
-            // global bbox and match every query.
-            let entries: Vec<_> = cached_segs.iter().enumerate()
-                .filter(|(_, seg)| (seg.start_lon - seg.end_lon).abs() <= 180.0)
-                .map(|(idx, seg)| hex_store::AircraftEntry {
-                    cache_idx: idx,
-                    min_lat: seg.start_lat.min(seg.end_lat) as f64,
-                    min_lon: seg.start_lon.min(seg.end_lon) as f64,
-                    max_lat: seg.start_lat.max(seg.end_lat) as f64,
-                    max_lon: seg.start_lon.max(seg.end_lon) as f64,
-                })
-                .collect();
-            rstar::RTree::bulk_load(entries)
-        });
-
-        // Query envelope: receiver ± AIRCRAFT_QUERY_MAX_RADIUS_M (horizontal).
-        // R-tree returns segments whose bbox intersects this envelope — correct
-        // for any segment length. The exact CPA + per-profile reach test
-        // happens inside `segment_sel_with_overrides` downstream, but at busy
-        // traffic densities the envelope passes ~200 k segments per popup
-        // while only ~25 % are actually within per-profile reach. The cheap
-        // pre-filter below drops the rest before we pay the ~88-byte clone
-        // and the per-segment kernel call. Mirrors pipeline's group-level
-        // reach test (`pipeline-worker/src/compute/aircraft.rs:657-668`),
-        // single-receiver formulation.
-        use noise_compute::emission::aircraft::{
-            meters_to_lat_deg, meters_to_lon_deg, segment_min_slant_sq, GROUND_CONTEXT_NONE,
-            REACH_SQ_TABLE,
-        };
-        let radius_lat_deg = meters_to_lat_deg(AIRCRAFT_QUERY_MAX_RADIUS_M);
-        let radius_lon_deg = meters_to_lon_deg(lat, AIRCRAFT_QUERY_MAX_RADIUS_M);
-
-        let env = rstar::AABB::from_corners(
-            [lat - radius_lat_deg, lng - radius_lon_deg],
-            [lat + radius_lat_deg, lng + radius_lon_deg],
-        );
-
-        let prefilter_ctx = prefilter.map(|p| (p.rx_elev_m, lat.to_radians().cos().max(0.2)));
-        // Hoist the LazyLock deref once — for ~232 k segments at airport
-        // density the per-iteration `&*REACH_SQ_TABLE` would issue an
-        // Acquire load on every byte-compare-cheap inner loop iteration.
-        // Reach is per-noise-class (NUM_CLASSES granularity); R-tree envelope
-        // only needs class-coarse reach.
-        let reach_sq_table: &[[f64; 2]; noise_compute::emission::aircraft::NUM_CLASSES] =
-            &REACH_SQ_TABLE;
-
-        for entry in tree.locate_in_envelope_intersecting(&env) {
-            let seg = &cached_segs[entry.cache_idx];
-
-            // Per-class reach pre-filter for airborne segments only. Ground
-            // & airport-context segments use a separate emission path
-            // (`segment_sel_airport_ground`, ground bucketing) whose reach
-            // semantics differ — leave them untouched.
-            if let Some((rx_elev, cos_lat)) = prefilter_ctx {
-                if !seg.on_ground && seg.ground_context == GROUND_CONTEXT_NONE {
-                    let slant_sq = segment_min_slant_sq(seg, lat, lng, rx_elev, cos_lat);
-                    let cls = noise_compute::emission::aircraft::noise_class_of(seg.profile_idx)
-                        as usize;
-                    let reach_sq = reach_sq_table[cls][seg.is_departure as usize];
-                    if slant_sq > reach_sq {
-                        continue;
-                    }
-                }
-            }
-
-            all_aircraft.push(seg.clone());
-        }
+        // v6 aircraft popup arrows: the per-row reach prune and the
+        // bucket-level emission contract live inside compute_aircraft_v6
+        // (which reads em_*_bands directly from ground rows under the
+        // dB_sum_v6_1 contract). At this layer we only clone the
+        // RecordBatch handles — Arrow IPC batches are Arc-backed so this
+        // is a refcount bump, not a data copy.
+        all_airborne_batches.extend(data.aircraft_airborne_batches.iter().cloned());
+        all_cruise_batches.extend(data.aircraft_cruise_batches.iter().cloned());
+        all_ground_batches.extend(data.aircraft_ground_batches.iter().cloned());
     }
+    // `prefilter` was used by the v5 R-tree segment prune; v6 row views
+    // don't need it (per-row distance check inside compute_aircraft_v6).
+    // Kept in the public collect_from_hex_data signature so callers
+    // upgrade incrementally.
+    let _ = prefilter;
 
     all_barriers.sort_unstable_by(|a, b| {
         a.dist_m
@@ -561,7 +500,9 @@ pub fn collect_from_hex_data(
         railways: all_railways,
         buildings: all_buildings,
         industrial: all_industrial,
-        aircraft: all_aircraft,
+        aircraft_airborne_batches: all_airborne_batches,
+        aircraft_cruise_batches: all_cruise_batches,
+        aircraft_ground_batches: all_ground_batches,
         airport_lines: all_airport_lines,
         airport_areas: all_airport_areas,
         barriers: all_barriers,
@@ -790,7 +731,10 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         ..Default::default()
     };
 
-    let n_aircraft = sources.aircraft.len();
+    let n_airborne = sources.aircraft_airborne_batches.iter().map(|b| b.num_rows()).sum::<usize>();
+    let n_cruise = sources.aircraft_cruise_batches.iter().map(|b| b.num_rows()).sum::<usize>();
+    let n_ground = sources.aircraft_ground_batches.iter().map(|b| b.num_rows()).sum::<usize>();
+    let n_aircraft = n_airborne + n_cruise + n_ground;
     let n_roads = sources.roads.len();
     let n_railways = sources.railways.len();
 
@@ -801,13 +745,24 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         &sources.railways,
         &sources.buildings,
         &sources.industrial,
-        &sources.aircraft,
+        &[],
         &sources.airport_lines,
         &sources.airport_areas,
         &sources.barriers,
         rasters,
         &config,
         Some(&mut traces),
+    );
+    aircraft_v6::add_v6_aircraft_to_result(
+        &mut result,
+        &mut traces,
+        &receiver,
+        &sources.aircraft_airborne_batches,
+        &sources.aircraft_cruise_batches,
+        &sources.aircraft_ground_batches,
+        &sources.barriers,
+        rasters,
+        sources.n_days,
     );
     let t_compute = t_start.elapsed() - t_load - t_collect;
 
