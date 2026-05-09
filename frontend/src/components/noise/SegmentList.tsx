@@ -129,22 +129,31 @@ export function SegmentList({
         {KIND_FILTERS.map(({ key, label }) => {
           const kindCount = counts[key]
           const kindTotal = totals[key]
-          if (kindCount === 0 && shownCount > 0) return null
-          const on = enabled[key]
+          // Empty kinds stay visible (greyed) so the user always sees
+          // the full filter set — disappearing tabs on a sparse popup
+          // looked unpredictable. Greyed-out + count=0 makes the
+          // empty state explicit instead of hiding it.
+          const isEmpty = kindCount === 0
+          const on = enabled[key] && !isEmpty
           const countLabel = kindTotal > kindCount ? `${kindCount} of ${kindTotal}` : `${kindCount}`
           return (
             <button
               key={key}
               type="button"
+              disabled={isEmpty}
               onClick={() => setEnabled(e => ({ ...e, [key]: !e[key] }))}
-              title={`${label} — ${countLabel} segment${kindTotal === 1 ? '' : 's'} (click to ${on ? 'hide' : 'show'})`}
+              title={`${label} — ${countLabel} segment${kindTotal === 1 ? '' : 's'}${
+                isEmpty ? ' (no data at this point)' : on ? ' (click to hide)' : ' (click to show)'
+              }`}
               className={`shrink-0 px-1 transition-colors ${
-                on
-                  ? 'text-foreground hover:text-foreground/80'
-                  : 'text-muted-foreground/40 line-through hover:text-foreground'
+                isEmpty
+                  ? 'text-muted-foreground/30 cursor-not-allowed'
+                  : on
+                    ? 'text-foreground hover:text-foreground/80'
+                    : 'text-muted-foreground/40 line-through hover:text-foreground'
               }`}
             >
-              {label}
+              {label} <span className="tabular-nums opacity-60">{kindCount}</span>
             </button>
           )
         })}
