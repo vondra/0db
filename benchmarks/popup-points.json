@@ -125,7 +125,7 @@
   "lng": 14.002768808742937,
   "scenario": "industrial_kovohute",
   "r11": "8b1e308d2970fff",
-  "note": "24 m from Kovohut\u011b recycling plant centroid"
+  "note": "24 m from Kovohutě recycling plant centroid"
  },
  {
   "id": 17,
@@ -133,7 +133,7 @@
   "lng": 14.00415923893528,
   "scenario": "industrial_kovohute",
   "r11": "8b1e308d2944fff",
-  "note": "81 m from Kovohut\u011b recycling plant centroid"
+  "note": "81 m from Kovohutě recycling plant centroid"
  },
  {
   "id": 18,
@@ -141,7 +141,7 @@
   "lng": 14.003048331704596,
   "scenario": "industrial_kovohute",
   "r11": "8b1e308d62d9fff",
-  "note": "111 m from Kovohut\u011b recycling plant centroid"
+  "note": "111 m from Kovohutě recycling plant centroid"
  },
  {
   "id": 19,
@@ -189,7 +189,7 @@
   "lng": 14.170925392049222,
   "scenario": "behind_house_urban",
   "r11": "8b1e308eb961fff",
-  "note": "urban Dob\u0159\u00ed\u0161, building h~60 m on path to road 105 m away"
+  "note": "urban Dobříš, building h~60 m on path to road 105 m away"
  },
  {
   "id": 25,
@@ -197,7 +197,7 @@
   "lng": 14.16874838029655,
   "scenario": "behind_house_urban",
   "r11": "8b1e308e82c1fff",
-  "note": "urban Dob\u0159\u00ed\u0161, building h~30 m on path to road 63 m away"
+  "note": "urban Dobříš, building h~30 m on path to road 63 m away"
  },
  {
   "id": 26,
@@ -205,7 +205,7 @@
   "lng": 14.178913227653904,
   "scenario": "behind_house_urban",
   "r11": "8b1e308e9419fff",
-  "note": "urban Dob\u0159\u00ed\u0161, building h~15 m on path to road 102 m away"
+  "note": "urban Dobříš, building h~15 m on path to road 102 m away"
  },
  {
   "id": 27,
@@ -293,7 +293,7 @@
   "lng": 14.17055526587791,
   "scenario": "urban_dobris_centre",
   "r11": "8b1e308eb965fff",
-  "note": "central Dob\u0159\u00ed\u0161, 11 m from n\u00e1m\u011bst\u00ed"
+  "note": "central Dobříš, 11 m from náměstí"
  },
  {
   "id": 38,
@@ -301,7 +301,7 @@
   "lng": 14.16776935335417,
   "scenario": "urban_dobris_centre",
   "r11": "8b1e308e82defff",
-  "note": "central Dob\u0159\u00ed\u0161, 189 m from n\u00e1m\u011bst\u00ed"
+  "note": "central Dobříš, 189 m from náměstí"
  },
  {
   "id": 39,
@@ -309,7 +309,7 @@
   "lng": 14.170316462249986,
   "scenario": "urban_dobris_centre",
   "r11": "8b1e308eb942fff",
-  "note": "central Dob\u0159\u00ed\u0161, 204 m from n\u00e1m\u011bst\u00ed"
+  "note": "central Dobříš, 204 m from náměstí"
  },
  {
   "id": 40,
@@ -317,7 +317,7 @@
   "lng": 14.170097581795009,
   "scenario": "urban_dobris_centre",
   "r11": "8b1e308e82e9fff",
-  "note": "central Dob\u0159\u00ed\u0161, 204 m from n\u00e1m\u011bst\u00ed"
+  "note": "central Dobříš, 204 m from náměstí"
  },
  {
   "id": 41,
@@ -325,7 +325,7 @@
   "lng": 14.173341215777384,
   "scenario": "urban_dobris_centre",
   "r11": "8b1e308e9598fff",
-  "note": "central Dob\u0159\u00ed\u0161, 212 m from n\u00e1m\u011bst\u00ed"
+  "note": "central Dobříš, 212 m from náměstí"
  },
  {
   "id": 42,
@@ -381,7 +381,7 @@
   "lng": 14.098884877535246,
   "scenario": "r5_boundary",
   "r11": "8b1e308545b5fff",
-  "note": "\u226425 m from R5 cell boundary inside Dob\u0159\u00ed\u0161 R4"
+  "note": "≤25 m from R5 cell boundary inside Dobříš R4"
  },
  {
   "id": 49,
@@ -389,7 +389,7 @@
   "lng": 14.061975016513998,
   "scenario": "r5_boundary",
   "r11": "8b1e3080d961fff",
-  "note": "\u226425 m from R5 cell boundary inside Dob\u0159\u00ed\u0161 R4"
+  "note": "≤25 m from R5 cell boundary inside Dobříš R4"
  },
  {
   "id": 50,
@@ -798,5 +798,93 @@
   "scenario": "random_cell",
   "r11": "8b1e308caad6fff",
   "note": ""
+ },
+ {
+  "id": 101,
+  "lat": 50.1185,
+  "lng": 14.283,
+  "scenario": "aircraft_runway",
+  "r11": "8b1e35588ac5fff",
+  "note": "LKPR RWY 24 threshold (touchdown bar)"
+ },
+ {
+  "id": 102,
+  "lat": 50.1175,
+  "lng": 14.279,
+  "scenario": "aircraft_runway",
+  "r11": "8b1e35588a8efff",
+  "note": "LKPR RWY 24 ~300 m past touchdown (early roll)"
+ },
+ {
+  "id": 103,
+  "lat": 50.114,
+  "lng": 14.27,
+  "scenario": "aircraft_runway",
+  "r11": "8b1e35588013fff",
+  "note": "LKPR RWY 24 mid-runway ~1 km past touchdown"
+ },
+ {
+  "id": 104,
+  "lat": 50.12,
+  "lng": 14.294,
+  "scenario": "aircraft_approach",
+  "r11": "8b1e35589c2cfff",
+  "note": "LKPR RWY 24 short final ~1 km east of threshold"
+ },
+ {
+  "id": 105,
+  "lat": 50.123,
+  "lng": 14.314,
+  "scenario": "aircraft_approach",
+  "r11": "8b1e35589a22fff",
+  "note": "LKPR RWY 24 final ~2.5 km east of threshold"
+ },
+ {
+  "id": 106,
+  "lat": 50.126,
+  "lng": 14.334,
+  "scenario": "aircraft_approach",
+  "r11": "8b1e3541498dfff",
+  "note": "LKPR RWY 24 final ~4 km east of threshold"
+ },
+ {
+  "id": 107,
+  "lat": 50.096,
+  "lng": 14.2415,
+  "scenario": "aircraft_runway",
+  "r11": "8b1e3558acabfff",
+  "note": "LKPR RWY 06 takeoff start"
+ },
+ {
+  "id": 108,
+  "lat": 50.1,
+  "lng": 14.2495,
+  "scenario": "aircraft_runway",
+  "r11": "8b1e3558a89efff",
+  "note": "LKPR RWY 06 mid-roll, plane accelerating"
+ },
+ {
+  "id": 109,
+  "lat": 50.0915,
+  "lng": 14.224,
+  "scenario": "aircraft_departure",
+  "r11": "8b1e3559d0ddfff",
+  "note": "LKPR RWY 06 climbout ~1 km west"
+ },
+ {
+  "id": 110,
+  "lat": 50.0875,
+  "lng": 14.203,
+  "scenario": "aircraft_departure",
+  "r11": "8b1e35598964fff",
+  "note": "LKPR RWY 06 climbout ~3 km west"
+ },
+ {
+  "id": 111,
+  "lat": 50.108,
+  "lng": 14.267,
+  "scenario": "aircraft_apron",
+  "r11": "8b1e355887b4fff",
+  "note": "LKPR Terminal 2 apron area"
  }
 ]

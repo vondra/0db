@@ -86,13 +86,19 @@ fn stage_1_one_subflight(
     }
 
     let mut points = points.to_vec();
-    let mut agl_m: Vec<f32> = points
-        .iter()
-        .map(|p| {
-            let elev = rasters.elevation(p.lat as f64, p.lon as f64) as f32;
-            p.alt_ft * 0.3048 - elev
-        })
-        .collect();
+    // Ground-flagged points pin AGL = 0 (and skip the DEM lookup); without
+    // this, `validate_flight_trajectory` would read `0 - elev` for any
+    // landing roll above ~300 m AMSL and truncate the whole tail.
+    let mut agl_m: Vec<f32> = Vec::with_capacity(points.len());
+    for p in &points {
+        match p.airborne_alt_ft() {
+            None => agl_m.push(0.0),
+            Some(alt_ft) => {
+                let elev = rasters.elevation(p.lat as f64, p.lon as f64) as f32;
+                agl_m.push(alt_ft * 0.3048 - elev);
+            }
+        }
+    }
 
     filters::validate_flight_trajectory(&mut points, &mut agl_m);
     if points.len() < 2 {

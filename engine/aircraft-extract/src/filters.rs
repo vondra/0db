@@ -64,12 +64,14 @@ pub const MIN_PLAUSIBLE_ALT_FT: f32 = -2_000.0;
 /// ≈ 1700 kt). Above is wildly bad data.
 pub const MAX_PLAUSIBLE_SPEED_KT: f32 = 1_500.0;
 
-/// Per-point sanity. Drops NaNs, out-of-range coordinates, the (0,0)
-/// "no-fix" sentinel, implausible altitudes (when not on the ground),
-/// and impossibly fast vehicles.
+/// Per-point sanity. Drops NaN/out-of-range coords, the (0,0) "no-fix"
+/// sentinel, implausible airborne altitudes, and impossibly fast
+/// vehicles. Ground-flagged rows are exempt from altitude checks — the
+/// canonical "is on the surface" signal is the flag, and `alt_ft` carries
+/// no information for those points (it's NaN by parser contract).
 #[inline]
 pub fn point_is_sane(pt: &TracePoint) -> bool {
-    if !pt.lat.is_finite() || !pt.lon.is_finite() || !pt.alt_ft.is_finite() {
+    if !pt.lat.is_finite() || !pt.lon.is_finite() {
         return false;
     }
     if pt.lat.abs() > 90.0 || pt.lon.abs() > 180.0 {
@@ -78,8 +80,13 @@ pub fn point_is_sane(pt: &TracePoint) -> bool {
     if pt.lat == 0.0 && pt.lon == 0.0 {
         return false;
     }
-    if !pt.alt_is_ground() && (pt.alt_ft < MIN_PLAUSIBLE_ALT_FT || pt.alt_ft > MAX_PLAUSIBLE_ALT_FT) {
-        return false;
+    if let Some(alt_ft) = pt.airborne_alt_ft() {
+        if !alt_ft.is_finite()
+            || alt_ft < MIN_PLAUSIBLE_ALT_FT
+            || alt_ft > MAX_PLAUSIBLE_ALT_FT
+        {
+            return false;
+        }
     }
     if pt.speed_kt > MAX_PLAUSIBLE_SPEED_KT {
         return false;
@@ -160,7 +167,12 @@ fn drop_teleport_points(points: &mut Vec<TracePoint>, agl_m: &mut Vec<f32>) {
     for i in 1..points.len() {
         let dt = (points[i].timestamp - points[i - 1].timestamp).abs() as f32;
         if dt > 0.0 && dt < 10.0 {
-            let d_alt = (points[i].alt_ft - points[i - 1].alt_ft).abs();
+            // Altitude jump check skips ground/airborne boundaries — NaN
+            // alt_ft would defeat `d_alt > 10000` (NaN > x is false).
+            let alt_jump = match (points[i - 1].airborne_alt_ft(), points[i].airborne_alt_ft()) {
+                (Some(a), Some(b)) => (b - a).abs() > 10_000.0,
+                _ => false,
+            };
             // Implied horizontal speed via the local-flat formula —
             // we only need a coarse upper bound to flag teleports.
             let dx_deg = points[i].lon - points[i - 1].lon;
@@ -170,7 +182,7 @@ fn drop_teleport_points(points: &mut Vec<TracePoint>, agl_m: &mut Vec<f32>) {
             let dy_m = dy_deg * 110_540.0;
             let dist_m = (dx_m * dx_m + dy_m * dy_m).sqrt();
             let kt = dist_m / dt * (3600.0 / 1852.0);
-            if d_alt > 10_000.0 || kt > 1_500.0 {
+            if alt_jump || kt > 1_500.0 {
                 keep_idx[i] = false;
             }
         }

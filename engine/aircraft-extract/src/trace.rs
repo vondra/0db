@@ -30,7 +30,9 @@ pub struct TracePoint {
     pub timestamp: f64,
     pub lat: f32,
     pub lon: f32,
-    /// Barometric altitude in feet. `0.0` when [`FLAG_ALT_IS_GROUND`] is set.
+    /// Barometric altitude in feet. `NaN` when [`FLAG_ALT_IS_GROUND`] is
+    /// set; read via [`TracePoint::airborne_alt_ft`] to keep ground
+    /// sentinels out of arithmetic.
     pub alt_ft: f32,
     pub speed_kt: f32,
     pub track_deg: f32,
@@ -44,6 +46,17 @@ impl TracePoint {
     }
     pub fn on_ground_raw(&self) -> bool {
         self.flags & FLAG_ON_GROUND_RAW != 0
+    }
+    /// `Some(alt_ft)` for airborne points, `None` for `alt_is_ground`
+    /// sentinel rows whose `alt_ft` is `NaN`. Funnels every alt-arithmetic
+    /// site through one flag-aware accessor so a missed branch can't
+    /// silently propagate NaN into AGL / ROCD / teleport arithmetic.
+    pub fn airborne_alt_ft(&self) -> Option<f32> {
+        if self.alt_is_ground() {
+            None
+        } else {
+            Some(self.alt_ft)
+        }
     }
 }
 
@@ -180,6 +193,10 @@ pub fn parse_trace<R: Read>(reader: R) -> Result<Option<AircraftTrace>> {
     }))
 }
 
+/// `"ground"` string maps to `(NaN, true)` — not `(0.0, true)` — so a
+/// sub-sea-level aerodrome (Schiphol −3 m, Atyrau −22 m) can't collide
+/// with the on-surface marker, and a missed flag check downstream
+/// surfaces as NaN rather than as a silent underground truncation.
 fn parse_altitude_ft(value: &serde_json::Value) -> (f32, bool) {
     if let Some(alt_ft) = value.as_f64() {
         return (alt_ft as f32, false);
@@ -189,9 +206,9 @@ fn parse_altitude_ft(value: &serde_json::Value) -> (f32, bool) {
         .map(|s| s.eq_ignore_ascii_case("ground"))
         .unwrap_or(false)
     {
-        return (0.0, true);
+        return (f32::NAN, true);
     }
-    (0.0, false)
+    (f32::NAN, false)
 }
 
 /// Sequentially reads a list of byte-contiguous parts as one stream.
@@ -244,7 +261,8 @@ mod tests {
         assert_eq!(t.points.len(), 2);
         assert!(t.points[0].alt_is_ground());
         assert!(t.points[0].on_ground_raw()); // implied by alt_is_ground
-        assert_eq!(t.points[0].alt_ft, 0.0);
+        assert!(t.points[0].alt_ft.is_nan());
+        assert!(t.points[0].airborne_alt_ft().is_none());
         assert!(!t.points[1].alt_is_ground());
         assert_eq!(t.points[1].alt_ft, 600.0);
     }
