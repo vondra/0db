@@ -133,21 +133,20 @@ pub fn read_airport_areas(path: &Path) -> Result<Vec<AirportArea>> {
         };
 
         for i in 0..n {
-            out.push(AirportArea {
-                osm_id: osm_id.value(i),
-                aeroway_type: aeroway_type.map(|a| a.value(i)).unwrap_or(255),
-                name: name.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                airport_key: airport_key(
+            out.push(AirportArea::new(
+                osm_id.value(i),
+                aeroway_type.map(|a| a.value(i)).unwrap_or(255),
+                name.map(|a| a.value(i).to_string()).unwrap_or_default(),
+                airport_key(
                     name.map(|a| a.value(i)).unwrap_or(""),
                     icao.map(|a| a.value(i)).unwrap_or(""),
                     iata.map(|a| a.value(i)).unwrap_or(""),
                 ),
-                centroid_lat: clat.value(i),
-                centroid_lon: clon.value(i),
-                polygon_wkb: wkb.map(|a| hex_encode(a.value(i))).unwrap_or_default(),
-                area_m2: area_m2.map(|a| a.value(i)).unwrap_or(0.0),
-                parsed: Default::default(),
-            });
+                clat.value(i),
+                clon.value(i),
+                wkb.map(|a| hex_encode(a.value(i))).unwrap_or_default(),
+                area_m2.map(|a| a.value(i)).unwrap_or(0.0),
+            ));
         }
     }
     Ok(out)
@@ -253,18 +252,23 @@ fn propagate_aerodrome_identity_to_lines(lines: &mut [AirportLine], areas: &[Air
             if cx > r {
                 continue;
             }
-            // Use the cached `ParsedPolygon` so the same WKB hex isn't
-            // re-parsed for every (line, area) pair (~5k lines × ~50
-            // areas per popup before this commit). `parsed_polygon`
-            // returns `None` for empty / malformed WKB; fall back to
-            // the centroid-radius gate then.
-            let inside = match area.parsed_polygon() {
-                Some(parsed) => noise_compute::wkb::rings_contain_any_point(
-                    &parsed.outer,
-                    &parsed.holes,
-                    &[(mid_lat, mid_lon)],
-                ),
-                None => cx <= r,
+            // Empty WKB → centroid-radius fallback (matches the old
+            // `if !polygon_wkb.is_empty()` gate). Non-empty but
+            // malformed WKB → `parsed_polygon()` returns `None` and
+            // we treat it as "not inside" (the old behaviour of
+            // `wkb_contains_point` returning `false`), NOT as another
+            // radius fallback. /gg consensus caught the drift.
+            let inside = if area.polygon_wkb.is_empty() {
+                cx <= r
+            } else {
+                match area.parsed_polygon() {
+                    Some(parsed) => noise_compute::wkb::rings_contain_any_point(
+                        &parsed.outer,
+                        &parsed.holes,
+                        &[(mid_lat, mid_lon)],
+                    ),
+                    None => false,
+                }
             };
             if !inside {
                 continue;
@@ -350,31 +354,29 @@ mod tests {
         area_m2: f32,
         polygon_wkb: &str,
     ) -> AirportArea {
-        AirportArea {
+        AirportArea::new(
             osm_id,
-            aeroway_type: 5, // aerodrome
-            name: format!("Letiště {}", icao),
-            airport_key: icao.to_string(),
-            centroid_lat: clat,
-            centroid_lon: clon,
-            polygon_wkb: polygon_wkb.to_string(),
+            5, // aerodrome
+            format!("Letiště {}", icao),
+            icao.to_string(),
+            clat,
+            clon,
+            polygon_wkb.to_string(),
             area_m2,
-            parsed: Default::default(),
-        }
+        )
     }
 
     fn apron(name: &str, clat: f64, clon: f64, area_m2: f32) -> AirportArea {
-        AirportArea {
-            osm_id: 9,
-            aeroway_type: 2, // apron
-            name: name.to_string(),
-            airport_key: String::new(),
-            centroid_lat: clat,
-            centroid_lon: clon,
-            polygon_wkb: String::new(),
+        AirportArea::new(
+            9,
+            2, // apron
+            name.to_string(),
+            String::new(),
+            clat,
+            clon,
+            String::new(),
             area_m2,
-            parsed: Default::default(),
-        }
+        )
     }
 
     #[test]

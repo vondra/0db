@@ -1763,17 +1763,28 @@ pub fn airport_area_contains_any_of(area: &AirportArea, points: &[(f64, f64)]) -
     if n_survivors == 0 {
         return false;
     }
+    // Pre-check `is_empty()` so the cache only handles "non-empty WKB
+    // present" — malformed WKB returns `None` from `parsed_polygon()`
+    // and must NOT collapse into the centroid-radius fallback that's
+    // reserved for the empty-WKB case (a malformed polygon would
+    // otherwise expand to an arbitrarily large fallback circle).
+    // /gg (Codex + Gemini + DeepSeek consensus) caught the drift vs
+    // the old `wkb_contains_any_point` path which returned `false`
+    // on malformed input.
+    if area.polygon_wkb.is_empty() {
+        return any_within_fallback;
+    }
     // Cached parse: first call per area parses the WKB once; Stage 2C
     // and the popup hot loop reuse the same `ParsedPolygon` for every
     // segment / receiver instead of re-parsing the hex per call.
-    if let Some(parsed) = area.parsed_polygon() {
-        return crate::wkb::rings_contain_any_point(
+    match area.parsed_polygon() {
+        Some(parsed) => crate::wkb::rings_contain_any_point(
             &parsed.outer,
             &parsed.holes,
             &survivors[..n_survivors],
-        );
+        ),
+        None => false,
     }
-    any_within_fallback
 }
 
 fn airport_area_prune_radius_m(area: &AirportArea) -> f64 {
@@ -3321,17 +3332,16 @@ mod tests {
                     source_id: AIRCRAFT_ADSB_SOURCE_ID,
                     cruise_flight_ids: Vec::new(),
         };
-        let airport_areas = vec![AirportArea {
-            osm_id: 2,
-            aeroway_type: AEROWAY_HELIPAD,
-            centroid_lat: 50.00015,
-            centroid_lon: 14.00015,
-            polygon_wkb: String::new(),
-            area_m2: 400.0,
-            name: String::new(),
-            airport_key: String::new(),
-            parsed: Default::default(),
-        }];
+        let airport_areas = vec![AirportArea::new(
+            2,
+            AEROWAY_HELIPAD,
+            String::new(),
+            String::new(),
+            50.00015,
+            14.00015,
+            String::new(),
+            400.0,
+        )];
         seg.ground_context = AirportMatcher::new(&[], &airport_areas).segment_ground_context(&seg);
         assert_eq!(seg.ground_context, GROUND_CONTEXT_AIRPORT_AREA);
         assert!(!is_ground_stale_segment(&seg, &FlatGround));

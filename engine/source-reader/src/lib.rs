@@ -196,17 +196,16 @@ pub fn collect_from_hex_data(
             AIRPORT_CONTEXT_RADIUS_M,
         );
         for area in airport_areas {
-            all_airport_areas.push(noise_compute::types::AirportArea {
-                osm_id: area.osm_id,
-                aeroway_type: area.aeroway_type,
-                name: area.name.clone(),
-                airport_key: airport_key(&area.name, &area.airport_ref, &area.icao, &area.iata),
-                centroid_lat: area.centroid_lat,
-                centroid_lon: area.centroid_lon,
-                polygon_wkb: area.polygon_wkb,
-                area_m2: area.area_m2,
-                parsed: Default::default(),
-            });
+            all_airport_areas.push(noise_compute::types::AirportArea::new(
+                area.osm_id,
+                area.aeroway_type,
+                area.name.clone(),
+                airport_key(&area.name, &area.airport_ref, &area.icao, &area.iata),
+                area.centroid_lat,
+                area.centroid_lon,
+                area.polygon_wkb,
+                area.area_m2,
+            ));
         }
     }
     for data in hex_data {
