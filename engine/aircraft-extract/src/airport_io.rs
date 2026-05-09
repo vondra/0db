@@ -146,6 +146,7 @@ pub fn read_airport_areas(path: &Path) -> Result<Vec<AirportArea>> {
                 centroid_lon: clon.value(i),
                 polygon_wkb: wkb.map(|a| hex_encode(a.value(i))).unwrap_or_default(),
                 area_m2: area_m2.map(|a| a.value(i)).unwrap_or(0.0),
+                parsed: Default::default(),
             });
         }
     }
@@ -350,6 +351,7 @@ mod tests {
             centroid_lon: clon,
             polygon_wkb: polygon_wkb.to_string(),
             area_m2,
+            parsed: Default::default(),
         }
     }
 
@@ -363,6 +365,7 @@ mod tests {
             centroid_lon: clon,
             polygon_wkb: String::new(),
             area_m2,
+            parsed: Default::default(),
         }
     }
 

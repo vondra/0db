@@ -1763,8 +1763,17 @@ pub fn airport_area_contains_any_of(area: &AirportArea, points: &[(f64, f64)]) -
     if n_survivors == 0 {
         return false;
     }
-    if !area.polygon_wkb.is_empty() {
-        return crate::wkb::wkb_contains_any_point(&area.polygon_wkb, &survivors[..n_survivors]);
+    // Cached parse: first call per area parses the WKB once; subsequent
+    // calls (Stage 2C runs ~28k segments × ~50 areas per LKPR-7-R4 batch
+    // = ~10M repeats without the cache) get the parsed rings for free.
+    if let Some(parsed) = area.parsed_polygon() {
+        return survivors[..n_survivors].iter().any(|&(lat, lon)| {
+            crate::wkb::point_in_polygon(lat, lon, &parsed.outer)
+                && !parsed
+                    .holes
+                    .iter()
+                    .any(|h| crate::wkb::point_in_polygon(lat, lon, h))
+        });
     }
     any_within_fallback
 }
@@ -3323,6 +3332,7 @@ mod tests {
             area_m2: 400.0,
             name: String::new(),
             airport_key: String::new(),
+            parsed: Default::default(),
         }];
         seg.ground_context = AirportMatcher::new(&[], &airport_areas).segment_ground_context(&seg);
         assert_eq!(seg.ground_context, GROUND_CONTEXT_AIRPORT_AREA);

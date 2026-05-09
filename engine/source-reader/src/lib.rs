@@ -205,6 +205,7 @@ pub fn collect_from_hex_data(
                 centroid_lon: area.centroid_lon,
                 polygon_wkb: area.polygon_wkb,
                 area_m2: area.area_m2,
+                parsed: Default::default(),
             });
         }
     }

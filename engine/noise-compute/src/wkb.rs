@@ -360,7 +360,9 @@ pub fn wkb_contains_any_point(wkb_hex: &str, points: &[(f64, f64)]) -> bool {
 }
 
 /// Parse WKB with inner rings (holes). Returns (outer_ring, vec_of_holes).
-fn parse_wkb_polygon_with_holes(wkb_hex: &str) -> Option<(Vec<(f64, f64)>, Vec<Vec<(f64, f64)>>)> {
+pub fn parse_wkb_polygon_with_holes(
+    wkb_hex: &str,
+) -> Option<(Vec<(f64, f64)>, Vec<Vec<(f64, f64)>>)> {
     if wkb_hex.len() < 18 {
         return None;
     }
@@ -467,7 +469,7 @@ fn parse_wkb_polygon_with_holes(wkb_hex: &str) -> Option<(Vec<(f64, f64)>, Vec<V
 
 /// Parse WKB hex into outer ring coordinates as Vec<(lat, lon)>.
 /// Reuses same parsing logic as ring_area_offset (proven to work for area calculation).
-fn parse_wkb_polygon_coords(wkb_hex: &str) -> Option<Vec<(f64, f64)>> {
+pub fn parse_wkb_polygon_coords(wkb_hex: &str) -> Option<Vec<(f64, f64)>> {
     if wkb_hex.len() < 18 {
         return None;
     }
@@ -556,7 +558,7 @@ fn parse_wkb_polygon_coords(wkb_hex: &str) -> Option<Vec<(f64, f64)>> {
 }
 
 /// Ray-casting point-in-polygon test.
-fn point_in_polygon(lat: f64, lon: f64, poly: &[(f64, f64)]) -> bool {
+pub fn point_in_polygon(lat: f64, lon: f64, poly: &[(f64, f64)]) -> bool {
     let n = poly.len();
     let mut inside = false;
     let mut j = n - 1;
