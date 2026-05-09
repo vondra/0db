@@ -154,6 +154,18 @@ pub fn read_airport_areas(path: &Path) -> Result<Vec<AirportArea>> {
 
 /// Walk every `<h3r4_dir>/<R4>/airport_{lines,areas}.arrow` and merge
 /// into a single global set. Returns `(lines, areas)`.
+///
+/// OSM aeroway tagging convention: airport identification (name / icao /
+/// iata) lives on the aerodrome polygon (`aeroway=aerodrome`), NOT on
+/// the runway / taxiway lines that sit inside it. The osm-extract
+/// pipeline writes each tag verbatim onto its source feature, so
+/// `airport_lines.arrow` ends up with empty `airport_key` strings even
+/// for runways inside Praha-Ruzyně. This function patches that gap by
+/// running a midpoint-in-polygon test against every line and copying
+/// the parent aerodrome's `airport_key` onto it. Without this fix the
+/// popup's ground-ops bucketer aggregates 95 % of runway / taxi traffic
+/// under `airport_key = ""` and the contributor list shows "Inferred
+/// (lat, lon)" instead of "LKPR" / "Letiště Václava Havla Praha".
 pub fn read_global_airports(h3r4_dir: &Path) -> Result<(Vec<AirportLine>, Vec<AirportArea>)> {
     let mut lines = Vec::new();
     let mut areas = Vec::new();
@@ -169,5 +181,124 @@ pub fn read_global_airports(h3r4_dir: &Path) -> Result<(Vec<AirportLine>, Vec<Ai
         lines.extend(read_airport_lines(&path.join("airport_lines.arrow"))?);
         areas.extend(read_airport_areas(&path.join("airport_areas.arrow"))?);
     }
+    propagate_aerodrome_identity_to_lines(&mut lines, &areas);
     Ok((lines, areas))
+}
+
+/// For every line whose `airport_key` is empty, find the smallest
+/// containing aerodrome polygon and copy its identification down.
+/// Two-pass match:
+///   pass 1 — point-in-polygon containment (smallest polygon wins so a
+///   line inside both the outer aerodrome boundary and an inner
+///   apron / helipad polygon picks up the more specific name).
+///   pass 2 — proximity fallback for `aeroway_type = 5` aerodrome
+///   polygons (Ruzyně/LKPR's OSM polygon covers only the terminal
+///   building → 37 525 m² out of ~10 km² of actual airport, so its
+///   runway lines fall outside the polygon and would otherwise lose
+///   their LKPR identity). Fallback radius is the larger of 3 km and
+///   `2 × sqrt(area)` so well-mapped airports still anchor on
+///   geometry, mis-mapped ones recover via the 3 km guard.
+fn propagate_aerodrome_identity_to_lines(lines: &mut [AirportLine], areas: &[AirportArea]) {
+    const AERODROME_AEROWAY_TYPE: u8 = 5;
+    const PROXIMITY_RADIUS_M: f64 = 3000.0;
+
+    if lines.is_empty() || areas.is_empty() {
+        return;
+    }
+    let area_radius_m = |area: &AirportArea| -> f64 {
+        if area.area_m2 > 0.0 {
+            (area.area_m2 as f64 / std::f64::consts::PI).sqrt()
+        } else {
+            // Fallback when osm-extract didn't write area_m2 — use a
+            // generous default so the containment test still has a
+            // chance to fire.
+            500.0
+        }
+    };
+    for line in lines.iter_mut() {
+        if !line.airport_key.is_empty() && !line.name.is_empty() {
+            continue;
+        }
+        let mid_lat = (line.start_lat + line.end_lat) * 0.5;
+        let mid_lon = (line.start_lon + line.end_lon) * 0.5;
+
+        // Pass 1: smallest containing polygon (any aeroway_type).
+        let mut best_contain: Option<(usize, f64)> = None;
+        for (idx, area) in areas.iter().enumerate() {
+            if area.airport_key.is_empty() && area.name.is_empty() {
+                continue;
+            }
+            let cx = noise_compute::propagation::geo::flat_dist(
+                mid_lat,
+                mid_lon,
+                area.centroid_lat,
+                area.centroid_lon,
+            );
+            let r = area_radius_m(area) * 1.5 + 250.0;
+            if cx > r {
+                continue;
+            }
+            let inside = if !area.polygon_wkb.is_empty() {
+                noise_compute::wkb::wkb_contains_point(&area.polygon_wkb, mid_lat, mid_lon)
+            } else {
+                cx <= r
+            };
+            if !inside {
+                continue;
+            }
+            let measure = if area.area_m2 > 0.0 {
+                area.area_m2 as f64
+            } else {
+                f64::MAX
+            };
+            if best_contain.map(|(_, m)| measure < m).unwrap_or(true) {
+                best_contain = Some((idx, measure));
+            }
+        }
+        if let Some((idx, _)) = best_contain {
+            let parent = &areas[idx];
+            if line.airport_key.is_empty() {
+                line.airport_key = parent.airport_key.clone();
+            }
+            if line.name.is_empty() {
+                line.name = parent.name.clone();
+            }
+            continue;
+        }
+
+        // Pass 2: nearest aerodrome polygon within proximity radius.
+        // Only `aeroway_type = 5` (aerodrome) so taxiway / apron
+        // polygons don't claim distant runway lines.
+        let mut best_prox: Option<(usize, f64)> = None;
+        for (idx, area) in areas.iter().enumerate() {
+            if area.aeroway_type != AERODROME_AEROWAY_TYPE {
+                continue;
+            }
+            if area.airport_key.is_empty() && area.name.is_empty() {
+                continue;
+            }
+            let cx = noise_compute::propagation::geo::flat_dist(
+                mid_lat,
+                mid_lon,
+                area.centroid_lat,
+                area.centroid_lon,
+            );
+            let radius = PROXIMITY_RADIUS_M.max(area_radius_m(area) * 2.0);
+            if cx > radius {
+                continue;
+            }
+            if best_prox.map(|(_, d)| cx < d).unwrap_or(true) {
+                best_prox = Some((idx, cx));
+            }
+        }
+        if let Some((idx, _)) = best_prox {
+            let parent = &areas[idx];
+            if line.airport_key.is_empty() {
+                line.airport_key = parent.airport_key.clone();
+            }
+            if line.name.is_empty() {
+                line.name = parent.name.clone();
+            }
+        }
+    }
 }
