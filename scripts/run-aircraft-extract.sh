@@ -14,7 +14,7 @@ cd "$PROJECT_DIR"
 
 DATA_YEAR="${DATA_YEAR:-2025}"
 DATA_ROOT="${DATA_ROOT:-data}"
-ADSB_CACHE="${ADSB_CACHE:-$DATA_ROOT/source/adsb-cache}"
+ADSB_CACHE="${ADSB_CACHE:-$DATA_ROOT/source/flights-cache/radius/praha-150km}"
 H3R4_DIR="${H3R4_DIR:-$DATA_ROOT/prepared/$DATA_YEAR/h3r4}"
 PREPARED_DIR="${PREPARED_DIR:-$DATA_ROOT/prepared}"
 WORK_DIR="${WORK_DIR:-/tmp/aircraft-extract-work}"
@@ -26,8 +26,11 @@ die() { log "ERROR: $*"; exit 1; }
 if [ -z "$DAYS" ]; then
     log "DAYS env var not set; deriving from ADSB_CACHE=$ADSB_CACHE"
     [ -d "$ADSB_CACHE" ] || die "$ADSB_CACHE not found and DAYS not provided"
-    DAYS="$(find "$ADSB_CACHE" -maxdepth 2 -name '*.tar' -printf '%f\n' \
-        | sed 's/\.tar$//' | sort -u | paste -sd,)"
+    # Layout matches AdsbTarSource: <root>/<year>/<day>/subset.tar
+    # (depth 3). Walk to the parent dir of each *.tar so the day is
+    # the basename of `dirname tarfile`.
+    DAYS="$(find "$ADSB_CACHE" -mindepth 2 -maxdepth 4 -name '*.tar' -printf '%h\n' \
+        | awk -F/ '{print $NF}' | sort -u | paste -sd,)"
 fi
 [ -n "$DAYS" ] || die "no ADS-B TAR days resolved from $ADSB_CACHE"
 
