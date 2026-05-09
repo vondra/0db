@@ -170,24 +170,25 @@ fn sum_periods_linear(sources: &[SourceResult]) -> NoisePeriods {
 /// IPC writers / parquet / anyhow into the popup runtime.
 pub(super) const SCHEMA_VERSION_V7: &str = "v7";
 
-/// Verify schema_version on the first batch — Arrow IPC writes one
-/// schema per file shared across every RecordBatch, so checking the
-/// rest is redundant. An empty `batches` slice (R4 with no aircraft
-/// rows) is fine: nothing to validate.
+/// Verify `schema_version` on every batch in the slice. Single-file
+/// IPC guarantees one schema per file, but the caller merges batches
+/// across R4 cells (`source_reader::lib::collect_from_hex_data`), so
+/// a mixed slice can have v7 batches from one hex and stale v6 batches
+/// from a sibling — and the first-only optimisation /gg (Codex)
+/// flagged would silently let those through.
 pub(super) fn assert_schema_v7(label: &str, batches: &[RecordBatch]) -> Result<(), String> {
-    let Some(batch) = batches.first() else {
-        return Ok(());
-    };
-    let v = batch
-        .schema_ref()
-        .metadata()
-        .get("schema_version")
-        .map(String::as_str);
-    if v != Some(SCHEMA_VERSION_V7) {
-        return Err(format!(
-            "{label} schema_version mismatch (expected {SCHEMA_VERSION_V7}, got {v:?}) \
-             — re-extract aircraft pipeline with the M0c build"
-        ));
+    for (idx, batch) in batches.iter().enumerate() {
+        let v = batch
+            .schema_ref()
+            .metadata()
+            .get("schema_version")
+            .map(String::as_str);
+        if v != Some(SCHEMA_VERSION_V7) {
+            return Err(format!(
+                "{label}[batch {idx}] schema_version mismatch (expected {SCHEMA_VERSION_V7}, got {v:?}) \
+                 — re-extract aircraft pipeline with the M0c build"
+            ));
+        }
     }
     Ok(())
 }

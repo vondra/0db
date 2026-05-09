@@ -35,8 +35,8 @@ pub mod stage_2c;
 pub mod trace;
 
 /// Schema-version tag stamped into every Arrow file produced by this
-/// crate. v7 carries per-rotation `flight_id`, real `callsign` /
-/// `aircraft_type` columns, and ground-row `observed_flight_ids`; v6
-/// files lack those columns and would silently load with empty values
-/// if the assert was missing.
+/// crate. v7 introduces per-rotation `flight_id` (Stage 0 splits at
+/// telemetry gaps) and real `callsign` / `aircraft_type` columns on
+/// segments + airborne; v6 files lack those columns and would silently
+/// load with empty values if the assert was missing.
 pub const SCHEMA_VERSION: &str = "v7";
