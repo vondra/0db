@@ -682,18 +682,10 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         Some(r) => r,
         None => &stub,
     };
-    // Sample receiver elevation up-front so the aircraft R-tree pre-filter
-    // (inside `collect_from_hex_data`) has a real `rx_elev` to bound slant
-    // lower bounds against. With the stub rasters (offline tests), elevation
-    // is 0.0 and the pre-filter still runs but is slightly less aggressive.
+    // Sample receiver elevation up-front so the aircraft kernels see a
+    // real ground reference. With the stub rasters (offline tests),
+    // elevation is 0.0.
     let elevation = rasters.elevation(lat, lng);
-    // Pre-filter slant bound has to use the same reference the kernel
-    // uses — `Receiver::altitude_m()` adds DEFAULT_RECEIVER_HEIGHT (4 m)
-    // to the ground elevation, so the kernel evaluates `rel_alt` against
-    // ground+4 not raw ground. Using `elevation` directly here biased
-    // the pre-filter slant high by 8·rel_alt + 16 ≈ 64 k m² for cruise,
-    // which could falsely drop segments at the reach boundary.
-    let _ = noise_compute::types::default_receiver_altitude_m(elevation);
     let t_load = t_start.elapsed();
     let sources = collect_from_hex_data(&hex_refs, lat, lng);
     let t_collect = t_start.elapsed() - t_load;
@@ -738,7 +730,8 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         &sources.barriers,
         rasters,
         sources.n_days,
-    );
+    )
+    .map_err(|e| Error::new(Status::GenericFailure, e))?;
     let t_compute = t_start.elapsed() - t_load - t_collect;
 
     let summary = apply_segment_top_k_with_cap(&mut traces, top_k_per_kind);
