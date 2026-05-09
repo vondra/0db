@@ -43,10 +43,10 @@ if [ "$STEP" = "all" ] || [ "$STEP" = "rasters" ]; then
     NAMES+=("rasters")
 fi
 
-# ── ADS-B 2025 (heavy, ~2-6h) ────────────────────────────────────────
+# ── Aircraft extract v6 (heavy, ~2-6h) ───────────────────────────────
 if [ "$STEP" = "all" ] || [ "$STEP" = "aircraft" ]; then
     log "Starting: aircraft → $LOG_DIR/extraction-aircraft.log"
-    bash "$SCRIPT_DIR/adsb-to-h3r4.sh" &> "$LOG_DIR/extraction-aircraft.log" &
+    bash "$SCRIPT_DIR/run-aircraft-extract.sh" &> "$LOG_DIR/extraction-aircraft.log" &
     PIDS+=($!)
     NAMES+=("aircraft")
 fi
