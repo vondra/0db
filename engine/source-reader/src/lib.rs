@@ -108,31 +108,17 @@ pub fn collect_sources_at_point(
         .collect::<Result<_, _>>()?;
     let refs: Vec<&hex_store::HexData> = loaded.iter().collect();
 
-    Ok(collect_from_hex_data(&refs, lat, lng, None::<AircraftPrefilter>))
-}
-
-/// Aircraft R-tree pre-filter config. Drops airborne segments whose
-/// kernel-matched (unclamped CPA) slant² exceeds the profile's reach².
-/// Without this, ~75 % of segments returned by the r-tree envelope would
-/// incur a kernel call only to be rejected by the same test inside.
-#[derive(Clone, Copy, Debug)]
-pub struct AircraftPrefilter {
-    pub rx_elev_m: f64,
+    Ok(collect_from_hex_data(&refs, lat, lng))
 }
 
 /// Shared source collection logic. Takes pre-loaded hex data.
 /// Both `collect_sources_at_point` and `query_noise_at_point` delegate here.
-///
-/// `prefilter`: see `AircraftPrefilter`. `None` falls back to the 16 km
-/// horizontal R-tree envelope only — used by the `point-debug` CLI and
-/// raw-arrow tests that don't have rasters access.
 ///
 /// NACE codes are read directly from industrial.arrow nace_4digit column.
 pub fn collect_from_hex_data(
     hex_data: &[&hex_store::HexData],
     lat: f64,
     lng: f64,
-    prefilter: Option<AircraftPrefilter>,
 ) -> PointQueryData {
     let mut all_roads = Vec::new();
     let mut all_railways = Vec::new();
@@ -483,11 +469,6 @@ pub fn collect_from_hex_data(
         all_cruise_batches.extend(data.aircraft_cruise_batches.iter().cloned());
         all_ground_batches.extend(data.aircraft_ground_batches.iter().cloned());
     }
-    // `prefilter` was used by the v5 R-tree segment prune; v6 row views
-    // don't need it (per-row distance check inside compute_aircraft_v6).
-    // Kept in the public collect_from_hex_data signature so callers
-    // upgrade incrementally.
-    let _ = prefilter;
 
     all_barriers.sort_unstable_by(|a, b| {
         a.dist_m
@@ -712,18 +693,12 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
     // ground+4 not raw ground. Using `elevation` directly here biased
     // the pre-filter slant high by 8·rel_alt + 16 ≈ 64 k m² for cruise,
     // which could falsely drop segments at the reach boundary.
-    let receiver_alt_m = noise_compute::types::default_receiver_altitude_m(elevation);
+    let _ = noise_compute::types::default_receiver_altitude_m(elevation);
     let t_load = t_start.elapsed();
-    let sources = collect_from_hex_data(
-        &hex_refs,
-        lat,
-        lng,
-        Some(AircraftPrefilter { rx_elev_m: receiver_alt_m }),
-    );
+    let sources = collect_from_hex_data(&hex_refs, lat, lng);
     let t_collect = t_start.elapsed() - t_load;
     drop(store);
 
-    // Build receiver (elevation already sampled above for the collect pre-filter).
     let receiver = noise_compute::types::Receiver::new(lat, lng, elevation);
 
     let config = noise_compute::types::ComputeConfig {
