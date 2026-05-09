@@ -1700,14 +1700,44 @@ fn default_airport_line_width_m(aeroway_type: u8) -> f64 {
 /// centroid-radius pre-prune; falls back to the centroid radius when
 /// the WKB is empty (`area_m2 == 0` or unparsable).
 pub fn airport_area_contains_point(area: &AirportArea, lat: f64, lon: f64) -> bool {
-    let centroid_dist_m = geo::flat_dist(lat, lon, area.centroid_lat, area.centroid_lon);
-    if centroid_dist_m > airport_area_prune_radius_m(area) {
+    airport_area_contains_any_of(area, &[(lat, lon)])
+}
+
+/// Returns true when ANY of `points` is inside `area.polygon_wkb`.
+/// Centroid-prunes each point; if all points are outside the prune
+/// radius, returns false without parsing WKB. Otherwise parses the WKB
+/// once and tests every point that survived the prune. Same fallback
+/// path as [`airport_area_contains_point`] when WKB is empty.
+///
+/// Caller-side bound on `points.len()` is small (typically 1-3), so
+/// the survivor buffer is a fixed 8-slot stack array — large enough
+/// for any plausible caller, no allocation.
+pub fn airport_area_contains_any_of(area: &AirportArea, points: &[(f64, f64)]) -> bool {
+    let prune_r = airport_area_prune_radius_m(area);
+    let fallback_r = airport_area_fallback_radius_m(area);
+    let mut survivors: [(f64, f64); 8] = [(0.0, 0.0); 8];
+    let mut n_survivors = 0usize;
+    let mut any_within_fallback = false;
+    for &(lat, lon) in points {
+        let d = geo::flat_dist(lat, lon, area.centroid_lat, area.centroid_lon);
+        if d > prune_r {
+            continue;
+        }
+        if d <= fallback_r {
+            any_within_fallback = true;
+        }
+        if n_survivors < survivors.len() {
+            survivors[n_survivors] = (lat, lon);
+            n_survivors += 1;
+        }
+    }
+    if n_survivors == 0 {
         return false;
     }
     if !area.polygon_wkb.is_empty() {
-        return crate::wkb::wkb_contains_point(&area.polygon_wkb, lat, lon);
+        return crate::wkb::wkb_contains_any_point(&area.polygon_wkb, &survivors[..n_survivors]);
     }
-    centroid_dist_m <= airport_area_fallback_radius_m(area)
+    any_within_fallback
 }
 
 fn airport_area_prune_radius_m(area: &AirportArea) -> f64 {

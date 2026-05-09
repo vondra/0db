@@ -331,6 +331,18 @@ pub fn wkb_h3_grid_points(wkb_hex: &str) -> Vec<(f64, f64)> {
 /// Test whether a point lies inside a WKB polygon or multipolygon.
 /// Holes are respected; invalid WKB returns false.
 pub fn wkb_contains_point(wkb_hex: &str, lat: f64, lon: f64) -> bool {
+    wkb_contains_any_point(wkb_hex, &[(lat, lon)])
+}
+
+/// Like [`wkb_contains_point`] but tests N points against the polygon
+/// after parsing the WKB once. Returns `true` as soon as any point is
+/// inside (short-circuit) — caller should order points by likelihood
+/// of inclusion. Used by Stage 2C aeroway snap to test segment
+/// start/mid/end without re-parsing the polygon three times.
+pub fn wkb_contains_any_point(wkb_hex: &str, points: &[(f64, f64)]) -> bool {
+    if points.is_empty() {
+        return false;
+    }
     let (outer, holes) = match parse_wkb_polygon_with_holes(wkb_hex) {
         Some(v) => v,
         None => match parse_wkb_polygon_coords(wkb_hex) {
@@ -338,10 +350,13 @@ pub fn wkb_contains_point(wkb_hex: &str, lat: f64, lon: f64) -> bool {
             None => return false,
         },
     };
-    if outer.is_empty() || !point_in_polygon(lat, lon, &outer) {
+    if outer.is_empty() {
         return false;
     }
-    !holes.iter().any(|h| point_in_polygon(lat, lon, h))
+    points.iter().any(|&(lat, lon)| {
+        point_in_polygon(lat, lon, &outer)
+            && !holes.iter().any(|h| point_in_polygon(lat, lon, h))
+    })
 }
 
 /// Parse WKB with inner rings (holes). Returns (outer_ring, vec_of_holes).
