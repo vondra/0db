@@ -16,6 +16,7 @@
 //!    stored back as dB SPL per the `dB_sum_v6_1` ground contract.
 //! 5. Map bucket centroids onto R4 hexes and write ground.arrow.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Result;
@@ -24,6 +25,7 @@ use noise_compute::types::{AircraftSegment, AirportArea, AirportLine, RasterSamp
 
 use crate::flight::FlightSegment;
 use crate::progress::Ticker;
+use crate::stage_2c::aeroway_snap::{AeroSnap, SnapSource, SNAP_SOURCES};
 
 pub mod aeroway_snap;
 pub mod bucket;
@@ -109,10 +111,82 @@ pub fn run_stage_2c(
         items.push((seg.clone(), snap));
     }
 
+    log_snap_breakdown(&items);
+
     eprintln!("[stage2c] bucketing {} snapped items", items.len());
     let buckets = bucket::accumulate(&items, rasters, n_days);
     eprintln!("[stage2c] writing {} buckets per R4", buckets.len());
     r4_partition::write_per_r4(buckets, h3r4_dir, n_days)
+}
+
+/// Per-airport + global breakdown of snap-source provenance. Drives the
+/// "is OSM aeroway tagging good enough at airport X?" question — when a
+/// busy airport drops below the line+area threshold, OSM is missing
+/// runways/taxiways and the fix is upstream (OSM tagging) not in the
+/// snap chain.
+fn log_snap_breakdown(items: &[(AircraftSegment, AeroSnap)]) {
+    // Below this many segments, the line+area share is too noisy to
+    // distinguish a slow-tagging airport from random small-strip traffic.
+    // 50 ≈ a few days × a handful of movements at a regional aerodrome.
+    const BUSY_AIRPORT_THRESHOLD: u32 = 50;
+    // 30 % is a heuristic floor: LKPR canonical case empirically lands
+    // ~50 % line+area after M3 (was 28 % pre-M3); a busy airport under
+    // 30 % is almost certainly an OSM-tagging gap, not a snap-chain bug.
+    // Tune by eye if false positives appear.
+    const LINE_AREA_WARN_PCT: f32 = 30.0;
+    const TOP_AIRPORTS: usize = 20;
+
+    if items.is_empty() {
+        return;
+    }
+    let mut totals = [0u32; SNAP_SOURCES.len()];
+    let mut by_airport: HashMap<&str, [u32; SNAP_SOURCES.len()]> = HashMap::new();
+    for (_, snap) in items {
+        let idx = snap.snap_source as usize;
+        totals[idx] += 1;
+        if !snap.airport_key.is_empty() {
+            by_airport
+                .entry(snap.airport_key.as_str())
+                .or_insert([0u32; SNAP_SOURCES.len()])[idx] += 1;
+        }
+    }
+    let total: u32 = totals.iter().sum();
+    let pct = |n: u32| 100.0 * n as f32 / total.max(1) as f32;
+    let summary: String = SNAP_SOURCES
+        .iter()
+        .map(|s| format!("{s}={} ({:.1}%) ", totals[*s as usize], pct(totals[*s as usize])))
+        .collect();
+    eprintln!("[stage2c] snap breakdown — {summary}of {total} segments");
+
+    let mut sorted: Vec<_> = by_airport.into_iter().collect();
+    // Tiebreaker on airport key — HashMap order is random, so without
+    // it the top-20 cutoff would flip-flop across runs.
+    sorted.sort_by(|a, b| {
+        let sa: u32 = a.1.iter().sum();
+        let sb: u32 = b.1.iter().sum();
+        sb.cmp(&sa).then_with(|| a.0.cmp(b.0))
+    });
+    for (airport, counts) in sorted.iter().take(TOP_AIRPORTS) {
+        let n: u32 = counts.iter().sum();
+        // Skip R10Fallback: it always has an empty airport_key, so the
+        // per-airport tally never sees those snaps. Showing `r10=0` for
+        // every airport would falsely suggest "this airport had no
+        // anonymous fallbacks" — they're tallied in the global summary
+        // above instead. /gg (Gemini) caught the misleading column.
+        let breakdown: String = SNAP_SOURCES
+            .iter()
+            .filter(|s| **s != SnapSource::R10Fallback)
+            .map(|s| format!("{s}={} ", counts[*s as usize]))
+            .collect();
+        eprintln!("[stage2c] {airport}: {n} segs → {breakdown}");
+        let line_area = counts[SnapSource::Line as usize] + counts[SnapSource::Area as usize];
+        let line_area_pct = 100.0 * line_area as f32 / n.max(1) as f32;
+        if n >= BUSY_AIRPORT_THRESHOLD && line_area_pct < LINE_AREA_WARN_PCT {
+            eprintln!(
+                "[stage2c] WARN {airport}: only {line_area_pct:.0}% line+area on {n} segments — OSM aeroway may be missing runway/taxiway geometry",
+            );
+        }
+    }
 }
 
 /// Pre-snap filter for observed segments — drops anything that's
