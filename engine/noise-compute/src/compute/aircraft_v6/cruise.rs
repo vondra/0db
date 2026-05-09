@@ -129,9 +129,11 @@ pub fn scatter(
         };
         let energy = fast_exp_f64(sel * std::f64::consts::LN_10 * 0.1) * density;
         let period = (row.period.min(2)) as usize;
-        let acc = flights
-            .entry(synth_fid)
-            .or_insert_with(|| FlightAccum::new(row.rep_profile_idx, density, true));
+        let acc = flights.entry(synth_fid).or_insert_with(|| {
+            // Cruise rows have no per-flight callsign / typecode (one
+            // R8 bucket aggregates many flights), so leave both empty.
+            FlightAccum::new(row.rep_profile_idx, density, true, [0; 4], String::new())
+        });
         acc.period_energy[period] += energy;
         acc.flight_weight = acc.flight_weight.max(density);
 

@@ -20,6 +20,14 @@ pub struct FlightAccum {
     pub peak_seg_end: [f64; 2],
     pub profile_idx: u8,
     pub flight_weight: f64,
+    /// ICAO typecode (4-byte FixedSizeBinary, ASCII, '\0'-padded). Carried
+    /// from Stage 0 via Stage 1 / 2A so M2 `top_flights` can render
+    /// "B738" / "A320" instead of the profile-anchor placeholder. Empty
+    /// (`[0; 4]`) for cruise / synth fids.
+    pub aircraft_type: [u8; 4],
+    /// ATC callsign (e.g. "TVS100P"). Same provenance as `aircraft_type`;
+    /// empty when the trace had no callsign metadata.
+    pub callsign: String,
     /// Set when this entry was created from a cruise bucket. `flights_per_day`
     /// and the band counters route cruise via `CruiseFlightStats` instead so
     /// one transit crossing N R8 cells doesn't multi-count.
@@ -27,7 +35,13 @@ pub struct FlightAccum {
 }
 
 impl FlightAccum {
-    pub fn new(profile_idx: u8, weight: f64, is_cruise: bool) -> Self {
+    pub fn new(
+        profile_idx: u8,
+        weight: f64,
+        is_cruise: bool,
+        aircraft_type: [u8; 4],
+        callsign: String,
+    ) -> Self {
         Self {
             period_energy: [0.0; 3],
             peak_lmax: -999.0,
@@ -40,6 +54,8 @@ impl FlightAccum {
             peak_seg_end: [0.0; 2],
             profile_idx,
             flight_weight: weight,
+            aircraft_type,
+            callsign,
             is_cruise,
         }
     }

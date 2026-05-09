@@ -171,6 +171,16 @@ pub fn clamp_profile_idx(profile_idx: u8) -> usize {
     (profile_idx as usize).min(NUM_PROFILES - 1)
 }
 
+/// Decode an ICAO typecode stored as `FixedSizeBinary(4)` (ASCII,
+/// '\0'-padded — Stage 1's storage form) to a normal `String`. ICAO
+/// typecodes are 3-4 chars (e.g. "B738", "A320", "CRJ"); the trim
+/// drops the NUL pad. Invalid UTF-8 falls back to a lossy decode so
+/// the popup never panics on malformed extract data.
+pub fn typecode_to_string(bytes: &[u8; 4]) -> String {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(4);
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
+}
+
 /// Whether a profile's noise class is jet-classed. Routes through
 /// `IS_JET[noise_class]` so the predicate stays correct as the generator
 /// adds/reorders profiles. Used by airborne data-quality filters
