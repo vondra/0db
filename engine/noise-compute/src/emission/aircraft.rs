@@ -1696,7 +1696,10 @@ fn default_airport_line_width_m(aeroway_type: u8) -> f64 {
     }
 }
 
-fn airport_area_contains_point(area: &AirportArea, lat: f64, lon: f64) -> bool {
+/// Returns true when `(lat, lon)` is inside `area.polygon_wkb`, with a
+/// centroid-radius pre-prune; falls back to the centroid radius when
+/// the WKB is empty (`area_m2 == 0` or unparsable).
+pub fn airport_area_contains_point(area: &AirportArea, lat: f64, lon: f64) -> bool {
     let centroid_dist_m = geo::flat_dist(lat, lon, area.centroid_lat, area.centroid_lon);
     if centroid_dist_m > airport_area_prune_radius_m(area) {
         return false;

@@ -19,6 +19,7 @@
 use std::path::Path;
 
 use anyhow::Result;
+use noise_compute::emission::aircraft::prepare_ground_context;
 use noise_compute::types::{AircraftSegment, AirportArea, AirportLine, RasterSampler};
 
 use crate::flight::FlightSegment;
@@ -42,8 +43,33 @@ pub fn run_stage_2c(
     rasters: &dyn RasterSampler,
     n_days: u16,
 ) -> Result<usize> {
-    eprintln!("[stage2c] converting {} segments + running v5 synth", segments.len());
-    let observed_v5 = synthesize::convert_segments(segments);
+    eprintln!("[stage2c] converting {} segments", segments.len());
+    let mut observed_v5 = synthesize::convert_segments(segments);
+
+    // Multi-day clustering of low-AGL observed segments tags grass
+    // strips / informal helipads with `GROUND_CONTEXT_INFERRED` BEFORE
+    // synth runs — synth's coverage decision then sees the inferred
+    // airport identity and skips the apron-template fill that would
+    // otherwise emit anonymous R10-fallback rows for those clusters.
+    // Inference is offline-only (see `infer_repeated_ground_context`
+    // docstring in noise-compute/src/emission/aircraft.rs — popup
+    // runtime can't afford the O(N log N) clustering pass; Stage 2C
+    // is the batch-extract caller and runs once per global re-extract).
+    let prep_stats = prepare_ground_context(
+        &mut observed_v5,
+        airport_lines,
+        airport_areas,
+        rasters,
+        n_days,
+        /* enable_inference */ true,
+    );
+    eprintln!(
+        "[stage2c] prepare_ground_context: airport_marked={} inferred_marked={} resolved_kind={}",
+        prep_stats.airport_context_marked,
+        prep_stats.inferred_context_marked,
+        prep_stats.resolved_ops_kind,
+    );
+
     let synth_v5 = synthesize::synthesize(&observed_v5, airport_lines, airport_areas, rasters, n_days);
     eprintln!(
         "[stage2c] {} observed + {} synthetic surface segments — snapping",
