@@ -1,6 +1,6 @@
-//! Arrow schemas for the five v6 artifacts. Every schema embeds
-//! `schema_version = "v6"` in metadata so a v4/v5 reader can refuse
-//! to load the wrong layout instead of silently mis-decoding it.
+//! Arrow schemas for the five v7 artifacts. Every schema embeds
+//! `schema_version = "v7"` in metadata so the reader can refuse old
+//! v4/v5/v6 layouts instead of silently mis-decoding them.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -144,21 +144,22 @@ pub fn cruise_schema() -> Arc<Schema> {
 
 /// Ground emission contract stamped into ground.arrow metadata.
 ///
-/// `dB_sum_v6_1` means each `em_*_bands[i]` stores `10*log10(Σ 10^(x/10))`
+/// `dB_sum_v7_1` means each `em_*_bands[i]` stores `10*log10(Σ 10^(x/10))`
 /// — energies summed in linear space, written back as dB SPL — and silent
-/// bands round-trip as `f32::NEG_INFINITY`. We chose dB-band storage (not
-/// linear) because the popup's `propagate_variants_full` already consumes
-/// dB band levels natively; storing linear would force extract→dB and
-/// reader→linear conversions on every row. This tag also lets a reader
-/// reject v6 ground files written before C1, where Stage 2C v1 summed dB
-/// values as if they were linear (mathematically wrong by ~10 dB).
-pub const GROUND_CONTRACT_DB_SUM_V6_1: &str = "dB_sum_v6_1";
+/// bands round-trip as `f32::NEG_INFINITY`. dB-band storage was chosen
+/// because the popup's `propagate_variants_full` already consumes dB
+/// band levels natively; storing linear would force extract→dB and
+/// reader→linear conversions on every row. The tag also lets the reader
+/// reject earlier ground.arrow files (pre-`dB_sum_v6_1`, where Stage 2C
+/// summed dB values as if they were linear — mathematically wrong by
+/// ~10 dB).
+pub const GROUND_CONTRACT_DB_SUM_V7_1: &str = "dB_sum_v7_1";
 
 /// Stage 2C — `h3r4/<hex>/ground.arrow`. One row per
 /// (osm_id × ops_kind × sub_bucket_idx); period is *not* in the bucket
 /// key — each row carries all three `em_day/eve/night_bands` so the
 /// popup reads Lden from a single row, and silent periods round-trip as
-/// `[NEG_INFINITY; 8]`. See [`GROUND_CONTRACT_DB_SUM_V6_1`] for energy
+/// `[NEG_INFINITY; 8]`. See [`GROUND_CONTRACT_DB_SUM_V7_1`] for energy
 /// semantics.
 pub fn ground_schema() -> Arc<Schema> {
     let bands_field = || {
@@ -194,14 +195,14 @@ pub fn ground_schema() -> Arc<Schema> {
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "ground"),
-        ("ground_contract", GROUND_CONTRACT_DB_SUM_V6_1),
+        ("ground_contract", GROUND_CONTRACT_DB_SUM_V7_1),
     ])))
 }
 
-/// Verify a loaded file's metadata matches v6. Reader-side guard so
-/// stale v4/v5 files raise a loud error instead of silently producing
-/// gibberish numbers.
-pub fn assert_v6(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
+/// Verify a loaded file's metadata matches the current
+/// [`SCHEMA_VERSION`]. Reader-side guard so stale (pre-v7) files raise
+/// a loud error instead of silently producing gibberish numbers.
+pub fn assert_schema_v7(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
     match metadata.get("schema_version").map(String::as_str) {
         Some(SCHEMA_VERSION) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
@@ -211,15 +212,16 @@ pub fn assert_v6(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
     }
 }
 
-/// Verify ground.arrow metadata carries the `dB_sum_v6_1` energy
-/// contract. Pre-C1 v6 ground files lack this key — accepting them
-/// would feed the popup band levels off by roughly 10 dB.
-pub fn assert_ground_contract_v6_1(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
-    assert_v6(metadata)?;
+/// Verify ground.arrow metadata carries the `dB_sum_v7_1` energy
+/// contract. Pre-v7 ground files lack this key (or carry the older
+/// `dB_sum_v6_1`) — accepting them would feed the popup band levels
+/// off by roughly 10 dB.
+pub fn assert_ground_contract_v7_1(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
+    assert_schema_v7(metadata)?;
     match metadata.get("ground_contract").map(String::as_str) {
-        Some(GROUND_CONTRACT_DB_SUM_V6_1) => Ok(()),
+        Some(GROUND_CONTRACT_DB_SUM_V7_1) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "ground_contract mismatch: expected {GROUND_CONTRACT_DB_SUM_V6_1}, got {other}"
+            "ground_contract mismatch: expected {GROUND_CONTRACT_DB_SUM_V7_1}, got {other}"
         )),
         None => Err(anyhow::anyhow!(
             "ground_contract metadata missing — re-extract Stage 2C with C1 build"
@@ -232,7 +234,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_carry_v6_metadata() {
+    fn all_schemas_carry_v7_metadata() {
         for s in [
             flights_schema(),
             segments_schema(),
@@ -241,16 +243,24 @@ mod tests {
             ground_schema(),
         ] {
             let md = s.metadata();
-            assert_eq!(md.get("schema_version").map(String::as_str), Some("v6"));
+            assert_eq!(md.get("schema_version").map(String::as_str), Some("v7"));
             assert!(md.contains_key("kind"));
         }
     }
 
     #[test]
-    fn assert_v6_rejects_v5() {
-        let md: HashMap<String, String> =
-            [("schema_version".into(), "v5".into())].into_iter().collect();
-        assert!(assert_v6(&md).is_err());
+    fn assert_schema_v7_rejects_old_versions() {
+        for old in ["v4", "v5", "v6"] {
+            let md: HashMap<String, String> =
+                [("schema_version".into(), old.into())].into_iter().collect();
+            assert!(assert_schema_v7(&md).is_err(), "expected reject for {old}");
+        }
+    }
+
+    #[test]
+    fn assert_schema_v7_rejects_missing_metadata() {
+        let md: HashMap<String, String> = HashMap::new();
+        assert!(assert_schema_v7(&md).is_err());
     }
 
     #[test]
@@ -258,7 +268,7 @@ mod tests {
         let s = ground_schema();
         assert_eq!(
             s.metadata().get("ground_contract").map(String::as_str),
-            Some(GROUND_CONTRACT_DB_SUM_V6_1)
+            Some(GROUND_CONTRACT_DB_SUM_V7_1)
         );
     }
 
@@ -272,19 +282,19 @@ mod tests {
     }
 
     #[test]
-    fn assert_ground_contract_v6_1_rejects_pre_c1_files() {
+    fn assert_ground_contract_v7_1_rejects_pre_v7_files() {
         let md: HashMap<String, String> = [
             ("schema_version".into(), "v6".into()),
             ("kind".into(), "ground".into()),
         ]
         .into_iter()
         .collect();
-        assert!(assert_ground_contract_v6_1(&md).is_err());
+        assert!(assert_ground_contract_v7_1(&md).is_err());
     }
 
     #[test]
-    fn assert_ground_contract_v6_1_accepts_current_schema() {
+    fn assert_ground_contract_v7_1_accepts_current_schema() {
         let s = ground_schema();
-        assert!(assert_ground_contract_v6_1(s.metadata()).is_ok());
+        assert!(assert_ground_contract_v7_1(s.metadata()).is_ok());
     }
 }

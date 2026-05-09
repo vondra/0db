@@ -31,10 +31,11 @@ use ground_view::GroundRowAccum;
 /// `aircraft` slice (the legacy aircraft branch is gone — see
 /// `noise_compute::compute_at_point_with_airports`).
 ///
-/// Returns `Err(String)` when ground.arrow is stale (missing the
-/// `dB_sum_v6_1` contract metadata) so the popup HTTP path can map
-/// the failure to a structured 500 response with the operator-
-/// actionable message instead of crashing the worker via `assert!`.
+/// Returns `Err(String)` when any aircraft.arrow file fails the v7
+/// schema or `dB_sum_v7_1` ground-energy contract, so the popup HTTP
+/// path can map the failure to a structured 500 response with the
+/// operator-actionable message instead of crashing the worker via
+/// `assert!`.
 pub fn add_v6_aircraft_to_result(
     result: &mut NoiseResult,
     traces: &mut TraceCollector,
@@ -46,6 +47,9 @@ pub fn add_v6_aircraft_to_result(
     rasters: &dyn RasterSampler,
     n_days: u16,
 ) -> Result<(), String> {
+    assert_schema_v7("airborne.arrow", airborne_batches)?;
+    assert_schema_v7("cruise.arrow", cruise_batches)?;
+    assert_schema_v7("ground.arrow", ground_batches)?;
     let airborne_rows = AirborneRowAccum::new(airborne_batches);
     let cruise_rows = CruiseRowAccum::new(cruise_batches);
     let ground_rows = GroundRowAccum::new(ground_batches)?;
@@ -159,4 +163,31 @@ fn sum_periods_linear(sources: &[SourceResult]) -> NoisePeriods {
         return NoisePeriods::silence();
     }
     noise_compute::periods::periods(to_db(day), to_db(eve), to_db(night))
+}
+
+/// Stamp written by every aircraft-extract v7 Arrow file. Inline copy
+/// rather than build-dep on aircraft-extract, which would pull arrow
+/// IPC writers / parquet / anyhow into the popup runtime.
+pub(super) const SCHEMA_VERSION_V7: &str = "v7";
+
+/// Verify schema_version on the first batch — Arrow IPC writes one
+/// schema per file shared across every RecordBatch, so checking the
+/// rest is redundant. An empty `batches` slice (R4 with no aircraft
+/// rows) is fine: nothing to validate.
+pub(super) fn assert_schema_v7(label: &str, batches: &[RecordBatch]) -> Result<(), String> {
+    let Some(batch) = batches.first() else {
+        return Ok(());
+    };
+    let v = batch
+        .schema_ref()
+        .metadata()
+        .get("schema_version")
+        .map(String::as_str);
+    if v != Some(SCHEMA_VERSION_V7) {
+        return Err(format!(
+            "{label} schema_version mismatch (expected {SCHEMA_VERSION_V7}, got {v:?}) \
+             — re-extract aircraft pipeline with the M0c build"
+        ));
+    }
+    Ok(())
 }
