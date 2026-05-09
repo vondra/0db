@@ -22,10 +22,10 @@ fn base_metadata(extra: &[(&str, &str)]) -> HashMap<String, String> {
 /// Returns a clone of `schema` with `n_days` metadata stamped. Used by
 /// the writers to record the extraction window so the popup reader can
 /// recover the correct period normalization without scanning date_ids.
-pub fn with_n_days(schema: std::sync::Arc<arrow::datatypes::Schema>, n_days: u16) -> std::sync::Arc<arrow::datatypes::Schema> {
+pub fn with_n_days(schema: Arc<Schema>, n_days: u16) -> Arc<Schema> {
     let mut md = schema.metadata().clone();
     md.insert("n_days".to_string(), n_days.to_string());
-    std::sync::Arc::new((*schema).clone().with_metadata(md))
+    Arc::new((*schema).clone().with_metadata(md))
 }
 
 /// Stage 0 — `flights/<day>.arrow`. One row per (aircraft, day).
@@ -142,21 +142,24 @@ pub fn cruise_schema() -> Arc<Schema> {
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[("kind", "cruise")])))
 }
 
-/// Ground emission contract — band-energy semantics stamped into the
-/// ground.arrow metadata so a reader can refuse v6 ground files written
-/// before C1 (where Stage 2C v1 silently summed dB values as if they
-/// were linear). `dB_sum_v6_1` means each `em_*_bands[i]` stores the
-/// linear-energy-summed band level converted back to dB SPL: empty
-/// bands round-trip as `f32::NEG_INFINITY`, finite bands aggregate via
-/// `10*log10(Σ 10^(x/10))`. Period-silent rows still carry NEG_INFINITY
-/// arrays for the silent periods (one row × all three em arrays).
+/// Ground emission contract stamped into ground.arrow metadata.
+///
+/// `dB_sum_v6_1` means each `em_*_bands[i]` stores `10*log10(Σ 10^(x/10))`
+/// — energies summed in linear space, written back as dB SPL — and silent
+/// bands round-trip as `f32::NEG_INFINITY`. We chose dB-band storage (not
+/// linear) because the popup's `propagate_variants_full` already consumes
+/// dB band levels natively; storing linear would force extract→dB and
+/// reader→linear conversions on every row. This tag also lets a reader
+/// reject v6 ground files written before C1, where Stage 2C v1 summed dB
+/// values as if they were linear (mathematically wrong by ~10 dB).
 pub const GROUND_CONTRACT_DB_SUM_V6_1: &str = "dB_sum_v6_1";
 
-/// Stage 2C — `h3r4/<hex>/ground.arrow`. One row per (osm_id × ops_kind
-/// × sub_bucket_idx); each row carries `em_day_bands` + `em_eve_bands`
-/// + `em_night_bands` (silent periods = `[NEG_INFINITY; 8]`). Per-band
-/// dB level so the popup can call `propagate_variants_full` directly
-/// after a dB→linear conversion just like the roads kernel does.
+/// Stage 2C — `h3r4/<hex>/ground.arrow`. One row per
+/// (osm_id × ops_kind × sub_bucket_idx); period is *not* in the bucket
+/// key — each row carries all three `em_day/eve/night_bands` so the
+/// popup reads Lden from a single row, and silent periods round-trip as
+/// `[NEG_INFINITY; 8]`. See [`GROUND_CONTRACT_DB_SUM_V6_1`] for energy
+/// semantics.
 pub fn ground_schema() -> Arc<Schema> {
     let bands_field = || {
         DataType::List(Arc::new(Field::new("item", DataType::Float32, false)))
@@ -208,9 +211,9 @@ pub fn assert_v6(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
     }
 }
 
-/// Verify a ground.arrow's metadata carries the `dB_sum_v6_1` energy
-/// contract. Pre-C1 v6 ground files lack this key (they summed dB as
-/// linear); rejecting them is the only safe migration path.
+/// Verify ground.arrow metadata carries the `dB_sum_v6_1` energy
+/// contract. Pre-C1 v6 ground files lack this key — accepting them
+/// would feed the popup band levels off by roughly 10 dB.
 pub fn assert_ground_contract_v6_1(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
     assert_v6(metadata)?;
     match metadata.get("ground_contract").map(String::as_str) {
