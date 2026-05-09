@@ -47,7 +47,7 @@ pub fn run_stage_2c(
     let mut items: Vec<(AircraftSegment, aeroway_snap::AeroSnap)> = Vec::new();
 
     for seg in &observed_v5 {
-        if !is_ground_candidate(seg) {
+        if !is_ground_candidate(seg, rasters) {
             continue;
         }
         let snap = aeroway_snap::assign(seg, airport_lines, airport_areas);
@@ -66,9 +66,19 @@ pub fn run_stage_2c(
 /// obviously not a ground op so we don't churn the snap loop on
 /// airborne cruise. The full ground-eligibility gate (raster AGL +
 /// ground_context) lives inside `build_ground_ops_line_emission` and
-/// catches the rest at bucket time.
-fn is_ground_candidate(seg: &AircraftSegment) -> bool {
-    seg.on_ground || seg.surface_model || seg.start_alt_m < 80.0 || seg.end_alt_m < 80.0
+/// catches the rest at bucket time. The 80 m AGL threshold uses the
+/// raster DEM so elevated airports (Praha = 380 m MSL, Mexico City =
+/// 2200 m MSL) aren't pre-rejected; /gg (Codex) caught a prior
+/// version that compared `seg.start_alt_m < 80.0` against MSL altitude.
+fn is_ground_candidate(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> bool {
+    if seg.on_ground || seg.surface_model {
+        return true;
+    }
+    let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
+    let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
+    let elev = rasters.elevation(mid_lat, mid_lon);
+    let agl_min = ((seg.start_alt_m as f64) - elev).min((seg.end_alt_m as f64) - elev);
+    agl_min < 80.0
 }
 
 #[cfg(test)]

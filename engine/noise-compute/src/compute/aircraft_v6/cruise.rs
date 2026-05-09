@@ -40,11 +40,21 @@ pub fn scatter(
         let half_len_m = rl * 0.5;
         let lat_off = half_len_m / crate::constants::M_PER_DEG_LAT;
         let lon_off = half_len_m / crate::constants::m_per_deg_lon(lat.to_radians());
+        // Density = sum_length / rep_len: how many representative
+        // segments' worth of cruise track this R8 bucket carries.
+        // Partial bucket transits (sum_length < rep_len) keep their
+        // fractional weight so an in-cell clipped 500 m of a 10 km
+        // segment is charged 0.05 events, not a full event. /gg
+        // (Codex) caught a prior `.max(1.0)` floor that over-counted
+        // cruise Lden across multi-cell tracks.
         let density = if row.rep_len_m > 0.0 {
-            (row.sum_length_m / row.rep_len_m).max(1.0) as f64
+            (row.sum_length_m / row.rep_len_m) as f64
         } else {
-            1.0
+            0.0
         };
+        if density <= 0.0 {
+            continue;
+        }
         let synth_fid = pack_synth(idx as u64);
         let seg = AircraftSegment {
             flight_id: synth_fid,

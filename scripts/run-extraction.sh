@@ -43,20 +43,34 @@ if [ "$STEP" = "all" ] || [ "$STEP" = "rasters" ]; then
     NAMES+=("rasters")
 fi
 
-# ── Aircraft extract v6 (heavy, ~2-6h) ───────────────────────────────
-if [ "$STEP" = "all" ] || [ "$STEP" = "aircraft" ]; then
-    log "Starting: aircraft → $LOG_DIR/extraction-aircraft.log"
-    bash "$SCRIPT_DIR/run-aircraft-extract.sh" &> "$LOG_DIR/extraction-aircraft.log" &
-    PIDS+=($!)
-    NAMES+=("aircraft")
-fi
-
 # ── OSM planet (heavy, ~4-8h) ────────────────────────────────────────
+# Must finish before aircraft Stage 2C: that stage reads
+# `airport_lines.arrow` / `airport_areas.arrow` per R4 from prepared
+# data, and missing airport geometry forces Stage 2C onto the R10
+# fallback path (silent quality regression). /gg (Codex) caught this
+# race when the two ran in parallel — keep OSM ahead of aircraft.
 if [ "$STEP" = "all" ] || [ "$STEP" = "osm" ]; then
     log "Starting: osm → $LOG_DIR/extraction-osm.log"
     bash "$SCRIPT_DIR/osm-to-h3r4.sh" &> "$LOG_DIR/extraction-osm.log" &
-    PIDS+=($!)
+    OSM_PID=$!
+    PIDS+=("$OSM_PID")
     NAMES+=("osm")
+fi
+
+# ── Aircraft extract v6 (heavy, ~2-6h) ───────────────────────────────
+# Wait for OSM (if running) so airport_*.arrow exists before Stage 2C.
+if [ "$STEP" = "all" ] || [ "$STEP" = "aircraft" ]; then
+    if [ "${OSM_PID:-}" != "" ]; then
+        log "Waiting for OSM (pid=$OSM_PID) before launching aircraft → $LOG_DIR/extraction-aircraft.log"
+        ( wait "$OSM_PID" 2>/dev/null
+          bash "$SCRIPT_DIR/run-aircraft-extract.sh"
+        ) &> "$LOG_DIR/extraction-aircraft.log" &
+    else
+        log "Starting: aircraft → $LOG_DIR/extraction-aircraft.log"
+        bash "$SCRIPT_DIR/run-aircraft-extract.sh" &> "$LOG_DIR/extraction-aircraft.log" &
+    fi
+    PIDS+=($!)
+    NAMES+=("aircraft")
 fi
 
 if [ ${#PIDS[@]} -eq 0 ]; then
