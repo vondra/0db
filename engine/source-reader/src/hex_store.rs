@@ -340,7 +340,7 @@ fn load_v6_ground_into(
     batches: &[RecordBatch],
     out: &mut Vec<noise_compute::types::AircraftSegment>,
 ) {
-    use noise_compute::emission::aircraft::{GROUND_CONTEXT_INFERRED, GROUND_OPS_KIND_NONE};
+    use noise_compute::emission::aircraft::GROUND_CONTEXT_INFERRED;
     use noise_compute::types::AircraftSegment;
     for batch in batches {
         let n = batch.num_rows();
@@ -395,8 +395,6 @@ fn column_f32<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Float32Array
 fn column_list<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a ListArray> {
     batch.column_by_name(name)?.as_any().downcast_ref::<ListArray>()
 }
-
-// ── Query helpers: iterate over mmap'd Arrow columns directly ──
 
 /// Road segment query result (references into mmap'd data, minimal copy).
 #[derive(serde::Serialize)]
@@ -1141,8 +1139,6 @@ pub fn query_barriers_from_batches(
 
     results
 }
-
-// ── Column accessors ──
 
 pub fn col_i64<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a Int64Array> {
     b.column_by_name(name)?.as_any().downcast_ref()

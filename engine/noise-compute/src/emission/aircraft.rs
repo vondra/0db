@@ -15,10 +15,6 @@ use std::sync::{LazyLock, OnceLock};
 
 use crate::sources::AIRCRAFT_ADSB_SOURCE_ID;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// NPD tables (Doc 29 §4.2)
-// ═══════════════════════════════════════════════════════════════════════════
-
 /// NPD SEL threshold for per-profile reach calculation.
 /// At this raw NPD SEL, a segment's contribution is negligible (< 0.15 dB on total Lden).
 pub const AIRCRAFT_NPD_REACH_THRESHOLD_DB: f64 = 40.0;
@@ -488,10 +484,6 @@ pub fn interpolate_sel_logd(profile: &NpdProfile, log_d: f64, is_departure: bool
     sel[last]
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// CPA geometry (Doc 29 §4.4.1)
-// ═══════════════════════════════════════════════════════════════════════════
-
 // Doc 29 reference value — slightly higher precision than the
 // crate-wide `crate::constants::M_PER_DEG_LAT` (110_540.0) used by the
 // general geo helpers. Kept module-private so the two never get
@@ -645,10 +637,6 @@ pub fn compute_cpa(
         t,
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Acoustic corrections
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// ΔV = 10 × log10(V_ref / V_seg) (Doc 29 §4.5.1, Eq. 4-14).
 #[inline]
@@ -1037,10 +1025,6 @@ pub fn period_leq(total_energy: f64, n_days: f64, period_seconds: f64) -> f64 {
     }
     10.0 * (total_energy / (n_days * period_seconds)).log10()
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Single-segment SEL computation
-// ═══════════════════════════════════════════════════════════════════════════
 
 use crate::constants::{ALPHA_ATM, A_WEIGHTING};
 use crate::propagation::geo;

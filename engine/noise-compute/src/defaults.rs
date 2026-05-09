@@ -32,7 +32,6 @@ use crate::admin::{Admin, Continent};
 /// both-directions total.
 pub type Aadt = (f64, f64, f64, f64);
 
-// ─── WORLD default ─────────────────────────────────────────────────────────
 // Exact copy of the pre-redesign `normalize.rs::default_road_traffic` table.
 // Must match bit-for-bit so non-admin call sites (the legacy
 // `default_road_traffic(class)` wrapper) see zero behavior change.
@@ -55,14 +54,11 @@ pub const WORLD_DEFAULT: [Aadt; 13] = [
     (1120.5, 81.0, 121.5, 27.0),       // 12 primary_link  — 1350
 ];
 
-// ─── City ids — generated from scripts/h3-admin-metros.json ────────────────
 // Re-export the dedicated module so existing callers (`CITY_SAO_PAULO` …)
 // keep working unchanged. Edit the JSON, then run
 // `node scripts/gen-city-consts-rs.mjs` to refresh.
 
 pub use crate::city_consts_generated::*;
-
-// ─── Cascade resolver ──────────────────────────────────────────────────────
 
 /// Returns the best-known default (light, medium, heavy, moto) AADT for a
 /// segment with no spatial / ref / service-tree data. Cascades most-specific
@@ -94,7 +90,6 @@ pub fn build_traffic_default_cache(admin: Admin) -> [Aadt; WORLD_DEFAULT.len()] 
     std::array::from_fn(|c| resolve_traffic_default(c as u8, admin))
 }
 
-// ─── City defaults ─────────────────────────────────────────────────────────
 // One arm per (city_id, class). Values reflect each metro's published or
 // enricher-coded tier defaults. Missing classes fall through to country.
 
@@ -123,7 +118,6 @@ fn city_default(city_id: u16, class: u8) -> Option<Aadt> {
     }
 }
 
-// ─── Country defaults ──────────────────────────────────────────────────────
 // Two-layer policy:
 //   (a) Explicit arm for a country whose national road enricher publishes
 //       per-class AADT (currently BR rural + TH rural). Takes priority.
@@ -196,7 +190,6 @@ fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
     Some((base.0 * scale, base.1 * scale, base.2 * scale, base.3 * scale))
 }
 
-// ─── Continent defaults ────────────────────────────────────────────────────
 // Sparse — only where a continent-wide skew is known to diverge from the EU
 // baseline (e.g. Africa has a sparser motorway network, so the class-0
 // default is lower).
