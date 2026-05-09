@@ -97,6 +97,11 @@ pub struct GroundRowView<'a> {
     pub em_night_bands: &'a [f32; 8],
     pub n_observed_per_day: f32,
     pub n_modeled_per_day: f32,
+    /// Real flight IDs of observed segments contributing to this row.
+    /// Per-airport unique-movement count = `|⋃ rows.observed_flight_ids|
+    /// / n_days` — naive sum of `n_observed_per_day` across sub-buckets
+    /// over-counts because one taxi-takeoff trace crosses many.
+    pub observed_flight_ids: &'a [u64],
     pub line_start_lat: f32,
     pub line_start_lon: f32,
     pub line_end_lat: f32,

@@ -9,7 +9,7 @@
 //! independent Arrow files per R4 × 7 R4 (centre + ring1) and runs the
 //! same propagation kernels as the existing road / rail compute paths.
 //!
-//! Each schema sets `schema_version = "v7"` in its Arrow metadata so
+//! Each schema sets `schema_version = "v8"` in its Arrow metadata so
 //! the reader can refuse stale inputs at load time.
 
 pub mod airport_io;
@@ -35,8 +35,9 @@ pub mod stage_2c;
 pub mod trace;
 
 /// Schema-version tag stamped into every Arrow file produced by this
-/// crate. v7 introduces per-rotation `flight_id` (Stage 0 splits at
-/// telemetry gaps) and real `callsign` / `aircraft_type` columns on
-/// segments + airborne; v6 files lack those columns and would silently
-/// load with empty values if the assert was missing.
-pub const SCHEMA_VERSION: &str = "v7";
+/// crate. v8 adds `observed_flight_ids` (List<UInt64>) on ground.arrow
+/// for airport-level n_observed dedup (M4) — v7 readers would parse
+/// the file but the new column would be missing, dropping airport
+/// dedup silently. v7 introduced per-rotation flight_id + callsign /
+/// aircraft_type columns on segments + airborne.
+pub const SCHEMA_VERSION: &str = "v8";

@@ -1,6 +1,6 @@
-//! Arrow schemas for the five v7 artifacts. Every schema embeds
-//! `schema_version = "v7"` in metadata so the reader can refuse old
-//! v4/v5/v6 layouts instead of silently mis-decoding them.
+//! Arrow schemas for the five v8 artifacts. Every schema embeds
+//! `schema_version = "v8"` in metadata so the reader can refuse old
+//! v4/v5/v6/v7 layouts instead of silently mis-decoding them.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -184,6 +184,17 @@ pub fn ground_schema() -> Arc<Schema> {
         Field::new("em_night_bands", bands_field(), false),
         Field::new("n_observed_per_day", DataType::Float32, false),
         Field::new("n_modeled_per_day", DataType::Float32, false),
+        // Real flight IDs that contributed observed segments to this
+        // bucket. Per-airport dedup uses the union of these lists across
+        // all buckets of an airport — popup reports unique movements,
+        // not the per-bucket sum (which over-counts because one flight
+        // crosses many sub-buckets along a runway / taxi route).
+        // Empty for synth_v5 rows (no real fid → can't dedup).
+        Field::new(
+            "observed_flight_ids",
+            DataType::List(Arc::new(Field::new("item", DataType::UInt64, false))),
+            false,
+        ),
         Field::new(
             "profile_mix",
             DataType::List(Arc::new(Field::new("item", mix_struct, false))),
@@ -204,9 +215,9 @@ pub fn ground_schema() -> Arc<Schema> {
 }
 
 /// Verify a loaded file's metadata matches the current
-/// [`SCHEMA_VERSION`]. Reader-side guard so stale (pre-v7) files raise
+/// [`SCHEMA_VERSION`]. Reader-side guard so stale (pre-v8) files raise
 /// a loud error instead of silently producing gibberish numbers.
-pub fn assert_schema_v7(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
+pub fn assert_schema_v8(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
     match metadata.get("schema_version").map(String::as_str) {
         Some(SCHEMA_VERSION) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
@@ -221,7 +232,7 @@ pub fn assert_schema_v7(metadata: &HashMap<String, String>) -> anyhow::Result<()
 /// `dB_sum_v6_1`) — accepting them would feed the popup band levels
 /// off by roughly 10 dB.
 pub fn assert_ground_contract_v7_1(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
-    assert_schema_v7(metadata)?;
+    assert_schema_v8(metadata)?;
     match metadata.get("ground_contract").map(String::as_str) {
         Some(GROUND_CONTRACT_DB_SUM_V7_1) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
@@ -247,24 +258,24 @@ mod tests {
             ground_schema(),
         ] {
             let md = s.metadata();
-            assert_eq!(md.get("schema_version").map(String::as_str), Some("v7"));
+            assert_eq!(md.get("schema_version").map(String::as_str), Some("v8"));
             assert!(md.contains_key("kind"));
         }
     }
 
     #[test]
-    fn assert_schema_v7_rejects_old_versions() {
-        for old in ["v4", "v5", "v6"] {
+    fn assert_schema_v8_rejects_old_versions() {
+        for old in ["v4", "v5", "v6", "v7"] {
             let md: HashMap<String, String> =
                 [("schema_version".into(), old.into())].into_iter().collect();
-            assert!(assert_schema_v7(&md).is_err(), "expected reject for {old}");
+            assert!(assert_schema_v8(&md).is_err(), "expected reject for {old}");
         }
     }
 
     #[test]
-    fn assert_schema_v7_rejects_missing_metadata() {
+    fn assert_schema_v8_rejects_missing_metadata() {
         let md: HashMap<String, String> = HashMap::new();
-        assert!(assert_schema_v7(&md).is_err());
+        assert!(assert_schema_v8(&md).is_err());
     }
 
     #[test]

@@ -179,6 +179,10 @@ pub struct GroundLine {
     pub em_night_bands: [f32; 8],
     pub n_observed_per_day: f32,
     pub n_modeled_per_day: f32,
+    /// Sorted, deduped real flight IDs of observed segments contributing
+    /// to this bucket. Empty for synth_v5 rows. Popup unions these
+    /// across all rows of an airport for unique-movement reporting.
+    pub observed_flight_ids: Vec<u64>,
     pub profile_mix: Vec<ProfileMixEntry>,
     pub line_start_lat: f32,
     pub line_start_lon: f32,

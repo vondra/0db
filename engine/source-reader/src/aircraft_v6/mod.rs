@@ -47,9 +47,9 @@ pub fn add_v6_aircraft_to_result(
     rasters: &dyn RasterSampler,
     n_days: u16,
 ) -> Result<(), String> {
-    assert_schema_v7("airborne.arrow", airborne_batches)?;
-    assert_schema_v7("cruise.arrow", cruise_batches)?;
-    assert_schema_v7("ground.arrow", ground_batches)?;
+    assert_schema_v8("airborne.arrow", airborne_batches)?;
+    assert_schema_v8("cruise.arrow", cruise_batches)?;
+    assert_schema_v8("ground.arrow", ground_batches)?;
     let airborne_rows = AirborneRowAccum::new(airborne_batches);
     let cruise_rows = CruiseRowAccum::new(cruise_batches);
     let ground_rows = GroundRowAccum::new(ground_batches)?;
@@ -165,28 +165,27 @@ fn sum_periods_linear(sources: &[SourceResult]) -> NoisePeriods {
     noise_compute::periods::periods(to_db(day), to_db(eve), to_db(night))
 }
 
-/// Stamp written by every aircraft-extract v7 Arrow file. Inline copy
+/// Stamp written by every aircraft-extract v8 Arrow file. Inline copy
 /// rather than build-dep on aircraft-extract, which would pull arrow
 /// IPC writers / parquet / anyhow into the popup runtime.
-pub(super) const SCHEMA_VERSION_V7: &str = "v7";
+pub(super) const SCHEMA_VERSION_V8: &str = "v8";
 
 /// Verify `schema_version` on every batch in the slice. Single-file
 /// IPC guarantees one schema per file, but the caller merges batches
 /// across R4 cells (`source_reader::lib::collect_from_hex_data`), so
-/// a mixed slice can have v7 batches from one hex and stale v6 batches
-/// from a sibling — and the first-only optimisation /gg (Codex)
-/// flagged would silently let those through.
-pub(super) fn assert_schema_v7(label: &str, batches: &[RecordBatch]) -> Result<(), String> {
+/// a mixed slice can have v8 batches from one hex and stale v7 batches
+/// from a sibling. Loop over every batch, not just the first.
+pub(super) fn assert_schema_v8(label: &str, batches: &[RecordBatch]) -> Result<(), String> {
     for (idx, batch) in batches.iter().enumerate() {
         let v = batch
             .schema_ref()
             .metadata()
             .get("schema_version")
             .map(String::as_str);
-        if v != Some(SCHEMA_VERSION_V7) {
+        if v != Some(SCHEMA_VERSION_V8) {
             return Err(format!(
-                "{label}[batch {idx}] schema_version mismatch (expected {SCHEMA_VERSION_V7}, got {v:?}) \
-                 — re-extract aircraft pipeline with the M0c build"
+                "{label}[batch {idx}] schema_version mismatch (expected {SCHEMA_VERSION_V8}, got {v:?}) \
+                 — re-extract aircraft pipeline with the M4 build"
             ));
         }
     }
