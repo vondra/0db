@@ -9,6 +9,7 @@
 
 pub mod admin;
 pub mod city_consts_generated;
+pub mod compute;
 pub mod confidence;
 pub mod constants;
 pub mod country_defaults_generated;
