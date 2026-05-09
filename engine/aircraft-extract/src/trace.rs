@@ -40,6 +40,16 @@ pub struct TracePoint {
     pub flags: u8,
 }
 
+/// Inline callsign transition: at trace `point_idx`, the callsign became
+/// `value`. Most traces have 1–4 transitions per day (single flight or
+/// rotation through 2–3 schedules). Stored on the trace, not per-point,
+/// to avoid the 24-byte Option<String> on the hot 1.6M-point Vec.
+#[derive(Clone, Debug)]
+pub struct CallsignChange {
+    pub point_idx: usize,
+    pub value: String,
+}
+
 impl TracePoint {
     pub fn alt_is_ground(&self) -> bool {
         self.flags & FLAG_ALT_IS_GROUND != 0
@@ -65,6 +75,10 @@ pub struct AircraftTrace {
     pub icao24: String,
     pub aircraft_type: String,
     pub points: Vec<TracePoint>,
+    /// Callsign transitions in raw-trace `point_idx` order — **not yet
+    /// rebased** onto post-`point_is_sane` indices; consumers must use
+    /// [`Flight::callsigns`] (rebased) instead, or rebase themselves.
+    pub callsigns: Vec<CallsignChange>,
 }
 
 /// Read every aircraft trace from a single day's TAR archive(s).
@@ -149,6 +163,7 @@ pub fn parse_trace<R: Read>(reader: R) -> Result<Option<AircraftTrace>> {
     };
 
     let mut points = Vec::with_capacity(trace_arr.len());
+    let mut callsigns: Vec<CallsignChange> = Vec::new();
     for entry in trace_arr {
         let arr = match entry.as_array() {
             Some(a) if a.len() >= 7 => a,
@@ -162,6 +177,25 @@ pub fn parse_trace<R: Read>(reader: R) -> Result<Option<AircraftTrace>> {
         let track_deg = arr[5].as_f64().unwrap_or(0.0) as f32;
         let on_ground_bit = arr[6].as_i64().unwrap_or(0);
         let baro_rate_fpm = arr.get(7).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+
+        // Compare on `&str` before allocating — adsb.lol re-emits the
+        // meta block on every position, so most points produce a
+        // duplicate that would otherwise allocate a String just to be
+        // dropped.
+        if let Some(raw) = arr
+            .get(8)
+            .and_then(|v| v.get("flight"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            if callsigns.last().map(|c| c.value.as_str()) != Some(raw) {
+                callsigns.push(CallsignChange {
+                    point_idx: points.len(),
+                    value: raw.to_string(),
+                });
+            }
+        }
 
         let mut flags = 0u8;
         if on_ground_bit & 1 != 0 {
@@ -190,6 +224,7 @@ pub fn parse_trace<R: Read>(reader: R) -> Result<Option<AircraftTrace>> {
         icao24,
         aircraft_type,
         points,
+        callsigns,
     }))
 }
 
@@ -288,6 +323,39 @@ mod tests {
     }
 
     #[test]
+    fn extracts_callsign_from_point_metadata() {
+        // adsb.lol col 8 is sometimes a meta object carrying `flight`,
+        // sometimes null. The parser records each value transition;
+        // duplicates from re-emitted meta blocks must coalesce.
+        let raw = gz(
+            r#"{"icao":"49d328","t":"A320","timestamp":1000,"trace":[
+                [10,50.0,14.0,1000.0,250.0,90.0,0,0,null],
+                [20,50.001,14.001,1100.0,250.0,90.0,0,0,{"flight":"TVS100P  "}],
+                [30,50.002,14.002,1200.0,250.0,90.0,0,0,{"flight":"TVS100P  "}],
+                [40,50.003,14.003,1300.0,250.0,90.0,0,0,{"flight":"TVS200X  "}]
+            ]}"#,
+        );
+        let t = parse_trace(raw.as_slice()).unwrap().unwrap();
+        assert_eq!(t.callsigns.len(), 2);
+        assert_eq!(t.callsigns[0].point_idx, 1);
+        assert_eq!(t.callsigns[0].value, "TVS100P");
+        assert_eq!(t.callsigns[1].point_idx, 3);
+        assert_eq!(t.callsigns[1].value, "TVS200X");
+    }
+
+    #[test]
+    fn callsign_metadata_optional() {
+        let raw = gz(
+            r#"{"icao":"49d262","t":"PC12","timestamp":1000,"trace":[
+                [10,50.0,14.0,1000.0,250.0,90.0,0,0],
+                [20,50.001,14.001,1100.0,250.0,90.0,0,0]
+            ]}"#,
+        );
+        let t = parse_trace(raw.as_slice()).unwrap().unwrap();
+        assert!(t.callsigns.is_empty());
+    }
+
+    #[test]
     fn missing_baro_rate_defaults_to_zero() {
         // 7-element row (no baro_rate column) should still parse.
         let raw = gz(
@@ -326,5 +394,14 @@ mod tests {
         // At least some have a 4-character ICAO typecode (most common case).
         let typed = traces.iter().filter(|t| t.aircraft_type.len() >= 3).count();
         assert!(typed > traces.len() / 2);
+        // Pre-M0a this was always 0; the regression check just needs
+        // a non-trivial floor. 30 % is robust to GA-heavy days where
+        // many Mode-S aircraft never broadcast `flight`.
+        let with_callsign = traces.iter().filter(|t| !t.callsigns.is_empty()).count();
+        assert!(
+            with_callsign * 10 > traces.len() * 3,
+            "expected ≥30% traces to carry a callsign, got {with_callsign}/{}",
+            traces.len()
+        );
     }
 }

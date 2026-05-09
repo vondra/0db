@@ -6,7 +6,7 @@
 //! aggregates produced by Stage 2A / 2B / 2C and serialised into the
 //! per-R4 Arrow files.
 
-use crate::trace::TracePoint;
+use crate::trace::{CallsignChange, TracePoint};
 
 /// Flight phase classification — from `classify`. Stored as `u8` in
 /// segments.arrow (`phase` column).
@@ -42,12 +42,21 @@ pub mod segment_flags {
 #[derive(Clone)]
 pub struct Flight {
     pub flight_id: u64,
+    /// Callsign effective at the first surviving (`point_is_sane`)
+    /// point — equivalent to `callsigns.first().value`. Kept as a
+    /// scalar for arrow round-trip continuity until M0b lands the full
+    /// transition list in the schema. Empty when no point carried
+    /// `flight` metadata.
     pub callsign: String,
     pub aircraft_type: String,
     pub profile_idx: u8,
     pub source_id: u8,
     pub origin: u8,
     pub points: Vec<TracePoint>,
+    /// Callsign transitions in `Flight.points` index space (rebased
+    /// through `point_is_sane`). Empty after arrow round-trip until
+    /// M0b extends the Stage 0 schema to persist them.
+    pub callsigns: Vec<CallsignChange>,
 }
 
 /// Stage 1 in-memory record. One per classified flight segment.

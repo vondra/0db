@@ -204,6 +204,11 @@ pub fn read_flights(path: &Path) -> Result<Vec<Flight>> {
                 source_id: src.value(i),
                 origin: orig.value(i),
                 points,
+                // Stage 0 currently persists only the first callsign;
+                // M0b will extend the schema with the full transition
+                // list. For now `read_flights` always reconstructs an
+                // empty list — Stage 1 doesn't yet use it.
+                callsigns: Vec::new(),
             });
         }
     }
