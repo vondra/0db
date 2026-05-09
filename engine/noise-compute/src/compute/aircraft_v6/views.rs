@@ -80,53 +80,80 @@ pub struct CruiseRowView<'a> {
     pub cruise_flight_ids: &'a [u64],
 }
 
-/// One entry of a row's `profile_mix`: noise-class, share-of-row in
-/// [0, 1], and the 4-byte FixedSizeBinary ICAO typecode of the class
-/// anchor (`profile_typecode(CLASS_REP_PROFILE_IDX[class])`).
-///
-/// The popup re-derives its display typecode from `class` to keep
-/// one source of truth (see `top_profile_mix` in `ground.rs`); the
-/// `rep_typecode` column exists so external tools reading the arrow
-/// file directly (e.g. Python notebooks) don't repeat the lookup.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct ProfileMixView {
-    pub class: u8,
-    pub share: f32,
-    pub rep_typecode: [u8; 4],
+/// Per-vertex slice borrow over a ground path's polyline. All slices
+/// have the same length; vertex `i` is fully described by index `i`
+/// across every slice.
+#[derive(Clone, Copy, Debug)]
+pub struct GroundVertexSlice<'a> {
+    pub lat: &'a [f32],
+    pub lon: &'a [f32],
+    pub alt_m: &'a [f32],
+    pub speed_kt: &'a [f32],
+    pub ts_offset_s: &'a [f32],
 }
 
-/// One row of `ground.arrow` (post-Stage-2C-v2). `em_*_bands` carry
-/// dB SPL per band per period — silent periods round-trip as
-/// `f32::NEG_INFINITY`. Energy was summed in linear space inside
-/// Stage 2C and converted back to dB; the popup must NOT divide by
-/// `n_days` again because Stage 2C already daily-averaged via
-/// `period_leq` inside `build_ground_ops_line_emission`.
+impl GroundVertexSlice<'_> {
+    pub fn len(&self) -> usize {
+        self.lat.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Per-leg slice borrow over a ground path. `em_bands_offsets` /
+/// `em_bands_values` represent the leg-level `List<Float32>(8)` in
+/// flat form: leg `i`'s 8-band emission is
+/// `em_bands_values[em_bands_offsets[i]..em_bands_offsets[i+1]]`.
 #[derive(Clone, Copy, Debug)]
-pub struct GroundRowView<'a> {
-    pub osm_id: i64,
+pub struct GroundLegSlice<'a> {
+    pub start_idx: &'a [u16],
+    pub end_idx: &'a [u16],
+    pub ops_kind: &'a [u8],
+    pub count_weight: &'a [f32],
+    pub length_m: &'a [f32],
+    pub em_bands_values: &'a [f32],
+    pub em_bands_offsets: &'a [i32],
+}
+
+impl GroundLegSlice<'_> {
+    pub fn len(&self) -> usize {
+        self.ops_kind.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub fn em_bands(&self, leg_idx: usize) -> &[f32] {
+        let lo = self.em_bands_offsets[leg_idx] as usize;
+        let hi = self.em_bands_offsets[leg_idx + 1] as usize;
+        &self.em_bands_values[lo..hi]
+    }
+}
+
+/// One row of `ground.arrow` (v10 raw-paths layout). Each row is one
+/// aircraft × one contiguous ground path; `vertices` is the polyline
+/// of `FlightSegment` endpoints (segN.start = segN-1.end), `legs[i]`
+/// joins `vertices[start_idx]` to `vertices[end_idx]` with its own
+/// 8-band emission (dB SPL; silent rows round-trip as
+/// `f32::NEG_INFINITY`) and a `count_weight = 1 /
+/// n_legs_of_this_kind_in_path` so summing across same-kind legs
+/// reconstructs one movement's reference SEL energy.
+#[derive(Clone, Copy, Debug)]
+pub struct GroundPathView<'a> {
+    pub flight_id: u64,
+    pub callsign: &'a str,
+    pub aircraft_type: &'a [u8; 4],
+    pub profile_idx: u8,
     pub airport_key: &'a str,
-    pub ops_kind: u8,
-    pub sub_bucket_idx: u16,
-    pub em_day_bands: &'a [f32; 8],
-    pub em_eve_bands: &'a [f32; 8],
-    pub em_night_bands: &'a [f32; 8],
-    pub n_observed_per_day: f32,
-    pub n_modeled_per_day: f32,
-    /// Real flight IDs of observed segments contributing to this row.
-    /// Per-airport unique-movement count = `|⋃ rows.observed_flight_ids|
-    /// / n_days` — naive sum of `n_observed_per_day` across sub-buckets
-    /// over-counts because one taxi-takeoff trace crosses many.
-    pub observed_flight_ids: &'a [u64],
-    /// Per-class share-of-emission triples produced by the Stage 2C
-    /// bucketer. Empty for rows whose accumulator never saw a finite
-    /// emission band. Aggregated across an airport's rows (weighted
-    /// by row received energy) to feed the popup top-3 typecode list.
-    pub profile_mix: &'a [ProfileMixView],
-    pub line_start_lat: f32,
-    pub line_start_lon: f32,
-    pub line_end_lat: f32,
-    pub line_end_lon: f32,
-    pub line_length_m: f32,
+    pub vertices: GroundVertexSlice<'a>,
+    pub legs: GroundLegSlice<'a>,
+    pub length_m_runway: f32,
+    pub length_m_taxi: f32,
+    pub length_m_apron: f32,
+    /// 0 = day, 1 = evening, 2 = night.
+    pub period_rep: u8,
+    pub date_id: i16,
+    pub is_departure: bool,
     pub source_id: u8,
     pub origin: u8,
 }

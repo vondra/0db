@@ -1,8 +1,14 @@
-//! Read OSM-derived airport_lines.arrow / airport_areas.arrow files
-//! prepared by `osm-extract`. Stage 2C aggregates them across every
-//! per-R4 prepared dir so coverage / synth see a global airport set;
-//! the partitioning back onto per-R4 ground.arrow happens after
-//! bucketing.
+//! Read OSM-derived `airport_areas.arrow` files prepared by
+//! `osm-extract`. Stage 2C v10 aggregates them across every per-R4
+//! prepared dir so the nearest-aerodrome identity lookup sees a
+//! global airport set even when an airport's polygon is split across
+//! R4 boundaries.
+//!
+//! The matching v9 reader also consumed `airport_lines.arrow` and
+//! propagated parent-aerodrome identity onto runways via a polygon
+//! containment + proximity pass. v10 dropped that — ground geometry
+//! is raw ADS-B trajectories, not OSM aeroway snaps, so airport_lines
+//! is no longer read by the extractor.
 
 use std::fs::File;
 use std::io::BufReader;
@@ -14,7 +20,9 @@ use arrow::array::{
 };
 use arrow::ipc::reader::FileReader;
 use arrow::record_batch::RecordBatch;
-use noise_compute::types::{AirportArea, AirportLine};
+use noise_compute::types::AirportArea;
+
+const AERODROME_AEROWAY_TYPE: u8 = 5;
 
 fn read_batches(path: &Path) -> Result<Vec<RecordBatch>> {
     let f = File::open(path)?;
@@ -64,52 +72,6 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
-pub fn read_airport_lines(path: &Path) -> Result<Vec<AirportLine>> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let batches = read_batches(path)?;
-    let mut out = Vec::new();
-    for batch in batches {
-        let n = batch.num_rows();
-        let osm_id = col_i64(&batch, "osm_id");
-        let slat = col_f64(&batch, "start_lat");
-        let slon = col_f64(&batch, "start_lon");
-        let elat = col_f64(&batch, "end_lat");
-        let elon = col_f64(&batch, "end_lon");
-        let aeroway_type = col_u8(&batch, "aeroway_type");
-        let width_m = col_f32(&batch, "width_m");
-        let name = col_str(&batch, "name");
-        let icao = col_str(&batch, "icao");
-        let iata = col_str(&batch, "iata");
-
-        let (Some(osm_id), Some(slat), Some(slon), Some(elat), Some(elon)) =
-            (osm_id, slat, slon, elat, elon)
-        else {
-            continue;
-        };
-
-        for i in 0..n {
-            out.push(AirportLine {
-                osm_id: osm_id.value(i),
-                aeroway_type: aeroway_type.map(|a| a.value(i)).unwrap_or(255),
-                name: name.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                airport_key: airport_key(
-                    name.map(|a| a.value(i)).unwrap_or(""),
-                    icao.map(|a| a.value(i)).unwrap_or(""),
-                    iata.map(|a| a.value(i)).unwrap_or(""),
-                ),
-                start_lat: slat.value(i),
-                start_lon: slon.value(i),
-                end_lat: elat.value(i),
-                end_lon: elon.value(i),
-                width_m: width_m.map(|a| a.value(i)).unwrap_or(0.0),
-            });
-        }
-    }
-    Ok(out)
-}
-
 pub fn read_airport_areas(path: &Path) -> Result<Vec<AirportArea>> {
     if !path.exists() {
         return Ok(Vec::new());
@@ -152,25 +114,20 @@ pub fn read_airport_areas(path: &Path) -> Result<Vec<AirportArea>> {
     Ok(out)
 }
 
-/// Walk every `<h3r4_dir>/<R4>/airport_{lines,areas}.arrow` and merge
-/// into a single global set. Returns `(lines, areas)`.
+/// Walk every `<h3r4_dir>/<R4>/airport_areas.arrow` and merge into a
+/// single global set, filtered to `aeroway_type == AERODROME` so the
+/// nearest-aerodrome lookup never picks up a stand-alone apron / taxi
+/// polygon as an airport identity. Returns the deduped polygon list.
 ///
-/// OSM aeroway tagging convention: airport identification (name / icao /
-/// iata) lives on the aerodrome polygon (`aeroway=aerodrome`), NOT on
-/// the runway / taxiway lines that sit inside it. The osm-extract
-/// pipeline writes each tag verbatim onto its source feature, so
-/// `airport_lines.arrow` ends up with empty `airport_key` strings even
-/// for runways inside Praha-Ruzyně. This function patches that gap by
-/// running a midpoint-in-polygon test against every line and copying
-/// the parent aerodrome's `airport_key` onto it. Without this fix the
-/// popup's ground-ops bucketer aggregates 95 % of runway / taxi traffic
-/// under `airport_key = ""` and the contributor list shows "Inferred
-/// (lat, lon)" instead of "LKPR" / "Letiště Václava Havla Praha".
-pub fn read_global_airports(h3r4_dir: &Path) -> Result<(Vec<AirportLine>, Vec<AirportArea>)> {
-    let mut lines = Vec::new();
+/// Pre-v10 also read `airport_lines.arrow` and ran
+/// `propagate_aerodrome_identity_to_lines` to fill empty `airport_key`
+/// strings on runway lines from their parent aerodrome polygon — that
+/// helper is gone because the v10 ground extractor doesn't snap onto
+/// runway lines.
+pub fn read_global_airports(h3r4_dir: &Path) -> Result<Vec<AirportArea>> {
     let mut areas = Vec::new();
     if !h3r4_dir.exists() {
-        return Ok((lines, areas));
+        return Ok(areas);
     }
     for entry in std::fs::read_dir(h3r4_dir)? {
         let entry = entry?;
@@ -178,257 +135,11 @@ pub fn read_global_airports(h3r4_dir: &Path) -> Result<(Vec<AirportLine>, Vec<Ai
         if !path.is_dir() {
             continue;
         }
-        lines.extend(read_airport_lines(&path.join("airport_lines.arrow"))?);
-        areas.extend(read_airport_areas(&path.join("airport_areas.arrow"))?);
-    }
-    propagate_aerodrome_identity_to_lines(&mut lines, &areas);
-    Ok((lines, areas))
-}
-
-/// For every line whose `airport_key` is empty, find the smallest
-/// containing aerodrome polygon and copy its identification down.
-/// Two-pass match:
-///   pass 1 — point-in-polygon containment (smallest polygon wins so a
-///   line inside both the outer aerodrome boundary and an inner
-///   apron / helipad polygon picks up the more specific name).
-///   pass 2 — proximity fallback for `aeroway_type = 5` aerodrome
-///   polygons (Ruzyně/LKPR's OSM polygon covers only the terminal
-///   building → 37 525 m² out of ~10 km² of actual airport, so its
-///   runway lines fall outside the polygon and would otherwise lose
-///   their LKPR identity). Fallback radius is the larger of 3 km and
-///   `2 × sqrt(area)` so well-mapped airports still anchor on
-///   geometry, mis-mapped ones recover via the 3 km guard.
-fn propagate_aerodrome_identity_to_lines(lines: &mut [AirportLine], areas: &[AirportArea]) {
-    const AERODROME_AEROWAY_TYPE: u8 = 5;
-    const PROXIMITY_RADIUS_M: f64 = 3000.0;
-
-    if lines.is_empty() || areas.is_empty() {
-        return;
-    }
-    // Effective polygon radius — `area_m2 = 0` means osm-extract didn't
-    // write the field, so use a generous 500 m default to give the
-    // containment test something to clamp against.
-    fn area_radius_m(area: &AirportArea) -> f64 {
-        if area.area_m2 > 0.0 {
-            (area.area_m2 as f64 / std::f64::consts::PI).sqrt()
-        } else {
-            500.0
-        }
-    }
-    fn area_has_identity(area: &AirportArea) -> bool {
-        !area.airport_key.is_empty() || !area.name.is_empty()
-    }
-    fn copy_identity(line: &mut AirportLine, parent: &AirportArea) {
-        if line.airport_key.is_empty() {
-            line.airport_key = parent.airport_key.clone();
-        }
-        if line.name.is_empty() {
-            line.name = parent.name.clone();
-        }
-    }
-
-    for line in lines.iter_mut() {
-        if !line.airport_key.is_empty() && !line.name.is_empty() {
-            continue;
-        }
-        let mid_lat = (line.start_lat + line.end_lat) * 0.5;
-        let mid_lon = (line.start_lon + line.end_lon) * 0.5;
-
-        // Pass 1: smallest containing polygon (any aeroway_type). Smaller
-        // wins so a runway inside both the outer aerodrome boundary and
-        // an inner apron picks up the more specific name.
-        let mut best_contain: Option<(usize, f64)> = None;
-        for (idx, area) in areas.iter().enumerate() {
-            if !area_has_identity(area) {
-                continue;
-            }
-            let cx = noise_compute::propagation::geo::flat_dist(
-                mid_lat,
-                mid_lon,
-                area.centroid_lat,
-                area.centroid_lon,
-            );
-            let r = area_radius_m(area) * 1.5 + 250.0;
-            if cx > r {
-                continue;
-            }
-            // Empty WKB → centroid-radius fallback (matches the old
-            // `if !polygon_wkb.is_empty()` gate). Non-empty but
-            // malformed WKB → `parsed_polygon()` returns `None` and
-            // we treat it as "not inside" (the old behaviour of
-            // `wkb_contains_point` returning `false`), NOT as another
-            // radius fallback. /gg consensus caught the drift.
-            let inside = if area.polygon_wkb.is_empty() {
-                cx <= r
-            } else {
-                match area.parsed_polygon() {
-                    Some(parsed) => noise_compute::wkb::rings_contain_any_point(
-                        &parsed.outer,
-                        &parsed.holes,
-                        &[(mid_lat, mid_lon)],
-                    ),
-                    None => false,
-                }
-            };
-            if !inside {
-                continue;
-            }
-            let measure = if area.area_m2 > 0.0 {
-                area.area_m2 as f64
-            } else {
-                f64::MAX
-            };
-            if best_contain.map(|(_, m)| measure < m).unwrap_or(true) {
-                best_contain = Some((idx, measure));
+        for area in read_airport_areas(&path.join("airport_areas.arrow"))? {
+            if area.aeroway_type == AERODROME_AEROWAY_TYPE {
+                areas.push(area);
             }
         }
-        if let Some((idx, _)) = best_contain {
-            copy_identity(line, &areas[idx]);
-            continue;
-        }
-
-        // Pass 2: nearest aerodrome polygon within proximity radius.
-        // Restricted to `aeroway_type = 5` so taxiway / apron polygons
-        // don't claim distant runway lines.
-        let mut best_prox: Option<(usize, f64)> = None;
-        for (idx, area) in areas.iter().enumerate() {
-            if area.aeroway_type != AERODROME_AEROWAY_TYPE {
-                continue;
-            }
-            if !area_has_identity(area) {
-                continue;
-            }
-            let cx = noise_compute::propagation::geo::flat_dist(
-                mid_lat,
-                mid_lon,
-                area.centroid_lat,
-                area.centroid_lon,
-            );
-            // Same multiplier (1.5×) as `aeroway_snap::try_snap_to_aerodrome_proximity`
-            // so a line and the segments running along it both get
-            // assigned to the same aerodrome at the same proximity boundary.
-            // /gg (Gemini) caught a 1.5× vs 2.0× mismatch that would have
-            // tagged a runway line at 1.8× radius with the parent's
-            // identity while the segment running along that line still
-            // fell back to anonymous R10 — propagation and identity must
-            // agree on which lines belong to which airport.
-            let radius = PROXIMITY_RADIUS_M.max(area_radius_m(area) * 1.5);
-            if cx > radius {
-                continue;
-            }
-            if best_prox.map(|(_, d)| cx < d).unwrap_or(true) {
-                best_prox = Some((idx, cx));
-            }
-        }
-        if let Some((idx, _)) = best_prox {
-            copy_identity(line, &areas[idx]);
-        }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Build an `AirportLine` with empty identity (the OSM tagging
-    /// pattern that propagation is designed to fix).
-    fn line(start_lat: f64, start_lon: f64, end_lat: f64, end_lon: f64) -> AirportLine {
-        AirportLine {
-            osm_id: 1,
-            aeroway_type: 0, // runway
-            name: String::new(),
-            airport_key: String::new(),
-            start_lat,
-            start_lon,
-            end_lat,
-            end_lon,
-            width_m: 45.0,
-        }
-    }
-
-    fn aerodrome(
-        osm_id: i64,
-        icao: &str,
-        clat: f64,
-        clon: f64,
-        area_m2: f32,
-        polygon_wkb: &str,
-    ) -> AirportArea {
-        AirportArea::new(
-            osm_id,
-            5, // aerodrome
-            format!("Letiště {}", icao),
-            icao.to_string(),
-            clat,
-            clon,
-            polygon_wkb.to_string(),
-            area_m2,
-        )
-    }
-
-    fn apron(name: &str, clat: f64, clon: f64, area_m2: f32) -> AirportArea {
-        AirportArea::new(
-            9,
-            2, // apron
-            name.to_string(),
-            String::new(),
-            clat,
-            clon,
-            String::new(),
-            area_m2,
-        )
-    }
-
-    #[test]
-    fn proximity_propagates_lkpr_identity_to_runway_centerline() {
-        // Ruzyně canonical case: the airport polygon is small (37 525 m²)
-        // and a 3 km runway centerline sits a kilometre to the
-        // south-west. Pass-1 polygon containment misses it; pass-2
-        // proximity should attach LKPR.
-        let mut lines = vec![line(50.105, 14.250, 50.110, 14.270)];
-        let areas = vec![aerodrome(42, "LKPR", 50.119, 14.283, 37_525.0, "")];
-        propagate_aerodrome_identity_to_lines(&mut lines, &areas);
-        assert_eq!(lines[0].airport_key, "LKPR");
-        assert!(lines[0].name.contains("LKPR"));
-    }
-
-    #[test]
-    fn unnamed_apron_does_not_donate_identity() {
-        // An apron polygon without name/icao must not claim a runway
-        // line — pass-1 was previously called the "smallest containing
-        // polygon (any type)" and could have matched here. Passes both
-        // skip-empty filters now.
-        let mut lines = vec![line(50.105, 14.250, 50.110, 14.270)];
-        let areas = vec![apron("", 50.107, 14.260, 5_000.0)];
-        propagate_aerodrome_identity_to_lines(&mut lines, &areas);
-        assert!(lines[0].airport_key.is_empty());
-        assert!(lines[0].name.is_empty());
-    }
-
-    #[test]
-    fn distant_aerodrome_does_not_donate_identity() {
-        // Two airports 30 km apart — the propagation pass must not
-        // claim each other's lines (3 km radius guard + per-area
-        // 1.5×polygon-radius cap).
-        let mut lines = vec![line(50.10, 14.27, 50.11, 14.28)];
-        let areas = vec![aerodrome(99, "LKKB", 50.12, 14.55, 1_800_000.0, "")];
-        propagate_aerodrome_identity_to_lines(&mut lines, &areas);
-        assert!(
-            lines[0].airport_key.is_empty(),
-            "30 km is well outside the 3 km guard"
-        );
-    }
-
-    #[test]
-    fn nearer_airport_wins_over_farther() {
-        // A line equidistant-ish to two airports should pick up the
-        // closer one.
-        let mut lines = vec![line(50.10, 14.27, 50.11, 14.28)];
-        let areas = vec![
-            aerodrome(42, "LKPR", 50.119, 14.283, 37_525.0, ""), // ~1 km
-            aerodrome(99, "LKKB", 50.12, 14.55, 1_800_000.0, ""), // ~20 km
-        ];
-        propagate_aerodrome_identity_to_lines(&mut lines, &areas);
-        assert_eq!(lines[0].airport_key, "LKPR");
-    }
+    Ok(areas)
 }

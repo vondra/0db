@@ -328,50 +328,6 @@ pub fn wkb_h3_grid_points(wkb_hex: &str) -> Vec<(f64, f64)> {
     points
 }
 
-/// Test whether a point lies inside a WKB polygon or multipolygon.
-/// Holes are respected; invalid WKB returns false.
-pub fn wkb_contains_point(wkb_hex: &str, lat: f64, lon: f64) -> bool {
-    wkb_contains_any_point(wkb_hex, &[(lat, lon)])
-}
-
-/// Like [`wkb_contains_point`] but tests N points against the polygon
-/// after parsing the WKB once. Returns `true` as soon as any point is
-/// inside (short-circuit) — caller should order points by likelihood
-/// of inclusion. Used by Stage 2C aeroway snap to test segment
-/// start/mid/end without re-parsing the polygon three times.
-pub fn wkb_contains_any_point(wkb_hex: &str, points: &[(f64, f64)]) -> bool {
-    if points.is_empty() {
-        return false;
-    }
-    let (outer, holes) = match parse_wkb_polygon_with_holes(wkb_hex) {
-        Some(v) => v,
-        None => match parse_wkb_polygon_coords(wkb_hex) {
-            Some(coords) => (coords, vec![]),
-            None => return false,
-        },
-    };
-    rings_contain_any_point(&outer, &holes, points)
-}
-
-/// Test N points against an already-parsed (outer, holes) ring pair.
-/// Outer-ring containment with hole subtraction; ray-cast lives in
-/// [`point_in_polygon`]. Shared between [`wkb_contains_any_point`] and
-/// [`crate::types::AirportArea`]'s cached path so both call sites stay
-/// in lockstep on edge / on-vertex semantics.
-pub fn rings_contain_any_point(
-    outer: &[(f64, f64)],
-    holes: &[Vec<(f64, f64)>],
-    points: &[(f64, f64)],
-) -> bool {
-    if outer.is_empty() {
-        return false;
-    }
-    points.iter().any(|&(lat, lon)| {
-        point_in_polygon(lat, lon, outer)
-            && !holes.iter().any(|h| point_in_polygon(lat, lon, h))
-    })
-}
-
 /// Parse WKB with inner rings (holes). Returns (outer_ring, vec_of_holes).
 pub(crate) fn parse_wkb_polygon_with_holes(
     wkb_hex: &str,

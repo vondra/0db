@@ -33,7 +33,8 @@ pub mod state;
 pub mod views;
 
 pub use views::{
-    AirborneRowView, BBox, CruiseRowView, GroundRowView, ProfileMixView, SubSegmentSlice,
+    AirborneRowView, BBox, CruiseRowView, GroundLegSlice, GroundPathView, GroundVertexSlice,
+    SubSegmentSlice,
 };
 
 const NUM_BANDS: usize = 8;
@@ -45,7 +46,7 @@ pub fn compute_aircraft_v6(
     receiver: &Receiver,
     airborne_rows: &[AirborneRowView<'_>],
     cruise_rows: &[CruiseRowView<'_>],
-    ground_rows: &[GroundRowView<'_>],
+    ground_rows: &[GroundPathView<'_>],
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
     n_days: u16,

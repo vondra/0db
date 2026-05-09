@@ -35,12 +35,14 @@ pub mod stage_2c;
 pub mod trace;
 
 /// Schema-version tag stamped into every Arrow file produced by this
-/// crate. v9 adds `profile_mix` (List<Struct>) on ground.arrow for the
-/// popup top-3 typecode display (S3) — v8 readers tried to read the
-/// new column via `col_list` and silently dropped the entire batch
-/// when it was missing, so a popup served from a stale v8 file would
-/// show zero ground rows instead of a loud schema error. Bumping the
-/// version flips that to a fail-loud at the schema gate. v8 added
+/// crate. v10 rewrites `ground.arrow`: 1 row = 1 aircraft × 1 contiguous
+/// ground path (vertices + per-leg ops_kind + count_weight + em_bands).
+/// Replaces the v9 `(osm_id × ops_kind × sub_bucket_idx)` snap-and-bucket
+/// schema entirely — the OSM aeroway snap chain (line / area / aerodrome
+/// proximity / R10 fallback) and the S2 synth fill are gone; ground
+/// geometry is raw ADS-B trajectories with the nearest aerodrome from
+/// `airport_areas.arrow` providing identity. v9 added `profile_mix`
+/// (List<Struct>) for the popup top-3 typecode display; v8 added
 /// `observed_flight_ids` (List<UInt64>) for M4 dedup; v7 introduced
 /// per-rotation flight_id + callsign / aircraft_type columns.
-pub const SCHEMA_VERSION: &str = "v9";
+pub const SCHEMA_VERSION: &str = "v10";

@@ -1,6 +1,6 @@
-//! Arrow schemas for the five v9 artifacts. Every schema embeds
-//! `schema_version = "v9"` in metadata so the reader can refuse old
-//! v4/v5/v6/v7/v8 layouts instead of silently mis-decoding them.
+//! Arrow schemas for the five v10 artifacts. Every schema embeds
+//! `schema_version = "v10"` in metadata so the reader can refuse old
+//! v4..v9 layouts instead of silently mis-decoding them.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -148,78 +148,83 @@ pub fn cruise_schema() -> Arc<Schema> {
 
 /// Ground emission contract stamped into ground.arrow metadata.
 ///
-/// `dB_sum_v7_1` means each `em_*_bands[i]` stores `10*log10(Σ 10^(x/10))`
-/// — energies summed in linear space, written back as dB SPL — and silent
-/// bands round-trip as `f32::NEG_INFINITY`. dB-band storage was chosen
-/// because the popup's `propagate_variants_full` already consumes dB
-/// band levels natively; storing linear would force extract→dB and
-/// reader→linear conversions on every row. The tag also lets the reader
-/// reject earlier ground.arrow files (pre-`dB_sum_v6_1`, where Stage 2C
-/// summed dB values as if they were linear — mathematically wrong by
-/// ~10 dB).
-pub const GROUND_CONTRACT_DB_SUM_V7_1: &str = "dB_sum_v7_1";
+/// `raw_paths_v10` means each row is one aircraft × one contiguous
+/// ground path: a polyline of `vertices` plus per-leg `em_bands`,
+/// `ops_kind`, and `count_weight = 1 / n_legs_of_this_kind_in_path`.
+/// Energy is stored in dB SPL per leg (silent bands round-trip as
+/// `f32::NEG_INFINITY`); applying `count_weight` while summing across
+/// same-kind legs reconstructs one movement's reference SEL energy.
+/// The tag lets the reader reject pre-v10 ground files where energy
+/// was per-bucket-aggregated (`dB_sum_v7_1`) — feeding either contract
+/// into the wrong consumer mis-counts movements by 10–20 dB.
+pub const GROUND_CONTRACT_RAW_PATHS_V10: &str = "raw_paths_v10";
 
-/// Stage 2C — `h3r4/<hex>/ground.arrow`. One row per
-/// (osm_id × ops_kind × sub_bucket_idx); period is *not* in the bucket
-/// key — each row carries all three `em_day/eve/night_bands` so the
-/// popup reads Lden from a single row, and silent periods round-trip as
-/// `[NEG_INFINITY; 8]`. See [`GROUND_CONTRACT_DB_SUM_V7_1`] for energy
-/// semantics.
+/// Stage 2C — `h3r4/<hex>/ground.arrow`. One row per aircraft × one
+/// contiguous ground path. `vertices` are the consecutive
+/// `FlightSegment` endpoints (segN.start = segN-1.end); `legs[i]`
+/// joins `vertices[start_idx]` to `vertices[end_idx]` with an
+/// `ops_kind` (post-smoothing), a `count_weight = 1 /
+/// n_legs_of_this_kind_in_path` for energy normalization, and
+/// `em_bands` (8 floats, dB per Doc 29 octave centre — silent rows
+/// round-trip as `f32::NEG_INFINITY`). The path header carries the
+/// path's representative period and date so silent periods don't need
+/// per-leg em_day/eve/night triples. See [`GROUND_CONTRACT_RAW_PATHS_V10`]
+/// for energy semantics.
 pub fn ground_schema() -> Arc<Schema> {
-    let bands_field = || {
-        DataType::List(Arc::new(Field::new("item", DataType::Float32, false)))
-    };
-    let mix_struct = DataType::Struct(Fields::from(vec![
-        Field::new("class", DataType::UInt8, false),
-        Field::new("share", DataType::Float32, false),
-        Field::new("rep_typecode", DataType::FixedSizeBinary(4), false),
+    let vertex_struct = DataType::Struct(Fields::from(vec![
+        Field::new("lat", DataType::Float32, false),
+        Field::new("lon", DataType::Float32, false),
+        Field::new("alt_m", DataType::Float32, false),
+        Field::new("speed_kt", DataType::Float32, false),
+        Field::new("ts_offset_s", DataType::Float32, false),
+    ]));
+    let leg_struct = DataType::Struct(Fields::from(vec![
+        Field::new("start_idx", DataType::UInt16, false),
+        Field::new("end_idx", DataType::UInt16, false),
+        Field::new("ops_kind", DataType::UInt8, false),
+        Field::new("count_weight", DataType::Float32, false),
+        Field::new("length_m", DataType::Float32, false),
+        Field::new(
+            "em_bands",
+            DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
+            false,
+        ),
     ]));
     let fields = vec![
-        Field::new("osm_id", DataType::Int64, false),
+        Field::new("flight_id", DataType::UInt64, false),
+        Field::new("callsign", DataType::Utf8, false),
+        Field::new("aircraft_type", DataType::FixedSizeBinary(4), false),
+        Field::new("profile_idx", DataType::UInt8, false),
         Field::new("airport_key", DataType::Utf8, false),
-        Field::new("ops_kind", DataType::UInt8, false),
-        Field::new("sub_bucket_idx", DataType::UInt16, false),
-        Field::new("em_day_bands", bands_field(), false),
-        Field::new("em_eve_bands", bands_field(), false),
-        Field::new("em_night_bands", bands_field(), false),
-        Field::new("n_observed_per_day", DataType::Float32, false),
-        Field::new("n_modeled_per_day", DataType::Float32, false),
-        // Real flight IDs that contributed observed segments to this
-        // bucket. Per-airport dedup uses the union of these lists across
-        // all buckets of an airport — popup reports unique movements,
-        // not the per-bucket sum (which over-counts because one flight
-        // crosses many sub-buckets along a runway / taxi route).
-        // Empty for synth_v5 rows (no real fid → can't dedup).
         Field::new(
-            "observed_flight_ids",
-            DataType::List(Arc::new(Field::new("item", DataType::UInt64, false))),
+            "vertices",
+            DataType::List(Arc::new(Field::new("item", vertex_struct, false))),
             false,
         ),
         Field::new(
-            "profile_mix",
-            DataType::List(Arc::new(Field::new("item", mix_struct, false))),
+            "legs",
+            DataType::List(Arc::new(Field::new("item", leg_struct, false))),
             false,
         ),
-        Field::new("line_start_lat", DataType::Float32, false),
-        Field::new("line_start_lon", DataType::Float32, false),
-        Field::new("line_end_lat", DataType::Float32, false),
-        Field::new("line_end_lon", DataType::Float32, false),
-        Field::new("line_length_m", DataType::Float32, false),
+        Field::new("length_m_runway", DataType::Float32, false),
+        Field::new("length_m_taxi", DataType::Float32, false),
+        Field::new("length_m_apron", DataType::Float32, false),
+        Field::new("period_rep", DataType::UInt8, false),
+        Field::new("date_id", DataType::Int16, false),
+        Field::new("is_departure", DataType::UInt8, false),
         Field::new("source_id", DataType::UInt8, false),
         Field::new("origin", DataType::UInt8, false),
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "ground"),
-        ("ground_contract", GROUND_CONTRACT_DB_SUM_V7_1),
+        ("ground_contract", GROUND_CONTRACT_RAW_PATHS_V10),
     ])))
 }
 
 /// Verify a loaded file's metadata matches the current
-/// [`SCHEMA_VERSION`]. Reader-side guard so stale (pre-v9) files raise
-/// a loud error instead of silently producing gibberish numbers — a
-/// pre-S3 `v8` ground.arrow lacks the `profile_mix` column, and
-/// `col_list("profile_mix")` would otherwise silently drop the batch.
-pub fn assert_schema_v9(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
+/// [`SCHEMA_VERSION`]. Reader-side guard so stale (pre-v10) files raise
+/// a loud error instead of silently producing gibberish numbers.
+pub fn assert_schema_v10(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
     match metadata.get("schema_version").map(String::as_str) {
         Some(SCHEMA_VERSION) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
@@ -229,19 +234,19 @@ pub fn assert_schema_v9(metadata: &HashMap<String, String>) -> anyhow::Result<()
     }
 }
 
-/// Verify ground.arrow metadata carries the `dB_sum_v7_1` energy
-/// contract. Pre-v7 ground files lack this key (or carry the older
-/// `dB_sum_v6_1`) — accepting them would feed the popup band levels
-/// off by roughly 10 dB.
-pub fn assert_ground_contract_v7_1(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
-    assert_schema_v9(metadata)?;
+/// Verify ground.arrow metadata carries the `raw_paths_v10` contract.
+/// Pre-v10 ground files carry `dB_sum_v7_1` (per-bucket aggregated
+/// energy) — accepting them in the v10 reader would mis-interpret
+/// per-bucket sums as per-leg energies and over-count by 10–20 dB.
+pub fn assert_ground_contract_v10(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
+    assert_schema_v10(metadata)?;
     match metadata.get("ground_contract").map(String::as_str) {
-        Some(GROUND_CONTRACT_DB_SUM_V7_1) => Ok(()),
+        Some(GROUND_CONTRACT_RAW_PATHS_V10) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "ground_contract mismatch: expected {GROUND_CONTRACT_DB_SUM_V7_1}, got {other}"
+            "ground_contract mismatch: expected {GROUND_CONTRACT_RAW_PATHS_V10}, got {other}"
         )),
         None => Err(anyhow::anyhow!(
-            "ground_contract metadata missing — re-extract Stage 2C with C1 build"
+            "ground_contract metadata missing — re-extract Stage 2C with the v10 build"
         )),
     }
 }
@@ -251,7 +256,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_carry_v9_metadata() {
+    fn all_schemas_carry_v10_metadata() {
         for s in [
             flights_schema(),
             segments_schema(),
@@ -260,24 +265,24 @@ mod tests {
             ground_schema(),
         ] {
             let md = s.metadata();
-            assert_eq!(md.get("schema_version").map(String::as_str), Some("v9"));
+            assert_eq!(md.get("schema_version").map(String::as_str), Some("v10"));
             assert!(md.contains_key("kind"));
         }
     }
 
     #[test]
-    fn assert_schema_v9_rejects_old_versions() {
-        for old in ["v4", "v5", "v6", "v7", "v8"] {
+    fn assert_schema_v10_rejects_old_versions() {
+        for old in ["v4", "v5", "v6", "v7", "v8", "v9"] {
             let md: HashMap<String, String> =
                 [("schema_version".into(), old.into())].into_iter().collect();
-            assert!(assert_schema_v9(&md).is_err(), "expected reject for {old}");
+            assert!(assert_schema_v10(&md).is_err(), "expected reject for {old}");
         }
     }
 
     #[test]
-    fn assert_schema_v9_rejects_missing_metadata() {
+    fn assert_schema_v10_rejects_missing_metadata() {
         let md: HashMap<String, String> = HashMap::new();
-        assert!(assert_schema_v9(&md).is_err());
+        assert!(assert_schema_v10(&md).is_err());
     }
 
     #[test]
@@ -285,33 +290,49 @@ mod tests {
         let s = ground_schema();
         assert_eq!(
             s.metadata().get("ground_contract").map(String::as_str),
-            Some(GROUND_CONTRACT_DB_SUM_V7_1)
+            Some(GROUND_CONTRACT_RAW_PATHS_V10)
         );
     }
 
     #[test]
-    fn ground_schema_drops_period_field() {
+    fn ground_schema_carries_path_columns() {
         let s = ground_schema();
-        assert!(
-            s.field_with_name("period").is_err(),
-            "period must not appear in ground schema (each row carries em_day/eve/night)"
-        );
+        for required in ["vertices", "legs", "airport_key", "period_rep", "is_departure"] {
+            assert!(
+                s.field_with_name(required).is_ok(),
+                "ground schema must carry {required} column"
+            );
+        }
+        for retired in [
+            "osm_id",
+            "ops_kind",
+            "sub_bucket_idx",
+            "em_day_bands",
+            "line_start_lat",
+            "profile_mix",
+        ] {
+            assert!(
+                s.field_with_name(retired).is_err(),
+                "{retired} must NOT appear in v10 ground schema"
+            );
+        }
     }
 
     #[test]
-    fn assert_ground_contract_v7_1_rejects_pre_v7_files() {
+    fn assert_ground_contract_v10_rejects_pre_v10_files() {
         let md: HashMap<String, String> = [
-            ("schema_version".into(), "v6".into()),
+            ("schema_version".into(), "v9".into()),
             ("kind".into(), "ground".into()),
+            ("ground_contract".into(), "dB_sum_v7_1".into()),
         ]
         .into_iter()
         .collect();
-        assert!(assert_ground_contract_v7_1(&md).is_err());
+        assert!(assert_ground_contract_v10(&md).is_err());
     }
 
     #[test]
-    fn assert_ground_contract_v7_1_accepts_current_schema() {
+    fn assert_ground_contract_v10_accepts_current_schema() {
         let s = ground_schema();
-        assert!(assert_ground_contract_v7_1(s.metadata()).is_ok());
+        assert!(assert_ground_contract_v10(s.metadata()).is_ok());
     }
 }

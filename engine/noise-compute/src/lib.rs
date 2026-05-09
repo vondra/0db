@@ -101,6 +101,12 @@ fn wkb_to_geojson(hex: &str) -> Option<serde_json::Value> {
 }
 
 /// Compute noise at a single receiver point from all nearby sources.
+///
+/// Aircraft handling moved to `compute::aircraft_v6::compute_aircraft_v6`,
+/// which the popup invokes after this function (see
+/// `source-reader/src/aircraft_v6/mod.rs::add_v6_aircraft_to_result`).
+/// The `aircraft` parameter is kept on this entry point for the
+/// pipeline / non-popup callers and should be empty on the popup path.
 pub fn compute_at_point(
     receiver: &Receiver,
     roads: &[RoadSegment],
@@ -112,31 +118,41 @@ pub fn compute_at_point(
     rasters: &dyn RasterSampler,
     config: &ComputeConfig,
 ) -> NoiseResult {
-    compute_at_point_with_airports(
-        receiver,
-        roads,
-        railways,
-        buildings,
-        industrial,
-        aircraft,
-        &[],
-        &[],
-        barriers,
-        rasters,
-        config,
+    compute_at_point_inner(
+        receiver, roads, railways, buildings, industrial, aircraft, barriers, rasters, config,
         None,
     )
 }
 
-pub fn compute_at_point_with_airports(
+/// Variant that also takes a `TraceCollector` (popup uses this through
+/// the source-reader to collect noise-segments traces alongside the
+/// aggregate result).
+pub fn compute_at_point_with_traces(
     receiver: &Receiver,
     roads: &[RoadSegment],
     railways: &[RailSegment],
     buildings: &[PointSource],
     industrial: &[PointSource],
     aircraft: &[AircraftSegment],
-    airport_lines: &[AirportLine],
-    airport_areas: &[AirportArea],
+    barriers: &[Barrier],
+    rasters: &dyn RasterSampler,
+    config: &ComputeConfig,
+    traces: Option<&mut TraceCollector>,
+) -> NoiseResult {
+    compute_at_point_inner(
+        receiver, roads, railways, buildings, industrial, aircraft, barriers, rasters, config,
+        traces,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_at_point_inner(
+    receiver: &Receiver,
+    roads: &[RoadSegment],
+    railways: &[RailSegment],
+    buildings: &[PointSource],
+    industrial: &[PointSource],
+    aircraft: &[AircraftSegment],
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
     _config: &ComputeConfig,
@@ -211,13 +227,12 @@ pub fn compute_at_point_with_airports(
     }
 
     // ── Aircraft (Doc 29 — SEPARATE from ISO 9613-2) ──
-    // Aircraft handling moved to `compute::aircraft_v6::compute_aircraft_v6`,
-    // which consumes popup arrows directly via typed views and reads
-    // ground em_*_bands under the dB_sum_v6_1 contract. The
-    // `aircraft` / `airport_lines` / `airport_areas` parameters are kept
-    // on this entry point for compatibility with existing callers and
-    // should always be empty — invoke `compute_aircraft_v6` afterwards.
-    let _ = (aircraft, airport_lines, airport_areas);
+    // Aircraft handling moved to `compute::aircraft_v6::compute_aircraft_v6`.
+    // The `aircraft` slice is reserved for non-popup callers that still
+    // pass legacy `AircraftSegment` slices in (none in this checkout);
+    // the popup invokes `compute_aircraft_v6` separately and merges its
+    // contributors back into `result` via `add_v6_aircraft_to_result`.
+    let _ = aircraft;
 
     // ── Total ──
     let total = periods::sum_periods(

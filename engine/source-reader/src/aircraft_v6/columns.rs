@@ -9,13 +9,10 @@ use arrow::record_batch::RecordBatch;
 pub fn col_u64<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a UInt64Array> {
     batch.column_by_name(name)?.as_any().downcast_ref()
 }
-pub fn col_u16<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a UInt16Array> {
-    batch.column_by_name(name)?.as_any().downcast_ref()
-}
 pub fn col_u8<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a UInt8Array> {
     batch.column_by_name(name)?.as_any().downcast_ref()
 }
-pub fn col_i64<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Int64Array> {
+pub fn col_i16<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Int16Array> {
     batch.column_by_name(name)?.as_any().downcast_ref()
 }
 pub fn col_f32<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Float32Array> {

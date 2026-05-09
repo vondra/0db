@@ -62,7 +62,7 @@ pub(crate) fn read_all_batches(path: &Path) -> Result<(Schema, Vec<RecordBatch>)
     let f = File::open(path)?;
     let r = FileReader::try_new(BufReader::new(f), None)?;
     let schema = r.schema();
-    arrow_schemas::assert_schema_v9(schema.metadata())?;
+    arrow_schemas::assert_schema_v10(schema.metadata())?;
     let mut batches = Vec::new();
     for b in r {
         batches.push(b?);

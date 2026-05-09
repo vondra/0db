@@ -47,9 +47,9 @@ pub fn add_v6_aircraft_to_result(
     rasters: &dyn RasterSampler,
     n_days: u16,
 ) -> Result<(), String> {
-    assert_schema_v9("airborne.arrow", airborne_batches)?;
-    assert_schema_v9("cruise.arrow", cruise_batches)?;
-    assert_schema_v9("ground.arrow", ground_batches)?;
+    assert_schema_v10("airborne.arrow", airborne_batches)?;
+    assert_schema_v10("cruise.arrow", cruise_batches)?;
+    assert_schema_v10("ground.arrow", ground_batches)?;
     let airborne_rows = AirborneRowAccum::new(airborne_batches);
     let cruise_rows = CruiseRowAccum::new(cruise_batches);
     let ground_rows = GroundRowAccum::new(ground_batches)?;
@@ -165,31 +165,31 @@ fn sum_periods_linear(sources: &[SourceResult]) -> NoisePeriods {
     noise_compute::periods::periods(to_db(day), to_db(eve), to_db(night))
 }
 
-/// Stamp written by every aircraft-extract v9 Arrow file. Inline copy
+/// Stamp written by every aircraft-extract v10 Arrow file. Inline copy
 /// rather than build-dep on aircraft-extract, which would pull arrow
 /// IPC writers / parquet / anyhow into the popup runtime.
-pub(super) const SCHEMA_VERSION_V9: &str = "v9";
+pub(super) const SCHEMA_VERSION_V10: &str = "v10";
 
 /// Verify `schema_version` on every batch in the slice. Single-file
 /// IPC guarantees one schema per file, but the caller merges batches
 /// across R4 cells (`source_reader::lib::collect_from_hex_data`), so
-/// a mixed slice can have v9 batches from one hex and stale v8 batches
-/// from a sibling. Loop over every batch, not just the first. v9 added
-/// the `profile_mix` column on ground.arrow (S3); a v8 reader would
-/// silently drop the entire batch via `col_list("profile_mix")` →
-/// `continue`, so the popup would show zero ground rows instead of a
-/// loud schema error. /gg (Codex) flagged that contradiction.
-pub(super) fn assert_schema_v9(label: &str, batches: &[RecordBatch]) -> Result<(), String> {
+/// a mixed slice can carry v10 batches from one hex and stale v9
+/// batches from a sibling. Loop over every batch, not just the first.
+/// v10 rewrote `ground.arrow` to per-aircraft `vertices` + `legs` —
+/// a v9 reader would silently drop every ground batch via
+/// `col_list("vertices")` → `continue` and the popup would show zero
+/// ground rows instead of a loud schema error.
+pub(super) fn assert_schema_v10(label: &str, batches: &[RecordBatch]) -> Result<(), String> {
     for (idx, batch) in batches.iter().enumerate() {
         let v = batch
             .schema_ref()
             .metadata()
             .get("schema_version")
             .map(String::as_str);
-        if v != Some(SCHEMA_VERSION_V9) {
+        if v != Some(SCHEMA_VERSION_V10) {
             return Err(format!(
-                "{label}[batch {idx}] schema_version mismatch (expected {SCHEMA_VERSION_V9}, got {v:?}) \
-                 — re-extract aircraft pipeline with the S3 build"
+                "{label}[batch {idx}] schema_version mismatch (expected {SCHEMA_VERSION_V10}, got {v:?}) \
+                 — re-extract aircraft pipeline with the v10 build"
             ));
         }
     }

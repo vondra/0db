@@ -2,7 +2,7 @@
 //!
 //! `Flight` (Stage 0 output) carries the raw point list per aircraft.
 //! `FlightSegment` (Stage 1 output) carries one classified segment.
-//! `AirborneEvent` / `CruiseBucket` / `GroundLine` are the per-R4
+//! `AirborneEvent` / `CruiseBucket` / `GroundPath` are the per-R4
 //! aggregates produced by Stage 2A / 2B / 2C and serialised into the
 //! per-R4 Arrow files.
 
@@ -162,42 +162,56 @@ pub struct CruiseBucket {
     pub origin: u8,
 }
 
-/// Stage 2C row — per (osm_id × ops_kind × sub_bucket_idx). Each row
-/// carries all three em_day/eve/night band arrays (silent periods are
-/// `[NEG_INFINITY; 8]`); period is therefore *not* in the bucket key.
-/// `n_observed_per_day` / `n_modeled_per_day` store the raw count over
-/// the extraction window and are divided by `n_days` at popup compute
-/// time (see `compute_aircraft_v6`).
+/// Stage 2C row — one aircraft × one contiguous ground path. Polyline
+/// of consecutive `FlightSegment` endpoints (segN.start = segN-1.end)
+/// in `vertices`; `legs[i]` joins `vertices[start_idx]` to
+/// `vertices[end_idx]` with a smoothed `ops_kind`,
+/// `count_weight = 1 / n_legs_of_this_kind_in_path` (one movement's
+/// energy distributed across same-kind legs so summation reconstructs
+/// a single SEL), and per-leg `em_bands` (8 dB SPL floats; silent
+/// rows round-trip as `f32::NEG_INFINITY`).
 #[derive(Clone)]
-pub struct GroundLine {
-    pub osm_id: i64,
+pub struct GroundPath {
+    pub flight_id: u64,
+    pub callsign: String,
+    pub aircraft_type: [u8; 4],
+    pub profile_idx: u8,
     pub airport_key: String,
-    pub ops_kind: u8,
-    pub sub_bucket_idx: u16,
-    pub em_day_bands: [f32; 8],
-    pub em_eve_bands: [f32; 8],
-    pub em_night_bands: [f32; 8],
-    pub n_observed_per_day: f32,
-    pub n_modeled_per_day: f32,
-    /// Sorted, deduped real flight IDs of observed segments contributing
-    /// to this bucket. Empty for synth_v5 rows. Popup unions these
-    /// across all rows of an airport for unique-movement reporting.
-    pub observed_flight_ids: Vec<u64>,
-    pub profile_mix: Vec<ProfileMixEntry>,
-    pub line_start_lat: f32,
-    pub line_start_lon: f32,
-    pub line_end_lat: f32,
-    pub line_end_lon: f32,
-    pub line_length_m: f32,
+    pub vertices: Vec<GroundPathVertex>,
+    pub legs: Vec<GroundPathLeg>,
+    pub length_m_runway: f32,
+    pub length_m_taxi: f32,
+    pub length_m_apron: f32,
+    pub period_rep: u8,
+    pub date_id: i16,
+    pub is_departure: bool,
     pub source_id: u8,
     pub origin: u8,
 }
 
+#[derive(Clone, Copy)]
+pub struct GroundPathVertex {
+    pub lat: f32,
+    pub lon: f32,
+    pub alt_m: f32,
+    pub speed_kt: f32,
+    pub ts_offset_s: f32,
+}
+
 #[derive(Clone)]
-pub struct ProfileMixEntry {
-    pub class: u8,
-    pub share: f32,
-    pub rep_typecode: [u8; 4],
+pub struct GroundPathLeg {
+    pub start_idx: u16,
+    pub end_idx: u16,
+    /// 1 = runway_roll, 2 = taxi, 3 = apron_movement (post-smoothing).
+    pub ops_kind: u8,
+    /// 1 / n_legs_of_this_kind_in_path. Distributes one movement's
+    /// reference SEL energy across same-kind legs of the path so that
+    /// summing energies × count_weight reconstructs one movement.
+    pub count_weight: f32,
+    pub length_m: f32,
+    /// 8 octave-band emission levels (dB SPL); silent legs round-trip
+    /// as `[NEG_INFINITY; 8]`.
+    pub em_bands: [f32; 8],
 }
 
 /// FL bins — five buckets covering the cruise altitude range. Tracks

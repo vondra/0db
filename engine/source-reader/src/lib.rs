@@ -88,7 +88,6 @@ pub struct PointQueryData {
     pub aircraft_airborne_batches: Vec<arrow::record_batch::RecordBatch>,
     pub aircraft_cruise_batches: Vec<arrow::record_batch::RecordBatch>,
     pub aircraft_ground_batches: Vec<arrow::record_batch::RecordBatch>,
-    pub airport_lines: Vec<noise_compute::types::AirportLine>,
     pub airport_areas: Vec<noise_compute::types::AirportArea>,
     pub barriers: Vec<noise_compute::types::Barrier>,
     pub n_days: u16,
@@ -128,7 +127,6 @@ pub fn collect_from_hex_data(
     let mut all_airborne_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
     let mut all_cruise_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
     let mut all_ground_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
-    let mut all_airport_lines = Vec::new();
     let mut all_airport_areas = Vec::new();
 
     let mut date_ids = std::collections::HashSet::new();
@@ -169,26 +167,6 @@ pub fn collect_from_hex_data(
     });
 
     for data in hex_data {
-        let airport_lines = query_airport_lines_from_batches(
-            &data.airport_line_batches,
-            lat,
-            lng,
-            AIRPORT_CONTEXT_RADIUS_M,
-        );
-        for line in airport_lines {
-            all_airport_lines.push(noise_compute::types::AirportLine {
-                osm_id: line.osm_id,
-                aeroway_type: line.aeroway_type,
-                name: line.name.clone(),
-                airport_key: airport_key(&line.name, &line.airport_ref, &line.icao, &line.iata),
-                start_lat: line.start_lat,
-                start_lon: line.start_lon,
-                end_lat: line.end_lat,
-                end_lon: line.end_lon,
-                width_m: line.width_m,
-            });
-        }
-
         let airport_areas = query_airport_areas_from_batches(
             &data.airport_area_batches,
             lat,
@@ -484,7 +462,6 @@ pub fn collect_from_hex_data(
         aircraft_airborne_batches: all_airborne_batches,
         aircraft_cruise_batches: all_cruise_batches,
         aircraft_ground_batches: all_ground_batches,
-        airport_lines: all_airport_lines,
         airport_areas: all_airport_areas,
         barriers: all_barriers,
         n_days,
@@ -706,15 +683,13 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
     let n_railways = sources.railways.len();
 
     let mut traces = noise_compute::types::TraceCollector::new();
-    let mut result = noise_compute::compute_at_point_with_airports(
+    let mut result = noise_compute::compute_at_point_with_traces(
         &receiver,
         &sources.roads,
         &sources.railways,
         &sources.buildings,
         &sources.industrial,
         &[],
-        &sources.airport_lines,
-        &sources.airport_areas,
         &sources.barriers,
         rasters,
         &config,

@@ -123,14 +123,13 @@ fn main() -> Result<()> {
             let segs = aircraft_extract::arrow_io::read_segments(&segments)
                 .with_context(|| format!("read {}", segments.display()))?;
             let rasters = raster_reader::RealRasters::new(&prepared_dir);
-            let (lines, areas) = read_global_airports(&h3r4_dir)
-                .with_context(|| format!("read airport_*.arrow from {}", h3r4_dir.display()))?;
+            let areas = read_global_airports(&h3r4_dir)
+                .with_context(|| format!("read airport_areas.arrow from {}", h3r4_dir.display()))?;
             eprintln!(
-                "[stage2c] loaded {} airport_lines, {} airport_areas globally",
-                lines.len(),
+                "[stage2c] loaded {} aerodrome polygons globally",
                 areas.len()
             );
-            let n = run_stage_2c(&segs, &lines, &areas, &h3r4_dir, &rasters, n_days)?;
+            let n = run_stage_2c(&segs, &areas, &h3r4_dir, &rasters, n_days)?;
             eprintln!("[stage2c] {n} R4 hexes written");
         }
         Cmd::RunAll {
@@ -186,13 +185,12 @@ fn main() -> Result<()> {
             let r2b = run_stage_2b(&all_segments, &h3r4_dir, n_days)?;
             let t2c = Instant::now();
             let rasters = raster_reader::RealRasters::new(&prepared_dir);
-            let (lines, areas) = read_global_airports(&h3r4_dir)?;
+            let areas = read_global_airports(&h3r4_dir)?;
             eprintln!(
-                "[run-all] stage2c airports: {} lines, {} areas",
-                lines.len(),
+                "[run-all] stage2c airports: {} aerodrome polygons",
                 areas.len()
             );
-            let r2c = run_stage_2c(&all_segments, &lines, &areas, &h3r4_dir, &rasters, n_days)?;
+            let r2c = run_stage_2c(&all_segments, &areas, &h3r4_dir, &rasters, n_days)?;
             let t_end = Instant::now();
             eprintln!(
                 "[run-all] stage2a={r2a} ({:?}), stage2b={r2b} ({:?}), stage2c={r2c} ({:?})",
