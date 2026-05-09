@@ -474,63 +474,77 @@ Implementation: `engine/noise-compute/src/lib.rs:1874` calls `NpdLuts::lookup_lm
 
 **Sources**: ECAC Doc 29 4th Ed §A.3.1 (LAmax NPDs), FAA AEDT Tech Manual §6.4 (LAmax interpolation procedure), EASA ANP v2.3 + v9 published L_MAX_A / L_MAX_D NPD tables.
 
-### 5.2 Airport ground ops (current implementation)
+### 5.2 Airport ground ops (raw-ADS-B-paths model, schema v10)
 
 Airport ground ops are a separate submodel inside the `aircraft` layer.
 
 Inputs:
-- observed ADS-B segments flagged `on_ground` or low-AGL near airports
-- airport geometry from `airport_lines.arrow` and `airport_areas.arrow`
+- observed ADS-B segments classified `Phase::Ground` by Stage 1
+  (low-AGL on-ground rolls + taxi traces)
+- aerodrome polygons from `airport_areas.arrow` (filtered to
+  `aeroway_type == AERODROME`) for nearest-aerodrome identity only —
+  **no snap onto runway / taxi / apron geometry**
 
-Ground-context classification:
-- contexts: `airport_line`, `airport_area`, `inferred`
-- airport line matching uses OSM width when present, otherwise default widths:
-  - runway / stopway **45 m**
-  - taxiway **18 m**
-- airport areas use polygon containment when available, otherwise area-based fallback radii
-- repeated multi-day clusters of `on_ground` segments with no OSM match can be upgraded to `inferred` airport context
+Path extraction (one row of `ground.arrow` = one aircraft × one
+contiguous ground run):
+- group `FlightSegment`s by `flight_id`, walk in time order
+- a "path" is a maximal run of consecutive `Phase::Ground` segments
+  where `segN+1.start = segN.end` (Stage 1 enforces touching at
+  frame boundaries; non-touching pairs split a new path)
+- vertices = sequence of consecutive segment endpoints
+- airport identity = nearest `aeroway = aerodrome` polygon within
+  `max(3000, area_radius_m × 1.5)` of the path centroid; when no
+  aerodrome is in range, an `airport_key = "strip:{r7_hex}"` (H3
+  res-7 ≈ 1.2 km cell) anchors anonymous strips so distinct grass
+  fields don't merge into one `(no airport)` cluster
 
-Ground-ops classes:
-- **runway_roll**
-- **taxi**
-- **apron_movement**
+Per-leg `ops_kind` (one leg = one `FlightSegment` end-to-end):
+- speed-based classifier: `speed_kt ≥ 40 OR length_m ≥ 500` →
+  `runway_roll`; `speed_kt ≥ 8` → `taxi`; else `apron_movement`
+- smoothing pass: a leg whose `ops_kind` differs from BOTH neighbours
+  AND is short (< 10 s OR < 30 m) inherits the neighbour's kind, so
+  a slow taxi pause in a runway-hold queue doesn't mis-classify as
+  apron
 
-Class fallback without explicit aeroway match:
-- `speed >= 40 kt` or `segment_length >= 500 m` → runway_roll
-- `speed >= 8 kt` → taxi
-- otherwise apron_movement
+Per-leg `count_weight = 1 / n_legs_of_this_kind_in_path`:
+- distributes one movement's reference-SEL energy across the
+  same-kind legs of one path
+- Σ count_weight across same-kind legs of one path = 1.0 — summing
+  per-leg energy × count_weight reconstructs one movement's energy
+- `build_ground_ops_line_emission` is called with `count_weight=1.0`
+  so the stored `em_bands` represents one full event's emission;
+  the popup applies the per-leg `count_weight` exactly once
 
-Synthetic fill of missing ground coverage:
-- airports are grouped from airport lines / areas by airport key or coarse spatial cluster
-- only enabled when observed flights for a group >= **12**
-- missing coverage scale = `1 - covered_observed / all_observed`
-- if missing coverage > **5%**, synthetic surface segments are emitted from airport geometry:
-  - runway share **70%** at **70 kt**
-  - taxiway share **20%** at **18 kt**
-  - apron share **10%** at **12 kt**
-  - helipad / heliport apron speed **6 kt**
-- apron polygons are sampled on ~**90 m** grid, capped at **8** points
-- apron point emitters become short **24 m** micro-segments
-- tiny synthetic weights `< 0.05` are dropped
-
-Ground-ops line-source emission:
+Ground-ops line-source emission (per leg):
 - source height = **4.0 m**
-- profile-specific reference SEL table by aircraft family × class (`runway / taxi / apron`)
+- profile-specific reference SEL table by aircraft family × class
+  (`runway / taxi / apron`)
 - runway departure gets **+2 dB**
-- speed adjustment relative to nominal class speed is clamped to **±3 dB**
-- max radius:
-  - runway_roll **5 km**
-  - taxi **3 km**
-  - apron_movement **1.5 km**
+- speed adjustment relative to nominal class speed is clamped to
+  **±3 dB**
 
-Ground-ops propagation:
-- converted to octave-band line-source emission
-- then propagated with the same Section 3 engine as other ground line sources
-- terrain / screening / vegetation ARE applied
+Ground-ops propagation (popup):
+- per-path bbox prefilter at **16 km** envelope, per-leg prefilter
+  at the same conservative cap (the kernel's
+  `below_free_field_threshold_line` does the precise per-band
+  rejection inside)
+- per leg: `propagate_variants_full` with `SourceGeometry::Line`,
+  finite-line correction, and full Section 3 path effects (terrain
+  / screening / vegetation / ground)
+
+Synthetic fill (was active pre-v10 when ADS-B coverage missed parts
+of an airport's footprint) is **not part of the v10 model**. The
+v10 design choice: the popup faithfully shows what ADS-B saw, and
+unobserved ground ops simply don't appear. Tier 3 backlog #4
+tracks the schedule-synth driver that would re-introduce a
+coverage-fill driver on top of curated schedules.
 
 Pipeline/output note:
-- batch tiles merge airborne + ground ops into one `aircraft` layer (`source_type = 4`)
-- aircraft `.adj.bin` tiles are NOT currently emitted, even though popup breakdown computes path-effect variants for airport ground ops
+- batch tiles merge airborne + ground ops into one `aircraft` layer
+  (`source_type = 4`)
+- aircraft `.adj.bin` tiles are NOT currently emitted, even though
+  popup breakdown computes path-effect variants for airport ground
+  ops
 
 ---
 
@@ -679,7 +693,7 @@ ISO 9613-2 point source.
 | **Industrial profiles** | `nace_4digit -> site_subtype -> source_type` fallback chain | Standard inventories usually use audited source inventories / measured facility data | Keeps global coverage, but facility class can be approximate when registry match is missing. |
 | **Aircraft NPD** | ~124 per-typecode profiles auto-generated from EASA ANP v2.3, 12 aircraft noise classes for bucket aggregation | Doc 29: official ANP database with full procedural-step profiles, weights, aerodynamic coefficients | ±1-2 dB per aircraft type for ANP-mapped types; similarity_fallback for unmapped typecodes (~70-80% of long-tail traffic) routes to closest anchor by engine type / size class. |
 | **Aircraft local time / ground filtering** | Per-coordinate IANA TZ lookup (tzf-rs + chrono-tz, DST-aware) + airport-context stale-ground filter | Operational studies use airport-local time (same principle) and curated trajectory cleaning | Near-runway behaviour can still be biased by trajectory-cleaning simplifications. |
-| **Aircraft ground ops** | ADS-B low-AGL / on-ground segments matched to airport geometry, plus synthetic runway/taxi/apron fill when coverage is incomplete | Airport studies usually use curated surface movement inventories and local operations data | Near-runway levels depend on airport geometry quality and ADS-B ground coverage. |
+| **Aircraft ground ops** | Raw ADS-B trajectories per aircraft × contiguous ground run; nearest-aerodrome identity from `airport_areas.arrow`; per-leg `ops_kind` from speed/length classifier with smoothing pass | Airport studies usually use curated surface movement inventories and local operations data | Near-runway levels depend on ADS-B ground coverage; unobserved movements are not synthesised in v10 (was synth-fill pre-v10; deferred to a schedule-driven driver in Tier 3 backlog #4). |
 | **Aircraft tile adjustments** | Aircraft ground propagation could expose separate terrain / screening / vegetation variants | Batch `aircraft` tiles currently bake ground-ops path effects into final Lden and do not emit `.adj.bin` | Map propagation toggles cannot isolate aircraft ground-ops attenuation separately. |
 | **Bridge/tunnel** | Bridge G=0, tunnel skip | No standard specifies this directly | Physically correct — bridge is hard surface, tunnel contains sound. |
 | **Oneway roads** | AADT × 0.5 | No standard | Approximation: one-way carries ~50% of two-way equivalent. |

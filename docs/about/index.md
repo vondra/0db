@@ -158,11 +158,11 @@ Source height: 0.5 m (CNOSSOS-EU §2.7.1, wheel-rail contact).
 
 ### Aircraft
 
-The aircraft layer combines two models: airborne overflights from ADS-B radar trajectories, processed through NPD (Noise-Power-Distance) profiles inspired by ECAC Doc 29, and airport ground operations (runway roll, taxi, apron movement) inferred from airport geometry and low-altitude ADS-B traces. The map shows both together; the popup splits them into airborne and ground ops.
+The aircraft layer combines two models: airborne overflights from ADS-B radar trajectories, processed through NPD (Noise-Power-Distance) profiles inspired by ECAC Doc 29, and airport ground operations (runway roll, taxi, apron movement) extracted directly from low-altitude / on-ground ADS-B trajectories with the nearest mapped aerodrome attached for identity. The map shows both together; the popup splits them into airborne and ground ops.
 
-- **Data:** ADS-B trajectories from [adsb.lol](https://adsb.lol) (full year, all altitudes) + airport runway / taxiway / apron geometry from OpenStreetMap
+- **Data:** ADS-B trajectories from [adsb.lol](https://adsb.lol) (full year, all altitudes) + aerodrome polygons from OpenStreetMap (used only to label which airport a ground path belongs to — no snap onto runway / taxi / apron geometry)
 - **~124 per-typecode aircraft profiles** auto-generated from EASA ANP v2.3 (Aircraft Noise and Performance database) — covers Boeing 737/747/757/767/777/787, Airbus A319/A320/A321/A330/A340/A350/A380, Embraer E-Jets, ATR, Dash 8, plus light GA and helicopter placeholders for types not in ANP
-- **Limitations:** Most modern jets (737 MAX, A320neo, A321neo) have dedicated profiles from EASA ANP v2.3 + supplementary v9 sources; the A220 family and other less-common variants fall back to a similarity-based mapping that picks the closest anchor by engine type and size class. Airport ground ops are partly inferred or synthetically backfilled when surface coverage is incomplete. Day/evening/night periods are derived from the segment-midpoint coordinate using an IANA timezone database (DST-aware). This is useful for atlas-scale patterns, not certified airport contouring.
+- **Limitations:** Most modern jets (737 MAX, A320neo, A321neo) have dedicated profiles from EASA ANP v2.3 + supplementary v9 sources; the A220 family and other less-common variants fall back to a similarity-based mapping that picks the closest anchor by engine type and size class. Ground ops show what ADS-B observed — there's no synthetic backfill, so movements outside the receiver coverage simply don't appear. Day/evening/night periods are derived from the segment-midpoint coordinate using an IANA timezone database (DST-aware). This is useful for atlas-scale patterns, not certified airport contouring.
 
 <details>
 <summary>Technical: aircraft layer (Doc 29 + airport ground ops)</summary>
@@ -197,7 +197,7 @@ Auto-generated from EASA ANP v2.3 (+ v9 supplement for modern types). Approach v
 
 Airport-aware filtering removes obvious off-airport taxi remnants from ADS-B traces, but this is still not a certified airport ground-noise model.
 
-**Airport ground ops:** Low-altitude or on-ground ADS-B segments are matched to runway, taxiway and apron geometry. When observed surface coverage is incomplete, the model adds synthetic airport surface movements weighted by the airport layout. Those ground movements are then propagated as ordinary line sources with terrain, screening and vegetation, unlike airborne overflights.
+**Airport ground ops:** Low-altitude or on-ground ADS-B segments are grouped per aircraft into contiguous ground paths (one path = one taxi-and-takeoff or land-and-taxi sweep). The path's vertices are the actual ADS-B trajectory; a per-leg `ops_kind` (runway / taxi / apron) is derived from leg speed and length and smoothed to absorb runway-hold pauses. The nearest mapped aerodrome within ~3 km of the path centroid contributes the airport label; paths far from any aerodrome fall into an anonymous strip cluster keyed off the H3 res-7 cell. Each leg is a Section 3 line source with terrain, screening, vegetation and ground attenuation. Energy is normalised across same-kind legs of one path so summing the legs reconstructs one movement's contribution; runway-roll departure picks up Doc 29's +2 dB.
 
 **Lden:** Per-period (day 12h, evening 4h +5 dB, night 8h +10 dB), standard [END 2002/49/EC](../standards/end-2002-49-ec.pdf).
 
@@ -470,7 +470,7 @@ This model is an engineering approximation for a continental-scale noise atlas �
 | Aircraft type mapping | Doc 29 / ANP: aircraft-specific certified profiles + procedural steps + weights | ~124 per-ICAO-typecode NPD profiles auto-generated from EASA ANP v2.3 (+ v9 supplement), bucketed at 12 aircraft noise classes for aggregation | ±1-2 dB for ANP-mapped types; similarity_fallback for unmapped typecodes routes to closest anchor by engine/size class |
 | Aircraft timing | Airport-local time and operational preprocessing | Segment midpoint → IANA timezone (tzf-rs) → DST-aware local time (chrono-tz); END default period boundaries | Global local time; only airport-local operational-preprocessing differences remain |
 | Aircraft ground preprocessing | Curated airport trajectory cleaning | Airport-aware ADS-B filtering removes obvious stale ground segments | Near-runway bias still possible |
-| Aircraft ground operations | Surface movement inventories and airport-local operational data | ADS-B low-altitude / on-ground segments matched to airport geometry, with synthetic runway/taxi/apron fill when coverage is incomplete | Near-runway levels depend on airport geometry quality and ADS-B surface coverage |
+| Aircraft ground operations | Surface movement inventories and airport-local operational data | Raw ADS-B trajectories per aircraft × contiguous ground run; nearest-aerodrome identity from OSM polygons; speed/length-based per-leg `ops_kind` with smoothing | Near-runway levels depend on ADS-B surface coverage; movements outside the ADS-B receiver footprint don't appear (no synth-fill in v10) |
 | Receiver grid | END: facade receivers (4 m height, 2 m from wall) | H3 res-11 hex centers (24 m edge, 4 m height) | Area average, not per-facade |
 | Road corrections | CNOSSOS-EU: gradient, intersection, temperature | Not implemented | ±1–3 dB on steep/cold roads |
 | Building reflections | ISO 9613-2 §7.5: image-source ray tracing | Simplified: local enclosure heuristic, 0–5 dB boost | May underestimate in complex geometries |
