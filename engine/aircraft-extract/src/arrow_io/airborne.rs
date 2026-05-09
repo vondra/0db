@@ -174,5 +174,22 @@ mod tests {
         write_airborne(&p, &evs, 1).unwrap();
         let (_, batches) = read_record_batches(&p).unwrap();
         assert_eq!(batches[0].num_rows(), 1);
+        // Verify M1 columns survive write→read so a Stage 2A regression
+        // dropping callsign / aircraft_type can't slip through with the
+        // num_rows check still passing.
+        let cs = batches[0]
+            .column_by_name("callsign")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::StringArray>()
+            .unwrap();
+        let at = batches[0]
+            .column_by_name("aircraft_type")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::FixedSizeBinaryArray>()
+            .unwrap();
+        assert_eq!(cs.value(0), "TVS100P");
+        assert_eq!(at.value(0), b"A320");
     }
 }

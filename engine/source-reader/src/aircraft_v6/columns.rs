@@ -27,9 +27,22 @@ pub fn col_str<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a StringArray
 pub fn col_list<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a ListArray> {
     batch.column_by_name(name)?.as_any().downcast_ref()
 }
+/// Returns the column iff it's a `FixedSizeBinary(width)` column with
+/// the expected element width. Catches schema drift (e.g. someone
+/// widening `aircraft_type` to 6 bytes) before the per-row
+/// `copy_from_slice([u8; 4])` panics inside the popup worker.
 pub fn col_fixed_size_binary<'a>(
     batch: &'a RecordBatch,
     name: &str,
+    expected_width: i32,
 ) -> Option<&'a FixedSizeBinaryArray> {
-    batch.column_by_name(name)?.as_any().downcast_ref()
+    let arr = batch
+        .column_by_name(name)?
+        .as_any()
+        .downcast_ref::<FixedSizeBinaryArray>()?;
+    if arr.value_length() == expected_width {
+        Some(arr)
+    } else {
+        None
+    }
 }

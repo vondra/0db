@@ -79,7 +79,7 @@ impl AirborneRowAccum {
             }
             let Some(flight_id) = col_u64(batch, "flight_id") else { continue };
             let Some(callsign) = col_str(batch, "callsign") else { continue };
-            let Some(aircraft_type) = col_fixed_size_binary(batch, "aircraft_type") else { continue };
+            let Some(aircraft_type) = col_fixed_size_binary(batch, "aircraft_type", 4) else { continue };
             let Some(profile_idx) = col_u8(batch, "profile_idx") else { continue };
             let Some(source_id) = col_u8(batch, "source_id") else { continue };
             let origin = col_u8(batch, "origin");
