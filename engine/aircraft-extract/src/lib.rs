@@ -23,6 +23,7 @@ pub mod geo;
 pub mod ground_inference;
 pub mod period;
 pub mod profile;
+pub mod progress;
 pub mod segment;
 pub mod source;
 pub mod source_adsb_tar;

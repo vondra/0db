@@ -22,6 +22,7 @@ use anyhow::Result;
 use noise_compute::types::{AircraftSegment, AirportArea, AirportLine, RasterSampler};
 
 use crate::flight::FlightSegment;
+use crate::progress::Ticker;
 
 pub mod aeroway_snap;
 pub mod bucket;
@@ -41,12 +42,34 @@ pub fn run_stage_2c(
     rasters: &dyn RasterSampler,
     n_days: u16,
 ) -> Result<usize> {
+    eprintln!("[stage2c] converting {} segments + running v5 synth", segments.len());
     let observed_v5 = synthesize::convert_segments(segments);
     let synth_v5 = synthesize::synthesize(&observed_v5, airport_lines, airport_areas, rasters, n_days);
+    eprintln!(
+        "[stage2c] {} observed + {} synthetic surface segments — snapping",
+        observed_v5.len(),
+        synth_v5.len()
+    );
 
+    // Snap loop is the single hot section in Stage 2C; aeroway
+    // lookups + raster AGL probes dominate. Praha-150km does this in
+    // ~30 s; globally it's the long pole so observability matters.
+    let total = observed_v5.len() + synth_v5.len();
+    let mut processed = 0usize;
     let mut items: Vec<(AircraftSegment, aeroway_snap::AeroSnap)> = Vec::new();
+    let mut ticker = Ticker::new();
+    let mut log_progress = |processed: usize, kept: usize| {
+        ticker.maybe_tick(|| {
+            eprintln!(
+                "[stage2c] {processed}/{total} segments snapped ({pct:.1}%) — {kept} kept",
+                pct = 100.0 * processed as f64 / total.max(1) as f64,
+            );
+        });
+    };
 
     for seg in &observed_v5 {
+        processed += 1;
+        log_progress(processed, items.len());
         if !is_ground_candidate(seg, rasters) {
             continue;
         }
@@ -54,11 +77,15 @@ pub fn run_stage_2c(
         items.push((seg.clone(), snap));
     }
     for seg in &synth_v5 {
+        processed += 1;
+        log_progress(processed, items.len());
         let snap = aeroway_snap::assign(seg, airport_lines, airport_areas);
         items.push((seg.clone(), snap));
     }
 
+    eprintln!("[stage2c] bucketing {} snapped items", items.len());
     let buckets = bucket::accumulate(&items, rasters, n_days);
+    eprintln!("[stage2c] writing {} buckets per R4", buckets.len());
     r4_partition::write_per_r4(buckets, h3r4_dir, n_days)
 }
 

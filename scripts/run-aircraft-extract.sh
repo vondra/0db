@@ -31,17 +31,30 @@ if [ -z "$DAYS" ]; then
 fi
 [ -n "$DAYS" ] || die "no ADS-B TAR days resolved from $ADSB_CACHE"
 
+LOG_DIR="${LOG_DIR:-logs}"
+LOG_FILE="$LOG_DIR/aircraft-extract-$(date '+%Y%m%d-%H%M%S').log"
+mkdir -p "$LOG_DIR"
+ln -sf "$(basename "$LOG_FILE")" "$LOG_DIR/aircraft-extract-latest.log"
+log "logging to $LOG_FILE (symlinked $LOG_DIR/aircraft-extract-latest.log)"
+
 log "rebuilding aircraft-extract (release)"
-cargo build --release --manifest-path engine/aircraft-extract/Cargo.toml --bin aircraft-extract
+cargo build --release --manifest-path engine/aircraft-extract/Cargo.toml --bin aircraft-extract \
+    2>&1 | tee -a "$LOG_FILE"
 
 mkdir -p "$WORK_DIR" "$H3R4_DIR"
 
 log "running aircraft-extract run-all (DAYS=$DAYS)"
+# `tee` instead of a `tail` filter: streams every per-day milestone +
+# Stage 2B/2C 10-second progress tick straight into the log file AND
+# stdout (so `bash run_in_background` output and a foreground terminal
+# both see live progress). `tail -F logs/aircraft-extract-latest.log`
+# is the operator's go-to during multi-hour global runs.
 ./engine/aircraft-extract/target/release/aircraft-extract run-all \
     --adsb-cache "$ADSB_CACHE" \
     --h3r4-dir "$H3R4_DIR" \
     --prepared-dir "$PREPARED_DIR" \
     --work-dir "$WORK_DIR" \
-    --days "$DAYS"
+    --days "$DAYS" \
+    2>&1 | tee -a "$LOG_FILE"
 
 log "done — popup arrows in $H3R4_DIR/<R4>/{airborne,cruise,ground}.arrow"

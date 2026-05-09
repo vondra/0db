@@ -149,21 +149,35 @@ fn main() -> Result<()> {
                 vec![Box::new(AdsbTarSource::new(&adsb_cache))];
             let n_days = days.len() as u16;
             let mut all_segments = Vec::new();
+            // Per-day error tolerance: one corrupted TAR or DEM miss
+            // must not throw away the other 364 days' Stage 0+1 work.
+            // Failed days are listed at the end so the operator can
+            // rerun with `--days <failed,…>`.
+            let mut failed_days: Vec<String> = Vec::new();
             for day in &days {
-                let t0 = Instant::now();
-                let n0 = run_stage_0(&sources, day, &flights_dir)?;
-                let t1 = Instant::now();
-                let n1 = run_stage_1(&flights_dir, &segments_dir, day, &prepared_dir)?;
-                let t2 = Instant::now();
+                match run_day(day, &sources, &flights_dir, &segments_dir, &prepared_dir) {
+                    Ok(()) => match aircraft_extract::arrow_io::read_segments(
+                        &segments_dir.join(format!("{day}.arrow")),
+                    ) {
+                        Ok(segs) => all_segments.extend(segs),
+                        Err(e) => {
+                            eprintln!("[run-all] {day}: FAILED to read segments — {e}");
+                            failed_days.push(day.clone());
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("[run-all] {day}: FAILED stage0/1 — {e}, skipping");
+                        failed_days.push(day.clone());
+                    }
+                }
+            }
+            if !failed_days.is_empty() {
                 eprintln!(
-                    "[run-all] {day}: stage0={n0} ({:?}) stage1={n1} ({:?})",
-                    t1 - t0,
-                    t2 - t1
+                    "[run-all] {} day(s) failed: {} — Stage 2 runs on the rest; rerun with --days {} to retry",
+                    failed_days.len(),
+                    failed_days.join(","),
+                    failed_days.join(",")
                 );
-                let segs = aircraft_extract::arrow_io::read_segments(
-                    &segments_dir.join(format!("{day}.arrow")),
-                )?;
-                all_segments.extend(segs);
             }
 
             let t2a = Instant::now();
@@ -188,6 +202,28 @@ fn main() -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+/// Run Stage 0 + Stage 1 for a single day. Lifted out of `RunAll` so
+/// the per-day try/log/continue caller stays a flat `match` instead of
+/// a `Result`-returning IIFE.
+fn run_day(
+    day: &str,
+    sources: &[Box<dyn FlightSource>],
+    flights_dir: &Path,
+    segments_dir: &Path,
+    prepared_dir: &Path,
+) -> Result<()> {
+    let t0 = Instant::now();
+    let n0 = run_stage_0(sources, day, flights_dir)?;
+    let t_stage0 = Instant::now();
+    let n1 = run_stage_1(flights_dir, segments_dir, day, prepared_dir)?;
+    eprintln!(
+        "[run-all] {day}: stage0={n0} ({:?}) stage1={n1} ({:?})",
+        t_stage0 - t0,
+        Instant::now() - t_stage0
+    );
     Ok(())
 }
 
