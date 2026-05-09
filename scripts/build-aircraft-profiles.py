@@ -10,7 +10,7 @@ Two inputs:
                               Power Setting + 10 distance SEL values
 
   2. Pinned global traffic counts (`--counts <PATH>`):
-     - JSON dict {profile_idx_str → segment_count} from running aircraft
+     - JSON dict {ICAO_typecode → segment_count} from running aircraft
        extraction across the global ADS-B archive. Snapshot pinned in repo
        at scripts/aircraft-profiles-counts.json. SHA stamped into the
        generated banner so any drift between snapshot and generated output
@@ -1147,8 +1147,26 @@ def main():
     counts_bytes = counts_path.read_bytes()
     counts_sha = hashlib.sha256(counts_bytes).hexdigest()
 
+    # Counts JSON is keyed by ICAO typecode (e.g. "B738", "EMJ", "FALLBACK")
+    # rather than profile_idx so a future reorder of ICAO_TYPECODE_TO_ACFT_ID
+    # doesn't silently re-route counts to the wrong typecode (B738 idx 0 →
+    # idx 5 swap would otherwise hand B738's 575M segments to whatever
+    # typecode now sits at idx 0, and Voronoi anchors flip without any
+    # failure signal). Every JSON key must resolve to a known typecode;
+    # unknown keys are a fatal error so an out-of-date counts file fails
+    # loud rather than silently dropping traffic.
     counts_raw = json.loads(counts_bytes)
-    counts: dict[int, int] = {int(k): int(v) for k, v in counts_raw.items()}
+    typecode_to_idx = {tc: i for i, (tc, _, _) in enumerate(ICAO_TYPECODE_TO_ACFT_ID)}
+    unknown = [k for k in counts_raw if k not in typecode_to_idx]
+    if unknown:
+        sys.exit(
+            f"Counts JSON has {len(unknown)} unknown typecode(s) — first 10: "
+            f"{unknown[:10]}. Either add them to ICAO_TYPECODE_TO_ACFT_ID or "
+            f"re-aggregate counts against the current generator."
+        )
+    counts: dict[int, int] = {
+        typecode_to_idx[k]: int(v) for k, v in counts_raw.items()
+    }
     counts_total = sum(counts.values())
 
     profiles = build_profiles(anp_dir, v9_dir)
