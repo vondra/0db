@@ -32,10 +32,35 @@ pub fn scatter(
     let rx_elev = receiver.altitude_m();
     let npd_luts = aircraft::NpdLuts::shared();
 
+    // Receiver reach envelope on the R8 cell centre — skips rows whose
+    // synth segment is fully outside reach. The synth segment in the
+    // scatter below extends `half_len_m * sqrt(2)` from cell centre
+    // along the NE-SW diagonal (because lat_off and lon_off are both
+    // half_len_m / m_per_deg), so closest-segment-point ≥
+    // `dist_to_centre - half_len_m * sqrt(2)`. The kernel's per-row
+    // slant test would reject these anyway, but `segment_sel_with_terrain`
+    // is ~µs vs ~ns for this lat/lon test. rep_len_m is typically
+    // ~50 km (Stage 2B uses source-segment length, not clip length),
+    // so the cap dilates the 16 km horizontal reach to ~51 km in the
+    // worst case — still drops a meaningful share of the 7-R4 grid
+    // disk's ~350 k cruise rows for praha-150km × 7 days.
+    let lat_rad = receiver.lat.to_radians();
+    let m_per_lat = crate::constants::M_PER_DEG_LAT;
+    let m_per_lon = crate::constants::m_per_deg_lon(lat_rad);
+
     for (idx, row) in rows.iter().enumerate() {
         let Some((lat, lon)) = r8_cell_center(row.r8_hex) else {
             continue;
         };
+        let dlat_m = (lat - receiver.lat) * m_per_lat;
+        let dlon_m = (lon - receiver.lon) * m_per_lon;
+        let dist2_m2 = dlat_m * dlat_m + dlon_m * dlon_m;
+        let half_len_m = (row.rep_len_m as f64).max(SLANT_FLOOR_M) * 0.5;
+        let half_seg_len_m = half_len_m * std::f64::consts::SQRT_2;
+        let cap_m = aircraft::AIRCRAFT_MAX_HORIZONTAL_REACH_M + half_seg_len_m;
+        if dist2_m2 > cap_m * cap_m {
+            continue;
+        }
         let rl = (row.rep_len_m as f64).max(SLANT_FLOOR_M);
         let half_len_m = rl * 0.5;
         let lat_off = half_len_m / crate::constants::M_PER_DEG_LAT;
