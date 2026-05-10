@@ -46,10 +46,11 @@ export const DATASETS: Dataset[] = [
     priority: 0,
   },
 
-  // ── Aircraft: ADS-B observational (plan v5 Phase C.1) ──
-  // Single aircraft source today — every row in per-hex aircraft.arrow
-  // produced by adsb-to-h3r4 stamps source_id = 1. Kept a fixed low id so
-  // the Rust writer can use a const, not a dynamic lookup.
+  // ── Aircraft: ADS-B observational ──
+  // Single aircraft source today — `aircraft-extract` produces all
+  // three popup arrows (airborne / cruise / ground). The Rust mirror
+  // exposes this entry's id as `AIRCRAFT_ADSB_SOURCE_ID` so callers can
+  // use a const, not a dynamic lookup.
   {
     id: 1,
     layer: 'aircraft',

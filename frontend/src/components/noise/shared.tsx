@@ -114,7 +114,7 @@ export const PERIOD_LABELS_DETAIL = [
 
 /** Tooltip explaining the CNOSSOS day/evening/night convention.
  * Aircraft periods come from the segment midpoint via IANA timezone + DST
- * (see `engine/adsb-to-h3r4/src/segment.rs::period_from_timestamp`). */
+ * (see `engine/aircraft-extract/src/period.rs::period_from_timestamp`). */
 export const PERIOD_TOOLTIP =
   'CNOSSOS-EU period buckets (local wall-clock time):\n' +
   '  Day      07:00–19:00\n' +

@@ -184,12 +184,12 @@ export interface AircraftTopFlight {
   energy_pct: number
   geometry: [[number, number], [number, number]]
   /** ICAO 24-bit transponder address as 6-char lowercase hex
-   *  ("4b1805"); empty string for synthetic / surface buckets. */
+   *  ("4b1805"); empty string for synthetic ids. */
   icao_hex: string
   /** Unix timestamp seconds of flight start. `null` for synthetic. */
   start_unix: number | null
-  /** True for runway-spread surface synthesis or cruise bucket
-   *  aggregates; UI hides ICAO + time for these. */
+  /** True for synthetic flight ids — anonymous-transponder traces or
+   *  cruise R8-bucket aggregates; UI hides ICAO + time for these. */
   synthetic: boolean
 }
 

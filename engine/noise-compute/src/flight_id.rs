@@ -9,7 +9,10 @@
 //!   bit  [32]     synthetic = 0
 //!   bits [31: 0]  Unix timestamp seconds (flight start; covers 1970-2106)
 //!
-//! Synthetic (no ADS-B — runway/taxiway model, surface buckets):
+//! Synthetic (no real ADS-B identity — anonymous-transponder traces in
+//! the extract path get a deterministic synth id; the popup compute path
+//! also hashes cruise R8-bucket aggregates into a synth id since one row
+//! folds many flights):
 //!   bit  [32]     synthetic = 1
 //!   bits [63:33] | [31:0]  opaque seq, low 32 bits in [31:0], high 31 bits in [63:33]
 //! ```
@@ -24,9 +27,9 @@
 //!   links, and exact `start_unix` for tooltips. The previous FNV-1a hash was
 //!   one-way.
 //! - **Same u64 footprint**: per-row cost in the popup arrows unchanged.
-//! - **Synthetic bit**: distinguishes ADS-B-backed flights from
-//!   surface-bucket / cruise-aggregate synthesis without a magic numeric
-//!   range (replaces `SURFACE_FLIGHT_ID_BASE`).
+//! - **Synthetic bit**: marks IDs that don't map 1:1 to a single
+//!   observed aircraft (anonymous-transponder traces and cruise R8
+//!   aggregates) without a magic numeric range.
 
 /// Position of the ICAO-24 field. Top 24 bits.
 pub const ICAO_SHIFT: u32 = 40;
@@ -42,12 +45,12 @@ pub const TS_MASK: u64 = 0xFFFF_FFFF;
 /// aircraft. `0x000000` ("no address") is rejected by the same predicate.
 pub const ICAO_RESERVED_ANON: u32 = 0xFFFFFF;
 
-/// Process-wide counter for ADS-B traces dropped at the segmentation
-/// boundary because the ICAO field is missing, malformed, or reserved
-/// (anonymous / fictitious), or the start timestamp is zero. Bumped silently
-/// in the `aircraft-extract` segmentation path; extraction binaries should
-/// read this counter at end-of-run and log the total to keep upstream feed
-/// regressions visible without per-trace spam.
+/// Process-wide counter scaffolded for malformed-trace telemetry.
+/// Currently unused — anonymous-transponder traces (ICAO `0xFFFFFF` /
+/// `0x000000`) flow through `pack_synth` rather than being dropped, and
+/// no extractor branch increments this counter today. Kept as a hook so
+/// a future stricter filter pass can surface drop counts without
+/// per-trace logging spam.
 pub static INVALID_TRACE_DROPS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
@@ -55,8 +58,9 @@ pub static INVALID_TRACE_DROPS: std::sync::atomic::AtomicU64 =
 ///
 /// `Real` carries a hardware-level ICAO 24-bit transponder address and the
 /// flight-start Unix timestamp. `Synth` carries an opaque sequence number for
-/// IDs that don't correspond to an observed aircraft (e.g. runway-spread
-/// surface emitters synthesised from inferred ground coverage).
+/// IDs that don't map to a single observed aircraft — anonymous-transponder
+/// traces (ICAO 0xFFFFFF / 0x000000) and cruise R8-bucket aggregates that
+/// fold many flights into one row both go through `pack_synth`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlightIdKind {
     Real { icao24: u32, start_unix: u32 },

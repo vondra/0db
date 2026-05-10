@@ -36,7 +36,7 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
         <thead>
           <tr className="text-muted-foreground/60 [&_th]:font-normal [&_th]:pb-0.5">
             <th className="text-right">
-              {detailed ? <HoverText title={"Peak A-weighted SPL during this flyover.\n\nHardcoded approximation: Lmax = SEL − 12 dB. The 12 dB constant is the empirical mid-band of measured SEL−Lmax across jet flyovers (8–10 dB low approaches, 15–18 dB cruise overheads — FAA AEDT TM §6, Doc 29 §A.2.1).\n\nWhy hardcoded: EASA ANP v2.3 ships separate Lmax NPD tables but the generator only ingests SEL columns to keep the kernel hot path simple. Lmax here is informational (not used in the Lden integral).\n\nBias: overestimates cruise overhead Lmax by 3–6 dB, underestimates low-approach Lmax by 2–4 dB. See engine/noise-compute/SPEC.md §5.1."}>Lmax</HoverText> : 'Lmax'}
+              {detailed ? <HoverText title={"Peak A-weighted SPL during this flyover.\n\nLooked up from per-class LAmax NPD tables — EASA ANP v2.3 LAmax curves where available, generated SEL−12 fallback otherwise (manual GA / helicopter profiles, ANP entries without LAmax). Informational display only — the Lden total uses SEL, not Lmax.\n\nFull Doc 29 Eq. 4-12 also applies ΔI / Λ per segment; we skip those (< 2 dB residual). See engine/noise-compute/SPEC.md §5.1."}>Lmax</HoverText> : 'Lmax'}
             </th>
             <th className="text-right">
               {detailed ? <HoverText title={"Closest Point of Approach — shortest 3D slant distance from the flight track to this receiver.\nComputed on the infinite line extension of the segment (Doc 29 §4.4.1).\nSmaller CPA = louder."}>CPA(km)</HoverText> : 'CPA(km)'}
@@ -73,7 +73,7 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
             const aircraftTooltipText = (() => {
               const base = aircraftTooltip(rawTypecode)
               if (icaoHex && !isSynth) return `${base}\n\nICAO hex: ${icaoHex}\nClick to open trace on globe.adsb.lol`
-              if (isSynth) return `${base}\n\nSynthetic surface / cruise bucket — no per-flight identity`
+              if (isSynth) return `${base}\n\nSynthetic id — anonymous-transponder trace or cruise R8 bucket aggregate; no single per-flight identity`
               return base
             })()
             const globeHref = icaoHex && !isSynth && f.date
@@ -666,7 +666,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                 <thead>
                   <tr className="text-muted-foreground/60 [&_th]:font-normal [&_th]:pb-0.5">
                     <th className="text-left">
-                      <HoverText title={"Lmax threshold\n\nPer-event peak A-weighted SPL band (Lmax = SEL − 12 dB).\nA flight is counted in this band if its Lmax at this point exceeds the threshold."}>Lmax</HoverText>
+                      <HoverText title={"Lmax threshold\n\nPer-event peak A-weighted SPL band looked up from per-class LAmax NPD tables (EASA ANP v2.3 where available, generated SEL−12 fallback for manual GA / helicopter profiles).\nA flight is counted in this band if its Lmax at this point exceeds the threshold."}>Lmax</HoverText>
                     </th>
                     <th className="text-right">
                       <HoverText title={"Observed flights per day\n\nSegments contributing to this Lmax band, divided by n_days from the ADS-B archive (currently 365)."}>Flights/day</HoverText>
