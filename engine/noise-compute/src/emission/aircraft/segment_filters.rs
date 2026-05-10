@@ -12,7 +12,7 @@
 
 use crate::types::{AircraftSegment, RasterSampler};
 
-use super::npd::{noise_class_of, IS_JET};
+use super::npd::{is_helicopter_profile, noise_class_of, IS_JET};
 
 /// Runtime fallback for stale prepared ADS-B data that still contains taxi or
 /// runway-roll segments. The authoritative fix is extractor-side `on_ground`
@@ -51,7 +51,18 @@ pub fn resolve_ground_ops_kind(seg: &AircraftSegment) -> u8 {
 ///   stretch even when avg speed is averaged down by an early phase).
 /// * `speed_kt ≥ 8` → `TAXI`.
 /// * else → `APRON_MOVEMENT` (slow / stationary movements).
+///
+/// Helicopters never get `RUNWAY_ROLL` — a helicopter accelerating
+/// through 40 kt on a helipad is rotor-thrust-driven, not the turbofan
+/// T/O profile RUNWAY_ROLL is calibrated for. Cap helicopters at TAXI.
 pub fn ground_ops_kind_fallback(seg: &AircraftSegment) -> u8 {
+    if is_helicopter_profile(seg.profile_idx) {
+        return if seg.speed_kt >= 8.0 {
+            GROUND_OPS_KIND_TAXI
+        } else {
+            GROUND_OPS_KIND_APRON_MOVEMENT
+        };
+    }
     if seg.speed_kt >= 40.0 || seg.segment_length_m >= 500.0 {
         GROUND_OPS_KIND_RUNWAY_ROLL
     } else if seg.speed_kt >= 8.0 {
@@ -334,5 +345,55 @@ mod tests {
             ..off_airport
         };
         assert!(is_airport_ground_segment(&airport_ground, &FlatGround));
+    }
+
+    /// A helicopter accelerating through 40 kt on a helipad must be
+    /// classified as TAXI, not RUNWAY_ROLL. The latter SEL is calibrated
+    /// for turbofan T/O thrust which is absent on rotor aircraft.
+    #[test]
+    fn helicopter_never_runway_roll() {
+        // EC35 (Eurocopter EC135) — first helicopter typecode in the
+        // profile array. Class HELICOPTER, anchor for all 21 heli types.
+        let heli_profile_idx = crate::emission::aircraft::profile_idx("EC35");
+
+        let fast_seg = AircraftSegment {
+            flight_id: 1,
+            profile_idx: heli_profile_idx,
+            is_departure: true,
+            on_ground: true,
+            period: 0,
+            date_id: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            start_alt_m: 252.0,
+            end_lat: 50.001,
+            end_lon: 14.001,
+            end_alt_m: 252.0,
+            speed_kt: 60.0,             // would trigger RUNWAY_ROLL for fixed-wing
+            segment_length_m: 800.0,    // ditto
+            ground_context: GROUND_CONTEXT_AIRPORT_LINE,
+            ground_ops_kind: GROUND_OPS_KIND_NONE,
+            count_weight: 1.0,
+            surface_model: false,
+            source_id: AIRCRAFT_ADSB_SOURCE_ID,
+            cruise_flight_ids: Vec::new(),
+        };
+        assert_eq!(ground_ops_kind_fallback(&fast_seg), GROUND_OPS_KIND_TAXI);
+
+        let slow_seg = AircraftSegment {
+            speed_kt: 3.0,
+            segment_length_m: 50.0,
+            ..fast_seg.clone()
+        };
+        assert_eq!(ground_ops_kind_fallback(&slow_seg), GROUND_OPS_KIND_APRON_MOVEMENT);
+
+        // Sanity: a non-helicopter (B738) at the same fast settings still
+        // hits RUNWAY_ROLL. Confirms the gate is helicopter-specific.
+        let jet_profile_idx = crate::emission::aircraft::profile_idx("B738");
+        let jet_seg = AircraftSegment {
+            profile_idx: jet_profile_idx,
+            ..fast_seg
+        };
+        assert_eq!(ground_ops_kind_fallback(&jet_seg), GROUND_OPS_KIND_RUNWAY_ROLL);
     }
 }

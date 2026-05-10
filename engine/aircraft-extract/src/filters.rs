@@ -64,6 +64,14 @@ pub const MIN_PLAUSIBLE_ALT_FT: f32 = -2_000.0;
 /// ≈ 1700 kt). Above is wildly bad data.
 pub const MAX_PLAUSIBLE_SPEED_KT: f32 = 1_500.0;
 
+/// Helicopter AGL ceiling — anything claiming helicopter @ ≥5 km AGL
+/// is ADS-B mode-S decode error or military spoof. Civil helicopter
+/// service ceilings: EC135/AS350 ≤ 6 km MSL, R22/R44 ≤ 4.3 km MSL;
+/// mountain rescue tops at ~4 km AGL. AGL is DEM-relative (Stage 1
+/// per-point sample), so a helicopter at FL130 over 3 km terrain ≈
+/// 1 km AGL and passes; only flat-terrain ADS-B garbage is rejected.
+pub const HELICOPTER_AGL_CEIL_M: f32 = 5_000.0;
+
 /// Per-point sanity. Drops NaN/out-of-range coords, the (0,0) "no-fix"
 /// sentinel, implausible airborne altitudes, and impossibly fast
 /// vehicles. Ground-flagged rows are exempt from altitude checks — the
@@ -224,6 +232,15 @@ pub fn segment_is_keepable(
     {
         return false;
     }
+    // Symmetric to the HARD_AGL_FLOOR_M check above: any single endpoint
+    // breaching the ceiling drops the segment (mode-S decode errors are
+    // typically a single-sample altitude spike, not a sustained climb).
+    if is_airborne
+        && noise_compute::emission::aircraft::is_helicopter_profile(profile_idx)
+        && start_agl_m.max(end_agl_m) > HELICOPTER_AGL_CEIL_M
+    {
+        return false;
+    }
     true
 }
 
@@ -337,5 +354,19 @@ mod tests {
     #[test]
     fn segment_is_keepable_keeps_sane_jet_segment() {
         assert!(segment_is_keepable(1000.0, 100.0, 200.0, 250.0, 0, true));
+    }
+
+    #[test]
+    fn segment_is_keepable_rejects_helicopter_above_ceiling() {
+        let heli = noise_compute::emission::aircraft::profile_idx("EC35");
+        // Spike: one endpoint at FL250+ → reject (typical mode-S decode error).
+        assert!(!segment_is_keepable(1000.0, 200.0, 7_500.0, 80.0, heli, true));
+        // Sustained legitimate civil ops at FL130 over 3 km terrain ≈ 1 km AGL → keep.
+        assert!(segment_is_keepable(1000.0, 800.0, 1_000.0, 80.0, heli, true));
+        // Right at ceiling — keep (strict > comparison, matches HARD_AGL_FLOOR convention).
+        assert!(segment_is_keepable(1000.0, 4_000.0, 5_000.0, 80.0, heli, true));
+        // Same-altitude jet at 7.5 km is not affected by the heli filter.
+        let jet = noise_compute::emission::aircraft::profile_idx("B738");
+        assert!(segment_is_keepable(1000.0, 200.0, 7_500.0, 250.0, jet, true));
     }
 }
