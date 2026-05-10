@@ -54,6 +54,13 @@ export function unixToIsoDate(unix: number): string {
   return new Date(unix * 1000).toISOString().slice(0, 10)
 }
 
+/** Unix seconds → "YYYY-MM-DD HH:MM:SS UTC". Display format for
+ *  tooltips that quote the exact takeoff timestamp (drop ms, suffix
+ *  "UTC" so users don't read it as local time). */
+export function unixToIsoDateTimeUtc(unix: number): string {
+  return new Date(unix * 1000).toISOString().replace('T', ' ').replace(/\..+/, ' UTC')
+}
+
 /** globe.adsb.lol trace deep-link for an ICAO 24-bit hex. When `date`
  *  ("YYYY-MM-DD") is supplied the link opens that day's trace; otherwise
  *  it opens the aircraft's current/recent track. Hex is uppercased for

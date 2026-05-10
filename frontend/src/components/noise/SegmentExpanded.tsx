@@ -144,13 +144,18 @@ function CruiseLoudestFlights({ tops }: { tops: CruiseHexTopFlight[] }) {
             })
             const globeHref = hex && f.date ? globeAdsbTraceHref(hex, f.date) : null
             const dateCell = `${f.date ? f.date.slice(5) : '—'} ${f.time_utc ? f.time_utc.slice(0, 5) : ''}`
-            const dateTooltip = `${f.date || '?'} ${f.time_utc || ''} UTC (flight start)`
+            // Synthetic cruise rows (empty hex ⇒ empty date/time per
+            // `cruise.rs:316-317`) drop the date HoverText: the bare cell
+            // already reads "—" and a "? UTC" tooltip would only confuse.
+            const dateContent = f.date
+              ? <HoverText title={`${f.date} ${f.time_utc || ''} UTC (flight start)`}>{dateCell}</HoverText>
+              : dateCell
             return (
               <tr key={i} className="[&_td]:text-right">
                 <td className="font-medium">{f.lmax_db.toFixed(0)}&nbsp;dB</td>
                 <td>{metersToKm(f.altitude_m)}</td>
                 <td className="text-muted-foreground/80 tabular-nums whitespace-nowrap">
-                  <HoverText title={dateTooltip}>{dateCell}</HoverText>
+                  {dateContent}
                 </td>
                 <td className="whitespace-nowrap">
                   <HoverText title={aircraftTooltipText}>
@@ -344,15 +349,24 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
       // trace link hangs off the callsign value and the ICAO hex lives in the
       // hover tooltip instead of consuming a row of its own. Synthetic (empty
       // icao_hex) fids stay plain text — no transponder hex = no globe deep-link.
-      const callsignText = e.callsign || '—'
-      let callsignValue: React.ReactNode = callsignText
+      // Missing callsign with present hex falls back to the hex itself as link
+      // text so the clickable target is never a bare em-dash placeholder.
+      // Tooltip uses `aircraftFlightTooltip` so the airborne row sees the
+      // same identity card (model + class + NPD + ICAO + click hint) as
+      // the two top-flight tables — no hand-rolled string drift.
+      let callsignValue: React.ReactNode = e.callsign || '—'
       if (e.icao_hex) {
+        const linkText = e.callsign || e.icao_hex.toUpperCase()
         const date = e.start_unix != null ? unixToIsoDate(e.start_unix) : null
-        const tooltip = `ICAO hex: ${e.icao_hex.toUpperCase()}\nClick to open trace on globe.adsb.lol`
+        const tooltip = aircraftFlightTooltip({
+          typecode: e.aircraft_type,
+          callsign: e.callsign,
+          icaoHex: e.icao_hex,
+        })
         callsignValue = (
           <HoverText title={tooltip}>
             <a href={globeAdsbTraceHref(e.icao_hex, date)} target="_blank" rel="noopener noreferrer" className="hover:underline">
-              {callsignText}
+              {linkText}
             </a>
           </HoverText>
         )

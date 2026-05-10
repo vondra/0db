@@ -3,7 +3,7 @@ import { useMap, Source, Layer } from 'react-map-gl/maplibre'
 import { ldenToColor } from '../utils/noise-colors'
 import { MetricLabel, DataPoint } from './noise/noise-tooltips'
 import { HoverText } from './ui/info-tip'
-import { fmt, fmtDb, fmtDbValue, fmtFloat, fmtInt, fmtCompact, globeAdsbTraceHref, metersToKm, txtTable, unixToIsoDate, type TableRow } from '../utils/formatters'
+import { fmt, fmtDb, fmtDbValue, fmtFloat, fmtInt, fmtCompact, globeAdsbTraceHref, metersToKm, txtTable, unixToIsoDate, unixToIsoDateTimeUtc, type TableRow } from '../utils/formatters'
 import { aircraftFlightTooltip, aircraftTooltip, classToAnchorTypecode, parseProfileName } from '../utils/aircraft-types'
 import { formatDist, lineRow, railTrainSourceLine, roadSourceDescription, SOURCE_LABELS, subtypeLabel } from './noise/shared'
 import { SegmentList } from './noise/SegmentList'
@@ -70,16 +70,17 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
             const typecodeDisplay = rawTypecode === 'FALLBACK' ? 'Unknown' : rawTypecode
             const isSynth = f.synthetic
             const icaoHex = f.icao_hex ? f.icao_hex.toUpperCase() : null
-            const exactTime = f.start_unix != null
-              ? new Date(f.start_unix * 1000).toISOString().replace('T', ' ').replace(/\..+/, ' UTC')
-              : null
+            const exactTime = f.start_unix != null ? unixToIsoDateTimeUtc(f.start_unix) : null
             const dateTooltip = exactTime
               ? `${exactTime} (flight start)\n${PERIOD_LABELS_DETAIL[f.period] ?? '?'}`
               : `${f.date}\n${PERIOD_LABELS_DETAIL[f.period] ?? '?'}`
+            // `synthetic: isSynth` is the authoritative signal; the helper
+            // only consults `icaoHex` as a fallback. Pass the raw hex —
+            // helper handles the synth-suppression branch internally.
             const aircraftTooltipText = aircraftFlightTooltip({
               typecode: rawTypecode,
               callsign: f.callsign,
-              icaoHex: !isSynth ? icaoHex : null,
+              icaoHex,
               synthetic: isSynth,
             })
             // `start_unix` is the flight's first ADS-B sample (≈ takeoff

@@ -178,11 +178,14 @@ export function aircraftTooltip(typecode: string, className?: string | null): st
 /**
  * Top-flight cell tooltip — `aircraftTooltip` (type/class/NPD) plus the
  * per-flight identity block (callsign + ICAO hex + globe.adsb.lol hint
- * when the row is clickable). For synthetic ids (anonymous transponder
- * or cruise R8 aggregate) the identity block degrades to a single
- * "Synthetic id" line so the table doesn't show empty hex / phantom
- * "click to open trace" hints. Used by both `TopFlightsTable`
- * (DetailPopup) and `CruiseLoudestFlights` (SegmentExpanded).
+ * when the row is clickable). Missing `icaoHex` is the synthetic signal:
+ * the identity block degrades to a "Synthetic id" line so the table
+ * doesn't show empty hex / phantom "click to open trace" hints. Pass
+ * `synthetic: true` explicitly when the caller has its own synth flag
+ * but ALSO sends a non-empty hex (rare — happens at the DetailPopup
+ * site where the engine surface keeps both fields independently).
+ * Used by both `TopFlightsTable` (DetailPopup) and
+ * `CruiseLoudestFlights` (SegmentExpanded).
  */
 export function aircraftFlightTooltip(opts: {
   typecode: string
@@ -191,12 +194,14 @@ export function aircraftFlightTooltip(opts: {
   synthetic?: boolean
 }): string {
   const base = aircraftTooltip(opts.typecode)
-  if (opts.synthetic) {
+  // Synthetic when explicitly flagged, OR when no hex is available
+  // (the only "click to open trace" target). Defensive: an explicit
+  // `synthetic: false` plus a missing hex still falls through to the
+  // non-synth branch but skips the broken "ICAO hex: ..." line.
+  const isSynth = opts.synthetic === true || !opts.icaoHex
+  if (isSynth) {
     return `${base}\n\nSynthetic id — anonymous-transponder trace or cruise R8 bucket aggregate; no single per-flight identity`
   }
   const csLine = opts.callsign ? `\nCallsign: ${opts.callsign}` : ''
-  if (opts.icaoHex) {
-    return `${base}${csLine}\n\nICAO hex: ${opts.icaoHex.toUpperCase()}\nClick to open trace on globe.adsb.lol`
-  }
-  return `${base}${csLine}`
+  return `${base}${csLine}\n\nICAO hex: ${(opts.icaoHex ?? '').toUpperCase()}\nClick to open trace on globe.adsb.lol`
 }
