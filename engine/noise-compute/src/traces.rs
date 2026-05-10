@@ -380,6 +380,7 @@ pub(crate) fn build_point_segment_trace(inputs: BuildPointTrace<'_>) -> SegmentT
         polyline: None,
         hex_polygon: None,
         cruise_buckets: None,
+        cruise_top_flights: None,
         length_m_per_kind: None,
     }
 }
@@ -494,6 +495,7 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
         polyline: None,
         hex_polygon: None,
         cruise_buckets: None,
+        cruise_top_flights: None,
         length_m_per_kind: None,
     }
 }
@@ -603,6 +605,7 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
         polyline: None,
         hex_polygon: None,
         cruise_buckets: None,
+        cruise_top_flights: None,
         length_m_per_kind: None,
     }
 }

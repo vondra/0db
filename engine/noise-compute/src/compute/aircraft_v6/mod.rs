@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use crate::compute::aircraft_v6::state::FlightAccum;
+use crate::compute::aircraft_v6::state::{FlightAccum, TopFlightCandidate};
 use crate::periods;
 use crate::types::{
     AircraftBandData, AircraftMetadata, Barrier, Contributor, LayerKind, NoisePeriods,
@@ -24,6 +24,7 @@ use crate::types::{
 
 pub mod airborne;
 pub mod cruise;
+pub mod dates;
 pub mod ground;
 pub mod state;
 pub mod views;
@@ -66,6 +67,7 @@ pub fn compute_aircraft_v6(
     // accumulating their `period_energy` into `airborne_energy`; cruise
     // band counters come from `cruise_flight_stats` (real fid dedup).
     let mut cruise_flights: HashMap<u64, FlightAccum> = HashMap::new();
+    let mut top_flight_candidates: HashMap<u64, TopFlightCandidate> = HashMap::new();
     cruise::scatter(
         receiver,
         cruise_rows,
@@ -73,6 +75,7 @@ pub fn compute_aircraft_v6(
         n_days_f,
         &mut cruise_flights,
         &mut cruise_flight_stats,
+        &mut top_flight_candidates,
         traces.as_deref_mut(),
     );
 
@@ -80,6 +83,7 @@ pub fn compute_aircraft_v6(
     let (airborne_periods, airborne_detail) = airborne::build_detail(
         &flights,
         &cruise_flights,
+        &top_flight_candidates,
         &mut cruise_band,
         n_days_f,
     );

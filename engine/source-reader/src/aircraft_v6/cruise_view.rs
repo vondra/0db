@@ -26,6 +26,8 @@ struct OwnedCruiseRow {
     source_id: u8,
     origin: u8,
     cruise_flight_ids: Vec<u64>,
+    cruise_aircraft_types: Vec<[u8; 4]>,
+    cruise_callsigns: Vec<String>,
 }
 
 impl CruiseRowAccum {
@@ -49,6 +51,8 @@ impl CruiseRowAccum {
             let source_id = col_u8(batch, "source_id");
             let origin = col_u8(batch, "origin");
             let fid_list = col_list(batch, "cruise_flight_ids");
+            let typecode_list = col_list(batch, "cruise_aircraft_types");
+            let callsign_list = col_list(batch, "cruise_callsigns");
             for i in 0..n {
                 let cruise_flight_ids: Vec<u64> = fid_list
                     .map(|fl| {
@@ -56,6 +60,32 @@ impl CruiseRowAccum {
                             .as_any()
                             .downcast_ref::<UInt64Array>()
                             .map(|u| u.values().to_vec())
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                let cruise_aircraft_types: Vec<[u8; 4]> = typecode_list
+                    .map(|tl| {
+                        let arr = tl.value(i);
+                        arr.as_any()
+                            .downcast_ref::<FixedSizeBinaryArray>()
+                            .map(|fb| {
+                                (0..fb.len())
+                                    .map(|j| {
+                                        let mut buf = [0u8; 4];
+                                        buf.copy_from_slice(fb.value(j));
+                                        buf
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                let cruise_callsigns: Vec<String> = callsign_list
+                    .map(|cl| {
+                        let arr = cl.value(i);
+                        arr.as_any()
+                            .downcast_ref::<StringArray>()
+                            .map(|sa| (0..sa.len()).map(|j| sa.value(j).to_string()).collect())
                             .unwrap_or_default()
                     })
                     .unwrap_or_default();
@@ -73,6 +103,8 @@ impl CruiseRowAccum {
                     source_id: source_id.map(|a| a.value(i)).unwrap_or(0),
                     origin: origin.map(|a| a.value(i)).unwrap_or(0),
                     cruise_flight_ids,
+                    cruise_aircraft_types,
+                    cruise_callsigns,
                 });
             }
         }
@@ -96,6 +128,8 @@ impl CruiseRowAccum {
                 source_id: r.source_id,
                 origin: r.origin,
                 cruise_flight_ids: &r.cruise_flight_ids,
+                cruise_aircraft_types: &r.cruise_aircraft_types,
+                cruise_callsigns: &r.cruise_callsigns,
             })
             .collect()
     }

@@ -1,26 +1,54 @@
-//! Direct row-view scatter for cruise R8 buckets. Each `CruiseRowView`
-//! is one bucket aggregating `sum_length_m` of cruise track at altitude
-//! `rep_alt_m` through R8-cell-centre. Builds a stack-only synth segment
-//! per bucket, runs the standard Doc 29 SEL chain, and feeds energy
-//! into `FlightAccum`s keyed by a per-bucket synth fid (`pack_synth`).
-//! Real cruise flight identity is preserved in `cruise_flight_stats` so
-//! the popup band counters dedup across R8 cells.
+//! Direct row-view scatter for cruise R8 buckets. The synth-fid keying
+//! into `flights` is deliberate: one transit may cross many buckets, so
+//! per-real-fid energy aggregation would over-count. Real-fid dedup
+//! lives in `cruise_flight_stats` (band counters) and `top_flight_candidates`
+//! (popup table); both consume `cruise_flight_ids` parallel arrays.
 
 use std::collections::HashMap;
 
 use h3o::CellIndex;
 
-use crate::compute::aircraft_v6::state::{BandStats, CruiseFlightStats, FlightAccum};
+use crate::compute::aircraft_v6::dates::{date_from_unix, time_from_unix};
+use crate::compute::aircraft_v6::state::{
+    BandStats, CruiseFlightStats, FlightAccum, TopFlightCandidate,
+};
 use crate::compute::aircraft_v6::views::CruiseRowView;
 use crate::emission::aircraft;
 use crate::flight_id::pack_synth;
 use crate::propagation::iso9613::fast_exp_f64;
-use crate::types::{AircraftSegment, CruiseBucketBreakdown, RasterSampler, Receiver, TraceCollector};
+use crate::types::{
+    AircraftSegment, CruiseBucketBreakdown, CruiseHexTopFlight, RasterSampler, Receiver,
+    TraceCollector,
+};
 
 /// Slant floor (m) — clamps the receiver-overhead degenerate case so
 /// `1 / d²` doesn't blow up when the cruise rep-line passes directly
 /// above the receiver. 5 m matches Doc 29 §A.2 minimum non-zero CPA.
 pub const SLANT_FLOOR_M: f64 = 5.0;
+
+/// Per-R8-hex top-flight tracker. Same fid can appear in multiple
+/// Stage 2B buckets within the same hex (e.g. crossing an FL boundary
+/// mid-hex), so dedup via HashMap with "max peak_lmax wins" merge — a
+/// Vec would inflate top-5 with duplicates of the loudest fid.
+struct HexTopFlight {
+    peak_lmax: f64,
+    altitude_m: f64,
+    class_idx: u8,
+    period: u8,
+    aircraft_type: [u8; 4],
+    callsign: String,
+}
+
+struct HexAccum {
+    n_unique_flights: std::collections::HashSet<u64>,
+    rep_alt_m: f32,
+    centroid_lat: f64,
+    centroid_lon: f64,
+    d_slant_m: f64,
+    period_energy: [f64; 3],
+    buckets: Vec<CruiseBucketBreakdown>,
+    top_fids: HashMap<u64, HexTopFlight>,
+}
 
 pub fn scatter(
     receiver: &Receiver,
@@ -29,26 +57,11 @@ pub fn scatter(
     n_days_f: f64,
     flights: &mut HashMap<u64, FlightAccum>,
     cruise_flight_stats: &mut HashMap<u64, CruiseFlightStats>,
+    top_flight_candidates: &mut HashMap<u64, TopFlightCandidate>,
     mut traces: Option<&mut TraceCollector>,
 ) {
     let rx_elev = receiver.altitude_m();
     let npd_luts = aircraft::NpdLuts::shared();
-    /// Per-R8-hex accumulator. One trace per hex at end of scatter;
-    /// `cruise_buckets` carries the per-bucket (FL × class × period
-    /// × is_dep) breakdown sorted by received_lden. `period_energy`
-    /// is the linear-domain event-energy sum split by period — the
-    /// trace builder applies the same `n_days × T_period` normalisation
-    /// road/rail use, so energy-summing displayed cruise hexes
-    /// approaches the source-aggregate cruise contribution.
-    struct HexAccum {
-        n_unique_flights: std::collections::HashSet<u64>,
-        rep_alt_m: f32,
-        centroid_lat: f64,
-        centroid_lon: f64,
-        d_slant_m: f64,
-        period_energy: [f64; 3],
-        buckets: Vec<CruiseBucketBreakdown>,
-    }
     let mut hex_accums: HashMap<u64, HexAccum> = HashMap::new();
 
     // R8-centre prefilter constants. rep_len_m is typically ~50 km
@@ -170,7 +183,7 @@ pub fn scatter(
         if cpa.d_p_m < acc.min_dist_m {
             acc.min_dist_m = cpa.d_p_m;
         }
-        for &fid in row.cruise_flight_ids {
+        for (i, &fid) in row.cruise_flight_ids.iter().enumerate() {
             let entry = cruise_flight_stats.entry(fid).or_insert(CruiseFlightStats {
                 peak_lmax: f64::NEG_INFINITY,
                 alt_at_peak: 0.0,
@@ -180,6 +193,29 @@ pub fn scatter(
                 entry.peak_lmax = lmax;
                 entry.alt_at_peak = cpa.relative_alt_m;
                 entry.class_at_peak = class_idx;
+            }
+
+            let (typecode, callsign) = fid_meta(row, i);
+            let cand = top_flight_candidates.entry(fid).or_insert(TopFlightCandidate {
+                peak_lmax: f64::NEG_INFINITY,
+                peak_altitude_m: 0.0,
+                peak_period: row.period,
+                peak_seg_start: [0.0; 2],
+                peak_seg_end: [0.0; 2],
+                min_dist_m: f64::MAX,
+                profile_idx: row.rep_profile_idx,
+                aircraft_type: typecode,
+                callsign: callsign.to_string(),
+            });
+            if lmax > cand.peak_lmax {
+                cand.peak_lmax = lmax;
+                cand.peak_altitude_m = cpa.relative_alt_m;
+                cand.peak_period = row.period;
+                cand.peak_seg_start = [seg.start_lon, seg.start_lat];
+                cand.peak_seg_end = [seg.end_lon, seg.end_lat];
+            }
+            if cpa.d_p_m < cand.min_dist_m {
+                cand.min_dist_m = cpa.d_p_m;
             }
         }
 
@@ -197,9 +233,25 @@ pub fn scatter(
                 d_slant_m: cpa.d_p_m.max(SLANT_FLOOR_M),
                 period_energy: [0.0; 3],
                 buckets: Vec::new(),
+                top_fids: HashMap::new(),
             });
-            for &fid in row.cruise_flight_ids {
+            for (i, &fid) in row.cruise_flight_ids.iter().enumerate() {
                 entry.n_unique_flights.insert(fid);
+                let (typecode, callsign) = fid_meta(row, i);
+                let cand = entry.top_fids.entry(fid).or_insert(HexTopFlight {
+                    peak_lmax: f64::NEG_INFINITY,
+                    altitude_m: 0.0,
+                    class_idx: class_idx as u8,
+                    period: row.period,
+                    aircraft_type: typecode,
+                    callsign: callsign.to_string(),
+                });
+                if lmax > cand.peak_lmax {
+                    cand.peak_lmax = lmax;
+                    cand.altitude_m = cpa.relative_alt_m;
+                    cand.class_idx = class_idx as u8;
+                    cand.period = row.period;
+                }
             }
             entry.period_energy[period] += energy;
             if cpa.d_p_m < entry.d_slant_m {
@@ -226,6 +278,7 @@ pub fn scatter(
                     .partial_cmp(&a.received_lden)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
+            let cruise_top_flights = top_flights_for_hex(&acc.top_fids);
             t.segments
                 .push(crate::traces::build_aircraft_cruise_r8_trace(
                     crate::traces::BuildAircraftCruiseR8Trace {
@@ -238,10 +291,48 @@ pub fn scatter(
                         period_energies: acc.period_energy,
                         n_days: n_days_f,
                         cruise_buckets: acc.buckets,
+                        cruise_top_flights,
                     },
                 ));
         }
     }
+}
+
+const TOP_FLIGHTS_PER_HEX: usize = 5;
+
+fn top_flights_for_hex(top_fids: &HashMap<u64, HexTopFlight>) -> Vec<CruiseHexTopFlight> {
+    let mut entries: Vec<(u64, &HexTopFlight)> = top_fids.iter().map(|(f, t)| (*f, t)).collect();
+    entries.sort_by(|a, b| {
+        b.1.peak_lmax
+            .partial_cmp(&a.1.peak_lmax)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.0.cmp(&b.0))
+    });
+    entries.truncate(TOP_FLIGHTS_PER_HEX);
+    entries
+        .into_iter()
+        .map(|(fid, t)| {
+            let (icao_hex, start_unix) = crate::flight_id::icao_hex_and_start_unix(fid);
+            let date = start_unix.map(date_from_unix).unwrap_or_default();
+            let time_utc = start_unix.map(time_from_unix).unwrap_or_default();
+            let _ = t.period;
+            CruiseHexTopFlight {
+                lmax_db: round1(t.peak_lmax),
+                altitude_m: round1(t.altitude_m),
+                date,
+                time_utc,
+                icao_hex,
+                aircraft_type: aircraft::typecode_to_string(&t.aircraft_type),
+                callsign: t.callsign.clone(),
+                class_name: aircraft::CLASS_NAMES[t.class_idx as usize].to_string(),
+            }
+        })
+        .collect()
+}
+
+#[inline]
+fn round1(v: f64) -> f64 {
+    (v * 10.0).round() / 10.0
 }
 
 /// Per-band cruise dedup → `[band_faint, band_audible, band_disruptive]`.
@@ -262,6 +353,21 @@ pub fn band_stats(cruise_flight_stats: &HashMap<u64, CruiseFlightStats>) -> [Ban
         }
     }
     out
+}
+
+/// Per-fid metadata at index `i` of a cruise row. Falls back to anonymous
+/// values when the parallel arrays are shorter than `cruise_flight_ids`
+/// — happens only for stale (pre-v11) reader output where the columns
+/// are missing entirely.
+#[inline]
+fn fid_meta<'a>(row: &CruiseRowView<'a>, i: usize) -> ([u8; 4], &'a str) {
+    let typecode = row.cruise_aircraft_types.get(i).copied().unwrap_or([0; 4]);
+    let callsign = row
+        .cruise_callsigns
+        .get(i)
+        .map(String::as_str)
+        .unwrap_or("");
+    (typecode, callsign)
 }
 
 fn r8_cell_center(r8_hex: u64) -> Option<(f64, f64)> {

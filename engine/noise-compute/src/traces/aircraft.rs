@@ -9,8 +9,9 @@
 use crate::emission::aircraft::{typecode_to_string, PERIOD_SECONDS};
 use crate::propagation::iso9613;
 use crate::types::{
-    CruiseBucketBreakdown, EmissionTrace, LayerKind, PathProfileTrace, PerPeriod,
-    PropagationVariants, ScreeningTrace, SegmentTrace, TerrainTrace, VegetationTrace, NUM_BANDS,
+    CruiseBucketBreakdown, CruiseHexTopFlight, EmissionTrace, LayerKind, PathProfileTrace,
+    PerPeriod, PropagationVariants, ScreeningTrace, SegmentTrace, TerrainTrace, VegetationTrace,
+    NUM_BANDS,
 };
 
 use super::{
@@ -146,6 +147,7 @@ pub fn build_aircraft_ground_path_trace(
         polyline: Some(polyline),
         hex_polygon: None,
         cruise_buckets: None,
+        cruise_top_flights: None,
         length_m_per_kind: Some(length_m_per_kind),
     }
 }
@@ -245,6 +247,7 @@ pub fn build_aircraft_airborne_subsegment_trace(
         polyline: None,
         hex_polygon: None,
         cruise_buckets: None,
+        cruise_top_flights: None,
         length_m_per_kind: None,
     }
 }
@@ -262,6 +265,7 @@ pub struct BuildAircraftCruiseR8Trace {
     pub period_energies: [f64; 3],
     pub n_days: f64,
     pub cruise_buckets: Vec<CruiseBucketBreakdown>,
+    pub cruise_top_flights: Vec<CruiseHexTopFlight>,
 }
 
 pub fn build_aircraft_cruise_r8_trace(inputs: BuildAircraftCruiseR8Trace) -> SegmentTrace {
@@ -314,6 +318,7 @@ pub fn build_aircraft_cruise_r8_trace(inputs: BuildAircraftCruiseR8Trace) -> Seg
         polyline: None,
         hex_polygon: Some(hex_polygon),
         cruise_buckets: Some(inputs.cruise_buckets),
+        cruise_top_flights: Some(inputs.cruise_top_flights),
         length_m_per_kind: None,
     }
 }

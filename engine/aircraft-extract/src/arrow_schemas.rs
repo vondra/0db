@@ -140,6 +140,20 @@ pub fn cruise_schema() -> Arc<Schema> {
             DataType::List(Arc::new(Field::new("item", DataType::UInt64, false))),
             false,
         ),
+        Field::new(
+            "cruise_aircraft_types",
+            DataType::List(Arc::new(Field::new(
+                "item",
+                DataType::FixedSizeBinary(4),
+                false,
+            ))),
+            false,
+        ),
+        Field::new(
+            "cruise_callsigns",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, false))),
+            false,
+        ),
         Field::new("source_id", DataType::UInt8, false),
         Field::new("origin", DataType::UInt8, false),
     ];
@@ -222,9 +236,9 @@ pub fn ground_schema() -> Arc<Schema> {
 }
 
 /// Verify a loaded file's metadata matches the current
-/// [`SCHEMA_VERSION`]. Reader-side guard so stale (pre-v10) files raise
-/// a loud error instead of silently producing gibberish numbers.
-pub fn assert_schema_v10(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
+/// [`SCHEMA_VERSION`]. Reader-side guard so stale files raise a loud
+/// error instead of silently producing gibberish numbers.
+pub fn assert_schema_version(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
     match metadata.get("schema_version").map(String::as_str) {
         Some(SCHEMA_VERSION) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
@@ -239,7 +253,7 @@ pub fn assert_schema_v10(metadata: &HashMap<String, String>) -> anyhow::Result<(
 /// energy) — accepting them in the v10 reader would mis-interpret
 /// per-bucket sums as per-leg energies and over-count by 10–20 dB.
 pub fn assert_ground_contract_v10(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
-    assert_schema_v10(metadata)?;
+    assert_schema_version(metadata)?;
     match metadata.get("ground_contract").map(String::as_str) {
         Some(GROUND_CONTRACT_RAW_PATHS_V10) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
@@ -256,7 +270,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_carry_v10_metadata() {
+    fn all_schemas_carry_current_version_metadata() {
         for s in [
             flights_schema(),
             segments_schema(),
@@ -265,24 +279,30 @@ mod tests {
             ground_schema(),
         ] {
             let md = s.metadata();
-            assert_eq!(md.get("schema_version").map(String::as_str), Some("v10"));
+            assert_eq!(
+                md.get("schema_version").map(String::as_str),
+                Some(SCHEMA_VERSION)
+            );
             assert!(md.contains_key("kind"));
         }
     }
 
     #[test]
-    fn assert_schema_v10_rejects_old_versions() {
-        for old in ["v4", "v5", "v6", "v7", "v8", "v9"] {
+    fn assert_schema_version_rejects_old_versions() {
+        for old in ["v4", "v5", "v6", "v7", "v8", "v9", "v10"] {
             let md: HashMap<String, String> =
                 [("schema_version".into(), old.into())].into_iter().collect();
-            assert!(assert_schema_v10(&md).is_err(), "expected reject for {old}");
+            assert!(
+                assert_schema_version(&md).is_err(),
+                "expected reject for {old}"
+            );
         }
     }
 
     #[test]
-    fn assert_schema_v10_rejects_missing_metadata() {
+    fn assert_schema_version_rejects_missing_metadata() {
         let md: HashMap<String, String> = HashMap::new();
-        assert!(assert_schema_v10(&md).is_err());
+        assert!(assert_schema_version(&md).is_err());
     }
 
     #[test]

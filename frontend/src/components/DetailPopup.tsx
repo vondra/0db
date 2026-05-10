@@ -27,7 +27,7 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
     <>
       <div className="font-medium mt-2 mb-0.5 text-foreground/70 text-[10px]">
         {detailed ? (
-          <HoverText title={"Top flights by energy\n\nThe loudest individual ADS-B flights ranked by their share of total airborne Lden energy at this point. Each row is one unique flight observation.\n\nUseful for diagnosing why noise is unexpectedly high — e.g. a single low-altitude night flight dominating total energy."}>
+          <HoverText title={"Top flights by Lmax\n\nThe loudest individual ADS-B flights ranked by peak A-weighted Lmax at this point — interleaves both low-altitude airborne (approach / departure) events and high-altitude cruise overflights. Each row is one unique flight observation.\n\nThe `energy %` column is the flight's share of total Lden energy and is only computed for airborne entries; cruise rows show 0 because the bucket aggregates many real flights.\n\nUseful for diagnosing why noise is unexpectedly high — e.g. a single low-altitude night flight dominating total energy."}>
             Top flights
           </HoverText>
         ) : 'Top flights'}
@@ -60,7 +60,13 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
             const periodLetter = (PERIOD_LABELS[f.period] ?? '?').charAt(0)
             const periodColor = PERIOD_COLORS[f.period]
             const dateShort = f.date ? f.date.slice(5) : ''
-            const rawTypecode = parseProfileName(f.profile)
+            // Backend `aircraft_type` (extract-time ICAO typecode) is the
+            // canonical source. Fall back to the profile-anchor name when
+            // typecode metadata was missing or pre-v11 reader.
+            const profileTypecode = parseProfileName(f.profile)
+            const rawTypecode = f.aircraft_type && f.aircraft_type.length > 0
+              ? f.aircraft_type
+              : profileTypecode
             const typecodeDisplay = rawTypecode === 'FALLBACK' ? 'Unknown' : rawTypecode
             const isSynth = f.synthetic
             const icaoHex = f.icao_hex ? f.icao_hex.toUpperCase() : null

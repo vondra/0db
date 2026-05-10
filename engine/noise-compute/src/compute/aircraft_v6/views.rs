@@ -78,6 +78,10 @@ pub struct CruiseRowView<'a> {
     pub source_id: u8,
     pub origin: u8,
     pub cruise_flight_ids: &'a [u64],
+    /// Parallel-indexed against `cruise_flight_ids`. Empty for pre-v11
+    /// readers that didn't write these columns.
+    pub cruise_aircraft_types: &'a [[u8; 4]],
+    pub cruise_callsigns: &'a [String],
 }
 
 /// Per-vertex slice borrow over a ground path's polyline. All slices

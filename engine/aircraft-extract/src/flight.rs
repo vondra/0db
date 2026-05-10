@@ -158,6 +158,10 @@ pub struct CruiseBucket {
     pub rep_alt_m: f32,
     pub rep_speed_kt: f32,
     pub cruise_flight_ids: Vec<u64>,
+    /// Aircraft typecode per fid in `cruise_flight_ids`, parallel order.
+    pub cruise_aircraft_types: Vec<[u8; 4]>,
+    /// Callsign per fid in `cruise_flight_ids`, parallel order.
+    pub cruise_callsigns: Vec<String>,
     pub source_id: u8,
     pub origin: u8,
 }

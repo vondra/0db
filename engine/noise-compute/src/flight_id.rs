@@ -116,6 +116,17 @@ pub fn icao24_to_hex_lower(icao24: u32) -> String {
     format!("{:06x}", icao24 & 0xFF_FFFF)
 }
 
+/// Common destructure used at every popup top-flight emit site: real
+/// fids resolve to (hex, Some(unix)); synth fids to (empty, None).
+pub fn icao_hex_and_start_unix(fid: u64) -> (String, Option<u32>) {
+    match unpack(fid) {
+        FlightIdKind::Real { icao24, start_unix } => {
+            (icao24_to_hex_lower(icao24), Some(start_unix))
+        }
+        FlightIdKind::Synth { .. } => (String::new(), None),
+    }
+}
+
 /// Parse 1..=6 hex chars into a u32 (24-bit) value. Returns `None` for
 /// empty input, length > 6, or non-hex characters. Hot path — no allocations.
 #[inline]

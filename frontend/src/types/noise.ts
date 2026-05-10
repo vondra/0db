@@ -181,6 +181,14 @@ export interface AircraftTopFlight {
   period: number // 0=day, 1=evening, 2=night
   date: string // "YYYY-MM-DD"
   profile: string
+  /** ICAO typecode ("B738", "A320"). Distinct from `profile` (the
+   *  Doc 29 anchor name). Empty when typecode was unknown at extract. */
+  aircraft_type: string
+  /** ATC callsign / flight number (e.g. "TVS100P"). Empty when missing. */
+  callsign: string
+  /** % of total airborne Lden energy. Cruise rows report 0 (per-fid
+   *  energy split would be artificial since one bucket aggregates many
+   *  real flights). */
   energy_pct: number
   geometry: [[number, number], [number, number]]
   /** ICAO 24-bit transponder address as 6-char lowercase hex
@@ -191,6 +199,17 @@ export interface AircraftTopFlight {
   /** True for synthetic flight ids — anonymous-transponder traces or
    *  cruise R8-bucket aggregates; UI hides ICAO + time for these. */
   synthetic: boolean
+}
+
+export interface CruiseHexTopFlight {
+  lmax_db: number
+  altitude_m: number
+  date: string // "YYYY-MM-DD"
+  time_utc: string // "HH:MM:SS"
+  icao_hex: string
+  aircraft_type: string
+  callsign: string
+  class_name: string
 }
 
 /** Server-side proxy response from `/api/aircraft/:hex` (hexdb.io). */
@@ -557,6 +576,8 @@ export interface SegmentTrace {
   hex_polygon?: [number, number][]
   /** Per-bucket breakdown inside a cruise hex; sorted by `received_lden` desc. */
   cruise_buckets?: CruiseBucketBreakdown[]
+  /** Top contributing flights inside a cruise hex (peak Lmax desc, ≤5 entries). */
+  cruise_top_flights?: CruiseHexTopFlight[]
   /** Ground path `[runway, taxi, apron]` lengths in meters. */
   length_m_per_kind?: [number, number, number]
 }

@@ -20,13 +20,10 @@ pub struct FlightAccum {
     pub peak_seg_end: [f64; 2],
     pub profile_idx: u8,
     pub flight_weight: f64,
-    /// ICAO typecode (4-byte FixedSizeBinary, ASCII, '\0'-padded). Carried
-    /// from Stage 0 via Stage 1 / 2A so M2 `top_flights` can render
-    /// "B738" / "A320" instead of the profile-anchor placeholder. Empty
-    /// (`[0; 4]`) for cruise / synth fids.
+    /// 4-byte FixedSizeBinary ICAO typecode (ASCII, '\0'-padded). Empty
+    /// `[0; 4]` for synth fids without per-flight metadata.
     pub aircraft_type: [u8; 4],
-    /// ATC callsign (e.g. "TVS100P"). Same provenance as `aircraft_type`;
-    /// empty when the trace had no callsign metadata.
+    /// ATC callsign; empty when the trace had no metadata.
     pub callsign: String,
     /// Set when this entry was created from a cruise bucket. `flights_per_day`
     /// and the band counters route cruise via `CruiseFlightStats` instead so
@@ -103,4 +100,20 @@ pub struct CruiseFlightStats {
     pub peak_lmax: f64,
     pub alt_at_peak: f64,
     pub class_at_peak: usize,
+}
+
+/// Cruise-side per-real-fid candidate for the unified popup
+/// `top_flights` table. Cruise scatter keys energy on the bucket synth
+/// fid (see mod.rs), so we can't piggy-back on `FlightAccum` and need
+/// a real-fid-keyed mirror.
+pub struct TopFlightCandidate {
+    pub peak_lmax: f64,
+    pub peak_altitude_m: f64,
+    pub peak_period: u8,
+    pub peak_seg_start: [f64; 2],
+    pub peak_seg_end: [f64; 2],
+    pub min_dist_m: f64,
+    pub profile_idx: u8,
+    pub aircraft_type: [u8; 4],
+    pub callsign: String,
 }
