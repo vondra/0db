@@ -375,12 +375,27 @@ pub fn segment_energy_kernel(
     let log_d = d_ft.log2() * LOG10_2;
     let sel_npd = npd_luts.lookup(noise_class, is_dep, log_d);
 
-    // CFFK fast path: above 7.62 km slant the per-segment corrections
-    // (ΔF, Λ, ΔI) collapse to within fractions of a dB. Skip them and
-    // pay only NPD lookup + Δv. Validates against full Doc 29 within
-    // ~0.3 dB at slant ≥ 7.62 km.
+    // CFFK fast path: above 7.62 km slant Λ and ΔI collapse to within
+    // fractions of a dB and the kernel can skip them; ΔF stays.
+    //
+    // For long aggregated segments **with the unclamped CPA foot well
+    // inside the endpoints** (t in (q_m/d_bar, (slen-q_m)/d_bar) both
+    // ≫ 1) ΔF ≈ 0 — matches the previous skip within fractions of a dB.
+    // For aggregated segments where the foot is near an endpoint or
+    // outside (e.g., receiver off the side of a 50 km cruise leg), ΔF
+    // correctly suppresses by 3-10 dB; the previous skip was a latent
+    // Doc 29 deviation, fixed here.
+    //
+    // For per-sample airborne (Commit A): one sub-segment owns the foot
+    // (ΔF ≈ 0 → full event energy); the other N-1 sub-segments project
+    // the foot far outside their endpoints (α₁, α₂ same sign, |α| ≫ 1
+    // ⇒ f → 0 ⇒ ΔF strongly negative ⇒ negligible energy). Sum across
+    // sub-segments converges to one event, avoiding the N× over-count
+    // the previous skip would produce for collinear short segments.
     if d_p_m > AIRCRAFT_FAR_FIELD_THRESHOLD_M {
-        let sel = sel_npd + seg_dv;
+        let q_m = t * slen;
+        let df = fast_delta_f(q_m, slen, d_bar_m);
+        let sel = sel_npd + seg_dv + df;
         if sel < 20.0 {
             return None;
         }
@@ -390,7 +405,7 @@ pub fn segment_energy_kernel(
             sel,
             d_p_m,
             rel_alt_m: rel_alt,
-            q_m: t * slen,
+            q_m,
             seg_len_m: slen,
             lateral_m: lateral_sq.sqrt(),
             beta_deg: 90.0, // CFFK doesn't need β; sentinel
@@ -627,5 +642,60 @@ mod tests {
         let energy = 1000.0 * 10f64.powf(91.0 / 10.0);
         let leq = period_leq(energy, 365.0, PERIOD_SECONDS[0]);
         assert!(leq > 40.0 && leq < 80.0, "Leq = {leq}");
+    }
+
+    /// Doc 29 §A.3.4 invariant: emitting N collinear sub-segments must
+    /// give the same total linear energy as one aggregated segment over
+    /// the same geometry. CFFK previously skipped ΔF in the far field
+    /// (slant > 7.62 km), which let each sub-segment re-emit the full
+    /// event and over-counted by factor N. With ΔF restored, the
+    /// off-foot sub-segments collapse to ~0 and the foot-owning piece
+    /// contributes the full event.
+    #[test]
+    fn cffk_partition_preserves_linear_energy() {
+        use super::super::npd::{CLASS_REP_PROFILE_IDX, REACH_SQ_TABLE};
+        let npd_luts = NpdLuts::shared();
+        let class_idx = 0; // WING_FALLBACK
+        let profile = &PROFILES[CLASS_REP_PROFILE_IDX[class_idx] as usize];
+        let (inst_code, di_a, di_b, di_c) = delta_i_constants(profile.installation);
+        let reach_sq = REACH_SQ_TABLE[class_idx][1]; // departure
+        // Geometry: 20 km-long flight at 8 km altitude, receiver 8 km
+        // off to the side at sea level → slant ~11 km (far field).
+        let start_x = -10_000.0;
+        let start_y = 8_000.0;
+        let end_x = 10_000.0;
+        let end_y = 8_000.0;
+        let alt_m = 8_000.0;
+        let dv = delta_v(profile.v_ref_kt, profile);
+        let kernel = |ax: f64, ay: f64, sdx: f64, sdy: f64, slen: f64| {
+            let inv_lsq = 1.0 / (sdx * sdx + sdy * sdy);
+            segment_energy_kernel(
+                ax, ay, sdx, sdy, 0.0,
+                alt_m, inv_lsq, slen, 0.0,
+                npd_luts, class_idx, true, dv,
+                profile.d_bar_m, inst_code, di_a, di_b, di_c,
+                false, reach_sq, f64::MIN, f64::MIN,
+            )
+        };
+        // One aggregated segment.
+        let agg = kernel(start_x, start_y, end_x - start_x, end_y - start_y, 20_000.0).unwrap();
+        // Same geometry split into 10 collinear sub-segments.
+        let n = 10;
+        let mut sum_energy = 0.0;
+        for i in 0..n {
+            let t0 = i as f64 / n as f64;
+            let t1 = (i + 1) as f64 / n as f64;
+            let sx = start_x + (end_x - start_x) * t0;
+            let ex = start_x + (end_x - start_x) * t1;
+            let slen = (end_x - start_x) / n as f64;
+            if let Some(r) = kernel(sx, start_y, ex - sx, 0.0, slen) {
+                sum_energy += r.energy;
+            }
+        }
+        let ratio = sum_energy / agg.energy;
+        assert!(
+            (0.7..1.3).contains(&ratio),
+            "partition / aggregate energy ratio = {ratio:.3} (expected ~1.0)"
+        );
     }
 }
