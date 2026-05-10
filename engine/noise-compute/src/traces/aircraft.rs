@@ -134,11 +134,13 @@ pub fn build_aircraft_ground_path_trace(
 
 /// Pick a label from the per-kind length distribution. The longest
 /// kind wins — a path with 70 % runway and 20 % taxi reads as
-/// "runway" in the popup row label.
+/// "runway" in the popup row label. All-zero falls through to the
+/// catch-all "apron" rather than silently labelling a degenerate
+/// path as runway.
 fn kind_label_from_lengths(lengths: [f32; 3]) -> &'static str {
-    let mut best_idx = 0;
-    let mut best_val = lengths[0];
-    for (i, v) in lengths.iter().enumerate().skip(1) {
+    let mut best_idx = usize::MAX;
+    let mut best_val = 0.0_f32;
+    for (i, v) in lengths.iter().enumerate() {
         if *v > best_val {
             best_val = *v;
             best_idx = i;
@@ -298,7 +300,8 @@ fn h3_cell_boundary(r8_hex: u64) -> Vec<(f64, f64)> {
         return Vec::new();
     };
     let boundary = cell.boundary();
-    let mut ring: Vec<(f64, f64)> = boundary.iter().map(|ll| (ll.lat(), ll.lng())).collect();
+    let mut ring = Vec::with_capacity(boundary.len() + 1);
+    ring.extend(boundary.iter().map(|ll| (ll.lat(), ll.lng())));
     if let Some(first) = ring.first().copied() {
         ring.push(first);
     }
