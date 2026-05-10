@@ -1,5 +1,5 @@
-//! `compute_aircraft_v6` — popup entry point that consumes the v6
-//! popup arrows directly via typed column views (no Arrow / IPC
+//! `compute_aircraft_v6` — popup entry point that consumes the popup
+//! aircraft arrows directly via typed column views (no Arrow / IPC
 //! dependency in noise-compute).
 //!
 //! Architecture: airborne, cruise and ground rows each scatter directly
@@ -8,13 +8,9 @@
 //! * cruise:   per-bucket Doc 29 SEL × density → `FlightAccum` per
 //!             synth fid + `CruiseFlightStats` per real fid for band
 //!             counter dedup
-//! * ground:   per-row stored `em_*_bands` → `propagate_variants_full`
+//! * ground:   per-leg stored `em_bands` → `propagate_variants_full`
 //!             without re-bucketing or re-computing reference SEL
-//!             (the `dB_sum_v6_1` contract)
-//!
-//! No `AircraftSegment` `Vec` is allocated and no fallthrough to the
-//! legacy `compute_aircraft` function — that function is gone after
-//! C2/C4. The v6 path is the only popup contract.
+//!             (the `raw_paths_v10` contract)
 
 use std::collections::HashMap;
 

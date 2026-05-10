@@ -1,8 +1,6 @@
 //! Compute orchestrators that consume row views from upstream readers.
-//!
-//! Sub-modules are organized per source kind. v6 is the popup contract
-//! that reads aircraft popup arrows directly via typed column views,
-//! avoiding the `AircraftSegment` synthesis that lived in source-reader
-//! before C3.
+//! `aircraft_v6` reads the popup aircraft arrows directly via typed
+//! column views, avoiding any `AircraftSegment` synthesis at the popup
+//! boundary.
 
 pub mod aircraft_v6;

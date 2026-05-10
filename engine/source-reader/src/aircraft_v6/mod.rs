@@ -1,13 +1,12 @@
-//! Run `compute_aircraft_v6` over the popup arrows and merge its
-//! output into the `NoiseResult` returned by `compute_at_point_with_airports`
-//! (whose aircraft branch is now a no-op — see `lib.rs::query_noise_impl`).
+//! Run `compute_aircraft_v6` over the popup arrows and merge its output
+//! into the `NoiseResult` returned by `compute_at_point_with_traces`.
 //!
-//! Lifetime story: `RecordBatch` arrays are `Arc<dyn Array>`-backed,
-//! so source-reader's hex store can clone the batches cheaply and
-//! drop its `RwLock`. Each `*RowAccum` then snapshots the columns it
-//! cares about into owned `Vec<T>` / `String` / `[f32; 8]` so the
-//! `*RowView<'_>` slices we hand to noise-compute borrow into stable
-//! Rust memory, not into mmap-backed arrow buffers.
+//! Lifetime story: `RecordBatch` arrays are `Arc<dyn Array>`-backed, so
+//! source-reader's hex store can clone the batches cheaply and drop its
+//! `RwLock`. Each `*RowAccum` then snapshots the columns it cares about
+//! into owned `Vec<T>` / `String` / `[f32; 8]` so the `*RowView<'_>`
+//! slices we hand to noise-compute borrow into stable Rust memory, not
+//! into mmap-backed arrow buffers.
 
 mod airborne_view;
 mod columns;
@@ -25,17 +24,14 @@ use airborne_view::AirborneRowAccum;
 use cruise_view::CruiseRowAccum;
 use ground_view::GroundRowAccum;
 
-/// Run `compute_aircraft_v6` over the popup arrows and merge its
-/// output into an existing `NoiseResult`. The caller is expected to
-/// have invoked `compute_at_point_with_airports` first with an empty
-/// `aircraft` slice (the legacy aircraft branch is gone — see
-/// `noise_compute::compute_at_point_with_airports`).
+/// Run `compute_aircraft_v6` over the popup arrows and merge its output
+/// into an existing `NoiseResult`. Caller is expected to have invoked
+/// `compute_at_point_with_traces` first.
 ///
-/// Returns `Err(String)` when any aircraft.arrow file fails the v7
-/// schema or `dB_sum_v7_1` ground-energy contract, so the popup HTTP
-/// path can map the failure to a structured 500 response with the
-/// operator-actionable message instead of crashing the worker via
-/// `assert!`.
+/// Returns `Err(String)` when any aircraft.arrow file fails the v10
+/// schema check, so the popup HTTP path can map the failure to a
+/// structured 500 response with an operator-actionable message instead
+/// of crashing the worker via `assert!`.
 pub fn add_v6_aircraft_to_result(
     result: &mut NoiseResult,
     traces: &mut TraceCollector,
@@ -78,6 +74,13 @@ pub fn add_v6_aircraft_to_result(
         return Ok(());
     }
 
+    // compute_at_point_inner had no visibility into the popup aircraft
+    // arrows, so it ran Confidence::assess with has_aircraft=false and
+    // emitted the "no ADS-B data" note. Now that we have rows, bump the
+    // score and drop the misleading note.
+    result.confidence.overall = (result.confidence.overall + 0.15).min(1.0);
+    result.confidence.notes.retain(|n| !n.starts_with("Aircraft:"));
+
     result.contributors.extend(air_contribs);
     if air_periods.lden_db.is_finite() {
         let displayed_count = result
@@ -93,19 +96,18 @@ pub fn add_v6_aircraft_to_result(
         });
     }
     // Each popup query is a fresh compute, so the v6 band data fully
-    // replaces whatever `compute_at_point_with_airports` left behind
-    // (currently always `None` since its aircraft branch is a no-op).
+    // replaces whatever the non-aircraft pass left behind (always `None`
+    // — that pass doesn't touch `aircraft_detail`).
     result.aircraft_detail = Some(band_data);
     result.total = sum_periods_linear(&result.sources);
 
-    // compute_at_point_with_airports already ran finalize_popup_contributors
-    // on roads/rails/buildings/industrial and committed the top-30 +
-    // an `other_sources_lden` energy bucket. Aircraft contributors were
-    // appended after that call, so the popup would otherwise see a
-    // padded list (top-30 non-aircraft + N aircraft) and a stale
-    // `other_sources_lden`. /gg (Codex) flagged this. Re-finalize over
-    // the merged contributors so aircraft can compete for top-N slots
-    // and `other_sources_lden` reflects the true tail.
+    // The non-aircraft pass already ran finalize_popup_contributors on
+    // roads/rails/buildings/industrial and committed top-30 + an
+    // `other_sources_lden` energy bucket. Aircraft contributors are
+    // appended after that, so without re-finalizing the popup would see
+    // a padded list (top-30 non-aircraft + N aircraft) and a stale
+    // `other_sources_lden`. Re-finalize over the merged set so aircraft
+    // compete for top-N slots and the tail bucket stays honest.
     let other_lden_existing = result.other_sources_lden;
     let merged = std::mem::take(&mut result.contributors);
     let finalized = noise_compute::present::finalize_popup_contributors(merged, 30);
@@ -134,10 +136,9 @@ fn combine_other_lden(a: f64, b: f64) -> f64 {
 }
 
 /// Energy-sum the per-source periods after the aircraft contribution
-/// has been pushed onto `sources`. `compute_at_point_with_airports`
-/// already filled in `result.total` for the non-aircraft sources, but
-/// that total predates the v6 aircraft push so we recompute from
-/// scratch here.
+/// has been pushed onto `sources`. The non-aircraft pass already filled
+/// `result.total` for road/rail/building/industrial, but that total
+/// predates the aircraft push so we recompute from scratch here.
 fn sum_periods_linear(sources: &[SourceResult]) -> NoisePeriods {
     let to_lin = |db: f64| -> f64 {
         if db.is_finite() {

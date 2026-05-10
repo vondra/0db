@@ -2,7 +2,7 @@
 name = "aircraft-extract"
 version = "0.1.0"
 edition = "2021"
-description = "Aircraft pipeline v6 — popup-first extraction (Stage 0..2C → per-R4 Arrow)"
+description = "Aircraft pipeline — popup-first extraction (Stage 0..2C → per-R4 Arrow)"
 
 [lib]
 name = "aircraft_extract"

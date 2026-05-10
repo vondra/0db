@@ -1,14 +1,7 @@
 //! Read OSM-derived `airport_areas.arrow` files prepared by
-//! `osm-extract`. Stage 2C v10 aggregates them across every per-R4
-//! prepared dir so the nearest-aerodrome identity lookup sees a
-//! global airport set even when an airport's polygon is split across
-//! R4 boundaries.
-//!
-//! The matching v9 reader also consumed `airport_lines.arrow` and
-//! propagated parent-aerodrome identity onto runways via a polygon
-//! containment + proximity pass. v10 dropped that — ground geometry
-//! is raw ADS-B trajectories, not OSM aeroway snaps, so airport_lines
-//! is no longer read by the extractor.
+//! `osm-extract`. Stage 2C aggregates them across every per-R4 prepared
+//! dir so the nearest-aerodrome identity lookup sees a global airport
+//! set even when an airport's polygon is split across R4 boundaries.
 
 use std::fs::File;
 use std::io::BufReader;
@@ -118,12 +111,6 @@ pub fn read_airport_areas(path: &Path) -> Result<Vec<AirportArea>> {
 /// single global set, filtered to `aeroway_type == AERODROME` so the
 /// nearest-aerodrome lookup never picks up a stand-alone apron / taxi
 /// polygon as an airport identity. Returns the deduped polygon list.
-///
-/// Pre-v10 also read `airport_lines.arrow` and ran
-/// `propagate_aerodrome_identity_to_lines` to fill empty `airport_key`
-/// strings on runway lines from their parent aerodrome polygon — that
-/// helper is gone because the v10 ground extractor doesn't snap onto
-/// runway lines.
 pub fn read_global_airports(h3r4_dir: &Path) -> Result<Vec<AirportArea>> {
     let mut areas = Vec::new();
     if !h3r4_dir.exists() {

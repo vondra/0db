@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Aircraft pipeline v6 driver — wrapper around the `aircraft-extract`
+# Aircraft pipeline driver — wrapper around the `aircraft-extract`
 # binary that runs Stage 0..2C end-to-end against the ADS-B TAR cache
 # and writes per-R4 popup arrows (airborne / cruise / ground) under
 # `data/prepared/{DATA_YEAR}/h3r4/<R4>/`.

@@ -1,6 +1,6 @@
-//! Read / write Arrow files for the v6 schemas. Atomic write via a
-//! sibling `.tmp` rename — concurrent readers (popup, pipeline) never
-//! observe a partially-written file.
+//! Read / write Arrow files for the popup aircraft schemas. Atomic
+//! write via a sibling `.tmp` rename — concurrent readers (popup,
+//! pipeline) never observe a partially-written file.
 
 use std::fs::File;
 use std::io::BufReader;

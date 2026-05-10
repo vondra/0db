@@ -14,7 +14,6 @@ use crate::classify::{FeatureType, Tags};
 /// Info about a relation we care about.
 #[derive(Clone)]
 pub struct RelationInfo {
-    pub relation_id: i64,
     pub feature_type: FeatureType,
     pub tags: Tags,
     pub member_ways: Vec<(i64, String)>, // (way_id, role: "outer"/"inner")
@@ -65,7 +64,6 @@ pub fn scan_relations(pbf_path: &Path) -> Result<RelationManifest> {
                             local.relations.insert(
                                 rel.id(),
                                 RelationInfo {
-                                    relation_id: rel.id(),
                                     feature_type: ftype,
                                     tags: rel_tags,
                                     member_ways,

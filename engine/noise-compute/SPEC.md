@@ -381,7 +381,7 @@ d_p = slant distance at CPA. β = elevation angle.
   Boundaries follow END 2002/49/EC defaults: day [07:00, 19:00), evening
   [19:00, 23:00), night [23:00, 07:00). Historical DST rules come from
   tzdata 2024a+.
-- airport context uses `airport_lines.arrow` + `airport_areas.arrow`
+- airport context uses `airport_areas.arrow` (nearest-aerodrome identity)
 - candidate airport-ground segments are those with:
   - `on_ground = true`, or
   - both endpoints within **60 m AGL**

@@ -13,27 +13,15 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// All source data for one H3 res-4 hex — mmap'd Arrow IPC files.
-///
-/// Aircraft layout (v6-only after C3): three independent popup arrows
-/// (`airborne.arrow` / `cruise.arrow` / `ground.arrow`). The legacy
-/// single-file `aircraft.arrow` / `aircraft-v5.arrow` path was retired
-/// — `compute_aircraft_v6` consumes the row views directly.
 pub struct HexData {
     _mmaps: Vec<Arc<Mmap>>,
     pub road_batches: Vec<RecordBatch>,
     pub railway_batches: Vec<RecordBatch>,
-    #[cfg_attr(not(feature = "node"), allow(dead_code))]
-    pub airport_line_batches: Vec<RecordBatch>,
-    #[cfg_attr(not(feature = "node"), allow(dead_code))]
-    pub airport_area_batches: Vec<RecordBatch>,
     pub building_batches: Vec<RecordBatch>,
     pub barrier_batches: Vec<RecordBatch>,
     pub industrial_batches: Vec<RecordBatch>,
-    /// Stage 2A airborne — v6 schema.
     pub aircraft_airborne_batches: Vec<RecordBatch>,
-    /// Stage 2B cruise — v6 schema.
     pub aircraft_cruise_batches: Vec<RecordBatch>,
-    /// Stage 2C ground — v6 schema.
     pub aircraft_ground_batches: Vec<RecordBatch>,
 }
 
@@ -43,8 +31,6 @@ impl HexData {
             _mmaps: vec![],
             road_batches: vec![],
             railway_batches: vec![],
-            airport_line_batches: vec![],
-            airport_area_batches: vec![],
             building_batches: vec![],
             barrier_batches: vec![],
             industrial_batches: vec![],
@@ -66,8 +52,6 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
 
     let road_batches = load_arrow_mmap(&path.join("roads.arrow"), &mut mmaps);
     let railway_batches = load_arrow_mmap(&path.join("railways.arrow"), &mut mmaps);
-    let airport_line_batches = load_arrow_mmap(&path.join("airport_lines.arrow"), &mut mmaps);
-    let airport_area_batches = load_arrow_mmap(&path.join("airport_areas.arrow"), &mut mmaps);
     let building_batches = load_arrow_mmap(&path.join("buildings.arrow"), &mut mmaps);
     let barrier_batches = load_arrow_mmap(&path.join("barriers.arrow"), &mut mmaps);
     let industrial_batches = load_arrow_mmap(&path.join("industrial.arrow"), &mut mmaps);
@@ -79,8 +63,6 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
         _mmaps: mmaps,
         road_batches,
         railway_batches,
-        airport_line_batches,
-        airport_area_batches,
         building_batches,
         barrier_batches,
         industrial_batches,
@@ -486,212 +468,6 @@ pub fn query_buildings_from_batches(
                 addr_street: street.map(|a| a.value(i).to_string()).unwrap_or_default(),
                 addr_housenumber: house.map(|a| a.value(i).to_string()).unwrap_or_default(),
                 polygon_wkb: wkb.map(|a| hex_encode(a.value(i))).unwrap_or_default(),
-                dist_m: dist,
-            });
-        }
-    }
-
-    results
-}
-
-#[cfg_attr(not(feature = "node"), allow(dead_code))]
-#[derive(serde::Serialize)]
-pub struct AirportLineResult {
-    pub osm_id: i64,
-    pub segment_idx: i16,
-    pub start_lat: f64,
-    pub start_lon: f64,
-    pub end_lat: f64,
-    pub end_lon: f64,
-    pub length_m: f32,
-    pub aeroway_type: u8,
-    pub name: String,
-    #[serde(rename = "ref")]
-    pub airport_ref: String,
-    pub icao: String,
-    pub iata: String,
-    pub operator: String,
-    pub surface: String,
-    pub width_m: f32,
-    pub aerodrome_type: String,
-    pub access: String,
-    pub dist_m: f64,
-    pub cp_lat: f64,
-    pub cp_lon: f64,
-    pub fraction: f64,
-}
-
-#[cfg_attr(not(feature = "node"), allow(dead_code))]
-pub fn query_airport_lines_from_batches(
-    batches: &[RecordBatch],
-    lat: f64,
-    lon: f64,
-    max_radius: f64,
-) -> Vec<AirportLineResult> {
-    let mut results = Vec::new();
-
-    for batch in batches {
-        let n = batch.num_rows();
-        let osm_id = col_i64(batch, "osm_id");
-        let seg_idx = col_i16(batch, "segment_idx");
-        let slat = col_f64(batch, "start_lat");
-        let slon = col_f64(batch, "start_lon");
-        let elat = col_f64(batch, "end_lat");
-        let elon = col_f64(batch, "end_lon");
-        let len = col_f32(batch, "length_m");
-        let aeroway_type = col_u8(batch, "aeroway_type");
-        let name = col_str(batch, "name");
-        let airport_ref = col_str(batch, "ref");
-        let icao = col_str(batch, "icao");
-        let iata = col_str(batch, "iata");
-        let operator = col_str(batch, "operator");
-        let surface = col_str(batch, "surface");
-        let width_m = col_f32(batch, "width_m");
-        let aerodrome_type = col_str(batch, "aerodrome_type");
-        let access = col_str(batch, "access");
-
-        let (Some(osm_id), Some(slat), Some(slon), Some(elat), Some(elon)) =
-            (osm_id, slat, slon, elat, elon)
-        else {
-            continue;
-        };
-
-        for i in 0..n {
-            let s_lat = slat.value(i);
-            let s_lon = slon.value(i);
-            let e_lat = elat.value(i);
-            let e_lon = elon.value(i);
-
-            let mid_lat = (s_lat + e_lat) / 2.0;
-            let mid_lon = (s_lon + e_lon) / 2.0;
-            let dlat = (lat - mid_lat).abs() * 110_540.0;
-            if dlat > max_radius * 1.5 {
-                continue;
-            }
-            let dlon = (lon - mid_lon).abs() * 111_320.0 * mid_lat.to_radians().cos();
-            if dlon > max_radius * 1.5 {
-                continue;
-            }
-
-            let cp = crate::geo::closest_point_on_segment(lat, lon, s_lat, s_lon, e_lat, e_lon);
-            if cp.dist_m > max_radius {
-                continue;
-            }
-
-            results.push(AirportLineResult {
-                osm_id: osm_id.value(i),
-                segment_idx: seg_idx.map(|a| a.value(i)).unwrap_or(0),
-                start_lat: s_lat,
-                start_lon: s_lon,
-                end_lat: e_lat,
-                end_lon: e_lon,
-                length_m: len.map(|a| a.value(i)).unwrap_or(0.0),
-                aeroway_type: aeroway_type.map(|a| a.value(i)).unwrap_or(255),
-                name: name.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                airport_ref: airport_ref
-                    .map(|a| a.value(i).to_string())
-                    .unwrap_or_default(),
-                icao: icao.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                iata: iata.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                operator: operator.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                surface: surface.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                width_m: width_m.map(|a| a.value(i)).unwrap_or(0.0),
-                aerodrome_type: aerodrome_type
-                    .map(|a| a.value(i).to_string())
-                    .unwrap_or_default(),
-                access: access.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                dist_m: cp.dist_m,
-                cp_lat: cp.lat,
-                cp_lon: cp.lon,
-                fraction: cp.fraction,
-            });
-        }
-    }
-
-    results
-}
-
-#[cfg_attr(not(feature = "node"), allow(dead_code))]
-#[derive(serde::Serialize)]
-pub struct AirportAreaResult {
-    pub osm_id: i64,
-    pub centroid_lat: f64,
-    pub centroid_lon: f64,
-    pub aeroway_type: u8,
-    pub name: String,
-    #[serde(rename = "ref")]
-    pub airport_ref: String,
-    pub icao: String,
-    pub iata: String,
-    pub operator: String,
-    pub surface: String,
-    pub width_m: f32,
-    pub aerodrome_type: String,
-    pub access: String,
-    pub polygon_wkb: String,
-    pub area_m2: f32,
-    pub dist_m: f64,
-}
-
-#[cfg_attr(not(feature = "node"), allow(dead_code))]
-pub fn query_airport_areas_from_batches(
-    batches: &[RecordBatch],
-    lat: f64,
-    lon: f64,
-    max_radius: f64,
-) -> Vec<AirportAreaResult> {
-    let mut results = Vec::new();
-
-    for batch in batches {
-        let n = batch.num_rows();
-        let osm_id = col_i64(batch, "osm_id");
-        let clat = col_f64(batch, "centroid_lat");
-        let clon = col_f64(batch, "centroid_lon");
-        let aeroway_type = col_u8(batch, "aeroway_type");
-        let name = col_str(batch, "name");
-        let airport_ref = col_str(batch, "ref");
-        let icao = col_str(batch, "icao");
-        let iata = col_str(batch, "iata");
-        let operator = col_str(batch, "operator");
-        let surface = col_str(batch, "surface");
-        let width_m = col_f32(batch, "width_m");
-        let aerodrome_type = col_str(batch, "aerodrome_type");
-        let access = col_str(batch, "access");
-        let wkb = col_binary(batch, "polygon_wkb");
-        let area_m2 = col_f32(batch, "area_m2");
-
-        let (Some(osm_id), Some(clat), Some(clon)) = (osm_id, clat, clon) else {
-            continue;
-        };
-
-        for i in 0..n {
-            let c_lat = clat.value(i);
-            let c_lon = clon.value(i);
-            let dist = crate::geo::flat_dist(lat, lon, c_lat, c_lon);
-            if dist > max_radius {
-                continue;
-            }
-
-            results.push(AirportAreaResult {
-                osm_id: osm_id.value(i),
-                centroid_lat: c_lat,
-                centroid_lon: c_lon,
-                aeroway_type: aeroway_type.map(|a| a.value(i)).unwrap_or(255),
-                name: name.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                airport_ref: airport_ref
-                    .map(|a| a.value(i).to_string())
-                    .unwrap_or_default(),
-                icao: icao.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                iata: iata.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                operator: operator.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                surface: surface.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                width_m: width_m.map(|a| a.value(i)).unwrap_or(0.0),
-                aerodrome_type: aerodrome_type
-                    .map(|a| a.value(i).to_string())
-                    .unwrap_or_default(),
-                access: access.map(|a| a.value(i).to_string()).unwrap_or_default(),
-                polygon_wkb: wkb.map(|a| hex_encode(a.value(i))).unwrap_or_default(),
-                area_m2: area_m2.map(|a| a.value(i)).unwrap_or(0.0),
                 dist_m: dist,
             });
         }

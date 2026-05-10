@@ -3,9 +3,8 @@
 //! CNOSSOS-EU emission + ISO 9613-2 propagation + Doc 29 aircraft.
 //! No I/O, no files, no napi. Pure computation.
 //!
-//! Two entry points:
-//! - `compute_at_point()` — single receiver (popup)
-//! - `compute_batch()` — many receivers (pipeline)
+//! Single-receiver entry points: `compute_at_point` and
+//! `compute_at_point_with_traces` (popup).
 
 pub mod admin;
 pub mod city_consts_generated;
@@ -101,26 +100,21 @@ fn wkb_to_geojson(hex: &str) -> Option<serde_json::Value> {
 }
 
 /// Compute noise at a single receiver point from all nearby sources.
-///
-/// Aircraft handling moved to `compute::aircraft_v6::compute_aircraft_v6`,
-/// which the popup invokes after this function (see
+/// Aircraft go through `compute::aircraft_v6::compute_aircraft_v6`,
+/// invoked separately by the popup (see
 /// `source-reader/src/aircraft_v6/mod.rs::add_v6_aircraft_to_result`).
-/// The `aircraft` parameter is kept on this entry point for the
-/// pipeline / non-popup callers and should be empty on the popup path.
 pub fn compute_at_point(
     receiver: &Receiver,
     roads: &[RoadSegment],
     railways: &[RailSegment],
     buildings: &[PointSource],
     industrial: &[PointSource],
-    aircraft: &[AircraftSegment],
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
     config: &ComputeConfig,
 ) -> NoiseResult {
     compute_at_point_inner(
-        receiver, roads, railways, buildings, industrial, aircraft, barriers, rasters, config,
-        None,
+        receiver, roads, railways, buildings, industrial, barriers, rasters, config, None,
     )
 }
 
@@ -133,15 +127,13 @@ pub fn compute_at_point_with_traces(
     railways: &[RailSegment],
     buildings: &[PointSource],
     industrial: &[PointSource],
-    aircraft: &[AircraftSegment],
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
     config: &ComputeConfig,
     traces: Option<&mut TraceCollector>,
 ) -> NoiseResult {
     compute_at_point_inner(
-        receiver, roads, railways, buildings, industrial, aircraft, barriers, rasters, config,
-        traces,
+        receiver, roads, railways, buildings, industrial, barriers, rasters, config, traces,
     )
 }
 
@@ -152,7 +144,6 @@ fn compute_at_point_inner(
     railways: &[RailSegment],
     buildings: &[PointSource],
     industrial: &[PointSource],
-    aircraft: &[AircraftSegment],
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
     _config: &ComputeConfig,
@@ -160,7 +151,6 @@ fn compute_at_point_inner(
 ) -> NoiseResult {
     let mut source_results = Vec::new();
     let mut all_contributors = Vec::new();
-    let aircraft_band_data: Option<AircraftBandData> = None;
 
     // ── Roads ──
     if !roads.is_empty() {
@@ -226,13 +216,9 @@ fn compute_at_point_inner(
         all_contributors.extend(ind_contributors);
     }
 
-    // ── Aircraft (Doc 29 — SEPARATE from ISO 9613-2) ──
-    // Aircraft handling moved to `compute::aircraft_v6::compute_aircraft_v6`.
-    // The `aircraft` slice is reserved for non-popup callers that still
-    // pass legacy `AircraftSegment` slices in (none in this checkout);
-    // the popup invokes `compute_aircraft_v6` separately and merges its
-    // contributors back into `result` via `add_v6_aircraft_to_result`.
-    let _ = aircraft;
+    // Aircraft are computed by `compute::aircraft_v6::compute_aircraft_v6`
+    // and merged into the result downstream via
+    // `source-reader::aircraft_v6::add_v6_aircraft_to_result`.
 
     // ── Total ──
     let total = periods::sum_periods(
@@ -254,7 +240,9 @@ fn compute_at_point_inner(
         && railways
             .iter()
             .any(|r| r.trains_passenger > 0.0 || r.trains_freight > 0.0);
-    let has_aircraft = !aircraft.is_empty();
+    // Aircraft visibility is downstream — `add_v6_aircraft_to_result`
+    // sees the popup arrows and bumps confidence after merging.
+    let has_aircraft = false;
     let has_terrain = rasters.elevation(receiver.lat, receiver.lon) != 200.0; // StubRasters returns 200.0
     let has_building_heights = rasters.building_height(receiver.lat, receiver.lon) != 0.0;
     let conf = confidence::Confidence::assess(
@@ -271,7 +259,7 @@ fn compute_at_point_inner(
         contributors: all_contributors,
         other_sources_lden,
         confidence: conf,
-        aircraft_detail: aircraft_band_data,
+        aircraft_detail: None,
         segments: Vec::new(),
         segments_meta: None,
     }
@@ -1815,7 +1803,6 @@ mod tests {
             &[],
             &[],
             &[],
-            &[],
             &MockRasters,
             &ComputeConfig::default(),
         );
@@ -1916,7 +1903,6 @@ mod tests {
             &[],
             &[],
             &[],
-            &[],
             &MockRasters,
             &ComputeConfig::default(),
         );
@@ -1937,7 +1923,6 @@ mod tests {
             &[],
             &[],
             &[],
-            &[],
             &MockRasters,
             &ComputeConfig::default(),
         );
@@ -1945,7 +1930,6 @@ mod tests {
             &receiver,
             &[],
             &railways,
-            &[],
             &[],
             &[],
             &[],
@@ -2004,7 +1988,6 @@ mod tests {
         let result = compute_at_point(
             &receiver,
             &roads,
-            &[],
             &[],
             &[],
             &[],
@@ -2197,29 +2180,6 @@ mod tests {
             trains_freight_source: 0,
             source_id: 0,
         }];
-        let aircraft = vec![AircraftSegment {
-            flight_id: 1,
-            profile_idx: 0,
-            is_departure: false,
-            on_ground: false,
-            period: 0,
-            date_id: 0,
-            start_lat: 50.08,
-            start_lon: 14.43,
-            start_alt_m: 500.0,
-            end_lat: 50.09,
-            end_lon: 14.43,
-            end_alt_m: 400.0,
-            speed_kt: 150.0,
-            segment_length_m: 1100.0,
-            ground_context: emission::aircraft::GROUND_CONTEXT_NONE,
-            ground_ops_kind: emission::aircraft::GROUND_OPS_KIND_NONE,
-            count_weight: 1.0,
-            surface_model: false,
-            source_id: AIRCRAFT_ADSB_SOURCE_ID,
-            cruise_flight_ids: Vec::new(),
-        }];
-
         let config = ComputeConfig {
             n_days: 365,
             ..Default::default()
@@ -2230,13 +2190,12 @@ mod tests {
             &railways,
             &[],
             &[],
-            &aircraft,
             &[],
             &MockRasters,
             &config,
         );
 
-        // Should have road + railway + aircraft
+        // Should have road + railway
         assert!(
             result.sources.len() >= 2,
             "sources = {:?}",

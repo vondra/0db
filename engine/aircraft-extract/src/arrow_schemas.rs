@@ -1,6 +1,6 @@
-//! Arrow schemas for the five v10 artifacts. Every schema embeds
-//! `schema_version = "v10"` in metadata so the reader can refuse old
-//! v4..v9 layouts instead of silently mis-decoding them.
+//! Arrow schemas for the five aircraft pipeline artifacts. Every schema
+//! embeds `schema_version = SCHEMA_VERSION` in metadata so the reader
+//! can refuse stale layouts instead of silently mis-decoding them.
 
 use std::collections::HashMap;
 use std::sync::Arc;

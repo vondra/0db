@@ -218,14 +218,6 @@ fn main() -> Result<()> {
                 // (a way can be both a relation member AND a standalone feature,
                 //  but usually relation members don't have building= tags themselves)
                 if let Some(ftype) = classify::classify_way(&way) {
-                    let ftype = if matches!(ftype, classify::FeatureType::AirportLine)
-                        && is_closed_ring(&coords)
-                    {
-                        classify::FeatureType::AirportArea
-                    } else {
-                        ftype
-                    };
-
                     // Skip if this way is an outer member of a building/industrial relation
                     // (the relation's tags take precedence)
                     if is_relation_member
@@ -393,15 +385,6 @@ fn centroid(coords: &[[f64; 2]]) -> (f64, f64) {
         coords.iter().map(|c| c[0]).sum::<f64>() / n,
         coords.iter().map(|c| c[1]).sum::<f64>() / n,
     )
-}
-
-fn is_closed_ring(coords: &[[f64; 2]]) -> bool {
-    if coords.len() < 4 {
-        return false;
-    }
-    let first = coords[0];
-    let last = coords[coords.len() - 1];
-    (first[0] - last[0]).abs() < 1e-7 && (first[1] - last[1]).abs() < 1e-7
 }
 
 fn coords_to_wkb(coords: &[[f64; 2]]) -> Vec<u8> {

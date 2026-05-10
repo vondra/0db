@@ -20,7 +20,7 @@ use aircraft_extract::stage_2b::run_stage_2b;
 use aircraft_extract::stage_2c::run_stage_2c;
 
 #[derive(Parser)]
-#[command(name = "aircraft-extract", about = "Aircraft pipeline v6 driver")]
+#[command(name = "aircraft-extract", about = "Aircraft pipeline driver")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,

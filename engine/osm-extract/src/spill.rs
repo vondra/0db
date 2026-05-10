@@ -11,28 +11,6 @@ use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-/// One record waiting to be written.
-pub struct SegmentRecord {
-    pub hex_id: u64,
-    pub osm_id: i64,
-    pub segment_idx: i16,
-    pub start_lat: f64,
-    pub start_lon: f64,
-    pub end_lat: f64,
-    pub end_lon: f64,
-    pub length_m: f32,
-    pub tags: Tags,
-}
-
-pub struct PolygonRecord {
-    pub hex_id: u64,
-    pub osm_id: i64,
-    pub centroid_lat: f64,
-    pub centroid_lon: f64,
-    pub tags: Tags,
-    pub wkb: Option<Vec<u8>>,
-}
-
 /// Per-feature-type, per-bucket writer.
 struct BucketFile {
     writer: BufWriter<File>,
@@ -182,30 +160,6 @@ impl Spiller {
                         0
                     },
                     classify::rail_service_type(tags.get("service").map(|s| s.as_str())),
-                );
-            }
-            FeatureType::AirportLine => {
-                let airport_ref = tags
-                    .get("ref")
-                    .or_else(|| tags.get("local_ref"))
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-                let width_m = classify::parse_width_m(tags.get("width").map(|s| s.as_str()))
-                    .map(|v| format!("{v:.1}"))
-                    .unwrap_or_default();
-                let _ = write!(
-                    w,
-                    "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                    classify::aeroway_type(tags),
-                    tags.get("name").map(|s| s.as_str()).unwrap_or(""),
-                    airport_ref,
-                    tags.get("icao").map(|s| s.as_str()).unwrap_or(""),
-                    tags.get("iata").map(|s| s.as_str()).unwrap_or(""),
-                    tags.get("operator").map(|s| s.as_str()).unwrap_or(""),
-                    tags.get("surface").map(|s| s.as_str()).unwrap_or(""),
-                    width_m,
-                    tags.get("aerodrome:type").map(|s| s.as_str()).unwrap_or(""),
-                    tags.get("access").map(|s| s.as_str()).unwrap_or(""),
                 );
             }
             FeatureType::Barrier => {

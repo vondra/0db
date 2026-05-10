@@ -46,10 +46,10 @@ fi
 
 # ── OSM planet (heavy, ~4-8h) ────────────────────────────────────────
 # Must finish before aircraft Stage 2C: that stage reads
-# `airport_lines.arrow` / `airport_areas.arrow` per R4 from prepared
-# data, and missing airport geometry forces Stage 2C onto the R10
-# fallback path (silent quality regression). /gg (Codex) caught this
-# race when the two ran in parallel — keep OSM ahead of aircraft.
+# `airport_areas.arrow` per R4 from prepared data for the
+# nearest-aerodrome identity lookup, and missing airport geometry
+# leaves ground paths without an airport_key. Keep OSM ahead of
+# aircraft.
 if [ "$STEP" = "all" ] || [ "$STEP" = "osm" ]; then
     log "Starting: osm → $LOG_DIR/extraction-osm.log"
     bash "$SCRIPT_DIR/osm-to-h3r4.sh" &> "$LOG_DIR/extraction-osm.log" &

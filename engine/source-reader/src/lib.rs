@@ -18,9 +18,8 @@ use std::sync::RwLock;
 #[cfg(feature = "node")]
 use hex_store::HexData;
 use hex_store::{
-    hex_encode, load_hex, query_airport_areas_from_batches, query_airport_lines_from_batches,
-    query_barriers_from_batches, query_buildings_from_batches, query_railways_from_batches,
-    query_roads_from_batches,
+    hex_encode, load_hex, query_barriers_from_batches, query_buildings_from_batches,
+    query_railways_from_batches, query_roads_from_batches,
 };
 
 #[cfg(feature = "node")]
@@ -33,20 +32,8 @@ static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::Onc
 // NACE codes are now baked into industrial.arrow (nace_4digit UInt16 column).
 // No global lookup needed at runtime.
 
-const AIRPORT_CONTEXT_RADIUS_M: f64 = 5_000.0;
 const BUILDING_QUERY_RADIUS_M: f64 = 2_000.0;
 const INDUSTRIAL_QUERY_RADIUS_M: f64 = 5_000.0;
-
-fn airport_key(name: &str, _airport_ref: &str, icao: &str, iata: &str) -> String {
-    let key = if !icao.is_empty() {
-        icao
-    } else if !iata.is_empty() {
-        iata
-    } else {
-        name
-    };
-    key.trim().to_string()
-}
 
 #[cfg(feature = "node")]
 struct HexStore {
@@ -88,7 +75,6 @@ pub struct PointQueryData {
     pub aircraft_airborne_batches: Vec<arrow::record_batch::RecordBatch>,
     pub aircraft_cruise_batches: Vec<arrow::record_batch::RecordBatch>,
     pub aircraft_ground_batches: Vec<arrow::record_batch::RecordBatch>,
-    pub airport_areas: Vec<noise_compute::types::AirportArea>,
     pub barriers: Vec<noise_compute::types::Barrier>,
     pub n_days: u16,
 }
@@ -127,7 +113,6 @@ pub fn collect_from_hex_data(
     let mut all_airborne_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
     let mut all_cruise_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
     let mut all_ground_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
-    let mut all_airport_areas = Vec::new();
 
     let mut date_ids = std::collections::HashSet::new();
     let mut n_days_from_metadata: Option<u16> = None;
@@ -166,26 +151,6 @@ pub fn collect_from_hex_data(
         }
     });
 
-    for data in hex_data {
-        let airport_areas = query_airport_areas_from_batches(
-            &data.airport_area_batches,
-            lat,
-            lng,
-            AIRPORT_CONTEXT_RADIUS_M,
-        );
-        for area in airport_areas {
-            all_airport_areas.push(noise_compute::types::AirportArea::new(
-                area.osm_id,
-                area.aeroway_type,
-                area.name.clone(),
-                airport_key(&area.name, &area.airport_ref, &area.icao, &area.iata),
-                area.centroid_lat,
-                area.centroid_lon,
-                area.polygon_wkb,
-                area.area_m2,
-            ));
-        }
-    }
     for data in hex_data {
         let railways = query_railways_from_batches(&data.railway_batches, lat, lng, noise_compute::constants::RAILWAY_MAX_RADIUS);
         for r in railways {
@@ -437,12 +402,10 @@ pub fn collect_from_hex_data(
             });
         }
 
-        // v6 aircraft popup arrows: the per-row reach prune and the
-        // bucket-level emission contract live inside compute_aircraft_v6
-        // (which reads em_*_bands directly from ground rows under the
-        // dB_sum_v6_1 contract). At this layer we only clone the
-        // RecordBatch handles — Arrow IPC batches are Arc-backed so this
-        // is a refcount bump, not a data copy.
+        // Aircraft popup arrows: per-row reach prune + raw_paths_v10
+        // emission contract live inside compute_aircraft_v6. Cloning
+        // RecordBatch is a refcount bump on Arc-backed Arrow buffers,
+        // not a data copy.
         all_airborne_batches.extend(data.aircraft_airborne_batches.iter().cloned());
         all_cruise_batches.extend(data.aircraft_cruise_batches.iter().cloned());
         all_ground_batches.extend(data.aircraft_ground_batches.iter().cloned());
@@ -462,7 +425,6 @@ pub fn collect_from_hex_data(
         aircraft_airborne_batches: all_airborne_batches,
         aircraft_cruise_batches: all_cruise_batches,
         aircraft_ground_batches: all_ground_batches,
-        airport_areas: all_airport_areas,
         barriers: all_barriers,
         n_days,
     }
@@ -516,44 +478,6 @@ pub fn query_roads(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<String
     for hex_id in &hex_ids {
         let data = store.ensure_hex(hex_id);
         let mut results = query_roads_from_batches(&data.road_batches, lat, lng, max_radius_m);
-        all_results.append(&mut results);
-    }
-
-    Ok(serde_json::to_string(&all_results).unwrap())
-}
-
-#[cfg(feature = "node")]
-#[napi]
-pub fn query_airport_lines(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<String> {
-    let hex_ids = geo::grid_disk_r4(lat, lng);
-    let mut store = STORE
-        .write()
-        .map_err(|e| Error::new(Status::GenericFailure, format!("{e}")))?;
-
-    let mut all_results = Vec::new();
-    for hex_id in &hex_ids {
-        let data = store.ensure_hex(hex_id);
-        let mut results =
-            query_airport_lines_from_batches(&data.airport_line_batches, lat, lng, max_radius_m);
-        all_results.append(&mut results);
-    }
-
-    Ok(serde_json::to_string(&all_results).unwrap())
-}
-
-#[cfg(feature = "node")]
-#[napi]
-pub fn query_airport_areas(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<String> {
-    let hex_ids = geo::grid_disk_r4(lat, lng);
-    let mut store = STORE
-        .write()
-        .map_err(|e| Error::new(Status::GenericFailure, format!("{e}")))?;
-
-    let mut all_results = Vec::new();
-    for hex_id in &hex_ids {
-        let data = store.ensure_hex(hex_id);
-        let mut results =
-            query_airport_areas_from_batches(&data.airport_area_batches, lat, lng, max_radius_m);
         all_results.append(&mut results);
     }
 
@@ -689,7 +613,6 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         &sources.railways,
         &sources.buildings,
         &sources.industrial,
-        &[],
         &sources.barriers,
         rasters,
         &config,
