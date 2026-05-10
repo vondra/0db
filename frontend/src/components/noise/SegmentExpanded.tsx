@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { SegmentTrace } from '../../types/noise'
+import type { CruiseHexTopFlight, SegmentTrace } from '../../types/noise'
 import { fmtFloat } from '../../utils/formatters'
 import { ldenToColor } from '../../utils/noise-colors'
 import { HoverText } from '../ui/info-tip'
@@ -90,7 +90,45 @@ function Section1Source({ trace }: { trace: SegmentTrace }) {
   return (
     <Section>
       <InlineTable rows={rows} />
+      {trace.kind === 'aircraft' && trace.aircraft_subtype === 3 && trace.cruise_top_flights && trace.cruise_top_flights.length > 0 && (
+        <CruiseLoudestFlights tops={trace.cruise_top_flights} />
+      )}
     </Section>
+  )
+}
+
+// `<table>` cannot live inside `InlineTable`'s `<span>` value cell, so cruise
+// hexes get a separate block under the key-value rows.
+function CruiseLoudestFlights({ tops }: { tops: CruiseHexTopFlight[] }) {
+  return (
+    <div className="mt-1.5">
+      <div className="text-muted-foreground/70 mb-0.5">Loudest flights</div>
+      <table className="text-[10px] [&_th]:font-normal [&_th]:text-left [&_td]:text-left">
+        <thead>
+          <tr className="text-muted-foreground/60">
+            <th className="text-right pr-1.5">Lmax</th>
+            <th className="text-right pr-1.5">Alt</th>
+            <th className="pl-1">Aircraft</th>
+            <th className="pl-2">When (UTC)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tops.map((f, i) => (
+            <tr key={i}>
+              <td className="text-right pr-1.5 tabular-nums">{f.lmax_db.toFixed(1)}</td>
+              <td className="text-right pr-1.5 tabular-nums">{Math.round(f.altitude_m)} m</td>
+              <td className="pl-1">
+                {f.aircraft_type || '—'}
+                {f.callsign && <span className="text-muted-foreground/60"> · {f.callsign}</span>}
+              </td>
+              <td className="pl-2 text-muted-foreground/60 tabular-nums">
+                {f.date ? f.date.slice(5) : '—'} {f.time_utc ? f.time_utc.slice(0, 5) : ''}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 
@@ -269,25 +307,10 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
       ]
     }
     case 'aircraft_cruise': {
-      const rows: [React.ReactNode, React.ReactNode][] = [
+      return [
         ['R8 hex', e.r8_hex],
         ['Unique flights', `${e.n_unique_flights}`],
-        ['Representative altitude', `${Math.round(e.rep_alt_m)} m`],
       ]
-      const buckets = t.cruise_buckets
-      if (buckets && buckets.length > 0) {
-        const top = buckets.slice(0, 5)
-        const summary = top
-          .map(b => {
-            const period = ['day', 'eve', 'night'][b.period] ?? '?'
-            const dep = b.is_dep ? 'dep' : 'arr'
-            return `FL${b.fl_bin} · class ${b.class} · ${period} · ${dep} · ${b.n_flights}f · ${b.received_lden.toFixed(1)} dB`
-          })
-          .join('\n')
-        const more = buckets.length > 5 ? `\n… +${buckets.length - 5} more` : ''
-        rows.push(['Top buckets', <pre className="text-[10px] whitespace-pre-wrap">{summary}{more}</pre>])
-      }
-      return rows
     }
     case 'building': {
       return [
