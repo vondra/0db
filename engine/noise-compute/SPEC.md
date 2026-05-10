@@ -427,24 +427,35 @@ The popup and the pipeline batch path use the same Doc 29 kernel
 (NPD via 128-bin LUT, ΔF via `fast_delta_f`, Λ via `fast_lateral_attenuation`,
 ΔI via inline `u²/v²`) and the < 0.15 dB per-segment combined error.
 
-### Cross-flight bucket merge
+### Cross-flight aggregation
 
-Two paths exist: **v4** bucketed at ~100 m lat/lon × 60 m altitude × 20 kt
-(`engine/noise-compute/src/emission/aircraft_bucket.rs`, calibrated against
-±50-100 m ADS-B jitter), and **v5** bucketed at R5 hex × 12 noise classes ×
-heading × altitude bin (`engine/aircraft-tracks/src/aggregate.rs`).
-`count_weight` summed across the bucket gives exact annual energy for
-acoustically-identical flights. `date_id` is not in either key — output tiles
-are permanently annual; sub-annual reporting would require daily partitions.
-Popup reads the same arrow as the pipeline, so popup ↔ tile parity is a
-structural property of consuming the baked output.
+Aggregation happens at the `aircraft-extract` Stage 2A/2B/2C boundary,
+producing three popup arrows per R4:
+- **Stage 2A airborne** — one row per (flight × ADS-B sub-segment) in
+  `airborne.arrow`, with the segment's `count_weight = 1`.
+- **Stage 2B cruise** — one row per (R8 hex × flight-level bin × class ×
+  period × is_departure) bucket in `cruise.arrow`. `count_weight`
+  aggregates same-bucket flights so summing per-bucket energy ×
+  count_weight reconstructs annual energy.
+- **Stage 2C ground** — one row per (aircraft × contiguous ground path)
+  in `ground.arrow`, with per-leg `count_weight = 1 /
+  n_legs_of_this_kind_in_path` (see §5.2).
+
+The popup's `compute_aircraft_v6` consumes all three arrows directly via
+typed column views; popup is the only consumer of these per-R4 aircraft
+arrows. `date_id` is preserved on every row so per-day breakdowns stay
+reconstructable.
 
 ### Cross-hex visibility (ring-1 loading)
-Pipeline loads the target R4 hex plus its 6 H3 grid-disk ring-1 neighbors before
-filtering segments by target-hex bounding capsule. Popup uses the same data via
-bbox-indexed R-tree (not midpoint) so long/cross-hex segments are always found.
-Antimeridian-crossing segments (|Δlon| > 180°) are excluded from the R-tree to
-avoid degenerate global bboxes.
+The popup loads the target R4 hex plus its 6 H3 grid-disk ring-1
+neighbours so paths / sub-segments whose endpoints straddle the R4
+boundary stay visible. `compute_aircraft_v6` then prunes per row via
+vertex-bbox vs receiver distance: ground paths use
+`PATH_BBOX_PRUNE_RADIUS_M = LEG_PRUNE_RADIUS_M = 16 km` (matching
+`AIRCRAFT_MAX_HORIZONTAL_REACH_M`); airborne / cruise rows carry a
+pre-computed bbox from Stage 2A/2B and prune the same way.
+Antimeridian-crossing rows are excluded from the bbox prune to avoid
+degenerate global envelopes.
 
 ### Per-period energy
 ```
@@ -458,7 +469,17 @@ T_day = 43200s, T_evening = 14400s, T_night = 28800s
 ```
 
 ### Octave bands
-❌ BROADBAND ONLY. NPD returns single SEL value. Do not fabricate per-band data.
+**Airborne / cruise**: ❌ BROADBAND ONLY. Doc 29 NPD returns a single SEL
+value; per-band data is not fabricated for the airborne kernel. Path
+effects (Section 3) skip the per-band chain — the airborne kernel uses
+only NPD lookup + Δv/ΔI/Λ/ΔF and lateral attenuation, never terrain /
+screening / vegetation per band.
+
+**Ground ops**: 8-band emission via per-class spectrum templates
+(`GROUND_OPS_RUNWAY_SPECTRUM_SHAPE` / `GROUND_OPS_TAXI_SPECTRUM_SHAPE` /
+`GROUND_OPS_APRON_SPECTRUM_SHAPE` in `aircraft/ground_ops.rs`). Popup
+runs `propagate_variants_full` per leg with full Section 3 path effects
+on every band — see §5.2.
 
 ### Per-event peak Lmax (informational only)
 
@@ -468,7 +489,17 @@ The popup's per-flight `Lmax` and the band-classification thresholds (>30 / >45 
 Lmax_event = lookup_lmax(class_idx, is_departure, log10(d_p_ft))
 ```
 
-Implementation: `engine/noise-compute/src/lib.rs:1874` calls `NpdLuts::lookup_lmax`; the LUTs are built by `build_lmax_lut` in `engine/noise-compute/src/emission/aircraft.rs`. Inside the 200 ft – 25 000 ft NPD table the LUT log-linearly interpolates between adjacent NPD points; below 200 ft it extends the first-two-point slope; above 25 000 ft it extrapolates via spherical divergence (`−20·log10(d/d_ref)`) plus the per-profile `alpha_eff` for atmospheric absorption (same fit used for SEL, since LAmax and SEL share the same source spectrum). `peak_lmax` per flight = max across segments of `Lmax_event`.
+Implementation: `compute_aircraft_v6` (in
+`engine/noise-compute/src/compute/aircraft_v6/airborne.rs`) calls
+`NpdLuts::lookup_lmax`; the LUTs are built by `build_lmax_lut` in
+`engine/noise-compute/src/emission/aircraft/npd.rs`. Inside the
+200 ft – 25 000 ft NPD table the LUT log-linearly interpolates between
+adjacent NPD points; below 200 ft it extends the first-two-point slope;
+above 25 000 ft it extrapolates via spherical divergence
+(`−20·log10(d/d_ref)`) plus the per-profile `alpha_eff` for atmospheric
+absorption (same fit used for SEL, since LAmax and SEL share the same
+source spectrum). `peak_lmax` per flight = max across segments of
+`Lmax_event`.
 
 **What is dropped vs full Doc 29 Eq. 4-12**: ΔI (installation directivity) and Λ (lateral attenuation) are not applied to `Lmax_event` — only the NPD curve. Doc 29 applies them per segment to `Lmax,seg`, which would give a small additional reduction at low elevation angles for wing-mounted jets. For popup peak ranking and band-count thresholds the residual is < 2 dB; this is acceptable for an informational display and avoids a second per-segment kernel pass.
 
@@ -539,12 +570,37 @@ unobserved ground ops simply don't appear. Tier 3 backlog #4
 tracks the schedule-synth driver that would re-introduce a
 coverage-fill driver on top of curated schedules.
 
-Pipeline/output note:
-- batch tiles merge airborne + ground ops into one `aircraft` layer
-  (`source_type = 4`)
-- aircraft `.adj.bin` tiles are NOT currently emitted, even though
-  popup breakdown computes path-effect variants for airport ground
-  ops
+### 5.3 Aircraft contribution to confidence
+
+Per-source confidence scoring is cross-cutting; see
+`engine/noise-compute/src/confidence.rs` for the full
+`Confidence::assess` rubric (5 inputs, 0.3 base, +0.15 aircraft /
++0.20 traffic / +0.10 rail / +0.10 terrain / +0.10 buildings).
+
+Aircraft scoring has one quirk: `compute_at_point_inner` cannot see
+the popup arrows when it runs `Confidence::assess` (only the merged
+`NoiseResult` gets them via `add_v6_aircraft_to_result` later), so it
+hard-codes `has_aircraft = false`. The +0.15 bump and the removal of
+the `"Aircraft: no ADS-B data for this area"` note are therefore
+applied post-merge by `source-reader::aircraft_v6::add_v6_aircraft_to_result`
+when aircraft contributors actually land.
+
+### 5.4 Per-receiver SegmentTrace breakdown (popup output)
+
+The popup separates aircraft `SegmentTrace` rows into three sub-tabs
+via `aircraft_subtype: u8`:
+1. **Ground path** — one trace per ADS-B ground path; geometry =
+   polyline of vertices.
+2. **Airborne sub-segment** — one trace per Stage 2A sub-segment;
+   `received_lden` carries the single-event SEL.
+3. **Cruise R8 hex** — one trace aggregated per R8 cell crossed by
+   cruise traffic; geometry = R8 hex polygon, `received_lden` carries
+   `sel + 10·log10(density)` event-energy summary.
+
+`apply_segment_top_k_with_cap` (in `source-reader/src/lib.rs`) keeps a
+separate cap bucket per `aircraft_subtype` — the louder dB scale of
+one bucket (cruise event-energy) cannot crowd a quieter scale
+(airborne single-event SEL) out of the popup.
 
 ---
 
@@ -694,7 +750,7 @@ ISO 9613-2 point source.
 | **Aircraft NPD** | ~124 per-typecode profiles auto-generated from EASA ANP v2.3, 12 aircraft noise classes for bucket aggregation | Doc 29: official ANP database with full procedural-step profiles, weights, aerodynamic coefficients | ±1-2 dB per aircraft type for ANP-mapped types; similarity_fallback for unmapped typecodes (~70-80% of long-tail traffic) routes to closest anchor by engine type / size class. |
 | **Aircraft local time / ground filtering** | Per-coordinate IANA TZ lookup (tzf-rs + chrono-tz, DST-aware) + airport-context stale-ground filter | Operational studies use airport-local time (same principle) and curated trajectory cleaning | Near-runway behaviour can still be biased by trajectory-cleaning simplifications. |
 | **Aircraft ground ops** | Raw ADS-B trajectories per aircraft × contiguous ground run; nearest-aerodrome identity from `airport_areas.arrow`; per-leg `ops_kind` from speed/length classifier with smoothing pass | Airport studies usually use curated surface movement inventories and local operations data | Near-runway levels depend on ADS-B ground coverage; unobserved movements are not synthesised in v10 (was synth-fill pre-v10; deferred to a schedule-driven driver in Tier 3 backlog #4). |
-| **Aircraft tile adjustments** | Aircraft ground propagation could expose separate terrain / screening / vegetation variants | Batch `aircraft` tiles currently bake ground-ops path effects into final Lden and do not emit `.adj.bin` | Map propagation toggles cannot isolate aircraft ground-ops attenuation separately. |
+| **Aircraft batch tiles** | No batch tile pipeline; popup is the only consumer of the per-R4 aircraft arrows. | Operational studies expect server-side batch tile generation with toggleable propagation breakdown. | Map propagation toggles cannot isolate aircraft path-effect components separately at tile resolution; popup `traces` exposes them per-leg / per-sub-segment. |
 | **Bridge/tunnel** | Bridge G=0, tunnel skip | No standard specifies this directly | Physically correct — bridge is hard surface, tunnel contains sound. |
 | **Oneway roads** | AADT × 0.5 | No standard | Approximation: one-way carries ~50% of two-way equivalent. |
 | **Private / service access heuristics** | Private roads ×0.1, service rail ×0.02 | No standard | Atlas-scale approximation where access restrictions imply low traffic. |

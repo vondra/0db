@@ -45,9 +45,9 @@ pub const ICAO_RESERVED_ANON: u32 = 0xFFFFFF;
 /// Process-wide counter for ADS-B traces dropped at the segmentation
 /// boundary because the ICAO field is missing, malformed, or reserved
 /// (anonymous / fictitious), or the start timestamp is zero. Bumped silently
-/// on every drop in `aircraft-tracks` and `adsb-to-h3r4` segmentation paths;
-/// extraction binaries should read this counter at end-of-run and log the
-/// total to keep upstream feed regressions visible without per-trace spam.
+/// in the `aircraft-extract` segmentation path; extraction binaries should
+/// read this counter at end-of-run and log the total to keep upstream feed
+/// regressions visible without per-trace spam.
 pub static INVALID_TRACE_DROPS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
