@@ -227,11 +227,21 @@ MANUAL_PROFILES: dict[str, tuple[list[float], list[float], float, float, str, bo
         [91.0, 86.0, 82.0, 78.0, 71.0, 64.0, 59.0, 53.0, 47.0, 41.0],
         110.0, 220.0, "Prop", False,
     ),
-    # Helicopters: dominated by main-rotor blade-vortex interaction.
-    # Slower roll-off than fixed-wing prop. R44/EC135 typical.
+    # Helicopter NPD anchored at energy-mean of 64.2M global heli events
+    # (88 dB SEL @ 1000 ft) computed from scripts/aircraft-profiles-counts.json.
+    # Curve shape: MV-22 helicopter-mode AAM NPD (ACRP02-44 Table 4-7,
+    # https://onlinepubs.trb.org/onlinepubs/acrp/docs/ACRP02-44_FR.pdf) —
+    # closest publicly-tabulated rotorcraft per-distance NPD; represents
+    # heavy-rotorcraft slope. Raw MV-22 = [100.6, 97.2, 94.8, 92.3, 87.9,
+    # 82.5, 78.7, 74.0, 68.0, 61.2] dB @ [200, 400, 630, 1000, 2000, 4000,
+    # 6300, 10000, 16000, 25000] ft, uniformly shifted -4.3 dB → level-flight
+    # curve.  Approach = level + 3 dB (BVI uplift; ACRP02-44 lines 973-977
+    # document 3-6 dB BVI rise above level flight).  Departure = level +
+    # 1 dB (climb power).  Approach LOUDER than departure for helicopters —
+    # opposite of fixed-wing turbofans, do not "fix" by reversing.
     "HELICOPTER": (
-        [92.0, 88.0, 85.0, 82.0, 76.0, 70.0, 65.0, 59.0, 53.0, 47.0],
-        [94.0, 90.0, 87.0, 84.0, 78.0, 72.0, 67.0, 61.0, 55.0, 49.0],
+        [99.3, 95.9, 93.5, 91.0, 86.6, 81.2, 77.4, 72.7, 66.7, 59.9],
+        [97.3, 93.9, 91.5, 89.0, 84.6, 79.2, 75.4, 70.7, 64.7, 57.9],
         100.0, 230.0, "Prop", False,
     ),
     # PC-24 placeholder (no ANP entry). Light bizjet, fuselage-mounted.
