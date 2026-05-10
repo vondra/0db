@@ -422,38 +422,52 @@ terrain. Airport-ground segments bypass the filter. Full rationale (geometry,
 
 ### Shared kernel approximations
 
-The popup and the pipeline batch path use the same Doc 29 kernel
-(`segment_energy_kernel`); see its rustdoc for the four approximations
-(NPD via 128-bin LUT, ΔF via `fast_delta_f`, Λ via `fast_lateral_attenuation`,
-ΔI via inline `u²/v²`) and the < 0.15 dB per-segment combined error.
+`compute_aircraft_v6` runs the same Doc 29 kernel
+(`segment_energy_kernel` in `aircraft/doc29.rs`) on every airborne sub-
+segment and every cruise synthetic segment; see its rustdoc for the
+four approximations (NPD via 128-bin LUT, ΔF via `fast_delta_f`, Λ via
+`fast_lateral_attenuation`, ΔI via inline `u²/v²`) and the < 0.15 dB
+per-segment combined error.
 
 ### Cross-flight aggregation
 
 Aggregation happens at the `aircraft-extract` Stage 2A/2B/2C boundary,
 producing three popup arrows per R4:
-- **Stage 2A airborne** — one row per (flight × ADS-B sub-segment) in
-  `airborne.arrow`, with the segment's `count_weight = 1`.
-- **Stage 2B cruise** — one row per (R8 hex × flight-level bin × class ×
-  period × is_departure) bucket in `cruise.arrow`. `count_weight`
-  aggregates same-bucket flights so summing per-bucket energy ×
-  count_weight reconstructs annual energy.
-- **Stage 2C ground** — one row per (aircraft × contiguous ground path)
-  in `ground.arrow`, with per-leg `count_weight = 1 /
-  n_legs_of_this_kind_in_path` (see §5.2).
+- **Stage 2A airborne** — one row per (flight × R4 crossing) in
+  `airborne.arrow`, with `sub_segments: List<Struct>` carrying per-
+  sub-segment `period` / `date_id` / `flags` so a long crossing that
+  straddles 19:00 still buckets into the right period. Each row also
+  carries a precomputed `bbox_min/max_lat/lon` envelope.
+- **Stage 2B cruise** — one row per (R8 hex × flight-level bin × class
+  × period × is_departure) bucket in `cruise.arrow`. `sum_length_m /
+  rep_len_m` gives effective flight density at compute time;
+  `cruise_flight_ids: List<UInt64>` lists the unique flights that
+  contributed so the popup can dedupe across R8 cells. Cruise is
+  intentionally annual-only — there is no `date_id` field.
+- **Stage 2C ground** — one row per (aircraft × contiguous ground
+  path) in `ground.arrow`, with per-leg `count_weight = 1 /
+  n_legs_of_this_kind_in_path` (see §5.2). `vertices` carry per-vertex
+  `period` / `date_id` so per-day breakdowns stay reconstructable for
+  ground.
 
-The popup's `compute_aircraft_v6` consumes all three arrows directly via
-typed column views; popup is the only consumer of these per-R4 aircraft
-arrows. `date_id` is preserved on every row so per-day breakdowns stay
-reconstructable.
+The popup's `compute_aircraft_v6` consumes all three arrows directly
+via typed column views; popup is the only consumer of these per-R4
+aircraft arrows.
 
 ### Cross-hex visibility (ring-1 loading)
 The popup loads the target R4 hex plus its 6 H3 grid-disk ring-1
-neighbours so paths / sub-segments whose endpoints straddle the R4
-boundary stay visible. `compute_aircraft_v6` then prunes per row via
-vertex-bbox vs receiver distance: ground paths use
-`PATH_BBOX_PRUNE_RADIUS_M = LEG_PRUNE_RADIUS_M = 16 km` (matching
-`AIRCRAFT_MAX_HORIZONTAL_REACH_M`); airborne / cruise rows carry a
-pre-computed bbox from Stage 2A/2B and prune the same way.
+neighbours so paths / segments straddling the R4 boundary stay
+visible. `compute_aircraft_v6` then prunes per row, with a different
+prefilter shape per arrow:
+- **Ground paths** — vertex-bbox vs receiver distance using
+  `PATH_BBOX_PRUNE_RADIUS_M = LEG_PRUNE_RADIUS_M = 16 km` (matching
+  `AIRCRAFT_MAX_HORIZONTAL_REACH_M` in `aircraft/npd.rs`).
+- **Airborne sub-segments** — per-row `bbox_min/max_lat/lon` (baked at
+  Stage 2A) compared against the receiver envelope.
+- **Cruise R8 buckets** — receiver-to-R8-cell-centre distance vs
+  `AIRCRAFT_MAX_HORIZONTAL_REACH_M + half_diagonal` (no per-row bbox;
+  R8 cell radius bounds the half-diagonal).
+
 Antimeridian-crossing rows are excluded from the bbox prune to avoid
 degenerate global envelopes.
 
@@ -490,8 +504,9 @@ Lmax_event = lookup_lmax(class_idx, is_departure, log10(d_p_ft))
 ```
 
 Implementation: `compute_aircraft_v6` (in
-`engine/noise-compute/src/compute/aircraft_v6/airborne.rs`) calls
-`NpdLuts::lookup_lmax`; the LUTs are built by `build_lmax_lut` in
+`engine/noise-compute/src/compute/aircraft_v6/mod.rs`) delegates to
+`airborne::scatter` and `cruise::scatter`, which call
+`NpdLuts::lookup_lmax`. The LUTs are built by `build_lmax_lut` in
 `engine/noise-compute/src/emission/aircraft/npd.rs`. Inside the
 200 ft – 25 000 ft NPD table the LUT log-linearly interpolates between
 adjacent NPD points; below 200 ft it extends the first-two-point slope;

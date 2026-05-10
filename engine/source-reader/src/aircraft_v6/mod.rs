@@ -28,7 +28,8 @@ use ground_view::GroundRowAccum;
 /// into an existing `NoiseResult`. Caller is expected to have invoked
 /// `compute_at_point_with_traces` first.
 ///
-/// Returns `Err(String)` when any aircraft.arrow file fails the v10
+/// Returns `Err(String)` when any of the three popup arrows
+/// (`airborne.arrow` / `cruise.arrow` / `ground.arrow`) fails the v10
 /// schema check, so the popup HTTP path can map the failure to a
 /// structured 500 response with an operator-actionable message instead
 /// of crashing the worker via `assert!`.

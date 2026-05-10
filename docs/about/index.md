@@ -158,7 +158,7 @@ Source height: 0.5 m (CNOSSOS-EU §2.7.1, wheel-rail contact).
 
 ### Aircraft
 
-The aircraft layer combines two models: airborne overflights from ADS-B radar trajectories, processed through NPD (Noise-Power-Distance) profiles inspired by ECAC Doc 29, and airport ground operations (runway roll, taxi, apron movement) extracted directly from low-altitude / on-ground ADS-B trajectories with the nearest mapped aerodrome attached for identity. The map shows both together; the popup splits them into airborne and ground ops.
+The aircraft layer combines two models: airborne overflights from ADS-B radar trajectories, processed through NPD (Noise-Power-Distance) profiles inspired by ECAC Doc 29, and airport ground operations (runway roll, taxi, apron movement) extracted directly from low-altitude / on-ground ADS-B trajectories with the nearest mapped aerodrome attached for identity. The map shows everything together; the popup splits aircraft into three tabs — ground paths, airborne sub-segments, and cruise hexes.
 
 - **Data:** ADS-B trajectories from [adsb.lol](https://adsb.lol) (full year, all altitudes) + aerodrome polygons from OpenStreetMap (used only to label which airport a ground path belongs to — no snap onto runway / taxi / apron geometry)
 - **~124 per-typecode aircraft profiles** auto-generated from EASA ANP v2.3 (Aircraft Noise and Performance database) — covers Boeing 737/747/757/767/777/787, Airbus A319/A320/A321/A330/A340/A350/A380, Embraer E-Jets, ATR, Dash 8, plus light GA and helicopter placeholders for types not in ANP
@@ -198,6 +198,8 @@ Auto-generated from EASA ANP v2.3 (+ v9 supplement for modern types). Approach v
 Airport-aware filtering removes obvious off-airport taxi remnants from ADS-B traces, but this is still not a certified airport ground-noise model.
 
 **Airport ground ops:** Low-altitude or on-ground ADS-B segments are grouped per aircraft into contiguous ground paths (one path = one taxi-and-takeoff or land-and-taxi sweep). The path's vertices are the actual ADS-B trajectory; a per-leg `ops_kind` (runway / taxi / apron) is derived from leg speed and length and smoothed to absorb runway-hold pauses. The nearest mapped aerodrome within ~3 km of the path centroid contributes the airport label; paths far from any aerodrome fall into an anonymous strip cluster keyed off the H3 res-7 cell. Each leg is a Section 3 line source with terrain, screening, vegetation and ground attenuation. Energy is normalised across same-kind legs of one path so summing the legs reconstructs one movement's contribution; runway-roll departure picks up Doc 29's +2 dB.
+
+**Popup tabs:** the popup splits aircraft into three tabs — *Ground* (one row per ADS-B ground path), *Airborne* (one row per Stage 2A sub-segment showing single-event SEL), and *Cruise* (one row per crossed H3 res-8 hex with aggregated event-energy across all flights).
 
 **Lden:** Per-period (day 12h, evening 4h +5 dB, night 8h +10 dB), standard [END 2002/49/EC](../standards/end-2002-49-ec.pdf).
 

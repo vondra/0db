@@ -23,7 +23,7 @@
 //! - **Reversible**: popup unpacks `icao_hex` for hexdb.io / globe.adsb.lol
 //!   links, and exact `start_unix` for tooltips. The previous FNV-1a hash was
 //!   one-way.
-//! - **Same u64 footprint**: per-row cost in `aircraft.arrow` unchanged.
+//! - **Same u64 footprint**: per-row cost in the popup arrows unchanged.
 //! - **Synthetic bit**: distinguishes ADS-B-backed flights from
 //!   surface-bucket / cruise-aggregate synthesis without a magic numeric
 //!   range (replaces `SURFACE_FLIGHT_ID_BASE`).
@@ -150,7 +150,7 @@ mod tests {
     }
 
     /// Locks the bit layout against accidental shift/mask changes — the
-    /// concrete u64 must stay stable since it's persisted in `aircraft.arrow`.
+    /// concrete u64 must stay stable since it's persisted in the popup arrows.
     #[test]
     fn pack_real_layout_is_stable() {
         // 0x4B1805 << 40 = 0x4B_1805_0000_0000_0000
