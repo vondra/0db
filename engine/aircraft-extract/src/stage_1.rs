@@ -21,18 +21,17 @@ use noise_compute::types::RasterSampler;
 use raster_reader::RealRasters;
 
 /// Run Stage 1 for one day. Reads `input_dir/<day>.arrow`, writes
-/// `output_dir/<day>.arrow`. `prepared_dir` is the `data/prepared/`
-/// root from which `RealRasters` finds the DEM tiles.
+/// `output_dir/<day>.arrow`. Caller owns `rasters` so multi-day
+/// orchestration can share one tile cache across days.
 pub fn run_stage_1(
     input_dir: &Path,
     output_dir: &Path,
     day_str: &str,
-    prepared_dir: &Path,
+    rasters: &RealRasters,
 ) -> Result<usize> {
     let in_path = input_dir.join(format!("{day_str}.arrow"));
     let flights = read_flights(&in_path)
         .with_context(|| format!("read flights {}", in_path.display()))?;
-    let rasters = RealRasters::new(prepared_dir);
     let date_id = parse_date_id(day_str);
 
     // Pre-load DEM tiles covering the flight bbox so per-point lookups
@@ -211,11 +210,12 @@ mod tests {
             vec![Box::new(AdsbTarSource::new(cache))];
         crate::stage_0::run_stage_0(&sources, "2025-01-21", &stage0_dir).unwrap();
 
+        let rasters = RealRasters::new(std::path::Path::new(prepared));
         let n = run_stage_1(
             &stage0_dir,
             &stage1_dir,
             "2025-01-21",
-            std::path::Path::new(prepared),
+            &rasters,
         )
         .unwrap();
         assert!(n > 1000, "got only {n} segments");

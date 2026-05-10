@@ -15,8 +15,9 @@ use std::path::Path;
 
 use crate::flight::Flight;
 
-/// One pluggable flight data source for Stage 0.
-pub trait FlightSource {
+/// One pluggable flight data source for Stage 0. `Send + Sync` so
+/// trait objects can be shared across rayon worker threads.
+pub trait FlightSource: Send + Sync {
     /// Stable identifier — see `flight::source_id::*`.
     fn source_id(&self) -> u8;
 

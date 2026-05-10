@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand};
 
 use aircraft_extract::airport_io::read_global_airports;
 use aircraft_extract::arrow_io::read_record_batches;
+use aircraft_extract::flight::FlightSegment;
 use aircraft_extract::source::FlightSource;
 use aircraft_extract::source_adsb_tar::AdsbTarSource;
 use aircraft_extract::stage_0::run_stage_0;
@@ -18,6 +19,9 @@ use aircraft_extract::stage_1::{read_flights, run_stage_1};
 use aircraft_extract::stage_2a::run_stage_2a;
 use aircraft_extract::stage_2b::run_stage_2b;
 use aircraft_extract::stage_2c::run_stage_2c;
+use raster_reader::RealRasters;
+use rayon::iter::Either;
+use rayon::prelude::*;
 
 #[derive(Parser)]
 #[command(name = "aircraft-extract", about = "Aircraft pipeline driver")]
@@ -104,7 +108,8 @@ fn main() -> Result<()> {
         }
         Cmd::Stage1 { flights_dir, out, day, prepared_dir } => {
             std::fs::create_dir_all(&out)?;
-            let n = run_stage_1(&flights_dir, &out, &day, &prepared_dir)?;
+            let rasters = RealRasters::new(&prepared_dir);
+            let n = run_stage_1(&flights_dir, &out, &day, &rasters)?;
             eprintln!("[stage1] {day}: {n} segments");
         }
         Cmd::Stage2a { segments, h3r4_dir, n_days } => {
@@ -144,32 +149,55 @@ fn main() -> Result<()> {
             std::fs::create_dir_all(&flights_dir)?;
             std::fs::create_dir_all(&segments_dir)?;
 
+            // Dedup before par_iter — Stage 0/1 write fixed paths
+            // (flights/<day>.arrow, segments/<day>.arrow) per day, so
+            // duplicates would race on the same output file.
+            let mut days_dedup = days.clone();
+            days_dedup.sort();
+            days_dedup.dedup();
+            if days_dedup.len() != days.len() {
+                eprintln!(
+                    "[run-all] duplicate days dropped: {} → {} unique",
+                    days.len(),
+                    days_dedup.len()
+                );
+            }
+            let days = days_dedup;
+
             let sources: Vec<Box<dyn FlightSource>> =
                 vec![Box::new(AdsbTarSource::new(&adsb_cache))];
             let n_days = days.len() as u16;
-            let mut all_segments = Vec::new();
+
+            // Shared instance — TileStore is per-slot Mutex +
+            // Arc<RawTile>, safe to fan out under par_iter.
+            let rasters = RealRasters::new(&prepared_dir);
+
             // Per-day error tolerance: one corrupted TAR or DEM miss
-            // must not throw away the other 364 days' Stage 0+1 work.
+            // must not throw away the other days' Stage 0+1 work.
             // Failed days are listed at the end so the operator can
             // rerun with `--days <failed,…>`.
-            let mut failed_days: Vec<String> = Vec::new();
-            for day in &days {
-                match run_day(day, &sources, &flights_dir, &segments_dir, &prepared_dir) {
-                    Ok(()) => match aircraft_extract::arrow_io::read_segments(
-                        &segments_dir.join(format!("{day}.arrow")),
-                    ) {
-                        Ok(segs) => all_segments.extend(segs),
+            let (segs_per_day, failed_days): (Vec<Vec<FlightSegment>>, Vec<String>) = days
+                .par_iter()
+                .partition_map(|day| {
+                    match run_day(day, &sources, &flights_dir, &segments_dir, &rasters) {
+                        Ok(()) => match aircraft_extract::arrow_io::read_segments(
+                            &segments_dir.join(format!("{day}.arrow")),
+                        ) {
+                            Ok(segs) => Either::Left(segs),
+                            Err(e) => {
+                                eprintln!("[run-all] {day}: FAILED to read segments — {e}");
+                                Either::Right(day.clone())
+                            }
+                        },
                         Err(e) => {
-                            eprintln!("[run-all] {day}: FAILED to read segments — {e}");
-                            failed_days.push(day.clone());
+                            eprintln!("[run-all] {day}: FAILED stage0/1 — {e}, skipping");
+                            Either::Right(day.clone())
                         }
-                    },
-                    Err(e) => {
-                        eprintln!("[run-all] {day}: FAILED stage0/1 — {e}, skipping");
-                        failed_days.push(day.clone());
                     }
-                }
-            }
+                });
+
+            let all_segments: Vec<FlightSegment> =
+                segs_per_day.into_iter().flatten().collect();
             if !failed_days.is_empty() {
                 eprintln!(
                     "[run-all] {} day(s) failed: {} — Stage 2 runs on the rest; rerun with --days {} to retry",
@@ -184,7 +212,6 @@ fn main() -> Result<()> {
             let t2b = Instant::now();
             let r2b = run_stage_2b(&all_segments, &h3r4_dir, n_days)?;
             let t2c = Instant::now();
-            let rasters = raster_reader::RealRasters::new(&prepared_dir);
             let areas = read_global_airports(&h3r4_dir)?;
             eprintln!(
                 "[run-all] stage2c airports: {} aerodrome polygons",
@@ -211,12 +238,12 @@ fn run_day(
     sources: &[Box<dyn FlightSource>],
     flights_dir: &Path,
     segments_dir: &Path,
-    prepared_dir: &Path,
+    rasters: &RealRasters,
 ) -> Result<()> {
     let t0 = Instant::now();
     let n0 = run_stage_0(sources, day, flights_dir)?;
     let t_stage0 = Instant::now();
-    let n1 = run_stage_1(flights_dir, segments_dir, day, prepared_dir)?;
+    let n1 = run_stage_1(flights_dir, segments_dir, day, rasters)?;
     eprintln!(
         "[run-all] {day}: stage0={n0} ({:?}) stage1={n1} ({:?})",
         t_stage0 - t0,
