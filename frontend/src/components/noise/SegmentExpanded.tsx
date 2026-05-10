@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { CruiseHexTopFlight, SegmentTrace } from '../../types/noise'
-import { fmtFloat } from '../../utils/formatters'
+import { fmtFloat, globeAdsbTraceHref, metersToKm, unixToIsoDate } from '../../utils/formatters'
+import { aircraftFlightTooltip } from '../../utils/aircraft-types'
 import { ldenToColor } from '../../utils/noise-colors'
 import { HoverText } from '../ui/info-tip'
 import { PathProfileDiagram } from './PathProfileDiagram'
@@ -101,31 +102,71 @@ function Section1Source({ trace }: { trace: SegmentTrace }) {
 // hexes get a separate block under the key-value rows.
 function CruiseLoudestFlights({ tops }: { tops: CruiseHexTopFlight[] }) {
   return (
-    <div className="mt-1.5">
-      <div className="text-muted-foreground/70 mb-0.5">Loudest flights</div>
-      <table className="text-[10px] [&_th]:font-normal [&_th]:text-left [&_td]:text-left">
+    <div className="mt-2 -mx-1">
+      <div className="font-medium mt-2 mb-0.5 text-foreground/70 text-[10px] px-1">
+        <HoverText title={"Top flights in this R8 hex\n\nThe loudest individual ADS-B flights that crossed this cruise cell, ranked by peak A-weighted Lmax. Cruise buckets aggregate many flights — this table picks the top 5 by peak.\n\nDate + time are the flight's first ADS-B sample (≈ takeoff time, UTC), not the moment over this cell. Per-hex aggregation drops per-sample timing."}>
+          Top flights
+        </HoverText>
+      </div>
+      <table className="w-full text-[10px] [&_th]:pl-2 [&_td]:pl-2 [&_:first-child]:pl-1">
         <thead>
-          <tr className="text-muted-foreground/60">
-            <th className="text-right pr-1.5">Lmax</th>
-            <th className="text-right pr-1.5">Alt</th>
-            <th className="pl-1">Aircraft</th>
-            <th className="pl-2">When (UTC)</th>
+          <tr className="text-muted-foreground/60 [&_th]:font-normal [&_th]:pb-0.5">
+            <th className="text-right">
+              <HoverText title={"Peak A-weighted SPL during this flyover.\n\nLooked up from per-class LAmax NPD tables. Informational display only — the Lden total uses SEL, not Lmax."}>
+                Lmax
+              </HoverText>
+            </th>
+            <th className="text-right">
+              <HoverText title={"Aircraft altitude above receiver during peak encounter in this hex.\nDerived from the cruise bucket's representative altitude at the loudest cell crossing."}>
+                Alt(km)
+              </HoverText>
+            </th>
+            <th className="text-right">
+              <HoverText title={"Date + time (UTC) of the flight's first ADS-B sample.\nThis is ≈ takeoff time, not the moment over this hex — Stage 2B cruise aggregates drop per-sample timing."}>
+                Date
+              </HoverText>
+            </th>
+            <th className="text-right">
+              <HoverText title={"Aircraft type + identity\n\nCell shows the 4-letter ICAO designator (B738, A320, …); hover for the full model + ICAO 24-bit hex address. Click to open the trace on globe.adsb.lol."}>
+                Aircraft
+              </HoverText>
+            </th>
           </tr>
         </thead>
         <tbody>
-          {tops.map((f, i) => (
-            <tr key={i}>
-              <td className="text-right pr-1.5 tabular-nums">{f.lmax_db.toFixed(1)}</td>
-              <td className="text-right pr-1.5 tabular-nums">{Math.round(f.altitude_m)} m</td>
-              <td className="pl-1">
-                {f.aircraft_type || '—'}
-                {f.callsign && <span className="text-muted-foreground/60"> · {f.callsign}</span>}
-              </td>
-              <td className="pl-2 text-muted-foreground/60 tabular-nums">
-                {f.date ? f.date.slice(5) : '—'} {f.time_utc ? f.time_utc.slice(0, 5) : ''}
-              </td>
-            </tr>
-          ))}
+          {tops.map((f, i) => {
+            const typecode = f.aircraft_type || 'Unknown'
+            const hex = f.icao_hex || null
+            const aircraftTooltipText = aircraftFlightTooltip({
+              typecode,
+              callsign: f.callsign,
+              icaoHex: hex,
+            })
+            const globeHref = hex && f.date ? globeAdsbTraceHref(hex, f.date) : null
+            const dateCell = `${f.date ? f.date.slice(5) : '—'} ${f.time_utc ? f.time_utc.slice(0, 5) : ''}`
+            const dateTooltip = `${f.date || '?'} ${f.time_utc || ''} UTC (flight start)`
+            return (
+              <tr key={i} className="[&_td]:text-right">
+                <td className="font-medium">{f.lmax_db.toFixed(0)}&nbsp;dB</td>
+                <td>{metersToKm(f.altitude_m)}</td>
+                <td className="text-muted-foreground/80 tabular-nums whitespace-nowrap">
+                  <HoverText title={dateTooltip}>{dateCell}</HoverText>
+                </td>
+                <td className="whitespace-nowrap">
+                  <HoverText title={aircraftTooltipText}>
+                    {globeHref ? (
+                      <a href={globeHref} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                        {typecode}
+                      </a>
+                    ) : (
+                      typecode
+                    )}
+                    {f.callsign && <span className="text-muted-foreground/60"> · {f.callsign}</span>}
+                  </HoverText>
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -298,10 +339,28 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
       return rows
     }
     case 'aircraft_airborne': {
+      // Callsign is the discoverable click target — users recognize callsigns
+      // ("TVS100P") more readily than 6-hex ICAO addresses, so the globe.adsb.lol
+      // trace link hangs off the callsign value and the ICAO hex lives in the
+      // hover tooltip instead of consuming a row of its own. Synthetic (empty
+      // icao_hex) fids stay plain text — no transponder hex = no globe deep-link.
+      const callsignText = e.callsign || '—'
+      let callsignValue: React.ReactNode = callsignText
+      if (e.icao_hex) {
+        const date = e.start_unix != null ? unixToIsoDate(e.start_unix) : null
+        const tooltip = `ICAO hex: ${e.icao_hex.toUpperCase()}\nClick to open trace on globe.adsb.lol`
+        callsignValue = (
+          <HoverText title={tooltip}>
+            <a href={globeAdsbTraceHref(e.icao_hex, date)} target="_blank" rel="noopener noreferrer" className="hover:underline">
+              {callsignText}
+            </a>
+          </HoverText>
+        )
+      }
       return [
-        ['Class', e.class],
-        ['Callsign', e.callsign || '—'],
+        ['Callsign', callsignValue],
         ['Aircraft', e.aircraft_type || '—'],
+        ['Class', e.class],
         ['CPA distance', `${Math.round(e.cpa_distance_m)} m`],
         ['Altitude at CPA', `${Math.round(e.altitude_m_at_cpa)} m`],
       ]

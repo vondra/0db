@@ -140,7 +140,7 @@ export function SegmentList({
                     : 'text-muted-foreground/40 line-through hover:text-foreground'
               }`}
             >
-              {label} <span className="tabular-nums opacity-60">{kindCount}</span>
+              {label}
             </button>
           )
         })}

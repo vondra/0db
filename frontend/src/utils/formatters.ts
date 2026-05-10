@@ -48,6 +48,23 @@ export function metersToKm(m: number, digits = 2): string {
   return (m / 1000).toFixed(digits)
 }
 
+/** Unix seconds → "YYYY-MM-DD" (UTC). Used for globe.adsb.lol trace
+ *  deep-links whose `showTrace=` query parameter expects an ISO date. */
+export function unixToIsoDate(unix: number): string {
+  return new Date(unix * 1000).toISOString().slice(0, 10)
+}
+
+/** globe.adsb.lol trace deep-link for an ICAO 24-bit hex. When `date`
+ *  ("YYYY-MM-DD") is supplied the link opens that day's trace; otherwise
+ *  it opens the aircraft's current/recent track. Hex is uppercased for
+ *  display consistency — the adsb.lol query is case-insensitive. */
+export function globeAdsbTraceHref(icaoHex: string, date?: string | null): string {
+  const hex = icaoHex.toUpperCase()
+  return date
+    ? `https://globe.adsb.lol/?icao=${hex}&showTrace=${date}`
+    : `https://globe.adsb.lol/?icao=${hex}`
+}
+
 /**
  * Build a 2-column table-like text block for native title= tooltips.
  * Renders with monospace columns: label padded, value right-aligned.

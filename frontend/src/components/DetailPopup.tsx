@@ -3,8 +3,8 @@ import { useMap, Source, Layer } from 'react-map-gl/maplibre'
 import { ldenToColor } from '../utils/noise-colors'
 import { MetricLabel, DataPoint } from './noise/noise-tooltips'
 import { HoverText } from './ui/info-tip'
-import { fmt, fmtDb, fmtDbValue, fmtFloat, fmtInt, fmtCompact, metersToKm, txtTable, type TableRow } from '../utils/formatters'
-import { aircraftTooltip, classToAnchorTypecode, parseProfileName } from '../utils/aircraft-types'
+import { fmt, fmtDb, fmtDbValue, fmtFloat, fmtInt, fmtCompact, globeAdsbTraceHref, metersToKm, txtTable, unixToIsoDate, type TableRow } from '../utils/formatters'
+import { aircraftFlightTooltip, aircraftTooltip, classToAnchorTypecode, parseProfileName } from '../utils/aircraft-types'
 import { formatDist, lineRow, railTrainSourceLine, roadSourceDescription, SOURCE_LABELS, subtypeLabel } from './noise/shared'
 import { SegmentList } from './noise/SegmentList'
 import { TabStrip, type PopupTab } from './noise/TabStrip'
@@ -76,28 +76,35 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
             const dateTooltip = exactTime
               ? `${exactTime} (flight start)\n${PERIOD_LABELS_DETAIL[f.period] ?? '?'}`
               : `${f.date}\n${PERIOD_LABELS_DETAIL[f.period] ?? '?'}`
-            const aircraftTooltipText = (() => {
-              const base = aircraftTooltip(rawTypecode)
-              if (icaoHex && !isSynth) return `${base}\n\nICAO hex: ${icaoHex}\nClick to open trace on globe.adsb.lol`
-              if (isSynth) return `${base}\n\nSynthetic id — anonymous-transponder trace or cruise R8 bucket aggregate; no single per-flight identity`
-              return base
-            })()
-            const globeHref = icaoHex && !isSynth && f.date
-              ? `https://globe.adsb.lol/?icao=${icaoHex}&showTrace=${f.date}`
+            const aircraftTooltipText = aircraftFlightTooltip({
+              typecode: rawTypecode,
+              callsign: f.callsign,
+              icaoHex: !isSynth ? icaoHex : null,
+              synthetic: isSynth,
+            })
+            // `start_unix` is the flight's first ADS-B sample (≈ takeoff
+            // UTC). globe.adsb.lol indexes traces by takeoff date, so an
+            // overnight flight peaking after 00:00 UTC would deep-link to
+            // the wrong day if we used `f.date` (peak overflight UTC date).
+            const traceDate = f.start_unix != null
+              ? unixToIsoDate(f.start_unix)
+              : f.date
+            const globeHref = icaoHex && !isSynth && traceDate
+              ? globeAdsbTraceHref(icaoHex, traceDate)
               : null
             return (
               <tr key={i} className="[&_td]:text-right">
                 <td className="font-medium">{f.lmax_db.toFixed(0)}&nbsp;dB</td>
                 <td>{metersToKm(f.cpa_distance_m)}</td>
                 <td>{metersToKm(f.altitude_m)}</td>
-                <td style={periodColor ? { color: periodColor } : undefined}>
+                <td className="whitespace-nowrap" style={periodColor ? { color: periodColor } : undefined}>
                   {detailed ? (
                     <HoverText title={dateTooltip}>
                       {dateShort} {periodLetter}
                     </HoverText>
                   ) : `${dateShort} ${periodLetter}`}
                 </td>
-                <td>
+                <td className="whitespace-nowrap">
                   <HoverText title={aircraftTooltipText}>
                     {globeHref ? (
                       <a href={globeHref} target="_blank" rel="noopener noreferrer" className="hover:underline">

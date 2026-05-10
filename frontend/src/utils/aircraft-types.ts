@@ -174,3 +174,29 @@ export function aircraftTooltip(typecode: string, className?: string | null): st
   }
   return lines.join('\n')
 }
+
+/**
+ * Top-flight cell tooltip — `aircraftTooltip` (type/class/NPD) plus the
+ * per-flight identity block (callsign + ICAO hex + globe.adsb.lol hint
+ * when the row is clickable). For synthetic ids (anonymous transponder
+ * or cruise R8 aggregate) the identity block degrades to a single
+ * "Synthetic id" line so the table doesn't show empty hex / phantom
+ * "click to open trace" hints. Used by both `TopFlightsTable`
+ * (DetailPopup) and `CruiseLoudestFlights` (SegmentExpanded).
+ */
+export function aircraftFlightTooltip(opts: {
+  typecode: string
+  callsign?: string | null
+  icaoHex?: string | null
+  synthetic?: boolean
+}): string {
+  const base = aircraftTooltip(opts.typecode)
+  if (opts.synthetic) {
+    return `${base}\n\nSynthetic id — anonymous-transponder trace or cruise R8 bucket aggregate; no single per-flight identity`
+  }
+  const csLine = opts.callsign ? `\nCallsign: ${opts.callsign}` : ''
+  if (opts.icaoHex) {
+    return `${base}${csLine}\n\nICAO hex: ${opts.icaoHex.toUpperCase()}\nClick to open trace on globe.adsb.lol`
+  }
+  return `${base}${csLine}`
+}

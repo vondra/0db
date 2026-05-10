@@ -488,6 +488,11 @@ export type EmissionTrace =
       aircraft_type: string
       cpa_distance_m: number
       altitude_m_at_cpa: number
+      /** Empty for synthetic (anonymous-transponder) fids. */
+      icao_hex: string
+      /** Flight start (Unix s); `null` for synthetic. UI derives the
+       *  YYYY-MM-DD date for the globe.adsb.lol trace deep-link. */
+      start_unix: number | null
     }
   | {
       kind: 'aircraft_cruise'

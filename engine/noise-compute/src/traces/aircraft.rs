@@ -178,6 +178,7 @@ pub struct BuildAircraftAirborneSubSegmentTrace<'a> {
     pub callsign: &'a str,
     pub aircraft_type: &'a [u8; 4],
     pub class_name: &'static str,
+    pub flight_id: u64,
     pub start_lat: f64,
     pub start_lon: f64,
     pub end_lat: f64,
@@ -196,6 +197,7 @@ pub fn build_aircraft_airborne_subsegment_trace(
 ) -> SegmentTrace {
     let typecode_str = typecode_to_string(inputs.aircraft_type);
     let variants = aircraft_period_variants(inputs.period_energies, inputs.n_days);
+    let (icao_hex, start_unix) = crate::flight_id::icao_hex_and_start_unix(inputs.flight_id);
     SegmentTrace {
         kind: LayerKind::Aircraft,
         osm_id: None,
@@ -224,6 +226,8 @@ pub fn build_aircraft_airborne_subsegment_trace(
             aircraft_type: typecode_str,
             cpa_distance_m: inputs.cpa_distance_m,
             altitude_m_at_cpa: inputs.altitude_m_at_cpa,
+            icao_hex,
+            start_unix,
         },
         lw_bands: PerPeriod {
             day: [0.0; NUM_BANDS],
@@ -349,6 +353,9 @@ mod tests {
             callsign: "TEST",
             aircraft_type: b"A320",
             class_name: "Jet medium",
+            // Synth fid so `icao_hex_and_start_unix` returns (empty, None),
+            // exercising the same trace-emission branch real synth IDs take.
+            flight_id: crate::flight_id::pack_synth(1),
             start_lat: 50.0,
             start_lon: 14.0,
             end_lat: 50.001,
