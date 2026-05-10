@@ -38,19 +38,6 @@ const POWER_SUM_HINT =
   'Grouped "Noise source" Lden pools segments in energy, not dB:\n' +
   '  L_total = 10·log₁₀(Σᵢ 10^(Lᵢ/10))'
 
-// Aircraft sub-types put non-Lden values into `received_lden`. The
-// tooltip and column hint below adapt per sub-type so users don't read
-// SEL or aggregate event energy as a true Lden contribution.
-const AIRBORNE_SEL_HINT =
-  'Single-event SEL — sound exposure level of one aircraft passing\n' +
-  '(Doc 29 SEL chain). NOT a Lden contribution; cross-flight Lden\n' +
-  'lives on the parent Aircraft (airborne) row.'
-
-const CRUISE_ENERGY_HINT =
-  'Aggregate event-energy dB across all flights crossing this R8\n' +
-  'cell over the extraction window. Sorts cruise hexes within the\n' +
-  'tab; not directly comparable to road / rail Lden.'
-
 // Cruise R8 hex traces hardcode horizontal `dist_m = 0` because the
 // receiver may sit anywhere inside the hex. Use slant distance there
 // so the row doesn't read "overhead" for a 10 km-distant cruise hex.
@@ -61,11 +48,7 @@ function displayDistance(t: SegmentTrace): number {
   return t.dist_m
 }
 
-function receivedDbHint(t: SegmentTrace): string {
-  if (t.kind === 'aircraft') {
-    if (t.aircraft_subtype === 2) return AIRBORNE_SEL_HINT
-    if (t.aircraft_subtype === 3) return CRUISE_ENERGY_HINT
-  }
+function receivedDbHint(_t: SegmentTrace): string {
   return POWER_SUM_HINT
 }
 

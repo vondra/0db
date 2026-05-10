@@ -539,10 +539,14 @@ export interface SegmentTrace {
   ground: GroundTrace
   received_bands: PerPeriod<number[]>
   /**
-   * Aircraft sub-types put non-Lden values here (airborne = single-event
-   * SEL, cruise = aggregate event-energy dB) in every variant slot. The
-   * column header in those tabs should read "Event SEL" / "Hex event
-   * energy", not "Lden". See backend types.rs for the full contract.
+   * Per-segment Lden contribution (energy-summing across all visible
+   * segments approaches the source-aggregate Lden for that layer, modulo
+   * the segment top-K cap). Same semantics across road / rail /
+   * buildings / industrial / aircraft (ground / airborne / cruise) — the
+   * `full` slot is what the popup row displays; `free_field` /
+   * `no_terrain` / `no_screening` / `no_vegetation` only meaningful for
+   * road / rail / buildings / industrial / aircraft ground (path-effect
+   * variants), zero for airborne / cruise.
    */
   received_lden: LdenVariants
   /** 0 = non-aircraft / unset, 1 = ground path, 2 = airborne sub-segment, 3 = cruise hex. */

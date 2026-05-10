@@ -606,16 +606,26 @@ The popup separates aircraft `SegmentTrace` rows into three sub-tabs
 via `aircraft_subtype: u8`:
 1. **Ground path** — one trace per ADS-B ground path; geometry =
    polyline of vertices.
-2. **Airborne sub-segment** — one trace per Stage 2A sub-segment;
-   `received_lden` carries the single-event SEL.
+2. **Airborne sub-segment** — one trace per Stage 2A sub-segment.
 3. **Cruise R8 hex** — one trace aggregated per R8 cell crossed by
-   cruise traffic; geometry = R8 hex polygon, `received_lden` carries
-   `sel + 10·log10(density)` event-energy summary.
+   cruise traffic; geometry = R8 hex polygon.
 
-`apply_segment_top_k_with_cap` (in `source-reader/src/lib.rs`) keeps a
-separate cap bucket per `aircraft_subtype` — the louder dB scale of
-one bucket (cruise event-energy) cannot crowd a quieter scale
-(airborne single-event SEL) out of the popup.
+For all three sub-types `received_lden.full` is a per-segment Lden
+contribution: per-period event energy divided by `n_days × T_period`,
+fed through the same `variants_to_lden` mix (+5 dB evening, +10 dB
+night) used by road / rail. Energy-summing the displayed `received_lden`
+across the visible segments approaches the source-aggregate Lden for
+that layer, modulo the per-sub-tab top-K cap. (See
+`engine/noise-compute/src/traces/aircraft.rs::aircraft_period_variants`.)
+Path-effect variants (`no_terrain`, `no_screening`, …) stay zero —
+aircraft propagation does not expose them at the per-event level — so
+the popup gates Section 4/5/6 detail rows for `aircraft_subtype` 2 / 3
+and shows only Source / emission inputs there.
+
+`apply_segment_top_k_with_cap` (in `source-reader/src/lib.rs`) budgets
+top-K capacity separately per `aircraft_subtype` so a sub-tab with many
+loud segments (e.g. ground ops) cannot crowd quieter sub-tabs out of
+the popup.
 
 ---
 

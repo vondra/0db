@@ -678,12 +678,11 @@ fn apply_segment_top_k_with_cap(
         ..Default::default()
     };
 
-    // Aircraft segments are split by `aircraft_subtype`: 1 = ground
-    // path, 2 = airborne sub-segment, 3 = cruise R8 hex. Each gets
-    // its OWN cap bucket — cruise's `received_lden` (aggregate event
-    // energy) and airborne's (single-event SEL) live on different
-    // dB scales, so combining them into one bucket lets the louder
-    // scale crowd the quieter one out of the popup.
+    // Aircraft segments split into 3 sub-tabs by `aircraft_subtype`
+    // (1 = ground / 2 = airborne / 3 = cruise) for top-K budgeting:
+    // each sub-tab carries its own slice of segments at the popup-
+    // global cap, instead of competing for one shared cap which would
+    // let the noisier ground tail crowd cruise out of the display.
     let aircraft_subtype_bucket = |seg: &noise_compute::types::SegmentTrace| -> Option<u8> {
         if seg.kind != LayerKind::Aircraft {
             return None;

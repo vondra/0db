@@ -26,6 +26,7 @@ pub fn scatter(
     receiver: &Receiver,
     rows: &[CruiseRowView<'_>],
     rasters: &dyn RasterSampler,
+    n_days_f: f64,
     flights: &mut HashMap<u64, FlightAccum>,
     cruise_flight_stats: &mut HashMap<u64, CruiseFlightStats>,
     mut traces: Option<&mut TraceCollector>,
@@ -34,14 +35,18 @@ pub fn scatter(
     let npd_luts = aircraft::NpdLuts::shared();
     /// Per-R8-hex accumulator. One trace per hex at end of scatter;
     /// `cruise_buckets` carries the per-bucket (FL × class × period
-    /// × is_dep) breakdown sorted by received_lden.
+    /// × is_dep) breakdown sorted by received_lden. `period_energy`
+    /// is the linear-domain event-energy sum split by period — the
+    /// trace builder applies the same `n_days × T_period` normalisation
+    /// road/rail use, so energy-summing displayed cruise hexes
+    /// approaches the source-aggregate cruise contribution.
     struct HexAccum {
         n_unique_flights: std::collections::HashSet<u64>,
         rep_alt_m: f32,
         centroid_lat: f64,
         centroid_lon: f64,
         d_slant_m: f64,
-        received_energy: f64,
+        period_energy: [f64; 3],
         buckets: Vec<CruiseBucketBreakdown>,
     }
     let mut hex_accums: HashMap<u64, HexAccum> = HashMap::new();
@@ -190,13 +195,13 @@ pub fn scatter(
                 centroid_lat: lat,
                 centroid_lon: lon,
                 d_slant_m: cpa.d_p_m.max(SLANT_FLOOR_M),
-                received_energy: 0.0,
+                period_energy: [0.0; 3],
                 buckets: Vec::new(),
             });
             for &fid in row.cruise_flight_ids {
                 entry.n_unique_flights.insert(fid);
             }
-            entry.received_energy += energy;
+            entry.period_energy[period] += energy;
             if cpa.d_p_m < entry.d_slant_m {
                 entry.d_slant_m = cpa.d_p_m.max(SLANT_FLOOR_M);
             }
@@ -221,7 +226,6 @@ pub fn scatter(
                     .partial_cmp(&a.received_lden)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            let received_lden = crate::types::PropagationVariants::to_db(acc.received_energy);
             t.segments
                 .push(crate::traces::build_aircraft_cruise_r8_trace(
                     crate::traces::BuildAircraftCruiseR8Trace {
@@ -231,7 +235,8 @@ pub fn scatter(
                         centroid_lat: acc.centroid_lat,
                         centroid_lon: acc.centroid_lon,
                         d_slant_m: acc.d_slant_m,
-                        received_lden,
+                        period_energies: acc.period_energy,
+                        n_days: n_days_f,
                         cruise_buckets: acc.buckets,
                     },
                 ));

@@ -260,14 +260,10 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
       return rows
     }
     case 'aircraft_airborne': {
-      // received_lden carries the single-event SEL (Doc 29 SEL chain).
-      // Surface it explicitly so users don't read it as a Lden value.
-      const sel = t.received_lden.full
       return [
         ['Class', e.class],
         ['Callsign', e.callsign || '—'],
         ['Aircraft', e.aircraft_type || '—'],
-        ['Event SEL', Number.isFinite(sel) ? `${sel.toFixed(1)} dB` : '—'],
         ['CPA distance', `${Math.round(e.cpa_distance_m)} m`],
         ['Altitude at CPA', `${Math.round(e.altitude_m_at_cpa)} m`],
       ]

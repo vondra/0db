@@ -51,7 +51,8 @@ pub fn compute_aircraft_v6(
     let n_days_f = (n_days as f64).max(1.0);
 
     let mut traces = traces;
-    let flights = airborne::scatter(receiver, airborne_rows, rasters, traces.as_deref_mut());
+    let flights =
+        airborne::scatter(receiver, airborne_rows, rasters, n_days_f, traces.as_deref_mut());
     let mut cruise_flight_stats = HashMap::new();
     // Cruise gets its own FlightAccum table — the cruise synth fids
     // (`flight_id::pack_synth(idx)` with idx = row index) share the
@@ -69,6 +70,7 @@ pub fn compute_aircraft_v6(
         receiver,
         cruise_rows,
         rasters,
+        n_days_f,
         &mut cruise_flights,
         &mut cruise_flight_stats,
         traces.as_deref_mut(),
