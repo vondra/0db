@@ -103,12 +103,15 @@ export default function MapView({
         enabled={(quietClustersEnabled ?? false) && (quietVisible ?? false) && quietDataRes !== null}
         threshold={quietThreshold ?? 35}
       />
-      <ContributorHighlight geometry={highlightGeometry ?? null} />
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
       <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} sourceModes={sourceModes} />
       <IsochronLayer geojson={isochronGeojson ?? null} />
       <FlyToLocation location={selectedLocation ?? null} onArrived={handleArrived} />
+      {/* Mount last so MapLibre renders the highlight stroke + fill above
+          HexLayer noise tiles, isochron, raster overlays — without this a
+          cruise R8 polygon disappears under the heatmap. */}
+      <ContributorHighlight geometry={highlightGeometry ?? null} />
       <DetailPopup
         detailPosition={detailPosition ?? null}
         triggerPosition={flyToPos}
