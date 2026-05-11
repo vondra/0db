@@ -7,15 +7,21 @@ import {
 } from '../../types/noise'
 import { SegmentRow } from './SegmentRow'
 
-const KIND_FILTERS: { key: SegmentKind; label: string }[] = [
-  { key: 'road', label: 'Road' },
-  { key: 'railway', label: 'Rail' },
-  { key: 'aircraft_ground', label: 'GroundOps' },
-  { key: 'aircraft_airborne', label: 'Airborne' },
-  { key: 'aircraft_cruise', label: 'Cruise' },
-  { key: 'building', label: 'Buildings' },
-  { key: 'industrial', label: 'Industrial' },
+// Labels are abbreviated to fit a single row in a ~360 px popup; the
+// long form lives in the title tooltip so users can still identify the
+// kind without guessing. Wrapping to two rows looked broken.
+const KIND_FILTERS: { key: SegmentKind; label: string; longName: string }[] = [
+  { key: 'road', label: 'Road', longName: 'Road traffic' },
+  { key: 'railway', label: 'Rail', longName: 'Railway' },
+  { key: 'aircraft_ground', label: 'Ground', longName: 'Aircraft ground ops' },
+  { key: 'aircraft_airborne', label: 'Airborne', longName: 'Aircraft airborne' },
+  { key: 'aircraft_cruise', label: 'Cruise', longName: 'Aircraft cruise' },
+  { key: 'building', label: 'Building', longName: 'Buildings' },
+  { key: 'industrial', label: 'Industry', longName: 'Industrial sites' },
 ]
+
+const kindMap = (fn: (k: SegmentKind) => boolean): Record<SegmentKind, boolean> =>
+  Object.fromEntries(KIND_FILTERS.map(f => [f.key, fn(f.key)])) as Record<SegmentKind, boolean>
 
 type UnifiedEntry = { trace: SegmentTrace; sortKey: number }
 
@@ -81,9 +87,7 @@ export function SegmentList({
   onShowAll?: () => void | Promise<void>
   loadingFull?: boolean
 }) {
-  const [enabled, setEnabled] = useState<Record<SegmentKind, boolean>>(() =>
-    Object.fromEntries(KIND_FILTERS.map(k => [k.key, true])) as Record<SegmentKind, boolean>,
-  )
+  const [enabled, setEnabled] = useState<Record<SegmentKind, boolean>>(() => kindMap(() => true))
 
   // Sort once when `segments` arrive — `enabled` toggles only filter
   // the pre-sorted list and don't touch the sort cost.
@@ -113,7 +117,7 @@ export function SegmentList({
   return (
     <div>
       <div className="flex mt-1 mb-1.5 whitespace-nowrap text-[11px] bg-muted/30 rounded py-1 -mx-1 divide-x divide-foreground/25 overflow-x-auto">
-        {KIND_FILTERS.map(({ key, label }) => {
+        {KIND_FILTERS.map(({ key, label, longName }) => {
           const kindCount = metaCount(meta, key, 'count')
           const kindTotal = metaCount(meta, key, 'total')
           // Empty kinds stay visible (greyed) so the user always sees
@@ -122,16 +126,34 @@ export function SegmentList({
           // empty state explicit instead of hiding it.
           const isEmpty = kindCount === 0
           const on = enabled[key] && !isEmpty
+          // "Isolated" = this kind is the only one enabled (everything
+          // else is off). A second click in that state restores all.
+          const isolated = on && KIND_FILTERS.every(({ key: k }) => k === key ? enabled[k] : !enabled[k])
           const countLabel = kindTotal > kindCount ? `${kindCount} of ${kindTotal}` : `${kindCount}`
+          const handleClick = (e: React.MouseEvent) => {
+            if (e.shiftKey) {
+              // Shift-click toggles just this kind, keeping other
+              // selections — useful when narrowing down 2-3 kinds.
+              setEnabled(prev => ({ ...prev, [key]: !prev[key] }))
+              return
+            }
+            // Plain click isolates this kind; re-clicking the isolated
+            // kind restores the full set.
+            setEnabled(isolated ? kindMap(() => true) : kindMap(k => k === key))
+          }
+          const titleAction =
+            isEmpty  ? ' (no data at this point)'
+          : isolated ? ' (click to show all kinds)'
+          : on       ? ' (click to show only this; shift-click to hide)'
+          :            ' (click to show only this; shift-click to add)'
           return (
             <button
               key={key}
               type="button"
               disabled={isEmpty}
-              onClick={() => setEnabled(e => ({ ...e, [key]: !e[key] }))}
-              title={`${label} — ${countLabel} segment${kindTotal === 1 ? '' : 's'}${
-                isEmpty ? ' (no data at this point)' : on ? ' (click to hide)' : ' (click to show)'
-              }`}
+              aria-pressed={on}
+              onClick={handleClick}
+              title={`${longName} — ${countLabel} segment${kindTotal === 1 ? '' : 's'}${titleAction}`}
               className={`shrink-0 px-1 transition-colors ${
                 isEmpty
                   ? 'text-muted-foreground/30 cursor-not-allowed'
