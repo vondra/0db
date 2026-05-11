@@ -51,13 +51,13 @@ pub fn typecode_bytes(s: &str) -> [u8; 4] {
     out
 }
 
-/// Stage 0 in-memory record. One per telemetry-gap leg (presumed
-/// rotation) — a single `trace_full_<icao>.json` typically yields N
-/// `Flight`s, one per `FLIGHT_SPLIT_GAP_S`-separated chunk.
-/// `flight_id` is per-leg so popup dedup counts movements rather than
-/// aircraft-days; the trade-off is that a long mid-cruise coverage
-/// outage will produce two legs with distinct IDs (rare in EU ADS-B
-/// coverage; accepted as the price of correct turn-around counting).
+/// Stage 0 in-memory record. One per rotation — a single
+/// `trace_full_<icao>.json` typically yields N `Flight`s, one per
+/// sustained on-ground rest (≥ `MIN_TURNAROUND_S`) detected in the
+/// trace. `flight_id` is per-leg so popup dedup counts movements
+/// rather than aircraft-days; airborne signal dropouts of any
+/// duration preserve flight identity, so a transoceanic crossing with
+/// a 4 h coverage hole stays one `Flight`.
 #[derive(Clone)]
 pub struct Flight {
     pub flight_id: u64,
