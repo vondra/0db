@@ -38,11 +38,18 @@ const POWER_SUM_HINT =
   'Grouped "Noise source" Lden pools segments in energy, not dB:\n' +
   '  L_total = 10·log₁₀(Σᵢ 10^(Lᵢ/10))'
 
-// Cruise R8 hex traces hardcode horizontal `dist_m = 0` because the
-// receiver may sit anywhere inside the hex. Use slant distance there
-// so the row doesn't read "overhead" for a 10 km-distant cruise hex.
+// Aircraft NPD uses 3D slant. For airborne, both `dist_m` and
+// `d_slant_m` are currently sourced from CPA's `d_p_m`, so reading
+// `d_slant_m` is equivalent today but stays correct if the airborne
+// emit ever changes to populate horizontal in `dist_m`. For cruise,
+// `dist_m` is hardcoded to 0 (receiver sits inside the R8 hex), so
+// slant is the only meaningful distance there.
 function displayDistance(t: SegmentTrace): number {
-  if (t.kind === 'aircraft' && t.aircraft_subtype === AIRCRAFT_SUBTYPE.CRUISE) {
+  if (
+    t.kind === 'aircraft' &&
+    (t.aircraft_subtype === AIRCRAFT_SUBTYPE.AIRBORNE ||
+      t.aircraft_subtype === AIRCRAFT_SUBTYPE.CRUISE)
+  ) {
     return t.d_slant_m
   }
   return t.dist_m
