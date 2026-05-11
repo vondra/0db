@@ -42,15 +42,14 @@ pub fn resolve_ground_ops_kind(seg: &AircraftSegment) -> u8 {
     }
 }
 
-/// Speed/length-based ops_kind classifier. Used by Stage 2C ground path
-/// extraction to assign per-leg `ops_kind` from the leg's observed
-/// speed and length:
+/// Speed-only `ops_kind` classifier. Used for pure-taxi paths and
+/// non-Stage-2C consumers; the per-sample Stage 1 takeoff/landing roll
+/// regime is reconstructed at the path level in
+/// `stage_2c::ground_path::classify_path_kinds`, not here.
 ///
-/// * `speed_kt ≥ 40 OR segment_length_m ≥ 500` → `RUNWAY_ROLL`
-///   (takeoff acceleration arc has high avg speed OR a long ground
-///   stretch even when avg speed is averaged down by an early phase).
-/// * `speed_kt ≥ 8` → `TAXI`.
-/// * else → `APRON_MOVEMENT` (slow / stationary movements).
+/// * `speed_kt ≥ 40` → `RUNWAY_ROLL`
+/// * `speed_kt ≥ 8`  → `TAXI`
+/// * else            → `APRON_MOVEMENT`
 ///
 /// Helicopters never get `RUNWAY_ROLL` — a helicopter accelerating
 /// through 40 kt on a helipad is rotor-thrust-driven, not the turbofan
@@ -63,7 +62,7 @@ pub fn ground_ops_kind_fallback(seg: &AircraftSegment) -> u8 {
             GROUND_OPS_KIND_APRON_MOVEMENT
         };
     }
-    if seg.speed_kt >= 40.0 || seg.segment_length_m >= 500.0 {
+    if seg.speed_kt >= 40.0 {
         GROUND_OPS_KIND_RUNWAY_ROLL
     } else if seg.speed_kt >= 8.0 {
         GROUND_OPS_KIND_TAXI
