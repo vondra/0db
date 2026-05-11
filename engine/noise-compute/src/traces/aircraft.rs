@@ -274,6 +274,8 @@ pub struct BuildAircraftCruiseR8Trace {
 
 pub fn build_aircraft_cruise_r8_trace(inputs: BuildAircraftCruiseR8Trace) -> SegmentTrace {
     let r8_str = format!("{:015x}", inputs.r8_hex);
+    // Trailing `f`s are res-15 child padding; the first 10 hex chars carry the res-8 address.
+    let display_name = format!("Cruise over {}", &r8_str[..10]);
     let hex_polygon = h3_cell_boundary(inputs.r8_hex);
     let variants = aircraft_period_variants(inputs.period_energies, inputs.n_days);
 
@@ -281,7 +283,7 @@ pub fn build_aircraft_cruise_r8_trace(inputs: BuildAircraftCruiseR8Trace) -> Seg
         kind: LayerKind::Aircraft,
         osm_id: None,
         segment_idx: 0,
-        name: format!("Cruise R8 {r8_str}"),
+        name: display_name,
         subtype: "cruise".to_string(),
         is_dominant_of_group: false,
         start_lat: inputs.centroid_lat,
