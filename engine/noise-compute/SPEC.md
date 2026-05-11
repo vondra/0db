@@ -375,7 +375,11 @@ d_p = slant distance at CPA. β = elevation angle.
   bucket-key aggregation
 - unknown / unmapped typecode falls back to **`FALLBACK_PROFILE_IDX`** (a
   B738/737800-equivalent profile)
-- `is_departure` is inferred from median climb rate (`ROCD > 500 fpm`)
+- `is_departure` is per-sample-pair: a ±5-sample smoothed ROCD median
+  (`classify_is_departure_per_sample` in `segment.rs`) is thresholded
+  against Doc 29 §A.3.2 — climb > 500 fpm flags Departure, and shallow
+  cruise descents (`avg_alt > 10 000 ft && smoothed_rocd > -500 fpm`)
+  also use the Departure NPD because en-route thrust ≈ T/O thrust.
 - day/evening/night period is derived from the segment-midpoint coordinate via
   **tzf-rs IANA timezone lookup + chrono-tz** (DST-aware UTC → local wall-clock).
   Boundaries follow END 2002/49/EC defaults: day [07:00, 19:00), evening
@@ -388,9 +392,26 @@ d_p = slant distance at CPA. β = elevation angle.
 - stale ground / taxi remnants are filtered by:
   - `on_ground` with **no airport context**
   - fallback low-AGL test (`<= 15 m AGL`) with **no airport context**
-- **segment length cap at extraction: 10 km** (`MAX_SEGMENT_LENGTH_M`). Longer
-  cruise segments from sparse traces are split along actual trace points (no
-  synthetic interpolation). Legacy pre-cap data can still contain longer segments.
+- **per-sample emission**: Stage 1 emits one segment per consecutive
+  ADS-B sample-pair (`segment.rs::build_segments`). No aggregation across
+  samples; per-pair geometry is preserved straight from the trace and
+  Doc 29 ΔF apportions energy correctly across collinear sub-segments.
+- **derived-speed plausibility** (`segment_is_keepable`): segments whose
+  implied speed `length_m / dt_s` exceeds `MAX_PLAUSIBLE_SPEED_KT` (1500
+  kt) are dropped as mode-S decode errors. A 200 km gap over 30 min (real
+  cruise across an oceanic coverage hole) survives; the same gap over 30 s
+  is rejected.
+- **phase-aware gap policy**: a sample-pair is dropped if its time delta
+  exceeds the per-phase budget — 3600 s for Cruise (oceanic dropouts OK),
+  120 s for Airborne (terminal area should be dense), 60 s for Ground.
+- **segment phase prioritises Airborne**: at a sample-pair transition
+  Airborne wins over both Ground and Cruise so takeoff / flare segments
+  stay audible and the Cruise→Airborne descent gets the correct approach
+  NPD rather than Stage 2B's forced-Departure cruise routing.
+- **ground-rest flight split**: `split_flights` splits the trace at
+  sustained on-ground rests ≥ `MIN_TURNAROUND_S` (5 min). Airborne signal
+  dropouts of any duration preserve flight identity, so a transoceanic
+  crossing with a 4 h coverage hole stays one `flight_id`.
 
 ### Data-quality gating (`is_valid_airborne_segment`)
 Shared single-source-of-truth filter used by both pipeline and popup. Applied
@@ -406,10 +427,6 @@ Universal impossibility checks (all airborne profiles):
 Jet-only (profiles 0, 1, 2, 3, 5, 7; Turboprop/LightGA/Rotorcraft exempt):
 - **impossible jet speed**: `speed_kt < 80`
 - **jet too low**: `max_alt < midpoint_terrain + 150 m`
-- **legacy long-segment stitching guards** (legacy pre-10-km-cap data):
-  - 30 km line extrapolation crossing sea level within ±50% of length
-  - 30 km segment with both endpoints under 2000 m AGL
-  - 100 km segment mixing near-ground and cruise altitudes
 
 ### Filter D — per-receiver sub-terrain extrapolation rejection
 
@@ -427,16 +444,21 @@ terrain. Airport-ground segments bypass the filter. Full rationale (geometry,
 segment and every cruise synthetic segment; see its rustdoc for the
 four approximations (NPD via 128-bin LUT, ΔF via `fast_delta_f`, Λ via
 `fast_lateral_attenuation`, ΔI via inline `u²/v²`) and the < 0.15 dB
-per-segment combined error.
+per-segment combined error. ΔF applies at every slant range — the
+CFFK far-field fast path (slant > 7.62 km) keeps Λ and ΔI skipped but
+retains ΔF so that N collinear per-sample sub-segments correctly sum
+to one event (regression: `cffk_partition_preserves_linear_energy` in
+`doc29.rs`).
 
 ### Cross-flight aggregation
 
 Aggregation happens at the `aircraft-extract` Stage 2A/2B/2C boundary,
 producing three popup arrows per R4:
 - **Stage 2A airborne** — one row per (flight × R4 crossing) in
-  `airborne.arrow`, with `sub_segments: List<Struct>` carrying per-
-  sub-segment `period` / `date_id` / `flags` so a long crossing that
-  straddles 19:00 still buckets into the right period. Each row also
+  `airborne.arrow`, with `sub_segments: List<Struct>` carrying one
+  entry per emitted sample-pair plus its own `period` / `date_id` /
+  `flags` (including `is_departure`) so consecutive sub-segments
+  straddling 19:00 each fall in the right Lden period. Each row also
   carries a precomputed `bbox_min/max_lat/lon` envelope.
 - **Stage 2B cruise** — one row per (R8 hex × flight-level bin × class
   × period × is_departure) bucket in `cruise.arrow`. `sum_length_m /

@@ -46,12 +46,12 @@ pub fn run_stage_2a(
 }
 
 /// Group every Phase::Airborne FlightSegment by the R4 cell at its
-/// midpoint. We bucket by midpoint rather than per-end because a
-/// segment crossing two R4 cells contributes ~equal to both — at
-/// segment-length scale (≤ 10 km vs R4 ≈ 25 km edge) the midpoint
-/// approximation is within a few % of the analytical split. (A future
-/// pass could do analytical clipping like Stage 2B; current accuracy
-/// is dominated by Doc 29 NPD interpolation, not midpoint snap.)
+/// midpoint. We bucket by midpoint rather than per-end because per-sample
+/// segments are short (1-4 km typical ADS-B sample-pair) vs R4 ≈ 25 km
+/// edge — the midpoint approximation snaps each segment to one R4 within
+/// a few % of an analytical split. (A future pass could do analytical
+/// clipping like Stage 2B; current accuracy is dominated by Doc 29 NPD
+/// interpolation, not midpoint snap.)
 fn bucket_by_r4(segments: &[FlightSegment]) -> HashMap<u64, Vec<&FlightSegment>> {
     let mut map: HashMap<u64, Vec<&FlightSegment>> = HashMap::new();
     for seg in segments {
