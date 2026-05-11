@@ -229,6 +229,21 @@ export interface AircraftAirborneDetail {
   periods: NoisePeriodsData
   observed_flights_per_day: number
   helicopter_flights_per_day: number
+  /**
+   * Distinct cruise-phase transits (real flight_id dedup) visible at this
+   * receiver per day. Contributes to the Lmax band counts below when the
+   * transit's peak_lmax crosses 30/45/60 dB; surfaced separately because
+   * `observed_flights_per_day` is airborne-only and the bands would
+   * otherwise exceed the airborne count without explanation.
+   * Upper bound on the cruise contribution to bands: sub-threshold transits
+   * are included here but not in band counters. A single real flight can
+   * appear in both `observed_flights_per_day` and `cruise_transits_per_day`
+   * if it has both a low approach/departure encounter and a high overhead
+   * cruise bucket at this receiver (counted per phase, not per distinct
+   * flight). Rust serializes this unconditionally — required (not optional).
+   * The popup hides the row when value rounds below 0.1/day.
+   */
+  cruise_transits_per_day: number
   lmax_peak: number | null
   faint: AircraftEventBandStats
   audible: AircraftEventBandStats

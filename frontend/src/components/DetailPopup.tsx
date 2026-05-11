@@ -671,6 +671,16 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                 'Aircraft/heli (avg per day)',
                 `${aircraftAirborne.observed_flights_per_day.toFixed(1)}/${aircraftAirborne.helicopter_flights_per_day.toFixed(1)}`,
               )}
+              {/* >= 0.05 so the value rounds to >= 0.1/day at toFixed(1);
+                  otherwise the row would render "0.0" and confuse users
+                  (e.g. one cruise transit over 365 days = 0.003/day). */}
+              {aircraftAirborne.cruise_transits_per_day >= 0.05 &&
+                lineRow(
+                  <HoverText title={'Distinct high-altitude cruise-phase transits per day (real flight_id dedup).\nIncluded in the Lmax band counts below when their slant Lmax exceeds the band threshold; below-threshold transits are still counted here, so this is an upper bound on the cruise contribution to the bands.\nMostly disjoint from the Aircraft/heli count above (which is airborne-only), but a single flight can appear in both if it has a low approach/departure and a high overhead encounter at this receiver — separated so the band totals reconcile.'}>
+                    Cruise transits/day
+                  </HoverText>,
+                  aircraftAirborne.cruise_transits_per_day.toFixed(1),
+                )}
               {aircraftAirborne.lmax_peak != null && lineRow('Peak Lmax', `${aircraftAirborne.lmax_peak.toFixed(1)} dB`)}
               {lineRow(
                 'Day/Evening/Night',

@@ -79,12 +79,13 @@ pub fn compute_aircraft_v6(
         traces.as_deref_mut(),
     );
 
-    let mut cruise_band = cruise::band_stats(&cruise_flight_stats);
+    let cruise_band = cruise::band_stats(&cruise_flight_stats);
     let (airborne_periods, airborne_detail) = airborne::build_detail(
         &flights,
         &cruise_flights,
+        cruise_flight_stats.len(),
         &top_flight_candidates,
-        &mut cruise_band,
+        &cruise_band,
         n_days_f,
     );
 
