@@ -42,10 +42,6 @@ pub const ANOMALY_SUSTAINED_SAMPLES: usize = 3;
 /// — keeping it skews the rep_line for ground-ops sub-buckets.
 pub const MIN_SEGMENT_LENGTH_M: f32 = 10.0;
 
-/// Maximum credible segment length. Long sparse cadence produces a
-/// straight line through the terrain that wasn't actually flown.
-pub const MAX_SEGMENT_LENGTH_M: f32 = 50_000.0;
-
 /// Below this airspeed a fixed-wing jet is not flying — drop the
 /// segment so the airborne energy isn't anchored on a stalled trace.
 pub const JET_STALL_SPEED_KT: f32 = 80.0;
@@ -63,6 +59,9 @@ pub const MIN_PLAUSIBLE_ALT_FT: f32 = -2_000.0;
 /// Sustained physical maximum speed for any aircraft (Mach 3 at FL600
 /// ≈ 1700 kt). Above is wildly bad data.
 pub const MAX_PLAUSIBLE_SPEED_KT: f32 = 1_500.0;
+
+/// m/s → kt, exact by definition (1 nm = 1852 m).
+pub const MPS_TO_KT: f32 = 3600.0 / 1852.0;
 
 /// Helicopter AGL ceiling — anything claiming helicopter @ ≥5 km AGL
 /// is ADS-B mode-S decode error or military spoof. Civil helicopter
@@ -189,8 +188,8 @@ fn drop_teleport_points(points: &mut Vec<TracePoint>, agl_m: &mut Vec<f32>) {
             let dx_m = dx_deg * 111_320.0 * cos_lat;
             let dy_m = dy_deg * 110_540.0;
             let dist_m = (dx_m * dx_m + dy_m * dy_m).sqrt();
-            let kt = dist_m / dt * (3600.0 / 1852.0);
-            if alt_jump || kt > 1_500.0 {
+            let kt = dist_m / dt * MPS_TO_KT;
+            if alt_jump || kt > MAX_PLAUSIBLE_SPEED_KT {
                 keep_idx[i] = false;
             }
         }
@@ -210,10 +209,19 @@ fn drop_teleport_points(points: &mut Vec<TracePoint>, agl_m: &mut Vec<f32>) {
 }
 
 /// Per-segment receiver-independent filter. `length_m` is the segment
-/// arc length in metres; `start_agl_m` / `end_agl_m` are post-DEM AGL.
+/// arc length in metres; `dt_s` is the time between the sample-pair
+/// endpoints; `start_agl_m` / `end_agl_m` are post-DEM AGL.
 /// `is_airborne` reflects the classified phase (Airborne or Cruise).
+///
+/// Implied speed `length_m / dt_s` against [`MAX_PLAUSIBLE_SPEED_KT`]
+/// is the canonical garbage detector: two samples placed 200 km apart
+/// over 30 s is a mode-S decode error, the same gap over 30 min is
+/// real cruise at 400 kt. A hard length cap couldn't make that
+/// distinction and silently dropped legitimate sparse oceanic cruise.
+#[inline]
 pub fn segment_is_keepable(
     length_m: f32,
+    dt_s: f32,
     start_agl_m: f32,
     end_agl_m: f32,
     avg_speed_kt: f32,
@@ -223,7 +231,14 @@ pub fn segment_is_keepable(
     if start_agl_m.min(end_agl_m) < HARD_AGL_FLOOR_M {
         return false;
     }
-    if length_m < MIN_SEGMENT_LENGTH_M || length_m > MAX_SEGMENT_LENGTH_M {
+    if length_m < MIN_SEGMENT_LENGTH_M {
+        return false;
+    }
+    if !dt_s.is_finite() || dt_s <= 0.0 {
+        return false;
+    }
+    let derived_kt = (length_m / dt_s) * MPS_TO_KT;
+    if derived_kt > MAX_PLAUSIBLE_SPEED_KT {
         return false;
     }
     if is_airborne
@@ -338,35 +353,49 @@ mod tests {
 
     #[test]
     fn segment_is_keepable_rejects_short_taxi_remnant() {
-        assert!(!segment_is_keepable(5.0, 0.0, 0.0, 250.0, 0, true));
+        assert!(!segment_is_keepable(5.0, 1.0, 0.0, 0.0, 250.0, 0, true));
     }
 
     #[test]
-    fn segment_is_keepable_rejects_sparse_50km_gap() {
-        assert!(!segment_is_keepable(60_000.0, 0.0, 0.0, 250.0, 0, true));
+    fn segment_is_keepable_rejects_supersonic_teleport() {
+        // 200 km / 30 s = 24 000 kt — mode-S decode error.
+        assert!(!segment_is_keepable(200_000.0, 30.0, 0.0, 0.0, 250.0, 0, true));
+    }
+
+    #[test]
+    fn segment_is_keepable_keeps_legitimate_oceanic_segment() {
+        // 200 km / 30 min = 400 kt — real cruise across an ADS-B
+        // coverage hole.
+        assert!(segment_is_keepable(200_000.0, 1800.0, 10_500.0, 10_500.0, 450.0, 0, true));
+    }
+
+    #[test]
+    fn segment_is_keepable_rejects_nonpositive_dt() {
+        assert!(!segment_is_keepable(1000.0, 0.0, 100.0, 200.0, 250.0, 0, true));
+        assert!(!segment_is_keepable(1000.0, -5.0, 100.0, 200.0, 250.0, 0, true));
     }
 
     #[test]
     fn segment_is_keepable_rejects_underground() {
-        assert!(!segment_is_keepable(1000.0, -500.0, -400.0, 250.0, 0, true));
+        assert!(!segment_is_keepable(1000.0, 5.0, -500.0, -400.0, 250.0, 0, true));
     }
 
     #[test]
     fn segment_is_keepable_keeps_sane_jet_segment() {
-        assert!(segment_is_keepable(1000.0, 100.0, 200.0, 250.0, 0, true));
+        assert!(segment_is_keepable(1000.0, 5.0, 100.0, 200.0, 250.0, 0, true));
     }
 
     #[test]
     fn segment_is_keepable_rejects_helicopter_above_ceiling() {
         let heli = noise_compute::emission::aircraft::profile_idx("EC35");
         // Spike: one endpoint at FL250+ → reject (typical mode-S decode error).
-        assert!(!segment_is_keepable(1000.0, 200.0, 7_500.0, 80.0, heli, true));
+        assert!(!segment_is_keepable(1000.0, 5.0, 200.0, 7_500.0, 80.0, heli, true));
         // Sustained legitimate civil ops at FL130 over 3 km terrain ≈ 1 km AGL → keep.
-        assert!(segment_is_keepable(1000.0, 800.0, 1_000.0, 80.0, heli, true));
+        assert!(segment_is_keepable(1000.0, 5.0, 800.0, 1_000.0, 80.0, heli, true));
         // Right at ceiling — keep (strict > comparison, matches HARD_AGL_FLOOR convention).
-        assert!(segment_is_keepable(1000.0, 4_000.0, 5_000.0, 80.0, heli, true));
+        assert!(segment_is_keepable(1000.0, 5.0, 4_000.0, 5_000.0, 80.0, heli, true));
         // Same-altitude jet at 7.5 km is not affected by the heli filter.
         let jet = noise_compute::emission::aircraft::profile_idx("B738");
-        assert!(segment_is_keepable(1000.0, 200.0, 7_500.0, 250.0, jet, true));
+        assert!(segment_is_keepable(1000.0, 5.0, 200.0, 7_500.0, 250.0, jet, true));
     }
 }
