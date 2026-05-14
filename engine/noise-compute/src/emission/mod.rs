@@ -1,4 +1,5 @@
 pub mod aircraft;
+pub mod gse;
 pub mod industrial;
 pub mod profiles_generated;
 pub mod railway;
