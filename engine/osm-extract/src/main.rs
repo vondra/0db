@@ -238,8 +238,23 @@ fn main() -> Result<()> {
                     // (e.g. a runway drawn as a perimeter way rather than a
                     // multipolygon). Reroute to AirportArea so we get a
                     // proper polygon source rather than perimeter fragments.
+                    //
+                    // GATED on aeroway = runway/airstrip ONLY: taxiway and
+                    // stopway closed-rings are typically turnaround LOOPS
+                    // (a closed taxi cul-de-sac), where the loop ring is the
+                    // actual path of taxi traffic — NOT the perimeter of an
+                    // area. Rerouting taxiway loops to AirportArea would
+                    // artificially fill their interior with concrete and
+                    // remove the line from airport_lines.arrow, breaking
+                    // downstream leg snapping (Gemini+DeepSeek /gg WARN).
                     if matches!(ftype, classify::FeatureType::AirportLine)
                         && relations::is_closed_ring(&coords)
+                        && matches!(
+                            way.tags()
+                                .find(|(k, _)| *k == "aeroway")
+                                .map(|(_, v)| v),
+                            Some("runway") | Some("airstrip")
+                        )
                     {
                         ftype = classify::FeatureType::AirportArea;
                     }
