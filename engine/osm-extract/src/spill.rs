@@ -5,6 +5,7 @@
 //! We use CSV for simplicity during development — Arrow IPC in finalize step.
 
 use crate::classify::{self, FeatureType, Tags};
+use crate::microsegment;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -170,6 +171,21 @@ impl Spiller {
                         .and_then(|s| s.parse::<f32>().ok())
                         .unwrap_or(3.0),
                     classify::barrier_material_type(tags.get("material").map(|s| s.as_str())),
+                );
+            }
+            FeatureType::AirportLine => {
+                let heading = microsegment::bearing_deg(seg.0[0], seg.0[1], seg.1[0], seg.1[1]);
+                let width_m = classify::parse_width_m(tags.get("width").map(|s| s.as_str()))
+                    .map(|v| format!("{v:.1}"))
+                    .unwrap_or_default();
+                let _ = write!(
+                    w,
+                    "\t{:.1}\t{}\t{}\t{}\t{}",
+                    heading,
+                    classify::aeroway_type(tags),
+                    tags.get("ref").unwrap_or(&String::new()),
+                    tags.get("surface").unwrap_or(&String::new()),
+                    width_m,
                 );
             }
             _ => {}
