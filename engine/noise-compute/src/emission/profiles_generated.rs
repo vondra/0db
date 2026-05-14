@@ -1741,7 +1741,12 @@ fn similarity_fallback(typecode: &str) -> u8 {
 }
 
 /// Beacon-only entries that broadcast as ADS-B but are not aircraft.
+/// Beacon-only ADS-B entries that should not flow through the aircraft
+/// pipeline. `TWR` = control tower fixed transponders. `GND` = airport
+/// ground vehicles (fuel trucks, tugs, follow-me, fire trucks); these
+/// would otherwise hit the 737-800 fallback profile and produce a
+/// ~30 dB over-estimate per source at airport receivers.
 pub fn is_non_aircraft_typecode(typecode: &str) -> bool {
-    matches!(typecode.trim(), "TWR")
+    matches!(typecode.trim(), "TWR" | "GND")
 }
 
