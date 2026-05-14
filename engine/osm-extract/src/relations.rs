@@ -130,7 +130,7 @@ fn classify_multipolygon(
         FeatureType::Industrial
     } else if matches!(
         tag("aeroway"),
-        Some("runway" | "taxiway" | "apron" | "helipad" | "aerodrome" | "stopway")
+        Some("runway" | "taxiway" | "apron" | "helipad" | "aerodrome" | "stopway" | "airstrip")
     ) || tag("amenity") == Some("heliport")
     {
         FeatureType::AirportArea
@@ -304,4 +304,13 @@ fn merge_rings(ways: &[Vec<[f64; 2]>]) -> Vec<[f64; 2]> {
 
 fn points_close(a: [f64; 2], b: [f64; 2]) -> bool {
     (a[0] - b[0]).abs() < 1e-7 && (a[1] - b[1]).abs() < 1e-7
+}
+
+/// True if a polyline's first and last vertices coincide (within
+/// `points_close` tolerance, ~11 cm). Reused for the AirportLine
+/// closed-ring reroute in `main.rs`: a runway/taxi way drawn as a
+/// closed perimeter is geometrically a polygon, must flow through
+/// AirportArea path, not become microsegmented perimeter fragments.
+pub fn is_closed_ring(coords: &[[f64; 2]]) -> bool {
+    coords.len() >= 3 && points_close(coords[0], *coords.last().unwrap())
 }

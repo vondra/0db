@@ -217,18 +217,31 @@ fn main() -> Result<()> {
                 // Also process the way itself if it has its own relevant tags
                 // (a way can be both a relation member AND a standalone feature,
                 //  but usually relation members don't have building= tags themselves)
-                if let Some(ftype) = classify::classify_way(&way) {
-                    // Skip if this way is an outer member of a building/industrial relation
-                    // (the relation's tags take precedence)
+                if let Some(mut ftype) = classify::classify_way(&way) {
+                    // Skip if this way is an outer member of a polygon relation;
+                    // the relation's assembled multipolygon already covers it.
+                    // AirportLine ways inside an aeroway=aerodrome multipolygon
+                    // would otherwise be re-emitted as perimeter fragments.
                     if is_relation_member
                         && matches!(
                             ftype,
                             classify::FeatureType::Building
                                 | classify::FeatureType::Industrial
                                 | classify::FeatureType::AirportArea
+                                | classify::FeatureType::AirportLine
                         )
                     {
                         return;
+                    }
+
+                    // Closed-ring AirportLine ways are geometrically polygons
+                    // (e.g. a runway drawn as a perimeter way rather than a
+                    // multipolygon). Reroute to AirportArea so we get a
+                    // proper polygon source rather than perimeter fragments.
+                    if matches!(ftype, classify::FeatureType::AirportLine)
+                        && relations::is_closed_ring(&coords)
+                    {
+                        ftype = classify::FeatureType::AirportArea;
                     }
 
                     if ftype.is_linear() && coords.len() < 2 {
