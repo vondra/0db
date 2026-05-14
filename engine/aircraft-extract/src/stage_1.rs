@@ -80,7 +80,7 @@ fn stage_1_one_flight(
         return Vec::new();
     }
 
-    let g_flags = ground_flags(&points);
+    let g_flags = ground_flags(&points, &agl_m);
     let phases = classify::classify_points(ClassifyInput {
         on_ground: &g_flags,
         agl_m: &agl_m,
