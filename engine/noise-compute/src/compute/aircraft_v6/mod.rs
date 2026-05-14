@@ -51,9 +51,16 @@ pub fn compute_aircraft_v6(
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
     let n_days_f = (n_days as f64).max(1.0);
 
+    // Per-layer timing probes. Env-gated (POPUP_TIMING=1) so production
+    // popup latency is unaffected. Inline `Instant::now()` is cheaper
+    // than perf/flamegraph and lands one line per popup request.
+    let timing_on = std::env::var("POPUP_TIMING").as_deref() == Ok("1");
+    let t_start = std::time::Instant::now();
+
     let mut traces = traces;
     let flights =
         airborne::scatter(receiver, airborne_rows, rasters, n_days_f, traces.as_deref_mut());
+    let t_airborne_scatter = t_start.elapsed();
     let mut cruise_flight_stats = HashMap::new();
     // Cruise gets its own FlightAccum table — the cruise synth fids
     // (`flight_id::pack_synth(idx)` with idx = row index) share the
@@ -78,6 +85,7 @@ pub fn compute_aircraft_v6(
         &mut top_flight_candidates,
         traces.as_deref_mut(),
     );
+    let t_cruise_scatter = t_start.elapsed() - t_airborne_scatter;
 
     let cruise_band = cruise::band_stats(&cruise_flight_stats);
     let (airborne_periods, airborne_detail) = airborne::build_detail(
@@ -88,12 +96,30 @@ pub fn compute_aircraft_v6(
         &cruise_band,
         n_days_f,
     );
+    let t_airborne_detail = t_start.elapsed() - t_airborne_scatter - t_cruise_scatter;
 
     let g_res = ground::run(receiver, ground_rows, barriers, rasters, traces.as_deref_mut());
     let (ground_periods, ground_contribs, ground_detail) =
         ground::build_outputs(receiver, barriers, rasters, &g_res, n_days_f);
+    let t_ground = t_start.elapsed() - t_airborne_scatter - t_cruise_scatter - t_airborne_detail;
 
     let combined_periods = combine_periods(&airborne_periods, &ground_periods);
+
+    if timing_on {
+        let t_total = t_start.elapsed();
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+        eprintln!(
+            "ac-v6 total={:.0}ms airb_scatter={:.0}ms cr_scatter={:.0}ms airb_detail={:.0}ms ground={:.0}ms (n_airb={} n_cr={} n_g={})",
+            ms(t_total),
+            ms(t_airborne_scatter),
+            ms(t_cruise_scatter),
+            ms(t_airborne_detail),
+            ms(t_ground),
+            airborne_rows.len(),
+            cruise_rows.len(),
+            ground_rows.len(),
+        );
+    }
 
     let mut contributors: Vec<Contributor> = Vec::new();
     if airborne_periods.lden_db.is_finite() {

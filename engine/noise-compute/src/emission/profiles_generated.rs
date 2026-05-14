@@ -1740,7 +1740,6 @@ fn similarity_fallback(typecode: &str) -> u8 {
     FALLBACK_PROFILE_IDX
 }
 
-/// Beacon-only entries that broadcast as ADS-B but are not aircraft.
 /// Beacon-only ADS-B entries that should not flow through the aircraft
 /// pipeline. `TWR` = control tower fixed transponders. `GND` = airport
 /// ground vehicles (fuel trucks, tugs, follow-me, fire trucks); these

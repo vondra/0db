@@ -234,21 +234,18 @@ fn main() -> Result<()> {
                         return;
                     }
 
-                    // Closed-ring AirportLine ways are geometrically polygons
-                    // (e.g. a runway drawn as a perimeter way rather than a
-                    // multipolygon). Reroute to AirportArea so we get a
-                    // proper polygon source rather than perimeter fragments.
+                    // Closed-ring runway/airstrip ways are geometrically
+                    // polygons (a runway drawn as a perimeter way rather
+                    // than a multipolygon). Reroute to AirportArea for a
+                    // proper polygon source instead of perimeter fragments.
                     //
-                    // GATED on aeroway = runway/airstrip ONLY: taxiway and
-                    // stopway closed-rings are typically turnaround LOOPS
-                    // (a closed taxi cul-de-sac), where the loop ring is the
-                    // actual path of taxi traffic — NOT the perimeter of an
-                    // area. Rerouting taxiway loops to AirportArea would
-                    // artificially fill their interior with concrete and
-                    // remove the line from airport_lines.arrow, breaking
-                    // downstream leg snapping (Gemini+DeepSeek /gg WARN).
+                    // taxiway/stopway closed-rings are typically turnaround
+                    // LOOPS where the ring itself is the taxi path; keeping
+                    // them as AirportLine preserves the downstream leg snap.
                     if matches!(ftype, classify::FeatureType::AirportLine)
-                        && relations::is_closed_ring(&coords)
+                        && coords.len() >= 3
+                        && (coords[0][0] - coords.last().unwrap()[0]).abs() < 1e-7
+                        && (coords[0][1] - coords.last().unwrap()[1]).abs() < 1e-7
                         && matches!(
                             way.tags()
                                 .find(|(k, _)| *k == "aeroway")

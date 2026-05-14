@@ -175,18 +175,17 @@ impl Spiller {
             }
             FeatureType::AirportLine => {
                 let heading = microsegment::bearing_deg(seg.0[0], seg.0[1], seg.1[0], seg.1[1]);
-                let width_m = classify::parse_width_m(tags.get("width").map(|s| s.as_str()))
-                    .map(|v| format!("{v:.1}"))
-                    .unwrap_or_default();
                 let _ = write!(
                     w,
-                    "\t{:.1}\t{}\t{}\t{}\t{}",
+                    "\t{:.1}\t{}\t{}\t{}\t",
                     heading,
                     classify::aeroway_type(tags),
-                    tags.get("ref").unwrap_or(&String::new()),
-                    tags.get("surface").unwrap_or(&String::new()),
-                    width_m,
+                    tags.get("ref").map(String::as_str).unwrap_or(""),
+                    tags.get("surface").map(String::as_str).unwrap_or(""),
                 );
+                if let Some(v) = classify::parse_width_m(tags.get("width").map(|s| s.as_str())) {
+                    let _ = write!(w, "{v:.1}");
+                }
             }
             _ => {}
         }
