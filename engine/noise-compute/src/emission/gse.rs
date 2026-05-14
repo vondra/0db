@@ -104,16 +104,7 @@ pub fn classify_gse_callsign(callsign: &str) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::A_WEIGHTING;
-
-    fn lw_total_a_weighted(bands: &[f64; NUM_BANDS]) -> f64 {
-        let lin: f64 = bands
-            .iter()
-            .zip(A_WEIGHTING.iter())
-            .map(|(lw, aw)| 10f64.powf((lw + aw) / 10.0))
-            .sum();
-        10.0 * lin.log10()
-    }
+    use crate::propagation::iso9613::a_weighted_total;
 
     #[test]
     fn classify_pozar_heavy() {
@@ -150,7 +141,8 @@ mod tests {
 
     #[test]
     fn icao_outside_range_rejected() {
-        assert!(!icao_is_ground_vehicle(0x49F200));
+        assert!(!icao_is_ground_vehicle(0x49EFFF), "just below lo edge");
+        assert!(!icao_is_ground_vehicle(0x49F200), "just above hi edge");
         assert!(!icao_is_ground_vehicle(0x498F84));
         assert!(!icao_is_ground_vehicle(0x000000));
         assert!(!icao_is_ground_vehicle(0xFFFFFF));
@@ -158,18 +150,18 @@ mod tests {
 
     #[test]
     fn classes_strictly_ordered_loudness() {
-        let light = lw_total_a_weighted(&GSE_LW_BANDS_DB[GSE_CLASS_LIGHT as usize]);
-        let medium = lw_total_a_weighted(&GSE_LW_BANDS_DB[GSE_CLASS_MEDIUM as usize]);
-        let heavy = lw_total_a_weighted(&GSE_LW_BANDS_DB[GSE_CLASS_HEAVY as usize]);
+        let light = a_weighted_total(&GSE_LW_BANDS_DB[GSE_CLASS_LIGHT as usize]);
+        let medium = a_weighted_total(&GSE_LW_BANDS_DB[GSE_CLASS_MEDIUM as usize]);
+        let heavy = a_weighted_total(&GSE_LW_BANDS_DB[GSE_CLASS_HEAVY as usize]);
         assert!(light < medium, "LIGHT={light} not < MEDIUM={medium}");
         assert!(medium < heavy, "MEDIUM={medium} not < HEAVY={heavy}");
     }
 
     #[test]
     fn cnossos_totals_in_expected_band() {
-        let light = lw_total_a_weighted(&GSE_LW_BANDS_DB[GSE_CLASS_LIGHT as usize]);
-        let medium = lw_total_a_weighted(&GSE_LW_BANDS_DB[GSE_CLASS_MEDIUM as usize]);
-        let heavy = lw_total_a_weighted(&GSE_LW_BANDS_DB[GSE_CLASS_HEAVY as usize]);
+        let light = a_weighted_total(&GSE_LW_BANDS_DB[GSE_CLASS_LIGHT as usize]);
+        let medium = a_weighted_total(&GSE_LW_BANDS_DB[GSE_CLASS_MEDIUM as usize]);
+        let heavy = a_weighted_total(&GSE_LW_BANDS_DB[GSE_CLASS_HEAVY as usize]);
         assert!((85.0..95.0).contains(&light), "LIGHT={light} outside 85-95 dB(A)");
         assert!((95.0..105.0).contains(&medium), "MEDIUM={medium} outside 95-105 dB(A)");
         assert!((100.0..110.0).contains(&heavy), "HEAVY={heavy} outside 100-110 dB(A)");
