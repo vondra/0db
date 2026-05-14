@@ -51,9 +51,10 @@ pub fn compute_aircraft_v6(
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
     let n_days_f = (n_days as f64).max(1.0);
 
-    // Per-layer timing probes. Env-gated (POPUP_TIMING=1) so production
-    // popup latency is unaffected. Inline `Instant::now()` is cheaper
-    // than perf/flamegraph and lands one line per popup request.
+    // Per-layer timing probes. The print is env-gated (POPUP_TIMING=1);
+    // the 5 Instant::now()/elapsed() calls run unconditionally but cost
+    // <1 µs total per popup. Inline timing > perf/flamegraph for this
+    // app: one log line per popup, no perf.data on disk.
     let timing_on = std::env::var("POPUP_TIMING").as_deref() == Ok("1");
     let t_start = std::time::Instant::now();
 
