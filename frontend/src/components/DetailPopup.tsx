@@ -386,6 +386,10 @@ function MetadataRows({ c }: { c: Contributor }) {
     const g = m.ground_ops
     const total = (g.observed_movements_per_day ?? 0) + (g.modeled_movements_per_day ?? 0)
     const hasModeled = (g.modeled_movements_per_day ?? 0) > 0.01
+    const arr = g.arrivals_per_day ?? 0
+    const dep = g.departures_per_day ?? 0
+    const gseTotal = (g.gse_per_day ?? [0, 0, 0]).reduce((s, v) => s + v, 0)
+    const hasGse = gseTotal > 0.05
     const movementsText = txtTable([
       'Airport ground operations per day.',
       'Observed from ADS-B where visible; the',
@@ -396,16 +400,45 @@ function MetadataRows({ c }: { c: Contributor }) {
       { sep: true },
       ['Total', `${fmtFloat(total)}/day`],
       '',
+      'Per direction (unique rotations, set-union dedup):',
+      ['  Arrivals', `${fmtFloat(arr)}/day`],
+      ['  Departures', `${fmtFloat(dep)}/day`],
+      '',
       'Per class:',
       ['  Runway roll', `${fmtFloat((g.runway_roll.observed_movements_per_day ?? 0) + (g.runway_roll.modeled_movements_per_day ?? 0))}/day`],
       ['  Taxi', `${fmtFloat((g.taxi.observed_movements_per_day ?? 0) + (g.taxi.modeled_movements_per_day ?? 0))}/day`],
       ['  Apron', `${fmtFloat((g.apron_movement.observed_movements_per_day ?? 0) + (g.apron_movement.modeled_movements_per_day ?? 0))}/day`],
+      ...(hasGse
+        ? [
+            '' as TableRow,
+            'Ground support equipment:' as TableRow,
+            ['  Light', `${fmtFloat((g.gse_per_day ?? [0, 0, 0])[0])}/day`] as [string, string],
+            ['  Medium', `${fmtFloat((g.gse_per_day ?? [0, 0, 0])[1])}/day`] as [string, string],
+            ['  Heavy', `${fmtFloat((g.gse_per_day ?? [0, 0, 0])[2])}/day`] as [string, string],
+          ]
+        : []),
     ] as TableRow[], 16, 12)
-    return lineRow(
-      'Ground movements',
-      <DataPoint title="Airport ground ops per day" text={movementsText}>
-        {`${total.toFixed(1)}/day`}
-      </DataPoint>,
+    return (
+      <>
+        {lineRow(
+          'Ground movements',
+          <DataPoint title="Airport ground ops per day" text={movementsText}>
+            {`${total.toFixed(1)}/day`}
+          </DataPoint>,
+        )}
+        {lineRow(
+          'Arr / Dep',
+          <DataPoint title="Unique rotations per direction" text={movementsText}>
+            <span className="tabular-nums">{`${arr.toFixed(1)} / ${dep.toFixed(1)}/day`}</span>
+          </DataPoint>,
+        )}
+        {hasGse && lineRow(
+          'GSE',
+          <DataPoint title="Ground support equipment events per day" text={movementsText}>
+            <span className="tabular-nums">{`${gseTotal.toFixed(1)}/day`}</span>
+          </DataPoint>,
+        )}
+      </>
     )
   }
 
@@ -448,8 +481,14 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
     ? 0
     : Math.max(0, 1 - profileMix.reduce((s, e) => s + e.share, 0))
   const showOther = Math.round(profileMixOther * 100) >= 5
+  // The compute layer emits `rep_typecode = "FALLBACK"` for the
+  // WING_FALLBACK noise class (typecode not in EASA ANP); mirror the
+  // existing typecode→"Unknown" conversions at lines 70 and 714 so
+  // users don't see the internal sentinel surface in the ground-ops
+  // "Top types" chip.
+  const fallbackToUnknown = (s: string) => (s === 'FALLBACK' ? 'Unknown' : s)
   const profileMixDisplay: Array<[string, string]> = [
-    ...profileMix.map((e) => [e.rep_typecode, profileMixPct(e.share)] as [string, string]),
+    ...profileMix.map((e) => [fallbackToUnknown(e.rep_typecode), profileMixPct(e.share)] as [string, string]),
     ...(showOther ? [['Other', profileMixPct(profileMixOther)] as [string, string]] : []),
   ]
   const profileMixSummary = profileMix.length === 0

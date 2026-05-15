@@ -270,6 +270,19 @@ export interface AircraftGroundOpsDetail {
   periods_free: NoisePeriodsData
   observed_movements_per_day: number | null
   modeled_movements_per_day: number | null
+  /** Unique arrival rotations per day at this airport. Computed
+   *  from the set of flight_ids whose runway_roll segments had
+   *  is_departure=0. NOT an ICAO Annex-14 movement (a one-flight
+   *  arrival counts as 1 here; Annex-14 might count it as 2). */
+  arrivals_per_day: number | null
+  /** Unique departure rotations per day; same semantics as
+   *  [`arrivals_per_day`] with is_departure=1. */
+  departures_per_day: number | null
+  /** Ground Support Equipment events per day, indexed by class
+   *  (0=LIGHT, 1=MEDIUM, 2=HEAVY). Pushback tractors, fuel
+   *  trucks, follow-me cars classified by callsign prefix at
+   *  Stage 0 ingestion. `null` when no GSE seen at this airport. */
+  gse_per_day: [number, number, number] | null
   distance_m: number
   emission_db: number
   received_bands: number[]
