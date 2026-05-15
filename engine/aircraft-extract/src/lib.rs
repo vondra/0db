@@ -36,3 +36,5 @@ pub mod trace;
 /// path (vertices + per-leg ops_kind + count_weight + em_bands), with
 /// the nearest aerodrome from `airport_areas.arrow` providing identity.
 pub const SCHEMA_VERSION: &str = "v12";
+
+pub mod stage_airport_discover;
