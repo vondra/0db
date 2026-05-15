@@ -60,6 +60,8 @@ mod tests {
             profile_idx: 0,
             source_id: 0,
             origin: origin::OBSERVED,
+            veh_kind: 0,
+            gse_class: 0,
             points: vec![pt(); n],
         }
     }

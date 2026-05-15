@@ -93,6 +93,8 @@ fn stage_1_one_flight(
         profile_idx: flight.profile_idx,
         source_id: flight.source_id,
         origin: flight.origin,
+        veh_kind: flight.veh_kind,
+        gse_class: flight.gse_class,
         date_id,
     };
     build_segments(&points, &agl_m, &phases, &meta)
@@ -178,6 +180,8 @@ pub fn read_flights(path: &Path) -> Result<Vec<Flight>> {
                 profile_idx: prof.value(i),
                 source_id: src.value(i),
                 origin: orig.value(i),
+                veh_kind: 0,
+                gse_class: 0,
                 points,
             });
         }

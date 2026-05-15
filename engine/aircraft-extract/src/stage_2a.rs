@@ -178,6 +178,8 @@ mod tests {
             profile_idx: 0,
             source_id: 0,
             origin: 0,
+            veh_kind: 0,
+            gse_class: 0,
             period: 0,
             date_id: 0,
             phase: Phase::Airborne,

@@ -58,6 +58,13 @@ pub fn typecode_bytes(s: &str) -> [u8; 4] {
 /// rather than aircraft-days; airborne signal dropouts of any
 /// duration preserve flight identity, so a transoceanic crossing with
 /// a 4 h coverage hole stays one `Flight`.
+///
+/// `veh_kind` partitions aircraft (`0`) from ground-support equipment
+/// (`1`) so Stage 0 routing can fork the two pipelines: aircraft run
+/// through the NPD path, GSE through the CNOSSOS-derived emission
+/// table in `noise_compute::emission::gse`. The field is wired in
+/// Phase 2.3a but defaults to `0` at every construction site —
+/// Phase 2.3b activates GSE routing.
 #[derive(Clone)]
 pub struct Flight {
     pub flight_id: u64,
@@ -68,10 +75,20 @@ pub struct Flight {
     pub profile_idx: u8,
     pub source_id: u8,
     pub origin: u8,
+    /// 0 = aircraft (default), 1 = GSE.
+    pub veh_kind: u8,
+    /// Valid when `veh_kind == 1`: GSE noise class index
+    /// (`GSE_CLASS_LIGHT`/`MEDIUM`/`HEAVY` from `noise_compute::emission::gse`).
+    /// Ignored otherwise.
+    pub gse_class: u8,
     pub points: Vec<TracePoint>,
 }
 
 /// Stage 1 in-memory record. One per classified flight segment.
+///
+/// `veh_kind`/`gse_class` mirror the `Flight` fields and propagate
+/// down so Stage 2A/2B/2C writers can route GSE segments off the
+/// aircraft NPD path. See `Flight` for the contract.
 #[derive(Clone)]
 pub struct FlightSegment {
     pub flight_id: u64,
@@ -80,6 +97,8 @@ pub struct FlightSegment {
     pub profile_idx: u8,
     pub source_id: u8,
     pub origin: u8,
+    pub veh_kind: u8,
+    pub gse_class: u8,
     pub period: u8,
     pub date_id: i16,
     pub phase: Phase,
