@@ -1,4 +1,5 @@
 pub mod aircraft;
+pub mod airport_traffic;
 pub mod gse;
 pub mod industrial;
 pub mod profiles_generated;

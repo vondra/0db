@@ -54,9 +54,14 @@ pub struct AirportTrafficRow {
     /// energy-weighted — caller multiplies by `band_energy_lin` at
     /// compute time.
     pub movements_per_day: f32,
-    /// Pre-computed per-band linear energy contribution per second of
-    /// source operation per movement. Already includes speed adjustment,
-    /// finite-line correction, departure bonus, acoustic-mode weighting.
+    /// Per-band linear Z-weighted SEL at 25 m perpendicular distance
+    /// for ONE MOVEMENT through this microsegment, event-integrated
+    /// (NOT per-second — multiplying by movement duration would
+    /// double-count). Already encodes speed adjustment, finite-line
+    /// correction at the 25 m reference, departure bonus, and the
+    /// aircraft per-event vs GSE kinematic-integral semantics chosen
+    /// by `noise_compute::emission::airport_traffic`. A-weighting
+    /// is applied receiver-side after frequency-dependent propagation.
     pub band_energy_lin: [f32; NUM_BANDS],
 }
 
