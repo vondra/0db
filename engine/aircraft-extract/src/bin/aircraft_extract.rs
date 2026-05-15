@@ -61,6 +61,11 @@ enum Cmd {
         h3r4_dir: PathBuf,
         #[arg(long, default_value_t = 1)]
         n_days: u16,
+        /// Optional `min_lat,min_lon,max_lat,max_lon` bbox — required
+        /// when the upstream segments came from a bbox/radius subset
+        /// cache. See `RunAll::scope_bbox` for full rationale.
+        #[arg(long)]
+        scope_bbox: Option<String>,
     },
     /// Stage 2B: segments → per-R4 cruise.arrow
     Stage2b {
@@ -70,6 +75,8 @@ enum Cmd {
         h3r4_dir: PathBuf,
         #[arg(long, default_value_t = 1)]
         n_days: u16,
+        #[arg(long)]
+        scope_bbox: Option<String>,
     },
     /// Stage 2C: segments → per-R4 airport_traffic.arrow
     Stage2c {
@@ -79,6 +86,8 @@ enum Cmd {
         h3r4_dir: PathBuf,
         #[arg(long, default_value_t = 1)]
         n_days: u16,
+        #[arg(long)]
+        scope_bbox: Option<String>,
     },
     /// Run every stage end-to-end for a list of days.
     RunAll {
@@ -120,19 +129,22 @@ fn main() -> Result<()> {
             let n = run_stage_1(&flights_dir, &out, &day, &rasters)?;
             eprintln!("[stage1] {day}: {n} segments");
         }
-        Cmd::Stage2a { segments, h3r4_dir, n_days } => {
+        Cmd::Stage2a { segments, h3r4_dir, n_days, scope_bbox } => {
+            let scope = parse_scope(scope_bbox.as_deref())?;
             let segs = aircraft_extract::arrow_io::read_segments(&segments)
                 .with_context(|| format!("read {}", segments.display()))?;
-            let n = run_stage_2a(&segs, &h3r4_dir, n_days, None)?;
+            let n = run_stage_2a(&segs, &h3r4_dir, n_days, scope.as_ref())?;
             eprintln!("[stage2a] {n} R4 hexes written");
         }
-        Cmd::Stage2b { segments, h3r4_dir, n_days } => {
+        Cmd::Stage2b { segments, h3r4_dir, n_days, scope_bbox } => {
+            let scope = parse_scope(scope_bbox.as_deref())?;
             let segs = aircraft_extract::arrow_io::read_segments(&segments)
                 .with_context(|| format!("read {}", segments.display()))?;
-            let n = run_stage_2b(&segs, &h3r4_dir, n_days, None)?;
+            let n = run_stage_2b(&segs, &h3r4_dir, n_days, scope.as_ref())?;
             eprintln!("[stage2b] {n} R4 hexes written");
         }
-        Cmd::Stage2c { segments, h3r4_dir, n_days } => {
+        Cmd::Stage2c { segments, h3r4_dir, n_days, scope_bbox } => {
+            let scope = parse_scope(scope_bbox.as_deref())?;
             let segs = aircraft_extract::arrow_io::read_segments(&segments)
                 .with_context(|| format!("read {}", segments.display()))?;
             let areas = read_global_airports(&h3r4_dir)
@@ -141,7 +153,7 @@ fn main() -> Result<()> {
                 "[stage2c] loaded {} aerodrome polygons globally",
                 areas.len()
             );
-            let n = run_stage_2c(&segs, &areas, &h3r4_dir, n_days, None)?;
+            let n = run_stage_2c(&segs, &areas, &h3r4_dir, n_days, scope.as_ref())?;
             eprintln!("[stage2c] {n} R4 hexes written");
         }
         Cmd::RunAll {
@@ -152,11 +164,8 @@ fn main() -> Result<()> {
             days,
             scope_bbox,
         } => {
-            let scope = scope_bbox
-                .as_deref()
-                .map(ScopeBbox::parse)
-                .transpose()
-                .map_err(|e| anyhow::anyhow!("--scope-bbox: {e}"))?;
+            let scope = parse_scope(scope_bbox.as_deref())?;
+            require_scope_for_subset_cache(&adsb_cache, scope.as_ref())?;
             if let Some(s) = scope.as_ref() {
                 eprintln!(
                     "[run-all] scope bbox: lat {}..{}, lon {}..{}",
@@ -245,6 +254,39 @@ fn main() -> Result<()> {
                 t_end - t2c
             );
         }
+    }
+    Ok(())
+}
+
+/// Shared `--scope-bbox` parser, identical surface across Stage2 + RunAll.
+fn parse_scope(s: Option<&str>) -> Result<Option<ScopeBbox>> {
+    s.map(ScopeBbox::parse)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("--scope-bbox: {e}"))
+}
+
+/// Hard-fail when `--adsb-cache` points at a bbox/radius subset path
+/// and the operator forgot `--scope-bbox`. The subset caches keep
+/// whole daily traces for any in-scope flight; without a scope filter
+/// Stage 2A/2B/2C would silently overwrite global R4 files with those
+/// out-of-scope trajectories — the exact corruption that bit us when
+/// the first Canary re-extract overwrote 95 Praha `841e3*` R4s.
+fn require_scope_for_subset_cache(
+    adsb_cache: &std::path::Path,
+    scope: Option<&ScopeBbox>,
+) -> Result<()> {
+    if scope.is_some() {
+        return Ok(());
+    }
+    let s = adsb_cache.to_string_lossy();
+    if s.contains("/bbox/") || s.contains("/radius/") {
+        return Err(anyhow::anyhow!(
+            "--adsb-cache {} looks like a subset cache (path contains /bbox/ or \
+             /radius/) but --scope-bbox is not set. Either pass --scope-bbox \
+             min_lat,min_lon,max_lat,max_lon matching the subset filter, or \
+             point --adsb-cache at the global archive root.",
+            s
+        ));
     }
     Ok(())
 }

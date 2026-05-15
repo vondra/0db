@@ -19,11 +19,15 @@ H3R4_DIR="${H3R4_DIR:-$DATA_ROOT/prepared/$DATA_YEAR/h3r4}"
 PREPARED_DIR="${PREPARED_DIR:-$DATA_ROOT/prepared}"
 WORK_DIR="${WORK_DIR:-/tmp/aircraft-extract-work}"
 DAYS="${DAYS:-}"
-# Optional `min_lat,min_lon,max_lat,max_lon`. REQUIRED for bbox/radius
-# subset caches (Canary, Praha-150km, ...) — full daily traces of
-# in-scope flights would otherwise overwrite global R4 files. Leave
-# unset only when running against the global ADS-B archive.
-SCOPE_BBOX="${SCOPE_BBOX:-}"
+# REQUIRED for bbox/radius subset caches (Canary, Praha-150km, ...) —
+# full daily traces of in-scope flights would otherwise overwrite
+# global R4 files. The aircraft-extract binary hard-fails when
+# --adsb-cache contains /bbox/ or /radius/ AND --scope-bbox is unset.
+#
+# Default tracks the default ADSB_CACHE (Praha 150 km radius around
+# 50.10°N 14.43°E): a bounding box that covers the entire 150 km
+# disc with ~10 km margin. Override when ADSB_CACHE is changed.
+SCOPE_BBOX="${SCOPE_BBOX:-48.65,12.00,51.55,16.90}"
 
 log() { echo "[aircraft-extract] $(date '+%Y-%m-%d %H:%M:%S') $*"; }
 die() { log "ERROR: $*"; exit 1; }
