@@ -212,6 +212,11 @@ pub fn read_segments(path: &Path) -> Result<Vec<FlightSegment>> {
                 profile_idx: profile_idx.value(i),
                 source_id: source_id.value(i),
                 origin: origin.value(i),
+                // segments.arrow schema predates Phase 2.3a; the on-disk
+                // file has no veh_kind/gse_class columns yet, so default
+                // to aircraft. Phase 2.3b extends the schema so GSE
+                // routing survives the Stage 1 → Stage 2 disk round-trip
+                // in `aircraft_extract::RunAll`.
                 veh_kind: 0,
                 gse_class: 0,
                 period: period.value(i),

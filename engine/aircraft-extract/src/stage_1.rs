@@ -180,6 +180,9 @@ pub fn read_flights(path: &Path) -> Result<Vec<Flight>> {
                 profile_idx: prof.value(i),
                 source_id: src.value(i),
                 origin: orig.value(i),
+                // flights.arrow predates Phase 2.3a; columns absent
+                // on disk → default aircraft. Phase 2.3b extends the
+                // schema so Stage 0 routing survives this round-trip.
                 veh_kind: 0,
                 gse_class: 0,
                 points,
