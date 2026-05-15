@@ -634,6 +634,7 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         &sources.aircraft_cruise_batches,
         &sources.aircraft_airport_traffic_batches,
         rasters,
+        &sources.barriers,
         sources.n_days,
     )
     .map_err(|e| Error::new(Status::GenericFailure, e))?;
