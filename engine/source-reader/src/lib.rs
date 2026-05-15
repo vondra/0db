@@ -686,18 +686,18 @@ fn apply_segment_top_k_with_cap(
         ..Default::default()
     };
 
-    // Aircraft segments split into 2 sub-tabs by `aircraft_subtype`
-    // (2 = airborne / 3 = cruise) for top-K budgeting: each sub-tab
-    // carries its own slice of segments at the popup-global cap. The
-    // Phase-6-retired `aircraft_subtype = 1` (ground path) bucket no
-    // longer has a producer; `aircraft_ground_*` summary fields are
-    // wire-format placeholders kept at 0 until the frontend Ground
-    // tab is also retired.
+    // Aircraft segments split into 3 sub-tabs by `aircraft_subtype`
+    // (1 = ground / 2 = airborne / 3 = cruise) for top-K budgeting:
+    // each sub-tab carries its own slice of segments at the popup-
+    // global cap. Phase 7c restores subtype = 1 (ground path) — see
+    // `noise-compute::compute::aircraft_v6::airport_traffic::run`'s
+    // `emit_segment_traces` (one SegmentTrace per microsegment).
     let aircraft_subtype_bucket = |seg: &noise_compute::types::SegmentTrace| -> Option<u8> {
         if seg.kind != LayerKind::Aircraft {
             return None;
         }
         match seg.aircraft_subtype {
+            1 => Some(1),
             2 => Some(2),
             3 => Some(3),
             _ => None,
@@ -705,11 +705,13 @@ fn apply_segment_top_k_with_cap(
     };
 
     let mut per_kind_total: std::collections::HashMap<LayerKind, u32> = std::collections::HashMap::new();
+    let mut aircraft_ground_total = 0u32;
     let mut aircraft_airborne_subseg_total = 0u32;
     let mut aircraft_cruise_total = 0u32;
     for seg in &traces.segments {
         *per_kind_total.entry(seg.kind).or_insert(0) += 1;
         match aircraft_subtype_bucket(seg) {
+            Some(1) => aircraft_ground_total += 1,
             Some(2) => aircraft_airborne_subseg_total += 1,
             Some(3) => aircraft_cruise_total += 1,
             _ => {}
@@ -717,7 +719,7 @@ fn apply_segment_top_k_with_cap(
     }
     summary.road_total = *per_kind_total.get(&LayerKind::Road).unwrap_or(&0);
     summary.railway_total = *per_kind_total.get(&LayerKind::Railway).unwrap_or(&0);
-    summary.aircraft_ground_total = 0;
+    summary.aircraft_ground_total = aircraft_ground_total;
     summary.building_total = *per_kind_total.get(&LayerKind::Building).unwrap_or(&0);
     summary.industrial_total = *per_kind_total.get(&LayerKind::Industrial).unwrap_or(&0);
     summary.aircraft_airborne_total = aircraft_airborne_subseg_total;
@@ -729,10 +731,19 @@ fn apply_segment_top_k_with_cap(
 
     let mut kept: Vec<noise_compute::types::SegmentTrace> = Vec::new();
     let mut per_kind: std::collections::HashMap<LayerKind, u32> = std::collections::HashMap::new();
+    let mut aircraft_ground_count = 0u32;
     let mut aircraft_airborne_subseg_count = 0u32;
     let mut aircraft_cruise_count = 0u32;
     for seg in std::mem::take(&mut traces.segments) {
         let cap_ok = match aircraft_subtype_bucket(&seg) {
+            Some(1) => {
+                if (aircraft_ground_count as usize) < per_kind_cap {
+                    aircraft_ground_count += 1;
+                    true
+                } else {
+                    false
+                }
+            }
             Some(2) => {
                 if (aircraft_airborne_subseg_count as usize) < per_kind_cap {
                     aircraft_airborne_subseg_count += 1;
@@ -769,7 +780,7 @@ fn apply_segment_top_k_with_cap(
 
     summary.road_count = *per_kind.get(&LayerKind::Road).unwrap_or(&0);
     summary.railway_count = *per_kind.get(&LayerKind::Railway).unwrap_or(&0);
-    summary.aircraft_ground_count = 0;
+    summary.aircraft_ground_count = aircraft_ground_count;
     summary.building_count = *per_kind.get(&LayerKind::Building).unwrap_or(&0);
     summary.industrial_count = *per_kind.get(&LayerKind::Industrial).unwrap_or(&0);
     summary.aircraft_airborne_count = aircraft_airborne_subseg_count;
