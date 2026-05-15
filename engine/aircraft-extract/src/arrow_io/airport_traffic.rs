@@ -1,4 +1,4 @@
-//! `airport_traffic.arrow` writer + reader (Phase 3 schema v1).
+//! `airport_traffic.arrow` writer + reader (v3 contract).
 //!
 //! One row per per-segment per-period traffic counter. Sparse on the
 //! `(osm_id, segment_idx, ops_kind, is_departure, veh_kind, class_idx,
@@ -7,18 +7,23 @@
 //! energy: the writer attributes the +1 movement only to the segment
 //! with longest coverage per leg, while energy is distributed to every
 //! intersected segment. Replaces ground.arrow's per-rotation paths
-//! with per-segment counters that don't scale with `n_days`. See
+//! with per-segment counters whose row count is fixed at the OSM
+//! microsegment × class × period grid; only the per-row `flight_ids`
+//! payload scales linearly with observed rotations. See
 //! [`crate::arrow_schemas::airport_traffic_schema`] for the column
-//! list and the `airport_traffic_v2` contract (daily-total energy).
+//! list and the `airport_traffic_v3` contract (daily-total energy +
+//! per-row sorted `flight_ids` for dedup of unique movements).
 
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
 use arrow::array::{
-    ArrayRef, FixedSizeListArray, Float32Array, Float32Builder, StringArray, StringBuilder,
-    UInt16Array, UInt16Builder, UInt64Array, UInt64Builder, UInt8Array, UInt8Builder,
+    ArrayRef, FixedSizeListArray, Float32Array, Float32Builder, ListArray, StringArray,
+    StringBuilder, UInt16Array, UInt16Builder, UInt64Array, UInt64Builder, UInt8Array,
+    UInt8Builder,
 };
+use arrow::buffer::OffsetBuffer;
 use arrow::datatypes::{DataType, Field};
 use arrow::record_batch::RecordBatch;
 
@@ -55,11 +60,22 @@ pub struct AirportTrafficRow {
     pub class_idx: u8,
     /// 0 = day, 1 = evening, 2 = night.
     pub period: u8,
-    /// Display-only movement count averaged over the n_days window
-    /// (counts legs attributed to this segment as the longest-coverage
-    /// intersection). NOT used by the acoustic kernel — multiplying it
-    /// into the receiver chain would double-count the per-event SEL
-    /// already integrated into `band_energy_lin`.
+    /// PER-MICROSEGMENT unique movements per day =
+    /// `flight_ids.len() / n_days`. Dedup is intra-row only: the same
+    /// rotation's repeated ADS-B sample-pair hits of THIS microsegment
+    /// collapse to one set entry.
+    ///
+    /// **Σ across rows is NOT the airport movement count.** A single
+    /// rotation crosses ~3-8 microsegments along its taxi path and
+    /// has its `flight_id` in each one's set, so summing
+    /// `movements_per_day` over all rows of an airport inflates the
+    /// real total by that taxi-path microsegment count. The correct
+    /// airport-level metric is `|⋃_rows flight_ids| / n_days` —
+    /// caller must take a SET UNION over `flight_ids` across rows
+    /// keyed by `airport_key`, `ops_kind`, and `is_departure`.
+    ///
+    /// Acoustic kernel ignores this field — energy is already
+    /// integrated in `band_energy_lin`.
     pub movements_per_day: f32,
     /// Per-band **daily total** linear Z-weighted energy at 25 m
     /// perpendicular distance from this microsegment for this period
@@ -70,6 +86,14 @@ pub struct AirportTrafficRow {
     /// by `noise_compute::emission::airport_traffic`. A-weighting
     /// is applied receiver-side after frequency-dependent propagation.
     pub band_energy_lin: [f32; NUM_BANDS],
+    /// `flight_id`s of every rotation attributed to this microsegment
+    /// (sorted ascending for deterministic on-disk layout). Caller
+    /// dedup invariant: each flight contributes +1 only on the
+    /// longest-coverage microsegment per leg, so union across rows
+    /// of a per-airport bucket equals real unique flights served
+    /// without double-counting. Used by popup display + for
+    /// debug joins back to `airborne.arrow` / `cruise.arrow`.
+    pub flight_ids: Vec<u64>,
 }
 
 /// Write one R4 hex's traffic counters. `n_days` stamps the extraction
@@ -101,6 +125,15 @@ pub fn write_airport_traffic(
 
     let mut band_values: Vec<f32> = Vec::with_capacity(n * NUM_BANDS);
 
+    // `flight_ids` is variable-length; flatten into one u64 +
+    // offsets buffer pair. Exact-sum capacity (mirrors
+    // `cruise.rs::write_cruise`) avoids over-allocation while still
+    // skipping any re-grow on the hot path.
+    let total_flight_id_entries: usize = rows.iter().map(|r| r.flight_ids.len()).sum();
+    let mut flight_id_values: Vec<u64> = Vec::with_capacity(total_flight_id_entries);
+    let mut flight_id_offsets: Vec<i32> = Vec::with_capacity(n + 1);
+    flight_id_offsets.push(0);
+
     for r in rows {
         airport_key.append_value(&r.airport_key);
         osm_id.append_value(r.osm_id);
@@ -118,6 +151,8 @@ pub fn write_airport_traffic(
         period.append_value(r.period);
         movements_per_day.append_value(r.movements_per_day);
         band_values.extend_from_slice(&r.band_energy_lin);
+        flight_id_values.extend_from_slice(&r.flight_ids);
+        flight_id_offsets.push(flight_id_values.len() as i32);
     }
 
     let band_item_field = Arc::new(Field::new("item", DataType::Float32, false));
@@ -125,6 +160,14 @@ pub fn write_airport_traffic(
         band_item_field,
         NUM_BANDS as i32,
         Arc::new(Float32Array::from(band_values)),
+        None,
+    );
+
+    let flight_id_item_field = Arc::new(Field::new("item", DataType::UInt64, false));
+    let flight_id_list = ListArray::new(
+        flight_id_item_field,
+        OffsetBuffer::new(flight_id_offsets.into()),
+        Arc::new(UInt64Array::from(flight_id_values)),
         None,
     );
 
@@ -145,6 +188,7 @@ pub fn write_airport_traffic(
         Arc::new(period.finish()),
         Arc::new(movements_per_day.finish()),
         Arc::new(band_list),
+        Arc::new(flight_id_list),
     ];
     let batch = RecordBatch::try_new(schema.clone(), columns)?;
     write_record_batches(path, &schema, &[batch])
@@ -152,7 +196,7 @@ pub fn write_airport_traffic(
 
 pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
     let (schema, batches) = read_all_batches(path)?;
-    arrow_schemas::assert_airport_traffic_contract_v2(schema.metadata())?;
+    arrow_schemas::assert_airport_traffic_contract_v3(schema.metadata())?;
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     let mut out = Vec::with_capacity(total_rows);
     for b in batches {
@@ -174,11 +218,17 @@ pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
         let band_list = b.column_by_name("band_energy_lin").unwrap().as_any().downcast_ref::<FixedSizeListArray>().unwrap();
         let band_values = band_list.values().as_any().downcast_ref::<Float32Array>().unwrap();
         let band_buf = band_values.values();
+        let flight_id_list = b.column_by_name("flight_ids").unwrap().as_any().downcast_ref::<ListArray>().unwrap();
+        let flight_id_offsets = flight_id_list.offsets();
+        let flight_id_values = flight_id_list.values().as_any().downcast_ref::<UInt64Array>().unwrap();
 
         for i in 0..b.num_rows() {
             let lo = i * NUM_BANDS;
             let mut bands = [0.0f32; NUM_BANDS];
             bands.copy_from_slice(&band_buf[lo..lo + NUM_BANDS]);
+            let f_lo = flight_id_offsets[i] as usize;
+            let f_hi = flight_id_offsets[i + 1] as usize;
+            let flight_ids: Vec<u64> = flight_id_values.values()[f_lo..f_hi].to_vec();
             out.push(AirportTrafficRow {
                 airport_key: airport_key.value(i).to_string(),
                 osm_id: osm_id.value(i),
@@ -196,6 +246,7 @@ pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
                 period: period.value(i),
                 movements_per_day: movements_per_day.value(i),
                 band_energy_lin: bands,
+                flight_ids,
             });
         }
     }
@@ -228,6 +279,7 @@ mod tests {
             // positions changes the read-back, so the round-trip test
             // catches column-ordering bugs in the builder vec.
             band_energy_lin: [1.0e6, 2.0e6, 3.0e6, 4.0e6, 5.0e6, 6.0e6, 7.0e6, 8.0e6],
+            flight_ids: vec![100, 200, 300],
         }
     }
 
@@ -288,23 +340,27 @@ mod tests {
     #[test]
     fn reader_rejects_wrong_contract() {
         // Synthetic file written with bogus contract metadata must be
-        // rejected by `assert_airport_traffic_contract_v2` — guards
-        // against silently mis-decoding a future v2 schema with a
-        // v1 binary.
-        use crate::arrow_io::write_record_batches;
-        use std::sync::Arc;
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("bogus.arrow");
-        let schema_v1 = arrow_schemas::airport_traffic_schema();
-        let mut md = schema_v1.metadata().clone();
-        md.insert("airport_traffic_contract".into(), "bogus_v9".into());
-        let bogus = Arc::new((*schema_v1).clone().with_metadata(md));
-        let empty_batch = RecordBatch::new_empty(bogus.clone());
-        write_record_batches(&path, &bogus, &[empty_batch]).unwrap();
-        let err = read_airport_traffic(&path).unwrap_err();
-        assert!(
-            err.to_string().contains("airport_traffic_contract"),
-            "expected contract-mismatch error, got: {err}"
-        );
+        // rejected by `assert_airport_traffic_contract_v3` — guards
+        // against silently mis-decoding a v1 / v2 file with a v3
+        // binary (v2 lacks the `flight_ids` column; v2
+        // `movements_per_day` was per-FlightSegment-hit, ~5-15×
+        // over-count of real rotations).
+        for stale_contract in ["bogus_v9", "airport_traffic_v1", "airport_traffic_v2"] {
+            use crate::arrow_io::write_record_batches;
+            use std::sync::Arc;
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("bogus.arrow");
+            let schema = arrow_schemas::airport_traffic_schema();
+            let mut md = schema.metadata().clone();
+            md.insert("airport_traffic_contract".into(), stale_contract.into());
+            let bogus = Arc::new((*schema).clone().with_metadata(md));
+            let empty_batch = RecordBatch::new_empty(bogus.clone());
+            write_record_batches(&path, &bogus, &[empty_batch]).unwrap();
+            let err = read_airport_traffic(&path).unwrap_err();
+            assert!(
+                err.to_string().contains("airport_traffic_contract"),
+                "stale_contract={stale_contract}: expected contract-mismatch error, got: {err}"
+            );
+        }
     }
 }

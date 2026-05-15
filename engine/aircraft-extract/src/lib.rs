@@ -37,5 +37,5 @@ pub mod trace;
 /// crate. Phase 6 retired the per-rotation `ground.arrow`; the
 /// authoritative ground-ops layer is now `airport_traffic.arrow`
 /// (sparse per-microsegment per-period counters under the
-/// `airport_traffic_v2` dimensional contract).
+/// `airport_traffic_v3` dimensional contract).
 pub const SCHEMA_VERSION: &str = "v12";

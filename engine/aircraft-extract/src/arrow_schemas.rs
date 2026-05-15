@@ -173,14 +173,23 @@ pub fn cruise_schema() -> Arc<Schema> {
 /// per-event SEL across the n_days window, ÷ n_days at emission).
 /// Phase 4 popup applies relative propagation + A-weighting + ÷
 /// period_s to get the period Leq. `movements_per_day` is a true
-/// display count — caller MUST NOT multiply it into the receiver
-/// chain (energy is already integrated).
+/// display count of UNIQUE rotations attributed to this microsegment
+/// (= `flight_ids.len() / n_days`, v3 dedup); caller MUST NOT
+/// multiply it into the receiver chain — energy is already
+/// integrated.
 ///
-/// `_v2` bump: contract changed from per-movement SEL to daily-total
-/// energy on 2026-05-15. Older files stamped `airport_traffic_v1`
-/// MUST be rejected by [`assert_airport_traffic_contract_v2`] to
-/// prevent silent dimensional mis-decoding.
-pub const AIRPORT_TRAFFIC_CONTRACT_V2: &str = "airport_traffic_v2";
+/// `_v3` bump: per-row `flight_ids: List<UInt64>` column carries the
+/// sorted unique `flight_id`s attributed to this microsegment, and
+/// `movements_per_day` is recomputed from `flight_ids.len()` instead
+/// of the legacy per-FlightSegment-hit counter that over-counted by
+/// 5–15× at busy airports.
+///
+/// `_v2` was the dimensional contract correction (per-movement SEL →
+/// daily-total energy on 2026-05-15). `_v1` was per-movement SEL.
+/// Older files MUST be rejected by
+/// [`assert_airport_traffic_contract_v3`] to prevent silent
+/// mis-decoding.
+pub const AIRPORT_TRAFFIC_CONTRACT_V3: &str = "airport_traffic_v3";
 
 /// `geometry_kind` enum stamped on each airport_traffic row.
 /// LINE: OSM runway / taxiway / stopway microsegment with real
@@ -197,7 +206,10 @@ pub const GEOMETRY_KIND_SYNTHETIC: u8 = 2;
 /// when energy is non-zero, because each leg contributes the +1
 /// movement only to the longest-coverage segment but spreads band
 /// energy to every intersected segment). Per-microsegment counters
-/// keep the file size constant in `n_days`, replacing the legacy
+/// keep the file size near-constant in `n_days` (the dominant
+/// per-counter-row part is fixed; `flight_ids` adds 8 B per unique
+/// rotation observed, so the column scales linearly with activity,
+/// not with the time window directly), replacing the legacy
 /// per-rotation paths model retired in Phase 6.
 pub fn airport_traffic_schema() -> Arc<Schema> {
     let fields = vec![
@@ -227,25 +239,34 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
             ),
             false,
         ),
+        // Variable-length List — flight count per row depends on
+        // airport activity (a quiet strip may have 1, LKPR runway
+        // microsegment can have 100s in 14 d). Sorted ascending so
+        // on-disk bytes are deterministic across re-extracts.
+        Field::new(
+            "flight_ids",
+            DataType::List(Arc::new(Field::new("item", DataType::UInt64, false))),
+            false,
+        ),
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "airport_traffic"),
-        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V2),
+        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V3),
     ])))
 }
 
 /// Verify a loaded airport_traffic.arrow file's metadata matches the
-/// current [`AIRPORT_TRAFFIC_CONTRACT_V2`] contract. A future schema
-/// bump (e.g., 8-band octave → 24-band third-octave) would change the
-/// contract value, and an older binary reading the new file must
-/// hard-fail rather than mis-decode bands.
-pub fn assert_airport_traffic_contract_v2(
+/// current [`AIRPORT_TRAFFIC_CONTRACT_V3`] contract. Older files
+/// (v1, v2) MUST be rejected — their column layout lacks `flight_ids`
+/// and their `movements_per_day` carried a 5–15× over-count of real
+/// rotations that would silently mislead any downstream display.
+pub fn assert_airport_traffic_contract_v3(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     match metadata.get("airport_traffic_contract").map(String::as_str) {
-        Some(AIRPORT_TRAFFIC_CONTRACT_V2) => Ok(()),
+        Some(AIRPORT_TRAFFIC_CONTRACT_V3) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V2}, got {other}"
+            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V3}, got {other}"
         )),
         None => Err(anyhow::anyhow!(
             "airport_traffic_contract metadata missing"
@@ -293,7 +314,7 @@ mod tests {
         let s = airport_traffic_schema();
         assert_eq!(
             s.metadata().get("airport_traffic_contract").map(String::as_str),
-            Some(AIRPORT_TRAFFIC_CONTRACT_V2)
+            Some(AIRPORT_TRAFFIC_CONTRACT_V3)
         );
     }
 
@@ -304,7 +325,7 @@ mod tests {
             "airport_key", "osm_id", "segment_idx", "geometry_kind",
             "start_lat", "start_lon", "end_lat", "end_lon", "length_m",
             "ops_kind", "is_departure", "veh_kind", "class_idx", "period",
-            "movements_per_day", "band_energy_lin",
+            "movements_per_day", "band_energy_lin", "flight_ids",
         ] {
             assert!(
                 s.field_with_name(required).is_ok(),

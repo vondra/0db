@@ -2,7 +2,7 @@
 //!
 //! Writes `airport_traffic.arrow` per R4: sparse per-microsegment
 //! per-period traffic counters with daily-total linear Z-weighted band
-//! energy (v2 `airport_traffic_v2` contract). Consults OSM
+//! energy (v3 `airport_traffic_v3` contract). Consults OSM
 //! `airport_areas.arrow` for nearest-aerodrome identity and reads
 //! `airport_lines.arrow` per R4 for the aeroway microsegment graph.
 //!
