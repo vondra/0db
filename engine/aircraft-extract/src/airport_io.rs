@@ -14,6 +14,7 @@ use arrow::array::{
 };
 use arrow::ipc::reader::FileReader;
 use arrow::record_batch::RecordBatch;
+use noise_compute::propagation::geo::flat_dist;
 use noise_compute::types::AirportArea;
 
 /// `airport_areas.arrow` aeroway_type for an `aeroway = aerodrome`
@@ -21,6 +22,67 @@ use noise_compute::types::AirportArea;
 /// taxi polygons live in the same arrow but match other aeroway_type
 /// values.
 pub(crate) const AERODROME_AEROWAY_TYPE: u8 = 5;
+
+/// Minimum nearest-aerodrome radius. OSM aerodrome polygons are
+/// inconsistently sized — LKPR's canonical case is a terminal-only
+/// 37 525 m² polygon whose centroid sits ~3-5 km from runway-end
+/// pavement. Without a generous floor, ADS-B ground segments at
+/// runway thresholds and on the apron land in `strip:R7` orphan
+/// buckets, fragmenting the popup into 4-5 separate "Aircraft —
+/// strip:..." rows that should all aggregate under one LKPR row.
+///
+/// 6 km captures both runway ends of a Cat E airport from a
+/// terminal-only centroid; the `closest aerodrome` tie-breaker
+/// inside [`nearest_aerodrome_within`] keeps LKLT / LKKB / LKVO
+/// (Praha's GA satellites, ~10-15 km away) from getting mis-merged
+/// into LKPR. The proper Tier 1.5 fix per `typed-brewing-clarke.md`
+/// Phase 1d is to extend `airport_areas.arrow` with an
+/// `extent_radius_m` derived from `polygon ∪ runway/taxi-line
+/// buffer`; this floor is the pragmatic interim until that
+/// extension lands.
+pub(crate) const NEAREST_AERODROME_FLOOR_M: f64 = 6000.0;
+
+/// Multiplier on the polygon's equivalent radius (√area/π) for the
+/// nearest-aerodrome snap window. 1.5 gives a small buffer past the
+/// painted polygon for taxiway / runway approach segments.
+pub(crate) const NEAREST_AERODROME_RADIUS_MULT: f64 = 1.5;
+
+/// Find the nearest `aeroway = aerodrome` polygon whose centroid is
+/// within `max(NEAREST_AERODROME_FLOOR_M, area_radius × MULT)` of
+/// `(lat, lon)`. Returns `None` for orphan strips — Stage 2C falls
+/// back to `airport_key = "strip:<R7_hex>"`; Stage 1.5
+/// (`stage_airport_discover_runner.rs`) treats `None` as "this
+/// cluster is a genuinely new auto-discovered airfield" and emits
+/// it under a synthetic `auto-<H3-R11>` key.
+pub(crate) fn nearest_aerodrome_within<'a>(
+    lat: f64,
+    lon: f64,
+    areas: &'a [AirportArea],
+) -> Option<&'a AirportArea> {
+    let mut best: Option<(&AirportArea, f64)> = None;
+    for area in areas {
+        if area.aeroway_type != AERODROME_AEROWAY_TYPE {
+            continue;
+        }
+        if area.airport_key.is_empty() && area.name.is_empty() {
+            continue;
+        }
+        let area_radius = if area.area_m2 > 0.0 {
+            (area.area_m2 as f64 / std::f64::consts::PI).sqrt()
+        } else {
+            500.0
+        };
+        let radius = NEAREST_AERODROME_FLOOR_M.max(area_radius * NEAREST_AERODROME_RADIUS_MULT);
+        let dist = flat_dist(lat, lon, area.centroid_lat, area.centroid_lon);
+        if dist > radius {
+            continue;
+        }
+        if best.map(|(_, d)| dist < d).unwrap_or(true) {
+            best = Some((area, dist));
+        }
+    }
+    best.map(|(a, _)| a)
+}
 
 fn read_batches(path: &Path) -> Result<Vec<RecordBatch>> {
     let f = File::open(path)?;

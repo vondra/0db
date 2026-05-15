@@ -31,6 +31,7 @@ pub mod stage_2a;
 pub mod stage_2b;
 pub mod stage_2c;
 pub mod stage_airport_discover;
+pub mod stage_airport_discover_runner;
 pub mod synth_airport_io;
 pub mod trace;
 

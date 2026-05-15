@@ -30,6 +30,14 @@
 
 use crate::geo::{flat_dist, M_PER_DEG_LAT, M_PER_DEG_LON_EQUATOR};
 
+/// Perpendicular buffer used by [`project_leg_onto_airport_lines`] to
+/// decide whether an ADS-B leg snapped onto an OSM aeroway. Stage 2C
+/// projects every ground leg against the real OSM lines using this
+/// value; Stage 1.5 (`stage_airport_discover_runner.rs`) inverts the
+/// snap to find OSM-missing candidates and must use the SAME buffer
+/// — a vertex Stage 2C would have snapped to must not feed DBSCAN.
+pub(crate) const AIRPORT_LINE_SNAP_BUFFER_M: f32 = 50.0;
+
 /// Minimal view into one airport_lines.arrow row — enough to do
 /// projection geometry plus the per-row metadata Phase 3d aggregator
 /// needs without re-reading the source Arrow. Geometry coords drive
