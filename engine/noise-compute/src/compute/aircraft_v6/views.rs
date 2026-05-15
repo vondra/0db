@@ -41,13 +41,14 @@ pub struct BBox {
     pub max_lon: f32,
 }
 
-/// One row of `airport_traffic.arrow` (v2 contract). Per-band
+/// One row of `airport_traffic.arrow` (v3 contract). Per-band
 /// **daily total** linear Z-weighted energy at 25 m perpendicular from
 /// this OSM microsegment for the row's period (writer divides
 /// Σ per-event SEL by `n_days`). Phase 4 popup applies relative
 /// propagation + `A_WEIGHTING` then divides by `period_s` for the
-/// period Leq. `movements_per_day` is **display metadata only**, not
-/// an acoustic multiplier.
+/// period Leq. `movements_per_day` is **per-microsegment display
+/// only**: airport-total movements require UNION over `flight_ids`
+/// across rows.
 #[derive(Clone, Copy, Debug)]
 pub struct AirportTrafficRowView<'a> {
     pub airport_key: &'a str,
@@ -66,6 +67,11 @@ pub struct AirportTrafficRowView<'a> {
     pub period: u8,
     pub movements_per_day: f32,
     pub band_energy_lin: &'a [f32; 8],
+    /// Sorted unique `flight_id`s attributed to this microsegment
+    /// for this period (longest-coverage attribution from Stage 2C).
+    /// Caller UNIONs across rows for airport-level unique movement
+    /// counts.
+    pub flight_ids: &'a [u64],
 }
 
 /// One row of `airborne.arrow`. `flight_id` is the real ADS-B identity

@@ -7,7 +7,7 @@ use arrow::array::Array;
 use arrow::record_batch::RecordBatch;
 use noise_compute::compute::aircraft_v6::AirportTrafficRowView;
 
-use super::columns::{col_fixed_size_list, col_f32, col_str, col_u16, col_u64, col_u8};
+use super::columns::{col_fixed_size_list, col_f32, col_list, col_str, col_u16, col_u64, col_u8};
 
 const NUM_BANDS: usize = 8;
 
@@ -30,6 +30,7 @@ pub struct AirportTrafficRowAccum {
     period: Vec<u8>,
     movements_per_day: Vec<f32>,
     band_energy_lin: Vec<[f32; NUM_BANDS]>,
+    flight_ids: Vec<Vec<u64>>,
 }
 
 impl AirportTrafficRowAccum {
@@ -51,6 +52,7 @@ impl AirportTrafficRowAccum {
             period: Vec::new(),
             movements_per_day: Vec::new(),
             band_energy_lin: Vec::new(),
+            flight_ids: Vec::new(),
         };
         for batch in batches {
             out.absorb(batch);
@@ -77,6 +79,7 @@ impl AirportTrafficRowAccum {
             Some(period),
             Some(mpd),
             Some(bands),
+            Some(fids_list),
         ) = (
             col_str(batch, "airport_key"),
             col_u64(batch, "osm_id"),
@@ -94,6 +97,7 @@ impl AirportTrafficRowAccum {
             col_u8(batch, "period"),
             col_f32(batch, "movements_per_day"),
             col_fixed_size_list(batch, "band_energy_lin"),
+            col_list(batch, "flight_ids"),
         ) else {
             return;
         };
@@ -106,8 +110,18 @@ impl AirportTrafficRowAccum {
             return;
         };
         let band_buf = band_f32.values();
+        let fid_offsets = fids_list.offsets();
+        let Some(fid_values) = fids_list
+            .values()
+            .as_any()
+            .downcast_ref::<arrow::array::UInt64Array>()
+        else {
+            return;
+        };
+        let fid_buf = fid_values.values();
         self.airport_key.reserve(n);
         self.band_energy_lin.reserve(n);
+        self.flight_ids.reserve(n);
         for i in 0..n {
             self.airport_key.push(airport_key.value(i).to_string());
             self.osm_id.push(osm_id.value(i));
@@ -128,6 +142,9 @@ impl AirportTrafficRowAccum {
             let mut row_bands = [0.0f32; NUM_BANDS];
             row_bands.copy_from_slice(&band_buf[lo..lo + NUM_BANDS]);
             self.band_energy_lin.push(row_bands);
+            let f_lo = fid_offsets[i] as usize;
+            let f_hi = fid_offsets[i + 1] as usize;
+            self.flight_ids.push(fid_buf[f_lo..f_hi].to_vec());
         }
     }
 
@@ -150,6 +167,7 @@ impl AirportTrafficRowAccum {
                 period: self.period[i],
                 movements_per_day: self.movements_per_day[i],
                 band_energy_lin: &self.band_energy_lin[i],
+                flight_ids: &self.flight_ids[i],
             })
             .collect()
     }

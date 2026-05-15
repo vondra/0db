@@ -81,7 +81,7 @@ pub fn add_v6_aircraft_to_result(
     let mut n_traffic_rows: usize = 0;
     if !traffic_views.is_empty() {
         n_traffic_rows = traffic_views.len();
-        let traffic_contribs = compute_airport_traffic::run(receiver, &traffic_views);
+        let traffic_contribs = compute_airport_traffic::run(receiver, &traffic_views, n_days);
         if !traffic_contribs.is_empty() {
             let mut all: Vec<NoisePeriods> = Vec::with_capacity(1 + traffic_contribs.len());
             all.push(air_periods);
