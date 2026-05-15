@@ -20,6 +20,7 @@ use aircraft_extract::scope::ScopeBbox;
 use aircraft_extract::stage_2a::run_stage_2a;
 use aircraft_extract::stage_2b::run_stage_2b;
 use aircraft_extract::stage_2c::run_stage_2c;
+use aircraft_extract::stage_airport_discover_runner::run_stage_airport_discover;
 use raster_reader::RealRasters;
 use rayon::iter::Either;
 use rayon::prelude::*;
@@ -235,16 +236,42 @@ fn main() -> Result<()> {
                 );
             }
 
+            // Read the global aerodrome set once. Stage 1.5
+            // (`run_stage_airport_discover`) uses it for the
+            // polygon-radius-aware re-attribution / reject pass on
+            // DBSCAN clusters; Stage 2C reuses the same vec for
+            // its `nearest_aerodrome_within` resolver.
+            let areas = read_global_airports(&h3r4_dir)?;
+            eprintln!(
+                "[run-all] global aerodromes: {} polygons",
+                areas.len()
+            );
+
+            // Stage 1.5 — DBSCAN auto-discovery of OSM-missing
+            // airfields. Sits AFTER the per-day par_iter (so it sees
+            // the multi-day vertex set, not a per-day slice that
+            // misses sparse rural strips) and BEFORE run_stage_2a (so
+            // Stage 2C's `R4Cache::load` sees the synth sidecars this
+            // stage emits). Writes empty arrows for in-scope R4s that
+            // produced no clusters so a stale strip from a previous
+            // run cannot leak into Stage 2C.
+            let t1_5 = Instant::now();
+            let r1_5 = run_stage_airport_discover(
+                &all_segments,
+                &areas,
+                &h3r4_dir,
+                scope.as_ref(),
+            )?;
             let t2a = Instant::now();
+            eprintln!(
+                "[run-all] stage1.5 R4s with synth lines={r1_5} ({:?})",
+                t2a - t1_5
+            );
+
             let r2a = run_stage_2a(&all_segments, &h3r4_dir, n_days, scope.as_ref())?;
             let t2b = Instant::now();
             let r2b = run_stage_2b(&all_segments, &h3r4_dir, n_days, scope.as_ref())?;
             let t2c = Instant::now();
-            let areas = read_global_airports(&h3r4_dir)?;
-            eprintln!(
-                "[run-all] stage2c airports: {} aerodrome polygons",
-                areas.len()
-            );
             let r2c = run_stage_2c(&all_segments, &areas, &h3r4_dir, n_days, scope.as_ref())?;
             let t_end = Instant::now();
             eprintln!(
