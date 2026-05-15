@@ -55,7 +55,7 @@ pub fn run_stage_2a(
 fn bucket_by_r4(segments: &[FlightSegment]) -> HashMap<u64, Vec<&FlightSegment>> {
     let mut map: HashMap<u64, Vec<&FlightSegment>> = HashMap::new();
     for seg in segments {
-        if seg.phase != Phase::Airborne {
+        if seg.phase != Phase::Airborne || seg.veh_kind != 0 {
             continue;
         }
         let mid_lat = (seg.start_lat + seg.end_lat) as f64 * 0.5;
