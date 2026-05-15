@@ -62,9 +62,11 @@ pub fn typecode_bytes(s: &str) -> [u8; 4] {
 /// `veh_kind` partitions aircraft (`0`) from ground-support equipment
 /// (`1`) so Stage 0 routing can fork the two pipelines: aircraft run
 /// through the NPD path, GSE through the CNOSSOS-derived emission
-/// table in `noise_compute::emission::gse`. The field is wired in
-/// Phase 2.3a but defaults to `0` at every construction site —
-/// Phase 2.3b activates GSE routing.
+/// table in `noise_compute::emission::gse`. Wired by phase:
+/// 2.3a adds the struct fields (defaults `(0, 0)` everywhere),
+/// 2.3b extends `flights.arrow` / `segments.arrow` schemas so the
+/// flag survives Stage 0 → Stage 1 and Stage 1 → Stage 2 disk
+/// round-trips, 2.3c activates GND → GSE routing in trace_to_flight.
 #[derive(Clone)]
 pub struct Flight {
     pub flight_id: u64,
