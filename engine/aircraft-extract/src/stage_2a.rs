@@ -18,17 +18,27 @@ use crate::arrow_io::write_airborne;
 use crate::flight::{
     segment_flags, AirborneEvent, AirborneSubSegment, FlightSegment, Phase,
 };
+use crate::scope::ScopeBbox;
 
 /// Run Stage 2A. Reads Stage 1 segments for one day from `segments_dir`,
 /// groups airborne sub-segments by (flight_id, R4) and writes one
-/// `airborne.arrow` per R4 under `h3r4_dir/<hex>/`.
+/// `airborne.arrow` per R4 under `h3r4_dir/<hex>/`. When `scope` is
+/// set, only R4 cells whose centroid sits inside the bbox (expanded
+/// by `scope::SCOPE_BUFFER_M`) get written — required to prevent
+/// bbox/radius-subset caches from overwriting global R4 files with
+/// the full daily trajectories of in-scope flights.
 pub fn run_stage_2a(
     segments: &[FlightSegment],
     h3r4_dir: &Path,
     n_days: u16,
+    scope: Option<&ScopeBbox>,
 ) -> Result<usize> {
     let by_r4 = bucket_by_r4(segments);
-    let r4s: Vec<u64> = by_r4.keys().copied().collect();
+    let r4s: Vec<u64> = by_r4
+        .keys()
+        .copied()
+        .filter(|r4| scope.map_or(true, |s| s.contains_r4(*r4)))
+        .collect();
     let n_r4 = r4s.len();
 
     r4s.par_iter().try_for_each(|r4_hex| -> Result<()> {

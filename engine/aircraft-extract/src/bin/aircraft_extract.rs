@@ -16,6 +16,7 @@ use aircraft_extract::source::FlightSource;
 use aircraft_extract::source_adsb_tar::AdsbTarSource;
 use aircraft_extract::stage_0::run_stage_0;
 use aircraft_extract::stage_1::{read_flights, run_stage_1};
+use aircraft_extract::scope::ScopeBbox;
 use aircraft_extract::stage_2a::run_stage_2a;
 use aircraft_extract::stage_2b::run_stage_2b;
 use aircraft_extract::stage_2c::run_stage_2c;
@@ -92,6 +93,15 @@ enum Cmd {
         work_dir: PathBuf,
         #[arg(long, value_delimiter = ',')]
         days: Vec<String>,
+        /// Optional `min_lat,min_lon,max_lat,max_lon` bbox.
+        /// Required when `--adsb-cache` points at a bbox/radius
+        /// subset (Canary, Praha-150km, etc.) — those caches keep
+        /// full daily traces for any flight that entered the
+        /// filter, so without scope filtering Stage 2A/2B/2C would
+        /// overwrite global R4 files with those out-of-scope
+        /// trajectories.
+        #[arg(long)]
+        scope_bbox: Option<String>,
     },
 }
 
@@ -113,13 +123,13 @@ fn main() -> Result<()> {
         Cmd::Stage2a { segments, h3r4_dir, n_days } => {
             let segs = aircraft_extract::arrow_io::read_segments(&segments)
                 .with_context(|| format!("read {}", segments.display()))?;
-            let n = run_stage_2a(&segs, &h3r4_dir, n_days)?;
+            let n = run_stage_2a(&segs, &h3r4_dir, n_days, None)?;
             eprintln!("[stage2a] {n} R4 hexes written");
         }
         Cmd::Stage2b { segments, h3r4_dir, n_days } => {
             let segs = aircraft_extract::arrow_io::read_segments(&segments)
                 .with_context(|| format!("read {}", segments.display()))?;
-            let n = run_stage_2b(&segs, &h3r4_dir, n_days)?;
+            let n = run_stage_2b(&segs, &h3r4_dir, n_days, None)?;
             eprintln!("[stage2b] {n} R4 hexes written");
         }
         Cmd::Stage2c { segments, h3r4_dir, n_days } => {
@@ -131,7 +141,7 @@ fn main() -> Result<()> {
                 "[stage2c] loaded {} aerodrome polygons globally",
                 areas.len()
             );
-            let n = run_stage_2c(&segs, &areas, &h3r4_dir, n_days)?;
+            let n = run_stage_2c(&segs, &areas, &h3r4_dir, n_days, None)?;
             eprintln!("[stage2c] {n} R4 hexes written");
         }
         Cmd::RunAll {
@@ -140,7 +150,19 @@ fn main() -> Result<()> {
             prepared_dir,
             work_dir,
             days,
+            scope_bbox,
         } => {
+            let scope = scope_bbox
+                .as_deref()
+                .map(ScopeBbox::parse)
+                .transpose()
+                .map_err(|e| anyhow::anyhow!("--scope-bbox: {e}"))?;
+            if let Some(s) = scope.as_ref() {
+                eprintln!(
+                    "[run-all] scope bbox: lat {}..{}, lon {}..{}",
+                    s.min_lat, s.max_lat, s.min_lon, s.max_lon
+                );
+            }
             let flights_dir = work_dir.join("flights");
             let segments_dir = work_dir.join("segments");
             std::fs::create_dir_all(&flights_dir)?;
@@ -205,16 +227,16 @@ fn main() -> Result<()> {
             }
 
             let t2a = Instant::now();
-            let r2a = run_stage_2a(&all_segments, &h3r4_dir, n_days)?;
+            let r2a = run_stage_2a(&all_segments, &h3r4_dir, n_days, scope.as_ref())?;
             let t2b = Instant::now();
-            let r2b = run_stage_2b(&all_segments, &h3r4_dir, n_days)?;
+            let r2b = run_stage_2b(&all_segments, &h3r4_dir, n_days, scope.as_ref())?;
             let t2c = Instant::now();
             let areas = read_global_airports(&h3r4_dir)?;
             eprintln!(
                 "[run-all] stage2c airports: {} aerodrome polygons",
                 areas.len()
             );
-            let r2c = run_stage_2c(&all_segments, &areas, &h3r4_dir, n_days)?;
+            let r2c = run_stage_2c(&all_segments, &areas, &h3r4_dir, n_days, scope.as_ref())?;
             let t_end = Instant::now();
             eprintln!(
                 "[run-all] stage2a={r2a} ({:?}), stage2b={r2b} ({:?}), stage2c={r2c} ({:?})",

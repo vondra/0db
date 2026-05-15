@@ -19,6 +19,11 @@ H3R4_DIR="${H3R4_DIR:-$DATA_ROOT/prepared/$DATA_YEAR/h3r4}"
 PREPARED_DIR="${PREPARED_DIR:-$DATA_ROOT/prepared}"
 WORK_DIR="${WORK_DIR:-/tmp/aircraft-extract-work}"
 DAYS="${DAYS:-}"
+# Optional `min_lat,min_lon,max_lat,max_lon`. REQUIRED for bbox/radius
+# subset caches (Canary, Praha-150km, ...) — full daily traces of
+# in-scope flights would otherwise overwrite global R4 files. Leave
+# unset only when running against the global ADS-B archive.
+SCOPE_BBOX="${SCOPE_BBOX:-}"
 
 log() { echo "[aircraft-extract] $(date '+%Y-%m-%d %H:%M:%S') $*"; }
 die() { log "ERROR: $*"; exit 1; }
@@ -26,10 +31,11 @@ die() { log "ERROR: $*"; exit 1; }
 if [ -z "$DAYS" ]; then
     log "DAYS env var not set; deriving from ADSB_CACHE=$ADSB_CACHE"
     [ -d "$ADSB_CACHE" ] || die "$ADSB_CACHE not found and DAYS not provided"
-    # Layout matches AdsbTarSource: <root>/<year>/<day>/subset.tar
-    # (depth 3). Walk to the parent dir of each *.tar so the day is
-    # the basename of `dirname tarfile`.
-    DAYS="$(find "$ADSB_CACHE" -mindepth 2 -maxdepth 4 -name '*.tar' -printf '%h\n' \
+    # AdsbTarSource accepts both `<root>/<year>/<day>/subset.tar` and
+    # the flat `<root>/<day>/subset.tar` (subset caches). Walk to the
+    # parent dir of each *.tar so the day is the basename of
+    # `dirname tarfile`.
+    DAYS="$(find "$ADSB_CACHE" -mindepth 1 -maxdepth 4 -name '*.tar' -printf '%h\n' \
         | awk -F/ '{print $NF}' | sort -u | paste -sd,)"
 fi
 [ -n "$DAYS" ] || die "no ADS-B TAR days resolved from $ADSB_CACHE"
@@ -52,12 +58,18 @@ log "running aircraft-extract run-all (DAYS=$DAYS)"
 # stdout (so `bash run_in_background` output and a foreground terminal
 # both see live progress). `tail -F logs/aircraft-extract-latest.log`
 # is the operator's go-to during multi-hour global runs.
+SCOPE_ARGS=()
+if [ -n "$SCOPE_BBOX" ]; then
+    SCOPE_ARGS=(--scope-bbox "$SCOPE_BBOX")
+    log "scope bbox: $SCOPE_BBOX"
+fi
 ./engine/aircraft-extract/target/release/aircraft-extract run-all \
     --adsb-cache "$ADSB_CACHE" \
     --h3r4-dir "$H3R4_DIR" \
     --prepared-dir "$PREPARED_DIR" \
     --work-dir "$WORK_DIR" \
     --days "$DAYS" \
+    "${SCOPE_ARGS[@]}" \
     2>&1 | tee -a "$LOG_FILE"
 
-log "done — popup arrows in $H3R4_DIR/<R4>/{airborne,cruise,ground}.arrow"
+log "done — popup arrows in $H3R4_DIR/<R4>/{airborne,cruise,airport_traffic}.arrow"
