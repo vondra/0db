@@ -9,18 +9,20 @@
 //! into mmap-backed arrow buffers.
 
 mod airborne_view;
+mod airport_traffic_view;
 mod columns;
 mod cruise_view;
 mod ground_view;
 
 use arrow::record_batch::RecordBatch;
-use noise_compute::compute::aircraft_v6::compute_aircraft_v6;
+use noise_compute::compute::aircraft_v6::{airport_traffic as compute_airport_traffic, compute_aircraft_v6};
 use noise_compute::types::{
     Barrier, LayerKind, NoisePeriods, NoiseResult, RasterSampler, Receiver, SourceMetadata,
     SourceResult, TraceCollector,
 };
 
 use airborne_view::AirborneRowAccum;
+use airport_traffic_view::AirportTrafficRowAccum;
 use cruise_view::CruiseRowAccum;
 use ground_view::GroundRowAccum;
 
@@ -40,27 +42,42 @@ pub fn add_v6_aircraft_to_result(
     airborne_batches: &[RecordBatch],
     cruise_batches: &[RecordBatch],
     ground_batches: &[RecordBatch],
+    airport_traffic_batches: &[RecordBatch],
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
     n_days: u16,
 ) -> Result<(), String> {
     assert_schema_version("airborne.arrow", airborne_batches)?;
     assert_schema_version("cruise.arrow", cruise_batches)?;
-    assert_schema_version("ground.arrow", ground_batches)?;
+    // When `airport_traffic.arrow` is present we treat it as the
+    // authoritative ground-ops source and **skip** ground.arrow to
+    // avoid double-counting. Older popup hex dirs without re-extract
+    // still fall back to ground.arrow.
+    let use_airport_traffic = !airport_traffic_batches.is_empty();
+    if !use_airport_traffic {
+        assert_schema_version("ground.arrow", ground_batches)?;
+    }
     let airborne_rows = AirborneRowAccum::new(airborne_batches);
     let cruise_rows = CruiseRowAccum::new(cruise_batches);
-    let ground_rows = GroundRowAccum::new(ground_batches)?;
+    let ground_rows = if use_airport_traffic {
+        GroundRowAccum::empty()
+    } else {
+        GroundRowAccum::new(ground_batches)?
+    };
+    let traffic_rows = AirportTrafficRowAccum::new(airport_traffic_batches);
 
     let airborne_views = airborne_rows.views();
     let cruise_views = cruise_rows.views();
     let ground_views = ground_rows.views();
+    let traffic_views = traffic_rows.views();
 
-    let total_rows = airborne_views.len() + cruise_views.len() + ground_views.len();
+    let total_rows =
+        airborne_views.len() + cruise_views.len() + ground_views.len() + traffic_views.len();
     if total_rows == 0 {
         return Ok(());
     }
 
-    let (air_periods, air_contribs, band_data) = compute_aircraft_v6(
+    let (air_periods, mut air_contribs, band_data) = compute_aircraft_v6(
         receiver,
         &airborne_views,
         &cruise_views,
@@ -70,6 +87,15 @@ pub fn add_v6_aircraft_to_result(
         n_days,
         Some(traces),
     );
+
+    // Phase 4: airport_traffic.arrow → Doc 29 line-source compute.
+    // Adds per-airport Contributor rows next to the airborne/cruise
+    // path. Ground.arrow legacy path was already short-circuited above
+    // when this batch is non-empty, so there's no double-counting.
+    if !traffic_views.is_empty() {
+        let traffic_contribs = compute_airport_traffic::run(receiver, &traffic_views);
+        air_contribs.extend(traffic_contribs);
+    }
 
     if !air_periods.lden_db.is_finite() && air_contribs.is_empty() {
         return Ok(());

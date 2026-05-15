@@ -24,6 +24,15 @@ pub fn col_str<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a StringArray
 pub fn col_list<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a ListArray> {
     batch.column_by_name(name)?.as_any().downcast_ref()
 }
+pub fn col_u16<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a UInt16Array> {
+    batch.column_by_name(name)?.as_any().downcast_ref()
+}
+pub fn col_fixed_size_list<'a>(
+    batch: &'a RecordBatch,
+    name: &str,
+) -> Option<&'a FixedSizeListArray> {
+    batch.column_by_name(name)?.as_any().downcast_ref()
+}
 /// Returns the column iff it's a `FixedSizeBinary(width)` column with
 /// the expected element width. Catches schema drift (e.g. someone
 /// widening `aircraft_type` to 6 bytes) before the per-row

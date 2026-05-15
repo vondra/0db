@@ -41,6 +41,31 @@ pub struct BBox {
     pub max_lon: f32,
 }
 
+/// One row of `airport_traffic.arrow` (Phase 3 v1 contract). Per-band
+/// linear Z-weighted SEL@25m for one movement through this OSM
+/// microsegment, event-integrated; Phase 4 popup multiplies by
+/// receiver-side relative propagation × `movements_per_day / 86400`
+/// then applies `A_WEIGHTING` per band before summation.
+#[derive(Clone, Copy, Debug)]
+pub struct AirportTrafficRowView<'a> {
+    pub airport_key: &'a str,
+    pub osm_id: u64,
+    pub segment_idx: u16,
+    pub geometry_kind: u8,
+    pub start_lat: f32,
+    pub start_lon: f32,
+    pub end_lat: f32,
+    pub end_lon: f32,
+    pub length_m: f32,
+    pub ops_kind: u8,
+    pub is_departure: u8,
+    pub veh_kind: u8,
+    pub class_idx: u8,
+    pub period: u8,
+    pub movements_per_day: f32,
+    pub band_energy_lin: &'a [f32; 8],
+}
+
 /// One row of `airborne.arrow`. `flight_id` is the real ADS-B identity
 /// (or a synth id from `flight_id::pack_synth` for TIS-B / anonymous);
 /// the popup uses it for per-flight stats dedup. `callsign` and

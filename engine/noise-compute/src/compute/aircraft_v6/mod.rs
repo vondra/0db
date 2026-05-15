@@ -23,6 +23,7 @@ use crate::types::{
 };
 
 pub mod airborne;
+pub mod airport_traffic;
 pub mod cruise;
 pub mod dates;
 pub mod ground;
@@ -30,8 +31,8 @@ pub mod state;
 pub mod views;
 
 pub use views::{
-    AirborneRowView, BBox, CruiseRowView, GroundLegSlice, GroundPathView, GroundVertexSlice,
-    SubSegmentSlice,
+    AirborneRowView, AirportTrafficRowView, BBox, CruiseRowView, GroundLegSlice, GroundPathView,
+    GroundVertexSlice, SubSegmentSlice,
 };
 
 const NUM_BANDS: usize = 8;
