@@ -100,7 +100,11 @@ pub fn add_v6_aircraft_to_result(
     // fold those into `air_periods` here — otherwise the per-source
     // Aircraft total at the top of the popup would omit ground-ops
     // energy while still listing it as a contributor row below.
+    let timing_on = std::env::var("POPUP_TIMING").as_deref() == Ok("1");
+    let t_traffic_start = std::time::Instant::now();
+    let mut n_traffic_rows: usize = 0;
     if !traffic_views.is_empty() {
+        n_traffic_rows = traffic_views.len();
         let traffic_contribs = compute_airport_traffic::run(receiver, &traffic_views);
         if !traffic_contribs.is_empty() {
             let mut all: Vec<NoisePeriods> = Vec::with_capacity(1 + traffic_contribs.len());
@@ -111,6 +115,14 @@ pub fn add_v6_aircraft_to_result(
             air_periods = noise_compute::periods::sum_periods(&all);
         }
         air_contribs.extend(traffic_contribs);
+    }
+    if timing_on {
+        let t_traffic = t_traffic_start.elapsed();
+        eprintln!(
+            "popup-stage airport_traffic={:.0}ms (n_traffic_rows={})",
+            t_traffic.as_secs_f64() * 1000.0,
+            n_traffic_rows,
+        );
     }
 
     if !air_periods.lden_db.is_finite() && air_contribs.is_empty() {
