@@ -11,8 +11,8 @@
 
 use h3o::{CellIndex, LatLng, Resolution};
 
-const M_PER_DEG_LAT: f32 = 110_540.0;
-const M_PER_DEG_LON_EQUATOR: f32 = 111_320.0;
+pub(crate) const M_PER_DEG_LAT: f32 = 110_540.0;
+pub(crate) const M_PER_DEG_LON_EQUATOR: f32 = 111_320.0;
 
 /// Smallest signed longitude difference (`lon2 - lon1`) wrapped into
 /// the range `(-180, 180]`. Critical for transpacific cruise where the
