@@ -75,6 +75,10 @@ pub struct PointQueryData {
     pub aircraft_airborne_batches: Vec<arrow::record_batch::RecordBatch>,
     pub aircraft_cruise_batches: Vec<arrow::record_batch::RecordBatch>,
     pub aircraft_ground_batches: Vec<arrow::record_batch::RecordBatch>,
+    /// Phase 3 shadow output (`airport_traffic.arrow`). Loaded into
+    /// the popup-query result for parity comparison; not yet consumed
+    /// acoustically — Phase 4 wires the compute path.
+    pub aircraft_airport_traffic_batches: Vec<arrow::record_batch::RecordBatch>,
     pub barriers: Vec<noise_compute::types::Barrier>,
     pub n_days: u16,
 }
@@ -113,6 +117,7 @@ pub fn collect_from_hex_data(
     let mut all_airborne_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
     let mut all_cruise_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
     let mut all_ground_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
+    let mut all_airport_traffic_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
 
     let mut date_ids = std::collections::HashSet::new();
     let mut n_days_from_metadata: Option<u16> = None;
@@ -409,6 +414,8 @@ pub fn collect_from_hex_data(
         all_airborne_batches.extend(data.aircraft_airborne_batches.iter().cloned());
         all_cruise_batches.extend(data.aircraft_cruise_batches.iter().cloned());
         all_ground_batches.extend(data.aircraft_ground_batches.iter().cloned());
+        all_airport_traffic_batches
+            .extend(data.aircraft_airport_traffic_batches.iter().cloned());
     }
 
     all_barriers.sort_unstable_by(|a, b| {
@@ -425,6 +432,7 @@ pub fn collect_from_hex_data(
         aircraft_airborne_batches: all_airborne_batches,
         aircraft_cruise_batches: all_cruise_batches,
         aircraft_ground_batches: all_ground_batches,
+        aircraft_airport_traffic_batches: all_airport_traffic_batches,
         barriers: all_barriers,
         n_days,
     }
