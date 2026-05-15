@@ -239,6 +239,85 @@ pub fn ground_schema() -> Arc<Schema> {
     ])))
 }
 
+/// Airport traffic contract stamped into airport_traffic.arrow.
+///
+/// Counter-rows: one per (airport_key, osm_id, segment_idx, ops_kind,
+/// is_departure, veh_kind, class_idx, period) — `movements_per_day`
+/// is a true count, `band_energy_lin` is the pre-computed per-band
+/// linear energy contribution per second of source operation per
+/// movement. Distinct from `raw_paths_v10` which stored per-leg dB
+/// energy with `count_weight` normalization.
+pub const AIRPORT_TRAFFIC_CONTRACT_V1: &str = "airport_traffic_v1";
+
+/// `geometry_kind` enum stamped on each airport_traffic row.
+/// LINE: OSM runway / taxiway / stopway microsegment with real
+/// start/end coords. AREA_GRID_POINT: pre-discretized apron point
+/// (start == end). SYNTHETIC: row emitted by Phase 5 DBSCAN
+/// auto-discovery for OSM-missing strips.
+pub const GEOMETRY_KIND_LINE: u8 = 0;
+pub const GEOMETRY_KIND_AREA_GRID_POINT: u8 = 1;
+pub const GEOMETRY_KIND_SYNTHETIC: u8 = 2;
+
+/// Stage 2C (next-gen) — `h3r4/<hex>/airport_traffic.arrow`. One
+/// row per per-segment per-period traffic counter (sparse — only
+/// rows with non-zero movements emitted). Replaces ground.arrow's
+/// per-rotation paths with per-segment counters that don't scale
+/// with `n_days`.
+pub fn airport_traffic_schema() -> Arc<Schema> {
+    let fields = vec![
+        Field::new("airport_key", DataType::Utf8, false),
+        Field::new("osm_id", DataType::UInt64, false),
+        Field::new("segment_idx", DataType::UInt16, false),
+        Field::new("geometry_kind", DataType::UInt8, false),
+        Field::new("start_lat", DataType::Float32, false),
+        Field::new("start_lon", DataType::Float32, false),
+        Field::new("end_lat", DataType::Float32, false),
+        Field::new("end_lon", DataType::Float32, false),
+        Field::new("length_m", DataType::Float32, false),
+        Field::new("ops_kind", DataType::UInt8, false),
+        Field::new("is_departure", DataType::UInt8, false),
+        Field::new("veh_kind", DataType::UInt8, false),
+        Field::new("class_idx", DataType::UInt8, false),
+        Field::new("period", DataType::UInt8, false),
+        Field::new("movements_per_day", DataType::Float32, false),
+        // FixedSizeList enforces the 8-band invariant at the schema
+        // level so the reader doesn't need a runtime `ensure!` guard.
+        // Encoding-cost wise it also drops the per-row offsets buffer.
+        Field::new(
+            "band_energy_lin",
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, false)),
+                noise_compute::types::NUM_BANDS as i32,
+            ),
+            false,
+        ),
+    ];
+    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
+        ("kind", "airport_traffic"),
+        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V1),
+    ])))
+}
+
+/// Verify a loaded airport_traffic.arrow file's metadata matches the
+/// current [`AIRPORT_TRAFFIC_CONTRACT_V1`] contract. Mirrors
+/// [`assert_ground_contract_v10`] — a future schema bump (e.g., 8-band
+/// octave → 24-band third-octave) would change the contract value,
+/// and an older binary reading the new file must hard-fail rather
+/// than mis-decode bands.
+pub fn assert_airport_traffic_contract_v1(
+    metadata: &HashMap<String, String>,
+) -> anyhow::Result<()> {
+    match metadata.get("airport_traffic_contract").map(String::as_str) {
+        Some(AIRPORT_TRAFFIC_CONTRACT_V1) => Ok(()),
+        Some(other) => Err(anyhow::anyhow!(
+            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V1}, got {other}"
+        )),
+        None => Err(anyhow::anyhow!(
+            "airport_traffic_contract metadata missing"
+        )),
+    }
+}
+
 /// Verify a loaded file's metadata matches the current
 /// [`SCHEMA_VERSION`]. Reader-side guard so stale files raise a loud
 /// error instead of silently producing gibberish numbers.
@@ -281,6 +360,7 @@ mod tests {
             airborne_schema(),
             cruise_schema(),
             ground_schema(),
+            airport_traffic_schema(),
         ] {
             let md = s.metadata();
             assert_eq!(
@@ -288,6 +368,31 @@ mod tests {
                 Some(SCHEMA_VERSION)
             );
             assert!(md.contains_key("kind"));
+        }
+    }
+
+    #[test]
+    fn airport_traffic_schema_carries_contract_metadata() {
+        let s = airport_traffic_schema();
+        assert_eq!(
+            s.metadata().get("airport_traffic_contract").map(String::as_str),
+            Some(AIRPORT_TRAFFIC_CONTRACT_V1)
+        );
+    }
+
+    #[test]
+    fn airport_traffic_schema_has_required_columns() {
+        let s = airport_traffic_schema();
+        for required in [
+            "airport_key", "osm_id", "segment_idx", "geometry_kind",
+            "start_lat", "start_lon", "end_lat", "end_lon", "length_m",
+            "ops_kind", "is_departure", "veh_kind", "class_idx", "period",
+            "movements_per_day", "band_energy_lin",
+        ] {
+            assert!(
+                s.field_with_name(required).is_ok(),
+                "airport_traffic schema must carry {required} column"
+            );
         }
     }
 
