@@ -274,6 +274,54 @@ pub fn assert_airport_traffic_contract_v3(
     }
 }
 
+/// Stage 1.5 — `h3r4/<hex>/synth_airport_lines.arrow`. One row per
+/// ≤50 m microsegment of a DBSCAN-discovered runway / airstrip for
+/// OSM-missing airfields. Mirrors `airport_lines.arrow` (the real-OSM
+/// counterpart in `osm-extract/finalize.rs`) but adds an explicit
+/// `airport_key` column — synthetic clusters have no icao/iata/name
+/// to derive identity from, so the writer encodes the
+/// content-addressed `auto-<H3-R11-hex>` key directly on the row.
+///
+/// `osm_id` is `UInt64` (not `Int64` like the real file) so the
+/// `1<<63` synthetic high-bit pattern round-trips unambiguously.
+pub fn synth_airport_lines_schema() -> Arc<Schema> {
+    let fields = vec![
+        Field::new("osm_id", DataType::UInt64, false),
+        Field::new("segment_idx", DataType::UInt16, false),
+        Field::new("airport_key", DataType::Utf8, false),
+        Field::new("start_lat", DataType::Float64, false),
+        Field::new("start_lon", DataType::Float64, false),
+        Field::new("end_lat", DataType::Float64, false),
+        Field::new("end_lon", DataType::Float64, false),
+        Field::new("length_m", DataType::Float32, false),
+        Field::new("heading_deg", DataType::Float32, false),
+        Field::new("aeroway_type", DataType::UInt8, false),
+        Field::new("name", DataType::Utf8, false),
+    ];
+    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
+        ("kind", "synth_airport_lines"),
+    ])))
+}
+
+/// Stage 1.5 — `h3r4/<hex>/synth_airport_areas.arrow`. One row per
+/// DBSCAN-discovered cluster (= one row per synth airport).
+/// Independent of the real `airport_areas.arrow`, so Stage 2C can
+/// chain both sets when resolving airport identity.
+pub fn synth_airport_areas_schema() -> Arc<Schema> {
+    let fields = vec![
+        Field::new("osm_id", DataType::UInt64, false),
+        Field::new("airport_key", DataType::Utf8, false),
+        Field::new("name", DataType::Utf8, false),
+        Field::new("aeroway_type", DataType::UInt8, false),
+        Field::new("centroid_lat", DataType::Float64, false),
+        Field::new("centroid_lon", DataType::Float64, false),
+        Field::new("area_m2", DataType::Float32, false),
+    ];
+    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
+        ("kind", "synth_airport_areas"),
+    ])))
+}
+
 /// Verify a loaded file's metadata matches the current
 /// [`SCHEMA_VERSION`]. Reader-side guard so stale files raise a loud
 /// error instead of silently producing gibberish numbers.
@@ -299,6 +347,8 @@ mod tests {
             airborne_schema(),
             cruise_schema(),
             airport_traffic_schema(),
+            synth_airport_lines_schema(),
+            synth_airport_areas_schema(),
         ] {
             let md = s.metadata();
             assert_eq!(
@@ -307,6 +357,42 @@ mod tests {
             );
             assert!(md.contains_key("kind"));
         }
+    }
+
+    #[test]
+    fn synth_airport_schemas_carry_required_columns() {
+        let lines = synth_airport_lines_schema();
+        for required in [
+            "osm_id", "segment_idx", "airport_key",
+            "start_lat", "start_lon", "end_lat", "end_lon",
+            "length_m", "heading_deg", "aeroway_type", "name",
+        ] {
+            assert!(
+                lines.field_with_name(required).is_ok(),
+                "synth_airport_lines schema must carry {required}"
+            );
+        }
+        let areas = synth_airport_areas_schema();
+        for required in [
+            "osm_id", "airport_key", "name", "aeroway_type",
+            "centroid_lat", "centroid_lon", "area_m2",
+        ] {
+            assert!(
+                areas.field_with_name(required).is_ok(),
+                "synth_airport_areas schema must carry {required}"
+            );
+        }
+    }
+
+    #[test]
+    fn synth_airport_lines_osm_id_is_unsigned() {
+        let lines = synth_airport_lines_schema();
+        let field = lines.field_with_name("osm_id").unwrap();
+        assert_eq!(
+            field.data_type(),
+            &DataType::UInt64,
+            "synthetic osm_id must be UInt64 so the 1<<63 high-bit pattern round-trips"
+        );
     }
 
     #[test]
