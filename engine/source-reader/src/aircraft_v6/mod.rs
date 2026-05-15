@@ -52,9 +52,13 @@ pub fn add_v6_aircraft_to_result(
     // When `airport_traffic.arrow` is present we treat it as the
     // authoritative ground-ops source and **skip** ground.arrow to
     // avoid double-counting. Older popup hex dirs without re-extract
-    // still fall back to ground.arrow.
+    // still fall back to ground.arrow. The contract assert here
+    // refuses to decode a v1 file under the v2 dimensional contract
+    // (silent ~11.5 dB over-count at n_days=14 otherwise).
     let use_airport_traffic = !airport_traffic_batches.is_empty();
-    if !use_airport_traffic {
+    if use_airport_traffic {
+        assert_airport_traffic_contract("airport_traffic.arrow", airport_traffic_batches)?;
+    } else {
         assert_schema_version("ground.arrow", ground_batches)?;
     }
     let airborne_rows = AirborneRowAccum::new(airborne_batches);
@@ -77,7 +81,7 @@ pub fn add_v6_aircraft_to_result(
         return Ok(());
     }
 
-    let (air_periods, mut air_contribs, band_data) = compute_aircraft_v6(
+    let (mut air_periods, mut air_contribs, band_data) = compute_aircraft_v6(
         receiver,
         &airborne_views,
         &cruise_views,
@@ -92,8 +96,20 @@ pub fn add_v6_aircraft_to_result(
     // Adds per-airport Contributor rows next to the airborne/cruise
     // path. Ground.arrow legacy path was already short-circuited above
     // when this batch is non-empty, so there's no double-counting.
+    // Each traffic contributor carries its own per-period Lden, so we
+    // fold those into `air_periods` here — otherwise the per-source
+    // Aircraft total at the top of the popup would omit ground-ops
+    // energy while still listing it as a contributor row below.
     if !traffic_views.is_empty() {
         let traffic_contribs = compute_airport_traffic::run(receiver, &traffic_views);
+        if !traffic_contribs.is_empty() {
+            let mut all: Vec<NoisePeriods> = Vec::with_capacity(1 + traffic_contribs.len());
+            all.push(air_periods);
+            for c in &traffic_contribs {
+                all.push(c.periods.clone());
+            }
+            air_periods = noise_compute::periods::sum_periods(&all);
+        }
         air_contribs.extend(traffic_contribs);
     }
 
@@ -198,6 +214,14 @@ fn sum_periods_linear(sources: &[SourceResult]) -> NoisePeriods {
 /// IPC writers / parquet / anyhow into the popup runtime.
 pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v12";
 
+/// The `airport_traffic.arrow` semantic contract. `schema_version` only
+/// guards column types/order; this guards the dimensional meaning of
+/// `band_energy_lin` (v1 = per-movement SEL, v2 = daily-total energy).
+/// Decoding a v1 file under the v2 kernel silently over-counts by
+/// ~10·log10(n_days) ≈ 11.5 dB at n_days=14, so the assert is a
+/// safety net, not cosmetic.
+pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v2";
+
 /// Verify `schema_version` on every batch in the slice. Single-file
 /// IPC guarantees one schema per file, but the caller merges batches
 /// across R4 cells (`source_reader::lib::collect_from_hex_data`), so a
@@ -216,6 +240,35 @@ pub(super) fn assert_schema_version(label: &str, batches: &[RecordBatch]) -> Res
         if v != Some(EXPECTED_SCHEMA_VERSION) {
             return Err(format!(
                 "{label}[batch {idx}] schema_version mismatch (expected {EXPECTED_SCHEMA_VERSION}, got {v:?}) \
+                 — re-extract aircraft pipeline"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Guard the `airport_traffic.arrow` dimensional contract. Mirrors
+/// [`assert_schema_version`] but checks the orthogonal
+/// `airport_traffic_contract` metadata key, which encodes the
+/// quantity stored in `band_energy_lin` (see
+/// [`EXPECTED_AIRPORT_TRAFFIC_CONTRACT`]).
+pub(super) fn assert_airport_traffic_contract(
+    label: &str,
+    batches: &[RecordBatch],
+) -> Result<(), String> {
+    // Also enforce schema_version since metadata corruption could
+    // leave only one of the two stamps intact.
+    assert_schema_version(label, batches)?;
+    for (idx, batch) in batches.iter().enumerate() {
+        let c = batch
+            .schema_ref()
+            .metadata()
+            .get("airport_traffic_contract")
+            .map(String::as_str);
+        if c != Some(EXPECTED_AIRPORT_TRAFFIC_CONTRACT) {
+            return Err(format!(
+                "{label}[batch {idx}] airport_traffic_contract mismatch \
+                 (expected {EXPECTED_AIRPORT_TRAFFIC_CONTRACT}, got {c:?}) \
                  — re-extract aircraft pipeline"
             ));
         }

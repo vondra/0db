@@ -29,6 +29,7 @@ pub mod stage_1;
 pub mod stage_2a;
 pub mod stage_2b;
 pub mod stage_2c;
+pub mod stage_airport_discover;
 pub mod trace;
 
 /// Schema-version tag stamped into every Arrow file produced by this
@@ -36,5 +37,3 @@ pub mod trace;
 /// path (vertices + per-leg ops_kind + count_weight + em_bands), with
 /// the nearest aerodrome from `airport_areas.arrow` providing identity.
 pub const SCHEMA_VERSION: &str = "v12";
-
-pub mod stage_airport_discover;

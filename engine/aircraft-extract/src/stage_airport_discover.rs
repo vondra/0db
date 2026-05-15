@@ -7,6 +7,7 @@
 //! identically to OSM-derived rows.
 //!
 //! Algorithm (per plan v2):
+//!
 //! 1. Per R4 disk: DBSCAN(eps=200 m, min_samples=30) on miss-snap
 //!    vertices.
 //! 2. PCA over each cluster: if primary axis variance ratio > 5,
@@ -15,12 +16,12 @@
 //! 3. Width = perpendicular spread clamped to 10-60 m.
 //!
 //! This module owns the algorithmic core only — the pipeline wiring
-//! (collect miss-snap vertices from Stage 1, write synthetic lines
-//! to airport_lines.arrow) is in a follow-up. Stand-alone so DBSCAN
-//! + PCA can be unit-tested against synthetic input without needing
-//! a non-Praha cache.
+//! (collect miss-snap vertices from Stage 1, write synthetic lines to
+//! airport_lines.arrow) is in a follow-up. Stand-alone so DBSCAN +
+//! PCA can be unit-tested against synthetic input without needing a
+//! non-Praha cache.
 
-use crate::geo::flat_dist;
+use crate::geo::{M_PER_DEG_LAT, M_PER_DEG_LON_EQUATOR, flat_dist};
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -51,8 +52,7 @@ pub fn discover_strips(
     eps_m: f32,
     min_samples: usize,
 ) -> Vec<DiscoveredStrip> {
-    let labels = dbscan_2d(vertices, eps_m, min_samples);
-    let n_clusters = labels.iter().copied().filter_map(|l| l).max().unwrap_or(0) + 1;
+    let (labels, n_clusters) = dbscan_2d(vertices, eps_m, min_samples);
     let mut out = Vec::new();
     for cid in 0..n_clusters {
         let members: Vec<(f32, f32)> = vertices
@@ -69,14 +69,20 @@ pub fn discover_strips(
 }
 
 /// DBSCAN 2D over (lat, lon) points with metric eps in metres.
-/// Returns one `Option<usize>` per input vertex — `Some(cluster_id)`
-/// for cluster members, `None` for noise (label = -1 in classic
-/// DBSCAN). Single-threaded O(n²); acceptable for ≤ 10⁴ per-R4
-/// vertices.
-fn dbscan_2d(vertices: &[(f32, f32)], eps_m: f32, min_samples: usize) -> Vec<Option<usize>> {
+/// Returns `(labels, n_clusters)`: one `Option<usize>` per input vertex
+/// — `Some(cluster_id)` for cluster members, `None` for noise (label =
+/// -1 in classic DBSCAN). Single-threaded O(n²); acceptable for ≤ 10⁴
+/// per-R4 vertices. Queue dedupe uses a per-call `in_queue` bitmap so
+/// expansion stays O(n) per cluster instead of O(n²).
+fn dbscan_2d(
+    vertices: &[(f32, f32)],
+    eps_m: f32,
+    min_samples: usize,
+) -> (Vec<Option<usize>>, usize) {
     let n = vertices.len();
     let mut labels: Vec<Option<usize>> = vec![None; n];
     let mut visited = vec![false; n];
+    let mut in_queue = vec![false; n];
     let mut cluster_id: usize = 0;
     for i in 0..n {
         if visited[i] {
@@ -85,12 +91,16 @@ fn dbscan_2d(vertices: &[(f32, f32)], eps_m: f32, min_samples: usize) -> Vec<Opt
         visited[i] = true;
         let neighbors = region_query(vertices, i, eps_m);
         if neighbors.len() < min_samples {
-            // Noise (may be reassigned to a cluster as a border point).
+            // Noise (may be reassigned to a cluster as a border point
+            // when reached via another core's expansion).
             continue;
         }
         labels[i] = Some(cluster_id);
         // Iteratively expand the cluster across reachable neighbors.
         let mut queue = neighbors;
+        for &k in &queue {
+            in_queue[k] = true;
+        }
         let mut head = 0;
         while head < queue.len() {
             let j = queue[head];
@@ -100,7 +110,8 @@ fn dbscan_2d(vertices: &[(f32, f32)], eps_m: f32, min_samples: usize) -> Vec<Opt
                 let inner = region_query(vertices, j, eps_m);
                 if inner.len() >= min_samples {
                     for k in inner {
-                        if !queue.contains(&k) {
+                        if !in_queue[k] {
+                            in_queue[k] = true;
                             queue.push(k);
                         }
                     }
@@ -110,9 +121,13 @@ fn dbscan_2d(vertices: &[(f32, f32)], eps_m: f32, min_samples: usize) -> Vec<Opt
                 labels[j] = Some(cluster_id);
             }
         }
+        // Reset in_queue for the next cluster's expansion.
+        for &k in &queue {
+            in_queue[k] = false;
+        }
         cluster_id += 1;
     }
-    labels
+    (labels, cluster_id)
 }
 
 fn region_query(vertices: &[(f32, f32)], i: usize, eps_m: f32) -> Vec<usize> {
@@ -136,13 +151,12 @@ fn fit_strip(members: &[(f32, f32)]) -> DiscoveredStrip {
     // Convert each (lat, lon) into local meters around the centroid
     // for stable PCA. cos(mid_lat) scaling matters at any latitude
     // off the equator.
-    let m_per_deg_lat = 110_540.0f32;
     let cos_lat = (mean_lat as f64).to_radians().cos() as f32;
-    let m_per_deg_lon = 111_320.0f32 * cos_lat;
+    let m_per_deg_lon = M_PER_DEG_LON_EQUATOR * cos_lat;
 
     let pts_m: Vec<(f32, f32)> = members
         .iter()
-        .map(|&(lat, lon)| ((lon - mean_lon) * m_per_deg_lon, (lat - mean_lat) * m_per_deg_lat))
+        .map(|&(lat, lon)| ((lon - mean_lon) * m_per_deg_lon, (lat - mean_lat) * M_PER_DEG_LAT))
         .collect();
     // Covariance matrix in (x=east, y=north) meters.
     let mut sxx = 0.0f32;
@@ -184,7 +198,10 @@ fn fit_strip(members: &[(f32, f32)]) -> DiscoveredStrip {
         max_proj = max_proj.max(proj);
         perp_max = perp_max.max(perp);
     }
-    let length_m = (max_proj - min_proj).max(0.0);
+    // max_proj >= min_proj by construction (same loop, ≥1 member from
+    // caller's min_samples gate). perp_max is the max |signed perp|
+    // → full width is 2× that, clamped to the runway band.
+    let length_m = max_proj - min_proj;
     let width_m = (perp_max * 2.0).clamp(10.0, 60.0);
 
     // Bearing of primary axis (east, north) → compass degrees.
@@ -213,33 +230,37 @@ fn fit_strip(members: &[(f32, f32)]) -> DiscoveredStrip {
 mod tests {
     use super::*;
 
+    /// Convert local (east_m, north_m) offsets at 50°N anchor into a
+    /// lat/lon pair, sharing the same constants as production code.
+    fn local_at_50n(east_m: f32, north_m: f32) -> (f32, f32) {
+        let dlon = east_m / (M_PER_DEG_LON_EQUATOR * (50.0f32.to_radians()).cos());
+        let dlat = north_m / M_PER_DEG_LAT;
+        (50.0 + dlat, 14.0 + dlon)
+    }
+
     /// Synthetic east-west runway: 1000 m line at 50°N, 60 points
     /// strung along it with 5 m perp jitter.
     fn synthetic_runway() -> Vec<(f32, f32)> {
-        let mut pts = Vec::new();
-        for i in 0..60 {
-            let along = i as f32 * 1000.0 / 60.0 - 500.0; // -500..+500 m
-            let perp = ((i * 13) % 11) as f32 - 5.0; // -5..+5 m jitter
-            // lat-only perp jitter, lon-only along motion (east-west runway).
-            let dlon = along / (111_320.0 * (50.0f32.to_radians()).cos());
-            let dlat = perp / 110_540.0;
-            pts.push((50.0 + dlat, 14.0 + dlon));
-        }
-        pts
+        (0..60)
+            .map(|i| {
+                let along = i as f32 * 1000.0 / 60.0 - 500.0; // -500..+500 m
+                let perp = ((i * 13) % 11) as f32 - 5.0; // -5..+5 m jitter
+                local_at_50n(along, perp)
+            })
+            .collect()
     }
 
-    /// Synthetic blob: 60 points scattered uniformly in a 100 × 100 m
-    /// square — should not look like a runway.
+    /// Synthetic blob: 60 points scattered in a ~100 × 100 m square
+    /// using coprime-of-100 strides so successive points don't land on
+    /// the same row/column — should not look like a runway.
     fn synthetic_blob() -> Vec<(f32, f32)> {
-        let mut pts = Vec::new();
-        for i in 0..60 {
-            let dx = ((i * 7) % 100) as f32 - 50.0;
-            let dy = ((i * 13) % 100) as f32 - 50.0;
-            let dlon = dx / (111_320.0 * (50.0f32.to_radians()).cos());
-            let dlat = dy / 110_540.0;
-            pts.push((50.0 + dlat, 14.0 + dlon));
-        }
-        pts
+        (0..60)
+            .map(|i| {
+                let dx = ((i * 7) % 100) as f32 - 50.0;
+                let dy = ((i * 13) % 100) as f32 - 50.0;
+                local_at_50n(dx, dy)
+            })
+            .collect()
     }
 
     #[test]
@@ -302,17 +323,32 @@ mod tests {
 
     #[test]
     fn width_clamped_to_band() {
-        // 60 points with 80 m perp spread → should clamp to 60.
-        let mut pts = Vec::new();
-        for i in 0..60 {
-            let along = i as f32 * 1000.0 / 60.0 - 500.0;
-            let perp = if i % 2 == 0 { 40.0 } else { -40.0 };
-            let dlon = along / (111_320.0 * (50.0f32.to_radians()).cos());
-            let dlat = perp / 110_540.0;
-            pts.push((50.0 + dlat, 14.0 + dlon));
-        }
+        // 60 points with 80 m perp spread → should clamp to upper 60 m.
+        let pts: Vec<_> = (0..60)
+            .map(|i| {
+                let along = i as f32 * 1000.0 / 60.0 - 500.0;
+                let perp = if i % 2 == 0 { 40.0 } else { -40.0 };
+                local_at_50n(along, perp)
+            })
+            .collect();
         let out = discover_strips(&pts, 100.0, 5);
         assert!(!out.is_empty());
         assert_eq!(out[0].width_m, 60.0, "perp 80m should clamp to 60");
+    }
+
+    #[test]
+    fn width_clamped_to_floor() {
+        // 60 points strung along a 1000 m line with ~1 m perp jitter
+        // → raw width ~2 m should clamp UP to the 10 m floor.
+        let pts: Vec<_> = (0..60)
+            .map(|i| {
+                let along = i as f32 * 1000.0 / 60.0 - 500.0;
+                let perp = if i % 2 == 0 { 1.0 } else { -1.0 };
+                local_at_50n(along, perp)
+            })
+            .collect();
+        let out = discover_strips(&pts, 50.0, 5);
+        assert!(!out.is_empty());
+        assert_eq!(out[0].width_m, 10.0, "tight 2m spread should clamp up to 10");
     }
 }

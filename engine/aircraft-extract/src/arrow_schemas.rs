@@ -242,12 +242,22 @@ pub fn ground_schema() -> Arc<Schema> {
 /// Airport traffic contract stamped into airport_traffic.arrow.
 ///
 /// Counter-rows: one per (airport_key, osm_id, segment_idx, ops_kind,
-/// is_departure, veh_kind, class_idx, period) — `movements_per_day`
-/// is a true count, `band_energy_lin` is the pre-computed per-band
-/// linear energy contribution per second of source operation per
-/// movement. Distinct from `raw_paths_v10` which stored per-leg dB
-/// energy with `count_weight` normalization.
-pub const AIRPORT_TRAFFIC_CONTRACT_V1: &str = "airport_traffic_v1";
+/// is_departure, veh_kind, class_idx, period). `band_energy_lin` is
+/// the **daily total** linear Z-weighted energy at 25 m perpendicular
+/// from this microsegment for this period (Stage 2C writer: Σ
+/// per-event SEL across the n_days window, ÷ n_days at emission).
+/// Phase 4 popup applies relative propagation + A-weighting + ÷
+/// period_s to get the period Leq. `movements_per_day` is a true
+/// display count — caller MUST NOT multiply it into the receiver
+/// chain (energy is already integrated). Distinct from
+/// `raw_paths_v10` which stored per-leg dB energy with
+/// `count_weight` normalization.
+///
+/// `_v2` bump: contract changed from per-movement SEL to daily-total
+/// energy on 2026-05-15. Older files stamped `airport_traffic_v1`
+/// MUST be rejected by [`assert_airport_traffic_contract_v2`] to
+/// prevent silent dimensional mis-decoding.
+pub const AIRPORT_TRAFFIC_CONTRACT_V2: &str = "airport_traffic_v2";
 
 /// `geometry_kind` enum stamped on each airport_traffic row.
 /// LINE: OSM runway / taxiway / stopway microsegment with real
@@ -259,8 +269,11 @@ pub const GEOMETRY_KIND_AREA_GRID_POINT: u8 = 1;
 pub const GEOMETRY_KIND_SYNTHETIC: u8 = 2;
 
 /// Stage 2C (next-gen) — `h3r4/<hex>/airport_traffic.arrow`. One
-/// row per per-segment per-period traffic counter (sparse — only
-/// rows with non-zero movements emitted). Replaces ground.arrow's
+/// row per per-segment per-period traffic counter (sparse on the
+/// `(seg × class × period)` grid; `movements_per_day` may be `0.0`
+/// when energy is non-zero, because each leg contributes the +1
+/// movement only to the longest-coverage segment but spreads band
+/// energy to every intersected segment). Replaces ground.arrow's
 /// per-rotation paths with per-segment counters that don't scale
 /// with `n_days`.
 pub fn airport_traffic_schema() -> Arc<Schema> {
@@ -294,23 +307,23 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "airport_traffic"),
-        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V1),
+        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V2),
     ])))
 }
 
 /// Verify a loaded airport_traffic.arrow file's metadata matches the
-/// current [`AIRPORT_TRAFFIC_CONTRACT_V1`] contract. Mirrors
+/// current [`AIRPORT_TRAFFIC_CONTRACT_V2`] contract. Mirrors
 /// [`assert_ground_contract_v10`] — a future schema bump (e.g., 8-band
 /// octave → 24-band third-octave) would change the contract value,
 /// and an older binary reading the new file must hard-fail rather
 /// than mis-decode bands.
-pub fn assert_airport_traffic_contract_v1(
+pub fn assert_airport_traffic_contract_v2(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     match metadata.get("airport_traffic_contract").map(String::as_str) {
-        Some(AIRPORT_TRAFFIC_CONTRACT_V1) => Ok(()),
+        Some(AIRPORT_TRAFFIC_CONTRACT_V2) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V1}, got {other}"
+            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V2}, got {other}"
         )),
         None => Err(anyhow::anyhow!(
             "airport_traffic_contract metadata missing"
@@ -376,7 +389,7 @@ mod tests {
         let s = airport_traffic_schema();
         assert_eq!(
             s.metadata().get("airport_traffic_contract").map(String::as_str),
-            Some(AIRPORT_TRAFFIC_CONTRACT_V1)
+            Some(AIRPORT_TRAFFIC_CONTRACT_V2)
         );
     }
 

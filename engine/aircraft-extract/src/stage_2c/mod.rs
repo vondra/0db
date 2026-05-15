@@ -5,10 +5,10 @@
 //! - **ground.arrow** (v10 `raw_paths_v10` contract): 1 row =
 //!   1 aircraft × 1 contiguous ground path. Per-leg ops_kind
 //!   smoothing + count_weight normalization. See `ground_path.rs`.
-//! - **airport_traffic.arrow** (v1 `airport_traffic_v1` contract):
-//!   Sparse per-microsegment per-period counters. Replaces ground.arrow
-//!   in Phase 6 after popup parity validation. See
-//!   `airport_traffic_writer.rs`.
+//! - **airport_traffic.arrow** (v2 `airport_traffic_v2` contract):
+//!   Sparse per-microsegment per-period counters with daily-total
+//!   linear Z-weighted band energy. Replaces ground.arrow in Phase 6
+//!   after popup parity validation. See `airport_traffic_writer.rs`.
 //!
 //! Both consult OSM `airport_areas.arrow` for nearest-aerodrome
 //! identity. airport_traffic additionally reads `airport_lines.arrow`

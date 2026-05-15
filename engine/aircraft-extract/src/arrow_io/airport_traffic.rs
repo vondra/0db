@@ -1,10 +1,15 @@
 //! `airport_traffic.arrow` writer + reader (Phase 3 schema v1).
 //!
-//! One row per per-segment per-period traffic counter. Sparse —
-//! only rows with `movements_per_day > 0` are emitted. Replaces
-//! ground.arrow's per-rotation paths with per-segment counters that
-//! don't scale with `n_days`. See [`crate::arrow_schemas::airport_traffic_schema`]
-//! for the column list and the `airport_traffic_v1` contract.
+//! One row per per-segment per-period traffic counter. Sparse on the
+//! `(osm_id, segment_idx, ops_kind, is_departure, veh_kind, class_idx,
+//! period)` grid — i.e. only buckets with any acoustic activity. Note
+//! that `movements_per_day` may be `0.0` on a row with non-zero band
+//! energy: the writer attributes the +1 movement only to the segment
+//! with longest coverage per leg, while energy is distributed to every
+//! intersected segment. Replaces ground.arrow's per-rotation paths
+//! with per-segment counters that don't scale with `n_days`. See
+//! [`crate::arrow_schemas::airport_traffic_schema`] for the column
+//! list and the `airport_traffic_v2` contract (daily-total energy).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -23,7 +28,7 @@ use crate::arrow_schemas;
 
 use super::{read_all_batches, write_record_batches};
 
-/// One traffic counter — sparse-only (caller filters movements_per_day > 0).
+/// One traffic counter — sparse on the (segment × class × period) grid.
 #[derive(Clone)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct AirportTrafficRow {
@@ -50,14 +55,16 @@ pub struct AirportTrafficRow {
     pub class_idx: u8,
     /// 0 = day, 1 = evening, 2 = night.
     pub period: u8,
-    /// Movement count averaged over the n_days window. True count, not
-    /// energy-weighted — caller multiplies by `band_energy_lin` at
-    /// compute time.
+    /// Display-only movement count averaged over the n_days window
+    /// (counts legs attributed to this segment as the longest-coverage
+    /// intersection). NOT used by the acoustic kernel — multiplying it
+    /// into the receiver chain would double-count the per-event SEL
+    /// already integrated into `band_energy_lin`.
     pub movements_per_day: f32,
-    /// Per-band linear Z-weighted SEL at 25 m perpendicular distance
-    /// for ONE MOVEMENT through this microsegment, event-integrated
-    /// (NOT per-second — multiplying by movement duration would
-    /// double-count). Already encodes speed adjustment, finite-line
+    /// Per-band **daily total** linear Z-weighted energy at 25 m
+    /// perpendicular distance from this microsegment for this period
+    /// (Stage 2C writer: Σ per-event SEL across the n_days window,
+    /// then ÷ n_days). Already encodes speed adjustment, finite-line
     /// correction at the 25 m reference, departure bonus, and the
     /// aircraft per-event vs GSE kinematic-integral semantics chosen
     /// by `noise_compute::emission::airport_traffic`. A-weighting
@@ -145,7 +152,7 @@ pub fn write_airport_traffic(
 
 pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
     let (schema, batches) = read_all_batches(path)?;
-    arrow_schemas::assert_airport_traffic_contract_v1(schema.metadata())?;
+    arrow_schemas::assert_airport_traffic_contract_v2(schema.metadata())?;
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     let mut out = Vec::with_capacity(total_rows);
     for b in batches {
@@ -281,7 +288,7 @@ mod tests {
     #[test]
     fn reader_rejects_wrong_contract() {
         // Synthetic file written with bogus contract metadata must be
-        // rejected by `assert_airport_traffic_contract_v1` — guards
+        // rejected by `assert_airport_traffic_contract_v2` — guards
         // against silently mis-decoding a future v2 schema with a
         // v1 binary.
         use crate::arrow_io::write_record_batches;

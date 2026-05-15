@@ -42,10 +42,12 @@ pub struct BBox {
 }
 
 /// One row of `airport_traffic.arrow` (Phase 3 v1 contract). Per-band
-/// linear Z-weighted SEL@25m for one movement through this OSM
-/// microsegment, event-integrated; Phase 4 popup multiplies by
-/// receiver-side relative propagation × `movements_per_day / 86400`
-/// then applies `A_WEIGHTING` per band before summation.
+/// **daily total** linear Z-weighted energy at 25 m perpendicular from
+/// this OSM microsegment for the row's period (writer divides
+/// Σ per-event SEL by `n_days`). Phase 4 popup applies relative
+/// propagation + `A_WEIGHTING` then divides by `period_s` for the
+/// period Leq. `movements_per_day` is **display metadata only**, not
+/// an acoustic multiplier.
 #[derive(Clone, Copy, Debug)]
 pub struct AirportTrafficRowView<'a> {
     pub airport_key: &'a str,
