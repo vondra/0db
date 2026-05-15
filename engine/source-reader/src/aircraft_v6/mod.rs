@@ -170,7 +170,7 @@ fn sum_periods_linear(sources: &[SourceResult]) -> NoisePeriods {
 /// Stamp written by every aircraft-extract Arrow file. Inline copy
 /// rather than build-dep on aircraft-extract, which would pull arrow
 /// IPC writers / parquet / anyhow into the popup runtime.
-pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v11";
+pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v12";
 
 /// Verify `schema_version` on every batch in the slice. Single-file
 /// IPC guarantees one schema per file, but the caller merges batches

@@ -268,8 +268,11 @@ mod tests {
             profile_idx: 0,
             source_id: 0,
             origin: 0,
-            veh_kind: 0,
-            gse_class: 0,
+            // Distinct non-zero values catch builder/schema column-order
+            // transposition (would otherwise round-trip identically when
+            // both fields happen to default to 0).
+            veh_kind: 1,
+            gse_class: 2,
             period: 1,
             date_id: 1234,
             phase: Phase::Airborne,
@@ -293,5 +296,7 @@ mod tests {
         assert_eq!(&r.aircraft_type, b"A320");
         assert_eq!(r.phase, Phase::Airborne);
         assert!((r.length_m - 300.0).abs() < 1e-3);
+        assert_eq!(r.veh_kind, 1);
+        assert_eq!(r.gse_class, 2);
     }
 }

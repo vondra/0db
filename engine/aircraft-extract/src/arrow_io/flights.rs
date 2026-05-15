@@ -139,7 +139,6 @@ pub fn write_flights(path: &Path, rows: &[FlightRow<'_>]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arrow_io::read_record_batches;
     use tempfile::tempdir;
 
     #[test]
@@ -163,13 +162,21 @@ mod tests {
             profile_idx: 0,
             source_id: 0,
             origin: 0,
-            veh_kind: 0,
-            gse_class: 0,
+            // Non-zero distinct values catch a column-order transposition
+            // between schema and builder list (veh_kind would otherwise
+            // pass the round-trip if both fields happen to be 0).
+            veh_kind: 1,
+            gse_class: 2,
             base_timestamp: 1_700_000_000.0,
             points: &pts,
         }];
         write_flights(&p, &rows).unwrap();
-        let (_, batches) = read_record_batches(&p).unwrap();
-        assert_eq!(batches[0].num_rows(), 1);
+        // End-to-end round-trip via the typed reader so writer + reader
+        // are exercised together — catches column-rename / transposition
+        // / type-mismatch bugs that a raw batch read would miss.
+        let flights = crate::stage_1::read_flights(&p).unwrap();
+        assert_eq!(flights.len(), 1);
+        assert_eq!(flights[0].veh_kind, 1);
+        assert_eq!(flights[0].gse_class, 2);
     }
 }
