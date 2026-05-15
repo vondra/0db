@@ -61,6 +61,8 @@ pub fn write_flights_at(path: &Path, flights: &[Flight]) -> Result<()> {
             profile_idx: f.profile_idx,
             source_id: f.source_id,
             origin: f.origin,
+            veh_kind: f.veh_kind,
+            gse_class: f.gse_class,
             base_timestamp: f.points.first().map(|p| p.timestamp).unwrap_or(0.0),
             points: &f.points,
         })

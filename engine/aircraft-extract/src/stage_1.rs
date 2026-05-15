@@ -138,6 +138,8 @@ pub fn read_flights(path: &Path) -> Result<Vec<Flight>> {
         let prof = b.column_by_name("profile_idx").unwrap().as_any().downcast_ref::<UInt8Array>().unwrap();
         let src = b.column_by_name("source_id").unwrap().as_any().downcast_ref::<UInt8Array>().unwrap();
         let orig = b.column_by_name("origin").unwrap().as_any().downcast_ref::<UInt8Array>().unwrap();
+        let veh_kind = b.column_by_name("veh_kind").unwrap().as_any().downcast_ref::<UInt8Array>().unwrap();
+        let gse_class = b.column_by_name("gse_class").unwrap().as_any().downcast_ref::<UInt8Array>().unwrap();
         let base_ts = b.column_by_name("base_timestamp").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
         let pts_list = b.column_by_name("points").unwrap().as_any().downcast_ref::<ListArray>().unwrap();
         let pts_struct = pts_list.values().as_any().downcast_ref::<StructArray>().unwrap();
@@ -180,11 +182,8 @@ pub fn read_flights(path: &Path) -> Result<Vec<Flight>> {
                 profile_idx: prof.value(i),
                 source_id: src.value(i),
                 origin: orig.value(i),
-                // flights.arrow predates Phase 2.3a; columns absent
-                // on disk → default aircraft. Phase 2.3b extends the
-                // schema so Stage 0 routing survives this round-trip.
-                veh_kind: 0,
-                gse_class: 0,
+                veh_kind: veh_kind.value(i),
+                gse_class: gse_class.value(i),
                 points,
             });
         }

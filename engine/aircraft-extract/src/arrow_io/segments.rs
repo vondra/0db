@@ -25,6 +25,8 @@ pub fn write_segments(path: &Path, rows: &[FlightSegment]) -> Result<()> {
     let mut profile_idx = UInt8Builder::with_capacity(n);
     let mut source_id = UInt8Builder::with_capacity(n);
     let mut origin = UInt8Builder::with_capacity(n);
+    let mut veh_kind = UInt8Builder::with_capacity(n);
+    let mut gse_class = UInt8Builder::with_capacity(n);
     let mut period = UInt8Builder::with_capacity(n);
     let mut date_id = Int16Builder::with_capacity(n);
     let mut phase = UInt8Builder::with_capacity(n);
@@ -45,6 +47,8 @@ pub fn write_segments(path: &Path, rows: &[FlightSegment]) -> Result<()> {
         profile_idx.append_value(r.profile_idx);
         source_id.append_value(r.source_id);
         origin.append_value(r.origin);
+        veh_kind.append_value(r.veh_kind);
+        gse_class.append_value(r.gse_class);
         period.append_value(r.period);
         date_id.append_value(r.date_id);
         phase.append_value(r.phase.as_u8());
@@ -66,6 +70,8 @@ pub fn write_segments(path: &Path, rows: &[FlightSegment]) -> Result<()> {
         Arc::new(profile_idx.finish()),
         Arc::new(source_id.finish()),
         Arc::new(origin.finish()),
+        Arc::new(veh_kind.finish()),
+        Arc::new(gse_class.finish()),
         Arc::new(period.finish()),
         Arc::new(date_id.finish()),
         Arc::new(phase.finish()),
@@ -120,6 +126,18 @@ pub fn read_segments(path: &Path) -> Result<Vec<FlightSegment>> {
             .unwrap();
         let origin = b
             .column_by_name("origin")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<UInt8Array>()
+            .unwrap();
+        let veh_kind = b
+            .column_by_name("veh_kind")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<UInt8Array>()
+            .unwrap();
+        let gse_class = b
+            .column_by_name("gse_class")
             .unwrap()
             .as_any()
             .downcast_ref::<UInt8Array>()
@@ -212,13 +230,8 @@ pub fn read_segments(path: &Path) -> Result<Vec<FlightSegment>> {
                 profile_idx: profile_idx.value(i),
                 source_id: source_id.value(i),
                 origin: origin.value(i),
-                // segments.arrow schema predates Phase 2.3a; the on-disk
-                // file has no veh_kind/gse_class columns yet, so default
-                // to aircraft. Phase 2.3b extends the schema so GSE
-                // routing survives the Stage 1 → Stage 2 disk round-trip
-                // in `aircraft_extract::RunAll`.
-                veh_kind: 0,
-                gse_class: 0,
+                veh_kind: veh_kind.value(i),
+                gse_class: gse_class.value(i),
                 period: period.value(i),
                 date_id: date_id.value(i),
                 phase: crate::flight::Phase::from_u8(phase.value(i)),

@@ -35,4 +35,4 @@ pub mod trace;
 /// crate. `ground.arrow` carries 1 row = 1 aircraft × 1 contiguous ground
 /// path (vertices + per-leg ops_kind + count_weight + em_bands), with
 /// the nearest aerodrome from `airport_areas.arrow` providing identity.
-pub const SCHEMA_VERSION: &str = "v11";
+pub const SCHEMA_VERSION: &str = "v12";

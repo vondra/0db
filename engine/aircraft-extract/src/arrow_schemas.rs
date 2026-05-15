@@ -47,6 +47,8 @@ pub fn flights_schema() -> Arc<Schema> {
         Field::new("profile_idx", DataType::UInt8, false),
         Field::new("source_id", DataType::UInt8, false),
         Field::new("origin", DataType::UInt8, false),
+        Field::new("veh_kind", DataType::UInt8, false),
+        Field::new("gse_class", DataType::UInt8, false),
         Field::new("base_timestamp", DataType::Float64, false),
         Field::new(
             "points",
@@ -66,6 +68,8 @@ pub fn segments_schema() -> Arc<Schema> {
         Field::new("profile_idx", DataType::UInt8, false),
         Field::new("source_id", DataType::UInt8, false),
         Field::new("origin", DataType::UInt8, false),
+        Field::new("veh_kind", DataType::UInt8, false),
+        Field::new("gse_class", DataType::UInt8, false),
         Field::new("period", DataType::UInt8, false),
         Field::new("date_id", DataType::Int16, false),
         Field::new("phase", DataType::UInt8, false),
@@ -289,7 +293,7 @@ mod tests {
 
     #[test]
     fn assert_schema_version_rejects_old_versions() {
-        for old in ["v4", "v5", "v6", "v7", "v8", "v9", "v10"] {
+        for old in ["v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11"] {
             let md: HashMap<String, String> =
                 [("schema_version".into(), old.into())].into_iter().collect();
             assert!(

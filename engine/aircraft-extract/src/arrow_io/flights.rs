@@ -24,6 +24,8 @@ pub struct FlightRow<'a> {
     pub profile_idx: u8,
     pub source_id: u8,
     pub origin: u8,
+    pub veh_kind: u8,
+    pub gse_class: u8,
     pub base_timestamp: f64,
     pub points: &'a [TracePoint],
 }
@@ -36,6 +38,8 @@ pub fn write_flights(path: &Path, rows: &[FlightRow<'_>]) -> Result<()> {
     let mut profile_idx = UInt8Builder::with_capacity(rows.len());
     let mut source_id = UInt8Builder::with_capacity(rows.len());
     let mut origin = UInt8Builder::with_capacity(rows.len());
+    let mut veh_kind = UInt8Builder::with_capacity(rows.len());
+    let mut gse_class = UInt8Builder::with_capacity(rows.len());
     let mut base_ts = Float64Builder::with_capacity(rows.len());
 
     let pt_struct_field = match schema.field_with_name("points")?.data_type() {
@@ -56,6 +60,8 @@ pub fn write_flights(path: &Path, rows: &[FlightRow<'_>]) -> Result<()> {
         profile_idx.append_value(r.profile_idx);
         source_id.append_value(r.source_id);
         origin.append_value(r.origin);
+        veh_kind.append_value(r.veh_kind);
+        gse_class.append_value(r.gse_class);
         base_ts.append_value(r.base_timestamp);
         total_pts += r.points.len();
         pt_offsets.push(total_pts as i32);
@@ -121,6 +127,8 @@ pub fn write_flights(path: &Path, rows: &[FlightRow<'_>]) -> Result<()> {
         Arc::new(profile_idx.finish()),
         Arc::new(source_id.finish()),
         Arc::new(origin.finish()),
+        Arc::new(veh_kind.finish()),
+        Arc::new(gse_class.finish()),
         Arc::new(base_ts.finish()),
         Arc::new(points_list),
     ];
@@ -155,6 +163,8 @@ mod tests {
             profile_idx: 0,
             source_id: 0,
             origin: 0,
+            veh_kind: 0,
+            gse_class: 0,
             base_timestamp: 1_700_000_000.0,
             points: &pts,
         }];
