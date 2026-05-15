@@ -28,6 +28,14 @@ use crate::arrow_io::{read_all_batches, write_record_batches};
 use crate::arrow_schemas::{synth_airport_areas_schema, synth_airport_lines_schema};
 use crate::geo::lat_lon_to_cell;
 
+/// True iff `osm_id` carries the [`SYNTHETIC_OSM_ID_BIT`] marker —
+/// emitted by Stage 1.5 DBSCAN, not by real OSM. Cheaper to read at
+/// call sites than the inline bitmask `osm_id & SYNTHETIC_OSM_ID_BIT
+/// != 0` and keeps the bit definition encapsulated.
+pub(crate) fn is_synthetic_osm_id(osm_id: u64) -> bool {
+    osm_id & SYNTHETIC_OSM_ID_BIT != 0
+}
+
 /// High bit on `osm_id` marks the value as synthetic (emitted by
 /// Stage 1.5 DBSCAN, not by OSM). Real OSM IDs — both ways and
 /// relations — are written as positive `i64` in this codebase
