@@ -2,24 +2,23 @@
 //!
 //! Three noise classes — LIGHT, MEDIUM, HEAVY — for airport ground
 //! vehicles (follow-me cars, pushback tractors, fuel trucks, fire
-//! trucks, runway sweepers, maintenance vans). These vehicles ride
-//! Mode-S transponders inside reserved ICAO ranges and surface in
-//! ADS-B feeds with `t=GND` or empty typecode; without a dedicated
-//! model the legacy pipeline routed them through `WING_FALLBACK`
-//! 737-800 NPDs, which over-estimates them by ~25-30 dB.
+//! trucks, runway sweepers, maintenance vans). These vehicles surface
+//! in ADS-B feeds with `t=GND`; without a dedicated model the legacy
+//! pipeline routed them through `WING_FALLBACK` 737-800 NPDs, which
+//! over-estimates them by ~25-30 dB.
 //!
 //! ## Calibration source: CNOSSOS-EU road model (Annex II)
 //!
 //! Per-band Lw is derived from CNOSSOS CAT1 / CAT2 / CAT3 coefficients
 //! evaluated at 20 km/h, CNOSSOS' lowest validated speed (below 20 km/h
 //! the formula extrapolates). Class → CNOSSOS category mapping reflects
-//! mass + engine size:
+//! axle mass per the CNOSSOS classification:
 //!
-//! | Class  | Analog     | CNOSSOS cat | Representative vehicle      |
-//! |--------|------------|-------------|-----------------------------|
-//! | LIGHT  | passenger  | CAT1        | follow-me, small van, meteo |
-//! | MEDIUM | light HGV  | CAT2        | pushback tractor, fuel cart |
-//! | HEAVY  | heavy HGV  | CAT3        | fire truck, sweeper, ARFF   |
+//! | Class  | Analog        | CNOSSOS cat | Mass    | Representative      |
+//! |--------|---------------|-------------|---------|---------------------|
+//! | LIGHT  | passenger car | CAT1        | <3.5 t  | follow-me, meteo    |
+//! | MEDIUM | medium truck  | CAT2        | 3.5-12t | fuel cart, van      |
+//! | HEAVY  | heavy truck   | CAT3        | >12 t   | pushback, ARFF, sweeper |
 //!
 //! CNOSSOS road noise at low speed is conservative for GSE: it captures
 //! tyre-road and engine but misses hydraulic-pump / PTO / aircraft-push
@@ -46,10 +45,9 @@ pub const GSE_CLASS_HEAVY: u8 = 2;
 pub static GSE_CLASS_NAMES: [&str; NUM_GSE_CLASSES] = ["LIGHT", "MEDIUM", "HEAVY"];
 
 /// Per-class octave-band sound-power level Lw (dB) at low operating
-/// speed (CNOSSOS validated floor, 20 km/h). Aircraft equivalents
-/// for context: a single A320 taxi event ≈ 92 dB SEL at 25 m, which
-/// corresponds to ~107 dB Lw — HEAVY GSE sustained is ~4 dB below
-/// a single taxi pass.
+/// speed (CNOSSOS validated floor, 20 km/h). Lw is per-second
+/// sustained emission; per-event SEL depends on propagation
+/// distance, duration, and is computed by the consumer.
 pub static GSE_LW_BANDS_DB: [[f64; NUM_BANDS]; NUM_GSE_CLASSES] = [
     // LIGHT  — CNOSSOS CAT1 @ 20 km/h (~89 dB(A) Lw total)
     [98.9, 87.6, 85.4, 83.4, 84.1, 83.5, 78.9, 71.4],
@@ -59,14 +57,21 @@ pub static GSE_LW_BANDS_DB: [[f64; NUM_BANDS]; NUM_GSE_CLASSES] = [
     [108.8, 102.1, 100.2, 99.9, 99.4, 95.1, 90.4, 84.1],
 ];
 
-/// Mode-S ICAO 24-bit address ranges reserved for ground vehicles.
+/// Mode-S ICAO 24-bit address ranges OBSERVED to carry ground vehicles.
 ///
-/// LKPR / CZ leases `0x49F000..=0x49F1FF` to airport ground transponders
-/// (PLET pushback, POZAR ARFF, FOLLOW-ME, meteorology, bird control).
-/// Other countries assign distinct ranges; extend the table when ADS-B
-/// coverage gains new airports with documented ranges.
+/// **Not** an authoritative ICAO sub-allocation — Czech CAA does not
+/// publish per-purpose sub-blocks. The CZ aviation block is
+/// `0x498000..=0x49FFFF`; within it, ADS-B data for LKPR/LKKB shows
+/// `0x49F000..=0x49F1FF` carrying PLET pushback, POZAR ARFF, FOLLOW-ME,
+/// meteorology, and bird-control transponders — alongside some GA. This
+/// range is a Stage-0 *tiebreaker only*: typecode evidence (`t=GND`,
+/// callsign prefix) must come first, with the ICAO check filling in
+/// when typecode is missing but the address sits in this empirical
+/// allowlist. Treating it as a standalone classifier would re-introduce
+/// the GA-misclassification risk documented in
+/// `OVERNIGHT_STATUS.md` Phase 2.1 decision table.
 pub static GND_VEHICLE_ICAO_RANGES: &[(u32, u32)] = &[
-    (0x49F000, 0x49F1FF), // CZ — LKPR/LKKB ground fleet
+    (0x49F000, 0x49F1FF), // CZ — LKPR/LKKB observed ground fleet (not exclusive)
 ];
 
 pub fn icao_is_ground_vehicle(icao24: u32) -> bool {
@@ -83,11 +88,13 @@ pub fn icao_is_ground_vehicle(icao24: u32) -> bool {
 /// + tugs, which are MEDIUM-class).
 static GSE_CALLSIGN_MAP: &[(&str, u8)] = &[
     ("POZAR", GSE_CLASS_HEAVY),    // ARFF / fire truck
-    ("PLET", GSE_CLASS_MEDIUM),    // pushback tractor (PLET 1/2/3)
+    ("PLET", GSE_CLASS_HEAVY),     // pushback tractor — 30-50 t narrow-body
+                                   // class places it in CNOSSOS CAT3 by axle
+                                   // mass, not CAT2 (3/4 /gg reviewers).
     ("FOLLOW", GSE_CLASS_LIGHT),   // follow-me car
-    ("UDRZBA", GSE_CLASS_MEDIUM),  // maintenance
+    ("UDRZBA", GSE_CLASS_MEDIUM),  // maintenance — defensible mid default
     ("METEO", GSE_CLASS_LIGHT),    // meteorology
-    ("PTACNIK", GSE_CLASS_LIGHT),  // bird control
+    ("PTACNIK", GSE_CLASS_LIGHT),  // bird control (vehicle only — pyro impulses unmodelled)
     ("EMIL", GSE_CLASS_LIGHT),     // ramp coordination
 ];
 
@@ -114,9 +121,9 @@ mod tests {
     }
 
     #[test]
-    fn classify_plet_medium() {
-        assert_eq!(classify_gse_callsign("PLET1"), GSE_CLASS_MEDIUM);
-        assert_eq!(classify_gse_callsign("PLET 2"), GSE_CLASS_MEDIUM);
+    fn classify_plet_heavy() {
+        assert_eq!(classify_gse_callsign("PLET1"), GSE_CLASS_HEAVY);
+        assert_eq!(classify_gse_callsign("PLET 2"), GSE_CLASS_HEAVY);
     }
 
     #[test]
@@ -159,11 +166,14 @@ mod tests {
 
     #[test]
     fn cnossos_totals_in_expected_band() {
+        // Bounds ±2 dB around expected CNOSSOS @ 20 km/h totals
+        // (89.3 / 100.2 / 103.3 dB(A) per hand-recalc) — catches a
+        // ≥3 dB drift in the band table or a swapped class.
         let light = a_weighted_total(&GSE_LW_BANDS_DB[GSE_CLASS_LIGHT as usize]);
         let medium = a_weighted_total(&GSE_LW_BANDS_DB[GSE_CLASS_MEDIUM as usize]);
         let heavy = a_weighted_total(&GSE_LW_BANDS_DB[GSE_CLASS_HEAVY as usize]);
-        assert!((85.0..95.0).contains(&light), "LIGHT={light} outside 85-95 dB(A)");
-        assert!((95.0..105.0).contains(&medium), "MEDIUM={medium} outside 95-105 dB(A)");
-        assert!((100.0..110.0).contains(&heavy), "HEAVY={heavy} outside 100-110 dB(A)");
+        assert!((87.3..91.3).contains(&light), "LIGHT={light} outside 87.3-91.3 dB(A)");
+        assert!((98.2..102.2).contains(&medium), "MEDIUM={medium} outside 98.2-102.2 dB(A)");
+        assert!((101.3..105.3).contains(&heavy), "HEAVY={heavy} outside 101.3-105.3 dB(A)");
     }
 }
