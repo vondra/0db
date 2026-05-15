@@ -120,6 +120,16 @@ impl FlightSegment {
     pub fn is_airborne(&self) -> bool {
         self.phase != Phase::Ground
     }
+    /// Phase-aware departure signal. For Airborne segments it's
+    /// Doc 29 §A.3.2 climb classification (positive ROCD, or shallow
+    /// descent at FL100+). For Ground segments it's smoothed speed
+    /// acceleration above `GROUND_DEPARTURE_ACCEL_KT_PER_MIN` — a
+    /// candidate takeoff-roll signal that DOES NOT mean "takeoff
+    /// thrust": consumers applying a takeoff-specific acoustic bonus
+    /// must additionally check `ops_kind == GROUND_OPS_KIND_RUNWAY_ROLL`
+    /// (airport_traffic_writer enforces this for the +2 dB bonus
+    /// gate). Bit is `false` for arrivals, steady taxi, and landing
+    /// rollouts.
     pub fn is_departure(&self) -> bool {
         self.flags & segment_flags::IS_DEPARTURE != 0
     }
