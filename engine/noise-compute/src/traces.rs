@@ -16,8 +16,7 @@ use crate::{building_type_name, industrial_type_name, rail_type_name};
 mod aircraft;
 pub use aircraft::{
     build_aircraft_airborne_subsegment_trace, build_aircraft_cruise_r8_trace,
-    build_aircraft_ground_path_trace, BuildAircraftAirborneSubSegmentTrace,
-    BuildAircraftCruiseR8Trace, BuildAircraftGroundPathTrace,
+    BuildAircraftAirborneSubSegmentTrace, BuildAircraftCruiseR8Trace,
 };
 
 /// Convert band-energies (linear, A-weighted) to band levels in dB(A).

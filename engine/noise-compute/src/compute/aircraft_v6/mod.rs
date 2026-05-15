@@ -2,22 +2,22 @@
 //! aircraft arrows directly via typed column views (no Arrow / IPC
 //! dependency in noise-compute).
 //!
-//! Architecture: airborne, cruise and ground rows each scatter directly
-//! onto their own per-row kernels:
+//! Architecture: airborne and cruise rows each scatter directly onto
+//! their own per-row kernels:
 //! * airborne: per-sub-segment Doc 29 SEL → `FlightAccum` per real fid
 //! * cruise:   per-bucket Doc 29 SEL × density → `FlightAccum` per
 //!             synth fid + `CruiseFlightStats` per real fid for band
 //!             counter dedup
-//! * ground:   per-leg stored `em_bands` → `propagate_variants_full`
-//!             without re-bucketing or re-computing reference SEL
-//!             (the `raw_paths_v10` contract)
+//!
+//! Ground operations live in the parallel `airport_traffic` compute
+//! path invoked by source-reader after this function returns;
+//! the per-rotation `ground.arrow` model was retired in Phase 6.
 
 use std::collections::HashMap;
 
 use crate::compute::aircraft_v6::state::{FlightAccum, TopFlightCandidate};
-use crate::periods;
 use crate::types::{
-    AircraftBandData, AircraftMetadata, Barrier, Contributor, LayerKind, NoisePeriods,
+    AircraftBandData, AircraftMetadata, Contributor, LayerKind, NoisePeriods,
     PropagationBaseline, RasterSampler, Receiver, ScreeningBreakdown, SourceMetadata,
     TerrainBreakdown, TraceCollector, VegetationBreakdown,
 };
@@ -26,14 +26,10 @@ pub mod airborne;
 pub mod airport_traffic;
 pub mod cruise;
 pub mod dates;
-pub mod ground;
 pub mod state;
 pub mod views;
 
-pub use views::{
-    AirborneRowView, AirportTrafficRowView, BBox, CruiseRowView, GroundLegSlice, GroundPathView,
-    GroundVertexSlice, SubSegmentSlice,
-};
+pub use views::{AirborneRowView, AirportTrafficRowView, BBox, CruiseRowView, SubSegmentSlice};
 
 const NUM_BANDS: usize = 8;
 
@@ -44,8 +40,6 @@ pub fn compute_aircraft_v6(
     receiver: &Receiver,
     airborne_rows: &[AirborneRowView<'_>],
     cruise_rows: &[CruiseRowView<'_>],
-    ground_rows: &[GroundPathView<'_>],
-    barriers: &[Barrier],
     rasters: &dyn RasterSampler,
     n_days: u16,
     traces: Option<&mut TraceCollector>,
@@ -53,7 +47,7 @@ pub fn compute_aircraft_v6(
     let n_days_f = (n_days as f64).max(1.0);
 
     // Per-layer timing probes. The print is env-gated (POPUP_TIMING=1);
-    // the 5 Instant::now()/elapsed() calls run unconditionally but cost
+    // the 4 Instant::now()/elapsed() calls run unconditionally but cost
     // <1 µs total per popup. Inline timing > perf/flamegraph for this
     // app: one log line per popup, no perf.data on disk.
     let timing_on = std::env::var("POPUP_TIMING").as_deref() == Ok("1");
@@ -100,26 +94,17 @@ pub fn compute_aircraft_v6(
     );
     let t_airborne_detail = t_start.elapsed() - t_airborne_scatter - t_cruise_scatter;
 
-    let g_res = ground::run(receiver, ground_rows, barriers, rasters, traces.as_deref_mut());
-    let (ground_periods, ground_contribs, ground_detail) =
-        ground::build_outputs(receiver, barriers, rasters, &g_res, n_days_f);
-    let t_ground = t_start.elapsed() - t_airborne_scatter - t_cruise_scatter - t_airborne_detail;
-
-    let combined_periods = combine_periods(&airborne_periods, &ground_periods);
-
     if timing_on {
         let t_total = t_start.elapsed();
         let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
         eprintln!(
-            "ac-v6 total={:.0}ms airb_scatter={:.0}ms cr_scatter={:.0}ms airb_detail={:.0}ms ground={:.0}ms (n_airb={} n_cr={} n_g={})",
+            "ac-v6 total={:.0}ms airb_scatter={:.0}ms cr_scatter={:.0}ms airb_detail={:.0}ms (n_airb={} n_cr={})",
             ms(t_total),
             ms(t_airborne_scatter),
             ms(t_cruise_scatter),
             ms(t_airborne_detail),
-            ms(t_ground),
             airborne_rows.len(),
             cruise_rows.len(),
-            ground_rows.len(),
         );
     }
 
@@ -154,40 +139,13 @@ pub fn compute_aircraft_v6(
             })),
         });
     }
-    contributors.extend(ground_contribs);
 
     let band_data = AircraftBandData {
         airborne: airborne_detail,
-        ground_ops: ground_detail,
+        ground_ops: Default::default(),
     };
 
-    (combined_periods, contributors, band_data)
-}
-
-/// Energy-sum the airborne periods (already daily-averaged via Doc 29
-/// normalization in `airborne::build_detail`) with the v6 ground periods.
-fn combine_periods(airborne: &NoisePeriods, ground: &NoisePeriods) -> NoisePeriods {
-    let to_lin = |db: f64| -> f64 {
-        if db.is_finite() {
-            (db * std::f64::consts::LN_10 * 0.1).exp()
-        } else {
-            0.0
-        }
-    };
-    let to_db = |lin: f64| -> f64 {
-        if lin > 0.0 {
-            10.0 * lin.log10()
-        } else {
-            f64::NEG_INFINITY
-        }
-    };
-    let total_day = to_lin(airborne.ld_db) + to_lin(ground.ld_db);
-    let total_eve = to_lin(airborne.le_db) + to_lin(ground.le_db);
-    let total_night = to_lin(airborne.ln_db) + to_lin(ground.ln_db);
-    if total_day + total_eve + total_night <= 0.0 {
-        return NoisePeriods::silence();
-    }
-    periods::periods(to_db(total_day), to_db(total_eve), to_db(total_night))
+    (airborne_periods, contributors, band_data)
 }
 
 #[cfg(test)]
@@ -214,7 +172,7 @@ mod tests {
     fn silence_when_no_data() {
         let receiver = Receiver::new(50.10, 14.262, 0.0);
         let (periods, contribs, _band) =
-            compute_aircraft_v6(&receiver, &[], &[], &[], &[], &FlatGround, 1, None);
+            compute_aircraft_v6(&receiver, &[], &[], &FlatGround, 1, None);
         assert!(!periods.lden_db.is_finite());
         assert!(contribs.is_empty());
     }

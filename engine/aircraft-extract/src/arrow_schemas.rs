@@ -164,81 +164,6 @@ pub fn cruise_schema() -> Arc<Schema> {
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[("kind", "cruise")])))
 }
 
-/// Ground emission contract stamped into ground.arrow metadata.
-///
-/// `raw_paths_v10` means each row is one aircraft × one contiguous
-/// ground path: a polyline of `vertices` plus per-leg `em_bands`,
-/// `ops_kind`, and `count_weight = 1 / n_legs_of_this_kind_in_path`.
-/// Energy is stored in dB SPL per leg (silent bands round-trip as
-/// `f32::NEG_INFINITY`); applying `count_weight` while summing across
-/// same-kind legs reconstructs one movement's reference SEL energy.
-/// The tag lets the reader reject pre-v10 ground files where energy
-/// was per-bucket-aggregated (`dB_sum_v7_1`) — feeding either contract
-/// into the wrong consumer mis-counts movements by 10–20 dB.
-pub const GROUND_CONTRACT_RAW_PATHS_V10: &str = "raw_paths_v10";
-
-/// Stage 2C — `h3r4/<hex>/ground.arrow`. One row per aircraft × one
-/// contiguous ground path. `vertices` are the consecutive
-/// `FlightSegment` endpoints (segN.start = segN-1.end); `legs[i]`
-/// joins `vertices[start_idx]` to `vertices[end_idx]` with an
-/// `ops_kind` (post-smoothing), a `count_weight = 1 /
-/// n_legs_of_this_kind_in_path` for energy normalization, and
-/// `em_bands` (8 floats, dB per Doc 29 octave centre — silent rows
-/// round-trip as `f32::NEG_INFINITY`). The path header carries the
-/// path's representative period and date so silent periods don't need
-/// per-leg em_day/eve/night triples. See [`GROUND_CONTRACT_RAW_PATHS_V10`]
-/// for energy semantics.
-pub fn ground_schema() -> Arc<Schema> {
-    let vertex_struct = DataType::Struct(Fields::from(vec![
-        Field::new("lat", DataType::Float32, false),
-        Field::new("lon", DataType::Float32, false),
-        Field::new("alt_m", DataType::Float32, false),
-        Field::new("speed_kt", DataType::Float32, false),
-        Field::new("ts_offset_s", DataType::Float32, false),
-    ]));
-    let leg_struct = DataType::Struct(Fields::from(vec![
-        Field::new("start_idx", DataType::UInt16, false),
-        Field::new("end_idx", DataType::UInt16, false),
-        Field::new("ops_kind", DataType::UInt8, false),
-        Field::new("count_weight", DataType::Float32, false),
-        Field::new("length_m", DataType::Float32, false),
-        Field::new(
-            "em_bands",
-            DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
-            false,
-        ),
-    ]));
-    let fields = vec![
-        Field::new("flight_id", DataType::UInt64, false),
-        Field::new("callsign", DataType::Utf8, false),
-        Field::new("aircraft_type", DataType::FixedSizeBinary(4), false),
-        Field::new("profile_idx", DataType::UInt8, false),
-        Field::new("airport_key", DataType::Utf8, false),
-        Field::new(
-            "vertices",
-            DataType::List(Arc::new(Field::new("item", vertex_struct, false))),
-            false,
-        ),
-        Field::new(
-            "legs",
-            DataType::List(Arc::new(Field::new("item", leg_struct, false))),
-            false,
-        ),
-        Field::new("length_m_runway", DataType::Float32, false),
-        Field::new("length_m_taxi", DataType::Float32, false),
-        Field::new("length_m_apron", DataType::Float32, false),
-        Field::new("period_rep", DataType::UInt8, false),
-        Field::new("date_id", DataType::Int16, false),
-        Field::new("is_departure", DataType::UInt8, false),
-        Field::new("source_id", DataType::UInt8, false),
-        Field::new("origin", DataType::UInt8, false),
-    ];
-    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
-        ("kind", "ground"),
-        ("ground_contract", GROUND_CONTRACT_RAW_PATHS_V10),
-    ])))
-}
-
 /// Airport traffic contract stamped into airport_traffic.arrow.
 ///
 /// Counter-rows: one per (airport_key, osm_id, segment_idx, ops_kind,
@@ -249,9 +174,7 @@ pub fn ground_schema() -> Arc<Schema> {
 /// Phase 4 popup applies relative propagation + A-weighting + ÷
 /// period_s to get the period Leq. `movements_per_day` is a true
 /// display count — caller MUST NOT multiply it into the receiver
-/// chain (energy is already integrated). Distinct from
-/// `raw_paths_v10` which stored per-leg dB energy with
-/// `count_weight` normalization.
+/// chain (energy is already integrated).
 ///
 /// `_v2` bump: contract changed from per-movement SEL to daily-total
 /// energy on 2026-05-15. Older files stamped `airport_traffic_v1`
@@ -268,14 +191,14 @@ pub const GEOMETRY_KIND_LINE: u8 = 0;
 pub const GEOMETRY_KIND_AREA_GRID_POINT: u8 = 1;
 pub const GEOMETRY_KIND_SYNTHETIC: u8 = 2;
 
-/// Stage 2C (next-gen) — `h3r4/<hex>/airport_traffic.arrow`. One
-/// row per per-segment per-period traffic counter (sparse on the
+/// Stage 2C — `h3r4/<hex>/airport_traffic.arrow`. One row per
+/// per-segment per-period traffic counter (sparse on the
 /// `(seg × class × period)` grid; `movements_per_day` may be `0.0`
 /// when energy is non-zero, because each leg contributes the +1
 /// movement only to the longest-coverage segment but spreads band
-/// energy to every intersected segment). Replaces ground.arrow's
-/// per-rotation paths with per-segment counters that don't scale
-/// with `n_days`.
+/// energy to every intersected segment). Per-microsegment counters
+/// keep the file size constant in `n_days`, replacing the legacy
+/// per-rotation paths model retired in Phase 6.
 pub fn airport_traffic_schema() -> Arc<Schema> {
     let fields = vec![
         Field::new("airport_key", DataType::Utf8, false),
@@ -312,11 +235,10 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
 }
 
 /// Verify a loaded airport_traffic.arrow file's metadata matches the
-/// current [`AIRPORT_TRAFFIC_CONTRACT_V2`] contract. Mirrors
-/// [`assert_ground_contract_v10`] — a future schema bump (e.g., 8-band
-/// octave → 24-band third-octave) would change the contract value,
-/// and an older binary reading the new file must hard-fail rather
-/// than mis-decode bands.
+/// current [`AIRPORT_TRAFFIC_CONTRACT_V2`] contract. A future schema
+/// bump (e.g., 8-band octave → 24-band third-octave) would change the
+/// contract value, and an older binary reading the new file must
+/// hard-fail rather than mis-decode bands.
 pub fn assert_airport_traffic_contract_v2(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
@@ -344,23 +266,6 @@ pub fn assert_schema_version(metadata: &HashMap<String, String>) -> anyhow::Resu
     }
 }
 
-/// Verify ground.arrow metadata carries the `raw_paths_v10` contract.
-/// Pre-v10 ground files carry `dB_sum_v7_1` (per-bucket aggregated
-/// energy) — accepting them in the v10 reader would mis-interpret
-/// per-bucket sums as per-leg energies and over-count by 10–20 dB.
-pub fn assert_ground_contract_v10(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
-    assert_schema_version(metadata)?;
-    match metadata.get("ground_contract").map(String::as_str) {
-        Some(GROUND_CONTRACT_RAW_PATHS_V10) => Ok(()),
-        Some(other) => Err(anyhow::anyhow!(
-            "ground_contract mismatch: expected {GROUND_CONTRACT_RAW_PATHS_V10}, got {other}"
-        )),
-        None => Err(anyhow::anyhow!(
-            "ground_contract metadata missing — re-extract Stage 2C with the v10 build"
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,7 +277,6 @@ mod tests {
             segments_schema(),
             airborne_schema(),
             cruise_schema(),
-            ground_schema(),
             airport_traffic_schema(),
         ] {
             let md = s.metadata();
@@ -427,54 +331,4 @@ mod tests {
         assert!(assert_schema_version(&md).is_err());
     }
 
-    #[test]
-    fn ground_schema_carries_ground_contract_metadata() {
-        let s = ground_schema();
-        assert_eq!(
-            s.metadata().get("ground_contract").map(String::as_str),
-            Some(GROUND_CONTRACT_RAW_PATHS_V10)
-        );
-    }
-
-    #[test]
-    fn ground_schema_carries_path_columns() {
-        let s = ground_schema();
-        for required in ["vertices", "legs", "airport_key", "period_rep", "is_departure"] {
-            assert!(
-                s.field_with_name(required).is_ok(),
-                "ground schema must carry {required} column"
-            );
-        }
-        for retired in [
-            "osm_id",
-            "ops_kind",
-            "sub_bucket_idx",
-            "em_day_bands",
-            "line_start_lat",
-            "profile_mix",
-        ] {
-            assert!(
-                s.field_with_name(retired).is_err(),
-                "{retired} must NOT appear in v10 ground schema"
-            );
-        }
-    }
-
-    #[test]
-    fn assert_ground_contract_v10_rejects_pre_v10_files() {
-        let md: HashMap<String, String> = [
-            ("schema_version".into(), "v9".into()),
-            ("kind".into(), "ground".into()),
-            ("ground_contract".into(), "dB_sum_v7_1".into()),
-        ]
-        .into_iter()
-        .collect();
-        assert!(assert_ground_contract_v10(&md).is_err());
-    }
-
-    #[test]
-    fn assert_ground_contract_v10_accepts_current_schema() {
-        let s = ground_schema();
-        assert!(assert_ground_contract_v10(s.metadata()).is_ok());
-    }
 }

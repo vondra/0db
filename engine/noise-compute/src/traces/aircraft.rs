@@ -1,23 +1,18 @@
-//! Per-row trace builders for the three aircraft sub-types.
-//!
-//! `SegmentTrace` covers ground / airborne / cruise via the
-//! `aircraft_subtype` discriminator (1 = ground path, 2 = airborne
-//! sub-segment, 3 = cruise R8 hex). Each builder pulls values the
-//! engine already holds — no re-emission or re-propagation happens
-//! here, only field shaping.
+//! Per-row trace builders for the airborne + cruise aircraft
+//! sub-types (`SegmentTrace` `aircraft_subtype` 2 = airborne
+//! sub-segment, 3 = cruise R8 hex). Ground-path traces were retired in
+//! Phase 6 along with `ground.arrow`; airport_traffic contributors
+//! do not push traces.
 
 use crate::emission::aircraft::{typecode_to_string, PERIOD_SECONDS};
-use crate::propagation::iso9613;
 use crate::types::{
-    CruiseBucketBreakdown, CruiseHexTopFlight, EmissionTrace, LayerKind, PathProfileTrace,
-    PerPeriod, PropagationVariants, ScreeningTrace, SegmentTrace, TerrainTrace, VegetationTrace,
-    NUM_BANDS,
+    CruiseBucketBreakdown, CruiseHexTopFlight, EmissionTrace, LayerKind, PerPeriod,
+    PropagationVariants, SegmentTrace, NUM_BANDS,
 };
 
 use super::{
-    baseline_trace, empty_path_profile, empty_screening_trace, empty_terrain_trace,
-    empty_vegetation_trace, ground_trace, point_source_aloft_baseline, variants_to_lden,
-    variants_to_received_bands,
+    empty_path_profile, empty_screening_trace, empty_terrain_trace, empty_vegetation_trace,
+    ground_trace, point_source_aloft_baseline, variants_to_lden,
 };
 
 /// Path-effect / band slots stay zero because aircraft propagation
@@ -36,141 +31,6 @@ fn aircraft_period_variants(period_energies: [f64; 3], n_days: f64) -> [Propagat
             ..Default::default()
         }
     })
-}
-
-/// Inputs for a ground-path trace.
-pub struct BuildAircraftGroundPathTrace<'a> {
-    pub aircraft_type: &'a [u8; 4],
-    pub airport_key: &'a str,
-    pub polyline: Vec<(f64, f64)>,
-    pub length_m_per_kind: [f32; 3],
-    pub closest_dist_m: f64,
-    pub closest_d_slant_m: f64,
-    pub closest_cp_lat: f64,
-    pub closest_cp_lon: f64,
-    pub closest_src_height_m: f64,
-    pub closest_ground_g: f64,
-    pub finite_line_corr_db: f64,
-    pub reflection_boost_db: f64,
-    pub variants: [PropagationVariants; 3],
-    pub terrain: TerrainTrace,
-    pub screening: ScreeningTrace,
-    pub vegetation: VegetationTrace,
-    pub path_profile: PathProfileTrace,
-}
-
-pub fn build_aircraft_ground_path_trace(
-    inputs: BuildAircraftGroundPathTrace<'_>,
-) -> SegmentTrace {
-    let BuildAircraftGroundPathTrace {
-        aircraft_type,
-        airport_key,
-        polyline,
-        length_m_per_kind,
-        closest_dist_m,
-        closest_d_slant_m,
-        closest_cp_lat,
-        closest_cp_lon,
-        closest_src_height_m,
-        closest_ground_g,
-        finite_line_corr_db,
-        reflection_boost_db,
-        variants,
-        terrain,
-        screening,
-        vegetation,
-        path_profile,
-    } = inputs;
-
-    let total_length_m = (length_m_per_kind[0] + length_m_per_kind[1] + length_m_per_kind[2]) as f64;
-    let start = *polyline
-        .first()
-        .expect("ground path polyline non-empty: caller filters empty paths");
-    let end = *polyline
-        .last()
-        .expect("ground path polyline non-empty: caller filters empty paths");
-
-    SegmentTrace {
-        kind: LayerKind::Aircraft,
-        osm_id: None,
-        segment_idx: 0,
-        name: if airport_key.is_empty() {
-            let typecode_str = typecode_to_string(aircraft_type);
-            format!("Aircraft ground path {typecode_str}")
-        } else {
-            format!("Aircraft - {airport_key} ground")
-        },
-        subtype: "ground_ops".to_string(),
-        is_dominant_of_group: false,
-        start_lat: start.0,
-        start_lon: start.1,
-        end_lat: end.0,
-        end_lon: end.1,
-        cp_lat: closest_cp_lat,
-        cp_lon: closest_cp_lon,
-        length_m: total_length_m,
-        dist_m: closest_dist_m,
-        d_slant_m: closest_d_slant_m,
-        bridge: false,
-        tunnel: false,
-        emission: EmissionTrace::AircraftGround {
-            class: kind_label_from_lengths(length_m_per_kind),
-            observed_movements: 1.0,
-            modeled_movements: 0.0,
-        },
-        lw_bands: PerPeriod {
-            day: [0.0; NUM_BANDS],
-            evening: [0.0; NUM_BANDS],
-            night: [0.0; NUM_BANDS],
-        },
-        lw_db_a: PerPeriod {
-            day: 0.0,
-            evening: 0.0,
-            night: 0.0,
-        },
-        baseline: baseline_trace(
-            closest_d_slant_m,
-            closest_src_height_m,
-            closest_ground_g,
-            finite_line_corr_db,
-            reflection_boost_db,
-            iso9613::SourceGeometry::Line,
-        ),
-        path_profile,
-        terrain,
-        screening,
-        vegetation,
-        ground: ground_trace(closest_ground_g),
-        received_bands: variants_to_received_bands(&variants),
-        received_lden: variants_to_lden(&variants),
-        aircraft_subtype: 1,
-        polyline: Some(polyline),
-        hex_polygon: None,
-        cruise_buckets: None,
-        cruise_top_flights: None,
-        length_m_per_kind: Some(length_m_per_kind),
-    }
-}
-
-/// Pick a label from the per-kind length distribution. The longest
-/// kind wins — a path with 70 % runway and 20 % taxi reads as
-/// "runway" in the popup row label. All-zero falls through to the
-/// catch-all "apron" rather than silently labelling a degenerate
-/// path as runway.
-fn kind_label_from_lengths(lengths: [f32; 3]) -> &'static str {
-    let mut best_idx = usize::MAX;
-    let mut best_val = 0.0_f32;
-    for (i, v) in lengths.iter().enumerate() {
-        if *v > best_val {
-            best_val = *v;
-            best_idx = i;
-        }
-    }
-    match best_idx {
-        0 => "runway",
-        1 => "taxi",
-        _ => "apron",
-    }
 }
 
 /// Inputs for an airborne sub-segment trace.

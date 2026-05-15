@@ -2097,8 +2097,6 @@ mod tests {
             &receiver,
             &row_views,
             &[],
-            &[],
-            &[],
             &MockRasters,
             365,
             None,

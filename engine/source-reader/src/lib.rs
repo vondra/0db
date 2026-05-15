@@ -74,10 +74,9 @@ pub struct PointQueryData {
     /// `compute_aircraft_v6` — no AircraftSegment synthesis happens here.
     pub aircraft_airborne_batches: Vec<arrow::record_batch::RecordBatch>,
     pub aircraft_cruise_batches: Vec<arrow::record_batch::RecordBatch>,
-    pub aircraft_ground_batches: Vec<arrow::record_batch::RecordBatch>,
-    /// Phase 3 shadow output (`airport_traffic.arrow`). Loaded into
-    /// the popup-query result for parity comparison; not yet consumed
-    /// acoustically — Phase 4 wires the compute path.
+    /// `airport_traffic.arrow` per-microsegment sparse counters
+    /// (v2 contract). Replaces the per-rotation `ground.arrow` path
+    /// retired in Phase 6.
     pub aircraft_airport_traffic_batches: Vec<arrow::record_batch::RecordBatch>,
     pub barriers: Vec<noise_compute::types::Barrier>,
     pub n_days: u16,
@@ -116,7 +115,6 @@ pub fn collect_from_hex_data(
     let mut all_barriers = Vec::new();
     let mut all_airborne_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
     let mut all_cruise_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
-    let mut all_ground_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
     let mut all_airport_traffic_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
 
     let mut date_ids = std::collections::HashSet::new();
@@ -143,7 +141,7 @@ pub fn collect_from_hex_data(
             .aircraft_airborne_batches
             .iter()
             .chain(data.aircraft_cruise_batches.iter())
-            .chain(data.aircraft_ground_batches.iter())
+            .chain(data.aircraft_airport_traffic_batches.iter())
         {
             scan_metadata(batch, &mut n_days_from_metadata, &mut date_ids);
         }
@@ -407,13 +405,12 @@ pub fn collect_from_hex_data(
             });
         }
 
-        // Aircraft popup arrows: per-row reach prune + raw_paths_v10
-        // emission contract live inside compute_aircraft_v6. Cloning
+        // Aircraft popup arrows: per-row reach prune + emission
+        // contract live inside compute_aircraft_v6. Cloning
         // RecordBatch is a refcount bump on Arc-backed Arrow buffers,
         // not a data copy.
         all_airborne_batches.extend(data.aircraft_airborne_batches.iter().cloned());
         all_cruise_batches.extend(data.aircraft_cruise_batches.iter().cloned());
-        all_ground_batches.extend(data.aircraft_ground_batches.iter().cloned());
         all_airport_traffic_batches
             .extend(data.aircraft_airport_traffic_batches.iter().cloned());
     }
@@ -431,7 +428,6 @@ pub fn collect_from_hex_data(
         industrial: all_industrial,
         aircraft_airborne_batches: all_airborne_batches,
         aircraft_cruise_batches: all_cruise_batches,
-        aircraft_ground_batches: all_ground_batches,
         aircraft_airport_traffic_batches: all_airport_traffic_batches,
         barriers: all_barriers,
         n_days,
@@ -609,8 +605,12 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
 
     let n_airborne = sources.aircraft_airborne_batches.iter().map(|b| b.num_rows()).sum::<usize>();
     let n_cruise = sources.aircraft_cruise_batches.iter().map(|b| b.num_rows()).sum::<usize>();
-    let n_ground = sources.aircraft_ground_batches.iter().map(|b| b.num_rows()).sum::<usize>();
-    let n_aircraft = n_airborne + n_cruise + n_ground;
+    let n_traffic = sources
+        .aircraft_airport_traffic_batches
+        .iter()
+        .map(|b| b.num_rows())
+        .sum::<usize>();
+    let n_aircraft = n_airborne + n_cruise + n_traffic;
     let n_roads = sources.roads.len();
     let n_railways = sources.railways.len();
 
@@ -632,9 +632,7 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         &receiver,
         &sources.aircraft_airborne_batches,
         &sources.aircraft_cruise_batches,
-        &sources.aircraft_ground_batches,
         &sources.aircraft_airport_traffic_batches,
-        &sources.barriers,
         rasters,
         sources.n_days,
     )
@@ -687,17 +685,18 @@ fn apply_segment_top_k_with_cap(
         ..Default::default()
     };
 
-    // Aircraft segments split into 3 sub-tabs by `aircraft_subtype`
-    // (1 = ground / 2 = airborne / 3 = cruise) for top-K budgeting:
-    // each sub-tab carries its own slice of segments at the popup-
-    // global cap, instead of competing for one shared cap which would
-    // let the noisier ground tail crowd cruise out of the display.
+    // Aircraft segments split into 2 sub-tabs by `aircraft_subtype`
+    // (2 = airborne / 3 = cruise) for top-K budgeting: each sub-tab
+    // carries its own slice of segments at the popup-global cap. The
+    // Phase-6-retired `aircraft_subtype = 1` (ground path) bucket no
+    // longer has a producer; `aircraft_ground_*` summary fields are
+    // wire-format placeholders kept at 0 until the frontend Ground
+    // tab is also retired.
     let aircraft_subtype_bucket = |seg: &noise_compute::types::SegmentTrace| -> Option<u8> {
         if seg.kind != LayerKind::Aircraft {
             return None;
         }
         match seg.aircraft_subtype {
-            1 => Some(1),
             2 => Some(2),
             3 => Some(3),
             _ => None,
@@ -705,13 +704,11 @@ fn apply_segment_top_k_with_cap(
     };
 
     let mut per_kind_total: std::collections::HashMap<LayerKind, u32> = std::collections::HashMap::new();
-    let mut aircraft_ground_total = 0u32;
     let mut aircraft_airborne_subseg_total = 0u32;
     let mut aircraft_cruise_total = 0u32;
     for seg in &traces.segments {
         *per_kind_total.entry(seg.kind).or_insert(0) += 1;
         match aircraft_subtype_bucket(seg) {
-            Some(1) => aircraft_ground_total += 1,
             Some(2) => aircraft_airborne_subseg_total += 1,
             Some(3) => aircraft_cruise_total += 1,
             _ => {}
@@ -719,7 +716,7 @@ fn apply_segment_top_k_with_cap(
     }
     summary.road_total = *per_kind_total.get(&LayerKind::Road).unwrap_or(&0);
     summary.railway_total = *per_kind_total.get(&LayerKind::Railway).unwrap_or(&0);
-    summary.aircraft_ground_total = aircraft_ground_total;
+    summary.aircraft_ground_total = 0;
     summary.building_total = *per_kind_total.get(&LayerKind::Building).unwrap_or(&0);
     summary.industrial_total = *per_kind_total.get(&LayerKind::Industrial).unwrap_or(&0);
     summary.aircraft_airborne_total = aircraft_airborne_subseg_total;
@@ -731,19 +728,10 @@ fn apply_segment_top_k_with_cap(
 
     let mut kept: Vec<noise_compute::types::SegmentTrace> = Vec::new();
     let mut per_kind: std::collections::HashMap<LayerKind, u32> = std::collections::HashMap::new();
-    let mut aircraft_ground_count = 0u32;
     let mut aircraft_airborne_subseg_count = 0u32;
     let mut aircraft_cruise_count = 0u32;
     for seg in std::mem::take(&mut traces.segments) {
         let cap_ok = match aircraft_subtype_bucket(&seg) {
-            Some(1) => {
-                if (aircraft_ground_count as usize) < per_kind_cap {
-                    aircraft_ground_count += 1;
-                    true
-                } else {
-                    false
-                }
-            }
             Some(2) => {
                 if (aircraft_airborne_subseg_count as usize) < per_kind_cap {
                     aircraft_airborne_subseg_count += 1;
@@ -780,7 +768,7 @@ fn apply_segment_top_k_with_cap(
 
     summary.road_count = *per_kind.get(&LayerKind::Road).unwrap_or(&0);
     summary.railway_count = *per_kind.get(&LayerKind::Railway).unwrap_or(&0);
-    summary.aircraft_ground_count = aircraft_ground_count;
+    summary.aircraft_ground_count = 0;
     summary.building_count = *per_kind.get(&LayerKind::Building).unwrap_or(&0);
     summary.industrial_count = *per_kind.get(&LayerKind::Industrial).unwrap_or(&0);
     summary.aircraft_airborne_count = aircraft_airborne_subseg_count;

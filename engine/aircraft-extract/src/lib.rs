@@ -33,7 +33,8 @@ pub mod stage_airport_discover;
 pub mod trace;
 
 /// Schema-version tag stamped into every Arrow file produced by this
-/// crate. `ground.arrow` carries 1 row = 1 aircraft × 1 contiguous ground
-/// path (vertices + per-leg ops_kind + count_weight + em_bands), with
-/// the nearest aerodrome from `airport_areas.arrow` providing identity.
+/// crate. Phase 6 retired the per-rotation `ground.arrow`; the
+/// authoritative ground-ops layer is now `airport_traffic.arrow`
+/// (sparse per-microsegment per-period counters under the
+/// `airport_traffic_v2` dimensional contract).
 pub const SCHEMA_VERSION: &str = "v12";

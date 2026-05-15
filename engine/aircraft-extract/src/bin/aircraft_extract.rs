@@ -70,14 +70,12 @@ enum Cmd {
         #[arg(long, default_value_t = 1)]
         n_days: u16,
     },
-    /// Stage 2C: segments → per-R4 ground.arrow
+    /// Stage 2C: segments → per-R4 airport_traffic.arrow
     Stage2c {
         #[arg(long)]
         segments: PathBuf,
         #[arg(long)]
         h3r4_dir: PathBuf,
-        #[arg(long)]
-        prepared_dir: PathBuf,
         #[arg(long, default_value_t = 1)]
         n_days: u16,
     },
@@ -124,17 +122,16 @@ fn main() -> Result<()> {
             let n = run_stage_2b(&segs, &h3r4_dir, n_days)?;
             eprintln!("[stage2b] {n} R4 hexes written");
         }
-        Cmd::Stage2c { segments, h3r4_dir, prepared_dir, n_days } => {
+        Cmd::Stage2c { segments, h3r4_dir, n_days } => {
             let segs = aircraft_extract::arrow_io::read_segments(&segments)
                 .with_context(|| format!("read {}", segments.display()))?;
-            let rasters = raster_reader::RealRasters::new(&prepared_dir);
             let areas = read_global_airports(&h3r4_dir)
                 .with_context(|| format!("read airport_areas.arrow from {}", h3r4_dir.display()))?;
             eprintln!(
                 "[stage2c] loaded {} aerodrome polygons globally",
                 areas.len()
             );
-            let n = run_stage_2c(&segs, &areas, &h3r4_dir, &rasters, n_days)?;
+            let n = run_stage_2c(&segs, &areas, &h3r4_dir, n_days)?;
             eprintln!("[stage2c] {n} R4 hexes written");
         }
         Cmd::RunAll {
@@ -217,7 +214,7 @@ fn main() -> Result<()> {
                 "[run-all] stage2c airports: {} aerodrome polygons",
                 areas.len()
             );
-            let r2c = run_stage_2c(&all_segments, &areas, &h3r4_dir, &rasters, n_days)?;
+            let r2c = run_stage_2c(&all_segments, &areas, &h3r4_dir, n_days)?;
             let t_end = Instant::now();
             eprintln!(
                 "[run-all] stage2a={r2a} ({:?}), stage2b={r2b} ({:?}), stage2c={r2c} ({:?})",

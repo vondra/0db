@@ -16,7 +16,10 @@
 //! * [`segment_filters`] — per-segment validity gates (airborne / ground
 //!   stale / airport ground), `SegmentTerrain` cache, ground-ops kind /
 //!   context constants.
-//! * [`ground_ops`] — `GroundOpsLineEmission` taxi/runway/apron model.
+//! * [`ground_ops`] — surface-model constants (per-kind reference
+//!   speeds + spectrum shapes) shared by the `airport_traffic`
+//!   emission kernel. The Phase-6-retired per-leg `ground.arrow`
+//!   model lived here previously.
 //! * [`segment_sel`] — single-shot per-segment SEL wrappers (popup +
 //!   tests).
 
@@ -27,7 +30,7 @@ mod segment_filters;
 mod segment_sel;
 
 pub use doc29::*;
-pub use ground_ops::*;
+pub(crate) use ground_ops::*;
 pub use npd::*;
 pub use segment_filters::*;
 pub use segment_sel::*;

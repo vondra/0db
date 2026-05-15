@@ -22,10 +22,9 @@ pub struct HexData {
     pub industrial_batches: Vec<RecordBatch>,
     pub aircraft_airborne_batches: Vec<RecordBatch>,
     pub aircraft_cruise_batches: Vec<RecordBatch>,
-    pub aircraft_ground_batches: Vec<RecordBatch>,
-    /// Phase 3 shadow output: per-microsegment sparse traffic counters
-    /// (`airport_traffic.arrow`). Not yet consumed by `compute_aircraft_v6`
-    /// — Phase 4 wires the kernel; Phase 6 drops `ground.arrow` in favor.
+    /// Per-microsegment sparse traffic counters (`airport_traffic.arrow`,
+    /// v2 contract). Phase 6 dropped the per-rotation `ground.arrow`
+    /// path in favor of this — see [`add_v6_aircraft_to_result`].
     pub aircraft_airport_traffic_batches: Vec<RecordBatch>,
 }
 
@@ -40,7 +39,6 @@ impl HexData {
             industrial_batches: vec![],
             aircraft_airborne_batches: vec![],
             aircraft_cruise_batches: vec![],
-            aircraft_ground_batches: vec![],
             aircraft_airport_traffic_batches: vec![],
         }
     }
@@ -62,7 +60,6 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
     let industrial_batches = load_arrow_mmap(&path.join("industrial.arrow"), &mut mmaps);
     let aircraft_airborne_batches = load_arrow_mmap(&path.join("airborne.arrow"), &mut mmaps);
     let aircraft_cruise_batches = load_arrow_mmap(&path.join("cruise.arrow"), &mut mmaps);
-    let aircraft_ground_batches = load_arrow_mmap(&path.join("ground.arrow"), &mut mmaps);
     let aircraft_airport_traffic_batches =
         load_arrow_mmap(&path.join("airport_traffic.arrow"), &mut mmaps);
 
@@ -75,7 +72,6 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
         industrial_batches,
         aircraft_airborne_batches,
         aircraft_cruise_batches,
-        aircraft_ground_batches,
         aircraft_airport_traffic_batches,
     })
 }

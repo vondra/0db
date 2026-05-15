@@ -16,7 +16,11 @@ use arrow::ipc::reader::FileReader;
 use arrow::record_batch::RecordBatch;
 use noise_compute::types::AirportArea;
 
-const AERODROME_AEROWAY_TYPE: u8 = 5;
+/// `airport_areas.arrow` aeroway_type for an `aeroway = aerodrome`
+/// polygon (the only value that anchors traffic identity). Apron /
+/// taxi polygons live in the same arrow but match other aeroway_type
+/// values.
+pub(crate) const AERODROME_AEROWAY_TYPE: u8 = 5;
 
 fn read_batches(path: &Path) -> Result<Vec<RecordBatch>> {
     let f = File::open(path)?;

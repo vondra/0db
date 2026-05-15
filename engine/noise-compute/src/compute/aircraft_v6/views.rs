@@ -41,7 +41,7 @@ pub struct BBox {
     pub max_lon: f32,
 }
 
-/// One row of `airport_traffic.arrow` (Phase 3 v1 contract). Per-band
+/// One row of `airport_traffic.arrow` (v2 contract). Per-band
 /// **daily total** linear Z-weighted energy at 25 m perpendicular from
 /// this OSM microsegment for the row's period (writer divides
 /// Σ per-event SEL by `n_days`). Phase 4 popup applies relative
@@ -111,80 +111,3 @@ pub struct CruiseRowView<'a> {
     pub cruise_callsigns: &'a [String],
 }
 
-/// Per-vertex slice borrow over a ground path's polyline. All slices
-/// have the same length; vertex `i` is fully described by index `i`
-/// across every slice.
-#[derive(Clone, Copy, Debug)]
-pub struct GroundVertexSlice<'a> {
-    pub lat: &'a [f32],
-    pub lon: &'a [f32],
-    pub alt_m: &'a [f32],
-    pub speed_kt: &'a [f32],
-    pub ts_offset_s: &'a [f32],
-}
-
-impl GroundVertexSlice<'_> {
-    pub fn len(&self) -> usize {
-        self.lat.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
-/// Per-leg slice borrow over a ground path. `em_bands_offsets` /
-/// `em_bands_values` represent the leg-level `List<Float32>(8)` in
-/// flat form: leg `i`'s 8-band emission is
-/// `em_bands_values[em_bands_offsets[i]..em_bands_offsets[i+1]]`.
-#[derive(Clone, Copy, Debug)]
-pub struct GroundLegSlice<'a> {
-    pub start_idx: &'a [u16],
-    pub end_idx: &'a [u16],
-    pub ops_kind: &'a [u8],
-    pub count_weight: &'a [f32],
-    pub length_m: &'a [f32],
-    pub em_bands_values: &'a [f32],
-    pub em_bands_offsets: &'a [i32],
-}
-
-impl GroundLegSlice<'_> {
-    pub fn len(&self) -> usize {
-        self.ops_kind.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-    pub fn em_bands(&self, leg_idx: usize) -> &[f32] {
-        let lo = self.em_bands_offsets[leg_idx] as usize;
-        let hi = self.em_bands_offsets[leg_idx + 1] as usize;
-        &self.em_bands_values[lo..hi]
-    }
-}
-
-/// One row of `ground.arrow` (v10 raw-paths layout). Each row is one
-/// aircraft × one contiguous ground path; `vertices` is the polyline
-/// of `FlightSegment` endpoints (segN.start = segN-1.end), `legs[i]`
-/// joins `vertices[start_idx]` to `vertices[end_idx]` with its own
-/// 8-band emission (dB SPL; silent rows round-trip as
-/// `f32::NEG_INFINITY`) and a `count_weight = 1 /
-/// n_legs_of_this_kind_in_path` so summing across same-kind legs
-/// reconstructs one movement's reference SEL energy.
-#[derive(Clone, Copy, Debug)]
-pub struct GroundPathView<'a> {
-    pub flight_id: u64,
-    pub callsign: &'a str,
-    pub aircraft_type: &'a [u8; 4],
-    pub profile_idx: u8,
-    pub airport_key: &'a str,
-    pub vertices: GroundVertexSlice<'a>,
-    pub legs: GroundLegSlice<'a>,
-    pub length_m_runway: f32,
-    pub length_m_taxi: f32,
-    pub length_m_apron: f32,
-    /// 0 = day, 1 = evening, 2 = night.
-    pub period_rep: u8,
-    pub date_id: i16,
-    pub is_departure: bool,
-    pub source_id: u8,
-    pub origin: u8,
-}

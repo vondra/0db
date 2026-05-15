@@ -12,71 +12,51 @@ mod airborne_view;
 mod airport_traffic_view;
 mod columns;
 mod cruise_view;
-mod ground_view;
 
 use arrow::record_batch::RecordBatch;
 use noise_compute::compute::aircraft_v6::{airport_traffic as compute_airport_traffic, compute_aircraft_v6};
 use noise_compute::types::{
-    Barrier, LayerKind, NoisePeriods, NoiseResult, RasterSampler, Receiver, SourceMetadata,
-    SourceResult, TraceCollector,
+    LayerKind, NoisePeriods, NoiseResult, RasterSampler, Receiver, SourceMetadata, SourceResult,
+    TraceCollector,
 };
 
 use airborne_view::AirborneRowAccum;
 use airport_traffic_view::AirportTrafficRowAccum;
 use cruise_view::CruiseRowAccum;
-use ground_view::GroundRowAccum;
 
 /// Run `compute_aircraft_v6` over the popup arrows and merge its output
 /// into an existing `NoiseResult`. Caller is expected to have invoked
 /// `compute_at_point_with_traces` first.
 ///
-/// Returns `Err(String)` when any of the three popup arrows
-/// (`airborne.arrow` / `cruise.arrow` / `ground.arrow`) fails the v10
-/// schema check, so the popup HTTP path can map the failure to a
-/// structured 500 response with an operator-actionable message instead
-/// of crashing the worker via `assert!`.
+/// Returns `Err(String)` when any of the popup arrows fails its schema
+/// check (`v12` for airborne/cruise, `airport_traffic_v2` for the
+/// ground-ops arrow), so the popup HTTP path can map the failure to
+/// a structured 500 response with an operator-actionable message
+/// instead of crashing the worker via `assert!`.
 pub fn add_v6_aircraft_to_result(
     result: &mut NoiseResult,
     traces: &mut TraceCollector,
     receiver: &Receiver,
     airborne_batches: &[RecordBatch],
     cruise_batches: &[RecordBatch],
-    ground_batches: &[RecordBatch],
     airport_traffic_batches: &[RecordBatch],
-    barriers: &[Barrier],
     rasters: &dyn RasterSampler,
     n_days: u16,
 ) -> Result<(), String> {
     assert_schema_version("airborne.arrow", airborne_batches)?;
     assert_schema_version("cruise.arrow", cruise_batches)?;
-    // When `airport_traffic.arrow` is present we treat it as the
-    // authoritative ground-ops source and **skip** ground.arrow to
-    // avoid double-counting. Older popup hex dirs without re-extract
-    // still fall back to ground.arrow. The contract assert here
-    // refuses to decode a v1 file under the v2 dimensional contract
-    // (silent ~11.5 dB over-count at n_days=14 otherwise).
-    let use_airport_traffic = !airport_traffic_batches.is_empty();
-    if use_airport_traffic {
+    if !airport_traffic_batches.is_empty() {
         assert_airport_traffic_contract("airport_traffic.arrow", airport_traffic_batches)?;
-    } else {
-        assert_schema_version("ground.arrow", ground_batches)?;
     }
     let airborne_rows = AirborneRowAccum::new(airborne_batches);
     let cruise_rows = CruiseRowAccum::new(cruise_batches);
-    let ground_rows = if use_airport_traffic {
-        GroundRowAccum::empty()
-    } else {
-        GroundRowAccum::new(ground_batches)?
-    };
     let traffic_rows = AirportTrafficRowAccum::new(airport_traffic_batches);
 
     let airborne_views = airborne_rows.views();
     let cruise_views = cruise_rows.views();
-    let ground_views = ground_rows.views();
     let traffic_views = traffic_rows.views();
 
-    let total_rows =
-        airborne_views.len() + cruise_views.len() + ground_views.len() + traffic_views.len();
+    let total_rows = airborne_views.len() + cruise_views.len() + traffic_views.len();
     if total_rows == 0 {
         return Ok(());
     }
@@ -85,17 +65,13 @@ pub fn add_v6_aircraft_to_result(
         receiver,
         &airborne_views,
         &cruise_views,
-        &ground_views,
-        barriers,
         rasters,
         n_days,
         Some(traces),
     );
 
-    // Phase 4: airport_traffic.arrow → Doc 29 line-source compute.
-    // Adds per-airport Contributor rows next to the airborne/cruise
-    // path. Ground.arrow legacy path was already short-circuited above
-    // when this batch is non-empty, so there's no double-counting.
+    // airport_traffic.arrow → Doc 29 line-source compute. Adds
+    // per-airport Contributor rows next to the airborne/cruise path.
     // Each traffic contributor carries its own per-period Lden, so we
     // fold those into `air_periods` here — otherwise the per-source
     // Aircraft total at the top of the popup would omit ground-ops
