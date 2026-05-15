@@ -78,6 +78,11 @@ pub struct PointQueryData {
     /// (v2 contract). Replaces the per-rotation `ground.arrow` path
     /// retired in Phase 6.
     pub aircraft_airport_traffic_batches: Vec<arrow::record_batch::RecordBatch>,
+    /// `airport_lines.arrow` per-microsegment OSM aeroway features.
+    /// Source-reader only needs `osm_id` + `ref` from here to label
+    /// SegmentTraces by runway/taxiway designator. The full per-line
+    /// geometry already lives in `aircraft_airport_traffic_batches`.
+    pub airport_lines_batches: Vec<arrow::record_batch::RecordBatch>,
     pub barriers: Vec<noise_compute::types::Barrier>,
     pub n_days: u16,
 }
@@ -116,6 +121,7 @@ pub fn collect_from_hex_data(
     let mut all_airborne_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
     let mut all_cruise_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
     let mut all_airport_traffic_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
+    let mut all_airport_lines_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
 
     let mut date_ids = std::collections::HashSet::new();
     let mut n_days_from_metadata: Option<u16> = None;
@@ -413,6 +419,7 @@ pub fn collect_from_hex_data(
         all_cruise_batches.extend(data.aircraft_cruise_batches.iter().cloned());
         all_airport_traffic_batches
             .extend(data.aircraft_airport_traffic_batches.iter().cloned());
+        all_airport_lines_batches.extend(data.airport_lines_batches.iter().cloned());
     }
 
     all_barriers.sort_unstable_by(|a, b| {
@@ -429,6 +436,7 @@ pub fn collect_from_hex_data(
         aircraft_airborne_batches: all_airborne_batches,
         aircraft_cruise_batches: all_cruise_batches,
         aircraft_airport_traffic_batches: all_airport_traffic_batches,
+        airport_lines_batches: all_airport_lines_batches,
         barriers: all_barriers,
         n_days,
     }
@@ -633,6 +641,7 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         &sources.aircraft_airborne_batches,
         &sources.aircraft_cruise_batches,
         &sources.aircraft_airport_traffic_batches,
+        &sources.airport_lines_batches,
         rasters,
         &sources.barriers,
         sources.n_days,

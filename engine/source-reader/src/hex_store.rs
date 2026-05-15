@@ -26,6 +26,13 @@ pub struct HexData {
     /// v2 contract). Phase 6 dropped the per-rotation `ground.arrow`
     /// path in favor of this — see [`add_v6_aircraft_to_result`].
     pub aircraft_airport_traffic_batches: Vec<RecordBatch>,
+    /// OSM aeroway microsegments (`airport_lines.arrow`). Carries
+    /// `osm_id` + `segment_idx` + nullable `ref` (e.g. "RWY 06/24")
+    /// per microsegment. Source-reader Phase 7c uses this to map
+    /// per-row airport_traffic.arrow rows back to their OSM way
+    /// identifier so the popup can label SegmentTraces "LKPR RWY
+    /// 06/24" instead of the generic "LKPR runway-roll".
+    pub airport_lines_batches: Vec<RecordBatch>,
 }
 
 impl HexData {
@@ -40,6 +47,7 @@ impl HexData {
             aircraft_airborne_batches: vec![],
             aircraft_cruise_batches: vec![],
             aircraft_airport_traffic_batches: vec![],
+            airport_lines_batches: vec![],
         }
     }
 }
@@ -62,6 +70,7 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
     let aircraft_cruise_batches = load_arrow_mmap(&path.join("cruise.arrow"), &mut mmaps);
     let aircraft_airport_traffic_batches =
         load_arrow_mmap(&path.join("airport_traffic.arrow"), &mut mmaps);
+    let airport_lines_batches = load_arrow_mmap(&path.join("airport_lines.arrow"), &mut mmaps);
 
     Ok(HexData {
         _mmaps: mmaps,
@@ -73,6 +82,7 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
         aircraft_airborne_batches,
         aircraft_cruise_batches,
         aircraft_airport_traffic_batches,
+        airport_lines_batches,
     })
 }
 

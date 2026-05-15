@@ -26,6 +26,41 @@ use cruise_view::CruiseRowAccum;
 use noise_compute::compute::aircraft_v6::AirportTrafficRowView;
 use std::collections::HashMap;
 
+/// Build the per-popup `osm_id` → `ref` lookup from the
+/// `airport_lines.arrow` batches. One entry per unique osm_id (one OSM
+/// way can have many microsegments — all share the same `ref`). Rows
+/// without a `ref` tag are skipped, so `HashMap::get` returns `None`
+/// for them and the SegmentTrace falls back to the generic label.
+fn build_osm_ref_lookup(batches: &[RecordBatch]) -> HashMap<u64, String> {
+    use arrow::array::Array;
+    let mut out: HashMap<u64, String> = HashMap::new();
+    for batch in batches {
+        let (Some(osm_id), Some(ref_col)) = (
+            columns::col_i64(batch, "osm_id"),
+            columns::col_str(batch, "ref"),
+        ) else {
+            continue;
+        };
+        for i in 0..batch.num_rows() {
+            if ref_col.is_null(i) {
+                continue;
+            }
+            // `trim()` rejects whitespace-only refs that would otherwise
+            // surface as " " labels in the popup (OSM is community-edited;
+            // see e.g. `ref=" "` accidental data entries).
+            let r = ref_col.value(i).trim();
+            if r.is_empty() {
+                continue;
+            }
+            // Synth osm_ids (bit 63 set) live in
+            // `synth_airport_lines.arrow`, not here, so the i64 → u64
+            // cast is bit-identical for every row in this file.
+            out.entry(osm_id.value(i) as u64).or_insert_with(|| r.to_string());
+        }
+    }
+    out
+}
+
 /// Dedup airport_traffic rows by `airport_key` and emit one
 /// `(lat, lon)` centroid per airport. The centroid is the
 /// midpoint-of-midpoints of all microsegments under that key —
@@ -65,6 +100,7 @@ pub fn add_v6_aircraft_to_result(
     airborne_batches: &[RecordBatch],
     cruise_batches: &[RecordBatch],
     airport_traffic_batches: &[RecordBatch],
+    airport_lines_batches: &[RecordBatch],
     rasters: &dyn RasterSampler,
     barriers: &[noise_compute::types::Barrier],
     n_days: u16,
@@ -120,12 +156,20 @@ pub fn add_v6_aircraft_to_result(
     let mut n_traffic_rows: usize = 0;
     if !traffic_views.is_empty() {
         n_traffic_rows = traffic_views.len();
+        // Build the OSM `osm_id` → `ref` lookup once per popup. Real-OSM
+        // aeroway rows that carry a `ref` tag (e.g. runway "06/24") let
+        // the SegmentTrace name render as "LKPR RWY 06/24" instead of
+        // the generic "LKPR runway-roll". Synth osm_ids never have a
+        // `ref` row in `airport_lines.arrow`, so they fall through to
+        // the generic label automatically.
+        let osm_ref_lookup = build_osm_ref_lookup(airport_lines_batches);
         let traffic_contribs = compute_airport_traffic::run(
             receiver,
             &traffic_views,
             n_days,
             rasters,
             barriers,
+            &osm_ref_lookup,
             Some(traces),
         );
         if !traffic_contribs.is_empty() {
