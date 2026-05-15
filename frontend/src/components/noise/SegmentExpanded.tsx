@@ -222,6 +222,14 @@ const POINT_SOURCE_KINDS = new Set(['building', 'industrial'])
 function computeLwRow(trace: SegmentTrace): [React.ReactNode, React.ReactNode] | null {
   const lw = trace.lw_db_a
   if (!lw) return null
+  // Aircraft ground-ops SegmentTraces emit silent (NEG_INFINITY →
+  // JSON null) lw_db_a values per period because per-microsegment
+  // Lw isn't computed today — the airport-aggregate emission_db
+  // lives on the parent Contributor instead. Skip the row when any
+  // period's Lw is missing rather than crashing on null.toFixed.
+  if (!Number.isFinite(lw.day) || !Number.isFinite(lw.evening) || !Number.isFinite(lw.night)) {
+    return null
+  }
   const kind = trace.emission.kind
   const cfg = isLineSourceKind(kind)
     ? LW_LINE_SOURCE
