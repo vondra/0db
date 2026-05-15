@@ -16,6 +16,7 @@ use noise_compute::types::{AirportArea, RasterSampler};
 use crate::flight::FlightSegment;
 
 pub mod airport_traffic;
+pub mod airport_traffic_writer;
 pub mod ground_path;
 
 /// Run Stage 2C over a global segment slice + global aerodrome

@@ -31,8 +31,10 @@
 use crate::geo::{flat_dist, M_PER_DEG_LAT, M_PER_DEG_LON_EQUATOR};
 
 /// Minimal view into one airport_lines.arrow row — enough to do
-/// projection geometry. Full row carries heading/aeroway_type/ref/
-/// surface/width_m too, but those don't enter the projection math.
+/// projection geometry plus the per-row metadata Phase 3d aggregator
+/// needs without re-reading the source Arrow. Geometry coords drive
+/// `clipped_overlap_m`; `length_m`/`aeroway_type` ride through for
+/// the writer.
 #[derive(Clone, Copy, Debug)]
 pub struct AirportLineSegment {
     pub osm_id: u64,
@@ -46,6 +48,10 @@ pub struct AirportLineSegment {
     /// kernel — `clipped_overlap_m` recomputes from coords so the
     /// local u/v basis stays consistent with the cached length.
     pub length_m: f32,
+    /// OSM aeroway encoding (0=runway, 1=taxiway, 6=stopway, 7=airstrip,
+    /// else apron/parking/heliport/gate). Phase 3d uses it to derive
+    /// `ops_kind` without re-reading the source Arrow row.
+    pub aeroway_type: u8,
 }
 
 /// One ADS-B leg → one OSM microsegment overlap.
@@ -237,6 +243,7 @@ mod tests {
             end_lat: ela,
             end_lon: elo,
             length_m: flat_dist(sla, slo, ela, elo),
+            aeroway_type: 1, // taxi default for projection tests
         }
     }
 
