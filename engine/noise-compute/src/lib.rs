@@ -2099,6 +2099,7 @@ mod tests {
             &[],
             &MockRasters,
             365,
+            &[],
             None,
         );
 

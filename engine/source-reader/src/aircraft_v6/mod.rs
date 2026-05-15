@@ -23,6 +23,31 @@ use noise_compute::types::{
 use airborne_view::AirborneRowAccum;
 use airport_traffic_view::AirportTrafficRowAccum;
 use cruise_view::CruiseRowAccum;
+use noise_compute::compute::aircraft_v6::AirportTrafficRowView;
+use std::collections::HashMap;
+
+/// Dedup airport_traffic rows by `airport_key` and emit one
+/// `(lat, lon)` centroid per airport. The centroid is the
+/// midpoint-of-midpoints of all microsegments under that key —
+/// good enough for the 6 km airport-context test in
+/// `airborne::scatter`. Sub-millisecond at LKPR-density.
+fn airport_centroids_from_traffic(rows: &[AirportTrafficRowView<'_>]) -> Vec<(f64, f64)> {
+    let mut acc: HashMap<&str, (f64, f64, u32)> = HashMap::new();
+    for row in rows {
+        let mid_lat = (row.start_lat + row.end_lat) as f64 * 0.5;
+        let mid_lon = (row.start_lon + row.end_lon) as f64 * 0.5;
+        let entry = acc.entry(row.airport_key).or_insert((0.0, 0.0, 0));
+        entry.0 += mid_lat;
+        entry.1 += mid_lon;
+        entry.2 += 1;
+    }
+    acc.into_values()
+        .map(|(sum_lat, sum_lon, n)| {
+            let inv = 1.0 / (n as f64).max(1.0);
+            (sum_lat * inv, sum_lon * inv)
+        })
+        .collect()
+}
 
 /// Run `compute_aircraft_v6` over the popup arrows and merge its output
 /// into an existing `NoiseResult`. Caller is expected to have invoked
@@ -61,12 +86,25 @@ pub fn add_v6_aircraft_to_result(
         return Ok(());
     }
 
+    // Build the airport-centroid list from the receiver-disk's
+    // airport_traffic.arrow rows. Phase 7c: dedup per `airport_key`
+    // and use the energy-mean centroid as the airport's "where".
+    // Airborne sub-segments that fall within
+    // `AIRPORT_CONTEXT_RADIUS_M` of any of these centroids get
+    // `ground_context = AIRPORT_LINE` so the 150 m fixed-wing-jet
+    // floor in `is_valid_airborne_with_terrain` short-circuits.
+    // Without this, approach corridor vertices (Phase 7c P1a now
+    // routes them to airborne instead of ground) would be dropped
+    // by that floor.
+    let airport_centroids = airport_centroids_from_traffic(&traffic_views);
+
     let (mut air_periods, mut air_contribs, band_data) = compute_aircraft_v6(
         receiver,
         &airborne_views,
         &cruise_views,
         rasters,
         n_days,
+        &airport_centroids,
         Some(traces),
     );
 

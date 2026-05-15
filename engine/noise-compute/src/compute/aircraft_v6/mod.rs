@@ -42,6 +42,7 @@ pub fn compute_aircraft_v6(
     cruise_rows: &[CruiseRowView<'_>],
     rasters: &dyn RasterSampler,
     n_days: u16,
+    airport_centroids: &[(f64, f64)],
     traces: Option<&mut TraceCollector>,
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
     let n_days_f = (n_days as f64).max(1.0);
@@ -54,8 +55,14 @@ pub fn compute_aircraft_v6(
     let t_start = std::time::Instant::now();
 
     let mut traces = traces;
-    let flights =
-        airborne::scatter(receiver, airborne_rows, rasters, n_days_f, traces.as_deref_mut());
+    let flights = airborne::scatter(
+        receiver,
+        airborne_rows,
+        rasters,
+        n_days_f,
+        airport_centroids,
+        traces.as_deref_mut(),
+    );
     let t_airborne_scatter = t_start.elapsed();
     let mut cruise_flight_stats = HashMap::new();
     // Cruise gets its own FlightAccum table — the cruise synth fids
@@ -172,7 +179,7 @@ mod tests {
     fn silence_when_no_data() {
         let receiver = Receiver::new(50.10, 14.262, 0.0);
         let (periods, contribs, _band) =
-            compute_aircraft_v6(&receiver, &[], &[], &FlatGround, 1, None);
+            compute_aircraft_v6(&receiver, &[], &[], &FlatGround, 1, &[], None);
         assert!(!periods.lden_db.is_finite());
         assert!(contribs.is_empty());
     }
