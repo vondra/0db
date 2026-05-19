@@ -124,6 +124,10 @@ const TYPECODE_MODEL: Record<string, string> = {
 export function classToAnchorTypecode(className: string | null | undefined): string {
   if (!className) return '?'
   if (className === 'HELICOPTER') return 'HELI'
+  // The FALLBACK anchor is a synthetic energy-mean NPD, not a real
+  // aircraft — display as "Unknown" so users don't mistake it for an
+  // ICAO typecode they should look up.
+  if (className === 'WING_FALLBACK' || className === 'FALLBACK') return 'Unknown'
   const m = className.match(/^(?:WING|FUSE|PROP)_(.+)$/)
   return m ? m[1] : className
 }

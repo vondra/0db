@@ -1,7 +1,12 @@
 import { useMemo, useState } from 'react'
 import type { CruiseHexTopFlight, SegmentTrace } from '../../types/noise'
 import { globeAdsbTraceHref, metersToKm, unixToIsoDate } from '../../utils/formatters'
-import { aircraftFlightTooltip, modelName } from '../../utils/aircraft-types'
+import {
+  aircraftFlightTooltip,
+  aircraftTooltip,
+  classToAnchorTypecode,
+  modelName,
+} from '../../utils/aircraft-types'
 import { ldenToColor } from '../../utils/noise-colors'
 import { HoverText } from '../ui/info-tip'
 import { PathProfileDiagram } from './PathProfileDiagram'
@@ -460,22 +465,51 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
         )
       }
       const aglTooltip =
-        'Aircraft altitude at CPA, minus receiver DEM elevation.\n' +
+        'AGL at CPA = Above Ground Level at the Closest Point of\n' +
+        'Approach. Aircraft altitude minus receiver DEM elevation.\n' +
         'Positive = aircraft above receiver; negative = aircraft\n' +
         'below receiver standing surface (e.g. hill receiver above a\n' +
         'sea-level runway). CPA foot is the Doc 29 §4.4.1 infinite-\n' +
         'line projection; may be extrapolated outside the sub-segment\n' +
         'endpoints when the geometry requires.'
+      const cpaTooltip =
+        'CPA distance = Closest Point of Approach. The shortest\n' +
+        'straight-line distance from the receiver to the aircraft\n' +
+        "along this sub-segment's flight path (Doc 29 §4.4.1)."
       const direction = e.is_departure ? 'Departure ↑' : 'Arrival ↓'
       const directionTooltip = e.is_departure
         ? 'Departure: Stage 2A classifier saw ROCD median > +500 fpm at this sub-segment.'
         : 'Arrival: Stage 2A classifier saw non-departure ROCD (descent or level cruise).'
+      const typecode = e.aircraft_type || ''
+      const aircraftDisplay = typecode ? modelName(typecode) : '—'
+      const aircraftHoverTooltip = typecode
+        ? `ICAO designator: ${typecode}\n\n${aircraftTooltip(typecode, e.class)}`
+        : 'No ICAO aircraft typecode broadcast by this transponder.'
+      const classDisplay = classToAnchorTypecode(e.class)
+      const classHoverTooltip =
+        classDisplay === 'Unknown'
+          ? 'Noise class: no per-typecode NPD profile registered in EASA\n' +
+            'ANP v2.3 for this aircraft; emission uses the synthetic\n' +
+            'energy-mean fallback NPD (traffic-weighted mean of all 123\n' +
+            'curated profiles).'
+          : `Noise class: ICAO typecodes Voronoi-routed to the ${classDisplay}\n` +
+            'anchor profile from EASA ANP v2.3. Hover the Aircraft row\n' +
+            'for full NPD provenance.'
       return [
         ['Callsign', callsignValue],
-        ['Aircraft', e.aircraft_type || '—'],
+        [
+          'Aircraft',
+          <HoverText title={aircraftHoverTooltip}>{aircraftDisplay}</HoverText>,
+        ],
         [<HoverText title={directionTooltip}>Direction</HoverText>, direction],
-        ['Class', e.class],
-        ['CPA distance', `${Math.round(e.cpa_distance_m)} m`],
+        [
+          <HoverText title={classHoverTooltip}>Class</HoverText>,
+          classDisplay,
+        ],
+        [
+          <HoverText title={cpaTooltip}>CPA distance</HoverText>,
+          `${Math.round(e.cpa_distance_m)} m`,
+        ],
         [<HoverText title={aglTooltip}>AGL at CPA</HoverText>, `${Math.round(e.altitude_m_at_cpa)} m`],
       ]
     }
