@@ -183,13 +183,13 @@ function CruiseLoudestFlights({ tops }: { tops: CruiseHexTopFlight[] }) {
 // rail 0.5 m wheel-rail, building mid-facade, industrial varies, aircraft
 // ground 4 m), not a computed field. Tooltip explains the convention.
 function computeSourceHeightRow(trace: SegmentTrace): [React.ReactNode, React.ReactNode] | null {
-  // Aircraft ground-ops microsegments use a fixed CNOSSOS 4 m source
-  // height (heavy-vehicle wheel height analogue). Showing it on every
-  // row adds clutter without information — the value is a model
-  // constant, not a per-segment measurement. Hide for ground; other
-  // source types still show it because they vary (rail 0.5 m, building
-  // mid-facade, industrial NACE-dependent).
-  if (trace.kind === 'aircraft' && trace.aircraft_subtype === 1) {
+  // Aircraft ground-ops + airborne rows hide Source height: ground
+  // is a fixed CNOSSOS 4 m model constant (no info per row); airborne
+  // duplicates `Altitude at CPA` byte-for-byte (see `traces.rs:213`
+  // — `baseline.source_height_m = altitude_m_at_cpa` for airborne
+  // sub-segments). Other source types still show it because they
+  // vary (rail 0.5 m, building mid-facade, industrial NACE-dependent).
+  if (trace.kind === 'aircraft' && (trace.aircraft_subtype === 1 || trace.aircraft_subtype === 2)) {
     return null
   }
   const h = trace.baseline.source_height_m
@@ -459,12 +459,24 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
           </HoverText>
         )
       }
+      const aglTooltip =
+        'Aircraft altitude at CPA, minus receiver DEM elevation.\n' +
+        'Positive = aircraft above receiver; negative = aircraft\n' +
+        'below receiver standing surface (e.g. hill receiver above a\n' +
+        'sea-level runway). CPA foot is the Doc 29 §4.4.1 infinite-\n' +
+        'line projection; may be extrapolated outside the sub-segment\n' +
+        'endpoints when the geometry requires.'
+      const direction = e.is_departure ? 'Departure ↑' : 'Arrival ↓'
+      const directionTooltip = e.is_departure
+        ? 'Departure: Stage 2A classifier saw ROCD median > +500 fpm at this sub-segment.'
+        : 'Arrival: Stage 2A classifier saw non-departure ROCD (descent or level cruise).'
       return [
         ['Callsign', callsignValue],
         ['Aircraft', e.aircraft_type || '—'],
+        [<HoverText title={directionTooltip}>Direction</HoverText>, direction],
         ['Class', e.class],
         ['CPA distance', `${Math.round(e.cpa_distance_m)} m`],
-        ['Altitude at CPA', `${Math.round(e.altitude_m_at_cpa)} m`],
+        [<HoverText title={aglTooltip}>AGL at CPA</HoverText>, `${Math.round(e.altitude_m_at_cpa)} m`],
       ]
     }
     case 'aircraft_cruise': {

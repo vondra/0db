@@ -45,6 +45,8 @@ pub struct BuildAircraftAirborneSubSegmentTrace<'a> {
     pub cpa_distance_m: f64,
     pub altitude_m_at_cpa: f64,
     pub d_slant_m: f64,
+    /// From Stage 2A sub-segment `flags & 0b001`.
+    pub is_departure: bool,
     /// Linear-domain event energy per period `[day, evening, night]`
     /// (active period holds `10^(SEL/10)`, others zero).
     pub period_energies: [f64; 3],
@@ -85,6 +87,7 @@ pub fn build_aircraft_airborne_subsegment_trace(
             aircraft_type: typecode_str,
             cpa_distance_m: inputs.cpa_distance_m,
             altitude_m_at_cpa: inputs.altitude_m_at_cpa,
+            is_departure: inputs.is_departure,
             icao_hex,
             start_unix,
         },
@@ -224,6 +227,7 @@ mod tests {
             cpa_distance_m: 500.0,
             altitude_m_at_cpa: 800.0,
             d_slant_m: 943.4,
+            is_departure: false,
             period_energies,
             n_days,
         })

@@ -536,6 +536,9 @@ export type EmissionTrace =
       aircraft_type: string
       cpa_distance_m: number
       altitude_m_at_cpa: number
+      /** Set by Stage 2A `classify_is_departure_per_sample` from
+       *  smoothed ROCD median + 500 fpm threshold. */
+      is_departure: boolean
       /** Empty for synthetic (anonymous-transponder) fids. */
       icao_hex: string
       /** Flight start (Unix s); `null` for synthetic. UI derives the
