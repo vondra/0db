@@ -855,12 +855,22 @@ function Section5Lden({ trace }: { trace: SegmentTrace }) {
     () =>
       PERIOD_ROWS.map(p => {
         const bands = trace.received_bands[p.key]
-        const energy = bands.reduce((a, b) => a + Math.pow(10, b / 10), 0)
+        // `null` bands (engine emits NEG_INFINITY → JSON null for
+        // silent / unsupported sources) coerce to 0 inside `b / 10`
+        // and produce `10^0 = 1` per band — 8 bands then sum to ~9
+        // dB, the fake "L_rec 9 dB" that surfaced in pre-Tier-1+2
+        // ground-ops popups. Filter non-finite before the power
+        // sum so a silent band stays silent.
+        const energy = bands.reduce(
+          (acc, b) => acc + (Number.isFinite(b) ? Math.pow(10, b / 10) : 0),
+          0,
+        )
+        const lrec = energy > 0 ? 10 * Math.log10(energy) : Number.NEGATIVE_INFINITY
         return {
           ...p,
           lw: trace.lw_db_a[p.key],
           lwBands: trace.lw_bands[p.key],
-          lrec: 10 * Math.log10(Math.max(energy, 1e-30)),
+          lrec,
           lrecBands: bands,
         }
       }),
