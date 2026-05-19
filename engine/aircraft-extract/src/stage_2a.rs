@@ -40,6 +40,9 @@ pub fn run_stage_2a(
         .filter(|r4| scope.map_or(true, |s| s.contains_r4(*r4)))
         .collect();
     let n_r4 = r4s.len();
+    let total_segs: usize = r4s.iter().map(|r4| by_r4[r4].len()).sum();
+    eprintln!("[stage2a] starting: {n_r4} R4 cells, {total_segs} airborne segments");
+    let stage_start = std::time::Instant::now();
 
     r4s.par_iter().try_for_each(|r4_hex| -> Result<()> {
         let segs = by_r4.get(r4_hex).expect("present");
@@ -52,6 +55,7 @@ pub fn run_stage_2a(
         std::fs::create_dir_all(&dir)?;
         write_airborne(&dir.join("airborne.arrow"), &events, n_days)
     })?;
+    eprintln!("[stage2a] done: {n_r4} R4s in {:?}", stage_start.elapsed());
     Ok(n_r4)
 }
 

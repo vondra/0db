@@ -19,6 +19,8 @@
 //! `stage_airport_discover_runner.rs`. Kept standalone so DBSCAN + PCA
 //! can be unit-tested without a real ADS-B cache.
 
+use std::collections::HashMap;
+
 use crate::geo::{M_PER_DEG_LAT, M_PER_DEG_LON_EQUATOR, flat_dist};
 
 #[derive(Clone, Copy, Debug)]
@@ -69,15 +71,18 @@ pub fn discover_strips(
 /// DBSCAN 2D over (lat, lon) points with metric eps in metres.
 /// Returns `(labels, n_clusters)`: one `Option<usize>` per input vertex
 /// — `Some(cluster_id)` for cluster members, `None` for noise (label =
-/// -1 in classic DBSCAN). Single-threaded O(n²); acceptable for ≤ 10⁴
-/// per-R4 vertices. Queue dedupe uses a per-call `in_queue` bitmap so
-/// expansion stays O(n) per cluster instead of O(n²).
+/// -1 in classic DBSCAN). Grid-indexed region queries reduce neighbor
+/// lookup from O(n) to O(local-density), making whole-DBSCAN O(n)
+/// instead of O(n²) on uniformly-spaced inputs. Without the grid,
+/// dense R4 cells like LKPR (10⁵ ground vertices) took ~30 min on a
+/// single thread; with it, the same cell completes in seconds.
 fn dbscan_2d(
     vertices: &[(f32, f32)],
     eps_m: f32,
     min_samples: usize,
 ) -> (Vec<Option<usize>>, usize) {
     let n = vertices.len();
+    let grid = SpatialGrid::build(vertices, eps_m);
     let mut labels: Vec<Option<usize>> = vec![None; n];
     let mut visited = vec![false; n];
     let mut in_queue = vec![false; n];
@@ -87,7 +92,7 @@ fn dbscan_2d(
             continue;
         }
         visited[i] = true;
-        let neighbors = region_query(vertices, i, eps_m);
+        let neighbors = grid.region_query(vertices, i, eps_m);
         if neighbors.len() < min_samples {
             // Noise (may be reassigned to a cluster as a border point
             // when reached via another core's expansion).
@@ -105,7 +110,7 @@ fn dbscan_2d(
             head += 1;
             if !visited[j] {
                 visited[j] = true;
-                let inner = region_query(vertices, j, eps_m);
+                let inner = grid.region_query(vertices, j, eps_m);
                 if inner.len() >= min_samples {
                     for k in inner {
                         if !in_queue[k] {
@@ -128,15 +133,92 @@ fn dbscan_2d(
     (labels, cluster_id)
 }
 
-fn region_query(vertices: &[(f32, f32)], i: usize, eps_m: f32) -> Vec<usize> {
-    let (lat_i, lon_i) = vertices[i];
-    let mut out = Vec::new();
-    for (j, &(lat_j, lon_j)) in vertices.iter().enumerate() {
-        if flat_dist(lat_i, lon_i, lat_j, lon_j) <= eps_m {
-            out.push(j);
+/// Grid index for DBSCAN neighbor queries. Cell size = eps so each
+/// neighbor lookup touches at most the 3×3 neighborhood (own cell +
+/// 8 adjacent). Coordinates are converted to local meters around the
+/// bbox-min anchor so cells are uniform regardless of latitude.
+struct SpatialGrid {
+    /// (x_m, y_m) per vertex in the local meter frame.
+    coords_m: Vec<(f32, f32)>,
+    /// `cell -> indices` lookup. HashMap keeps memory bounded on
+    /// sparse inputs (rural strips) vs a dense Vec<Vec<usize>>.
+    cells: HashMap<(i32, i32), Vec<usize>>,
+    eps_m: f32,
+}
+
+impl SpatialGrid {
+    fn build(vertices: &[(f32, f32)], eps_m: f32) -> Self {
+        // Convert all vertices to local meters around a single anchor
+        // so cell coordinates compose cleanly. cos(lat) is taken at the
+        // mean latitude — accurate to <0.1 % across an R4 cell (~25 km).
+        let n = vertices.len();
+        if n == 0 {
+            return Self {
+                coords_m: Vec::new(),
+                cells: HashMap::new(),
+                eps_m,
+            };
+        }
+        let mean_lat: f64 = vertices.iter().map(|v| v.0 as f64).sum::<f64>() / n as f64;
+        let cos_lat = mean_lat.to_radians().cos() as f32;
+        let m_per_deg_lon = M_PER_DEG_LON_EQUATOR * cos_lat;
+        let mut coords_m: Vec<(f32, f32)> = Vec::with_capacity(n);
+        let (mut min_x, mut min_y) = (f32::INFINITY, f32::INFINITY);
+        for &(lat, lon) in vertices {
+            let x = lon * m_per_deg_lon;
+            let y = lat * M_PER_DEG_LAT;
+            coords_m.push((x, y));
+            if x < min_x {
+                min_x = x;
+            }
+            if y < min_y {
+                min_y = y;
+            }
+        }
+        // Re-anchor so all coords are non-negative and the cell index
+        // tuple stays in a tight (i32, i32) range.
+        for c in coords_m.iter_mut() {
+            c.0 -= min_x;
+            c.1 -= min_y;
+        }
+        let inv_eps = 1.0 / eps_m;
+        let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for (i, &(x, y)) in coords_m.iter().enumerate() {
+            let key = ((x * inv_eps) as i32, (y * inv_eps) as i32);
+            cells.entry(key).or_default().push(i);
+        }
+        Self {
+            coords_m,
+            cells,
+            eps_m,
         }
     }
-    out
+
+    fn region_query(&self, vertices: &[(f32, f32)], i: usize, eps_m: f32) -> Vec<usize> {
+        // Walk the 3×3 neighborhood of the query cell. Distance check
+        // still uses `flat_dist` over the original lat/lon for parity
+        // with the rest of the codebase; the grid only prunes the
+        // candidate set.
+        let (xi, yi) = self.coords_m[i];
+        let inv_eps = 1.0 / self.eps_m;
+        let cx = (xi * inv_eps) as i32;
+        let cy = (yi * inv_eps) as i32;
+        let (lat_i, lon_i) = vertices[i];
+        let mut out = Vec::new();
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                if let Some(idxs) = self.cells.get(&(cx + dx, cy + dy)) {
+                    for &j in idxs {
+                        let (lat_j, lon_j) = vertices[j];
+                        if flat_dist(lat_i, lon_i, lat_j, lon_j) <= eps_m {
+                            out.push(j);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
 }
 
 /// PCA over a cluster: returns a `DiscoveredStrip` summarizing the
