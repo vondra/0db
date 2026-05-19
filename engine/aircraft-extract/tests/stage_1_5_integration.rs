@@ -185,7 +185,7 @@ fn stage_1_5_then_stage_2c_round_trips_synth_airport_key() {
     // cluster gets classified as SynthAirport (not Reattribute).
     let areas: Vec<noise_compute::types::AirportArea> = Vec::new();
 
-    let r1_5 = run_stage_airport_discover(&segs, &areas, h3r4_dir, None).unwrap();
+    let r1_5 = run_stage_airport_discover(&segs, &areas, &[], h3r4_dir, None).unwrap();
     assert_eq!(r1_5, 1, "Stage 1.5 should populate exactly one R4");
 
     let synth_lines_path = r4_dir.join("synth_airport_lines.arrow");

@@ -252,3 +252,30 @@ pub fn read_global_airports(h3r4_dir: &Path) -> Result<Vec<AirportArea>> {
     }
     Ok(areas)
 }
+
+/// Walk every `<h3r4_dir>/<R4>/airport_lines.arrow` and merge into a
+/// single global set. Stage 1.5 (`stage_airport_discover_runner.rs`)
+/// uses the union to filter out DBSCAN clusters that sit inside an
+/// aerodrome's polygon buffer but are NOT near any real OSM aeroway
+/// line — those are almost always false-positive ADS-B noise (cars on
+/// access roads, GSE in parking lots) rather than missing taxiway
+/// extensions. Per-R4 reads in parallel don't help here: the test
+/// needs a cluster's centroid resolved against any line in the world,
+/// not just lines whose origin R4 happens to match the cluster's R4
+/// (clusters at R4 boundaries would otherwise see only half their
+/// neighborhood).
+pub fn read_global_airport_lines(h3r4_dir: &Path) -> Result<Vec<AirportLineRow>> {
+    let mut lines = Vec::new();
+    if !h3r4_dir.exists() {
+        return Ok(lines);
+    }
+    for entry in std::fs::read_dir(h3r4_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        lines.extend(read_airport_lines(&path.join("airport_lines.arrow"))?);
+    }
+    Ok(lines)
+}

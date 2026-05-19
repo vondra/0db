@@ -9,7 +9,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use aircraft_extract::airport_io::read_global_airports;
+use aircraft_extract::airport_io::{read_global_airport_lines, read_global_airports};
 use aircraft_extract::arrow_io::read_record_batches;
 use aircraft_extract::flight::FlightSegment;
 use aircraft_extract::source::FlightSource;
@@ -246,6 +246,17 @@ fn main() -> Result<()> {
                 "[run-all] global aerodromes: {} polygons",
                 areas.len()
             );
+            // Stage 1.5 cross-checks DBSCAN clusters against the real
+            // aeroway line set so false-positive clusters (cars on
+            // access roads, GSE in parking lots) inside an aerodrome's
+            // polygon buffer don't get mis-labeled as the airport's
+            // ground ops. Read once, share across all R4 par_iter
+            // workers.
+            let global_lines = read_global_airport_lines(&h3r4_dir)?;
+            eprintln!(
+                "[run-all] global airport lines: {} microsegments",
+                global_lines.len()
+            );
 
             // Stage 1.5 — DBSCAN auto-discovery of OSM-missing
             // airfields. Sits AFTER the per-day par_iter (so it sees
@@ -259,6 +270,7 @@ fn main() -> Result<()> {
             let r1_5 = run_stage_airport_discover(
                 &all_segments,
                 &areas,
+                &global_lines,
                 &h3r4_dir,
                 scope.as_ref(),
             )?;
