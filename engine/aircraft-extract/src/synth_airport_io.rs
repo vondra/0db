@@ -6,13 +6,6 @@
 //! Identity, encoding, and the "synthetic high bit" invariant are
 //! documented next to [`SYNTHETIC_OSM_ID_BIT`] below.
 
-// This module ships in the first of 5 commits wiring DBSCAN
-// auto-discovery into `run-all`. Commits 2-4 add the runner, Stage 2C
-// concat, and run-all wiring respectively — until then the readers /
-// writers / identity helpers are exercised only by the unit tests in
-// this module. Drop the allow after commit 4 lands.
-#![allow(dead_code)]
-
 use std::path::Path;
 use std::sync::Arc;
 
@@ -317,6 +310,7 @@ pub(crate) fn read_synth_airport_lines(path: &Path) -> Result<Vec<SynthAirportLi
 }
 
 /// Read `synth_airport_areas.arrow`. Missing file → empty vec.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn read_synth_airport_areas(path: &Path) -> Result<Vec<SynthAirportAreaRow>> {
     if !path.exists() {
         return Ok(Vec::new());

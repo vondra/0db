@@ -1,9 +1,7 @@
 //! Polyline-to-polyline projection: each ADS-B leg is distributed
 //! across the OSM airport-line microsegments it overlaps within
-//! `max_perp_m` perpendicular distance.
-//!
-//! Phase 3b — geometric kernel only. Phase 3c/d wire this into the
-//! Stage 2C counter aggregation pipeline.
+//! `max_perp_m` perpendicular distance. Geometric kernel only — the
+//! Stage 2C aggregator wires this into the counter pipeline.
 //!
 //! ## Why polyline-to-polyline, not snap-to-nearest
 //!
@@ -11,8 +9,7 @@
 //! produce 1 row in a snap-to-nearest scheme (all emission compressed
 //! to one segment). Distributing length proportionally keeps the
 //! acoustic energy spatially smooth across the taxiway and matches
-//! how a continuous taxi sounds to a downrange receiver. The single-
-//! reviewer (Gemini) /gg WARN that flagged this is fix C10 in plan v2.
+//! how a continuous taxi sounds to a downrange receiver.
 //!
 //! ## Geometric model
 //!
@@ -39,8 +36,8 @@ use crate::geo::{flat_dist, M_PER_DEG_LAT, M_PER_DEG_LON_EQUATOR};
 pub(crate) const AIRPORT_LINE_SNAP_BUFFER_M: f32 = 50.0;
 
 /// Minimal view into one airport_lines.arrow row — enough to do
-/// projection geometry plus the per-row metadata Phase 3d aggregator
-/// needs without re-reading the source Arrow. Geometry coords drive
+/// projection geometry plus the per-row metadata the aggregator needs
+/// without re-reading the source Arrow. Geometry coords drive
 /// `clipped_overlap_m`; `length_m`/`aeroway_type` ride through for
 /// the writer.
 #[derive(Clone, Copy, Debug)]
@@ -52,13 +49,13 @@ pub struct AirportLineSegment {
     pub end_lat: f32,
     pub end_lon: f32,
     /// Carried through from airport_lines.arrow for downstream rows
-    /// (Phase 3c airport_traffic.length_m). NOT consulted inside the
-    /// kernel — `clipped_overlap_m` recomputes from coords so the
-    /// local u/v basis stays consistent with the cached length.
+    /// (`airport_traffic.length_m`). NOT consulted inside the kernel
+    /// — `clipped_overlap_m` recomputes from coords so the local u/v
+    /// basis stays consistent with the cached length.
     pub length_m: f32,
     /// OSM aeroway encoding (0=runway, 1=taxiway, 6=stopway, 7=airstrip,
-    /// else apron/parking/heliport/gate). Phase 3d uses it to derive
-    /// `ops_kind` without re-reading the source Arrow row.
+    /// else apron/parking/heliport/gate). The aggregator uses it to
+    /// derive `ops_kind` without re-reading the source Arrow row.
     pub aeroway_type: u8,
 }
 

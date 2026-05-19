@@ -1,8 +1,7 @@
 //! Per-row trace builders for the airborne + cruise aircraft
 //! sub-types (`SegmentTrace` `aircraft_subtype` 2 = airborne
-//! sub-segment, 3 = cruise R8 hex). Ground-path traces were retired in
-//! Phase 6 along with `ground.arrow`; airport_traffic contributors
-//! do not push traces.
+//! sub-segment, 3 = cruise R8 hex). Ground (subtype 1) traces are
+//! emitted by `compute::aircraft_v6::airport_traffic`.
 
 use crate::emission::aircraft::{typecode_to_string, PERIOD_SECONDS};
 use crate::types::{

@@ -22,16 +22,15 @@ pub struct HexData {
     pub industrial_batches: Vec<RecordBatch>,
     pub aircraft_airborne_batches: Vec<RecordBatch>,
     pub aircraft_cruise_batches: Vec<RecordBatch>,
-    /// Per-microsegment sparse traffic counters (`airport_traffic.arrow`,
-    /// v2 contract). Phase 6 dropped the per-rotation `ground.arrow`
-    /// path in favor of this — see [`add_v6_aircraft_to_result`].
+    /// Per-microsegment sparse traffic counters
+    /// (`airport_traffic.arrow`). See [`add_v6_aircraft_to_result`].
     pub aircraft_airport_traffic_batches: Vec<RecordBatch>,
     /// OSM aeroway microsegments (`airport_lines.arrow`). Carries
     /// `osm_id` + `segment_idx` + nullable `ref` (e.g. "RWY 06/24")
-    /// per microsegment. Source-reader Phase 7c uses this to map
-    /// per-row airport_traffic.arrow rows back to their OSM way
-    /// identifier so the popup can label SegmentTraces "LKPR RWY
-    /// 06/24" instead of the generic "LKPR runway-roll".
+    /// per microsegment. Source-reader uses this to map per-row
+    /// airport_traffic.arrow rows back to their OSM way identifier so
+    /// the popup can label SegmentTraces "LKPR RWY 06/24" instead of
+    /// the generic "LKPR runway-roll".
     pub airport_lines_batches: Vec<RecordBatch>,
 }
 
@@ -195,9 +194,8 @@ pub fn query_roads_from_batches(
         let aadt_m = col_i32(batch, "aadt_medium");
         let aadt_h = col_i32(batch, "aadt_heavy");
         let aadt_mo = col_i32(batch, "aadt_moto");
-        // Arrow schema v5 (plan Commit 0.3): single source_id column replaces
-        // the legacy (roads_dataset_id, traffic_source) pair. Provenance is
-        // looked up via noise_compute::sources::provenance_of(source_id).
+        // Single `source_id` column; provenance via
+        // `noise_compute::sources::provenance_of(source_id)`.
         let source_id_col = col_u16(batch, "source_id");
 
         // All required columns must be present

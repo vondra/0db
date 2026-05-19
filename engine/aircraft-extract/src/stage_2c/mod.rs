@@ -2,13 +2,11 @@
 //!
 //! Writes `airport_traffic.arrow` per R4: sparse per-microsegment
 //! per-period traffic counters with daily-total linear Z-weighted band
-//! energy (v3 `airport_traffic_v3` contract). Consults OSM
-//! `airport_areas.arrow` for nearest-aerodrome identity and reads
-//! `airport_lines.arrow` per R4 for the aeroway microsegment graph.
-//!
-//! The legacy `ground.arrow` per-rotation paths writer was retired in
-//! Phase 6 (commit `<this commit>`); see `airport_traffic_writer.rs`
-//! for the current data shape.
+//! energy. Every microsegment a rotation's leg crossed receives both
+//! proportional band energy and the rotation's `flight_id` (touch
+//! semantics). Consults OSM `airport_areas.arrow` for nearest-
+//! aerodrome identity and reads `airport_lines.arrow` per R4 for the
+//! aeroway microsegment graph. See `airport_traffic_writer.rs`.
 
 use std::path::Path;
 

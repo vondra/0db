@@ -1,18 +1,18 @@
 //! Per-segment per-movement **Z-weighted band SEL@25m** kernel for
-//! the Phase 3 `airport_traffic.arrow` writer + Phase 4 popup consumer.
+//! the `airport_traffic.arrow` writer + popup consumer.
 //!
 //! Returns the Z-weighted (un-A-weighted) band SEL at 25 m perpendicular
 //! distance, in **linear units** (10^(dB/10)), for ONE MOVEMENT through
 //! ONE OSM microsegment. The Stage 2C writer accumulates these per
 //! event into `band_energy_lin`, then divides by `n_days` at row
 //! emission so each stored row holds the **daily total energy** for
-//! that microsegment + period. Phase 4 multiplies by per-band
+//! that microsegment + period. The popup multiplies by per-band
 //! propagation attenuation, adds `A_WEIGHTING[i]`, and divides by
 //! `period_s` to get the period Leq. Storing A-weighted at source
 //! would double-count the A-weight across frequency-dependent
-//! propagation — the 4/4 /gg consensus on Phase 3c flagged that.
+//! propagation.
 //!
-//! ## Phase 4 contract
+//! ## Receiver contract
 //!
 //! ```text
 //! received_z_lin[i] = sum_over_rows(
@@ -32,13 +32,12 @@
 //! barrier), NOT absolute path loss — using absolute would double-count
 //! the 25 m reference loss.
 //!
-//! ## Aircraft vs GSE math (Occam picks where reviewers split)
+//! ## Aircraft vs GSE math
 //!
 //! - **Aircraft**: per-event `GROUND_OPS_REFERENCE_SEL_DB[class][kind]`
 //!   spread across microsegments via `× seg_length / NOMINAL_EVENT_LENGTH_M`
-//!   (fixed 1 km nominal). Phase 3d may refine using actual run length
-//!   from Stage 1 context. Speed adjust ±3 dB clamp + 2 dB departure
-//!   bonus retained from `build_ground_ops_line_emission` convention.
+//!   (fixed 1 km nominal). Speed adjust ±3 dB clamp + 2 dB departure
+//!   bonus.
 //! - **GSE**: kinematic moving-point integration of per-band Lw along
 //!   the segment at perpendicular distance 25 m. One closed-form
 //!   integral replaces stationary-Lp + duration + finite-line correction
@@ -147,7 +146,7 @@ fn aircraft_band_sel_z_db(
     }
     // Per-microsegment splitting: spread the per-event anchor SEL
     // across microsegments by length ratio. Equivalent to assuming
-    // a 1 km nominal event traversed uniformly. Phase 3d may refine.
+    // a 1 km nominal event traversed uniformly.
     total_sel += 10.0 * ((segment_length_m as f64) / GROUND_OPS_NOMINAL_EVENT_LENGTH_M).log10();
     // Finite-line correction at the 25 m reference perpendicular,
     // segment center. FLC ≤ 0. fraction=0.5 by construction: the

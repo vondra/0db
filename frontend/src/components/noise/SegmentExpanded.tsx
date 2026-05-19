@@ -341,10 +341,10 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
     }
     case 'aircraft_ground': {
       // Per-microsegment movements + class mix come from the Stage 2C
-      // `flight_ids` set (v3 contract) aggregated across all rows at
-      // this `(osm_id, segment_idx)`. The arr/dep split is meaningful
-      // ONLY for runway-roll microsegments (taxi/apron rows always
-      // have is_departure=0 by Stage 2C convention).
+      // `flight_ids` set aggregated across all rows at this
+      // `(osm_id, segment_idx)`. The arr/dep split is meaningful ONLY
+      // for runway-roll microsegments (taxi/apron rows always have
+      // is_departure=0 by Stage 2C convention).
       const rows: [React.ReactNode, React.ReactNode][] = []
       const classLabel =
         `${e.class}${t.length_m > 0 ? ` · ${Math.round(t.length_m)} m` : ''}`
@@ -361,7 +361,7 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
         const dep = e.departures_per_day ?? 0
         const splitText =
           e.class === 'runway'
-            ? `Runway-roll split:\n  Arrivals    ${arr.toFixed(1)}/day\n  Departures  ${dep.toFixed(1)}/day\n\nUnique rotations attributed to this microsegment via Stage 2C\nlongest-coverage projection. flight_ids per (osm_id, segment_idx) ÷ n_days.`
+            ? `Runway-roll split:\n  Arrivals    ${arr.toFixed(1)}/day\n  Departures  ${dep.toFixed(1)}/day\n\nUnique rotations that crossed this microsegment. Touch semantics\n(Stage 2C v4) — each rotation appears in every microsegment its\nground trajectory intersected. Airport-aggregate totals UNION\nacross microsegment rows for correct deduplication.`
             : `${e.class === 'taxi' ? 'Taxi' : 'Apron'} movements through this microsegment.\nNo arr/dep split — Stage 2C only carries direction\nfor runway-roll rows (is_departure=0 elsewhere).`
         const headline =
           e.class === 'runway'

@@ -35,11 +35,9 @@ pub(crate) const AERODROME_AEROWAY_TYPE: u8 = 5;
 /// terminal-only centroid; the `closest aerodrome` tie-breaker
 /// inside [`nearest_aerodrome_within`] keeps LKLT / LKKB / LKVO
 /// (Praha's GA satellites, ~10-15 km away) from getting mis-merged
-/// into LKPR. The proper Tier 1.5 fix per `typed-brewing-clarke.md`
-/// Phase 1d is to extend `airport_areas.arrow` with an
-/// `extent_radius_m` derived from `polygon ∪ runway/taxi-line
-/// buffer`; this floor is the pragmatic interim until that
-/// extension lands.
+/// into LKPR. Pragmatic interim — the proper fix would extend
+/// `airport_areas.arrow` with an `extent_radius_m` derived from
+/// `polygon ∪ runway/taxi-line buffer`.
 pub(crate) const NEAREST_AERODROME_FLOOR_M: f64 = 6000.0;
 
 /// Multiplier on the polygon's equivalent radius (√area/π) for the
@@ -177,11 +175,11 @@ pub fn read_airport_areas(path: &Path) -> Result<Vec<AirportArea>> {
     Ok(out)
 }
 
-/// Read `airport_lines.arrow` per-R4 microsegment table. Phase 3d
+/// Read `airport_lines.arrow` per-R4 microsegment table. The Stage 2C
 /// aggregator consumes this to project ADS-B legs onto OSM aeroway
 /// microsegments. `aeroway_type` (0=runway, 1=taxiway, 6=stopway,
-/// 7=airstrip) is preserved so Phase 3d can derive ops_kind without
-/// re-classifying from speed alone.
+/// 7=airstrip) is preserved so the aggregator can derive ops_kind
+/// without re-classifying from speed alone.
 pub struct AirportLineRow {
     pub osm_id: u64,
     pub segment_idx: u16,

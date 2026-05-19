@@ -395,9 +395,8 @@ mod tests {
         // At least some have a 4-character ICAO typecode (most common case).
         let typed = traces.iter().filter(|t| t.aircraft_type.len() >= 3).count();
         assert!(typed > traces.len() / 2);
-        // Pre-M0a this was always 0; the regression check just needs
-        // a non-trivial floor. 30 % is robust to GA-heavy days where
-        // many Mode-S aircraft never broadcast `flight`.
+        // ≥30 % of traces must carry a callsign. Robust to GA-heavy
+        // days where many Mode-S aircraft never broadcast `flight`.
         let with_callsign = traces.iter().filter(|t| !t.callsigns.is_empty()).count();
         assert!(
             with_callsign * 10 > traces.len() * 3,

@@ -19,9 +19,9 @@ import { dirname, join } from 'node:path'
  * results (404 / unknown ICAO) are also cached — a permanently anonymous
  * transponder shouldn't repeatedly hit hexdb.
  *
- * Etapa 4 of the flight_id rework — the popup tooltip + click-to-info
- * feature requires these lookups; the disk cache is what keeps the
- * worst-case popup latency bounded when 10+ flights show up in one query.
+ * The popup tooltip + click-to-info feature requires these lookups;
+ * the disk cache is what keeps the worst-case popup latency bounded
+ * when 10+ flights show up in one query.
  */
 
 const CACHE_ROOT = process.env.AIRCRAFT_CACHE_DIR ?? '/tmp/quietmap-v4/aircraft-cache'

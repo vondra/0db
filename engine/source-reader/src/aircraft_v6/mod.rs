@@ -89,7 +89,7 @@ fn airport_centroids_from_traffic(rows: &[AirportTrafficRowView<'_>]) -> Vec<(f6
 /// `compute_at_point_with_traces` first.
 ///
 /// Returns `Err(String)` when any of the popup arrows fails its schema
-/// check (`v12` for airborne/cruise, `airport_traffic_v3` for the
+/// check (`v12` for airborne/cruise, `airport_traffic_v4` for the
 /// ground-ops arrow), so the popup HTTP path can map the failure to
 /// a structured 500 response with an operator-actionable message
 /// instead of crashing the worker via `assert!`.
@@ -124,15 +124,13 @@ pub fn add_v6_aircraft_to_result(
     }
 
     // Build the airport-centroid list from the receiver-disk's
-    // airport_traffic.arrow rows. Phase 7c: dedup per `airport_key`
-    // and use the energy-mean centroid as the airport's "where".
-    // Airborne sub-segments that fall within
-    // `AIRPORT_CONTEXT_RADIUS_M` of any of these centroids get
-    // `ground_context = AIRPORT_LINE` so the 150 m fixed-wing-jet
-    // floor in `is_valid_airborne_with_terrain` short-circuits.
-    // Without this, approach corridor vertices (Phase 7c P1a now
-    // routes them to airborne instead of ground) would be dropped
-    // by that floor.
+    // airport_traffic.arrow rows. Dedup per `airport_key` and use the
+    // energy-mean centroid as the airport's "where". Airborne
+    // sub-segments that fall within `AIRPORT_CONTEXT_RADIUS_M` of any
+    // of these centroids get `ground_context = AIRPORT_LINE` so the
+    // 150 m fixed-wing-jet floor in `is_valid_airborne_with_terrain`
+    // short-circuits — otherwise approach-corridor airborne vertices
+    // would be dropped by that floor.
     let airport_centroids = airport_centroids_from_traffic(&traffic_views);
 
     let (mut air_periods, mut air_contribs, band_data) = compute_aircraft_v6(
@@ -294,21 +292,15 @@ pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v12";
 
 /// The `airport_traffic.arrow` semantic contract. `schema_version`
 /// only guards column types/order; this guards what those columns
-/// mean.
+/// mean today: `band_energy_lin` = daily-total Z-weighted energy at
+/// 25 m perpendicular; `flight_ids` = TOUCH set (every microsegment
+/// a rotation crossed carries its `flight_id`, in lock-step with
+/// proportional band-energy attribution).
 ///
-/// * **v1** — `band_energy_lin` was per-movement SEL × n_movements
-///   (quadratic over-count of energy at popup time).
-/// * **v2** — `band_energy_lin` became daily-total energy; decoding
-///   a v1 file under v2 silently over-counts by ~10·log10(n_days)
-///   ≈ 11.5 dB at n_days=14.
-/// * **v3** — adds `flight_ids: List<UInt64>` and recomputes
-///   `movements_per_day = unique_flight_ids / n_days`. v2's
-///   `movements_per_day` was a per-FlightSegment-hit counter that
-///   over-counted real rotations by 5–15× at busy airports.
-///
-/// The assert here is a safety net so a stale file from any older
-/// contract never sneaks into the popup display path.
-pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v3";
+/// Older files MUST be rejected — column shape and `flight_ids`
+/// semantics differ across versions and silent decoding would
+/// produce wrong popup numbers.
+pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v4";
 
 /// Verify `schema_version` on every batch in the slice. Single-file
 /// IPC guarantees one schema per file, but the caller merges batches

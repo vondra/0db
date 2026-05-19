@@ -17,9 +17,8 @@
 //!   stale / airport ground), `SegmentTerrain` cache, ground-ops kind /
 //!   context constants.
 //! * [`ground_ops`] — surface-model constants (per-kind reference
-//!   speeds + spectrum shapes) shared by the `airport_traffic`
-//!   emission kernel. The Phase-6-retired per-leg `ground.arrow`
-//!   model lived here previously.
+//!   speeds + spectrum shapes) consumed by the `airport_traffic`
+//!   emission kernel.
 //! * [`segment_sel`] — single-shot per-segment SEL wrappers (popup +
 //!   tests).
 

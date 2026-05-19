@@ -74,9 +74,7 @@ pub struct PointQueryData {
     /// `compute_aircraft_v6` — no AircraftSegment synthesis happens here.
     pub aircraft_airborne_batches: Vec<arrow::record_batch::RecordBatch>,
     pub aircraft_cruise_batches: Vec<arrow::record_batch::RecordBatch>,
-    /// `airport_traffic.arrow` per-microsegment sparse counters
-    /// (v2 contract). Replaces the per-rotation `ground.arrow` path
-    /// retired in Phase 6.
+    /// `airport_traffic.arrow` per-microsegment sparse counters.
     pub aircraft_airport_traffic_batches: Vec<arrow::record_batch::RecordBatch>,
     /// `airport_lines.arrow` per-microsegment OSM aeroway features.
     /// Source-reader only needs `osm_id` + `ref` from here to label
@@ -698,7 +696,7 @@ fn apply_segment_top_k_with_cap(
     // Aircraft segments split into 3 sub-tabs by `aircraft_subtype`
     // (1 = ground / 2 = airborne / 3 = cruise) for top-K budgeting:
     // each sub-tab carries its own slice of segments at the popup-
-    // global cap. Phase 7c restores subtype = 1 (ground path) — see
+    // global cap. Subtype 1 emitted by
     // `noise-compute::compute::aircraft_v6::airport_traffic::run`'s
     // `emit_segment_traces` (one SegmentTrace per microsegment).
     let aircraft_subtype_bucket = |seg: &noise_compute::types::SegmentTrace| -> Option<u8> {

@@ -1,12 +1,12 @@
-//! Phase 5 — DBSCAN auto-discovery of OSM-missing airport strips.
+//! DBSCAN auto-discovery of OSM-missing airport strips.
 //!
 //! Input: ground vertices from Stage 1 ADS-B traces that did NOT snap
 //! to any OSM aeroway microsegment within 50 m perpendicular distance.
 //! Output: synthetic airport_lines.arrow rows + a per-cluster
-//! `airport_key = "auto-<r4_hex>-<seq>"` that Phase 4 popup consumes
-//! identically to OSM-derived rows.
+//! `airport_key = "auto-<r4_hex>-<seq>"` consumed identically to
+//! OSM-derived rows by the popup.
 //!
-//! Algorithm (per plan v2):
+//! Algorithm:
 //!
 //! 1. Per R4 disk: DBSCAN(eps=200 m, min_samples=30) on miss-snap
 //!    vertices.
@@ -15,11 +15,9 @@
 //!    treat as apron-equivalent (single representative point).
 //! 3. Width = perpendicular spread clamped to 10-60 m.
 //!
-//! This module owns the algorithmic core only — the pipeline wiring
-//! (collect miss-snap vertices from Stage 1, write synthetic lines to
-//! airport_lines.arrow) is in a follow-up. Stand-alone so DBSCAN +
-//! PCA can be unit-tested against synthetic input without needing a
-//! non-Praha cache.
+//! Algorithmic core only — pipeline wiring lives in
+//! `stage_airport_discover_runner.rs`. Kept standalone so DBSCAN + PCA
+//! can be unit-tested without a real ADS-B cache.
 
 use crate::geo::{M_PER_DEG_LAT, M_PER_DEG_LON_EQUATOR, flat_dist};
 

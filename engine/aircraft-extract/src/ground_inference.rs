@@ -5,13 +5,13 @@
 //!
 //! The composite layered inference (all altitude thresholds are AGL in
 //! metres, computed via DEM by Stage 1):
-//!   1. Rate-limits the raw bit (AGL ≤ 600 ft, speed ≤ 140 kt,
+//!   1. Rate-limits the raw bit (AGL ≤ 80 ft, speed ≤ 140 kt,
 //!      |baro_rate| ≤ 2 000 fpm) — otherwise reject as bogus.
 //!   2. Edge-window scan recovers ground prefixes / suffixes that have
 //!      NO raw bit set but match surface signatures (low AGL + low
 //!      speed + low baro_rate) for ≥ 3 consecutive points.
 //!   3. The edge scan terminates on the first strongly-airborne sample
-//!      (AGL ≥ 500 ft OR speed ≥ 130 kt) so cruise points never get
+//!      (AGL ≥ 165 ft OR speed ≥ 130 kt) so cruise points never get
 //!      flipped to ground.
 //!
 //! AGL semantics matter at high-elevation airports: La Paz (13 325 ft
@@ -27,18 +27,16 @@ const SURFACE_EDGE_WINDOW_POINTS: usize = 32;
 // feet to keep the Doc 29 reasoning legible; the runtime values stay
 // in metres to match Stage 1's `agl_m` source of truth.
 //
-// Phase 7c tightening: previous values (220 ft surface, 600 ft raw,
-// 500 ft edge-strong-airborne) accepted transponder on_ground bits
-// up to 183 m AGL — a B738 on final at 30-150 m AGL with the bit
-// flipped early ended up classified `Phase::Ground` and seeded fake
-// "ground ops" line clusters along the ILS approach corridor at
-// LKPR. The new gates are asymmetric: raw transponder is trusted
-// up to 80 ft AGL (covers DEM/baro uncertainty at landfill
-// airports per `filters.rs:23-29`), surface inference is paranoid
-// at 30 ft (Doc 29 §B-7 departure-segment start altitude), and
-// edge-airborne termination drops to 165 ft (~50 m, ICAO Annex 14
-// obstacle limitation surface at runway-end gate) so a slow climb
-// transitions out of ground inference within ~16 s of liftoff.
+// The gates are asymmetric so a B738 on final at 30-150 m AGL with
+// the on_ground bit flipped early (transponder flip before flare)
+// cannot seed fake ground-ops clusters along the ILS approach
+// corridor: raw transponder is trusted ONLY up to 80 ft AGL (covers
+// DEM/baro uncertainty at landfill airports per `filters.rs:23-29`),
+// surface inference is paranoid at 30 ft (Doc 29 §B-7
+// departure-segment start altitude), and edge-airborne termination
+// drops to 165 ft (~50 m, ICAO Annex 14 obstacle limitation surface
+// at runway-end gate) so a slow climb transitions out of ground
+// inference within ~16 s of liftoff.
 const SURFACE_MAX_AGL_M: f32 = 30.0 * 0.3048; // ≈ 9.14 m
 const SURFACE_MAX_SPEED_KT: f32 = 90.0;
 const SURFACE_MAX_BARO_RATE_FPM: f32 = 1200.0;
@@ -293,10 +291,10 @@ mod tests {
 
     #[test]
     fn taxi_at_high_dem_bias_stays_ground() {
-        // Phase 7c: at a landfill airport with 8 m DEM bias the
-        // computed AGL for a real taxi sample can run > 9 m even
-        // though the wheels are on the tarmac. The raw transponder
-        // bit (24 m gate) absorbs this.
+        // At a landfill airport with 8 m DEM bias the computed AGL
+        // for a real taxi sample can run > 9 m even though the wheels
+        // are on the tarmac. The raw transponder bit (24 m gate)
+        // absorbs this.
         let p = pt(1_247.0 + 26.0, 15.0, 0.0, true); // alt=1273ft, terrain msl=1247ft → AGL ≈ 7.9m
         let agl = (26.0_f32) * FT_TO_M;
         // 26 ft = 7.93 m, under both surface (9 m) and raw (24 m) gates.
@@ -307,30 +305,29 @@ mod tests {
 
     #[test]
     fn final_approach_30m_agl_stays_airborne() {
-        // Phase 7c: a B738 on final at 30 m AGL with the on_ground
-        // bit prematurely set (transponder flip before flare) must
-        // NOT be classified ground. The raw gate (24 m) rejects on
-        // AGL grounds; even if a hypothetical implementation
-        // relaxed it, the 140 kt speed gate would also reject.
+        // A B738 on final at 30 m AGL with the on_ground bit
+        // prematurely set (transponder flip before flare) must NOT
+        // be classified ground. The raw gate (24 m) rejects on AGL
+        // grounds; even if a hypothetical implementation relaxed it,
+        // the 140 kt speed gate would also reject.
         let p = pt(100.0, 145.0, -800.0, true);  // ~30 m AGL, 145 kt, descending
         assert!(!raw_ground_signal(&p, 30.0));
     }
 
     #[test]
     fn flare_at_5m_agl_taxi_speed_is_ground() {
-        // Phase 7c: just before touchdown, AGL 5 m, speed 20 kt,
-        // raw bit set — still inside both gates.
+        // Just before touchdown, AGL 5 m, speed 20 kt, raw bit set
+        // — still inside both gates.
         let p = pt(16.0, 20.0, 0.0, true);
         assert!(raw_ground_signal(&p, 5.0));
     }
 
     #[test]
     fn slow_climb_after_takeoff_at_45m_agl_is_airborne() {
-        // Phase 7c (DeepSeek concern): the previous
-        // SURFACE_EDGE_STRONG_AIRBORNE_AGL_M = 500 ft (152 m) would
-        // let a slow GA climb stay flagged "ground" for ~30 s after
-        // rotation. New 165 ft (~50 m) gate transitions the climb
-        // out of ground inference promptly.
+        // The 165 ft (~50 m) edge-airborne gate must transition a
+        // slow climb out of ground inference promptly — a 500 ft
+        // gate would leave a slow GA climb flagged "ground" for
+        // ~30 s after rotation.
         let points = vec![
             pt(0.0, 8.0, 0.0, true),       // taxi, raw bit set → ground
             pt(0.0, 100.0, 200.0, true),   // accelerating

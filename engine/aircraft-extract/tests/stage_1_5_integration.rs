@@ -1,4 +1,4 @@
-//! End-to-end integration test for Phase 7 DBSCAN auto-discovery.
+//! End-to-end integration test for DBSCAN auto-discovery.
 //!
 //! Simulates an OSM-thin R4 where:
 //! 1. `airport_lines.arrow` exists but covers a DIFFERENT location
@@ -17,9 +17,6 @@
 //! 5. Assertions confirm the synth `airport_key` round-trips all
 //!    the way to `airport_traffic.arrow`, proving the wiring
 //!    works end-to-end.
-//!
-//! Guards Codex's commit-2 /gg WARN ("real-world discovery quality
-//! is untested") and Gemini's "intentional OSM deletion" suggestion.
 
 use std::path::Path;
 use std::sync::Arc;

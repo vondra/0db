@@ -10,8 +10,7 @@
 //!             counter dedup
 //!
 //! Ground operations live in the parallel `airport_traffic` compute
-//! path invoked by source-reader after this function returns;
-//! the per-rotation `ground.arrow` model was retired in Phase 6.
+//! path invoked by source-reader after this function returns.
 
 use std::collections::HashMap;
 

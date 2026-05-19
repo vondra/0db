@@ -36,8 +36,6 @@ pub mod synth_airport_io;
 pub mod trace;
 
 /// Schema-version tag stamped into every Arrow file produced by this
-/// crate. Phase 6 retired the per-rotation `ground.arrow`; the
-/// authoritative ground-ops layer is now `airport_traffic.arrow`
-/// (sparse per-microsegment per-period counters under the
-/// `airport_traffic_v3` dimensional contract).
+/// crate. Reader-side `assert_schema_version` rejects mismatches so
+/// callers must re-extract when bumped.
 pub const SCHEMA_VERSION: &str = "v12";

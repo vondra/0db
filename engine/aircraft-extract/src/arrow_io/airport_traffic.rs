@@ -1,18 +1,17 @@
-//! `airport_traffic.arrow` writer + reader (v3 contract).
+//! `airport_traffic.arrow` writer + reader.
 //!
 //! One row per per-segment per-period traffic counter. Sparse on the
 //! `(osm_id, segment_idx, ops_kind, is_departure, veh_kind, class_idx,
-//! period)` grid — i.e. only buckets with any acoustic activity. Note
-//! that `movements_per_day` may be `0.0` on a row with non-zero band
-//! energy: the writer attributes the +1 movement only to the segment
-//! with longest coverage per leg, while energy is distributed to every
-//! intersected segment. Replaces ground.arrow's per-rotation paths
-//! with per-segment counters whose row count is fixed at the OSM
-//! microsegment × class × period grid; only the per-row `flight_ids`
-//! payload scales linearly with observed rotations. See
+//! period)` grid — i.e. only buckets with any acoustic activity. Touch
+//! semantics: both `flight_ids` and `band_energy_lin` are attributed
+//! to every intersected microsegment (energy distributes proportionally
+//! to overlap length; flight_id is inserted via HashSet so a rotation
+//! that re-touched the same microsegment only counts once). Row count
+//! is fixed at the OSM microsegment × class × period grid; only the
+//! per-row `flight_ids` payload scales linearly with
+//! `unique_rotations × avg_microsegments_per_rotation`. See
 //! [`crate::arrow_schemas::airport_traffic_schema`] for the column
-//! list and the `airport_traffic_v3` contract (daily-total energy +
-//! per-row sorted `flight_ids` for dedup of unique movements).
+//! list and the `airport_traffic_v4` contract docstring.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -86,13 +85,17 @@ pub struct AirportTrafficRow {
     /// by `noise_compute::emission::airport_traffic`. A-weighting
     /// is applied receiver-side after frequency-dependent propagation.
     pub band_energy_lin: [f32; NUM_BANDS],
-    /// `flight_id`s of every rotation attributed to this microsegment
-    /// (sorted ascending for deterministic on-disk layout). Caller
-    /// dedup invariant: each flight contributes +1 only on the
-    /// longest-coverage microsegment per leg, so union across rows
-    /// of a per-airport bucket equals real unique flights served
-    /// without double-counting. Used by popup display + for
-    /// debug joins back to `airborne.arrow` / `cruise.arrow`.
+    /// `flight_id`s of every rotation that crossed this microsegment
+    /// (sorted ascending for deterministic on-disk layout). v4 touch
+    /// semantics: each rotation contributes to every microsegment it
+    /// crossed, in lock-step with proportional band-energy
+    /// attribution. HashSet dedup ensures repeated sample-pair hits
+    /// of the same microsegment by one rotation count once. Per-row
+    /// `flight_ids.len() / n_days` = unique rotations crossing here.
+    /// Airport-aggregate totals UNION across rows (HashSet dedup) so
+    /// a rotation touching N microsegments still counts once per
+    /// direction. Used by popup display + for debug joins back to
+    /// `airborne.arrow` / `cruise.arrow`.
     pub flight_ids: Vec<u64>,
 }
 
@@ -196,7 +199,7 @@ pub fn write_airport_traffic(
 
 pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
     let (schema, batches) = read_all_batches(path)?;
-    arrow_schemas::assert_airport_traffic_contract_v3(schema.metadata())?;
+    arrow_schemas::assert_airport_traffic_contract_v4(schema.metadata())?;
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     let mut out = Vec::with_capacity(total_rows);
     for b in batches {
@@ -340,12 +343,18 @@ mod tests {
     #[test]
     fn reader_rejects_wrong_contract() {
         // Synthetic file written with bogus contract metadata must be
-        // rejected by `assert_airport_traffic_contract_v3` — guards
-        // against silently mis-decoding a v1 / v2 file with a v3
-        // binary (v2 lacks the `flight_ids` column; v2
-        // `movements_per_day` was per-FlightSegment-hit, ~5-15×
-        // over-count of real rotations).
-        for stale_contract in ["bogus_v9", "airport_traffic_v1", "airport_traffic_v2"] {
+        // rejected by `assert_airport_traffic_contract_v4` — guards
+        // against silently mis-decoding any older file with a v4
+        // binary. v1/v2 lack the `flight_ids` column; v3 carries
+        // `flight_ids` with longest-coverage attribution that
+        // under-counts per-microsegment movements 5-30× vs the v4
+        // touch semantic.
+        for stale_contract in [
+            "bogus_v9",
+            "airport_traffic_v1",
+            "airport_traffic_v2",
+            "airport_traffic_v3",
+        ] {
             use crate::arrow_io::write_record_batches;
             use std::sync::Arc;
             let dir = tempdir().unwrap();

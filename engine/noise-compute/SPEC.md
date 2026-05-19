@@ -466,11 +466,10 @@ producing three popup arrows per R4:
   `cruise_flight_ids: List<UInt64>` lists the unique flights that
   contributed so the popup can dedupe across R8 cells. Cruise is
   intentionally annual-only — there is no `date_id` field.
-- **Stage 2C ground** — one row per (aircraft × contiguous ground
-  path) in `ground.arrow`, with per-leg `count_weight = 1 /
-  n_legs_of_this_kind_in_path` (see §5.2). `vertices` carry per-vertex
-  `period` / `date_id` so per-day breakdowns stay reconstructable for
-  ground.
+- **Stage 2C ground** — sparse per-microsegment per-period counter
+  rows in `airport_traffic.arrow`. Each row carries daily-total
+  Z-weighted band energy at 25 m perpendicular + the touch set of
+  `flight_ids` that crossed this microsegment (see §5.2).
 
 The popup's `compute_aircraft_v6` consumes all three arrows directly
 via typed column views; popup is the only consumer of these per-R4
@@ -542,7 +541,7 @@ source spectrum). `peak_lmax` per flight = max across segments of
 
 **Sources**: ECAC Doc 29 4th Ed §A.3.1 (LAmax NPDs), FAA AEDT Tech Manual §6.4 (LAmax interpolation procedure), EASA ANP v2.3 + v9 published L_MAX_A / L_MAX_D NPD tables.
 
-### 5.2 Airport ground ops (raw-ADS-B-paths model, schema v10)
+### 5.2 Airport ground ops (per-microsegment model, `airport_traffic.arrow`)
 
 Airport ground ops are a separate submodel inside the `aircraft` layer.
 
@@ -550,62 +549,78 @@ Inputs:
 - observed ADS-B segments classified `Phase::Ground` by Stage 1
   (low-AGL on-ground rolls + taxi traces)
 - aerodrome polygons from `airport_areas.arrow` (filtered to
-  `aeroway_type == AERODROME`) for nearest-aerodrome identity only —
-  **no snap onto runway / taxi / apron geometry**
+  `aeroway_type == AERODROME`) for nearest-aerodrome identity
+- OSM aeroway microsegments from `airport_lines.arrow` (runways,
+  taxiways, stopways, airstrips, broken into ≤ 250 m pieces by
+  `osm-extract`)
+- Stage 1.5 DBSCAN-discovered synthetic strips for OSM-missing
+  airfields, written alongside as `synth_airport_lines.arrow` /
+  `synth_airport_areas.arrow`
 
-Path extraction (one row of `ground.arrow` = one aircraft × one
-contiguous ground run):
-- group `FlightSegment`s by `flight_id`, walk in time order
-- a "path" is a maximal run of consecutive `Phase::Ground` segments
-  where `segN+1.start = segN.end` (Stage 1 enforces touching at
-  frame boundaries; non-touching pairs split a new path)
-- vertices = sequence of consecutive segment endpoints
-- airport identity = nearest `aeroway = aerodrome` polygon within
-  `max(3000, area_radius_m × 1.5)` of the path centroid; when no
-  aerodrome is in range, an `airport_key = "strip:{r7_hex}"` (H3
-  res-7 ≈ 1.2 km cell) anchors anonymous strips so distinct grass
-  fields don't merge into one `(no airport)` cluster
+Stage 2C aggregates into `airport_traffic.arrow` — sparse
+per-microsegment per-period counters. Each row is keyed by
+`(airport_key, osm_id, segment_idx, ops_kind, is_departure, veh_kind,
+class_idx, period)` and carries:
+- `band_energy_lin: FixedSizeList<f32; 8>` — daily-total linear
+  Z-weighted energy at 25 m perpendicular from this microsegment for
+  this period (Σ per-event SEL across the n_days window ÷ n_days)
+- `flight_ids: List<UInt64>` — touch set: every microsegment a
+  rotation's leg crossed receives that rotation's `flight_id`
+- `movements_per_day = flight_ids.len() / n_days` — display metadata
+  only; never multiplied into the receiver chain
 
-Per-leg `ops_kind` (one leg = one `FlightSegment` end-to-end):
-- speed-based classifier: `speed_kt ≥ 40 OR length_m ≥ 500` →
-  `runway_roll`; `speed_kt ≥ 8` → `taxi`; else `apron_movement`
-- smoothing pass: a leg whose `ops_kind` differs from BOTH neighbours
-  AND is short (< 10 s OR < 30 m) inherits the neighbour's kind, so
-  a slow taxi pause in a runway-hold queue doesn't mis-classify as
-  apron
+Leg-to-microsegment projection (per ADS-B sample-pair leg):
+- buffer each `airport_lines.arrow` microsegment by
+  `AIRPORT_LINE_SNAP_BUFFER_M = 50 m` perpendicular
+- the portion of the leg lying inside that buffer rectangle is the
+  "overlap"; if the leg covers multiple microsegments their overlap
+  lengths are renormalised so Σ overlap = leg length
+- airport identity comes from the microsegment's parent OSM
+  aerodrome (via `nearest_aerodrome_within`); legs hitting no
+  microsegment fall under `airport_key = "strip:{r7_hex}"`
 
-Per-leg `count_weight = 1 / n_legs_of_this_kind_in_path`:
-- distributes one movement's reference-SEL energy across the
-  same-kind legs of one path
-- Σ count_weight across same-kind legs of one path = 1.0 — summing
-  per-leg energy × count_weight reconstructs one movement's energy
-- `build_ground_ops_line_emission` is called with `count_weight=1.0`
-  so the stored `em_bands` represents one full event's emission;
-  the popup applies the per-leg `count_weight` exactly once
+Per-leg `ops_kind` is derived from the matched microsegment's OSM
+`aeroway_type`: runway → `runway_roll`, taxiway → `taxi`, anything
+else (apron / parking / heliport / gate) → `apron_movement`. No
+speed-based classifier and no smoothing pass — OSM geometry is the
+source of truth.
 
-Ground-ops line-source emission (per leg):
-- source height = **4.0 m**
-- profile-specific reference SEL table by aircraft family × class
-  (`runway / taxi / apron`)
-- runway departure gets **+2 dB**
-- speed adjustment relative to nominal class speed is clamped to
-  **±3 dB**
+Per-segment per-movement Z-weighted band SEL@25m kernel
+(`engine/noise-compute/src/emission/airport_traffic.rs`):
+- per-event SEL = `GROUND_OPS_REFERENCE_SEL_DB[class][ops_kind]`
+  spread by `× seg_length / NOMINAL_EVENT_LENGTH_M` (fixed 1 km
+  nominal); finite-line correction at 25 m applied
+- runway departure: **+2 dB**
+- speed adjust relative to nominal class speed: clamped to **±3 dB**
+- source height: **4.0 m**
+- band shaping: per-`ops_kind` Z-weighted spectrum (runway / taxi /
+  apron)
 
-Ground-ops propagation (popup):
-- per-path bbox prefilter at **16 km** envelope, per-leg prefilter
-  at the same conservative cap (the kernel's
-  `below_free_field_threshold_line` does the precise per-band
-  rejection inside)
-- per leg: `propagate_variants_full` with `SourceGeometry::Line`,
-  finite-line correction, and full Section 3 path effects (terrain
-  / screening / vegetation / ground)
+The writer accumulates per-microsegment band energy + inserts the
+rotation's `flight_id` into the row's set, in lock-step. Both
+operations happen for every intersected microsegment (touch
+semantics) — there is no longest-coverage attribution.
 
-Synthetic fill (was active pre-v10 when ADS-B coverage missed parts
-of an airport's footprint) is **not part of the v10 model**. The
-v10 design choice: the popup faithfully shows what ADS-B saw, and
-unobserved ground ops simply don't appear. Tier 3 backlog #4
-tracks the schedule-synth driver that would re-introduce a
-coverage-fill driver on top of curated schedules.
+Receiver math (popup compute in
+`engine/noise-compute/src/compute/aircraft_v6/airport_traffic.rs`):
+- prefilter each microsegment by per-row bbox against a popup-side
+  16 km envelope; `below_free_field_threshold_line` does precise
+  per-band rejection inside
+- per row: `received_band_lin[i] = row.band_energy_lin[i] ×
+  prop_rel_band[i]`, where `prop_rel_band[i]` is the relative
+  per-band attenuation from the 25 m reference (geo divergence + ISO
+  9613-2 atm absorption + terrain / screening / vegetation / ground)
+- airport-level `arrivals_per_day` / `departures_per_day` come from
+  HashSet UNION over `flight_ids` across all rows of the airport
+  (one rotation crossing 30 microsegments still counts once per
+  direction)
+
+Stage 1.5 DBSCAN auto-discovery handles OSM-missing airfields:
+- ground vertices from Stage 1 that fail to snap to any OSM line
+  cluster (eps = 200 m, min_samples = 5)
+- accepted clusters emit synthetic `airport_lines.arrow` rows under
+  an `airport_key = "auto-<H3-R11-hex>"` key consumed identically
+  to OSM lines by Stage 2C
 
 ### 5.3 Aircraft contribution to confidence
 
