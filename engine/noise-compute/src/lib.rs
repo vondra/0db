@@ -1356,6 +1356,17 @@ fn compute_point_sources(
         variants: [PropagationVariants; 3],
         emission_energy: f64,
         polygon_wkb: String,
+        /// First-touched PointSource's `floors` / `area_m2`. Each
+        /// PointSource on the same osm_id is one grid point of the
+        /// same building / industrial site, so they all share these
+        /// values — we just keep the first.
+        floors: u8,
+        area_m2: f32,
+        /// Number of PointSource grid points that fell into this
+        /// osm_id. For large industrial sites this is the H3 grid
+        /// discretisation count (driving the `Lw − 10·log10(N)`
+        /// per-point split). 1 for buildings + small industrial.
+        grid_point_count: u16,
     }
     let mut pts_by_osm: HashMap<i64, PtAccum> = HashMap::new();
     let ground_g = rasters.ground_g(receiver.lat, receiver.lon);
@@ -1466,11 +1477,15 @@ fn compute_point_sources(
             ],
             emission_energy: 0.0,
             polygon_wkb: src.polygon_wkb.clone(),
+            floors: src.floors,
+            area_m2: src.area_m2,
+            grid_point_count: 0,
         });
         acc.variants[0].add(&v_day);
         acc.variants[1].add(&v_eve);
         acc.variants[2].add(&v_night);
         acc.emission_energy += day_em;
+        acc.grid_point_count = acc.grid_point_count.saturating_add(1);
         if src.dist_m < acc.min_dist {
             acc.min_dist = src.dist_m;
             acc.min_d_slant = d_slant;
@@ -1552,20 +1567,25 @@ fn compute_point_sources(
             building_type_name(acc.subtype)
         };
 
-        // Build per-source metadata (popup only)
+        // Build per-source metadata (popup only). `floors` / `area_m2` /
+        // `grid_point_count` come from the first PointSource hit on this
+        // osm_id (all grid points of the same site share these values).
         let metadata = if source_kind == LayerKind::Industrial {
             Some(SourceMetadata::Industrial(IndustrialMetadata {
-                area_m2: 0.0, // derived per-point; aggregate unavailable at this level
+                area_m2: acc.area_m2 as f64,
                 source_type: subtype_name,
                 nace: None,
-                grid_point_count: 0, // not tracked in accum yet
+                grid_point_count: acc.grid_point_count,
             }))
         } else {
-            // building
+            // building. `acc.src_height` is `elevation + height/2`
+            // (mid-facade anchor), so subtracting `elevation` gives
+            // half the building height. Double to recover the full
+            // building height the popup shows under "Height".
             Some(SourceMetadata::Building(BuildingMetadata {
-                height_m: (acc.src_height - rasters.elevation(acc.lat, acc.lon)).max(0.0),
-                floors: 0, // not preserved after emission calc
-                area_m2: 0.0,
+                height_m: ((acc.src_height - rasters.elevation(acc.lat, acc.lon)) * 2.0).max(0.0),
+                floors: acc.floors,
+                area_m2: acc.area_m2 as f64,
                 building_type: subtype_name,
                 address: acc.name.clone(),
             }))
