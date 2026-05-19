@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { CruiseHexTopFlight, SegmentTrace } from '../../types/noise'
-import { fmtFloat, globeAdsbTraceHref, metersToKm, unixToIsoDate } from '../../utils/formatters'
+import { globeAdsbTraceHref, metersToKm, unixToIsoDate } from '../../utils/formatters'
 import { aircraftFlightTooltip } from '../../utils/aircraft-types'
 import { ldenToColor } from '../../utils/noise-colors'
 import { HoverText } from '../ui/info-tip'
@@ -83,7 +83,7 @@ function Section1Source({ trace }: { trace: SegmentTrace }) {
     () => {
       const out: [React.ReactNode, React.ReactNode][] = [...emissionRowsList]
       if (lwRow) out.push(lwRow)
-      out.push(sourceHeightRow)
+      if (sourceHeightRow) out.push(sourceHeightRow)
       return out
     },
     [emissionRowsList, lwRow, sourceHeightRow],
@@ -182,7 +182,16 @@ function CruiseLoudestFlights({ tops }: { tops: CruiseHexTopFlight[] }) {
 // section — value is a per-source-type model constant (road 0.05 m wheel,
 // rail 0.5 m wheel-rail, building mid-facade, industrial varies, aircraft
 // ground 4 m), not a computed field. Tooltip explains the convention.
-function computeSourceHeightRow(trace: SegmentTrace): [React.ReactNode, React.ReactNode] {
+function computeSourceHeightRow(trace: SegmentTrace): [React.ReactNode, React.ReactNode] | null {
+  // Aircraft ground-ops microsegments use a fixed CNOSSOS 4 m source
+  // height (heavy-vehicle wheel height analogue). Showing it on every
+  // row adds clutter without information — the value is a model
+  // constant, not a per-segment measurement. Hide for ground; other
+  // source types still show it because they vary (rail 0.5 m, building
+  // mid-facade, industrial NACE-dependent).
+  if (trace.kind === 'aircraft' && trace.aircraft_subtype === 1) {
+    return null
+  }
   const h = trace.baseline.source_height_m
   const slantSame = Math.abs(trace.d_slant_m - trace.dist_m) < 0.5
   const slantNote = slantSame
@@ -331,25 +340,15 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
       ]
     }
     case 'aircraft_ground': {
-      const rows: [React.ReactNode, React.ReactNode][] = [
-        ['Class', e.class],
-        ['Observed movements', fmtFloat(e.observed_movements)],
-        ['Modeled movements', fmtFloat(e.modeled_movements)],
-      ]
-      const lengths = t.length_m_per_kind
-      if (lengths) {
-        const [runway, taxi, apron] = lengths
-        const total = runway + taxi + apron
-        if (total > 0) {
-          const fmt = (v: number) =>
-            v >= 1000 ? `${(v / 1000).toFixed(1)} km` : `${Math.round(v)} m`
-          rows.push([
-            'Path lengths',
-            `runway ${fmt(runway)} · taxi ${fmt(taxi)} · apron ${fmt(apron)}`,
-          ])
-        }
-      }
-      return rows
+      // Per-microsegment movements + aggregate path lengths don't fit
+      // the per-microsegment scope: the compute folds movements into
+      // the airport-level Contributor row, and path lengths are an
+      // airport-wide sum, not a per-segment property. Drop both —
+      // Tier 2 metadata (cluster_confidence, vertex_count) will
+      // replace them with values that are actually per-segment.
+      const classLabel =
+        `${e.class}${t.length_m > 0 ? ` · ${Math.round(t.length_m)} m` : ''}`
+      return [['Class', classLabel]]
     }
     case 'aircraft_airborne': {
       // Callsign is the discoverable click target — users recognize callsigns
@@ -982,32 +981,42 @@ export function SegmentExpanded({ trace }: { trace: SegmentTrace }) {
       </div>
     )
   }
+  // Ground-ops microsegments: path_profile is intentionally left
+  // empty by `airport_traffic.rs::emit_segment_traces` (the per-row
+  // path is cached internally but not serialized — would 3-4× the
+  // popup payload). Skip the path-profile diagram + Section6 (variant
+  // delta table — Section4 already covers per-effect impacts). Per-
+  // effect attenuations (Section4) and per-period Lden (Section5)
+  // stay because their numbers ARE per-microsegment and useful.
+  const isGroundOps = trace.kind === 'aircraft' && trace.aircraft_subtype === 1
   return (
     <div className="ml-2 mr-4 pb-2 text-[11px] leading-relaxed font-mono text-muted-foreground">
       <Section1Source trace={trace} />
-      <Section>
-        <PathProfileDiagram
-          trace={trace.path_profile}
-          terrainEdges={trace.terrain.edges}
-          dominantEdgeIdx={trace.terrain.dominant_edge_idx}
-        />
-        <HoverText
-          title={
-            'Bilateral cadence: one 10 m near-probe at each end (berm catch),\n' +
-            'then three samples at 30 m / 60 m / 120 m, then 240 m through the\n' +
-            'middle. step_m_med is the median inter-sample gap the engine saw\n' +
-            '(propagation::path_profile::fill_t_values).'
-          }
-        >
-          <div className="mt-0.5 text-[10px] text-muted-foreground italic">
-            Profile: {trace.path_profile.t.length} samples · median step{' '}
-            {trace.path_profile.step_m_med.toFixed(1)} m
-          </div>
-        </HoverText>
-      </Section>
+      {!isGroundOps && (
+        <Section>
+          <PathProfileDiagram
+            trace={trace.path_profile}
+            terrainEdges={trace.terrain.edges}
+            dominantEdgeIdx={trace.terrain.dominant_edge_idx}
+          />
+          <HoverText
+            title={
+              'Bilateral cadence: one 10 m near-probe at each end (berm catch),\n' +
+              'then three samples at 30 m / 60 m / 120 m, then 240 m through the\n' +
+              'middle. step_m_med is the median inter-sample gap the engine saw\n' +
+              '(propagation::path_profile::fill_t_values).'
+            }
+          >
+            <div className="mt-0.5 text-[10px] text-muted-foreground italic">
+              Profile: {trace.path_profile.t.length} samples · median step{' '}
+              {trace.path_profile.step_m_med.toFixed(1)} m
+            </div>
+          </HoverText>
+        </Section>
+      )}
       <Section4PathEffects trace={trace} />
-      <Section5Lden trace={trace} />
-      <Section6Variants trace={trace} />
+      {!isGroundOps && <Section5Lden trace={trace} />}
+      {!isGroundOps && <Section6Variants trace={trace} />}
     </div>
   )
 }
