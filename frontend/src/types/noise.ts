@@ -503,11 +503,31 @@ export type EmissionTrace =
   | {
       kind: 'aircraft_ground'
       class: 'runway' | 'taxi' | 'apron'
-      // Engine emits NaN/Infinity for synthesized segments with no observed
-      // traffic, which serde_json maps to JSON null — see fmtFloat in
-      // utils/formatters.ts.
+      /** Unique flight rotations / day that touched THIS microsegment.
+       * Derived from `union(row.flight_ids) / n_days` across all rows
+       * sharing `(osm_id, segment_idx)`. Includes arrivals + departures
+       * + GSE; the three counts below break it down. */
       observed_movements: number | null
+      /** Reserved for schedule-synth (Eurocontrol DDR2 / OAG); zero
+       * today because the synth driver is scaffolded but not running. */
       modeled_movements: number | null
+      // Fields below are optional in the type to survive a stale
+      // server JSON cached without them; the renderer defaults to 0
+      // / empty when absent.
+      /** Runway-roll arrivals on this microsegment / day. */
+      arrivals_per_day?: number
+      /** Runway-roll departures on this microsegment / day (carry the
+       * +2 dB Doc 29 takeoff bonus in their band_energy). */
+      departures_per_day?: number
+      /** GSE movements per GSE class (LIGHT / MEDIUM / HEAVY) / day. */
+      gse_per_day?: [number, number, number]
+      /** Top aircraft classes by energy share at THIS microsegment.
+       * Same shape as AircraftGroundOpsDetail.profile_mix (airport-
+       * aggregate) so the popup can reuse one renderer. */
+      class_mix?: ProfileMixEntry[]
+      /** OSM aeroway `ref` tag (e.g. "06/24" for runway "06/24"); null
+       * for synth strips and OSM ways without a `ref`. */
+      osm_ref?: string | null
     }
   | {
       kind: 'aircraft_airborne'

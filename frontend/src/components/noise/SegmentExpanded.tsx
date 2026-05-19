@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { CruiseHexTopFlight, SegmentTrace } from '../../types/noise'
 import { globeAdsbTraceHref, metersToKm, unixToIsoDate } from '../../utils/formatters'
-import { aircraftFlightTooltip } from '../../utils/aircraft-types'
+import { aircraftFlightTooltip, modelName } from '../../utils/aircraft-types'
 import { ldenToColor } from '../../utils/noise-colors'
 import { HoverText } from '../ui/info-tip'
 import { PathProfileDiagram } from './PathProfileDiagram'
@@ -340,15 +340,96 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
       ]
     }
     case 'aircraft_ground': {
-      // Per-microsegment movements + aggregate path lengths don't fit
-      // the per-microsegment scope: the compute folds movements into
-      // the airport-level Contributor row, and path lengths are an
-      // airport-wide sum, not a per-segment property. Drop both —
-      // Tier 2 metadata (cluster_confidence, vertex_count) will
-      // replace them with values that are actually per-segment.
+      // Per-microsegment movements + class mix come from the Stage 2C
+      // `flight_ids` set (v3 contract) aggregated across all rows at
+      // this `(osm_id, segment_idx)`. The arr/dep split is meaningful
+      // ONLY for runway-roll microsegments (taxi/apron rows always
+      // have is_departure=0 by Stage 2C convention).
+      const rows: [React.ReactNode, React.ReactNode][] = []
       const classLabel =
         `${e.class}${t.length_m > 0 ? ` · ${Math.round(t.length_m)} m` : ''}`
-      return [['Class', classLabel]]
+      rows.push(['Class', classLabel])
+      if (e.osm_ref) {
+        rows.push(['OSM ref', e.osm_ref])
+      }
+      const obs = e.observed_movements ?? 0
+      if (obs > 0) {
+        // Hover shows arr/dep split (only meaningful for runway-roll;
+        // taxi/apron always show 0 split because their is_departure
+        // is always 0 by Stage 2C contract).
+        const arr = e.arrivals_per_day ?? 0
+        const dep = e.departures_per_day ?? 0
+        const splitText =
+          e.class === 'runway'
+            ? `Runway-roll split:\n  Arrivals    ${arr.toFixed(1)}/day\n  Departures  ${dep.toFixed(1)}/day\n\nUnique rotations attributed to this microsegment via Stage 2C\nlongest-coverage projection. flight_ids per (osm_id, segment_idx) ÷ n_days.`
+            : `${e.class === 'taxi' ? 'Taxi' : 'Apron'} movements through this microsegment.\nNo arr/dep split — Stage 2C only carries direction\nfor runway-roll rows (is_departure=0 elsewhere).`
+        const headline =
+          e.class === 'runway'
+            ? `${arr.toFixed(1)} arr / ${dep.toFixed(1)} dep`
+            : `${obs.toFixed(1)}/day`
+        rows.push([
+          'Movements',
+          <HoverText title={splitText}>{headline}</HoverText>,
+        ])
+      }
+      // Top aircraft classes by energy share at this microsegment.
+      // Headline shows ICAO typecodes (A320 / B738 / B38M) the same
+      // way TopFlightsTable does; the hover tooltip names the model
+      // via `aircraftTooltip` so the user never sees an internal
+      // class index.
+      if (e.class_mix && e.class_mix.length > 0) {
+        const tooltipLines = [
+          'Aircraft class mix on this microsegment',
+          '(% of A-weighted received energy)',
+          '',
+        ]
+        for (const c of e.class_mix) {
+          tooltipLines.push(
+            `  ${c.rep_typecode.padEnd(6)}  ${modelName(c.rep_typecode)}  ${(c.share * 100).toFixed(1)}%`,
+          )
+        }
+        tooltipLines.push('')
+        tooltipLines.push(
+          'Each row = the class representative ICAO typecode (Voronoi-',
+        )
+        tooltipLines.push(
+          'anchored from EASA ANP v2.3) plus its energy share at this',
+        )
+        tooltipLines.push('microsegment.')
+        const headline = (
+          <span className="whitespace-nowrap">
+            {e.class_mix.slice(0, 3).map((c, i) => (
+              <span key={c.rep_typecode}>
+                {i > 0 && ' · '}
+                <HoverText title={`${modelName(c.rep_typecode)} (${c.rep_typecode})`}>
+                  {c.rep_typecode}
+                </HoverText>
+                {` ${(c.share * 100).toFixed(0)}%`}
+              </span>
+            ))}
+          </span>
+        )
+        rows.push([
+          <HoverText title={tooltipLines.join('\n')}>Top types</HoverText>,
+          headline,
+        ])
+      }
+      const gse = e.gse_per_day ?? [0, 0, 0]
+      const gseTotal = gse[0] + gse[1] + gse[2]
+      if (gseTotal > 0) {
+        const tooltip =
+          'Ground Support Equipment (GSE) movements / day\n' +
+          'on this microsegment, split by class:\n\n' +
+          `  LIGHT   ${gse[0].toFixed(1)}/day\n` +
+          `  MEDIUM  ${gse[1].toFixed(1)}/day\n` +
+          `  HEAVY   ${gse[2].toFixed(1)}/day\n\n` +
+          'Stage 2C routes veh_kind=1 rows here.'
+        rows.push([
+          'GSE',
+          <HoverText title={tooltip}>{gseTotal.toFixed(1)}/day</HoverText>,
+        ])
+      }
+      return rows
     }
     case 'aircraft_airborne': {
       // Callsign is the discoverable click target — users recognize callsigns
@@ -427,6 +508,13 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
 
 function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
   const { baseline, terrain, screening, vegetation, ground, received_lden } = trace
+  // Aircraft ground-ops microsegments populate attenuation_bands and
+  // factor_g but intentionally NOT the structural arrays (edges,
+  // obstacle, forest_runs) — those would 3-4× the JSON payload at
+  // 3 k microsegments per LKPR popup. Detect the "scalar-only" mode
+  // via empty path_profile and suppress the "(none)" parentheticals
+  // that imply data is missing when really it's just not serialized.
+  const isScalarOnly = trace.path_profile.t.length === 0
 
   const groundDelta = received_lden.full - received_lden.no_ground
   const atmosphericDelta = received_lden.full - received_lden.no_atmospheric
@@ -595,12 +683,13 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
         'Scalar = A-weighted ΔL_A (full − no_terrain Lden).\n' +
         'Rayleigh δ* gate is reported on its own row when it zeroes any band.' +
         triple
+      const terrainParens = edgeLabel
+        ? ` (δ ${terrain.delta_m.toFixed(2)} m, ${edgeLabel})`
+        : isScalarOnly
+          ? ''
+          : ' (none)'
       return [
-        <HoverText title={labelTooltip}>
-          Terrain diffraction{edgeLabel
-            ? ` (δ ${terrain.delta_m.toFixed(2)} m, ${edgeLabel})`
-            : ' (none)'}
-        </HoverText>,
+        <HoverText title={labelTooltip}>Terrain diffraction{terrainParens}</HoverText>,
         <HoverText title={bandsTooltip(terrain.attenuation_bands, { title: valueTooltip })}>
           {fmtDb(terrainDelta)}
         </HoverText>,
@@ -613,7 +702,9 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
         ? edgeCount > 1
           ? `${edgeCount} diffraction edges`
           : `${obs.kind} ${obs.height_m.toFixed(1)} m`
-        : 'none'
+        : isScalarOnly
+          ? ''
+          : 'none'
       const labelTooltip =
         'A_bar — Building / barrier screening component (SPEC §3.5b).\n\n' +
         'Engine runs ONE combined diffraction over a composite top\n' +
@@ -636,7 +727,9 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
         'Scalar = A-weighted ΔL_A (full − no_screening Lden).' +
         edgesDetail
       return [
-        <HoverText title={labelTooltip}>Building/barrier ({screenLabel})</HoverText>,
+        <HoverText title={labelTooltip}>
+          Building/barrier{screenLabel ? ` (${screenLabel})` : ''}
+        </HoverText>,
         <HoverText title={bandsTooltip(screening.attenuation_bands, { title: valueTooltip })}>
           {fmtDb(screeningDelta)}
         </HoverText>,
@@ -656,7 +749,9 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
         Foliage
         {vegetation.forest_depth_m > 0
           ? ` (${vegetation.forest_depth_m.toFixed(0)} m forest, 0.5× adj.)`
-          : ' (none)'}
+          : isScalarOnly
+            ? ''
+            : ' (none)'}
       </HoverText>,
       <HoverText
         title={bandsTooltip(vegetation.attenuation_bands, {
@@ -714,16 +809,21 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
         <span className="text-muted-foreground/70 font-medium">
           <HoverText
             title={
-              'Engine variant delta: full Lden − free-field Lden.\n\n' +
+              'NOT a sum of the rows above — this is the engine variant\n' +
+              'delta: received_lden.full − received_lden.free_field.\n\n' +
               'Free-field covers divergence + atmospheric + ground + FLC\n' +
               '(iso9613.rs:253). Everything else applied in Full shows up\n' +
               'here: terrain diffraction (A_bar), building/barrier screening\n' +
               '(A_bar increment), foliage (A_fol), and — when non-zero —\n' +
               'the urban reflection boost (A_refl). 0 dB means no obstruction\n' +
-              'and no reflection changed the outcome.'
+              'and no reflection changed the outcome.\n\n' +
+              'The per-effect rows above ARE deltas too (full vs full-with-\n' +
+              'one-effect-removed), but they overlap rather than add up\n' +
+              'cleanly — the ISO 9613-2 max-rule between ground and\n' +
+              'barrier means dropping one effect can shift another.'
             }
           >
-            Total obstruction effect
+            Combined path effect
           </HoverText>
         </span>
         <span className="text-foreground font-mono font-medium text-right">
@@ -1015,8 +1115,8 @@ export function SegmentExpanded({ trace }: { trace: SegmentTrace }) {
         </Section>
       )}
       <Section4PathEffects trace={trace} />
-      {!isGroundOps && <Section5Lden trace={trace} />}
-      {!isGroundOps && <Section6Variants trace={trace} />}
+      <Section5Lden trace={trace} />
+      <Section6Variants trace={trace} />
     </div>
   )
 }
