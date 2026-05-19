@@ -302,7 +302,7 @@ pub(crate) fn build_point_segment_trace(inputs: BuildPointTrace<'_>) -> SegmentT
                 label,
                 EmissionTrace::Industrial {
                     source_type: label,
-                    area_m2: 0.0,
+                    area_m2: src.area_m2 as f64,
                     nace: None,
                     hub_height_m: None,
                     rated_power_kw: None,
@@ -317,8 +317,8 @@ pub(crate) fn build_point_segment_trace(inputs: BuildPointTrace<'_>) -> SegmentT
                 EmissionTrace::Building {
                     building_type: label,
                     height_m: src.source_height_m,
-                    floors: 0,
-                    area_m2: 0.0,
+                    floors: src.floors,
+                    area_m2: src.area_m2 as f64,
                 },
             )
         }
