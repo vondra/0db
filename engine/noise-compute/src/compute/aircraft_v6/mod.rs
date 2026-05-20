@@ -162,6 +162,92 @@ pub fn compute_aircraft_v6(
     (airborne_periods, contributors, band_data)
 }
 
+/// Per-phase aircraft periods, separated for heatmap validation.
+///
+/// The popup entrypoint [`compute_aircraft_v6`] folds airborne + cruise
+/// energy into one `airborne_periods` (matches the single "Aircraft Lden"
+/// shown in the popup contributor). The heatmap pipeline computes
+/// cruise / airborne / ground ops separately and needs to validate each
+/// phase against popup-equivalent numbers — that requires the unfolded
+/// values this struct exposes.
+///
+/// `ground_ops` is None here because ground ops lives in the parallel
+/// `airport_traffic::run` path invoked by source-reader, not in
+/// `compute_aircraft_v6`. The heatmap validator calls that path directly
+/// when it needs ground-only periods.
+#[derive(Debug, Clone)]
+pub struct AircraftPeriodsBreakdown {
+    pub airborne: NoisePeriods,
+    pub cruise: NoisePeriods,
+}
+
+/// Test-only / validation-only variant of [`compute_aircraft_v6`] that
+/// returns airborne and cruise period totals separately instead of
+/// folding cruise into airborne.
+///
+/// Use this from heatmap-v2 validation harnesses to compare per-source
+/// heatmap output against the popup-equivalent per-source Lden. The
+/// popup contract ([`compute_aircraft_v6`]) is unchanged — production
+/// callers must continue to use that entry point.
+pub fn compute_aircraft_v6_separable(
+    receiver: &Receiver,
+    airborne_rows: &[AirborneRowView<'_>],
+    cruise_rows: &[CruiseRowView<'_>],
+    rasters: &dyn RasterSampler,
+    n_days: u16,
+    airport_centroids: &[(f64, f64)],
+) -> AircraftPeriodsBreakdown {
+    use crate::emission::aircraft;
+    use crate::periods;
+
+    let n_days_f = (n_days as f64).max(1.0);
+
+    let flights = airborne::scatter(
+        receiver,
+        airborne_rows,
+        rasters,
+        n_days_f,
+        airport_centroids,
+        None,
+    );
+
+    let mut cruise_flight_stats: HashMap<u64, state::CruiseFlightStats> = HashMap::new();
+    let mut cruise_flights: HashMap<u64, FlightAccum> = HashMap::new();
+    let mut top_flight_candidates: HashMap<u64, TopFlightCandidate> = HashMap::new();
+    cruise::scatter(
+        receiver,
+        cruise_rows,
+        rasters,
+        n_days_f,
+        &mut cruise_flights,
+        &mut cruise_flight_stats,
+        &mut top_flight_candidates,
+        None,
+    );
+
+    let collapse = |accums: &HashMap<u64, FlightAccum>| -> NoisePeriods {
+        let mut e = [0.0f64; 3];
+        for acc in accums.values() {
+            for p in 0..3 {
+                e[p] += acc.period_energy[p];
+            }
+        }
+        if e.iter().sum::<f64>() > 0.0 {
+            let ld = aircraft::period_leq(e[0], n_days_f, aircraft::PERIOD_SECONDS[0]);
+            let le = aircraft::period_leq(e[1], n_days_f, aircraft::PERIOD_SECONDS[1]);
+            let ln = aircraft::period_leq(e[2], n_days_f, aircraft::PERIOD_SECONDS[2]);
+            periods::periods(ld, le, ln)
+        } else {
+            NoisePeriods::silence()
+        }
+    };
+
+    AircraftPeriodsBreakdown {
+        airborne: collapse(&flights),
+        cruise: collapse(&cruise_flights),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +275,14 @@ mod tests {
             compute_aircraft_v6(&receiver, &[], &[], &FlatGround, 1, &[], None, None);
         assert!(!periods.lden_db.is_finite());
         assert!(contribs.is_empty());
+    }
+
+    #[test]
+    fn separable_silence_when_no_data() {
+        let receiver = Receiver::new(50.10, 14.262, 0.0);
+        let breakdown =
+            compute_aircraft_v6_separable(&receiver, &[], &[], &FlatGround, 1, &[]);
+        assert!(!breakdown.airborne.lden_db.is_finite());
+        assert!(!breakdown.cruise.lden_db.is_finite());
     }
 }
