@@ -27,3 +27,4 @@ server/public/debug-*.png*
 pipeline/_*-download.py
 pipeline/cz_hexes.mjs
 benchmarks/.tmp-telemetry.jsonl
+.playwright-mcp/
