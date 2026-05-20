@@ -18,7 +18,7 @@ Two inputs:
 
 Output (stdout): Rust source for `profiles_generated.rs`.
 
-Class scheme: **Voronoi assignment over 12 frozen anchor classes.**
+Class scheme: **Voronoi assignment over 14 frozen anchor classes.**
 
 Each anchor is the exact NPD vector of one dominant profile (top-K
 traffic per Installation). Every other profile is assigned to its
@@ -26,13 +26,13 @@ nearest anchor by L∞ distance, constrained to the same Installation.
 Helicopters pinned to their own class (different physics, single
 ANP-equivalent reference NPD shared by all rotorcraft).
 
-Per-Installation anchor counts: 7 Wing + 2 Fuselage + 2 Propeller + 1
-Helicopter = 12 classes. Computed from
+Per-Installation anchor counts: 9 Wing + 2 Fuselage + 2 Propeller + 1
+Helicopter = 14 classes. Computed from
 scripts/aircraft-profiles-counts.json (4.885 G global segments,
-51 363 R4 cells); top-7 Wing anchors cover 79 % of traffic with 0 dB
-intra-class error (anchor sig members are bit-identical). Weighted-avg
-per-segment acoustic error = 0.76 dB across all 124 profiles, well
-under Doc 29 measurement uncertainty.
+51 363 R4 cells); weighted-avg per-segment acoustic error = 0.76 dB
+across all 124 profiles, well under Doc 29 measurement uncertainty.
+Wing=9 (vs the original Wing=7 design at c93f5f4) restores B789 +
+A319 anchors after the c76cefa A20N/A21N v9 split displaced them.
 
 FALLBACK NPD is recomputed at generation time as the traffic-weighted
 energy-mean of every non-FALLBACK profile, so unmapped typecodes get
@@ -260,13 +260,20 @@ INSTALLATION_RUST = {
 }
 
 # Voronoi anchor budget per Installation (sum = NUM_CLASSES).
+# Wing=9 restores B789 + A319 anchors that the EASA v9 supplement
+# (commit c76cefa) had displaced when A20N/A21N gained their own NPD
+# signatures. With Wing=7 the top traffic slots filled with narrow-body
+# only; wide-body (B777/B787/B747/A330/A340/A350) all routed to
+# WING_FALLBACK with 2.24 dB intra-class error. Bumping to 9 brings
+# WING_B789 back as the wide-body anchor and recovers the original
+# 0.76 dB weighted-avg per-segment error from the c93f5f4 design.
 ANCHORS_PER_INSTALL: dict[str, int] = {
-    "Wing":       7,
+    "Wing":       9,
     "Fuselage":   2,
     "Prop":       2,
     "Helicopter": 1,
 }
-NUM_CLASSES = sum(ANCHORS_PER_INSTALL.values())
+NUM_CLASSES = sum(ANCHORS_PER_INSTALL.values())  # → 14
 
 
 @dataclass

@@ -90,7 +90,7 @@ fn write_stub_airport_lines(path: &Path) {
         ])
         .with_metadata({
             let mut md = std::collections::HashMap::new();
-            md.insert("schema_version".to_string(), "v12".to_string());
+            md.insert("schema_version".to_string(), "v13".to_string());
             md
         }),
     );

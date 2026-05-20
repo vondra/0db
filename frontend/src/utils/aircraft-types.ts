@@ -124,10 +124,13 @@ const TYPECODE_MODEL: Record<string, string> = {
 export function classToAnchorTypecode(className: string | null | undefined): string {
   if (!className) return '?'
   if (className === 'HELICOPTER') return 'HELI'
-  // The FALLBACK anchor is a synthetic energy-mean NPD, not a real
-  // aircraft — display as "Unknown" so users don't mistake it for an
-  // ICAO typecode they should look up.
-  if (className === 'WING_FALLBACK' || className === 'FALLBACK') return 'Unknown'
+  // The FALLBACK anchor is a synthetic traffic-weighted energy-mean
+  // of all 123 real NPD profiles — a LEGITIMATE Voronoi class with
+  // many real-typecode members (B737-classic, B77x, B78x, B7x4,
+  // A33x, A35K, A346, A380, ...) whose own NPDs are acoustically
+  // closest to the mean. Display as "Average NPD" so users see a
+  // meaningful label, not the implementation sentinel name.
+  if (className === 'WING_FALLBACK' || className === 'FALLBACK') return 'Average NPD'
   const m = className.match(/^(?:WING|FUSE|PROP)_(.+)$/)
   return m ? m[1] : className
 }

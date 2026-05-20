@@ -25,7 +25,7 @@
 //! load. AEDT 3.x GSE database measures these directly and reports
 //! 5-10 dB higher levels per equipment code. Treat these values as a
 //! v1 floor; future calibration commits may swap in AEDT measurements
-//! per equipment type. Aircraft NPD (NUM_CLASSES = 12 in
+//! per equipment type. Aircraft NPD (NUM_CLASSES = 14 in
 //! `profiles_generated`) is untouched — GSE lives in its own table.
 //!
 //! ## Reference

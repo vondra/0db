@@ -37,5 +37,8 @@ pub mod trace;
 
 /// Schema-version tag stamped into every Arrow file produced by this
 /// crate. Reader-side `assert_schema_version` rejects mismatches so
-/// callers must re-extract when bumped.
-pub const SCHEMA_VERSION: &str = "v12";
+/// callers must re-extract when bumped. v13 reflects the 12 → 14 class
+/// regen (`ANCHORS_PER_INSTALL["Wing"] = 9`) — column layout unchanged
+/// but persisted `class_idx` semantics shifted, so v12 arrows would
+/// silently mis-display class labels under the new mapping.
+pub const SCHEMA_VERSION: &str = "v13";

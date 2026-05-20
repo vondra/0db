@@ -2,7 +2,7 @@
 //!
 //! Inputs:
 //!   ANP v2.3:        sha256=fb122e3dce42733f
-//!   global counts:   sha256=6ea950b853cb3733 (4885163837 segments)
+//!   global counts:   sha256=b43635ca4751a5a3 (4885163837 segments)
 //!
 //! Regen: python scripts/build-aircraft-profiles.py \
 //!         --anp <DIR> \
@@ -10,17 +10,11 @@
 //!         --counts scripts/aircraft-profiles-counts.json \
 //!         --ts-out frontend/src/utils/profile-class.generated.ts \
 //!         -o engine/noise-compute/src/emission/profiles_generated.rs
-//!
-//! Manual hot-fix 2026-05-10: 21 HELICOPTER NPD blocks (lines 1242-1442)
-//! recalibrated against MV-22 AAM curve from ACRP02-44 (see commit message).
-//! `scripts/build-aircraft-profiles.py::MANUAL_PROFILES["HELICOPTER"]` was
-//! updated in the same commit, so a clean regen will re-emit identical
-//! values once ANP v2.3 CSVs are available.
 
 use super::aircraft::{Installation, NpdProfile};
 
 pub const NUM_PROFILES: usize = 124;
-pub const NUM_CLASSES: usize = 12;
+pub const NUM_CLASSES: usize = 14;
 pub const FALLBACK_PROFILE_IDX: u8 = 123;
 pub const FALLBACK_NOISE_CLASS: u8 = 0;
 
@@ -28,11 +22,13 @@ pub static CLASS_NAMES: [&str; NUM_CLASSES] = [
     "WING_FALLBACK",
     "WING_A320",
     "WING_B738",
+    "WING_B789",
     "PROP_C172",
     "WING_B38M",
     "WING_A21N",
     "WING_A321",
     "WING_A20N",
+    "WING_A319",
     "FUSE_CRJ9",
     "HELICOPTER",
     "PROP_DH8D",
@@ -43,11 +39,13 @@ pub static IS_JET: [bool; NUM_CLASSES] = [
     true, // WING_FALLBACK
     true, // WING_A320
     true, // WING_B738
+    true, // WING_B789
     false, // PROP_C172
     true, // WING_B38M
     true, // WING_A21N
     true, // WING_A321
     true, // WING_A20N
+    true, // WING_A319
     true, // FUSE_CRJ9
     false, // HELICOPTER
     false, // PROP_DH8D
@@ -63,11 +61,13 @@ pub static GROUND_OPS_REFERENCE_SEL_DB: [[f64; 3]; NUM_CLASSES] = [
     [104.0, 92.0, 86.0], // WING_FALLBACK
     [104.0, 92.0, 86.0], // WING_A320
     [104.0, 92.0, 86.0], // WING_B738
+    [108.0, 96.0, 90.0], // WING_B789
     [92.0, 80.0, 74.0], // PROP_C172
     [104.0, 92.0, 86.0], // WING_B38M
     [104.0, 92.0, 86.0], // WING_A21N
     [97.5, 85.5, 79.5], // WING_A321
     [94.1, 82.1, 76.1], // WING_A20N
+    [104.0, 92.0, 86.0], // WING_A319
     [100.0, 88.0, 82.0], // FUSE_CRJ9
     [94.0, 82.0, 76.0], // HELICOPTER
     [97.0, 85.0, 79.0], // PROP_DH8D
@@ -85,27 +85,27 @@ pub static CLASS_OF_PROFILE: [u8; NUM_PROFILES] = [
     0, // B735 → WING_FALLBACK
     0, // B733 → WING_FALLBACK
     0, // B736 → WING_FALLBACK
-    4, // B38M → WING_B38M
-    4, // B39M → WING_B38M
-    4, // B37M → WING_B38M
+    5, // B38M → WING_B38M
+    5, // B39M → WING_B38M
+    5, // B37M → WING_B38M
     1, // A320 → WING_A320
-    7, // A20N → WING_A20N
-    1, // A319 → WING_A320
-    1, // A19N → WING_A320
-    1, // BCS3 → WING_A320
-    1, // BCS1 → WING_A320
-    6, // A321 → WING_A321
-    5, // A21N → WING_A21N
+    8, // A20N → WING_A20N
+    9, // A319 → WING_A319
+    9, // A19N → WING_A319
+    9, // BCS3 → WING_A319
+    9, // BCS1 → WING_A319
+    7, // A321 → WING_A321
+    6, // A21N → WING_A21N
     1, // B752 → WING_A320
     1, // B753 → WING_A320
-    0, // B772 → WING_FALLBACK
+    3, // B772 → WING_B789
     2, // B773 → WING_B738
-    0, // B77W → WING_FALLBACK
-    0, // B77L → WING_FALLBACK
+    3, // B77W → WING_B789
+    3, // B77L → WING_B789
     2, // B77F → WING_B738
-    0, // B788 → WING_FALLBACK
-    0, // B789 → WING_FALLBACK
-    0, // B78X → WING_FALLBACK
+    3, // B788 → WING_B789
+    3, // B789 → WING_B789
+    3, // B78X → WING_B789
     2, // A332 → WING_B738
     0, // A333 → WING_FALLBACK
     0, // A338 → WING_FALLBACK
@@ -114,93 +114,93 @@ pub static CLASS_OF_PROFILE: [u8; NUM_PROFILES] = [
     0, // A35K → WING_FALLBACK
     2, // A306 → WING_B738
     2, // A310 → WING_B738
-    0, // B763 → WING_FALLBACK
+    3, // B763 → WING_B789
     0, // B764 → WING_FALLBACK
     2, // MD11 → WING_B738
-    6, // DC10 → WING_A321
-    6, // L101 → WING_A321
-    0, // B744 → WING_FALLBACK
-    0, // B748 → WING_FALLBACK
-    6, // B741 → WING_A321
-    6, // B742 → WING_A321
-    0, // A342 → WING_FALLBACK
-    0, // A343 → WING_FALLBACK
-    0, // A346 → WING_FALLBACK
+    3, // DC10 → WING_B789
+    3, // L101 → WING_B789
+    3, // B744 → WING_B789
+    3, // B748 → WING_B789
+    7, // B741 → WING_A321
+    7, // B742 → WING_A321
+    3, // A342 → WING_B789
+    3, // A343 → WING_B789
+    3, // A346 → WING_B789
     0, // A388 → WING_FALLBACK
-    6, // IL76 → WING_A321
+    7, // IL76 → WING_A321
     1, // E170 → WING_A320
     1, // E75L → WING_A320
     1, // E75S → WING_A320
     1, // E190 → WING_A320
     1, // E195 → WING_A320
-    5, // E290 → WING_A21N
-    5, // E295 → WING_A21N
-    8, // CRJ2 → FUSE_CRJ9
-    8, // CRJ7 → FUSE_CRJ9
-    8, // CRJ9 → FUSE_CRJ9
-    8, // EMJ → FUSE_CRJ9
-    8, // CL60 → FUSE_CRJ9
-    11, // C56X → FUSE_C56X
-    11, // C680 → FUSE_C56X
-    8, // GLEX → FUSE_CRJ9
-    8, // GLF6 → FUSE_CRJ9
-    8, // GLF5 → FUSE_CRJ9
-    8, // FA7X → FUSE_CRJ9
-    8, // PC24 → FUSE_CRJ9
-    11, // LJ60 → FUSE_C56X
-    10, // AT72 → PROP_DH8D
-    10, // AT76 → PROP_DH8D
-    10, // AT43 → PROP_DH8D
-    10, // AT45 → PROP_DH8D
-    10, // DH8D → PROP_DH8D
-    10, // DH8C → PROP_DH8D
-    10, // DH8A → PROP_DH8D
-    10, // DH8B → PROP_DH8D
-    10, // L410 → PROP_DH8D
-    10, // EN48 → PROP_DH8D
-    10, // SF34 → PROP_DH8D
-    10, // F50 → PROP_DH8D
-    8, // F70 → FUSE_CRJ9
-    10, // JS41 → PROP_DH8D
-    3, // C172 → PROP_C172
-    3, // C152 → PROP_C172
-    3, // C182 → PROP_C172
-    3, // PA28 → PROP_C172
-    3, // PA34 → PROP_C172
-    3, // SR20 → PROP_C172
-    3, // SR22 → PROP_C172
-    3, // DA40 → PROP_C172
-    3, // DA42 → PROP_C172
-    3, // P28A → PROP_C172
-    3, // C210 → PROP_C172
-    3, // BE36 → PROP_C172
-    3, // M20P → PROP_C172
-    3, // C206 → PROP_C172
-    3, // PA32 → PROP_C172
-    3, // PA44 → PROP_C172
-    3, // RV7 → PROP_C172
-    3, // RV8 → PROP_C172
-    9, // EC35 → HELICOPTER
-    9, // EC45 → HELICOPTER
-    9, // EC55 → HELICOPTER
-    9, // EC30 → HELICOPTER
-    9, // EC20 → HELICOPTER
-    9, // AS50 → HELICOPTER
-    9, // AS55 → HELICOPTER
-    9, // AS65 → HELICOPTER
-    9, // H500 → HELICOPTER
-    9, // MD52 → HELICOPTER
-    9, // B06 → HELICOPTER
-    9, // B407 → HELICOPTER
-    9, // B412 → HELICOPTER
-    9, // R22 → HELICOPTER
-    9, // R44 → HELICOPTER
-    9, // R66 → HELICOPTER
-    9, // S76 → HELICOPTER
-    9, // A109 → HELICOPTER
-    9, // BK17 → HELICOPTER
-    9, // B505 → HELICOPTER
-    9, // GYRO → HELICOPTER
+    6, // E290 → WING_A21N
+    6, // E295 → WING_A21N
+    10, // CRJ2 → FUSE_CRJ9
+    10, // CRJ7 → FUSE_CRJ9
+    10, // CRJ9 → FUSE_CRJ9
+    10, // EMJ → FUSE_CRJ9
+    10, // CL60 → FUSE_CRJ9
+    13, // C56X → FUSE_C56X
+    13, // C680 → FUSE_C56X
+    10, // GLEX → FUSE_CRJ9
+    10, // GLF6 → FUSE_CRJ9
+    10, // GLF5 → FUSE_CRJ9
+    10, // FA7X → FUSE_CRJ9
+    10, // PC24 → FUSE_CRJ9
+    13, // LJ60 → FUSE_C56X
+    12, // AT72 → PROP_DH8D
+    12, // AT76 → PROP_DH8D
+    12, // AT43 → PROP_DH8D
+    12, // AT45 → PROP_DH8D
+    12, // DH8D → PROP_DH8D
+    12, // DH8C → PROP_DH8D
+    12, // DH8A → PROP_DH8D
+    12, // DH8B → PROP_DH8D
+    12, // L410 → PROP_DH8D
+    12, // EN48 → PROP_DH8D
+    12, // SF34 → PROP_DH8D
+    12, // F50 → PROP_DH8D
+    10, // F70 → FUSE_CRJ9
+    12, // JS41 → PROP_DH8D
+    4, // C172 → PROP_C172
+    4, // C152 → PROP_C172
+    4, // C182 → PROP_C172
+    4, // PA28 → PROP_C172
+    4, // PA34 → PROP_C172
+    4, // SR20 → PROP_C172
+    4, // SR22 → PROP_C172
+    4, // DA40 → PROP_C172
+    4, // DA42 → PROP_C172
+    4, // P28A → PROP_C172
+    4, // C210 → PROP_C172
+    4, // BE36 → PROP_C172
+    4, // M20P → PROP_C172
+    4, // C206 → PROP_C172
+    4, // PA32 → PROP_C172
+    4, // PA44 → PROP_C172
+    4, // RV7 → PROP_C172
+    4, // RV8 → PROP_C172
+    11, // EC35 → HELICOPTER
+    11, // EC45 → HELICOPTER
+    11, // EC55 → HELICOPTER
+    11, // EC30 → HELICOPTER
+    11, // EC20 → HELICOPTER
+    11, // AS50 → HELICOPTER
+    11, // AS55 → HELICOPTER
+    11, // AS65 → HELICOPTER
+    11, // H500 → HELICOPTER
+    11, // MD52 → HELICOPTER
+    11, // B06 → HELICOPTER
+    11, // B407 → HELICOPTER
+    11, // B412 → HELICOPTER
+    11, // R22 → HELICOPTER
+    11, // R44 → HELICOPTER
+    11, // R66 → HELICOPTER
+    11, // S76 → HELICOPTER
+    11, // A109 → HELICOPTER
+    11, // BK17 → HELICOPTER
+    11, // B505 → HELICOPTER
+    11, // GYRO → HELICOPTER
     0, // FALLBACK → WING_FALLBACK
 ];
 
@@ -212,11 +212,13 @@ pub static CLASS_REP_PROFILE_IDX: [u8; NUM_CLASSES] = [
     123, // WING_FALLBACK → FALLBACK
     10, // WING_A320 → A320
     0, // WING_B738 → B738
+    26, // WING_B789 → B789
     84, // PROP_C172 → C172
     7, // WING_B38M → B38M
     17, // WING_A21N → A21N
     16, // WING_A321 → A321
     11, // WING_A20N → A20N
+    12, // WING_A319 → A319
     59, // FUSE_CRJ9 → CRJ9
     107, // HELICOPTER → AS50
     74, // PROP_DH8D → DH8D
@@ -1456,10 +1458,10 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     ),
     NpdProfile::new(
         "FALLBACK/737800",
-        [94.3, 89.9, 86.9, 83.6, 78.2, 72.0, 67.3, 62.1, 56.2, 50.6],
-        [105.9, 102.0, 99.4, 96.5, 91.7, 86.3, 82.4, 77.5, 72.0, 66.6],
-        [91.2, 84.3, 79.6, 74.7, 66.8, 58.2, 51.9, 45.1, 37.7, 30.6],
-        [105.3, 98.6, 94.1, 89.3, 81.7, 73.4, 67.6, 60.8, 53.7, 46.5],
+        [94.4, 90.2, 87.1, 83.9, 78.6, 72.5, 67.9, 62.8, 56.9, 51.1],
+        [105.9, 102.0, 99.4, 96.5, 91.8, 86.3, 82.4, 77.5, 72.0, 66.6],
+        [91.2, 84.3, 79.7, 74.8, 67.1, 58.9, 53.1, 46.9, 40.1, 33.1],
+        [105.3, 98.6, 94.1, 89.3, 81.7, 73.4, 67.6, 60.8, 53.8, 46.5],
         160.0,
         370.0,
         Installation::Wing,

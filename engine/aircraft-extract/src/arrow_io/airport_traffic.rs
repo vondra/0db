@@ -53,7 +53,7 @@ pub struct AirportTrafficRow {
     /// 0 = aircraft, 1 = GSE.
     pub veh_kind: u8,
     /// Indexes `noise_compute::emission::profiles_generated::CLASS_OF_PROFILE`
-    /// when `veh_kind=0` (range 0..NUM_CLASSES=12), or
+    /// when `veh_kind=0` (range 0..NUM_CLASSES=14), or
     /// `noise_compute::emission::gse::GSE_LW_BANDS_DB` when `veh_kind=1`
     /// (range 0..NUM_GSE_CLASSES=3).
     pub class_idx: u8,

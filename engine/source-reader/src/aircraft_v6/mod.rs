@@ -287,8 +287,12 @@ fn sum_periods_linear(sources: &[SourceResult]) -> NoisePeriods {
 
 /// Stamp written by every aircraft-extract Arrow file. Inline copy
 /// rather than build-dep on aircraft-extract, which would pull arrow
-/// IPC writers / parquet / anyhow into the popup runtime.
-pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v12";
+/// IPC writers / parquet / anyhow into the popup runtime. Must move
+/// in lock-step with `aircraft-extract::SCHEMA_VERSION`. v13 reflects
+/// the 12 → 14 class regen — column layout unchanged but persisted
+/// `class_idx` semantics shifted, so v12 arrows would silently
+/// mis-display class labels under the new mapping.
+pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v13";
 
 /// The `airport_traffic.arrow` semantic contract. `schema_version`
 /// only guards column types/order; this guards what those columns
