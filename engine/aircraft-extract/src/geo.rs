@@ -80,6 +80,14 @@ pub fn cell_centroid(cell: CellIndex) -> (f64, f64) {
     (ll.lat(), ll.lng())
 }
 
+/// 15-char zero-padded lowercase hex string used as the `<R4>` directory
+/// name under `data/prepared/<year>/h3r4/`. Every H3 cell at any
+/// resolution serialises to 15 hex chars; keeping the format identical
+/// across stages keeps `r4_dir.join(r4_hex_str(r4))` round-trip safe.
+pub fn r4_hex_str(r4: u64) -> String {
+    format!("{r4:015x}")
+}
+
 /// Convert one geographic point to a local flat plane anchored at
 /// `(anchor_lat, anchor_lon)`. Output is metres east / north.
 fn to_local_xy(anchor_lat: f32, anchor_lon: f32, cos_lat: f32, lat: f32, lon: f32) -> (f32, f32) {

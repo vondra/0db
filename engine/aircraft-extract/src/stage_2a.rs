@@ -18,6 +18,7 @@ use crate::arrow_io::write_airborne;
 use crate::flight::{
     segment_flags, AirborneEvent, AirborneSubSegment, FlightSegment, Phase,
 };
+use crate::geo::r4_hex_str;
 use crate::scope::ScopeBbox;
 
 /// Run Stage 2A. Reads Stage 1 segments for one day from `segments_dir`,
@@ -50,8 +51,7 @@ pub fn run_stage_2a(
         if events.is_empty() {
             return Ok(());
         }
-        let hex_str = format!("{r4_hex:015x}");
-        let dir = h3r4_dir.join(&hex_str);
+        let dir = h3r4_dir.join(r4_hex_str(*r4_hex));
         std::fs::create_dir_all(&dir)?;
         write_airborne(&dir.join("airborne.arrow"), &events, n_days)
     })?;
