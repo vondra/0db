@@ -160,17 +160,20 @@ fn main() -> Result<()> {
         }
         Cmd::Stage2a { segments_by_r4, h3r4_dir, n_days, scope_bbox } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
+            require_input_dir_exists("--segments-by-r4", &segments_by_r4)?;
             let n = run_stage_2a(&segments_by_r4, &h3r4_dir, n_days, scope.as_ref())?;
             eprintln!("[stage2a] {n} R4 hexes written");
         }
         Cmd::Stage2b { segments_dir, h3r4_dir, n_days, scope_bbox } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
+            require_input_dir_exists("--segments-dir", &segments_dir)?;
             let day_paths = list_segments_day_paths(&segments_dir)?;
             let n = run_stage_2b(&day_paths, &h3r4_dir, n_days, scope.as_ref())?;
             eprintln!("[stage2b] {n} R4 hexes written");
         }
         Cmd::Stage2c { segments_by_r4, h3r4_dir, n_days, scope_bbox } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
+            require_input_dir_exists("--segments-by-r4", &segments_by_r4)?;
             let areas = read_global_airports(&h3r4_dir)
                 .with_context(|| format!("read airport_areas.arrow from {}", h3r4_dir.display()))?;
             eprintln!(
@@ -317,6 +320,26 @@ fn main() -> Result<()> {
             // shuffle wipes it before recreating.
             let _ = std::fs::remove_dir_all(&by_r4_dir);
         }
+    }
+    Ok(())
+}
+
+/// Fail loud when an operator runs a Stage 2 subcommand against a
+/// missing input dir — a typo or a failed upstream shuffle would
+/// otherwise become a silent no-op and leave stale `h3r4` outputs in
+/// place (`list_r4_shards` swallows NotFound by design for RunAll).
+fn require_input_dir_exists(flag: &str, dir: &Path) -> Result<()> {
+    if !dir.exists() {
+        return Err(anyhow::anyhow!(
+            "{flag} {} does not exist — did the upstream shuffle / Stage 1 run?",
+            dir.display()
+        ));
+    }
+    if !dir.is_dir() {
+        return Err(anyhow::anyhow!(
+            "{flag} {} is not a directory",
+            dir.display()
+        ));
     }
     Ok(())
 }
