@@ -13,30 +13,26 @@ use std::path::Path;
 use anyhow::Result;
 use noise_compute::types::AirportArea;
 
-use crate::flight::FlightSegment;
 use crate::scope::ScopeBbox;
 
 pub mod airport_traffic;
 pub mod airport_traffic_writer;
 
-/// Run Stage 2C over a global segment slice + global aerodrome
-/// identity set. `airport_areas` aggregates every R4's
-/// `airport_areas.arrow` (filtered to `aeroway = aerodrome`) so the
-/// nearest-aerodrome lookup sees whole airports even when an airport
-/// is split across R4 boundaries. When `scope` is set, R4 cells
-/// outside its bbox+buffer are skipped — see
+/// Run Stage 2C against the per-R4 ground shards under
+/// `segments_by_r4_dir/<R4>/ground.arrow`. `airport_areas` is the
+/// global aerodrome identity set (aerodromes straddle R4 boundaries
+/// so per-line resolution must see the whole set). When `scope` is
+/// set, R4 cells outside its bbox+buffer are skipped — see
 /// [`run_stage_2a`](crate::stage_2a::run_stage_2a) for rationale.
-///
-/// Returns the R4-count from the `airport_traffic.arrow` writer.
 pub fn run_stage_2c(
-    segments: &[FlightSegment],
+    segments_by_r4_dir: &Path,
     airport_areas: &[AirportArea],
     h3r4_dir: &Path,
     n_days: u16,
     scope: Option<&ScopeBbox>,
 ) -> Result<usize> {
     let traffic_n = airport_traffic_writer::run_airport_traffic(
-        segments,
+        segments_by_r4_dir,
         airport_areas,
         h3r4_dir,
         n_days,

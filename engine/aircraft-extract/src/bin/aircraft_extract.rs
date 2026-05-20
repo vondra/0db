@@ -12,7 +12,6 @@ use clap::{Parser, Subcommand};
 
 use aircraft_extract::airport_io::{read_global_airport_lines, read_global_airports};
 use aircraft_extract::arrow_io::read_record_batches;
-use aircraft_extract::flight::FlightSegment;
 use aircraft_extract::source::FlightSource;
 use aircraft_extract::source_adsb_tar::AdsbTarSource;
 use aircraft_extract::stage_0::run_stage_0;
@@ -62,10 +61,22 @@ enum Cmd {
         #[arg(long)]
         prepared_dir: PathBuf,
     },
-    /// Stage 2A: segments → per-R4 airborne.arrow
-    Stage2a {
+    /// Shuffle: segments/<day>.arrow → per-R4 airborne/ground shards
+    Shuffle {
+        /// Dir containing Stage 1's `segments/<day>.arrow` outputs.
         #[arg(long)]
-        segments: PathBuf,
+        segments_dir: PathBuf,
+        /// Output dir for `<R4>/{airborne,ground}.arrow` per-R4 shards.
+        #[arg(long)]
+        out_dir: PathBuf,
+        #[arg(long)]
+        scope_bbox: Option<String>,
+    },
+    /// Stage 2A: per-R4 airborne shards → per-R4 airborne.arrow
+    Stage2a {
+        /// Dir containing the shuffle output `<R4>/airborne.arrow`.
+        #[arg(long)]
+        segments_by_r4: PathBuf,
         #[arg(long)]
         h3r4_dir: PathBuf,
         #[arg(long, default_value_t = 1)]
@@ -76,10 +87,11 @@ enum Cmd {
         #[arg(long)]
         scope_bbox: Option<String>,
     },
-    /// Stage 2B: segments → per-R4 cruise.arrow
+    /// Stage 2B: per-day segments shards → per-R4 cruise.arrow
     Stage2b {
+        /// Dir containing Stage 1's `segments/<day>.arrow` outputs.
         #[arg(long)]
-        segments: PathBuf,
+        segments_dir: PathBuf,
         #[arg(long)]
         h3r4_dir: PathBuf,
         #[arg(long, default_value_t = 1)]
@@ -87,10 +99,11 @@ enum Cmd {
         #[arg(long)]
         scope_bbox: Option<String>,
     },
-    /// Stage 2C: segments → per-R4 airport_traffic.arrow
+    /// Stage 2C: per-R4 ground shards → per-R4 airport_traffic.arrow
     Stage2c {
+        /// Dir containing the shuffle output `<R4>/ground.arrow`.
         #[arg(long)]
-        segments: PathBuf,
+        segments_by_r4: PathBuf,
         #[arg(long)]
         h3r4_dir: PathBuf,
         #[arg(long, default_value_t = 1)]
@@ -139,31 +152,32 @@ fn main() -> Result<()> {
             let n = run_stage_1(&flights_dir, &out, &day, &rasters)?;
             eprintln!("[stage1] {day}: {n} segments");
         }
-        Cmd::Stage2a { segments, h3r4_dir, n_days, scope_bbox } => {
+        Cmd::Shuffle { segments_dir, out_dir, scope_bbox } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
-            let segs = aircraft_extract::arrow_io::read_segments(&segments)
-                .with_context(|| format!("read {}", segments.display()))?;
-            let n = run_stage_2a(&segs, &h3r4_dir, n_days, scope.as_ref())?;
+            let day_paths = list_segments_day_paths(&segments_dir)?;
+            aircraft_extract::shuffle::shuffle_per_r4(&day_paths, &out_dir, scope.as_ref())?;
+            eprintln!("[shuffle] {} day shards → {}", day_paths.len(), out_dir.display());
+        }
+        Cmd::Stage2a { segments_by_r4, h3r4_dir, n_days, scope_bbox } => {
+            let scope = parse_scope(scope_bbox.as_deref())?;
+            let n = run_stage_2a(&segments_by_r4, &h3r4_dir, n_days, scope.as_ref())?;
             eprintln!("[stage2a] {n} R4 hexes written");
         }
-        Cmd::Stage2b { segments, h3r4_dir, n_days, scope_bbox } => {
+        Cmd::Stage2b { segments_dir, h3r4_dir, n_days, scope_bbox } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
-            let segs = aircraft_extract::arrow_io::read_segments(&segments)
-                .with_context(|| format!("read {}", segments.display()))?;
-            let n = run_stage_2b(&segs, &h3r4_dir, n_days, scope.as_ref())?;
+            let day_paths = list_segments_day_paths(&segments_dir)?;
+            let n = run_stage_2b(&day_paths, &h3r4_dir, n_days, scope.as_ref())?;
             eprintln!("[stage2b] {n} R4 hexes written");
         }
-        Cmd::Stage2c { segments, h3r4_dir, n_days, scope_bbox } => {
+        Cmd::Stage2c { segments_by_r4, h3r4_dir, n_days, scope_bbox } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
-            let segs = aircraft_extract::arrow_io::read_segments(&segments)
-                .with_context(|| format!("read {}", segments.display()))?;
             let areas = read_global_airports(&h3r4_dir)
                 .with_context(|| format!("read airport_areas.arrow from {}", h3r4_dir.display()))?;
             eprintln!(
                 "[stage2c] loaded {} aerodrome polygons globally",
                 areas.len()
             );
-            let n = run_stage_2c(&segs, &areas, &h3r4_dir, n_days, scope.as_ref())?;
+            let n = run_stage_2c(&segments_by_r4, &areas, &h3r4_dir, n_days, scope.as_ref())?;
             eprintln!("[stage2c] {n} R4 hexes written");
         }
         Cmd::RunAll {
@@ -214,19 +228,16 @@ fn main() -> Result<()> {
             // must not throw away the other days' Stage 0+1 work.
             // Failed days are listed at the end so the operator can
             // rerun with `--days <failed,…>`.
-            let (segs_per_day, failed_days): (Vec<Vec<FlightSegment>>, Vec<String>) = days
+            let (ok_paths, failed_days): (Vec<PathBuf>, Vec<String>) = days
                 .par_iter()
                 .partition_map(|day| {
+                    let segments_path = segments_dir.join(format!("{day}.arrow"));
                     match run_day(day, &sources, &flights_dir, &segments_dir, &rasters) {
-                        Ok(()) => match aircraft_extract::arrow_io::read_segments(
-                            &segments_dir.join(format!("{day}.arrow")),
-                        ) {
-                            Ok(segs) => Either::Left(segs),
-                            Err(e) => {
-                                eprintln!("[run-all] {day}: FAILED to read segments — {e}");
-                                Either::Right(day.clone())
-                            }
-                        },
+                        Ok(()) if segments_path.exists() => Either::Left(segments_path),
+                        Ok(()) => {
+                            eprintln!("[run-all] {day}: FAILED — no segments file produced");
+                            Either::Right(day.clone())
+                        }
                         Err(e) => {
                             eprintln!("[run-all] {day}: FAILED stage0/1 — {e}, skipping");
                             Either::Right(day.clone())
@@ -234,8 +245,6 @@ fn main() -> Result<()> {
                     }
                 });
 
-            let all_segments: Vec<FlightSegment> =
-                segs_per_day.into_iter().flatten().collect();
             if !failed_days.is_empty() {
                 eprintln!(
                     "[run-all] {} day(s) failed: {} — Stage 2 runs on the rest; rerun with --days {} to retry",
@@ -248,36 +257,34 @@ fn main() -> Result<()> {
             // Read the global aerodrome set once. Stage 1.5
             // (`run_stage_airport_discover`) uses it for the
             // polygon-radius-aware re-attribution / reject pass on
-            // DBSCAN clusters; Stage 2C reuses the same vec for
-            // its `nearest_aerodrome_within` resolver.
+            // DBSCAN clusters; Stage 2C reuses the same vec for its
+            // `nearest_aerodrome_within` resolver. Airport identity
+            // must stay global — aerodromes straddle R4 boundaries.
             let areas = read_global_airports(&h3r4_dir)?;
-            eprintln!(
-                "[run-all] global aerodromes: {} polygons",
-                areas.len()
-            );
-            // Stage 1.5 cross-checks DBSCAN clusters against the real
-            // aeroway line set so false-positive clusters (cars on
-            // access roads, GSE in parking lots) inside an aerodrome's
-            // polygon buffer don't get mis-labeled as the airport's
-            // ground ops. Read once, share across all R4 par_iter
-            // workers.
+            eprintln!("[run-all] global aerodromes: {} polygons", areas.len());
             let global_lines = read_global_airport_lines(&h3r4_dir)?;
             eprintln!(
                 "[run-all] global airport lines: {} microsegments",
                 global_lines.len()
             );
 
-            // Stage 1.5 — DBSCAN auto-discovery of OSM-missing
-            // airfields. Sits AFTER the per-day par_iter (so it sees
-            // the multi-day vertex set, not a per-day slice that
-            // misses sparse rural strips) and BEFORE run_stage_2a (so
-            // Stage 2C's `R4Cache::load` sees the synth sidecars this
-            // stage emits). Writes empty arrows for in-scope R4s that
-            // produced no clusters so a stale strip from a previous
-            // run cannot leak into Stage 2C.
+            // Shuffle Stage 1 per-day shards into per-R4
+            // `segments_by_r4/<R4>/{airborne,ground}.arrow`. Stages 1.5
+            // / 2A / 2C all consume these; Stage 2B reads the per-day
+            // shards directly (cruise straddles R4 boundaries).
+            let by_r4_dir = work_dir.join("segments_by_r4");
+            let t_shuf = Instant::now();
+            aircraft_extract::shuffle::shuffle_per_r4(&ok_paths, &by_r4_dir, scope.as_ref())?;
             let t1_5 = Instant::now();
+            eprintln!("[run-all] shuffle done ({:?})", t1_5 - t_shuf);
+
+            // Stage 1.5 — DBSCAN auto-discovery of OSM-missing
+            // airfields. Runs BEFORE Stage 2C so its synth sidecars
+            // are visible when Stage 2C loads each R4's airport_lines
+            // cache. Writes empty arrows for in-scope R4s with no
+            // current clusters so a stale strip cannot leak through.
             let r1_5 = run_stage_airport_discover(
-                &all_segments,
+                &by_r4_dir,
                 &areas,
                 &global_lines,
                 &h3r4_dir,
@@ -289,11 +296,14 @@ fn main() -> Result<()> {
                 t2a - t1_5
             );
 
-            let r2a = run_stage_2a(&all_segments, &h3r4_dir, n_days, scope.as_ref())?;
+            let r2a = run_stage_2a(&by_r4_dir, &h3r4_dir, n_days, scope.as_ref())?;
             let t2b = Instant::now();
-            let r2b = run_stage_2b(&all_segments, &h3r4_dir, n_days, scope.as_ref())?;
+            // Stage 2B reads per-day cruise shards, NOT the shuffled
+            // per-R4 ones — cruise output R4 derives from each
+            // touched R8's parent (`stage_2b.rs:cell.parent(R4)`).
+            let r2b = run_stage_2b(&ok_paths, &h3r4_dir, n_days, scope.as_ref())?;
             let t2c = Instant::now();
-            let r2c = run_stage_2c(&all_segments, &areas, &h3r4_dir, n_days, scope.as_ref())?;
+            let r2c = run_stage_2c(&by_r4_dir, &areas, &h3r4_dir, n_days, scope.as_ref())?;
             let t_end = Instant::now();
             eprintln!(
                 "[run-all] stage2a={r2a} ({:?}), stage2b={r2b} ({:?}), stage2c={r2c} ({:?})",
@@ -301,9 +311,26 @@ fn main() -> Result<()> {
                 t2c - t2b,
                 t_end - t2c
             );
+
+            // Best-effort cleanup of the per-R4 shuffle scratch dir.
+            // A crash mid-stage leaves it on disk; the next run's
+            // shuffle wipes it before recreating.
+            let _ = std::fs::remove_dir_all(&by_r4_dir);
         }
     }
     Ok(())
+}
+
+/// Collect `segments/<day>.arrow` paths from a directory, sorted by
+/// filename. Subcommand input for Stage 2B and Shuffle.
+fn list_segments_day_paths(segments_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut out: Vec<PathBuf> = std::fs::read_dir(segments_dir)
+        .with_context(|| format!("read_dir {}", segments_dir.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("arrow"))
+        .collect();
+    out.sort();
+    Ok(out)
 }
 
 /// Shared `--scope-bbox` parser, identical surface across Stage2 + RunAll.

@@ -4,92 +4,74 @@
 //! own period / date / flags) are kept in a `List<Struct>` so a long
 //! crossing that straddles 19:00 still gets the correct Lden weighting.
 //!
-//! Cruise-phase segments are routed to Stage 2B; ground to 2C. Only
-//! Phase::Airborne segments flow through here.
+//! Consumes the per-R4 airborne shards produced by
+//! [`crate::shuffle::shuffle_per_r4`] — one input file per R4 means each
+//! worker owns its R4's segments + accumulator, no global merge.
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::Result;
-use h3o::{LatLng, Resolution};
+use anyhow::{Context, Result};
 use rayon::prelude::*;
 
-use crate::arrow_io::write_airborne;
+use crate::arrow_io::read_segments;
 use crate::flight::{
     segment_flags, AirborneEvent, AirborneSubSegment, FlightSegment, Phase,
 };
 use crate::geo::r4_hex_str;
 use crate::scope::ScopeBbox;
+use crate::shuffle::list_r4_shards;
 
-/// Run Stage 2A. Reads Stage 1 segments for one day from `segments_dir`,
-/// groups airborne sub-segments by (flight_id, R4) and writes one
-/// `airborne.arrow` per R4 under `h3r4_dir/<hex>/`. When `scope` is
-/// set, only R4 cells whose centroid sits inside the bbox (expanded
-/// by `scope::SCOPE_BUFFER_M`) get written — required to prevent
-/// bbox/radius-subset caches from overwriting global R4 files with
-/// the full daily trajectories of in-scope flights.
+/// Run Stage 2A against the shuffled per-R4 airborne shards under
+/// `segments_by_r4_dir/<R4>/airborne.arrow`. When `scope` is set, R4
+/// subdirs outside it are skipped — scope was applied during shuffle
+/// already, so this is defensive and cheap.
 pub fn run_stage_2a(
-    segments: &[FlightSegment],
+    segments_by_r4_dir: &Path,
     h3r4_dir: &Path,
     n_days: u16,
     scope: Option<&ScopeBbox>,
 ) -> Result<usize> {
-    let by_r4 = bucket_by_r4(segments);
-    let r4s: Vec<u64> = by_r4
-        .keys()
-        .copied()
-        .filter(|r4| scope.map_or(true, |s| s.contains_r4(*r4)))
-        .collect();
-    let n_r4 = r4s.len();
-    let total_segs: usize = r4s.iter().map(|r4| by_r4[r4].len()).sum();
-    eprintln!("[stage2a] starting: {n_r4} R4 cells, {total_segs} airborne segments");
+    let r4_inputs = list_r4_shards(segments_by_r4_dir, "airborne.arrow", scope)?;
+    let n_r4 = r4_inputs.len();
+    eprintln!("[stage2a] starting: {n_r4} R4 cells");
     let stage_start = std::time::Instant::now();
 
-    r4s.par_iter().try_for_each(|r4_hex| -> Result<()> {
-        let segs = by_r4.get(r4_hex).expect("present");
-        let events = aggregate_events_for_r4(segs);
-        if events.is_empty() {
-            return Ok(());
-        }
-        let dir = h3r4_dir.join(r4_hex_str(*r4_hex));
-        std::fs::create_dir_all(&dir)?;
-        write_airborne(&dir.join("airborne.arrow"), &events, n_days)
-    })?;
-    eprintln!("[stage2a] done: {n_r4} R4s in {:?}", stage_start.elapsed());
-    Ok(n_r4)
+    let written = std::sync::atomic::AtomicUsize::new(0);
+    r4_inputs
+        .par_iter()
+        .try_for_each(|(r4, shard_path)| -> Result<()> {
+            let segments = read_segments(shard_path)
+                .with_context(|| format!("read {}", shard_path.display()))?;
+            let events = aggregate_events_for_r4(&segments);
+            if events.is_empty() {
+                return Ok(());
+            }
+            let dir = h3r4_dir.join(r4_hex_str(*r4));
+            std::fs::create_dir_all(&dir)?;
+            crate::arrow_io::write_airborne(&dir.join("airborne.arrow"), &events, n_days)?;
+            written.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        })?;
+    let written = written.load(std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[stage2a] done: {written} R4s in {:?}", stage_start.elapsed());
+    Ok(written)
 }
 
-/// Group every Phase::Airborne FlightSegment by the R4 cell at its
-/// midpoint. We bucket by midpoint rather than per-end because per-sample
-/// segments are short (1-4 km typical ADS-B sample-pair) vs R4 ≈ 25 km
-/// edge — the midpoint approximation snaps each segment to one R4 within
-/// a few % of an analytical split. (A future pass could do analytical
-/// clipping like Stage 2B; current accuracy is dominated by Doc 29 NPD
-/// interpolation, not midpoint snap.)
-fn bucket_by_r4(segments: &[FlightSegment]) -> HashMap<u64, Vec<&FlightSegment>> {
-    let mut map: HashMap<u64, Vec<&FlightSegment>> = HashMap::new();
+fn aggregate_events_for_r4(segments: &[FlightSegment]) -> Vec<AirborneEvent> {
+    let mut by_flight: HashMap<u64, AirborneEventBuilder> = HashMap::new();
     for seg in segments {
+        // Shuffle pre-filtered by Phase; veh_kind only filtered here
+        // because the schema can't distinguish aircraft from GSE at
+        // shuffle time (Phase::Ground covers both; Airborne should
+        // already be aircraft-only, but defense-in-depth is cheap).
         if seg.phase != Phase::Airborne || seg.veh_kind != 0 {
             continue;
         }
-        let mid_lat = (seg.start_lat + seg.end_lat) as f64 * 0.5;
-        let mid_lon = (seg.start_lon + seg.end_lon) as f64 * 0.5;
-        let Ok(ll) = LatLng::new(mid_lat, mid_lon) else {
-            continue;
-        };
-        let r4 = u64::from(ll.to_cell(Resolution::Four));
-        map.entry(r4).or_default().push(seg);
-    }
-    map
-}
-
-fn aggregate_events_for_r4(segments: &[&FlightSegment]) -> Vec<AirborneEvent> {
-    let mut by_flight: HashMap<u64, AirborneEventBuilder> = HashMap::new();
-    for seg in segments {
-        let entry = by_flight
+        by_flight
             .entry(seg.flight_id)
-            .or_insert_with(|| AirborneEventBuilder::new(seg));
-        entry.push(seg);
+            .or_insert_with(|| AirborneEventBuilder::new(seg))
+            .push(seg);
     }
     by_flight.into_values().map(AirborneEventBuilder::finish).collect()
 }
@@ -211,23 +193,55 @@ mod tests {
     }
 
     #[test]
-    fn bucketing_groups_segments_in_same_r4() {
-        let segs = vec![seg(1, 50.10, 14.26), seg(2, 50.11, 14.27)];
-        let map = bucket_by_r4(&segs);
-        assert_eq!(map.len(), 1, "got {} R4 buckets", map.len());
-    }
-
-    #[test]
     fn aggregate_groups_per_flight() {
         let s1 = seg(1, 50.10, 14.26);
         let s2 = seg(1, 50.10, 14.27);
         let s3 = seg(2, 50.10, 14.26);
-        let segs: Vec<&FlightSegment> = [&s1, &s2, &s3].into_iter().collect();
+        let segs = vec![s1, s2, s3];
         let events = aggregate_events_for_r4(&segs);
         assert_eq!(events.len(), 2);
         let f1 = events.iter().find(|e| e.flight_id == 1).unwrap();
         assert_eq!(f1.sub_segments.len(), 2);
         let f2 = events.iter().find(|e| e.flight_id == 2).unwrap();
         assert_eq!(f2.sub_segments.len(), 1);
+    }
+
+    #[test]
+    fn aggregate_filters_non_aircraft_and_non_airborne() {
+        let mut gse = seg(1, 50.10, 14.26);
+        gse.veh_kind = 1;
+        let mut ground = seg(2, 50.10, 14.26);
+        ground.phase = Phase::Ground;
+        let ok = seg(3, 50.10, 14.26);
+        let events = aggregate_events_for_r4(&[gse, ground, ok]);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].flight_id, 3);
+    }
+
+    /// Round trip: write a per-R4 airborne shard via the shuffle
+    /// schema, run Stage 2A, verify an airborne.arrow lands in h3r4.
+    #[test]
+    fn run_stage_2a_consumes_per_r4_shard() {
+        use crate::arrow_io::write_segments;
+        let tmp = tempfile::tempdir().unwrap();
+        let by_r4 = tmp.path().join("segments_by_r4");
+        let h3r4 = tmp.path().join("h3r4");
+        let r4 = {
+            use h3o::{LatLng, Resolution};
+            let ll = LatLng::new(50.10, 14.26).unwrap();
+            u64::from(ll.to_cell(Resolution::Four))
+        };
+        let r4_dir = by_r4.join(r4_hex_str(r4));
+        std::fs::create_dir_all(&r4_dir).unwrap();
+        write_segments(
+            &r4_dir.join("airborne.arrow"),
+            &[seg(1, 50.10, 14.26), seg(2, 50.10, 14.27)],
+        )
+        .unwrap();
+
+        let n = run_stage_2a(&by_r4, &h3r4, 1, None).unwrap();
+        assert_eq!(n, 1);
+        let out = h3r4.join(r4_hex_str(r4)).join("airborne.arrow");
+        assert!(out.exists(), "Stage 2A must write airborne.arrow");
     }
 }

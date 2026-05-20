@@ -23,6 +23,7 @@ pub mod profile;
 pub mod progress;
 pub mod scope;
 pub mod segment;
+pub mod shuffle;
 pub mod source;
 pub mod source_adsb_tar;
 pub mod stage_0;
