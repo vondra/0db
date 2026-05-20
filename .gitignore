@@ -14,6 +14,8 @@ data/
 target/
 *.node
 engine/pipeline-worker/backend/
+pipeline/lib/*.js
+pipeline/lib/*.d.ts
 
 # Runtime artifacts
 .claude/scheduled_tasks.lock
