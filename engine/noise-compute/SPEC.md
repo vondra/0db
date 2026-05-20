@@ -99,22 +99,11 @@ where Q = vehicles/hour, v = speed in km/h. The `1/(1000·v)` term converts flow
 L_W_total,i = 10 × log₁₀(Σ_cat 10^(L_W'/m,cat,i / 10))
 ```
 
-### Input priority (current implementation)
-1. If Arrow has `aadt_*` with `aadt_light > 0` and the row's `provenance` (derived from `source_id` via `sources::provenance_of()`, see `Provenance` enum in `sources.rs`) is non-`None`, use those flows (oneway × 0.5 still applied; `access_factor` reductions are bypassed only for `Provenance::is_measured()` — i.e. `NationalMeasured`, `ContinentalMeasured`, `GlobalMeasured`. `Heuristic` and `Baseline` rows still get access reductions). Provenance values: `NationalMeasured`, `ContinentalMeasured`, `GlobalMeasured`, `Heuristic`, `Baseline`.
-2. Otherwise use `default_road_traffic(road_class)` combined with the lane-ratio boost (see below).
+### Day/evening/night split
 
-Speed priority:
-- `maxspeed` from OSM if present
-- otherwise `default_road_speed(road_class)` (see `normalize.rs`)
-- junction flag caps speed at 30 km/h (roundabouts)
+Fixed per-class: 65/20/15 % for motorway-class roads, 70/18/12 % otherwise. Applied even on measured AADT — sub-daily census not currently sourced.
 
-Surface priority:
-- recognized OSM `surface=*`
-- otherwise asphalt (`ΔL_WR = 0`)
-
-### Defaults, lane boost, period split
-
-Per-class AADT defaults live in `defaults.rs` (`WORLD_DEFAULT` + city/country/continent cascade). Default speeds (`default_road_speed`) and lane-count boost above 2 lanes (`lane_ratio`) live in `normalize.rs`. Day/evening/night split (65/20/15 for motorway-class, 70/18/12 for everything else) lives in `emission/road.rs` (`TIME_DIST_MOTORWAY`, `TIME_DIST_URBAN`). Even with measured AADT, per-period counts use the same fixed split — sub-daily census data is not currently measured from source.
+`access_factor` reductions are bypassed only when `Provenance::is_measured()` (NationalMeasured / ContinentalMeasured / GlobalMeasured); Heuristic / Baseline rows still get access reductions.
 
 ---
 
@@ -151,26 +140,11 @@ This is the CNOSSOS Annex IV line-source density (NoiseModelling-compatible).
 
 High-speed passenger (`v > 200 km/h`) is served by the passenger rolling spectrum scaled via `30·log₁₀(v/v_ref)` — not a dedicated aerodynamic model.
 
-### Input priority (current implementation)
-Passenger / freight counts:
-1. `trains_passenger`, `trains_freight` from Arrow if `> 0`
-2. otherwise `default_traffic(rail_type, usage)` (see `railway.rs`)
+### Day/evening/night split
 
-Speed:
-1. OSM `maxspeed` if present
-2. otherwise `300 km/h` when `highspeed=true`
-3. otherwise `default_speed(rail_type)` (see `railway.rs`)
+Fixed 65/20/15 % applied identically to passenger and freight — no asymmetric split for night-biased freight where it would be realistic.
 
-Post-adjustments applied even on real counts:
-- `service > 0` → counts × **0.02**
-- `parallel_divisor > 1` → counts divided by that factor
-
-### Defaults and period split
-
-Per-`rail_type` × `usage` train-count and speed defaults: see
-`engine/noise-compute/src/emission/railway.rs`. Day/evening/night uses the
-same 65/20/15 split for passenger and freight — there is no asymmetric
-split for night-biased freight even where it would be realistic.
+Post-adjustments applied even on measured counts: `service > 0` → counts × **0.02**; `parallel_divisor > 1` → counts divided by that factor.
 
 ---
 
@@ -368,50 +342,35 @@ SEL_seg = L_E(d_p) + ΔV + ΔI(φ) - Λ(β, l) + ΔF
 CPA (Closest Point of Approach) computed on segment EXTENSION (unclamped).
 d_p = slant distance at CPA. β = elevation angle.
 
-### Input and preprocessing (current implementation)
-- ADS-B supplies real segment geometry, altitude, speed, timestamp, and often `on_ground`
-- aircraft `typecode` is mapped to one of **~124 per-typecode NPD profiles**
-  (auto-generated from EASA ANP v2.3) clustered at 14 aircraft noise classes for
-  bucket-key aggregation
-- unknown / unmapped typecode falls back to **`FALLBACK_PROFILE_IDX`** (a
-  B738/737800-equivalent profile)
-- `is_departure` is per-sample-pair: a ±5-sample smoothed ROCD median
-  (`classify_is_departure_per_sample` in `segment.rs`) is thresholded
-  against Doc 29 §A.3.2 — climb > 500 fpm flags Departure, and shallow
-  cruise descents (`avg_alt > 10 000 ft && smoothed_rocd > -500 fpm`)
-  also use the Departure NPD because en-route thrust ≈ T/O thrust.
-- day/evening/night period is derived from the segment-midpoint coordinate via
-  **tzf-rs IANA timezone lookup + chrono-tz** (DST-aware UTC → local wall-clock).
-  Boundaries follow END 2002/49/EC defaults: day [07:00, 19:00), evening
-  [19:00, 23:00), night [23:00, 07:00). Historical DST rules come from
-  tzdata 2024a+.
-- airport context uses `airport_areas.arrow` (nearest-aerodrome identity)
-- candidate airport-ground segments are those with:
-  - `on_ground = true`, or
-  - both endpoints within **60 m AGL**
-- stale ground / taxi remnants are filtered by:
-  - `on_ground` with **no airport context**
-  - fallback low-AGL test (`<= 15 m AGL`) with **no airport context**
-- **per-sample emission**: Stage 1 emits one segment per consecutive
-  ADS-B sample-pair (`segment.rs::build_segments`). No aggregation across
-  samples; per-pair geometry is preserved straight from the trace and
-  Doc 29 ΔF apportions energy correctly across collinear sub-segments.
-- **derived-speed plausibility** (`segment_is_keepable`): segments whose
-  implied speed `length_m / dt_s` exceeds `MAX_PLAUSIBLE_SPEED_KT` (1500
-  kt) are dropped as mode-S decode errors. A 200 km gap over 30 min (real
-  cruise across an oceanic coverage hole) survives; the same gap over 30 s
-  is rejected.
-- **phase-aware gap policy**: a sample-pair is dropped if its time delta
-  exceeds the per-phase budget — 3600 s for Cruise (oceanic dropouts OK),
-  120 s for Airborne (terminal area should be dense), 60 s for Ground.
-- **segment phase prioritises Airborne**: at a sample-pair transition
-  Airborne wins over both Ground and Cruise so takeoff / flare segments
-  stay audible and the Cruise→Airborne descent gets the correct approach
-  NPD rather than Stage 2B's forced-Departure cruise routing.
-- **ground-rest flight split**: `split_flights` splits the trace at
-  sustained on-ground rests ≥ `MIN_TURNAROUND_S` (5 min). Airborne signal
-  dropouts of any duration preserve flight identity, so a transoceanic
-  crossing with a 4 h coverage hole stays one `flight_id`.
+### Input and preprocessing
+
+Non-obvious thresholds, periods, and routing rules (constants live in
+`aircraft-extract`):
+
+- **Typecode → NPD profile**: unknown typecode falls back to
+  `FALLBACK_PROFILE_IDX` (B738/737800-equivalent).
+- **`is_departure`**: per-sample-pair, ±5-sample smoothed ROCD median
+  thresholded against Doc 29 §A.3.2 — climb > 500 fpm = Departure, and
+  shallow cruise descents (`avg_alt > 10 000 ft && rocd > -500 fpm`)
+  also use Departure NPD because en-route thrust ≈ T/O thrust.
+- **Period**: segment-midpoint → IANA timezone (tzf-rs + chrono-tz,
+  DST-aware) → END 2002/49/EC boundaries (day 07-19, eve 19-23,
+  night 23-07).
+- **Airport-ground candidacy**: `on_ground = true` OR both endpoints
+  within 60 m AGL.
+- **Stale-ground filter**: `on_ground` or `≤ 15 m AGL` with no airport
+  context → dropped.
+- **Derived-speed plausibility**: implied `length_m / dt_s >
+  MAX_PLAUSIBLE_SPEED_KT` (1500 kt) dropped as mode-S decode errors.
+  A 200 km/30 min oceanic gap survives; 200 km/30 s does not.
+- **Phase-aware gap budget**: Cruise 3600 s (oceanic dropouts OK),
+  Airborne 120 s (terminal area should be dense), Ground 60 s.
+- **Phase priority at transitions**: Airborne wins over Ground and
+  Cruise so takeoff / flare stays audible and Cruise→Airborne descents
+  get the approach NPD, not forced-Departure cruise routing.
+- **Flight split**: `split_flights` splits the trace at on-ground rests
+  ≥ `MIN_TURNAROUND_S` (5 min); airborne dropouts of any duration
+  preserve `flight_id`.
 
 ### Data-quality gating (`is_valid_airborne_segment`)
 Shared single-source-of-truth filter used by both pipeline and popup. Applied
@@ -452,45 +411,21 @@ to one event (regression: `cffk_partition_preserves_linear_energy` in
 
 ### Cross-flight aggregation
 
-Aggregation happens at the `aircraft-extract` Stage 2A/2B/2C boundary,
-producing three popup arrows per R4:
-- **Stage 2A airborne** — one row per (flight × R4 crossing) in
-  `airborne.arrow`, with `sub_segments: List<Struct>` carrying one
-  entry per emitted sample-pair plus its own `period` / `date_id` /
-  `flags` (including `is_departure`) so consecutive sub-segments
-  straddling 19:00 each fall in the right Lden period. Each row also
-  carries a precomputed `bbox_min/max_lat/lon` envelope.
-- **Stage 2B cruise** — one row per (R8 hex × flight-level bin × class
-  × period × is_departure) bucket in `cruise.arrow`. `sum_length_m /
-  rep_len_m` gives effective flight density at compute time;
-  `cruise_flight_ids: List<UInt64>` lists the unique flights that
-  contributed so the popup can dedupe across R8 cells. Cruise is
-  intentionally annual-only — there is no `date_id` field.
-- **Stage 2C ground** — sparse per-microsegment per-period counter
-  rows in `airport_traffic.arrow`. Each row carries daily-total
-  Z-weighted band energy at 25 m perpendicular + the touch set of
-  `flight_ids` that crossed this microsegment (see §5.2).
+Stage 2A/2B/2C produce three per-R4 popup arrows: `airborne.arrow`
+(per-flight sub-segments with bbox envelope + per-pair period/date_id/
+flags), `cruise.arrow` (per-R8/FL-bin/class/period bucket with
+`cruise_flight_ids` for dedup; annual-only — no `date_id`), and
+`airport_traffic.arrow` (sparse per-microsegment counters — see §5.2).
+Schemas in `aircraft-extract/src/arrow_schemas.rs`. `compute_aircraft_v6`
+is the only consumer.
 
-The popup's `compute_aircraft_v6` consumes all three arrows directly
-via typed column views; popup is the only consumer of these per-R4
-aircraft arrows.
+### Cross-hex visibility
 
-### Cross-hex visibility (ring-1 loading)
-The popup loads the target R4 hex plus its 6 H3 grid-disk ring-1
-neighbours so paths / segments straddling the R4 boundary stay
-visible. `compute_aircraft_v6` then prunes per row, with a different
-prefilter shape per arrow:
-- **Ground paths** — vertex-bbox vs receiver distance using
-  `PATH_BBOX_PRUNE_RADIUS_M = LEG_PRUNE_RADIUS_M = 16 km` (matching
-  `AIRCRAFT_MAX_HORIZONTAL_REACH_M` in `aircraft/npd.rs`).
-- **Airborne sub-segments** — per-row `bbox_min/max_lat/lon` (baked at
-  Stage 2A) compared against the receiver envelope.
-- **Cruise R8 buckets** — receiver-to-R8-cell-centre distance vs
-  `AIRCRAFT_MAX_HORIZONTAL_REACH_M + half_diagonal` (no per-row bbox;
-  R8 cell radius bounds the half-diagonal).
-
-Antimeridian-crossing rows are excluded from the bbox prune to avoid
-degenerate global envelopes.
+Popup loads target R4 + 6 ring-1 neighbours so R4-straddling rows stay
+visible. Per-row prune radius: `AIRCRAFT_MAX_HORIZONTAL_REACH_M = 16 km`
+(in `aircraft/npd.rs`); airborne uses baked per-row bbox, cruise uses
+R8-cell-centre + half-diagonal. Antimeridian-crossing rows skip the
+bbox prune (degenerate global envelopes).
 
 ### Per-period energy
 ```
@@ -518,151 +453,110 @@ on every band — see §5.2.
 
 ### Per-event peak Lmax (informational only)
 
-The popup's per-flight `Lmax` and the band-classification thresholds (>30 / >45 / >60 dB) come from per-class LAmax NPD LUTs ingested directly from the ANP CSVs alongside the SEL NPDs.
-
 ```
 Lmax_event = lookup_lmax(class_idx, is_departure, log10(d_p_ft))
 ```
 
-Implementation: `compute_aircraft_v6` (in
-`engine/noise-compute/src/compute/aircraft_v6/mod.rs`) delegates to
-`airborne::scatter` and `cruise::scatter`, which call
-`NpdLuts::lookup_lmax`. The LUTs are built by `build_lmax_lut` in
-`engine/noise-compute/src/emission/aircraft/npd.rs`. Inside the
-200 ft – 25 000 ft NPD table the LUT log-linearly interpolates between
-adjacent NPD points; below 200 ft it extends the first-two-point slope;
-above 25 000 ft it extrapolates via spherical divergence
-(`−20·log10(d/d_ref)`) plus the per-profile `alpha_eff` for atmospheric
-absorption (same fit used for SEL, since LAmax and SEL share the same
-source spectrum). `peak_lmax` per flight = max across segments of
-`Lmax_event`.
+Per-class LAmax NPD LUTs ingested from the ANP CSVs alongside the SEL
+NPDs (`build_lmax_lut` in `emission/aircraft/npd.rs`). 200–25 000 ft
+log-linear interpolation; below 200 ft extends the first-two-point slope;
+above 25 000 ft extrapolates as `−20·log10(d/d_ref)` + per-profile
+`alpha_eff` (same fit as SEL — LAmax and SEL share source spectrum).
+Popup `peak_lmax` per flight = max across segments.
 
-**What is dropped vs full Doc 29 Eq. 4-12**: ΔI (installation directivity) and Λ (lateral attenuation) are not applied to `Lmax_event` — only the NPD curve. Doc 29 applies them per segment to `Lmax,seg`, which would give a small additional reduction at low elevation angles for wing-mounted jets. For popup peak ranking and band-count thresholds the residual is < 2 dB; this is acceptable for an informational display and avoids a second per-segment kernel pass.
+**Dropped vs full Doc 29 Eq. 4-12**: ΔI and Λ are NOT applied to
+`Lmax_event` — only the NPD curve. Doc 29 applies them per segment; the
+residual at low elevation angles for wing-mounted jets is < 2 dB,
+acceptable for informational peak ranking and avoids a second kernel
+pass.
 
-**Sources**: ECAC Doc 29 4th Ed §A.3.1 (LAmax NPDs), FAA AEDT Tech Manual §6.4 (LAmax interpolation procedure), EASA ANP v2.3 + v9 published L_MAX_A / L_MAX_D NPD tables.
+**Sources**: ECAC Doc 29 4th Ed §A.3.1 (LAmax NPDs), FAA AEDT Tech
+Manual §6.4 (LAmax interpolation), EASA ANP v2.3 + v9 supplement
+L_MAX_A / L_MAX_D tables.
 
 ### 5.2 Airport ground ops (per-microsegment model, `airport_traffic.arrow`)
 
-Airport ground ops are a separate submodel inside the `aircraft` layer.
+Separate submodel inside the aircraft layer. Inputs: Stage-1
+`Phase::Ground` segments + OSM aeroway microsegments
+(`airport_lines.arrow`, ≤ 250 m pieces) + aerodrome polygons
+(`airport_areas.arrow`) + Stage-1.5 DBSCAN synthetic strips for
+OSM-missing airfields.
 
-Inputs:
-- observed ADS-B segments classified `Phase::Ground` by Stage 1
-  (low-AGL on-ground rolls + taxi traces)
-- aerodrome polygons from `airport_areas.arrow` (filtered to
-  `aeroway_type == AERODROME`) for nearest-aerodrome identity
-- OSM aeroway microsegments from `airport_lines.arrow` (runways,
-  taxiways, stopways, airstrips, broken into ≤ 250 m pieces by
-  `osm-extract`)
-- Stage 1.5 DBSCAN-discovered synthetic strips for OSM-missing
-  airfields, written alongside as `synth_airport_lines.arrow` /
-  `synth_airport_areas.arrow`
+**Row semantics** (`airport_traffic.arrow`, keyed by `airport_key,
+osm_id, segment_idx, ops_kind, is_departure, veh_kind, class_idx,
+period`):
 
-Stage 2C aggregates into `airport_traffic.arrow` — sparse
-per-microsegment per-period counters. Each row is keyed by
-`(airport_key, osm_id, segment_idx, ops_kind, is_departure, veh_kind,
-class_idx, period)` and carries:
-- `band_energy_lin: FixedSizeList<f32; 8>` — daily-total linear
-  Z-weighted energy at 25 m perpendicular from this microsegment for
-  this period (Σ per-event SEL across the n_days window ÷ n_days)
-- `flight_ids: List<UInt64>` — touch set: every microsegment a
-  rotation's leg crossed receives that rotation's `flight_id`
-- `movements_per_day = flight_ids.len() / n_days` — display metadata
-  only; never multiplied into the receiver chain
+- `band_energy_lin[8]`: **daily total** linear Z-weighted SEL at 25 m
+  perpendicular for this period (Σ per-event ÷ n_days).
+- `flight_ids: List<UInt64>`: **touch set** — every microsegment a
+  rotation's leg crossed gets its `flight_id`. No longest-coverage
+  attribution.
+- `movements_per_day = flight_ids.len() / n_days`: **display metadata
+  only**, never multiplied into the receiver chain.
 
-Leg-to-microsegment projection (per ADS-B sample-pair leg):
-- buffer each `airport_lines.arrow` microsegment by
-  `AIRPORT_LINE_SNAP_BUFFER_M = 50 m` perpendicular
-- the portion of the leg lying inside that buffer rectangle is the
-  "overlap"; if the leg covers multiple microsegments their overlap
-  lengths are renormalised so Σ overlap = leg length
-- airport identity comes from the microsegment's parent OSM
-  aerodrome (via `nearest_aerodrome_within`); legs hitting no
-  microsegment fall under `airport_key = "strip:{r7_hex}"`
+**Leg-to-microsegment projection**: buffer each microsegment by
+`AIRPORT_LINE_SNAP_BUFFER_M = 50 m` perpendicular; the leg's overlap
+inside that rectangle contributes. When a leg covers multiple segments
+their overlap lengths are renormalised so Σ overlap = leg length
+(prevents +3 dB inflation on adjacent parallel taxiways). Legs that
+miss every microsegment are dropped (no fallback emission); coverage
+for OSM-missing airfields comes from the Stage 1.5 DBSCAN synthetic
+strips below.
 
-Per-leg `ops_kind` is derived from the matched microsegment's OSM
-`aeroway_type`: runway → `runway_roll`, taxiway → `taxi`, anything
-else (apron / parking / heliport / gate) → `apron_movement`. No
-speed-based classifier and no smoothing pass — OSM geometry is the
-source of truth.
+**`ops_kind` from OSM** `aeroway_type` (`ops_kind_from_aeroway` in
+`airport_traffic_writer.rs`): runway / stopway / airstrip →
+`runway_roll`, taxiway → `taxi`. Aprons are area features (in
+`airport_areas.arrow`), not lines, so the writer doesn't emit
+`apron_movement` rows; any other aeroway value is corrupt input and
+skipped. No speed classifier — OSM geometry is the source of truth.
 
-Per-segment per-movement Z-weighted band SEL@25m kernel
-(`engine/noise-compute/src/emission/airport_traffic.rs`):
-- per-event SEL = `GROUND_OPS_REFERENCE_SEL_DB[class][ops_kind]`
-  spread by `× seg_length / NOMINAL_EVENT_LENGTH_M` (fixed 1 km
-  nominal); finite-line correction at 25 m applied
-- runway departure: **+2 dB**
-- speed adjust relative to nominal class speed: clamped to **±3 dB**
-- source height: **4.0 m**
-- band shaping: per-`ops_kind` Z-weighted spectrum (runway / taxi /
-  apron)
+**Per-movement Z-weighted SEL@25m kernel**
+(`emission/airport_traffic.rs`):
+- SEL = `GROUND_OPS_REFERENCE_SEL_DB[class][ops_kind]` × `seg_length /
+  NOMINAL_EVENT_LENGTH_M` (1 km nominal); FLC at 25 m
+- runway departure: **+2 dB** (Doc 29 §A.3 thrust regime)
+- speed adjust: **±3 dB** clamp
+- source height: 4.0 m; per-`ops_kind` Z-weighted spectrum
 
-The writer accumulates per-microsegment band energy + inserts the
-rotation's `flight_id` into the row's set, in lock-step. Both
-operations happen for every intersected microsegment (touch
-semantics) — there is no longest-coverage attribution.
+**Receiver math** (`compute/aircraft_v6/airport_traffic.rs`):
+`received_band_lin[i] = row.band_energy_lin[i] × prop_rel_band[i]`
+where `prop_rel_band` is **relative** attenuation from the 25 m
+reference (using absolute would double-count the 25 m loss).
+Airport-level `arrivals_per_day` / `departures_per_day` come from
+HashSet UNION over `flight_ids` across the airport's rows — one
+rotation crossing 30 microsegments counts once per direction.
 
-Receiver math (popup compute in
-`engine/noise-compute/src/compute/aircraft_v6/airport_traffic.rs`):
-- prefilter each microsegment by per-row bbox against a popup-side
-  16 km envelope; `below_free_field_threshold_line` does precise
-  per-band rejection inside
-- per row: `received_band_lin[i] = row.band_energy_lin[i] ×
-  prop_rel_band[i]`, where `prop_rel_band[i]` is the relative
-  per-band attenuation from the 25 m reference (geo divergence + ISO
-  9613-2 atm absorption + terrain / screening / vegetation / ground)
-- airport-level `arrivals_per_day` / `departures_per_day` come from
-  HashSet UNION over `flight_ids` across all rows of the airport
-  (one rotation crossing 30 microsegments still counts once per
-  direction)
-
-Stage 1.5 DBSCAN auto-discovery handles OSM-missing airfields:
-- ground vertices from Stage 1 that fail to snap to any OSM line
-  cluster (eps = 200 m, min_samples = 5)
-- accepted clusters emit synthetic `airport_lines.arrow` rows under
-  an `airport_key = "auto-<H3-R11-hex>"` key consumed identically
-  to OSM lines by Stage 2C
+**Stage 1.5 DBSCAN auto-discovery**: miss-snap ground vertices
+clustered (eps = 200 m, low min_samples for low-confidence
+visibility), accepted clusters emit synthetic `airport_lines.arrow`
+rows under `airport_key = "auto-<R11-hex>"`, consumed identically by
+Stage 2C.
 
 ### 5.3 Aircraft contribution to confidence
 
-Per-source confidence scoring is cross-cutting; see
-`engine/noise-compute/src/confidence.rs` for the full
-`Confidence::assess` rubric (5 inputs, 0.3 base, +0.15 aircraft /
-+0.20 traffic / +0.10 rail / +0.10 terrain / +0.10 buildings).
-
-Aircraft scoring has one quirk: `compute_at_point_inner` cannot see
-the popup arrows when it runs `Confidence::assess` (only the merged
-`NoiseResult` gets them via `add_v6_aircraft_to_result` later), so it
-hard-codes `has_aircraft = false`. The +0.15 bump and the removal of
-the `"Aircraft: no ADS-B data for this area"` note are therefore
-applied post-merge by `source-reader::aircraft_v6::add_v6_aircraft_to_result`
-when aircraft contributors actually land.
+Confidence rubric in `confidence.rs::assess`. Aircraft quirk:
+`compute_at_point_inner` runs the rubric with `has_aircraft = false`
+because the popup arrows aren't visible at that stage; the bump and
+note removal are applied post-merge by
+`source-reader::aircraft_v6::add_v6_aircraft_to_result`.
 
 ### 5.4 Per-receiver SegmentTrace breakdown (popup output)
 
-The popup separates aircraft `SegmentTrace` rows into three sub-tabs
-via `aircraft_subtype: u8`:
-1. **Ground path** — one trace per ADS-B ground path; geometry =
-   polyline of vertices.
-2. **Airborne sub-segment** — one trace per Stage 2A sub-segment.
-3. **Cruise R8 hex** — one trace aggregated per R8 cell crossed by
-   cruise traffic; geometry = R8 hex polygon.
+`aircraft_subtype: u8` splits the popup into three sub-tabs:
+1. **Ground** — one trace per (airport microsegment × `ops_kind`); geometry = microsegment polyline.
+2. **Airborne sub-segment** — one per Stage 2A sub-segment.
+3. **Cruise R8 hex** — one per crossed R8 cell (hex polygon).
 
-For all three sub-types `received_lden.full` is a per-segment Lden
-contribution: per-period event energy divided by `n_days × T_period`,
-fed through the same `variants_to_lden` mix (+5 dB evening, +10 dB
-night) used by road / rail. Energy-summing the displayed `received_lden`
-across the visible segments approaches the source-aggregate Lden for
-that layer, modulo the per-sub-tab top-K cap. (See
-`engine/noise-compute/src/traces/aircraft.rs::aircraft_period_variants`.)
-Path-effect variants (`no_terrain`, `no_screening`, …) stay zero —
-aircraft propagation does not expose them at the per-event level — so
-the popup gates Section 4/5/6 detail rows for `aircraft_subtype` 2 / 3
-and shows only Source / emission inputs there.
+`received_lden.full` is per-segment: per-period energy / `(n_days ×
+T_period)` through the standard `variants_to_lden` mix. Energy-summing
+the visible segments approaches source-aggregate Lden modulo per-sub-tab
+top-K cap. Path-effect variants (`no_terrain`, `no_screening`, …) stay
+zero — aircraft propagation does not expose them per-event — so the
+popup gates path-effect detail rows for `aircraft_subtype` 2/3.
 
-`apply_segment_top_k_with_cap` (in `source-reader/src/lib.rs`) budgets
-top-K capacity separately per `aircraft_subtype` so a sub-tab with many
-loud segments (e.g. ground ops) cannot crowd quieter sub-tabs out of
-the popup.
+`apply_segment_top_k_with_cap` (`source-reader/src/lib.rs`) budgets
+top-K separately per `aircraft_subtype` so a loud sub-tab (e.g. ground
+ops) can't crowd quieter sub-tabs out.
 
 ---
 
@@ -686,21 +580,13 @@ This exclusion radius is used only for self-screening suppression.
 ```
 Lw = baseLw + 10 × log₁₀(min(area_m², 500000) / 10000)
 ```
-Current profile priority:
-1. `nace_4digit` baked into `industrial.arrow`
-2. OSM-derived `site_subtype`
-3. coarse `source_type`
 
 baseLw from NACE / subtype / source-type profile (calibrated against Czech SHM 2022):
 - Heavy industry (cement, steel, power): 99-100 dB
 - Medium industry (chemical, food): 88-95 dB
 - Light industry (warehouse, commercial): 70-86 dB
-Area scaling capped at 50 ha (500,000 m²) to prevent OSM polygon artifacts.
 
-Area priority:
-1. `area_m2` from Arrow if present
-2. polygon area from WKB
-3. fallback `10000 m²`
+Area scaling capped at 50 ha (500 000 m²) to prevent OSM polygon artifacts.
 
 ### Source height
 - quarry (`source_type = 1`): 8m
@@ -740,32 +626,7 @@ Each source gets a fade-out radius from emitted Lw, capped at **2 km**.
 Lw = 10 × log₁₀(10^(Lw_fixed/10) + GFA × 10^(Lw_per_m²/10))
 where GFA = area_m² × floors
 ```
-Current implementation has **10 building classes + default fallback**:
-- residential
-- commercial
-- warehouse / industrial building
-- school
-- hospital
-- church / worship
-- hotel
-- garage / parking
-- farm building
-- public / civic
-
-Type priority:
-1. `amenity` / `shop` / `healthcare` / `tourism` / `leisure`
-2. fallback to `building=*`
-3. default residential
-
-Geometry priority:
-1. `height`
-2. `floors × 3 m`
-3. fallback `8 m`
-
-Area priority:
-1. `area_m2` from Arrow
-2. polygon area from WKB
-3. fallback `100 m²`
+Current implementation has **10 building classes + default fallback** (residential, commercial, warehouse, school, hospital, church, hotel, garage, farm, public). Type / geometry / area resolution chains live in `settlement.rs`.
 
 ### Source height
 height/2 (mid-facade). Consistent in emission AND propagation (fix V33 mismatch).
@@ -788,35 +649,6 @@ ISO 9613-2 point source.
 | K8 | Lden: Ld=60, Le=55, Ln=50 | 60.00 dB | END 2002/49/EC |
 
 ---
-
-## Documented Simplifications vs Standards
-
-| Simplification | What we do | What the standard says | Impact |
-|---|---|---|---|
-| **Line source + FLC** | Cylindrical divergence + end-angle finite-line correction | ISO 9613-2: point sources only, subdivide line into representative points | ±1-2 dB near segment endpoints. Standard practice in noise mapping software. |
-| **Road inputs** | Real `aadt_*` if present (any non-`None` `Provenance`), otherwise class defaults; local heuristics flagged as `Provenance::Heuristic` | CNOSSOS expects external traffic inputs, not atlas-side fallback heuristics | Coverage stays global, but low-class roads may be approximate where counts are missing. |
-| **Road period split** | Fixed 65/20/15 or 70/18/12 split of daily AADT | Regulatory workflows may use measured day/evening/night counts | Bias possible on commuter / nightlife corridors. |
-| **Surface correction** | One scalar ΔL_WR per surface type | CNOSSOS Table F-4: per-band αm + βm, speed-dependent | ±1 dB. Our scalars are band-averaged approximations. |
-| **Ground effect** | CF[i] × G lookup; path-averaged G for line sources, receiver-local G for point sources (popup and pipeline match in both cases) | CNOSSOS §2.5.15-18: geometry-dependent Aground with height substitutions, separate source/middle/receiver zones | ±2 dB in complex terrain / mixed ground. |
-| **Diffraction** | 10·log₁₀(3 + C₃·20·δ·f/340), caps 20/25 dB, C₃ for double edges, Rayleigh gate per band via δ* with vertical mirroring across OLS-fitted per-side mean ground planes | CNOSSOS §2.5.6(c): Rayleigh criterion; §2.5.23: C" (identical to our C₃); §2.5.31: Δground additive combination; §2.5.24: favourable-conditions curved rays | ±1 dB behind shallow hills at low bands. Not implemented: Δground additive combination, curved rays, −λ/20 near-miss clause, lateral diffraction. |
-| **Building / barrier screening** | Composite top profile (`elevation + max(building_h, barrier_h)`) sampled at the unified bilateral cadence; upper-convex-hull edge detection up to 3 edges with CNOSSOS C″ | ISO 9613-2: explicit obstacle modelling per edge / geometry | ±3 dB in complex urban. Raster sampling, not individual building edges. |
-| **Urban reflection** | Per-receiver enclosure boost +0-5 dB | ISO 9613-2 §7.5: image-source reflection model | ±2 dB. Standard requires full reflection geometry, we use a local heuristic. |
-| **Meteorology** | NOT IMPLEMENTED (P_FAV exists but unused) | ISO 9613-2: Cmet = C₀(1 - 10·h_s/r), subtracted from downwind | ±2 dB at long range. TODO: implement. |
-| **Road categories** | 4 categories (no 4a mopeds, no 5) | CNOSSOS: 5 categories (4a, 4b, 5) | <0.5 dB. Vehicle mix is slightly flattened. |
-| **Road corrections** | No gradient / intersection / temperature corrections | CNOSSOS includes extra source-side corrections | ±1-3 dB on steep links, cold weather, or stop-go junctions. |
-| **Railway emission** | Simplified RMR (one rolling spectrum per type, train/day scaling) | CNOSSOS Annex IV: component-based (roughness, transfer function per rail/wheel type) | ±2 dB. We use aggregate reference spectra, not full component model. |
-| **Railway period split** | Fixed 65/20/15 split of daily passenger/freight counts | Measured per-period rail traffic would be more accurate | Night freight corridors can be biased if only daily counts are known. |
-| **Receiver height** | 4.0m (END facade) | END: 4.0m (facade). ISO: variable. | Matches END standard. |
-| **Settlement noise** | Custom per-building source model | END / CNOSSOS do not standardize this source class | Useful for atlas context, but not regulatory-comparable. |
-| **Industrial profiles** | `nace_4digit -> site_subtype -> source_type` fallback chain | Standard inventories usually use audited source inventories / measured facility data | Keeps global coverage, but facility class can be approximate when registry match is missing. |
-| **Aircraft NPD** | ~124 per-typecode profiles auto-generated from EASA ANP v2.3, 14 aircraft noise classes for bucket aggregation | Doc 29: official ANP database with full procedural-step profiles, weights, aerodynamic coefficients | ±1-2 dB per aircraft type for ANP-mapped types; similarity_fallback for unmapped typecodes (~70-80% of long-tail traffic) routes to closest anchor by engine type / size class. |
-| **Aircraft local time / ground filtering** | Per-coordinate IANA TZ lookup (tzf-rs + chrono-tz, DST-aware) + airport-context stale-ground filter | Operational studies use airport-local time (same principle) and curated trajectory cleaning | Near-runway behaviour can still be biased by trajectory-cleaning simplifications. |
-| **Aircraft ground ops** | Raw ADS-B trajectories per aircraft × contiguous ground run; nearest-aerodrome identity from `airport_areas.arrow`; per-leg `ops_kind` from speed/length classifier with smoothing pass | Airport studies usually use curated surface movement inventories and local operations data | Near-runway levels depend on ADS-B ground coverage; unobserved movements are not synthesised in v10 (was synth-fill pre-v10; deferred to a schedule-driven driver in Tier 3 backlog #4). |
-| **Aircraft batch tiles** | No batch tile pipeline; popup is the only consumer of the per-R4 aircraft arrows. | Operational studies expect server-side batch tile generation with toggleable propagation breakdown. | Map propagation toggles cannot isolate aircraft path-effect components separately at tile resolution; popup `traces` exposes them per-leg / per-sub-segment. |
-| **Bridge/tunnel** | Bridge G=0, tunnel skip | No standard specifies this directly | Physically correct — bridge is hard surface, tunnel contains sound. |
-| **Oneway roads** | AADT × 0.5 | No standard | Approximation: one-way carries ~50% of two-way equivalent. |
-| **Private / service access heuristics** | Private roads ×0.1, service rail ×0.02 | No standard | Atlas-scale approximation where access restrictions imply low traffic. |
-| **Industrial self-screening** | Exclusion radius R=√(area/π) | ISO 9613-2: explicit geometry | Prevents false screening from source's own building footprint. |
 
 ## Research Archive
 

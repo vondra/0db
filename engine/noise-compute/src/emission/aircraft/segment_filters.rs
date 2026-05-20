@@ -42,10 +42,10 @@ pub fn resolve_ground_ops_kind(seg: &AircraftSegment) -> u8 {
     }
 }
 
-/// Speed-only `ops_kind` classifier. Used for pure-taxi paths and
-/// non-Stage-2C consumers; the per-sample Stage 1 takeoff/landing roll
-/// regime is reconstructed at the path level in
-/// `stage_2c::ground_path::classify_path_kinds`, not here.
+/// Speed-only `ops_kind` classifier — fallback for segments without
+/// an explicit Stage-2C ops_kind (no OSM aeroway match). The
+/// authoritative `ops_kind` comes from `airport_traffic.arrow` rows
+/// keyed off OSM aeroway type (see SPEC §5.2).
 ///
 /// * `speed_kt ≥ 40` → `RUNWAY_ROLL`
 /// * `speed_kt ≥ 8`  → `TAXI`

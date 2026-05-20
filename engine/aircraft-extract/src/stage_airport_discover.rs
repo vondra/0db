@@ -3,13 +3,13 @@
 //! Input: ground vertices from Stage 1 ADS-B traces that did NOT snap
 //! to any OSM aeroway microsegment within 50 m perpendicular distance.
 //! Output: synthetic airport_lines.arrow rows + a per-cluster
-//! `airport_key = "auto-<r4_hex>-<seq>"` consumed identically to
+//! `airport_key = "auto-<R11-hex>"` consumed identically to
 //! OSM-derived rows by the popup.
 //!
 //! Algorithm:
 //!
-//! 1. Per R4 disk: DBSCAN(eps=200 m, min_samples=30) on miss-snap
-//!    vertices.
+//! 1. Per R4 disk: DBSCAN on miss-snap vertices (params in
+//!    `stage_airport_discover_runner.rs`).
 //! 2. PCA over each cluster: if primary axis variance ratio > 5,
 //!    emit a synthetic runway line (axis ± half-width); otherwise
 //!    treat as apron-equivalent (single representative point).

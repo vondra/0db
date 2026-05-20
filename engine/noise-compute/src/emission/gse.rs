@@ -67,9 +67,8 @@ pub static GSE_LW_BANDS_DB: [[f64; NUM_BANDS]; NUM_GSE_CLASSES] = [
 /// range is a Stage-0 *tiebreaker only*: typecode evidence (`t=GND`,
 /// callsign prefix) must come first, with the ICAO check filling in
 /// when typecode is missing but the address sits in this empirical
-/// allowlist. Treating it as a standalone classifier would re-introduce
-/// the GA-misclassification risk documented in
-/// `OVERNIGHT_STATUS.md` Phase 2.1 decision table.
+/// allowlist. Treating it as a standalone classifier would
+/// misclassify the GA aircraft that share the range.
 pub static GND_VEHICLE_ICAO_RANGES: &[(u32, u32)] = &[
     (0x49F000, 0x49F1FF), // CZ — LKPR/LKKB observed ground fleet (not exclusive)
 ];

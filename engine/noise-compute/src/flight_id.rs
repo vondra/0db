@@ -45,15 +45,6 @@ pub const TS_MASK: u64 = 0xFFFF_FFFF;
 /// aircraft. `0x000000` ("no address") is rejected by the same predicate.
 pub const ICAO_RESERVED_ANON: u32 = 0xFFFFFF;
 
-/// Process-wide counter scaffolded for malformed-trace telemetry.
-/// Currently unused — anonymous-transponder traces (ICAO `0xFFFFFF` /
-/// `0x000000`) flow through `pack_synth` rather than being dropped, and
-/// no extractor branch increments this counter today. Kept as a hook so
-/// a future stricter filter pass can surface drop counts without
-/// per-trace logging spam.
-pub static INVALID_TRACE_DROPS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
 /// Decoded flight identity.
 ///
 /// `Real` carries a hardware-level ICAO 24-bit transponder address and the

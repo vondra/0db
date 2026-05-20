@@ -152,7 +152,7 @@ fn write_stub_airport_lines(path: &Path) {
 fn build_ground_strip() -> Vec<FlightSegment> {
     // 60 ground segments arranged head-to-tail along a 1 km east-west
     // line at TEST_LAT/TEST_LON. Density (~17 m per segment) sits
-    // well above the DBSCAN_MIN_SAMPLES=30 floor in 1 km.
+    // well above the DBSCAN min-samples floor.
     let dlon_for_1km = (1000.0 / 111_320.0) as f32 / (TEST_LAT.to_radians()).cos();
     let mut segs = Vec::with_capacity(60);
     for i in 0..60 {
