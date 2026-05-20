@@ -48,7 +48,7 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
               {detailed ? <HoverText title={`Date & period\n\n${PERIOD_TOOLTIP}`}>Date</HoverText> : 'Date'}
             </th>
             <th className="text-right">
-              {detailed ? <HoverText title={"Aircraft type + identity\n\nCell shows the 4-letter ICAO designator (B738, A320, …); hover for the full model name + ICAO 24-bit hex address (when ADS-B carried it). Click to open the trace on globe.adsb.lol — works for any flight whose timestamp falls inside ADS-B mirror retention.\n\n• Unknown = typecode not in NPD database (energy-mean fallback). Hover may still show ICAO hex if the transponder broadcast it."}>Aircraft</HoverText> : 'Aircraft'}
+              {detailed ? <HoverText title={"Aircraft type + identity. Cell shows the 4-letter ICAO designator (B738, A320, …) or 'Average NPD' if no real typecode was carried in ADS-B. Click to open the trace on globe.adsb.lol."}>Aircraft</HoverText> : 'Aircraft'}
             </th>
             <th className="text-right">
               {detailed ? <HoverText title={"Energy share (%)\n\nThis flight's contribution to total airborne Lden energy.\n100% = this single flight causes all airborne noise.\nEnergy is in linear (not dB) scale, so a flight with 90%\ndominates even if other flights have similar Lmax."}>%</HoverText> : '%'}
@@ -67,7 +67,7 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
             const rawTypecode = f.aircraft_type && f.aircraft_type.length > 0
               ? f.aircraft_type
               : profileTypecode
-            const typecodeDisplay = rawTypecode === 'FALLBACK' ? 'Unknown' : rawTypecode
+            const typecodeDisplay = rawTypecode === 'FALLBACK' ? 'Average NPD' : rawTypecode
             const isSynth = f.synthetic
             const icaoHex = f.icao_hex ? f.icao_hex.toUpperCase() : null
             const exactTime = f.start_unix != null ? unixToIsoDateTimeUtc(f.start_unix) : null
@@ -481,12 +481,9 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
     ? 0
     : Math.max(0, 1 - profileMix.reduce((s, e) => s + e.share, 0))
   const showOther = Math.round(profileMixOther * 100) >= 5
-  // The compute layer emits `rep_typecode = "FALLBACK"` for the
-  // WING_FALLBACK noise class (typecode not in EASA ANP); mirror the
-  // existing typecode→"Unknown" conversions at lines 70 and 714 so
-  // users don't see the internal sentinel surface in the ground-ops
-  // "Top types" chip.
-  const fallbackToUnknown = (s: string) => (s === 'FALLBACK' ? 'Unknown' : s)
+  // FALLBACK rep typecode → "Average NPD" everywhere (matches
+  // `classToAnchorTypecode` in `aircraft-types.ts`).
+  const fallbackToUnknown = (s: string) => (s === 'FALLBACK' ? 'Average NPD' : s)
   const profileMixDisplay: Array<[string, string]> = [
     ...profileMix.map((e) => [fallbackToUnknown(e.rep_typecode), profileMixPct(e.share)] as [string, string]),
     ...(showOther ? [['Other', profileMixPct(profileMixOther)] as [string, string]] : []),
@@ -738,7 +735,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                       <HoverText title={"Mean aircraft altitude AMSL in this band.\nLow values indicate approach/departure traffic; high values indicate en-route cruise."}>Avg alt(km)</HoverText>
                     </th>
                     <th className="text-right">
-                      <HoverText title={"Dominant aircraft type in this band\n\nThe anchor typecode of the dominant noise class. CLASS_NAMES[noise_class] is shortened to its anchor 4-letter typecode (WING_B738 → B738).\nUnknown = traffic-weighted energy-mean class for typecodes not in the NPD database."}>Aircraft</HoverText>
+                      <HoverText title={"Dominant aircraft type in this band — anchor typecode of the dominant noise class, e.g. B738. 'Average NPD' = the traffic-weighted energy-mean class (no per-typecode profile)."}>Aircraft</HoverText>
                     </th>
                   </tr>
                 </thead>
@@ -750,7 +747,9 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                   ].map(({ label, bucket, color }) => {
                     if (bucket.observed_events_per_day <= 0) return null
                     const anchor = classToAnchorTypecode(bucket.top_aircraft)
-                    const anchorDisplay = anchor === 'FALLBACK' ? 'Unknown' : anchor
+                    // `classToAnchorTypecode` already maps WING_FALLBACK → 'Average NPD',
+                    // so the explicit re-mapping that used to live here is gone.
+                    const anchorDisplay = anchor
                     return (
                       <tr key={label} className="[&_td]:text-right">
                         <td style={{ color }} className="font-medium !text-left">{label}</td>

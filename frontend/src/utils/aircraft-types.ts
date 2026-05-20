@@ -116,20 +116,12 @@ const TYPECODE_MODEL: Record<string, string> = {
 }
 
 /**
- * Class label → anchor typecode (the typecode of the Voronoi anchor profile).
- * Used to compress band-row "Top type" cells. WING_B738 → "B738",
- * WING_FALLBACK → "FALLBACK", HELICOPTER → "HELI". Returns the input
- * unchanged when no class prefix matches.
+ * Class label → anchor typecode. WING_B738 → "B738", HELICOPTER → "HELI",
+ * WING_FALLBACK → "Average NPD" (the synthetic energy-mean class).
  */
 export function classToAnchorTypecode(className: string | null | undefined): string {
   if (!className) return '?'
   if (className === 'HELICOPTER') return 'HELI'
-  // The FALLBACK anchor is a synthetic traffic-weighted energy-mean
-  // of all 123 real NPD profiles — a LEGITIMATE Voronoi class with
-  // many real-typecode members (B737-classic, B77x, B78x, B7x4,
-  // A33x, A35K, A346, A380, ...) whose own NPDs are acoustically
-  // closest to the mean. Display as "Average NPD" so users see a
-  // meaningful label, not the implementation sentinel name.
   if (className === 'WING_FALLBACK' || className === 'FALLBACK') return 'Average NPD'
   const m = className.match(/^(?:WING|FUSE|PROP)_(.+)$/)
   return m ? m[1] : className

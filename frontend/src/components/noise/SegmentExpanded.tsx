@@ -488,18 +488,8 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
       const classDisplay = classToAnchorTypecode(e.class)
       const classHoverTooltip =
         classDisplay === 'Average NPD'
-          ? 'Noise class: this aircraft\'s NPD curve is L∞-closest to the\n' +
-            'traffic-weighted energy-mean of all 123 EASA ANP v2.3 profiles\n' +
-            '(a synthetic "average aircraft"). Remaining members of this\n' +
-            'class are aircraft whose own NPDs are closer to the mean than\n' +
-            'to any of the 9 dedicated Wing anchors — typically older\n' +
-            '737s (B733-B737), A380, and truly unmapped typecodes.\n' +
-            'Wide-body B777/B787/B747/A340 are now routed to WING_B789\n' +
-            'directly (added 2026-05-20 after the EASA v9 anchor restore).'
-          : `Noise class: ICAO typecodes Voronoi-routed to the ${classDisplay}\n` +
-            'anchor profile from EASA ANP v2.3 (acoustically nearest by L∞\n' +
-            'over the 20-dim approach+departure SEL vector). Hover the\n' +
-            'Aircraft row for full NPD provenance.'
+          ? 'No per-typecode NPD profile — energy-mean of 123 EASA ANP v2.3 profiles used.'
+          : `Aircraft noise class; anchored on ${classDisplay}'s ANP NPD curve.`
       return [
         ['Callsign', callsignValue],
         [

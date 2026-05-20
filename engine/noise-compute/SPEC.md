@@ -371,7 +371,7 @@ d_p = slant distance at CPA. β = elevation angle.
 ### Input and preprocessing (current implementation)
 - ADS-B supplies real segment geometry, altitude, speed, timestamp, and often `on_ground`
 - aircraft `typecode` is mapped to one of **~124 per-typecode NPD profiles**
-  (auto-generated from EASA ANP v2.3) clustered at 12 aircraft noise classes for
+  (auto-generated from EASA ANP v2.3) clustered at 14 aircraft noise classes for
   bucket-key aggregation
 - unknown / unmapped typecode falls back to **`FALLBACK_PROFILE_IDX`** (a
   B738/737800-equivalent profile)
@@ -809,7 +809,7 @@ ISO 9613-2 point source.
 | **Receiver height** | 4.0m (END facade) | END: 4.0m (facade). ISO: variable. | Matches END standard. |
 | **Settlement noise** | Custom per-building source model | END / CNOSSOS do not standardize this source class | Useful for atlas context, but not regulatory-comparable. |
 | **Industrial profiles** | `nace_4digit -> site_subtype -> source_type` fallback chain | Standard inventories usually use audited source inventories / measured facility data | Keeps global coverage, but facility class can be approximate when registry match is missing. |
-| **Aircraft NPD** | ~124 per-typecode profiles auto-generated from EASA ANP v2.3, 12 aircraft noise classes for bucket aggregation | Doc 29: official ANP database with full procedural-step profiles, weights, aerodynamic coefficients | ±1-2 dB per aircraft type for ANP-mapped types; similarity_fallback for unmapped typecodes (~70-80% of long-tail traffic) routes to closest anchor by engine type / size class. |
+| **Aircraft NPD** | ~124 per-typecode profiles auto-generated from EASA ANP v2.3, 14 aircraft noise classes for bucket aggregation | Doc 29: official ANP database with full procedural-step profiles, weights, aerodynamic coefficients | ±1-2 dB per aircraft type for ANP-mapped types; similarity_fallback for unmapped typecodes (~70-80% of long-tail traffic) routes to closest anchor by engine type / size class. |
 | **Aircraft local time / ground filtering** | Per-coordinate IANA TZ lookup (tzf-rs + chrono-tz, DST-aware) + airport-context stale-ground filter | Operational studies use airport-local time (same principle) and curated trajectory cleaning | Near-runway behaviour can still be biased by trajectory-cleaning simplifications. |
 | **Aircraft ground ops** | Raw ADS-B trajectories per aircraft × contiguous ground run; nearest-aerodrome identity from `airport_areas.arrow`; per-leg `ops_kind` from speed/length classifier with smoothing pass | Airport studies usually use curated surface movement inventories and local operations data | Near-runway levels depend on ADS-B ground coverage; unobserved movements are not synthesised in v10 (was synth-fill pre-v10; deferred to a schedule-driven driver in Tier 3 backlog #4). |
 | **Aircraft batch tiles** | No batch tile pipeline; popup is the only consumer of the per-R4 aircraft arrows. | Operational studies expect server-side batch tile generation with toggleable propagation breakdown. | Map propagation toggles cannot isolate aircraft path-effect components separately at tile resolution; popup `traces` exposes them per-leg / per-sub-segment. |

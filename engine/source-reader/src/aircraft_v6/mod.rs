@@ -89,7 +89,7 @@ fn airport_centroids_from_traffic(rows: &[AirportTrafficRowView<'_>]) -> Vec<(f6
 /// `compute_at_point_with_traces` first.
 ///
 /// Returns `Err(String)` when any of the popup arrows fails its schema
-/// check (`v12` for airborne/cruise, `airport_traffic_v4` for the
+/// check (`v13` for airborne/cruise, `airport_traffic_v4` for the
 /// ground-ops arrow), so the popup HTTP path can map the failure to
 /// a structured 500 response with an operator-actionable message
 /// instead of crashing the worker via `assert!`.
