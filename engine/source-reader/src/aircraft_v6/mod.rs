@@ -61,11 +61,10 @@ fn build_osm_ref_lookup(batches: &[RecordBatch]) -> HashMap<u64, String> {
     out
 }
 
-/// Dedup airport_traffic rows by `airport_key` and emit one
-/// `(lat, lon)` centroid per airport. The centroid is the
-/// midpoint-of-midpoints of all microsegments under that key —
-/// good enough for the 6 km airport-context test in
-/// `airborne::scatter`. Sub-millisecond at LKPR-density.
+/// Dedup `airport_traffic` rows by `airport_key` and emit one
+/// `(lat, lon)` centroid per airport — midpoint-of-microsegment-midpoints.
+/// Feeds the 6 km airport-context test in `airborne::scatter`;
+/// sub-millisecond at LKPR density.
 fn airport_centroids_from_traffic(rows: &[AirportTrafficRowView<'_>]) -> Vec<(f64, f64)> {
     let mut acc: HashMap<&str, (f64, f64, u32)> = HashMap::new();
     for row in rows {
@@ -123,14 +122,9 @@ pub fn add_v6_aircraft_to_result(
         return Ok(());
     }
 
-    // Build the airport-centroid list from the receiver-disk's
-    // airport_traffic.arrow rows. Dedup per `airport_key` and use the
-    // energy-mean centroid as the airport's "where". Airborne
-    // sub-segments that fall within `AIRPORT_CONTEXT_RADIUS_M` of any
-    // of these centroids get `ground_context = AIRPORT_LINE` so the
-    // 150 m fixed-wing-jet floor in `is_valid_airborne_with_terrain`
-    // short-circuits — otherwise approach-corridor airborne vertices
-    // would be dropped by that floor.
+    // Gates the 6 km `AIRPORT_CONTEXT_RADIUS_M` test in airborne
+    // scatter; without it, approach-corridor sub-segments below the
+    // 150 m fixed-wing-jet AGL floor would be dropped.
     let airport_centroids = airport_centroids_from_traffic(&traffic_views);
 
     let (mut air_periods, mut air_contribs, band_data) = compute_aircraft_v6(
@@ -144,23 +138,17 @@ pub fn add_v6_aircraft_to_result(
         result.timings.as_mut(),
     );
 
-    // airport_traffic.arrow → Doc 29 line-source compute. Adds
-    // per-airport Contributor rows next to the airborne/cruise path.
-    // Each traffic contributor carries its own per-period Lden, so we
-    // fold those into `air_periods` here — otherwise the per-source
-    // Aircraft total at the top of the popup would omit ground-ops
-    // energy while still listing it as a contributor row below.
+    // airport_traffic → Doc 29 line-source contributors; fold their
+    // per-period Lden into `air_periods` so the top-of-popup Aircraft
+    // total includes ground-ops energy (not just its contributor row).
     let timing_on = std::env::var("POPUP_TIMING").as_deref() == Ok("1");
     let t_traffic_start = std::time::Instant::now();
     let mut n_traffic_rows: usize = 0;
     if !traffic_views.is_empty() {
         n_traffic_rows = traffic_views.len();
-        // Build the OSM `osm_id` → `ref` lookup once per popup. Real-OSM
-        // aeroway rows that carry a `ref` tag (e.g. runway "06/24") let
-        // the SegmentTrace name render as "LKPR RWY 06/24" instead of
-        // the generic "LKPR runway-roll". Synth osm_ids never have a
-        // `ref` row in `airport_lines.arrow`, so they fall through to
-        // the generic label automatically.
+        // OSM `ref` tags (e.g. runway "06/24") let SegmentTrace render
+        // "LKPR RWY 06/24" instead of generic "LKPR runway-roll". Synth
+        // osm_ids have no `ref` row → fall through to the generic label.
         let osm_ref_lookup = build_osm_ref_lookup(airport_lines_batches);
         let traffic_contribs = compute_airport_traffic::run(
             receiver,
@@ -197,10 +185,9 @@ pub fn add_v6_aircraft_to_result(
         return Ok(());
     }
 
-    // compute_at_point_inner had no visibility into the popup aircraft
-    // arrows, so it ran Confidence::assess with has_aircraft=false and
-    // emitted the "no ADS-B data" note. Now that we have rows, bump the
-    // score and drop the misleading note.
+    // Upstream Confidence::assess ran with has_aircraft=false (no
+    // visibility into popup aircraft arrows there); now that we have
+    // rows, bump the score and drop the stale "no ADS-B data" note.
     result.confidence.overall = (result.confidence.overall + 0.15).min(1.0);
     result.confidence.notes.retain(|n| !n.starts_with("Aircraft:"));
 
@@ -218,19 +205,14 @@ pub fn add_v6_aircraft_to_result(
             displayed_count,
         });
     }
-    // Each popup query is a fresh compute, so the v6 band data fully
-    // replaces whatever the non-aircraft pass left behind (always `None`
-    // — that pass doesn't touch `aircraft_detail`).
+    // Fresh per-popup compute; non-aircraft pass never touches this.
     result.aircraft_detail = Some(band_data);
     result.total = sum_periods_linear(&result.sources);
 
-    // The non-aircraft pass already ran finalize_popup_contributors on
-    // roads/rails/buildings/industrial and committed top-30 + an
-    // `other_sources_lden` energy bucket. Aircraft contributors are
-    // appended after that, so without re-finalizing the popup would see
-    // a padded list (top-30 non-aircraft + N aircraft) and a stale
-    // `other_sources_lden`. Re-finalize over the merged set so aircraft
-    // compete for top-N slots and the tail bucket stays honest.
+    // Re-finalize over the merged contributor set so aircraft compete
+    // for top-N slots (non-aircraft pass already committed its top-30
+    // + `other_sources_lden`; appending aircraft rows would leave a
+    // padded list and a stale tail bucket).
     let other_lden_existing = result.other_sources_lden;
     let merged = std::mem::take(&mut result.contributors);
     let finalized = noise_compute::present::finalize_popup_contributors(merged, 30);
@@ -290,13 +272,18 @@ fn sum_periods_linear(sources: &[SourceResult]) -> NoisePeriods {
 }
 
 /// Stamp written by every aircraft-extract Arrow file. Inline copy
-/// rather than build-dep on aircraft-extract, which would pull arrow
-/// IPC writers / parquet / anyhow into the popup runtime. Must move
-/// in lock-step with `aircraft-extract::SCHEMA_VERSION`. v13 reflects
-/// the 12 → 14 class regen — column layout unchanged but persisted
+/// (not a build-dep) keeps arrow IPC / parquet / anyhow out of the
+/// popup runtime; must move in lock-step with `aircraft-extract::SCHEMA_VERSION`.
+/// v13 reflects the 12 → 14 class regen — same columns, but persisted
 /// `class_idx` semantics shifted, so v12 arrows would silently
 /// mis-display class labels under the new mapping.
 pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v13";
+
+/// Versions accepted under the dev-only `ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1`
+/// escape hatch. NPD lookups use shifted class indices, so per-flight
+/// profiles can be slightly off (~5%); use only when re-extraction
+/// isn't an option (visual validation, debugging).
+const LEGACY_SCHEMA_VERSIONS: &[&str] = &["v12"];
 
 /// The `airport_traffic.arrow` semantic contract. `schema_version`
 /// only guards column types/order; this guards what those columns
@@ -310,27 +297,44 @@ pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v13";
 /// produce wrong popup numbers.
 pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v4";
 
-/// Verify `schema_version` on every batch in the slice. Single-file
-/// IPC guarantees one schema per file, but the caller merges batches
-/// across R4 cells (`source_reader::lib::collect_from_hex_data`), so a
-/// mixed slice can carry current batches from one hex and stale ones
-/// from a sibling. Loop over every batch, not just the first. A
-/// reader running against the wrong schema can silently drop every
-/// batch via `col_list(...)` → `continue` (zero rows) instead of
-/// raising; loud error here is the safety net.
+/// Legacy `airport_traffic_contract` variants accepted under the same
+/// `ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1` escape hatch as
+/// [`LEGACY_SCHEMA_VERSIONS`]. v3 stored `band_energy_lin` and
+/// `flight_ids` with the same column shapes as v4 — only touch
+/// semantics around the rotation boundary changed.
+const LEGACY_AIRPORT_TRAFFIC_CONTRACTS: &[&str] = &["airport_traffic_v3"];
+
+fn accept_legacy() -> bool {
+    matches!(std::env::var("ACCEPT_LEGACY_AIRCRAFT_SCHEMA").as_deref(), Ok("1"))
+}
+
+/// Verify `schema_version` on every batch in the slice — the caller
+/// merges batches across R4 cells, so one hex's current batches and a
+/// sibling's stale batches can land in the same slice. Wrong-schema
+/// readers silently drop rows via `col_list(...)` → `continue`; this
+/// is the loud safety net.
 pub(super) fn assert_schema_version(label: &str, batches: &[RecordBatch]) -> Result<(), String> {
+    let allow_legacy = accept_legacy();
     for (idx, batch) in batches.iter().enumerate() {
         let v = batch
             .schema_ref()
             .metadata()
             .get("schema_version")
             .map(String::as_str);
-        if v != Some(EXPECTED_SCHEMA_VERSION) {
-            return Err(format!(
-                "{label}[batch {idx}] schema_version mismatch (expected {EXPECTED_SCHEMA_VERSION}, got {v:?}) \
-                 — re-extract aircraft pipeline"
-            ));
+        if v == Some(EXPECTED_SCHEMA_VERSION) {
+            continue;
         }
+        if allow_legacy && v.map_or(false, |s| LEGACY_SCHEMA_VERSIONS.contains(&s)) {
+            eprintln!(
+                "WARN: {label}[batch {idx}] legacy schema {v:?} accepted via \
+                 ACCEPT_LEGACY_AIRCRAFT_SCHEMA — class_idx may map to wrong NPD profile"
+            );
+            continue;
+        }
+        return Err(format!(
+            "{label}[batch {idx}] schema_version mismatch (expected {EXPECTED_SCHEMA_VERSION}, got {v:?}) \
+             — re-extract aircraft pipeline (or set ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1 for dev)"
+        ));
     }
     Ok(())
 }
@@ -344,22 +348,31 @@ pub(super) fn assert_airport_traffic_contract(
     label: &str,
     batches: &[RecordBatch],
 ) -> Result<(), String> {
-    // Also enforce schema_version since metadata corruption could
-    // leave only one of the two stamps intact.
+    // Enforce schema_version too: metadata corruption could leave only
+    // one of the two stamps intact.
     assert_schema_version(label, batches)?;
+    let allow_legacy = accept_legacy();
     for (idx, batch) in batches.iter().enumerate() {
         let c = batch
             .schema_ref()
             .metadata()
             .get("airport_traffic_contract")
             .map(String::as_str);
-        if c != Some(EXPECTED_AIRPORT_TRAFFIC_CONTRACT) {
-            return Err(format!(
-                "{label}[batch {idx}] airport_traffic_contract mismatch \
-                 (expected {EXPECTED_AIRPORT_TRAFFIC_CONTRACT}, got {c:?}) \
-                 — re-extract aircraft pipeline"
-            ));
+        if c == Some(EXPECTED_AIRPORT_TRAFFIC_CONTRACT) {
+            continue;
         }
+        if allow_legacy && c.map_or(false, |s| LEGACY_AIRPORT_TRAFFIC_CONTRACTS.contains(&s)) {
+            eprintln!(
+                "WARN: {label}[batch {idx}] legacy airport_traffic_contract {c:?} accepted \
+                 via ACCEPT_LEGACY_AIRCRAFT_SCHEMA — touch semantics may differ at rotation boundary"
+            );
+            continue;
+        }
+        return Err(format!(
+            "{label}[batch {idx}] airport_traffic_contract mismatch \
+             (expected {EXPECTED_AIRPORT_TRAFFIC_CONTRACT}, got {c:?}) \
+             — re-extract aircraft pipeline (or set ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1 for dev)"
+        ));
     }
     Ok(())
 }

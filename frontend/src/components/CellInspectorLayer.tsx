@@ -11,10 +11,9 @@ const MIN_ZOOM = 14
 const DATA_LAYERS = ['dem', 'building', 'forest'] as const
 type DataLayer = (typeof DATA_LAYERS)[number]
 
-// Heatmap-v2 aircraft uses its own tile grid (Mercator z=6..15, 256×256
-// cells per tile, 3 × i16 per cell). It coexists with the 1-arc-second
-// raster overlays handled by `DATA_LAYERS` — the hover query runs in
-// parallel and folds an "Aircraft Lden" row into the same tooltip.
+// Heatmap-v2 aircraft tile grid (Mercator z=6..15, 256×256 i16×3 per
+// cell). Hover query coexists with the 1″ raster overlays — appends
+// an "Aircraft Lden" row to the same tooltip.
 const HEATMAP_V2_TILE_SIZE = 256
 const HEATMAP_V2_NUM_PERIODS = 3
 const HEATMAP_V2_MIN_ZOOM = 6
@@ -59,11 +58,9 @@ export default function CellInspectorLayer({
     [sourceModes],
   )
 
-  // Aircraft-v2 keeps the tooltip alive even though aircraft sourceMode
-  // is non-off — the v2 raster IS the aircraft display now (Decision
-  // #13), and the existing CNOSSOS-raster cell inspector defers to the
-  // popup when other sources are on. Heatmap value lookup is purely
-  // tile-data, no popup contention.
+  // Aircraft-v2 keeps the tooltip alive even with aircraft sourceMode
+  // non-off — the v2 raster IS the aircraft display (Decision #13)
+  // and the lookup is pure tile-data, no popup contention.
   const enabled =
     (activeLayers.length > 0 && allSourcesOff) || aircraftV2Active
 
@@ -170,22 +167,29 @@ export default function CellInspectorLayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cellKey])
 
-  if (!enabled || !hover || !outline || !values) return null
+  if (!enabled || !hover || !values) return null
+
+  // Outline polygon traces a 1″ (~30 m) DEM/Overture cell; hide it
+  // for aircraft-v2-only hovers (~3 m cells at z=15 would render
+  // invisible and misleading next to the larger DEM grid).
+  const showOutline = activeLayers.length > 0 && outline
 
   return (
     <>
-      <Source id="cell-inspector-outline" type="geojson" data={outline}>
-        <Layer
-          id="cell-inspector-outline-line"
-          type="line"
-          paint={{ 'line-color': 'rgba(0,0,0,0.65)', 'line-width': 1 }}
-        />
-        <Layer
-          id="cell-inspector-outline-fill"
-          type="fill"
-          paint={{ 'fill-color': 'rgba(255,255,255,0.12)' }}
-        />
-      </Source>
+      {showOutline ? (
+        <Source id="cell-inspector-outline" type="geojson" data={outline}>
+          <Layer
+            id="cell-inspector-outline-line"
+            type="line"
+            paint={{ 'line-color': 'rgba(0,0,0,0.65)', 'line-width': 1 }}
+          />
+          <Layer
+            id="cell-inspector-outline-fill"
+            type="fill"
+            paint={{ 'fill-color': 'rgba(255,255,255,0.12)' }}
+          />
+        </Source>
+      ) : null}
       <div
         style={{
           position: 'fixed',
@@ -272,10 +276,21 @@ function ensureTileFetched(
     : `/api/raster-data/${layer}/${z}/${x}/${y}.bin`
   fetch(url)
     .then(res => {
-      if (!res.ok) throw new Error(`status ${res.status}`)
+      // 204 (missing tile) is `res.ok = true` but a 0-byte body would
+      // make `DataView.getInt16` throw and unmount the React tree.
+      // Mark failed alongside real errors so the reader returns `null`.
+      if (res.status === 204 || !res.ok) throw new Error(`status ${res.status}`)
       return res.arrayBuffer()
     })
-    .then(buf => { cache.set(key, buf); promoteLru(cache, key); onLoaded() })
+    .then(buf => {
+      if (buf.byteLength === 0) {
+        cache.set(key, 'failed')
+      } else {
+        cache.set(key, buf)
+      }
+      promoteLru(cache, key)
+      onLoaded()
+    })
     .catch(() => { cache.set(key, 'failed'); onLoaded() })
 }
 
@@ -305,11 +320,12 @@ function readCellValue(
 
 const SILENCE_I16 = -32768
 
-/// Read the per-cell Lday/Leve/Lnight i16×10 from a heatmap-v2 cell
-/// tile and combine into Lden using the EU directive's standard
-/// 12/4/8 h period weights with +5 dB evening / +10 dB night penalties.
-/// Returns `null` when the tile is still loading, `NEG_INFINITY`-stand-in
-/// for silence — caller renders both as "—" / "…".
+/**
+ * Read per-cell Lday/Leve/Lnight i16×10 from a heatmap-v2 cell tile
+ * and combine into Lden using the EU directive's 12/4/8 h weights
+ * with +5 dB evening / +10 dB night penalties. Returns `null` when
+ * loading and `-Infinity` for silence — caller renders both as "—" / "…".
+ */
 function readHeatmapV2Lden(
   z: number,
   lat: number,
@@ -320,6 +336,11 @@ function readHeatmapV2Lden(
 ): number | null {
   const entry = cache.get(`aircraft-v2/${z}/${tileX}/${tileY}`)
   if (!entry || entry === 'loading' || entry === 'failed') return null
+  // Short/half-cached buffer → `DataView.getInt16` would crash; treat
+  // anything below the spec body length (256×256×3×2 = 393 216 B) as
+  // missing.
+  const expected = HEATMAP_V2_TILE_SIZE * HEATMAP_V2_TILE_SIZE * HEATMAP_V2_NUM_PERIODS * 2
+  if (entry.byteLength < expected) return null
   const { lonWest, lonEast, latNorth, latSouth } = tileBbox(z, tileX, tileY)
   const mercYNorth = Math.log(Math.tan(Math.PI / 4 + (latNorth * Math.PI) / 360))
   const mercYSouth = Math.log(Math.tan(Math.PI / 4 + (latSouth * Math.PI) / 360))
@@ -334,8 +355,8 @@ function readHeatmapV2Lden(
   const leve = view.getInt16((base + 1) * 2, true)
   const lnight = view.getInt16((base + 2) * 2, true)
   const eDay = lday === SILENCE_I16 ? 0 : Math.pow(10, lday / 100)
-  // Stored values are dB×10 — apply +5 / +10 penalties before the
-  // 10^(·/10) energy conversion. `(leve + 50) / 100` = `(L/10 + 5) / 10`.
+  // Stored as dB×10; +5 dB evening / +10 dB night penalties fold into
+  // the exponent as `(L + 50) / 100` and `(L + 100) / 100`.
   const eEve = leve === SILENCE_I16 ? 0 : Math.pow(10, (leve + 50) / 100)
   const eNi = lnight === SILENCE_I16 ? 0 : Math.pow(10, (lnight + 100) / 100)
   const sum = 12 * eDay + 4 * eEve + 8 * eNi
