@@ -50,6 +50,14 @@ pub(crate) fn is_synthetic_osm_id(osm_id: u64) -> bool {
 /// before serialisation — JS `Number` silently truncates `u64 > 2⁵³`.
 pub(crate) const SYNTHETIC_OSM_ID_BIT: u64 = 1u64 << 63;
 
+/// Filename under `<h3r4>/<R4>/` holding the Stage 1.5 synthetic
+/// airstrip lines for that R4 (empty arrow when nothing clustered).
+pub(crate) const SYNTH_LINES_FILE: &str = "synth_airport_lines.arrow";
+
+/// Filename under `<h3r4>/<R4>/` holding the Stage 1.5 synthetic
+/// aerodrome area row (one per discovered `auto-<R11>` strip).
+pub(crate) const SYNTH_AREAS_FILE: &str = "synth_airport_areas.arrow";
+
 /// Aeroway-type sentinel for synthetic airstrip lines. Mirrors the
 /// real OSM convention (`osm-extract/classify.rs::aeroway_type` —
 /// 0=runway, 1=taxiway, 6=stopway, 7=airstrip).
