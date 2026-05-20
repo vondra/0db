@@ -17,12 +17,14 @@ use crate::arrow_schemas;
 mod airborne;
 mod airport_traffic;
 mod cruise;
+mod cruise_spill;
 mod flights;
 mod segments;
 
 pub use airborne::write_airborne;
 pub use airport_traffic::{read_airport_traffic, write_airport_traffic, AirportTrafficRow};
 pub use cruise::write_cruise;
+pub(crate) use cruise_spill::{read_cruise_spill, write_cruise_spill, CruiseSpillRow};
 pub use flights::{write_flights, FlightRow};
 pub use segments::{read_segments, write_segments};
 
