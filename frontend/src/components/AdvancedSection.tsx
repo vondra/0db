@@ -1,6 +1,10 @@
 import { useState } from 'react'
 import { ChevronDown, Mountain, Building, TreePine, Shield } from 'lucide-react'
 
+// `aircraft-v2` (the new raster heatmap layer) is intentionally NOT
+// listed here. The right-panel Aircraft source toggle drives it via
+// App.tsx's MapView `rasterOverlays` override — Decision #13 switch
+// mode. Adding it here too would surface two competing toggles.
 const OVERLAYS = [
   { id: 'dem', label: 'Elevation', tooltip: 'DEM terrain elevation — hills, valleys, ridges (30m)', icon: <Mountain className="size-3.5" /> },
   { id: 'building', label: 'Buildings', tooltip: 'Building heights from Overture Maps (30m)', icon: <Building className="size-3.5" /> },

@@ -448,7 +448,7 @@ export async function renderDataTile(
   return buf
 }
 
-function encodePNG(width: number, height: number, rgba: Buffer): Buffer {
+export function encodePNG(width: number, height: number, rgba: Buffer): Buffer {
   const filtered = Buffer.alloc(height * (1 + width * 4))
   for (let y = 0; y < height; y++) {
     filtered[y * (1 + width * 4)] = 0 // filter: none

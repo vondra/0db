@@ -5,11 +5,17 @@ interface RasterOverlayLayerProps {
   visibleLayers: Record<string, boolean>
 }
 
+/// `url` overrides the default `/api/raster/{id}/{z}/{x}/{y}.png` when
+/// non-empty. Heatmap-v2-aircraft lives on its own route family
+/// (`/api/heatmap-v2/...`), and reads from the binary HM2A tile cache
+/// the heatmap-aircraft Rust crate writes — see
+/// `engine/heatmap-aircraft` and `server/src/routes/heatmap-v2.ts`.
 const LAYERS = [
-  { id: 'dem', minzoom: 6 },
-  { id: 'building', minzoom: 10 },
-  { id: 'forest', minzoom: 8 },
-  { id: 'barriers', minzoom: 12 },
+  { id: 'dem', minzoom: 6, url: '' },
+  { id: 'building', minzoom: 10, url: '' },
+  { id: 'forest', minzoom: 8, url: '' },
+  { id: 'barriers', minzoom: 12, url: '' },
+  { id: 'aircraft-v2', minzoom: 6, url: '/api/heatmap-v2/aircraft/{z}/{x}/{y}.png' },
 ] as const
 
 export default function RasterOverlayLayer({ visibleLayers }: RasterOverlayLayerProps) {
@@ -56,21 +62,21 @@ export default function RasterOverlayLayer({ visibleLayers }: RasterOverlayLayer
 
   return (
     <>
-      {LAYERS.map(({ id, minzoom }) =>
+      {LAYERS.map(({ id, minzoom, url }) =>
         visibleLayers[id] ? (
           <Source
             key={`${id}-${styleState.epoch}`}
             id={`raster-${id}`}
             type="raster"
-            tiles={[`/api/raster/${id}/{z}/{x}/{y}.png`]}
+            tiles={[url || `/api/raster/${id}/{z}/{x}/{y}.png`]}
             tileSize={256}
             minzoom={minzoom}
-            maxzoom={16}
+            maxzoom={id === 'aircraft-v2' ? 15 : 16}
           >
             <Layer
               id={`raster-${id}-layer`}
               type="raster"
-              paint={{ 'raster-opacity': 0.7 }}
+              paint={{ 'raster-opacity': id === 'aircraft-v2' ? 1.0 : 0.7 }}
               {...(beforeId ? { beforeId } : {})}
             />
           </Source>

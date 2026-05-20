@@ -72,7 +72,7 @@ export default function App() {
   })
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null)
   const [rasterOverlays, setRasterOverlays] = useState<Record<string, boolean>>(
-    initial.rasterOverlays ?? { dem: false, building: false, forest: false, barriers: false }
+    initial.rasterOverlays ?? { dem: false, building: false, forest: false, barriers: false, 'aircraft-v2': false }
   )
   const rasterOverlaysRef = useRef(rasterOverlays)
   rasterOverlaysRef.current = rasterOverlays
@@ -312,7 +312,15 @@ export default function App() {
         highlightGeometry={highlightGeometry}
         realEstateFilters={realEstateFilters}
         onPropertySelect={setSelectedProperty}
-        rasterOverlays={rasterOverlays}
+        rasterOverlays={{
+          ...rasterOverlays,
+          // Aircraft toggle in the right panel doubles as the heatmap-v2
+          // aircraft layer toggle while M6 is in dev. Decision #13
+          // "switch mode" — when aircraft is anything but `off`, show
+          // the new raster heatmap on top of (eventually instead of)
+          // the v1 hex aircraft data.
+          'aircraft-v2': (sourceModes.aircraft ?? 'off') !== 'off',
+        }}
       />
 
       {/* Mobile: layers toggle button */}
