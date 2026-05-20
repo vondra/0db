@@ -3,6 +3,7 @@
 //! its persisted input artifact (re-run Stage 1 without re-doing
 //! Stage 0; re-run Stage 2A/2B/2C without re-running Stage 1, …).
 
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -28,6 +29,13 @@ use rayon::prelude::*;
 #[derive(Parser)]
 #[command(name = "aircraft-extract", about = "Aircraft pipeline driver")]
 struct Cli {
+    /// Cap rayon's global thread pool. Set when per-task RAM peak
+    /// (decoded day ~1.5 GB, worst-R4 working set ~2 GB) × all cores
+    /// exceeds host RAM — e.g. `--max-threads 20` on a 90 GB / 24-core
+    /// box keeps any one stage below ~80 GB peak. Omit to keep rayon's
+    /// default (honours `RAYON_NUM_THREADS` or `available_parallelism()`).
+    #[arg(long, global = true)]
+    max_threads: Option<NonZeroUsize>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -117,6 +125,7 @@ enum Cmd {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    init_rayon_pool(cli.max_threads)?;
     match cli.cmd {
         Cmd::Stage0 { adsb_cache, out, day } => {
             std::fs::create_dir_all(&out)?;
@@ -302,6 +311,13 @@ fn parse_scope(s: Option<&str>) -> Result<Option<ScopeBbox>> {
     s.map(ScopeBbox::parse)
         .transpose()
         .map_err(|e| anyhow::anyhow!("--scope-bbox: {e}"))
+}
+
+fn init_rayon_pool(max_threads: Option<NonZeroUsize>) -> Result<()> {
+    let Some(n) = max_threads else { return Ok(()) };
+    rayon::ThreadPoolBuilder::new().num_threads(n.get()).build_global()?;
+    eprintln!("[rayon] global pool = {} threads", n);
+    Ok(())
 }
 
 /// Hard-fail when `--adsb-cache` points at a bbox/radius subset path
