@@ -360,6 +360,23 @@ export interface NoiseComputeData {
   compute_time_ms: number
   segments?: SegmentTrace[]
   segments_meta?: SegmentTracesSummary | null
+  /** Per-layer wall-clock breakdown (ms). Always present in popup
+   * responses; pipeline-internal callers may omit. JSON serialization
+   * cost is NOT measured here — the frontend can derive it from XHR
+   * wall time minus the sum of these. */
+  timings?: PopupTimings | null
+}
+
+export interface PopupTimings {
+  load_ms: number
+  collect_ms: number
+  road_ms: number
+  rail_ms: number
+  building_ms: number
+  industrial_ms: number
+  aircraft_airborne_ms: number
+  aircraft_cruise_ms: number
+  aircraft_ground_ms: number
 }
 
 // Per-segment traces — popup "view into the engine's guts". Mirrors

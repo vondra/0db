@@ -651,6 +651,12 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
     result.segments = std::mem::take(&mut traces.segments);
     result.segments_meta = Some(summary);
 
+    // Stamp wrapper timings before serializing so the popup JSON carries
+    // the full per-component breakdown for the frontend debug overlay.
+    if let Some(t) = result.timings.as_mut() {
+        t.load_ms = t_load.as_secs_f64() * 1000.0;
+        t.collect_ms = t_collect.as_secs_f64() * 1000.0;
+    }
     let json = serde_json::to_string(&result).unwrap();
     let t_total = t_start.elapsed();
 

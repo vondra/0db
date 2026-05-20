@@ -151,11 +151,13 @@ fn compute_at_point_inner(
 ) -> NoiseResult {
     let mut source_results = Vec::new();
     let mut all_contributors = Vec::new();
+    let mut timings = crate::types::LayerTimings::default();
 
-    // ── Roads ──
     if !roads.is_empty() {
+        let t = std::time::Instant::now();
         let (road_periods, road_contributors) =
             compute_roads(receiver, roads, barriers, rasters, traces.as_deref_mut());
+        timings.road_ms = t.elapsed().as_secs_f64() * 1000.0;
         source_results.push(SourceResult {
             source_type: LayerKind::Road,
             periods: road_periods.clone(),
@@ -165,10 +167,11 @@ fn compute_at_point_inner(
         all_contributors.extend(road_contributors);
     }
 
-    // ── Railways ──
     if !railways.is_empty() {
+        let t = std::time::Instant::now();
         let (rail_periods, rail_contributors) =
             compute_railways(receiver, railways, barriers, rasters, traces.as_deref_mut());
+        timings.rail_ms = t.elapsed().as_secs_f64() * 1000.0;
         source_results.push(SourceResult {
             source_type: LayerKind::Railway,
             periods: rail_periods,
@@ -178,8 +181,8 @@ fn compute_at_point_inner(
         all_contributors.extend(rail_contributors);
     }
 
-    // ── Settlement (buildings) ──
     if !buildings.is_empty() {
+        let t = std::time::Instant::now();
         let (bld_periods, bld_contributors) = compute_point_sources(
             receiver,
             buildings,
@@ -188,6 +191,7 @@ fn compute_at_point_inner(
             LayerKind::Building,
             traces.as_deref_mut(),
         );
+        timings.building_ms = t.elapsed().as_secs_f64() * 1000.0;
         source_results.push(SourceResult {
             source_type: LayerKind::Building,
             periods: bld_periods,
@@ -197,8 +201,8 @@ fn compute_at_point_inner(
         all_contributors.extend(bld_contributors);
     }
 
-    // ── Industrial ──
     if !industrial.is_empty() {
+        let t = std::time::Instant::now();
         let (ind_periods, ind_contributors) = compute_point_sources(
             receiver,
             industrial,
@@ -207,6 +211,7 @@ fn compute_at_point_inner(
             LayerKind::Industrial,
             traces.as_deref_mut(),
         );
+        timings.industrial_ms = t.elapsed().as_secs_f64() * 1000.0;
         source_results.push(SourceResult {
             source_type: LayerKind::Industrial,
             periods: ind_periods,
@@ -262,6 +267,7 @@ fn compute_at_point_inner(
         aircraft_detail: None,
         segments: Vec::new(),
         segments_meta: None,
+        timings: Some(timings),
     }
 }
 
@@ -2120,6 +2126,7 @@ mod tests {
             &MockRasters,
             365,
             &[],
+            None,
             None,
         );
 

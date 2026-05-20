@@ -141,6 +141,7 @@ pub fn add_v6_aircraft_to_result(
         n_days,
         &airport_centroids,
         Some(traces),
+        result.timings.as_mut(),
     );
 
     // airport_traffic.arrow → Doc 29 line-source compute. Adds
@@ -180,13 +181,16 @@ pub fn add_v6_aircraft_to_result(
         }
         air_contribs.extend(traffic_contribs);
     }
+    let t_traffic = t_traffic_start.elapsed();
     if timing_on {
-        let t_traffic = t_traffic_start.elapsed();
         eprintln!(
             "popup-stage airport_traffic={:.0}ms (n_traffic_rows={})",
             t_traffic.as_secs_f64() * 1000.0,
             n_traffic_rows,
         );
+    }
+    if let Some(t) = result.timings.as_mut() {
+        t.aircraft_ground_ms = t_traffic.as_secs_f64() * 1000.0;
     }
 
     if !air_periods.lden_db.is_finite() && air_contribs.is_empty() {

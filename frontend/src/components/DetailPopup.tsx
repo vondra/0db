@@ -973,10 +973,42 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
               </div>
             )}
           </div>
+          <TimingsOverlay timings={data.timings ?? null} />
         </>
       ) : (
         <div className="text-sm text-muted-foreground mt-1">No noise data computed for this location.</div>
       )}
+    </div>
+  )
+}
+
+function TimingsOverlay({ timings }: { timings: NoiseComputeData['timings'] }) {
+  if (!timings) return null
+  // Sort components by cost so the dominant bucket is visible at a glance.
+  const rows: Array<[string, number]> = [
+    ['road', timings.road_ms],
+    ['rail', timings.rail_ms],
+    ['building', timings.building_ms],
+    ['industrial', timings.industrial_ms],
+    ['ac airborne', timings.aircraft_airborne_ms],
+    ['ac cruise', timings.aircraft_cruise_ms],
+    ['ac ground', timings.aircraft_ground_ms],
+    ['load', timings.load_ms],
+    ['collect', timings.collect_ms],
+  ]
+  const total = rows.reduce((s, [, ms]) => s + ms, 0)
+  const sorted = rows.sort((a, b) => b[1] - a[1])
+  return (
+    <div className="mt-2 pt-1.5 border-t border-border/30 text-[10px] font-mono text-muted-foreground/70 leading-tight">
+      <div className="opacity-60 mb-0.5">⏱ popup-timing — Σ {total.toFixed(0)} ms (server, pre-JSON)</div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-0">
+        {sorted.map(([k, ms]) => (
+          <div key={k} className="flex justify-between">
+            <span className="opacity-80">{k}</span>
+            <span className="tabular-nums">{ms.toFixed(0)} ms</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

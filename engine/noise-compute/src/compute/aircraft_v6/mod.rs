@@ -35,6 +35,7 @@ const NUM_BANDS: usize = 8;
 /// Pure-view popup compute. Consumes typed slices borrowed from the v6
 /// popup arrows; emits `(NoisePeriods, Vec<Contributor>, AircraftBandData)`
 /// matching the legacy entry point's contract.
+#[allow(clippy::too_many_arguments)]
 pub fn compute_aircraft_v6(
     receiver: &Receiver,
     airborne_rows: &[AirborneRowView<'_>],
@@ -43,6 +44,7 @@ pub fn compute_aircraft_v6(
     n_days: u16,
     airport_centroids: &[(f64, f64)],
     traces: Option<&mut TraceCollector>,
+    mut timings: Option<&mut crate::types::LayerTimings>,
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
     let n_days_f = (n_days as f64).max(1.0);
 
@@ -100,9 +102,9 @@ pub fn compute_aircraft_v6(
     );
     let t_airborne_detail = t_start.elapsed() - t_airborne_scatter - t_cruise_scatter;
 
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
     if timing_on {
         let t_total = t_start.elapsed();
-        let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
         eprintln!(
             "ac-v6 total={:.0}ms airb_scatter={:.0}ms cr_scatter={:.0}ms airb_detail={:.0}ms (n_airb={} n_cr={})",
             ms(t_total),
@@ -112,6 +114,12 @@ pub fn compute_aircraft_v6(
             airborne_rows.len(),
             cruise_rows.len(),
         );
+    }
+    if let Some(t) = timings.as_deref_mut() {
+        // `airb_detail` is a few ms of post-processing — fold into the
+        // airborne bucket so the popup breakdown stays 3 aircraft buckets.
+        t.aircraft_airborne_ms = ms(t_airborne_scatter) + ms(t_airborne_detail);
+        t.aircraft_cruise_ms = ms(t_cruise_scatter);
     }
 
     let mut contributors: Vec<Contributor> = Vec::new();
@@ -178,7 +186,7 @@ mod tests {
     fn silence_when_no_data() {
         let receiver = Receiver::new(50.10, 14.262, 0.0);
         let (periods, contribs, _band) =
-            compute_aircraft_v6(&receiver, &[], &[], &FlatGround, 1, &[], None);
+            compute_aircraft_v6(&receiver, &[], &[], &FlatGround, 1, &[], None, None);
         assert!(!periods.lden_db.is_finite());
         assert!(contribs.is_empty());
     }

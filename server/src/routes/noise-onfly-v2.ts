@@ -162,6 +162,7 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
           compute_time_ms: elapsed,
           segments: raw.segments ?? [],
           segments_meta: raw.segments_meta ?? null,
+          timings: raw.timings ?? null,
         })
       } catch (err) {
         if (abortController.signal.aborted || request.raw.aborted || request.raw.destroyed) {
