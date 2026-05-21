@@ -56,9 +56,15 @@ pub const M_PER_DEG_LAT: f64 = 110_540.0;
 pub const M_PER_DEG_LON_EQ: f64 = 111_320.0;
 
 /// Meters per degree of longitude at `lat_rad` radians.
+///
+/// Floors `cos(lat)` at `0.01` (~89.43° max effective lat) so callers
+/// dividing by the result — e.g. `ENCLOSURE_RADIUS_M / m_per_deg_lon(lat)`
+/// — degrade smoothly toward the poles instead of returning `∞`.
+/// `wkb.rs` already applies its own `cos().max(0.1)` ceiling on the
+/// raw expression; the looser floor here doesn't affect it.
 #[inline]
 pub fn m_per_deg_lon(lat_rad: f64) -> f64 {
-    M_PER_DEG_LON_EQ * lat_rad.cos()
+    M_PER_DEG_LON_EQ * lat_rad.cos().max(0.01)
 }
 pub const SOURCE_HEIGHT_INDUSTRIAL_ENCLOSED: f64 = 4.0;
 
@@ -110,3 +116,25 @@ pub const INDUSTRIAL_MAX_RADIUS: f64 = 4_000.0;
 pub const GROUND_OPS_RUNWAY_MAX_RADIUS: f64 = 5_000.0;
 pub const GROUND_OPS_TAXI_MAX_RADIUS: f64 = 3_000.0;
 pub const GROUND_OPS_APRON_MAX_RADIUS: f64 = 1_500.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f64::consts::PI;
+
+    /// At the pole, `cos(lat) = 0` would yield `m_per_deg_lon = 0`,
+    /// breaking every caller that divides by it. The floor inside
+    /// `m_per_deg_lon` keeps the value finite and positive.
+    #[test]
+    fn m_per_deg_lon_at_pole_is_finite_positive() {
+        let v = m_per_deg_lon(PI / 2.0);
+        assert!(v.is_finite() && v > 0.0, "m_per_deg_lon(π/2) = {v}");
+    }
+
+    /// Equator value stays unchanged by the floor (cos(0) = 1 ≫ 0.01).
+    #[test]
+    fn m_per_deg_lon_at_equator_unchanged_by_floor() {
+        let v = m_per_deg_lon(0.0);
+        assert!((v - M_PER_DEG_LON_EQ).abs() < 1e-9);
+    }
+}
