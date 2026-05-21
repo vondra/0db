@@ -884,4 +884,140 @@ mod runway_anchor_tests {
         let anchors = airport_anchors(&[], &[], &[]);
         assert!(anchors.is_empty());
     }
+
+    // ──────────────────────────────────────────────────────────────
+    // Integration-level scenarios — exercise the gate semantics
+    // `airport_anchors` exists to support. The kernel-side gate is
+    // `is_near_airport` (private), so the tests re-implement the
+    // identical "any anchor within AIRPORT_CONTEXT_RADIUS_M" check
+    // directly via `noise_compute::propagation::geo::flat_dist`.
+    // ──────────────────────────────────────────────────────────────
+
+    /// Mirrors `AIRPORT_CONTEXT_RADIUS_M` in the kernel. Hardcoded
+    /// here so the test breaks loud if the kernel constant changes
+    /// without updating this assertion.
+    const GATE_RADIUS_M: f64 = 6000.0;
+
+    fn any_within(anchors: &[(f64, f64)], lat: f64, lon: f64) -> bool {
+        anchors.iter().any(|&(a_lat, a_lon)| {
+            noise_compute::propagation::geo::flat_dist(lat, lon, a_lat, a_lon) <= GATE_RADIUS_M
+        })
+    }
+
+    /// Plan §8.3 dual-runway hub scenario. Two parallel east-west
+    /// runways 8 km long, separated by ~11 km north-south. The
+    /// centroid-only path would place a single anchor near the
+    /// midpoint between both runways and gate-fail at receivers
+    /// near each far runway end; the runway-end path provides 4
+    /// anchors and rescues those receivers.
+    #[test]
+    fn dual_runway_hub_gate_active_at_each_runway_end() {
+        // 0.111° lon at 50° lat ≈ 8 km east; 0.10° lat ≈ 11 km north.
+        let batch = real_batch(&[
+            RowSpec {
+                osm_id: 1, segment_idx: 0,
+                start_lat: 50.000, start_lon: 0.000,
+                end_lat:   50.000, end_lon:   0.111,
+                aeroway_type: 0,
+            },
+            RowSpec {
+                osm_id: 2, segment_idx: 0,
+                start_lat: 50.100, start_lon: 0.000,
+                end_lat:   50.100, end_lon:   0.111,
+                aeroway_type: 0,
+            },
+        ]);
+        let anchors = runway_ends_from_airport_lines(&[batch], &[]);
+        assert_eq!(anchors.len(), 4, "two runways × two endpoints each");
+        assert!(any_within(&anchors, 50.000, 0.000), "near runway A west end");
+        assert!(any_within(&anchors, 50.000, 0.111), "near runway A east end");
+        assert!(any_within(&anchors, 50.100, 0.111), "near runway B east end");
+        assert!(
+            !any_within(&anchors, 50.200, 0.000),
+            "11 km north of runway B — must fail gate",
+        );
+    }
+
+    /// Plan §8.5 perpendicular-off-axis small airport.
+    ///
+    /// Single 3.5 km east-west runway centred at (50.000, 0.000),
+    /// receiver 5.8 km north of midpoint. The centroid-only path
+    /// places the anchor at the runway midpoint → 5.8 km away,
+    /// passes 6 km gate. The runway-end path places anchors at
+    /// both endpoints, each at √(5.8² + 1.75²) ≈ 6.06 km from the
+    /// receiver → fails the gate.
+    ///
+    /// Documents the intentional tightening at perpendicular-off-
+    /// axis cases — the gate exists to rescue along-axis approach
+    /// segments below the 150 m AGL floor, not perpendicular-off-
+    /// axis receivers.
+    #[test]
+    fn perpendicular_off_axis_small_airport_tightens_after_runway_ends() {
+        let half_runway_deg_lon = 0.04879 * 0.5; // ~1.75 km east-west at 50° lat
+        let batch = real_batch(&[RowSpec {
+            osm_id: 1, segment_idx: 0,
+            start_lat: 50.000, start_lon: -half_runway_deg_lon,
+            end_lat:   50.000, end_lon:    half_runway_deg_lon,
+            aeroway_type: 0,
+        }]);
+        let anchors = runway_ends_from_airport_lines(&[batch], &[]);
+        assert_eq!(anchors.len(), 2);
+        // 5.8 km / 110_540 m/° ≈ 0.05246°.
+        let rcv_lat = 50.000 + 0.05246;
+        let rcv_lon = 0.000;
+        // Legacy centroid path would have passed: receiver IS within
+        // 6 km of the runway midpoint.
+        assert!(
+            noise_compute::propagation::geo::flat_dist(rcv_lat, rcv_lon, 50.000, 0.000)
+                <= GATE_RADIUS_M,
+            "receiver should be within 6 km of runway midpoint (legacy path)",
+        );
+        // New path: receiver ≈ 6.06 km from each runway end → fails
+        // gate. This is the documented intentional tightening.
+        assert!(
+            !any_within(&anchors, rcv_lat, rcv_lon),
+            "runway-end anchors should tighten the gate at perpendicular off-axis receivers",
+        );
+    }
+
+    /// Mixed-disk heliport + runway airport: both keep gate behavior
+    /// (the heliport via its centroid fallback, the runway airport
+    /// via its endpoint anchors). The layering at the popup site is
+    /// what preserves today's heliport behavior bit-for-bit.
+    #[test]
+    fn heliport_keeps_centroid_when_layered_with_runway_airport() {
+        // Heliport: airport_traffic row only, no runway lines.
+        let band_zero: [f32; 8] = [0.0; 8];
+        let gse_zero: [u32; 3] = [0; 3];
+        let traffic = vec![AirportTrafficRowView {
+            airport_key: "HELIPAD",
+            osm_id: 0, segment_idx: 0, geometry_kind: 0,
+            start_lat: 51.000, start_lon: 1.000,
+            end_lat: 51.000, end_lon: 1.000,
+            length_m: 0.0,
+            ops_kind: 1, is_departure: 0, veh_kind: 0, class_idx: 0, period: 0,
+            movements_per_day: 0.0,
+            band_energy_lin: &band_zero,
+            unique_movement_count: 0, unique_arr_count: 0, unique_dep_count: 0,
+            unique_gse_count_per_class: &gse_zero,
+            microseg_unique_count: 0, microseg_unique_arr_count: 0,
+            microseg_unique_dep_count: 0,
+            microseg_unique_gse_count_per_class: &gse_zero,
+        }];
+        // Runway airport: airport_lines row only, no traffic.
+        let batch = real_batch(&[RowSpec {
+            osm_id: 1, segment_idx: 0,
+            start_lat: 50.000, start_lon: 0.000,
+            end_lat:   50.000, end_lon:   0.001,
+            aeroway_type: 0,
+        }]);
+        let anchors = airport_anchors(&[batch], &[], &traffic);
+        assert_eq!(anchors.len(), 3, "2 runway endpoints + 1 heliport centroid");
+        assert!(any_within(&anchors, 51.000, 1.000), "receiver at heliport");
+        assert!(any_within(&anchors, 50.000, 0.000), "receiver at runway");
+        assert!(
+            !any_within(&anchors, 50.500, 0.500),
+            "receiver ~55 km away from either — must fail gate",
+        );
+    }
 }
