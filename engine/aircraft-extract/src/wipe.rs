@@ -13,37 +13,48 @@
 //! in-scope `h3r4/<R4>/` subdir. Workers then write the current-run
 //! file into the same path; R4s with no traffic stay empty.
 //!
-//! Safety: `filename` MUST be a single basename (no path separators)
-//! and the removal is restricted to direct children of
-//! `h3r4_dir/<R4>/`. The function panics if `filename`
-//! contains `/` — enforced in both debug and release builds because
-//! a path traversal here would delete arbitrary files outside the
-//! intended `h3r4/` tree.
+//! Out-of-scope R4s are intentionally left alone: a partial re-extract
+//! refreshes only the bbox the operator passed, and out-of-scope cells
+//! continue to serve their last full run. The trade-off: after a
+//! schema bump, operators MUST re-extract globally (or accept that
+//! out-of-scope R4s with stale files will still fatal-fail at popup
+//! time). This wipe only converts stale-in-scope to absent-in-scope;
+//! it is not a schema-migration tool.
+//!
+//! Safety guards (all enforced in release builds; the function is
+//! `pub` and deletes data):
+//! - `filename` is checked at runtime for `/`, `\\`, and empty.
+//! - Directory subentries are validated via `entry.file_type()`
+//!   (does NOT follow symlinks) — a symlink named like an R4 hex
+//!   cannot redirect deletes outside `h3r4_dir`.
+//! - Subdir names must parse as `h3o::CellIndex` at `Resolution::Four`
+//!   (not just valid hex), so unrelated hex-named directories like
+//!   `"deadbeef"` are skipped even when `scope == None`.
 
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use h3o::{CellIndex, Resolution};
 
 use crate::scope::ScopeBbox;
 
-/// Remove `h3r4_dir/<R4>/<filename>` for every in-scope R4 hex
-/// subdir of `h3r4_dir`. `scope = None` matches every R4 subdir.
+/// Remove `h3r4_dir/<R4>/<filename>` for every in-scope R4 hex subdir
+/// of `h3r4_dir`. `scope = None` matches every real R4 subdir.
 ///
 /// Returns the number of files actually removed (for log + test).
-/// Missing `h3r4_dir` or missing per-R4 files are NOT errors —
-/// the wipe is best-effort cleanup.
-///
-/// Logs one line per deletion to stderr so operators see exactly
-/// which stale files were dropped during a reextract.
+/// Missing `h3r4_dir` or missing per-R4 files are NOT errors — the
+/// wipe is best-effort cleanup. Logs one line per deletion to stderr.
 pub fn wipe_stale_arrows_for_scope(
     h3r4_dir: &Path,
     filename: &str,
     scope: Option<&ScopeBbox>,
 ) -> Result<usize> {
-    assert!(
-        !filename.contains('/') && !filename.contains('\\'),
-        "filename must be a single basename, got {filename:?}",
-    );
+    // Runtime guard, not `debug_assert!` — this is a `pub` data-
+    // deleting helper, and the check must survive release builds
+    // against any future caller that computes `filename` dynamically.
+    if filename.is_empty() || filename.contains('/') || filename.contains('\\') {
+        anyhow::bail!("filename must be a non-empty single basename, got {filename:?}");
+    }
     let read = match std::fs::read_dir(h3r4_dir) {
         Ok(r) => r,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
@@ -54,32 +65,51 @@ pub fn wipe_stale_arrows_for_scope(
     let mut removed = 0usize;
     for entry in read {
         let entry = entry.with_context(|| format!("read_dir entry in {}", h3r4_dir.display()))?;
-        let path = entry.path();
-        if !path.is_dir() {
+        // `file_type()` does NOT follow symlinks; `path.is_dir()`
+        // would. A symlink named like an R4 hex must not redirect the
+        // delete outside `h3r4_dir`.
+        let ft = entry
+            .file_type()
+            .with_context(|| format!("file_type {}", entry.path().display()))?;
+        if !ft.is_dir() {
             continue;
         }
+        let path = entry.path();
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;
         };
-        // The directory name is the R4 hex (`r4_hex_str` output). A
-        // non-hex name means this subdir was created by an unrelated
-        // tool — leave it alone.
-        let Ok(r4) = u64::from_str_radix(name, 16) else {
+        // Directory name is the R4 hex (`r4_hex_str` output).
+        // Validate via `h3o::CellIndex` at Resolution::Four, not just
+        // `u64::from_str_radix` — that rejects unrelated hex-named
+        // scratch directories like `"deadbeef"`.
+        let Ok(r4_u64) = u64::from_str_radix(name, 16) else {
             continue;
         };
+        let Ok(cell) = CellIndex::try_from(r4_u64) else {
+            continue;
+        };
+        if cell.resolution() != Resolution::Four {
+            continue;
+        }
         if let Some(s) = scope {
-            if !s.contains_r4(r4) {
+            if !s.contains_r4(r4_u64) {
                 continue;
             }
         }
         let stale = path.join(filename);
-        if !stale.exists() {
-            continue;
+        // No `exists()` probe — concurrent unlink between check and
+        // remove would upgrade NotFound into a fatal error. Treat
+        // NotFound as a no-op; any other error is fatal.
+        match std::fs::remove_file(&stale) {
+            Ok(()) => {
+                eprintln!("[wipe] removed stale {}", stale.display());
+                removed += 1;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(e).with_context(|| format!("remove {}", stale.display()));
+            }
         }
-        std::fs::remove_file(&stale)
-            .with_context(|| format!("remove {}", stale.display()))?;
-        eprintln!("[wipe] removed stale {}", stale.display());
-        removed += 1;
     }
     Ok(removed)
 }
@@ -176,10 +206,63 @@ mod tests {
         assert!(weird.join("airport_traffic.arrow").exists());
     }
 
+    /// `u64::from_str_radix` accepts arbitrary hex strings; without
+    /// the extra `CellIndex` + `Resolution::Four` validation, a
+    /// scratch directory called `"deadbeef"` would have its
+    /// `airport_traffic.arrow` wiped on a `scope = None` run.
     #[test]
-    #[should_panic(expected = "filename must be a single basename")]
-    fn rejects_filename_with_separator() {
+    fn valid_hex_but_not_h3_r4_is_left_alone() {
         let tmp = tempfile::tempdir().unwrap();
-        let _ = wipe_stale_arrows_for_scope(tmp.path(), "sub/path.arrow", None);
+        let h3r4 = tmp.path().join("h3r4");
+        // "deadbeef" parses as a u64 but is not a valid H3 index.
+        let bogus = h3r4.join("deadbeef");
+        std::fs::create_dir_all(&bogus).unwrap();
+        std::fs::write(bogus.join("airport_traffic.arrow"), b"keep").unwrap();
+        let removed = wipe_stale_arrows_for_scope(&h3r4, "airport_traffic.arrow", None).unwrap();
+        assert_eq!(removed, 0);
+        assert!(bogus.join("airport_traffic.arrow").exists());
+    }
+
+    /// An H3 cell at a different resolution (here R7) parses as a
+    /// `CellIndex` but its resolution is not Four — wipe must reject
+    /// it so an unrelated per-R7 scratch tree under `h3r4_dir`
+    /// cannot have its `*.arrow` deleted.
+    #[test]
+    fn h3_cell_at_wrong_resolution_is_left_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let h3r4 = tmp.path().join("h3r4");
+        let r7 = u64::from(LatLng::new(50.10, 14.26).unwrap().to_cell(Resolution::Seven));
+        let r7_dir = h3r4.join(format!("{r7:015x}"));
+        std::fs::create_dir_all(&r7_dir).unwrap();
+        std::fs::write(r7_dir.join("airport_traffic.arrow"), b"keep").unwrap();
+        let removed = wipe_stale_arrows_for_scope(&h3r4, "airport_traffic.arrow", None).unwrap();
+        assert_eq!(removed, 0);
+        assert!(r7_dir.join("airport_traffic.arrow").exists());
+    }
+
+    #[test]
+    fn rejects_filename_with_forward_slash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = wipe_stale_arrows_for_scope(tmp.path(), "sub/path.arrow", None)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("basename"),
+            "error must mention basename invariant, got: {err}",
+        );
+    }
+
+    #[test]
+    fn rejects_filename_with_backslash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = wipe_stale_arrows_for_scope(tmp.path(), "sub\\path.arrow", None)
+            .unwrap_err();
+        assert!(err.to_string().contains("basename"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_empty_filename() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = wipe_stale_arrows_for_scope(tmp.path(), "", None).unwrap_err();
+        assert!(err.to_string().contains("basename"), "got: {err}");
     }
 }
