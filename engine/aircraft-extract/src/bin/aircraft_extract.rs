@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use aircraft_extract::airport_io::{read_global_airport_lines, read_global_airports};
 use aircraft_extract::arrow_io::read_record_batches;
@@ -37,6 +37,43 @@ struct Cli {
     max_threads: Option<NonZeroUsize>,
     #[command(subcommand)]
     cmd: Cmd,
+}
+
+/// Entry stage for `run-all`. Variants are declared in pipeline order
+/// (Stage 0 → 2C); `PartialOrd`/`Ord` compare by that order so the
+/// dispatcher can ask `from_stage <= FromStage::Shuffle` to decide
+/// whether to execute each phase. Stage reuse skips every phase whose
+/// output already exists on disk under `--work-dir`.
+///
+/// Required inputs under `--work-dir` per variant (output of an earlier
+/// stage that we expect the operator's prior run to have produced):
+///
+/// | Variant   | flights/ | segments/ | segments_by_r4/ |
+/// |-----------|----------|-----------|-----------------|
+/// | Stage0    | —        | —         | —               |
+/// | Stage1    | yes      | —         | —               |
+/// | Shuffle   | —        | yes       | —               |
+/// | Stage1_5  | —        | yes       | yes             |
+/// | Stage2a   | —        | yes       | yes             |
+/// | Stage2b   | —        | yes       | yes             |
+/// | Stage2c   | —        | —         | yes             |
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq, PartialOrd, Ord)]
+enum FromStage {
+    /// Full pipeline: Stage 0 (ADS-B TAR decode) onward. Default.
+    Stage0,
+    /// Skip Stage 0; reuse `<work-dir>/flights/<day>.arrow`.
+    Stage1,
+    /// Skip Stage 0+1; reuse `<work-dir>/segments/<day>.arrow`.
+    Shuffle,
+    /// Skip Stage 0+1+shuffle; reuse `<work-dir>/{segments,segments_by_r4}/`.
+    Stage1_5,
+    /// Skip everything before Stage 2A; reuse `<work-dir>/{segments,segments_by_r4}/`.
+    Stage2a,
+    /// Skip everything before Stage 2B; reuse `<work-dir>/{segments,segments_by_r4}/`.
+    /// Stage 2B reads per-day cruise shards from `segments/`; Stage 2C reads `segments_by_r4/`.
+    Stage2b,
+    /// Skip everything before Stage 2C; reuse `<work-dir>/segments_by_r4/`.
+    Stage2c,
 }
 
 #[derive(Subcommand)]
@@ -139,6 +176,14 @@ enum Cmd {
         /// trajectories.
         #[arg(long)]
         scope_bbox: Option<String>,
+        /// Skip every phase before `<stage>` and reuse its persisted
+        /// input artifact from `--work-dir`. One of:
+        /// `stage0` (default — full pipeline), `stage1`, `shuffle`,
+        /// `stage1-5`, `stage2a`, `stage2b`, `stage2c`. Use after an
+        /// earlier `run-all` populated `--work-dir` to iterate on a
+        /// downstream stage without re-running upstream work.
+        #[arg(long, value_enum, default_value_t = FromStage::Stage0)]
+        from_stage: FromStage,
     },
 }
 
@@ -203,6 +248,7 @@ fn main() -> Result<()> {
             work_dir,
             days,
             scope_bbox,
+            from_stage,
         } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             require_scope_for_subset_cache(&adsb_cache, scope.as_ref())?;
@@ -212,10 +258,13 @@ fn main() -> Result<()> {
                     s.min_lat, s.max_lat, s.min_lon, s.max_lon
                 );
             }
+            if from_stage != FromStage::Stage0 {
+                let name = from_stage_name(from_stage);
+                eprintln!("[run-all] --from-stage {name}: skipping every phase before {name}");
+            }
             let flights_dir = work_dir.join("flights");
             let segments_dir = work_dir.join("segments");
-            std::fs::create_dir_all(&flights_dir)?;
-            std::fs::create_dir_all(&segments_dir)?;
+            let by_r4_dir = work_dir.join("segments_by_r4");
 
             // Dedup before par_iter — Stage 0/1 write fixed paths
             // (flights/<day>.arrow, segments/<day>.arrow) per day, so
@@ -231,44 +280,101 @@ fn main() -> Result<()> {
                 );
             }
             let days = days_dedup;
-
-            let sources: Vec<Box<dyn FlightSource>> =
-                vec![Box::new(AdsbTarSource::new(&adsb_cache))];
             let n_days = days.len() as u16;
 
             // Shared instance — TileStore is per-slot Mutex +
             // Arc<RawTile>, safe to fan out under par_iter.
             let rasters = RealRasters::new(&prepared_dir);
 
-            // Per-day error tolerance: one corrupted TAR or DEM miss
-            // must not throw away the other days' Stage 0+1 work.
-            // Failed days are listed at the end so the operator can
-            // rerun with `--days <failed,…>`.
-            let (ok_paths, failed_days): (Vec<PathBuf>, Vec<String>) = days
-                .par_iter()
-                .partition_map(|day| {
-                    let segments_path = segments_dir.join(format!("{day}.arrow"));
-                    match run_day(day, &sources, &flights_dir, &segments_dir, &rasters) {
-                        Ok(()) if segments_path.exists() => Either::Left(segments_path),
-                        Ok(()) => {
-                            eprintln!("[run-all] {day}: FAILED — no segments file produced");
-                            Either::Right(day.clone())
+            // Per-day phase. `ok_paths` is the input list for both
+            // `shuffle_per_r4` and `run_stage_2b`; either consumer empty
+            // means the corresponding output is silently wiped, so we
+            // must populate it for every variant that still runs them.
+            // After this block, Stage 2B (which runs for any
+            // `from_stage <= Stage2b`) gets a non-empty list — or we
+            // fail loud before nuking anything.
+            let needs_ok_paths = from_stage <= FromStage::Stage2b;
+            let ok_paths: Vec<PathBuf> = if from_stage <= FromStage::Stage1 {
+                std::fs::create_dir_all(&flights_dir)?;
+                std::fs::create_dir_all(&segments_dir)?;
+                let sources: Vec<Box<dyn FlightSource>> =
+                    vec![Box::new(AdsbTarSource::new(&adsb_cache))];
+                // Per-day error tolerance: one corrupted TAR or DEM miss
+                // must not throw away the other days' Stage 0+1 work.
+                // Failed days are listed at the end so the operator can
+                // rerun with `--days <failed,…>`.
+                let (ok_paths, failed_days): (Vec<PathBuf>, Vec<String>) = days
+                    .par_iter()
+                    .partition_map(|day| {
+                        let segments_path = segments_dir.join(format!("{day}.arrow"));
+                        match run_day(
+                            day,
+                            &sources,
+                            &flights_dir,
+                            &segments_dir,
+                            &rasters,
+                            from_stage,
+                        ) {
+                            Ok(()) if segments_path.exists() => Either::Left(segments_path),
+                            Ok(()) => {
+                                eprintln!("[run-all] {day}: FAILED — no segments file produced");
+                                Either::Right(day.clone())
+                            }
+                            Err(e) => {
+                                eprintln!("[run-all] {day}: FAILED stage0/1 — {e}, skipping");
+                                Either::Right(day.clone())
+                            }
                         }
-                        Err(e) => {
-                            eprintln!("[run-all] {day}: FAILED stage0/1 — {e}, skipping");
-                            Either::Right(day.clone())
-                        }
-                    }
-                });
+                    });
 
-            if !failed_days.is_empty() {
+                if !failed_days.is_empty() {
+                    eprintln!(
+                        "[run-all] {} day(s) failed: {} — Stage 2 runs on the rest; rerun with --days {} to retry",
+                        failed_days.len(),
+                        failed_days.join(","),
+                        failed_days.join(",")
+                    );
+                }
+                ok_paths
+            } else if needs_ok_paths {
+                // Skipped Stage 0+1; reuse whatever Stage 1 left in
+                // `segments_dir`. Filter by requested days so a stale
+                // shard from a prior wider run doesn't sneak into
+                // Stage 2B. Empty result = previous Stage 1 never ran
+                // or `--days` doesn't match the cache; fail loud
+                // because Stage 2B would otherwise wipe in-scope
+                // `cruise.arrow` then write nothing.
+                require_input_dir_exists("--work-dir/segments (--from-stage)", &segments_dir)?;
+                let requested: std::collections::HashSet<&str> =
+                    days.iter().map(String::as_str).collect();
+                let mut paths: Vec<PathBuf> = list_segments_day_paths(&segments_dir)?
+                    .into_iter()
+                    .filter(|p| {
+                        p.file_stem()
+                            .and_then(|s| s.to_str())
+                            .map(|s| requested.contains(s))
+                            .unwrap_or(false)
+                    })
+                    .collect();
+                paths.sort();
+                if paths.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "--work-dir/segments {} contains no shard matching --days; rerun \
+                         from an earlier stage or fix --days",
+                        segments_dir.display()
+                    ));
+                }
                 eprintln!(
-                    "[run-all] {} day(s) failed: {} — Stage 2 runs on the rest; rerun with --days {} to retry",
-                    failed_days.len(),
-                    failed_days.join(","),
-                    failed_days.join(",")
+                    "[run-all] reusing {} segment shard(s) from {}",
+                    paths.len(),
+                    segments_dir.display()
                 );
-            }
+                paths
+            } else {
+                // Stage 2C only — neither shuffle nor Stage 2B runs,
+                // so `ok_paths` is unused.
+                Vec::new()
+            };
 
             // Read the global aerodrome set once. Stage 1.5
             // (`run_stage_airport_discover`) uses it for the
@@ -288,50 +394,64 @@ fn main() -> Result<()> {
             // `segments_by_r4/<R4>/{airborne,ground}.arrow`. Stages 1.5
             // / 2A / 2C all consume these; Stage 2B reads the per-day
             // shards directly (cruise straddles R4 boundaries).
-            let by_r4_dir = work_dir.join("segments_by_r4");
-            let t_shuf = Instant::now();
-            aircraft_extract::shuffle::shuffle_per_r4(&ok_paths, &by_r4_dir, scope.as_ref())?;
-            let t1_5 = Instant::now();
-            eprintln!("[run-all] shuffle done ({:?})", t1_5 - t_shuf);
+            if from_stage <= FromStage::Shuffle {
+                let t_shuf = Instant::now();
+                aircraft_extract::shuffle::shuffle_per_r4(&ok_paths, &by_r4_dir, scope.as_ref())?;
+                eprintln!("[run-all] shuffle done ({:?})", t_shuf.elapsed());
+            } else {
+                // Stages 1.5 / 2A / 2C all read `<by_r4_dir>/<R4>/…`;
+                // fail loud before they silently no-op on a missing dir.
+                require_input_dir_exists(
+                    "--work-dir/segments_by_r4 (required by Stage 1.5 / 2A / 2C)",
+                    &by_r4_dir,
+                )?;
+            }
 
             // Stage 1.5 — DBSCAN auto-discovery of OSM-missing
             // airfields. Runs BEFORE Stage 2C so its synth sidecars
             // are visible when Stage 2C loads each R4's airport_lines
             // cache. Writes empty arrows for in-scope R4s with no
             // current clusters so a stale strip cannot leak through.
-            let r1_5 = run_stage_airport_discover(
-                &by_r4_dir,
-                &areas,
-                &global_lines,
-                &h3r4_dir,
-                scope.as_ref(),
-            )?;
-            let t2a = Instant::now();
-            eprintln!(
-                "[run-all] stage1.5 R4s with synth lines={r1_5} ({:?})",
-                t2a - t1_5
-            );
+            if from_stage <= FromStage::Stage1_5 {
+                let t1_5 = Instant::now();
+                let r1_5 = run_stage_airport_discover(
+                    &by_r4_dir,
+                    &areas,
+                    &global_lines,
+                    &h3r4_dir,
+                    scope.as_ref(),
+                )?;
+                eprintln!(
+                    "[run-all] stage1.5 R4s with synth lines={r1_5} ({:?})",
+                    t1_5.elapsed()
+                );
+            }
 
-            let r2a = run_stage_2a(&by_r4_dir, &h3r4_dir, n_days, scope.as_ref(), &rasters)?;
-            let t2b = Instant::now();
-            // Stage 2B reads per-day cruise shards, NOT the shuffled
-            // per-R4 ones — cruise output R4 derives from each
-            // touched R8's parent (`stage_2b.rs:cell.parent(R4)`).
-            let r2b = run_stage_2b(&ok_paths, &h3r4_dir, n_days, scope.as_ref())?;
+            if from_stage <= FromStage::Stage2a {
+                let t2a = Instant::now();
+                let r2a = run_stage_2a(&by_r4_dir, &h3r4_dir, n_days, scope.as_ref(), &rasters)?;
+                eprintln!("[run-all] stage2a={r2a} ({:?})", t2a.elapsed());
+            }
+
+            if from_stage <= FromStage::Stage2b {
+                let t2b = Instant::now();
+                // Stage 2B reads per-day cruise shards, NOT the shuffled
+                // per-R4 ones — cruise output R4 derives from each
+                // touched R8's parent (`stage_2b.rs:cell.parent(R4)`).
+                let r2b = run_stage_2b(&ok_paths, &h3r4_dir, n_days, scope.as_ref())?;
+                eprintln!("[run-all] stage2b={r2b} ({:?})", t2b.elapsed());
+            }
+
+            // Stage 2C always runs — it is the last stage; `from_stage`
+            // can equal Stage2c (run just this one) but never exceed it.
             let t2c = Instant::now();
             let r2c = run_stage_2c(&by_r4_dir, &areas, &h3r4_dir, n_days, scope.as_ref())?;
-            let t_end = Instant::now();
-            eprintln!(
-                "[run-all] stage2a={r2a} ({:?}), stage2b={r2b} ({:?}), stage2c={r2c} ({:?})",
-                t2b - t2a,
-                t2c - t2b,
-                t_end - t2c
-            );
+            eprintln!("[run-all] stage2c={r2c} ({:?})", t2c.elapsed());
 
-            // Best-effort cleanup of the per-R4 shuffle scratch dir.
-            // A crash mid-stage leaves it on disk; the next run's
-            // shuffle wipes it before recreating.
-            let _ = std::fs::remove_dir_all(&by_r4_dir);
+            // `by_r4_dir` is left on disk so `--from-stage stage1-5/2a/2c`
+            // can iterate on the same scratch dir without re-running
+            // shuffle. The next shuffle wipes it before recreating;
+            // operators clear `--work-dir` manually between major runs.
         }
     }
     Ok(())
@@ -376,6 +496,22 @@ fn parse_scope(s: Option<&str>) -> Result<Option<ScopeBbox>> {
         .map_err(|e| anyhow::anyhow!("--scope-bbox: {e}"))
 }
 
+/// Render `FromStage` using its clap-side CLI value (`stage1-5`),
+/// not the Rust variant name (`Stage1_5`). Used in operator-facing
+/// log lines so the displayed value matches what they passed on the
+/// command line.
+fn from_stage_name(from_stage: FromStage) -> &'static str {
+    match from_stage {
+        FromStage::Stage0 => "stage0",
+        FromStage::Stage1 => "stage1",
+        FromStage::Shuffle => "shuffle",
+        FromStage::Stage1_5 => "stage1-5",
+        FromStage::Stage2a => "stage2a",
+        FromStage::Stage2b => "stage2b",
+        FromStage::Stage2c => "stage2c",
+    }
+}
+
 fn init_rayon_pool(max_threads: Option<NonZeroUsize>) -> Result<()> {
     let Some(n) = max_threads else { return Ok(()) };
     rayon::ThreadPoolBuilder::new().num_threads(n.get()).build_global()?;
@@ -411,22 +547,31 @@ fn require_scope_for_subset_cache(
 
 /// Run Stage 0 + Stage 1 for a single day. Lifted out of `RunAll` so
 /// the per-day try/log/continue caller stays a flat `match` instead of
-/// a `Result`-returning IIFE.
+/// a `Result`-returning IIFE. `from_stage` selects whether to execute
+/// Stage 0 — when set to `Stage1`, the caller is reusing a populated
+/// `flights_dir` from a previous run and we go straight to Stage 1.
 fn run_day(
     day: &str,
     sources: &[Box<dyn FlightSource>],
     flights_dir: &Path,
     segments_dir: &Path,
     rasters: &RealRasters,
+    from_stage: FromStage,
 ) -> Result<()> {
     let t0 = Instant::now();
-    let n0 = run_stage_0(sources, day, flights_dir)?;
-    let t_stage0 = Instant::now();
+    let stage0_log = if from_stage <= FromStage::Stage0 {
+        let n0 = run_stage_0(sources, day, flights_dir)?;
+        format!("stage0={n0} ({:?})", t0.elapsed())
+    } else {
+        // Distinguish "skipped" from a real but empty Stage 0 result —
+        // the latter has its own diagnostic (no flights for the day).
+        "stage0=skipped".to_string()
+    };
+    let t_stage1 = Instant::now();
     let n1 = run_stage_1(flights_dir, segments_dir, day, rasters)?;
     eprintln!(
-        "[run-all] {day}: stage0={n0} ({:?}) stage1={n1} ({:?})",
-        t_stage0 - t0,
-        Instant::now() - t_stage0
+        "[run-all] {day}: {stage0_log} stage1={n1} ({:?})",
+        t_stage1.elapsed()
     );
     Ok(())
 }
