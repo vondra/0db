@@ -87,6 +87,185 @@ fn airport_centroids_from_traffic(rows: &[AirportTrafficRowView<'_>]) -> Vec<(f6
         .collect()
 }
 
+/// Aeroway-type sentinels for runway-typed `airport_lines.arrow`
+/// rows. Mirrors `osm-extract::classify::aeroway_type` codomain:
+/// 0=runway, 6=stopway, 7=airstrip. Taxiways (1) deliberately
+/// excluded — their endpoints already sit inside the runway-end
+/// neighborhood at almost every airport, and including them
+/// inflates the anchor list 5-10× at hubs without widening the
+/// gate where it matters.
+///
+/// Wired into the popup gate in a follow-up commit; `#[allow]`
+/// silences dead-code while the resolver is staged.
+#[allow(dead_code)]
+const RUNWAY_AEROWAY_TYPES: [u8; 3] = [0, 6, 7];
+
+#[allow(dead_code)]
+fn is_runway_aeroway_type(t: u8) -> bool {
+    RUNWAY_AEROWAY_TYPES.contains(&t)
+}
+
+/// One per-batch runway-microsegment row extracted from
+/// `airport_lines.arrow` or `synth_airport_lines.arrow`. Carries
+/// only the bits the runway-end resolver needs.
+#[allow(dead_code)]
+struct RunwayLineRow {
+    osm_id: u64,
+    segment_idx: i32,
+    start_lat: f64,
+    start_lon: f64,
+    end_lat: f64,
+    end_lon: f64,
+}
+
+/// Decode one batch's runway-typed rows into `RunwayLineRow`s.
+/// Handles BOTH real OSM lines (`osm_id: Int64`, `segment_idx: Int16`)
+/// and Stage 1.5 synth lines (`osm_id: UInt64`, `segment_idx: UInt16`)
+/// — the lat/lon columns share `Float64` in both schemas. Returns
+/// nothing when required columns are missing or have unexpected types.
+#[allow(dead_code)]
+fn collect_runway_rows(batch: &RecordBatch, out: &mut Vec<RunwayLineRow>) {
+    let (Some(slat), Some(slon), Some(elat), Some(elon), Some(atype)) = (
+        columns::col_f64(batch, "start_lat"),
+        columns::col_f64(batch, "start_lon"),
+        columns::col_f64(batch, "end_lat"),
+        columns::col_f64(batch, "end_lon"),
+        columns::col_u8(batch, "aeroway_type"),
+    ) else {
+        return;
+    };
+    // osm_id is Int64 in real OSM lines, UInt64 in synth. Try both;
+    // bit-identical casts when values fit in i64 (real osm_ids are
+    // always positive per `osm-extract/main.rs:200,287`). Synth ids
+    // use the high bit but live in their own batches.
+    let osm_id_i64 = columns::col_i64(batch, "osm_id");
+    let osm_id_u64 = columns::col_u64(batch, "osm_id");
+    // segment_idx is Int16 (real) or UInt16 (synth).
+    let seg_idx_i16 = columns::col_i16(batch, "segment_idx");
+    let seg_idx_u16 = columns::col_u16(batch, "segment_idx");
+    if osm_id_i64.is_none() && osm_id_u64.is_none() {
+        return;
+    }
+    if seg_idx_i16.is_none() && seg_idx_u16.is_none() {
+        return;
+    }
+    for i in 0..batch.num_rows() {
+        if !is_runway_aeroway_type(atype.value(i)) {
+            continue;
+        }
+        let osm_id: u64 = match (osm_id_i64, osm_id_u64) {
+            (Some(c), _) => c.value(i) as u64,
+            (_, Some(c)) => c.value(i),
+            _ => unreachable!("checked above"),
+        };
+        // segment_idx widened to i32 so the per-osm_id min/max
+        // reduction has headroom regardless of signed/unsigned source.
+        let segment_idx: i32 = match (seg_idx_i16, seg_idx_u16) {
+            (Some(c), _) => c.value(i) as i32,
+            (_, Some(c)) => c.value(i) as i32,
+            _ => unreachable!("checked above"),
+        };
+        out.push(RunwayLineRow {
+            osm_id,
+            segment_idx,
+            start_lat: slat.value(i),
+            start_lon: slon.value(i),
+            end_lat: elat.value(i),
+            end_lon: elon.value(i),
+        });
+    }
+}
+
+/// Extract per-`osm_id` runway endpoints from real OSM
+/// `airport_lines.arrow` + Stage 1.5 `synth_airport_lines.arrow`
+/// batches. For every `osm_id` with at least one runway-typed row,
+/// emit two anchors: the `(start_lat, start_lon)` of the row with
+/// MIN `segment_idx` and the `(end_lat, end_lon)` of the row with
+/// MAX `segment_idx`. Microsegments are emitted in along-the-way
+/// order by `osm-extract::microsegment::split` (and the synth
+/// mirror in `stage_airport_discover_runner.rs`), so these are the
+/// physical OSM way endpoints.
+///
+/// Heliports (no runway rows) and taxiway-only osm_ids emit zero
+/// anchors here; the caller layers the airport_traffic centroid set
+/// on top so heliports retain the legacy gate.
+#[allow(dead_code)]
+fn runway_ends_from_airport_lines(
+    airport_lines_batches: &[RecordBatch],
+    synth_lines_batches: &[RecordBatch],
+) -> Vec<(f64, f64)> {
+    // Per-osm_id running min/max segment_idx + the start/end at each.
+    // i32::MAX / i32::MIN sentinels so the first row always wins.
+    struct Acc {
+        min_seg: i32,
+        min_start_lat: f64,
+        min_start_lon: f64,
+        max_seg: i32,
+        max_end_lat: f64,
+        max_end_lon: f64,
+    }
+    let mut by_osm: HashMap<u64, Acc> = HashMap::new();
+    let mut rows: Vec<RunwayLineRow> = Vec::new();
+    for batch in airport_lines_batches.iter().chain(synth_lines_batches.iter()) {
+        collect_runway_rows(batch, &mut rows);
+    }
+    for r in &rows {
+        let entry = by_osm.entry(r.osm_id).or_insert(Acc {
+            min_seg: i32::MAX,
+            min_start_lat: 0.0,
+            min_start_lon: 0.0,
+            max_seg: i32::MIN,
+            max_end_lat: 0.0,
+            max_end_lon: 0.0,
+        });
+        if r.segment_idx < entry.min_seg {
+            entry.min_seg = r.segment_idx;
+            entry.min_start_lat = r.start_lat;
+            entry.min_start_lon = r.start_lon;
+        }
+        if r.segment_idx > entry.max_seg {
+            entry.max_seg = r.segment_idx;
+            entry.max_end_lat = r.end_lat;
+            entry.max_end_lon = r.end_lon;
+        }
+    }
+    let mut anchors: Vec<(f64, f64)> = Vec::with_capacity(by_osm.len() * 2);
+    for acc in by_osm.into_values() {
+        // Defence: a one-microsegment runway way still has min_seg
+        // ≤ max_seg (both equal) — both endpoints come from the same
+        // row's start/end fields.
+        anchors.push((acc.min_start_lat, acc.min_start_lon));
+        anchors.push((acc.max_end_lat, acc.max_end_lon));
+    }
+    anchors
+}
+
+/// Build the airport-context gate's anchor set.
+///
+/// Returns the **concatenation** of per-osm_id runway endpoints
+/// (from real + synth `airport_lines` batches) and the legacy
+/// per-airport_key mean-midpoint centroids (from `airport_traffic`
+/// rows). The two lists are layered, not exclusive — `is_near_airport`
+/// uses any-of semantics so redundant interior anchors at hubs are
+/// harmless (each sits inside every runway-end's 6 km disk) but they
+/// preserve today's exact behavior at heliports / taxiway-only
+/// aerodromes where no runway anchor would be produced.
+///
+/// Anchor budget at LKPR density: ≤ ~30 runway-end anchors + ≤ ~20
+/// centroids = ≤ ~50 total. The `flat_dist`-per-sub-segment scan
+/// stays sub-millisecond.
+#[allow(dead_code)]
+fn airport_anchors(
+    airport_lines_batches: &[RecordBatch],
+    synth_lines_batches: &[RecordBatch],
+    traffic_rows: &[AirportTrafficRowView<'_>],
+) -> Vec<(f64, f64)> {
+    let mut anchors =
+        runway_ends_from_airport_lines(airport_lines_batches, synth_lines_batches);
+    anchors.extend(airport_centroids_from_traffic(traffic_rows));
+    anchors
+}
+
 /// Run `compute_aircraft_v6` over the popup arrows and merge its output
 /// into an existing `NoiseResult`. Caller is expected to have invoked
 /// `compute_at_point_with_traces` first.
@@ -436,4 +615,274 @@ pub(super) fn assert_airport_traffic_contract(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod runway_anchor_tests {
+    use super::*;
+    use arrow::array::{
+        Float32Array, Float64Array, Int16Array, Int64Array, StringArray, UInt16Array, UInt64Array,
+        UInt8Array,
+    };
+    use arrow::datatypes::{DataType, Field, Schema};
+    use std::sync::Arc;
+
+    /// Schema matching osm-extract `write_airport_lines` for the
+    /// columns this resolver consults. Tests fabricate batches with
+    /// this schema so the helper is exercised without depending on
+    /// real OSM data on disk.
+    fn real_lines_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new("osm_id", DataType::Int64, false),
+            Field::new("segment_idx", DataType::Int16, false),
+            Field::new("start_lat", DataType::Float64, false),
+            Field::new("start_lon", DataType::Float64, false),
+            Field::new("end_lat", DataType::Float64, false),
+            Field::new("end_lon", DataType::Float64, false),
+            Field::new("length_m", DataType::Float32, false),
+            Field::new("heading_deg", DataType::Float32, false),
+            Field::new("aeroway_type", DataType::UInt8, false),
+            Field::new("ref", DataType::Utf8, true),
+        ]))
+    }
+
+    fn synth_lines_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new("osm_id", DataType::UInt64, false),
+            Field::new("segment_idx", DataType::UInt16, false),
+            Field::new("airport_key", DataType::Utf8, false),
+            Field::new("start_lat", DataType::Float64, false),
+            Field::new("start_lon", DataType::Float64, false),
+            Field::new("end_lat", DataType::Float64, false),
+            Field::new("end_lon", DataType::Float64, false),
+            Field::new("length_m", DataType::Float32, false),
+            Field::new("heading_deg", DataType::Float32, false),
+            Field::new("aeroway_type", DataType::UInt8, false),
+            Field::new("name", DataType::Utf8, false),
+        ]))
+    }
+
+    struct RowSpec {
+        osm_id: i64,
+        segment_idx: i16,
+        start_lat: f64,
+        start_lon: f64,
+        end_lat: f64,
+        end_lon: f64,
+        aeroway_type: u8,
+    }
+
+    fn real_batch(rows: &[RowSpec]) -> RecordBatch {
+        let osm_id = Int64Array::from_iter_values(rows.iter().map(|r| r.osm_id));
+        let seg_idx = Int16Array::from_iter_values(rows.iter().map(|r| r.segment_idx));
+        let slat = Float64Array::from_iter_values(rows.iter().map(|r| r.start_lat));
+        let slon = Float64Array::from_iter_values(rows.iter().map(|r| r.start_lon));
+        let elat = Float64Array::from_iter_values(rows.iter().map(|r| r.end_lat));
+        let elon = Float64Array::from_iter_values(rows.iter().map(|r| r.end_lon));
+        let len = Float32Array::from_iter_values(rows.iter().map(|_| 100.0_f32));
+        let head = Float32Array::from_iter_values(rows.iter().map(|_| 0.0_f32));
+        let atype = UInt8Array::from_iter_values(rows.iter().map(|r| r.aeroway_type));
+        let refcol = StringArray::from(vec![None::<&str>; rows.len()]);
+        RecordBatch::try_new(
+            real_lines_schema(),
+            vec![
+                Arc::new(osm_id),
+                Arc::new(seg_idx),
+                Arc::new(slat),
+                Arc::new(slon),
+                Arc::new(elat),
+                Arc::new(elon),
+                Arc::new(len),
+                Arc::new(head),
+                Arc::new(atype),
+                Arc::new(refcol),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn synth_batch(rows: &[RowSpec]) -> RecordBatch {
+        let osm_id = UInt64Array::from_iter_values(rows.iter().map(|r| r.osm_id as u64));
+        let seg_idx = UInt16Array::from_iter_values(rows.iter().map(|r| r.segment_idx as u16));
+        let key = StringArray::from_iter_values(rows.iter().map(|_| "auto-key"));
+        let slat = Float64Array::from_iter_values(rows.iter().map(|r| r.start_lat));
+        let slon = Float64Array::from_iter_values(rows.iter().map(|r| r.start_lon));
+        let elat = Float64Array::from_iter_values(rows.iter().map(|r| r.end_lat));
+        let elon = Float64Array::from_iter_values(rows.iter().map(|r| r.end_lon));
+        let len = Float32Array::from_iter_values(rows.iter().map(|_| 100.0_f32));
+        let head = Float32Array::from_iter_values(rows.iter().map(|_| 0.0_f32));
+        let atype = UInt8Array::from_iter_values(rows.iter().map(|r| r.aeroway_type));
+        let name = StringArray::from_iter_values(rows.iter().map(|_| "synth"));
+        RecordBatch::try_new(
+            synth_lines_schema(),
+            vec![
+                Arc::new(osm_id),
+                Arc::new(seg_idx),
+                Arc::new(key),
+                Arc::new(slat),
+                Arc::new(slon),
+                Arc::new(elat),
+                Arc::new(elon),
+                Arc::new(len),
+                Arc::new(head),
+                Arc::new(atype),
+                Arc::new(name),
+            ],
+        )
+        .unwrap()
+    }
+
+    /// Three abutting runway microsegments → exactly two anchors at
+    /// the way endpoints.
+    #[test]
+    fn real_runway_three_microsegs_yields_two_anchors_at_endpoints() {
+        let batch = real_batch(&[
+            RowSpec { osm_id: 42, segment_idx: 0, start_lat: 50.0, start_lon: 14.0, end_lat: 50.0, end_lon: 14.001, aeroway_type: 0 },
+            RowSpec { osm_id: 42, segment_idx: 1, start_lat: 50.0, start_lon: 14.001, end_lat: 50.0, end_lon: 14.002, aeroway_type: 0 },
+            RowSpec { osm_id: 42, segment_idx: 2, start_lat: 50.0, start_lon: 14.002, end_lat: 50.0, end_lon: 14.003, aeroway_type: 0 },
+        ]);
+        let mut anchors = runway_ends_from_airport_lines(&[batch], &[]);
+        anchors.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        assert_eq!(anchors.len(), 2);
+        assert!((anchors[0].1 - 14.0).abs() < 1e-9);
+        assert!((anchors[1].1 - 14.003).abs() < 1e-9);
+    }
+
+    /// Single-microsegment runway way still produces two anchors —
+    /// the start and end of that one row.
+    #[test]
+    fn one_microseg_runway_emits_both_endpoints_from_same_row() {
+        let batch = real_batch(&[RowSpec {
+            osm_id: 7,
+            segment_idx: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            end_lat: 50.0,
+            end_lon: 14.001,
+            aeroway_type: 0,
+        }]);
+        let mut anchors = runway_ends_from_airport_lines(&[batch], &[]);
+        anchors.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        assert_eq!(anchors.len(), 2);
+        assert!((anchors[0].1 - 14.0).abs() < 1e-9);
+        assert!((anchors[1].1 - 14.001).abs() < 1e-9);
+    }
+
+    /// Taxiway-only osm_ids emit zero anchors. The runway filter is
+    /// load-bearing — taxiway endpoints already sit inside the runway
+    /// envelope at almost every airport.
+    #[test]
+    fn taxiway_only_osm_id_yields_no_anchors() {
+        let batch = real_batch(&[RowSpec {
+            osm_id: 99,
+            segment_idx: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            end_lat: 50.0,
+            end_lon: 14.001,
+            aeroway_type: 1, // taxiway
+        }]);
+        let anchors = runway_ends_from_airport_lines(&[batch], &[]);
+        assert!(anchors.is_empty());
+    }
+
+    /// Mixed runway + taxiway batch keeps only runway anchors. Plus
+    /// the 255 osm-extract parse-failure sentinel must also drop out.
+    #[test]
+    fn mixed_aeroway_types_keeps_runway_only() {
+        let batch = real_batch(&[
+            RowSpec { osm_id: 42, segment_idx: 0, start_lat: 50.0, start_lon: 14.0, end_lat: 50.0, end_lon: 14.001, aeroway_type: 0 },
+            RowSpec { osm_id: 43, segment_idx: 0, start_lat: 50.0, start_lon: 14.002, end_lat: 50.0, end_lon: 14.003, aeroway_type: 1 },
+            RowSpec { osm_id: 44, segment_idx: 0, start_lat: 50.0, start_lon: 14.004, end_lat: 50.0, end_lon: 14.005, aeroway_type: 255 },
+            RowSpec { osm_id: 42, segment_idx: 1, start_lat: 50.0, start_lon: 14.001, end_lat: 50.0, end_lon: 14.002, aeroway_type: 0 },
+        ]);
+        let anchors = runway_ends_from_airport_lines(&[batch], &[]);
+        assert_eq!(anchors.len(), 2, "only osm_id 42 is runway-typed");
+    }
+
+    /// Synth batches contribute alongside real batches. Both use
+    /// distinct osm_id pools (synth has high bit set), so each
+    /// contributes its own pair.
+    #[test]
+    fn synth_batch_emits_anchors_too() {
+        let real = real_batch(&[RowSpec {
+            osm_id: 42, segment_idx: 0, start_lat: 50.0, start_lon: 14.0, end_lat: 50.0, end_lon: 14.001, aeroway_type: 0,
+        }]);
+        // Synth osm_id mirrors Stage 1.5's high-bit encoding
+        // (`SYNTHETIC_OSM_ID_BIT = 1u64 << 63`). `i64::MIN` is the
+        // two's-complement representation of `1u64 << 63`, so the
+        // cast in `synth_batch` round-trips bit-for-bit.
+        let synth = synth_batch(&[RowSpec {
+            osm_id: i64::MIN,
+            segment_idx: 0, start_lat: 51.0, start_lon: 15.0, end_lat: 51.0, end_lon: 15.001, aeroway_type: 7,
+        }]);
+        let anchors = runway_ends_from_airport_lines(&[real], &[synth]);
+        assert_eq!(anchors.len(), 4);
+    }
+
+    /// `airport_anchors` always layers traffic centroids on top of
+    /// runway-end anchors. Heliport (no runway batch rows) gets the
+    /// legacy centroid path, exactly today's behavior.
+    #[test]
+    fn airport_anchors_layers_runway_ends_plus_centroids() {
+        // One runway batch, plus one fabricated traffic row (we build
+        // the AirportTrafficRowView by hand since AirportTrafficRowAccum
+        // requires schema-stamped batches).
+        let batch = real_batch(&[RowSpec {
+            osm_id: 42, segment_idx: 0, start_lat: 50.0, start_lon: 14.0, end_lat: 50.0, end_lon: 14.001, aeroway_type: 0,
+        }]);
+        let band_zero: [f32; 8] = [0.0; 8];
+        let gse_zero: [u32; 3] = [0; 3];
+        let traffic = vec![AirportTrafficRowView {
+            airport_key: "LKTEST",
+            osm_id: 42,
+            segment_idx: 0,
+            geometry_kind: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            end_lat: 50.0,
+            end_lon: 14.001,
+            length_m: 100.0,
+            ops_kind: 1,
+            is_departure: 0,
+            veh_kind: 0,
+            class_idx: 0,
+            period: 0,
+            movements_per_day: 0.0,
+            band_energy_lin: &band_zero,
+            unique_movement_count: 0,
+            unique_arr_count: 0,
+            unique_dep_count: 0,
+            unique_gse_count_per_class: &gse_zero,
+            microseg_unique_count: 0,
+            microseg_unique_arr_count: 0,
+            microseg_unique_dep_count: 0,
+            microseg_unique_gse_count_per_class: &gse_zero,
+        }];
+        let anchors = airport_anchors(&[batch], &[], &traffic);
+        // 2 runway endpoints + 1 traffic centroid = 3.
+        assert_eq!(anchors.len(), 3);
+    }
+
+    /// CRITICAL regression test (rev 1 issue #2): runway lines
+    /// present in the disk but ZERO airport_traffic rows must still
+    /// produce runway-end anchors. Today's centroid-only code path
+    /// would have produced zero anchors here (traffic-coupled).
+    #[test]
+    fn no_traffic_runway_lines_still_emit_anchors() {
+        let batch = real_batch(&[
+            RowSpec { osm_id: 42, segment_idx: 0, start_lat: 50.0, start_lon: 14.0, end_lat: 50.0, end_lon: 14.001, aeroway_type: 0 },
+            RowSpec { osm_id: 42, segment_idx: 1, start_lat: 50.0, start_lon: 14.001, end_lat: 50.0, end_lon: 14.002, aeroway_type: 0 },
+        ]);
+        let anchors = airport_anchors(&[batch], &[], &[]);
+        assert_eq!(anchors.len(), 2);
+    }
+
+    /// Empty disk → empty anchors. Same graceful-degradation behavior
+    /// as today's `airport_centroids_from_traffic` on an empty slice.
+    #[test]
+    fn empty_inputs_produce_empty_anchors() {
+        let anchors = airport_anchors(&[], &[], &[]);
+        assert!(anchors.is_empty());
+    }
 }
