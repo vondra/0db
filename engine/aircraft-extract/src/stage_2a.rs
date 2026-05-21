@@ -32,6 +32,19 @@ pub fn run_stage_2a(
     n_days: u16,
     scope: Option<&ScopeBbox>,
 ) -> Result<usize> {
+    // Wipe stale airborne.arrow from in-scope R4s before workers write
+    // fresh files. R4s with no airborne activity this run would otherwise
+    // retain a prior-run file (possibly older schema) and the popup
+    // reader would fatal-fail on schema_version mismatch. Symmetric to
+    // the Stage 2B/2C guards.
+    let wiped = crate::wipe::wipe_stale_arrows_for_scope(
+        h3r4_dir,
+        "airborne.arrow",
+        scope,
+    )?;
+    if wiped > 0 {
+        eprintln!("[stage2a] wiped {wiped} stale airborne.arrow file(s) before write");
+    }
     let r4_inputs = list_r4_shards(segments_by_r4_dir, "airborne.arrow", scope)?;
     let n_r4 = r4_inputs.len();
     eprintln!("[stage2a] starting: {n_r4} R4 cells");
@@ -243,5 +256,63 @@ mod tests {
         assert_eq!(n, 1);
         let out = h3r4.join(r4_hex_str(r4)).join("airborne.arrow");
         assert!(out.exists(), "Stage 2A must write airborne.arrow");
+    }
+
+    /// Regression for wipe-on-scope applied to airborne: a stale
+    /// `airborne.arrow` in an in-scope R4 must be wiped before
+    /// `run_stage_2a` returns, even if no airborne segments hit that
+    /// R4 this run. Symmetric to Stage 2B/2C tests.
+    #[test]
+    fn run_stage_2a_wipes_in_scope_stale_airborne() {
+        use h3o::{LatLng, Resolution};
+        let tmp = tempfile::tempdir().unwrap();
+        let by_r4 = tmp.path().join("segments_by_r4");
+        let h3r4 = tmp.path().join("h3r4");
+        // Praha R4 — in-scope. No segments_by_r4 input → writer does
+        // not emit a fresh airborne.arrow for this run.
+        let r4 = u64::from(
+            LatLng::new(50.10, 14.26)
+                .unwrap()
+                .to_cell(Resolution::Four),
+        );
+        let r4_dir = h3r4.join(r4_hex_str(r4));
+        std::fs::create_dir_all(&r4_dir).unwrap();
+        let stale = r4_dir.join("airborne.arrow");
+        std::fs::write(&stale, b"stale-prev-run").unwrap();
+        std::fs::create_dir_all(&by_r4).unwrap();
+        let scope = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
+        let n = run_stage_2a(&by_r4, &h3r4, 1, Some(&scope)).unwrap();
+        assert_eq!(n, 0, "no R4 shards → no R4 written");
+        assert!(
+            !stale.exists(),
+            "stale airborne.arrow must be wiped from in-scope R4"
+        );
+    }
+
+    /// Out-of-scope counterexample for the airborne wipe: a stale
+    /// `airborne.arrow` in an R4 OUTSIDE the scope bbox must survive.
+    #[test]
+    fn run_stage_2a_leaves_out_of_scope_stale_airborne() {
+        use h3o::{LatLng, Resolution};
+        let tmp = tempfile::tempdir().unwrap();
+        let by_r4 = tmp.path().join("segments_by_r4");
+        let h3r4 = tmp.path().join("h3r4");
+        // Gran Canaria R4 — outside Praha scope.
+        let r4 = u64::from(
+            LatLng::new(27.93, -15.39)
+                .unwrap()
+                .to_cell(Resolution::Four),
+        );
+        let r4_dir = h3r4.join(r4_hex_str(r4));
+        std::fs::create_dir_all(&r4_dir).unwrap();
+        let stale = r4_dir.join("airborne.arrow");
+        std::fs::write(&stale, b"stale-prev-run").unwrap();
+        std::fs::create_dir_all(&by_r4).unwrap();
+        let praha = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
+        let _ = run_stage_2a(&by_r4, &h3r4, 1, Some(&praha)).unwrap();
+        assert!(
+            stale.exists(),
+            "out-of-scope R4 airborne.arrow must survive a scoped reextract"
+        );
     }
 }
