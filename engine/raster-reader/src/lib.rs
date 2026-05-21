@@ -17,6 +17,12 @@ fn env_usize(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+/// Half-edge of the `building_enclosure` 3×3 probe footprint, in metres.
+/// 75 m yields a 150 × 150 m isotropic square; the prior 0.001° degree
+/// step squeezed E-W at high latitudes (down to ~75 m at 70°N), making
+/// the enclosure metric latitude-dependent.
+const ENCLOSURE_RADIUS_M: f64 = 75.0;
+
 /// Real raster data from 1°×1° tiles. Implements RasterSampler.
 pub struct RealRasters {
     pub dem: TileStore,
@@ -97,13 +103,22 @@ impl RasterSampler for RealRasters {
     }
 
     fn building_enclosure(&self, lat: f64, lon: f64) -> f64 {
-        // Sample building heights in ~100m radius (3×3 grid at ~33m spacing)
-        let step = 0.001; // ~110m at 50°N
+        // 3×3 probe at ENCLOSURE_RADIUS_M (75 m) N-S and E-W.
+        // Earlier code used a constant 0.001° step which is ~111 m N-S
+        // but only ~111·cos(lat) m E-W — a 220 × 142 m rectangle at
+        // Praha (50°N), shrinking to 220 × 75 m at Tromsø (70°N).
+        // Converting to metric isotropises the enclosure footprint.
+        let step_lat_deg = ENCLOSURE_RADIUS_M / noise_compute::constants::M_PER_DEG_LAT;
+        let step_lon_deg = ENCLOSURE_RADIUS_M
+            / noise_compute::constants::m_per_deg_lon(lat.to_radians());
         let mut tall_count = 0;
         let mut total = 0;
         for dr in [-1, 0, 1] {
             for dc in [-1, 0, 1] {
-                let h = self.building.sample(lat + dr as f64 * step, lon + dc as f64 * step);
+                let h = self.building.sample(
+                    lat + dr as f64 * step_lat_deg,
+                    lon + dc as f64 * step_lon_deg,
+                );
                 if h > 5.0 { tall_count += 1; }
                 total += 1;
             }
@@ -347,12 +362,12 @@ impl FusedGrid {
         // DEM at sub-cell-shifted positions, introducing a persistent
         // half-cell phase error that `lookup_fused` / `pixel` cannot correct.
         //
-        // Margin = 5 cells: `building_enclosure` probes at ±0.001° (~110 m
-        // at 50°N ≈ 3.6 arcsec = 3.6 cells). A 1-cell margin silently
-        // clamped those probes at hex boundaries to edge pixels, diverging
-        // from RealRasters. 5 cells covers the probe radius plus bilinear
-        // neighbours.
-        const MARGIN_CELLS: i32 = 5;
+        // Margin sized to cover `building_enclosure`'s metric 3×3 probe
+        // (ENCLOSURE_RADIUS_M = 75 m) plus bilinear neighbours. Probe
+        // footprint in DEM cells (30 m): lat ≈ 2.4 cells; lon ≈ 2.4/cos(lat),
+        // which reaches ~7.1 cells at 70°N. 8 cells stays safe through
+        // ~76°N — beyond the global atlas's effective latitude range.
+        const MARGIN_CELLS: i32 = 8;
         let lat_lo_i = (lat_min * inv_cell_deg).floor() as i32 - MARGIN_CELLS;
         let lon_lo_i = (lon_min * inv_cell_deg).floor() as i32 - MARGIN_CELLS;
         let lat_hi_i = (lat_max * inv_cell_deg).ceil() as i32 + MARGIN_CELLS;
@@ -467,12 +482,19 @@ impl noise_compute::types::RasterSampler for FusedGrid {
     }
 
     fn building_enclosure(&self, lat: f64, lon: f64) -> f64 {
-        let step = 0.001;
+        // Mirror RealRasters::building_enclosure: metric 3×3 probe at
+        // ENCLOSURE_RADIUS_M (75 m). Required for popup/pipeline parity.
+        let step_lat_deg = ENCLOSURE_RADIUS_M / noise_compute::constants::M_PER_DEG_LAT;
+        let step_lon_deg = ENCLOSURE_RADIUS_M
+            / noise_compute::constants::m_per_deg_lon(lat.to_radians());
         let mut tall = 0;
         let mut total = 0;
         for dr in [-1, 0, 1] {
             for dc in [-1, 0, 1] {
-                let h = self.pixel(lat + dr as f64 * step, lon + dc as f64 * step).building;
+                let h = self.pixel(
+                    lat + dr as f64 * step_lat_deg,
+                    lon + dc as f64 * step_lon_deg,
+                ).building;
                 if h > 5 { tall += 1; }
                 total += 1;
             }
