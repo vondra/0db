@@ -35,6 +35,7 @@ pub mod stage_airport_discover;
 pub mod stage_airport_discover_runner;
 pub mod synth_airport_io;
 pub mod trace;
+pub mod wipe;
 
 /// Schema-version tag stamped into every Arrow file produced by this
 /// crate. Reader-side `assert_schema_version` rejects mismatches so

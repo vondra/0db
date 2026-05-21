@@ -42,6 +42,18 @@ pub fn run_stage_2c(
     n_days: u16,
     scope: Option<&ScopeBbox>,
 ) -> Result<usize> {
+    // Wipe stale airport_traffic.arrow from in-scope R4s before workers
+    // write fresh files. R4s that have no traffic this run would otherwise
+    // retain a prior-run file (possibly older schema) and the popup
+    // reader would fatal-fail on schema_version mismatch.
+    let wiped = crate::wipe::wipe_stale_arrows_for_scope(
+        h3r4_dir,
+        "airport_traffic.arrow",
+        scope,
+    )?;
+    if wiped > 0 {
+        eprintln!("[stage2c] wiped {wiped} stale airport_traffic.arrow file(s) before write");
+    }
     let traffic_n = airport_traffic_writer::run_airport_traffic(
         segments_by_r4_dir,
         airport_areas,
