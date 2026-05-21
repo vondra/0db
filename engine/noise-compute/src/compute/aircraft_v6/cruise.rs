@@ -37,7 +37,6 @@ struct HexTopFlight {
     peak_lmax: f64,
     altitude_m: f64,
     class_idx: u8,
-    period: u8,
     aircraft_type: [u8; 4],
     callsign: String,
 }
@@ -249,7 +248,6 @@ pub fn scatter(
                     peak_lmax: f64::NEG_INFINITY,
                     altitude_m: 0.0,
                     class_idx: class_idx as u8,
-                    period: row.period,
                     aircraft_type: *cand_view.aircraft_type,
                     callsign: cand_view.callsign.to_string(),
                 });
@@ -257,7 +255,6 @@ pub fn scatter(
                     cand.peak_lmax = lmax;
                     cand.altitude_m = cpa.relative_alt_m;
                     cand.class_idx = class_idx as u8;
-                    cand.period = row.period;
                 }
             }
             entry.period_energy[period] += energy;
@@ -324,7 +321,6 @@ fn top_flights_for_hex(top_fids: &HashMap<u64, HexTopFlight>) -> Vec<CruiseHexTo
             let (icao_hex, start_unix) = crate::flight_id::icao_hex_and_start_unix(fid);
             let date = start_unix.map(date_from_unix).unwrap_or_default();
             let time_utc = start_unix.map(time_from_unix).unwrap_or_default();
-            let _ = t.period;
             CruiseHexTopFlight {
                 lmax_db: round1(t.peak_lmax),
                 altitude_m: round1(t.altitude_m),
