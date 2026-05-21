@@ -511,16 +511,18 @@ fn sum_periods_linear(sources: &[SourceResult]) -> NoisePeriods {
 /// Stamp written by every aircraft-extract Arrow file. Inline copy
 /// (not a build-dep) keeps arrow IPC / parquet / anyhow out of the
 /// popup runtime; must move in lock-step with `aircraft-extract::SCHEMA_VERSION`.
-/// v14 replaces the per-fid cruise lists with bounded top-K
-/// `top_candidates` + scalar `unique_count`. Old v13 files would
-/// silently decode to zero fids under the new column layout — must
-/// reject loud.
-pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v14";
+/// v15 (Opt A) adds pre-sampled terrain elevations to airborne
+/// sub-segments (`terrain_start_elev_m`, `terrain_mid_elev_m`,
+/// `terrain_end_elev_m`) + Stage 1 `start_elev_m` / `end_elev_m` so
+/// the popup can skip ~1 M raster lookups per LKPR query. v14 files
+/// would decode the missing columns as zero and falsely keep
+/// "below-ground" segments — must reject loud.
+pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v15";
 
 /// Versions accepted under the dev-only `ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1`
-/// escape hatch. v13 is NOT in this list (column layout changed —
-/// legacy decode would silently lose fid data; see plan §1.4 + Codex
-/// W1 + Claude W7).
+/// escape hatch. v14 / v13 are NOT in this list (column layouts changed
+/// in ways that would silently mis-decode — see plan §1.4 + Codex W1 +
+/// Claude W7; v15 adds new mandatory terrain columns).
 const LEGACY_SCHEMA_VERSIONS: &[&str] = &["v12"];
 
 /// The `airport_traffic.arrow` semantic contract. `schema_version`

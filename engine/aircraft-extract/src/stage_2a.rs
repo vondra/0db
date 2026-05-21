@@ -7,6 +7,14 @@
 //! Consumes the per-R4 airborne shards produced by
 //! [`crate::shuffle::shuffle_per_r4`] — one input file per R4 means each
 //! worker owns its R4's segments + accumulator, no global merge.
+//!
+//! v15 (Opt A) samples per-sub-segment midpoint elevation here from
+//! `rasters.dem` so the popup terrain gates can drop `SegmentTerrain::sample`
+//! (5 raster lookups per sub-segment, mutex-serialised in raster-reader)
+//! on the hot path. Start/end elevations propagate from Stage 1's
+//! per-point loop. Stage 2A is the right layer for mid because the
+//! mid-point is interpolated between two ADS-B samples, not stored
+//! per-point.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -21,16 +29,27 @@ use crate::flight::{
 use crate::geo::r4_hex_str;
 use crate::scope::ScopeBbox;
 use crate::shuffle::list_r4_shards;
+use noise_compute::types::RasterSampler;
+use raster_reader::RealRasters;
 
 /// Run Stage 2A against the shuffled per-R4 airborne shards under
 /// `segments_by_r4_dir/<R4>/airborne.arrow`. When `scope` is set, R4
 /// subdirs outside it are skipped — scope was applied during shuffle
 /// already, so this is defensive and cheap.
+///
+/// `rasters` provides DEM access for per-sub-segment midpoint elevation
+/// (v15 Opt A). The shared `RealRasters` instance is mutex-internal so
+/// rayon parallelism is safe; the caller may want to call
+/// `rasters.dem.preload_bbox` before invoking us if the scope is known
+/// (CLI does this implicitly via Stage 1 having already touched every
+/// tile in scope; in isolated `stage2a` runs preload happens per-R4
+/// inside the per-shard loop).
 pub fn run_stage_2a(
     segments_by_r4_dir: &Path,
     h3r4_dir: &Path,
     n_days: u16,
     scope: Option<&ScopeBbox>,
+    rasters: &RealRasters,
 ) -> Result<usize> {
     // Wipe stale airborne.arrow from in-scope R4s before workers write
     // fresh files. R4s with no airborne activity this run would otherwise
@@ -56,7 +75,7 @@ pub fn run_stage_2a(
         .try_for_each(|(r4, shard_path)| -> Result<()> {
             let segments = read_segments(shard_path)
                 .with_context(|| format!("read {}", shard_path.display()))?;
-            let events = aggregate_events_for_r4(&segments);
+            let events = aggregate_events_for_r4(&segments, rasters);
             if events.is_empty() {
                 return Ok(());
             }
@@ -71,7 +90,10 @@ pub fn run_stage_2a(
     Ok(written)
 }
 
-fn aggregate_events_for_r4(segments: &[FlightSegment]) -> Vec<AirborneEvent> {
+fn aggregate_events_for_r4(
+    segments: &[FlightSegment],
+    rasters: &RealRasters,
+) -> Vec<AirborneEvent> {
     let mut by_flight: HashMap<u64, AirborneEventBuilder> = HashMap::new();
     for seg in segments {
         // Shuffle pre-filtered by Phase; veh_kind only filtered here
@@ -84,7 +106,7 @@ fn aggregate_events_for_r4(segments: &[FlightSegment]) -> Vec<AirborneEvent> {
         by_flight
             .entry(seg.flight_id)
             .or_insert_with(|| AirborneEventBuilder::new(seg))
-            .push(seg);
+            .push(seg, rasters);
     }
     by_flight.into_values().map(AirborneEventBuilder::finish).collect()
 }
@@ -121,7 +143,7 @@ impl AirborneEventBuilder {
             total_length_m: 0.0,
         }
     }
-    fn push(&mut self, seg: &FlightSegment) {
+    fn push(&mut self, seg: &FlightSegment, rasters: &RealRasters) {
         let mut flags = 0u8;
         if seg.is_departure() {
             flags |= segment_flags::IS_DEPARTURE;
@@ -143,6 +165,15 @@ impl AirborneEventBuilder {
             .max(seg.start_lon)
             .max(seg.end_lon);
         self.total_length_m += seg.length_m;
+        // v15: sample mid-segment terrain elevation here. Start/end
+        // come from Stage 1 (per-point ADS-B lookup); mid is between
+        // two ADS-B samples and must be sampled now. Stored explicitly
+        // so the popup's `mid_alt - mid_elev` AGL check stays correct
+        // in mountainous terrain (linear interpolation between start /
+        // end can be off by tens of metres at LOWI / SEQM / KASE).
+        let mid_lat = ((seg.start_lat as f64) + (seg.end_lat as f64)) * 0.5;
+        let mid_lon = ((seg.start_lon as f64) + (seg.end_lon as f64)) * 0.5;
+        let mid_elev = rasters.elevation(mid_lat, mid_lon) as f32;
         self.sub_segments.push(AirborneSubSegment {
             start_lat: seg.start_lat,
             start_lon: seg.start_lon,
@@ -155,6 +186,9 @@ impl AirborneEventBuilder {
             period: seg.period,
             date_id: seg.date_id,
             flags,
+            terrain_start_elev_m: seg.start_elev_m,
+            terrain_mid_elev_m: mid_elev,
+            terrain_end_elev_m: seg.end_elev_m,
         });
     }
     fn finish(self) -> AirborneEvent {
@@ -202,16 +236,34 @@ mod tests {
             speed_kt: 250.0,
             length_m: 200.0,
             agl_avg_m: 500.0,
+            start_elev_m: 250.0,
+            end_elev_m: 260.0,
         }
+    }
+
+    /// Test-only `RealRasters` factory: points at a tempdir that has
+    /// no DEM tiles, so `rasters.elevation` returns 0.0 m everywhere
+    /// (the raster-reader fall-through path for missing tiles). Keeps
+    /// unit tests independent of `data/prepared` DEM availability.
+    fn test_rasters() -> RealRasters {
+        let tmp = tempfile::tempdir().unwrap();
+        // RealRasters::new takes a `data/prepared` dir; an empty dir
+        // exercises the no-tile path which returns sea-level (0 m).
+        // We leak the tmp so the path remains valid for the test's
+        // lifetime — tests bin gets cleaned up at process exit anyway.
+        let path = tmp.path().to_path_buf();
+        std::mem::forget(tmp);
+        RealRasters::new(&path)
     }
 
     #[test]
     fn aggregate_groups_per_flight() {
+        let rasters = test_rasters();
         let s1 = seg(1, 50.10, 14.26);
         let s2 = seg(1, 50.10, 14.27);
         let s3 = seg(2, 50.10, 14.26);
         let segs = vec![s1, s2, s3];
-        let events = aggregate_events_for_r4(&segs);
+        let events = aggregate_events_for_r4(&segs, &rasters);
         assert_eq!(events.len(), 2);
         let f1 = events.iter().find(|e| e.flight_id == 1).unwrap();
         assert_eq!(f1.sub_segments.len(), 2);
@@ -221,14 +273,31 @@ mod tests {
 
     #[test]
     fn aggregate_filters_non_aircraft_and_non_airborne() {
+        let rasters = test_rasters();
         let mut gse = seg(1, 50.10, 14.26);
         gse.veh_kind = 1;
         let mut ground = seg(2, 50.10, 14.26);
         ground.phase = Phase::Ground;
         let ok = seg(3, 50.10, 14.26);
-        let events = aggregate_events_for_r4(&[gse, ground, ok]);
+        let events = aggregate_events_for_r4(&[gse, ground, ok], &rasters);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].flight_id, 3);
+    }
+
+    #[test]
+    fn aggregate_propagates_terrain_elevs_from_stage1() {
+        // Synthetic case: Stage 1 said start=250 m, end=260 m. With
+        // ZeroRasters mid_elev = 0. Verifies start/end pass through
+        // and mid is sampled (not interpolated).
+        let rasters = test_rasters();
+        let events = aggregate_events_for_r4(&[seg(1, 50.10, 14.26)], &rasters);
+        assert_eq!(events.len(), 1);
+        let sub = &events[0].sub_segments[0];
+        assert!((sub.terrain_start_elev_m - 250.0).abs() < 1e-3);
+        assert!((sub.terrain_end_elev_m - 260.0).abs() < 1e-3);
+        // mid is sampled from rasters (0 m at empty-tile fall-through).
+        // The point: it's NOT (250+260)/2 = 255, it's the raster value.
+        assert!((sub.terrain_mid_elev_m - 0.0).abs() < 1e-3);
     }
 
     /// Round trip: write a per-R4 airborne shard via the shuffle
@@ -252,7 +321,8 @@ mod tests {
         )
         .unwrap();
 
-        let n = run_stage_2a(&by_r4, &h3r4, 1, None).unwrap();
+        let rasters = test_rasters();
+        let n = run_stage_2a(&by_r4, &h3r4, 1, None, &rasters).unwrap();
         assert_eq!(n, 1);
         let out = h3r4.join(r4_hex_str(r4)).join("airborne.arrow");
         assert!(out.exists(), "Stage 2A must write airborne.arrow");
@@ -281,7 +351,8 @@ mod tests {
         std::fs::write(&stale, b"stale-prev-run").unwrap();
         std::fs::create_dir_all(&by_r4).unwrap();
         let scope = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
-        let n = run_stage_2a(&by_r4, &h3r4, 1, Some(&scope)).unwrap();
+        let rasters = test_rasters();
+        let n = run_stage_2a(&by_r4, &h3r4, 1, Some(&scope), &rasters).unwrap();
         assert_eq!(n, 0, "no R4 shards → no R4 written");
         assert!(
             !stale.exists(),
@@ -309,7 +380,8 @@ mod tests {
         std::fs::write(&stale, b"stale-prev-run").unwrap();
         std::fs::create_dir_all(&by_r4).unwrap();
         let praha = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
-        let _ = run_stage_2a(&by_r4, &h3r4, 1, Some(&praha)).unwrap();
+        let rasters = test_rasters();
+        let _ = run_stage_2a(&by_r4, &h3r4, 1, Some(&praha), &rasters).unwrap();
         assert!(
             stale.exists(),
             "out-of-scope R4 airborne.arrow must survive a scoped reextract"

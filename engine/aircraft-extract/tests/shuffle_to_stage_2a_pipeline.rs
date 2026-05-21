@@ -15,6 +15,17 @@ use aircraft_extract::flight::{FlightSegment, Phase};
 use aircraft_extract::geo::{lat_lon_to_cell, r4_hex_str};
 use aircraft_extract::shuffle::shuffle_per_r4;
 use aircraft_extract::stage_2a::run_stage_2a;
+use raster_reader::RealRasters;
+
+/// Empty-tree `RealRasters` for integration tests: falls back to
+/// sea-level (0 m) elevation everywhere without depending on the
+/// real DEM tile cache under `data/prepared`.
+fn test_rasters() -> RealRasters {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().to_path_buf();
+    std::mem::forget(tmp);
+    RealRasters::new(&path)
+}
 
 fn seg(flight_id: u64, phase: Phase, lat: f32, lon: f32) -> FlightSegment {
     FlightSegment {
@@ -39,6 +50,8 @@ fn seg(flight_id: u64, phase: Phase, lat: f32, lon: f32) -> FlightSegment {
         speed_kt: 300.0,
         length_m: 200.0,
         agl_avg_m: 1000.0,
+        start_elev_m: 0.0,
+        end_elev_m: 0.0,
     }
 }
 
@@ -112,7 +125,7 @@ fn shuffle_then_stage_2a_writes_per_r4_outputs() {
         "shuffle output dir must contain exactly the two visited R4s"
     );
 
-    let n_r4 = run_stage_2a(&by_r4_dir, &h3r4_dir, 2, None).unwrap();
+    let n_r4 = run_stage_2a(&by_r4_dir, &h3r4_dir, 2, None, &test_rasters()).unwrap();
     assert_eq!(n_r4, 2, "Stage 2A should emit airborne.arrow for both R4s");
 
     let cz_airborne_path = h3r4_dir.join(r4_hex_str(r4_cz)).join("airborne.arrow");
@@ -183,6 +196,6 @@ fn empty_input_pipeline_is_a_clean_noop() {
     assert!(!tmp.path().join("temp_shuffle").exists());
     assert!(list_r4_dirs(&by_r4_dir).is_empty());
 
-    let n = run_stage_2a(&by_r4_dir, &h3r4_dir, 1, None).unwrap();
+    let n = run_stage_2a(&by_r4_dir, &h3r4_dir, 1, None, &test_rasters()).unwrap();
     assert_eq!(n, 0);
 }

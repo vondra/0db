@@ -285,6 +285,8 @@ mod tests {
             speed_kt: 300.0,
             length_m: 200.0,
             agl_avg_m: 1000.0,
+            start_elev_m: 0.0,
+            end_elev_m: 0.0,
         }
     }
 

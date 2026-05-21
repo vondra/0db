@@ -91,6 +91,14 @@ pub struct Flight {
 /// `veh_kind`/`gse_class` mirror the `Flight` fields and propagate
 /// down so Stage 2A/2B/2C writers can route GSE segments off the
 /// aircraft NPD path. See `Flight` for the contract.
+///
+/// `start_elev_m` / `end_elev_m` are sampled at the segment endpoints
+/// during Stage 1 (Opt A v15): the per-point AGL loop already calls
+/// `rasters.elevation` so emitting `elev = alt_msl - agl` adds zero
+/// extra raster I/O. Stage 2A propagates these into airborne
+/// sub-segments so the popup kernel can skip `SegmentTerrain::sample`
+/// on the hot path. For ground-flagged endpoints the popup ignores
+/// the elev value (it gates on the `ON_GROUND` flag earlier).
 #[derive(Clone)]
 pub struct FlightSegment {
     pub flight_id: u64,
@@ -114,6 +122,8 @@ pub struct FlightSegment {
     pub speed_kt: f32,
     pub length_m: f32,
     pub agl_avg_m: f32,
+    pub start_elev_m: f32,
+    pub end_elev_m: f32,
 }
 
 impl FlightSegment {
@@ -160,6 +170,20 @@ pub struct AirborneEvent {
 /// One sub-segment inside an [`AirborneEvent`]. Period and date are
 /// stored per sub-segment so a long airborne crossing that spans the
 /// 19:00 evening boundary still gets the correct Lden weighting.
+///
+/// `terrain_{start,mid,end}_elev_m` are pre-sampled at extract time
+/// (Opt A v15): start/end propagate from Stage 1's per-point elevation;
+/// mid is sampled at Stage 2A from the midpoint of the sub-segment.
+/// The popup terrain gates (`is_ground_stale`, `is_valid_airborne`,
+/// `segment_sel`) read these directly instead of calling
+/// `SegmentTerrain::sample` (5 raster lookups per sub-segment). At
+/// LKPR popup this saves ~1 M raster mutex acquisitions.
+///
+/// `mid` is stored explicitly rather than interpolated: in mountainous
+/// terrain (LOWI / SEQM / SLLP / KASE) the mid-point elevation can
+/// differ from `(start+end)/2` by tens of meters at the sub-segment
+/// median length of 168 m, and the linear interpolation would silently
+/// degrade the `mid_alt - mid_elev` AGL check.
 #[derive(Clone)]
 pub struct AirborneSubSegment {
     pub start_lat: f32,
@@ -173,6 +197,9 @@ pub struct AirborneSubSegment {
     pub period: u8,
     pub date_id: i16,
     pub flags: u8,
+    pub terrain_start_elev_m: f32,
+    pub terrain_mid_elev_m: f32,
+    pub terrain_end_elev_m: f32,
 }
 
 /// One entry in a cruise row's `top_candidates` list (v14). Identity

@@ -79,6 +79,12 @@ enum Cmd {
         segments_by_r4: PathBuf,
         #[arg(long)]
         h3r4_dir: PathBuf,
+        /// `data/prepared` root — Stage 2A samples per-sub-segment
+        /// midpoint DEM elevation here (v15 Opt A). Same path Stage 1
+        /// receives; reuse to share the tile cache when calling stages
+        /// in sequence (`run-all` does this implicitly).
+        #[arg(long)]
+        prepared_dir: PathBuf,
         #[arg(long, default_value_t = 1)]
         n_days: u16,
         /// Optional `min_lat,min_lon,max_lat,max_lon` bbox — required
@@ -158,10 +164,17 @@ fn main() -> Result<()> {
             aircraft_extract::shuffle::shuffle_per_r4(&day_paths, &out_dir, scope.as_ref())?;
             eprintln!("[shuffle] {} day shards → {}", day_paths.len(), out_dir.display());
         }
-        Cmd::Stage2a { segments_by_r4, h3r4_dir, n_days, scope_bbox } => {
+        Cmd::Stage2a {
+            segments_by_r4,
+            h3r4_dir,
+            prepared_dir,
+            n_days,
+            scope_bbox,
+        } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             require_input_dir_exists("--segments-by-r4", &segments_by_r4)?;
-            let n = run_stage_2a(&segments_by_r4, &h3r4_dir, n_days, scope.as_ref())?;
+            let rasters = RealRasters::new(&prepared_dir);
+            let n = run_stage_2a(&segments_by_r4, &h3r4_dir, n_days, scope.as_ref(), &rasters)?;
             eprintln!("[stage2a] {n} R4 hexes written");
         }
         Cmd::Stage2b { segments_dir, h3r4_dir, n_days, scope_bbox } => {
@@ -299,7 +312,7 @@ fn main() -> Result<()> {
                 t2a - t1_5
             );
 
-            let r2a = run_stage_2a(&by_r4_dir, &h3r4_dir, n_days, scope.as_ref())?;
+            let r2a = run_stage_2a(&by_r4_dir, &h3r4_dir, n_days, scope.as_ref(), &rasters)?;
             let t2b = Instant::now();
             // Stage 2B reads per-day cruise shards, NOT the shuffled
             // per-R4 ones — cruise output R4 derives from each

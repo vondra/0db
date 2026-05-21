@@ -112,8 +112,13 @@ pub fn point_is_sane(pt: &TracePoint) -> bool {
 /// Trajectory-level fix per plan: a per-segment filter would drop only
 /// the underground sub-segment, leaving the fabricated approach
 /// segments before it. Truncating the whole tail eliminates the leak.
-pub fn validate_flight_trajectory(points: &mut Vec<TracePoint>, agl_m: &mut Vec<f32>) {
+pub fn validate_flight_trajectory(
+    points: &mut Vec<TracePoint>,
+    agl_m: &mut Vec<f32>,
+    elev_m: &mut Vec<f32>,
+) {
     debug_assert_eq!(points.len(), agl_m.len());
+    debug_assert_eq!(points.len(), elev_m.len());
     let underground = agl_m.iter().position(|&a| a < HARD_AGL_FLOOR_M);
     let descent = scan_for_sustained_descent(points);
     let cut = match (underground, descent) {
@@ -124,8 +129,9 @@ pub fn validate_flight_trajectory(points: &mut Vec<TracePoint>, agl_m: &mut Vec<
         let keep = backtrack_to_last_credible(points, agl_m, idx);
         points.truncate(keep);
         agl_m.truncate(keep);
+        elev_m.truncate(keep);
     }
-    drop_teleport_points(points, agl_m);
+    drop_teleport_points(points, agl_m, elev_m);
 }
 
 fn scan_for_sustained_descent(points: &[TracePoint]) -> Option<usize> {
@@ -166,7 +172,11 @@ fn backtrack_to_last_credible(
     idx.min(points.len())
 }
 
-fn drop_teleport_points(points: &mut Vec<TracePoint>, agl_m: &mut Vec<f32>) {
+fn drop_teleport_points(
+    points: &mut Vec<TracePoint>,
+    agl_m: &mut Vec<f32>,
+    elev_m: &mut Vec<f32>,
+) {
     if points.len() < 2 {
         return;
     }
@@ -200,12 +210,14 @@ fn drop_teleport_points(points: &mut Vec<TracePoint>, agl_m: &mut Vec<f32>) {
             if j != i {
                 points.swap(j, i);
                 agl_m.swap(j, i);
+                elev_m.swap(j, i);
             }
             j += 1;
         }
     }
     points.truncate(j);
     agl_m.truncate(j);
+    elev_m.truncate(j);
 }
 
 /// Per-segment receiver-independent filter. `length_m` is the segment
@@ -315,13 +327,15 @@ mod tests {
         ];
         // Synthetic AGL: last two points underground.
         let mut agl = vec![1500.0, 1000.0, 800.0, -100.0, -500.0];
-        validate_flight_trajectory(&mut points, &mut agl);
+        let mut elev = vec![0.0f32; agl.len()];
+        validate_flight_trajectory(&mut points, &mut agl, &mut elev);
         // Cuts at the first agl < HARD_AGL_FLOOR (-300m), which is
         // index 4 (the -500 point). Backtracks through index 3 (-100 m
         // is also negative) to keep index 3 only if AGL >= 0. Here
         // index 2 has 800m → keep first 3 points.
         assert_eq!(points.len(), 3);
         assert_eq!(agl.len(), 3);
+        assert_eq!(elev.len(), 3, "elev_m must follow agl truncation");
     }
 
     #[test]
@@ -334,7 +348,8 @@ mod tests {
             pt(20.0, 50.004, 14.004, 3000.0, -8500.0, 0),
         ];
         let mut agl = vec![1500.0, 1000.0, 600.0, 200.0, 100.0];
-        validate_flight_trajectory(&mut points, &mut agl);
+        let mut elev = vec![0.0f32; agl.len()];
+        validate_flight_trajectory(&mut points, &mut agl, &mut elev);
         assert!(points.len() <= 1, "got {}", points.len());
     }
 
@@ -347,7 +362,8 @@ mod tests {
             pt(12.0, 70.001, 30.001, 5500.0, 0.0, 0),
         ];
         let mut agl = vec![1500.0, 1500.0, 1500.0, 1500.0];
-        validate_flight_trajectory(&mut points, &mut agl);
+        let mut elev = vec![0.0f32; agl.len()];
+        validate_flight_trajectory(&mut points, &mut agl, &mut elev);
         assert_eq!(points.len(), 3);
     }
 

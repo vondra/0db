@@ -65,6 +65,8 @@ fn ground_segment(start_lat: f32, start_lon: f32, end_lat: f32, end_lon: f32) ->
         speed_kt: 30.0,
         length_m: 100.0,
         agl_avg_m: 0.0,
+        start_elev_m: 0.0,
+        end_elev_m: 0.0,
     }
 }
 

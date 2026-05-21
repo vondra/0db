@@ -156,6 +156,8 @@ mod tests {
             speed_kt: 90.0,
             length_m: 100.0,
             agl_avg_m: 0.0,
+            start_elev_m: 0.0,
+            end_elev_m: 0.0,
         };
         let aerodrome = AirportArea::new(
             1,

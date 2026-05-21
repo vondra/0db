@@ -65,17 +65,24 @@ fn stage_1_one_flight(
     // this, `validate_flight_trajectory` would read `0 - elev` for any
     // landing roll above ~300 m AMSL and truncate the whole tail.
     let mut agl_m: Vec<f32> = Vec::with_capacity(points.len());
+    // Per-point terrain elevation in meters, sampled from `rasters.dem`.
+    // For ground-flagged points we still sample the raster so v15
+    // sub-segment `terrain_*_elev_m` carries a meaningful value at
+    // takeoff / landing endpoints (the popup gates on the on-ground
+    // flag earlier, but downstream layers benefit from having a real
+    // elevation rather than 0). Stage 1's per-point loop already pays
+    // the raster lookup cost; one branch removed is essentially free.
+    let mut elev_m: Vec<f32> = Vec::with_capacity(points.len());
     for p in &points {
+        let elev = rasters.elevation(p.lat as f64, p.lon as f64) as f32;
+        elev_m.push(elev);
         match p.airborne_alt_ft() {
             None => agl_m.push(0.0),
-            Some(alt_ft) => {
-                let elev = rasters.elevation(p.lat as f64, p.lon as f64) as f32;
-                agl_m.push(alt_ft * 0.3048 - elev);
-            }
+            Some(alt_ft) => agl_m.push(alt_ft * 0.3048 - elev),
         }
     }
 
-    filters::validate_flight_trajectory(&mut points, &mut agl_m);
+    filters::validate_flight_trajectory(&mut points, &mut agl_m, &mut elev_m);
     if points.len() < 2 {
         return Vec::new();
     }
@@ -97,7 +104,7 @@ fn stage_1_one_flight(
         gse_class: flight.gse_class,
         date_id,
     };
-    build_segments(&points, &agl_m, &phases, &meta)
+    build_segments(&points, &agl_m, &elev_m, &phases, &meta)
 }
 
 fn bbox_of_flights(flights: &[Flight]) -> Option<(f64, f64, f64, f64)> {

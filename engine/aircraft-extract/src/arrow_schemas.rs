@@ -60,6 +60,10 @@ pub fn flights_schema() -> Arc<Schema> {
 }
 
 /// Stage 1 — `segments/<day>.arrow`. One row per classified segment.
+///
+/// v15 adds `start_elev_m` / `end_elev_m` (Opt A): Stage 1 already
+/// loops per-point elevations for AGL, so emitting these per-segment
+/// is free; Stage 2A propagates them into airborne sub-segments.
 pub fn segments_schema() -> Arc<Schema> {
     let fields = vec![
         Field::new("flight_id", DataType::UInt64, false),
@@ -83,6 +87,8 @@ pub fn segments_schema() -> Arc<Schema> {
         Field::new("speed_kt", DataType::Float32, false),
         Field::new("length_m", DataType::Float32, false),
         Field::new("agl_avg_m", DataType::Float32, false),
+        Field::new("start_elev_m", DataType::Float32, false),
+        Field::new("end_elev_m", DataType::Float32, false),
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[("kind", "segments")])))
 }
@@ -90,6 +96,14 @@ pub fn segments_schema() -> Arc<Schema> {
 /// Stage 2A — `h3r4/<hex>/airborne.arrow`. One row per (flight, R4)
 /// crossing. `sub_segments` carries per-sub-segment period / date /
 /// flags so a long crossing that straddles 19:00 still buckets right.
+///
+/// v15 adds three terrain elevation columns sampled at extract time
+/// (Opt A) so the popup terrain gates can skip `SegmentTerrain::sample`
+/// (5 raster lookups → 0). `terrain_start_elev_m` / `terrain_end_elev_m`
+/// propagate from Stage 1's per-point elevation; `terrain_mid_elev_m`
+/// is sampled at Stage 2A from each sub-segment's midpoint (stored
+/// explicitly because mountain terrain breaks linear interpolation —
+/// LOWI / SEQM / KASE).
 pub fn airborne_schema() -> Arc<Schema> {
     let sub_struct = DataType::Struct(Fields::from(vec![
         Field::new("start_lat", DataType::Float32, false),
@@ -103,6 +117,9 @@ pub fn airborne_schema() -> Arc<Schema> {
         Field::new("period", DataType::UInt8, false),
         Field::new("date_id", DataType::Int16, false),
         Field::new("flags", DataType::UInt8, false),
+        Field::new("terrain_start_elev_m", DataType::Float32, false),
+        Field::new("terrain_mid_elev_m", DataType::Float32, false),
+        Field::new("terrain_end_elev_m", DataType::Float32, false),
     ]));
     let fields = vec![
         Field::new("flight_id", DataType::UInt64, false),

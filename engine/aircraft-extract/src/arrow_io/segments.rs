@@ -40,6 +40,8 @@ pub fn write_segments(path: &Path, rows: &[FlightSegment]) -> Result<()> {
     let mut speed = Float32Builder::with_capacity(n);
     let mut length = Float32Builder::with_capacity(n);
     let mut agl = Float32Builder::with_capacity(n);
+    let mut s_elev = Float32Builder::with_capacity(n);
+    let mut e_elev = Float32Builder::with_capacity(n);
     for r in rows {
         flight_id.append_value(r.flight_id);
         callsign.append_value(&r.callsign);
@@ -62,6 +64,8 @@ pub fn write_segments(path: &Path, rows: &[FlightSegment]) -> Result<()> {
         speed.append_value(r.speed_kt);
         length.append_value(r.length_m);
         agl.append_value(r.agl_avg_m);
+        s_elev.append_value(r.start_elev_m);
+        e_elev.append_value(r.end_elev_m);
     }
     let columns: Vec<ArrayRef> = vec![
         Arc::new(flight_id.finish()),
@@ -85,6 +89,8 @@ pub fn write_segments(path: &Path, rows: &[FlightSegment]) -> Result<()> {
         Arc::new(speed.finish()),
         Arc::new(length.finish()),
         Arc::new(agl.finish()),
+        Arc::new(s_elev.finish()),
+        Arc::new(e_elev.finish()),
     ];
     let batch = RecordBatch::try_new(schema.clone(), columns)?;
     write_record_batches(path, &schema, &[batch])
@@ -220,6 +226,18 @@ pub fn read_segments(path: &Path) -> Result<Vec<FlightSegment>> {
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap();
+        let s_elev = b
+            .column_by_name("start_elev_m")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        let e_elev = b
+            .column_by_name("end_elev_m")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
         for i in 0..b.num_rows() {
             let mut typecode = [0u8; 4];
             typecode.copy_from_slice(aircraft_type.value(i));
@@ -245,6 +263,8 @@ pub fn read_segments(path: &Path) -> Result<Vec<FlightSegment>> {
                 speed_kt: speed.value(i),
                 length_m: length.value(i),
                 agl_avg_m: agl.value(i),
+                start_elev_m: s_elev.value(i),
+                end_elev_m: e_elev.value(i),
             });
         }
     }
@@ -286,6 +306,8 @@ mod tests {
             speed_kt: 250.0,
             length_m: 300.0,
             agl_avg_m: 700.0,
+            start_elev_m: 250.0,
+            end_elev_m: 280.0,
         }];
         write_segments(&p, &segs).unwrap();
         let read = read_segments(&p).unwrap();
@@ -298,5 +320,7 @@ mod tests {
         assert!((r.length_m - 300.0).abs() < 1e-3);
         assert_eq!(r.veh_kind, 1);
         assert_eq!(r.gse_class, 2);
+        assert!((r.start_elev_m - 250.0).abs() < 1e-3);
+        assert!((r.end_elev_m - 280.0).abs() < 1e-3);
     }
 }

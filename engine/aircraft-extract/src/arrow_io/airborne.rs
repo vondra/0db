@@ -69,6 +69,9 @@ pub fn write_airborne(path: &Path, rows: &[AirborneEvent], n_days: u16) -> Resul
     let mut period = UInt8Builder::with_capacity(total_subs);
     let mut date_id = Int16Builder::with_capacity(total_subs);
     let mut flags = UInt8Builder::with_capacity(total_subs);
+    let mut t_start = Float32Builder::with_capacity(total_subs);
+    let mut t_mid = Float32Builder::with_capacity(total_subs);
+    let mut t_end = Float32Builder::with_capacity(total_subs);
     for r in rows {
         for s in &r.sub_segments {
             sla.append_value(s.start_lat);
@@ -82,6 +85,9 @@ pub fn write_airborne(path: &Path, rows: &[AirborneEvent], n_days: u16) -> Resul
             period.append_value(s.period);
             date_id.append_value(s.date_id);
             flags.append_value(s.flags);
+            t_start.append_value(s.terrain_start_elev_m);
+            t_mid.append_value(s.terrain_mid_elev_m);
+            t_end.append_value(s.terrain_end_elev_m);
         }
     }
     let sub_struct = StructArray::new(
@@ -98,6 +104,9 @@ pub fn write_airborne(path: &Path, rows: &[AirborneEvent], n_days: u16) -> Resul
             Arc::new(period.finish()),
             Arc::new(date_id.finish()),
             Arc::new(flags.finish()),
+            Arc::new(t_start.finish()),
+            Arc::new(t_mid.finish()),
+            Arc::new(t_end.finish()),
         ],
         None,
     );
@@ -164,6 +173,9 @@ mod tests {
                 period: 0,
                 date_id: 1,
                 flags: 0,
+                terrain_start_elev_m: 200.0,
+                terrain_mid_elev_m: 210.0,
+                terrain_end_elev_m: 220.0,
             }],
             total_length_m: 300.0,
             bbox_min_lat: 50.0,
@@ -191,5 +203,39 @@ mod tests {
             .unwrap();
         assert_eq!(cs.value(0), "TVS100P");
         assert_eq!(at.value(0), b"A320");
+        // v15 terrain columns survive write→read so the popup reader
+        // can rely on them existing without an Option<&[f32]> shim.
+        let sub_list = batches[0]
+            .column_by_name("sub_segments")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::ListArray>()
+            .unwrap();
+        let sub_struct = sub_list
+            .values()
+            .as_any()
+            .downcast_ref::<arrow::array::StructArray>()
+            .unwrap();
+        let t_start = sub_struct
+            .column_by_name("terrain_start_elev_m")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::Float32Array>()
+            .unwrap();
+        let t_mid = sub_struct
+            .column_by_name("terrain_mid_elev_m")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::Float32Array>()
+            .unwrap();
+        let t_end = sub_struct
+            .column_by_name("terrain_end_elev_m")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::Float32Array>()
+            .unwrap();
+        assert!((t_start.value(0) - 200.0).abs() < 1e-3);
+        assert!((t_mid.value(0) - 210.0).abs() < 1e-3);
+        assert!((t_end.value(0) - 220.0).abs() < 1e-3);
     }
 }
