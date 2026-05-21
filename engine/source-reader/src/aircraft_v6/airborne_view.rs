@@ -34,7 +34,9 @@ struct SubSegmentColumns<'a> {
     date_id: &'a [i16],
     flags: &'a [u8],
     terrain_start_elev_m: &'a [f32],
+    terrain_q1_elev_m: &'a [f32],
     terrain_mid_elev_m: &'a [f32],
+    terrain_q3_elev_m: &'a [f32],
     terrain_end_elev_m: &'a [f32],
 }
 
@@ -71,7 +73,9 @@ impl<'a> SubSegmentColumns<'a> {
             date_id: i16_col("date_id")?,
             flags: u8_col("flags")?,
             terrain_start_elev_m: f32_col("terrain_start_elev_m")?,
+            terrain_q1_elev_m: f32_col("terrain_q1_elev_m")?,
             terrain_mid_elev_m: f32_col("terrain_mid_elev_m")?,
+            terrain_q3_elev_m: f32_col("terrain_q3_elev_m")?,
             terrain_end_elev_m: f32_col("terrain_end_elev_m")?,
         })
     }
@@ -101,7 +105,21 @@ impl<'a> AirborneRowAccum<'a> {
             let Some(sub_struct) = sub_list.values().as_any().downcast_ref::<StructArray>() else {
                 continue;
             };
-            let Some(s) = SubSegmentColumns::from_struct(sub_struct) else { continue };
+            // Fail-loud on schema mismatch: `assert_schema_version` has
+            // already gated v15, so any missing column here is a
+            // corrupt batch (post-deploy file truncation, dev override,
+            // …). Print the batch's column names + drop the batch
+            // rather than silently zero-out the popup. Mirrors the
+            // heatmap loader's expect-style panic on malformed batches.
+            let Some(s) = SubSegmentColumns::from_struct(sub_struct) else {
+                eprintln!(
+                    "WARN: airborne.arrow sub_segments struct missing v15 \
+                     terrain columns at batch with {} rows; dropping batch. \
+                     Re-run `aircraft-extract run-all` to refresh.",
+                    n
+                );
+                continue;
+            };
             let offsets = sub_list.value_offsets();
             for i in 0..n {
                 let lo = offsets[i] as usize;
@@ -134,7 +152,9 @@ impl<'a> AirborneRowAccum<'a> {
                         date_id: &s.date_id[lo..hi],
                         flags: &s.flags[lo..hi],
                         terrain_start_elev_m: &s.terrain_start_elev_m[lo..hi],
+                        terrain_q1_elev_m: &s.terrain_q1_elev_m[lo..hi],
                         terrain_mid_elev_m: &s.terrain_mid_elev_m[lo..hi],
+                        terrain_q3_elev_m: &s.terrain_q3_elev_m[lo..hi],
                         terrain_end_elev_m: &s.terrain_end_elev_m[lo..hi],
                     },
                 });

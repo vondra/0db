@@ -97,13 +97,18 @@ pub fn segments_schema() -> Arc<Schema> {
 /// crossing. `sub_segments` carries per-sub-segment period / date /
 /// flags so a long crossing that straddles 19:00 still buckets right.
 ///
-/// v15 adds three terrain elevation columns sampled at extract time
-/// (Opt A) so the popup terrain gates can skip `SegmentTerrain::sample`
-/// (5 raster lookups → 0). `terrain_start_elev_m` / `terrain_end_elev_m`
-/// propagate from Stage 1's per-point elevation; `terrain_mid_elev_m`
-/// is sampled at Stage 2A from each sub-segment's midpoint (stored
-/// explicitly because mountain terrain breaks linear interpolation —
-/// LOWI / SEQM / KASE).
+/// v15 (Opt A) adds five terrain elevation columns sampled at extract
+/// time so the popup terrain gates can skip `SegmentTerrain::sample`
+/// (5 raster lookups → 0 on the hot path). `terrain_start_elev_m` /
+/// `terrain_end_elev_m` propagate from Stage 1's per-point elevation;
+/// `terrain_q1_elev_m` / `terrain_mid_elev_m` / `terrain_q3_elev_m`
+/// are sampled at Stage 2A from the sub-segment's 0.25 / 0.5 / 0.75
+/// points. All three intermediate samples are stored explicitly: real
+/// DEM terrain isn't linearly interpolated between endpoints, so a
+/// sharp peak between ADS-B samples (LOWI / SEQM / KASE mountain
+/// airports) can sit tens of metres above the linear ridge. /gg rev 2
+/// flagged that storing only `mid` lets a narrow spike at frac=0.25 or
+/// 0.75 sneak through the AGL gate (verified by 3-of-4 reviewers).
 pub fn airborne_schema() -> Arc<Schema> {
     let sub_struct = DataType::Struct(Fields::from(vec![
         Field::new("start_lat", DataType::Float32, false),
@@ -118,7 +123,9 @@ pub fn airborne_schema() -> Arc<Schema> {
         Field::new("date_id", DataType::Int16, false),
         Field::new("flags", DataType::UInt8, false),
         Field::new("terrain_start_elev_m", DataType::Float32, false),
+        Field::new("terrain_q1_elev_m", DataType::Float32, false),
         Field::new("terrain_mid_elev_m", DataType::Float32, false),
+        Field::new("terrain_q3_elev_m", DataType::Float32, false),
         Field::new("terrain_end_elev_m", DataType::Float32, false),
     ]));
     let fields = vec![

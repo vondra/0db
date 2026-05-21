@@ -58,8 +58,17 @@ pub fn heading_diff(a: f32, b: f32) -> f32 {
 
 /// Antimeridian-safe midpoint. Output longitude wrapped to `(-180, 180]`.
 pub fn midpoint(lat1: f32, lon1: f32, lat2: f32, lon2: f32) -> (f32, f32) {
-    let lat = (lat1 + lat2) * 0.5;
-    let mut lon = lon1 + signed_lon_diff(lon1, lon2) * 0.5;
+    interp_along_path(lat1, lon1, lat2, lon2, 0.5)
+}
+
+/// Antimeridian-safe linear interpolation along the path
+/// `(lat1, lon1) → (lat2, lon2)` at fraction `frac` ∈ [0, 1].
+/// Output longitude wrapped to `(-180, 180]`. Latitude is plain
+/// linear (latitude can't wrap). Used by Stage 2A to sample DEM
+/// elevation at q1 / mid / q3 along an airborne sub-segment.
+pub fn interp_along_path(lat1: f32, lon1: f32, lat2: f32, lon2: f32, frac: f32) -> (f32, f32) {
+    let lat = lat1 + (lat2 - lat1) * frac;
+    let mut lon = lon1 + signed_lon_diff(lon1, lon2) * frac;
     if lon > 180.0 {
         lon -= 360.0;
     } else if lon <= -180.0 {

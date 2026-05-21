@@ -522,10 +522,14 @@ fn sum_periods_linear(sources: &[SourceResult]) -> NoisePeriods {
 pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v15";
 
 /// Versions accepted under the dev-only `ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1`
-/// escape hatch. v14 / v13 are NOT in this list (column layouts changed
-/// in ways that would silently mis-decode — see plan §1.4 + Codex W1 +
-/// Claude W7; v15 adds new mandatory terrain columns).
-const LEGACY_SCHEMA_VERSIONS: &[&str] = &["v12"];
+/// escape hatch. Empty since v15 (Opt A): v15 adds mandatory
+/// `terrain_*_elev_m` sub-segment columns that earlier versions cannot
+/// provide; loading v12 / v13 / v14 under v15 reader code would silently
+/// zero-out terrain in the popup (and the heatmap loader's
+/// `unwrap_or_else(vec![0.0; n])` would do the same), masking real
+/// underground segments. /gg flagged this in rev 2; force re-extract
+/// instead of degrading silently.
+const LEGACY_SCHEMA_VERSIONS: &[&str] = &[];
 
 /// The `airport_traffic.arrow` semantic contract. `schema_version`
 /// only guards column types/order; this guards what those columns

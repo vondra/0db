@@ -10,9 +10,12 @@
 /// `terrain_*_elev_m` are pre-sampled at extract time (Opt A v15) so
 /// the popup terrain gates can skip `SegmentTerrain::sample` (5 raster
 /// lookups per sub-segment, mutex-serialised). Start / end propagate
-/// from Stage 1's per-point elevation; mid is sampled at Stage 2A from
-/// the sub-segment midpoint (stored explicitly because linear
-/// interpolation between start / end is wrong in mountain terrain).
+/// from Stage 1's per-point elevation; q1, mid, q3 are sampled at
+/// Stage 2A from the sub-segment's 0.25 / 0.5 / 0.75 points. All three
+/// intermediate elevations are stored explicitly: real DEM isn't
+/// linearly interpolated between endpoints, so a sharp peak at
+/// frac=0.25 or 0.75 (LOWI / SEQM / KASE mountain airports) can sit
+/// tens of metres above any linear estimate.
 #[derive(Clone, Copy, Debug)]
 pub struct SubSegmentSlice<'a> {
     pub start_lat: &'a [f32],
@@ -27,7 +30,9 @@ pub struct SubSegmentSlice<'a> {
     pub date_id: &'a [i16],
     pub flags: &'a [u8],
     pub terrain_start_elev_m: &'a [f32],
+    pub terrain_q1_elev_m: &'a [f32],
     pub terrain_mid_elev_m: &'a [f32],
+    pub terrain_q3_elev_m: &'a [f32],
     pub terrain_end_elev_m: &'a [f32],
 }
 

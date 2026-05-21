@@ -72,34 +72,42 @@ pub fn ground_ops_kind_fallback(seg: &AircraftSegment) -> u8 {
 }
 
 /// Cached terrain elevations sampled at five points along a segment
-/// Per-segment terrain sample cache (start, end, midpoint).
+/// Per-segment terrain sample cache (start, q1, mid, q3, end).
 ///
 /// Cruise scatter synthesises a one-shot `AircraftSegment` from an R8
-/// representative point and still needs to look up DEM at that segment's
-/// endpoints + midpoint, so the type stays alive for `cruise.rs`. The
-/// airborne popup hot path no longer constructs one — it reads the
-/// pre-sampled terrain elevations stored on each sub-segment (Opt A
-/// v15). Previous q1/q3 lookups dropped: with both `alt` and `elev`
-/// linearly interpolated between endpoints, `alt(frac) - elev(frac)`
-/// is itself linear, so the q1/q3 AGL check is implied by the
-/// start/end check (Gemini's math proof, /gg rev 2). Mid is kept
-/// because the receiver-side terrain can be a peak between two ADS-B
-/// samples — mountain terrain breaks linear interpolation.
+/// representative point and still needs to look up DEM at that
+/// segment's five sample points, so the type stays alive for
+/// `cruise.rs`. The airborne popup hot path no longer constructs one
+/// — it reads the pre-sampled terrain elevations stored on each
+/// sub-segment (Opt A v15). All five points are stored explicitly:
+/// real DEM is non-linear, so a sharp peak at frac=0.25 or 0.75 can
+/// sit tens of metres above any linear estimate between endpoints
+/// (LOWI / SEQM / SLLP / KASE). /gg rev 2 caught a rev 1 plan error
+/// that dropped q1/q3 based on a false "linear interpolation"
+/// assumption.
 #[derive(Clone, Copy, Debug)]
 pub struct SegmentTerrain {
     pub start_elev: f64,
-    pub end_elev: f64,
+    pub q1_elev: f64,
     pub mid_elev: f64,
+    pub q3_elev: f64,
+    pub end_elev: f64,
 }
 
 impl SegmentTerrain {
     pub fn sample(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> Self {
         let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
         let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
+        let q1_lat = seg.start_lat * 0.75 + seg.end_lat * 0.25;
+        let q1_lon = seg.start_lon * 0.75 + seg.end_lon * 0.25;
+        let q3_lat = seg.start_lat * 0.25 + seg.end_lat * 0.75;
+        let q3_lon = seg.start_lon * 0.25 + seg.end_lon * 0.75;
         SegmentTerrain {
             start_elev: rasters.elevation(seg.start_lat, seg.start_lon),
-            end_elev: rasters.elevation(seg.end_lat, seg.end_lon),
+            q1_elev: rasters.elevation(q1_lat, q1_lon),
             mid_elev: rasters.elevation(mid_lat, mid_lon),
+            q3_elev: rasters.elevation(q3_lat, q3_lon),
+            end_elev: rasters.elevation(seg.end_lat, seg.end_lon),
         }
     }
 }
@@ -194,20 +202,19 @@ pub fn is_ground_stale_with_terrain(seg: &AircraftSegment, terrain: &SegmentTerr
 }
 
 /// `is_valid_airborne_segment` reading pre-sampled elevations from a
-/// [`SegmentTerrain`] cache (popup airborne reads from
+/// [`SegmentTerrain`] cache. Popup airborne reads from
 /// `AirborneSubSegment::terrain_*_elev_m`; cruise constructs one
-/// in-place via `SegmentTerrain::sample`).
+/// in-place via `SegmentTerrain::sample`.
 ///
-/// q1/q3 AGL check dropped in Opt A v15 (Gemini math proof): with
-/// `alt(frac) = start_alt + (end_alt - start_alt) * frac` and
-/// `elev(frac) = start_elev + (end_elev - start_elev) * frac`,
-/// `alt(frac) - elev(frac) = (1-frac)·(start_alt - start_elev) +
-///  frac·(end_alt - end_elev)`. The q1/q3 check is then a convex
-/// combination of the start/end checks and adds no information when
-/// both are stored. mid IS kept because mid_elev is sampled at the
-/// actual terrain (not interpolated) — at LOWI / SEQM / KASE the
-/// real peak between two ADS-B samples can be tens of metres above
-/// `(start_elev + end_elev) / 2`.
+/// Underground-segment check: AGL ≥ -30 m must hold at all five
+/// stored sample points (start / q1 / mid / q3 / end). Aircraft `alt`
+/// is linearly interpolated between endpoints (we have only the two
+/// ADS-B samples bounding the sub-segment); terrain `elev` is real
+/// DEM at each frac, so it is NOT linear in the sub-segment. The
+/// rev 2 plan dropped q1/q3 based on a math proof that assumed
+/// linear terrain — /gg flagged the assumption is false. Restoring
+/// q1/q3 checks the worst real case: a narrow ridge spike at
+/// frac=0.25 or 0.75 missed by the mid sample alone.
 pub fn is_valid_airborne_with_terrain(seg: &AircraftSegment, terrain: &SegmentTerrain) -> bool {
     if seg.on_ground || seg.ground_context != GROUND_CONTEXT_NONE {
         return true;
@@ -220,9 +227,26 @@ pub fn is_valid_airborne_with_terrain(seg: &AircraftSegment, terrain: &SegmentTe
     if max_alt < terrain.mid_elev - 30.0 {
         return false;
     }
-    let start_agl = seg.start_alt_m as f64 - terrain.start_elev;
-    let end_agl = seg.end_alt_m as f64 - terrain.end_elev;
+    let sa = seg.start_alt_m as f64;
+    let ea = seg.end_alt_m as f64;
+    let start_agl = sa - terrain.start_elev;
+    let end_agl = ea - terrain.end_elev;
     if start_agl < -30.0 || end_agl < -30.0 {
+        return false;
+    }
+    // Mid / q1 / q3 AGL gates. Aircraft alt is linearly interpolated
+    // between endpoints (no intermediate ADS-B samples); terrain elev
+    // is real raster at each frac. A steep climb (start_alt=1000,
+    // end_alt=2000) over a midpath peak (mid_elev=1800) has
+    // mid_alt=1500, i.e. 300 m underground at the midpoint. q1/q3
+    // catch the same pattern when the peak isn't centred.
+    let mid_alt = (sa + ea) * 0.5;
+    if mid_alt < terrain.mid_elev - 30.0 {
+        return false;
+    }
+    let q1_alt = sa * 0.75 + ea * 0.25;
+    let q3_alt = sa * 0.25 + ea * 0.75;
+    if q1_alt < terrain.q1_elev - 30.0 || q3_alt < terrain.q3_elev - 30.0 {
         return false;
     }
     if !is_fixed_wing_jet {
@@ -285,6 +309,94 @@ mod tests {
         fn building_enclosure(&self, _lat: f64, _lon: f64) -> f64 {
             0.0
         }
+    }
+
+    /// Regression for /gg rev 2 (DeepSeek): a steep climb over a
+    /// midpath mountain peak whose stored `terrain.mid_elev` sits
+    /// above the linearly-interpolated `(start_alt + end_alt) / 2`
+    /// must be rejected by `is_valid_airborne_with_terrain`. The
+    /// `max_alt < mid_elev - 30` gate alone misses this case (end_alt
+    /// pulls max_alt above mid_elev); the `mid_alt < mid_elev - 30`
+    /// gate added in Opt A v15 closes the hole.
+    #[test]
+    fn airborne_with_terrain_rejects_steep_climb_below_midpath_peak() {
+        let seg = AircraftSegment {
+            flight_id: 1,
+            profile_idx: 0,            // jet
+            is_departure: true,
+            on_ground: false,
+            period: 0,
+            date_id: 0,
+            start_lat: 47.25,           // LOWI-ish geometry
+            start_lon: 11.34,
+            start_alt_m: 1000.0,        // lowland start
+            end_lat: 47.27,
+            end_lon: 11.40,
+            end_alt_m: 2000.0,          // higher end (still below peak)
+            speed_kt: 200.0,            // jet ≥ 80 kt
+            segment_length_m: 5000.0,
+            ground_context: GROUND_CONTEXT_NONE,
+            ground_ops_kind: GROUND_OPS_KIND_NONE,
+            count_weight: 1.0,
+            surface_model: false,
+            source_id: AIRCRAFT_ADSB_SOURCE_ID,
+        };
+        let terrain = SegmentTerrain {
+            start_elev: 700.0,  // start AGL = 300 m, OK
+            q1_elev: 1100.0,    // q1_alt = 1250 → AGL = 150, OK
+            mid_elev: 1800.0,   // peak  → mid_alt = 1500 m → AGL = -300 m
+            q3_elev: 1750.0,    // q3_alt = 1750 → AGL = 0, OK
+            end_elev: 1700.0,   // end   AGL = 300 m, OK
+        };
+        // max_alt = 2000 ≥ mid_elev - 30 = 1770: passes the max gate.
+        // mid_alt = 1500 < mid_elev - 30 = 1770: fails the mid gate.
+        assert!(
+            !is_valid_airborne_with_terrain(&seg, &terrain),
+            "steep climb over midpath peak must be rejected (mid_alt < mid_elev - 30)"
+        );
+    }
+
+    /// Q1/Q3-only spike: midpoint elevation is benign but a narrow
+    /// ridge at frac=0.25 (or 0.75) crosses the climbing alt path.
+    /// Without q1/q3 raster samples this case would silently pass —
+    /// /gg rev 2 (Codex, Gemini, DeepSeek consensus) caught the hole
+    /// in rev 1's "drop q1/q3" decision.
+    #[test]
+    fn airborne_with_terrain_rejects_q1_spike() {
+        let seg = AircraftSegment {
+            flight_id: 1,
+            profile_idx: 0,
+            is_departure: true,
+            on_ground: false,
+            period: 0,
+            date_id: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            start_alt_m: 1000.0,
+            end_lat: 50.01,
+            end_lon: 14.01,
+            end_alt_m: 2000.0,
+            speed_kt: 200.0,
+            segment_length_m: 1400.0,
+            ground_context: GROUND_CONTEXT_NONE,
+            ground_ops_kind: GROUND_OPS_KIND_NONE,
+            count_weight: 1.0,
+            surface_model: false,
+            source_id: AIRCRAFT_ADSB_SOURCE_ID,
+        };
+        // q1_alt = 1000*0.75 + 2000*0.25 = 1250 m; q1_elev = 1500 →
+        // q1_alt - q1_elev = -250 m. Other points safe.
+        let terrain = SegmentTerrain {
+            start_elev: 700.0,
+            q1_elev: 1500.0,   // narrow ridge at frac=0.25
+            mid_elev: 1100.0,  // dips back
+            q3_elev: 1500.0,
+            end_elev: 1700.0,
+        };
+        assert!(
+            !is_valid_airborne_with_terrain(&seg, &terrain),
+            "narrow ridge at q1 must reject the sub-segment"
+        );
     }
 
     #[test]

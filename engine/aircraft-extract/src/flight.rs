@@ -171,19 +171,20 @@ pub struct AirborneEvent {
 /// stored per sub-segment so a long airborne crossing that spans the
 /// 19:00 evening boundary still gets the correct Lden weighting.
 ///
-/// `terrain_{start,mid,end}_elev_m` are pre-sampled at extract time
-/// (Opt A v15): start/end propagate from Stage 1's per-point elevation;
-/// mid is sampled at Stage 2A from the midpoint of the sub-segment.
-/// The popup terrain gates (`is_ground_stale`, `is_valid_airborne`,
-/// `segment_sel`) read these directly instead of calling
-/// `SegmentTerrain::sample` (5 raster lookups per sub-segment). At
-/// LKPR popup this saves ~1 M raster mutex acquisitions.
+/// `terrain_*_elev_m` are pre-sampled at extract time (Opt A v15):
+/// start/end propagate from Stage 1's per-point elevation; q1, mid,
+/// q3 are sampled at Stage 2A from the sub-segment's 0.25 / 0.5 / 0.75
+/// points. The popup terrain gates (`is_ground_stale`,
+/// `is_valid_airborne`, `segment_sel`) read these directly instead of
+/// calling `SegmentTerrain::sample` (5 raster lookups per sub-segment).
+/// At LKPR popup this saves ~1 M raster mutex acquisitions.
 ///
-/// `mid` is stored explicitly rather than interpolated: in mountainous
-/// terrain (LOWI / SEQM / SLLP / KASE) the mid-point elevation can
-/// differ from `(start+end)/2` by tens of meters at the sub-segment
-/// median length of 168 m, and the linear interpolation would silently
-/// degrade the `mid_alt - mid_elev` AGL check.
+/// All three intermediate elevations are stored: real DEM isn't
+/// linearly interpolated between endpoints, so in mountain terrain
+/// (LOWI / SEQM / SLLP / KASE) a sharp peak between two ADS-B samples
+/// can sit tens of meters above any linear estimate. /gg rev 2 (3 of
+/// 4 reviewers) caught that storing only mid lets a narrow spike at
+/// frac=0.25 or 0.75 sneak past the AGL gate.
 #[derive(Clone)]
 pub struct AirborneSubSegment {
     pub start_lat: f32,
@@ -198,7 +199,9 @@ pub struct AirborneSubSegment {
     pub date_id: i16,
     pub flags: u8,
     pub terrain_start_elev_m: f32,
+    pub terrain_q1_elev_m: f32,
     pub terrain_mid_elev_m: f32,
+    pub terrain_q3_elev_m: f32,
     pub terrain_end_elev_m: f32,
 }
 

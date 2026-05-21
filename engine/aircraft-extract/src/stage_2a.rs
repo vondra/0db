@@ -26,7 +26,7 @@ use crate::arrow_io::read_segments;
 use crate::flight::{
     segment_flags, AirborneEvent, AirborneSubSegment, FlightSegment, Phase,
 };
-use crate::geo::r4_hex_str;
+use crate::geo::{interp_along_path, r4_hex_str};
 use crate::scope::ScopeBbox;
 use crate::shuffle::list_r4_shards;
 use noise_compute::types::RasterSampler;
@@ -165,15 +165,29 @@ impl AirborneEventBuilder {
             .max(seg.start_lon)
             .max(seg.end_lon);
         self.total_length_m += seg.length_m;
-        // v15: sample mid-segment terrain elevation here. Start/end
-        // come from Stage 1 (per-point ADS-B lookup); mid is between
-        // two ADS-B samples and must be sampled now. Stored explicitly
-        // so the popup's `mid_alt - mid_elev` AGL check stays correct
-        // in mountainous terrain (linear interpolation between start /
-        // end can be off by tens of metres at LOWI / SEQM / KASE).
-        let mid_lat = ((seg.start_lat as f64) + (seg.end_lat as f64)) * 0.5;
-        let mid_lon = ((seg.start_lon as f64) + (seg.end_lon as f64)) * 0.5;
-        let mid_elev = rasters.elevation(mid_lat, mid_lon) as f32;
+        // v15 (Opt A): sample q1 / mid / q3 terrain elevation here.
+        // Start/end come from Stage 1 (per-point ADS-B lookup); the
+        // three intermediate samples are between ADS-B samples and
+        // must be sampled now. All stored explicitly because real
+        // DEM is non-linear: a narrow ridge at frac=0.25 or 0.75 can
+        // sit tens of metres above any linear estimate between
+        // endpoints, and the popup AGL gate needs to detect that
+        // underground segments aren't passed through silently
+        // (LOWI / SEQM / KASE mountain airports). `interp_along_path`
+        // is antimeridian-safe so polar / dateline-crossing
+        // sub-segments sample the right tiles.
+        let (q1_lat, q1_lon) = interp_along_path(
+            seg.start_lat, seg.start_lon, seg.end_lat, seg.end_lon, 0.25,
+        );
+        let (mid_lat, mid_lon) = interp_along_path(
+            seg.start_lat, seg.start_lon, seg.end_lat, seg.end_lon, 0.5,
+        );
+        let (q3_lat, q3_lon) = interp_along_path(
+            seg.start_lat, seg.start_lon, seg.end_lat, seg.end_lon, 0.75,
+        );
+        let q1_elev = rasters.elevation(q1_lat as f64, q1_lon as f64) as f32;
+        let mid_elev = rasters.elevation(mid_lat as f64, mid_lon as f64) as f32;
+        let q3_elev = rasters.elevation(q3_lat as f64, q3_lon as f64) as f32;
         self.sub_segments.push(AirborneSubSegment {
             start_lat: seg.start_lat,
             start_lon: seg.start_lon,
@@ -187,7 +201,9 @@ impl AirborneEventBuilder {
             date_id: seg.date_id,
             flags,
             terrain_start_elev_m: seg.start_elev_m,
+            terrain_q1_elev_m: q1_elev,
             terrain_mid_elev_m: mid_elev,
+            terrain_q3_elev_m: q3_elev,
             terrain_end_elev_m: seg.end_elev_m,
         });
     }
@@ -287,17 +303,19 @@ mod tests {
     #[test]
     fn aggregate_propagates_terrain_elevs_from_stage1() {
         // Synthetic case: Stage 1 said start=250 m, end=260 m. With
-        // ZeroRasters mid_elev = 0. Verifies start/end pass through
-        // and mid is sampled (not interpolated).
+        // ZeroRasters q1/mid/q3 = 0. Verifies start/end pass through
+        // and q1/mid/q3 are sampled (not interpolated).
         let rasters = test_rasters();
         let events = aggregate_events_for_r4(&[seg(1, 50.10, 14.26)], &rasters);
         assert_eq!(events.len(), 1);
         let sub = &events[0].sub_segments[0];
         assert!((sub.terrain_start_elev_m - 250.0).abs() < 1e-3);
         assert!((sub.terrain_end_elev_m - 260.0).abs() < 1e-3);
-        // mid is sampled from rasters (0 m at empty-tile fall-through).
-        // The point: it's NOT (250+260)/2 = 255, it's the raster value.
+        // q1/mid/q3 are sampled from rasters (0 m at empty-tile
+        // fall-through), NOT linearly interpolated from start/end.
+        assert!((sub.terrain_q1_elev_m - 0.0).abs() < 1e-3);
         assert!((sub.terrain_mid_elev_m - 0.0).abs() < 1e-3);
+        assert!((sub.terrain_q3_elev_m - 0.0).abs() < 1e-3);
     }
 
     /// Round trip: write a per-R4 airborne shard via the shuffle
