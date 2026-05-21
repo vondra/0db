@@ -120,6 +120,20 @@ pub fn load_airport_summary(path: &Path) -> Result<Option<AirportSummaryAccum>, 
         format!("arrow ipc {} (re-extract aircraft pipeline?): {e}", path.display())
     })?;
     let schema = r.schema();
+    // Defence-in-depth: check both `schema_version` and the dimensional
+    // `airport_summary_contract` stamps. Per /gg Codex audit, a corrupt
+    // sidecar could carry one stamp but not the other; reject either
+    // mismatch loud so the popup gets `Err` rather than zero counts.
+    let sv = schema.metadata().get("schema_version").map(String::as_str);
+    if sv != Some(super::EXPECTED_SCHEMA_VERSION) {
+        return Err(format!(
+            "{} schema_version mismatch (expected {}, got {:?}) \
+             — re-extract aircraft pipeline",
+            path.display(),
+            super::EXPECTED_SCHEMA_VERSION,
+            sv
+        ));
+    }
     let v = schema.metadata().get("airport_summary_contract");
     if v.map(String::as_str) != Some("airport_summary_v1") {
         return Err(format!(
