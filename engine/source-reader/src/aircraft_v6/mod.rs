@@ -94,13 +94,8 @@ fn airport_centroids_from_traffic(rows: &[AirportTrafficRowView<'_>]) -> Vec<(f6
 /// neighborhood at almost every airport, and including them
 /// inflates the anchor list 5-10× at hubs without widening the
 /// gate where it matters.
-///
-/// Wired into the popup gate in a follow-up commit; `#[allow]`
-/// silences dead-code while the resolver is staged.
-#[allow(dead_code)]
 const RUNWAY_AEROWAY_TYPES: [u8; 3] = [0, 6, 7];
 
-#[allow(dead_code)]
 fn is_runway_aeroway_type(t: u8) -> bool {
     RUNWAY_AEROWAY_TYPES.contains(&t)
 }
@@ -108,7 +103,6 @@ fn is_runway_aeroway_type(t: u8) -> bool {
 /// One per-batch runway-microsegment row extracted from
 /// `airport_lines.arrow` or `synth_airport_lines.arrow`. Carries
 /// only the bits the runway-end resolver needs.
-#[allow(dead_code)]
 struct RunwayLineRow {
     osm_id: u64,
     segment_idx: i32,
@@ -123,7 +117,6 @@ struct RunwayLineRow {
 /// and Stage 1.5 synth lines (`osm_id: UInt64`, `segment_idx: UInt16`)
 /// — the lat/lon columns share `Float64` in both schemas. Returns
 /// nothing when required columns are missing or have unexpected types.
-#[allow(dead_code)]
 fn collect_runway_rows(batch: &RecordBatch, out: &mut Vec<RunwayLineRow>) {
     let (Some(slat), Some(slon), Some(elat), Some(elon), Some(atype)) = (
         columns::col_f64(batch, "start_lat"),
@@ -189,7 +182,6 @@ fn collect_runway_rows(batch: &RecordBatch, out: &mut Vec<RunwayLineRow>) {
 /// Heliports (no runway rows) and taxiway-only osm_ids emit zero
 /// anchors here; the caller layers the airport_traffic centroid set
 /// on top so heliports retain the legacy gate.
-#[allow(dead_code)]
 fn runway_ends_from_airport_lines(
     airport_lines_batches: &[RecordBatch],
     synth_lines_batches: &[RecordBatch],
@@ -254,7 +246,6 @@ fn runway_ends_from_airport_lines(
 /// Anchor budget at LKPR density: ≤ ~30 runway-end anchors + ≤ ~20
 /// centroids = ≤ ~50 total. The `flat_dist`-per-sub-segment scan
 /// stays sub-millisecond.
-#[allow(dead_code)]
 fn airport_anchors(
     airport_lines_batches: &[RecordBatch],
     synth_lines_batches: &[RecordBatch],
@@ -288,6 +279,7 @@ pub fn add_v6_aircraft_to_result(
     cruise_batches: &[RecordBatch],
     airport_traffic_batches: &[RecordBatch],
     airport_lines_batches: &[RecordBatch],
+    synth_airport_lines_batches: &[RecordBatch],
     airport_summary_path: Option<&Path>,
     rasters: &dyn RasterSampler,
     barriers: &[noise_compute::types::Barrier],
@@ -360,8 +352,15 @@ pub fn add_v6_aircraft_to_result(
 
     // Gates the 6 km `AIRPORT_CONTEXT_RADIUS_M` test in airborne
     // scatter; without it, approach-corridor sub-segments below the
-    // 150 m fixed-wing-jet AGL floor would be dropped.
-    let airport_centroids = airport_centroids_from_traffic(&traffic_views);
+    // 150 m fixed-wing-jet AGL floor would be dropped. Per-osm_id
+    // runway endpoints (real OSM + Stage 1.5 synth) plus the legacy
+    // per-airport_key centroids — see [`airport_anchors`] for the
+    // any-of-anchors layering rationale at multi-runway hubs.
+    let airport_anchors = airport_anchors(
+        airport_lines_batches,
+        synth_airport_lines_batches,
+        &traffic_views,
+    );
 
     let (mut air_periods, mut air_contribs, band_data) = compute_aircraft_v6(
         receiver,
@@ -369,7 +368,7 @@ pub fn add_v6_aircraft_to_result(
         &cruise_views,
         rasters,
         n_days,
-        &airport_centroids,
+        &airport_anchors,
         Some(traces),
         result.timings.as_mut(),
     );

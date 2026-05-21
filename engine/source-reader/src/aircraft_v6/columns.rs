@@ -30,14 +30,9 @@ pub fn col_list<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a ListArray>
 pub fn col_u16<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a UInt16Array> {
     batch.column_by_name(name)?.as_any().downcast_ref()
 }
-/// Wired into the runway-end resolver in `aircraft_v6/mod.rs` —
-/// `#[allow]` silences dead-code until step 4 hooks it into the
-/// popup path.
-#[allow(dead_code)]
 pub fn col_i16<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Int16Array> {
     batch.column_by_name(name)?.as_any().downcast_ref()
 }
-#[allow(dead_code)]
 pub fn col_f64<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Float64Array> {
     batch.column_by_name(name)?.as_any().downcast_ref()
 }
