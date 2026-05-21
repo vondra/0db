@@ -29,8 +29,8 @@ pub mod state;
 pub mod views;
 
 pub use views::{
-    AirborneRowView, AirportSummaryView, AirportTrafficRowView, BBox, CruiseRowView,
-    CruiseTopCandidateView, SubSegmentSlice, NUM_GSE_CLASSES,
+    AirborneRowView, AirportTrafficRowView, BBox, CruiseRowView, CruiseTopCandidateView,
+    SubSegmentSlice, NUM_GSE_CLASSES,
 };
 
 const NUM_BANDS: usize = 8;

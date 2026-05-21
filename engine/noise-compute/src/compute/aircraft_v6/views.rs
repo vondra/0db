@@ -55,8 +55,8 @@ pub const NUM_GSE_CLASSES: usize = 3;
 /// v5 replaces v4's `flight_ids: List<UInt64>` with scalar
 /// `unique_*_count` counters plus row-replicated per-microsegment
 /// UNION `microseg_unique_*` counts. Airport-level UNION counts now
-/// live in the separate `airport_summary.arrow` sidecar (see
-/// [`AirportSummaryView`]).
+/// live in the separate `airport_summary.arrow` sidecar (consumed via
+/// [`crate::compute::aircraft_v6::airport_traffic::AirportSummaryEntry`]).
 #[derive(Clone, Copy, Debug)]
 pub struct AirportTrafficRowView<'a> {
     pub airport_key: &'a str,
@@ -93,19 +93,6 @@ pub struct AirportTrafficRowView<'a> {
     pub microseg_unique_arr_count: u32,
     pub microseg_unique_dep_count: u32,
     pub microseg_unique_gse_count_per_class: &'a [u32; NUM_GSE_CLASSES],
-}
-
-/// One row of `airport_summary.arrow` — global UNION counts per
-/// `airport_key` across all R4s. Loaded once at popup query time,
-/// keyed by airport_key.
-#[derive(Clone, Copy, Debug)]
-pub struct AirportSummaryView<'a> {
-    pub airport_key: &'a str,
-    pub airport_unique_arr_count: u32,
-    pub airport_unique_dep_count: u32,
-    pub airport_unique_gse_count_per_class: &'a [u32; NUM_GSE_CLASSES],
-    /// Index 0=runway, 1=taxi, 2=apron — VEH_KIND=0 only.
-    pub airport_unique_ops_count_per_kind: &'a [u32; 3],
 }
 
 /// One row of `airborne.arrow`. `flight_id` is the real ADS-B identity
