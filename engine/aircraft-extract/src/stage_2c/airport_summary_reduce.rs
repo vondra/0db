@@ -5,10 +5,13 @@
 //! R4 part, UNIONs the HashSets per `airport_key`, and writes the
 //! global `airport_summary.arrow` (one row per airport).
 //!
-//! Memory budget per plan §3.2: one airport at a time → bounded by
-//! largest single-airport unique fids (LKPR full year ~50k fids ×
-//! ~32 B HashSet entry ≈ 1.6 MB). Streaming write keeps the global
-//! HashSet from being held in RAM.
+//! Memory pattern (rev 2 deviation from plan §3.2's "one airport at
+//! a time" sketch): builds one `HashMap<airport_key, GlobalAggregate>`
+//! across ALL airports. Worst-case RAM = Σ (per-airport unique
+//! fid sets); at LKPR full year ~50k airports × ~5 MB per large hub
+//! fid set → low-GB. Acceptable for the reduce step; if global
+//! extracts pinch RAM, swap to a streaming sort+uniq pattern keyed
+//! on airport_key.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;

@@ -199,9 +199,12 @@ pub fn cruise_schema() -> Arc<Schema> {
 /// reduce phase.
 pub const AIRPORT_TRAFFIC_CONTRACT_V5: &str = "airport_traffic_v5";
 
-/// Per-R4 airport aggregate sidecar contract (one row per airport_key
-/// with UNION counts across all microsegments of THIS R4). Per-popup
-/// loader merges across R4s via the global `airport_summary.arrow`.
+/// Per-R4 airport aggregate sidecar contract — rev 2 design held
+/// option 2a (single global `airport_summary.arrow` via Stage 2C
+/// reduce) as canonical, so this per-R4 schema is currently UNUSED
+/// in the writer pipeline. Kept here for forward compatibility if
+/// a future debug-mode wants per-R4 partials. The popup never reads
+/// it. Plan §1.3 final paragraph.
 pub const AIRPORT_AGGREGATE_CONTRACT_V1: &str = "airport_aggregate_v1";
 
 /// Global airport summary sidecar contract (one row per airport_key,
