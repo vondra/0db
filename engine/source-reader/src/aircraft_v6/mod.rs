@@ -131,6 +131,11 @@ pub fn add_v6_aircraft_to_result(
     // ADS-B data" at the receiver). When BOTH airport_traffic and
     // the sidecar are absent (rural receiver, no aircraft), no
     // sidecar lookup is required and `None` propagates harmlessly.
+    //
+    // `airport_summary_path = None` is treated identically to a
+    // present-but-empty file: if traffic rows exist the call MUST
+    // fail loud (per /gg Gemini audit) — otherwise a caller that
+    // forgets to wire the path silently returns zero counts.
     let has_traffic_rows = !airport_traffic_batches.is_empty();
     let airport_summary_accum = match airport_summary_path {
         Some(p) => {
@@ -149,6 +154,17 @@ pub fn add_v6_aircraft_to_result(
                 ));
             }
             loaded
+        }
+        None if has_traffic_rows => {
+            eprintln!(
+                "ERROR: airport_traffic.arrow rows present but airport_summary_path is None \
+                 — caller must wire the sidecar location whenever traffic rows are loaded."
+            );
+            return Err(
+                "airport_summary_path = None with airport_traffic.arrow rows present \
+                 — wire `<prepared>/aircraft/airport_summary.arrow`"
+                    .to_string(),
+            );
         }
         None => None,
     };
