@@ -356,10 +356,14 @@ pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v5";
 
 /// Legacy `airport_traffic_contract` variants accepted under the same
 /// `ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1` escape hatch as
-/// [`LEGACY_SCHEMA_VERSIONS`]. v4 is NOT in the legacy list — its
-/// column shape (per-row `flight_ids: List<UInt64>`) is incompatible
-/// with v5's scalar counters; silent decoding would drop fid data.
-const LEGACY_AIRPORT_TRAFFIC_CONTRACTS: &[&str] = &["airport_traffic_v3"];
+/// [`LEGACY_SCHEMA_VERSIONS`]. Empty post-/gg Claude I7 audit: v3
+/// carried per-event SEL (off by ~10·log10(n_days), ≈ 11.5 dB at
+/// n_days=14) and v4 carried per-row `flight_ids: List<UInt64>` —
+/// neither aligns with v5's daily-total energy + scalar counters,
+/// so silent decoding would ship wrong numbers. Re-extract is the
+/// only safe path; the escape hatch only covers `LEGACY_SCHEMA_VERSIONS`
+/// (column-compatible schema versions for the popup arrows).
+const LEGACY_AIRPORT_TRAFFIC_CONTRACTS: &[&str] = &[];
 
 fn accept_legacy() -> bool {
     matches!(std::env::var("ACCEPT_LEGACY_AIRCRAFT_SCHEMA").as_deref(), Ok("1"))
