@@ -2094,7 +2094,7 @@ mod tests {
             row_views.push(AirborneRowView {
                 flight_id: flight,
                 callsign: "",
-                aircraft_type: &[0u8; 4],
+                aircraft_type: [0u8; 4],
                 profile_idx: 0,
                 source_id: AIRCRAFT_ADSB_SOURCE_ID as u8,
                 origin: 0,

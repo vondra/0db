@@ -100,11 +100,17 @@ pub struct AirportTrafficRowView<'a> {
 /// the popup uses it for per-flight stats dedup. `callsign` and
 /// `aircraft_type` give the popup display the real flight number /
 /// ICAO typecode (M1) instead of a profile-anchor placeholder.
+///
+/// `aircraft_type` is held by value (`[u8; 4]`, 4 bytes) rather than
+/// `&'a [u8; 4]`: the source-reader / heatmap loaders read it via
+/// `FixedSizeBinaryArray::value(i)` (which yields `&[u8]` without
+/// fixed-size typing), so storing inline avoids a self-borrowing
+/// `Vec<[u8; 4]>` shim in the accumulator. Per Opt C (plan §3).
 #[derive(Clone, Copy, Debug)]
 pub struct AirborneRowView<'a> {
     pub flight_id: u64,
     pub callsign: &'a str,
-    pub aircraft_type: &'a [u8; 4],
+    pub aircraft_type: [u8; 4],
     pub profile_idx: u8,
     pub source_id: u8,
     pub origin: u8,
