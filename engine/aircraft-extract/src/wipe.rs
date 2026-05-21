@@ -102,7 +102,7 @@ pub fn wipe_stale_arrows_for_scope(
         // NotFound as a no-op; any other error is fatal.
         match std::fs::remove_file(&stale) {
             Ok(()) => {
-                eprintln!("[wipe] removed stale {}", stale.display());
+                eprintln!("{} [wipe] removed stale {}", crate::progress::ts(), stale.display());
                 removed += 1;
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,

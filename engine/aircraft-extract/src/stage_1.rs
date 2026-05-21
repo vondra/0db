@@ -15,6 +15,7 @@ use crate::filters;
 use crate::flight::{typecode_bytes, Flight, FlightSegment};
 use crate::ground_inference::ground_flags;
 use crate::period::parse_date_id;
+use crate::progress::{finished, started, Milestone};
 use crate::segment::{build_segments, SegmentMeta};
 use crate::trace::TracePoint;
 use noise_compute::types::RasterSampler;
@@ -33,6 +34,8 @@ pub fn run_stage_1(
     let flights = read_flights(&in_path)
         .with_context(|| format!("read flights {}", in_path.display()))?;
     let date_id = parse_date_id(day_str);
+    let n_flights = flights.len();
+    started("stage1", &format!("day={day_str}, {n_flights} flights"));
 
     // Pre-load DEM tiles covering the flight bbox so per-point lookups
     // are lock-free during rayon par_iter.
@@ -41,13 +44,22 @@ pub fn run_stage_1(
     }
 
     // Heavy work: per-flight AGL + truncate + ground + classify + segments.
+    let flight_counter = Milestone::new("stage1", "flights", 1_000);
     let segments: Vec<FlightSegment> = flights
         .par_iter()
-        .flat_map_iter(|f| stage_1_one_flight(f, &rasters, date_id).into_iter())
+        .flat_map_iter(|f| {
+            let out = stage_1_one_flight(f, &rasters, date_id);
+            flight_counter.add(1);
+            out.into_iter()
+        })
         .collect();
 
     let out_path = output_dir.join(format!("{day_str}.arrow"));
     write_segments(&out_path, &segments)?;
+    finished(
+        "stage1",
+        &format!("day={day_str}, {n_flights} flights → {} segments", segments.len()),
+    );
     Ok(segments.len())
 }
 

@@ -27,6 +27,7 @@ use crate::flight::{
     segment_flags, AirborneEvent, AirborneSubSegment, FlightSegment, Phase,
 };
 use crate::geo::{interp_along_path, r4_hex_str};
+use crate::progress::{finished, human, started, ts, Milestone};
 use crate::scope::ScopeBbox;
 use crate::shuffle::list_r4_shards;
 use noise_compute::types::RasterSampler;
@@ -62,23 +63,32 @@ pub fn run_stage_2a(
         scope,
     )?;
     if wiped > 0 {
-        eprintln!("[stage2a] wiped {wiped} stale airborne.arrow file(s) before write");
+        eprintln!(
+            "{} [stage2a] wiped {wiped} stale airborne.arrow file(s) before write",
+            ts()
+        );
     }
     let r4_inputs = list_r4_shards(segments_by_r4_dir, "airborne.arrow", scope)?;
     let n_r4 = r4_inputs.len();
-    eprintln!("[stage2a] starting: {n_r4} R4 cells");
+    started("stage2a", &format!("{n_r4} R4 cells"));
     let stage_start = std::time::Instant::now();
 
+    let r4_counter = Milestone::new("stage2a", "R4 cells", 100);
+    let seg_counter = Milestone::new("stage2a", "segments in", 1_000_000);
+    let evt_counter = Milestone::new("stage2a", "events out", 100_000);
     let written = std::sync::atomic::AtomicUsize::new(0);
     r4_inputs
         .par_iter()
         .try_for_each(|(r4, shard_path)| -> Result<()> {
             let segments = read_segments(shard_path)
                 .with_context(|| format!("read {}", shard_path.display()))?;
+            seg_counter.add(segments.len() as u64);
             let events = aggregate_events_for_r4(&segments, rasters);
+            r4_counter.add(1);
             if events.is_empty() {
                 return Ok(());
             }
+            evt_counter.add(events.len() as u64);
             let dir = h3r4_dir.join(r4_hex_str(*r4));
             std::fs::create_dir_all(&dir)?;
             crate::arrow_io::write_airborne(&dir.join("airborne.arrow"), &events, n_days)?;
@@ -86,7 +96,17 @@ pub fn run_stage_2a(
             Ok(())
         })?;
     let written = written.load(std::sync::atomic::Ordering::Relaxed);
-    eprintln!("[stage2a] done: {written} R4s in {:?}", stage_start.elapsed());
+    let empty = n_r4.saturating_sub(written);
+    finished(
+        "stage2a",
+        &format!(
+            "{written}/{n_r4} R4s wrote {} events from {} segments ({} empty after gates) in {:?}",
+            human(evt_counter.total()),
+            human(seg_counter.total()),
+            empty,
+            stage_start.elapsed()
+        ),
+    );
     Ok(written)
 }
 

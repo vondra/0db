@@ -12,6 +12,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use aircraft_extract::airport_io::{read_global_airport_lines, read_global_airports};
 use aircraft_extract::arrow_io::read_record_batches;
+use aircraft_extract::progress::ts;
 use aircraft_extract::source::FlightSource;
 use aircraft_extract::source_adsb_tar::AdsbTarSource;
 use aircraft_extract::stage_0::run_stage_0;
@@ -195,19 +196,24 @@ fn main() -> Result<()> {
             std::fs::create_dir_all(&out)?;
             let sources: Vec<Box<dyn FlightSource>> = vec![Box::new(AdsbTarSource::new(adsb_cache))];
             let n = run_stage_0(&sources, &day, &out)?;
-            eprintln!("[stage0] {day}: {n} flights");
+            eprintln!("{} [stage0] {day}: {n} flights", ts());
         }
         Cmd::Stage1 { flights_dir, out, day, prepared_dir } => {
             std::fs::create_dir_all(&out)?;
             let rasters = RealRasters::new(&prepared_dir);
             let n = run_stage_1(&flights_dir, &out, &day, &rasters)?;
-            eprintln!("[stage1] {day}: {n} segments");
+            eprintln!("{} [stage1] {day}: {n} segments", ts());
         }
         Cmd::Shuffle { segments_dir, out_dir, scope_bbox } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             let day_paths = list_segments_day_paths(&segments_dir)?;
             aircraft_extract::shuffle::shuffle_per_r4(&day_paths, &out_dir, scope.as_ref())?;
-            eprintln!("[shuffle] {} day shards → {}", day_paths.len(), out_dir.display());
+            eprintln!(
+                "{} [shuffle] {} day shards → {}",
+                ts(),
+                day_paths.len(),
+                out_dir.display()
+            );
         }
         Cmd::Stage2a {
             segments_by_r4,
@@ -220,14 +226,14 @@ fn main() -> Result<()> {
             require_input_dir_exists("--segments-by-r4", &segments_by_r4)?;
             let rasters = RealRasters::new(&prepared_dir);
             let n = run_stage_2a(&segments_by_r4, &h3r4_dir, n_days, scope.as_ref(), &rasters)?;
-            eprintln!("[stage2a] {n} R4 hexes written");
+            eprintln!("{} [stage2a] {n} R4 hexes written", ts());
         }
         Cmd::Stage2b { segments_dir, h3r4_dir, n_days, scope_bbox } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             require_input_dir_exists("--segments-dir", &segments_dir)?;
             let day_paths = list_segments_day_paths(&segments_dir)?;
             let n = run_stage_2b(&day_paths, &h3r4_dir, n_days, scope.as_ref())?;
-            eprintln!("[stage2b] {n} R4 hexes written");
+            eprintln!("{} [stage2b] {n} R4 hexes written", ts());
         }
         Cmd::Stage2c { segments_by_r4, h3r4_dir, n_days, scope_bbox } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
@@ -235,11 +241,12 @@ fn main() -> Result<()> {
             let areas = read_global_airports(&h3r4_dir)
                 .with_context(|| format!("read airport_areas.arrow from {}", h3r4_dir.display()))?;
             eprintln!(
-                "[stage2c] loaded {} aerodrome polygons globally",
+                "{} [stage2c] loaded {} aerodrome polygons globally",
+                ts(),
                 areas.len()
             );
             let n = run_stage_2c(&segments_by_r4, &areas, &h3r4_dir, n_days, scope.as_ref())?;
-            eprintln!("[stage2c] {n} R4 hexes written");
+            eprintln!("{} [stage2c] {n} R4 hexes written", ts());
         }
         Cmd::RunAll {
             adsb_cache,
@@ -254,13 +261,20 @@ fn main() -> Result<()> {
             require_scope_for_subset_cache(&adsb_cache, scope.as_ref())?;
             if let Some(s) = scope.as_ref() {
                 eprintln!(
-                    "[run-all] scope bbox: lat {}..{}, lon {}..{}",
-                    s.min_lat, s.max_lat, s.min_lon, s.max_lon
+                    "{} [run-all] scope bbox: lat {}..{}, lon {}..{}",
+                    ts(),
+                    s.min_lat,
+                    s.max_lat,
+                    s.min_lon,
+                    s.max_lon
                 );
             }
             if from_stage != FromStage::Stage0 {
                 let name = from_stage_name(from_stage);
-                eprintln!("[run-all] --from-stage {name}: skipping every phase before {name}");
+                eprintln!(
+                    "{} [run-all] --from-stage {name}: skipping every phase before {name}",
+                    ts()
+                );
             }
             let flights_dir = work_dir.join("flights");
             let segments_dir = work_dir.join("segments");
@@ -274,7 +288,8 @@ fn main() -> Result<()> {
             days_dedup.dedup();
             if days_dedup.len() != days.len() {
                 eprintln!(
-                    "[run-all] duplicate days dropped: {} → {} unique",
+                    "{} [run-all] duplicate days dropped: {} → {} unique",
+                    ts(),
                     days.len(),
                     days_dedup.len()
                 );
@@ -317,11 +332,17 @@ fn main() -> Result<()> {
                         ) {
                             Ok(()) if segments_path.exists() => Either::Left(segments_path),
                             Ok(()) => {
-                                eprintln!("[run-all] {day}: FAILED — no segments file produced");
+                                eprintln!(
+                                    "{} [run-all] {day}: FAILED — no segments file produced",
+                                    ts()
+                                );
                                 Either::Right(day.clone())
                             }
                             Err(e) => {
-                                eprintln!("[run-all] {day}: FAILED stage0/1 — {e}, skipping");
+                                eprintln!(
+                                    "{} [run-all] {day}: FAILED stage0/1 — {e}, skipping",
+                                    ts()
+                                );
                                 Either::Right(day.clone())
                             }
                         }
@@ -329,7 +350,8 @@ fn main() -> Result<()> {
 
                 if !failed_days.is_empty() {
                     eprintln!(
-                        "[run-all] {} day(s) failed: {} — Stage 2 runs on the rest; rerun with --days {} to retry",
+                        "{} [run-all] {} day(s) failed: {} — Stage 2 runs on the rest; rerun with --days {} to retry",
+                        ts(),
                         failed_days.len(),
                         failed_days.join(","),
                         failed_days.join(",")
@@ -365,7 +387,8 @@ fn main() -> Result<()> {
                     ));
                 }
                 eprintln!(
-                    "[run-all] reusing {} segment shard(s) from {}",
+                    "{} [run-all] reusing {} segment shard(s) from {}",
+                    ts(),
                     paths.len(),
                     segments_dir.display()
                 );
@@ -383,10 +406,15 @@ fn main() -> Result<()> {
             // `nearest_aerodrome_within` resolver. Airport identity
             // must stay global — aerodromes straddle R4 boundaries.
             let areas = read_global_airports(&h3r4_dir)?;
-            eprintln!("[run-all] global aerodromes: {} polygons", areas.len());
+            eprintln!(
+                "{} [run-all] global aerodromes: {} polygons",
+                ts(),
+                areas.len()
+            );
             let global_lines = read_global_airport_lines(&h3r4_dir)?;
             eprintln!(
-                "[run-all] global airport lines: {} microsegments",
+                "{} [run-all] global airport lines: {} microsegments",
+                ts(),
                 global_lines.len()
             );
 
@@ -397,7 +425,7 @@ fn main() -> Result<()> {
             if from_stage <= FromStage::Shuffle {
                 let t_shuf = Instant::now();
                 aircraft_extract::shuffle::shuffle_per_r4(&ok_paths, &by_r4_dir, scope.as_ref())?;
-                eprintln!("[run-all] shuffle done ({:?})", t_shuf.elapsed());
+                eprintln!("{} [run-all] shuffle done ({:?})", ts(), t_shuf.elapsed());
             } else {
                 // Stages 1.5 / 2A / 2C all read `<by_r4_dir>/<R4>/…`;
                 // fail loud before they silently no-op on a missing dir.
@@ -422,7 +450,8 @@ fn main() -> Result<()> {
                     scope.as_ref(),
                 )?;
                 eprintln!(
-                    "[run-all] stage1.5 R4s with synth lines={r1_5} ({:?})",
+                    "{} [run-all] stage1.5 R4s with synth lines={r1_5} ({:?})",
+                    ts(),
                     t1_5.elapsed()
                 );
             }
@@ -430,7 +459,7 @@ fn main() -> Result<()> {
             if from_stage <= FromStage::Stage2a {
                 let t2a = Instant::now();
                 let r2a = run_stage_2a(&by_r4_dir, &h3r4_dir, n_days, scope.as_ref(), &rasters)?;
-                eprintln!("[run-all] stage2a={r2a} ({:?})", t2a.elapsed());
+                eprintln!("{} [run-all] stage2a={r2a} ({:?})", ts(), t2a.elapsed());
             }
 
             if from_stage <= FromStage::Stage2b {
@@ -439,14 +468,14 @@ fn main() -> Result<()> {
                 // per-R4 ones — cruise output R4 derives from each
                 // touched R8's parent (`stage_2b.rs:cell.parent(R4)`).
                 let r2b = run_stage_2b(&ok_paths, &h3r4_dir, n_days, scope.as_ref())?;
-                eprintln!("[run-all] stage2b={r2b} ({:?})", t2b.elapsed());
+                eprintln!("{} [run-all] stage2b={r2b} ({:?})", ts(), t2b.elapsed());
             }
 
             // Stage 2C always runs — it is the last stage; `from_stage`
             // can equal Stage2c (run just this one) but never exceed it.
             let t2c = Instant::now();
             let r2c = run_stage_2c(&by_r4_dir, &areas, &h3r4_dir, n_days, scope.as_ref())?;
-            eprintln!("[run-all] stage2c={r2c} ({:?})", t2c.elapsed());
+            eprintln!("{} [run-all] stage2c={r2c} ({:?})", ts(), t2c.elapsed());
 
             // `by_r4_dir` is left on disk so `--from-stage stage1-5/2a/2c`
             // can iterate on the same scratch dir without re-running
@@ -515,7 +544,7 @@ fn from_stage_name(from_stage: FromStage) -> &'static str {
 fn init_rayon_pool(max_threads: Option<NonZeroUsize>) -> Result<()> {
     let Some(n) = max_threads else { return Ok(()) };
     rayon::ThreadPoolBuilder::new().num_threads(n.get()).build_global()?;
-    eprintln!("[rayon] global pool = {} threads", n);
+    eprintln!("{} [rayon] global pool = {} threads", ts(), n);
     Ok(())
 }
 
@@ -570,7 +599,8 @@ fn run_day(
     let t_stage1 = Instant::now();
     let n1 = run_stage_1(flights_dir, segments_dir, day, rasters)?;
     eprintln!(
-        "[run-all] {day}: {stage0_log} stage1={n1} ({:?})",
+        "{} [run-all] {day}: {stage0_log} stage1={n1} ({:?})",
+        ts(),
         t_stage1.elapsed()
     );
     Ok(())

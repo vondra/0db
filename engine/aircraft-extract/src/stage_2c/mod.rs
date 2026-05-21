@@ -13,6 +13,7 @@ use std::path::Path;
 use anyhow::Result;
 use noise_compute::types::AirportArea;
 
+use crate::progress::ts;
 use crate::scope::ScopeBbox;
 
 pub mod airport_summary_reduce;
@@ -52,7 +53,10 @@ pub fn run_stage_2c(
         scope,
     )?;
     if wiped > 0 {
-        eprintln!("[stage2c] wiped {wiped} stale airport_traffic.arrow file(s) before write");
+        eprintln!(
+            "{} [stage2c] wiped {wiped} stale airport_traffic.arrow file(s) before write",
+            ts()
+        );
     }
     let traffic_n = airport_traffic_writer::run_airport_traffic(
         segments_by_r4_dir,
@@ -61,7 +65,6 @@ pub fn run_stage_2c(
         n_days,
         scope,
     )?;
-    eprintln!("[stage2c] airport_traffic.arrow R4s={traffic_n}");
 
     // Reduce phase — walk per-R4 airport_summary_parts and union per
     // airport_key. Always run even when traffic_n == 0 so the popup
@@ -78,12 +81,7 @@ pub fn run_stage_2c(
         .join("aircraft");
     std::fs::create_dir_all(&summary_dir)?;
     let summary_path = summary_dir.join(AIRPORT_SUMMARY_FILENAME);
-    let n_airports =
-        airport_summary_reduce::run_airport_summary_reduce(&parts_root, &summary_path)?;
-    eprintln!(
-        "[stage2c] airport_summary.arrow airports={n_airports} → {}",
-        summary_path.display()
-    );
+    let _ = airport_summary_reduce::run_airport_summary_reduce(&parts_root, &summary_path)?;
     // Best-effort cleanup: parts/ is intermediate scratch.
     let _ = std::fs::remove_dir_all(&parts_root);
     Ok(traffic_n)

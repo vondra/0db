@@ -32,6 +32,7 @@ use rayon::prelude::*;
 use crate::arrow_io::{read_segments, write_segments};
 use crate::flight::{FlightSegment, Phase};
 use crate::geo::{lat_lon_to_cell, midpoint, r4_hex_str};
+use crate::progress::{finished, human, started, Milestone};
 use crate::scope::ScopeBbox;
 
 /// Coarse hash buckets the shuffle is partitioned across. 256 is small
@@ -117,21 +118,36 @@ pub fn shuffle_per_r4(
     }
     std::fs::create_dir_all(out_dir)?;
 
-    eprintln!("[shuffle] passA over {} days", day_paths.len());
+    started("shuffle/passA", &format!("{} day shards", day_paths.len()));
     let pass_a_start = std::time::Instant::now();
-    pass_a(day_paths, &temp_dir, scope)?;
-    eprintln!("[shuffle] passA done in {:?}", pass_a_start.elapsed());
+    let pass_a_total = pass_a(day_paths, &temp_dir, scope)?;
+    finished(
+        "shuffle/passA",
+        &format!(
+            "{} segments scattered in {:?}",
+            human(pass_a_total),
+            pass_a_start.elapsed()
+        ),
+    );
 
-    eprintln!("[shuffle] passB → {}", out_dir.display());
+    started("shuffle/passB", &format!("{} hash buckets", SHUFFLE_HASH_BUCKETS));
     let pass_b_start = std::time::Instant::now();
-    pass_b(&temp_dir, out_dir)?;
-    eprintln!("[shuffle] passB done in {:?}", pass_b_start.elapsed());
+    let pass_b_shards = pass_b(&temp_dir, out_dir)?;
+    finished(
+        "shuffle/passB",
+        &format!(
+            "{pass_b_shards} R4 phase shards written → {} in {:?}",
+            out_dir.display(),
+            pass_b_start.elapsed()
+        ),
+    );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
 }
 
-fn pass_a(day_paths: &[PathBuf], temp_dir: &Path, scope: Option<&ScopeBbox>) -> Result<()> {
+fn pass_a(day_paths: &[PathBuf], temp_dir: &Path, scope: Option<&ScopeBbox>) -> Result<u64> {
+    let counter = Milestone::new("shuffle/passA", "segments", 1_000_000);
     day_paths.par_iter().try_for_each(|day_path| -> Result<()> {
         let segments = read_segments(day_path)
             .with_context(|| format!("read {}", day_path.display()))?;
@@ -141,6 +157,7 @@ fn pass_a(day_paths: &[PathBuf], temp_dir: &Path, scope: Option<&ScopeBbox>) -> 
             .ok_or_else(|| anyhow::anyhow!("missing file stem: {}", day_path.display()))?;
 
         let mut buckets: HashMap<(&'static str, u64), Vec<FlightSegment>> = HashMap::new();
+        let mut kept = 0u64;
         for seg in segments {
             let Some(phase) = phase_name(seg.phase) else {
                 continue;
@@ -157,6 +174,7 @@ fn pass_a(day_paths: &[PathBuf], temp_dir: &Path, scope: Option<&ScopeBbox>) -> 
                 .entry((phase, shuffle_bucket(r4)))
                 .or_default()
                 .push(seg);
+            kept += 1;
         }
 
         // Sequential per-bucket write — paths are unique per
@@ -164,15 +182,20 @@ fn pass_a(day_paths: &[PathBuf], temp_dir: &Path, scope: Option<&ScopeBbox>) -> 
         for ((phase, hash), segs) in buckets {
             write_segments(&pass_a_path(temp_dir, phase, hash, day_stem), &segs)?;
         }
+        counter.add(kept);
         Ok(())
-    })
+    })?;
+    Ok(counter.total())
 }
 
-fn pass_b(temp_dir: &Path, out_dir: &Path) -> Result<()> {
+fn pass_b(temp_dir: &Path, out_dir: &Path) -> Result<u64> {
     let phases = ["airborne", "ground"];
+    let bucket_counter = Milestone::new("shuffle/passB", "buckets", 25);
+    let shard_counter = Milestone::new("shuffle/passB", "shards", 1_000);
     (0..SHUFFLE_HASH_BUCKETS)
         .into_par_iter()
         .try_for_each(|hash| -> Result<()> {
+            let mut shards_this_bucket = 0u64;
             for phase in phases {
                 let parts = list_pass_a_parts(&pass_a_bucket_dir(temp_dir, phase, hash))?;
                 if parts.is_empty() {
@@ -193,10 +216,14 @@ fn pass_b(temp_dir: &Path, out_dir: &Path) -> Result<()> {
                     let r4_dir = out_dir.join(r4_hex_str(r4));
                     std::fs::create_dir_all(&r4_dir)?;
                     write_segments(&r4_dir.join(format!("{phase}.arrow")), &segs)?;
+                    shards_this_bucket += 1;
                 }
             }
+            bucket_counter.add(1);
+            shard_counter.add(shards_this_bucket);
             Ok(())
-        })
+        })?;
+    Ok(shard_counter.total())
 }
 
 /// Walk `<segments_by_r4_dir>/<R4>/<shard_name>` for in-scope R4s —

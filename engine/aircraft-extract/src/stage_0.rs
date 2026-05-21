@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use crate::arrow_io::{write_flights, FlightRow};
 use crate::dedup;
 use crate::flight::Flight;
+use crate::progress::{finished, started};
 use crate::source::FlightSource;
 
 /// Read every source for `day_str`, dedupe, and write the per-day
@@ -22,6 +23,7 @@ pub fn run_stage_0(
     day_str: &str,
     output_root: &Path,
 ) -> Result<usize> {
+    started("stage0", &format!("day={day_str}, sources={}", sources.len()));
     let mut all = Vec::new();
     for s in sources {
         let mut flights = s
@@ -29,9 +31,17 @@ pub fn run_stage_0(
             .with_context(|| format!("source {} day {day_str}", s.source_id()))?;
         all.append(&mut flights);
     }
+    let n_raw = all.len();
     let unique = dedup::dedup(all);
     let path = output_root.join(format!("{day_str}.arrow"));
     write_flights_at(&path, &unique)?;
+    finished(
+        "stage0",
+        &format!(
+            "day={day_str}, {n_raw} raw → {} unique flights",
+            unique.len()
+        ),
+    );
     Ok(unique.len())
 }
 

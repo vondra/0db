@@ -6,6 +6,16 @@
 #
 # Stage 0/1 are per-day; Stage 2A/2B/2C aggregate the full window.
 # `aircraft-extract run-all` orchestrates the cross-day flow.
+#
+# Stage reuse — to iterate on a single later stage without re-running
+# upstream work, pass `--from-stage <stage>` (or set
+# `FROM_STAGE=<stage>`). Valid values: stage0 (default — full
+# pipeline), stage1, shuffle, stage1-5, stage2a, stage2b, stage2c.
+# Each variant reuses outputs that an earlier `run-all` left under
+# WORK_DIR (`flights/`, `segments/`, `segments_by_r4/`). Example:
+# `./scripts/run-aircraft-extract.sh --from-stage stage2a` reuses the
+# cached Stage 1 segments and per-R4 shuffle, runs only Stage 2A/2B/2C.
+# See `aircraft-extract run-all --help` for per-variant requirements.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -28,9 +38,42 @@ DAYS="${DAYS:-}"
 # 50.10°N 14.43°E): a bounding box that covers the entire 150 km
 # disc with ~10 km margin. Override when ADSB_CACHE is changed.
 SCOPE_BBOX="${SCOPE_BBOX:-48.65,12.00,51.55,16.90}"
+FROM_STAGE="${FROM_STAGE:-}"
 
 log() { echo "[aircraft-extract] $(date '+%Y-%m-%d %H:%M:%S') $*"; }
 die() { log "ERROR: $*"; exit 1; }
+
+# CLI args are accepted as the discoverable alternative to env vars.
+# Only the stage-reuse flag is parsed here — every other knob remains
+# env-var-driven to keep the surface small (DAYS, ADSB_CACHE, … rarely
+# change per invocation, --from-stage flips between runs).
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --from-stage)
+            [ $# -ge 2 ] || die "--from-stage requires a value"
+            FROM_STAGE="$2"
+            shift 2
+            ;;
+        --from-stage=*)
+            FROM_STAGE="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            # Pipe the header comment block (between the shebang and
+            # the first non-comment line) so `--help` and the source
+            # docs stay one source of truth.
+            awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"
+            echo
+            echo "Usage: $0 [--from-stage <stage0|stage1|shuffle|stage1-5|stage2a|stage2b|stage2c>]"
+            echo "Env vars: DATA_YEAR, DATA_ROOT, ADSB_CACHE, H3R4_DIR, PREPARED_DIR, WORK_DIR,"
+            echo "          DAYS, SCOPE_BBOX, FROM_STAGE, LOG_DIR"
+            exit 0
+            ;;
+        *)
+            die "unknown argument: $1 (try --help)"
+            ;;
+    esac
+done
 
 if [ -z "$DAYS" ]; then
     log "DAYS env var not set; deriving from ADSB_CACHE=$ADSB_CACHE"
@@ -52,7 +95,7 @@ log "logging to $LOG_FILE (symlinked $LOG_DIR/aircraft-extract-latest.log)"
 
 log "rebuilding aircraft-extract (release)"
 cargo build --release --manifest-path engine/aircraft-extract/Cargo.toml --bin aircraft-extract \
-    2>&1 | tee -a "$LOG_FILE"
+    2>&1 | stdbuf -oL -eL tee -a "$LOG_FILE"
 
 mkdir -p "$WORK_DIR" "$H3R4_DIR"
 
@@ -62,10 +105,14 @@ log "running aircraft-extract run-all (DAYS=$DAYS)"
 # stdout (so `bash run_in_background` output and a foreground terminal
 # both see live progress). `tail -F logs/aircraft-extract-latest.log`
 # is the operator's go-to during multi-hour global runs.
-SCOPE_ARGS=()
+EXTRA_ARGS=()
 if [ -n "$SCOPE_BBOX" ]; then
-    SCOPE_ARGS=(--scope-bbox "$SCOPE_BBOX")
+    EXTRA_ARGS+=(--scope-bbox "$SCOPE_BBOX")
     log "scope bbox: $SCOPE_BBOX"
+fi
+if [ -n "$FROM_STAGE" ]; then
+    EXTRA_ARGS+=(--from-stage "$FROM_STAGE")
+    log "from-stage: $FROM_STAGE (skipping every phase before $FROM_STAGE)"
 fi
 ./engine/aircraft-extract/target/release/aircraft-extract run-all \
     --adsb-cache "$ADSB_CACHE" \
@@ -73,7 +120,7 @@ fi
     --prepared-dir "$PREPARED_DIR" \
     --work-dir "$WORK_DIR" \
     --days "$DAYS" \
-    "${SCOPE_ARGS[@]}" \
-    2>&1 | tee -a "$LOG_FILE"
+    "${EXTRA_ARGS[@]}" \
+    2>&1 | stdbuf -oL -eL tee -a "$LOG_FILE"
 
 log "done — popup arrows in $H3R4_DIR/<R4>/{airborne,cruise,airport_traffic}.arrow"

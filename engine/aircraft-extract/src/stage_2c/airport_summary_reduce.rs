@@ -20,6 +20,7 @@ use anyhow::{Context, Result};
 use noise_compute::emission::gse::NUM_GSE_CLASSES;
 
 use crate::arrow_io::{read_airport_summary_part, write_airport_summary, AirportSummaryRow};
+use crate::progress::{finished, started, Milestone};
 
 /// Read all per-R4 `airport_summary_parts/*/part.arrow` files, UNION
 /// the raw fid sets per airport_key, write the global
@@ -38,7 +39,8 @@ pub fn run_airport_summary_reduce(
 ) -> Result<usize> {
     if !parts_root.exists() {
         eprintln!(
-            "[stage2c/reduce] no airport_summary_parts/ at {} — writing empty summary",
+            "{} [stage2c/reduce] no airport_summary_parts/ at {} — writing empty summary",
+            crate::progress::ts(),
             parts_root.display()
         );
         write_airport_summary(output_path, &[])?;
@@ -47,11 +49,15 @@ pub fn run_airport_summary_reduce(
 
     let mut by_airport: HashMap<String, GlobalAggregate> = HashMap::new();
 
-    // Walk every R4 subdir and absorb its part.arrow.
-    for entry in std::fs::read_dir(parts_root)
+    let part_counter = Milestone::new("stage2c/reduce", "R4 parts", 50);
+    let mut n_parts = 0usize;
+    let r4_entries: Vec<_> = std::fs::read_dir(parts_root)
         .with_context(|| format!("read_dir {}", parts_root.display()))?
-    {
-        let entry = entry?;
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    started("stage2c/reduce", &format!("{} R4 subdirs", r4_entries.len()));
+
+    // Walk every R4 subdir and absorb its part.arrow.
+    for entry in r4_entries {
         let path = entry.path();
         if !path.is_dir() {
             continue;
@@ -84,6 +90,8 @@ pub fn run_airport_summary_reduce(
                 }
             }
         }
+        n_parts += 1;
+        part_counter.add(1);
     }
 
     let mut rows: Vec<AirportSummaryRow> = by_airport
@@ -107,9 +115,9 @@ pub fn run_airport_summary_reduce(
         std::fs::create_dir_all(parent)?;
     }
     write_airport_summary(output_path, &rows)?;
-    eprintln!(
-        "[stage2c/reduce] wrote {n} airports to {}",
-        output_path.display()
+    finished(
+        "stage2c/reduce",
+        &format!("{n} airports from {n_parts} R4 parts → {}", output_path.display()),
     );
     Ok(n)
 }
