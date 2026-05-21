@@ -363,10 +363,12 @@ impl FusedGrid {
         // half-cell phase error that `lookup_fused` / `pixel` cannot correct.
         //
         // Margin sized to cover `building_enclosure`'s metric 3×3 probe
-        // (ENCLOSURE_RADIUS_M = 75 m) plus bilinear neighbours. Probe
-        // footprint in DEM cells (30 m): lat ≈ 2.4 cells; lon ≈ 2.4/cos(lat),
-        // which reaches ~7.1 cells at 70°N. 8 cells stays safe through
-        // ~76°N — beyond the global atlas's effective latitude range.
+        // (ENCLOSURE_RADIUS_M = 75 m) plus the `pixel()` nearest-neighbour
+        // half-cell rounding. Probe footprint in DEM cells (~30.7 m):
+        // lat ≈ 2.4 cells; lon ≈ 2.4/cos(lat), reaching ~7.1 cells at
+        // 70°N. 8 cells stays safe through ~71°N (cos(lat) ≥ 0.32) —
+        // covers every populated Arctic city; above that the probe
+        // clamps to edge pixels exactly like the pre-fix code did.
         const MARGIN_CELLS: i32 = 8;
         let lat_lo_i = (lat_min * inv_cell_deg).floor() as i32 - MARGIN_CELLS;
         let lon_lo_i = (lon_min * inv_cell_deg).floor() as i32 - MARGIN_CELLS;
@@ -858,10 +860,11 @@ mod tests {
 
     #[test]
     fn fused_building_enclosure_near_bbox_edge() {
-        // Regression test for Gemini-flagged bug: 1-cell margin made
-        // `building_enclosure()` (probe radius ~0.001° = 3.6 cells)
-        // silently clamp to edge pixels at hex boundaries. 5-cell margin
-        // post-fix must keep parity with RealRasters.
+        // Regression test for Gemini-flagged bug: insufficient bbox
+        // margin made `building_enclosure()` silently clamp the 3×3
+        // probe to edge pixels at hex boundaries. Current 8-cell margin
+        // covers the metric probe (ENCLOSURE_RADIUS_M = 75 m ≈ 2.4 lat
+        // cells, ~3.4 lon cells at 50°N) plus rounding slack.
         let Some((real, fg)) = test_fused() else { return; };
         let lat = 49.181;  // 1 cell from bbox min (49.18)
         let lon = 16.581;
