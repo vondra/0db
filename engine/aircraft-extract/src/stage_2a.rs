@@ -208,10 +208,20 @@ impl AirborneEventBuilder {
         // five stored `terrain_*_elev_m` (start/q1/mid/q3/end) share
         // the same interp. Mixed NN/bilinear inside one sub-segment
         // would produce spurious "ridge spike" rejects in the popup's
-        // q1/q3 gate.
-        let q1_elev = rasters.elevation_nearest(q1_lat as f64, q1_lon as f64) as f32;
-        let mid_elev = rasters.elevation_nearest(mid_lat as f64, mid_lon as f64) as f32;
-        let q3_elev = rasters.elevation_nearest(q3_lat as f64, q3_lon as f64) as f32;
+        // q1/q3 gate. Sub-segments are ≤ 30 km so q1/mid/q3 almost
+        // always land in the same 1° tile — cache it across the three
+        // lookups to skip both atomics.
+        let mut dem_key = (i32::MIN, i32::MIN);
+        let mut dem_tile: Option<std::sync::Arc<raster_reader::RawTile>> = None;
+        let q1_elev = rasters
+            .elevation_nearest_cached(q1_lat as f64, q1_lon as f64, &mut dem_key, &mut dem_tile)
+            as f32;
+        let mid_elev = rasters
+            .elevation_nearest_cached(mid_lat as f64, mid_lon as f64, &mut dem_key, &mut dem_tile)
+            as f32;
+        let q3_elev = rasters
+            .elevation_nearest_cached(q3_lat as f64, q3_lon as f64, &mut dem_key, &mut dem_tile)
+            as f32;
         self.sub_segments.push(AirborneSubSegment {
             start_lat: seg.start_lat,
             start_lon: seg.start_lon,

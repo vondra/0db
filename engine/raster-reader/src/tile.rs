@@ -376,6 +376,35 @@ impl TileStore {
         }
     }
 
+    /// Variant of [`sample_cached`] with an explicit [`Interp`] override.
+    /// Pairs with [`sample_with`] in semantics: a caller using NN on the
+    /// AGL-gate path threads the same (cached_key, cached_tile) so the
+    /// per-tile mutex AND global `use_counter` atomic are both skipped
+    /// on cache hits inside one flight.
+    #[inline]
+    pub fn sample_cached_with(
+        &self,
+        lat: f64,
+        lon: f64,
+        interp: Interp,
+        cached_key: &mut (i32, i32),
+        cached_tile: &mut Option<Arc<RawTile>>,
+    ) -> f64 {
+        let (lat_int, lon_int, frac_lat, frac_lon) = Self::to_tile_key(lat, lon);
+        if (lat_int, lon_int) != *cached_key {
+            *cached_key = (lat_int, lon_int);
+            *cached_tile = self
+                .get_tile_fast(lat_int, lon_int)
+                .or_else(|| self.get_tile(lat_int, lon_int));
+        }
+        let Some(tile) = cached_tile.as_deref() else { return self.default_value };
+        let (frac_row, frac_col) = Self::frac_to_pixel(frac_lat, frac_lon, tile.grid_size);
+        match interp {
+            Interp::Bilinear => tile.sample_bilinear(frac_row, frac_col),
+            Interp::Nearest => tile.sample_nearest(frac_row, frac_col),
+        }
+    }
+
     /// Sample along path, return profile of values at raster resolution.
     pub fn profile_along_path(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> Vec<f64> {
         let cos_lat = ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);

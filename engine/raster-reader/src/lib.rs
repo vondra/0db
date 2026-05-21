@@ -9,6 +9,8 @@ use std::path::Path;
 use noise_compute::types::RasterSampler;
 use tile::{TileStore, DType, Interp};
 
+pub use tile::RawTile;
+
 fn env_usize(name: &str, default: usize) -> usize {
     std::env::var(name)
         .ok()
@@ -34,7 +36,13 @@ pub struct RealRasters {
 impl RealRasters {
     /// Create from source-data directory. Tiles loaded lazily on first access.
     pub fn new(data_dir: &Path) -> Self {
-        let dem_cache_tiles = env_usize("QUIETMAP_CACHE_DEM_TILES", 12);
+        // Defaults to 32 not 12: 12 is below the working-set size of
+        // any realistic extract bbox (Praha alone is ~20 1°×1° DEM
+        // tiles), so the LRU evict path fires repeatedly and scans
+        // every tile slot each time. 32 covers most regional bboxes
+        // without code changes; operators override with the env-var
+        // for global runs.
+        let dem_cache_tiles = env_usize("QUIETMAP_CACHE_DEM_TILES", 32);
         let building_cache_tiles = env_usize("QUIETMAP_CACHE_BUILDING_TILES", 64);
         let forest_cache_tiles = env_usize("QUIETMAP_CACHE_FOREST_TILES", 64);
         let imd_cache_tiles = env_usize("QUIETMAP_CACHE_IMD_TILES", 128);
@@ -97,6 +105,26 @@ impl RealRasters {
     /// continuity.
     pub fn elevation_nearest(&self, lat: f64, lon: f64) -> f64 {
         self.dem.sample_with(lat, lon, Interp::Nearest)
+    }
+
+    /// Caller-threaded NN DEM lookup. Pairs with
+    /// [`elevation_nearest`]: when a caller (Stage 1 per-flight loop,
+    /// Stage 2A per-sub-segment) sweeps many points likely to fall in
+    /// the same 1° tile, threading a stack `(cached_key, cached_tile)`
+    /// pair across calls skips the per-tile mutex AND the global
+    /// `use_counter` atomic on cache hits.
+    ///
+    /// Initialize both with `(i32::MIN, i32::MIN)` and `None`; the
+    /// method updates them in place.
+    pub fn elevation_nearest_cached(
+        &self,
+        lat: f64,
+        lon: f64,
+        cached_key: &mut (i32, i32),
+        cached_tile: &mut Option<std::sync::Arc<RawTile>>,
+    ) -> f64 {
+        self.dem
+            .sample_cached_with(lat, lon, Interp::Nearest, cached_key, cached_tile)
     }
 }
 

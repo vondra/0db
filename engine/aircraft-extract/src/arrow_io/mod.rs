@@ -3,7 +3,7 @@
 //! pipeline) never observe a partially-written file.
 
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -57,7 +57,12 @@ pub(crate) fn write_record_batches(
     let tmp = sibling_tmp_path(path);
     {
         let f = File::create(&tmp)?;
-        let mut w = FileWriter::try_new(f, schema)?;
+        // BufWriter coalesces FileWriter's many small writes (header,
+        // schema, per-batch dictionaries, footer) into one syscall
+        // per 8 KiB block. Without it, big arrow files on rotational
+        // disk burn a measurable chunk of wall-time in write(2)
+        // overhead. Mirrors the pattern in `cruise_spill.rs`.
+        let mut w = FileWriter::try_new(BufWriter::new(f), schema)?;
         for b in batches {
             if b.num_rows() > 0 {
                 w.write(b)?;
