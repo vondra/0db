@@ -3,10 +3,12 @@
 //!
 //! Lifetime story: `RecordBatch` arrays are `Arc<dyn Array>`-backed, so
 //! source-reader's hex store can clone the batches cheaply and drop its
-//! `RwLock`. Each `*RowAccum` then snapshots the columns it cares about
-//! into owned `Vec<T>` / `String` / `[f32; 8]` so the `*RowView<'_>`
-//! slices we hand to noise-compute borrow into stable Rust memory, not
-//! into mmap-backed arrow buffers.
+//! `RwLock`. `AirborneRowAccum<'a>` (Opt C) is now zero-copy — it borrows
+//! `&[f32]` / `&str` directly out of the live arrow buffers tied to
+//! the caller's `&[RecordBatch]` Vec. `CruiseRowAccum` and
+//! `AirportTrafficRowAccum` still snapshot columns into owned
+//! `Vec<T>` / `String` (Tier 3 to convert; small batches make the
+//! savings less load-bearing for those layers).
 
 mod airborne_view;
 pub mod airport_summary_view;

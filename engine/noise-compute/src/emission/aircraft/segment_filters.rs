@@ -72,33 +72,34 @@ pub fn ground_ops_kind_fallback(seg: &AircraftSegment) -> u8 {
 }
 
 /// Cached terrain elevations sampled at five points along a segment
-/// (start, end, midpoint, ¼, ¾). Lets the popup hot loop run
-/// `is_ground_stale`, `is_valid_airborne`, and the kernel's Filter D
-/// cuts off one batch of `rasters.elevation()` calls instead of nine
-/// (start/end appear in all three predicates).
+/// Per-segment terrain sample cache (start, end, midpoint).
+///
+/// Cruise scatter synthesises a one-shot `AircraftSegment` from an R8
+/// representative point and still needs to look up DEM at that segment's
+/// endpoints + midpoint, so the type stays alive for `cruise.rs`. The
+/// airborne popup hot path no longer constructs one — it reads the
+/// pre-sampled terrain elevations stored on each sub-segment (Opt A
+/// v15). Previous q1/q3 lookups dropped: with both `alt` and `elev`
+/// linearly interpolated between endpoints, `alt(frac) - elev(frac)`
+/// is itself linear, so the q1/q3 AGL check is implied by the
+/// start/end check (Gemini's math proof, /gg rev 2). Mid is kept
+/// because the receiver-side terrain can be a peak between two ADS-B
+/// samples — mountain terrain breaks linear interpolation.
 #[derive(Clone, Copy, Debug)]
 pub struct SegmentTerrain {
     pub start_elev: f64,
     pub end_elev: f64,
     pub mid_elev: f64,
-    pub q1_elev: f64,
-    pub q3_elev: f64,
 }
 
 impl SegmentTerrain {
     pub fn sample(seg: &AircraftSegment, rasters: &dyn RasterSampler) -> Self {
         let mid_lat = (seg.start_lat + seg.end_lat) * 0.5;
         let mid_lon = (seg.start_lon + seg.end_lon) * 0.5;
-        let q1_lat = seg.start_lat * 0.75 + seg.end_lat * 0.25;
-        let q1_lon = seg.start_lon * 0.75 + seg.end_lon * 0.25;
-        let q3_lat = seg.start_lat * 0.25 + seg.end_lat * 0.75;
-        let q3_lon = seg.start_lon * 0.25 + seg.end_lon * 0.75;
         SegmentTerrain {
             start_elev: rasters.elevation(seg.start_lat, seg.start_lon),
             end_elev: rasters.elevation(seg.end_lat, seg.end_lon),
             mid_elev: rasters.elevation(mid_lat, mid_lon),
-            q1_elev: rasters.elevation(q1_lat, q1_lon),
-            q3_elev: rasters.elevation(q3_lat, q3_lon),
         }
     }
 }
@@ -192,7 +193,21 @@ pub fn is_ground_stale_with_terrain(seg: &AircraftSegment, terrain: &SegmentTerr
     start_agl <= GROUND_STALE_MAX_AGL_M && end_agl <= GROUND_STALE_MAX_AGL_M
 }
 
-/// `is_valid_airborne_segment` reading elevations from a `SegmentTerrain` cache.
+/// `is_valid_airborne_segment` reading pre-sampled elevations from a
+/// [`SegmentTerrain`] cache (popup airborne reads from
+/// `AirborneSubSegment::terrain_*_elev_m`; cruise constructs one
+/// in-place via `SegmentTerrain::sample`).
+///
+/// q1/q3 AGL check dropped in Opt A v15 (Gemini math proof): with
+/// `alt(frac) = start_alt + (end_alt - start_alt) * frac` and
+/// `elev(frac) = start_elev + (end_elev - start_elev) * frac`,
+/// `alt(frac) - elev(frac) = (1-frac)·(start_alt - start_elev) +
+///  frac·(end_alt - end_elev)`. The q1/q3 check is then a convex
+/// combination of the start/end checks and adds no information when
+/// both are stored. mid IS kept because mid_elev is sampled at the
+/// actual terrain (not interpolated) — at LOWI / SEQM / KASE the
+/// real peak between two ADS-B samples can be tens of metres above
+/// `(start_elev + end_elev) / 2`.
 pub fn is_valid_airborne_with_terrain(seg: &AircraftSegment, terrain: &SegmentTerrain) -> bool {
     if seg.on_ground || seg.ground_context != GROUND_CONTEXT_NONE {
         return true;
@@ -208,13 +223,6 @@ pub fn is_valid_airborne_with_terrain(seg: &AircraftSegment, terrain: &SegmentTe
     let start_agl = seg.start_alt_m as f64 - terrain.start_elev;
     let end_agl = seg.end_alt_m as f64 - terrain.end_elev;
     if start_agl < -30.0 || end_agl < -30.0 {
-        return false;
-    }
-    let sa = seg.start_alt_m as f64;
-    let ea = seg.end_alt_m as f64;
-    let q1_alt = sa * 0.75 + ea * 0.25;
-    let q3_alt = sa * 0.25 + ea * 0.75;
-    if q1_alt < terrain.q1_elev - 30.0 || q3_alt < terrain.q3_elev - 30.0 {
         return false;
     }
     if !is_fixed_wing_jet {

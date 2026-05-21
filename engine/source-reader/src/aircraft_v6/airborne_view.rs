@@ -33,6 +33,9 @@ struct SubSegmentColumns<'a> {
     period: &'a [u8],
     date_id: &'a [i16],
     flags: &'a [u8],
+    terrain_start_elev_m: &'a [f32],
+    terrain_mid_elev_m: &'a [f32],
+    terrain_end_elev_m: &'a [f32],
 }
 
 impl<'a> SubSegmentColumns<'a> {
@@ -67,6 +70,9 @@ impl<'a> SubSegmentColumns<'a> {
             period: u8_col("period")?,
             date_id: i16_col("date_id")?,
             flags: u8_col("flags")?,
+            terrain_start_elev_m: f32_col("terrain_start_elev_m")?,
+            terrain_mid_elev_m: f32_col("terrain_mid_elev_m")?,
+            terrain_end_elev_m: f32_col("terrain_end_elev_m")?,
         })
     }
 }
@@ -127,6 +133,9 @@ impl<'a> AirborneRowAccum<'a> {
                         period: &s.period[lo..hi],
                         date_id: &s.date_id[lo..hi],
                         flags: &s.flags[lo..hi],
+                        terrain_start_elev_m: &s.terrain_start_elev_m[lo..hi],
+                        terrain_mid_elev_m: &s.terrain_mid_elev_m[lo..hi],
+                        terrain_end_elev_m: &s.terrain_end_elev_m[lo..hi],
                     },
                 });
             }

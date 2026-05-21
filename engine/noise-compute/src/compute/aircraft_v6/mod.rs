@@ -62,7 +62,6 @@ pub fn compute_aircraft_v6(
     let flights = airborne::scatter(
         receiver,
         airborne_rows,
-        rasters,
         n_days_f,
         airport_centroids,
         traces.as_deref_mut(),
@@ -208,7 +207,6 @@ pub fn compute_aircraft_v6_separable(
     let flights = airborne::scatter(
         receiver,
         airborne_rows,
-        rasters,
         n_days_f,
         airport_centroids,
         None,

@@ -2059,6 +2059,9 @@ mod tests {
         let mut period_col = Vec::with_capacity(total_subs);
         let mut date_id_col = Vec::with_capacity(total_subs);
         let mut flags_col = Vec::with_capacity(total_subs);
+        let mut terrain_start = Vec::with_capacity(total_subs);
+        let mut terrain_mid = Vec::with_capacity(total_subs);
+        let mut terrain_end = Vec::with_capacity(total_subs);
 
         // Column buffers above stay alive for the whole compute call —
         // the row views borrow into them via slice indices.
@@ -2083,6 +2086,9 @@ mod tests {
                 period_col.push(period);
                 date_id_col.push(date_id);
                 flags_col.push(0);
+                terrain_start.push(0.0_f32);
+                terrain_mid.push(0.0_f32);
+                terrain_end.push(0.0_f32);
             }
         }
 
@@ -2110,6 +2116,9 @@ mod tests {
                     period: &period_col[lo..hi],
                     date_id: &date_id_col[lo..hi],
                     flags: &flags_col[lo..hi],
+                    terrain_start_elev_m: &terrain_start[lo..hi],
+                    terrain_mid_elev_m: &terrain_mid[lo..hi],
+                    terrain_end_elev_m: &terrain_end[lo..hi],
                 },
                 bbox: BBox {
                     min_lat: 50.08,

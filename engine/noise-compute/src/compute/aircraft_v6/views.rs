@@ -6,6 +6,13 @@
 /// Per-row borrow over an airborne sub-segment list. All slices have
 /// the same length; sub-segment `i` is fully described by index `i`
 /// across every slice.
+///
+/// `terrain_*_elev_m` are pre-sampled at extract time (Opt A v15) so
+/// the popup terrain gates can skip `SegmentTerrain::sample` (5 raster
+/// lookups per sub-segment, mutex-serialised). Start / end propagate
+/// from Stage 1's per-point elevation; mid is sampled at Stage 2A from
+/// the sub-segment midpoint (stored explicitly because linear
+/// interpolation between start / end is wrong in mountain terrain).
 #[derive(Clone, Copy, Debug)]
 pub struct SubSegmentSlice<'a> {
     pub start_lat: &'a [f32],
@@ -19,6 +26,9 @@ pub struct SubSegmentSlice<'a> {
     pub period: &'a [u8],
     pub date_id: &'a [i16],
     pub flags: &'a [u8],
+    pub terrain_start_elev_m: &'a [f32],
+    pub terrain_mid_elev_m: &'a [f32],
+    pub terrain_end_elev_m: &'a [f32],
 }
 
 impl SubSegmentSlice<'_> {
