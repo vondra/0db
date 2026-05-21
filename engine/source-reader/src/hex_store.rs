@@ -30,8 +30,17 @@ pub struct HexData {
     /// per microsegment. Source-reader uses this to map per-row
     /// airport_traffic.arrow rows back to their OSM way identifier so
     /// the popup can label SegmentTraces "LKPR RWY 06/24" instead of
-    /// the generic "LKPR runway-roll".
+    /// the generic "LKPR runway-roll". The same batches feed the
+    /// per-osm_id runway-end anchor extractor that gates the airborne
+    /// 6 km airport-context test.
     pub airport_lines_batches: Vec<RecordBatch>,
+    /// Stage 1.5 DBSCAN-discovered airstrips
+    /// (`synth_airport_lines.arrow`). Same microsegment shape as the
+    /// real OSM lines but with `osm_id: UInt64` (high-bit-set)
+    /// and an explicit `airport_key` column. Fed to the runway-end
+    /// anchor extractor alongside the real lines so auto-discovered
+    /// strips contribute to the airborne airport-context gate.
+    pub synth_airport_lines_batches: Vec<RecordBatch>,
 }
 
 impl HexData {
@@ -47,6 +56,7 @@ impl HexData {
             aircraft_cruise_batches: vec![],
             aircraft_airport_traffic_batches: vec![],
             airport_lines_batches: vec![],
+            synth_airport_lines_batches: vec![],
         }
     }
 }
@@ -70,6 +80,11 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
     let aircraft_airport_traffic_batches =
         load_arrow_mmap(&path.join("airport_traffic.arrow"), &mut mmaps);
     let airport_lines_batches = load_arrow_mmap(&path.join("airport_lines.arrow"), &mut mmaps);
+    // Stage 1.5's synth strips live alongside the real OSM lines in
+    // each R4 dir. Optional — older extracts predate Stage 1.5; the
+    // loader returns an empty vec when the file is absent.
+    let synth_airport_lines_batches =
+        load_arrow_mmap(&path.join("synth_airport_lines.arrow"), &mut mmaps);
 
     Ok(HexData {
         _mmaps: mmaps,
@@ -82,6 +97,7 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
         aircraft_cruise_batches,
         aircraft_airport_traffic_batches,
         airport_lines_batches,
+        synth_airport_lines_batches,
     })
 }
 
@@ -580,4 +596,81 @@ pub(crate) fn hex_encode(bytes: &[u8]) -> String {
         out.push(HEX[(b & 0x0f) as usize] as char);
     }
     out
+}
+
+#[cfg(test)]
+mod synth_load_tests {
+    use super::*;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::ipc::writer::FileWriter;
+    use std::sync::Arc;
+
+    /// Write a minimal synth_airport_lines.arrow file at `path`.
+    /// Schema matches `aircraft-extract::arrow_schemas::synth_airport_lines_schema`
+    /// for the column subset Step 1's runway-end resolver consults
+    /// (start_lat / start_lon / end_lat / end_lon / aeroway_type +
+    /// osm_id / segment_idx for grouping).
+    fn write_synth(path: &Path) {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("osm_id", DataType::UInt64, false),
+            Field::new("segment_idx", DataType::UInt16, false),
+            Field::new("airport_key", DataType::Utf8, false),
+            Field::new("start_lat", DataType::Float64, false),
+            Field::new("start_lon", DataType::Float64, false),
+            Field::new("end_lat", DataType::Float64, false),
+            Field::new("end_lon", DataType::Float64, false),
+            Field::new("length_m", DataType::Float32, false),
+            Field::new("heading_deg", DataType::Float32, false),
+            Field::new("aeroway_type", DataType::UInt8, false),
+            Field::new("name", DataType::Utf8, false),
+        ]));
+        let osm_id = UInt64Array::from(vec![1u64 << 63]);
+        let seg_idx = UInt16Array::from(vec![0u16]);
+        let key = StringArray::from(vec!["auto-x"]);
+        let slat = Float64Array::from(vec![50.0_f64]);
+        let slon = Float64Array::from(vec![14.0_f64]);
+        let elat = Float64Array::from(vec![50.001_f64]);
+        let elon = Float64Array::from(vec![14.0_f64]);
+        let len = Float32Array::from(vec![100.0_f32]);
+        let head = Float32Array::from(vec![0.0_f32]);
+        let atype = UInt8Array::from(vec![7u8]);
+        let name = StringArray::from(vec!["synth"]);
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(osm_id),
+                Arc::new(seg_idx),
+                Arc::new(key),
+                Arc::new(slat),
+                Arc::new(slon),
+                Arc::new(elat),
+                Arc::new(elon),
+                Arc::new(len),
+                Arc::new(head),
+                Arc::new(atype),
+                Arc::new(name),
+            ],
+        )
+        .unwrap();
+        let f = File::create(path).unwrap();
+        let mut w = FileWriter::try_new(f, &schema).unwrap();
+        w.write(&batch).unwrap();
+        w.finish().unwrap();
+    }
+
+    #[test]
+    fn load_hex_reads_synth_airport_lines_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        write_synth(&dir.path().join("synth_airport_lines.arrow"));
+        let hex = load_hex(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(hex.synth_airport_lines_batches.len(), 1);
+        assert_eq!(hex.synth_airport_lines_batches[0].num_rows(), 1);
+    }
+
+    #[test]
+    fn load_hex_returns_empty_synth_batches_when_file_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let hex = load_hex(dir.path().to_str().unwrap()).unwrap();
+        assert!(hex.synth_airport_lines_batches.is_empty());
+    }
 }
