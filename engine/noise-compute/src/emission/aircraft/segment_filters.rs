@@ -301,7 +301,6 @@ mod tests {
             count_weight: 1.0,
             surface_model: false,
             source_id: AIRCRAFT_ADSB_SOURCE_ID,
-            cruise_flight_ids: Vec::new(),
         };
         assert!(is_ground_stale_segment(&seg, &FlatGround));
 
@@ -335,7 +334,6 @@ mod tests {
             count_weight: 1.0,
             surface_model: false,
             source_id: AIRCRAFT_ADSB_SOURCE_ID,
-            cruise_flight_ids: Vec::new(),
         };
         assert!(!is_airport_ground_segment(&off_airport, &FlatGround));
 
@@ -375,7 +373,6 @@ mod tests {
             count_weight: 1.0,
             surface_model: false,
             source_id: AIRCRAFT_ADSB_SOURCE_ID,
-            cruise_flight_ids: Vec::new(),
         };
         assert_eq!(ground_ops_kind_fallback(&fast_seg), GROUND_OPS_KIND_TAXI);
 

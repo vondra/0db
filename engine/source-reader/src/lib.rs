@@ -587,6 +587,13 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         .filter_map(|id| store.hexes.get(id.as_str()))
         .collect();
 
+    // Resolve airport_summary.arrow path: sibling of h3r4_dir under
+    // `aircraft/` (Stage 2C v5 reduce output). Missing file →
+    // popup returns zero airport-level counts (per Codex C4).
+    let airport_summary_pathbuf = std::path::Path::new(&store.h3r4_dir)
+        .parent()
+        .map(|p| p.join("aircraft").join("airport_summary.arrow"));
+
     let stub = StubRasters;
     let real_rasters = RASTERS.get();
     let rasters: &dyn noise_compute::types::RasterSampler = match real_rasters {
@@ -640,6 +647,7 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         &sources.aircraft_cruise_batches,
         &sources.aircraft_airport_traffic_batches,
         &sources.airport_lines_batches,
+        airport_summary_pathbuf.as_deref(),
         rasters,
         &sources.barriers,
         sources.n_days,

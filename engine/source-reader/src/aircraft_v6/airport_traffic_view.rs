@@ -1,18 +1,20 @@
-//! `AirportTrafficRowView<'_>` builder over `airport_traffic.arrow`
-//! batches. Same lifetime story as the other v6 views — snapshot each
-//! column into owned Rust memory so the kernel's `&'_` view doesn't
-//! borrow into the mmap'd Arrow buffers.
+//! `AirportTrafficRowView<'_>` builder over `airport_traffic.arrow` v5
+//! batches. v5 swap: drops the per-row `flight_ids: List<UInt64>` and
+//! captures the scalar `unique_*_count` + row-replicated
+//! `microseg_unique_*` columns instead. Per Codex C4 + Claude W1
+//! airport-level UNIONs come from the separate
+//! `airport_summary.arrow` sidecar.
 
 use arrow::array::Array;
 use arrow::record_batch::RecordBatch;
-use noise_compute::compute::aircraft_v6::AirportTrafficRowView;
+use noise_compute::compute::aircraft_v6::{AirportTrafficRowView, NUM_GSE_CLASSES};
 
-use super::columns::{col_fixed_size_list, col_f32, col_list, col_str, col_u16, col_u64, col_u8};
+use super::columns::{col_fixed_size_list, col_f32, col_str, col_u16, col_u32, col_u64, col_u8};
 
 const NUM_BANDS: usize = 8;
 
-/// Owned column buffers for one airport_traffic.arrow batch slice.
-/// Each `Vec` parallels the others — index `i` describes one row.
+/// Owned column buffers for one airport_traffic.arrow v5 slice. Each
+/// `Vec` parallels the others — index `i` describes one row.
 pub struct AirportTrafficRowAccum {
     airport_key: Vec<String>,
     osm_id: Vec<u64>,
@@ -30,7 +32,14 @@ pub struct AirportTrafficRowAccum {
     period: Vec<u8>,
     movements_per_day: Vec<f32>,
     band_energy_lin: Vec<[f32; NUM_BANDS]>,
-    flight_ids: Vec<Vec<u64>>,
+    unique_movement_count: Vec<u32>,
+    unique_arr_count: Vec<u32>,
+    unique_dep_count: Vec<u32>,
+    unique_gse_count_per_class: Vec<[u32; NUM_GSE_CLASSES]>,
+    microseg_unique_count: Vec<u32>,
+    microseg_unique_arr_count: Vec<u32>,
+    microseg_unique_dep_count: Vec<u32>,
+    microseg_unique_gse_count_per_class: Vec<[u32; NUM_GSE_CLASSES]>,
 }
 
 impl AirportTrafficRowAccum {
@@ -52,7 +61,14 @@ impl AirportTrafficRowAccum {
             period: Vec::new(),
             movements_per_day: Vec::new(),
             band_energy_lin: Vec::new(),
-            flight_ids: Vec::new(),
+            unique_movement_count: Vec::new(),
+            unique_arr_count: Vec::new(),
+            unique_dep_count: Vec::new(),
+            unique_gse_count_per_class: Vec::new(),
+            microseg_unique_count: Vec::new(),
+            microseg_unique_arr_count: Vec::new(),
+            microseg_unique_dep_count: Vec::new(),
+            microseg_unique_gse_count_per_class: Vec::new(),
         };
         for batch in batches {
             out.absorb(batch);
@@ -79,7 +95,14 @@ impl AirportTrafficRowAccum {
             Some(period),
             Some(mpd),
             Some(bands),
-            Some(fids_list),
+            Some(unique_mov),
+            Some(unique_arr),
+            Some(unique_dep),
+            Some(gse_list),
+            Some(microseg_unique),
+            Some(microseg_unique_arr),
+            Some(microseg_unique_dep),
+            Some(microseg_gse_list),
         ) = (
             col_str(batch, "airport_key"),
             col_u64(batch, "osm_id"),
@@ -97,31 +120,51 @@ impl AirportTrafficRowAccum {
             col_u8(batch, "period"),
             col_f32(batch, "movements_per_day"),
             col_fixed_size_list(batch, "band_energy_lin"),
-            col_list(batch, "flight_ids"),
+            col_u32(batch, "unique_movement_count"),
+            col_u32(batch, "unique_arr_count"),
+            col_u32(batch, "unique_dep_count"),
+            col_fixed_size_list(batch, "unique_gse_count_per_class"),
+            col_u32(batch, "microseg_unique_count"),
+            col_u32(batch, "microseg_unique_arr_count"),
+            col_u32(batch, "microseg_unique_dep_count"),
+            col_fixed_size_list(batch, "microseg_unique_gse_count_per_class"),
         ) else {
             return;
         };
         if bands.value_length() != NUM_BANDS as i32 {
             return;
         }
+        if gse_list.value_length() != NUM_GSE_CLASSES as i32
+            || microseg_gse_list.value_length() != NUM_GSE_CLASSES as i32
+        {
+            return;
+        }
         let band_values = bands.values();
-        let Some(band_f32) = band_values.as_any().downcast_ref::<arrow::array::Float32Array>()
+        let Some(band_f32) = band_values
+            .as_any()
+            .downcast_ref::<arrow::array::Float32Array>()
         else {
             return;
         };
         let band_buf = band_f32.values();
-        let fid_offsets = fids_list.offsets();
-        let Some(fid_values) = fids_list
+        let Some(gse_u32) = gse_list
             .values()
             .as_any()
-            .downcast_ref::<arrow::array::UInt64Array>()
+            .downcast_ref::<arrow::array::UInt32Array>()
         else {
             return;
         };
-        let fid_buf = fid_values.values();
+        let gse_buf = gse_u32.values();
+        let Some(microseg_gse_u32) = microseg_gse_list
+            .values()
+            .as_any()
+            .downcast_ref::<arrow::array::UInt32Array>()
+        else {
+            return;
+        };
+        let microseg_gse_buf = microseg_gse_u32.values();
         self.airport_key.reserve(n);
         self.band_energy_lin.reserve(n);
-        self.flight_ids.reserve(n);
         for i in 0..n {
             self.airport_key.push(airport_key.value(i).to_string());
             self.osm_id.push(osm_id.value(i));
@@ -138,13 +181,26 @@ impl AirportTrafficRowAccum {
             self.class_idx.push(class_idx.value(i));
             self.period.push(period.value(i));
             self.movements_per_day.push(mpd.value(i));
-            let lo = i * NUM_BANDS;
+            let lo_b = i * NUM_BANDS;
             let mut row_bands = [0.0f32; NUM_BANDS];
-            row_bands.copy_from_slice(&band_buf[lo..lo + NUM_BANDS]);
+            row_bands.copy_from_slice(&band_buf[lo_b..lo_b + NUM_BANDS]);
             self.band_energy_lin.push(row_bands);
-            let f_lo = fid_offsets[i] as usize;
-            let f_hi = fid_offsets[i + 1] as usize;
-            self.flight_ids.push(fid_buf[f_lo..f_hi].to_vec());
+            self.unique_movement_count.push(unique_mov.value(i));
+            self.unique_arr_count.push(unique_arr.value(i));
+            self.unique_dep_count.push(unique_dep.value(i));
+            let lo_g = i * NUM_GSE_CLASSES;
+            let mut row_gse = [0u32; NUM_GSE_CLASSES];
+            row_gse.copy_from_slice(&gse_buf[lo_g..lo_g + NUM_GSE_CLASSES]);
+            self.unique_gse_count_per_class.push(row_gse);
+            self.microseg_unique_count.push(microseg_unique.value(i));
+            self.microseg_unique_arr_count
+                .push(microseg_unique_arr.value(i));
+            self.microseg_unique_dep_count
+                .push(microseg_unique_dep.value(i));
+            let mut row_microseg_gse = [0u32; NUM_GSE_CLASSES];
+            row_microseg_gse.copy_from_slice(&microseg_gse_buf[lo_g..lo_g + NUM_GSE_CLASSES]);
+            self.microseg_unique_gse_count_per_class
+                .push(row_microseg_gse);
         }
     }
 
@@ -167,7 +223,15 @@ impl AirportTrafficRowAccum {
                 period: self.period[i],
                 movements_per_day: self.movements_per_day[i],
                 band_energy_lin: &self.band_energy_lin[i],
-                flight_ids: &self.flight_ids[i],
+                unique_movement_count: self.unique_movement_count[i],
+                unique_arr_count: self.unique_arr_count[i],
+                unique_dep_count: self.unique_dep_count[i],
+                unique_gse_count_per_class: &self.unique_gse_count_per_class[i],
+                microseg_unique_count: self.microseg_unique_count[i],
+                microseg_unique_arr_count: self.microseg_unique_arr_count[i],
+                microseg_unique_dep_count: self.microseg_unique_dep_count[i],
+                microseg_unique_gse_count_per_class: &self
+                    .microseg_unique_gse_count_per_class[i],
             })
             .collect()
     }

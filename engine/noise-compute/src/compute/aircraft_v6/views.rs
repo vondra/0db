@@ -41,13 +41,22 @@ pub struct BBox {
     pub max_lon: f32,
 }
 
-/// One row of `airport_traffic.arrow`. Per-band daily-total linear
+/// Number of GSE noise classes (LIGHT / MEDIUM / HEAVY). Mirrored
+/// here so the popup view + heatmap loader pick up array sizes
+/// without depending on `emission::gse` for a pure data shape.
+pub const NUM_GSE_CLASSES: usize = 3;
+
+/// One row of `airport_traffic.arrow` v5. Per-band daily-total linear
 /// Z-weighted energy at 25 m perpendicular from this OSM microsegment
 /// for the row's period (writer divides Σ per-event SEL by `n_days`).
 /// Popup applies relative propagation + `A_WEIGHTING` then divides by
-/// `period_s` for the period Leq. `movements_per_day` is
-/// per-microsegment display only: airport-total movements require
-/// UNION over `flight_ids` across rows.
+/// `period_s` for the period Leq.
+///
+/// v5 replaces v4's `flight_ids: List<UInt64>` with scalar
+/// `unique_*_count` counters plus row-replicated per-microsegment
+/// UNION `microseg_unique_*` counts. Airport-level UNION counts now
+/// live in the separate `airport_summary.arrow` sidecar (see
+/// [`AirportSummaryView`]).
 #[derive(Clone, Copy, Debug)]
 pub struct AirportTrafficRowView<'a> {
     pub airport_key: &'a str,
@@ -66,13 +75,37 @@ pub struct AirportTrafficRowView<'a> {
     pub period: u8,
     pub movements_per_day: f32,
     pub band_energy_lin: &'a [f32; 8],
-    /// Sorted unique `flight_id`s that crossed this microsegment for
-    /// this period (Stage 2C v4 touch semantics: every microsegment
-    /// a rotation's ground leg intersected receives the flight_id).
-    /// Caller UNIONs across rows for airport-level unique movement
-    /// counts — HashSet dedup keeps a rotation that touched N
-    /// microsegments at count 1 per direction.
-    pub flight_ids: &'a [u64],
+    /// Distinct fids that crossed this row, regardless of
+    /// `ops_kind / is_departure / veh_kind`.
+    pub unique_movement_count: u32,
+    /// Distinct fids on rows keyed as runway-roll arrivals; zero
+    /// elsewhere.
+    pub unique_arr_count: u32,
+    /// Analogous for departures.
+    pub unique_dep_count: u32,
+    /// Per-GSE-class distinct fids; populated only on `veh_kind=1`
+    /// rows.
+    pub unique_gse_count_per_class: &'a [u32; NUM_GSE_CLASSES],
+    /// UNION across ALL rows of this `(osm_id, segment_idx)`. Same
+    /// value on every row of the microsegment — popup reads first
+    /// row's value to populate per-microseg observed_movements.
+    pub microseg_unique_count: u32,
+    pub microseg_unique_arr_count: u32,
+    pub microseg_unique_dep_count: u32,
+    pub microseg_unique_gse_count_per_class: &'a [u32; NUM_GSE_CLASSES],
+}
+
+/// One row of `airport_summary.arrow` — global UNION counts per
+/// `airport_key` across all R4s. Loaded once at popup query time,
+/// keyed by airport_key.
+#[derive(Clone, Copy, Debug)]
+pub struct AirportSummaryView<'a> {
+    pub airport_key: &'a str,
+    pub airport_unique_arr_count: u32,
+    pub airport_unique_dep_count: u32,
+    pub airport_unique_gse_count_per_class: &'a [u32; NUM_GSE_CLASSES],
+    /// Index 0=runway, 1=taxi, 2=apron — VEH_KIND=0 only.
+    pub airport_unique_ops_count_per_kind: &'a [u32; 3],
 }
 
 /// One row of `airborne.arrow`. `flight_id` is the real ADS-B identity
@@ -92,11 +125,29 @@ pub struct AirborneRowView<'a> {
     pub bbox: BBox,
 }
 
-/// One row of `cruise.arrow` — an R8 bucket aggregating `sum_length_m`
-/// of cruise track at altitude `rep_alt_m`. `cruise_flight_ids` are
-/// the real fids that contributed segments to this bucket; popup
-/// dedups by them across R8 cells (one transit crossing many R8s
-/// must count as one flight in the band counters).
+/// One entry of `top_candidates` (v14). Identity + ranking dimension
+/// only; row-constant fields (period / date_id) live on the parent
+/// row. `peak_lmax_25m_db` is the source-side NPD `lookup_lmax` at
+/// the 25 m anchor (rev 2 ranking dimension); `altitude_m` is the
+/// segment's altitude at peak so the popup can recompute CPA / slant
+/// against the receiver.
+#[derive(Clone, Debug)]
+pub struct CruiseTopCandidateView<'a> {
+    pub flight_id: u64,
+    pub callsign: &'a str,
+    pub aircraft_type: &'a [u8; 4],
+    pub peak_lmax_25m_db: f32,
+    pub altitude_m: f32,
+}
+
+/// One row of `cruise.arrow` v14. R8 bucket aggregating `sum_length_m`
+/// of cruise track at altitude `rep_alt_m`. v14 replaces v13's per-fid
+/// lists with a bounded top-K `top_candidates` (ranked by source-side
+/// peak Lmax at 25 m) + scalar `unique_count`.
+///
+/// Popup `band_stats` walks `top_candidates` into a per-fid HashMap
+/// for dedup across R8 cells. Tail fids outside the top-K cap drop
+/// out of band counters; documented regression.
 #[derive(Clone, Debug)]
 pub struct CruiseRowView<'a> {
     pub r8_hex: u64,
@@ -111,10 +162,10 @@ pub struct CruiseRowView<'a> {
     pub rep_speed_kt: f32,
     pub source_id: u8,
     pub origin: u8,
-    pub cruise_flight_ids: &'a [u64],
-    /// Parallel-indexed against `cruise_flight_ids`. Empty for pre-v11
-    /// readers that didn't write these columns.
-    pub cruise_aircraft_types: &'a [[u8; 4]],
-    pub cruise_callsigns: &'a [String],
+    /// Number of distinct real fids that contributed to this bucket.
+    /// Display-only — band counter dedup uses `top_candidates` instead.
+    pub unique_count: u32,
+    /// Bounded top-K identity slice ranked by `peak_lmax_25m_db` desc.
+    pub top_candidates: &'a [CruiseTopCandidateView<'a>],
 }
 

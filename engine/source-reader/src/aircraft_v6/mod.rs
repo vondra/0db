@@ -9,9 +9,12 @@
 //! into mmap-backed arrow buffers.
 
 mod airborne_view;
+pub mod airport_summary_view;
 mod airport_traffic_view;
 mod columns;
 mod cruise_view;
+
+use std::path::Path;
 
 use arrow::record_batch::RecordBatch;
 use noise_compute::compute::aircraft_v6::{airport_traffic as compute_airport_traffic, compute_aircraft_v6};
@@ -21,6 +24,7 @@ use noise_compute::types::{
 };
 
 use airborne_view::AirborneRowAccum;
+use airport_summary_view::load_airport_summary;
 use airport_traffic_view::AirportTrafficRowAccum;
 use cruise_view::CruiseRowAccum;
 use noise_compute::compute::aircraft_v6::AirportTrafficRowView;
@@ -87,11 +91,16 @@ fn airport_centroids_from_traffic(rows: &[AirportTrafficRowView<'_>]) -> Vec<(f6
 /// into an existing `NoiseResult`. Caller is expected to have invoked
 /// `compute_at_point_with_traces` first.
 ///
+/// `airport_summary_path` points at the global `airport_summary.arrow`
+/// sidecar (typically `<prepared>/aircraft/airport_summary.arrow`).
+/// When the file is absent OR an airport is missing from it, popup
+/// arr/dep/observed counts return zero — per Codex C4 + Claude W1; no
+/// silent fallback to per-row sum (which over-counts 4-8×).
+///
 /// Returns `Err(String)` when any of the popup arrows fails its schema
-/// check (`v13` for airborne/cruise, `airport_traffic_v4` for the
-/// ground-ops arrow), so the popup HTTP path can map the failure to
-/// a structured 500 response with an operator-actionable message
-/// instead of crashing the worker via `assert!`.
+/// check (`v14` for airborne/cruise, `airport_traffic_v5` for the
+/// ground-ops arrow), so the popup HTTP path can map the failure to a
+/// structured 500 response with an operator-actionable message.
 pub fn add_v6_aircraft_to_result(
     result: &mut NoiseResult,
     traces: &mut TraceCollector,
@@ -100,6 +109,7 @@ pub fn add_v6_aircraft_to_result(
     cruise_batches: &[RecordBatch],
     airport_traffic_batches: &[RecordBatch],
     airport_lines_batches: &[RecordBatch],
+    airport_summary_path: Option<&Path>,
     rasters: &dyn RasterSampler,
     barriers: &[noise_compute::types::Barrier],
     n_days: u16,
@@ -112,9 +122,17 @@ pub fn add_v6_aircraft_to_result(
     let airborne_rows = AirborneRowAccum::new(airborne_batches);
     let cruise_rows = CruiseRowAccum::new(cruise_batches);
     let traffic_rows = AirportTrafficRowAccum::new(airport_traffic_batches);
+    // Load airport_summary.arrow sidecar if path is provided + file
+    // exists. Missing file or path → popup returns zero airport-level
+    // counts (per Codex C4 + Claude W1).
+    let airport_summary_accum = match airport_summary_path {
+        Some(p) => load_airport_summary(p)?,
+        None => None,
+    };
 
     let airborne_views = airborne_rows.views();
-    let cruise_views = cruise_rows.views();
+    let cruise_view_slices = cruise_rows.views();
+    let cruise_views = cruise_view_slices.as_row_views();
     let traffic_views = traffic_rows.views();
 
     let total_rows = airborne_views.len() + cruise_views.len() + traffic_views.len();
@@ -150,6 +168,7 @@ pub fn add_v6_aircraft_to_result(
         // "LKPR RWY 06/24" instead of generic "LKPR runway-roll". Synth
         // osm_ids have no `ref` row → fall through to the generic label.
         let osm_ref_lookup = build_osm_ref_lookup(airport_lines_batches);
+        let airport_summary_lookup = airport_summary_accum.as_ref().map(|a| a.lookup());
         let traffic_contribs = compute_airport_traffic::run(
             receiver,
             &traffic_views,
@@ -157,6 +176,7 @@ pub fn add_v6_aircraft_to_result(
             rasters,
             barriers,
             &osm_ref_lookup,
+            airport_summary_lookup.as_ref(),
             Some(traces),
         );
         if !traffic_contribs.is_empty() {
