@@ -125,9 +125,40 @@ pub fn airborne_schema() -> Arc<Schema> {
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[("kind", "airborne")])))
 }
 
-/// Stage 2B — `h3r4/<hex>/cruise.arrow`. One row per (R8, fl_bin,
-/// class, period, is_dep) bucket.
+/// Max number of `top_candidates` entries written per cruise row. Rev 2
+/// of the cruise rewrite caps the per-bucket fid pool at 50 so per-row
+/// size stays bounded by `O(K)` regardless of `n_days`; the receiver-side
+/// peak-Lmax ranking matches the popup's display ranking dimension
+/// (Spearman ≥ 0.9 measured in integration test). Tail fids below K=50
+/// drop out of band counters — documented regression.
+pub const CRUISE_TOP_K: usize = 50;
+
+/// Per-candidate struct stored in `top_candidates`. Identity-only fields
+/// the popup needs for the table display (callsign, typecode) plus the
+/// ranking dimension (`peak_lmax_25m_db` = NPD `lookup_lmax` at the
+/// 25 m anchor for the loudest segment this fid contributed to the
+/// bucket) and `altitude_m` (needed for CPA + slant recompute against
+/// the popup receiver). Row-constant fields (period / date_id) are NOT
+/// duplicated per candidate.
+pub fn cruise_top_candidate_fields() -> Fields {
+    Fields::from(vec![
+        Field::new("flight_id", DataType::UInt64, false),
+        Field::new("callsign", DataType::Utf8, false),
+        Field::new("aircraft_type", DataType::FixedSizeBinary(4), false),
+        Field::new("peak_lmax_25m_db", DataType::Float32, false),
+        Field::new("altitude_m", DataType::Float32, false),
+    ])
+}
+
+/// Stage 2B — `h3r4/<hex>/cruise.arrow` (v14). One row per (R8, fl_bin,
+/// class, period, is_dep) bucket. Per-fid lists (`cruise_flight_ids` /
+/// `_aircraft_types` / `_callsigns`) of v13 are replaced by:
+/// - `unique_count: UInt32` — distinct fids that contributed to the
+///   bucket.
+/// - `top_candidates: List<Struct>` — bounded top-K (K=50) ranked by
+///   source-side peak Lmax at 25 m (NPD `lookup_lmax`).
 pub fn cruise_schema() -> Arc<Schema> {
+    let cand_struct = DataType::Struct(cruise_top_candidate_fields());
     let fields = vec![
         Field::new("r8_hex", DataType::UInt64, false),
         Field::new("class", DataType::UInt8, false),
@@ -139,23 +170,10 @@ pub fn cruise_schema() -> Arc<Schema> {
         Field::new("rep_len_m", DataType::Float32, false),
         Field::new("rep_alt_m", DataType::Float32, false),
         Field::new("rep_speed_kt", DataType::Float32, false),
+        Field::new("unique_count", DataType::UInt32, false),
         Field::new(
-            "cruise_flight_ids",
-            DataType::List(Arc::new(Field::new("item", DataType::UInt64, false))),
-            false,
-        ),
-        Field::new(
-            "cruise_aircraft_types",
-            DataType::List(Arc::new(Field::new(
-                "item",
-                DataType::FixedSizeBinary(4),
-                false,
-            ))),
-            false,
-        ),
-        Field::new(
-            "cruise_callsigns",
-            DataType::List(Arc::new(Field::new("item", DataType::Utf8, false))),
+            "top_candidates",
+            DataType::List(Arc::new(Field::new("item", cand_struct, false))),
             false,
         ),
         Field::new("source_id", DataType::UInt8, false),
@@ -173,14 +191,23 @@ pub fn cruise_schema() -> Arc<Schema> {
 /// the n_days window ÷ n_days at emission). Popup applies relative
 /// propagation + A-weighting + ÷ period_s to get the period Leq.
 ///
-/// `flight_ids` is a TOUCH set: every microsegment a leg crossed
-/// receives the rotation's flight_id, in lock-step with proportional
-/// band-energy attribution (HashSet dedup at write time). Per-row
-/// `movements_per_day = flight_ids.len() / n_days` is a true display
-/// count of unique rotations crossing this microsegment; caller MUST
-/// NOT multiply it into the receiver chain — energy is already
-/// integrated.
-pub const AIRPORT_TRAFFIC_CONTRACT_V4: &str = "airport_traffic_v4";
+/// v5 drops the per-row `flight_ids: List<UInt64>` (which scaled
+/// linearly with `unique_rotations × n_days`) and replaces it with
+/// scalar `unique_*_count` counters plus row-replicated
+/// `microseg_unique_*` UNION counts. Airport-level unique counts move
+/// to the per-popup `airport_summary.arrow` sidecar after a Stage 2C
+/// reduce phase.
+pub const AIRPORT_TRAFFIC_CONTRACT_V5: &str = "airport_traffic_v5";
+
+/// Per-R4 airport aggregate sidecar contract (one row per airport_key
+/// with UNION counts across all microsegments of THIS R4). Per-popup
+/// loader merges across R4s via the global `airport_summary.arrow`.
+pub const AIRPORT_AGGREGATE_CONTRACT_V1: &str = "airport_aggregate_v1";
+
+/// Global airport summary sidecar contract (one row per airport_key,
+/// truly unique counts across all R4s). Produced by Stage 2C v5
+/// reduce phase from per-R4 `airport_summary_parts/` dumps.
+pub const AIRPORT_SUMMARY_CONTRACT_V1: &str = "airport_summary_v1";
 
 /// `geometry_kind` enum stamped on each airport_traffic row.
 /// LINE: OSM runway / taxiway / stopway microsegment with real
@@ -191,13 +218,33 @@ pub const GEOMETRY_KIND_LINE: u8 = 0;
 pub const GEOMETRY_KIND_AREA_GRID_POINT: u8 = 1;
 pub const GEOMETRY_KIND_SYNTHETIC: u8 = 2;
 
-/// Stage 2C — `h3r4/<hex>/airport_traffic.arrow`. One row per
-/// per-segment per-period traffic counter (sparse on the
-/// `(seg × class × period)` grid). Every intersected microsegment
-/// receives both proportional band energy AND the rotation's
-/// flight_id in lock-step. `flight_ids` scales as
-/// `unique_rotations × avg_microsegments_per_rotation`, 8 B per pair.
+/// Number of GSE noise classes (LIGHT / MEDIUM / HEAVY) — exposed at
+/// the schema layer so `airport_traffic.arrow` / sidecars can encode
+/// per-class FixedSizeList<UInt32, NUM_GSE_CLASSES>. Mirrors
+/// `noise_compute::emission::gse::NUM_GSE_CLASSES` but avoids the
+/// runtime crate dep at schema-build time.
+pub const NUM_GSE_CLASSES: i32 = 3;
+
+/// `ops_kind` enum codomain size for per-kind unique-count arrays
+/// (runway / taxi / apron — matches `GROUND_OPS_KIND_*` minus 1).
+pub const NUM_OPS_KINDS: i32 = 3;
+
+/// Stage 2C — `h3r4/<hex>/airport_traffic.arrow` (v5). One row per
+/// per-segment per-period traffic counter. Per-row `flight_ids:
+/// List<UInt64>` from v4 is replaced by:
+/// - Per-row scalars: `unique_movement_count`, `unique_arr_count`,
+///   `unique_dep_count`, `unique_gse_count_per_class`.
+/// - Per-microsegment UNIONs (replicated on every row of the same
+///   microsegment): `microseg_unique_count`, `microseg_unique_arr_count`,
+///   `microseg_unique_dep_count`, `microseg_unique_gse_count_per_class`.
+///
+/// Airport-level UNION across R4s lives in the separate
+/// `data/prepared/{year}/aircraft/airport_summary.arrow` sidecar.
 pub fn airport_traffic_schema() -> Arc<Schema> {
+    let gse_per_class = DataType::FixedSizeList(
+        Arc::new(Field::new("item", DataType::UInt32, false)),
+        NUM_GSE_CLASSES,
+    );
     let fields = vec![
         Field::new("airport_key", DataType::Utf8, false),
         Field::new("osm_id", DataType::UInt64, false),
@@ -216,7 +263,6 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
         Field::new("movements_per_day", DataType::Float32, false),
         // FixedSizeList enforces the 8-band invariant at the schema
         // level so the reader doesn't need a runtime `ensure!` guard.
-        // Encoding-cost wise it also drops the per-row offsets buffer.
         Field::new(
             "band_energy_lin",
             DataType::FixedSizeList(
@@ -225,24 +271,39 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
             ),
             false,
         ),
-        // Variable-length List — flight count per row depends on
-        // airport activity (a quiet strip may have 1, LKPR runway
-        // microsegment can have 100s in 14 d). Sorted ascending so
-        // on-disk bytes are deterministic across re-extracts.
+        // Per-row scalar unique counts replace the v4 `flight_ids:
+        // List<UInt64>` payload. Each row carries ALL four counters;
+        // only the per-row-key-relevant ones are non-zero (e.g.
+        // arr_count populated only when (ops_kind=RUNWAY_ROLL,
+        // is_departure=0, veh_kind=0)).
+        Field::new("unique_movement_count", DataType::UInt32, false),
+        Field::new("unique_arr_count", DataType::UInt32, false),
+        Field::new("unique_dep_count", DataType::UInt32, false),
         Field::new(
-            "flight_ids",
-            DataType::List(Arc::new(Field::new("item", DataType::UInt64, false))),
+            "unique_gse_count_per_class",
+            gse_per_class.clone(),
+            false,
+        ),
+        // Per-microsegment UNION (replicated across rows). Lets the
+        // popup populate observed_movements_per_day per microsegment
+        // without a UNION join over per-row scalars.
+        Field::new("microseg_unique_count", DataType::UInt32, false),
+        Field::new("microseg_unique_arr_count", DataType::UInt32, false),
+        Field::new("microseg_unique_dep_count", DataType::UInt32, false),
+        Field::new(
+            "microseg_unique_gse_count_per_class",
+            gse_per_class,
             false,
         ),
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "airport_traffic"),
-        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V4),
+        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V5),
     ])))
 }
 
 /// Verify a loaded airport_traffic.arrow file's metadata matches the
-/// current [`AIRPORT_TRAFFIC_CONTRACT_V4`] contract. Older files MUST
+/// current [`AIRPORT_TRAFFIC_CONTRACT_V5`] contract. Older files MUST
 /// be rejected — column layouts and `flight_ids` attribution
 /// semantics differ across versions, so silent decoding would
 /// produce wrong numbers downstream (historically: per-event-SEL
@@ -250,16 +311,90 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
 /// n_days=14, and longest-coverage attribution under-counting
 /// per-microsegment movements roughly N× where N = avg microsegments
 /// crossed per rotation).
-pub fn assert_airport_traffic_contract_v4(
+pub fn assert_airport_traffic_contract_v5(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     match metadata.get("airport_traffic_contract").map(String::as_str) {
-        Some(AIRPORT_TRAFFIC_CONTRACT_V4) => Ok(()),
+        Some(AIRPORT_TRAFFIC_CONTRACT_V5) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V4}, got {other}"
+            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V5}, got {other}"
         )),
         None => Err(anyhow::anyhow!(
             "airport_traffic_contract metadata missing"
+        )),
+    }
+}
+
+/// Per-R4 airport_aggregate.arrow schema — one row per airport_key
+/// carrying partial (per-R4) UNION counts. Per Codex C3, popup
+/// loader cannot union scalar counts across R4s; the canonical
+/// answer is the global `airport_summary.arrow` (produced by Stage
+/// 2C v5 reduce). This per-R4 file is debug/observation only —
+/// production popup reads `airport_summary.arrow`.
+pub fn airport_aggregate_schema() -> Arc<Schema> {
+    let gse_per_class = DataType::FixedSizeList(
+        Arc::new(Field::new("item", DataType::UInt32, false)),
+        NUM_GSE_CLASSES,
+    );
+    let ops_per_kind = DataType::FixedSizeList(
+        Arc::new(Field::new("item", DataType::UInt32, false)),
+        NUM_OPS_KINDS,
+    );
+    let fields = vec![
+        Field::new("airport_key", DataType::Utf8, false),
+        Field::new("airport_unique_arr_count", DataType::UInt32, false),
+        Field::new("airport_unique_dep_count", DataType::UInt32, false),
+        Field::new("airport_unique_gse_count_per_class", gse_per_class, false),
+        Field::new("airport_unique_ops_count_per_kind", ops_per_kind, false),
+    ];
+    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
+        ("kind", "airport_aggregate"),
+        ("airport_aggregate_contract", AIRPORT_AGGREGATE_CONTRACT_V1),
+    ])))
+}
+
+/// Global airport_summary.arrow schema (one row per airport_key,
+/// canonical truly-unique counts across all R4s). Output of Stage 2C
+/// v5 reduce phase. Loaded once at popup query time; HashMap keyed by
+/// airport_key.
+pub fn airport_summary_schema() -> Arc<Schema> {
+    // Schema columns mirror airport_aggregate_schema 1:1 (same shape;
+    // only the contract metadata differs to keep the loader path
+    // explicit).
+    let gse_per_class = DataType::FixedSizeList(
+        Arc::new(Field::new("item", DataType::UInt32, false)),
+        NUM_GSE_CLASSES,
+    );
+    let ops_per_kind = DataType::FixedSizeList(
+        Arc::new(Field::new("item", DataType::UInt32, false)),
+        NUM_OPS_KINDS,
+    );
+    let fields = vec![
+        Field::new("airport_key", DataType::Utf8, false),
+        Field::new("airport_unique_arr_count", DataType::UInt32, false),
+        Field::new("airport_unique_dep_count", DataType::UInt32, false),
+        Field::new("airport_unique_gse_count_per_class", gse_per_class, false),
+        Field::new("airport_unique_ops_count_per_kind", ops_per_kind, false),
+    ];
+    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
+        ("kind", "airport_summary"),
+        ("airport_summary_contract", AIRPORT_SUMMARY_CONTRACT_V1),
+    ])))
+}
+
+/// Verify metadata on `airport_summary.arrow`. Missing or stale →
+/// hard error (popup MUST refuse to compute airport arr/dep counts
+/// without a current sidecar; per-row sum is forbidden, see plan §4.3).
+pub fn assert_airport_summary_contract_v1(
+    metadata: &HashMap<String, String>,
+) -> anyhow::Result<()> {
+    match metadata.get("airport_summary_contract").map(String::as_str) {
+        Some(AIRPORT_SUMMARY_CONTRACT_V1) => Ok(()),
+        Some(other) => Err(anyhow::anyhow!(
+            "airport_summary_contract mismatch: expected {AIRPORT_SUMMARY_CONTRACT_V1}, got {other}"
+        )),
+        None => Err(anyhow::anyhow!(
+            "airport_summary_contract metadata missing"
         )),
     }
 }
@@ -337,6 +472,8 @@ mod tests {
             airborne_schema(),
             cruise_schema(),
             airport_traffic_schema(),
+            airport_aggregate_schema(),
+            airport_summary_schema(),
             synth_airport_lines_schema(),
             synth_airport_areas_schema(),
         ] {
@@ -390,7 +527,7 @@ mod tests {
         let s = airport_traffic_schema();
         assert_eq!(
             s.metadata().get("airport_traffic_contract").map(String::as_str),
-            Some(AIRPORT_TRAFFIC_CONTRACT_V4)
+            Some(AIRPORT_TRAFFIC_CONTRACT_V5)
         );
     }
 
@@ -401,7 +538,11 @@ mod tests {
             "airport_key", "osm_id", "segment_idx", "geometry_kind",
             "start_lat", "start_lon", "end_lat", "end_lon", "length_m",
             "ops_kind", "is_departure", "veh_kind", "class_idx", "period",
-            "movements_per_day", "band_energy_lin", "flight_ids",
+            "movements_per_day", "band_energy_lin",
+            "unique_movement_count", "unique_arr_count", "unique_dep_count",
+            "unique_gse_count_per_class",
+            "microseg_unique_count", "microseg_unique_arr_count",
+            "microseg_unique_dep_count", "microseg_unique_gse_count_per_class",
         ] {
             assert!(
                 s.field_with_name(required).is_ok(),
@@ -411,8 +552,62 @@ mod tests {
     }
 
     #[test]
+    fn cruise_schema_has_v14_columns() {
+        let s = cruise_schema();
+        for required in [
+            "r8_hex", "class", "rep_profile_idx", "fl_bin", "period",
+            "flags", "sum_length_m", "rep_len_m", "rep_alt_m", "rep_speed_kt",
+            "unique_count", "top_candidates", "source_id", "origin",
+        ] {
+            assert!(
+                s.field_with_name(required).is_ok(),
+                "cruise schema must carry {required} column"
+            );
+        }
+        // v14 explicitly DROPS the per-fid lists.
+        for dropped in ["cruise_flight_ids", "cruise_aircraft_types", "cruise_callsigns"] {
+            assert!(
+                s.field_with_name(dropped).is_err(),
+                "cruise v14 schema must NOT carry the v13 {dropped} column"
+            );
+        }
+    }
+
+    #[test]
+    fn airport_aggregate_schema_carries_contract_metadata() {
+        let s = airport_aggregate_schema();
+        assert_eq!(
+            s.metadata().get("airport_aggregate_contract").map(String::as_str),
+            Some(AIRPORT_AGGREGATE_CONTRACT_V1)
+        );
+    }
+
+    #[test]
+    fn airport_summary_schema_carries_contract_metadata() {
+        let s = airport_summary_schema();
+        assert_eq!(
+            s.metadata().get("airport_summary_contract").map(String::as_str),
+            Some(AIRPORT_SUMMARY_CONTRACT_V1)
+        );
+    }
+
+    #[test]
+    fn assert_airport_summary_contract_round_trip() {
+        let s = airport_summary_schema();
+        assert!(assert_airport_summary_contract_v1(s.metadata()).is_ok());
+        let mut bogus = s.metadata().clone();
+        bogus.insert(
+            "airport_summary_contract".into(),
+            "airport_summary_vBOGUS".into(),
+        );
+        assert!(assert_airport_summary_contract_v1(&bogus).is_err());
+        bogus.remove("airport_summary_contract");
+        assert!(assert_airport_summary_contract_v1(&bogus).is_err());
+    }
+
+    #[test]
     fn assert_schema_version_rejects_old_versions() {
-        for old in ["v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11"] {
+        for old in ["v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13"] {
             let md: HashMap<String, String> =
                 [("schema_version".into(), old.into())].into_iter().collect();
             assert!(

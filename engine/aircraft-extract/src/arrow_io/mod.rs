@@ -15,6 +15,7 @@ use arrow::record_batch::RecordBatch;
 use crate::arrow_schemas;
 
 mod airborne;
+mod airport_summary;
 mod airport_traffic;
 mod cruise;
 mod cruise_spill;
@@ -22,6 +23,14 @@ mod flights;
 mod segments;
 
 pub use airborne::write_airborne;
+pub use airport_summary::{
+    read_airport_summary, write_airport_summary, AirportSummaryRow,
+};
+// Reader half is consumed by the Stage 2C v5 reduce phase (added in
+// the next implementation step). Writer used today by
+// `stage_2c/airport_traffic_writer.rs` to dump per-R4 fid sets.
+#[allow(unused_imports)]
+pub(crate) use airport_summary::{read_airport_summary_part, write_airport_summary_part};
 pub use airport_traffic::{read_airport_traffic, write_airport_traffic, AirportTrafficRow};
 pub use cruise::write_cruise;
 pub(crate) use cruise_spill::{read_cruise_spill, write_cruise_spill, CruiseSpillRow};

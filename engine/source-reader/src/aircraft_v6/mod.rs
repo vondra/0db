@@ -274,34 +274,32 @@ fn sum_periods_linear(sources: &[SourceResult]) -> NoisePeriods {
 /// Stamp written by every aircraft-extract Arrow file. Inline copy
 /// (not a build-dep) keeps arrow IPC / parquet / anyhow out of the
 /// popup runtime; must move in lock-step with `aircraft-extract::SCHEMA_VERSION`.
-/// v13 reflects the 12 → 14 class regen — same columns, but persisted
-/// `class_idx` semantics shifted, so v12 arrows would silently
-/// mis-display class labels under the new mapping.
-pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v13";
+/// v14 replaces the per-fid cruise lists with bounded top-K
+/// `top_candidates` + scalar `unique_count`. Old v13 files would
+/// silently decode to zero fids under the new column layout — must
+/// reject loud.
+pub(super) const EXPECTED_SCHEMA_VERSION: &str = "v14";
 
 /// Versions accepted under the dev-only `ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1`
-/// escape hatch. NPD lookups use shifted class indices, so per-flight
-/// profiles can be slightly off (~5%); use only when re-extraction
-/// isn't an option (visual validation, debugging).
+/// escape hatch. v13 is NOT in this list (column layout changed —
+/// legacy decode would silently lose fid data; see plan §1.4 + Codex
+/// W1 + Claude W7).
 const LEGACY_SCHEMA_VERSIONS: &[&str] = &["v12"];
 
 /// The `airport_traffic.arrow` semantic contract. `schema_version`
 /// only guards column types/order; this guards what those columns
 /// mean today: `band_energy_lin` = daily-total Z-weighted energy at
-/// 25 m perpendicular; `flight_ids` = TOUCH set (every microsegment
-/// a rotation crossed carries its `flight_id`, in lock-step with
-/// proportional band-energy attribution).
-///
-/// Older files MUST be rejected — column shape and `flight_ids`
-/// semantics differ across versions and silent decoding would
-/// produce wrong popup numbers.
-pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v4";
+/// 25 m perpendicular; per-row scalar `unique_*_count` + per-microseg
+/// UNION `microseg_unique_*` replace the v4 `flight_ids` list.
+/// Airport-level UNION across R4s now lives in the separate
+/// `airport_summary.arrow` sidecar.
+pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v5";
 
 /// Legacy `airport_traffic_contract` variants accepted under the same
 /// `ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1` escape hatch as
-/// [`LEGACY_SCHEMA_VERSIONS`]. v3 stored `band_energy_lin` and
-/// `flight_ids` with the same column shapes as v4 — only touch
-/// semantics around the rotation boundary changed.
+/// [`LEGACY_SCHEMA_VERSIONS`]. v4 is NOT in the legacy list — its
+/// column shape (per-row `flight_ids: List<UInt64>`) is incompatible
+/// with v5's scalar counters; silent decoding would drop fid data.
 const LEGACY_AIRPORT_TRAFFIC_CONTRACTS: &[&str] = &["airport_traffic_v3"];
 
 fn accept_legacy() -> bool {

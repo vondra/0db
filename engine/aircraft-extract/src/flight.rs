@@ -175,7 +175,26 @@ pub struct AirborneSubSegment {
     pub flags: u8,
 }
 
-/// Stage 2B row — per (R8, fl_bin, class, period, is_dep) bucket.
+/// One entry in a cruise row's `top_candidates` list (v14). Identity
+/// + ranking dimension only — row-constant fields (period / date_id)
+/// are NOT duplicated per candidate per Codex W4 + Claude C3.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CruiseTopCandidate {
+    pub flight_id: u64,
+    pub callsign: String,
+    pub aircraft_type: [u8; 4],
+    /// Source-side NPD `lookup_lmax` at the 25 m anchor for the
+    /// loudest segment this fid contributed to the bucket. Ranking
+    /// dimension matches popup's peak Lmax display ranking.
+    pub peak_lmax_25m_db: f32,
+    /// Altitude at the peak segment (needed by popup's CPA + slant
+    /// recompute against the receiver).
+    pub altitude_m: f32,
+}
+
+/// Stage 2B row — per (R8, fl_bin, class, period, is_dep) bucket
+/// (v14: bounded top-K candidates + scalar unique_count replace the
+/// per-fid lists from v13).
 #[derive(Clone)]
 pub struct CruiseBucket {
     pub r8_hex: u64,
@@ -188,11 +207,12 @@ pub struct CruiseBucket {
     pub rep_len_m: f32,
     pub rep_alt_m: f32,
     pub rep_speed_kt: f32,
-    pub cruise_flight_ids: Vec<u64>,
-    /// Aircraft typecode per fid in `cruise_flight_ids`, parallel order.
-    pub cruise_aircraft_types: Vec<[u8; 4]>,
-    /// Callsign per fid in `cruise_flight_ids`, parallel order.
-    pub cruise_callsigns: Vec<String>,
+    /// Distinct real fids that touched this bucket. Display-only.
+    pub unique_count: u32,
+    /// Bounded top-K (K=`arrow_schemas::CRUISE_TOP_K`) ranked by
+    /// `peak_lmax_25m_db` descending. Tail fids below the cut drop
+    /// out of band counters; documented regression vs v13.
+    pub top_candidates: Vec<CruiseTopCandidate>,
     pub source_id: u8,
     pub origin: u8,
 }
