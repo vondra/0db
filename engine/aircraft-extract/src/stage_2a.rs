@@ -30,7 +30,6 @@ use crate::geo::{interp_along_path, r4_hex_str};
 use crate::progress::{finished, human, started, ts, Milestone};
 use crate::scope::ScopeBbox;
 use crate::shuffle::list_r4_shards;
-use noise_compute::types::RasterSampler;
 use raster_reader::RealRasters;
 
 /// Run Stage 2A against the shuffled per-R4 airborne shards under
@@ -205,9 +204,14 @@ impl AirborneEventBuilder {
         let (q3_lat, q3_lon) = interp_along_path(
             seg.start_lat, seg.start_lon, seg.end_lat, seg.end_lon, 0.75,
         );
-        let q1_elev = rasters.elevation(q1_lat as f64, q1_lon as f64) as f32;
-        let mid_elev = rasters.elevation(mid_lat as f64, mid_lon as f64) as f32;
-        let q3_elev = rasters.elevation(q3_lat as f64, q3_lon as f64) as f32;
+        // NN DEM lookup matches Stage 1's per-point sampler so all
+        // five stored `terrain_*_elev_m` (start/q1/mid/q3/end) share
+        // the same interp. Mixed NN/bilinear inside one sub-segment
+        // would produce spurious "ridge spike" rejects in the popup's
+        // q1/q3 gate.
+        let q1_elev = rasters.elevation_nearest(q1_lat as f64, q1_lon as f64) as f32;
+        let mid_elev = rasters.elevation_nearest(mid_lat as f64, mid_lon as f64) as f32;
+        let q3_elev = rasters.elevation_nearest(q3_lat as f64, q3_lon as f64) as f32;
         self.sub_segments.push(AirborneSubSegment {
             start_lat: seg.start_lat,
             start_lon: seg.start_lon,

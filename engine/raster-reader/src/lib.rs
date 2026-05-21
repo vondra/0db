@@ -83,6 +83,23 @@ impl RealRasters {
     }
 }
 
+impl RealRasters {
+    /// Nearest-neighbor DEM lookup — for aircraft-extract Stage 1 +
+    /// Stage 2A only. ~3-4× cheaper per lookup than `elevation()`
+    /// because it skips the 4-pixel bilinear blend. Acoustically safe
+    /// for the AGL-gate path: gates have 15-30 m slack everywhere
+    /// except three documented edge cases (phase seed at 7 620 m,
+    /// GROUND_STALE_MAX_AGL_M, RAW_GROUND_FLAG_MAX_AGL_M) — full
+    /// error model in `.claude/plans/stage1-nn-dem.md`.
+    ///
+    /// Deliberately NOT on the `RasterSampler` trait — the trait is
+    /// the popup contract and stays bilinear for terrain profile
+    /// continuity.
+    pub fn elevation_nearest(&self, lat: f64, lon: f64) -> f64 {
+        self.dem.sample_with(lat, lon, Interp::Nearest)
+    }
+}
+
 impl RasterSampler for RealRasters {
     fn elevation(&self, lat: f64, lon: f64) -> f64 {
         self.dem.sample(lat, lon)

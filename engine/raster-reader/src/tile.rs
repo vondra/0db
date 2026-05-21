@@ -339,6 +339,27 @@ impl TileStore {
         }
     }
 
+    /// Sample at (lat, lon) but override the store's configured
+    /// [`Interp`]. The DEM store is configured `Bilinear` so popup
+    /// path-effects get a continuous terrain profile; Stage 1 + 2A in
+    /// aircraft-extract use this entry point with [`Interp::Nearest`]
+    /// to skip the bilinear blend (3-4× cheaper per lookup) on the
+    /// AGL-gate path, which only ever consumes elevation through
+    /// hard thresholds with 15-30 m slack — see
+    /// `.claude/plans/stage1-nn-dem.md` for the error model.
+    pub fn sample_with(&self, lat: f64, lon: f64, interp: Interp) -> f64 {
+        let (lat_int, lon_int, frac_lat, frac_lon) = Self::to_tile_key(lat, lon);
+        let tile = self
+            .get_tile_fast(lat_int, lon_int)
+            .or_else(|| self.get_tile(lat_int, lon_int));
+        let Some(tile) = tile else { return self.default_value };
+        let (frac_row, frac_col) = Self::frac_to_pixel(frac_lat, frac_lon, tile.grid_size);
+        match interp {
+            Interp::Bilinear => tile.sample_bilinear(frac_row, frac_col),
+            Interp::Nearest => tile.sample_nearest(frac_row, frac_col),
+        }
+    }
+
     /// Sample with tile caching — avoids repeated tile-slot lookups and Arc refcount
     /// bumps when consecutive samples fall within the same 1° tile (common in path
     /// sampling). Cache hit path touches zero atomics.
@@ -519,5 +540,21 @@ mod tests {
             1201, DType::U8, Interp::Nearest, 42.0, ".raw", 1,
         );
         assert_eq!(store.sample(49.0, 16.0), 42.0);
+    }
+
+    /// `sample_with` honors the override Interp while `sample` honors
+    /// the store's configured Interp. Stage 1 + 2A use `sample_with`
+    /// via `RealRasters::elevation_nearest` to skip the bilinear
+    /// blend on the AGL-gate path; the same store stays bilinear for
+    /// popup path effects.
+    #[test]
+    fn sample_with_overrides_store_interp_for_missing_tile() {
+        let store = TileStore::new(
+            PathBuf::from("/nonexistent"),
+            1201, DType::I16BE, Interp::Bilinear, 7.0, ".hgt", 1,
+        );
+        assert_eq!(store.sample(49.0, 16.0), 7.0);
+        assert_eq!(store.sample_with(49.0, 16.0, Interp::Nearest), 7.0);
+        assert_eq!(store.sample_with(49.0, 16.0, Interp::Bilinear), 7.0);
     }
 }

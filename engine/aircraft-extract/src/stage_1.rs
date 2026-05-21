@@ -18,7 +18,6 @@ use crate::period::parse_date_id;
 use crate::progress::{finished, started, Milestone};
 use crate::segment::{build_segments, SegmentMeta};
 use crate::trace::TracePoint;
-use noise_compute::types::RasterSampler;
 use raster_reader::RealRasters;
 
 /// Run Stage 1 for one day. Reads `input_dir/<day>.arrow`, writes
@@ -86,7 +85,11 @@ fn stage_1_one_flight(
     // the raster lookup cost; one branch removed is essentially free.
     let mut elev_m: Vec<f32> = Vec::with_capacity(points.len());
     for p in &points {
-        let elev = rasters.elevation(p.lat as f64, p.lon as f64) as f32;
+        // NN DEM lookup — Stage 1 only ever consumes elevation through
+        // hard AGL gates (HARD_AGL_FLOOR_M = -300, 7 620 m phase seed,
+        // etc.) with 15-30 m slack. Bilinear blend is acoustic-grade
+        // overkill here. Plan: `.claude/plans/stage1-nn-dem.md`.
+        let elev = rasters.elevation_nearest(p.lat as f64, p.lon as f64) as f32;
         elev_m.push(elev);
         match p.airborne_alt_ft() {
             None => agl_m.push(0.0),
