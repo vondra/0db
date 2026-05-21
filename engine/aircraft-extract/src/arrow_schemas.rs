@@ -127,10 +127,12 @@ pub fn airborne_schema() -> Arc<Schema> {
 
 /// Max number of `top_candidates` entries written per cruise row. Rev 2
 /// of the cruise rewrite caps the per-bucket fid pool at 50 so per-row
-/// size stays bounded by `O(K)` regardless of `n_days`; the receiver-side
-/// peak-Lmax ranking matches the popup's display ranking dimension
-/// (Spearman ≥ 0.9 measured in integration test). Tail fids below K=50
-/// drop out of band counters — documented regression.
+/// size stays bounded by `O(K)` regardless of `n_days`. Ranking
+/// dimension: source-side peak Lmax at 25 m (NPD `lookup_lmax`). Plan
+/// §2.1 assumes Spearman ≥ 0.9 between source-side peak Lmax and the
+/// popup's receiver-side rank; not yet measured in tests — tracked
+/// for the LKPR full-year integration check. Tail fids below K=50 drop
+/// out of band counters — documented regression.
 pub const CRUISE_TOP_K: usize = 50;
 
 /// Per-candidate struct stored in `top_candidates`. Identity-only fields
