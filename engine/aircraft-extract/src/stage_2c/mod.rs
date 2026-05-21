@@ -205,4 +205,69 @@ mod tests {
             "airport_summary_parts/ must be cleaned up after run"
         );
     }
+
+    /// Regression for the wipe-on-scope bug: a stale
+    /// `airport_traffic.arrow` from a previous run that landed in an
+    /// in-scope R4 with NO current ground traffic must be deleted
+    /// before `run_stage_2c` returns. Mirrors the LKPR-14d reproducer
+    /// that motivated the wipe.
+    #[test]
+    fn run_stage_2c_wipes_in_scope_stale_airport_traffic() {
+        use crate::geo::r4_hex_str;
+        use crate::scope::ScopeBbox;
+        use h3o::{LatLng, Resolution};
+        let tmp = tempfile::tempdir().unwrap();
+        let by_r4_dir = tmp.path().join("segments_by_r4");
+        let h3r4_dir = tmp.path().join("h3r4");
+        // Praha R4 — in-scope. No ground.arrow input → writer does
+        // not emit a fresh airport_traffic.arrow for this run.
+        let r4 = u64::from(
+            LatLng::new(50.10, 14.26)
+                .unwrap()
+                .to_cell(Resolution::Four),
+        );
+        let r4_dir = h3r4_dir.join(r4_hex_str(r4));
+        std::fs::create_dir_all(&r4_dir).unwrap();
+        let stale = r4_dir.join("airport_traffic.arrow");
+        std::fs::write(&stale, b"stale-prev-run").unwrap();
+        std::fs::create_dir_all(&by_r4_dir).unwrap();
+        // Praha scope.
+        let scope = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
+        let n = run_stage_2c(&by_r4_dir, &[], &h3r4_dir, 1, Some(&scope)).unwrap();
+        assert_eq!(n, 0, "no ground segments → no R4 written");
+        assert!(
+            !stale.exists(),
+            "stale airport_traffic.arrow must be wiped from in-scope R4"
+        );
+    }
+
+    /// Symmetric counterexample: a stale `airport_traffic.arrow`
+    /// inside an OUT-OF-scope R4 must survive. Partial reextracts
+    /// must not touch other regions' data.
+    #[test]
+    fn run_stage_2c_leaves_out_of_scope_stale_airport_traffic() {
+        use crate::geo::r4_hex_str;
+        use crate::scope::ScopeBbox;
+        use h3o::{LatLng, Resolution};
+        let tmp = tempfile::tempdir().unwrap();
+        let by_r4_dir = tmp.path().join("segments_by_r4");
+        let h3r4_dir = tmp.path().join("h3r4");
+        // Gran Canaria R4 — out of Praha scope.
+        let r4 = u64::from(
+            LatLng::new(27.93, -15.39)
+                .unwrap()
+                .to_cell(Resolution::Four),
+        );
+        let r4_dir = h3r4_dir.join(r4_hex_str(r4));
+        std::fs::create_dir_all(&r4_dir).unwrap();
+        let stale = r4_dir.join("airport_traffic.arrow");
+        std::fs::write(&stale, b"stale-prev-run").unwrap();
+        std::fs::create_dir_all(&by_r4_dir).unwrap();
+        let praha = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
+        let _ = run_stage_2c(&by_r4_dir, &[], &h3r4_dir, 1, Some(&praha)).unwrap();
+        assert!(
+            stale.exists(),
+            "out-of-scope R4 file must survive a scoped reextract"
+        );
+    }
 }
