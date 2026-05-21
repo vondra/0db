@@ -201,14 +201,6 @@ pub fn cruise_schema() -> Arc<Schema> {
 /// reduce phase.
 pub const AIRPORT_TRAFFIC_CONTRACT_V5: &str = "airport_traffic_v5";
 
-/// Per-R4 airport aggregate sidecar contract — rev 2 design held
-/// option 2a (single global `airport_summary.arrow` via Stage 2C
-/// reduce) as canonical, so this per-R4 schema is currently UNUSED
-/// in the writer pipeline. Kept here for forward compatibility if
-/// a future debug-mode wants per-R4 partials. The popup never reads
-/// it. Plan §1.3 final paragraph.
-pub const AIRPORT_AGGREGATE_CONTRACT_V1: &str = "airport_aggregate_v1";
-
 /// Global airport summary sidecar contract (one row per airport_key,
 /// truly unique counts across all R4s). Produced by Stage 2C v5
 /// reduce phase from per-R4 `airport_summary_parts/` dumps.
@@ -330,42 +322,11 @@ pub fn assert_airport_traffic_contract_v5(
     }
 }
 
-/// Per-R4 airport_aggregate.arrow schema — one row per airport_key
-/// carrying partial (per-R4) UNION counts. Per Codex C3, popup
-/// loader cannot union scalar counts across R4s; the canonical
-/// answer is the global `airport_summary.arrow` (produced by Stage
-/// 2C v5 reduce). This per-R4 file is debug/observation only —
-/// production popup reads `airport_summary.arrow`.
-pub fn airport_aggregate_schema() -> Arc<Schema> {
-    let gse_per_class = DataType::FixedSizeList(
-        Arc::new(Field::new("item", DataType::UInt32, false)),
-        NUM_GSE_CLASSES,
-    );
-    let ops_per_kind = DataType::FixedSizeList(
-        Arc::new(Field::new("item", DataType::UInt32, false)),
-        NUM_OPS_KINDS,
-    );
-    let fields = vec![
-        Field::new("airport_key", DataType::Utf8, false),
-        Field::new("airport_unique_arr_count", DataType::UInt32, false),
-        Field::new("airport_unique_dep_count", DataType::UInt32, false),
-        Field::new("airport_unique_gse_count_per_class", gse_per_class, false),
-        Field::new("airport_unique_ops_count_per_kind", ops_per_kind, false),
-    ];
-    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
-        ("kind", "airport_aggregate"),
-        ("airport_aggregate_contract", AIRPORT_AGGREGATE_CONTRACT_V1),
-    ])))
-}
-
 /// Global airport_summary.arrow schema (one row per airport_key,
 /// canonical truly-unique counts across all R4s). Output of Stage 2C
 /// v5 reduce phase. Loaded once at popup query time; HashMap keyed by
 /// airport_key.
 pub fn airport_summary_schema() -> Arc<Schema> {
-    // Schema columns mirror airport_aggregate_schema 1:1 (same shape;
-    // only the contract metadata differs to keep the loader path
-    // explicit).
     let gse_per_class = DataType::FixedSizeList(
         Arc::new(Field::new("item", DataType::UInt32, false)),
         NUM_GSE_CLASSES,
@@ -477,7 +438,6 @@ mod tests {
             airborne_schema(),
             cruise_schema(),
             airport_traffic_schema(),
-            airport_aggregate_schema(),
             airport_summary_schema(),
             synth_airport_lines_schema(),
             synth_airport_areas_schema(),
@@ -576,15 +536,6 @@ mod tests {
                 "cruise v14 schema must NOT carry the v13 {dropped} column"
             );
         }
-    }
-
-    #[test]
-    fn airport_aggregate_schema_carries_contract_metadata() {
-        let s = airport_aggregate_schema();
-        assert_eq!(
-            s.metadata().get("airport_aggregate_contract").map(String::as_str),
-            Some(AIRPORT_AGGREGATE_CONTRACT_V1)
-        );
     }
 
     #[test]
