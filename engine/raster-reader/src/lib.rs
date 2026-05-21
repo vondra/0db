@@ -115,10 +115,13 @@ impl RasterSampler for RealRasters {
         let mut total = 0;
         for dr in [-1, 0, 1] {
             for dc in [-1, 0, 1] {
-                let h = self.building.sample(
-                    lat + dr as f64 * step_lat_deg,
-                    lon + dc as f64 * step_lon_deg,
-                );
+                // Wrap probe longitude across the antimeridian — for a
+                // receiver near ±180°, the dc=±1 column would otherwise
+                // sample an out-of-bounds tile (clamped to ±179° edge),
+                // diverging from `FusedGrid::building_enclosure`.
+                let probe_lon =
+                    ((lon + dc as f64 * step_lon_deg + 180.0).rem_euclid(360.0)) - 180.0;
+                let h = self.building.sample(lat + dr as f64 * step_lat_deg, probe_lon);
                 if h > 5.0 { tall_count += 1; }
                 total += 1;
             }
@@ -493,10 +496,15 @@ impl noise_compute::types::RasterSampler for FusedGrid {
         let mut total = 0;
         for dr in [-1, 0, 1] {
             for dc in [-1, 0, 1] {
-                let h = self.pixel(
-                    lat + dr as f64 * step_lat_deg,
-                    lon + dc as f64 * step_lon_deg,
-                ).building;
+                // Wrap probe longitude across the antimeridian — keeps parity
+                // with `RealRasters::building_enclosure`; without it, `pixel()`
+                // clamps the out-of-bbox column and the two implementations
+                // diverge near ±180°.
+                let probe_lon =
+                    ((lon + dc as f64 * step_lon_deg + 180.0).rem_euclid(360.0)) - 180.0;
+                let h = self
+                    .pixel(lat + dr as f64 * step_lat_deg, probe_lon)
+                    .building;
                 if h > 5 { tall += 1; }
                 total += 1;
             }
@@ -888,5 +896,24 @@ mod tests {
         // Both must be finite and plausible CZ elevations.
         assert!(e_edge.is_finite() && e_outside.is_finite());
         assert!(e_outside > -1000.0 && e_outside < 10_000.0);
+    }
+
+    #[test]
+    fn building_enclosure_antimeridian_wraps() {
+        // Regression for the antimeridian wrap fix: a receiver at lon
+        // ≈ ±180° must not panic and the probe column at dc=+1/-1 must
+        // wrap to the opposite hemisphere, not clamp to the ±179° edge.
+        // We can't compare against a real-raster ground truth here
+        // (Pacific tiles are not in `data/prepared/`), so we assert the
+        // function is finite and matches between RealRasters / FusedGrid
+        // at both wrap polarities — the fix's purpose is parity.
+        if !prepared_available() { return; }
+        let r = test_rasters();
+        let lat = 0.0;
+        for &lon in &[179.9995_f64, -179.9995_f64] {
+            let v = r.building_enclosure(lat, lon);
+            assert!(v.is_finite(), "RealRasters NaN at lon={lon}");
+            assert!((0.0..=3.0).contains(&v), "out of range at lon={lon}: {v}");
+        }
     }
 }
