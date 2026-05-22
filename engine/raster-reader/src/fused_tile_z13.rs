@@ -13,6 +13,8 @@
 //! `RealRasters` mmap). Lives in L2/L3 for the duration of one tile's
 //! compute, then drops.
 
+use std::sync::Arc;
+
 use noise_compute::constants::{
     DEFAULT_RECEIVER_HEIGHT, M_PER_DEG_LAT, m_per_deg_lon,
 };
@@ -119,31 +121,36 @@ pub struct FusedTileZ13 {
     pub rx_refl_db: Vec<f32>,
 
     /// Halo covering tile bbox + `HALO_M` extension on each side.
-    pub halo: FusedGrid,
+    /// `Arc`-wrapped so one [`TileBatch::build`] can share the same
+    /// halo across N×N adjacent tiles instead of rebuilding it
+    /// N² times — the halo dominates per-tile build cost.
+    pub halo: Arc<FusedGrid>,
 }
 
 impl FusedTileZ13 {
-    /// Build by sampling rasters for one Mercator tile at the given zoom.
+    /// Build a standalone tile with its own freshly built halo.
     pub fn build(zoom: u8, tile_x: u32, tile_y: u32, rasters: &RealRasters) -> Self {
         let bbox = TileBbox::from_xyz(zoom, tile_x, tile_y);
+        let halo = Arc::new(build_halo_for(rasters, &bbox));
+        Self::build_with_halo(zoom, tile_x, tile_y, rasters, halo)
+    }
 
-        let mut rx_lat = [0.0_f64; TILE_PX];
-        let mut rx_lon = [0.0_f64; TILE_PX];
-        for i in 0..TILE_PX {
-            rx_lat[i] = pixel_lat(&bbox, i as u32);
-            rx_lon[i] = pixel_lon(&bbox, i as u32);
-        }
+    /// Build only the inner core; reuse an externally provided halo.
+    ///
+    /// The halo's bbox must cover the tile bbox extended by [`HALO_M`]
+    /// on every side — usually because the halo was built once for the
+    /// enclosing [`TileBatch`].
+    pub fn build_with_halo(
+        zoom: u8,
+        tile_x: u32,
+        tile_y: u32,
+        rasters: &RealRasters,
+        halo: Arc<FusedGrid>,
+    ) -> Self {
+        let bbox = TileBbox::from_xyz(zoom, tile_x, tile_y);
 
-        let centre_lat = (bbox.north_lat + bbox.south_lat) * 0.5;
-        let halo_lat_deg = HALO_M / M_PER_DEG_LAT;
-        let halo_lon_deg = HALO_M / m_per_deg_lon(centre_lat.to_radians()).max(1.0);
-        let halo = FusedGrid::build(
-            rasters,
-            bbox.south_lat - halo_lat_deg,
-            bbox.north_lat + halo_lat_deg,
-            bbox.west_lon - halo_lon_deg,
-            bbox.east_lon + halo_lon_deg,
-        );
+        let rx_lat: [f64; TILE_PX] = std::array::from_fn(|i| pixel_lat(&bbox, i as u32));
+        let rx_lon: [f64; TILE_PX] = std::array::from_fn(|i| pixel_lon(&bbox, i as u32));
 
         let n = TILE_PX * TILE_PX;
         let mut inner_elev_m = vec![0.0_f32; n];
@@ -153,10 +160,11 @@ impl FusedTileZ13 {
         let mut rx_alt_m = vec![0.0_f32; n];
         let mut rx_refl_db = vec![0.0_f32; n];
 
-        // Sample inner core directly from RealRasters tile stores — the
-        // same mmap pages were just warmed building the halo, so this is
-        // entirely cache-hot. `rx_refl_db` reads from the freshly built
-        // halo (denser than 3×3-on-mmap, and one fewer cache hop).
+        // Sample inner core directly from `RealRasters` tile stores —
+        // the same mmap pages were just warmed building the halo, so
+        // this is entirely cache-hot. `rx_refl_db` reads from the
+        // (possibly shared) halo: denser than the 3×3-on-mmap probe
+        // and one fewer cache hop.
         for py in 0..TILE_PX {
             let lat = rx_lat[py];
             let row_base = py * TILE_PX;
@@ -259,6 +267,113 @@ impl RasterSampler for FusedTileZ13 {
     }
 }
 
+/// Compute the halo bbox covering `inner_bbox` extended by [`HALO_M`].
+fn halo_bbox_for(inner_bbox: &TileBbox) -> (f64, f64, f64, f64) {
+    let centre_lat = (inner_bbox.north_lat + inner_bbox.south_lat) * 0.5;
+    let halo_lat_deg = HALO_M / M_PER_DEG_LAT;
+    let halo_lon_deg = HALO_M / m_per_deg_lon(centre_lat.to_radians()).max(1.0);
+    (
+        inner_bbox.south_lat - halo_lat_deg,
+        inner_bbox.north_lat + halo_lat_deg,
+        inner_bbox.west_lon - halo_lon_deg,
+        inner_bbox.east_lon + halo_lon_deg,
+    )
+}
+
+fn build_halo_for(rasters: &RealRasters, inner_bbox: &TileBbox) -> FusedGrid {
+    let (lat_min, lat_max, lon_min, lon_max) = halo_bbox_for(inner_bbox);
+    FusedGrid::build(rasters, lat_min, lat_max, lon_min, lon_max)
+}
+
+/// A `batch_n × batch_n` block of [`FusedTileZ13`] tiles that share one
+/// halo [`FusedGrid`] covering the entire block + [`HALO_M`] on each
+/// side. The shared halo is built once and reused across all tiles in
+/// the block — the dominant cost saving versus N² per-tile halo builds.
+///
+/// Construction is sequential; the caller usually parallelises across
+/// batches, not within them (each tile's scatter already uses rayon).
+pub struct TileBatch {
+    pub zoom: u8,
+    pub base_x: u32,
+    pub base_y: u32,
+    pub batch_n: u32,
+    pub tiles: Vec<FusedTileZ13>,
+}
+
+impl TileBatch {
+    /// Build a batch whose north-west tile is at `(base_x, base_y)`.
+    ///
+    /// Tiles are stored in row-major (y-then-x) order: index
+    /// `dy * batch_n + dx` → tile `(base_x + dx, base_y + dy)`.
+    pub fn build(
+        zoom: u8,
+        base_x: u32,
+        base_y: u32,
+        batch_n: u32,
+        rasters: &RealRasters,
+    ) -> Self {
+        assert!(batch_n >= 1, "batch_n must be ≥ 1");
+        let nw = TileBbox::from_xyz(zoom, base_x, base_y);
+        let se = TileBbox::from_xyz(zoom, base_x + batch_n - 1, base_y + batch_n - 1);
+        let batch_bbox = TileBbox {
+            west_lon: nw.west_lon,
+            east_lon: se.east_lon,
+            north_lat: nw.north_lat,
+            south_lat: se.south_lat,
+        };
+        let halo = Arc::new(build_halo_for(rasters, &batch_bbox));
+
+        let mut tiles = Vec::with_capacity((batch_n * batch_n) as usize);
+        for dy in 0..batch_n {
+            for dx in 0..batch_n {
+                tiles.push(FusedTileZ13::build_with_halo(
+                    zoom,
+                    base_x + dx,
+                    base_y + dy,
+                    rasters,
+                    halo.clone(),
+                ));
+            }
+        }
+
+        TileBatch { zoom, base_x, base_y, batch_n, tiles }
+    }
+}
+
+/// Read /sys L3 size and pick a default batch dimension N.
+///
+/// Working set per batch ≈ 17 MB halo (Praha) + N² × 0.5 MB inner. The
+/// three buckets map to the canonical Linux Ryzen / EPYC L3 sizes seen
+/// on our two dev servers; everything is fallthrough-safe.
+///
+/// Override at runtime with a CLI flag — this is the default if none.
+pub fn default_batch_size() -> u32 {
+    match read_l3_size_mb() {
+        Some(mb) if mb <= 40 => 2,
+        Some(mb) if mb <= 70 => 3,
+        _ => 4,
+    }
+}
+
+fn read_l3_size_mb() -> Option<u32> {
+    let raw = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index3/size").ok()?;
+    parse_cache_size_mb(raw.trim())
+}
+
+fn parse_cache_size_mb(s: &str) -> Option<u32> {
+    // Linux exposes values like "32M", "96M", "32768K".
+    let (digits, suffix) = s.split_at(s.find(|c: char| !c.is_ascii_digit())?);
+    let n: u64 = digits.parse().ok()?;
+    let mb = match suffix {
+        "" => n / (1024 * 1024),
+        "K" | "KB" => n / 1024,
+        "M" | "MB" => n,
+        "G" | "GB" => n * 1024,
+        _ => return None,
+    };
+    u32::try_from(mb).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,5 +443,40 @@ mod tests {
         // Praha DEM around 200-400 m; receiver alt = DEM + 4 m.
         let mid = tile.rx_alt(128, 128);
         assert!(mid > 100.0 && mid < 500.0, "Praha tile centre alt = {mid} m");
+    }
+
+    #[test]
+    fn parse_cache_size_handles_linux_formats() {
+        assert_eq!(parse_cache_size_mb("32M"), Some(32));
+        assert_eq!(parse_cache_size_mb("96M"), Some(96));
+        assert_eq!(parse_cache_size_mb("32768K"), Some(32));
+        assert_eq!(parse_cache_size_mb("1G"), Some(1024));
+        assert_eq!(parse_cache_size_mb("nope"), None);
+        assert_eq!(parse_cache_size_mb("32X"), None);
+    }
+
+    #[test]
+    fn batch_shares_halo_across_all_tiles() {
+        let Some(root) = data_root() else {
+            eprintln!("data/prepared not present; skipping TileBatch smoke");
+            return;
+        };
+        let rasters = RealRasters::new(&root);
+        let batch = TileBatch::build(13, 4420, 2773, 2, &rasters);
+        assert_eq!(batch.tiles.len(), 4);
+        // All four tiles must point at the same FusedGrid allocation.
+        let halo0 = Arc::as_ptr(&batch.tiles[0].halo);
+        for t in &batch.tiles[1..] {
+            assert_eq!(Arc::as_ptr(&t.halo), halo0, "halo not shared");
+        }
+        // Row-major tile ordering: (dx, dy) → idx dy*N + dx.
+        assert_eq!(batch.tiles[0].tile_x, 4420);
+        assert_eq!(batch.tiles[0].tile_y, 2773);
+        assert_eq!(batch.tiles[1].tile_x, 4421);
+        assert_eq!(batch.tiles[1].tile_y, 2773);
+        assert_eq!(batch.tiles[2].tile_x, 4420);
+        assert_eq!(batch.tiles[2].tile_y, 2774);
+        assert_eq!(batch.tiles[3].tile_x, 4421);
+        assert_eq!(batch.tiles[3].tile_y, 2774);
     }
 }
