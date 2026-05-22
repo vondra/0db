@@ -265,6 +265,23 @@ impl RasterSampler for FusedTileZ13 {
         // sees real building data regardless of receiver position.
         self.halo.building_enclosure(lat, lon)
     }
+
+    /// Without this override, `build_default` (trait fallback) drops the
+    /// P3 peak augmentation and zeroes `forest_u8` per sample — biased
+    /// +3 dB vs popup in M8 parity. Halo already runs the canonical walk
+    /// and covers every source→receiver ray (radius = `HALO_M`).
+    fn build_path_profile(
+        &self,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        dist_m: f64,
+        out: &mut noise_compute::propagation::PathProfile,
+    ) {
+        self.halo
+            .build_path_profile(src_lat, src_lon, rcv_lat, rcv_lon, dist_m, out);
+    }
 }
 
 /// Compute the halo bbox covering `inner_bbox` extended by [`HALO_M`].
