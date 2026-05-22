@@ -108,22 +108,31 @@ export async function decodeHM3(buf: ArrayBuffer): Promise<DecodedHM3Tile> {
 }
 
 /**
- * Browser-native zstd decompression via `DecompressionStream('zstd')`.
- * Available in Chrome 127+ / Firefox 126+ / Safari 18+ (≈ 98 % users).
- * Older browsers throw — frontend handles by rendering an empty tile.
+ * Zstd decompression with a JS fallback.
  *
- * `wasm-zstd` fallback is a TODO: 50 kB module lazy-loaded only on
- * the unsupported-browser path. Not blocking V1 ship.
+ * Native [`DecompressionStream('zstd')`] is the fast path (Chrome 127+ /
+ * Firefox 126+ / Safari 18+); when missing or rejected (older Chromium,
+ * test browsers) we fall back to [`fzstd`] — a ~10 kB pure-JS decoder
+ * that imports lazily so it doesn't tax the cold-load bundle.
+ *
+ * The native-fail probe is per-process: the first miss flips a static
+ * flag so subsequent tiles skip straight to fzstd.
  */
+let nativeZstdBroken = false
+
 async function zstdDecompress(data: Uint8Array): Promise<Uint8Array> {
-  if (typeof DecompressionStream === 'undefined') {
-    throw new Error('zstd: browser missing DecompressionStream — wasm fallback NYI')
+  if (!nativeZstdBroken && typeof DecompressionStream !== 'undefined') {
+    try {
+      const Ctor = DecompressionStream as unknown as new (fmt: string) => GenericTransformStream
+      const ds = new Ctor('zstd')
+      const stream = new Blob([data as BlobPart]).stream().pipeThrough(ds)
+      const out = await new Response(stream).arrayBuffer()
+      return new Uint8Array(out)
+    } catch (e) {
+      nativeZstdBroken = true
+      console.info('hm3: native zstd unavailable, falling back to fzstd', e)
+    }
   }
-  // The DecompressionStream constructor accepts 'zstd' on supported browsers;
-  // older typings still spell it as the union literal "gzip" | "deflate"
-  // | "deflate-raw", so cast for now.
-  const ds = new (DecompressionStream as unknown as new (fmt: string) => GenericTransformStream)('zstd')
-  const stream = new Blob([data as BlobPart]).stream().pipeThrough(ds)
-  const out = await new Response(stream).arrayBuffer()
-  return new Uint8Array(out)
+  const { decompress } = await import('fzstd')
+  return decompress(data)
 }
