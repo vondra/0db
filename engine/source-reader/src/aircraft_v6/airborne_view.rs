@@ -115,7 +115,7 @@ impl<'a> AirborneRowAccum<'a> {
                 eprintln!(
                     "WARN: airborne.arrow sub_segments struct missing v15 \
                      terrain columns at batch with {} rows; dropping batch. \
-                     Re-run `aircraft-extract run-all` to refresh.",
+                     Re-run `./scripts/run-aircraft-extract.sh` to refresh.",
                     n
                 );
                 continue;

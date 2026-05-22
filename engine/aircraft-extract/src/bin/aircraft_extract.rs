@@ -175,10 +175,11 @@ enum Cmd {
     /// hostile to discourage casual use: most iteration work touches
     /// ONE stage, and re-running the upstream cache wastes 50-90 % of
     /// wall time. Prefer the per-stage subcommands (`stage0`,
-    /// `stage1`, `shuffle`, `stage2a`, `stage2b`, `stage2c`) when you
-    /// know which stage's code you changed; if you really do need a
-    /// multi-stage rerun, this variant still accepts `--from-stage`
-    /// to skip everything before the cheapest valid entry point.
+    /// `stage1`, `shuffle`, `stage1-5`, `stage2a`, `stage2b`,
+    /// `stage2c`) when you know which stage's code you changed; if
+    /// you really do need a multi-stage rerun, this variant still
+    /// accepts `--from-stage` to skip everything before the cheapest
+    /// valid entry point.
     #[command(name = "run-all-dont-do-this-prefer-individual-stage-subcommands-or-from-stage-flag")]
     RunAll {
         #[arg(long)]
