@@ -3,6 +3,7 @@
 //! Implements noise_compute::types::RasterSampler for both popup (lazy) and pipeline (pre-loaded).
 //! Reads Copernicus GLO-30 / SRTM DEM, Overture building height, WorldCover forest, IMD ground type.
 
+pub mod fused_tile_z13;
 pub mod tile;
 
 use std::path::Path;
