@@ -59,15 +59,25 @@ pub fn build_aircraft_airborne_subsegment_trace(
     let typecode_str = typecode_to_string(inputs.aircraft_type);
     let variants = aircraft_period_variants(inputs.period_energies, inputs.n_days);
     let (icao_hex, start_unix) = crate::flight_id::icao_hex_and_start_unix(inputs.flight_id);
+    // Title identity preference: airline callsign → ICAO hex →
+    // typecode-only. Callsign-less broadcasts (general aviation,
+    // military, transponder hex-only modes) used to land in the list
+    // as bare "B738" / "C172" rows with no way to tell them apart;
+    // promote the icao_hex into the title so two GA flights of the
+    // same type stay visibly distinct. Synthetic fids carry no hex
+    // and fall through to typecode-only as before.
+    let title = if !inputs.callsign.is_empty() {
+        format!("{} ({typecode_str})", inputs.callsign)
+    } else if !icao_hex.is_empty() {
+        format!("{} ({typecode_str})", icao_hex.to_uppercase())
+    } else {
+        typecode_str.clone()
+    };
     SegmentTrace {
         kind: LayerKind::Aircraft,
         osm_id: None,
         segment_idx: 0,
-        name: if inputs.callsign.is_empty() {
-            typecode_str.clone()
-        } else {
-            format!("{} ({typecode_str})", inputs.callsign)
-        },
+        name: title,
         subtype: "airborne".to_string(),
         is_dominant_of_group: false,
         start_lat: inputs.start_lat,
