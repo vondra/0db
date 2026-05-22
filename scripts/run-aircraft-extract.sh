@@ -5,12 +5,14 @@
 # `data/prepared/{DATA_YEAR}/h3r4/<R4>/`.
 #
 # Stage 0/1 are per-day; Stage 2A/2B/2C aggregate the full window.
-# The aircraft-extract binary's full-pipeline orchestrator is named
-# `run-all-dont-do-this-prefer-individual-stage-subcommands-or-from-stage-flag`
-# — the name is a deterrent. Prefer the per-stage subcommands
-# (`stage0`, `stage1`, `shuffle`, `stage1-5`, `stage2a`, `stage2b`,
-# `stage2c`) when iterating on one stage's code; this wrapper script
-# is the rare full-pipeline path that does need the orchestrator.
+# `aircraft-extract run-all` orchestrates the cross-day flow. The
+# orchestrator REFUSES to start when `--work-dir` already holds
+# outputs (flights/, segments/, segments_by_r4/) AND `--from-stage`
+# is the default `stage0` — without that guard, re-running this
+# wrapper would silently overwrite hours of cached upstream work that
+# the operator almost certainly meant to reuse. Pick `--from-stage
+# stageX` (or set `FROM_STAGE=stageX`) for the stage whose code you
+# changed, OR `rm -rf $WORK_DIR` to start fresh.
 #
 # Stage reuse — to iterate on a single later stage without re-running
 # upstream work, pass `--from-stage <stage>` (or set
@@ -103,8 +105,7 @@ cargo build --release --manifest-path engine/aircraft-extract/Cargo.toml --bin a
 
 mkdir -p "$WORK_DIR" "$H3R4_DIR"
 
-ORCHESTRATOR="run-all-dont-do-this-prefer-individual-stage-subcommands-or-from-stage-flag"
-log "running aircraft-extract $ORCHESTRATOR (DAYS=$DAYS)"
+log "running aircraft-extract run-all (DAYS=$DAYS)"
 # `tee` instead of a `tail` filter: streams every per-day milestone +
 # Stage 2B/2C 10-second progress tick straight into the log file AND
 # stdout (so `bash run_in_background` output and a foreground terminal
@@ -119,7 +120,7 @@ if [ -n "$FROM_STAGE" ]; then
     EXTRA_ARGS+=(--from-stage "$FROM_STAGE")
     log "from-stage: $FROM_STAGE (skipping every phase before $FROM_STAGE)"
 fi
-./engine/aircraft-extract/target/release/aircraft-extract "$ORCHESTRATOR" \
+./engine/aircraft-extract/target/release/aircraft-extract run-all \
     --adsb-cache "$ADSB_CACHE" \
     --h3r4-dir "$H3R4_DIR" \
     --prepared-dir "$PREPARED_DIR" \

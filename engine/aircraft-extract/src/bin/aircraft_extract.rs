@@ -171,16 +171,17 @@ enum Cmd {
         #[arg(long)]
         scope_bbox: Option<String>,
     },
-    /// Cold-cache full pipeline orchestrator. The name is deliberately
-    /// hostile to discourage casual use: most iteration work touches
-    /// ONE stage, and re-running the upstream cache wastes 50-90 % of
-    /// wall time. Prefer the per-stage subcommands (`stage0`,
-    /// `stage1`, `shuffle`, `stage1-5`, `stage2a`, `stage2b`,
-    /// `stage2c`) when you know which stage's code you changed; if
-    /// you really do need a multi-stage rerun, this variant still
-    /// accepts `--from-stage` to skip everything before the cheapest
-    /// valid entry point.
-    #[command(name = "run-all-dont-do-this-prefer-individual-stage-subcommands-or-from-stage-flag")]
+    /// Run every stage end-to-end for a list of days. REFUSES to start
+    /// when `--work-dir` already contains populated stage artifacts
+    /// from a previous run unless the operator passes `--from-stage`
+    /// explicitly — the safety check exists because re-running the
+    /// orchestrator with default `--from-stage stage0` would silently
+    /// overwrite 1-3 hours of cached upstream work that the operator
+    /// almost certainly meant to reuse. Prefer the per-stage
+    /// subcommands (`stage0`, `stage1`, `shuffle`, `stage1-5`,
+    /// `stage2a`, `stage2b`, `stage2c`) when iterating on one stage,
+    /// and pass `--from-stage stageX` to keep using the orchestrator
+    /// from a chosen entry point.
     RunAll {
         #[arg(long)]
         adsb_cache: PathBuf,
@@ -308,6 +309,16 @@ fn main() -> Result<()> {
         } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             require_scope_for_subset_cache(&adsb_cache, scope.as_ref())?;
+            // Refuse to silently overwrite a populated work_dir under
+            // the default `--from-stage stage0`. If the operator
+            // explicitly asked for a later entry point, the populated
+            // dir IS the input they want to reuse and we proceed.
+            // If they want a clean full run, they delete or move the
+            // dir manually — making the data loss intentional, not
+            // accidental.
+            if from_stage == FromStage::Stage0 {
+                bail_on_populated_work_dir(&work_dir)?;
+            }
             if let Some(s) = scope.as_ref() {
                 eprintln!(
                     "{} [run-all] scope bbox: lat {}..{}, lon {}..{}",
@@ -539,6 +550,58 @@ fn main() -> Result<()> {
 /// missing input dir — a typo or a failed upstream shuffle would
 /// otherwise become a silent no-op and leave stale `h3r4` outputs in
 /// place (`list_r4_shards` swallows NotFound by design for RunAll).
+/// Refuse to run the orchestrator at default `--from-stage stage0`
+/// when `--work-dir` already holds outputs from an earlier run.
+/// Operators almost always want to REUSE that cache (via
+/// `--from-stage stage1` / `shuffle` / `stage1-5` / ...); the
+/// orchestrator would otherwise re-do Stage 0 + Stage 1 silently and
+/// discard 1-3 hours of cached upstream work. The error message
+/// shows the exact files that would be overwritten and offers the
+/// two valid recovery paths.
+fn bail_on_populated_work_dir(work_dir: &Path) -> Result<()> {
+    let flights_dir = work_dir.join("flights");
+    let segments_dir = work_dir.join("segments");
+    let by_r4_dir = work_dir.join("segments_by_r4");
+    let mut populated: Vec<(&str, &Path)> = Vec::new();
+    for (name, dir) in [
+        ("flights", flights_dir.as_path()),
+        ("segments", segments_dir.as_path()),
+        ("segments_by_r4", by_r4_dir.as_path()),
+    ] {
+        if dir.exists() && dir.is_dir() {
+            let any = std::fs::read_dir(dir)
+                .with_context(|| format!("read_dir {}", dir.display()))?
+                .next()
+                .is_some();
+            if any {
+                populated.push((name, dir));
+            }
+        }
+    }
+    if populated.is_empty() {
+        return Ok(());
+    }
+    let listing = populated
+        .iter()
+        .map(|(n, p)| format!("  - {n}/  ({})", p.display()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Err(anyhow::anyhow!(
+        "--work-dir {} already holds outputs from a previous run:\n\
+         {listing}\n\n\
+         The default `--from-stage stage0` would silently overwrite the cached \
+         upstream work. Pick one:\n\
+         (a) Reuse the cache — pass `--from-stage stage1` (or later) to skip ahead \
+             to the stage whose code actually changed. The other six per-stage \
+             subcommands also run standalone against the existing dirs.\n\
+         (b) Wipe and rerun fresh — `rm -rf {work_dir}` first, then run-all.\n\
+         The safety check fires only when both conditions hold: default `--from-stage` AND \
+         a non-empty work_dir. Move the dir, archive it, or commit to (a)/(b) before retrying.",
+        work_dir.display(),
+        work_dir = work_dir.display(),
+    ))
+}
+
 fn require_input_dir_exists(flag: &str, dir: &Path) -> Result<()> {
     if !dir.exists() {
         return Err(anyhow::anyhow!(
