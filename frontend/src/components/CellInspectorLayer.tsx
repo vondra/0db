@@ -44,8 +44,12 @@ export default function CellInspectorLayer({
     [rasterOverlays],
   )
 
+  // `sourceModes.aircraft` is pinned to '0db' (no UI toggle — see App.tsx)
+  // so a raw `Object.values(...).every(off)` would never become true and the
+  // raster inspector would be permanently disabled. Filter aircraft out.
   const allSourcesOff = useMemo(
-    () => Object.values(sourceModes ?? {}).every(m => m === 'off' || m == null),
+    () => Object.entries(sourceModes ?? {})
+      .every(([id, m]) => id === 'aircraft' || m === 'off' || m == null),
     [sourceModes],
   )
 
