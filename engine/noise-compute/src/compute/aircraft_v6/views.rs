@@ -30,9 +30,6 @@ pub struct SubSegmentSlice<'a> {
     pub date_id: &'a [i16],
     pub flags: &'a [u8],
     pub terrain_start_elev_m: &'a [f32],
-    pub terrain_q1_elev_m: &'a [f32],
-    pub terrain_mid_elev_m: &'a [f32],
-    pub terrain_q3_elev_m: &'a [f32],
     pub terrain_end_elev_m: &'a [f32],
 }
 

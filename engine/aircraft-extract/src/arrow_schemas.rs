@@ -97,18 +97,14 @@ pub fn segments_schema() -> Arc<Schema> {
 /// crossing. `sub_segments` carries per-sub-segment period / date /
 /// flags so a long crossing that straddles 19:00 still buckets right.
 ///
-/// v15 (Opt A) adds five terrain elevation columns sampled at extract
-/// time so the popup terrain gates can skip `SegmentTerrain::sample`
-/// (5 raster lookups → 0 on the hot path). `terrain_start_elev_m` /
-/// `terrain_end_elev_m` propagate from Stage 1's per-point elevation;
-/// `terrain_q1_elev_m` / `terrain_mid_elev_m` / `terrain_q3_elev_m`
-/// are sampled at Stage 2A from the sub-segment's 0.25 / 0.5 / 0.75
-/// points. All three intermediate samples are stored explicitly: real
-/// DEM terrain isn't linearly interpolated between endpoints, so a
-/// sharp peak between ADS-B samples (LOWI / SEQM / KASE mountain
-/// airports) can sit tens of metres above the linear ridge. /gg rev 2
-/// flagged that storing only `mid` lets a narrow spike at frac=0.25 or
-/// 0.75 sneak through the AGL gate (verified by 3-of-4 reviewers).
+/// v16 (K3) keeps only `terrain_start_elev_m` / `terrain_end_elev_m`
+/// at sub-segment level (Stage 1 sampler). The popup terrain gates skip
+/// `SegmentTerrain::sample` (5 raster lookups → 0 on the hot path) and
+/// the chord mountain-peak check (mid / q1 / q3 vs DEM) moved to Stage 1
+/// itself (`airborne_chord_clears_peaks` in `stage_1.rs`), so v15's three
+/// intermediate columns are no longer needed at popup time. v15 stored
+/// them because the check ran in the popup; the architectural unification
+/// trades 12 % airborne.arrow size for a single source of truth.
 pub fn airborne_schema() -> Arc<Schema> {
     let sub_struct = DataType::Struct(Fields::from(vec![
         Field::new("start_lat", DataType::Float32, false),
@@ -123,9 +119,6 @@ pub fn airborne_schema() -> Arc<Schema> {
         Field::new("date_id", DataType::Int16, false),
         Field::new("flags", DataType::UInt8, false),
         Field::new("terrain_start_elev_m", DataType::Float32, false),
-        Field::new("terrain_q1_elev_m", DataType::Float32, false),
-        Field::new("terrain_mid_elev_m", DataType::Float32, false),
-        Field::new("terrain_q3_elev_m", DataType::Float32, false),
         Field::new("terrain_end_elev_m", DataType::Float32, false),
     ]));
     let fields = vec![
@@ -146,7 +139,48 @@ pub fn airborne_schema() -> Arc<Schema> {
         Field::new("bbox_min_lon", DataType::Float32, false),
         Field::new("bbox_max_lon", DataType::Float32, false),
     ];
-    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[("kind", "airborne")])))
+    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
+        ("kind", "airborne"),
+        ("airborne_contract", AIRBORNE_CONTRACT_V2),
+    ])))
+}
+
+/// Airborne sub-segment column-shape contract stamped into
+/// `airborne.arrow` so `schema_version` (the global stamp) can stay at
+/// v15 — only `airborne.arrow` changed shape in K3, every other arrow
+/// the pipeline produces is byte-identical.
+///
+/// v1 stored five terrain elevations per sub-segment (start / q1 / mid /
+/// q3 / end). v2 (K3, 2026-05) drops q1 / mid / q3; the chord
+/// mountain-peak check that needed them moved to Stage 1
+/// (`airborne_chord_clears_peaks`). v1 readers crash on v2's missing
+/// columns and v2 readers can't ignore v1's extra columns silently
+/// (would degrade Stage 1's parity claim), so the stamp must mismatch
+/// loud.
+pub const AIRBORNE_CONTRACT_V2: &str = "airborne_v2";
+
+/// Verify a loaded `airborne.arrow` file's `airborne_contract` metadata
+/// matches the current [`AIRBORNE_CONTRACT_V2`]. Older files MUST be
+/// rejected — column layout differs and silent decoding would either
+/// crash (v2 reading v1's extra columns through a 13-col offset) or
+/// silently zero-out terrain at every chord midpoint (v2 cuts read
+/// from v1 columns that don't exist).
+pub fn assert_airborne_contract_v2(
+    metadata: &HashMap<String, String>,
+) -> anyhow::Result<()> {
+    match metadata.get("airborne_contract").map(String::as_str) {
+        Some(AIRBORNE_CONTRACT_V2) => Ok(()),
+        Some(other) => Err(anyhow::anyhow!(
+            "airborne_contract mismatch: expected {AIRBORNE_CONTRACT_V2}, got {other}"
+        )),
+        // v1 files (overnight 2026-05-21 extract) carry no
+        // `airborne_contract` stamp — the contract const was introduced
+        // by K3. Reject loud rather than degrade silently.
+        None => Err(anyhow::anyhow!(
+            "airborne_contract metadata missing — \
+             v1 (pre-K3) `airborne.arrow` files need re-extraction"
+        )),
+    }
 }
 
 /// Max number of `top_candidates` entries written per cruise row. Rev 2

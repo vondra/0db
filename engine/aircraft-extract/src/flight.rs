@@ -199,9 +199,6 @@ pub struct AirborneSubSegment {
     pub date_id: i16,
     pub flags: u8,
     pub terrain_start_elev_m: f32,
-    pub terrain_q1_elev_m: f32,
-    pub terrain_mid_elev_m: f32,
-    pub terrain_q3_elev_m: f32,
     pub terrain_end_elev_m: f32,
 }
 

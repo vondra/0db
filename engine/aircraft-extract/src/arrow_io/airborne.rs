@@ -70,9 +70,6 @@ pub fn write_airborne(path: &Path, rows: &[AirborneEvent], n_days: u16) -> Resul
     let mut date_id = Int16Builder::with_capacity(total_subs);
     let mut flags = UInt8Builder::with_capacity(total_subs);
     let mut t_start = Float32Builder::with_capacity(total_subs);
-    let mut t_q1 = Float32Builder::with_capacity(total_subs);
-    let mut t_mid = Float32Builder::with_capacity(total_subs);
-    let mut t_q3 = Float32Builder::with_capacity(total_subs);
     let mut t_end = Float32Builder::with_capacity(total_subs);
     for r in rows {
         for s in &r.sub_segments {
@@ -88,9 +85,6 @@ pub fn write_airborne(path: &Path, rows: &[AirborneEvent], n_days: u16) -> Resul
             date_id.append_value(s.date_id);
             flags.append_value(s.flags);
             t_start.append_value(s.terrain_start_elev_m);
-            t_q1.append_value(s.terrain_q1_elev_m);
-            t_mid.append_value(s.terrain_mid_elev_m);
-            t_q3.append_value(s.terrain_q3_elev_m);
             t_end.append_value(s.terrain_end_elev_m);
         }
     }
@@ -109,9 +103,6 @@ pub fn write_airborne(path: &Path, rows: &[AirborneEvent], n_days: u16) -> Resul
             Arc::new(date_id.finish()),
             Arc::new(flags.finish()),
             Arc::new(t_start.finish()),
-            Arc::new(t_q1.finish()),
-            Arc::new(t_mid.finish()),
-            Arc::new(t_q3.finish()),
             Arc::new(t_end.finish()),
         ],
         None,
@@ -180,9 +171,6 @@ mod tests {
                 date_id: 1,
                 flags: 0,
                 terrain_start_elev_m: 200.0,
-                terrain_q1_elev_m: 205.0,
-                terrain_mid_elev_m: 210.0,
-                terrain_q3_elev_m: 215.0,
                 terrain_end_elev_m: 220.0,
             }],
             total_length_m: 300.0,
@@ -211,8 +199,8 @@ mod tests {
             .unwrap();
         assert_eq!(cs.value(0), "TVS100P");
         assert_eq!(at.value(0), b"A320");
-        // v15 terrain columns survive write→read so the popup reader
-        // can rely on them existing without an Option<&[f32]> shim.
+        // v16 (K3) keeps only start/end terrain elevs; mid/q1/q3 absorbed
+        // into Stage 1's chord mountain-peak check.
         let sub_list = batches[0]
             .column_by_name("sub_segments")
             .unwrap()
@@ -230,24 +218,6 @@ mod tests {
             .as_any()
             .downcast_ref::<arrow::array::Float32Array>()
             .unwrap();
-        let t_q1 = sub_struct
-            .column_by_name("terrain_q1_elev_m")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<arrow::array::Float32Array>()
-            .unwrap();
-        let t_mid = sub_struct
-            .column_by_name("terrain_mid_elev_m")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<arrow::array::Float32Array>()
-            .unwrap();
-        let t_q3 = sub_struct
-            .column_by_name("terrain_q3_elev_m")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<arrow::array::Float32Array>()
-            .unwrap();
         let t_end = sub_struct
             .column_by_name("terrain_end_elev_m")
             .unwrap()
@@ -255,9 +225,9 @@ mod tests {
             .downcast_ref::<arrow::array::Float32Array>()
             .unwrap();
         assert!((t_start.value(0) - 200.0).abs() < 1e-3);
-        assert!((t_q1.value(0) - 205.0).abs() < 1e-3);
-        assert!((t_mid.value(0) - 210.0).abs() < 1e-3);
-        assert!((t_q3.value(0) - 215.0).abs() < 1e-3);
         assert!((t_end.value(0) - 220.0).abs() < 1e-3);
+        assert!(sub_struct.column_by_name("terrain_q1_elev_m").is_none(), "v16 must NOT carry q1");
+        assert!(sub_struct.column_by_name("terrain_mid_elev_m").is_none(), "v16 must NOT carry mid");
+        assert!(sub_struct.column_by_name("terrain_q3_elev_m").is_none(), "v16 must NOT carry q3");
     }
 }

@@ -34,9 +34,6 @@ struct SubSegmentColumns<'a> {
     date_id: &'a [i16],
     flags: &'a [u8],
     terrain_start_elev_m: &'a [f32],
-    terrain_q1_elev_m: &'a [f32],
-    terrain_mid_elev_m: &'a [f32],
-    terrain_q3_elev_m: &'a [f32],
     terrain_end_elev_m: &'a [f32],
 }
 
@@ -73,9 +70,6 @@ impl<'a> SubSegmentColumns<'a> {
             date_id: i16_col("date_id")?,
             flags: u8_col("flags")?,
             terrain_start_elev_m: f32_col("terrain_start_elev_m")?,
-            terrain_q1_elev_m: f32_col("terrain_q1_elev_m")?,
-            terrain_mid_elev_m: f32_col("terrain_mid_elev_m")?,
-            terrain_q3_elev_m: f32_col("terrain_q3_elev_m")?,
             terrain_end_elev_m: f32_col("terrain_end_elev_m")?,
         })
     }
@@ -152,9 +146,6 @@ impl<'a> AirborneRowAccum<'a> {
                         date_id: &s.date_id[lo..hi],
                         flags: &s.flags[lo..hi],
                         terrain_start_elev_m: &s.terrain_start_elev_m[lo..hi],
-                        terrain_q1_elev_m: &s.terrain_q1_elev_m[lo..hi],
-                        terrain_mid_elev_m: &s.terrain_mid_elev_m[lo..hi],
-                        terrain_q3_elev_m: &s.terrain_q3_elev_m[lo..hi],
                         terrain_end_elev_m: &s.terrain_end_elev_m[lo..hi],
                     },
                 });

@@ -289,6 +289,9 @@ pub fn add_v6_aircraft_to_result(
 ) -> Result<(), String> {
     assert_schema_version("airborne.arrow", airborne_batches)?;
     assert_schema_version("cruise.arrow", cruise_batches)?;
+    if !airborne_batches.is_empty() {
+        assert_airborne_contract("airborne.arrow", airborne_batches)?;
+    }
     if !airport_traffic_batches.is_empty() {
         assert_airport_traffic_contract("airport_traffic.arrow", airport_traffic_batches)?;
     }
@@ -550,6 +553,15 @@ pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v6";
 /// the only safe path.
 const LEGACY_AIRPORT_TRAFFIC_CONTRACTS: &[&str] = &[];
 
+/// `airborne.arrow` sub-segment column-shape contract. v2 (K3) keeps
+/// only `terrain_start_elev_m` / `terrain_end_elev_m`; v1 stored five
+/// elevs (start / q1 / mid / q3 / end). Popup reader hard-fails on a
+/// v1 file because the 13-col offset shifts every read past
+/// `flags` — silent decoding would alias `terrain_q1_elev_m` slice
+/// over what v2 treats as `terrain_end_elev_m`.
+pub(super) const EXPECTED_AIRBORNE_CONTRACT: &str = "airborne_v2";
+const LEGACY_AIRBORNE_CONTRACTS: &[&str] = &[];
+
 fn accept_legacy() -> bool {
     matches!(std::env::var("ACCEPT_LEGACY_AIRCRAFT_SCHEMA").as_deref(), Ok("1"))
 }
@@ -617,6 +629,43 @@ pub(super) fn assert_airport_traffic_contract(
         return Err(format!(
             "{label}[batch {idx}] airport_traffic_contract mismatch \
              (expected {EXPECTED_AIRPORT_TRAFFIC_CONTRACT}, got {c:?}) \
+             — re-extract aircraft pipeline (or set ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1 for dev)"
+        ));
+    }
+    Ok(())
+}
+
+/// Guard the `airborne.arrow` sub-segment column-shape contract.
+/// Mirrors [`assert_airport_traffic_contract`] but checks the
+/// `airborne_contract` metadata key set by Stage 2A. Pre-K3 (v1) files
+/// have three extra terrain columns the v2 popup reader would silently
+/// alias over `terrain_end_elev_m`, producing wrong Filter D cuts on
+/// every airborne sub-segment.
+pub(super) fn assert_airborne_contract(
+    label: &str,
+    batches: &[RecordBatch],
+) -> Result<(), String> {
+    assert_schema_version(label, batches)?;
+    let allow_legacy = accept_legacy();
+    for (idx, batch) in batches.iter().enumerate() {
+        let c = batch
+            .schema_ref()
+            .metadata()
+            .get("airborne_contract")
+            .map(String::as_str);
+        if c == Some(EXPECTED_AIRBORNE_CONTRACT) {
+            continue;
+        }
+        if allow_legacy && c.map_or(false, |s| LEGACY_AIRBORNE_CONTRACTS.contains(&s)) {
+            eprintln!(
+                "WARN: {label}[batch {idx}] legacy airborne_contract {c:?} accepted \
+                 via ACCEPT_LEGACY_AIRCRAFT_SCHEMA — terrain columns may differ"
+            );
+            continue;
+        }
+        return Err(format!(
+            "{label}[batch {idx}] airborne_contract mismatch \
+             (expected {EXPECTED_AIRBORNE_CONTRACT}, got {c:?}) \
              — re-extract aircraft pipeline (or set ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1 for dev)"
         ));
     }

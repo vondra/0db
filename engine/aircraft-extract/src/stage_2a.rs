@@ -26,7 +26,7 @@ use crate::arrow_io::read_segments;
 use crate::flight::{
     segment_flags, AirborneEvent, AirborneSubSegment, FlightSegment, Phase,
 };
-use crate::geo::{interp_along_path, r4_hex_str};
+use crate::geo::r4_hex_str;
 use crate::progress::{finished, human, started, ts, Milestone};
 use crate::scope::ScopeBbox;
 use crate::shuffle::list_r4_shards;
@@ -162,7 +162,7 @@ impl AirborneEventBuilder {
             total_length_m: 0.0,
         }
     }
-    fn push(&mut self, seg: &FlightSegment, rasters: &RealRasters) {
+    fn push(&mut self, seg: &FlightSegment, _rasters: &RealRasters) {
         let mut flags = 0u8;
         if seg.is_departure() {
             flags |= segment_flags::IS_DEPARTURE;
@@ -184,44 +184,10 @@ impl AirborneEventBuilder {
             .max(seg.start_lon)
             .max(seg.end_lon);
         self.total_length_m += seg.length_m;
-        // v15 (Opt A): sample q1 / mid / q3 terrain elevation here.
-        // Start/end come from Stage 1 (per-point ADS-B lookup); the
-        // three intermediate samples are between ADS-B samples and
-        // must be sampled now. All stored explicitly because real
-        // DEM is non-linear: a narrow ridge at frac=0.25 or 0.75 can
-        // sit tens of metres above any linear estimate between
-        // endpoints, and the popup AGL gate needs to detect that
-        // underground segments aren't passed through silently
-        // (LOWI / SEQM / KASE mountain airports). `interp_along_path`
-        // is antimeridian-safe so polar / dateline-crossing
-        // sub-segments sample the right tiles.
-        let (q1_lat, q1_lon) = interp_along_path(
-            seg.start_lat, seg.start_lon, seg.end_lat, seg.end_lon, 0.25,
-        );
-        let (mid_lat, mid_lon) = interp_along_path(
-            seg.start_lat, seg.start_lon, seg.end_lat, seg.end_lon, 0.5,
-        );
-        let (q3_lat, q3_lon) = interp_along_path(
-            seg.start_lat, seg.start_lon, seg.end_lat, seg.end_lon, 0.75,
-        );
-        // NN DEM lookup matches Stage 1's per-point sampler so all
-        // five stored `terrain_*_elev_m` (start/q1/mid/q3/end) share
-        // the same interp. Mixed NN/bilinear inside one sub-segment
-        // would produce spurious "ridge spike" rejects in the popup's
-        // q1/q3 gate. Sub-segments are ≤ 30 km so q1/mid/q3 almost
-        // always land in the same 1° tile — cache it across the three
-        // lookups to skip both atomics.
-        let mut dem_key = (i32::MIN, i32::MIN);
-        let mut dem_tile: Option<std::sync::Arc<raster_reader::RawTile>> = None;
-        let q1_elev = rasters
-            .elevation_nearest_cached(q1_lat as f64, q1_lon as f64, &mut dem_key, &mut dem_tile)
-            as f32;
-        let mid_elev = rasters
-            .elevation_nearest_cached(mid_lat as f64, mid_lon as f64, &mut dem_key, &mut dem_tile)
-            as f32;
-        let q3_elev = rasters
-            .elevation_nearest_cached(q3_lat as f64, q3_lon as f64, &mut dem_key, &mut dem_tile)
-            as f32;
+        // v16 (K3): only start/end terrain elevs are stored — the popup
+        // no longer needs q1 / mid / q3 because the chord mountain-peak
+        // check moved to Stage 1 (`airborne_chord_clears_peaks`). Start /
+        // end come from Stage 1's per-point ADS-B-time DEM sampler.
         self.sub_segments.push(AirborneSubSegment {
             start_lat: seg.start_lat,
             start_lon: seg.start_lon,
@@ -235,9 +201,6 @@ impl AirborneEventBuilder {
             date_id: seg.date_id,
             flags,
             terrain_start_elev_m: seg.start_elev_m,
-            terrain_q1_elev_m: q1_elev,
-            terrain_mid_elev_m: mid_elev,
-            terrain_q3_elev_m: q3_elev,
             terrain_end_elev_m: seg.end_elev_m,
         });
     }
@@ -345,11 +308,8 @@ mod tests {
         let sub = &events[0].sub_segments[0];
         assert!((sub.terrain_start_elev_m - 250.0).abs() < 1e-3);
         assert!((sub.terrain_end_elev_m - 260.0).abs() < 1e-3);
-        // q1/mid/q3 are sampled from rasters (0 m at empty-tile
-        // fall-through), NOT linearly interpolated from start/end.
-        assert!((sub.terrain_q1_elev_m - 0.0).abs() < 1e-3);
-        assert!((sub.terrain_mid_elev_m - 0.0).abs() < 1e-3);
-        assert!((sub.terrain_q3_elev_m - 0.0).abs() < 1e-3);
+        // v16 (K3): q1/mid/q3 columns are gone — chord mountain-peak
+        // check moved to Stage 1 (`airborne_chord_clears_peaks`).
     }
 
     /// Round trip: write a per-R4 airborne shard via the shuffle

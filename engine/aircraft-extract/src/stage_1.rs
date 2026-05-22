@@ -130,7 +130,53 @@ fn stage_1_one_flight(
         gse_class: flight.gse_class,
         date_id,
     };
-    build_segments(&points, &agl_m, &elev_m, &phases, &meta)
+    let segments = build_segments(&points, &agl_m, &elev_m, &phases, &meta);
+    // K3: absorb the popup-side `is_valid_airborne_with_terrain` chord
+    // mountain-peak check at extract time so v16 `airborne.arrow` can
+    // drop the `terrain_q1_elev_m / terrain_mid_elev_m / terrain_q3_elev_m`
+    // columns. The kept set is identical to what the v15 popup would
+    // emit because Stage 2A's chord matches Stage 1's chord (shuffle
+    // midpoint assignment, no clipping) and the AGL gate (-30 m) is
+    // unchanged. Airport-context jet 150 m AGL floor still moves to
+    // Stage 2A where the resolved aerodrome centroid is available.
+    let mut dem_key = (i32::MIN, i32::MIN);
+    let mut dem_tile: Option<std::sync::Arc<raster_reader::RawTile>> = None;
+    segments
+        .into_iter()
+        .filter(|seg| airborne_chord_clears_peaks(seg, rasters, &mut dem_key, &mut dem_tile))
+        .collect()
+}
+
+/// Sample DEM at the chord's q1 / mid / q3 fracs and drop sub-segments
+/// whose chord-interpolated altitude is more than 30 m below terrain
+/// at any of those points. Mirrors the popup-side
+/// `noise_compute::emission::aircraft::is_valid_airborne_with_terrain`
+/// mid/q1/q3 check (segment_filters.rs:243-251) so popup parity holds
+/// once v16 drops the three terrain columns. Ground / airport-context
+/// segments bypass the check (popup short-circuits them too).
+fn airborne_chord_clears_peaks(
+    seg: &crate::flight::FlightSegment,
+    rasters: &RealRasters,
+    dem_key: &mut (i32, i32),
+    dem_tile: &mut Option<std::sync::Arc<raster_reader::RawTile>>,
+) -> bool {
+    use crate::flight::{Phase, segment_flags};
+    if seg.phase == Phase::Ground || (seg.flags & segment_flags::ON_GROUND) != 0 {
+        return true;
+    }
+    let sa = seg.start_alt_m as f64;
+    let ea = seg.end_alt_m as f64;
+    // q1, mid, q3 along the chord.
+    for &frac in &[0.25_f64, 0.5, 0.75] {
+        let lat = seg.start_lat as f64 + (seg.end_lat - seg.start_lat) as f64 * frac;
+        let lon = seg.start_lon as f64 + (seg.end_lon - seg.start_lon) as f64 * frac;
+        let terrain = rasters.elevation_nearest_cached(lat, lon, dem_key, dem_tile);
+        let chord_alt = sa + (ea - sa) * frac;
+        if chord_alt < terrain - 30.0 {
+            return false;
+        }
+    }
+    true
 }
 
 fn bbox_of_flights(flights: &[Flight]) -> Option<(f64, f64, f64, f64)> {
