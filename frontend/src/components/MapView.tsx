@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import Map, { NavigationControl } from 'react-map-gl/maplibre'
 import type { StyleSpecification } from 'maplibre-gl'
 import HexLayer from './HexLayer'
@@ -6,10 +6,10 @@ import HexHoverTooltip from './HexHoverTooltip'
 import FlyToLocation from './FlyToLocation'
 import DetailPopup from './DetailPopup'
 import QuietClustersLayer from './QuietClustersLayer'
-import ContributorHighlight from './ContributorHighlight'
 import RealEstateLayer from './RealEstateLayer'
 import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
+import HeatmapV3Overlay, { AIRCRAFT_LAYER_SOURCES } from './HeatmapV3Overlay'
 import CellInspectorLayer from './CellInspectorLayer'
 import MapStateSync from './MapStateSync'
 import { DEFAULT_BASEMAP, loadBasemapStyle, type BasemapId } from '../utils/basemaps'
@@ -58,6 +58,11 @@ export default function MapView({
     setFlyToPos(pos)
   }, [])
 
+  const activeAircraftSources = useMemo(
+    () => AIRCRAFT_LAYER_SOURCES.filter(s => !!rasterOverlays?.[s]),
+    [rasterOverlays],
+  )
+
   useEffect(() => {
     let cancelled = false
     void loadBasemapStyle(bm).then((style) => {
@@ -105,13 +110,17 @@ export default function MapView({
       />
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
+      {/* Highlight rides on the same deck.gl canvas as the heatmap so
+          it always draws above the HM3 tiles. A separate MapLibre
+          Source/Layer would sit under the non-interleaved deck canvas
+          and disappear whenever any heatmap was active. */}
+      <HeatmapV3Overlay
+        sources={activeAircraftSources}
+        highlightGeometry={highlightGeometry ?? null}
+      />
       <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} sourceModes={sourceModes} />
       <IsochronLayer geojson={isochronGeojson ?? null} />
       <FlyToLocation location={selectedLocation ?? null} onArrived={handleArrived} />
-      {/* Mount last so MapLibre renders the highlight stroke + fill above
-          HexLayer noise tiles, isochron, raster overlays — without this a
-          cruise R8 polygon disappears under the heatmap. */}
-      <ContributorHighlight geometry={highlightGeometry ?? null} />
       <DetailPopup
         detailPosition={detailPosition ?? null}
         triggerPosition={flyToPos}

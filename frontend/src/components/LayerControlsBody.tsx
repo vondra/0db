@@ -42,7 +42,13 @@ export default function LayerControlsBody({
 
   return (
     <>
-      <SourceToggles sourceModes={sourceModes} onToggleSource={onToggleSource} onSourceModeChange={onSourceModeChange} />
+      <SourceToggles
+        sourceModes={sourceModes}
+        onToggleSource={onToggleSource}
+        onSourceModeChange={onSourceModeChange}
+        rasterOverlays={rasterOverlays}
+        onRasterOverlayChange={onRasterOverlayChange}
+      />
 
       <div className={divClass} />
 

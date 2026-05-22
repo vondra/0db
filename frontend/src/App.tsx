@@ -10,7 +10,7 @@ import MobileDetailSheet from './components/MobileDetailSheet'
 import BasemapBar from './components/BasemapBar'
 import PropertyCard from './components/PropertyCard'
 import FloatingCard from './components/FloatingCard'
-import { useUrlState, type SourceMode } from './hooks/useUrlState'
+import { useUrlState, EMPTY_RASTER_OVERLAYS, type SourceMode } from './hooks/useUrlState'
 import type { SelectedLocation } from './components/FlyToLocation'
 import type { RealEstateFilters, Property } from './components/RealEstateLayer'
 import type { NoiseComputeData } from './types/noise'
@@ -36,13 +36,14 @@ export default function App() {
   const [isochronActive, setIsochronActive] = useState(false)
   const [isochronGeojson, setIsochronGeojson] = useState<GeoJSON.Feature | null>(null)
   const [sourceModes, setSourceModes] = useState<Record<string, SourceMode>>(() => {
-    const modes: Record<string, SourceMode> = {}
-    for (const id of ['road', 'railway', 'aircraft', 'building', 'industrial']) {
+    // Aircraft has no UI toggle — popup/hex always include it; users toggle
+    // the three aircraft *heatmap* layers via raster-overlay rows instead.
+    const modes: Record<string, SourceMode> = { aircraft: '0db' }
+    for (const id of ['road', 'railway', 'building', 'industrial']) {
       modes[id] = initial.layers.includes(id) ? '0db' : 'off'
     }
-    // Apply saved source modes from URL
     for (const [id, mode] of Object.entries(initial.sourceModes)) {
-      if (initial.layers.includes(id)) modes[id] = mode
+      if (id !== 'aircraft' && initial.layers.includes(id)) modes[id] = mode
     }
     return modes
   })
@@ -72,7 +73,7 @@ export default function App() {
   })
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null)
   const [rasterOverlays, setRasterOverlays] = useState<Record<string, boolean>>(
-    initial.rasterOverlays ?? { dem: false, building: false, forest: false, barriers: false, 'aircraft-v2': false }
+    initial.rasterOverlays ?? { ...EMPTY_RASTER_OVERLAYS },
   )
   const rasterOverlaysRef = useRef(rasterOverlays)
   rasterOverlaysRef.current = rasterOverlays
@@ -312,15 +313,7 @@ export default function App() {
         highlightGeometry={highlightGeometry}
         realEstateFilters={realEstateFilters}
         onPropertySelect={setSelectedProperty}
-        rasterOverlays={{
-          ...rasterOverlays,
-          // Aircraft toggle in the right panel doubles as the heatmap-v2
-          // aircraft layer toggle while M6 is in dev. Decision #13
-          // "switch mode" — when aircraft is anything but `off`, show
-          // the new raster heatmap on top of (eventually instead of)
-          // the v1 hex aircraft data.
-          'aircraft-v2': (sourceModes.aircraft ?? 'off') !== 'off',
-        }}
+        rasterOverlays={rasterOverlays}
       />
 
       {/* Mobile: layers toggle button */}

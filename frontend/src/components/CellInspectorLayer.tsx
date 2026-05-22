@@ -11,14 +11,6 @@ const MIN_ZOOM = 14
 const DATA_LAYERS = ['dem', 'building', 'forest'] as const
 type DataLayer = (typeof DATA_LAYERS)[number]
 
-// Heatmap-v2 aircraft tile grid (Mercator z=6..15, 256×256 i16×3 per
-// cell). Hover query coexists with the 1″ raster overlays — appends
-// an "Aircraft Lden" row to the same tooltip.
-const HEATMAP_V2_TILE_SIZE = 256
-const HEATMAP_V2_NUM_PERIODS = 3
-const HEATMAP_V2_MIN_ZOOM = 6
-const HEATMAP_V2_MAX_ZOOM = 15
-
 interface CellInspectorLayerProps {
   rasterOverlays: Record<string, boolean>
   sourceModes?: Record<string, SourceMode>
@@ -51,18 +43,17 @@ export default function CellInspectorLayer({
     () => DATA_LAYERS.filter(id => rasterOverlays[id]),
     [rasterOverlays],
   )
-  const aircraftV2Active = !!rasterOverlays['aircraft-v2']
 
+  // `sourceModes.aircraft` is pinned to '0db' (no UI toggle — see App.tsx)
+  // so a raw `Object.values(...).every(off)` would never become true and the
+  // raster inspector would be permanently disabled. Filter aircraft out.
   const allSourcesOff = useMemo(
-    () => Object.values(sourceModes ?? {}).every(m => m === 'off' || m == null),
+    () => Object.entries(sourceModes ?? {})
+      .every(([id, m]) => id === 'aircraft' || m === 'off' || m == null),
     [sourceModes],
   )
 
-  // Aircraft-v2 keeps the tooltip alive even with aircraft sourceMode
-  // non-off — the v2 raster IS the aircraft display (Decision #13)
-  // and the lookup is pure tile-data, no popup contention.
-  const enabled =
-    (activeLayers.length > 0 && allSourcesOff) || aircraftV2Active
+  const enabled = activeLayers.length > 0 && allSourcesOff
 
   useEffect(() => {
     if (!enabled || !mapRef) {
@@ -104,9 +95,6 @@ export default function CellInspectorLayer({
   // Kick off tile fetches at the CELL CENTER (not the raw hover position)
   // so every point inside the outline reads from the same raster sample.
   const dataZ = hover ? clamp(Math.floor(hover.zoom), MIN_ZOOM, 16) : MIN_ZOOM
-  const heatmapZ = hover
-    ? clamp(Math.floor(hover.zoom), HEATMAP_V2_MIN_ZOOM, HEATMAP_V2_MAX_ZOOM)
-    : HEATMAP_V2_MAX_ZOOM
   useEffect(() => {
     if (!hover) return
     const { x, y } = lngLatToTile(cellCenterLon, cellCenterLat, dataZ)
@@ -115,33 +103,21 @@ export default function CellInspectorLayer({
         setTileEpoch(e => e + 1),
       )
     }
-    if (aircraftV2Active) {
-      const { x: hx, y: hy } = lngLatToTile(cellCenterLon, cellCenterLat, heatmapZ)
-      ensureTileFetched('aircraft-v2', heatmapZ, hx, hy, tileCache.current, () =>
-        setTileEpoch(e => e + 1),
-      )
-    }
-  }, [hover, dataZ, activeLayers, cellCenterLat, cellCenterLon, aircraftV2Active, heatmapZ])
+  }, [hover, dataZ, activeLayers, cellCenterLat, cellCenterLon])
 
   const values = useMemo(() => {
     if (!hover) return null
     const { x, y } = lngLatToTile(cellCenterLon, cellCenterLat, dataZ)
-    const out: Partial<Record<DataLayer, number | null>> & { aircraftLden?: number | null } = {}
+    const out: Partial<Record<DataLayer, number | null>> = {}
     for (const layer of activeLayers) {
       out[layer] = readCellValue(
         layer, dataZ, cellCenterLat, cellCenterLon, x, y, tileCache.current,
       )
     }
-    if (aircraftV2Active) {
-      const { x: hx, y: hy } = lngLatToTile(cellCenterLon, cellCenterLat, heatmapZ)
-      out.aircraftLden = readHeatmapV2Lden(
-        heatmapZ, cellCenterLat, cellCenterLon, hx, hy, tileCache.current,
-      )
-    }
     return out
     // tileEpoch re-reads cached entries once a background fetch lands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hover, dataZ, heatmapZ, activeLayers, cellCenterLat, cellCenterLon, aircraftV2Active, tileEpoch])
+  }, [hover, dataZ, activeLayers, cellCenterLat, cellCenterLon, tileEpoch])
 
   // Memoise the cell outline on cell identity so MapLibre only rebuilds the
   // polygon when the cursor crosses into a new cell.
@@ -167,29 +143,22 @@ export default function CellInspectorLayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cellKey])
 
-  if (!enabled || !hover || !values) return null
-
-  // Outline polygon traces a 1″ (~30 m) DEM/Overture cell; hide it
-  // for aircraft-v2-only hovers (~3 m cells at z=15 would render
-  // invisible and misleading next to the larger DEM grid).
-  const showOutline = activeLayers.length > 0 && outline
+  if (!enabled || !hover || !values || !outline) return null
 
   return (
     <>
-      {showOutline ? (
-        <Source id="cell-inspector-outline" type="geojson" data={outline}>
-          <Layer
-            id="cell-inspector-outline-line"
-            type="line"
-            paint={{ 'line-color': 'rgba(0,0,0,0.65)', 'line-width': 1 }}
-          />
-          <Layer
-            id="cell-inspector-outline-fill"
-            type="fill"
-            paint={{ 'fill-color': 'rgba(255,255,255,0.12)' }}
-          />
-        </Source>
-      ) : null}
+      <Source id="cell-inspector-outline" type="geojson" data={outline}>
+        <Layer
+          id="cell-inspector-outline-line"
+          type="line"
+          paint={{ 'line-color': 'rgba(0,0,0,0.65)', 'line-width': 1 }}
+        />
+        <Layer
+          id="cell-inspector-outline-fill"
+          type="fill"
+          paint={{ 'fill-color': 'rgba(255,255,255,0.12)' }}
+        />
+      </Source>
       <div
         style={{
           position: 'fixed',
@@ -216,18 +185,8 @@ const TOOLTIP_ROWS: Array<{
   { key: 'forest', label: 'Forest', fmt: v => v > 0 ? 'yes' : 'no' },
 ]
 
-function renderLines(
-  values: Partial<Record<DataLayer, number | null>> & { aircraftLden?: number | null },
-): ReactNode {
+function renderLines(values: Partial<Record<DataLayer, number | null>>): ReactNode {
   const rows: ReactNode[] = []
-  if ('aircraftLden' in values) {
-    const v = values.aircraftLden
-    rows.push(
-      <div key="aircraft-v2">
-        Aircraft Lden: {v == null ? '…' : Number.isFinite(v) ? `${v.toFixed(1)} dB` : '—'}
-      </div>,
-    )
-  }
   for (const row of TOOLTIP_ROWS) {
     if (!(row.key in values)) continue
     const v = values[row.key]
@@ -260,7 +219,7 @@ function tileBbox(z: number, x: number, y: number) {
 }
 
 function ensureTileFetched(
-  layer: DataLayer | 'aircraft-v2',
+  layer: DataLayer,
   z: number,
   x: number,
   y: number,
@@ -271,10 +230,7 @@ function ensureTileFetched(
   if (cache.has(key)) return
   cache.set(key, 'loading')
   promoteLru(cache, key)
-  const url = layer === 'aircraft-v2'
-    ? `/api/heatmap-v2-cells/aircraft/${z}/${x}/${y}.bin`
-    : `/api/raster-data/${layer}/${z}/${x}/${y}.bin`
-  fetch(url)
+  fetch(`/api/raster-data/${layer}/${z}/${x}/${y}.bin`)
     .then(res => {
       // 204 (missing tile) is `res.ok = true` but a 0-byte body would
       // make `DataView.getInt16` throw and unmount the React tree.
@@ -316,51 +272,6 @@ function readCellValue(
   const idx = py * TILE_SIZE + px
   if (layer === 'dem') return new DataView(entry).getInt16(idx * 2, false)
   return new Uint8Array(entry)[idx]
-}
-
-const SILENCE_I16 = -32768
-
-/**
- * Read per-cell Lday/Leve/Lnight i16×10 from a heatmap-v2 cell tile
- * and combine into Lden using the EU directive's 12/4/8 h weights
- * with +5 dB evening / +10 dB night penalties. Returns `null` when
- * loading and `-Infinity` for silence — caller renders both as "—" / "…".
- */
-function readHeatmapV2Lden(
-  z: number,
-  lat: number,
-  lng: number,
-  tileX: number,
-  tileY: number,
-  cache: Map<string, TileEntry>,
-): number | null {
-  const entry = cache.get(`aircraft-v2/${z}/${tileX}/${tileY}`)
-  if (!entry || entry === 'loading' || entry === 'failed') return null
-  // Short/half-cached buffer → `DataView.getInt16` would crash; treat
-  // anything below the spec body length (256×256×3×2 = 393 216 B) as
-  // missing.
-  const expected = HEATMAP_V2_TILE_SIZE * HEATMAP_V2_TILE_SIZE * HEATMAP_V2_NUM_PERIODS * 2
-  if (entry.byteLength < expected) return null
-  const { lonWest, lonEast, latNorth, latSouth } = tileBbox(z, tileX, tileY)
-  const mercYNorth = Math.log(Math.tan(Math.PI / 4 + (latNorth * Math.PI) / 360))
-  const mercYSouth = Math.log(Math.tan(Math.PI / 4 + (latSouth * Math.PI) / 360))
-  const mercY = Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))
-  const fracY = (mercY - mercYNorth) / (mercYSouth - mercYNorth)
-  const py = clamp(Math.floor(fracY * HEATMAP_V2_TILE_SIZE), 0, HEATMAP_V2_TILE_SIZE - 1)
-  const fracX = (lng - lonWest) / (lonEast - lonWest)
-  const px = clamp(Math.floor(fracX * HEATMAP_V2_TILE_SIZE), 0, HEATMAP_V2_TILE_SIZE - 1)
-  const base = (py * HEATMAP_V2_TILE_SIZE + px) * HEATMAP_V2_NUM_PERIODS
-  const view = new DataView(entry)
-  const lday = view.getInt16(base * 2, true)
-  const leve = view.getInt16((base + 1) * 2, true)
-  const lnight = view.getInt16((base + 2) * 2, true)
-  const eDay = lday === SILENCE_I16 ? 0 : Math.pow(10, lday / 100)
-  // Stored as dB×10; +5 dB evening / +10 dB night penalties fold into
-  // the exponent as `(L + 50) / 100` and `(L + 100) / 100`.
-  const eEve = leve === SILENCE_I16 ? 0 : Math.pow(10, (leve + 50) / 100)
-  const eNi = lnight === SILENCE_I16 ? 0 : Math.pow(10, (lnight + 100) / 100)
-  const sum = 12 * eDay + 4 * eEve + 8 * eNi
-  return sum <= 0 ? -Infinity : 10 * Math.log10(sum / 24)
 }
 
 function promoteLru(cache: Map<string, TileEntry>, key: string): void {

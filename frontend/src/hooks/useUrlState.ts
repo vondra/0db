@@ -1,12 +1,19 @@
 import { useCallback, useRef, useMemo } from 'react'
 import { DEFAULT_BASEMAP, type BasemapId } from '../utils/basemaps'
+import { AIRCRAFT_LAYER_SOURCES } from '../components/HeatmapV3Overlay'
 
 const DEFAULT_LAT = 49.8
 const DEFAULT_LNG = 15.5
 const DEFAULT_ZOOM = 8
 const ALL_SOURCE_IDS = ['road', 'railway', 'aircraft', 'building', 'industrial']
 export const ALL_PROPAGATION_IDS = ['terrain', 'screening', 'vegetation']
-export const ALL_RASTER_OVERLAY_IDS = ['dem', 'building', 'forest', 'barriers', 'aircraft-v2']
+export const ALL_RASTER_OVERLAY_IDS = [
+  ...AIRCRAFT_LAYER_SOURCES,
+  'dem',
+  'building',
+  'forest',
+  'barriers',
+]
 
 export type SourceMode = 'off' | '0db' | 'end' | 'diff'
 
@@ -24,9 +31,9 @@ export interface UrlState {
   rasterOverlays: Record<string, boolean>
 }
 
-const EMPTY_RASTER_OVERLAYS: Record<string, boolean> = {
-  dem: false, building: false, forest: false, barriers: false, 'aircraft-v2': false,
-}
+export const EMPTY_RASTER_OVERLAYS: Record<string, boolean> = Object.fromEntries(
+  ALL_RASTER_OVERLAY_IDS.map(id => [id, false]),
+)
 
 function parseHash(): UrlState {
   const hash = window.location.hash.slice(1)
