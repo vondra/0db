@@ -17,10 +17,11 @@ use super::npd::{
 
 // Doc 29 reference value — slightly higher precision than the
 // crate-wide `crate::constants::M_PER_DEG_LAT` (110_540.0) used by the
-// general geo helpers. Kept module-private so the two never get
-// imported under the same path; aircraft kernels stay on this value
-// because compute_cpa was authored against it.
-pub(super) const M_PER_DEG_LAT: f64 = 111_132.92;
+// general geo helpers. Re-exported via `aircraft::*` so external callers
+// (e.g. heatmap-aircraft's per-sub-seg line-perpendicular tile-envelope
+// prune) project lat/lon to local meters consistent with the kernel's
+// own distance math.
+pub const M_PER_DEG_LAT: f64 = 111_132.92;
 
 /// Slant² from receiver to the segment evaluated at the same unclamped CPA
 /// foot the airborne kernel uses (`segment_energy_kernel`). Conservative
