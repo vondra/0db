@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { CruiseHexTopFlight, SegmentTrace } from '../../types/noise'
-import { globeAdsbTraceHref, metersToKm, unixToIsoDate } from '../../utils/formatters'
+import { globeAdsbTraceHref, metersToKm, unixToIsoDate, unixToIsoDateTimeUtc } from '../../utils/formatters'
 import {
   aircraftFlightTooltip,
   aircraftTooltip,
@@ -499,12 +499,26 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
         classDisplay === 'Average NPD'
           ? 'No per-typecode NPD profile — energy-mean of 123 EASA ANP v2.3 profiles used.'
           : `Aircraft noise class; anchored on ${classDisplay}'s ANP NPD curve.`
+      // Flight start (UTC) — surfaced so repeated rows for the same
+      // physical flight (same callsign + typecode + start_unix, different
+      // CPA sub-segs along the trajectory) are visibly distinguishable
+      // from two distinct flights of the same aircraft type. Synthetic
+      // fids carry no real timestamp, so the row is suppressed there.
+      const flightStartTooltip =
+        'Flight start (UTC) — Unix epoch of the first ADS-B fix observed for this transponder.\n' +
+        'Two segment rows with the same Callsign + Aircraft + Flight start are the same\n' +
+        'physical flight; the differing dB / CPA values come from distinct sub-segments\n' +
+        'along the trajectory.'
+      const flightStartCell = e.start_unix != null
+        ? <HoverText title={flightStartTooltip}>{unixToIsoDateTimeUtc(e.start_unix)}</HoverText>
+        : null
       return [
         ['Callsign', callsignValue],
         [
           'Aircraft',
           <HoverText title={aircraftHoverTooltip}>{aircraftDisplay}</HoverText>,
         ],
+        ...(flightStartCell ? [['Flight start', flightStartCell] as [string, React.ReactNode]] : []),
         [<HoverText title={directionTooltip}>Direction</HoverText>, direction],
         [
           <HoverText title={classHoverTooltip}>Class</HoverText>,
