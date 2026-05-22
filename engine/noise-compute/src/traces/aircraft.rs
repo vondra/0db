@@ -69,7 +69,10 @@ pub fn build_aircraft_airborne_subsegment_trace(
     let title = if !inputs.callsign.is_empty() {
         format!("{} ({typecode_str})", inputs.callsign)
     } else if !icao_hex.is_empty() {
-        format!("{} ({typecode_str})", icao_hex.to_uppercase())
+        // `icao24_to_hex_lower` formats `{:06x}` so the chars are pure
+        // ASCII hex — `to_ascii_uppercase` skips the Unicode tables
+        // `to_uppercase` would otherwise walk.
+        format!("{} ({typecode_str})", icao_hex.to_ascii_uppercase())
     } else {
         typecode_str.clone()
     };
