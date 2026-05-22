@@ -49,5 +49,8 @@ pub mod wipe;
 /// ~1 M raster lookups per LKPR popup. Column layout is incompatible
 /// with v14 — readers MUST reject v14 instead of silently mis-decoding
 /// (terrain checks would read zeros and falsely keep "below-ground"
-/// segments).
+/// segments). Within-v15 evolutions of `airport_traffic.arrow` semantics
+/// (e.g. v5→v6 raw-Σ convention) are gated by the orthogonal
+/// `airport_traffic_contract` metadata, leaving upstream arrows
+/// (airborne, cruise, segments) re-extract-free.
 pub const SCHEMA_VERSION: &str = "v15";

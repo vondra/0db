@@ -30,7 +30,6 @@ pub struct AirportTrafficRowAccum {
     veh_kind: Vec<u8>,
     class_idx: Vec<u8>,
     period: Vec<u8>,
-    movements_per_day: Vec<f32>,
     band_energy_lin: Vec<[f32; NUM_BANDS]>,
     unique_movement_count: Vec<u32>,
     unique_arr_count: Vec<u32>,
@@ -59,7 +58,6 @@ impl AirportTrafficRowAccum {
             veh_kind: Vec::new(),
             class_idx: Vec::new(),
             period: Vec::new(),
-            movements_per_day: Vec::new(),
             band_energy_lin: Vec::new(),
             unique_movement_count: Vec::new(),
             unique_arr_count: Vec::new(),
@@ -93,7 +91,6 @@ impl AirportTrafficRowAccum {
             Some(veh_kind),
             Some(class_idx),
             Some(period),
-            Some(mpd),
             Some(bands),
             Some(unique_mov),
             Some(unique_arr),
@@ -118,7 +115,6 @@ impl AirportTrafficRowAccum {
             col_u8(batch, "veh_kind"),
             col_u8(batch, "class_idx"),
             col_u8(batch, "period"),
-            col_f32(batch, "movements_per_day"),
             col_fixed_size_list(batch, "band_energy_lin"),
             col_u32(batch, "unique_movement_count"),
             col_u32(batch, "unique_arr_count"),
@@ -180,7 +176,6 @@ impl AirportTrafficRowAccum {
             self.veh_kind.push(veh_kind.value(i));
             self.class_idx.push(class_idx.value(i));
             self.period.push(period.value(i));
-            self.movements_per_day.push(mpd.value(i));
             let lo_b = i * NUM_BANDS;
             let mut row_bands = [0.0f32; NUM_BANDS];
             row_bands.copy_from_slice(&band_buf[lo_b..lo_b + NUM_BANDS]);
@@ -221,7 +216,6 @@ impl AirportTrafficRowAccum {
                 veh_kind: self.veh_kind[i],
                 class_idx: self.class_idx[i],
                 period: self.period[i],
-                movements_per_day: self.movements_per_day[i],
                 band_energy_lin: &self.band_energy_lin[i],
                 unique_movement_count: self.unique_movement_count[i],
                 unique_arr_count: self.unique_arr_count[i],

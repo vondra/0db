@@ -55,15 +55,10 @@ pub struct AirportTrafficRow {
     pub class_idx: u8,
     /// 0 = day, 1 = evening, 2 = night.
     pub period: u8,
-    /// PER-ROW unique movements per day =
-    /// `unique_movement_count / n_days`. Matches v4 `flight_ids.len() /
-    /// n_days` semantics exactly per row.
-    pub movements_per_day: f32,
-    /// Per-band **daily total** linear Z-weighted energy at 25 m
-    /// perpendicular distance from this microsegment for this period
-    /// (Stage 2C writer: Σ per-event SEL across the n_days window,
-    /// then ÷ n_days). Acoustic kernel ignores `movements_per_day` —
-    /// energy is already integrated.
+    /// Per-band **raw Σ** of linear Z-weighted energy at 25 m
+    /// perpendicular distance from this microsegment for this period,
+    /// summed over the n_days extraction window. Consumer divides via
+    /// `period_leq(e, n_days_f, period_seconds)` to recover Leq.
     pub band_energy_lin: [f32; NUM_BANDS],
     /// Distinct fids that crossed this microsegment-row, regardless
     /// of ops_kind / is_departure / veh_kind. Display count.
@@ -112,7 +107,6 @@ pub fn write_airport_traffic(
     let mut veh_kind = UInt8Builder::with_capacity(n);
     let mut class_idx = UInt8Builder::with_capacity(n);
     let mut period = UInt8Builder::with_capacity(n);
-    let mut movements_per_day = Float32Builder::with_capacity(n);
     let mut unique_mov = UInt32Builder::with_capacity(n);
     let mut unique_arr = UInt32Builder::with_capacity(n);
     let mut unique_dep = UInt32Builder::with_capacity(n);
@@ -139,7 +133,6 @@ pub fn write_airport_traffic(
         veh_kind.append_value(r.veh_kind);
         class_idx.append_value(r.class_idx);
         period.append_value(r.period);
-        movements_per_day.append_value(r.movements_per_day);
         band_values.extend_from_slice(&r.band_energy_lin);
         unique_mov.append_value(r.unique_movement_count);
         unique_arr.append_value(r.unique_arr_count);
@@ -186,7 +179,6 @@ pub fn write_airport_traffic(
         Arc::new(veh_kind.finish()),
         Arc::new(class_idx.finish()),
         Arc::new(period.finish()),
-        Arc::new(movements_per_day.finish()),
         Arc::new(band_list),
         Arc::new(unique_mov.finish()),
         Arc::new(unique_arr.finish()),
@@ -203,7 +195,7 @@ pub fn write_airport_traffic(
 
 pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
     let (schema, batches) = read_all_batches(path)?;
-    arrow_schemas::assert_airport_traffic_contract_v5(schema.metadata())?;
+    arrow_schemas::assert_airport_traffic_contract_v6(schema.metadata())?;
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     let mut out = Vec::with_capacity(total_rows);
     for b in batches {
@@ -221,7 +213,6 @@ pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
         let veh_kind = column::<UInt8Array>(&b, "veh_kind")?;
         let class_idx = column::<UInt8Array>(&b, "class_idx")?;
         let period = column::<UInt8Array>(&b, "period")?;
-        let movements_per_day = column::<Float32Array>(&b, "movements_per_day")?;
         let band_list = column::<FixedSizeListArray>(&b, "band_energy_lin")?;
         let band_buf = band_list
             .values()
@@ -276,7 +267,6 @@ pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
                 veh_kind: veh_kind.value(i),
                 class_idx: class_idx.value(i),
                 period: period.value(i),
-                movements_per_day: movements_per_day.value(i),
                 band_energy_lin: bands,
                 unique_movement_count: unique_mov.value(i),
                 unique_arr_count: unique_arr.value(i),
@@ -330,7 +320,6 @@ mod tests {
             veh_kind: 0,
             class_idx: 2,  // WING_B738
             period: 0,     // day
-            movements_per_day: 12.5,
             // 8 strictly distinct values — a transposition of any two
             // positions changes the read-back.
             band_energy_lin: [1.0e6, 2.0e6, 3.0e6, 4.0e6, 5.0e6, 6.0e6, 7.0e6, 8.0e6],
@@ -364,7 +353,6 @@ mod tests {
         row_gse.veh_kind = 1;
         row_gse.class_idx = 2; // HEAVY
         row_gse.airport_key = "strip:871e3558effffff".into();
-        row_gse.movements_per_day = 3.0;
         row_gse.unique_movement_count = 6;
         row_gse.unique_arr_count = 0;
         row_gse.unique_dep_count = 0;
@@ -407,9 +395,9 @@ mod tests {
     #[test]
     fn reader_rejects_wrong_contract() {
         // Synthetic file with bogus contract metadata must be rejected
-        // by `assert_airport_traffic_contract_v5`. Older versions had
-        // different column shapes; silent decoding would produce
-        // wrong popup numbers.
+        // by `assert_airport_traffic_contract_v6`. Older versions had
+        // different column shapes or energy normalization; silent
+        // decoding would produce wrong popup numbers.
         for stale_contract in [
             "bogus_v9",
             "airport_traffic_v1",

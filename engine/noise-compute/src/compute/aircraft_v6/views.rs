@@ -61,16 +61,19 @@ pub struct BBox {
 /// without depending on `emission::gse` for a pure data shape.
 pub const NUM_GSE_CLASSES: usize = 3;
 
-/// One row of `airport_traffic.arrow` v5. Per-band daily-total linear
-/// Z-weighted energy at 25 m perpendicular from this OSM microsegment
-/// for the row's period (writer divides Σ per-event SEL by `n_days`).
-/// Popup applies relative propagation + `A_WEIGHTING` then divides by
-/// `period_s` for the period Leq.
+/// One row of `airport_traffic.arrow` v6. Per-band raw Σ over n_days
+/// of linear Z-weighted energy at 25 m perpendicular from this OSM
+/// microsegment for the row's period. Popup applies relative
+/// propagation + `A_WEIGHTING`, then `period_leq(_, n_days_f,
+/// period_seconds)` divides by `n_days × period_seconds` to recover
+/// the period Leq.
 ///
-/// v5 replaces v4's `flight_ids: List<UInt64>` with scalar
-/// `unique_*_count` counters plus row-replicated per-microsegment
-/// UNION `microseg_unique_*` counts. Airport-level UNION counts now
-/// live in the separate `airport_summary.arrow` sidecar (consumed via
+/// v6 drops v5's redundant `movements_per_day` column (always
+/// `unique_movement_count / n_days_f`) and flips `band_energy_lin`
+/// from daily-average to raw Σ. Scalar `unique_*_count` counters plus
+/// row-replicated per-microsegment UNION `microseg_unique_*` counts
+/// remain unchanged from v5. Airport-level UNION counts live in the
+/// separate `airport_summary.arrow` sidecar (consumed via
 /// [`crate::compute::aircraft_v6::airport_traffic::AirportSummaryEntry`]).
 #[derive(Clone, Copy, Debug)]
 pub struct AirportTrafficRowView<'a> {
@@ -88,7 +91,6 @@ pub struct AirportTrafficRowView<'a> {
     pub veh_kind: u8,
     pub class_idx: u8,
     pub period: u8,
-    pub movements_per_day: f32,
     pub band_energy_lin: &'a [f32; 8],
     /// Distinct fids that crossed this row, regardless of
     /// `ops_kind / is_departure / veh_kind`.

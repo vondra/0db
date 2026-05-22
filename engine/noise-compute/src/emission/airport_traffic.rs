@@ -4,27 +4,24 @@
 //! Returns the Z-weighted (un-A-weighted) band SEL at 25 m perpendicular
 //! distance, in **linear units** (10^(dB/10)), for ONE MOVEMENT through
 //! ONE OSM microsegment. The Stage 2C writer accumulates these per
-//! event into `band_energy_lin`, then divides by `n_days` at row
-//! emission so each stored row holds the **daily total energy** for
-//! that microsegment + period. The popup multiplies by per-band
-//! propagation attenuation, adds `A_WEIGHTING[i]`, and divides by
-//! `period_s` to get the period Leq. Storing A-weighted at source
-//! would double-count the A-weight across frequency-dependent
-//! propagation.
+//! event into `band_energy_lin` so each stored row holds the **raw Σ
+//! over n_days** for that microsegment + period (v6 convention —
+//! matches airborne/cruise/airport_summary "raw in extract, consumer
+//! divides"). The popup multiplies by per-band propagation
+//! attenuation, adds `A_WEIGHTING[i]`, and divides by
+//! `n_days × period_s` (via `period_leq`) to get the period Leq.
+//! Storing A-weighted at source would double-count the A-weight across
+//! frequency-dependent propagation.
 //!
 //! ## Receiver contract
 //!
 //! ```text
 //! received_z_lin[i] = sum_over_rows(
-//!     row.band_energy_lin[i] × prop_rel_band[i]            // daily energy
+//!     row.band_energy_lin[i] × prop_rel_band[i]            // raw Σ over n_days
 //! )
 //! received_a_lin[i] = received_z_lin[i] × 10^(A_WEIGHTING[i] / 10)
-//! leq_period_db = 10 · log10(sum_i(received_a_lin[i]) / period_seconds)
+//! leq_period_db = 10 · log10(sum_i(received_a_lin[i]) / (n_days × period_seconds))
 //! ```
-//!
-//! `row.movements_per_day` is display metadata only — multiplying it
-//! into the receiver chain would quadratically over-count energy
-//! already integrated into `band_energy_lin`.
 //!
 //! Day/eve/night penalties (+5, +10 dB for Lden) applied per-row by
 //! `row.period`. `prop_rel_band[i]` is RELATIVE attenuation from the

@@ -270,7 +270,7 @@ fn airport_anchors(
 /// silent fallback to per-row sum (which over-counts 4-8×).
 ///
 /// Returns `Err(String)` when any of the popup arrows fails its schema
-/// check (`v14` for airborne/cruise, `airport_traffic_v5` for the
+/// check (`v15` for airborne/cruise, `airport_traffic_v6` for the
 /// ground-ops arrow), so the popup HTTP path can map the failure to a
 /// structured 500 response with an operator-actionable message.
 pub fn add_v6_aircraft_to_result(
@@ -533,22 +533,21 @@ const LEGACY_SCHEMA_VERSIONS: &[&str] = &[];
 
 /// The `airport_traffic.arrow` semantic contract. `schema_version`
 /// only guards column types/order; this guards what those columns
-/// mean today: `band_energy_lin` = daily-total Z-weighted energy at
-/// 25 m perpendicular; per-row scalar `unique_*_count` + per-microseg
-/// UNION `microseg_unique_*` replace the v4 `flight_ids` list.
-/// Airport-level UNION across R4s now lives in the separate
+/// mean today: `band_energy_lin` = raw Σ over n_days of Z-weighted
+/// energy at 25 m perpendicular (v6 convention; consumer divides via
+/// `period_leq(_, n_days_f, _)`); per-row scalar `unique_*_count` +
+/// per-microseg UNION `microseg_unique_*` replace the v4 `flight_ids`
+/// list. Airport-level UNION across R4s lives in the separate
 /// `airport_summary.arrow` sidecar.
-pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v5";
+pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v6";
 
 /// Legacy `airport_traffic_contract` variants accepted under the same
 /// `ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1` escape hatch as
-/// [`LEGACY_SCHEMA_VERSIONS`]. Empty post-/gg Claude I7 audit: v3
-/// carried per-event SEL (off by ~10·log10(n_days), ≈ 11.5 dB at
-/// n_days=14) and v4 carried per-row `flight_ids: List<UInt64>` —
-/// neither aligns with v5's daily-total energy + scalar counters,
-/// so silent decoding would ship wrong numbers. Re-extract is the
-/// only safe path; the escape hatch only covers `LEGACY_SCHEMA_VERSIONS`
-/// (column-compatible schema versions for the popup arrows).
+/// [`LEGACY_SCHEMA_VERSIONS`]. Empty: v5 stored daily-average
+/// `band_energy_lin` plus a redundant `movements_per_day` column,
+/// neither aligned with v6's raw Σ convention. Silent decoding would
+/// ship wrong Lden numbers (~25.6 dB low at n_days=365). Re-extract is
+/// the only safe path.
 const LEGACY_AIRPORT_TRAFFIC_CONTRACTS: &[&str] = &[];
 
 fn accept_legacy() -> bool {
@@ -611,7 +610,7 @@ pub(super) fn assert_airport_traffic_contract(
         if allow_legacy && c.map_or(false, |s| LEGACY_AIRPORT_TRAFFIC_CONTRACTS.contains(&s)) {
             eprintln!(
                 "WARN: {label}[batch {idx}] legacy airport_traffic_contract {c:?} accepted \
-                 via ACCEPT_LEGACY_AIRCRAFT_SCHEMA — touch semantics may differ at rotation boundary"
+                 via ACCEPT_LEGACY_AIRCRAFT_SCHEMA — energy semantics may differ"
             );
             continue;
         }
@@ -855,7 +854,6 @@ mod runway_anchor_tests {
             veh_kind: 0,
             class_idx: 0,
             period: 0,
-            movements_per_day: 0.0,
             band_energy_lin: &band_zero,
             unique_movement_count: 0,
             unique_arr_count: 0,
@@ -1004,7 +1002,6 @@ mod runway_anchor_tests {
             end_lat: 51.000, end_lon: 1.000,
             length_m: 0.0,
             ops_kind: 1, is_departure: 0, veh_kind: 0, class_idx: 0, period: 0,
-            movements_per_day: 0.0,
             band_energy_lin: &band_zero,
             unique_movement_count: 0, unique_arr_count: 0, unique_dep_count: 0,
             unique_gse_count_per_class: &gse_zero,

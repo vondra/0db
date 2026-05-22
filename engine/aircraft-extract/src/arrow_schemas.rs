@@ -212,18 +212,22 @@ pub fn cruise_schema() -> Arc<Schema> {
 ///
 /// Counter-rows: one per (airport_key, osm_id, segment_idx, ops_kind,
 /// is_departure, veh_kind, class_idx, period). `band_energy_lin` is
-/// the daily-total linear Z-weighted energy at 25 m perpendicular
-/// from this microsegment for this period (Σ per-event SEL across
-/// the n_days window ÷ n_days at emission). Popup applies relative
-/// propagation + A-weighting + ÷ period_s to get the period Leq.
+/// the raw Σ over n_days of linear Z-weighted energy at 25 m
+/// perpendicular from this microsegment for this period (v6
+/// convention). Popup applies relative propagation + A-weighting and
+/// then `period_leq(_, n_days_f, period_seconds)` to recover the
+/// period Leq.
 ///
-/// v5 drops the per-row `flight_ids: List<UInt64>` (which scaled
-/// linearly with `unique_rotations × n_days`) and replaces it with
-/// scalar `unique_*_count` counters plus row-replicated
-/// `microseg_unique_*` UNION counts. Airport-level unique counts move
-/// to the per-popup `airport_summary.arrow` sidecar after a Stage 2C
-/// reduce phase.
-pub const AIRPORT_TRAFFIC_CONTRACT_V5: &str = "airport_traffic_v5";
+/// v6 drops the redundant pre-divided `movements_per_day: Float32`
+/// column (always equal to `unique_movement_count / n_days_f`; consumer
+/// can derive on demand) and flips `band_energy_lin` from daily-average
+/// (Σ / n_days) to raw cumulative Σ over n_days. Aligns
+/// `airport_traffic.arrow` with the "raw in extract, consumer divides"
+/// convention used by `airborne.arrow`, `cruise.arrow`, and
+/// `airport_summary.arrow`. v5 dropped the per-row `flight_ids` payload
+/// for scalar `unique_*_count` counters plus row-replicated
+/// `microseg_unique_*` UNION counts.
+pub const AIRPORT_TRAFFIC_CONTRACT_V6: &str = "airport_traffic_v6";
 
 /// Global airport summary sidecar contract (one row per airport_key,
 /// truly unique counts across all R4s). Produced by Stage 2C v5
@@ -250,14 +254,17 @@ pub const NUM_GSE_CLASSES: i32 = 3;
 /// (runway / taxi / apron — matches `GROUND_OPS_KIND_*` minus 1).
 pub const NUM_OPS_KINDS: i32 = 3;
 
-/// Stage 2C — `h3r4/<hex>/airport_traffic.arrow` (v5). One row per
-/// per-segment per-period traffic counter. Per-row `flight_ids:
-/// List<UInt64>` from v4 is replaced by:
-/// - Per-row scalars: `unique_movement_count`, `unique_arr_count`,
-///   `unique_dep_count`, `unique_gse_count_per_class`.
-/// - Per-microsegment UNIONs (replicated on every row of the same
-///   microsegment): `microseg_unique_count`, `microseg_unique_arr_count`,
-///   `microseg_unique_dep_count`, `microseg_unique_gse_count_per_class`.
+/// Stage 2C — `h3r4/<hex>/airport_traffic.arrow` (v6). One row per
+/// per-segment per-period traffic counter. v6 carries `band_energy_lin`
+/// as raw Σ over n_days (consumer divides via `period_leq(_, n_days_f,
+/// _)` to recover Leq) and drops the v5 `movements_per_day` column
+/// (redundant with `unique_movement_count / n_days_f`).
+///
+/// Per-row scalars: `unique_movement_count`, `unique_arr_count`,
+/// `unique_dep_count`, `unique_gse_count_per_class`. Per-microsegment
+/// UNIONs (replicated on every row of the same microsegment):
+/// `microseg_unique_count`, `microseg_unique_arr_count`,
+/// `microseg_unique_dep_count`, `microseg_unique_gse_count_per_class`.
 ///
 /// Airport-level UNION across R4s lives in the separate
 /// `data/prepared/{year}/aircraft/airport_summary.arrow` sidecar.
@@ -281,7 +288,8 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
         Field::new("veh_kind", DataType::UInt8, false),
         Field::new("class_idx", DataType::UInt8, false),
         Field::new("period", DataType::UInt8, false),
-        Field::new("movements_per_day", DataType::Float32, false),
+        // Raw Σ over n_days per band. Consumer divides via
+        // `period_leq(e, n_days_f, period_seconds)` to recover Leq.
         // FixedSizeList enforces the 8-band invariant at the schema
         // level so the reader doesn't need a runtime `ensure!` guard.
         Field::new(
@@ -306,8 +314,8 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
             false,
         ),
         // Per-microsegment UNION (replicated across rows). Lets the
-        // popup populate observed_movements_per_day per microsegment
-        // without a UNION join over per-row scalars.
+        // popup populate per-microseg movement counts without a UNION
+        // join over per-row scalars.
         Field::new("microseg_unique_count", DataType::UInt32, false),
         Field::new("microseg_unique_arr_count", DataType::UInt32, false),
         Field::new("microseg_unique_dep_count", DataType::UInt32, false),
@@ -319,26 +327,24 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "airport_traffic"),
-        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V5),
+        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V6),
     ])))
 }
 
 /// Verify a loaded airport_traffic.arrow file's metadata matches the
-/// current [`AIRPORT_TRAFFIC_CONTRACT_V5`] contract. Older files MUST
-/// be rejected — column layouts and `flight_ids` attribution
-/// semantics differ across versions, so silent decoding would
-/// produce wrong numbers downstream (historically: per-event-SEL
-/// vs daily-total energy off by ~10·log10(n_days) ≈ 11.5 dB at
-/// n_days=14, and longest-coverage attribution under-counting
-/// per-microsegment movements roughly N× where N = avg microsegments
-/// crossed per rotation).
-pub fn assert_airport_traffic_contract_v5(
+/// current [`AIRPORT_TRAFFIC_CONTRACT_V6`] contract. Older files MUST
+/// be rejected — column layouts and energy-normalization semantics
+/// differ across versions, so silent decoding would produce wrong
+/// numbers downstream. v5 stored daily-average `band_energy_lin` and
+/// a redundant `movements_per_day` column; reading v5 as v6 would
+/// under-read Lden by ~10·log10(n_days) ≈ 25.6 dB at n_days=365.
+pub fn assert_airport_traffic_contract_v6(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     match metadata.get("airport_traffic_contract").map(String::as_str) {
-        Some(AIRPORT_TRAFFIC_CONTRACT_V5) => Ok(()),
+        Some(AIRPORT_TRAFFIC_CONTRACT_V6) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V5}, got {other}"
+            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V6}, got {other}"
         )),
         None => Err(anyhow::anyhow!(
             "airport_traffic_contract metadata missing"
@@ -516,7 +522,7 @@ mod tests {
         let s = airport_traffic_schema();
         assert_eq!(
             s.metadata().get("airport_traffic_contract").map(String::as_str),
-            Some(AIRPORT_TRAFFIC_CONTRACT_V5)
+            Some(AIRPORT_TRAFFIC_CONTRACT_V6)
         );
     }
 
@@ -527,7 +533,7 @@ mod tests {
             "airport_key", "osm_id", "segment_idx", "geometry_kind",
             "start_lat", "start_lon", "end_lat", "end_lon", "length_m",
             "ops_kind", "is_departure", "veh_kind", "class_idx", "period",
-            "movements_per_day", "band_energy_lin",
+            "band_energy_lin",
             "unique_movement_count", "unique_arr_count", "unique_dep_count",
             "unique_gse_count_per_class",
             "microseg_unique_count", "microseg_unique_arr_count",

@@ -1,12 +1,14 @@
 //! Stage 2C — ground operations.
 //!
 //! Writes `airport_traffic.arrow` per R4: sparse per-microsegment
-//! per-period traffic counters with daily-total linear Z-weighted band
-//! energy. Every microsegment a rotation's leg crossed receives both
-//! proportional band energy and the rotation's `flight_id` (touch
-//! semantics). Consults OSM `airport_areas.arrow` for nearest-
-//! aerodrome identity and reads `airport_lines.arrow` per R4 for the
-//! aeroway microsegment graph. See `airport_traffic_writer.rs`.
+//! per-period traffic counters with raw Σ over n_days of linear
+//! Z-weighted band energy (v6 convention; consumer divides via
+//! `period_leq(_, n_days_f, period_seconds)`). Every microsegment a
+//! rotation's leg crossed receives both proportional band energy and
+//! the rotation's `flight_id` (touch semantics). Consults OSM
+//! `airport_areas.arrow` for nearest-aerodrome identity and reads
+//! `airport_lines.arrow` per R4 for the aeroway microsegment graph.
+//! See `airport_traffic_writer.rs`.
 
 use std::path::Path;
 
