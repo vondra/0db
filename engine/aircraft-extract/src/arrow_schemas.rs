@@ -261,7 +261,7 @@ pub fn cruise_schema() -> Arc<Schema> {
 /// `airport_summary.arrow`. v5 dropped the per-row `flight_ids` payload
 /// for scalar `unique_*_count` counters plus row-replicated
 /// `microseg_unique_*` UNION counts.
-pub const AIRPORT_TRAFFIC_CONTRACT_V6: &str = "airport_traffic_v6";
+pub const AIRPORT_TRAFFIC_CONTRACT_V7: &str = "airport_traffic_v7";
 
 /// Global airport summary sidecar contract (one row per airport_key,
 /// truly unique counts across all R4s). Produced by Stage 2C v5
@@ -361,24 +361,24 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "airport_traffic"),
-        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V6),
+        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V7),
     ])))
 }
 
 /// Verify a loaded airport_traffic.arrow file's metadata matches the
-/// current [`AIRPORT_TRAFFIC_CONTRACT_V6`] contract. Older files MUST
+/// current [`AIRPORT_TRAFFIC_CONTRACT_V7`] contract. Older files MUST
 /// be rejected — column layouts and energy-normalization semantics
 /// differ across versions, so silent decoding would produce wrong
 /// numbers downstream. v5 stored daily-average `band_energy_lin` and
 /// a redundant `movements_per_day` column; reading v5 as v6 would
 /// under-read Lden by ~10·log10(n_days) ≈ 25.6 dB at n_days=365.
-pub fn assert_airport_traffic_contract_v6(
+pub fn assert_airport_traffic_contract_v7(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     match metadata.get("airport_traffic_contract").map(String::as_str) {
-        Some(AIRPORT_TRAFFIC_CONTRACT_V6) => Ok(()),
+        Some(AIRPORT_TRAFFIC_CONTRACT_V7) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V6}, got {other}"
+            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V7}, got {other}"
         )),
         None => Err(anyhow::anyhow!(
             "airport_traffic_contract metadata missing"
@@ -556,7 +556,7 @@ mod tests {
         let s = airport_traffic_schema();
         assert_eq!(
             s.metadata().get("airport_traffic_contract").map(String::as_str),
-            Some(AIRPORT_TRAFFIC_CONTRACT_V6)
+            Some(AIRPORT_TRAFFIC_CONTRACT_V7)
         );
     }
 

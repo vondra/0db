@@ -270,7 +270,7 @@ fn airport_anchors(
 /// silent fallback to per-row sum (which over-counts 4-8×).
 ///
 /// Returns `Err(String)` when any of the popup arrows fails its schema
-/// check (`v15` for airborne/cruise, `airport_traffic_v6` for the
+/// check (`v15` for airborne/cruise, `airport_traffic_v7` for the
 /// ground-ops arrow), so the popup HTTP path can map the failure to a
 /// structured 500 response with an operator-actionable message.
 pub fn add_v6_aircraft_to_result(
@@ -542,7 +542,7 @@ const LEGACY_SCHEMA_VERSIONS: &[&str] = &[];
 /// per-microseg UNION `microseg_unique_*` replace the v4 `flight_ids`
 /// list. Airport-level UNION across R4s lives in the separate
 /// `airport_summary.arrow` sidecar.
-pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v6";
+pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v7";
 
 /// Legacy `airport_traffic_contract` variants accepted under the same
 /// `ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1` escape hatch as

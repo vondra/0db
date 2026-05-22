@@ -58,19 +58,29 @@ pub struct BBox {
 /// without depending on `emission::gse` for a pure data shape.
 pub const NUM_GSE_CLASSES: usize = 3;
 
-/// One row of `airport_traffic.arrow` v6. Per-band raw Σ over n_days
-/// of linear Z-weighted energy at 25 m perpendicular from this OSM
-/// microsegment for the row's period. Popup applies relative
-/// propagation + `A_WEIGHTING`, then `period_leq(_, n_days_f,
-/// period_seconds)` divides by `n_days × period_seconds` to recover
-/// the period Leq.
+/// One row of `airport_traffic.arrow` v7. Per-band raw Σ over n_days
+/// of linear Z-weighted source energy, with **per-`veh_kind` storage
+/// semantics** (consumer branches in the receiver formula):
+///  - aircraft rows store density-weighted per-metre `LW'`
+///    (= LW'_lin × overlap / line.length_m), applied at receiver via
+///    CNOSSOS-EU §2.5.5 `+ 10·log10(θ / d_perp)` over the full
+///    microsegment geometry. Refinement invariance follows by Chasles
+///    (`Σ θᵢ = θ_total` across collinear sub-segments).
+///  - GSE rows store per-event SEL@25m from the kinematic moving-point
+///    integral, applied at receiver via point-source divergence
+///    `+ 10·log10(25 / d_endpoint)`.
 ///
-/// v6 drops v5's redundant `movements_per_day` column (always
-/// `unique_movement_count / n_days_f`) and flips `band_energy_lin`
-/// from daily-average to raw Σ. Scalar `unique_*_count` counters plus
-/// row-replicated per-microsegment UNION `microseg_unique_*` counts
-/// remain unchanged from v5. Airport-level UNION counts live in the
-/// separate `airport_summary.arrow` sidecar (consumed via
+/// v7 replaces v6's "absolute SEL@25m for aircraft + FLC-delta at
+/// receiver" formulation, which violated refinement invariance: the
+/// same physical microsegment split into N collinear sub-segments
+/// produced different received Lden (Codex /gg-flagged on LKPR
+/// runway 4052652 — 10× discrepancy). The per-metre `LW'`
+/// formulation matches CNOSSOS-EU Directive 2015/996 Annex II §2.5.5.
+///
+/// Scalar `unique_*_count` counters plus row-replicated per-microsegment
+/// UNION `microseg_unique_*` counts remain unchanged from v6.
+/// Airport-level UNION counts live in the separate `airport_summary
+/// .arrow` sidecar (consumed via
 /// [`crate::compute::aircraft_v6::airport_traffic::AirportSummaryEntry`]).
 #[derive(Clone, Copy, Debug)]
 pub struct AirportTrafficRowView<'a> {

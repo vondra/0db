@@ -55,10 +55,18 @@ pub struct AirportTrafficRow {
     pub class_idx: u8,
     /// 0 = day, 1 = evening, 2 = night.
     pub period: u8,
-    /// Per-band **raw Σ** of linear Z-weighted energy at 25 m
-    /// perpendicular distance from this microsegment for this period,
-    /// summed over the n_days extraction window. Consumer divides via
-    /// `period_leq(e, n_days_f, period_seconds)` to recover Leq.
+    /// Per-band **raw Σ** of linear Z-weighted energy contribution
+    /// from this microsegment for this period, summed over the n_days
+    /// extraction window. Units depend on `veh_kind`:
+    ///  - `veh_kind = 0` (aircraft): per-metre `LW'` × `(hit_length /
+    ///    line.length_m)` density factor. Consumer applies CNOSSOS-EU
+    ///    §2.5.5 `+ 10·log10(θ / d_perp)` over the full microsegment
+    ///    geometry at receiver — refinement-invariant by Chasles.
+    ///  - `veh_kind = 1` (GSE): per-event SEL@25m from the kinematic
+    ///    moving-point integral; consumer applies point-source
+    ///    `+ 10·log10(25 / d_endpoint)` divergence.
+    /// Either way the consumer divides by `n_days × period_seconds`
+    /// via `period_leq` to recover Leq.
     pub band_energy_lin: [f32; NUM_BANDS],
     /// Distinct fids that crossed this microsegment-row, regardless
     /// of ops_kind / is_departure / veh_kind. Display count.
@@ -195,7 +203,7 @@ pub fn write_airport_traffic(
 
 pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
     let (schema, batches) = read_all_batches(path)?;
-    arrow_schemas::assert_airport_traffic_contract_v6(schema.metadata())?;
+    arrow_schemas::assert_airport_traffic_contract_v7(schema.metadata())?;
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     let mut out = Vec::with_capacity(total_rows);
     for b in batches {
@@ -395,7 +403,7 @@ mod tests {
     #[test]
     fn reader_rejects_wrong_contract() {
         // Synthetic file with bogus contract metadata must be rejected
-        // by `assert_airport_traffic_contract_v6`. Older versions had
+        // by `assert_airport_traffic_contract_v7`. Older versions had
         // different column shapes or energy normalization; silent
         // decoding would produce wrong popup numbers.
         for stale_contract in [

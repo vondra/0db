@@ -482,17 +482,22 @@ Separate submodel inside the aircraft layer. Inputs: Stage-1
 (`airport_areas.arrow`) + Stage-1.5 DBSCAN synthetic strips for
 OSM-missing airfields.
 
-**Row semantics** (`airport_traffic.arrow`, keyed by `airport_key,
+**Row semantics** (`airport_traffic.arrow` v7, keyed by `airport_key,
 osm_id, segment_idx, ops_kind, is_departure, veh_kind, class_idx,
 period`):
 
-- `band_energy_lin[8]`: **daily total** linear Z-weighted SEL at 25 m
-  perpendicular for this period (Σ per-event ÷ n_days).
-- `flight_ids: List<UInt64>`: **touch set** — every microsegment a
-  rotation's leg crossed gets its `flight_id`. No longest-coverage
-  attribution.
-- `movements_per_day = flight_ids.len() / n_days`: **display metadata
-  only**, never multiplied into the receiver chain.
+- `band_energy_lin[8]`: linear Z-weighted source energy, raw Σ over
+  n_days. Storage units branch on `veh_kind`:
+  - aircraft (`veh_kind = 0`): density-weighted per-metre `LW'`
+    (= LW'_lin × `overlap / line.length_m`). Refinement-invariant by
+    Chasles theorem at receiver.
+  - GSE (`veh_kind = 1`): per-event SEL@25m from the kinematic
+    moving-point integral over `length_within_segment_m`.
+  Consumer divides by `n_days × period_seconds` via `period_leq`.
+- Scalar `unique_*_count` columns: distinct `flight_id`s touching this
+  row, segmented by ops_kind/is_dep/veh_kind/class_idx.
+- Row-replicated `microseg_unique_*` columns: UNION across all rows
+  sharing the same `(osm_id, segment_idx)`.
 
 **Leg-to-microsegment projection**: buffer each microsegment by
 `AIRPORT_LINE_SNAP_BUFFER_M = 50 m` perpendicular; the leg's overlap
@@ -510,18 +515,25 @@ strips below.
 `apron_movement` rows; any other aeroway value is corrupt input and
 skipped. No speed classifier — OSM geometry is the source of truth.
 
-**Per-movement Z-weighted SEL@25m kernel**
-(`emission/airport_traffic.rs`):
-- SEL = `GROUND_OPS_REFERENCE_SEL_DB[class][ops_kind]` × `seg_length /
-  NOMINAL_EVENT_LENGTH_M` (1 km nominal); FLC at 25 m
-- runway departure: **+2 dB** (Doc 29 §A.3 thrust regime)
-- speed adjust: **±3 dB** clamp
-- source height: 4.0 m; per-`ops_kind` Z-weighted spectrum
+**Emission kernel** (`emission/airport_traffic.rs`):
+- Aircraft (`compute_aircraft_lw_per_meter_lin`): per-class anchor
+  `GROUND_OPS_REFERENCE_LW_PER_METER_DB[class][ops_kind]` (= legacy
+  1 km event-SEL anchor + `+9.01 dB = 10·log10(25/π)`); speed
+  adjust ±3 dB clamp; runway departure +2 dB (Doc 29 §A.3); spectrum
+  shape per `ops_kind`. Returns per-metre `LW'` density.
+- GSE (`compute_gse_band_energy_lin`): closed-form kinematic
+  moving-point integral over `segment_length_m` at perpendicular
+  distance 25 m. One term replaces stationary-Lp + duration + FLC.
 
 **Receiver math** (`compute/aircraft_v6/airport_traffic.rs`):
-`received_band_lin[i] = row.band_energy_lin[i] × prop_rel_band[i]`
-where `prop_rel_band` is **relative** attenuation from the 25 m
-reference (using absolute would double-count the 25 m loss).
+- Aircraft rows: `received_band_lin[i] = row.band_energy_lin[i] × (θ /
+  d_perp_extended)` per CNOSSOS-EU §2.5.5 line-source formula, with
+  signed-fraction `θ` math so receivers past either endpoint get the
+  correct (small) angle.
+- GSE rows: `received_band_lin[i] = row.band_energy_lin[i] × (25 /
+  d_endpoint)` (point-source divergence from the 25 m anchor).
+- Both apply shared CNOSSOS-EU §2.5 path effects (atmospheric, ground,
+  terrain, screening, vegetation, reflection).
 Airport-level `arrivals_per_day` / `departures_per_day` come from
 HashSet UNION over `flight_ids` across the airport's rows — one
 rotation crossing 30 microsegments counts once per direction.

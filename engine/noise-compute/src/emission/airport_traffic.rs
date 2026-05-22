@@ -1,85 +1,70 @@
-//! Per-segment per-movement **Z-weighted band SEL@25m** kernel for
-//! the `airport_traffic.arrow` writer + popup consumer.
+//! Per-microsegment per-movement Z-weighted band energy kernel for
+//! the `airport_traffic.arrow` writer + popup/heatmap consumer.
 //!
-//! Returns the Z-weighted (un-A-weighted) band SEL at 25 m perpendicular
-//! distance, in **linear units** (10^(dB/10)), for ONE MOVEMENT through
-//! ONE OSM microsegment. The Stage 2C writer accumulates these per
-//! event into `band_energy_lin` so each stored row holds the **raw Σ
-//! over n_days** for that microsegment + period (v6 convention —
-//! matches airborne/cruise/airport_summary "raw in extract, consumer
-//! divides"). The popup multiplies by per-band propagation
-//! attenuation, adds `A_WEIGHTING[i]`, and divides by
-//! `n_days × period_s` (via `period_leq`) to get the period Leq.
-//! Storing A-weighted at source would double-count the A-weight across
-//! frequency-dependent propagation.
+//! Two physical models, **two storage semantics** in the same
+//! `band_energy_lin` column (consumer branches on `row.veh_kind`):
 //!
-//! ## Receiver contract
+//! - **Aircraft (`veh_kind == 0`)**: per-metre sound power `LW'` (linear,
+//!   Z-weighted, per band). Stage 2C accumulates as
+//!   `band_energy_lin += LW'_lin × (overlap / line.length_m)` — the
+//!   density-weighted contribution to the microsegment's line source.
+//!   Receiver applies CNOSSOS-EU §2.5.5 line-source formula
+//!   `recv_lin = stored_lin × (θ / d_perp_to_extended_line)` over the
+//!   FULL microsegment geometry. Refinement invariance follows by
+//!   Chasles' theorem (`Σ θᵢ = θ_total` over sub-segments).
 //!
-//! ```text
-//! received_z_lin[i] = sum_over_rows(
-//!     row.band_energy_lin[i] × prop_rel_band[i]            // raw Σ over n_days
-//! )
-//! received_a_lin[i] = received_z_lin[i] × 10^(A_WEIGHTING[i] / 10)
-//! leq_period_db = 10 · log10(sum_i(received_a_lin[i]) / (n_days × period_seconds))
-//! ```
+//! - **GSE (`veh_kind == 1`)**: per-event absolute SEL@25m (linear).
+//!   Stage 2C accumulates as `band_energy_lin += SEL_lin` — no density
+//!   scaling, the kinematic moving-point integral already accounts for
+//!   `hit.length_within_segment_m` traversal length. Receiver applies
+//!   point-source divergence from the 25 m reference.
 //!
-//! Day/eve/night penalties (+5, +10 dB for Lden) applied per-row by
-//! `row.period`. `prop_rel_band[i]` is RELATIVE attenuation from the
-//! 25 m reference (per-band geo divergence + atm absorption + ground +
-//! barrier), NOT absolute path loss — using absolute would double-count
-//! the 25 m reference loss.
+//! Stage 2C stores **raw Σ over n_days** (v7 Convention B). Popup /
+//! heatmap divide by `n_days × period_s` (via `period_leq`) for the
+//! period Leq, after A-weight fold at the receiver (storing A-weighted
+//! at source would double-count A across frequency-dependent
+//! propagation).
 //!
-//! ## Aircraft vs GSE math
+//! ### Aircraft LW' calibration
 //!
-//! - **Aircraft**: per-event `GROUND_OPS_REFERENCE_SEL_DB[class][kind]`
-//!   spread across microsegments via `× seg_length / NOMINAL_EVENT_LENGTH_M`
-//!   (fixed 1 km nominal). Speed adjust ±3 dB clamp + 2 dB departure
-//!   bonus.
-//! - **GSE**: kinematic moving-point integration of per-band Lw along
-//!   the segment at perpendicular distance 25 m. One closed-form
-//!   integral replaces stationary-Lp + duration + finite-line correction
-//!   (3 terms) per Occam. The integral asymptotes via `atan → π/2`, so
-//!   relative to a stationary-Lp+duration approximation it gives LESS
-//!   energy at long segments (-5.6 dB at L=250 m, -11.2 dB at L=1 km).
+//! `GROUND_OPS_REFERENCE_LW_PER_METER_DB[class][kind]` ≡ historical
+//! 1 km event SEL anchor + `10·log10(25/π) = +9.01 dB`. Identity at
+//! the legacy calibration point (1 km event, 25 m perpendicular,
+//! midpoint receiver): `recv ≈ anchor − 0.14 dB` under both old and
+//! new kernels (the 0.14 dB residual is `FLC(1000m, 25m, 0.5) =
+//! 10·log10(θ_1km / π)`).
+//!
+//! Day/eve/night penalties applied per-row by `row.period`.
 
-use crate::propagation::geo::finite_line_correction;
 use crate::types::NUM_BANDS;
 
 use super::aircraft::{
     GROUND_OPS_APRON_SPECTRUM_SHAPE, GROUND_OPS_KIND_APRON_MOVEMENT,
-    GROUND_OPS_KIND_RUNWAY_ROLL, GROUND_OPS_KIND_TAXI, GROUND_OPS_NOMINAL_EVENT_LENGTH_M,
+    GROUND_OPS_KIND_RUNWAY_ROLL, GROUND_OPS_KIND_TAXI,
     GROUND_OPS_REF_OFFSET_M, GROUND_OPS_RUNWAY_DEPARTURE_BONUS_DB,
     GROUND_OPS_RUNWAY_SPECTRUM_SHAPE, GROUND_OPS_SPEED_CLAMP_DB, GROUND_OPS_TAXI_SPECTRUM_SHAPE,
     SURFACE_APRON_SPEED_KT, SURFACE_RUNWAY_SPEED_KT, SURFACE_TAXIWAY_SPEED_KT,
 };
 use super::gse::GSE_LW_BANDS_DB;
-use super::profiles_generated::GROUND_OPS_REFERENCE_SEL_DB;
+use super::profiles_generated::GROUND_OPS_REFERENCE_LW_PER_METER_DB;
 
 const KT_TO_M_S: f64 = 0.514_444_44;
 
-/// Per-segment per-movement Z-weighted band SEL@25m, linear units.
+/// Aircraft: per-metre Z-weighted sound power `LW'` (linear units).
 ///
-/// Returns `[0; 8]` for degenerate input (segment_length ≤ 0,
-/// leg_avg_speed ≤ 0). Panics on unknown `veh_kind` or `ops_kind`.
-pub fn compute_band_energy_lin(
-    veh_kind: u8,
+/// Returns `[0; 8]` for degenerate input (`leg_avg_speed_kt ≤ 0`).
+/// Panics on unknown `ops_kind`. **Aircraft only** — GSE callers
+/// must use [`compute_gse_band_energy_lin`].
+pub fn compute_aircraft_lw_per_meter_lin(
     class_idx: u8,
     ops_kind: u8,
     is_departure: u8,
     leg_avg_speed_kt: f32,
-    segment_length_m: f32,
 ) -> [f32; NUM_BANDS] {
-    if !(segment_length_m > 0.0 && leg_avg_speed_kt > 0.0) {
+    if !(leg_avg_speed_kt > 0.0) {
         return [0.0; NUM_BANDS];
     }
-    let bands_db = compute_band_sel_25m_z_db(
-        veh_kind,
-        class_idx,
-        ops_kind,
-        is_departure,
-        leg_avg_speed_kt,
-        segment_length_m,
-    );
+    let bands_db = aircraft_lw_per_meter_z_db(class_idx, ops_kind, is_departure, leg_avg_speed_kt);
     let mut bands = [0.0f32; NUM_BANDS];
     for i in 0..NUM_BANDS {
         bands[i] = 10f64.powf(bands_db[i] / 10.0) as f32;
@@ -87,49 +72,47 @@ pub fn compute_band_energy_lin(
     bands
 }
 
-/// dB variant of [`compute_band_energy_lin`]. `pub(crate)` because the
-/// on-disk writer contract is the linear form.
-pub(crate) fn compute_band_sel_25m_z_db(
-    veh_kind: u8,
+/// GSE: per-event absolute Z-weighted band SEL@25m (linear units),
+/// from the kinematic moving-point integral over `segment_length_m`.
+///
+/// Returns `[0; 8]` for degenerate input. Panics on unknown
+/// `ops_kind` (validated for parity with the aircraft branch even
+/// though the GSE math ignores it).
+pub fn compute_gse_band_energy_lin(
     class_idx: u8,
     ops_kind: u8,
-    is_departure: u8,
     leg_avg_speed_kt: f32,
     segment_length_m: f32,
-) -> [f64; NUM_BANDS] {
-    // Validate ops_kind for both branches — the aircraft branch checks
-    // via `ops_kind_idx` but the GSE branch doesn't read ops_kind at
-    // all, so an invalid value would silently pass through without
-    // this guard.
-    let _ = ops_kind_idx(ops_kind);
-    match veh_kind {
-        0 => aircraft_band_sel_z_db(class_idx, ops_kind, is_departure, leg_avg_speed_kt, segment_length_m),
-        1 => gse_band_sel_z_db(class_idx, leg_avg_speed_kt, segment_length_m),
-        other => panic!(
-            "airport_traffic: veh_kind must be 0 (aircraft) or 1 (GSE), got {other}"
-        ),
+) -> [f32; NUM_BANDS] {
+    if !(segment_length_m > 0.0 && leg_avg_speed_kt > 0.0) {
+        return [0.0; NUM_BANDS];
     }
+    let _ = ops_kind_idx(ops_kind);
+    let bands_db = gse_band_sel_z_db(class_idx, leg_avg_speed_kt, segment_length_m);
+    let mut bands = [0.0f32; NUM_BANDS];
+    for i in 0..NUM_BANDS {
+        bands[i] = 10f64.powf(bands_db[i] / 10.0) as f32;
+    }
+    bands
 }
 
-/// Aircraft: anchor SEL × (seg_length / nominal_event_length) spread
-/// by Z-weighted spectrum shape. Speed adjust + departure bonus +
-/// finite-line correction at 25 m preserved.
-fn aircraft_band_sel_z_db(
+/// dB variant of [`compute_aircraft_lw_per_meter_lin`]. `pub(crate)`
+/// because the on-disk writer contract is the linear form.
+pub(crate) fn aircraft_lw_per_meter_z_db(
     class_idx: u8,
     ops_kind: u8,
     is_departure: u8,
     speed_kt: f32,
-    segment_length_m: f32,
 ) -> [f64; NUM_BANDS] {
     let kind_idx = ops_kind_idx(ops_kind);
     assert!(
-        (class_idx as usize) < GROUND_OPS_REFERENCE_SEL_DB.len(),
+        (class_idx as usize) < GROUND_OPS_REFERENCE_LW_PER_METER_DB.len(),
         "class_idx {class_idx} out of range for {} aircraft classes",
-        GROUND_OPS_REFERENCE_SEL_DB.len()
+        GROUND_OPS_REFERENCE_LW_PER_METER_DB.len()
     );
-    let mut total_sel = GROUND_OPS_REFERENCE_SEL_DB[class_idx as usize][kind_idx];
+    let mut total_lw = GROUND_OPS_REFERENCE_LW_PER_METER_DB[class_idx as usize][kind_idx];
     if ops_kind == GROUND_OPS_KIND_RUNWAY_ROLL && is_departure == 1 {
-        total_sel += GROUND_OPS_RUNWAY_DEPARTURE_BONUS_DB;
+        total_lw += GROUND_OPS_RUNWAY_DEPARTURE_BONUS_DB;
     }
     let nominal = match ops_kind {
         GROUND_OPS_KIND_RUNWAY_ROLL => SURFACE_RUNWAY_SPEED_KT as f64,
@@ -139,17 +122,8 @@ fn aircraft_band_sel_z_db(
     };
     if speed_kt > 1.0 {
         let adj = 10.0 * ((speed_kt as f64) / nominal.max(1.0)).log10();
-        total_sel += adj.clamp(-GROUND_OPS_SPEED_CLAMP_DB, GROUND_OPS_SPEED_CLAMP_DB);
+        total_lw += adj.clamp(-GROUND_OPS_SPEED_CLAMP_DB, GROUND_OPS_SPEED_CLAMP_DB);
     }
-    // Per-microsegment splitting: spread the per-event anchor SEL
-    // across microsegments by length ratio. Equivalent to assuming
-    // a 1 km nominal event traversed uniformly.
-    total_sel += 10.0 * ((segment_length_m as f64) / GROUND_OPS_NOMINAL_EVENT_LENGTH_M).log10();
-    // Finite-line correction at the 25 m reference perpendicular,
-    // segment center. FLC ≤ 0. fraction=0.5 by construction: the
-    // notional receiver sits at the perpendicular foot of the segment
-    // midpoint, not at an arbitrary along-segment position.
-    total_sel += finite_line_correction(segment_length_m as f64, GROUND_OPS_REF_OFFSET_M, 0.5);
 
     let shape = match ops_kind {
         GROUND_OPS_KIND_RUNWAY_ROLL => GROUND_OPS_RUNWAY_SPECTRUM_SHAPE,
@@ -157,14 +131,13 @@ fn aircraft_band_sel_z_db(
         GROUND_OPS_KIND_APRON_MOVEMENT => GROUND_OPS_APRON_SPECTRUM_SHAPE,
         _ => unreachable!(),
     };
-    // Normalize raw Z-weighted shape so per-band sum equals total_sel.
     let shape_z_sum_db = 10.0
         * shape
             .iter()
             .map(|s| 10f64.powf(s / 10.0))
             .sum::<f64>()
             .log10();
-    let c = total_sel - shape_z_sum_db;
+    let c = total_lw - shape_z_sum_db;
     let mut bands = [0.0f64; NUM_BANDS];
     for i in 0..NUM_BANDS {
         bands[i] = c + shape[i];
@@ -237,42 +210,67 @@ mod tests {
     }
 
     #[test]
-    fn aircraft_full_nominal_event_recovers_anchor_sel() {
-        // A 1 km taxi event at nominal 18 kt: per-microsegment SEL
-        // sums (in Z-band linear space) to the anchor SEL for that class.
-        let bands =
-            compute_band_sel_25m_z_db(0, 2, GROUND_OPS_KIND_TAXI, 0, 18.0, GROUND_OPS_NOMINAL_EVENT_LENGTH_M as f32);
-        let z_total = sum_z_band_levels_db(&bands);
-        let anchor = GROUND_OPS_REFERENCE_SEL_DB[2][1];
-        let flc = finite_line_correction(GROUND_OPS_NOMINAL_EVENT_LENGTH_M, GROUND_OPS_REF_OFFSET_M, 0.5);
-        let expected = anchor + flc;
+    fn aircraft_lw_per_meter_recovers_anchor_minus_zero_point_one_four_at_1km_test() {
+        // Refinement-invariance calibration anchor: a 1 km event with
+        // the receiver perpendicular to the midpoint at 25 m sees
+        // `anchor − 10·log10(π / θ_1km)` = `anchor − 0.14 dB`. The
+        // LW' table value is calibrated such that this identity holds
+        // (+9.01 dB shift relative to the legacy 1 km event-SEL anchor).
+        let bands = aircraft_lw_per_meter_z_db(2, GROUND_OPS_KIND_TAXI, 0, 18.0);
+        let lw_total_per_meter = sum_z_band_levels_db(&bands);
+        // Receiver applies `+ 10·log10(θ/d)` on top of LW' per metre.
+        let theta = 2.0 * (500.0_f64 / 25.0).atan(); // 1km @ 25m midpoint
+        let recv = lw_total_per_meter + 10.0 * (theta / 25.0).log10();
+        let anchor = GROUND_OPS_REFERENCE_LW_PER_METER_DB[2][1]
+            - 10.0 * (25.0_f64 / std::f64::consts::PI).log10();
+        let expected = anchor - 10.0 * (std::f64::consts::PI / theta).log10();
         assert!(
-            (z_total - expected).abs() < 0.1,
-            "z-total {z_total} ≠ anchor+flc {expected}"
+            (recv - expected).abs() < 0.05,
+            "1km / 25m receiver level {recv} ≠ legacy anchor − 0.14 dB ({expected})"
         );
     }
 
     #[test]
-    fn aircraft_short_segment_under_full_event() {
-        // Same B738 taxi for a 50 m microsegment (1/20 of nominal event).
-        // Per-seg SEL = anchor + 10·log10(0.05) ≈ anchor - 13 dB.
-        let bands = compute_band_sel_25m_z_db(0, 2, GROUND_OPS_KIND_TAXI, 0, 18.0, 50.0);
-        let z_total = sum_z_band_levels_db(&bands);
-        let anchor = GROUND_OPS_REFERENCE_SEL_DB[2][1];
-        let expected = anchor + 10.0 * 0.05f64.log10()
-            + finite_line_correction(50.0, GROUND_OPS_REF_OFFSET_M, 0.5);
+    fn aircraft_refinement_invariance_holds_for_split_segment() {
+        // CNOSSOS-EU §2.5.5: Σ θᵢ = θ_total over collinear sub-segments
+        // (Chasles' theorem). For the same physical 1 km line, a single
+        // segment and the same line split into N equal sub-segments must
+        // give the same total received energy at any receiver. Old kernel
+        // violated this; the new per-metre LW' formulation satisfies it
+        // by construction.
+        let lw = compute_aircraft_lw_per_meter_lin(2, GROUND_OPS_KIND_TAXI, 0, 18.0);
+        let lw_total: f64 = lw.iter().map(|b| *b as f64).sum();
+        let recv = |theta: f64| -> f64 { lw_total * (theta / 25.0) };
+
+        // 1 × 1000m line, receiver perpendicular to midpoint at 25 m.
+        let theta_full = 2.0 * (500.0_f64 / 25.0).atan();
+        let single = recv(theta_full);
+
+        // 5 × 200m collinear sub-segs, same receiver: fractions are
+        // 0.0/1.0 for the side sub-segs (foot at vertex) and similar
+        // signed-d1/d2 for the rest. Their θᵢ sum to θ_full.
+        let mut sum_theta = 0.0;
+        for i in 0..5 {
+            let d1_along = 200.0 * (i as f64) - 500.0; // signed distance to seg start from receiver foot
+            let d2_along = 200.0 * (i as f64 + 1.0) - 500.0;
+            sum_theta += (d2_along / 25.0).atan() - (d1_along / 25.0).atan();
+        }
+        let split = recv(sum_theta);
         assert!(
-            (z_total - expected).abs() < 0.5,
-            "50m seg z-total {z_total} ≠ {expected}"
+            (split - single).abs() / single < 1e-10,
+            "refinement invariance violated: single={single} split={split}"
+        );
+        // And theta sums match.
+        assert!(
+            (sum_theta - theta_full).abs() < 1e-12,
+            "Σ θᵢ ({sum_theta}) ≠ θ_total ({theta_full})"
         );
     }
 
     #[test]
     fn aircraft_runway_departure_gets_2_db_bonus() {
-        let arr =
-            compute_band_sel_25m_z_db(0, 2, GROUND_OPS_KIND_RUNWAY_ROLL, 0, 70.0, 250.0);
-        let dep =
-            compute_band_sel_25m_z_db(0, 2, GROUND_OPS_KIND_RUNWAY_ROLL, 1, 70.0, 250.0);
+        let arr = aircraft_lw_per_meter_z_db(2, GROUND_OPS_KIND_RUNWAY_ROLL, 0, 70.0);
+        let dep = aircraft_lw_per_meter_z_db(2, GROUND_OPS_KIND_RUNWAY_ROLL, 1, 70.0);
         let delta = sum_z_band_levels_db(&dep) - sum_z_band_levels_db(&arr);
         assert!(
             (delta - 2.0).abs() < 0.1,
@@ -282,8 +280,8 @@ mod tests {
 
     #[test]
     fn aircraft_speed_clamp_caps_adjustment_at_3_db() {
-        let nominal = compute_band_sel_25m_z_db(0, 2, GROUND_OPS_KIND_TAXI, 0, 18.0, 250.0);
-        let speedy = compute_band_sel_25m_z_db(0, 2, GROUND_OPS_KIND_TAXI, 0, 100.0, 250.0);
+        let nominal = aircraft_lw_per_meter_z_db(2, GROUND_OPS_KIND_TAXI, 0, 18.0);
+        let speedy = aircraft_lw_per_meter_z_db(2, GROUND_OPS_KIND_TAXI, 0, 100.0);
         let delta = sum_z_band_levels_db(&speedy) - sum_z_band_levels_db(&nominal);
         assert!(
             (delta - 3.0).abs() < 0.1,
@@ -295,8 +293,7 @@ mod tests {
     fn gse_kinematic_integral_short_segment() {
         // L = 50 m, v = 5 m/s, r = 25 → atan(1) = π/4 = 0.785,
         // 2π·v·r = 785. geo_offset = 10·log10(0.785/785) = -30 dB.
-        let bands =
-            compute_band_sel_25m_z_db(1, GSE_CLASS_HEAVY, GROUND_OPS_KIND_TAXI, 0, 9.72, 50.0);
+        let bands = gse_band_sel_z_db(GSE_CLASS_HEAVY, 9.72, 50.0);
         let z_total = sum_z_band_levels_db(&bands);
         let lw_total = sum_z_band_levels_db(&GSE_LW_BANDS_DB[GSE_CLASS_HEAVY as usize]);
         let delta = z_total - lw_total;
@@ -308,16 +305,7 @@ mod tests {
 
     #[test]
     fn gse_class_ordering_light_lt_medium_lt_heavy() {
-        let total = |cls: u8| {
-            sum_z_band_levels_db(&compute_band_sel_25m_z_db(
-                1,
-                cls,
-                GROUND_OPS_KIND_TAXI,
-                0,
-                9.72,
-                250.0,
-            ))
-        };
+        let total = |cls: u8| sum_z_band_levels_db(&gse_band_sel_z_db(cls, 9.72, 250.0));
         let light = total(GSE_CLASS_LIGHT);
         let medium = total(GSE_CLASS_MEDIUM);
         let heavy = total(GSE_CLASS_HEAVY);
@@ -329,12 +317,8 @@ mod tests {
     fn gse_longer_segment_higher_sel() {
         // Kinematic integral grows with L (more source-time near
         // perpendicular foot) → per-movement SEL should increase.
-        let short = sum_z_band_levels_db(&compute_band_sel_25m_z_db(
-            1, GSE_CLASS_MEDIUM, GROUND_OPS_KIND_TAXI, 0, 9.72, 50.0,
-        ));
-        let long = sum_z_band_levels_db(&compute_band_sel_25m_z_db(
-            1, GSE_CLASS_MEDIUM, GROUND_OPS_KIND_TAXI, 0, 9.72, 250.0,
-        ));
+        let short = sum_z_band_levels_db(&gse_band_sel_z_db(GSE_CLASS_MEDIUM, 9.72, 50.0));
+        let long = sum_z_band_levels_db(&gse_band_sel_z_db(GSE_CLASS_MEDIUM, 9.72, 250.0));
         assert!(
             long > short,
             "longer GSE seg should give more energy; short={short} long={long}"
@@ -345,12 +329,8 @@ mod tests {
     fn gse_no_aircraft_speed_clamp_faster_means_quieter() {
         // Kinematic: SEL ∝ 1/v → faster vehicle gives less per-pass
         // SEL (shorter time near receiver). No 3-dB clamp.
-        let slow = sum_z_band_levels_db(&compute_band_sel_25m_z_db(
-            1, GSE_CLASS_MEDIUM, GROUND_OPS_KIND_TAXI, 0, 5.0, 250.0,
-        ));
-        let fast = sum_z_band_levels_db(&compute_band_sel_25m_z_db(
-            1, GSE_CLASS_MEDIUM, GROUND_OPS_KIND_TAXI, 0, 50.0, 250.0,
-        ));
+        let slow = sum_z_band_levels_db(&gse_band_sel_z_db(GSE_CLASS_MEDIUM, 5.0, 250.0));
+        let fast = sum_z_band_levels_db(&gse_band_sel_z_db(GSE_CLASS_MEDIUM, 50.0, 250.0));
         let delta_db_expected = 10.0 * (5.0_f64 / 50.0).log10(); // -10 dB
         let actual = fast - slow;
         assert!(
@@ -360,9 +340,9 @@ mod tests {
     }
 
     #[test]
-    fn linear_form_matches_db_conversion() {
-        let bands_db = compute_band_sel_25m_z_db(0, 2, GROUND_OPS_KIND_TAXI, 0, 18.0, 250.0);
-        let bands_lin = compute_band_energy_lin(0, 2, GROUND_OPS_KIND_TAXI, 0, 18.0, 250.0);
+    fn aircraft_linear_form_matches_db_conversion() {
+        let bands_db = aircraft_lw_per_meter_z_db(2, GROUND_OPS_KIND_TAXI, 0, 18.0);
+        let bands_lin = compute_aircraft_lw_per_meter_lin(2, GROUND_OPS_KIND_TAXI, 0, 18.0);
         for i in 0..NUM_BANDS {
             let expected = 10f64.powf(bands_db[i] / 10.0) as f32;
             assert!(
@@ -375,16 +355,16 @@ mod tests {
     }
 
     #[test]
-    fn degenerate_zero_length_returns_all_zeros() {
-        let bands = compute_band_energy_lin(0, 2, GROUND_OPS_KIND_TAXI, 0, 18.0, 0.0);
+    fn degenerate_zero_speed_returns_all_zeros() {
+        let bands = compute_aircraft_lw_per_meter_lin(2, GROUND_OPS_KIND_TAXI, 0, 0.0);
         assert_eq!(bands, [0.0; NUM_BANDS]);
-        let bands = compute_band_energy_lin(1, GSE_CLASS_MEDIUM, GROUND_OPS_KIND_TAXI, 0, 18.0, 0.0);
+        let bands = compute_gse_band_energy_lin(GSE_CLASS_MEDIUM, GROUND_OPS_KIND_TAXI, 0.0, 250.0);
         assert_eq!(bands, [0.0; NUM_BANDS]);
     }
 
     #[test]
-    fn degenerate_zero_speed_returns_all_zeros() {
-        let bands = compute_band_energy_lin(0, 2, GROUND_OPS_KIND_TAXI, 0, 0.0, 250.0);
+    fn gse_degenerate_zero_length_returns_all_zeros() {
+        let bands = compute_gse_band_energy_lin(GSE_CLASS_MEDIUM, GROUND_OPS_KIND_TAXI, 18.0, 0.0);
         assert_eq!(bands, [0.0; NUM_BANDS]);
     }
 
@@ -393,43 +373,36 @@ mod tests {
         // Sanity: A-weighting subtracts ~25 dB from 63 Hz and adds ~1 dB
         // to 2 kHz. For aircraft taxi spectrum (peak at 63 Hz),
         // A-weighted total is lower than Z-weighted by several dB.
-        let bands = compute_band_sel_25m_z_db(0, 2, GROUND_OPS_KIND_TAXI, 0, 18.0, 250.0);
+        let bands = aircraft_lw_per_meter_z_db(2, GROUND_OPS_KIND_TAXI, 0, 18.0);
         let z = sum_z_band_levels_db(&bands);
         let a = sum_a_weighted_band_levels_db(&bands);
         assert!(a < z, "A-weighted total ({a}) must be < Z-weighted total ({z})");
     }
 
     #[test]
-    #[should_panic(expected = "veh_kind must be 0")]
-    fn unknown_veh_kind_panics() {
-        let _ = compute_band_sel_25m_z_db(2, 0, GROUND_OPS_KIND_TAXI, 0, 18.0, 250.0);
+    #[should_panic(expected = "ops_kind must be RUNWAY_ROLL/TAXI/APRON_MOVEMENT")]
+    fn unknown_ops_kind_panics_aircraft() {
+        let _ = aircraft_lw_per_meter_z_db(2, 0, 0, 18.0);
     }
 
     #[test]
     #[should_panic(expected = "ops_kind must be RUNWAY_ROLL/TAXI/APRON_MOVEMENT")]
-    fn unknown_ops_kind_panics() {
-        let _ = compute_band_sel_25m_z_db(0, 2, 0, 0, 18.0, 250.0);
+    fn unknown_ops_kind_panics_gse() {
+        // The GSE entrypoint validates ops_kind even though the GSE
+        // kinematic math doesn't read it — keeps the writer contract
+        // symmetric across veh_kind branches.
+        let _ = compute_gse_band_energy_lin(GSE_CLASS_MEDIUM, 0, 10.0, 250.0);
     }
 
     #[test]
     #[should_panic(expected = "class_idx 99 out of range")]
     fn aircraft_class_idx_out_of_range_panics() {
-        let _ =
-            compute_band_sel_25m_z_db(0, 99, GROUND_OPS_KIND_TAXI, 0, 18.0, 250.0);
+        let _ = aircraft_lw_per_meter_z_db(99, GROUND_OPS_KIND_TAXI, 0, 18.0);
     }
 
     #[test]
     #[should_panic(expected = "gse_class 99 out of range")]
     fn gse_class_idx_out_of_range_panics() {
-        let _ = compute_band_sel_25m_z_db(1, 99, GROUND_OPS_KIND_TAXI, 0, 18.0, 250.0);
-    }
-
-    #[test]
-    #[should_panic(expected = "ops_kind must be RUNWAY_ROLL/TAXI/APRON_MOVEMENT")]
-    fn unknown_ops_kind_panics_for_gse_branch_too() {
-        // Validation lives at the entry of compute_band_sel_25m_z_db
-        // so the GSE branch (which doesn't read ops_kind) also rejects
-        // invalid values rather than silently emitting energy.
-        let _ = compute_band_sel_25m_z_db(1, GSE_CLASS_MEDIUM, 0, 0, 10.0, 250.0);
+        let _ = gse_band_sel_z_db(99, 9.72, 250.0);
     }
 }

@@ -673,10 +673,18 @@ RUNWAY_DB_BY_ANCHOR: dict[str, float] = {
 
 
 def derive_ground_ops_per_class(profiles: list[Profile], anchors: list[AnchorClass]) -> list[list[float]]:
-    """Per-class [runway, taxi, apron] reference SEL dB at 25 m.
+    """Per-class [runway, taxi, apron] per-metre LW' in dB re 1 pW/m.
 
+    `RUNWAY_DB_BY_ANCHOR` is kept in the legacy "1 km event SEL at 25 m"
+    convention so the dB values stay recognizable against ICAO Doc 29
+    references. The +9.01 dB shift (= `10·log10(25/π)`) converts to the
+    CNOSSOS-EU §2.5.5 per-metre formulation `recv = LW' + 10·log10(θ/d)`
+    such that the identity at the 1 km / 25 m test point holds:
+      recv(1km, 25m midpoint) = (anchor + 9.01) + 10·log10(θ_1km/25)
+                              = anchor − 0.14 dB
     Standard Doc 29 offsets: taxi = runway − 12 dB, apron = runway − 18 dB.
     """
+    lw_shift = 10.0 * math.log10(25.0 / math.pi)  # +9.01 dB
     out: list[list[float]] = []
     for a in anchors:
         anchor_p = profiles[a.anchor_idx]
@@ -686,7 +694,11 @@ def derive_ground_ops_per_class(profiles: list[Profile], anchors: list[AnchorCla
         )
         taxi = runway - 12.0
         apron = runway - 18.0
-        out.append([round(runway, 1), round(taxi, 1), round(apron, 1)])
+        out.append([
+            round(runway + lw_shift, 2),
+            round(taxi + lw_shift, 2),
+            round(apron + lw_shift, 2),
+        ])
     return out
 
 
@@ -741,12 +753,15 @@ def emit_rust(
         lines.append(f"    {'true' if j else 'false'}, // {n}")
     lines.append("];")
     lines.append("")
-    lines.append("/// Runway-roll, taxi, apron reference SEL (dB) at 25 m, per noise class.")
-    lines.append("/// Hand-tuned per anchor typecode (see `RUNWAY_DB_BY_ANCHOR` in the")
-    lines.append("/// generator) — `dep@200ft` overestimates runway-roll by 6-10 dB because")
-    lines.append("/// flyover NPDs don't include ground absorption / engine baffling.")
-    lines.append("/// Standard offsets: taxi = runway − 12 dB, apron = runway − 18 dB.")
-    lines.append("pub static GROUND_OPS_REFERENCE_SEL_DB: [[f64; 3]; NUM_CLASSES] = [")
+    lines.append("/// Runway-roll, taxi, apron per-metre `LW'` (dB re 1 pW/m), per noise")
+    lines.append("/// class. Hand-tuned per anchor typecode (see `RUNWAY_DB_BY_ANCHOR` in")
+    lines.append("/// the generator) — `dep@200ft` overestimates runway-roll by 6-10 dB")
+    lines.append("/// because flyover NPDs don't include ground absorption / engine")
+    lines.append("/// baffling. Standard offsets: taxi = runway − 12 dB, apron = runway")
+    lines.append("/// − 18 dB. Stored values ≡ legacy 1 km event-SEL anchors + `+9.01 dB")
+    lines.append("/// = 10·log10(25/π)`; identity at the 1 km test point holds under the")
+    lines.append("/// CNOSSOS-EU §2.5.5 line-source receiver formula.")
+    lines.append("pub static GROUND_OPS_REFERENCE_LW_PER_METER_DB: [[f64; 3]; NUM_CLASSES] = [")
     for (r, t, a), n in zip(ground_ops, class_names):
         lines.append(f"    [{r}, {t}, {a}], // {n}")
     lines.append("];")

@@ -39,8 +39,45 @@ pub struct ClosestPoint {
     pub fraction: f64, // 0.0 = at start, 1.0 = at end
 }
 
+/// Three-semantic decomposition for line-source receiver math.
+///
+/// `point_to_segment` returns a fused (distance, foot, fraction) tuple
+/// that collapses three physically different quantities into one; for
+/// CNOSSOS-EU line-source receivers off the segment endpoints (e.g.
+/// past a runway threshold) this loses signed information needed by
+/// the finite-line angle integral. [`point_to_segment_full`] returns
+/// each as a dedicated field:
+///
+/// - `d_perp_m`: perpendicular to the EXTENDED line (unclamped foot).
+///   This is the `d` in the CNOSSOS line-source receiver formula
+///   `recv = LW' + 10·log10(θ / d)`.
+/// - `d_endpoint_m`: Euclidean to the nearest endpoint (clamped foot
+///   distance). Conservative prune metric — a receiver close to the
+///   line but far past its end has small `d_perp` yet large
+///   `d_endpoint`.
+/// - `cp_lat` / `cp_lon`: foot CLAMPED to segment for path sampling
+///   (terrain / screening). Unclamped foot would land off-segment and
+///   sample the wrong source location.
+/// - `fraction`: along-line position, UNCLAMPED + signed (can be < 0
+///   or > 1). The FLC angle integral relies on signed `d1 = f·L` and
+///   `d2 = (1-f)·L` so off-segment receivers get the right subtended
+///   angle via `atan(d1/d_perp) − atan(−d2/d_perp)`.
+#[derive(Debug, Clone, Copy)]
+pub struct PointToSegment {
+    pub d_perp_m: f64,
+    pub d_endpoint_m: f64,
+    pub cp_lat: f64,
+    pub cp_lon: f64,
+    pub fraction: f64,
+}
+
 /// Horizontal distance from a point to a line segment.
 /// Returns (distance_m, closest_point_lat, closest_point_lon, fraction 0-1).
+///
+/// Distance and fraction are clamped (segment, not extended line) —
+/// road / rail / barrier callers want the on-segment foot. Aircraft
+/// ground-ops receivers need the unclamped signed-fraction variant
+/// from [`point_to_segment_full`].
 pub fn point_to_segment(
     p_lat: f64,
     p_lon: f64,
@@ -49,32 +86,61 @@ pub fn point_to_segment(
     b_lat: f64,
     b_lon: f64,
 ) -> (f64, f64, f64, f64) {
+    let pts = point_to_segment_full(p_lat, p_lon, a_lat, a_lon, b_lat, b_lon);
+    (
+        pts.d_endpoint_m,
+        pts.cp_lat,
+        pts.cp_lon,
+        pts.fraction.clamp(0.0, 1.0),
+    )
+}
+
+/// Full three-semantic decomposition. See [`PointToSegment`] docstring.
+pub fn point_to_segment_full(
+    p_lat: f64,
+    p_lon: f64,
+    a_lat: f64,
+    a_lon: f64,
+    b_lat: f64,
+    b_lon: f64,
+) -> PointToSegment {
     let mid_lat = ((a_lat + b_lat) / 2.0).to_radians();
     let m_lon = m_per_deg_lon(mid_lat);
 
-    // Project to local meters (A at origin)
+    // Project to local meters (A at origin).
     let bx = (b_lon - a_lon) * m_lon;
     let by = (b_lat - a_lat) * M_PER_DEG_LAT;
     let px = (p_lon - a_lon) * m_lon;
     let py = (p_lat - a_lat) * M_PER_DEG_LAT;
 
     let ab_len_sq = bx * bx + by * by;
-    let t = if ab_len_sq < 1e-10 {
+    let t_unclamped = if ab_len_sq < 1e-10 {
         0.0
     } else {
-        ((px * bx + py * by) / ab_len_sq).clamp(0.0, 1.0)
+        (px * bx + py * by) / ab_len_sq
     };
+    let t_clamped = t_unclamped.clamp(0.0, 1.0);
 
-    let cp_x = t * bx;
-    let cp_y = t * by;
-    let dx = px - cp_x;
-    let dy = py - cp_y;
-    let dist = (dx * dx + dy * dy).sqrt();
+    // d_perp: unclamped foot → distance to extended line.
+    let foot_x = t_unclamped * bx;
+    let foot_y = t_unclamped * by;
+    let d_perp_m = ((px - foot_x).powi(2) + (py - foot_y).powi(2)).sqrt();
 
-    let cp_lat = a_lat + t * (b_lat - a_lat);
-    let cp_lon = a_lon + t * (b_lon - a_lon);
+    // d_endpoint: clamped foot → Euclidean to nearest segment point.
+    let cp_x = t_clamped * bx;
+    let cp_y = t_clamped * by;
+    let d_endpoint_m = ((px - cp_x).powi(2) + (py - cp_y).powi(2)).sqrt();
 
-    (dist, cp_lat, cp_lon, t)
+    let cp_lat = a_lat + t_clamped * (b_lat - a_lat);
+    let cp_lon = a_lon + t_clamped * (b_lon - a_lon);
+
+    PointToSegment {
+        d_perp_m,
+        d_endpoint_m,
+        cp_lat,
+        cp_lon,
+        fraction: t_unclamped,
+    }
 }
 
 /// Find closest point on a line segment to a given point (struct return variant).
@@ -204,57 +270,6 @@ mod tests {
         // θ ≈ atan(10/100) + atan(190/100) ≈ 0.1 + 1.08 ≈ 1.18
         // FLC ≈ 10 × log₁₀(1.18/π) ≈ -4.3 dB
         assert!(flc < -3.5 && flc > -5.0, "flc={flc}");
-    }
-
-    /// Aircraft ground-ops kernels propagate via
-    /// `FLC(L, d_receiver, frac) - FLC(L, 25, 0.5)` because
-    /// `emission/airport_traffic.rs:155` bakes `FLC(L, 25, 0.5)` into
-    /// `band_energy_lin`. These tests pin the delta values the popup
-    /// + heatmap propagation produces for a 75 m microsegment — the
-    /// shape we expect to recover the ~+16 dB overstate at 1 km.
-    #[test]
-    fn test_finite_line_delta_at_reference_is_zero() {
-        let l = 75.0;
-        let ref_flc = finite_line_correction(l, 25.0, 0.5);
-        let delta = finite_line_correction(l, 25.0, 0.5) - ref_flc;
-        assert!(delta.abs() < 1e-9, "delta should be exactly 0 at reference, got {delta}");
-    }
-
-    #[test]
-    fn test_finite_line_delta_near_field_positive() {
-        let l = 75.0;
-        let ref_flc = finite_line_correction(l, 25.0, 0.5);
-        let delta = finite_line_correction(l, 10.0, 0.5) - ref_flc;
-        // d < d_ref → segment looks "wider" → FLC less negative than
-        // reference → delta positive. Mathematically ≈ +1.25 dB.
-        assert!((delta - 1.24).abs() < 0.10, "expected ≈+1.24 dB, got {delta}");
-    }
-
-    #[test]
-    fn test_finite_line_delta_far_field_large_negative() {
-        let l = 75.0;
-        let ref_flc = finite_line_correction(l, 25.0, 0.5);
-        let delta = finite_line_correction(l, 1000.0, 0.5) - ref_flc;
-        // d ≫ L → segment looks like a point → delta near
-        // 10·log10(L/(π·d)) − reference_flc ≈ -14 dB. This is the
-        // exact amount the aircraft ground-ops propagation was
-        // overstating (cylindrical decay assumed an infinite line).
-        assert!((delta - (-14.18)).abs() < 0.10, "expected ≈-14.18 dB, got {delta}");
-    }
-
-    #[test]
-    fn test_finite_line_delta_endpoint_far_field_matches_midpoint() {
-        // Endpoint receivers and midpoint receivers see the SAME
-        // segment angle at large distance — the segment looks like a
-        // point from far away regardless of which end the receiver's
-        // perpendicular foot lies near. The delta should be within a
-        // few tenths of a dB of the midpoint value.
-        let l = 75.0;
-        let ref_flc = finite_line_correction(l, 25.0, 0.5);
-        let delta_mid = finite_line_correction(l, 1000.0, 0.5) - ref_flc;
-        let delta_end = finite_line_correction(l, 1000.0, 0.05) - ref_flc;
-        assert!((delta_end - delta_mid).abs() < 0.5,
-                "endpoint delta {delta_end} should match midpoint delta {delta_mid} within 0.5 dB at d=1km");
     }
 
     /// Splitting a microsegment into two halves must conserve the

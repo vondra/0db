@@ -15,10 +15,3 @@ pub(crate) const GROUND_OPS_TAXI_SPECTRUM_SHAPE: [f64; NUM_BANDS] = [14.0, 11.0,
 pub(crate) const GROUND_OPS_APRON_SPECTRUM_SHAPE: [f64; NUM_BANDS] =
     [12.0, 9.0, 6.0, 3.0, 1.0, -1.0, -4.0, -8.0];
 
-/// Nominal event length (meters) for the aircraft anchor table. The
-/// per-class SEL values in `GROUND_OPS_REFERENCE_SEL_DB` are calibrated
-/// against a typical taxi/runway pass — assumed ~1 km here. The
-/// `airport_traffic` kernel spreads the per-event SEL across
-/// microsegments via
-/// `per_seg_SEL_lin = anchor_SEL_lin × (seg_length / NOMINAL_EVENT_LENGTH_M)`.
-pub(crate) const GROUND_OPS_NOMINAL_EVENT_LENGTH_M: f64 = 1000.0;
