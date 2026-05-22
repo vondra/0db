@@ -45,6 +45,14 @@ pub fn run_stage_2c(
     n_days: u16,
     scope: Option<&ScopeBbox>,
 ) -> Result<usize> {
+    // Pre-check input schema BEFORE any destructive operation. The wipe
+    // below removes stale airport_traffic.arrow files; if the writer
+    // then fails on input schema mismatch (e.g. shuffle produced
+    // pre-bump ground.arrow shards), the popup is left without a fresh
+    // file and without the prior one. Catching the mismatch up front
+    // keeps the existing output intact for the operator to recover.
+    precheck_segments_schema(segments_by_r4_dir)?;
+
     // Wipe stale airport_traffic.arrow from in-scope R4s before workers
     // write fresh files. R4s that have no traffic this run would otherwise
     // retain a prior-run file (possibly older schema) and the popup
@@ -87,6 +95,46 @@ pub fn run_stage_2c(
     // Best-effort cleanup: parts/ is intermediate scratch.
     let _ = std::fs::remove_dir_all(&parts_root);
     Ok(traffic_n)
+}
+
+/// Open the first `<R4>/ground.arrow` shard under `segments_by_r4_dir`
+/// to confirm the input is readable with the current `SCHEMA_VERSION`.
+/// `read_record_batches` runs `assert_schema_version` internally; the
+/// full `run_airport_traffic` reader would catch the same mismatch
+/// later but only after wipe has already destroyed the previous
+/// output. This precheck reads one file (microseconds), so a stale
+/// shuffle or corrupt shard aborts the run before any destination
+/// file is touched.
+///
+/// Returns `Ok(())` when the directory exists but holds no shards —
+/// that's a valid empty-run case (writer emits zero rows). A missing
+/// directory is treated as caller misconfiguration and raises; the
+/// orchestrator always creates `segments_by_r4_dir` (even when empty)
+/// at shuffle time.
+fn precheck_segments_schema(segments_by_r4_dir: &Path) -> Result<()> {
+    let entries = std::fs::read_dir(segments_by_r4_dir).map_err(|e| {
+        anyhow::anyhow!(
+            "Stage 2C precheck: cannot read {}: {e}. Pass the same \
+             `segments_by_r4` path that `shuffle` wrote to.",
+            segments_by_r4_dir.display()
+        )
+    })?;
+    for entry in entries {
+        let ground = entry?.path().join("ground.arrow");
+        if !ground.is_file() {
+            continue;
+        }
+        crate::arrow_io::read_record_batches(&ground).map_err(|e| {
+            anyhow::anyhow!(
+                "Stage 2C precheck failed on {}: {e}. The shard is either \
+                 from an older `aircraft-extract` binary (stale schema) or \
+                 corrupt — re-run shuffle with the current binary.",
+                ground.display()
+            )
+        })?;
+        return Ok(());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -240,6 +288,43 @@ mod tests {
         assert!(
             !stale.exists(),
             "stale airport_traffic.arrow must be wiped from in-scope R4"
+        );
+    }
+
+    /// Regression for the wipe-before-error fragility: when
+    /// `segments_by_r4_dir` carries a shard with a wrong-schema
+    /// `ground.arrow`, the precheck must reject the run BEFORE the
+    /// destructive wipe runs. Otherwise a stale shuffle leaves the
+    /// popup with neither old nor new airport_traffic.arrow files.
+    #[test]
+    fn run_stage_2c_aborts_on_stale_input_before_wipe() {
+        use crate::geo::r4_hex_str;
+        use crate::scope::ScopeBbox;
+        use h3o::{LatLng, Resolution};
+        let tmp = tempfile::tempdir().unwrap();
+        let by_r4_dir = tmp.path().join("segments_by_r4");
+        let h3r4_dir = tmp.path().join("h3r4");
+        let r4 = u64::from(
+            LatLng::new(50.10, 14.26)
+                .unwrap()
+                .to_cell(Resolution::Four),
+        );
+        // Pre-populate a fresh-looking airport_traffic.arrow in
+        // h3r4_dir to confirm precheck keeps it intact on rejection.
+        let h3r4_r4 = h3r4_dir.join(r4_hex_str(r4));
+        std::fs::create_dir_all(&h3r4_r4).unwrap();
+        let prior = h3r4_r4.join("airport_traffic.arrow");
+        std::fs::write(&prior, b"prior-good-output").unwrap();
+        // Corrupt ground.arrow shard (will fail the schema check).
+        let by_r4_r4 = by_r4_dir.join(r4_hex_str(r4));
+        std::fs::create_dir_all(&by_r4_r4).unwrap();
+        std::fs::write(by_r4_r4.join("ground.arrow"), b"not-an-arrow-file").unwrap();
+        let scope = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
+        let result = run_stage_2c(&by_r4_dir, &[], &h3r4_dir, 1, Some(&scope));
+        assert!(result.is_err(), "precheck must reject corrupt shard");
+        assert!(
+            prior.exists(),
+            "precheck must abort before wipe — prior airport_traffic.arrow lost"
         );
     }
 
