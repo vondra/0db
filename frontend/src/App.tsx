@@ -21,6 +21,10 @@ const AboutPage = lazy(() => import('./components/AboutPage'))
 
 export default function App() {
   const isAbout = window.location.pathname.startsWith('/about')
+  // `?hm3=1` query flag swaps the v2 PNG aircraft tiles for the v3
+  // client-decoded HM3 tiles during the M9 cutover. Read once per
+  // render — the URL doesn't change without a navigation.
+  const hm3Enabled = window.location.search.includes('hm3=1')
   const { initial, updateUrl } = useUrlState()
 
   if (isAbout) {
@@ -318,8 +322,11 @@ export default function App() {
           // aircraft layer toggle while M6 is in dev. Decision #13
           // "switch mode" — when aircraft is anything but `off`, show
           // the new raster heatmap on top of (eventually instead of)
-          // the v1 hex aircraft data.
-          'aircraft-v2': (sourceModes.aircraft ?? 'off') !== 'off',
+          // the v1 hex aircraft data. HM3 (V1 pipeline) is gated by
+          // `hm3Enabled` so the default toggle keeps its V0/HM2A
+          // semantics during M9 cutover.
+          'aircraft-v2': (sourceModes.aircraft ?? 'off') !== 'off' && !hm3Enabled,
+          'aircraft-v3': (sourceModes.aircraft ?? 'off') !== 'off' && hm3Enabled,
         }}
       />
 

@@ -10,6 +10,7 @@ import ContributorHighlight from './ContributorHighlight'
 import RealEstateLayer from './RealEstateLayer'
 import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
+import HeatmapV3Layer from './HeatmapV3Layer'
 import CellInspectorLayer from './CellInspectorLayer'
 import MapStateSync from './MapStateSync'
 import { DEFAULT_BASEMAP, loadBasemapStyle, type BasemapId } from '../utils/basemaps'
@@ -105,6 +106,7 @@ export default function MapView({
       />
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
+      <HeatmapV3Layer visible={!!rasterOverlays?.['aircraft-v3']} />
       <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} sourceModes={sourceModes} />
       <IsochronLayer geojson={isochronGeojson ?? null} />
       <FlyToLocation location={selectedLocation ?? null} onArrived={handleArrived} />
