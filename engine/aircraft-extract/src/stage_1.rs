@@ -131,52 +131,37 @@ fn stage_1_one_flight(
         date_id,
     };
     let segments = build_segments(&points, &agl_m, &elev_m, &phases, &meta);
-    // K3: absorb the popup-side `is_valid_airborne_with_terrain` chord
-    // mountain-peak check at extract time so v16 `airborne.arrow` can
-    // drop the `terrain_q1_elev_m / terrain_mid_elev_m / terrain_q3_elev_m`
-    // columns. The kept set is identical to what the v15 popup would
-    // emit because Stage 2A's chord matches Stage 1's chord (shuffle
-    // midpoint assignment, no clipping) and the AGL gate (-30 m) is
-    // unchanged. Airport-context jet 150 m AGL floor still moves to
-    // Stage 2A where the resolved aerodrome centroid is available.
-    let mut dem_key = (i32::MIN, i32::MIN);
-    let mut dem_tile: Option<std::sync::Arc<raster_reader::RawTile>> = None;
-    segments
-        .into_iter()
-        .filter(|seg| airborne_chord_clears_peaks(seg, rasters, &mut dem_key, &mut dem_tile))
-        .collect()
+    // K3 + tightening: chord q1/mid/q3 check from the v15 popup is
+    // intentionally NOT carried over — at 1-15 s ADS-B sampling the
+    // linear chord between adjacent points tracks the real trajectory
+    // well enough for flat-to-rolling terrain. Mountain-airport STAR
+    // approaches (LOWI / SEQM / KASE) can in principle pass a chord
+    // midpoint under a peak with both endpoints above; accepted for
+    // the Praha-150km scope, revisit for global extracts. The
+    // jet 150 m AGL floor (popup `segment_filters.rs:252-255`) is
+    // not at Stage 1 either — moves to Stage 2A where the resolved
+    // aerodrome centroid is available.
+    segments.into_iter().filter(airborne_endpoints_above_terrain).collect()
 }
 
-/// Sample DEM at the chord's q1 / mid / q3 fracs and drop sub-segments
-/// whose chord-interpolated altitude is more than 30 m below terrain
-/// at any of those points. Mirrors the popup-side
-/// `noise_compute::emission::aircraft::is_valid_airborne_with_terrain`
-/// mid/q1/q3 check (segment_filters.rs:243-251) so popup parity holds
-/// once v16 drops the three terrain columns. Ground / airport-context
-/// segments bypass the check (popup short-circuits them too).
-fn airborne_chord_clears_peaks(
-    seg: &crate::flight::FlightSegment,
-    rasters: &RealRasters,
-    dem_key: &mut (i32, i32),
-    dem_tile: &mut Option<std::sync::Arc<raster_reader::RawTile>>,
-) -> bool {
+/// Endpoint AGL ≥ −30 m gate. Catches Mode-S altitude decode errors
+/// and "transponder on but aircraft already landed somewhere unmapped"
+/// leakage. Ground-flagged segments bypass — they re-enter through
+/// Stage 2C ground ops. The popup's airport-context bypass
+/// (`segment_filters.rs:219` `ground_context != GROUND_CONTEXT_NONE`)
+/// is NOT mirrored — that field is resolved per-receiver at Stage 2A.
+/// The −30 m slack absorbs DEM error near runways and sub-sea airports
+/// (AMS −4 m, Atyrau −22 m). NaN-bearing endpoints drop here
+/// (popup kept them under `<` semantics, but NaN propagation downstream
+/// is worse than early drop).
+fn airborne_endpoints_above_terrain(seg: &crate::flight::FlightSegment) -> bool {
     use crate::flight::{Phase, segment_flags};
     if seg.phase == Phase::Ground || (seg.flags & segment_flags::ON_GROUND) != 0 {
         return true;
     }
-    let sa = seg.start_alt_m as f64;
-    let ea = seg.end_alt_m as f64;
-    // q1, mid, q3 along the chord.
-    for &frac in &[0.25_f64, 0.5, 0.75] {
-        let lat = seg.start_lat as f64 + (seg.end_lat - seg.start_lat) as f64 * frac;
-        let lon = seg.start_lon as f64 + (seg.end_lon - seg.start_lon) as f64 * frac;
-        let terrain = rasters.elevation_nearest_cached(lat, lon, dem_key, dem_tile);
-        let chord_alt = sa + (ea - sa) * frac;
-        if chord_alt < terrain - 30.0 {
-            return false;
-        }
-    }
-    true
+    let start_agl = (seg.start_alt_m - seg.start_elev_m) as f64;
+    let end_agl = (seg.end_alt_m - seg.end_elev_m) as f64;
+    start_agl >= -30.0 && end_agl >= -30.0
 }
 
 fn bbox_of_flights(flights: &[Flight]) -> Option<(f64, f64, f64, f64)> {
@@ -273,9 +258,69 @@ pub fn read_flights(path: &Path) -> Result<Vec<Flight>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flight::{Phase, segment_flags, FlightSegment};
     use crate::source::FlightSource;
     use crate::source_adsb_tar::AdsbTarSource;
     use tempfile::tempdir;
+
+    fn airborne_seg(start_alt: f32, start_elev: f32, end_alt: f32, end_elev: f32) -> FlightSegment {
+        FlightSegment {
+            flight_id: 0,
+            callsign: String::new(),
+            aircraft_type: [0; 4],
+            profile_idx: 0,
+            source_id: 0,
+            origin: 0,
+            veh_kind: 0,
+            gse_class: 0,
+            period: 0,
+            date_id: 0,
+            phase: Phase::Airborne,
+            flags: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            start_alt_m: start_alt,
+            end_lat: 50.0,
+            end_lon: 14.01,
+            end_alt_m: end_alt,
+            speed_kt: 100.0,
+            length_m: 700.0,
+            agl_avg_m: ((start_alt + end_alt) * 0.5) - ((start_elev + end_elev) * 0.5),
+            start_elev_m: start_elev,
+            end_elev_m: end_elev,
+        }
+    }
+
+    #[test]
+    fn endpoints_above_terrain_drops_underground_airborne() {
+        // Endpoint 100 m below terrain — transponder spike, should drop.
+        let seg = airborne_seg(500.0, 600.0, 500.0, 500.0);
+        assert!(!airborne_endpoints_above_terrain(&seg));
+    }
+
+    #[test]
+    fn endpoints_above_terrain_keeps_minus_30_boundary() {
+        // Exactly at -30 m AGL on both endpoints — inclusive boundary
+        // pins behavior against a future `>` rewrite that would flip it.
+        let seg = airborne_seg(470.0, 500.0, 470.0, 500.0);
+        assert!(airborne_endpoints_above_terrain(&seg));
+    }
+
+    #[test]
+    fn endpoints_above_terrain_bypasses_on_ground_flag() {
+        // ON_GROUND flag wins even when AGL nominally fails.
+        let mut seg = airborne_seg(0.0, 500.0, 0.0, 500.0);
+        seg.flags |= segment_flags::ON_GROUND;
+        assert!(airborne_endpoints_above_terrain(&seg));
+    }
+
+    #[test]
+    fn endpoints_above_terrain_bypasses_ground_phase() {
+        // `Phase::Ground` wins even when AGL nominally fails.
+        let mut seg = airborne_seg(0.0, 500.0, 0.0, 500.0);
+        seg.phase = Phase::Ground;
+        assert!(airborne_endpoints_above_terrain(&seg));
+    }
 
     #[test]
     fn end_to_end_one_day_against_real_dem() {
