@@ -10,7 +10,7 @@ import MobileDetailSheet from './components/MobileDetailSheet'
 import BasemapBar from './components/BasemapBar'
 import PropertyCard from './components/PropertyCard'
 import FloatingCard from './components/FloatingCard'
-import { useUrlState, type SourceMode } from './hooks/useUrlState'
+import { useUrlState, EMPTY_RASTER_OVERLAYS, type SourceMode } from './hooks/useUrlState'
 import type { SelectedLocation } from './components/FlyToLocation'
 import type { RealEstateFilters, Property } from './components/RealEstateLayer'
 import type { NoiseComputeData } from './types/noise'
@@ -72,15 +72,7 @@ export default function App() {
   })
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null)
   const [rasterOverlays, setRasterOverlays] = useState<Record<string, boolean>>(
-    initial.rasterOverlays ?? {
-      'aircraft-ground': false,
-      'aircraft-airborne': false,
-      'aircraft-cruise': false,
-      dem: false,
-      building: false,
-      forest: false,
-      barriers: false,
-    }
+    initial.rasterOverlays ?? { ...EMPTY_RASTER_OVERLAYS },
   )
   const rasterOverlaysRef = useRef(rasterOverlays)
   rasterOverlaysRef.current = rasterOverlays

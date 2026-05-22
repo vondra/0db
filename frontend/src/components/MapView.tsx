@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import Map, { NavigationControl } from 'react-map-gl/maplibre'
 import type { StyleSpecification } from 'maplibre-gl'
 import HexLayer from './HexLayer'
@@ -10,7 +10,7 @@ import ContributorHighlight from './ContributorHighlight'
 import RealEstateLayer from './RealEstateLayer'
 import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
-import HeatmapV3Layer from './HeatmapV3Layer'
+import HeatmapV3Overlay, { AIRCRAFT_LAYER_SOURCES } from './HeatmapV3Overlay'
 import CellInspectorLayer from './CellInspectorLayer'
 import MapStateSync from './MapStateSync'
 import { DEFAULT_BASEMAP, loadBasemapStyle, type BasemapId } from '../utils/basemaps'
@@ -59,6 +59,11 @@ export default function MapView({
     setFlyToPos(pos)
   }, [])
 
+  const activeAircraftSources = useMemo(
+    () => AIRCRAFT_LAYER_SOURCES.filter(s => !!rasterOverlays?.[s]),
+    [rasterOverlays],
+  )
+
   useEffect(() => {
     let cancelled = false
     void loadBasemapStyle(bm).then((style) => {
@@ -106,9 +111,7 @@ export default function MapView({
       />
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
-      <HeatmapV3Layer source="aircraft-ground"   visible={!!rasterOverlays?.['aircraft-ground']} />
-      <HeatmapV3Layer source="aircraft-airborne" visible={!!rasterOverlays?.['aircraft-airborne']} />
-      <HeatmapV3Layer source="aircraft-cruise"   visible={!!rasterOverlays?.['aircraft-cruise']} />
+      <HeatmapV3Overlay sources={activeAircraftSources} />
       <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} sourceModes={sourceModes} />
       <IsochronLayer geojson={isochronGeojson ?? null} />
       <FlyToLocation location={selectedLocation ?? null} onArrived={handleArrived} />

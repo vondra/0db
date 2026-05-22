@@ -1,11 +1,8 @@
 import { useState } from 'react'
 import { ChevronDown, Mountain, Building, TreePine, Shield, Plane } from 'lucide-react'
 
-// Three aircraft heatmap layers — each ships as its own HM3 tile tree
-// under `data/tiles/{year}/heatmap-v3/{id}/…` and is rendered by a
-// dedicated `HeatmapV3Layer`. They were one combined raster before;
-// users asked to see them separately so a quiet cruise overflight
-// doesn't drown out a busy taxi run in the visualisation.
+// Aircraft is split into three layers because a quiet cruise overflight
+// would otherwise drown out a busy taxi run in the same raster.
 const OVERLAYS = [
   { id: 'aircraft-ground',   label: 'Aircraft — ground ops', tooltip: 'Taxi + runway roll + apron movements (LKPR-class noise)', icon: <Plane className="size-3.5" /> },
   { id: 'aircraft-airborne', label: 'Aircraft — airborne',   tooltip: 'Sub-cruise traffic: climb / approach / departure within ~3000 m AGL', icon: <Plane className="size-3.5" /> },
