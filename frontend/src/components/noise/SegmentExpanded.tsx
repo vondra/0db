@@ -5,6 +5,7 @@ import {
   aircraftFlightTooltip,
   aircraftTooltip,
   classToAnchorTypecode,
+  displayTypecode,
   modelName,
 } from '../../utils/aircraft-types'
 import { ldenToColor } from '../../utils/noise-colors'
@@ -69,7 +70,11 @@ function InlineTable({ rows }: { rows: [string | React.ReactNode, React.ReactNod
       {rows.map(([k, v], i) => (
         <div key={i} className="contents">
           <span className="text-muted-foreground/70 whitespace-nowrap">{k}</span>
-          <span className="text-foreground text-right tabular-nums">{v}</span>
+          {/* `min-w-0` makes the 1fr cell honour its grid track size when
+             the content includes long unbreakable runs ("Average NPD
+             42% · B738 28% · A320 13%"). Without it the cell expands and
+             overflows the 320 px side panel. */}
+          <span className="min-w-0 text-foreground text-right tabular-nums break-words">{v}</span>
         </div>
       ))}
     </div>
@@ -389,8 +394,9 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
           '',
         ]
         for (const c of e.class_mix) {
+          const display = displayTypecode(c.rep_typecode)
           tooltipLines.push(
-            `  ${c.rep_typecode.padEnd(6)}  ${modelName(c.rep_typecode)}  ${(c.share * 100).toFixed(1)}%`,
+            `  ${display.padEnd(11)}  ${modelName(c.rep_typecode)}  ${(c.share * 100).toFixed(1)}%`,
           )
         }
         tooltipLines.push('')
@@ -401,13 +407,16 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
           'anchored from EASA ANP v2.3) plus its energy share at this',
         )
         tooltipLines.push('microsegment.')
+        // No whitespace-nowrap — long mixes ("Average NPD 42% · B738 28%
+        // · A320 13%") overflow the 320 px side panel otherwise. Allow
+        // the row to wrap into a second line inside the 1fr value cell.
         const headline = (
-          <span className="whitespace-nowrap">
+          <span>
             {e.class_mix.slice(0, 3).map((c, i) => (
               <span key={c.rep_typecode}>
                 {i > 0 && ' · '}
                 <HoverText title={`${modelName(c.rep_typecode)} (${c.rep_typecode})`}>
-                  {c.rep_typecode}
+                  {displayTypecode(c.rep_typecode)}
                 </HoverText>
                 {` ${(c.share * 100).toFixed(0)}%`}
               </span>

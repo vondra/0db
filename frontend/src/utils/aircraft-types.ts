@@ -144,6 +144,19 @@ export function modelName(typecode: string): string {
 }
 
 /**
+ * Display name for a rep-typecode cell. Maps the synthetic
+ * `"FALLBACK"` (the WING_FALLBACK class' anchor typecode, used for
+ * traffic that didn't match any specific NPD profile) to a
+ * user-readable label. Pass any other typecode through unchanged.
+ *
+ * Use this anywhere `rep_typecode` is rendered to the user;
+ * "FALLBACK" is an internal implementation detail.
+ */
+export function displayTypecode(typecode: string): string {
+  return typecode === 'FALLBACK' ? 'Average NPD' : typecode
+}
+
+/**
  * Tooltip for an aircraft cell. Same 3-line format in both Bands and
  * Top flights tables.
  *

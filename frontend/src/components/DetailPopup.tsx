@@ -4,7 +4,7 @@ import { ldenToColor } from '../utils/noise-colors'
 import { MetricLabel, DataPoint } from './noise/noise-tooltips'
 import { HoverText } from './ui/info-tip'
 import { fmt, fmtDb, fmtDbValue, fmtFloat, fmtInt, fmtCompact, globeAdsbTraceHref, metersToKm, txtTable, unixToIsoDate, unixToIsoDateTimeUtc, type TableRow } from '../utils/formatters'
-import { aircraftFlightTooltip, aircraftTooltip, classToAnchorTypecode, parseProfileName } from '../utils/aircraft-types'
+import { aircraftFlightTooltip, aircraftTooltip, classToAnchorTypecode, displayTypecode, parseProfileName } from '../utils/aircraft-types'
 import { formatDist, lineRow, railTrainSourceLine, roadSourceDescription, SOURCE_LABELS, subtypeLabel } from './noise/shared'
 import { SegmentList } from './noise/SegmentList'
 import { TabStrip, type PopupTab } from './noise/TabStrip'
@@ -67,7 +67,7 @@ function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFlight[]; 
             const rawTypecode = f.aircraft_type && f.aircraft_type.length > 0
               ? f.aircraft_type
               : profileTypecode
-            const typecodeDisplay = rawTypecode === 'FALLBACK' ? 'Average NPD' : rawTypecode
+            const typecodeDisplay = displayTypecode(rawTypecode)
             const isSynth = f.synthetic
             const icaoHex = f.icao_hex ? f.icao_hex.toUpperCase() : null
             const exactTime = f.start_unix != null ? unixToIsoDateTimeUtc(f.start_unix) : null
@@ -481,11 +481,8 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
     ? 0
     : Math.max(0, 1 - profileMix.reduce((s, e) => s + e.share, 0))
   const showOther = Math.round(profileMixOther * 100) >= 5
-  // FALLBACK rep typecode → "Average NPD" everywhere (matches
-  // `classToAnchorTypecode` in `aircraft-types.ts`).
-  const fallbackToUnknown = (s: string) => (s === 'FALLBACK' ? 'Average NPD' : s)
   const profileMixDisplay: Array<[string, string]> = [
-    ...profileMix.map((e) => [fallbackToUnknown(e.rep_typecode), profileMixPct(e.share)] as [string, string]),
+    ...profileMix.map((e) => [displayTypecode(e.rep_typecode), profileMixPct(e.share)] as [string, string]),
     ...(showOther ? [['Other', profileMixPct(profileMixOther)] as [string, string]] : []),
   ]
   const profileMixSummary = profileMix.length === 0
