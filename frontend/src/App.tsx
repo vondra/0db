@@ -36,13 +36,14 @@ export default function App() {
   const [isochronActive, setIsochronActive] = useState(false)
   const [isochronGeojson, setIsochronGeojson] = useState<GeoJSON.Feature | null>(null)
   const [sourceModes, setSourceModes] = useState<Record<string, SourceMode>>(() => {
-    const modes: Record<string, SourceMode> = {}
-    for (const id of ['road', 'railway', 'aircraft', 'building', 'industrial']) {
+    // Aircraft has no UI toggle — popup/hex always include it; users toggle
+    // the three aircraft *heatmap* layers via raster-overlay rows instead.
+    const modes: Record<string, SourceMode> = { aircraft: '0db' }
+    for (const id of ['road', 'railway', 'building', 'industrial']) {
       modes[id] = initial.layers.includes(id) ? '0db' : 'off'
     }
-    // Apply saved source modes from URL
     for (const [id, mode] of Object.entries(initial.sourceModes)) {
-      if (initial.layers.includes(id)) modes[id] = mode
+      if (id !== 'aircraft' && initial.layers.includes(id)) modes[id] = mode
     }
     return modes
   })

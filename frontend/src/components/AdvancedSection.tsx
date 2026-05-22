@@ -1,12 +1,7 @@
 import { useState } from 'react'
-import { ChevronDown, Mountain, Building, TreePine, Shield, Plane } from 'lucide-react'
+import { ChevronDown, Mountain, Building, TreePine, Shield } from 'lucide-react'
 
-// Aircraft is split into three layers because a quiet cruise overflight
-// would otherwise drown out a busy taxi run in the same raster.
 const OVERLAYS = [
-  { id: 'aircraft-ground',   label: 'Aircraft — ground ops', tooltip: 'Taxi + runway roll + apron movements (LKPR-class noise)', icon: <Plane className="size-3.5" /> },
-  { id: 'aircraft-airborne', label: 'Aircraft — airborne',   tooltip: 'Sub-cruise traffic: climb / approach / departure within ~3000 m AGL', icon: <Plane className="size-3.5" /> },
-  { id: 'aircraft-cruise',   label: 'Aircraft — cruise',     tooltip: 'High-altitude overflight (FL100+), bands across the country', icon: <Plane className="size-3.5" /> },
   { id: 'dem', label: 'Elevation', tooltip: 'DEM terrain elevation — hills, valleys, ridges (30m)', icon: <Mountain className="size-3.5" /> },
   { id: 'building', label: 'Buildings', tooltip: 'Building heights from Overture Maps (30m)', icon: <Building className="size-3.5" /> },
   { id: 'forest', label: 'Forest', tooltip: 'Forest cover from ESA WorldCover (30m)', icon: <TreePine className="size-3.5" /> },
