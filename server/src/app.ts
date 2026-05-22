@@ -9,7 +9,6 @@ import { docsRoutes } from './routes/docs.js'
 import { h3r4Routes } from './routes/h3r4.js'
 import { rasterTileRoutes } from './routes/raster-tiles.js'
 import { aircraftRoutes } from './routes/aircraft.js'
-import { heatmapV2Routes } from './routes/heatmap-v2.js'
 import { heatmapV3Routes } from './routes/heatmap-v3.js'
 
 export async function buildApp(opts: { logger?: boolean } = {}): Promise<FastifyInstance> {
@@ -29,7 +28,6 @@ export async function buildApp(opts: { logger?: boolean } = {}): Promise<Fastify
   await app.register(h3r4Routes)
   await app.register(rasterTileRoutes)
   await app.register(aircraftRoutes)
-  await app.register(heatmapV2Routes)
   await app.register(heatmapV3Routes)
 
   return app
