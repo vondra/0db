@@ -5,17 +5,21 @@
 # `data/prepared/{DATA_YEAR}/h3r4/<R4>/`.
 #
 # Stage 0/1 are per-day; Stage 2A/2B/2C aggregate the full window.
-# `aircraft-extract run-all` orchestrates the cross-day flow.
+# The aircraft-extract binary's full-pipeline orchestrator is named
+# `run-all-dont-do-this-prefer-individual-stage-subcommands-or-from-stage-flag`
+# — the name is a deterrent. Prefer the per-stage subcommands
+# (`stage0`, `stage1`, `shuffle`, `stage1-5`, `stage2a`, `stage2b`,
+# `stage2c`) when iterating on one stage's code; this wrapper script
+# is the rare full-pipeline path that does need the orchestrator.
 #
 # Stage reuse — to iterate on a single later stage without re-running
 # upstream work, pass `--from-stage <stage>` (or set
 # `FROM_STAGE=<stage>`). Valid values: stage0 (default — full
 # pipeline), stage1, shuffle, stage1-5, stage2a, stage2b, stage2c.
-# Each variant reuses outputs that an earlier `run-all` left under
-# WORK_DIR (`flights/`, `segments/`, `segments_by_r4/`). Example:
+# Each variant reuses outputs that an earlier orchestrator run left
+# under WORK_DIR (`flights/`, `segments/`, `segments_by_r4/`). Example:
 # `./scripts/run-aircraft-extract.sh --from-stage stage2a` reuses the
 # cached Stage 1 segments and per-R4 shuffle, runs only Stage 2A/2B/2C.
-# See `aircraft-extract run-all --help` for per-variant requirements.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -99,7 +103,8 @@ cargo build --release --manifest-path engine/aircraft-extract/Cargo.toml --bin a
 
 mkdir -p "$WORK_DIR" "$H3R4_DIR"
 
-log "running aircraft-extract run-all (DAYS=$DAYS)"
+ORCHESTRATOR="run-all-dont-do-this-prefer-individual-stage-subcommands-or-from-stage-flag"
+log "running aircraft-extract $ORCHESTRATOR (DAYS=$DAYS)"
 # `tee` instead of a `tail` filter: streams every per-day milestone +
 # Stage 2B/2C 10-second progress tick straight into the log file AND
 # stdout (so `bash run_in_background` output and a foreground terminal
@@ -114,7 +119,7 @@ if [ -n "$FROM_STAGE" ]; then
     EXTRA_ARGS+=(--from-stage "$FROM_STAGE")
     log "from-stage: $FROM_STAGE (skipping every phase before $FROM_STAGE)"
 fi
-./engine/aircraft-extract/target/release/aircraft-extract run-all \
+./engine/aircraft-extract/target/release/aircraft-extract "$ORCHESTRATOR" \
     --adsb-cache "$ADSB_CACHE" \
     --h3r4-dir "$H3R4_DIR" \
     --prepared-dir "$PREPARED_DIR" \

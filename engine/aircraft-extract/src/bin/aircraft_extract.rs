@@ -110,6 +110,22 @@ enum Cmd {
         #[arg(long)]
         scope_bbox: Option<String>,
     },
+    /// Stage 1.5: per-R4 airfield discovery — DBSCAN-clusters ground
+    /// vertices that don't snap to existing OSM aeroway lines, writes
+    /// `<R4>/synth_airport_lines.arrow` + `synth_airport_areas.arrow`.
+    /// Consumed by Stage 2C; runs BEFORE Stage 2A in the orchestrator.
+    #[command(name = "stage1-5")]
+    Stage1_5 {
+        /// Dir containing the shuffle output `<R4>/ground.arrow`.
+        #[arg(long)]
+        segments_by_r4: PathBuf,
+        /// h3r4 dir holding the global `airport_areas.arrow` /
+        /// `airport_lines.arrow` (same dir written by `osm-extract`).
+        #[arg(long)]
+        h3r4_dir: PathBuf,
+        #[arg(long)]
+        scope_bbox: Option<String>,
+    },
     /// Stage 2A: per-R4 airborne shards → per-R4 airborne.arrow
     Stage2a {
         /// Dir containing the shuffle output `<R4>/airborne.arrow`.
@@ -155,7 +171,15 @@ enum Cmd {
         #[arg(long)]
         scope_bbox: Option<String>,
     },
-    /// Run every stage end-to-end for a list of days.
+    /// Cold-cache full pipeline orchestrator. The name is deliberately
+    /// hostile to discourage casual use: most iteration work touches
+    /// ONE stage, and re-running the upstream cache wastes 50-90 % of
+    /// wall time. Prefer the per-stage subcommands (`stage0`,
+    /// `stage1`, `shuffle`, `stage2a`, `stage2b`, `stage2c`) when you
+    /// know which stage's code you changed; if you really do need a
+    /// multi-stage rerun, this variant still accepts `--from-stage`
+    /// to skip everything before the cheapest valid entry point.
+    #[command(name = "run-all-dont-do-this-prefer-individual-stage-subcommands-or-from-stage-flag")]
     RunAll {
         #[arg(long)]
         adsb_cache: PathBuf,
@@ -214,6 +238,30 @@ fn main() -> Result<()> {
                 day_paths.len(),
                 out_dir.display()
             );
+        }
+        Cmd::Stage1_5 { segments_by_r4, h3r4_dir, scope_bbox } => {
+            let scope = parse_scope(scope_bbox.as_deref())?;
+            require_input_dir_exists("--segments-by-r4", &segments_by_r4)?;
+            let areas = read_global_airports(&h3r4_dir).with_context(|| {
+                format!("read airport_areas.arrow from {}", h3r4_dir.display())
+            })?;
+            let lines = read_global_airport_lines(&h3r4_dir).with_context(|| {
+                format!("read airport_lines.arrow from {}", h3r4_dir.display())
+            })?;
+            eprintln!(
+                "{} [stage1.5] loaded {} aerodromes + {} airport lines globally",
+                ts(),
+                areas.len(),
+                lines.len()
+            );
+            let n = run_stage_airport_discover(
+                &segments_by_r4,
+                &areas,
+                &lines,
+                &h3r4_dir,
+                scope.as_ref(),
+            )?;
+            eprintln!("{} [stage1.5] {n} R4s populated with synth airport_lines", ts());
         }
         Cmd::Stage2a {
             segments_by_r4,
