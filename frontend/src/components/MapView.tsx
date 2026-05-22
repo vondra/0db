@@ -6,7 +6,6 @@ import HexHoverTooltip from './HexHoverTooltip'
 import FlyToLocation from './FlyToLocation'
 import DetailPopup from './DetailPopup'
 import QuietClustersLayer from './QuietClustersLayer'
-import ContributorHighlight from './ContributorHighlight'
 import RealEstateLayer from './RealEstateLayer'
 import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
@@ -111,14 +110,17 @@ export default function MapView({
       />
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
-      <HeatmapV3Overlay sources={activeAircraftSources} />
+      {/* Highlight rides on the same deck.gl canvas as the heatmap so
+          it always draws above the HM3 tiles. A separate MapLibre
+          Source/Layer would sit under the non-interleaved deck canvas
+          and disappear whenever any heatmap was active. */}
+      <HeatmapV3Overlay
+        sources={activeAircraftSources}
+        highlightGeometry={highlightGeometry ?? null}
+      />
       <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} sourceModes={sourceModes} />
       <IsochronLayer geojson={isochronGeojson ?? null} />
       <FlyToLocation location={selectedLocation ?? null} onArrived={handleArrived} />
-      {/* Mount last so MapLibre renders the highlight stroke + fill above
-          HexLayer noise tiles, isochron, raster overlays — without this a
-          cruise R8 polygon disappears under the heatmap. */}
-      <ContributorHighlight geometry={highlightGeometry ?? null} />
       <DetailPopup
         detailPosition={detailPosition ?? null}
         triggerPosition={flyToPos}
