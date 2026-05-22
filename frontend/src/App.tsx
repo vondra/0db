@@ -72,7 +72,15 @@ export default function App() {
   })
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null)
   const [rasterOverlays, setRasterOverlays] = useState<Record<string, boolean>>(
-    initial.rasterOverlays ?? { dem: false, building: false, forest: false, barriers: false }
+    initial.rasterOverlays ?? {
+      'aircraft-ground': false,
+      'aircraft-airborne': false,
+      'aircraft-cruise': false,
+      dem: false,
+      building: false,
+      forest: false,
+      barriers: false,
+    }
   )
   const rasterOverlaysRef = useRef(rasterOverlays)
   rasterOverlaysRef.current = rasterOverlays
@@ -312,13 +320,7 @@ export default function App() {
         highlightGeometry={highlightGeometry}
         realEstateFilters={realEstateFilters}
         onPropertySelect={setSelectedProperty}
-        rasterOverlays={{
-          ...rasterOverlays,
-          // Aircraft toggle drives the HM3 raster heatmap. Tiles ship
-          // under `/api/heatmap-v3/aircraft/{z}/{x}/{y}.bin` and are
-          // decoded client-side via `HeatmapV3Layer`.
-          'aircraft-v3': (sourceModes.aircraft ?? 'off') !== 'off',
-        }}
+        rasterOverlays={rasterOverlays}
       />
 
       {/* Mobile: layers toggle button */}

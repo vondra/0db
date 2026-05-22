@@ -106,7 +106,9 @@ export default function MapView({
       />
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
-      <HeatmapV3Layer visible={!!rasterOverlays?.['aircraft-v3']} />
+      <HeatmapV3Layer source="aircraft-ground"   visible={!!rasterOverlays?.['aircraft-ground']} />
+      <HeatmapV3Layer source="aircraft-airborne" visible={!!rasterOverlays?.['aircraft-airborne']} />
+      <HeatmapV3Layer source="aircraft-cruise"   visible={!!rasterOverlays?.['aircraft-cruise']} />
       <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} sourceModes={sourceModes} />
       <IsochronLayer geojson={isochronGeojson ?? null} />
       <FlyToLocation location={selectedLocation ?? null} onArrived={handleArrived} />

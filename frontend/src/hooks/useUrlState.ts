@@ -6,7 +6,15 @@ const DEFAULT_LNG = 15.5
 const DEFAULT_ZOOM = 8
 const ALL_SOURCE_IDS = ['road', 'railway', 'aircraft', 'building', 'industrial']
 export const ALL_PROPAGATION_IDS = ['terrain', 'screening', 'vegetation']
-export const ALL_RASTER_OVERLAY_IDS = ['dem', 'building', 'forest', 'barriers']
+export const ALL_RASTER_OVERLAY_IDS = [
+  'aircraft-ground',
+  'aircraft-airborne',
+  'aircraft-cruise',
+  'dem',
+  'building',
+  'forest',
+  'barriers',
+]
 
 export type SourceMode = 'off' | '0db' | 'end' | 'diff'
 
@@ -25,7 +33,13 @@ export interface UrlState {
 }
 
 const EMPTY_RASTER_OVERLAYS: Record<string, boolean> = {
-  dem: false, building: false, forest: false, barriers: false,
+  'aircraft-ground': false,
+  'aircraft-airborne': false,
+  'aircraft-cruise': false,
+  dem: false,
+  building: false,
+  forest: false,
+  barriers: false,
 }
 
 function parseHash(): UrlState {

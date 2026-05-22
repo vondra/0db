@@ -1,11 +1,15 @@
 import { useState } from 'react'
-import { ChevronDown, Mountain, Building, TreePine, Shield } from 'lucide-react'
+import { ChevronDown, Mountain, Building, TreePine, Shield, Plane } from 'lucide-react'
 
-// `aircraft-v2` (the new raster heatmap layer) is intentionally NOT
-// listed here. The right-panel Aircraft source toggle drives it via
-// App.tsx's MapView `rasterOverlays` override — Decision #13 switch
-// mode. Adding it here too would surface two competing toggles.
+// Three aircraft heatmap layers — each ships as its own HM3 tile tree
+// under `data/tiles/{year}/heatmap-v3/{id}/…` and is rendered by a
+// dedicated `HeatmapV3Layer`. They were one combined raster before;
+// users asked to see them separately so a quiet cruise overflight
+// doesn't drown out a busy taxi run in the visualisation.
 const OVERLAYS = [
+  { id: 'aircraft-ground',   label: 'Aircraft — ground ops', tooltip: 'Taxi + runway roll + apron movements (LKPR-class noise)', icon: <Plane className="size-3.5" /> },
+  { id: 'aircraft-airborne', label: 'Aircraft — airborne',   tooltip: 'Sub-cruise traffic: climb / approach / departure within ~3000 m AGL', icon: <Plane className="size-3.5" /> },
+  { id: 'aircraft-cruise',   label: 'Aircraft — cruise',     tooltip: 'High-altitude overflight (FL100+), bands across the country', icon: <Plane className="size-3.5" /> },
   { id: 'dem', label: 'Elevation', tooltip: 'DEM terrain elevation — hills, valleys, ridges (30m)', icon: <Mountain className="size-3.5" /> },
   { id: 'building', label: 'Buildings', tooltip: 'Building heights from Overture Maps (30m)', icon: <Building className="size-3.5" /> },
   { id: 'forest', label: 'Forest', tooltip: 'Forest cover from ESA WorldCover (30m)', icon: <TreePine className="size-3.5" /> },
