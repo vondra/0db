@@ -309,13 +309,22 @@ fn main() -> Result<()> {
         } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             require_scope_for_subset_cache(&adsb_cache, scope.as_ref())?;
-            // Refuse to silently overwrite a populated work_dir under
-            // the default `--from-stage stage0`. If the operator
-            // explicitly asked for a later entry point, the populated
+            // Without any days, run-all would emit zero ok_paths and
+            // proceed to shuffle, which wipes `segments_by_r4/` before
+            // writing nothing. Bail loud to catch the typo / forgot-
+            // --days case before shuffle erases existing cache.
+            if days.is_empty() {
+                anyhow::bail!(
+                    "--days is empty — refusing to start. Pass at least one day, \
+                     e.g. `--days 2025-01-01` or comma-separated list",
+                );
+            }
+            // Refuse to silently overwrite a populated work_dir when
+            // `--from-stage` resolves to stage0 (default OR explicit).
+            // If the operator passed a later entry point, the populated
             // dir IS the input they want to reuse and we proceed.
-            // If they want a clean full run, they delete or move the
-            // dir manually — making the data loss intentional, not
-            // accidental.
+            // Clean full run requires `rm -rf $WORK_DIR` first — data
+            // loss must be intentional, not accidental.
             if from_stage == FromStage::Stage0 {
                 bail_on_populated_work_dir(&work_dir)?;
             }
@@ -416,6 +425,17 @@ fn main() -> Result<()> {
                         failed_days.join(","),
                         failed_days.join(",")
                     );
+                }
+                // Every day failed → ok_paths empty → shuffle would
+                // proceed and wipe `segments_by_r4/` before writing
+                // nothing, destroying the cached partition from any
+                // earlier successful run. Bail loud instead.
+                if ok_paths.is_empty() && needs_ok_paths {
+                    return Err(anyhow::anyhow!(
+                        "every requested day failed Stage 0/1 — refusing to start \
+                         shuffle (would wipe segments_by_r4/). Check upstream errors \
+                         and rerun with --days <surviving-list>",
+                    ));
                 }
                 ok_paths
             } else if needs_ok_paths {
@@ -546,18 +566,15 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Fail loud when an operator runs a Stage 2 subcommand against a
-/// missing input dir — a typo or a failed upstream shuffle would
-/// otherwise become a silent no-op and leave stale `h3r4` outputs in
-/// place (`list_r4_shards` swallows NotFound by design for RunAll).
-/// Refuse to run the orchestrator at default `--from-stage stage0`
-/// when `--work-dir` already holds outputs from an earlier run.
-/// Operators almost always want to REUSE that cache (via
-/// `--from-stage stage1` / `shuffle` / `stage1-5` / ...); the
+/// Refuse to run the orchestrator at `--from-stage stage0` (default
+/// OR explicit) when `--work-dir` already holds outputs from an
+/// earlier run. Operators almost always want to REUSE that cache
+/// (via `--from-stage stage1` / `shuffle` / `stage1-5` / ...); the
 /// orchestrator would otherwise re-do Stage 0 + Stage 1 silently and
 /// discard 1-3 hours of cached upstream work. The error message
-/// shows the exact files that would be overwritten and offers the
-/// two valid recovery paths.
+/// shows the exact dirs that would be overwritten and offers the
+/// two valid recovery paths: skip ahead with `--from-stage stageX`,
+/// or `rm -rf $WORK_DIR` to start fresh.
 fn bail_on_populated_work_dir(work_dir: &Path) -> Result<()> {
     let flights_dir = work_dir.join("flights");
     let segments_dir = work_dir.join("segments");
@@ -602,6 +619,10 @@ fn bail_on_populated_work_dir(work_dir: &Path) -> Result<()> {
     ))
 }
 
+/// Fail loud when an operator runs a Stage 2 subcommand against a
+/// missing input dir — a typo or a failed upstream shuffle would
+/// otherwise become a silent no-op and leave stale `h3r4` outputs in
+/// place (`list_r4_shards` swallows NotFound by design for RunAll).
 fn require_input_dir_exists(flag: &str, dir: &Path) -> Result<()> {
     if !dir.exists() {
         return Err(anyhow::anyhow!(
