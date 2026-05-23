@@ -210,17 +210,23 @@ pub fn cruise_top_candidate_fields() -> Fields {
     ])
 }
 
-/// Stage 2B — `h3r4/<hex>/cruise.arrow` (v14). One row per (R8, fl_bin,
-/// class, period, is_dep) bucket. Per-fid lists (`cruise_flight_ids` /
-/// `_aircraft_types` / `_callsigns`) of v13 are replaced by:
-/// - `unique_count: UInt32` — distinct fids that contributed to the
-///   bucket.
-/// - `top_candidates: List<Struct>` — bounded top-K (K=50) ranked by
-///   source-side peak Lmax at 25 m (NPD `lookup_lmax`).
+/// Cruise.arrow contract stamped into schema metadata. Bumped whenever
+/// the column shape OR the spatial bucket resolution changes. Loaders
+/// MUST call [`assert_cruise_contract`] — without it a stale v14 (R8)
+/// file is mistaken for v15 (R7) because the `col_u64("r7_hex")` lookup
+/// returns None on v14 and downstream code falls through to "no cruise
+/// data" instead of failing loud.
+pub const CRUISE_CONTRACT_V15_R7: &str = "cruise_v15_r7";
+
+/// Stage 2B — `h3r4/<hex>/cruise.arrow` (v15). One row per (R7, fl_bin,
+/// class, period, is_dep) bucket. v15 coarsens the spatial key from R8
+/// (~0.74 km² hex) to R7 (~5.16 km² hex) for ~7× fewer rows per R4 with
+/// < 0.16 dB Lden drift at FL250+ (centroid offset ≤ 1.44 km against
+/// typical slant > 7.62 km).
 pub fn cruise_schema() -> Arc<Schema> {
     let cand_struct = DataType::Struct(cruise_top_candidate_fields());
     let fields = vec![
-        Field::new("r8_hex", DataType::UInt64, false),
+        Field::new("r7_hex", DataType::UInt64, false),
         Field::new("class", DataType::UInt8, false),
         Field::new("rep_profile_idx", DataType::UInt8, false),
         Field::new("fl_bin", DataType::UInt8, false),
@@ -239,7 +245,29 @@ pub fn cruise_schema() -> Arc<Schema> {
         Field::new("source_id", DataType::UInt8, false),
         Field::new("origin", DataType::UInt8, false),
     ];
-    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[("kind", "cruise")])))
+    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
+        ("kind", "cruise"),
+        ("cruise_contract", CRUISE_CONTRACT_V15_R7),
+    ])))
+}
+
+/// Verify a loaded `cruise.arrow` file's `cruise_contract` metadata
+/// matches [`CRUISE_CONTRACT_V15_R7`]. Older files MUST be rejected —
+/// v14 stored an `r8_hex` column, and the popup/heatmap readers silently
+/// skip batches whose `r7_hex` column is missing, hiding the version skew.
+pub fn assert_cruise_contract(
+    metadata: &HashMap<String, String>,
+) -> anyhow::Result<()> {
+    match metadata.get("cruise_contract").map(String::as_str) {
+        Some(CRUISE_CONTRACT_V15_R7) => Ok(()),
+        Some(other) => Err(anyhow::anyhow!(
+            "cruise_contract mismatch: expected {CRUISE_CONTRACT_V15_R7}, got {other}"
+        )),
+        None => Err(anyhow::anyhow!(
+            "cruise_contract metadata missing — \
+             pre-v15 (R8) `cruise.arrow` files need re-extraction"
+        )),
+    }
 }
 
 /// Airport traffic contract stamped into airport_traffic.arrow.
@@ -584,7 +612,7 @@ mod tests {
     fn cruise_schema_has_v14_columns() {
         let s = cruise_schema();
         for required in [
-            "r8_hex", "class", "rep_profile_idx", "fl_bin", "period",
+            "r7_hex", "class", "rep_profile_idx", "fl_bin", "period",
             "flags", "sum_length_m", "rep_len_m", "rep_alt_m", "rep_speed_kt",
             "unique_count", "top_candidates", "source_id", "origin",
         ] {

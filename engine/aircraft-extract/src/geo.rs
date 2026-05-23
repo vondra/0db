@@ -1,6 +1,6 @@
 //! Geometry helpers — antimeridian-safe `flat_dist`, `bearing`,
 //! `midpoint`, h3 helpers, and an analytical line-cell clip used by
-//! Stage 2B to compute the cruise transit length per R8 hex without
+//! Stage 2B to compute the cruise transit length per R7 hex without
 //! relying on the unreliable `h3o::grid_path` (which mis-handles
 //! pentagons and does not follow great arcs).
 //!

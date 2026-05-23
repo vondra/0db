@@ -413,7 +413,7 @@ to one event (regression: `cffk_partition_preserves_linear_energy` in
 
 Stage 2A/2B/2C produce three per-R4 popup arrows: `airborne.arrow`
 (per-flight sub-segments with bbox envelope + per-pair period/date_id/
-flags), `cruise.arrow` (per-R8/FL-bin/class/period bucket with
+flags), `cruise.arrow` (per-R7/FL-bin/class/period bucket with
 `cruise_flight_ids` for dedup; annual-only — no `date_id`), and
 `airport_traffic.arrow` (sparse per-microsegment counters — see §5.2).
 Schemas in `aircraft-extract/src/arrow_schemas.rs`. `compute_aircraft_v6`
@@ -424,7 +424,7 @@ is the only consumer.
 Popup loads target R4 + 6 ring-1 neighbours so R4-straddling rows stay
 visible. Per-row prune radius: `AIRCRAFT_MAX_HORIZONTAL_REACH_M = 16 km`
 (in `aircraft/npd.rs`); airborne uses baked per-row bbox, cruise uses
-R8-cell-centre + half-diagonal. Antimeridian-crossing rows skip the
+R7-cell-centre + half-diagonal. Antimeridian-crossing rows skip the
 bbox prune (degenerate global envelopes).
 
 ### Per-period energy

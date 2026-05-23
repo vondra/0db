@@ -42,7 +42,7 @@ use crate::flight::CruiseTopCandidate;
 /// trivially auditable.
 pub(crate) struct CruiseSpillRow {
     pub r4: u64,
-    pub r8_hex: u64,
+    pub r7_hex: u64,
     pub class: u8,
     pub fl_bin: u8,
     pub period: u8,
@@ -78,7 +78,7 @@ fn spill_schema() -> Arc<Schema> {
     let top_struct = DataType::Struct(top_struct_fields());
     Arc::new(Schema::new(vec![
         Field::new("r4", DataType::UInt64, false),
-        Field::new("r8_hex", DataType::UInt64, false),
+        Field::new("r7_hex", DataType::UInt64, false),
         Field::new("class", DataType::UInt8, false),
         Field::new("fl_bin", DataType::UInt8, false),
         Field::new("period", DataType::UInt8, false),
@@ -143,7 +143,7 @@ pub(crate) fn write_cruise_spill(path: &Path, rows: &[CruiseSpillRow]) -> Result
 
     for row in rows {
         r4.append_value(row.r4);
-        r8.append_value(row.r8_hex);
+        r8.append_value(row.r7_hex);
         class.append_value(row.class);
         fl_bin.append_value(row.fl_bin);
         period.append_value(row.period);
@@ -315,7 +315,7 @@ pub(crate) fn read_cruise_spill(path: &Path) -> Result<Vec<CruiseSpillRow>> {
             }
             out.push(CruiseSpillRow {
                 r4: r4.value(i),
-                r8_hex: r8.value(i),
+                r7_hex: r8.value(i),
                 class: class.value(i),
                 fl_bin: fl_bin.value(i),
                 period: period.value(i),
@@ -357,7 +357,7 @@ mod tests {
     fn row(r4: u64, n_fids: usize) -> CruiseSpillRow {
         CruiseSpillRow {
             r4,
-            r8_hex: r4 + 1,
+            r7_hex: r4 + 1,
             class: 5,
             fl_bin: 3,
             period: 2,
@@ -393,7 +393,7 @@ mod tests {
         assert_eq!(back.len(), 2);
         for (a, b) in rows.iter().zip(&back) {
             assert_eq!(a.r4, b.r4);
-            assert_eq!(a.r8_hex, b.r8_hex);
+            assert_eq!(a.r7_hex, b.r7_hex);
             assert_eq!(a.fid_set, b.fid_set);
             assert_eq!(a.top_candidates, b.top_candidates);
             assert!((a.sum_length_m - b.sum_length_m).abs() < 1e-3);

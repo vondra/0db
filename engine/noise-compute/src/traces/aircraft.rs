@@ -1,6 +1,6 @@
 //! Per-row trace builders for the airborne + cruise aircraft
 //! sub-types (`SegmentTrace` `aircraft_subtype` 2 = airborne
-//! sub-segment, 3 = cruise R8 hex). Ground (subtype 1) traces are
+//! sub-segment, 3 = cruise R7 hex). Ground (subtype 1) traces are
 //! emitted by `compute::aircraft_v6::airport_traffic`.
 
 use crate::emission::aircraft::{typecode_to_string, PERIOD_SECONDS};
@@ -131,27 +131,30 @@ pub fn build_aircraft_airborne_subsegment_trace(
     }
 }
 
-/// Inputs for a cruise R8 hex aggregate trace.
-pub struct BuildAircraftCruiseR8Trace {
-    pub r8_hex: u64,
+/// Inputs for a cruise R7 hex aggregate trace.
+pub struct BuildAircraftCruiseR7Trace {
+    pub r7_hex: u64,
     pub n_unique_flights: u32,
     pub rep_alt_m: f32,
     pub centroid_lat: f64,
     pub centroid_lon: f64,
     pub d_slant_m: f64,
     /// Linear-domain event-energy sum per period `[day, evening, night]`
-    /// across every cruise row contributing to this R8 cell.
+    /// across every cruise row contributing to this R7 cell.
     pub period_energies: [f64; 3],
     pub n_days: f64,
     pub cruise_buckets: Vec<CruiseBucketBreakdown>,
     pub cruise_top_flights: Vec<CruiseHexTopFlight>,
 }
 
-pub fn build_aircraft_cruise_r8_trace(inputs: BuildAircraftCruiseR8Trace) -> SegmentTrace {
-    let r8_str = format!("{:015x}", inputs.r8_hex);
-    // Trailing `f`s are res-15 child padding; the first 10 hex chars carry the res-8 address.
-    let display_name = format!("Cruise over {}", &r8_str[..10]);
-    let hex_polygon = h3_cell_boundary(inputs.r8_hex);
+pub fn build_aircraft_cruise_r7_trace(inputs: BuildAircraftCruiseR7Trace) -> SegmentTrace {
+    let r7_str = format!("{:015x}", inputs.r7_hex);
+    // h3o {:015x} renders the full 60-bit cell index; for res-7 the
+    // first 9 chars are meaningful (mode + base-cell + 7 digit nibbles),
+    // remaining 6 are 0xF padding for unused child digits. 9 chars are
+    // enough to disambiguate adjacent R7 cells in the display name.
+    let display_name = format!("Cruise over {}", &r7_str[..9]);
+    let hex_polygon = h3_cell_boundary(inputs.r7_hex);
     let variants = aircraft_period_variants(inputs.period_energies, inputs.n_days);
 
     SegmentTrace {
@@ -173,7 +176,7 @@ pub fn build_aircraft_cruise_r8_trace(inputs: BuildAircraftCruiseR8Trace) -> Seg
         bridge: false,
         tunnel: false,
         emission: EmissionTrace::AircraftCruise {
-            r8_hex: r8_str,
+            r7_hex: r7_str,
             n_unique_flights: inputs.n_unique_flights,
             rep_alt_m: inputs.rep_alt_m,
         },
@@ -204,11 +207,11 @@ pub fn build_aircraft_cruise_r8_trace(inputs: BuildAircraftCruiseR8Trace) -> Seg
     }
 }
 
-/// Boundary lat/lon of an H3 res-8 cell. Last vertex equals the
+/// Boundary lat/lon of an H3 res-7 cell. Last vertex equals the
 /// first to close the GeoJSON ring (W6).
-fn h3_cell_boundary(r8_hex: u64) -> Vec<(f64, f64)> {
+fn h3_cell_boundary(r7_hex: u64) -> Vec<(f64, f64)> {
     use h3o::CellIndex;
-    let Ok(cell) = CellIndex::try_from(r8_hex) else {
+    let Ok(cell) = CellIndex::try_from(r7_hex) else {
         return Vec::new();
     };
     let boundary = cell.boundary();

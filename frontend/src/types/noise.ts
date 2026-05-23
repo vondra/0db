@@ -381,7 +381,7 @@ export interface PopupTimings {
 
 // Per-segment traces — popup "view into the engine's guts". Mirrors
 // `engine/noise-compute/src/types.rs::SegmentTrace`. Aircraft sub-types
-// (ground path / airborne sub-segment / cruise R8 hex) are split via
+// (ground path / airborne sub-segment / cruise R7 hex) are split via
 // `SegmentTrace.aircraft_subtype`; SegmentKind below is the UI-side
 // dispatch label.
 
@@ -564,7 +564,7 @@ export type EmissionTrace =
     }
   | {
       kind: 'aircraft_cruise'
-      r8_hex: string
+      r7_hex: string
       n_unique_flights: number
       rep_alt_m: number
     }
@@ -585,7 +585,7 @@ export type EmissionTrace =
       effective_area_source_dist_m: number
     }
 
-/** One bucket inside a cruise R8 hex aggregate trace. */
+/** One bucket inside a cruise R7 hex aggregate trace. */
 export interface CruiseBucketBreakdown {
   class: number
   fl_bin: number
@@ -598,7 +598,7 @@ export interface CruiseBucketBreakdown {
 export interface SegmentTrace {
   /**
    * Engine SourceKind. Aircraft splits further via `aircraft_subtype`:
-   * 1 = ground path, 2 = airborne sub-segment, 3 = cruise R8 hex.
+   * 1 = ground path, 2 = airborne sub-segment, 3 = cruise R7 hex.
    * UI dispatch helper is `traceKind()` in `SegmentList`.
    */
   kind: 'road' | 'railway' | 'building' | 'industrial' | 'aircraft'
@@ -662,7 +662,7 @@ export interface SegmentTrace {
  * truncated; Lden values themselves always reflect the full set.
  *
  * Aircraft splits into three sub-buckets: ground path / airborne
- * sub-segment / cruise R8 hex. Each is capped separately by the
+ * sub-segment / cruise R7 hex. Each is capped separately by the
  * backend so a busy airport doesn't drown one tab in another's
  * truncation; the popup renders three sub-tabs keyed off these
  * counters directly. */

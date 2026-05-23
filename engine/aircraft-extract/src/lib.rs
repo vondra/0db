@@ -5,7 +5,7 @@
 //! DEM AGL, classifies phase (Ground/Airborne/Cruise), and applies
 //! receiver-independent filters with trajectory-aware truncation.
 //! Stages 2A/2B/2C aggregate per-R4 to three popup Arrow files:
-//! airborne sub-segments, cruise R8 buckets, and ground paths from raw
+//! airborne sub-segments, cruise R7 buckets, and ground paths from raw
 //! ADS-B trajectories. Every schema stamps `schema_version =
 //! SCHEMA_VERSION` so the popup reader can refuse stale inputs.
 

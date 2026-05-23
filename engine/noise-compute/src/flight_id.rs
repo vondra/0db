@@ -11,7 +11,7 @@
 //!
 //! Synthetic (no real ADS-B identity — anonymous-transponder traces in
 //! the extract path get a deterministic synth id; the popup compute path
-//! also hashes cruise R8-bucket aggregates into a synth id since one row
+//! also hashes cruise R7-bucket aggregates into a synth id since one row
 //! folds many flights):
 //!   bit  [32]     synthetic = 1
 //!   bits [63:33] | [31:0]  opaque seq, low 32 bits in [31:0], high 31 bits in [63:33]
@@ -28,7 +28,7 @@
 //!   one-way.
 //! - **Same u64 footprint**: per-row cost in the popup arrows unchanged.
 //! - **Synthetic bit**: marks IDs that don't map 1:1 to a single
-//!   observed aircraft (anonymous-transponder traces and cruise R8
+//!   observed aircraft (anonymous-transponder traces and cruise R7
 //!   aggregates) without a magic numeric range.
 
 /// Position of the ICAO-24 field. Top 24 bits.
@@ -50,7 +50,7 @@ pub const ICAO_RESERVED_ANON: u32 = 0xFFFFFF;
 /// `Real` carries a hardware-level ICAO 24-bit transponder address and the
 /// flight-start Unix timestamp. `Synth` carries an opaque sequence number for
 /// IDs that don't map to a single observed aircraft — anonymous-transponder
-/// traces (ICAO 0xFFFFFF / 0x000000) and cruise R8-bucket aggregates that
+/// traces (ICAO 0xFFFFFF / 0x000000) and cruise R7-bucket aggregates that
 /// fold many flights into one row both go through `pack_synth`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlightIdKind {

@@ -157,17 +157,17 @@ pub struct CruiseTopCandidateView<'a> {
     pub altitude_m: f32,
 }
 
-/// One row of `cruise.arrow` v14. R8 bucket aggregating `sum_length_m`
+/// One row of `cruise.arrow` v14. R7 bucket aggregating `sum_length_m`
 /// of cruise track at altitude `rep_alt_m`. v14 replaces v13's per-fid
 /// lists with a bounded top-K `top_candidates` (ranked by source-side
 /// peak Lmax at 25 m) + scalar `unique_count`.
 ///
 /// Popup `band_stats` walks `top_candidates` into a per-fid HashMap
-/// for dedup across R8 cells. Tail fids outside the top-K cap drop
+/// for dedup across R7 cells. Tail fids outside the top-K cap drop
 /// out of band counters; documented regression.
 #[derive(Clone, Debug)]
 pub struct CruiseRowView<'a> {
-    pub r8_hex: u64,
+    pub r7_hex: u64,
     pub class: u8,
     pub rep_profile_idx: u8,
     pub fl_bin: u8,

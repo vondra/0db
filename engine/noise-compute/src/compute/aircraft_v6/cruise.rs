@@ -1,4 +1,4 @@
-//! Direct row-view scatter for cruise R8 buckets. The synth-fid keying
+//! Direct row-view scatter for cruise R7 buckets. The synth-fid keying
 //! into `flights` is deliberate: one transit may cross many buckets, so
 //! per-real-fid energy aggregation would over-count. Real-fid dedup
 //! lives in `cruise_flight_stats` (band counters) and `top_flight_candidates`
@@ -29,7 +29,7 @@ use crate::types::{
 /// above the receiver. 5 m matches Doc 29 §A.2 minimum non-zero CPA.
 pub const SLANT_FLOOR_M: f64 = 5.0;
 
-/// Per-R8-hex top-flight tracker. Same fid can appear in multiple
+/// Per-R7-hex top-flight tracker. Same fid can appear in multiple
 /// Stage 2B buckets within the same hex (e.g. crossing an FL boundary
 /// mid-hex), so dedup via HashMap with "max peak_lmax wins" merge — a
 /// Vec would inflate top-5 with duplicates of the loudest fid.
@@ -66,7 +66,7 @@ pub fn scatter(
     let npd_luts = aircraft::NpdLuts::shared();
     let mut hex_accums: HashMap<u64, HexAccum> = HashMap::new();
 
-    // R8-centre prefilter constants. rep_len_m is typically ~50 km
+    // R7-centre prefilter constants. rep_len_m is typically ~50 km
     // (Stage 2B uses source-segment length, not clip length), so the
     // cap dilates the 16 km horizontal reach to ~51 km worst case —
     // still drops a meaningful share of the 7-R4 grid disk's ~350 k
@@ -76,7 +76,7 @@ pub fn scatter(
     let m_per_lon = crate::constants::m_per_deg_lon(receiver.lat.to_radians());
 
     for (idx, row) in rows.iter().enumerate() {
-        let Some((lat, lon)) = r8_cell_center(row.r8_hex) else {
+        let Some((lat, lon)) = r7_cell_center(row.r7_hex) else {
             continue;
         };
         let rep_len_m = (row.rep_len_m as f64).max(SLANT_FLOOR_M);
@@ -110,7 +110,7 @@ pub fn scatter(
         // Density = sum_length / rep_len: fractional weight of this
         // representative segment carried by the bucket. Partial transits
         // (sum_length < rep_len, e.g. 500 m of a 10 km segment clipped
-        // to one R8 cell) keep their 0.05× weight — no `.max(1.0)`
+        // to one R7 cell) keep their 0.05× weight — no `.max(1.0)`
         // floor, which a /gg review caught as a multi-cell over-count.
         let density = if row.rep_len_m > 0.0 {
             (row.sum_length_m / row.rep_len_m) as f64
@@ -164,7 +164,7 @@ pub fn scatter(
         let period = (row.period.min(2)) as usize;
         let acc = flights.entry(synth_fid).or_insert_with(|| {
             // Cruise rows have no per-flight callsign / typecode (one
-            // R8 bucket aggregates many flights), so leave both empty.
+            // R7 bucket aggregates many flights), so leave both empty.
             FlightAccum::new(row.rep_profile_idx, density, true, [0; 4], String::new())
         });
         acc.period_energy[period] += energy;
@@ -232,7 +232,7 @@ pub fn scatter(
             // so a stable proxy (received_lden ≈ SEL on a per-event basis)
             // is enough.
             let received_lden = sel + 10.0 * density.max(1e-9).log10();
-            let entry = hex_accums.entry(row.r8_hex).or_insert(HexAccum {
+            let entry = hex_accums.entry(row.r7_hex).or_insert(HexAccum {
                 n_unique_flights: std::collections::HashSet::new(),
                 rep_alt_m: row.rep_alt_m,
                 centroid_lat: lat,
@@ -286,9 +286,9 @@ pub fn scatter(
             });
             let cruise_top_flights = top_flights_for_hex(&acc.top_fids);
             t.segments
-                .push(crate::traces::build_aircraft_cruise_r8_trace(
-                    crate::traces::BuildAircraftCruiseR8Trace {
-                        r8_hex: hex_key,
+                .push(crate::traces::build_aircraft_cruise_r7_trace(
+                    crate::traces::BuildAircraftCruiseR7Trace {
+                        r7_hex: hex_key,
                         n_unique_flights: acc.n_unique_flights.len() as u32,
                         rep_alt_m: acc.rep_alt_m,
                         centroid_lat: acc.centroid_lat,
@@ -341,10 +341,10 @@ fn round1(v: f64) -> f64 {
 }
 
 /// Per-band cruise dedup → `[band_faint, band_audible, band_disruptive]`.
-/// Each real fid contributes once per band it crosses (not once per R8
+/// Each real fid contributes once per band it crosses (not once per R7
 /// bucket). v14: walks `cruise_flight_stats` which is keyed on real fid
 /// and populated from each row's `top_candidates` slice — so a fid
-/// touching multiple R8 buckets dedupes naturally via HashMap insert.
+/// touching multiple R7 buckets dedupes naturally via HashMap insert.
 /// Tail fids outside the per-row top-K cap silently undercount per
 /// plan §4.4 / §9; documented regression.
 pub fn band_stats(cruise_flight_stats: &HashMap<u64, CruiseFlightStats>) -> [BandStats; 3] {
@@ -364,8 +364,8 @@ pub fn band_stats(cruise_flight_stats: &HashMap<u64, CruiseFlightStats>) -> [Ban
     out
 }
 
-fn r8_cell_center(r8_hex: u64) -> Option<(f64, f64)> {
-    let cell = CellIndex::try_from(r8_hex).ok()?;
+fn r7_cell_center(r7_hex: u64) -> Option<(f64, f64)> {
+    let cell = CellIndex::try_from(r7_hex).ok()?;
     let ll: h3o::LatLng = cell.into();
     Some((ll.lat(), ll.lng()))
 }

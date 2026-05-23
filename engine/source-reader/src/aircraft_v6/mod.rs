@@ -292,6 +292,9 @@ pub fn add_v6_aircraft_to_result(
     if !airborne_batches.is_empty() {
         assert_airborne_contract("airborne.arrow", airborne_batches)?;
     }
+    if !cruise_batches.is_empty() {
+        assert_cruise_contract("cruise.arrow", cruise_batches)?;
+    }
     if !airport_traffic_batches.is_empty() {
         assert_airport_traffic_contract("airport_traffic.arrow", airport_traffic_batches)?;
     }
@@ -562,6 +565,11 @@ const LEGACY_AIRPORT_TRAFFIC_CONTRACTS: &[&str] = &[];
 pub(super) const EXPECTED_AIRBORNE_CONTRACT: &str = "airborne_v2";
 const LEGACY_AIRBORNE_CONTRACTS: &[&str] = &[];
 
+/// Expected `cruise_contract` metadata. v15 (R7 bucketing) is the
+/// current schema. v14 (R8) cruise.arrow lacks the `r7_hex` column;
+/// silent skip would zero out cruise contributions at every receiver.
+pub(super) const EXPECTED_CRUISE_CONTRACT: &str = "cruise_v15_r7";
+
 fn accept_legacy() -> bool {
     matches!(std::env::var("ACCEPT_LEGACY_AIRCRAFT_SCHEMA").as_deref(), Ok("1"))
 }
@@ -667,6 +675,32 @@ pub(super) fn assert_airborne_contract(
             "{label}[batch {idx}] airborne_contract mismatch \
              (expected {EXPECTED_AIRBORNE_CONTRACT}, got {c:?}) \
              — re-extract aircraft pipeline (or set ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1 for dev)"
+        ));
+    }
+    Ok(())
+}
+
+/// Guard the `cruise.arrow` spatial-resolution contract. Pre-v15 files
+/// stored an `r8_hex` column; the popup/heatmap readers silently skip
+/// batches whose `r7_hex` column is missing, hiding the version skew.
+pub(super) fn assert_cruise_contract(
+    label: &str,
+    batches: &[RecordBatch],
+) -> Result<(), String> {
+    assert_schema_version(label, batches)?;
+    for (idx, batch) in batches.iter().enumerate() {
+        let c = batch
+            .schema_ref()
+            .metadata()
+            .get("cruise_contract")
+            .map(String::as_str);
+        if c == Some(EXPECTED_CRUISE_CONTRACT) {
+            continue;
+        }
+        return Err(format!(
+            "{label}[batch {idx}] cruise_contract mismatch \
+             (expected {EXPECTED_CRUISE_CONTRACT}, got {c:?}) \
+             — re-extract cruise stage 2B"
         ));
     }
     Ok(())

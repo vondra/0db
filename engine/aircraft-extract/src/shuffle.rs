@@ -10,7 +10,7 @@
 //!   complete IPC file per non-empty bucket sequentially — 1 FD per
 //!   worker at a time. Paths embed the day so workers never collide.
 //!   Cruise is left in the per-day shards (Stage 2B reads them directly;
-//!   midpoint-shuffling cruise would lose cross-R4 R8 routing).
+//!   midpoint-shuffling cruise would lose cross-R4 cell routing).
 //! - **Pass B (gather).** `par_iter` over `2 × SHUFFLE_HASH_BUCKETS`
 //!   `(phase, hash)` pairs. Each worker reads every Pass A part file for
 //!   its pair, buckets exactly by R4 in RAM, writes

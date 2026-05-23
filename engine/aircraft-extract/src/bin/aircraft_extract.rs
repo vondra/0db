@@ -546,7 +546,7 @@ fn main() -> Result<()> {
                 let t2b = Instant::now();
                 // Stage 2B reads per-day cruise shards, NOT the shuffled
                 // per-R4 ones — cruise output R4 derives from each
-                // touched R8's parent (`stage_2b.rs:cell.parent(R4)`).
+                // touched R7's parent (`stage_2b.rs:cell.parent(R4)`).
                 let r2b = run_stage_2b(&ok_paths, &h3r4_dir, n_days, scope.as_ref())?;
                 eprintln!("{} [run-all] stage2b={r2b} ({:?})", ts(), t2b.elapsed());
             }

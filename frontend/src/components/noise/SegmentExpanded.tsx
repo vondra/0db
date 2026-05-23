@@ -114,7 +114,7 @@ function CruiseLoudestFlights({ tops }: { tops: CruiseHexTopFlight[] }) {
   return (
     <div className="mt-2 -mx-1">
       <div className="font-medium mt-2 mb-0.5 text-foreground/70 text-[10px] px-1">
-        <HoverText title={"Top flights in this R8 hex\n\nThe loudest individual ADS-B flights that crossed this cruise cell, ranked by peak A-weighted Lmax. Cruise buckets aggregate many flights — this table picks the top 5 by peak.\n\nDate + time are the flight's first ADS-B sample (≈ takeoff time, UTC), not the moment over this cell. Per-hex aggregation drops per-sample timing."}>
+        <HoverText title={"Top flights in this R7 hex\n\nThe loudest individual ADS-B flights that crossed this cruise cell, ranked by peak A-weighted Lmax. Cruise buckets aggregate many flights — this table picks the top 5 by peak.\n\nDate + time are the flight's first ADS-B sample (≈ takeoff time, UTC), not the moment over this cell. Per-hex aggregation drops per-sample timing."}>
           Top flights
         </HoverText>
       </div>
@@ -533,7 +533,7 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
     }
     case 'aircraft_cruise': {
       return [
-        ['R8 hex', e.r8_hex],
+        ['R7 hex', e.r7_hex],
         ['Unique flights', `${e.n_unique_flights}`],
       ]
     }
@@ -1140,7 +1140,7 @@ function Section6Variants({ trace }: { trace: SegmentTrace }) {
 // ────────────────────────────────────────────────────────────────────────────
 
 export function SegmentExpanded({ trace }: { trace: SegmentTrace }) {
-  // Airborne sub-segments and cruise R8 hexes use Doc 29 SEL chains —
+  // Airborne sub-segments and cruise R7 hexes use Doc 29 SEL chains —
   // not ISO 9613-2 path effects — so the path-profile / terrain /
   // screening / vegetation / per-band Lw / Lden sections render with
   // empty / silent / uniform values that misrepresent the source.

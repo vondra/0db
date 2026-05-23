@@ -123,7 +123,7 @@ The aircraft layer combines two models: airborne overflights from ADS-B radar tr
 
 **Airport ground ops** — per-microsegment model on OSM aeroway geometry. Each ADS-B ground leg projects onto runway / taxiway microsegments (50 m perpendicular buffer); `ops_kind` comes from OSM `aeroway_type` (no speed classifier). Per-event SEL anchored at 25 m, propagated through Section 3 path effects. Runway-roll departures get Doc 29's +2 dB. DBSCAN auto-discovery covers OSM-missing airfields. Movements outside the ADS-B receiver footprint don't appear (no synthetic backfill).
 
-**Popup tabs**: *Ground* (per airport microsegment + movement kind), *Airborne* (per Stage 2A sub-segment), *Cruise* (per crossed H3-R8 hex).
+**Popup tabs**: *Ground* (per airport microsegment + movement kind), *Airborne* (per Stage 2A sub-segment), *Cruise* (per crossed H3-R7 hex).
 
 **Lden** per [END 2002/49/EC](../standards/end-2002-49-ec.pdf): day 12 h, evening 4 h +5 dB, night 8 h +10 dB.
 

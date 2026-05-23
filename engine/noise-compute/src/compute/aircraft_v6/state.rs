@@ -27,7 +27,7 @@ pub struct FlightAccum {
     pub callsign: String,
     /// Set when this entry was created from a cruise bucket. `flights_per_day`
     /// and the band counters route cruise via `CruiseFlightStats` instead so
-    /// one transit crossing N R8 cells doesn't multi-count.
+    /// one transit crossing N R7 cells doesn't multi-count.
     pub is_cruise: bool,
 }
 
@@ -93,7 +93,7 @@ impl BandStats {
 }
 
 /// Cruise dedup state — keyed by *real* fid (not the bucket synth fid).
-/// One transit crossing many R8 cells writes to many `FlightAccum`s
+/// One transit crossing many R7 cells writes to many `FlightAccum`s
 /// (per-bucket synth fids), but the popup band counters need to count
 /// the real flight once. `peak_lmax` tracks the loudest cell encounter.
 pub struct CruiseFlightStats {

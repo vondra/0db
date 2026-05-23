@@ -219,12 +219,12 @@ pub struct CruiseTopCandidate {
     pub altitude_m: f32,
 }
 
-/// Stage 2B row — per (R8, fl_bin, class, period, is_dep) bucket
+/// Stage 2B row — per (R7, fl_bin, class, period, is_dep) bucket
 /// (v14: bounded top-K candidates + scalar unique_count replace the
 /// per-fid lists from v13).
 #[derive(Clone)]
 pub struct CruiseBucket {
-    pub r8_hex: u64,
+    pub r7_hex: u64,
     pub class: u8,
     pub rep_profile_idx: u8,
     pub fl_bin: u8,

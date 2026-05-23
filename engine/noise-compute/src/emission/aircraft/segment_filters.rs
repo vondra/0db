@@ -74,7 +74,7 @@ pub fn ground_ops_kind_fallback(seg: &AircraftSegment) -> u8 {
 /// Cached terrain elevations sampled at five points along a segment
 /// Per-segment terrain sample cache (start, q1, mid, q3, end).
 ///
-/// Cruise scatter synthesises a one-shot `AircraftSegment` from an R8
+/// Cruise scatter synthesises a one-shot `AircraftSegment` from an R7
 /// representative point and still needs to look up DEM at that
 /// segment's five sample points, so the type stays alive for
 /// `cruise.rs`. The airborne popup hot path no longer constructs one

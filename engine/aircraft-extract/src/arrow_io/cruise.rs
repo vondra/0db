@@ -51,7 +51,7 @@ pub fn write_cruise(path: &Path, rows: &[CruiseBucket], n_days: u16) -> Result<(
     let mut running = 0usize;
 
     for r in rows {
-        r8.append_value(r.r8_hex);
+        r8.append_value(r.r7_hex);
         class.append_value(r.class);
         rep_pi.append_value(r.rep_profile_idx);
         fl_bin.append_value(r.fl_bin);
@@ -127,7 +127,7 @@ mod tests {
 
     fn sample_bucket() -> CruiseBucket {
         CruiseBucket {
-            r8_hex: 0xABC,
+            r7_hex: 0xABC,
             class: 5,
             rep_profile_idx: 7,
             fl_bin: 3,
@@ -220,7 +220,7 @@ mod tests {
             ..sample_bucket()
         };
         let row_b = CruiseBucket {
-            r8_hex: 0xDEF,
+            r7_hex: 0xDEF,
             unique_count: 4,
             top_candidates: (0..4)
                 .map(|i| CruiseTopCandidate {

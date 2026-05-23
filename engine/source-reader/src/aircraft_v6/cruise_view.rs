@@ -16,7 +16,7 @@ pub struct CruiseRowAccum {
 }
 
 struct OwnedCruiseRow {
-    r8_hex: u64,
+    r7_hex: u64,
     class: u8,
     rep_profile_idx: u8,
     fl_bin: u8,
@@ -47,7 +47,7 @@ impl CruiseRowAccum {
             if n == 0 {
                 continue;
             }
-            let Some(r8) = col_u64(batch, "r8_hex") else { continue };
+            let Some(r8) = col_u64(batch, "r7_hex") else { continue };
             let Some(class) = col_u8(batch, "class") else { continue };
             let Some(rep_pi) = col_u8(batch, "rep_profile_idx") else { continue };
             let Some(fl_bin) = col_u8(batch, "fl_bin") else { continue };
@@ -118,7 +118,7 @@ impl CruiseRowAccum {
                     cand_alt.push(cand_alt_arr.value(j));
                 }
                 rows.push(OwnedCruiseRow {
-                    r8_hex: r8.value(i),
+                    r7_hex: r8.value(i),
                     class: class.value(i),
                     rep_profile_idx: rep_pi.value(i),
                     fl_bin: fl_bin.value(i),
@@ -190,7 +190,7 @@ impl<'a> CruiseViewSlices<'a> {
             .iter()
             .enumerate()
             .map(|(i, r)| CruiseRowView {
-                r8_hex: r.r8_hex,
+                r7_hex: r.r7_hex,
                 class: r.class,
                 rep_profile_idx: r.rep_profile_idx,
                 fl_bin: r.fl_bin,
