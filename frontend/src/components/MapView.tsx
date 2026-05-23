@@ -10,6 +10,7 @@ import RealEstateLayer from './RealEstateLayer'
 import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
 import HeatmapV3Overlay, { AIRCRAFT_LAYER_SOURCES } from './HeatmapV3Overlay'
+import HeatmapV3HoverTooltip from './HeatmapV3HoverTooltip'
 import CellInspectorLayer from './CellInspectorLayer'
 import MapStateSync from './MapStateSync'
 import { DEFAULT_BASEMAP, loadBasemapStyle, type BasemapId } from '../utils/basemaps'
@@ -118,6 +119,7 @@ export default function MapView({
         sources={activeAircraftSources}
         highlightGeometry={highlightGeometry ?? null}
       />
+      <HeatmapV3HoverTooltip sources={activeAircraftSources} />
       <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} sourceModes={sourceModes} />
       <IsochronLayer geojson={isochronGeojson ?? null} />
       <FlyToLocation location={selectedLocation ?? null} onArrived={handleArrived} />
