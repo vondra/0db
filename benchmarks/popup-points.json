@@ -886,5 +886,37 @@
   "scenario": "aircraft_apron",
   "r11": "8b1e355887b4fff",
   "note": "LKPR Terminal 2 apron area"
+ },
+ {
+  "id": 112,
+  "lat": 50.1145,
+  "lng": 14.2575,
+  "scenario": "aircraft_perpendicular_lkpr",
+  "r11": "8b1e35588c8cfff",
+  "note": "500 m NW perpendicular to LKPR RWY 24 — Plan v2 prediction headline test (-5 to -8 dB expected)"
+ },
+ {
+  "id": 113,
+  "lat": 50.118,
+  "lng": 14.2535,
+  "scenario": "aircraft_perpendicular_lkpr",
+  "r11": "8b1e35588da5fff",
+  "note": "1 km NW perpendicular to LKPR RWY 24 — Plan v2 prediction headline test (-10 to -14 dB expected)"
+ },
+ {
+  "id": 114,
+  "lat": 50.1059,
+  "lng": 14.2625,
+  "scenario": "aircraft_perpendicular_lkpr",
+  "r11": "8b1e355884d2fff",
+  "note": "500 m SE perpendicular to LKPR RWY 24 — Plan v2 prediction headline test (-5 to -8 dB expected)"
+ },
+ {
+  "id": 115,
+  "lat": 50.1023,
+  "lng": 14.2665,
+  "scenario": "aircraft_perpendicular_lkpr",
+  "r11": "8b1e3558aa76fff",
+  "note": "1 km SE perpendicular to LKPR RWY 24 — Plan v2 prediction headline test (-10 to -14 dB expected)"
  }
 ]
