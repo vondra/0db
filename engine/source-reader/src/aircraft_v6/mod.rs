@@ -286,6 +286,12 @@ pub fn add_v6_aircraft_to_result(
     rasters: &dyn RasterSampler,
     barriers: &[noise_compute::types::Barrier],
     n_days: u16,
+    // Per-kind top-K cap for airborne sub-segment traces — passed to
+    // compute_aircraft_v6 so the bounded min-heap in airborne::scatter
+    // is sized correctly. query_noise_impl sets this to
+    // SEGMENT_TOP_K_PER_KIND (150) on the normal path or
+    // SEGMENT_TOP_K_PER_KIND_FULL (1000) on the "Show all" path.
+    trace_cap: usize,
 ) -> Result<(), String> {
     assert_schema_version("airborne.arrow", airborne_batches)?;
     assert_schema_version("cruise.arrow", cruise_batches)?;
@@ -377,6 +383,7 @@ pub fn add_v6_aircraft_to_result(
         rasters,
         n_days,
         &airport_anchors,
+        trace_cap,
         Some(traces),
         result.timings.as_mut(),
     );

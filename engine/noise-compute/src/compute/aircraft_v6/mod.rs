@@ -46,6 +46,10 @@ pub fn compute_aircraft_v6(
     rasters: &dyn RasterSampler,
     n_days: u16,
     airport_centroids: &[(f64, f64)],
+    // Max airborne sub-segment traces to keep in TraceCollector (the
+    // bounded top-K heap). `0` = don't allocate any traces — used by
+    // callers that pass `traces = None` anyway.
+    trace_cap: usize,
     traces: Option<&mut TraceCollector>,
     mut timings: Option<&mut crate::types::LayerTimings>,
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
@@ -64,6 +68,7 @@ pub fn compute_aircraft_v6(
         airborne_rows,
         n_days_f,
         airport_centroids,
+        trace_cap,
         traces.as_deref_mut(),
     );
     let t_airborne_scatter = t_start.elapsed();
@@ -209,6 +214,8 @@ pub fn compute_aircraft_v6_separable(
         airborne_rows,
         n_days_f,
         airport_centroids,
+        // No traces collected on this path → cap is irrelevant; pass 0.
+        0,
         None,
     );
 
@@ -273,7 +280,7 @@ mod tests {
     fn silence_when_no_data() {
         let receiver = Receiver::new(50.10, 14.262, 0.0);
         let (periods, contribs, _band) =
-            compute_aircraft_v6(&receiver, &[], &[], &FlatGround, 1, &[], None, None);
+            compute_aircraft_v6(&receiver, &[], &[], &FlatGround, 1, &[], 0, None, None);
         assert!(!periods.lden_db.is_finite());
         assert!(contribs.is_empty());
     }
