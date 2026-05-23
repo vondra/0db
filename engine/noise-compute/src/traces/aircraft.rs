@@ -5,14 +5,11 @@
 
 use crate::emission::aircraft::{typecode_to_string, PERIOD_SECONDS};
 use crate::types::{
-    CruiseBucketBreakdown, CruiseHexTopFlight, EmissionTrace, LayerKind, PerPeriod,
-    PropagationVariants, SegmentTrace, NUM_BANDS,
+    CruiseBucketBreakdown, CruiseHexTopFlight, EmissionTrace, LayerKind, PropagationVariants,
+    SegmentTrace,
 };
 
-use super::{
-    empty_path_profile, empty_screening_trace, empty_terrain_trace, empty_vegetation_trace,
-    ground_trace, point_source_aloft_baseline, variants_to_lden,
-};
+use super::variants_to_lden;
 
 /// Path-effect / band slots stay zero because aircraft propagation
 /// (Doc 29 SEL chain) doesn't expose them at the per-event level — see
@@ -51,6 +48,10 @@ pub struct BuildAircraftAirborneSubSegmentTrace<'a> {
     /// (active period holds `10^(SEL/10)`, others zero).
     pub period_energies: [f64; 3],
     pub n_days: f64,
+    /// Doc 29 Eq. 4-8b decomposition from the kernel evaluation. CFFK
+    /// fast path (slant > 7.62 km) populates `lambda_db = 0.0` and
+    /// `delta_i_db = 0.0` per Doc 29 §A.2.7 and sets `cffk_fast_path = true`.
+    pub doc29: crate::types::Doc29Breakdown,
 }
 
 pub fn build_aircraft_airborne_subsegment_trace(
@@ -104,23 +105,7 @@ pub fn build_aircraft_airborne_subsegment_trace(
             icao_hex,
             start_unix,
         },
-        lw_bands: PerPeriod {
-            day: [0.0; NUM_BANDS],
-            evening: [0.0; NUM_BANDS],
-            night: [0.0; NUM_BANDS],
-        },
-        lw_db_a: PerPeriod {
-            day: 0.0,
-            evening: 0.0,
-            night: 0.0,
-        },
-        baseline: point_source_aloft_baseline(inputs.d_slant_m, inputs.altitude_m_at_cpa),
-        path_profile: empty_path_profile(),
-        terrain: empty_terrain_trace(),
-        screening: empty_screening_trace(),
-        vegetation: empty_vegetation_trace(),
-        ground: ground_trace(0.0),
-        received_bands: PerPeriod::silent_bands(),
+        propagation: crate::types::PropagationBreakdown::Doc29(inputs.doc29),
         received_lden: variants_to_lden(&variants),
         aircraft_subtype: 2,
         polyline: None,
@@ -145,6 +130,11 @@ pub struct BuildAircraftCruiseR7Trace {
     pub n_days: f64,
     pub cruise_buckets: Vec<CruiseBucketBreakdown>,
     pub cruise_top_flights: Vec<CruiseHexTopFlight>,
+    /// Doc 29 breakdown for the representative sub-segment (loudest
+    /// contributor to this hex's slant). CFFK fast path at cruise
+    /// altitudes — `lambda_db` and `delta_i_db` are typically 0.0 since
+    /// FL250+ implies slant ≥ 7.62 km.
+    pub doc29: crate::types::Doc29Breakdown,
 }
 
 pub fn build_aircraft_cruise_r7_trace(inputs: BuildAircraftCruiseR7Trace) -> SegmentTrace {
@@ -180,23 +170,7 @@ pub fn build_aircraft_cruise_r7_trace(inputs: BuildAircraftCruiseR7Trace) -> Seg
             n_unique_flights: inputs.n_unique_flights,
             rep_alt_m: inputs.rep_alt_m,
         },
-        lw_bands: PerPeriod {
-            day: [0.0; NUM_BANDS],
-            evening: [0.0; NUM_BANDS],
-            night: [0.0; NUM_BANDS],
-        },
-        lw_db_a: PerPeriod {
-            day: 0.0,
-            evening: 0.0,
-            night: 0.0,
-        },
-        baseline: point_source_aloft_baseline(inputs.d_slant_m, inputs.rep_alt_m as f64),
-        path_profile: empty_path_profile(),
-        terrain: empty_terrain_trace(),
-        screening: empty_screening_trace(),
-        vegetation: empty_vegetation_trace(),
-        ground: ground_trace(0.0),
-        received_bands: PerPeriod::silent_bands(),
+        propagation: crate::types::PropagationBreakdown::Doc29(inputs.doc29),
         received_lden: variants_to_lden(&variants),
         aircraft_subtype: 3,
         polyline: None,
@@ -246,6 +220,20 @@ mod tests {
             is_departure: false,
             period_energies,
             n_days,
+            doc29: crate::types::Doc29Breakdown {
+                sel_npd_db: 0.0,
+                delta_v_db: 0.0,
+                delta_i_db: 0.0,
+                lambda_db: 0.0,
+                delta_f_db: 0.0,
+                d_p_m: 500.0,
+                lateral_m: 0.0,
+                beta_deg: 90.0,
+                seg_len_m: 0.0,
+                d_bar_m: 500.0,
+                installation: "wing",
+                cffk_fast_path: false,
+            },
         })
     }
 

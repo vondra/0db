@@ -202,7 +202,8 @@ function computeSourceHeightRow(trace: SegmentTrace): [React.ReactNode, React.Re
   if (trace.kind === 'aircraft' && (trace.aircraft_subtype === 1 || trace.aircraft_subtype === 2)) {
     return null
   }
-  const h = trace.baseline.source_height_m
+  if (trace.propagation.model !== 'cnossos') return null
+  const h = trace.propagation.baseline.source_height_m
   const slantSame = Math.abs(trace.d_slant_m - trace.dist_m) < 0.5
   const slantNote = slantSame
     ? ''
@@ -239,7 +240,8 @@ const LW_POINT_SOURCE = {
 const POINT_SOURCE_KINDS = new Set(['building', 'industrial'])
 
 function computeLwRow(trace: SegmentTrace): [React.ReactNode, React.ReactNode] | null {
-  const lw = trace.lw_db_a
+  if (trace.propagation.model !== 'cnossos') return null
+  const lw = trace.propagation.lw_db_a
   if (!lw) return null
   // Aircraft ground-ops SegmentTraces emit silent (NEG_INFINITY →
   // JSON null) lw_db_a values per period because per-microsegment
@@ -571,14 +573,18 @@ function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.ReactNode][
 // ────────────────────────────────────────────────────────────────────────────
 
 function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
-  const { baseline, terrain, screening, vegetation, ground, received_lden } = trace
+  // Doc 29 aircraft (airborne / cruise) doesn't have CNOSSOS path effects.
+  // Future: render a Section4Doc29 with NPD / ΔV / ΔI / Λ / ΔF instead.
+  if (trace.propagation.model !== 'cnossos') return null
+  const { received_lden } = trace
+  const { baseline, terrain, screening, vegetation, ground, path_profile } = trace.propagation
   // Aircraft ground-ops microsegments populate attenuation_bands and
   // factor_g but intentionally NOT the structural arrays (edges,
   // obstacle, forest_runs) — those would 3-4× the JSON payload at
   // 3 k microsegments per LKPR popup. Detect the "scalar-only" mode
   // via empty path_profile and suppress the "(none)" parentheticals
   // that imply data is missing when really it's just not serialized.
-  const isScalarOnly = trace.path_profile.t.length === 0
+  const isScalarOnly = path_profile.t.length === 0
 
   const groundDelta = received_lden.full - received_lden.no_ground
   const atmosphericDelta = received_lden.full - received_lden.no_atmospheric
@@ -778,7 +784,7 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
         'rows are engine decomposition, not two independent Fresnels.'
       const edgesDetail = obs && obs.edges.length > 0
         ? '\n\nEdges:' + obs.edges
-            .map((e, i) => {
+            .map((e: typeof obs.edges[number], i: number) => {
               const kind = e.kind
               const h = kind === 'terrain' ? 'hill peak' : `${kind} ${e.height_m.toFixed(1)} m`
               return `\n  E${EDGE_SUBSCRIPTS[i] ?? i + 1}  ${h}  @ t=${e.t.toFixed(2)}  (+${e.screen_h_m.toFixed(1)} m above LOS)`
@@ -915,30 +921,35 @@ function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
 // ────────────────────────────────────────────────────────────────────────────
 
 function Section5Lden({ trace }: { trace: SegmentTrace }) {
+  // Section 5 is CNOSSOS-only (per-band Lw / received bands). Doc 29
+  // aircraft uses single-number SEL — no band breakdown to render here.
+  const cn = trace.propagation.model === 'cnossos' ? trace.propagation : null
   const periodCells = useMemo(
     () =>
-      PERIOD_ROWS.map(p => {
-        const bands = trace.received_bands[p.key]
-        // `null` bands (engine emits NEG_INFINITY → JSON null for
-        // silent / unsupported sources) coerce to 0 inside `b / 10`
-        // and produce `10^0 = 1` per band — 8 bands then sum to ~9
-        // dB, the fake "L_rec 9 dB" that surfaced in pre-Tier-1+2
-        // ground-ops popups. Filter non-finite before the power
-        // sum so a silent band stays silent.
-        const energy = bands.reduce(
-          (acc, b) => acc + (Number.isFinite(b) ? Math.pow(10, b / 10) : 0),
-          0,
-        )
-        const lrec = energy > 0 ? 10 * Math.log10(energy) : Number.NEGATIVE_INFINITY
-        return {
-          ...p,
-          lw: trace.lw_db_a[p.key],
-          lwBands: trace.lw_bands[p.key],
-          lrec,
-          lrecBands: bands,
-        }
-      }),
-    [trace.lw_db_a, trace.lw_bands, trace.received_bands],
+      cn
+        ? PERIOD_ROWS.map(p => {
+            const bands = cn.received_bands[p.key]
+            // `null` bands (engine emits NEG_INFINITY → JSON null for
+            // silent / unsupported sources) coerce to 0 inside `b / 10`
+            // and produce `10^0 = 1` per band — 8 bands then sum to ~9
+            // dB, the fake "L_rec 9 dB" that surfaced in pre-Tier-1+2
+            // ground-ops popups. Filter non-finite before the power
+            // sum so a silent band stays silent.
+            const energy = bands.reduce(
+              (acc: number, b: number | null) => acc + (Number.isFinite(b) ? Math.pow(10, (b as number) / 10) : 0),
+              0,
+            )
+            const lrec = energy > 0 ? 10 * Math.log10(energy) : Number.NEGATIVE_INFINITY
+            return {
+              ...p,
+              lw: cn.lw_db_a[p.key],
+              lwBands: cn.lw_bands[p.key],
+              lrec,
+              lrecBands: bands,
+            }
+          })
+        : [],
+    [cn],
   )
   return (
     <Section>
@@ -1166,12 +1177,12 @@ export function SegmentExpanded({ trace }: { trace: SegmentTrace }) {
   return (
     <div className="ml-2 mr-4 pb-2 text-[11px] leading-relaxed font-mono text-muted-foreground">
       <Section1Source trace={trace} />
-      {!isGroundOps && (
+      {!isGroundOps && trace.propagation.model === 'cnossos' && (
         <Section>
           <PathProfileDiagram
-            trace={trace.path_profile}
-            terrainEdges={trace.terrain.edges}
-            dominantEdgeIdx={trace.terrain.dominant_edge_idx}
+            trace={trace.propagation.path_profile}
+            terrainEdges={trace.propagation.terrain.edges}
+            dominantEdgeIdx={trace.propagation.terrain.dominant_edge_idx}
           />
           <HoverText
             title={
@@ -1182,8 +1193,8 @@ export function SegmentExpanded({ trace }: { trace: SegmentTrace }) {
             }
           >
             <div className="mt-0.5 text-[10px] text-muted-foreground italic">
-              Profile: {trace.path_profile.t.length} samples · median step{' '}
-              {trace.path_profile.step_m_med.toFixed(1)} m
+              Profile: {trace.propagation.path_profile.t.length} samples · median step{' '}
+              {trace.propagation.path_profile.step_m_med.toFixed(1)} m
             </div>
           </HoverText>
         </Section>

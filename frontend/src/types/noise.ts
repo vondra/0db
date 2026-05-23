@@ -590,6 +590,46 @@ export type EmissionTrace =
  * `is_dep` was dropped in v16 — it was always `true` per Doc 29 §A.3.2
  * (en-route flights use the Departure NPD family; no cruise NPD set
  * is published). */
+/**
+ * Per-segment propagation breakdown. `Cnossos` carries the full ISO 9613-2
+ * + CNOSSOS-EU chain (terrain, screening, vegetation, ground, per-band Lw)
+ * for surface sources. `Doc29` carries ICAO Doc 29 Eq. 4-8b decomposition
+ * for aircraft airborne sub-segments + cruise hexes.
+ */
+export type PropagationBreakdown =
+  | { model: 'cnossos' } & CnossosBreakdown
+  | { model: 'doc29' } & Doc29Breakdown
+
+export interface CnossosBreakdown {
+  baseline: BaselineTrace
+  path_profile: PathProfileTrace
+  terrain: TerrainTrace
+  screening: ScreeningTrace
+  vegetation: VegetationTrace
+  ground: GroundTrace
+  /** Band entries are null for periods with no emission (e.g. runway segments
+   *  where day/evening had no observed traffic). */
+  lw_bands: PerPeriod<(number | null)[]>
+  lw_db_a: PerPeriod<number>
+  received_bands: PerPeriod<number[]>
+}
+
+export interface Doc29Breakdown {
+  sel_npd_db: number
+  delta_v_db: number
+  delta_i_db: number
+  lambda_db: number
+  delta_f_db: number
+  d_p_m: number
+  lateral_m: number
+  /** Elevation angle (β) in degrees. CFFK fast path = 90.0 sentinel. */
+  beta_deg: number
+  seg_len_m: number
+  d_bar_m: number
+  installation: 'wing' | 'fuselage' | 'propeller'
+  cffk_fast_path: boolean
+}
+
 export interface CruiseBucketBreakdown {
   class: number
   fl_bin: number
@@ -622,17 +662,14 @@ export interface SegmentTrace {
   bridge: boolean
   tunnel: boolean
   emission: EmissionTrace
-  // Band entries are null for periods with no emission (e.g. runway segments
-  // where day/evening had no observed traffic — see fmtDb / bandsTooltip).
-  lw_bands: PerPeriod<(number | null)[]>
-  lw_db_a: PerPeriod<number>
-  baseline: BaselineTrace
-  path_profile: PathProfileTrace
-  terrain: TerrainTrace
-  screening: ScreeningTrace
-  vegetation: VegetationTrace
-  ground: GroundTrace
-  received_bands: PerPeriod<number[]>
+  /**
+   * Tagged-enum propagation breakdown — model-specific structure. `Cnossos`
+   * for surface sources (road / rail / aircraft ground ops / building /
+   * industrial); `Doc29` for aircraft airborne sub-segments + cruise hexes.
+   * Frontend gates Section4PathEffects / lw rows / received-bands on
+   * `propagation.model === 'cnossos'`.
+   */
+  propagation: PropagationBreakdown
   /**
    * Per-segment Lden contribution (energy-summing across all visible
    * segments approaches the source-aggregate Lden for that layer, modulo

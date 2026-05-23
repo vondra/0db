@@ -6,10 +6,10 @@ use crate::constants::{ALPHA_ATM, GROUND_CF};
 use crate::propagation::iso9613;
 use crate::propagation::PathProfile;
 use crate::types::{
-    BaselineTrace, EmissionTrace, ForestRun, GroundTrace, LayerKind, LdenVariants,
-    PathProfileTrace, PerPeriod, PointSource, PropagationVariants, RailSegment, RoadSegment,
-    ScreeningObstacleTrace, ScreeningTrace, SegmentTrace, TerrainTrace, VegetationTrace,
-    NUM_BANDS,
+    BaselineTrace, CnossosBreakdown, EmissionTrace, ForestRun, GroundTrace, LayerKind,
+    LdenVariants, PathProfileTrace, PerPeriod, PointSource, PropagationBreakdown,
+    PropagationVariants, RailSegment, RoadSegment, ScreeningObstacleTrace, ScreeningTrace,
+    SegmentTrace, TerrainTrace, VegetationTrace, NUM_BANDS,
 };
 use crate::{building_type_name, industrial_type_name, rail_type_name};
 
@@ -217,20 +217,6 @@ pub fn baseline_trace(
     }
 }
 
-/// Baseline for a point source aloft (aircraft airborne / cruise) — ground
-/// absorption, finite-line correction, and reflection are zero by construction:
-/// the source is decoupled from any ground surface.
-pub(crate) fn point_source_aloft_baseline(d_slant_m: f64, altitude_m: f64) -> BaselineTrace {
-    baseline_trace(
-        d_slant_m,
-        altitude_m,
-        0.0,
-        0.0,
-        0.0,
-        iso9613::SourceGeometry::Point,
-    )
-}
-
 /// Inputs for building a per-segment road trace. Keyword-struct style to avoid
 /// a 30-argument function. Consumed (not borrowed) for heavy fields that can
 /// be moved into the resulting SegmentTrace.
@@ -357,30 +343,32 @@ pub(crate) fn build_point_segment_trace(inputs: BuildPointTrace<'_>) -> SegmentT
         bridge: false,
         tunnel: false,
         emission,
-        lw_bands: PerPeriod {
-            day: lw_bands[0],
-            evening: lw_bands[1],
-            night: lw_bands[2],
-        },
-        lw_db_a: PerPeriod {
-            day: iso9613::a_weighted_total(&lw_bands[0]),
-            evening: iso9613::a_weighted_total(&lw_bands[1]),
-            night: iso9613::a_weighted_total(&lw_bands[2]),
-        },
-        baseline: baseline_trace(
-            d_slant,
-            src_alt,
-            ground_g,
-            0.0,
-            reflection_boost_db,
-            iso9613::SourceGeometry::Point,
-        ),
-        path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
-        terrain,
-        screening: screening_trace(screening_atten, obstacle_trace),
-        vegetation,
-        ground: ground_trace(ground_g),
-        received_bands: variants_to_received_bands(&seg_variants),
+        propagation: PropagationBreakdown::Cnossos(Box::new(CnossosBreakdown {
+            baseline: baseline_trace(
+                d_slant,
+                src_alt,
+                ground_g,
+                0.0,
+                reflection_boost_db,
+                iso9613::SourceGeometry::Point,
+            ),
+            path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
+            terrain,
+            screening: screening_trace(screening_atten, obstacle_trace),
+            vegetation,
+            ground: ground_trace(ground_g),
+            lw_bands: PerPeriod {
+                day: lw_bands[0],
+                evening: lw_bands[1],
+                night: lw_bands[2],
+            },
+            lw_db_a: PerPeriod {
+                day: iso9613::a_weighted_total(&lw_bands[0]),
+                evening: iso9613::a_weighted_total(&lw_bands[1]),
+                night: iso9613::a_weighted_total(&lw_bands[2]),
+            },
+            received_bands: variants_to_received_bands(&seg_variants),
+        })),
         received_lden: variants_to_lden(&seg_variants),
         aircraft_subtype: 0,
         polyline: None,
@@ -472,30 +460,32 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
             rail_type,
             service: seg.service,
         },
-        lw_bands: PerPeriod {
-            day: lw_bands[0],
-            evening: lw_bands[1],
-            night: lw_bands[2],
-        },
-        lw_db_a: PerPeriod {
-            day: iso9613::a_weighted_total(&lw_bands[0]),
-            evening: iso9613::a_weighted_total(&lw_bands[1]),
-            night: iso9613::a_weighted_total(&lw_bands[2]),
-        },
-        baseline: baseline_trace(
-            d_slant,
-            src_alt,
-            ground_g,
-            flc,
-            reflection_boost_db,
-            iso9613::SourceGeometry::Line,
-        ),
-        path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
-        terrain,
-        screening: screening_trace(screening_atten, obstacle_trace),
-        vegetation,
-        ground: ground_trace(ground_g),
-        received_bands: variants_to_received_bands(&seg_variants),
+        propagation: PropagationBreakdown::Cnossos(Box::new(CnossosBreakdown {
+            baseline: baseline_trace(
+                d_slant,
+                src_alt,
+                ground_g,
+                flc,
+                reflection_boost_db,
+                iso9613::SourceGeometry::Line,
+            ),
+            path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
+            terrain,
+            screening: screening_trace(screening_atten, obstacle_trace),
+            vegetation,
+            ground: ground_trace(ground_g),
+            lw_bands: PerPeriod {
+                day: lw_bands[0],
+                evening: lw_bands[1],
+                night: lw_bands[2],
+            },
+            lw_db_a: PerPeriod {
+                day: iso9613::a_weighted_total(&lw_bands[0]),
+                evening: iso9613::a_weighted_total(&lw_bands[1]),
+                night: iso9613::a_weighted_total(&lw_bands[2]),
+            },
+            received_bands: variants_to_received_bands(&seg_variants),
+        })),
         received_lden: variants_to_lden(&seg_variants),
         aircraft_subtype: 0,
         polyline: None,
@@ -582,30 +572,32 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
         bridge: seg.bridge,
         tunnel: seg.tunnel,
         emission,
-        lw_bands: PerPeriod {
-            day: lw_bands[0],
-            evening: lw_bands[1],
-            night: lw_bands[2],
-        },
-        lw_db_a: PerPeriod {
-            day: iso9613::a_weighted_total(&lw_bands[0]),
-            evening: iso9613::a_weighted_total(&lw_bands[1]),
-            night: iso9613::a_weighted_total(&lw_bands[2]),
-        },
-        baseline: baseline_trace(
-            d_slant,
-            src_alt,
-            ground_g,
-            flc,
-            reflection_boost_db,
-            iso9613::SourceGeometry::Line,
-        ),
-        path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
-        terrain,
-        screening: screening_trace(screening_atten, obstacle_trace),
-        vegetation,
-        ground: ground_trace(ground_g),
-        received_bands: variants_to_received_bands(&seg_variants),
+        propagation: PropagationBreakdown::Cnossos(Box::new(CnossosBreakdown {
+            baseline: baseline_trace(
+                d_slant,
+                src_alt,
+                ground_g,
+                flc,
+                reflection_boost_db,
+                iso9613::SourceGeometry::Line,
+            ),
+            path_profile: path_profile_into_trace(path_profile, src_alt, rcv_alt),
+            terrain,
+            screening: screening_trace(screening_atten, obstacle_trace),
+            vegetation,
+            ground: ground_trace(ground_g),
+            lw_bands: PerPeriod {
+                day: lw_bands[0],
+                evening: lw_bands[1],
+                night: lw_bands[2],
+            },
+            lw_db_a: PerPeriod {
+                day: iso9613::a_weighted_total(&lw_bands[0]),
+                evening: iso9613::a_weighted_total(&lw_bands[1]),
+                night: iso9613::a_weighted_total(&lw_bands[2]),
+            },
+            received_bands: variants_to_received_bands(&seg_variants),
+        })),
         received_lden: variants_to_lden(&seg_variants),
         aircraft_subtype: 0,
         polyline: None,
@@ -613,53 +605,6 @@ pub(crate) fn build_road_segment_trace(inputs: BuildRoadTrace<'_>) -> SegmentTra
         cruise_buckets: None,
         cruise_top_flights: None,
         length_m_per_kind: None,
-    }
-}
-
-pub(crate) fn empty_terrain_trace() -> TerrainTrace {
-    TerrainTrace {
-        delta_m: 0.0,
-        is_double: false,
-        attenuation_bands: [0.0; NUM_BANDS],
-        n_edges: 0,
-        edges: Vec::new(),
-        delta_star_m: 0.0,
-        edge_distance_m: 0.0,
-        dominant_edge_idx: 0,
-    }
-}
-
-pub(crate) fn empty_screening_trace() -> ScreeningTrace {
-    ScreeningTrace {
-        attenuation_bands: [0.0; NUM_BANDS],
-        obstacle: None,
-    }
-}
-
-pub(crate) fn empty_path_profile() -> PathProfileTrace {
-    PathProfileTrace {
-        t: Vec::new(),
-        elevation_m: Vec::new(),
-        building_h_m: Vec::new(),
-        forest_u8: Vec::new(),
-        imd_u8: Vec::new(),
-        dist_m: 0.0,
-        step_m_med: 0.0,
-        src_lat: 0.0,
-        src_lon: 0.0,
-        rcv_lat: 0.0,
-        rcv_lon: 0.0,
-        src_alt_m: 0.0,
-        rcv_alt_m: 0.0,
-    }
-}
-
-pub(crate) fn empty_vegetation_trace() -> VegetationTrace {
-    VegetationTrace {
-        forest_depth_m: 0.0,
-        sampled_path_m: 0.0,
-        attenuation_bands: [0.0; NUM_BANDS],
-        forest_runs: Vec::new(),
     }
 }
 

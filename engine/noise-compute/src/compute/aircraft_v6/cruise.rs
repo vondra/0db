@@ -284,6 +284,22 @@ pub fn scatter(
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
             let cruise_top_flights = top_flights_for_hex(&acc.top_fids);
+            // Doc 29 placeholder: kernel breakdown not yet plumbed; cruise
+            // is always CFFK fast-path (FL250+ slant > 7.62 km).
+            let placeholder_doc29 = crate::types::Doc29Breakdown {
+                sel_npd_db: 0.0,
+                delta_v_db: 0.0,
+                delta_i_db: 0.0,
+                lambda_db: 0.0,
+                delta_f_db: 0.0,
+                d_p_m: acc.d_slant_m,
+                lateral_m: 0.0,
+                beta_deg: 90.0,
+                seg_len_m: 0.0,
+                d_bar_m: acc.d_slant_m,
+                installation: "wing",
+                cffk_fast_path: true,
+            };
             t.segments
                 .push(crate::traces::build_aircraft_cruise_r7_trace(
                     crate::traces::BuildAircraftCruiseR7Trace {
@@ -297,6 +313,7 @@ pub fn scatter(
                         n_days: n_days_f,
                         cruise_buckets: acc.buckets,
                         cruise_top_flights,
+                        doc29: placeholder_doc29,
                     },
                 ));
         }
