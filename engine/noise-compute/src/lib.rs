@@ -841,6 +841,7 @@ fn compute_roads(
             },
             obstacle_max_height_m: (acc.obstacle_max_height * 10.0).round() / 10.0,
             obstacle_max_segment_idx: acc.obstacle_max_segment_idx,
+            provenance: crate::sources::dataset_meta(acc.dominant_source_id),
         };
 
         contributors.push(Contributor {
@@ -1282,6 +1283,7 @@ fn compute_railways(
             },
             obstacle_max_height_m: (acc.obstacle_max_height * 10.0).round() / 10.0,
             obstacle_max_segment_idx: acc.obstacle_max_segment_idx,
+            provenance: crate::sources::dataset_meta(acc.closest_source_id),
         };
 
         contributors.push(Contributor {

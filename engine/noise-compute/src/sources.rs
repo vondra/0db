@@ -128,6 +128,37 @@ pub fn provenance_of(id: u16) -> Provenance {
     get_source(id).map_or(Provenance::None, |s| s.provenance)
 }
 
+/// Compact dataset attribution attached to popup contributors and
+/// segments. Mirrors the TS `lookupProvenance` shape so the wire JSON
+/// stays unchanged — previously assembled server-side in Node from a
+/// duplicate `SOURCES_BY_ID` map. Moved into Rust because (a) the
+/// generator already mirrors `SOURCES` here so there is one source of
+/// truth, and (b) the Node enrichment was a no-op since the field
+/// rename `dataset_id` → `source_id` (provenance came out `null` on
+/// every popup).
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct DatasetMeta {
+    pub name: &'static str,
+    pub year: Option<u16>,
+    pub license: Option<&'static str>,
+    pub url: Option<&'static str>,
+}
+
+/// `None` when `id == 0` ("unspecified") or unknown. Caller may
+/// fall back to the sentinel `Source::UNSPECIFIED` if a non-null
+/// stub is required.
+pub fn dataset_meta(id: u16) -> Option<DatasetMeta> {
+    if id == 0 {
+        return None;
+    }
+    get_source(id).map(|s| DatasetMeta {
+        name: s.name,
+        year: s.year,
+        license: s.license,
+        url: s.url,
+    })
+}
+
 pub const SOURCES: &[Source] = &[
     Source {
         id: 0,

@@ -10,21 +10,11 @@ import {
   NoiseOnflyRequestError,
   NoiseOnflySupervisor,
 } from '../engine/noise-onfly-supervisor.js'
-import { SOURCES_BY_ID } from '../../../pipeline/lib/sources.js'
 
-/**
- * Build a compact provenance object for popup display. `source_id = 0` returns
- * the seeded "Unspecified / pre-provenance legacy" entry — never undefined so
- * the frontend never crashes on a missing lookup.
- */
-function lookupProvenance(sourceId: number | null | undefined):
-  | { name: string; year: number | null; license: string | null; url: string | null }
-  | null {
-  if (sourceId == null) return null
-  const src = SOURCES_BY_ID.get(sourceId) ?? SOURCES_BY_ID.get(0)
-  if (!src) return null
-  return { name: src.name, year: src.year, license: src.license, url: src.url }
-}
+// Provenance is now attached in the Rust engine (`crate::sources::dataset_meta`)
+// directly on EmissionTrace::Road / Railway and Road / Rail metadata. The old
+// Node-side `lookupProvenance(meta.dominant_dataset_id ?? meta.dataset_id)`
+// enrichment was a silent no-op since the field rename to `source_id`.
 
 const SOURCE_READER_PATH = resolve(import.meta.dirname, '../../../engine/source-reader/target/release/libsource_reader.so')
 const YEAR = process.env.DATA_YEAR || '2025'
@@ -99,29 +89,13 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
           displayed_count: s.displayed_count ?? 0,
         }))
 
-        // Typed metadata (SourceMetadata enum from Rust) flows through unchanged.
-        // Aircraft metadata is now Rust-side `SourceMetadata::Aircraft` (not a server-side bag),
-        // so no flattening needed here.
-        // Enrich each road/rail segment trace with provenance once (mirror
-        // of the contributor-level lookup below; both share the central
-        // registry so wording stays consistent).
-        for (const s of (raw.segments ?? [])) {
-          const em = s?.emission
-          if (em && (em.kind === 'road' || em.kind === 'railway') && em.dataset_id != null) {
-            em.provenance = lookupProvenance(em.dataset_id)
-          }
-        }
+        // Typed metadata (SourceMetadata enum from Rust) and segment
+        // emission both carry `provenance` from the Rust builders. No
+        // Node-side enrichment needed.
 
         const topContributors = (raw.contributors ?? []).map((c: any) => {
           const screeningRaw = c.screening ?? { building_path_m: 0 }
-          // Attach human-readable provenance from the central registry. Looks up by
-          // dominant_dataset_id (road) / dataset_id (rail/point); missing → unspecified.
-          const meta = c.metadata ? { ...c.metadata } : null
-          if (meta) {
-            const rawId =
-              meta.dominant_dataset_id ?? meta.dataset_id ?? null
-            meta.provenance = lookupProvenance(rawId)
-          }
+          const meta = c.metadata ?? null
           return {
             source_type: c.source_type,
             osm_id: c.osm_id ?? null,
