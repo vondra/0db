@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Fires after `git merge` (and after `git pull` which is fetch+merge).
+exec "$(dirname "$0")/_engine-rebuild.sh" "HEAD@{1}" "HEAD"

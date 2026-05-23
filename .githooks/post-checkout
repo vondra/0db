@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fires after `git checkout <branch>` (branch checkout, $3 == 1) and
+# after file-level `git checkout -- file` (file checkout, $3 == 0).
+# Only rebuild on branch checkouts; file-level checkouts don't move
+# HEAD so the diff against $1 would be empty anyway.
+[ "$3" = "1" ] || exit 0
+exec "$(dirname "$0")/_engine-rebuild.sh" "$1" "$2"
