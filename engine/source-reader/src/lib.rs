@@ -1,6 +1,15 @@
 //! source-reader: mmap'd Arrow IPC reader for noise popup.
 //! Zero-copy: data stays in mmap'd pages, queries iterate directly over Arrow columns.
 
+// mimalloc handles popup's many small short-lived allocs (SegmentTrace
+// + Box<PropagationBreakdown> + inner Vec<f32>) faster than glibc malloc
+// — Microsoft Research benchmarks ~2× speedup for similar workloads.
+// At LKPR the per-popup drop cascade (~6 k traces × ~10 inner allocs)
+// is the hot spot remaining in apply_segment_top_k_with_cap.
+#[cfg(feature = "node")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub mod aircraft_v6;
 pub mod geo;
 pub mod hex_store;
