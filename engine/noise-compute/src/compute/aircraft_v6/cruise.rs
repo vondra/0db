@@ -265,7 +265,6 @@ pub fn scatter(
                 class: row.class,
                 fl_bin: row.fl_bin,
                 period: row.period,
-                is_dep: (row.flags & 0b001) != 0,
                 // v14: `unique_count` is the full bucket count (not
                 // just top-K) — display semantics match v13.
                 n_flights: row.unique_count,

@@ -585,12 +585,15 @@ export type EmissionTrace =
       effective_area_source_dist_m: number
     }
 
-/** One bucket inside a cruise R7 hex aggregate trace. */
+/** One bucket inside a cruise R7 hex aggregate trace.
+ *
+ * `is_dep` was dropped in v16 — it was always `true` per Doc 29 §A.3.2
+ * (en-route flights use the Departure NPD family; no cruise NPD set
+ * is published). */
 export interface CruiseBucketBreakdown {
   class: number
   fl_bin: number
   period: number
-  is_dep: boolean
   n_flights: number
   received_lden: number
 }

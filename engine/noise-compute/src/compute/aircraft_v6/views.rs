@@ -172,7 +172,6 @@ pub struct CruiseRowView<'a> {
     pub rep_profile_idx: u8,
     pub fl_bin: u8,
     pub period: u8,
-    pub flags: u8,
     pub sum_length_m: f32,
     pub rep_len_m: f32,
     pub rep_alt_m: f32,

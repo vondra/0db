@@ -565,10 +565,11 @@ const LEGACY_AIRPORT_TRAFFIC_CONTRACTS: &[&str] = &[];
 pub(super) const EXPECTED_AIRBORNE_CONTRACT: &str = "airborne_v2";
 const LEGACY_AIRBORNE_CONTRACTS: &[&str] = &[];
 
-/// Expected `cruise_contract` metadata. v15 (R7 bucketing) is the
-/// current schema. v14 (R8) cruise.arrow lacks the `r7_hex` column;
-/// silent skip would zero out cruise contributions at every receiver.
-pub(super) const EXPECTED_CRUISE_CONTRACT: &str = "cruise_v15_r7";
+/// Expected `cruise_contract` metadata. v16 drops the tautological
+/// `flags` column (always IS_DEPARTURE per Doc 29 §A.3.2). Older
+/// cruise.arrow files lack columns the popup expects; silent skip
+/// would zero out cruise contributions at every receiver.
+pub(super) const EXPECTED_CRUISE_CONTRACT: &str = "cruise_v16_no_flags";
 
 fn accept_legacy() -> bool {
     matches!(std::env::var("ACCEPT_LEGACY_AIRCRAFT_SCHEMA").as_deref(), Ok("1"))

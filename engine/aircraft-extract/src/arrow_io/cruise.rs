@@ -29,7 +29,6 @@ pub fn write_cruise(path: &Path, rows: &[CruiseBucket], n_days: u16) -> Result<(
     let mut rep_pi = UInt8Builder::with_capacity(n);
     let mut fl_bin = UInt8Builder::with_capacity(n);
     let mut period = UInt8Builder::with_capacity(n);
-    let mut flags = UInt8Builder::with_capacity(n);
     let mut sum_len = Float32Builder::with_capacity(n);
     let mut rep_len = Float32Builder::with_capacity(n);
     let mut rep_alt = Float32Builder::with_capacity(n);
@@ -56,7 +55,6 @@ pub fn write_cruise(path: &Path, rows: &[CruiseBucket], n_days: u16) -> Result<(
         rep_pi.append_value(r.rep_profile_idx);
         fl_bin.append_value(r.fl_bin);
         period.append_value(r.period);
-        flags.append_value(r.flags);
         sum_len.append_value(r.sum_length_m);
         rep_len.append_value(r.rep_len_m);
         rep_alt.append_value(r.rep_alt_m);
@@ -104,7 +102,6 @@ pub fn write_cruise(path: &Path, rows: &[CruiseBucket], n_days: u16) -> Result<(
         Arc::new(rep_pi.finish()),
         Arc::new(fl_bin.finish()),
         Arc::new(period.finish()),
-        Arc::new(flags.finish()),
         Arc::new(sum_len.finish()),
         Arc::new(rep_len.finish()),
         Arc::new(rep_alt.finish()),
@@ -132,7 +129,6 @@ mod tests {
             rep_profile_idx: 7,
             fl_bin: 3,
             period: 0,
-            flags: 1,
             sum_length_m: 5000.0,
             rep_len_m: 1500.0,
             rep_alt_m: 11_000.0,
@@ -177,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn cruise_schema_carries_v14_columns() {
+    fn cruise_schema_has_no_flags_column() {
         let dir = tempdir().unwrap();
         let p = dir.path().join("cruise.arrow");
         let cs = vec![sample_bucket()];
@@ -186,6 +182,8 @@ mod tests {
         assert!(schema.field_with_name("unique_count").is_ok());
         assert!(schema.field_with_name("top_candidates").is_ok());
         assert!(schema.field_with_name("cruise_flight_ids").is_err());
+        // v16 invariant: `flags` is gone (was always IS_DEPARTURE per Doc 29 §A.3.2).
+        assert!(schema.field_with_name("flags").is_err());
         assert_eq!(
             schema.metadata().get("schema_version").map(String::as_str),
             Some(crate::SCHEMA_VERSION)

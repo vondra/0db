@@ -21,9 +21,9 @@ adsb.lol TAR archives ── Stage 0 (parse + dedup) ──→ flights/<day>.arr
               ▼           ▼                            ▼
         Stage 2A      Stage 2B                   Stage 2C
         airborne      cruise                     airport ground ops
-        per           per (R8, fl_bin,           per (airport_key,
-        (flight × R4) class, period,             osm_id, segment_idx,
-                      is_dep)                    ops_kind, period, …)
+        per           per (R7, fl_bin,           per (airport_key,
+        (flight × R4) class, period)             osm_id, segment_idx,
+                                                 ops_kind, period, …)
               │           │                            │
               ▼           ▼                            ▼
         airborne.arrow  cruise.arrow         airport_traffic.arrow

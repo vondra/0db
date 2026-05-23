@@ -42,9 +42,9 @@ pub mod wipe;
 /// callers must re-extract when bumped. v14 replaced the per-fid cruise
 /// flight-id lists with a bounded top-K struct list. v15 (Opt A) added
 /// five pre-sampled terrain elevation columns to airborne sub-segments.
-/// Within-v15 column-shape evolutions of `airport_traffic.arrow` and
-/// `airborne.arrow` (K3 q1/mid/q3 drop) are gated by the orthogonal
-/// `airport_traffic_contract` / `airborne_contract` metadata stamps so
-/// upstream cached arrows (Stage 0 flights, Stage 1 segments, cruise)
-/// stay re-extract-free.
+/// Within-v15 column-shape evolutions of `airport_traffic.arrow`,
+/// `airborne.arrow` (K3 q1/mid/q3 drop), and `cruise.arrow` (R8→R7,
+/// then v16 drops the tautological `flags` column) are gated by the
+/// orthogonal `*_contract` metadata stamps so upstream cached arrows
+/// (Stage 0 flights, Stage 1 segments) stay re-extract-free.
 pub const SCHEMA_VERSION: &str = "v15";

@@ -21,7 +21,6 @@ struct OwnedCruiseRow {
     rep_profile_idx: u8,
     fl_bin: u8,
     period: u8,
-    flags: u8,
     sum_length_m: f32,
     rep_len_m: f32,
     rep_alt_m: f32,
@@ -52,7 +51,6 @@ impl CruiseRowAccum {
             let Some(rep_pi) = col_u8(batch, "rep_profile_idx") else { continue };
             let Some(fl_bin) = col_u8(batch, "fl_bin") else { continue };
             let Some(period) = col_u8(batch, "period") else { continue };
-            let Some(flags) = col_u8(batch, "flags") else { continue };
             let Some(sum_len) = col_f32(batch, "sum_length_m") else { continue };
             let Some(rep_len) = col_f32(batch, "rep_len_m") else { continue };
             let Some(rep_alt) = col_f32(batch, "rep_alt_m") else { continue };
@@ -123,7 +121,6 @@ impl CruiseRowAccum {
                     rep_profile_idx: rep_pi.value(i),
                     fl_bin: fl_bin.value(i),
                     period: period.value(i),
-                    flags: flags.value(i),
                     sum_length_m: sum_len.value(i),
                     rep_len_m: rep_len.value(i),
                     rep_alt_m: rep_alt.value(i),
@@ -195,7 +192,6 @@ impl<'a> CruiseViewSlices<'a> {
                 rep_profile_idx: r.rep_profile_idx,
                 fl_bin: r.fl_bin,
                 period: r.period,
-                flags: r.flags,
                 sum_length_m: r.sum_length_m,
                 rep_len_m: r.rep_len_m,
                 rep_alt_m: r.rep_alt_m,

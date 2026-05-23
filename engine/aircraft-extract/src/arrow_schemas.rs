@@ -147,8 +147,9 @@ pub fn airborne_schema() -> Arc<Schema> {
 
 /// Airborne sub-segment column-shape contract stamped into
 /// `airborne.arrow` so `schema_version` (the global stamp) can stay at
-/// v15 — only `airborne.arrow` changed shape in K3, every other arrow
-/// the pipeline produces is byte-identical.
+/// v15 — per-arrow shape evolutions (K3 q1/mid/q3 drop in airborne;
+/// R8→R7 and v16 `flags` drop in cruise; v7 LW' kernel in airport
+/// traffic) are tracked via the orthogonal `*_contract` stamps.
 ///
 /// v1 stored five terrain elevations per sub-segment (start / q1 / mid /
 /// q3 / end). v2 (K3, 2026-05) drops q1 / mid / q3; the chord
@@ -212,17 +213,23 @@ pub fn cruise_top_candidate_fields() -> Fields {
 
 /// Cruise.arrow contract stamped into schema metadata. Bumped whenever
 /// the column shape OR the spatial bucket resolution changes. Loaders
-/// MUST call [`assert_cruise_contract`] — without it a stale v14 (R8)
-/// file is mistaken for v15 (R7) because the `col_u64("r7_hex")` lookup
-/// returns None on v14 and downstream code falls through to "no cruise
-/// data" instead of failing loud.
-pub const CRUISE_CONTRACT_V15_R7: &str = "cruise_v15_r7";
+/// MUST call [`assert_cruise_contract`] — without it a stale file is
+/// mistaken for the current schema because missing columns return None
+/// and downstream code falls through to "no cruise data" instead of
+/// failing loud.
+///
+/// v16 drops the tautological `flags: u8` column. Every cruise row
+/// carries `flags = IS_DEPARTURE = 1` by construction (Doc 29 §A.3.2:
+/// en-route flights use the Departure NPD family; no cruise-specific
+/// NPD set is published). The popup kernel hardcodes `is_departure: true`
+/// directly on the synth `AircraftSegment` — the column was pure overhead.
+pub const CRUISE_CONTRACT_V16_NO_FLAGS: &str = "cruise_v16_no_flags";
 
-/// Stage 2B — `h3r4/<hex>/cruise.arrow` (v15). One row per (R7, fl_bin,
-/// class, period, is_dep) bucket. v15 coarsens the spatial key from R8
+/// Stage 2B — `h3r4/<hex>/cruise.arrow` (v16). One row per (R7, fl_bin,
+/// class, period) bucket. v15 coarsens the spatial key from R8
 /// (~0.74 km² hex) to R7 (~5.16 km² hex) for ~7× fewer rows per R4 with
 /// < 0.16 dB Lden drift at FL250+ (centroid offset ≤ 1.44 km against
-/// typical slant > 7.62 km).
+/// typical slant > 7.62 km). v16 drops the tautological `flags` column.
 pub fn cruise_schema() -> Arc<Schema> {
     let cand_struct = DataType::Struct(cruise_top_candidate_fields());
     let fields = vec![
@@ -231,7 +238,6 @@ pub fn cruise_schema() -> Arc<Schema> {
         Field::new("rep_profile_idx", DataType::UInt8, false),
         Field::new("fl_bin", DataType::UInt8, false),
         Field::new("period", DataType::UInt8, false),
-        Field::new("flags", DataType::UInt8, false),
         Field::new("sum_length_m", DataType::Float32, false),
         Field::new("rep_len_m", DataType::Float32, false),
         Field::new("rep_alt_m", DataType::Float32, false),
@@ -247,25 +253,25 @@ pub fn cruise_schema() -> Arc<Schema> {
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "cruise"),
-        ("cruise_contract", CRUISE_CONTRACT_V15_R7),
+        ("cruise_contract", CRUISE_CONTRACT_V16_NO_FLAGS),
     ])))
 }
 
 /// Verify a loaded `cruise.arrow` file's `cruise_contract` metadata
-/// matches [`CRUISE_CONTRACT_V15_R7`]. Older files MUST be rejected —
-/// v14 stored an `r8_hex` column, and the popup/heatmap readers silently
-/// skip batches whose `r7_hex` column is missing, hiding the version skew.
+/// matches [`CRUISE_CONTRACT_V16_NO_FLAGS`]. Older files MUST be
+/// rejected — the popup/heatmap readers silently skip batches whose
+/// expected columns are missing, hiding the version skew.
 pub fn assert_cruise_contract(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     match metadata.get("cruise_contract").map(String::as_str) {
-        Some(CRUISE_CONTRACT_V15_R7) => Ok(()),
+        Some(CRUISE_CONTRACT_V16_NO_FLAGS) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "cruise_contract mismatch: expected {CRUISE_CONTRACT_V15_R7}, got {other}"
+            "cruise_contract mismatch: expected {CRUISE_CONTRACT_V16_NO_FLAGS}, got {other}"
         )),
         None => Err(anyhow::anyhow!(
             "cruise_contract metadata missing — \
-             pre-v15 (R8) `cruise.arrow` files need re-extraction"
+             pre-v16 `cruise.arrow` files need re-extraction"
         )),
     }
 }
@@ -609,11 +615,11 @@ mod tests {
     }
 
     #[test]
-    fn cruise_schema_has_v14_columns() {
+    fn cruise_schema_v16_required_columns() {
         let s = cruise_schema();
         for required in [
             "r7_hex", "class", "rep_profile_idx", "fl_bin", "period",
-            "flags", "sum_length_m", "rep_len_m", "rep_alt_m", "rep_speed_kt",
+            "sum_length_m", "rep_len_m", "rep_alt_m", "rep_speed_kt",
             "unique_count", "top_candidates", "source_id", "origin",
         ] {
             assert!(
@@ -621,6 +627,12 @@ mod tests {
                 "cruise schema must carry {required} column"
             );
         }
+        // v16 drops the tautological `flags` column (Doc 29 §A.3.2:
+        // all cruise rows always carry IS_DEPARTURE=1).
+        assert!(
+            s.field_with_name("flags").is_err(),
+            "cruise schema v16 must NOT carry `flags` column"
+        );
         // v14 explicitly DROPS the per-fid lists.
         for dropped in ["cruise_flight_ids", "cruise_aircraft_types", "cruise_callsigns"] {
             assert!(
