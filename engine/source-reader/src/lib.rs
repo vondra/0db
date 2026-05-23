@@ -766,13 +766,20 @@ fn apply_segment_top_k_with_cap(
         .segments
         .sort_unstable_by(|a, b| b.received_lden.full.partial_cmp(&a.received_lden.full).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut kept: Vec<noise_compute::types::SegmentTrace> = Vec::new();
     let mut per_kind: std::collections::HashMap<LayerKind, u32> = std::collections::HashMap::new();
     let mut aircraft_ground_count = 0u32;
     let mut aircraft_airborne_subseg_count = 0u32;
     let mut aircraft_cruise_count = 0u32;
-    for seg in std::mem::take(&mut traces.segments) {
-        let cap_ok = match aircraft_subtype_bucket(&seg) {
+    // `retain_mut` drops over-cap traces in place — avoids the
+    // intermediate `kept` Vec allocation. Drop cost itself is
+    // unchanged (each over-cap trace still pays cascade dealloc on
+    // Box<PropagationBreakdown> + inner Vec<f32>) and remains the
+    // hot spot — at LKPR ≈ 100 ms with n_in ≈ 4 k. Real fix is
+    // capping at per-source emission (e.g. airport_traffic ground
+    // ops capped to 150 in `aircraft_v6/airport_traffic.rs`).
+    let mut truncated = false;
+    traces.segments.retain_mut(|seg| {
+        let cap_ok = match aircraft_subtype_bucket(seg) {
             Some(1) => {
                 if (aircraft_ground_count as usize) < per_kind_cap {
                     aircraft_ground_count += 1;
@@ -807,13 +814,12 @@ fn apply_segment_top_k_with_cap(
                 }
             }
         };
-        if cap_ok {
-            kept.push(seg);
-        } else {
-            summary.truncated = true;
+        if !cap_ok {
+            truncated = true;
         }
-    }
-    traces.segments = kept;
+        cap_ok
+    });
+    summary.truncated = truncated;
 
     summary.road_count = *per_kind.get(&LayerKind::Road).unwrap_or(&0);
     summary.railway_count = *per_kind.get(&LayerKind::Railway).unwrap_or(&0);
