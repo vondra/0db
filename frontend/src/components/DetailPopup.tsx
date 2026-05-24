@@ -1009,14 +1009,19 @@ function TimingsOverlay({ timings }: { timings: NoiseComputeData['timings'] }) {
   )
 }
 
-interface DetailPopupProps {
+export interface DetailPopupProps {
   detailPosition: { lat: number; lng: number } | null
   triggerPosition: { lat: number; lng: number } | null
   onDetailData?: (data: NoiseComputeData | null) => void
   onDetailPositionChange?: (pos: { lat: number; lng: number } | null) => void
+  /// Fired when the noise fetch fails (non-abort). MVP-0: card stays
+  /// open showing the position skeleton with an error message instead of
+  /// silently unmounting via `onDetailPositionChange(null)` — Gemini
+  /// /gg 2026-05-24 CRITICAL.
+  onDetailError?: (message: string | null) => void
 }
 
-export default function DetailPopup({ detailPosition, triggerPosition, onDetailData, onDetailPositionChange }: DetailPopupProps) {
+export default function DetailPopup({ detailPosition, triggerPosition, onDetailData, onDetailPositionChange, onDetailError }: DetailPopupProps) {
   const { current: map } = useMap()
 
   useEffect(() => {
@@ -1060,13 +1065,14 @@ export default function DetailPopup({ detailPosition, triggerPosition, onDetailD
       .catch(err => {
         if (err.name === 'AbortError') return
         console.error(err)
-        // Clear stale selection so UI doesn't stick on a failed point.
-        onDetailData?.(null)
-        onDetailPositionChange?.(null)
+        // Keep `detailPosition` so the card stays open with a skeleton
+        // → error state. Clearing position here (the pre-MVP-0 behavior)
+        // unmounted the card and lost the user's clicked location.
+        onDetailError?.(err instanceof Error ? err.message : String(err))
       })
 
     return () => controller.abort()
-  }, [detailPosition, map, onDetailData, onDetailPositionChange])
+  }, [detailPosition, map, onDetailData, onDetailError])
 
   return (
     <>

@@ -61,6 +61,9 @@ export default function App() {
   })
   const [detailPosition, setDetailPosition] = useState<{ lat: number; lng: number } | null>(initial.detailPosition)
   const [noiseDetailData, setNoiseDetailData] = useState<NoiseComputeData | null>(null)
+  // MVP-0: card opens skeleton-immediate-on-click; error path keeps the
+  // position so user sees the failure context instead of card vanishing.
+  const [noiseDetailError, setNoiseDetailError] = useState<string | null>(null)
   const [highlightGeometry, setHighlightGeometry] = useState<any | null>(null)
   const [quietHexData, setQuietHexData] = useState<QuietHex[]>([])
   const [quietVisible, setQuietVisible] = useState(false)
@@ -200,15 +203,37 @@ export default function App() {
 
   const handleDetailPositionChange = useCallback((pos: { lat: number; lng: number } | null) => {
     setDetailPosition(pos)
+    // Fresh click: clear stale data + error so the new skeleton renders
+    // for the new position (Codex /gg 2026-05-24 WARNING — position-match
+    // gating in the card is the back-stop).
+    if (pos) {
+      setNoiseDetailData(null)
+      setNoiseDetailError(null)
+    }
     syncUrl({ detailPosition: pos })
   }, [syncUrl])
 
   const handleDetailData = useCallback((d: NoiseComputeData | null) => {
     setNoiseDetailData(d)
+    if (d) {
+      setNoiseDetailError(null)
+    } else {
+      // Backend returned valid-but-empty (no R4 coverage, all-silent point).
+      // Surface as an error so the skeleton stops spinning forever —
+      // Gemini /gg #82 WARNING. NoiseDetailContent's own
+      // "No noise data computed" path renders only after `data` is set
+      // with total_lden=null; an outright null payload bypasses it.
+      setNoiseDetailError('No data available for this location')
+    }
+  }, [])
+
+  const handleDetailError = useCallback((msg: string | null) => {
+    setNoiseDetailError(msg)
   }, [])
 
   const handleNoiseClose = useCallback(() => {
     setNoiseDetailData(null)
+    setNoiseDetailError(null)
     setHighlightGeometry(null)
     handleDetailPositionChange(null)
   }, [handleDetailPositionChange])
@@ -271,6 +296,8 @@ export default function App() {
           <div className="pointer-events-auto">
             <DetailCard
               noiseData={noiseDetailData}
+              position={detailPosition}
+              error={noiseDetailError}
               onNoiseClose={handleNoiseClose}
               onHighlight={setHighlightGeometry}
             />
@@ -304,6 +331,7 @@ export default function App() {
         onQuietHexUpdate={handleQuietHexUpdate}
         onDetailData={handleDetailData}
         onDetailPositionChange={handleDetailPositionChange}
+        onDetailError={handleDetailError}
         detailPosition={detailPosition}
         quietHexData={quietHexData}
         quietVisible={quietVisible}
@@ -363,7 +391,9 @@ export default function App() {
 
       <MobileDetailSheet
         data={noiseDetailData}
-        onClose={() => { setNoiseDetailData(null); handleDetailPositionChange(null) }}
+        position={detailPosition}
+        error={noiseDetailError}
+        onClose={() => { setNoiseDetailData(null); setNoiseDetailError(null); handleDetailPositionChange(null) }}
         onHighlight={setHighlightGeometry}
       />
     </div>

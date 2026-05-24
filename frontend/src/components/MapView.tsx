@@ -31,6 +31,7 @@ interface MapViewProps {
   onQuietHexUpdate?: (update: QuietHexUpdate) => void
   onDetailData?: (data: NoiseComputeData | null) => void
   onDetailPositionChange?: (pos: { lat: number; lng: number } | null) => void
+  onDetailError?: (message: string | null) => void
   detailPosition?: { lat: number; lng: number } | null
   quietHexData?: QuietHex[]
   quietVisible?: boolean
@@ -46,7 +47,7 @@ interface MapViewProps {
 
 export default function MapView({
   selectedLocation, initialCenter, initialZoom, sourceModes, propagationFactors,
-  basemap, onViewChange, onQuietHexUpdate, onDetailData, onDetailPositionChange, detailPosition,
+  basemap, onViewChange, onQuietHexUpdate, onDetailData, onDetailPositionChange, onDetailError, detailPosition,
   quietHexData, quietVisible, quietDataRes, quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters, onPropertySelect, rasterOverlays,
 }: MapViewProps) {
   const center = initialCenter ?? [49.8, 15.5]
@@ -128,6 +129,7 @@ export default function MapView({
         triggerPosition={flyToPos}
         onDetailData={onDetailData}
         onDetailPositionChange={onDetailPositionChange}
+        onDetailError={onDetailError}
       />
       {onViewChange && <MapStateSync onViewChange={onViewChange} />}
     </Map>
