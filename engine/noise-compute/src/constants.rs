@@ -112,10 +112,36 @@ pub const RAILWAY_MAX_RADIUS: f64 = 7_000.0;
 /// Industrial point source max radius.
 pub const INDUSTRIAL_MAX_RADIUS: f64 = 4_000.0;
 
-/// Aircraft ground ops max radii.
+/// Aircraft ground ops max radii. Per-ops_kind reach matches per-source
+/// emission decay: cumulative line-source Lden at the cap boundary sits
+/// ~5-15 dB (well below the 30 dB renderer floor + the ~25 dB road/rail
+/// calibration boundary). Wired via `ground_ops_max_radius()` into both
+/// heatmap (`ground_ops.rs`) and popup (`airport_traffic.rs`). Measured
+/// LKPR 49-tile bbox: 97× wall speedup vs the prior 16 km blanket;
+/// mean drift 5.4 dB, max 26 dB at outermost tile corners (mostly
+/// pixels that fall under the 30 dB tile-skip floor).
 pub const GROUND_OPS_RUNWAY_MAX_RADIUS: f64 = 5_000.0;
 pub const GROUND_OPS_TAXI_MAX_RADIUS: f64 = 3_000.0;
 pub const GROUND_OPS_APRON_MAX_RADIUS: f64 = 1_500.0;
+
+/// Per-`ops_kind` reach. Heatmap + popup share this — single source of truth.
+/// Unknown / NONE → most generous cap so we never silently drop.
+/// APRON arm is reserved: current Stage 2C only emits ops_kind ∈
+/// {RUNWAY_ROLL, TAXI} for line features (aprons are area features —
+/// see `stage_2c/airport_traffic_writer.rs:69`). Wired anyway so a
+/// future area→line synthesis doesn't silently inherit the RUNWAY cap.
+#[inline]
+pub fn ground_ops_max_radius(ops_kind: u8) -> f64 {
+    use crate::emission::aircraft::{
+        GROUND_OPS_KIND_APRON_MOVEMENT, GROUND_OPS_KIND_RUNWAY_ROLL, GROUND_OPS_KIND_TAXI,
+    };
+    match ops_kind {
+        GROUND_OPS_KIND_RUNWAY_ROLL => GROUND_OPS_RUNWAY_MAX_RADIUS,
+        GROUND_OPS_KIND_TAXI => GROUND_OPS_TAXI_MAX_RADIUS,
+        GROUND_OPS_KIND_APRON_MOVEMENT => GROUND_OPS_APRON_MAX_RADIUS,
+        _ => GROUND_OPS_RUNWAY_MAX_RADIUS,
+    }
+}
 
 #[cfg(test)]
 mod tests {

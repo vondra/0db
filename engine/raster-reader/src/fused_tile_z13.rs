@@ -25,8 +25,13 @@ use crate::{FusedGrid, RealRasters};
 /// Side length of one output tile in receiver pixels.
 pub const TILE_PX: usize = 256;
 
-/// Halo extension on each side of the tile bbox, in metres. Matches the
-/// ground-ops `TRAFFIC_PRUNE_RADIUS_M` in `heatmap-aircraft`.
+/// Halo extension on each side of the tile bbox, in metres. Conservative
+/// upper bound covering the airborne `AIRCRAFT_MAX_HORIZONTAL_REACH_M` =
+/// 16 km. Ground-ops reach is now per-ops_kind (≤ 5 km RUNWAY), so the
+/// halo is over-fetched ~3× for ground-only tiles — perf opportunity for
+/// a future ground-specific tile build (out of scope for the per-ops_kind
+/// reach commit). Cruise/airborne path profiles still need the full 16 km
+/// halo.
 pub const HALO_M: f64 = 16_000.0;
 
 /// Equatorial m/px at zoom 0. = 2 π R / 256 with R = 6 378 137.
