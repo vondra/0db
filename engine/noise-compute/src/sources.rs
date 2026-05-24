@@ -123,7 +123,11 @@ pub fn get_source(id: u16) -> Option<&'static Source> {
         .map(|idx| &SOURCES[idx])
 }
 
-/// Shorthand for the common "what's the provenance of this stamp" lookup.
+/// Shorthand for the common "what's the provenance CLASSIFICATION" of this
+/// stamp (NationalMeasured / Heuristic / Baseline / etc.). Different from
+/// `dataset_meta(id)` which returns the wire-shape `DatasetMeta { name,
+/// year, license, url }` used for popup display. Both are derived from
+/// the same `SOURCES` table.
 pub fn provenance_of(id: u16) -> Provenance {
     get_source(id).map_or(Provenance::None, |s| s.provenance)
 }
