@@ -436,8 +436,9 @@ pub fn segment_energy_kernel(
         let x = di_a * v2 + u2;
         let den = di_c * (4.0 * u2 * v2) + (v2 - u2) * (v2 - u2);
         if den > 0.0 && x > 0.0 {
-            // 4.342944819032518 = 10 / ln(10) → converts ln to dB.
-            4.342944819032518_f64 * (di_b * x.ln() - den.ln())
+            // ln × (10/ln 10) ≡ log2 × (10·log10 2) at f64 precision; glibc
+            // log2 is faster than log (~2× shared polynomial helper hits).
+            (10.0 * LOG10_2) * (di_b * x.log2() - den.log2())
         } else {
             0.0
         }
