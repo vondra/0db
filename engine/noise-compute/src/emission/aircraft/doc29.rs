@@ -9,6 +9,7 @@
 
 use std::f64::consts::{LOG10_2, PI};
 
+use crate::propagation::iso9613::fast_exp_f64;
 use crate::types::AircraftSegment;
 
 use super::npd::{
@@ -244,19 +245,19 @@ pub fn fast_lateral_attenuation(
         return if beta_deg < 0.0 { 10.857 } else { 0.0 };
     }
 
-    // exp(k·x) ≡ exp2(k·log2(e)·x); libm exp2 manipulates the IEEE-754
-    // exponent directly and skips the base-e argument reduction, ~2× faster
-    // than libm exp. Constants fold at compile time. Same trick the log2
-    // swaps in fast_delta_f / ΔI use; identity at f64 precision (sub-ULP).
-    const NEG_274E_LOG2E: f64 = -0.00274 * std::f64::consts::LOG2_E;
-    const NEG_142_LOG2E: f64 = -0.142 * std::f64::consts::LOG2_E;
+    // Doc 29 Γ × Λ uses two `exp` calls per Wing accept-path pixel; route
+    // through the project's `fast_exp_f64` polynomial (Padé 5th-order, used
+    // already in road/iso9613 paths) which is ~2-3× faster than libm exp/exp2
+    // at the cost of < 0.001 dB error per call. Both args are tightly bounded
+    // (|x| ≤ 8) so well inside `EXP_CLAMP_HI`.
     let gamma = if lateral_m <= 914.0 {
-        1.089 * (1.0 - (NEG_274E_LOG2E * lateral_m).exp2())
+        1.089 * (1.0 - fast_exp_f64(-0.00274 * lateral_m))
     } else {
         1.0
     };
 
-    let lambda_beta = 1.137 - 0.0229 * beta_deg + 9.72 * (NEG_142_LOG2E * beta_deg).exp2();
+    let lambda_beta =
+        1.137 - 0.0229 * beta_deg + 9.72 * fast_exp_f64(-0.142 * beta_deg);
     gamma * lambda_beta
 }
 
