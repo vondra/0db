@@ -244,13 +244,19 @@ pub fn fast_lateral_attenuation(
         return if beta_deg < 0.0 { 10.857 } else { 0.0 };
     }
 
+    // exp(k·x) ≡ exp2(k·log2(e)·x); libm exp2 manipulates the IEEE-754
+    // exponent directly and skips the base-e argument reduction, ~2× faster
+    // than libm exp. Constants fold at compile time. Same trick the log2
+    // swaps in fast_delta_f / ΔI use; identity at f64 precision (sub-ULP).
+    const NEG_274E_LOG2E: f64 = -0.00274 * std::f64::consts::LOG2_E;
+    const NEG_142_LOG2E: f64 = -0.142 * std::f64::consts::LOG2_E;
     let gamma = if lateral_m <= 914.0 {
-        1.089 * (1.0 - (-0.00274 * lateral_m).exp())
+        1.089 * (1.0 - (NEG_274E_LOG2E * lateral_m).exp2())
     } else {
         1.0
     };
 
-    let lambda_beta = 1.137 - 0.0229 * beta_deg + 9.72 * (-0.142 * beta_deg).exp();
+    let lambda_beta = 1.137 - 0.0229 * beta_deg + 9.72 * (NEG_142_LOG2E * beta_deg).exp2();
     gamma * lambda_beta
 }
 
@@ -270,14 +276,11 @@ pub fn delta_i_constants(installation: Installation) -> (Installation, f64, f64,
     }
 }
 
-/// Output of the shared airborne kernel. Energy is what pipeline
-/// accumulates; SEL + a few CPA fields cover everything popup needs for
-/// trace bookkeeping (peak altitude, min slant) without rebuilding a
-/// separate per-segment CPA pass.
+/// Output of the shared airborne kernel. SEL + CPA fields cover what
+/// every caller needs; callers convert SEL → linear energy via
+/// `propagation::iso9613::fast_exp_f64` themselves (no libm exp here).
 #[derive(Clone, Copy, Debug)]
 pub struct AircraftKernelResult {
-    /// `exp(SEL · ln(10) · 0.1)` — accumulator-ready energy.
-    pub energy: f64,
     /// SEL in dB after Doc 29 master Eq. 4-8b.
     pub sel: f64,
     /// Slant distance from receiver to CPA foot.
@@ -404,9 +407,7 @@ pub fn segment_energy_kernel(
         if sel < 20.0 {
             return None;
         }
-        let energy = (sel * std::f64::consts::LN_10 * 0.1).exp();
         return Some(AircraftKernelResult {
-            energy,
             sel,
             d_p_m,
             rel_alt_m: rel_alt,
@@ -448,11 +449,9 @@ pub fn segment_energy_kernel(
     if sel < 20.0 {
         return None;
     }
-    let energy = (sel * std::f64::consts::LN_10 * 0.1).exp();
     let beta_deg = fast_atan(rel_alt / lateral_m.max(0.01)).to_degrees();
 
     Some(AircraftKernelResult {
-        energy,
         sel,
         d_p_m,
         rel_alt_m: rel_alt,
@@ -695,10 +694,11 @@ mod tests {
             let ex = start_x + (end_x - start_x) * t1;
             let slen = (end_x - start_x) / n as f64;
             if let Some(r) = kernel(sx, start_y, ex - sx, 0.0, slen) {
-                sum_energy += r.energy;
+                sum_energy += (r.sel * std::f64::consts::LN_10 * 0.1).exp();
             }
         }
-        let ratio = sum_energy / agg.energy;
+        let agg_energy = (agg.sel * std::f64::consts::LN_10 * 0.1).exp();
+        let ratio = sum_energy / agg_energy;
         assert!(
             (0.7..1.3).contains(&ratio),
             "partition / aggregate energy ratio = {ratio:.3} (expected ~1.0)"
