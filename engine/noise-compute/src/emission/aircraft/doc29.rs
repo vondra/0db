@@ -210,7 +210,11 @@ pub fn fast_delta_f(q_m: f64, seg_len_m: f64, d_bar_m: f64) -> f64 {
     let g2 = alpha2 / (1.0 + alpha2 * alpha2) + fast_atan(alpha2);
     let f = (g2 - g1) * std::f64::consts::FRAC_1_PI;
 
-    10.0 * f.max(1e-15).log10()
+    // log2 × 10·log10(2) ≡ 10·log10 at f64 precision; same trick the NPD
+    // lookup uses (see `let log_d = d_ft.log2() * LOG10_2` above). libm
+    // log10 was ~8 % of total airborne runtime in perf record on Dobříš
+    // (call site verified via `perf annotate`); log2 is ~2× cheaper.
+    (10.0 * LOG10_2) * f.max(1e-15).log2()
 }
 
 /// Fast lateral attenuation. Computes `β` via `fast_atan` (no atan2) from
