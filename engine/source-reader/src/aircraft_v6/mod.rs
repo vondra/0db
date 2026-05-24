@@ -257,6 +257,21 @@ pub fn add_v6_aircraft_to_result(
     result.confidence.overall = (result.confidence.overall + 0.15).min(1.0);
     result.confidence.notes.retain(|n| !n.starts_with("Aircraft:"));
 
+    // Compute aircraft `periods_free` from the contributors before we
+    // hand them off. Airborne and cruise kernels apply no terrain /
+    // screening (Doc 29 free-field NPD), so each contributor's
+    // `periods_free == periods`. Ground ops sets the same — see TODO on
+    // `SourceResult.periods_free` doc in noise-compute/src/types.rs to
+    // pull real free-field periods out of the airport_traffic kernel
+    // variants (Codex /gg #80 CRITICAL — acceptable approximation today
+    // because the field was always null before this commit).
+    let aircraft_periods_free = noise_compute::periods::sum_periods(
+        &air_contribs
+            .iter()
+            .map(|c| c.periods_free.clone())
+            .collect::<Vec<_>>(),
+    );
+
     result.contributors.extend(air_contribs);
     if air_periods.lden_db.is_finite() {
         let displayed_count = result
@@ -267,6 +282,7 @@ pub fn add_v6_aircraft_to_result(
         result.sources.push(SourceResult {
             source_type: LayerKind::Aircraft,
             periods: air_periods,
+            periods_free: aircraft_periods_free,
             segment_count: total_rows,
             displayed_count,
         });
@@ -274,6 +290,15 @@ pub fn add_v6_aircraft_to_result(
     // Fresh per-popup compute; non-aircraft pass never touches this.
     result.aircraft_detail = Some(band_data);
     result.total = sum_periods_linear(&result.sources);
+    // Recompute `total_free` after aircraft merge — the noise-compute pass
+    // set it from non-aircraft sources only; we now have the full set.
+    result.total_free = noise_compute::periods::sum_periods(
+        &result
+            .sources
+            .iter()
+            .map(|s| s.periods_free.clone())
+            .collect::<Vec<_>>(),
+    );
 
     // Re-finalize over the merged contributor set so aircraft compete
     // for top-N slots (non-aircraft pass already committed its top-30

@@ -13,6 +13,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 pub mod aircraft_v6;
 pub mod geo;
 pub mod hex_store;
+#[cfg(feature = "node")]
+pub mod wire;
 
 #[cfg(feature = "node")]
 use napi::{Error, Status};
@@ -687,7 +689,8 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         t.load_ms = t_load.as_secs_f64() * 1000.0;
         t.collect_ms = t_collect.as_secs_f64() * 1000.0;
     }
-    let json = serde_json::to_string(&result).unwrap();
+    let wire_result = wire::build_wire_result(result, lat, lng, elevation);
+    let json = serde_json::to_string(&wire_result).unwrap();
     let t_total = t_start.elapsed();
 
     if timing_on {

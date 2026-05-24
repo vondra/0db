@@ -153,6 +153,18 @@ fn compute_at_point_inner(
     let mut all_contributors = Vec::new();
     let mut timings = crate::types::LayerTimings::default();
 
+    // Free-field aggregate is summed from each Contributor's `periods_free`
+    // (already computed alongside `periods`). Accepts a small under-count
+    // vs the kernel's true source-wide total because Contributors below the
+    // display threshold are dropped — comparable error to the existing
+    // `other_sources_lden` accounting; never user-facing (wire field is the
+    // new `lden_free`, previously always null).
+    let contrib_periods_free = |contribs: &[Contributor]| -> NoisePeriods {
+        periods::sum_periods(
+            &contribs.iter().map(|c| c.periods_free.clone()).collect::<Vec<_>>(),
+        )
+    };
+
     if !roads.is_empty() {
         let t = std::time::Instant::now();
         let (road_periods, road_contributors) =
@@ -161,6 +173,7 @@ fn compute_at_point_inner(
         source_results.push(SourceResult {
             source_type: LayerKind::Road,
             periods: road_periods.clone(),
+            periods_free: contrib_periods_free(&road_contributors),
             segment_count: roads.len(),
             displayed_count: present::display_count(&road_contributors),
         });
@@ -175,6 +188,7 @@ fn compute_at_point_inner(
         source_results.push(SourceResult {
             source_type: LayerKind::Railway,
             periods: rail_periods,
+            periods_free: contrib_periods_free(&rail_contributors),
             segment_count: railways.len(),
             displayed_count: present::display_count(&rail_contributors),
         });
@@ -195,6 +209,7 @@ fn compute_at_point_inner(
         source_results.push(SourceResult {
             source_type: LayerKind::Building,
             periods: bld_periods,
+            periods_free: contrib_periods_free(&bld_contributors),
             segment_count: buildings.len(),
             displayed_count: present::display_count(&bld_contributors),
         });
@@ -215,6 +230,7 @@ fn compute_at_point_inner(
         source_results.push(SourceResult {
             source_type: LayerKind::Industrial,
             periods: ind_periods,
+            periods_free: contrib_periods_free(&ind_contributors),
             segment_count: industrial.len(),
             displayed_count: present::display_count(&ind_contributors),
         });
@@ -230,6 +246,12 @@ fn compute_at_point_inner(
         &source_results
             .iter()
             .map(|s| s.periods.clone())
+            .collect::<Vec<_>>(),
+    );
+    let total_free = periods::sum_periods(
+        &source_results
+            .iter()
+            .map(|s| s.periods_free.clone())
             .collect::<Vec<_>>(),
     );
 
@@ -260,6 +282,7 @@ fn compute_at_point_inner(
 
     NoiseResult {
         total,
+        total_free,
         sources: source_results,
         contributors: all_contributors,
         other_sources_lden,

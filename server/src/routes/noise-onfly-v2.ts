@@ -5,16 +5,17 @@
 import type { FastifyInstance } from 'fastify'
 import { Worker } from 'node:worker_threads'
 import { resolve } from 'node:path'
-import { getElevation } from '../engine/dem-reader.js'
 import {
   NoiseOnflyRequestError,
   NoiseOnflySupervisor,
 } from '../engine/noise-onfly-supervisor.js'
 
-// Provenance is now attached in the Rust engine (`crate::sources::dataset_meta`)
-// directly on EmissionTrace::Road / Railway and Road / Rail metadata. The old
-// Node-side `lookupProvenance(meta.dominant_dataset_id ?? meta.dataset_id)`
-// enrichment was a silent no-op since the field rename to `source_id`.
+// Wire shape is built entirely in Rust (engine/source-reader/src/wire.rs).
+// Node forwards the JSON string after one sentinel replace for
+// `compute_time_ms`. Previously this route parsed, reshaped, and
+// re-stringified — the cause of `provenance: null` and
+// `total_lden_free: null` regressions (Rust struct renames silently
+// diverged from Node's reshape). Single source of truth, ~30-50 ms saved.
 
 const SOURCE_READER_PATH = resolve(import.meta.dirname, '../../../engine/source-reader/target/release/libsource_reader.so')
 const YEAR = process.env.DATA_YEAR || '2025'
@@ -76,68 +77,24 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
         const resultJson = full
           ? await supervisor.queryNoiseAtPointUnfiltered(lat, lng, abortController.signal)
           : await supervisor.queryNoiseAtPoint(lat, lng, abortController.signal)
-        const raw = JSON.parse(resultJson)
         const elapsed = Date.now() - t0
 
-        const elevation = Math.round(getElevation(lat, lng) * 10) / 10
-
-        const sources = (raw.sources ?? []).map((s: any) => ({
-          source_type: s.source_type,
-          lden: s.periods?.lden_db ?? null,
-          lden_free: s.periods_free?.lden_db ?? null,
-          segment_count: s.segment_count ?? 0,
-          displayed_count: s.displayed_count ?? 0,
-        }))
-
-        // Typed metadata (SourceMetadata enum from Rust) and segment
-        // emission both carry `provenance` from the Rust builders. No
-        // Node-side enrichment needed.
-
-        const topContributors = (raw.contributors ?? []).map((c: any) => {
-          const screeningRaw = c.screening ?? { building_path_m: 0 }
-          const meta = c.metadata ?? null
-          return {
-            source_type: c.source_type,
-            osm_id: c.osm_id ?? null,
-            name: c.name ?? '',
-            subtype: c.subtype ?? '',
-            distance_m: Math.round(c.distance_m ?? 0),
-            metadata: meta,
-            emission_db: c.emission_db ?? 0,
-            emission_bands: c.emission_bands ?? [],
-            baseline: c.baseline ?? { geometric_db: 0, ground_factor: 0.5 },
-            terrain: c.terrain ?? { delta_m: 0, is_double: false, profile_points: 0 },
-            screening: {
-              building_path_m: screeningRaw.building_path_m ?? 0,
-              obstacle: screeningRaw.obstacle ?? null,
-            },
-            vegetation: c.vegetation ?? { forest_depth_m: 0, sampled_path_m: 0 },
-            terrain_impact_db: c.terrain_impact_db ?? 0,
-            screening_impact_db: c.screening_impact_db ?? 0,
-            vegetation_impact_db: c.vegetation_impact_db ?? 0,
-            atmospheric_impact_db: c.atmospheric_impact_db ?? 0,
-            ground_impact_db: c.ground_impact_db ?? 0,
-            received_lden: Math.round((c.periods?.lden_db ?? c.received_lden ?? 0) * 10) / 10,
-            received_lden_free: Math.round((c.periods_free?.lden_db ?? c.received_lden_free ?? 0) * 10) / 10,
-            received_bands: c.received_bands ?? [],
-            geometry: c.geometry ?? null,
-          }
-        })
-
-        return reply.send({
-          h3_index: '',
-          h3_center: [lat, lng],
-          elevation_m: elevation,
-          total_lden: raw.total?.lden_db ?? null,
-          total_lden_free: raw.total_free?.lden_db ?? null,
-          sources,
-          top_contributors: topContributors,
-          other_sources_lden: raw.other_sources_lden ?? null,
-          compute_time_ms: elapsed,
-          segments: raw.segments ?? [],
-          segments_meta: raw.segments_meta ?? null,
-          timings: raw.timings ?? null,
-        })
+        // Rust builds the final wire shape directly (engine/source-reader/
+        // src/wire.rs). Node injects only the wall-time measurement via a
+        // single sentinel replace, then sends the string as-is — Fastify
+        // forwards strings with explicit `application/json` content-type
+        // without re-serializing (saves ~30-50 ms per popup vs the prior
+        // parse + reshape + auto-stringify path).
+        const sentinel = '"compute_time_ms":"__QM_COMPUTE_TIME_MS__"'
+        const replaced = `"compute_time_ms":${elapsed}`
+        const finalJson = resultJson.replace(sentinel, replaced)
+        if (finalJson === resultJson) {
+          throw new Error(`compute_time_ms sentinel missing from Rust output`)
+        }
+        if (finalJson.includes('__QM_COMPUTE_TIME_MS__')) {
+          throw new Error(`compute_time_ms sentinel appeared more than once`)
+        }
+        return reply.type('application/json').send(finalJson)
       } catch (err) {
         if (abortController.signal.aborted || request.raw.aborted || request.raw.destroyed) {
           return
