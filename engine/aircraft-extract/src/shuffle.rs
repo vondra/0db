@@ -143,6 +143,16 @@ pub fn shuffle_per_r4(
     );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
+
+    // Day-count manifest: distinct extracted days shuffled into `out_dir` =
+    // the true Lden normalization window. Written here (every recreation of
+    // `out_dir` carries it, including the standalone `shuffle` subcommand)
+    // rather than derived downstream from `--days`, which a `--from-stage`
+    // re-run takes from a possibly-stale ADS-B cache (the 2026-05-24
+    // n_days=7-on-full-year mislabel). `list_r4_shards` skips it (not a
+    // directory). `day_paths` is deduped per day by the caller.
+    std::fs::write(out_dir.join("n_days"), day_paths.len().to_string())
+        .with_context(|| format!("write n_days manifest in {}", out_dir.display()))?;
     Ok(())
 }
 

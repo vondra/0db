@@ -364,7 +364,6 @@ fn main() -> Result<()> {
                 );
             }
             let days = days_dedup;
-            let n_days = days.len() as u16;
 
             // Shared instance — TileStore is per-slot Mutex +
             // Arc<RawTile>, safe to fan out under par_iter.
@@ -536,25 +535,48 @@ fn main() -> Result<()> {
                 );
             }
 
+            // n_days for Lden, from the shuffle's day-count manifest (see
+            // `read_window_n_days`). All three Stage-2 outputs stamp this
+            // one window, so the popup's max-n_days collapse
+            // (source-reader/lib.rs:150) stays consistent across co-loaded
+            // layers and can't drift to the 2026-05-24 n_days=7-on-full-year
+            // mislabel (~17 dB off).
+            let window_n_days = read_window_n_days(&by_r4_dir)?;
+
             if from_stage <= FromStage::Stage2a {
                 let t2a = Instant::now();
-                let r2a = run_stage_2a(&by_r4_dir, &h3r4_dir, n_days, scope.as_ref(), &rasters)?;
+                let r2a =
+                    run_stage_2a(&by_r4_dir, &h3r4_dir, window_n_days, scope.as_ref(), &rasters)?;
                 eprintln!("{} [run-all] stage2a={r2a} ({:?})", ts(), t2a.elapsed());
             }
 
             if from_stage <= FromStage::Stage2b {
                 let t2b = Instant::now();
-                // Stage 2B reads per-day cruise shards, NOT the shuffled
-                // per-R4 ones — cruise output R4 derives from each
-                // touched R7's parent (`stage_2b.rs:cell.parent(R4)`).
-                let r2b = run_stage_2b(&ok_paths, &h3r4_dir, n_days, scope.as_ref())?;
+                // Stage 2B reads per-day cruise shards (`ok_paths`), NOT the
+                // shuffled per-R4 ones — cruise output R4 derives from each
+                // touched R7's parent (`stage_2b.rs:cell.parent(R4)`). Its
+                // input window must therefore equal the shuffled window it is
+                // stamped with; a `--from-stage` re-run with a shrunk `--days`
+                // would aggregate fewer days than `segments_by_r4` holds and
+                // mis-normalize cruise (while wiping the full-window files).
+                // Refuse it — re-shuffle for the requested days instead.
+                if ok_paths.len() as u16 != window_n_days {
+                    anyhow::bail!(
+                        "Stage 2B input is {} day(s) but the shuffled window is {} \
+                         (segments_by_r4/n_days). Re-run with `--from-stage shuffle` to \
+                         re-shuffle for the requested --days, or pass the full day set.",
+                        ok_paths.len(),
+                        window_n_days,
+                    );
+                }
+                let r2b = run_stage_2b(&ok_paths, &h3r4_dir, window_n_days, scope.as_ref())?;
                 eprintln!("{} [run-all] stage2b={r2b} ({:?})", ts(), t2b.elapsed());
             }
 
             // Stage 2C always runs — it is the last stage; `from_stage`
             // can equal Stage2c (run just this one) but never exceed it.
             let t2c = Instant::now();
-            let r2c = run_stage_2c(&by_r4_dir, &areas, &h3r4_dir, n_days, scope.as_ref())?;
+            let r2c = run_stage_2c(&by_r4_dir, &areas, &h3r4_dir, window_n_days, scope.as_ref())?;
             eprintln!("{} [run-all] stage2c={r2c} ({:?})", ts(), t2c.elapsed());
 
             // `by_r4_dir` is left on disk so `--from-stage stage1-5/2a/2c`
@@ -649,6 +671,31 @@ fn list_segments_day_paths(segments_dir: &Path) -> Result<Vec<PathBuf>> {
         .collect();
     out.sort();
     Ok(out)
+}
+
+/// Reads the shuffle day-count manifest (`<by_r4_dir>/n_days`). The shuffle
+/// writes it from the segments it actually shuffled, so it is the true Lden
+/// normalization window — the count of distinct extracted days present in
+/// `segments_by_r4/` — and is invariant to a `--from-stage` re-run that
+/// takes a stale `--days` from a shrunk ADS-B cache. A missing manifest
+/// (legacy `segments_by_r4/` from before this field) fails loud.
+fn read_window_n_days(by_r4_dir: &Path) -> Result<u16> {
+    let path = by_r4_dir.join("n_days");
+    let raw = std::fs::read_to_string(&path).with_context(|| {
+        format!(
+            "missing day-count manifest {} — re-run with `--from-stage shuffle` \
+             to regenerate it from the segment files",
+            path.display()
+        )
+    })?;
+    let n = raw
+        .trim()
+        .parse::<u16>()
+        .with_context(|| format!("parse n_days from {}", path.display()))?;
+    if n == 0 {
+        anyhow::bail!("day-count manifest {} is 0 — re-run `--from-stage shuffle`", path.display());
+    }
+    Ok(n)
 }
 
 /// Shared `--scope-bbox` parser, identical surface across Stage2 + RunAll.
