@@ -6,6 +6,7 @@ import {
   type SegmentTracesSummary,
 } from '../../types/noise'
 import { SegmentRow } from './SegmentRow'
+import { HoverText } from '../ui/info-tip'
 
 // Labels are abbreviated to fit a single row in a ~360 px popup; the
 // long form lives in the title tooltip so users can still identify the
@@ -178,9 +179,9 @@ export function SegmentList({
       </div>
       {truncated && (
         <div className="flex items-center justify-between border-t border-border/40 py-1 text-[10px] text-muted-foreground">
-          <span>
-            Showing {shownCount.toLocaleString()} of {totalCount.toLocaleString()}
-          </span>
+          <HoverText title={'Segments ranked by their energy contribution at this point. "Total" counts segments with a measurable contribution — for aircraft, sub-segments whose peak is below the ~25 dB audibility cutoff are omitted (their energy is negligible, far below the displayed ranks), so this is the loudest set, not every Doc 29 evaluation. Energy-summing the returned rows approximates the source Lden (modulo the display cap); "Show all" raises the cap.'}>
+            <span>Showing {shownCount.toLocaleString()} of {totalCount.toLocaleString()}</span>
+          </HoverText>
           <button
             disabled={loadingFull || !onShowAll}
             onClick={() => void onShowAll?.()}
