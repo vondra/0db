@@ -556,8 +556,12 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
   ], 22, 14)
 
   const atmosphericText = txtTable([
-    ['Distance', `${c.distance_m.toFixed(0)} m (closest)`],
-    { sep: true },
+    // Ground-ops distance_m is 0 by design (the source surrounds the
+    // receiver), so skip the placeholder "Distance: 0 m (closest)". The
+    // A-weighted ΔL_A below is the real per-microsegment atmospheric effect.
+    ...((aircraftGroundOps
+      ? []
+      : [['Distance', `${c.distance_m.toFixed(0)} m (closest)`], { sep: true }]) as TableRow[]),
     ['A-weighted ΔL_A', `${fmt(c.atmospheric_impact_db)} dB`],
     '',
     'ISO 9613-2 §7.2 atmospheric absorption',
@@ -567,8 +571,12 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
   ], 22, 14)
 
   const groundText = txtTable([
-    [`G at closest segment`, c.baseline.ground_factor.toFixed(2)],
-    { sep: true },
+    // Ground ops are a distributed set of microsegments — no single
+    // source-level G, so skip the placeholder "G at closest segment: 0.00".
+    // The A-weighted ΔL_A below is the real energy-weighted ground effect.
+    ...((aircraftGroundOps
+      ? []
+      : [[`G at closest segment`, c.baseline.ground_factor.toFixed(2)], { sep: true }]) as TableRow[]),
     ['A-weighted ΔL_A', `${fmt(c.ground_impact_db)} dB`],
     '',
     'ISO 9613-2 §7.3 ground effect.',
@@ -792,7 +800,14 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                   Sound path
                 </div>
               </div>
-              {lineRow(
+              {/* Ground ops surround the receiver (distance_m = 0 by design),
+                  so there's no meaningful single source-level geometric
+                  divergence — the contributor baseline is a placeholder 0.
+                  Per-microsegment divergence is shown in the Segments tab.
+                  Suppress the row here rather than display a bogus "0.0 dB"
+                  (the terrain / screening / vegetation / ground impacts below
+                  are real, mirrored from the ground-ops metadata). */}
+              {!aircraftGroundOps && lineRow(
                 <MetricLabel term="baseline" />,
                 <DataPoint title="Baseline propagation breakdown" text={baselineText}>
                   {fmt(c.baseline.geometric_db)} dB
@@ -807,7 +822,7 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
                 </DataPoint>,
               )}
               {lineRow(
-                `Ground (G=${c.baseline.ground_factor.toFixed(1)})`,
+                aircraftGroundOps ? 'Ground' : `Ground (G=${c.baseline.ground_factor.toFixed(1)})`,
                 <DataPoint title="Ground effect (signed A-weighted ΔL_A)" text={groundText}>
                   <span className={Math.abs(c.ground_impact_db) < 0.05 ? 'text-muted-foreground/40' : ''}>
                     {fmt(c.ground_impact_db)} dB
