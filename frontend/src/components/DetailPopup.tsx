@@ -700,20 +700,28 @@ function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (geometry:
           )}
           {aircraftAirborne ? (
             <>
+              {/* One total the end-user actually asks for: how many aircraft
+                  were heard per day. Low airborne approach/departure events +
+                  identified high-altitude cruise overflights, summed. The Lmax
+                  bands below are the subset of this union crossing each
+                  threshold, so they can never exceed it — the old airborne-only
+                  headline sat BELOW the >30 dB band count and looked broken.
+                  Helicopters are a subset of the airborne total, shown in
+                  parentheses. (Dual-phase flights counted in both phases;
+                  cruise is the identified-loud set, a lower bound.) */}
               {lineRow(
-                'Aircraft/heli (avg per day)',
-                `${aircraftAirborne.observed_flights_per_day.toFixed(1)}/${aircraftAirborne.helicopter_flights_per_day.toFixed(1)}`,
+                <HoverText title={'Total aircraft + helicopter movements heard per day at this point: low airborne approach/departure events plus identified high-altitude cruise overflights, each real flight_id deduped per phase. The Lmax band counts below are the subset crossing each threshold, so they never exceed this total. Helicopters are a subset of the airborne movements (shown in parentheses). Caveats: a single flight crossing both low and high over this exact point is counted in both phases; cruise transits are the identified-loud set, so that part is a lower bound.'}>
+                  Aircraft + heli (per day)
+                </HoverText>,
+                // toFixed(0) matches the band counts below: rounding is
+                // monotonic and the total is ≥ every band exactly, so the
+                // rounded total is ≥ every rounded band — the headline can
+                // never visually read below a band row.
+                `${(aircraftAirborne.observed_flights_per_day + aircraftAirborne.cruise_transits_per_day).toFixed(0)}` +
+                  (aircraftAirborne.helicopter_flights_per_day >= 0.05
+                    ? ` (${aircraftAirborne.helicopter_flights_per_day.toFixed(1)} heli)`
+                    : ''),
               )}
-              {/* >= 0.05 so the value rounds to >= 0.1/day at toFixed(1);
-                  otherwise the row would render "0.0" and confuse users
-                  (e.g. one cruise transit over 365 days = 0.003/day). */}
-              {aircraftAirborne.cruise_transits_per_day >= 0.05 &&
-                lineRow(
-                  <HoverText title={'Distinct high-altitude cruise-phase transits per day (real flight_id dedup).\nIncluded in the Lmax band counts below when their slant Lmax exceeds the band threshold; below-threshold transits are still counted here, so this is an upper bound on the cruise contribution to the bands.\nMostly disjoint from the Aircraft/heli count above (which is airborne-only), but a single flight can appear in both if it has a low approach/departure and a high overhead encounter at this receiver — separated so the band totals reconcile.'}>
-                    Cruise transits/day
-                  </HoverText>,
-                  aircraftAirborne.cruise_transits_per_day.toFixed(1),
-                )}
               {aircraftAirborne.lmax_peak != null && lineRow('Peak Lmax', `${aircraftAirborne.lmax_peak.toFixed(1)} dB`)}
               {lineRow(
                 'Day/Evening/Night',
