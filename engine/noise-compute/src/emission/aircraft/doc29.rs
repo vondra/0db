@@ -146,6 +146,34 @@ pub fn compute_cpa(
     }
 }
 
+/// Clamped closest approach for DISPLAY ONLY (popup Lmax / CPA distance /
+/// altitude). `compute_cpa` keeps the unclamped infinite-line foot because the
+/// SEL energy integral needs it — ΔF reads `q_m = t·seg_len` (Doc 29 §4.5.6) —
+/// but that foot is NOT a physical aircraft position: for a curving departure,
+/// one short segment's straight line extended km past its endpoints lands a
+/// far/high aircraft "tens of m away / m overhead" (flight 39d311 over LKPR:
+/// 7.2 km away, 1509 m AMSL, shown as 36 m / 30 m). This returns the closest
+/// the aircraft ACTUALLY reaches while ON the observed segment (`t` clamped to
+/// [0,1]): foot inside → identical to `d_p_m`/`relative_alt_m`; foot outside →
+/// distance to the nearer endpoint. NEVER feed this to SEL — energy stays on
+/// the unclamped `CpaResult`. `sdz = end_alt_m - start_alt_m` is the only input
+/// `CpaResult` doesn't already carry.
+#[inline]
+pub fn clamped_display_cpa(cpa: &CpaResult, sdz: f64) -> (f64, f64) {
+    if (0.0..=1.0).contains(&cpa.t) {
+        return (cpa.d_p_m, cpa.relative_alt_m);
+    }
+    let tc = cpa.t.clamp(0.0, 1.0);
+    // `back` = signed segment-fractions from the clamped endpoint out to the
+    // unclamped foot; `along_m` is that offset in the ground plane (⊥ to the
+    // perpendicular `lateral_m`), so horizontal distance is Pythagoras and the
+    // altitude winds back along the climb gradient.
+    let back = cpa.t - tc;
+    let along_m = back * cpa.seg_len_m;
+    let rel_alt = cpa.relative_alt_m - back * sdz;
+    ((cpa.lateral_m * cpa.lateral_m + along_m * along_m + rel_alt * rel_alt).sqrt(), rel_alt)
+}
+
 /// ΔV = 10 × log10(V_ref / V_seg) (Doc 29 §4.5.1, Eq. 4-14).
 #[inline]
 pub fn delta_v(speed_kt: f64, profile: &NpdProfile) -> f64 {
@@ -570,6 +598,52 @@ mod tests {
         assert!(cpa.relative_alt_m < -600.0, "relative altitude should stay signed, got {}", cpa.relative_alt_m);
         assert!(cpa.d_p_m > 600.0, "slant distance should include the vertical gap, got {}", cpa.d_p_m);
         assert!(cpa.beta_deg < 0.0, "beta should be negative for segments below the receiver, got {}", cpa.beta_deg);
+    }
+
+    /// Curving-departure phantom: a short, high segment ~7 km from the receiver
+    /// whose straight line extended backward puts the unclamped infinite-line
+    /// foot ~40 m away (real flight 39d311 over LKPR). `compute_cpa` keeps that
+    /// phantom (the SEL ΔF integral needs it); `clamped_display_cpa` must
+    /// recover the real multi-km closest approach for the popup display.
+    #[test]
+    fn clamped_display_cpa_kills_curving_departure_phantom() {
+        let cpa = compute_cpa(
+            50.1110, 14.3819, 279.0, // receiver (LKPR R4 reference)
+            50.1700, 14.4197, 1509.0, // segment start (39d311 climb leg)
+            50.1711, 14.4204, 1532.0, // segment end
+        );
+        assert!(cpa.d_p_m < 100.0, "unclamped d_p is the phantom, got {}", cpa.d_p_m);
+        assert!(cpa.t < 0.0, "foot lies before the segment, got t = {}", cpa.t);
+
+        let (dist, alt) = clamped_display_cpa(&cpa, 1532.0 - 1509.0);
+        assert!(dist > 5000.0, "clamped distance should be the real far approach, got {dist}");
+        assert!(alt > 1000.0, "clamped altitude should be the real climb height, got {alt}");
+    }
+
+    /// Foot inside the segment → clamp is a bit-for-bit no-op (returns the
+    /// kernel's own `d_p_m` / `relative_alt_m`, so inside-segment popup rows are
+    /// identical to today and can't wobble a `round1` band boundary).
+    #[test]
+    fn clamped_display_cpa_noop_when_foot_inside() {
+        let cpa = compute_cpa(50.005, 14.01, 300.0, 50.0, 14.0, 1000.0, 50.01, 14.0, 1000.0);
+        assert!((0.0..=1.0).contains(&cpa.t), "foot should be inside, got t = {}", cpa.t);
+        let (dist, alt) = clamped_display_cpa(&cpa, 0.0);
+        assert_eq!(dist, cpa.d_p_m);
+        assert_eq!(alt, cpa.relative_alt_m);
+    }
+
+    /// Foot PAST the segment end (t > 1): the receiver sits beyond where a
+    /// climbing segment ends, so the clamp must wind back to the END endpoint —
+    /// larger distance, altitude at the segment end. Mirrors the t < 0 case.
+    #[test]
+    fn clamped_display_cpa_winds_back_to_end_when_foot_past_segment() {
+        // N–S climbing segment at lon 14.0; receiver due north of the end.
+        let cpa = compute_cpa(50.02, 14.0, 300.0, 50.0, 14.0, 1000.0, 50.01, 14.0, 1100.0);
+        assert!(cpa.t > 1.0, "foot should lie past the segment end, got t = {}", cpa.t);
+        let (dist, alt) = clamped_display_cpa(&cpa, 1100.0 - 1000.0);
+        // Altitude winds back to the end endpoint (1100 − 300 = 800 m).
+        assert!((alt - 800.0).abs() < 1.0, "clamped altitude should be the end height, got {alt}");
+        assert!(dist > cpa.d_p_m, "clamped distance should exceed the unclamped foot, got {dist} vs {}", cpa.d_p_m);
     }
 
     #[test]

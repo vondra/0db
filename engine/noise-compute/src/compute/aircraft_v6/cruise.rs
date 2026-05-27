@@ -171,24 +171,32 @@ pub fn scatter(
         acc.flight_weight = acc.flight_weight.max(density);
 
         let class_idx = aircraft::noise_class_of(seg.profile_idx) as usize;
-        let log_d = (cpa.d_p_m * aircraft::FT_PER_M).max(100.0).log10();
+        // Clamp the DISPLAY CPA onto the observed segment so an off-segment
+        // infinite-line foot can't report a phantom near pass. Cruise synthetic
+        // segments are level (start == end == rep_alt_m), so the altitude clamp
+        // is a no-op (sdz = 0) today — but both distance and altitude go through
+        // the helper to stay symmetric with airborne and stay correct if a
+        // gradient is ever modelled. `sel` / `energy` keep the unclamped `cpa`
+        // (ΔF needs the infinite-line `q_m`).
+        let (disp_dist, disp_alt) = aircraft::clamped_display_cpa(&cpa, 0.0);
+        let log_d = (disp_dist * aircraft::FT_PER_M).max(100.0).log10();
         let lmax = npd_luts.lookup_lmax(class_idx, true, log_d);
         if lmax > acc.peak_lmax {
             acc.peak_lmax = lmax;
             acc.peak_sel = sel;
-            acc.peak_altitude_m = cpa.relative_alt_m;
+            acc.peak_altitude_m = disp_alt;
             acc.peak_period = row.period;
             acc.peak_seg_start = [seg.start_lon, seg.start_lat];
             acc.peak_seg_end = [seg.end_lon, seg.end_lat];
         }
-        if cpa.d_p_m < acc.min_dist_m {
-            acc.min_dist_m = cpa.d_p_m;
+        if disp_dist < acc.min_dist_m {
+            acc.min_dist_m = disp_dist;
         }
         // v14: walk the row's bounded top-K candidate slice instead of
         // per-fid lists. Identity (typecode / callsign / fid) comes
-        // from the candidate; receiver-side ranking (`lmax`,
-        // `cpa.relative_alt_m`) comes from the row's already-computed
-        // values per Codex W2 — re-deriving Lmax from candidate's
+        // from the candidate; receiver-side ranking (`lmax`, `disp_alt`)
+        // comes from the row's already-computed values per Codex W2 —
+        // re-deriving Lmax from candidate's
         // source-side peak would discard the popup-receiver geometry.
         for cand_view in row.top_candidates.iter() {
             let fid = cand_view.flight_id;
@@ -199,7 +207,7 @@ pub fn scatter(
             });
             if lmax > entry.peak_lmax {
                 entry.peak_lmax = lmax;
-                entry.alt_at_peak = cpa.relative_alt_m;
+                entry.alt_at_peak = disp_alt;
                 entry.class_at_peak = class_idx;
             }
 
@@ -216,13 +224,13 @@ pub fn scatter(
             });
             if lmax > cand.peak_lmax {
                 cand.peak_lmax = lmax;
-                cand.peak_altitude_m = cpa.relative_alt_m;
+                cand.peak_altitude_m = disp_alt;
                 cand.peak_period = row.period;
                 cand.peak_seg_start = [seg.start_lon, seg.start_lat];
                 cand.peak_seg_end = [seg.end_lon, seg.end_lat];
             }
-            if cpa.d_p_m < cand.min_dist_m {
-                cand.min_dist_m = cpa.d_p_m;
+            if disp_dist < cand.min_dist_m {
+                cand.min_dist_m = disp_dist;
             }
         }
 
@@ -237,7 +245,7 @@ pub fn scatter(
                 rep_alt_m: row.rep_alt_m,
                 centroid_lat: lat,
                 centroid_lon: lon,
-                d_slant_m: cpa.d_p_m.max(SLANT_FLOOR_M),
+                d_slant_m: disp_dist.max(SLANT_FLOOR_M),
                 period_energy: [0.0; 3],
                 buckets: Vec::new(),
                 top_fids: HashMap::new(),
@@ -253,13 +261,13 @@ pub fn scatter(
                 });
                 if lmax > cand.peak_lmax {
                     cand.peak_lmax = lmax;
-                    cand.altitude_m = cpa.relative_alt_m;
+                    cand.altitude_m = disp_alt;
                     cand.class_idx = class_idx as u8;
                 }
             }
             entry.period_energy[period] += energy;
-            if cpa.d_p_m < entry.d_slant_m {
-                entry.d_slant_m = cpa.d_p_m.max(SLANT_FLOOR_M);
+            if disp_dist < entry.d_slant_m {
+                entry.d_slant_m = disp_dist.max(SLANT_FLOOR_M);
             }
             entry.buckets.push(CruiseBucketBreakdown {
                 class: row.class,
