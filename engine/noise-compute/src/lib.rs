@@ -294,6 +294,20 @@ fn compute_at_point_inner(
     }
 }
 
+/// Road [`NoisePeriods`] at a receiver — the popup road path without trace
+/// collection. Each segment's closest-point (`dist_m`/`cp_lat`/`cp_lon`/
+/// `fraction`) must already be filled for THIS receiver. Exposed so the
+/// surface-heatmap road parity validator can compare against the exact
+/// popup reference instead of re-implementing the physics.
+pub fn road_periods(
+    receiver: &Receiver,
+    roads: &[RoadSegment],
+    barriers: &[Barrier],
+    rasters: &dyn RasterSampler,
+) -> NoisePeriods {
+    compute_roads(receiver, roads, barriers, rasters, None).0
+}
+
 /// Compute road noise: emission per period → propagation → Lden per segment.
 fn compute_roads(
     receiver: &Receiver,
