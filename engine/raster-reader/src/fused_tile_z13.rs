@@ -133,10 +133,12 @@ pub struct FusedTileZ13 {
 }
 
 impl FusedTileZ13 {
-    /// Build a standalone tile with its own freshly built halo.
-    pub fn build(zoom: u8, tile_x: u32, tile_y: u32, rasters: &RealRasters) -> Self {
+    /// Build a standalone tile with its own freshly built halo extended
+    /// by `halo_m` (use [`HALO_M`] for aircraft; a smaller per-layer reach
+    /// for surface sources).
+    pub fn build(zoom: u8, tile_x: u32, tile_y: u32, halo_m: f64, rasters: &RealRasters) -> Self {
         let bbox = TileBbox::from_xyz(zoom, tile_x, tile_y);
-        let halo = Arc::new(build_halo_for(rasters, &bbox));
+        let halo = Arc::new(build_halo_for(rasters, &bbox, halo_m));
         Self::build_with_halo(zoom, tile_x, tile_y, rasters, halo)
     }
 
@@ -289,11 +291,14 @@ impl RasterSampler for FusedTileZ13 {
     }
 }
 
-/// Compute the halo bbox covering `inner_bbox` extended by [`HALO_M`].
-fn halo_bbox_for(inner_bbox: &TileBbox) -> (f64, f64, f64, f64) {
+/// Compute the halo bbox covering `inner_bbox` extended by `halo_m` on
+/// each side. [`HALO_M`] is the aircraft default; surface layers pass
+/// their (smaller) per-layer reach so the halo — and thus the L3 working
+/// set — shrinks to what each source type actually needs.
+fn halo_bbox_for(inner_bbox: &TileBbox, halo_m: f64) -> (f64, f64, f64, f64) {
     let centre_lat = (inner_bbox.north_lat + inner_bbox.south_lat) * 0.5;
-    let halo_lat_deg = HALO_M / M_PER_DEG_LAT;
-    let halo_lon_deg = HALO_M / m_per_deg_lon(centre_lat.to_radians()).max(1.0);
+    let halo_lat_deg = halo_m / M_PER_DEG_LAT;
+    let halo_lon_deg = halo_m / m_per_deg_lon(centre_lat.to_radians()).max(1.0);
     (
         inner_bbox.south_lat - halo_lat_deg,
         inner_bbox.north_lat + halo_lat_deg,
@@ -302,8 +307,8 @@ fn halo_bbox_for(inner_bbox: &TileBbox) -> (f64, f64, f64, f64) {
     )
 }
 
-fn build_halo_for(rasters: &RealRasters, inner_bbox: &TileBbox) -> FusedGrid {
-    let (lat_min, lat_max, lon_min, lon_max) = halo_bbox_for(inner_bbox);
+fn build_halo_for(rasters: &RealRasters, inner_bbox: &TileBbox, halo_m: f64) -> FusedGrid {
+    let (lat_min, lat_max, lon_min, lon_max) = halo_bbox_for(inner_bbox, halo_m);
     FusedGrid::build(rasters, lat_min, lat_max, lon_min, lon_max)
 }
 
@@ -332,6 +337,7 @@ impl TileBatch {
         base_x: u32,
         base_y: u32,
         batch_n: u32,
+        halo_m: f64,
         rasters: &RealRasters,
     ) -> Self {
         assert!(batch_n >= 1, "batch_n must be ≥ 1");
@@ -343,7 +349,7 @@ impl TileBatch {
             north_lat: nw.north_lat,
             south_lat: se.south_lat,
         };
-        let halo = Arc::new(build_halo_for(rasters, &batch_bbox));
+        let halo = Arc::new(build_halo_for(rasters, &batch_bbox, halo_m));
 
         let mut tiles = Vec::with_capacity((batch_n * batch_n) as usize);
         for dy in 0..batch_n {
@@ -458,7 +464,7 @@ mod tests {
             return;
         };
         let rasters = RealRasters::new(&root);
-        let tile = FusedTileZ13::build(13, 4493, 2823, &rasters);
+        let tile = FusedTileZ13::build(13, 4493, 2823, HALO_M, &rasters);
         assert_eq!(tile.zoom, 13);
         assert_eq!(tile.inner_elev_m.len(), TILE_PX * TILE_PX);
         assert_eq!(tile.rx_alt_m.len(), TILE_PX * TILE_PX);
@@ -484,7 +490,7 @@ mod tests {
             return;
         };
         let rasters = RealRasters::new(&root);
-        let batch = TileBatch::build(13, 4420, 2773, 2, &rasters);
+        let batch = TileBatch::build(13, 4420, 2773, 2, HALO_M, &rasters);
         assert_eq!(batch.tiles.len(), 4);
         // All four tiles must point at the same FusedGrid allocation.
         let halo0 = Arc::as_ptr(&batch.tiles[0].halo);
