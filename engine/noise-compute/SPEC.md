@@ -557,7 +557,7 @@ note removal are applied post-merge by
 `aircraft_subtype: u8` splits the popup into three sub-tabs:
 1. **Ground** — one trace per (airport microsegment × `ops_kind`); geometry = microsegment polyline.
 2. **Airborne sub-segment** — one per Stage 2A sub-segment.
-3. **Cruise R8 hex** — one per crossed R8 cell (hex polygon).
+3. **Cruise R7 hex** — one per crossed R7 cell (hex polygon).
 
 `received_lden.full` is per-segment: per-period energy / `(n_days ×
 T_period)` through the standard `variants_to_lden` mix. Energy-summing
