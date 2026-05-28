@@ -948,6 +948,28 @@ fn compute_railways(
         closest_service: bool,
         closest_highspeed: bool,
         closest_parallel_divisor: u8,
+        // Dominant-segment metadata — highest received-energy segment drives the
+        // popup display, mirroring the road pattern. Earlier rail surfaced the
+        // closest-segment fields, which misled whenever a busy/fast mainline
+        // sat farther than a quiet siding (the siding's 30 km/h and 5 trains/day
+        // looked like "the speed used" / "whole-line count" even though the
+        // mainline produced ~all the energy). Closest-* fields stay in the
+        // accumulator (kept harmless) but no longer feed `RailMetadata`.
+        dominant_segment_idx: i16,
+        dominant_distance_m: f64,
+        dominant_trains_passenger_raw: f64,
+        dominant_trains_freight_raw: f64,
+        dominant_trains_passenger_effective: f64,
+        dominant_trains_freight_effective: f64,
+        dominant_trains_passenger_source: &'static str,
+        dominant_trains_freight_source: &'static str,
+        dominant_source_id: u16,
+        dominant_maxspeed_posted: u8,
+        dominant_speed_used: f64,
+        dominant_speed_source: &'static str,
+        dominant_service: bool,
+        dominant_highspeed: bool,
+        dominant_parallel_divisor: u8,
         // Aggregation
         segment_count: u32,
         total_length_m: f64,
@@ -1125,6 +1147,21 @@ fn compute_railways(
             closest_service: false,
             closest_highspeed: false,
             closest_parallel_divisor: 1,
+            dominant_segment_idx: 0,
+            dominant_distance_m: 0.0,
+            dominant_trains_passenger_raw: 0.0,
+            dominant_trains_freight_raw: 0.0,
+            dominant_trains_passenger_effective: 0.0,
+            dominant_trains_freight_effective: 0.0,
+            dominant_trains_passenger_source: "default_by_type",
+            dominant_trains_freight_source: "default_by_type",
+            dominant_source_id: 0,
+            dominant_maxspeed_posted: 0,
+            dominant_speed_used: 0.0,
+            dominant_speed_source: "type_default",
+            dominant_service: false,
+            dominant_highspeed: false,
+            dominant_parallel_divisor: 1,
             segment_count: 0,
             total_length_m: 0.0,
             obstacle_segment_count: 0,
@@ -1206,8 +1243,45 @@ fn compute_railways(
         acc.line_coords
             .push([[seg.start_lon, seg.start_lat], [seg.end_lon, seg.end_lat]]);
 
-        // Popup trace: push per-segment trace + track the dominant one for this
-        // group so we can flip is_dominant_of_group once the loop finishes.
+        // Dominant segment — highest received energy drives the popup display
+        // metadata (speed, train counts, service, highspeed, parallel_divisor),
+        // mirroring the road pattern at line ~720. The gate runs OUTSIDE the
+        // trace block so the metadata is correct even when traces aren't being
+        // collected. `crosses_dominant` is reused inside the trace block to
+        // tag the corresponding `dominant_trace_idx` without re-comparing.
+        let seg_energy: f64 = seg_variants[0].full_energy;
+        let crosses_dominant = seg_energy > acc.dominant_energy;
+        if crosses_dominant {
+            acc.dominant_energy = seg_energy;
+            acc.dominant_segment_idx = seg.segment_idx;
+            acc.dominant_distance_m = seg.dist_m;
+            acc.dominant_trains_passenger_raw = seg.trains_passenger;
+            acc.dominant_trains_freight_raw = seg.trains_freight;
+            acc.dominant_trains_passenger_effective = q_pax;
+            acc.dominant_trains_freight_effective = q_frt;
+            acc.dominant_trains_passenger_source = match seg.trains_passenger_source {
+                0 => "arrow",
+                _ => "default_by_type",
+            };
+            acc.dominant_trains_freight_source = match seg.trains_freight_source {
+                0 => "arrow",
+                _ => "default_by_type",
+            };
+            acc.dominant_source_id = seg.source_id;
+            acc.dominant_maxspeed_posted = seg.maxspeed;
+            acc.dominant_speed_used = speed;
+            acc.dominant_speed_source = match seg.speed_source {
+                0 => "osm_maxspeed",
+                1 => "highspeed_default",
+                _ => "type_default",
+            };
+            acc.dominant_service = seg.service;
+            acc.dominant_highspeed = seg.highspeed;
+            acc.dominant_parallel_divisor = seg.parallel_divisor.max(1);
+        }
+
+        // Popup trace: push per-segment trace + tag the dominant one so we can
+        // flip is_dominant_of_group once the loop finishes.
         if let Some(t) = traces.as_deref_mut() {
             let trace = build_rail_segment_trace(BuildRailTrace {
                 seg,
@@ -1230,9 +1304,7 @@ fn compute_railways(
             });
             let trace_idx = t.segments.len();
             t.segments.push(trace);
-            let seg_energy: f64 = seg_variants[0].full_energy;
-            if seg_energy > acc.dominant_energy {
-                    acc.dominant_energy = seg_energy;
+            if crosses_dominant {
                 acc.dominant_trace_idx = Some(trace_idx);
             }
         }
@@ -1279,22 +1351,31 @@ fn compute_railways(
 
         let impacts = PropagationVariants::impact_deltas(&acc.variants, rail_periods.lden_db);
 
+        // Headline rail metadata: dominant (loudest) segment, mirroring the
+        // road-contributor pattern. `closest_*` is still tracked on the
+        // accumulator for the propagation baseline (`min_dist`, `cp_lat/lon`,
+        // `min_d_slant`, `min_ground_g`) but no longer feeds these display
+        // fields — closest mis-represented audible traffic whenever a busy
+        // mainline sat farther than a quiet siding.
         let rail_meta = RailMetadata {
-            trains_passenger_raw: acc.closest_trains_passenger_raw,
-            trains_freight_raw: acc.closest_trains_freight_raw,
-            trains_passenger_source: acc.closest_trains_passenger_source,
-            trains_freight_source: acc.closest_trains_freight_source,
-            source_id: acc.closest_source_id,
-            maxspeed_posted_kmh: acc.closest_maxspeed_posted,
-            trains_passenger_effective: acc.closest_trains_passenger_effective,
-            trains_freight_effective: acc.closest_trains_freight_effective,
-            speed_kmh: acc.closest_speed_used,
-            speed_source: acc.closest_speed_source,
+            trains_passenger_raw: acc.dominant_trains_passenger_raw,
+            trains_freight_raw: acc.dominant_trains_freight_raw,
+            trains_passenger_source: acc.dominant_trains_passenger_source,
+            trains_freight_source: acc.dominant_trains_freight_source,
+            source_id: acc.dominant_source_id,
+            maxspeed_posted_kmh: acc.dominant_maxspeed_posted,
+            trains_passenger_effective: acc.dominant_trains_passenger_effective,
+            trains_freight_effective: acc.dominant_trains_freight_effective,
+            speed_kmh: acc.dominant_speed_used,
+            speed_source: acc.dominant_speed_source,
             rail_type: rail_type_name(acc.rail_type_u8),
             usage: rail_usage_name(acc.usage_u8),
-            service: acc.closest_service,
-            highspeed: acc.closest_highspeed,
-            parallel_divisor: acc.closest_parallel_divisor,
+            service: acc.dominant_service,
+            highspeed: acc.dominant_highspeed,
+            parallel_divisor: acc.dominant_parallel_divisor,
+            dominant_segment_idx: acc.dominant_segment_idx,
+            dominant_distance_m: acc.dominant_distance_m,
+            closest_distance_m: acc.min_dist,
             bridge: acc.has_bridge,
             segment_count: acc.segment_count,
             total_length_m: acc.total_length_m,
@@ -1306,7 +1387,7 @@ fn compute_railways(
             },
             obstacle_max_height_m: (acc.obstacle_max_height * 10.0).round() / 10.0,
             obstacle_max_segment_idx: acc.obstacle_max_segment_idx,
-            provenance: crate::sources::dataset_meta(acc.closest_source_id),
+            provenance: crate::sources::dataset_meta(acc.dominant_source_id),
         };
 
         contributors.push(Contributor {

@@ -316,19 +316,23 @@ function MetadataRows({ c }: { c: Contributor }) {
     const segmentsText = txtTable([
       ['Microsegments', String(m.segment_count)],
       ['Total length', `${(m.total_length_m / 1000).toFixed(2)} km`],
+      ['Closest point', `${Math.round(m.closest_distance_m)} m`],
+      ['Dominant seg.', `#${m.dominant_segment_idx} (${Math.round(m.dominant_distance_m)} m)`],
       ...(m.bridge ? [['Bridge', 'yes'] as [string, string]] : []),
+      '',
+      'Metadata from loudest segment.',
     ], 18, 12)
     return (
       <>
         {lineRow(
           <MetricLabel term="speed" />,
-          <DataPoint title="Speed used in CNOSSOS rail emission" text={speedText}>
+          <DataPoint title="Speed at the energy-dominant (loudest) segment in this rail group — matches the road-popup pattern. Earlier this was the closest segment, which misrepresented audible traffic whenever a fast mainline sat farther than a quiet siding." text={speedText}>
             {m.speed_kmh.toFixed(0)} km/h
           </DataPoint>,
         )}
         {lineRow(
           <MetricLabel term="trains">Trains/day</MetricLabel>,
-          <DataPoint title="Daily train count (whole line, both directions)" text={trainsText}>
+          <DataPoint title="Daily train count at the energy-dominant (loudest) segment, scaled to a whole-line estimate via that segment's parallel-track divisor. Earlier this was the closest segment — misleading whenever a busy mainline sat farther than a quiet siding." text={trainsText}>
             {`${fmtInt(Math.round(wholeLineTrains))}/day${isDefault ? '*' : ''}`}
           </DataPoint>,
         )}

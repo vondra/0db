@@ -143,6 +143,12 @@ export interface RailMetadata {
   highspeed: boolean
   parallel_divisor: number
   bridge: boolean
+  /** Index + perpendicular distance of the dominant (loudest) segment in
+   *  this rail group, plus the closest segment's distance. Mirrors the
+   *  road pattern; lets the popup show "dominant 200 m away, closest 50 m". */
+  dominant_segment_idx: number
+  dominant_distance_m: number
+  closest_distance_m: number
   segment_count: number
   total_length_m: number
   obstacle_segment_count: number
