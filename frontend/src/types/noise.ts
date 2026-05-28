@@ -203,7 +203,7 @@ export interface AircraftTopFlight {
   /** Unix timestamp seconds of flight start. `null` for synthetic. */
   start_unix: number | null
   /** True for synthetic flight ids — anonymous-transponder traces or
-   *  cruise R8-bucket aggregates; UI hides ICAO + time for these. */
+   *  cruise R7-bucket aggregates; UI hides ICAO + time for these. */
   synthetic: boolean
 }
 

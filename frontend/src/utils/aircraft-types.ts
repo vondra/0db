@@ -212,7 +212,7 @@ export function aircraftFlightTooltip(opts: {
   // non-synth branch but skips the broken "ICAO hex: ..." line.
   const isSynth = opts.synthetic === true || !opts.icaoHex
   if (isSynth) {
-    return `${base}\n\nSynthetic id — anonymous-transponder trace or cruise R8 bucket aggregate; no single per-flight identity`
+    return `${base}\n\nSynthetic id — anonymous-transponder trace or cruise R7 bucket aggregate; no single per-flight identity`
   }
   const csLine = opts.callsign ? `\nCallsign: ${opts.callsign}` : ''
   return `${base}${csLine}\n\nICAO hex: ${(opts.icaoHex ?? '').toUpperCase()}\nClick to open trace on globe.adsb.lol`
