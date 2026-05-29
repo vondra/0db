@@ -416,7 +416,6 @@ export function findComponents(graph: Graph): Component[] {
 // ---------- Building spatial grid ----------
 
 export interface BuildingGrid {
-  grid: Map<number, number[]>
   lats: Float64Array
   lons: Float64Array
   /** Pre-projected building coords in metres (using the per-hex `mPerDegLon`).
@@ -482,24 +481,18 @@ export function buildBuildingGrid(table: any): BuildingGrid {
   const avgLat = n > 0 ? latSum / n : 0
   const mPerDegLon = M_PER_DEG_LON_EQUATOR * Math.cos(avgLat * Math.PI / 180)
 
-  // Second pass: pre-project every building into local metres + bucket
-  // into the grid using local cell indices.
+  // Second pass: pre-project every building into local metres. (Spatial
+  // bucketing now lives in assignBuildingsGlobally's per-segment grid; the
+  // old per-building grid here was dead after the building-outer rewrite.)
   const xs = new Float64Array(n)
   const ys = new Float64Array(n)
-  const grid = new Map<number, number[]>()
   for (let i = 0; i < n; i++) {
     xs[i] = lons[i] * mPerDegLon
     ys[i] = lats[i] * M_PER_DEG_LAT
-    const latLocal = Math.floor(lats[i] / GRID_CELL) - latOriginIdx
-    const lonLocal = Math.floor(lons[i] / GRID_CELL) - lonOriginIdx
-    const key = packGridKey(latLocal, lonLocal)
-    let list = grid.get(key)
-    if (!list) { list = []; grid.set(key, list) }
-    list.push(i)
   }
 
   return {
-    grid, lats, lons, xs, ys, mPerDegLon,
+    lats, lons, xs, ys, mPerDegLon,
     types, floors: flrs, areas,
     latOriginIdx, lonOriginIdx,
   }
@@ -525,43 +518,63 @@ export function assignBuildingsGlobally(
   startLat: any, startLon: any, endLat: any, endLon: any,
   bg: BuildingGrid,
 ): Map<number, number> {
-  // Hot path runs hundreds of millions of building × segment distance checks
-  // for dense urban hexes; TypedArray access avoids the per-iteration hash
-  // and allocation overhead Map.get/set incur on a numeric key.
   const n = bg.lats.length
   const bestSegArr = new Int32Array(n).fill(-1)
-  const bestDistArr = new Float64Array(n)
-  bestDistArr.fill(Infinity)
 
   if (eligibleSegments.length === 0) return new Map()
 
-  // Bbox padding for the segment-cell scan: how many ±cells we have to
-  // visit to cover MAX_BUFFER_M of slop in each direction. Uses the same
-  // hex-level `mPerDegLon` (= 111_320 × cosLat) the building xs were
-  // projected with — keeps the bbox check coordinate-consistent with the
-  // distance check below.
+  // Bbox padding: ±cells covering MAX_BUFFER_M of slop in each direction,
+  // using the same hex-level `mPerDegLon` (= 111_320 × cosLat) the building
+  // xs were projected with — keeps the bbox check coordinate-consistent.
   const lonCells = Math.ceil(MAX_BUFFER_M / (bg.mPerDegLon * GRID_CELL))
   const latCells = Math.ceil(MAX_BUFFER_M / (M_PER_DEG_LAT * GRID_CELL))
 
   const xs = bg.xs
   const ys = bg.ys
+  const lats = bg.lats
+  const lons = bg.lons
   const mLon = bg.mPerDegLon
-  const gridMap = bg.grid
   const latOff = bg.latOriginIdx
   const lonOff = bg.lonOriginIdx
 
-  for (const seg of eligibleSegments) {
+  // Invert the old segment-outer scan, which probed every building in each
+  // segment's bbox cells → O(segments × buildings_in_dense_core): quadratic
+  // in metro density (4M buildings collapse to ~625/cell, every segment then
+  // scans tens of thousands of mostly-out-of-range buildings) and the cause
+  // of multi-hour hangs on the densest hexes. Instead bucket every eligible
+  // segment into the grid cells its 250 m-capped extent (± buffer) covers,
+  // then for each building gather only the segments registered in its own
+  // cell. A building's candidate set is the handful of segments whose frontage
+  // passes within MAX_BUFFER_M — O(1-few) in real street geometry (road
+  // spacing bounds it, unlike building density) — so total work is ~O(buildings).
+  //
+  // Byte-identical to the old code: a segment is registered in cell C iff
+  // C ∈ its bbox range (exactly when the old loop would have probed that
+  // building for that segment), grid lists are filled in eligibleSegments
+  // order so candidates are visited in that order, and the per-building loop
+  // below uses the identical pointToSegmentDistXY + `dist < bestDist` compare —
+  // so the assigned nearest segment per building is bit-identical (NOT merely
+  // monotonic-equal: a squared compare could flip a sub-ulp near-tie), ties
+  // resolved the same way (earliest eligible segment wins).
+  const E = eligibleSegments.length
+  const segIdA = new Int32Array(E)
+  const sxA = new Float64Array(E)
+  const syA = new Float64Array(E)
+  const exA = new Float64Array(E)
+  const eyA = new Float64Array(E)
+  const segGrid = new Map<number, number[]>()
+
+  for (let e = 0; e < E; e++) {
+    const seg = eligibleSegments[e]
+    segIdA[e] = seg
     const sLat = startLat.get(seg) as number
     const sLon = startLon.get(seg) as number
     const eLat = endLat.get(seg) as number
     const eLon = endLon.get(seg) as number
-
-    // Project segment endpoints once per segment. Inner loop now operates
-    // entirely in metres — pure subtract/multiply/sqrt, zero trig.
-    const sx = sLon * mLon
-    const sy = sLat * M_PER_DEG_LAT
-    const ex = eLon * mLon
-    const ey = eLat * M_PER_DEG_LAT
+    sxA[e] = sLon * mLon
+    syA[e] = sLat * M_PER_DEG_LAT
+    exA[e] = eLon * mLon
+    eyA[e] = eLat * M_PER_DEG_LAT
 
     const gMinLat = Math.floor(Math.min(sLat, eLat) / GRID_CELL) - latCells
     const gMaxLat = Math.floor(Math.max(sLat, eLat) / GRID_CELL) + latCells
@@ -571,18 +584,29 @@ export function assignBuildingsGlobally(
     for (let gLat = gMinLat; gLat <= gMaxLat; gLat++) {
       const latPart = (gLat - latOff) << GRID_KEY_BITS
       for (let gLon = gMinLon; gLon <= gMaxLon; gLon++) {
-        const buildings = gridMap.get(latPart | ((gLon - lonOff) & GRID_KEY_MASK))
-        if (!buildings) continue
-        for (let k = 0; k < buildings.length; k++) {
-          const bi = buildings[k]
-          const dist = pointToSegmentDistXY(xs[bi], ys[bi], sx, sy, ex, ey)
-          if (dist <= MAX_BUFFER_M && dist < bestDistArr[bi]) {
-            bestDistArr[bi] = dist
-            bestSegArr[bi] = seg
-          }
-        }
+        const key = latPart | ((gLon - lonOff) & GRID_KEY_MASK)
+        let list = segGrid.get(key)
+        if (!list) { list = []; segGrid.set(key, list) }
+        list.push(e)
       }
     }
+  }
+
+  for (let bi = 0; bi < n; bi++) {
+    const key = ((Math.floor(lats[bi] / GRID_CELL) - latOff) << GRID_KEY_BITS)
+      | ((Math.floor(lons[bi] / GRID_CELL) - lonOff) & GRID_KEY_MASK)
+    const cands = segGrid.get(key)
+    if (!cands) continue
+    const bx = xs[bi]
+    const by = ys[bi]
+    let bestDist = Infinity
+    let bestE = -1
+    for (let c = 0; c < cands.length; c++) {
+      const e = cands[c]
+      const dist = pointToSegmentDistXY(bx, by, sxA[e], syA[e], exA[e], eyA[e])
+      if (dist <= MAX_BUFFER_M && dist < bestDist) { bestDist = dist; bestE = e }
+    }
+    if (bestE >= 0) bestSegArr[bi] = segIdA[bestE]
   }
 
   // Aggregate to `seg → totalDwellings` in one O(n) walk so each component
