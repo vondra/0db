@@ -336,6 +336,20 @@ pub fn industrial_periods(
     compute_point_sources(receiver, sources, barriers, rasters, LayerKind::Industrial, None).0
 }
 
+/// Building [`NoisePeriods`] at a receiver — the popup point-source path
+/// (`LayerKind::Building`) without trace collection. Each `PointSource`'s
+/// `dist_m` must already be filled for THIS receiver. Exposed so the
+/// surface-heatmap building parity validator compares against the exact popup
+/// reference.
+pub fn building_periods(
+    receiver: &Receiver,
+    sources: &[PointSource],
+    barriers: &[Barrier],
+    rasters: &dyn RasterSampler,
+) -> NoisePeriods {
+    compute_point_sources(receiver, sources, barriers, rasters, LayerKind::Building, None).0
+}
+
 /// Compute road noise: emission per period → propagation → Lden per segment.
 fn compute_roads(
     receiver: &Receiver,
