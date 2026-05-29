@@ -3,11 +3,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use arrow::array::UInt8Array;
+use arrow::array::UInt16Array;
 use arrow::datatypes::Schema;
 use arrow::ipc::reader::FileReader;
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
+use noise_compute::sources::provenance_of;
 use rayon::prelude::*;
 
 #[derive(Default, Clone, Copy)]
@@ -120,15 +121,28 @@ fn upgrade_hex(prepared_dir: &Path, hex_id: &str, run_at_unix: &str) -> Result<T
         let batch = batch.map_err(|e| e.to_string())?;
         rows += batch.num_rows();
 
-        if let Some(tsrc) = batch
-            .column_by_name("traffic_source")
-            .and_then(|arr| arr.as_any().downcast_ref::<UInt8Array>())
+        // source_id replaced the `traffic_source` column the rename deleted
+        // (that dead read silently bucketed every row `default` — the bug this
+        // fixes). Fold through the canonical `legacy_traffic_source_str()`, the
+        // same fold the engine uses (traces.rs:529). These are coverage counts
+        // (segments per source tier) — unlike the engine they skip the
+        // `aadt_light > 0` gate, so a stamped zero-AADT row counts enriched here
+        // but shows as default in the popup (intended: this audits enricher reach).
+        if let Some(sids) = batch
+            .column_by_name("source_id")
+            .and_then(|arr| arr.as_any().downcast_ref::<UInt16Array>())
         {
             for i in 0..batch.num_rows() {
-                match tsrc.value(i) {
-                    1 => matched_external_segments += 1,
-                    2 => estimated_service_tree_segments += 1,
-                    _ => default_segments += 1,
+                match provenance_of(sids.value(i)).legacy_traffic_source_str() {
+                    "matched_external" => matched_external_segments += 1,
+                    "estimated_service_tree" => estimated_service_tree_segments += 1,
+                    "default_by_class" => default_segments += 1,
+                    // An unknown bucket means the fold's contract changed — fail
+                    // loud, don't silently miscount (the bug class this kills).
+                    other => return Err(format!(
+                        "unexpected traffic_source bucket {other:?} (source_id {}, hex {hex_id})",
+                        sids.value(i)
+                    )),
                 }
             }
         } else {
