@@ -1,21 +1,19 @@
-import { Car, TrainFront, Plane, Building2, Factory, Layers } from 'lucide-react'
+import { Car, TrainFront, Plane, Building2, Factory } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { SourceMode } from '../hooks/useUrlState'
-import type { HeatmapV3LayerSource } from './HeatmapV3Overlay'
+import type { HeatmapLayer } from './HeatmapV3Overlay'
 
 interface LayerRow {
-  id: HeatmapV3LayerSource
+  id: HeatmapLayer
   label: string
   tooltip: string
   icon: ReactNode
 }
 
-// The simplified layer panel: the combined `total` view (default on) plus the
-// seven per-source heatmap layers. Each is a heatmap-v3 raster overlay driven
-// by `rasterOverlays`; the overlay energy-sums whichever are active (so `total`
-// alone is the one-fetch all-sources view).
+// The layer panel: the seven noise layers, all on by default. There is no
+// `total` toggle — when every layer is on the overlay fetches the precomputed
+// `total` tile automatically (see MapView); turning any off sums the rest.
 const LAYER_ROWS: LayerRow[] = [
-  { id: 'total', label: 'Total — all sources', tooltip: 'Combined noise from every source', icon: <Layers className="size-4" /> },
   { id: 'road', label: 'Roads', tooltip: 'Car, truck, and motorcycle traffic noise', icon: <Car className="size-4" /> },
   { id: 'rail', label: 'Railways', tooltip: 'Trains, trams, and freight lines', icon: <TrainFront className="size-4" /> },
   { id: 'industrial', label: 'Industrial', tooltip: 'Factories, power plants, quarries', icon: <Factory className="size-4" /> },

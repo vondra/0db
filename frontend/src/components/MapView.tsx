@@ -9,7 +9,7 @@ import QuietClustersLayer from './QuietClustersLayer'
 import RealEstateLayer from './RealEstateLayer'
 import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
-import HeatmapV3Overlay, { HEATMAP_V3_LAYER_SOURCES } from './HeatmapV3Overlay'
+import HeatmapV3Overlay, { HEATMAP_LAYERS } from './HeatmapV3Overlay'
 import HeatmapV3HoverTooltip from './HeatmapV3HoverTooltip'
 import CellInspectorLayer from './CellInspectorLayer'
 import MapStateSync from './MapStateSync'
@@ -61,10 +61,10 @@ export default function MapView({
   }, [])
 
   const activeHeatmapSources = useMemo(() => {
-    const active = HEATMAP_V3_LAYER_SOURCES.filter(s => !!rasterOverlays?.[s])
-    // `total` is already the energy-sum of every layer, so when it's on render
-    // it alone — summing it with individual layers would double-count those.
-    return active.includes('total') ? (['total'] as const) : active
+    const active = HEATMAP_LAYERS.filter(s => !!rasterOverlays?.[s])
+    // All seven on → fetch the single precomputed `total` tile (one fetch, no
+    // client-side sum); any subset → fetch + energy-sum those layers.
+    return active.length === HEATMAP_LAYERS.length ? (['total'] as const) : active
   }, [rasterOverlays])
 
   useEffect(() => {

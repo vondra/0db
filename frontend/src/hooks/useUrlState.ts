@@ -1,6 +1,6 @@
 import { useCallback, useRef, useMemo } from 'react'
 import { DEFAULT_BASEMAP, type BasemapId } from '../utils/basemaps'
-import { HEATMAP_V3_LAYER_SOURCES } from '../components/HeatmapV3Overlay'
+import { HEATMAP_LAYERS } from '../components/HeatmapV3Overlay'
 
 const DEFAULT_LAT = 49.8
 const DEFAULT_LNG = 15.5
@@ -8,7 +8,7 @@ const DEFAULT_ZOOM = 8
 const ALL_SOURCE_IDS = ['road', 'railway', 'aircraft', 'building', 'industrial']
 export const ALL_PROPAGATION_IDS = ['terrain', 'screening', 'vegetation']
 export const ALL_RASTER_OVERLAY_IDS = [
-  ...HEATMAP_V3_LAYER_SOURCES,
+  ...HEATMAP_LAYERS,
   'dem',
   'building-height', // Overture building-height raster — distinct from the `building` noise layer
   'forest',
@@ -35,6 +35,14 @@ export const EMPTY_RASTER_OVERLAYS: Record<string, boolean> = Object.fromEntries
   ALL_RASTER_OVERLAY_IDS.map(id => [id, false]),
 )
 
+// Default view: all seven noise layers on (advanced rasters off). With every
+// layer on, MapView fetches the single precomputed `total` tile rather than
+// summing seven — the fast path ~80% of visitors get without touching the UI.
+export const DEFAULT_RASTER_OVERLAYS: Record<string, boolean> = {
+  ...EMPTY_RASTER_OVERLAYS,
+  ...Object.fromEntries(HEATMAP_LAYERS.map(id => [id, true])),
+}
+
 function parseHash(): UrlState {
   const hash = window.location.hash.slice(1)
   if (!hash) {
@@ -49,9 +57,7 @@ function parseHash(): UrlState {
       detailPosition: null,
       propagationDisabled: [],
       basemap: DEFAULT_BASEMAP,
-      // Default view: the combined `total` heatmap on (the all-layers-on view
-      // ~80% of visitors want — one tile fetch); individual layers off.
-      rasterOverlays: { ...EMPTY_RASTER_OVERLAYS, total: true },
+      rasterOverlays: { ...DEFAULT_RASTER_OVERLAYS },
     }
   }
 
@@ -95,7 +101,11 @@ function parseHash(): UrlState {
     ? params.get('layers')!.split(',').filter(s => ALL_SOURCE_IDS.includes(s))
     : [...ALL_SOURCE_IDS]
 
-  const rasterOverlays: Record<string, boolean> = { ...EMPTY_RASTER_OVERLAYS }
+  // `ro` lists exactly the active overlays; its absence means the default view
+  // (all seven layers on). An explicit empty `ro=` therefore means "all off".
+  const rasterOverlays: Record<string, boolean> = params.has('ro')
+    ? { ...EMPTY_RASTER_OVERLAYS }
+    : { ...DEFAULT_RASTER_OVERLAYS }
   if (params.has('ro')) {
     for (const id of params.get('ro')!.split(',')) {
       if (ALL_RASTER_OVERLAY_IDS.includes(id)) rasterOverlays[id] = true
@@ -178,7 +188,11 @@ export function buildHash(state: {
 
   if (state.rasterOverlays) {
     const active = ALL_RASTER_OVERLAY_IDS.filter(id => state.rasterOverlays![id])
-    if (active.length > 0) {
+    // Omit `ro` for the default view (all seven layers on, advanced off) so a
+    // bare link opens the default; serialize the exact set otherwise (including
+    // the empty "all off" set as `ro=`).
+    const isDefault = ALL_RASTER_OVERLAY_IDS.every(id => !!state.rasterOverlays![id] === !!DEFAULT_RASTER_OVERLAYS[id])
+    if (!isDefault) {
       parts.push(`ro=${active.join(',')}`)
     }
   }
