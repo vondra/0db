@@ -214,7 +214,7 @@ pub fn collect_from_hex_data(
                 maxspeed: r.maxspeed,
                 trains_passenger: norm.scaled_passenger_per_day,
                 trains_freight: norm.scaled_freight_per_day,
-                speed_kmh: norm.speed_kmh as u8,
+                speed_kmh: norm.speed_kmh,
                 track_count: 1,
                 name: r.name.clone(),
                 rail_ref: r.rail_ref.clone(),

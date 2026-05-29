@@ -308,6 +308,20 @@ pub fn road_periods(
     compute_roads(receiver, roads, barriers, rasters, None).0
 }
 
+/// Railway [`NoisePeriods`] at a receiver — the popup rail path without trace
+/// collection. Each segment's closest-point (`dist_m`/`cp_lat`/`cp_lon`/
+/// `fraction`) and effective (post `service`/`parallel_divisor`) train counts
+/// must already be filled for THIS receiver. Exposed so the surface-heatmap
+/// rail parity validator compares against the exact popup reference.
+pub fn rail_periods(
+    receiver: &Receiver,
+    railways: &[RailSegment],
+    barriers: &[Barrier],
+    rasters: &dyn RasterSampler,
+) -> NoisePeriods {
+    compute_railways(receiver, railways, barriers, rasters, None).0
+}
+
 /// Compute road noise: emission per period → propagation → Lden per segment.
 fn compute_roads(
     receiver: &Receiver,
@@ -1010,7 +1024,10 @@ fn compute_railways(
         if seg.tunnel {
             continue;
         }
-        if seg.dist_m > 8000.0 {
+        // The popup queries rail only within RAILWAY_MAX_RADIUS, so this is the
+        // authoritative cutoff; using the named constant (not a looser 8 km
+        // magic number) keeps the surface heatmap's reach gate exactly aligned.
+        if seg.dist_m > RAILWAY_MAX_RADIUS {
             continue;
         }
 
@@ -1022,11 +1039,7 @@ fn compute_railways(
         }
 
         let rail_type = RailType::from_u8(seg.rail_type);
-        let speed = if seg.speed_kmh > 0 {
-            seg.speed_kmh as f64
-        } else {
-            80.0
-        };
+        let speed = if seg.speed_kmh > 0.0 { seg.speed_kmh } else { 80.0 };
         let q_pax = seg.trains_passenger.max(0.0);
         let q_frt = seg.trains_freight.max(0.0);
         if q_pax + q_frt <= 0.0 {
@@ -2023,7 +2036,7 @@ mod tests {
             maxspeed: 100,
             trains_passenger: 80.0,
             trains_freight: 20.0,
-            speed_kmh: 100,
+            speed_kmh: 100.0,
             track_count: 2,
             name: String::new(),
             rail_ref: String::new(),
@@ -2314,7 +2327,7 @@ mod tests {
             maxspeed: 100,
             trains_passenger: 80.0,
             trains_freight: 20.0,
-            speed_kmh: 100,
+            speed_kmh: 100.0,
             track_count: 2,
             name: String::new(),
             rail_ref: String::new(),
