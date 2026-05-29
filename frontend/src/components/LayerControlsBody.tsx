@@ -1,6 +1,5 @@
 import SourceToggles from './SourceToggles'
 import OverlayControls from './OverlayControls'
-import SoundPathSection from './SoundPathSection'
 import AdvancedSection from './AdvancedSection'
 import type { RealEstateFilters } from './RealEstateLayer'
 import type { SourceMode } from '../hooks/useUrlState'
@@ -29,7 +28,6 @@ export interface LayerControlsBodyProps {
  */
 export default function LayerControlsBody({
   sourceModes, onToggleSource, onSourceModeChange,
-  propagationFactors, onPropagationChange,
   quietClustersEnabled, onQuietClustersChange,
   quietThreshold, onQuietThresholdChange,
   realEstateFilters, onRealEstateChange,
@@ -59,13 +57,6 @@ export default function LayerControlsBody({
         onQuietThresholdChange={onQuietThresholdChange}
         realEstateFilters={realEstateFilters}
         onRealEstateChange={onRealEstateChange}
-      />
-
-      <div className={divClass} />
-
-      <SoundPathSection
-        propagationFactors={propagationFactors}
-        onPropagationChange={onPropagationChange}
       />
 
       <div className={divClass} />

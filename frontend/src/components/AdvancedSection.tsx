@@ -3,7 +3,7 @@ import { ChevronDown, Mountain, Building, TreePine, Shield } from 'lucide-react'
 
 const OVERLAYS = [
   { id: 'dem', label: 'Elevation', tooltip: 'DEM terrain elevation — hills, valleys, ridges (30m)', icon: <Mountain className="size-3.5" /> },
-  { id: 'building', label: 'Buildings', tooltip: 'Building heights from Overture Maps (30m)', icon: <Building className="size-3.5" /> },
+  { id: 'building-height', label: 'Building heights', tooltip: 'Building heights from Overture Maps (30m)', icon: <Building className="size-3.5" /> },
   { id: 'forest', label: 'Forest', tooltip: 'Forest cover from ESA WorldCover (30m)', icon: <TreePine className="size-3.5" /> },
   { id: 'barriers', label: 'Noise barriers', tooltip: 'Noise barriers from OSM (walls blocking sound propagation)', icon: <Shield className="size-3.5" /> },
 ]

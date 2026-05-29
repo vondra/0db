@@ -11,7 +11,9 @@ interface RasterOverlayLayerProps {
 /// MapLibre raster source.
 const LAYERS = [
   { id: 'dem', minzoom: 6, url: '' },
-  { id: 'building', minzoom: 10, url: '' },
+  // Distinct overlay key from the `building` noise heatmap layer (both share
+  // the flat rasterOverlays dict); the tile path stays /api/raster/building/.
+  { id: 'building-height', minzoom: 10, url: '/api/raster/building/{z}/{x}/{y}.png' },
   { id: 'forest', minzoom: 8, url: '' },
   { id: 'barriers', minzoom: 12, url: '' },
 ] as const

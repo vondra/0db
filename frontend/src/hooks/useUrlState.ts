@@ -1,6 +1,6 @@
 import { useCallback, useRef, useMemo } from 'react'
 import { DEFAULT_BASEMAP, type BasemapId } from '../utils/basemaps'
-import { AIRCRAFT_LAYER_SOURCES } from '../components/HeatmapV3Overlay'
+import { HEATMAP_V3_LAYER_SOURCES } from '../components/HeatmapV3Overlay'
 
 const DEFAULT_LAT = 49.8
 const DEFAULT_LNG = 15.5
@@ -8,9 +8,9 @@ const DEFAULT_ZOOM = 8
 const ALL_SOURCE_IDS = ['road', 'railway', 'aircraft', 'building', 'industrial']
 export const ALL_PROPAGATION_IDS = ['terrain', 'screening', 'vegetation']
 export const ALL_RASTER_OVERLAY_IDS = [
-  ...AIRCRAFT_LAYER_SOURCES,
+  ...HEATMAP_V3_LAYER_SOURCES,
   'dem',
-  'building',
+  'building-height', // Overture building-height raster — distinct from the `building` noise layer
   'forest',
   'barriers',
 ]
@@ -49,7 +49,9 @@ function parseHash(): UrlState {
       detailPosition: null,
       propagationDisabled: [],
       basemap: DEFAULT_BASEMAP,
-      rasterOverlays: { ...EMPTY_RASTER_OVERLAYS },
+      // Default view: the combined `total` heatmap on (the all-layers-on view
+      // ~80% of visitors want — one tile fetch); individual layers off.
+      rasterOverlays: { ...EMPTY_RASTER_OVERLAYS, total: true },
     }
   }
 

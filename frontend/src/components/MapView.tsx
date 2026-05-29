@@ -9,7 +9,7 @@ import QuietClustersLayer from './QuietClustersLayer'
 import RealEstateLayer from './RealEstateLayer'
 import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
-import HeatmapV3Overlay, { AIRCRAFT_LAYER_SOURCES } from './HeatmapV3Overlay'
+import HeatmapV3Overlay, { HEATMAP_V3_LAYER_SOURCES } from './HeatmapV3Overlay'
 import HeatmapV3HoverTooltip from './HeatmapV3HoverTooltip'
 import CellInspectorLayer from './CellInspectorLayer'
 import MapStateSync from './MapStateSync'
@@ -60,10 +60,12 @@ export default function MapView({
     setFlyToPos(pos)
   }, [])
 
-  const activeAircraftSources = useMemo(
-    () => AIRCRAFT_LAYER_SOURCES.filter(s => !!rasterOverlays?.[s]),
-    [rasterOverlays],
-  )
+  const activeHeatmapSources = useMemo(() => {
+    const active = HEATMAP_V3_LAYER_SOURCES.filter(s => !!rasterOverlays?.[s])
+    // `total` is already the energy-sum of every layer, so when it's on render
+    // it alone — summing it with individual layers would double-count those.
+    return active.includes('total') ? (['total'] as const) : active
+  }, [rasterOverlays])
 
   useEffect(() => {
     let cancelled = false
@@ -117,10 +119,10 @@ export default function MapView({
           Source/Layer would sit under the non-interleaved deck canvas
           and disappear whenever any heatmap was active. */}
       <HeatmapV3Overlay
-        sources={activeAircraftSources}
+        sources={activeHeatmapSources}
         highlightGeometry={highlightGeometry ?? null}
       />
-      <HeatmapV3HoverTooltip sources={activeAircraftSources} />
+      <HeatmapV3HoverTooltip sources={activeHeatmapSources} />
       <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} sourceModes={sourceModes} />
       <IsochronLayer geojson={isochronGeojson ?? null} />
       <FlyToLocation location={selectedLocation ?? null} onArrived={handleArrived} />

@@ -11,6 +11,11 @@ const MIN_ZOOM = 14
 const DATA_LAYERS = ['dem', 'building', 'forest'] as const
 type DataLayer = (typeof DATA_LAYERS)[number]
 
+// The Overture building-height raster is keyed `building-height` in
+// rasterOverlays (distinct from the `building` noise heatmap layer); its tile
+// + readout path stays `building`.
+const overlayKey = (l: DataLayer): string => (l === 'building' ? 'building-height' : l)
+
 interface CellInspectorLayerProps {
   rasterOverlays: Record<string, boolean>
   sourceModes?: Record<string, SourceMode>
@@ -40,7 +45,7 @@ export default function CellInspectorLayer({
   const [tileEpoch, setTileEpoch] = useState(0)
 
   const activeLayers: DataLayer[] = useMemo(
-    () => DATA_LAYERS.filter(id => rasterOverlays[id]),
+    () => DATA_LAYERS.filter(id => rasterOverlays[overlayKey(id)]),
     [rasterOverlays],
   )
 
