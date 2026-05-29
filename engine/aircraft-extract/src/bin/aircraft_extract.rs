@@ -812,10 +812,13 @@ fn run_day(
 /// working sets in RAM at once. Auto-scaling off total RAM keeps the extract
 /// OOM-free on any host (laptop → 256 GB server) with zero manual tuning.
 fn max_concurrent_days(num_days: usize) -> usize {
-    // Measured peak resident set per dense global day on the 2026-05 global TTM
-    // extract (7 days × ~16 GB OOM-killed a 110 GB cgroup on a 125 GB host).
-    // 20 GB is that peak rounded up to absorb the shared DEM tile cache's share.
-    const PEAK_PER_DAY_GB: f64 = 20.0;
+    // Effective RAM cost per concurrent day, calibrated from the 2026-05 global
+    // TTM extract: 4 concurrent dense days OOM-killed a 110 GB cgroup at the
+    // segment-write peak, i.e. ~28 GB per concurrent day once the shared DEM
+    // tile cache + per-day segment accumulation are amortized in (the per-day
+    // segment set alone is ~16 GB; 28 folds in the fixed shared-cache share so
+    // the linear K model stays safely below the limit).
+    const PEAK_PER_DAY_GB: f64 = 28.0;
     // Effective budget = min(host RAM, this process's cgroup memory limit) so a
     // container or `systemd-run -p MemoryMax=…` scope caps concurrency too —
     // sizing off host RAM alone re-OOMs inside a smaller cgroup.
