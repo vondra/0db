@@ -1,6 +1,6 @@
 //! WKB polygon utilities — area calculation from hex-encoded WKB.
 //!
-//! Used by both source-reader (popup) and pipeline-worker (tile generation)
+//! Used by both source-reader (popup) and heatmap-aircraft (tile generation)
 //! to compute real area from OSM polygon data instead of hardcoded defaults.
 //!
 //! WHY: Industrial area was hardcoded to 10000 m², building area to 100 m².

@@ -4,7 +4,7 @@
 //!   SEL_seg = L_E(P, d_p) + ΔV + ΔI(φ) - Λ(β, l) + ΔF
 //!
 //! `segment_energy_kernel` is the shared per-segment hot path; both the
-//! popup wrapper (`segment_sel::*`) and pipeline-worker scatter delegate
+//! popup wrapper (`segment_sel::*`) and heatmap-aircraft scatter delegate
 //! here.
 
 use std::f64::consts::{LOG10_2, PI};

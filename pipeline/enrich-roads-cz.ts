@@ -207,7 +207,7 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
 
       // Whole-row atomic write — payload + dataset_id together.
       // Do NOT halve for oneway — ŘSD = bidirectional total,
-      // pipeline-worker already applies oneway_factor=0.5 (arrow.rs:81)
+      // heatmap-aircraft already applies oneway_factor=0.5 (arrow.rs:81)
       aadtLight[i] = best.aadt_light
       aadtMedium[i] = best.aadt_medium
       aadtHeavy[i] = best.aadt_heavy

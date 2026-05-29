@@ -84,7 +84,7 @@ pub fn resolve_traffic_default(class: u8, admin: Admin) -> Aadt {
 /// can index by `road_class` instead of paying for a city/country/
 /// continent lookup per segment. Build at the top of any code path that
 /// processes many segments under a stable admin (e.g. a per-hex batch
-/// in `pipeline-worker::io::arrow::load_roads` or a popup-time receiver
+/// in the batch road loader or a popup-time receiver
 /// query in `source-reader`).
 pub fn build_traffic_default_cache(admin: Admin) -> [Aadt; WORLD_DEFAULT.len()] {
     std::array::from_fn(|c| resolve_traffic_default(c as u8, admin))

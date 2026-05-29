@@ -13,7 +13,6 @@ data/
 *.tsbuildinfo
 target/
 *.node
-engine/pipeline-worker/backend/
 pipeline/lib/*.js
 pipeline/lib/*.d.ts
 

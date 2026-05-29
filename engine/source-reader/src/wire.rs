@@ -1,7 +1,7 @@
 //! Popup-response wire shape.
 //!
 //! `noise-compute` carries internal `NoiseResult` / `SourceResult` /
-//! `Contributor` structs shared with the pipeline-worker (which writes
+//! `Contributor` structs shared with the heatmap-aircraft (which writes
 //! Arrow tiles, not JSON). The popup JSON contract — what the frontend
 //! reads — was previously assembled by the Fastify route in Node:
 //! parse → rename fields (`periods.lden_db` → `received_lden`) → round

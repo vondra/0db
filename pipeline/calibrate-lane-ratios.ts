@@ -7,7 +7,7 @@
  * (road_class × lanes × oneway) bucket, and outputs the ratio table
  * relative to the 2-lane baseline.
  *
- * Output: ratio table as JSON + Rust const for pipeline-worker.
+ * Output: ratio table as JSON + Rust const for heatmap-aircraft.
  *
  * Usage:
  *   DATA_YEAR=2025 npx tsx pipeline/calibrate-lane-ratios.ts
@@ -149,7 +149,7 @@ function main(): void {
   }
 
   // Step 4: Output as Rust const
-  console.log('\n\n// ── Rust const for pipeline-worker ──')
+  console.log('\n\n// ── Rust const for heatmap-aircraft ──')
   console.log('fn lane_ratio(class_idx: usize, lanes: u8, oneway: bool) -> f64 {')
   console.log('    if lanes <= 2 { return 1.0; }')
   console.log('    match (class_idx, oneway) {')

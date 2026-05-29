@@ -428,7 +428,7 @@ fn compute_roads(
 
     // Admin resolved once per compute_roads call — receiver position is
     // constant across segments. Uses the process-wide admin table
-    // (see admin::init_admin_table at pipeline-worker/source-reader init).
+    // (see admin::init_admin_table at heatmap-aircraft/source-reader init).
     // Falls back to Admin::UNKNOWN → WORLD_DEFAULT when uninitialised.
     let admin = crate::admin::admin_for_latlng(receiver.lat, receiver.lon);
 
