@@ -2,14 +2,8 @@ import SourceToggles from './SourceToggles'
 import OverlayControls from './OverlayControls'
 import AdvancedSection from './AdvancedSection'
 import type { RealEstateFilters } from './RealEstateLayer'
-import type { SourceMode } from '../hooks/useUrlState'
 
 export interface LayerControlsBodyProps {
-  sourceModes: Record<string, SourceMode>
-  onToggleSource: (sourceId: string) => void
-  onSourceModeChange: (sourceId: string, mode: SourceMode) => void
-  propagationFactors: Record<string, boolean>
-  onPropagationChange: (factors: Record<string, boolean>) => void
   quietClustersEnabled: boolean
   onQuietClustersChange: (enabled: boolean) => void
   quietThreshold: number
@@ -27,7 +21,6 @@ export interface LayerControlsBodyProps {
  * (header, dismiss affordance, animation, visibility media query) differs.
  */
 export default function LayerControlsBody({
-  sourceModes, onToggleSource, onSourceModeChange,
   quietClustersEnabled, onQuietClustersChange,
   quietThreshold, onQuietThresholdChange,
   realEstateFilters, onRealEstateChange,
@@ -41,9 +34,6 @@ export default function LayerControlsBody({
   return (
     <>
       <SourceToggles
-        sourceModes={sourceModes}
-        onToggleSource={onToggleSource}
-        onSourceModeChange={onSourceModeChange}
         rasterOverlays={rasterOverlays}
         onRasterOverlayChange={onRasterOverlayChange}
       />

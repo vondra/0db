@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Source, Layer, useMap } from 'react-map-gl/maplibre'
-import type { SourceMode } from '../hooks/useUrlState'
+import { HEATMAP_LAYERS } from './HeatmapV3Overlay'
 
 const TILE_SIZE = 64
 const CELL_STEP_DEG = 1 / 3600
@@ -18,7 +18,6 @@ const overlayKey = (l: DataLayer): string => (l === 'building' ? 'building-heigh
 
 interface CellInspectorLayerProps {
   rasterOverlays: Record<string, boolean>
-  sourceModes?: Record<string, SourceMode>
 }
 
 type TileEntry = ArrayBuffer | 'loading' | 'failed'
@@ -31,7 +30,6 @@ type TileEntry = ArrayBuffer | 'loading' | 'failed'
  */
 export default function CellInspectorLayer({
   rasterOverlays,
-  sourceModes,
 }: CellInspectorLayerProps) {
   const { current: mapRef } = useMap()
   const tileCache = useRef<Map<string, TileEntry>>(new Map())
@@ -49,16 +47,14 @@ export default function CellInspectorLayer({
     [rasterOverlays],
   )
 
-  // `sourceModes.aircraft` is pinned to '0db' (no UI toggle — see App.tsx)
-  // so a raw `Object.values(...).every(off)` would never become true and the
-  // raster inspector would be permanently disabled. Filter aircraft out.
-  const allSourcesOff = useMemo(
-    () => Object.entries(sourceModes ?? {})
-      .every(([id, m]) => id === 'aircraft' || m === 'off' || m == null),
-    [sourceModes],
+  // Defer to the noise popup/heatmap: show raw raster cell values only when
+  // no noise heatmap layer is on.
+  const noiseLayersOff = useMemo(
+    () => !HEATMAP_LAYERS.some(id => rasterOverlays[id]),
+    [rasterOverlays],
   )
 
-  const enabled = activeLayers.length > 0 && allSourcesOff
+  const enabled = activeLayers.length > 0 && noiseLayersOff
 
   useEffect(() => {
     if (!enabled || !mapRef) {

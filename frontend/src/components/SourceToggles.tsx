@@ -1,6 +1,5 @@
 import { Car, TrainFront, Plane, Building2, Factory } from 'lucide-react'
 import type { ReactNode } from 'react'
-import type { SourceMode } from '../hooks/useUrlState'
 import type { HeatmapLayer } from './HeatmapV3Overlay'
 
 interface LayerRow {
@@ -23,14 +22,7 @@ const LAYER_ROWS: LayerRow[] = [
   { id: 'aircraft-cruise', label: 'Aircraft — cruise', tooltip: 'High-altitude overflight (FL100+)', icon: <Plane className="size-4" /> },
 ]
 
-// `sourceModes`/`onToggleSource`/`onSourceModeChange` stay on the prop contract
-// (the legacy H3 vector layers + their plumbing are kept intact) but the
-// simplified panel no longer drives them — it toggles only raster heatmap
-// layers.
 interface SourceTogglesProps {
-  sourceModes: Record<string, SourceMode>
-  onToggleSource: (sourceId: string) => void
-  onSourceModeChange: (sourceId: string, mode: SourceMode) => void
   rasterOverlays: Record<string, boolean>
   onRasterOverlayChange: (overlays: Record<string, boolean>) => void
 }

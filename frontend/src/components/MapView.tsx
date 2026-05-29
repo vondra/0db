@@ -1,11 +1,9 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import Map, { NavigationControl } from 'react-map-gl/maplibre'
 import type { StyleSpecification } from 'maplibre-gl'
-import HexLayer from './HexLayer'
-import HexHoverTooltip from './HexHoverTooltip'
 import FlyToLocation from './FlyToLocation'
 import DetailPopup from './DetailPopup'
-import QuietClustersLayer from './QuietClustersLayer'
+import QuietZonesLayer from './QuietZonesLayer'
 import RealEstateLayer from './RealEstateLayer'
 import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
@@ -14,28 +12,20 @@ import HeatmapV3HoverTooltip from './HeatmapV3HoverTooltip'
 import CellInspectorLayer from './CellInspectorLayer'
 import MapStateSync from './MapStateSync'
 import { DEFAULT_BASEMAP, loadBasemapStyle, type BasemapId } from '../utils/basemaps'
-import type { QuietHex, QuietHexUpdate } from './HexLayer'
 import type { SelectedLocation } from './FlyToLocation'
 import type { NoiseComputeData } from '../types/noise'
-import type { SourceMode } from '../hooks/useUrlState'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 interface MapViewProps {
   selectedLocation?: SelectedLocation | null
   initialCenter?: [number, number]
   initialZoom?: number
-  sourceModes?: Record<string, SourceMode>
-  propagationFactors?: Record<string, boolean>
   basemap?: BasemapId
   onViewChange?: (lat: number, lng: number, zoom: number) => void
-  onQuietHexUpdate?: (update: QuietHexUpdate) => void
   onDetailData?: (data: NoiseComputeData | null) => void
   onDetailPositionChange?: (pos: { lat: number; lng: number } | null) => void
   onDetailError?: (message: string | null) => void
   detailPosition?: { lat: number; lng: number } | null
-  quietHexData?: QuietHex[]
-  quietVisible?: boolean
-  quietDataRes?: number | null
   quietClustersEnabled?: boolean
   quietThreshold?: number
   highlightGeometry?: any | null
@@ -46,9 +36,9 @@ interface MapViewProps {
 }
 
 export default function MapView({
-  selectedLocation, initialCenter, initialZoom, sourceModes, propagationFactors,
-  basemap, onViewChange, onQuietHexUpdate, onDetailData, onDetailPositionChange, onDetailError, detailPosition,
-  quietHexData, quietVisible, quietDataRes, quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters, onPropertySelect, rasterOverlays,
+  selectedLocation, initialCenter, initialZoom,
+  basemap, onViewChange, onDetailData, onDetailPositionChange, onDetailError, detailPosition,
+  quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters, onPropertySelect, rasterOverlays,
 }: MapViewProps) {
   const center = initialCenter ?? [49.8, 15.5]
   const zoom = initialZoom ?? 8
@@ -99,19 +89,6 @@ export default function MapView({
       dragPan={{ deceleration: 4000, maxSpeed: 1100 }}
     >
       <NavigationControl position="bottom-left" showCompass={false} />
-      <HexLayer
-        sourceModes={sourceModes}
-        propagationFactors={propagationFactors}
-        onQuietHexUpdate={onQuietHexUpdate}
-        basemapId={bm}
-        quietClustersEnabled={quietClustersEnabled}
-      />
-      <HexHoverTooltip />
-      <QuietClustersLayer
-        hexData={quietHexData ?? []}
-        enabled={(quietClustersEnabled ?? false) && (quietVisible ?? false) && quietDataRes !== null}
-        threshold={quietThreshold ?? 35}
-      />
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
       {/* Highlight rides on the same deck.gl canvas as the heatmap so
@@ -122,8 +99,9 @@ export default function MapView({
         sources={activeHeatmapSources}
         highlightGeometry={highlightGeometry ?? null}
       />
+      <QuietZonesLayer enabled={quietClustersEnabled ?? false} threshold={quietThreshold ?? 55} />
       <HeatmapV3HoverTooltip sources={activeHeatmapSources} />
-      <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} sourceModes={sourceModes} />
+      <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} />
       <IsochronLayer geojson={isochronGeojson ?? null} />
       <FlyToLocation location={selectedLocation ?? null} onArrived={handleArrived} />
       <DetailPopup

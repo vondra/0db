@@ -67,11 +67,11 @@ export default function OverlayControls({
         active={quietClustersEnabled}
         icon={<TreePine className="size-4" />}
         label="Quiet zones"
-        tooltip="Highlight contiguous areas where noise stays below a threshold"
+        tooltip="Highlight areas where total noise (all sources) stays below a threshold"
         onClick={() => onQuietClustersChange(!quietClustersEnabled)}
       />
       {quietClustersEnabled && (
-        <NoiseSlider value={quietThreshold} onChange={onQuietThresholdChange} min={15} max={45} testId="quiet-threshold" />
+        <NoiseSlider value={quietThreshold} onChange={onQuietThresholdChange} min={40} max={65} testId="quiet-threshold" />
       )}
 
       <ToggleRow
