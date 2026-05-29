@@ -158,7 +158,13 @@ pub fn shuffle_per_r4(
 
 fn pass_a(day_paths: &[PathBuf], temp_dir: &Path, scope: Option<&ScopeBbox>) -> Result<u64> {
     let counter = Milestone::new("shuffle/passA", "segments", 1_000_000);
-    day_paths.par_iter().try_for_each(|day_path| -> Result<()> {
+    // Bound how many days are decoded into RAM at once. Each worker holds a
+    // full day's segments + per-bucket HashMaps (~16 GB); a naive par_iter over
+    // all 7 global days hit ~114 GB anon and was cgroup-OOM-killed. Chunk by the
+    // same ~28 GB/day budget as Stage 0/1 (sized to host RAM or the cgroup
+    // limit, whichever is smaller). Within a chunk par_iter still fills cores.
+    for chunk in day_paths.chunks(pass_a_max_concurrent_days(day_paths.len())) {
+        chunk.par_iter().try_for_each(|day_path| -> Result<()> {
         let segments = read_segments(day_path)
             .with_context(|| format!("read {}", day_path.display()))?;
         let day_stem = day_path
@@ -195,7 +201,36 @@ fn pass_a(day_paths: &[PathBuf], temp_dir: &Path, scope: Option<&ScopeBbox>) -> 
         counter.add(kept);
         Ok(())
     })?;
+    }
     Ok(counter.total())
+}
+
+/// How many days Pass A decodes into RAM concurrently, sized to the smaller of
+/// host RAM and this process's cgroup memory limit (~28 GB effective per
+/// concurrent day, 60% of budget) — the same policy as the Stage 0/1 day cap
+/// in the orchestrator. Kept local to avoid a bin->lib dependency.
+/// TODO: hoist this and the bin's copy into one shared crate util.
+fn pass_a_max_concurrent_days(num_days: usize) -> usize {
+    const PEAK_PER_DAY_GB: f64 = 28.0;
+    let host = std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("MemTotal:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|kb| kb.parse::<u64>().ok())
+        })
+        .map(|kb| kb * 1024)
+        .unwrap_or(16u64 * 1024 * 1024 * 1024);
+    let cgroup = std::fs::read_to_string("/proc/self/cgroup")
+        .ok()
+        .and_then(|cg| cg.lines().find_map(|l| l.strip_prefix("0::").map(str::to_owned)))
+        .and_then(|rel| {
+            std::fs::read_to_string(format!("/sys/fs/cgroup{}/memory.max", rel.trim())).ok()
+        })
+        .and_then(|raw| raw.trim().parse::<u64>().ok());
+    let budget_gb = cgroup.map_or(host, |c| host.min(c)) as f64 / 1_000_000_000.0;
+    ((budget_gb * 0.60 / PEAK_PER_DAY_GB).floor() as usize).clamp(1, num_days.max(1))
 }
 
 fn pass_b(temp_dir: &Path, out_dir: &Path) -> Result<u64> {
