@@ -44,7 +44,7 @@ export default function App() {
   const [quietThreshold, setQuietThreshold] = useState(initial.quietThreshold ?? 55)
   const [basemap, setBasemap] = useState<BasemapId>(initial.basemap ?? DEFAULT_BASEMAP)
   const [realEstateFilters, setRealEstateFilters] = useState<RealEstateFilters>({
-    enabled: false, propertyType: 'all', listingType: 'all', maxNoise: 35,
+    enabled: false, propertyType: 'all', listingType: 'all', maxNoise: 60,
   })
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null)
   const [rasterOverlays, setRasterOverlays] = useState<Record<string, boolean>>(

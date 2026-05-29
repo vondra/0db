@@ -1,6 +1,8 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { useMap, Source, Layer } from 'react-map-gl/maplibre'
-import { latLngToCell } from 'h3-js'
+import { useEffect, useState, useMemo } from 'react'
+import { MapboxOverlay } from '@deck.gl/mapbox'
+import { ScatterplotLayer } from '@deck.gl/layers'
+import { useMap } from 'react-map-gl/maplibre'
+import { markPropertyClick } from '../lib/property-click-guard'
 
 export interface RealEstateFilters {
   enabled: boolean
@@ -25,202 +27,118 @@ export interface Property {
   updated: string
 }
 
-type MarkerCategory = 'land-buy' | 'land-rent' | 'house-buy' | 'house-rent'
-
-const ICON_COLORS: Record<'buy' | 'rent', string> = {
-  buy:  '#2563eb',
-  rent: '#f59e0b',
-}
-
-function getCategory(p: { type: string; listing: string }): MarkerCategory {
-  const t = p.type === 'land' ? 'land' : 'house'
-  const l = p.listing === 'rent' ? 'rent' : 'buy'
-  return `${t}-${l}` as MarkerCategory
-}
-
-function createMarkerSvg(category: MarkerCategory): string {
-  const isRent = category.endsWith('-rent')
-  const isLand = category.startsWith('land-')
-  const iconColor = isRent ? ICON_COLORS.rent : ICON_COLORS.buy
-  const pin = 'M16 38 C16 38 3 24 3 14 A13 13 0 0 1 29 14 C29 24 16 38 16 38 Z'
-  const innerIcon = isLand
-    ? `<rect x="10" y="9" width="12" height="10" rx="1" fill="none" stroke="${iconColor}" stroke-width="1.8" stroke-linejoin="round"/><line x1="13" y1="9" x2="13" y2="5" stroke="${iconColor}" stroke-width="1.8" stroke-linecap="round"/>`
-    : `<path d="M9 18 L9 13 L16 7 L23 13 L23 18 Z" fill="none" stroke="${iconColor}" stroke-width="1.8" stroke-linejoin="round"/>`
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="40" viewBox="0 0 32 40">
-    <path d="${pin}" fill="white" stroke="#999" stroke-width="1.5"/>
-    ${innerIcon}
-  </svg>`
-}
-
 interface RealEstateLayerProps {
   filters: RealEstateFilters
   onPropertySelect?: (property: Property | null) => void
 }
 
-const hexCache = new Map<string, Property[]>()
+const BUY: [number, number, number] = [37, 99, 235]   // blue
+const RENT: [number, number, number] = [245, 158, 11] // amber
 
-function getVisibleH3R4Hexes(bounds: { west: number; south: number; east: number; north: number }): string[] {
-  const hexes = new Set<string>()
-  const STEPS = 4
-  const latStep = (bounds.north - bounds.south) / STEPS
-  const lngStep = (bounds.east - bounds.west) / STEPS
-  for (let i = 0; i <= STEPS; i++) {
-    for (let j = 0; j <= STEPS; j++) {
-      try { hexes.add(latLngToCell(bounds.south + i * latStep, bounds.west + j * lngStep, 4)) } catch {}
-    }
+// The full CZ listing set is small (a few thousand) and static within a
+// session — fetch once and share across mounts; the client filters by
+// viewport + type + noise. Replaces the old per-H3R4-hex fetch (no h3-js).
+let allCache: Property[] | null = null
+let allPromise: Promise<Property[]> | null = null
+function loadAllProperties(): Promise<Property[]> {
+  if (allCache) return Promise.resolve(allCache)
+  if (!allPromise) {
+    allPromise = fetch('/api/properties')
+      .then(r => (r.ok ? r.json() : []))
+      .then((data: Property[]) => { allCache = data; return data })
+      .catch(() => { allPromise = null; return [] as Property[] })
   }
-  return [...hexes]
+  return allPromise
 }
 
+/**
+ * Property markers as a deck.gl ScatterplotLayer on its own overlay. It must
+ * mount AFTER the heatmap (see MapView order) so the pins sit above it — a
+ * MapLibre symbol/circle layer is occluded by the non-interleaved heatmap
+ * canvas. Coloured dots (blue = buy, amber = rent) rather than pin icons:
+ * map image loading proved unreliable, and property TYPE is handled by the
+ * filter, so a dot reads fine.
+ */
 export default function RealEstateLayer({ filters, onPropertySelect }: RealEstateLayerProps) {
-  const { current: map } = useMap()
-  const [properties, setProperties] = useState<Property[]>([])
-  const fetchIdRef = useRef(0)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const iconsLoaded = useRef(false)
-
-  // Load SVG pin markers into MapLibre (re-load on basemap switch)
-  useEffect(() => {
-    if (!map) return
-    const categories: MarkerCategory[] = ['land-buy', 'land-rent', 'house-buy', 'house-rent']
-
-    const loadIcons = () => {
-      let loaded = 0
-      for (const cat of categories) {
-        const img = new Image(32, 40)
-        img.onload = () => {
-          try {
-            if (map.hasImage(cat)) map.removeImage(cat)
-            map.addImage(cat, img)
-          } catch {}
-          if (++loaded === categories.length) iconsLoaded.current = true
-        }
-        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(createMarkerSvg(cat))
-      }
-    }
-
-    const m = map.getMap()
-    const onStyleLoad = () => { iconsLoaded.current = false; loadIcons() }
-    if (m.isStyleLoaded()) loadIcons()
-    m.on('style.load', onStyleLoad)
-    return () => { m.off('style.load', onStyleLoad) }
-  }, [map])
-
-  // Fetch from H3R4 JSON files
-  const fetchProperties = useCallback(async () => {
-    if (!map || !filters.enabled) { setProperties([]); return }
-
-    const id = ++fetchIdRef.current
-    const bounds = map.getBounds()
-    const hexes = getVisibleH3R4Hexes({
-      west: bounds.getWest(), south: bounds.getSouth(),
-      east: bounds.getEast(), north: bounds.getNorth(),
-    })
-
-    const results: Property[] = []
-    await Promise.all(hexes.map(async (hex) => {
-      if (hexCache.has(hex)) { results.push(...hexCache.get(hex)!); return }
-      try {
-        const res = await fetch(`/api/h3r4/${hex}/real-estate/index.json`)
-        if (!res.ok) { hexCache.set(hex, []); return }
-        const data: Property[] = await res.json()
-        hexCache.set(hex, data)
-        results.push(...data)
-      } catch { hexCache.set(hex, []) }
-    }))
-
-    if (id !== fetchIdRef.current) return
-    setProperties(results)
-  }, [map, filters.enabled])
-
-  const debouncedFetch = useCallback(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(fetchProperties, 400)
-  }, [fetchProperties])
+  const { current: mapRef } = useMap()
+  const [overlay, setOverlay] = useState<MapboxOverlay | null>(null)
+  const [all, setAll] = useState<Property[]>([])
+  const [bounds, setBounds] = useState<{ w: number; s: number; e: number; n: number } | null>(null)
 
   useEffect(() => {
-    if (!map) return
-    if (filters.enabled) fetchProperties()
-    else { setProperties([]); onPropertySelect?.(null) }
-    map.on('moveend', debouncedFetch)
-    return () => {
-      map.off('moveend', debouncedFetch)
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    }
-  }, [map, filters.enabled, fetchProperties, debouncedFetch])
+    if (!mapRef) return
+    const map = mapRef.getMap()
+    const o = new MapboxOverlay({ interleaved: false, layers: [] })
+    map.addControl(o)
+    setOverlay(o)
+    return () => { map.removeControl(o); setOverlay(null) }
+  }, [mapRef])
 
-  // Client-side filter + categorize
-  const geojson = useMemo<GeoJSON.FeatureCollection | null>(() => {
-    const filtered = properties.filter(p => {
-      if (p.noise == null) return false  // no noise data = don't show
-      if (filters.propertyType !== 'all' && p.type !== filters.propertyType) return false
-      if (filters.listingType !== 'all' && p.listing !== filters.listingType) return false
-      if (p.noise > filters.maxNoise) return false
-      return true
-    })
-    if (filtered.length === 0) return null
-    return {
-      type: 'FeatureCollection',
-      features: filtered.map(p => ({
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: [p.lng, p.lat] },
-        properties: { ...p, _category: getCategory(p) },
-      })),
-    }
-  }, [properties, filters])
-
-  // Click + hover
+  // Fetch the full listing set once when the overlay is enabled.
   useEffect(() => {
-    if (!map || !filters.enabled) return
+    if (!filters.enabled) { onPropertySelect?.(null); return }
+    let cancelled = false
+    void loadAllProperties().then(props => { if (!cancelled) setAll(props) })
+    return () => { cancelled = true }
+  }, [filters.enabled, onPropertySelect])
 
-    const onPropertyClick = (e: any) => {
-      const features = map.queryRenderedFeatures(e.point, { layers: ['property-icons'] })
-      if (features.length > 0) {
-        const p = features[0].properties as any
-        onPropertySelect?.({
-          id: p.id, title: p.title, price: p.price, currency: p.currency,
-          lat: p.lat, lng: p.lng, area: p.area, type: p.type, listing: p.listing,
-          url: p.url, photo: p.photo, noise: p.noise, updated: p.updated,
-        })
-      }
+  // Track the viewport so visible markers re-derive as the map moves.
+  useEffect(() => {
+    if (!mapRef || !filters.enabled) return
+    const map = mapRef.getMap()
+    const update = () => {
+      const b = map.getBounds()
+      setBounds({ w: b.getWest(), s: b.getSouth(), e: b.getEast(), n: b.getNorth() })
     }
+    update()
+    map.on('moveend', update)
+    return () => { map.off('moveend', update) }
+  }, [mapRef, filters.enabled])
 
-    const onMapClick = (e: any) => {
-      if ((e.originalEvent.target as HTMLElement).closest('[data-side-panel]')) return
-      const hits = map.queryRenderedFeatures(e.point, { layers: ['property-icons'] })
-      if (hits.length === 0) onPropertySelect?.(null)
-    }
+  // Visible markers: viewport clip + type / listing / noise filters.
+  const visible = useMemo(() => {
+    if (!filters.enabled || !bounds) return [] as Property[]
+    return all.filter(p =>
+      p.noise != null &&
+      p.lng >= bounds.w && p.lng <= bounds.e && p.lat >= bounds.s && p.lat <= bounds.n &&
+      (filters.propertyType === 'all' || p.type === filters.propertyType) &&
+      (filters.listingType === 'all' || p.listing === filters.listingType) &&
+      p.noise <= filters.maxNoise,
+    )
+  }, [all, bounds, filters])
 
-    const onEnter = () => { map.getCanvas().style.cursor = 'pointer' }
-    const onLeave = () => { map.getCanvas().style.cursor = '' }
+  useEffect(() => {
+    if (!overlay) return
+    overlay.setProps({ layers: visible.length > 0 ? [makeLayer(visible, onPropertySelect)] : [] })
+  }, [overlay, visible, onPropertySelect])
 
-    map.on('click', 'property-icons', onPropertyClick)
-    map.on('click', onMapClick)
-    map.on('mouseenter', 'property-icons', onEnter)
-    map.on('mouseleave', 'property-icons', onLeave)
+  return null
+}
 
-    return () => {
-      map.off('click', 'property-icons', onPropertyClick)
-      map.off('click', onMapClick)
-      map.off('mouseenter', 'property-icons', onEnter)
-      map.off('mouseleave', 'property-icons', onLeave)
-    }
-  }, [map, filters.enabled, onPropertySelect])
-
-  if (!filters.enabled || !geojson) return null
-
-  return (
-    <Source id="real-estate" type="geojson" data={geojson}>
-      <Layer
-        id="property-icons"
-        type="symbol"
-        layout={{
-          'icon-image': ['get', '_category'],
-          'icon-size': 1,
-          'icon-allow-overlap': true,
-          'icon-anchor': 'bottom',
-        }}
-      />
-    </Source>
-  )
+function makeLayer(data: Property[], onSelect?: (p: Property | null) => void) {
+  return new ScatterplotLayer<Property>({
+    id: 'properties',
+    data,
+    getPosition: (p) => [p.lng, p.lat],
+    getFillColor: (p) => (p.listing === 'rent' ? RENT : BUY),
+    getLineColor: [255, 255, 255],
+    stroked: true,
+    radiusUnits: 'pixels',
+    getRadius: 6,
+    radiusMinPixels: 5,
+    radiusMaxPixels: 9,
+    lineWidthUnits: 'pixels',
+    getLineWidth: 2,
+    pickable: true,
+    autoHighlight: true,
+    highlightColor: [255, 255, 255, 90],
+    // Stamp the shared guard so DetailPopup skips this same click (a
+    // non-interleaved deck overlay can't stop MapLibre's separate click handler
+    // by return value — the noise popup would otherwise open over the card).
+    onClick: (info) => {
+      if (!info.object) return
+      markPropertyClick()
+      onSelect?.(info.object as Property)
+    },
+  })
 }

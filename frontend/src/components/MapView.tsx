@@ -89,7 +89,6 @@ export default function MapView({
       dragPan={{ deceleration: 4000, maxSpeed: 1100 }}
     >
       <NavigationControl position="bottom-left" showCompass={false} />
-      {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
       {/* Highlight rides on the same deck.gl canvas as the heatmap so
           it always draws above the HM3 tiles. A separate MapLibre
@@ -100,6 +99,9 @@ export default function MapView({
         highlightGeometry={highlightGeometry ?? null}
       />
       <QuietZonesLayer enabled={quietClustersEnabled ?? false} threshold={quietThreshold ?? 55} />
+      {/* After the heatmap + quiet overlays so the property markers (their own
+          deck overlay) stack on top rather than being hidden under the heatmap. */}
+      {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
       <HeatmapV3HoverTooltip sources={activeHeatmapSources} />
       <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} />
       <IsochronLayer geojson={isochronGeojson ?? null} />

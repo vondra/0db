@@ -98,7 +98,7 @@ export default function OverlayControls({
                 }`}>{t === 'buy' ? 'Buy' : 'Rent'}</button>
             ))}
           </div>
-          <NoiseSlider value={f.maxNoise} onChange={(v) => onRealEstateChange({ ...f, maxNoise: v })} min={20} max={45} testId="max-noise" />
+          <NoiseSlider value={f.maxNoise} onChange={(v) => onRealEstateChange({ ...f, maxNoise: v })} min={40} max={75} testId="max-noise" />
         </div>
       )}
     </div>

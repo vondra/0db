@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMap, Source, Layer } from 'react-map-gl/maplibre'
 import { ldenToColor } from '../utils/noise-colors'
+import { propertyJustClicked } from '../lib/property-click-guard'
 import { MetricLabel, DataPoint } from './noise/noise-tooltips'
 import { HoverText } from './ui/info-tip'
 import { fmt, fmtDb, fmtDbValue, fmtFloat, fmtInt, fmtCompact, globeAdsbTraceHref, metersToKm, txtTable, unixToIsoDate, unixToIsoDateTimeUtc, type TableRow } from '../utils/formatters'
@@ -1067,7 +1068,13 @@ export default function DetailPopup({ detailPosition, triggerPosition, onDetailD
       }
       if ((e.originalEvent.target as HTMLElement).closest('.maplibregl-popup')) return
 
-      onDetailPositionChange?.({ lat: e.lngLat.lat, lng: e.lngLat.lng })
+      const { lat, lng } = e.lngLat
+      // Defer a tick so a deck.gl property-marker click (separate overlay, which
+      // can't suppress this MapLibre handler) registers first; skip if so, else
+      // the noise popup opens on top of the PropertyCard.
+      setTimeout(() => {
+        if (!propertyJustClicked()) onDetailPositionChange?.({ lat, lng })
+      }, 0)
     }
 
     map.on('mousedown', onMouseDown)

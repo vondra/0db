@@ -1,8 +1,9 @@
 /**
- * Import Czech real estate properties from Sreality.cz → H3R4 partitioned JSON.
+ * Import Czech real estate listings from Sreality.cz → one properties.json.
  *
- * No PostgreSQL — writes properties.json into data/prepared/h3r4/{hex}/.
- * Noise levels looked up from pre-computed .bin tiles.
+ * Noise is sampled from the z13 `total` HM3 raster (the live heatmap), not the
+ * deprecated H3 tiles. Output: data/prepared/{DATA_YEAR}/properties/properties.json
+ * + photos/, served at /api/properties. No H3 / h3-js.
  *
  * Usage:
  *   npx tsx import-properties.ts
@@ -10,13 +11,16 @@
 
 import { mkdirSync, existsSync, writeFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { latLngToCell, cellToParent } from 'h3-js'
+import { decompress } from 'fzstd'
 
 const RATE_LIMIT_MS = 1200
 const PHOTO_RATE_MS = 300
-// Photos are written directly into h3r4/{hex}/real-estate/ alongside index.json
-const H3R4_DIR = resolve(import.meta.dirname, '../data/prepared/h3r4')
-const TILES_DIR = resolve(import.meta.dirname, '../data/tiles/h3-tiles')
+const DATA_YEAR = process.env.DATA_YEAR || '2025'
+// Properties + photos live under one year-based dir, served at /api/properties.
+const PROPERTIES_DIR = resolve(import.meta.dirname, '..', 'data', 'prepared', DATA_YEAR, 'properties')
+const PHOTOS_DIR = resolve(PROPERTIES_DIR, 'photos')
+// Noise sampled from the z13 `total` HM3 raster (the live heatmap).
+const TOTAL_Z13_DIR = resolve(import.meta.dirname, '..', 'data', 'tiles', DATA_YEAR, 'heatmap-v3', 'total', '13')
 const PER_PAGE = 60
 const MAX_PAGES = 500
 
@@ -64,10 +68,6 @@ async function fetchJson(url: string): Promise<any> {
 
 // ── Sreality ──
 
-const SREALITY_SUB_TYPES: Record<number, string> = {
-  18: 'komerční', 19: 'stavební', 20: 'pole', 21: 'les', 22: 'louka', 23: 'zahrada',
-  33: 'chata', 35: 'památka', 37: 'rodinný dům', 39: 'vila', 40: 'na klíč', 43: 'chalupa', 44: 'usedlost',
-}
 const SREALITY_URL_SLUGS: Record<number, string> = {
   18: 'komercni', 19: 'bydleni', 20: 'pole', 21: 'les', 22: 'louka', 23: 'zahrada',
   33: 'chata', 35: 'pamatka', 37: 'rodinny', 39: 'vila', 40: 'na-klic', 43: 'chalupa', 44: 'zemedelska-usedlost',
@@ -150,9 +150,9 @@ async function fetchSreality(): Promise<RawListing[]> {
   return listings
 }
 
-// ── Photo download (into H3R4 hex dirs) ──
+// ── Photo download (into the properties photos dir) ──
 
-async function downloadPhotos(listings: RawListing[], hexMap: Map<string, string>): Promise<number> {
+async function downloadPhotos(listings: RawListing[]): Promise<number> {
   let cookie = ''
   try {
     const res = await fetch('https://www.sreality.cz/', {
@@ -161,17 +161,13 @@ async function downloadPhotos(listings: RawListing[], hexMap: Map<string, string
     cookie = (res.headers.getSetCookie?.() || []).map((c: string) => c.split(';')[0]).join('; ')
   } catch {}
 
+  mkdirSync(PHOTOS_DIR, { recursive: true })
   let downloaded = 0, skipped = 0, failed = 0
 
   for (const l of listings) {
     if (!l.photo) continue
-    const hex = hexMap.get(l.id)
-    if (!hex) continue
-
-    const dir = resolve(H3R4_DIR, hex, 'real-estate')
-    mkdirSync(dir, { recursive: true })
-    const filename = `${l.id}.jpg`
-    if (existsSync(resolve(dir, filename))) { skipped++; continue }
+    const dest = resolve(PHOTOS_DIR, `${l.id}.jpg`)
+    if (existsSync(dest)) { skipped++; continue }
 
     try {
       const res = await fetch(l.photo, {
@@ -185,10 +181,8 @@ async function downloadPhotos(listings: RawListing[], hexMap: Map<string, string
       })
       if (res.ok) {
         const buf = Buffer.from(await res.arrayBuffer())
-        if (buf.length > 1000) {
-          writeFileSync(resolve(dir, filename), buf)
-          downloaded++
-        } else failed++
+        if (buf.length > 1000) { writeFileSync(dest, buf); downloaded++ }
+        else failed++
       } else failed++
     } catch { failed++ }
 
@@ -202,98 +196,90 @@ async function downloadPhotos(listings: RawListing[], hexMap: Map<string, string
   return downloaded
 }
 
-// ── Noise lookup from .bin tiles ──
+// ── Noise from the z13 `total` HM3 raster ──
 
-const MAGIC = Buffer.from('H3N1', 'ascii')
-const tileCache = new Map<string, { hexes: BigInt64Array; lden: Int16Array } | null>()
+const TILE_PX = 256
+const NO_DATA = 255
+const totalTileCache = new Map<string, Uint8Array | null>()
 
-function loadTile(filePath: string): { hexes: BigInt64Array; lden: Int16Array } | null {
-  if (tileCache.has(filePath)) return tileCache.get(filePath)!
-  if (!existsSync(filePath)) { tileCache.set(filePath, null); return null }
+/** Decode one z13 `total` HM3 tile to its 256×256 cell bytes (255 = no data). */
+function loadTotalTile(tx: number, ty: number): Uint8Array | null {
+  const key = `${tx}/${ty}`
+  const cached = totalTileCache.get(key)
+  if (cached !== undefined) return cached
 
-  const buf = readFileSync(filePath)
-  if (buf.length < 8 || buf.toString('ascii', 0, 4) !== 'H3N1') { tileCache.set(filePath, null); return null }
+  const path = resolve(TOTAL_Z13_DIR, String(tx), `${ty}.bin`)
+  if (!existsSync(path)) { totalTileCache.set(key, null); return null }
 
-  const count = buf.readUInt32LE(4)
-  const hexes = new BigInt64Array(count)
-  const lden = new Int16Array(count)
-  for (let i = 0; i < count; i++) {
-    hexes[i] = buf.readBigUInt64LE(8 + i * 8)
-    lden[i] = buf.readInt16LE(8 + count * 8 + i * 2)
+  // Bail (tile -> null, those properties get noise=null) on any format drift
+  // rather than silently mis-sampling, mirroring the frontend HM3 decoder.
+  const bail = () => { totalTileCache.set(key, null); return null }
+  const buf = readFileSync(path)
+  if (buf.length < 20 || buf.toString('ascii', 0, 4) !== 'HM3 ') return bail()
+  if (buf.readUInt8(4) !== 1 || buf.readUInt16LE(8) !== TILE_PX || buf.readUInt8(11) !== 1) return bail()
+  const isDense = (buf.readUInt8(7) & 1) !== 0
+  const payloadLen = buf.readUInt32LE(16)
+  const body = decompress(new Uint8Array(buf.buffer, buf.byteOffset + 20, payloadLen))
+
+  const cells = new Uint8Array(TILE_PX * TILE_PX).fill(NO_DATA)
+  if (isDense) {
+    if (body.length < TILE_PX * TILE_PX) return bail()
+    cells.set(body.subarray(0, TILE_PX * TILE_PX))
+  } else {
+    if (body.length < 32) return bail()
+    const mask = body.subarray(0, 32)
+    let off = 32
+    for (let py = 0; py < TILE_PX; py++) {
+      if ((mask[py >> 3] & (1 << (py & 7))) === 0) continue
+      if (off + TILE_PX > body.length) return bail()
+      cells.set(body.subarray(off, off + TILE_PX), py * TILE_PX)
+      off += TILE_PX
+    }
   }
-  tileCache.set(filePath, { hexes, lden })
-  return { hexes, lden }
+  totalTileCache.set(key, cells)
+  return cells
 }
 
-function lookupNoise(lat: number, lng: number): number | null {
-  // Convert to H3 res-11, find partition (res-5 parent)
-  let h3_11: string
-  try { h3_11 = latLngToCell(lat, lng, 11) } catch { return null }
-
-  const h3bi = BigInt('0x' + h3_11)
-
-  const parent5 = cellToParent(h3_11, 5)
-  const tilePath = resolve(TILES_DIR, 'r11', 'total', `${parent5}.bin`)
-  const tile = loadTile(tilePath)
-  if (!tile) return null
-
-  // Binary search (BigInt64Array values compared as BigInt)
-  let lo = 0, hi = tile.hexes.length - 1
-  while (lo <= hi) {
-    const mid = (lo + hi) >>> 1
-    const v = tile.hexes[mid]
-    if (v === h3bi) return tile.lden[mid] / 10
-    if (v < h3bi) lo = mid + 1
-    else hi = mid - 1
-  }
-  return null
+/** Total Lden (dB) at a point, or null beyond computed coverage. Web-Mercator
+ *  z13 tile math mirrors the renderer + the heatmap hover tooltip. */
+function sampleTotalLden(lat: number, lng: number): number | null {
+  const n = 2 ** 13
+  const latRad = (lat * Math.PI) / 180
+  const merc = Math.log(Math.tan(latRad) + 1 / Math.cos(latRad))
+  const xFloat = ((lng + 180) / 360) * n
+  const yFloat = ((1 - merc / Math.PI) / 2) * n
+  const tx = Math.floor(xFloat)
+  const ty = Math.floor(yFloat)
+  const cells = loadTotalTile(tx, ty)
+  if (!cells) return null
+  const px = Math.min(TILE_PX - 1, Math.floor((xFloat - tx) * TILE_PX))
+  const py = Math.min(TILE_PX - 1, Math.floor((yFloat - ty) * TILE_PX))
+  const byte = cells[py * TILE_PX + px]
+  return byte === NO_DATA ? null : byte / 2
 }
 
-// ── Partition into H3R4 files ──
+// ── Write one properties.json ──
 
-function writeProperties(listings: RawListing[]): { hexMap: Map<string, string> } {
+function writePropertiesJson(listings: RawListing[]): void {
   const today = new Date().toISOString().slice(0, 10)
-  const hexMap = new Map<string, string>() // listing id → hex
-  const groups = new Map<string, Property[]>()
   let withNoise = 0
 
-  for (const l of listings) {
-    let hex: string
-    try { hex = latLngToCell(l.lat, l.lng, 4) } catch { continue }
-    hexMap.set(l.id, hex)
-
-    const noise = lookupNoise(l.lat, l.lng)
+  const props: Property[] = listings.map((l) => {
+    const noise = sampleTotalLden(l.lat, l.lng)
     if (noise !== null) withNoise++
-
-    // Photo URL: local file in properties/ subdir, or external fallback
-    const filename = `${l.id}.jpg`
-    const localDir = resolve(H3R4_DIR, hex, 'real-estate')
-    const hasLocal = existsSync(resolve(localDir, filename))
-    const photo = hasLocal ? `/api/h3r4/${hex}/real-estate/${filename}` : l.photo
-
-    const prop: Property = {
+    const localPhoto = resolve(PHOTOS_DIR, `${l.id}.jpg`)
+    const photo = existsSync(localPhoto) ? `/api/properties/photos/${l.id}.jpg` : l.photo
+    return {
       id: l.id, lat: l.lat, lng: l.lng, type: l.type, listing: l.listing,
       price: l.price, currency: 'CZK', area: l.area, title: l.title,
       url: l.url, photo, noise, updated: today,
     }
+  })
 
-    let group = groups.get(hex)
-    if (!group) { group = []; groups.set(hex, group) }
-    group.push(prop)
-  }
-
-  // Write index.json per hex
-  let totalWritten = 0
-  for (const [hex, props] of groups) {
-    const dir = resolve(H3R4_DIR, hex, 'real-estate')
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(resolve(dir, 'index.json'), JSON.stringify(props))
-    totalWritten += props.length
-  }
-
-  console.log(`  Written: ${totalWritten} properties across ${groups.size} hexes`)
-  console.log(`  Noise lookup: ${withNoise}/${listings.length} (${(withNoise / listings.length * 100).toFixed(0)}%)`)
-  return { hexMap }
+  mkdirSync(PROPERTIES_DIR, { recursive: true })
+  writeFileSync(resolve(PROPERTIES_DIR, 'properties.json'), JSON.stringify(props))
+  console.log(`  Written: ${props.length} properties`)
+  console.log(`  Noise sampled: ${withNoise}/${listings.length} (${listings.length ? (withNoise / listings.length * 100).toFixed(0) : 0}%)`)
 }
 
 // ── Main ──
@@ -303,7 +289,6 @@ async function main(): Promise<void> {
 
   const listings = await fetchSreality()
 
-  // Deduplicate
   const seen = new Set<string>()
   const deduped = listings.filter(l => {
     if (seen.has(l.id)) return false
@@ -311,20 +296,14 @@ async function main(): Promise<void> {
     return true
   })
   console.log(`  Deduped: ${listings.length} → ${deduped.length}`)
-
   if (deduped.length === 0) { console.log('No listings.'); return }
 
-  // Noise lookup + partition + write index.json
-  console.log('\n  Writing H3R4 properties...')
-  const { hexMap } = writeProperties(deduped)
-
-  // Download photos into h3r4/{hex}/real-estate/
+  // Photos first so the JSON can point at the local copies that landed.
   console.log('\n  Downloading photos...')
-  await downloadPhotos(deduped, hexMap)
+  await downloadPhotos(deduped)
 
-  // Re-write index.json with updated photo paths (local photos now exist)
-  console.log('\n  Updating photo paths...')
-  writeProperties(deduped)
+  console.log('\n  Writing properties.json...')
+  writePropertiesJson(deduped)
 
   console.log('\n=== Done ===')
 }
