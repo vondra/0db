@@ -386,35 +386,54 @@ fn main() -> Result<()> {
                 // must not throw away the other days' Stage 0+1 work.
                 // Failed days are listed at the end so the operator can
                 // rerun with `--days <failed,…>`.
-                let (ok_paths, failed_days): (Vec<PathBuf>, Vec<String>) = days
-                    .par_iter()
-                    .partition_map(|day| {
-                        let segments_path = segments_dir.join(format!("{day}.arrow"));
-                        match run_day(
-                            day,
-                            &sources,
-                            &flights_dir,
-                            &segments_dir,
-                            &rasters,
-                            from_stage,
-                        ) {
-                            Ok(()) if segments_path.exists() => Either::Left(segments_path),
-                            Ok(()) => {
-                                eprintln!(
-                                    "{} [run-all] {day}: FAILED — no segments file produced",
-                                    ts()
-                                );
-                                Either::Right(day.clone())
+                // Process days in RAM-bounded chunks. Each concurrent day holds
+                // its full flight + segment working set in memory; within-day
+                // work is already rayon-parallel over flights, so even one chunk
+                // saturates every core. Running ALL days at once only multiplies
+                // RAM with no throughput gain — it OOM-killed the 2026-05 global
+                // TTM extract (7 dense days ≈ 16 GB each > 110 GB cgroup).
+                let max_concurrent = max_concurrent_days(days.len());
+                eprintln!(
+                    "{} [run-all] Stage 0/1: {} day(s), <={} concurrent (RAM-bounded; within-day fills every core)",
+                    ts(),
+                    days.len(),
+                    max_concurrent
+                );
+                let mut ok_paths: Vec<PathBuf> = Vec::new();
+                let mut failed_days: Vec<String> = Vec::new();
+                for chunk in days.chunks(max_concurrent) {
+                    let (mut ok, mut fail): (Vec<PathBuf>, Vec<String>) = chunk
+                        .par_iter()
+                        .partition_map(|day| {
+                            let segments_path = segments_dir.join(format!("{day}.arrow"));
+                            match run_day(
+                                day,
+                                &sources,
+                                &flights_dir,
+                                &segments_dir,
+                                &rasters,
+                                from_stage,
+                            ) {
+                                Ok(()) if segments_path.exists() => Either::Left(segments_path),
+                                Ok(()) => {
+                                    eprintln!(
+                                        "{} [run-all] {day}: FAILED — no segments file produced",
+                                        ts()
+                                    );
+                                    Either::Right(day.clone())
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "{} [run-all] {day}: FAILED stage0/1 — {e}, skipping",
+                                        ts()
+                                    );
+                                    Either::Right(day.clone())
+                                }
                             }
-                            Err(e) => {
-                                eprintln!(
-                                    "{} [run-all] {day}: FAILED stage0/1 — {e}, skipping",
-                                    ts()
-                                );
-                                Either::Right(day.clone())
-                            }
-                        }
-                    });
+                        });
+                    ok_paths.append(&mut ok);
+                    failed_days.append(&mut fail);
+                }
 
                 if !failed_days.is_empty() {
                     eprintln!(
@@ -784,6 +803,61 @@ fn run_day(
         t_stage1.elapsed()
     );
     Ok(())
+}
+
+/// How many days to run through Stage 0/1 concurrently, sized to the host's
+/// RAM. Within-day work is already rayon-parallel over flights, so a single
+/// day saturates every core; extra concurrency only overlaps each day's serial
+/// I/O prefix/suffix, at the cost of holding that many days' flight + segment
+/// working sets in RAM at once. Auto-scaling off total RAM keeps the extract
+/// OOM-free on any host (laptop → 256 GB server) with zero manual tuning.
+fn max_concurrent_days(num_days: usize) -> usize {
+    // Measured peak resident set per dense global day on the 2026-05 global TTM
+    // extract (7 days × ~16 GB OOM-killed a 110 GB cgroup on a 125 GB host).
+    // 20 GB is that peak rounded up to absorb the shared DEM tile cache's share.
+    const PEAK_PER_DAY_GB: f64 = 20.0;
+    // Effective budget = min(host RAM, this process's cgroup memory limit) so a
+    // container or `systemd-run -p MemoryMax=…` scope caps concurrency too —
+    // sizing off host RAM alone re-OOMs inside a smaller cgroup.
+    let total_gb = available_memory_bytes() as f64 / 1_000_000_000.0;
+    // Budget 60%: leaves headroom for the OS, the shared raster cache, and the
+    // parent process while staying well clear of the OOM boundary.
+    let k = (total_gb * 0.60 / PEAK_PER_DAY_GB).floor() as usize;
+    k.clamp(1, num_days.max(1))
+}
+
+/// Total physical RAM in bytes from `/proc/meminfo` (Linux). Falls back to a
+/// conservative 16 GB if it can't be read, so the cap stays safe off-Linux.
+fn host_ram_bytes() -> u64 {
+    std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("MemTotal:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|kb| kb.parse::<u64>().ok())
+        })
+        .map(|kb| kb * 1024)
+        .unwrap_or(16 * 1024 * 1024 * 1024)
+}
+
+/// This process's cgroup-v2 `memory.max` in bytes, if it is a real numeric
+/// limit (not "max"). Resolves the cgroup path from `/proc/self/cgroup`
+/// (v2 single line `0::<path>`). Returns None on cgroup v1 or no limit →
+/// caller falls back to host RAM.
+fn cgroup_memory_limit_bytes() -> Option<u64> {
+    let cg = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let rel = cg.lines().find_map(|l| l.strip_prefix("0::"))?.trim();
+    let raw = std::fs::read_to_string(format!("/sys/fs/cgroup{rel}/memory.max")).ok()?;
+    raw.trim().parse::<u64>().ok()
+}
+
+/// Memory budget for concurrency sizing: the smaller of host RAM and this
+/// process's cgroup limit, so the day-concurrency cap is OOM-safe in
+/// containers and `systemd-run -p MemoryMax=…` scopes, not just on bare metal.
+fn available_memory_bytes() -> u64 {
+    let host = host_ram_bytes();
+    cgroup_memory_limit_bytes().map_or(host, |lim| host.min(lim))
 }
 
 #[allow(dead_code)]

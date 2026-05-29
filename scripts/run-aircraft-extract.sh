@@ -113,7 +113,7 @@ log "running aircraft-extract run-all (DAYS=$DAYS)"
 # is the operator's go-to during multi-hour global runs.
 EXTRA_ARGS=()
 if [ -n "$SCOPE_BBOX" ]; then
-    EXTRA_ARGS+=(--scope-bbox "$SCOPE_BBOX")
+    EXTRA_ARGS+=(--scope-bbox="$SCOPE_BBOX")
     log "scope bbox: $SCOPE_BBOX"
 fi
 if [ -n "$FROM_STAGE" ]; then
