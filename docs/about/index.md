@@ -22,7 +22,7 @@ The map computes environmental noise in three steps:
 
 2. **Sound travels and fades** — noise gets quieter with distance. Hills block it, buildings screen it, forests absorb it. We simulate this physics for every source-receiver pair using ISO 9613-2 propagation with 8 octave bands.
 
-3. **You see the result** — the map shows noise at every 24-meter hexagonal cell, colored from green (quiet, ~10 dB) through yellow and orange to red and purple (very loud, 80+ dB). Each source layer is independent — toggle them to see roads alone, railways alone, or everything combined.
+3. **You see the result** — the map shows noise at every ~12-meter raster cell, colored from green (quiet, ~10 dB) through yellow and orange to red and purple (very loud, 80+ dB). Each source layer is independent — toggle them to see roads alone, railways alone, or everything combined.
 
 ![Quiet Map — noise visualization](map-overview.jpg)
 
@@ -228,16 +228,16 @@ We simulate these effects for every source-receiver pair using [ISO 9613-2](http
 
 Road, railway, industrial, settlement, and aircraft ground ops use the same propagation engine. Airborne aircraft uses NPD tables where atmospheric absorption is already included.
 
-| Effect | What it does | Data source | Max effect | Toggleable |
-|--------|-------------|-------------|-----------|-----------|
-| Distance | Sound spreads out — 3 dB per doubling (line), 6 dB (point) | Geometry | Baseline | No |
-| Atmosphere | Air absorbs high frequencies over long distances | ISO 9613-1 (15°C, 70% RH) | Baseline | No |
-| Ground | Soft ground (grass) absorbs; hard ground (asphalt) reflects | Copernicus IMD raster → G-factor | ~3 dB | No |
-| Terrain | Hills block sound via diffraction | Copernicus GLO-30 DEM (30m) | 20–25 dB | Yes |
-| Buildings | Buildings screen sound like walls | Overture building-height raster (30m) | 20 dB/band | Yes |
-| Vegetation | Forests absorb sound, especially high frequencies | ESA WorldCover 2021 | 2–12 dB/band | Yes |
-| Reflections | Urban canyons bounce sound, increasing levels | Building enclosure heuristic | +5 dB | With screening |
-| Weather | Downwind/inversion conditions can carry sound further | Not currently modelled | — | No |
+| Effect | What it does | Data source | Max effect |
+|--------|-------------|-------------|-----------|
+| Distance | Sound spreads out — 3 dB per doubling (line), 6 dB (point) | Geometry | Baseline |
+| Atmosphere | Air absorbs high frequencies over long distances | ISO 9613-1 (15°C, 70% RH) | Baseline |
+| Ground | Soft ground (grass) absorbs; hard ground (asphalt) reflects | Copernicus IMD raster → G-factor | ~3 dB |
+| Terrain | Hills block sound via diffraction | Copernicus GLO-30 DEM (30m) | 20–25 dB |
+| Buildings | Buildings screen sound like walls | Overture building-height raster (30m) | 20 dB/band |
+| Vegetation | Forests absorb sound, especially high frequencies | ESA WorldCover 2021 | 2–12 dB/band |
+| Reflections | Urban canyons bounce sound, increasing levels | Building enclosure heuristic | +5 dB |
+| Weather | Downwind/inversion conditions can carry sound further | Not currently modelled | — |
 
 **Key rule:** When a barrier (hill or building) is present, it replaces the ground effect — you get the larger of the two, not both (ISO 9613-2 §7.3.1). Vegetation attenuation is always additive.
 
@@ -296,7 +296,7 @@ Day: 07:00–19:00, evening: 19:00–23:00, night: 23:00–07:00.
 
 ### Grid
 
-[H3](https://h3geo.org/) hexagonal grid, resolution 11 (24 m edge-to-edge) — fine enough to distinguish the street-facing vs garden side of a building. Lower resolutions (res 10–6) at lower zoom levels.
+A Web-Mercator raster at zoom 13 (~12 m per pixel at 50°N, varies with latitude) — fine enough to distinguish the street-facing vs garden side of a building. A zoom pyramid (z6–13) serves coarser tiles when zoomed out.
 
 ### Color scale
 
@@ -304,8 +304,7 @@ Green (quiet, ~10 dB) → yellow (~45 dB) → orange (~55 dB) → red (~65 dB) �
 
 ### Toggles
 
-- **Source layers:** Roads, Railways, Aircraft, Buildings, Industrial — each toggleable independently
-- **Propagation effects:** Terrain, Screening (buildings + reflections), Vegetation — toggle off to see noise without that attenuation on layers that expose propagation adjustments; aircraft popup still breaks out airport ground ops separately
+- **Source layers:** Roads, Railways, Industrial, Buildings, and Aircraft (ground ops, airborne, cruise) — each toggleable independently
 - **Overlays:** Quiet zones (areas below a threshold), Properties (real estate filtered by noise)
 
 ---
@@ -316,13 +315,13 @@ Green (quiet, ~10 dB) → yellow (~45 dB) → orange (~55 dB) → red (~65 dB) �
 
 The map can display real estate listings filtered by noise level. Each country has its own data sources — see individual country pages.
 
-- Properties geocoded to H3 hex cells and joined with noise data
-- Default filter: show only properties below 45 dB Lden (WHO outdoor guideline)
+- Each property's noise is sampled from the z13 noise raster at its location
+- Default filter: show only properties below 60 dB Lden
 - Focus: land plots — building plots, forests, meadows, gardens
 
 ### Quiet zones
 
-Highlights contiguous areas below a configurable noise threshold (default 35 dB). Useful for identifying quiet retreats, parks, and areas suitable for noise-sensitive development.
+Highlights contiguous areas below a configurable noise threshold (default 55 dB). Useful for identifying quiet retreats, parks, and areas suitable for noise-sensitive development.
 
 ---
 
@@ -343,8 +342,8 @@ This model is an engineering approximation for a continental-scale noise atlas �
 | Aircraft type mapping | Doc 29 / ANP: aircraft-specific certified profiles + procedural steps + weights | Per-ICAO-typecode NPD profiles auto-generated from EASA ANP v2.3 (+ v9 supplement), bucketed at a fixed set of noise classes for aggregation (see SPEC §5) | ±1-2 dB for ANP-mapped types; similarity fallback for unmapped typecodes routes to closest anchor by engine/size class |
 | Aircraft timing | Airport-local time and operational preprocessing | Segment midpoint → IANA timezone (tzf-rs) → DST-aware local time (chrono-tz); END default period boundaries | Global local time; only airport-local operational-preprocessing differences remain |
 | Aircraft ground ops | Curated surface-movement inventories + airport-local operational data | ADS-B legs projected onto OSM aeroway microsegments (runway/taxiway); per-microsegment movement counters; DBSCAN auto-discovery for OSM-missing airfields | Near-runway levels depend on ADS-B coverage; movements outside the receiver footprint don't appear (no synthetic backfill) |
-| Aircraft batch tiles | Operational studies expect server-side batch tile generation with toggleable propagation breakdown | No batch tile pipeline; popup is the only consumer of per-R4 aircraft arrows | Map propagation toggles cannot isolate aircraft path-effect components at tile resolution; popup `traces` exposes them per-leg / per-sub-segment |
-| Receiver grid | END: facade receivers (4 m height, 2 m from wall) | H3 res-11 hex centers (24 m edge, 4 m height) | Area average, not per-facade |
+| Tile propagation | Operational studies may expose a per-effect propagation breakdown | Tiles store one combined full-propagation Lden per source layer (z13 HM3); the click popup's `traces` expose per-leg / per-sub-segment detail | No per-effect (terrain/screening/vegetation) isolation at tile resolution |
+| Receiver grid | END: facade receivers (4 m height, 2 m from wall) | z13 Web-Mercator raster pixel centers (~12 m at 50°N, 4 m height) | Area average, not per-facade |
 | Road corrections | CNOSSOS-EU: gradient, intersection, temperature | Not implemented | ±1–3 dB on steep/cold roads |
 | Building reflections | ISO 9613-2 §7.5: image-source ray tracing | Simplified: local enclosure heuristic, 0–5 dB boost | May underestimate in complex geometries |
 | Settlement noise | Not standardised (END covers road/rail/aircraft/industry only) | Custom per-building model, 10 OSM building types | Novel — no standard reference values |
