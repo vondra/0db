@@ -246,8 +246,12 @@ pub fn median_step_m(t: &[f64], dist_m: f64) -> f32 {
         return 0.0;
     }
     let mut steps: Vec<f64> = t.windows(2).map(|w| (w[1] - w[0]) * dist_m).collect();
-    steps.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    steps[steps.len() / 2] as f32
+    // Median only needs the mid-order statistic, not a full sort: select_nth is
+    // O(n) and yields the identical element (steps[mid] is the same value a full
+    // sort would place there).
+    let mid = steps.len() / 2;
+    steps.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap());
+    steps[mid] as f32
 }
 
 /// Horizontal path length in meters from (lat1, lon1) to (lat2, lon2)

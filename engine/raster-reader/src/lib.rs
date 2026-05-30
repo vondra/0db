@@ -286,8 +286,11 @@ impl RasterSampler for RealRasters {
             let ground_src = out.elevation_m[0];
             let ground_rcv = *out.elevation_m.last().unwrap();
             let mut peaks: Vec<(f64, f32)> = Vec::with_capacity(8);
-            let t_snapshot: Vec<f64> = out.t.clone();
-            for w in t_snapshot.windows(2) {
+            // Iterate out.t directly: the window scan only reads (gap detection
+            // + peak collection into a separate Vec); out.t is not mutated until
+            // the insert pass after this loop, so the old defensive clone was a
+            // redundant per-path allocation.
+            for w in out.t.windows(2) {
                 let gap_m = (w[1] - w[0]) * dist_m;
                 if gap_m <= gap_scan_min_m {
                     continue;
@@ -649,8 +652,11 @@ impl noise_compute::types::RasterSampler for FusedGrid {
             let mut peaks: Vec<(f64, f32)> = Vec::with_capacity(8);
             // Per-window gap scan: walk bilateral samples pairwise, scan
             // inside any gap > 1.5 × CELL_M at CELL_M cadence.
-            let t_snapshot: Vec<f64> = out.t.clone();
-            for w in t_snapshot.windows(2) {
+            // Iterate out.t directly: the window scan only reads (gap detection
+            // + peak collection into a separate Vec); out.t is not mutated until
+            // the insert pass after this loop, so the old defensive clone was a
+            // redundant per-path allocation.
+            for w in out.t.windows(2) {
                 let gap_m = (w[1] - w[0]) * dist_m;
                 if gap_m <= gap_scan_min_m {
                     continue;
