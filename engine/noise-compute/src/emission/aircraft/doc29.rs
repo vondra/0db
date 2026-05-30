@@ -430,6 +430,13 @@ pub fn segment_energy_kernel<const WANT_CPA: bool>(
     // sub-segments converges to one event, avoiding the N× over-count
     // the previous skip would produce for collinear short segments.
     if d_p_m > AIRCRAFT_FAR_FIELD_THRESHOLD_M {
+        // ΔF ≤ 0 always (it is 10·log10 of the energy fraction f ∈ (0, 1]:
+        // g(α) = α/(1+α²) + atan(α) is monotone ⇒ g2 − g1 ∈ (0, π) ⇒ f ≤ 1).
+        // So the fast-path sel ≤ sel_npd + seg_dv; if that ceiling is already
+        // below the 20 dB floor the segment can never clear it — skip ΔF.
+        if sel_npd + seg_dv < 20.0 {
+            return None;
+        }
         let q_m = t * slen;
         let df = fast_delta_f(q_m, slen, d_bar_m);
         let sel = sel_npd + seg_dv + df;
