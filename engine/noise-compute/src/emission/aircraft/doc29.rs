@@ -360,7 +360,7 @@ pub struct AircraftKernelResult {
 /// Filter D is the geometry-aware replacement.
 #[allow(clippy::too_many_arguments)]
 #[inline]
-pub fn segment_energy_kernel(
+pub fn segment_energy_kernel<const WANT_CPA: bool>(
     ax: f64,
     ay: f64,
     sdx: f64,
@@ -442,7 +442,9 @@ pub fn segment_energy_kernel(
             rel_alt_m: rel_alt,
             q_m,
             seg_len_m: slen,
-            lateral_m: lateral_sq.sqrt(),
+            // CPA-only (the fast-path sel ignores lateral_m); skipped for the
+            // heatmap energy-only path (`WANT_CPA = false`).
+            lateral_m: if WANT_CPA { lateral_sq.sqrt() } else { 0.0 },
             beta_deg: 90.0, // CFFK doesn't need β; sentinel
             t,
         });
@@ -478,7 +480,13 @@ pub fn segment_energy_kernel(
     if sel < 20.0 {
         return None;
     }
-    let beta_deg = fast_atan(rel_alt / lateral_m.max(0.01)).to_degrees();
+    // CPA-only — `beta_deg` never feeds `sel` (ΔI uses u² above). Skipped on the
+    // heatmap energy-only path (`WANT_CPA = false`); saves one atan per pixel.
+    let beta_deg = if WANT_CPA {
+        fast_atan(rel_alt / lateral_m.max(0.01)).to_degrees()
+    } else {
+        0.0
+    };
 
     Some(AircraftKernelResult {
         sel,
@@ -749,7 +757,7 @@ mod tests {
         let dv = delta_v(profile.v_ref_kt, profile);
         let kernel = |ax: f64, ay: f64, sdx: f64, sdy: f64, slen: f64| {
             let inv_lsq = 1.0 / (sdx * sdx + sdy * sdy);
-            segment_energy_kernel(
+            segment_energy_kernel::<true>(
                 ax, ay, sdx, sdy, 0.0,
                 alt_m, inv_lsq, slen, 0.0,
                 npd_luts, class_idx, true, dv,
