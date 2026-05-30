@@ -180,6 +180,15 @@ pub fn screening_attenuation(
     exclusion_radius_m: f64,
     terrain_atten: &[f64; NUM_BANDS],
 ) -> [f64; NUM_BANDS] {
+    // No building or barrier anywhere on the path ⇒ the composite top profile
+    // equals bare earth ⇒ the screening increment over terrain is exactly zero.
+    // Skip the per-sample composite scan + OLS Fresnel fit (the dominant
+    // screening cost) for the rural majority. Conservative: a building at an
+    // endpoint (which the scan itself ignores) still trips the flag, so a real
+    // interior obstacle is never skipped.
+    if barriers.is_empty() && !profile.building_h_m.iter().any(|&b| b > 0) {
+        return [0.0; NUM_BANDS];
+    }
     let (atten, _) = screening_attenuation_with_meta(
         profile, barriers, src_elev, rcv_alt, exclusion_radius_m, terrain_atten,
     );
