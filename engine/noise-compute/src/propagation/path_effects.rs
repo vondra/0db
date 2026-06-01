@@ -7,7 +7,8 @@
 //!
 //! See [`super::path_profile`] for the canonical cadence and docs.
 
-use super::diffraction;
+use super::diffraction::DiffractionResult;
+use super::horizon::single_edge_atten;
 use super::path_profile::{path_integral_u8, vegetation_run_length, PathProfile};
 use super::vegetation;
 use crate::constants::{M_PER_DEG_LAT, M_PER_DEG_LON_EQ};
@@ -34,7 +35,7 @@ pub fn terrain_attenuation(
 ) -> [f64; NUM_BANDS] {
     match compute_terrain_diffraction(profile, src_elev, rcv_alt) {
         None => [0.0; NUM_BANDS],
-        Some(res) => diffraction::diffraction_attenuation_rayleigh(&res.diff),
+        Some(res) => res.bands,
     }
 }
 
@@ -52,17 +53,16 @@ fn empty_terrain_trace() -> TerrainTrace {
     }
 }
 
-/// Shared intermediate between `terrain_attenuation` and `_with_meta`.
-/// Carries the raw `DiffractionResult` plus the source/receiver absolute
-/// altitudes needed by the meta path to compute the dominant-edge LOS.
+/// Shared intermediate between `terrain_attenuation` and `_with_meta`: the
+/// precomputed bands + the single-edge `DiffractionResult`, with the f64
+/// profile / `t` borrow the meta path indexes for the edge `EdgePoint`.
 struct TerrainDiffraction<'a> {
-    diff: crate::propagation::diffraction::DiffractionResult,
+    bands: [f64; NUM_BANDS],
+    diff: DiffractionResult,
     /// Profile passed through as f64 — valid only for the duration of the
     /// caller's borrow of `profile.elevation_f64_scratch`.
     prof_f64: &'a [f64],
     t: &'a [f64],
-    src_abs: f64,
-    rcv_abs: f64,
     n: usize,
 }
 
@@ -100,23 +100,16 @@ fn compute_terrain_diffraction<'a>(
         ..
     } = profile;
     let prof_f64 = PathProfile::elevation_f64_from(elevation_f64_scratch, elevation_m);
-    let diff = diffraction::compute_path_difference(t, prof_f64, dist_m, src_h, rcv_h);
-    Some(TerrainDiffraction {
-        diff,
-        prof_f64,
-        t,
-        src_abs: src_ground + src_h,
-        rcv_abs: rcv_ground + rcv_h,
-        n,
-    })
+    // Single-edge δ over bare-earth (was the multi-edge hull compute_path_difference).
+    let (bands, diff) = single_edge_atten(t, prof_f64, prof_f64, dist_m, src_h, rcv_h);
+    Some(TerrainDiffraction { bands, diff: diff?, prof_f64, t, n })
 }
 
-/// Terrain attenuation + full multi-edge trace for popup tooltips.
+/// Terrain attenuation + single-edge trace for popup tooltips.
 ///
-/// Returns `(trace, profile_points)` where `trace` contains per-band
-/// attenuation, the diffraction δ, Rayleigh δ\*, first-to-last edge
-/// distance, N ∈ {0, 1, 2, 3} edge count, and the list of edges found by
-/// the upper-convex-hull algorithm (see `diffraction::compute_path_difference`).
+/// Returns `(trace, profile_points)` where `trace` carries per-band attenuation,
+/// the diffraction δ, the Rayleigh δ\*, and the single max-δ edge over bare earth
+/// (`n_edges` is 0 for a clear path, else 1; see `horizon::single_edge_atten`).
 /// `profile_points` is the raw sample count the engine scanned — surfaced to
 /// popup as transparency metadata.
 pub fn terrain_attenuation_with_meta(
@@ -127,39 +120,18 @@ pub fn terrain_attenuation_with_meta(
     let Some(res) = compute_terrain_diffraction(profile, src_elev, rcv_alt) else {
         return (empty_terrain_trace(), 0);
     };
-    let TerrainDiffraction { diff, prof_f64, t, src_abs, rcv_abs, n } = res;
-    let atten = diffraction::diffraction_attenuation_rayleigh(&diff);
-
-    // Single pass: materialise edges + track dominant (max LOS excess).
-    // Matches the `d_idx` selection inside `diffraction::compute_double_edge`
-    // and `compute_triple_edge` so the popup SVG highlights the same edge
-    // the Rayleigh δ* mirror fit was anchored at.
-    let n_edges = diff.n_edges as usize;
-    let mut edges: Vec<EdgePoint> = Vec::with_capacity(n_edges);
-    let mut best_idx = 0usize;
-    let mut best_excess = f64::NEG_INFINITY;
-    for k in 0..n_edges {
-        let idx = diff.edge_indices[k];
-        let ti = t[idx];
-        let elev = prof_f64[idx];
-        let los = src_abs + (rcv_abs - src_abs) * ti;
-        let excess = elev - los;
-        if excess > best_excess {
-            best_excess = excess;
-            best_idx = k;
-        }
-        edges.push(EdgePoint { t: ti, elevation_m: elev });
-    }
+    let TerrainDiffraction { bands, diff, prof_f64, t, n } = res;
+    let idx = diff.edge_indices[0];
 
     let trace = TerrainTrace {
         delta_m: diff.delta,
-        is_double: diff.is_double,
-        attenuation_bands: atten,
-        n_edges: diff.n_edges,
-        edges,
+        is_double: false,
+        attenuation_bands: bands,
+        n_edges: 1,
+        edges: vec![EdgePoint { t: t[idx], elevation_m: prof_f64[idx] }],
         delta_star_m: diff.delta_star,
-        edge_distance_m: diff.edge_distance,
-        dominant_edge_idx: best_idx as u8,
+        edge_distance_m: 0.0,
+        dominant_edge_idx: 0,
     };
     (trace, n as u32)
 }
@@ -219,7 +191,6 @@ pub fn screening_attenuation_with_meta(
     exclusion_radius_m: f64,
     terrain_atten: &[f64; NUM_BANDS],
 ) -> ([f64; NUM_BANDS], ScreeningObstacleTrace) {
-    use super::diffraction::{compute_path_difference_with_ols, diffraction_attenuation_rayleigh};
     let excl_limit = exclusion_radius_m.max(0.0);
     let dist_m = profile.dist_m;
     let (src_lat, src_lon) = (profile.src_lat, profile.src_lon);
@@ -295,136 +266,75 @@ pub fn screening_attenuation_with_meta(
     let elevation_f64: &[f64] =
         PathProfile::elevation_f64_from(elevation_f64_scratch, elevation_m);
 
-    // 3. Composite top profile = elevation + max(building_h, barrier_at),
-    //    with exclusion radius zeroing out buildings near the source (not
-    //    barriers — explicit barrier polys are always real obstacles).
+    // 3. Composite top profile = elevation + max(building_h, barrier_at), with
+    //    exclusion radius zeroing buildings near the source (not barriers —
+    //    explicit barrier polys are always real obstacles).
     composite_h_scratch.clear();
     composite_h_scratch.reserve(n);
     let mut samples_taken: u32 = 0;
-    let mut barrier_wins_at_dominant = false;
-    let mut dominant_composite_excess = 0.0_f64;
-    let mut dominant_idx = 0usize;
-
     for i in 0..n {
         let ti = t[i];
-        let ground = elevation_f64[i];
         let mut above_ground = 0.0_f64;
-
         if ti > 0.0 && ti < 1.0 {
-            let bh = building_h_m[i] as f64;
             let bh_effective = if excl_limit > 0.0 && ti * dist_m < excl_limit {
                 0.0
             } else {
                 samples_taken += 1;
-                bh
+                building_h_m[i] as f64
             };
-            let barrier_h = barrier_at[i] as f64;
-            above_ground = bh_effective.max(barrier_h);
+            above_ground = bh_effective.max(barrier_at[i] as f64);
         }
-
-        let composite = ground + above_ground;
-        composite_h_scratch.push(composite);
-
-        let los_i = src_elev + (rcv_alt - src_elev) * ti;
-        let excess_i = composite - los_i;
-        if ti > 0.0 && ti < 1.0 && above_ground > 0.0 && excess_i > dominant_composite_excess {
-            dominant_composite_excess = excess_i;
-            dominant_idx = i;
-            barrier_wins_at_dominant = (barrier_at[i] as f64) > (building_h_m[i] as f64);
-        }
+        composite_h_scratch.push(elevation_f64[i] + above_ground);
     }
 
-    // If nothing above ground along the path: zero attenuation, none trace.
-    if dominant_composite_excess <= 0.0 {
-        let mut tr = make_empty();
-        tr.samples_taken = samples_taken;
-        return ([0.0; NUM_BANDS], tr);
-    }
-
-    // 4. Convert absolute altitudes to per-end heights above bare-earth for
-    //    the diffraction API (matches terrain_attenuation contract).
+    // 4. Per-end heights above bare-earth for the diffraction API.
     let src_h = (src_elev - elevation_f64[0]).max(0.05);
     let rcv_h = (rcv_alt - elevation_f64[n - 1]).max(0.5);
 
-    // 5. Combined diffraction over composite, δ* fit on bare-earth.
-    let res_combined = compute_path_difference_with_ols(
-        t, composite_h_scratch, elevation_f64, dist_m, src_h, rcv_h,
-    );
-    let atten_combined = diffraction_attenuation_rayleigh(&res_combined);
+    // 5. Single dominant-δ edge over the composite, δ* fit on bare-earth (was
+    //    the multi-edge hull compute_path_difference_with_ols). None ⇒ the
+    //    composite never clears the LOS ⇒ no screening.
+    let (atten_combined, res_opt) =
+        single_edge_atten(t, composite_h_scratch, elevation_f64, dist_m, src_h, rcv_h);
+    let Some(res) = res_opt else {
+        let mut tr = make_empty();
+        tr.samples_taken = samples_taken;
+        return ([0.0; NUM_BANDS], tr);
+    };
 
-    // 6. Screening = increment of combined over pure-terrain (passed in by the
-    //    caller, already computed in terrain_attenuation_with_meta — avoids a
-    //    redundant second Fresnel pass on bare-earth per path).
-    //    `atten_terrain + atten_screen ≡ atten_combined` → no double-count.
+    // 6. Screening = increment of combined over terrain (passed in by the caller,
+    //    already computed in terrain_attenuation — no redundant bare-earth pass).
+    //    `terrain + screen` = max(A_terrain, A_combined) per band → no double-count.
     let mut atten_screen = [0.0_f64; NUM_BANDS];
     for i in 0..NUM_BANDS {
         atten_screen[i] = (atten_combined[i] - terrain_atten[i]).max(0.0);
     }
 
-    // 7. Materialise per-edge ObstacleEdge list from the combined result.
-    //    `edge_indices[..n_edges]` are sorted leftmost-to-rightmost in `t`.
-    //    Per-edge `kind` is decided by which source dominates at the edge
-    //    sample: pure bare-earth = "terrain", barrier > building = "barrier",
-    //    otherwise "building".
-    let n_edges_val = res_combined.n_edges as usize;
-    let mut edges: Vec<ObstacleEdge> = Vec::with_capacity(n_edges_val);
-    let mut dom_k = 0usize;
-    let mut dom_excess = f64::NEG_INFINITY;
-    for k in 0..n_edges_val {
-        let idx = res_combined.edge_indices[k];
-        let above = (composite_h_scratch[idx] - elevation_f64[idx]).max(0.0);
-        let building = building_h_m[idx] as f64;
-        let barrier = barrier_at[idx] as f64;
-        let kind: &'static str = if above <= 0.0 {
-            "terrain"
-        } else if barrier > building {
-            "barrier"
-        } else {
-            "building"
-        };
-        let los_i = src_elev + (rcv_alt - src_elev) * t[idx];
-        let screen = composite_h_scratch[idx] - los_i;
-        if screen > dom_excess {
-            dom_excess = screen;
-            dom_k = k;
-        }
-        edges.push(ObstacleEdge {
-            kind,
-            t: t[idx],
-            height_m: if kind == "terrain" { 0.0 } else { above },
-            screen_h_m: screen,
-        });
-    }
-
-    // 8. Representative obstacle = dominant-excess edge (if edges exist),
-    //    else fall back to the composite-dominant sample scanned earlier.
-    //    Using max-excess (not leftmost) matches the physical blocker that
-    //    the CNOSSOS Rayleigh δ* fit anchored against inside diffraction.rs.
-    let (edge_idx, trace_kind, trace_height) = if !edges.is_empty() {
-        let idx = res_combined.edge_indices[dom_k];
-        let e = &edges[dom_k];
-        (idx, e.kind, e.height_m)
+    // 7. The single δ-edge → trace. kind by which source tops the edge sample:
+    //    pure bare-earth = "terrain", barrier > building = "barrier", else "building".
+    let idx = res.edge_indices[0];
+    let above = (composite_h_scratch[idx] - elevation_f64[idx]).max(0.0);
+    let kind: &'static str = if above <= 0.0 {
+        "terrain"
+    } else if (barrier_at[idx] as f64) > (building_h_m[idx] as f64) {
+        "barrier"
     } else {
-        let kind = if barrier_wins_at_dominant { "barrier" } else { "building" };
-        let above = (composite_h_scratch[dominant_idx] - elevation_f64[dominant_idx]).max(0.0);
-        (dominant_idx, kind, above)
+        "building"
     };
-
-    let t_edge = t[edge_idx];
-    let los_edge = src_elev + (rcv_alt - src_elev) * t_edge;
-    let screen_h = composite_h_scratch[edge_idx] - los_edge;
-    let delta_m = res_combined.delta;
+    let los_edge = src_elev + (rcv_alt - src_elev) * t[idx];
+    let screen_h = composite_h_scratch[idx] - los_edge;
+    let height_m = if kind == "terrain" { 0.0 } else { above };
 
     let trace = ScreeningObstacleTrace {
-        kind: trace_kind,
-        height_m: trace_height,
-        t: t_edge,
+        kind,
+        height_m,
+        t: t[idx],
         screen_h_m: screen_h,
-        delta_m,
+        delta_m: res.delta,
         samples_taken,
         step_m: step_m_med,
-        n_edges: res_combined.n_edges,
-        edges,
+        n_edges: 1,
+        edges: vec![ObstacleEdge { kind, t: t[idx], height_m, screen_h_m: screen_h }],
     };
 
     (atten_screen, trace)

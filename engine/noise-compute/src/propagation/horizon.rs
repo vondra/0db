@@ -18,7 +18,7 @@
 //! near-endpoint barrier that the hull's LOS-excess ranking systematically
 //! under-weighted (excess favours near-source obstacles, where the LOS sits low).
 
-use super::diffraction::{compute_single_edge, diffraction_attenuation_rayleigh};
+use super::diffraction::{compute_single_edge, diffraction_attenuation_rayleigh, DiffractionResult};
 use crate::types::NUM_BANDS;
 
 /// Per-band terrain (bare-earth δ\*) + screening (composite-edge increment) for
@@ -80,8 +80,8 @@ fn max_delta_idx(
 /// Per-band attenuation over the max-δ edge of `top` (the composite OR the
 /// bare-earth profile), with the CNOSSOS §2.5.6(c) Rayleigh δ\* fit ALWAYS on
 /// `bare` (feeding rooftops to the OLS mean-ground would break ground physics).
-/// Returns the chosen edge index for trace/geometry; `None` + zero bands when
-/// `top` clears the line of sight.
+/// Returns the single-edge [`DiffractionResult`] (δ, Rayleigh δ\*, edge index)
+/// for trace/geometry, or `None` + zero bands when `top` clears the line of sight.
 ///
 /// THE shared primitive: surface terrain calls it with `top == bare`, screening
 /// with `top == composite`; the popup wrappers and the heatmap horizon both
@@ -93,7 +93,7 @@ pub(crate) fn single_edge_atten(
     total_dist: f64,
     src_height: f64,
     rcv_height: f64,
-) -> ([f64; NUM_BANDS], Option<usize>) {
+) -> ([f64; NUM_BANDS], Option<DiffractionResult>) {
     debug_assert!(
         t.len() == top.len() && top.len() == bare.len(),
         "profile arrays must be equal length"
@@ -107,7 +107,7 @@ pub(crate) fn single_edge_atten(
             let r = compute_single_edge(
                 t, top, bare, total_dist, idx, src_elev, rcv_elev, dsr, src_height, rcv_height,
             );
-            (diffraction_attenuation_rayleigh(&r), Some(idx))
+            (diffraction_attenuation_rayleigh(&r), Some(r))
         }
         None => ([0.0; NUM_BANDS], None),
     }
@@ -130,15 +130,18 @@ pub fn solve_single_edge(
         return EdgeDiffraction::ZERO;
     }
     let (terrain, _) = single_edge_atten(t, bare, bare, total_dist, src_height, rcv_height);
-    let (combined, c_idx) = single_edge_atten(t, composite, bare, total_dist, src_height, rcv_height);
+    let (combined, c_res) = single_edge_atten(t, composite, bare, total_dist, src_height, rcv_height);
 
     // A_screen = clamped INCREMENT → terrain + screen = max(A_terrain, A_combined) per band.
     let mut screen = [0.0; NUM_BANDS];
     for i in 0..NUM_BANDS {
         screen[i] = (combined[i] - terrain[i]).max(0.0);
     }
-    let (edge_to_rcv_m, edge_height_m) = match c_idx {
-        Some(i) => ((1.0 - t[i]) * total_dist, composite[i] - bare[i]),
+    let (edge_to_rcv_m, edge_height_m) = match c_res {
+        Some(r) => {
+            let i = r.edge_indices[0];
+            ((1.0 - t[i]) * total_dist, composite[i] - bare[i])
+        }
         None => (-1.0, 0.0),
     };
     EdgeDiffraction { terrain, screen, edge_to_rcv_m, edge_height_m }
