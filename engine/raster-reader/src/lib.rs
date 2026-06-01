@@ -617,141 +617,31 @@ impl noise_compute::types::RasterSampler for FusedGrid {
         out.forest_u8.reserve(n);
         out.imd_u8.reserve(n);
 
-        // Fused per-t fetch: compute (r0, c0) once, read the four neighbouring
-        // FusedPixels once, bilinearly blend elevation and take the top-left
-        // pixel (the existing `self.pixel()` convention) for the categorical
-        // layers. Eliminates the redundant row/col computation and pointer
-        // dereference that `elevation_bilinear` + `pixel` did separately.
+        // Raster coords are affine in lat/lon, which are affine in t, so walk
+        // (rf, cf) as a plain lerp instead of re-deriving them inside every lookup.
+        let src_rf = (src_lat - self.lat_min) * self.inv_cell_deg;
+        let src_cf = (src_lon - self.lon_min) * self.inv_cell_deg;
+        let d_rf = (rcv_lat - src_lat) * self.inv_cell_deg;
+        let d_cf = (rcv_lon - src_lon) * self.inv_cell_deg;
         for &t in &out.t {
-            let lat = src_lat + t * (rcv_lat - src_lat);
-            let lon = src_lon + t * (rcv_lon - src_lon);
-            let (elev, bh, fr_u8, imd_u8) = self.lookup_fused(lat, lon);
+            let (elev, bh, fr_u8, imd_u8) = self.lookup_fused_rc(src_rf + t * d_rf, src_cf + t * d_cf);
             out.elevation_m.push(elev);
             out.building_h_m.push(bh);
             out.forest_u8.push(fr_u8);
             out.imd_u8.push(imd_u8);
         }
 
-        // P3 peak augmentation (global multi-hill coverage): scan only gaps
-        // in the bilateral cadence that are larger than ~1.5 × cell size
-        // (GPT-5.4 + Gemini 3.1 Pro dual review, 2026-04-23: scanning the
-        // whole path at 30 m from t=0 caused phase-shift duplicates in the
-        // endpoint-dense zones — fake peaks 9-22 m from existing samples
-        // passed the old 3 m reject filter and bloated the profile by +16 %,
-        // compounding downstream terrain / screening / vegetation costs).
-        //
-        // Gap-only scan: the bilateral cadence already samples at ≤30 m near
-        // endpoints and ≤240 m in the middle; we only look between samples
-        // where that gap could hide a real hill.
-        let cell_m_const = noise_compute::propagation::path_profile::CELL_M;
-        let gap_scan_min_m = cell_m_const * 1.5;
-        let peak_dedup_min_m = cell_m_const * 0.5;
-        if dist_m > cell_m_const * 10.0 && out.elevation_m.len() >= 3 {
-            let ground_src = out.elevation_m[0];
-            let ground_rcv = *out.elevation_m.last().unwrap();
-            let mut peaks: Vec<(f64, f32)> = Vec::with_capacity(8);
-            // Per-window gap scan: walk bilateral samples pairwise, scan
-            // inside any gap > 1.5 × CELL_M at CELL_M cadence.
-            // Iterate out.t directly: the window scan only reads (gap detection
-            // + peak collection into a separate Vec); out.t is not mutated until
-            // the insert pass after this loop, so the old defensive clone was a
-            // redundant per-path allocation.
-            for w in out.t.windows(2) {
-                let gap_m = (w[1] - w[0]) * dist_m;
-                if gap_m <= gap_scan_min_m {
-                    continue;
-                }
-                let steps = ((gap_m / cell_m_const).floor() as usize).max(1);
-                let mut prev_elev = f32::NAN;
-                let mut curr_elev = f32::NAN;
-                let mut prev_t = w[0];
-                let mut curr_t = w[0];
-                for k in 1..steps {
-                    let local_t = w[0] + (k as f64 / steps as f64) * (w[1] - w[0]);
-                    let lat = src_lat + local_t * (rcv_lat - src_lat);
-                    let lon = src_lon + local_t * (rcv_lon - src_lon);
-                    let elev = self.lookup_elevation(lat, lon);
-                    if !prev_elev.is_nan() && !curr_elev.is_nan()
-                        && curr_elev > prev_elev && curr_elev > elev
-                    {
-                        let los_c = ground_src + (ground_rcv - ground_src) * curr_t as f32;
-                        if curr_elev > los_c + noise_compute::propagation::path_profile::PEAK_EXCESS_MIN_M {
-                            peaks.push((curr_t, curr_elev));
-                        }
-                    }
-                    prev_elev = curr_elev;
-                    prev_t = curr_t;
-                    curr_elev = elev;
-                    curr_t = local_t;
-                }
-                let _ = prev_t;
-            }
-            if peaks.is_empty() {
-                // fast path — no profile mutation, preserve downstream cost.
-            } else {
-                // Cell-scale dedup against peaks themselves (keep max-excess
-                // per cell cluster).
-                peaks.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-                let mut clustered: Vec<(f64, f32)> = Vec::with_capacity(peaks.len());
-                for (pt, pe) in peaks {
-                    if let Some(last) = clustered.last_mut() {
-                        if (pt - last.0) * dist_m < cell_m_const {
-                            let los_new = ground_src + (ground_rcv - ground_src) * pt as f32;
-                            let los_old = ground_src + (ground_rcv - ground_src) * last.0 as f32;
-                            if pe - los_new > last.1 - los_old {
-                                *last = (pt, pe);
-                            }
-                            continue;
-                        }
-                    }
-                    clustered.push((pt, pe));
-                }
-                // Top-N cap by LOS excess (matches downstream convex-hull cap).
-                if clustered.len() > noise_compute::propagation::path_profile::PEAK_MAX_COUNT {
-                    clustered.sort_by(|p1, p2| {
-                        let l1 = ground_src + (ground_rcv - ground_src) * p1.0 as f32;
-                        let l2 = ground_src + (ground_rcv - ground_src) * p2.0 as f32;
-                        (p2.1 - l2).partial_cmp(&(p1.1 - l1)).unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                    clustered.truncate(noise_compute::propagation::path_profile::PEAK_MAX_COUNT);
-                    clustered.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-                }
-                for &(pt, pelev) in &clustered {
-                    let insert_idx = out.t.partition_point(|&x| x < pt);
-                    if insert_idx > 0
-                        && (out.t[insert_idx - 1] - pt).abs() * dist_m < peak_dedup_min_m
-                    {
-                        continue;
-                    }
-                    if insert_idx < out.t.len()
-                        && (out.t[insert_idx] - pt).abs() * dist_m < peak_dedup_min_m
-                    {
-                        continue;
-                    }
-                    let lat = src_lat + pt * (rcv_lat - src_lat);
-                    let lon = src_lon + pt * (rcv_lon - src_lon);
-                    let (_, bh, fr_u8, imd_u8) =
-                        self.lookup_fused(lat, lon);
-                    out.t.insert(insert_idx, pt);
-                    out.elevation_m.insert(insert_idx, pelev);
-                    out.building_h_m.insert(insert_idx, bh);
-                    out.forest_u8.insert(insert_idx, fr_u8);
-                    out.imd_u8.insert(insert_idx, imd_u8);
-                }
-            }
-        }
-
-        out.step_m_med = noise_compute::propagation::path_profile::median_step_m(&out.t, dist_m);
+        // The heatmap collapses to per-pixel energy: it never reads step_m_med
+        // (popup tooltip metadata), and it omits the P3 mid-path peak
+        // augmentation that RealRasters keeps for the per-point popup. Measured
+        // on aggregate z13 tiles that augmentation moves Lden <0.07 dB mean /
+        // 2 dB max while costing ~half the surface ray-march — the bilateral
+        // cadence already samples every obstacle that dominates the single-edge δ.
+        out.step_m_med = 0.0;
     }
 }
 
 impl FusedGrid {
-    /// Bilinear elevation only — cheap scan path for P3 peak detection.
-    #[inline]
-    fn lookup_elevation(&self, lat: f64, lon: f64) -> f32 {
-        self.elevation_bilinear(lat, lon) as f32
-    }
-
     /// Bilinear elevation + IMD, nearest-neighbour building + forest.
     ///
     /// Matches `RealRasters` per-raster `Interp` config: DEM bilinear, IMD
@@ -765,6 +655,16 @@ impl FusedGrid {
     pub fn lookup_fused(&self, lat: f64, lon: f64) -> (f32, u8, u8, u8) {
         let rf = (lat - self.lat_min) * self.inv_cell_deg;
         let cf = (lon - self.lon_min) * self.inv_cell_deg;
+        self.lookup_fused_rc(rf, cf)
+    }
+
+    /// [`Self::lookup_fused`] with pre-computed fractional raster coordinates.
+    /// The profile builder walks a straight ray, so `(rf, cf)` are affine in the
+    /// path parameter `t`; lerping them directly differs only sub-ULP from
+    /// re-deriving via per-sample lat/lon (measured 0.000 dB tile drift) and
+    /// drops two multiplies + two subtracts per sample from the hot loop.
+    #[inline]
+    pub fn lookup_fused_rc(&self, rf: f64, cf: f64) -> (f32, u8, u8, u8) {
         // Clamp before floor: prevents negative wrap and OOB extrapolation.
         let rf = rf.clamp(0.0, (self.rows - 1) as f64);
         let cf = cf.clamp(0.0, (self.cols - 1) as f64);

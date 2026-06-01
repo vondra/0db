@@ -273,10 +273,11 @@ impl RasterSampler for FusedTileZ13 {
         self.halo.building_enclosure(lat, lon)
     }
 
-    /// Without this override, `build_default` (trait fallback) drops the
-    /// P3 peak augmentation and zeroes `forest_u8` per sample — biased
-    /// +3 dB vs popup in M8 parity. Halo already runs the canonical walk
-    /// and covers every source→receiver ray (radius = `HALO_M`).
+    /// Without this override, `build_default` (trait fallback) zeroes
+    /// `forest_u8` per sample — biased +3 dB vs popup in M8 parity. The halo
+    /// runs the canonical bilateral walk and covers every source→receiver ray
+    /// (radius = `HALO_M`). The heatmap profile omits the popup's P3 peak
+    /// augmentation — see `FusedGrid::build_path_profile`.
     fn build_path_profile(
         &self,
         src_lat: f64,
