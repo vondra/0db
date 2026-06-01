@@ -310,20 +310,27 @@ pub fn screening_attenuation_with_meta(
         atten_screen[i] = (atten_combined[i] - terrain_atten[i]).max(0.0);
     }
 
-    // 7. The single δ-edge → trace. kind by which source tops the edge sample:
-    //    pure bare-earth = "terrain", barrier > building = "barrier", else "building".
+    // 7. The single δ-edge → trace. A bare-terrain dominant edge is owned by
+    //    terrain_attenuation, NOT a screening obstacle (atten_screen is 0 here) —
+    //    report "none" so the popup doesn't list a terrain hill as a barrier.
     let idx = res.edge_indices[0];
     let above = (composite_h_scratch[idx] - elevation_f64[idx]).max(0.0);
-    let kind: &'static str = if above <= 0.0 {
-        "terrain"
-    } else if (barrier_at[idx] as f64) > (building_h_m[idx] as f64) {
-        "barrier"
+    if above <= 0.0 {
+        let mut tr = make_empty();
+        tr.samples_taken = samples_taken;
+        return (atten_screen, tr);
+    }
+    // Classify by the EFFECTIVE building height — a source-excluded footprint is 0,
+    // so it never mislabels a real barrier at the edge as "building".
+    let bh_eff = if excl_limit > 0.0 && t[idx] * dist_m < excl_limit {
+        0.0
     } else {
-        "building"
+        building_h_m[idx] as f64
     };
+    let kind: &'static str = if (barrier_at[idx] as f64) > bh_eff { "barrier" } else { "building" };
     let los_edge = src_elev + (rcv_alt - src_elev) * t[idx];
     let screen_h = composite_h_scratch[idx] - los_edge;
-    let height_m = if kind == "terrain" { 0.0 } else { above };
+    let height_m = above;
 
     let trace = ScreeningObstacleTrace {
         kind,
@@ -513,10 +520,11 @@ mod tests {
     }
 
     #[test]
-    fn combined_edge_on_naked_hill_is_kind_terrain() {
-        // A bare-earth hill at t=0.5 with no buildings anywhere. The composite
-        // edge should be kind="terrain" (not "building") since the composite
-        // top at that sample equals the DEM elevation (above_ground == 0).
+    fn naked_hill_is_not_a_screening_obstacle() {
+        // A bare-earth hill at t=0.5 with no buildings: terrain_attenuation owns
+        // the diffraction. Screening must report "none" (the composite top equals
+        // the DEM, so the increment over terrain is zero — a terrain hill is not a
+        // building/barrier screening obstacle).
         let mut p = build_flat_profile(1500.0, 10.0);
         let (spike, _) = p
             .t
@@ -529,7 +537,7 @@ mod tests {
         p.elevation_m[spike] = 40.0;
         // building_h_m all zero — guaranteed by build_flat_profile.
         let (terrain_trace, _) = terrain_attenuation_with_meta(&mut p, 10.05, 11.5);
-        let (_atten, screening_trace) = screening_attenuation_with_meta(
+        let (atten, screening_trace) = screening_attenuation_with_meta(
             &mut p,
             &[],
             10.05,
@@ -537,16 +545,8 @@ mod tests {
             0.0,
             &terrain_trace.attenuation_bands,
         );
-        if screening_trace.n_edges > 0 {
-            // Every edge in this geometry must be "terrain".
-            for edge in &screening_trace.edges {
-                assert_eq!(
-                    edge.kind, "terrain",
-                    "bare-earth hill edge must be kind=terrain, got {}",
-                    edge.kind
-                );
-                assert_eq!(edge.height_m, 0.0, "terrain kind must have height_m=0");
-            }
-        }
+        assert_eq!(screening_trace.kind, "none", "bare hill is not a screening obstacle");
+        assert_eq!(screening_trace.n_edges, 0);
+        assert!(atten.iter().all(|&a| a == 0.0), "no screening increment over terrain");
     }
 }
