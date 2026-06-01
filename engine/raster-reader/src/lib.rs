@@ -759,8 +759,10 @@ impl FusedGrid {
     /// (top-left of the bilinear quad) for all three categoricals, biasing
     /// up-left by half a cell and producing up to 6+ dB divergence from
     /// `RealRasters` wherever a raster edge passed through the quad.
+    /// `(elev_bilinear, building_nearest, forest_nearest, imd_bilinear)` — the
+    /// four surface rasters in one lookup, used by the heatmap horizon builder.
     #[inline]
-    fn lookup_fused(&self, lat: f64, lon: f64) -> (f32, u8, u8, u8) {
+    pub fn lookup_fused(&self, lat: f64, lon: f64) -> (f32, u8, u8, u8) {
         let rf = (lat - self.lat_min) * self.inv_cell_deg;
         let cf = (lon - self.lon_min) * self.inv_cell_deg;
         // Clamp before floor: prevents negative wrap and OOB extrapolation.
