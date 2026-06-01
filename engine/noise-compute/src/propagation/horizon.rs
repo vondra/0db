@@ -205,6 +205,44 @@ impl Horizon {
         let rcv_h = (rcv_alt - rcv_ground_m).max(0.5);
         solve_single_edge(&t, &bare, &composite, d_m, src_h, rcv_h)
     }
+
+    /// Path-averaged ground factor G (0 hard … 1 soft) over `[0, d_m]`, the
+    /// line-source analogue of `path_effects::ground_g_from_profile` (G = 1 −
+    /// imd/100). z13 cells are ~uniformly spaced, so a plain cell mean tracks the
+    /// distance-weighted integral. Empty prefix (sub-cell path) → 0.5 mixed.
+    pub fn ground_g_to(&self, d_m: f64) -> f64 {
+        let mut sum = 0u64;
+        let mut n = 0u64;
+        for c in &self.cells {
+            if c.dist_m as f64 >= d_m {
+                break;
+            }
+            sum += c.imd_u8 as u64;
+            n += 1;
+        }
+        if n == 0 {
+            return 0.5;
+        }
+        (1.0 - (sum as f64 / n as f64) / 100.0).clamp(0.0, 1.0)
+    }
+
+    /// Forest-covered path length (m) over `[0, d_m]` — feeds
+    /// `vegetation::vegetation_attenuation`. WorldCover forest is a 0/100 flag.
+    pub fn forest_depth_to(&self, d_m: f64) -> f64 {
+        let mut depth = 0.0_f64;
+        let mut prev = 0.0_f64;
+        for c in &self.cells {
+            let dist = c.dist_m as f64;
+            if dist >= d_m {
+                break;
+            }
+            if c.forest_u8 > 50 {
+                depth += dist - prev;
+            }
+            prev = dist;
+        }
+        depth
+    }
 }
 
 #[cfg(test)]
@@ -360,5 +398,27 @@ mod tests {
         let d = solve_single_edge(&t, &bare, &bare, 1850.0, 0.05, 4.0);
         assert_eq!(d.terrain[0], 0.0, "63 Hz must be gated by δ*");
         assert!(d.terrain[4] > 5.0, "1 kHz should pass the gate, got {:.3}", d.terrain[4]);
+    }
+
+    fn cover_cell(dist_m: f32, imd_u8: u8, forest_u8: u8) -> HorizonCell {
+        HorizonCell { dist_m, ground_m: 0.0, composite_m: 0.0, imd_u8, forest_u8 }
+    }
+
+    #[test]
+    fn ground_g_and_forest_depth_over_prefix() {
+        let horizon = Horizon {
+            cells: vec![
+                cover_cell(100.0, 0, 100),   // soft ground, forest
+                cover_cell(200.0, 0, 100),   // soft, forest
+                cover_cell(300.0, 100, 0),   // hard, no forest
+            ],
+            origin_ground_m: 0.0,
+        };
+        // [0,250]: imd {0,0} → G=1 (soft); forest over both 100 m segments → 200 m.
+        assert!((horizon.ground_g_to(250.0) - 1.0).abs() < 1e-9);
+        assert!((horizon.forest_depth_to(250.0) - 200.0).abs() < 1e-9);
+        // [0,400]: imd {0,0,100} → mean 33.3 → G≈0.667; the hard cell adds no forest.
+        assert!((horizon.ground_g_to(400.0) - (1.0 - (100.0 / 3.0) / 100.0)).abs() < 1e-6);
+        assert!((horizon.forest_depth_to(400.0) - 200.0).abs() < 1e-9);
     }
 }
