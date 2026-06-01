@@ -347,4 +347,18 @@ mod tests {
         assert_eq!(d.terrain, [0.0; NUM_BANDS]);
         assert_eq!(d.screen, [0.0; NUM_BANDS]);
     }
+
+    /// CNOSSOS §2.5.6(c) Rayleigh δ* gate (was diffraction.rs K9): a shallow bare
+    /// hill gates the long-wavelength low bands while higher bands pass — the gate
+    /// lives in compute_delta_star + maekawa, reached via the terrain edge.
+    #[test]
+    fn shallow_hill_rayleigh_gates_low_bands() {
+        let n = 61;
+        let mut bare = vec![400.0_f64; n];
+        bare[n / 2] = 419.0;
+        let t: Vec<f64> = (0..n).map(|i| i as f64 / (n - 1) as f64).collect();
+        let d = solve_single_edge(&t, &bare, &bare, 1850.0, 0.05, 4.0);
+        assert_eq!(d.terrain[0], 0.0, "63 Hz must be gated by δ*");
+        assert!(d.terrain[4] > 5.0, "1 kHz should pass the gate, got {:.3}", d.terrain[4]);
+    }
 }

@@ -39,10 +39,9 @@ pub const NEAR_OFFSET_M: f64 = 10.0;
 /// eliminating pixel-level noise peaks that bloat the profile.
 pub const PEAK_EXCESS_MIN_M: f32 = 2.0;
 
-/// Maximum number of peaks kept per path. Matches the downstream convex-hull
-/// top-3 cap in `diffraction::compute_path_difference_with_ols` — keeping
-/// more here just bloats the profile for elements that are deterministically
-/// discarded during edge selection.
+/// Maximum number of terrain peaks kept per path for the single-edge δ selection
+/// to choose among — keeping more just bloats the profile with peaks the max-δ
+/// pick would discard anyway.
 pub const PEAK_MAX_COUNT: usize = 3;
 
 /// Unified path profile: one bilateral sample set, all four rasters.
@@ -70,7 +69,7 @@ pub struct PathProfile {
     pub rcv_lat: f64,
     pub rcv_lon: f64,
     /// Scratch buffer for callers that need f64-typed elevation (e.g.
-    /// `diffraction::compute_path_difference`). Grown on first use, reused
+    /// `horizon::single_edge_atten` via path_effects). Grown on first use, reused
     /// across subsequent calls via `elevation_f64()`.
     pub elevation_f64_scratch: Vec<f64>,
     /// Scratch buffer for the composite top profile (elevation + building_h +
