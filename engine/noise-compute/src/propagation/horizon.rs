@@ -74,6 +74,38 @@ fn max_delta_idx(
     best
 }
 
+/// Per-band attenuation over the max-δ edge of `top` (the composite OR the
+/// bare-earth profile), with the CNOSSOS §2.5.6(c) Rayleigh δ\* fit ALWAYS on
+/// `bare` (feeding rooftops to the OLS mean-ground would break ground physics).
+/// Returns the chosen edge index for trace/geometry; `None` + zero bands when
+/// `top` clears the line of sight.
+///
+/// THE shared primitive: surface terrain calls it with `top == bare`, screening
+/// with `top == composite`; the popup wrappers and the heatmap horizon both
+/// funnel through it, so they agree by construction.
+pub(crate) fn single_edge_atten(
+    t: &[f64],
+    top: &[f64],
+    bare: &[f64],
+    total_dist: f64,
+    src_height: f64,
+    rcv_height: f64,
+) -> ([f64; NUM_BANDS], Option<usize>) {
+    let n = bare.len();
+    let src_elev = bare[0] + src_height;
+    let rcv_elev = bare[n - 1] + rcv_height;
+    let dsr = (total_dist * total_dist + (rcv_elev - src_elev).powi(2)).sqrt();
+    match max_delta_idx(t, top, total_dist, src_elev, rcv_elev, dsr) {
+        Some(idx) => {
+            let r = compute_single_edge(
+                t, top, bare, total_dist, idx, src_elev, rcv_elev, dsr, src_height, rcv_height,
+            );
+            (diffraction_attenuation_rayleigh(&r), Some(idx))
+        }
+        None => ([0.0; NUM_BANDS], None),
+    }
+}
+
 /// The shared single-edge δ kernel. `bare` = bare-earth ground elevations,
 /// `composite` = ground+building, both absolute metres at fractional path
 /// positions `t∈[0,1]`; `total_dist` ground metres; `src_height`/`rcv_height`
@@ -87,45 +119,81 @@ pub fn solve_single_edge(
     src_height: f64,
     rcv_height: f64,
 ) -> EdgeDiffraction {
-    let n = bare.len();
-    if n < 3 || total_dist < 30.0 {
+    if bare.len() < 3 || total_dist < 30.0 {
         return EdgeDiffraction::ZERO;
     }
-    let src_elev = bare[0] + src_height;
-    let rcv_elev = bare[n - 1] + rcv_height;
-    let dsr = (total_dist * total_dist + (rcv_elev - src_elev).powi(2)).sqrt();
-
-    // A_terrain: diffraction over the max-δ bare-earth edge.
-    let terrain = match max_delta_idx(t, bare, total_dist, src_elev, rcv_elev, dsr) {
-        Some(idx) => {
-            let r = compute_single_edge(
-                t, bare, bare, total_dist, idx, src_elev, rcv_elev, dsr, src_height, rcv_height,
-            );
-            diffraction_attenuation_rayleigh(&r)
-        }
-        None => [0.0; NUM_BANDS],
-    };
-
-    // A_combined: diffraction over the max-δ composite edge (δ\* still over bare).
-    let (combined, edge_to_rcv_m, edge_height_m) =
-        match max_delta_idx(t, composite, total_dist, src_elev, rcv_elev, dsr) {
-            Some(idx) => {
-                let r = compute_single_edge(
-                    t, composite, bare, total_dist, idx, src_elev, rcv_elev, dsr, src_height,
-                    rcv_height,
-                );
-                let bands = diffraction_attenuation_rayleigh(&r);
-                (bands, (1.0 - t[idx]) * total_dist, composite[idx] - bare[idx])
-            }
-            None => ([0.0; NUM_BANDS], -1.0, 0.0),
-        };
+    let (terrain, _) = single_edge_atten(t, bare, bare, total_dist, src_height, rcv_height);
+    let (combined, c_idx) = single_edge_atten(t, composite, bare, total_dist, src_height, rcv_height);
 
     // A_screen = the INCREMENT over terrain, so `terrain + screen ≡ A_combined`.
     let mut screen = [0.0; NUM_BANDS];
     for i in 0..NUM_BANDS {
         screen[i] = (combined[i] - terrain[i]).max(0.0);
     }
+    let (edge_to_rcv_m, edge_height_m) = match c_idx {
+        Some(i) => ((1.0 - t[i]) * total_dist, composite[i] - bare[i]),
+        None => (-1.0, 0.0),
+    };
     EdgeDiffraction { terrain, screen, edge_to_rcv_m, edge_height_m }
+}
+
+/// One raster cell crossed along a source ray: along-ray ground distance from
+/// the ray origin + the bare-earth and composite (ground+building) tops + the
+/// ground-cover bytes. A [`Horizon`] is the ordered list of these for one source
+/// direction — sampled once, reused by every receiver on the ray.
+#[derive(Clone, Copy, Debug)]
+pub struct HorizonCell {
+    pub dist_m: f32,
+    pub ground_m: f32,
+    pub composite_m: f32,
+    pub imd_u8: u8,
+    pub forest_u8: u8,
+}
+
+/// Obstacles along ONE source direction, ascending by `dist_m`. Built once (the
+/// only raster reads — see `build_horizon` in the heatmap crate); each receiver
+/// slices the prefix `[0, d]`. `origin_ground_m` is the DEM at the ray origin.
+pub struct Horizon {
+    pub cells: Vec<HorizonCell>,
+    pub origin_ground_m: f32,
+}
+
+impl Horizon {
+    /// Single-edge δ diffraction for a receiver at ground distance `d_m` along
+    /// the ray, absolute altitudes `src_elev`/`rcv_alt`, receiver bare-earth
+    /// `rcv_ground_m`. A pure scan of the cached cells — no raster reads. Builds
+    /// the `[origin, …interior cells…, receiver]` profile (endpoints carry no
+    /// building) and runs [`solve_single_edge`].
+    pub fn diffraction_for(
+        &self,
+        d_m: f64,
+        src_elev: f64,
+        rcv_alt: f64,
+        rcv_ground_m: f64,
+    ) -> EdgeDiffraction {
+        let origin_ground = self.origin_ground_m as f64;
+        let mut t = vec![0.0];
+        let mut bare = vec![origin_ground];
+        let mut composite = vec![origin_ground];
+        for c in &self.cells {
+            let dist = c.dist_m as f64;
+            if dist <= 0.0 {
+                continue;
+            }
+            if dist >= d_m {
+                break;
+            }
+            t.push(dist / d_m);
+            bare.push(c.ground_m as f64);
+            composite.push(c.composite_m as f64);
+        }
+        t.push(1.0);
+        bare.push(rcv_ground_m);
+        composite.push(rcv_ground_m);
+        let src_h = (src_elev - origin_ground).max(0.05);
+        let rcv_h = (rcv_alt - rcv_ground_m).max(0.5);
+        solve_single_edge(&t, &bare, &composite, d_m, src_h, rcv_h)
+    }
 }
 
 #[cfg(test)]
@@ -222,5 +290,50 @@ mod tests {
                 combined[i]
             );
         }
+    }
+
+    fn cell(dist_m: f32, ground_m: f32, composite_m: f32) -> HorizonCell {
+        HorizonCell { dist_m, ground_m, composite_m, imd_u8: 50, forest_u8: 0 }
+    }
+
+    /// `diffraction_for` must build the `[origin, …cells…, receiver]` profile
+    /// correctly — identical bands to `solve_single_edge` on the equivalent arrays.
+    #[test]
+    fn horizon_diffraction_for_matches_equivalent_profile() {
+        let horizon = Horizon {
+            cells: vec![
+                cell(100.0, 100.0, 100.0),
+                cell(200.0, 100.0, 100.0),
+                cell(250.0, 100.0, 108.0), // 8 m building mid-path
+                cell(300.0, 100.0, 100.0),
+                cell(400.0, 100.0, 100.0),
+            ],
+            origin_ground_m: 100.0,
+        };
+        let from_horizon = horizon.diffraction_for(500.0, 100.05, 104.0, 100.0);
+
+        let t = vec![0.0, 0.2, 0.4, 0.5, 0.6, 0.8, 1.0];
+        let bare = vec![100.0; 7];
+        let composite = vec![100.0, 100.0, 100.0, 108.0, 100.0, 100.0, 100.0];
+        let direct = solve_single_edge(&t, &bare, &composite, 500.0, 0.05, 4.0);
+
+        for i in 0..NUM_BANDS {
+            assert!((from_horizon.terrain[i] - direct.terrain[i]).abs() < 1e-9);
+            assert!((from_horizon.screen[i] - direct.screen[i]).abs() < 1e-9);
+        }
+        assert!(from_horizon.screen.iter().any(|&a| a > 0.0), "building must screen");
+        assert!((from_horizon.edge_to_rcv_m - 250.0).abs() < 1.0);
+    }
+
+    /// A horizon whose cells never rise above the LOS produces no diffraction.
+    #[test]
+    fn horizon_clear_path_is_zero() {
+        let horizon = Horizon {
+            cells: vec![cell(100.0, 100.0, 100.0), cell(300.0, 100.0, 100.0)],
+            origin_ground_m: 100.0,
+        };
+        let d = horizon.diffraction_for(500.0, 100.05, 104.0, 100.0);
+        assert_eq!(d.terrain, [0.0; NUM_BANDS]);
+        assert_eq!(d.screen, [0.0; NUM_BANDS]);
     }
 }
