@@ -205,7 +205,7 @@ fn rehull_over_points(
         .collect()
 }
 
-fn compute_single_edge(
+pub(super) fn compute_single_edge(
     t: &[f64], edge_profile: &[f64], ols_profile: &[f64], total_dist: f64, idx: usize,
     src_elev: f64, rcv_elev: f64, dsr: f64,
     source_height: f64, receiver_height: f64,
