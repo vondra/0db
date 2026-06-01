@@ -7,9 +7,12 @@
 //!   A_terrain  = diffraction over the max-δ edge of the BARE-EARTH profile
 //!   A_combined = diffraction over the max-δ edge of the COMPOSITE profile
 //!   A_screen   = (A_combined − A_terrain).max(0)        ← INCREMENT, never a sum
-//! so `terrain + screen ≡ A_combined`, byte-compatible with the caller
-//! arithmetic (`a_bar = terrain + screen; max(a_gr, a_bar)`). Summing two
-//! independent Maekawa terms would double-count (Maekawa is non-linear).
+//! so `terrain + screen` = max(A_terrain, A_combined) per band — ≡ A_combined
+//! whenever the composite edge dominates (the usual case, since composite ≥ bare),
+//! and the clamp keeps the stronger bare-earth band when the single composite
+//! edge happens to gate a band the bare hill still screens. This is exactly
+//! today's `(combined − terrain).max(0)` contract (path_effects.rs:359). Summing
+//! two independent Maekawa terms would instead double-count (Maekawa non-linear).
 //!
 //! δ ∝ 1/(L−x) toward each endpoint, so the single max-δ edge is the
 //! near-endpoint barrier that the hull's LOS-excess ranking systematically
@@ -91,6 +94,10 @@ pub(crate) fn single_edge_atten(
     src_height: f64,
     rcv_height: f64,
 ) -> ([f64; NUM_BANDS], Option<usize>) {
+    debug_assert!(
+        t.len() == top.len() && top.len() == bare.len(),
+        "profile arrays must be equal length"
+    );
     let n = bare.len();
     let src_elev = bare[0] + src_height;
     let rcv_elev = bare[n - 1] + rcv_height;
@@ -125,7 +132,7 @@ pub fn solve_single_edge(
     let (terrain, _) = single_edge_atten(t, bare, bare, total_dist, src_height, rcv_height);
     let (combined, c_idx) = single_edge_atten(t, composite, bare, total_dist, src_height, rcv_height);
 
-    // A_screen = the INCREMENT over terrain, so `terrain + screen ≡ A_combined`.
+    // A_screen = clamped INCREMENT → terrain + screen = max(A_terrain, A_combined) per band.
     let mut screen = [0.0; NUM_BANDS];
     for i in 0..NUM_BANDS {
         screen[i] = (combined[i] - terrain[i]).max(0.0);
@@ -190,6 +197,7 @@ impl Horizon {
         t.push(1.0);
         bare.push(rcv_ground_m);
         composite.push(rcv_ground_m);
+        // Height floors match path_effects (DEFAULT_RECEIVER_HEIGHT 4.0 → .min(0.5)).
         let src_h = (src_elev - origin_ground).max(0.05);
         let rcv_h = (rcv_alt - rcv_ground_m).max(0.5);
         solve_single_edge(&t, &bare, &composite, d_m, src_h, rcv_h)
