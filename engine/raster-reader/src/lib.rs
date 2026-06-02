@@ -277,98 +277,11 @@ impl RasterSampler for RealRasters {
             out.imd_u8.push(imd.clamp(0.0, 255.0) as u8);
         }
 
-        // P3 peak augmentation: gap-only scan (see FusedGrid impl for the
-        // phase-shift rationale).
-        let cell = noise_compute::propagation::path_profile::CELL_M;
-        let gap_scan_min_m = cell * 1.5;
-        let peak_dedup_min_m = cell * 0.5;
-        if dist_m > cell * 10.0 && out.elevation_m.len() >= 3 {
-            let ground_src = out.elevation_m[0];
-            let ground_rcv = *out.elevation_m.last().unwrap();
-            let mut peaks: Vec<(f64, f32)> = Vec::with_capacity(8);
-            // Iterate out.t directly: the window scan only reads (gap detection
-            // + peak collection into a separate Vec); out.t is not mutated until
-            // the insert pass after this loop, so the old defensive clone was a
-            // redundant per-path allocation.
-            for w in out.t.windows(2) {
-                let gap_m = (w[1] - w[0]) * dist_m;
-                if gap_m <= gap_scan_min_m {
-                    continue;
-                }
-                let steps = ((gap_m / cell).floor() as usize).max(1);
-                let mut prev_elev = f32::NAN;
-                let mut curr_elev = f32::NAN;
-                let mut curr_t = w[0];
-                for k in 1..steps {
-                    let local_t = w[0] + (k as f64 / steps as f64) * (w[1] - w[0]);
-                    let lat = src_lat + local_t * (rcv_lat - src_lat);
-                    let lon = src_lon + local_t * (rcv_lon - src_lon);
-                    let elev =
-                        self.dem.sample_cached(lat, lon, &mut dem_key, &mut dem_tile) as f32;
-                    if !prev_elev.is_nan() && !curr_elev.is_nan()
-                        && curr_elev > prev_elev && curr_elev > elev
-                    {
-                        let los_c = ground_src + (ground_rcv - ground_src) * curr_t as f32;
-                        if curr_elev > los_c + noise_compute::propagation::path_profile::PEAK_EXCESS_MIN_M {
-                            peaks.push((curr_t, curr_elev));
-                        }
-                    }
-                    prev_elev = curr_elev;
-                    curr_elev = elev;
-                    curr_t = local_t;
-                }
-            }
-            if !peaks.is_empty() {
-                peaks.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-                let mut clustered: Vec<(f64, f32)> = Vec::with_capacity(peaks.len());
-                for (pt, pe) in peaks {
-                    if let Some(last) = clustered.last_mut() {
-                        if (pt - last.0) * dist_m < cell {
-                            let los_new = ground_src + (ground_rcv - ground_src) * pt as f32;
-                            let los_old = ground_src + (ground_rcv - ground_src) * last.0 as f32;
-                            if pe - los_new > last.1 - los_old {
-                                *last = (pt, pe);
-                            }
-                            continue;
-                        }
-                    }
-                    clustered.push((pt, pe));
-                }
-                if clustered.len() > noise_compute::propagation::path_profile::PEAK_MAX_COUNT {
-                    clustered.sort_by(|p1, p2| {
-                        let l1 = ground_src + (ground_rcv - ground_src) * p1.0 as f32;
-                        let l2 = ground_src + (ground_rcv - ground_src) * p2.0 as f32;
-                        (p2.1 - l2).partial_cmp(&(p1.1 - l1)).unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                    clustered.truncate(noise_compute::propagation::path_profile::PEAK_MAX_COUNT);
-                    clustered.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-                }
-                for &(pt, pelev) in &clustered {
-                    let insert_idx = out.t.partition_point(|&x| x < pt);
-                    if insert_idx > 0
-                        && (out.t[insert_idx - 1] - pt).abs() * dist_m < peak_dedup_min_m
-                    {
-                        continue;
-                    }
-                    if insert_idx < out.t.len()
-                        && (out.t[insert_idx] - pt).abs() * dist_m < peak_dedup_min_m
-                    {
-                        continue;
-                    }
-                    let lat = src_lat + pt * (rcv_lat - src_lat);
-                    let lon = src_lon + pt * (rcv_lon - src_lon);
-                    let bh = self.building.sample_cached(lat, lon, &mut bld_key, &mut bld_tile);
-                    let fr = self.forest.sample_cached(lat, lon, &mut for_key, &mut for_tile);
-                    let im = self.imd.sample_cached(lat, lon, &mut imd_key, &mut imd_tile);
-                    out.t.insert(insert_idx, pt);
-                    out.elevation_m.insert(insert_idx, pelev);
-                    out.building_h_m.insert(insert_idx, bh.clamp(0.0, 255.0) as u8);
-                    out.forest_u8.insert(insert_idx, fr.clamp(0.0, 255.0) as u8);
-                    out.imd_u8.insert(insert_idx, im.clamp(0.0, 255.0) as u8);
-                }
-            }
-        }
-
+        // The bilateral adaptive cadence (dense near endpoints, coarse mid-path)
+        // IS the sampling strategy. The P3 mid-path peak augmentation that
+        // re-scanned every coarse gap at 30 m was removed: it re-walked the very
+        // terrain the cadence deliberately coarsens, undercutting the cadence's
+        // purpose, for a refinement the cadence already largely captures.
         out.step_m_med = noise_compute::propagation::path_profile::median_step_m(&out.t, dist_m);
     }
 }

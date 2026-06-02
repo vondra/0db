@@ -30,20 +30,6 @@ pub const CELL_M: f64 = 110_540.0 / 3600.0;
 /// enough to be useful for edge detection.
 pub const NEAR_OFFSET_M: f64 = 10.0;
 
-/// Minimum LOS excess (m) for a mid-path peak to qualify as a diffraction
-/// edge candidate. Below this, sub-metre terrain ripples would pollute the
-/// profile without meaningfully changing δ. The Maekawa δ from a peak of
-/// height h mid-path scales as h²/L — a 1 m peak on a 5 km path gives
-/// δ ≈ 0.2 mm, i.e. <0.01 dB at 1 kHz. 2 m is the cheapest threshold that
-/// preserves real road-berm / retaining-wall scale features while
-/// eliminating pixel-level noise peaks that bloat the profile.
-pub const PEAK_EXCESS_MIN_M: f32 = 2.0;
-
-/// Maximum number of terrain peaks kept per path for the single-edge δ selection
-/// to choose among — keeping more just bloats the profile with peaks the max-δ
-/// pick would discard anyway.
-pub const PEAK_MAX_COUNT: usize = 3;
-
 /// Unified path profile: one bilateral sample set, all four rasters.
 ///
 /// Per source→receiver path, built once by `RasterSampler::build_path_profile`
