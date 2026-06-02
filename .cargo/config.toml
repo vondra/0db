@@ -1,0 +1,12 @@
+# Build for the host CPU. Without this, cargo targets the generic x86-64
+# baseline: `.round()`/`.floor()` become libm CALLS (no SSE4.1 `roundsd`) and
+# AVX2 auto-vectorization is off — measured 13.6% of surface-heatmap CPU sat in
+# `round`/`floor` alone. `target-cpu=native` inlines them and turns on AVX2:
+# ~1.35× on the surface heatmap (byte-identical, verified) and faster across the
+# whole engine (popup, aircraft kernel, extraction).
+#
+# Trade-off: the binary becomes specific to this CPU model. That's already the
+# operating assumption — CLAUDE.md requires rebuilding every binary per host
+# after a pull/rsync, so binaries are never shared between non-identical machines.
+[build]
+rustflags = ["-C", "target-cpu=native"]
