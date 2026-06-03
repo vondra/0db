@@ -555,6 +555,13 @@ impl noise_compute::types::RasterSampler for FusedGrid {
 }
 
 impl FusedGrid {
+    /// Number of raster cells held (cols × rows) — the denominator for the
+    /// scatter's read-redundancy telemetry (how many times each cell is re-read).
+    #[inline]
+    pub fn cell_count(&self) -> usize {
+        self.cols * self.rows
+    }
+
     /// Bilinear elevation + IMD, nearest-neighbour building + forest.
     ///
     /// Matches `RealRasters` per-raster `Interp` config: DEM bilinear, IMD
