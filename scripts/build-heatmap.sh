@@ -59,8 +59,9 @@ while [ $# -gt 0 ]; do
 done
 
 case "$SOURCE" in
-  all) LAYERS=("${ALL_LAYERS[@]}") ;;
-  *)   LAYERS=("$SOURCE") ;;
+  all)    LAYERS=("${ALL_LAYERS[@]}") ;;
+  ground) LAYERS=(road rail industrial building) ;;   # the four shared-halo surface layers
+  *)      LAYERS=("$SOURCE") ;;
 esac
 
 is_world=false; is_shard=false; bbox=""
@@ -79,34 +80,42 @@ cargo build --release --manifest-path engine/heatmap-aircraft/Cargo.toml \
   --bin build-pyramid --bin build-heatmap-combine
 
 if ! $COMBINE_ONLY; then
+  # Split requested layers into the GROUND family (one shared-halo pass) and
+  # aircraft (its own region_runner). Ground = road/rail/industrial/building all
+  # ray-march terrain, so one 10 km halo per batch feeds every layer.
+  SURFACE_LAYERS=(); AIRCRAFT_LAYERS=()
   for L in "${LAYERS[@]}"; do
-    LDIR="$OUTPUT/$L"
-    is_surface=true; [[ "$L" == aircraft-* ]] && is_surface=false
+    if [[ "$L" == aircraft-* ]]; then AIRCRAFT_LAYERS+=("$L"); else SURFACE_LAYERS+=("$L"); fi
+  done
 
-    if $is_surface && { $is_world || $is_shard; }; then
-      log "skip $L — surface kernels are bbox/tile only (use --bbox for surface)"
-      continue
-    fi
-
-    # Clean the layer tree before a full (world) rebuild — only a fresh tree
-    # guarantees no tile from a previous, larger run lingers (plan R4). A bbox
-    # rebuild overwrites in place and the surface builder unlinks tiles that
-    # rebuild all-silent, so combine never reads stale source energy either way.
-    if $is_world; then
-      log "clean $LDIR (full rebuild)"
-      rm -rf "$LDIR"
-    fi
-
-    log "build $L → $LDIR"
-    if $is_surface; then
-      "$SURFACE" --source "$L" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
-        --prepared-dir "$PREP" --output "$LDIR" "${SEL_ARGS[@]}"
+  # GROUND: build the requested surface layers in ONE process sharing the halo
+  # (`--source ground`); a single requested surface layer keeps its own --source
+  # for parity. Surface is bbox-only — skipped under --world/--shard.
+  if [ ${#SURFACE_LAYERS[@]} -gt 0 ]; then
+    if $is_world || $is_shard; then
+      log "skip surface (${SURFACE_LAYERS[*]}) — surface kernels are bbox/tile only (use --bbox)"
     else
-      "$AIRCRAFT" --source "${L#aircraft-}" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
-        --prepared-dir "$PREP" --output "$LDIR" "${SEL_ARGS[@]}"
+      # The full surface set (all / ground) → one shared-halo `ground` pass; a
+      # single requested layer → its own `--source`. Either way --output is the
+      # root and the binary appends {layer}.
+      if [ "${#SURFACE_LAYERS[@]}" -ge 2 ]; then SRC=ground; else SRC="${SURFACE_LAYERS[0]}"; fi
+      log "build surface $SRC (${SURFACE_LAYERS[*]}) → $OUTPUT/{layer}"
+      "$SURFACE" --source "$SRC" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
+        --prepared-dir "$PREP" --output "$OUTPUT" "${SEL_ARGS[@]}"
+      for L in "${SURFACE_LAYERS[@]}"; do
+        log "pyramid $L z$ZOOM → z6"
+        "$PYR" --tiles-dir "$OUTPUT/$L" --base-zoom "$ZOOM" --dst-zoom 6 --source-id "${SID[$L]}"
+      done
     fi
+  fi
 
-    # A sharded run owns only its z13 slice — pyramid once after rsync.
+  # AIRCRAFT: per sub-layer (region_runner streams the globe; --world/--shard ok).
+  for L in "${AIRCRAFT_LAYERS[@]}"; do
+    LDIR="$OUTPUT/$L"
+    if $is_world; then log "clean $LDIR (full rebuild)"; rm -rf "$LDIR"; fi
+    log "build $L → $LDIR"
+    "$AIRCRAFT" --source "${L#aircraft-}" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
+      --prepared-dir "$PREP" --output "$LDIR" "${SEL_ARGS[@]}"
     if $is_shard; then
       log "sharded — built z$ZOOM only; pyramid $L after merging shards"
     else
