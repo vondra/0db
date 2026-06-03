@@ -60,7 +60,7 @@ done
 
 case "$SOURCE" in
   all)    LAYERS=("${ALL_LAYERS[@]}") ;;
-  ground) LAYERS=(road rail industrial building) ;;   # the four shared-halo surface layers
+  ground) LAYERS=(road rail industrial building aircraft-ground) ;;   # the five shared-halo terrain layers
   *)      LAYERS=("$SOURCE") ;;
 esac
 
@@ -85,7 +85,11 @@ if ! $COMBINE_ONLY; then
   # ray-march terrain, so one 10 km halo per batch feeds every layer.
   SURFACE_LAYERS=(); AIRCRAFT_LAYERS=()
   for L in "${LAYERS[@]}"; do
-    if [[ "$L" == aircraft-* ]]; then AIRCRAFT_LAYERS+=("$L"); else SURFACE_LAYERS+=("$L"); fi
+    case "$L" in
+      aircraft-ground) SURFACE_LAYERS+=("$L") ;;   # terrain ray-march → built by the ground pass
+      aircraft-*)      AIRCRAFT_LAYERS+=("$L") ;;
+      *)               SURFACE_LAYERS+=("$L") ;;
+    esac
   done
 
   # GROUND: build the requested surface layers in ONE process sharing the halo
