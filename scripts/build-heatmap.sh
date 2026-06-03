@@ -107,8 +107,8 @@ if ! $COMBINE_ONLY; then
       "$SURFACE" --source "$SRC" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
         --prepared-dir "$PREP" --output "$OUTPUT" "${SEL_ARGS[@]}"
       for L in "${SURFACE_LAYERS[@]}"; do
-        log "pyramid $L z$ZOOM → z6"
-        "$PYR" --tiles-dir "$OUTPUT/$L" --base-zoom "$ZOOM" --dst-zoom 6 --source-id "${SID[$L]}"
+        log "pyramid $L z$ZOOM → z6${bbox:+ (bbox)}"
+        "$PYR" --tiles-dir "$OUTPUT/$L" --base-zoom "$ZOOM" --dst-zoom 6 --source-id "${SID[$L]}" ${bbox:+--bbox "$bbox"}
       done
     fi
   fi
@@ -123,8 +123,8 @@ if ! $COMBINE_ONLY; then
     if $is_shard; then
       log "sharded — built z$ZOOM only; pyramid $L after merging shards"
     else
-      log "pyramid $L z$ZOOM → z6"
-      "$PYR" --tiles-dir "$LDIR" --base-zoom "$ZOOM" --dst-zoom 6 --source-id "${SID[$L]}"
+      log "pyramid $L z$ZOOM → z6${bbox:+ (bbox)}"
+      "$PYR" --tiles-dir "$LDIR" --base-zoom "$ZOOM" --dst-zoom 6 --source-id "${SID[$L]}" ${bbox:+--bbox "$bbox"}
     fi
   done
 fi
