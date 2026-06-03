@@ -362,9 +362,6 @@ impl FusedGrid {
             }
         }
 
-        let size_mb = (data.len() * std::mem::size_of::<FusedPixel>()) as f64 / (1024.0 * 1024.0);
-        eprintln!("  FusedGrid: {}×{} = {:.1} MB (L3-resident)", rows, cols, size_mb);
-
         FusedGrid { data, lat_min: lat_lo, lon_min: lon_lo, inv_cell_deg, cols, rows }
     }
 

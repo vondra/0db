@@ -35,6 +35,10 @@ PYR="$TARGET/build-pyramid"
 COMBINE="$TARGET/build-heatmap-combine"
 
 log() { echo "[build-heatmap] $(date '+%H:%M:%S') $*"; }
+# Wall-clock-stamp each line of a long builder's output (same clock as log()), so
+# the multi-day surface heartbeat carries "when" — throughput/ETA is read off the
+# log. pipefail (set above) still propagates the builder's exit status.
+stamp() { while IFS= read -r line; do printf '%s %s\n' "$(date '+%H:%M:%S')" "$line"; done; }
 
 # HM3 header source_id per layer (mirrors wire_hm3.rs SOURCE_ID_*).
 declare -A SID=(
@@ -105,7 +109,7 @@ if ! $COMBINE_ONLY; then
       if [ "${#SURFACE_LAYERS[@]}" -ge 2 ]; then SRC=ground; else SRC="${SURFACE_LAYERS[0]}"; fi
       log "build surface $SRC (${SURFACE_LAYERS[*]}) → $OUTPUT/{layer}"
       "$SURFACE" --source "$SRC" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
-        --prepared-dir "$PREP" --output "$OUTPUT" "${SEL_ARGS[@]}"
+        --prepared-dir "$PREP" --output "$OUTPUT" "${SEL_ARGS[@]}" 2>&1 | stamp
       for L in "${SURFACE_LAYERS[@]}"; do
         log "pyramid $L z$ZOOM → z6${bbox:+ (bbox)}"
         "$PYR" --tiles-dir "$OUTPUT/$L" --base-zoom "$ZOOM" --dst-zoom 6 --source-id "${SID[$L]}" ${bbox:+--bbox "$bbox"}
