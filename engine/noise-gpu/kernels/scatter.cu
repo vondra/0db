@@ -16,6 +16,10 @@ __constant__ double BAND_FREQ[NB] = {63.0,125.0,250.0,500.0,1000.0,2000.0,4000.0
 __constant__ double GROUND_CF[NB] = {-1.5,-0.7,1.5,2.5,2.0,1.3,0.7,0.2};
 __constant__ double ALPHA_VEG[NB] = {0.01,0.015,0.02,0.025,0.03,0.04,0.045,0.06};
 __constant__ double MAX_VEG[NB]   = {2.0,3.0,4.0,5.0,6.0,8.0,9.0,12.0};
+// Lden period weights = 12/4/8-hour × 0/5/10-dB penalty (10^(p/10)); the shared
+// /24 cancels in the skip ratio (scatter_line::LDEN_WEIGHTS).
+__constant__ double LDEN_W[3]     = {12.0, 12.649110640673518, 80.0};  // 4·√10
+#define UB_SAFETY 1.0001         // inflate UB past fast_exp non-monotonicity
 #define SOS 340.0                // SPEED_OF_SOUND
 #define SINGLE_DIFF_CAP 20.0     // ISO 9613-2 §7.3 single-edge cap
 #define CELL_M (110540.0/3600.0) // raster cell ≈30.7m (1 arc-sec)
@@ -393,9 +397,11 @@ extern "C" __global__ void freefield_rail(
 
 // RAIL scatter: the full surface path per source — free-field + terrain
 // diffraction + building screening + ground effect + vegetation, combined as
-// max(A_ground, A_terrain+A_screen) (ISO 9613-2 §7.3.1). NO budget skip yet
-// (Step D). One thread per pixel; mirrors scatter_band minus the skip, f64.
-//   meta = [rows, cols, lat_min, lon_min, inv, north_lat, south_lat, west_lon, east_lon]
+// max(A_ground, A_terrain+A_screen) (ISO 9613-2 §7.3.1), with the per-pixel
+// energy-budget skip. One thread per pixel; mirrors scatter_band exactly
+// (sources in array order, per-thread kept/skipped). Per-period energy
+// accumulates in f32 (matching TileAccumulator), kept in f64 (matching kept_add).
+//   meta = [rows, cols, lat_min, lon_min, inv, north_lat, south_lat, west_lon, east_lon, eta]
 //   inner = 256×256 row-major tile DEM (pixel-centre elevation, source ground)
 //   cover = halo packed [building, forest, imd] per cell (u8)
 //   sp   = nsrc×4  {length_m, max_distance_m, source_height_m, bridge}
@@ -416,16 +422,24 @@ extern "C" __global__ void rail(
     int rows = (int)meta[0], cols = (int)meta[1];
     double lat_min = meta[2], lon_min = meta[3], inv = meta[4];
     const double* bb = &meta[5];   // north_lat, south_lat, west_lon, east_lon
+    double eta = meta[9];
     int py = pix >> 8, pxi = pix & 255;
     double rlat = rxll[py], rlon = rxll[256 + pxi];
     double ralt = rxar[pix * 2], refl = rxar[pix * 2 + 1];
-    double e0 = 0.0, e1 = 0.0, e2 = 0.0;
+    float e0 = 0.0f, e1 = 0.0f, e2 = 0.0f;
+    double kept = 0.0, skipped = 0.0;
     double tprof[MAXT], ed[MAXT], comp[MAXT];
     unsigned char bld[MAXT], forr[MAXT], imdp[MAXT];
 
     for (int s = 0; s < nsrc; s++) {
         double dend, cplat, cplon, frac;
         p2s(rlat, rlon, seg[s*4], seg[s*4+1], seg[s*4+2], seg[s*4+3], &dend, &cplat, &cplon, &frac);
+        // Exact reach cull. The prefix-stateful skip needs the per-pixel kept-source
+        // sequence to match scatter_band's prep order: it does, since both cull by
+        // exact dist and the CPU's reach-BOX prefilter is conservative for lat <78.5°
+        // (everywhere rail exists). Above that the CPU box under-covers longitude
+        // (cos floor 0.2 vs the metric's 0.01) and drops sources the GPU keeps — the
+        // GPU is then MORE correct, but not byte-identical to production.
         if (dend > sp[s*4+1]) continue;
         double salt = tile_elev(inner, elev, rows, cols, lat_min, lon_min, inv, bb, cplat, cplon) + sp[s*4+2];
         double dz = salt - ralt;
@@ -433,6 +447,18 @@ extern "C" __global__ void rail(
         double fc = flc(sp[s*4], dend, fmin(fmax(frac, 0.0), 1.0));
         double base = refl + fc - 10.0 * log10(2.0 * PI_D * dslant);
         double atm_km = dslant / 1000.0;
+        const float* em = &semis[s * 24];
+
+        // ---- energy-budget skip: best-case Lden (no terrain/screen/veg, max
+        // ground gain) is a provable upper bound; drop if it stays within η of kept.
+        double ub = 0.0;
+        for (int i = 0; i < NB; i++) {
+            double gg_ub = fmax(-GROUND_CF[i], 0.0);
+            double em_lden = LDEN_W[0]*(double)em[i] + LDEN_W[1]*(double)em[8+i] + LDEN_W[2]*(double)em[16+i];
+            ub += em_lden * fexp((base - ALPHA_ATM[i] * atm_km + gg_ub + A_W[i]) * LN10 * 0.1);
+        }
+        ub *= UB_SAFETY;
+        if (skipped + ub <= eta * kept) { skipped += ub; continue; }
 
         // ---- ray-march the cadence: bare elevation + building/forest/imd ----
         double src_rf = (cplat - lat_min) * inv, src_cf = (cplon - lon_min) * inv;
@@ -461,18 +487,28 @@ extern "C" __global__ void rail(
         double ground_g = (sp[s*4+3] != 0.0) ? 0.0 : fmin(fmax(1.0 - gimd / 100.0, 0.0), 1.0);
         veg_bands(veg_run_length(tprof, forr, n, dend), veg);
 
-        const float* em = &semis[s * 24];
+        double pf[NB];
         for (int i = 0; i < NB; i++) {
             double a_gr = GROUND_CF[i] * ground_g;
             double a_bar = terr[i] + screen[i];
             double gob = (a_bar > 0.0) ? fmax(a_gr, a_bar) : a_gr;   // barrier REPLACES ground
-            double pf = fexp((base - ALPHA_ATM[i] * atm_km - gob - veg[i] + A_W[i]) * LN10 * 0.1);
-            e0 += (double)em[i]      * pf;
-            e1 += (double)em[8 + i]  * pf;
-            e2 += (double)em[16 + i] * pf;
+            pf[i] = fexp((base - ALPHA_ATM[i] * atm_km - gob - veg[i] + A_W[i]) * LN10 * 0.1);
         }
+        // Per period: f32 power into the accumulator (as scatter_band), f64 into
+        // kept_add (summed over periods, then one add to kept — matches scatter_band).
+        double kept_add = 0.0;
+        for (int p = 0; p < 3; p++) {
+            double power = 0.0;
+            for (int i = 0; i < NB; i++) power += (double)em[p*8 + i] * pf[i];
+            if (isfinite(power) && power > 0.0) {
+                float pw = (float)power;
+                if (p == 0) e0 += pw; else if (p == 1) e1 += pw; else e2 += pw;
+                kept_add += power * LDEN_W[p];
+            }
+        }
+        kept += kept_add;
     }
-    out[pix * 3 + 0] = (float)e0;
-    out[pix * 3 + 1] = (float)e1;
-    out[pix * 3 + 2] = (float)e2;
+    out[pix * 3 + 0] = e0;
+    out[pix * 3 + 1] = e1;
+    out[pix * 3 + 2] = e2;
 }
