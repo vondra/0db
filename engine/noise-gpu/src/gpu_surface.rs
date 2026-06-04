@@ -16,7 +16,7 @@ use h3o::CellIndex;
 use heatmap_aircraft::accumulator::TileAccumulator;
 use heatmap_aircraft::region_runner::tile_centre_r4;
 use heatmap_aircraft::source_loader_rail::RailData;
-use heatmap_aircraft::wire_hm3::{collapse_lden_surface_u8, read_tile};
+use heatmap_aircraft::wire_hm3::{collapse_lden_surface_u8, read_tile, write_tile, SOURCE_ID_RAIL};
 use noise_gpu::{build_pixel_bins, pack_tile, BIN_W, N_BINS};
 use raster_reader::fused_tile_z13::{TileBatch, TILE_PX};
 use raster_reader::RealRasters;
@@ -29,9 +29,16 @@ fn env(k: &str, d: &str) -> String {
 }
 
 fn main() -> Result<()> {
-    let a: Vec<String> = std::env::args().collect();
-    let (base_x, base_y): (u32, u32) = (a[1].parse()?, a[2].parse()?);
-    let batch_n: u32 = a.get(3).and_then(|s| s.parse().ok()).unwrap_or(4);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let pos: Vec<&String> = args.iter().filter(|s| !s.starts_with("--")).collect();
+    let (base_x, base_y): (u32, u32) = (pos[0].parse()?, pos[1].parse()?);
+    let batch_n: u32 = pos.get(2).and_then(|s| s.parse().ok()).unwrap_or(4);
+    // --output <heatmap-v3 root> → write HM3 rail tiles to {root}/rail/13/x/y.bin.
+    let output = args
+        .iter()
+        .position(|s| s == "--output")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
     let z = 13u8;
     let prepared = env("NOISE_GPU_PREPARED", "/dev/shm/qmap/prepared");
     let baseline = env("NOISE_GPU_BASELINE", "/root/baseline");
@@ -66,7 +73,7 @@ fn main() -> Result<()> {
 
     // ---- per-tile loop ----
     let (mut t_kernel, mut t_bins, mut t_rail) = (0f64, 0f64, 0f64);
-    let (mut max_diff, mut n_diff, mut n_baseline) = (0i32, 0usize, 0usize);
+    let (mut max_diff, mut n_diff, mut n_baseline, mut n_written) = (0i32, 0usize, 0usize, 0usize);
     let t_all = Instant::now();
     for dy in 0..batch_n {
         for dx in 0..batch_n {
@@ -122,6 +129,16 @@ fn main() -> Result<()> {
             accum.energy.copy_from_slice(&gpu);
             let cells = collapse_lden_surface_u8(&accum);
 
+            if let Some(root) = &output {
+                let out = Path::new(root)
+                    .join("rail/13")
+                    .join(tx.to_string())
+                    .join(format!("{ty}.bin"));
+                if write_tile(&out, &cells, SOURCE_ID_RAIL, true)? > 0 {
+                    n_written += 1;
+                }
+            }
+
             let bp = Path::new(&baseline)
                 .join("rail/13")
                 .join(tx.to_string())
@@ -165,6 +182,9 @@ fn main() -> Result<()> {
             "  vs production baseline: {n_baseline} tiles, max {max_diff}B ({:.1} dB), {n_diff} cells differ",
             max_diff as f64 * 0.5
         );
+    }
+    if let Some(root) = &output {
+        eprintln!("  wrote {n_written} non-empty HM3 rail tiles under {root}/rail/13");
     }
     Ok(())
 }
