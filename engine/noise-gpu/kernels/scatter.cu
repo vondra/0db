@@ -407,16 +407,102 @@ extern "C" __global__ void freefield_rail(
     out[pix * 3 + 2] = (float)e2;
 }
 
-// RAIL scatter: the full surface path per source — free-field + terrain
-// diffraction + building screening + ground effect + vegetation, combined as
-// max(A_ground, A_terrain+A_screen) (ISO 9613-2 §7.3.1), with the per-pixel
-// energy-budget skip. One thread per pixel; mirrors scatter_band exactly
-// (sources in array order, per-thread kept/skipped). Per-period energy
-// accumulates in f32 (matching TileAccumulator), kept in f64 (matching kept_add).
-//   meta = [rows, cols, lat_min, lon_min, inv, north_lat, south_lat, west_lon, east_lon, eta]
-//   inner = 256×256 row-major tile DEM (pixel-centre elevation, source ground)
-//   cover = halo packed [building, forest, imd] per cell (u8)
-//   sp   = nsrc×4  {length_m, max_distance_m, source_height_m, bridge}
+#define BIN_W 8                  // pixel-bin edge (8×8 patch = one CUDA block)
+#define BIN_TILES (256 / BIN_W)  // 32 bins per axis, 1024 bins per tile
+
+// ── One source's contribution to one receiver pixel: geometry → energy-budget
+// skip → cadence ray-march → terrain/screening/ground/veg → max(A_gr,A_bar)
+// combine → accumulate 3-period energy (f32) + kept (f64). Shared by `rail`
+// (scans all sources) and `rail_binned` (scans a block's pre-binned list). seg/sp
+// point at THIS source's 4-tuple, em at its 24 emission bands; e0..e2/kept/skipped
+// are the caller's per-pixel running state. Returns on reach-cull or budget-skip.
+__device__ __forceinline__ void rail_source(
+    const float* elev, const float* inner, const unsigned char* cover,
+    int rows, int cols, double lat_min, double lon_min, double inv, const double* bb,
+    double rlat, double rlon, double ralt, double refl, double eta,
+    const double* seg, const double* sp, const float* em,
+    double* tprof, double* ed, double* comp,
+    unsigned char* bld, unsigned char* forr, unsigned char* imdp,
+    float& e0, float& e1, float& e2, double& kept, double& skipped)
+{
+    double dend, cplat, cplon, frac;
+    p2s(rlat, rlon, seg[0], seg[1], seg[2], seg[3], &dend, &cplat, &cplon, &frac);
+    if (dend > sp[1]) return;   // exact per-pixel reach cull (matches scatter_band)
+    double salt = tile_elev(inner, elev, rows, cols, lat_min, lon_min, inv, bb, cplat, cplon) + sp[2];
+    double dz = salt - ralt;
+    float dslant = fmaxf((float)sqrt(dend * dend + dz * dz), 1.0f);
+    double fc = flc(sp[0], dend, fmin(fmax(frac, 0.0), 1.0));
+    float base = (float)(refl + fc) - 10.0f * log10f(2.0f * (float)PI_D * dslant);
+    float atm_km = dslant / 1000.0f;
+
+    // energy-budget skip (kept/skipped/ub f64 — the ratio needs the precision)
+    double ub = 0.0;
+    for (int i = 0; i < NB; i++) {
+        float gg_ub = fmaxf(-(float)GROUND_CF[i], 0.0f);
+        double em_lden = LDEN_W[0]*(double)em[i] + LDEN_W[1]*(double)em[8+i] + LDEN_W[2]*(double)em[16+i];
+        float pdb = (base - (float)ALPHA_ATM[i] * atm_km + gg_ub + (float)A_W[i]) * (float)LN10 * 0.1f;
+        ub += em_lden * fexp((double)pdb);
+    }
+    ub *= UB_SAFETY;
+    if (skipped + ub <= eta * kept) { skipped += ub; return; }
+
+    // ray-march the cadence: bare elevation + building/forest/imd
+    double src_rf = (cplat - lat_min) * inv, src_cf = (cplon - lon_min) * inv;
+    double d_rf = (rlat - cplat) * inv, d_cf = (rlon - cplon) * inv;
+    int n = fill_t(dend, tprof);
+    for (int i = 0; i < n; i++) {
+        double rf = src_rf + tprof[i] * d_rf, cf = src_cf + tprof[i] * d_cf;
+        ed[i] = (double)bilinear_elev_rc(elev, rows, cols, rf, cf);
+        cover_rc(cover, rows, cols, rf, cf, &bld[i], &forr[i], &imdp[i]);
+    }
+
+    // path effects (bands in fp32)
+    float terr[NB], screen[NB], veg[NB];
+    terrain_bands(tprof, ed, n, dend, salt, ralt, terr);
+    for (int i = 0; i < NB; i++) screen[i] = 0.0f;
+    bool anyb = false;
+    for (int i = 0; i < n; i++) if (bld[i] > 0) { anyb = true; break; }
+    if (anyb && n >= 3 && dend >= 30.0) {
+        for (int i = 0; i < n; i++)
+            comp[i] = ed[i] + ((tprof[i] > 0.0 && tprof[i] < 1.0) ? (double)bld[i] : 0.0);
+        float comb[NB];
+        single_edge_bands(tprof, comp, ed, n, dend, salt, ralt, comb);
+        for (int i = 0; i < NB; i++) screen[i] = fmaxf(comb[i] - terr[i], 0.0f);
+    }
+    double gimd = path_integral_imd(tprof, imdp, n, dend);
+    float ground_g = (sp[3] != 0.0) ? 0.0f : fminf(fmaxf(1.0f - (float)(gimd / 100.0), 0.0f), 1.0f);
+    veg_bands(veg_run_length(tprof, forr, n, dend), veg);
+
+    float pf[NB];
+    for (int i = 0; i < NB; i++) {
+        float a_gr = (float)GROUND_CF[i] * ground_g;
+        float a_bar = terr[i] + screen[i];
+        float gob = (a_bar > 0.0f) ? fmaxf(a_gr, a_bar) : a_gr;   // barrier REPLACES ground
+        float pdb = (base - (float)ALPHA_ATM[i] * atm_km - gob - veg[i] + (float)A_W[i]) * (float)LN10 * 0.1f;
+        pf[i] = (float)fexp((double)pdb);
+    }
+    double kept_add = 0.0;   // summed over periods then added once (matches scatter_band)
+    for (int p = 0; p < 3; p++) {
+        double power = 0.0;
+        for (int i = 0; i < NB; i++) power += (double)em[p*8 + i] * pf[i];
+        if (isfinite(power) && power > 0.0) {
+            float pw = (float)power;
+            if (p == 0) e0 += pw; else if (p == 1) e1 += pw; else e2 += pw;
+            kept_add += power * LDEN_W[p];
+        }
+    }
+    kept += kept_add;
+}
+
+// RAIL scatter: free-field + terrain diffraction + building screening + ground +
+// vegetation, combined max(A_ground,A_terrain+A_screen) (ISO 9613-2 §7.3.1), with
+// the per-pixel energy-budget skip. Thread-per-pixel; mirrors scatter_band
+// (sources in array order, per-thread kept/skipped). Tiled (swizzled) pixel
+// mapping (meta[10]=tile width) keeps each block's rays' terrain L2-hot. Scans
+// ALL sources (reach cull is inside rail_source); `rail_binned` is the pre-binned
+// variant. Per-period energy in f32 (matching TileAccumulator), kept in f64.
+//   meta = [rows, cols, lat_min, lon_min, inv, north, south, west, east, eta, tile_width]
+//   inner = 256×256 tile DEM; cover = halo [building,forest,imd] u8; sp = nsrc×4.
 extern "C" __global__ void rail(
     const float*  __restrict__ elev,
     const float*  __restrict__ inner,
@@ -452,85 +538,58 @@ extern "C" __global__ void rail(
     double tprof[MAXT], ed[MAXT], comp[MAXT];
     unsigned char bld[MAXT], forr[MAXT], imdp[MAXT];
 
-    for (int s = 0; s < nsrc; s++) {
-        double dend, cplat, cplon, frac;
-        p2s(rlat, rlon, seg[s*4], seg[s*4+1], seg[s*4+2], seg[s*4+3], &dend, &cplat, &cplon, &frac);
-        // Exact reach cull. The prefix-stateful skip needs the per-pixel kept-source
-        // sequence to match scatter_band's prep order: it does, since both cull by
-        // exact dist and the CPU's reach-BOX prefilter is conservative for lat <78.5°
-        // (everywhere rail exists). Above that the CPU box under-covers longitude
-        // (cos floor 0.2 vs the metric's 0.01) and drops sources the GPU keeps — the
-        // GPU is then MORE correct, but not byte-identical to production.
-        if (dend > sp[s*4+1]) continue;
-        double salt = tile_elev(inner, elev, rows, cols, lat_min, lon_min, inv, bb, cplat, cplon) + sp[s*4+2];
-        double dz = salt - ralt;
-        float dslant = fmaxf((float)sqrt(dend * dend + dz * dz), 1.0f);
-        double fc = flc(sp[s*4], dend, fmin(fmax(frac, 0.0), 1.0));
-        float base = (float)(refl + fc) - 10.0f * log10f(2.0f * (float)PI_D * dslant);
-        float atm_km = dslant / 1000.0f;
-        const float* em = &semis[s * 24];
+    for (int s = 0; s < nsrc; s++)
+        rail_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
+                    rlat, rlon, ralt, refl, eta, &seg[s * 4], &sp[s * 4], &semis[s * 24],
+                    tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
+    out[opix * 3 + 0] = e0;
+    out[opix * 3 + 1] = e1;
+    out[opix * 3 + 2] = e2;
+}
 
-        // ---- energy-budget skip: best-case Lden (no terrain/screen/veg, max
-        // ground gain) is a provable upper bound; drop if it stays within η of kept.
-        // (kept/skipped/ub stay f64 — the budget ratio needs the precision.)
-        double ub = 0.0;
-        for (int i = 0; i < NB; i++) {
-            float gg_ub = fmaxf(-(float)GROUND_CF[i], 0.0f);
-            double em_lden = LDEN_W[0]*(double)em[i] + LDEN_W[1]*(double)em[8+i] + LDEN_W[2]*(double)em[16+i];
-            float pdb = (base - (float)ALPHA_ATM[i] * atm_km + gg_ub + (float)A_W[i]) * (float)LN10 * 0.1f;
-            ub += em_lden * fexp((double)pdb);
-        }
-        ub *= UB_SAFETY;
-        if (skipped + ub <= eta * kept) { skipped += ub; continue; }
-
-        // ---- ray-march the cadence: bare elevation + building/forest/imd ----
-        double src_rf = (cplat - lat_min) * inv, src_cf = (cplon - lon_min) * inv;
-        double d_rf = (rlat - cplat) * inv, d_cf = (rlon - cplon) * inv;
-        int n = fill_t(dend, tprof);
-        for (int i = 0; i < n; i++) {
-            double rf = src_rf + tprof[i] * d_rf, cf = src_cf + tprof[i] * d_cf;
-            ed[i] = (double)bilinear_elev_rc(elev, rows, cols, rf, cf);
-            cover_rc(cover, rows, cols, rf, cf, &bld[i], &forr[i], &imdp[i]);
-        }
-
-        // ---- path effects (bands in fp32) ----
-        float terr[NB], screen[NB], veg[NB];
-        terrain_bands(tprof, ed, n, dend, salt, ralt, terr);
-        for (int i = 0; i < NB; i++) screen[i] = 0.0f;
-        bool anyb = false;
-        for (int i = 0; i < n; i++) if (bld[i] > 0) { anyb = true; break; }
-        if (anyb && n >= 3 && dend >= 30.0) {
-            for (int i = 0; i < n; i++)
-                comp[i] = ed[i] + ((tprof[i] > 0.0 && tprof[i] < 1.0) ? (double)bld[i] : 0.0);
-            float comb[NB];
-            single_edge_bands(tprof, comp, ed, n, dend, salt, ralt, comb);
-            for (int i = 0; i < NB; i++) screen[i] = fmaxf(comb[i] - terr[i], 0.0f);
-        }
-        double gimd = path_integral_imd(tprof, imdp, n, dend);
-        float ground_g = (sp[s*4+3] != 0.0) ? 0.0f : fminf(fmaxf(1.0f - (float)(gimd / 100.0), 0.0f), 1.0f);
-        veg_bands(veg_run_length(tprof, forr, n, dend), veg);
-
-        float pf[NB];
-        for (int i = 0; i < NB; i++) {
-            float a_gr = (float)GROUND_CF[i] * ground_g;
-            float a_bar = terr[i] + screen[i];
-            float gob = (a_bar > 0.0f) ? fmaxf(a_gr, a_bar) : a_gr;   // barrier REPLACES ground
-            float pdb = (base - (float)ALPHA_ATM[i] * atm_km - gob - veg[i] + (float)A_W[i]) * (float)LN10 * 0.1f;
-            pf[i] = (float)fexp((double)pdb);
-        }
-        // Per period: f32 power into the accumulator (as scatter_band), f64 into
-        // kept_add (summed over periods, then one add to kept — matches scatter_band).
-        double kept_add = 0.0;
-        for (int p = 0; p < 3; p++) {
-            double power = 0.0;
-            for (int i = 0; i < NB; i++) power += (double)em[p*8 + i] * pf[i];
-            if (isfinite(power) && power > 0.0) {
-                float pw = (float)power;
-                if (p == 0) e0 += pw; else if (p == 1) e1 += pw; else e2 += pw;
-                kept_add += power * LDEN_W[p];
-            }
-        }
-        kept += kept_add;
+// RAIL scatter with CPU-precomputed 8×8 pixel source bins — the big lever on the
+// pixel-major GPU: don't scan all sources per pixel (the CPU's source-major
+// reach-box already avoids that). One CUDA block owns one 8×8 receiver patch (64
+// threads = 64 pixels) and iterates only bin_indices[bin_offsets[bid] .. bid+1] —
+// the conservative source list whose reach can intersect the patch. The bin is a
+// conservative superset in ORIGINAL source order, and the exact per-pixel cull in
+// rail_source still runs, so each pixel sees exactly its reachable sources in the
+// same order ⇒ kept/skipped parity ⇒ identical output to `rail`.
+extern "C" __global__ void rail_binned(
+    const float*  __restrict__ elev,
+    const float*  __restrict__ inner,
+    const unsigned char* __restrict__ cover,
+    const double* __restrict__ meta,
+    const double* __restrict__ seg,
+    const double* __restrict__ sp,
+    const float*  __restrict__ semis,
+    const double* __restrict__ rxll,
+    const float*  __restrict__ rxar,
+    const int* __restrict__ bin_offsets,
+    const int* __restrict__ bin_indices,
+    float* __restrict__ out)
+{
+    int bid = blockIdx.x, lane = threadIdx.x;
+    if (bid >= BIN_TILES * BIN_TILES || lane >= BIN_W * BIN_W) return;
+    int rows = (int)meta[0], cols = (int)meta[1];
+    double lat_min = meta[2], lon_min = meta[3], inv = meta[4];
+    const double* bb = &meta[5];
+    double eta = meta[9];
+    int by = bid / BIN_TILES, bx = bid % BIN_TILES;
+    int py = by * BIN_W + lane / BIN_W, pxi = bx * BIN_W + lane % BIN_W;
+    int opix = py * 256 + pxi;
+    double rlat = rxll[py], rlon = rxll[256 + pxi];
+    double ralt = rxar[opix * 2], refl = rxar[opix * 2 + 1];
+    float e0 = 0.0f, e1 = 0.0f, e2 = 0.0f;
+    double kept = 0.0, skipped = 0.0;
+    double tprof[MAXT], ed[MAXT], comp[MAXT];
+    unsigned char bld[MAXT], forr[MAXT], imdp[MAXT];
+    int s0 = bin_offsets[bid], s1 = bin_offsets[bid + 1];
+    for (int si = s0; si < s1; si++) {
+        int s = bin_indices[si];
+        rail_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
+                    rlat, rlon, ralt, refl, eta, &seg[s * 4], &sp[s * 4], &semis[s * 24],
+                    tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
     }
     out[opix * 3 + 0] = e0;
     out[opix * 3 + 1] = e1;
