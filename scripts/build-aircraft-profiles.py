@@ -980,8 +980,8 @@ def emit_rust(
 # Format: typecode → (op_mode, sel_idx, expected_dB).
 # Hard-coded snapshots from the ANP CSV. If the generator's CSV parsing
 # regresses (wrong column extraction, off-by-one Op Mode), `verify_anchors`
-# fails fast before writing the .rs file. Without these, /check-pipeline
-# can't catch ICAO mapping fat-fingers (parity test is blind).
+# fails fast before writing the .rs file. Runtime heatmap/popup checks are
+# blind to ICAO mapping fat-fingers.
 # (typecode, metric "SEL"|"LAmax", op_mode, idx, expected_dB)
 ANCHORS: list[tuple[str, str, str, int, float]] = [
     # B738 / 737800 / NPD CF567B / SEL D max-power (23500 lbs) col_4 (L_2000ft)
