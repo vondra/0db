@@ -14,6 +14,12 @@
 
 use crate::constants::{M_PER_DEG_LAT, M_PER_DEG_LON_EQ};
 
+pub struct AreaGridPoint {
+    pub lat: f64,
+    pub lon: f64,
+    pub area_m2: f64,
+}
+
 /// Compute area in m² from hex-encoded WKB polygon.
 /// Returns None if WKB is invalid, too short, or not a Polygon/MultiPolygon.
 pub fn wkb_area_m2(wkb_hex: &str) -> Option<f64> {
@@ -253,13 +259,16 @@ pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
     points
 }
 
-/// Generate H3 res-11 cell centers inside a WKB polygon.
-/// Scans bbox on ~40m grid, snaps each point to its H3 res-11 cell center,
-/// deduplicates, and filters by polygon containment.
-pub fn wkb_h3_grid_points(wkb_hex: &str) -> Vec<(f64, f64)> {
-    use h3o::{LatLng, Resolution};
-    use std::collections::HashSet;
-
+/// Generate weighted square area cells inside a WKB polygon.
+///
+/// Each returned point represents the covered polygon area inside one global
+/// grid cell. Subsampling keeps narrow polygons and clipped boundary cells from
+/// disappearing when the cell center alone falls outside the polygon.
+pub fn wkb_area_grid_points(
+    wkb_hex: &str,
+    spacing_m: f64,
+    samples_per_axis: usize,
+) -> Vec<AreaGridPoint> {
     let (coords, holes) = match parse_wkb_polygon_with_holes(wkb_hex) {
         Some(c) => c,
         None => match parse_wkb_polygon_coords(wkb_hex) {
@@ -267,7 +276,7 @@ pub fn wkb_h3_grid_points(wkb_hex: &str) -> Vec<(f64, f64)> {
             None => return vec![],
         },
     };
-    if coords.is_empty() {
+    if coords.is_empty() || spacing_m <= 0.0 {
         return vec![];
     }
 
@@ -290,29 +299,45 @@ pub fn wkb_h3_grid_points(wkb_hex: &str) -> Vec<(f64, f64)> {
         }
     }
 
-    // Scan step 20m — must be < half of H3 res-11 row spacing (~43m) to hit every cell
+    let samples = samples_per_axis.max(1);
     let mid_lat = (min_lat + max_lat) / 2.0;
-    let lat_step = 20.0 / M_PER_DEG_LAT;
-    let lon_step = 20.0 / (M_PER_DEG_LON_EQ * mid_lat.to_radians().cos().max(0.1));
+    let lat_step = spacing_m / M_PER_DEG_LAT;
+    let lon_step = spacing_m / (M_PER_DEG_LON_EQ * mid_lat.to_radians().cos().max(0.1));
+    let sample_area_m2 = spacing_m * spacing_m / (samples * samples) as f64;
 
-    let mut seen = HashSet::new();
     let mut points = Vec::new();
-    let mut lat = min_lat;
+    let lat_start = (min_lat / lat_step).floor() * lat_step + lat_step / 2.0;
+    let lon_start = (min_lon / lon_step).floor() * lon_step + lon_step / 2.0;
+    let mut lat = lat_start;
     while lat <= max_lat {
-        let mut lon = min_lon;
+        let mut lon = lon_start;
         while lon <= max_lon {
-            if let Ok(ll) = LatLng::new(lat, lon) {
-                let cell = ll.to_cell(Resolution::Eleven);
-                if seen.insert(cell) {
-                    let center = LatLng::from(cell);
-                    let clat = center.lat();
-                    let clon = center.lng();
-                    if point_in_polygon(clat, clon, &coords)
-                        && !holes.iter().any(|h| point_in_polygon(clat, clon, h))
+            let mut count = 0usize;
+            let mut sum_lat = 0.0;
+            let mut sum_lon = 0.0;
+            for sy in 0..samples {
+                let yoff = ((sy as f64 + 0.5) / samples as f64 - 0.5) * lat_step;
+                let sample_lat = lat + yoff;
+                for sx in 0..samples {
+                    let xoff = ((sx as f64 + 0.5) / samples as f64 - 0.5) * lon_step;
+                    let sample_lon = lon + xoff;
+                    if point_in_polygon(sample_lat, sample_lon, &coords)
+                        && !holes
+                            .iter()
+                            .any(|h| point_in_polygon(sample_lat, sample_lon, h))
                     {
-                        points.push((clat, clon));
+                        count += 1;
+                        sum_lat += sample_lat;
+                        sum_lon += sample_lon;
                     }
                 }
+            }
+            if count > 0 {
+                points.push(AreaGridPoint {
+                    lat: sum_lat / count as f64,
+                    lon: sum_lon / count as f64,
+                    area_m2: sample_area_m2 * count as f64,
+                });
             }
             lon += lon_step;
         }
@@ -322,7 +347,11 @@ pub fn wkb_h3_grid_points(wkb_hex: &str) -> Vec<(f64, f64)> {
     if points.is_empty() {
         let clat = coords.iter().map(|c| c.0).sum::<f64>() / coords.len() as f64;
         let clon = coords.iter().map(|c| c.1).sum::<f64>() / coords.len() as f64;
-        points.push((clat, clon));
+        points.push(AreaGridPoint {
+            lat: clat,
+            lon: clon,
+            area_m2: spacing_m * spacing_m,
+        });
     }
 
     points
