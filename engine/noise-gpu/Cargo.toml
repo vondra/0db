@@ -36,5 +36,5 @@ name = "e2-ff"
 path = "src/e2_ff.rs"
 
 [[bin]]
-name = "e2-terr"
-path = "src/e2_terr.rs"
+name = "e2-full"
+path = "src/e2_full.rs"

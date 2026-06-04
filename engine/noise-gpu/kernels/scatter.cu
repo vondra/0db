@@ -13,6 +13,9 @@
 __constant__ double A_W[NB]       = {-26.2,-16.1,-8.6,-3.2,0.0,1.2,1.0,-1.1};
 __constant__ double ALPHA_ATM[NB] = {0.1,0.4,1.0,1.9,3.7,8.7,22.0,58.4};
 __constant__ double BAND_FREQ[NB] = {63.0,125.0,250.0,500.0,1000.0,2000.0,4000.0,8000.0};
+__constant__ double GROUND_CF[NB] = {-1.5,-0.7,1.5,2.5,2.0,1.3,0.7,0.2};
+__constant__ double ALPHA_VEG[NB] = {0.01,0.015,0.02,0.025,0.03,0.04,0.045,0.06};
+__constant__ double MAX_VEG[NB]   = {2.0,3.0,4.0,5.0,6.0,8.0,9.0,12.0};
 #define SOS 340.0                // SPEED_OF_SOUND
 #define SINGLE_DIFF_CAP 20.0     // ISO 9613-2 §7.3 single-edge cap
 #define CELL_M (110540.0/3600.0) // raster cell ≈30.7m (1 arc-sec)
@@ -190,7 +193,7 @@ __device__ int fill_t(double dist, double* t) {
 
 // ---- horizon::max_delta_idx — edge of largest path-length difference δ over
 // 1..n-1 among samples above the source→receiver LOS; -1 if path clear.
-__device__ int mdidx(const double* t, const float* prof, int n,
+__device__ int mdidx(const double* t, const double* prof, int n,
                       double dist, double se, double re, double dsr) {
     int best = -1; double bestd = 0.0;
     for (int i = 1; i < n - 1; i++) {
@@ -207,7 +210,7 @@ __device__ int mdidx(const double* t, const float* prof, int n,
 }
 
 // ---- diffraction::fit_plane — OLS line over samples [lo,hi] (x = (t−t_off)·dist).
-__device__ void fit_plane(const double* t, const float* prof, int lo, int hi,
+__device__ void fit_plane(const double* t, const double* prof, int lo, int hi,
                           double t_off, double dist, double* a, double* b) {
     double nn = (double)(hi - lo + 1);
     double sx = 0, sz = 0, sxx = 0, sxz = 0;
@@ -223,7 +226,7 @@ __device__ void fit_plane(const double* t, const float* prof, int lo, int hi,
 
 // ---- diffraction::compute_delta_star — CNOSSOS §2.5.6(c) Rayleigh δ* (mirror
 // source/receiver across per-side mean-ground planes; OLS on BARE earth).
-__device__ double dstar(const double* t, const float* prof, int n, int d_idx,
+__device__ double dstar(const double* t, const double* prof, int n, int d_idx,
                         double dist, double src_h, double rcv_h) {
     double dsg = t[d_idx] * dist, drg = (1.0 - t[d_idx]) * dist;
     double a_s, b_s; fit_plane(t, prof, 0, d_idx, 0.0, dist, &a_s, &b_s);
@@ -251,30 +254,90 @@ __device__ void maek_single(double delta, double dstar_v, double* bands) {
     }
 }
 
-// ---- path_effects::terrain_attenuation over a bare-earth profile (the heatmap
-// band-only variant: no trace metadata). Writes 8 bands into out.
-__device__ void terrain_bands(const double* t, const float* prof, int n,
+// ---- horizon::single_edge_atten — the shared single-δ primitive. δ geometry +
+// max-δ edge run on `top`; the §2.5.6(c) Rayleigh δ* OLS always on `bare`. Heights
+// above bare earth (0.05 / 0.5 floors). Writes 8 bands. Terrain calls it with
+// top==bare; screening with top==composite, bare==elevation.
+__device__ void single_edge_bands(const double* t, const double* top, const double* bare,
+                                  int n, double dist, double src_alt, double rcv_alt, double* out) {
+    for (int i = 0; i < NB; i++) out[i] = 0.0;
+    double src_h = fmax(src_alt - bare[0], 0.05);
+    double rcv_h = fmax(rcv_alt - bare[n - 1], 0.5);
+    double se = bare[0] + src_h, re = bare[n - 1] + rcv_h;
+    double dsr = sqrt(dist * dist + (re - se) * (re - se));
+    int idx = mdidx(t, top, n, dist, se, re, dsr);
+    if (idx < 0) return;
+    double los = se + (re - se) * t[idx];
+    if (top[idx] <= los) return;
+    double dsg = t[idx] * dist, drg = (1.0 - t[idx]) * dist, tp = top[idx];
+    double d_sb = sqrt(dsg * dsg + (tp - se) * (tp - se));
+    double d_br = sqrt(drg * drg + (tp - re) * (tp - re));
+    double delta = d_sb + d_br - dsr;
+    maek_single(delta, dstar(t, bare, n, idx, dist, src_h, rcv_h), out);
+}
+
+// ---- path_effects::terrain_attenuation — bare-earth diffraction. Guard (short
+// path) + the "any sample above LoS" hill scan, then the single-edge primitive.
+__device__ void terrain_bands(const double* t, const double* prof, int n,
                               double dist, double src_alt, double rcv_alt, double* out) {
     for (int i = 0; i < NB; i++) out[i] = 0.0;
     if (n < 3 || dist < 30.0) return;
     double dz_total = rcv_alt - src_alt;
     bool hill = false;
-    for (int i = 0; i < n; i++) if ((double)prof[i] > src_alt + dz_total * t[i]) { hill = true; break; }
+    for (int i = 0; i < n; i++) if (prof[i] > src_alt + dz_total * t[i]) { hill = true; break; }
     if (!hill) return;
-    double src_h = fmax(src_alt - (double)prof[0], 0.05);
-    double rcv_h = fmax(rcv_alt - (double)prof[n - 1], 0.5);
-    double se = (double)prof[0] + src_h;
-    double re = (double)prof[n - 1] + rcv_h;
-    double dsr = sqrt(dist * dist + (re - se) * (re - se));
-    int idx = mdidx(t, prof, n, dist, se, re, dsr);
-    if (idx < 0) return;
-    double los = se + (re - se) * t[idx];
-    if ((double)prof[idx] <= los) return;
-    double dsg = t[idx] * dist, drg = (1.0 - t[idx]) * dist, top = prof[idx];
-    double d_sb = sqrt(dsg * dsg + (top - se) * (top - se));
-    double d_br = sqrt(drg * drg + (top - re) * (top - re));
-    double delta = d_sb + d_br - dsr;
-    maek_single(delta, dstar(t, prof, n, idx, dist, src_h, rcv_h), out);
+    single_edge_bands(t, prof, prof, n, dist, src_alt, rcv_alt, out);
+}
+
+// ---- raster_reader::lookup_fused_rc categoricals: building/forest NEAREST,
+// imd BILINEAR (round, clamp). `cover` is the halo packed [build,forest,imd] per cell.
+__device__ __forceinline__ void cover_rc(
+    const unsigned char* cover, int rows, int cols, double rf, double cf,
+    unsigned char* bh, unsigned char* fr_out, unsigned char* imd_out)
+{
+    rf = fmin(fmax(rf, 0.0), (double)(rows - 1));
+    cf = fmin(fmax(cf, 0.0), (double)(cols - 1));
+    int r0 = min((int)floor(rf), rows - 2);
+    int c0 = min((int)floor(cf), cols - 2);
+    double fr = rf - (double)r0, fc = cf - (double)c0;
+    long base = (long)r0 * cols + c0;
+    long b00 = base*3, b01 = (base+1)*3, b10 = (base+cols)*3, b11 = (base+cols+1)*3;
+    long near = (fr >= 0.5) ? ((fc >= 0.5) ? b11 : b10) : ((fc >= 0.5) ? b01 : b00);
+    *bh = cover[near]; *fr_out = cover[near + 1];
+    double v0 = (double)cover[b00+2] + fc * ((double)cover[b01+2] - (double)cover[b00+2]);
+    double v1 = (double)cover[b10+2] + fc * ((double)cover[b11+2] - (double)cover[b10+2]);
+    double im = fmin(fmax(round(v0 + fr * (v1 - v0)), 0.0), 255.0);
+    *imd_out = (unsigned char)im;
+}
+
+// ---- path_profile::path_integral_u8 (interval-length-weighted mean of imd).
+__device__ double path_integral_imd(const double* t, const unsigned char* imd, int n, double dist) {
+    if (n < 2) return 0.0;
+    double sum = 0.0, total = 0.0;
+    for (int i = 1; i < n; i++) {
+        double mid = 0.5 * ((double)imd[i - 1] + (double)imd[i]);
+        double len = (t[i] - t[i - 1]) * dist;
+        sum += mid * len; total += len;
+    }
+    return total < 1e-9 ? 0.0 : sum / total;
+}
+
+// ---- path_profile::vegetation_run_length — cumulative forest run (≥10 m runs).
+__device__ double veg_run_length(const double* t, const unsigned char* forest, int n, double dist) {
+    if (n < 2) return 0.0;
+    double total = 0.0, run = 0.0;
+    for (int i = 1; i < n; i++) {
+        double len = (t[i] - t[i - 1]) * dist;
+        if (forest[i] > 0) run += len;
+        else { if (run >= 10.0) total += run; run = 0.0; }
+    }
+    if (run >= 10.0) total += run;
+    return total;
+}
+
+// ---- vegetation::vegetation_attenuation (per-band, capped).
+__device__ void veg_bands(double depth, double* out) {
+    for (int i = 0; i < NB; i++) out[i] = (depth <= 0.0) ? 0.0 : fmin(ALPHA_VEG[i] * depth, MAX_VEG[i]);
 }
 
 // FREE-FIELD rail scatter: geometry + cylindrical divergence + FLC + air + 8-band
@@ -328,17 +391,18 @@ extern "C" __global__ void freefield_rail(
     out[pix * 3 + 2] = (float)e2;
 }
 
-// RAIL scatter: free-field (as above) + bare-earth TERRAIN diffraction per source
-// (DDA cadence ray-march + single-edge δ + δ* Rayleigh gate + Maekawa). NO
-// ground/screening/veg, NO budget skip yet — isolates the diffraction port. One
-// thread per pixel walks the same per-source profile the CPU builds. Matches the
-// CPU free-field+terrain reference exactly (f64). Source ground via tile_elev
-// (inner grid in-tile, like scatter_band), not the halo bilinear.
+// RAIL scatter: the full surface path per source — free-field + terrain
+// diffraction + building screening + ground effect + vegetation, combined as
+// max(A_ground, A_terrain+A_screen) (ISO 9613-2 §7.3.1). NO budget skip yet
+// (Step D). One thread per pixel; mirrors scatter_band minus the skip, f64.
 //   meta = [rows, cols, lat_min, lon_min, inv, north_lat, south_lat, west_lon, east_lon]
-//   inner = 256×256 row-major tile DEM (pixel-centre elevation)
+//   inner = 256×256 row-major tile DEM (pixel-centre elevation, source ground)
+//   cover = halo packed [building, forest, imd] per cell (u8)
+//   sp   = nsrc×4  {length_m, max_distance_m, source_height_m, bridge}
 extern "C" __global__ void rail(
     const float*  __restrict__ elev,
     const float*  __restrict__ inner,
+    const unsigned char* __restrict__ cover,
     const double* __restrict__ meta,
     const double* __restrict__ seg,
     const double* __restrict__ sp,
@@ -356,31 +420,53 @@ extern "C" __global__ void rail(
     double rlat = rxll[py], rlon = rxll[256 + pxi];
     double ralt = rxar[pix * 2], refl = rxar[pix * 2 + 1];
     double e0 = 0.0, e1 = 0.0, e2 = 0.0;
-    double tprof[MAXT]; float eprof[MAXT];
+    double tprof[MAXT], ed[MAXT], comp[MAXT];
+    unsigned char bld[MAXT], forr[MAXT], imdp[MAXT];
 
     for (int s = 0; s < nsrc; s++) {
         double dend, cplat, cplon, frac;
         p2s(rlat, rlon, seg[s*4], seg[s*4+1], seg[s*4+2], seg[s*4+3], &dend, &cplat, &cplon, &frac);
-        if (dend > sp[s*3+1]) continue;
-        double salt = tile_elev(inner, elev, rows, cols, lat_min, lon_min, inv, bb, cplat, cplon) + sp[s*3+2];
+        if (dend > sp[s*4+1]) continue;
+        double salt = tile_elev(inner, elev, rows, cols, lat_min, lon_min, inv, bb, cplat, cplon) + sp[s*4+2];
         double dz = salt - ralt;
         double dslant = fmax(sqrt(dend * dend + dz * dz), 1.0);
-        double fc = flc(sp[s*3], dend, fmin(fmax(frac, 0.0), 1.0));
+        double fc = flc(sp[s*4], dend, fmin(fmax(frac, 0.0), 1.0));
         double base = refl + fc - 10.0 * log10(2.0 * PI_D * dslant);
         double atm_km = dslant / 1000.0;
 
-        // ---- terrain diffraction: build the bare-earth profile, ray-march cadence ----
-        double terr[NB];
+        // ---- ray-march the cadence: bare elevation + building/forest/imd ----
         double src_rf = (cplat - lat_min) * inv, src_cf = (cplon - lon_min) * inv;
         double d_rf = (rlat - cplat) * inv, d_cf = (rlon - cplon) * inv;
         int n = fill_t(dend, tprof);
-        for (int i = 0; i < n; i++)
-            eprof[i] = bilinear_elev_rc(elev, rows, cols, src_rf + tprof[i] * d_rf, src_cf + tprof[i] * d_cf);
-        terrain_bands(tprof, eprof, n, dend, salt, ralt, terr);
+        for (int i = 0; i < n; i++) {
+            double rf = src_rf + tprof[i] * d_rf, cf = src_cf + tprof[i] * d_cf;
+            ed[i] = (double)bilinear_elev_rc(elev, rows, cols, rf, cf);
+            cover_rc(cover, rows, cols, rf, cf, &bld[i], &forr[i], &imdp[i]);
+        }
+
+        // ---- path effects ----
+        double terr[NB], screen[NB], veg[NB];
+        terrain_bands(tprof, ed, n, dend, salt, ralt, terr);
+        for (int i = 0; i < NB; i++) screen[i] = 0.0;
+        bool anyb = false;
+        for (int i = 0; i < n; i++) if (bld[i] > 0) { anyb = true; break; }
+        if (anyb && n >= 3 && dend >= 30.0) {
+            for (int i = 0; i < n; i++)
+                comp[i] = ed[i] + ((tprof[i] > 0.0 && tprof[i] < 1.0) ? (double)bld[i] : 0.0);
+            double comb[NB];
+            single_edge_bands(tprof, comp, ed, n, dend, salt, ralt, comb);
+            for (int i = 0; i < NB; i++) screen[i] = fmax(comb[i] - terr[i], 0.0);
+        }
+        double gimd = path_integral_imd(tprof, imdp, n, dend);
+        double ground_g = (sp[s*4+3] != 0.0) ? 0.0 : fmin(fmax(1.0 - gimd / 100.0, 0.0), 1.0);
+        veg_bands(veg_run_length(tprof, forr, n, dend), veg);
 
         const float* em = &semis[s * 24];
         for (int i = 0; i < NB; i++) {
-            double pf = fexp((base - ALPHA_ATM[i] * atm_km - terr[i] + A_W[i]) * LN10 * 0.1);
+            double a_gr = GROUND_CF[i] * ground_g;
+            double a_bar = terr[i] + screen[i];
+            double gob = (a_bar > 0.0) ? fmax(a_gr, a_bar) : a_gr;   // barrier REPLACES ground
+            double pf = fexp((base - ALPHA_ATM[i] * atm_km - gob - veg[i] + A_W[i]) * LN10 * 0.1);
             e0 += (double)em[i]      * pf;
             e1 += (double)em[8 + i]  * pf;
             e2 += (double)em[16 + i] * pf;
