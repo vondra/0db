@@ -314,6 +314,9 @@ pub fn fl_bin_of(alt_m: f32) -> u8 {
 pub mod source_id {
     pub const ADSB_LOL_TAR: u8 = 0;
     pub const SCHEDULE_SYNTH: u8 = 1;
+    /// adsbexchange free-sample feed. Identical readsb `trace_full` format to
+    /// adsb.lol — only the provenance differs (denser receiver network).
+    pub const ADSB_EXCHANGE: u8 = 2;
 }
 
 /// Origin tag — always 0 for now. Reserved for the schedule-synth and

@@ -77,6 +77,26 @@ enum FromStage {
     Stage2c,
 }
 
+/// Which ADS-B network the `--adsb-cache` holds. Both ship the identical readsb
+/// `trace_full` TAR format, so this only stamps the provenance `source_id` (and
+/// dedup identity). The per-feed default cache PATH lives in
+/// `run-aircraft-extract.sh`.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Feed {
+    Adsblol,
+    Adsbexchange,
+}
+
+impl Feed {
+    fn source_id(self) -> u8 {
+        use aircraft_extract::flight::source_id;
+        match self {
+            Feed::Adsblol => source_id::ADSB_LOL_TAR,
+            Feed::Adsbexchange => source_id::ADSB_EXCHANGE,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Cmd {
     /// Stage 0: ADS-B TAR → flights/<day>.arrow
@@ -211,6 +231,10 @@ enum Cmd {
         /// downstream stage without re-running upstream work.
         #[arg(long, value_enum, default_value_t = FromStage::Stage0)]
         from_stage: FromStage,
+        /// Which network `--adsb-cache` holds; stamps the provenance source_id
+        /// (identical TAR format either way).
+        #[arg(long, value_enum, default_value_t = Feed::Adsblol)]
+        feed: Feed,
     },
 }
 
@@ -306,6 +330,7 @@ fn main() -> Result<()> {
             days,
             scope_bbox,
             from_stage,
+            feed,
         } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             require_scope_for_subset_cache(&adsb_cache, scope.as_ref())?;
@@ -381,7 +406,7 @@ fn main() -> Result<()> {
                 std::fs::create_dir_all(&flights_dir)?;
                 std::fs::create_dir_all(&segments_dir)?;
                 let sources: Vec<Box<dyn FlightSource>> =
-                    vec![Box::new(AdsbTarSource::new(&adsb_cache))];
+                    vec![Box::new(AdsbTarSource::new(&adsb_cache).with_source_id(feed.source_id()))];
                 // Per-day error tolerance: one corrupted TAR or DEM miss
                 // must not throw away the other days' Stage 0+1 work.
                 // Failed days are listed at the end so the operator can

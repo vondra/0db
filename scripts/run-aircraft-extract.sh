@@ -30,7 +30,12 @@ cd "$PROJECT_DIR"
 
 DATA_YEAR="${DATA_YEAR:-2025}"
 DATA_ROOT="${DATA_ROOT:-data}"
-ADSB_CACHE="${ADSB_CACHE:-$DATA_ROOT/source/flights-cache/radius/praha-150km}"
+# Which ADS-B network to read. adsb.lol and adsbexchange ship the identical
+# readsb trace_full TAR format, so --feed only picks the default cache path +
+# scope and stamps provenance. ADSB_CACHE / SCOPE_BBOX (if set) win over the
+# per-feed defaults resolved after arg parsing.
+FEED="${FEED:-adsblol}"
+ADSB_CACHE="${ADSB_CACHE-__PER_FEED__}"
 H3R4_DIR="${H3R4_DIR:-$DATA_ROOT/prepared/$DATA_YEAR/h3r4}"
 PREPARED_DIR="${PREPARED_DIR:-$DATA_ROOT/prepared}"
 WORK_DIR="${WORK_DIR:-/tmp/aircraft-extract-work}"
@@ -40,10 +45,9 @@ DAYS="${DAYS:-}"
 # global R4 files. The aircraft-extract binary hard-fails when
 # --adsb-cache contains /bbox/ or /radius/ AND --scope-bbox is unset.
 #
-# Default tracks the default ADSB_CACHE (Praha 150 km radius around
-# 50.10°N 14.43°E): a bounding box that covers the entire 150 km
-# disc with ~10 km margin. Override when ADSB_CACHE is changed.
-SCOPE_BBOX="${SCOPE_BBOX:-48.65,12.00,51.55,16.90}"
+# Resolved per --feed below (Praha disc for adsb.lol; empty = global for
+# adsbexchange). An explicit SCOPE_BBOX env (even empty) wins.
+SCOPE_BBOX="${SCOPE_BBOX-__PER_FEED__}"
 FROM_STAGE="${FROM_STAGE:-}"
 
 log() { echo "[aircraft-extract] $(date '+%Y-%m-%d %H:%M:%S') $*"; }
@@ -64,14 +68,23 @@ while [ $# -gt 0 ]; do
             FROM_STAGE="${1#*=}"
             shift
             ;;
+        --feed)
+            [ $# -ge 2 ] || die "--feed requires a value (adsblol|adsbexchange)"
+            FEED="$2"
+            shift 2
+            ;;
+        --feed=*)
+            FEED="${1#*=}"
+            shift
+            ;;
         -h|--help)
             # Pipe the header comment block (between the shebang and
             # the first non-comment line) so `--help` and the source
             # docs stay one source of truth.
             awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"
             echo
-            echo "Usage: $0 [--from-stage <stage0|stage1|shuffle|stage1-5|stage2a|stage2b|stage2c>]"
-            echo "Env vars: DATA_YEAR, DATA_ROOT, ADSB_CACHE, H3R4_DIR, PREPARED_DIR, WORK_DIR,"
+            echo "Usage: $0 [--feed <adsblol|adsbexchange>] [--from-stage <stage0|...|stage2c>]"
+            echo "Env vars: DATA_YEAR, DATA_ROOT, FEED, ADSB_CACHE, H3R4_DIR, PREPARED_DIR, WORK_DIR,"
             echo "          DAYS, SCOPE_BBOX, FROM_STAGE, LOG_DIR"
             exit 0
             ;;
@@ -80,6 +93,16 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# Per-feed defaults — applied only where ADSB_CACHE / SCOPE_BBOX weren't set.
+case "$FEED" in
+    adsblol)      FEED_CACHE="$DATA_ROOT/source/flights-cache/radius/praha-150km"; FEED_SCOPE="48.65,12.00,51.55,16.90" ;;
+    adsbexchange) FEED_CACHE="/storagebox/adsbexchange";                           FEED_SCOPE="" ;;
+    *)            die "unknown --feed: $FEED (adsblol|adsbexchange)" ;;
+esac
+[ "$ADSB_CACHE" = "__PER_FEED__" ] && ADSB_CACHE="$FEED_CACHE"
+[ "$SCOPE_BBOX" = "__PER_FEED__" ] && SCOPE_BBOX="$FEED_SCOPE"
+log "feed: $FEED  cache=$ADSB_CACHE  scope=${SCOPE_BBOX:-<global>}"
 
 if [ -z "$DAYS" ]; then
     log "DAYS env var not set; deriving from ADSB_CACHE=$ADSB_CACHE"
@@ -111,7 +134,7 @@ log "running aircraft-extract run-all (DAYS=$DAYS)"
 # stdout (so `bash run_in_background` output and a foreground terminal
 # both see live progress). `tail -F logs/aircraft-extract-latest.log`
 # is the operator's go-to during multi-hour global runs.
-EXTRA_ARGS=()
+EXTRA_ARGS=(--feed "$FEED")
 if [ -n "$SCOPE_BBOX" ]; then
     EXTRA_ARGS+=(--scope-bbox="$SCOPE_BBOX")
     log "scope bbox: $SCOPE_BBOX"
