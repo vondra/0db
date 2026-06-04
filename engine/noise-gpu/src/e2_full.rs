@@ -53,6 +53,10 @@ fn main() -> Result<()> {
         .parse::<f64>()
         .unwrap_or(0.40)
         .clamp(0.0, 0.40);
+    // Skip the (slow) CPU reference — keep only GPU kernel timing + the GPU→u8
+    // baseline diff. For fast fp32 drift/perf iteration, where byte-exact-vs-CPU
+    // is moot anyway.
+    let gpu_only = std::env::var("NOISE_GPU_ONLY").is_ok();
     let h3r4 = format!("{prepared}/{year}/h3r4");
 
     let r4 = tile_centre_r4(z, x, y).context("tile centre")?;
@@ -121,11 +125,12 @@ fn main() -> Result<()> {
         cover.push(p.imd);
     }
 
-    // ---- CPU reference: scatter_band minus the budget skip, via real engine ----
+    // ---- CPU reference: full scatter_band (incl. skip), via real engine fns.
+    // Skipped entirely under NOISE_GPU_ONLY (the GPU→u8 baseline diff stands alone).
     let mut cpu = vec![0f32; n * 3];
     let mut prof = PathProfile::new();
     let no_barriers: &[Barrier] = &[];
-    for py in 0..TILE_PX {
+    for py in (0..TILE_PX).filter(|_| !gpu_only) {
         let rlat = tile.rx_lat[py];
         for px in 0..TILE_PX {
             let pix = py * TILE_PX + px;
@@ -276,36 +281,39 @@ fn main() -> Result<()> {
     dev.synchronize().expect("sync");
     let gpu_ms = t.elapsed().as_secs_f64() * 1e3;
     let gpu = dev.dtoh_sync_copy(&d_out).expect("dtoh");
+    eprintln!("GPU kernel {gpu_ms:.1} ms");
 
-    // ---- compare: exact f32 inequality + zero-sided mismatches + dB on both-positive.
-    // (dB-only on both-positive would hide a 0-vs-positive flip or sub-0.5 dB drift.)
-    let (mut maxdb, mut nover, mut nbit, mut nzero) = (0f64, 0usize, 0usize, 0usize);
-    for i in 0..n * 3 {
-        let (g, c) = (gpu[i], cpu[i]);
-        if g != c {
-            nbit += 1;
-        }
-        if (g > 0.0) != (c > 0.0) {
-            nzero += 1;
-        }
-        if g > 0.0 && c > 0.0 {
-            let d = (10.0 * (g as f64 / c as f64).log10()).abs();
-            if d > maxdb {
-                maxdb = d;
+    // ---- compare vs CPU ref (skipped under NOISE_GPU_ONLY): exact f32 inequality +
+    // zero-sided mismatches + both-positive dB.
+    if !gpu_only {
+        let (mut maxdb, mut nover, mut nbit, mut nzero) = (0f64, 0usize, 0usize, 0usize);
+        for i in 0..n * 3 {
+            let (g, c) = (gpu[i], cpu[i]);
+            if g != c {
+                nbit += 1;
             }
-            if d > 0.5 {
-                nover += 1;
+            if (g > 0.0) != (c > 0.0) {
+                nzero += 1;
+            }
+            if g > 0.0 && c > 0.0 {
+                let d = (10.0 * (g as f64 / c as f64).log10()).abs();
+                if d > maxdb {
+                    maxdb = d;
+                }
+                if d > 0.5 {
+                    nover += 1;
+                }
             }
         }
-    }
-    eprintln!(
-        "GPU rail (FULL path) vs CPU ref: {nbit}/{} f32-unequal, {nzero} zero-sided, max {maxdb:.4} dB, {nover} >0.5 dB | GPU kernel {gpu_ms:.1} ms",
-        n * 3
-    );
-    if nbit == 0 {
-        eprintln!("✓ full path + budget skip port BYTE-EXACT vs CPU ref");
-    } else if maxdb < 0.5 && nzero == 0 {
-        eprintln!("✓ port within 0.5 dB ({nbit} sub-0.5 dB f32 drifts, 0 zero-sided)");
+        eprintln!(
+            "GPU vs CPU ref: {nbit}/{} f32-unequal, {nzero} zero-sided, max {maxdb:.4} dB, {nover} >0.5 dB",
+            n * 3
+        );
+        if nbit == 0 {
+            eprintln!("✓ full path + budget skip port BYTE-EXACT vs CPU ref");
+        } else if maxdb < 0.5 && nzero == 0 {
+            eprintln!("✓ port within 0.5 dB ({nbit} sub-0.5 dB f32 drifts, 0 zero-sided)");
+        }
     }
 
     // ---- (2) GPU energy → collapse → u8, diff vs the production baseline ----

@@ -58,14 +58,16 @@ extern "C" __global__ void bilinear_elev(
     out[i] = (float)bilinear_elev_d(elev, rows, cols, lat_min, lon_min, inv_cell_deg, qlat[i], qlon[i]);
 }
 
-// ---- noise_compute fast_exp_f64 ----
-__device__ __forceinline__ double fexp(double x) {
-    x = fmin(fmax(x, -87.0), 88.0);
-    double n = round(x * 1.4426950408889634);   // 1/ln2
-    double r = x - n * 0.6931471805599453;       // ln2
-    double r2 = r * r;
-    double poly = 1.0 + r + r2 * (0.5 + r * (1.0/6.0 + r * (1.0/24.0 + r * (1.0/120.0))));
-    return poly * exp2(n);                        // 2^n exact for integer n
+// ---- noise_compute fast_exp_f64, fp32 internals (exp2f/poly on the SFU; f64
+// emulation of exp is the dominant per-source cost on consumer Ada). Arg widened
+// in; ~1e-6 drift vs the f64 form, validated against the baseline tile.
+__device__ __forceinline__ double fexp(double xd) {
+    float x = (float)fmin(fmax(xd, -87.0), 88.0);
+    float n = roundf(x * 1.4426950408889634f);   // 1/ln2
+    float r = x - n * 0.6931471805599453f;        // ln2
+    float r2 = r * r;
+    float poly = 1.0f + r + r2 * (0.5f + r * (1.0f/6.0f + r * (1.0f/24.0f + r * (1.0f/120.0f))));
+    return (double)(poly * exp2f(n));             // 2^n exact for integer n
 }
 
 // ---- geo::point_to_segment_full (the fields the line scatter needs) ----
@@ -93,7 +95,7 @@ __device__ __forceinline__ double flc(double len, double dperp, double frac) {
     double d1 = frac * len, d2 = (1.0 - frac) * len, invd = 1.0 / dperp;
     double a1 = d1 * invd, a2 = d2 * invd, prod = a1 * a2;
     double theta = (prod < 0.98) ? atan((a1 + a2) / (1.0 - prod)) : (atan(a1) + atan(a2));
-    double corr = 4.342944819032518 * log(theta / PI_D);
+    double corr = 4.342944819032518 * (double)logf((float)(theta / PI_D));
     return fmin(corr, 0.0);
 }
 
@@ -107,11 +109,11 @@ __device__ __forceinline__ float bilinear_elev_rc(
     cf = fmin(fmax(cf, 0.0), (double)(cols - 1));
     int r0 = min((int)floor(rf), rows - 2);
     int c0 = min((int)floor(cf), cols - 2);
-    double fr = rf - (double)r0, fc = cf - (double)c0;
+    float fr = (float)(rf - (double)r0), fc = (float)(cf - (double)c0);
     long base = (long)r0 * cols + c0;
-    double v0 = elev[base]       + fc * (elev[base + 1]        - elev[base]);
-    double v1 = elev[base + cols] + fc * (elev[base + cols + 1] - elev[base + cols]);
-    return (float)(v0 + fr * (v1 - v0));
+    float v0 = elev[base]        + fc * (elev[base + 1]        - elev[base]);
+    float v1 = elev[base + cols] + fc * (elev[base + cols + 1] - elev[base + cols]);
+    return v0 + fr * (v1 - v0);
 }
 
 // ---- FusedTileZ13::elevation — the production SOURCE-ground lookup. Inside the
@@ -197,6 +199,9 @@ __device__ int fill_t(double dist, double* t) {
 
 // ---- horizon::max_delta_idx — edge of largest path-length difference δ over
 // 1..n-1 among samples above the source→receiver LOS; -1 if path clear.
+// NB: kept f64 — the δ = d_sb+d_br−dsr subtraction cancels (near-equal large
+// distances); naive fp32 here drifts ~1500 cells/1 dB. fp32 needs the stable
+// reformulation δ = Σ dz²/(d+x) (next step), not a blanket cast.
 __device__ int mdidx(const double* t, const double* prof, int n,
                       double dist, double se, double re, double dsr) {
     int best = -1; double bestd = 0.0;
@@ -253,7 +258,7 @@ __device__ void maek_single(double delta, double dstar_v, double* bands) {
     for (int i = 0; i < NB; i++) {
         double lambda = SOS / BAND_FREQ[i];
         if (delta <= lambda * 0.25 - dstar_v) continue;
-        double a_bar = 10.0 * log10(3.0 + 20.0 * delta * BAND_FREQ[i] / SOS);
+        double a_bar = 10.0 * (double)log10f((float)(3.0 + 20.0 * delta * BAND_FREQ[i] / SOS));
         bands[i] = fmin(a_bar, SINGLE_DIFF_CAP);
     }
 }
@@ -445,7 +450,7 @@ extern "C" __global__ void rail(
         double dz = salt - ralt;
         double dslant = fmax(sqrt(dend * dend + dz * dz), 1.0);
         double fc = flc(sp[s*4], dend, fmin(fmax(frac, 0.0), 1.0));
-        double base = refl + fc - 10.0 * log10(2.0 * PI_D * dslant);
+        double base = refl + fc - 10.0 * (double)log10f((float)(2.0 * PI_D * dslant));
         double atm_km = dslant / 1000.0;
         const float* em = &semis[s * 24];
 
