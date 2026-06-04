@@ -1,0 +1,26 @@
+[package]
+name = "noise-gpu"
+version = "0.1.0"
+edition = "2021"
+
+# GPU backend for the surface scatter (docs/dev/gpu-ground-hybrid-plan.md).
+# cudarc dynamically targets the CUDA driver; the .cu kernels are compiled to PTX
+# at build time by build.rs via `nvcc -arch=sm_89`. cuda-12060 = highest bindings
+# cudarc 0.12 ships; the 12.x driver API is forward-compatible with the box's 12.8.
+[dependencies]
+cudarc = { version = "0.12", default-features = false, features = ["driver", "nvrtc", "cuda-12060"] }
+raster-reader = { path = "../raster-reader" }
+heatmap-aircraft = { path = "../heatmap-aircraft" }
+noise-compute = { path = "../noise-compute" }
+h3o = "0.7"
+anyhow = "1"
+
+[[bin]]
+name = "noise-gpu-smoke"
+path = "src/main.rs"
+
+# E2a: reproduce one rail tile on CPU via the engine lib, diff vs the baseline —
+# validates the host plumbing before the GPU kernel slots into the same harness.
+[[bin]]
+name = "e2-rail"
+path = "src/e2_rail.rs"
