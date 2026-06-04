@@ -22,7 +22,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-DATA_YEAR="${DATA_YEAR:-2025}"
+DATA_YEAR="${DATA_YEAR:-2026}"  # active dataset year (.env DATA_YEAR=2026)
 DATA_ROOT="${DATA_ROOT:-data}"
 H3R4="$DATA_ROOT/prepared/$DATA_YEAR/h3r4"
 PREP="$DATA_ROOT/prepared"
@@ -33,6 +33,7 @@ SURFACE="$TARGET/build-heatmap-surface"
 AIRCRAFT="$TARGET/build-heatmap-aircraft"
 PYR="$TARGET/build-pyramid"
 COMBINE="$TARGET/build-heatmap-combine"
+GPU_SURFACE="engine/noise-gpu/target/release/gpu-surface"  # --gpu: line layers on GPU
 
 log() { echo "[build-heatmap] $(date '+%H:%M:%S') $*"; }
 # Wall-clock-stamp each line of a long builder's output (same clock as log()), so
@@ -52,12 +53,14 @@ ALL_LAYERS=(road rail industrial building aircraft-airborne aircraft-cruise airc
 SOURCE=all
 COMBINE_ONLY=false
 NO_COMBINE=false
+USE_GPU=false
 SEL_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --source) SOURCE="${2:?--source needs a value}"; shift 2 ;;
     --combine-only) COMBINE_ONLY=true; shift ;;
     --no-combine) NO_COMBINE=true; shift ;;
+    --gpu) USE_GPU=true; shift ;;   # line layers (road/rail) → GPU, point layers ∥ on CPU
     *) SEL_ARGS+=("$1"); shift ;;
   esac
 done
@@ -102,6 +105,41 @@ if ! $COMBINE_ONLY; then
   if [ ${#SURFACE_LAYERS[@]} -gt 0 ]; then
     if $is_world || $is_shard; then
       log "skip surface (${SURFACE_LAYERS[*]}) — surface kernels are bbox/tile only (use --bbox)"
+    elif $USE_GPU; then
+      # HYBRID: the line layers (road/rail) go to the GPU while the CPU builds the
+      # point/ground layers IN PARALLEL — both mmap the same tmpfs rasters, so the
+      # heavy raster reads share the OS page cache (and CPU L3). GPU = throughput
+      # on the dominant line scatter; CPU = the cheaper point/ground layers.
+      [ -n "$bbox" ] || { log "ERROR: --gpu requires --bbox"; exit 1; }
+      gpu_layers=(); cpu_layers=()
+      for L in "${SURFACE_LAYERS[@]}"; do
+        case "$L" in road | rail) gpu_layers+=("$L") ;; *) cpu_layers+=("$L") ;; esac
+      done
+      log "rebuilding gpu-surface (needs nvcc on this host)"
+      cargo build --release --manifest-path engine/noise-gpu/Cargo.toml --bin gpu-surface
+      gpu_pid=""; cpu_pid=""
+      if [ ${#gpu_layers[@]} -gt 0 ]; then
+        log "GPU surface: ${gpu_layers[*]} → $OUTPUT/{layer}"
+        ( IFS=,; NOISE_GPU_PREPARED="$PREP" DATA_YEAR="$DATA_YEAR" \
+            "$GPU_SURFACE" --layers "${gpu_layers[*]}" --bbox "$bbox" --output "$OUTPUT" ) 2>&1 | stamp &
+        gpu_pid=$!
+      fi
+      if [ ${#cpu_layers[@]} -gt 0 ]; then
+        # Build exactly cpu_layers via `ground` minus everything not requested.
+        excl=(); for L in road rail industrial building aircraft-ground; do
+          [[ " ${cpu_layers[*]} " == *" $L "* ]] || excl+=(--exclude "$L")
+        done
+        log "CPU surface: ${cpu_layers[*]} → $OUTPUT/{layer}"
+        "$SURFACE" --source ground "${excl[@]}" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
+          --prepared-dir "$PREP" --output "$OUTPUT" "${SEL_ARGS[@]}" 2>&1 | stamp &
+        cpu_pid=$!
+      fi
+      [ -n "$gpu_pid" ] && wait "$gpu_pid"
+      [ -n "$cpu_pid" ] && wait "$cpu_pid"
+      for L in "${SURFACE_LAYERS[@]}"; do
+        log "pyramid $L z$ZOOM → z6 (bbox)"
+        "$PYR" --tiles-dir "$OUTPUT/$L" --base-zoom "$ZOOM" --dst-zoom 6 --source-id "${SID[$L]}" --bbox "$bbox"
+      done
     else
       # The full surface set (all / ground) → one shared-halo `ground` pass; a
       # single requested layer → its own `--source`. Either way --output is the
