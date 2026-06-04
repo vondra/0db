@@ -189,41 +189,12 @@ fn ring_area_offset(
 /// spacing_m: approximate grid spacing in meters (30m for buildings, 150m for industrial)
 /// Returns: Vec of (lat, lon) points inside the polygon. At least 1 (centroid fallback).
 pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
-    // Parse polygon outer ring + inner rings (courtyards)
-    let (coords, holes) = match parse_wkb_polygon_with_holes(wkb_hex) {
-        Some(c) => c,
-        None => {
-            // Fallback to outer-ring-only parsing
-            match parse_wkb_polygon_coords(wkb_hex) {
-                Some(c) => (c, vec![]),
-                None => return vec![],
-            }
-        }
-    };
-
-    if coords.is_empty() {
+    let polys = parse_wkb_polygons(wkb_hex);
+    if polys.is_empty() {
         return vec![];
     }
 
-    // Bounding box
-    let mut min_lat = f64::MAX;
-    let mut max_lat = f64::MIN;
-    let mut min_lon = f64::MAX;
-    let mut max_lon = f64::MIN;
-    for &(lat, lon) in &coords {
-        if lat < min_lat {
-            min_lat = lat;
-        }
-        if lat > max_lat {
-            max_lat = lat;
-        }
-        if lon < min_lon {
-            min_lon = lon;
-        }
-        if lon > max_lon {
-            max_lon = lon;
-        }
-    }
+    let (min_lat, max_lat, min_lon, max_lon) = outer_ring_bbox(&polys);
 
     // Convert spacing to degrees
     let mid_lat = (min_lat + max_lat) / 2.0;
@@ -239,9 +210,7 @@ pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
     while lat <= max_lat {
         let mut lon = lon_start;
         while lon <= max_lon {
-            if point_in_polygon(lat, lon, &coords)
-                && !holes.iter().any(|h| point_in_polygon(lat, lon, h))
-            {
+            if point_in_any_polygon(lat, lon, &polys) {
                 points.push((lat, lon));
             }
             lon += lon_step;
@@ -249,11 +218,9 @@ pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
         lat += lat_step;
     }
 
-    // Fallback: at least the centroid
+    // Fallback: at least the footprint centroid.
     if points.is_empty() {
-        let clat = coords.iter().map(|c| c.0).sum::<f64>() / coords.len() as f64;
-        let clon = coords.iter().map(|c| c.1).sum::<f64>() / coords.len() as f64;
-        points.push((clat, clon));
+        points.push(footprint_centroid(&polys));
     }
 
     points
@@ -269,35 +236,12 @@ pub fn wkb_area_grid_points(
     spacing_m: f64,
     samples_per_axis: usize,
 ) -> Vec<AreaGridPoint> {
-    let (coords, holes) = match parse_wkb_polygon_with_holes(wkb_hex) {
-        Some(c) => c,
-        None => match parse_wkb_polygon_coords(wkb_hex) {
-            Some(c) => (c, vec![]),
-            None => return vec![],
-        },
-    };
-    if coords.is_empty() || spacing_m <= 0.0 {
+    let polys = parse_wkb_polygons(wkb_hex);
+    if polys.is_empty() || spacing_m <= 0.0 {
         return vec![];
     }
 
-    let mut min_lat = f64::MAX;
-    let mut max_lat = f64::MIN;
-    let mut min_lon = f64::MAX;
-    let mut max_lon = f64::MIN;
-    for &(lat, lon) in &coords {
-        if lat < min_lat {
-            min_lat = lat;
-        }
-        if lat > max_lat {
-            max_lat = lat;
-        }
-        if lon < min_lon {
-            min_lon = lon;
-        }
-        if lon > max_lon {
-            max_lon = lon;
-        }
-    }
+    let (min_lat, max_lat, min_lon, max_lon) = outer_ring_bbox(&polys);
 
     let samples = samples_per_axis.max(1);
     let mid_lat = (min_lat + max_lat) / 2.0;
@@ -321,11 +265,7 @@ pub fn wkb_area_grid_points(
                 for sx in 0..samples {
                     let xoff = ((sx as f64 + 0.5) / samples as f64 - 0.5) * lon_step;
                     let sample_lon = lon + xoff;
-                    if point_in_polygon(sample_lat, sample_lon, &coords)
-                        && !holes
-                            .iter()
-                            .any(|h| point_in_polygon(sample_lat, sample_lon, h))
-                    {
+                    if point_in_any_polygon(sample_lat, sample_lon, &polys) {
                         count += 1;
                         sum_lat += sample_lat;
                         sum_lon += sample_lon;
@@ -345,8 +285,7 @@ pub fn wkb_area_grid_points(
     }
 
     if points.is_empty() {
-        let clat = coords.iter().map(|c| c.0).sum::<f64>() / coords.len() as f64;
-        let clon = coords.iter().map(|c| c.1).sum::<f64>() / coords.len() as f64;
+        let (clat, clon) = footprint_centroid(&polys);
         points.push(AreaGridPoint {
             lat: clat,
             lon: clon,
@@ -357,28 +296,31 @@ pub fn wkb_area_grid_points(
     points
 }
 
-/// Parse WKB with inner rings (holes). Returns (outer_ring, vec_of_holes).
-pub(crate) fn parse_wkb_polygon_with_holes(
-    wkb_hex: &str,
-) -> Option<(Vec<(f64, f64)>, Vec<Vec<(f64, f64)>>)> {
+/// One parsed WKB sub-polygon: outer ring + inner rings (holes), each `(lat, lon)`.
+pub(crate) type WkbPoly = (Vec<(f64, f64)>, Vec<Vec<(f64, f64)>>);
+
+/// Parse a WKB-hex Polygon (type 3) or MultiPolygon (type 6) into ALL its
+/// sub-polygons, each `(outer ring, holes)`. Empty vec on invalid/unsupported WKB.
+///
+/// A MultiPolygon yields EVERY part. The prior single-polygon parser read only the
+/// first sub-polygon, so a multi-part industrial site (or building) had its whole
+/// rescaled area-weighted emission collapsed onto part 1's footprint — energy was
+/// conserved but spatially wrong.
+pub(crate) fn parse_wkb_polygons(wkb_hex: &str) -> Vec<WkbPoly> {
     if wkb_hex.len() < 18 {
-        return None;
+        return Vec::new();
     }
     let bytes: Vec<u8> = (0..wkb_hex.len())
         .step_by(2)
-        .filter_map(|i| u8::from_str_radix(&wkb_hex[i..i + 2], 16).ok())
+        // `.get` (not `&wkb_hex[..]`) so an odd-length hex string can't panic on the
+        // final 1-char slice.
+        .filter_map(|i| wkb_hex.get(i..i + 2).and_then(|s| u8::from_str_radix(s, 16).ok()))
         .collect();
     if bytes.len() < 9 {
-        return None;
+        return Vec::new();
     }
 
     let le = bytes[0] == 1;
-    let wkb_type = if le {
-        u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
-    } else {
-        u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
-    };
-
     let read_u32 = |off: usize| -> u32 {
         if off + 4 > bytes.len() {
             return 0;
@@ -402,157 +344,120 @@ pub(crate) fn parse_wkb_polygon_with_holes(
         }
     };
 
-    let ring_start = match wkb_type {
-        3 => 5,
+    match read_u32(1) {
+        3 => parse_one_polygon(&bytes, 5, &read_u32, &read_f64)
+            .map(|(poly, _)| vec![poly])
+            .unwrap_or_default(),
         6 => {
-            if bytes.len() < 14 {
-                return None;
+            let num_polys = read_u32(5) as usize;
+            let mut polys = Vec::new();
+            let mut off = 9;
+            for _ in 0..num_polys {
+                // Each sub-polygon: byte-order(1) + type(4), then its rings.
+                if off + 5 > bytes.len() {
+                    break;
+                }
+                off += 5;
+                match parse_one_polygon(&bytes, off, &read_u32, &read_f64) {
+                    Some((poly, new_off)) => {
+                        polys.push(poly);
+                        off = new_off;
+                    }
+                    None => break,
+                }
             }
-            14
+            polys
         }
-        _ => return None,
-    };
-
-    if ring_start + 4 > bytes.len() {
-        return None;
+        _ => Vec::new(),
     }
-    let num_rings = read_u32(ring_start) as usize;
-    if num_rings == 0 {
-        return None;
-    }
-
-    // Parse outer ring
-    let mut off = ring_start + 4;
-    if off + 4 > bytes.len() {
-        return None;
-    }
-    let num_points = read_u32(off) as usize;
-    off += 4;
-    if num_points < 3 || off + num_points * 16 > bytes.len() {
-        return None;
-    }
-
-    let mut outer = Vec::with_capacity(num_points);
-    for _ in 0..num_points {
-        let lon = read_f64(off);
-        let lat = read_f64(off + 8);
-        outer.push((lat, lon));
-        off += 16;
-    }
-
-    // Parse inner rings (holes)
-    let mut holes = Vec::new();
-    for _ in 1..num_rings {
-        if off + 4 > bytes.len() {
-            break;
-        }
-        let rp = read_u32(off) as usize;
-        off += 4;
-        if rp < 3 || off + rp * 16 > bytes.len() {
-            off += rp * 16;
-            continue;
-        }
-        let mut hole = Vec::with_capacity(rp);
-        for _ in 0..rp {
-            let lon = read_f64(off);
-            let lat = read_f64(off + 8);
-            hole.push((lat, lon));
-            off += 16;
-        }
-        holes.push(hole);
-    }
-
-    Some((outer, holes))
 }
 
-/// Parse WKB hex into outer ring coordinates as Vec<(lat, lon)>.
-/// Reuses same parsing logic as ring_area_offset (proven to work for area calculation).
-pub(crate) fn parse_wkb_polygon_coords(wkb_hex: &str) -> Option<Vec<(f64, f64)>> {
-    if wkb_hex.len() < 18 {
+/// Parse one polygon's rings (outer + holes) starting at its ring-count offset;
+/// returns the polygon and the offset just past its last ring. Rings with <3 points
+/// are dropped but still advance the offset, so MultiPolygon iteration stays in sync.
+fn parse_one_polygon(
+    bytes: &[u8],
+    start: usize,
+    read_u32: &dyn Fn(usize) -> u32,
+    read_f64: &dyn Fn(usize) -> f64,
+) -> Option<(WkbPoly, usize)> {
+    if start + 4 > bytes.len() {
         return None;
     }
-
-    let bytes: Vec<u8> = (0..wkb_hex.len())
-        .step_by(2)
-        .filter_map(|i| u8::from_str_radix(&wkb_hex[i..i + 2], 16).ok())
-        .collect();
-    if bytes.len() < 9 {
+    let num_rings = read_u32(start) as usize;
+    // Bound the ring count by the bytes left (>=4 per ring) BEFORE allocating — an
+    // attacker-controlled u32 count would otherwise request a ~100 GB Vec. Division
+    // (not `num_rings * 4`) avoids overflow on 32-bit targets.
+    if num_rings == 0 || num_rings > (bytes.len() - start) / 4 {
         return None;
     }
-
-    let le = bytes[0] == 1;
-    let wkb_type = if le {
-        u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
-    } else {
-        u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
-    };
-
-    let read_u32 = |off: usize| -> u32 {
+    let mut off = start + 4;
+    let mut rings: Vec<Vec<(f64, f64)>> = Vec::with_capacity(num_rings);
+    for _ in 0..num_rings {
         if off + 4 > bytes.len() {
-            return 0;
+            return None;
         }
-        if le {
-            u32::from_le_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]])
-        } else {
-            u32::from_be_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]])
+        let np = read_u32(off) as usize;
+        off += 4;
+        // Same bound for the point count (16 bytes/point), overflow-safe.
+        if np > (bytes.len() - off) / 16 {
+            return None;
         }
-    };
-    let read_f64 = |off: usize| -> f64 {
-        if off + 8 > bytes.len() {
-            return 0.0;
+        let mut ring = Vec::with_capacity(np);
+        for _ in 0..np {
+            let lon = read_f64(off);
+            let lat = read_f64(off + 8);
+            ring.push((lat, lon));
+            off += 16;
         }
-        let mut b = [0u8; 8];
-        b.copy_from_slice(&bytes[off..off + 8]);
-        if le {
-            f64::from_le_bytes(b)
-        } else {
-            f64::from_be_bytes(b)
-        }
-    };
-
-    // Handle both Polygon (3) and MultiPolygon (6) — use first polygon's outer ring
-    let ring_start = match wkb_type {
-        3 => 5, // byte_order(1) + type(4) → rings start at 5
-        6 => {
-            // MultiPolygon: skip to first sub-polygon
-            // 5=num_polys, then first sub-polygon has byte_order(1)+type(4)+rings
-            if bytes.len() < 14 {
-                return None;
-            }
-            5 + 4 + 1 + 4 // skip num_polys(4) + sub byte_order(1) + sub type(4) = offset 14
-        }
-        _ => return None,
-    };
-
-    if ring_start + 4 > bytes.len() {
+        rings.push(ring);
+    }
+    let mut iter = rings.into_iter();
+    let outer = iter.next()?;
+    if outer.len() < 3 {
         return None;
     }
-    let num_rings = read_u32(ring_start) as usize;
-    if num_rings == 0 {
-        return None;
-    }
+    let holes: Vec<Vec<(f64, f64)>> = iter.filter(|r| r.len() >= 3).collect();
+    Some(((outer, holes), off))
+}
 
-    let pts_off = ring_start + 4;
-    if pts_off + 4 > bytes.len() {
-        return None;
-    }
-    let num_points = read_u32(pts_off) as usize;
-    if num_points < 3 {
-        return None;
-    }
+/// True if `(lat, lon)` is inside ANY sub-polygon's outer ring and outside that
+/// sub-polygon's holes.
+pub(crate) fn point_in_any_polygon(lat: f64, lon: f64, polys: &[WkbPoly]) -> bool {
+    polys.iter().any(|(outer, holes)| {
+        point_in_polygon(lat, lon, outer) && !holes.iter().any(|h| point_in_polygon(lat, lon, h))
+    })
+}
 
-    let coord_off = pts_off + 4;
-    if coord_off + num_points * 16 > bytes.len() {
-        return None;
+/// Bounding box `(min_lat, max_lat, min_lon, max_lon)` over every sub-polygon's
+/// outer ring. Caller guarantees `polys` is non-empty.
+fn outer_ring_bbox(polys: &[WkbPoly]) -> (f64, f64, f64, f64) {
+    let (mut min_lat, mut max_lat) = (f64::MAX, f64::MIN);
+    let (mut min_lon, mut max_lon) = (f64::MAX, f64::MIN);
+    for (outer, _) in polys {
+        for &(lat, lon) in outer {
+            min_lat = min_lat.min(lat);
+            max_lat = max_lat.max(lat);
+            min_lon = min_lon.min(lon);
+            max_lon = max_lon.max(lon);
+        }
     }
+    (min_lat, max_lat, min_lon, max_lon)
+}
 
-    let mut coords = Vec::with_capacity(num_points);
-    for i in 0..num_points {
-        let lon = read_f64(coord_off + i * 16);
-        let lat = read_f64(coord_off + i * 16 + 8);
-        coords.push((lat, lon));
+/// Mean vertex over every sub-polygon's outer ring — the fallback point when the
+/// grid samples nothing (a polygon too small to catch a grid line).
+fn footprint_centroid(polys: &[WkbPoly]) -> (f64, f64) {
+    let (mut slat, mut slon, mut n) = (0.0f64, 0.0f64, 0usize);
+    for (outer, _) in polys {
+        for &(lat, lon) in outer {
+            slat += lat;
+            slon += lon;
+            n += 1;
+        }
     }
-    Some(coords)
+    let n = n.max(1) as f64;
+    (slat / n, slon / n)
 }
 
 /// Ray-casting point-in-polygon test.
@@ -575,9 +480,102 @@ pub(crate) fn point_in_polygon(lat: f64, lon: f64, poly: &[(f64, f64)]) -> bool 
 mod tests {
     use super::*;
 
+    /// Little-endian WKB Polygon (type 3) hex from rings of `(lat, lon)` points.
+    fn polygon_wkb(rings: &[&[(f64, f64)]]) -> String {
+        let mut b = vec![1u8];
+        b.extend_from_slice(&3u32.to_le_bytes());
+        b.extend_from_slice(&(rings.len() as u32).to_le_bytes());
+        for ring in rings {
+            b.extend_from_slice(&(ring.len() as u32).to_le_bytes());
+            for &(lat, lon) in *ring {
+                b.extend_from_slice(&lon.to_le_bytes());
+                b.extend_from_slice(&lat.to_le_bytes());
+            }
+        }
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    /// Little-endian WKB MultiPolygon (type 6) hex from sub-polygons (each a slice
+    /// of rings of `(lat, lon)` points).
+    fn multipolygon_wkb(polys: &[&[&[(f64, f64)]]]) -> String {
+        let mut b = vec![1u8];
+        b.extend_from_slice(&6u32.to_le_bytes());
+        b.extend_from_slice(&(polys.len() as u32).to_le_bytes());
+        for poly in polys {
+            b.push(1u8);
+            b.extend_from_slice(&3u32.to_le_bytes());
+            b.extend_from_slice(&(poly.len() as u32).to_le_bytes());
+            for ring in *poly {
+                b.extend_from_slice(&(ring.len() as u32).to_le_bytes());
+                for &(lat, lon) in *ring {
+                    b.extend_from_slice(&lon.to_le_bytes());
+                    b.extend_from_slice(&lat.to_le_bytes());
+                }
+            }
+        }
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
     #[test]
     fn test_invalid_wkb() {
         assert_eq!(wkb_area_m2(""), None);
         assert_eq!(wkb_area_m2("0102"), None);
+        assert!(parse_wkb_polygons("").is_empty());
+        assert!(parse_wkb_polygons("0102").is_empty());
+    }
+
+    #[test]
+    fn single_polygon_samples_inside_bbox() {
+        let sq: &[(f64, f64)] = &[
+            (50.000, 14.000),
+            (50.000, 14.006),
+            (50.004, 14.006),
+            (50.004, 14.000),
+            (50.000, 14.000),
+        ];
+        let cells = wkb_area_grid_points(&polygon_wkb(&[sq]), 75.0, 5);
+        assert!(!cells.is_empty(), "a ~440 m square should yield grid cells");
+        for c in &cells {
+            assert!(c.area_m2 > 0.0);
+            assert!((49.999..=50.005).contains(&c.lat) && (13.999..=14.007).contains(&c.lon));
+        }
+    }
+
+    /// The MultiPolygon-collapse regression: a 2-part site must place emission in
+    /// BOTH parts. The old single-polygon parser dropped part B entirely.
+    #[test]
+    fn multipolygon_covers_all_parts() {
+        let a: &[(f64, f64)] = &[
+            (50.000, 14.000),
+            (50.000, 14.006),
+            (50.004, 14.006),
+            (50.004, 14.000),
+            (50.000, 14.000),
+        ];
+        let b: &[(f64, f64)] = &[
+            (50.000, 14.100),
+            (50.000, 14.106),
+            (50.004, 14.106),
+            (50.004, 14.100),
+            (50.000, 14.100),
+        ];
+        // parse must yield both sub-polygons.
+        assert_eq!(parse_wkb_polygons(&multipolygon_wkb(&[&[a], &[b]])).len(), 2);
+        let cells = wkb_area_grid_points(&multipolygon_wkb(&[&[a], &[b]]), 75.0, 5);
+        assert!(cells.iter().any(|c| c.lon < 14.05), "no cells in part A");
+        assert!(
+            cells.iter().any(|c| c.lon > 14.05),
+            "no cells in part B — MultiPolygon collapsed to the first part"
+        );
+    }
+
+    #[test]
+    fn malformed_wkb_no_panic() {
+        // Polygon header claiming u32::MAX rings — must reject before allocating, not OOM.
+        assert!(parse_wkb_polygons("0103000000ffffffff").is_empty());
+        // u32::MAX point count in the first ring.
+        assert!(parse_wkb_polygons("010300000001000000ffffffff").is_empty());
+        // Odd-length hex must not panic on the final 1-char slice.
+        assert!(parse_wkb_polygons("0103000000ffffffffa").is_empty());
     }
 }
