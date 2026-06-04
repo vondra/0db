@@ -14,10 +14,21 @@ heatmap-aircraft = { path = "../heatmap-aircraft" }
 noise-compute = { path = "../noise-compute" }
 h3o = "0.7"
 anyhow = "1"
+rayon = "1"
+
+[lib]
+name = "noise_gpu"
+path = "src/lib.rs"
 
 [[bin]]
 name = "noise-gpu-smoke"
 path = "src/main.rs"
+
+# Production batch runner: build a tile block's rail HM3 on the GPU (shared halo
+# + binned kernel), validate vs baseline / write output, report throughput.
+[[bin]]
+name = "gpu-surface"
+path = "src/gpu_surface.rs"
 
 # E2a: reproduce one rail tile on CPU via the engine lib, diff vs the baseline —
 # validates the host plumbing before the GPU kernel slots into the same harness.

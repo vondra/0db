@@ -17,16 +17,15 @@ use cudarc::nvrtc::Ptx;
 use h3o::CellIndex;
 use heatmap_aircraft::accumulator::TileAccumulator;
 use heatmap_aircraft::region_runner::tile_centre_r4;
-use heatmap_aircraft::source_line::LineRow;
 use heatmap_aircraft::source_loader_rail::RailData;
 use heatmap_aircraft::wire_hm3::{collapse_lden_surface_u8, read_tile};
 use noise_compute::constants::{ALPHA_ATM, A_WEIGHTING, GROUND_CF};
 use noise_compute::propagation::geo::{finite_line_correction, point_to_segment_full};
 use noise_compute::propagation::iso9613::fast_exp_f64;
 use noise_compute::propagation::path_effects;
-use noise_compute::propagation::path_profile::path_dist_m;
 use noise_compute::propagation::PathProfile;
 use noise_compute::types::{Barrier, RasterSampler};
+use noise_gpu::{build_pixel_bins, BIN_W, N_BINS};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch};
 use raster_reader::RealRasters;
 
@@ -40,75 +39,6 @@ const UB_SAFETY: f64 = 1.0001;
 
 fn env(k: &str, d: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| d.to_string())
-}
-
-const BIN_W: usize = 8;
-const BIN_TILES: usize = TILE_PX / BIN_W;
-const N_BINS: usize = BIN_TILES * BIN_TILES;
-
-/// CSR source bins: per 8×8 pixel block, the rail-source indices whose reach can
-/// intersect that block — conservative (the exact per-pixel cull still runs on the
-/// GPU), in ORIGINAL source order (budget-skip parity). The GPU's pixel-major
-/// analogue of the CPU's per-source reach-box: it avoids scanning all sources per
-/// pixel (the big lever — ~4400 candidates/dense block, ~2/rural, not all 58k).
-struct PixelBins {
-    offsets: Vec<i32>,
-    indices: Vec<i32>,
-    avg_sources: f64,
-    max_sources: usize,
-}
-
-fn build_pixel_bins(
-    tile: &raster_reader::fused_tile_z13::FusedTileZ13,
-    rail: &[LineRow],
-) -> PixelBins {
-    // Block centre + radius (centre→furthest corner) for each 8×8 patch.
-    let mut centres = Vec::with_capacity(N_BINS);
-    for by in 0..BIN_TILES {
-        for bx in 0..BIN_TILES {
-            let (py0, py1) = (by * BIN_W, by * BIN_W + BIN_W - 1);
-            let (px0, px1) = (bx * BIN_W, bx * BIN_W + BIN_W - 1);
-            let lat = 0.5 * (tile.rx_lat[py0] + tile.rx_lat[py1]);
-            let lon = 0.5 * (tile.rx_lon[px0] + tile.rx_lon[px1]);
-            let radius = [
-                (tile.rx_lat[py0], tile.rx_lon[px0]),
-                (tile.rx_lat[py0], tile.rx_lon[px1]),
-                (tile.rx_lat[py1], tile.rx_lon[px0]),
-                (tile.rx_lat[py1], tile.rx_lon[px1]),
-            ]
-            .into_iter()
-            .map(|(clat, clon)| path_dist_m(lat, lon, clat, clon))
-            .fold(0.0, f64::max);
-            centres.push((lat, lon, radius));
-        }
-    }
-    // A source lands in a bin if its distance to the block centre ≤ reach + radius
-    // (so it could reach SOME pixel in the block). Conservative ⇒ correct.
-    let mut bins: Vec<Vec<i32>> = (0..N_BINS).map(|_| Vec::new()).collect();
-    for (si, r) in rail.iter().enumerate() {
-        for (bi, &(lat, lon, radius)) in centres.iter().enumerate() {
-            let pts =
-                point_to_segment_full(lat, lon, r.start_lat, r.start_lon, r.end_lat, r.end_lon);
-            if pts.d_endpoint_m <= r.max_distance_m + radius {
-                bins[bi].push(si as i32);
-            }
-        }
-    }
-    let (mut offsets, mut indices) = (Vec::with_capacity(N_BINS + 1), Vec::new());
-    let (mut total, mut max_sources) = (0usize, 0usize);
-    offsets.push(0);
-    for bin in bins {
-        total += bin.len();
-        max_sources = max_sources.max(bin.len());
-        indices.extend_from_slice(&bin);
-        offsets.push(indices.len() as i32);
-    }
-    PixelBins {
-        offsets,
-        indices,
-        avg_sources: total as f64 / N_BINS as f64,
-        max_sources,
-    }
 }
 
 fn main() -> Result<()> {
