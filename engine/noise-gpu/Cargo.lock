@@ -1021,7 +1021,9 @@ dependencies = [
  "cudarc",
  "h3o",
  "heatmap-aircraft",
+ "noise-compute",
  "raster-reader",
+ "rayon",
 ]
 
 [[package]]
