@@ -256,15 +256,15 @@ __device__ double dstar(const double* t, const double* prof, int n, int d_idx,
     return v > 0.0 ? v : 0.0;
 }
 
-// ---- diffraction::maekawa_bands (single edge: is_double=false ⇒ c3=1, cap 20).
-__device__ void maek_single(double delta, double dstar_v, double* bands) {
-    for (int i = 0; i < NB; i++) bands[i] = 0.0;
-    if (delta <= 0.0) return;
+// ---- diffraction::maekawa_bands (single edge: is_double=false ⇒ c3=1, cap 20). fp32.
+__device__ void maek_single(float delta, float dstar_v, float* bands) {
+    for (int i = 0; i < NB; i++) bands[i] = 0.0f;
+    if (delta <= 0.0f) return;
     for (int i = 0; i < NB; i++) {
-        double lambda = SOS / BAND_FREQ[i];
-        if (delta <= lambda * 0.25 - dstar_v) continue;
-        double a_bar = 10.0 * (double)log10f((float)(3.0 + 20.0 * delta * BAND_FREQ[i] / SOS));
-        bands[i] = fmin(a_bar, SINGLE_DIFF_CAP);
+        float lambda = (float)(SOS / BAND_FREQ[i]);
+        if (delta <= lambda * 0.25f - dstar_v) continue;
+        float a_bar = 10.0f * log10f(3.0f + 20.0f * delta * (float)BAND_FREQ[i] / (float)SOS);
+        bands[i] = fminf(a_bar, (float)SINGLE_DIFF_CAP);
     }
 }
 
@@ -273,28 +273,29 @@ __device__ void maek_single(double delta, double dstar_v, double* bands) {
 // above bare earth (0.05 / 0.5 floors). Writes 8 bands. Terrain calls it with
 // top==bare; screening with top==composite, bare==elevation.
 __device__ void single_edge_bands(const double* t, const double* top, const double* bare,
-                                  int n, double dist, double src_alt, double rcv_alt, double* out) {
-    for (int i = 0; i < NB; i++) out[i] = 0.0;
+                                  int n, double dist, double src_alt, double rcv_alt, float* out) {
+    for (int i = 0; i < NB; i++) out[i] = 0.0f;
     double src_h = fmax(src_alt - bare[0], 0.05);
     double rcv_h = fmax(rcv_alt - bare[n - 1], 0.5);
     double se = bare[0] + src_h, re = bare[n - 1] + rcv_h;
     double dsr = sqrt(dist * dist + (re - se) * (re - se));
     int idx = mdidx(t, top, n, dist, se, re, dsr);
     if (idx < 0) return;
-    double los = se + (re - se) * t[idx];
-    if (top[idx] <= los) return;
-    double dsg = t[idx] * dist, drg = (1.0 - t[idx]) * dist, tp = top[idx];
-    double d_sb = sqrt(dsg * dsg + (tp - se) * (tp - se));
-    double d_br = sqrt(drg * drg + (tp - re) * (tp - re));
-    double delta = d_sb + d_br - dsr;
-    maek_single(delta, dstar(t, bare, n, idx, dist, src_h, rcv_h), out);
+    if (top[idx] <= se + (re - se) * t[idx]) return;
+    // stable-δ in fp32 (same reformulation as mdidx); δ* stays f64 (1× per edge).
+    float distf = (float)dist, ti = (float)t[idx];
+    float dsg = ti * distf, drg = distf - dsg;
+    float dzsb = (float)(top[idx] - se), dzbr = (float)(top[idx] - re), dzsr = (float)(re - se);
+    float dsb = sqrtf(dsg * dsg + dzsb * dzsb), dbr = sqrtf(drg * drg + dzbr * dzbr);
+    float delta = dzsb * dzsb / (dsb + dsg) + dzbr * dzbr / (dbr + drg) - dzsr * dzsr / (float)(dsr + dist);
+    maek_single(delta, (float)dstar(t, bare, n, idx, dist, src_h, rcv_h), out);
 }
 
 // ---- path_effects::terrain_attenuation — bare-earth diffraction. Guard (short
 // path) + the "any sample above LoS" hill scan, then the single-edge primitive.
 __device__ void terrain_bands(const double* t, const double* prof, int n,
-                              double dist, double src_alt, double rcv_alt, double* out) {
-    for (int i = 0; i < NB; i++) out[i] = 0.0;
+                              double dist, double src_alt, double rcv_alt, float* out) {
+    for (int i = 0; i < NB; i++) out[i] = 0.0f;
     if (n < 3 || dist < 30.0) return;
     double dz_total = rcv_alt - src_alt;
     bool hill = false;
@@ -349,9 +350,10 @@ __device__ double veg_run_length(const double* t, const unsigned char* forest, i
     return total;
 }
 
-// ---- vegetation::vegetation_attenuation (per-band, capped).
-__device__ void veg_bands(double depth, double* out) {
-    for (int i = 0; i < NB; i++) out[i] = (depth <= 0.0) ? 0.0 : fmin(ALPHA_VEG[i] * depth, MAX_VEG[i]);
+// ---- vegetation::vegetation_attenuation (per-band, capped). fp32.
+__device__ void veg_bands(double depth, float* out) {
+    for (int i = 0; i < NB; i++)
+        out[i] = (depth <= 0.0) ? 0.0f : fminf((float)(ALPHA_VEG[i] * depth), (float)MAX_VEG[i]);
 }
 
 // FREE-FIELD rail scatter: geometry + cylindrical divergence + FLC + air + 8-band
@@ -462,19 +464,21 @@ extern "C" __global__ void rail(
         if (dend > sp[s*4+1]) continue;
         double salt = tile_elev(inner, elev, rows, cols, lat_min, lon_min, inv, bb, cplat, cplon) + sp[s*4+2];
         double dz = salt - ralt;
-        double dslant = fmax(sqrt(dend * dend + dz * dz), 1.0);
+        float dslant = fmaxf((float)sqrt(dend * dend + dz * dz), 1.0f);
         double fc = flc(sp[s*4], dend, fmin(fmax(frac, 0.0), 1.0));
-        double base = refl + fc - 10.0 * (double)log10f((float)(2.0 * PI_D * dslant));
-        double atm_km = dslant / 1000.0;
+        float base = (float)(refl + fc) - 10.0f * log10f(2.0f * (float)PI_D * dslant);
+        float atm_km = dslant / 1000.0f;
         const float* em = &semis[s * 24];
 
         // ---- energy-budget skip: best-case Lden (no terrain/screen/veg, max
         // ground gain) is a provable upper bound; drop if it stays within η of kept.
+        // (kept/skipped/ub stay f64 — the budget ratio needs the precision.)
         double ub = 0.0;
         for (int i = 0; i < NB; i++) {
-            double gg_ub = fmax(-GROUND_CF[i], 0.0);
+            float gg_ub = fmaxf(-(float)GROUND_CF[i], 0.0f);
             double em_lden = LDEN_W[0]*(double)em[i] + LDEN_W[1]*(double)em[8+i] + LDEN_W[2]*(double)em[16+i];
-            ub += em_lden * fexp((base - ALPHA_ATM[i] * atm_km + gg_ub + A_W[i]) * LN10 * 0.1);
+            float pdb = (base - (float)ALPHA_ATM[i] * atm_km + gg_ub + (float)A_W[i]) * (float)LN10 * 0.1f;
+            ub += em_lden * fexp((double)pdb);
         }
         ub *= UB_SAFETY;
         if (skipped + ub <= eta * kept) { skipped += ub; continue; }
@@ -489,29 +493,30 @@ extern "C" __global__ void rail(
             cover_rc(cover, rows, cols, rf, cf, &bld[i], &forr[i], &imdp[i]);
         }
 
-        // ---- path effects ----
-        double terr[NB], screen[NB], veg[NB];
+        // ---- path effects (bands in fp32) ----
+        float terr[NB], screen[NB], veg[NB];
         terrain_bands(tprof, ed, n, dend, salt, ralt, terr);
-        for (int i = 0; i < NB; i++) screen[i] = 0.0;
+        for (int i = 0; i < NB; i++) screen[i] = 0.0f;
         bool anyb = false;
         for (int i = 0; i < n; i++) if (bld[i] > 0) { anyb = true; break; }
         if (anyb && n >= 3 && dend >= 30.0) {
             for (int i = 0; i < n; i++)
                 comp[i] = ed[i] + ((tprof[i] > 0.0 && tprof[i] < 1.0) ? (double)bld[i] : 0.0);
-            double comb[NB];
+            float comb[NB];
             single_edge_bands(tprof, comp, ed, n, dend, salt, ralt, comb);
-            for (int i = 0; i < NB; i++) screen[i] = fmax(comb[i] - terr[i], 0.0);
+            for (int i = 0; i < NB; i++) screen[i] = fmaxf(comb[i] - terr[i], 0.0f);
         }
         double gimd = path_integral_imd(tprof, imdp, n, dend);
-        double ground_g = (sp[s*4+3] != 0.0) ? 0.0 : fmin(fmax(1.0 - gimd / 100.0, 0.0), 1.0);
+        float ground_g = (sp[s*4+3] != 0.0) ? 0.0f : fminf(fmaxf(1.0f - (float)(gimd / 100.0), 0.0f), 1.0f);
         veg_bands(veg_run_length(tprof, forr, n, dend), veg);
 
-        double pf[NB];
+        float pf[NB];
         for (int i = 0; i < NB; i++) {
-            double a_gr = GROUND_CF[i] * ground_g;
-            double a_bar = terr[i] + screen[i];
-            double gob = (a_bar > 0.0) ? fmax(a_gr, a_bar) : a_gr;   // barrier REPLACES ground
-            pf[i] = fexp((base - ALPHA_ATM[i] * atm_km - gob - veg[i] + A_W[i]) * LN10 * 0.1);
+            float a_gr = (float)GROUND_CF[i] * ground_g;
+            float a_bar = terr[i] + screen[i];
+            float gob = (a_bar > 0.0f) ? fmaxf(a_gr, a_bar) : a_gr;   // barrier REPLACES ground
+            float pdb = (base - (float)ALPHA_ATM[i] * atm_km - gob - veg[i] + (float)A_W[i]) * (float)LN10 * 0.1f;
+            pf[i] = (float)fexp((double)pdb);
         }
         // Per period: f32 power into the accumulator (as scatter_band), f64 into
         // kept_add (summed over periods, then one add to kept — matches scatter_band).
