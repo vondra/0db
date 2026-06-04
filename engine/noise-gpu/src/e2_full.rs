@@ -57,6 +57,9 @@ fn main() -> Result<()> {
     // baseline diff. For fast fp32 drift/perf iteration, where byte-exact-vs-CPU
     // is moot anyway.
     let gpu_only = std::env::var("NOISE_GPU_ONLY").is_ok();
+    // Swizzle tile width (must divide 256): the cache-blocking knob. 8×8 measured
+    // best on the 4060 (rays overlap most in a ~96 m tile).
+    let tw: f64 = env("NOISE_GPU_TW", "8").parse::<f64>().unwrap_or(8.0);
     let h3r4 = format!("{prepared}/{year}/h3r4");
 
     let r4 = tile_centre_r4(z, x, y).context("tile centre")?;
@@ -89,6 +92,7 @@ fn main() -> Result<()> {
         tile.bbox.west_lon,
         tile.bbox.east_lon,
         eta,
+        tw,
     ];
     let mut seg = Vec::with_capacity(nsrc * 4);
     let mut sp = Vec::with_capacity(nsrc * 4);
@@ -252,7 +256,7 @@ fn main() -> Result<()> {
     let d_rxll = dev.htod_copy(rxll).expect("rxll");
     let d_rxar = dev.htod_copy(rxar).expect("rxar");
     let mut d_out = dev.alloc_zeros::<f32>(n * 3).expect("out");
-    let block = 128u32;
+    let block: u32 = env("NOISE_GPU_BLOCK", "128").parse().unwrap_or(128);
     let cfg = LaunchConfig {
         grid_dim: ((n as u32).div_ceil(block), 1, 1),
         block_dim: (block, 1, 1),

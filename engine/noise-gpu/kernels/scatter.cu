@@ -199,20 +199,25 @@ __device__ int fill_t(double dist, double* t) {
 
 // ---- horizon::max_delta_idx — edge of largest path-length difference δ over
 // 1..n-1 among samples above the source→receiver LOS; -1 if path clear.
-// NB: kept f64 — the δ = d_sb+d_br−dsr subtraction cancels (near-equal large
-// distances); naive fp32 here drifts ~1500 cells/1 dB. fp32 needs the stable
-// reformulation δ = Σ dz²/(d+x) (next step), not a blanket cast.
+// Stable-δ in fp32: δ = d_sb+d_br−dsr rewritten as Σ dz²/(d+x) so the near-equal
+// large distances never cancel (a naive fp32 cast drifted ~1500 cells). dsg+drg
+// = dist EXACTLY via drg = dist−dsg; the LoS gate stays f64 (exact candidate
+// selection); height diffs widen exactly from the f32 profile.
 __device__ int mdidx(const double* t, const double* prof, int n,
                       double dist, double se, double re, double dsr) {
-    int best = -1; double bestd = 0.0;
+    int best = -1; float bestd = 0.0f;
+    float distf = (float)dist;
+    float dzsr = (float)(re - se);
+    float third = dzsr * dzsr / (float)(dsr + dist);
     for (int i = 1; i < n - 1; i++) {
-        double top = prof[i];
-        double los = se + (re - se) * t[i];
-        if (top <= los) continue;
-        double dsg = t[i] * dist, drg = (1.0 - t[i]) * dist;
-        double dsb = sqrt(dsg * dsg + (top - se) * (top - se));
-        double dbr = sqrt(drg * drg + (top - re) * (top - re));
-        double delta = dsb + dbr - dsr;
+        double topd = prof[i];
+        if (topd <= se + (re - se) * t[i]) continue;
+        float ti = (float)t[i];
+        float dsg = ti * distf, drg = distf - dsg;
+        float dzsb = (float)(topd - se), dzbr = (float)(topd - re);
+        float dsb = sqrtf(dsg * dsg + dzsb * dzsb);
+        float dbr = sqrtf(drg * drg + dzbr * dzbr);
+        float delta = dzsb * dzsb / (dsb + dsg) + dzbr * dzbr / (dbr + drg) - third;
         if (delta > bestd) { bestd = delta; best = i; }
     }
     return best;
@@ -428,9 +433,18 @@ extern "C" __global__ void rail(
     double lat_min = meta[2], lon_min = meta[3], inv = meta[4];
     const double* bb = &meta[5];   // north_lat, south_lat, west_lon, east_lon
     double eta = meta[9];
-    int py = pix >> 8, pxi = pix & 255;
+    // Tiled (swizzled) pixel mapping: consecutive threads fill a 16×16 pixel tile
+    // before the next, so each warp/block covers a COMPACT 2D region — its rays to a
+    // given source overlap, keeping the terrain halo L2-hot. Row-major (pix>>8,
+    // pix&255) gave each warp a 32-wide stripe whose rays fanned out. Output is
+    // identical; only the memory access pattern changes.
+    int TW = (int)meta[10], TPR = 256 / TW;   // tile width (swept; must divide 256)
+    int tl = pix / (TW * TW), it = pix % (TW * TW);
+    int py = (tl / TPR) * TW + it / TW;
+    int pxi = (tl % TPR) * TW + it % TW;
+    int opix = py * 256 + pxi;   // actual pixel index (rxar/out are pixel-indexed)
     double rlat = rxll[py], rlon = rxll[256 + pxi];
-    double ralt = rxar[pix * 2], refl = rxar[pix * 2 + 1];
+    double ralt = rxar[opix * 2], refl = rxar[opix * 2 + 1];
     float e0 = 0.0f, e1 = 0.0f, e2 = 0.0f;
     double kept = 0.0, skipped = 0.0;
     double tprof[MAXT], ed[MAXT], comp[MAXT];
@@ -513,7 +527,7 @@ extern "C" __global__ void rail(
         }
         kept += kept_add;
     }
-    out[pix * 3 + 0] = e0;
-    out[pix * 3 + 1] = e1;
-    out[pix * 3 + 2] = e2;
+    out[opix * 3 + 0] = e0;
+    out[opix * 3 + 1] = e1;
+    out[opix * 3 + 2] = e2;
 }
