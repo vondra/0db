@@ -559,6 +559,21 @@ impl FusedGrid {
         self.cols * self.rows
     }
 
+    /// Packed pixel array for the GPU backend (engine/noise-gpu) to upload as a
+    /// device-resident halo. The device kernel mirrors [`Self::lookup_fused_rc`]
+    /// over these cells; pair with [`Self::geom`] for the (lat,lon)→cell mapping.
+    #[inline]
+    pub fn pixels(&self) -> &[FusedPixel] {
+        &self.data
+    }
+
+    /// `(lat_min, lon_min, inv_cell_deg, rows, cols)` — the origin/scale a device
+    /// bilinear lookup needs: `rf = (lat − lat_min)·inv_cell_deg`, `cf` likewise.
+    #[inline]
+    pub fn geom(&self) -> (f64, f64, f64, usize, usize) {
+        (self.lat_min, self.lon_min, self.inv_cell_deg, self.rows, self.cols)
+    }
+
     /// Bilinear elevation + IMD, nearest-neighbour building + forest.
     ///
     /// Matches `RealRasters` per-raster `Interp` config: DEM bilinear, IMD

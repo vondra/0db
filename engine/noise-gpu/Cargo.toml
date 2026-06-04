@@ -24,3 +24,13 @@ path = "src/main.rs"
 [[bin]]
 name = "e2-rail"
 path = "src/e2_rail.rs"
+
+# E2b step 1: validate the device port of the halo bilinear lookup (GPU vs CPU).
+[[bin]]
+name = "e2-gpu"
+path = "src/e2_gpu.rs"
+
+# E2b step 2: validate the device free-field rail scatter (geometry + 8-band).
+[[bin]]
+name = "e2-ff"
+path = "src/e2_ff.rs"
