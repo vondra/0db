@@ -20,32 +20,14 @@ rayon = "1"
 name = "noise_gpu"
 path = "src/lib.rs"
 
-[[bin]]
-name = "noise-gpu-smoke"
-path = "src/main.rs"
-
 # Production batch runner: build a tile block's rail HM3 on the GPU (shared halo
 # + binned kernel), validate vs baseline / write output, report throughput.
 [[bin]]
 name = "gpu-surface"
 path = "src/gpu_surface.rs"
 
-# E2a: reproduce one rail tile on CPU via the engine lib, diff vs the baseline —
-# validates the host plumbing before the GPU kernel slots into the same harness.
-[[bin]]
-name = "e2-rail"
-path = "src/e2_rail.rs"
-
-# E2b step 1: validate the device port of the halo bilinear lookup (GPU vs CPU).
-[[bin]]
-name = "e2-gpu"
-path = "src/e2_gpu.rs"
-
-# E2b step 2: validate the device free-field rail scatter (geometry + 8-band).
-[[bin]]
-name = "e2-ff"
-path = "src/e2_ff.rs"
-
+# E2 acceptance: GPU-vs-CPU byte-exact parity on the full surface path. Run by
+# hand on a GPU host before a --gpu world build (see docs/dev/gpu-fp32-dda-plan.md).
 [[bin]]
 name = "e2-full"
 path = "src/e2_full.rs"

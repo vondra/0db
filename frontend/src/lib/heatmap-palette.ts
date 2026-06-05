@@ -1,11 +1,9 @@
 /**
- * dBA → RGBA palette for HM3 tile rendering.
+ * dBA → RGBA palette for the map heatmap (HM3 tile rendering).
  *
- * Mirror of the 15-stop ramp the server uses in
- * `server/src/routes/heatmap-v2.ts`. Keeping both sides in lockstep
- * matters: the HM3 frontend layer and the HM2A server-rendered PNG
- * are drawn at different zooms during the cutover and must look
- * identical at the seams.
+ * The server now serves raw HM3 byte tiles and renders no PNG, so this
+ * ramp no longer has to track a server-side palette. The 15 stops below
+ * are tuned for legibility over a light basemap (see [`STOPS`]).
  */
 
 // Aggressive opacity ramp so the heatmap is *legible* over light
@@ -31,26 +29,47 @@ const STOPS: { db: number; rgb: readonly [number, number, number]; op: number }[
 
 const NO_COLOR: [number, number, number, number] = [0, 0, 0, 0]
 
-/** Interpolated dB → [r, g, b, a] (0-255 each). */
-export function paletteColor(db: number): [number, number, number, number] {
-  if (!Number.isFinite(db)) return NO_COLOR
-  // Sub-floor cells render transparent — see [`STOPS`] header.
-  if (db < STOPS[0].db) return NO_COLOR
+/** Interpolate the STOPS ramp at `db` (caller clamps to ≥ STOPS[0].db).
+ *  Returns RGB plus the 0–1 opacity so callers take what they need. */
+function lerpStop(db: number): { rgb: [number, number, number]; op: number } {
   for (let i = 1; i < STOPS.length; i++) {
     const next = STOPS[i]
     if (db <= next.db) {
       const prev = STOPS[i - 1]
       const t = (db - prev.db) / (next.db - prev.db)
-      return [
-        Math.round(prev.rgb[0] + t * (next.rgb[0] - prev.rgb[0])),
-        Math.round(prev.rgb[1] + t * (next.rgb[1] - prev.rgb[1])),
-        Math.round(prev.rgb[2] + t * (next.rgb[2] - prev.rgb[2])),
-        Math.round(255 * (prev.op + t * (next.op - prev.op))),
-      ]
+      return {
+        rgb: [
+          Math.round(prev.rgb[0] + t * (next.rgb[0] - prev.rgb[0])),
+          Math.round(prev.rgb[1] + t * (next.rgb[1] - prev.rgb[1])),
+          Math.round(prev.rgb[2] + t * (next.rgb[2] - prev.rgb[2])),
+        ],
+        op: prev.op + t * (next.op - prev.op),
+      }
     }
   }
   const last = STOPS[STOPS.length - 1]
-  return [last.rgb[0], last.rgb[1], last.rgb[2], Math.round(last.op * 255)]
+  return { rgb: [...last.rgb], op: last.op }
+}
+
+/** Interpolated dB → [r, g, b, a] (0-255 each). Sub-floor renders transparent. */
+export function paletteColor(db: number): [number, number, number, number] {
+  if (!Number.isFinite(db)) return NO_COLOR
+  // Sub-floor cells render transparent — see [`STOPS`] header.
+  if (db < STOPS[0].db) return NO_COLOR
+  const { rgb, op } = lerpStop(db)
+  return [rgb[0], rgb[1], rgb[2], Math.round(255 * op)]
+}
+
+/**
+ * Solid `#rrggbb` at a dB level, from the SAME stops as the map heatmap —
+ * a UI swatch is then an exact legend for the map cell. Opacity is dropped
+ * (swatches are opaque); sub-floor / non-finite clamp to the lightest stop
+ * so a swatch always has a colour.
+ */
+export function paletteHex(db: number): string {
+  const clamped = Number.isFinite(db) ? Math.max(db, STOPS[0].db) : STOPS[0].db
+  const { rgb } = lerpStop(clamped)
+  return '#' + rgb.map((c) => c.toString(16).padStart(2, '0')).join('')
 }
 
 /**
