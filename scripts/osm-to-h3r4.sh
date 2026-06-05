@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
-YEAR="${DATA_YEAR:-2025}"
+YEAR="${DATA_YEAR:-2026}"  # active dataset year (.env DATA_YEAR=2026)
 DATA_ROOT="${DATA_ROOT:-$PROJECT_DIR/data}"
 RUN_SERVICE_TREE="${RUN_SERVICE_TREE:-1}"
 STAMP_ROAD_METADATA="${STAMP_ROAD_METADATA:-1}"

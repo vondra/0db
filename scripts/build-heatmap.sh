@@ -18,7 +18,7 @@
 #   ./scripts/build-heatmap.sh --combine-only                            # just rebuild total/ from existing layers
 #   ./scripts/build-heatmap.sh --source road --bbox <…> --no-combine     # build a layer, skip total/
 #
-# Env: DATA_YEAR=2025  DATA_ROOT=data  OUTPUT=$DATA_ROOT/tiles/$DATA_YEAR/heatmap-v3  ZOOM=13
+# Env: DATA_YEAR=2026  DATA_ROOT=data  OUTPUT=$DATA_ROOT/tiles/$DATA_YEAR/heatmap-v3  ZOOM=13
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

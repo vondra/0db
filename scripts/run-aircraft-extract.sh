@@ -28,7 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
-DATA_YEAR="${DATA_YEAR:-2025}"
+DATA_YEAR="${DATA_YEAR:-2026}"  # active dataset year (.env DATA_YEAR=2026)
 DATA_ROOT="${DATA_ROOT:-data}"
 # Which ADS-B network to read. adsb.lol and adsbexchange ship the identical
 # readsb trace_full TAR format, so --feed only picks the default cache path +

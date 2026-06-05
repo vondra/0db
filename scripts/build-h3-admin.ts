@@ -26,7 +26,7 @@
  *
  * Usage:
  *   cd scripts && npm i    # one-time (needs tsx)
- *   DATA_YEAR=2025 npx tsx build-h3-admin.ts
+ *   DATA_YEAR=2026 npx tsx build-h3-admin.ts
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url'
 import { cellToLatLng } from 'h3-js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const CACHE_DIR = resolve(__dirname, 'cache')
 const NE_GEOJSON = resolve(CACHE_DIR, 'ne_10m_admin_0_countries.geojson')
 const NE_URL =
