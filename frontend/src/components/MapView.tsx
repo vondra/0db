@@ -12,6 +12,7 @@ import HeatmapV3HoverTooltip from './HeatmapV3HoverTooltip'
 import CellInspectorLayer from './CellInspectorLayer'
 import MapStateSync from './MapStateSync'
 import { DEFAULT_BASEMAP, loadBasemapStyle, type BasemapId } from '../utils/basemaps'
+import { QUIET_THRESHOLD_DEFAULT } from '../hooks/useUrlState'
 import type { SelectedLocation } from './FlyToLocation'
 import type { NoiseComputeData } from '../types/noise'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -98,7 +99,7 @@ export default function MapView({
         sources={activeHeatmapSources}
         highlightGeometry={highlightGeometry ?? null}
       />
-      <QuietZonesLayer enabled={quietClustersEnabled ?? false} threshold={quietThreshold ?? 55} />
+      <QuietZonesLayer enabled={quietClustersEnabled ?? false} threshold={quietThreshold ?? QUIET_THRESHOLD_DEFAULT} />
       {/* After the heatmap + quiet overlays so the property markers (their own
           deck overlay) stack on top rather than being hidden under the heatmap. */}
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}

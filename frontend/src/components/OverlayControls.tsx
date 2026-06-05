@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { TreePine, Home } from 'lucide-react'
 import type { RealEstateFilters } from './RealEstateLayer'
+import { QUIET_THRESHOLD_MIN, QUIET_THRESHOLD_MAX } from '../hooks/useUrlState'
 
 interface OverlayControlsProps {
   quietClustersEnabled: boolean
@@ -71,7 +72,7 @@ export default function OverlayControls({
         onClick={() => onQuietClustersChange(!quietClustersEnabled)}
       />
       {quietClustersEnabled && (
-        <NoiseSlider value={quietThreshold} onChange={onQuietThresholdChange} min={40} max={65} testId="quiet-threshold" />
+        <NoiseSlider value={quietThreshold} onChange={onQuietThresholdChange} min={QUIET_THRESHOLD_MIN} max={QUIET_THRESHOLD_MAX} testId="quiet-threshold" />
       )}
 
       <ToggleRow

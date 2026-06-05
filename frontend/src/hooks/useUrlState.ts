@@ -5,6 +5,12 @@ import { HEATMAP_LAYERS } from '../components/HeatmapV3Overlay'
 const DEFAULT_LAT = 49.8
 const DEFAULT_LNG = 15.5
 const DEFAULT_ZOOM = 8
+// Quiet-zone slider: highlight pixels whose total Lden is at or below this.
+// Range targets genuinely quiet places (rural/forest), deliberately below the
+// heatmap's loud band: 0 dB (near-silence) to 50 dB (calm suburb).
+export const QUIET_THRESHOLD_MIN = 0
+export const QUIET_THRESHOLD_MAX = 50
+export const QUIET_THRESHOLD_DEFAULT = 35
 export const ALL_RASTER_OVERLAY_IDS = [
   ...HEATMAP_LAYERS,
   'dem',
@@ -36,12 +42,12 @@ export const DEFAULT_RASTER_OVERLAYS: Record<string, boolean> = {
   ...Object.fromEntries(HEATMAP_LAYERS.map(id => [id, true])),
 }
 
-// Quiet-zone threshold, clamped to the slider's 40–65 dB range. A malformed
-// `qt` (NaN) would otherwise make `byte > maxByte` always false downstream and
-// paint every non-NO_DATA pixel as quiet.
+// Quiet-zone threshold, clamped to the slider's range. A malformed `qt` (NaN)
+// would otherwise make `byte > maxByte` always false downstream and paint every
+// non-NO_DATA pixel as quiet.
 function parseQuietThreshold(raw: string | null): number {
   const n = raw == null ? NaN : parseInt(raw, 10)
-  return Number.isFinite(n) ? Math.min(65, Math.max(40, n)) : 55
+  return Number.isFinite(n) ? Math.min(QUIET_THRESHOLD_MAX, Math.max(QUIET_THRESHOLD_MIN, n)) : QUIET_THRESHOLD_DEFAULT
 }
 
 function parseHash(): UrlState {
@@ -52,7 +58,7 @@ function parseHash(): UrlState {
       lng: DEFAULT_LNG,
       zoom: DEFAULT_ZOOM,
       quietClusters: false,
-      quietThreshold: 55,
+      quietThreshold: QUIET_THRESHOLD_DEFAULT,
       detailPosition: null,
       basemap: DEFAULT_BASEMAP,
       rasterOverlays: { ...DEFAULT_RASTER_OVERLAYS },
@@ -119,7 +125,7 @@ export function buildHash(state: {
 
   if (state.quietClusters) {
     parts.push('qc=1')
-    if (state.quietThreshold != null && state.quietThreshold !== 55) parts.push(`qt=${state.quietThreshold}`)
+    if (state.quietThreshold != null && state.quietThreshold !== QUIET_THRESHOLD_DEFAULT) parts.push(`qt=${state.quietThreshold}`)
   }
 
   if (state.detailPosition) {

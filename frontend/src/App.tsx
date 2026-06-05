@@ -10,7 +10,7 @@ import MobileDetailSheet from './components/MobileDetailSheet'
 import BasemapBar from './components/BasemapBar'
 import PropertyCard from './components/PropertyCard'
 import FloatingCard from './components/FloatingCard'
-import { useUrlState, EMPTY_RASTER_OVERLAYS } from './hooks/useUrlState'
+import { useUrlState, EMPTY_RASTER_OVERLAYS, QUIET_THRESHOLD_DEFAULT } from './hooks/useUrlState'
 import type { SelectedLocation } from './components/FlyToLocation'
 import type { RealEstateFilters, Property } from './components/RealEstateLayer'
 import type { NoiseComputeData } from './types/noise'
@@ -41,7 +41,7 @@ export default function App() {
   const [noiseDetailError, setNoiseDetailError] = useState<string | null>(null)
   const [highlightGeometry, setHighlightGeometry] = useState<any | null>(null)
   const [quietClustersEnabled, setQuietClustersEnabled] = useState(initial.quietClusters)
-  const [quietThreshold, setQuietThreshold] = useState(initial.quietThreshold ?? 55)
+  const [quietThreshold, setQuietThreshold] = useState(initial.quietThreshold ?? QUIET_THRESHOLD_DEFAULT)
   const [basemap, setBasemap] = useState<BasemapId>(initial.basemap ?? DEFAULT_BASEMAP)
   const [realEstateFilters, setRealEstateFilters] = useState<RealEstateFilters>({
     enabled: false, propertyType: 'all', listingType: 'all', maxNoise: 60,
