@@ -895,6 +895,10 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
     : ''
 
   const [tab, setTab] = useState<PopupTab>('sources')
+  // Mount the (up to 8000-row) Segments list only after its tab is first
+  // visited — opening the popup on Sources must not pay to build it. Once
+  // mounted it stays (display toggle) so per-row expanded state survives.
+  const [segmentsMounted, setSegmentsMounted] = useState(false)
   const [fullSegments, setFullSegments] = useState<{
     segments: NoiseComputeData['segments']
     meta: NoiseComputeData['segments_meta']
@@ -957,7 +961,7 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
               active={tab}
               sourceCount={data.top_contributors.length}
               segmentCount={segmentsTotal}
-              onChange={setTab}
+              onChange={(t) => { setTab(t); if (t === 'segments') setSegmentsMounted(true) }}
             />
           ) : (
             <div className="border-b border-border pb-0.5 mb-0.5">
@@ -967,7 +971,9 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
             </div>
           )}
           <div className="overflow-y-auto" style={{ maxHeight: 'max(100dvh - 400px, 160px)' }}>
-            {/* Both tabs stay mounted so per-row state (expanded) survives tab switches. */}
+            {/* Sources is always mounted; Segments mounts lazily (below) on first
+                visit. Once mounted, both toggle via display so expanded-row state
+                survives tab switches. */}
             <div style={{ display: showSegments ? 'none' : 'block' }}>
               {(maxSources ? data.top_contributors.slice(0, maxSources) : data.top_contributors).map((c, i) => (
                 <ContributorRow key={`${c.source_type}-${c.osm_id}-${i}`} c={c} onToggle={onHighlight} />
@@ -985,7 +991,7 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
                 </div>
               )}
             </div>
-            {hasSegmentsTab && (
+            {hasSegmentsTab && segmentsMounted && (
               <div style={{ display: showSegments ? 'block' : 'none' }}>
                 <SegmentList
                   segments={displaySegments}
