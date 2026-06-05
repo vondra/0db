@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { TreePine, Home } from 'lucide-react'
 import type { RealEstateFilters } from './RealEstateLayer'
 import { QUIET_THRESHOLD_MIN, QUIET_THRESHOLD_MAX, QUIET_THRESHOLD_STEP } from '../hooks/useUrlState'
+import { Switch } from './ui/switch'
 
 interface OverlayControlsProps {
   quietClustersEnabled: boolean
@@ -23,13 +24,7 @@ function ToggleRow({ active, icon, label, tooltip, onClick }: {
     >
       <span className={active ? 'text-foreground' : 'text-muted-foreground'}>{icon}</span>
       <span className={`flex-1 text-left text-sm ${active ? 'text-foreground' : 'text-muted-foreground'}`}>{label}</span>
-      <span className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-        active ? 'bg-primary' : 'bg-muted-foreground/20'
-      }`}>
-        <span className={`inline-block size-3.5 rounded-full bg-white shadow-sm transition-transform ${
-          active ? 'translate-x-[18px]' : 'translate-x-[3px]'
-        }`} />
-      </span>
+      <Switch on={active} />
     </button>
   )
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, Mountain, Building, TreePine, Shield } from 'lucide-react'
+import { Switch } from './ui/switch'
 
 const OVERLAYS = [
   { id: 'dem', label: 'Elevation', tooltip: 'DEM terrain elevation — hills, valleys, ridges (30m)', icon: <Mountain className="size-3.5" /> },
@@ -43,13 +44,7 @@ export default function AdvancedSection({ rasterOverlays, onRasterOverlayChange 
                 <span className={`flex-1 text-left text-xs ${active ? 'text-foreground' : 'text-muted-foreground'}`}>
                   {overlay.label}
                 </span>
-                <span className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
-                  active ? 'bg-primary' : 'bg-muted-foreground/20'
-                }`}>
-                  <span className={`inline-block size-3 rounded-full bg-white shadow-sm transition-transform ${
-                    active ? 'translate-x-[14px]' : 'translate-x-[2px]'
-                  }`} />
-                </span>
+                <Switch on={active} size="sm" />
               </button>
             )
           })}

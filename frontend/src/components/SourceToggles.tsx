@@ -1,6 +1,7 @@
 import { Car, TrainFront, Plane, Building2, Factory } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { HeatmapLayer } from './HeatmapV3Overlay'
+import { Switch } from './ui/switch'
 
 interface LayerRow {
   id: HeatmapLayer
@@ -47,13 +48,7 @@ function OnOffRow({ id, label, tooltip, icon, active, onToggle }: OnOffRowProps)
     >
       <span className={tone}>{icon}</span>
       <span className={`flex-1 text-left text-sm ${tone}`}>{label}</span>
-      <span className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-        active ? 'bg-primary' : 'bg-muted-foreground/20'
-      }`}>
-        <span className={`inline-block size-3.5 rounded-full bg-white shadow-sm transition-transform ${
-          active ? 'translate-x-[18px]' : 'translate-x-[3px]'
-        }`} />
-      </span>
+      <Switch on={active} />
     </button>
   )
 }
