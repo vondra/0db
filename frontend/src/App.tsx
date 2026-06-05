@@ -245,7 +245,7 @@ function MapApp() {
       {!layersOpen && (
         <button
           onClick={() => { setLayersOpen(true); setNoiseDetailData(null); handleDetailPositionChange(null) }}
-          className="fixed bottom-[16px] right-[10px] z-[1003] flex h-[29px] w-[29px] items-center justify-center rounded-lg bg-white md:hidden"
+          className="fixed bottom-[16px] right-[10px] z-[1003] flex h-11 w-11 items-center justify-center rounded-lg bg-white md:hidden"
           style={{ boxShadow: '0 0 0 2px rgba(0,0,0,.1)' }}
           aria-label="Toggle layers panel"
         >

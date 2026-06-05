@@ -966,7 +966,7 @@ export function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetai
               </span>
             </div>
           )}
-          <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 400px)' }}>
+          <div className="overflow-y-auto" style={{ maxHeight: 'max(100dvh - 400px, 160px)' }}>
             {/* Both tabs stay mounted so per-row state (expanded) survives tab switches. */}
             <div style={{ display: showSegments ? 'none' : 'block' }}>
               {(maxSources ? data.top_contributors.slice(0, maxSources) : data.top_contributors).map((c, i) => (

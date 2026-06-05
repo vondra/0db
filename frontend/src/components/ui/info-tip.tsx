@@ -166,7 +166,7 @@ export function HoverText({
             // "Polish Trains unified GTFS (Kuranowski/PKP PLK) (2025) · CC-BY-4.0"
             // (~74 chars at 11 px monospace ≈ 490 px) without wrapping.
             maxWidth: "min(34rem, calc(100vw - 16px))",
-            maxHeight: `calc(100vh - 16px)`,
+            maxHeight: `calc(100dvh - 16px)`,
             overflow: "auto",
           }}
           className="rounded-md bg-zinc-900/95 text-zinc-50 border border-zinc-700/60 shadow-xl px-3 py-2"

@@ -20,7 +20,9 @@ const ICONS: Record<BasemapId, React.ReactNode> = {
   ),
 }
 
-const BTN = 'flex items-center justify-center w-[29px] h-[29px] cursor-pointer'
+// 44 px tap target on mobile (Apple HIG min), 29 px on desktop where a mouse
+// is precise — the mobile row and the desktop column share this class.
+const BTN = 'flex items-center justify-center w-11 h-11 md:w-[29px] md:h-[29px] cursor-pointer'
 
 interface BasemapBarProps {
   basemap: BasemapId
