@@ -65,12 +65,7 @@ pub(crate) fn nearest_aerodrome_within<'a>(
         if area.airport_key.is_empty() && area.name.is_empty() {
             continue;
         }
-        let area_radius = if area.area_m2 > 0.0 {
-            (area.area_m2 as f64 / std::f64::consts::PI).sqrt()
-        } else {
-            500.0
-        };
-        let radius = NEAREST_AERODROME_FLOOR_M.max(area_radius * NEAREST_AERODROME_RADIUS_MULT);
+        let radius = aerodrome_radius_m(area);
         let dist = flat_dist(lat, lon, area.centroid_lat, area.centroid_lon);
         if dist > radius {
             continue;
@@ -82,36 +77,16 @@ pub(crate) fn nearest_aerodrome_within<'a>(
     best.map(|(a, _)| a)
 }
 
-/// True iff `(lat, lon)` lies within the centroid+radius approximation
-/// of ANY OSM aerodrome polygon — used by Stage 1.5 to drop ground
-/// vertices inside already-known airports before DBSCAN.
-///
-/// Differs from [`nearest_aerodrome_within`] in two ways:
-/// - returns bool (no identity payload — caller doesn't care which
-///   aerodrome a vertex is inside, only that it's inside ANY)
-/// - does NOT skip aerodromes with empty `airport_key`/`name` —
-///   Stage 1.5's goal is to discover airfields OSM is missing, so an
-///   unnamed-but-mapped polygon still counts as "already covered".
-pub(crate) fn point_in_any_aerodrome(
-    lat: f64,
-    lon: f64,
-    areas: &[AirportArea],
-) -> bool {
-    for area in areas {
-        if area.aeroway_type != AERODROME_AEROWAY_TYPE {
-            continue;
-        }
-        let area_radius = if area.area_m2 > 0.0 {
-            (area.area_m2 as f64 / std::f64::consts::PI).sqrt()
-        } else {
-            500.0
-        };
-        let radius = NEAREST_AERODROME_FLOOR_M.max(area_radius * NEAREST_AERODROME_RADIUS_MULT);
-        if flat_dist(lat, lon, area.centroid_lat, area.centroid_lon) <= radius {
-            return true;
-        }
-    }
-    false
+/// Centroid-radius used by the aerodrome gates: `max(6 km floor, √(area/π) × 1.5)`,
+/// with a 500 m fallback when `area_m2` is unknown. The single source of this
+/// formula so the spatial index (`airport_index`) and the naive gates can't drift.
+pub(crate) fn aerodrome_radius_m(area: &AirportArea) -> f64 {
+    let area_radius = if area.area_m2 > 0.0 {
+        (area.area_m2 as f64 / std::f64::consts::PI).sqrt()
+    } else {
+        500.0
+    };
+    NEAREST_AERODROME_FLOOR_M.max(area_radius * NEAREST_AERODROME_RADIUS_MULT)
 }
 
 fn read_batches(path: &Path) -> Result<Vec<RecordBatch>> {

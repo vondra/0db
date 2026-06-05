@@ -9,6 +9,7 @@
 //! ADS-B trajectories. Every schema stamps `schema_version =
 //! SCHEMA_VERSION` so the popup reader can refuse stale inputs.
 
+pub mod airport_index;
 pub mod airport_io;
 pub mod arrow_io;
 pub mod arrow_schemas;

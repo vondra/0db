@@ -10,6 +10,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
+use aircraft_extract::airport_index::AerodromeIndex;
 use aircraft_extract::airport_io::{read_global_airport_lines, read_global_airports};
 use aircraft_extract::arrow_io::read_record_batches;
 use aircraft_extract::progress::ts;
@@ -280,9 +281,10 @@ fn main() -> Result<()> {
                 areas.len(),
                 lines.len()
             );
+            let aerodrome_index = AerodromeIndex::build(&areas);
             let n = run_stage_airport_discover(
                 &segments_by_r4,
-                &areas,
+                &aerodrome_index,
                 &lines,
                 &h3r4_dir,
                 scope.as_ref(),
@@ -578,9 +580,12 @@ fn main() -> Result<()> {
             // current clusters so a stale strip cannot leak through.
             if from_stage <= FromStage::Stage1_5 {
                 let t1_5 = Instant::now();
+                // Grid-index the global aerodromes so the per-ground-segment gate is
+                // O(few-nearby), not O(45443) — else a mega-hub R4 is ~30 min/core.
+                let aerodrome_index = AerodromeIndex::build(&areas);
                 let r1_5 = run_stage_airport_discover(
                     &by_r4_dir,
-                    &areas,
+                    &aerodrome_index,
                     &global_lines,
                     &h3r4_dir,
                     scope.as_ref(),

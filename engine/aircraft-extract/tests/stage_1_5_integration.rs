@@ -28,6 +28,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
 
+use aircraft_extract::airport_index::AerodromeIndex;
 use aircraft_extract::arrow_io::read_airport_traffic;
 use aircraft_extract::flight::{FlightSegment, Phase};
 use aircraft_extract::stage_2c::airport_traffic_writer::run_airport_traffic;
@@ -195,7 +196,9 @@ fn stage_1_5_then_stage_2c_round_trips_synth_airport_key() {
     // cluster gets classified as SynthAirport (not Reattribute).
     let areas: Vec<noise_compute::types::AirportArea> = Vec::new();
 
-    let r1_5 = run_stage_airport_discover(&by_r4_dir, &areas, &[], h3r4_dir, None).unwrap();
+    let r1_5 =
+        run_stage_airport_discover(&by_r4_dir, &AerodromeIndex::build(&areas), &[], h3r4_dir, None)
+            .unwrap();
     assert_eq!(r1_5, 1, "Stage 1.5 should populate exactly one R4");
 
     let synth_lines_path = r4_dir.join("synth_airport_lines.arrow");
