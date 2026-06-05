@@ -412,11 +412,11 @@ extern "C" __global__ void freefield_rail(
 
 // ── One source's contribution to one receiver pixel: geometry → energy-budget
 // skip → cadence ray-march → terrain/screening/ground/veg → max(A_gr,A_bar)
-// combine → accumulate 3-period energy (f32) + kept (f64). Shared by `rail`
-// (scans all sources) and `rail_binned` (scans a block's pre-binned list). seg/sp
+// combine → accumulate 3-period energy (f32) + kept (f64). Shared by `line`
+// (scans all sources) and `line_binned` (scans a block's pre-binned list). seg/sp
 // point at THIS source's 4-tuple, em at its 24 emission bands; e0..e2/kept/skipped
 // are the caller's per-pixel running state. Returns on reach-cull or budget-skip.
-__device__ __forceinline__ void rail_source(
+__device__ __forceinline__ void line_source(
     const float* elev, const float* inner, const unsigned char* cover,
     int rows, int cols, double lat_min, double lon_min, double inv, const double* bb,
     double rlat, double rlon, double ralt, double refl, double eta,
@@ -499,11 +499,11 @@ __device__ __forceinline__ void rail_source(
 // the per-pixel energy-budget skip. Thread-per-pixel; mirrors scatter_band
 // (sources in array order, per-thread kept/skipped). Tiled (swizzled) pixel
 // mapping (meta[10]=tile width) keeps each block's rays' terrain L2-hot. Scans
-// ALL sources (reach cull is inside rail_source); `rail_binned` is the pre-binned
+// ALL sources (reach cull is inside line_source); `line_binned` is the pre-binned
 // variant. Per-period energy in f32 (matching TileAccumulator), kept in f64.
 //   meta = [rows, cols, lat_min, lon_min, inv, north, south, west, east, eta, tile_width]
 //   inner = 256×256 tile DEM; cover = halo [building,forest,imd] u8; sp = nsrc×4.
-extern "C" __global__ void rail(
+extern "C" __global__ void line(
     const float*  __restrict__ elev,
     const float*  __restrict__ inner,
     const unsigned char* __restrict__ cover,
@@ -539,7 +539,7 @@ extern "C" __global__ void rail(
     unsigned char bld[MAXT], forr[MAXT], imdp[MAXT];
 
     for (int s = 0; s < nsrc; s++)
-        rail_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
+        line_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
                     rlat, rlon, ralt, refl, eta, &seg[s * 4], &sp[s * 4], &semis[s * 24],
                     tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
     out[opix * 3 + 0] = e0;
@@ -553,9 +553,9 @@ extern "C" __global__ void rail(
 // threads = 64 pixels) and iterates only bin_indices[bin_offsets[bid] .. bid+1] —
 // the conservative source list whose reach can intersect the patch. The bin is a
 // conservative superset in ORIGINAL source order, and the exact per-pixel cull in
-// rail_source still runs, so each pixel sees exactly its reachable sources in the
+// line_source still runs, so each pixel sees exactly its reachable sources in the
 // same order ⇒ kept/skipped parity ⇒ identical output to `rail`.
-extern "C" __global__ void rail_binned(
+extern "C" __global__ void line_binned(
     const float*  __restrict__ elev,
     const float*  __restrict__ inner,
     const unsigned char* __restrict__ cover,
@@ -587,7 +587,7 @@ extern "C" __global__ void rail_binned(
     int s0 = bin_offsets[bid], s1 = bin_offsets[bid + 1];
     for (int si = s0; si < s1; si++) {
         int s = bin_indices[si];
-        rail_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
+        line_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
                     rlat, rlon, ralt, refl, eta, &seg[s * 4], &sp[s * 4], &semis[s * 24],
                     tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
     }

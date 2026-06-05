@@ -6,13 +6,13 @@ use noise_compute::propagation::geo::point_to_segment_full;
 use noise_compute::propagation::path_profile::path_dist_m;
 use raster_reader::fused_tile_z13::{FusedTileZ13, TILE_PX};
 
-/// Pixel-bin edge: an 8×8 receiver patch = one CUDA block in `rail_binned`.
+/// Pixel-bin edge: an 8×8 receiver patch = one CUDA block in `line_binned`.
 pub const BIN_W: usize = 8;
 /// Bins per axis (32) and total bins per tile (1024).
 pub const BIN_TILES: usize = TILE_PX / BIN_W;
 pub const N_BINS: usize = BIN_TILES * BIN_TILES;
 
-/// CSR source bins for `rail_binned`: per 8×8 pixel block, the rail-source indices
+/// CSR source bins for `line_binned`: per 8×8 pixel block, the line-source indices
 /// whose reach can intersect that block — conservative (the exact per-pixel cull
 /// still runs on the GPU), in ORIGINAL source order (budget-skip parity). The
 /// GPU's pixel-major analogue of the CPU's per-source reach-box: it avoids
@@ -27,7 +27,7 @@ pub struct PixelBins {
 /// Build the per-8×8-block source bins for one tile. Serial O(nsrc × N_BINS)
 /// point-to-segment; the cost is pipelinable with the GPU (bin tile N+1 while the
 /// GPU runs N) and parallelizable.
-pub fn build_pixel_bins(tile: &FusedTileZ13, rail: &[LineRow]) -> PixelBins {
+pub fn build_pixel_bins(tile: &FusedTileZ13, lines: &[LineRow]) -> PixelBins {
     // Block centre + radius (centre→furthest corner) for each 8×8 patch.
     let mut centres = Vec::with_capacity(N_BINS);
     for by in 0..BIN_TILES {
@@ -56,7 +56,7 @@ pub fn build_pixel_bins(tile: &FusedTileZ13, rail: &[LineRow]) -> PixelBins {
     let bins: Vec<Vec<i32>> = centres
         .par_iter()
         .map(|&(lat, lon, radius)| {
-            rail.iter()
+            lines.iter()
                 .enumerate()
                 .filter_map(|(si, r)| {
                     let pts = point_to_segment_full(
@@ -89,7 +89,7 @@ pub fn build_pixel_bins(tile: &FusedTileZ13, rail: &[LineRow]) -> PixelBins {
     }
 }
 
-/// Per-tile non-halo buffers packed for the `rail`/`rail_binned` kernels (the halo
+/// Per-tile non-halo buffers packed for the `line`/`line_binned` kernels (the halo
 /// elev/cover are uploaded once per batch and shared). `meta` carries the SHARED
 /// halo geom + this tile's bbox + eta + swizzle width.
 pub struct TileBuffers {
@@ -106,7 +106,7 @@ pub struct TileBuffers {
 /// of the SHARED batch halo (from `FusedGrid::geom`).
 pub fn pack_tile(
     tile: &FusedTileZ13,
-    rail: &[LineRow],
+    lines: &[LineRow],
     halo_geom: (f64, f64, f64, usize, usize),
     eta: f64,
     tw: f64,
@@ -127,11 +127,11 @@ pub fn pack_tile(
         tw,
     ];
     let (mut seg, mut sp, mut semis) = (
-        Vec::with_capacity(rail.len() * 4),
-        Vec::with_capacity(rail.len() * 4),
-        Vec::with_capacity(rail.len() * 24),
+        Vec::with_capacity(lines.len() * 4),
+        Vec::with_capacity(lines.len() * 4),
+        Vec::with_capacity(lines.len() * 24),
     );
-    for r in rail {
+    for r in lines {
         seg.extend_from_slice(&[r.start_lat, r.start_lon, r.end_lat, r.end_lon]);
         sp.extend_from_slice(&[
             r.length_m as f64,

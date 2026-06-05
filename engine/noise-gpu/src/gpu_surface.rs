@@ -1,7 +1,7 @@
 //! GPU surface heatmap batch runner for the LINE layers (road + rail) — the
 //! production wiring of the binned scatter kernel. Road and rail are both
 //! `LineRow` sources feeding the identical CNOSSOS line-source physics, so one
-//! kernel (`rail_binned`) serves both; only the loader, halo reach, and HM3
+//! kernel (`line_binned`) serves both; only the loader, halo reach, and HM3
 //! source_id differ. Builds one tile block's shared 10 km halo once, then per
 //! tile per layer: load rows, bin sources per 8×8 block, run the kernel,
 //! collapse to Lden u8, write `{output}/{layer}/13/x/y.bin` and (if a baseline
@@ -390,9 +390,9 @@ fn main() -> Result<()> {
     );
 
     let dev = CudaDevice::new(0).expect("cuda");
-    dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["rail_binned"])
+    dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["line_binned"])
         .expect("ptx");
-    let f = dev.get_func("s", "rail_binned").expect("fn");
+    let f = dev.get_func("s", "line_binned").expect("fn");
 
     let cfg = Cfg {
         z,

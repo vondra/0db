@@ -244,7 +244,7 @@ fn main() -> Result<()> {
 
     // ---- GPU ----
     let dev = CudaDevice::new(0).expect("cuda");
-    dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["rail", "rail_binned"])
+    dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["line", "line_binned"])
         .expect("ptx");
     // NOISE_GPU_BINNED → per-8×8-block source bins (the pixel-major work-reduction).
     let use_binned = std::env::var("NOISE_GPU_BINNED").is_ok();
@@ -256,7 +256,7 @@ fn main() -> Result<()> {
         );
     }
     let f = dev
-        .get_func("s", if use_binned { "rail_binned" } else { "rail" })
+        .get_func("s", if use_binned { "line_binned" } else { "line" })
         .expect("fn");
     let d_elev = dev.htod_copy(elev).expect("elev");
     let d_inner = dev.htod_copy(inner).expect("inner");
