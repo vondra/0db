@@ -113,14 +113,13 @@ struct LayerStat {
     n_tiles: usize,
 }
 
-struct Cfg<'a> {
+struct Cfg {
     z: u8,
     batch_n: u32,
     halo_m: f64,
     h3r4: PathBuf,
     baseline: String,
     output: Option<String>,
-    layers: &'a [LineLayer],
 }
 
 /// Heartbeat so a multi-block region build is observable, not a silent wait.
@@ -146,7 +145,8 @@ impl Progress {
 }
 
 /// Build one grid-aligned block's shared halo once, upload it, then compute every
-/// `(tile, layer)` in `targets` on the GPU.
+/// `(tile, layer)` in `block_tiles` on the GPU using the region's pre-loaded rows
+/// (loaded once per centre-R4 region by the caller, not re-read per tile).
 #[allow(clippy::too_many_arguments)]
 fn process_block(
     dev: &Arc<CudaDevice>,
@@ -155,7 +155,8 @@ fn process_block(
     cfg: &Cfg,
     bx: u32,
     by: u32,
-    targets: &[(u32, u32)],
+    block_tiles: &[(u32, u32)],
+    region_rows: &[(LineLayer, Vec<LineRow>)],
     stats: &mut BTreeMap<&'static str, LayerStat>,
     prog: &mut Progress,
 ) -> Result<()> {
@@ -181,23 +182,17 @@ fn process_block(
         shared_mem_bytes: 0,
     };
 
-    for &(tx, ty) in targets {
+    for &(tx, ty) in block_tiles {
         let tile = &batch.tiles[((ty - by) * cfg.batch_n + (tx - bx)) as usize];
-        let r4 = tile_centre_r4(cfg.z, tx, ty).context("tile centre")?;
-        let cell = CellIndex::try_from(r4)?;
-        let ring: Vec<u64> = cell.grid_disk::<Vec<_>>(1).into_iter().map(u64::from).collect();
-
-        for &layer in cfg.layers {
-            let tl = Instant::now();
-            let line_rows = layer.load_rows(&cfg.h3r4, &ring, cell)?;
+        for (layer, line_rows) in region_rows {
+            let layer = *layer;
             let st = stats.entry(layer.dir()).or_default();
-            st.t_load += tl.elapsed().as_secs_f64();
 
             let tb = Instant::now();
-            let bins = build_pixel_bins(tile, &line_rows);
+            let bins = build_pixel_bins(tile, line_rows);
             st.t_bins += tb.elapsed().as_secs_f64();
 
-            let bufs = pack_tile(tile, &line_rows, halo_geom, ETA, TW);
+            let bufs = pack_tile(tile, line_rows, halo_geom, ETA, TW);
             let d_inner = dev.htod_copy(bufs.inner).expect("inner");
             let d_meta = dev.htod_copy(bufs.meta).expect("meta");
             let d_seg = dev.htod_copy(bufs.seg).expect("seg");
@@ -330,9 +325,11 @@ fn main() -> Result<()> {
         let _ = admin::init_admin_table(&admin::default_admin_path(&h3r4));
     }
 
-    // Target tiles → grid-aligned blocks (one shared halo per block). Either a
-    // bbox (production region) or a single positional block (dev/bench).
-    let mut blocks: BTreeMap<(u32, u32), Vec<(u32, u32)>> = BTreeMap::new();
+    // Target tiles → grouped by centre R4 so each region's rows load ONCE
+    // (~36 tiles share an R4), not re-read per tile; each region then batches into
+    // grid-aligned halo blocks. Build `regions` directly in both modes so
+    // n_targets counts exactly the valid tiles that get built.
+    let mut regions: BTreeMap<u64, Vec<(u32, u32)>> = BTreeMap::new();
     let (blk_n, mode) = if let Some(b) = &bbox {
         let v: Vec<f64> = b.split(',').map(|s| s.parse()).collect::<Result<_, _>>()?;
         if v.len() != 4 || v[0] >= v[2] || v[1] >= v[3] {
@@ -341,11 +338,8 @@ fn main() -> Result<()> {
         let (xr, yr) = tile_range(z, v[0], v[1], v[2], v[3]);
         for ty in yr {
             for tx in xr.clone() {
-                if tile_centre_r4(z, tx, ty).is_some() {
-                    blocks
-                        .entry(((tx / batch_n) * batch_n, (ty / batch_n) * batch_n))
-                        .or_default()
-                        .push((tx, ty));
+                if let Some(r4) = tile_centre_r4(z, tx, ty) {
+                    regions.entry(r4).or_default().push((tx, ty));
                 }
             }
         }
@@ -368,24 +362,23 @@ fn main() -> Result<()> {
         if (base_x, base_y) != (bx_in, by_in) {
             eprintln!("note: snapped block origin {bx_in}/{by_in} → {base_x}/{base_y} (grid-aligned)");
         }
-        let mut tiles = Vec::new();
         for dy in 0..bn {
             for dx in 0..bn {
-                tiles.push((base_x + dx, base_y + dy));
+                if let Some(r4) = tile_centre_r4(z, base_x + dx, base_y + dy) {
+                    regions.entry(r4).or_default().push((base_x + dx, base_y + dy));
+                }
             }
         }
-        blocks.insert((base_x, base_y), tiles);
         (bn, format!("block {base_x}/{base_y} n={bn}"))
     };
-    if blocks.is_empty() {
-        bail!("no tiles to build (bbox covers no valid z{z} tiles)");
+    if regions.is_empty() {
+        bail!("no tiles to build (no valid z{z} tiles in range)");
     }
-
-    let n_targets: usize = blocks.values().map(Vec::len).sum();
+    let n_targets: usize = regions.values().map(Vec::len).sum();
     let layer_names: Vec<&str> = layers.iter().map(|l| l.dir()).collect();
     eprintln!(
-        "{mode} | {} block(s), {n_targets} tile(s), layers={:?}, halo={halo_m:.0} m, batch={blk_n}",
-        blocks.len(),
+        "{mode} | {} region(s), {n_targets} tile(s), layers={:?}, halo={halo_m:.0} m, batch={blk_n}",
+        regions.len(),
         layer_names,
     );
 
@@ -401,7 +394,6 @@ fn main() -> Result<()> {
         h3r4,
         baseline,
         output: output.clone(),
-        layers: &layers,
     };
     let mut stats: BTreeMap<&'static str, LayerStat> = BTreeMap::new();
     let mut prog = Progress {
@@ -411,8 +403,30 @@ fn main() -> Result<()> {
     };
     let rasters = RealRasters::new(Path::new(&prepared));
     let t_all = Instant::now();
-    for (&(bx, by), targets) in &blocks {
-        process_block(&dev, &f, &rasters, &cfg, bx, by, targets, &mut stats, &mut prog)?;
+    for (&r4, region_tiles) in &regions {
+        // Load every requested layer's rows ONCE for this region (grid_disk(1)).
+        let cell = CellIndex::try_from(r4)?;
+        let ring: Vec<u64> = cell.grid_disk::<Vec<_>>(1).into_iter().map(u64::from).collect();
+        let mut region_rows: Vec<(LineLayer, Vec<LineRow>)> = Vec::with_capacity(layers.len());
+        for &layer in &layers {
+            let tl = Instant::now();
+            let r = layer.load_rows(&cfg.h3r4, &ring, cell)?;
+            stats.entry(layer.dir()).or_default().t_load += tl.elapsed().as_secs_f64();
+            region_rows.push((layer, r));
+        }
+        // Batch the region's tiles into grid-aligned blocks (one shared halo each).
+        let mut blocks: BTreeMap<(u32, u32), Vec<(u32, u32)>> = BTreeMap::new();
+        for &(tx, ty) in region_tiles {
+            blocks
+                .entry(((tx / blk_n) * blk_n, (ty / blk_n) * blk_n))
+                .or_default()
+                .push((tx, ty));
+        }
+        for (&(bx, by), block_tiles) in &blocks {
+            process_block(
+                &dev, &f, &rasters, &cfg, bx, by, block_tiles, &region_rows, &mut stats, &mut prog,
+            )?;
+        }
     }
     let wall = t_all.elapsed().as_secs_f64();
 
