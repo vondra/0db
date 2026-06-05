@@ -55,7 +55,7 @@
  *   **Mining corridors**:                            light 45% / medium 8% / heavy 37% / moto 10%
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-bo.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-bo.ts
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
@@ -69,7 +69,7 @@ import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_BO_NATIONAL_ROADS
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/bo`)
 

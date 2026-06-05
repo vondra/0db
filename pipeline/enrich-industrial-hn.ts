@@ -40,7 +40,7 @@
  * HN_BBOX: [minLat=12.9, minLon=-89.4, maxLat=17.5, maxLon=-83.1]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-hn.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-hn.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

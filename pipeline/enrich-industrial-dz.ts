@@ -50,7 +50,7 @@
  *   - **Ports**: Algiers, Oran, Annaba, Arzew, Skikda, Béjaïa
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-dz.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-dz.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

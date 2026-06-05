@@ -30,7 +30,7 @@
  *     industry concentrated in Kuwait City metropolitan area
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-kw.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-kw.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

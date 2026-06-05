@@ -28,7 +28,7 @@
  * JM is an island — no neighbor-border excludes needed.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-jm.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-jm.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

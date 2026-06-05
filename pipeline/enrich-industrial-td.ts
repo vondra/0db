@@ -30,7 +30,7 @@
  *   - **~11% electrification** — one of world's lowest
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-td.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-td.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

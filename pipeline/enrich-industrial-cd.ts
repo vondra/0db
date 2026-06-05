@@ -46,7 +46,7 @@
  *       delayed; currently at ~1% of theoretical potential
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-cd.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-cd.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

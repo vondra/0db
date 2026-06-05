@@ -39,7 +39,7 @@
  *   - **Ajaokuta Steel** (largely inoperative)
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-ng.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-ng.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

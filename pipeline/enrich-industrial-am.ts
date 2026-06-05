@@ -26,7 +26,7 @@
  *   - No oil/gas production. No coal. No steel.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-am.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-am.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

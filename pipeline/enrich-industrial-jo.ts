@@ -40,7 +40,7 @@
  *   - **Dead Sea Industries** — bromine, potassium compounds, magnesium
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-jo.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-jo.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

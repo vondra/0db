@@ -8,8 +8,8 @@
  * Already in pipeline globally but not applied per-hex to US OSM turbines.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-us.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-us.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-us.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-us.ts --enrich-only
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
@@ -18,7 +18,7 @@ import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Float32 } from 'a
 import { cellToLatLng } from 'h3-js'
 import { haversineM } from './lib/spatial.js'
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const USWTDB_CSV = resolve(import.meta.dirname, `../data/enrichment/global/uswtdb.csv`)
 

@@ -21,7 +21,7 @@
  * LI_BBOX: [minLat=47.05, minLon=9.47, maxLat=47.27, maxLon=9.64]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-li.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-li.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

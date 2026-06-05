@@ -178,7 +178,7 @@ function yieldToEventLoop(): Promise<void> {
 
 async function loadAllBarriersAsync(): Promise<BarrierSegment[]> {
   if (barrierSegments) return barrierSegments
-  const h3r4Dir = join(DATA_DIR, process.env.DATA_YEAR || '2025', 'h3r4')
+  const h3r4Dir = join(DATA_DIR, process.env.DATA_YEAR || '2026', 'h3r4')
   const result: BarrierSegment[] = []
   if (!existsSync(h3r4Dir)) { barrierSegments = result; return result }
   const hexDirs = readdirSync(h3r4Dir)

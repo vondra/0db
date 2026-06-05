@@ -35,7 +35,7 @@
  * For point-based GEM plants, we use the nearest-neighbour 2km lookup.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-co.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-co.ts
  */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
@@ -47,7 +47,7 @@ import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
 import { flatDistM, inBbox, pointInRing } from './lib/spatial.js'
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/co`)
 

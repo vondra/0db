@@ -10,7 +10,7 @@
  * Output: ratio table as JSON + Rust const for heatmap-aircraft.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/calibrate-lane-ratios.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/calibrate-lane-ratios.ts
  */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
@@ -18,7 +18,7 @@ import { resolve } from 'node:path'
 import { tableFromIPC } from 'apache-arrow'
 import { SOURCES_BY_ID, PROVENANCE_RANK } from './lib/sources.js'
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 const CLASS_NAMES = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'residential', 'living_st']

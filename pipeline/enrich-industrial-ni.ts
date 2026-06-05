@@ -42,7 +42,7 @@
  * NI_BBOX: [minLat=10.7, minLon=-87.7, maxLat=15.0, maxLon=-82.6]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-ni.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-ni.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

@@ -27,7 +27,7 @@
  *   - **Albanian RTZ copper** (Rubik/Rrëshen)
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-al.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-al.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

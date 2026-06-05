@@ -11,8 +11,8 @@
  * License: CC-BY 4.0 (NZGOAL Waka Kotahi + AT)
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-nz.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-nz.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-nz.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-nz.ts --enrich-only
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync } from 'node:fs'
@@ -26,7 +26,7 @@ import { haversineM } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_NZ_NATIONAL_ROADS
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/nz`)
 const AT_AADT = resolve(CACHE_DIR, 'at-aadt.geojson')

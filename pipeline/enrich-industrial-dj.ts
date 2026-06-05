@@ -28,7 +28,7 @@
  * DJ_BBOX: [minLat=10.9, minLon=41.7, maxLat=12.8, maxLon=43.5]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-dj.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-dj.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

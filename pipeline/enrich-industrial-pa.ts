@@ -41,7 +41,7 @@
  * PA_BBOX: [minLat=7.2, minLon=-83.1, maxLat=9.7, maxLon=-77.1]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-pa.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-pa.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

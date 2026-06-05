@@ -9,9 +9,9 @@
  * Zaragoza, Malaga, Bilbao, Alicante).
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-buildings-es.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-buildings-es.ts --force-download
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-buildings-es.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-buildings-es.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-buildings-es.ts --force-download
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-buildings-es.ts --enrich-only
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, openSync, writeSync, closeSync } from 'node:fs'
@@ -28,7 +28,7 @@ import { flatDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_ES_CATASTRO
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/es`)
 const CACHE_FILE = resolve(CACHE_DIR, 'catastro-buildings.json')

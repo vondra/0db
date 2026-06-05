@@ -34,7 +34,7 @@
  * SD_BBOX: [minLat=8.7, minLon=21.8, maxLat=22.2, maxLon=38.6]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-sd.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-sd.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

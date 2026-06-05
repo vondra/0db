@@ -33,7 +33,7 @@
  * NOTE: NO RAILWAY. Oman Rail 2,135 km was planned but never built.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-om.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-om.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

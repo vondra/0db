@@ -21,7 +21,7 @@
  *   - **Wine**: Tikveš — one of Europe's largest wineries
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-mk.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-mk.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

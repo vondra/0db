@@ -11,9 +11,9 @@
  *   mkuran.pl/gtfs/wkd.zip — Warszawska Kolej Dojazdowa (suburban)
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-pl.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-pl.ts --force-download
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-pl.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-pl.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-pl.ts --force-download
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-pl.ts --enrich-only
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
@@ -29,7 +29,7 @@ import { flatDist, pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_PL_NATIONAL_RAILWAY
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/pl`)
 const CACHE_FREQUENCIES = resolve(CACHE_DIR, 'gtfs-stop-frequencies.json')

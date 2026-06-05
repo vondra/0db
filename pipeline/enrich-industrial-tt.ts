@@ -31,7 +31,7 @@
  * TT is an island pair — no neighbor-border excludes needed.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-tt.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-tt.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

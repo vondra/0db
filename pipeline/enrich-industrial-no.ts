@@ -11,9 +11,9 @@
  * License: NLOD 2.0
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-no.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-no.ts --enrich-only
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-no.ts --force-download
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-no.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-no.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-no.ts --force-download
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
@@ -22,7 +22,7 @@ import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Float32 } from 'a
 import { cellToLatLng } from 'h3-js'
 import { haversineM } from './lib/spatial.js'
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/no`)
 const CACHE_TURBINES = resolve(CACHE_DIR, 'nve-vindturbiner.json')

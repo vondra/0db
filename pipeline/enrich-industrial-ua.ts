@@ -34,7 +34,7 @@
  *     - Lysychansk refinery — DESTROYED
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-ua.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-ua.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

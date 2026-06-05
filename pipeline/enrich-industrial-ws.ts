@@ -33,7 +33,7 @@
  *   WS_BBOX: minLat=-14.1, minLon=-172.8, maxLat=-13.4, maxLon=-171.2
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-ws.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-ws.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

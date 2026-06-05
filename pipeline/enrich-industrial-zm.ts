@@ -56,7 +56,7 @@
  *   - **Chilanga Cement** (Lusaka area, Lafarge)
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-zm.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-zm.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

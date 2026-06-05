@@ -20,7 +20,7 @@
  *   - **Cement**: Myaing cement (Max Myanmar / Asia Cement)
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-mm.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-mm.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

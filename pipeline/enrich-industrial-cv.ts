@@ -21,7 +21,7 @@
  * CV_BBOX: [minLat=14.8, minLon=-25.4, maxLat=17.2, maxLon=-22.6]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-cv.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-cv.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

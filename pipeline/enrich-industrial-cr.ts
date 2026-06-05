@@ -40,7 +40,7 @@
  * CR_BBOX: [minLat=8.0, minLon=-86.0, maxLat=11.2, maxLon=-82.5]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-cr.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-cr.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

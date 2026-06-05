@@ -39,7 +39,7 @@
  * Island continent — no land border excludes needed.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-au.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-au.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

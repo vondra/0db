@@ -8,7 +8,7 @@
 //!   extract-subtypes /path/to/planet.osm.pbf > subtypes.tsv
 //!
 //! Then patch Arrow files:
-//!   DATA_YEAR=2025 npx tsx pipeline/patch-industrial-subtype.ts subtypes.tsv
+//!   DATA_YEAR=2026 npx tsx pipeline/patch-industrial-subtype.ts subtypes.tsv
 
 use osmpbf::{ElementReader, Element};
 use std::env;

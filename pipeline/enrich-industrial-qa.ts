@@ -31,7 +31,7 @@
  * north of Doha, home to LNG trains, petrochemical, GTL, power plants).
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-qa.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-qa.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

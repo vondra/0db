@@ -12,9 +12,9 @@
  *   Krad (motorcycles)               → aadt_moto    (Category 4)
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-de.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-de.ts --force-download
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-de.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-de.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-de.ts --force-download
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-de.ts --enrich-only
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
@@ -32,7 +32,7 @@ const AUTOBAHN_DATASET_ID = SOURCE_ID_DE_BAST_AUTOBAHN
 const BUNDESSTR_DATASET_ID = SOURCE_ID_DE_BAST_BUNDESSTRASSEN
 const MY_SOURCE_ID = AUTOBAHN_DATASET_ID  // default for gating; actual write picks per row
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/de`)
 const CACHE_AUTOBAHN = resolve(CACHE_DIR, 'svz-autobahnen-2021.xlsx')

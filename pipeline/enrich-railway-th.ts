@@ -27,9 +27,9 @@
  * parsed but no matches — documented in provenance.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-th.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-th.ts --force-download
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-th.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-th.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-th.ts --force-download
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-th.ts --enrich-only
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
@@ -45,7 +45,7 @@ import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_TH_NATIONAL_RAILWAY
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/th`)
 const CACHE_FREQUENCIES = resolve(CACHE_DIR, 'gtfs-stop-frequencies.json')

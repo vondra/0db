@@ -59,7 +59,7 @@ const DEFAULT_FUEL_TO_NACE = (fuel: string): number => {
 }
 
 export async function enrichGemIndustrial(args: EnrichGemArgs): Promise<void> {
-  const YEAR = process.env.DATA_YEAR || '2025'
+  const YEAR = process.env.DATA_YEAR || '2026'
   const H3R4_DIR = resolve(__dirname, `../../data/prepared/${YEAR}/h3r4`)
   const CACHE_DIR = resolve(__dirname, `../../data/enrichment/${YEAR}/${args.countryCode}`)
   const isInside = args.isInside ?? ((lat: number, lon: number) => inBbox(lat, lon, args.bbox))

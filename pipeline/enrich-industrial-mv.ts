@@ -33,7 +33,7 @@
  * MV_BBOX: [minLat=-0.7, minLon=72.6, maxLat=7.1, maxLon=73.8]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-mv.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-mv.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

@@ -6,8 +6,8 @@
  * buildings.arrow, fills missing floors and refines building_type.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-buildings-cz.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-buildings-cz.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-buildings-cz.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-buildings-cz.ts --enrich-only
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
@@ -24,7 +24,7 @@ import { flatDist } from './lib/spatial.js'
 // Define S-JTSK (EPSG:5514) projection
 proj4.defs('EPSG:5514', '+proj=krovak +lat_0=49.5 +lon_0=24.83333333333333 +alpha=30.28813975277778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel +towgs84=570.8,85.7,462.8,4.998,1.587,5.261,3.56 +units=m +no_defs')
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/cz`)
 const CACHE_FILE = resolve(CACHE_DIR, 'ruian-buildings.json')

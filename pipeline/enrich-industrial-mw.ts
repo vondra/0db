@@ -47,7 +47,7 @@
  *   - **No oil/gas industry** — Malawi has no hydrocarbons
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-mw.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-mw.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

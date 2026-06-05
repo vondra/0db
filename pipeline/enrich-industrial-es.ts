@@ -14,9 +14,9 @@
  * regions remain at OSM defaults.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-es.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-es.ts --enrich-only
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-es.ts --force-download
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-es.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-es.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-es.ts --force-download
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
@@ -26,7 +26,7 @@ import { cellToLatLng } from 'h3-js'
 import proj4 from 'proj4'
 import { haversineM } from './lib/spatial.js'
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/es`)
 const CACHE_CSV = resolve(CACHE_DIR, 'clm-aerogeneradores.csv')

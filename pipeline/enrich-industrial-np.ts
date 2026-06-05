@@ -30,7 +30,7 @@
  *   - No oil/gas/mining of significance — Nepal imports all petroleum
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-np.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-np.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

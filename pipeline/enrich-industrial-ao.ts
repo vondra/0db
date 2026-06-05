@@ -50,7 +50,7 @@
  *   - **Biocom sugar-ethanol** (Malanje) — integrated sugarcane complex
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-ao.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-ao.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

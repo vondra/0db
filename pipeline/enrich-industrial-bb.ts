@@ -31,7 +31,7 @@
  * BB_BBOX: [minLat=13.0, minLon=-59.7, maxLat=13.4, maxLon=-59.4]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-bb.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-bb.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

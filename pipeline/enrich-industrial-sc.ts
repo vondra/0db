@@ -34,7 +34,7 @@
  * SC_BBOX: [minLat=-10.2, minLon=46.2, maxLat=-3.7, maxLon=56.3]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-sc.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-sc.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

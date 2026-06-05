@@ -42,7 +42,7 @@
  *   PG_BBOX: minLat=-11.7, minLon=140.8, maxLat=-1.0, maxLon=160.0
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-pg.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-pg.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

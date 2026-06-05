@@ -36,7 +36,7 @@
  *     Niche Cocoa) — Ghana is world's 2nd largest cocoa producer after CI
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-gh.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-gh.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

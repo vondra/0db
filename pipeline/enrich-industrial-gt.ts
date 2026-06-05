@@ -45,7 +45,7 @@
  * GT_BBOX: [minLat=13.7, minLon=-92.3, maxLat=17.8, maxLon=-88.2]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-gt.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-gt.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

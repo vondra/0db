@@ -31,7 +31,7 @@
  *     218 killed, 6,000+ injured, one of largest non-nuclear industrial disasters)
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-lb.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-lb.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

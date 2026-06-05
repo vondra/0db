@@ -29,7 +29,7 @@ import { flatDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_EU_CITY_TRAFFIC
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, '../data/enrichment/global/eu-city-traffic')
 

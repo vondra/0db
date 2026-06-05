@@ -31,9 +31,9 @@
  *   rail_type=3 (narrow_gauge)                     → 40 trains/day (Palm Monorail, theme parks)
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-ae.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-ae.ts --force-download
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-railway-ae.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-ae.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-ae.ts --force-download
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-ae.ts --enrich-only
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, createReadStream, chmodSync } from 'node:fs'
@@ -49,7 +49,7 @@ import { flatDist, pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_AE_NATIONAL_RAILWAY
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/ae`)
 const CACHE_FREQUENCIES = resolve(CACHE_DIR, 'gtfs-stop-frequencies.json')

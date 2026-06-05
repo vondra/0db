@@ -40,7 +40,7 @@
  *   - **Doubly landlocked**: Uzbekistan + Liechtenstein — only 2 in the world
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-uz.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-uz.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

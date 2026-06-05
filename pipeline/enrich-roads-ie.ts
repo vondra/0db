@@ -27,9 +27,9 @@
  * The daily count is treated as AADT (typical weekday is a reasonable proxy).
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-ie.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-ie.ts --enrich-only
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-ie.ts --force-download
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-ie.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-ie.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-ie.ts --force-download
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
@@ -43,7 +43,7 @@ import { haversineM } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_IE_NATIONAL_ROADS
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/ie`)
 const CACHE_SITES_JSON = resolve(CACHE_DIR, 'tii-tmu-sites.json')

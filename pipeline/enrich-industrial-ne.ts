@@ -35,7 +35,7 @@
  *       Index; very limited formal industry outside extractives
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-ne.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-ne.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

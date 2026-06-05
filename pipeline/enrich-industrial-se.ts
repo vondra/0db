@@ -12,9 +12,9 @@
  * hub_height + rated_power_kw columns.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-se.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-se.ts --enrich-only
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-se.ts --force-download
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-se.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-se.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-se.ts --force-download
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
@@ -24,7 +24,7 @@ import { cellToLatLng } from 'h3-js'
 import shp from 'shpjs'
 import { haversineM } from './lib/spatial.js'
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/se`)
 const CACHE_ZIP = resolve(CACHE_DIR, 'vindbrukskollen.zip')

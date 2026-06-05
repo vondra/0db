@@ -36,7 +36,7 @@
  *     livestock); most consumer goods imported
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-ml.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-ml.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

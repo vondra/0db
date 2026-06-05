@@ -7,9 +7,9 @@
  *   Provincial roads (DW) AADT XLS: 3,124 segments (no geometry — matched by ref + proximity)
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-pl.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-pl.ts --enrich-only
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-pl.ts --force-download
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-pl.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-pl.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-pl.ts --force-download
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
@@ -25,7 +25,7 @@ import { haversineM } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_PL_NATIONAL_ROADS
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/pl`)
 const CACHE_NATIONAL_XLS = resolve(CACHE_DIR, 'gpr-2020-national.xls')

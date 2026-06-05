@@ -2,14 +2,14 @@
 # Re-run all measured enrichment scripts (roads + railways + buildings + industrial).
 # Parallel with limited concurrency to avoid thrashing Arrow flock.
 #
-# Usage: DATA_YEAR=2025 bash pipeline/bench/rerun-measured.sh
+# Usage: DATA_YEAR=2026 bash pipeline/bench/rerun-measured.sh
 set -uo pipefail   # NO -e: we want to continue even if one script fails
 cd "$(dirname "$0")/../.."
 
 LOG_DIR="logs/rerun-measured"
 mkdir -p "$LOG_DIR"
 
-YEAR="${DATA_YEAR:-2025}"
+YEAR="${DATA_YEAR:-2026}"
 export DATA_YEAR="$YEAR"
 JOBS="${JOBS:-6}"
 

@@ -32,7 +32,7 @@
  * BT_BBOX: [minLat=26.7, minLon=88.7, maxLat=28.4, maxLon=92.1]
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-bt.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-bt.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

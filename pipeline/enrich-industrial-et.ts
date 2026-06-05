@@ -38,7 +38,7 @@
  *   - No oil refinery (Assab refinery closed 1997 during Eritrean independence)
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-et.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-et.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

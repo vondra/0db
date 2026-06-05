@@ -22,7 +22,7 @@
  *   roughly at 71.7°W. Exclude lon > -71.7 to avoid DR territory.
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-ht.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-ht.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'

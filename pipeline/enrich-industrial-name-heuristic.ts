@@ -17,7 +17,7 @@
  *     entries (national registries, E-PRTR, GEM).
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-name-heuristic.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-name-heuristic.ts
  */
 
 import { readdirSync, existsSync } from 'node:fs'
@@ -27,7 +27,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { SOURCE_ID_INDUSTRIAL_NAME_HEURISTIC } from './lib/source-ids.generated.js'
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 const PROGRESS_INTERVAL_MS = 10_000

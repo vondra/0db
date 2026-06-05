@@ -12,8 +12,8 @@
  * Sets source_id = service-tree-heuristic registry id (heuristic estimate).
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-service-tree.ts
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-roads-service-tree.ts --prefix 841e309
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-service-tree.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-service-tree.ts --prefix 841e309
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
@@ -25,7 +25,7 @@ import { SOURCE_ID_SERVICE_TREE_HEURISTIC } from './lib/source-ids.generated.js'
 
 const MY_SOURCE_ID = SOURCE_ID_SERVICE_TREE_HEURISTIC
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const PREFIX = process.argv.includes('--prefix') ? process.argv[process.argv.indexOf('--prefix') + 1] : ''
 

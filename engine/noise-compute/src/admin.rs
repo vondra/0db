@@ -229,7 +229,7 @@ pub fn is_initialised() -> bool {
 ///
 /// Per CLAUDE.md, admin.bin is year-independent (like rasters/DEM) and lives
 /// at `data/prepared/h3r4-admin.bin`. Callers pass the year-scoped h3r4 dir
-/// (e.g. `data/prepared/2025/h3r4`); we walk up two levels to land on
+/// (e.g. `data/prepared/2026/h3r4`); we walk up two levels to land on
 /// `data/prepared`. Falls back to the immediate parent for non-year-scoped
 /// layouts (legacy / tests). Returns the first existing path; if none
 /// exists, returns the year-independent location (caller logs the

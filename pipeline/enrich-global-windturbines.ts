@@ -22,7 +22,7 @@ import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Float32 } from 'a
 import { latLngToCell } from 'h3-js'
 import { flatDist } from './lib/spatial.js'
 
-const YEAR = process.env.DATA_YEAR || '2025'
+const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, '../data/enrichment/global')
 const CACHE_CSV = resolve(CACHE_DIR, 'uswtdb.csv')

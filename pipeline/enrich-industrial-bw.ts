@@ -43,7 +43,7 @@
  *     soda ash deposit by area, mining since 1991)
  *
  * Usage:
- *   DATA_YEAR=2025 npx tsx pipeline/enrich-industrial-bw.ts
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-bw.ts
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'
