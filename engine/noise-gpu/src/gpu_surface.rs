@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
-use cudarc::driver::{CudaDevice, CudaFunction, LaunchAsync, LaunchConfig};
+use cudarc::driver::{CudaDevice, CudaFunction, CudaSlice, LaunchAsync, LaunchConfig};
 use cudarc::nvrtc::Ptx;
 use h3o::{CellIndex, LatLng};
 use heatmap_aircraft::accumulator::TileAccumulator;
@@ -32,7 +32,7 @@ use heatmap_aircraft::wire_hm3::{
 };
 use noise_compute::admin;
 use noise_compute::constants::RAILWAY_MAX_RADIUS;
-use noise_gpu::{build_pixel_bins, pack_tile, PixelBins, TileBuffers, BIN_W, N_BINS};
+use noise_gpu::{build_pixel_bins, pack_sources, pack_tile, PixelBins, TileBuffers, BIN_W, N_BINS};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
 
@@ -144,9 +144,14 @@ impl Progress {
     }
 }
 
+/// A layer's GPU-resident source buffers (`seg`, `sp`, `semis`), uploaded once per
+/// region (by the caller) and shared across every block/tile of that region.
+type LayerSrc = (LineLayer, (CudaSlice<f64>, CudaSlice<f64>, CudaSlice<f32>));
+
 /// Build one grid-aligned block's shared halo once, upload it, then compute every
 /// `(tile, layer)` in `block_tiles` on the GPU using the region's pre-loaded rows
-/// (loaded once per centre-R4 region by the caller, not re-read per tile).
+/// and pre-uploaded sources (`src_dev`) — both loaded/uploaded once per centre-R4
+/// region by the caller, not re-read or re-uploaded per block or tile.
 #[allow(clippy::too_many_arguments)]
 fn process_block(
     dev: &Arc<CudaDevice>,
@@ -157,6 +162,7 @@ fn process_block(
     by: u32,
     block_tiles: &[(u32, u32)],
     region_rows: &[(LineLayer, Vec<LineRow>)],
+    src_dev: &[LayerSrc],
     stats: &mut BTreeMap<&'static str, LayerStat>,
     prog: &mut Progress,
 ) -> Result<()> {
@@ -199,7 +205,7 @@ fn process_block(
         let rows = &region_rows.iter().find(|(l, _)| *l == layer).expect("layer").1;
         (
             build_pixel_bins(tile, rows),
-            pack_tile(tile, rows, halo_geom, ETA, TW),
+            pack_tile(tile, halo_geom, ETA, TW),
         )
     };
     let prep_timed = |it: (u32, u32, LineLayer),
@@ -216,9 +222,8 @@ fn process_block(
         let tk = Instant::now();
         let d_inner = dev.htod_copy(bufs.inner).expect("inner");
         let d_meta = dev.htod_copy(bufs.meta).expect("meta");
-        let d_seg = dev.htod_copy(bufs.seg).expect("seg");
-        let d_sp = dev.htod_copy(bufs.sp).expect("sp");
-        let d_semis = dev.htod_copy(bufs.semis).expect("semis");
+        // Region-resident sources (uploaded once per layer above) — not re-uploaded per tile.
+        let (d_seg, d_sp, d_semis) = &src_dev.iter().find(|(l, _)| *l == layer).expect("layer src").1;
         let d_rxll = dev.htod_copy(bufs.rxll).expect("rxll");
         let d_rxar = dev.htod_copy(bufs.rxar).expect("rxar");
         let d_off = dev.htod_copy(bins.offsets).expect("off");
@@ -228,7 +233,7 @@ fn process_block(
                 .launch(
                     launch_cfg,
                     (
-                        &d_elev, &d_inner, &d_cover, &d_meta, &d_seg, &d_sp, &d_semis, &d_rxll,
+                        &d_elev, &d_inner, &d_cover, &d_meta, d_seg, d_sp, d_semis, &d_rxll,
                         &d_rxar, &d_off, &d_idx, &mut d_out,
                     ),
                 )
@@ -436,6 +441,22 @@ fn main() -> Result<()> {
             stats.entry(layer.dir()).or_default().t_load += tl.elapsed().as_secs_f64();
             region_rows.push((layer, r));
         }
+        // Upload each layer's sources to the GPU ONCE for this region; every block
+        // and tile reuses them (was re-uploaded per tile → ~30× redundant PCIe/CPU).
+        let src_dev: Vec<LayerSrc> = region_rows
+            .iter()
+            .map(|(layer, rows)| {
+                let s = pack_sources(rows);
+                (
+                    *layer,
+                    (
+                        dev.htod_copy(s.seg).expect("seg"),
+                        dev.htod_copy(s.sp).expect("sp"),
+                        dev.htod_copy(s.semis).expect("semis"),
+                    ),
+                )
+            })
+            .collect();
         // Batch the region's tiles into grid-aligned blocks (one shared halo each).
         let mut blocks: BTreeMap<(u32, u32), Vec<(u32, u32)>> = BTreeMap::new();
         for &(tx, ty) in region_tiles {
@@ -446,7 +467,8 @@ fn main() -> Result<()> {
         }
         for (&(bx, by), block_tiles) in &blocks {
             process_block(
-                &dev, &f, &rasters, &cfg, bx, by, block_tiles, &region_rows, &mut stats, &mut prog,
+                &dev, &f, &rasters, &cfg, bx, by, block_tiles, &region_rows, &src_dev,
+                &mut stats, &mut prog,
             )?;
         }
     }

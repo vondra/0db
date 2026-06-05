@@ -90,42 +90,29 @@ pub fn build_pixel_bins(tile: &FusedTileZ13, lines: &[LineRow]) -> PixelBins {
 }
 
 /// Per-tile non-halo buffers packed for the `line`/`line_binned` kernels (the halo
-/// elev/cover are uploaded once per batch and shared). `meta` carries the SHARED
-/// halo geom + this tile's bbox + eta + swizzle width.
+/// elev/cover are uploaded once per batch and shared; the line SOURCES are uploaded
+/// once per layer — see [`SourceBuffers`]). `meta` carries the SHARED halo geom +
+/// this tile's bbox + eta + swizzle width.
 pub struct TileBuffers {
     pub inner: Vec<f32>,
     pub meta: Vec<f64>,
-    pub seg: Vec<f64>,
-    pub sp: Vec<f64>,
-    pub semis: Vec<f32>,
     pub rxll: Vec<f64>,
     pub rxar: Vec<f32>,
 }
 
-/// Pack one tile's device buffers. `halo_geom` = (lat_min, lon_min, inv, rows, cols)
-/// of the SHARED batch halo (from `FusedGrid::geom`).
-pub fn pack_tile(
-    tile: &FusedTileZ13,
-    lines: &[LineRow],
-    halo_geom: (f64, f64, f64, usize, usize),
-    eta: f64,
-    tw: f64,
-) -> TileBuffers {
-    let (lat_min, lon_min, inv, rows, cols) = halo_geom;
-    let n = TILE_PX * TILE_PX;
-    let meta = vec![
-        rows as f64,
-        cols as f64,
-        lat_min,
-        lon_min,
-        inv,
-        tile.bbox.north_lat,
-        tile.bbox.south_lat,
-        tile.bbox.west_lon,
-        tile.bbox.east_lon,
-        eta,
-        tw,
-    ];
+/// A layer's line sources, packed ONCE per (region, layer) and uploaded once; the
+/// per-tile bins (`PixelBins.indices`) index into these arrays, so they are tile-
+/// invariant. Previously re-packed and re-uploaded per tile — ~160 MB/tile on a
+/// dense (LKPR-class) layer, ~30× redundant PCIe + CPU work across a region.
+pub struct SourceBuffers {
+    pub seg: Vec<f64>,
+    pub sp: Vec<f64>,
+    pub semis: Vec<f32>,
+}
+
+/// Pack a layer's line sources (tile-invariant): `seg` (4 coords), `sp`
+/// (length/reach/height/bridge), `semis` (3 periods × 8 emission bands).
+pub fn pack_sources(lines: &[LineRow]) -> SourceBuffers {
     let (mut seg, mut sp, mut semis) = (
         Vec::with_capacity(lines.len() * 4),
         Vec::with_capacity(lines.len() * 4),
@@ -145,6 +132,33 @@ pub fn pack_tile(
             }
         }
     }
+    SourceBuffers { seg, sp, semis }
+}
+
+/// Pack one tile's per-tile device buffers (inner DEM + meta + receivers). The line
+/// sources are NOT here — they are layer-invariant (see [`pack_sources`]).
+/// `halo_geom` = (lat_min, lon_min, inv, rows, cols) of the SHARED batch halo.
+pub fn pack_tile(
+    tile: &FusedTileZ13,
+    halo_geom: (f64, f64, f64, usize, usize),
+    eta: f64,
+    tw: f64,
+) -> TileBuffers {
+    let (lat_min, lon_min, inv, rows, cols) = halo_geom;
+    let n = TILE_PX * TILE_PX;
+    let meta = vec![
+        rows as f64,
+        cols as f64,
+        lat_min,
+        lon_min,
+        inv,
+        tile.bbox.north_lat,
+        tile.bbox.south_lat,
+        tile.bbox.west_lon,
+        tile.bbox.east_lon,
+        eta,
+        tw,
+    ];
     let mut rxll = Vec::with_capacity(2 * TILE_PX);
     rxll.extend_from_slice(&tile.rx_lat);
     rxll.extend_from_slice(&tile.rx_lon);
@@ -156,9 +170,6 @@ pub fn pack_tile(
     TileBuffers {
         inner: tile.inner_elev_m.clone(),
         meta,
-        seg,
-        sp,
-        semis,
         rxll,
         rxar,
     }
