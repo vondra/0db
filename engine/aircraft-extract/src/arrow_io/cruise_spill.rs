@@ -164,7 +164,7 @@ pub(crate) fn write_cruise_spill(path: &Path, rows: &[CruiseSpillRow]) -> Result
         for cand in &row.top_candidates {
             top_fid.append_value(cand.flight_id);
             top_callsign.append_value(&cand.callsign);
-            top_typecode.append_value(&cand.aircraft_type)?;
+            top_typecode.append_value(cand.aircraft_type)?;
             top_lmax.append_value(cand.peak_lmax_25m_db);
             top_alt.append_value(cand.altitude_m);
         }

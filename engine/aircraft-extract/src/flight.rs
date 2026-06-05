@@ -202,9 +202,10 @@ pub struct AirborneSubSegment {
     pub terrain_end_elev_m: f32,
 }
 
-/// One entry in a cruise row's `top_candidates` list (v14). Identity
-/// + ranking dimension only — row-constant fields (period / date_id)
-/// are NOT duplicated per candidate per Codex W4 + Claude C3.
+/// One entry in a cruise row's `top_candidates` list (v14).
+/// Identity + ranking dimension only — row-constant fields
+/// (period / date_id) are NOT duplicated per candidate per
+/// Codex W4 + Claude C3.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CruiseTopCandidate {
     pub flight_id: u64,

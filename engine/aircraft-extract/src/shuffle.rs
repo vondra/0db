@@ -435,14 +435,20 @@ mod tests {
     }
 
     #[test]
-    fn empty_input_writes_nothing() {
+    fn empty_input_writes_no_shards() {
         let tmp = tempfile::tempdir().unwrap();
         let out_dir = tmp.path().join("segments_by_r4");
         shuffle_per_r4(&[], &out_dir, None).unwrap();
         assert!(out_dir.exists(), "out_dir must be created");
-        // No R4 subdirs.
-        let count = std::fs::read_dir(&out_dir).unwrap().count();
-        assert_eq!(count, 0);
+        // No R4 shard dirs — only the n_days manifest, which records a
+        // zero-day window for empty input.
+        let subdirs = std::fs::read_dir(&out_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .count();
+        assert_eq!(subdirs, 0, "no R4 shard dirs for empty input");
+        assert_eq!(std::fs::read_to_string(out_dir.join("n_days")).unwrap(), "0");
         assert!(!tmp.path().join("temp_shuffle").exists());
     }
 }

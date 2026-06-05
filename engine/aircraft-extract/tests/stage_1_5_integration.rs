@@ -10,10 +10,10 @@
 //!    re-attributed to a nearby real aerodrome.
 //! 3. Stage 1.5 is run → emits `synth_airport_lines.arrow` under a
 //!    deterministic `auto-<H3-R11>` key.
-//! 4. Stage 2C is run → reads both real (empty for this cluster)
-//!    + synth lines, snaps the test's ground segments onto the
-//!    synth microsegments, writes per-microsegment rows in
-//!    `airport_traffic.arrow`.
+//! 4. Stage 2C is run → reads both real (empty for this
+//!    cluster) + synth lines, snaps the test's ground segments
+//!    onto the synth microsegments, writes per-microsegment
+//!    rows in `airport_traffic.arrow`.
 //! 5. Assertions confirm the synth `airport_key` round-trips all
 //!    the way to `airport_traffic.arrow`, proving the wiring
 //!    works end-to-end.

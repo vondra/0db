@@ -47,7 +47,7 @@ pub fn run_stage_1(
     let segments: Vec<FlightSegment> = flights
         .par_iter()
         .flat_map_iter(|f| {
-            let out = stage_1_one_flight(f, &rasters, date_id);
+            let out = stage_1_one_flight(f, rasters, date_id);
             flight_counter.add(1);
             out.into_iter()
         })

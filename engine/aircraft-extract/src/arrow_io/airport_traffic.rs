@@ -65,6 +65,7 @@ pub struct AirportTrafficRow {
     ///  - `veh_kind = 1` (GSE): per-event SEL@25m from the kinematic
     ///    moving-point integral; consumer applies point-source
     ///    `+ 10·log10(25 / d_endpoint)` divergence.
+    ///
     /// Either way the consumer divides by `n_days × period_seconds`
     /// via `period_leq` to recover Leq.
     pub band_energy_lin: [f32; NUM_BANDS],

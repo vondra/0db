@@ -245,7 +245,7 @@ mod tests {
         let east = bearing_deg(50.0, 14.0, 50.0, 14.05);
         assert!((east - 90.0).abs() < 0.5, "east bearing got {east}");
         let north = bearing_deg(50.0, 14.0, 50.05, 14.0);
-        assert!(north < 0.5 || north > 359.5, "north bearing got {north}");
+        assert!(!north.is_nan() && !(0.5..=359.5).contains(&north), "north bearing got {north}");
     }
 
     #[test]

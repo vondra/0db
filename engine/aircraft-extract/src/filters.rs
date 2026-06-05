@@ -89,8 +89,7 @@ pub fn point_is_sane(pt: &TracePoint) -> bool {
     }
     if let Some(alt_ft) = pt.airborne_alt_ft() {
         if !alt_ft.is_finite()
-            || alt_ft < MIN_PLAUSIBLE_ALT_FT
-            || alt_ft > MAX_PLAUSIBLE_ALT_FT
+            || !(MIN_PLAUSIBLE_ALT_FT..=MAX_PLAUSIBLE_ALT_FT).contains(&alt_ft)
         {
             return false;
         }
@@ -205,8 +204,8 @@ fn drop_teleport_points(
         }
     }
     let mut j = 0;
-    for i in 0..points.len() {
-        if keep_idx[i] {
+    for (i, &keep) in keep_idx.iter().enumerate() {
+        if keep {
             if j != i {
                 points.swap(j, i);
                 agl_m.swap(j, i);

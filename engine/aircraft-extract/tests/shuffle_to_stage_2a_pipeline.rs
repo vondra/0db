@@ -165,7 +165,7 @@ fn second_shuffle_wipes_stale_r4_shards() {
             seg(2, Phase::Airborne, nyc_lat, nyc_lon),
         ],
     );
-    shuffle_per_r4(&[day_path.clone()], &by_r4_dir, None).unwrap();
+    shuffle_per_r4(std::slice::from_ref(&day_path), &by_r4_dir, None).unwrap();
     let r4_cz = r4_of_seg_at(cz_lat, cz_lon);
     let r4_nyc = r4_of_seg_at(nyc_lat, nyc_lon);
     assert!(list_r4_dirs(&by_r4_dir).contains(&r4_nyc));

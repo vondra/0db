@@ -65,7 +65,7 @@ pub fn write_cruise(path: &Path, rows: &[CruiseBucket], n_days: u16) -> Result<(
         for cand in &r.top_candidates {
             cand_fid.append_value(cand.flight_id);
             cand_callsign.append_value(&cand.callsign);
-            cand_typecode.append_value(&cand.aircraft_type)?;
+            cand_typecode.append_value(cand.aircraft_type)?;
             cand_lmax.append_value(cand.peak_lmax_25m_db);
             cand_alt.append_value(cand.altitude_m);
         }

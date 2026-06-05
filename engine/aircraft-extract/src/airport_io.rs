@@ -52,11 +52,11 @@ pub(crate) const NEAREST_AERODROME_RADIUS_MULT: f64 = 1.5;
 /// (`stage_airport_discover_runner.rs`) treats `None` as "this
 /// cluster is a genuinely new auto-discovered airfield" and emits
 /// it under a synthetic `auto-<H3-R11>` key.
-pub(crate) fn nearest_aerodrome_within<'a>(
+pub(crate) fn nearest_aerodrome_within(
     lat: f64,
     lon: f64,
-    areas: &'a [AirportArea],
-) -> Option<&'a AirportArea> {
+    areas: &[AirportArea],
+) -> Option<&AirportArea> {
     let mut best: Option<(&AirportArea, f64)> = None;
     for area in areas {
         if area.aeroway_type != AERODROME_AEROWAY_TYPE {
