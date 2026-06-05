@@ -68,9 +68,15 @@ export function PathProfileDiagram({
   const { elevMin, elevMax, exaggeration, xOf, yOf, xAxisTicks } =
     useMemo(() => {
       const elevs = trace.elevation_m
-      const maxBld = Math.max(...trace.building_h_m.map(v => Number(v) || 0), 0)
-      const rawMin = Math.min(...elevs, trace.src_alt_m - maxBld)
-      const rawMax = Math.max(...elevs, trace.src_alt_m, trace.rcv_alt_m)
+      // Fold, don't spread: elevation_m / building_h_m can be 10k+ samples at
+      // airport points, and Math.max(...bigArray) overflows the call stack.
+      const maxBld = trace.building_h_m.reduce((m, v) => Math.max(m, Number(v) || 0), 0)
+      let rawMin = trace.src_alt_m - maxBld
+      let rawMax = Math.max(trace.src_alt_m, trace.rcv_alt_m)
+      for (const v of elevs) {
+        if (v < rawMin) rawMin = v
+        if (v > rawMax) rawMax = v
+      }
       const elevPad = Math.max((rawMax - rawMin) * 0.1, 2)
       const eMin = rawMin - elevPad
       const eMax = rawMax + maxBld + elevPad
@@ -191,14 +197,6 @@ export function PathProfileDiagram({
   }
   const handleLeave = () => setHoverIdx(null)
 
-  if (!hasPath) {
-    return (
-      <div className="py-3 text-[10px] italic text-muted-foreground/60">
-        No path data — source and receiver coincide.
-      </div>
-    )
-  }
-
   const srcX = xOf(0)
   const rcvX = xOf(1)
   const srcY = yOf(trace.src_alt_m)
@@ -238,6 +236,15 @@ export function PathProfileDiagram({
     }
     return placed as Array<(typeof placed)[number] & { hideLabel?: boolean }>
   }, [terrainEdges, dominantEdgeIdx, xOf, yOf])
+
+  // All hooks are above this point, so the early return can't change hook order.
+  if (!hasPath) {
+    return (
+      <div className="py-3 text-[10px] italic text-muted-foreground/60">
+        No path data — source and receiver coincide.
+      </div>
+    )
+  }
 
   const groundTooltip =
     'Ground hardness from Copernicus Imperviousness Density\n' +

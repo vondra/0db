@@ -19,16 +19,21 @@ import { DEFAULT_BASEMAP, type BasemapId } from './utils/basemaps'
 const AboutPage = lazy(() => import('./components/AboutPage'))
 
 export default function App() {
-  const isAbout = window.location.pathname.startsWith('/about')
-  const { initial, updateUrl } = useUrlState()
-
-  if (isAbout) {
+  // Route split: /about and the map app must not share one component instance,
+  // or the early return would skip MapApp's hooks on the next render and break
+  // React's hook order (Rules-of-Hooks). Keep all map state inside MapApp.
+  if (window.location.pathname.startsWith('/about')) {
     return (
       <Suspense fallback={<div className="h-screen w-screen bg-[#fafaf8]" />}>
         <AboutPage />
       </Suspense>
     )
   }
+  return <MapApp />
+}
+
+function MapApp() {
+  const { initial, updateUrl } = useUrlState()
 
   const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
   const [layersOpen, setLayersOpen] = useState(false)
