@@ -32,7 +32,7 @@ use heatmap_aircraft::wire_hm3::{
 };
 use noise_compute::admin;
 use noise_compute::constants::RAILWAY_MAX_RADIUS;
-use noise_gpu::{build_pixel_bins, pack_tile, BIN_W, N_BINS};
+use noise_gpu::{build_pixel_bins, pack_tile, PixelBins, TileBuffers, BIN_W, N_BINS};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
 
@@ -182,83 +182,105 @@ fn process_block(
         shared_mem_bytes: 0,
     };
 
-    for &(tx, ty) in block_tiles {
+    // Software pipeline: a CUDA launch is async, so while tile N's kernel runs on
+    // the GPU we bin+pack tile N+1 on the CPU (the cores otherwise idle during the
+    // GPU wait). Single-threaded; dtoh_sync_copy is the join that waits for the
+    // kernel. Same per-(tile,layer) work in the same order ⇒ identical output.
+    // Order by LAYER first (all road, then all rail), not interleaved: the pipeline
+    // overlaps tile N+1's prep with tile N's kernel, so consecutive same-layer items
+    // (similar kernel ≈ similar prep cost) overlap far better than road↔rail swings.
+    let items: Vec<(u32, u32, LineLayer)> = region_rows
+        .iter()
+        .flat_map(|(l, _)| block_tiles.iter().map(move |&(tx, ty)| (tx, ty, *l)))
+        .collect();
+    let prep = |it: (u32, u32, LineLayer)| -> (PixelBins, TileBuffers) {
+        let (tx, ty, layer) = it;
         let tile = &batch.tiles[((ty - by) * cfg.batch_n + (tx - bx)) as usize];
-        for (layer, line_rows) in region_rows {
-            let layer = *layer;
-            let st = stats.entry(layer.dir()).or_default();
+        let rows = &region_rows.iter().find(|(l, _)| *l == layer).expect("layer").1;
+        (
+            build_pixel_bins(tile, rows),
+            pack_tile(tile, rows, halo_geom, ETA, TW),
+        )
+    };
+    let prep_timed = |it: (u32, u32, LineLayer),
+                      stats: &mut BTreeMap<&'static str, LayerStat>| {
+        let t = Instant::now();
+        let p = prep(it);
+        stats.entry(it.2.dir()).or_default().t_bins += t.elapsed().as_secs_f64();
+        (it, p)
+    };
 
-            let tb = Instant::now();
-            let bins = build_pixel_bins(tile, line_rows);
-            st.t_bins += tb.elapsed().as_secs_f64();
-
-            let bufs = pack_tile(tile, line_rows, halo_geom, ETA, TW);
-            let d_inner = dev.htod_copy(bufs.inner).expect("inner");
-            let d_meta = dev.htod_copy(bufs.meta).expect("meta");
-            let d_seg = dev.htod_copy(bufs.seg).expect("seg");
-            let d_sp = dev.htod_copy(bufs.sp).expect("sp");
-            let d_semis = dev.htod_copy(bufs.semis).expect("semis");
-            let d_rxll = dev.htod_copy(bufs.rxll).expect("rxll");
-            let d_rxar = dev.htod_copy(bufs.rxar).expect("rxar");
-            let d_off = dev.htod_copy(bins.offsets).expect("off");
-            let d_idx = dev.htod_copy(bins.indices).expect("idx");
-            let tk = Instant::now();
-            unsafe {
-                f.clone()
-                    .launch(
-                        launch_cfg,
-                        (
-                            &d_elev, &d_inner, &d_cover, &d_meta, &d_seg, &d_sp, &d_semis, &d_rxll,
-                            &d_rxar, &d_off, &d_idx, &mut d_out,
-                        ),
-                    )
-                    .expect("launch");
-            }
-            dev.synchronize().expect("sync");
-            st.t_kernel += tk.elapsed().as_secs_f64();
-            let gpu = dev.dtoh_sync_copy(&d_out).expect("dtoh");
-
-            let mut accum = TileAccumulator::new();
-            accum.energy.copy_from_slice(&gpu);
-            let cells = collapse_lden_surface_u8(&accum);
-
-            if let Some(root) = &cfg.output {
-                let out = Path::new(root)
-                    .join(layer.dir())
-                    .join(cfg.z.to_string())
-                    .join(tx.to_string())
-                    .join(format!("{ty}.bin"));
-                if write_tile(&out, &cells, layer.source_id(), true)? > 0 {
-                    st.n_written += 1;
-                }
-            }
-            if !cfg.baseline.is_empty() {
-                let bp = Path::new(&cfg.baseline)
-                    .join(layer.dir())
-                    .join(cfg.z.to_string())
-                    .join(tx.to_string())
-                    .join(format!("{ty}.bin"));
-                if bp.exists() {
-                    let b = read_tile(&bp)?;
-                    for i in 0..cells.len().min(b.len()) {
-                        let (c, bb) = (cells[i], b[i]);
-                        let differ = if c != NO_DATA && bb != NO_DATA {
-                            let d = (c as i32 - bb as i32).abs();
-                            st.max_diff = st.max_diff.max(d);
-                            d > 0
-                        } else {
-                            c != bb
-                        };
-                        if differ {
-                            st.n_diff += 1;
-                        }
-                    }
-                    st.n_baseline += 1;
-                }
-            }
-            st.n_tiles += 1;
-            prog.tick();
+    let mut iter = items.into_iter();
+    let mut pending = iter.next().map(|it| prep_timed(it, stats));
+    while let Some(((tx, ty, layer), (bins, bufs))) = pending {
+        let tk = Instant::now();
+        let d_inner = dev.htod_copy(bufs.inner).expect("inner");
+        let d_meta = dev.htod_copy(bufs.meta).expect("meta");
+        let d_seg = dev.htod_copy(bufs.seg).expect("seg");
+        let d_sp = dev.htod_copy(bufs.sp).expect("sp");
+        let d_semis = dev.htod_copy(bufs.semis).expect("semis");
+        let d_rxll = dev.htod_copy(bufs.rxll).expect("rxll");
+        let d_rxar = dev.htod_copy(bufs.rxar).expect("rxar");
+        let d_off = dev.htod_copy(bins.offsets).expect("off");
+        let d_idx = dev.htod_copy(bins.indices).expect("idx");
+        unsafe {
+            f.clone()
+                .launch(
+                    launch_cfg,
+                    (
+                        &d_elev, &d_inner, &d_cover, &d_meta, &d_seg, &d_sp, &d_semis, &d_rxll,
+                        &d_rxar, &d_off, &d_idx, &mut d_out,
+                    ),
+                )
+                .expect("launch");
         }
+        // Overlap: prep the NEXT item on the CPU while this kernel runs on the GPU.
+        pending = iter.next().map(|it| prep_timed(it, stats));
+        // Join: dtoh_sync_copy waits for the kernel, then reads the result back.
+        let gpu = dev.dtoh_sync_copy(&d_out).expect("dtoh");
+        stats.entry(layer.dir()).or_default().t_kernel += tk.elapsed().as_secs_f64();
+
+        let mut accum = TileAccumulator::new();
+        accum.energy.copy_from_slice(&gpu);
+        let cells = collapse_lden_surface_u8(&accum);
+
+        if let Some(root) = &cfg.output {
+            let out = Path::new(root)
+                .join(layer.dir())
+                .join(cfg.z.to_string())
+                .join(tx.to_string())
+                .join(format!("{ty}.bin"));
+            if write_tile(&out, &cells, layer.source_id(), true)? > 0 {
+                stats.entry(layer.dir()).or_default().n_written += 1;
+            }
+        }
+        if !cfg.baseline.is_empty() {
+            let bp = Path::new(&cfg.baseline)
+                .join(layer.dir())
+                .join(cfg.z.to_string())
+                .join(tx.to_string())
+                .join(format!("{ty}.bin"));
+            if bp.exists() {
+                let b = read_tile(&bp)?;
+                let st = stats.entry(layer.dir()).or_default();
+                for ci in 0..cells.len().min(b.len()) {
+                    let (c, bb) = (cells[ci], b[ci]);
+                    let differ = if c != NO_DATA && bb != NO_DATA {
+                        let d = (c as i32 - bb as i32).abs();
+                        st.max_diff = st.max_diff.max(d);
+                        d > 0
+                    } else {
+                        c != bb
+                    };
+                    if differ {
+                        st.n_diff += 1;
+                    }
+                }
+                st.n_baseline += 1;
+            }
+        }
+        stats.entry(layer.dir()).or_default().n_tiles += 1;
+        prog.tick();
     }
     Ok(())
 }
@@ -432,12 +454,13 @@ fn main() -> Result<()> {
 
     eprintln!("=== {n_targets} tile(s) × {} layer(s) in {wall:.2}s ===", layers.len());
     for (name, s) in &stats {
-        let per = if s.n_tiles > 0 { 1e3 / s.n_tiles as f64 } else { 0.0 };
+        // gpu = the GPU-phase wall (upload + launch + sync); prep = bin + pack. The
+        // pipeline OVERLAPS prep(N+1) with gpu(N), so wall < gpu + prep — the
+        // top-line wall is the real cost, these are diagnostic, not additive.
         eprintln!(
-            "  [{name}] {} tiles | kernel {:.0} ms ({:.0} ms/tile) | bins {:.0} ms | load {:.0} ms | written {}",
+            "  [{name}] {} tiles | gpu {:.0} ms | prep {:.0} ms | load {:.0} ms | written {} (gpu∥prep)",
             s.n_tiles,
             s.t_kernel * 1e3,
-            s.t_kernel * per,
             s.t_bins * 1e3,
             s.t_load * 1e3,
             s.n_written,
