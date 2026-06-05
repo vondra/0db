@@ -108,6 +108,9 @@ struct LayerStat {
     t_load: f64,
     max_diff: i32,
     n_diff: usize,
+    n_cmp: usize, // both-present cells compared (drift-gate denominator)
+    n_le1: usize, // |Δ| ≤ 1 byte (0.5 dB)
+    n_le3: usize, // |Δ| ≤ 3 bytes (1.5 dB)
     n_baseline: usize,
     n_written: usize,
     n_tiles: usize,
@@ -273,6 +276,13 @@ fn process_block(
                     let differ = if c != NO_DATA && bb != NO_DATA {
                         let d = (c as i32 - bb as i32).abs();
                         st.max_diff = st.max_diff.max(d);
+                        st.n_cmp += 1;
+                        if d <= 1 {
+                            st.n_le1 += 1;
+                        }
+                        if d <= 3 {
+                            st.n_le3 += 1;
+                        }
                         d > 0
                     } else {
                         c != bb
@@ -488,12 +498,16 @@ fn main() -> Result<()> {
             s.n_written,
         );
         if s.n_baseline > 0 {
+            let denom = s.n_cmp.max(1) as f64;
             eprintln!(
-                "          vs baseline: {} tiles, max {}B ({:.1} dB), {} cells differ",
+                "          vs baseline: {} tiles, max {}B ({:.1} dB), {} cells differ | ≤1B {:.3}% ≤3B {:.3}% of {} cmp",
                 s.n_baseline,
                 s.max_diff,
                 s.max_diff as f64 * 0.5,
                 s.n_diff,
+                100.0 * s.n_le1 as f64 / denom,
+                100.0 * s.n_le3 as f64 / denom,
+                s.n_cmp,
             );
         }
     }

@@ -71,12 +71,17 @@ __device__ __forceinline__ double fexp(double xd) {
 }
 
 // ---- geo::point_to_segment_full (the fields the line scatter needs) ----
+// Lon-scale `cos` → SFU `__cosf` (1 val/source; ~1e-6 rel err ≪0.5 dB). The
+// projection/dot/sqrt stay f64: bisected on the box, an fp32 projection put
+// `d_end` within fp32-ε of the per-source reach cull at a handful of cells →
+// presence flip → 2.0 dB (>1.5 dB gate). The f64 dot-products are also where
+// the only measurable p2s f64 cost lives, so fp32 there bought <1% anyway.
 __device__ __forceinline__ void p2s(
     double plat, double plon, double alat, double alon, double blat, double blon,
     double* d_end, double* cplat, double* cplon, double* frac)
 {
     double mid = ((alat + blat) * 0.5) * (PI_D / 180.0);
-    double mlon = M_LON_EQ * fmax(cos(mid), 0.01);
+    double mlon = M_LON_EQ * fmax(__cosf((float)mid), 0.01f);
     double bx = (blon - alon) * mlon, by = (blat - alat) * M_LAT;
     double px = (plon - alon) * mlon, py = (plat - alat) * M_LAT;
     double ab = bx * bx + by * by;
@@ -89,27 +94,27 @@ __device__ __forceinline__ void p2s(
     *frac = tu;
 }
 
-// ---- geo::finite_line_correction ----
-__device__ __forceinline__ double flc(double len, double dperp, double frac) {
-    if (len < 0.1 || dperp < 0.1) return 0.0;
-    double d1 = frac * len, d2 = (1.0 - frac) * len, invd = 1.0 / dperp;
-    double a1 = d1 * invd, a2 = d2 * invd, prod = a1 * a2;
-    double theta = (prod < 0.98) ? atan((a1 + a2) / (1.0 - prod)) : (atan(a1) + atan(a2));
-    double corr = 4.342944819032518 * (double)logf((float)(theta / PI_D));
-    return fmin(corr, 0.0);
+// ---- geo::finite_line_correction (fp32: ratios + atan, scale-free; logf already f32) ----
+__device__ __forceinline__ float flc(float len, float dperp, float frac) {
+    if (len < 0.1f || dperp < 0.1f) return 0.0f;
+    float d1 = frac * len, d2 = (1.0f - frac) * len, invd = 1.0f / dperp;
+    float a1 = d1 * invd, a2 = d2 * invd, prod = a1 * a2;
+    float theta = (prod < 0.98f) ? atanf((a1 + a2) / (1.0f - prod)) : (atanf(a1) + atanf(a2));
+    float corr = 4.342944819032518f * logf(theta / (float)PI_D);
+    return fminf(corr, 0.0f);
 }
 
 // ---- raster_reader::lookup_fused_rc (elevation bilinear from row/col coords) ----
 // The profile walk lerps (rf,cf) directly (build_path_profile), so this is the
 // rc-form of bilinear_elev_d; returns the f32 the CPU profile stores.
 __device__ __forceinline__ float bilinear_elev_rc(
-    const float* elev, int rows, int cols, double rf, double cf)
+    const float* elev, int rows, int cols, float rf, float cf)
 {
-    rf = fmin(fmax(rf, 0.0), (double)(rows - 1));
-    cf = fmin(fmax(cf, 0.0), (double)(cols - 1));
-    int r0 = min((int)floor(rf), rows - 2);
-    int c0 = min((int)floor(cf), cols - 2);
-    float fr = (float)(rf - (double)r0), fc = (float)(cf - (double)c0);
+    rf = fminf(fmaxf(rf, 0.0f), (float)(rows - 1));
+    cf = fminf(fmaxf(cf, 0.0f), (float)(cols - 1));
+    int r0 = min((int)floorf(rf), rows - 2);
+    int c0 = min((int)floorf(cf), cols - 2);
+    float fr = rf - (float)r0, fc = cf - (float)c0;
     long base = (long)r0 * cols + c0;
     float v0 = elev[base]        + fc * (elev[base + 1]        - elev[base]);
     float v1 = elev[base + cols] + fc * (elev[base + cols + 1] - elev[base + cols]);
@@ -307,53 +312,55 @@ __device__ void terrain_bands(const double* t, const double* prof, int n,
 // ---- raster_reader::lookup_fused_rc categoricals: building/forest NEAREST,
 // imd BILINEAR (round, clamp). `cover` is the halo packed [build,forest,imd] per cell.
 __device__ __forceinline__ void cover_rc(
-    const unsigned char* cover, int rows, int cols, double rf, double cf,
+    const unsigned char* cover, int rows, int cols, float rf, float cf,
     unsigned char* bh, unsigned char* fr_out, unsigned char* imd_out)
 {
-    rf = fmin(fmax(rf, 0.0), (double)(rows - 1));
-    cf = fmin(fmax(cf, 0.0), (double)(cols - 1));
-    int r0 = min((int)floor(rf), rows - 2);
-    int c0 = min((int)floor(cf), cols - 2);
-    double fr = rf - (double)r0, fc = cf - (double)c0;
+    rf = fminf(fmaxf(rf, 0.0f), (float)(rows - 1));
+    cf = fminf(fmaxf(cf, 0.0f), (float)(cols - 1));
+    int r0 = min((int)floorf(rf), rows - 2);
+    int c0 = min((int)floorf(cf), cols - 2);
+    float fr = rf - (float)r0, fc = cf - (float)c0;
     long base = (long)r0 * cols + c0;
     long b00 = base*3, b01 = (base+1)*3, b10 = (base+cols)*3, b11 = (base+cols+1)*3;
-    long near = (fr >= 0.5) ? ((fc >= 0.5) ? b11 : b10) : ((fc >= 0.5) ? b01 : b00);
+    long near = (fr >= 0.5f) ? ((fc >= 0.5f) ? b11 : b10) : ((fc >= 0.5f) ? b01 : b00);
     *bh = cover[near]; *fr_out = cover[near + 1];
-    double v0 = (double)cover[b00+2] + fc * ((double)cover[b01+2] - (double)cover[b00+2]);
-    double v1 = (double)cover[b10+2] + fc * ((double)cover[b11+2] - (double)cover[b10+2]);
-    double im = fmin(fmax(round(v0 + fr * (v1 - v0)), 0.0), 255.0);
+    float v0 = (float)cover[b00+2] + fc * ((float)cover[b01+2] - (float)cover[b00+2]);
+    float v1 = (float)cover[b10+2] + fc * ((float)cover[b11+2] - (float)cover[b10+2]);
+    float im = fminf(fmaxf(roundf(v0 + fr * (v1 - v0)), 0.0f), 255.0f);
     *imd_out = (unsigned char)im;
 }
 
 // ---- path_profile::path_integral_u8 (interval-length-weighted mean of imd).
-__device__ double path_integral_imd(const double* t, const unsigned char* imd, int n, double dist) {
-    if (n < 2) return 0.0;
-    double sum = 0.0, total = 0.0;
+// `fill_t` guarantees t[0]=0,t[n-1]=1 ⇒ Σ(t[i]−t[i−1])=1 ⇒ the CPU's `sum·dist /
+// (total=dist)` collapses to the t-weighted mean Σ mid·(t[i]−t[i−1]); the `dist`
+// and the `total` accumulator/division cancel exactly. fp32 (imd∈[0,255]).
+__device__ float path_integral_imd(const double* t, const unsigned char* imd, int n) {
+    if (n < 2) return 0.0f;
+    float sum = 0.0f;
     for (int i = 1; i < n; i++) {
-        double mid = 0.5 * ((double)imd[i - 1] + (double)imd[i]);
-        double len = (t[i] - t[i - 1]) * dist;
-        sum += mid * len; total += len;
+        float mid = 0.5f * ((float)imd[i - 1] + (float)imd[i]);
+        sum += mid * (float)(t[i] - t[i - 1]);
     }
-    return total < 1e-9 ? 0.0 : sum / total;
+    return sum;
 }
 
-// ---- path_profile::vegetation_run_length — cumulative forest run (≥10 m runs).
-__device__ double veg_run_length(const double* t, const unsigned char* forest, int n, double dist) {
-    if (n < 2) return 0.0;
-    double total = 0.0, run = 0.0;
+// ---- path_profile::vegetation_run_length — cumulative forest run (≥10 m runs). fp32.
+__device__ float veg_run_length(const double* t, const unsigned char* forest, int n, float dist) {
+    if (n < 2) return 0.0f;
+    float total = 0.0f, run = 0.0f;
     for (int i = 1; i < n; i++) {
-        double len = (t[i] - t[i - 1]) * dist;
+        float len = (float)(t[i] - t[i - 1]) * dist;
         if (forest[i] > 0) run += len;
-        else { if (run >= 10.0) total += run; run = 0.0; }
+        else { if (run >= 10.0f) total += run; run = 0.0f; }
     }
-    if (run >= 10.0) total += run;
+    if (run >= 10.0f) total += run;
     return total;
 }
 
 // ---- vegetation::vegetation_attenuation (per-band, capped). fp32.
-__device__ void veg_bands(double depth, float* out) {
+__device__ void veg_bands(float depth, float* out) {
     for (int i = 0; i < NB; i++)
-        out[i] = (depth <= 0.0) ? 0.0f : fminf((float)(ALPHA_VEG[i] * depth), (float)MAX_VEG[i]);
+        out[i] = (depth <= 0.0f) ? 0.0f : fminf((float)ALPHA_VEG[i] * depth, (float)MAX_VEG[i]);
 }
 
 // FREE-FIELD rail scatter: geometry + cylindrical divergence + FLC + air + 8-band
@@ -391,8 +398,8 @@ extern "C" __global__ void freefield_rail(
         double salt = bilinear_elev_d(elev, rows, cols, lat_min, lon_min, inv, cplat, cplon) + sp[s*3+2];
         double dz = salt - ralt;
         double dslant = fmax(sqrt(dend * dend + dz * dz), 1.0);
-        double fc = flc(sp[s*3], dend, fmin(fmax(frac, 0.0), 1.0));
-        double base = refl + fc - 10.0 * log10(2.0 * PI_D * dslant);
+        float fc = flc((float)sp[s*3], (float)dend, (float)fmin(fmax(frac, 0.0), 1.0));
+        double base = refl + (double)fc - 10.0 * log10(2.0 * PI_D * dslant);
         double atm_km = dslant / 1000.0;
         const float* em = &semis[s * 24];
         for (int i = 0; i < NB; i++) {
@@ -431,8 +438,8 @@ __device__ __forceinline__ void line_source(
     double salt = tile_elev(inner, elev, rows, cols, lat_min, lon_min, inv, bb, cplat, cplon) + sp[2];
     double dz = salt - ralt;
     float dslant = fmaxf((float)sqrt(dend * dend + dz * dz), 1.0f);
-    double fc = flc(sp[0], dend, fmin(fmax(frac, 0.0), 1.0));
-    float base = (float)(refl + fc) - 10.0f * log10f(2.0f * (float)PI_D * dslant);
+    float fc = flc((float)sp[0], (float)dend, (float)fmin(fmax(frac, 0.0), 1.0));
+    float base = (float)refl + fc - 10.0f * log10f(2.0f * (float)PI_D * dslant);
     float atm_km = dslant / 1000.0f;
 
     // energy-budget skip (kept/skipped/ub f64 — the ratio needs the precision)
@@ -446,12 +453,17 @@ __device__ __forceinline__ void line_source(
     ub *= UB_SAFETY;
     if (skipped + ub <= eta * kept) { skipped += ub; return; }
 
-    // ray-march the cadence: bare elevation + building/forest/imd
-    double src_rf = (cplat - lat_min) * inv, src_cf = (cplon - lon_min) * inv;
-    double d_rf = (rlat - cplat) * inv, d_cf = (rlon - cplon) * inv;
+    // ray-march the cadence: bare elevation + building/forest/imd, in halo-RELATIVE
+    // raster coords. The per-sample ray delta `d_rf` is ≲326 cells/10 km; the
+    // absolute `src_rf` is ≤~8000 cells even for a 4×4-tile + 10 km batch, where fp32
+    // ULP is ~1.5 cm ≪ the 30 m cell — so the lerp runs in fp32 directly (mm–cm
+    // accurate; NOT incremental: `+=` would drift + break the sample↔t[i] tie). The
+    // f64 ORIGIN subtractions (cplat−lat_min, absolute lat/lon) stay f64, cast once.
+    float src_rf = (float)((cplat - lat_min) * inv), src_cf = (float)((cplon - lon_min) * inv);
+    float d_rf = (float)((rlat - cplat) * inv), d_cf = (float)((rlon - cplon) * inv);
     int n = fill_t(dend, tprof);
     for (int i = 0; i < n; i++) {
-        double rf = src_rf + tprof[i] * d_rf, cf = src_cf + tprof[i] * d_cf;
+        float rf = src_rf + (float)tprof[i] * d_rf, cf = src_cf + (float)tprof[i] * d_cf;
         ed[i] = (double)bilinear_elev_rc(elev, rows, cols, rf, cf);
         cover_rc(cover, rows, cols, rf, cf, &bld[i], &forr[i], &imdp[i]);
     }
@@ -469,9 +481,9 @@ __device__ __forceinline__ void line_source(
         single_edge_bands(tprof, comp, ed, n, dend, salt, ralt, comb);
         for (int i = 0; i < NB; i++) screen[i] = fmaxf(comb[i] - terr[i], 0.0f);
     }
-    double gimd = path_integral_imd(tprof, imdp, n, dend);
-    float ground_g = (sp[3] != 0.0) ? 0.0f : fminf(fmaxf(1.0f - (float)(gimd / 100.0), 0.0f), 1.0f);
-    veg_bands(veg_run_length(tprof, forr, n, dend), veg);
+    float gimd = path_integral_imd(tprof, imdp, n);
+    float ground_g = (sp[3] != 0.0) ? 0.0f : fminf(fmaxf(1.0f - gimd / 100.0f, 0.0f), 1.0f);
+    veg_bands(veg_run_length(tprof, forr, n, (float)dend), veg);
 
     float pf[NB];
     for (int i = 0; i < NB; i++) {
@@ -555,7 +567,11 @@ extern "C" __global__ void line(
 // conservative superset in ORIGINAL source order, and the exact per-pixel cull in
 // line_source still runs, so each pixel sees exactly its reachable sources in the
 // same order ⇒ kept/skipped parity ⇒ identical output to `rail`.
-extern "C" __global__ void line_binned(
+// __launch_bounds__(64 threads/block, 8 blocks/SM) caps registers at 128 (65536/SM
+// ÷ 512 threads), lifting occupancy from ~12 to 16 warps/SM with zero spill (verified
+// ptxas -v). The kernel is f64-ALU/SFU bound, so this only helps where latency hiding
+// matters — measured, not assumed.
+extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 8) line_binned(
     const float*  __restrict__ elev,
     const float*  __restrict__ inner,
     const unsigned char* __restrict__ cover,
