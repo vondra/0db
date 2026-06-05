@@ -635,7 +635,7 @@ mod tests {
 
     fn test_rasters() -> RealRasters {
         // Prepared rasters under data/prepared — 1° tiles for CZ + surroundings
-        // are populated by scripts/rasters-to-tiles.sh. Tests auto-ignore
+        // are populated by scripts/rasters-global.sh. Tests auto-ignore
         // when missing (see `prepared_available` helper below).
         RealRasters::new(Path::new("../../data/prepared"))
     }
