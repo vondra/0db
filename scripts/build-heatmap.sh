@@ -22,7 +22,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-DATA_YEAR="${DATA_YEAR:-2026}"  # active dataset year (.env DATA_YEAR=2026)
+DATA_YEAR="${DATA_YEAR:-$(cat DATA_YEAR)}"  # default from committed ./DATA_YEAR (bump there yearly); env overrides
 DATA_ROOT="${DATA_ROOT:-data}"
 H3R4="$DATA_ROOT/prepared/$DATA_YEAR/h3r4"
 PREP="$DATA_ROOT/prepared"
