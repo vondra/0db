@@ -534,6 +534,19 @@ fn main() -> Result<()> {
                 ts(),
                 areas.len()
             );
+            // 0 global aerodromes ⇒ the OSM airport data isn't in --h3r4-dir (e.g. an
+            // empty staging dir). Both Stage 1.5 gates then no-op → every ground segment
+            // becomes a DBSCAN candidate (hours/R4 + garbage). Fail fast; cost a run once.
+            if areas.is_empty() {
+                anyhow::bail!(
+                    "0 global aerodromes loaded from {} — the OSM airport_areas.arrow data \
+                     is missing there. Stage 1.5 would then treat every ground segment as a \
+                     new-airport candidate (DBSCAN over millions of points → hours per R4 + \
+                     garbage synth airports). Point --h3r4-dir at a prepared h3r4 that HAS \
+                     the OSM airport data, not an empty or staging dir.",
+                    h3r4_dir.display()
+                );
+            }
             let global_lines = read_global_airport_lines(&h3r4_dir)?;
             eprintln!(
                 "{} [run-all] global airport lines: {} microsegments",
