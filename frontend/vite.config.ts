@@ -10,4 +10,19 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Split the two biggest independent vendor stacks into their own chunks
+        // so an app-code change doesn't bust their cache and they download in
+        // parallel. deck is still needed for first paint (all layers default
+        // on), so this is a caching win, not a smaller first load.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          if (id.includes('maplibre-gl')) return 'maplibre'
+          if (/deck\.gl|luma\.gl|math\.gl|wgsl_reflect|mjolnir/.test(id)) return 'deck'
+        },
+      },
+    },
+  },
 })
