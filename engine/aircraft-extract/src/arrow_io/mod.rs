@@ -36,6 +36,7 @@ pub use cruise::write_cruise;
 pub(crate) use cruise_spill::{read_cruise_spill, write_cruise_spill, CruiseSpillRow};
 pub use flights::{write_flights, FlightRow};
 pub use segments::{read_segments, write_segments};
+pub(crate) use segments::for_each_segment_batch;
 
 pub(crate) fn sibling_tmp_path(p: &Path) -> PathBuf {
     let mut name = p
@@ -84,6 +85,22 @@ pub(crate) fn read_all_batches(path: &Path) -> Result<(Schema, Vec<RecordBatch>)
         batches.push(b?);
     }
     Ok(((*schema).clone(), batches))
+}
+
+/// Stream record batches one at a time (schema-checked) instead of
+/// collecting them all like [`read_all_batches`]. Peak is one batch: small
+/// for chunk-written shards (`WRITE_CHUNK_ROWS`), but a legacy single-batch
+/// shard is one big batch — so a caller bounding a 100M-row legacy day
+/// (Stage 2B) also slices the decode (`for_each_segment_batch`) and caps
+/// concurrency (the arrow batch itself still resides per worker).
+pub(crate) fn for_each_batch(path: &Path, mut f: impl FnMut(RecordBatch) -> Result<()>) -> Result<()> {
+    let file = File::open(path)?;
+    let r = FileReader::try_new(BufReader::new(file), None)?;
+    arrow_schemas::assert_schema_version(r.schema().metadata())?;
+    for b in r {
+        f(b?)?;
+    }
+    Ok(())
 }
 
 pub fn read_record_batches(path: &Path) -> Result<(Schema, Vec<RecordBatch>)> {

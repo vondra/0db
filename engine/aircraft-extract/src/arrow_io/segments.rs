@@ -9,15 +9,35 @@ use arrow::array::{
     Int16Array, Int16Builder, StringArray, StringBuilder, UInt64Array, UInt64Builder, UInt8Array,
     UInt8Builder,
 };
+use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 
 use crate::arrow_schemas;
 use crate::flight::FlightSegment;
 
-use super::{read_all_batches, write_record_batches};
+use super::{for_each_batch, write_record_batches};
+
+/// Rows per record batch. A whole-day Stage 1 shard is ~100M segments; a
+/// single batch would be ~8 GB resident on read, which Stage 2B's
+/// batch-streaming reader can't bound (it streams whole batches). ~1M rows
+/// ≈ 80 MB decoded keeps the per-batch read small. See [`for_each_batch`].
+const WRITE_CHUNK_ROWS: usize = 1_000_000;
 
 pub fn write_segments(path: &Path, rows: &[FlightSegment]) -> Result<()> {
+    write_segments_chunked(path, rows, WRITE_CHUNK_ROWS)
+}
+
+fn write_segments_chunked(path: &Path, rows: &[FlightSegment], chunk_rows: usize) -> Result<()> {
     let schema = arrow_schemas::segments_schema();
+    let batches = rows
+        .chunks(chunk_rows.max(1))
+        .map(|chunk| build_segments_batch(chunk, &schema))
+        .collect::<Result<Vec<_>>>()?;
+    write_record_batches(path, &schema, &batches)
+}
+
+/// Build one segments record batch from up to `WRITE_CHUNK_ROWS` rows.
+fn build_segments_batch(rows: &[FlightSegment], schema: &Arc<Schema>) -> Result<RecordBatch> {
     let n = rows.len();
     let mut flight_id = UInt64Builder::with_capacity(n);
     let mut callsign = StringBuilder::with_capacity(n, 8 * n);
@@ -92,14 +112,15 @@ pub fn write_segments(path: &Path, rows: &[FlightSegment]) -> Result<()> {
         Arc::new(s_elev.finish()),
         Arc::new(e_elev.finish()),
     ];
-    let batch = RecordBatch::try_new(schema.clone(), columns)?;
-    write_record_batches(path, &schema, &[batch])
+    Ok(RecordBatch::try_new(schema.clone(), columns)?)
 }
 
-pub fn read_segments(path: &Path) -> Result<Vec<FlightSegment>> {
-    let (_, batches) = read_all_batches(path)?;
-    let mut out = Vec::new();
-    for b in batches {
+/// Decode one segments record batch — the per-batch half of
+/// [`read_segments`], reused by the streaming [`for_each_segment_batch`].
+fn segments_from_batch(b: &RecordBatch) -> Result<Vec<FlightSegment>> {
+    let mut out = Vec::with_capacity(b.num_rows());
+    // Scoped so the per-column array borrows of `b` drop before returning.
+    {
         let flight_id = b
             .column_by_name("flight_id")
             .unwrap()
@@ -271,6 +292,50 @@ pub fn read_segments(path: &Path) -> Result<Vec<FlightSegment>> {
     Ok(out)
 }
 
+/// Stream a segments shard batch-by-batch, handing each batch's decoded
+/// segments to `f` and dropping them before the next — peak RAM is one
+/// batch, not the whole file. Stage 2B scans multi-GB day shards this way
+/// instead of [`read_segments`] (which holds the entire file in RAM).
+/// Decode a record batch at most this many rows at a time. A legacy
+/// single-batch day shard holds ~100M rows in ONE batch; decoding it whole
+/// would materialise ~8 GB of `FlightSegment`s at once (on top of the ~8 GB
+/// arrow batch), so slice it. Newer shards are written in `WRITE_CHUNK_ROWS`
+/// batches and decode in one slice. ~256k rows ≈ 20 MB decoded.
+const READ_CHUNK_ROWS: usize = 262_144;
+
+pub(crate) fn for_each_segment_batch(
+    path: &Path,
+    f: impl FnMut(Vec<FlightSegment>) -> Result<()>,
+) -> Result<()> {
+    for_each_segment_slice(path, READ_CHUNK_ROWS, f)
+}
+
+fn for_each_segment_slice(
+    path: &Path,
+    slice_rows: usize,
+    mut f: impl FnMut(Vec<FlightSegment>) -> Result<()>,
+) -> Result<()> {
+    for_each_batch(path, |b| {
+        let n = b.num_rows();
+        let mut off = 0;
+        while off < n {
+            let len = slice_rows.min(n - off);
+            f(segments_from_batch(&b.slice(off, len))?)?;
+            off += len;
+        }
+        Ok(())
+    })
+}
+
+pub fn read_segments(path: &Path) -> Result<Vec<FlightSegment>> {
+    let mut out = Vec::new();
+    for_each_segment_batch(path, |mut segs| {
+        out.append(&mut segs);
+        Ok(())
+    })?;
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,5 +387,93 @@ mod tests {
         assert_eq!(r.gse_class, 2);
         assert!((r.start_elev_m - 250.0).abs() < 1e-3);
         assert!((r.end_elev_m - 280.0).abs() < 1e-3);
+    }
+
+    fn seg_with_id(id: u64) -> FlightSegment {
+        FlightSegment {
+            flight_id: id,
+            callsign: String::new(),
+            aircraft_type: *b"A320",
+            profile_idx: 0,
+            source_id: 0,
+            origin: 0,
+            veh_kind: 0,
+            gse_class: 0,
+            period: 0,
+            date_id: 0,
+            phase: Phase::Cruise,
+            flags: 0,
+            start_lat: 0.0,
+            start_lon: 0.0,
+            start_alt_m: 0.0,
+            end_lat: 0.0,
+            end_lon: 0.0,
+            end_alt_m: 0.0,
+            speed_kt: 0.0,
+            length_m: 0.0,
+            agl_avg_m: 0.0,
+            start_elev_m: 0.0,
+            end_elev_m: 0.0,
+        }
+    }
+
+    /// A multi-batch file (the shape Stage 2B's streaming reader needs to
+    /// bound memory) must round-trip in original row order, and
+    /// `for_each_segment_batch` must yield one Vec per batch.
+    #[test]
+    fn write_chunks_into_streamable_batches() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("seg.arrow");
+        let segs: Vec<FlightSegment> = (0..5u64).map(seg_with_id).collect();
+        write_segments_chunked(&p, &segs, 2).unwrap(); // 5 rows / chunk 2 → 3 batches
+
+        let mut nbatch = 0;
+        for_each_batch(&p, |_| {
+            nbatch += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(nbatch, 3, "5 rows / chunk 2 → 3 record batches");
+
+        let ids: Vec<u64> = read_segments(&p).unwrap().iter().map(|s| s.flight_id).collect();
+        assert_eq!(ids, vec![0, 1, 2, 3, 4], "read_segments concatenates in row order");
+
+        let mut streamed = Vec::new();
+        for_each_segment_batch(&p, |b| {
+            streamed.extend(b.iter().map(|s| s.flight_id));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(streamed, vec![0, 1, 2, 3, 4]);
+    }
+
+    /// A single large batch (the legacy ~100M-row shard shape) must decode in
+    /// row-slices — preserving order across slice boundaries — so it never
+    /// materialises whole.
+    #[test]
+    fn single_batch_decodes_in_ordered_slices() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("seg.arrow");
+        let segs: Vec<FlightSegment> = (0..5u64).map(seg_with_id).collect();
+        write_segments_chunked(&p, &segs, 1000).unwrap(); // one batch of 5 rows
+
+        let mut nbatch = 0;
+        for_each_batch(&p, |_| {
+            nbatch += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(nbatch, 1, "5 rows / chunk 1000 → one batch");
+
+        let mut slices = 0;
+        let mut ids = Vec::new();
+        for_each_segment_slice(&p, 2, |s| {
+            slices += 1;
+            ids.extend(s.iter().map(|x| x.flight_id));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(slices, 3, "one 5-row batch / slice 2 → 3 decode slices");
+        assert_eq!(ids, vec![0, 1, 2, 3, 4]);
     }
 }
