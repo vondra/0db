@@ -49,8 +49,24 @@ DAYS="${DAYS:-}"
 # adsbexchange). An explicit SCOPE_BBOX env (even empty) wins.
 SCOPE_BBOX="${SCOPE_BBOX-__PER_FEED__}"
 FROM_STAGE="${FROM_STAGE:-}"
+# OOM guard. Stage 2B/2C load multi-million-segment mega-hub R4s; an
+# unbounded run peaked at 126 GB and triggered a GLOBAL oom-kill that
+# took down the whole session (2026-06-05). systemd-run --scope confines
+# the blast radius to MemoryMax so only THIS job dies, never the box.
+# MAX_THREADS caps rayon so N concurrent mega-hub cells can't co-resident
+# past the cap. MEMMAX= (empty) opts out (e.g. no user systemd).
+MEMMAX="${MEMMAX:-100G}"
+MAX_THREADS="${MAX_THREADS:-}"
 
-log() { echo "[aircraft-extract] $(date '+%Y-%m-%d %H:%M:%S') $*"; }
+# Echo to stdout AND (once LOG_FILE is set) append to it, so status the
+# binary doesn't emit — the OOM-guard decision above all — survives a
+# `nohup …>/dev/null` launch where the script's own stdout is discarded.
+log() {
+    local m="[aircraft-extract] $(date '+%Y-%m-%d %H:%M:%S') $*"
+    echo "$m"
+    [ -n "${LOG_FILE:-}" ] && echo "$m" >>"$LOG_FILE"
+    return 0
+}
 die() { log "ERROR: $*"; exit 1; }
 
 # CLI args are accepted as the discoverable alternative to env vars.
@@ -143,7 +159,29 @@ if [ -n "$FROM_STAGE" ]; then
     EXTRA_ARGS+=(--from-stage "$FROM_STAGE")
     log "from-stage: $FROM_STAGE (skipping every phase before $FROM_STAGE)"
 fi
-./engine/aircraft-extract/target/release/aircraft-extract run-all \
+if [ -n "$MAX_THREADS" ]; then
+    EXTRA_ARGS+=(--max-threads "$MAX_THREADS")
+    log "max-threads: $MAX_THREADS (rayon pool cap — bounds concurrent mega-hub RAM)"
+fi
+
+# Confine RAM to MEMMAX via a transient user scope so an OOM kills only
+# this job, not the box. --scope runs synchronously (foreground), so the
+# `tee` pipe + live progress are unchanged. Probe first; if user systemd
+# is unreachable we REFUSE to run rather than silently fall back to the
+# unguarded launch that already global-OOM'd the box — set MEMMAX= to
+# explicitly opt out of the guard.
+GUARD=()
+if [ -n "$MEMMAX" ]; then
+    : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"; export XDG_RUNTIME_DIR
+    GUARD=(systemd-run --user --scope --quiet -p MemoryMax="$MEMMAX" -p MemorySwapMax=0)
+    # Probe with the REAL guard (incl. the -p caps) so a host that can't
+    # honour MemoryMax/MemorySwapMax fails HERE, not mid-pipe.
+    if ! command -v systemd-run >/dev/null 2>&1 || ! "${GUARD[@]}" true >/dev/null 2>&1; then
+        die "MEMMAX=$MEMMAX set but the systemd-run --user MemoryMax guard is unavailable — refusing to run unguarded (an unbounded run global-OOM'd the whole session 2026-06-05). Re-run where user systemd is reachable, or set MEMMAX= to opt out."
+    fi
+    log "OOM guard: MemoryMax=$MEMMAX MemorySwapMax=0"
+fi
+"${GUARD[@]}" ./engine/aircraft-extract/target/release/aircraft-extract run-all \
     --adsb-cache "$ADSB_CACHE" \
     --h3r4-dir "$H3R4_DIR" \
     --prepared-dir "$PREPARED_DIR" \
