@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { TreePine, Home } from 'lucide-react'
 import type { RealEstateFilters } from './RealEstateLayer'
-import { QUIET_THRESHOLD_MIN, QUIET_THRESHOLD_MAX } from '../hooks/useUrlState'
+import { QUIET_THRESHOLD_MIN, QUIET_THRESHOLD_MAX, QUIET_THRESHOLD_STEP } from '../hooks/useUrlState'
 
 interface OverlayControlsProps {
   quietClustersEnabled: boolean
@@ -34,8 +34,8 @@ function ToggleRow({ active, icon, label, tooltip, onClick }: {
   )
 }
 
-function NoiseSlider({ value, onChange, min, max, testId }: {
-  value: number; onChange: (v: number) => void; min: number; max: number; testId: string
+function NoiseSlider({ value, onChange, min, max, step = 1, testId }: {
+  value: number; onChange: (v: number) => void; min: number; max: number; step?: number; testId: string
 }) {
   const [local, setLocal] = useState(value)
   const onChangeRef = useRef(onChange)
@@ -50,9 +50,9 @@ function NoiseSlider({ value, onChange, min, max, testId }: {
     <div className="flex items-center gap-2 ml-7 mt-0.5 mb-1">
       <span className="text-[11px] text-muted-foreground shrink-0">below</span>
       <input type="range" data-testid={testId} value={local}
-        onChange={(e) => setLocal(parseInt(e.target.value, 10))} min={min} max={max}
+        onChange={(e) => setLocal(parseFloat(e.target.value))} min={min} max={max} step={step}
         className="flex-1 h-1 accent-primary cursor-pointer" />
-      <span className="text-[11px] text-muted-foreground tabular-nums w-10 text-right">{local} dB</span>
+      <span className="text-[11px] text-muted-foreground tabular-nums w-12 text-right">{local} dB</span>
     </div>
   )
 }
@@ -72,7 +72,7 @@ export default function OverlayControls({
         onClick={() => onQuietClustersChange(!quietClustersEnabled)}
       />
       {quietClustersEnabled && (
-        <NoiseSlider value={quietThreshold} onChange={onQuietThresholdChange} min={QUIET_THRESHOLD_MIN} max={QUIET_THRESHOLD_MAX} testId="quiet-threshold" />
+        <NoiseSlider value={quietThreshold} onChange={onQuietThresholdChange} min={QUIET_THRESHOLD_MIN} max={QUIET_THRESHOLD_MAX} step={QUIET_THRESHOLD_STEP} testId="quiet-threshold" />
       )}
 
       <ToggleRow

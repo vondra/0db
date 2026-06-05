@@ -5,12 +5,14 @@ import { HEATMAP_LAYERS } from '../components/HeatmapV3Overlay'
 const DEFAULT_LAT = 49.8
 const DEFAULT_LNG = 15.5
 const DEFAULT_ZOOM = 8
-// Quiet-zone slider: highlight pixels whose total Lden is at or below this.
-// Range targets genuinely quiet places (rural/forest), deliberately below the
-// heatmap's loud band: 0 dB (near-silence) to 50 dB (calm suburb).
-export const QUIET_THRESHOLD_MIN = 0
-export const QUIET_THRESHOLD_MAX = 50
+// Quiet-zone slider spec — highlight pixels whose total Lden is ≤ this.
+// Range targets genuinely quiet places: 20 dB (rural quiet) to 45 dB (calm
+// suburb). Step 0.5 dB matches the HM3 raster's native resolution (1 byte =
+// 0.5 dB); finer would be false precision.
+export const QUIET_THRESHOLD_MIN = 20
+export const QUIET_THRESHOLD_MAX = 45
 export const QUIET_THRESHOLD_DEFAULT = 35
+export const QUIET_THRESHOLD_STEP = 0.5
 export const ALL_RASTER_OVERLAY_IDS = [
   ...HEATMAP_LAYERS,
   'dem',
@@ -42,11 +44,12 @@ export const DEFAULT_RASTER_OVERLAYS: Record<string, boolean> = {
   ...Object.fromEntries(HEATMAP_LAYERS.map(id => [id, true])),
 }
 
-// Quiet-zone threshold, clamped to the slider's range. A malformed `qt` (NaN)
-// would otherwise make `byte > maxByte` always false downstream and paint every
+// Quiet-zone threshold, clamped to the slider's range. parseFloat (not parseInt)
+// so the 0.5 dB step survives the URL round-trip. A malformed `qt` (NaN) would
+// otherwise make `byte > maxByte` always false downstream and paint every
 // non-NO_DATA pixel as quiet.
 function parseQuietThreshold(raw: string | null): number {
-  const n = raw == null ? NaN : parseInt(raw, 10)
+  const n = raw == null ? NaN : parseFloat(raw)
   return Number.isFinite(n) ? Math.min(QUIET_THRESHOLD_MAX, Math.max(QUIET_THRESHOLD_MIN, n)) : QUIET_THRESHOLD_DEFAULT
 }
 
