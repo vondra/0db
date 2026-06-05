@@ -82,6 +82,12 @@ export async function decodeHM3(buf: ArrayBuffer): Promise<DecodedHM3Tile> {
   const nonEmptyCells = view.getUint32(12, true)
   // payload_len redundant once we have the slice — use it as a sanity check.
   const payloadLen = view.getUint32(16, true)
+  // A corrupt/truncated tile can carry a payloadLen past the buffer; the
+  // Uint8Array view would then throw RangeError. Reject cleanly so callers
+  // render an empty tile instead of surfacing the throw.
+  if (HM3_HEADER_BYTES + payloadLen > buf.byteLength) {
+    throw new Error(`HM3 payload ${payloadLen} exceeds buffer (${buf.byteLength - HM3_HEADER_BYTES} avail)`)
+  }
   const compressed = new Uint8Array(buf, HM3_HEADER_BYTES, payloadLen)
   const body = await zstdDecompress(compressed)
 

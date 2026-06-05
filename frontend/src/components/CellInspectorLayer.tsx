@@ -271,8 +271,15 @@ function readCellValue(
   const fracX = (lng - lonWest) / (lonEast - lonWest)
   const px = clamp(Math.floor(fracX * TILE_SIZE), 0, TILE_SIZE - 1)
   const idx = py * TILE_SIZE + px
-  if (layer === 'dem') return new DataView(entry).getInt16(idx * 2, false)
-  return new Uint8Array(entry)[idx]
+  // Guard a truncated tile: getInt16 past the buffer throws synchronously, and
+  // this runs inside a render useMemo, so it would unmount the tree
+  // (ensureTileFetched only rejects 0-byte bodies, not short-but-nonzero ones).
+  if (layer === 'dem') {
+    return idx * 2 + 2 <= entry.byteLength
+      ? new DataView(entry).getInt16(idx * 2, false)
+      : null
+  }
+  return idx < entry.byteLength ? new Uint8Array(entry)[idx] : null
 }
 
 function promoteLru(cache: Map<string, TileEntry>, key: string): void {
