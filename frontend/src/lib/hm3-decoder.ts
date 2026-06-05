@@ -38,14 +38,6 @@ export interface DecodedHM3Tile {
 }
 
 /**
- * Decode a tile byte → byte. Sentinel 255 stays 255 (no data);
- * everything else is the encoded dB × 2.
- */
-export function dequantiseLden(byte: number): number {
-  return byte === NO_DATA ? Number.NEGATIVE_INFINITY : byte / 2
-}
-
-/**
  * Fetch + decode one HM3 tile. Throws on header / version / body
  * mismatch — callers should catch and render an empty tile.
  */

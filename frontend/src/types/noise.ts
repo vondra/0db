@@ -218,19 +218,6 @@ export interface CruiseHexTopFlight {
   class_name: string
 }
 
-/** Server-side proxy response from `/api/aircraft/:hex` (hexdb.io). */
-export interface AircraftInfo {
-  hex: string
-  registration: string | null
-  icao_typecode: string | null
-  manufacturer: string | null
-  type: string | null
-  operator: string | null
-  operator_icao: string | null
-  source: 'hexdb' | 'unknown'
-  fetched_at: number
-}
-
 export interface AircraftAirborneDetail {
   periods: NoisePeriodsData
   observed_flights_per_day: number
