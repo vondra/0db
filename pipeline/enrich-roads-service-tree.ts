@@ -909,13 +909,33 @@ function main() {
     return true
   }).sort()
   const rawStart = parseInt(process.env.START_INDEX || '0', 10)
-  const START_INDEX = Number.isFinite(rawStart)
+  let START_INDEX = Number.isFinite(rawStart)
     ? Math.min(Math.max(0, rawStart), hexDirs.length)
     : 0
+  let END_INDEX = hexDirs.length
+
+  // SHARD="i/n" splits the sorted hex list into n disjoint contiguous slices for n
+  // parallel processes. Safe because processHex reads/writes only its own hex's arrows
+  // (no cross-slice file contention); the per-hex flow accumulation itself is single-threaded.
+  if (process.env.SHARD) {
+    const m = /^(\d+)\/(\d+)$/.exec(process.env.SHARD)
+    const i = m ? Number(m[1]) : NaN
+    const n = m ? Number(m[2]) : NaN
+    if (!m || n <= 0 || i >= n) {
+      console.error(`ERROR: invalid SHARD="${process.env.SHARD}" (expected i/n with 0 <= i < n)`)
+      process.exit(1)
+    }
+    START_INDEX = Math.floor((i * hexDirs.length) / n)
+    END_INDEX = Math.floor(((i + 1) * hexDirs.length) / n)
+  }
+
+  let rangeSuffix = ''
+  if (process.env.SHARD) rangeSuffix = ` | shard ${process.env.SHARD} → [${START_INDEX}, ${END_INDEX})`
+  else if (START_INDEX > 0) rangeSuffix = ` (resume from #${START_INDEX})`
 
   console.log(`Service-tree AADT enrichment (v2: flow accumulation)`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
-  console.log(`  Hexes: ${hexDirs.length}${PREFIX ? ` (prefix: ${PREFIX})` : ''}${START_INDEX > 0 ? ` (resume from #${START_INDEX})` : ''}`)
+  console.log(`  Hexes: ${hexDirs.length} total${PREFIX ? ` (prefix: ${PREFIX})` : ''}${rangeSuffix}`)
 
   const startTime = Date.now()
   let lastProgress = startTime
@@ -924,7 +944,7 @@ function main() {
   let totalSegmentsEnriched = 0
   let totalResidential = 0
 
-  for (let hi = START_INDEX; hi < hexDirs.length; hi++) {
+  for (let hi = START_INDEX; hi < END_INDEX; hi++) {
     const hexId = hexDirs[hi]
     const result = processHex(hexId)
 
@@ -939,7 +959,7 @@ function main() {
     if (now - lastProgress >= 10_000) {
       lastProgress = now
       const elapsed = ((now - startTime) / 1000).toFixed(0)
-      process.stdout.write(`\r  [${elapsed}s] ${hexesProcessed}/${hexDirs.length} hexes, ${hexesEnriched} enriched, ${totalSegmentsEnriched} segments`)
+      process.stdout.write(`\r  [${elapsed}s] ${hexesProcessed}/${END_INDEX} hexes, ${hexesEnriched} enriched, ${totalSegmentsEnriched} segments`)
     }
   }
 
