@@ -40,3 +40,10 @@ required-features = ["gpu"]
 name = "e2-full"
 path = "src/e2_full.rs"
 required-features = ["gpu"]
+
+# E2 airborne: fp32 airborne NPD kernel vs the f64 `QM_AIRBORNE_FORCE_EXACT=1`
+# oracle on one tile (docs/dev/gpu-airborne-plan.md). The make-or-break parity proof.
+[[bin]]
+name = "e2-airborne"
+path = "src/e2_airborne.rs"
+required-features = ["gpu"]

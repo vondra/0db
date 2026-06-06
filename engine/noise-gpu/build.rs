@@ -12,6 +12,9 @@ use std::{env, fs, path::PathBuf, process::Command};
 
 fn main() {
     println!("cargo:rerun-if-env-changed=NOISE_GPU_ARCH");
+    // Watch the whole dir, not just each .cu — otherwise ADDING a new kernel
+    // (e.g. airborne.cu) doesn't re-run this script, so its .ptx never builds.
+    println!("cargo:rerun-if-changed=kernels");
     if env::var_os("CARGO_FEATURE_GPU").is_none() {
         return;
     }
