@@ -1,0 +1,55 @@
+//! Core types for noise computation.
+
+use serde::Serialize;
+
+/// Noise source category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LayerKind {
+    Road,
+    Railway,
+    Building,
+    Industrial,
+    Aircraft,
+}
+
+impl LayerKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Road => "road",
+            Self::Railway => "railway",
+            Self::Building => "building",
+            Self::Industrial => "industrial",
+            Self::Aircraft => "aircraft",
+        }
+    }
+}
+
+impl std::fmt::Display for LayerKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Number of octave bands (63 Hz to 8 kHz).
+pub const NUM_BANDS: usize = 8;
+
+/// Octave band center frequencies [Hz].
+pub const BAND_FREQ: [f64; NUM_BANDS] = [63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0];
+
+
+mod inputs;
+mod config;
+mod result;
+mod aircraft_detail;
+mod propagation;
+mod metadata;
+mod trace_types;
+
+pub use aircraft_detail::*;
+pub use config::*;
+pub use inputs::*;
+pub use metadata::*;
+pub use propagation::*;
+pub use result::*;
+pub use trace_types::*;
