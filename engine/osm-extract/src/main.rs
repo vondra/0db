@@ -4,7 +4,7 @@
 //!   Pass 0: Scan relations → manifest of multipolygon members
 //!   Pass 1: Stream nodes → mmap'd coordinate cache
 //!   Pass 2: Stream ways + relations → classify, resolve, microsegment, assemble multipolygons
-//!   Spill to 256 intermediate buckets, then finalize → per-hex Arrow IPC
+//!   Spill to `--num-buckets` hex-disjoint buckets, then finalize → per-hex Arrow IPC
 
 mod classify;
 mod finalize;
@@ -30,7 +30,11 @@ struct Cli {
     node_cache: PathBuf,
     #[arg(long, default_value = "/tmp/osm_spill")]
     spill_dir: PathBuf,
-    #[arg(long, default_value_t = 256)]
+    /// Spill partitions. Buckets are disjoint by hex, so finalize parallelizes one
+    /// rayon task per (source, bucket). Only num_buckets/32 actually populate — H3
+    /// res-4 ids are ≡31 mod 32 in the hashed bits — so 1024 → 32 effective buckets,
+    /// enough to saturate a 32-core box at finalize (256 gave only 8).
+    #[arg(long, default_value_t = 1024)]
     num_buckets: usize,
     /// Skip extraction, only run finalize on existing spill data.
     #[arg(long)]
