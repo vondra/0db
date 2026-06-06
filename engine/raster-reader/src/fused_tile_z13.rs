@@ -35,7 +35,7 @@ pub const TILE_PX: usize = 256;
 pub const HALO_M: f64 = 16_000.0;
 
 /// Equatorial m/px at zoom 0. = 2 π R / 256 with R = 6 378 137.
-const EQUATORIAL_M_PER_PX_Z0: f64 = 156_543.033_928_040_99;
+const EQUATORIAL_M_PER_PX_Z0: f64 = 156_543.033_928_041;
 
 /// Mercator tile bbox in lat/lon (EPSG:4326).
 #[derive(Debug, Clone, Copy)]

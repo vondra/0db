@@ -224,7 +224,7 @@ fn compute_at_point_inner(
             barriers,
             rasters,
             LayerKind::Industrial,
-            traces.as_deref_mut(),
+            traces,
         );
         timings.industrial_ms = t.elapsed().as_secs_f64() * 1000.0;
         source_results.push(SourceResult {
@@ -595,7 +595,7 @@ fn compute_roads(
 
         let key = (key_ref.clone(), seg.name.clone(), seg.road_class);
         let link_suffix = match class_idx {
-            10 | 11 | 12 => " (link)",
+            10..=12 => " (link)",
             _ => "",
         };
         let acc = roads_by_key.entry(key).or_insert_with(|| {
@@ -834,7 +834,7 @@ fn compute_roads(
     }
 
     // Mark the dominant-of-group traces now that all segments are processed.
-    if let Some(t) = traces.as_deref_mut() {
+    if let Some(t) = traces {
         for acc in roads_by_key.values() {
             if let Some(idx) = acc.dominant_trace_idx {
                 if let Some(tr) = t.segments.get_mut(idx) {
@@ -1365,7 +1365,7 @@ fn compute_railways(
         }
     }
 
-    if let Some(t) = traces.as_deref_mut() {
+    if let Some(t) = traces {
         for acc in rails_by_key.values() {
             if let Some(idx) = acc.dominant_trace_idx {
                 if let Some(tr) = t.segments.get_mut(idx) {

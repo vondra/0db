@@ -50,7 +50,7 @@ pub fn compute_aircraft_v6(
     // callers that pass `traces = None` anyway.
     trace_cap: usize,
     traces: Option<&mut TraceCollector>,
-    mut timings: Option<&mut crate::types::LayerTimings>,
+    timings: Option<&mut crate::types::LayerTimings>,
 ) -> (NoisePeriods, Vec<Contributor>, AircraftBandData) {
     let n_days_f = (n_days as f64).max(1.0);
 
@@ -92,7 +92,7 @@ pub fn compute_aircraft_v6(
         &mut cruise_flights,
         &mut cruise_flight_stats,
         &mut top_flight_candidates,
-        traces.as_deref_mut(),
+        traces,
     );
     let t_cruise_scatter = t_start.elapsed() - t_airborne_scatter;
 
@@ -120,7 +120,7 @@ pub fn compute_aircraft_v6(
             cruise_rows.len(),
         );
     }
-    if let Some(t) = timings.as_deref_mut() {
+    if let Some(t) = timings {
         // `airb_detail` is a few ms of post-processing — fold into the
         // airborne bucket so the popup breakdown stays 3 aircraft buckets.
         t.aircraft_airborne_ms = ms(t_airborne_scatter) + ms(t_airborne_detail);

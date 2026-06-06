@@ -67,6 +67,12 @@ pub struct BandStats {
     pub class_counts: [u32; aircraft::NUM_CLASSES],
 }
 
+impl Default for BandStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BandStats {
     pub fn new() -> Self {
         Self {

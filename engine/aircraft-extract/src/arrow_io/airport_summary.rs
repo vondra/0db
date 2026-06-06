@@ -295,10 +295,10 @@ pub(crate) fn write_airport_summary_part(
     Ok(())
 }
 
-/// Reader half is consumed by the Stage 2C v5 reduce phase (next
-/// implementation step). Kept here in lockstep with the writer so the
-/// round-trip test catches schema drift early.
-#[allow(dead_code)]
+/// Reads one Stage 2C `part.arrow` shard back into rows; the reduce phase
+/// (`stage_2c::airport_summary_reduce`) absorbs every R4 subdir's part.
+/// Kept in lockstep with the writer so the round-trip test catches schema
+/// drift early.
 pub(crate) fn read_airport_summary_part(path: &Path) -> Result<Vec<AirportSummaryPartRow>> {
     use arrow::ipc::reader::FileReader;
     use std::fs::File;

@@ -76,9 +76,8 @@ fn compute_subtype(tags: &[(String, String)]) -> u8 {
     // Check man_made=*
     // NOTE: wastewater_plant NOT classified — has dedicated source_type=4 profile (89 dB, 24/7)
     for (k, v) in tags {
-        if k == "man_made" {
-            if v == "works" { return 2; }
-        }
+        if k == "man_made"
+            && v == "works" { return 2; }
     }
     // Check landuse=*
     for (k, v) in tags {

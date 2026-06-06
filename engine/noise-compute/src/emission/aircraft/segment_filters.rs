@@ -146,10 +146,10 @@ pub fn is_valid_airborne_segment(seg: &AircraftSegment, rasters: &dyn RasterSamp
         return false;
     }
 
-    let sl = seg.start_lat as f64;
-    let sn = seg.start_lon as f64;
-    let el = seg.end_lat as f64;
-    let en = seg.end_lon as f64;
+    let sl = seg.start_lat;
+    let sn = seg.start_lon;
+    let el = seg.end_lat;
+    let en = seg.end_lon;
     let sa = seg.start_alt_m as f64;
     let ea = seg.end_alt_m as f64;
     for frac in [0.25_f64, 0.75] {

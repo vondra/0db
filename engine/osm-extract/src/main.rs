@@ -92,7 +92,7 @@ fn main() -> Result<()> {
         match element {
             Element::Way(way) => {
                 ways_total += 1;
-                if ways_total % 2_000_000 == 0 {
+                if ways_total.is_multiple_of(2_000_000) {
                     eprintln!(
                         "  {:.1}M ways, {:.1}M features, {} rels assembled...",
                         ways_total as f64 / 1e6,

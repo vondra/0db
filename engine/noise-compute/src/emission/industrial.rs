@@ -147,7 +147,7 @@ pub fn nace_profile(nace_4digit: u16) -> Option<IndustrialProfile> {
             evening_offset: -5.0,
             night_offset: -12.0,
         },
-        13 | 14 | 15 => IndustrialProfile {
+        13..=15 => IndustrialProfile {
             // Textiles, leather
             base_lw: 88.0,
             spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
@@ -219,7 +219,7 @@ pub fn nace_profile(nace_4digit: u16) -> Option<IndustrialProfile> {
             night_offset: -8.0,
         },
         // Light industry / services
-        1 | 2 | 3 => IndustrialProfile {
+        1..=3 => IndustrialProfile {
             // Agriculture
             base_lw: 70.0,
             spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],

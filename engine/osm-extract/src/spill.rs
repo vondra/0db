@@ -438,10 +438,7 @@ fn site_subtype_from_tags(tags: &Tags) -> u8 {
     // NOTE: wastewater_plant intentionally NOT classified — it has a dedicated
     // source_type=4 profile (89 dB, 24/7) which is more accurate than waste subtype=9 (93 dB).
     if let Some(mm) = tags.get("man_made") {
-        match mm.as_str() {
-            "works" => return 2,
-            _ => {}
-        }
+        if mm.as_str() == "works" { return 2 }
     }
     // Check landuse refinements
     if let Some(lu) = tags.get("landuse") {
@@ -485,7 +482,7 @@ mod hex {
     }
 
     pub fn decode(s: &str) -> Option<Vec<u8>> {
-        if s.len() % 2 != 0 || s.is_empty() {
+        if !s.len().is_multiple_of(2) || s.is_empty() {
             return None;
         }
         (0..s.len())

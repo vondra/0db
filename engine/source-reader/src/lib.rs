@@ -169,7 +169,7 @@ pub fn collect_from_hex_data(
             scan_metadata(batch, &mut n_days_from_metadata, &mut date_ids);
         }
     }
-    let n_days = n_days_from_metadata.unwrap_or_else(|| {
+    let n_days = n_days_from_metadata.unwrap_or({
         if date_ids.is_empty() {
             365
         } else {

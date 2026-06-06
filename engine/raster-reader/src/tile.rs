@@ -559,7 +559,7 @@ mod tests {
         // Sample in Brno center — should find some buildings
         let h = store.sample(49.195, 16.608);
         // Could be 0 (street) or >0 (building) — just verify no crash
-        assert!(h >= 0.0 && h <= 255.0, "Building height: {h}m");
+        assert!((0.0..=255.0).contains(&h), "Building height: {h}m");
     }
 
     #[test]

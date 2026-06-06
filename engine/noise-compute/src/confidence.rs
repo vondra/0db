@@ -11,6 +11,12 @@ pub struct Confidence {
     pub notes: Vec<String>, // human-readable notes
 }
 
+impl Default for Confidence {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Confidence {
     pub fn new() -> Self {
         Confidence {

@@ -12,12 +12,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use aircraft_extract::airport_index::AerodromeIndex;
 use aircraft_extract::airport_io::{read_global_airport_lines, read_global_airports};
-use aircraft_extract::arrow_io::read_record_batches;
 use aircraft_extract::progress::ts;
 use aircraft_extract::source::FlightSource;
 use aircraft_extract::source_adsb_tar::AdsbTarSource;
 use aircraft_extract::stage_0::run_stage_0;
-use aircraft_extract::stage_1::{read_flights, run_stage_1};
+use aircraft_extract::stage_1::run_stage_1;
 use aircraft_extract::scope::ScopeBbox;
 use aircraft_extract::stage_2a::run_stage_2a;
 use aircraft_extract::stage_2b::run_stage_2b;
@@ -904,12 +903,4 @@ fn cgroup_memory_limit_bytes() -> Option<u64> {
 fn available_memory_bytes() -> u64 {
     let host = host_ram_bytes();
     cgroup_memory_limit_bytes().map_or(host, |lim| host.min(lim))
-}
-
-#[allow(dead_code)]
-fn _unused_paths() -> (PathBuf, &'static Path) {
-    let p = PathBuf::new();
-    let _ = read_record_batches(&p);
-    let _ = read_flights(&p);
-    (p, Path::new(""))
 }

@@ -269,7 +269,7 @@ pub fn fast_lateral_attenuation(
     }
 
     let beta_deg = fast_atan(rel_alt / lateral_m.max(0.01)).to_degrees();
-    if beta_deg > 50.0 || beta_deg < 0.0 {
+    if !(0.0..=50.0).contains(&beta_deg) {
         return if beta_deg < 0.0 { 10.857 } else { 0.0 };
     }
 
@@ -342,7 +342,7 @@ pub struct AircraftKernelResult {
 /// implied aircraft position is a straight-line projection past the last
 /// trace sample) AND the linearly-extrapolated altitude at the foot is
 /// > 30 m below terrain at `(foot_lat, foot_lon)`. Airport-ground segments
-/// bypass the filter (they set `terrain_*_cut_m = f64::MIN`).
+/// > bypass the filter (they set `terrain_*_cut_m = f64::MIN`).
 ///
 /// Why the `t ∈ [0, 1]` gate: legitimate cases keep CPA inside the
 /// observed segment (Schiphol-style sub-sea descents have CPA within the

@@ -29,8 +29,6 @@ use airborne_view::AirborneRowAccum;
 use airport_summary_view::load_airport_summary;
 use airport_traffic_view::AirportTrafficRowAccum;
 use cruise_view::CruiseRowAccum;
-#[cfg(test)]
-use noise_compute::compute::aircraft_v6::AirportTrafficRowView;
 use std::collections::HashMap;
 
 /// Build the per-popup `osm_id` → `ref` lookup from the
@@ -193,7 +191,7 @@ pub fn add_v6_aircraft_to_result(
 
     let (mut air_periods, mut air_contribs, band_data) = compute_aircraft_v6(
         receiver,
-        &airborne_views,
+        airborne_views,
         &cruise_views,
         rasters,
         n_days,
@@ -437,7 +435,7 @@ pub(super) fn assert_schema_version(label: &str, batches: &[RecordBatch]) -> Res
         if v == Some(EXPECTED_SCHEMA_VERSION) {
             continue;
         }
-        if allow_legacy && v.map_or(false, |s| LEGACY_SCHEMA_VERSIONS.contains(&s)) {
+        if allow_legacy && v.is_some_and(|s| LEGACY_SCHEMA_VERSIONS.contains(&s)) {
             eprintln!(
                 "WARN: {label}[batch {idx}] legacy schema {v:?} accepted via \
                  ACCEPT_LEGACY_AIRCRAFT_SCHEMA — class_idx may map to wrong NPD profile"
@@ -474,7 +472,7 @@ pub(super) fn assert_airport_traffic_contract(
         if c == Some(EXPECTED_AIRPORT_TRAFFIC_CONTRACT) {
             continue;
         }
-        if allow_legacy && c.map_or(false, |s| LEGACY_AIRPORT_TRAFFIC_CONTRACTS.contains(&s)) {
+        if allow_legacy && c.is_some_and(|s| LEGACY_AIRPORT_TRAFFIC_CONTRACTS.contains(&s)) {
             eprintln!(
                 "WARN: {label}[batch {idx}] legacy airport_traffic_contract {c:?} accepted \
                  via ACCEPT_LEGACY_AIRCRAFT_SCHEMA — energy semantics may differ"
@@ -511,7 +509,7 @@ pub(super) fn assert_airborne_contract(
         if c == Some(EXPECTED_AIRBORNE_CONTRACT) {
             continue;
         }
-        if allow_legacy && c.map_or(false, |s| LEGACY_AIRBORNE_CONTRACTS.contains(&s)) {
+        if allow_legacy && c.is_some_and(|s| LEGACY_AIRBORNE_CONTRACTS.contains(&s)) {
             eprintln!(
                 "WARN: {label}[batch {idx}] legacy airborne_contract {c:?} accepted \
                  via ACCEPT_LEGACY_AIRCRAFT_SCHEMA — terrain columns may differ"

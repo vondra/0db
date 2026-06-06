@@ -60,7 +60,7 @@ pub fn scatter(
     flights: &mut HashMap<u64, FlightAccum>,
     cruise_flight_stats: &mut HashMap<u64, CruiseFlightStats>,
     top_flight_candidates: &mut HashMap<u64, TopFlightCandidate>,
-    mut traces: Option<&mut TraceCollector>,
+    traces: Option<&mut TraceCollector>,
 ) {
     let rx_elev = receiver.altitude_m();
     let npd_luts = aircraft::NpdLuts::shared();
@@ -281,7 +281,7 @@ pub fn scatter(
         }
     }
 
-    if let Some(t) = traces.as_deref_mut() {
+    if let Some(t) = traces {
         let mut hex_keys: Vec<u64> = hex_accums.keys().copied().collect();
         hex_keys.sort();
         for hex_key in hex_keys {

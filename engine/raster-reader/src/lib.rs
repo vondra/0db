@@ -646,7 +646,7 @@ mod tests {
     fn prepared_available() -> bool {
         let dir = Path::new("../../data/prepared/dem/copernicus");
         std::fs::read_dir(dir)
-            .map(|mut iter| iter.any(|e| e.ok().map_or(false, |e| e.path().extension().map_or(false, |x| x == "hgt"))))
+            .map(|mut iter| iter.any(|e| e.ok().is_some_and(|e| e.path().extension().is_some_and(|x| x == "hgt"))))
             .unwrap_or(false)
     }
 
@@ -673,8 +673,8 @@ mod tests {
         let r = test_rasters();
         let g1 = r.ground_g(49.195, 16.608); // urban
         let g2 = r.ground_g(49.3, 16.4);      // rural
-        assert!(g1 >= 0.0 && g1 <= 1.0, "G urban: {g1}");
-        assert!(g2 >= 0.0 && g2 <= 1.0, "G rural: {g2}");
+        assert!((0.0..=1.0).contains(&g1), "G urban: {g1}");
+        assert!((0.0..=1.0).contains(&g2), "G rural: {g2}");
     }
 
     #[test]
@@ -682,7 +682,7 @@ mod tests {
         if !prepared_available() { return; }
         let r = test_rasters();
         let h = r.building_height(49.195, 16.608);
-        assert!(h >= 0.0 && h <= 255.0, "Building height: {h}m");
+        assert!((0.0..=255.0).contains(&h), "Building height: {h}m");
     }
 
     // FusedGrid ↔ RealRasters parity tests. Regression guard for the

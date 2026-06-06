@@ -246,7 +246,7 @@ pub fn screening_attenuation_with_meta(
             continue;
         }
         let idx = nearest_t_index(&profile.t, t_proj);
-        let bh = barrier.height_m as f32;
+        let bh = barrier.height_m;
         if bh > barrier_at[idx] {
             barrier_at[idx] = bh;
         }

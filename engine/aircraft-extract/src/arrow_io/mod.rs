@@ -26,10 +26,6 @@ pub use airborne::write_airborne;
 pub use airport_summary::{
     read_airport_summary, write_airport_summary, AirportSummaryRow,
 };
-// Reader half is consumed by the Stage 2C v5 reduce phase (added in
-// the next implementation step). Writer used today by
-// `stage_2c/airport_traffic_writer.rs` to dump per-R4 fid sets.
-#[allow(unused_imports)]
 pub(crate) use airport_summary::{read_airport_summary_part, write_airport_summary_part};
 pub use airport_traffic::{read_airport_traffic, write_airport_traffic, AirportTrafficRow};
 pub use cruise::write_cruise;
