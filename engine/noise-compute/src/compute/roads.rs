@@ -1,0 +1,618 @@
+use crate::*;
+
+/// Compute road noise: emission per period → propagation → Lden per segment.
+pub(crate) fn compute_roads(
+    receiver: &Receiver,
+    roads: &[RoadSegment],
+    barriers: &[Barrier],
+    rasters: &dyn RasterSampler,
+    mut traces: Option<&mut TraceCollector>,
+) -> (NoisePeriods, Vec<Contributor>) {
+    let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
+
+    use std::collections::HashMap;
+
+    // Group segments by (ref, name, class): accumulate energy + collect geometry
+    struct RoadAccum {
+        class_name: &'static str,
+        display_name: String,
+        first_osm_id: i64,
+        // Closest segment (for distance display, baseline, path-effect context)
+        min_dist: f64,
+        min_d_slant: f64,
+        min_ground_g: f64,
+        closest_cp_lat: f64,
+        closest_cp_lon: f64,
+        closest_src_height: f64,
+        // Dominant-segment metadata (highest received energy — what drives the result)
+        dominant_energy: f64,
+        dominant_segment_idx: i16,
+        dominant_distance_m: f64,
+        dominant_aadt_light_raw: i32,
+        dominant_aadt_medium_raw: i32,
+        dominant_aadt_heavy_raw: i32,
+        dominant_aadt_moto_raw: i32,
+        dominant_aadt_light_nominal: f64,
+        dominant_aadt_medium_nominal: f64,
+        dominant_aadt_heavy_nominal: f64,
+        dominant_aadt_moto_nominal: f64,
+        dominant_aadt_light_effective: f64,
+        dominant_aadt_medium_effective: f64,
+        dominant_aadt_heavy_effective: f64,
+        dominant_aadt_moto_effective: f64,
+        dominant_traffic_source: &'static str, // "matched_external" | "estimated_service_tree" | "default_by_class"
+        dominant_source_id: u16,              // dataset identity from pipeline/lib/enrichment-datasets.ts
+        dominant_speed_posted: u8,
+        dominant_speed_used: f64,
+        dominant_speed_source: &'static str, // "osm_posted" | "default_by_class" | "roundabout_cap"
+        dominant_surface_type: u8,
+        dominant_surface_corr_db: f64,
+        dominant_lanes: u8,
+        dominant_oneway: bool,
+        // Aggregation across all grouped segments
+        segment_count: u32,
+        total_length_m: f64,
+        bridge_count: u32,
+        speed_min: f64,
+        speed_max: f64,
+        oneway_segment_count: u32,
+        twoway_segment_count: u32,
+        // Group-level screening obstacle histogram (popup transparency)
+        obstacle_segment_count: u32,
+        obstacle_height_sum: f64,
+        obstacle_max_height: f64,
+        obstacle_max_segment_idx: i16,
+        // Per-period variant energies (full, free-field, no_terrain, no_screening, no_vegetation)
+        variants: [PropagationVariants; 3], // day, evening, night
+        emission_energy: f64,
+        line_coords: Vec<[[f64; 2]; 2]>,
+        // Index into the caller's traces.segments Vec of the dominant-segment
+        // trace (highest received energy). Populated only when a TraceCollector
+        // is active; flipped to `is_dominant_of_group = true` at the end.
+        dominant_trace_idx: Option<usize>,
+    }
+    // Group by (ref, name, class) — not osm_id — so "D1" becomes one contributor.
+    // For unnamed roads (ref="" && name=""): group per osm_id (like railway)
+    // to avoid merging all unnamed residential streets into one mega-contributor.
+    let mut roads_by_key: HashMap<(String, String, u8), RoadAccum> = HashMap::new();
+
+    // Admin resolved once per compute_roads call — receiver position is
+    // constant across segments. Uses the process-wide admin table
+    // (see admin::init_admin_table at heatmap-aircraft/source-reader init).
+    // Falls back to Admin::UNKNOWN → WORLD_DEFAULT when uninitialised.
+    let admin = crate::admin::admin_for_latlng(receiver.lat, receiver.lon);
+
+    for seg in roads {
+        let Some(norm) = normalize::normalize_road_segment(seg, admin)
+        else {
+            continue;
+        };
+        let class_idx = norm.class_idx;
+        let max_d = norm.max_distance_m;
+        if seg.dist_m > max_d {
+            continue;
+        }
+
+        let src_elev = rasters.elevation(seg.cp_lat, seg.cp_lon);
+        let src_alt = src_elev + norm.source_height_m;
+        let rcv_alt = receiver.altitude_m();
+        let d_slant = geo::slant_dist(seg.dist_m, src_alt, rcv_alt);
+        if d_slant < 1.0 {
+            continue;
+        }
+
+        let class_name = norm.class_name;
+        let time_dist = norm.time_dist();
+        let light = norm.light_aadt;
+        let medium = norm.medium_aadt;
+        let heavy = norm.heavy_aadt;
+        let moto = norm.moto_aadt;
+        let speed = norm.speed_kmh;
+        let base_speed = norm.base_speed_kmh;
+        let surf_corr = norm.surf_corr_db;
+        let flc = geo::finite_line_correction(seg.length_m as f64, seg.dist_m, seg.fraction);
+
+        // Early exit: skip if free-field < threshold (matching pipeline)
+        {
+            let ef = road::build_period_flows(
+                light,
+                medium,
+                heavy,
+                moto,
+                speed,
+                time_dist.day_pct,
+                12.0,
+            );
+            let ee = road::line_source_emission(&ef, surf_corr);
+            let me = ee.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            if geo::below_free_field_threshold_line(me, seg.dist_m, 0.0) {
+                continue;
+            }
+        }
+
+        // Unified path profile — sampled once, shared across all path-effect calls.
+        let mut path_profile = propagation::PathProfile::new();
+        rasters.build_path_profile(
+            seg.cp_lat,
+            seg.cp_lon,
+            receiver.lat,
+            receiver.lon,
+            seg.dist_m,
+            &mut path_profile,
+        );
+        // Bridge: hard surface below → G=0 (no ground absorption)
+        let ground_g = if seg.bridge {
+            0.0
+        } else {
+            propagation::path_effects::ground_g_from_profile(&path_profile)
+        };
+        let (terrain, _terrain_profile_points) =
+            propagation::path_effects::terrain_attenuation_with_meta(
+                &mut path_profile,
+                src_alt,
+                rcv_alt,
+            );
+        let (screening_atten, obstacle_trace) =
+            propagation::path_effects::screening_attenuation_with_meta(
+        &mut path_profile,
+                barriers,
+                src_alt,
+                rcv_alt,
+                0.0, // roads: no exclusion radius
+                &terrain.attenuation_bands,
+            );
+        let veg_atten = propagation::path_effects::vegetation_attenuation_path(&path_profile);
+
+        let mut seg_variants = [
+            PropagationVariants::default(),
+            PropagationVariants::default(),
+            PropagationVariants::default(),
+        ];
+        let mut day_emission_energy = 0.0f64;
+        let mut period_emissions: [[f64; NUM_BANDS]; 3] = [[0.0; NUM_BANDS]; 3];
+        for (pi, (pct, hours)) in [
+            (time_dist.day_pct, 12.0),
+            (time_dist.evening_pct, 4.0),
+            (time_dist.night_pct, 8.0),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let flows = road::build_period_flows(light, medium, heavy, moto, speed, *pct, *hours);
+            let emission = road::line_source_emission(&flows, surf_corr);
+            let v = iso9613::propagate_variants_full(
+                &emission,
+                d_slant,
+                SourceGeometry::Line,
+                ground_g,
+                &terrain.attenuation_bands,
+                &screening_atten,
+                &veg_atten,
+                reflection,
+                flc,
+            );
+            seg_variants[pi].add(&v);
+            if pi == 0 {
+                for j in 0..NUM_BANDS {
+                    day_emission_energy += crate::propagation::iso9613::fast_exp_f64(
+                        emission[j] * std::f64::consts::LN_10 * 0.1,
+                    );
+                }
+            }
+            period_emissions[pi] = emission;
+        }
+
+        // Group by (ref, name, class) — all "D1 motorway" segments → one contributor
+        // Ref inheritance: an orphan mainline or its link inherits the ref of
+        // the nearest mainline that carries one. Link classes 10/11/12 map to
+        // their mainline parents 0/1/2 (so a GC-1 on-ramp with no OSM ref=* tag
+        // groups under "GC-1 (link)" instead of "osm:123").
+        let infer_target_class = match class_idx {
+            0 | 10 => Some(0),
+            1 | 11 => Some(1),
+            2 | 12 => Some(2),
+            _ => None,
+        };
+        let effective_ref = if seg.road_ref.is_empty() && infer_target_class.is_some() {
+            let target = infer_target_class.unwrap();
+            let mut best_ref = String::new();
+            let mut best_dist = f64::MAX;
+            for other in roads.iter() {
+                if (other.road_class as usize) != target {
+                    continue;
+                }
+                if other.road_ref.is_empty() {
+                    continue;
+                }
+                let d = ((seg.cp_lat - other.cp_lat).powi(2) + (seg.cp_lon - other.cp_lon).powi(2))
+                    .sqrt();
+                if d < best_dist {
+                    best_dist = d;
+                    best_ref = other.road_ref.clone();
+                }
+            }
+            best_ref
+        } else {
+            seg.road_ref.clone()
+        };
+
+        // For unnamed roads: group per osm_id (like railway), not catch-all
+        let key_ref = if effective_ref.is_empty() && seg.name.is_empty() {
+            format!("osm:{}", seg.osm_id)
+        } else {
+            effective_ref.clone()
+        };
+
+        let key = (key_ref.clone(), seg.name.clone(), seg.road_class);
+        let link_suffix = match class_idx {
+            10..=12 => " (link)",
+            _ => "",
+        };
+        let acc = roads_by_key.entry(key).or_insert_with(|| {
+            let display_name = if !effective_ref.is_empty() && !seg.name.is_empty() {
+                format!("{} — {}{}", effective_ref, seg.name, link_suffix)
+            } else if !effective_ref.is_empty() {
+                format!("{}{}", effective_ref, link_suffix)
+            } else if !seg.name.is_empty() {
+                format!("{}{}", seg.name, link_suffix)
+            } else {
+                // Fallback with distance badge for unnamed roads
+                let class_label = match class_idx {
+                    0 => "Motorway",
+                    1 => "Trunk road",
+                    2 => "Primary road",
+                    3 => "Secondary road",
+                    4 => "Tertiary road",
+                    5 => "Local road",
+                    6 => "Living street",
+                    7 => "Service road",
+                    8 => "Track",
+                    9 => "Unclassified road",
+                    10 => "Motorway link",
+                    11 => "Trunk link",
+                    12 => "Primary link",
+                    _ => "Road",
+                };
+                let dist = seg.dist_m;
+                if dist < 100.0 {
+                    format!("{} ({}m)", class_label, dist as u32)
+                } else if dist < 1000.0 {
+                    format!("{} ({}m)", class_label, (dist / 10.0).round() as u32 * 10)
+                } else {
+                    format!("{} ({:.1}km)", class_label, dist / 1000.0)
+                }
+            };
+            RoadAccum {
+                class_name,
+                display_name,
+                first_osm_id: seg.osm_id,
+                min_dist: f64::MAX,
+                min_d_slant: 0.0,
+                min_ground_g: 0.5,
+                closest_cp_lat: seg.cp_lat,
+                closest_cp_lon: seg.cp_lon,
+                closest_src_height: src_alt,
+                dominant_energy: 0.0,
+                dominant_segment_idx: 0,
+                dominant_distance_m: 0.0,
+                dominant_aadt_light_raw: 0,
+                dominant_aadt_medium_raw: 0,
+                dominant_aadt_heavy_raw: 0,
+                dominant_aadt_moto_raw: 0,
+                dominant_aadt_light_nominal: 0.0,
+                dominant_aadt_medium_nominal: 0.0,
+                dominant_aadt_heavy_nominal: 0.0,
+                dominant_aadt_moto_nominal: 0.0,
+                dominant_aadt_light_effective: 0.0,
+                dominant_aadt_medium_effective: 0.0,
+                dominant_aadt_heavy_effective: 0.0,
+                dominant_aadt_moto_effective: 0.0,
+                dominant_traffic_source: "default_by_class",
+                dominant_source_id: 0,
+                dominant_speed_posted: 0,
+                dominant_speed_used: 0.0,
+                dominant_speed_source: "default_by_class",
+                dominant_surface_type: 0,
+                dominant_surface_corr_db: 0.0,
+                dominant_lanes: 0,
+                dominant_oneway: false,
+                segment_count: 0,
+                total_length_m: 0.0,
+                bridge_count: 0,
+                speed_min: f64::MAX,
+                speed_max: 0.0,
+                oneway_segment_count: 0,
+                twoway_segment_count: 0,
+                obstacle_segment_count: 0,
+                obstacle_height_sum: 0.0,
+                obstacle_max_height: 0.0,
+                obstacle_max_segment_idx: 0,
+                variants: [
+                    PropagationVariants::default(),
+                    PropagationVariants::default(),
+                    PropagationVariants::default(),
+                ],
+                emission_energy: 0.0,
+                line_coords: Vec::new(),
+                dominant_trace_idx: None,
+            }
+        });
+        // Aggregation across all grouped segments (independent of closest check)
+        acc.segment_count += 1;
+        acc.total_length_m += seg.length_m as f64;
+        if seg.bridge {
+            acc.bridge_count += 1;
+        }
+        // Cheap group-level obstacle histogram — another tile-cached scan of the
+        // same path as screening_atten just computed. Popup shows "N of M segments
+        // had obstacles on path" based on this.
+        {
+            let (seg_max_bh, _) = rasters.max_building_along_path(
+                seg.cp_lat,
+                seg.cp_lon,
+                receiver.lat,
+                receiver.lon,
+                seg.dist_m,
+                0.0,
+            );
+            if seg_max_bh > 2.0 {
+                acc.obstacle_segment_count += 1;
+                acc.obstacle_height_sum += seg_max_bh;
+                if seg_max_bh > acc.obstacle_max_height {
+                    acc.obstacle_max_height = seg_max_bh;
+                    acc.obstacle_max_segment_idx = seg.segment_idx;
+                }
+            }
+        }
+        for pi in 0..3 {
+            acc.variants[pi].add(&seg_variants[pi]);
+        }
+        acc.emission_energy += day_emission_energy;
+        // Aggregate stats across all segments
+        if speed < acc.speed_min {
+            acc.speed_min = speed;
+        }
+        if speed > acc.speed_max {
+            acc.speed_max = speed;
+        }
+        if seg.oneway {
+            acc.oneway_segment_count += 1;
+        } else {
+            acc.twoway_segment_count += 1;
+        }
+        // Closest segment — for distance display, baseline, and path-effect context
+        if seg.dist_m < acc.min_dist {
+            acc.min_dist = seg.dist_m;
+            acc.min_d_slant = d_slant;
+            acc.min_ground_g = ground_g;
+            acc.closest_cp_lat = seg.cp_lat;
+            acc.closest_cp_lon = seg.cp_lon;
+            acc.closest_src_height = src_alt;
+        }
+        // Popup trace: push a SegmentTrace for this segment if the caller wants
+        // per-segment engine state. `std::mem::take` consumes the path_profile
+        // (not reused below) so the trace owns the sample arrays without clone.
+        let pushed_trace_idx: Option<usize> = if let Some(t) = traces.as_deref_mut() {
+            let trace = build_road_segment_trace(BuildRoadTrace {
+                seg,
+                class_name,
+                src_alt,
+                rcv_alt,
+                d_slant,
+                flc,
+                ground_g,
+                reflection_boost_db: reflection,
+                light,
+                medium,
+                heavy,
+                moto,
+                speed_kmh: speed,
+                surf_corr,
+                path_profile: std::mem::take(&mut path_profile),
+                terrain,
+                screening_atten,
+                obstacle_trace,
+                veg_atten,
+                seg_variants,
+                lw_bands: period_emissions,
+            });
+            let idx = t.segments.len();
+            t.segments.push(trace);
+            Some(idx)
+        } else {
+            None
+        };
+
+        // Dominant segment — highest received energy, drives the popup metadata
+        let seg_received_energy: f64 = seg_variants[0].full_energy;
+        if seg_received_energy > acc.dominant_energy {
+            if let Some(idx) = pushed_trace_idx {
+                acc.dominant_trace_idx = Some(idx);
+            }
+            acc.dominant_energy = seg_received_energy;
+            acc.dominant_segment_idx = seg.segment_idx;
+            acc.dominant_distance_m = seg.dist_m;
+            acc.dominant_aadt_light_raw = seg.aadt_light;
+            acc.dominant_aadt_medium_raw = seg.aadt_medium;
+            acc.dominant_aadt_heavy_raw = seg.aadt_heavy;
+            acc.dominant_aadt_moto_raw = seg.aadt_moto;
+            let provenance = sources::provenance_of(seg.source_id);
+            let (nom_l, nom_m, nom_h, nom_x) = normalize::nominal_road_aadt(
+                seg.road_class,
+                provenance,
+                seg.aadt_light,
+                seg.aadt_medium,
+                seg.aadt_heavy,
+                seg.aadt_moto,
+                admin,
+            );
+            acc.dominant_aadt_light_nominal = nom_l;
+            acc.dominant_aadt_medium_nominal = nom_m;
+            acc.dominant_aadt_heavy_nominal = nom_h;
+            acc.dominant_aadt_moto_nominal = nom_x;
+            acc.dominant_aadt_light_effective = light;
+            acc.dominant_aadt_medium_effective = medium;
+            acc.dominant_aadt_heavy_effective = heavy;
+            acc.dominant_aadt_moto_effective = moto;
+            acc.dominant_traffic_source = if provenance.has_data() && seg.aadt_light > 0 {
+                provenance.legacy_traffic_source_str()
+            } else {
+                "default_by_class"
+            };
+            acc.dominant_source_id = seg.source_id;
+            acc.dominant_speed_posted = seg.speed_limit;
+            acc.dominant_speed_used = speed;
+            acc.dominant_speed_source = if seg.junction == 1 {
+                if speed < base_speed {
+                    "roundabout_cap"
+                } else {
+                    "osm_posted"
+                }
+            } else if seg.speed_limit > 0 {
+                "osm_posted"
+            } else {
+                "default_by_class"
+            };
+            acc.dominant_surface_type = seg.surface_type;
+            acc.dominant_surface_corr_db = surf_corr;
+            acc.dominant_lanes = seg.lanes;
+            acc.dominant_oneway = seg.oneway;
+        }
+        // Each segment is an independent 2-point LineString; no osm_id regrouping needed.
+        acc.line_coords
+            .push([[seg.start_lon, seg.start_lat], [seg.end_lon, seg.end_lat]]);
+    }
+
+    // Mark the dominant-of-group traces now that all segments are processed.
+    if let Some(t) = traces {
+        for acc in roads_by_key.values() {
+            if let Some(idx) = acc.dominant_trace_idx {
+                if let Some(tr) = t.segments.get_mut(idx) {
+                    tr.is_dominant_of_group = true;
+                }
+            }
+        }
+    }
+
+    // Emit grouped contributors
+    let mut contributors = Vec::new();
+    for ((_ref, _name, _class), acc) in &roads_by_key {
+        // Full energy from variants (includes all path effects per-band)
+        let ld = PropagationVariants::to_db(acc.variants[0].full_energy);
+        let le = PropagationVariants::to_db(acc.variants[1].full_energy);
+        let ln = PropagationVariants::to_db(acc.variants[2].full_energy);
+        let road_periods = periods::periods(ld, le, ln);
+
+        // Free-field energy (for comparison)
+        let ld_free = PropagationVariants::to_db(acc.variants[0].free_field_energy);
+        let le_free = PropagationVariants::to_db(acc.variants[1].free_field_energy);
+        let ln_free = PropagationVariants::to_db(acc.variants[2].free_field_energy);
+        let free_periods = periods::periods(ld_free, le_free, ln_free);
+
+        let emission_db = 10.0 * acc.emission_energy.max(1e-12).log10();
+        let geometry = if !acc.line_coords.is_empty() {
+            Some(serde_json::json!({"type": "MultiLineString", "coordinates": acc.line_coords}))
+        } else {
+            None
+        };
+
+        let impacts = PropagationVariants::impact_deltas(&acc.variants, road_periods.lden_db);
+
+        let (nearest_terrain, nearest_screening, nearest_veg) = compute_path_effects(
+            rasters,
+            barriers,
+            acc.closest_cp_lat,
+            acc.closest_cp_lon,
+            acc.closest_src_height,
+            receiver,
+            acc.min_dist,
+            0.0,
+        );
+
+        let road_meta = RoadMetadata {
+            aadt_light_raw: acc.dominant_aadt_light_raw,
+            aadt_medium_raw: acc.dominant_aadt_medium_raw,
+            aadt_heavy_raw: acc.dominant_aadt_heavy_raw,
+            aadt_moto_raw: acc.dominant_aadt_moto_raw,
+            traffic_source: acc.dominant_traffic_source,
+            dominant_source_id: acc.dominant_source_id,
+            speed_posted_kmh: acc.dominant_speed_posted,
+            aadt_light_nominal: acc.dominant_aadt_light_nominal,
+            aadt_medium_nominal: acc.dominant_aadt_medium_nominal,
+            aadt_heavy_nominal: acc.dominant_aadt_heavy_nominal,
+            aadt_moto_nominal: acc.dominant_aadt_moto_nominal,
+            aadt_light_effective: acc.dominant_aadt_light_effective,
+            aadt_medium_effective: acc.dominant_aadt_medium_effective,
+            aadt_heavy_effective: acc.dominant_aadt_heavy_effective,
+            aadt_moto_effective: acc.dominant_aadt_moto_effective,
+            speed_kmh: acc.dominant_speed_used,
+            speed_source: acc.dominant_speed_source,
+            road_class: acc.class_name,
+            surface: surface_name(acc.dominant_surface_type),
+            surface_corr_db: acc.dominant_surface_corr_db,
+            lanes: acc.dominant_lanes,
+            oneway: acc.dominant_oneway,
+            dominant_segment_idx: acc.dominant_segment_idx,
+            dominant_distance_m: acc.dominant_distance_m,
+            closest_distance_m: acc.min_dist,
+            speed_min_kmh: acc.speed_min,
+            speed_max_kmh: acc.speed_max,
+            oneway_segment_count: acc.oneway_segment_count,
+            twoway_segment_count: acc.twoway_segment_count,
+            segment_count: acc.segment_count,
+            total_length_m: acc.total_length_m,
+            bridge_count: acc.bridge_count,
+            obstacle_segment_count: acc.obstacle_segment_count,
+            obstacle_avg_height_m: if acc.obstacle_segment_count > 0 {
+                (acc.obstacle_height_sum / acc.obstacle_segment_count as f64 * 10.0).round() / 10.0
+            } else {
+                0.0
+            },
+            obstacle_max_height_m: (acc.obstacle_max_height * 10.0).round() / 10.0,
+            obstacle_max_segment_idx: acc.obstacle_max_segment_idx,
+            provenance: crate::sources::dataset_meta(acc.dominant_source_id),
+        };
+
+        contributors.push(Contributor {
+            osm_id: Some(acc.first_osm_id),
+            geometry,
+            source_type: LayerKind::Road,
+            name: acc.display_name.clone(),
+            subtype: acc.class_name.to_string(),
+            distance_m: acc.min_dist,
+            periods: road_periods,
+            periods_free: free_periods,
+            emission_db,
+            baseline: iso9613::compute_baseline(
+                acc.min_d_slant,
+                SourceGeometry::Line,
+                acc.min_ground_g,
+            ),
+            terrain: nearest_terrain,
+            screening: nearest_screening,
+            vegetation: nearest_veg,
+            terrain_impact_db: round1(impacts.terrain),
+            screening_impact_db: round1(impacts.screening),
+            vegetation_impact_db: round1(impacts.vegetation),
+            atmospheric_impact_db: round1(impacts.atmospheric),
+            ground_impact_db: round1(impacts.ground),
+            received_bands: std::array::from_fn(|j| {
+                10.0 * acc.variants[0].band_energy[j].max(1e-30).log10()
+            }),
+            metadata: Some(SourceMetadata::Road(road_meta)),
+        });
+    }
+
+    // Total must come from all grouped energies, not from display-filtered contributors.
+    let mut total_energy = [0.0f64; 3];
+    for acc in roads_by_key.values() {
+        total_energy[0] += acc.variants[0].full_energy;
+        total_energy[1] += acc.variants[1].full_energy;
+        total_energy[2] += acc.variants[2].full_energy;
+    }
+    let ld = 10.0 * total_energy[0].max(1e-12).log10();
+    let le = 10.0 * total_energy[1].max(1e-12).log10();
+    let ln = 10.0 * total_energy[2].max(1e-12).log10();
+
+    (periods::periods(ld, le, ln), contributors)
+}

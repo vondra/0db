@@ -815,3 +815,65 @@ pub const SOURCES: &[Source] = &[
         year: Some(2021),
     },
 ];
+
+#[cfg(test)]
+mod sources_tests {
+    use crate::sources::{get_source, provenance_of, Provenance, Source, SOURCES};
+
+    #[test]
+    fn unspecified_is_id_zero_sentinel() {
+        let s = &SOURCES[0];
+        assert_eq!(s.id, 0);
+        assert_eq!(s.key, "unspecified");
+        assert_eq!(s.provenance, Provenance::None);
+        assert_eq!(Source::UNSPECIFIED.id, 0);
+    }
+
+    #[test]
+    fn no_duplicate_ids() {
+        let mut seen = std::collections::HashSet::new();
+        for s in SOURCES {
+            assert!(seen.insert(s.id), "duplicate id={} (key={})", s.id, s.key);
+        }
+    }
+
+    #[test]
+    fn no_duplicate_keys() {
+        let mut seen = std::collections::HashSet::new();
+        for s in SOURCES {
+            assert!(seen.insert(s.key), "duplicate key={} (id={})", s.key, s.id);
+        }
+    }
+
+    #[test]
+    fn provenance_rank_monotonic() {
+        assert!(Provenance::NationalMeasured.rank() > Provenance::ContinentalMeasured.rank());
+        assert!(Provenance::ContinentalMeasured.rank() > Provenance::GlobalMeasured.rank());
+        assert!(Provenance::GlobalMeasured.rank() > Provenance::Heuristic.rank());
+        assert!(Provenance::Heuristic.rank() > Provenance::Baseline.rank());
+        assert!(Provenance::Baseline.rank() > Provenance::None.rank());
+    }
+
+    #[test]
+    fn get_source_looks_up_by_id() {
+        let rsd = get_source(20).expect("cz-rsd (id=20) must exist");
+        assert_eq!(rsd.key, "cz-rsd-scitani");
+        assert_eq!(rsd.provenance, Provenance::NationalMeasured);
+    }
+
+    #[test]
+    fn provenance_of_unknown_id_is_none() {
+        assert_eq!(provenance_of(0), Provenance::None);
+        assert_eq!(provenance_of(u16::MAX), Provenance::None);
+    }
+
+    #[test]
+    fn sources_sorted_by_id_for_binary_search() {
+        // get_source uses binary_search_by_key; the generator emits SOURCES
+        // in id-ascending order. Lock the invariant so a hand-edit to
+        // sources.rs (or a reordered DATASETS) can't silently break lookup.
+        for pair in SOURCES.windows(2) {
+            assert!(pair[0].id < pair[1].id, "SOURCES not sorted by id: {} then {}", pair[0].id, pair[1].id);
+        }
+    }
+}
