@@ -97,11 +97,33 @@ if [ "$RUN_SERVICE_TREE" = "1" ]; then
     fi
 
     log ""
-    log "Running service-tree road enrichment ..."
+    SVC_SHARDS="${SVC_SHARDS:-96}"
+    SVC_JOBS="${SVC_JOBS:-$(nproc)}"
+    SVC_LOG_DIR="$SCRATCH_ROOT/svc-tree-logs"
+    export SVC_SHARDS SVC_LOG_DIR YEAR
+    log "Running service-tree road enrichment ($SVC_SHARDS shards x $SVC_JOBS jobs) ..."
+    rm -rf "$SVC_LOG_DIR"; mkdir -p "$SVC_LOG_DIR"
+    # Per-hex flow accumulation is single-threaded, but every hex is self-contained
+    # (reads/writes only its own roads.arrow), so SHARD=i/n slices run in parallel —
+    # ~3h single-core -> ~15min. Local tsx, NOT npx: parallel `npx tsx` races on the
+    # shared ~/.npm/_npx cache and most shards die with ENOENT.
     (
         cd "$PROJECT_DIR/pipeline"
-        DATA_YEAR="$YEAR" npx tsx enrich-roads-service-tree.ts
-    ) 2>&1 | while IFS= read -r line; do log "  $line"; done
+        seq 0 $((SVC_SHARDS - 1)) | xargs -P "$SVC_JOBS" -I{} bash -c \
+            'SHARD="$1/$SVC_SHARDS" DATA_YEAR="$YEAR" node_modules/.bin/tsx enrich-roads-service-tree.ts > "$SVC_LOG_DIR/shard-$1.log" 2>&1' _ {}
+    ) || true
+    # A shard "completed" iff it reached the final "=== Results" line. Counting that
+    # (not error-string greps) catches OOM-kills, a missing tsx binary, or any crash —
+    # otherwise a died shard leaves its hex slice un-enriched (and maybe a half-written
+    # roads.arrow) and the extract would march on to stamping unaware.
+    set +e
+    svc_done=$(grep -lF "=== Results" "$SVC_LOG_DIR"/shard-*.log 2>/dev/null | wc -l)
+    svc_enr=$(grep -h "Segments:" "$SVC_LOG_DIR"/shard-*.log 2>/dev/null | grep -oE "[0-9]+ enriched" | grep -oE "^[0-9]+" | awk '{s+=$1} END {print s+0}')
+    set -e
+    log "  service-tree: $svc_enr segments enriched, $svc_done/$SVC_SHARDS shards completed"
+    if [ "$svc_done" -ne "$SVC_SHARDS" ]; then
+        log "  WARNING: $((SVC_SHARDS - svc_done)) service-tree shard(s) did NOT complete (died/OOM/missing-binary) — see $SVC_LOG_DIR"
+    fi
 
     if [ "$STAMP_ROAD_METADATA" = "1" ]; then
         if [ ! -f "$ROAD_ARROW_UPGRADE_BIN" ]; then
