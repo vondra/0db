@@ -193,4 +193,3 @@ pub struct VegetationBreakdown {
     /// 0 when the segment was beyond the model's applicable range.
     pub sampled_path_m: f64,
 }
-

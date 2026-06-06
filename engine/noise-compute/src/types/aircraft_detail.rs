@@ -148,4 +148,3 @@ pub struct AircraftBandData {
     pub airborne: AircraftAirborneDetail,
     pub ground_ops: AircraftGroundOpsDetail,
 }
-

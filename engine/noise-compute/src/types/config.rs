@@ -133,4 +133,3 @@ pub trait RasterSampler: Send + Sync {
         (max_bh, max_t, taken, step)
     }
 }
-

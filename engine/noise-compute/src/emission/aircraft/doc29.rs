@@ -341,8 +341,8 @@ pub struct AircraftKernelResult {
 /// foot `t` falls outside the observed endpoints (`t ∉ [0, 1]`, i.e. the
 /// implied aircraft position is a straight-line projection past the last
 /// trace sample) AND the linearly-extrapolated altitude at the foot is
-/// > 30 m below terrain at `(foot_lat, foot_lon)`. Airport-ground segments
-/// > bypass the filter (they set `terrain_*_cut_m = f64::MIN`).
+/// more than 30 m below terrain at `(foot_lat, foot_lon)`. Airport-ground
+/// segments bypass the filter (they set `terrain_*_cut_m = f64::MIN`).
 ///
 /// Why the `t ∈ [0, 1]` gate: legitimate cases keep CPA inside the
 /// observed segment (Schiphol-style sub-sea descents have CPA within the

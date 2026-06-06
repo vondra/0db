@@ -239,4 +239,3 @@ pub struct Barrier {
     pub lon: f64,
     pub dist_m: f64,
 }
-

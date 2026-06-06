@@ -203,4 +203,3 @@ pub struct AircraftMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ground_ops: Option<AircraftGroundOpsDetail>,
 }
-
