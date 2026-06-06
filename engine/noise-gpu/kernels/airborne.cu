@@ -154,11 +154,14 @@ __device__ __forceinline__ int coarse_pixel(int n, int i) {
     return (i * (TPX - 1) + (n - 1) / 2) / (n - 1);
 }
 
-// NEAR (exact): one thread per receiver pixel, loop all near sub-segs.
+// NEAR (exact): one thread per receiver pixel, loop this tile's near sub-segs via the
+// index list `idx[0..nidx]` into the REGION-resident SoA (E5: segs uploaded once per
+// region, `sll` lon half at offset `nreg`; per-tile only the index list changes).
 extern "C" __global__ void airborne_exact(
     const double* __restrict__ rll, const float* __restrict__ rxa,
     const double* __restrict__ sll, const float* __restrict__ sf, const int* __restrict__ si,
-    const float* __restrict__ npd, int nseg, float* __restrict__ out)
+    const float* __restrict__ npd, const int* __restrict__ idx, int nidx, int nreg,
+    float* __restrict__ out)
 {
     int pix = blockIdx.x * blockDim.x + threadIdx.x;
     if (pix >= TPX * TPX) return;
@@ -167,9 +170,10 @@ extern "C" __global__ void airborne_exact(
     float rx_elev = rxa[pix];
     const float* npd_dep = npd + NPD_NC * (NPD_NB + 1);
     float e[3] = {0.0f, 0.0f, 0.0f};
-    for (int s = 0; s < nseg; s++) {
+    for (int j = 0; j < nidx; j++) {
+        int s = idx[j];
         float sel;
-        if (airborne_sel(sll[s], sll[nseg + s], sf + s * 12, si[s*4+1], si[s*4+2], si[s*4+0],
+        if (airborne_sel(sll[s], sll[nreg + s], sf + s * 12, si[s*4+1], si[s*4+2], si[s*4+0],
                          rx_lat, rx_lon, mpdl, rx_elev, npd, npd_dep, &sel)) {
             e[si[s * 4 + 3]] += fexpf_nc(sel * (float)LN10 * 0.1f);
         }
@@ -185,12 +189,14 @@ extern "C" __global__ void airborne_exact(
 extern "C" __global__ void airborne_coarse(
     const double* __restrict__ rll, const float* __restrict__ rxa,
     const double* __restrict__ sll, const float* __restrict__ sf, const int* __restrict__ si,
-    const float* __restrict__ npd, int nseg, int n, float* __restrict__ out_coarse)
+    const float* __restrict__ npd, const int* __restrict__ idx, int nidx, int nreg,
+    int n, float* __restrict__ out_coarse)
 {
-    int s = blockIdx.x * blockDim.x + threadIdx.x;
-    if (s >= nseg) return;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= nidx) return;
+    int s = idx[j];
     const float* npd_dep = npd + NPD_NC * (NPD_NB + 1);
-    double start_lat = sll[s], start_lon = sll[nseg + s];
+    double start_lat = sll[s], start_lon = sll[nreg + s];
     const float* f = sf + s * 12;
     int cls = si[s*4+1], is_dep = si[s*4+2], inst = si[s*4+0], period = si[s*4+3];
     for (int ci = 0; ci < n; ci++) {
