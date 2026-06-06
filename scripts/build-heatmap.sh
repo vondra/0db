@@ -123,7 +123,7 @@ if ! $COMBINE_ONLY; then
       if [ ${#gpu_layers[@]} -gt 0 ]; then
         log "GPU surface: ${gpu_layers[*]} → $OUTPUT/{layer}"
         ( IFS=,; NOISE_GPU_PREPARED="$PREP" DATA_YEAR="$DATA_YEAR" \
-            "$GPU_SURFACE" --layers "${gpu_layers[*]}" --bbox "$bbox" --output "$OUTPUT" ) 2>&1 | stamp &
+            scripts/memcap "$GPU_SURFACE" --layers "${gpu_layers[*]}" --bbox "$bbox" --output "$OUTPUT" ) 2>&1 | stamp &
         gpu_pid=$!
       fi
       if [ ${#cpu_layers[@]} -gt 0 ]; then
@@ -132,7 +132,7 @@ if ! $COMBINE_ONLY; then
           [[ " ${cpu_layers[*]} " == *" $L "* ]] || excl+=(--exclude "$L")
         done
         log "CPU surface: ${cpu_layers[*]} → $OUTPUT/{layer}"
-        "$SURFACE" --source ground "${excl[@]}" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
+        scripts/memcap "$SURFACE" --source ground "${excl[@]}" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
           --prepared-dir "$PREP" --output "$OUTPUT" "${SEL_ARGS[@]}" 2>&1 | stamp &
         cpu_pid=$!
       fi
@@ -148,7 +148,7 @@ if ! $COMBINE_ONLY; then
       # root and the binary appends {layer}.
       if [ "${#SURFACE_LAYERS[@]}" -ge 2 ]; then SRC=ground; else SRC="${SURFACE_LAYERS[0]}"; fi
       log "build surface $SRC (${SURFACE_LAYERS[*]}) → $OUTPUT/{layer}"
-      "$SURFACE" --source "$SRC" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
+      scripts/memcap "$SURFACE" --source "$SRC" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
         --prepared-dir "$PREP" --output "$OUTPUT" "${SEL_ARGS[@]}" 2>&1 | stamp
       for L in "${SURFACE_LAYERS[@]}"; do
         log "pyramid $L z$ZOOM → z6${bbox:+ (bbox)}"
@@ -162,7 +162,7 @@ if ! $COMBINE_ONLY; then
     LDIR="$OUTPUT/$L"
     if $is_world; then log "clean $LDIR (full rebuild)"; rm -rf "$LDIR"; fi
     log "build $L → $LDIR"
-    "$AIRCRAFT" --source "${L#aircraft-}" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
+    scripts/memcap "$AIRCRAFT" --source "${L#aircraft-}" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
       --prepared-dir "$PREP" --output "$LDIR" "${SEL_ARGS[@]}"
     if $is_shard; then
       log "sharded — built z$ZOOM only; pyramid $L after merging shards"
