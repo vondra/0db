@@ -115,8 +115,10 @@ if ! $COMBINE_ONLY; then
       for L in "${SURFACE_LAYERS[@]}"; do
         case "$L" in road | rail) gpu_layers+=("$L") ;; *) cpu_layers+=("$L") ;; esac
       done
+      # --features gpu pulls in cudarc + the nvcc PTX build; build.rs fails with a
+      # clear message if nvcc is missing, so this build is the single GPU-host gate.
       log "rebuilding gpu-surface (needs nvcc on this host)"
-      cargo build --release --manifest-path engine/noise-gpu/Cargo.toml --bin gpu-surface
+      cargo build --release --manifest-path engine/noise-gpu/Cargo.toml --features gpu --bin gpu-surface
       gpu_pid=""; cpu_pid=""
       if [ ${#gpu_layers[@]} -gt 0 ]; then
         log "GPU surface: ${gpu_layers[*]} → $OUTPUT/{layer}"
