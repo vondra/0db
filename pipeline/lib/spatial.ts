@@ -85,6 +85,33 @@ export function pointToSegmentDist(
 }
 
 /**
+ * Min distance (m) from point `(pLat, pLon)` to a polyline given as
+ * `[lon, lat]` vertices (GeoJSON-native order). Returns `Infinity` for an
+ * empty line, the point-to-vertex distance for a single vertex.
+ *
+ * Matching a road segment to the nearest point ON a census section's line —
+ * instead of to the section's centroid — places the boundary between two
+ * adjacent sections at the real junction rather than on the perpendicular
+ * bisector of their centroids (which drifts hundreds of metres when the
+ * sections differ in length). 14 country enrichers carried a private copy of
+ * this; this is the canonical one.
+ */
+export function pointToPolylineDist(
+  pLat: number,
+  pLon: number,
+  coords: ReadonlyArray<readonly [number, number]>,
+): number {
+  if (coords.length === 0) return Infinity
+  if (coords.length === 1) return flatDist(pLat, pLon, coords[0][1], coords[0][0])
+  let best = Infinity
+  for (let i = 0; i < coords.length - 1; i++) {
+    const d = pointToSegmentDist(pLat, pLon, coords[i][1], coords[i][0], coords[i + 1][1], coords[i + 1][0])
+    if (d < best) best = d
+  }
+  return best
+}
+
+/**
  * Inclusive bounding-box test. `bbox = [minLat, minLon, maxLat, maxLon]`.
  * Most enrichers used this exact convention with a 4-tuple; a handful
  * passed a wider `number[]` — the wider type is implicit-compatible.

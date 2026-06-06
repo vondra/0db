@@ -16,7 +16,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCE_ID_CZ_RSD_SCITANI } from './lib/source-ids.generated.js'
-import { flatDist } from './lib/spatial.js'
+import { pointToPolylineDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CZ_RSD_SCITANI
 
@@ -36,14 +36,18 @@ const PAGE_SIZE = 2000
 
 // ── Types ──
 
+// ŘSD class → CNOSSOS-EU category (Annex II, Dir (EU) 2015/996, amended Reg. 2021/1226):
+//   cat1 light  = cars + light commercial ≤3.5 t  → O + LN
+//   cat2 medium = 2-axle medium trucks + buses    → SN + A (+ TR/TRP tractors, closest bucket)
+//   cat3 heavy  = 3+ axle / artic / semitrailer / artic bus → TN + TNP + SNP + NSN + AK
+//   cat4 PTW    = M
 interface CensusSection {
   ref: string           // normalized road ref
-  aadt_light: number    // O (passenger cars)
-  aadt_medium: number   // NSN + A + AK (light trucks + buses)
-  aadt_heavy: number    // TN + TNP + SN + SNP (heavy trucks) + AK (articulated buses, 3+ axles)
-  aadt_moto: number     // M (motorcycles)
-  lat: number
-  lon: number
+  aadt_light: number
+  aadt_medium: number
+  aadt_heavy: number
+  aadt_moto: number
+  coords: [number, number][]   // section polyline as [lon, lat] vertices (matched per-segment, not by centroid)
 }
 
 // ── Step 1: Download ŘSD census ──
@@ -106,13 +110,11 @@ function parseCensus(features: any[]): Map<string, CensusSection[]> {
 
     const section: CensusSection = {
       ref,
-      aadt_light: a.O || 0,
-      aadt_medium: (a.NSN || 0) + (a.A || 0),
-      // AK (articulated buses) → heavy under CNOSSOS (3+ axles)
-      aadt_heavy: (a.TN || 0) + (a.TNP || 0) + (a.SN || 0) + (a.SNP || 0) + (a.AK || 0),
+      aadt_light: (a.O || 0) + (a.LN || 0),
+      aadt_medium: (a.SN || 0) + (a.A || 0) + (a.TR || 0) + (a.TRP || 0),
+      aadt_heavy: (a.TN || 0) + (a.TNP || 0) + (a.SNP || 0) + (a.NSN || 0) + (a.AK || 0),
       aadt_moto: a.M || 0,
-      lat: pts.reduce((s: number, p: number[]) => s + p[1], 0) / pts.length,
-      lon: pts.reduce((s: number, p: number[]) => s + p[0], 0) / pts.length,
+      coords: pts as [number, number][],
     }
 
     if (!byRef.has(ref)) byRef.set(ref, [])
@@ -191,14 +193,17 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
       const candidates = censusByRef.get(normalized)
       if (!candidates || candidates.length === 0) continue
 
-      // Pick closest census section by centroid distance
+      // Pick the section whose LINE is closest to the segment midpoint.
+      // Point-to-polyline (not point-to-centroid): the boundary between two
+      // adjacent sections then lands at the real junction, not on the
+      // perpendicular bisector of their centroids (~575 m off near Kadaň).
       const midLat = ((startLat.get(i) as number) + (endLat.get(i) as number)) / 2
       const midLon = ((startLon.get(i) as number) + (endLon.get(i) as number)) / 2
 
       let best = candidates[0]
-      let bestDist = flatDist(midLat, midLon, best.lat, best.lon)
+      let bestDist = pointToPolylineDist(midLat, midLon, best.coords)
       for (let j = 1; j < candidates.length; j++) {
-        const d = flatDist(midLat, midLon, candidates[j].lat, candidates[j].lon)
+        const d = pointToPolylineDist(midLat, midLon, candidates[j].coords)
         if (d < bestDist) { best = candidates[j]; bestDist = d }
       }
 

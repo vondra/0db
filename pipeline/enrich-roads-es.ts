@@ -21,7 +21,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_ES_NATIONAL_ROADS } from './lib/source-ids.generated.js'
-import { haversineM } from './lib/spatial.js'
+import { pointToPolylineDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_ES_NATIONAL_ROADS
 
@@ -29,7 +29,7 @@ const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/es`)
 const CACHE_TRAMOS = resolve(CACHE_DIR, 'mitma-tramos-2022.js')
-const CACHE_JSON = resolve(CACHE_DIR, 'mitma-tramos-parsed.json')
+const CACHE_JSON = resolve(CACHE_DIR, 'mitma-tramos-parsed-v2.json')   // v2: stores section `coords` polyline (was centroid midLat/midLon)
 
 const enrichOnly = process.argv.includes('--enrich-only')
 const forceDownload = process.argv.includes('--force-download')
@@ -44,8 +44,7 @@ const ES_BBOX: [number, number, number, number] = [27.0, -19.0, 44.0, 5.0]
 interface TramoSection {
   via: string         // raw road ref e.g. "A-5", "AP-7", "N-340"
   ref: string         // normalized ref for matching
-  midLat: number
-  midLon: number
+  coords: [number, number][]   // section polyline as [lon, lat] vertices (matched per-segment, not by centroid)
   pkInicio: number
   pkFin: number
   longitud: number
@@ -108,23 +107,15 @@ function parseTramos(): TramoSection[] {
 
     if (!via || imdTot <= 0) { skipped++; continue }
 
-    // Compute centroid of MultiLineString geometry
-    const coords = feat.geometry?.coordinates
-    if (!coords || !Array.isArray(coords) || coords.length === 0) { skipped++; continue }
+    // Flatten MultiLineString → [lon, lat] vertices; matched per-segment, not by centroid.
+    const rawCoords = feat.geometry?.coordinates
+    if (!rawCoords || !Array.isArray(rawCoords) || rawCoords.length === 0) { skipped++; continue }
+    const lineCoords = (rawCoords as number[][][]).flat() as [number, number][]
+    if (lineCoords.length === 0) { skipped++; continue }
 
-    let sumLat = 0, sumLon = 0, count = 0
-    for (const line of coords) {
-      for (const [lon, lat] of line) {
-        sumLat += lat
-        sumLon += lon
-        count++
-      }
-    }
-    if (count === 0) { skipped++; continue }
-    const midLat = sumLat / count
-    const midLon = sumLon / count
-
-    if (midLat < ES_BBOX[0] || midLat > ES_BBOX[2] || midLon < ES_BBOX[1] || midLon > ES_BBOX[3]) {
+    // bbox filter on the first vertex (sections don't meaningfully straddle the ES bbox edge)
+    const [v0Lon, v0Lat] = lineCoords[0]
+    if (v0Lat < ES_BBOX[0] || v0Lat > ES_BBOX[2] || v0Lon < ES_BBOX[1] || v0Lon > ES_BBOX[3]) {
       skipped++; continue
     }
 
@@ -144,8 +135,7 @@ function parseTramos(): TramoSection[] {
     sections.push({
       via,
       ref,
-      midLat,
-      midLon,
+      coords: lineCoords,
       pkInicio: parseFloat(props.pkinicio_t || '0'),
       pkFin: parseFloat(props.pkfin_t || '0'),
       longitud: parseFloat(props.longitud || '0'),
@@ -266,7 +256,7 @@ async function enrichArrows(sections: TramoSection[]): Promise<void> {
 
       if (normRef && refIndex.has(normRef)) {
         for (const c of refIndex.get(normRef)!) {
-          const dist = haversineM(midLat, midLon, c.midLat, c.midLon)
+          const dist = pointToPolylineDist(midLat, midLon, c.coords)
           if (dist < bestDist) { bestDist = dist; best = c }
         }
       }

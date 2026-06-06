@@ -21,7 +21,7 @@ import { cellToLatLng } from 'h3-js'
 import * as XLSX from 'xlsx'
 import shp from 'shpjs'
 import { SOURCE_ID_PL_NATIONAL_ROADS } from './lib/source-ids.generated.js'
-import { haversineM } from './lib/spatial.js'
+import { pointToPolylineDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_PL_NATIONAL_ROADS
 
@@ -31,7 +31,7 @@ const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/pl`)
 const CACHE_NATIONAL_XLS = resolve(CACHE_DIR, 'gpr-2020-national.xls')
 const CACHE_PROVINCIAL_XLS = resolve(CACHE_DIR, 'gpr-2020-provincial.xls')
 const CACHE_SHP_ZIP = resolve(CACHE_DIR, 'gpr-2020-segments-shp.zip')
-const CACHE_PARSED = resolve(CACHE_DIR, 'gpr-2020-parsed.json')
+const CACHE_PARSED = resolve(CACHE_DIR, 'gpr-2020-parsed-v2.json')   // v2: national records store `coords` polyline (was centroid only)
 
 const enrichOnly = process.argv.includes('--enrich-only')
 const forceDownload = process.argv.includes('--force-download')
@@ -48,12 +48,13 @@ interface SegmentRecord {
   nr2020: string         // measurement point ID (joins to SHP)
   ref: string            // road number normalized (e.g. "A1", "S7", "DK1", "DW806")
   isProvincial: boolean
-  midLat: number
+  midLat: number               // representative centroid — grid/display only (NaN for provincial)
   midLon: number
+  coords: [number, number][] | null   // section polyline [lon,lat]; null for provincial (ref-only match)
   imdTot: number
-  aadt_light: number     // cars (col 9 nat / equivalent prov)
-  aadt_medium: number    // light trucks + buses
-  aadt_heavy: number     // heavy trucks (no trailer + with trailer)
+  aadt_light: number     // cars + light commercial ≤3.5 t (CNOSSOS cat1)
+  aadt_medium: number    // buses (CNOSSOS cat2)
+  aadt_heavy: number     // trucks: no-trailer + with-trailer
   aadt_moto: number      // motorcycles
 }
 
@@ -205,7 +206,7 @@ async function buildSegments(): Promise<SegmentRecord[]> {
           const refRaw = (props.NRDROGI || '').toString().trim().toUpperCase().replace(/\s+/g, '')
           const ref = /^[AS]/.test(refRaw) ? refRaw : `DK${refRaw}`
           // Synthetic class split using CNOSSOS defaults
-          segments.push(makeFromTotal(nr2020, ref, coords[0], coords[1], sdrr, false))
+          segments.push(makeFromTotal(nr2020, ref, coords[0], coords[1], extractLineCoords(feat.geometry), sdrr, false))
           nationalUnmatched++
         }
       }
@@ -226,7 +227,7 @@ async function buildSegments(): Promise<SegmentRecord[]> {
       ref = refRaw
     }
 
-    segments.push(makeRecord(nr2020, ref, coords[0], coords[1], xls, false))
+    segments.push(makeRecord(nr2020, ref, coords[0], coords[1], extractLineCoords(feat.geometry), xls, false))
     nationalMatched++
   }
 
@@ -243,7 +244,7 @@ async function buildSegments(): Promise<SegmentRecord[]> {
     // Provincial refs need DW prefix
     const refClean = xls.ref.replace(/^DW/, '').replace(/[^0-9A-Z]/g, '')
     const ref = `DW${refClean}`
-    segments.push(makeRecord(xls.nr2020, ref, NaN, NaN, xls, true))
+    segments.push(makeRecord(xls.nr2020, ref, NaN, NaN, null, xls, true))
     provincialAdded++
   }
   console.log(`  Provincial: ${provincialAdded} added (no geometry, ref-only matching)`)
@@ -268,14 +269,22 @@ function extractCentroid(geom: any): [number, number] | null {
   return [sumLat / n, sumLon / n]
 }
 
-function makeRecord(nr2020: string, ref: string, lat: number, lon: number, xls: XlsRecord, isProvincial: boolean): SegmentRecord {
-  // CNOSSOS-EU vehicle classes:
-  //   light = cars
-  //   medium = light trucks + buses
-  //   heavy = trucks_no_trailer + trucks_with_trailer
-  //   moto = motorcycles
-  const aadt_light = Math.round(xls.cars)
-  const aadt_medium = Math.round(xls.lightTrucks + xls.buses)
+/** Section polyline as [lon, lat] vertices (flattened); [] if no line geometry. */
+function extractLineCoords(geom: any): [number, number][] {
+  if (!geom || !geom.coordinates) return []
+  if (geom.type === 'LineString') return geom.coordinates as [number, number][]
+  if (geom.type === 'MultiLineString') return (geom.coordinates as number[][][]).flat() as [number, number][]
+  return []
+}
+
+function makeRecord(nr2020: string, ref: string, lat: number, lon: number, coords: [number, number][] | null, xls: XlsRecord, isProvincial: boolean): SegmentRecord {
+  // CNOSSOS-EU (Dir (EU) 2015/996) vehicle classes:
+  //   light  = cars + light commercial ≤3.5 t (LGV)
+  //   medium = buses
+  //   heavy  = trucks_no_trailer + trucks_with_trailer
+  //   moto   = motorcycles
+  const aadt_light = Math.round(xls.cars + xls.lightTrucks)
+  const aadt_medium = Math.round(xls.buses)
   const aadt_heavy = Math.round(xls.trucksNoTrailer + xls.trucksWithTrailer)
   const aadt_moto = Math.round(xls.motorcycles)
   return {
@@ -284,6 +293,7 @@ function makeRecord(nr2020: string, ref: string, lat: number, lon: number, xls: 
     isProvincial,
     midLat: lat,
     midLon: lon,
+    coords,
     imdTot: xls.imdTot,
     aadt_light,
     aadt_medium,
@@ -292,7 +302,7 @@ function makeRecord(nr2020: string, ref: string, lat: number, lon: number, xls: 
   }
 }
 
-function makeFromTotal(nr2020: string, ref: string, lat: number, lon: number, total: number, isProvincial: boolean): SegmentRecord {
+function makeFromTotal(nr2020: string, ref: string, lat: number, lon: number, coords: [number, number][] | null, total: number, isProvincial: boolean): SegmentRecord {
   // CNOSSOS default split for Polish motorways/national roads when only SDRR is known:
   // light=72%, medium=8%, heavy=18%, moto=2%
   const aadt_moto = Math.round(total * 0.02)
@@ -305,6 +315,7 @@ function makeFromTotal(nr2020: string, ref: string, lat: number, lon: number, to
     isProvincial,
     midLat: lat,
     midLon: lon,
+    coords,
     imdTot: total,
     aadt_light,
     aadt_medium,
@@ -420,7 +431,7 @@ async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
             }
             continue
           }
-          const d = haversineM(midLat, midLon, s.midLat, s.midLon)
+          const d = pointToPolylineDist(midLat, midLon, s.coords ?? [])
           if (d < bestDist) { bestDist = d; best = s }
         }
       }

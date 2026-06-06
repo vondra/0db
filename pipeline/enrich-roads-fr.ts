@@ -17,7 +17,7 @@ import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uin
 import proj4 from 'proj4'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_FR_CEREMA_TMJA } from './lib/source-ids.generated.js'
-import { haversineM } from './lib/spatial.js'
+import { pointToPolylineDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_FR_CEREMA_TMJA
 
@@ -26,7 +26,7 @@ const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/fr`)
 const CACHE_2024 = resolve(CACHE_DIR, 'tmja-2024.csv')
 const CACHE_2019 = resolve(CACHE_DIR, 'tmja-2019.csv')
-const CACHE_JSON = resolve(CACHE_DIR, 'tmja-census.json')
+const CACHE_JSON = resolve(CACHE_DIR, 'tmja-census-v2.json')   // v2: stores section endpoint `coords` (was midpoint only)
 
 const enrichOnly = process.argv.includes('--enrich-only')
 const forceDownload = process.argv.includes('--force-download')
@@ -44,8 +44,9 @@ const toWGS84 = (x: number, y: number): [number, number] => {
 interface CensusSection {
   route: string        // "A0001", "N0007"
   ref: string          // normalized: "A1", "N7"
-  lat: number
+  lat: number          // representative midpoint — grid bucketing + display only
   lon: number
+  coords: [number, number][]   // [start, end] as [lon, lat]; matched per-segment, not by midpoint
   tmja: number         // total AADT
   ratio_pl: number     // heavy vehicle share (0-1)
   aadt_light: number
@@ -120,12 +121,21 @@ function parseCsvFiles(): CensusSection[] {
 
       if (!route || !tmja || !xD || !yD || xD < 100000) { skipped++; continue }
 
-      // Midpoint of section
+      // Representative midpoint — grid bucketing + display only. Matching uses
+      // the section's two endpoints as a line, so the AADT boundary lands at the
+      // section end (the real junction), not on the midpoint bisector.
       const mx = xF && yF ? (xD + xF) / 2 : xD
       const my = xF && yF ? (yD + yF) / 2 : yD
       const [lat, lon] = toWGS84(mx, my)
 
       if (lat < 41 || lat > 51.5 || lon < -5.5 || lon > 10) { skipped++; continue }
+
+      const [latD, lonD] = toWGS84(xD, yD)
+      const coords: [number, number][] = [[lonD, latD]]
+      if (xF && yF) {
+        const [latF, lonF] = toWGS84(xF, yF)
+        coords.push([lonF, latF])
+      }
 
       // Normalize route: "A0001" → "A1", "N0007" → "N7"
       const ref = route.replace(/^([A-Z])0*/, '$1')
@@ -145,7 +155,7 @@ function parseCsvFiles(): CensusSection[] {
       const aadt_heavy = totalHV - aadt_medium
       const aadt_light = Math.round(tmja - totalHV - aadt_moto)
 
-      sections.push({ route, ref, lat, lon, tmja: Math.round(tmja), ratio_pl: ratioHV, aadt_light, aadt_medium, aadt_heavy, aadt_moto })
+      sections.push({ route, ref, lat, lon, coords, tmja: Math.round(tmja), ratio_pl: ratioHV, aadt_light, aadt_medium, aadt_heavy, aadt_moto })
       parsed++
     }
     console.log(`  ${label}: ${parsed} sections, ${skipped} skipped`)
@@ -247,7 +257,7 @@ async function enrichArrows(sections: CensusSection[]) {
 
       if (normRef && refIndex.has(normRef)) {
         for (const c of refIndex.get(normRef)!) {
-          const dist = haversineM(midLat, midLon, c.lat, c.lon)
+          const dist = pointToPolylineDist(midLat, midLon, c.coords)
           if (dist < bestDist) { bestDist = dist; best = c }
         }
       }
