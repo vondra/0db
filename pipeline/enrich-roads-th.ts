@@ -171,15 +171,16 @@ async function loadDrrAadt(): Promise<Map<string, DrrAadt>> {
 
 // Convert DRR per-class to CNOSSOS categories
 function drrToCnossos(d: DrrAadt): { light: number; medium: number; heavy: number; moto: number } {
-  // CNOSSOS categories:
-  // light = passenger cars + small trucks (incl. motos? no — moto separate)
-  // medium = 2-axle trucks + buses
-  // heavy = 3+ axle trucks + articulated + large buses
-  // moto = motorcycles
+  // CNOSSOS-EU (Dir 2015/996):
+  //   light  = passenger cars (+ car-with-trailer)
+  //   medium = 2-axle trucks + buses + minor/other (cat2)
+  //   heavy  = 3+ axle trucks + articulated (cat3)
+  //   moto   = motorcycles
+  // bd (buses) are cat2 medium, NOT heavy — only articulated buses would be cat3.
   return {
     light: Math.round(d.sv + d.svt),
-    medium: Math.round(d.tb2 + d.drt),
-    heavy: Math.round(d.tb3 + d.t4 + d.art3 + d.art4 + d.art5 + d.art6 + d.bd),
+    medium: Math.round(d.tb2 + d.bd + d.drt),
+    heavy: Math.round(d.tb3 + d.t4 + d.art3 + d.art4 + d.art5 + d.art6),
     moto: Math.round(d.mc),
   }
 }

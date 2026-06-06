@@ -248,14 +248,23 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
 
     // Read existing enrichment columns
     const existingAadtLight = table.getChild('aadt_light')
+    const existingAadtMedium = table.getChild('aadt_medium')
+    const existingAadtHeavy = table.getChild('aadt_heavy')
+    const existingAadtMoto = table.getChild('aadt_moto')
     const existingSourceId = table.getChild('source_id')
 
     const aadtLight = new Int32Array(n)
+    const aadtMedium = new Int32Array(n)
+    const aadtHeavy = new Int32Array(n)
+    const aadtMoto = new Int32Array(n)
     const sourceId = new Uint16Array(n)
 
     // Preserve existing enrichments
     for (let i = 0; i < n; i++) {
       aadtLight[i] = existingAadtLight ? (existingAadtLight.get(i) as number ?? 0) : 0
+      aadtMedium[i] = existingAadtMedium ? (existingAadtMedium.get(i) as number ?? 0) : 0
+      aadtHeavy[i] = existingAadtHeavy ? (existingAadtHeavy.get(i) as number ?? 0) : 0
+      aadtMoto[i] = existingAadtMoto ? (existingAadtMoto.get(i) as number ?? 0) : 0
       sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
     }
 
@@ -293,7 +302,11 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
       // Max 30km — Italian TGM stations are sparse (~653 stations for 300K km of road)
       if (bestDist > 30_000) continue
 
-      aadtLight[i] = best.aadt
+      const split = splitTgm(best.aadt, roadClass)
+      aadtLight[i] = split.light
+      aadtMedium[i] = split.medium
+      aadtHeavy[i] = split.heavy
+      aadtMoto[i] = split.moto
       sourceId[i] = MY_SOURCE_ID
       hexMatched++
       matchByClass.get(roadClass)!.matched++
@@ -304,11 +317,13 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
     // Copy ALL existing columns by iterating schema
     const columns: Record<string, any> = {}
     for (const field of table.schema.fields) {
-      if (field.name === 'aadt_light' || field.name === 'source_id') continue
+      if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
       columns[field.name] = table.getChild(field.name)!
     }
     columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-
+    columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
+    columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
+    columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
     columns['source_id'] = vectorFromArray(sourceId, new Uint16())
 
     const newTable = makeTable(columns)
@@ -401,7 +416,25 @@ function normalizeOsmRef(ref: string): string {
   return ''
 }
 
-/** Flat-earth distance in meters */
+/**
+ * Split a total TGM (AADT) into CNOSSOS-EU classes. ANAS TGM carries no
+ * per-class breakdown, so this is a road-class heuristic (heavy share rises
+ * with road importance), consistent with the US/CA enrichers. Italian A-/SS-road
+ * freight is ~5–18% of AADT by class; ~4% powered-two-wheelers; of the heavy
+ * bucket ~20% are buses + 2-axle rigid (cat2 medium), ~80% artic/heavy rigid
+ * (cat3 heavy). Previously the whole TGM was written to light, modelling every
+ * truck and bus as a car.
+ */
+function splitTgm(total: number, roadClass: number): { light: number; medium: number; heavy: number; moto: number } {
+  const heavyShare = roadClass <= 1 ? 0.18 : roadClass === 2 ? 0.12 : roadClass === 3 ? 0.08 : 0.05
+  const moto = Math.round(total * 0.04)
+  const heavyTotal = Math.round(total * heavyShare)
+  const medium = Math.round(heavyTotal * 0.20)
+  const heavy = heavyTotal - medium
+  const light = Math.max(0, total - moto - heavyTotal)
+  return { light, medium, heavy, moto }
+}
+
 // ── Main ──
 
 async function main() {

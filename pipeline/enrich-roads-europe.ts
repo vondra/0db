@@ -368,13 +368,19 @@ function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
       const dirFactor = record.isOneway ? 2 : 1
 
       const totalAadt = record.aadt * dirFactor
-      const lightAadt = totalAadt - (record.truckAadt * dirFactor) - (record.twoWheelAadt * dirFactor)
+      const heavyAadt = record.truckAadt * dirFactor
+      const motoAadt = record.twoWheelAadt * dirFactor
+      // The dataset only splits out trucks (heavy) + two-wheelers (moto); cars and
+      // buses share the remainder. Estimate buses (CNOSSOS cat2 medium) at ~2% of
+      // total — a typical urban bus share — rather than dumping them into light.
+      const mediumAadt = totalAadt * 0.02
+      const lightAadt = totalAadt - heavyAadt - motoAadt - mediumAadt
 
       // Whole-row atomic write — payload + dataset_id together, gated by priority above.
       aadtLight[i] = Math.max(0, Math.round(lightAadt))
-      aadtMedium[i] = 0  // dataset doesn't distinguish medium vehicles
-      aadtHeavy[i] = Math.max(0, Math.round(record.truckAadt * dirFactor))
-      aadtMoto[i] = Math.max(0, Math.round(record.twoWheelAadt * dirFactor))
+      aadtMedium[i] = Math.max(0, Math.round(mediumAadt))
+      aadtHeavy[i] = Math.max(0, Math.round(heavyAadt))
+      aadtMoto[i] = Math.max(0, Math.round(motoAadt))
       sourceId[i] = MY_SOURCE_ID
       hexMatched++
       matchByClass.get(roadClass)!.matched++
@@ -493,7 +499,7 @@ async function main() {
 - ${totalMatched} segments enriched across ${hexesUpdated} H3R4 hexes
 - Preserves existing country-specific enrichment (higher-rank source_id from prior runs)
 - Directional correction: raw_oneway=true measurements doubled to bidirectional total
-- AADT split: light = total - truck - 2wheel; heavy = TR_AADT; moto = 2W_AADT
+- AADT split: medium = 2% of total (bus estimate); light = total - truck - 2wheel - medium; heavy = TR_AADT; moto = 2W_AADT
 
 ## Cities included
 ${CITIES.map(c => `- ${c[2]} (${c[0]})`).join('\n')}

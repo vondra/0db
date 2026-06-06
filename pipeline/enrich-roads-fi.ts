@@ -118,14 +118,16 @@ function parseAllPages(): FiRoadSegment[] {
       const kvlRaskas = parseInt(props.kvl_raskas || '0')
       const kvlYhdistelma = parseInt(props.kvl_yhdistelma || '0')
 
-      // CNOSSOS-EU vehicle classes:
-      //   moto = 1% of kvl (no Finnish moto column)
-      //   heavy = kvl_yhdistelma (articulated trucks)
-      //   medium = kvl_raskas - kvl_yhdistelma (rigid trucks + buses)
-      //   light = kvl - kvl_raskas - moto
+      // CNOSSOS-EU (Dir 2015/996): cat1 light ≤3.5 t, cat2 medium, cat3 heavy.
+      // The Digiroad source gives only kvl_raskas (ALL heavy vehicles ≥3.5 t) and
+      // kvl_yhdistelma (articulated subset) — no 2-axle/bus column to populate cat2
+      // reliably, so all heavy vehicles default to cat3 (Finland's HGV fleet is
+      // long-haul-dominated; the cat2↔cat3 Lw gap is small). The previous mapping
+      // forced rigid 3-axle HGVs into medium, under-stating their noise.
+      // moto estimated at 1% of kvl (no Finnish motorcycle column).
       const aadt_moto = Math.round(kvl * 0.01)
-      const aadt_heavy = kvlYhdistelma
-      const aadt_medium = Math.max(0, kvlRaskas - kvlYhdistelma)
+      const aadt_heavy = kvlRaskas
+      const aadt_medium = 0
       const aadt_light = Math.max(0, kvl - kvlRaskas - aadt_moto)
 
       records.push({
