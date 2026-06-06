@@ -21,7 +21,7 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
-import { latLngToCell } from 'h3-js'
+import { latLngToCell, cellToLatLng } from 'h3-js'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_EU_CITY_TRAFFIC } from './lib/source-ids.generated.js'
@@ -252,8 +252,17 @@ function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
   hexesUpdated: number
   matchByClass: Map<number, { matched: number; total: number }>
 } {
-  const hexDirs = readdirSync(H3R4_DIR).filter(d =>
-    d.length === 15 && d.endsWith('ffffffff'))
+  // Generous Europe box (Iceland/Canaries → Urals/Cyprus) so the hex scan skips the
+  // rest of the planet instead of reading every roads.arrow on Earth (~40 min → minutes).
+  const EU_HEX_BBOX = { minLat: 34, maxLat: 72, minLon: -32, maxLon: 45 }
+  const hexDirs = readdirSync(H3R4_DIR).filter(d => {
+    if (d.length !== 15 || !d.endsWith('ffffffff')) return false
+    try {
+      const [lat, lon] = cellToLatLng(d)
+      return lat >= EU_HEX_BBOX.minLat && lat <= EU_HEX_BBOX.maxLat
+        && lon >= EU_HEX_BBOX.minLon && lon <= EU_HEX_BBOX.maxLon
+    } catch { return false }
+  })
 
   let totalRoads = 0
   let totalMatched = 0

@@ -17,6 +17,7 @@ import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCE_ID_CZ_RSD_SCITANI } from './lib/source-ids.generated.js'
 import { pointToPolylineDist } from './lib/spatial.js'
+import { cellToLatLng } from 'h3-js'
 
 const MY_SOURCE_ID = SOURCE_ID_CZ_RSD_SCITANI
 
@@ -126,9 +127,20 @@ function parseCensus(features: any[]): Map<string, CensusSection[]> {
 
 // ── Step 3: Enrich Arrow files ──
 
+// Generous lat/lon box around Czechia (+~0.3 deg halo) so the hex scan skips the
+// rest of the planet — ŘSD refs only match CZ hexes. Without this the script reads
+// every roads.arrow on Earth (~40 min); with it, only the ~112 CZ R4 cells.
+const CZ_HEX_BBOX = { minLat: 48.2, maxLat: 51.4, minLon: 11.7, maxLon: 19.2 }
+
 function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
-  const hexDirs = readdirSync(H3R4_DIR).filter(d =>
-    d.length === 15 && d.endsWith('ffffffff'))
+  const hexDirs = readdirSync(H3R4_DIR).filter(d => {
+    if (d.length !== 15 || !d.endsWith('ffffffff')) return false
+    try {
+      const [lat, lon] = cellToLatLng(d)
+      return lat >= CZ_HEX_BBOX.minLat && lat <= CZ_HEX_BBOX.maxLat
+        && lon >= CZ_HEX_BBOX.minLon && lon <= CZ_HEX_BBOX.maxLon
+    } catch { return false }
+  })
 
   let totalRoads = 0
   let totalMatched = 0
