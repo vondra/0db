@@ -194,7 +194,11 @@ fn main() -> Result<()> {
     let _ = scatter_tile(tile, &views, &mut accum_prod);
     let t_cpu_prod = tcp.elapsed().as_secs_f64() * 1e3;
 
+    // Classify/prune (envelope + ground-stale + prepare_segment + near/far split) — part of
+    // the honest GPU per-box cost (region-resident E5 amortises prepare_segment region-wide).
+    let t_classify = std::time::Instant::now();
     let (near, far) = admitted_segments(tile, &views);
+    let t_classify_ms = t_classify.elapsed().as_secs_f64() * 1e3;
 
     // ---- GPU: near (airborne_exact) + 3 far levels (airborne_coarse) ----
     let dev = CudaDevice::new(0).expect("cuda");
@@ -207,14 +211,21 @@ fn main() -> Result<()> {
     let f_near = dev.get_func("air", "airborne_exact").expect("fn near");
     let f_coarse = dev.get_func("air", "airborne_coarse").expect("fn coarse");
 
-    let t_up = std::time::Instant::now();
+    let n = TILE_PX * TILE_PX;
+    // --- pack (CPU): build the device-SoA Vecs (this is what region-resident E5 amortises) ---
+    let t_pack = std::time::Instant::now();
     let (rll, rxa) = pack_airborne_receivers(tile);
+    let npd_flat = NpdLuts::shared().sel_luts_flat_f32();
+    let (snll, snf, sni) = pack_airborne_segs(&near);
+    let far_packed: Vec<(Vec<f64>, Vec<f32>, Vec<i32>)> =
+        far.iter().map(|s| pack_airborne_segs(s)).collect();
+    let t_pack_ms = t_pack.elapsed().as_secs_f64() * 1e3;
+
+    // --- htod (PCIe transfer) ---
+    let t_htod = std::time::Instant::now();
     let d_rll = dev.htod_copy(rll).expect("rll");
     let d_rxa = dev.htod_copy(rxa).expect("rxa");
-    let d_npd = dev.htod_copy(NpdLuts::shared().sel_luts_flat_f32()).expect("npd");
-    let n = TILE_PX * TILE_PX;
-
-    let (snll, snf, sni) = pack_airborne_segs(&near);
+    let d_npd = dev.htod_copy(npd_flat).expect("npd");
     let d_snll = dev.htod_copy(snll).expect("snll");
     let d_snf = dev.htod_copy(snf).expect("snf");
     let d_sni = dev.htod_copy(sni).expect("sni");
@@ -222,23 +233,22 @@ fn main() -> Result<()> {
 
     // (d_sll, d_sf, d_si, nseg, n_nodes, d_coarse) per far level
     let mut fardev = Vec::new();
-    for (lvl, segs) in far.iter().enumerate() {
+    for ((lvl, seglist), (sll, sf, si)) in far.iter().enumerate().zip(far_packed) {
         let nn = COARSE_LEVELS_N[lvl];
-        let (sll, sf, si) = pack_airborne_segs(segs);
         fardev.push((
             dev.htod_copy(sll).expect("f sll"),
             dev.htod_copy(sf).expect("f sf"),
             dev.htod_copy(si).expect("f si"),
-            segs.len(),
+            seglist.len(),
             nn,
             dev.alloc_zeros::<f32>(nn * nn * 3).expect("coarse out"),
         ));
     }
-    // Sync so t_upload measures real H→D completion — cudarc htod_copy is async-queued,
-    // so without this the "upload" time is just enqueue time and leaks into the kernel
-    // timing below (gg/codex). With the sync, t_upload = pack+transfer, t_gpu_kernels = pure kernel.
+    // Sync so t_htod measures real H→D completion — cudarc htod_copy is async-queued
+    // (gg/codex); without it the "upload" is just enqueue time and leaks into the kernel.
     dev.synchronize().expect("upload sync");
-    let t_upload = t_up.elapsed().as_secs_f64() * 1e3;
+    let t_htod_ms = t_htod.elapsed().as_secs_f64() * 1e3;
+    let t_upload = t_pack_ms + t_htod_ms;
 
     let block: u32 = 256;
     let t = std::time::Instant::now();
@@ -320,11 +330,15 @@ fn main() -> Result<()> {
     }
     eprintln!("--- TIMING (same box, one LKPR tile) ---");
     eprintln!("  CPU prod (adaptive)   {t_cpu_prod:7.0} ms");
-    eprintln!("  GPU kernels (near+far){t_gpu_kernels:7.1} ms   (upload {t_upload:.0} ms, +dtoh/expand → path {t_gpu_path:.0} ms)");
+    let t_full = t_classify_ms + t_upload + t_gpu_path;
     eprintln!(
-        "  → speedup: {:.1}× (kernels only) | {:.1}× (full path incl. upload+expand)",
+        "  GPU per-box {t_full:.0} ms = classify {t_classify_ms:.0} + pack {t_pack_ms:.0} + htod {t_htod_ms:.0} + kernels {t_gpu_kernels:.1} + dtoh/expand {:.0}",
+        t_gpu_path - t_gpu_kernels,
+    );
+    eprintln!(
+        "  → speedup: {:.0}× (kernels only) | {:.1}× (full per-box) — E5 region-resident amortises classify+pack+htod",
         t_cpu_prod / t_gpu_kernels.max(0.001),
-        t_cpu_prod / (t_upload + t_gpu_path).max(0.001),
+        t_cpu_prod / t_full.max(0.001),
     );
     Ok(())
 }
