@@ -23,7 +23,7 @@ use cudarc::nvrtc::Ptx;
 use h3o::{CellIndex, LatLng};
 use heatmap_aircraft::accumulator::TileAccumulator;
 use heatmap_aircraft::grid::tile_range;
-use heatmap_aircraft::region_runner::tile_centre_r4;
+use heatmap_aircraft::region_runner::{read_r4_file, region_tiles, tile_centre_r4};
 use heatmap_aircraft::source_line::LineRow;
 use heatmap_aircraft::source_loader_rail::RailData;
 use heatmap_aircraft::source_loader_road::RoadData;
@@ -205,14 +205,17 @@ fn process_block(
     let prep = |it: (u32, u32, LineLayer)| -> (PixelBins, TileBuffers) {
         let (tx, ty, layer) = it;
         let tile = &batch.tiles[((ty - by) * cfg.batch_n + (tx - bx)) as usize];
-        let rows = &region_rows.iter().find(|(l, _)| *l == layer).expect("layer").1;
+        let rows = &region_rows
+            .iter()
+            .find(|(l, _)| *l == layer)
+            .expect("layer")
+            .1;
         (
             build_pixel_bins(tile, rows),
             pack_tile(tile, halo_geom, ETA, TW),
         )
     };
-    let prep_timed = |it: (u32, u32, LineLayer),
-                      stats: &mut BTreeMap<&'static str, LayerStat>| {
+    let prep_timed = |it: (u32, u32, LineLayer), stats: &mut BTreeMap<&'static str, LayerStat>| {
         let t = Instant::now();
         let p = prep(it);
         stats.entry(it.2.dir()).or_default().t_bins += t.elapsed().as_secs_f64();
@@ -226,7 +229,11 @@ fn process_block(
         let d_inner = dev.htod_copy(bufs.inner).expect("inner");
         let d_meta = dev.htod_copy(bufs.meta).expect("meta");
         // Region-resident sources (uploaded once per layer above) — not re-uploaded per tile.
-        let (d_seg, d_sp, d_semis) = &src_dev.iter().find(|(l, _)| *l == layer).expect("layer src").1;
+        let (d_seg, d_sp, d_semis) = &src_dev
+            .iter()
+            .find(|(l, _)| *l == layer)
+            .expect("layer src")
+            .1;
         let d_rxll = dev.htod_copy(bufs.rxll).expect("rxll");
         let d_rxar = dev.htod_copy(bufs.rxar).expect("rxar");
         let d_off = dev.htod_copy(bins.offsets).expect("off");
@@ -260,6 +267,11 @@ fn process_block(
                 .join(format!("{ty}.bin"));
             if write_tile(&out, &cells, layer.source_id(), true)? > 0 {
                 stats.entry(layer.dir()).or_default().n_written += 1;
+            } else if out.exists() {
+                // Rebuilt all-silent: unlink any stale tile a prior build left, else
+                // combine keeps summing stale GPU energy (mirrors build_heatmap_surface).
+                std::fs::remove_file(&out)
+                    .with_context(|| format!("rm stale {}", out.display()))?;
             }
         }
         if !cfg.baseline.is_empty() {
@@ -305,13 +317,14 @@ fn main() -> Result<()> {
     // Index-based parse: each known flag consumes the NEXT token (which must exist
     // and not itself be a flag); everything else is a positional. Tracking by
     // position (not value) avoids dropping a positional that equals a flag's value.
-    let (mut output, mut bbox, mut layers_s, mut batch_s) = (None, None, None, None);
+    let (mut output, mut bbox, mut layers_s, mut batch_s, mut regions_file) =
+        (None, None, None, None, None);
     let mut pos: Vec<String> = Vec::new();
     let mut i = 0;
     while i < argv.len() {
         let a = argv[i].as_str();
         match a {
-            "--output" | "--bbox" | "--layers" | "--batch" => {
+            "--output" | "--bbox" | "--layers" | "--batch" | "--regions-file" => {
                 let v = argv
                     .get(i + 1)
                     .filter(|s| !s.starts_with("--"))
@@ -321,6 +334,7 @@ fn main() -> Result<()> {
                     "--output" => output = Some(v),
                     "--bbox" => bbox = Some(v),
                     "--layers" => layers_s = Some(v),
+                    "--regions-file" => regions_file = Some(v),
                     _ => batch_s = Some(v),
                 }
                 i += 2;
@@ -367,7 +381,17 @@ fn main() -> Result<()> {
     // grid-aligned halo blocks. Build `regions` directly in both modes so
     // n_targets counts exactly the valid tiles that get built.
     let mut regions: BTreeMap<u64, Vec<(u32, u32)>> = BTreeMap::new();
-    let (blk_n, mode) = if let Some(b) = &bbox {
+    let (blk_n, mode) = if let Some(rf) = &regions_file {
+        // Cluster per-chunk unit: build exactly the listed output R4s' owned tiles
+        // (centre-R4 ownership, same contract as build_heatmap_surface --regions-file).
+        for r4 in read_r4_file(Path::new(rf))? {
+            regions.insert(r4, region_tiles(r4, z));
+        }
+        (
+            batch_n,
+            format!("regions-file {rf} ({} R4s)", regions.len()),
+        )
+    } else if let Some(b) = &bbox {
         let v: Vec<f64> = b.split(',').map(|s| s.parse()).collect::<Result<_, _>>()?;
         if v.len() != 4 || v[0] >= v[2] || v[1] >= v[3] {
             bail!("--bbox needs south,west,north,east with south<north and west<east");
@@ -397,12 +421,17 @@ fn main() -> Result<()> {
         // halo matches theirs (else diffing vs an aligned baseline drifts spuriously).
         let (base_x, base_y) = ((bx_in / bn) * bn, (by_in / bn) * bn);
         if (base_x, base_y) != (bx_in, by_in) {
-            eprintln!("note: snapped block origin {bx_in}/{by_in} → {base_x}/{base_y} (grid-aligned)");
+            eprintln!(
+                "note: snapped block origin {bx_in}/{by_in} → {base_x}/{base_y} (grid-aligned)"
+            );
         }
         for dy in 0..bn {
             for dx in 0..bn {
                 if let Some(r4) = tile_centre_r4(z, base_x + dx, base_y + dy) {
-                    regions.entry(r4).or_default().push((base_x + dx, base_y + dy));
+                    regions
+                        .entry(r4)
+                        .or_default()
+                        .push((base_x + dx, base_y + dy));
                 }
             }
         }
@@ -443,7 +472,11 @@ fn main() -> Result<()> {
     for (&r4, region_tiles) in &regions {
         // Load every requested layer's rows ONCE for this region (grid_disk(1)).
         let cell = CellIndex::try_from(r4)?;
-        let ring: Vec<u64> = cell.grid_disk::<Vec<_>>(1).into_iter().map(u64::from).collect();
+        let ring: Vec<u64> = cell
+            .grid_disk::<Vec<_>>(1)
+            .into_iter()
+            .map(u64::from)
+            .collect();
         let mut region_rows: Vec<(LineLayer, Vec<LineRow>)> = Vec::with_capacity(layers.len());
         for &layer in &layers {
             let tl = Instant::now();
@@ -477,14 +510,26 @@ fn main() -> Result<()> {
         }
         for (&(bx, by), block_tiles) in &blocks {
             process_block(
-                &dev, &f, &rasters, &cfg, bx, by, block_tiles, &region_rows, &src_dev,
-                &mut stats, &mut prog,
+                &dev,
+                &f,
+                &rasters,
+                &cfg,
+                bx,
+                by,
+                block_tiles,
+                &region_rows,
+                &src_dev,
+                &mut stats,
+                &mut prog,
             )?;
         }
     }
     let wall = t_all.elapsed().as_secs_f64();
 
-    eprintln!("=== {n_targets} tile(s) × {} layer(s) in {wall:.2}s ===", layers.len());
+    eprintln!(
+        "=== {n_targets} tile(s) × {} layer(s) in {wall:.2}s ===",
+        layers.len()
+    );
     for (name, s) in &stats {
         // gpu = the GPU-phase wall (upload + launch + sync); prep = bin + pack. The
         // pipeline OVERLAPS prep(N+1) with gpu(N), so wall < gpu + prep — the
