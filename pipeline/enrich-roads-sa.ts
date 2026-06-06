@@ -464,6 +464,7 @@ async function main() {
       aadtMedium[i] = split.medium
       aadtHeavy[i] = split.heavy
       aadtMoto[i] = split.moto
+      sourceId[i] = MY_SOURCE_ID  // stamp provenance so the priority gate sees SA ownership on re-run
       hexMatched++
     }
 

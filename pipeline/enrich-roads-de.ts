@@ -243,7 +243,7 @@ async function enrichArrows(sections: CensusSection[]) {
   for (const hex of allHexes) {
     try {
       const [lat, lon] = cellToLatLng(hex)
-      if (lat > 46 && lat < 56 && lon > 4 && lon > 4 && lon < 16) {
+      if (lat > 46 && lat < 56 && lon > 4 && lon < 16) {
         if (existsSync(resolve(H3R4_DIR, hex, 'roads.arrow'))) hexDirs.push(hex)
       }
     } catch {}

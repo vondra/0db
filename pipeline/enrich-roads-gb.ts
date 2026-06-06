@@ -18,7 +18,7 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
-import { tableFromIPC, tableToIPC, vectorFromArray, Int32, Uint8, Uint16 } from 'apache-arrow'
+import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
@@ -246,7 +246,7 @@ async function enrichArrows(points: CountPoint[]) {
       columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
 
       columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-      const enriched = new table.constructor(columns)
+      const enriched = makeTable(columns)
       writeFileSync(arrowPath, tableToIPC(enriched, 'file'))
       hexesUpdated++
     }
