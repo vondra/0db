@@ -80,6 +80,10 @@ fn main() -> Result<()> {
     // ── Pass 2: Extract features ──
     eprintln!("\n── Pass 2: Extract → spill ──");
     let t2 = Instant::now();
+    // Start from a clean spill dir: a stale partition from an earlier run (especially
+    // a different num_buckets) would let finalize place the same hex in two parallel
+    // units and race on its output file. (--finalize_only returns earlier, never here.)
+    std::fs::remove_dir_all(&cli.spill_dir).ok();
     let mut spiller = spill::Spiller::new(&cli.spill_dir, cli.num_buckets)?;
     let mut assembler = relations::RelationAssembler::new(&manifest);
 
