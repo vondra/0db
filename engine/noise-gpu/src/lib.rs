@@ -1,8 +1,13 @@
 //! Shared host-side helpers for the GPU surface scatter (used by the e2-full
 //! validator and the gpu-surface production batch runner).
 
+/// Region-resident GPU airborne scatter, shared by the `e2-airborne` validator and the
+/// `gpu-airborne` production builder (cudarc-backed, so gated on the `gpu` feature).
+#[cfg(feature = "gpu")]
+pub mod airborne;
+
 use heatmap_aircraft::source_line::LineRow;
-use noise_compute::emission::aircraft::{Installation, M_PER_DEG_LAT, SegmentPrepared};
+use noise_compute::emission::aircraft::{Installation, SegmentPrepared, M_PER_DEG_LAT};
 use noise_compute::propagation::geo::point_to_segment_full;
 use noise_compute::propagation::path_profile::path_dist_m;
 use raster_reader::fused_tile_z13::{FusedTileZ13, TILE_PX};
@@ -113,7 +118,8 @@ pub fn build_pixel_bins(tile: &FusedTileZ13, lines: &[LineRow]) -> PixelBins {
     let bins: Vec<Vec<i32>> = centres
         .par_iter()
         .map(|&(lat, lon, radius)| {
-            lines.iter()
+            lines
+                .iter()
                 .enumerate()
                 .filter_map(|(si, r)| {
                     let pts = point_to_segment_full(
