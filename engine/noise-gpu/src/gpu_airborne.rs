@@ -22,7 +22,7 @@ use heatmap_aircraft::grid::{tile_bbox, tile_range};
 use heatmap_aircraft::r4_source_cache::{R4SourceCache, SourceSel};
 use heatmap_aircraft::region_runner::{morton_order, region_tiles, tile_centre_r4};
 use heatmap_aircraft::wire_hm3::{collapse_lden_u8, write_tile, SOURCE_ID_AIRCRAFT};
-use heatmap_aircraft::worklist::resolve_n_days;
+use heatmap_aircraft::worklist::{any_source_arrow, resolve_n_days};
 use noise_gpu::airborne::{region_candidates, AirborneGpu};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch};
 use raster_reader::RealRasters;
@@ -142,6 +142,12 @@ fn main() -> Result<()> {
     // One build-wide n_days, data-derived and verified against any explicit --n-days (the
     // cluster resolves it once for the whole area and passes it to every chunk).
     let source_r4s = ring_union(regions.keys().copied());
+    // A chunk can hold road/rail but no airborne (rural). Building the absent airborne is a
+    // no-op, not a fatal resolve — else the shared `line` job loses its road/rail too (Codex /gg).
+    if !any_source_arrow(&args.h3r4_dir, &source_r4s, SEL)? {
+        eprintln!("no airborne data in this chunk — nothing to build");
+        return Ok(());
+    }
     let resolved = resolve_n_days(&args.h3r4_dir, &source_r4s, SEL)?;
     let n_days = match args.n_days {
         Some(cli) if cli != resolved => {
