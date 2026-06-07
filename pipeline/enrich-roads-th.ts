@@ -52,14 +52,12 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-th.ts --force-download
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
-import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_TH_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox } from './lib/spatial.js'
+import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_TH_NATIONAL_ROADS
 
@@ -69,8 +67,11 @@ const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/th`)
 
 const forceDownload = process.argv.includes('--force-download')
 
-// TH coarse bbox
+// TH coarse bbox. Used both to scan hexes (TH_HEX_BBOX, H3-centroid gate in
+// iterateCountryHexes) and to gate each segment by its midpoint inside the match
+// closure — same box, so the set of touched rows is identical to the legacy loop.
 const TH_BBOX: [number, number, number, number] = [5.5, 97.3, 20.5, 105.7]
+const TH_HEX_BBOX: [number, number, number, number] = TH_BBOX
 
 // Exclusion zones for neighbour countries inside TH bbox.
 // Thailand has complex borders — these bboxes are conservative to avoid clipping
@@ -253,16 +254,7 @@ async function main() {
 
   const drrMap = await loadDrrAadt()
 
-  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
-  const hexDirs: string[] = []
-  for (const hex of allHexes) {
-    try {
-      const [lat, lon] = cellToLatLng(hex)
-      if (inBbox(lat, lon, TH_BBOX)) {
-        if (existsSync(resolve(H3R4_DIR, hex, 'roads.arrow'))) hexDirs.push(hex)
-      }
-    } catch {}
-  }
+  const hexDirs = iterateCountryHexes(H3R4_DIR, TH_HEX_BBOX)
   console.log(`\nTH-bbox hexes with roads.arrow: ${hexDirs.length}`)
 
   let totalRoads = 0, excluded = 0, alreadyEnriched = 0
@@ -272,131 +264,77 @@ async function main() {
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
     const hex = hexDirs[hi]
-    const roadPath = resolve(H3R4_DIR, hex, 'roads.arrow')
-    const buf = readFileSync(roadPath)
-    const table = tableFromIPC(buf)
-    const n = table.numRows
-    if (n === 0) continue
+    const r = await writeRoadAadt(
+      resolve(H3R4_DIR, hex, 'roads.arrow'),
+      (row) => {
+        // Fast-exit before the expensive ref-match when a higher-priority dataset
+        // already owns the row (writeRoadAadt re-checks the gate — this only saves work).
+        if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) { alreadyEnriched++; return null }
 
-    const startLat = table.getChild('start_lat')!
-    const startLon = table.getChild('start_lon')!
-    const endLat = table.getChild('end_lat')!
-    const endLon = table.getChild('end_lon')!
-    const refCol = table.getChild('ref')
-    const roadClass = table.getChild('road_class')!
-    const existingSourceId = table.getChild('source_id')
-    const existingLight = table.getChild('aadt_light')
-    const existingMed = table.getChild('aadt_medium')
-    const existingHvy = table.getChild('aadt_heavy')
-    const existingMoto = table.getChild('aadt_moto')
-    const sourceId = new Uint16Array(n)
-    const aadtLight = new Int32Array(n)
-    const aadtMedium = new Int32Array(n)
-    const aadtHeavy = new Int32Array(n)
-    const aadtMoto = new Int32Array(n)
-    for (let i = 0; i < n; i++) {
-      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-      aadtLight[i] = (existingLight?.get(i) as number) ?? 0
-      aadtMedium[i] = (existingMed?.get(i) as number) ?? 0
-      aadtHeavy[i] = (existingHvy?.get(i) as number) ?? 0
-      aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-    }
+        const midLat = row.midLat
+        const midLon = row.midLon
 
-    totalRoads += n
-    let hexMatched = 0
+        if (!inBbox(midLat, midLon, TH_BBOX)) return null
+        if (inAnyZone(midLat, midLon)) { excluded++; return null }
 
-    for (let i = 0; i < n; i++) {
-      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) { alreadyEnriched++; continue }
+        const ref = String(row.ref ?? '').trim()
+        const isBkk = inBbox(midLat, midLon, BANGKOK_BBOX)
 
-      const sLat = startLat.get(i) as number
-      const sLon = startLon.get(i) as number
-      const eLat = endLat.get(i) as number
-      const eLon = endLon.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
+        let aadtLi = 0, aadtMe = 0, aadtHv = 0, aadtMo = 0
+        let source: 'drr' | 'motorway' | 'trunk' | 'default' | null = null
 
-      if (!inBbox(midLat, midLon, TH_BBOX)) continue
-      if (inAnyZone(midLat, midLon)) { excluded++; continue }
+        // Tier 1: DRR exact ref match (Thai prefix like นบ.3021)
+        if (ref && drrMap.has(ref)) {
+          const d = drrMap.get(ref)!
+          const split = drrToCnossos(d)
+          aadtLi = split.light
+          aadtMe = split.medium
+          aadtHv = split.heavy
+          aadtMo = split.moto
+          source = 'drr'
+          matchedDrr++
+        }
 
-      const ref = String(refCol?.get(i) ?? '').trim()
-      const cls = (roadClass.get(i) as number) ?? 5
-      const isBkk = inBbox(midLat, midLon, BANGKOK_BBOX)
-
-      let aadtLi = 0, aadtMe = 0, aadtHv = 0, aadtMo = 0
-      let source: 'drr' | 'motorway' | 'trunk' | 'default' | null = null
-
-      // Tier 1: DRR exact ref match (Thai prefix like นบ.3021)
-      if (ref && drrMap.has(ref)) {
-        const d = drrMap.get(ref)!
-        const split = drrToCnossos(d)
-        aadtLi = split.light
-        aadtMe = split.medium
-        aadtHv = split.heavy
-        aadtMo = split.moto
-        source = 'drr'
-        matchedDrr++
-      }
-
-      // Tier 2: DOH motorway numeric ref
-      if (!source && ref) {
-        // Split multi-refs: "7;9" → check each
-        for (const tok of ref.split(/[;,]/)) {
-          const t = tok.trim()
-          if (DOH_MOTORWAY_AADT[t]) {
-            const aadt = DOH_MOTORWAY_AADT[t]
-            const split = thaiClassSplit(aadt, isBkk)
-            aadtLi = split.light; aadtMe = split.medium; aadtHv = split.heavy; aadtMo = split.moto
-            source = 'motorway'
-            matchedDohMotorway++
-            break
+        // Tier 2: DOH motorway numeric ref
+        if (!source && ref) {
+          // Split multi-refs: "7;9" → check each
+          for (const tok of ref.split(/[;,]/)) {
+            const t = tok.trim()
+            if (DOH_MOTORWAY_AADT[t]) {
+              const aadt = DOH_MOTORWAY_AADT[t]
+              const split = thaiClassSplit(aadt, isBkk)
+              aadtLi = split.light; aadtMe = split.medium; aadtHv = split.heavy; aadtMo = split.moto
+              source = 'motorway'
+              matchedDohMotorway++
+              break
+            }
           }
         }
-      }
 
-      // Tier 3: DOH trunk highway numeric ref
-      if (!source && ref) {
-        for (const tok of ref.split(/[;,]/)) {
-          const t = tok.trim()
-          if (DOH_TRUNK_AADT[t]) {
-            const aadt = isBkk ? DOH_TRUNK_AADT[t].bkk : DOH_TRUNK_AADT[t].rural
-            const split = thaiClassSplit(aadt, isBkk)
-            aadtLi = split.light; aadtMe = split.medium; aadtHv = split.heavy; aadtMo = split.moto
-            source = 'trunk'
-            matchedDohTrunk++
-            break
+        // Tier 3: DOH trunk highway numeric ref
+        if (!source && ref) {
+          for (const tok of ref.split(/[;,]/)) {
+            const t = tok.trim()
+            if (DOH_TRUNK_AADT[t]) {
+              const aadt = isBkk ? DOH_TRUNK_AADT[t].bkk : DOH_TRUNK_AADT[t].rural
+              const split = thaiClassSplit(aadt, isBkk)
+              aadtLi = split.light; aadtMe = split.medium; aadtHv = split.heavy; aadtMo = split.moto
+              source = 'trunk'
+              matchedDohTrunk++
+              break
+            }
           }
         }
-      }
 
-      // A.1: no spatial or ref match → leave source_id = 0, engine applies
-      // country-tier cascade (TH rural + Bangkok city overrides in defaults.rs).
-      if (!source) continue
+        // A.1: no spatial or ref match → leave source_id = 0, engine applies
+        // country-tier cascade (TH rural + Bangkok city overrides in defaults.rs).
+        if (!source) return null
 
-      aadtLight[i] = aadtLi
-      aadtMedium[i] = aadtMe
-      aadtHeavy[i] = aadtHv
-      aadtMoto[i] = aadtMo
-      sourceId[i] = MY_SOURCE_ID
-      hexMatched++
-    }
-
-    if (hexMatched > 0) {
-      const columns: Record<string, any> = {}
-      for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
-        columns[field.name] = table.getChild(field.name)!
-      }
-
-      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-      columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-      columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
-      columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
-      columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
-
-      const newTable = makeTable(columns)
-      writeFileSync(roadPath, Buffer.from(tableToIPC(newTable, 'file')))
-      hexesUpdated++
-    }
+        return { light: aadtLi, medium: aadtMe, heavy: aadtHv, moto: aadtMo, sourceId: MY_SOURCE_ID }
+      },
+    )
+    totalRoads += r.rows
+    if (r.updated) hexesUpdated++
 
     const elapsed = Date.now() - startTime
     if (elapsed > 10_000 && hi % 20 === 0) {

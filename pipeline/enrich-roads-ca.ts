@@ -21,14 +21,13 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-ca.ts --force-download
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
-import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_CA_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { haversineM } from './lib/spatial.js'
+import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CA_NATIONAL_ROADS
 
@@ -44,6 +43,11 @@ const QC_URL = 'https://ws.mapserver.transports.gouv.qc.ca/swtq?service=wfs&vers
 
 // Canada bbox (continental)
 const CA_BBOX: [number, number, number, number] = [41.5, -141.0, 84.0, -52.0]
+
+// Quebec-only scan box (+halo): the DJMA census covers Quebec's state highways,
+// so iterateCountryHexes skips the rest of the planet (otherwise the loader reads
+// every roads.arrow on Earth). [minLat, minLon, maxLat, maxLon]
+const CA_HEX_BBOX: [number, number, number, number] = [44.5, -80, 63, -56]
 
 interface QcSegment {
   midLat: number
@@ -144,118 +148,53 @@ async function enrichArrows(sites: QcSegment[]): Promise<void> {
   }
   console.log(`\n  Grid cells: ${grid.size}`)
 
-  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
-  const hexDirs: string[] = []
-  for (const hex of allHexes) {
-    try {
-      const [lat, lon] = cellToLatLng(hex)
-      // Quebec province roughly: 45-62 N, -79.7 to -57.1 W
-      if (lat >= 44.5 && lat <= 63 && lon >= -80 && lon <= -56) {
-        if (existsSync(resolve(H3R4_DIR, hex, 'roads.arrow'))) hexDirs.push(hex)
-      }
-    } catch {}
-  }
+  const hexDirs = iterateCountryHexes(H3R4_DIR, CA_HEX_BBOX)
   console.log(`  Quebec hexes with roads.arrow: ${hexDirs.length}\n`)
 
   let totalSeg = 0, matched = 0, preserved = 0, hexesUpdated = 0
   const startTime = Date.now()
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
-    const hex = hexDirs[hi]
-    const arrowPath = resolve(H3R4_DIR, hex, 'roads.arrow')
-    const buf = readFileSync(arrowPath)
-    const table = tableFromIPC(buf)
-    const numRows = table.numRows
-    if (numRows === 0) continue
+    const hexId = hexDirs[hi]
+    const r = await writeRoadAadt(
+      resolve(H3R4_DIR, hexId, 'roads.arrow'),
+      (row) => {
+        // Priority gate: preserve existing if it has higher priority than self
+        // (writeRoadAadt re-checks the gate — this only saves the grid search).
+        if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) {
+          preserved++
+          return null
+        }
 
-    const startLats = table.getChild('start_lat')
-    const startLons = table.getChild('start_lon')
-    const endLats = table.getChild('end_lat')
-    const endLons = table.getChild('end_lon')
-    const existingSourceId = table.getChild('source_id')
-    const existingLight = table.getChild('aadt_light')
-    const existingMedium = table.getChild('aadt_medium')
-    const existingHeavy = table.getChild('aadt_heavy')
-    const existingMoto = table.getChild('aadt_moto')
+        // Nearest census centroid within a tight 200 m cap. DJMA sections are
+        // matched by centroid (not polyline), so compare row midpoint vs each
+        // candidate's STORED centroid s.midLat/midLon.
+        const gy = Math.floor(row.midLat * 100)
+        const gx = Math.floor(row.midLon * 100)
+        let best: QcSegment | null = null
+        let bestDist = 200
 
-    if (!startLats || !startLons || !endLats || !endLons) continue
-
-    const aadtLight = new Int32Array(numRows)
-    const aadtMedium = new Int32Array(numRows)
-    const aadtHeavy = new Int32Array(numRows)
-    const aadtMoto = new Int32Array(numRows)
-    const sourceId = new Uint16Array(numRows)
-
-    // Seed output arrays from existing values so non-matched rows are never
-    // clobbered back to zero. Per-row writes happen only on match + gate pass.
-    for (let i = 0; i < numRows; i++) {
-      aadtLight[i] = (existingLight?.get(i) as number) ?? 0
-      aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
-      aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
-      aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-      sourceId[i] = (existingSourceId?.get(i) as number) ?? 0
-    }
-    let hexMatched = 0
-
-    for (let i = 0; i < numRows; i++) {
-      totalSeg++
-      // Priority gate: preserve existing if it has higher priority than self.
-      const existingId = sourceId[i]
-      if (!shouldOverwrite(existingId, MY_SOURCE_ID)) {
-        preserved++
-        continue
-      }
-
-      const sLat = startLats.get(i) as number
-      const sLon = startLons.get(i) as number
-      const eLat = endLats.get(i) as number
-      const eLon = endLons.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
-
-      const gy = Math.floor(midLat * 100)
-      const gx = Math.floor(midLon * 100)
-      let best: QcSegment | null = null
-      let bestDist = 200
-
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const cell = grid.get(`${gy + dy}_${gx + dx}`)
-          if (!cell) continue
-          for (const s of cell) {
-            const d = haversineM(midLat, midLon, s.midLat, s.midLon)
-            if (d < bestDist) { bestDist = d; best = s }
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const cell = grid.get(`${gy + dy}_${gx + dx}`)
+            if (!cell) continue
+            for (const s of cell) {
+              const d = haversineM(row.midLat, row.midLon, s.midLat, s.midLon)
+              if (d < bestDist) { bestDist = d; best = s }
+            }
           }
         }
-      }
 
-      if (best) {
-        aadtLight[i] = best.aadt_light
-        aadtMedium[i] = best.aadt_medium
-        aadtHeavy[i] = best.aadt_heavy
-        aadtMoto[i] = best.aadt_moto
-        sourceId[i] = MY_SOURCE_ID
-        hexMatched++
-        matched++
-      }
-    }
-
-    if (hexMatched > 0) {
-      const columns: Record<string, any> = {}
-      for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
-        columns[field.name] = table.getChild(field.name)!
-      }
-      columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-      columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
-      columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
-      columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
-
-      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-      const enriched = makeTable(columns)
-      writeFileSync(arrowPath, Buffer.from(tableToIPC(enriched, 'file')))
-      hexesUpdated++
-    }
+        if (!best) return null
+        return {
+          light: best.aadt_light, medium: best.aadt_medium,
+          heavy: best.aadt_heavy, moto: best.aadt_moto, sourceId: MY_SOURCE_ID,
+        }
+      },
+      () => { matched++ },
+    )
+    totalSeg += r.rows
+    if (r.updated) hexesUpdated++
 
     if (hi % 25 === 0 || hi === hexDirs.length - 1) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(0)
