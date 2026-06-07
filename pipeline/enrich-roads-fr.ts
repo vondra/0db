@@ -9,15 +9,14 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-fr.ts --enrich-only
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import proj4 from 'proj4'
-import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_FR_CEREMA_TMJA } from './lib/source-ids.generated.js'
 import { pointToPolylineDist } from './lib/spatial.js'
+import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_FR_CEREMA_TMJA
 
@@ -177,6 +176,10 @@ function buildGrid(sections: CensusSection[]): Map<string, CensusSection[]> {
   return grid
 }
 
+// France bbox (+margin); [minLat,minLon,maxLat,maxLon]. iterateCountryHexes skips
+// the rest of the planet so the loader doesn't read every roads.arrow on Earth.
+const FR_HEX_BBOX: [number, number, number, number] = [41, -5.5, 51.5, 10]
+
 async function enrichArrows(sections: CensusSection[]) {
   const refIndex = new Map<string, CensusSection[]>()
   for (const s of sections) {
@@ -186,17 +189,7 @@ async function enrichArrows(sections: CensusSection[]) {
   }
   console.log(`\n  Ref index: ${refIndex.size} unique road refs`)
 
-  // Pre-filter French hexes via H3 center
-  const allHexes = readdirSync(H3R4_DIR).filter(d => !d.startsWith('.'))
-  const hexDirs: string[] = []
-  for (const hex of allHexes) {
-    try {
-      const [lat, lon] = cellToLatLng(hex)
-      if (lat > 41 && lat < 52 && lon > -6 && lon < 10) {
-        if (existsSync(resolve(H3R4_DIR, hex, 'roads.arrow'))) hexDirs.push(hex)
-      }
-    } catch {}
-  }
+  const hexDirs = iterateCountryHexes(H3R4_DIR, FR_HEX_BBOX)
   console.log(`  French hexes: ${hexDirs.length}\n`)
 
   let totalSeg = 0, matched = 0, preserved = 0, hexesUpdated = 0
@@ -204,91 +197,40 @@ async function enrichArrows(sections: CensusSection[]) {
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
     const hex = hexDirs[hi]
-    const arrowPath = resolve(H3R4_DIR, hex, 'roads.arrow')
-    const buf = readFileSync(arrowPath)
-    const table = tableFromIPC(buf)
-    const numRows = table.numRows
-    const refs = table.getChild('ref')
-    const startLats = table.getChild('start_lat')
-    const startLons = table.getChild('start_lon')
-    const endLats = table.getChild('end_lat')
-    const endLons = table.getChild('end_lon')
-    const existingLight = table.getChild('aadt_light')
-    const existingMedium = table.getChild('aadt_medium')
-    const existingHeavy = table.getChild('aadt_heavy')
-    const existingMoto = table.getChild('aadt_moto')
-    const existingSourceId = table.getChild('source_id')
+    const r = await writeRoadAadt(
+      resolve(H3R4_DIR, hex, 'roads.arrow'),
+      (row) => {
+        totalSeg++
 
-    if (!startLats || !startLons) continue
-
-    const aadtLight = new Int32Array(numRows)
-    const aadtMedium = new Int32Array(numRows)
-    const aadtHeavy = new Int32Array(numRows)
-    const aadtMoto = new Int32Array(numRows)
-    const sourceId = new Uint16Array(numRows)
-    let hexMatched = 0
-
-    // Seed output columns from existing Arrow state; priority rule decides per row.
-    for (let i = 0; i < numRows; i++) {
-      aadtLight[i] = (existingLight?.get(i) as number) ?? 0
-      aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
-      aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
-      aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-    }
-
-    for (let i = 0; i < numRows; i++) {
-      totalSeg++
-
-      // Priority gate: if a higher-priority dataset already owns this row, leave it.
-      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) {
-        if (sourceId[i] !== 0) preserved++
-        continue
-      }
-
-      const midLat = ((startLats.get(i) ?? 0) + (endLats?.get(i) ?? startLats.get(i) ?? 0)) / 2
-      const midLon = ((startLons.get(i) ?? 0) + (endLons?.get(i) ?? startLons.get(i) ?? 0)) / 2
-      const osmRef = refs?.get(i)?.toString().trim() || ''
-      // French OSM refs: "A 1", "N 7", "D 906"
-      const normRef = osmRef.replace(/\s+/g, '')
-
-      let best: CensusSection | null = null
-      let bestDist = Infinity
-
-      if (normRef && refIndex.has(normRef)) {
-        for (const c of refIndex.get(normRef)!) {
-          const dist = pointToPolylineDist(midLat, midLon, c.coords)
-          if (dist < bestDist) { bestDist = dist; best = c }
+        // Priority gate: if a higher-priority dataset already owns this row, leave it.
+        if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) {
+          if (row.existingSourceId !== 0) preserved++
+          return null
         }
-      }
 
-      if (best && bestDist < 20000) {  // 20km for ref-matched sections
-        // Whole-row atomic write — payload + dataset_id together.
-        aadtLight[i] = best.aadt_light
-        aadtMedium[i] = best.aadt_medium
-        aadtHeavy[i] = best.aadt_heavy
-        aadtMoto[i] = best.aadt_moto
-        sourceId[i] = MY_SOURCE_ID
-        hexMatched++
-        matched++
-      }
-    }
+        const osmRef = row.ref?.toString().trim() || ''
+        // French OSM refs: "A 1", "N 7", "D 906"
+        const normRef = osmRef.replace(/\s+/g, '')
 
-    if (hexMatched > 0) {
-      const columns: Record<string, any> = {}
-      for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
-        columns[field.name] = table.getChild(field.name)!
-      }
-      columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-      columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
-      columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
-      columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
-      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-      const enriched = makeTable(columns)
-      writeFileSync(arrowPath, tableToIPC(enriched, 'file'))
-      hexesUpdated++
-    }
+        let best: CensusSection | null = null
+        let bestDist = Infinity
+
+        if (normRef && refIndex.has(normRef)) {
+          for (const c of refIndex.get(normRef)!) {
+            const dist = pointToPolylineDist(row.midLat, row.midLon, c.coords)
+            if (dist < bestDist) { bestDist = dist; best = c }
+          }
+        }
+
+        if (!best || bestDist >= 20000) return null  // 20km for ref-matched sections
+        return {
+          light: best.aadt_light, medium: best.aadt_medium,
+          heavy: best.aadt_heavy, moto: best.aadt_moto, sourceId: MY_SOURCE_ID,
+        }
+      },
+      () => { matched++ },
+    )
+    if (r.updated) hexesUpdated++
 
     if (hi % 10 === 0) {
       console.log(`  [${Math.round((Date.now() - startTime) / 1000)}s] ${hi + 1}/${hexDirs.length} hexes, ${hexesUpdated} updated, ${matched} matched`)

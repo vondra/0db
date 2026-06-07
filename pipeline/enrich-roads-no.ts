@@ -17,14 +17,12 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-no.ts --force-download
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
-import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_NO_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { haversineM } from './lib/spatial.js'
+import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_NO_NATIONAL_ROADS
 
@@ -39,7 +37,10 @@ const forceDownload = process.argv.includes('--force-download')
 const NVDB_BASE = 'https://nvdbapiles.atlas.vegvesen.no/vegobjekter/540'
 const PAGE_SIZE = 1000
 
-const NO_BBOX: [number, number, number, number] = [57.9, 4.5, 71.2, 31.2]
+// Generous box around Norway; [minLat,minLon,maxLat,maxLon]. Used both to drop
+// out-of-country NVDB centroids at parse time AND (via iterateCountryHexes) to
+// skip the rest of the planet's roads.arrow files during the hex scan.
+const NO_HEX_BBOX: [number, number, number, number] = [57.9, 4.5, 71.2, 31.2]
 
 interface NvdbRecord {
   id: number
@@ -137,7 +138,7 @@ function parseObject(obj: any): NvdbRecord | null {
   const midLat = sumLat / n
   const midLon = sumLon / n
 
-  if (midLat < NO_BBOX[0] || midLat > NO_BBOX[2] || midLon < NO_BBOX[1] || midLon > NO_BBOX[3]) return null
+  if (midLat < NO_HEX_BBOX[0] || midLat > NO_HEX_BBOX[2] || midLon < NO_HEX_BBOX[1] || midLon > NO_HEX_BBOX[3]) return null
 
   const vegref = obj.lokasjon?.vegsystemreferanser?.[0]?.kortform || ''
 
@@ -177,16 +178,7 @@ async function enrichArrows(sites: NvdbRecord[]): Promise<void> {
   }
   console.log(`\n  Grid cells: ${grid.size}`)
 
-  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
-  const hexDirs: string[] = []
-  for (const hex of allHexes) {
-    try {
-      const [lat, lon] = cellToLatLng(hex)
-      if (lat >= NO_BBOX[0] && lat <= NO_BBOX[2] && lon >= NO_BBOX[1] && lon <= NO_BBOX[3]) {
-        if (existsSync(resolve(H3R4_DIR, hex, 'roads.arrow'))) hexDirs.push(hex)
-      }
-    } catch {}
-  }
+  const hexDirs = iterateCountryHexes(H3R4_DIR, NO_HEX_BBOX)
   console.log(`  Norwegian hexes with roads.arrow: ${hexDirs.length}\n`)
 
   let totalSeg = 0, matched = 0, preserved = 0, hexesUpdated = 0
@@ -194,100 +186,43 @@ async function enrichArrows(sites: NvdbRecord[]): Promise<void> {
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
     const hex = hexDirs[hi]
-    const arrowPath = resolve(H3R4_DIR, hex, 'roads.arrow')
-    const buf = readFileSync(arrowPath)
-    const table = tableFromIPC(buf)
-    const numRows = table.numRows
-    if (numRows === 0) continue
+    const r = await writeRoadAadt(
+      resolve(H3R4_DIR, hex, 'roads.arrow'),
+      (row) => {
+        // Fast-exit if a higher-priority dataset owns the row (writeRoadAadt
+        // re-checks the gate — this only saves the nearest-centroid search).
+        if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) {
+          preserved++
+          return null
+        }
 
-    const startLats = table.getChild('start_lat')
-    const startLons = table.getChild('start_lon')
-    const endLats = table.getChild('end_lat')
-    const endLons = table.getChild('end_lon')
-    const existingSourceId = table.getChild('source_id')
-    const existingLight = table.getChild('aadt_light')
-    const existingMedium = table.getChild('aadt_medium')
-    const existingHeavy = table.getChild('aadt_heavy')
-    const existingMoto = table.getChild('aadt_moto')
+        // Nearest NVDB centroid within 200 m, via the 1km spatial grid (3×3 cells).
+        const gy = Math.floor(row.midLat * 100)
+        const gx = Math.floor(row.midLon * 100)
+        let best: NvdbRecord | null = null
+        let bestDist = 200
 
-    if (!startLats || !startLons || !endLats || !endLons) continue
-
-    const aadtLight = new Int32Array(numRows)
-    const aadtMedium = new Int32Array(numRows)
-    const aadtHeavy = new Int32Array(numRows)
-    const aadtMoto = new Int32Array(numRows)
-    const sourceId = new Uint16Array(numRows)
-
-    // Seed output arrays from existing values so non-matched rows are never
-    // clobbered back to zero. Per-row writes happen only on match + gate pass.
-    for (let i = 0; i < numRows; i++) {
-      aadtLight[i] = (existingLight?.get(i) as number) ?? 0
-      aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
-      aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
-      aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-      sourceId[i] = (existingSourceId?.get(i) as number) ?? 0
-    }
-    let hexMatched = 0
-
-    for (let i = 0; i < numRows; i++) {
-      totalSeg++
-      // Priority gate: preserve existing if it has higher priority than self.
-      const existingId = sourceId[i]
-      if (!shouldOverwrite(existingId, MY_SOURCE_ID)) {
-        preserved++
-        continue
-      }
-
-      const sLat = startLats.get(i) as number
-      const sLon = startLons.get(i) as number
-      const eLat = endLats.get(i) as number
-      const eLon = endLons.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
-
-      const gy = Math.floor(midLat * 100)
-      const gx = Math.floor(midLon * 100)
-      let best: NvdbRecord | null = null
-      let bestDist = 200
-
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const cell = grid.get(`${gy + dy}_${gx + dx}`)
-          if (!cell) continue
-          for (const s of cell) {
-            const d = haversineM(midLat, midLon, s.midLat, s.midLon)
-            if (d < bestDist) { bestDist = d; best = s }
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const cell = grid.get(`${gy + dy}_${gx + dx}`)
+            if (!cell) continue
+            for (const s of cell) {
+              const d = haversineM(row.midLat, row.midLon, s.midLat, s.midLon)
+              if (d < bestDist) { bestDist = d; best = s }
+            }
           }
         }
-      }
 
-      if (best) {
-        aadtLight[i] = best.aadt_light
-        aadtMedium[i] = best.aadt_medium
-        aadtHeavy[i] = best.aadt_heavy
-        aadtMoto[i] = best.aadt_moto
-        sourceId[i] = MY_SOURCE_ID
-        hexMatched++
-        matched++
-      }
-    }
-
-    if (hexMatched > 0) {
-      const columns: Record<string, any> = {}
-      for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
-        columns[field.name] = table.getChild(field.name)!
-      }
-      columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-      columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
-      columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
-      columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
-
-      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-      const enriched = makeTable(columns)
-      writeFileSync(arrowPath, Buffer.from(tableToIPC(enriched, 'file')))
-      hexesUpdated++
-    }
+        if (!best) return null
+        return {
+          light: best.aadt_light, medium: best.aadt_medium,
+          heavy: best.aadt_heavy, moto: best.aadt_moto, sourceId: MY_SOURCE_ID,
+        }
+      },
+      () => { matched++ },
+    )
+    totalSeg += r.rows
+    if (r.updated) hexesUpdated++
 
     if (hi % 50 === 0 || hi === hexDirs.length - 1) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(0)

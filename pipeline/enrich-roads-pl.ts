@@ -12,16 +12,14 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-pl.ts --force-download
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
-import { cellToLatLng } from 'h3-js'
 import * as XLSX from 'xlsx'
 import shp from 'shpjs'
 import { SOURCE_ID_PL_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { pointToPolylineDist } from './lib/spatial.js'
+import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_PL_NATIONAL_ROADS
 
@@ -41,8 +39,9 @@ const NATIONAL_XLS_URL = 'https://www.gov.pl/attachment/51021048-4885-4ced-a487-
 const PROVINCIAL_XLS_URL = 'https://www.gov.pl/attachment/bc113506-2cb6-45fb-9e83-7c8e60aa11fd'
 const SHP_ZIP_URL = 'https://www.gov.pl/attachment/540a9afe-df60-4610-bc93-808a925e0ed0'
 
-// Poland mainland bounding box
-const PL_BBOX: [number, number, number, number] = [49.0, 14.0, 55.0, 24.5]
+// Poland mainland bounding box. [minLat,minLon,maxLat,maxLon] — iterateCountryHexes
+// skips the rest of the planet so the loader doesn't read every roads.arrow on Earth.
+const PL_HEX_BBOX: [number, number, number, number] = [49.0, 14.0, 55.0, 24.5]
 
 interface SegmentRecord {
   nr2020: string         // measurement point ID (joins to SHP)
@@ -336,16 +335,7 @@ async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
   console.log(`\n  Ref index: ${refIndex.size} unique refs`)
 
   // Pre-filter Polish hexes
-  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
-  const hexDirs: string[] = []
-  for (const hex of allHexes) {
-    try {
-      const [lat, lon] = cellToLatLng(hex)
-      if (lat >= PL_BBOX[0] && lat <= PL_BBOX[2] && lon >= PL_BBOX[1] && lon <= PL_BBOX[3]) {
-        if (existsSync(resolve(H3R4_DIR, hex, 'roads.arrow'))) hexDirs.push(hex)
-      }
-    } catch {}
-  }
+  const hexDirs = iterateCountryHexes(H3R4_DIR, PL_HEX_BBOX)
   console.log(`  Polish hexes with roads.arrow: ${hexDirs.length}\n`)
 
   let totalSeg = 0
@@ -355,116 +345,58 @@ async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
   const startTime = Date.now()
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
-    const hex = hexDirs[hi]
-    const arrowPath = resolve(H3R4_DIR, hex, 'roads.arrow')
-    const buf = readFileSync(arrowPath)
-    const table = tableFromIPC(buf)
-    const numRows = table.numRows
-    if (numRows === 0) continue
-
-    const refs = table.getChild('ref')
-    const startLats = table.getChild('start_lat')
-    const startLons = table.getChild('start_lon')
-    const endLats = table.getChild('end_lat')
-    const endLons = table.getChild('end_lon')
-    const existingSourceId = table.getChild('source_id')
-    const existingLight = table.getChild('aadt_light')
-    const existingMedium = table.getChild('aadt_medium')
-    const existingHeavy = table.getChild('aadt_heavy')
-    const existingMoto = table.getChild('aadt_moto')
-
-    if (!startLats || !startLons || !endLats || !endLons) continue
-
-    const aadtLight = new Int32Array(numRows)
-    const aadtMedium = new Int32Array(numRows)
-    const aadtHeavy = new Int32Array(numRows)
-    const aadtMoto = new Int32Array(numRows)
-    const sourceId = new Uint16Array(numRows)
-
-    // Seed output arrays from existing values so non-matched rows are never
-    // clobbered back to zero. Per-row writes happen only on match + gate pass.
-    for (let i = 0; i < numRows; i++) {
-      aadtLight[i] = (existingLight?.get(i) as number) ?? 0
-      aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
-      aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
-      aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-      sourceId[i] = (existingSourceId?.get(i) as number) ?? 0
-    }
-
-    let hexMatched = 0
-
-    for (let i = 0; i < numRows; i++) {
-      totalSeg++
-      // Priority gate: preserve existing if it has higher priority than self.
-      const existingId = sourceId[i]
-      if (!shouldOverwrite(existingId, MY_SOURCE_ID)) {
-        preserved++
-        continue
-      }
-
-      const sLat = startLats.get(i) as number
-      const sLon = startLons.get(i) as number
-      const eLat = endLats.get(i) as number
-      const eLon = endLons.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
-
-      const osmRefRaw = (refs?.get(i)?.toString() || '').trim().toUpperCase()
-      // Polish OSM refs: "A1", "S7", "DK 1", "DW 806", "85"
-      // Try several normalizations, take first ref if multi (";"-separated)
-      const firstRef = osmRefRaw.split(';')[0].replace(/\s+/g, '')
-      const candidates: string[] = [firstRef]
-      // If pure number, also try DK prefix
-      if (/^\d+$/.test(firstRef)) candidates.push(`DK${firstRef}`, `DW${firstRef}`)
-
-      let best: SegmentRecord | null = null
-      let bestDist = Infinity
-
-      for (const cand of candidates) {
-        if (!refIndex.has(cand)) continue
-        for (const s of refIndex.get(cand)!) {
-          if (Number.isNaN(s.midLat)) {
-            // Provincial road without geometry — match by ref alone if no national hit yet
-            if (!best || best.isProvincial) {
-              best = s
-              bestDist = 5_000_000 // sentinel — accepted only if no closer national segment
-            }
-            continue
-          }
-          const d = pointToPolylineDist(midLat, midLon, s.coords ?? [])
-          if (d < bestDist) { bestDist = d; best = s }
+    const hexId = hexDirs[hi]
+    const r = await writeRoadAadt(
+      resolve(H3R4_DIR, hexId, 'roads.arrow'),
+      (row) => {
+        totalSeg++
+        // Priority gate: preserve existing if it has higher priority than self.
+        // (writeRoadAadt re-checks the gate — this fast-exits before the ref match.)
+        if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) {
+          preserved++
+          return null
         }
-      }
 
-      // Match within 30km for national, 50km for provincial
-      const maxDist = best?.isProvincial ? 50_000 : 30_000
-      if (best && (Number.isNaN(best.midLat) || bestDist < maxDist)) {
-        aadtLight[i] = best.aadt_light
-        aadtMedium[i] = best.aadt_medium
-        aadtHeavy[i] = best.aadt_heavy
-        aadtMoto[i] = best.aadt_moto
-        sourceId[i] = MY_SOURCE_ID
-        hexMatched++
-        matched++
-      }
-    }
+        const osmRefRaw = (row.ref?.toString() || '').trim().toUpperCase()
+        // Polish OSM refs: "A1", "S7", "DK 1", "DW 806", "85"
+        // Try several normalizations, take first ref if multi (";"-separated)
+        const firstRef = osmRefRaw.split(';')[0].replace(/\s+/g, '')
+        const candidates: string[] = [firstRef]
+        // If pure number, also try DK prefix
+        if (/^\d+$/.test(firstRef)) candidates.push(`DK${firstRef}`, `DW${firstRef}`)
 
-    if (hexMatched > 0) {
-      const columns: Record<string, any> = {}
-      for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
-        columns[field.name] = table.getChild(field.name)!
-      }
-      columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-      columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
-      columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
-      columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
+        let best: SegmentRecord | null = null
+        let bestDist = Infinity
 
-      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-      const enriched = makeTable(columns)
-      writeFileSync(arrowPath, Buffer.from(tableToIPC(enriched, 'file')))
-      hexesUpdated++
-    }
+        for (const cand of candidates) {
+          if (!refIndex.has(cand)) continue
+          for (const s of refIndex.get(cand)!) {
+            if (Number.isNaN(s.midLat)) {
+              // Provincial road without geometry — match by ref alone if no national hit yet
+              if (!best || best.isProvincial) {
+                best = s
+                bestDist = 5_000_000 // sentinel — accepted only if no closer national segment
+              }
+              continue
+            }
+            const d = pointToPolylineDist(row.midLat, row.midLon, s.coords ?? [])
+            if (d < bestDist) { bestDist = d; best = s }
+          }
+        }
+
+        // Match within 30km for national, 50km for provincial
+        const maxDist = best?.isProvincial ? 50_000 : 30_000
+        if (best && (Number.isNaN(best.midLat) || bestDist < maxDist)) {
+          return {
+            light: best.aadt_light, medium: best.aadt_medium,
+            heavy: best.aadt_heavy, moto: best.aadt_moto, sourceId: MY_SOURCE_ID,
+          }
+        }
+        return null
+      },
+      () => { matched++ },
+    )
+    if (r.updated) hexesUpdated++
 
     if (hi % 25 === 0 || hi === hexDirs.length - 1) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(0)

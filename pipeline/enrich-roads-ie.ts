@@ -32,14 +32,12 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-ie.ts --force-download
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
-import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_IE_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { haversineM } from './lib/spatial.js'
+import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_IE_NATIONAL_ROADS
 
@@ -58,6 +56,9 @@ const SITES_URL = 'https://data.tii.ie/Datasets/TrafficCountData/sites/tmu-sites
 const AGGR_URL = 'https://data.tii.ie/Datasets/TrafficCountData/2019/06/19/per-site-class-aggr-2019-06-19.csv'
 
 const IE_BBOX: [number, number, number, number] = [51.4, -10.5, 55.4, -5.4]
+// Hex-scan box (same extent as IE_BBOX): [minLat,minLon,maxLat,maxLon]. iterateCountryHexes
+// skips the rest of the planet so the loader doesn't read every roads.arrow on Earth.
+const IE_HEX_BBOX: [number, number, number, number] = IE_BBOX
 
 interface Site {
   cosit: string
@@ -171,16 +172,7 @@ async function enrichArrows(sites: SiteAadt[]): Promise<void> {
   }
   console.log(`\n  Ref index: ${refIndex.size} unique refs`)
 
-  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
-  const hexDirs: string[] = []
-  for (const hex of allHexes) {
-    try {
-      const [lat, lon] = cellToLatLng(hex)
-      if (lat >= IE_BBOX[0] && lat <= IE_BBOX[2] && lon >= IE_BBOX[1] && lon <= IE_BBOX[3]) {
-        if (existsSync(resolve(H3R4_DIR, hex, 'roads.arrow'))) hexDirs.push(hex)
-      }
-    } catch {}
-  }
+  const hexDirs = iterateCountryHexes(H3R4_DIR, IE_HEX_BBOX)
   console.log(`  IE hexes with roads.arrow: ${hexDirs.length}\n`)
 
   let totalSeg = 0
@@ -191,100 +183,43 @@ async function enrichArrows(sites: SiteAadt[]): Promise<void> {
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
     const hex = hexDirs[hi]
-    const arrowPath = resolve(H3R4_DIR, hex, 'roads.arrow')
-    const buf = readFileSync(arrowPath)
-    const table = tableFromIPC(buf)
-    const numRows = table.numRows
-    if (numRows === 0) continue
-
-    const refs = table.getChild('ref')
-    const startLats = table.getChild('start_lat')
-    const startLons = table.getChild('start_lon')
-    const endLats = table.getChild('end_lat')
-    const endLons = table.getChild('end_lon')
-    const existingSourceId = table.getChild('source_id')
-    const existingLight = table.getChild('aadt_light')
-    const existingMedium = table.getChild('aadt_medium')
-    const existingHeavy = table.getChild('aadt_heavy')
-    const existingMoto = table.getChild('aadt_moto')
-
-    if (!startLats || !startLons || !endLats || !endLons) continue
-
-    const aadtLight = new Int32Array(numRows)
-    const aadtMedium = new Int32Array(numRows)
-    const aadtHeavy = new Int32Array(numRows)
-    const aadtMoto = new Int32Array(numRows)
-    const sourceId = new Uint16Array(numRows)
-
-    // Seed output arrays from existing values so non-matched rows are never
-    // clobbered back to zero. Per-row writes happen only on match + gate pass.
-    for (let i = 0; i < numRows; i++) {
-      aadtLight[i] = (existingLight?.get(i) as number) ?? 0
-      aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
-      aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
-      aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-      sourceId[i] = (existingSourceId?.get(i) as number) ?? 0
-    }
-    let hexMatched = 0
-
-    for (let i = 0; i < numRows; i++) {
-      totalSeg++
-      // Priority gate: preserve existing if it has higher priority than self.
-      const existingId = sourceId[i]
-      if (!shouldOverwrite(existingId, MY_SOURCE_ID)) {
-        preserved++
-        continue
-      }
-
-      const sLat = startLats.get(i) as number
-      const sLon = startLons.get(i) as number
-      const eLat = endLats.get(i) as number
-      const eLon = endLons.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
-
-      const osmRefRaw = (refs?.get(i)?.toString() || '').trim().toUpperCase()
-      // Irish OSM refs: "M1", "M50", "N7", "R132", "L1234"
-      const firstRef = osmRefRaw.split(';')[0].replace(/[-\s]/g, '').replace(/^([MNRL])0*/, '$1')
-
-      let best: SiteAadt | null = null
-      let bestDist = Infinity
-
-      if (firstRef && refIndex.has(firstRef)) {
-        for (const s of refIndex.get(firstRef)!) {
-          const d = haversineM(midLat, midLon, s.lat, s.lon)
-          if (d < bestDist) { bestDist = d; best = s }
+    const r = await writeRoadAadt(
+      resolve(H3R4_DIR, hex, 'roads.arrow'),
+      (row) => {
+        // Priority gate: preserve existing if it has higher priority than self.
+        // Fast-exit before the ref-match (writeRoadAadt re-checks — this only saves work).
+        if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) {
+          preserved++
+          return null
         }
-      }
 
-      // Match within 25 km along ref
-      if (best && bestDist < 25_000) {
-        aadtLight[i] = best.aadt_light
-        aadtMedium[i] = best.aadt_medium
-        aadtHeavy[i] = best.aadt_heavy
-        aadtMoto[i] = best.aadt_moto
-        sourceId[i] = MY_SOURCE_ID
-        hexMatched++
-        matched++
-      }
-    }
+        const osmRefRaw = (row.ref?.toString() || '').trim().toUpperCase()
+        // Irish OSM refs: "M1", "M50", "N7", "R132", "L1234"
+        const firstRef = osmRefRaw.split(';')[0].replace(/[-\s]/g, '').replace(/^([MNRL])0*/, '$1')
 
-    if (hexMatched > 0) {
-      const columns: Record<string, any> = {}
-      for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
-        columns[field.name] = table.getChild(field.name)!
-      }
-      columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-      columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
-      columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
-      columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
+        let best: SiteAadt | null = null
+        let bestDist = Infinity
 
-      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-      const enriched = makeTable(columns)
-      writeFileSync(arrowPath, Buffer.from(tableToIPC(enriched, 'file')))
-      hexesUpdated++
-    }
+        if (firstRef && refIndex.has(firstRef)) {
+          for (const s of refIndex.get(firstRef)!) {
+            const d = haversineM(row.midLat, row.midLon, s.lat, s.lon)
+            if (d < bestDist) { bestDist = d; best = s }
+          }
+        }
+
+        // Match within 25 km along ref
+        if (best && bestDist < 25_000) {
+          return {
+            light: best.aadt_light, medium: best.aadt_medium,
+            heavy: best.aadt_heavy, moto: best.aadt_moto, sourceId: MY_SOURCE_ID,
+          }
+        }
+        return null
+      },
+      () => { matched++ },
+    )
+    totalSeg += r.rows
+    if (r.updated) hexesUpdated++
 
     if (hi % 10 === 0 || hi === hexDirs.length - 1) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(0)
