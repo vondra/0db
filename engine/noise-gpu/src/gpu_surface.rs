@@ -32,7 +32,7 @@ use heatmap_aircraft::wire_hm3::{
 };
 use noise_compute::admin;
 use noise_compute::constants::RAILWAY_MAX_RADIUS;
-use noise_gpu::{build_pixel_bins, pack_sources, pack_tile, PixelBins, TileBuffers, BIN_W, N_BINS};
+use noise_gpu::{pack_sources, pack_tile, TileBuffers, BIN_W, N_BINS};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
 
@@ -202,18 +202,13 @@ fn process_block(
         .iter()
         .flat_map(|(l, _)| block_tiles.iter().map(move |&(tx, ty)| (tx, ty, *l)))
         .collect();
-    let prep = |it: (u32, u32, LineLayer)| -> (PixelBins, TileBuffers) {
-        let (tx, ty, layer) = it;
+    // GPU-side binning: the kernel (line_binned_fused) does the per-block source cull
+    // itself, so per-tile prep is just the pack — no CPU build_pixel_bins (the old
+    // prep-bound bottleneck). t_bins now measures only pack_tile (sub-ms).
+    let prep = |it: (u32, u32, LineLayer)| -> TileBuffers {
+        let (tx, ty, _layer) = it;
         let tile = &batch.tiles[((ty - by) * cfg.batch_n + (tx - bx)) as usize];
-        let rows = &region_rows
-            .iter()
-            .find(|(l, _)| *l == layer)
-            .expect("layer")
-            .1;
-        (
-            build_pixel_bins(tile, rows),
-            pack_tile(tile, halo_geom, ETA, TW),
-        )
+        pack_tile(tile, halo_geom, ETA, TW)
     };
     let prep_timed = |it: (u32, u32, LineLayer), stats: &mut BTreeMap<&'static str, LayerStat>| {
         let t = Instant::now();
@@ -224,7 +219,7 @@ fn process_block(
 
     let mut iter = items.into_iter();
     let mut pending = iter.next().map(|it| prep_timed(it, stats));
-    while let Some(((tx, ty, layer), (bins, bufs))) = pending {
+    while let Some(((tx, ty, layer), bufs)) = pending {
         let tk = Instant::now();
         let d_inner = dev.htod_copy(bufs.inner).expect("inner");
         let d_meta = dev.htod_copy(bufs.meta).expect("meta");
@@ -234,17 +229,23 @@ fn process_block(
             .find(|(l, _)| *l == layer)
             .expect("layer src")
             .1;
+        // nsrc for this layer — the fused kernel scans [0, nsrc) and culls per block
+        // (replaces the CPU CSR bins; same count for every tile of the layer).
+        let nsrc = region_rows
+            .iter()
+            .find(|(l, _)| *l == layer)
+            .expect("layer")
+            .1
+            .len() as i32;
         let d_rxll = dev.htod_copy(bufs.rxll).expect("rxll");
         let d_rxar = dev.htod_copy(bufs.rxar).expect("rxar");
-        let d_off = dev.htod_copy(bins.offsets).expect("off");
-        let d_idx = dev.htod_copy(bins.indices).expect("idx");
         unsafe {
             f.clone()
                 .launch(
                     launch_cfg,
                     (
                         &d_elev, &d_inner, &d_cover, &d_meta, d_seg, d_sp, d_semis, &d_rxll,
-                        &d_rxar, &d_off, &d_idx, &mut d_out,
+                        &d_rxar, nsrc, &mut d_out,
                     ),
                 )
                 .expect("launch");
@@ -449,9 +450,9 @@ fn main() -> Result<()> {
     );
 
     let dev = CudaDevice::new(0).expect("cuda");
-    dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["line_binned"])
+    dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["line_binned_fused"])
         .expect("ptx");
-    let f = dev.get_func("s", "line_binned").expect("fn");
+    let f = dev.get_func("s", "line_binned_fused").expect("fn");
 
     let cfg = Cfg {
         z,
