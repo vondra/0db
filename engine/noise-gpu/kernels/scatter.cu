@@ -94,6 +94,17 @@ __device__ __forceinline__ void p2s(
     *frac = tu;
 }
 
+// Block-corner radius UPPER BOUND in the p2s metric, for ANY source latitude: the
+// longitude leg uses M_LON_EQ (equatorial, cos=1) which is >= every p2s mlon
+// (M_LON_EQ·cos(seg_mid)), so reach >= |centre−corner| in the per-pixel cull's OWN
+// metric at all latitudes ⇒ the GPU block-bin is a conservative superset everywhere
+// (no floor, no per-source recompute). +1 m guards fp ULP. Provenance: path_dist_m
+// geometry with cos→1 (docs/dev/gpu-binning-plan.md). dlat in meters, dlon in degrees.
+__device__ __forceinline__ double block_reach_ub(double dlat_half_m, double dlon_half_deg) {
+    double dlon_m = dlon_half_deg * M_LON_EQ;
+    return sqrt(dlat_half_m * dlat_half_m + dlon_m * dlon_m) + 1.0;
+}
+
 // ---- geo::finite_line_correction (fp32: ratios + atan, scale-free; logf already f32) ----
 __device__ __forceinline__ float flc(float len, float dperp, float frac) {
     if (len < 0.1f || dperp < 0.1f) return 0.0f;
@@ -606,6 +617,77 @@ extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 8) line_binned(
         line_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
                     rlat, rlon, ralt, refl, eta, &seg[s * 4], &sp[s * 4], &semis[s * 24],
                     tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
+    }
+    out[opix * 3 + 0] = e0;
+    out[opix * 3 + 1] = e1;
+    out[opix * 3 + 2] = e2;
+}
+
+// FUSED variant — bins ON the GPU (deletes the CPU build_pixel_bins prep, the
+// gpu-surface bottleneck). Same 8×8-block / 64-thread mapping as line_binned, but
+// instead of a CPU CSR bin it scans all nsrc sources in 64-source CHUNKS: the 64
+// lanes cull one chunk cooperatively (one source per lane) into shared keep[64],
+// then REPLAY that chunk in source order, each thread (= its own pixel) calling
+// line_source only on survivors. cos=1 block radius (block_reach_ub) is a universal
+// upper bound on the p2s block-corner distance ⇒ conservative superset at every
+// latitude; the per-pixel cull in line_source stays authoritative; the 0..nsrc
+// ordered replay preserves the order-dependent energy-budget skip ⇒ byte-identical
+// to `line`. One cull per source (not 64×), fixed 64-byte shared, no atomics.
+// See docs/dev/gpu-binning-plan.md.
+extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 8) line_binned_fused(
+    const float*  __restrict__ elev,
+    const float*  __restrict__ inner,
+    const unsigned char* __restrict__ cover,
+    const double* __restrict__ meta,
+    const double* __restrict__ seg,
+    const double* __restrict__ sp,
+    const float*  __restrict__ semis,
+    const double* __restrict__ rxll,
+    const float*  __restrict__ rxar,
+    int nsrc, float* __restrict__ out)
+{
+    int bid = blockIdx.x, lane = threadIdx.x;
+    if (bid >= BIN_TILES * BIN_TILES || lane >= BIN_W * BIN_W) return;
+    int rows = (int)meta[0], cols = (int)meta[1];
+    double lat_min = meta[2], lon_min = meta[3], inv = meta[4];
+    const double* bb = &meta[5];
+    double eta = meta[9];
+    int by = bid / BIN_TILES, bx = bid % BIN_TILES;
+    int py0 = by * BIN_W, py1 = by * BIN_W + BIN_W - 1;
+    int px0 = bx * BIN_W, px1 = bx * BIN_W + BIN_W - 1;
+    int py = py0 + lane / BIN_W, pxi = px0 + lane % BIN_W;
+    int opix = py * 256 + pxi;
+    double rlat = rxll[py], rlon = rxll[256 + pxi];
+    double ralt = rxar[opix * 2], refl = rxar[opix * 2 + 1];
+    float e0 = 0.0f, e1 = 0.0f, e2 = 0.0f;
+    double kept = 0.0, skipped = 0.0;
+    double tprof[MAXT], ed[MAXT], comp[MAXT];
+    unsigned char bld[MAXT], forr[MAXT], imdp[MAXT];
+
+    // Block centre + cos=1 radius UB — once per thread (all lanes agree, no divergence).
+    double clat = 0.5 * (rxll[py0] + rxll[py1]);
+    double clon = 0.5 * (rxll[256 + px0] + rxll[256 + px1]);
+    double reach = block_reach_ub(0.5 * fabs(rxll[py1] - rxll[py0]) * M_LAT,
+                                  0.5 * fabs(rxll[256 + px1] - rxll[256 + px0]));
+    __shared__ unsigned char keep[BIN_W * BIN_W];
+    for (int base = 0; base < nsrc; base += BIN_W * BIN_W) {
+        int s = base + lane;
+        keep[lane] = 0;
+        if (s < nsrc) {
+            double de, cpa, cpo, fr;
+            p2s(clat, clon, seg[s * 4], seg[s * 4 + 1], seg[s * 4 + 2], seg[s * 4 + 3],
+                &de, &cpa, &cpo, &fr);
+            keep[lane] = (de <= sp[s * 4 + 1] + reach) ? 1 : 0;
+        }
+        __syncthreads();
+        int chunk_n = min(BIN_W * BIN_W, nsrc - base);
+        for (int j = 0; j < chunk_n; ++j)
+            if (keep[j])
+                line_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
+                            rlat, rlon, ralt, refl, eta, &seg[(base + j) * 4],
+                            &sp[(base + j) * 4], &semis[(base + j) * 24],
+                            tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
+        __syncthreads();
     }
     out[opix * 3 + 0] = e0;
     out[opix * 3 + 1] = e1;

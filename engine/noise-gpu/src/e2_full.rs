@@ -244,19 +244,40 @@ fn main() -> Result<()> {
 
     // ---- GPU ----
     let dev = CudaDevice::new(0).expect("cuda");
-    dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["line", "line_binned"])
-        .expect("ptx");
-    // NOISE_GPU_BINNED → per-8×8-block source bins (the pixel-major work-reduction).
-    let use_binned = std::env::var("NOISE_GPU_BINNED").is_ok();
-    let bins = use_binned.then(|| build_pixel_bins(tile, &rail));
+    dev.load_ptx(
+        Ptx::from_src(SCATTER_PTX),
+        "s",
+        &["line", "line_binned", "line_binned_fused"],
+    )
+    .expect("ptx");
+    // NOISE_GPU_KERNEL: line (scan-all, default) | line_binned_cpu_csr (CPU
+    // build_pixel_bins) | line_binned_fused (GPU-side binning). Both binned kernels
+    // share the 1024×64 launch geometry; line is pixel-major. All three must agree
+    // byte-for-byte (gate 1d-#1); fused must beat max(csr_kernel, build_pixel_bins).
+    let mode = env("NOISE_GPU_KERNEL", "line");
+    let use_csr = mode == "line_binned_cpu_csr";
+    let binned_launch = mode.starts_with("line_binned");
+    // CSR mode pays the CPU build_pixel_bins prep that the fused kernel ELIMINATES;
+    // time it so the perf gate t_kernel(fused) < max(t_kernel(csr), t_bins) is one-run.
+    let t_bins = std::time::Instant::now();
+    let bins = use_csr.then(|| build_pixel_bins(tile, &rail));
     if let Some(b) = &bins {
         eprintln!(
-            "8×8 source bins: avg {:.0} sources/block, max {}",
-            b.avg_sources, b.max_sources
+            "build_pixel_bins {:.1} ms | 8×8 bins: avg {:.0} sources/block, max {}",
+            t_bins.elapsed().as_secs_f64() * 1e3,
+            b.avg_sources,
+            b.max_sources
         );
     }
     let f = dev
-        .get_func("s", if use_binned { "line_binned" } else { "line" })
+        .get_func(
+            "s",
+            match mode.as_str() {
+                "line_binned_cpu_csr" => "line_binned",
+                "line_binned_fused" => "line_binned_fused",
+                _ => "line",
+            },
+        )
         .expect("fn");
     let d_elev = dev.htod_copy(elev).expect("elev");
     let d_inner = dev.htod_copy(inner).expect("inner");
@@ -276,13 +297,13 @@ fn main() -> Result<()> {
     let mut d_out = dev.alloc_zeros::<f32>(n * 3).expect("out");
     let block: u32 = env("NOISE_GPU_BLOCK", "128").parse().unwrap_or(128);
     let cfg = LaunchConfig {
-        grid_dim: if use_binned {
+        grid_dim: if binned_launch {
             (N_BINS as u32, 1, 1)
         } else {
             ((n as u32).div_ceil(block), 1, 1)
         },
         block_dim: (
-            if use_binned {
+            if binned_launch {
                 (BIN_W * BIN_W) as u32
             } else {
                 block
@@ -294,7 +315,7 @@ fn main() -> Result<()> {
     };
     let t = std::time::Instant::now();
     unsafe {
-        if use_binned {
+        if use_csr {
             let (off, idx) = (d_bin_off.as_ref().unwrap(), d_bin_idx.as_ref().unwrap());
             f.launch(
                 cfg,
@@ -305,6 +326,8 @@ fn main() -> Result<()> {
             )
             .expect("launch");
         } else {
+            // line (pixel-major) and line_binned_fused (binned) share this ARG tuple
+            // (…, nsrc, out); only the launch GEOMETRY differs (binned_launch above).
             f.launch(
                 cfg,
                 (
