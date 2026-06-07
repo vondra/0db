@@ -31,3 +31,4 @@ benchmarks/.tmp-telemetry.jsonl
 # cluster worker list (local, per-machine)
 scripts/hosts
 __pycache__/
+logs/
