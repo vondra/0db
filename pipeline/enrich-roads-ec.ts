@@ -60,7 +60,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_EC_NATIONAL_ROADS } from './lib/source-ids.generated.js'
-import { inBbox, pointToSegmentDist } from './lib/spatial.js'
+import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_EC_NATIONAL_ROADS
@@ -140,14 +140,6 @@ function ecRegion(lat: number, lon: number): 'costa' | 'sierra' | 'oriente' {
 
 // Local to EC: census `feat.coords` always has ≥2 vertices (loadRoads drops shorter),
 // so this matches the shared spatial.pointToPolylineDist on every call site here.
-function pointToPolylineDist(pLat: number, pLon: number, coords: [number, number][]): number {
-  let best = Infinity
-  for (let i = 0; i < coords.length - 1; i++) {
-    const d = pointToSegmentDist(pLat, pLon, coords[i][1], coords[i][0], coords[i + 1][1], coords[i + 1][0])
-    if (d < best) best = d
-  }
-  return best
-}
 
 interface EcFeat {
   coords: [number, number][]

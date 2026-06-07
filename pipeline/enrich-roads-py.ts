@@ -50,7 +50,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_PY_NATIONAL_ROADS } from './lib/source-ids.generated.js'
-import { inBbox, pointToSegmentDist } from './lib/spatial.js'
+import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_PY_NATIONAL_ROADS
@@ -106,15 +106,6 @@ function cityTier(lat: number, lon: number): 0 | 1 | 2 {
 function inChaco(lat: number, lon: number): boolean {
   // West of Río Paraguay (~-57.3) and north of Asunción
   return lon < -57.3 && lat > -26.0
-}
-
-function pointToPolylineDist(pLat: number, pLon: number, coords: [number, number][]): number {
-  let best = Infinity
-  for (let i = 0; i < coords.length - 1; i++) {
-    const d = pointToSegmentDist(pLat, pLon, coords[i][1], coords[i][0], coords[i + 1][1], coords[i + 1][0])
-    if (d < best) best = d
-  }
-  return best
 }
 
 interface MopcFeat {

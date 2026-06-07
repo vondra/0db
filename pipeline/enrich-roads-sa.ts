@@ -52,7 +52,7 @@ import { resolve } from 'node:path'
 import { read as xlsxRead, utils as xlsxUtils } from 'xlsx'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_SA_NATIONAL_ROADS } from './lib/source-ids.generated.js'
-import { inBbox, pointToSegmentDist } from './lib/spatial.js'
+import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_SA_NATIONAL_ROADS
@@ -262,14 +262,6 @@ function sauAtlasAadt(rttDescri: string): number {
 // ── Geometry helpers ──
 
 /** Distance from a point to a polyline (min over all segments). */
-function pointToPolylineDist(pLat: number, pLon: number, coords: [number, number][]): number {
-  let best = Infinity
-  for (let i = 0; i < coords.length - 1; i++) {
-    const d = pointToSegmentDist(pLat, pLon, coords[i][1], coords[i][0], coords[i + 1][1], coords[i + 1][0])
-    if (d < best) best = d
-  }
-  return best
-}
 
 /** Spatial grid index of polylines by integer lat/lon cell (~1 km). */
 function buildPolylineGrid(features: GeoFeature[]): Map<string, GeoFeature[]> {

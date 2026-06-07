@@ -67,7 +67,7 @@ import { resolve } from 'node:path'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_CN_NATIONAL_ROADS } from './lib/source-ids.generated.js'
-import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
+import { flatDist, inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CN_NATIONAL_ROADS
@@ -175,15 +175,6 @@ function cityTier(lat: number, lon: number): 0 | 1 | 2 {
   for (const c of TIER1_CITIES) if (inBbox(lat, lon, c.bbox)) return 1
   for (const c of TIER2_CITIES) if (inBbox(lat, lon, c.bbox)) return 2
   return 0
-}
-
-function pointToPolylineDist(pLat: number, pLon: number, coords: [number, number][]): number {
-  let best = Infinity
-  for (let i = 0; i < coords.length - 1; i++) {
-    const d = pointToSegmentDist(pLat, pLon, coords[i][1], coords[i][0], coords[i + 1][1], coords[i + 1][0])
-    if (d < best) best = d
-  }
-  return best
 }
 
 // ── Load highway network ──

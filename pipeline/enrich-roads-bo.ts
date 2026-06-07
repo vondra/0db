@@ -63,7 +63,7 @@ import { resolve } from 'node:path'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_BO_NATIONAL_ROADS } from './lib/source-ids.generated.js'
-import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
+import { flatDist, inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_BO_NATIONAL_ROADS
@@ -142,15 +142,6 @@ function boRegion(lat: number, lon: number): 'altiplano' | 'valles' | 'llanos' {
   if (lon < -67.0) return 'altiplano'
   // Valles: in between (Cochabamba, Sucre, Tarija)
   return 'valles'
-}
-
-function pointToPolylineDist(pLat: number, pLon: number, coords: [number, number][]): number {
-  let best = Infinity
-  for (let i = 0; i < coords.length - 1; i++) {
-    const d = pointToSegmentDist(pLat, pLon, coords[i][1], coords[i][0], coords[i + 1][1], coords[i + 1][0])
-    if (d < best) best = d
-  }
-  return best
 }
 
 interface BoFeat {
