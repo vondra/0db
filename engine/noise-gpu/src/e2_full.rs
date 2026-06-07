@@ -25,7 +25,7 @@ use noise_compute::propagation::iso9613::fast_exp_f64;
 use noise_compute::propagation::path_effects;
 use noise_compute::propagation::PathProfile;
 use noise_compute::types::{Barrier, RasterSampler};
-use noise_gpu::{build_pixel_bins, BIN_W, N_BINS};
+use noise_gpu::{BIN_W, N_BINS};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch};
 use raster_reader::RealRasters;
 
@@ -244,40 +244,15 @@ fn main() -> Result<()> {
 
     // ---- GPU ----
     let dev = CudaDevice::new(0).expect("cuda");
-    dev.load_ptx(
-        Ptx::from_src(SCATTER_PTX),
-        "s",
-        &["line", "line_binned", "line_binned_fused"],
-    )
-    .expect("ptx");
-    // NOISE_GPU_KERNEL: line (scan-all, default) | line_binned_cpu_csr (CPU
-    // build_pixel_bins) | line_binned_fused (GPU-side binning). Both binned kernels
-    // share the 1024×64 launch geometry; line is pixel-major. All three must agree
-    // byte-for-byte (gate 1d-#1); fused must beat max(csr_kernel, build_pixel_bins).
+    dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["line", "line_binned_fused"])
+        .expect("ptx");
+    // NOISE_GPU_KERNEL: line (scan-all, default) | line_binned_fused (GPU-side binning).
+    // line_binned_fused uses the 1024×64 binned launch; line is pixel-major. The two must
+    // agree byte-for-byte — the conservative-cull + ordered-replay parity check.
     let mode = env("NOISE_GPU_KERNEL", "line");
-    let use_csr = mode == "line_binned_cpu_csr";
-    let binned_launch = mode.starts_with("line_binned");
-    // CSR mode pays the CPU build_pixel_bins prep that the fused kernel ELIMINATES;
-    // time it so the perf gate t_kernel(fused) < max(t_kernel(csr), t_bins) is one-run.
-    let t_bins = std::time::Instant::now();
-    let bins = use_csr.then(|| build_pixel_bins(tile, &rail));
-    if let Some(b) = &bins {
-        eprintln!(
-            "build_pixel_bins {:.1} ms | 8×8 bins: avg {:.0} sources/block, max {}",
-            t_bins.elapsed().as_secs_f64() * 1e3,
-            b.avg_sources,
-            b.max_sources
-        );
-    }
+    let binned_launch = mode == "line_binned_fused";
     let f = dev
-        .get_func(
-            "s",
-            match mode.as_str() {
-                "line_binned_cpu_csr" => "line_binned",
-                "line_binned_fused" => "line_binned_fused",
-                _ => "line",
-            },
-        )
+        .get_func("s", if binned_launch { "line_binned_fused" } else { "line" })
         .expect("fn");
     let d_elev = dev.htod_copy(elev).expect("elev");
     let d_inner = dev.htod_copy(inner).expect("inner");
@@ -288,12 +263,6 @@ fn main() -> Result<()> {
     let d_semis = dev.htod_copy(semis).expect("semis");
     let d_rxll = dev.htod_copy(rxll).expect("rxll");
     let d_rxar = dev.htod_copy(rxar).expect("rxar");
-    let d_bin_off = bins
-        .as_ref()
-        .map(|b| dev.htod_copy(b.offsets.clone()).expect("bin off"));
-    let d_bin_idx = bins
-        .as_ref()
-        .map(|b| dev.htod_copy(b.indices.clone()).expect("bin idx"));
     let mut d_out = dev.alloc_zeros::<f32>(n * 3).expect("out");
     let block: u32 = env("NOISE_GPU_BLOCK", "128").parse().unwrap_or(128);
     let cfg = LaunchConfig {
@@ -315,37 +284,16 @@ fn main() -> Result<()> {
     };
     let t = std::time::Instant::now();
     unsafe {
-        if use_csr {
-            let (off, idx) = (d_bin_off.as_ref().unwrap(), d_bin_idx.as_ref().unwrap());
-            f.launch(
-                cfg,
-                (
-                    &d_elev, &d_inner, &d_cover, &d_meta, &d_seg, &d_sp, &d_semis, &d_rxll,
-                    &d_rxar, off, idx, &mut d_out,
-                ),
-            )
-            .expect("launch");
-        } else {
-            // line (pixel-major) and line_binned_fused (binned) share this ARG tuple
-            // (…, nsrc, out); only the launch GEOMETRY differs (binned_launch above).
-            f.launch(
-                cfg,
-                (
-                    &d_elev,
-                    &d_inner,
-                    &d_cover,
-                    &d_meta,
-                    &d_seg,
-                    &d_sp,
-                    &d_semis,
-                    &d_rxll,
-                    &d_rxar,
-                    nsrc as i32,
-                    &mut d_out,
-                ),
-            )
-            .expect("launch");
-        }
+        // line (pixel-major) and line_binned_fused (binned) share the ARG tuple
+        // (…, nsrc, out); only the launch GEOMETRY differs (binned_launch above).
+        f.launch(
+            cfg,
+            (
+                &d_elev, &d_inner, &d_cover, &d_meta, &d_seg, &d_sp, &d_semis, &d_rxll, &d_rxar,
+                nsrc as i32, &mut d_out,
+            ),
+        )
+        .expect("launch");
     }
     dev.synchronize().expect("sync");
     let gpu_ms = t.elapsed().as_secs_f64() * 1e3;

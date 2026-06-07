@@ -8,8 +8,6 @@ pub mod airborne;
 
 use heatmap_aircraft::source_line::LineRow;
 use noise_compute::emission::aircraft::{Installation, SegmentPrepared, M_PER_DEG_LAT};
-use noise_compute::propagation::geo::point_to_segment_full;
-use noise_compute::propagation::path_profile::path_dist_m;
 use raster_reader::fused_tile_z13::{FusedTileZ13, TILE_PX};
 
 fn inst_code(inst: Installation) -> i32 {
@@ -74,85 +72,7 @@ pub const BIN_W: usize = 8;
 pub const BIN_TILES: usize = TILE_PX / BIN_W;
 pub const N_BINS: usize = BIN_TILES * BIN_TILES;
 
-/// CSR source bins for `line_binned`: per 8×8 pixel block, the line-source indices
-/// whose reach can intersect that block — conservative (the exact per-pixel cull
-/// still runs on the GPU), in ORIGINAL source order (budget-skip parity). The
-/// GPU's pixel-major analogue of the CPU's per-source reach-box: it avoids
-/// scanning all sources per pixel (~4400 candidates/dense block, ~2/rural).
-pub struct PixelBins {
-    pub offsets: Vec<i32>,
-    pub indices: Vec<i32>,
-    pub avg_sources: f64,
-    pub max_sources: usize,
-}
-
-/// Build the per-8×8-block source bins for one tile. Serial O(nsrc × N_BINS)
-/// point-to-segment; the cost is pipelinable with the GPU (bin tile N+1 while the
-/// GPU runs N) and parallelizable.
-pub fn build_pixel_bins(tile: &FusedTileZ13, lines: &[LineRow]) -> PixelBins {
-    // Block centre + radius (centre→furthest corner) for each 8×8 patch.
-    let mut centres = Vec::with_capacity(N_BINS);
-    for by in 0..BIN_TILES {
-        for bx in 0..BIN_TILES {
-            let (py0, py1) = (by * BIN_W, by * BIN_W + BIN_W - 1);
-            let (px0, px1) = (bx * BIN_W, bx * BIN_W + BIN_W - 1);
-            let lat = 0.5 * (tile.rx_lat[py0] + tile.rx_lat[py1]);
-            let lon = 0.5 * (tile.rx_lon[px0] + tile.rx_lon[px1]);
-            let radius = [
-                (tile.rx_lat[py0], tile.rx_lon[px0]),
-                (tile.rx_lat[py0], tile.rx_lon[px1]),
-                (tile.rx_lat[py1], tile.rx_lon[px0]),
-                (tile.rx_lat[py1], tile.rx_lon[px1]),
-            ]
-            .into_iter()
-            .map(|(clat, clon)| path_dist_m(lat, lon, clat, clon))
-            .fold(0.0, f64::max);
-            centres.push((lat, lon, radius));
-        }
-    }
-    // A source lands in a bin if its distance to the block centre ≤ reach + radius
-    // (so it could reach SOME pixel in the block). Conservative ⇒ correct. Parallel
-    // over bins (all cores); each bin scans sources in order ⇒ original order kept.
-    // This is the rural-tile bottleneck (kernel ~18 ms vs serial binning ~250 ms).
-    use rayon::prelude::*;
-    let bins: Vec<Vec<i32>> = centres
-        .par_iter()
-        .map(|&(lat, lon, radius)| {
-            lines
-                .iter()
-                .enumerate()
-                .filter_map(|(si, r)| {
-                    let pts = point_to_segment_full(
-                        lat,
-                        lon,
-                        r.start_lat,
-                        r.start_lon,
-                        r.end_lat,
-                        r.end_lon,
-                    );
-                    (pts.d_endpoint_m <= r.max_distance_m + radius).then_some(si as i32)
-                })
-                .collect()
-        })
-        .collect();
-    let (mut offsets, mut indices) = (Vec::with_capacity(N_BINS + 1), Vec::new());
-    let (mut total, mut max_sources) = (0usize, 0usize);
-    offsets.push(0);
-    for bin in bins {
-        total += bin.len();
-        max_sources = max_sources.max(bin.len());
-        indices.extend_from_slice(&bin);
-        offsets.push(indices.len() as i32);
-    }
-    PixelBins {
-        offsets,
-        indices,
-        avg_sources: total as f64 / N_BINS as f64,
-        max_sources,
-    }
-}
-
-/// Per-tile non-halo buffers packed for the `line`/`line_binned` kernels (the halo
+/// Per-tile non-halo buffers packed for the `line`/`line_binned_fused` kernels (the halo
 /// elev/cover are uploaded once per batch and shared; the line SOURCES are uploaded
 /// once per layer — see [`SourceBuffers`]). `meta` carries the SHARED halo geom +
 /// this tile's bbox + eta + swizzle width.

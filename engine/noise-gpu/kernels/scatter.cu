@@ -570,60 +570,7 @@ extern "C" __global__ void line(
     out[opix * 3 + 2] = e2;
 }
 
-// RAIL scatter with CPU-precomputed 8×8 pixel source bins — the big lever on the
-// pixel-major GPU: don't scan all sources per pixel (the CPU's source-major
-// reach-box already avoids that). One CUDA block owns one 8×8 receiver patch (64
-// threads = 64 pixels) and iterates only bin_indices[bin_offsets[bid] .. bid+1] —
-// the conservative source list whose reach can intersect the patch. The bin is a
-// conservative superset in ORIGINAL source order, and the exact per-pixel cull in
-// line_source still runs, so each pixel sees exactly its reachable sources in the
-// same order ⇒ kept/skipped parity ⇒ identical output to `rail`.
-// __launch_bounds__(64 threads/block, 8 blocks/SM) caps registers at 128 (65536/SM
-// ÷ 512 threads), lifting occupancy from ~12 to 16 warps/SM with zero spill (verified
-// ptxas -v). The kernel is f64-ALU/SFU bound, so this only helps where latency hiding
-// matters — measured, not assumed.
-extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 8) line_binned(
-    const float*  __restrict__ elev,
-    const float*  __restrict__ inner,
-    const unsigned char* __restrict__ cover,
-    const double* __restrict__ meta,
-    const double* __restrict__ seg,
-    const double* __restrict__ sp,
-    const float*  __restrict__ semis,
-    const double* __restrict__ rxll,
-    const float*  __restrict__ rxar,
-    const int* __restrict__ bin_offsets,
-    const int* __restrict__ bin_indices,
-    float* __restrict__ out)
-{
-    int bid = blockIdx.x, lane = threadIdx.x;
-    if (bid >= BIN_TILES * BIN_TILES || lane >= BIN_W * BIN_W) return;
-    int rows = (int)meta[0], cols = (int)meta[1];
-    double lat_min = meta[2], lon_min = meta[3], inv = meta[4];
-    const double* bb = &meta[5];
-    double eta = meta[9];
-    int by = bid / BIN_TILES, bx = bid % BIN_TILES;
-    int py = by * BIN_W + lane / BIN_W, pxi = bx * BIN_W + lane % BIN_W;
-    int opix = py * 256 + pxi;
-    double rlat = rxll[py], rlon = rxll[256 + pxi];
-    double ralt = rxar[opix * 2], refl = rxar[opix * 2 + 1];
-    float e0 = 0.0f, e1 = 0.0f, e2 = 0.0f;
-    double kept = 0.0, skipped = 0.0;
-    double tprof[MAXT], ed[MAXT], comp[MAXT];
-    unsigned char bld[MAXT], forr[MAXT], imdp[MAXT];
-    int s0 = bin_offsets[bid], s1 = bin_offsets[bid + 1];
-    for (int si = s0; si < s1; si++) {
-        int s = bin_indices[si];
-        line_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
-                    rlat, rlon, ralt, refl, eta, &seg[s * 4], &sp[s * 4], &semis[s * 24],
-                    tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
-    }
-    out[opix * 3 + 0] = e0;
-    out[opix * 3 + 1] = e1;
-    out[opix * 3 + 2] = e2;
-}
-
-// FUSED variant — bins ON the GPU (deletes the CPU build_pixel_bins prep, the
+// Binned scatter — bins ON the GPU (deletes the CPU build_pixel_bins prep, the
 // gpu-surface bottleneck). Same 8×8-block / 64-thread mapping as line_binned, but
 // instead of a CPU CSR bin it scans all nsrc sources in 64-source CHUNKS: the 64
 // lanes cull one chunk cooperatively (one source per lane) into shared keep[64],
