@@ -17,11 +17,14 @@ noise-compute = { path = "../noise-compute" }
 h3o = "0.7"
 anyhow = "1"
 rayon = "1"
+# Only the gpu-airborne production bin parses a CLI; gated with cudarc so the CPU-only lib
+# build stays dependency-light (gpu-surface/e2 hand-parse their few args).
+clap = { version = "4", features = ["derive"], optional = true }
 
 [features]
 # The gpu-surface/e2-full bins (require this feature) pull in cudarc and trigger the
 # nvcc PTX build. OFF by default so the lib builds without any CUDA on the host.
-gpu = ["dep:cudarc"]
+gpu = ["dep:cudarc", "dep:clap"]
 
 [lib]
 name = "noise_gpu"
@@ -46,4 +49,11 @@ required-features = ["gpu"]
 [[bin]]
 name = "e2-airborne"
 path = "src/e2_airborne.rs"
+required-features = ["gpu"]
+
+# Production airborne builder: the region-resident kernel wired into the cluster's per-chunk
+# region loop (HM3 output). Drop-in for build-heatmap-aircraft's airborne source on a GPU box.
+[[bin]]
+name = "gpu-airborne"
+path = "src/gpu_airborne.rs"
 required-features = ["gpu"]
