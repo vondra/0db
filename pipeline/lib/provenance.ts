@@ -82,8 +82,10 @@ async function releaseLock(lockPath: string): Promise<void> {
 /**
  * Read Arrow file → mutate via callback → atomic replace.
  * The callback receives the parsed `Table`; returns the updated table to write.
- * If the callback returns the same `Table` reference, a fresh `tableToIPC` is
- * still emitted (Arrow has no in-place mutation — arrays are rebuilt externally).
+ * **Returning the SAME `Table` reference signals "no change" — the file is left
+ * byte-for-byte untouched** (no re-serialize, no rename). This keeps no-op hexes
+ * bit-identical, which the refactor-verification relies on; callers that genuinely
+ * changed a row must return a freshly-built `Table`.
  */
 export async function withArrowWrite(
   arrowPath: string,
@@ -96,6 +98,7 @@ export async function withArrowWrite(
     const bytes = await fs.readFile(arrowPath)
     const input = tableFromIPC(bytes)
     const output = await fn(input)
+    if (output === input) return   // no-op: nothing changed → leave the file untouched
     await fs.writeFile(tmpPath, Buffer.from(tableToIPC(output, 'file')))
     await fs.rename(tmpPath, arrowPath)
   } finally {

@@ -10,14 +10,12 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-cz.ts --enrich-only
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
-import { SOURCES_BY_KEY } from './lib/sources.js'
-import { shouldOverwrite } from './lib/provenance.js'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCE_ID_CZ_RSD_SCITANI } from './lib/source-ids.generated.js'
 import { pointToPolylineDist } from './lib/spatial.js'
-import { cellToLatLng } from 'h3-js'
+import { shouldOverwrite } from './lib/provenance.js'
+import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CZ_RSD_SCITANI
 
@@ -127,20 +125,13 @@ function parseCensus(features: any[]): Map<string, CensusSection[]> {
 
 // ── Step 3: Enrich Arrow files ──
 
-// Generous lat/lon box around Czechia (+~0.3 deg halo) so the hex scan skips the
-// rest of the planet — ŘSD refs only match CZ hexes. Without this the script reads
-// every roads.arrow on Earth (~40 min); with it, only the ~112 CZ R4 cells.
-const CZ_HEX_BBOX = { minLat: 48.2, maxLat: 51.4, minLon: 11.7, maxLon: 19.2 }
+// Generous box around Czechia (+~0.3 deg halo) so the hex scan skips the rest of
+// the planet — ŘSD refs only match CZ hexes (otherwise the loader reads every
+// roads.arrow on Earth, ~40 min vs the ~112 CZ R4 cells). [minLat,minLon,maxLat,maxLon]
+const CZ_HEX_BBOX: [number, number, number, number] = [48.2, 11.7, 51.4, 19.2]
 
-function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
-  const hexDirs = readdirSync(H3R4_DIR).filter(d => {
-    if (d.length !== 15 || !d.endsWith('ffffffff')) return false
-    try {
-      const [lat, lon] = cellToLatLng(d)
-      return lat >= CZ_HEX_BBOX.minLat && lat <= CZ_HEX_BBOX.maxLat
-        && lon >= CZ_HEX_BBOX.minLon && lon <= CZ_HEX_BBOX.maxLon
-    } catch { return false }
-  })
+async function enrichHexes(censusByRef: Map<string, CensusSection[]>): Promise<void> {
+  const hexDirs = iterateCountryHexes(H3R4_DIR, CZ_HEX_BBOX)
 
   let totalRoads = 0
   let totalMatched = 0
@@ -148,113 +139,47 @@ function enrichHexes(censusByRef: Map<string, CensusSection[]>): void {
   const matchByClass = new Map<number, { matched: number; total: number }>()
 
   for (const hexId of hexDirs) {
-    const roadsPath = resolve(H3R4_DIR, hexId, 'roads.arrow')
-    if (!existsSync(roadsPath)) continue
+    const r = await writeRoadAadt(
+      resolve(H3R4_DIR, hexId, 'roads.arrow'),
+      (row) => {
+        let cls = matchByClass.get(row.roadClass)
+        if (!cls) { cls = { matched: 0, total: 0 }; matchByClass.set(row.roadClass, cls) }
+        cls.total++
 
-    const buf = readFileSync(roadsPath)
-    const table = tableFromIPC(buf)
-    const n = table.numRows
-    if (n === 0) continue
-    totalRoads += n
+        // Fast-exit before the expensive ref-match when a higher-priority dataset
+        // already owns the row (writeRoadAadt re-checks the gate — this only saves work).
+        if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
 
-    const refCol = table.getChild('ref')
-    const startLat = table.getChild('start_lat')!
-    const startLon = table.getChild('start_lon')!
-    const endLat = table.getChild('end_lat')!
-    const endLon = table.getChild('end_lon')!
-    const roadClassCol = table.getChild('road_class')
+        // Ref match is MANDATORY — no proximity-only fallback.
+        if (!row.ref) return null
+        const normalized = normalizeOsmRef(row.ref)
+        if (!normalized) return null
+        const candidates = censusByRef.get(normalized)
+        if (!candidates || candidates.length === 0) return null
 
-    // Seed output columns from existing Arrow state; priority rule decides per row.
-    const existingAadtLight = table.getChild('aadt_light')
-    const existingAadtMedium = table.getChild('aadt_medium')
-    const existingAadtHeavy = table.getChild('aadt_heavy')
-    const existingAadtMoto = table.getChild('aadt_moto')
-    const existingSourceId = table.getChild('source_id')
+        // Pick the section whose LINE is closest to the segment midpoint
+        // (point-to-polyline, not centroid → the boundary lands at the real
+        // junction, not the perpendicular bisector of two centroids).
+        let best = candidates[0]
+        let bestDist = pointToPolylineDist(row.midLat, row.midLon, best.coords)
+        for (let j = 1; j < candidates.length; j++) {
+          const d = pointToPolylineDist(row.midLat, row.midLon, candidates[j].coords)
+          if (d < bestDist) { best = candidates[j]; bestDist = d }
+        }
+        if (bestDist > 10_000) return null // avoid wrong matches on same-numbered roads far away
 
-    const aadtLight = new Int32Array(n)
-    const aadtMedium = new Int32Array(n)
-    const aadtHeavy = new Int32Array(n)
-    const aadtMoto = new Int32Array(n)
-    const sourceId = new Uint16Array(n)
-
-    for (let i = 0; i < n; i++) {
-      aadtLight[i] = existingAadtLight ? (existingAadtLight.get(i) as number) ?? 0 : 0
-      aadtMedium[i] = existingAadtMedium ? (existingAadtMedium.get(i) as number) ?? 0 : 0
-      aadtHeavy[i] = existingAadtHeavy ? (existingAadtHeavy.get(i) as number) ?? 0 : 0
-      aadtMoto[i] = existingAadtMoto ? (existingAadtMoto.get(i) as number) ?? 0 : 0
-      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-    }
-
-    let hexMatched = 0
-
-    for (let i = 0; i < n; i++) {
-      const roadClass = roadClassCol ? (roadClassCol.get(i) as number) : 5
-      if (!matchByClass.has(roadClass)) matchByClass.set(roadClass, { matched: 0, total: 0 })
-      matchByClass.get(roadClass)!.total++
-
-      // Priority gate: if a higher-priority dataset already owns this row, leave it.
-      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
-
-      // Ref match is MANDATORY — no proximity-only fallback
-      const osmRef = refCol ? (refCol.get(i) as string | null) : null
-      if (!osmRef) continue
-
-      const normalized = normalizeOsmRef(osmRef)
-      if (!normalized) continue
-
-      const candidates = censusByRef.get(normalized)
-      if (!candidates || candidates.length === 0) continue
-
-      // Pick the section whose LINE is closest to the segment midpoint.
-      // Point-to-polyline (not point-to-centroid): the boundary between two
-      // adjacent sections then lands at the real junction, not on the
-      // perpendicular bisector of their centroids (~575 m off near Kadaň).
-      const midLat = ((startLat.get(i) as number) + (endLat.get(i) as number)) / 2
-      const midLon = ((startLon.get(i) as number) + (endLon.get(i) as number)) / 2
-
-      let best = candidates[0]
-      let bestDist = pointToPolylineDist(midLat, midLon, best.coords)
-      for (let j = 1; j < candidates.length; j++) {
-        const d = pointToPolylineDist(midLat, midLon, candidates[j].coords)
-        if (d < bestDist) { best = candidates[j]; bestDist = d }
-      }
-
-      // Max 10km — avoid wrong matches on same-numbered roads far away
-      if (bestDist > 10_000) continue
-
-      // Whole-row atomic write — payload + dataset_id together.
-      // Do NOT halve for oneway — ŘSD = bidirectional total,
-      // heatmap-aircraft already applies oneway_factor=0.5 (arrow.rs:81)
-      aadtLight[i] = best.aadt_light
-      aadtMedium[i] = best.aadt_medium
-      aadtHeavy[i] = best.aadt_heavy
-      aadtMoto[i] = best.aadt_moto
-      sourceId[i] = MY_SOURCE_ID
-      hexMatched++
-      matchByClass.get(roadClass)!.matched++
-    }
-
-    if (hexMatched === 0) continue
-
-    // Copy ALL existing columns by iterating schema (don't hardcode column list)
-    const columns: Record<string, any> = {}
-    for (const field of table.schema.fields) {
-      columns[field.name] = table.getChild(field.name)!
-    }
-
-    // Add enrichment columns (overwrite if already present from previous run)
-    columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-    columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
-    columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
-    columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
-    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-
-    const newTable = makeTable(columns)
-    // MUST use 'file' format — Rust FileReader requires ARROW1 magic bytes.
-    // Default stream format = enriched data silently lost.
-    writeFileSync(roadsPath, Buffer.from(tableToIPC(newTable, 'file')))
-    totalMatched += hexMatched
-    hexesUpdated++
+        // Do NOT halve for oneway — ŘSD = bidirectional total; the engine applies
+        // oneway_factor=0.5. (The priority gate + atomic write live in writeRoadAadt.)
+        return {
+          light: best.aadt_light, medium: best.aadt_medium,
+          heavy: best.aadt_heavy, moto: best.aadt_moto, sourceId: MY_SOURCE_ID,
+        }
+      },
+      (row) => { matchByClass.get(row.roadClass)!.matched++ },
+    )
+    totalRoads += r.rows
+    totalMatched += r.matched
+    if (r.updated) hexesUpdated++
   }
 
   console.log(`\n=== Results ===`)
@@ -313,7 +238,7 @@ async function main() {
   const censusByRef = parseCensus(features)
   console.log(`  ${censusByRef.size} unique road refs\n`)
 
-  enrichHexes(censusByRef)
+  await enrichHexes(censusByRef)
   console.log(`\n=== Done ===`)
 }
 
