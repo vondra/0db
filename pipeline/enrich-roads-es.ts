@@ -14,14 +14,13 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-es.ts --force-download
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
-import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_ES_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { pointToPolylineDist } from './lib/spatial.js'
+import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_ES_NATIONAL_ROADS
 
@@ -38,6 +37,10 @@ const TRAMOS_URL = 'https://mapatrafico.transportes.gob.es/2022/Visor/datos/GIS/
 
 // Spain bbox (Iberian peninsula + Balearics + Canary islands)
 const ES_BBOX: [number, number, number, number] = [27.0, -19.0, 44.0, 5.0]
+
+// Same box in iterateCountryHexes order [minLat,minLon,maxLat,maxLon] (already the
+// order ES_BBOX is declared in) — skips the rest of the planet's roads.arrow.
+const ES_HEX_BBOX: [number, number, number, number] = ES_BBOX
 
 // ── Types ──
 
@@ -171,17 +174,9 @@ async function enrichArrows(sections: TramoSection[]): Promise<void> {
   refCounts.sort((a, b) => b[1] - a[1])
   for (const [ref, n] of refCounts.slice(0, 10)) console.log(`    ${ref}: ${n} sections`)
 
-  // Pre-filter Spanish hexes via H3 center
-  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
-  const hexDirs: string[] = []
-  for (const hex of allHexes) {
-    try {
-      const [lat, lon] = cellToLatLng(hex)
-      if (lat >= ES_BBOX[0] && lat <= ES_BBOX[2] && lon >= ES_BBOX[1] && lon <= ES_BBOX[3]) {
-        if (existsSync(resolve(H3R4_DIR, hex, 'roads.arrow'))) hexDirs.push(hex)
-      }
-    } catch {}
-  }
+  // Pre-filter Spanish hexes via H3 center. ES_BBOX is already
+  // [minLat,minLon,maxLat,maxLon], the order iterateCountryHexes expects.
+  const hexDirs = iterateCountryHexes(H3R4_DIR, ES_HEX_BBOX)
   console.log(`  Spanish hexes with roads.arrow: ${hexDirs.length}\n`)
 
   let totalSeg = 0
@@ -191,104 +186,46 @@ async function enrichArrows(sections: TramoSection[]): Promise<void> {
   const startTime = Date.now()
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
-    const hex = hexDirs[hi]
-    const arrowPath = resolve(H3R4_DIR, hex, 'roads.arrow')
-    const buf = readFileSync(arrowPath)
-    const table = tableFromIPC(buf)
-    const numRows = table.numRows
-    if (numRows === 0) continue
-
-    const refs = table.getChild('ref')
-    const startLats = table.getChild('start_lat')
-    const startLons = table.getChild('start_lon')
-    const endLats = table.getChild('end_lat')
-    const endLons = table.getChild('end_lon')
-    const existingSourceId = table.getChild('source_id')
-    const existingLight = table.getChild('aadt_light')
-    const existingMedium = table.getChild('aadt_medium')
-    const existingHeavy = table.getChild('aadt_heavy')
-    const existingMoto = table.getChild('aadt_moto')
-
-    if (!startLats || !startLons || !endLats || !endLons) continue
-
-    // Seed output arrays from existing values so non-matched rows are never
-    // clobbered back to zero. We overwrite per-row only on MITMA match or
-    // when shouldOverwrite() permits.
-    const aadtLight = new Int32Array(numRows)
-    const aadtMedium = new Int32Array(numRows)
-    const aadtHeavy = new Int32Array(numRows)
-    const aadtMoto = new Int32Array(numRows)
-    const sourceId = new Uint16Array(numRows)
-    for (let i = 0; i < numRows; i++) {
-      aadtLight[i] = (existingLight?.get(i) as number) ?? 0
-      aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
-      aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
-      aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-      sourceId[i] = (existingSourceId?.get(i) as number) ?? 0
-    }
-
-    let hexMatched = 0
-
-    for (let i = 0; i < numRows; i++) {
-      totalSeg++
-
-      // Priority gate: preserve existing if it has higher priority than MITMA.
-      const existingId = sourceId[i]
-      if (!shouldOverwrite(existingId, MY_SOURCE_ID)) {
-        preserved++
-        continue
-      }
-
-      const sLat = startLats.get(i) as number
-      const sLon = startLons.get(i) as number
-      const eLat = endLats.get(i) as number
-      const eLon = endLons.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
-
-      const osmRef = (refs?.get(i)?.toString() || '').trim()
-      // Spanish OSM refs use forms like "A-1", "AP-7", "N-340", "M-30"
-      // Try original normalized + first part if multi-ref ("A-1;N-I")
-      const normRef = osmRef.replace(/[-\s]/g, '').toUpperCase().split(';')[0]
-
-      let best: TramoSection | null = null
-      let bestDist = Infinity
-
-      if (normRef && refIndex.has(normRef)) {
-        for (const c of refIndex.get(normRef)!) {
-          const dist = pointToPolylineDist(midLat, midLon, c.coords)
-          if (dist < bestDist) { bestDist = dist; best = c }
+    const hexId = hexDirs[hi]
+    const r = await writeRoadAadt(
+      resolve(H3R4_DIR, hexId, 'roads.arrow'),
+      (row) => {
+        // Priority gate: preserve existing if it has higher priority than MITMA.
+        // (writeRoadAadt re-checks the gate — this only saves the ref-match work.)
+        if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) {
+          preserved++
+          return null
         }
-      }
 
-      // Match within 30 km along ref (corridors are long)
-      if (best && bestDist < 30_000) {
-        aadtLight[i] = best.aadt_light
-        aadtMedium[i] = best.aadt_medium
-        aadtHeavy[i] = best.aadt_heavy
-        aadtMoto[i] = best.aadt_moto
-        sourceId[i] = MY_SOURCE_ID
-        hexMatched++
-        matched++
-      }
-    }
+        const osmRef = (row.ref?.toString() || '').trim()
+        // Spanish OSM refs use forms like "A-1", "AP-7", "N-340", "M-30"
+        // Try original normalized + first part if multi-ref ("A-1;N-I")
+        const normRef = osmRef.replace(/[-\s]/g, '').toUpperCase().split(';')[0]
 
-    if (hexMatched > 0) {
-      const columns: Record<string, any> = {}
-      for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
-        columns[field.name] = table.getChild(field.name)!
-      }
-      columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-      columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
-      columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
-      columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
+        let best: TramoSection | null = null
+        let bestDist = Infinity
 
-      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-      const enriched = makeTable(columns)
-      writeFileSync(arrowPath, Buffer.from(tableToIPC(enriched, 'file')))
-      hexesUpdated++
-    }
+        if (normRef && refIndex.has(normRef)) {
+          for (const c of refIndex.get(normRef)!) {
+            const dist = pointToPolylineDist(row.midLat, row.midLon, c.coords)
+            if (dist < bestDist) { bestDist = dist; best = c }
+          }
+        }
+
+        // Match within 30 km along ref (corridors are long)
+        if (!best || bestDist >= 30_000) return null
+        // `|| 0`: a few MITMA tramos have a non-numeric imdtot → NaN aadt (the
+        // `imdTot <= 0` parse skip misses NaN). The old code coerced these to 0 via
+        // Int32Array assignment; reproduce that exactly (writeRoadAadt rejects NaN).
+        return {
+          light: best.aadt_light || 0, medium: best.aadt_medium || 0,
+          heavy: best.aadt_heavy || 0, moto: best.aadt_moto || 0, sourceId: MY_SOURCE_ID,
+        }
+      },
+      () => { matched++ },
+    )
+    totalSeg += r.rows
+    if (r.updated) hexesUpdated++
 
     if (hi % 25 === 0 || hi === hexDirs.length - 1) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(0)

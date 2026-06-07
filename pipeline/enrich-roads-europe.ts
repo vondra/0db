@@ -2,15 +2,16 @@
  * Continental road enrichment (Europe): EU city traffic volume dataset.
  *
  * Downloads harmonized traffic data from 36 European cities (Nature Scientific Data, 2025),
- * matches to OSM road segments by osm_id, writes aadt_light + aadt_heavy + source_id
- * into roads.arrow for each matching H3R4 hex.
+ * matches to OSM road segments by nearest-point proximity, writes aadt_light + aadt_medium +
+ * aadt_heavy + aadt_moto + source_id into roads.arrow for each matching H3R4 hex.
  *
  * Dataset: "Harmonized Annual Averaged Traffic Data at Street Segment Level for European Cities"
  * GitHub: https://github.com/XavB64/traffic-volume-data-EU-cities
  * License: CC BY 4.0
  *
- * Each city's treated/ folder contains GeoJSON files with AADT + optional TR_AADT (truck AADT),
- * already matched to OSM way IDs (osmid column). We use direct osm_id join — no proximity needed.
+ * Each city's treated/ folder contains GeoJSON files with AADT + optional TR_AADT (truck AADT).
+ * We take each record's point / line-midpoint and match it to the nearest OSM road segment
+ * midpoint within a tight 50 m cap (per-hex spatial grid).
  *
  * Usage:
  *   cd pipeline && npx tsx enrich-roads-europe.ts
@@ -18,14 +19,13 @@
  *   cd pipeline && npx tsx enrich-roads-europe.ts --enrich-only
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
-import { latLngToCell, cellToLatLng } from 'h3-js'
-import { SOURCES_BY_KEY } from './lib/sources.js'
+import { latLngToCell } from 'h3-js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_EU_CITY_TRAFFIC } from './lib/source-ids.generated.js'
 import { flatDist } from './lib/spatial.js'
+import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_EU_CITY_TRAFFIC
 
@@ -246,23 +246,18 @@ function parseCity(geojson: any): Map<string, TrafficRecord[]> {
 
 // ── Step 3: Enrich Arrow files ──
 
-function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
+// Generous Europe box (Iceland/Canaries → Urals/Cyprus) so the hex scan skips the
+// rest of the planet instead of reading every roads.arrow on Earth (~40 min → minutes).
+// [minLat, minLon, maxLat, maxLon].
+const EU_HEX_BBOX: [number, number, number, number] = [34, -32, 72, 45]
+
+async function enrichHexes(allRecords: Map<string, TrafficRecord[]>): Promise<{
   totalRoads: number
   totalMatched: number
   hexesUpdated: number
   matchByClass: Map<number, { matched: number; total: number }>
-} {
-  // Generous Europe box (Iceland/Canaries → Urals/Cyprus) so the hex scan skips the
-  // rest of the planet instead of reading every roads.arrow on Earth (~40 min → minutes).
-  const EU_HEX_BBOX = { minLat: 34, maxLat: 72, minLon: -32, maxLon: 45 }
-  const hexDirs = readdirSync(H3R4_DIR).filter(d => {
-    if (d.length !== 15 || !d.endsWith('ffffffff')) return false
-    try {
-      const [lat, lon] = cellToLatLng(d)
-      return lat >= EU_HEX_BBOX.minLat && lat <= EU_HEX_BBOX.maxLat
-        && lon >= EU_HEX_BBOX.minLon && lon <= EU_HEX_BBOX.maxLon
-    } catch { return false }
-  })
+}> {
+  const hexDirs = iterateCountryHexes(H3R4_DIR, EU_HEX_BBOX)
 
   let totalRoads = 0
   let totalMatched = 0
@@ -285,15 +280,6 @@ function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
     const records = allRecords.get(hexId)
     if (!records || records.length === 0) continue
 
-    const roadsPath = resolve(H3R4_DIR, hexId, 'roads.arrow')
-    if (!existsSync(roadsPath)) continue
-
-    const buf = readFileSync(roadsPath)
-    const table = tableFromIPC(buf)
-    const n = table.numRows
-    if (n === 0) continue
-    totalRoads += n
-
     // Build spatial grid from traffic records for fast proximity lookup
     const CELL = 0.001 // ~111m grid cells
     const grid = new Map<string, TrafficRecord[]>()
@@ -303,118 +289,64 @@ function enrichHexes(allRecords: Map<string, TrafficRecord[]>): {
       grid.get(key)!.push(r)
     }
 
-    const startLatCol = table.getChild('start_lat')!
-    const startLonCol = table.getChild('start_lon')!
-    const endLatCol = table.getChild('end_lat')!
-    const endLonCol = table.getChild('end_lon')!
-    const roadClassCol = table.getChild('road_class')
-    const onewayCol = table.getChild('oneway')
-
-    // Existing enrichment columns (may exist from previous run)
-    const existingAadtLight = table.getChild('aadt_light')
-    const existingAadtMedium = table.getChild('aadt_medium')
-    const existingAadtHeavy = table.getChild('aadt_heavy')
-    const existingAadtMoto = table.getChild('aadt_moto')
-    const existingSourceId = table.getChild('source_id')
-
-    // Seed output columns from whatever's already in the Arrow (per-row state).
-    // `shouldOverwrite()` then decides if we replace with eu-city-traffic data.
-    const aadtLight = new Int32Array(n)
-    const aadtMedium = new Int32Array(n)
-    const aadtHeavy = new Int32Array(n)
-    const aadtMoto = new Int32Array(n)
-    const sourceId = new Uint16Array(n)
-
-    for (let i = 0; i < n; i++) {
-      aadtLight[i] = existingAadtLight ? (existingAadtLight.get(i) as number) ?? 0 : 0
-      aadtMedium[i] = existingAadtMedium ? (existingAadtMedium.get(i) as number) ?? 0 : 0
-      aadtHeavy[i] = existingAadtHeavy ? (existingAadtHeavy.get(i) as number) ?? 0 : 0
-      aadtMoto[i] = existingAadtMoto ? (existingAadtMoto.get(i) as number) ?? 0 : 0
-      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-    }
-
-    let hexMatched = 0
     const MAX_DIST = 50 // meters
 
-    for (let i = 0; i < n; i++) {
-      const roadClass = roadClassCol ? (roadClassCol.get(i) as number) : 5
-      if (!matchByClass.has(roadClass)) matchByClass.set(roadClass, { matched: 0, total: 0 })
-      matchByClass.get(roadClass)!.total++
+    const r = await writeRoadAadt(
+      resolve(H3R4_DIR, hexId, 'roads.arrow'),
+      (row) => {
+        let cls = matchByClass.get(row.roadClass)
+        if (!cls) { cls = { matched: 0, total: 0 }; matchByClass.set(row.roadClass, cls) }
+        cls.total++
 
-      // Priority check: if a higher-priority dataset already owns this row, leave it alone.
-      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) {
-        if (sourceId[i] !== 0) {
-          matchByClass.get(roadClass)!.matched++
-          hexMatched++
-        }
-        continue
-      }
+        // Priority check: if a higher-priority dataset already owns this row, leave it
+        // alone (writeRoadAadt re-checks the gate — this only saves the proximity work).
+        if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
 
-      // Midpoint of Arrow road segment
-      const midLat = ((startLatCol.get(i) as number) + (endLatCol.get(i) as number)) / 2
-      const midLon = ((startLonCol.get(i) as number) + (endLonCol.get(i) as number)) / 2
-
-      // Search nearby grid cells for closest traffic record
-      const cy = Math.floor(midLat / CELL)
-      const cx = Math.floor(midLon / CELL)
-      let bestDist = MAX_DIST + 1
-      let record: TrafficRecord | null = null
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const candidates = grid.get(`${cy + dy},${cx + dx}`)
-          if (!candidates) continue
-          for (const c of candidates) {
-            const d = flatDist(midLat, midLon, c.lat, c.lon)
-            if (d < bestDist) { bestDist = d; record = c; }
+        // Search nearby grid cells for the closest traffic record to the segment midpoint.
+        const cy = Math.floor(row.midLat / CELL)
+        const cx = Math.floor(row.midLon / CELL)
+        let bestDist = MAX_DIST + 1
+        let record: TrafficRecord | null = null
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const candidates = grid.get(`${cy + dy},${cx + dx}`)
+            if (!candidates) continue
+            for (const c of candidates) {
+              const d = flatDist(row.midLat, row.midLon, c.lat, c.lon)
+              if (d < bestDist) { bestDist = d; record = c }
+            }
           }
         }
-      }
-      if (!record) continue
+        if (!record) return null
 
-      // Convert directional → bidirectional total.
-      // Arrow stores bidirectional total; heatmap-aircraft applies oneway_factor=0.5.
-      // Dataset raw_oneway=true means the measurement is for ONE direction only.
-      const dirFactor = record.isOneway ? 2 : 1
+        // Convert directional → bidirectional total.
+        // Arrow stores bidirectional total; heatmap-aircraft applies oneway_factor=0.5.
+        // Dataset raw_oneway=true means the measurement is for ONE direction only.
+        const dirFactor = record.isOneway ? 2 : 1
 
-      const totalAadt = record.aadt * dirFactor
-      const heavyAadt = record.truckAadt * dirFactor
-      const motoAadt = record.twoWheelAadt * dirFactor
-      // The dataset only splits out trucks (heavy) + two-wheelers (moto); cars and
-      // buses share the remainder. Estimate buses (CNOSSOS cat2 medium) at ~2% of
-      // total — a typical urban bus share — rather than dumping them into light.
-      const mediumAadt = totalAadt * 0.02
-      const lightAadt = totalAadt - heavyAadt - motoAadt - mediumAadt
+        const totalAadt = record.aadt * dirFactor
+        const heavyAadt = record.truckAadt * dirFactor
+        const motoAadt = record.twoWheelAadt * dirFactor
+        // The dataset only splits out trucks (heavy) + two-wheelers (moto); cars and
+        // buses share the remainder. Estimate buses (CNOSSOS cat2 medium) at ~2% of
+        // total — a typical urban bus share — rather than dumping them into light.
+        const mediumAadt = totalAadt * 0.02
+        const lightAadt = totalAadt - heavyAadt - motoAadt - mediumAadt
 
-      // Whole-row atomic write — payload + dataset_id together, gated by priority above.
-      aadtLight[i] = Math.max(0, Math.round(lightAadt))
-      aadtMedium[i] = Math.max(0, Math.round(mediumAadt))
-      aadtHeavy[i] = Math.max(0, Math.round(heavyAadt))
-      aadtMoto[i] = Math.max(0, Math.round(motoAadt))
-      sourceId[i] = MY_SOURCE_ID
-      hexMatched++
-      matchByClass.get(roadClass)!.matched++
-    }
+        return {
+          light: Math.max(0, Math.round(lightAadt)),
+          medium: Math.max(0, Math.round(mediumAadt)),
+          heavy: Math.max(0, Math.round(heavyAadt)),
+          moto: Math.max(0, Math.round(motoAadt)),
+          sourceId: MY_SOURCE_ID,
+        }
+      },
+      (row) => { matchByClass.get(row.roadClass)!.matched++ },
+    )
 
-    if (hexMatched === 0) continue
-
-    // Copy ALL existing columns by iterating schema
-    const columns: Record<string, any> = {}
-    for (const field of table.schema.fields) {
-      columns[field.name] = table.getChild(field.name)!
-    }
-
-    // Add/overwrite enrichment columns
-    columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-    columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
-    columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
-    columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
-    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-
-    const newTable = makeTable(columns)
-    // MUST use 'file' format — Rust FileReader requires ARROW1 magic bytes
-    writeFileSync(roadsPath, Buffer.from(tableToIPC(newTable, 'file')))
-    totalMatched += hexMatched
-    hexesUpdated++
+    totalRoads += r.rows
+    totalMatched += r.matched
+    if (r.updated) hexesUpdated++
   }
 
   return { totalRoads, totalMatched, hexesUpdated, matchByClass }
@@ -478,7 +410,7 @@ async function main() {
 
   // Enrich Arrow files
   console.log('  Enriching Arrow files...')
-  const { totalRoads, totalMatched, hexesUpdated, matchByClass } = enrichHexes(allRecords)
+  const { totalRoads, totalMatched, hexesUpdated, matchByClass } = await enrichHexes(allRecords)
 
   console.log(`\n=== Results ===`)
   console.log(`  ${totalMatched} / ${totalRoads} segments enriched in matched hexes`)
@@ -504,7 +436,7 @@ async function main() {
   - Downloaded: ${new Date().toISOString().split('T')[0]}
 
 ## Matching
-- Direct osm_id join (dataset already matched to OSM way IDs)
+- Nearest-point proximity (segment midpoint → closest record within 50 m)
 - ${totalMatched} segments enriched across ${hexesUpdated} H3R4 hexes
 - Preserves existing country-specific enrichment (higher-rank source_id from prior runs)
 - Directional correction: raw_oneway=true measurements doubled to bidirectional total
@@ -515,7 +447,7 @@ ${CITIES.map(c => `- ${c[2]} (${c[0]})`).join('\n')}
 
 ## Gaps
 - No vehicle class breakdown for many cities (only total AADT)
-- Point geometries (sensor locations) matched via osmid, not spatial proximity
+- Point geometries (sensor locations) matched via spatial proximity
 - Some cities have low OSM matching rates (see dataset's osm_distance column)
 `
   writeFileSync(provPath, provenance)

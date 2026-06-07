@@ -10,7 +10,7 @@
  *   TGM — Traffico Giornaliero Medio (AADT equivalent)
  *   Km — kilometric position on the road
  *
- * Matching strategy: ref match (mandatory) + nearest station within 10km.
+ * Matching strategy: ref match (mandatory) + nearest station within 30km.
  * This mirrors enrich-roads-cz.ts which also uses ref + proximity.
  *
  * Source: Ministero delle Infrastrutture e dei Trasporti — TGM Nov 2015
@@ -22,15 +22,13 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-it.ts --enrich-only
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, globSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
-import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_IT_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { flatDist } from './lib/spatial.js'
+import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_IT_NATIONAL_ROADS
 
@@ -46,6 +44,11 @@ const TGM_URL = 'https://dati.mit.gov.it/catalog/dataset/a9b851f0-cb05-4e7e-ae43
 
 // Italy bounding box (lat/lon)
 const IT_BBOX = { minLat: 35.5, maxLat: 47.1, minLon: 6.6, maxLon: 18.6 }
+// Same box as [minLat, minLon, maxLat, maxLon] for iterateCountryHexes — it skips
+// the rest of the planet so the loader doesn't read every roads.arrow on Earth.
+const IT_HEX_BBOX: [number, number, number, number] = [
+  IT_BBOX.minLat, IT_BBOX.minLon, IT_BBOX.maxLat, IT_BBOX.maxLon,
+]
 
 // ── Types ──
 
@@ -112,18 +115,13 @@ async function downloadAndConvert(): Promise<any> {
   return geojson
 }
 
-/** Recursively find files with given extension */
+/** Recursively find files with given extension (case-insensitive). */
 function findFiles(dir: string, ext: string): string[] {
-  const results: string[] = []
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const fullPath = resolve(dir, entry.name)
-    if (entry.isDirectory()) {
-      results.push(...findFiles(fullPath, ext))
-    } else if (entry.name.toLowerCase().endsWith(ext)) {
-      results.push(fullPath)
-    }
-  }
-  return results
+  const pattern = `**/*${ext.startsWith('.') ? ext : `.${ext}`}`
+  return globSync(pattern, { cwd: dir })
+    .filter((rel) => rel.toLowerCase().endsWith(ext.toLowerCase()))
+    .sort()
+    .map((rel) => resolve(dir, rel))
 }
 
 // ── Step 2: Parse GeoJSON into TGM stations grouped by ref ──
@@ -193,21 +191,9 @@ function parseStations(geojson: any): Map<string, TgmStation[]> {
 
 // ── Step 3: Enrich Arrow files ──
 
-function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
-  // Pre-filter hexes to Italy bbox using H3 center (no file I/O)
-  const allHexes = readdirSync(H3R4_DIR).filter(d =>
-    d.length === 15 && d.endsWith('ffffffff'))
-  const hexDirs: string[] = []
-  for (const hex of allHexes) {
-    try {
-      const [lat, lon] = cellToLatLng(hex)
-      if (lat >= IT_BBOX.minLat && lat <= IT_BBOX.maxLat &&
-          lon >= IT_BBOX.minLon && lon <= IT_BBOX.maxLon) {
-        hexDirs.push(hex)
-      }
-    } catch {}
-  }
-  console.log(`  Italian hexes (H3 bbox): ${hexDirs.length} of ${allHexes.length}`)
+async function enrichHexes(stationsByRef: Map<string, TgmStation[]>): Promise<void> {
+  const hexDirs = iterateCountryHexes(H3R4_DIR, IT_HEX_BBOX)
+  console.log(`  Italian hexes (H3 bbox): ${hexDirs.length}`)
 
   let totalRoads = 0
   let totalMatched = 0
@@ -217,120 +203,67 @@ function enrichHexes(stationsByRef: Map<string, TgmStation[]>): void {
 
   for (const hexId of hexDirs) {
     const roadsPath = resolve(H3R4_DIR, hexId, 'roads.arrow')
-    if (!existsSync(roadsPath)) continue
 
-    const buf = readFileSync(roadsPath)
-    const table = tableFromIPC(buf)
-    const n = table.numRows
-    if (n === 0) continue
-
-    const refCol = table.getChild('ref')
-    const startLat = table.getChild('start_lat')!
-    const startLon = table.getChild('start_lon')!
-    const endLat = table.getChild('end_lat')!
-    const endLon = table.getChild('end_lon')!
-    const roadClassCol = table.getChild('road_class')
-
-    // Quick check: does this hex have Italian roads?
-    let hasItalianRoads = false
-    for (let i = 0; i < Math.min(n, 20); i++) {
-      const lat = ((startLat.get(i) as number) + (endLat.get(i) as number)) / 2
-      const lon = ((startLon.get(i) as number) + (endLon.get(i) as number)) / 2
-      if (lat >= IT_BBOX.minLat && lat <= IT_BBOX.maxLat &&
-          lon >= IT_BBOX.minLon && lon <= IT_BBOX.maxLon) {
-        hasItalianRoads = true
-        break
+    // Per-hex guard (kept from the pre-migration loop, behaviour-identical): a hex
+    // whose H3 centroid is inside IT_BBOX can still straddle the border, so only
+    // enrich it if at least one of its first ≤20 segment midpoints is inside the
+    // box. Dropping it (or applying it per-row) would change which rows match —
+    // e.g. cross-border Austrian "A2" segments just north of lat 47.1 sit in
+    // qualified hexes and are processed by the original, but a per-row bbox filter
+    // would reject them. The sample is a read-only no-op pass (always returns null,
+    // so writeRoadAadt leaves the file byte-identical); the real matching pass only
+    // runs once the hex qualifies.
+    let sawItalianRoad = false
+    await writeRoadAadt(roadsPath, (row, i) => {
+      if (i < 20 && !sawItalianRoad &&
+          row.midLat >= IT_BBOX.minLat && row.midLat <= IT_BBOX.maxLat &&
+          row.midLon >= IT_BBOX.minLon && row.midLon <= IT_BBOX.maxLon) {
+        sawItalianRoad = true
       }
-    }
-    if (!hasItalianRoads) continue
+      return null
+    })
+    if (!sawItalianRoad) continue
 
-    totalRoads += n
+    const r = await writeRoadAadt(
+      roadsPath,
+      (row) => {
+        let cls = matchByClass.get(row.roadClass)
+        if (!cls) { cls = { matched: 0, total: 0 }; matchByClass.set(row.roadClass, cls) }
+        cls.total++
 
-    // Read existing enrichment columns
-    const existingAadtLight = table.getChild('aadt_light')
-    const existingAadtMedium = table.getChild('aadt_medium')
-    const existingAadtHeavy = table.getChild('aadt_heavy')
-    const existingAadtMoto = table.getChild('aadt_moto')
-    const existingSourceId = table.getChild('source_id')
+        // Fast-exit before the expensive ref-match when a higher-priority dataset
+        // already owns the row (writeRoadAadt re-checks the gate — this only saves work).
+        if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
 
-    const aadtLight = new Int32Array(n)
-    const aadtMedium = new Int32Array(n)
-    const aadtHeavy = new Int32Array(n)
-    const aadtMoto = new Int32Array(n)
-    const sourceId = new Uint16Array(n)
+        // Ref match is mandatory — no proximity-only fallback.
+        if (!row.ref) return null
+        const normalized = normalizeOsmRef(row.ref)
+        if (!normalized) return null
+        const candidates = stationsByRef.get(normalized)
+        if (!candidates || candidates.length === 0) return null
 
-    // Preserve existing enrichments
-    for (let i = 0; i < n; i++) {
-      aadtLight[i] = existingAadtLight ? (existingAadtLight.get(i) as number ?? 0) : 0
-      aadtMedium[i] = existingAadtMedium ? (existingAadtMedium.get(i) as number ?? 0) : 0
-      aadtHeavy[i] = existingAadtHeavy ? (existingAadtHeavy.get(i) as number ?? 0) : 0
-      aadtMoto[i] = existingAadtMoto ? (existingAadtMoto.get(i) as number ?? 0) : 0
-      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-    }
+        // Pick closest station by distance to road segment midpoint.
+        let best = candidates[0]
+        let bestDist = flatDist(row.midLat, row.midLon, best.lat, best.lon)
+        for (let j = 1; j < candidates.length; j++) {
+          const d = flatDist(row.midLat, row.midLon, candidates[j].lat, candidates[j].lon)
+          if (d < bestDist) { best = candidates[j]; bestDist = d }
+        }
 
-    let hexMatched = 0
+        // Max 30km — Italian TGM stations are sparse (~653 stations for 300K km of road).
+        if (bestDist > 30_000) return null
 
-    for (let i = 0; i < n; i++) {
-      // Skip already enriched
-      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
-
-      const roadClass = roadClassCol ? (roadClassCol.get(i) as number) : 5
-      if (!matchByClass.has(roadClass)) matchByClass.set(roadClass, { matched: 0, total: 0 })
-      matchByClass.get(roadClass)!.total++
-
-      // Ref match is mandatory — no proximity-only fallback
-      const osmRef = refCol ? (refCol.get(i) as string | null) : null
-      if (!osmRef) continue
-
-      const normalized = normalizeOsmRef(osmRef)
-      if (!normalized) continue
-
-      const candidates = stationsByRef.get(normalized)
-      if (!candidates || candidates.length === 0) continue
-
-      // Pick closest station by distance to road segment midpoint
-      const midLat = ((startLat.get(i) as number) + (endLat.get(i) as number)) / 2
-      const midLon = ((startLon.get(i) as number) + (endLon.get(i) as number)) / 2
-
-      let best = candidates[0]
-      let bestDist = flatDist(midLat, midLon, best.lat, best.lon)
-      for (let j = 1; j < candidates.length; j++) {
-        const d = flatDist(midLat, midLon, candidates[j].lat, candidates[j].lon)
-        if (d < bestDist) { best = candidates[j]; bestDist = d }
-      }
-
-      // Max 30km — Italian TGM stations are sparse (~653 stations for 300K km of road)
-      if (bestDist > 30_000) continue
-
-      const split = splitTgm(best.aadt, roadClass)
-      aadtLight[i] = split.light
-      aadtMedium[i] = split.medium
-      aadtHeavy[i] = split.heavy
-      aadtMoto[i] = split.moto
-      sourceId[i] = MY_SOURCE_ID
-      hexMatched++
-      matchByClass.get(roadClass)!.matched++
-    }
-
-    if (hexMatched === 0) continue
-
-    // Copy ALL existing columns by iterating schema
-    const columns: Record<string, any> = {}
-    for (const field of table.schema.fields) {
-      if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
-      columns[field.name] = table.getChild(field.name)!
-    }
-    columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-    columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
-    columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
-    columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
-    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-
-    const newTable = makeTable(columns)
-    // MUST use 'file' format — Rust FileReader requires ARROW1 magic bytes
-    writeFileSync(roadsPath, Buffer.from(tableToIPC(newTable, 'file')))
-    totalMatched += hexMatched
-    hexesUpdated++
+        const split = splitTgm(best.aadt, row.roadClass)
+        return {
+          light: split.light, medium: split.medium,
+          heavy: split.heavy, moto: split.moto, sourceId: MY_SOURCE_ID,
+        }
+      },
+      (row) => { matchByClass.get(row.roadClass)!.matched++ },
+    )
+    totalRoads += r.rows
+    totalMatched += r.matched
+    if (r.updated) hexesUpdated++
 
     // Progress every 10s
     const elapsed = Date.now() - startTime
@@ -457,7 +390,7 @@ async function main() {
   }
 
   console.log(`\n  Enriching roads.arrow files...`)
-  enrichHexes(stationsByRef)
+  await enrichHexes(stationsByRef)
   console.log(`\n=== Done ===`)
 }
 
