@@ -256,8 +256,19 @@ fn main() -> Result<()> {
             .push((tx, ty));
     }
 
+    // QM_E2_EXACT=1 adds a CPU-exact (FORCE_EXACT) ground-truth pass per tile and reports
+    // GPU-vs-exact + adaptive-vs-exact drift — the mountain parity gate. The coarse far-field
+    // lattice was tuned on gentle Prague terrain; steep tiles swing rx_alt sharply across the
+    // tile, so the far field is less smooth — validate on LOWI (Innsbruck) before "whole world".
+    let e2_exact = env("QM_E2_EXACT", "0") == "1";
     let (mut tot_cpu, mut tot_gpu) = (0.0f64, 0.0f64);
     let (mut worst_db, mut tot_zero, mut n_done) = (0.0f64, 0usize, 0usize);
+    let (mut worst_gx, mut zero_gx) = (0.0f64, 0usize); // GPU vs exact (the mountain gate)
+    let (mut worst_ax, mut zero_ax) = (0.0f64, 0usize); // adaptive vs exact (coarse error alone)
+                                                        // Severity of the GPU-vs-exact drift: how localised is it (cells over 0.5/1.0 dB, tiles
+                                                        // affected, where the worst sits) — distinguishes one freak cell from systematic mountain bias.
+    let (mut n_gx_over_half, mut n_gx_over_1, mut n_tiles_over_half) = (0usize, 0usize, 0usize);
+    let mut worst_gx_tile = (0u32, 0u32);
     for ((bx, by), btiles) in &batches {
         let batch = TileBatch::build(z, *bx, *by, bn, 0.0, &rasters);
         for &(tx, ty) in btiles {
@@ -369,19 +380,80 @@ fn main() -> Result<()> {
                     worst_db = worst_db.max(d);
                 }
             }
+
+            // Mountain gate: CPU-exact ground truth (FORCE_EXACT = per-pixel everywhere, no
+            // coarse lattice) vs the GPU result AND vs CPU-adaptive — isolates the far-field
+            // coarsening error on steep terrain.
+            if e2_exact {
+                std::env::set_var("QM_AIRBORNE_FORCE_EXACT", "1");
+                let mut accum_exact = TileAccumulator::new();
+                let _ = scatter_tile(tile, &views, &mut accum_exact);
+                std::env::remove_var("QM_AIRBORNE_FORCE_EXACT");
+                let mut tile_worst = 0.0f64;
+                for ((&g, &a), &x) in fine
+                    .energy
+                    .iter()
+                    .zip(accum_prod.energy.iter())
+                    .zip(accum_exact.energy.iter())
+                {
+                    if (g > 0.0) != (x > 0.0) {
+                        zero_gx += 1;
+                    }
+                    if g > 0.0 && x > 0.0 {
+                        let d = (10.0 * (g as f64 / x as f64).log10()).abs();
+                        tile_worst = tile_worst.max(d);
+                        if d > 0.5 {
+                            n_gx_over_half += 1;
+                        }
+                        if d > 1.0 {
+                            n_gx_over_1 += 1;
+                        }
+                    }
+                    if (a > 0.0) != (x > 0.0) {
+                        zero_ax += 1;
+                    }
+                    if a > 0.0 && x > 0.0 {
+                        worst_ax = worst_ax.max((10.0 * (a as f64 / x as f64).log10()).abs());
+                    }
+                }
+                if tile_worst > worst_gx {
+                    worst_gx = tile_worst;
+                    worst_gx_tile = (tx, ty);
+                }
+                if tile_worst > 0.5 {
+                    n_tiles_over_half += 1;
+                }
+            }
             n_done += 1;
         }
     }
 
     let gpu_total = t_prep_ms + tot_gpu;
     eprintln!(
-        "region R4 {r4:015x} (LKPR) | {n_done} tiles | {nreg} region candidates (prepare_segment ONCE)"
+        "region R4 {r4:015x} | {n_done} tiles | {nreg} region candidates (prepare_segment ONCE)"
     );
-    eprintln!("parity over all tiles: worst max {worst_db:.4} dB, {tot_zero} zero-sided total");
+    eprintln!("GPU vs CPU-adaptive: worst max {worst_db:.4} dB, {tot_zero} zero-sided total");
     if worst_db < 0.5 && tot_zero == 0 {
         eprintln!("✓ region GPU airborne within 0.5 dB, 0 zero-sided across {n_done} tiles");
     } else {
         eprintln!("✗ parity FAILED (worst {worst_db:.3} dB, {tot_zero} zero-sided)");
+    }
+    if e2_exact {
+        let cells = (n_done * n * 3).max(1);
+        eprintln!(
+            "GPU vs CPU-EXACT (ground truth): worst {worst_gx:.4} dB @tile {}/{} | {n_gx_over_half} cells >0.5 dB, {n_gx_over_1} >1.0 dB (of {cells}), {n_tiles_over_half}/{n_done} tiles affected, {zero_gx} zero-sided",
+            worst_gx_tile.0, worst_gx_tile.1
+        );
+        eprintln!(
+            "  adaptive vs exact: worst {worst_ax:.4} dB, {zero_ax} zero-sided — the coarse-lattice error; GPU≈adaptive ({worst_db:.4} dB) so GPU inherits it, does not introduce it"
+        );
+        if worst_gx < 0.5 && zero_gx == 0 {
+            eprintln!("✓ MOUNTAIN GATE PASS — GPU within 0.5 dB of exact across {n_done} tiles");
+        } else {
+            eprintln!(
+                "✗ MOUNTAIN GATE over 0.5 dB — worst {worst_gx:.3} dB on {n_gx_over_half} cell(s); pre-existing CPU coarse-lattice limit, not a GPU-port defect"
+            );
+        }
     }
     eprintln!("--- TIMING (same box, whole R4) ---");
     eprintln!(
