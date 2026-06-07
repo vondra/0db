@@ -17,15 +17,13 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-de.ts --enrich-only
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
-import { SOURCES_BY_KEY } from './lib/sources.js'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import proj4 from 'proj4'
-import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_DE_BAST_AUTOBAHN, SOURCE_ID_DE_BAST_BUNDESSTRASSEN } from './lib/source-ids.generated.js'
 import { haversineM } from './lib/spatial.js'
+import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 // CensusSection.ref starts with 'A' for Autobahn, 'B' for Bundesstraßen — pick per row.
 const AUTOBAHN_DATASET_ID = SOURCE_ID_DE_BAST_AUTOBAHN
@@ -237,18 +235,11 @@ async function enrichArrows(sections: CensusSection[]) {
   }
   console.log(`  Ref index: ${refIndex.size} unique road refs`)
 
-  // Pre-filter: use H3 cell center to find hexes in Germany bbox (no file I/O needed)
-  const allHexes = readdirSync(H3R4_DIR).filter(d => !d.startsWith('.'))
-  const hexDirs: string[] = []
-  for (const hex of allHexes) {
-    try {
-      const [lat, lon] = cellToLatLng(hex)
-      if (lat > 46 && lat < 56 && lon > 4 && lon < 16) {
-        if (existsSync(resolve(H3R4_DIR, hex, 'roads.arrow'))) hexDirs.push(hex)
-      }
-    } catch {}
-  }
-  console.log(`  German hexes: ${hexDirs.length} (of ${allHexes.length} total)\n`)
+  // Germany bbox (+margin); [minLat,minLon,maxLat,maxLon]. iterateCountryHexes skips
+  // the rest of the planet so the loader doesn't read every roads.arrow on Earth.
+  const DE_HEX_BBOX: [number, number, number, number] = [46, 4, 56, 16]
+  const hexDirs = iterateCountryHexes(H3R4_DIR, DE_HEX_BBOX)
+  console.log(`  German hexes: ${hexDirs.length}\n`)
 
   let totalSegments = 0
   let matchedSegments = 0
@@ -262,139 +253,66 @@ async function enrichArrows(sections: CensusSection[]) {
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
     const hex = hexDirs[hi]
-    const arrowPath = resolve(H3R4_DIR, hex, 'roads.arrow')
+    const r = await writeRoadAadt(
+      resolve(H3R4_DIR, hex, 'roads.arrow'),
+      (row) => {
+        const className = classNames[Math.min(row.roadClass, 6)]
+        matchByClass[className].total++
 
-    const buf = readFileSync(arrowPath)
-    const table = tableFromIPC(buf)
-    const numRows = table.numRows
+        // Fast-exit if a higher-priority dataset owns the row (both BASt ids share
+        // priority 80, so gating with MY_SOURCE_ID is representative; writeRoadAadt
+        // re-checks the gate against the picked id).
+        if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) {
+          if (row.existingSourceId !== 0) preservedSegments++
+          return null
+        }
 
-    // Read existing columns
-    const osmIds = table.getChild('osm_id')
-    const refs = table.getChild('ref')
-    const startLats = table.getChild('start_lat')
-    const startLons = table.getChild('start_lon')
-    const endLats = table.getChild('end_lat')
-    const endLons = table.getChild('end_lon')
-    const roadClasses = table.getChild('road_class')
-    const existingLight = table.getChild('aadt_light')
-    const existingMedium = table.getChild('aadt_medium')
-    const existingHeavy = table.getChild('aadt_heavy')
-    const existingMoto = table.getChild('aadt_moto')
-    const existingSourceId = table.getChild('source_id')
+        const rc = row.roadClass
+        const normRef = (row.ref?.toString().trim() || '').replace(/\s+/g, '') // "A 1" → "A1"
 
-    if (!osmIds || !startLats || !startLons) continue
+        let bestSection: CensusSection | null = null
+        let bestDist = Infinity
 
-    // Prepare enrichment arrays
-    const aadtLight = new Int32Array(numRows)
-    const aadtMedium = new Int32Array(numRows)
-    const aadtHeavy = new Int32Array(numRows)
-    const aadtMoto = new Int32Array(numRows)
-    const sourceId = new Uint16Array(numRows)
-
-    // Seed output columns from existing Arrow state; priority rule decides per row.
-    for (let i = 0; i < numRows; i++) {
-      aadtLight[i] = (existingLight?.get(i) as number) ?? 0
-      aadtMedium[i] = (existingMedium?.get(i) as number) ?? 0
-      aadtHeavy[i] = (existingHeavy?.get(i) as number) ?? 0
-      aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-    }
-
-    let hexMatched = 0
-
-    for (let i = 0; i < numRows; i++) {
-      const rc = roadClasses?.get(i) ?? 7
-      const className = classNames[Math.min(rc, 6)]
-      matchByClass[className].total++
-      totalSegments++
-
-      // Priority gate: if a higher-priority dataset already owns this row, leave it.
-      // Both BASt ids have priority 80, so gating with MY_SOURCE_ID is representative.
-      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) {
-        if (sourceId[i] !== 0) preservedSegments++
-        continue
-      }
-
-      // Match by ref + proximity
-      const midLat = ((startLats.get(i) ?? 0) + (endLats?.get(i) ?? startLats.get(i) ?? 0)) / 2
-      const midLon = ((startLons.get(i) ?? 0) + (endLons?.get(i) ?? startLons.get(i) ?? 0)) / 2
-
-      const osmRef = refs?.get(i)?.toString().trim() || ''
-      // Normalize OSM ref: "A 1" → "A1", "B 38" → "B38"
-      const normRef = osmRef.replace(/\s+/g, '')
-
-      let bestSection: CensusSection | null = null
-      let bestDist = Infinity
-
-      // Strategy 1: Match by ref — only consider sections with the same road ref
-      if (normRef && refIndex.has(normRef)) {
-        const candidates = refIndex.get(normRef)!
-        for (const c of candidates) {
-          const dist = haversineM(midLat, midLon, c.lat, c.lon)
-          if (dist < bestDist) {
-            bestDist = dist
-            bestSection = c
+        // Strategy 1: match by ref.
+        if (normRef && refIndex.has(normRef)) {
+          for (const c of refIndex.get(normRef)!) {
+            const dist = haversineM(row.midLat, row.midLon, c.lat, c.lon)
+            if (dist < bestDist) { bestDist = dist; bestSection = c }
           }
         }
-      }
 
-      // Strategy 2: For motorways/trunk without ref match, try proximity to any Autobahn/Bundesstraße
-      // (conservative: only match within 2km and only if road class matches)
-      if (!bestSection && (rc === 0 || rc === 1) && midLat > 47 && midLat < 55.5) {
-        const nearby = findNearby(grid, midLat, midLon, 2000)
-        for (const c of nearby) {
-          // Only match Autobahn to A-roads, trunk to B-roads
-          const isAutobahn = c.ref.startsWith('A')
-          if (rc === 0 && !isAutobahn) continue
-          if (rc === 1 && isAutobahn) continue
-
-          const dist = haversineM(midLat, midLon, c.lat, c.lon)
-          if (dist < bestDist && dist < 2000) {
-            bestDist = dist
-            bestSection = c
+        // Strategy 2: motorway/trunk without ref match → nearest Autobahn/Bundesstraße ≤2km
+        // (Autobahn only to A-roads, trunk only to B-roads).
+        if (!bestSection && (rc === 0 || rc === 1) && row.midLat > 47 && row.midLat < 55.5) {
+          for (const c of findNearby(grid, row.midLat, row.midLon, 2000)) {
+            const isAutobahn = c.ref.startsWith('A')
+            if (rc === 0 && !isAutobahn) continue
+            if (rc === 1 && isAutobahn) continue
+            const dist = haversineM(row.midLat, row.midLon, c.lat, c.lon)
+            if (dist < bestDist && dist < 2000) { bestDist = dist; bestSection = c }
           }
         }
-      }
 
-      // Apply match (within reasonable distance)
-      const maxMatchDist = normRef ? 15000 : 2000  // 15km for ref-matched, 2km for proximity-only
-      if (bestSection && bestDist < maxMatchDist) {
-        // Whole-row atomic write — payload + dataset_id together.
-        // Pick dataset per row based on ref prefix: A* = Autobahn, B* = Bundesstraßen.
+        const maxMatchDist = normRef ? 15000 : 2000 // 15km ref-matched, 2km proximity-only
+        if (!bestSection || bestDist >= maxMatchDist) return null
+        // Pick the dataset per row: A* = Autobahn, B* = Bundesstraßen.
         const pickedId = bestSection.ref.startsWith('A') ? AUTOBAHN_DATASET_ID : BUNDESSTR_DATASET_ID
-        aadtLight[i] = bestSection.aadt_light
-        aadtMedium[i] = bestSection.aadt_medium
-        aadtHeavy[i] = bestSection.aadt_heavy
-        aadtMoto[i] = bestSection.aadt_moto
-        sourceId[i] = pickedId
-        hexMatched++
+        return {
+          light: bestSection.aadt_light, medium: bestSection.aadt_medium,
+          heavy: bestSection.aadt_heavy, moto: bestSection.aadt_moto, sourceId: pickedId,
+        }
+      },
+      (row) => {
+        matchByClass[classNames[Math.min(row.roadClass, 6)]].matched++
         matchedSegments++
-        matchByClass[className].matched++
-      }
-    }
+      },
+    )
+    totalSegments += r.rows
+    if (r.updated) hexesUpdated++
 
-    if (hexMatched > 0) {
-      // Rebuild table with enrichment columns
-      const columns: Record<string, any> = {}
-      for (const field of table.schema.fields) {
-        if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
-        columns[field.name] = table.getChild(field.name)!
-      }
-      columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-      columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
-      columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
-      columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
-      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-
-      const enrichedTable = makeTable(columns)
-      const outBuf = tableToIPC(enrichedTable, 'file')
-      writeFileSync(arrowPath, outBuf)
-      hexesUpdated++
-    }
-
-    // Progress every hex (German hexes are large)
+    // Progress every 10 hexes (German hexes are large).
     if (hi % 10 === 0) {
-      process.stdout.write(`\r  [${Math.round((Date.now() - startTime) / 1000)}s] ${hi+1}/${hexDirs.length} hexes, ${hexesUpdated} updated, ${matchedSegments} matched`)
+      process.stdout.write(`\r  [${Math.round((Date.now() - startTime) / 1000)}s] ${hi + 1}/${hexDirs.length} hexes, ${hexesUpdated} updated, ${matchedSegments} matched`)
     }
   }
 
