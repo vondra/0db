@@ -20,8 +20,15 @@ import shp from 'shpjs'
 import { SOURCE_ID_PL_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_PL_NATIONAL_ROADS
+
+// Poland's bbox blankets ~all of Czechia, and a no-geometry provincial (DW) road
+// is accepted by ref alone — so without a country gate a Czech "I/150" was matched
+// to Polish "DW150" and given Polish AADT (150k segments, Stage-3 audit). Only
+// roads whose midpoint is on Polish soil get PL data.
+const inPoland = makeCountryGate('PL')
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -387,6 +394,10 @@ async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
         // Match within 30km for national, 50km for provincial
         const maxDist = best?.isProvincial ? 50_000 : 30_000
         if (best && (Number.isNaN(best.midLat) || bestDist < maxDist)) {
+          // The provincial branch above accepts a DW match by ref ALONE (no geometry,
+          // any distance); clamp every match to Polish soil so a Czech "150" can't
+          // keep "DW150" data.
+          if (!inPoland(row.midLat, row.midLon)) return null
           return {
             light: best.aadt_light, medium: best.aadt_medium,
             heavy: best.aadt_heavy, moto: best.aadt_moto, sourceId: MY_SOURCE_ID,
