@@ -81,7 +81,14 @@ async function downloadAllPages(): Promise<void> {
     const offset = p * PAGE_SIZE
     const path = resolve(CACHE_DIR, `hpms-page-${offset}.json`)
     if (!forceDownload && existsSync(path) && statSync(path).size > 1000) continue
-    if (enrichOnly) throw new Error(`--enrich-only but hpms-page-${offset}.json not cached`)
+    // --enrich-only is the OFFLINE mode: trust any existing cached page and only
+    // abort on a genuinely MISSING one. The last page is a valid but <1 KB empty
+    // trailing page (235,257 records fill 118 of the 119 paginated requests), and
+    // must not be re-downloaded (network) or mistaken for "not cached".
+    if (enrichOnly) {
+      if (existsSync(path)) continue
+      throw new Error(`--enrich-only but hpms-page-${offset}.json missing`)
+    }
     console.log(`  Downloading hpms-page-${offset}...`)
     const url = `${HPMS_BASE}/query?where=AADT%3E0&outFields=AADT,F_SYSTEM,THROUGH_LANES,NHS,FACILITY_TYPE&f=geojson&outSR=4326&resultOffset=${offset}&resultRecordCount=${PAGE_SIZE}&orderByFields=OBJECTID`
     const res = await fetch(url, { signal: AbortSignal.timeout(120_000) })
