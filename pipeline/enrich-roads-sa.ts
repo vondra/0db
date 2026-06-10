@@ -57,6 +57,12 @@ import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_SA_NATIONAL_ROADS
 
+// SA traffic sources (MoT national roads / Riyadh PMS / SAU Atlas) survey the major road network
+// (OSM motorway(0)..tertiary(4) + _link variants), not residential(5)/service(7)/etc. — so writeRoadAadt
+// is gated to this set, stopping a quiet street inheriting a nearby road's AADT via the broad spatial
+// fallbacks (Riyadh PMS 200 m / SAU Atlas — radius tightened 500→250 m below).
+const SA_COVERAGE = new Set([0, 1, 2, 3, 4, 10, 11, 12])
+
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/sa`)
@@ -393,9 +399,11 @@ async function main() {
           }
         }
 
-        // Tier 3: SAU Atlas spatial fallback
+        // Tier 3: SAU Atlas spatial fallback (250 m — tightened from 500 m: a half-km radius let a
+        // segment inherit an unrelated nearby road's class/AADT; the coverage gate already excludes
+        // residential, this curbs the in-coverage over-reach).
         if (!matchedBy) {
-          const near = nearestInGrid(midLat, midLon, atlasGrid, 500)
+          const near = nearestInGrid(midLat, midLon, atlasGrid, 250)
           if (near) {
             aadt = sauAtlasAadt(near.feat.props.RTT_DESCRI || '')
             matchedBy = 'atlas'
@@ -412,6 +420,8 @@ async function main() {
           heavy: split.heavy, moto: split.moto, sourceId: MY_SOURCE_ID,
         }
       },
+      undefined,
+      SA_COVERAGE,
     )
     totalRoads += r.rows
     if (r.updated) hexesUpdated++
