@@ -39,6 +39,20 @@ const MY_SOURCE_ID = SOURCE_ID_US_FHWA_HPMS
 // interstate's AADT (the Knoxville "Papermill Pointe Way" = 211,587 bug).
 const HPMS_COVERAGE = new Set([0, 1, 2, 3, 4, 10, 11, 12])
 
+// The coverage gate stops MINOR (residential/service) OSM roads matching HPMS,
+// but an in-coverage secondary/tertiary street still inherits a nearby INTERSTATE
+// segment's AADT just because it's within 200 m — the "Papermill Drive" = 184k
+// cross-class proximity mismatch (~13% of US secondary/tertiary roads). So the
+// match also requires the matched HPMS segment's functional class to be
+// compatible with the OSM road's. F_SYSTEM 1 Interstate→rank 0, 2 Freeway→1,
+// 3 Principal Arterial→2, 4 Minor Arterial→3, 5 Major Collector→4.
+const FSYSTEM_RANK: Record<number, number> = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4 }
+// OSM road_class on the same 0..4 major-road scale (links collapse to parent).
+const osmRank = (c: number): number => (c <= 4 ? c : c === 10 ? 0 : c === 11 ? 1 : c === 12 ? 2 : 5)
+// Reject when |F_SYSTEM rank − OSM rank| exceeds this — 1 tolerates the usual
+// OSM↔HPMS off-by-one tagging variance while still blocking interstate→secondary.
+const CLASS_TOLERANCE = 1
+
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/us`)
@@ -201,6 +215,7 @@ async function enrichArrows(sites: UsRoadSegment[]): Promise<void> {
 
         const gy = Math.floor(midLat * 100)
         const gx = Math.floor(midLon * 100)
+        const rowRank = osmRank(row.roadClass)
         let best: UsRoadSegment | null = null
         let bestDist = 200
 
@@ -209,6 +224,8 @@ async function enrichArrows(sites: UsRoadSegment[]): Promise<void> {
             const cell = grid.get(`${gy + dy}_${gx + dx}`)
             if (!cell) continue
             for (const s of cell) {
+              // Class-compatible HPMS segments only — a secondary must not match an interstate.
+              if (Math.abs(FSYSTEM_RANK[s.fSystem] - rowRank) > CLASS_TOLERANCE) continue
               const d = haversineM(midLat, midLon, s.midLat, s.midLon)
               if (d < bestDist) { bestDist = d; best = s }
             }
