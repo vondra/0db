@@ -4,6 +4,8 @@ Engineering formulas inspired by CNOSSOS-EU 2021/1226, ISO 9613-2:2024, and ECAC
 
 **Purpose**: Global noise atlas for public information ("where do I hear noise"). Not regulatory END mapping.
 
+*Last verified against code: 2026-06-10 (whole-file audit of `noise-compute`, `source-reader`, `aircraft-extract`, `raster-reader`).*
+
 ## Constants
 
 ### Receiver
@@ -58,6 +60,8 @@ h_s = 0.05 m
 
 Note: Category 4a (mopeds) and 5 (open category) not implemented. Known simplification.
 
+Emission speed is clamped to **[20, 130] km/h** before the rolling/propulsion formulas (`road.rs`); cat3 additionally capped at 80 km/h per the table above.
+
 ### Rolling noise per band (CNOSSOS-EU §2.4.6)
 ```
 L_WR,i = A_R,i + B_R,i × log₁₀(v / v_ref)
@@ -105,6 +109,8 @@ Fixed per-class: 65/20/15 % for motorway-class roads, 70/18/12 % otherwise. Appl
 
 `access_factor` reductions are bypassed only when `Provenance::is_measured()` (NationalMeasured / ContinentalMeasured / GlobalMeasured); Heuristic / Baseline rows still get access reductions.
 
+A row counts as enriched only when `provenance.has_data() && aadt_light > 0` (`normalize.rs::has_enriched_traffic`) — an enriched row with zero light but nonzero heavy AADT falls back to full class defaults (known edge case). Un-enriched rows with ≥ 3 lanes get a `lane_ratio` default multiplier (ŘSD-calibrated bucket medians, `normalize.rs::lane_ratio`): motorway oneway 3 lanes ×1.42; primary 3/4 lanes ×1.37/×2.13; secondary 3 lanes ×1.83; all other buckets ×1.0. Measured rows bypass it.
+
 ---
 
 ## 2. Railway Emission (CNOSSOS-EU Annex IV / RMR)
@@ -145,6 +151,21 @@ High-speed passenger (`v > 200 km/h`) is served by the passenger rolling spectru
 Fixed 65/20/15 % applied identically to passenger and freight — no asymmetric split for night-biased freight where it would be realistic.
 
 Post-adjustments applied even on measured counts: `service > 0` → counts × **0.02**; `parallel_divisor > 1` → counts divided by that factor.
+
+### Defaults when un-enriched (`railway.rs::default_traffic` / `default_speed`)
+
+| `rail_type` / usage | trains/day (pax + freight) | default speed |
+|---|---|---|
+| Rail, main line | 80 + 20 | 80 km/h |
+| Rail, branch | 30 + 5 | 80 km/h |
+| Rail, industrial siding | 0 + 15 | 80 km/h |
+| Rail, unknown usage | 40 + 10 | 80 km/h |
+| Tram | 120 + 0 | 40 km/h |
+| LightRail | 80 + 0 | 60 km/h |
+| NarrowGauge | 10 + 0 | 40 km/h |
+| Funicular | 40 + 0 | 20 km/h |
+
+`maxspeed` tag wins when present; missing `maxspeed` with `highspeed=yes` → 300 km/h (`normalize.rs::normalize_rail`).
 
 ---
 
@@ -192,8 +213,8 @@ Ground and barrier attenuation are **not** added together.
 ### 3.4 Finite-line correction (line sources only)
 Uses **HORIZONTAL** distance and angle subtended:
 ```
-d1 = horizontal distance from receiver to nearest endpoint of segment
-d2 = horizontal distance from receiver to far endpoint
+d1, d2 = along-segment horizontal offsets from the foot of the receiver's
+         perpendicular to the two segment endpoints
 d_perp = perpendicular horizontal distance from receiver to segment line
 
 θ = atan(d1/d_perp) + atan(d2/d_perp)    [radians]
@@ -201,44 +222,39 @@ FLC = 10 × log₁₀(θ / π)                  [dB, always ≤ 0]
 ```
 Note: Uses HORIZONTAL distances, not 3D slant. This is a fix from V33/V44 which incorrectly used 3D.
 
-### 3.5 Terrain diffraction (ISO 9613-2 §7.3/7.4 + CNOSSOS-EU §2.5.6(c))
+### 3.5 Terrain diffraction (ISO 9613-2 §7.3 + CNOSSOS-EU §2.5.6(c), single-edge)
 ```
-δ = path_via_edges - direct_path    [m]
+δ = path_via_edge - direct_path    [m]
 
 Single edge (§7.3):
 A_bar,i = min(20, 10 × log₁₀(3 + 20 × δ × f[i] / 340))
 
-Double edge (§7.4 / CNOSSOS §2.5.23):
-C₃ = (1 + (5λ/e)²) / (1/3 + (5λ/e)²)    where e = edge-to-edge distance, λ = 340/f[i]
-A_bar,i = min(25, 10 × log₁₀(3 + C₃ × 20 × δ × f[i] / 340))
-
-Triple edge (project simplification — ISO/CNOSSOS silent for N=3):
-δ = |S→E1| + |E1→E2| + |E2→E3| + |E3→R| − |S→R|
-e = |E1 → E3|    first-to-last edge path distance (per CNOSSOS wording for multiple diffraction)
-A_bar,i = min(25, 10 × log₁₀(3 + C₃ × 20 × δ × f[i] / 340))
-
-C'' = 1 floor (CNOSSOS §2.5.23): C₃ is clamped to 1 when e ≤ 0.3 m.
-
 Rayleigh gate (CNOSSOS-EU §2.5.6(c)):
 if δ ≤ λ/4 − δ*  then  A_bar,i = 0
 ```
-C₃ (identical to CNOSSOS `C"`) accounts for thick barriers: 1.0 when edges are far apart, up to 3.0 when close.
 
-**Edge selection (N ∈ {1, 2, 3}):** upper convex hull of the sampled (t·dist, elevation) profile, filtered to samples above the source→receiver line-of-sight. If more than 3 hull vertices remain, keep the top-3 by LOS excess and rebuild the hull over `{endpoints ∪ top-3}` to guarantee a geometrically valid S→E1→…→R path (no straight-line segment dips below the dropped vertex's terrain).
+**Edge selection (N = 1, single-edge model):** among profile samples above the
+source→receiver line-of-sight, the edge with the **largest path-length
+difference δ** wins (`propagation/horizon.rs::max_delta_idx`). Max-δ ranking
+deliberately replaced LOS-excess ranking, which systematically under-weighted
+barriers close to either endpoint. The multi-edge upper-convex-hull cascade
+(double/triple Fresnel, C₃ thick-barrier term, 25 dB cap) was **removed
+2026-06-01** in the single-edge δ rewrite (commits `efba2c1b`…`f2b526ce`); the
+double-edge band math survives in `diffraction.rs::maekawa_bands` but is
+unreachable. The GPU kernel (`noise-gpu/kernels/scatter.cu`) mirrors the same
+single-edge selection. The attenuation cap is therefore **20 dB in all cases**.
 
-**3-edge cap is a project simplification.** ISO 9613-2 §7.4 defines cascade Fresnel for N≤2; CNOSSOS-EU §2.5.6 describes the shape of the multiple-diffraction correction without explicitly capping the edge count. Our N=3 implementation uses the first-to-last path distance as `e` and the double-edge 25 dB cap. N=3 covers practically all real terrain profiles within ~10 km; beyond that the Rayleigh gate typically dominates and the correction saturates.
-
-δ* is the path-length difference computed using the same dominant edge D but with mirror source S\* and mirror receiver R\* reflected **vertically** across their respective mean ground planes. Each mean ground plane is an unweighted least-squares line fit over the DEM profile samples on that side (including D itself). D is chosen as the edge with the larger excess above the direct line of sight (for N≥2 this is the edge with the largest LOS excess of all).
+δ* is the path-length difference computed using the same dominant edge D but with mirror source S\* and mirror receiver R\* reflected **vertically** across their respective mean ground planes. Each mean ground plane is an unweighted least-squares line fit over the DEM profile samples on that side (including D itself). D is the single max-δ edge selected above.
 
 **δ\* fits on bare-earth elevation only.** When the combined-screening entrypoint (`combined` terrain+building+barrier top profile) invokes diffraction, δ* continues to fit on `elevation_m` so the mean-ground planes represent the *ground reflection* surface that CNOSSOS §2.5.6(c) physically defines. Feeding building heights to the OLS fit would drag the mean-ground plane up to rooftops and silently break ground-reflection physics.
 
 Simplifications vs. strict CNOSSOS:
+- **Single edge only (N = 1)** — multiple diffraction (ISO §7.4 / CNOSSOS §2.5.23) removed 2026-06-01, see above.
 - We use **vertical** reflection across the fitted plane (standard acoustic practice in NMPB / NoiseModelling), not perpendicular-to-plane.
-- The **−λ/20** near-miss clause is not implemented — `compute_path_difference` early-returns zero when no sampled elevation sits above the line-of-sight, collapsing all non-blocked paths to zero before diffraction is considered.
+- The **−λ/20** near-miss clause is not implemented — the path-difference scan early-returns zero when no sampled elevation sits above the line-of-sight, collapsing all non-blocked paths to zero before diffraction is considered.
 - `Δground` additive combination (CNOSSOS §2.5.31) is not implemented — we still combine ground and barrier via `max(A_ground, A_terrain + A_screen)` in §3.3.
 - Favourable-conditions curved rays (§2.5.24) are not implemented — see §3.9.
 - Lateral diffraction around vertical edges (§2.5.6(i)) is not implemented.
-- **Multi-edge capped at N=3** (project simplification, see above).
 
 See §3.5a for the shared path-sampling scheme.
 
@@ -253,7 +269,7 @@ Diffraction is computed once over a composite top profile (`elevation + max(buil
 ### 3.6 Building screening (ISO 9613-2, per-band)
 Samples Overture Maps 30m building raster at the same bilateral cadence (§3.5a). Explicit `noise_barrier` geometries compete with raster buildings. For industrial sources, screening samples inside the source's own footprint are skipped via an exclusion radius.
 
-**Screening is not computed standalone.** Buildings and barriers are merged into the §3.5b composite top profile (`elevation + max(building_h, barrier_h)`) and diffraction is computed once by the §3.5 multi-edge algorithm (upper convex hull, up to 3 edges, CNOSSOS C₃ / Rayleigh gate). The per-band screening cap inherits from §3.5 — 20 dB when the composite yields a single edge, 25 dB for 2–3 edges — not a dedicated building-only cap.
+**Screening is not computed standalone.** Buildings and barriers are merged into the §3.5b composite top profile (`elevation + max(building_h, barrier_h)`) and diffraction is computed once by the §3.5 single-edge algorithm (max-δ edge, Rayleigh gate). The per-band screening cap inherits from §3.5 — 20 dB — not a dedicated building-only cap.
 
 The popup-facing `screening_attenuation` value returned by the engine is the increment of the combined result over bare-earth terrain diffraction, i.e. `atten_combined − atten_terrain` (clamped ≥ 0). With that definition `A_terrain + A_screen ≡ A_combined`, which is what §3.3 feeds into the ground/barrier combination. See §3.5b for the motivating double-count problem the merge fixes.
 
@@ -268,11 +284,13 @@ the constants block at the top of this SPEC. Rationale: binary WorldCover forest
 treats any canopy ≥ 10 % as dense foliage; scalar compensates for over-application.
 
 ### 3.8 Urban reflection (ISO 9613-2 §7.5)
-Per-RECEIVER boost based on building enclosure:
+Per-RECEIVER boost based on building enclosure (`raster-reader::building_enclosure`):
+3×3 probe at 75 m metric spacing around the receiver; buildings taller than 5 m count.
 ```
-A_refl = clamp(enclosure_db, 0, 5)    [dB]
+density > 0.5 → A_refl = +3.0 dB;  density > 0.2 → +1.5 dB;  else 0 dB
 ```
-Current implementation estimates `enclosure_db` from local building density in a 3×3 raster sample around the receiver, then applies it ONCE per receiver, not per source-receiver path.
+Applied ONCE per receiver, not per source-receiver path. Maximum is 3 dB — the
+`clamp(enclosure_db, 0, 5)` helper (`reflection.rs`) is dead code.
 
 ### 3.9 Favourable meteorological conditions (CNOSSOS-EU §2.5.21)
 ❌ NOT IMPLEMENTED.
@@ -283,15 +301,16 @@ Current implementation estimates `enclosure_db` from local building density in a
 Applied in pipeline and popup:
 - **Bridge**: G=0 (hard surface, overrides IMD raster)
 - **Tunnel**: segment skipped entirely (sound contained inside)
+- **Access codes 2 (no) / 4 (legacy motor_vehicle=no)**: segment dropped entirely, like tunnels
 - **Oneway road**: AADT × 0.5 (approximation: half the traffic of two-way)
-- **Junction**: speed capped at 30 km/h (roundabouts)
+- **Junction**: speed capped at 30 km/h (junction code 1 = roundabout; mini-roundabouts (code 2) currently NOT capped — known gap)
 - **Service railway** (yard/siding/spur): counts × 0.02
 - **Parallel railway ways**: counts divided by `parallel_divisor`
 - **Industrial exclusion radius**: R=√(area/π) — buildings within R of source point are not counted as screening (prevents self-screening from source's own footprint)
 
 Road `access` and `road_class` u8 enums (codes, OSM mappings, AADT-reduction factors): see `engine/osm-extract/src/classify.rs` and the consumer in `engine/noise-compute/src/normalize.rs::access_factor`. The reduction is bypassed only when `Provenance::is_measured()` is true (NationalMeasured / ContinentalMeasured / GlobalMeasured); `Heuristic`, `Baseline` and `None` rows still get access reductions.
 
-Link rationale (codes 10-12, `*_link` slip roads / ramps carry 15% of mainline AADT — HCM 7 / FEHRL / CERTU lower-range, validated against Pasito Blanco GC-1 popup): see `defaults.rs` ramp rows. `secondary_link` / `tertiary_link` stay on mainline codes (3/4) because their flow is closer to regular urban streets. For `highway=track` without a `surface` tag, the extractor defaults to `unpaved` (+3 dB rolling correction).
+Link rationale (codes 10-12, `*_link` slip roads / ramps carry 15% of mainline AADT — HCM 7 / FEHRL / CERTU lower-range, validated against Pasito Blanco GC-1 popup): see `defaults.rs` ramp rows. `secondary_link` / `tertiary_link` stay on mainline codes (3/4) because their flow is closer to regular urban streets. For `highway=track` without a `surface` tag, the extractor defaults to `unpaved` (+2 dB rolling correction — §1 surface table).
 
 ### 3.11 Total received level per band
 ```
@@ -304,6 +323,29 @@ where A_ground_or_barrier,i = max(A_ground,i, A_terrain,i + A_screen,i) if barri
 ```
 L_A = 10 × log₁₀(Σ_i 10^((L_received,i + A[i]) / 10))
 ```
+
+### 3.13 Audibility cutoffs (output-affecting)
+
+Per-source maximum propagation radii (`constants.rs`) — beyond these a source
+is not evaluated at all:
+
+| Source | Max radius |
+|---|---|
+| Road (by class) | motorway 10 km · trunk 7 km · primary 5 km · secondary 3 km · unclassified 2 km · tertiary 1.6 km · motorway_link 1.2 km · trunk_link 900 m · residential 800 m · primary_link 600 m · service 500 m · living_street 400 m · track 300 m |
+| Railway (all types) | 7 km |
+| Industrial | 4 km |
+| Building | fade radius from Lw, capped 2 km |
+| Aircraft ground ops | runway 5 km · taxi 3 km · apron 1.5 km |
+| Aircraft airborne/cruise | 16 km horizontal envelope + per-class slant reach (§5.1) |
+
+Additionally a **free-field early-exit**
+(`geo.rs::below_free_field_threshold[_line]`): when emission minus a
+conservative divergence + atmospheric bound is already below the caller's
+threshold, the full path computation is skipped (provably no audible loss —
+path effects only attenuate further). Both gates trade the strict "compute at
+all distances" principle for speed; radii are sized so the dropped
+contribution sits well below audibility for that class's maximum plausible
+emission.
 
 ---
 
@@ -319,9 +361,10 @@ Penalty: +5 dB evening, +10 dB night.
 
 ## 5. Aircraft
 
-Current public `aircraft` layer is a HYBRID of:
-- **Airborne overflights**: Doc 29-inspired empirical NPD model
-- **Airport ground ops**: runway / taxi / apron line sources propagated through Section 3 ISO 9613-2 path effects
+Aircraft splits into THREE public layers (separate tile trees + popup sub-tabs):
+- **Airborne overflights** (`aircraft-airborne`): Doc 29-inspired empirical NPD model, terminal-area traffic
+- **Airport ground ops** (`aircraft-ground`): runway / taxi / apron line sources propagated through Section 3 ISO 9613-2 path effects
+- **Cruise** (`aircraft-cruise`): FL100+ overflight, Doc 29 NPD over per-R7 hex buckets
 
 ### 5.1 Airborne aircraft (Doc 29 4th Edition)
 
@@ -332,7 +375,7 @@ SEPARATE from ISO 9613-2. Airborne Doc 29 is empirical NPD-based, not path-traci
 SEL_seg = L_E(d_p) + ΔV + ΔI(φ) - Λ(β, l) + ΔF
 ```
 
-- **L_E**: NPD lookup at slant distance d_p (feet). ~124 per-typecode profiles auto-generated from EASA ANP v2.3, bucketed at 14 aircraft noise classes for aggregation (9 Wing + 2 Fuselage + 2 Prop + 1 Helicopter — `NUM_CLASSES` in `profiles_generated.rs`). See `scripts/build-aircraft-profiles.py`.
+- **L_E**: NPD lookup at slant distance d_p (feet). 124 per-typecode profiles auto-generated from EASA ANP v2.3, bucketed at 14 aircraft noise classes (9 Wing + 2 Fuselage + 2 Prop + 1 Helicopter — `NUM_CLASSES` in `profiles_generated.rs`). The kernel evaluates the **class anchor curve**, not the per-typecode curve (mean within-class spread ~0.8 dB); unknown typecodes route through a similarity table before falling back to `FALLBACK_PROFILE_IDX` (B738-equivalent). See `scripts/build-aircraft-profiles.py`.
 - **ΔV**: Speed/duration correction (Eq. 4-14)
 - **ΔI**: Engine installation angle correction (Eq. 4-15)
 - **Λ**: Lateral attenuation (Eq. 4-18/19) — Wing-mounted jets only per Doc 29 §4.5.4 / FAA AEDT TM §6.2.4. Fuselage-mounted, propeller, and helicopter installations get Λ = 0 (gated by `installation` parameter in `fast_lateral_attenuation` / `lateral_attenuation`).
@@ -341,6 +384,11 @@ SEL_seg = L_E(d_p) + ΔV + ΔI(φ) - Λ(β, l) + ΔF
 ### Geometry (§4.4.1)
 CPA (Closest Point of Approach) computed on segment EXTENSION (unclamped).
 d_p = slant distance at CPA. β = elevation angle.
+
+Energy uses the unclamped CPA everywhere (ΔF needs it). **Display** outputs
+(popup Lmax, distance, altitude) use `clamped_display_cpa` — CPA clamped to
+the observed endpoints — so curving departures don't show phantom near-passes
+(2026-05-27 popup-honesty sweep). Lmax NPD lookup uses the clamped distance.
 
 ### Input and preprocessing
 
@@ -356,8 +404,13 @@ Non-obvious thresholds, periods, and routing rules (constants live in
 - **Period**: segment-midpoint → IANA timezone (tzf-rs + chrono-tz,
   DST-aware) → END 2002/49/EC boundaries (day 07-19, eve 19-23,
   night 23-07).
-- **Airport-ground candidacy**: `on_ground = true` OR both endpoints
-  within 60 m AGL.
+- **Airport-ground candidacy** (Stage 1 `ground_inference.rs`, layered):
+  the raw transponder ground bit is trusted only when AGL ≤ 80 ft (≈ 24.4 m)
+  AND speed ≤ 140 kt AND |baro rate| ≤ 2000 fpm; without the bit, a surface
+  signature (AGL ≤ 30 ft ≈ 9.1 m, speed ≤ 90 kt, |baro rate| ≤ 1200 fpm) can
+  mark ground; strong-airborne neighbours (AGL ≥ 165 ft OR speed ≥ 130 kt)
+  veto edge points within a 32-point window. (The old "60 m AGL both
+  endpoints" predicate survives in `segment_filters.rs` as dead code.)
 - **Stale-ground filter**: `on_ground` or `≤ 15 m AGL` with no airport
   context → dropped.
 - **Derived-speed plausibility**: implied `length_m / dt_s >
@@ -372,20 +425,29 @@ Non-obvious thresholds, periods, and routing rules (constants live in
   ≥ `MIN_TURNAROUND_S` (5 min); airborne dropouts of any duration
   preserve `flight_id`.
 
-### Data-quality gating (`is_valid_airborne_segment`)
-Shared single-source-of-truth filter used by both pipeline and popup. Applied
-to airborne segments (`on_ground = false`, `ground_context = NONE`). Ground and
-airport-context segments bypass this filter (handled by the ground-ops submodel).
+### Data-quality gating (post-K3 split)
 
-Universal impossibility checks (all airborne profiles):
+Since the v16/K3 refactor the gates are split by stage; the historical
+`is_valid_airborne_segment` bundle is **no longer applied to airborne
+segments** in either popup or heatmap (the function survives in
+`segment_filters.rs` and still serves cruise checks).
+
+Enforced at Stage 1 (extract) for airborne pairs:
+- **endpoint AGL**: `start_agl < -30 m` or `end_agl < -30 m` rejected
+  (DEM-relative, so subsea-level airports like Schiphol/Atyrau pass)
+- **impossible jet speed**: `speed_kt < 80` for jet classes
+  (`IS_JET[noise_class]`; Turboprop / LightGA / Rotorcraft exempt)
+
+Enforced only for cruise synthetic segments (`cruise.rs`):
 - **midpoint underground**: `max(start_alt, end_alt) < midpoint_terrain - 30 m`
-- **endpoint AGL**: `start_agl < -30 m` or `end_agl < -30 m` (DEM-relative, so
-  subsea-level airports like Schiphol/Atyrau pass the filter)
 - **line goes under terrain**: 25%/75% interpolated samples ≤ terrain - 30 m
-
-Jet-only (profiles 0, 1, 2, 3, 5, 7; Turboprop/LightGA/Rotorcraft exempt):
-- **impossible jet speed**: `speed_kt < 80`
 - **jet too low**: `max_alt < midpoint_terrain + 150 m`
+
+⚠ **Known gap (under review)**: the chord (25/75) and jet-too-low checks were
+dropped for airborne segments during K3 with the intent to re-add them in
+Stage 2A (`stage_1.rs` comment); Stage 2A never received them, and six stale
+comments cite a non-existent `airborne_chord_clears_peaks`. Filter D (below)
+covers part of the exposure.
 
 ### Filter D — per-receiver sub-terrain extrapolation rejection
 
@@ -394,7 +456,7 @@ Jet-only (profiles 0, 1, 2, 3, 5, 7; Turboprop/LightGA/Rotorcraft exempt):
 outside the observed endpoints AND whose extrapolated altitude lies > 30 m below
 terrain. Airport-ground segments bypass the filter. Full rationale (geometry,
 30 m margin, replaced-blanket-filter history) lives in the rustdoc on
-`segment_energy_kernel` (`emission/aircraft.rs`).
+`segment_energy_kernel` (`emission/aircraft/doc29.rs`).
 
 ### Shared kernel approximations
 
@@ -409,15 +471,26 @@ retains ΔF so that N collinear per-sample sub-segments correctly sum
 to one event (regression: `cffk_partition_preserves_linear_energy` in
 `doc29.rs`).
 
+Output-affecting kernel gates: segments whose SEL lands **< 20 dB** return no
+energy (`doc29.rs`, both CFFK and full paths); per-class × direction slant
+**reach envelopes** at the 40 dB NPD threshold (`REACH_SQ_TABLE`, `npd.rs`)
+reject far geometry before evaluation; NPD lookup distance floors at 100 ft.
+The heatmap additionally routes far receivers through a coarse lattice
+(`NEAR_SLANT_M = 500 m` exact zone, coarse bands at 2 km / 8 km) — heatmap-only
+approximation; the popup is always exact.
+
 ### Cross-flight aggregation
 
 Stage 2A/2B/2C produce three per-R4 popup arrows: `airborne.arrow`
 (per-flight sub-segments with bbox envelope + per-pair period/date_id/
-flags), `cruise.arrow` (per-R7/FL-bin/class/period bucket with
-`cruise_flight_ids` for dedup; annual-only — no `date_id`), and
+flags), `cruise.arrow` (per-R7/FL-bin/class/period bucket; v14 carries a
+bounded `top_candidates` list + scalar `unique_count` instead of the old
+full `cruise_flight_ids` — tail flight ids undercount band counters;
+annual-only — no `date_id`), and
 `airport_traffic.arrow` (sparse per-microsegment counters — see §5.2).
-Schemas in `aircraft-extract/src/arrow_schemas.rs`. `compute_aircraft_v6`
-is the only consumer.
+Schemas in `aircraft-extract/src/arrow_schemas.rs`. Consumers:
+`compute_aircraft_v6` (popup), `heatmap-aircraft`, and `noise-gpu` read the
+same arrows.
 
 ### Cross-hex visibility
 
@@ -454,8 +527,9 @@ on every band — see §5.2.
 ### Per-event peak Lmax (informational only)
 
 ```
-Lmax_event = lookup_lmax(class_idx, is_departure, log10(d_p_ft))
+Lmax_event = lookup_lmax(class_idx, is_departure, log10(d_display_ft))
 ```
+where `d_display` is the clamped display CPA distance (see Geometry above).
 
 Per-class LAmax NPD LUTs ingested from the ANP CSVs alongside the SEL
 NPDs (`build_lmax_lut` in `emission/aircraft/npd.rs`). 200–25 000 ft
@@ -502,8 +576,9 @@ period`):
 **Leg-to-microsegment projection**: buffer each microsegment by
 `AIRPORT_LINE_SNAP_BUFFER_M = 50 m` perpendicular; the leg's overlap
 inside that rectangle contributes. When a leg covers multiple segments
-their overlap lengths are renormalised so Σ overlap = leg length
-(prevents +3 dB inflation on adjacent parallel taxiways). Legs that
+their overlap lengths are renormalised **downward** when Σ overlap exceeds
+the leg length (prevents +3 dB inflation on adjacent parallel taxiways; legs
+partially off the network keep Σ < leg length). Legs that
 miss every microsegment are dropped (no fallback emission); coverage
 for OSM-missing airfields comes from the Stage 1.5 DBSCAN synthetic
 strips below.
@@ -518,31 +593,51 @@ skipped. No speed classifier — OSM geometry is the source of truth.
 **Emission kernel** (`emission/airport_traffic.rs`):
 - Aircraft (`compute_aircraft_lw_per_meter_lin`): per-class anchor
   `GROUND_OPS_REFERENCE_LW_PER_METER_DB[class][ops_kind]` (= legacy
-  1 km event-SEL anchor + `+9.01 dB = 10·log10(25/π)`); speed
-  adjust ±3 dB clamp; runway departure +2 dB (Doc 29 §A.3); spectrum
-  shape per `ops_kind`. Returns per-metre `LW'` density.
+  1 km event-SEL anchor + `+9.01 dB = 10·log10(25/π)`; taxi = runway
+  −12 dB, apron = −18 dB); speed adjust ±3 dB clamp vs nominals
+  70/18/12 kt, applied only when `speed_kt > 1`; runway departure
+  +2 dB (Doc 29 §A.3); spectrum shape per `ops_kind`; source height
+  4 m. Returns per-metre `LW'` density.
 - GSE (`compute_gse_band_energy_lin`): closed-form kinematic
   moving-point integral over `segment_length_m` at perpendicular
   distance 25 m. One term replaces stationary-Lp + duration + FLC.
 
-**Receiver math** (`compute/aircraft_v6/airport_traffic.rs`):
+**Receiver math** (`compute/aircraft_v6/airport_traffic/mod.rs`):
 - Aircraft rows: `received_band_lin[i] = row.band_energy_lin[i] × (θ /
   d_perp_extended)` per CNOSSOS-EU §2.5.5 line-source formula, with
   signed-fraction `θ` math so receivers past either endpoint get the
   correct (small) angle.
 - GSE rows: `received_band_lin[i] = row.band_energy_lin[i] × (25 /
   d_endpoint)` (point-source divergence from the 25 m anchor).
+  ⚠ Known issue: the kinematic model's own far field decays ~1/d²; the
+  1/d scaling over-estimates GSE at range (~12 dB at 1.5 km for a 250 m
+  segment). Bounded by GSE being ≪ 5 % of microsegment energy and the
+  ground-ops reach caps.
 - Both apply shared CNOSSOS-EU §2.5 path effects (atmospheric, ground,
-  terrain, screening, vegetation, reflection).
+  terrain, screening, vegetation, reflection). Variants are built inline
+  per row from a per-microsegment path-effect cache. `d_perp` /
+  `d_endpoint` are floored at half a z13 pixel for heatmap parity
+  (popup would otherwise read ~5-8 dB hot directly on the line).
+  Per-`ops_kind` reach caps: runway 5 km, taxi 3 km, apron 1.5 km
+  (`ground_ops_max_radius`, shared popup + heatmap; see §3.13).
+
 Airport-level `arrivals_per_day` / `departures_per_day` come from
-HashSet UNION over `flight_ids` across the airport's rows — one
-rotation crossing 30 microsegments counts once per direction.
+HashSet UNION over `flight_ids` — one rotation crossing 30 microsegments
+counts once per direction. The UNION runs at extract time (per-R4
+`airport_summary_parts/` → global reduce → `airport_summary.arrow`
+sidecar); only RUNWAY_ROLL touches count toward arr/dep. The popup reads
+the sidecar and **refuses** (renders zeros / "—") when it is missing —
+per-row re-summing is forbidden (would over-count ~N×).
 
 **Stage 1.5 DBSCAN auto-discovery**: miss-snap ground vertices
-clustered (eps = 200 m, low min_samples for low-confidence
-visibility), accepted clusters emit synthetic `airport_lines.arrow`
-rows under `airport_key = "auto-<R11-hex>"`, consumed identically by
-Stage 2C.
+clustered (eps = 200 m, min_samples = 5). Accepted clusters emit
+synthetic strips into `synth_airport_lines.arrow` /
+`synth_airport_areas.arrow` sidecars, unioned with real OSM lines in
+the Stage 2C cache (consumed identically). Clusters near an existing
+airport reattribute to the **real** airport key; standalone ones get
+`airport_key = "auto-<R11-hex>"`; lines with no aerodrome within range
+get `strip:<R7>`. Accept gates: line-shaped, ≤ 4 km, ≤ 20 k vertices;
+GSE vertices excluded.
 
 ### 5.3 Aircraft contribution to confidence
 
@@ -570,35 +665,53 @@ popup gates path-effect detail rows for `aircraft_subtype` 2/3.
 top-K separately per `aircraft_subtype` so a loud sub-tab (e.g. ground
 ops) can't crowd quieter sub-tabs out.
 
+Airborne sub-segments with event `Lmax < 25 dB` are skipped at trace level
+(`AIRBORNE_TRACE_CUTOFF_DB` — display-only; period energy still accumulates,
+and an `airborne_above_cutoff` counter feeds the truncation flag).
+
 ---
 
 ## 6. Industrial Emission
 
 ### Source geometry
-Receives PRE-DISCRETIZED point sources. Discretization done at import:
-- **Wind turbine**: single point at centroid
+Discretized at load/query time in `normalize.rs::prepare_industrial_points`
+(shared by popup and heatmap — parity by construction):
+- **Wind turbine** (`source_type = 10`): single point at centroid
 - **Non-wind, area ≤ 5000 m²**: centroid
-- **Non-wind, area > 5000 m² and polygon available**: H3 interior grid points
+- **Non-wind, area > 5000 m² and polygon available**: **75 m square metric
+  grid, area-weighted** (`wkb::wkb_area_grid_points`, 5×5-subsampled cells;
+  cell areas renormalised so Σ = polygon area)
 - fallback to centroid if polygon/grid generation fails
-- Energy split: Lw_per_point = Lw_total - 10×log₁₀(N_points)
+- Energy split per point: `Lw_point = Lw_total − 10×log₁₀(area_total /
+  area_point)` — area-weighted; equals −10·log₁₀(N) only for equal cells
+- Sources with resolved Lw < 10 dB are dropped; missing area defaults to
+  10 000 m² (→ Lw = baseLw exactly)
 
 Each discretized point also carries:
 ```
 R_excl = √(area_per_point / π)
 ```
-This exclusion radius is used only for self-screening suppression.
+R_excl both suppresses self-screening (§3.6) and floors the propagation
+distance (`geo.rs::effective_area_source_dist` — prevents the 1/r²
+singularity for receivers inside the source polygon).
 
 ### Emission
 ```
-Lw = baseLw + 10 × log₁₀(min(area_m², 500000) / 10000)
+Lw = baseLw + 10 × log₁₀(clamp(area_m², 100, 500000) / 10000)
 ```
 
-baseLw from NACE / subtype / source-type profile (calibrated against Czech SHM 2022):
-- Heavy industry (cement, steel, power): 99-100 dB
-- Medium industry (chemical, food): 88-95 dB
-- Light industry (warehouse, commercial): 70-86 dB
+baseLw from a resolution chain — NACE 4-digit → NACE 2-digit → OSM
+`site_subtype` (13 profiles) → `source_type` (calibrated against Czech
+SHM 2022):
+- Heavy industry (cement, steel, mining, quarry): 99-100 dB
+- Power: thermal (NACE 3511) 97 dB, hydro 90 dB, solar (synthetic NACE 3599) 55 dB
+- Medium industry (chemical, food, works): 88-95 dB
+- Light industry (warehouse, commercial, farm): 55-86 dB (office/commercial 60)
 
-Area scaling capped at 50 ha (500 000 m²) to prevent OSM polygon artifacts.
+Every profile carries `evening_offset` / `night_offset` (e.g. quarry −20 dB
+night, wastewater 0 = 24/7, school −25 dB night); wind turbines are flat 24/7.
+
+Area scaling clamped to [100 m², 50 ha] to prevent OSM polygon artifacts.
 
 ### Source height
 - quarry (`source_type = 1`): 8m
@@ -617,21 +730,26 @@ Fallbacks:
 - `rated_power_kw` default = **2000 kW**
 
 ### Propagation
-ISO 9613-2 point source (same as roads but with point-source divergence).
+ISO 9613-2 point source (point-source divergence; distance floored at
+R_excl). Max radius 4 km (§3.13); popup queries sources within 5 km.
 
 ---
 
 ## 7. Settlement (buildings)
 
 ### Source geometry
-PRE-DISCRETIZED at import.
-
-Current implementation:
+Discretized at load/query time in `normalize.rs::prepare_building_points`
+(shared by popup and heatmap):
 - small / missing-polygon buildings: centroid
 - buildings with `area > 2000 m²` and polygon available: interior grid at **30 m** spacing
 - if grid generation yields only one point, fallback to centroid
+- energy split is uniform: `Lw_point = Lw − 10×log₁₀(N)` (unlike industrial's
+  area-weighted split)
+- missing area defaults to 100 m²; missing height → floors × 3 m → 8 m;
+  missing floors → ceil(height / 3); sources with Lw < 10 dB are dropped
 
-Each source gets a fade-out radius from emitted Lw, capped at **2 km**.
+Each source gets a fade-out radius from emitted Lw, capped at **2 km**
+(popup query radius 2 km).
 
 ### Emission (custom model, NOT standardized)
 ```
@@ -657,7 +775,7 @@ ISO 9613-2 point source.
 | K4 | Propagation 100m, G=0, line source | 28.58 dB attenuation | ISO 9613-2 |
 | K5 | Propagation 100m, G=1, line source | 31.66 dB attenuation | ISO 9613-2 |
 | K6 | Single barrier 50m, δ=0.5m, G=0 | 15.28 dB barrier atten | ISO 9613-2 |
-| K7 | Double barrier 200m, δ=1.0m, G=0.5 | 16.30 dB barrier atten | ISO 9613-2 |
+| K7 | retired 2026-06-01 — double-edge unreachable in the single-edge model; test retargeted to Maekawa-only (~17.9 dB) | — | ISO 9613-2 §7.4 |
 | K8 | Lden: Ld=60, Le=55, Ln=50 | 60.00 dB | END 2002/49/EC |
 
 ---
@@ -743,6 +861,12 @@ an EU-generic fall-back.
 | Country TH rural (class 0) = 60 000 | TH_RURAL class defaults × `thaiClassSplit(isBangkok=false)` | DOH 2023 rural motorway monitoring stations |
 | Continent Africa (class 0) ≈ 31 700 | EU baseline × continent_scale(Africa) = 30 000 × 1.057 | `country_defaults_generated.rs::continent_scale()`. Pop-density-weighted blend of wiki + density indexes (see `scripts/gen-country-defaults-rs.mjs`). |
 | World (class 0) = 30 000 | EU-generic motorway | Pragmatic: spans the 20 000-40 000 band of BAST-Zählstellen / TMC / MOBIS national censuses |
+
+On top of the cascade, a **242-country scaling layer** (Wikipedia
+vehicles-per-km fleet density relative to DE,
+`country_defaults_generated.rs`) multiplies motorway / trunk / primary
+(+ link) class defaults, clamped to **[0.7, 1.3]**. Lane-count default
+multipliers: see §1 (`lane_ratio`).
 
 All cascade arms in `defaults.rs` carry a `// Source:` comment pointing at
 the TypeScript enricher they were derived from. When an enricher
