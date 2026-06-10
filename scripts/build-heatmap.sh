@@ -140,7 +140,7 @@ if ! $COMBINE_ONLY; then
       [ -n "$cpu_pid" ] && wait "$cpu_pid"
       for L in "${SURFACE_LAYERS[@]}"; do
         log "pyramid $L z$ZOOM → z6 (bbox)"
-        "$PYR" --tiles-dir "$OUTPUT/$L" --base-zoom "$ZOOM" --dst-zoom 6 --source-id "${SID[$L]}" --bbox "$bbox"
+        "$PYR" --tiles-dir "$OUTPUT/$L" --base-zoom "$ZOOM" --dst-zoom 3 --source-id "${SID[$L]}" --bbox "$bbox"
       done
     else
       # The full surface set (all / ground) → one shared-halo `ground` pass; a
@@ -152,7 +152,7 @@ if ! $COMBINE_ONLY; then
         --prepared-dir "$PREP" --output "$OUTPUT" "${SEL_ARGS[@]}" 2>&1 | stamp
       for L in "${SURFACE_LAYERS[@]}"; do
         log "pyramid $L z$ZOOM → z6${bbox:+ (bbox)}"
-        "$PYR" --tiles-dir "$OUTPUT/$L" --base-zoom "$ZOOM" --dst-zoom 6 --source-id "${SID[$L]}" ${bbox:+--bbox "$bbox"}
+        "$PYR" --tiles-dir "$OUTPUT/$L" --base-zoom "$ZOOM" --dst-zoom 3 --source-id "${SID[$L]}" ${bbox:+--bbox "$bbox"}
       done
     fi
   fi
@@ -168,7 +168,7 @@ if ! $COMBINE_ONLY; then
       log "sharded — built z$ZOOM only; pyramid $L after merging shards"
     else
       log "pyramid $L z$ZOOM → z6${bbox:+ (bbox)}"
-      "$PYR" --tiles-dir "$LDIR" --base-zoom "$ZOOM" --dst-zoom 6 --source-id "${SID[$L]}" ${bbox:+--bbox "$bbox"}
+      "$PYR" --tiles-dir "$LDIR" --base-zoom "$ZOOM" --dst-zoom 3 --source-id "${SID[$L]}" ${bbox:+--bbox "$bbox"}
     fi
   done
 fi
