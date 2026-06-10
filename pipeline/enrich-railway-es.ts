@@ -12,16 +12,15 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-es.ts --enrich-only
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
-import { shouldOverwrite } from './lib/provenance.js'
 import { latLngToCell } from 'h3-js'
 import { SOURCE_ID_ES_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
-import { flatDist, pointToSegmentDist } from './lib/spatial.js'
+import { pointToSegmentDist } from './lib/spatial.js'
+import { writeRailTrains } from './lib/railways-arrow.js'
+import { iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_ES_NATIONAL_RAILWAY
 
@@ -71,10 +70,11 @@ const FEEDS: FeedConfig[] = [
 // Spain bounding box (with margin for border areas)
 const BBOX: [number, number, number, number] = [35.5, -10.0, 44.0, 5.0] // [minLat, minLon, maxLat, maxLon]
 
-// GTFS route_type: 2=Rail, 100-109=extended railway types, 0=Tram, 900-906=Tram extended
+// RENFE/Cercanías/FGC are heavy/suburban RAIL — only rail route_types (GTFS 2 +
+// 100-109) enter the stop pool, so a tram-route stop can never be matched by a
+// heavy-rail (rail_type=0) segment. Spanish street trams are separate operators,
+// absent from these feeds, and get a class default via the rail_type gate instead.
 const RAIL_TYPES = new Set([2, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109])
-const TRAM_TYPES = new Set([0, 900, 901, 902, 903, 904, 905, 906])
-const ALL_RAIL = new Set([...RAIL_TYPES, ...TRAM_TYPES])
 
 // ── Types ──
 
@@ -290,11 +290,11 @@ async function computeStopFrequenciesForFeed(feed: FeedConfig, extractDir: strin
 
   const railRouteIds = new Set<string>()
   for (const [routeId, routeType] of routeTypeMap) {
-    if (ALL_RAIL.has(routeType)) {
+    if (RAIL_TYPES.has(routeType)) {
       railRouteIds.add(routeId)
     }
   }
-  console.log(`  ${railRouteIds.size} rail/tram routes`)
+  console.log(`  ${railRouteIds.size} rail routes`)
   if (railRouteIds.size === 0) {
     console.log('  WARNING: No rail routes found. Check route_types in GTFS.')
     // RENFE may use route_type=2 or extended types. Try all if none found.
@@ -542,8 +542,23 @@ function mergeStopCounts(perFeed: StopTrainCount[][]): StopTrainCount[] {
 
 // ── Step 3: Match stops to railway segments ──
 
-function enrichHexes(allStopCounts: StopTrainCount[]): void {
-  // Group stops by H3R4 hex
+// CNOSSOS operator-class fallback (owner-confirmed L2: fill by type, no silent
+// track). Mirrors enrich-railway-kr.ts; industrial freight=8 mirrors
+// enrich-railway-th.ts; heavy-rail main=50pax/10frt is a conservative floor —
+// RENFE/Cercanías GTFS covers the busy lines, so an unmatched main is a minor line.
+// rail_type: 0=rail 1=tram 2=light_rail 3=narrow_gauge 4=funicular; usage: 0=main 1=branch 2=industrial
+function defaultTrains(railType: number, usage: number): { pax: number; frt: number } {
+  if (railType === 2) return { pax: 250, frt: 0 } // light_rail (urban)
+  if (railType === 1) return { pax: 200, frt: 0 } // tram
+  if (railType === 3) return { pax: 30, frt: 0 }  // narrow gauge
+  if (railType === 4) return { pax: 30, frt: 0 }  // funicular
+  if (usage === 1) return { pax: 80, frt: 0 }     // heavy-rail branch
+  if (usage === 2) return { pax: 0, frt: 8 }      // industrial spur
+  return { pax: 50, frt: 10 }                     // heavy-rail main without a GTFS match
+}
+
+async function enrichHexes(allStopCounts: StopTrainCount[]): Promise<void> {
+  // Group RENFE/Cercanías/FGC stops by H3R4 hex
   const stopsByHex = new Map<string, StopTrainCount[]>()
   for (const sc of allStopCounts) {
     if (!stopsByHex.has(sc.h3r4)) stopsByHex.set(sc.h3r4, [])
@@ -551,131 +566,71 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
   }
   console.log(`  Stops span ${stopsByHex.size} H3R4 hexes`)
 
-  const hexDirs = readdirSync(H3R4_DIR).filter(d =>
-    d.length === 15 && d.endsWith('ffffffff'))
+  // Scan ALL Spanish hexes (not just ones with stops) so class defaults reach
+  // every track — a tram that no longer inherits RENFE's count gets its own value.
+  const hexDirs = iterateCountryHexes(H3R4_DIR, BBOX, 'railways.arrow')
+  console.log(`  ES hexes with railways.arrow: ${hexDirs.length}`)
 
-  let totalRails = 0
-  let totalMatched = 0
-  let hexesUpdated = 0
-  let hexesScanned = 0
-  let totalPreExisting = 0
+  let totalRails = 0, totalStamped = 0, gtfsHits = 0, skippedService = 0, hexesUpdated = 0
   const startTime = Date.now()
 
-  for (const hexId of hexDirs) {
-    const hexStops = stopsByHex.get(hexId)
-    if (!hexStops) continue
-
-    const railPath = resolve(H3R4_DIR, hexId, 'railways.arrow')
-    if (!existsSync(railPath)) continue
-
-    hexesScanned++
-    const buf = readFileSync(railPath)
-    const table = tableFromIPC(buf)
-    const n = table.numRows
-    if (n === 0) continue
-
-    const startLat = table.getChild('start_lat')!
-    const startLon = table.getChild('start_lon')!
-    const endLat = table.getChild('end_lat')!
-    const endLon = table.getChild('end_lon')!
-    const serviceCol = table.getChild('service')
-
-    const existingPax = table.getChild('trains_passenger')
-    const existingFrt = table.getChild('trains_freight')
-    const existingSourceId = table.getChild('source_id')
-
-    const trainsPax = new Int32Array(n)
-    const trainsFrt = new Int32Array(n)
-    const sourceId = new Uint16Array(n)
-
-    for (let i = 0; i < n; i++) {
-      trainsPax[i] = existingPax ? (existingPax.get(i) as number ?? 0) : 0
-      trainsFrt[i] = existingFrt ? (existingFrt.get(i) as number ?? 0) : 0
-
-      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-      if (trainsPax[i] > 0 || trainsFrt[i] > 0) totalPreExisting++
-    }
-
-    totalRails += n
-
-    // Build spatial grid for stops in this hex
+  for (let hi = 0; hi < hexDirs.length; hi++) {
+    const hexId = hexDirs[hi]
+    // Build this hex's stop grid once (0.01° ≈ 1 km cells).
     const grid = new Map<string, StopTrainCount[]>()
-    for (const sc of hexStops) {
+    for (const sc of stopsByHex.get(hexId) || []) {
       const key = `${Math.floor(sc.lat * 100)}_${Math.floor(sc.lon * 100)}`
       if (!grid.has(key)) grid.set(key, [])
       grid.get(key)!.push(sc)
     }
 
-    let hexMatched = 0
-
-    for (let i = 0; i < n; i++) {
-      const service = serviceCol ? (serviceCol.get(i) as number ?? 0) : 0
-      if (service > 0) continue
-      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
-
-      const sLat = startLat.get(i) as number
-      const sLon = startLon.get(i) as number
-      const eLat = endLat.get(i) as number
-      const eLon = endLon.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
-
-      let bestDist = 500
-      let bestStop: StopTrainCount | null = null
-
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const k = `${Math.floor(midLat * 100) + dy}_${Math.floor(midLon * 100) + dx}`
-          const cell = grid.get(k)
-          if (!cell) continue
-          for (const sc of cell) {
-            const d = pointToSegmentDist(sc.lat, sc.lon, sLat, sLon, eLat, eLon)
-            if (d < bestDist) {
-              bestDist = d
-              bestStop = sc
+    let matchWasGtfs = false
+    const r = await writeRailTrains(
+      resolve(H3R4_DIR, hexId, 'railways.arrow'),
+      (row) => {
+        matchWasGtfs = false
+        // Family gate: RENFE/Cercanías/FGC are heavy/suburban RAIL, so only
+        // rail_type==0 may inherit a GTFS count. Spanish street trams are separate
+        // operators absent from these feeds → tram/light_rail get a class default.
+        if (row.railType === 0 && grid.size > 0) {
+          let bestDist = 500
+          let bestStop: StopTrainCount | null = null
+          const gy = Math.floor(row.midLat * 100), gx = Math.floor(row.midLon * 100)
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+            const cell = grid.get(`${gy + dy}_${gx + dx}`)
+            if (!cell) continue
+            for (const sc of cell) {
+              const d = pointToSegmentDist(sc.lat, sc.lon, row.startLat, row.startLon, row.endLat, row.endLon)
+              if (d < bestDist) { bestDist = d; bestStop = sc }
             }
           }
+          if (bestStop) {
+            matchWasGtfs = true
+            return { pax: bestStop.trains_passenger, frt: bestStop.trains_freight, sourceId: MY_SOURCE_ID }
+          }
         }
-      }
+        // No GTFS match (or non-heavy-rail): CNOSSOS class default.
+        const def = defaultTrains(row.railType, row.usage)
+        return { pax: def.pax, frt: def.frt, sourceId: MY_SOURCE_ID }
+      },
+      () => { if (matchWasGtfs) gtfsHits++ }, // count only post-gate (applied) GTFS matches
+    )
+    totalRails += r.rows
+    totalStamped += r.matched
+    skippedService += r.skippedService
+    if (r.updated) hexesUpdated++
 
-      if (!bestStop) continue
-
-      trainsPax[i] = bestStop.trains_passenger
-      trainsFrt[i] = bestStop.trains_freight
-      sourceId[i] = MY_SOURCE_ID
-      hexMatched++
-    }
-
-    if (hexMatched === 0) continue
-
-    const columns: Record<string, any> = {}
-    for (const field of table.schema.fields) {
-      if (field.name === 'trains_passenger') continue
-      if (field.name === 'trains_freight') continue
-      if (field.name === 'source_id') continue
-      columns[field.name] = table.getChild(field.name)!
-    }
-    columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
-    columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
-
-    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-
-    const newTable = makeTable(columns)
-    writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
-    totalMatched += hexMatched
-    hexesUpdated++
-
-    if (Date.now() - startTime > 0 && hexesScanned % 50 === 0) {
-      console.log(`  [${((Date.now() - startTime) / 1000).toFixed(0)}s] ${hexesScanned} hexes, ${totalMatched} segments matched`)
+    if (hi % 200 === 0 || hi === hexDirs.length - 1) {
+      console.log(`  [${((Date.now() - startTime) / 1000).toFixed(0)}s] ${hi + 1}/${hexDirs.length} hexes, ${hexesUpdated} updated, ${totalStamped.toLocaleString()} stamped (${gtfsHits.toLocaleString()} via GTFS)`)
     }
   }
 
   console.log(`\n=== Results ===`)
-  console.log(`  Railway segments in matched hexes: ${totalRails}`)
-  console.log(`  Pre-existing enrichments (preserved): ${totalPreExisting}`)
-  console.log(`  Newly matched from RENFE GTFS: ${totalMatched} (${totalRails > 0 ? (totalMatched / totalRails * 100).toFixed(1) : 0}%)`)
-  console.log(`  Hexes updated: ${hexesUpdated}`)
-  console.log(`  Hexes scanned: ${hexesScanned}`)
+  console.log(`  Railway segments scanned:  ${totalRails.toLocaleString()}`)
+  console.log(`  Skipped service tracks:    ${skippedService.toLocaleString()}`)
+  console.log(`  Matched by RENFE/FGC GTFS: ${gtfsHits.toLocaleString()}`)
+  console.log(`  Stamped (incl. defaults):  ${totalStamped.toLocaleString()}`)
+  console.log(`  Hexes updated:             ${hexesUpdated}/${hexDirs.length}`)
 }
 
 // ── Main ──
@@ -714,7 +669,7 @@ async function main() {
   }
 
   console.log(`\n  Enriching railways.arrow files...`)
-  enrichHexes(merged)
+  await enrichHexes(merged)
   console.log(`\n=== Done ===`)
 }
 
