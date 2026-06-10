@@ -14,6 +14,7 @@
  * Usage:
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-service-tree.ts
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-service-tree.ts --prefix 841e309
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-service-tree.ts --bbox 17.5,-180,71.5,-65  # one country
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
@@ -22,12 +23,18 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCE_ID_SERVICE_TREE_HEURISTIC } from './lib/source-ids.generated.js'
+import { iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_SERVICE_TREE_HEURISTIC
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const PREFIX = process.argv.includes('--prefix') ? process.argv[process.argv.indexOf('--prefix') + 1] : ''
+const bboxArg = process.argv.includes('--bbox') ? process.argv[process.argv.indexOf('--bbox') + 1] : ''
+const BBOX = bboxArg ? bboxArg.split(',').map(Number) as [number, number, number, number] : null
+if (BBOX && (BBOX.length !== 4 || BBOX.some(n => !Number.isFinite(n)))) {
+  console.error(`ERROR: --bbox must be minLat,minLon,maxLat,maxLon (got "${bboxArg}")`); process.exit(1)
+}
 
 const GRID_CELL = 0.0005       // building grid cell size in degrees (~55m at equator)
 
@@ -901,13 +908,15 @@ function main() {
     process.exit(1)
   }
 
-  // Sort explicit so START_INDEX is reproducible across runs (readdirSync
-  // alphabetical order isn't filesystem-guaranteed).
-  const hexDirs = readdirSync(H3R4_DIR).filter(d => {
-    if (d.startsWith('.')) return false
-    if (PREFIX && !d.startsWith(PREFIX)) return false
-    return true
-  }).sort()
+  // --bbox scopes to one region via the shared iterateCountryHexes (cellToLatLng
+  // + inBbox, hexes with roads.arrow inside the box) — used by the road re-stamp
+  // to refill only the fixed country; else the full tree (optionally a --prefix
+  // slice). Sorted so START_INDEX / SHARD slicing is reproducible across runs
+  // (readdirSync order isn't filesystem-guaranteed).
+  const hexDirs = (BBOX
+    ? iterateCountryHexes(H3R4_DIR, BBOX)
+    : readdirSync(H3R4_DIR).filter(d => !d.startsWith('.') && (!PREFIX || d.startsWith(PREFIX)))
+  ).sort()
   const rawStart = parseInt(process.env.START_INDEX || '0', 10)
   let START_INDEX = Number.isFinite(rawStart)
     ? Math.min(Math.max(0, rawStart), hexDirs.length)
@@ -935,7 +944,7 @@ function main() {
 
   console.log(`Service-tree AADT enrichment (v2: flow accumulation)`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
-  console.log(`  Hexes: ${hexDirs.length} total${PREFIX ? ` (prefix: ${PREFIX})` : ''}${rangeSuffix}`)
+  console.log(`  Hexes: ${hexDirs.length} total${PREFIX ? ` (prefix: ${PREFIX})` : ''}${BBOX ? ` (bbox: ${BBOX.join(',')})` : ''}${rangeSuffix}`)
 
   const startTime = Date.now()
   let lastProgress = startTime
