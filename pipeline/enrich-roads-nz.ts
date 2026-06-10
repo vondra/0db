@@ -24,6 +24,11 @@ import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_NZ_NATIONAL_ROADS
 
+// NZTA State Highways + Auckland Transport AADT cover the surveyed NZ road network (OSM motorway(0)/
+// trunk(1)/primary(2)/secondary(3)/tertiary(4) + their _link variants), not residential(5)/service(7)/
+// etc., so writeRoadAadt is gated to this set — a quiet street can't inherit a nearby highway's AADT.
+const NZ_COVERAGE = new Set([0, 1, 2, 3, 4, 10, 11, 12])
+
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/nz`)
@@ -187,6 +192,7 @@ async function enrichArrows(sites: NzRoadSegment[]): Promise<void> {
         }
       },
       () => { matched++ },
+      NZ_COVERAGE,
     )
     totalSeg += r.rows
     if (r.updated) hexesUpdated++
