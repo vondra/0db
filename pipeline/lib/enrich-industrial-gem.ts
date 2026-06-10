@@ -47,15 +47,23 @@ export interface EnrichGemArgs {
   /** Spatial search radius for nearest-plant match (metres). Default 2000.
    *  PY uses 3000 due to sparser GEM coverage. */
   searchRadiusM?: number
-  /** GEM `Type` (lowercased) → NACE-4 classifier. Default:
-   *  solar→3599, wind→3512, anything else→3511 (electric power gen). */
-  fuelToNace?: (fuel: string) => number
+  /** GEM `Type` (lowercased) → NACE-4 classifier, or `null` to SKIP the row.
+   *  Default maps to the engine's nace_profile (industrial.rs): solar→3599 (55 dB),
+   *  hydro→3512 (90 dB), thermal/nuclear/fossil/etc→3511 (97 dB); wind and blank-fuel
+   *  return null. */
+  fuelToNace?: (fuel: string) => number | null
 }
 
-const DEFAULT_FUEL_TO_NACE = (fuel: string): number => {
+// Source of truth for power-plant noise class. Wind is SKIPPED: turbines are already
+// modelled as source_type=10 (their own rotating-source profile), so stamping a
+// nearby OSM site NACE 3512 would give it a wrong 90 dB hydro profile. Blank fuel is
+// SKIPPED rather than guessed as thermal (97 dB).
+const DEFAULT_FUEL_TO_NACE = (fuel: string): number | null => {
+  if (!fuel || fuel === 'unknown') return null // skip — no fuel signal
+  if (fuel.includes('wind')) return null        // skip — already source_type=10
   if (fuel.includes('solar')) return 3599
-  if (fuel.includes('wind')) return 3512
-  return 3511
+  if (fuel.includes('hydro')) return 3512
+  return 3511 // thermal / nuclear / coal / gas / oil / biomass / geothermal
 }
 
 export async function enrichGemIndustrial(args: EnrichGemArgs): Promise<void> {
@@ -170,9 +178,11 @@ export async function enrichGemIndustrial(args: EnrichGemArgs): Promise<void> {
             }
           }
           if (!best) continue
+          const nace = fuelToNace(best.fuel)
+          if (nace == null) continue // wind / blank-fuel → leave the row untouched
           const existingId = existingSourceId[i]
           if (!shouldOverwrite(existingId, MY_SOURCE_ID)) continue
-          newNace[i] = fuelToNace(best.fuel)
+          newNace[i] = nace
           newDatasetId[i] = MY_SOURCE_ID
           if (existingId === 0) newEntries++
           matched++
