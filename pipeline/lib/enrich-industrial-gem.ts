@@ -58,7 +58,7 @@ export interface EnrichGemArgs {
 // modelled as source_type=10 (their own rotating-source profile), so stamping a
 // nearby OSM site NACE 3512 would give it a wrong 90 dB hydro profile. Blank fuel is
 // SKIPPED rather than guessed as thermal (97 dB).
-const DEFAULT_FUEL_TO_NACE = (fuel: string): number | null => {
+export const DEFAULT_FUEL_TO_NACE = (fuel: string): number | null => {
   if (!fuel || fuel === 'unknown') return null // skip — no fuel signal
   if (fuel.includes('wind')) return null        // skip — already source_type=10
   if (fuel.includes('solar')) return 3599

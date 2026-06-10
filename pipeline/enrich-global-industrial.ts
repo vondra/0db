@@ -151,12 +151,17 @@ async function parseGppd(csvText: string): Promise<Facility[]> {
     const name = (r['name'] || '').trim()
     const fuel = (r['primary_fuel'] || '').trim()
 
-    // All power plants → NACE 35 (Electricity, gas, steam and air conditioning supply)
-    // Sub-classify by fuel type for more specific profiles
-    let nace = '350000'  // generic electricity generation
-    if (fuel === 'Nuclear') nace = '351100'
+    // Power plants → NACE 35 (Electricity, gas, steam and air conditioning supply),
+    // sub-classified by fuel so the engine picks the right emission profile:
+    //   3512 hydro 90dB · 3511 thermal 97dB · 3599 solar 55dB.
+    // Wind is modelled separately (source_type=10) — never stamp it onto an OSM
+    // industrial polygon, or it inherits a thermal/hydro spectrum. Blank/unknown
+    // fuel is left unstamped too: without a fuel we can't pick a profile, so we
+    // keep the OSM row untouched rather than guess. nace = '' is the skip sentinel.
+    let nace = ''
+    if (fuel === 'Wind') nace = ''  // modelled separately — skip
+    else if (fuel === 'Nuclear') nace = '351100'
     else if (fuel === 'Hydro') nace = '351200'
-    else if (fuel === 'Wind') nace = '351200'
     else if (fuel === 'Solar') nace = '359900'
     else if (fuel === 'Gas' || fuel === 'Oil') nace = '351100'
     else if (fuel === 'Coal' || fuel === 'Petcoke') nace = '351100'
@@ -356,7 +361,9 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
             }
           }
 
-          if (bestFac) {
+          // Empty nace is the GPPD skip sentinel (wind / blank-fuel plants) — leave
+          // the OSM row untouched: no nace_4digit, no source_id stamp.
+          if (bestFac && bestFac.nace !== '') {
             const nace6 = parseInt(bestFac.nace, 10) || 0
             const nace4 = Math.floor(nace6 / 100)
             const myId = bestFac.source === 'eprtr' ? EPRTR_DATASET_ID : GPPD_DATASET_ID

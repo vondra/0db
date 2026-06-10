@@ -38,6 +38,7 @@ import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
 import { flatDistM, inBbox } from './lib/spatial.js'
+import { DEFAULT_FUEL_TO_NACE } from './lib/enrich-industrial-gem.js'
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -184,8 +185,10 @@ async function main() {
             }
           }
           if (best) {
-            const nace6 = best.fuel.includes('solar') ? 359900 : best.fuel.includes('wind') ? 351200 : 351100
-            const nace4 = Math.floor(nace6 / 100)
+            // Hydro→3512 (90 dB), solar→3599 (55 dB), thermal→3511 (97 dB);
+            // wind (source_type=10) and blank/unknown fuel return null → skip.
+            const nace4 = DEFAULT_FUEL_TO_NACE(best.fuel)
+            if (nace4 == null) continue
             const existingId = existingSourceId[i]
             if (shouldOverwrite(existingId, MY_SOURCE_ID)) {
               newNace[i] = nace4

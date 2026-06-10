@@ -26,6 +26,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
+import { DEFAULT_FUEL_TO_NACE } from './lib/enrich-industrial-gem.js'
 import { flatDistM, inBbox } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2026'
@@ -150,10 +151,9 @@ async function main() {
             }
           }
           if (best) {
-            const nace6 = best.fuel.includes('solar') ? 359900 : best.fuel.includes('wind') ? 351200 : 351100
-            const nace4 = Math.floor(nace6 / 100)
+            const nace4 = DEFAULT_FUEL_TO_NACE(best.fuel) // wind/blank → null → skip
             const existingId = existingSourceId[i]
-            if (shouldOverwrite(existingId, MY_SOURCE_ID)) {
+            if (nace4 != null && shouldOverwrite(existingId, MY_SOURCE_ID)) {
               newNace[i] = nace4
               newDatasetId[i] = MY_SOURCE_ID
               if (existingId === 0) newEntries++

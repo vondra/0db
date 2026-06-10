@@ -57,6 +57,27 @@ function inExcluded(lat: number, lon: number): boolean {
 }
 interface IndSite { lat: number; lon: number; name: string; fuel: string }
 
+/**
+ * Map a plant fuel/type to a NACE 4-digit code for industrial noise stamping.
+ *
+ * Returns `null` for sources that must NOT be stamped as industrial:
+ *  - wind turbines are modelled separately as `source_type=10`, so the OSM row
+ *    must keep its existing (empty) NACE/source_id — never inherit a plant code.
+ *  - blank/unknown fuel has no defensible emission class.
+ *
+ * Engine NACE→emission map: 3512 hydro (90 dB), 3511 thermal/nuclear (97 dB),
+ * 3599 solar (55 dB).
+ */
+function fuelToNace4(fuel: string): number | null {
+  const f = fuel.toLowerCase()
+  if (!f) return null
+  if (f.includes('wind') || f.includes('aerogerador') || f.includes('eolic') || f.includes('eólic')) return null
+  if (f.includes('hydro') || f.includes('hidro')) return 3512
+  if (f.includes('solar') || f.includes('fotovolt')) return 3599
+  if (f.includes('thermal') || f.includes('termo') || f.includes('fossil') || f.includes('nuclear') || f.includes('nucle')) return 3511
+  return null
+}
+
 function loadPoints(path: string, fuel: string, nameField: string, statusField: string, statusOK: string[]): IndSite[] {
   if (!existsSync(path)) return []
   const fc = JSON.parse(readFileSync(path, 'utf-8'))
@@ -184,8 +205,10 @@ async function main() {
             }
           }
           if (best) {
-            const nace6 = best.fuel.includes('solar') ? 359900 : best.fuel.includes('wind') ? 351200 : 351100
-            const nace4 = Math.floor(nace6 / 100)
+            // Wind & blank/unknown fuel → no industrial stamp (wind is source_type=10,
+            // modelled separately; leave NACE/source_id untouched).
+            const nace4 = fuelToNace4(best.fuel)
+            if (nace4 == null) continue
             const existingId = existingSourceId[i]
             if (shouldOverwrite(existingId, MY_SOURCE_ID)) {
               newNace[i] = nace4

@@ -193,7 +193,12 @@ async function main() {
           }
           if (best) {
             const srcLower = best.source.toLowerCase()
-            const nace6 = srcLower.includes('solar') ? 359900 : srcLower.includes('wind') ? 351200 : 351100
+            // Wind is modelled separately as source_type=10 (per-turbine IEC 61400-11),
+            // never as a NACE-35 industrial point — skip the OSM row entirely so it
+            // isn't mis-stamped as hydro (351200). CN loads no hydro geojson, so the
+            // remaining fuels (coal/gas/nuclear/LNG) are all thermal → 351100.
+            if (srcLower.includes('wind')) continue
+            const nace6 = srcLower.includes('solar') ? 359900 : 351100
             const nace4 = Math.floor(nace6 / 100)
             const existingId = existingSourceId[i]
             if (shouldOverwrite(existingId, MY_SOURCE_ID)) {

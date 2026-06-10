@@ -91,6 +91,24 @@ const MHE_TIPO_TO_FUEL: Record<string, string> = {
   DO: 'diesel',
 }
 
+/**
+ * Map a plant fuel string to its 4-digit NACE division-35 code for the
+ * industrial noise engine, or 0 = do NOT stamp.
+ *   3512 hydro (90 dB) · 3511 thermal/combustion (97 dB) · 3599 solar (55 dB)
+ * Wind is source_type=10 (modelled separately, never industrial) → skip.
+ * Blank/unknown fuel → skip (avoid mis-tagging an OSM site as 97 dB thermal).
+ */
+function fuelToNace4(fuel: string): number {
+  const f = fuel.toLowerCase()
+  if (f.includes('wind') || f.includes('eolic') || f.includes('eólic')) return 0
+  if (f.includes('hydro')) return 3512
+  if (f.includes('solar') || f.includes('photovolt') || f.includes('fotovolt')) return 3599
+  if (!f || f.includes('unknown')) return 0
+  // everything combustion-based: gas, oil, diesel, coal, biomass/bioenergy,
+  // geothermal, plus transmission substations (division-35 infrastructure)
+  return 3511
+}
+
 function loadMheGen(file: string, source: string): IndSite[] {
   const path = resolve(CACHE_DIR, file)
   if (!existsSync(path)) return []
@@ -260,8 +278,8 @@ async function main() {
             }
           }
           if (best) {
-            const nace6 = best.fuel.includes('solar') ? 359900 : best.fuel.includes('wind') ? 351200 : 351100
-            const nace4 = Math.floor(nace6 / 100)
+            const nace4 = fuelToNace4(best.fuel)
+            if (nace4 === 0) continue  // wind (source_type=10) or blank/unknown → don't stamp
             const existingId = existingSourceId[i]
             if (shouldOverwrite(existingId, MY_SOURCE_ID)) {
               newNace[i] = nace4
