@@ -77,6 +77,21 @@ interface PolySite {
   source: string
 }
 
+/**
+ * Map a power-plant fuel to its CNOSSOS industrial NACE, or null to SKIP.
+ *
+ * Engine NACE→noise: 3599 solar 55 dB, 3512 hydro 90 dB, 3511 thermal 97 dB.
+ * Wind is modelled as source_type=10 (separate from industrial NACE) → SKIP.
+ * Blank/unknown fuel → SKIP rather than mislabel a plant 97 dB thermal.
+ */
+function fuelToNace(fuel: string): string | null {
+  if (/wind/.test(fuel)) return null            // modelled as source_type=10, not a NACE
+  if (/hydro|pump/.test(fuel)) return '351200'  // 90 dB
+  if (/solar|csp|photovolt|pv/.test(fuel)) return '359900'  // 55 dB
+  if (/coal|nuclear|gas|oil|biomass|bioenergy|thermal|fossil|diesel|peat/.test(fuel)) return '351100'  // 97 dB
+  return null  // blank/unknown → skip
+}
+
 function loadGemPlants(): Site[] {
   const path = resolve(CACHE_DIR, 'power-plants-gem.geojson')
   if (!existsSync(path)) return []
@@ -92,10 +107,12 @@ function loadGemPlants(): Site[] {
     const status = (p.Status || '').toString().toLowerCase()
     if (!status.includes('operating')) continue
     const fuel = (p.Type || 'unknown').toString().toLowerCase()
+    const nace = fuelToNace(fuel)
+    if (nace === null) continue  // wind (source_type=10) or unknown → skip
     out.push({
       lat, lon,
       name: (p.Plant___Project_name || 'CO plant').toString(),
-      nace: '351100',
+      nace,
       source: `GEM CO (${fuel})`,
     })
   }

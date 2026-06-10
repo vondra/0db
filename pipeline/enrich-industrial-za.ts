@@ -75,6 +75,21 @@ interface IndSite {
   lat: number; lon: number; name: string; nace: string; source: string
 }
 
+/**
+ * Map a power-plant fuel to its CNOSSOS industrial NACE, or null to SKIP.
+ *
+ * Engine NACE→noise: 3599 solar 55 dB, 3512 hydro 90 dB, 3511 thermal 97 dB.
+ * Wind is modelled as source_type=10 (separate from industrial NACE) → SKIP.
+ * Blank/unknown fuel → SKIP rather than mislabel a plant 97 dB thermal.
+ */
+function fuelToNace(fuel: string): string | null {
+  if (/wind/.test(fuel)) return null            // modelled as source_type=10, not a NACE
+  if (/hydro|pump/.test(fuel)) return '351200'  // 90 dB
+  if (/solar|csp|photovolt|pv/.test(fuel)) return '359900'  // 55 dB
+  if (/coal|nuclear|gas|oil|biomass|bioenergy|thermal|fossil|diesel|peat/.test(fuel)) return '351100'  // 97 dB
+  return null  // blank/unknown → skip
+}
+
 function loadEskomPlants(): IndSite[] {
   const path = resolve(CACHE_DIR, 'power-plants-eskom.geojson')
   if (!existsSync(path)) return []
@@ -94,10 +109,12 @@ function loadEskomPlants(): IndSite[] {
     else if (/gas/.test(cat)) fuel = 'oil/gas'
     else if (/wind/.test(cat)) fuel = 'wind'
     else if (/csp|solar/.test(cat)) fuel = 'solar'
+    const nace = fuelToNace(fuel)
+    if (nace === null) continue  // wind (source_type=10) or unknown → skip
     out.push({
       lat, lon,
       name: (p.NAME || 'ZA Eskom plant').toString(),
-      nace: '351100',
+      nace,
       source: `Eskom UP (${fuel})`,
     })
   }
@@ -119,10 +136,12 @@ function loadGemPlants(): IndSite[] {
     const status = (p.Status || '').toString().toLowerCase()
     if (!status.includes('operating')) continue
     const fuel = (p.Type || p.Fuel || 'unknown').toString().toLowerCase()
+    const nace = fuelToNace(fuel)
+    if (nace === null) continue  // wind (source_type=10) or unknown → skip
     out.push({
       lat, lon,
       name: (p.Plant___Project_name || 'ZA plant').toString(),
-      nace: '351100',
+      nace,
       source: `GEM ZA (${fuel})`,
     })
   }

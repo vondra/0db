@@ -52,11 +52,16 @@ const NAME_RULES: NameRule[] = [
     label: 'solar',
   },
 
-  // Wind (NACE 3512) — 90 dB — before "power" to avoid generic match
+  // Wind — SKIP (nace ''). Wind turbines are modelled separately as
+  // source_type=10, NOT an industrial NACE. Must still match wind keywords
+  // BEFORE the generic 'power' rule so a "wind power plant" hits this skip
+  // instead of being stamped 351100 thermal. Empty nace → parseInt→NaN→0 →
+  // nace4=0 → the stamp loop's `if (nace4 === 0) continue` leaves the row
+  // untouched (no nace, no source_id).
   {
     keywords: ['wind farm', 'wind park', 'windpark', 'éolien', 'vindpark', 'vindkraft', 'parque eólico', 'větrná', 'wiatrowy', 'turbin'],
-    nace: '351200',
-    label: 'wind',
+    nace: '',
+    label: 'wind (skip)',
   },
 
   // Power/energy (NACE 35) — generic power keywords after solar/wind
@@ -233,6 +238,7 @@ async function main() {
 
           const nace6 = parseInt(rule.nace, 10) || 0
           const nace4 = Math.floor(nace6 / 100)
+          if (nace4 === 0) continue  // skip sentinel (e.g. wind → modelled as source_type=10, not a NACE)
           const existingId = existingSourceId[i]
           if (shouldOverwrite(existingId, MY_SOURCE_ID)) {
             newNace[i] = nace4

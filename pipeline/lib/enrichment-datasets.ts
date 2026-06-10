@@ -242,7 +242,10 @@ export const DATASETS: Dataset[] = [
     year: 2025,
     license: 'ODbL-1.0',
     url: 'https://www.openstreetmap.org/',
-    priority: 10,
+    // priority 50 → 'global-measured': the NACE is a real per-facility fuel match
+    // (GEM/GPPD/USWTDB), so it must outrank the name-keyword heuristic (id 9000,
+    // priority 10 → 'heuristic'), which otherwise won the id tiebreak at equal rank.
+    priority: 50,
   },
 
   // ── Roads: national (OSM-only) ──

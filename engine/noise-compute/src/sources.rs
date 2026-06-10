@@ -337,7 +337,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 330,
         key: "global-industrial-national-mix",
-        provenance: Provenance::Heuristic,
+        provenance: Provenance::GlobalMeasured,
         layer: "industrial",
         name: "OSM-derived per-country industrial (may include GEM/GPPD/USWTDB matches)",
         license: Some("ODbL-1.0"),
