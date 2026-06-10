@@ -18,16 +18,14 @@
  *   npx tsx enrich-railway-europe.ts --feed=de,ch,at    # Multiple feeds
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
 import { latLngToCell } from 'h3-js'
-import { SOURCES_BY_KEY } from './lib/sources.js'
-import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_GLOBAL_GTFS_TRANSIT } from './lib/source-ids.generated.js'
-import { flatDist, pointToSegmentDist } from './lib/spatial.js'
+import { pointToSegmentDist } from './lib/spatial.js'
+import { writeRailTrains } from './lib/railways-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_GLOBAL_GTFS_TRANSIT
 
@@ -58,7 +56,24 @@ interface FeedConfig {
 // Extended: 100-199=Railway, 200-299=Coach, 400-499=Urban Rail, 700-799=Bus, 900-999=Tram, 1000-1099=Water
 const RAIL_TYPES = new Set([2, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109])
 const TRAM_TYPES = new Set([0, 900, 901, 902, 903, 904, 905, 906])
-const ALL_RAIL_AND_TRAM = new Set([...RAIL_TYPES, ...TRAM_TYPES])
+const METRO_TYPES = new Set([1, 400, 401, 402, 403, 404, 405])
+// Per-feed allow-list value: feeds with surface trams/light-rail/metro use this, rail-only feeds use
+// RAIL_TYPES. METRO_TYPES is included so metro routes survive the per-feed filter and routeFamily can
+// map them to the 'tram' family (they enrich OSM light_rail, rail_type 2) — without it, metro-bearing
+// feeds (e.g. Sofia) would fall back to class defaults instead of real frequencies.
+const ALL_RAIL_AND_TRAM = new Set([...RAIL_TYPES, ...TRAM_TYPES, ...METRO_TYPES])
+
+// GTFS route family → OSM rail_type family (rail_type 0=rail, 1=tram, 2=light_rail).
+// Metro/light-metro is grouped with tram: OSM tags light-metro as light_rail (rail_type 2)
+// while GTFS tags it route_type 1 (Porto etc.), and true underground subways have no OSM
+// segment so never match. Conscious Occam trade-off — a subway STOP within 500 m of a
+// surface tram/light_rail segment can match it; accepted over a 3-family scheme that would
+// miss GTFS-tram-tagged light rails. Bus/ferry/etc. → null (skipped).
+function routeFamily(routeType: number): 'rail' | 'tram' | null {
+  if (RAIL_TYPES.has(routeType)) return 'rail'
+  if (TRAM_TYPES.has(routeType) || METRO_TYPES.has(routeType)) return 'tram'
+  return null
+}
 
 const FEEDS: FeedConfig[] = [
   {
@@ -263,6 +278,7 @@ interface StopTrainCount {
   lon: number
   name: string
   h3r4: string
+  family: 'rail' | 'tram'
   trains_passenger: number
   trains_freight: number   // GTFS rarely has freight, but keep for consistency
 }
@@ -452,7 +468,10 @@ async function computeStopFrequencies(
   extractDir: string,
   feed: FeedConfig,
 ): Promise<StopTrainCount[]> {
-  const cacheFile = resolve(CACHE_DIR, feed.id, 'stop-frequencies.json')
+  // Versioned filename: the family-aware schema added a mandatory `family` field, so a
+  // pre-migration cache (family-less stops) must NOT be reused — a stale entry would lack
+  // a family and break the rail↔tram grid routing. A new name forces a clean rebuild.
+  const cacheFile = resolve(CACHE_DIR, feed.id, 'family-frequencies.json')
   if (!forceDownload && existsSync(cacheFile)) {
     console.log(`  [${feed.id}] Using cached stop frequencies: ${cacheFile}`)
     return JSON.parse(readFileSync(cacheFile, 'utf-8'))
@@ -471,15 +490,16 @@ async function computeStopFrequencies(
   }
   console.log(`  [${feed.id}] ${routeTypeMap.size} routes, ${routesRaw.length} total`)
 
-  // Filter to rail route IDs only
-  const railRouteIds = new Set<string>()
+  // Map each route to its OSM rail family, respecting the per-feed route-type allow-list
+  // (a rail-only feed yields only rail-family stops; an ALL_RAIL_AND_TRAM feed yields mixed).
+  const routeFam = new Map<string, 'rail' | 'tram'>()
   for (const [routeId, routeType] of routeTypeMap) {
-    if (feed.railRouteTypes.has(routeType)) {
-      railRouteIds.add(routeId)
-    }
+    if (!feed.railRouteTypes.has(routeType)) continue
+    const fam = routeFamily(routeType)
+    if (fam) routeFam.set(routeId, fam)
   }
-  console.log(`  [${feed.id}] ${railRouteIds.size} rail/tram routes`)
-  if (railRouteIds.size === 0) {
+  console.log(`  [${feed.id}] ${routeFam.size} rail/tram routes`)
+  if (routeFam.size === 0) {
     console.log(`  [${feed.id}] WARNING: No rail routes found. Skipping.`)
     return []
   }
@@ -567,26 +587,25 @@ async function computeStopFrequencies(
   // ── Parse trips.txt: trip_id -> (route_id, service_id) ──
   console.log(`  [${feed.id}] Reading trips.txt...`)
   const tripsRaw = await parseCsvStream(resolve(extractDir, 'trips.txt'))
-  // Filter to rail trips running on target day
-  const railTripIds = new Set<string>()
+  // Filter to rail/tram trips running on target day, carrying their family forward
+  const tripFam = new Map<string, 'rail' | 'tram'>()
   for (const r of tripsRaw) {
-    const routeId = r['route_id']
-    const serviceId = r['service_id']
-    if (!railRouteIds.has(routeId)) continue
+    const fam = routeFam.get(r['route_id'])
+    if (!fam) continue
     // If we have calendar info, filter by service; otherwise count all
-    if (activeServiceIds.size > 0 && !activeServiceIds.has(serviceId)) continue
-    railTripIds.add(r['trip_id'])
+    if (activeServiceIds.size > 0 && !activeServiceIds.has(r['service_id'])) continue
+    tripFam.set(r['trip_id'], fam)
   }
-  console.log(`  [${feed.id}] ${railTripIds.size} rail trips on target day (of ${tripsRaw.length} total)`)
+  console.log(`  [${feed.id}] ${tripFam.size} rail trips on target day (of ${tripsRaw.length} total)`)
 
-  if (railTripIds.size === 0) {
+  if (tripFam.size === 0) {
     console.log(`  [${feed.id}] WARNING: No active rail trips. Skipping.`)
     return []
   }
 
   // ── Parse stop_times.txt: count departures per stop for rail trips ──
   console.log(`  [${feed.id}] Reading stop_times.txt (this may take a while for large feeds)...`)
-  const stopDepartures = new Map<string, number>() // stop_id -> departure count
+  const stopDepartures = new Map<string, { rail: number; tram: number }>() // stop_id -> per-family departure count
 
   // Stream stop_times.txt because it can be very large (hundreds of MB)
   const stStream = createReadStream(resolve(extractDir, 'stop_times.txt'), { encoding: 'utf-8' })
@@ -616,10 +635,13 @@ async function computeStopFrequencies(
     // Fast path: extract only trip_id and stop_id without full CSV parse
     const fields = parseCsvLine(line)
     const tripId = fields[tripIdIdx]
-    if (!railTripIds.has(tripId)) continue
+    const fam = tripFam.get(tripId)
+    if (!fam) continue
 
     const stopId = fields[stopIdIdx]
-    stopDepartures.set(stopId, (stopDepartures.get(stopId) || 0) + 1)
+    let counts = stopDepartures.get(stopId)
+    if (!counts) { counts = { rail: 0, tram: 0 }; stopDepartures.set(stopId, counts) }
+    counts[fam]++
     stMatched++
 
     if (Date.now() - lastProgressTime > 10_000) {
@@ -678,7 +700,7 @@ async function computeStopFrequencies(
   const results: StopTrainCount[] = []
   let resolvedViaParent = 0
 
-  for (const [stopId, count] of stopDepartures) {
+  for (const [stopId, counts] of stopDepartures) {
     let stop = stopsMap.get(stopId)
     if (!stop) {
       // Try parent station
@@ -690,23 +712,28 @@ async function computeStopFrequencies(
     }
     if (!stop) continue
 
-    // All GTFS departures are passenger (freight isn't in GTFS)
-    results.push({
-      stop_id: stop.stop_id,
-      lat: stop.lat,
-      lon: stop.lon,
-      name: stop.name,
-      h3r4: stop.h3r4,
-      trains_passenger: count,
-      trains_freight: 0,
-    })
+    // All GTFS departures are passenger (freight isn't in GTFS). Emit one row per
+    // non-zero family so rail and tram stops route to their own OSM rail_type grid.
+    for (const family of ['rail', 'tram'] as const) {
+      if (counts[family] === 0) continue
+      results.push({
+        stop_id: stop.stop_id,
+        lat: stop.lat,
+        lon: stop.lon,
+        name: stop.name,
+        h3r4: stop.h3r4,
+        family,
+        trains_passenger: counts[family],
+        trains_freight: 0,
+      })
+    }
   }
 
   // Deduplicate: multiple stop_ids might resolve to same parent coords
-  // Group by rounded lat/lon (to ~10m) and sum
+  // Group by rounded lat/lon (to ~10m) + family and sum
   const dedupMap = new Map<string, StopTrainCount>()
   for (const sc of results) {
-    const key = `${sc.lat.toFixed(4)}_${sc.lon.toFixed(4)}`
+    const key = `${sc.lat.toFixed(4)}_${sc.lon.toFixed(4)}_${sc.family}`
     const existing = dedupMap.get(key)
     if (existing) {
       existing.trains_passenger += sc.trains_passenger
@@ -744,8 +771,21 @@ async function computeStopFrequencies(
 
 // ── Step 3: Match stops to railway segments and write Arrow ──
 
-/** Distance from point (px,py) to line segment (ax,ay)-(bx,by) in meters. */
-function enrichHexes(allStopCounts: StopTrainCount[]): void {
+// CNOSSOS operator-class fallback (owner-confirmed L2: fill by type, no silent track).
+// Mirrors enrich-railway-kr.ts; industrial freight=8 mirrors th.ts; heavy-rail main=50/10
+// is a conservative floor (GTFS covers the busy lines, an unmatched main is a minor line).
+// rail_type: 0=rail 1=tram 2=light_rail 3=narrow_gauge 4=funicular; usage: 0=main 1=branch 2=industrial
+function defaultTrains(railType: number, usage: number): { pax: number; frt: number } {
+  if (railType === 2) return { pax: 250, frt: 0 }
+  if (railType === 1) return { pax: 200, frt: 0 }
+  if (railType === 3) return { pax: 30, frt: 0 }
+  if (railType === 4) return { pax: 30, frt: 0 }
+  if (usage === 1) return { pax: 80, frt: 0 }
+  if (usage === 2) return { pax: 0, frt: 8 }
+  return { pax: 50, frt: 10 }
+}
+
+async function enrichHexes(allStopCounts: StopTrainCount[]): Promise<void> {
   // Group stops by H3R4 hex
   const stopsByHex = new Map<string, StopTrainCount[]>()
   for (const sc of allStopCounts) {
@@ -754,144 +794,76 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
   }
   console.log(`  Stops span ${stopsByHex.size} H3R4 hexes`)
 
-  const hexDirs = readdirSync(H3R4_DIR).filter(d =>
-    d.length === 15 && d.endsWith('ffffffff'))
-
-  let totalRails = 0
-  let totalMatched = 0
-  let hexesUpdated = 0
-  let hexesScanned = 0
-  let totalPreExisting = 0
+  // Multi-country continental feed has no single bbox — scan only hexes that carry
+  // europe stops (class defaults reach every track within those hexes; a tram that no
+  // longer inherits a heavy-rail count gets its own value). Hexes with zero europe
+  // stops are left to the national/global passes.
+  let totalRails = 0, totalStamped = 0, gtfsHits = 0, skippedService = 0, hexesUpdated = 0, hexesScanned = 0
   const startTime = Date.now()
 
-  for (const hexId of hexDirs) {
-    // Only process hexes that have GTFS stops
-    const hexStops = stopsByHex.get(hexId)
-    if (!hexStops) continue
-
+  for (const hexId of stopsByHex.keys()) {
     const railPath = resolve(H3R4_DIR, hexId, 'railways.arrow')
     if (!existsSync(railPath)) continue
-
     hexesScanned++
-    const buf = readFileSync(railPath)
-    const table = tableFromIPC(buf)
-    const n = table.numRows
-    if (n === 0) continue
 
-    const startLat = table.getChild('start_lat')!
-    const startLon = table.getChild('start_lon')!
-    const endLat = table.getChild('end_lat')!
-    const endLon = table.getChild('end_lon')!
-    const serviceCol = table.getChild('service')
-
-    // Read existing enrichment columns if present
-    const existingPax = table.getChild('trains_passenger')
-    const existingFrt = table.getChild('trains_freight')
-    const existingSourceId = table.getChild('source_id')
-
-    const trainsPax = new Int32Array(n)
-    const trainsFrt = new Int32Array(n)
-    const sourceId = new Uint16Array(n)
-
-    // Seed output arrays from existing values so we never clobber prior
-    // higher-priority enrichment (e.g. national GTFS from enrich-railway-cz).
-    for (let i = 0; i < n; i++) {
-      trainsPax[i] = existingPax ? (existingPax.get(i) as number ?? 0) : 0
-      trainsFrt[i] = existingFrt ? (existingFrt.get(i) as number ?? 0) : 0
-      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number ?? 0) : 0
-      if (trainsPax[i] > 0 || trainsFrt[i] > 0) totalPreExisting++
-    }
-
-    totalRails += n
-
-    // Build spatial grid for stops in this hex (0.01 deg ~ 1km cells)
-    const grid = new Map<string, StopTrainCount[]>()
-    for (const sc of hexStops) {
+    // Build this hex's two family grids once (0.01° ≈ 1 km cells).
+    const railGrid = new Map<string, StopTrainCount[]>()
+    const tramGrid = new Map<string, StopTrainCount[]>()
+    for (const sc of stopsByHex.get(hexId)!) {
       const key = `${Math.floor(sc.lat * 100)}_${Math.floor(sc.lon * 100)}`
+      const grid = sc.family === 'rail' ? railGrid : tramGrid
       if (!grid.has(key)) grid.set(key, [])
       grid.get(key)!.push(sc)
     }
 
-    let hexMatched = 0
-
-    for (let i = 0; i < n; i++) {
-      // Skip service tracks (yards, sidings, spurs)
-      const service = serviceCol ? (serviceCol.get(i) as number ?? 0) : 0
-      if (service > 0) continue
-
-      // Priority gate: preserve higher-priority existing (e.g. national GTFS).
-      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
-
-      const sLat = startLat.get(i) as number
-      const sLon = startLon.get(i) as number
-      const eLat = endLat.get(i) as number
-      const eLon = endLon.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
-
-      // Find nearest GTFS stop within 500m of the segment
-      let bestDist = 500 // max 500m from segment to stop
-      let bestStop: StopTrainCount | null = null
-
-      const gridKey = `${Math.floor(midLat * 100)}_${Math.floor(midLon * 100)}`
-      // Check 3x3 grid cells
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const k = `${Math.floor(midLat * 100) + dy}_${Math.floor(midLon * 100) + dx}`
-          const cell = grid.get(k)
-          if (!cell) continue
-          for (const sc of cell) {
-            // Distance from stop to segment line
-            const d = pointToSegmentDist(sc.lat, sc.lon, sLat, sLon, eLat, eLon)
-            if (d < bestDist) {
-              bestDist = d
-              bestStop = sc
+    let matchWasGtfs = false
+    const r = await writeRailTrains(
+      railPath,
+      (row) => {
+        matchWasGtfs = false
+        // Family gate: heavy rail (rail_type 0) → rail stops; tram/light_rail
+        // (rail_type 1/2) → tram/metro stops. Cross-family matches can't happen.
+        const grid = row.railType === 0 ? railGrid : (row.railType === 1 || row.railType === 2) ? tramGrid : null
+        if (grid && grid.size > 0) {
+          let bestDist = 500
+          let bestStop: StopTrainCount | null = null
+          const gy = Math.floor(row.midLat * 100), gx = Math.floor(row.midLon * 100)
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+            const cell = grid.get(`${gy + dy}_${gx + dx}`)
+            if (!cell) continue
+            for (const sc of cell) {
+              const d = pointToSegmentDist(sc.lat, sc.lon, row.startLat, row.startLon, row.endLat, row.endLon)
+              if (d < bestDist) { bestDist = d; bestStop = sc }
             }
           }
+          if (bestStop) {
+            matchWasGtfs = true
+            return { pax: bestStop.trains_passenger, frt: bestStop.trains_freight, sourceId: MY_SOURCE_ID }
+          }
         }
-      }
+        // No GTFS match (or unhandled rail_type): CNOSSOS class default.
+        const def = defaultTrains(row.railType, row.usage)
+        return { pax: def.pax, frt: def.frt, sourceId: MY_SOURCE_ID }
+      },
+      () => { if (matchWasGtfs) gtfsHits++ }, // count only post-gate (applied) GTFS matches
+    )
+    totalRails += r.rows
+    totalStamped += r.matched
+    skippedService += r.skippedService
+    if (r.updated) hexesUpdated++
 
-      if (!bestStop) continue
-
-      trainsPax[i] = bestStop.trains_passenger
-      trainsFrt[i] = bestStop.trains_freight
-      sourceId[i] = MY_SOURCE_ID
-      hexMatched++
-    }
-
-    if (hexMatched === 0) continue
-
-    // Copy ALL existing columns by iterating schema
-    const columns: Record<string, any> = {}
-    for (const field of table.schema.fields) {
-      if (field.name === 'trains_passenger') continue
-      if (field.name === 'trains_freight') continue
-      if (field.name === 'source_id') continue
-      columns[field.name] = table.getChild(field.name)!
-    }
-    columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
-    columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
-    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-
-    const newTable = makeTable(columns)
-    // MUST use 'file' format — Rust FileReader requires ARROW1 magic bytes
-    writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
-    totalMatched += hexMatched
-    hexesUpdated++
-
-    // Progress every 10s
     const elapsed = Date.now() - startTime
     if (elapsed > 0 && hexesScanned % 50 === 0) {
-      console.log(`  [${(elapsed / 1000).toFixed(0)}s] ${hexesScanned} hexes, ${totalMatched} segments matched`)
+      console.log(`  [${(elapsed / 1000).toFixed(0)}s] ${hexesScanned} hexes, ${hexesUpdated} updated, ${totalStamped.toLocaleString()} stamped (${gtfsHits.toLocaleString()} via GTFS)`)
     }
   }
 
   console.log(`\n=== Enrichment Results ===`)
-  console.log(`  Railway segments in matched hexes: ${totalRails}`)
-  console.log(`  Pre-existing enrichments (preserved): ${totalPreExisting}`)
-  console.log(`  Newly matched from GTFS: ${totalMatched} (${totalRails > 0 ? (totalMatched / totalRails * 100).toFixed(1) : 0}%)`)
-  console.log(`  Hexes updated: ${hexesUpdated}`)
-  console.log(`  Hexes scanned: ${hexesScanned}`)
+  console.log(`  Railway segments scanned:  ${totalRails.toLocaleString()}`)
+  console.log(`  Skipped service tracks:    ${skippedService.toLocaleString()}`)
+  console.log(`  Matched by GTFS:           ${gtfsHits.toLocaleString()}`)
+  console.log(`  Stamped (incl. defaults):  ${totalStamped.toLocaleString()}`)
+  console.log(`  Hexes updated:             ${hexesUpdated}/${hexesScanned}`)
 }
 
 // ── Main ──
@@ -952,7 +924,7 @@ async function main() {
 
   console.log(`\n\n--- Enriching railways.arrow ---`)
   console.log(`  Total GTFS stops: ${allStopCounts.length}`)
-  enrichHexes(allStopCounts)
+  await enrichHexes(allStopCounts)
 
   console.log(`\n=== Done ===`)
 }
