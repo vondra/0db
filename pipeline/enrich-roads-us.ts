@@ -32,6 +32,13 @@ import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_US_FHWA_HPMS
 
+// HPMS surveys F_SYSTEM 1-5 (Interstate → Major Collector) = OSM motorway(0)/
+// trunk(1)/primary(2)/secondary(3)/tertiary(4) and their _link variants
+// (10/11/12). It never surveys residential(5)/service(7)/etc., so writeRoadAadt
+// is gated to this set — a quiet street can no longer inherit a nearby
+// interstate's AADT (the Knoxville "Papermill Pointe Way" = 211,587 bug).
+const HPMS_COVERAGE = new Set([0, 1, 2, 3, 4, 10, 11, 12])
+
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/us`)
@@ -58,15 +65,14 @@ interface UsRoadSegment {
   aadt_moto: number
 }
 
-// Heavy share by F_SYSTEM (CNOSSOS-EU Part 2 Table 2.3 defaults applied to US road categories)
+// Heavy share by F_SYSTEM (CNOSSOS-EU Part 2 Table 2.3 defaults applied to US
+// road categories). Only F_SYSTEM 1-5 — parseAllPages drops 6/7 (see below).
 const HEAVY_SHARE: Record<number, number> = {
   1: 0.12, // Interstate
   2: 0.10, // Principal Arterial Other Freeway
   3: 0.08, // Principal Arterial Other
   4: 0.06, // Minor Arterial
   5: 0.05, // Major Collector
-  6: 0.04, // Minor Collector
-  7: 0.03, // Local
 }
 
 async function downloadAllPages(): Promise<void> {
@@ -121,6 +127,12 @@ function parseAllPages(): UsRoadSegment[] {
       if (lat < US_HEX_BBOX[0] || lat > US_HEX_BBOX[2] || lon < US_HEX_BBOX[1] || lon > US_HEX_BBOX[3]) continue
 
       const fSystem = parseInt(props.F_SYSTEM || '7')
+      // Source coverage = HPMS F_SYSTEM 1-5 (Interstate → Major Collector). Drop
+      // Minor Collector (6) / Local (7) and NaN: those dense minor segments are
+      // the ones most prone to mis-matching a nearby major OSM road, and the
+      // target class gate (HPMS_COVERAGE) already restricts matches to road_class
+      // 0-4 + links — this keeps source ↔ target coverage aligned.
+      if (!(fSystem >= 1 && fSystem <= 5)) continue
       const heavyShare = HEAVY_SHARE[fSystem] ?? 0.05
 
       // CNOSSOS classes
@@ -160,7 +172,7 @@ async function enrichArrows(sites: UsRoadSegment[]): Promise<void> {
   const hexDirs = iterateCountryHexes(H3R4_DIR, US_HEX_BBOX)
   console.log(`  US hexes with roads.arrow: ${hexDirs.length}\n`)
 
-  let totalSeg = 0, matched = 0, preserved = 0, hexesUpdated = 0
+  let totalSeg = 0, matched = 0, preserved = 0, hexesUpdated = 0, skipped = 0
   const startTime = Date.now()
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
@@ -204,8 +216,10 @@ async function enrichArrows(sites: UsRoadSegment[]): Promise<void> {
         }
       },
       () => { matched++ },
+      HPMS_COVERAGE,
     )
     if (r.updated) hexesUpdated++
+    skipped += r.skipped
 
     if (hi % 200 === 0 || hi === hexDirs.length - 1) {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(0)
@@ -214,7 +228,8 @@ async function enrichArrows(sites: UsRoadSegment[]): Promise<void> {
   }
 
   console.log(`\n=== Enrichment Results ===`)
-  console.log(`  Total segments scanned: ${totalSeg.toLocaleString()}`)
+  console.log(`  In-coverage rows scanned: ${totalSeg.toLocaleString()}`)
+  console.log(`  Out-of-coverage rows skipped (class gate): ${skipped.toLocaleString()}`)
   console.log(`  Preserved (continental): ${preserved.toLocaleString()}`)
   console.log(`  Newly matched: ${matched.toLocaleString()} (${(100 * matched / Math.max(totalSeg, 1)).toFixed(2)}%)`)
   console.log(`  Hexes updated: ${hexesUpdated}/${hexDirs.length}`)

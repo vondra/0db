@@ -49,6 +49,9 @@ export interface WriteRoadResult {
   rows: number
   matched: number
   updated: boolean
+  /** Rows whose `road_class` fell outside the source's `coverage` set — skipped
+   *  before `match` ran, so a major-road dataset cannot stamp a minor road. */
+  skipped: number
 }
 
 /**
@@ -58,18 +61,22 @@ export interface WriteRoadResult {
  * 'file'-format write via `withArrowWrite`. Returns the original table unchanged
  * when nothing matched, so the file is left byte-identical.
  *
- * `match(row, i)` is invoked for EVERY row (return `null` = no match) — count
- * per-class totals there. `onApplied(row, i)` fires only after the gate accepts a
- * match — count per-class matched there (the count must follow the gate, not
- * precede it).
+ * `match(row, i)` is invoked for every row WITHIN `coverage` (return `null` = no
+ * match) — count per-class totals there. Rows whose `road_class` is outside
+ * `coverage` are skipped before `match` (tallied in `result.skipped`), so a
+ * dataset that only surveys major roads physically cannot stamp a minor one.
+ * `onApplied(row, i)` fires only after the priority gate accepts a match — count
+ * per-class matched there (the count must follow the gate, not precede it).
  */
 export async function writeRoadAadt(
   arrowPath: string,
   match: (row: RoadRow, i: number) => RoadAadt | null,
   onApplied?: (row: RoadRow, i: number, applied: RoadAadt) => void,
+  coverage?: ReadonlySet<number>,
 ): Promise<WriteRoadResult> {
   let rows = 0
   let matched = 0
+  let skipped = 0
   let updated = false
 
   await withArrowWrite(arrowPath, (table: Table): Table => {
@@ -121,6 +128,13 @@ export async function writeRoadAadt(
         midLat: (startLat + endLat) / 2,
         midLon: (startLon + endLon) / 2,
       }
+      // Class gate (centralized so no enricher can forget it): a source whose
+      // `coverage` set omits this row's `road_class` never reaches `match`, so a
+      // major-road dataset can't bleed onto a residential/service street — the
+      // Knoxville "Papermill Pointe Way" = 211,587 AADT bug. road_class codes:
+      // 0 motorway..4 tertiary, 5 residential, 6 living_street, 7 service,
+      // 8 track, 9 unclassified, 10/11/12 links (engine inputs.rs).
+      if (coverage && !coverage.has(row.roadClass)) { skipped++; continue }
       const m = match(row, i)
       if (!m) continue
       // Fail loud on a malformed match (missing/NaN column, or a 0/unknown source_id):
@@ -162,7 +176,7 @@ export async function writeRoadAadt(
     return makeTable(cols)
   })
 
-  return { rows, matched, updated }
+  return { rows, matched, updated, skipped }
 }
 
 /**
