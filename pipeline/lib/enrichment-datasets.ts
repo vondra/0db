@@ -31,7 +31,23 @@ export interface Dataset {
   license: string | null
   url: string | null
   priority: number
+  /** Road classes (engine inputs.rs codes: 0 motorway..4 tertiary, 10-12 links)
+   *  this source may stamp — mirrors the `coverage` set its enricher passes to
+   *  `writeRoadAadt`. Absent = the enricher declares no class gate; the
+   *  invariant scanner (`audit-enrichment-invariants.ts`) then skips the
+   *  coverage check for rows carrying this id. */
+  roadCoverage?: readonly number[]
+  /** Rail families whose MEASURED (GTFS/timetable) counts this source may
+   *  stamp: 'rail' = rail_type 0, 'tram' = rail_type 1/2. Per-family class
+   *  defaults (≤250 trains/day) are family-correct by construction and not
+   *  limited by this. Absent = capability unknown; the scanner skips the
+   *  tram-overcount check for this id. */
+  railFamilies?: readonly ('rail' | 'tram')[]
 }
+
+/** Classes 0-4 + links — the standard major-road census coverage every
+ *  coverage-passing national road enricher uses today (fi/sa/pl/dk/no/us/nz). */
+const MAJOR_ROAD_COVERAGE = [0, 1, 2, 3, 4, 10, 11, 12] as const
 
 export const DATASETS: Dataset[] = [
   // ── Sentinel ──
@@ -104,6 +120,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-domain',
     url: 'https://www.fhwa.dot.gov/policyinformation/hpms.cfm',
     priority: 80,
+    roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
     id: 22,
@@ -146,6 +163,7 @@ export const DATASETS: Dataset[] = [
     license: 'mixed (per-operator)',
     url: null,
     priority: 70,
+    railFamilies: ['rail', 'tram'], // family-aware Variant B (enrich-railway-europe.ts)
   },
 
   // ── Railways: national ──
@@ -158,6 +176,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://www.spravazeleznic.cz/',
     priority: 80,
+    railFamilies: ['rail'], // CZPTT is heavy-rail only; trams get class defaults
   },
 
   // ── Buildings: national ──
@@ -328,6 +347,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://www.opendata.dk/vejdirektoratet/taellinger-nogletal-mastra',
     priority: 80,
+    roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
     id: 1034,
@@ -358,6 +378,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://avoindata.suomi.fi/data/fi/dataset/liikennemaarat',
     priority: 80,
+    roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
     id: 1041,
@@ -378,6 +399,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://gisportal.binamarga.pu.go.id/',
     priority: 80,
+    highMoto: true,
   },
   {
     id: 1049,
@@ -418,6 +440,7 @@ export const DATASETS: Dataset[] = [
     license: 'NLOD 2.0',
     url: 'https://nvdbapiles.atlas.vegvesen.no/',
     priority: 80,
+    roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
     id: 1090,
@@ -428,6 +451,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://opendata-nzta.opendata.arcgis.com/',
     priority: 80,
+    roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
     id: 1093,
@@ -448,6 +472,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://services1.arcgis.com/IwZZTMxZCmAmFYvF/',
     priority: 80,
+    highMoto: true,
   },
   {
     id: 1097,
@@ -458,6 +483,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://www.gov.pl/web/gddkia/generalny-pomiar-ruchu-20202021',
     priority: 80,
+    roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
     id: 1098,
@@ -478,6 +504,7 @@ export const DATASETS: Dataset[] = [
     license: 'open-data',
     url: 'https://mot.gov.sa/en/open-data',
     priority: 80,
+    roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
     id: 1113,
@@ -530,6 +557,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://opendata.transport.nsw.gov.au/',
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
   {
     id: 2009,
@@ -540,6 +568,7 @@ export const DATASETS: Dataset[] = [
     license: 'open-data',
     url: 'https://stibmivb.opendatasoft.com/',
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
   {
     id: 2015,
@@ -550,6 +579,7 @@ export const DATASETS: Dataset[] = [
     license: 'open-data',
     url: 'https://www.viarail.ca/',
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
   {
     id: 2021,
@@ -570,6 +600,7 @@ export const DATASETS: Dataset[] = [
     license: 'open-data',
     url: 'https://www.rejseplanen.info/labs/GTFS.zip',
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
   {
     id: 2028,
@@ -580,6 +611,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://data.renfe.com/',
     priority: 80,
+    railFamilies: ['rail'], // Renfe/FGC heavy/suburban only; street trams are separate operators
   },
   {
     id: 2030,
@@ -590,6 +622,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://rata.digitraffic.fi/',
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
   {
     id: 2035,
@@ -600,6 +633,7 @@ export const DATASETS: Dataset[] = [
     license: 'open-data',
     url: 'https://www.transportforireland.ie/',
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
   {
     id: 2036,
@@ -610,6 +644,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://www.gov.il/he/pages/gtfs_general_transit_feed_specifications',
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
   {
     id: 2037,
@@ -630,6 +665,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://dati.toscana.it/',
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
   {
     id: 2044,
@@ -650,6 +686,7 @@ export const DATASETS: Dataset[] = [
     license: 'open-data',
     url: 'https://datos.cdmx.gob.mx/dataset/gtfs',
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
   {
     id: 2066,
@@ -660,6 +697,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://mkuran.pl/gtfs/',
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
   {
     id: 2067,
@@ -670,6 +708,7 @@ export const DATASETS: Dataset[] = [
     license: 'open-data',
     url: 'https://publico.cp.pt/gtfs',
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
   {
     id: 2073,
@@ -680,6 +719,7 @@ export const DATASETS: Dataset[] = [
     license: 'open-data',
     url: 'https://www.trafiklab.se/',
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
   {
     id: 2075,
@@ -690,6 +730,7 @@ export const DATASETS: Dataset[] = [
     license: 'open-data',
     url: null,
     priority: 80,
+    railFamilies: ['rail', 'tram'],
   },
 
   // ── Heuristics ──
