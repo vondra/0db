@@ -14,6 +14,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { shouldOverwrite } from './lib/provenance.js'
 import * as XLSX from 'xlsx'
 import shp from 'shpjs'
@@ -24,19 +25,13 @@ import { makeCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_PL_NATIONAL_ROADS
 
-// Poland's bbox blankets ~all of Czechia, and a no-geometry provincial (DW) road
-// is accepted by ref alone — so without a country gate a Czech "I/150" was matched
-// to Polish "DW150" and given Polish AADT (150k segments, Stage-3 audit). Only
-// roads whose midpoint is on Polish soil get PL data.
-const inPoland = makeCountryGate('PL')
-
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/pl`)
 const CACHE_NATIONAL_XLS = resolve(CACHE_DIR, 'gpr-2020-national.xls')
 const CACHE_PROVINCIAL_XLS = resolve(CACHE_DIR, 'gpr-2020-provincial.xls')
 const CACHE_SHP_ZIP = resolve(CACHE_DIR, 'gpr-2020-segments-shp.zip')
-const CACHE_PARSED = resolve(CACHE_DIR, 'gpr-2020-parsed-v2.json')   // v2: national records store `coords` polyline (was centroid only)
+const CACHE_PARSED = resolve(CACHE_DIR, 'gpr-2020-parsed-v3.json')   // v3: header-detected columns (v2 mis-parsed provincial with national layout; see parseGprXls). v2: polyline coords.
 
 const enrichOnly = process.argv.includes('--enrich-only')
 const forceDownload = process.argv.includes('--force-download')
@@ -89,7 +84,7 @@ async function downloadAll(): Promise<void> {
 
 // ── Step 2: parse XLS ──
 
-interface XlsRecord {
+export interface XlsRecord {
   nr2020: string
   ref: string
   pikp: number
@@ -103,7 +98,18 @@ interface XlsRecord {
   buses: number
 }
 
-function parseGprXls(path: string, label: string): Map<string, XlsRecord> {
+/**
+ * Parse a GPR 2020 SDRR workbook (national or provincial) into per-point records.
+ *
+ * Columns are DETECTED FROM HEADER TEXT, not fixed indices: the national sheet
+ * has extra "kraj."+"E" columns after "Numer drogi" that the provincial sheet
+ * lacks, so a single fixed layout shifts every provincial value one column left
+ * — cars landed in `motorcycles` (DW943: moto=1704 instead of 64; audit
+ * 2026-06-10 R1). Header rows are the rows above the first numeric ID; needles
+ * are diacritic-stripped substrings so "Sam. osob. i mikrobusy" (national) and
+ * "Sam. osob. mikrobusy" (provincial) both match.
+ */
+export function parseGprXls(path: string, label: string): Map<string, XlsRecord> {
   const buf = readFileSync(path)
   const wb = XLSX.read(buf, { type: 'buffer' })
   const sheetName = wb.SheetNames.find(n => n.toLowerCase() === 'tab02') || wb.SheetNames[0]
@@ -118,12 +124,49 @@ function parseGprXls(path: string, label: string): Map<string, XlsRecord> {
   }
   if (dataStart < 0) throw new Error(`${label}: could not find data start row`)
 
-  // Column layout (verified from XLS inspection):
-  // 0=Numer punktu (nr2020), 1=NrDrogi (road), 2=E (Euro route),
-  // 3=Pikietaż pocz., 4=Pikietaż końc., 5=Długość, 6=Nazwa,
-  // 7=SDRR poj./dobę (TOTAL), 8=Motocykle, 9=Sam. osob.+mikro,
-  // 10=Lekkie sam. ciężar., 11=Sam. cięż. bez przycz., 12=Sam. cięż. z przycz.,
-  // 13=Autobusy, 14=Ciągniki
+  // Needles are matched against diacritic-stripped text, so the regex below must
+  // strip ń→n, ż→z etc. (needles avoid ł, which doesn't NFD-decompose). Sheet-wide
+  // banner rows ("ŚREDNI DOBOWY RUCH ROCZNY (SDRR)") live in column 0 and would
+  // poison its text — only rows with ≥3 non-empty string cells are real headers.
+  const headerRows: number[] = []
+  for (let r = 0; r < dataStart; r++) {
+    let nonEmpty = 0
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const v = sheet[XLSX.utils.encode_cell({ r, c })]?.v
+      if (typeof v === 'string' && v.trim()) nonEmpty++
+    }
+    if (nonEmpty >= 3) headerRows.push(r)
+  }
+  const texts: string[] = []
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const parts: string[] = []
+    for (const r of headerRows) {
+      const v = sheet[XLSX.utils.encode_cell({ r, c })]?.v
+      if (typeof v === 'string' && v.trim()) parts.push(v)
+    }
+    texts[c] = parts.join(' ').toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ').trim()
+  }
+  const findCol = (needle: string, exclude?: string): number =>
+    texts.findIndex(t => t && t.includes(needle) && (!exclude || !t.includes(exclude)))
+  const cols = {
+    id: findCol('numer punktu'),
+    ref: findCol('numer drogi'),
+    pikp: findCol('pikieta'),                    // "Opis odcinka / Pikietaż / pocz."
+    pikk: findCol('konc'),                       // "końc." (NFD → konc)
+    sdrr: findCol('sdrr'),
+    motorcycles: findCol('motocykle'),
+    cars: findCol('sam. osob'),
+    lightTrucks: findCol('lekkie sam'),
+    trucksNoTrailer: findCol('bez przycz'),
+    trucksWithTrailer: findCol('z przycz', 'bez przycz'),  // "bez przycz." contains "z przycz."
+    buses: findCol('autobus'),
+  }
+  const missing = Object.entries(cols).filter(([, c]) => c < 0).map(([k]) => k)
+  if (missing.length > 0) {
+    throw new Error(`${label}: header columns not found in sheet ${sheetName}: ${missing.join(', ')} — GPR layout drifted, refusing to guess indices`)
+  }
 
   const map = new Map<string, XlsRecord>()
   for (let r = dataStart; r <= range.e.r; r++) {
@@ -139,38 +182,47 @@ function parseGprXls(path: string, label: string): Map<string, XlsRecord> {
       }
       return 0
     }
-    const id = get(0)
-    const road = get(1)
+    const id = get(cols.id)
+    const road = get(cols.ref)
     if (id == null || road == null) continue
 
     const nr2020 = id.toString().trim()
     const refRaw = road.toString().trim()
     if (!nr2020 || !refRaw) continue
 
-    // Normalize: "A 1" → "A1", "DK 7" → "DK7", "85" → "DK85" (national defaults to DK)
-    let ref = refRaw.replace(/\s+/g, '').toUpperCase()
-    // Provincial roads use "DW" prefix, national might be just number
-    if (/^\d/.test(ref)) {
-      // Pure digit means national or provincial; we use NR2020 prefix to disambiguate later
-      ref = ref
-    }
+    // Normalize: "A 1" → "A1", "DK 7" → "DK7"; pure digits disambiguated later
+    const ref = refRaw.replace(/\s+/g, '').toUpperCase()
 
     map.set(nr2020, {
       nr2020,
       ref,
-      pikp: num(3),
-      pikk: num(4),
-      imdTot: num(7),
-      motorcycles: num(8),
-      cars: num(9),
-      lightTrucks: num(10),
-      trucksNoTrailer: num(11),
-      trucksWithTrailer: num(12),
-      buses: num(13),
+      pikp: num(cols.pikp),
+      pikk: num(cols.pikk),
+      imdTot: num(cols.sdrr),
+      motorcycles: num(cols.motorcycles),
+      cars: num(cols.cars),
+      lightTrucks: num(cols.lightTrucks),
+      trucksNoTrailer: num(cols.trucksNoTrailer),
+      trucksWithTrailer: num(cols.trucksWithTrailer),
+      buses: num(cols.buses),
     })
   }
 
-  console.log(`  ${label}: parsed ${map.size} measurement points`)
+  // Scramble tripwire: GPR motorcycle share is ~1-2% nationwide; cars-in-moto
+  // (the v2 provincial bug) pushes it past 50%. Threshold 15% leaves room for
+  // genuinely moto-heavy files while catching any future column shift.
+  let motoSum = 0
+  let allSum = 0
+  for (const rec of map.values()) {
+    motoSum += rec.motorcycles
+    allSum += rec.motorcycles + rec.cars + rec.lightTrucks + rec.trucksNoTrailer + rec.trucksWithTrailer + rec.buses
+  }
+  const motoShare = allSum > 0 ? motoSum / allSum : 0
+  if (motoShare > 0.15) {
+    throw new Error(`${label}: motorcycle share ${(100 * motoShare).toFixed(1)}% > 15% — column-scramble signature (GPR real share ≈1-2%)`)
+  }
+
+  console.log(`  ${label}: parsed ${map.size} measurement points (moto share ${(100 * motoShare).toFixed(2)}%)`)
   return map
 }
 
@@ -333,6 +385,14 @@ function makeFromTotal(nr2020: string, ref: string, lat: number, lon: number, co
 // ── Step 4: enrich roads.arrow ──
 
 async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
+  // Poland's bbox blankets ~all of Czechia, and a no-geometry provincial (DW) road
+  // is accepted by ref alone — so without a country gate a Czech "I/150" was matched
+  // to Polish "DW150" and given Polish AADT (150k segments, Stage-3 audit). Only
+  // roads whose midpoint is on Polish soil get PL data. Created here, not at module
+  // scope: makeCountryGate may download the NE countries geojson, and the test file
+  // imports parseGprXls from this module.
+  const inPoland = makeCountryGate('PL')
+
   // Index by ref
   const refIndex = new Map<string, SegmentRecord[]>()
   for (const s of segments) {
@@ -350,6 +410,12 @@ async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
   let preserved = 0
   let hexesUpdated = 0
   const startTime = Date.now()
+
+  // GPR covers national (A/S/DK → motorway..tertiary) + provincial DW roads
+  // (≈ secondary/tertiary). Same coverage set as US HPMS: majors + links only,
+  // so a stray ref collision can never stamp a residential/service street
+  // (/gg W5 — writeRoadAadt's gate is opt-in, PL previously passed none).
+  const PL_COVERAGE: ReadonlySet<number> = new Set([0, 1, 2, 3, 4, 10, 11, 12])
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
     const hexId = hexDirs[hi]
@@ -378,11 +444,15 @@ async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
         for (const cand of candidates) {
           if (!refIndex.has(cand)) continue
           for (const s of refIndex.get(cand)!) {
-            if (Number.isNaN(s.midLat)) {
+            // isProvincial is the no-geometry sentinel — NOT Number.isNaN(midLat):
+            // the parsed cache goes through JSON, which turns NaN into null, and
+            // isNaN(null) is false — cached reruns would silently drop every DW
+            // match (Codex review of C1).
+            if (s.isProvincial) {
               // Provincial road without geometry — match by ref alone if no national hit yet
               if (!best || best.isProvincial) {
                 best = s
-                bestDist = 5_000_000 // sentinel — accepted only if no closer national segment
+                bestDist = 5_000_000 // sentinel — any national polyline hit beats it
               }
               continue
             }
@@ -391,9 +461,9 @@ async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
           }
         }
 
-        // Match within 30km for national, 50km for provincial
-        const maxDist = best?.isProvincial ? 50_000 : 30_000
-        if (best && (Number.isNaN(best.midLat) || bestDist < maxDist)) {
+        // National needs its polyline within 30 km; provincial is ref-only
+        // (clamped to Polish soil below).
+        if (best && (best.isProvincial || bestDist < 30_000)) {
           // The provincial branch above accepts a DW match by ref ALONE (no geometry,
           // any distance); clamp every match to Polish soil so a Czech "150" can't
           // keep "DW150" data.
@@ -406,6 +476,7 @@ async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
         return null
       },
       () => { matched++ },
+      PL_COVERAGE,
     )
     if (r.updated) hexesUpdated++
 
@@ -423,7 +494,7 @@ async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
 
   // Top corridors
   const top = [...segments]
-    .filter(s => !Number.isNaN(s.midLat) && s.imdTot > 0)
+    .filter(s => !s.isProvincial && s.imdTot > 0)
     .sort((a, b) => b.imdTot - a.imdTot)
     .slice(0, 15)
   console.log(`\n  Top 15 AADT corridors:`)
@@ -462,4 +533,7 @@ async function main() {
   console.log(`\n=== Done ===`)
 }
 
-main().catch(err => { console.error('Error:', err); process.exit(1) })
+// Run only when invoked directly — the test file imports parseGprXls.
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch(err => { console.error('Error:', err); process.exit(1) })
+}
