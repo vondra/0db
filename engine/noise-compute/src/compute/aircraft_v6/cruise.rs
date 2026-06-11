@@ -29,6 +29,25 @@ use crate::types::{
 /// above the receiver. 5 m matches Doc 29 §A.2 minimum non-zero CPA.
 pub const SLANT_FLOOR_M: f64 = 5.0;
 
+/// Lat/lon endpoint offsets (degrees) for a cruise bucket's synthetic
+/// NE–SW diagonal segment, such that the segment's flat-earth length is
+/// `2 × half_len_m` (= `rep_len_m`).
+///
+/// Each axis takes `half_len_m / √2` because the endpoints move along
+/// BOTH axes at once. Without the divide the segment spanned
+/// `half_len_m` in lat AND lon → geometric length `√2 × rep_len_m`,
+/// while the bucket's `density = sum_length / rep_len` normalizes by
+/// `rep_len` — a `+10·log10(√2)` ≈ +1.5 dB systematic cruise
+/// over-count (2026-06 audit B2). Shared by the popup scatter and
+/// heatmap-aircraft's cruise scatter: parity by construction.
+pub fn cruise_synth_offsets(lat: f64, half_len_m: f64) -> (f64, f64) {
+    let axis_m = half_len_m / std::f64::consts::SQRT_2;
+    (
+        axis_m / crate::constants::M_PER_DEG_LAT,
+        axis_m / crate::constants::m_per_deg_lon(lat.to_radians()),
+    )
+}
+
 /// Per-R7-hex top-flight tracker. Same fid can appear in multiple
 /// Stage 2B buckets within the same hex (e.g. crossing an FL boundary
 /// mid-hex), so dedup via HashMap with "max peak_lmax wins" merge — a
@@ -68,7 +87,7 @@ pub fn scatter(
 
     // R7-centre prefilter constants. rep_len_m is typically ~50 km
     // (Stage 2B uses source-segment length, not clip length), so the
-    // cap dilates the 16 km horizontal reach to ~51 km worst case —
+    // cap dilates the 16 km horizontal reach to ~41 km worst case —
     // still drops a meaningful share of the 7-R4 grid disk's ~350 k
     // cruise rows for praha-150km × 7 days. Detailed math at the
     // call site below.
@@ -82,12 +101,13 @@ pub fn scatter(
         let rep_len_m = (row.rep_len_m as f64).max(SLANT_FLOOR_M);
         let half_len_m = rep_len_m * 0.5;
 
-        // Distance prefilter: synth segment extends `half_len_m` along
-        // each axis (NE-SW diagonal), so the closest segment point is
-        // at least `dist_to_centre - half_len_m * sqrt(2)` from the
-        // receiver. Skip rows beyond reach + diagonal cap. The kernel's
-        // per-row slant test would reject these too, but this lat/lon
-        // test is ~ns vs ~µs for `segment_sel_with_terrain`.
+        // Distance prefilter: both synth segment endpoints lie
+        // `half_len_m` from the R7 centre along the NE-SW diagonal
+        // (`cruise_synth_offsets`), so the closest segment point is at
+        // least `dist_to_centre - half_len_m` from the receiver. Skip
+        // rows beyond reach + that cap. The kernel's per-row slant test
+        // would reject these too, but this lat/lon test is ~ns vs ~µs
+        // for `segment_sel_with_terrain`.
         // /gg (Codex) flagged that a naive `lon - receiver.lon` produces
         // a ~360° false-negative for receivers near ±180° (a Pacific
         // receiver vs an Asia source on the other side of the
@@ -102,7 +122,7 @@ pub fn scatter(
         }
         let dlon_m = dlon * m_per_lon;
         let dist2_m2 = dlat_m * dlat_m + dlon_m * dlon_m;
-        let cap_m = aircraft::AIRCRAFT_MAX_HORIZONTAL_REACH_M + half_len_m * std::f64::consts::SQRT_2;
+        let cap_m = aircraft::AIRCRAFT_MAX_HORIZONTAL_REACH_M + half_len_m;
         if dist2_m2 > cap_m * cap_m {
             continue;
         }
@@ -120,8 +140,7 @@ pub fn scatter(
         if density <= 0.0 {
             continue;
         }
-        let lat_off = half_len_m / crate::constants::M_PER_DEG_LAT;
-        let lon_off = half_len_m / crate::constants::m_per_deg_lon(lat.to_radians());
+        let (lat_off, lon_off) = cruise_synth_offsets(lat, half_len_m);
         let synth_fid = pack_synth(idx as u64);
         let seg = AircraftSegment {
             flight_id: synth_fid,
@@ -392,4 +411,126 @@ fn r7_cell_center(r7_hex: u64) -> Option<(f64, f64)> {
     let cell = CellIndex::try_from(r7_hex).ok()?;
     let ll: h3o::LatLng = cell.into();
     Some((ll.lat(), ll.lng()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::RasterSampler;
+
+    struct FlatGround;
+
+    impl RasterSampler for FlatGround {
+        fn elevation(&self, _lat: f64, _lon: f64) -> f64 {
+            250.0
+        }
+        fn building_height(&self, _lat: f64, _lon: f64) -> f64 {
+            0.0
+        }
+        fn ground_g(&self, _lat: f64, _lon: f64) -> f64 {
+            0.0
+        }
+        fn building_enclosure(&self, _lat: f64, _lon: f64) -> f64 {
+            0.0
+        }
+    }
+
+    /// Synthetic cruise bucket segment exactly as `scatter` builds it,
+    /// with caller-supplied axis offsets so tests can compare the fixed
+    /// construction against the pre-fix one.
+    fn synth_segment(
+        lat: f64,
+        lon: f64,
+        lat_off: f64,
+        lon_off: f64,
+        rep_len_m: f64,
+        rep_alt_m: f32,
+    ) -> AircraftSegment {
+        AircraftSegment {
+            flight_id: pack_synth(0),
+            profile_idx: 0,
+            is_departure: true,
+            on_ground: false,
+            period: 0,
+            date_id: 0,
+            start_lat: lat - lat_off,
+            start_lon: lon - lon_off,
+            start_alt_m: rep_alt_m,
+            end_lat: lat + lat_off,
+            end_lon: lon + lon_off,
+            end_alt_m: rep_alt_m,
+            speed_kt: 450.0,
+            segment_length_m: rep_len_m as f32,
+            count_weight: 1.0,
+            surface_model: false,
+            ground_context: aircraft::GROUND_CONTEXT_NONE,
+            ground_ops_kind: aircraft::GROUND_OPS_KIND_NONE,
+            source_id: 0,
+        }
+    }
+
+    /// Audit B2 geometry pin: the synthetic diagonal's flat-earth length
+    /// must equal `rep_len_m`, recomputed per-axis with the same
+    /// `M_PER_DEG_LAT` / `m_per_deg_lon` scaling `segment_sel` applies
+    /// (constants here are the crate ones the offsets are built from;
+    /// the kernel's own Doc 29 constant `doc29::M_PER_DEG_LAT =
+    /// 111_132.92` sees the segment ~0.19 % longer ≈ +0.008 dB, far
+    /// below the audit's +1.5 dB bug this test pins against).
+    #[test]
+    fn cruise_synth_segment_length_matches_rep_len() {
+        for &(lat, rep_len_m) in &[(49.8_f64, 50_000.0_f64), (0.0, 80_000.0), (68.0, 30_000.0)] {
+            let half_len_m = rep_len_m * 0.5;
+            let (lat_off, lon_off) = cruise_synth_offsets(lat, half_len_m);
+            let dlat_m = 2.0 * lat_off * crate::constants::M_PER_DEG_LAT;
+            let dlon_m = 2.0 * lon_off * crate::constants::m_per_deg_lon(lat.to_radians());
+            let len_m = (dlat_m * dlat_m + dlon_m * dlon_m).sqrt();
+            let rel_err = (len_m - rep_len_m).abs() / rep_len_m;
+            assert!(
+                rel_err < 0.001,
+                "lat={lat} rep_len={rep_len_m}: synth length {len_m:.2} m, rel err {rel_err:.5}"
+            );
+        }
+    }
+
+    /// Audit B2 energy regression: vs the pre-fix construction (axis
+    /// offsets NOT divided by √2) the segment SEL must drop by
+    /// 10·log10(√2) = 1.505 dB.
+    ///
+    /// Regime: ΔF (Doc 29 Eq. 4-20) scales energy ∝ geometric length
+    /// only while `seg_len ≪ d_bar` (B738 anchor d̄ = 370 m); at real
+    /// ~50 km cruise rep-lengths the per-bucket energy fraction
+    /// saturates (f → 1) and the √2 over-length instead widens the
+    /// window of R7 buckets whose synthetic segment covers a receiver —
+    /// the same √2 factor, paid in the bucket-overlap aggregate. The
+    /// single-`segment_sel` pin therefore uses `rep_len = 0.2·d̄` where
+    /// the length→energy proportionality is direct.
+    #[test]
+    fn cruise_sqrt2_fix_energy_regression() {
+        let (lat, lon) = (49.8_f64, 14.4_f64);
+        let class_idx = aircraft::noise_class_of(0) as usize;
+        let anchor = &aircraft::PROFILES[aircraft::CLASS_REP_PROFILE_IDX[class_idx] as usize];
+        let rep_len_m = 0.2 * anchor.d_bar_m;
+        let half_len_m = rep_len_m * 0.5;
+        let rep_alt_m = 10_000.0_f32;
+        let rx_elev_m = 300.0;
+
+        let (lat_off, lon_off) = cruise_synth_offsets(lat, half_len_m);
+        let new_seg = synth_segment(lat, lon, lat_off, lon_off, rep_len_m, rep_alt_m);
+
+        let old_lat_off = half_len_m / crate::constants::M_PER_DEG_LAT;
+        let old_lon_off = half_len_m / crate::constants::m_per_deg_lon(lat.to_radians());
+        let old_seg = synth_segment(lat, lon, old_lat_off, old_lon_off, rep_len_m, rep_alt_m);
+
+        let (sel_new, _) = aircraft::segment_sel(&new_seg, lat, lon, rx_elev_m, &FlatGround)
+            .expect("fixed construction should compute SEL");
+        let (sel_old, _) = aircraft::segment_sel(&old_seg, lat, lon, rx_elev_m, &FlatGround)
+            .expect("pre-fix construction should compute SEL");
+
+        let diff = sel_new - sel_old;
+        let expect = -10.0 * std::f64::consts::SQRT_2.log10(); // −1.505 dB
+        assert!(
+            (diff - expect).abs() < 0.1,
+            "SEL diff new−old = {diff:.3} dB, expected {expect:.3} ± 0.1"
+        );
+    }
 }
