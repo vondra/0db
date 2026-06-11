@@ -33,3 +33,5 @@ scripts/hosts
 __pycache__/
 logs/
 .data-hub-token
+.data-hub-key.pem
+scripts/data-hub-cert.pem
