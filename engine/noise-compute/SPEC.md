@@ -198,6 +198,13 @@ A_ground,i = CF[i] × G
 ```
 where G = `1 - IMD/100`, from the imperviousness raster. G=0 hard, G=1 soft.
 
+Water is hard (ISO 9613-2 §7.3.1 groups water with paving/concrete): the
+WorldCover→IMD LUT maps water to 100; snow/ice stays 0 (porous snow cover →
+soft). A missing IMD tile defaults to 100 — the converted set has a tile for
+every land tile, so an absent tile is open ocean. Partial-tree caveat: ry177
+carries only 34–59°N (+synced Scandinavia), where missing northern LAND reads
+hard too; he84's complete raster tree is the production truth.
+
 Current implementation:
 - **Line sources** (roads, railways, aircraft-ground): both popup and pipeline
   use **path-averaged** `G_path` from closest-point to receiver — identical

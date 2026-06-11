@@ -54,7 +54,10 @@ log "Phase 2: Conversions (SRTM + WorldCover + Building)"
 bash "$SCRIPT_DIR/rasters/convert-dem-srtm.sh" &> "$LOG_DIR/convert-dem-srtm.log" &
 PID_SRTM=$!
 
-bash "$SCRIPT_DIR/rasters/convert-worldcover.sh" &> "$LOG_DIR/convert-worldcover.log" &
+# IMD_FORCE=1 forwards --imd-force so an existing IMD tree gets rewritten —
+# without it the converter skips existing tiles and a LUT change (e.g. the
+# 2026-06 water=hard fix) silently never lands on already-converted hosts.
+bash "$SCRIPT_DIR/rasters/convert-worldcover.sh" ${IMD_FORCE:+--imd-force} &> "$LOG_DIR/convert-worldcover.log" &
 PID_WC=$!
 
 bash "$SCRIPT_DIR/rasters/convert-building.sh" &> "$LOG_DIR/convert-building.log" &

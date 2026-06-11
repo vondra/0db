@@ -66,9 +66,15 @@ impl RealRasters {
             forest_cache_tiles,
         );
 
-        // IMD ground type: u8 (0-100 imperviousness), 3601×3601 (30m), bilinear
+        // IMD ground type: u8 (0-100 imperviousness), 3601×3601 (30m), bilinear.
+        // Missing-tile default 100 = hard (G=0): the WorldCover converter emits
+        // an IMD tile for every land tile, so a tile absent from the complete
+        // set is open ocean — acoustically hard water (ISO 9613-2, audit B3).
+        // Caveat: on hosts with a partial tree (ry177 carries only 34–59°N
+        // plus synced Scandinavia) missing northern LAND tiles read hard too;
+        // he84's complete tree is the production truth.
         let imd = TileStore::new(
-            data_dir.join("rasters/imd"), 3601, DType::U8, Interp::Bilinear, 50.0, ".raw",
+            data_dir.join("rasters/imd"), 3601, DType::U8, Interp::Bilinear, 100.0, ".raw",
             imd_cache_tiles,
         );
 
@@ -141,7 +147,8 @@ impl RasterSampler for RealRasters {
     fn ground_g(&self, lat: f64, lon: f64) -> f64 {
         // IMD 0=natural(soft), 100=impervious(hard)
         // G: 0=hard, 1=soft → G = 1.0 - IMD/100
-        // Default tile value is 50 (missing data → G=0.5), so no special case needed.
+        // Missing-tile default is 100 (ocean → hard water, G=0), so no special
+        // case needed — land tiles always exist in the converted set.
         // WHY no conditional: IMD=0 means fully soft ground (forest, meadow) → G=1.0.
         // Old code returned 0.5 for IMD=0, halving ground attenuation in rural areas.
         let imd = self.imd.sample(lat, lon);
@@ -665,6 +672,22 @@ mod tests {
         let e1 = r.elevation(49.195, 16.608);
         let e2 = r.elevation(49.5, 16.0);
         assert!((e1 - e2).abs() > 10.0, "Should not be flat: e1={e1}, e2={e2}");
+    }
+
+    /// Audit B3: a coordinate with no IMD tile on disk is open ocean — the
+    /// missing-tile default must read fully hard (imd=100 → G=0). The
+    /// converter emits an IMD tile for every land tile, never for ocean,
+    /// so no mid-Atlantic tile exists on any host. (Partial-tree hosts —
+    /// ry177 keeps only 34–59°N + Scandinavia — make missing northern
+    /// LAND read hard too; he84's complete tree is the production truth.)
+    /// Runs without `prepared_available()`: a missing data dir is the
+    /// same code path as a missing tile.
+    #[test]
+    fn imd_missing_tile_defaults_to_hard_ocean() {
+        let r = test_rasters();
+        let imd = r.imd.sample(30.0, -45.0);
+        assert_eq!(imd, 100.0, "missing IMD tile must default to 100 (hard)");
+        assert_eq!(r.ground_g(30.0, -45.0), 0.0, "ocean ground must be hard (G=0)");
     }
 
     #[test]

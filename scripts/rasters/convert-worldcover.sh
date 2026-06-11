@@ -2,9 +2,23 @@
 # Convert ESA WorldCover 2021 → forest .raw + IMD proxy .raw for ALL land tiles.
 # Each 3°×3° WorldCover tile produces up to 9 output 1°×1° tiles.
 # ~50 min with 16 parallel.
+#
+# --imd-force  regenerate IMD outputs even when they already exist (delete +
+#              rewrite). Needed when the class→imperviousness LUT changes
+#              (e.g. the 2026-06 water 0→100 fix): without it the exists-skip
+#              makes a re-run a silent no-op (/gg W1). Forest outputs are
+#              never touched by the flag — forest derives from class 10 alone.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source scripts/rasters/node-extent.sh
+
+IMD_FORCE=0
+for arg in "$@"; do
+    case "$arg" in
+        --imd-force) IMD_FORCE=1 ;;
+        *) echo "usage: $0 [--imd-force]" >&2; exit 1 ;;
+    esac
+done
 
 WC_SRC="data/source/vegetation/worldcover-2021"
 FOREST_DST="data/prepared/rasters/forest"
@@ -53,6 +67,10 @@ convert_one() {
     local NAME="$1"
     local FOREST_OUT="$FOREST_DST/${NAME}.raw"
     local IMD_OUT="$IMD_DST/${NAME}.raw"
+
+    # --imd-force: a LUT change invalidates IMD bytes only; drop the stale
+    # tile so the exists-skips below regenerate it. Forest stays untouched.
+    [ "${IMD_FORCE:-0}" = "1" ] && rm -f "$IMD_OUT"
 
     # Skip if both exist
     [ -f "$FOREST_OUT" ] && [ -f "$IMD_OUT" ] && return 0
@@ -111,8 +129,14 @@ if not __import__('os').path.exists('$IMD_OUT'):
         lut[40] = 10   # cropland
         lut[50] = 85   # built-up
         lut[60] = 15   # bare/sparse
+        # Snow/ice stays soft (G=1): WorldCover 70 is permanent snow/firn
+        # (glaciers), and snow cover is acoustically porous. ISO 9613-2 lists
+        # bare ice as hard, but bare ice is a negligible sliver of class 70.
         lut[70] = 0    # snow/ice
-        lut[80] = 0    # water
+        # Water is acoustically HARD, G=0 (ISO 9613-2 7.3.1 groups it with
+        # paving/concrete). Was 0 = fully soft, ~3 dB too quiet across
+        # lakes/rivers/sea (2026-06 audit B3).
+        lut[80] = 100  # water
         lut[90] = 5    # wetland
         lut[95] = 2    # mangroves
         lut[100] = 5   # moss/lichen
@@ -123,7 +147,7 @@ if not __import__('os').path.exists('$IMD_OUT'):
     rm -f "$TMP_FOREST" "$TMP_IMD"
 }
 export -f convert_one
-export VRT FOREST_DST IMD_DST
+export VRT FOREST_DST IMD_DST IMD_FORCE
 
 # Run parallel
 cat "$TILE_LIST" | xargs -P "$JOBS" -I{} bash -c 'convert_one "$@"' _ {}

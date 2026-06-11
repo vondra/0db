@@ -67,6 +67,13 @@ ds = gdal.Open('$TMP')
 arr = ds.GetRasterBand(1).ReadAsArray()
 arr = np.clip(arr, 0, 100).astype(np.uint8)
 if np.any(arr > 0):
+    # Copernicus HRL maps water as 0% impervious -> G=1 soft, re-breaking the
+    # ISO water=hard fix. In the WorldCover-derived base, exactly value 100 is
+    # water (built-up is 85) -- preserve it where Copernicus says 0.
+    import os
+    if os.path.exists('$DST'):
+        base = np.fromfile('$DST', dtype=np.uint8).reshape(arr.shape)
+        arr = np.where((arr == 0) & (base == 100), np.uint8(100), arr)
     arr.tofile('$DST')
 ds = None
 " 2>/dev/null
