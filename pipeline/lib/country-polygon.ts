@@ -1,6 +1,7 @@
 /**
- * High-resolution country point-in-polygon gate from the committed Natural Earth
- * 1:10m admin-0 file (`scripts/cache/ne_10m_admin_0_countries.geojson`).
+ * High-resolution country point-in-polygon gate from geoBoundaries CGAZ ADM0
+ * (`scripts/cache/geoBoundariesCGAZ_ADM0_s0005.geojson`, derived on demand from
+ * the release GeoPackage pinned at tag v6.0.0 — see below).
  *
  * Use to stop an enricher writing one country's data onto another country's roads
  * where a rectangular `*_HEX_BBOX` overlaps a neighbour: Poland's bbox blankets
@@ -8,28 +9,91 @@
  * Polish AADT (see the Stage-3 road audit). Gate the match by the road midpoint's
  * actual country.
  *
- * This is the full-resolution polygon — NOT `h3r4-admin.bin`, which is H3 res-4
+ * Why CGAZ and not Natural Earth 1:10m (the previous source): NE generalization
+ * mis-assigns multi-km border salients — the Hlučínsko salient (Czech soil,
+ * 49.98953 N 18.12880 E, ~4.5 km inside CZ) tested Poland-true, so the PL gate
+ * legitimately wrote Polish AADT onto Czech roads there. geoBoundaries CGAZ is
+ * OSM-derived, globally gap-filled, CC-BY 4.0 (atlas attribution: boundaries ©
+ * geoBoundaries — Runfola et al. 2020, doi:10.1371/journal.pone.0231866); all
+ * CZ salients verified correct (Hlučínsko, Šluknov, Frýdlant, Bogatynia).
+ *
+ * On-demand derivation (first run on a fresh host; needs curl + GDAL's ogr2ogr,
+ * `apt install gdal-bin`): download the 162 MB GeoPackage, then one-time-convert
+ * to a 95 MB GeoJSON with `-simplify 0.0005` (~55 m Douglas-Peucker — full CGAZ
+ * rings are 8-15x denser, parse 3.6 s and cost ~200 µs/gate-call for fidelity the
+ * gate doesn't need; the 55 m band flips 0.06 % of points vs full, measured on a
+ * 111 m grid over Hlučínsko) and `COORDINATE_PRECISION=6` (~0.1 m). The GeoPackage
+ * is kept beside the GeoJSON so the tolerance can be retuned without re-download.
+ *
+ * This is an actual-polygon gate — NOT `h3r4-admin.bin`, which is H3 res-4
  * (~22 km, centroid-based) and far too coarse to separate roads at a border.
  */
-import { readFileSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { resolve, dirname } from 'node:path'
+import { resolve } from 'node:path'
 import { pointInRing } from './spatial.js'
 
-const NE_GEOJSON = resolve(import.meta.dirname, '..', '..', 'scripts', 'cache', 'ne_10m_admin_0_countries.geojson')
-// scripts/cache/ is gitignored (this 13 MB file is a downloadable reference, not committed),
-// so a fresh checkout/host lacks it. Same file + URL build-h3-admin.ts fetches — pull once on demand.
-const NE_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson'
+const CACHE_DIR = resolve(import.meta.dirname, '..', '..', 'scripts', 'cache')
+const CGAZ_GPKG = resolve(CACHE_DIR, 'geoBoundariesCGAZ_ADM0.gpkg')
+const CGAZ_GEOJSON = resolve(CACHE_DIR, 'geoBoundariesCGAZ_ADM0_s0005.geojson')
+// Pinned release tag, not `main`: boundaries silently moving under a data gate
+// would make enrichment runs irreproducible.
+const CGAZ_URL = 'https://github.com/wmgeolab/geoBoundaries/raw/v6.0.0/releaseData/CGAZ/geoBoundariesCGAZ_ADM0.gpkg'
 
-type NeFeature = { properties: Record<string, unknown>; geometry: { type: string; coordinates: unknown } }
-let features: ReadonlyArray<NeFeature> | null = null
-function neFeatures(): ReadonlyArray<NeFeature> {
+type CgazFeature = { properties: Record<string, unknown>; geometry: { type: string; coordinates: unknown } }
+let features: ReadonlyArray<CgazFeature> | null = null
+function cgazFeatures(): ReadonlyArray<CgazFeature> {
   if (features) return features
-  if (!existsSync(NE_GEOJSON)) {
-    mkdirSync(dirname(NE_GEOJSON), { recursive: true })
-    execFileSync('curl', ['-fsSL', NE_URL, '-o', NE_GEOJSON])
+  if (!existsSync(CGAZ_GEOJSON)) {
+    mkdirSync(CACHE_DIR, { recursive: true })
+    // tmp + rename so an interrupted download/convert can't leave a truncated
+    // file that existsSync would happily accept on the next run
+    if (!existsSync(CGAZ_GPKG)) {
+      execFileSync('curl', ['-fsSL', '--max-time', '600', CGAZ_URL, '-o', `${CGAZ_GPKG}.tmp`])
+      renameSync(`${CGAZ_GPKG}.tmp`, CGAZ_GPKG)
+    }
+    try {
+      execFileSync('ogr2ogr', ['-f', 'GeoJSON', `${CGAZ_GEOJSON}.tmp`, CGAZ_GPKG,
+        '-select', 'shapeGroup', '-simplify', '0.0005', '-lco', 'COORDINATE_PRECISION=6'])
+    } catch (e) {
+      throw new Error(`country-polygon: ogr2ogr conversion failed — is GDAL installed (apt install gdal-bin)? ${e}`)
+    }
+    renameSync(`${CGAZ_GEOJSON}.tmp`, CGAZ_GEOJSON)
   }
-  return (features = JSON.parse(readFileSync(NE_GEOJSON, 'utf8')).features)
+  return (features = JSON.parse(readFileSync(CGAZ_GEOJSON, 'utf8')).features)
+}
+
+// CGAZ keys countries by ISO 3166-1 alpha-3 (`shapeGroup`); callers use alpha-2.
+// Exactly the 199 alpha-3 codes present in CGAZ ADM0 v6.0.0 (its remaining 19
+// features are numeric US-DoS disputed-area codes with no ISO identity).
+// Dependent territories with their own alpha-2 (HK, PR, GI, …) are not separate
+// CGAZ features — they are absent here and fail loud below by design.
+const ISO2_TO_ISO3: Record<string, string> = {
+  AD: 'AND', AE: 'ARE', AF: 'AFG', AG: 'ATG', AL: 'ALB', AM: 'ARM', AO: 'AGO', AQ: 'ATA',
+  AR: 'ARG', AT: 'AUT', AU: 'AUS', AZ: 'AZE', BA: 'BIH', BB: 'BRB', BD: 'BGD', BE: 'BEL',
+  BF: 'BFA', BG: 'BGR', BH: 'BHR', BI: 'BDI', BJ: 'BEN', BN: 'BRN', BO: 'BOL', BR: 'BRA',
+  BS: 'BHS', BT: 'BTN', BW: 'BWA', BY: 'BLR', BZ: 'BLZ', CA: 'CAN', CD: 'COD', CF: 'CAF',
+  CG: 'COG', CH: 'CHE', CI: 'CIV', CL: 'CHL', CM: 'CMR', CN: 'CHN', CO: 'COL', CR: 'CRI',
+  CU: 'CUB', CV: 'CPV', CY: 'CYP', CZ: 'CZE', DE: 'DEU', DJ: 'DJI', DK: 'DNK', DM: 'DMA',
+  DO: 'DOM', DZ: 'DZA', EC: 'ECU', EE: 'EST', EG: 'EGY', EH: 'ESH', ER: 'ERI', ES: 'ESP',
+  ET: 'ETH', FI: 'FIN', FJ: 'FJI', FM: 'FSM', FR: 'FRA', GA: 'GAB', GB: 'GBR', GD: 'GRD',
+  GE: 'GEO', GH: 'GHA', GL: 'GRL', GM: 'GMB', GN: 'GIN', GQ: 'GNQ', GR: 'GRC', GT: 'GTM',
+  GW: 'GNB', GY: 'GUY', HN: 'HND', HR: 'HRV', HT: 'HTI', HU: 'HUN', ID: 'IDN', IE: 'IRL',
+  IL: 'ISR', IN: 'IND', IQ: 'IRQ', IR: 'IRN', IS: 'ISL', IT: 'ITA', JM: 'JAM', JO: 'JOR',
+  JP: 'JPN', KE: 'KEN', KG: 'KGZ', KH: 'KHM', KI: 'KIR', KM: 'COM', KN: 'KNA', KP: 'PRK',
+  KR: 'KOR', KW: 'KWT', KZ: 'KAZ', LA: 'LAO', LB: 'LBN', LC: 'LCA', LI: 'LIE', LK: 'LKA',
+  LR: 'LBR', LS: 'LSO', LT: 'LTU', LU: 'LUX', LV: 'LVA', LY: 'LBY', MA: 'MAR', MC: 'MCO',
+  MD: 'MDA', ME: 'MNE', MG: 'MDG', MH: 'MHL', MK: 'MKD', ML: 'MLI', MM: 'MMR', MN: 'MNG',
+  MR: 'MRT', MT: 'MLT', MU: 'MUS', MV: 'MDV', MW: 'MWI', MX: 'MEX', MY: 'MYS', MZ: 'MOZ',
+  NA: 'NAM', NE: 'NER', NG: 'NGA', NI: 'NIC', NL: 'NLD', NO: 'NOR', NP: 'NPL', NR: 'NRU',
+  NZ: 'NZL', OM: 'OMN', PA: 'PAN', PE: 'PER', PG: 'PNG', PH: 'PHL', PK: 'PAK', PL: 'POL',
+  PT: 'PRT', PW: 'PLW', PY: 'PRY', QA: 'QAT', RO: 'ROU', RS: 'SRB', RU: 'RUS', RW: 'RWA',
+  SA: 'SAU', SB: 'SLB', SC: 'SYC', SD: 'SDN', SE: 'SWE', SG: 'SGP', SI: 'SVN', SK: 'SVK',
+  SL: 'SLE', SM: 'SMR', SN: 'SEN', SO: 'SOM', SR: 'SUR', SS: 'SSD', ST: 'STP', SV: 'SLV',
+  SY: 'SYR', SZ: 'SWZ', TD: 'TCD', TG: 'TGO', TH: 'THA', TJ: 'TJK', TL: 'TLS', TM: 'TKM',
+  TN: 'TUN', TO: 'TON', TR: 'TUR', TT: 'TTO', TV: 'TUV', TW: 'TWN', TZ: 'TZA', UA: 'UKR',
+  UG: 'UGA', US: 'USA', UY: 'URY', UZ: 'UZB', VA: 'VAT', VC: 'VCT', VE: 'VEN', VN: 'VNM',
+  VU: 'VUT', WS: 'WSM', XK: 'XKX', YE: 'YEM', ZA: 'ZAF', ZM: 'ZMB', ZW: 'ZWE',
 }
 
 type Ring = ReadonlyArray<readonly [number, number]>
@@ -37,21 +101,35 @@ type Ring = ReadonlyArray<readonly [number, number]>
 /**
  * A load-once point-in-country tester: `true` iff `(lat, lon)` is inside any outer
  * ring of the ISO-3166-1 alpha-2 country (holes/enclaves ignored — fine for a
- * border-road gate). Matches both `ISO_A2` and `ISO_A2_EH` (Natural Earth stores
- * France/Norway/… under the latter). Throws on an unknown code — fail loud, since a
- * silent always-false gate would drop every match. `makeCountryGate(iso2)` IS the
- * reuse path for other enrichers; no need to expose the raw rings.
+ * border-road gate). Throws on an alpha-2 code that is unknown or has no CGAZ
+ * feature — fail loud, since a silent always-false gate would drop every match.
+ * `makeCountryGate(iso2)` IS the reuse path for other enrichers; no need to
+ * expose the raw rings.
  */
 export function makeCountryGate(iso2: string): (lat: number, lon: number) => boolean {
   const code = iso2.toUpperCase()
-  const f = neFeatures().find(x => x.properties.ISO_A2 === code || x.properties.ISO_A2_EH === code)
-  if (!f) throw new Error(`country-polygon: no Natural Earth feature for ISO_A2=${code}`)
+  const iso3 = ISO2_TO_ISO3[code]
+  if (!iso3) throw new Error(`country-polygon: unknown ISO_A2 country code ${code}`)
+  const f = cgazFeatures().find(x => x.properties.shapeGroup === iso3)
+  if (!f) throw new Error(`country-polygon: no CGAZ ADM0 feature for ${code} (${iso3})`)
   const g = f.geometry
-  const rings: Ring[] = []   // outer ring of each Polygon (N for a MultiPolygon)
-  if (g.type === 'Polygon') rings.push((g.coordinates as Ring[])[0])
-  else if (g.type === 'MultiPolygon') for (const poly of g.coordinates as Ring[][]) rings.push(poly[0])
+  const outerRings: Ring[] = []   // outer ring of each Polygon (N for a MultiPolygon)
+  if (g.type === 'Polygon') outerRings.push((g.coordinates as Ring[])[0])
+  else if (g.type === 'MultiPolygon') for (const poly of g.coordinates as Ring[][]) outerRings.push(poly[0])
+  // Pair each ring with its lon/lat bbox for a per-ring pre-check: CGAZ rings are
+  // ~6x denser than NE's and archipelago countries carry hundreds of island rings
+  // (FRA incl. overseas: 204) — the box test skips them all for ~free (measured:
+  // DE gate 45 → 24 µs/call on DE-local points; PL unchanged within noise).
+  const rings = outerRings.map(ring => {
+    let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity
+    for (const [x, y] of ring) { if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y }
+    return { ring, w, s, e, n }
+  })
   return (lat, lon) => {
-    for (const ring of rings) if (pointInRing(lon, lat, ring)) return true
+    for (const { ring, w, s, e, n } of rings) {
+      if (lon < w || lon > e || lat < s || lat > n) continue
+      if (pointInRing(lon, lat, ring)) return true
+    }
     return false
   }
 }

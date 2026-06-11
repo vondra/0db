@@ -389,7 +389,7 @@ async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
   // is accepted by ref alone — so without a country gate a Czech "I/150" was matched
   // to Polish "DW150" and given Polish AADT (150k segments, Stage-3 audit). Only
   // roads whose midpoint is on Polish soil get PL data. Created here, not at module
-  // scope: makeCountryGate may download the NE countries geojson, and the test file
+  // scope: makeCountryGate may download+convert the CGAZ boundary file, and the test file
   // imports parseGprXls from this module.
   const inPoland = makeCountryGate('PL')
 
