@@ -14,8 +14,13 @@ pub struct IndustrialProfile {
 }
 
 /// Get profile by site_type.
-/// base_lw values calibrated against Czech SHM 2022 + CNOSSOS-EU Lw'' methodology.
-/// Reviewed by GPT-5.4 + Gemini 3.1 Pro against ISO 8297 and real EIS data.
+/// base_lw values were authored against Czech SHM 2022 + CNOSSOS-EU Lw''
+/// methodology (reviewed by GPT-5.4 + Gemini 3.1 Pro against ISO 8297 and
+/// real EIS data) — but at a time when `industrial_emission_bands` carried a
+/// hidden +4.9..+6.4 dB(A) spectrum surplus (audit 2026-06 I-03). Since the
+/// B4+B6 normalization, base_lw IS the radiated dB(A) total, i.e. effective
+/// emission dropped by that surplus; re-calibration against SHM is backlog
+/// (C8a / area-density model I-04).
 pub fn industrial_profile(site_type: u8) -> IndustrialProfile {
     match site_type {
         0 => IndustrialProfile {
@@ -74,7 +79,8 @@ pub fn industrial_profile(site_type: u8) -> IndustrialProfile {
 /// WHY: OSM source_type only gives 5 coarse categories. NACE codes from IRZ/E-PRTR/GEM
 /// enable sector-specific profiles (metallurgy ≠ warehouse ≠ solar farm).
 /// 4-digit resolution distinguishes solar (3599, quiet) from thermal power (3511, loud).
-/// Values from docs/about/index.md emission tables, calibrated against SHM 2022.
+/// Values from docs/about/index.md emission tables (authored pre-normalization —
+/// see the honesty note on `industrial_profile`).
 /// Sources: EU 2000/14/EC equipment limits, 3M Noise Navigator, FHWA RCNM.
 pub fn nace_profile(nace_4digit: u16) -> Option<IndustrialProfile> {
     // Try 4-digit match first (more specific), then fall back to 2-digit.
@@ -311,11 +317,7 @@ pub fn industrial_lw(profile: &IndustrialProfile, area_m2: f64) -> f64 {
     profile.base_lw + 10.0 * (effective / 10000.0).log10()
 }
 
-/// Compute emission bands.
+/// Compute emission bands, normalized so `a_weighted_total(bands) == lw`.
 pub fn industrial_emission_bands(profile: &IndustrialProfile, lw: f64) -> [f64; NUM_BANDS] {
-    let mut bands = [0.0f64; NUM_BANDS];
-    for i in 0..NUM_BANDS {
-        bands[i] = lw + profile.spectrum[i];
-    }
-    bands
+    super::spectrum::normalized_emission_bands(lw, &profile.spectrum)
 }

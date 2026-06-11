@@ -121,11 +121,16 @@ pub(crate) fn compute_point_sources(
             0.0,
         );
 
+        // Display aggregate is A-weighted so the popup's emission_db equals the
+        // nominal LwA (post-C7 the bands are normalized to it; a Z-sum would
+        // read ~+2 dB over the rated value — Codex C7 review).
         let day_em: f64 = src
             .lw_day
             .iter()
-            .map(|&v| {
-                crate::propagation::iso9613::fast_exp_f64(v as f64 * std::f64::consts::LN_10 * 0.1)
+            .enumerate()
+            .map(|(i, &v)| {
+                let a = v as f64 + crate::constants::A_WEIGHTING[i];
+                crate::propagation::iso9613::fast_exp_f64(a * std::f64::consts::LN_10 * 0.1)
             })
             .sum();
 

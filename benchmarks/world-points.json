@@ -328,7 +328,7 @@
    53.0
   ],
   "known_gap": "industrial-I18-quarry-emission-floor",
-  "tolerance_note": "band = measured 52.5 day → Lden via the audit's quarry-profile offset −1.6 (industrial-report §G item 7) ≈ 50.9 ±2; audit quarry contributor 39.4 (−11, I-18); live industrial source 42.6",
+  "tolerance_note": "band = measured 52.5 day → Lden via the audit's quarry-profile offset −1.6 (industrial-report §G item 7) ≈ 50.9 ±2; audit quarry contributor 39.4 (−11, I-18); live industrial source 42.6; C7 (B4+B6) deepens by ~−4.9 (quarry spectrum normalization) by design",
   "caveats": "mode reads the industrial source aggregate; the audit Δ was per-contributor at 229 m — other sites fold in"
  },
  {
@@ -344,10 +344,10 @@
    "url": "https://www.umweltbundesamt.at/fileadmin/site/themen/energie/kernenergie/verfahren/tschechien/ete_smr_uvp/scoping/cz_files/ete_smr_oznameni_zameru_smr_ete.pdf"
   },
   "expected_model_band": [
-   40.4,
-   44.4
+   34.9,
+   38.9
   ],
-  "tolerance_note": "audit model 42.4 → Lday ≈ 37 vs measured 33.9 = +2..+3, acceptably hot (industrial-report §C); band = audit model ±2; B4+B6 (C7) lowers industrial ~−5 dB → re-band at C7",
+  "tolerance_note": "band = post-C7 (B4+B6) expectation 36.9 ±2: pre-C7 audit model 42.4 + spectrum normalization −5.4..−5.7 across the village-site mix (NPP 3511 = −5.65); → Lday ≈ 31.5 vs measured 33.9, slightly cold post-fix. Valid only after the wave-end rebuild",
   "caveats": "industrial total dominated by small village sites, not the NPP; NPP polygon double-counted (I-07)"
  },
  {
@@ -376,7 +376,6 @@
   "lng": 14.1288,
   "mode": "source:industrial",
   "host": "any",
-  "pending": "B4B6",
   "external": {
    "value": "IEC-correct hand expectation ≈ 52–53 dB Lden at 200 m (audit §G.1); DK anchor: measured 40 dB(A) @6 m/s, 42–44 @8 m/s at neighbour dwellings",
    "metric": "IEC 61400-11-based hand calc (industrial-report §G.1) + Miljøstyrelsen 2019 neighbour-measurement campaign",
@@ -384,10 +383,10 @@
    "url": "https://mst.dk/publikationer/2019/august/maaling-af-stoej-hos-vindmoellenaboer"
   },
   "expected_model_band": [
-   55.3,
-   59.3
+   50.0,
+   54.0
   ],
-  "tolerance_note": "band = audit-verified current state 57.3 ±2 (live 2026-06-11 = 57.30); +4..+5 hot vs IEC from the +6.4 dB spectrum-normalization bug (I-03); C7 (B4+B6) flips this band to the post-fix ledger ~52–53",
+  "tolerance_note": "band = post-C7 (B4+B6) ledger 52 ±2: pre-C7 state 57.30 + turbine shift (spectrum −6.41, wind LUT 3 MW 105→106 +1.0, hub default 80→105 m ≈ −0.4) ≈ 51.5; Theodor-mine contributor shifts only −4.9..−5.6; IEC hand calc (§G.1) expects 52–53. Valid only after the wave-end rebuild",
   "caveats": "receiver 200 m due S of turbine 517373610 (50.19618, 14.1288); second turbine 410 m NE contributes"
  },
  {
@@ -396,7 +395,6 @@
   "lng": 14.1288,
   "mode": "source:industrial",
   "host": "any",
-  "pending": "B4B6",
   "external": {
    "value": "IEC-correct hand expectation ≈ 44–45 dB Lden at 500 m (audit §G.1)",
    "metric": "IEC 61400-11-based hand calc (industrial-report §G.1) + Miljøstyrelsen 2019 neighbour-measurement campaign",
@@ -404,10 +402,10 @@
    "url": "https://mst.dk/publikationer/2019/august/maaling-af-stoej-hos-vindmoellenaboer"
   },
   "expected_model_band": [
-   46.8,
-   50.8
+   42.0,
+   46.0
   ],
-  "tolerance_note": "band = audit-verified current state 48.8 ±2 (live 2026-06-11 = 48.80); +4..+5 hot (I-03); C7 (B4+B6) flips this band to ~44–45",
+  "tolerance_note": "band = post-C7 (B4+B6) ledger 44 ±2: pre-C7 state 48.80 + turbine shift ≈ −5.5 (spectrum −6.41, LUT +1.0, hub ≈ −0.1) ≈ 43.3; IEC hand calc (§G.1) expects 44–45. Valid only after the wave-end rebuild",
   "caveats": "DK comparison point: our turbine-only Lp at ~500 m ≈ 41.3 dB(A) sits at the top of the measured envelope for a larger farm at 8 m/s"
  },
  {
@@ -416,7 +414,6 @@
   "lng": 14.1288,
   "mode": "source:industrial",
   "host": "any",
-  "pending": "B4B6",
   "external": {
    "value": "IEC-correct hand expectation ≈ 38–39 dB Lden at 1000 m (audit §G.1)",
    "metric": "IEC 61400-11-based hand calc (industrial-report §G.1) + Miljøstyrelsen 2019 neighbour-measurement campaign",
@@ -424,10 +421,10 @@
    "url": "https://mst.dk/publikationer/2019/august/maaling-af-stoej-hos-vindmoellenaboer"
   },
   "expected_model_band": [
-   40.9,
-   44.9
+   36.0,
+   40.0
   ],
-  "tolerance_note": "band = audit-verified current state 42.9 ±2 (live 2026-06-11 = 42.92); C7 (B4+B6) flips this band to ~38–39",
+  "tolerance_note": "band = post-C7 (B4+B6) ledger 38 ±2: pre-C7 state 42.92 + turbine shift ≈ −5.4 (spectrum −6.41, LUT +1.0); IEC hand calc (§G.1) expects 38–39. Valid only after the wave-end rebuild",
   "caveats": "gap partially from the 'Býv. důl Theodor' site at 467 m (audit §G.1)"
  },
  {

@@ -136,13 +136,13 @@ The aircraft layer combines two models: airborne overflights from ADS-B radar tr
 Industrial noise is spatially concentrated but locally dominant — a single cement plant or wind farm can define the noise environment for kilometres. We classify each site by registry NACE sector when available, otherwise by OSM industrial subtype or coarse source type. The range across sectors is ~30 dB: a farm (70 dB) vs a cement plant (100 dB).
 
 - **Data:** OpenStreetMap industrial landuse + NACE codes from national pollution registries (IRZ, E-PRTR, GPPD)
-- **Wind turbines:** IEC 61400-11 model, emission based on rated power (98–107 dB Lw)
+- **Wind turbines:** IEC 61400-11 model, emission based on rated power (98–106.5 dB(A) Lw)
 - **Formula:** `Lw = base_sector + 10 × log₁₀(area / 10,000 m²)` — area capped at 500,000 m²
 
 <details>
 <summary>Technical: industrial emission profiles (ISO 8297 + NACE)</summary>
 
-[ISO 8297](https://www.iso.org/standard/15401.html), [CNOSSOS-EU §2.4](../standards/cnossos-eu-2021-1226.pdf). Reference area 10 000 m² (a 100 000 m² factory adds 10 dB to its base). Profile priority: registry `nace_4digit` → OSM subtype → coarse source type. Calibrated against Czech SHM 2022 + EU Directive 2000/14/EC limits + 3M Noise Navigator measurements.
+[ISO 8297](https://www.iso.org/standard/15401.html), [CNOSSOS-EU §2.4](../standards/cnossos-eu-2021-1226.pdf). Reference area 10 000 m² (a 100 000 m² factory adds 10 dB to its base). Profile priority: registry `nace_4digit` → OSM subtype → coarse source type. Base values were authored against Czech SHM 2022 + EU Directive 2000/14/EC limits + 3M Noise Navigator measurements before the 2026-06 band normalization; they are now honest dB(A) totals (effective emission −4.9..−6.4 vs pre-audit), re-calibration pending.
 
 **By OSM site type** (when no registry NACE):
 
@@ -176,9 +176,11 @@ Industrial noise is spatially concentrated but locally dominant — a single cem
 | Retail / logistics | 46/47 | 84 dB | -8 | -20 |
 | Agriculture | 1-3 | 70 dB | -5 | -20 |
 
-Source height: 8 m (quarry), 10 m (heavy industry NACE 8/23/24/35), 5 m (other), hub height for wind turbines (default 80 m).
+Emission bands are normalized so the A-weighted band sum equals Base Lw exactly (audit 2026-06) — Base Lw is the radiated dB(A) total, not a pre-spectrum scalar.
 
-**Wind turbines** (IEC 61400-11): Lw scales with rated power — 98 dB (< 1 MW), 101 (1–2), 103 (2–3, default), 105 (3–5), 107 (≥ 5 MW).
+Source height: 8 m (quarry), 10 m (heavy industry NACE 8/23/24/35), 5 m (other), hub height for wind turbines (default 105 m, tag errors clamped at 175 m).
+
+**Wind turbines** (IEC 61400-11): published max LwA is nearly flat across ratings — 98 dB(A) (< 1 MW), 104 (1–2 MW), 105 (2–3 MW + unknown default), 106 (3–5 MW), 106.5 (≥ 5 MW); ratings above 8 MW are treated as OSM tag errors (unknown).
 
 → Full emission/area/height resolution chains: `engine/noise-compute/SPEC.md` §6.
 
@@ -209,6 +211,8 @@ Noise from everyday building activity — HVAC systems, human activity, deliveri
 | Garage | garage, parking | 35 dB | 12 | -5 | -15 |
 | Farm | farm, barn | 40 dB | 14 | -5 | -20 |
 | Public | civic, office, government | 52 dB | 18 | -8 | -20 |
+
+Since the 2026-06 audit the engine constants carry a +5.6..+7.0 dB(A) per-class bump on top of these bases — it compensates the emission-band normalization exactly (radiated levels unchanged, units now honest dB(A); table in `settlement.rs::building_profile`).
 
 Industrial / warehouse buildings inside industrial landuse polygons are handled by the industrial pipeline, not double-counted. Source at building height / 2 (mid-facade), propagated as ISO 9613-2 point source.
 

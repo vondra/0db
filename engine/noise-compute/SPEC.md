@@ -278,6 +278,8 @@ Diffraction is computed once over a composite top profile (`elevation + max(buil
 ### 3.6 Building screening (ISO 9613-2, per-band)
 Samples Overture Maps 30m building raster at the same bilateral cadence (§3.5a). Explicit `noise_barrier` geometries compete with raster buildings. For industrial sources, screening samples inside the source's own footprint are skipped via an exclusion radius.
 
+**Barrier consumers (B8/C9, 2026-06-11).** Popup and ALL CPU surface heatmap kernels (road/rail `scatter_line`, industrial/building `scatter_point`, aircraft `ground_ops`) feed `barriers.arrow` vector barriers into the §3.5b composite via the shared `screening_attenuation`; the heatmap prepares one slice per z13 tile (`heatmap-aircraft::source_loader_barrier::BarrierData::for_tile` — sorted ascending by a conservative lower-bound distance; contract documented on `types::Barrier`). The **GPU line kernels (`noise-gpu`, road/rail on GPU cluster boxes) have no barrier input**: their only screening source is the 30 m cover raster, and burning barrier segments into its building channel was measured acoustically unsound — the §3.5a bilateral cadence (≥ ~30 m sample spacing) steps over a one-cell-thin burned wall on most paths (mean +3.7 / max +13.8 dB under-screening at wall-adjacent shadow pixels vs the vector path; decision record: `heatmap-aircraft/tests/barrier_screening.rs`). GPU-built road/rail tiles therefore still read hot behind mapped walls; closing the gap means routing barrier-carrying R4s (~1.5% of hexes) to CPU builders or adding a vector-barrier input to the CUDA kernel.
+
 **Screening is not computed standalone.** Buildings and barriers are merged into the §3.5b composite top profile (`elevation + max(building_h, barrier_h)`) and diffraction is computed once by the §3.5 single-edge algorithm (max-δ edge, Rayleigh gate). The per-band screening cap inherits from §3.5 — 20 dB — not a dedicated building-only cap.
 
 The popup-facing `screening_attenuation` value returned by the engine is the increment of the combined result over bare-earth terrain diffraction, i.e. `atten_combined − atten_terrain` (clamped ≥ 0). With that definition `A_terrain + A_screen ≡ A_combined`, which is what §3.3 feeds into the ground/barrier combination. See §3.5b for the motivating double-count problem the merge fixes.
@@ -711,9 +713,18 @@ singularity for receivers inside the source polygon).
 Lw = baseLw + 10 × log₁₀(clamp(area_m², 100, 500000) / 10000)
 ```
 
+**Normalization invariant** (audit 2026-06 B4+B6, `emission/spectrum.rs`):
+emission bands are `Lw + spectrum_i − a_weighted_total(spectrum)`, so
+`a_weighted_total(bands) == Lw` — Lw IS the radiated dB(A) total.
+Pre-fix the relative spectra silently added +4.9..+6.4 dB(A) per profile
+family (audit I-03); effective industrial emission dropped by exactly that
+much. Test-locked at 1e-9 for every profile.
+
 baseLw from a resolution chain — NACE 4-digit → NACE 2-digit → OSM
-`site_subtype` (13 profiles) → `source_type` (calibrated against Czech
-SHM 2022):
+`site_subtype` (13 profiles) → `source_type`. Values were authored against
+Czech SHM 2022 while the bands still carried the hidden spectrum surplus —
+post-normalization they undershoot by that surplus; re-calibration is
+backlog (C8a, area-density model I-04):
 - Heavy industry (cement, steel, mining, quarry): 99-100 dB
 - Power: thermal (NACE 3511) 97 dB, hydro 90 dB, solar (synthetic NACE 3599) 55 dB
 - Medium industry (chemical, food, works): 88-95 dB
@@ -732,13 +743,29 @@ Area scaling clamped to [100 m², 50 ha] to prevent OSM polygon artifacts.
 
 ### Wind turbines (IEC 61400-11)
 ```
-Lw = rating_lookup(rated_power_kw)    [98-107 dB by power class]
+LwA = rating_lookup(rated_power_kw)
 ```
-Spectrum: [-2, -1, 0, 1, 1, 0, -2, -5] dB relative to broadband.
+Published max LwA is a flat band, nearly independent of rating across
+1.8–6.6 MW (audit I-10 — per-type sources cited in `wind.rs::turbine_lw`):
 
-Fallbacks:
-- `hub_height` default = **80 m**
-- `rated_power_kw` default = **2000 kW**
+| rated power | LwA | anchors |
+|---|---|---|
+| < 1 MW | 98 | pre-audit value kept |
+| 1–2 MW | 104 | V90-2.0 = 104.0, E-82 E2 = 104.0 |
+| 2–3 MW | 105 | E-92 (2.35 MW) = 105.0 |
+| 3–5 MW | 106 | V112-3.0 = 106.5, N149 = 106.1 |
+| ≥ 5 MW | 106.5 | N163 = 106.4, E-160 = 106.0, V150-6.0 = 104.9 |
+| unknown (0) | 105 | mid-band |
+
+Spectrum: [-2, -1, 0, 1, 1, 0, -2, -5] dB relative, normalized so
+`a_weighted_total(bands) == LwA` (pre-fix the shape added +6.4 dB(A)).
+
+Fallbacks + tag-error clamps (audit I-10b):
+- `hub_height` default = **105 m** (known-data median in our arrows;
+  context: WindGuard DE 2024 avg 143 m, LBNL US 2023 avg 103.4 m);
+  clamp ≤ 175 m (4,792 OSM hubs >170 m are tag errors)
+- `rated_power_kw` default = **2000 kW**; values > 8000 kW treated as
+  unknown (23 OSM powers ≥20 MW are tag errors)
 
 ### Propagation
 ISO 9613-2 point source (point-source divergence; distance floored at
@@ -760,7 +787,11 @@ Discretized at load/query time in `normalize.rs::prepare_building_points`
   missing floors → ceil(height / 3); sources with Lw < 10 dB are dropped
 
 Each source gets a fade-out radius from emitted Lw, capped at **2 km**
-(popup query radius 2 km).
+(popup query radius 2 km). The radius is solved against the
+pre-normalization scalar (`Lw − a_weighted_total(spectrum)`) to keep the
+pre-B4+B6 cull behavior exactly (W7 net-zero); the honest-Lw radius
+(~×2.1 for small buildings, <1e-3 dB acoustic effect) is deferred to the
+C8a recalibration.
 
 ### Emission (custom model, NOT standardized)
 ```
@@ -768,6 +799,15 @@ Lw = 10 × log₁₀(10^(Lw_fixed/10) + GFA × 10^(Lw_per_m²/10))
 where GFA = area_m² × floors
 ```
 Current implementation has **10 building classes + default fallback** (residential, commercial, warehouse, school, hospital, church, hotel, garage, farm, public). Type / geometry / area resolution chains live in `settlement.rs`.
+
+Bands carry the same normalization invariant as industrial
+(`a_weighted_total(bands) == Lw`). To keep the audit wave acoustically
+net-zero for settlement (/gg verdict W7), every class's
+`Lw_fixed`/`Lw_per_m²` was bumped by exactly its spectrum's A-weighted
+offset (+5.6..+7.0 dB — old→new table in `settlement.rs::building_profile`),
+so radiated dB(A) is unchanged; honest units now, real recalibration is
+backlog C8a. Test-locked by the
+`building_radiated_dba_unchanged_by_normalization` pin.
 
 ### Source height
 height/2 (mid-facade). Consistent in emission AND propagation (fix V33 mismatch).
