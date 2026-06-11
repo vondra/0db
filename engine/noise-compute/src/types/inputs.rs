@@ -230,12 +230,30 @@ impl AirportArea {
     }
 }
 
-/// Noise barrier microsegment.
+/// Noise barrier microsegment, reduced to its midpoint for screening.
+///
+/// Slice contract (consumed by `path_effects::screening_attenuation[_with_meta]`):
+/// the slice MUST be sorted ascending by `dist_m`, and `dist_m` MUST be a
+/// LOWER BOUND on the true receiver→midpoint distance — the screening loop
+/// early-breaks at the first barrier with `dist_m > path_len + 100` and a
+/// violated bound would silently drop barriers that are actually on the path.
+///
+/// * Popup (`source-reader::lib`): `dist_m` is the exact receiver→midpoint
+///   distance (one receiver per query), sorted after the per-hex merge.
+/// * Heatmap (`heatmap-aircraft::source_loader_barrier::BarrierData::for_tile`):
+///   one slice serves every receiver pixel of a z13 tile, so
+///   `dist_m = max(0, d(midpoint, tile_centre) − tile_half_diagonal)` — by the
+///   triangle inequality a lower bound for EVERY pixel in the tile, keeping
+///   the early-break conservative (it only ever scans more barriers, never
+///   fewer, than the popup would for the same receiver).
 #[derive(Debug, Clone)]
 pub struct Barrier {
     pub osm_id: i64,
+    /// Height above local ground (m); extract defaults untagged walls to 3.0.
     pub height_m: f32,
+    /// Segment midpoint.
     pub lat: f64,
     pub lon: f64,
+    /// Lower bound on the receiver→midpoint distance (see struct docs).
     pub dist_m: f64,
 }

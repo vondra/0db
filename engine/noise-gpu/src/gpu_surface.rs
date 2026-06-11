@@ -175,6 +175,18 @@ fn process_block(
     let (_, _, _, rows, cols) = halo_geom;
 
     let elev: Vec<f32> = halo.pixels().iter().map(|p| p.elevation).collect();
+    // KNOWN DIVERGENCE vs the CPU kernels (B8/C9, 2026-06-11): noise barriers
+    // are NOT represented here. The CPU scatter kernels screen with the exact
+    // vector barriers (`barriers.arrow` → `screening_attenuation`); this GPU
+    // path's only screening input is the 30 m `cover` building channel, and
+    // burning barrier segments into it (`FusedGrid::burn_building_max`) was
+    // measured acoustically unsound — the ray cadence steps over a
+    // one-cell-thin wall on most paths (mean +3.7 / max +13.8 dB
+    // under-screening at wall-adjacent shadow pixels; decision record:
+    // heatmap-aircraft tests/barrier_screening.rs). So GPU road/rail tiles
+    // read hot behind mapped walls; route barrier-carrying R4s (1.5% of
+    // hexes) to CPU builders, or add a real vector-barrier kernel input, to
+    // close the gap. SPEC §3.6 documents the divergence.
     let mut cover = Vec::with_capacity(rows * cols * 3);
     for p in halo.pixels() {
         cover.push(p.building);

@@ -304,6 +304,11 @@ const CELL_M: f64 = 110_540.0 / 3600.0;
 /// Vec, cropped to just the needed area (~22 MB for a typical R4 hex + ring).
 /// Implements RasterSampler so all existing path_effects code works unchanged.
 /// Zero algorithmic change = zero dB error vs mmap-based RealRasters.
+///
+/// `Clone` exists for [`FusedGrid::burn_building_max`] experiments: burning
+/// into a COPY leaves the original — and the receiver reflection pre-baked
+/// from it — untouched.
+#[derive(Clone)]
 pub struct FusedGrid {
     data: Vec<FusedPixel>,
     lat_min: f64,
@@ -370,6 +375,94 @@ impl FusedGrid {
         }
 
         FusedGrid { data, lat_min: lat_lo, lon_min: lon_lo, inv_cell_deg, cols, rows }
+    }
+
+    /// Rasterise one noise-barrier segment into the BUILDING channel: every
+    /// grid cell the segment crosses gets `building = max(building, height)`.
+    ///
+    /// NOT wired into any production path (B8/C9 verdict, 2026-06-11): this
+    /// was the candidate GPU barrier representation (the CUDA surface kernels
+    /// read screening obstacles from the 30 m cover raster and have no
+    /// vector-barrier input), but the quantified comparison —
+    /// heatmap-aircraft `tests/barrier_screening.rs::w2_vector_vs_burn_
+    /// quantified_decision_record` — measured the burn UNDER-screening by
+    /// mean +3.7 / max +13.8 dB at wall-adjacent shadow pixels: the bilateral
+    /// ray cadence (≥ ~30 m sample spacing) steps over a one-cell-thin burned
+    /// wall on most paths, while the CPU vector path
+    /// (`path_effects::screening_attenuation`) maps the wall onto the nearest
+    /// existing sample and never misses. Thin-line features cannot be
+    /// faithfully represented in a raster sampled at ≥ cell-size cadence, so
+    /// barriers ship CPU-vector-only and this function remains as the
+    /// decision-record apparatus. If you re-open the GPU question, burn a
+    /// CLONE (receiver reflection is pre-baked from the unburned halo by
+    /// `FusedTileZ13::build_with_halo` — barriers must screen, never reflect).
+    ///
+    /// Supercover traversal (Amanatides & Woo, 4-connected): a diagonal wall
+    /// has no one-past-the-corner gaps a nearest-neighbour ray sample could
+    /// slip through, which plain 8-connected Bresenham would leave. Cells are
+    /// matched on the nearest-neighbour convention (`pixel()` rounds, so cell
+    /// (r, c) spans [r−0.5, r+0.5)). Out-of-grid cells are skipped, never
+    /// clamped — clamping would smear far barriers onto the halo edge.
+    pub fn burn_building_max(
+        &mut self,
+        start_lat: f64,
+        start_lon: f64,
+        end_lat: f64,
+        end_lon: f64,
+        height_m: f32,
+    ) {
+        let h = height_m.round().clamp(0.0, 255.0) as u8;
+        if h == 0 || !(start_lat.is_finite() && start_lon.is_finite() && end_lat.is_finite() && end_lon.is_finite()) {
+            return;
+        }
+        // Continuous coords in floor-grid space: +0.5 shifts the rounding
+        // convention so `floor` yields the same cell `pixel()` rounds to.
+        let u0 = (start_lat - self.lat_min) * self.inv_cell_deg + 0.5;
+        let v0 = (start_lon - self.lon_min) * self.inv_cell_deg + 0.5;
+        let u1 = (end_lat - self.lat_min) * self.inv_cell_deg + 0.5;
+        let v1 = (end_lon - self.lon_min) * self.inv_cell_deg + 0.5;
+        let mut r = u0.floor() as i64;
+        let mut c = v0.floor() as i64;
+        let r_end = u1.floor() as i64;
+        let c_end = v1.floor() as i64;
+        // Whole segment on one side of the grid slab in either axis ⇒ no cell
+        // crossed; O(1) reject for the region barriers far from this halo.
+        let (rows, cols) = (self.rows as i64, self.cols as i64);
+        if (r < 0 && r_end < 0)
+            || (r >= rows && r_end >= rows)
+            || (c < 0 && c_end < 0)
+            || (c >= cols && c_end >= cols)
+        {
+            return;
+        }
+        let step_r: i64 = if u1 >= u0 { 1 } else { -1 };
+        let step_c: i64 = if v1 >= v0 { 1 } else { -1 };
+        // Parametric distance (in units of |Δ|⁻¹) to the next r/c cell
+        // boundary, then constant per-cell increments — Amanatides & Woo.
+        let inv_du = (u1 - u0).abs().recip(); // ∞ when the segment is axis-parallel
+        let inv_dv = (v1 - v0).abs().recip();
+        let mut t_max_r = if step_r > 0 { (r + 1) as f64 - u0 } else { u0 - r as f64 } * inv_du;
+        let mut t_max_c = if step_c > 0 { (c + 1) as f64 - v0 } else { v0 - c as f64 } * inv_dv;
+        // Supercover visits exactly |Δr| + |Δc| + 1 cells; the +4 pads float
+        // edge cases so a boundary-grazing segment can't loop unbounded.
+        let mut guard = (r_end - r).abs() + (c_end - c).abs() + 4;
+        loop {
+            if (0..rows).contains(&r) && (0..cols).contains(&c) {
+                let px = &mut self.data[r as usize * self.cols + c as usize];
+                px.building = px.building.max(h);
+            }
+            if (r == r_end && c == c_end) || guard <= 0 {
+                return;
+            }
+            guard -= 1;
+            if t_max_r < t_max_c {
+                t_max_r += inv_du;
+                r += step_r;
+            } else {
+                t_max_c += inv_dv;
+                c += step_c;
+            }
+        }
     }
 
     /// Nearest-neighbor pixel lookup — matches `TileStore::sample_nearest`
@@ -824,5 +917,81 @@ mod tests {
             assert!(v.is_finite(), "RealRasters NaN at lon={lon}");
             assert!((0.0..=3.0).contains(&v), "out of range at lon={lon}: {v}");
         }
+    }
+
+    // ── FusedGrid::burn_building_max (GPU barrier burn) ──────────────────
+    // A grid built from an EMPTY rasters dir is flat 0 with building 0
+    // everywhere (missing tiles are negative-cached defaults), so every
+    // non-zero building cell after a burn is the burn's own footprint.
+
+    fn empty_grid() -> FusedGrid {
+        let r = RealRasters::new(Path::new("/nonexistent-quietmap-test-rasters"));
+        FusedGrid::build(&r, 0.0, 0.05, 0.0, 0.05)
+    }
+
+    fn burned_cells(fg: &FusedGrid) -> Vec<(usize, usize, u8)> {
+        let (_, _, _, rows, cols) = fg.geom();
+        let mut out = Vec::new();
+        for r in 0..rows {
+            for c in 0..cols {
+                let b = fg.pixels()[r * cols + c].building;
+                if b > 0 {
+                    out.push((r, c, b));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn burn_horizontal_segment_marks_one_cell_row() {
+        let mut fg = empty_grid();
+        fg.burn_building_max(0.01, 0.01, 0.01, 0.04, 3.0);
+        let cells = burned_cells(&fg);
+        // 0.03° span at 1/3600° cells = 108 crossings → 109 cells ±1 float edge.
+        assert!(
+            (108..=110).contains(&cells.len()),
+            "horizontal wall cell count {} not in 108..=110",
+            cells.len()
+        );
+        let row0 = cells[0].0;
+        assert!(cells.iter().all(|&(r, _, h)| r == row0 && h == 3));
+    }
+
+    #[test]
+    fn burn_diagonal_is_supercover_not_bresenham() {
+        let mut fg = empty_grid();
+        // 45° diagonal across 36×36 cells: supercover visits |Δr|+|Δc|+1 ≈ 73
+        // cells (4-connected, no corner gaps); 8-connected Bresenham would
+        // visit ~37 — the kernel's nearest-neighbour ray samples could slip
+        // diagonally through those gaps.
+        fg.burn_building_max(0.01, 0.01, 0.02, 0.02, 3.0);
+        let cells = burned_cells(&fg);
+        assert!(
+            cells.len() > 60,
+            "diagonal burn {} cells — looks 8-connected, supercover expected",
+            cells.len()
+        );
+        assert!(cells.len() <= 76, "diagonal burn {} cells > |Δr|+|Δc|+1 bound", cells.len());
+    }
+
+    #[test]
+    fn burn_is_max_and_skips_out_of_grid() {
+        let mut fg = empty_grid();
+        fg.burn_building_max(0.02, 0.01, 0.02, 0.02, 5.0);
+        fg.burn_building_max(0.02, 0.01, 0.02, 0.02, 2.0);
+        let cells = burned_cells(&fg);
+        assert!(!cells.is_empty());
+        assert!(cells.iter().all(|&(_, _, h)| h == 5), "max(existing, h), never overwrite down");
+
+        // Entirely outside the grid → nothing painted, especially no edge smear.
+        let before = cells.len();
+        fg.burn_building_max(5.0, 5.0, 5.1, 5.1, 3.0);
+        fg.burn_building_max(-1.0, 0.02, -2.0, 0.02, 3.0);
+        assert_eq!(burned_cells(&fg).len(), before, "out-of-grid burn must be a no-op");
+
+        // Degenerate point segment → exactly one new cell.
+        fg.burn_building_max(0.04, 0.04, 0.04, 0.04, 4.0);
+        assert_eq!(burned_cells(&fg).len(), before + 1);
     }
 }

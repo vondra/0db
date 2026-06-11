@@ -158,7 +158,18 @@ pub fn screening_attenuation(
     // screening cost) for the rural majority. Conservative: a building at an
     // endpoint (which the scan itself ignores) still trips the flag, so a real
     // interior obstacle is never skipped.
-    if barriers.is_empty() && !profile.building_h_m.iter().any(|&b| b > 0) {
+    //
+    // Barrier arm: `dist_m` is sorted-ascending and a lower bound on the
+    // receiver→midpoint distance (`types::Barrier` contract), so when even the
+    // NEAREST barrier is past the `path_len + 100` horizon the projection loop
+    // below would break on its first iteration and map nothing — result-
+    // identical to an empty slice, minus the wasted full screening pass. This
+    // keeps the rural fast path alive for the majority of pixels in a tile
+    // that carries a wall somewhere (heatmap passes one slice per tile).
+    let barriers_in_reach = barriers
+        .first()
+        .is_some_and(|b| b.dist_m <= profile.dist_m + 100.0);
+    if !barriers_in_reach && !profile.building_h_m.iter().any(|&b| b > 0) {
         return [0.0; NUM_BANDS];
     }
     let (atten, _) = screening_attenuation_with_meta(
@@ -517,6 +528,77 @@ mod tests {
             atten.iter().any(|&a| a > 0.0),
             "building at t=0.4 should produce screening"
         );
+    }
+
+    /// Mid-path 3 m barrier on a flat profile must screen, and the band-only
+    /// wrapper must agree with `_with_meta` (the heatmap kernels call the
+    /// wrapper; popup calls `_with_meta` — parity by construction).
+    #[test]
+    fn screening_finds_midpath_barrier() {
+        let dist_m = 200.0;
+        let terrain_atten = [0.0_f64; NUM_BANDS];
+        let barrier = Barrier {
+            osm_id: 1,
+            height_m: 3.0,
+            lat: 0.0,
+            lon: 0.5 * dist_m / 111_320.0, // t = 0.5 on the src→rcv path
+            dist_m: dist_m / 2.0,
+        };
+        let mut p = build_flat_profile(dist_m, 0.0);
+        let (atten, trace) = screening_attenuation_with_meta(
+            &mut p,
+            std::slice::from_ref(&barrier),
+            0.05,
+            1.5,
+            0.0,
+            &terrain_atten,
+        );
+        assert_eq!(trace.kind, "barrier");
+        assert!(
+            atten.iter().any(|&a| a > 0.0),
+            "3 m wall above the 0.05→1.5 m LOS must screen"
+        );
+        let mut p2 = build_flat_profile(dist_m, 0.0);
+        let bands = screening_attenuation(
+            &mut p2,
+            std::slice::from_ref(&barrier),
+            0.05,
+            1.5,
+            0.0,
+            &terrain_atten,
+        );
+        assert_eq!(bands, atten, "band-only wrapper == _with_meta bands");
+    }
+
+    /// Early-out refinement: with no buildings and every (sorted, lower-bound
+    /// dist) barrier past the `path_len + 100` horizon, the wrapper must return
+    /// exactly the empty-slice result (the projection loop would break on its
+    /// first iteration) — this is what keeps the rural fast path alive on
+    /// heatmap tiles that carry a wall somewhere else in the tile.
+    #[test]
+    fn far_barriers_hit_the_early_out_unchanged() {
+        let dist_m = 200.0;
+        let terrain_atten = [0.0_f64; NUM_BANDS];
+        let far = Barrier {
+            osm_id: 2,
+            height_m: 3.0,
+            lat: 0.1,
+            lon: 0.1,
+            dist_m: dist_m + 101.0,
+        };
+        let mut p = build_flat_profile(dist_m, 0.0);
+        let bands = screening_attenuation(
+            &mut p,
+            std::slice::from_ref(&far),
+            0.05,
+            1.5,
+            0.0,
+            &terrain_atten,
+        );
+        let mut p2 = build_flat_profile(dist_m, 0.0);
+        let empty = screening_attenuation(&mut p2, &[], 0.05, 1.5, 0.0, &terrain_atten);
+        assert_eq!(bands, empty);
+        assert!(bands.iter().all(|&a| a == 0.0));
     }
 
     #[test]
