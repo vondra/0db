@@ -121,7 +121,13 @@ pub(crate) fn aircraft_lw_per_meter_z_db(
         _ => unreachable!(),
     };
     if speed_kt > 1.0 {
-        let adj = 10.0 * ((speed_kt as f64) / nominal.max(1.0)).log10();
+        // Doc 29 Vol 2 Eq 4-14 / AEDT Eq 4-26 duration (dwell) correction:
+        // per-metre energy ∝ P/v — a slower pass dwells longer per metre,
+        // so LW' RISES as speed drops. Only the dwell sign ports here: the
+        // per-kind anchors already bake the kind-nominal speeds (70/18/12 kt),
+        // not Doc 29's 160 kt V_ref. ±3 dB clamp keeps outlier ADS-B leg
+        // speeds from dominating.
+        let adj = -10.0 * ((speed_kt as f64) / nominal.max(1.0)).log10();
         total_lw += adj.clamp(-GROUND_OPS_SPEED_CLAMP_DB, GROUND_OPS_SPEED_CLAMP_DB);
     }
 
@@ -278,15 +284,64 @@ mod tests {
         );
     }
 
+    /// Dwell correction (Doc 29 Eq 4-14 / AEDT Eq 4-26): per-metre energy
+    /// ∝ 1/v, so a slow roll is LOUDER per metre than a fast one. The
+    /// pre-2026-06 kernel had the sign inverted (fast = louder).
     #[test]
-    fn aircraft_speed_clamp_caps_adjustment_at_3_db() {
-        let nominal = aircraft_lw_per_meter_z_db(2, GROUND_OPS_KIND_TAXI, 0, 18.0);
-        let speedy = aircraft_lw_per_meter_z_db(2, GROUND_OPS_KIND_TAXI, 0, 100.0);
-        let delta = sum_z_band_levels_db(&speedy) - sum_z_band_levels_db(&nominal);
+    fn aircraft_dwell_slower_is_louder_monotonic() {
+        let lw = |kt: f32| {
+            sum_z_band_levels_db(&aircraft_lw_per_meter_z_db(
+                2,
+                GROUND_OPS_KIND_RUNWAY_ROLL,
+                0,
+                kt,
+            ))
+        };
+        let (slow, nominal, fast) = (lw(20.0), lw(70.0), lw(150.0));
         assert!(
-            (delta - 3.0).abs() < 0.1,
-            "speed clamp should give +3 dB, got {delta}"
+            slow > nominal && nominal > fast,
+            "dwell monotonicity: 20kt {slow} > 70kt {nominal} > 150kt {fast}"
         );
+    }
+
+    /// At the kind-nominal speed the dwell adjust is exactly 0, so the
+    /// Z-total recovers the per-kind anchor (arrival: no departure bonus).
+    #[test]
+    fn aircraft_dwell_identity_at_kind_nominal_speed() {
+        for (kind, kind_idx, nominal_kt) in [
+            (GROUND_OPS_KIND_RUNWAY_ROLL, 0, 70.0),
+            (GROUND_OPS_KIND_TAXI, 1, 18.0),
+            (GROUND_OPS_KIND_APRON_MOVEMENT, 2, 12.0),
+        ] {
+            let total =
+                sum_z_band_levels_db(&aircraft_lw_per_meter_z_db(2, kind, 0, nominal_kt));
+            let anchor = GROUND_OPS_REFERENCE_LW_PER_METER_DB[2][kind_idx];
+            assert!(
+                (total - anchor).abs() < 1e-6,
+                "kind {kind}: Z-total {total} ≠ anchor {anchor} at nominal {nominal_kt} kt"
+            );
+        }
+    }
+
+    /// Clamp pins: 20 kt runway (−10·log10(20/70) = +5.4) and 8 kt taxi
+    /// (+3.5) pin to exactly +3; 36 kt taxi (−10·log10(2) = −3.01) pins
+    /// to exactly −3.
+    #[test]
+    fn aircraft_dwell_clamp_pins_at_plus_minus_3_db() {
+        let total = |kind: u8, kt: f32| {
+            sum_z_band_levels_db(&aircraft_lw_per_meter_z_db(2, kind, 0, kt))
+        };
+        let runway_nominal = total(GROUND_OPS_KIND_RUNWAY_ROLL, 70.0);
+        let taxi_nominal = total(GROUND_OPS_KIND_TAXI, 18.0);
+        let pin = |delta: f64, expected: f64, label: &str| {
+            assert!(
+                (delta - expected).abs() < 1e-6,
+                "{label}: expected {expected:+} dB exactly, got {delta}"
+            );
+        };
+        pin(total(GROUND_OPS_KIND_RUNWAY_ROLL, 20.0) - runway_nominal, 3.0, "runway 20 kt");
+        pin(total(GROUND_OPS_KIND_TAXI, 8.0) - taxi_nominal, 3.0, "taxi 8 kt");
+        pin(total(GROUND_OPS_KIND_TAXI, 36.0) - taxi_nominal, -3.0, "taxi 36 kt");
     }
 
     #[test]
