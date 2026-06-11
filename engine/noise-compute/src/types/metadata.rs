@@ -59,7 +59,7 @@ pub struct RoadMetadata {
     pub aadt_moto_raw: i32,
     pub traffic_source: &'static str, // "matched_external" | "estimated_service_tree" | "default_by_class"
     pub dominant_source_id: u16,     // dataset identity (single source of truth: pipeline/lib/sources.ts → engine/noise-compute/src/sources.rs; 0 = unspecified). Resolved into `provenance` field below.
-    pub speed_posted_kmh: u8,         // raw OSM maxspeed (0 = none)
+    pub speed_posted_kmh: Option<u8>, // raw OSM maxspeed (Some(0) = untagged); None = derestricted (maxspeed=none) — no number exists to display
 
     // Nominal ("road total, both directions") — arrow's raw number if
     // enriched, else class default. Pre-factor (no oneway / access /
@@ -76,7 +76,7 @@ pub struct RoadMetadata {
     pub aadt_heavy_effective: f64,
     pub aadt_moto_effective: f64,
     pub speed_kmh: f64,
-    pub speed_source: &'static str, // "osm_posted" | "default_by_class" | "roundabout_cap"
+    pub speed_source: &'static str, // "osm_posted" | "default_by_class" | "roundabout_cap" | "derestricted"
 
     // Descriptive — at dominant segment
     pub road_class: &'static str, // "motorway" .. "living_street"
@@ -130,7 +130,7 @@ pub struct RailMetadata {
     pub trains_passenger_source: &'static str, // "arrow" | "default_by_type"
     pub trains_freight_source: &'static str,
     pub source_id: u16, // dataset identity (single source of truth: pipeline/lib/sources.ts → engine/noise-compute/src/sources.rs; 0 = unspecified). Resolved into `provenance` field below.
-    pub maxspeed_posted_kmh: u8,
+    pub maxspeed_posted_kmh: u16, // u16: 300+ km/h high-speed postings survive
 
     // Effective (post service × parallel_divisor scaling)
     pub trains_passenger_effective: f64,

@@ -468,6 +468,10 @@ pub(crate) fn compute_roads(
                 } else {
                     "osm_posted"
                 }
+            } else if seg.speed_limit == normalize::SPEED_LIMIT_DERESTRICTED {
+                // maxspeed=none: no posted number exists; emission models
+                // DERESTRICTED_SPEED_KMH. UI renders "no limit".
+                "derestricted"
             } else if seg.speed_limit > 0 {
                 "osm_posted"
             } else {
@@ -536,7 +540,11 @@ pub(crate) fn compute_roads(
             aadt_moto_raw: acc.dominant_aadt_moto_raw,
             traffic_source: acc.dominant_traffic_source,
             dominant_source_id: acc.dominant_source_id,
-            speed_posted_kmh: acc.dominant_speed_posted,
+            // Derestricted has no posted number — None keeps the popup from
+            // rendering the 255 sentinel as "255 km/h" (/gg W4).
+            speed_posted_kmh: (acc.dominant_speed_posted
+                != normalize::SPEED_LIMIT_DERESTRICTED)
+                .then_some(acc.dominant_speed_posted),
             aadt_light_nominal: acc.dominant_aadt_light_nominal,
             aadt_medium_nominal: acc.dominant_aadt_medium_nominal,
             aadt_heavy_nominal: acc.dominant_aadt_heavy_nominal,

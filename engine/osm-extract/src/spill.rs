@@ -97,7 +97,12 @@ impl Spiller {
                     "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     classify::road_class(highway),
                     tags.get("maxspeed")
-                        .and_then(|s| s.parse::<u8>().ok())
+                        .map(|s| match classify::parse_maxspeed_kmh(s) {
+                            // u8 column unchanged: `none` → sentinel 255,
+                            // real limits clamp to 254 so they can't collide.
+                            classify::MAXSPEED_NONE => classify::SPEED_LIMIT_DERESTRICTED,
+                            v => v.min(254) as u8,
+                        })
                         .unwrap_or(0),
                     classify::surface_type(surface),
                     if tags.get("oneway").map(|s| s.as_str()) == Some("yes") {
@@ -146,9 +151,13 @@ impl Spiller {
                     "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     classify::rail_type(railway),
                     classify::rail_usage_type(tags.get("usage").map(|s| s.as_str())),
+                    // `none` is a road concept; on rail drop it so it falls to
+                    // the same 0 = untagged → type-default speed downstream.
+                    // u16 column (finalize.rs): 300+ km/h survives.
                     tags.get("maxspeed")
-                        .and_then(|s| s.parse::<u8>().ok())
-                        .unwrap_or(0),
+                        .map(|s| classify::parse_maxspeed_kmh(s))
+                        .filter(|&v| v != classify::MAXSPEED_NONE)
+                        .unwrap_or(0u16),
                     tags.get("name").unwrap_or(&String::new()),
                     tags.get("ref").unwrap_or(&String::new()),
                     electrified,

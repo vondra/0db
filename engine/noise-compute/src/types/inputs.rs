@@ -60,7 +60,7 @@ pub struct RoadSegment {
     pub end_lon: f64,
     pub length_m: f32,
     pub road_class: u8,   // 0=motorway..6=living_street, 7=service, 8=track, 9=unclassified, 10=motorway_link, 11=trunk_link, 12=primary_link
-    pub speed_limit: u8,  // km/h, 0=use default
+    pub speed_limit: u8,  // km/h, 0=use default, 255=derestricted (maxspeed=none) → DERESTRICTED_SPEED_KMH
     pub surface_type: u8, // 0=asphalt..4=gravel
     pub oneway: bool,
     pub lanes: u8,
@@ -94,7 +94,7 @@ pub struct RailSegment {
     pub length_m: f32,
     pub rail_type: u8, // 0=rail, 1=tram, 2=light_rail, 3=narrow_gauge, 4=funicular
     pub usage: u8,     // 0=main, 1=branch, 2=industrial
-    pub maxspeed: u8,  // km/h (raw OSM value, 0 = none)
+    pub maxspeed: u16, // km/h (raw OSM value, 0 = none); u16 so 300+ km/h survives
     pub trains_passenger: f64, // effective daily count (post service/divisor scaling)
     pub trains_freight: f64, // effective daily count (post service/divisor scaling)
     pub speed_kmh: f64, // effective speed used by emission (resolved); f64 not u8 — high-speed rail resolves to 300 km/h, which u8 saturated to 255 (~1.4 dB too quiet)

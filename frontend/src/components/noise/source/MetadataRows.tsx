@@ -26,9 +26,22 @@ export function MetadataRows({ c }: { c: Contributor }) {
     const wholeRoadTotal = effTotal / onewayFactor
     const isDefault = m.traffic_source === 'default_by_class'
     const hasSpeedRange = m.speed_min_kmh < m.speed_max_kmh
+    // Derestricted (maxspeed=none, e.g. German Autobahn): no number exists;
+    // the engine models DERESTRICTED_SPEED_KMH and reports it in speed_kmh.
+    // Keyed off the null posted value, not speed_source — a derestricted road
+    // through a roundabout reports speed_source "roundabout_cap" but still
+    // carries posted=null (engine sets null only for the 255 sentinel).
+    let postedMaxspeed: string
+    if (m.speed_posted_kmh == null) {
+      postedMaxspeed = 'no limit'
+    } else if (m.speed_posted_kmh > 0) {
+      postedMaxspeed = `${m.speed_posted_kmh} km/h`
+    } else {
+      postedMaxspeed = '— (none)'
+    }
     const speedText = txtTable([
       ['Source', m.speed_source.replace(/_/g, ' ')],
-      ['Posted maxspeed', m.speed_posted_kmh > 0 ? `${m.speed_posted_kmh} km/h` : '— (none)'],
+      ['Posted maxspeed', postedMaxspeed],
       ['Class default', m.road_class],
       { sep: true },
       ['Dominant seg.', `${m.speed_kmh.toFixed(0)} km/h`],

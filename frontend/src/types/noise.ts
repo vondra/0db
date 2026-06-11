@@ -92,7 +92,8 @@ export interface RoadMetadata {
   traffic_source: 'matched_external' | 'estimated_service_tree' | 'default_by_class'
   dominant_dataset_id?: number
   provenance?: DatasetProvenance | null
-  speed_posted_kmh: number
+  /** Raw OSM maxspeed; null = derestricted (`maxspeed=none`) — no number exists. */
+  speed_posted_kmh: number | null
   aadt_light_nominal: number
   aadt_medium_nominal: number
   aadt_heavy_nominal: number
@@ -102,7 +103,7 @@ export interface RoadMetadata {
   aadt_heavy_effective: number
   aadt_moto_effective: number
   speed_kmh: number
-  speed_source: 'osm_posted' | 'default_by_class' | 'roundabout_cap'
+  speed_source: 'osm_posted' | 'default_by_class' | 'roundabout_cap' | 'derestricted'
   road_class: string
   surface: string
   surface_corr_db: number

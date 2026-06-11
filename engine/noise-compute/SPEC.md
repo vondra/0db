@@ -62,6 +62,8 @@ Note: Category 4a (mopeds) and 5 (open category) not implemented. Known simplifi
 
 Emission speed is clamped to **[20, 130] km/h** before the rolling/propulsion formulas (`road.rs`); cat3 additionally capped at 80 km/h per the table above.
 
+OSM `maxspeed` is parsed unit-aware at extract (`osm-extract::classify::parse_maxspeed_kmh`: first `;`-token; `mph`/`knots`/`walk`; numeric clamp ≤ 400; `signals`/garbage → 0). The roads column stays u8: `maxspeed=none` (derestricted) stores sentinel **255** (`SPEED_LIMIT_DERESTRICTED`), real limits clamp to 254; `normalize_road` resolves the sentinel to **130 km/h** (`DERESTRICTED_SPEED_KMH` — BASt 2025 measured 124.1 km/h mean on derestricted Autobahn; CNOSSOS validity cap 130).
+
 ### Rolling noise per band (CNOSSOS-EU §2.4.6)
 ```
 L_WR,i = A_R,i + B_R,i × log₁₀(v / v_ref)
@@ -165,7 +167,7 @@ Post-adjustments applied even on measured counts: `service > 0` → counts × **
 | NarrowGauge | 10 + 0 | 40 km/h |
 | Funicular | 40 + 0 | 20 km/h |
 
-`maxspeed` tag wins when present; missing `maxspeed` with `highspeed=yes` → 300 km/h (`normalize.rs::normalize_rail`).
+`maxspeed` tag wins when present (unit-aware parse at extract — mph postings like WCML "125 mph" now convert instead of dropping to 0); missing `maxspeed` with `highspeed=yes` → 300 km/h (`normalize.rs::normalize_rail`). The railways `maxspeed` column is **UInt16** since 2026-06 (300+ km/h overflowed u8); readers (`hex_store::col_u16_or_u8`, `source_loader_rail`) also accept legacy UInt8 arrows until the next world OSM re-extract.
 
 ---
 
@@ -594,8 +596,10 @@ skipped. No speed classifier — OSM geometry is the source of truth.
 - Aircraft (`compute_aircraft_lw_per_meter_lin`): per-class anchor
   `GROUND_OPS_REFERENCE_LW_PER_METER_DB[class][ops_kind]` (= legacy
   1 km event-SEL anchor + `+9.01 dB = 10·log10(25/π)`; taxi = runway
-  −12 dB, apron = −18 dB); speed adjust ±3 dB clamp vs nominals
-  70/18/12 kt, applied only when `speed_kt > 1`; runway departure
+  −12 dB, apron = −18 dB); dwell speed adjust `−10·log10(v/v_nom)`
+  (Doc 29 Eq 4-14: per-metre energy ∝ 1/v, slower → louder), ±3 dB
+  clamp vs nominals 70/18/12 kt, applied only when `speed_kt > 1`;
+  runway departure
   +2 dB (Doc 29 §A.3); spectrum shape per `ops_kind`; source height
   4 m. Returns per-metre `LW'` density.
 - GSE (`compute_gse_band_energy_lin`): closed-form kinematic
