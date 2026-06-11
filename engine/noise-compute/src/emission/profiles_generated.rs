@@ -1614,7 +1614,10 @@ pub fn profile_idx(typecode: &str) -> u8 {
 /// Maps unmapped typecode prefixes onto the closest anchor profile by
 /// engine type / size class (Cessna piston → C172, Beech turboprop → DH8D,
 /// Cessna business jet → C56X, Bombardier/Gulfstream/Falcon/Hawker/Embraer
-/// business jet → CRJ9, Cirrus/Diamond/RV → C172, helicopters → EC35).
+/// business jet → CRJ9, Cirrus/Diamond/RV/GA-piston/UL → C172,
+/// helicopters → EC35). Sailplane designators route to C172 as
+/// defense-in-depth only — Stage 0/1 drop them up front via
+/// [`is_negligible_noise_typecode`].
 /// Typecodes that miss every pattern still return FALLBACK_PROFILE_IDX.
 ///
 /// Coverage per ADSB scan (24 sample days, 1.30 M traces): patterns below
@@ -1622,6 +1625,58 @@ pub fn profile_idx(typecode: &str) -> u8 {
 /// entries are exotic / military / experimental typecodes.
 fn similarity_fallback(typecode: &str) -> u8 {
     let b = typecode.as_bytes();
+    // Sailplanes + self-launch/sustainer motor-gliders: Schempp-Hirth
+    // (Ventus/Discus/Duo Discus/Nimbus/Janus), Schleicher AS2x digit range
+    // (ASW-20…ASG-29; the range skips AS2T = FFA Turbine Bravo, a turboprop
+    // trainer) + ASK-14 / ASH-30 / ASH-31, Glaser-Dirks/DG, Rolladen-
+    // Schneider LS, Grob Twin G103, PIK-20E, generic GLID + BALL hot-air
+    // balloons. All verified against ICAO 8643 (2026-06-11). Normally dropped
+    // at Stage 0/1 by `is_negligible_noise_typecode`; this arm is defense-
+    // in-depth for any other caller and MUST precede the GL*→CRJ9,
+    // SF*→DH8D and helicopter arms below (GLID would otherwise evaluate as
+    // a CRJ-900, AS2x as an EC-135). C172 = quietest available profile,
+    // least-wrong if ever evaluated.
+    if matches!(b, b"GLID" | b"VENT" | b"DISC" | b"DUOD" | b"NIMB" | b"JANU"
+                     | [b'A', b'S', b'2', b'0'..=b'9'] | b"AS14" | b"AS30" | b"AS31"
+                     | b"DG40" | b"DG50" | b"DG60" | b"DG80" | b"DG1T"
+                     | b"LS8" | b"LS9" | b"LS10" | b"G103" | b"PK20" | b"BALL") {
+        return profile_idx("C172");
+    }
+    // GA piston singles (+ light piston twins — same PROP_C172 Voronoi class):
+    // Robin DR-400/DR-220/HR-200, Tecnam P2008/P2010, Grob G-115, Grumman
+    // AA-5, Mooney M20K (M20T), Socata TB-9/TB-10/TB-20, Aquila A210, MS-880
+    // Rallye, Commander 114, FFA AS-202 Bravo, Tecnam P2006T, Partenavia
+    // P-68. Each verified L1P/L2P piston in ICAO 8643 (2026-06-11).
+    // Previously fell to the jet-flavoured FALLBACK energy-mean — +10..25 dB
+    // vs reality for light pistons (audit 2026-06 airborne A1; DR40 alone =
+    // 1,437 rows in a 600-R4 Europe sample).
+    if matches!(b, b"DR40" | b"DR22" | b"HR20" | b"P208" | b"TWEN" | b"G115"
+                     | b"AA5" | b"M20T" | b"TB20" | b"TOBA" | b"TAMP" | b"A210"
+                     | b"RALL" | b"AC11" | b"AS02" | b"P06T" | b"P68") {
+        return profile_idx("C172");
+    }
+    // Powered ultralights / LSA (Rotax 912 class) + touring motor gliders:
+    // Aerospool WT9 Dynamic, Ikarus C42, generic ULAC microlight, Tecnam
+    // P2002 Sierra / P-92 Echo / Astore, Flight Design CT, JMB VL-3,
+    // Pipistrel Virus, Breezer, Evektor EuroStar + SportStar, BRM NG-5 +
+    // B23, PS-28 Cruiser, Sling 2, Tomark SD-4, Aero AT-3, Shark Aero,
+    // Direct Fly Alto, Zlin Savage, Europa; touring motor gliders HK-36
+    // Dimona, Scheibe SF-25 Falke, Grob G-109, Schleicher ASK-16 fly with
+    // engine running — UL-class noise, not sailplane silence. ICAO 8643
+    // special designators PARA (powered parachute) / SHIP (airship) cruise
+    // engine-on too — without this arm they fell to the jet FALLBACK (PARA
+    // only dodged it via the Piper PA** pattern below; explicit here for
+    // intent). GYRO is strict-mapped to HELICOPTER in the typecode table.
+    // Verified in ICAO 8643 (2026-06-11). Ordering: ECHO/ASTO must precede
+    // the EC*/AS* helicopter arm, SF25 the SF*→SAAB turboprop arm.
+    if matches!(b, b"WT9" | b"C42" | b"ULAC" | b"SIRA" | b"ECHO" | b"ASTO"
+                     | b"FDCT" | b"VL3" | b"PIVI" | b"BREZ" | b"EV97" | b"EVSS"
+                     | b"NG5" | b"BR23" | b"CRUZ" | b"SLG2" | b"SD4" | b"AAT3"
+                     | b"SHRK" | b"ALTO" | b"SAVG" | b"EUPA"
+                     | b"PARA" | b"SHIP"
+                     | b"DIMO" | b"SF25" | b"G109" | b"AS16") {
+        return profile_idx("C172");
+    }
     // C-130 Hercules and C-130J Super Hercules — military 4-engine turboprop
     // (would otherwise hit the C1xx Cessna piston bucket and produce a 20+ dB
     //  underestimate; DH8D anchor is the closest single-class fit).
@@ -1723,16 +1778,30 @@ fn similarity_fallback(typecode: &str) -> u8 {
     if matches!(b, b"B461" | b"B462" | b"B463" | b"B14R" | b"RJ70" | b"RJ85" | b"RJ1H") {
         return profile_idx("CRJ9");
     }
-    // Helicopters: AS / EC / Bell / Sikorsky / Robinson / Leonardo / Airbus H-series
-    if matches!(b, [b'A', b'S', _, _] | [b'E', b'C', _, _]) {
+    // IAI 1125 Astra / Gulfstream G100 (ASTR) — mid-size bizjet. Found during
+    // the ICAO 8643 audit of the former blanket AS*→helicopter arm, which
+    // modeled this jet as an EC-135.
+    if matches!(b, b"ASTR") {
+        return profile_idx("CRJ9");
+    }
+    // Helicopters: AS-332 Super Puma / AS-532 Cougar exact pair + EC / Bell /
+    // Sikorsky / Robinson / Leonardo / Airbus H-series. Deliberately NOT a
+    // blanket `AS**` prefix: per ICAO 8643 (verified 2026-06-11) the only
+    // AS-prefixed helicopter designators are AS32 / AS3B / AS50 / AS55 /
+    // AS65 — the latter three are strict-mapped above; every other AS* code
+    // is fixed-wing (Schleicher sailplanes, FFA Bravo, Tecnam Astore, IAI
+    // Astra — all routed above; the residue falls to FALLBACK, not to a
+    // phantom helicopter).
+    if matches!(b, b"AS32" | b"AS3B" | [b'E', b'C', _, _]) {
         return profile_idx("EC35");
     }
     if matches!(b, [b'B', b'4', _, _] | [b'B', b'5', b'0', b'5']) {
         return profile_idx("EC35");
     }
-    // Sikorsky H-60 / S-70 / S-76 / S-92, Robinson R22/44/66
-    // (3-char ICAO codes — match by length and prefix)
-    if matches!(b, b"H60" | b"R22" | b"R44" | b"R66" | b"S70" | b"S76" | b"S92") {
+    // Sikorsky H-60 / S-70 / S-76 / S-92, Robinson R22/44/66, plus UHEL —
+    // ICAO 8643 special designator for ultralight helicopters (Mosquito
+    // class): piston like an R22, EC35 is the only rotorcraft anchor.
+    if matches!(b, b"H60" | b"R22" | b"R44" | b"R66" | b"S70" | b"S76" | b"S92" | b"UHEL") {
         return profile_idx("EC35");
     }
     // Leonardo AW + Airbus H-series 4-char codes
@@ -1752,5 +1821,31 @@ fn similarity_fallback(typecode: &str) -> u8 {
 /// ~30 dB over-estimate per source at airport receivers.
 pub fn is_non_aircraft_typecode(typecode: &str) -> bool {
     matches!(typecode.trim(), "TWR" | "GND")
+}
+
+/// Unpowered sailplanes + self-launch/sustainer motor-gliders whose engine
+/// (if any) runs minutes per flight, and hot-air balloons (BALL — burner
+/// blasts seconds per minute) — acoustically negligible vs every NPD
+/// profile we carry. Stage 0/1 drop these traces outright; the FALLBACK
+/// energy-mean used to model a soaring glider at 96.5 dB SEL @1000 ft —
+/// a jet signature (2026-06 audit, airborne A1: Halltal top-3 loudest
+/// included a Ventus). Code list verified against ICAO 8643 (2026-06-11):
+/// GLID generic glider; Schempp-Hirth VENT/DISC/DUOD/NIMB/JANU;
+/// Schleicher AS20–AS29 digit range (ASW/ASK/ASH/ASG families — the digit
+/// constraint skips AS2T, FFA's turboprop Bravo) + AS14/AS30/AS31;
+/// Glaser-Dirks/DG DG40/DG50/DG60/DG80/DG1T; Rolladen-Schneider
+/// LS8/LS9/LS10; Grob Twin G103; Eiri PIK-20E (PK20); BALL balloon.
+/// Touring motor gliders (DIMO/SF25/G109/AS16) are NOT here — they cruise
+/// engine-on and route to PROP_C172 via `similarity_fallback`.
+/// Blank typecodes are NOT negligible: `""` stays on the FALLBACK
+/// energy-mean (deliberate 2026-04-29 semantics for truly-unknown types).
+pub fn is_negligible_noise_typecode(typecode: &str) -> bool {
+    matches!(
+        typecode.trim().as_bytes(),
+        b"GLID" | b"VENT" | b"DISC" | b"DUOD" | b"NIMB" | b"JANU"
+            | [b'A', b'S', b'2', b'0'..=b'9'] | b"AS14" | b"AS30" | b"AS31"
+            | b"DG40" | b"DG50" | b"DG60" | b"DG80" | b"DG1T"
+            | b"LS8" | b"LS9" | b"LS10" | b"G103" | b"PK20" | b"BALL"
+    )
 }
 

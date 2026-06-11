@@ -70,6 +70,13 @@ fn stage_1_one_flight(
     if flight.points.len() < 2 {
         return Vec::new();
     }
+    // Mirror of the Stage 0 glider drop (`trace_to_flight`): cached
+    // `flights/<day>.arrow` written by pre-filter code still carries
+    // sailplane traces, and the stage-reuse workflow (`--from-stage
+    // stage1`) re-reads those caches without re-running Stage 0.
+    if crate::profile::is_negligible_noise_typecode(&flight.aircraft_type) {
+        return Vec::new();
+    }
 
     let mut points = flight.points.clone();
     // Ground-flagged points pin AGL = 0 (and skip the DEM lookup); without
@@ -320,6 +327,36 @@ mod tests {
         let mut seg = airborne_seg(0.0, 500.0, 0.0, 500.0);
         seg.phase = Phase::Ground;
         assert!(airborne_endpoints_above_terrain(&seg));
+    }
+
+    #[test]
+    fn glider_flight_from_stale_stage0_cache_yields_no_segments() {
+        // Stage 0 written by pre-glider-filter code can still carry
+        // sailplane flights; the Stage 1 mirror drop must catch them.
+        let tmp = tempdir().unwrap();
+        let rasters = RealRasters::new(tmp.path()); // no tiles → elev 0 m
+        // Kinematics must satisfy `segment_is_keepable` for the blank
+        // control: blank → FALLBACK (jet-classed), so speed must clear
+        // JET_STALL_SPEED_KT. ~250 kt ≈ 3.9 km per 30 s step.
+        let mk = |typecode: &str| Flight {
+            flight_id: 1,
+            callsign: String::new(),
+            aircraft_type: typecode.to_string(),
+            profile_idx: 123,
+            source_id: 0,
+            origin: 0,
+            veh_kind: 0,
+            gse_class: 0,
+            points: vec![
+                TracePoint { timestamp: 0.0, lat: 47.320, lon: 11.48, alt_ft: 8000.0, speed_kt: 250.0, track_deg: 0.0, baro_rate_fpm: 0.0, flags: 0 },
+                TracePoint { timestamp: 30.0, lat: 47.355, lon: 11.48, alt_ft: 8000.0, speed_kt: 250.0, track_deg: 0.0, baro_rate_fpm: 0.0, flags: 0 },
+                TracePoint { timestamp: 60.0, lat: 47.390, lon: 11.48, alt_ft: 8000.0, speed_kt: 250.0, track_deg: 0.0, baro_rate_fpm: 0.0, flags: 0 },
+            ],
+        };
+        assert!(stage_1_one_flight(&mk("VENT"), &rasters, 0).is_empty());
+        assert!(stage_1_one_flight(&mk("AS21"), &rasters, 0).is_empty());
+        // Blank typecode is NOT a glider — it must still segment.
+        assert!(!stage_1_one_flight(&mk(""), &rasters, 0).is_empty());
     }
 
     #[test]
