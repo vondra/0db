@@ -20,13 +20,24 @@ fn main() {
     }
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let arch = env::var("NOISE_GPU_ARCH").unwrap_or_else(|_| "sm_89".into());
+    // NUM_CLASSES is parsed from the generated profiles table and injected as
+    // -DNPD_NC so the kernel's NPD LUT stride can never drift from the Rust
+    // upload (hardcoded 14 corrupted departures when the pinned 15th class
+    // landed; /gg C10b 2026-06-11).
+    let gen = "../noise-compute/src/emission/profiles_generated.rs";
+    println!("cargo:rerun-if-changed={gen}");
+    let num_classes = fs::read_to_string(gen)
+        .expect("profiles_generated.rs not found next to noise-gpu")
+        .lines()
+        .find_map(|l| l.strip_prefix("pub const NUM_CLASSES: usize = ")?.strip_suffix(';').map(str::to_owned))
+        .expect("NUM_CLASSES const not found in profiles_generated.rs");
     for entry in fs::read_dir("kernels").expect("kernels/ dir") {
         let path = entry.unwrap().path();
         if path.extension().is_some_and(|e| e == "cu") {
             let stem = path.file_stem().unwrap().to_str().unwrap();
             let ptx = out.join(format!("{stem}.ptx"));
             let status = Command::new("nvcc")
-                .args(["-ptx", &format!("-arch={arch}"), "-O3"])
+                .args(["-ptx", &format!("-arch={arch}"), "-O3", &format!("-DNPD_NC={num_classes}")])
                 .arg(&path)
                 .arg("-o")
                 .arg(&ptx)

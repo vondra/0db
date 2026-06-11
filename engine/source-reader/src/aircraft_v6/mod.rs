@@ -78,7 +78,7 @@ fn build_osm_ref_lookup(batches: &[RecordBatch]) -> HashMap<u64, String> {
 /// silent fallback to per-row sum (which over-counts 4-8×).
 ///
 /// Returns `Err(String)` when any of the popup arrows fails its schema
-/// check (`v15` for airborne/cruise, `airport_traffic_v7` for the
+/// check (`v15` for airborne/cruise, `airport_traffic_v8` for the
 /// ground-ops arrow), so the popup HTTP path can map the failure to a
 /// structured 500 response with an operator-actionable message.
 pub fn add_v6_aircraft_to_result(
@@ -389,7 +389,7 @@ const LEGACY_SCHEMA_VERSIONS: &[&str] = &[];
 /// per-microseg UNION `microseg_unique_*` replace the v4 `flight_ids`
 /// list. Airport-level UNION across R4s lives in the separate
 /// `airport_summary.arrow` sidecar.
-pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v7";
+pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v8";
 
 /// Legacy `airport_traffic_contract` variants accepted under the same
 /// `ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1` escape hatch as
@@ -406,14 +406,14 @@ const LEGACY_AIRPORT_TRAFFIC_CONTRACTS: &[&str] = &[];
 /// v1 file because the 13-col offset shifts every read past
 /// `flags` — silent decoding would alias `terrain_q1_elev_m` slice
 /// over what v2 treats as `terrain_end_elev_m`.
-pub(super) const EXPECTED_AIRBORNE_CONTRACT: &str = "airborne_v2";
+pub(super) const EXPECTED_AIRBORNE_CONTRACT: &str = "airborne_v3";
 const LEGACY_AIRBORNE_CONTRACTS: &[&str] = &[];
 
 /// Expected `cruise_contract` metadata. v16 drops the tautological
 /// `flags` column (always IS_DEPARTURE per Doc 29 §A.3.2). Older
 /// cruise.arrow files lack columns the popup expects; silent skip
 /// would zero out cruise contributions at every receiver.
-pub(super) const EXPECTED_CRUISE_CONTRACT: &str = "cruise_v16_no_flags";
+pub(super) const EXPECTED_CRUISE_CONTRACT: &str = "cruise_v17";
 
 fn accept_legacy() -> bool {
     matches!(std::env::var("ACCEPT_LEGACY_AIRCRAFT_SCHEMA").as_deref(), Ok("1"))

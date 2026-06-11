@@ -31,7 +31,13 @@
 #define FT_PER_M 3.28084
 #define FARFIELD_M 7620.0f              // AIRCRAFT_FAR_FIELD_THRESHOLD_M
 #define SEL_FLOOR 20.0f
-#define NPD_NC 14                       // NUM_CLASSES
+// NPD_NC = NUM_CLASSES, injected by build.rs from the generated
+// profiles_generated.rs so the LUT stride can never drift from the Rust
+// upload (a hardcoded 14 mis-stepped every departure lookup when the
+// pinned 15th class landed - Gemini /gg C10b CRITICAL, 2026-06-11).
+#ifndef NPD_NC
+#error "NPD_NC must be passed by build.rs (-DNPD_NC=<NUM_CLASSES>)"
+#endif
 #define NPD_NB 128                      // NPD_LUT_BINS
 #define NPD_LOG_MIN 2.0f                // log10(100 ft)
 #define NPD_INV_STEP (128.0f / 3.5f)    // NPD_LUT_BINS / (LOG_MAX-LOG_MIN)

@@ -18,7 +18,7 @@ Two inputs:
 
 Output (stdout): Rust source for `profiles_generated.rs`.
 
-Class scheme: **Voronoi assignment over 14 frozen anchor classes.**
+Class scheme: **Voronoi assignment over NUM_CLASSES anchor classes (14 traffic-ranked + pinned).**
 
 Each anchor is the exact NPD vector of one dominant profile (top-K
 traffic per Installation). Every other profile is assigned to its
@@ -273,7 +273,25 @@ ANCHORS_PER_INSTALL: dict[str, int] = {
     "Prop":       2,
     "Helicopter": 1,
 }
-NUM_CLASSES = sum(ANCHORS_PER_INSTALL.values())  # → 14
+NUM_CLASSES = sum(ANCHORS_PER_INSTALL.values())  # → 14 algorithmic
+
+# Hand-pinned anchors appended AFTER the traffic-ranked top-K selection.
+# Voronoi ranks representatives by traffic volume, so rare-but-loud families
+# never earn one: heavy freighters/old wide-bodies sat 3–8 dB above their
+# nearest passenger anchor (B744 +8.1, B77W +4.9, MD-11 +4.4 dB mean SEL) —
+# systematic under-read exactly at freight hubs, where traffic flies at night
+# (Lden +10 dB weighting). Raising the Wing budget 9→10 was rejected by the
+# C10b gate: traffic ranking just selects another quiet regional (E175).
+# A pin only ADDS a representative — the algorithmic classes keep their
+# IDENTITY (anchor + membership, minus members the pin wins), but numeric
+# class indices DO re-sort by traffic afterwards; stale arrows are gated by
+# the per-file contracts (airborne/cruise/airport_traffic), bumped with this
+# change. Membership still flows through the same L∞ nearest-anchor pass.
+# B748 (747-8, GEnx) sits mid-cluster among the heavies and pulls in
+# B744/B77W/MD-11/B742/IL76 at ±0.1–2.7 dB residual; pinning B744 instead
+# leaves B77W/B748/IL76 stranded (experiment 2026-06-11, audit C10b).
+PINNED_ANCHORS: list[str] = ["B748"]
+NUM_CLASSES += len(PINNED_ANCHORS)  # → 15
 
 # Single source of truth for the negligible-noise designator set (sailplanes
 # + hot-air balloons) — emitted into BOTH the similarity_fallback defensive
@@ -616,6 +634,20 @@ def cluster_voronoi(profiles: list[Profile], counts: dict[int, int]) -> list[Anc
             anchors.append(AnchorClass(anchor_idx=anchor, install=install))
             used_sigs.add(sig)
 
+    # Hand-pinned anchors (PINNED_ANCHORS) — appended after the ranked
+    # selection so the algorithmic classes stay stable across regens.
+    for tc in PINNED_ANCHORS:
+        idx = next((i for i, p in enumerate(profiles) if p.typecode == tc), None)
+        if idx is None:
+            sys.exit(f"PINNED ANCHOR FAIL: typecode {tc!r} not in profiles")
+        p = profiles[idx]
+        sig = (tuple(p.approach_sel), tuple(p.departure_sel), install_label(p))
+        if sig in used_sigs:
+            sys.exit(f"PINNED ANCHOR FAIL: {tc} already selected by traffic "
+                     f"ranking — drop it from PINNED_ANCHORS")
+        anchors.append(AnchorClass(anchor_idx=idx, install=install_label(p)))
+        used_sigs.add(sig)
+
     # Voronoi assign every profile to its nearest anchor (within same Install).
     for i, p in enumerate(profiles):
         my_install = install_label(p)
@@ -671,6 +703,14 @@ RUNWAY_DB_BY_ANCHOR: dict[str, float] = {
     "B38M":     104.0,   # MAX narrowbody jet
     "A319":     104.0,   # narrowbody jet
     "B789":     108.0,   # widebody twin
+    # Heavy widebody (pinned C10b class: B744/B748/B77W/MD11/B742/IL76).
+    # Same calibration band as B789: B744/B77W previously inherited 108.0
+    # via WING_B789, so their ground ops stay level while MD11/IL76 rise
+    # from the 104 narrowbody band. Without this entry the dep@200ft−10
+    # fallback emitted 100.1 → a −7.9 dB ground-ops regression for the
+    # whole family (Codex /gg C10b CRITICAL, 2026-06-11). Raising above
+    # 108 needs a cited Doc 29 / airport-measurement source.
+    "B748":     108.0,
     "CRJ9":     100.0,   # regional jet, fuselage-mounted
     "C56X":      99.0,   # light bizjet, fuselage-mounted
     "C172":      92.0,   # piston SE GA

@@ -141,7 +141,7 @@ pub fn airborne_schema() -> Arc<Schema> {
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "airborne"),
-        ("airborne_contract", AIRBORNE_CONTRACT_V2),
+        ("airborne_contract", AIRBORNE_CONTRACT_V3),
     ])))
 }
 
@@ -158,10 +158,13 @@ pub fn airborne_schema() -> Arc<Schema> {
 /// columns and v2 readers can't ignore v1's extra columns silently
 /// (would degrade Stage 1's parity claim), so the stamp must mismatch
 /// loud.
-pub const AIRBORNE_CONTRACT_V2: &str = "airborne_v2";
+/// v3 (C10b, 2026-06-11): pinned WING_B748 heavy class — NUM_CLASSES
+/// 14→15 and the traffic re-sort renumbered every class index, so the
+/// `class` column of older files maps to the wrong NPD table.
+pub const AIRBORNE_CONTRACT_V3: &str = "airborne_v3";
 
 /// Verify a loaded `airborne.arrow` file's `airborne_contract` metadata
-/// matches the current [`AIRBORNE_CONTRACT_V2`]. Older files MUST be
+/// matches the current [`AIRBORNE_CONTRACT_V3`]. Older files MUST be
 /// rejected — column layout differs and silent decoding would either
 /// crash (v2 reading v1's extra columns through a 13-col offset) or
 /// silently zero-out terrain at every chord midpoint (v2 cuts read
@@ -170,9 +173,9 @@ pub fn assert_airborne_contract_v2(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     match metadata.get("airborne_contract").map(String::as_str) {
-        Some(AIRBORNE_CONTRACT_V2) => Ok(()),
+        Some(AIRBORNE_CONTRACT_V3) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "airborne_contract mismatch: expected {AIRBORNE_CONTRACT_V2}, got {other}"
+            "airborne_contract mismatch: expected {AIRBORNE_CONTRACT_V3}, got {other}"
         )),
         // v1 files (overnight 2026-05-21 extract) carry no
         // `airborne_contract` stamp — the contract const was introduced
@@ -223,7 +226,9 @@ pub fn cruise_top_candidate_fields() -> Fields {
 /// en-route flights use the Departure NPD family; no cruise-specific
 /// NPD set is published). The popup kernel hardcodes `is_departure: true`
 /// directly on the synth `AircraftSegment` — the column was pure overhead.
-pub const CRUISE_CONTRACT_V16_NO_FLAGS: &str = "cruise_v16_no_flags";
+/// v17 (C10b, 2026-06-11): pinned WING_B748 — class renumbering, see
+/// [`AIRBORNE_CONTRACT_V3`]. (v16 dropped the tautological `flags` column.)
+pub const CRUISE_CONTRACT_V17: &str = "cruise_v17";
 
 /// Stage 2B — `h3r4/<hex>/cruise.arrow` (v16). One row per (R7, fl_bin,
 /// class, period) bucket. v15 coarsens the spatial key from R8
@@ -253,21 +258,21 @@ pub fn cruise_schema() -> Arc<Schema> {
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "cruise"),
-        ("cruise_contract", CRUISE_CONTRACT_V16_NO_FLAGS),
+        ("cruise_contract", CRUISE_CONTRACT_V17),
     ])))
 }
 
 /// Verify a loaded `cruise.arrow` file's `cruise_contract` metadata
-/// matches [`CRUISE_CONTRACT_V16_NO_FLAGS`]. Older files MUST be
+/// matches [`CRUISE_CONTRACT_V17`]. Older files MUST be
 /// rejected — the popup/heatmap readers silently skip batches whose
 /// expected columns are missing, hiding the version skew.
 pub fn assert_cruise_contract(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     match metadata.get("cruise_contract").map(String::as_str) {
-        Some(CRUISE_CONTRACT_V16_NO_FLAGS) => Ok(()),
+        Some(CRUISE_CONTRACT_V17) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "cruise_contract mismatch: expected {CRUISE_CONTRACT_V16_NO_FLAGS}, got {other}"
+            "cruise_contract mismatch: expected {CRUISE_CONTRACT_V17}, got {other}"
         )),
         None => Err(anyhow::anyhow!(
             "cruise_contract metadata missing — \
@@ -295,7 +300,10 @@ pub fn assert_cruise_contract(
 /// `airport_summary.arrow`. v5 dropped the per-row `flight_ids` payload
 /// for scalar `unique_*_count` counters plus row-replicated
 /// `microseg_unique_*` UNION counts.
-pub const AIRPORT_TRAFFIC_CONTRACT_V7: &str = "airport_traffic_v7";
+/// v8 (C10b, 2026-06-11): pinned WING_B748 — `class_idx` renumbering AND
+/// the baked per-class `band_energy_lin` reflect the new 15-class table,
+/// see [`AIRBORNE_CONTRACT_V3`].
+pub const AIRPORT_TRAFFIC_CONTRACT_V8: &str = "airport_traffic_v8";
 
 /// Global airport summary sidecar contract (one row per airport_key,
 /// truly unique counts across all R4s). Produced by Stage 2C v5
@@ -395,12 +403,12 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "airport_traffic"),
-        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V7),
+        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V8),
     ])))
 }
 
 /// Verify a loaded airport_traffic.arrow file's metadata matches the
-/// current [`AIRPORT_TRAFFIC_CONTRACT_V7`] contract. Older files MUST
+/// current [`AIRPORT_TRAFFIC_CONTRACT_V8`] contract. Older files MUST
 /// be rejected — column layouts and energy-normalization semantics
 /// differ across versions, so silent decoding would produce wrong
 /// numbers downstream. v5 stored daily-average `band_energy_lin` and
@@ -410,9 +418,9 @@ pub fn assert_airport_traffic_contract_v7(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     match metadata.get("airport_traffic_contract").map(String::as_str) {
-        Some(AIRPORT_TRAFFIC_CONTRACT_V7) => Ok(()),
+        Some(AIRPORT_TRAFFIC_CONTRACT_V8) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V7}, got {other}"
+            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V8}, got {other}"
         )),
         None => Err(anyhow::anyhow!(
             "airport_traffic_contract metadata missing"
@@ -590,7 +598,7 @@ mod tests {
         let s = airport_traffic_schema();
         assert_eq!(
             s.metadata().get("airport_traffic_contract").map(String::as_str),
-            Some(AIRPORT_TRAFFIC_CONTRACT_V7)
+            Some(AIRPORT_TRAFFIC_CONTRACT_V8)
         );
     }
 
