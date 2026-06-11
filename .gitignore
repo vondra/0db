@@ -32,3 +32,4 @@ benchmarks/.tmp-telemetry.jsonl
 scripts/hosts
 __pycache__/
 logs/
+.data-hub-token
