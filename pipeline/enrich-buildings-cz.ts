@@ -12,14 +12,14 @@
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Uint8, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
-import { shouldOverwrite } from './lib/provenance.js'
-
-const MY_SOURCE_ID = SOURCE_ID_CZ_RUIAN_VFR
 import proj4 from 'proj4'
+import { shouldOverwrite } from './lib/provenance.js'
+import { writeBuildingEnrichment } from './lib/buildings-arrow.js'
+import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { SOURCE_ID_CZ_RUIAN_VFR } from './lib/source-ids.generated.js'
 import { flatDist } from './lib/spatial.js'
+
+const MY_SOURCE_ID = SOURCE_ID_CZ_RUIAN_VFR
 
 // Define S-JTSK (EPSG:5514) projection
 proj4.defs('EPSG:5514', '+proj=krovak +lat_0=49.5 +lon_0=24.83333333333333 +alpha=30.28813975277778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel +towgs84=570.8,85.7,462.8,4.998,1.587,5.261,3.56 +units=m +no_defs')
@@ -205,7 +205,11 @@ function parseBuildingsFromVfr(xml: string): RuianBuilding[] {
 
 // ── Step 2: Enrich buildings.arrow ──
 
-function enrichHexes(ruianBuildings: RuianBuilding[]): void {
+// Generous box around Czechia (+~0.3 deg halo) so the hex scan skips the rest
+// of the planet — same bound as enrich-roads-cz.ts. [minLat,minLon,maxLat,maxLon]
+const CZ_HEX_BBOX: [number, number, number, number] = [48.2, 11.7, 51.4, 19.2]
+
+async function enrichHexes(ruianBuildings: RuianBuilding[]): Promise<void> {
   // Build spatial index: 0.01° grid (~1km cells) for fast lookup
   const grid = new Map<string, RuianBuilding[]>()
   for (const b of ruianBuildings) {
@@ -215,107 +219,62 @@ function enrichHexes(ruianBuildings: RuianBuilding[]): void {
   }
   console.log(`  Spatial grid: ${grid.size} cells`)
 
-  const hexDirs = readdirSync(H3R4_DIR).filter(d =>
-    d.length === 15 && d.endsWith('ffffffff'))
+  const hexDirs = iterateCountryHexes(H3R4_DIR, CZ_HEX_BBOX, 'buildings.arrow')
 
-  let totalBuildings = 0, totalEnriched = 0, floorsAdded = 0, typeRefined = 0, hexesUpdated = 0
+  let totalBuildings = 0, totalEnriched = 0, floorsAdded = 0, typeRefined = 0, hexesUpdated = 0, typeDowngradesBlocked = 0
 
   for (const hexId of hexDirs) {
-    const bldPath = resolve(H3R4_DIR, hexId, 'buildings.arrow')
-    if (!existsSync(bldPath)) continue
+    // The shared writer owns metadata preservation (v2 `buildings_contract`
+    // stamp survives), the priority gate and the type-specificity gate.
+    const r = await writeBuildingEnrichment(
+      resolve(H3R4_DIR, hexId, 'buildings.arrow'),
+      (row) => {
+        // Fast-exit before the spatial match when a higher-priority dataset
+        // owns the row (the writer re-checks the gate — this only saves work).
+        if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
 
-    const buf = readFileSync(bldPath)
-    const table = tableFromIPC(buf)
-    const n = table.numRows
-    if (n === 0) continue
-    totalBuildings += n
-
-    const clat = table.getChild('centroid_lat')!
-    const clon = table.getChild('centroid_lon')!
-    const existingFloors = table.getChild('floors')
-    const existingType = table.getChild('building_type')
-    const existingSourceId = table.getChild('source_id')
-
-    // New columns (copy existing, override where RÚIAN has data)
-    const newFloors = new Uint8Array(n)
-    const newType = new Uint8Array(n)
-    const newDatasetId = new Uint16Array(n)
-    let hexEnriched = 0
-
-    for (let i = 0; i < n; i++) {
-      const lat = clat.get(i) as number
-      const lon = clon.get(i) as number
-      const curFloors = existingFloors ? (existingFloors.get(i) as number) : 0
-      const curType = existingType ? (existingType.get(i) as number) : 0
-      const curDatasetId = existingSourceId ? (existingSourceId.get(i) as number) : 0
-      newFloors[i] = curFloors
-      newType[i] = curType
-      newDatasetId[i] = curDatasetId
-
-      // Priority gate: skip if a higher-priority dataset owns this row.
-      if (!shouldOverwrite(curDatasetId, MY_SOURCE_ID)) continue
-
-      // Find nearest RÚIAN building within 30m
-      const gridKey = `${Math.floor(lat * 100)}_${Math.floor(lon * 100)}`
-      let bestDist = 30 // 30m max
-      let bestRuian: RuianBuilding | null = null
-
-      // Check 3x3 grid cells
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const k = `${Math.floor(lat * 100) + dy}_${Math.floor(lon * 100) + dx}`
-          const cell = grid.get(k)
-          if (!cell) continue
-          for (const rb of cell) {
-            const d = flatDist(lat, lon, rb.lat, rb.lon)
-            if (d < bestDist) { bestDist = d; bestRuian = rb }
+        // Find nearest RÚIAN building within 30m (3x3 grid cells)
+        let bestDist = 30
+        let bestRuian: RuianBuilding | null = null
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const k = `${Math.floor(row.lat * 100) + dy}_${Math.floor(row.lon * 100) + dx}`
+            const cell = grid.get(k)
+            if (!cell) continue
+            for (const rb of cell) {
+              const d = flatDist(row.lat, row.lon, rb.lat, rb.lon)
+              if (d < bestDist) { bestDist = d; bestRuian = rb }
+            }
           }
         }
-      }
+        if (!bestRuian) return null
 
-      if (bestRuian) {
-        hexEnriched++
-        newDatasetId[i] = MY_SOURCE_ID
-        // Fill floors if missing in OSM
-        if (curFloors === 0 && bestRuian.floors > 0) {
-          newFloors[i] = Math.min(bestRuian.floors, 255)
-          floorsAdded++
+        const mappedType = bestRuian.useCode > 0 ? RUIAN_TO_BUILDING_TYPE[bestRuian.useCode] : undefined
+        return {
+          // Fill floors only if missing in OSM
+          floors: row.floors === 0 && bestRuian.floors > 0 ? Math.min(bestRuian.floors, 255) : undefined,
+          // Refine building type from RÚIAN (coarse 0-9 — the writer keeps
+          // the more specific v2 POI-join classes 10-13 untouched)
+          buildingType: mappedType,
+          sourceId: MY_SOURCE_ID,
         }
-        // Refine building type from RÚIAN (more precise than OSM)
-        if (bestRuian.useCode > 0) {
-          const mappedType = RUIAN_TO_BUILDING_TYPE[bestRuian.useCode]
-          if (mappedType !== undefined) {
-            newType[i] = mappedType
-            if (mappedType !== curType) typeRefined++
-          }
-        }
-      }
-    }
-
-    if (hexEnriched === 0) continue
-    totalEnriched += hexEnriched
-
-    // Copy all columns + overwrite floors, building_type, dataset_id
-    const columns: Record<string, any> = {}
-    for (const field of table.schema.fields) {
-      if (field.name === 'floors') continue
-      if (field.name === 'building_type') continue
-      if (field.name === 'source_id') continue
-      columns[field.name] = table.getChild(field.name)!
-    }
-    columns['floors'] = vectorFromArray(newFloors, new Uint8())
-    columns['building_type'] = vectorFromArray(newType, new Uint8())
-    columns['source_id'] = vectorFromArray(newDatasetId, new Uint16())
-
-    const newTable = makeTable(columns)
-    writeFileSync(bldPath, Buffer.from(tableToIPC(newTable, 'file')))
-    hexesUpdated++
+      },
+      (row, _i, applied) => {
+        if (applied.floors !== undefined) floorsAdded++
+        if (applied.buildingType !== undefined && applied.buildingType !== row.buildingType) typeRefined++
+      },
+    )
+    totalBuildings += r.rows
+    totalEnriched += r.matched
+    typeDowngradesBlocked += r.typeDowngradesBlocked
+    if (r.updated) hexesUpdated++
   }
 
   console.log(`\n=== Results ===`)
   console.log(`  ${totalEnriched} / ${totalBuildings} buildings matched to RÚIAN (${(totalEnriched / totalBuildings * 100).toFixed(1)}%)`)
   console.log(`  ${floorsAdded} floors added (were missing in OSM)`)
   console.log(`  ${typeRefined} building types refined from RÚIAN`)
+  console.log(`  ${typeDowngradesBlocked} coarse-over-specific type downgrades blocked (v2 POI-join classes kept)`)
   console.log(`  ${hexesUpdated} / ${hexDirs.length} hexes updated`)
 }
 
@@ -334,7 +293,7 @@ async function main() {
   const buildings = await downloadRuian()
   console.log(`\n  RÚIAN buildings: ${buildings.length.toLocaleString()}`)
   console.log(`  Enriching buildings.arrow files...`)
-  enrichHexes(buildings)
+  await enrichHexes(buildings)
   console.log(`\n=== Done ===`)
 }
 

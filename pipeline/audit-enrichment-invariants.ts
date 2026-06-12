@@ -38,6 +38,12 @@
  *                         nor 'any' (wrong dataset-id constant in an enricher)
  *   R11 unknown-country — registry-level: a dataset key carries a country prefix
  *                         that CGAZ/ISO-3166 cannot resolve (checked once at start)
+ *   R12 buildings-contract — settlement v2 (Convention-B): a stamped
+ *                         buildings.arrow must carry exactly `buildings_v2` +
+ *                         the opening_hours_frac column; an UNstamped file must
+ *                         not contain v2 POI-join type ids 10-13 (that shape =
+ *                         an enricher rewrite dropped the schema metadata, and
+ *                         the heatmap loader fail-loud rejects the file)
  *
  * Usage:
  *   DATA_YEAR=2025 npx tsx pipeline/audit-enrichment-invariants.ts \
@@ -56,6 +62,7 @@ import { tableFromIPC, type Table, type Vector } from 'apache-arrow'
 import { DATASETS } from './lib/enrichment-datasets.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { makeCountryGate } from './lib/country-polygon.js'
+import { MAX_BUILDING_TYPE, V2_SPECIFIC_TYPE_MIN } from './lib/buildings-arrow.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const YEAR = process.env.DATA_YEAR || readFileSync(resolve(__dirname, '..', 'DATA_YEAR'), 'utf8').trim()
@@ -436,6 +443,54 @@ const industrial = scanLayer('industrial.arrow', (t, hex) => {
   return checked
 })
 
+// ── R0/R8/R9/R10/R12: buildings ──────────────────────────────────────────────
+
+// Per-file contract stamp written by `osm-extract::finalize` and fail-loud
+// asserted by `heatmap-aircraft::schema_check::BUILDINGS_CONTRACT_V2`
+// (branch settlement-phase2). Value is the contract — never edit casually.
+const BUILDINGS_CONTRACT_V2 = 'buildings_v2'
+
+const buildings = scanLayer('buildings.arrow', (t, hex) => {
+  const btype = t.getChild('building_type')
+  const src = t.getChild('source_id')
+  const osm = t.getChild('osm_id')
+  const lat = t.getChild('centroid_lat'), lon = t.getChild('centroid_lon')
+  if (!btype || !lat || !lon) return 0
+  const hexLat = (lat.get(0) as number) ?? 0, hexLon = (lon.get(0) as number) ?? 0
+
+  const contract = t.schema.metadata.get('buildings_contract')
+  if (contract !== undefined && contract !== BUILDINGS_CONTRACT_V2) {
+    report('R12 buildings-contract', hex, -1, null, 0, hexLat, hexLon,
+      `buildings_contract='${contract}' (expected '${BUILDINGS_CONTRACT_V2}')`)
+  }
+  if (contract === BUILDINGS_CONTRACT_V2 && !t.getChild('opening_hours_frac')) {
+    report('R12 buildings-contract', hex, -1, null, 0, hexLat, hexLon,
+      `stamped ${BUILDINGS_CONTRACT_V2} but opening_hours_frac column is missing`)
+  }
+
+  let checked = 0
+  let v2TypesInUnstamped = 0
+  for (const i of sampleRows(t.numRows)) {
+    checked++
+    const id = (src?.get(i) as number) ?? 0
+    const c = (btype.get(i) as number) ?? 0
+    const la = lat.get(i) as number, lo = lon.get(i) as number
+    const oid = osm ? Number(osm.get(i)) : null
+    checkSourceRegistry('buildings', hex, i, oid, id, la, lo)
+    checkCountryBleed(hex, i, oid, id, la, lo, la, lo, la, lo)
+    if (c > MAX_BUILDING_TYPE) {
+      report('R8 class-range', hex, i, oid, id, la, lo, `building_type=${c} outside engine codes 0..${MAX_BUILDING_TYPE}`)
+    } else if (contract === undefined && c >= V2_SPECIFIC_TYPE_MIN) {
+      v2TypesInUnstamped++
+    }
+  }
+  if (v2TypesInUnstamped > 0) {
+    report('R12 buildings-contract', hex, -1, null, 0, hexLat, hexLon,
+      `${v2TypesInUnstamped}/${checked} sampled rows carry v2 type ids (>=${V2_SPECIFIC_TYPE_MIN}) but the file has no buildings_contract stamp — a rewrite dropped the schema metadata`)
+  }
+  return checked
+})
+
 // ── summary ──────────────────────────────────────────────────────────────────
 
 const FIX_HINTS: Record<string, string> = {
@@ -451,6 +506,7 @@ const FIX_HINTS: Record<string, string> = {
   'R9 country-bleed': 'Cross-border stamp — gate the enricher match by makeCountryGate (lib/country-polygon.ts) and reset + re-enrich BOTH countries. The PL GPR → CZ bleed is the known deferred case (gate fixed in enrich-roads-pl.ts; data awaits re-enrich).',
   'R10 layer-mismatch': 'Wrong dataset-id constant in the enricher — stamp the id registered for this layer, then reset + re-enrich.',
   'R11 unknown-country': "Dataset key's country prefix has no CGAZ/ISO-3166 identity — fix the key, or add the prefix to NON_COUNTRY_PREFIXES / CITY_COUNTRY in this scanner.",
+  'R12 buildings-contract': 'Settlement v2 contract broken — a rewrite dropped/garbled schema metadata. Rewrite buildings.arrow ONLY via lib/buildings-arrow.ts::writeBuildingEnrichment; re-extract the hex (osm-to-h3r4.sh) to restore the stamp.',
 }
 
 console.log(`=== Enrichment invariant scan — bbox ${BBOX.join(',')} (${YEAR}) ===`)
@@ -458,6 +514,7 @@ if (SAMPLE !== Infinity) console.log(`  sampling: ~${SAMPLE} rows per hex per la
 console.log(`  roads      ${roads.hexes} hexes  ${roads.rows.toLocaleString()} rows checked  ${(roads.ms / 1000).toFixed(1)}s`)
 console.log(`  railways   ${rails.hexes} hexes  ${rails.rows.toLocaleString()} rows checked  ${(rails.ms / 1000).toFixed(1)}s`)
 console.log(`  industrial ${industrial.hexes} hexes  ${industrial.rows.toLocaleString()} rows checked  ${(industrial.ms / 1000).toFixed(1)}s`)
+console.log(`  buildings  ${buildings.hexes} hexes  ${buildings.rows.toLocaleString()} rows checked  ${(buildings.ms / 1000).toFixed(1)}s`)
 
 if (violations.length === 0) {
   console.log(`\nCLEAN — no invariant violations.`)
