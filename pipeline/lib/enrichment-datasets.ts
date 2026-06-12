@@ -37,6 +37,14 @@ export interface Dataset {
    *  invariant scanner (`audit-enrichment-invariants.ts`) then skips the
    *  coverage check for rows carrying this id. */
   roadCoverage?: readonly number[]
+  /** What the enricher actually STAMPS under this id (C3.1 v2, accepted /gg):
+   *  'counted' = sensor/census counts only; 'derived' = mixes counted with
+   *  class/surface proxies under one id (per-row provenance indistinguishable);
+   *  'proxy' = no counts published, classification-based values only.
+   *  Consumers: traffic-defaults generator ingests counted ONLY; the A3
+   *  scanner enforces that proxy ids never feed it. Absent = not yet judged
+   *  (treated as not-counted). */
+  measurement?: 'counted' | 'derived' | 'proxy'
   /** Rail families whose MEASURED (GTFS/timetable) counts this source may
    *  stamp: 'rail' = rail_type 0, 'tram' = rail_type 1/2. Per-family class
    *  defaults (≤250 trains/day) are family-correct by construction and not
@@ -88,6 +96,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://github.com/XavB64/traffic-volume-data-EU-cities',
     priority: 70,
+    measurement: 'counted',
   },
   {
     id: 11,
@@ -98,6 +107,7 @@ export const DATASETS: Dataset[] = [
     license: 'project-internal',
     url: null,
     priority: 10,
+    measurement: 'derived',
   },
 
   // ── Roads: national ──
@@ -110,6 +120,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://geoportal.rsd.cz/',
     priority: 80,
+    measurement: 'counted',
   },
   {
     id: 21,
@@ -120,6 +131,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-domain',
     url: 'https://www.fhwa.dot.gov/policyinformation/hpms.cfm',
     priority: 80,
+    measurement: 'counted',
     roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
@@ -131,6 +143,7 @@ export const DATASETS: Dataset[] = [
     license: 'DL-DE BY 2.0',
     url: 'https://www.bast.de/',
     priority: 80,
+    measurement: 'counted',
   },
   {
     id: 23,
@@ -141,6 +154,7 @@ export const DATASETS: Dataset[] = [
     license: 'DL-DE BY 2.0',
     url: 'https://www.bast.de/',
     priority: 80,
+    measurement: 'counted',
   },
   {
     id: 24,
@@ -151,6 +165,7 @@ export const DATASETS: Dataset[] = [
     license: 'etalab-2.0',
     url: 'https://www.data.gouv.fr/',
     priority: 80,
+    measurement: 'counted',
   },
 
   // ── Railways: continental ──
@@ -277,6 +292,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://ide.transporte.gob.ar/geoserver/observ/ows',
     priority: 80,
+    measurement: 'derived',
   },
   {
     id: 1013,
@@ -287,6 +303,7 @@ export const DATASETS: Dataset[] = [
     license: 'community-mirror',
     url: 'https://services2.arcgis.com/1GTOs4RWV6SKu0wr/',
     priority: 80,
+    measurement: 'proxy',
   },
   {
     id: 1014,
@@ -297,6 +314,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://www.dnit.gov.br/',
     priority: 80,
+    measurement: 'proxy',
   },
   {
     id: 1019,
@@ -307,6 +325,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://www.donneesquebec.ca/recherche/dataset/debit-de-circulation',
     priority: 80,
+    measurement: 'counted',
   },
   {
     id: 1023,
@@ -317,6 +336,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://rest-sit.mop.gob.cl/',
     priority: 80,
+    measurement: 'derived',
   },
   {
     id: 1025,
@@ -327,6 +347,7 @@ export const DATASETS: Dataset[] = [
     license: 'community-mirror',
     url: 'https://services1.arcgis.com/ERdCHt0sNM6dENSD/',
     priority: 80,
+    measurement: 'proxy',
   },
   {
     id: 1026,
@@ -337,6 +358,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://services6.arcgis.com/kyerLIHvrND0OSya/',
     priority: 80,
+    measurement: 'derived',
   },
   {
     id: 1031,
@@ -347,6 +369,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://www.opendata.dk/vejdirektoratet/taellinger-nogletal-mastra',
     priority: 80,
+    measurement: 'counted',
     roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
@@ -358,6 +381,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://services6.arcgis.com/pYn2F4v1aESZqj1u/',
     priority: 80,
+    measurement: 'proxy',
   },
   {
     id: 1037,
@@ -368,6 +392,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://mapatrafico.transportes.gob.es/',
     priority: 80,
+    measurement: 'counted',
   },
   {
     id: 1039,
@@ -378,6 +403,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://avoindata.suomi.fi/data/fi/dataset/liikennemaarat',
     priority: 80,
+    measurement: 'counted',
     roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
@@ -389,6 +415,7 @@ export const DATASETS: Dataset[] = [
     license: 'Open Government Licence v3.0',
     url: 'https://roadtraffic.dft.gov.uk/',
     priority: 80,
+    measurement: 'counted',
   },
   {
     id: 1048,
@@ -399,6 +426,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://gisportal.binamarga.pu.go.id/',
     priority: 80,
+    measurement: 'derived',
     highMoto: true,
   },
   {
@@ -410,6 +438,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://data.tii.ie/',
     priority: 80,
+    measurement: 'counted',
   },
   {
     id: 1050,
@@ -420,6 +449,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://livingatlas.esri.in/',
     priority: 80,
+    measurement: 'proxy',
   },
   {
     id: 1054,
@@ -430,6 +460,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://www.stradeanas.it/',
     priority: 80,
+    measurement: 'counted',
   },
   {
     id: 1088,
@@ -440,6 +471,7 @@ export const DATASETS: Dataset[] = [
     license: 'NLOD 2.0',
     url: 'https://nvdbapiles.atlas.vegvesen.no/',
     priority: 80,
+    measurement: 'counted',
     roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
@@ -451,6 +483,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://opendata-nzta.opendata.arcgis.com/',
     priority: 80,
+    measurement: 'counted',
     roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
@@ -462,6 +495,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://services6.arcgis.com/G8JFnqCHKQ9vb8YW/',
     priority: 80,
+    measurement: 'derived',
   },
   {
     id: 1095,
@@ -472,6 +506,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://services1.arcgis.com/IwZZTMxZCmAmFYvF/',
     priority: 80,
+    measurement: 'proxy',
     highMoto: true,
   },
   {
@@ -483,6 +518,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://www.gov.pl/web/gddkia/generalny-pomiar-ruchu-20202021',
     priority: 80,
+    measurement: 'counted',
     roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
@@ -494,6 +530,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://www.mopc.gov.py/red-vial/',
     priority: 80,
+    measurement: 'proxy',
   },
   {
     id: 1102,
@@ -504,6 +541,7 @@ export const DATASETS: Dataset[] = [
     license: 'open-data',
     url: 'https://mot.gov.sa/en/open-data',
     priority: 80,
+    measurement: 'derived',
     roadCoverage: MAJOR_ROAD_COVERAGE,
   },
   {
@@ -515,6 +553,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://datagov.mot.go.th/',
     priority: 80,
+    measurement: 'derived',
   },
   {
     id: 1124,
@@ -525,6 +564,7 @@ export const DATASETS: Dataset[] = [
     license: 'community-mirror',
     url: 'https://services6.arcgis.com/lpJCO3ug8HhNiEOV/',
     priority: 80,
+    measurement: 'proxy',
   },
 
   // ── Railways: national (OSM-only) ──

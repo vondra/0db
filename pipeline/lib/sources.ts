@@ -25,6 +25,9 @@ import { DATASETS, type Dataset } from './enrichment-datasets.js'
 /**
  * How authoritative the data is.
  *
+ * - `city-measured` — per-segment match against a municipal traffic counter
+ *   inside a city polygon; denser/newer than the national census it overrides
+ *   (city-enrichment-plan §2.3).
  *   - `national-measured`     — per-segment spatial or ref match against a
  *                               national authority's published measurement
  *                               (ŘSD, BASt, MITMA, DNIT, FHWA HPMS, DOH, …).
@@ -42,6 +45,7 @@ import { DATASETS, type Dataset } from './enrichment-datasets.js'
  *   - `none`                  — sentinel for unenriched rows (id = 0).
  */
 export type Provenance =
+  | 'city-measured'
   | 'national-measured'
   | 'continental-measured'
   | 'global-measured'
@@ -57,6 +61,10 @@ export type Provenance =
  * heuristic → apply access_factor; none → engine-side default cascade).
  */
 export const PROVENANCE_RANK: Record<Provenance, number> = {
+  // Municipal counters beat national census INSIDE the city polygon: they
+  // cover the same streets plus locals with denser, newer measurements
+  // (city-enrichment-plan §2.3; rank guarded by polygon + coverage gates).
+  'city-measured': 6,
   'national-measured': 5,
   'continental-measured': 4,
   'global-measured': 3,
@@ -85,6 +93,7 @@ export interface Source {
  * couple of per-key manual overrides for ambiguous tier-50 entries.
  *
  * Mapping:
+ *   priority 90 → city-measured (municipal counters; city-enrichment-plan)
  *   priority 80 → national-measured
  *   priority 70 → continental-measured
  *   priority 50 → global-measured, except global-overture / *copernicus*
@@ -97,8 +106,9 @@ export interface Source {
  * script (`scripts/gen-sources-rs.ts`) and by the `shouldOverwrite`
  * tiebreak path.
  */
-function provenanceFromEntry(d: Dataset): Provenance {
+export function provenanceFromEntry(d: Dataset): Provenance {
   if (d.id === 0) return 'none'
+  if (d.priority >= 90) return 'city-measured'
   if (d.priority >= 80) return 'national-measured'
   if (d.priority >= 70) return 'continental-measured'
   if (d.priority >= 50) {

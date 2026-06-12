@@ -13,6 +13,7 @@ import {
   PROVENANCE_RANK,
   shouldOverwrite,
   type Source,
+  provenanceFromEntry,
 } from './sources.js'
 import { DATASETS } from './enrichment-datasets.js'
 
@@ -39,6 +40,13 @@ test('UNSPECIFIED is sentinel (id=0, provenance=none)', () => {
 // Real registry: 0=unspecified(0), 10=eu-city-traffic(70), 11=service-tree(10),
 // 20=cz-rsd(80), 300=global-gppd(50), 9000=industrial-name-heuristic(10),
 // 9001=global-overture(50), 9002=global-copernicus(50)
+
+test('priority 90 → city-measured (synthetic — no registry row yet)', () => {
+  // No city dataset exists at priority>=90 yet; pin the mapping band so the
+  // first real city adapter can't silently land on national-measured.
+  const fake = { ...DATASETS.find((d) => d.id === 20)!, id: 65000, key: 'test-city', priority: 90 }
+  assert.strictEqual(provenanceFromEntry(fake), 'city-measured')
+})
 
 test('priority 80 → national-measured', () => {
   const rsd = SOURCES_BY_KEY.get('cz-rsd-scitani')
@@ -83,6 +91,7 @@ test('priority 10 name-heuristic → heuristic', () => {
 })
 
 test('PROVENANCE_RANK ordering: measured > heuristic > baseline > none', () => {
+  assert.ok(PROVENANCE_RANK['city-measured'] > PROVENANCE_RANK['national-measured'])
   assert.ok(PROVENANCE_RANK['national-measured'] > PROVENANCE_RANK['continental-measured'])
   assert.ok(PROVENANCE_RANK['continental-measured'] > PROVENANCE_RANK['global-measured'])
   assert.ok(PROVENANCE_RANK['global-measured'] > PROVENANCE_RANK['heuristic'])

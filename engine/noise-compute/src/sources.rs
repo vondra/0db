@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 /// `Provenance` union in `pipeline/lib/sources.ts`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Provenance {
+    #[serde(rename = "city-measured")]
+    CityMeasured,
     #[serde(rename = "national-measured")]
     NationalMeasured,
     #[serde(rename = "continental-measured")]
@@ -34,6 +36,7 @@ impl Provenance {
     /// `pipeline/lib/sources.ts::PROVENANCE_RANK`.
     pub fn rank(self) -> u8 {
         match self {
+            Self::CityMeasured => 6,
             Self::NationalMeasured => 5,
             Self::ContinentalMeasured => 4,
             Self::GlobalMeasured => 3,
@@ -46,6 +49,7 @@ impl Provenance {
     /// Stable string form for logging and JSON — matches the TypeScript union.
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::CityMeasured => "city-measured",
             Self::NationalMeasured => "national-measured",
             Self::ContinentalMeasured => "continental-measured",
             Self::GlobalMeasured => "global-measured",
@@ -55,14 +59,18 @@ impl Provenance {
         }
     }
 
-    /// True if this source represents real measured data (national,
-    /// continental or global-scale observational). Used by `access_factor`
+    /// True if this source represents real measured data (any
+    /// measured tier — city, national, continental or global-scale
+    /// observational). Used by `access_factor`
     /// to pass through measured AADT without re-applying access multipliers
     /// (the measurement already reflects the restriction).
     pub fn is_measured(self) -> bool {
         matches!(
             self,
-            Self::NationalMeasured | Self::ContinentalMeasured | Self::GlobalMeasured
+            Self::CityMeasured
+                | Self::NationalMeasured
+                | Self::ContinentalMeasured
+                | Self::GlobalMeasured
         )
     }
 
@@ -80,7 +88,10 @@ impl Provenance {
     /// switch to the full `as_str()` form and this helper goes away.
     pub fn legacy_traffic_source_str(self) -> &'static str {
         match self {
-            Self::NationalMeasured | Self::ContinentalMeasured | Self::GlobalMeasured => {
+            Self::CityMeasured
+            | Self::NationalMeasured
+            | Self::ContinentalMeasured
+            | Self::GlobalMeasured => {
                 "matched_external"
             }
             Self::Heuristic => "estimated_service_tree",
@@ -123,11 +134,7 @@ pub fn get_source(id: u16) -> Option<&'static Source> {
         .map(|idx| &SOURCES[idx])
 }
 
-/// Shorthand for the common "what's the provenance CLASSIFICATION" of this
-/// stamp (NationalMeasured / Heuristic / Baseline / etc.). Different from
-/// `dataset_meta(id)` which returns the wire-shape `DatasetMeta { name,
-/// year, license, url }` used for popup display. Both are derived from
-/// the same `SOURCES` table.
+/// Shorthand for the common "what's the provenance of this stamp" lookup.
 pub fn provenance_of(id: u16) -> Provenance {
     get_source(id).map_or(Provenance::None, |s| s.provenance)
 }
@@ -148,12 +155,12 @@ pub struct DatasetMeta {
     pub url: Option<&'static str>,
 }
 
-/// `None` when `id == 0` ("unspecified") or unknown. Caller may
-/// fall back to the sentinel `Source::UNSPECIFIED` if a non-null
-/// stub is required.
+/// `dataset_meta(id)` returns the wire-shape `DatasetMeta { name,
+/// year, license, url }` used for popup display. `None` for id 0 /
+/// unknown ids — the popup then renders its per-kind fallback line.
 pub fn dataset_meta(id: u16) -> Option<DatasetMeta> {
     if id == 0 {
-        return None;
+        return None; // sentinel row exists in SOURCES but is not a dataset
     }
     get_source(id).map(|s| DatasetMeta {
         name: s.name,
@@ -161,6 +168,75 @@ pub fn dataset_meta(id: u16) -> Option<DatasetMeta> {
         license: s.license,
         url: s.url,
     })
+}
+
+#[cfg(test)]
+mod sources_tests {
+    use crate::sources::{get_source, provenance_of, Provenance, Source, SOURCES};
+
+    #[test]
+    fn unspecified_is_id_zero_sentinel() {
+        let s = &SOURCES[0];
+        assert_eq!(s.id, 0);
+        assert_eq!(s.key, "unspecified");
+        assert_eq!(s.provenance, Provenance::None);
+        assert_eq!(Source::UNSPECIFIED.id, 0);
+    }
+
+    #[test]
+    fn dataset_meta_zero_is_none() {
+        assert!(crate::sources::dataset_meta(0).is_none());
+        assert!(crate::sources::dataset_meta(20).is_some()); // cz-rsd
+    }
+
+    #[test]
+    fn no_duplicate_ids() {
+        let mut seen = std::collections::HashSet::new();
+        for s in SOURCES {
+            assert!(seen.insert(s.id), "duplicate id={} (key={})", s.id, s.key);
+        }
+    }
+
+    #[test]
+    fn no_duplicate_keys() {
+        let mut seen = std::collections::HashSet::new();
+        for s in SOURCES {
+            assert!(seen.insert(s.key), "duplicate key={} (id={})", s.key, s.id);
+        }
+    }
+
+    #[test]
+    fn provenance_rank_monotonic() {
+        assert!(Provenance::CityMeasured.rank() > Provenance::NationalMeasured.rank());
+        assert!(Provenance::NationalMeasured.rank() > Provenance::ContinentalMeasured.rank());
+        assert!(Provenance::ContinentalMeasured.rank() > Provenance::GlobalMeasured.rank());
+        assert!(Provenance::GlobalMeasured.rank() > Provenance::Heuristic.rank());
+        assert!(Provenance::Heuristic.rank() > Provenance::Baseline.rank());
+        assert!(Provenance::Baseline.rank() > Provenance::None.rank());
+    }
+
+    #[test]
+    fn get_source_looks_up_by_id() {
+        let rsd = get_source(20).expect("cz-rsd (id=20) must exist");
+        assert_eq!(rsd.key, "cz-rsd-scitani");
+        assert_eq!(rsd.provenance, Provenance::NationalMeasured);
+    }
+
+    #[test]
+    fn provenance_of_unknown_id_is_none() {
+        assert_eq!(provenance_of(0), Provenance::None);
+        assert_eq!(provenance_of(u16::MAX), Provenance::None);
+    }
+
+    #[test]
+    fn sources_sorted_by_id_for_binary_search() {
+        // get_source uses binary_search_by_key; the generator emits SOURCES
+        // in id-ascending order. Lock the invariant so a hand-edit to
+        // sources.rs (or a reordered DATASETS) can't silently break lookup.
+        for pair in SOURCES.windows(2) {
+            assert!(pair[0].id < pair[1].id, "SOURCES not sorted by id: {} then {}", pair[0].id, pair[1].id);
+        }
+    }
 }
 
 pub const SOURCES: &[Source] = &[
@@ -815,65 +891,3 @@ pub const SOURCES: &[Source] = &[
         year: Some(2021),
     },
 ];
-
-#[cfg(test)]
-mod sources_tests {
-    use crate::sources::{get_source, provenance_of, Provenance, Source, SOURCES};
-
-    #[test]
-    fn unspecified_is_id_zero_sentinel() {
-        let s = &SOURCES[0];
-        assert_eq!(s.id, 0);
-        assert_eq!(s.key, "unspecified");
-        assert_eq!(s.provenance, Provenance::None);
-        assert_eq!(Source::UNSPECIFIED.id, 0);
-    }
-
-    #[test]
-    fn no_duplicate_ids() {
-        let mut seen = std::collections::HashSet::new();
-        for s in SOURCES {
-            assert!(seen.insert(s.id), "duplicate id={} (key={})", s.id, s.key);
-        }
-    }
-
-    #[test]
-    fn no_duplicate_keys() {
-        let mut seen = std::collections::HashSet::new();
-        for s in SOURCES {
-            assert!(seen.insert(s.key), "duplicate key={} (id={})", s.key, s.id);
-        }
-    }
-
-    #[test]
-    fn provenance_rank_monotonic() {
-        assert!(Provenance::NationalMeasured.rank() > Provenance::ContinentalMeasured.rank());
-        assert!(Provenance::ContinentalMeasured.rank() > Provenance::GlobalMeasured.rank());
-        assert!(Provenance::GlobalMeasured.rank() > Provenance::Heuristic.rank());
-        assert!(Provenance::Heuristic.rank() > Provenance::Baseline.rank());
-        assert!(Provenance::Baseline.rank() > Provenance::None.rank());
-    }
-
-    #[test]
-    fn get_source_looks_up_by_id() {
-        let rsd = get_source(20).expect("cz-rsd (id=20) must exist");
-        assert_eq!(rsd.key, "cz-rsd-scitani");
-        assert_eq!(rsd.provenance, Provenance::NationalMeasured);
-    }
-
-    #[test]
-    fn provenance_of_unknown_id_is_none() {
-        assert_eq!(provenance_of(0), Provenance::None);
-        assert_eq!(provenance_of(u16::MAX), Provenance::None);
-    }
-
-    #[test]
-    fn sources_sorted_by_id_for_binary_search() {
-        // get_source uses binary_search_by_key; the generator emits SOURCES
-        // in id-ascending order. Lock the invariant so a hand-edit to
-        // sources.rs (or a reordered DATASETS) can't silently break lookup.
-        for pair in SOURCES.windows(2) {
-            assert!(pair[0].id < pair[1].id, "SOURCES not sorted by id: {} then {}", pair[0].id, pair[1].id);
-        }
-    }
-}
