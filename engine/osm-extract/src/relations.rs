@@ -43,7 +43,11 @@ pub fn scan_relations(pbf_path: &Path) -> Result<RelationManifest> {
                     relations: HashMap::new(),
                 };
                 if let Element::Relation(rel) = element {
-                    if let Some((ftype, tags)) = classify_multipolygon(&rel) {
+                    // QM_OSM_ONLY scope: skip out-of-scope multipolygons here so
+                    // their members never enter the assembly manifest at all.
+                    if let Some((ftype, tags)) =
+                        classify_multipolygon(&rel).filter(|(ft, _)| crate::classify::scope_keeps(ft))
+                    {
                         let mut rel_tags = Tags::new();
                         for (k, v) in &tags {
                             rel_tags.insert(k.clone(), v.clone());
