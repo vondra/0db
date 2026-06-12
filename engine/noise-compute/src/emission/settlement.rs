@@ -6,6 +6,21 @@
 //!
 //! Buildings pre-discretized at import (centroid or facade points).
 //! This module computes emission for a single point source.
+//!
+//! Calibration (settlement v2 phase 1, 2026-06-12): constants are HONEST
+//! radiated dB(A) — `a_weighted_total(building_emission_bands(p, lw)) == lw`.
+//! Values anchored to measured plant/activity literature collected in
+//! `.claude/plans/audit-2026-06/settlement-noise-v2-plan.md` §A/§C (dual
+//! /gg-reviewed; per-class provenance inline below). The pre-v2 constants were
+//! an uncalibrated heuristic kept alive by the C7 net-zero `AW_*` compensation;
+//! that compensation is gone — do NOT reintroduce offsets here, band
+//! normalization happens in `spectrum::normalized_emission_bands`.
+//!
+//! Known phase-1 limits (extract-side, fixed in phase 2 with re-extract):
+//! `building_type` is a coarse u8 — houses and apartment blocks share type 0,
+//! `building=supermarket` falls into the default, sheds/roofs/huts (18 M
+//! objects) wrongly carry the residential profile, and POI nodes inside
+//! `building=yes` footprints are not joined.
 
 use crate::types::NUM_BANDS;
 
@@ -15,132 +30,123 @@ pub struct BuildingProfile {
     pub lw_per_m2: f64,             // distributed (facade breakout, HVAC per area) [dB/m²]
     pub spectrum: [f64; NUM_BANDS], // relative dB per band
     pub evening_offset: f64,        // dB (typically -3 to -10)
-    pub night_offset: f64,          // dB (typically -10 to -25)
+    pub night_offset: f64,          // dB (typically -2 to -25)
 }
-
-// Per-spectrum-shape A-weighted offsets: `a_weighted_total(spectrum)` with the
-// relative spectrum treated as absolute band levels. Full-f64 values printed
-// from the runtime function on the pre-C7 tree (5f1b969f) so the compensation
-// below cancels the normalization bit-exactly.
-const AW_RESIDENTIAL: f64 = 6.413343012075016; // [-2,-1,0,1,1,0,-2,-5] (also hotel, default)
-const AW_COMMERCIAL: f64 = 7.049099243870941; // [-3,-1,0,1,1,1,-1,-3]
-const AW_WAREHOUSE: f64 = 5.599199408851733; // [-4,-2,0,1,0,-1,-3,-6] (also farm)
-const AW_SCHOOL: f64 = 6.604288486468003; // [-2,0,1,2,1,0,-2,-5]
-const AW_HOSPITAL: f64 = 6.475626690346978; // [-3,-1,0,1,1,0,-2,-4] (also public)
-const AW_CHURCH: f64 = 6.413034239102395; // [-3,-1,0,1,1,0,-2,-5]
-const AW_GARAGE: f64 = 5.604290014558924; // [-3,-1,0,1,0,-1,-3,-6]
 
 /// Get emission profile by building type.
 ///
-/// Net-zero compensation (audit 2026-06 B4+B6, /gg verdict W7): every class
-/// carries `base + AW_*` — the same spectrum offset that
-/// `spectrum::normalized_emission_bands` now subtracts. Pre-C7 the bands hid
-/// that surplus, so a building radiated `base + offset` dB(A) while claiming
-/// `base`; post-C7 `lw` is the honest radiated dB(A) and the radiated energy
-/// is unchanged. WHY net-zero instead of a recalibration: the settlement
-/// model is a custom heuristic that was never calibrated against
-/// measurements, so this wave only fixes the units — the real recalibration
-/// (likely several dB down, audit building-report) is backlog C8a.
-///
-/// base lw_fixed/lw_per_m2 → effective (bump): residential 45/15 →
-/// 51.41/21.41 (+6.4133), commercial 55/20 → 62.05/27.05 (+7.0491),
-/// warehouse 40/15 → 45.60/20.60 (+5.5992), school 60/22 → 66.60/28.60
-/// (+6.6043), hospital 50/18 → 56.48/24.48 (+6.4756), church 50/20 →
-/// 56.41/26.41 (+6.4130), hotel 48/16 → 54.41/22.41 (+6.4133), garage 35/12
-/// → 40.60/17.60 (+5.6043), farm 40/14 → 45.60/19.60 (+5.5992), public 52/18
-/// → 58.48/24.48 (+6.4756), default = residential.
+/// Spectra: "LF" plant/HVAC peaks 63–250 Hz (diffracts well → carries far,
+/// plan B10 — real building-services plant is LF-dominant, not the old
+/// 500 Hz–2 kHz voice band); voices peak mid; bells/whistles HF.
 pub fn building_profile(building_type: u8) -> BuildingProfile {
     match building_type {
         0 => BuildingProfile {
-            // residential
-            lw_fixed: 45.0 + AW_RESIDENTIAL,
-            lw_per_m2: 15.0 + AW_RESIDENTIAL,
-            spectrum: [-2.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
+            // residential (houses AND apartment blocks until phase 2 splits them)
+            // Anchor: 1 ASHP outdoor unit Lw 54–62 (Daikin EN14825; EU 813/2013
+            // cap 65) running day+night → whole-house fixed term ≈ 57; night cut
+            // −10 not −15 (heat pumps run hardest on winter nights; plan §A/§C).
+            lw_fixed: 57.0,
+            lw_per_m2: 21.0,
+            spectrum: [-1.0, -1.0, 0.0, 1.0, 1.0, 0.0, -3.0, -6.0],
             evening_offset: -5.0,
-            night_offset: -15.0,
+            night_offset: -10.0,
         },
         1 => BuildingProfile {
-            // commercial
-            lw_fixed: 55.0 + AW_COMMERCIAL,
-            lw_per_m2: 20.0 + AW_COMMERCIAL,
-            spectrum: [-3.0, -1.0, 0.0, 1.0, 1.0, 1.0, -1.0, -3.0],
-            evening_offset: -3.0,
-            night_offset: -20.0,
+            // commercial/retail/office (coarse class — includes food retail
+            // until phase 2). Anchor: AHU Lw 85–90, chillers 89–97 SPL@0.9m
+            // (Guyer) → generic-mix plant ≈ Lw 70 fixed + strong area term.
+            // Night −10 (NOT −20: part of the class is 24/7 refrigeration —
+            // the worst single audit finding, B2; true food-retail −2 lands
+            // with the phase-2 subtype).
+            lw_fixed: 70.0,
+            lw_per_m2: 30.0,
+            spectrum: [-1.0, 1.0, 1.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            evening_offset: -5.0,
+            night_offset: -10.0,
         },
         2 => BuildingProfile {
-            // warehouse/industrial building — HVAC, ventilation, handling
-            // WHY: Was Lw=0 (silent). But warehouses have ventilation, HVAC, loading activity.
-            // Industrial landuse polygon = outdoor activity; building = facade/roof breakout.
-            // Both contribute — NOT double counting (different physical noise sources).
-            lw_fixed: 40.0 + AW_WAREHOUSE,
-            lw_per_m2: 15.0 + AW_WAREHOUSE,
-            spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
-            evening_offset: -5.0,
-            night_offset: -15.0,
+            // warehouse/industrial building — roof/facade breakout only
+            // (outdoor yard activity = industrial layer, no double-count).
+            // Anchor: plan §A Lw ~60 breakout; 24/7 DCs exist → night −8.
+            lw_fixed: 58.0,
+            lw_per_m2: 21.0,
+            spectrum: [0.0, 1.0, 1.0, 0.0, -1.0, -2.0, -4.0, -7.0],
+            evening_offset: -3.0,
+            night_offset: -8.0,
         },
         3 => BuildingProfile {
-            // school
-            lw_fixed: 60.0 + AW_SCHOOL,
-            lw_per_m2: 22.0 + AW_SCHOOL,
+            // school — yard shouting dominates (just-outside-yard 71.7 dB
+            // during breaks, ~190 d/yr → 57 Leq annual at the fence, plan §A).
+            // Term-time day-weekday source; deep evening/night cuts stay.
+            lw_fixed: 66.0,
+            lw_per_m2: 28.0,
             spectrum: [-2.0, 0.0, 1.0, 2.0, 1.0, 0.0, -2.0, -5.0],
             evening_offset: -10.0,
             night_offset: -25.0,
         },
         4 => BuildingProfile {
-            // hospital
-            lw_fixed: 50.0 + AW_HOSPITAL,
-            lw_per_m2: 18.0 + AW_HOSPITAL,
-            spectrum: [-3.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -4.0],
+            // hospital — 24/7 chillers/cooling towers (Lw to 103 for big
+            // plants), gensets, A&E. Plan §A: campus plant ≈ Lw 72–80.
+            lw_fixed: 72.0,
+            lw_per_m2: 26.0,
+            spectrum: [-1.0, 0.0, 1.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -3.0,
             night_offset: -5.0, // 24/7 operation
         },
         5 => BuildingProfile {
-            // church/worship — bells, organ, gatherings
-            lw_fixed: 50.0 + AW_CHURCH,
-            lw_per_m2: 20.0 + AW_CHURCH,
-            spectrum: [-3.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
+            // church/worship — bells: ~110–125 dB at tower, annualized −20.8
+            // (12 min/day) → ≈ Lw 89 IF the tower rings; many OSM churches
+            // don't → fleet-average 72 fixed, PROP-MEAS (plan §A corrected
+            // derivation; confirm bell share + Lw by measurement).
+            lw_fixed: 72.0,
+            lw_per_m2: 26.0,
+            spectrum: [-3.0, -2.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0],
             evening_offset: -5.0,
             night_offset: -20.0,
         },
         6 => BuildingProfile {
-            // hotel
-            lw_fixed: 48.0 + AW_RESIDENTIAL,
-            lw_per_m2: 16.0 + AW_RESIDENTIAL,
-            spectrum: [-2.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
+            // hotel — HVAC + kitchen extract (Lw 75–85 per unit, modest
+            // whole-building mix → 58), 24/7 but quieter night.
+            lw_fixed: 58.0,
+            lw_per_m2: 22.0,
+            spectrum: [-1.0, 0.0, 0.0, 1.0, 1.0, -1.0, -3.0, -6.0],
             evening_offset: -2.0,
             night_offset: -10.0,
         },
         7 => BuildingProfile {
-            // garage/parking — ventilation fans, engine starts
-            lw_fixed: 35.0 + AW_GARAGE,
-            lw_per_m2: 12.0 + AW_GARAGE,
+            // garage/parking structure — vent fans; keep quiet (per-movement
+            // parking noise belongs to the Parkplatzlärm lane, not here).
+            lw_fixed: 41.0,
+            lw_per_m2: 18.0,
             spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -5.0,
             night_offset: -15.0,
         },
         8 => BuildingProfile {
-            // farm building — animals, machinery, seasonal
-            lw_fixed: 40.0 + AW_WAREHOUSE,
-            lw_per_m2: 14.0 + AW_WAREHOUSE,
-            spectrum: [-4.0, -2.0, 0.0, 1.0, 0.0, -1.0, -3.0, -6.0],
+            // farm building — livestock vent fans 30–80 dB(A) source,
+            // summer-heavy (annualized into the constant), machinery.
+            lw_fixed: 56.0,
+            lw_per_m2: 20.0,
+            spectrum: [-1.0, 0.0, 1.0, 0.0, -1.0, -2.0, -4.0, -7.0],
             evening_offset: -5.0,
-            night_offset: -20.0,
+            night_offset: -15.0,
         },
         9 => BuildingProfile {
-            // public/civic/government — office HVAC, visitor traffic
-            lw_fixed: 52.0 + AW_HOSPITAL,
-            lw_per_m2: 18.0 + AW_HOSPITAL,
-            spectrum: [-3.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -4.0],
+            // public/civic — office-grade HVAC, day-centric.
+            lw_fixed: 62.0,
+            lw_per_m2: 25.0,
+            spectrum: [-1.0, 0.0, 1.0, 1.0, 0.0, -1.0, -3.0, -6.0],
             evening_offset: -8.0,
             night_offset: -20.0,
         },
         _ => BuildingProfile {
-            // default (residential)
-            lw_fixed: 45.0 + AW_RESIDENTIAL,
-            lw_per_m2: 15.0 + AW_RESIDENTIAL,
-            spectrum: [-2.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
+            // default (residential) — also the `building=yes` 79 % + the
+            // silent tail (sheds/roofs/huts) until the phase-2 re-extract.
+            lw_fixed: 57.0,
+            lw_per_m2: 21.0,
+            spectrum: [-1.0, -1.0, 0.0, 1.0, 1.0, 0.0, -3.0, -6.0],
             evening_offset: -5.0,
-            night_offset: -15.0,
+            night_offset: -10.0,
         },
     }
 }
@@ -168,33 +174,31 @@ pub fn building_max_dist(lw: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::propagation::iso9613::a_weighted_total;
 
     #[test]
     fn test_residential_lw() {
         let p = building_profile(0);
         let lw = building_lw(&p, 200.0, 3);
-        // GFA = 600 m², effective Lw_fixed=51.41, Lw_per_m2=21.41
-        // → Lw = 10·log₁₀(10^5.141 + 600×10^2.141) ≈ 53.5 (honest dB(A) total)
-        assert!(lw > 45.0 && lw < 60.0, "residential: {:.1}", lw);
+        // GFA = 600 m²: 10·log₁₀(10^5.7 + 600×10^2.1) ≈ 57.6 — the v2 phase-1
+        // calibration (heat-pump-era fixed term 57 dominates a small house).
+        assert!((lw - 57.61).abs() < 0.1, "residential: {:.2}", lw);
     }
 
-    /// W7 net-zero pin: the compensated class constants + band normalization
-    /// must radiate exactly what the pre-C7 code radiated. 53.454543656970074
-    /// = `a_weighted_total(building_emission_bands(...))` for residential at
-    /// 200 m² × 3 floors, measured on the pre-C7 tree (5f1b969f: lw_old
-    /// 47.04119982655925 + hidden spectrum surplus 6.413343012075016).
-    /// Tolerance 1e-5 covers the ~1e-6 dB `fast_exp_f64` shift-variance the
-    /// old un-normalized path carried (the new path corrects it away).
+    /// v2 phase-1 invariant: constants are honest radiated dB(A) — for EVERY
+    /// class the normalized bands must A-sum back to the input lw exactly
+    /// (the C7 normalization contract, now without any AW_* compensation).
     #[test]
-    fn building_radiated_dba_unchanged_by_normalization() {
-        let p = building_profile(0);
-        let lw = building_lw(&p, 200.0, 3);
-        let aw = crate::propagation::iso9613::a_weighted_total(&building_emission_bands(&p, lw));
-        assert!(
-            (aw - 53.454543656970074).abs() < 1e-5,
-            "settlement net-zero broken: {:.12}",
-            aw
-        );
+    fn radiated_dba_equals_lw_for_all_classes() {
+        for t in 0..=10u8 {
+            let p = building_profile(t);
+            let lw = building_lw(&p, 500.0, 2);
+            let aw = a_weighted_total(&building_emission_bands(&p, lw));
+            assert!(
+                (aw - lw).abs() < 1e-6,
+                "class {t}: radiated {aw:.6} != lw {lw:.6}"
+            );
+        }
     }
 
     #[test]
@@ -209,6 +213,16 @@ mod tests {
             c_lw,
             r_lw
         );
+    }
+
+    /// Night ordering encodes the v2 calibration's core finding: 24/7 plant
+    /// classes (hospital −5, warehouse −8) cut far less than day-only classes
+    /// (school −25); commercial is no longer "shut at night" (−10, was −20).
+    #[test]
+    fn night_offsets_follow_operating_patterns() {
+        assert!(building_profile(4).night_offset > building_profile(3).night_offset);
+        assert!(building_profile(2).night_offset > building_profile(9).night_offset);
+        assert_eq!(building_profile(1).night_offset, -10.0);
     }
 
     #[test]

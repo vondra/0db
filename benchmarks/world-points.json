@@ -1057,5 +1057,42 @@
     "tolerance_note": "SHM Ln 45-50; C1 plan §4 — clear/retag per live value",
     "caveats": "screened site (buildings, forest); 358 m from track",
     "metric_field": "ln"
+  },
+  {
+    "id": "bldg_chodov_mall_facade",
+    "lat": 50.031,
+    "lng": 14.491,
+    "mode": "source:building",
+    "host": "any",
+    "external": {
+      "value": "plant noise at receptors near large retail typically rated 40-55 dB(A)",
+      "metric": "BS 4142 practice (ANC guide 2020; acoustic-ltd service class)",
+      "year": 2020,
+      "url": "https://www.association-of-noise-consultants.co.uk/wp-content/uploads/2020/05/ANC-BS-4142-Guide-March-2020.pdf"
+    },
+    "expected_model_band": [
+      40.0,
+      55.0
+    ],
+    "tolerance_note": "settlement v2 phase 1 (2026-06-12) landed the building source INSIDE the BS4142 practice band: 45.0 day / 35.0 night (was 40.7 / ~25 with the -20 night cut). Band = the practice range itself, not live+/-2."
+  },
+  {
+    "id": "bldg_old_town_square",
+    "lat": 50.0875,
+    "lng": 14.4213,
+    "mode": "source:building",
+    "host": "any",
+    "known_gap": "building-phase2-classification",
+    "external": {
+      "value": "pedestrian-zone deliveries/HVAC in-scope; LAeq day 63-71 incl. crowds (out of scope)",
+      "metric": "Dalian pedestrian-street study PMC10102546 + audit building-report",
+      "year": 2023,
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10102546/"
+    },
+    "expected_model_band": [
+      38.0,
+      52.0
+    ],
+    "tolerance_note": "phase 1 moved 25.1 -> 31.7 but the square's restaurants/shops are building=yes -> residential profile until the phase-2 POI join; band = post-phase-2 expectation. KNOWN-GAP until then."
   }
 ]
