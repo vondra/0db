@@ -2,6 +2,9 @@
 # Extract noise-relevant features from OSM planet PBF → H3R4 Arrow IPC.
 #
 # Output: data/prepared/{year}/h3r4/{hex}/ with roads.arrow, railways.arrow, buildings.arrow, industrial.arrow
+#
+# Usage: ./scripts/osm-to-h3r4.sh   (all knobs are env vars — see below; PBF_FILE must exist)
+# Called by run-extraction.sh (osm step); also run standalone for an OSM refresh.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

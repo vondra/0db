@@ -10,6 +10,8 @@
 # Usage:
 #   ./scripts/rasters-global.sh           # full pipeline
 #   ./scripts/rasters-global.sh convert   # skip downloads, only convert
+#
+# Called by run-extraction.sh (rasters step, `convert` mode); sub-steps live in scripts/rasters/.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
