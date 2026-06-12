@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "audit:invariants": "tsx audit-enrichment-invariants.ts",
     "gen:sources": "tsx lib/gen-sources-rs.ts",
     "check:sources": "tsx lib/gen-sources-rs.ts && git diff --exit-code --quiet ../engine/noise-compute/src/sources.rs || { echo 'sources.rs is out of date — run npm run gen:sources and commit both files.'; exit 1; }"
   },

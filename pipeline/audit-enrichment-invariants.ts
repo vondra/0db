@@ -1,28 +1,52 @@
 /**
- * READ-ONLY enrichment-invariant scanner (A3/C2 of the 2026-06 audit wave) —
- * the acceptance gate after every reset + re-enrich (see migrations/README.md).
+ * READ-ONLY enrichment-invariant scanner (A3/C2/R5 of the 2026-06 audit wave) —
+ * the acceptance gate after every reset + re-enrich (see migrations/README.md)
+ * and a CI tripwire: exits non-zero when any invariant is violated.
  *
  * Capability-aware per the /gg W5 verdict: instead of hardcoding "class>=5 +
  * national source = violation", each rule reads the source's declared
  * capability (`roadCoverage` / `railFamilies`) from `lib/enrichment-datasets.ts`
  * and skips rows whose source declares none — no guessing about undeclared feeds.
  *
- * Rules:
- *   R1 road-coverage   — row's road_class outside its source's declared roadCoverage
- *   R2 moto-scramble   — aadt_moto > max(500, 0.5*aadt_light): cars landed in the
- *                        moto column (the PL provincial XLS column-shift bug shape)
- *   R3 tram-overcount  — tram/light_rail row with trains_passenger > 400 from a
- *                        source whose railFamilies excludes 'tram' (family defaults
- *                        are <=250, so 400 clears them with margin)
- *   R4 wind-as-thermal — industrial row whose name matches the wind keyword set
- *                        AND nace_4digit in {3500,3511,3512} (wind is source_type=10,
- *                        never a power NACE — the pre-5f1b969f bug shape)
+ * Rules (roads / railways / industrial layers under prepared/{year}/h3r4):
+ *   R0  unknown-source  — source_id stamped on a row but absent from DATASETS
+ *   R1  road-coverage   — row's road_class outside its source's declared roadCoverage
+ *   R2  moto-scramble   — aadt_moto > max(500, 0.5*aadt_light): cars landed in the
+ *                         moto column (the PL provincial XLS column-shift bug shape)
+ *   R3  tram-overcount  — tram/light_rail row with trains_passenger > 400 from a
+ *                         source whose railFamilies excludes 'tram' (family defaults
+ *                         are <=250, so 400 clears them with margin)
+ *   R4  wind-as-thermal — industrial row whose name matches the wind keyword set
+ *                         AND nace_4digit in {3500,3511,3512} (wind is source_type=10,
+ *                         never a power NACE — the pre-5f1b969f bug shape)
+ *   R5  flow-jump       — same-ref same-source AADT jumps >3x at a shared endpoint
+ *                         with no junction (physically impossible flow change)
+ *   R6  value-range     — negative / non-finite AADT or train counts, or total AADT
+ *                         above the physically-impossible ceiling (500k; the busiest
+ *                         measured road, Toronto Hwy 401, peaks ~420k AADT)
+ *   R7  zero-write      — row stamped by a national/city/continental source
+ *                         (priority >= 70) with ALL AADT columns zero — the IT/SA
+ *                         "wrote zeros" bug shape (writeRoadAadt now throws on it,
+ *                         but pre-fix data can still carry it)
+ *   R8  class-range     — road_class outside engine inputs.rs codes 0..12
+ *   R9  country-bleed   — row stamped by a country-bound source but the WHOLE
+ *                         segment lies outside that country (CGAZ polygon test;
+ *                         midpoint pre-check, both endpoints confirm — a segment
+ *                         genuinely straddling the border is NOT flagged).
+ *                         The PL GPR → CZ bleed shape (see lib/country-polygon.ts).
+ *   R10 layer-mismatch  — source's declared `layer` is neither the scanned layer
+ *                         nor 'any' (wrong dataset-id constant in an enricher)
+ *   R11 unknown-country — registry-level: a dataset key carries a country prefix
+ *                         that CGAZ/ISO-3166 cannot resolve (checked once at start)
  *
  * Usage:
- *   DATA_YEAR=2026 npx tsx pipeline/audit-enrichment-invariants.ts --bbox S,W,N,E [--sample N]
+ *   DATA_YEAR=2025 npx tsx pipeline/audit-enrichment-invariants.ts \
+ *     --bbox S,W,N,E [--sample N] [--fix-hint]
  *
- * `--sample N` checks at most ~N evenly-strided rows per hex per layer.
- * Exits non-zero when violations are found (prints a table, first 50 rows).
+ * `--sample N` checks at most ~N evenly-strided rows per hex per layer
+ * (R5 always scans full hexes — adjacency needs every segment).
+ * `--fix-hint` appends a per-rule remediation hint for every rule that fired.
+ * Exits 0 clean, 1 on violations (prints a table, first 50 rows), 2 on usage.
  */
 
 import { readFileSync } from 'node:fs'
@@ -31,6 +55,7 @@ import { fileURLToPath } from 'node:url'
 import { tableFromIPC, type Table, type Vector } from 'apache-arrow'
 import { DATASETS } from './lib/enrichment-datasets.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const YEAR = process.env.DATA_YEAR || readFileSync(resolve(__dirname, '..', 'DATA_YEAR'), 'utf8').trim()
@@ -45,6 +70,10 @@ const WIND_NAME_KEYWORDS = [
 ]
 const POWER_NACE = new Set([3500, 3511, 3512])
 
+// R6 ceiling: the busiest measured road on Earth (Toronto Hwy 401) peaks ~420k
+// AADT — anything above 500k is a loader unit/parse error, not traffic.
+const AADT_IMPOSSIBLE = 500_000
+
 // ── args ─────────────────────────────────────────────────────────────────────
 
 function arg(name: string): string | null {
@@ -54,7 +83,7 @@ function arg(name: string): string | null {
 
 const bboxArg = arg('--bbox')
 if (!bboxArg) {
-  console.error('Usage: npx tsx pipeline/audit-enrichment-invariants.ts --bbox S,W,N,E [--sample N]')
+  console.error('Usage: npx tsx pipeline/audit-enrichment-invariants.ts --bbox S,W,N,E [--sample N] [--fix-hint]')
   process.exit(2)
 }
 const [s, w, n, e] = bboxArg.split(',').map(Number)
@@ -64,18 +93,49 @@ if (![s, w, n, e].every(Number.isFinite) || s >= n || w >= e) {
 }
 const BBOX: [number, number, number, number] = [s, w, n, e] // [minLat, minLon, maxLat, maxLon]
 const SAMPLE = arg('--sample') ? Math.max(1, parseInt(arg('--sample')!, 10)) : Infinity
+const FIX_HINT = process.argv.includes('--fix-hint')
 
 // ── capability registry ──────────────────────────────────────────────────────
 
 const ROAD_COVERAGE = new Map<number, ReadonlySet<number>>()
 const RAIL_FAMILIES = new Map<number, ReadonlySet<string>>()
 const KEY_BY_ID = new Map<number, string>()
+const LAYER_BY_ID = new Map<number, string>()
+const PRIORITY_BY_ID = new Map<number, number>()
 const HIGH_MOTO = new Set<number>()
 for (const d of DATASETS) {
   KEY_BY_ID.set(d.id, d.key)
+  LAYER_BY_ID.set(d.id, d.layer)
+  PRIORITY_BY_ID.set(d.id, d.priority)
   if (d.roadCoverage) ROAD_COVERAGE.set(d.id, new Set(d.roadCoverage))
   if (d.railFamilies) RAIL_FAMILIES.set(d.id, new Set(d.railFamilies))
   if (d.highMoto) HIGH_MOTO.add(d.id)
+}
+
+// ── source → country (for R9/R11) ────────────────────────────────────────────
+
+// City sources don't carry an ISO prefix in the key; map them explicitly.
+const CITY_COUNTRY: Record<string, string> = {
+  'city-praha-tsk': 'CZ',
+  'city-brno-detectors': 'CZ',
+  'city-wien-dauerzaehlstellen': 'AT',
+}
+// Two-letter key prefixes that are NOT ISO country codes (continental scope).
+const NON_COUNTRY_PREFIXES = new Set(['eu'])
+
+/** ISO alpha-2 of the country a source is bound to, or null for
+ *  global/continental/heuristic sources (which may legitimately stamp anywhere). */
+function countryOfKey(key: string): string | null {
+  if (CITY_COUNTRY[key]) return CITY_COUNTRY[key]
+  const m = /^([a-z]{2})-/.exec(key)
+  if (!m || NON_COUNTRY_PREFIXES.has(m[1])) return null
+  return m[1].toUpperCase()
+}
+
+const COUNTRY_BY_ID = new Map<number, string>()
+for (const d of DATASETS) {
+  const cc = countryOfKey(d.key)
+  if (cc) COUNTRY_BY_ID.set(d.id, cc)
 }
 
 // ── violation collection ─────────────────────────────────────────────────────
@@ -84,6 +144,7 @@ interface Violation {
   rule: string
   hex: string
   row: number
+  osmId: number | null
   source: string
   lat: number
   lon: number
@@ -91,10 +152,50 @@ interface Violation {
 }
 const violations: Violation[] = []
 const byRule = new Map<string, number>()
+const byRuleSource = new Map<string, Map<string, number>>()
 
-function report(rule: string, hex: string, row: number, sourceId: number, lat: number, lon: number, detail: string): void {
+function report(
+  rule: string, hex: string, row: number, osmId: number | null,
+  sourceId: number, lat: number, lon: number, detail: string,
+): void {
   byRule.set(rule, (byRule.get(rule) ?? 0) + 1)
-  violations.push({ rule, hex, row, source: KEY_BY_ID.get(sourceId) ?? `id ${sourceId}`, lat, lon, detail })
+  const source = KEY_BY_ID.get(sourceId) ?? `id ${sourceId}`
+  const perSource = byRuleSource.get(rule) ?? new Map<string, number>()
+  perSource.set(source, (perSource.get(source) ?? 0) + 1)
+  byRuleSource.set(rule, perSource)
+  violations.push({ rule, hex, row, osmId, source, lat, lon, detail })
+}
+
+// ── R11 + country gates (built once; reused per row for R9) ──────────────────
+
+// One CGAZ polygon gate per country that any registered source is bound to.
+// Building all of them up front IS the R11 registry check — an unresolvable
+// country prefix fails here even when no row in the bbox carries that source.
+const GATES = new Map<string, ((lat: number, lon: number) => boolean) | null>()
+for (const cc of new Set(COUNTRY_BY_ID.values())) {
+  try {
+    GATES.set(cc, makeCountryGate(cc))
+  } catch (err) {
+    GATES.set(cc, null)
+    const keys = DATASETS.filter(d => COUNTRY_BY_ID.get(d.id) === cc).map(d => d.key).join(', ')
+    report('R11 unknown-country', '—', -1, null, -1, 0, 0,
+      `country '${cc}' unresolvable (${err instanceof Error ? err.message : err}) — sources: ${keys}`)
+  }
+}
+
+/** R9: whole feature outside the source's country? Midpoint first (cheap
+ *  majority case), both endpoints confirm — border-straddling segments pass. */
+function checkCountryBleed(
+  hex: string, i: number, osmId: number | null, id: number,
+  midLat: number, midLon: number, aLat: number, aLon: number, bLat: number, bLon: number,
+): void {
+  const cc = COUNTRY_BY_ID.get(id)
+  if (!cc) return
+  const gate = GATES.get(cc)
+  if (!gate || gate(midLat, midLon)) return
+  if (gate(aLat, aLon) || gate(bLat, bLon)) return
+  report('R9 country-bleed', hex, i, osmId, id, midLat, midLon,
+    `source is ${cc}-bound but segment lies outside ${cc} (start+mid+end all foreign)`)
 }
 
 // ── scan plumbing ────────────────────────────────────────────────────────────
@@ -130,15 +231,33 @@ function segMid(
   return [(s0 + e0) / 2, (s1 + e1) / 2]
 }
 
-// ── R1 + R2: roads ───────────────────────────────────────────────────────────
+/** Shared per-row registry checks (R0 + R10) for any layer. */
+function checkSourceRegistry(
+  layer: string, hex: string, i: number, osmId: number | null, id: number, lat: number, lon: number,
+): void {
+  if (id === 0) return
+  if (!KEY_BY_ID.has(id)) {
+    report('R0 unknown-source', hex, i, osmId, id, lat, lon, `source_id=${id} not in DATASETS registry`)
+    return
+  }
+  const declared = LAYER_BY_ID.get(id)
+  if (declared !== layer && declared !== 'any') {
+    report('R10 layer-mismatch', hex, i, osmId, id, lat, lon,
+      `source declares layer '${declared}' but stamped a ${layer} row`)
+  }
+}
+
+// ── R0/R1/R2/R5/R6/R7/R8/R9/R10: roads ───────────────────────────────────────
 
 const roads = scanLayer('roads.arrow', (t, hex) => {
   const cls = t.getChild('road_class')
   const light = t.getChild('aadt_light')
   const moto = t.getChild('aadt_moto')
   const src = t.getChild('source_id')
+  const osm = t.getChild('osm_id')
   const sLat = t.getChild('start_lat'), sLon = t.getChild('start_lon')
   const eLat = t.getChild('end_lat'), eLon = t.getChild('end_lon')
+  const med = t.getChild('aadt_medium'), hev = t.getChild('aadt_heavy')
   if (!cls || !light || !moto || !src || !sLat || !sLon) return 0
   let checked = 0
   for (const i of sampleRows(t.numRows)) {
@@ -147,27 +266,117 @@ const roads = scanLayer('roads.arrow', (t, hex) => {
     const c = (cls.get(i) as number) ?? 0
     const li = (light.get(i) as number) ?? 0
     const mo = (moto.get(i) as number) ?? 0
+    const me = (med?.get(i) as number) ?? 0
+    const he = (hev?.get(i) as number) ?? 0
+    const oid = osm ? Number(osm.get(i)) : null
     const [la, lo] = segMid(sLat, sLon, eLat, eLon, i)
-    if (id > 0 && !KEY_BY_ID.has(id)) {
-      report('R0 unknown-source', hex, i, id, la, lo, `source_id=${id} not in DATASETS registry`)
-    }
+    checkSourceRegistry('roads', hex, i, oid, id, la, lo)
     const coverage = ROAD_COVERAGE.get(id)
     if (coverage && !coverage.has(c)) {
-      report('R1 road-coverage', hex, i, id, la, lo, `road_class=${c} outside declared coverage`)
+      report('R1 road-coverage', hex, i, oid, id, la, lo, `road_class=${c} outside declared coverage`)
     }
     if (li > 0 && mo > Math.max(500, 0.5 * li) && !HIGH_MOTO.has(id)) {
-      report('R2 moto-scramble', hex, i, id, la, lo, `aadt_moto=${mo} vs aadt_light=${li}`)
+      report('R2 moto-scramble', hex, i, oid, id, la, lo, `aadt_moto=${mo} vs aadt_light=${li}`)
+    }
+    const badCol =
+      !Number.isFinite(li) || li < 0 ? `aadt_light=${li}` :
+      !Number.isFinite(me) || me < 0 ? `aadt_medium=${me}` :
+      !Number.isFinite(he) || he < 0 ? `aadt_heavy=${he}` :
+      !Number.isFinite(mo) || mo < 0 ? `aadt_moto=${mo}` : null
+    const total = li + me + he + mo
+    if (badCol) {
+      report('R6 value-range', hex, i, oid, id, la, lo, `${badCol} (negative or non-finite)`)
+    } else if (total > AADT_IMPOSSIBLE) {
+      report('R6 value-range', hex, i, oid, id, la, lo, `total AADT ${total} > ${AADT_IMPOSSIBLE} (physically impossible)`)
+    }
+    if (id > 0 && total === 0 && (PRIORITY_BY_ID.get(id) ?? 0) >= 70) {
+      report('R7 zero-write', hex, i, oid, id, la, lo, `stamped by measured source but all AADT columns are 0`)
+    }
+    if (c > 12) {
+      report('R8 class-range', hex, i, oid, id, la, lo, `road_class=${c} outside engine codes 0..12`)
+    }
+    checkCountryBleed(hex, i, oid, id, la, lo,
+      sLat.get(i) as number, sLon.get(i) as number,
+      (eLat?.get(i) as number) ?? (sLat.get(i) as number), (eLon?.get(i) as number) ?? (sLon.get(i) as number))
+  }
+
+  // R5 flow conservation (Ondra 2026-06-12, C3.2 closure): along ONE road
+  // (same ref) stamped by ONE source, AADT must not jump >3x between
+  // segments that share an endpoint UNLESS a same-or-higher-class road also
+  // touches that endpoint (a junction where traffic can really enter/leave).
+  // Catches source data errors (PL provincial accept-anywhere), matching
+  // mistakes and OSM ref typos. Per-hex only (cross-hex adjacency skipped);
+  // full-row pass, not sampled — adjacency needs every segment.
+  {
+    const ref = t.getChild('ref')
+    if (ref && med && hev && eLat && eLon) {
+      const key = (lat: number, lon: number) => `${lat.toFixed(5)},${lon.toFixed(5)}`
+      // endpoint → classes of ALL roads touching it (junction detection)
+      const endpointClasses = new Map<string, number[]>()
+      type Seg = { i: number; id: number; total: number; a: string; b: string; c: number; r: string }
+      const segs: Seg[] = []
+      for (let i = 0; i < t.numRows; i++) {
+        const c = (cls.get(i) as number) ?? 0
+        const a = key(sLat.get(i) as number, sLon.get(i) as number)
+        const b = key((eLat.get(i) as number) ?? (sLat.get(i) as number), (eLon.get(i) as number) ?? (sLon.get(i) as number))
+        for (const k of [a, b]) {
+          const arr = endpointClasses.get(k) ?? []
+          arr.push(c)
+          endpointClasses.set(k, arr)
+        }
+        const id = (src.get(i) as number) ?? 0
+        const r = (ref.get(i) as string | null) ?? ''
+        if (!r || id === 0 || c > 4) continue
+        const total = ((light.get(i) as number) ?? 0) + ((med.get(i) as number) ?? 0) + ((hev.get(i) as number) ?? 0)
+        if (total > 0) segs.push({ i, id, total, a, b, c, r })
+      }
+      const byEndpoint = new Map<string, Seg[]>()
+      for (const sg of segs) {
+        for (const k of [sg.a, sg.b]) {
+          const arr = byEndpoint.get(k) ?? []
+          arr.push(sg)
+          byEndpoint.set(k, arr)
+        }
+      }
+      const flagged = new Set<string>()
+      for (const [k, list] of byEndpoint) {
+        if (list.length < 2) continue
+        for (let x = 0; x < list.length; x++) {
+          for (let y = x + 1; y < list.length; y++) {
+            const A = list[x], B = list[y]
+            if (A.r !== B.r || A.id !== B.id) continue
+            const ratio = Math.max(A.total, B.total) / Math.max(1, Math.min(A.total, B.total))
+            if (ratio <= 3) continue
+            // Junction = ANY other road touches the endpoint (class-blind:
+            // even a collector legitimately adds/removes traffic). The flag
+            // therefore fires only on mid-segment jumps where NOTHING
+            // connects — physically impossible flow changes.
+            const touching = endpointClasses.get(k) ?? []
+            const refSegsHere = list.filter((s2) => s2.r === A.r).length
+            const hasJunction = touching.length > refSegsHere
+            const fkey = `${A.r}:${k}`
+            if (!hasJunction && !flagged.has(fkey)) {
+              flagged.add(fkey)
+              const [la2, lo2] = k.split(',').map(Number)
+              report('R5 flow-jump', hex, A.i, osm ? Number(osm.get(A.i)) : null, A.id, la2, lo2,
+                `ref=${A.r} ${A.total}→${B.total} (${ratio.toFixed(1)}x) at shared endpoint, no junction`)
+            }
+          }
+        }
+      }
     }
   }
   return checked
 })
 
-// ── R3: railways ─────────────────────────────────────────────────────────────
+// ── R0/R3/R6/R9/R10: railways ────────────────────────────────────────────────
 
 const rails = scanLayer('railways.arrow', (t, hex) => {
   const rt = t.getChild('rail_type')
   const pax = t.getChild('trains_passenger')
+  const frt = t.getChild('trains_freight')
   const src = t.getChild('source_id')
+  const osm = t.getChild('osm_id')
   const sLat = t.getChild('start_lat'), sLon = t.getChild('start_lon')
   const eLat = t.getChild('end_lat'), eLon = t.getChild('end_lon')
   if (!rt || !pax || !src || !sLat || !sLon) return 0
@@ -177,42 +386,72 @@ const rails = scanLayer('railways.arrow', (t, hex) => {
     const id = (src.get(i) as number) ?? 0
     const type = (rt.get(i) as number) ?? 0
     const p = (pax.get(i) as number) ?? 0
+    const f = (frt?.get(i) as number) ?? 0
+    const oid = osm ? Number(osm.get(i)) : null
+    const [la, lo] = segMid(sLat, sLon, eLat, eLon, i)
+    checkSourceRegistry('railways', hex, i, oid, id, la, lo)
+    if (!Number.isFinite(p) || p < 0 || !Number.isFinite(f) || f < 0) {
+      report('R6 value-range', hex, i, oid, id, la, lo,
+        `trains_passenger=${p} trains_freight=${f} (negative or non-finite)`)
+    }
+    checkCountryBleed(hex, i, oid, id, la, lo,
+      sLat.get(i) as number, sLon.get(i) as number,
+      (eLat?.get(i) as number) ?? (sLat.get(i) as number), (eLon?.get(i) as number) ?? (sLon.get(i) as number))
     if (type !== 1 && type !== 2) continue
     if (p <= 400) continue
     const families = RAIL_FAMILIES.get(id)
     if (families && !families.has('tram')) {
-      const [la, lo] = segMid(sLat, sLon, eLat, eLon, i)
-      report('R3 tram-overcount', hex, i, id, la, lo, `rail_type=${type} trains_passenger=${p} from non-tram source`)
+      report('R3 tram-overcount', hex, i, oid, id, la, lo, `rail_type=${type} trains_passenger=${p} from non-tram source`)
     }
   }
   return checked
 })
 
-// ── R4: industrial ───────────────────────────────────────────────────────────
+// ── R0/R4/R9/R10: industrial ─────────────────────────────────────────────────
 
 const industrial = scanLayer('industrial.arrow', (t, hex) => {
   const name = t.getChild('name')
   const nace = t.getChild('nace_4digit')
   const src = t.getChild('source_id')
+  const osm = t.getChild('osm_id')
   const lat = t.getChild('centroid_lat'), lon = t.getChild('centroid_lon')
   if (!name || !nace || !src || !lat || !lon) return 0
   let checked = 0
   for (const i of sampleRows(t.numRows)) {
     checked++
+    const id = (src.get(i) as number) ?? 0
+    const la = lat.get(i) as number, lo = lon.get(i) as number
+    const oid = osm ? Number(osm.get(i)) : null
+    checkSourceRegistry('industrial', hex, i, oid, id, la, lo)
+    checkCountryBleed(hex, i, oid, id, la, lo, la, lo, la, lo)
     const nc = (nace.get(i) as number) ?? 0
     if (!POWER_NACE.has(nc)) continue
     const nm = (name.get(i) as string | null) ?? ''
     if (!nm) continue
     const lower = nm.toLowerCase()
     if (WIND_NAME_KEYWORDS.some(kw => lower.includes(kw))) {
-      report('R4 wind-as-thermal', hex, i, (src.get(i) as number) ?? 0,
-        lat.get(i) as number, lon.get(i) as number, `nace=${nc} name="${nm.slice(0, 50)}"`)
+      report('R4 wind-as-thermal', hex, i, oid, id, la, lo, `nace=${nc} name="${nm.slice(0, 50)}"`)
     }
   }
   return checked
 })
 
 // ── summary ──────────────────────────────────────────────────────────────────
+
+const FIX_HINTS: Record<string, string> = {
+  'R0 unknown-source': 'Register the id in lib/enrichment-datasets.ts (allocate-dataset-id.ts) or fix the enricher stamping a raw id, then reset + re-enrich the bbox.',
+  'R1 road-coverage': 'The enricher bypassed its class gate — pass the declared coverage set to writeRoadAadt, then reset + re-enrich the affected hexes.',
+  'R2 moto-scramble': 'Loader column mapping scrambled (cars in the moto column, the PL provincial XLS shape) — fix the source loader, reset + re-enrich. If the country genuinely rides motos, declare highMoto on the dataset.',
+  'R3 tram-overcount': 'Heavy-rail counts landed on tram rows — filter by rail_type in the enricher or declare railFamilies correctly, then re-enrich.',
+  'R4 wind-as-thermal': 'Wind site classified as thermal power — wind is source_type=10, never NACE 35xx; fix the NACE assignment and re-run industrial enrichment.',
+  'R5 flow-jump': 'Check the national census values at the printed endpoint — source data error, wrong section match, or OSM ref typo; fix the match and re-enrich that road.',
+  'R6 value-range': 'Physically impossible value — loader unit/parse error (vehicles/hour? thousands? sentinel -1?); fix the loader, reset + re-enrich.',
+  'R7 zero-write': 'Enricher stamped its id but wrote zeros (the IT/SA bug shape, predates the writeRoadAadt guard) — re-run the enricher on current code.',
+  'R8 class-range': 'road_class outside engine inputs.rs 0..12 — extraction bug; re-extract the hex (osm-to-h3r4.sh).',
+  'R9 country-bleed': 'Cross-border stamp — gate the enricher match by makeCountryGate (lib/country-polygon.ts) and reset + re-enrich BOTH countries. The PL GPR → CZ bleed is the known deferred case (gate fixed in enrich-roads-pl.ts; data awaits re-enrich).',
+  'R10 layer-mismatch': 'Wrong dataset-id constant in the enricher — stamp the id registered for this layer, then reset + re-enrich.',
+  'R11 unknown-country': "Dataset key's country prefix has no CGAZ/ISO-3166 identity — fix the key, or add the prefix to NON_COUNTRY_PREFIXES / CITY_COUNTRY in this scanner.",
+}
 
 console.log(`=== Enrichment invariant scan — bbox ${BBOX.join(',')} (${YEAR}) ===`)
 if (SAMPLE !== Infinity) console.log(`  sampling: ~${SAMPLE} rows per hex per layer`)
@@ -227,11 +466,23 @@ if (violations.length === 0) {
 
 console.log(`\n${violations.length} VIOLATION(S):`)
 for (const [rule, count] of [...byRule].sort((a, b) => b[1] - a[1])) {
-  console.log(`  ${rule}: ${count}`)
+  const perSource = [...(byRuleSource.get(rule) ?? [])].sort((a, b) => b[1] - a[1])
+    .map(([src, c]) => `${src}: ${c}`).join(', ')
+  console.log(`  ${rule}: ${count}  (${perSource})`)
 }
-console.log(`\n  ${'rule'.padEnd(18)} ${'source'.padEnd(22)} ${'hex'.padEnd(16)} ${'row'.padStart(7)}  ${'lat'.padStart(8)} ${'lon'.padStart(9)}  detail`)
+// Rarest rules first — a 40k-row flood from one rule must not push the
+// single R4/R8 finding out of the 50-row window.
+violations.sort((a, b) => (byRule.get(a.rule)! - byRule.get(b.rule)!) || a.rule.localeCompare(b.rule))
+console.log(`\n  ${'rule'.padEnd(18)} ${'source'.padEnd(22)} ${'hex'.padEnd(16)} ${'row'.padStart(7)} ${'osm_id'.padStart(12)}  ${'lat'.padStart(8)} ${'lon'.padStart(9)}  detail`)
 for (const v of violations.slice(0, 50)) {
-  console.log(`  ${v.rule.padEnd(18)} ${v.source.padEnd(22)} ${v.hex.padEnd(16)} ${String(v.row).padStart(7)}  ${v.lat.toFixed(4).padStart(8)} ${v.lon.toFixed(4).padStart(9)}  ${v.detail}`)
+  console.log(`  ${v.rule.padEnd(18)} ${v.source.padEnd(22)} ${v.hex.padEnd(16)} ${String(v.row).padStart(7)} ${String(v.osmId ?? '—').padStart(12)}  ${v.lat.toFixed(4).padStart(8)} ${v.lon.toFixed(4).padStart(9)}  ${v.detail}`)
 }
 if (violations.length > 50) console.log(`  … and ${violations.length - 50} more`)
+
+if (FIX_HINT) {
+  console.log(`\nFIX HINTS:`)
+  for (const [rule] of [...byRule].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${rule}: ${FIX_HINTS[rule] ?? '(no hint registered)'}`)
+  }
+}
 process.exit(1)

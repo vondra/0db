@@ -51,6 +51,10 @@ export interface Dataset {
    *  limited by this. Absent = capability unknown; the scanner skips the
    *  tram-overcount check for this id. */
   railFamilies?: readonly ('rail' | 'tram')[]
+  /** Motorcycle-dominant traffic mix is genuine for this source's country
+   *  (ID, PH, …) — the invariant scanner's moto-scramble rule (R2) would
+   *  otherwise flag every row; it skips ids declaring this. */
+  highMoto?: boolean
 }
 
 /** Classes 0-4 + links — the standard major-road census coverage every
