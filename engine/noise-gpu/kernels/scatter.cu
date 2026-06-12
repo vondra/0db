@@ -25,6 +25,16 @@ __constant__ double LDEN_W[3]     = {12.0, 12.649110640673518, 80.0};  // 4·√
 #define CELL_M (110540.0/3600.0) // raster cell ≈30.7m (1 arc-sec)
 #define NEAR_OFFSET_M 10.0       // near-endpoint probe
 #define MAXT 80                  // per-thread profile capacity (fill_t ≤~58 @10km)
+// SURFACE-HEATMAP coarse-middle cadence — MUST match the CPU defaults in
+// scatter_line.rs (SHADOW_MID_STRIDE / SHADOW_SRC_ZONE_M / SHADOW_RX_ZONE_M) so
+// the GPU line lane stays bit-parity with the CPU scatter. The dense 10/30/60/120
+// m ramp is kept only within the near-end zone; the far field is coarse-stepped.
+// Set stride 1 = exact. NOTE: the GPU has no env knobs — these are the
+// compile-time mirror of the CPU env DEFAULTS. If the CPU knobs are tuned,
+// re-sync here + rebuild the PTX (then re-check CPU≡GPU parity).
+#define SHADOW_MID_STRIDE 3
+#define SHADOW_SRC_ZONE_M 600.0
+#define SHADOW_RX_ZONE_M 600.0
 
 // ---- raster_reader::FusedGrid::lookup_fused_rc (elevation bilinear) ----
 __device__ __forceinline__ double bilinear_elev_d(
@@ -171,34 +181,61 @@ __device__ int fill_t(double dist, double* t) {
         if (near) t[m++] = 1.0 - near_t;
         t[m++] = 1.0;
     } else {
+        // SURFACE coarse-middle (matches CPU fill_t_values_coarse_mid): the dense
+        // 10/30/60/120 m ramp is TRUNCATED at the near-end zone and the far field
+        // is coarse-stepped at mstride×240 m. stride 1 ⇒ ∞ zone = exact cadence.
+        double src_zone_m = 1e30, rx_zone_m = 1e30; int mstride = 1;
+        if (SHADOW_MID_STRIDE > 1) {
+            src_zone_m = SHADOW_SRC_ZONE_M; rx_zone_m = SHADOW_RX_ZONE_M; mstride = SHADOW_MID_STRIDE;
+        }
         t[m++] = 0.0;
         if (near) t[m++] = near_t;
         double levels[4] = {CELL_M, CELL_M * 2.0, CELL_M * 4.0, CELL_M * 8.0};
         double pos = near ? NEAR_OFFSET_M : 0.0;
+        double last_fwd = pos;  // last COMMITTED ramp sample (bridge origin)
         for (int L = 0; L < 4; L++) {
+            int brk = 0;
             for (int r = 0; r < 3; r++) {
                 pos += levels[L];
-                if (pos >= dist * 0.5) break;
-                t[m++] = pos / dist;
+                if (pos >= dist * 0.5 || pos > src_zone_m) { brk = 1; break; }
+                t[m++] = pos / dist; last_fwd = pos;
             }
-            if (pos >= dist * 0.5) break;
+            if (brk) break;
         }
-        double fwd_end = fmin(pos, dist * 0.5) / dist;
-        double coarse = fmin(levels[3], dist * 0.25);
-        double mid = fwd_end, bwd_start = 1.0 - fwd_end;
+        // Exact (mstride==1): clamp to midpoint; coarse: bridge from last pushed
+        // sample (pos over-steps by one increment on the break → a >coarse hole).
+        double fwd_end = (mstride > 1) ? (last_fwd / dist) : (fmin(pos, dist * 0.5) / dist);
+        double coarse = fmin(levels[3] * (double)mstride, dist * 0.25);
+        // Backward ramp start (where the far-field fill stops): mirror of forward.
+        double bpos = near ? NEAR_OFFSET_M : 0.0;
+        for (int L = 0; L < 4; L++) {
+            int brk = 0;
+            for (int r = 0; r < 3; r++) {
+                double next = bpos + levels[L];
+                if (next >= dist * 0.5 || next > rx_zone_m) { brk = 1; break; }
+                bpos = next;
+            }
+            if (brk) break;
+        }
+        double bwd_start = fmax(1.0 - bpos / dist, 0.5);
         // The only dist-unbounded loop: reserve room for the ≤14 remaining
         // backward-ramp + endpoint pushes so a pathological dist can't overflow
-        // t[MAXT]. Never triggers for the ≤10 km reach the cadence sees (≤57).
-        while (mid < bwd_start - 0.0001 && m < MAXT - 16) { mid += coarse / dist; if (mid < bwd_start) t[m++] = mid; }
+        // t[MAXT]. Never triggers for the ≤10 km reach the cadence sees.
+        double mid = fwd_end;
+        while (mid < bwd_start - 0.0001 && m < MAXT - 16) {
+            mid += coarse / dist;
+            if (mid < bwd_start - 1e-9) t[m++] = mid;
+        }
         int bstart = m, bcount = 0;
         pos = near ? NEAR_OFFSET_M : 0.0;
         for (int L = 0; L < 4; L++) {
+            int brk = 0;
             for (int r = 0; r < 3; r++) {
                 pos += levels[L];
-                if (pos >= dist * 0.5) break;
+                if (pos >= dist * 0.5 || pos > rx_zone_m) { brk = 1; break; }
                 t[m++] = 1.0 - pos / dist; bcount++;
             }
-            if (pos >= dist * 0.5) break;
+            if (brk) break;
         }
         for (int i = 0; i < bcount / 2; i++) {
             double tmp = t[bstart + i];

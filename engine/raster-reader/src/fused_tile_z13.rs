@@ -292,6 +292,26 @@ impl RasterSampler for FusedTileZ13 {
     }
 }
 
+impl FusedTileZ13 {
+    /// [`RasterSampler::build_path_profile`] with the SURFACE-HEATMAP
+    /// coarse-middle cadence — full-res near both ends, the smooth long-ray
+    /// middle subsampled (see [`FusedGrid::build_path_profile_coarse_mid`]).
+    /// Heatmap line/point/ground-ops scatter only; the popup is untouched.
+    pub fn build_path_profile_coarse_mid(
+        &self,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        dist_m: f64,
+        cfg: noise_compute::propagation::path_profile::CoarseMid,
+        out: &mut noise_compute::propagation::PathProfile,
+    ) {
+        self.halo
+            .build_path_profile_coarse_mid(src_lat, src_lon, rcv_lat, rcv_lon, dist_m, cfg, out);
+    }
+}
+
 /// Compute the halo bbox covering `inner_bbox` extended by `halo_m` on
 /// each side. [`HALO_M`] is the aircraft default; surface layers pass
 /// their (smaller) per-layer reach so the halo — and thus the L3 working
