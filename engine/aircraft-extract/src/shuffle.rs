@@ -70,11 +70,16 @@ fn phase_name(phase: Phase) -> Option<&'static str> {
     }
 }
 
-fn pass_a_path(temp_dir: &Path, phase: &str, hash: u64, day_stem: &str) -> PathBuf {
+/// Pass-A temp shard key carries a pass discriminator (`air_` / `ga_`)
+/// because the airline and GA hybrid passes share first-of-month day
+/// stems (`2025-07-01` …) — an undiscriminated `day_<stem>.arrow` path
+/// would race and silently overwrite one pass's segments
+/// (`ga-365d-hybrid-plan.md`, binding delta 1).
+fn pass_a_path(temp_dir: &Path, phase: &str, hash: u64, pass: &str, day_stem: &str) -> PathBuf {
     temp_dir
         .join(phase)
         .join(format!("hash_{hash:03x}"))
-        .join(format!("day_{day_stem}.arrow"))
+        .join(format!("day_{pass}_{day_stem}.arrow"))
 }
 
 fn pass_a_bucket_dir(temp_dir: &Path, phase: &str, hash: u64) -> PathBuf {
@@ -89,14 +94,24 @@ fn pass_a_bucket_dir(temp_dir: &Path, phase: &str, hash: u64) -> PathBuf {
 /// <out_dir>/<R4>/ground.arrow
 /// ```
 ///
+/// `day_paths` is the primary (airline) window; `ga_day_paths` is the
+/// hybrid GA window's per-day shards (empty for plain single-window
+/// extracts — output is then byte-identical to the pre-hybrid shuffle).
+/// The two windows merge here because this is the last per-day stage;
+/// Stage 2 consumers read one per-R4 pool and weight rows per class
+/// (`ga-365d-hybrid-plan.md` §4.2).
+///
 /// `scope`, when set, drops out-of-scope R4s during Pass A so they
 /// never hit disk. Cleanup of the temp scratch dir is best-effort —
 /// the next run's `if exists` wipe at start handles a crash mid-merge.
 pub fn shuffle_per_r4(
     day_paths: &[PathBuf],
+    ga_day_paths: &[PathBuf],
     out_dir: &Path,
     scope: Option<&ScopeBbox>,
 ) -> Result<()> {
+    require_unique_day_stems("airline", day_paths)?;
+    require_unique_day_stems("GA", ga_day_paths)?;
     let temp_dir = out_dir
         .parent()
         .ok_or_else(|| anyhow::anyhow!("out_dir has no parent for temp_shuffle sibling"))?
@@ -118,9 +133,19 @@ pub fn shuffle_per_r4(
     }
     std::fs::create_dir_all(out_dir)?;
 
-    started("shuffle/passA", &format!("{} day shards", day_paths.len()));
+    started(
+        "shuffle/passA",
+        &format!(
+            "{} airline + {} GA day shards",
+            day_paths.len(),
+            ga_day_paths.len()
+        ),
+    );
     let pass_a_start = std::time::Instant::now();
-    let pass_a_total = pass_a(day_paths, &temp_dir, scope)?;
+    let counter = Milestone::new("shuffle/passA", "segments", 1_000_000);
+    pass_a(day_paths, "air", PASS_A_PEAK_PER_DAY_GB, &temp_dir, scope, &counter)?;
+    pass_a(ga_day_paths, "ga", PASS_A_GA_PEAK_PER_DAY_GB, &temp_dir, scope, &counter)?;
+    let pass_a_total = counter.total();
     finished(
         "shuffle/passA",
         &format!(
@@ -144,26 +169,73 @@ pub fn shuffle_per_r4(
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 
-    // Day-count manifest: distinct extracted days shuffled into `out_dir` =
-    // the true Lden normalization window. Written here (every recreation of
-    // `out_dir` carries it, including the standalone `shuffle` subcommand)
-    // rather than derived downstream from `--days`, which a `--from-stage`
-    // re-run takes from a possibly-stale ADS-B cache (the 2026-05-24
-    // n_days=7-on-full-year mislabel). `list_r4_shards` skips it (not a
-    // directory). `day_paths` is deduped per day by the caller.
+    // Day-count manifests: distinct extracted days shuffled into `out_dir`
+    // per window = the true Lden normalization denominators. Written here
+    // (every recreation of `out_dir` carries them, including the standalone
+    // `shuffle` subcommand) rather than derived downstream from `--days`,
+    // which a `--from-stage` re-run takes from a possibly-stale ADS-B cache
+    // (the 2026-05-24 n_days=7-on-full-year mislabel). `list_r4_shards`
+    // skips them (not directories). Both lists are deduped per day by the
+    // caller + the stem-uniqueness check above. `n_days` keeps its airline
+    // (primary-window) semantics for every existing reader; `ga_n_days` is
+    // written only for hybrid extracts so a plain extract's output tree
+    // stays byte-identical and `read_ga_n_days` falls back to 0.
     std::fs::write(out_dir.join("n_days"), day_paths.len().to_string())
         .with_context(|| format!("write n_days manifest in {}", out_dir.display()))?;
+    if !ga_day_paths.is_empty() {
+        std::fs::write(out_dir.join("ga_n_days"), ga_day_paths.len().to_string())
+            .with_context(|| format!("write ga_n_days manifest in {}", out_dir.display()))?;
+    }
     Ok(())
 }
 
-fn pass_a(day_paths: &[PathBuf], temp_dir: &Path, scope: Option<&ScopeBbox>) -> Result<u64> {
-    let counter = Milestone::new("shuffle/passA", "segments", 1_000_000);
+/// Pass A per-day decode RAM estimate for full (airline-window) day
+/// shards — same 28 GB/day calibration as the Stage 0/1 day cap.
+const PASS_A_PEAK_PER_DAY_GB: f64 = 28.0;
+
+/// GA-filtered day shards decode to a small fraction of a full day
+/// (only PROP_C172 + HELICOPTER classes survive Stage 0); the full-day
+/// estimate would throttle the 365-shard GA pass to 2-3 concurrent
+/// days for no RAM benefit (`ga-365d-hybrid-plan.md` §4.2.7).
+const PASS_A_GA_PEAK_PER_DAY_GB: f64 = 6.0;
+
+/// Bail on duplicate day stems within one pass list: Pass A keys temp
+/// shards by `(pass, day_stem)`, so two same-stem inputs in one list
+/// would race on one temp path and silently drop segments — the
+/// within-pass analog of binding delta 1's cross-pass collision.
+fn require_unique_day_stems(pass: &str, day_paths: &[PathBuf]) -> Result<()> {
+    let mut seen = std::collections::HashSet::with_capacity(day_paths.len());
+    for path in day_paths {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| anyhow::anyhow!("missing file stem: {}", path.display()))?;
+        if !seen.insert(stem.to_string()) {
+            anyhow::bail!(
+                "duplicate day stem '{stem}' in the {pass} shuffle input ({}) — two \
+                 shards would collide on one Pass-A temp path and silently drop \
+                 segments; dedupe the input day lists",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn pass_a(
+    day_paths: &[PathBuf],
+    pass: &'static str,
+    peak_per_day_gb: f64,
+    temp_dir: &Path,
+    scope: Option<&ScopeBbox>,
+    counter: &Milestone,
+) -> Result<()> {
     // Bound how many days are decoded into RAM at once. Each worker holds a
     // full day's segments + per-bucket HashMaps (~16 GB); a naive par_iter over
     // all 7 global days hit ~114 GB anon and was cgroup-OOM-killed. Chunk by the
     // same ~28 GB/day budget as Stage 0/1 (sized to host RAM or the cgroup
     // limit, whichever is smaller). Within a chunk par_iter still fills cores.
-    for chunk in day_paths.chunks(pass_a_max_concurrent_days(day_paths.len())) {
+    for chunk in day_paths.chunks(pass_a_max_concurrent_days(day_paths.len(), peak_per_day_gb)) {
         chunk.par_iter().try_for_each(|day_path| -> Result<()> {
         let segments = read_segments(day_path)
             .with_context(|| format!("read {}", day_path.display()))?;
@@ -194,24 +266,23 @@ fn pass_a(day_paths: &[PathBuf], temp_dir: &Path, scope: Option<&ScopeBbox>) -> 
         }
 
         // Sequential per-bucket write — paths are unique per
-        // (phase, hash, day) so no worker writes the same file.
+        // (phase, hash, pass, day) so no worker writes the same file.
         for ((phase, hash), segs) in buckets {
-            write_segments(&pass_a_path(temp_dir, phase, hash, day_stem), &segs)?;
+            write_segments(&pass_a_path(temp_dir, phase, hash, pass, day_stem), &segs)?;
         }
         counter.add(kept);
         Ok(())
     })?;
     }
-    Ok(counter.total())
+    Ok(())
 }
 
 /// How many days Pass A decodes into RAM concurrently, sized to the smaller of
-/// host RAM and this process's cgroup memory limit (~28 GB effective per
-/// concurrent day, 60% of budget) — the same policy as the Stage 0/1 day cap
-/// in the orchestrator. Kept local to avoid a bin->lib dependency.
+/// host RAM and this process's cgroup memory limit (`peak_per_day_gb` effective
+/// per concurrent day, 60% of budget) — the same policy as the Stage 0/1 day
+/// cap in the orchestrator. Kept local to avoid a bin->lib dependency.
 /// TODO: hoist this and the bin's copy into one shared crate util.
-fn pass_a_max_concurrent_days(num_days: usize) -> usize {
-    const PEAK_PER_DAY_GB: f64 = 28.0;
+fn pass_a_max_concurrent_days(num_days: usize, peak_per_day_gb: f64) -> usize {
     let host = std::fs::read_to_string("/proc/meminfo")
         .ok()
         .and_then(|s| {
@@ -230,7 +301,7 @@ fn pass_a_max_concurrent_days(num_days: usize) -> usize {
         })
         .and_then(|raw| raw.trim().parse::<u64>().ok());
     let budget_gb = cgroup.map_or(host, |c| host.min(c)) as f64 / 1_000_000_000.0;
-    ((budget_gb * 0.60 / PEAK_PER_DAY_GB).floor() as usize).clamp(1, num_days.max(1))
+    ((budget_gb * 0.60 / peak_per_day_gb).floor() as usize).clamp(1, num_days.max(1))
 }
 
 fn pass_b(temp_dir: &Path, out_dir: &Path) -> Result<u64> {
@@ -381,10 +452,12 @@ mod tests {
         .unwrap();
 
         let out_dir = tmp.path().join("segments_by_r4");
-        shuffle_per_r4(&[day_path], &out_dir, None).unwrap();
+        shuffle_per_r4(&[day_path], &[], &out_dir, None).unwrap();
 
         // temp_shuffle must be cleaned up.
         assert!(!tmp.path().join("temp_shuffle").exists());
+        // Single-window extract: no ga_n_days manifest (read_ga_n_days → 0).
+        assert!(!out_dir.join("ga_n_days").exists());
         // Exactly one R4 directory should contain both shards.
         let r4_dirs: Vec<_> = std::fs::read_dir(&out_dir)
             .unwrap()
@@ -419,7 +492,7 @@ mod tests {
 
         let out_dir = tmp.path().join("segments_by_r4");
         let scope = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
-        shuffle_per_r4(&[day_path], &out_dir, Some(&scope)).unwrap();
+        shuffle_per_r4(&[day_path], &[], &out_dir, Some(&scope)).unwrap();
 
         // Only the CZ R4 must appear.
         let r4_dirs: Vec<_> = std::fs::read_dir(&out_dir)
@@ -438,7 +511,7 @@ mod tests {
     fn empty_input_writes_no_shards() {
         let tmp = tempfile::tempdir().unwrap();
         let out_dir = tmp.path().join("segments_by_r4");
-        shuffle_per_r4(&[], &out_dir, None).unwrap();
+        shuffle_per_r4(&[], &[], &out_dir, None).unwrap();
         assert!(out_dir.exists(), "out_dir must be created");
         // No R4 shard dirs — only the n_days manifest, which records a
         // zero-day window for empty input.
@@ -449,6 +522,63 @@ mod tests {
             .count();
         assert_eq!(subdirs, 0, "no R4 shard dirs for empty input");
         assert_eq!(std::fs::read_to_string(out_dir.join("n_days")).unwrap(), "0");
+        assert!(!out_dir.join("ga_n_days").exists());
         assert!(!tmp.path().join("temp_shuffle").exists());
+    }
+
+    /// Hybrid merge with COLLIDING day stems — `2025-07-01` exists in
+    /// both passes (first-of-month overlap). Both segments must reach
+    /// the R4 shard: before binding delta 1 the undiscriminated Pass-A
+    /// temp path raced between passes and one silently vanished. Day
+    /// counts come from the two input lists, never a combined `len()`.
+    #[test]
+    fn hybrid_colliding_day_stems_merge_and_write_dual_manifests() {
+        let tmp = tempfile::tempdir().unwrap();
+        let air_dir = tmp.path().join("segments");
+        let ga_dir = tmp.path().join("ga_segments");
+        std::fs::create_dir_all(&air_dir).unwrap();
+        std::fs::create_dir_all(&ga_dir).unwrap();
+        let air_day = air_dir.join("2025-07-01.arrow");
+        let ga_day = ga_dir.join("2025-07-01.arrow");
+        // Same location → same (phase, hash, day-stem) Pass-A bucket.
+        write_segments(&air_day, &[seg(1, Phase::Airborne, 50.10, 14.26)]).unwrap();
+        write_segments(&ga_day, &[seg(2, Phase::Airborne, 50.10, 14.26)]).unwrap();
+
+        let out_dir = tmp.path().join("segments_by_r4");
+        shuffle_per_r4(&[air_day], &[ga_day], &out_dir, None).unwrap();
+
+        assert_eq!(std::fs::read_to_string(out_dir.join("n_days")).unwrap(), "1");
+        assert_eq!(std::fs::read_to_string(out_dir.join("ga_n_days")).unwrap(), "1");
+        let r4_dirs: Vec<_> = std::fs::read_dir(&out_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .collect();
+        assert_eq!(r4_dirs.len(), 1);
+        let mut fids: Vec<u64> = read_segments(&r4_dirs[0].path().join("airborne.arrow"))
+            .unwrap()
+            .iter()
+            .map(|s| s.flight_id)
+            .collect();
+        fids.sort_unstable();
+        assert_eq!(fids, [1, 2], "both passes' segments must survive the stem collision");
+    }
+
+    /// Duplicate day stems WITHIN one pass list would collide on one
+    /// Pass-A temp path — refuse loudly instead of dropping segments.
+    #[test]
+    fn duplicate_day_stem_within_one_pass_bails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir_a = tmp.path().join("a");
+        let dir_b = tmp.path().join("b");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_b).unwrap();
+        let day_a = dir_a.join("2025-07-01.arrow");
+        let day_b = dir_b.join("2025-07-01.arrow");
+        write_segments(&day_a, &[seg(1, Phase::Airborne, 50.10, 14.26)]).unwrap();
+        write_segments(&day_b, &[seg(2, Phase::Airborne, 50.10, 14.26)]).unwrap();
+        let out_dir = tmp.path().join("segments_by_r4");
+        let err = shuffle_per_r4(&[day_a, day_b], &[], &out_dir, None).unwrap_err();
+        assert!(err.to_string().contains("duplicate day stem"), "{err}");
     }
 }

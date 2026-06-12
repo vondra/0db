@@ -14,7 +14,7 @@ use aircraft_extract::airport_index::AerodromeIndex;
 use aircraft_extract::airport_io::{read_global_airport_lines, read_global_airports};
 use aircraft_extract::progress::ts;
 use aircraft_extract::source::FlightSource;
-use aircraft_extract::source_adsb_tar::AdsbTarSource;
+use aircraft_extract::source_adsb_tar::{AdsbTarSource, ClassWindowFilter};
 use aircraft_extract::stage_0::run_stage_0;
 use aircraft_extract::stage_1::run_stage_1;
 use aircraft_extract::scope::ScopeBbox;
@@ -97,6 +97,39 @@ impl Feed {
     }
 }
 
+/// CLI surface (`all|ga|non-ga`) for the hybrid Stage-0 class-window
+/// filter (`ga-365d-hybrid-plan.md` §3). `all` keeps every trace —
+/// byte-identical to the pre-hybrid single-window extract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum ClassFilterArg {
+    All,
+    Ga,
+    NonGa,
+}
+
+impl ClassFilterArg {
+    fn window(self) -> ClassWindowFilter {
+        match self {
+            ClassFilterArg::All => ClassWindowFilter::All,
+            ClassFilterArg::Ga => ClassWindowFilter::GaOnly,
+            ClassFilterArg::NonGa => ClassWindowFilter::NonGa,
+        }
+    }
+
+    /// Stage 0/1 per-day RAM estimate (GB) for `max_concurrent_days`.
+    /// GA-filtered days decode to a small fraction of a full day (only
+    /// PROP_C172 + HELICOPTER traces survive the prefix probe), so the
+    /// full-day 28 GB calibration would throttle the 365-day GA pass
+    /// to 2 concurrent days for no RAM benefit
+    /// (`ga-365d-hybrid-plan.md` §4.2.7).
+    fn stage01_peak_per_day_gb(self) -> f64 {
+        match self {
+            ClassFilterArg::Ga => 6.0,
+            ClassFilterArg::All | ClassFilterArg::NonGa => 28.0,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Cmd {
     /// Stage 0: ADS-B TAR → flights/<day>.arrow
@@ -107,6 +140,9 @@ enum Cmd {
         out: PathBuf,
         #[arg(long)]
         day: String,
+        /// Hybrid class-window pass (`ga-365d-hybrid-plan.md` §3).
+        #[arg(long, value_enum, default_value_t = ClassFilterArg::All)]
+        class_filter: ClassFilterArg,
     },
     /// Stage 1: flights → segments/<day>.arrow
     Stage1 {
@@ -121,9 +157,16 @@ enum Cmd {
     },
     /// Shuffle: segments/<day>.arrow → per-R4 airborne/ground shards
     Shuffle {
-        /// Dir containing Stage 1's `segments/<day>.arrow` outputs.
+        /// Dir(s) containing Stage 1's `segments/<day>.arrow` outputs
+        /// (repeatable; the primary/airline window — counted into the
+        /// `n_days` manifest).
+        #[arg(long, required = true)]
+        segments_dir: Vec<PathBuf>,
+        /// GA-pass `segments/<day>.arrow` dir(s) for hybrid extracts —
+        /// shuffled under a distinct pass key and counted into the
+        /// `ga_n_days` manifest (`ga-365d-hybrid-plan.md` §4.2.3).
         #[arg(long)]
-        segments_dir: PathBuf,
+        ga_segments_dir: Vec<PathBuf>,
         /// Output dir for `<R4>/{airborne,ground}.arrow` per-R4 shards.
         #[arg(long)]
         out_dir: PathBuf,
@@ -178,6 +221,10 @@ enum Cmd {
         n_days: u16,
         #[arg(long)]
         scope_bbox: Option<String>,
+        /// Hard-fail when GA-class segments reach cruise (default:
+        /// warn only — `ga-365d-hybrid-plan.md` binding delta 4).
+        #[arg(long, default_value_t = false)]
+        fail_on_ga_cruise: bool,
     },
     /// Stage 2C: per-R4 ground shards → per-R4 airport_traffic.arrow
     Stage2c {
@@ -231,10 +278,32 @@ enum Cmd {
         /// downstream stage without re-running upstream work.
         #[arg(long, value_enum, default_value_t = FromStage::Stage0)]
         from_stage: FromStage,
+        /// Stop after the named stage (inclusive; default `stage2c` =
+        /// run to the end). The hybrid flow's per-pass invocations end
+        /// at `--until-stage stage1`; a later merge invocation resumes
+        /// with `--from-stage shuffle` (`ga-365d-hybrid-plan.md` §4.2).
+        #[arg(long, value_enum, default_value_t = FromStage::Stage2c)]
+        until_stage: FromStage,
         /// Which network `--adsb-cache` holds; stamps the provenance source_id
         /// (identical TAR format either way).
         #[arg(long, value_enum, default_value_t = Feed::Adsblol)]
         feed: Feed,
+        /// Hybrid class-window pass for Stage 0 ingest: `ga` keeps only
+        /// the 365-day-sampled GA/heli classes, `non-ga` the complement
+        /// (incl. GSE). Default `all` = byte-identical single-window
+        /// extract (`ga-365d-hybrid-plan.md` §3).
+        #[arg(long, value_enum, default_value_t = ClassFilterArg::All)]
+        class_filter: ClassFilterArg,
+        /// Hybrid merge: the GA pass's `segments/` dir (per-day Stage 1
+        /// shards). Shuffle unions both windows and writes the
+        /// `ga_n_days` manifest next to `n_days`
+        /// (`ga-365d-hybrid-plan.md` §4.2.3).
+        #[arg(long)]
+        ga_segments_dir: Option<PathBuf>,
+        /// Hard-fail when GA-class segments reach Stage 2B / cruise
+        /// (default: warn only — `ga-365d-hybrid-plan.md` delta 4).
+        #[arg(long, default_value_t = false)]
+        fail_on_ga_cruise: bool,
     },
 }
 
@@ -242,9 +311,11 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     init_rayon_pool(cli.max_threads)?;
     match cli.cmd {
-        Cmd::Stage0 { adsb_cache, out, day } => {
+        Cmd::Stage0 { adsb_cache, out, day, class_filter } => {
             std::fs::create_dir_all(&out)?;
-            let sources: Vec<Box<dyn FlightSource>> = vec![Box::new(AdsbTarSource::new(adsb_cache))];
+            let sources: Vec<Box<dyn FlightSource>> = vec![Box::new(
+                AdsbTarSource::new(adsb_cache).with_class_filter(class_filter.window()),
+            )];
             let n = run_stage_0(&sources, &day, &out)?;
             eprintln!("{} [stage0] {day}: {n} flights", ts());
         }
@@ -254,14 +325,21 @@ fn main() -> Result<()> {
             let n = run_stage_1(&flights_dir, &out, &day, &rasters)?;
             eprintln!("{} [stage1] {day}: {n} segments", ts());
         }
-        Cmd::Shuffle { segments_dir, out_dir, scope_bbox } => {
+        Cmd::Shuffle { segments_dir, ga_segments_dir, out_dir, scope_bbox } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
-            let day_paths = list_segments_day_paths(&segments_dir)?;
-            aircraft_extract::shuffle::shuffle_per_r4(&day_paths, &out_dir, scope.as_ref())?;
+            let day_paths = list_segments_day_paths_multi(&segments_dir)?;
+            let ga_day_paths = list_segments_day_paths_multi(&ga_segments_dir)?;
+            aircraft_extract::shuffle::shuffle_per_r4(
+                &day_paths,
+                &ga_day_paths,
+                &out_dir,
+                scope.as_ref(),
+            )?;
             eprintln!(
-                "{} [shuffle] {} day shards → {}",
+                "{} [shuffle] {} airline + {} GA day shards → {}",
                 ts(),
                 day_paths.len(),
+                ga_day_paths.len(),
                 out_dir.display()
             );
         }
@@ -303,11 +381,11 @@ fn main() -> Result<()> {
             let n = run_stage_2a(&segments_by_r4, &h3r4_dir, n_days, scope.as_ref(), &rasters)?;
             eprintln!("{} [stage2a] {n} R4 hexes written", ts());
         }
-        Cmd::Stage2b { segments_dir, h3r4_dir, n_days, scope_bbox } => {
+        Cmd::Stage2b { segments_dir, h3r4_dir, n_days, scope_bbox, fail_on_ga_cruise } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             require_input_dir_exists("--segments-dir", &segments_dir)?;
             let day_paths = list_segments_day_paths(&segments_dir)?;
-            let n = run_stage_2b(&day_paths, &h3r4_dir, n_days, scope.as_ref())?;
+            let n = run_stage_2b(&day_paths, &h3r4_dir, n_days, scope.as_ref(), fail_on_ga_cruise)?;
             eprintln!("{} [stage2b] {n} R4 hexes written", ts());
         }
         Cmd::Stage2c { segments_by_r4, h3r4_dir, n_days, scope_bbox } => {
@@ -331,10 +409,24 @@ fn main() -> Result<()> {
             days,
             scope_bbox,
             from_stage,
+            until_stage,
             feed,
+            class_filter,
+            ga_segments_dir,
+            fail_on_ga_cruise,
         } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             require_scope_for_subset_cache(&adsb_cache, scope.as_ref())?;
+            if until_stage < from_stage {
+                anyhow::bail!(
+                    "--until-stage {} precedes --from-stage {} — nothing would run",
+                    from_stage_name(until_stage),
+                    from_stage_name(from_stage),
+                );
+            }
+            // Whether a pipeline phase executes this invocation: inside
+            // the [from_stage, until_stage] window (both inclusive).
+            let runs = |stage: FromStage| from_stage <= stage && stage <= until_stage;
             // Without any days, run-all would emit zero ok_paths and
             // proceed to shuffle, which wipes `segments_by_r4/` before
             // writing nothing. Bail loud to catch the typo / forgot-
@@ -371,9 +463,70 @@ fn main() -> Result<()> {
                     ts()
                 );
             }
+            if until_stage != FromStage::Stage2c {
+                let name = from_stage_name(until_stage);
+                eprintln!(
+                    "{} [run-all] --until-stage {name}: stopping after {name}",
+                    ts()
+                );
+            }
+            if class_filter != ClassFilterArg::All {
+                eprintln!(
+                    "{} [run-all] --class-filter {:?}: Stage 0 ingests only that \
+                     hybrid window's classes (ga-365d-hybrid-plan.md §3)",
+                    ts(),
+                    class_filter
+                );
+            }
             let flights_dir = work_dir.join("flights");
             let segments_dir = work_dir.join("segments");
             let by_r4_dir = work_dir.join("segments_by_r4");
+
+            // Hybrid merge input — resolved up front so a wrong path
+            // fails before hours of Stage 0/1, and only when shuffle
+            // actually consumes it.
+            let ga_day_paths: Vec<PathBuf> = match &ga_segments_dir {
+                None => Vec::new(),
+                Some(_) if !runs(FromStage::Shuffle) => {
+                    eprintln!(
+                        "{} [run-all] --ga-segments-dir ignored: shuffle is outside \
+                         the from/until window, segments_by_r4 + its manifests are \
+                         reused as-is",
+                        ts()
+                    );
+                    Vec::new()
+                }
+                Some(dir) => {
+                    require_input_dir_exists("--ga-segments-dir", dir)?;
+                    // Same physical dir as the airline segments would feed
+                    // every airline day into BOTH passes (double energy
+                    // under two pass keys) — refuse.
+                    if dir.canonicalize().ok().is_some_and(|ga| {
+                        segments_dir.canonicalize().ok() == Some(ga)
+                    }) {
+                        anyhow::bail!(
+                            "--ga-segments-dir {} is the airline segments dir itself; \
+                             point it at the GA pass's work dir (e.g. <ga-work>/segments)",
+                            dir.display()
+                        );
+                    }
+                    let paths = list_segments_day_paths(dir)?;
+                    if paths.is_empty() {
+                        anyhow::bail!(
+                            "--ga-segments-dir {} contains no .arrow day shards — did \
+                             the GA pass (--class-filter ga --until-stage stage1) run?",
+                            dir.display()
+                        );
+                    }
+                    eprintln!(
+                        "{} [run-all] hybrid merge: {} GA day shard(s) from {}",
+                        ts(),
+                        paths.len(),
+                        dir.display()
+                    );
+                    paths
+                }
+            };
 
             // Dedup before par_iter — Stage 0/1 write fixed paths
             // (flights/<day>.arrow, segments/<day>.arrow) per day, so
@@ -399,15 +552,17 @@ fn main() -> Result<()> {
             // `shuffle_per_r4` and `run_stage_2b`; either consumer empty
             // means the corresponding output is silently wiped, so we
             // must populate it for every variant that still runs them.
-            // After this block, Stage 2B (which runs for any
-            // `from_stage <= Stage2b`) gets a non-empty list — or we
-            // fail loud before nuking anything.
-            let needs_ok_paths = from_stage <= FromStage::Stage2b;
+            // After this block, Stage 2B (when it runs) gets a non-empty
+            // list — or we fail loud before nuking anything.
+            let needs_ok_paths = runs(FromStage::Shuffle) || runs(FromStage::Stage2b);
             let ok_paths: Vec<PathBuf> = if from_stage <= FromStage::Stage1 {
                 std::fs::create_dir_all(&flights_dir)?;
                 std::fs::create_dir_all(&segments_dir)?;
-                let sources: Vec<Box<dyn FlightSource>> =
-                    vec![Box::new(AdsbTarSource::new(&adsb_cache).with_source_id(feed.source_id()))];
+                let sources: Vec<Box<dyn FlightSource>> = vec![Box::new(
+                    AdsbTarSource::new(&adsb_cache)
+                        .with_source_id(feed.source_id())
+                        .with_class_filter(class_filter.window()),
+                )];
                 // Per-day error tolerance: one corrupted TAR or DEM miss
                 // must not throw away the other days' Stage 0+1 work.
                 // Failed days are listed at the end so the operator can
@@ -418,20 +573,29 @@ fn main() -> Result<()> {
                 // saturates every core. Running ALL days at once only multiplies
                 // RAM with no throughput gain — it OOM-killed the 2026-05 global
                 // TTM extract (7 dense days ≈ 16 GB each > 110 GB cgroup).
-                let max_concurrent = max_concurrent_days(days.len());
+                let max_concurrent =
+                    max_concurrent_days(days.len(), class_filter.stage01_peak_per_day_gb());
                 eprintln!(
                     "{} [run-all] Stage 0/1: {} day(s), <={} concurrent (RAM-bounded; within-day fills every core)",
                     ts(),
                     days.len(),
                     max_concurrent
                 );
+                // A run stopping at Stage 0 produces flights, not
+                // segments — success is judged on the artifact the last
+                // executed stage writes.
+                let done_dir = if until_stage == FromStage::Stage0 {
+                    &flights_dir
+                } else {
+                    &segments_dir
+                };
                 let mut ok_paths: Vec<PathBuf> = Vec::new();
                 let mut failed_days: Vec<String> = Vec::new();
                 for chunk in days.chunks(max_concurrent) {
                     let (mut ok, mut fail): (Vec<PathBuf>, Vec<String>) = chunk
                         .par_iter()
                         .partition_map(|day| {
-                            let segments_path = segments_dir.join(format!("{day}.arrow"));
+                            let done_path = done_dir.join(format!("{day}.arrow"));
                             match run_day(
                                 day,
                                 &sources,
@@ -439,11 +603,12 @@ fn main() -> Result<()> {
                                 &segments_dir,
                                 &rasters,
                                 from_stage,
+                                until_stage,
                             ) {
-                                Ok(()) if segments_path.exists() => Either::Left(segments_path),
+                                Ok(()) if done_path.exists() => Either::Left(done_path),
                                 Ok(()) => {
                                     eprintln!(
-                                        "{} [run-all] {day}: FAILED — no segments file produced",
+                                        "{} [run-all] {day}: FAILED — no output file produced",
                                         ts()
                                     );
                                     Either::Right(day.clone())
@@ -473,12 +638,14 @@ fn main() -> Result<()> {
                 // Every day failed → ok_paths empty → shuffle would
                 // proceed and wipe `segments_by_r4/` before writing
                 // nothing, destroying the cached partition from any
-                // earlier successful run. Bail loud instead.
-                if ok_paths.is_empty() && needs_ok_paths {
+                // earlier successful run. Bail loud instead. Same bail
+                // when this is a per-pass invocation stopping at Stage
+                // 0/1 — an all-failed pass must not look successful.
+                if ok_paths.is_empty() {
                     return Err(anyhow::anyhow!(
-                        "every requested day failed Stage 0/1 — refusing to start \
-                         shuffle (would wipe segments_by_r4/). Check upstream errors \
-                         and rerun with --days <surviving-list>",
+                        "every requested day failed Stage 0/1 — nothing produced under \
+                         {}. Check upstream errors and rerun with --days <surviving-list>",
+                        work_dir.display(),
                     ));
                 }
                 ok_paths
@@ -523,53 +690,90 @@ fn main() -> Result<()> {
                 Vec::new()
             };
 
+            if until_stage <= FromStage::Stage1 {
+                eprintln!(
+                    "{} [run-all] stopped after {} (--until-stage): {} day artifact(s) \
+                     under {}",
+                    ts(),
+                    from_stage_name(until_stage),
+                    ok_paths.len(),
+                    work_dir.display()
+                );
+                return Ok(());
+            }
+
             // Read the global aerodrome set once. Stage 1.5
             // (`run_stage_airport_discover`) uses it for the
             // polygon-radius-aware re-attribution / reject pass on
             // DBSCAN clusters; Stage 2C reuses the same vec for its
             // `nearest_aerodrome_within` resolver. Airport identity
             // must stay global — aerodromes straddle R4 boundaries.
-            let areas = read_global_airports(&h3r4_dir)?;
-            eprintln!(
-                "{} [run-all] global aerodromes: {} polygons",
-                ts(),
-                areas.len()
-            );
-            // 0 global aerodromes ⇒ the OSM airport data isn't in --h3r4-dir (e.g. an
-            // empty staging dir). Both Stage 1.5 gates then no-op → every ground segment
-            // becomes a DBSCAN candidate (hours/R4 + garbage). Fail fast; cost a run once.
-            if areas.is_empty() {
-                anyhow::bail!(
-                    "0 global aerodromes loaded from {} — the OSM airport_areas.arrow data \
-                     is missing there. Stage 1.5 would then treat every ground segment as a \
-                     new-airport candidate (DBSCAN over millions of points → hours per R4 + \
-                     garbage synth airports). Point --h3r4-dir at a prepared h3r4 that HAS \
-                     the OSM airport data, not an empty or staging dir.",
-                    h3r4_dir.display()
+            // Skipped entirely when neither consumer is in the
+            // from/until window.
+            let needs_airports = runs(FromStage::Stage1_5) || runs(FromStage::Stage2c);
+            let (areas, global_lines) = if needs_airports {
+                let areas = read_global_airports(&h3r4_dir)?;
+                eprintln!(
+                    "{} [run-all] global aerodromes: {} polygons",
+                    ts(),
+                    areas.len()
                 );
-            }
-            let global_lines = read_global_airport_lines(&h3r4_dir)?;
-            eprintln!(
-                "{} [run-all] global airport lines: {} microsegments",
-                ts(),
-                global_lines.len()
-            );
+                // 0 global aerodromes ⇒ the OSM airport data isn't in --h3r4-dir (e.g. an
+                // empty staging dir). Both Stage 1.5 gates then no-op → every ground segment
+                // becomes a DBSCAN candidate (hours/R4 + garbage). Fail fast; cost a run once.
+                if areas.is_empty() {
+                    anyhow::bail!(
+                        "0 global aerodromes loaded from {} — the OSM airport_areas.arrow data \
+                         is missing there. Stage 1.5 would then treat every ground segment as a \
+                         new-airport candidate (DBSCAN over millions of points → hours per R4 + \
+                         garbage synth airports). Point --h3r4-dir at a prepared h3r4 that HAS \
+                         the OSM airport data, not an empty or staging dir.",
+                        h3r4_dir.display()
+                    );
+                }
+                let global_lines = read_global_airport_lines(&h3r4_dir)?;
+                eprintln!(
+                    "{} [run-all] global airport lines: {} microsegments",
+                    ts(),
+                    global_lines.len()
+                );
+                (areas, global_lines)
+            } else {
+                (Vec::new(), Vec::new())
+            };
 
             // Shuffle Stage 1 per-day shards into per-R4
             // `segments_by_r4/<R4>/{airborne,ground}.arrow`. Stages 1.5
             // / 2A / 2C all consume these; Stage 2B reads the per-day
-            // shards directly (cruise straddles R4 boundaries).
-            if from_stage <= FromStage::Shuffle {
+            // shards directly (cruise straddles R4 boundaries) plus the
+            // `n_days` manifest written here. The GA-window shards merge
+            // into the same per-R4 pool under a distinct pass key
+            // (ga-365d-hybrid-plan.md §4.2).
+            if runs(FromStage::Shuffle) {
                 let t_shuf = Instant::now();
-                aircraft_extract::shuffle::shuffle_per_r4(&ok_paths, &by_r4_dir, scope.as_ref())?;
+                aircraft_extract::shuffle::shuffle_per_r4(
+                    &ok_paths,
+                    &ga_day_paths,
+                    &by_r4_dir,
+                    scope.as_ref(),
+                )?;
                 eprintln!("{} [run-all] shuffle done ({:?})", ts(), t_shuf.elapsed());
             } else {
-                // Stages 1.5 / 2A / 2C all read `<by_r4_dir>/<R4>/…`;
-                // fail loud before they silently no-op on a missing dir.
+                // Stages 1.5 / 2A / 2C read `<by_r4_dir>/<R4>/…`, Stage 2B
+                // its `n_days` manifest; fail loud before any of them
+                // silently no-ops on a missing dir.
                 require_input_dir_exists(
-                    "--work-dir/segments_by_r4 (required by Stage 1.5 / 2A / 2C)",
+                    "--work-dir/segments_by_r4 (required by Stage 1.5 / 2A / 2B / 2C)",
                     &by_r4_dir,
                 )?;
+            }
+            if until_stage <= FromStage::Shuffle {
+                eprintln!(
+                    "{} [run-all] stopped after shuffle (--until-stage): per-R4 shards in {}",
+                    ts(),
+                    by_r4_dir.display()
+                );
+                return Ok(());
             }
 
             // Stage 1.5 — DBSCAN auto-discovery of OSM-missing
@@ -577,7 +781,7 @@ fn main() -> Result<()> {
             // are visible when Stage 2C loads each R4's airport_lines
             // cache. Writes empty arrows for in-scope R4s with no
             // current clusters so a stale strip cannot leak through.
-            if from_stage <= FromStage::Stage1_5 {
+            if runs(FromStage::Stage1_5) {
                 let t1_5 = Instant::now();
                 // Grid-index the global aerodromes so the per-ground-segment gate is
                 // O(few-nearby), not O(45443) — else a mega-hub R4 is ~30 min/core.
@@ -595,6 +799,10 @@ fn main() -> Result<()> {
                     t1_5.elapsed()
                 );
             }
+            if until_stage <= FromStage::Stage1_5 {
+                eprintln!("{} [run-all] stopped after stage1-5 (--until-stage)", ts());
+                return Ok(());
+            }
 
             // n_days for Lden, from the shuffle's day-count manifest (see
             // `read_window_n_days`). All three Stage-2 outputs stamp this
@@ -603,15 +811,27 @@ fn main() -> Result<()> {
             // layers and can't drift to the 2026-05-24 n_days=7-on-full-year
             // mislabel (~17 dB off).
             let window_n_days = read_window_n_days(&by_r4_dir)?;
+            let ga_n_days = read_ga_n_days(&by_r4_dir)?;
+            if ga_n_days > 0 {
+                eprintln!(
+                    "{} [run-all] hybrid windows: n_days={window_n_days} (airline) + \
+                     ga_n_days={ga_n_days} (GA classes, ga-365d-hybrid-plan.md)",
+                    ts()
+                );
+            }
 
-            if from_stage <= FromStage::Stage2a {
+            if runs(FromStage::Stage2a) {
                 let t2a = Instant::now();
                 let r2a =
                     run_stage_2a(&by_r4_dir, &h3r4_dir, window_n_days, scope.as_ref(), &rasters)?;
                 eprintln!("{} [run-all] stage2a={r2a} ({:?})", ts(), t2a.elapsed());
             }
+            if until_stage <= FromStage::Stage2a {
+                eprintln!("{} [run-all] stopped after stage2a (--until-stage)", ts());
+                return Ok(());
+            }
 
-            if from_stage <= FromStage::Stage2b {
+            if runs(FromStage::Stage2b) {
                 let t2b = Instant::now();
                 // Stage 2B reads per-day cruise shards (`ok_paths`), NOT the
                 // shuffled per-R4 ones — cruise output R4 derives from each
@@ -621,6 +841,12 @@ fn main() -> Result<()> {
                 // would aggregate fewer days than `segments_by_r4` holds and
                 // mis-normalize cruise (while wiping the full-window files).
                 // Refuse it — re-shuffle for the requested days instead.
+                //
+                // Hybrid runs change nothing here: `ok_paths` is the AIRLINE
+                // pass only (GA shards enter solely via --ga-segments-dir →
+                // shuffle), so cruise keeps plain `n_days` semantics and this
+                // guard still compares airline days to the airline manifest
+                // (ga-365d-hybrid-plan.md §4.2.6).
                 if ok_paths.len() as u16 != window_n_days {
                     anyhow::bail!(
                         "Stage 2B input is {} day(s) but the shuffled window is {} \
@@ -630,12 +856,22 @@ fn main() -> Result<()> {
                         window_n_days,
                     );
                 }
-                let r2b = run_stage_2b(&ok_paths, &h3r4_dir, window_n_days, scope.as_ref())?;
+                let r2b = run_stage_2b(
+                    &ok_paths,
+                    &h3r4_dir,
+                    window_n_days,
+                    scope.as_ref(),
+                    fail_on_ga_cruise,
+                )?;
                 eprintln!("{} [run-all] stage2b={r2b} ({:?})", ts(), t2b.elapsed());
             }
+            if until_stage <= FromStage::Stage2b {
+                eprintln!("{} [run-all] stopped after stage2b (--until-stage)", ts());
+                return Ok(());
+            }
 
-            // Stage 2C always runs — it is the last stage; `from_stage`
-            // can equal Stage2c (run just this one) but never exceed it.
+            // Stage 2C is the last stage; reaching here means
+            // `until_stage == Stage2c`, so it always runs.
             let t2c = Instant::now();
             let r2c = run_stage_2c(&by_r4_dir, &areas, &h3r4_dir, window_n_days, scope.as_ref())?;
             eprintln!("{} [run-all] stage2c={r2c} ({:?})", ts(), t2c.elapsed());
@@ -734,6 +970,19 @@ fn list_segments_day_paths(segments_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
+/// Union of [`list_segments_day_paths`] over repeatable `--segments-dir`
+/// flags. Duplicate day stems across dirs are caught downstream by the
+/// shuffle's stem-uniqueness bail (one Pass-A temp path per stem).
+fn list_segments_day_paths_multi(dirs: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    for dir in dirs {
+        require_input_dir_exists("--segments-dir/--ga-segments-dir", dir)?;
+        out.extend(list_segments_day_paths(dir)?);
+    }
+    out.sort();
+    Ok(out)
+}
+
 /// Reads the shuffle day-count manifest (`<by_r4_dir>/n_days`). The shuffle
 /// writes it from the segments it actually shuffled, so it is the true Lden
 /// normalization window — the count of distinct extracted days present in
@@ -757,6 +1006,22 @@ fn read_window_n_days(by_r4_dir: &Path) -> Result<u16> {
         anyhow::bail!("day-count manifest {} is 0 — re-run `--from-stage shuffle`", path.display());
     }
     Ok(n)
+}
+
+/// Sibling of [`read_window_n_days`] for the GA-window manifest
+/// (`<by_r4_dir>/ga_n_days`, written only by hybrid shuffles). A
+/// missing file is 0 = plain single-window extract — all downstream
+/// stamping then degenerates to today's behavior
+/// (`ga-365d-hybrid-plan.md` §4.2.4).
+fn read_ga_n_days(by_r4_dir: &Path) -> Result<u16> {
+    let path = by_r4_dir.join("ga_n_days");
+    let raw = match std::fs::read_to_string(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        other => other.with_context(|| format!("read {}", path.display()))?,
+    };
+    raw.trim()
+        .parse::<u16>()
+        .with_context(|| format!("parse ga_n_days from {}", path.display()))
 }
 
 /// Shared `--scope-bbox` parser, identical surface across Stage2 + RunAll.
@@ -820,6 +1085,8 @@ fn require_scope_for_subset_cache(
 /// a `Result`-returning IIFE. `from_stage` selects whether to execute
 /// Stage 0 — when set to `Stage1`, the caller is reusing a populated
 /// `flights_dir` from a previous run and we go straight to Stage 1.
+/// `until_stage == Stage0` stops before Stage 1 (per-pass hybrid runs
+/// that only need the Stage 0 cache).
 fn run_day(
     day: &str,
     sources: &[Box<dyn FlightSource>],
@@ -827,6 +1094,7 @@ fn run_day(
     segments_dir: &Path,
     rasters: &RealRasters,
     from_stage: FromStage,
+    until_stage: FromStage,
 ) -> Result<()> {
     let t0 = Instant::now();
     let stage0_log = if from_stage <= FromStage::Stage0 {
@@ -837,6 +1105,13 @@ fn run_day(
         // the latter has its own diagnostic (no flights for the day).
         "stage0=skipped".to_string()
     };
+    if until_stage == FromStage::Stage0 {
+        eprintln!(
+            "{} [run-all] {day}: {stage0_log} stage1=skipped (--until-stage stage0)",
+            ts()
+        );
+        return Ok(());
+    }
     let t_stage1 = Instant::now();
     let n1 = run_stage_1(flights_dir, segments_dir, day, rasters)?;
     eprintln!(
@@ -853,21 +1128,23 @@ fn run_day(
 /// I/O prefix/suffix, at the cost of holding that many days' flight + segment
 /// working sets in RAM at once. Auto-scaling off total RAM keeps the extract
 /// OOM-free on any host (laptop → 256 GB server) with zero manual tuning.
-fn max_concurrent_days(num_days: usize) -> usize {
-    // Effective RAM cost per concurrent day, calibrated from the 2026-05 global
-    // TTM extract: 4 concurrent dense days OOM-killed a 110 GB cgroup at the
-    // segment-write peak, i.e. ~28 GB per concurrent day once the shared DEM
-    // tile cache + per-day segment accumulation are amortized in (the per-day
-    // segment set alone is ~16 GB; 28 folds in the fixed shared-cache share so
-    // the linear K model stays safely below the limit).
-    const PEAK_PER_DAY_GB: f64 = 28.0;
+///
+/// `peak_per_day_gb` is the effective RAM cost per concurrent day. For full
+/// days it was calibrated from the 2026-05 global TTM extract: 4 concurrent
+/// dense days OOM-killed a 110 GB cgroup at the segment-write peak, i.e.
+/// ~28 GB per concurrent day once the shared DEM tile cache + per-day segment
+/// accumulation are amortized in (the per-day segment set alone is ~16 GB; 28
+/// folds in the fixed shared-cache share so the linear K model stays safely
+/// below the limit). GA-filtered passes use a lower estimate — see
+/// `ClassFilterArg::stage01_peak_per_day_gb`.
+fn max_concurrent_days(num_days: usize, peak_per_day_gb: f64) -> usize {
     // Effective budget = min(host RAM, this process's cgroup memory limit) so a
     // container or `systemd-run -p MemoryMax=…` scope caps concurrency too —
     // sizing off host RAM alone re-OOMs inside a smaller cgroup.
     let total_gb = available_memory_bytes() as f64 / 1_000_000_000.0;
     // Budget 60%: leaves headroom for the OS, the shared raster cache, and the
     // parent process while staying well clear of the OOM boundary.
-    let k = (total_gb * 0.60 / PEAK_PER_DAY_GB).floor() as usize;
+    let k = (total_gb * 0.60 / peak_per_day_gb).floor() as usize;
     k.clamp(1, num_days.max(1))
 }
 
@@ -903,4 +1180,29 @@ fn cgroup_memory_limit_bytes() -> Option<u64> {
 fn available_memory_bytes() -> u64 {
     let host = host_ram_bytes();
     cgroup_memory_limit_bytes().map_or(host, |lim| host.min(lim))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_ga_n_days_missing_file_is_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(read_ga_n_days(tmp.path()).unwrap(), 0);
+    }
+
+    #[test]
+    fn read_ga_n_days_parses_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("ga_n_days"), "365\n").unwrap();
+        assert_eq!(read_ga_n_days(tmp.path()).unwrap(), 365);
+    }
+
+    #[test]
+    fn read_ga_n_days_rejects_garbage() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("ga_n_days"), "not-a-number").unwrap();
+        assert!(read_ga_n_days(tmp.path()).is_err());
+    }
 }

@@ -111,7 +111,7 @@ fn shuffle_then_stage_2a_writes_per_r4_outputs() {
     let day1_path = write_day(&segments_dir, "2025-01-21", &day1);
     let day2_path = write_day(&segments_dir, "2025-01-22", &day2);
 
-    shuffle_per_r4(&[day1_path, day2_path], &by_r4_dir, None).unwrap();
+    shuffle_per_r4(&[day1_path, day2_path], &[], &by_r4_dir, None).unwrap();
 
     let r4_cz = r4_of_seg_at(cz_lat, cz_lon);
     let r4_nyc = r4_of_seg_at(nyc_lat, nyc_lon);
@@ -165,7 +165,7 @@ fn second_shuffle_wipes_stale_r4_shards() {
             seg(2, Phase::Airborne, nyc_lat, nyc_lon),
         ],
     );
-    shuffle_per_r4(std::slice::from_ref(&day_path), &by_r4_dir, None).unwrap();
+    shuffle_per_r4(std::slice::from_ref(&day_path), &[], &by_r4_dir, None).unwrap();
     let r4_cz = r4_of_seg_at(cz_lat, cz_lon);
     let r4_nyc = r4_of_seg_at(nyc_lat, nyc_lon);
     assert!(list_r4_dirs(&by_r4_dir).contains(&r4_nyc));
@@ -173,7 +173,7 @@ fn second_shuffle_wipes_stale_r4_shards() {
     // Second run: only the CZ segment. NYC R4 dir must be wiped.
     let cz_only = vec![seg(99, Phase::Airborne, cz_lat, cz_lon)];
     let cz_only_path = write_day(&segments_dir, "2025-01-22", &cz_only);
-    shuffle_per_r4(&[cz_only_path], &by_r4_dir, None).unwrap();
+    shuffle_per_r4(&[cz_only_path], &[], &by_r4_dir, None).unwrap();
 
     let after = list_r4_dirs(&by_r4_dir);
     assert_eq!(
@@ -191,7 +191,7 @@ fn empty_input_pipeline_is_a_clean_noop() {
     let by_r4_dir = tmp.path().join("segments_by_r4");
     let h3r4_dir = tmp.path().join("h3r4");
 
-    shuffle_per_r4(&[], &by_r4_dir, None).unwrap();
+    shuffle_per_r4(&[], &[], &by_r4_dir, None).unwrap();
     assert!(by_r4_dir.exists(), "out_dir must be created");
     assert!(!tmp.path().join("temp_shuffle").exists());
     assert!(list_r4_dirs(&by_r4_dir).is_empty());
