@@ -60,12 +60,14 @@ PID_SRTM=$!
 bash "$SCRIPT_DIR/rasters/convert-worldcover.sh" ${IMD_FORCE:+--imd-force} &> "$LOG_DIR/convert-worldcover.log" &
 PID_WC=$!
 
-bash "$SCRIPT_DIR/rasters/convert-building.sh" &> "$LOG_DIR/convert-building.log" &
+# Overture-only since cf58f56b (convert-building.sh deleted with the GHSL
+# pipeline); merge copies download-overture-buildings.sh output into prepared/.
+bash "$SCRIPT_DIR/rasters/merge-building-tiles.sh" &> "$LOG_DIR/merge-building-tiles.log" &
 PID_BLD=$!
 
 log "  SRTM conversion (PID $PID_SRTM)"
 log "  WorldCover → forest+imd (PID $PID_WC)"
-log "  GHSL → building (PID $PID_BLD)"
+log "  Overture → building merge (PID $PID_BLD)"
 
 FAIL=0
 wait $PID_SRTM && log "  SRTM done" || { log "  SRTM FAILED"; FAIL=1; }
