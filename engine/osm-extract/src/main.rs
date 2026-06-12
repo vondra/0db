@@ -10,6 +10,7 @@ mod classify;
 mod finalize;
 mod microsegment;
 mod node_cache;
+mod poi_join;
 mod relations;
 mod spill;
 
@@ -142,6 +143,10 @@ fn main() -> Result<()> {
                                                 | "healthcare"
                                                 | "tourism"
                                                 | "leisure"
+                                                // settlement v2 phase 2 (mirror extract_way_tags).
+                                                | "animal"
+                                                | "livestock"
+                                                | "opening_hours"
                                         ) {
                                             t.insert(k.clone(), v.clone());
                                         }
@@ -337,6 +342,11 @@ fn main() -> Result<()> {
                         features_total += 1;
                     }
                 }
+                if let Some(kind) = classify::node_kind_node(&node) {
+                    let tags = classify::extract_node_settlement_tags_node(&node);
+                    features_total +=
+                        emit_settlement_node(&mut spiller, kind, node.id(), node.lat(), node.lon(), &tags);
+                }
             }
             Element::DenseNode(node) => {
                 if classify::is_wind_turbine_dense(&node) {
@@ -368,6 +378,11 @@ fn main() -> Result<()> {
                         );
                         features_total += 1;
                     }
+                }
+                if let Some(kind) = classify::node_kind_dense(&node) {
+                    let tags = classify::extract_node_settlement_tags_dense(&node);
+                    features_total +=
+                        emit_settlement_node(&mut spiller, kind, node.id(), node.lat(), node.lon(), &tags);
                 }
             }
             _ => {}
@@ -410,6 +425,37 @@ fn h3_res4(lat: f64, lon: f64) -> Option<u64> {
     use h3o::{LatLng, Resolution};
     let ll = LatLng::new(lat, lon).ok()?;
     Some(u64::from(ll.to_cell(Resolution::Four)))
+}
+
+/// Spill one settlement NODE (settlement v2 phase 2): a `Leisure` node becomes a
+/// point leisure source (centroid only, no footprint WKB → default area), a
+/// `Poi` node spills to the finalize footprint-join file. Returns 1 if a row was
+/// written, else 0 (e.g. a POI whose tags don't resolve to a class).
+fn emit_settlement_node(
+    spiller: &mut spill::Spiller,
+    kind: classify::FeatureType,
+    osm_id: i64,
+    lat: f64,
+    lon: f64,
+    tags: &classify::Tags,
+) -> u64 {
+    let Some(hex) = h3_res4(lat, lon) else {
+        return 0;
+    };
+    match kind {
+        classify::FeatureType::Leisure => {
+            spiller.emit_polygon(&kind, hex, osm_id, lat, lon, tags, None);
+            1
+        }
+        classify::FeatureType::Poi => match spill::poi_class_from_tags(tags) {
+            Some(class) => {
+                spiller.emit_poi(hex, lat, lon, class);
+                1
+            }
+            None => 0,
+        },
+        _ => 0,
+    }
 }
 
 fn centroid(coords: &[[f64; 2]]) -> (f64, f64) {

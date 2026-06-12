@@ -2,6 +2,7 @@ pub mod aircraft;
 pub mod airport_traffic;
 pub mod gse;
 pub mod industrial;
+pub mod leisure;
 pub mod profiles_generated;
 pub mod railway;
 pub mod road;

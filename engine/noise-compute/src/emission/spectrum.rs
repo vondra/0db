@@ -96,6 +96,11 @@ mod tests {
     #[test]
     fn every_building_class_holds_invariant() {
         for building_type in 0..=u8::MAX {
+            // SILENT is deliberately sub-audible (lw → −∞, gated before scatter)
+            // so the radiated-dB(A) invariant does not apply to it.
+            if building_type == settlement::SILENT {
+                continue;
+            }
             let p = settlement::building_profile(building_type);
             for (area, floors) in [(100.0, 1u8), (200.0, 3), (5_000.0, 10)] {
                 let lw = settlement::building_lw(&p, area, floors);

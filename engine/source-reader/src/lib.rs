@@ -30,7 +30,7 @@ use std::sync::RwLock;
 use hex_store::HexData;
 use hex_store::{
     hex_encode, load_hex, query_barriers_from_batches, query_buildings_from_batches,
-    query_railways_from_batches, query_roads_from_batches,
+    query_leisure_from_batches, query_railways_from_batches, query_roads_from_batches,
 };
 
 #[cfg(feature = "node")]
@@ -316,6 +316,41 @@ pub fn collect_from_hex_data(
                     b.building_type,
                     display_name.clone(),
                     b.polygon_wkb.clone(),
+                    pt_dist,
+                ));
+            }
+        }
+
+        // Leisure AREA sources fold into the building/settlement layer
+        // (settlement v2 phase 2): same point-source compute, tagged with
+        // `source_type = LEISURE_TYPE_BASE + sport` so the popup names a padel
+        // court correctly (see source_names::building_type_name).
+        let leisure = query_leisure_from_batches(
+            &data.leisure_batches,
+            lat,
+            lng,
+            BUILDING_QUERY_RADIUS_M,
+        );
+        for lz in leisure {
+            let source_type =
+                noise_compute::types::LEISURE_TYPE_BASE.saturating_add(lz.sport);
+            let prepared_points = noise_compute::normalize::prepare_leisure_points(
+                noise_compute::normalize::RawLeisureInput {
+                    centroid_lat: lz.centroid_lat,
+                    centroid_lon: lz.centroid_lon,
+                    sport: lz.sport,
+                    area_m2: (lz.area_m2 > 0.0).then_some(lz.area_m2 as f64),
+                    capacity: (lz.capacity > 0).then_some(lz.capacity),
+                    polygon_wkb: &lz.polygon_wkb,
+                },
+            );
+            for prepared in prepared_points {
+                let pt_dist = crate::geo::flat_dist(lat, lng, prepared.lat, prepared.lon);
+                all_buildings.push(prepared.with_metadata(
+                    lz.osm_id,
+                    source_type,
+                    lz.name.clone(),
+                    lz.polygon_wkb.clone(),
                     pt_dist,
                 ));
             }
