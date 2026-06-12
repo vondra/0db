@@ -250,6 +250,11 @@ struct MicrosegAcc {
     unique_arr_count: u32,
     unique_dep_count: u32,
     unique_gse_count_per_class: [u32; NUM_GSE_CLASSES],
+    /// v9 GA-class (365-day window) split of the three counts above, so
+    /// the trace divides `non_ga / n_days + ga / ga_n_days` (delta 2).
+    unique_ga_count: u32,
+    unique_ga_arr_count: u32,
+    unique_ga_dep_count: u32,
     /// Per-aircraft-class energy share at THIS microsegment — used
     /// for the class_mix display (top-N "what dominates here").
     class_energy: [f64; NUM_CLASSES],
@@ -294,11 +299,18 @@ pub type AirportSummaryLookup<'a> = std::collections::HashMap<&'a str, AirportSu
 /// view but owned for the duration of the popup query.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AirportSummaryEntry {
+    /// NON-GA-class window counts (airline 12-day). v9 split.
     pub arr_count: u32,
     pub dep_count: u32,
     pub gse_count_per_class: [u32; NUM_GSE_CLASSES],
     /// Index 0=runway, 1=taxi, 2=apron — VEH_KIND=0 only.
     pub ops_count_per_kind: [u32; 3],
+    /// GA-class (365-day) window split of arr/dep/ops. The popup divides
+    /// `non_ga / n_days + ga / ga_n_days` (`ga-365d-hybrid-plan.md` §2,
+    /// delta 2). GSE has no GA split (airline-pass only).
+    pub ga_arr_count: u32,
+    pub ga_dep_count: u32,
+    pub ga_ops_count_per_kind: [u32; 3],
 }
 
 /// Run the airport_traffic.arrow popup compute path. `n_days` flows
@@ -315,10 +327,19 @@ pub struct AirportSummaryEntry {
 /// `osm_ref_lookup` maps `osm_id` → OSM `ref` tag (e.g. "06/24") for
 /// real-OSM aeroway lines. Synthetic osm_ids (top bit set, from
 /// Stage 1.5 DBSCAN) are never in this lookup.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     receiver: &Receiver,
     rows: &[AirportTrafficRowView<'_>],
     n_days: u16,
+    // GA 365-day hybrid per-class weight LUT (`ga-365d-hybrid-plan.md` §2,
+    // layer-ground.md §4). Applied to the RECEIVED Lden energy + per-row
+    // movement counts of `veh_kind == 0` (aircraft) rows only — GSE
+    // (`veh_kind == 1`) rows always weight 1.0 (their `class_idx` indexes
+    // the GSE class space and GSE is an airline-pass artifact). The
+    // per-event source Lw display (`emission_db`, `lw_bands`) stays
+    // unweighted — per-event physics, like the airborne SEL.
+    class_weights: &crate::emission::aircraft::ClassWeights,
     rasters: &dyn RasterSampler,
     barriers: &[Barrier],
     osm_ref_lookup: &HashMap<u64, String>,
@@ -329,6 +350,10 @@ pub fn run(
         return Vec::new();
     }
     let n_days_f = (n_days as f64).max(1.0);
+    // GA-window divisor for the split-union movement counts: GA-class fids
+    // are observed over 365 days, so the popup divides them by THIS while
+    // non-GA counts divide by `n_days` (`ga-365d-hybrid-plan.md` §2).
+    let ga_n_days_f = (class_weights.ga_n_days() as f64).max(1.0);
     let recv_lat = receiver.lat;
     let recv_lon = receiver.lon;
     let rcv_alt = receiver.altitude_m();
@@ -506,6 +531,25 @@ pub fn run(
             aw_no_atmospheric += z * prop_no_atmospheric[i] * aw_lin;
             aw_no_ground += z * prop_no_ground[i] * aw_lin;
         }
+        // GA hybrid weight (`ga-365d-hybrid-plan.md` §2, layer-ground.md §4):
+        // aircraft rows scale by `w[class]`, GSE rows by 1.0. Fold into the
+        // RECEIVED energies (all variants) so every Lden-normalized
+        // accumulator below — airport, per-microseg, per-ops-kind,
+        // class_energy, and the trace `received_bands` — inherits the
+        // 1/365 scaling for a one-off GA movement. `aw_band_sum_25m` (the
+        // per-event emission Lw display) is deliberately left UNWEIGHTED:
+        // it is per-event source physics, like the airborne SEL/Lmax.
+        let row_weight = if row.veh_kind == 0 {
+            class_weights.get(row.class_idx)
+        } else {
+            1.0
+        };
+        aw_band_sum *= row_weight;
+        aw_no_terrain *= row_weight;
+        aw_no_screening *= row_weight;
+        aw_no_vegetation *= row_weight;
+        aw_no_atmospheric *= row_weight;
+        aw_no_ground *= row_weight;
         if !aw_band_sum.is_finite() || aw_band_sum <= 0.0 {
             continue;
         }
@@ -594,6 +638,9 @@ pub fn run(
                 unique_arr_count: row.microseg_unique_arr_count,
                 unique_dep_count: row.microseg_unique_dep_count,
                 unique_gse_count_per_class: *row.microseg_unique_gse_count_per_class,
+                unique_ga_count: row.microseg_unique_ga_count,
+                unique_ga_arr_count: row.microseg_unique_ga_arr_count,
+                unique_ga_dep_count: row.microseg_unique_ga_dep_count,
                 class_energy: [0.0; NUM_CLASSES],
             });
         microseg_entry.period_energy_full[period] += aw_band_sum;
@@ -604,9 +651,12 @@ pub fn run(
         microseg_entry.period_energy_no_ground[period] += aw_no_ground;
         for i in 0..NUM_BANDS {
             let z = row.band_energy_lin[i] as f64;
+            // Source Lw display stays per-event (unweighted); the received
+            // band energy carries the GA hybrid `row_weight` so the trace's
+            // per-band received Lp matches the weighted scalar Lden above.
             microseg_entry.band_energy_lin_per_period[period][i] += z;
             microseg_entry.received_bands_lin_per_period[period][i] +=
-                z * prop_full[i] * A_WEIGHT_LIN[i];
+                z * prop_full[i] * A_WEIGHT_LIN[i] * row_weight;
         }
         if row.veh_kind == 0 && (row.class_idx as usize) < NUM_CLASSES {
             microseg_entry.class_energy[row.class_idx as usize] += aw_band_sum;
@@ -657,7 +707,8 @@ pub fn run(
             continue;
         }
         let summary_entry = airport_summary.and_then(|m| m.get(airport_key.as_str()).copied());
-        let metadata = build_ground_ops_metadata(&acc, &periods, n_days_f, summary_entry);
+        let metadata =
+            build_ground_ops_metadata(&acc, &periods, n_days_f, ga_n_days_f, summary_entry);
         out.push(Contributor {
             source_type: LayerKind::Aircraft,
             osm_id: None,
@@ -727,6 +778,7 @@ pub fn run(
             by_microseg,
             &microseg_cache,
             n_days_f,
+            ga_n_days_f,
             recv_lat,
             recv_lon,
             refl_db,

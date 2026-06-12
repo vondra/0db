@@ -188,13 +188,17 @@ fn classify_tile(
     (near, far)
 }
 
-/// GPU handle: the device, the two airborne kernels, and the NPD LUTs (uploaded once,
-/// device-global). Construct once per process; reuse across every region and tile.
+/// GPU handle: the device, the two airborne kernels, the NPD LUTs, and the
+/// GA 365-day hybrid per-class weight LUT (all uploaded once, device-global).
+/// Construct once per build; reuse across every region and tile.
 pub struct AirborneGpu {
     dev: Arc<CudaDevice>,
     f_near: CudaFunction,
     f_coarse: CudaFunction,
     d_npd: CudaSlice<f32>,
+    /// `NUM_CLASSES`-length GA hybrid weight LUT (f32). The kernel scales
+    /// each sub-seg's energy by `d_w[class]` (`ga-365d-hybrid-plan.md` §2).
+    d_w: CudaSlice<f32>,
 }
 
 /// One R4's candidate sub-segs, resident on the device (the expensive `prepare_segment` +
@@ -221,10 +225,13 @@ impl RegionResident {
 // a `Default::default()` would silently hide all that I/O.
 #[allow(clippy::new_without_default)]
 impl AirborneGpu {
-    /// Open CUDA device 0, load the airborne PTX, and upload the NPD LUTs once. CUDA failures
-    /// `expect`-panic (the codebase convention — see `gpu_surface`): a dead device or missing
-    /// kernel is fatal to the whole build, so the worker dies loudly and the chunk re-dispatches.
-    pub fn new() -> Self {
+    /// Open CUDA device 0, load the airborne PTX, and upload the NPD LUTs + the GA 365-day
+    /// hybrid per-class weight LUT once. CUDA failures `expect`-panic (the codebase convention
+    /// — see `gpu_surface`): a dead device or missing kernel is fatal to the whole build, so
+    /// the worker dies loudly and the chunk re-dispatches. `class_weights` is build-wide
+    /// (resolved from the source arrows' `sample_days_by_class`); the weight LUT is constant
+    /// across every region + tile, so it uploads here, not per-tile.
+    pub fn new(class_weights: &aircraft::ClassWeights) -> Self {
         let dev = CudaDevice::new(0).expect("open cuda device 0");
         dev.load_ptx(
             Ptx::from_src(AIRBORNE_PTX),
@@ -237,12 +244,16 @@ impl AirborneGpu {
         let d_npd = dev
             .htod_copy(NpdLuts::shared().sel_luts_flat_f32())
             .expect("upload npd");
-        dev.synchronize().expect("npd upload sync");
+        let d_w = dev
+            .htod_copy(class_weights.as_array().iter().map(|&x| x as f32).collect::<Vec<f32>>())
+            .expect("upload class weights");
+        dev.synchronize().expect("npd + weights upload sync");
         Self {
             dev,
             f_near,
             f_coarse,
             d_npd,
+            d_w,
         }
     }
 
@@ -316,6 +327,7 @@ impl AirborneGpu {
                         &region.d_sf,
                         &region.d_si,
                         &self.d_npd,
+                        &self.d_w,
                         &d_nidx,
                         near_len as i32,
                         nreg_i,
@@ -345,6 +357,7 @@ impl AirborneGpu {
                             &region.d_sf,
                             &region.d_si,
                             &self.d_npd,
+                            &self.d_w,
                             &*d_idx,
                             *nidx as i32,
                             nreg_i,

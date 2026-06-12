@@ -66,6 +66,50 @@ fn build_osm_ref_lookup(batches: &[RecordBatch]) -> HashMap<u64, String> {
     out
 }
 
+/// Build the GA 365-day hybrid per-class weight LUT from the
+/// `sample_days_by_class` metadata stamped on the airborne /
+/// airport_traffic arrows (`ga-365d-hybrid-plan.md` §2). Mirrors the
+/// heatmap's `worklist::resolve_class_weights` strictness: every loaded
+/// airborne/airport_traffic batch MUST carry the stamp and they must all
+/// AGREE — a missing stamp or a disagreement across the grid_disk(1)
+/// hexes (mixed/stale shards) FAILS LOUD (owner directive 2026-06-12; no
+/// uniform fallback), since the first-stamp-wins shortcut could silently
+/// apply one window's LUT to rows from another and re-introduce the GA
+/// +14.8 dB phantom. Because the vector embeds both windows, this also
+/// catches the case where `n_days` (the divisor) differs across hexes.
+/// When there are no aircraft batches at all (rural receiver), returns
+/// the uniform LUT — there is nothing to weight.
+fn build_class_weights(
+    airborne_batches: &[RecordBatch],
+    airport_traffic_batches: &[RecordBatch],
+    n_days: u16,
+) -> Result<noise_compute::emission::aircraft::ClassWeights, String> {
+    use noise_compute::emission::aircraft::{ClassWeights, SAMPLE_DAYS_BY_CLASS_KEY};
+    if airborne_batches.is_empty() && airport_traffic_batches.is_empty() {
+        return Ok(ClassWeights::uniform());
+    }
+    let mut stamp: Option<String> = None;
+    for batch in airborne_batches.iter().chain(airport_traffic_batches.iter()) {
+        let v = batch
+            .schema_ref()
+            .metadata()
+            .get(SAMPLE_DAYS_BY_CLASS_KEY);
+        match (v, &stamp) {
+            (Some(v), None) => stamp = Some(v.clone()),
+            (Some(v), Some(seen)) if v != seen => {
+                return Err(format!(
+                    "{SAMPLE_DAYS_BY_CLASS_KEY} disagrees across loaded aircraft arrows \
+                     ({seen:?} vs {v:?}) — mixed/stale shards; re-extract / re-merge"
+                ));
+            }
+            (Some(_), Some(_)) => {}
+            // A batch passed the v4/v9 contract gate but lacks the stamp:
+            // impossible for current writers, so treat as a loud error.
+            (None, _) => return ClassWeights::parse(None, n_days),
+        }
+    }
+    ClassWeights::parse(stamp.as_deref(), n_days)
+}
 
 /// Run `compute_aircraft_v6` over the popup arrows and merge its output
 /// into an existing `NoiseResult`. Caller is expected to have invoked
@@ -116,6 +160,15 @@ pub fn add_v6_aircraft_to_result(
     if !airport_traffic_batches.is_empty() {
         assert_airport_traffic_contract("airport_traffic.arrow", airport_traffic_batches)?;
     }
+    // GA 365-day hybrid per-class weight LUT — built from the
+    // `sample_days_by_class` metadata the airborne / airport_traffic
+    // arrows stamp (`ga-365d-hybrid-plan.md` §2). FAILS LOUD when rows
+    // exist but the stamp is missing (owner directive 2026-06-12 — no
+    // compat shim): the arrows predate the hybrid contract and must be
+    // re-extracted. The contract bumps (airborne v4 / airport_traffic v9)
+    // already reject such files above; this is the in-kernel safety net.
+    let class_weights =
+        build_class_weights(airborne_batches, airport_traffic_batches, n_days)?;
     let airborne_rows = AirborneRowAccum::new(airborne_batches);
     let cruise_rows = CruiseRowAccum::new(cruise_batches);
     let traffic_rows = AirportTrafficRowAccum::new(airport_traffic_batches);
@@ -213,6 +266,7 @@ pub fn add_v6_aircraft_to_result(
         rasters,
         horizon.as_ref(),
         n_days,
+        &class_weights,
         trace_cap,
         Some(traces),
         result.timings.as_mut(),
@@ -235,6 +289,7 @@ pub fn add_v6_aircraft_to_result(
             receiver,
             &traffic_views,
             n_days,
+            &class_weights,
             rasters,
             barriers,
             &osm_ref_lookup,
@@ -407,7 +462,11 @@ const LEGACY_SCHEMA_VERSIONS: &[&str] = &[];
 /// per-microseg UNION `microseg_unique_*` replace the v4 `flight_ids`
 /// list. Airport-level UNION across R4s lives in the separate
 /// `airport_summary.arrow` sidecar.
-pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v8";
+/// v9 (GA 365-day hybrid): the microseg UNIONs split into non-GA +
+/// `microseg_unique_ga_*`, and the file stamps `sample_days_by_class`
+/// so the consumer weights GA energy at 1/365 (`ga-365d-hybrid-plan.md`
+/// §2). A v8 reader would double-weight GA at 1/12 — the bump refuses it.
+pub(super) const EXPECTED_AIRPORT_TRAFFIC_CONTRACT: &str = "airport_traffic_v9";
 
 /// Legacy `airport_traffic_contract` variants accepted under the same
 /// `ACCEPT_LEGACY_AIRCRAFT_SCHEMA=1` escape hatch as
@@ -424,7 +483,10 @@ const LEGACY_AIRPORT_TRAFFIC_CONTRACTS: &[&str] = &[];
 /// v1 file because the 13-col offset shifts every read past
 /// `flags` — silent decoding would alias `terrain_q1_elev_m` slice
 /// over what v2 treats as `terrain_end_elev_m`.
-pub(super) const EXPECTED_AIRBORNE_CONTRACT: &str = "airborne_v3";
+/// v4 (GA 365-day hybrid): no column change, but the file carries the
+/// `sample_days_by_class` vector the consumer REQUIRES to weight GA rows
+/// at 1/365. A v3 reader ignores it and ships the +14.8 dB phantom.
+pub(super) const EXPECTED_AIRBORNE_CONTRACT: &str = "airborne_v4";
 const LEGACY_AIRBORNE_CONTRACTS: &[&str] = &[];
 
 /// Expected `cruise_contract` metadata. v16 drops the tautological

@@ -125,7 +125,7 @@ fn shuffle_then_stage_2a_writes_per_r4_outputs() {
         "shuffle output dir must contain exactly the two visited R4s"
     );
 
-    let n_r4 = run_stage_2a(&by_r4_dir, &h3r4_dir, 2, None, &test_rasters()).unwrap();
+    let n_r4 = run_stage_2a(&by_r4_dir, &h3r4_dir, 2, 0, None, &test_rasters()).unwrap();
     assert_eq!(n_r4, 2, "Stage 2A should emit airborne.arrow for both R4s");
 
     let cz_airborne_path = h3r4_dir.join(r4_hex_str(r4_cz)).join("airborne.arrow");
@@ -196,6 +196,6 @@ fn empty_input_pipeline_is_a_clean_noop() {
     assert!(!tmp.path().join("temp_shuffle").exists());
     assert!(list_r4_dirs(&by_r4_dir).is_empty());
 
-    let n = run_stage_2a(&by_r4_dir, &h3r4_dir, 1, None, &test_rasters()).unwrap();
+    let n = run_stage_2a(&by_r4_dir, &h3r4_dir, 1, 0, None, &test_rasters()).unwrap();
     assert_eq!(n, 0);
 }

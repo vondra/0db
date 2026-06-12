@@ -50,6 +50,11 @@ pub fn compute_aircraft_v6(
     // cruise is structurally exempt (β ≥ 26.6°, see segment_sel).
     horizon: Option<&ReceiverHorizon>,
     n_days: u16,
+    // GA 365-day hybrid per-class weight LUT (`ga-365d-hybrid-plan.md` §2),
+    // built from the arrows' `sample_days_by_class` metadata by the caller.
+    // Threads into the airborne scatter; cruise is airline-only (no GA
+    // classes reach cruise altitude) so it ignores this.
+    class_weights: &crate::emission::aircraft::ClassWeights,
     // Max airborne sub-segment traces to keep in TraceCollector (the
     // bounded top-K heap). `0` = don't allocate any traces — used by
     // callers that pass `traces = None` anyway.
@@ -71,6 +76,7 @@ pub fn compute_aircraft_v6(
         receiver,
         airborne_rows,
         n_days_f,
+        class_weights,
         horizon,
         trace_cap,
         traces.as_deref_mut(),
@@ -110,6 +116,7 @@ pub fn compute_aircraft_v6(
         &top_flight_candidates,
         &cruise_band,
         n_days_f,
+        (class_weights.ga_n_days() as f64).max(1.0),
     );
     let t_airborne_detail = t_start.elapsed() - t_airborne_scatter - t_cruise_scatter;
 
@@ -212,6 +219,8 @@ pub fn compute_aircraft_v6_separable(
     cruise_rows: &[CruiseRowView<'_>],
     rasters: &dyn RasterSampler,
     n_days: u16,
+    // GA 365-day hybrid per-class weight LUT — same as `compute_aircraft_v6`.
+    class_weights: &crate::emission::aircraft::ClassWeights,
 ) -> AircraftPeriodsBreakdown {
     use crate::emission::aircraft;
     use crate::periods;
@@ -222,6 +231,7 @@ pub fn compute_aircraft_v6_separable(
         receiver,
         airborne_rows,
         n_days_f,
+        class_weights,
         // Validation harness compares against pre-C2 heatmap output —
         // no horizon until P3 wires the heatmap side.
         None,
@@ -290,8 +300,9 @@ mod tests {
     #[test]
     fn silence_when_no_data() {
         let receiver = Receiver::new(50.10, 14.262, 0.0);
+        let w = crate::emission::aircraft::ClassWeights::uniform();
         let (periods, contribs, _band) =
-            compute_aircraft_v6(&receiver, &[], &[], &FlatGround, None, 1, 0, None, None);
+            compute_aircraft_v6(&receiver, &[], &[], &FlatGround, None, 1, &w, 0, None, None);
         assert!(!periods.lden_db.is_finite());
         assert!(contribs.is_empty());
     }
@@ -299,8 +310,9 @@ mod tests {
     #[test]
     fn separable_silence_when_no_data() {
         let receiver = Receiver::new(50.10, 14.262, 0.0);
+        let w = crate::emission::aircraft::ClassWeights::uniform();
         let breakdown =
-            compute_aircraft_v6_separable(&receiver, &[], &[], &FlatGround, 1);
+            compute_aircraft_v6_separable(&receiver, &[], &[], &FlatGround, 1, &w);
         assert!(!breakdown.airborne.lden_db.is_finite());
         assert!(!breakdown.cruise.lden_db.is_finite());
     }

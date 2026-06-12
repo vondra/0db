@@ -20,6 +20,9 @@ pub(super) fn emit_segment_traces(
     by_microseg: HashMap<(u64, u16), MicrosegAcc>,
     microseg_cache: &HashMap<(u64, u16), MicrosegPath>,
     n_days_f: f64,
+    // GA-class window (365-day) divisor for the split-union microseg
+    // movement counts (`ga-365d-hybrid-plan.md` §2 / delta 2).
+    ga_n_days_f: f64,
     recv_lat: f64,
     recv_lon: f64,
     refl_db: f64,
@@ -271,9 +274,13 @@ pub(super) fn emit_segment_traces(
         // v5: per-microsegment counts are row-replicated scalars
         // (`microseg_unique_*`) captured into MicrosegAcc on first
         // insert — popup reads them directly without HashSet union.
-        let observed_movements = acc.unique_count as f64 / n_days_f;
-        let arrivals_per_day = acc.unique_arr_count as f64 / n_days_f;
-        let departures_per_day = acc.unique_dep_count as f64 / n_days_f;
+        // v9: each split into `non_ga / n_days + ga / ga_n_days` so a
+        // one-off GA movement reads at its true 365-day frequency.
+        let split = |non_ga: u32, ga: u32| non_ga as f64 / n_days_f + ga as f64 / ga_n_days_f;
+        let observed_movements = split(acc.unique_count, acc.unique_ga_count);
+        let arrivals_per_day = split(acc.unique_arr_count, acc.unique_ga_arr_count);
+        let departures_per_day = split(acc.unique_dep_count, acc.unique_ga_dep_count);
+        // GSE is airline-pass only — no GA split.
         let gse_per_day: [f64; NUM_GSE_CLASSES] = std::array::from_fn(|i| {
             acc.unique_gse_count_per_class[i] as f64 / n_days_f
         });

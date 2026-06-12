@@ -163,10 +163,14 @@ __device__ __forceinline__ int coarse_pixel(int n, int i) {
 // NEAR (exact): one thread per receiver pixel, loop this tile's near sub-segs via the
 // index list `idx[0..nidx]` into the REGION-resident SoA (E5: segs uploaded once per
 // region, `sll` lon half at offset `nreg`; per-tile only the index list changes).
+// `w` = NPD_NC-length GA 365-day hybrid per-class weight LUT (ga-365d-hybrid-plan.md §2):
+// each sub-seg's energy is scaled by w[class] so a GA one-off divides by 365 not 12
+// (uniform 1.0 for non-hybrid extracts → byte-identical to the pre-hybrid scatter).
 extern "C" __global__ void airborne_exact(
     const double* __restrict__ rll, const float* __restrict__ rxa,
     const double* __restrict__ sll, const float* __restrict__ sf, const int* __restrict__ si,
-    const float* __restrict__ npd, const int* __restrict__ idx, int nidx, int nreg,
+    const float* __restrict__ npd, const float* __restrict__ w,
+    const int* __restrict__ idx, int nidx, int nreg,
     float* __restrict__ out)
 {
     int pix = blockIdx.x * blockDim.x + threadIdx.x;
@@ -178,10 +182,11 @@ extern "C" __global__ void airborne_exact(
     float e[3] = {0.0f, 0.0f, 0.0f};
     for (int j = 0; j < nidx; j++) {
         int s = idx[j];
+        int cls = si[s * 4 + 1];
         float sel;
-        if (airborne_sel(sll[s], sll[nreg + s], sf + s * 12, si[s*4+1], si[s*4+2], si[s*4+0],
+        if (airborne_sel(sll[s], sll[nreg + s], sf + s * 12, cls, si[s*4+2], si[s*4+0],
                          rx_lat, rx_lon, mpdl, rx_elev, npd, npd_dep, &sel)) {
-            e[si[s * 4 + 3]] += fexpf_nc(sel * (float)LN10 * 0.1f);
+            e[si[s * 4 + 3]] += fexpf_nc(sel * (float)LN10 * 0.1f) * w[cls];
         }
     }
     out[pix * 3 + 0] = e[0]; out[pix * 3 + 1] = e[1]; out[pix * 3 + 2] = e[2];
@@ -195,7 +200,8 @@ extern "C" __global__ void airborne_exact(
 extern "C" __global__ void airborne_coarse(
     const double* __restrict__ rll, const float* __restrict__ rxa,
     const double* __restrict__ sll, const float* __restrict__ sf, const int* __restrict__ si,
-    const float* __restrict__ npd, const int* __restrict__ idx, int nidx, int nreg,
+    const float* __restrict__ npd, const float* __restrict__ w,
+    const int* __restrict__ idx, int nidx, int nreg,
     int n, float* __restrict__ out_coarse)
 {
     int j = blockIdx.x * blockDim.x + threadIdx.x;
@@ -205,6 +211,7 @@ extern "C" __global__ void airborne_coarse(
     double start_lat = sll[s], start_lon = sll[nreg + s];
     const float* f = sf + s * 12;
     int cls = si[s*4+1], is_dep = si[s*4+2], inst = si[s*4+0], period = si[s*4+3];
+    float gw = w[cls];   // GA 365-day hybrid per-class weight (seg-constant).
     for (int ci = 0; ci < n; ci++) {
         int py = coarse_pixel(n, ci);
         double rx_lat = rll[py], mpdl = rll[2 * TPX + py];
@@ -215,7 +222,7 @@ extern "C" __global__ void airborne_coarse(
             float sel;
             if (airborne_sel(start_lat, start_lon, f, cls, is_dep, inst,
                              rx_lat, rx_lon, mpdl, rx_elev, npd, npd_dep, &sel)) {
-                float energy = fexpf_nc(sel * (float)LN10 * 0.1f);
+                float energy = fexpf_nc(sel * (float)LN10 * 0.1f) * gw;
                 atomicAdd(&out_coarse[(ci * n + cj) * 3 + period], energy);
             }
         }

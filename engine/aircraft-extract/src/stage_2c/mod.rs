@@ -43,6 +43,9 @@ pub fn run_stage_2c(
     airport_areas: &[AirportArea],
     h3r4_dir: &Path,
     n_days: u16,
+    // GA-class window (0 = single-window extract); see
+    // [`airport_traffic_writer::run_airport_traffic`].
+    ga_n_days: u16,
     scope: Option<&ScopeBbox>,
 ) -> Result<usize> {
     // Pre-check input schema BEFORE any destructive operation. The wipe
@@ -73,6 +76,7 @@ pub fn run_stage_2c(
         airport_areas,
         h3r4_dir,
         n_days,
+        ga_n_days,
         scope,
     )?;
 
@@ -224,6 +228,7 @@ mod tests {
             std::slice::from_ref(&aerodrome),
             &h3r4_dir,
             1,
+            0,
             None,
         )
         .unwrap();
@@ -283,7 +288,7 @@ mod tests {
         std::fs::create_dir_all(&by_r4_dir).unwrap();
         // Praha scope.
         let scope = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
-        let n = run_stage_2c(&by_r4_dir, &[], &h3r4_dir, 1, Some(&scope)).unwrap();
+        let n = run_stage_2c(&by_r4_dir, &[], &h3r4_dir, 1, 0, Some(&scope)).unwrap();
         assert_eq!(n, 0, "no ground segments → no R4 written");
         assert!(
             !stale.exists(),
@@ -320,7 +325,7 @@ mod tests {
         std::fs::create_dir_all(&by_r4_r4).unwrap();
         std::fs::write(by_r4_r4.join("ground.arrow"), b"not-an-arrow-file").unwrap();
         let scope = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
-        let result = run_stage_2c(&by_r4_dir, &[], &h3r4_dir, 1, Some(&scope));
+        let result = run_stage_2c(&by_r4_dir, &[], &h3r4_dir, 1, 0, Some(&scope));
         assert!(result.is_err(), "precheck must reject corrupt shard");
         assert!(
             prior.exists(),
@@ -351,7 +356,7 @@ mod tests {
         std::fs::write(&stale, b"stale-prev-run").unwrap();
         std::fs::create_dir_all(&by_r4_dir).unwrap();
         let praha = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
-        let _ = run_stage_2c(&by_r4_dir, &[], &h3r4_dir, 1, Some(&praha)).unwrap();
+        let _ = run_stage_2c(&by_r4_dir, &[], &h3r4_dir, 1, 0, Some(&praha)).unwrap();
         assert!(
             stale.exists(),
             "out-of-scope R4 file must survive a scoped reextract"

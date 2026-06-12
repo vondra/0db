@@ -257,7 +257,14 @@ export interface AircraftAirborneDetail {
   top_day_energy_share?: number
   top_day_date?: string
   top_flight_energy_share?: number
+  /** Archive days behind the Lden average for AIRLINE classes (12-day TTM). */
   sample_days?: number
+  /**
+   * Archive days behind GA + helicopter classes — 365 in a hybrid extract,
+   * equal to `sample_days` when non-hybrid. The "Data" row shows both so the
+   * sample basis is honest per class (ga-365d-hybrid-plan.md delta 7).
+   */
+  ga_sample_days?: number
   top_flights?: AircraftTopFlight[]
 }
 

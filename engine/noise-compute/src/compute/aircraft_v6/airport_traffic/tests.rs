@@ -21,12 +21,29 @@
     /// check that energy folds correctly).
     const ZERO_GSE: [u32; NUM_GSE_CLASSES] = [0, 0, 0];
 
+    /// Uniform (non-hybrid) weight LUT — these tests predate the GA
+    /// hybrid, so every class weights 1.0 and the GA-split count columns
+    /// stay zero (degenerates to the legacy single-window math).
+    fn uniform_weights() -> crate::emission::aircraft::ClassWeights {
+        crate::emission::aircraft::ClassWeights::uniform()
+    }
+
     fn run_flat(
         receiver: &Receiver,
         rows: &[AirportTrafficRowView<'_>],
         n_days: u16,
     ) -> Vec<Contributor> {
-        run(receiver, rows, n_days, &FlatGround, &[], &HashMap::new(), None, None)
+        run(
+            receiver,
+            rows,
+            n_days,
+            &uniform_weights(),
+            &FlatGround,
+            &[],
+            &HashMap::new(),
+            None,
+            None,
+        )
     }
 
     fn make_row<'a>(bands: &'a [f32; 8]) -> AirportTrafficRowView<'a> {
@@ -54,6 +71,9 @@
             microseg_unique_arr_count: 0,
             microseg_unique_dep_count: 0,
             microseg_unique_gse_count_per_class: &ZERO_GSE,
+            microseg_unique_ga_count: 0,
+            microseg_unique_ga_arr_count: 0,
+            microseg_unique_ga_dep_count: 0,
         }
     }
 
@@ -92,6 +112,9 @@
             microseg_unique_arr_count: 2,
             microseg_unique_dep_count: 2,
             microseg_unique_gse_count_per_class: &ZERO_GSE,
+            microseg_unique_ga_count: 0,
+            microseg_unique_ga_arr_count: 0,
+            microseg_unique_ga_dep_count: 0,
         };
         let dep_row = AirportTrafficRowView {
             is_departure: 1,
@@ -107,6 +130,7 @@
                 dep_count: 2,
                 gse_count_per_class: [0, 0, 0],
                 ops_count_per_kind: [4, 0, 0],
+                ..Default::default()
             },
         );
         let receiver = Receiver { lat: 50.105, lon: 14.255, elevation_m: 0.0, height_m: 4.0 };
@@ -114,6 +138,7 @@
             &receiver,
             &[arr_row, dep_row],
             2,
+            &uniform_weights(),
             &FlatGround,
             &[],
             &HashMap::new(),
@@ -200,6 +225,9 @@
             microseg_unique_arr_count: 0,
             microseg_unique_dep_count: 0,
             microseg_unique_gse_count_per_class: &[3, 0, 0],
+            microseg_unique_ga_count: 0,
+            microseg_unique_ga_arr_count: 0,
+            microseg_unique_ga_dep_count: 0,
         };
         let mut summary: AirportSummaryLookup = HashMap::new();
         summary.insert(
@@ -209,6 +237,7 @@
                 dep_count: 0,
                 gse_count_per_class: [3, 0, 0],
                 ops_count_per_kind: [0, 0, 0],
+                ..Default::default()
             },
         );
         let receiver = Receiver { lat: 50.105, lon: 14.255, elevation_m: 0.0, height_m: 4.0 };
@@ -216,6 +245,7 @@
             &receiver,
             &[row],
             2,
+            &uniform_weights(),
             &FlatGround,
             &[],
             &HashMap::new(),
@@ -261,6 +291,74 @@
         let receiver = Receiver { lat: 50.105, lon: 14.255, elevation_m: 0.0, height_m: 4.0 };
         let out = run_flat(&receiver, &[row], 1);
         assert!(out.is_empty());
+    }
+
+    /// Hybrid LUT: GA classes → 365, airline → 12 (consumer divides by 12).
+    fn hybrid_weights() -> crate::emission::aircraft::ClassWeights {
+        use crate::emission::aircraft::{is_ga_sampled_class, ClassWeights, NUM_CLASSES};
+        let vec: String = (0..NUM_CLASSES)
+            .map(|c| if is_ga_sampled_class(c as u8) { "365" } else { "12" })
+            .collect::<Vec<_>>()
+            .join(",");
+        ClassWeights::parse(Some(&vec), 12).unwrap()
+    }
+
+    fn ground_lden(out: &[Contributor]) -> f64 {
+        out[0].periods.lden_db
+    }
+
+    /// GSE rows (`veh_kind == 1`) MUST weight 1.0 even under the hybrid
+    /// LUT — their `class_idx` indexes the GSE class space and GSE is an
+    /// airline-pass artifact (`ga-365d-hybrid-plan.md` §2 / layer-ground.md
+    /// §4). Same row → identical received Lden under hybrid vs uniform.
+    #[test]
+    fn gse_row_weight_pinned_to_one_under_hybrid() {
+        let bands: [f32; 8] = [1e6; 8];
+        let mut row = make_row(&bands);
+        row.veh_kind = 1;
+        row.class_idx = 0; // GSE LIGHT
+        let receiver = Receiver { lat: 50.105, lon: 14.255, elevation_m: 0.0, height_m: 4.0 };
+        let uni = run(
+            &receiver, &[row], 12, &uniform_weights(), &FlatGround, &[], &HashMap::new(), None, None,
+        );
+        let hyb = run(
+            &receiver, &[row], 12, &hybrid_weights(), &FlatGround, &[], &HashMap::new(), None, None,
+        );
+        assert_eq!(uni.len(), 1);
+        assert_eq!(hyb.len(), 1);
+        assert!(
+            (ground_lden(&uni) - ground_lden(&hyb)).abs() < 1e-9,
+            "GSE Lden must be identical under hybrid vs uniform (weight 1.0)"
+        );
+    }
+
+    /// A GA-class aircraft ground row (`veh_kind == 0`, HELICOPTER) is
+    /// weighted 12/365 under the hybrid LUT → its received Lden drops
+    /// ~10·log10(365/12) ≈ 14.83 dB vs uniform. The Kytín ground-ops
+    /// correction.
+    #[test]
+    fn ga_aircraft_ground_row_weighted_down() {
+        let bands: [f32; 8] = [1e6; 8];
+        let mut row = make_row(&bands);
+        row.veh_kind = 0;
+        // HELICOPTER class (GA-sampled) — resolve by name so the test
+        // survives a class-index re-sort.
+        row.class_idx = crate::emission::aircraft::noise_class_of(
+            crate::emission::aircraft::profile_idx("R44"),
+        );
+        let receiver = Receiver { lat: 50.105, lon: 14.255, elevation_m: 0.0, height_m: 4.0 };
+        let uni = run(
+            &receiver, &[row], 12, &uniform_weights(), &FlatGround, &[], &HashMap::new(), None, None,
+        );
+        let hyb = run(
+            &receiver, &[row], 12, &hybrid_weights(), &FlatGround, &[], &HashMap::new(), None, None,
+        );
+        let drop = ground_lden(&uni) - ground_lden(&hyb);
+        let expected = 10.0 * (365.0f64 / 12.0).log10();
+        assert!(
+            (drop - expected).abs() < 0.05,
+            "GA ground Lden drop {drop:.2} dB != {expected:.2} dB"
+        );
     }
 
     /// Guard against `A_WEIGHT_LIN` drifting out of sync with
@@ -349,7 +447,7 @@
         let mut traces = crate::types::TraceCollector::new();
         let mut lookup: HashMap<u64, String> = HashMap::new();
         lookup.insert(42, "06/24".to_string());
-        run(&receiver, &[row], 1, &FlatGround, &[], &lookup, None, Some(&mut traces));
+        run(&receiver, &[row], 1, &uniform_weights(), &FlatGround, &[], &lookup, None, Some(&mut traces));
         let trace = traces
             .segments
             .iter()
@@ -370,7 +468,7 @@
         let mut traces = crate::types::TraceCollector::new();
         let mut lookup: HashMap<u64, String> = HashMap::new();
         lookup.insert(42, "A".to_string());
-        run(&receiver, &[row], 1, &FlatGround, &[], &lookup, None, Some(&mut traces));
+        run(&receiver, &[row], 1, &uniform_weights(), &FlatGround, &[], &lookup, None, Some(&mut traces));
         let trace = traces
             .segments
             .iter()
@@ -389,7 +487,7 @@
         let receiver = Receiver { lat: 50.105, lon: 14.255, elevation_m: 0.0, height_m: 4.0 };
         let mut traces = crate::types::TraceCollector::new();
         let empty: HashMap<u64, String> = HashMap::new();
-        run(&receiver, &[row], 1, &FlatGround, &[], &empty, None, Some(&mut traces));
+        run(&receiver, &[row], 1, &uniform_weights(), &FlatGround, &[], &empty, None, Some(&mut traces));
         let trace = traces
             .segments
             .iter()
@@ -486,6 +584,9 @@
             microseg_unique_arr_count: 0,
             microseg_unique_dep_count: 0,
             microseg_unique_gse_count_per_class: &ZERO_GSE,
+            microseg_unique_ga_count: 0,
+            microseg_unique_ga_arr_count: 0,
+            microseg_unique_ga_dep_count: 0,
         }
     }
 
@@ -527,7 +628,7 @@
         };
         let bands: [f32; 8] = [1e6, 2e6, 3e6, 4e6, 5e6, 6e6, 7e6, 8e6];
         let row = make_path_effect_row(&bands);
-        let out = run(&pe_receiver(), &[row], 1, &rasters, &[], &HashMap::new(), None, None);
+        let out = run(&pe_receiver(), &[row], 1, &uniform_weights(), &rasters, &[], &HashMap::new(), None, None);
         let md = pe_ground_ops(&out);
         // With a hill in the way, terrain_impact_db must be NEGATIVE
         // (lower full Lden vs no_terrain → terrain attenuates).
@@ -565,7 +666,7 @@
         };
         let bands: [f32; 8] = [1e6, 2e6, 3e6, 4e6, 5e6, 6e6, 7e6, 8e6];
         let row = make_path_effect_row(&bands);
-        let out = run(&pe_receiver(), &[row], 1, &rasters, &[], &HashMap::new(), None, None);
+        let out = run(&pe_receiver(), &[row], 1, &uniform_weights(), &rasters, &[], &HashMap::new(), None, None);
         let md = pe_ground_ops(&out);
         // Building diffraction must drive screening_impact_db negative.
         assert!(
@@ -605,7 +706,7 @@
         };
         let bands: [f32; 8] = [1e6, 2e6, 3e6, 4e6, 5e6, 6e6, 7e6, 8e6];
         let row = make_path_effect_row(&bands);
-        let out = run(&pe_receiver(), &[row], 1, &rasters, &[], &HashMap::new(), None, None);
+        let out = run(&pe_receiver(), &[row], 1, &uniform_weights(), &rasters, &[], &HashMap::new(), None, None);
         let md = pe_ground_ops(&out);
         // Under the max rule, ground_impact ≈ 0 (per-band identity:
         // both full and no_ground use a_bar when a_bar > a_gr).
@@ -645,7 +746,7 @@
         };
         let bands: [f32; 8] = [1e6, 2e6, 3e6, 4e6, 5e6, 6e6, 7e6, 8e6];
         let row = make_path_effect_row(&bands);
-        let out = run(&pe_receiver(), &[row], 1, &rasters, &[], &HashMap::new(), None, None);
+        let out = run(&pe_receiver(), &[row], 1, &uniform_weights(), &rasters, &[], &HashMap::new(), None, None);
         let md = pe_ground_ops(&out);
         // No obstacle → both terrain and screening impacts are zero.
         assert!(

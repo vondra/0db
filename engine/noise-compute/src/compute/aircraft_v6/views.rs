@@ -110,13 +110,20 @@ pub struct AirportTrafficRowView<'a> {
     /// Per-GSE-class distinct fids; populated only on `veh_kind=1`
     /// rows.
     pub unique_gse_count_per_class: &'a [u32; NUM_GSE_CLASSES],
-    /// UNION across ALL rows of this `(osm_id, segment_idx)`. Same
-    /// value on every row of the microsegment — popup reads first
-    /// row's value to populate per-microseg observed_movements.
+    /// UNION across ALL rows of this `(osm_id, segment_idx)`. v9: these
+    /// three count NON-GA-class fids only — the GA-class union is below.
+    /// Same value on every row of the microsegment — popup reads first
+    /// row's value to populate per-microseg observed_movements, dividing
+    /// each window by its own day count (`ga-365d-hybrid-plan.md` §2).
     pub microseg_unique_count: u32,
     pub microseg_unique_arr_count: u32,
     pub microseg_unique_dep_count: u32,
     pub microseg_unique_gse_count_per_class: &'a [u32; NUM_GSE_CLASSES],
+    /// v9 GA-class (365-day window) microseg UNION split. Zero on
+    /// non-hybrid extracts.
+    pub microseg_unique_ga_count: u32,
+    pub microseg_unique_ga_arr_count: u32,
+    pub microseg_unique_ga_dep_count: u32,
 }
 
 /// One row of `airborne.arrow`. `flight_id` is the real ADS-B identity

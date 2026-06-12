@@ -378,7 +378,16 @@ fn main() -> Result<()> {
             let scope = parse_scope(scope_bbox.as_deref())?;
             require_input_dir_exists("--segments-by-r4", &segments_by_r4)?;
             let rasters = RealRasters::new(&prepared_dir);
-            let n = run_stage_2a(&segments_by_r4, &h3r4_dir, n_days, scope.as_ref(), &rasters)?;
+            // GA-class window from the shuffle manifest (0 = single-window).
+            let ga_n_days = read_ga_n_days(&segments_by_r4)?;
+            let n = run_stage_2a(
+                &segments_by_r4,
+                &h3r4_dir,
+                n_days,
+                ga_n_days,
+                scope.as_ref(),
+                &rasters,
+            )?;
             eprintln!("{} [stage2a] {n} R4 hexes written", ts());
         }
         Cmd::Stage2b { segments_dir, h3r4_dir, n_days, scope_bbox, fail_on_ga_cruise } => {
@@ -398,7 +407,15 @@ fn main() -> Result<()> {
                 ts(),
                 areas.len()
             );
-            let n = run_stage_2c(&segments_by_r4, &areas, &h3r4_dir, n_days, scope.as_ref())?;
+            let ga_n_days = read_ga_n_days(&segments_by_r4)?;
+            let n = run_stage_2c(
+                &segments_by_r4,
+                &areas,
+                &h3r4_dir,
+                n_days,
+                ga_n_days,
+                scope.as_ref(),
+            )?;
             eprintln!("{} [stage2c] {n} R4 hexes written", ts());
         }
         Cmd::RunAll {
@@ -822,8 +839,14 @@ fn main() -> Result<()> {
 
             if runs(FromStage::Stage2a) {
                 let t2a = Instant::now();
-                let r2a =
-                    run_stage_2a(&by_r4_dir, &h3r4_dir, window_n_days, scope.as_ref(), &rasters)?;
+                let r2a = run_stage_2a(
+                    &by_r4_dir,
+                    &h3r4_dir,
+                    window_n_days,
+                    ga_n_days,
+                    scope.as_ref(),
+                    &rasters,
+                )?;
                 eprintln!("{} [run-all] stage2a={r2a} ({:?})", ts(), t2a.elapsed());
             }
             if until_stage <= FromStage::Stage2a {
@@ -873,7 +896,14 @@ fn main() -> Result<()> {
             // Stage 2C is the last stage; reaching here means
             // `until_stage == Stage2c`, so it always runs.
             let t2c = Instant::now();
-            let r2c = run_stage_2c(&by_r4_dir, &areas, &h3r4_dir, window_n_days, scope.as_ref())?;
+            let r2c = run_stage_2c(
+                &by_r4_dir,
+                &areas,
+                &h3r4_dir,
+                window_n_days,
+                ga_n_days,
+                scope.as_ref(),
+            )?;
             eprintln!("{} [run-all] stage2c={r2c} ({:?})", ts(), t2c.elapsed());
 
             // `by_r4_dir` is left on disk so `--from-stage stage1-5/2a/2c`

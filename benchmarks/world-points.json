@@ -573,10 +573,10 @@
       "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf"
     },
     "expected_model_band": [
-      56.9,
-      60.9
+      48.5,
+      54.5
     ],
-    "tolerance_note": "audit model DEN/NOC 57.0/49.7, Δ +5.5/+4.0 (worst-pair georef ±900 m at map edge); band = verified live Lden 2026-06-11 (58.85) ±2 — W5/B7 re-bands",
+    "tolerance_note": "band = MEASURED RMT8 DEN 51.5 ±3 (Letiste Praha 2025). GA hybrid: model 53.73 (residual +2.2 over measured — candidate heli NPD / NE-corridor ground share); pre-hybrid live ~58.9 was +7.4 over (heli phantom). Re-banded 2026-06-12; tighten to ±2 after the world re-extract re-validation.",
     "caveats": "georef worst-case ±900 m (Horoměřice pair)"
   },
   {
@@ -592,10 +592,10 @@
       "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf"
     },
     "expected_model_band": [
-      57.3,
-      61.3
+      50.0,
+      56.0
     ],
-    "tolerance_note": "audit model DEN/NOC 57.5/50.3, Δ +4.5/+4.2; band = verified live Lden 2026-06-11 (59.34) ±2 — W5/B7 re-bands",
+    "tolerance_note": "band = MEASURED RMT9 DEN 53.0 ±3 (Letiste Praha 2025). GA hybrid: model 52.02 (Δ−0.98); pre-hybrid live ~59.3 was +6.3 over (strongest heli-corridor phantom — police base adjacency). Re-banded 2026-06-12.",
     "caveats": "georef ±150–300 m"
   },
   {
@@ -611,10 +611,10 @@
       "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf"
     },
     "expected_model_band": [
-      56.1,
-      60.1
+      46.6,
+      52.6
     ],
-    "tolerance_note": "audit model DEN/NOC 56.2/49.0, Δ +6.6/+5.5 (largest LKPR over-read; georef ±900 m worst case applies); band = verified live Lden 2026-06-11 (58.08) ±2 — W5/B7 re-bands",
+    "tolerance_note": "band = MEASURED RMT10 DEN 49.6 ±3 (Letiste Praha 2025). GA hybrid: model 52.41 (residual +2.8 over measured); pre-hybrid live ~58.1 was +8.5 over (heli phantom). Re-banded 2026-06-12; residual tracked with rmt8.",
     "caveats": "georef worst-case ±900 m (Horoměřice pair)"
   },
   {
@@ -630,10 +630,10 @@
       "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf"
     },
     "expected_model_band": [
-      53.2,
-      57.2
+      48.4,
+      52.4
     ],
-    "tolerance_note": "audit model DEN/NOC 53.5/46.1, Δ +3.1/+1.2 (approach side, near 0..+3); band = verified live Lden 2026-06-11 (55.23) ±2 — W5/B7 re-bands",
+    "tolerance_note": "band = MEASURED RMT11 DEN 50.4 ±2 (Letiste Praha 2025). GA hybrid landed the model ON the measurement: 50.82 (Δ+0.42); pre-hybrid live 55.2 was +4.8 over measured (helicopter 14d-window phantom). Re-banded 2026-06-12 off the GA-consumer merge.",
     "caveats": "georef ±150–300 m"
   },
   {
@@ -668,10 +668,10 @@
       "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf"
     },
     "expected_model_band": [
-      55.7,
-      59.7
+      51.5,
+      55.5
     ],
-    "tolerance_note": "audit model DEN/NOC 55.8/48.6, Δ +2.3/+0.3 (approach side); band = verified live Lden 2026-06-11 (57.66) ±2 — W5/B7 re-bands",
+    "tolerance_note": "band = MEASURED RMT13 DEN 53.5 ±2 (Letiste Praha 2025). GA hybrid: model 54.57 (Δ+1.07); pre-hybrid live 57.66 was +4.2 over measured (heli phantom). Re-banded 2026-06-12.",
     "caveats": "georef ±150–300 m"
   },
   {
@@ -915,10 +915,10 @@
       "url": "https://www.nonoise.org/library/npreport/chapter9.htm"
     },
     "expected_model_band": [
-      29.5,
-      33.5
+      26.4,
+      30.4
     ],
-    "tolerance_note": "audit cruise-only Lden 27.3 ✓ in NPS band (cruise-report §C); runner reads the aircraft-source aggregate (airborne folded in) — verified live 31.48 on 2026-06-11, band = live ±2; B2/C5 (cruise √2, −1.5 dB) shifts this — re-band at C5",
+    "tolerance_note": "band = live 28.44 ±2 post-GA-hybrid (2026-06-12, local 14d airline scope); NPS truth band 20-40 holds regardless. Re-check after the world re-extract (local praha-150km cache clips the SW corridor); B2/C5 cruise sqrt2 re-band note stays.",
     "caveats": "total there 37.5 (roads dominate); aircraft aggregate, not the cruise-only sum"
   },
   {

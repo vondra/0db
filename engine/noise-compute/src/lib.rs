@@ -795,6 +795,7 @@ mod tests {
             &MockRasters,
             None,
             365,
+            &crate::emission::aircraft::ClassWeights::uniform(),
             0,
             None,
             None,

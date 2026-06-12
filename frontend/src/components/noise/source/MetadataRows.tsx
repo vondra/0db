@@ -284,9 +284,19 @@ export function MetadataRows({ c }: { c: Contributor }) {
     const dayShare = a.top_day_energy_share ?? 0
     const flightShare = a.top_flight_energy_share ?? 0
     const sparse = dayShare > DAY_SHARE_WARN || flightShare > FLIGHT_SHARE_WARN
+    // GA 365-day hybrid (delta 7): airline classes sample N days, GA +
+    // helicopters sample a separate (365-day) window. When the two differ
+    // the sample basis must be stated per class, not as one figure —
+    // otherwise the popup implies jets were averaged over 365 days too.
+    const nDays = a.sample_days
+    const gaDays = a.ga_sample_days
+    const hybrid = gaDays != null && nDays != null && gaDays !== nDays
+    const basisLine = hybrid
+      ? `jets ${nDays} d/yr · GA+heli ${gaDays} d/yr.`
+      : `Lden averaged from ${nDays ?? '–'} sample days/yr.`
     const sampleText = txtTable([
       'ADS-B flight tracks (adsbexchange).',
-      `Lden averaged from ${a.sample_days ?? '–'} sample days/yr.`,
+      basisLine,
       ...(sparse
         ? [
             '',
@@ -299,10 +309,11 @@ export function MetadataRows({ c }: { c: Contributor }) {
           ]
         : []),
     ], 16, 16)
+    const badge = hybrid ? `${nDays}/${gaDays} d/yr` : `${nDays ?? '–'} days/yr`
     return lineRow(
       'Data',
       <DataPoint title="Aircraft data source" text={sampleText}>
-        {sparse ? <>⚠ sparse sample</> : <>ADS-B · {a.sample_days ?? '–'} days/yr</>}
+        {sparse ? <>⚠ sparse sample</> : <>ADS-B · {badge}</>}
       </DataPoint>,
     )
   }

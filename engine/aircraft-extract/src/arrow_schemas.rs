@@ -28,6 +28,43 @@ pub fn with_n_days(schema: Arc<Schema>, n_days: u16) -> Arc<Schema> {
     Arc::new((*schema).clone().with_metadata(md))
 }
 
+/// Build the `sample_days_by_class` metadata vector for the GA 365-day
+/// hybrid contract (`ga-365d-hybrid-plan.md` §2): a `NUM_CLASSES`-length
+/// comma string indexed by noise-class idx — GA-sampled classes carry
+/// `ga_n_days`, every other class carries `n_days`. A single-window
+/// extract (`ga_n_days == 0`) stamps the uniform `n_days` vector so the
+/// consumer's weight LUT is all-`1.0` (byte-identical accounting). Class
+/// membership comes from `noise_compute::emission::aircraft::is_ga_sampled_class`
+/// so the writer and every reader derive the vector from one source of truth.
+pub fn sample_days_by_class_vector(n_days: u16, ga_n_days: u16) -> String {
+    use noise_compute::emission::aircraft::{is_ga_sampled_class, NUM_CLASSES};
+    let ga = if ga_n_days == 0 { n_days } else { ga_n_days };
+    (0..NUM_CLASSES)
+        .map(|c| if is_ga_sampled_class(c as u8) { ga } else { n_days }.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Returns a clone of `schema` with the GA 365-day hybrid window metadata
+/// stamped: `n_days` (airline window), `ga_n_days` (GA-class window — only
+/// when hybrid, i.e. `ga_n_days > 0`), and the per-class
+/// `sample_days_by_class` vector the consumer's `ClassWeights` parses
+/// (`ga-365d-hybrid-plan.md` §2). Used by the airborne + airport_traffic
+/// writers (cruise stays on plain [`with_n_days`] — it is airline-only).
+pub fn with_n_days_and_windows(schema: Arc<Schema>, n_days: u16, ga_n_days: u16) -> Arc<Schema> {
+    use noise_compute::emission::aircraft::SAMPLE_DAYS_BY_CLASS_KEY;
+    let mut md = schema.metadata().clone();
+    md.insert("n_days".to_string(), n_days.to_string());
+    if ga_n_days > 0 {
+        md.insert("ga_n_days".to_string(), ga_n_days.to_string());
+    }
+    md.insert(
+        SAMPLE_DAYS_BY_CLASS_KEY.to_string(),
+        sample_days_by_class_vector(n_days, ga_n_days),
+    );
+    Arc::new((*schema).clone().with_metadata(md))
+}
+
 /// Stage 0 — `flights/<day>.arrow`. One row per (aircraft, day).
 pub fn flights_schema() -> Arc<Schema> {
     let pt_struct = DataType::Struct(Fields::from(vec![
@@ -141,7 +178,7 @@ pub fn airborne_schema() -> Arc<Schema> {
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "airborne"),
-        ("airborne_contract", AIRBORNE_CONTRACT_V3),
+        ("airborne_contract", AIRBORNE_CONTRACT_V4),
     ])))
 }
 
@@ -161,10 +198,15 @@ pub fn airborne_schema() -> Arc<Schema> {
 /// v3 (C10b, 2026-06-11): pinned WING_B748 heavy class — NUM_CLASSES
 /// 14→15 and the traffic re-sort renumbered every class index, so the
 /// `class` column of older files maps to the wrong NPD table.
-pub const AIRBORNE_CONTRACT_V3: &str = "airborne_v3";
+/// v4 (GA 365-day hybrid, 2026-06-12): no column change, but the file now
+/// carries the `sample_days_by_class` metadata vector the consumer's
+/// `ClassWeights` REQUIRES to weight GA rows at 1/365 (`ga-365d-hybrid-plan.md`
+/// §2). A v3 reader would ignore the vector and double-weight GA at 1/12
+/// (the +14.8 dB phantom); the bump makes that skew refuse to load.
+pub const AIRBORNE_CONTRACT_V4: &str = "airborne_v4";
 
 /// Verify a loaded `airborne.arrow` file's `airborne_contract` metadata
-/// matches the current [`AIRBORNE_CONTRACT_V3`]. Older files MUST be
+/// matches the current [`AIRBORNE_CONTRACT_V4`]. Older files MUST be
 /// rejected — column layout differs and silent decoding would either
 /// crash (v2 reading v1's extra columns through a 13-col offset) or
 /// silently zero-out terrain at every chord midpoint (v2 cuts read
@@ -173,9 +215,9 @@ pub fn assert_airborne_contract_v2(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     match metadata.get("airborne_contract").map(String::as_str) {
-        Some(AIRBORNE_CONTRACT_V3) => Ok(()),
+        Some(AIRBORNE_CONTRACT_V4) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "airborne_contract mismatch: expected {AIRBORNE_CONTRACT_V3}, got {other}"
+            "airborne_contract mismatch: expected {AIRBORNE_CONTRACT_V4}, got {other}"
         )),
         // v1 files (overnight 2026-05-21 extract) carry no
         // `airborne_contract` stamp — the contract const was introduced
@@ -227,7 +269,7 @@ pub fn cruise_top_candidate_fields() -> Fields {
 /// NPD set is published). The popup kernel hardcodes `is_departure: true`
 /// directly on the synth `AircraftSegment` — the column was pure overhead.
 /// v17 (C10b, 2026-06-11): pinned WING_B748 — class renumbering, see
-/// [`AIRBORNE_CONTRACT_V3`]. (v16 dropped the tautological `flags` column.)
+/// [`AIRBORNE_CONTRACT_V4`]. (v16 dropped the tautological `flags` column.)
 pub const CRUISE_CONTRACT_V17: &str = "cruise_v17";
 
 /// Stage 2B — `h3r4/<hex>/cruise.arrow` (v16). One row per (R7, fl_bin,
@@ -302,13 +344,26 @@ pub fn assert_cruise_contract(
 /// `microseg_unique_*` UNION counts.
 /// v8 (C10b, 2026-06-11): pinned WING_B748 — `class_idx` renumbering AND
 /// the baked per-class `band_energy_lin` reflect the new 15-class table,
-/// see [`AIRBORNE_CONTRACT_V3`].
-pub const AIRPORT_TRAFFIC_CONTRACT_V8: &str = "airport_traffic_v8";
+/// see [`AIRBORNE_CONTRACT_V4`].
+/// v9 (GA 365-day hybrid, 2026-06-12): the row-replicated `microseg_unique_*`
+/// UNIONs are the ONE place airline (12-day) and GA (365-day) movement
+/// counts would mix in a single number. Because classes partition flights,
+/// the union splits exactly: the existing three columns become **non-GA
+/// only** and three new `microseg_unique_ga_*` columns hold the GA-class
+/// union. The popup divides `non_ga / n_days + ga / ga_n_days`
+/// (`ga-365d-hybrid-plan.md` §2). The file also stamps `sample_days_by_class`
+/// so the consumer weights GA *energy* at 1/365. (`unique_gse_count_per_class`
+/// is untouched — GSE is airline-pass only.)
+pub const AIRPORT_TRAFFIC_CONTRACT_V9: &str = "airport_traffic_v9";
 
 /// Global airport summary sidecar contract (one row per airport_key,
-/// truly unique counts across all R4s). Produced by Stage 2C v5
-/// reduce phase from per-R4 `airport_summary_parts/` dumps.
-pub const AIRPORT_SUMMARY_CONTRACT_V1: &str = "airport_summary_v1";
+/// truly unique counts across all R4s). Produced by Stage 2C reduce phase
+/// from per-R4 `airport_summary_parts/` dumps.
+/// v2 (GA 365-day hybrid, 2026-06-12): the airport-level arr/dep/ops fid
+/// UNIONs also cross windows, so each splits into a non-GA (existing) and a
+/// GA set; the popup divides `non_ga / n_days + ga / ga_n_days` (Codex CRIT
+/// delta 2). GSE is airline-pass only — its per-class counts are unsplit.
+pub const AIRPORT_SUMMARY_CONTRACT_V2: &str = "airport_summary_v2";
 
 /// `geometry_kind` enum stamped on each airport_traffic row.
 /// LINE: OSM runway / taxiway / stopway microsegment with real
@@ -391,7 +446,10 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
         ),
         // Per-microsegment UNION (replicated across rows). Lets the
         // popup populate per-microseg movement counts without a UNION
-        // join over per-row scalars.
+        // join over per-row scalars. v9: these three count NON-GA-class
+        // fids only — the GA-class union lives in the `microseg_unique_ga_*`
+        // columns below so the popup can divide each by its own window
+        // (`non_ga / n_days + ga / ga_n_days`, `ga-365d-hybrid-plan.md` §2).
         Field::new("microseg_unique_count", DataType::UInt32, false),
         Field::new("microseg_unique_arr_count", DataType::UInt32, false),
         Field::new("microseg_unique_dep_count", DataType::UInt32, false),
@@ -400,27 +458,34 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
             gse_per_class,
             false,
         ),
+        // v9 GA-class microseg UNION (PROP_C172 + HELICOPTER): the 365-day
+        // window split of the three columns above. Zero on non-hybrid
+        // extracts (no flights routed to the GA window) — then the popup's
+        // `ga / ga_n_days` term vanishes and the math degenerates to legacy.
+        Field::new("microseg_unique_ga_count", DataType::UInt32, false),
+        Field::new("microseg_unique_ga_arr_count", DataType::UInt32, false),
+        Field::new("microseg_unique_ga_dep_count", DataType::UInt32, false),
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "airport_traffic"),
-        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V8),
+        ("airport_traffic_contract", AIRPORT_TRAFFIC_CONTRACT_V9),
     ])))
 }
 
 /// Verify a loaded airport_traffic.arrow file's metadata matches the
-/// current [`AIRPORT_TRAFFIC_CONTRACT_V8`] contract. Older files MUST
+/// current [`AIRPORT_TRAFFIC_CONTRACT_V9`] contract. Older files MUST
 /// be rejected — column layouts and energy-normalization semantics
 /// differ across versions, so silent decoding would produce wrong
 /// numbers downstream. v5 stored daily-average `band_energy_lin` and
 /// a redundant `movements_per_day` column; reading v5 as v6 would
 /// under-read Lden by ~10·log10(n_days) ≈ 25.6 dB at n_days=365.
-pub fn assert_airport_traffic_contract_v7(
+pub fn assert_airport_traffic_contract_v9(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     match metadata.get("airport_traffic_contract").map(String::as_str) {
-        Some(AIRPORT_TRAFFIC_CONTRACT_V8) => Ok(()),
+        Some(AIRPORT_TRAFFIC_CONTRACT_V9) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V8}, got {other}"
+            "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V9}, got {other}"
         )),
         None => Err(anyhow::anyhow!(
             "airport_traffic_contract metadata missing"
@@ -430,40 +495,52 @@ pub fn assert_airport_traffic_contract_v7(
 
 /// Global airport_summary.arrow schema (one row per airport_key,
 /// canonical truly-unique counts across all R4s). Output of Stage 2C
-/// v5 reduce phase. Loaded once at popup query time; HashMap keyed by
+/// reduce phase. Loaded once at popup query time; HashMap keyed by
 /// airport_key.
+///
+/// v2 (GA 365-day hybrid): arr/dep/ops counts split into non-GA (existing
+/// columns) + GA (`airport_unique_ga_*`) so the popup divides
+/// `non_ga / n_days + ga / ga_n_days`. GSE per-class stays unsplit
+/// (airline-pass only). GA columns are zero on non-hybrid extracts.
 pub fn airport_summary_schema() -> Arc<Schema> {
     let gse_per_class = DataType::FixedSizeList(
         Arc::new(Field::new("item", DataType::UInt32, false)),
         NUM_GSE_CLASSES,
     );
-    let ops_per_kind = DataType::FixedSizeList(
-        Arc::new(Field::new("item", DataType::UInt32, false)),
-        NUM_OPS_KINDS,
-    );
+    let ops_per_kind = || {
+        DataType::FixedSizeList(
+            Arc::new(Field::new("item", DataType::UInt32, false)),
+            NUM_OPS_KINDS,
+        )
+    };
     let fields = vec![
         Field::new("airport_key", DataType::Utf8, false),
+        // Non-GA-class window.
         Field::new("airport_unique_arr_count", DataType::UInt32, false),
         Field::new("airport_unique_dep_count", DataType::UInt32, false),
         Field::new("airport_unique_gse_count_per_class", gse_per_class, false),
-        Field::new("airport_unique_ops_count_per_kind", ops_per_kind, false),
+        Field::new("airport_unique_ops_count_per_kind", ops_per_kind(), false),
+        // GA-class (365-day) window.
+        Field::new("airport_unique_ga_arr_count", DataType::UInt32, false),
+        Field::new("airport_unique_ga_dep_count", DataType::UInt32, false),
+        Field::new("airport_unique_ga_ops_count_per_kind", ops_per_kind(), false),
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "airport_summary"),
-        ("airport_summary_contract", AIRPORT_SUMMARY_CONTRACT_V1),
+        ("airport_summary_contract", AIRPORT_SUMMARY_CONTRACT_V2),
     ])))
 }
 
 /// Verify metadata on `airport_summary.arrow`. Missing or stale →
 /// hard error (popup MUST refuse to compute airport arr/dep counts
 /// without a current sidecar; per-row sum is forbidden, see plan §4.3).
-pub fn assert_airport_summary_contract_v1(
+pub fn assert_airport_summary_contract_v2(
     metadata: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     match metadata.get("airport_summary_contract").map(String::as_str) {
-        Some(AIRPORT_SUMMARY_CONTRACT_V1) => Ok(()),
+        Some(AIRPORT_SUMMARY_CONTRACT_V2) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
-            "airport_summary_contract mismatch: expected {AIRPORT_SUMMARY_CONTRACT_V1}, got {other}"
+            "airport_summary_contract mismatch: expected {AIRPORT_SUMMARY_CONTRACT_V2}, got {other}"
         )),
         None => Err(anyhow::anyhow!(
             "airport_summary_contract metadata missing"
@@ -598,7 +675,7 @@ mod tests {
         let s = airport_traffic_schema();
         assert_eq!(
             s.metadata().get("airport_traffic_contract").map(String::as_str),
-            Some(AIRPORT_TRAFFIC_CONTRACT_V8)
+            Some(AIRPORT_TRAFFIC_CONTRACT_V9)
         );
     }
 
@@ -614,6 +691,8 @@ mod tests {
             "unique_gse_count_per_class",
             "microseg_unique_count", "microseg_unique_arr_count",
             "microseg_unique_dep_count", "microseg_unique_gse_count_per_class",
+            "microseg_unique_ga_count", "microseg_unique_ga_arr_count",
+            "microseg_unique_ga_dep_count",
         ] {
             assert!(
                 s.field_with_name(required).is_ok(),
@@ -655,22 +734,22 @@ mod tests {
         let s = airport_summary_schema();
         assert_eq!(
             s.metadata().get("airport_summary_contract").map(String::as_str),
-            Some(AIRPORT_SUMMARY_CONTRACT_V1)
+            Some(AIRPORT_SUMMARY_CONTRACT_V2)
         );
     }
 
     #[test]
     fn assert_airport_summary_contract_round_trip() {
         let s = airport_summary_schema();
-        assert!(assert_airport_summary_contract_v1(s.metadata()).is_ok());
+        assert!(assert_airport_summary_contract_v2(s.metadata()).is_ok());
         let mut bogus = s.metadata().clone();
         bogus.insert(
             "airport_summary_contract".into(),
             "airport_summary_vBOGUS".into(),
         );
-        assert!(assert_airport_summary_contract_v1(&bogus).is_err());
+        assert!(assert_airport_summary_contract_v2(&bogus).is_err());
         bogus.remove("airport_summary_contract");
-        assert!(assert_airport_summary_contract_v1(&bogus).is_err());
+        assert!(assert_airport_summary_contract_v2(&bogus).is_err());
     }
 
     #[test]

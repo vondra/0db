@@ -82,25 +82,40 @@ pub struct AirportTrafficRow {
     /// only when `veh_kind=1`.
     pub unique_gse_count_per_class: [u32; NUM_GSE_CLASSES],
     /// UNION across ALL rows of this microsegment `(osm_id,
-    /// segment_idx)` regardless of period / class / ops_kind.
-    /// Replicated on every row of the same microsegment so the popup
-    /// loader can populate per-microseg observed_movements without a
-    /// HashSet UNION join.
+    /// segment_idx)` regardless of period / class / ops_kind. v9: these
+    /// three count NON-GA-class fids only — the GA-class union lives in
+    /// `microseg_unique_ga_*`. Replicated on every row of the same
+    /// microsegment so the popup loader can populate per-microseg
+    /// observed_movements without a HashSet UNION join, and divide each
+    /// window by its own day count (`ga-365d-hybrid-plan.md` §2).
     pub microseg_unique_count: u32,
     pub microseg_unique_arr_count: u32,
     pub microseg_unique_dep_count: u32,
     pub microseg_unique_gse_count_per_class: [u32; NUM_GSE_CLASSES],
+    /// v9 GA-class (PROP_C172 + HELICOPTER) microsegment UNION — the
+    /// 365-day-window split of the three counts above. Zero on a
+    /// non-hybrid extract. (GSE has no GA split — airline-pass only.)
+    pub microseg_unique_ga_count: u32,
+    pub microseg_unique_ga_arr_count: u32,
+    pub microseg_unique_ga_dep_count: u32,
 }
 
-/// Write one R4 hex's traffic counters. `n_days` stamps the extraction
-/// window into schema metadata so the popup consumer can disambiguate
-/// sparse rates.
+/// Write one R4 hex's traffic counters. `n_days` (airline window) +
+/// `ga_n_days` (GA-class window, 0 = single-window extract) stamp the GA
+/// hybrid metadata (`n_days`, `ga_n_days`, `sample_days_by_class`) so the
+/// popup consumer weights GA energy at 1/365 and divides the GA-split
+/// movement counts by their own window (`ga-365d-hybrid-plan.md` §2).
 pub fn write_airport_traffic(
     path: &Path,
     rows: &[AirportTrafficRow],
     n_days: u16,
+    ga_n_days: u16,
 ) -> Result<()> {
-    let schema = arrow_schemas::with_n_days(arrow_schemas::airport_traffic_schema(), n_days);
+    let schema = arrow_schemas::with_n_days_and_windows(
+        arrow_schemas::airport_traffic_schema(),
+        n_days,
+        ga_n_days,
+    );
     let n = rows.len();
     let mut airport_key = StringBuilder::with_capacity(n, 8 * n);
     let mut osm_id = UInt64Builder::with_capacity(n);
@@ -122,6 +137,9 @@ pub fn write_airport_traffic(
     let mut microseg_unique = UInt32Builder::with_capacity(n);
     let mut microseg_unique_arr = UInt32Builder::with_capacity(n);
     let mut microseg_unique_dep = UInt32Builder::with_capacity(n);
+    let mut microseg_unique_ga = UInt32Builder::with_capacity(n);
+    let mut microseg_unique_ga_arr = UInt32Builder::with_capacity(n);
+    let mut microseg_unique_ga_dep = UInt32Builder::with_capacity(n);
 
     let mut band_values: Vec<f32> = Vec::with_capacity(n * NUM_BANDS);
     let mut gse_values: Vec<u32> = Vec::with_capacity(n * NUM_GSE_CLASSES);
@@ -151,6 +169,9 @@ pub fn write_airport_traffic(
         microseg_unique_arr.append_value(r.microseg_unique_arr_count);
         microseg_unique_dep.append_value(r.microseg_unique_dep_count);
         microseg_gse_values.extend_from_slice(&r.microseg_unique_gse_count_per_class);
+        microseg_unique_ga.append_value(r.microseg_unique_ga_count);
+        microseg_unique_ga_arr.append_value(r.microseg_unique_ga_arr_count);
+        microseg_unique_ga_dep.append_value(r.microseg_unique_ga_dep_count);
     }
 
     let band_list = FixedSizeListArray::new(
@@ -197,6 +218,9 @@ pub fn write_airport_traffic(
         Arc::new(microseg_unique_arr.finish()),
         Arc::new(microseg_unique_dep.finish()),
         Arc::new(microseg_gse_list),
+        Arc::new(microseg_unique_ga.finish()),
+        Arc::new(microseg_unique_ga_arr.finish()),
+        Arc::new(microseg_unique_ga_dep.finish()),
     ];
     let batch = RecordBatch::try_new(schema.clone(), columns)?;
     write_record_batches(path, &schema, &[batch])
@@ -204,7 +228,7 @@ pub fn write_airport_traffic(
 
 pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
     let (schema, batches) = read_all_batches(path)?;
-    arrow_schemas::assert_airport_traffic_contract_v7(schema.metadata())?;
+    arrow_schemas::assert_airport_traffic_contract_v9(schema.metadata())?;
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     let mut out = Vec::with_capacity(total_rows);
     for b in batches {
@@ -251,6 +275,9 @@ pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
             .downcast_ref::<UInt32Array>()
             .ok_or_else(|| anyhow::anyhow!("microseg_unique_gse_count_per_class inner type"))?
             .values();
+        let microseg_unique_ga = column::<UInt32Array>(&b, "microseg_unique_ga_count")?;
+        let microseg_unique_ga_arr = column::<UInt32Array>(&b, "microseg_unique_ga_arr_count")?;
+        let microseg_unique_ga_dep = column::<UInt32Array>(&b, "microseg_unique_ga_dep_count")?;
 
         for i in 0..b.num_rows() {
             let lo_b = i * NUM_BANDS;
@@ -285,6 +312,9 @@ pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
                 microseg_unique_arr_count: microseg_unique_arr.value(i),
                 microseg_unique_dep_count: microseg_unique_dep.value(i),
                 microseg_unique_gse_count_per_class: microseg_gse,
+                microseg_unique_ga_count: microseg_unique_ga.value(i),
+                microseg_unique_ga_arr_count: microseg_unique_ga_arr.value(i),
+                microseg_unique_ga_dep_count: microseg_unique_ga_dep.value(i),
             });
         }
     }
@@ -340,6 +370,9 @@ mod tests {
             microseg_unique_arr_count: 25,
             microseg_unique_dep_count: 25,
             microseg_unique_gse_count_per_class: [0, 0, 0],
+            microseg_unique_ga_count: 3,
+            microseg_unique_ga_arr_count: 1,
+            microseg_unique_ga_dep_count: 2,
         }
     }
 
@@ -348,7 +381,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("airport_traffic.arrow");
         let rows = vec![sample_row()];
-        write_airport_traffic(&path, &rows, 14).unwrap();
+        write_airport_traffic(&path, &rows, 14, 365).unwrap();
         let read = read_airport_traffic(&path).unwrap();
         assert_eq!(read.len(), 1);
         assert_eq!(read[0], rows[0], "every field must round-trip exactly");
@@ -370,10 +403,14 @@ mod tests {
         row_gse.microseg_unique_arr_count = 0;
         row_gse.microseg_unique_dep_count = 0;
         row_gse.microseg_unique_gse_count_per_class = [1, 2, 6];
+        // GSE row: no GA aircraft split (airline-pass only).
+        row_gse.microseg_unique_ga_count = 0;
+        row_gse.microseg_unique_ga_arr_count = 0;
+        row_gse.microseg_unique_ga_dep_count = 0;
         // Distinct band values so a row offset bug surfaces.
         row_gse.band_energy_lin = [10.0e6, 20.0e6, 30.0e6, 40.0e6, 50.0e6, 60.0e6, 70.0e6, 80.0e6];
         let rows = vec![sample_row(), row_gse.clone()];
-        write_airport_traffic(&path, &rows, 14).unwrap();
+        write_airport_traffic(&path, &rows, 14, 365).unwrap();
         let read = read_airport_traffic(&path).unwrap();
         assert_eq!(read.len(), 2);
         assert_eq!(read[0], rows[0], "row 0 round-trip");
@@ -384,27 +421,46 @@ mod tests {
     fn empty_rows_writes_valid_arrow_file() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("airport_traffic.arrow");
-        write_airport_traffic(&path, &[], 14).unwrap();
+        write_airport_traffic(&path, &[], 14, 0).unwrap();
         let read = read_airport_traffic(&path).unwrap();
         assert!(read.is_empty());
     }
 
     #[test]
-    fn n_days_metadata_stamped() {
+    fn hybrid_window_metadata_stamped() {
+        // Hybrid extract stamps n_days, ga_n_days, and the per-class vector
+        // the consumer's ClassWeights parses.
         let dir = tempdir().unwrap();
         let path = dir.path().join("airport_traffic.arrow");
-        write_airport_traffic(&path, &[sample_row()], 365).unwrap();
+        write_airport_traffic(&path, &[sample_row()], 12, 365).unwrap();
         let (schema, _) = crate::arrow_io::read_record_batches(&path).unwrap();
-        assert_eq!(
-            schema.metadata().get("n_days").map(String::as_str),
-            Some("365")
-        );
+        let md = schema.metadata();
+        assert_eq!(md.get("n_days").map(String::as_str), Some("12"));
+        assert_eq!(md.get("ga_n_days").map(String::as_str), Some("365"));
+        let vec = md
+            .get("sample_days_by_class")
+            .expect("sample_days_by_class stamped");
+        assert_eq!(vec.split(',').count(), 15, "15-class vector");
+        assert!(vec.contains("365"), "GA classes carry 365: {vec}");
+        assert!(vec.contains("12"), "airline classes carry 12: {vec}");
+
+        // Single-window extract: no ga_n_days, uniform vector.
+        let p2 = dir.path().join("single.arrow");
+        write_airport_traffic(&p2, &[sample_row()], 14, 0).unwrap();
+        let (s2, _) = crate::arrow_io::read_record_batches(&p2).unwrap();
+        assert!(s2.metadata().get("ga_n_days").is_none());
+        assert!(s2
+            .metadata()
+            .get("sample_days_by_class")
+            .unwrap()
+            .split(',')
+            .all(|d| d == "14"));
     }
 
     #[test]
     fn reader_rejects_wrong_contract() {
         // Synthetic file with bogus contract metadata must be rejected
-        // by `assert_airport_traffic_contract_v7`. Older versions had
+        // by `assert_airport_traffic_contract_v9`. Older versions had
         // different column shapes or energy normalization; silent
         // decoding would produce wrong popup numbers.
         for stale_contract in [
@@ -413,6 +469,7 @@ mod tests {
             "airport_traffic_v2",
             "airport_traffic_v3",
             "airport_traffic_v4",
+            "airport_traffic_v8",
         ] {
             use crate::arrow_io::write_record_batches;
             use std::sync::Arc;

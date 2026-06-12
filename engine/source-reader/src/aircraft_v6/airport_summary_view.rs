@@ -45,31 +45,35 @@ impl AirportSummaryAccum {
             Some(dep),
             Some(gse_list),
             Some(ops_list),
+            Some(ga_arr),
+            Some(ga_dep),
+            Some(ga_ops_list),
         ) = (
             col_str(batch, "airport_key"),
             col_u32(batch, "airport_unique_arr_count"),
             col_u32(batch, "airport_unique_dep_count"),
             col_fixed_size_list(batch, "airport_unique_gse_count_per_class"),
             col_fixed_size_list(batch, "airport_unique_ops_count_per_kind"),
+            col_u32(batch, "airport_unique_ga_arr_count"),
+            col_u32(batch, "airport_unique_ga_dep_count"),
+            col_fixed_size_list(batch, "airport_unique_ga_ops_count_per_kind"),
         ) else {
             return;
         };
         if gse_list.value_length() != NUM_GSE_CLASSES as i32
             || ops_list.value_length() != 3
+            || ga_ops_list.value_length() != 3
         {
             return;
         }
-        let Some(gse_buf) = gse_list
-            .values()
-            .as_any()
-            .downcast_ref::<arrow::array::UInt32Array>()
-        else {
-            return;
+        let u32_buf = |list: &arrow::array::FixedSizeListArray| {
+            list.values()
+                .as_any()
+                .downcast_ref::<arrow::array::UInt32Array>()
+                .map(|a| a.values().to_vec())
         };
-        let Some(ops_buf) = ops_list
-            .values()
-            .as_any()
-            .downcast_ref::<arrow::array::UInt32Array>()
+        let (Some(gse_buf), Some(ops_buf), Some(ga_ops_buf)) =
+            (u32_buf(gse_list), u32_buf(ops_list), u32_buf(ga_ops_list))
         else {
             return;
         };
@@ -78,16 +82,21 @@ impl AirportSummaryAccum {
         for i in 0..n {
             let lo_g = i * NUM_GSE_CLASSES;
             let mut gse = [0u32; NUM_GSE_CLASSES];
-            gse.copy_from_slice(&gse_buf.values()[lo_g..lo_g + NUM_GSE_CLASSES]);
+            gse.copy_from_slice(&gse_buf[lo_g..lo_g + NUM_GSE_CLASSES]);
             let lo_o = i * 3;
             let mut ops = [0u32; 3];
-            ops.copy_from_slice(&ops_buf.values()[lo_o..lo_o + 3]);
+            ops.copy_from_slice(&ops_buf[lo_o..lo_o + 3]);
+            let mut ga_ops = [0u32; 3];
+            ga_ops.copy_from_slice(&ga_ops_buf[lo_o..lo_o + 3]);
             self.airport_keys.push(airport_key.value(i).to_string());
             self.entries.push(AirportSummaryEntry {
                 arr_count: arr.value(i),
                 dep_count: dep.value(i),
                 gse_count_per_class: gse,
                 ops_count_per_kind: ops,
+                ga_arr_count: ga_arr.value(i),
+                ga_dep_count: ga_dep.value(i),
+                ga_ops_count_per_kind: ga_ops,
             });
         }
     }
@@ -135,10 +144,10 @@ pub fn load_airport_summary(path: &Path) -> Result<Option<AirportSummaryAccum>, 
         ));
     }
     let v = schema.metadata().get("airport_summary_contract");
-    if v.map(String::as_str) != Some("airport_summary_v1") {
+    if v.map(String::as_str) != Some("airport_summary_v2") {
         return Err(format!(
-            "{} airport_summary_contract mismatch (expected airport_summary_v1, got {:?}) \
-             — re-extract aircraft pipeline",
+            "{} airport_summary_contract mismatch (expected airport_summary_v2, got {:?}) \
+             — re-extract aircraft pipeline (GA 365-day hybrid split)",
             path.display(),
             v
         ));

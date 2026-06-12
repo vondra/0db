@@ -155,6 +155,15 @@ fn main() -> Result<()> {
         }
         _ => resolved,
     };
+    // GA 365-day hybrid weight LUT, resolved once build-wide from the
+    // source arrows' `sample_days_by_class` (consistency-asserted like
+    // n_days) and uploaded device-global by `AirborneGpu::new`.
+    let class_weights = heatmap_aircraft::worklist::resolve_class_weights(
+        &args.h3r4_dir,
+        &source_r4s,
+        SEL,
+        n_days,
+    )?;
     let n_tiles: usize = regions.values().map(Vec::len).sum();
     eprintln!(
         "{} region(s), {n_tiles} tile(s) at z={z}, n_days={n_days}",
@@ -167,7 +176,7 @@ fn main() -> Result<()> {
     } else {
         args.batch_size
     };
-    let gpu = AirborneGpu::new();
+    let gpu = AirborneGpu::new(&class_weights);
     let mut cache = R4SourceCache::new(&args.h3r4_dir, args.r4_cache.max(7), SEL);
 
     // Morton order so neighbouring regions' grid_disk(1) rings stay hot in the LRU.

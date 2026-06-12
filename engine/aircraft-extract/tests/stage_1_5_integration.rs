@@ -211,7 +211,7 @@ fn stage_1_5_then_stage_2c_round_trips_synth_airport_key() {
     // coverage) and the synth file (covers the test strip), and
     // emits airport_traffic.arrow with rows under the synth key.
     let n_days = 1u16;
-    let r2c = run_airport_traffic(&by_r4_dir, &areas, h3r4_dir, n_days, None).unwrap();
+    let r2c = run_airport_traffic(&by_r4_dir, &areas, h3r4_dir, n_days, 0, None).unwrap();
     assert_eq!(r2c, 1, "Stage 2C should write airport_traffic.arrow for one R4");
 
     let traffic_path = r4_dir.join("airport_traffic.arrow");

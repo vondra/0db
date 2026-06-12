@@ -45,8 +45,12 @@ fn main() -> Result<()> {
     let bn = default_batch_size();
     let n = TILE_PX * TILE_PX;
 
+    // GA hybrid weight LUT: uniform here so this parity gate validates the
+    // GPU vs CPU kernel MATH (the per-class weight is an identical post-
+    // multiply on both paths; w=1.0 keeps the comparison about the kernel).
+    let cw = noise_compute::emission::aircraft::ClassWeights::uniform();
     // Device + kernels + NPD: one-time startup, excluded from the per-region prep cost below.
-    let gpu = AirborneGpu::new();
+    let gpu = AirborneGpu::new(&cw);
 
     // ---- region-prep ONCE: candidates + prepare_segment + pack + upload (the amortised wall) ----
     // The envelope is derived from the R4 geometry (see `region_candidates`), so it is a safe
@@ -89,7 +93,7 @@ fn main() -> Result<()> {
             std::env::remove_var("QM_AIRBORNE_FORCE_EXACT");
             let mut accum_prod = TileAccumulator::new();
             let tc = std::time::Instant::now();
-            let _ = scatter_tile(tile, &views, &mut accum_prod);
+            let _ = scatter_tile(tile, &views, &cw, &mut accum_prod);
             tot_cpu += tc.elapsed().as_secs_f64() * 1e3;
 
             // GPU per-tile: classify (cheap) → near + far kernels → expand (shared module)
@@ -114,7 +118,7 @@ fn main() -> Result<()> {
             if e2_exact {
                 std::env::set_var("QM_AIRBORNE_FORCE_EXACT", "1");
                 let mut accum_exact = TileAccumulator::new();
-                let _ = scatter_tile(tile, &views, &mut accum_exact);
+                let _ = scatter_tile(tile, &views, &cw, &mut accum_exact);
                 std::env::remove_var("QM_AIRBORNE_FORCE_EXACT");
                 let mut tile_worst = 0.0f64;
                 for ((&g, &a), &x) in fine

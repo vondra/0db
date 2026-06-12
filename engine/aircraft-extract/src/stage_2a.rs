@@ -48,6 +48,10 @@ pub fn run_stage_2a(
     segments_by_r4_dir: &Path,
     h3r4_dir: &Path,
     n_days: u16,
+    // GA-class window (0 = single-window extract). Stamped into the
+    // airborne.arrow metadata so the popup/heatmap weight GA rows at
+    // 1/365 (`ga-365d-hybrid-plan.md` §2).
+    ga_n_days: u16,
     scope: Option<&ScopeBbox>,
     rasters: &RealRasters,
 ) -> Result<usize> {
@@ -90,7 +94,7 @@ pub fn run_stage_2a(
             evt_counter.add(events.len() as u64);
             let dir = h3r4_dir.join(r4_hex_str(*r4));
             std::fs::create_dir_all(&dir)?;
-            crate::arrow_io::write_airborne(&dir.join("airborne.arrow"), &events, n_days)?;
+            crate::arrow_io::write_airborne(&dir.join("airborne.arrow"), &events, n_days, ga_n_days)?;
             written.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(())
         })?;
@@ -334,7 +338,7 @@ mod tests {
         .unwrap();
 
         let rasters = test_rasters();
-        let n = run_stage_2a(&by_r4, &h3r4, 1, None, &rasters).unwrap();
+        let n = run_stage_2a(&by_r4, &h3r4, 1, 0, None, &rasters).unwrap();
         assert_eq!(n, 1);
         let out = h3r4.join(r4_hex_str(r4)).join("airborne.arrow");
         assert!(out.exists(), "Stage 2A must write airborne.arrow");
@@ -364,7 +368,7 @@ mod tests {
         std::fs::create_dir_all(&by_r4).unwrap();
         let scope = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
         let rasters = test_rasters();
-        let n = run_stage_2a(&by_r4, &h3r4, 1, Some(&scope), &rasters).unwrap();
+        let n = run_stage_2a(&by_r4, &h3r4, 1, 0, Some(&scope), &rasters).unwrap();
         assert_eq!(n, 0, "no R4 shards → no R4 written");
         assert!(
             !stale.exists(),
@@ -393,7 +397,7 @@ mod tests {
         std::fs::create_dir_all(&by_r4).unwrap();
         let praha = ScopeBbox::parse("48.65,12.00,51.55,16.90").unwrap();
         let rasters = test_rasters();
-        let _ = run_stage_2a(&by_r4, &h3r4, 1, Some(&praha), &rasters).unwrap();
+        let _ = run_stage_2a(&by_r4, &h3r4, 1, 0, Some(&praha), &rasters).unwrap();
         assert!(
             stale.exists(),
             "out-of-scope R4 airborne.arrow must survive a scoped reextract"

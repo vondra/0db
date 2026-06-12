@@ -89,6 +89,19 @@ pub fn run_airport_summary_reduce(
                     entry.ops_per_kind[i].insert(fid);
                 }
             }
+            // GA-class (365-day window) split — UNIONed separately so the
+            // popup divides each window by its own day count (delta 2).
+            for fid in row.ga_arr_fids {
+                entry.ga_arr.insert(fid);
+            }
+            for fid in row.ga_dep_fids {
+                entry.ga_dep.insert(fid);
+            }
+            for (i, fids) in row.ga_ops_fids_per_kind.iter().enumerate() {
+                for &fid in fids {
+                    entry.ga_ops_per_kind[i].insert(fid);
+                }
+            }
         }
         n_parts += 1;
         part_counter.add(1);
@@ -105,6 +118,11 @@ pub fn run_airport_summary_reduce(
             }),
             airport_unique_ops_count_per_kind: std::array::from_fn(|i| {
                 acc.ops_per_kind[i].len() as u32
+            }),
+            airport_unique_ga_arr_count: acc.ga_arr.len() as u32,
+            airport_unique_ga_dep_count: acc.ga_dep.len() as u32,
+            airport_unique_ga_ops_count_per_kind: std::array::from_fn(|i| {
+                acc.ga_ops_per_kind[i].len() as u32
             }),
         })
         .collect();
@@ -128,6 +146,9 @@ struct GlobalAggregate {
     dep: HashSet<u64>,
     gse_per_class: [HashSet<u64>; NUM_GSE_CLASSES],
     ops_per_kind: [HashSet<u64>; 3],
+    ga_arr: HashSet<u64>,
+    ga_dep: HashSet<u64>,
+    ga_ops_per_kind: [HashSet<u64>; 3],
 }
 
 #[cfg(test)]
@@ -155,6 +176,9 @@ mod tests {
                 dep_fids: vec![20],
                 gse_fids_per_class: [vec![100], vec![], vec![]],
                 ops_fids_per_kind: [vec![10, 11, 12, 20], vec![10, 12], vec![]],
+                ga_arr_fids: vec![900],
+                ga_dep_fids: vec![],
+                ga_ops_fids_per_kind: [vec![900], vec![], vec![]],
             }],
         )
         .unwrap();
@@ -169,6 +193,9 @@ mod tests {
                 dep_fids: vec![21, 22],
                 gse_fids_per_class: [vec![], vec![200], vec![]],
                 ops_fids_per_kind: [vec![12, 13, 21, 22], vec![13], vec![]],
+                ga_arr_fids: vec![900, 901],
+                ga_dep_fids: vec![],
+                ga_ops_fids_per_kind: [vec![900, 901], vec![], vec![]],
             }],
         )
         .unwrap();
@@ -189,6 +216,11 @@ mod tests {
         assert_eq!(rows[0].airport_unique_ops_count_per_kind[0], 7);
         // Ops kind 1 (taxi): {10,12} ∪ {13} = 3 fids.
         assert_eq!(rows[0].airport_unique_ops_count_per_kind[1], 3);
+        // GA arr union: {900} ∪ {900, 901} = 2 (900 dedupes across R4s) —
+        // and kept disjoint from the non-GA arr count above.
+        assert_eq!(rows[0].airport_unique_ga_arr_count, 2);
+        assert_eq!(rows[0].airport_unique_ga_dep_count, 0);
+        assert_eq!(rows[0].airport_unique_ga_ops_count_per_kind[0], 2);
     }
 
     #[test]
@@ -217,6 +249,9 @@ mod tests {
                     dep_fids: vec![3],
                     gse_fids_per_class: [vec![], vec![], vec![]],
                     ops_fids_per_kind: [vec![1, 2, 3], vec![], vec![]],
+                    ga_arr_fids: vec![],
+                    ga_dep_fids: vec![],
+                    ga_ops_fids_per_kind: [vec![], vec![], vec![]],
                 },
                 AirportSummaryPartRow {
                     airport_key: "LKKB".into(),
@@ -224,6 +259,9 @@ mod tests {
                     dep_fids: vec![],
                     gse_fids_per_class: [vec![], vec![], vec![]],
                     ops_fids_per_kind: [vec![100], vec![], vec![]],
+                    ga_arr_fids: vec![],
+                    ga_dep_fids: vec![],
+                    ga_ops_fids_per_kind: [vec![], vec![], vec![]],
                 },
             ],
         )
