@@ -142,7 +142,14 @@ while lat <= n + 1e-9:
         cells.add(h3.latlng_to_cell(lat, lon, 4))
         lon += 0.02
     lat += 0.02
-for c in sorted(cells):
+# grid_disk(1) union: the builders load RING sources per output cell, so both
+# the barrier check (correctness — 1,868 world cells have a neighbour-only
+# barrier) and the byte sum (a ring-dense border bbox is NOT sparse) must see
+# the ring, not just the covering cells.
+ring = set()
+for c in cells:
+    ring.update(h3.grid_disk(c, 1))
+for c in sorted(ring):
     print(c)
 PY
 )
