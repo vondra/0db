@@ -304,13 +304,86 @@ fn pass_a_max_concurrent_days(num_days: usize, peak_per_day_gb: f64) -> usize {
     ((budget_gb * 0.60 / peak_per_day_gb).floor() as usize).clamp(1, num_days.max(1))
 }
 
+/// How many hash buckets Pass B regroups in RAM concurrently. Each worker
+/// loads its WHOLE bucket into a `HashMap<R4, Vec<FlightSegment>>`, so the
+/// working set is `concurrency × bucket_ram`. Hash bucketing spreads R4s
+/// uniformly, so buckets are near-equal — but at world scale (6.9 B segments,
+/// 2026-06-12) a full-width pool meant 24 × ~6.4 GB ≈ 150 GB on a 94 GB host:
+/// 63 GB of swap, ~2 shards/min, a de-facto deadlock. Same policy as Pass A:
+/// size to 60 % of min(host, cgroup) RAM, est. RAM = 2× the on-disk part
+/// bytes of the LARGEST bucket (arrow → Vec expansion, conservative).
+/// `QM_SHUFFLE_PASSB_THREADS` overrides for emergencies.
+fn pass_b_concurrency(temp_dir: &Path) -> usize {
+    if let Some(n) = std::env::var("QM_SHUFFLE_PASSB_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        return n.max(1);
+    }
+    let mut max_bucket_bytes: u64 = 0;
+    for phase in ["airborne", "ground"] {
+        for hash in 0..SHUFFLE_HASH_BUCKETS {
+            let bytes = list_pass_a_parts(&pass_a_bucket_dir(temp_dir, phase, hash))
+                .map(|parts| {
+                    parts
+                        .iter()
+                        .filter_map(|p| std::fs::metadata(p).ok())
+                        .map(|m| m.len())
+                        .sum()
+                })
+                .unwrap_or(0);
+            max_bucket_bytes = max_bucket_bytes.max(bytes);
+        }
+    }
+    let est_ram_per_bucket_gb = (max_bucket_bytes as f64 * 2.0) / 1_000_000_000.0;
+    if est_ram_per_bucket_gb < 0.1 {
+        return rayon::current_num_threads();
+    }
+    // 60%-of-budget policy shared with pass_a_max_concurrent_days.
+    let budget_gb = {
+        let host = std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find(|l| l.starts_with("MemTotal:"))
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .and_then(|kb| kb.parse::<u64>().ok())
+            })
+            .map(|kb| kb * 1024)
+            .unwrap_or(16u64 * 1024 * 1024 * 1024);
+        let cgroup = std::fs::read_to_string("/proc/self/cgroup")
+            .ok()
+            .and_then(|cg| {
+                cg.lines()
+                    .find_map(|l| l.strip_prefix("0::").map(str::to_owned))
+            })
+            .and_then(|rel| {
+                std::fs::read_to_string(format!("/sys/fs/cgroup{}/memory.max", rel.trim())).ok()
+            })
+            .and_then(|raw| raw.trim().parse::<u64>().ok());
+        cgroup.map_or(host, |c| host.min(c)) as f64 / 1_000_000_000.0
+    };
+    ((budget_gb * 0.60 / est_ram_per_bucket_gb).floor() as usize)
+        .clamp(1, rayon::current_num_threads())
+}
+
 fn pass_b(temp_dir: &Path, out_dir: &Path) -> Result<u64> {
     let phases = ["airborne", "ground"];
+    let workers = pass_b_concurrency(temp_dir);
+    started(
+        "shuffle/passB",
+        &format!("{workers} concurrent buckets (RAM-bounded)"),
+    );
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .context("build passB pool")?;
     let bucket_counter = Milestone::new("shuffle/passB", "buckets", 25);
     let shard_counter = Milestone::new("shuffle/passB", "shards", 1_000);
-    (0..SHUFFLE_HASH_BUCKETS)
-        .into_par_iter()
-        .try_for_each(|hash| -> Result<()> {
+    pool.install(|| {
+        (0..SHUFFLE_HASH_BUCKETS)
+            .into_par_iter()
+            .try_for_each(|hash| -> Result<()> {
             let mut shards_this_bucket = 0u64;
             for phase in phases {
                 let parts = list_pass_a_parts(&pass_a_bucket_dir(temp_dir, phase, hash))?;
@@ -338,7 +411,8 @@ fn pass_b(temp_dir: &Path, out_dir: &Path) -> Result<u64> {
             bucket_counter.add(1);
             shard_counter.add(shards_this_bucket);
             Ok(())
-        })?;
+        })
+    })?;
     Ok(shard_counter.total())
 }
 
