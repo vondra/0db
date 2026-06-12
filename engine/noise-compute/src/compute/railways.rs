@@ -85,10 +85,21 @@ pub(crate) fn compute_railways(
         if seg.tunnel {
             continue;
         }
-        // The popup queries rail only within RAILWAY_MAX_RADIUS, so this is the
-        // authoritative cutoff; using the named constant (not a looser 8 km
-        // magic number) keeps the surface heatmap's reach gate exactly aligned.
-        if seg.dist_m > RAILWAY_MAX_RADIUS {
+
+        let rail_type = RailType::from_u8(seg.rail_type);
+        let speed = if seg.speed_kmh > 0.0 { seg.speed_kmh } else { 80.0 };
+        let q_pax = seg.trains_passenger.max(0.0);
+        let q_frt = seg.trains_freight.max(0.0);
+        if q_pax + q_frt <= 0.0 {
+            continue;
+        }
+        // Per-row audibility reach: this segment's own 25 dB Lden crossing,
+        // clamped [2 km, 10 km]. The heatmap loader sets the identical value on
+        // each `LineRow` from the SAME `rail_reach_m` solver (the popup's
+        // `RailSegment.trains_*` are already the effective post-scaling counts),
+        // so popup and heatmap cull at the same distance by construction — no
+        // blanket constant, no magic-number drift.
+        if seg.dist_m > railway::rail_reach_m(rail_type, speed, q_pax, q_frt) {
             continue;
         }
 
@@ -96,14 +107,6 @@ pub(crate) fn compute_railways(
         let src_alt = src_elev + SOURCE_HEIGHT_RAIL;
         let d_slant = geo::slant_dist(seg.dist_m, src_alt, receiver.altitude_m());
         if d_slant < 1.0 {
-            continue;
-        }
-
-        let rail_type = RailType::from_u8(seg.rail_type);
-        let speed = if seg.speed_kmh > 0.0 { seg.speed_kmh } else { 80.0 };
-        let q_pax = seg.trains_passenger.max(0.0);
-        let q_frt = seg.trains_freight.max(0.0);
-        if q_pax + q_frt <= 0.0 {
             continue;
         }
 

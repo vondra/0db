@@ -106,8 +106,45 @@ pub const ROAD_MAX_RADIUS: [f64; 13] = [
        600.0, // 12: primary_link
 ];
 
-/// Railway max propagation radius (all types).
-pub const RAILWAY_MAX_RADIUS: f64 = 7_000.0;
+/// Railway reach clamp + boundary convention.
+///
+/// Rail reach is solved PER ROW: each segment reaches exactly to the distance
+/// where ITS OWN free-field Lden falls to [`RAILWAY_REACH_TARGET_LDEN_DB`]
+/// (see `emission::railway::rail_reach_m`). The blanket 7 km that used to gate
+/// every row (commit `8540e4cb`, "all types") is retired — a quiet branch line
+/// truncating at the same distance as a 300 km/h corridor was a correctness
+/// bug, not a tuning choice. The solver reproduces the old 7 km for a *default
+/// mainline* (80 pax + 20 freight @ 80 km/h → 25.3 dB @ 7 km, the 2026-05-24
+/// Codex empirical re-derived in `.claude/plans/heatmap-orchestrator-audit/
+/// layer-line.md` §A), so the change is value-neutral for the dominant class
+/// and only moves the 25-30 dB fringe ring on the tails (quiet rows shrink,
+/// HS/loud corridors extend to the noise we currently truncate).
+///
+/// Clamp `[2 km, 10 km]`:
+/// - **Floor 2 km**: degenerate quiet rows (a single freight wagon, a stub
+///   siding) must still cover their near field, and the 25 dB target is a
+///   *display* convention (the renderer floor sits at 30 dB), not a physics
+///   cutoff — never let the solver cull a row before its audible field is
+///   drawn.
+/// - **Ceiling 10 km**: the halo budget. In a shared surface build the road
+///   10 km halo already ray-marches terrain this far, so capping rail reach at
+///   10 km costs no extra halo; beyond 10 km the cumulative Lden is < ~19 dB
+///   (well under the renderer floor) for any realistic corridor.
+pub const RAILWAY_REACH_CLAMP_MIN: f64 = 2_000.0;
+pub const RAILWAY_REACH_CLAMP_MAX: f64 = 10_000.0;
+
+/// Lden boundary the per-row rail reach solves to. Mirrors the ~25 dB
+/// road/rail boundary convention (road's per-class `ROAD_MAX_RADIUS` caps sit
+/// at the same crossing — e.g. motorway 10 km, residential 800 m — so road and
+/// rail reach use one boundary). Display floor, not a physics cutoff.
+pub const RAILWAY_REACH_TARGET_LDEN_DB: f64 = 25.0;
+
+/// Widest rail reach the clamp can return — used to size the rail-only
+/// ray-march halo (`build_heatmap_surface` / `gpu_surface`) so a row extended
+/// to the ceiling still ray-marches terrain along its whole path. Equals
+/// [`RAILWAY_REACH_CLAMP_MAX`]; named separately so the halo's intent reads at
+/// the call site.
+pub const RAILWAY_REACH_CEILING: f64 = RAILWAY_REACH_CLAMP_MAX;
 
 /// Industrial point source max radius.
 pub const INDUSTRIAL_MAX_RADIUS: f64 = 4_000.0;

@@ -172,6 +172,86 @@ pub fn default_speed(rail_type: RailType) -> f64 {
     }
 }
 
+/// Free-field Lden [dB(A)] of one rail row at horizontal distance `d` metres.
+///
+/// **Reference propagation** (the per-row reach solver's spine — identical to
+/// the derivation that reproduced the 2026-05-24 Codex empirical at the 7 km
+/// boundary, `.claude/plans/heatmap-orchestrator-audit/layer-line.md` §A):
+/// ISO 9613-2 cylindrical line spreading `10·log10(2π·d)` + atmospheric
+/// absorption `α_atm·d/1000`, **best-case ground** (`G = 0`, hard reflective
+/// ground — the loudest the receiver can ever hear, so reach never under-shoots
+/// a soft-ground site), **no** terrain / screening / vegetation / finite-line
+/// (a blanket reach can't know the per-receiver geometry; the kernel still
+/// applies all of those per pixel inside the reach). Per-period emission uses
+/// the same 0.65/0.20/0.15 day/evening/night traffic split and 12/4/8 h period
+/// lengths as `compute_railways`, fed through [`railway_emission`], then folded
+/// to Lden with the END +5/+10 dB penalties via [`crate::periods::compute_lden`].
+///
+/// `q_pax` / `q_frt` are the *effective* whole-day counts (post service /
+/// parallel-divisor scaling — i.e. `NormalizedRail::scaled_*_per_day`), so a
+/// divided or service track shrinks its own reach.
+fn free_field_lden_at(rail_type: RailType, speed_kmh: f64, q_pax: f64, q_frt: f64, d: f64) -> f64 {
+    use crate::constants::{ALPHA_ATM, GROUND_CF};
+    use crate::propagation::iso9613::a_weighted_total;
+
+    let d = d.max(1.0);
+    let geo = 10.0 * (2.0 * std::f64::consts::PI * d).log10();
+    let d_over_1000 = d / 1000.0;
+    // q_pct, period_hours per END day/evening/night.
+    let received = |q_pct: f64, period_hours: f64| -> f64 {
+        let em = railway_emission(rail_type, speed_kmh, q_pax * q_pct, q_frt * q_pct, period_hours);
+        let mut bands = [0.0f64; NUM_BANDS];
+        for i in 0..NUM_BANDS {
+            // G = 0: A_ground = GROUND_CF[i] · 0 = 0, kept explicit for parity
+            // with `propagate_bands` so the boundary matches the kernel's
+            // free-field limit exactly.
+            bands[i] = em[i] - geo - ALPHA_ATM[i] * d_over_1000 - GROUND_CF[i] * 0.0;
+        }
+        a_weighted_total(&bands)
+    };
+    let ld = received(0.65, 12.0);
+    let le = received(0.20, 4.0);
+    let ln = received(0.15, 8.0);
+    crate::periods::compute_lden(ld, le, ln)
+}
+
+/// Per-row rail audibility reach [m]: the distance at which this segment's own
+/// free-field Lden falls to [`crate::constants::RAILWAY_REACH_TARGET_LDEN_DB`]
+/// (~25 dB), clamped to `[RAILWAY_REACH_CLAMP_MIN, RAILWAY_REACH_CLAMP_MAX]`.
+/// Replaces the retired blanket `RAILWAY_MAX_RADIUS`; the heatmap loader and the
+/// popup distance gate BOTH call this, so their cutoff is identical by
+/// construction (no magic-number drift). Runs once per row at load — cost is
+/// irrelevant.
+///
+/// Solved by bisection over **log-distance** (`free_field_lden_at` is
+/// monotonically decreasing in `d`, dominated by the `10·log10(2π·d)` term, so
+/// the root is unique). 40 log-steps over `[100 m, 50 km]` converge to < 1 m —
+/// far tighter than the 30 m raster cadence the reach feeds. If the row is so
+/// loud it never crosses 25 dB inside 50 km, or so quiet it is already below at
+/// 100 m, the clamp catches it.
+///
+/// `q_pax` / `q_frt` = effective whole-day counts (post service / divisor
+/// scaling). See [`free_field_lden_at`] for the propagation reference.
+pub fn rail_reach_m(rail_type: RailType, speed_kmh: f64, q_pax: f64, q_frt: f64) -> f64 {
+    use crate::constants::{
+        RAILWAY_REACH_CLAMP_MAX, RAILWAY_REACH_CLAMP_MIN, RAILWAY_REACH_TARGET_LDEN_DB,
+    };
+    let target = RAILWAY_REACH_TARGET_LDEN_DB;
+    let mut lo = 100.0_f64; // below floor; bisection bracket, clamp finalises
+    let mut hi = 50_000.0_f64; // above ceiling; widest bracket we ever need
+    // 40 log-halvings: (ln(50000)-ln(100))/2^40 → sub-millimetre, ample margin.
+    for _ in 0..40 {
+        let mid = ((lo.ln() + hi.ln()) * 0.5).exp();
+        if free_field_lden_at(rail_type, speed_kmh, q_pax, q_frt, mid) > target {
+            lo = mid; // still loud → push the crossing outward
+        } else {
+            hi = mid;
+        }
+    }
+    let reach = ((lo.ln() + hi.ln()) * 0.5).exp();
+    reach.clamp(RAILWAY_REACH_CLAMP_MIN, RAILWAY_REACH_CLAMP_MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +309,70 @@ mod tests {
         let diff = eve - day;
         // +10·log10(12/4) ≈ 4.77 dB expected
         assert!((diff - 4.77).abs() < 0.1, "expected +4.77 dB, got {:.2}", diff);
+    }
+
+    /// The reach solver must put the free-field Lden of each representative row
+    /// exactly at the 25 dB target *at the distance it returns* — the defining
+    /// property. Verified by re-evaluating `free_field_lden_at` at the solved
+    /// reach (skipped when the clamp fired, since then the crossing is outside
+    /// `[min,max]` and the returned value is the clamp, not the root).
+    #[test]
+    fn reach_lands_on_25_db_target() {
+        for (rt, sp, qp, qf) in [
+            (RailType::Rail, 80.0, 80.0, 20.0),
+            (RailType::Rail, 300.0, 80.0, 0.0),
+            (RailType::Tram, 40.0, 120.0, 0.0),
+        ] {
+            let r = rail_reach_m(rt, sp, qp, qf);
+            // All three crossings fall strictly inside the clamp band.
+            assert!(r > 2_000.0 && r < 10_000.0, "{:?} reach {r} hit a clamp", rt);
+            let lden = free_field_lden_at(rt, sp, qp, qf, r);
+            assert!((lden - 25.0).abs() < 0.05, "{:?} Lden@reach = {lden:.3}, want 25", rt);
+        }
+    }
+
+    /// REGRESSION ANCHOR: the default mainline (80 pax + 20 freight @ 80 km/h,
+    /// the `default_traffic(Rail, usage=0)` row) must reach ≈7 km — reproducing
+    /// the retired blanket `RAILWAY_MAX_RADIUS = 7000` so the dominant ~96 % of
+    /// rail rows are value-neutral. layer-line.md §A: 25.3 dB @ 7 km.
+    #[test]
+    fn default_mainline_reach_reproduces_7km() {
+        let r = rail_reach_m(RailType::Rail, 80.0, 80.0, 20.0);
+        assert!((r - 7_000.0).abs() < 300.0, "default mainline reach {r:.0} m, want ≈7000");
+    }
+
+    /// HONESTY FIX: a 300 km/h high-speed corridor is 30.8 dB @ 7 km
+    /// (layer-line.md §A) — 5.8 dB louder than the boundary, currently truncated
+    /// early. Its calibrated reach must extend to ≈9-9.5 km.
+    #[test]
+    fn highspeed_reach_extends_to_9km() {
+        let r = rail_reach_m(RailType::Rail, 300.0, 80.0, 0.0);
+        assert!((9_000.0..=9_700.0).contains(&r), "HS reach {r:.0} m, want ≈9-9.5 km");
+    }
+
+    /// PERF WIN: tram (120 services/day @ 40 km/h) is only 16.8 dB @ 7 km —
+    /// far below the boundary, so it shrinks. Calibrated reach ≈3.5-4.5 km
+    /// (continuous form; layer-line.md's 3.5 km bucket was the rounded
+    /// light-rail figure — the busier 120-train tram default lands a touch
+    /// higher). Lighter rail classes shrink further still.
+    #[test]
+    fn tram_reach_shrinks_below_mainline() {
+        let tram = rail_reach_m(RailType::Tram, 40.0, 120.0, 0.0);
+        assert!((3_500.0..=4_500.0).contains(&tram), "tram reach {tram:.0} m, want ≈3.5-4.5 km");
+        let light = rail_reach_m(RailType::LightRail, 60.0, 80.0, 0.0);
+        assert!(light < tram, "light-rail {light:.0} should be < tram {tram:.0}");
+        assert!(light < 7_000.0, "light-rail {light:.0} must be well under the old 7 km");
+    }
+
+    /// Clamp floor: a near-silent stub (one passenger train/day @ 80 km/h
+    /// solves to ~900 m) must still clamp UP to the 2 km floor so its near
+    /// field stays drawn. Clamp ceiling: a very loud, fast, freight-heavy
+    /// corridor solves past 10 km and must clamp DOWN to the halo budget.
+    #[test]
+    fn reach_clamps_at_floor_and_ceiling() {
+        let stub = rail_reach_m(RailType::Rail, 80.0, 1.0, 0.0);
+        assert_eq!(stub, 2_000.0, "degenerate-quiet row must clamp to the 2 km floor");
+        let loud = rail_reach_m(RailType::Rail, 250.0, 200.0, 80.0);
+        assert_eq!(loud, 10_000.0, "loud HS-freight corridor must clamp to the 10 km ceiling");
     }
 }

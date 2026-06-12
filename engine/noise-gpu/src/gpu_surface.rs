@@ -31,7 +31,7 @@ use heatmap_aircraft::wire_hm3::{
     collapse_lden_surface_u8, read_tile, write_tile, SOURCE_ID_RAIL, SOURCE_ID_ROAD,
 };
 use noise_compute::admin;
-use noise_compute::constants::RAILWAY_MAX_RADIUS;
+use noise_compute::constants::RAILWAY_REACH_CEILING;
 use noise_gpu::{pack_sources, pack_tile, TileBuffers, BIN_W, N_BINS};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
@@ -69,13 +69,16 @@ impl LineLayer {
             Self::Rail => SOURCE_ID_RAIL,
         }
     }
-    /// Per-layer reach; the kernel still culls each source at its own
-    /// `max_distance_m`, so a block's shared halo can use the widest of these
-    /// without changing a shorter-reach layer's output.
+    /// Per-layer halo reach; the kernel still culls each source at its own
+    /// per-row `max_distance_m` (the rail loader bakes each segment's solved
+    /// 25 dB reach), so a block's shared halo can use the widest of these
+    /// without changing a shorter-reach layer's output. Rail uses the per-row
+    /// reach CEILING so a row extended to the clamp still ray-marches terrain
+    /// along its whole path.
     fn halo_m(self) -> f64 {
         match self {
             Self::Road => ROAD_HALO_M,
-            Self::Rail => RAILWAY_MAX_RADIUS,
+            Self::Rail => RAILWAY_REACH_CEILING,
         }
     }
     /// Load this layer's `grid_disk(1)` line rows for a region. Road resolves the

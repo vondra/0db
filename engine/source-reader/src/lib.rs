@@ -178,7 +178,12 @@ pub fn collect_from_hex_data(
     });
 
     for data in hex_data {
-        let railways = query_railways_from_batches(&data.railway_batches, lat, lng, noise_compute::constants::RAILWAY_MAX_RADIUS);
+        // Spatial candidate pre-filter: load every rail row within the WIDEST
+        // possible per-row reach (the clamp ceiling, 10 km), then `compute_railways`
+        // applies each row's exact `rail_reach_m` cutoff. Pre-filtering at the old
+        // 7 km blanket would silently drop a loud HS corridor 8-10 km out before
+        // its honest reach could admit it.
+        let railways = query_railways_from_batches(&data.railway_batches, lat, lng, noise_compute::constants::RAILWAY_REACH_CEILING);
         for r in railways {
             let norm =
                 noise_compute::normalize::normalize_rail(noise_compute::normalize::RawRailInput {
