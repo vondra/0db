@@ -2,10 +2,12 @@ use crate::*;
 
 thread_local! {
     /// Exact-key memo for `rail_reach_m` — see the comment at the call site.
-    /// Keyed on raw f64 bits (no quantization semantics to reason about);
-    /// per-thread keeps the popup single-threaded-per-request contract.
+    /// Keyed on `(rail_type, admin ISO, speed bits, pax bits, frt bits)`: raw
+    /// f64 bits (no quantization semantics to reason about) plus the admin code
+    /// (C1's per-region split changes the solved reach). Per-thread keeps the
+    /// popup single-threaded-per-request contract.
     static REACH_CACHE: std::cell::RefCell<
-        std::collections::HashMap<(u8, u64, u64, u64), f64>,
+        std::collections::HashMap<(u8, [u8; 2], u64, u64, u64), f64>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
@@ -85,9 +87,11 @@ pub(crate) fn compute_railways(
     }
     let mut rails_by_key: HashMap<(String, u8), RailAccum> = HashMap::new();
 
-    let day_pct = 0.65;
-    let eve_pct = 0.20;
-    let night_pct = 0.15;
+    // Admin resolved once per call — the receiver position is constant across
+    // segments. Drives the C1 per-region day/evening/night split (EU freight
+    // runs ~55 % at night vs ~33 % world), shared with the heatmap loader + the
+    // reach solver via `railway::rail_time_dist` (exact mirror of compute_roads).
+    let admin = crate::admin::admin_for_latlng(receiver.lat, receiver.lon);
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
     for seg in railways {
@@ -115,15 +119,19 @@ pub(crate) fn compute_railways(
         // (type, speed, counts) tuples collapse onto a handful of defaults,
         // so an exact-key cache hits ~99%.
         let reach_m = REACH_CACHE.with(|c| {
+            // admin in the key: the per-region split changes the row's Lden, so a
+            // CZ corridor and a US corridor with identical (type, speed, counts)
+            // can solve to different reaches on the same worker thread.
             let key = (
                 seg.rail_type,
+                admin.country_iso,
                 speed.to_bits(),
                 q_pax.to_bits(),
                 q_frt.to_bits(),
             );
             *c.borrow_mut()
                 .entry(key)
-                .or_insert_with(|| railway::rail_reach_m(rail_type, speed, q_pax, q_frt))
+                .or_insert_with(|| railway::rail_reach_m(admin, rail_type, speed, q_pax, q_frt))
         });
         if seg.dist_m > reach_m {
             continue;
@@ -136,11 +144,29 @@ pub(crate) fn compute_railways(
             continue;
         }
 
-        // Early exit: skip if free-field < threshold (matching pipeline)
+        // C1 per-region, per-category day/evening/night split for THIS segment's
+        // type (trams take the urban pax curve; only RailType::Rail in an EU
+        // region gets the night-heavy freight share). Same table the heatmap
+        // loader + reach solver consume → popup-vs-heatmap parity by construction.
+        let td = railway::rail_time_dist(admin, rail_type);
+        let periods = td.periods();
+
+        // Early exit: skip only if the LOUDEST period's free-field is below
+        // threshold — a true upper bound, so no audible-in-any-period segment is
+        // dropped. Pre-C1 the day block was always loudest (flat 65/20/15), but
+        // C1's EU freight night share (0.5458 over 8 h) can beat day, so a
+        // day-only gate would prune audible quiet/slow night-freight rows that
+        // the heatmap (Lden over all periods) keeps — a parity break (Codex /gg).
         {
-            let ee =
-                railway::railway_emission(rail_type, speed, q_pax * day_pct, q_frt * day_pct, 12.0);
-            let me = ee.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let me = periods
+                .iter()
+                .map(|&(pax_pct, frt_pct, hours)| {
+                    railway::railway_emission(rail_type, speed, q_pax * pax_pct, q_frt * frt_pct, hours)
+                        .iter()
+                        .cloned()
+                        .fold(f64::NEG_INFINITY, f64::max)
+                })
+                .fold(f64::NEG_INFINITY, f64::max);
             if geo::below_free_field_threshold_line(me, seg.dist_m, 0.0) {
                 continue;
             }
@@ -188,15 +214,14 @@ pub(crate) fn compute_railways(
             PropagationVariants::default(),
         ];
         let mut day_emission_energy = 0.0f64;
-        let period_hours = [12.0f64, 4.0, 8.0];
         let mut period_emissions: [[f64; NUM_BANDS]; 3] = [[0.0; NUM_BANDS]; 3];
-        for (pi, pct) in [day_pct, eve_pct, night_pct].iter().enumerate() {
+        for (pi, &(pax_pct, frt_pct, hours)) in periods.iter().enumerate() {
             let emission = railway::railway_emission(
                 rail_type,
                 speed,
-                q_pax * pct,
-                q_frt * pct,
-                period_hours[pi],
+                q_pax * pax_pct,
+                q_frt * frt_pct,
+                hours,
             );
             let v = iso9613::propagate_variants_full(
                 &emission,

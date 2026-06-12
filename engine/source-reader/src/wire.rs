@@ -51,6 +51,11 @@ pub struct WireSource {
     pub lden: f64,
     #[serde(serialize_with = "noise_compute::types::serialize_lden_db_opt")]
     pub lden_free: f64,
+    /// Per-source `L_night` (END 23:00–07:00, no penalty) — exposed so the
+    /// frontend + /check-world can band the night metric directly (C1: rail Ln
+    /// is no longer the flat `Lden − 7.91`). `null` when the period is silent.
+    #[serde(serialize_with = "noise_compute::types::serialize_lden_db_opt")]
+    pub ln: f64,
     pub segment_count: usize,
     pub displayed_count: usize,
 }
@@ -61,6 +66,7 @@ impl From<SourceResult> for WireSource {
             source_type: s.source_type,
             lden: s.periods.lden_db,
             lden_free: s.periods_free.lden_db,
+            ln: s.periods.ln_db,
             segment_count: s.segment_count,
             displayed_count: s.displayed_count,
         }
@@ -92,6 +98,10 @@ pub struct WireContributor {
     pub ground_impact_db: f64,
     pub received_lden: f64,
     pub received_lden_free: f64,
+    /// Per-contributor `L_night` (END 23:00–07:00, no penalty). Mirrors
+    /// `received_lden`'s `0.0`-for-silence mapping so the TS type stays
+    /// non-nullable. Surfaced for the C1 rail night break (Gemini delta 5).
+    pub received_ln: f64,
     pub received_bands: [f64; NUM_BANDS],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geometry: Option<serde_json::Value>,
@@ -119,6 +129,7 @@ impl From<Contributor> for WireContributor {
             ground_impact_db: c.ground_impact_db,
             received_lden: round1(finite_or_zero(c.periods.lden_db)),
             received_lden_free: round1(finite_or_zero(c.periods_free.lden_db)),
+            received_ln: round1(finite_or_zero(c.periods.ln_db)),
             received_bands: c.received_bands,
             geometry: c.geometry,
         }

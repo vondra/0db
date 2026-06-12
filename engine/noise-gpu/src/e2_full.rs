@@ -64,13 +64,19 @@ fn main() -> Result<()> {
     let h3r4 = format!("{prepared}/{year}/h3r4");
 
     let r4 = tile_centre_r4(z, x, y).context("tile centre")?;
-    let ring: Vec<u64> = CellIndex::try_from(r4)?
-        .grid_disk::<Vec<_>>(1)
-        .into_iter()
-        .map(u64::from)
-        .collect();
+    let cell = CellIndex::try_from(r4)?;
+    let ring: Vec<u64> = cell.grid_disk::<Vec<_>>(1).into_iter().map(u64::from).collect();
     let rasters = RealRasters::new(Path::new(&prepared));
-    let rail = RailData::load_for_r4s(Path::new(&h3r4), &ring)?.into_rows();
+    // C1 rail per-region period split needs the admin table. The bench loads rail
+    // directly (no surface binary in the loop), so init it here too — else the
+    // reference run resolves Admin::UNKNOWN → world split and drifts vs a
+    // real-admin production tile (Codex delta 1).
+    let _ = noise_compute::admin::init_admin_table(&noise_compute::admin::default_admin_path(
+        Path::new(&h3r4),
+    ));
+    let ll = h3o::LatLng::from(cell);
+    let admin = noise_compute::admin::admin_for_latlng(ll.lat(), ll.lng());
+    let rail = RailData::load_for_r4s(Path::new(&h3r4), &ring, admin)?.into_rows();
     let bn = default_batch_size();
     let (bx, by) = ((x / bn) * bn, (y / bn) * bn);
     let batch = TileBatch::build(z, bx, by, bn, halo_m, &rasters);

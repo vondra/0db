@@ -18,9 +18,125 @@
 //! / CNOSSOS), scaled so a typical mainline corridor matches EU END
 //! reference levels in the 0-5 km range.
 
+use crate::admin::Admin;
 use crate::types::NUM_BANDS;
 
 const B_ROLLING: f64 = 30.0;
+
+/// END day/evening/night period lengths [h] (12 / 4 / 8). The ONE definition
+/// of the period split — every rail period loop (popup `compute_railways`,
+/// heatmap `NormalizedRail::period_emissions`, the reach solver
+/// `free_field_lden_at`) iterates [`RailTimeDist::periods`] over these so the
+/// share model can never fork into a second copy.
+pub const RAIL_PERIOD_HOURS: [f64; 3] = [12.0, 4.0, 8.0];
+
+/// Per-region, per-category day/evening/night traffic split for rail.
+///
+/// Replaces the flat 65/20/15 that was applied to passenger AND freight alike —
+/// the cause of rail `L_night` always being exactly `Lden − 7.91 dB`
+/// (audit rail-report §G.4). `pax` and `frt` each sum to 1.0; freight shares
+/// only ever differ from `pax` for [`RailType::Rail`] (other types carry no
+/// freight, so the resolver hands them `frt = pax` — belt and suspenders).
+#[derive(Debug, Clone, Copy)]
+pub struct RailTimeDist {
+    pub pax: [f64; 3],
+    pub frt: [f64; 3],
+}
+
+impl RailTimeDist {
+    /// `(pax_share, frt_share, period_hours)` per END period — the single
+    /// iterator every rail period loop consumes. Keeping the zip here (not
+    /// re-spelled at each call site) is what makes the popup kernel, the heatmap
+    /// loader, and the reach solver provably share one split (plan delta 4).
+    #[inline]
+    pub fn periods(&self) -> [(f64, f64, f64); 3] {
+        [
+            (self.pax[0], self.frt[0], RAIL_PERIOD_HOURS[0]),
+            (self.pax[1], self.frt[1], RAIL_PERIOD_HOURS[1]),
+            (self.pax[2], self.frt[2], RAIL_PERIOD_HOURS[2]),
+        ]
+    }
+}
+
+/// EU-derived freight night split: **measured-derived** from EP IPOL-TRAN
+/// ET(2012)474533 Table 22 (Rheintalbahn 129 day-trains / 155 night-trains ⇒
+/// 54.6 % at night). The 16 h END "day" block (06–18 day + 18–22 evening)
+/// carries the 129 daytime trains, split 12:4 by hour ⇒ 129·12/16 = 96.75 day,
+/// 129·4/16 = 32.25 evening; night = 155. Total 96.75+32.25+155 = 284 ⇒
+/// **0.3407 / 0.1136 / 0.5458** (shipping the EXACT fractions, not the rounded
+/// 0.33/0.13/0.54 — Codex delta 3). Corroboration: EBA Lärm-Monitoring
+/// Jahresbericht 2023 (night Lm freight-dominated at ~all 19 stations); UBA.
+const EU_FREIGHT: [f64; 3] = [96.75 / 284.0, 32.25 / 284.0, 155.0 / 284.0];
+
+/// EU heavy-rail passenger split — `derived`: service span ~05–24 h ⇒ ~1.5–2 h
+/// inside the 23–07 night window; EBA station night counts are passenger-minor.
+const EU_PAX: [f64; 3] = [0.70, 0.20, 0.10];
+
+/// Urban tram / light-rail / narrow-gauge / funicular passenger split —
+/// `derived`: service ends ~00:30, starts ~04:30, so night is small. Freight
+/// never applies to these types.
+const TRAM_PAX: [f64; 3] = [0.70, 0.25, 0.05];
+
+/// Non-EU freight (US Class I, RU, CN…) — `derived/uniform`: continuous 24/7
+/// operation, no published time-of-day ⇒ flat 12/4/8 h split = 0.50 / 0.1667 /
+/// 0.3333.
+const WORLD_FREIGHT: [f64; 3] = [12.0 / 24.0, 4.0 / 24.0, 8.0 / 24.0];
+
+/// Non-EU passenger — `derived`, same reasoning as [`EU_PAX`].
+const WORLD_PAX: [f64; 3] = [0.70, 0.20, 0.10];
+
+const TD_EU_RAIL: RailTimeDist = RailTimeDist { pax: EU_PAX, frt: EU_FREIGHT };
+const TD_EU_TRAM: RailTimeDist = RailTimeDist { pax: TRAM_PAX, frt: TRAM_PAX };
+const TD_WORLD_RAIL: RailTimeDist = RailTimeDist { pax: WORLD_PAX, frt: WORLD_FREIGHT };
+const TD_WORLD_TRAM: RailTimeDist = RailTimeDist { pax: TRAM_PAX, frt: TRAM_PAX };
+
+/// ISO-3166 alpha-2 whitelist for the EU-derived freight table: EU27 + CH + NO
+/// + UK. Keyed on the country code, NOT [`crate::admin::Continent::Europe`] —
+/// that label is *geographic* Europe (it includes RU-west / UA / BY), and the
+/// EP/EBA freight curve is only sourced for the central/western EU corridor
+/// network (Codex delta 2). Geographic-Europe countries outside this list fall
+/// through to the world/uniform table.
+const EU_ISO_WHITELIST: [&[u8; 2]; 30] = [
+    b"AT", b"BE", b"BG", b"HR", b"CY", b"CZ", b"DK", b"EE", b"FI", b"FR", b"DE", b"GR", b"HU",
+    b"IE", b"IT", b"LV", b"LT", b"LU", b"MT", b"NL", b"PL", b"PT", b"RO", b"SK", b"SI", b"ES",
+    b"SE", // EU27
+    b"CH", b"NO", b"GB", // EFTA-adjacent + UK on the same network
+];
+
+#[inline]
+fn is_eu_rail_region(admin: Admin) -> bool {
+    EU_ISO_WHITELIST.contains(&&admin.country_iso)
+}
+
+/// Resolve the day/evening/night split for a rail segment from its admin region
+/// and vehicle type. Trams / light-rail / narrow-gauge / funicular always take
+/// the urban passenger curve (no freight). [`RailType::Rail`] takes the EU vs
+/// world freight+passenger table on the [`EU_ISO_WHITELIST`]. `Admin::UNKNOWN`
+/// (oceanic / pre-build hexes / tests) is deterministically non-EU.
+///
+/// Structured for per-country overrides (match `admin.country_code()` first,
+/// then the EU/world fork), but only the cited rows ship today: refining
+/// DE/CH/NL from EBA Lärmkartierung / BAV Emissionsplan / ProRail geluidregister
+/// per-section counts is the R2 follow-up (those feeds fix counts AND shares).
+pub fn rail_time_dist(admin: Admin, rail_type: RailType) -> &'static RailTimeDist {
+    let eu = is_eu_rail_region(admin);
+    match rail_type {
+        RailType::Rail => {
+            if eu {
+                &TD_EU_RAIL
+            } else {
+                &TD_WORLD_RAIL
+            }
+        }
+        _ => {
+            if eu {
+                &TD_EU_TRAM
+            } else {
+                &TD_WORLD_TRAM
+            }
+        }
+    }
+}
 
 struct RailVehicleCoeffs {
     a_rolling: [f64; NUM_BANDS],
@@ -183,23 +299,37 @@ pub fn default_speed(rail_type: RailType) -> f64 {
 /// a soft-ground site), **no** terrain / screening / vegetation / finite-line
 /// (a blanket reach can't know the per-receiver geometry; the kernel still
 /// applies all of those per pixel inside the reach). Per-period emission uses
-/// the same 0.65/0.20/0.15 day/evening/night traffic split and 12/4/8 h period
-/// lengths as `compute_railways`, fed through [`railway_emission`], then folded
-/// to Lden with the END +5/+10 dB penalties via [`crate::periods::compute_lden`].
+/// the SAME per-region, per-category day/evening/night split as the kernel —
+/// resolved via [`rail_time_dist`] on `admin` and `rail_type`, so a freight-heavy
+/// EU corridor reaches farther at night exactly as `compute_railways` hears it.
+/// The shares feed [`railway_emission`], then fold to Lden with the END +5/+10 dB
+/// penalties via [`crate::periods::compute_lden`].
 ///
 /// `q_pax` / `q_frt` are the *effective* whole-day counts (post service /
 /// parallel-divisor scaling — i.e. `NormalizedRail::scaled_*_per_day`), so a
 /// divided or service track shrinks its own reach.
-fn free_field_lden_at(rail_type: RailType, speed_kmh: f64, q_pax: f64, q_frt: f64, d: f64) -> f64 {
+fn free_field_lden_at(
+    admin: Admin,
+    rail_type: RailType,
+    speed_kmh: f64,
+    q_pax: f64,
+    q_frt: f64,
+    d: f64,
+) -> f64 {
     use crate::constants::{ALPHA_ATM, GROUND_CF};
     use crate::propagation::iso9613::a_weighted_total;
 
     let d = d.max(1.0);
     let geo = 10.0 * (2.0 * std::f64::consts::PI * d).log10();
     let d_over_1000 = d / 1000.0;
-    // q_pct, period_hours per END day/evening/night.
-    let received = |q_pct: f64, period_hours: f64| -> f64 {
-        let em = railway_emission(rail_type, speed_kmh, q_pax * q_pct, q_frt * q_pct, period_hours);
+    let received = |pax_pct: f64, frt_pct: f64, period_hours: f64| -> f64 {
+        let em = railway_emission(
+            rail_type,
+            speed_kmh,
+            q_pax * pax_pct,
+            q_frt * frt_pct,
+            period_hours,
+        );
         let mut bands = [0.0f64; NUM_BANDS];
         for i in 0..NUM_BANDS {
             // G = 0: A_ground = GROUND_CF[i] · 0 = 0, kept explicit for parity
@@ -209,9 +339,10 @@ fn free_field_lden_at(rail_type: RailType, speed_kmh: f64, q_pax: f64, q_frt: f6
         }
         a_weighted_total(&bands)
     };
-    let ld = received(0.65, 12.0);
-    let le = received(0.20, 4.0);
-    let ln = received(0.15, 8.0);
+    let [(pd, fd, hd), (pe, fe, he), (pn, fn_, hn)] = rail_time_dist(admin, rail_type).periods();
+    let ld = received(pd, fd, hd);
+    let le = received(pe, fe, he);
+    let ln = received(pn, fn_, hn);
     crate::periods::compute_lden(ld, le, ln)
 }
 
@@ -231,8 +362,17 @@ fn free_field_lden_at(rail_type: RailType, speed_kmh: f64, q_pax: f64, q_frt: f6
 /// 100 m, the clamp catches it.
 ///
 /// `q_pax` / `q_frt` = effective whole-day counts (post service / divisor
-/// scaling). See [`free_field_lden_at`] for the propagation reference.
-pub fn rail_reach_m(rail_type: RailType, speed_kmh: f64, q_pax: f64, q_frt: f64) -> f64 {
+/// scaling). `admin` selects the per-region period split so the reach the loader
+/// bakes and the cutoff the popup gates on share ONE share model (the same model
+/// the kernel computes) — see [`free_field_lden_at`] for the propagation
+/// reference.
+pub fn rail_reach_m(
+    admin: Admin,
+    rail_type: RailType,
+    speed_kmh: f64,
+    q_pax: f64,
+    q_frt: f64,
+) -> f64 {
     use crate::constants::{
         RAILWAY_REACH_CLAMP_MAX, RAILWAY_REACH_CLAMP_MIN, RAILWAY_REACH_TARGET_LDEN_DB,
     };
@@ -242,7 +382,7 @@ pub fn rail_reach_m(rail_type: RailType, speed_kmh: f64, q_pax: f64, q_frt: f64)
     // 40 log-halvings: (ln(50000)-ln(100))/2^40 → sub-millimetre, ample margin.
     for _ in 0..40 {
         let mid = ((lo.ln() + hi.ln()) * 0.5).exp();
-        if free_field_lden_at(rail_type, speed_kmh, q_pax, q_frt, mid) > target {
+        if free_field_lden_at(admin, rail_type, speed_kmh, q_pax, q_frt, mid) > target {
             lo = mid; // still loud → push the crossing outward
         } else {
             hi = mid;
@@ -316,37 +456,56 @@ mod tests {
     /// property. Verified by re-evaluating `free_field_lden_at` at the solved
     /// reach (skipped when the clamp fired, since then the crossing is outside
     /// `[min,max]` and the returned value is the clamp, not the root).
+    /// Uses `Admin::UNKNOWN` (world split) — the property holds under any split.
     #[test]
     fn reach_lands_on_25_db_target() {
+        let admin = Admin::UNKNOWN;
         for (rt, sp, qp, qf) in [
             (RailType::Rail, 80.0, 80.0, 20.0),
             (RailType::Rail, 300.0, 80.0, 0.0),
             (RailType::Tram, 40.0, 120.0, 0.0),
         ] {
-            let r = rail_reach_m(rt, sp, qp, qf);
+            let r = rail_reach_m(admin, rt, sp, qp, qf);
             // All three crossings fall strictly inside the clamp band.
             assert!(r > 2_000.0 && r < 10_000.0, "{:?} reach {r} hit a clamp", rt);
-            let lden = free_field_lden_at(rt, sp, qp, qf, r);
+            let lden = free_field_lden_at(admin, rt, sp, qp, qf, r);
             assert!((lden - 25.0).abs() < 0.05, "{:?} Lden@reach = {lden:.3}, want 25", rt);
         }
     }
 
-    /// REGRESSION ANCHOR: the default mainline (80 pax + 20 freight @ 80 km/h,
-    /// the `default_traffic(Rail, usage=0)` row) must reach ≈7 km — reproducing
-    /// the retired blanket `RAILWAY_MAX_RADIUS = 7000` so the dominant ~96 % of
-    /// rail rows are value-neutral. layer-line.md §A: 25.3 dB @ 7 km.
+    /// POST-C1 ANCHOR: a default mainline (80 pax + 20 freight @ 80 km/h) under
+    /// the WORLD split (`Admin::UNKNOWN`, freight 0.50/0.167/0.333) reaches
+    /// ≈7.7 km — slightly PAST the retired blanket `RAILWAY_MAX_RADIUS = 7000`
+    /// because even the uniform world split lifts the freight night share
+    /// 0.15→0.333 vs the old flat split (layer-line.md §A's 25.3 dB @ 7 km was the
+    /// FLAT-split crossing). The dominant mainline class is no longer perfectly
+    /// value-neutral — that is the intended C1 effect (the night-heavy redistribution
+    /// reaches the fringe ring), bounded by the 10 km clamp.
     #[test]
-    fn default_mainline_reach_reproduces_7km() {
-        let r = rail_reach_m(RailType::Rail, 80.0, 80.0, 20.0);
-        assert!((r - 7_000.0).abs() < 300.0, "default mainline reach {r:.0} m, want ≈7000");
+    fn default_mainline_reach_post_c1() {
+        let r = rail_reach_m(Admin::UNKNOWN, RailType::Rail, 80.0, 80.0, 20.0);
+        assert!((7_400.0..=8_100.0).contains(&r), "world mainline reach {r:.0} m, want ≈7.7 km");
     }
 
-    /// HONESTY FIX: a 300 km/h high-speed corridor is 30.8 dB @ 7 km
-    /// (layer-line.md §A) — 5.8 dB louder than the boundary, currently truncated
-    /// early. Its calibrated reach must extend to ≈9-9.5 km.
+    /// C1: the SAME default mainline under an EU region (CZ) reaches FARTHER than
+    /// off-corridor — EU freight runs 54.6 % at night (vs 33 % world), so the
+    /// night-penalised Lden rises and the 25 dB crossing moves outward. Direction
+    /// is the whole point of C1; magnitude is bounded by the 10 km clamp.
+    #[test]
+    fn eu_mainline_reach_exceeds_world() {
+        let cz = Admin { continent: crate::admin::Continent::Europe, country_iso: *b"CZ", city_id: 0 };
+        let eu = rail_reach_m(cz, RailType::Rail, 80.0, 80.0, 20.0);
+        let world = rail_reach_m(Admin::UNKNOWN, RailType::Rail, 80.0, 80.0, 20.0);
+        assert!(eu > world, "EU mainline reach {eu:.0} must exceed world {world:.0}");
+    }
+
+    /// HONESTY FIX: a 300 km/h high-speed PASSENGER corridor is 30.8 dB @ 7 km
+    /// (layer-line.md §A) — 5.8 dB louder than the boundary. Pax-only, so the EU
+    /// vs world freight split is irrelevant (pax night 0.10 both); its calibrated
+    /// reach extends to ≈9-9.5 km regardless of admin.
     #[test]
     fn highspeed_reach_extends_to_9km() {
-        let r = rail_reach_m(RailType::Rail, 300.0, 80.0, 0.0);
+        let r = rail_reach_m(Admin::UNKNOWN, RailType::Rail, 300.0, 80.0, 0.0);
         assert!((9_000.0..=9_700.0).contains(&r), "HS reach {r:.0} m, want ≈9-9.5 km");
     }
 
@@ -357,9 +516,10 @@ mod tests {
     /// higher). Lighter rail classes shrink further still.
     #[test]
     fn tram_reach_shrinks_below_mainline() {
-        let tram = rail_reach_m(RailType::Tram, 40.0, 120.0, 0.0);
+        let admin = Admin::UNKNOWN;
+        let tram = rail_reach_m(admin, RailType::Tram, 40.0, 120.0, 0.0);
         assert!((3_500.0..=4_500.0).contains(&tram), "tram reach {tram:.0} m, want ≈3.5-4.5 km");
-        let light = rail_reach_m(RailType::LightRail, 60.0, 80.0, 0.0);
+        let light = rail_reach_m(admin, RailType::LightRail, 60.0, 80.0, 0.0);
         assert!(light < tram, "light-rail {light:.0} should be < tram {tram:.0}");
         assert!(light < 7_000.0, "light-rail {light:.0} must be well under the old 7 km");
     }
@@ -370,9 +530,186 @@ mod tests {
     /// corridor solves past 10 km and must clamp DOWN to the halo budget.
     #[test]
     fn reach_clamps_at_floor_and_ceiling() {
-        let stub = rail_reach_m(RailType::Rail, 80.0, 1.0, 0.0);
+        let admin = Admin::UNKNOWN;
+        let stub = rail_reach_m(admin, RailType::Rail, 80.0, 1.0, 0.0);
         assert_eq!(stub, 2_000.0, "degenerate-quiet row must clamp to the 2 km floor");
-        let loud = rail_reach_m(RailType::Rail, 250.0, 200.0, 80.0);
+        let loud = rail_reach_m(admin, RailType::Rail, 250.0, 200.0, 80.0);
         assert_eq!(loud, 10_000.0, "loud HS-freight corridor must clamp to the 10 km ceiling");
+    }
+
+    // ── C1: per-region, per-category period shares ──────────────────────────
+
+    /// Every shipped table row's pax AND frt shares must sum to 1.0 (energy is
+    /// only redistributed across periods, never created/destroyed). Plan §3.5.
+    #[test]
+    fn time_dist_shares_sum_to_one() {
+        for td in [&TD_EU_RAIL, &TD_EU_TRAM, &TD_WORLD_RAIL, &TD_WORLD_TRAM] {
+            let ps: f64 = td.pax.iter().sum();
+            let fs: f64 = td.frt.iter().sum();
+            assert!((ps - 1.0).abs() < 1e-9, "pax shares sum {ps}");
+            assert!((fs - 1.0).abs() < 1e-9, "frt shares sum {fs}");
+        }
+    }
+
+    /// Plausibility bands (plan §3.5): EU freight night ∈ [0.45, 0.60]; EU pax
+    /// night ∈ [0.05, 0.15]; tram night ≤ 0.08; non-EU freight night = 8/24.
+    #[test]
+    fn time_dist_plausibility_bands() {
+        assert!((0.45..=0.60).contains(&TD_EU_RAIL.frt[2]), "EU frt night {}", TD_EU_RAIL.frt[2]);
+        assert!((0.05..=0.15).contains(&TD_EU_RAIL.pax[2]), "EU pax night {}", TD_EU_RAIL.pax[2]);
+        assert!(TD_EU_TRAM.pax[2] <= 0.08, "tram night {}", TD_EU_TRAM.pax[2]);
+        assert!(
+            (TD_WORLD_RAIL.frt[2] - 8.0 / 24.0).abs() < 1e-9,
+            "non-EU frt night {} != 8/24",
+            TD_WORLD_RAIL.frt[2]
+        );
+    }
+
+    /// The EXACT derived EU freight fractions (Codex delta 3) — 96.75/32.25/155
+    /// of 284 — must ship, not the rounded-then-drifted 0.33/0.13/0.54.
+    #[test]
+    fn eu_freight_exact_derived_fractions() {
+        assert!((TD_EU_RAIL.frt[0] - 0.340_67).abs() < 1e-4, "{}", TD_EU_RAIL.frt[0]);
+        assert!((TD_EU_RAIL.frt[1] - 0.113_56).abs() < 1e-4, "{}", TD_EU_RAIL.frt[1]);
+        assert!((TD_EU_RAIL.frt[2] - 0.545_77).abs() < 1e-4, "{}", TD_EU_RAIL.frt[2]);
+    }
+
+    /// The resolver hands trams/light-rail/etc the urban PAX curve in BOTH slots
+    /// (no freight ever applies to rail_type 1-4). Plan risk §5.
+    #[test]
+    fn freight_shares_never_apply_to_non_rail_types() {
+        for rt in [RailType::Tram, RailType::LightRail, RailType::NarrowGauge, RailType::Funicular] {
+            for admin in [Admin::UNKNOWN, Admin { continent: crate::admin::Continent::Europe, country_iso: *b"DE", city_id: 0 }] {
+                let td = rail_time_dist(admin, rt);
+                assert_eq!(td.pax, td.frt, "{rt:?} must have frt == pax (no freight)");
+            }
+        }
+    }
+
+    /// Geographic Europe outside the EU whitelist (RU/UA/BY) must take the WORLD
+    /// table, not the EU freight curve (Codex delta 2 — `Continent::Europe` is
+    /// geographic, not the EU).
+    #[test]
+    fn geographic_europe_outside_whitelist_is_world() {
+        for iso in [*b"RU", *b"UA", *b"BY"] {
+            let admin = Admin { continent: crate::admin::Continent::Europe, country_iso: iso, city_id: 0 };
+            let td = rail_time_dist(admin, RailType::Rail);
+            assert_eq!(td.frt, TD_WORLD_RAIL.frt, "{:?} must take the world freight split", std::str::from_utf8(&iso));
+        }
+        // …while a whitelisted EU country (FR) takes the EU split.
+        let fr = Admin { continent: crate::admin::Continent::Europe, country_iso: *b"FR", city_id: 0 };
+        assert_eq!(rail_time_dist(fr, RailType::Rail).frt, TD_EU_RAIL.frt);
+    }
+
+    /// SOLVER-VS-KERNEL CONSISTENCY (task mandate): the reach solver and the
+    /// kernel must compute the same period Lden for the same row+admin. Since the
+    /// solver IS `free_field_lden_at` (which now consumes `rail_time_dist`), this
+    /// pins that no second copy of the split exists — recompute the kernel's
+    /// free-field Lden independently from `railway_emission` + the shared shares
+    /// and require an exact match to `free_field_lden_at`.
+    #[test]
+    fn solver_period_model_matches_kernel_split() {
+        let cz = Admin { continent: crate::admin::Continent::Europe, country_iso: *b"CZ", city_id: 0 };
+        let (rt, sp, qp, qf, d) = (RailType::Rail, 80.0, 80.0, 20.0, 3_500.0);
+        // Independent re-derivation using the public shared helper.
+        let td = rail_time_dist(cz, rt);
+        let geo = 10.0 * (2.0 * std::f64::consts::PI * d).log10();
+        let recv = |pax_pct: f64, frt_pct: f64, h: f64| {
+            let em = railway_emission(rt, sp, qp * pax_pct, qf * frt_pct, h);
+            let mut bands = [0.0f64; NUM_BANDS];
+            for i in 0..NUM_BANDS {
+                bands[i] = em[i] - geo - crate::constants::ALPHA_ATM[i] * (d / 1000.0);
+            }
+            a_weighted_total(&bands)
+        };
+        let [(pd, fd, hd), (pe, fe, he), (pn, fn_, hn)] = td.periods();
+        let want = crate::periods::compute_lden(recv(pd, fd, hd), recv(pe, fe, he), recv(pn, fn_, hn));
+        let got = free_field_lden_at(cz, rt, sp, qp, qf, d);
+        assert!((want - got).abs() < 1e-9, "kernel split {want} != solver {got}");
+    }
+
+    /// C1 CORE INVARIANT: a mixed EU line's `Ln − Lden` must NOT equal the old
+    /// −7.91 dB identity (the flat-split artifact this milestone kills,
+    /// rail-report §G.4). And a freight-heavy EU corridor must have night HOURLY
+    /// energy exceed day — the physical point of the freight night split.
+    #[test]
+    fn eu_split_breaks_minus_7_91_identity_and_night_exceeds_day() {
+        let cz = Admin { continent: crate::admin::Continent::Europe, country_iso: *b"CZ", city_id: 0 };
+        let td = rail_time_dist(cz, RailType::Rail);
+        // Mixed line 80 pax + 60 freight: per-period A-weighted received-equivalent
+        // (use the emission Leq directly — period geometry is common).
+        let aw = |pax_pct: f64, frt_pct: f64, h: f64| {
+            a_weighted_total(&railway_emission(RailType::Rail, 80.0, 80.0 * pax_pct, 60.0 * frt_pct, h))
+        };
+        let [(pd, fd, hd), (pe, fe, he), (pn, fn_, hn)] = td.periods();
+        let (ld, le, ln) = (aw(pd, fd, hd), aw(pe, fe, he), aw(pn, fn_, hn));
+        let lden = crate::periods::compute_lden(ld, le, ln);
+        assert!(
+            (ln - lden - (-7.91)).abs() > 0.5,
+            "Ln-Lden = {:.2} must break the −7.91 flat-split identity",
+            ln - lden
+        );
+        // Freight-heavy: night hourly Leq exceeds day hourly Leq.
+        assert!(ln > ld, "freight-heavy EU night Leq {ln:.1} must exceed day {ld:.1}");
+    }
+
+    /// GATE UPPER-BOUND REGRESSION (Codex /gg CRITICAL): the popup early-exit in
+    /// `compute_railways` must screen on the LOUDEST period, not day. For a quiet,
+    /// slow EU freight row the night block (freight 0.5458 over 8 h) is louder than
+    /// day (freight 0.3407 over 12 h), so a day-only gate would prune a segment the
+    /// heatmap (all-period Lden) keeps — a parity break. Pin: at a distance where
+    /// the DAY band drops below the free-field threshold, the max-over-periods band
+    /// stays above it, so the segment survives the gate.
+    #[test]
+    fn early_gate_screens_on_loudest_period_not_day() {
+        let cz = Admin { continent: crate::admin::Continent::Europe, country_iso: *b"CZ", city_id: 0 };
+        let td = rail_time_dist(cz, RailType::Rail);
+        // Quiet slow EU freight (a near-silent service/branch stub: effective
+        // 0.02 freight/day @ 30 km/h). Loud rows never expose the window — the
+        // gate only matters near the threshold, which is exactly where a quiet
+        // night-freight row sits.
+        let (sp, qp, qf) = (30.0, 0.0, 0.02);
+        let max_band = |pax_pct: f64, frt_pct: f64, h: f64| {
+            railway_emission(RailType::Rail, sp, qp * pax_pct, qf * frt_pct, h)
+                .iter()
+                .cloned()
+                .fold(f64::NEG_INFINITY, f64::max)
+        };
+        let day = max_band(td.pax[0], td.frt[0], 12.0);
+        let loudest = td
+            .periods()
+            .iter()
+            .map(|&(p, f, h)| max_band(p, f, h))
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(loudest > day, "night must be the loudest period for EU freight");
+        // 1500 m sits inside the day-prunes / loudest-keeps window (measured
+        // 1200–1900 m for this row).
+        let d = 1_500.0;
+        let day_pruned = crate::propagation::geo::below_free_field_threshold_line(day, d, 0.0);
+        let loudest_kept = !crate::propagation::geo::below_free_field_threshold_line(loudest, d, 0.0);
+        assert!(
+            day_pruned && loudest_kept,
+            "at {d} m: day-gate prunes ({day_pruned}) but max-over-periods keeps ({loudest_kept}) — the bug the gate fix closes",
+        );
+    }
+
+    /// A PAX-ONLY line's Lden shifts only modestly vs the old flat split — its
+    /// night fraction drops 0.15→0.10, so Lden falls ~0.8 dB (plan §3.5:
+    /// −0.8 ± 0.2 dB). Computed against the retired flat 0.65/0.20/0.15 split.
+    #[test]
+    fn pax_only_lden_shift_vs_old_flat_split() {
+        let cz = Admin { continent: crate::admin::Continent::Europe, country_iso: *b"CZ", city_id: 0 };
+        let aw = |pct: f64, h: f64| a_weighted_total(&railway_emission(RailType::Rail, 100.0, 80.0 * pct, 0.0, h));
+        // New (EU pax 0.70/0.20/0.10):
+        let td = rail_time_dist(cz, RailType::Rail);
+        let new = crate::periods::compute_lden(
+            aw(td.pax[0], 12.0),
+            aw(td.pax[1], 4.0),
+            aw(td.pax[2], 8.0),
+        );
+        // Old flat 0.65/0.20/0.15:
+        let old = crate::periods::compute_lden(aw(0.65, 12.0), aw(0.20, 4.0), aw(0.15, 8.0));
+        let shift = new - old;
+        assert!((shift - (-0.8)).abs() <= 0.2, "pax-only Lden shift {shift:.2} dB, want -0.8±0.2");
     }
 }

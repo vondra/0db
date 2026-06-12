@@ -184,9 +184,14 @@ pub fn collect_from_hex_data(
         // 7 km blanket would silently drop a loud HS corridor 8-10 km out before
         // its honest reach could admit it.
         let railways = query_railways_from_batches(&data.railway_batches, lat, lng, noise_compute::constants::RAILWAY_REACH_CEILING);
+        // Receiver-hex admin for the C1 per-region period model. Only the scaled
+        // counts / speed of `norm` feed `RailSegment` here; `compute_railways`
+        // re-resolves the same admin for emission + reach, so this is for
+        // signature consistency (and harmless if the table is uninitialised).
+        let rail_admin = noise_compute::admin::admin_for_latlng(lat, lng);
         for r in railways {
-            let norm =
-                noise_compute::normalize::normalize_rail(noise_compute::normalize::RawRailInput {
+            let norm = noise_compute::normalize::normalize_rail(
+                noise_compute::normalize::RawRailInput {
                     rail_type: r.rail_type,
                     usage: r.usage,
                     maxspeed: r.maxspeed,
@@ -195,7 +200,9 @@ pub fn collect_from_hex_data(
                     trains_passenger: r.trains_passenger,
                     trains_freight: r.trains_freight,
                     parallel_divisor: r.parallel_divisor,
-                });
+                },
+                rail_admin,
+            );
             let trains_passenger_source: u8 = if r.trains_passenger > 0 { 0 } else { 1 };
             let trains_freight_source: u8 = if r.trains_freight > 0 { 0 } else { 1 };
             let speed_source: u8 = if r.maxspeed > 0 {

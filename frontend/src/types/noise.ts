@@ -5,6 +5,9 @@ export interface SourceSummary {
   source_type: string
   lden: number | null
   lden_free: number | null
+  /** Per-source L_night (END 23:00–07:00, no penalty). null = silent period.
+   * Surfaced for the C1 rail night split (rail Ln no longer = Lden − 7.91). */
+  ln: number | null
   segment_count: number
   displayed_count: number
 }
@@ -351,6 +354,9 @@ export interface Contributor {
   ground_impact_db: number
   received_lden: number
   received_lden_free: number
+  /** Per-contributor L_night (END 23:00–07:00, no penalty); 0 when silent
+   * (mirrors received_lden). C1 rail night break (Gemini delta 5). */
+  received_ln: number
   received_bands: number[]
   geometry: any | null
 }

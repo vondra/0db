@@ -82,17 +82,17 @@ impl LineLayer {
         }
     }
     /// Load this layer's `grid_disk(1)` line rows for a region. Road resolves the
-    /// admin area for its default-AADT fallback; rail has no admin dependency.
+    /// admin area for its default-AADT fallback; rail for the C1 per-region period
+    /// split (EU freight ~55 % at night). The admin lookup is hoisted OUT of the
+    /// match so it reaches `RailData::load_for_r4s` too (Gemini delta 5).
     fn load_rows(self, h3r4: &Path, ring: &[u64], cell: CellIndex) -> Result<Vec<LineRow>> {
+        let ll = LatLng::from(cell);
+        let admin = admin::admin_for_latlng(ll.lat(), ll.lng());
         Ok(match self {
-            Self::Road => {
-                let ll = LatLng::from(cell);
-                let admin = admin::admin_for_latlng(ll.lat(), ll.lng());
-                RoadData::load_for_r4s(h3r4, ring, admin)
-                    .context("load roads")?
-                    .into_rows()
-            }
-            Self::Rail => RailData::load_for_r4s(h3r4, ring)
+            Self::Road => RoadData::load_for_r4s(h3r4, ring, admin)
+                .context("load roads")?
+                .into_rows(),
+            Self::Rail => RailData::load_for_r4s(h3r4, ring, admin)
                 .context("load rail")?
                 .into_rows(),
         })
@@ -388,7 +388,10 @@ fn main() -> Result<()> {
         bail!("--batch / block size must be >= 1");
     }
 
-    if layers.contains(&LineLayer::Road) {
+    // Init when EITHER line layer is built: road needs default-AADT, rail needs
+    // the C1 per-region period split — a rail-only run on Admin::UNKNOWN would
+    // take the world split and break popup parity (Codex delta 1).
+    if layers.contains(&LineLayer::Road) || layers.contains(&LineLayer::Rail) {
         let _ = admin::init_admin_table(&admin::default_admin_path(&h3r4));
     }
 
