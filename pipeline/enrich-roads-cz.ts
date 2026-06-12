@@ -16,6 +16,7 @@ import { SOURCE_ID_CZ_RSD_SCITANI } from './lib/source-ids.generated.js'
 import { pointToPolylineDist } from './lib/spatial.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CZ_RSD_SCITANI
 
@@ -94,6 +95,9 @@ async function downloadCensus(): Promise<any[]> {
 
 // ── Step 2: Parse + normalize ──
 
+/** Un-surveyed (all-zero) census sections skipped by parseCensus — reported once. */
+let zeroSections = 0
+
 function parseCensus(features: any[]): Map<string, CensusSection[]> {
   const byRef = new Map<string, CensusSection[]>()
 
@@ -116,6 +120,14 @@ function parseCensus(features: any[]): Map<string, CensusSection[]> {
       coords: pts as [number, number][],
     }
 
+    // GPR publishes un-surveyed III-class sections with all-zero counts.
+    // Writing those zeros + the source stamp silently mutes real roads that
+    // would otherwise get class defaults (2026-06 audit R7: 44.6k segments).
+    if (section.aadt_light + section.aadt_medium + section.aadt_heavy + section.aadt_moto === 0) {
+      zeroSections++
+      continue
+    }
+
     if (!byRef.has(ref)) byRef.set(ref, [])
     byRef.get(ref)!.push(section)
   }
@@ -131,6 +143,12 @@ function parseCensus(features: any[]): Map<string, CensusSection[]> {
 const CZ_HEX_BBOX: [number, number, number, number] = [48.2, 11.7, 51.4, 19.2]
 
 async function enrichHexes(censusByRef: Map<string, CensusSection[]>): Promise<void> {
+  // Czech road numbers repeat across the border (Slovak I/49 continues CZ I/49)
+  // and the 10 km proximity cap doesn't stop a match just across the line — the
+  // 2026-06 audit R9 found ~1k Slovak/Polish segments carrying ŘSD AADT. Same
+  // gate pattern as enrich-roads-pl.ts; created here because makeCountryGate
+  // may download+convert the CGAZ boundary file on first use.
+  const inCzechia = makeCountryGate('CZ')
   const hexDirs = iterateCountryHexes(H3R4_DIR, CZ_HEX_BBOX)
 
   let totalRoads = 0
@@ -152,6 +170,7 @@ async function enrichHexes(censusByRef: Map<string, CensusSection[]>): Promise<v
 
         // Ref match is MANDATORY — no proximity-only fallback.
         if (!row.ref) return null
+        if (!inCzechia(row.midLat, row.midLon)) return null
         const normalized = normalizeOsmRef(row.ref)
         if (!normalized) return null
         const candidates = censusByRef.get(normalized)
@@ -236,7 +255,7 @@ async function main() {
   const features = await downloadCensus()
   console.log(`\n  Parsing ${features.length} census sections...`)
   const censusByRef = parseCensus(features)
-  console.log(`  ${censusByRef.size} unique road refs\n`)
+  console.log(`  ${censusByRef.size} unique road refs (${zeroSections} un-surveyed all-zero sections skipped)\n`)
 
   await enrichHexes(censusByRef)
   console.log(`\n=== Done ===`)
