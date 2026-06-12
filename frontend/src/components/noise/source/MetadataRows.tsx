@@ -1,7 +1,7 @@
 import type { Contributor } from '../../../types/noise'
 import { fmt, fmtFloat, fmtInt, fmtCompact, txtTable, type TableRow } from '../../../utils/formatters'
 import { MetricLabel, DataPoint } from '../noise-tooltips'
-import { lineRow, railTrainSourceLine, roadSourceDescription } from '../shared'
+import { formatProv, lineRow, railTrainSourceLine, roadSourceDescription } from '../shared'
 
 // Road traffic source / rail train source helpers live in shared.tsx so the
 // same source-attribution wording is reused here and in the Noise segments
@@ -252,8 +252,10 @@ export function MetadataRows({ c }: { c: Contributor }) {
 
   if (m.kind === 'industrial') {
     const hasDetail = m.nace || m.grid_point_count > 0
+    const prov = m.provenance
     const siteText = txtTable([
       ['Type', m.source_type.replace(/_/g, ' ')],
+      ['Source', prov ? formatProv(prov) : 'OSM tags + NACE profile'],
       ...(m.area_m2 > 0 ? [['Area', `${Math.round(m.area_m2).toLocaleString()} m²`] as [string, string]] : []),
       ...(m.nace ? [['NACE', m.nace] as [string, string]] : []),
       ...(m.grid_point_count > 0 ? [['Grid points', String(m.grid_point_count)] as [string, string]] : []),
@@ -269,6 +271,38 @@ export function MetadataRows({ c }: { c: Contributor }) {
       'Industrial',
       <DataPoint title="Industrial site metadata" text={siteText}>
         {summary}
+      </DataPoint>,
+    )
+  }
+
+  if (m.kind === 'aircraft' && m.variant === 'airborne' && m.airborne) {
+    const a = m.airborne
+    // Display thresholds for the sampling-fragility caveat — the Rust
+    // doc on AircraftAirborneDetail points here as their single home.
+    const DAY_SHARE_WARN = 0.5
+    const FLIGHT_SHARE_WARN = 0.3
+    const dayShare = a.top_day_energy_share ?? 0
+    const flightShare = a.top_flight_energy_share ?? 0
+    const sparse = dayShare > DAY_SHARE_WARN || flightShare > FLIGHT_SHARE_WARN
+    const sampleText = txtTable([
+      'ADS-B flight tracks (adsbexchange).',
+      `Lden averaged from ${a.sample_days ?? '–'} sample days/yr.`,
+      ...(sparse
+        ? [
+            '',
+            `⚠ ${Math.round(dayShare * 100)}% of energy from ${a.top_day_date || 'one day'}.`,
+            ...(flightShare > FLIGHT_SHARE_WARN
+              ? [`${Math.round(flightShare * 100)}% from a single flight.`]
+              : []),
+            'Sparse local traffic — value may over-',
+            'state a one-off (e.g. helicopter work).',
+          ]
+        : []),
+    ], 16, 16)
+    return lineRow(
+      'Data',
+      <DataPoint title="Aircraft data source" text={sampleText}>
+        {sparse ? <>⚠ sparse sample</> : <>ADS-B · {a.sample_days ?? '–'} days/yr</>}
       </DataPoint>,
     )
   }

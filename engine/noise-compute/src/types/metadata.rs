@@ -187,6 +187,8 @@ pub struct IndustrialMetadata {
     pub source_type: &'static str, // "industrial_area" | "quarry" | "wastewater" | "wind_turbine" ...
     pub nace: Option<String>,
     pub grid_point_count: u16, // engine discretized the site into N points
+    pub source_id: u16, // dataset identity stamp (0 = unspecified); resolved into `provenance`
+    pub provenance: Option<crate::sources::DatasetMeta>,
 }
 
 /// Aircraft contributor metadata — wraps AircraftBandData so aircraft flows

@@ -70,6 +70,20 @@ pub struct AircraftAirborneDetail {
     pub faint: AircraftEventBandStats,
     pub audible: AircraftEventBandStats,
     pub disruptive: AircraftEventBandStats,
+    /// Sampling-fragility transparency (audit 2026-06-12, dual-/gg
+    /// consensus): the Lden average comes from `sample_days` archive days,
+    /// so a one-off GA/helicopter day caught in the sample is weighted
+    /// ×365/sample_days (+14.8 dB at 12 days). These shares let the UI
+    /// flag receivers where the aircraft value hangs on a single day or
+    /// flight (display thresholds 0.5 / 0.3 live in the frontend).
+    /// Shares are of TOTAL aircraft energy (airborne + cruise); 0.0 when
+    /// no dated airborne flights contribute.
+    pub top_day_energy_share: f64,
+    /// ISO date of that loudest sample day ("" when none).
+    pub top_day_date: String,
+    pub top_flight_energy_share: f64,
+    /// Number of archive days behind the Lden average (`n_days`).
+    pub sample_days: u32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub top_flights: Vec<AircraftTopFlight>,
 }

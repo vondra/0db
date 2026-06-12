@@ -173,6 +173,9 @@ export interface IndustrialMetadata {
   source_type: string
   nace: string | null
   grid_point_count: number
+  /** Dataset stamp (0 = unspecified); resolved server-side into `provenance`. */
+  source_id?: number
+  provenance?: DatasetProvenance | null
 }
 
 export interface AircraftEventBandStats {
@@ -242,6 +245,16 @@ export interface AircraftAirborneDetail {
   faint: AircraftEventBandStats
   audible: AircraftEventBandStats
   disruptive: AircraftEventBandStats
+  /**
+   * Sampling-fragility transparency: share [0,1] of total aircraft energy
+   * from the single loudest sample day / single flight, plus the number of
+   * archive days behind the Lden average. UI flags a sparse sample above
+   * 0.5 / 0.3 (audit 2026-06-12).
+   */
+  top_day_energy_share?: number
+  top_day_date?: string
+  top_flight_energy_share?: number
+  sample_days?: number
   top_flights?: AircraftTopFlight[]
 }
 

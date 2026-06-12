@@ -402,15 +402,24 @@ pub fn collect_from_hex_data(
                             .filter(|&v| v > 0),
                     },
                 );
+                // Dataset stamp (GEM / E-PRTR / …) → popup provenance tooltip.
+                // `with_metadata` leaves source_id at 0 (shared with the
+                // building path, which has no stamp column).
+                let row_source_id = batch.column_by_name("source_id")
+                    .and_then(|c| c.as_any().downcast_ref::<arrow::array::UInt16Array>())
+                    .map(|a| a.value(i))
+                    .unwrap_or(0);
                 for prepared in prepared_points {
                     let pt_dist = crate::geo::flat_dist(lat, lng, prepared.lat, prepared.lon);
-                    all_industrial.push(prepared.with_metadata(
+                    let mut ps = prepared.with_metadata(
                         osm_id,
                         st,
                         iname.clone(),
                         wkb_hex.clone(),
                         pt_dist,
-                    ));
+                    );
+                    ps.source_id = row_source_id;
+                    all_industrial.push(ps);
                 }
             }
         }

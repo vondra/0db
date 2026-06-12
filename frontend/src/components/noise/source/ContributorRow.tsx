@@ -272,6 +272,10 @@ export function ContributorRow({ c, onToggle }: { c: Contributor; onToggle?: (ge
           )}
           {aircraftAirborne ? (
             <>
+              {/* Data-source row (+ sparse-sample warning) — MetadataRows'
+                  aircraft airborne branch renders ONLY that row, so it
+                  composes here without duplicating the tables below. */}
+              <MetadataRows c={c} />
               {/* One total the end-user actually asks for: how many aircraft
                   were heard per day. Low airborne approach/departure events +
                   identified high-altitude cruise overflights, summed. The Lmax

@@ -36,6 +36,9 @@ pub(crate) fn compute_point_sources(
         /// discretisation count (driving the `Lw − 10·log10(N)`
         /// per-point split). 1 for buildings + small industrial.
         grid_point_count: u16,
+        /// Dataset stamp of the first-touched PointSource (whole site
+        /// shares one source_id) — resolved to `provenance` for the popup.
+        source_id: u16,
     }
     let mut pts_by_osm: HashMap<i64, PtAccum> = HashMap::new();
     let ground_g = rasters.ground_g(receiver.lat, receiver.lon);
@@ -154,6 +157,7 @@ pub(crate) fn compute_point_sources(
             floors: src.floors,
             area_m2: src.area_m2,
             grid_point_count: 0,
+            source_id: src.source_id,
         });
         acc.variants[0].add(&v_day);
         acc.variants[1].add(&v_eve);
@@ -250,6 +254,8 @@ pub(crate) fn compute_point_sources(
                 source_type: subtype_name,
                 nace: None,
                 grid_point_count: acc.grid_point_count,
+                source_id: acc.source_id,
+                provenance: crate::sources::dataset_meta(acc.source_id),
             }))
         } else {
             // building. `acc.src_height` is `elevation + height/2`

@@ -152,7 +152,7 @@ export type RoadTrafficSource =
 
 export type RailTrainSource = 'arrow' | 'default_by_type'
 
-function formatProv(p: DatasetProvenance | null | undefined): string {
+export function formatProv(p: DatasetProvenance | null | undefined): string {
   if (!p) return ''
   const parts: string[] = [p.name]
   if (p.year != null) parts.push(`(${p.year})`)
