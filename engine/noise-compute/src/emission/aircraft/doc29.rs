@@ -12,6 +12,8 @@ use std::f64::consts::{LOG10_2, PI};
 use crate::propagation::iso9613::fast_exp_f64;
 use crate::types::AircraftSegment;
 
+use super::horizon::ReceiverHorizon;
+
 use super::npd::{
     AIRCRAFT_FAR_FIELD_THRESHOLD_M, FT_PER_M, Installation, NpdLuts, NpdProfile,
 };
@@ -358,6 +360,14 @@ pub struct AircraftKernelResult {
 /// `rel_alt < 30 m AGL` was tried and removed after independent review —
 /// it created spatial discontinuities for valid hill-top receivers.
 /// Filter D is the geometry-aware replacement.
+///
+/// **C2 terrain-horizon screening** (`horizon: Some(..)`): per-pair
+/// `ReceiverHorizon::screening_dz` insertion loss for real geometry
+/// below the receiver's terrain horizon. `None` ⇒ byte-identical to the
+/// pre-C2 kernel (hard invariant — popup/heatmap default until P2/P3).
+/// No double-count with Filter D: D drops 100 %-fictional sub-terrain
+/// extrapolations (`t ∉ [0, 1]` only) and never attenuates; the horizon
+/// attenuates real above-terrain geometry — both can act on one pair.
 #[allow(clippy::too_many_arguments)]
 #[inline]
 pub fn segment_energy_kernel<const WANT_CPA: bool>(
@@ -383,6 +393,7 @@ pub fn segment_energy_kernel<const WANT_CPA: bool>(
     reach_sq: f64,
     terrain_start_cut_m: f64,
     terrain_end_cut_m: f64,
+    horizon: Option<&ReceiverHorizon>,
 ) -> Option<AircraftKernelResult> {
     let t = -(ax * sdx + ay * sdy) * inv_lsq;
     let cpx = ax + t * sdx;
@@ -439,7 +450,28 @@ pub fn segment_energy_kernel<const WANT_CPA: bool>(
         }
         let q_m = t * slen;
         let df = fast_delta_f(q_m, slen, d_bar_m);
-        let sel = sel_npd + seg_dv + df;
+        let mut sel = sel_npd + seg_dv + df;
+        // C2 terrain-horizon screening, CFFK arm. Precheck (delta 3):
+        // `rel_alt <= 0` routes receiver-above-aircraft geometry to the
+        // full check (squaring alone would silently pass it); otherwise
+        // sin²β ≥ max stored sin²h ⇒ above every horizon ⇒ skip. The
+        // `lateral` sqrt is paid only after the precheck passes (delta 1
+        // perf note). This branch subtracts Dz alone — CFFK never
+        // computes Λ (premise: Λ negligible above 7.62 km slant), so
+        // there is no Λ to credit back; if P1 shows screened CFFK pairs
+        // with non-negligible Λ (low-β long-slant wing jets), compute
+        // `fast_lateral_attenuation` inside this blocked arm only —
+        // decide on data, not upfront (plan delta 1).
+        if let Some(hz) = horizon {
+            if rel_alt <= 0.0 || rel_alt * rel_alt < slant_sq * hz.max_sin_sq {
+                let lateral = lateral_sq.sqrt();
+                sel -= hz.screening_dz(cpx, cpy, lateral, rel_alt);
+            }
+        }
+        // Floor check runs AFTER screening: a screened segment that
+        // drops below 20 dB is inaudible and must be culled exactly like
+        // an unscreened one (the pre-ΔF ceiling check above is an upper
+        // bound that screening only tightens, so it stays valid).
         if sel < 20.0 {
             return None;
         }
@@ -483,7 +515,20 @@ pub fn segment_energy_kernel<const WANT_CPA: bool>(
         }
     };
 
-    let sel = sel_npd + seg_dv + di - lambda + df;
+    let mut sel = sel_npd + seg_dv + di - lambda + df;
+    // C2 terrain-horizon screening, full arm (same delta-3 precheck as
+    // the CFFK arm above). AEDT LOS-blockage bookkeeping: barrier loss
+    // and lateral attenuation are mutually exclusive, never summed —
+    // SEL −= max(Dz, Λ) − Λ ≡ (Dz − Λ).max(0) with the kernel's Λ
+    // already inside `sel` (AEDT 3f TM "Line-of-Sight Blockage";
+    // rationale Berton, AIAA 2021).
+    if let Some(hz) = horizon {
+        if rel_alt <= 0.0 || rel_alt * rel_alt < slant_sq * hz.max_sin_sq {
+            let dz = hz.screening_dz(cpx, cpy, lateral_m, rel_alt);
+            sel -= (dz - lambda).max(0.0);
+        }
+    }
+    // Post-screening floor, same rationale as the CFFK arm.
     if sel < 20.0 {
         return None;
     }
@@ -769,7 +814,7 @@ mod tests {
                 alt_m, inv_lsq, slen, 0.0,
                 npd_luts, class_idx, true, dv,
                 profile.d_bar_m, inst_code, di_a, di_b, di_c,
-                false, reach_sq, f64::MIN, f64::MIN,
+                false, reach_sq, f64::MIN, f64::MIN, None,
             )
         };
         // One aggregated segment.

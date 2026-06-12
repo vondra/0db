@@ -169,6 +169,9 @@ pub fn scatter(
         if !aircraft::is_valid_airborne_with_terrain(&seg, &terrain) {
             continue;
         }
+        // C2 horizon screening: cruise never screens — `with_terrain`
+        // hard-wires `horizon = None` (structural exemption: cruise AGL
+        // floor 7 200 m + 16 km slant cap ⇒ β ≥ 26.6° > any horizon).
         let Some((sel, cpa)) = aircraft::segment_sel_with_terrain(
             &seg,
             receiver.lat,

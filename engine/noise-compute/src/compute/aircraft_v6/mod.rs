@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 
 use crate::compute::aircraft_v6::state::{FlightAccum, TopFlightCandidate};
+use crate::emission::aircraft::ReceiverHorizon;
 use crate::types::{
     AircraftBandData, AircraftMetadata, Contributor, LayerKind, NoisePeriods,
     PropagationBaseline, RasterSampler, Receiver, ScreeningBreakdown, SourceMetadata,
@@ -44,6 +45,10 @@ pub fn compute_aircraft_v6(
     airborne_rows: &[AirborneRowView<'_>],
     cruise_rows: &[CruiseRowView<'_>],
     rasters: &dyn RasterSampler,
+    // C2 receiver terrain horizon — `Some` only on the popup path under
+    // `QM_AIRBORNE_HORIZON=1`. Threads into the AIRBORNE scatter only;
+    // cruise is structurally exempt (β ≥ 26.6°, see segment_sel).
+    horizon: Option<&ReceiverHorizon>,
     n_days: u16,
     // Max airborne sub-segment traces to keep in TraceCollector (the
     // bounded top-K heap). `0` = don't allocate any traces — used by
@@ -66,6 +71,7 @@ pub fn compute_aircraft_v6(
         receiver,
         airborne_rows,
         n_days_f,
+        horizon,
         trace_cap,
         traces.as_deref_mut(),
     );
@@ -146,6 +152,12 @@ pub fn compute_aircraft_v6(
             subtype: "airborne".to_string(),
             distance_m: 0.0,
             periods: airborne_periods.clone(),
+            // free == received was EXACT pre-C2 (airborne had no path
+            // effects). Under QM_AIRBORNE_HORIZON=1 this now includes
+            // the screening; the honest split needs a second period
+            // accumulation through the scatter — deferred to C2 P2
+            // (default-ON). P1 measures screening via flag on/off A/B
+            // instead (plan §"P0 implementation review" carry-overs).
             periods_free: airborne_periods.clone(),
             emission_db: airborne_periods.lden_db,
             received_bands: [0.0; NUM_BANDS],
@@ -210,6 +222,9 @@ pub fn compute_aircraft_v6_separable(
         receiver,
         airborne_rows,
         n_days_f,
+        // Validation harness compares against pre-C2 heatmap output —
+        // no horizon until P3 wires the heatmap side.
+        None,
         // No traces collected on this path → cap is irrelevant; pass 0.
         0,
         None,
@@ -276,7 +291,7 @@ mod tests {
     fn silence_when_no_data() {
         let receiver = Receiver::new(50.10, 14.262, 0.0);
         let (periods, contribs, _band) =
-            compute_aircraft_v6(&receiver, &[], &[], &FlatGround, 1, 0, None, None);
+            compute_aircraft_v6(&receiver, &[], &[], &FlatGround, None, 1, 0, None, None);
         assert!(!periods.lden_db.is_finite());
         assert!(contribs.is_empty());
     }

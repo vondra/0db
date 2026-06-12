@@ -793,6 +793,7 @@ mod tests {
             &row_views,
             &[],
             &MockRasters,
+            None,
             365,
             0,
             None,

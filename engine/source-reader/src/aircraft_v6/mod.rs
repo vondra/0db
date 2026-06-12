@@ -189,11 +189,29 @@ pub fn add_v6_aircraft_to_result(
     // = 21 s per LKPR query. Aircraft Lden delta when bypassing the
     // stale filter entirely: 0.000 dB on 5 reference receivers.
 
+    // C2 terrain screening (P0, default OFF): one receiver horizon per
+    // popup query, built from the DEM terrain surface (DSM-biased:
+    // GLO-30 includes canopy/buildings) via the same tile-cached
+    // bilinear sampler the rest of the popup uses. ~1.5 k samples
+    // ≈ 0.1-0.3 ms. Env-gated like POPUP_TIMING until P1 measurement /
+    // P2 default-flip; unset ⇒ `None` ⇒ byte-identical popup output.
+    let horizon = if std::env::var("QM_AIRBORNE_HORIZON").as_deref() == Ok("1") {
+        Some(noise_compute::emission::aircraft::ReceiverHorizon::build(
+            |lat, lon| rasters.elevation(lat, lon),
+            receiver.lat,
+            receiver.lon,
+            receiver.altitude_m(),
+        ))
+    } else {
+        None
+    };
+
     let (mut air_periods, mut air_contribs, band_data) = compute_aircraft_v6(
         receiver,
         airborne_views,
         &cruise_views,
         rasters,
+        horizon.as_ref(),
         n_days,
         trace_cap,
         Some(traces),
