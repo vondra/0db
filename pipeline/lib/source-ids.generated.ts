@@ -69,3 +69,4 @@ export const SOURCE_ID_TH_NATIONAL_RAILWAY = 2075 as const // th-national-railwa
 export const SOURCE_ID_INDUSTRIAL_NAME_HEURISTIC = 9000 as const // industrial-name-heuristic
 export const SOURCE_ID_GLOBAL_OVERTURE = 9001 as const // global-overture
 export const SOURCE_ID_GLOBAL_COPERNICUS_GLO30 = 9002 as const // global-copernicus-glo30
+export const SOURCE_ID_CITY_PRAHA_TSK = 9003 as const // city-praha-tsk

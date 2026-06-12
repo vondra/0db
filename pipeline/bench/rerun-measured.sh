@@ -72,6 +72,15 @@ log "Phase 2: Country scripts (parallel, $JOBS jobs)"
 echo "$ROADS $RAILWAYS $BUILDINGS $INDUSTRIAL" | tr ' ' '\n' | grep -v '^$' | \
     xargs -P "$JOBS" -I{} bash -c 'run_one "$@"' _ {}
 
+# ── Phase 3: City enrichers (SEQUENTIAL — outside the Phase-2 glob and
+# after it on purpose: the city driver writes the same hex arrows national
+# enrichers touch; racing them in the xargs pool would fight the per-hex
+# lock. Rank ordering makes the result identical either way; running last
+# just avoids wasted writes. city-enrichment-plan §2.4.) ──
+log ""
+log "Phase 3: City enrichers (sequential)"
+run_one pipeline/enrich-cities-roads.ts
+
 # ── Summary ──
 log ""
 log "Done. Failures:"

@@ -890,4 +890,14 @@ pub const SOURCES: &[Source] = &[
         url: Some("https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model"),
         year: Some(2021),
     },
+    Source {
+        id: 9003,
+        key: "city-praha-tsk",
+        provenance: Provenance::CityMeasured,
+        layer: "roads",
+        name: "TSK Praha — Intenzity dopravy",
+        license: Some("Prague open data (no explicit CC; city portal terms)"),
+        url: Some("https://tsk-praha.cz/"),
+        year: Some(2025),
+    },
 ];

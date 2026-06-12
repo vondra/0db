@@ -43,6 +43,12 @@ export interface RoadRow {
   endLon: number
   midLat: number
   midLon: number
+  /** OSM way name (null when untagged). City adapters name-match against
+   *  municipal counter street names; national censuses keep ref-matching. */
+  name: string | null
+  /** OSM way id — direct join key for municipal datasets that publish it
+   *  (e.g. Montpellier's osm_id column). */
+  osmId: number | null
 }
 
 export interface WriteRoadResult {
@@ -85,6 +91,8 @@ export async function writeRoadAadt(
     if (n === 0) return table
 
     const refCol = table.getChild('ref')
+    const nameCol = table.getChild('name')
+    const osmIdCol = table.getChild('osm_id')
     const sLat = table.getChild('start_lat')
     const sLon = table.getChild('start_lon')
     const eLat = table.getChild('end_lat')
@@ -127,6 +135,8 @@ export async function writeRoadAadt(
         endLon,
         midLat: (startLat + endLat) / 2,
         midLon: (startLon + endLon) / 2,
+        name: (nameCol?.get(i) as string | null) ?? null,
+        osmId: osmIdCol ? Number(osmIdCol.get(i)) : null,
       }
       // Class gate (centralized so no enricher can forget it): a source whose
       // `coverage` set omits this row's `road_class` never reaches `match`, so a

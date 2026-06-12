@@ -123,6 +123,24 @@ export const DATASETS: Dataset[] = [
     measurement: 'counted',
   },
   {
+    id: 9003,
+    layer: 'roads',
+    key: 'city-praha-tsk',
+    name: 'TSK Praha — Intenzity dopravy',
+    year: 2025,
+    license: 'Prague open data (no explicit CC; city portal terms)',
+    url: 'https://tsk-praha.cz/',
+    priority: 90,
+    measurement: 'derived',
+    /* Working-day 0–24 h totals per monitored-network section (954 profiles,
+     * 415 streets, whole administrative Prague; mix of loop detectors, mobile
+     * counters and manual surveys). 'derived', not 'counted': values are
+     * WORKING-DAY 0-24h totals — TSK's TP-189 weekday→AADT expansion table
+     * is not published with the file, so per plan §2.6 the unexpanded proxy
+     * must not enter counted-only consumers (~+5-8% vs true AADT,
+     * conservative). Matched inside the Prague ADM2 polygon. */
+  },
+  {
     id: 21,
     layer: 'roads',
     key: 'us-fhwa-hpms',

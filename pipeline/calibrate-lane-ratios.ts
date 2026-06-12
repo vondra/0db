@@ -17,8 +17,10 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tableFromIPC } from 'apache-arrow'
 import { SOURCES_BY_ID, PROVENANCE_RANK } from './lib/sources.js'
+import { DATASETS } from './lib/enrichment-datasets.js'
 
 const YEAR = process.env.DATA_YEAR || '2026'
+const MEASUREMENT_BY_ID = new Map(DATASETS.map((d) => [d.id, d.measurement]))
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 const CLASS_NAMES = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'residential', 'living_st']
@@ -76,6 +78,11 @@ function main(): void {
       const src = SOURCES_BY_ID.get(sid.get(i) as number)
       // Only measured data (global-measured and above) enters the calibration.
       if (!src || PROVENANCE_RANK[src.provenance] < PROVENANCE_RANK['global-measured']) continue
+      // Rank alone is not enough since city-measured (rank 6) can carry
+      // measurement:'derived' (e.g. Praha working-day proxy) — counted-only
+      // per C3.1 v2; datasets without the flag keep legacy rank behavior.
+      const meas = MEASUREMENT_BY_ID.get(src.id)
+      if (meas && meas !== 'counted') continue
       if (!al || al.get(i) <= 0) continue
 
       const roadClass = rc.get(i) as number
