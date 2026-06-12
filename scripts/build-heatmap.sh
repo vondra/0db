@@ -111,10 +111,61 @@ if ! $COMBINE_ONLY; then
       # heavy raster reads share the OS page cache (and CPU L3). GPU = throughput
       # on the dominant line scatter; CPU = the cheaper point/ground layers.
       [ -n "$bbox" ] || { log "ERROR: --gpu requires --bbox"; exit 1; }
+      # S-3 GPU dense/sparse routing gate: rural road on GPU is a measured 0.82× loss
+      # (docs/dev/gpu-benchmark-results.md). Gate by total roads.arrow + railways.arrow
+      # bytes over the R4 cells COVERING the bbox (~2 km sampling, the cluster
+      # master's polyfill idiom — a whole-tree scan would always read "dense" and
+      # walk 121k dirs on the world host). GPU_LINE_MIN_MB default = 2 MB matches
+      # the cluster's DENSE_LINE_MB — the same measured dense/sparse boundary.
+      # The same R4 set feeds the C9 barrier gate: the GPU kernel has no barrier
+      # input, so any barriers.arrow in the bbox routes the line layers to the CPU
+      # vector path (mirrors cluster-build-chunk.sh; 11 dB divergence measured on
+      # barrier-dense LKPR without it, 2026-06-12).
+      GPU_LINE_MIN_MB="${GPU_LINE_MIN_MB:-2}"
+      bbox_line_bytes=0
+      bbox_has_barriers=0
+      while read -r r4; do
+        [ -d "$H3R4/$r4" ] || continue
+        for f in "$H3R4/$r4/roads.arrow" "$H3R4/$r4/railways.arrow"; do
+          [ -f "$f" ] && bbox_line_bytes=$((bbox_line_bytes + $(stat -c%s "$f" 2>/dev/null || echo 0)))
+        done
+        [ -s "$H3R4/$r4/barriers.arrow" ] && bbox_has_barriers=1
+      done < <(python3 - "$bbox" <<'PY'
+import sys, h3
+s, w, n, e = (float(x) for x in sys.argv[1].split(","))
+s, n = min(s, n), max(s, n); w, e = min(w, e), max(w, e)
+cells = set()
+lat = s
+while lat <= n + 1e-9:
+    lon = w
+    while lon <= e + 1e-9:
+        cells.add(h3.latlng_to_cell(lat, lon, 4))
+        lon += 0.02
+    lat += 0.02
+for c in sorted(cells):
+    print(c)
+PY
+)
       gpu_layers=(); cpu_layers=()
       for L in "${SURFACE_LAYERS[@]}"; do
-        case "$L" in road | rail) gpu_layers+=("$L") ;; *) cpu_layers+=("$L") ;; esac
+        case "$L" in
+          road | rail)
+            if [ "$bbox_has_barriers" -eq 1 ] \
+              || [ "$bbox_line_bytes" -lt "$((GPU_LINE_MIN_MB * 1000000))" ]; then
+              cpu_layers+=("$L")
+            else
+              gpu_layers+=("$L")
+            fi ;;
+          *) cpu_layers+=("$L") ;;
+        esac
       done
+      if [ "${#gpu_layers[@]}" -eq 0 ]; then
+        if [ "$bbox_has_barriers" -eq 1 ]; then
+          log "barriers in bbox — line layers on CPU (GPU kernel is barrier-blind, C9)"
+        else
+          log "sparse bbox (${bbox_line_bytes} B < ${GPU_LINE_MIN_MB} MB) — road/rail on CPU (GPU 0.82× rural loss, S-3)"
+        fi
+      fi
       # --features gpu pulls in cudarc + the nvcc PTX build; build.rs fails with a
       # clear message if nvcc is missing, so this build is the single GPU-host gate.
       log "rebuilding gpu-surface (needs nvcc on this host)"
