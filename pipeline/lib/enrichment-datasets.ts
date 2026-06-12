@@ -141,6 +141,45 @@ export const DATASETS: Dataset[] = [
      * conservative). Matched inside the Prague ADM2 polygon. */
   },
   {
+    id: 9004,
+    layer: 'roads',
+    key: 'city-wien-dauerzaehlstellen',
+    name: 'Stadt Wien MA46 — Dauerzählstellen DTV',
+    year: 2025,
+    license: 'CC-BY-4.0',
+    url: 'https://www.data.gv.at/katalog/dataset/stadt-wien_verkehrszhlstellenzhlwertewien',
+    priority: 90,
+    measurement: 'counted',
+    /* ~70 permanent automatic counters (loops + side radar) on Vienna's
+     * B + G street network, monthly Mon–Sun all-days DTV per station and
+     * direction since 2016. 'counted': full-year, all-day-type means from
+     * fixed sensors — MA46 publishes the day-type-correct monthly DTVMS,
+     * the adapter only takes the days-weighted mean of the latest complete
+     * non-pandemic year (2025; the adapter logs + caches the year it
+     * picked). No proxy rows, no gap-fill. Matched by station point
+     * proximity inside the Wien(Stadt) ADM2 polygon. */
+  },
+  {
+    id: 9005,
+    layer: 'roads',
+    key: 'city-brno-detectors',
+    name: 'Brno BKOM — pentlogram intenzity dopravy',
+    year: 2023,
+    license: 'CC-BY-SA-4.0',
+    url: 'https://data.brno.cz/datasets/intenzita-dopravy-intenzita-vozidel-vehicle-traffic-intensity',
+    priority: 90,
+    measurement: 'derived',
+    /* 589 section polylines over Brno's main street graph, per-edition
+     * vehicles/24 h (latest edition 2023). 'derived', not 'counted':
+     * values are working-day-period intensities quantized to whole
+     * THOUSANDS with a PERCENT heavy share (buses folded into trucks),
+     * and pentlogram editions carry sections forward between BKOM survey
+     * campaigns — counted vs interpolated sections are indistinguishable
+     * per row, which is exactly the plan-§2.6 "mixed under one id" case.
+     * Matched by section-line proximity inside the Brno-City ADM2
+     * polygon. */
+  },
+  {
     id: 21,
     layer: 'roads',
     key: 'us-fhwa-hpms',

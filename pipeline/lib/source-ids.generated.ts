@@ -70,3 +70,5 @@ export const SOURCE_ID_INDUSTRIAL_NAME_HEURISTIC = 9000 as const // industrial-n
 export const SOURCE_ID_GLOBAL_OVERTURE = 9001 as const // global-overture
 export const SOURCE_ID_GLOBAL_COPERNICUS_GLO30 = 9002 as const // global-copernicus-glo30
 export const SOURCE_ID_CITY_PRAHA_TSK = 9003 as const // city-praha-tsk
+export const SOURCE_ID_CITY_WIEN_DAUERZAEHLSTELLEN = 9004 as const // city-wien-dauerzaehlstellen
+export const SOURCE_ID_CITY_BRNO_DETECTORS = 9005 as const // city-brno-detectors
