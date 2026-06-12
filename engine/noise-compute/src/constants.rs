@@ -137,6 +137,16 @@ pub const RAILWAY_REACH_CLAMP_MAX: f64 = 10_000.0;
 /// road/rail boundary convention (road's per-class `ROAD_MAX_RADIUS` caps sit
 /// at the same crossing — e.g. motorway 10 km, residential 800 m — so road and
 /// rail reach use one boundary). Display floor, not a physics cutoff.
+///
+/// KNOWN CONVENTION GAP (shared with the road caps; Codex /gg 2026-06-12):
+/// the solve is free-field UNREFLECTED, but the kernels add receiver-facade
+/// reflection (up to ~+5 dB) before propagation — at a reflective receiver
+/// the true 25 dB crossing sits past the cap (default mainline 7.1 → 9.5 km;
+/// worst CZ stamped row 8.9 → 11.6 km, still 27.9 dB at the 10 km ceiling).
+/// Affected band: 25-30 dB at facades only; the pre-S5 7 km blanket had the
+/// SAME gap (its reflected mainline crossing was already ~9.5 km). Revisit
+/// road+rail TOGETHER (+5 dB solve headroom) if SHM/check-world facade
+/// points near cutoffs show measurable under-coverage.
 pub const RAILWAY_REACH_TARGET_LDEN_DB: f64 = 25.0;
 
 /// Widest rail reach the clamp can return — used to size the rail-only

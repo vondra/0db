@@ -1,5 +1,14 @@
 use crate::*;
 
+thread_local! {
+    /// Exact-key memo for `rail_reach_m` — see the comment at the call site.
+    /// Keyed on raw f64 bits (no quantization semantics to reason about);
+    /// per-thread keeps the popup single-threaded-per-request contract.
+    static REACH_CACHE: std::cell::RefCell<
+        std::collections::HashMap<(u8, u64, u64, u64), f64>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 /// Compute railway noise — grouped by osm_id with geometry.
 pub(crate) fn compute_railways(
     receiver: &Receiver,
@@ -99,7 +108,24 @@ pub(crate) fn compute_railways(
         // `RailSegment.trains_*` are already the effective post-scaling counts),
         // so popup and heatmap cull at the same distance by construction — no
         // blanket constant, no magic-number drift.
-        if seg.dist_m > railway::rail_reach_m(rail_type, speed, q_pax, q_frt) {
+        //
+        // Memoized per worker thread: segments materialize per QUERY, and the
+        // 40-step bisection (~µs) × thousands of in-ceiling segments would
+        // re-pay ~5-10 ms on every popup (Codex /gg on 48085647). Effective
+        // (type, speed, counts) tuples collapse onto a handful of defaults,
+        // so an exact-key cache hits ~99%.
+        let reach_m = REACH_CACHE.with(|c| {
+            let key = (
+                seg.rail_type,
+                speed.to_bits(),
+                q_pax.to_bits(),
+                q_frt.to_bits(),
+            );
+            *c.borrow_mut()
+                .entry(key)
+                .or_insert_with(|| railway::rail_reach_m(rail_type, speed, q_pax, q_frt))
+        });
+        if seg.dist_m > reach_m {
             continue;
         }
 
