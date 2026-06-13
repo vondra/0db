@@ -21,6 +21,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
+import { gunzipSync } from 'node:zlib'
 import { createInterface } from 'node:readline'
 import { latLngToCell } from 'h3-js'
 import { SOURCE_ID_GLOBAL_GTFS_TRANSIT } from './lib/source-ids.generated.js'
@@ -127,7 +128,9 @@ const FEEDS: FeedConfig[] = [
   {
     id: 'fi',
     name: 'Finland',
-    url: 'https://data.public-transport.earth/gtfs/fi',
+    // Fintraffic/Digitraffic; requires Accept-Encoding: gzip (handled in downloadFeed).
+    // Old public-transport.earth/gtfs/fi went dead 2026-06.
+    url: 'https://rata.digitraffic.fi/api/v1/trains/gtfs-all.zip',
     country: 'FI',
     boundingBox: [59.7, 19.1, 70.1, 31.6],
     railRouteTypes: ALL_RAIL_AND_TRAM,
@@ -231,7 +234,9 @@ const FEEDS: FeedConfig[] = [
   {
     id: 'sk',
     name: 'Slovakia (ZSR/ŽSR)',
-    url: 'https://www.zsr.sk/files/pre-cestujucich/cestovny-poriadok/gtfs/gtfs.zip',
+    // NKOD national open-data portal (distribution of dataset ebeeedf1-…).
+    // Old zsr.sk direct .zip went dead 2026-06 (returns an HTML page).
+    url: 'https://data.slovensko.sk/download?id=f63ef0f2-c4e7-496b-bdd1-44ba0e9438e9',
     country: 'SK',
     boundingBox: [47.7, 16.8, 49.6, 22.6],
     railRouteTypes: ALL_RAIL_AND_TRAM,
@@ -437,12 +442,16 @@ async function downloadGtfs(feed: FeedConfig): Promise<string> {
   console.log(`  [${feed.id}] Downloading GTFS from ${feed.url}...`)
   const res = await fetch(feed.url, {
     signal: AbortSignal.timeout(600_000), // 10 min — large feeds
-    headers: { 'Accept': 'application/zip, application/octet-stream, */*' },
+    // Digitraffic (fi) returns HTTP 406 without Accept-Encoding: gzip; harmless elsewhere.
+    headers: { 'Accept': 'application/zip, application/octet-stream, */*', 'Accept-Encoding': 'gzip' },
     redirect: 'follow',
   })
   if (!res.ok) throw new Error(`GTFS download failed for ${feed.id}: ${res.status} ${res.statusText}`)
 
-  const buf = Buffer.from(await res.arrayBuffer())
+  let buf = Buffer.from(await res.arrayBuffer())
+  // GTFS zips start with 'PK'. If a server handed back a gzip stream (magic 1f 8b)
+  // that undici didn't auto-inflate (Digitraffic fi), inflate to recover the .zip.
+  if (buf[0] === 0x1f && buf[1] === 0x8b) buf = gunzipSync(buf)
   writeFileSync(zipPath, buf)
   console.log(`  [${feed.id}] Downloaded: ${(buf.length / 1e6).toFixed(1)} MB`)
 
