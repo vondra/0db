@@ -123,9 +123,10 @@ if ! $COMBINE_ONLY; then
       # barrier-dense LKPR without it, 2026-06-12). UNLESS QM_GPU_BARRIERS=1: then
       # gpu-surface screens the vector walls itself (kernel projection-and-snap;
       # spike GO 2026-06-12, 1.97× on barrier-dense vs 1.0× CPU demotion). Default
-      # OFF until per-box validation — .claude/plans/heatmap-orchestrator-audit/.
+      # ON (owner-directed 2026-06-13): validated mean 0.002 / max 1.5 dB vs the CPU
+      # truth — within 30 m-data noise; QM_GPU_BARRIERS=0 forces the CPU demotion.
       GPU_LINE_MIN_MB="${GPU_LINE_MIN_MB:-2}"
-      QM_GPU_BARRIERS="${QM_GPU_BARRIERS:-0}"
+      QM_GPU_BARRIERS="${QM_GPU_BARRIERS:-1}"
       bbox_line_bytes=0
       bbox_has_barriers=0
       while read -r r4; do
