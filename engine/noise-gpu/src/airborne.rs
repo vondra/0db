@@ -232,7 +232,12 @@ impl AirborneGpu {
     /// (resolved from the source arrows' `sample_days_by_class`); the weight LUT is constant
     /// across every region + tile, so it uploads here, not per-tile.
     pub fn new(class_weights: &aircraft::ClassWeights) -> Self {
-        let dev = CudaDevice::new(0).expect("open cuda device 0");
+        // `new_with_stream` (not `new`): every alloc/copy/launch/synchronize then runs on
+        // THIS instance's OWN stream, not the shared default/null stream. The world builder
+        // makes one AirborneGpu per rayon worker, so per-worker streams let the workers' GPU
+        // launches + copies overlap instead of serializing device-wide on the null stream
+        // (gg C1). Each worker holds its own CudaDevice instance ⇒ no shared-event hazard.
+        let dev = CudaDevice::new_with_stream(0).expect("open cuda device 0");
         dev.load_ptx(
             Ptx::from_src(AIRBORNE_PTX),
             "air",
