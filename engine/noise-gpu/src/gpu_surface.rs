@@ -518,6 +518,36 @@ fn main() -> Result<()> {
             stats.entry(layer.dir()).or_default().t_load += tl.elapsed().as_secs_f64();
             region_rows.push((layer, r));
         }
+        // Skip a region whose grid_disk(1) ring holds NO line sources: every tile
+        // would compute all-silent (nothing written), so the per-block halo crop +
+        // kernel launches are pure waste. On a world rail build most R4 cells in a
+        // kept chunk carry no rail (the chunk is kept for the few that do), so this
+        // is the dominant avoidable cost once the data pull is hidden behind compute.
+        // Acoustically a no-op (an empty ring can't light a pixel); it hoists the
+        // orchestrator's ring-based chunk empty-skip (cluster-build-chunk.sh S-4) to
+        // per-region granularity. Barriers-only regions skip too: zero sources →
+        // nothing to screen.
+        if region_rows.iter().all(|(_, rows)| rows.is_empty()) {
+            // Preserve process_block's all-silent cleanup: drop any tile a prior build
+            // left here (this cell's rail removed) so a direct-to-OUTPUT rebuild can't
+            // keep stale energy. No-op in the cluster (it stages a fresh out/ per
+            // chunk); cheap everywhere — fs unlinks only, no halo. (/gg consensus.)
+            if let Some(root) = &cfg.output {
+                for &(tx, ty) in region_tiles {
+                    for l in &layers {
+                        let _ = std::fs::remove_file(
+                            Path::new(root)
+                                .join(l.dir())
+                                .join(cfg.z.to_string())
+                                .join(tx.to_string())
+                                .join(format!("{ty}.bin")),
+                        );
+                    }
+                }
+            }
+            prog.done += region_tiles.len() * layers.len();
+            continue;
+        }
         // Region noise walls (same grid_disk(1) ring as the sources) — the
         // per-tile sorted slice is cut in process_block's prep. 98.5% of world
         // R4s have no barriers.arrow and load an empty set at zero cost. When the
