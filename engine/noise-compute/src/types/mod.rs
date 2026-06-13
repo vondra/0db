@@ -34,6 +34,13 @@ impl std::fmt::Display for LayerKind {
 /// Number of octave bands (63 Hz to 8 kHz).
 pub const NUM_BANDS: usize = 8;
 
+/// Leisure-area sources (settlement v2 phase 2) fold into the building layer
+/// but keep their own emission classes. A leisure `PointSource` carries
+/// `source_type = LEISURE_TYPE_BASE + sport` so the popup naming + (future)
+/// metadata can tell a padel court from a residential block without a new layer
+/// kind. 100 leaves the whole `building_type` 0–13 range free.
+pub const LEISURE_TYPE_BASE: u8 = 100;
+
 /// Octave band center frequencies [Hz].
 pub const BAND_FREQ: [f64; NUM_BANDS] = [63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0];
 

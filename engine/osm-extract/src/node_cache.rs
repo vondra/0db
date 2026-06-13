@@ -103,6 +103,31 @@ impl NodeCache {
     pub fn build(pbf_path: &Path, cache_path: &Path) -> Result<Self> {
         let file_size = MAX_NODE_ID * ENTRY_SIZE;
 
+        // QM_REUSE_NODE_CACHE=1: mmap an existing full-size cache instead of
+        // re-streaming the planet's nodes (~3 h). SAFE ONLY when the cache was
+        // fully built from the SAME pbf — the file content is a pure function
+        // of the pbf, and a build that died mid-node-pass left a SMALLER file
+        // (set_len happens first, but a crashed run is the operator's risk to
+        // assess — this is an explicit opt-in recovery knob, not a default).
+        // Added for the 2026-06-12 phase-2 world re-extract restart (disk
+        // rescope after the full-scope spill outgrew the host).
+        if std::env::var("QM_REUSE_NODE_CACHE").as_deref() == Ok("1") {
+            let file = OpenOptions::new().read(true).write(true).open(cache_path);
+            if let Ok(file) = file {
+                if file.metadata().map(|m| m.len()).ok() == Some(file_size) {
+                    eprintln!("  node cache: REUSING {} (QM_REUSE_NODE_CACHE=1)", cache_path.display());
+                    let mmap = unsafe { MmapMut::map_mut(&file)? };
+                    return Ok(NodeCache { mmap, count: 0 });
+                }
+            }
+            anyhow::bail!(
+                "QM_REUSE_NODE_CACHE=1 but {} is missing or not exactly {} bytes — \
+                 refusing to silently rebuild; unset the env to build fresh",
+                cache_path.display(),
+                file_size
+            );
+        }
+
         let file = OpenOptions::new()
             .read(true)
             .write(true)

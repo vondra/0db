@@ -20,6 +20,10 @@ pub struct HexData {
     pub building_batches: Vec<RecordBatch>,
     pub barrier_batches: Vec<RecordBatch>,
     pub industrial_batches: Vec<RecordBatch>,
+    /// Leisure AREA sources (`leisure.arrow`, settlement v2 phase 2) — sports
+    /// pitch / playground / pool / beer garden. Folded into the building
+    /// (settlement) layer in the popup.
+    pub leisure_batches: Vec<RecordBatch>,
     pub aircraft_airborne_batches: Vec<RecordBatch>,
     pub aircraft_cruise_batches: Vec<RecordBatch>,
     /// Per-microsegment sparse traffic counters
@@ -52,6 +56,7 @@ impl HexData {
             building_batches: vec![],
             barrier_batches: vec![],
             industrial_batches: vec![],
+            leisure_batches: vec![],
             aircraft_airborne_batches: vec![],
             aircraft_cruise_batches: vec![],
             aircraft_airport_traffic_batches: vec![],
@@ -75,6 +80,23 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
     let building_batches = load_arrow_mmap(&path.join("buildings.arrow"), &mut mmaps);
     let barrier_batches = load_arrow_mmap(&path.join("barriers.arrow"), &mut mmaps);
     let industrial_batches = load_arrow_mmap(&path.join("industrial.arrow"), &mut mmaps);
+    let leisure_batches = load_arrow_mmap(&path.join("leisure.arrow"), &mut mmaps);
+    // settlement v2 phase 2: buildings re-numbered building_type + added columns,
+    // leisure is a NEW file. A stale v1 buildings.arrow would feed OLD type ids
+    // through the NEW emission profiles → silently wrong popup numbers. Fail loud
+    // (Convention-B per-file contract); the fix is re-extract.
+    let building_batches = check_contract(
+        building_batches,
+        "buildings_contract",
+        BUILDINGS_CONTRACT_V2,
+        "buildings.arrow",
+    )?;
+    let leisure_batches = check_contract(
+        leisure_batches,
+        "leisure_contract",
+        LEISURE_CONTRACT_V1,
+        "leisure.arrow",
+    )?;
     let aircraft_airborne_batches = load_arrow_mmap(&path.join("airborne.arrow"), &mut mmaps);
     let aircraft_cruise_batches = load_arrow_mmap(&path.join("cruise.arrow"), &mut mmaps);
     let aircraft_airport_traffic_batches =
@@ -93,12 +115,41 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
         building_batches,
         barrier_batches,
         industrial_batches,
+        leisure_batches,
         aircraft_airborne_batches,
         aircraft_cruise_batches,
         aircraft_airport_traffic_batches,
         airport_lines_batches,
         synth_airport_lines_batches,
     })
+}
+
+/// settlement v2 phase 2 per-file contracts (source of truth:
+/// `osm-extract::finalize`). Mirrored here so the popup rejects a stale
+/// buildings.arrow whose `building_type` ids predate the re-numbering.
+pub const BUILDINGS_CONTRACT_V2: &str = "buildings_v2";
+pub const LEISURE_CONTRACT_V1: &str = "leisure_v1";
+
+/// Verify every batch of a settlement arrow carries the expected per-file
+/// contract stamp (Convention-B). Empty input passes (missing file is fine).
+/// Returns the batches unchanged on success, an `Err(String)` on mismatch so
+/// `load_hex` fails loud rather than serving mis-profiled buildings.
+fn check_contract(
+    batches: Vec<RecordBatch>,
+    key: &str,
+    expected: &str,
+    label: &str,
+) -> Result<Vec<RecordBatch>, String> {
+    for batch in &batches {
+        let c = batch.schema_ref().metadata().get(key).map(String::as_str);
+        if c != Some(expected) {
+            return Err(format!(
+                "{label} {key} mismatch (expected {expected}, got {c:?}) — \
+                 re-extract OSM (settlement v2 phase 2)"
+            ));
+        }
+    }
+    Ok(batches)
 }
 
 /// Mmap an Arrow IPC File and return its RecordBatches (zero-copy).
@@ -504,6 +555,66 @@ pub fn query_buildings_from_batches(
     results
 }
 
+/// One `leisure.arrow` row near the receiver (settlement v2 phase 2).
+#[derive(serde::Serialize)]
+pub struct LeisureResult {
+    pub osm_id: i64,
+    pub centroid_lat: f64,
+    pub centroid_lon: f64,
+    /// `emission::leisure` class id (PITCH/PADEL/…).
+    pub sport: u8,
+    pub capacity: u32,
+    pub area_m2: f32,
+    pub name: String,
+    pub polygon_wkb: String,
+    pub dist_m: f64,
+}
+
+pub fn query_leisure_from_batches(
+    batches: &[RecordBatch],
+    lat: f64,
+    lon: f64,
+    max_radius: f64,
+) -> Vec<LeisureResult> {
+    let mut results = Vec::new();
+    for batch in batches {
+        let n = batch.num_rows();
+        let (Some(osm_id), Some(clat), Some(clon)) = (
+            col_i64(batch, "osm_id"),
+            col_f64(batch, "centroid_lat"),
+            col_f64(batch, "centroid_lon"),
+        ) else {
+            continue;
+        };
+        let sport = col_u8(batch, "sport");
+        let capacity = col_u32(batch, "capacity");
+        let area = col_f32(batch, "area_m2");
+        let name = col_str(batch, "name");
+        let wkb = col_binary(batch, "polygon_wkb");
+
+        for i in 0..n {
+            let c_lat = clat.value(i);
+            let c_lon = clon.value(i);
+            let dist = crate::geo::flat_dist(lat, lon, c_lat, c_lon);
+            if dist > max_radius {
+                continue;
+            }
+            results.push(LeisureResult {
+                osm_id: osm_id.value(i),
+                centroid_lat: c_lat,
+                centroid_lon: c_lon,
+                sport: sport.map(|a| a.value(i)).unwrap_or(0),
+                capacity: capacity.map(|a| a.value(i)).unwrap_or(0),
+                area_m2: area.map(|a| a.value(i)).unwrap_or(0.0),
+                name: name.map(|a| a.value(i).to_string()).unwrap_or_default(),
+                polygon_wkb: wkb.map(|a| hex_encode(a.value(i))).unwrap_or_default(),
+                dist_m: dist,
+            });
+        }
+    }
+    results
+}
+
 #[derive(serde::Serialize)]
 pub struct BarrierResult {
     pub osm_id: i64,
@@ -576,6 +687,9 @@ pub fn col_u8<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a UInt8Array> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
 pub fn col_u16<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a UInt16Array> {
+    b.column_by_name(name)?.as_any().downcast_ref()
+}
+pub fn col_u32<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a UInt32Array> {
     b.column_by_name(name)?.as_any().downcast_ref()
 }
 pub fn col_bool<'a>(b: &'a RecordBatch, name: &str) -> Option<&'a BooleanArray> {

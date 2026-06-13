@@ -30,6 +30,12 @@ pub(crate) fn rail_usage_name(u: u8) -> &'static str {
 }
 
 pub(crate) fn building_type_name(bt: u8) -> &'static str {
+    // Leisure-area sources fold into the building/settlement layer (settlement
+    // v2 phase 2); their PointSource carries `source_type = LEISURE_TYPE_BASE +
+    // sport`, decoded here so the popup labels a padel court, not "default".
+    if bt >= crate::types::LEISURE_TYPE_BASE {
+        return leisure_type_name(bt - crate::types::LEISURE_TYPE_BASE);
+    }
     match bt {
         0 => "residential_multi",
         1 => "commercial",
@@ -41,7 +47,29 @@ pub(crate) fn building_type_name(bt: u8) -> &'static str {
         7 => "garage",
         8 => "farm",
         9 => "public",
+        // Phase-2 additions (settlement::SILENT/HOUSE/FOOD_RETAIL/HOSPITALITY).
+        // SILENT emits nothing so it never reaches a contributor; named for
+        // completeness.
+        10 => "silent",
+        11 => "residential_house",
+        12 => "food_retail",
+        13 => "hospitality_kitchen",
         _ => "default",
+    }
+}
+
+/// Display label for a leisure `sport` class (`emission::leisure` ids).
+pub(crate) fn leisure_type_name(sport: u8) -> &'static str {
+    use crate::emission::leisure::*;
+    match sport {
+        PADEL => "padel_court",
+        TENNIS => "tennis_court",
+        BASKETBALL => "ball_court",
+        PLAYGROUND => "playground",
+        POOL => "swimming_pool",
+        OUTDOOR_SEATING => "outdoor_seating",
+        STADIUM => "stadium",
+        _ => "sports_pitch",
     }
 }
 

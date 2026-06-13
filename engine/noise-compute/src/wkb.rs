@@ -429,6 +429,45 @@ pub(crate) fn point_in_any_polygon(lat: f64, lon: f64, polys: &[WkbPoly]) -> boo
     })
 }
 
+/// A parsed building/area footprint with a cached bbox, for the osm-extract
+/// POI-in-footprint spatial join (settlement v2 phase 2). `osm-extract` indexes
+/// buildings by `bbox()` (a centroid-only grid misses a POI inside a large
+/// footprint — plan §B4 Codex note), then `contains()` is the exact
+/// point-in-polygon test. Parsing once and reusing keeps the per-POI test cheap.
+pub struct WkbFootprint {
+    polys: Vec<WkbPoly>,
+    /// `(min_lat, max_lat, min_lon, max_lon)`.
+    bbox: (f64, f64, f64, f64),
+}
+
+impl WkbFootprint {
+    /// Parse a WKB-hex polygon/multipolygon. `None` when the WKB is invalid or
+    /// has no usable ring (so the join skips a building with no geometry).
+    pub fn parse(wkb_hex: &str) -> Option<Self> {
+        let polys = parse_wkb_polygons(wkb_hex);
+        if polys.is_empty() {
+            return None;
+        }
+        let bbox = outer_ring_bbox(&polys);
+        Some(Self { polys, bbox })
+    }
+
+    /// `(min_lat, max_lat, min_lon, max_lon)` of every outer ring.
+    pub fn bbox(&self) -> (f64, f64, f64, f64) {
+        self.bbox
+    }
+
+    /// True if `(lat, lon)` is inside the footprint (outer ring, minus holes).
+    pub fn contains(&self, lat: f64, lon: f64) -> bool {
+        // Cheap bbox reject before the ray-cast.
+        let (min_lat, max_lat, min_lon, max_lon) = self.bbox;
+        if lat < min_lat || lat > max_lat || lon < min_lon || lon > max_lon {
+            return false;
+        }
+        point_in_any_polygon(lat, lon, &self.polys)
+    }
+}
+
 /// Bounding box `(min_lat, max_lat, min_lon, max_lon)` over every sub-polygon's
 /// outer ring. Caller guarantees `polys` is non-empty.
 fn outer_ring_bbox(polys: &[WkbPoly]) -> (f64, f64, f64, f64) {

@@ -227,7 +227,7 @@ impl Spiller {
                 let bt = building_type_from_tags(tags);
                 let _ = write!(
                     w,
-                    "\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     bt,
                     tags.get("building:use")
                         .map(|s| building_use(s))
@@ -241,6 +241,24 @@ impl Spiller {
                     tags.get("name").unwrap_or(&String::new()),
                     tags.get("addr:street").unwrap_or(&String::new()),
                     tags.get("addr:housenumber").unwrap_or(&String::new()),
+                    // settlement v2 phase 2: opening_hours → day-fraction u8.
+                    classify::opening_hours_fraction(
+                        tags.get("opening_hours").map(|s| s.as_str())
+                    ),
+                );
+            }
+            FeatureType::Leisure => {
+                let _ = write!(
+                    w,
+                    "\t{}\t{}\t{}\t{}",
+                    classify::leisure_sport_class(tags),
+                    classify::parse_capacity(tags)
+                        .map(|c| c.to_string())
+                        .unwrap_or_default(),
+                    classify::opening_hours_fraction(
+                        tags.get("opening_hours").map(|s| s.as_str())
+                    ),
+                    tags.get("name").unwrap_or(&String::new()),
                 );
             }
             FeatureType::Industrial | FeatureType::WindTurbine => {
@@ -300,6 +318,17 @@ impl Spiller {
         let _ = writeln!(w);
     }
 
+    /// Emit a function-POI node for the finalize footprint join (settlement v2
+    /// phase 2). Format: `hex_id, lat, lon, class`. Consumed ONLY by finalize to
+    /// reclassify the `building=yes` the POI sits inside; never a final arrow.
+    /// `class` is the settlement class from [`poi_class`]; rows whose tags don't
+    /// resolve are not emitted (caller checks first).
+    pub fn emit_poi(&mut self, hex_id: u64, clat: f64, clon: f64, class: u8) {
+        let bucket = ((hex_id >> 28) as usize) % self.num_buckets;
+        let w = &mut self.get_writer(FeatureType::Poi.name(), bucket).writer;
+        let _ = writeln!(w, "{}\t{:.7}\t{:.7}\t{}", hex_id, clat, clon, class);
+    }
+
     pub fn flush_all(&mut self) -> Result<()> {
         for (_, bf) in self.writers.iter_mut() {
             bf.writer.flush()?;
@@ -309,55 +338,109 @@ impl Spiller {
 }
 
 /// Classify building type from all relevant OSM tags, not just building=*.
-/// Priority: amenity/shop/healthcare > building tag.
+/// Priority: amenity/shop/healthcare/tourism > building tag.
 /// WHY: OSM mappers often tag building=yes with function in amenity/shop.
 ///   Without this, a hospital tagged building=yes + amenity=hospital
 ///   would be classified as residential and get wrong emission profile.
+///
+/// `farm_auxiliary` co-tagged with a livestock signal is rescued from SILENT
+/// back to farm (class 8) — many auxiliaries are sheds (→ SILENT) but a few are
+/// barns. Function POIs reuse [`poi_class`] (shared with the finalize join).
 fn building_type_from_tags(tags: &Tags) -> u8 {
-    // First check amenity/shop/healthcare/tourism — these override building tag
-    if let Some(amenity) = tags.get("amenity") {
-        match amenity.as_str() {
-            "school" | "kindergarten" | "university" | "college" | "library" => return 3,
-            "hospital" | "clinic" | "doctors" | "dentist" | "pharmacy" => return 4,
-            "place_of_worship" => return 5,
-            "restaurant" | "bar" | "pub" | "cafe" | "fast_food" | "nightclub" => return 1, // commercial/hospitality
-            "parking" | "parking_space" => return 7,
-            "fire_station" | "police" | "townhall" | "courthouse" | "post_office" => return 9,
-            _ => {}
-        }
+    let get = |k: &str| tags.get(k).map(|s| s.as_str());
+    if let Some(c) = poi_class(get("amenity"), get("shop"), get("healthcare"), get("tourism")) {
+        return c;
     }
-    if let Some(shop) = tags.get("shop") {
-        if !shop.is_empty() {
-            return 1;
-        } // any shop = commercial
-    }
-    if let Some(healthcare) = tags.get("healthcare") {
-        match healthcare.as_str() {
-            "hospital" | "clinic" => return 4,
-            _ => {}
-        }
-    }
-    if let Some(tourism) = tags.get("tourism") {
-        match tourism.as_str() {
-            "hotel" | "hostel" | "motel" | "guest_house" => return 6,
-            _ => {}
-        }
-    }
-    if let Some(leisure) = tags.get("leisure") {
-        match leisure.as_str() {
-            "sports_centre" | "stadium" | "swimming_pool" => return 9, // public
-            _ => {}
-        }
+    // farm_auxiliary + livestock → real farm building, not a silent shed.
+    if get("building") == Some("farm_auxiliary")
+        && (tags.contains_key("animal") || get("livestock").is_some())
+    {
+        return 8;
     }
     // Fallback to building tag
     tags.get("building").map(|s| building_type(s)).unwrap_or(0)
 }
 
+/// The emission class implied by a function POI (`amenity`/`shop`/`healthcare`/
+/// `tourism`), or `None` if none of the values are noise-relevant. Shared by the
+/// way-level `building_type_from_tags` and the finalize POI-in-footprint join so
+/// a standalone `amenity=hospital` node and a `building=yes + amenity=hospital`
+/// way classify identically. Returns the settlement class u8.
+/// [`poi_class`] resolved from a node/way `Tags` map (settlement v2 phase 2).
+pub fn poi_class_from_tags(tags: &Tags) -> Option<u8> {
+    poi_class(
+        tags.get("amenity").map(|s| s.as_str()),
+        tags.get("shop").map(|s| s.as_str()),
+        tags.get("healthcare").map(|s| s.as_str()),
+        tags.get("tourism").map(|s| s.as_str()),
+    )
+}
+
+pub fn poi_class(
+    amenity: Option<&str>,
+    shop: Option<&str>,
+    healthcare: Option<&str>,
+    tourism: Option<&str>,
+) -> Option<u8> {
+    use noise_compute::emission::settlement as st;
+    if let Some(a) = amenity {
+        match a {
+            "school" | "kindergarten" | "university" | "college" | "library" => return Some(3),
+            "hospital" | "clinic" | "doctors" | "dentist" | "pharmacy" => return Some(4),
+            "place_of_worship" => return Some(5),
+            "restaurant" | "bar" | "pub" | "cafe" | "fast_food" | "food_court" | "ice_cream"
+            | "nightclub" => return Some(st::HOSPITALITY),
+            "fuel" | "car_wash" => return Some(1), // small-commercial placeholder (PROP-MEAS)
+            "parking" | "parking_space" => return Some(7),
+            "fire_station" | "police" | "townhall" | "courthouse" | "post_office" => {
+                return Some(9)
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = shop {
+        match s {
+            "supermarket" | "convenience" | "wholesale" | "greengrocer" | "butcher"
+            | "bakery" | "deli" | "frozen_food" | "mall" | "department_store" => {
+                return Some(st::FOOD_RETAIL)
+            }
+            "" => {}
+            _ => return Some(1), // any other shop = commercial
+        }
+    }
+    if let Some(h) = healthcare {
+        if matches!(h, "hospital" | "clinic") {
+            return Some(4);
+        }
+    }
+    if let Some(t) = tourism {
+        if matches!(t, "hotel" | "hostel" | "motel" | "guest_house") {
+            return Some(6);
+        }
+    }
+    None
+}
+
+/// Map a raw `building=*` value to a settlement emission class (the u8s defined
+/// in `noise_compute::emission::settlement`). Settlement v2 phase 2 splits the
+/// phase-1 coarse type 0: detached/terrace houses → HOUSE (garden + heat pump),
+/// `building=supermarket` → FOOD_RETAIL (24/7 refrigeration), restaurant/cafe
+/// buildings → HOSPITALITY, and the enumeration §C′ silent tail (sheds, roofs,
+/// huts, greenhouses, ruins — ~18 M objects that wrongly radiated residential)
+/// → SILENT. `yes`/`""`/unknown stay 0 = residential-apartments (the dominant
+/// `building=yes` 79 % can only be reclassified by the POI join, not by tag).
 fn building_type(val: &str) -> u8 {
+    use noise_compute::emission::settlement as st;
     match val {
-        "residential" | "house" | "detached" | "semidetached_house" | "terrace" | "apartments" => 0,
-        "commercial" | "retail" | "office" => 1,
-        "industrial" | "warehouse" => 2,
+        // Apartments / generic residential keep type 0 (no garden term).
+        "residential" | "apartments" | "dormitory" => 0,
+        // Single-family houses get the HOUSE class (garden + heat pump).
+        "house" | "detached" | "semidetached_house" | "semidetached" | "terrace"
+        | "bungalow" | "houseboat" | "cabin" => st::HOUSE,
+        "supermarket" => st::FOOD_RETAIL,
+        "restaurant" | "cafe" | "pub" | "bar" | "fast_food" => st::HOSPITALITY,
+        "commercial" | "retail" | "office" | "kiosk" => 1,
+        "industrial" | "warehouse" | "manufacture" => 2,
         "school" | "university" | "college" | "kindergarten" => 3,
         "hospital" | "clinic" => 4,
         "church" | "cathedral" | "chapel" | "mosque" | "synagogue" | "temple" => 5,
@@ -365,7 +448,17 @@ fn building_type(val: &str) -> u8 {
         "garage" | "garages" | "carport" | "parking" => 7,
         "farm" | "barn" | "stable" | "sty" | "cowshed" => 8,
         "public" | "civic" | "government" => 9,
-        "yes" | "" => 0, // default to residential
+        // §C′ SILENT tail: uninhabited / unheated / infra structures. Routing
+        // these out of residential is the largest correctness win of phase 2
+        // (~2.6 % of all buildings stop emitting phantom residential noise).
+        // `farm_auxiliary` is ambiguous (many are sheds) → SILENT unless the
+        // building_type_from_tags livestock check overrides it to farm.
+        "shed" | "roof" | "hut" | "outbuilding" | "greenhouse" | "static_caravan"
+        | "carport_roof" | "ruins" | "ruin" | "construction" | "collapsed" | "service"
+        | "allotment_house" | "boathouse" | "bunker" | "tent" | "container"
+        | "storage_tank" | "silo" | "hangar" | "conservatory" | "ger" | "farm_auxiliary"
+        | "transformer_tower" | "water_tower" | "no" => st::SILENT,
+        "yes" | "" => 0, // default to residential-apartments
         _ => 0,
     }
 }
@@ -502,3 +595,73 @@ mod hex {
 }
 
 pub use hex::decode as hex_decode;
+
+#[cfg(test)]
+mod settlement_class_tests {
+    use super::*;
+    use noise_compute::emission::settlement as st;
+
+    #[test]
+    fn building_type_splits_house_from_apartments() {
+        assert_eq!(building_type("apartments"), 0);
+        assert_eq!(building_type("residential"), 0);
+        assert_eq!(building_type("yes"), 0);
+        assert_eq!(building_type("house"), st::HOUSE);
+        assert_eq!(building_type("detached"), st::HOUSE);
+        assert_eq!(building_type("terrace"), st::HOUSE);
+    }
+
+    #[test]
+    fn building_type_food_retail_and_hospitality() {
+        assert_eq!(building_type("supermarket"), st::FOOD_RETAIL);
+        assert_eq!(building_type("restaurant"), st::HOSPITALITY);
+        assert_eq!(building_type("pub"), st::HOSPITALITY);
+        // generic retail/office stay commercial.
+        assert_eq!(building_type("retail"), 1);
+        assert_eq!(building_type("office"), 1);
+    }
+
+    #[test]
+    fn silent_tail_routed_out_of_residential() {
+        for v in ["shed", "roof", "hut", "greenhouse", "ruins", "construction", "carport_roof"] {
+            assert_eq!(building_type(v), st::SILENT, "{v} must be SILENT");
+        }
+        // The default for genuinely-unknown small footprints stays residential
+        // (only the ENUMERATED silent values flip — plan §C′).
+        assert_eq!(building_type("some_unknown_value"), 0);
+    }
+
+    #[test]
+    fn poi_class_priorities() {
+        assert_eq!(poi_class(Some("hospital"), None, None, None), Some(4));
+        assert_eq!(poi_class(Some("school"), None, None, None), Some(3));
+        assert_eq!(poi_class(Some("cafe"), None, None, None), Some(st::HOSPITALITY));
+        assert_eq!(poi_class(None, Some("supermarket"), None, None), Some(st::FOOD_RETAIL));
+        assert_eq!(poi_class(None, Some("convenience"), None, None), Some(st::FOOD_RETAIL));
+        assert_eq!(poi_class(None, Some("clothes"), None, None), Some(1));
+        assert_eq!(poi_class(None, None, Some("hospital"), None), Some(4));
+        assert_eq!(poi_class(None, None, None, Some("hotel")), Some(6));
+        // Non-noise POIs return None (so they don't bloat the join file).
+        assert_eq!(poi_class(Some("bench"), None, None, None), None);
+        assert_eq!(poi_class(None, None, None, None), None);
+    }
+
+    #[test]
+    fn farm_auxiliary_silent_unless_livestock() {
+        let mut shed = Tags::new();
+        shed.insert("building".into(), "farm_auxiliary".into());
+        assert_eq!(building_type_from_tags(&shed), st::SILENT);
+        let mut barn = Tags::new();
+        barn.insert("building".into(), "farm_auxiliary".into());
+        barn.insert("animal".into(), "cattle".into());
+        assert_eq!(building_type_from_tags(&barn), 8);
+    }
+
+    #[test]
+    fn building_type_from_tags_poi_overrides_yes() {
+        let mut t = Tags::new();
+        t.insert("building".into(), "yes".into());
+        t.insert("amenity".into(), "hospital".into());
+        assert_eq!(building_type_from_tags(&t), 4);
+    }
+}
