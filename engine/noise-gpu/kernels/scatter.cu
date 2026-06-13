@@ -476,6 +476,7 @@ __device__ __forceinline__ void line_source(
     int rows, int cols, double lat_min, double lon_min, double inv, const double* bb,
     double rlat, double rlon, double ralt, double refl, double eta,
     const double* seg, const double* sp, const float* em,
+    const double* barr, int nbarr,
     double* tprof, double* ed, double* comp,
     unsigned char* bld, unsigned char* forr, unsigned char* imdp,
     float& e0, float& e1, float& e2, double& kept, double& skipped)
@@ -516,15 +517,64 @@ __device__ __forceinline__ void line_source(
         cover_rc(cover, rows, cols, rf, cf, &bld[i], &forr[i], &imdp[i]);
     }
 
+    // ---- path_effects::screening_attenuation_with_meta §1 — VECTOR barriers.
+    // Project each tile barrier midpoint onto THIS propagation ray (closest
+    // point cplat/cplon → receiver), snap to the nearest tprof sample, keep the
+    // tallest per sample. NEVER a raster read — the building-channel burn
+    // under-screens 3.7–13.8 dB because the ray cadence steps over a one-cell
+    // wall (decision record: heatmap-aircraft tests/barrier_screening.rs).
+    // barr = nbarr×4 {lat, lon, height_m, dist_m}: the for_tile() slice, dist_m
+    // a conservative lower bound sorted ascending — the same `types::Barrier`
+    // early-break contract the CPU loop uses (`dist_m > dend+100` → break).
+    // Lon scale = RAY midpoint cosine (CPU: (src_lat+rcv_lat)/2), NOT the p2s
+    // road-segment midpoint; __cosf + clamp follow the p2s house style (≤1e-6
+    // rel vs the CPU's f64 cos — sub-mm on a 10 km path).
+    bool barrier_hit = false;
+    float barr_at[MAXT];
+    for (int i = 0; i < n; i++) barr_at[i] = 0.0f;
+    if (nbarr > 0 && barr[3] <= dend + 100.0) {
+        double ray_mid = ((cplat + rlat) * 0.5) * (PI_D / 180.0);
+        double ray_mlon = M_LON_EQ * fmax(__cosf((float)ray_mid), 0.01f);
+        double pdx = (rlon - cplon) * ray_mlon, pdy = (rlat - cplat) * M_LAT;
+        double plen2 = fmax(pdx * pdx + pdy * pdy, 1e-12);
+        for (int b = 0; b < nbarr; b++) {
+            if (barr[b * 4 + 3] > dend + 100.0) break;
+            double bdx = (barr[b * 4 + 1] - cplon) * ray_mlon;
+            double bdy = (barr[b * 4 + 0] - cplat) * M_LAT;
+            double tpj = (bdx * pdx + bdy * pdy) / plen2;
+            if (!(tpj >= 0.01 && tpj <= 0.99)) continue;      // CPU inclusive gate
+            double ex = bdx - tpj * pdx, ey = bdy - tpj * pdy;
+            if (ex * ex + ey * ey >= 50.0 * 50.0) continue;   // 50 m perp, `>=` rejects
+            // Nearest tprof sample (n ≤ ~58, linear scan); strict `<` keeps the
+            // LOWER index on ties — matches nearest_t_index's bracket pick.
+            int idx = 0; double bestd = fabs(tprof[0] - tpj);
+            for (int j = 1; j < n; j++) {
+                double dd = fabs(tprof[j] - tpj);
+                if (dd < bestd) { bestd = dd; idx = j; }
+            }
+            float h = (float)barr[b * 4 + 2];
+            if (h > barr_at[idx]) barr_at[idx] = h;
+            barrier_hit = true;
+        }
+    }
+
     // path effects (bands in fp32)
     float terr[NB], screen[NB], veg[NB];
     terrain_bands(tprof, ed, n, dend, salt, ralt, terr);
     for (int i = 0; i < NB; i++) screen[i] = 0.0f;
-    bool anyb = false;
+    // A barrier over open ground has no building cell — it must enable the
+    // screening pass too, or walls outside towns are silently ignored.
+    bool anyb = barrier_hit;
     for (int i = 0; i < n; i++) if (bld[i] > 0) { anyb = true; break; }
     if (anyb && n >= 3 && dend >= 30.0) {
-        for (int i = 0; i < n; i++)
-            comp[i] = ed[i] + ((tprof[i] > 0.0 && tprof[i] < 1.0) ? (double)bld[i] : 0.0);
+        for (int i = 0; i < n; i++) {
+            // Endpoint exclusion (tprof ∈ (0,1)) applies to building AND
+            // barrier: a wall snapped onto an endpoint sample must not screen
+            // (the CPU composite gate, path_effects.rs §3).
+            double above = (tprof[i] > 0.0 && tprof[i] < 1.0)
+                         ? fmax((double)bld[i], (double)barr_at[i]) : 0.0;
+            comp[i] = ed[i] + above;
+        }
         float comb[NB];
         single_edge_bands(tprof, comp, ed, n, dend, salt, ralt, comb);
         for (int i = 0; i < NB; i++) screen[i] = fmaxf(comb[i] - terr[i], 0.0f);
@@ -561,8 +611,11 @@ __device__ __forceinline__ void line_source(
 // mapping (meta[10]=tile width) keeps each block's rays' terrain L2-hot. Scans
 // ALL sources (reach cull is inside line_source); `line_binned` is the pre-binned
 // variant. Per-period energy in f32 (matching TileAccumulator), kept in f64.
-//   meta = [rows, cols, lat_min, lon_min, inv, north, south, west, east, eta, tile_width]
+//   meta = [rows, cols, lat_min, lon_min, inv, north, south, west, east, eta,
+//           tile_width, nbarr]
 //   inner = 256×256 tile DEM; cover = halo [building,forest,imd] u8; sp = nsrc×4.
+//   barr = nbarr×4 {lat, lon, height_m, dist_m} — this tile's sorted for_tile()
+//   barrier slice (nbarr in meta[11]; cudarc's tuple launch caps at 12 args).
 extern "C" __global__ void line(
     const float*  __restrict__ elev,
     const float*  __restrict__ inner,
@@ -573,6 +626,7 @@ extern "C" __global__ void line(
     const float*  __restrict__ semis,
     const double* __restrict__ rxll,
     const float*  __restrict__ rxar,
+    const double* __restrict__ barr,
     int nsrc, float* __restrict__ out)
 {
     int pix = blockIdx.x * blockDim.x + threadIdx.x;
@@ -593,6 +647,7 @@ extern "C" __global__ void line(
     int opix = py * 256 + pxi;   // actual pixel index (rxar/out are pixel-indexed)
     double rlat = rxll[py], rlon = rxll[256 + pxi];
     double ralt = rxar[opix * 2], refl = rxar[opix * 2 + 1];
+    int nbarr = (int)meta[11];
     float e0 = 0.0f, e1 = 0.0f, e2 = 0.0f;
     double kept = 0.0, skipped = 0.0;
     double tprof[MAXT], ed[MAXT], comp[MAXT];
@@ -601,6 +656,7 @@ extern "C" __global__ void line(
     for (int s = 0; s < nsrc; s++)
         line_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
                     rlat, rlon, ralt, refl, eta, &seg[s * 4], &sp[s * 4], &semis[s * 24],
+                    barr, nbarr,
                     tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
     out[opix * 3 + 0] = e0;
     out[opix * 3 + 1] = e1;
@@ -628,6 +684,7 @@ extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 8) line_binned_fused
     const float*  __restrict__ semis,
     const double* __restrict__ rxll,
     const float*  __restrict__ rxar,
+    const double* __restrict__ barr,
     int nsrc, float* __restrict__ out)
 {
     int bid = blockIdx.x, lane = threadIdx.x;
@@ -643,6 +700,7 @@ extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 8) line_binned_fused
     int opix = py * 256 + pxi;
     double rlat = rxll[py], rlon = rxll[256 + pxi];
     double ralt = rxar[opix * 2], refl = rxar[opix * 2 + 1];
+    int nbarr = (int)meta[11];
     float e0 = 0.0f, e1 = 0.0f, e2 = 0.0f;
     double kept = 0.0, skipped = 0.0;
     double tprof[MAXT], ed[MAXT], comp[MAXT];
@@ -670,6 +728,7 @@ extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 8) line_binned_fused
                 line_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
                             rlat, rlon, ralt, refl, eta, &seg[(base + j) * 4],
                             &sp[(base + j) * 4], &semis[(base + j) * 24],
+                            barr, nbarr,
                             tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
         __syncthreads();
     }

@@ -100,6 +100,7 @@ fn main() -> Result<()> {
         tile.bbox.east_lon,
         eta,
         tw,
+        0.0, // nbarr — the e2 CPU reference below is barrier-free (`no_barriers`)
     ];
     let mut seg = Vec::with_capacity(nsrc * 4);
     let mut sp = Vec::with_capacity(nsrc * 4);
@@ -269,6 +270,9 @@ fn main() -> Result<()> {
     let d_semis = dev.htod_copy(semis).expect("semis");
     let d_rxll = dev.htod_copy(rxll).expect("rxll");
     let d_rxar = dev.htod_copy(rxar).expect("rxar");
+    // One zero row — meta nbarr = 0, the kernel never reads it (cuMemAlloc
+    // rejects 0-byte buffers).
+    let d_barr = dev.htod_copy(vec![0.0f64; 4]).expect("barr");
     let mut d_out = dev.alloc_zeros::<f32>(n * 3).expect("out");
     let block: u32 = env("NOISE_GPU_BLOCK", "128").parse().unwrap_or(128);
     let cfg = LaunchConfig {
@@ -291,12 +295,12 @@ fn main() -> Result<()> {
     let t = std::time::Instant::now();
     unsafe {
         // line (pixel-major) and line_binned_fused (binned) share the ARG tuple
-        // (…, nsrc, out); only the launch GEOMETRY differs (binned_launch above).
+        // (…, barr, nsrc, out); only the launch GEOMETRY differs (binned_launch above).
         f.launch(
             cfg,
             (
                 &d_elev, &d_inner, &d_cover, &d_meta, &d_seg, &d_sp, &d_semis, &d_rxll, &d_rxar,
-                nsrc as i32, &mut d_out,
+                &d_barr, nsrc as i32, &mut d_out,
             ),
         )
         .expect("launch");

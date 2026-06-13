@@ -8,6 +8,7 @@ pub mod airborne;
 
 use heatmap_aircraft::source_line::LineRow;
 use noise_compute::emission::aircraft::{Installation, SegmentPrepared, M_PER_DEG_LAT};
+use noise_compute::types::Barrier;
 use raster_reader::fused_tile_z13::{FusedTileZ13, TILE_PX};
 
 fn inst_code(inst: Installation) -> i32 {
@@ -75,12 +76,16 @@ pub const N_BINS: usize = BIN_TILES * BIN_TILES;
 /// Per-tile non-halo buffers packed for the `line`/`line_binned_fused` kernels (the halo
 /// elev/cover are uploaded once per batch and shared; the line SOURCES are uploaded
 /// once per layer — see [`SourceBuffers`]). `meta` carries the SHARED halo geom +
-/// this tile's bbox + eta + swizzle width.
+/// this tile's bbox + eta + swizzle width + barrier count. `barr` is the tile's
+/// vector noise-wall slice, nbarr×4 `{lat, lon, height_m, dist_m}` in
+/// `BarrierData::for_tile` order (dist_m a conservative lower bound, sorted
+/// ascending — the kernel's early-break key).
 pub struct TileBuffers {
     pub inner: Vec<f32>,
     pub meta: Vec<f64>,
     pub rxll: Vec<f64>,
     pub rxar: Vec<f32>,
+    pub barr: Vec<f64>,
 }
 
 /// A layer's line sources, packed ONCE per (region, layer) and uploaded once; the
@@ -118,14 +123,18 @@ pub fn pack_sources(lines: &[LineRow]) -> SourceBuffers {
     SourceBuffers { seg, sp, semis }
 }
 
-/// Pack one tile's per-tile device buffers (inner DEM + meta + receivers). The line
-/// sources are NOT here — they are layer-invariant (see [`pack_sources`]).
-/// `halo_geom` = (lat_min, lon_min, inv, rows, cols) of the SHARED batch halo.
+/// Pack one tile's per-tile device buffers (inner DEM + meta + receivers +
+/// barriers). The line sources are NOT here — they are layer-invariant (see
+/// [`pack_sources`]). `halo_geom` = (lat_min, lon_min, inv, rows, cols) of the
+/// SHARED batch halo. `barriers` is this tile's `BarrierData::for_tile` slice;
+/// an empty slice packs one zero row (cuMemAlloc rejects 0 bytes) with
+/// `meta[11] = 0` so the kernel never reads it.
 pub fn pack_tile(
     tile: &FusedTileZ13,
     halo_geom: (f64, f64, f64, usize, usize),
     eta: f64,
     tw: f64,
+    barriers: &[Barrier],
 ) -> TileBuffers {
     let (lat_min, lon_min, inv, rows, cols) = halo_geom;
     let n = TILE_PX * TILE_PX;
@@ -141,6 +150,7 @@ pub fn pack_tile(
         tile.bbox.east_lon,
         eta,
         tw,
+        barriers.len() as f64,
     ];
     let mut rxll = Vec::with_capacity(2 * TILE_PX);
     rxll.extend_from_slice(&tile.rx_lat);
@@ -150,10 +160,18 @@ pub fn pack_tile(
         rxar.push(tile.rx_alt_m[i]);
         rxar.push(tile.rx_refl_db[i]);
     }
+    let mut barr = Vec::with_capacity(barriers.len().max(1) * 4);
+    for b in barriers {
+        barr.extend_from_slice(&[b.lat, b.lon, b.height_m as f64, b.dist_m]);
+    }
+    if barr.is_empty() {
+        barr.extend_from_slice(&[0.0; 4]);
+    }
     TileBuffers {
         inner: tile.inner_elev_m.clone(),
         meta,
         rxll,
         rxar,
+        barr,
     }
 }

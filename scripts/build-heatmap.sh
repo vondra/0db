@@ -120,8 +120,12 @@ if ! $COMBINE_ONLY; then
       # The same R4 set feeds the C9 barrier gate: the GPU kernel has no barrier
       # input, so any barriers.arrow in the bbox routes the line layers to the CPU
       # vector path (mirrors cluster-build-chunk.sh; 11 dB divergence measured on
-      # barrier-dense LKPR without it, 2026-06-12).
+      # barrier-dense LKPR without it, 2026-06-12). UNLESS QM_GPU_BARRIERS=1: then
+      # gpu-surface screens the vector walls itself (kernel projection-and-snap;
+      # spike GO 2026-06-12, 1.97× on barrier-dense vs 1.0× CPU demotion). Default
+      # OFF until per-box validation — .claude/plans/heatmap-orchestrator-audit/.
       GPU_LINE_MIN_MB="${GPU_LINE_MIN_MB:-2}"
+      QM_GPU_BARRIERS="${QM_GPU_BARRIERS:-0}"
       bbox_line_bytes=0
       bbox_has_barriers=0
       while read -r r4; do
@@ -153,6 +157,13 @@ for c in sorted(ring):
     print(c)
 PY
 )
+      # Gate ON: the GPU kernel screens vector barriers, so don't demote on their
+      # presence (S-3 sparse demotion below still applies). gpu-surface gets
+      # QM_GPU_BARRIERS=1 in its env to actually upload + screen them.
+      if [ "$QM_GPU_BARRIERS" = 1 ] && [ "$bbox_has_barriers" -eq 1 ]; then
+        log "QM_GPU_BARRIERS=1 — barriers in bbox stay on GPU (kernel screens vector walls)"
+        bbox_has_barriers=0
+      fi
       gpu_layers=(); cpu_layers=()
       for L in "${SURFACE_LAYERS[@]}"; do
         case "$L" in
@@ -180,7 +191,7 @@ PY
       gpu_pid=""; cpu_pid=""
       if [ ${#gpu_layers[@]} -gt 0 ]; then
         log "GPU surface: ${gpu_layers[*]} → $OUTPUT/{layer}"
-        ( IFS=,; NOISE_GPU_PREPARED="$PREP" DATA_YEAR="$DATA_YEAR" \
+        ( IFS=,; NOISE_GPU_PREPARED="$PREP" DATA_YEAR="$DATA_YEAR" QM_GPU_BARRIERS="$QM_GPU_BARRIERS" \
             scripts/memcap "$GPU_SURFACE" --layers "${gpu_layers[*]}" --bbox "$bbox" --output "$OUTPUT" ) 2>&1 | stamp &
         gpu_pid=$!
       fi

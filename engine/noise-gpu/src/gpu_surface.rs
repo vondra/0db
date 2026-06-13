@@ -25,6 +25,7 @@ use heatmap_aircraft::accumulator::TileAccumulator;
 use heatmap_aircraft::grid::tile_range;
 use heatmap_aircraft::region_runner::{read_r4_file, region_tiles, tile_centre_r4};
 use heatmap_aircraft::source_line::LineRow;
+use heatmap_aircraft::source_loader_barrier::BarrierData;
 use heatmap_aircraft::source_loader_rail::RailData;
 use heatmap_aircraft::source_loader_road::RoadData;
 use heatmap_aircraft::wire_hm3::{
@@ -126,6 +127,14 @@ struct Cfg {
     h3r4: PathBuf,
     baseline: String,
     output: Option<String>,
+    /// `QM_GPU_BARRIERS=1` — upload each region's `barriers.arrow` walls so the
+    /// kernel screens them (the vector projection-and-snap in `line_source`).
+    /// Default OFF: barriers are never loaded, every tile packs an empty slice
+    /// (`nbarr == 0`), and the kernel barrier loop is a no-op — byte-identical to
+    /// the barrier-blind GPU lane. The C9 gate (build-heatmap.sh /
+    /// cluster-build-chunk.sh) only routes barrier chunks here when this is set;
+    /// see the spike record (.claude/plans/heatmap-orchestrator-audit/).
+    barriers_enabled: bool,
 }
 
 /// Heartbeat so a multi-block region build is observable, not a silent wait.
@@ -169,6 +178,7 @@ fn process_block(
     block_tiles: &[(u32, u32)],
     region_rows: &[(LineLayer, Vec<LineRow>)],
     src_dev: &[LayerSrc],
+    barriers: &BarrierData,
     stats: &mut BTreeMap<&'static str, LayerStat>,
     prog: &mut Progress,
 ) -> Result<()> {
@@ -178,18 +188,12 @@ fn process_block(
     let (_, _, _, rows, cols) = halo_geom;
 
     let elev: Vec<f32> = halo.pixels().iter().map(|p| p.elevation).collect();
-    // KNOWN DIVERGENCE vs the CPU kernels (B8/C9, 2026-06-11): noise barriers
-    // are NOT represented here. The CPU scatter kernels screen with the exact
-    // vector barriers (`barriers.arrow` → `screening_attenuation`); this GPU
-    // path's only screening input is the 30 m `cover` building channel, and
-    // burning barrier segments into it (`FusedGrid::burn_building_max`) was
-    // measured acoustically unsound — the ray cadence steps over a
-    // one-cell-thin wall on most paths (mean +3.7 / max +13.8 dB
-    // under-screening at wall-adjacent shadow pixels; decision record:
-    // heatmap-aircraft tests/barrier_screening.rs). So GPU road/rail tiles
-    // read hot behind mapped walls; route barrier-carrying R4s (1.5% of
-    // hexes) to CPU builders, or add a real vector-barrier kernel input, to
-    // close the gap. SPEC §3.6 documents the divergence.
+    // Noise barriers reach the kernel as the VECTOR per-tile `for_tile` slice
+    // (projection-and-snap inside line_source), never as a raster burn —
+    // `FusedGrid::burn_building_max` was measured acoustically unsound (the ray
+    // cadence steps over a one-cell-thin wall on most paths; mean +3.7 / max
+    // +13.8 dB under-screening; decision record: heatmap-aircraft
+    // tests/barrier_screening.rs).
     let mut cover = Vec::with_capacity(rows * cols * 3);
     for p in halo.pixels() {
         cover.push(p.building);
@@ -219,11 +223,14 @@ fn process_block(
         .collect();
     // GPU-side binning: the kernel (line_binned_fused) does the per-block source cull
     // itself, so per-tile prep is just the pack — no CPU build_pixel_bins (the old
-    // prep-bound bottleneck). t_bins now measures only pack_tile (sub-ms).
+    // prep-bound bottleneck). t_bins now measures only pack_tile (sub-ms). The
+    // per-tile barrier slice rides along: reach-culled + sorted by for_tile, so
+    // the kernel's early-break scans only the walls a path can actually reach.
     let prep = |it: (u32, u32, LineLayer)| -> TileBuffers {
         let (tx, ty, _layer) = it;
         let tile = &batch.tiles[((ty - by) * cfg.batch_n + (tx - bx)) as usize];
-        pack_tile(tile, halo_geom, ETA, TW)
+        let tile_barriers = barriers.for_tile(&tile.bbox, cfg.halo_m);
+        pack_tile(tile, halo_geom, ETA, TW, &tile_barriers)
     };
     let prep_timed = |it: (u32, u32, LineLayer), stats: &mut BTreeMap<&'static str, LayerStat>| {
         let t = Instant::now();
@@ -254,13 +261,14 @@ fn process_block(
             .len() as i32;
         let d_rxll = dev.htod_copy(bufs.rxll).expect("rxll");
         let d_rxar = dev.htod_copy(bufs.rxar).expect("rxar");
+        let d_barr = dev.htod_copy(bufs.barr).expect("barr");
         unsafe {
             f.clone()
                 .launch(
                     launch_cfg,
                     (
                         &d_elev, &d_inner, &d_cover, &d_meta, d_seg, d_sp, d_semis, &d_rxll,
-                        &d_rxar, nsrc, &mut d_out,
+                        &d_rxar, &d_barr, nsrc, &mut d_out,
                     ),
                 )
                 .expect("launch");
@@ -472,6 +480,12 @@ fn main() -> Result<()> {
         .expect("ptx");
     let f = dev.get_func("s", "line_binned_fused").expect("fn");
 
+    // OFF by default: no production change until per-box-validated. When set, the
+    // C9 gate routes barrier-bearing chunks here instead of demoting them to CPU.
+    let barriers_enabled = env("QM_GPU_BARRIERS", "0") == "1";
+    if barriers_enabled {
+        eprintln!("QM_GPU_BARRIERS=1 — kernel vector-barrier screening ENABLED");
+    }
     let cfg = Cfg {
         z,
         batch_n: blk_n,
@@ -479,6 +493,7 @@ fn main() -> Result<()> {
         h3r4,
         baseline,
         output: output.clone(),
+        barriers_enabled,
     };
     let mut stats: BTreeMap<&'static str, LayerStat> = BTreeMap::new();
     let mut prog = Progress {
@@ -503,6 +518,17 @@ fn main() -> Result<()> {
             stats.entry(layer.dir()).or_default().t_load += tl.elapsed().as_secs_f64();
             region_rows.push((layer, r));
         }
+        // Region noise walls (same grid_disk(1) ring as the sources) — the
+        // per-tile sorted slice is cut in process_block's prep. 98.5% of world
+        // R4s have no barriers.arrow and load an empty set at zero cost. When the
+        // gate is OFF we skip the load entirely and pass an empty set, so every
+        // tile packs nbarr==0 and the kernel barrier loop no-ops (byte-identical
+        // to the barrier-blind lane).
+        let barrier_data = if cfg.barriers_enabled {
+            BarrierData::load_for_r4s(&cfg.h3r4, &ring).context("load barriers")?
+        } else {
+            BarrierData::from_segments(Vec::new())
+        };
         // Upload each layer's sources to the GPU ONCE for this region; every block
         // and tile reuses them (was re-uploaded per tile → ~30× redundant PCIe/CPU).
         let src_dev: Vec<LayerSrc> = region_rows
@@ -538,6 +564,7 @@ fn main() -> Result<()> {
                 block_tiles,
                 &region_rows,
                 &src_dev,
+                &barrier_data,
                 &mut stats,
                 &mut prog,
             )?;
