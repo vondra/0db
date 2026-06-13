@@ -34,6 +34,7 @@ use heatmap_aircraft::wire_hm3::{
 use noise_compute::admin;
 use noise_compute::constants::RAILWAY_REACH_CEILING;
 use noise_gpu::{pack_sources, pack_tile, TileBuffers, BIN_W, N_BINS};
+use rayon::prelude::*;
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
 
@@ -163,15 +164,15 @@ impl Progress {
 /// region (by the caller) and shared across every block/tile of that region.
 type LayerSrc = (LineLayer, (CudaSlice<f64>, CudaSlice<f64>, CudaSlice<f32>));
 
-/// Build one grid-aligned block's shared halo once, upload it, then compute every
-/// `(tile, layer)` in `block_tiles` on the GPU using the region's pre-loaded rows
-/// and pre-uploaded sources (`src_dev`) — both loaded/uploaded once per centre-R4
-/// region by the caller, not re-read or re-uploaded per block or tile.
+/// Compute every `(tile, layer)` in `block_tiles` on the GPU, using the caller-built
+/// shared halo (`batch`, cropped in parallel across the region's blocks), the region's
+/// pre-loaded rows, and pre-uploaded sources (`src_dev`) — all built/uploaded once per
+/// centre-R4 region by the caller, not re-read or re-uploaded per block or tile.
 #[allow(clippy::too_many_arguments)]
 fn process_block(
     dev: &Arc<CudaDevice>,
     f: &CudaFunction,
-    rasters: &RealRasters,
+    batch: &TileBatch,
     cfg: &Cfg,
     bx: u32,
     by: u32,
@@ -182,7 +183,6 @@ fn process_block(
     stats: &mut BTreeMap<&'static str, LayerStat>,
     prog: &mut Progress,
 ) -> Result<()> {
-    let batch = TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters);
     let halo = &batch.tiles[0].halo;
     let halo_geom = halo.geom();
     let (_, _, _, rows, cols) = halo_geom;
@@ -501,7 +501,6 @@ fn main() -> Result<()> {
         total: n_targets * layers.len(),
         last_beat: Instant::now(),
     };
-    let rasters = RealRasters::new(Path::new(&prepared));
     let t_all = Instant::now();
     for (&r4, region_tiles) in &regions {
         // Load every requested layer's rows ONCE for this region (grid_disk(1)).
@@ -583,15 +582,33 @@ fn main() -> Result<()> {
                 .or_default()
                 .push((tx, ty));
         }
-        for (&(bx, by), block_tiles) in &blocks {
+        // Crop every block's shared halo in PARALLEL — the single-threaded TileBatch::build
+        // crop is the dense-chunk bottleneck (the GPU box sits ~94% CPU-idle on it). Each rayon
+        // worker gets its OWN RealRasters via map_init: the TileStore caches are per-thread, so
+        // there is no shared-cache data race (a cold per-thread cache just re-reads the tmpfs
+        // rasters, cheap). The GPU kernel loop below stays SEQUENTIAL (one device) over the SAME
+        // sorted block order, so output is byte-identical to the serial build.
+        // Each batch carries its (bx, by) so the GPU loop pairs halo↔block by KEY (not by
+        // positional zip, which would silently desync if one side were ever filtered). Order
+        // is the sorted block_keys order; per-tile output is order-independent anyway.
+        let block_keys: Vec<(u32, u32)> = blocks.keys().copied().collect();
+        let batches: Vec<((u32, u32), TileBatch)> = block_keys
+            .par_iter()
+            .map_init(
+                || RealRasters::new(Path::new(&prepared)),
+                |rasters, &(bx, by)| ((bx, by), TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters)),
+            )
+            .collect();
+        for (key, batch) in &batches {
+            let (bx, by) = *key;
             process_block(
                 &dev,
                 &f,
-                &rasters,
+                batch,
                 &cfg,
                 bx,
                 by,
-                block_tiles,
+                &blocks[key],
                 &region_rows,
                 &src_dev,
                 &barrier_data,
