@@ -38,11 +38,20 @@
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 
 const IR_BBOX: readonly [number, number, number, number] = [25.0, 44.0, 39.8, 63.5]
+
+// Per-row point-in-IR gate: the bbox sweeps in Iraq, Turkmenistan, Afghanistan,
+// Pakistan, Azerbaijan, Armenia and the Gulf states. Without it a neighbouring
+// GEM plant within 2 km of a cross-border OSM site would stamp it (border bleed —
+// d2f0a742 MX lesson). makeCountryGate is safe here: Iran's bleed is on inland
+// borders, not generalised coast (the KR coastal-rejection caveat doesn't apply).
+const inIR = makeCountryGate('IR')
 
 await enrichGemIndustrial({
   countryCode: 'ir',
   countryName: "Iran",
   bbox: IR_BBOX,
+  isInside: inIR,
 })

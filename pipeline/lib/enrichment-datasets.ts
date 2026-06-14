@@ -722,6 +722,61 @@ export const DATASETS: Dataset[] = [
     priority: 80,
     measurement: 'proxy',
   },
+  {
+    id: 9012, // DZ = 12
+    layer: 'roads',
+    key: 'dz-national-roads',
+    name: 'Algeria-tuned CNOSSOS class defaults (no open per-segment AADT)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    measurement: 'proxy',
+  },
+  {
+    id: 9364, // IR = 364
+    layer: 'roads',
+    key: 'ir-national-roads',
+    name: 'Iran-tuned CNOSSOS class defaults (no open per-segment AADT)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    measurement: 'proxy',
+  },
+  {
+    id: 9404, // KE = 404
+    layer: 'roads',
+    key: 'ke-national-roads',
+    name: 'Kenya-tuned CNOSSOS class defaults (no open per-segment AADT)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    measurement: 'proxy',
+  },
+  {
+    id: 9792, // TR = 792
+    layer: 'roads',
+    key: 'tr-national-roads',
+    name: 'Turkey-tuned CNOSSOS class defaults (KGM otoyol/devlet yolu context)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    measurement: 'proxy',
+  },
+  {
+    id: 9804, // UA = 804
+    layer: 'roads',
+    key: 'ua-national-roads',
+    name: 'Ukraine-tuned CNOSSOS class defaults (Ukravtodor context)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    measurement: 'proxy',
+  },
 
   // ── Railways: national (OSM-only) ──
   {
@@ -962,6 +1017,61 @@ export const DATASETS: Dataset[] = [
     priority: 80,
     railFamilies: ['rail'],
   },
+  {
+    id: 9013, // DZ = 12 (+1 railway)
+    layer: 'railways',
+    key: 'dz-national-railway',
+    name: 'Algeria operator-class CNOSSOS defaults (SNTF context)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    railFamilies: ['rail'],
+  },
+  {
+    id: 9365, // IR = 364 (+1 railway)
+    layer: 'railways',
+    key: 'ir-national-railway',
+    name: 'Iran operator-class CNOSSOS defaults (RAI context)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    railFamilies: ['rail'],
+  },
+  {
+    id: 9405, // KE = 404 (+1 railway)
+    layer: 'railways',
+    key: 'ke-national-railway',
+    name: 'Kenya operator-class CNOSSOS defaults (SGR/metre-gauge context)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    railFamilies: ['rail'],
+  },
+  {
+    id: 9793, // TR = 792 (+1 railway)
+    layer: 'railways',
+    key: 'tr-national-railway',
+    name: 'Turkey operator-class CNOSSOS defaults (TCDD context)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    railFamilies: ['rail'],
+  },
+  {
+    id: 9805, // UA = 804 (+1 railway)
+    layer: 'railways',
+    key: 'ua-national-railway',
+    name: 'Ukraine operator-class CNOSSOS defaults (Ukrzaliznytsia context)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    railFamilies: ['rail'],
+  },
 
   // ── Heuristics ──
   {
@@ -969,6 +1079,20 @@ export const DATASETS: Dataset[] = [
     layer: 'industrial',
     key: 'industrial-name-heuristic',
     name: 'OSM industrial name-keyword NACE heuristic',
+    year: 2025,
+    license: 'project-internal',
+    url: null,
+    priority: 10,
+  },
+  {
+    // KR = 410. priority 10 (heuristic, same tier as 9000) but id > 9000 so the
+    // Korean-script keyword match wins the equal-rank id-tiebreak over the
+    // Latin-only global heuristic it supersedes; still < GEM/GPPD (priority 50),
+    // which keep their measured matches. See enrich-industrial-kr.ts docstring.
+    id: 9410,
+    layer: 'industrial',
+    key: 'kr-industrial-names',
+    name: 'OSM Korean-script industrial name-keyword NACE heuristic',
     year: 2025,
     license: 'project-internal',
     url: null,

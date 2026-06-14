@@ -23,32 +23,25 @@
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
+import { makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
 import { DEFAULT_FUEL_TO_NACE } from './lib/enrich-industrial-gem.js'
 import { flatDistM, inBbox } from './lib/spatial.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/vn`)
 
+// bbox stays as the cheap hex-shortlist; inVN (actual-polygon gate) is the real
+// filter — the hand-tuned China/Laos/Cambodia EXCLUDE_ZONES bled into neighbours.
 const VN_BBOX: [number, number, number, number] = [8.3, 102.1, 23.5, 109.5]
-const EXCLUDE_ZONES: Array<[number, number, number, number]> = [
-  [22.5, 102.1, 23.5, 109.5],  // China border
-  [13.5, 102.1, 22.5, 104.3],  // Laos
-  [10.0, 102.1, 14.5, 107.0],  // Cambodia
-]
-function inExcluded(lat: number, lon: number): boolean {
-  for (const b of EXCLUDE_ZONES) if (inBbox(lat, lon, b)) return true
-  return false
-}
 
 interface IndSite { lat: number; lon: number; name: string; fuel: string }
 
-function loadPlants(): IndSite[] {
+function loadPlants(inVN: (lat: number, lon: number) => boolean): IndSite[] {
   const path = resolve(CACHE_DIR, 'power-plants.geojson')
   if (!existsSync(path)) return []
   const fc = JSON.parse(readFileSync(path, 'utf-8'))
@@ -58,7 +51,7 @@ function loadPlants(): IndSite[] {
     if (!g || g.type !== 'Point') continue
     const [lon, lat] = g.coordinates
     if (lat == null || lon == null) continue
-    if (!inBbox(lat, lon, VN_BBOX) || inExcluded(lat, lon)) continue
+    if (!inBbox(lat, lon, VN_BBOX) || !inVN(lat, lon)) continue
     const p = f.properties || {}
     const status = (p.Status || '').toString().toLowerCase()
     if (status && status !== 'operating') continue
@@ -73,7 +66,9 @@ function loadPlants(): IndSite[] {
 
 async function main() {
   console.log(`=== VN Industrial Enrichment — GEM Global Integrated Power (${YEAR}) ===\n`)
-  const plants = loadPlants()
+  // Built here, not at module scope: the first call may download/convert CGAZ.
+  const inVN = makeCountryGate('VN')
+  const plants = loadPlants(inVN)
   console.log(`  Operating power plants: ${plants.length}`)
 
   const grid = new Map<string, IndSite[]>()
@@ -125,7 +120,7 @@ async function main() {
           const lat = centroidLat.get(i) as number
           const lon = centroidLon.get(i) as number
           if (lat == null || lon == null) continue
-          if (!inBbox(lat, lon, VN_BBOX) || inExcluded(lat, lon)) continue
+          if (!inBbox(lat, lon, VN_BBOX) || !inVN(lat, lon)) continue
 
           const baseLat = Math.floor(lat * 10)
           const baseLon = Math.floor(lon * 10)
@@ -159,8 +154,8 @@ async function main() {
           if (field.name === 'nace_4digit' || field.name === 'source_id') continue
           columns[field.name] = table.getChild(field.name)!
         }
-        columns['nace_4digit'] = vectorFromArray(newNace, new Uint16())
-        columns['source_id'] = vectorFromArray(newDatasetId, new Uint16())
+        columns['nace_4digit'] = vectorFromArray(Array.from(newNace), new Uint16())
+        columns['source_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
         return makeTable(columns)
       })
     } catch {}

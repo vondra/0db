@@ -24,21 +24,15 @@
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'
-import { inBbox } from './lib/spatial.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 
+// bbox stays for the hex-shortlist; the per-site test is the actual-polygon gate
+// (hand-tuned EXCLUDE_ZONES bled into neighbours along the bbox edges).
 const MM_BBOX: readonly [number, number, number, number] = [9.5, 92.0, 28.5, 101.2]
-
-const EXCLUDE_ZONES: ReadonlyArray<readonly [number, number, number, number]> = [
-  [22.0, 92.0, 28.5, 93.5],
-  [20.0, 92.0, 22.0, 92.8],
-  [24.0, 97.0, 28.5, 101.2],
-  [9.5, 100.0, 22.0, 101.2],
-  [9.5, 98.0, 18.0, 101.2],
-]
 
 await enrichGemIndustrial({
   countryCode: 'mm',
   countryName: "Myanmar",
   bbox: MM_BBOX,
-  isInside: (lat, lon) => inBbox(lat, lon, MM_BBOX) && !EXCLUDE_ZONES.some(z => inBbox(lat, lon, z)),
+  isInside: makeCountryGate('MM'),
 })
