@@ -34,9 +34,9 @@ use heatmap_aircraft::wire_hm3::{
 use noise_compute::admin;
 use noise_compute::constants::RAILWAY_REACH_CEILING;
 use noise_gpu::{pack_sources, pack_tile, TileBuffers, BIN_W, N_BINS};
-use rayon::prelude::*;
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
+use rayon::prelude::*;
 
 const SCATTER_PTX: &str = include_str!(concat!(env!("OUT_DIR"), "/scatter.ptx"));
 const NO_DATA: u8 = 255;
@@ -129,12 +129,17 @@ struct Cfg {
     baseline: String,
     output: Option<String>,
     /// `QM_GPU_BARRIERS=1` — upload each region's `barriers.arrow` walls so the
-    /// kernel screens them (the vector projection-and-snap in `line_source`).
-    /// Default OFF: barriers are never loaded, every tile packs an empty slice
-    /// (`nbarr == 0`), and the kernel barrier loop is a no-op — byte-identical to
-    /// the barrier-blind GPU lane. The C9 gate (build-heatmap.sh /
-    /// cluster-build-chunk.sh) only routes barrier chunks here when this is set;
-    /// see the spike record (.claude/plans/heatmap-orchestrator-audit/).
+    /// kernel screens them on the GPU (the vector projection-and-snap in
+    /// `line_source`; mean 0.002 / max 1.5 dB vs the CPU vector path).
+    /// PRODUCTION runs this ON: the cluster (cluster-build-chunk.sh) forces
+    /// `QM_GPU_BARRIERS=1` (owner-directed 2026-06-13), so every GPU surface build
+    /// screens its own barriers and the C9 CPU-routing gate is a no-op. The
+    /// BINARY's own env default is OFF (a bare `gpu-surface` is barrier-blind:
+    /// every tile packs an empty slice, `nbarr == 0`, the kernel barrier loop
+    /// no-ops, byte-identical to the barrier-blind lane) — that OFF baseline is
+    /// the reference `tests/barrier_screening.rs` compares ON against. So:
+    /// cluster default ON, bare-binary default OFF. See the spike record
+    /// (.claude/plans/heatmap-orchestrator-audit/).
     barriers_enabled: bool,
 }
 
@@ -596,7 +601,12 @@ fn main() -> Result<()> {
             .par_iter()
             .map_init(
                 || RealRasters::new(Path::new(&prepared)),
-                |rasters, &(bx, by)| ((bx, by), TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters)),
+                |rasters, &(bx, by)| {
+                    (
+                        (bx, by),
+                        TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters),
+                    )
+                },
             )
             .collect();
         for (key, batch) in &batches {
