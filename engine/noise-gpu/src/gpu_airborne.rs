@@ -70,6 +70,18 @@ struct Args {
     r4_cache: usize,
     #[arg(long, default_value_t = false)]
     write_empty: bool,
+    /// STREAM mode: read output R4 cell IDs (one hex/line) from stdin and build each on a warm
+    /// K-in-flight worker pool (K = rayon threads, each its own CUDA stream + R4 LRU, reused
+    /// across cells — no per-chunk process spawn), printing `done <r4hex> <written> <skipped>
+    /// <ms>` (or `fail <r4hex> <err>`) per cell as it finishes. The persistent worker the
+    /// cluster orchestrator feeds. Requires --seed-regions (resolves n_days + class_weights once).
+    #[arg(long, default_value_t = false)]
+    stream: bool,
+    /// STREAM mode: resolve the build-wide n_days + class_weights ONCE at startup from this seed
+    /// regions-file (the orchestrator's representative source set). Streamed cells inherit it,
+    /// consistency-asserted vs --n-days — same contract as the batch path's single resolve.
+    #[arg(long)]
+    seed_regions: Option<PathBuf>,
 }
 
 fn parse_bbox(s: &str) -> Result<[f64; 4], String> {
@@ -108,6 +120,10 @@ fn main() -> Result<()> {
         bail!("zoom {} out of supported range 6..=18", args.zoom);
     }
     let z = args.zoom;
+
+    if args.stream {
+        return run_stream(&args, z);
+    }
 
     // Output regions (R4 → its target tiles): regions-file (cluster) | bbox | single tile (dev).
     let regions: BTreeMap<u64, Vec<(u32, u32)>> =
@@ -310,4 +326,143 @@ fn process_region_gpu(
         }
     }
     Ok((written, skipped))
+}
+
+/// Shared streaming work queue: (pending Morton-ordered cells, stream-closed flag) under a mutex,
+/// plus a condvar to park idle workers. Workers drain a contiguous run off the front; the stdin
+/// reader pushes to the back and wakes one. (Factored to a type alias so the `let` below isn't a
+/// clippy `type_complexity` lint.)
+type StreamQueue = std::sync::Arc<(
+    std::sync::Mutex<(std::collections::VecDeque<u64>, bool)>,
+    std::sync::Condvar,
+)>;
+
+/// STREAM mode (`--stream`): the persistent warm worker the cluster orchestrator feeds — the
+/// answer to the per-chunk process spawn + inter-chunk staging stall (~39% of box wall-time)
+/// that capped the cluster's GPU at ~61% effective (a warm process sustains ~88-100%, STEP 1).
+/// One process: CUDA context + NPD LUTs + class-weights + RealRasters all resident; R4 cell IDs
+/// stream in on stdin and each is built on a warm K-in-flight rayon pool — every worker owns its
+/// `AirborneGpu` (one CUDA stream) + R4 source LRU and REUSES them across cells, identical
+/// concurrency to the batch path's `par_chunks`, just fed incrementally. One `done <r4hex>
+/// <written> <skipped> <ms>` (or `fail <r4hex> <err>`) line prints per cell AS IT FINISHES, so the
+/// orchestrator can ACK + advance its lease without waiting for the whole stream. n_days +
+/// class_weights resolve ONCE from `--seed-regions` (the orchestrator's representative source set);
+/// the streamed cells inherit that build-wide value, exactly as every chunk did in the batch cluster.
+fn run_stream(args: &Args, z: u8) -> Result<()> {
+    use std::collections::VecDeque;
+    use std::io::{BufRead, Write};
+    use std::sync::{Arc, Condvar, Mutex};
+
+    let seed = args.seed_regions.as_ref().context(
+        "--stream requires --seed-regions (resolves the build-wide n_days + class_weights)",
+    )?;
+    let seed_r4s = heatmap_aircraft::region_runner::read_r4_file(seed)?;
+    let source_r4s = ring_union(seed_r4s.iter().copied());
+    if !any_source_arrow(&args.h3r4_dir, &source_r4s, SEL)? {
+        bail!("--seed-regions has no airborne source — cannot resolve class_weights");
+    }
+    let resolved = resolve_n_days(&args.h3r4_dir, &source_r4s, SEL)?;
+    let n_days = match args.n_days {
+        Some(cli) if cli != resolved => {
+            bail!("--n-days {cli} disagrees with arrow metadata ({resolved})")
+        }
+        _ => resolved,
+    };
+    let class_weights = heatmap_aircraft::worklist::resolve_class_weights(
+        &args.h3r4_dir,
+        &source_r4s,
+        SEL,
+        n_days,
+    )?;
+    let rasters = RealRasters::new(&args.prepared_dir);
+    let bn = if args.batch_size == 0 {
+        default_batch_size()
+    } else {
+        args.batch_size
+    };
+    eprintln!(
+        "stream: n_days={n_days}, batch={bn}, {} worker(s) — reading R4 cells from stdin",
+        rayon::current_num_threads()
+    );
+
+    // Morton-locality streaming pool. Warm workers pull a CONTIGUOUS run of up to PULL_BATCH cells
+    // from the front of a shared queue the reader fills in arrival (= the orchestrator's Morton)
+    // order, so each worker keeps the batch path's grid_disk(1) ring-cache reuse across the run it
+    // builds. (rayon's par_bridge work-steals SINGLE cells → interleaved across workers → ring
+    // cache-thrash: measured 76% GPU vs the batch par_chunks' 88% on the same cells + cold cache.)
+    // The mutex is held only to splice a run off the front (cheap); the GPU/CPU build runs unlocked.
+    const PULL_BATCH: usize = 4;
+    let work: StreamQueue = Arc::new((Mutex::new((VecDeque::new(), false)), Condvar::new()));
+    let n_workers = rayon::current_num_threads().max(1);
+
+    std::thread::scope(|scope| {
+        for _ in 0..n_workers {
+            let work = Arc::clone(&work);
+            let rasters = &rasters;
+            let class_weights = &class_weights;
+            scope.spawn(move || {
+                // Warm per-worker state — one CUDA stream + one R4 source LRU, reused for every run
+                // this worker builds (the whole point: no per-chunk re-init).
+                let gpu = AirborneGpu::new(class_weights);
+                let mut cache = R4SourceCache::new(&args.h3r4_dir, args.r4_cache.max(7), SEL);
+                loop {
+                    let batch: Vec<u64> = {
+                        let (lock, cv) = &*work;
+                        let mut g = lock.lock().unwrap();
+                        loop {
+                            if !g.0.is_empty() {
+                                let take = g.0.len().min(PULL_BATCH);
+                                break g.0.drain(..take).collect();
+                            }
+                            if g.1 {
+                                break Vec::new(); // stream closed + drained → exit
+                            }
+                            g = cv.wait(g).unwrap();
+                        }
+                    };
+                    if batch.is_empty() {
+                        break;
+                    }
+                    for r4 in batch {
+                        let t = Instant::now();
+                        let tiles = region_tiles(r4, z);
+                        let line = match process_region_gpu(
+                            &gpu, &mut cache, rasters, args, z, bn, n_days, r4, &tiles,
+                        ) {
+                            Ok((w, s)) => {
+                                format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis())
+                            }
+                            Err(e) => format!("fail {r4:x} {e}"),
+                        };
+                        // One locked writeln+flush so each cell's result reaches the orchestrator at once.
+                        let mut out = std::io::stdout().lock();
+                        let _ = writeln!(out, "{line}");
+                        let _ = out.flush();
+                    }
+                }
+            });
+        }
+        // Reader on the main scope thread (StdinLock is !Send): parse hex R4s onto the queue tail in
+        // arrival order, waking one worker per cell. On EOF flag done + wake all so they drain + exit.
+        let stdin = std::io::stdin();
+        for line in stdin.lock().lines() {
+            let Ok(line) = line else { break };
+            let s = line.trim();
+            if s.is_empty() {
+                continue;
+            }
+            match u64::from_str_radix(s, 16) {
+                Ok(r4) => {
+                    let (lock, cv) = &*work;
+                    lock.lock().unwrap().0.push_back(r4);
+                    cv.notify_one();
+                }
+                Err(_) => eprintln!("stream: skip non-hex line: {s}"),
+            }
+        }
+        let (lock, cv) = &*work;
+        lock.lock().unwrap().1 = true;
+        cv.notify_all();
+    });
+    Ok(())
 }
