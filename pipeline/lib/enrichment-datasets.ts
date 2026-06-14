@@ -298,6 +298,43 @@ export const DATASETS: Dataset[] = [
     url: 'https://eerscmap.usgs.gov/uswtdb/',
     priority: 80,
   },
+  // GEM heavy-industry trackers — global per-facility asset locations with a
+  // real sector (steel / cement / coal mine), the public map GeoJSON served
+  // from GEM's DigitalOcean CDN (CC-BY-4.0). priority 50 → 'global-measured',
+  // same tier as GPPD: a real per-facility sector match, not an OSM guess.
+  {
+    // ids 331-333 (> the 330 national-mix baseline): specific steel/cement/coal NACE
+    // must win the equal-rank/year id-tiebreak over the generic power-mix (gg 2026-06-14;
+    // Codex+Gemini consensus — at 302-304 the generic 330 overrode them).
+    id: 331,
+    layer: 'industrial',
+    key: 'global-gem-steel',
+    name: 'GEM Global Iron and Steel Tracker',
+    year: 2025,
+    license: 'CC-BY-4.0',
+    url: 'https://globalenergymonitor.org/projects/global-iron-and-steel-tracker/',
+    priority: 50,
+  },
+  {
+    id: 332,
+    layer: 'industrial',
+    key: 'global-gem-cement',
+    name: 'GEM Global Cement and Concrete Tracker',
+    year: 2025,
+    license: 'CC-BY-4.0',
+    url: 'https://globalenergymonitor.org/projects/global-cement-and-concrete-tracker/',
+    priority: 50,
+  },
+  {
+    id: 333,
+    layer: 'industrial',
+    key: 'global-gem-coalmine',
+    name: 'GEM Global Coal Mine Tracker',
+    year: 2025,
+    license: 'CC-BY-4.0',
+    url: 'https://globalenergymonitor.org/projects/global-coal-mine-tracker/',
+    priority: 50,
+  },
 
   // ── Industrial: regional / continental ──
   {
@@ -627,6 +664,64 @@ export const DATASETS: Dataset[] = [
     priority: 80,
     measurement: 'proxy',
   },
+  {
+    // 9000 + ISO-3166 numeric (RU = 643), matching the ng/eg OSM-only batch.
+    id: 9643,
+    layer: 'roads',
+    key: 'ru-national-roads',
+    name: 'Russia-tuned CNOSSOS class defaults (no open per-segment AADT)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    // No published per-segment counts — country-tuned class defaults anchored to
+    // AUTOSTAT/Avtodor/Rosstat aggregates (same shape as CN/IN, ids 1025/1050).
+    measurement: 'proxy',
+  },
+  {
+    id: 9566, // NG = 566
+    layer: 'roads',
+    key: 'ng-national-roads',
+    name: 'Nigeria-tuned CNOSSOS class defaults (FRSC/FERMA portals unavailable)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    measurement: 'proxy',
+  },
+  {
+    id: 9818, // EG = 818
+    layer: 'roads',
+    key: 'eg-national-roads',
+    name: 'Egypt-tuned CNOSSOS class defaults (no open per-segment AADT)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    measurement: 'proxy',
+  },
+  {
+    id: 9392, // JP = 392
+    layer: 'roads',
+    key: 'jp-national-roads',
+    name: 'Japan MLIT Road Traffic Census R3 (2021) class defaults',
+    year: 2021,
+    license: 'derived-from-OSM',
+    url: 'https://www.mlit.go.jp/road/census/r3/',
+    priority: 80,
+    measurement: 'proxy',
+  },
+  {
+    id: 9484, // MX = 484
+    layer: 'roads',
+    key: 'mx-national-roads',
+    name: 'Mexico SICT/IMT Datos Viales 2025 (200m polyline match + class defaults)',
+    year: 2025,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    measurement: 'proxy',
+  },
 
   // ── Railways: national (OSM-only) ──
   {
@@ -832,6 +927,40 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     railFamilies: ['rail', 'tram'],
+  },
+  {
+    // 9000 + ISO-3166 numeric (RU = 643) + 1 — roads took 9643, railway takes 9644.
+    id: 9644,
+    layer: 'railways',
+    key: 'ru-national-railway',
+    name: 'Russia operator-class CNOSSOS defaults (no open per-segment timetable)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    railFamilies: ['rail'], // class defaults by family; no GTFS-measured tram counts
+  },
+  {
+    id: 9567, // NG = 566 (+1 railway)
+    layer: 'railways',
+    key: 'ng-national-railway',
+    name: 'Nigeria operator-class CNOSSOS defaults (SGR commissioning context)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    railFamilies: ['rail'],
+  },
+  {
+    id: 9819, // EG = 818 (+1 railway)
+    layer: 'railways',
+    key: 'eg-national-railway',
+    name: 'Egypt operator-class CNOSSOS defaults (no open per-segment timetable)',
+    year: 2024,
+    license: 'derived-from-OSM',
+    url: null,
+    priority: 80,
+    railFamilies: ['rail'],
   },
 
   // ── Heuristics ──

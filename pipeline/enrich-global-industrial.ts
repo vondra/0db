@@ -24,7 +24,13 @@ import { makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
 import { latLngToCell } from 'h3-js'
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
-import { SOURCE_ID_EUROPE_EPRTR, SOURCE_ID_GLOBAL_GPPD } from './lib/source-ids.generated.js'
+import {
+  SOURCE_ID_EUROPE_EPRTR,
+  SOURCE_ID_GLOBAL_GPPD,
+  SOURCE_ID_GLOBAL_GEM_STEEL,
+  SOURCE_ID_GLOBAL_GEM_CEMENT,
+  SOURCE_ID_GLOBAL_GEM_COALMINE,
+} from './lib/source-ids.generated.js'
 import { flatDist } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2026'
@@ -37,6 +43,52 @@ const forceDownload = process.argv.includes('--force-download')
 const enrichOnly = process.argv.includes('--enrich-only')
 
 const GPPD_URL = 'https://raw.githubusercontent.com/wri/global-power-plant-database/master/output_database/global_power_plant_database.csv'
+
+// GEM heavy-industry trackers — public map GeoJSON from GEM's DigitalOcean CDN
+// (the same file the live tracker maps fetch; CC-BY-4.0, no auth gate). The
+// gated "Download data" form gives a richer per-unit ZIP, but the map GeoJSON
+// carries everything noise needs: point lat/lon, lifecycle `status`, and a
+// plant/mine type. URLs are pinned to the release referenced by GEM's
+// `maps` repo (trackers/<t>/config.js, branch gitpages-production). Bump when
+// GEM publishes a newer release.
+interface GemTracker {
+  key: 'steel' | 'cement' | 'coalmine'
+  url: string
+  cache: string
+  nace: string   // 6-digit NACE → engine emission profile (steel 24, cement 23, coal 05)
+}
+
+const GEM_TRACKERS: GemTracker[] = [
+  {
+    key: 'steel',
+    url: 'https://publicgemdata.nyc3.cdn.digitaloceanspaces.com/gist/2025-10/gist_map_2025-10-07.geojson',
+    cache: resolve(CACHE_DIR, 'gem-steel.geojson'),
+    nace: '241000', // basic iron & steel
+  },
+  {
+    key: 'cement',
+    url: 'https://publicgemdata.nyc3.cdn.digitaloceanspaces.com/gcct/2025-07/gcct_map_2025-07-15.geojson',
+    cache: resolve(CACHE_DIR, 'gem-cement.geojson'),
+    nace: '235100', // cement
+  },
+  {
+    key: 'coalmine',
+    url: 'https://publicgemdata.nyc3.cdn.digitaloceanspaces.com/GCMT/2025-09/gcmt_map_2025-09-22-sectionfix.geojson',
+    cache: resolve(CACHE_DIR, 'gem-coalmine.geojson'),
+    nace: '051000', // hard coal mining
+  },
+]
+
+// Only active sites emit noise — a retired/cancelled/mothballed/proposed plant
+// must not stamp a loud NACE onto an OSM polygon. GEM status values are
+// lowercase free text; this is the active allow-list.
+const GEM_ACTIVE_STATUS = new Set(['operating', 'operating-pre-retirement'])
+
+const GEM_DATASET_ID: Record<GemTracker['key'], number> = {
+  steel: SOURCE_ID_GLOBAL_GEM_STEEL,
+  cement: SOURCE_ID_GLOBAL_GEM_CEMENT,
+  coalmine: SOURCE_ID_GLOBAL_GEM_COALMINE,
+}
 
 // E-PRTR facility data — European Pollutant Release and Transfer Register
 const EPRTR_URLS = [
@@ -54,7 +106,7 @@ interface Facility {
   lat: number
   lon: number
   nace: string   // 6-digit NACE code string, e.g. "350000"
-  source: 'gppd' | 'eprtr'
+  source: 'gppd' | 'eprtr' | 'gem-steel' | 'gem-cement' | 'gem-coalmine'
 }
 
 // ── Flat-earth distance (meters) ──
@@ -286,6 +338,73 @@ function parseEprtrWithCols(records: Record<string, string>[], latCol: string, l
   return facilities
 }
 
+// ── Step 4b: Download + parse GEM heavy-industry trackers ──
+
+async function downloadGem(t: GemTracker): Promise<string | null> {
+  if (enrichOnly || (!forceDownload && existsSync(t.cache))) {
+    if (!existsSync(t.cache)) {
+      console.log(`  WARN: no GEM ${t.key} cache at ${t.cache} — skipping`)
+      return null
+    }
+    console.log(`  Using cached GEM ${t.key}: ${t.cache}`)
+    return readFileSync(t.cache, 'utf-8')
+  }
+
+  console.log(`  Downloading GEM ${t.key} from ${t.url}...`)
+  try {
+    const res = await fetch(t.url, { signal: AbortSignal.timeout(120_000) })
+    if (!res.ok) {
+      console.log(`  WARN: GEM ${t.key} download failed: ${res.status} ${res.statusText} — skipping`)
+      return null
+    }
+    const text = await res.text()
+    mkdirSync(CACHE_DIR, { recursive: true })
+    writeFileSync(t.cache, text)
+    console.log(`  Cached GEM ${t.key} to ${t.cache} (${(text.length / 1024 / 1024).toFixed(1)} MB)`)
+    return text
+  } catch (err: any) {
+    console.log(`  WARN: GEM ${t.key} download error: ${err.message} — skipping`)
+    return null
+  }
+}
+
+// GEM map GeoJSON: FeatureCollection of Point features. Coordinates live both
+// as geometry [lon, lat] and as `Latitude`/`Longitude` properties — we prefer
+// the explicit properties (some rows carry a display-jittered geometry) and
+// fall back to geometry. We stamp one NACE per tracker (the sector is fixed by
+// the dataset), gated on an active lifecycle `status`.
+function parseGem(t: GemTracker, jsonText: string): Facility[] {
+  let fc: any
+  try {
+    fc = JSON.parse(jsonText)
+  } catch (err: any) {
+    console.log(`  WARN: GEM ${t.key} — invalid JSON (${err.message}) — skipping`)
+    return []
+  }
+  const features: any[] = Array.isArray(fc?.features) ? fc.features : []
+  console.log(`  GEM ${t.key}: ${features.length} raw features`)
+
+  const facilities: Facility[] = []
+  let inactive = 0
+  for (const f of features) {
+    const p = f?.properties ?? {}
+    const status = String(p['status'] ?? '').trim().toLowerCase()
+    if (!GEM_ACTIVE_STATUS.has(status)) { inactive++; continue }
+
+    const geom: number[] | undefined = f?.geometry?.coordinates
+    const lat = parseFloat(p['Latitude'] ?? p['latitude'] ?? (geom ? geom[1] : ''))
+    const lon = parseFloat(p['Longitude'] ?? p['longitude'] ?? (geom ? geom[0] : ''))
+    if (!isFinite(lat) || !isFinite(lon) || lat === 0 || lon === 0) continue
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) continue
+
+    const name = String(p['name'] ?? '').trim() || `GEM ${t.key}`
+    facilities.push({ name, lat, lon, nace: t.nace, source: `gem-${t.key}` })
+  }
+
+  console.log(`  GEM ${t.key}: ${facilities.length} active facilities (skipped ${inactive} inactive/non-operating)`)
+  return facilities
+}
+
 // ── Step 5: Build spatial index (facilities grouped by H3R4 hex) ──
 
 function groupByHex(facilities: Facility[]): Map<string, Facility[]> {
@@ -314,6 +433,7 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
   totalMatched: number
   hexesWithMatches: number
   hexesProcessed: number
+  matchedBySource: Map<Facility['source'], number>
 }> {
   const hexDirs = readdirSync(H3R4_DIR).filter(d =>
     d.length === 15 && d.endsWith('ffffffff'),
@@ -323,6 +443,7 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
   let totalMatched = 0
   let hexesProcessed = 0
   let hexesWithMatches = 0
+  const matchedBySource = new Map<Facility['source'], number>()
   const startTime = Date.now()
   let lastLog = startTime
 
@@ -387,13 +508,16 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
           if (bestFac && bestFac.nace !== '') {
             const nace6 = parseInt(bestFac.nace, 10) || 0
             const nace4 = Math.floor(nace6 / 100)
-            const myId = bestFac.source === 'eprtr' ? EPRTR_DATASET_ID : GPPD_DATASET_ID
+            const myId = bestFac.source === 'eprtr' ? EPRTR_DATASET_ID
+              : bestFac.source === 'gppd' ? GPPD_DATASET_ID
+              : GEM_DATASET_ID[bestFac.source.slice('gem-'.length) as GemTracker['key']]
             const existingId = existingSourceId[i]
             if (shouldOverwrite(existingId, myId)) {
               newNace[i] = nace4
               newDatasetId[i] = myId
               hexMatched++
               totalMatched++
+              matchedBySource.set(bestFac.source, (matchedBySource.get(bestFac.source) ?? 0) + 1)
               anyChanged = true
             }
           }
@@ -421,15 +545,18 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
   console.log(`  Hexes scanned: ${hexesProcessed} (${hexesWithMatches} with matches)`)
   console.log(`  Industrial sites scanned: ${totalIndustrial}`)
   console.log(`  Matches (facility → OSM polygon within 500m): ${totalMatched}`)
+  for (const [src, n] of [...matchedBySource].sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${src}: ${n}`)
+  }
   console.log(`  Time: ${elapsed}s`)
 
-  return { totalIndustrial, totalMatched, hexesWithMatches, hexesProcessed }
+  return { totalIndustrial, totalMatched, hexesWithMatches, hexesProcessed, matchedBySource }
 }
 
 // ── Main ──
 
 async function main() {
-  console.log(`=== Global Industrial Enrichment (GPPD + E-PRTR) ===\n`)
+  console.log(`=== Global Industrial Enrichment (GPPD + E-PRTR + GEM heavy industry) ===\n`)
   console.log(`  DATA_YEAR: ${YEAR}`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
   console.log(`  Cache dir: ${CACHE_DIR}\n`)
@@ -457,8 +584,15 @@ async function main() {
     eprtrFacilities = await parseEprtr(eprtrCsv)
   }
 
-  const allFacilities = [...gppdFacilities, ...eprtrFacilities]
-  console.log(`\n  Total facilities: ${allFacilities.length} (GPPD: ${gppdFacilities.length}, E-PRTR: ${eprtrFacilities.length})`)
+  console.log('\n--- Step 4b: Download + parse GEM heavy-industry trackers ---')
+  let gemFacilities: Facility[] = []
+  for (const t of GEM_TRACKERS) {
+    const json = await downloadGem(t)
+    if (json) gemFacilities = gemFacilities.concat(parseGem(t, json))
+  }
+
+  const allFacilities = [...gppdFacilities, ...eprtrFacilities, ...gemFacilities]
+  console.log(`\n  Total facilities: ${allFacilities.length} (GPPD: ${gppdFacilities.length}, E-PRTR: ${eprtrFacilities.length}, GEM: ${gemFacilities.length})`)
 
   if (allFacilities.length === 0) {
     console.error('ERROR: No facilities parsed from any source')
@@ -471,26 +605,34 @@ async function main() {
 
   // ── Spatial join (writes directly into industrial.arrow) ──
   console.log('\n--- Step 6: Spatial join to OSM industrial polygons ---')
-  await enrichHexes(facByHex)
+  const { matchedBySource } = await enrichHexes(facByHex)
+  const m = (s: Facility['source']) => matchedBySource.get(s) ?? 0
 
   // ── Provenance ──
   const provPath = resolve(CACHE_DIR, 'provenance.md')
   const provenance = `# Global Industrial Enrichment Provenance
 
 ## Sources used
-- **GPPD**: Global Power Plant Database (WRI), ${GPPD_URL}, ${gppdFacilities.length} power plants, CC-BY-4.0
-- **E-PRTR**: European Pollutant Release and Transfer Register (EEA), ${eprtrFacilities.length} facilities
+- **GPPD**: Global Power Plant Database (WRI), ${GPPD_URL}, ${gppdFacilities.length} power plants → ${m('gppd')} matched, CC-BY-4.0
+- **E-PRTR**: European Pollutant Release and Transfer Register (EEA), ${eprtrFacilities.length} facilities → ${m('eprtr')} matched, CC-BY-4.0
+- **GEM Iron & Steel** (NACE 2410): ${GEM_TRACKERS[0].url} → ${m('gem-steel')} matched, CC-BY-4.0
+- **GEM Cement & Concrete** (NACE 2351): ${GEM_TRACKERS[1].url} → ${m('gem-cement')} matched, CC-BY-4.0
+- **GEM Coal Mine** (NACE 0510): ${GEM_TRACKERS[2].url} → ${m('gem-coalmine')} matched, CC-BY-4.0
 
 ## Matching
 - Spatial join: facility lat/lon → nearest OSM industrial polygon centroid within 500m
 - H3R4 pre-filter: only compare facilities and polygons in the same H3 resolution-4 hex
 - Written directly to industrial.arrow per-row (nace_4digit + source_id)
-- Dataset priority preserves national registries (cz-irz > europe-eprtr > global-gppd)
+- Dataset priority preserves national registries (cz-irz > europe-eprtr > {global-gppd, GEM})
+- GEM trackers stamp only active sites (status operating / operating pre-retirement)
 
 ## Gaps
-- E-PRTR covers EU only — rest of world relies on GPPD (power plants only)
-- Facilities without nearby OSM industrial polygon are not matched
-- GPPD only covers power generation (NACE 35) — other industrial sectors need country-specific registries
+- E-PRTR covers EU only; GPPD covers power generation (NACE 35) only
+- GEM trackers add three heavy-industry sectors worldwide (steel / cement / coal mining),
+  but only sites ≥ tracker capacity threshold (e.g. steel ≥ 500 ktpa) — small sites need
+  country-specific registries
+- Facilities without a nearby OSM industrial polygon (within 500m) are not matched
+- GEM map GeoJSON is the public subset; the gated form download carries finer per-unit detail
 
 ## Run date
 ${new Date().toISOString()}

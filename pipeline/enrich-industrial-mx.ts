@@ -45,6 +45,7 @@
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 
 const MX_BBOX: readonly [number, number, number, number] = [14.5, -118.5, 32.7, -86.7]
 
@@ -52,4 +53,6 @@ await enrichGemIndustrial({
   countryCode: 'mx',
   countryName: "Mexico",
   bbox: MX_BBOX,
+  // bbox alone includes southern US + Guatemala/Belize; gate to MX polygon (gg 2026-06-14).
+  isInside: makeCountryGate('MX'),
 })

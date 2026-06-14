@@ -124,8 +124,11 @@ pub fn nace_profile(nace_4digit: u16) -> Option<IndustrialProfile> {
     Some(match nace_2 {
         // Heavy industry — high base Lw
         // Calibrated against Czech SHM 2022 + Irish Cement EIS (120.8 dBA plant total).
-        8 => IndustrialProfile {
-            // Mining/quarrying
+        // Coal mining (NACE 05: hard coal 0510 / lignite 0520) and other
+        // mining & quarrying (NACE 08) share an acoustic class: draglines,
+        // crushers, haul trucks, conveyors, ventilation fans. Same loud
+        // open-pit/underground profile (GEM Global Coal Mine Tracker enrichment).
+        5 | 8 => IndustrialProfile {
             base_lw: 99.0,
             spectrum: [-3.0, -1.0, 0.0, 1.0, 0.0, -2.0, -5.0, -8.0],
             evening_offset: -8.0,

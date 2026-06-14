@@ -22,6 +22,7 @@ import { SOURCE_ID_MX_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { pointToSegmentDist } from './lib/spatial.js'
 import { writeRailTrains } from './lib/railways-arrow.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_MX_NATIONAL_RAILWAY
 
@@ -393,6 +394,31 @@ async function computeStopFrequenciesForFeed(feed: FeedConfig, extractDir: strin
     return []
   }
 
+  // ── frequencies.txt: headway-based service expansion ──
+  // CDMX SEMOVI publishes Metro/Tren Ligero as frequency-based trips: a single
+  // template trip in stop_times.txt repeated every `headway_secs`. Counting each
+  // stop_time as one departure understates Línea 1 by ~225× (it runs ~285-570
+  // trains/day, not 2). Expand each trip to its daily departure count so the
+  // per-stop train counts reflect real service.
+  const freqPath = resolve(extractDir, 'frequencies.txt')
+  const tripDepartures = new Map<string, number>()  // trip_id → departures/day (default 1)
+  if (existsSync(freqPath)) {
+    const freqRaw = await parseCsvStream(freqPath)
+    const toSecs = (t: string): number => {
+      const [h, m, s] = (t || '').split(':').map((v) => parseInt(v, 10))
+      return (h || 0) * 3600 + (m || 0) * 60 + (s || 0)
+    }
+    for (const r of freqRaw) {
+      const tid = r['trip_id']
+      if (!tid || !tripFam.has(tid)) continue
+      const headway = parseInt(r['headway_secs'] || '0', 10)
+      const span = toSecs(r['end_time']) - toSecs(r['start_time'])
+      if (headway <= 0 || span <= 0) continue
+      tripDepartures.set(tid, (tripDepartures.get(tid) || 0) + Math.round(span / headway))
+    }
+    console.log(`  frequencies.txt: ${tripDepartures.size} rail trips expanded by headway (else 1 departure)`)
+  }
+
   // ── stop_times.txt (stream for large files) ──
   console.log(`  Reading stop_times.txt (streaming)...`)
   const stopDepartures = new Map<string, { rail: number; tram: number }>()
@@ -429,7 +455,7 @@ async function computeStopFrequenciesForFeed(feed: FeedConfig, extractDir: strin
     const stopId = fields[stopIdIdx]
     let counts = stopDepartures.get(stopId)
     if (!counts) { counts = { rail: 0, tram: 0 }; stopDepartures.set(stopId, counts) }
-    counts[fam]++
+    counts[fam] += tripDepartures.get(tripId) ?? 1   // headway-expanded departures, else 1
     stMatched++
 
     if (Date.now() - lastProgressTime > 10_000) {
@@ -590,7 +616,13 @@ async function enrichHexes(allStopCounts: StopTrainCount[]): Promise<void> {
   const hexDirs = iterateCountryHexes(H3R4_DIR, PT_BBOX, 'railways.arrow')
   console.log(`  MX hexes with railways.arrow: ${hexDirs.length}`)
 
-  let totalRails = 0, totalStamped = 0, gtfsHits = 0, skippedService = 0, hexesUpdated = 0
+  // Gate every segment to Mexican soil: PT_BBOX overlaps Guatemala/Belize, so the
+  // class-default fallback would otherwise stamp MX defaults onto cross-border rail.
+  // Created here (not module scope): makeCountryGate may download+convert the CGAZ
+  // polygon on first run — keep that off the import path.
+  const inMX = makeCountryGate('MX')
+
+  let totalRails = 0, totalStamped = 0, gtfsHits = 0, skippedService = 0, hexesUpdated = 0, outsideMX = 0
   const startTime = Date.now()
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
@@ -610,6 +642,9 @@ async function enrichHexes(allStopCounts: StopTrainCount[]): Promise<void> {
       resolve(H3R4_DIR, hexId, 'railways.arrow'),
       (row) => {
         matchWasGtfs = false
+        // Country gate first: skip segments outside Mexico (Guatemala/Belize) so
+        // neither a GTFS match nor the class default stamps them with MX data.
+        if (!inMX(row.midLat, row.midLon)) { outsideMX++; return null }
         // Family gate: heavy rail (rail_type 0) → suburban rail stops; tram/light_rail
         // (rail_type 1/2) → metro/light-rail stops. Cross-family matches can't happen.
         const grid = row.railType === 0 ? railGrid : (row.railType === 1 || row.railType === 2) ? tramGrid : null
@@ -648,6 +683,7 @@ async function enrichHexes(allStopCounts: StopTrainCount[]): Promise<void> {
 
   console.log(`\n=== Results ===`)
   console.log(`  Railway segments scanned:  ${totalRails.toLocaleString()}`)
+  console.log(`  Outside MX polygon:        ${outsideMX.toLocaleString()}`)
   console.log(`  Skipped service tracks:    ${skippedService.toLocaleString()}`)
   console.log(`  Matched by GTFS:           ${gtfsHits.toLocaleString()}`)
   console.log(`  Stamped (incl. defaults):  ${totalStamped.toLocaleString()}`)
