@@ -158,12 +158,24 @@ pub fn leisure_emission_bands(profile: &LeisureProfile, lw: f64) -> [f64; NUM_BA
     super::spectrum::normalized_emission_bands(lw, &profile.spectrum)
 }
 
+/// Plausible upper bound on a simultaneous open-air leisure crowd. OSM
+/// `seats`/`capacity` is a free integer tag; a typo or vandalism (`capacity=
+/// 100000`) would otherwise drive `leisure_lw` past 120 dB and paint a multi-km
+/// phantom hotspot. Clamp it, mirroring the wind-turbine tag-error clamp in
+/// `normalize::prepare_industrial_points`. 10 000 covers the largest real
+/// biergarten (Munich Hirschgarten ~8 000 seats); only PLAYGROUND /
+/// OUTDOOR_SEATING (the `ref_capacity > 0` classes) are capacity-scaled.
+const LEISURE_MAX_CAPACITY: u32 = 10_000;
+
 /// Capacity-adjusted whole-source Lw. Crowd sources (`ref_capacity > 0`) build
-/// up by `10·log10(capacity / ref_capacity)` from a tagged `seats`/`capacity`;
-/// court/pitch sources ignore capacity (the impact level is per-facility).
+/// up by `10·log10(capacity / ref_capacity)` from a tagged `seats`/`capacity`
+/// (clamped to `LEISURE_MAX_CAPACITY` against tag errors); court/pitch sources
+/// ignore capacity (the impact level is per-facility).
 pub fn leisure_lw(profile: &LeisureProfile, capacity: Option<u32>) -> f64 {
     match (profile.ref_capacity, capacity) {
-        (r, Some(c)) if r > 0.0 && c > 0 => profile.lw + 10.0 * (c as f64 / r).log10(),
+        (r, Some(c)) if r > 0.0 && c > 0 => {
+            profile.lw + 10.0 * (c.min(LEISURE_MAX_CAPACITY) as f64 / r).log10()
+        }
         _ => profile.lw,
     }
 }
@@ -205,6 +217,24 @@ mod tests {
         assert!((big - p.lw - 3.0103).abs() < 1e-3, "100 seats = +3 dB");
         // Courts ignore capacity.
         assert_eq!(leisure_lw(&leisure_profile(PADEL), Some(999)), 90.0);
+    }
+
+    /// OSM `capacity`/`seats` is a free, vandalizable tag; an absurd value must be
+    /// clamped, not amplified into a 120+ dB phantom source (mirrors the
+    /// wind-turbine tag-error clamp).
+    #[test]
+    fn leisure_lw_clamps_tag_error_capacity() {
+        let p = leisure_profile(OUTDOOR_SEATING); // ref 50, anchor 88
+        // Above the cap, Lw collapses to the cap's level — never higher.
+        assert_eq!(
+            leisure_lw(&p, Some(1_000_000)),
+            leisure_lw(&p, Some(LEISURE_MAX_CAPACITY))
+        );
+        // Ceiling = 88 + 10·log10(10000/50) = 111 dB, not the 131 dB an unclamped
+        // 1e6 would give.
+        assert!(leisure_lw(&p, Some(1_000_000)) < p.lw + 24.0);
+        // Below the cap, scaling is unchanged.
+        assert_eq!(leisure_lw(&p, Some(100)), p.lw + 10.0 * (100.0_f64 / 50.0).log10());
     }
 
     #[test]
