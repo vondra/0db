@@ -113,22 +113,33 @@ export function makeCountryGate(iso2: string): (lat: number, lon: number) => boo
   const f = cgazFeatures().find(x => x.properties.shapeGroup === iso3)
   if (!f) throw new Error(`country-polygon: no CGAZ ADM0 feature for ${code} (${iso3})`)
   const g = f.geometry
-  const outerRings: Ring[] = []   // outer ring of each Polygon (N for a MultiPolygon)
-  if (g.type === 'Polygon') outerRings.push((g.coordinates as Ring[])[0])
-  else if (g.type === 'MultiPolygon') for (const poly of g.coordinates as Ring[][]) outerRings.push(poly[0])
-  // Pair each ring with its lon/lat bbox for a per-ring pre-check: CGAZ rings are
-  // ~6x denser than NE's and archipelago countries carry hundreds of island rings
-  // (FRA incl. overseas: 204) — the box test skips them all for ~free (measured:
-  // DE gate 45 → 24 µs/call on DE-local points; PL unchanged within noise).
-  const rings = outerRings.map(ring => {
+  // Each Polygon = an outer ring + interior holes; a MultiPolygon is N of those.
+  // The holes are enclaves of OTHER countries (e.g. Tajik exclaves inside the
+  // Uzbek outer ring) — a point in a hole is NOT in this country, so it must be
+  // rejected or the proxy bleeds into the enclave's rows (gg 2026-06-14).
+  const polys: { outer: Ring; holes: Ring[] }[] = []
+  if (g.type === 'Polygon') {
+    const r = g.coordinates as Ring[]
+    polys.push({ outer: r[0], holes: r.slice(1) })
+  } else if (g.type === 'MultiPolygon') {
+    for (const poly of g.coordinates as Ring[][]) polys.push({ outer: poly[0], holes: poly.slice(1) })
+  }
+  // Pair each outer ring with its lon/lat bbox for a per-ring pre-check: CGAZ rings
+  // are ~6x denser than NE's and archipelago countries carry hundreds of island
+  // rings (FRA incl. overseas: 204) — the box test skips them all for ~free
+  // (measured: DE gate 45 → 24 µs/call on DE-local points; PL unchanged within
+  // noise). Holes are only tested on an outer-ring hit, so they cost ~nothing.
+  const indexed = polys.map(({ outer, holes }) => {
     let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity
-    for (const [x, y] of ring) { if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y }
-    return { ring, w, s, e, n }
+    for (const [x, y] of outer) { if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y }
+    return { outer, holes, w, s, e, n }
   })
   return (lat, lon) => {
-    for (const { ring, w, s, e, n } of rings) {
+    for (const { outer, holes, w, s, e, n } of indexed) {
       if (lon < w || lon > e || lat < s || lat > n) continue
-      if (pointInRing(lon, lat, ring)) return true
+      if (!pointInRing(lon, lat, outer)) continue
+      if (holes.some(h => pointInRing(lon, lat, h))) continue // inside a foreign enclave
+      return true
     }
     return false
   }
