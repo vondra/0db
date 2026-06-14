@@ -12,7 +12,9 @@
 //!   # a whole region (production), road+rail → HM3:
 //!   NOISE_GPU_PREPARED=/dev/shm/qmap/prepared DATA_YEAR=2026 \
 //!     gpu-surface --layers road,rail --bbox 38.27,-9.78,39.17,-8.50 --output OUT
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -44,6 +46,16 @@ const ROAD_HALO_M: f64 = 10_000.0; // motorway-class reach (matches build_heatma
 const ETA: f64 = 0.40; // energy-budget skip threshold (production default)
 const TW: f64 = 8.0; // pack_tile swizzle width — the binned kernel ignores it (only
                      // the un-binned `rail` bench kernel in e2-full swizzles by it)
+
+thread_local! {
+    /// One `RealRasters` per rayon worker, REUSED across every region/cell — vs the old
+    /// per-region `map_init` that rebuilt it each region, dropping the mmap-LRU cache cold (the
+    /// "no cross-cell raster reuse" the rewrite flagged). TileStore caches are per-thread (no
+    /// shared-cache race); persisting them keeps a Morton-adjacent cell's shared 1° DEM / raster
+    /// tiles mmap-warm, and a cell overflowing into a neighbour's tile mmaps it once for the next.
+    /// LRU-bounded (raster-reader), so it never grows over a multi-day --stream run.
+    static RASTERS: RefCell<Option<RealRasters>> = const { RefCell::new(None) };
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LineLayer {
@@ -105,6 +117,16 @@ fn env(k: &str, d: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| d.to_string())
 }
 
+/// CUDA device + scatter PTX, created once — shared by the batch path and --stream (the warm
+/// context the cluster used to re-pay on every chunk spawn).
+fn warm_device() -> (Arc<CudaDevice>, CudaFunction) {
+    let dev = CudaDevice::new(0).expect("cuda");
+    dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["line_binned_fused"])
+        .expect("ptx");
+    let f = dev.get_func("s", "line_binned_fused").expect("fn");
+    (dev, f)
+}
+
 /// Per-layer end-to-end counters (timings in seconds, summed over tiles).
 #[derive(Default)]
 struct LayerStat {
@@ -154,12 +176,16 @@ impl Progress {
     fn tick(&mut self) {
         self.done += 1;
         if self.last_beat.elapsed().as_secs() >= 30 {
-            eprintln!(
-                "  … {}/{} tile-layers ({:.0}%)",
-                self.done,
-                self.total,
-                self.done as f64 / self.total.max(1) as f64 * 100.0
-            );
+            if self.total > 0 {
+                eprintln!(
+                    "  … {}/{} tile-layers ({:.0}%)",
+                    self.done,
+                    self.total,
+                    self.done as f64 / self.total as f64 * 100.0
+                );
+            } else {
+                eprintln!("  … {} tile-layers built (stream)", self.done);
+            }
             self.last_beat = Instant::now();
         }
     }
@@ -341,6 +367,191 @@ fn process_block(
     Ok(())
 }
 
+/// Build one centre-R4 region's owned tiles for every layer — the shared body of the batch loop
+/// and the --stream loop. Loads the region's grid_disk(1) rows + barriers once, uploads sources
+/// once, crops blocks in parallel (reusing each worker's persistent RealRasters), then runs the
+/// sequential GPU kernel loop. Returns (written, skipped) tile-layers for the `done` line.
+#[allow(clippy::too_many_arguments)]
+fn process_region(
+    r4: u64,
+    region_tiles: &[(u32, u32)],
+    layers: &[LineLayer],
+    cfg: &Cfg,
+    dev: &Arc<CudaDevice>,
+    f: &CudaFunction,
+    prepared: &str,
+    stats: &mut BTreeMap<&'static str, LayerStat>,
+    prog: &mut Progress,
+) -> Result<(usize, usize)> {
+    let total = region_tiles.len() * layers.len();
+    let written0: usize = stats.values().map(|s| s.n_written).sum();
+    // Load every requested layer's rows ONCE for this region (grid_disk(1)).
+    let cell = CellIndex::try_from(r4)?;
+    let ring: Vec<u64> = cell
+        .grid_disk::<Vec<_>>(1)
+        .into_iter()
+        .map(u64::from)
+        .collect();
+    let mut region_rows: Vec<(LineLayer, Vec<LineRow>)> = Vec::with_capacity(layers.len());
+    for &layer in layers {
+        let tl = Instant::now();
+        let r = layer.load_rows(&cfg.h3r4, &ring, cell)?;
+        stats.entry(layer.dir()).or_default().t_load += tl.elapsed().as_secs_f64();
+        region_rows.push((layer, r));
+    }
+    // Skip a region whose grid_disk(1) ring holds NO line sources (every tile all-silent);
+    // preserve the all-silent cleanup so a direct-to-OUTPUT rebuild drops a prior build's tiles.
+    if region_rows.iter().all(|(_, rows)| rows.is_empty()) {
+        if let Some(root) = &cfg.output {
+            for &(tx, ty) in region_tiles {
+                for l in layers {
+                    let _ = std::fs::remove_file(
+                        Path::new(root)
+                            .join(l.dir())
+                            .join(cfg.z.to_string())
+                            .join(tx.to_string())
+                            .join(format!("{ty}.bin")),
+                    );
+                }
+            }
+        }
+        prog.done += total;
+        return Ok((0, total));
+    }
+    let barrier_data = if cfg.barriers_enabled {
+        BarrierData::load_for_r4s(&cfg.h3r4, &ring).context("load barriers")?
+    } else {
+        BarrierData::from_segments(Vec::new())
+    };
+    // Upload each layer's sources to the GPU ONCE for this region.
+    let src_dev: Vec<LayerSrc> = region_rows
+        .iter()
+        .map(|(layer, rows)| {
+            let s = pack_sources(rows);
+            (
+                *layer,
+                (
+                    dev.htod_copy(s.seg).expect("seg"),
+                    dev.htod_copy(s.sp).expect("sp"),
+                    dev.htod_copy(s.semis).expect("semis"),
+                ),
+            )
+        })
+        .collect();
+    // Batch the region's tiles into grid-aligned blocks (one shared halo each).
+    let mut blocks: BTreeMap<(u32, u32), Vec<(u32, u32)>> = BTreeMap::new();
+    for &(tx, ty) in region_tiles {
+        blocks
+            .entry((
+                (tx / cfg.batch_n) * cfg.batch_n,
+                (ty / cfg.batch_n) * cfg.batch_n,
+            ))
+            .or_default()
+            .push((tx, ty));
+    }
+    // Crop every block's shared halo in PARALLEL, REUSING each rayon worker's persistent
+    // RealRasters (RASTERS thread-local) so the mmap-LRU stays warm across cells. The GPU kernel
+    // loop below stays SEQUENTIAL over the SAME sorted block order, so output is byte-identical.
+    let block_keys: Vec<(u32, u32)> = blocks.keys().copied().collect();
+    let batches: Vec<((u32, u32), TileBatch)> = block_keys
+        .par_iter()
+        .map(|&(bx, by)| {
+            RASTERS.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                let rasters = slot.get_or_insert_with(|| RealRasters::new(Path::new(prepared)));
+                (
+                    (bx, by),
+                    TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters),
+                )
+            })
+        })
+        .collect();
+    for (key, batch) in &batches {
+        let (bx, by) = *key;
+        process_block(
+            dev,
+            f,
+            batch,
+            cfg,
+            bx,
+            by,
+            &blocks[key],
+            &region_rows,
+            &src_dev,
+            &barrier_data,
+            stats,
+            prog,
+        )?;
+    }
+    let written: usize = stats.values().map(|s| s.n_written).sum::<usize>() - written0;
+    Ok((written, total.saturating_sub(written)))
+}
+
+/// STREAM mode (`--stream`): the persistent warm surface worker the cluster orchestrator feeds.
+/// CUDA context + scatter PTX + admin table resident, and — the STEP-2 win — ONE RealRasters per
+/// rayon worker reused across the whole cell stream (RASTERS thread-local), so the mmap-LRU stays
+/// warm instead of being rebuilt per region. Reads output R4 cell IDs (one hex/line) from stdin,
+/// builds each cell's owned tiles, and prints `done <r4hex> <written> <skipped> <ms>` (or
+/// `fail <r4hex> <err>`) as it finishes — the SAME line protocol as gpu-airborne --stream, so the
+/// box agent drives either worker identically.
+#[allow(clippy::too_many_arguments)]
+fn run_stream(
+    z: u8,
+    layers: &[LineLayer],
+    halo_m: f64,
+    batch_n: u32,
+    h3r4: PathBuf,
+    baseline: String,
+    output: Option<String>,
+    prepared: &str,
+) -> Result<()> {
+    let (dev, f) = warm_device();
+    let barriers_enabled = env("QM_GPU_BARRIERS", "0") == "1";
+    if barriers_enabled {
+        eprintln!("QM_GPU_BARRIERS=1 — kernel vector-barrier screening ENABLED");
+    }
+    let cfg = Cfg {
+        z,
+        batch_n,
+        halo_m,
+        h3r4,
+        baseline,
+        output,
+        barriers_enabled,
+    };
+    let mut stats: BTreeMap<&'static str, LayerStat> = BTreeMap::new();
+    let mut prog = Progress {
+        done: 0,
+        total: 0,
+        last_beat: Instant::now(),
+    };
+    let names: Vec<&str> = layers.iter().map(|l| l.dir()).collect();
+    eprintln!("stream: layers={names:?}, halo={halo_m:.0}m, batch={batch_n} — reading R4 cells from stdin");
+    let mut out = std::io::stdout();
+    for line in std::io::stdin().lock().lines() {
+        let line = line?;
+        let hex = line.trim();
+        if hex.is_empty() {
+            continue;
+        }
+        let t = Instant::now();
+        match u64::from_str_radix(hex, 16) {
+            Ok(r4) => {
+                let tiles = region_tiles(r4, z);
+                match process_region(
+                    r4, &tiles, layers, &cfg, &dev, &f, prepared, &mut stats, &mut prog,
+                ) {
+                    Ok((w, s)) => writeln!(out, "done {r4:x} {w} {s} {}", t.elapsed().as_millis())?,
+                    Err(e) => writeln!(out, "fail {r4:x} {e}")?,
+                }
+            }
+            Err(_) => eprintln!("stream: skip non-hex line: {hex}"),
+        }
+        out.flush()?;
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     // Index-based parse: each known flag consumes the NEXT token (which must exist
@@ -348,11 +559,16 @@ fn main() -> Result<()> {
     // position (not value) avoids dropping a positional that equals a flag's value.
     let (mut output, mut bbox, mut layers_s, mut batch_s, mut regions_file) =
         (None, None, None, None, None);
+    let mut stream = false;
     let mut pos: Vec<String> = Vec::new();
     let mut i = 0;
     while i < argv.len() {
         let a = argv[i].as_str();
         match a {
+            "--stream" => {
+                stream = true;
+                i += 1;
+            }
             "--output" | "--bbox" | "--layers" | "--batch" | "--regions-file" => {
                 let v = argv
                     .get(i + 1)
@@ -406,6 +622,12 @@ fn main() -> Result<()> {
     // take the world split and break popup parity (Codex delta 1).
     if layers.contains(&LineLayer::Road) || layers.contains(&LineLayer::Rail) {
         let _ = admin::init_admin_table(&admin::default_admin_path(&h3r4));
+    }
+
+    if stream {
+        return run_stream(
+            z, &layers, halo_m, batch_n, h3r4, baseline, output, &prepared,
+        );
     }
 
     // Target tiles → grouped by centre R4 so each region's rows load ONCE
@@ -480,10 +702,7 @@ fn main() -> Result<()> {
         layer_names,
     );
 
-    let dev = CudaDevice::new(0).expect("cuda");
-    dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["line_binned_fused"])
-        .expect("ptx");
-    let f = dev.get_func("s", "line_binned_fused").expect("fn");
+    let (dev, f) = warm_device();
 
     // OFF by default: no production change until per-box-validated. When set, the
     // C9 gate routes barrier-bearing chunks here instead of demoting them to CPU.
@@ -508,124 +727,17 @@ fn main() -> Result<()> {
     };
     let t_all = Instant::now();
     for (&r4, region_tiles) in &regions {
-        // Load every requested layer's rows ONCE for this region (grid_disk(1)).
-        let cell = CellIndex::try_from(r4)?;
-        let ring: Vec<u64> = cell
-            .grid_disk::<Vec<_>>(1)
-            .into_iter()
-            .map(u64::from)
-            .collect();
-        let mut region_rows: Vec<(LineLayer, Vec<LineRow>)> = Vec::with_capacity(layers.len());
-        for &layer in &layers {
-            let tl = Instant::now();
-            let r = layer.load_rows(&cfg.h3r4, &ring, cell)?;
-            stats.entry(layer.dir()).or_default().t_load += tl.elapsed().as_secs_f64();
-            region_rows.push((layer, r));
-        }
-        // Skip a region whose grid_disk(1) ring holds NO line sources: every tile
-        // would compute all-silent (nothing written), so the per-block halo crop +
-        // kernel launches are pure waste. On a world rail build most R4 cells in a
-        // kept chunk carry no rail (the chunk is kept for the few that do), so this
-        // is the dominant avoidable cost once the data pull is hidden behind compute.
-        // Acoustically a no-op (an empty ring can't light a pixel); it hoists the
-        // orchestrator's ring-based chunk empty-skip (cluster-build-chunk.sh S-4) to
-        // per-region granularity. Barriers-only regions skip too: zero sources →
-        // nothing to screen.
-        if region_rows.iter().all(|(_, rows)| rows.is_empty()) {
-            // Preserve process_block's all-silent cleanup: drop any tile a prior build
-            // left here (this cell's rail removed) so a direct-to-OUTPUT rebuild can't
-            // keep stale energy. No-op in the cluster (it stages a fresh out/ per
-            // chunk); cheap everywhere — fs unlinks only, no halo. (/gg consensus.)
-            if let Some(root) = &cfg.output {
-                for &(tx, ty) in region_tiles {
-                    for l in &layers {
-                        let _ = std::fs::remove_file(
-                            Path::new(root)
-                                .join(l.dir())
-                                .join(cfg.z.to_string())
-                                .join(tx.to_string())
-                                .join(format!("{ty}.bin")),
-                        );
-                    }
-                }
-            }
-            prog.done += region_tiles.len() * layers.len();
-            continue;
-        }
-        // Region noise walls (same grid_disk(1) ring as the sources) — the
-        // per-tile sorted slice is cut in process_block's prep. 98.5% of world
-        // R4s have no barriers.arrow and load an empty set at zero cost. When the
-        // gate is OFF we skip the load entirely and pass an empty set, so every
-        // tile packs nbarr==0 and the kernel barrier loop no-ops (byte-identical
-        // to the barrier-blind lane).
-        let barrier_data = if cfg.barriers_enabled {
-            BarrierData::load_for_r4s(&cfg.h3r4, &ring).context("load barriers")?
-        } else {
-            BarrierData::from_segments(Vec::new())
-        };
-        // Upload each layer's sources to the GPU ONCE for this region; every block
-        // and tile reuses them (was re-uploaded per tile → ~30× redundant PCIe/CPU).
-        let src_dev: Vec<LayerSrc> = region_rows
-            .iter()
-            .map(|(layer, rows)| {
-                let s = pack_sources(rows);
-                (
-                    *layer,
-                    (
-                        dev.htod_copy(s.seg).expect("seg"),
-                        dev.htod_copy(s.sp).expect("sp"),
-                        dev.htod_copy(s.semis).expect("semis"),
-                    ),
-                )
-            })
-            .collect();
-        // Batch the region's tiles into grid-aligned blocks (one shared halo each).
-        let mut blocks: BTreeMap<(u32, u32), Vec<(u32, u32)>> = BTreeMap::new();
-        for &(tx, ty) in region_tiles {
-            blocks
-                .entry(((tx / blk_n) * blk_n, (ty / blk_n) * blk_n))
-                .or_default()
-                .push((tx, ty));
-        }
-        // Crop every block's shared halo in PARALLEL — the single-threaded TileBatch::build
-        // crop is the dense-chunk bottleneck (the GPU box sits ~94% CPU-idle on it). Each rayon
-        // worker gets its OWN RealRasters via map_init: the TileStore caches are per-thread, so
-        // there is no shared-cache data race (a cold per-thread cache just re-reads the tmpfs
-        // rasters, cheap). The GPU kernel loop below stays SEQUENTIAL (one device) over the SAME
-        // sorted block order, so output is byte-identical to the serial build.
-        // Each batch carries its (bx, by) so the GPU loop pairs halo↔block by KEY (not by
-        // positional zip, which would silently desync if one side were ever filtered). Order
-        // is the sorted block_keys order; per-tile output is order-independent anyway.
-        let block_keys: Vec<(u32, u32)> = blocks.keys().copied().collect();
-        let batches: Vec<((u32, u32), TileBatch)> = block_keys
-            .par_iter()
-            .map_init(
-                || RealRasters::new(Path::new(&prepared)),
-                |rasters, &(bx, by)| {
-                    (
-                        (bx, by),
-                        TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters),
-                    )
-                },
-            )
-            .collect();
-        for (key, batch) in &batches {
-            let (bx, by) = *key;
-            process_block(
-                &dev,
-                &f,
-                batch,
-                &cfg,
-                bx,
-                by,
-                &blocks[key],
-                &region_rows,
-                &src_dev,
-                &barrier_data,
-                &mut stats,
-                &mut prog,
-            )?;
-        }
+        process_region(
+            r4,
+            region_tiles,
+            &layers,
+            &cfg,
+            &dev,
+            &f,
+            &prepared,
+            &mut stats,
+            &mut prog,
+        )?;
     }
     let wall = t_all.elapsed().as_secs_f64();
 
