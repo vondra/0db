@@ -228,3 +228,185 @@ extern "C" __global__ void airborne_coarse(
         }
     }
 }
+
+// ─── M3 batched kernels: one launch over a whole BLOCK of tiles instead of per-tile,
+// so a region needs ~1 sync + 1 copyback rather than O(tiles)×. The per-(seg,receiver)
+// `airborne_sel` physics is reused UNCHANGED → parity with the per-tile path by
+// construction; only the indexing gains a `tile` dimension. Receiver + output buffers
+// are concatenated per tile (stride by tile); the region SoA (sll/sf/si) stays shared.
+// `ntiles` = tiles in this block. cudarc's launch tuple caps ~12 args, so the coarse
+// kernel packs (seg,tile) interleaved into one `far_st` array (far_st[2g]=seg, [2g+1]=tile).
+
+// NEAR batched: thread per (tile, pixel). Near list per tile via CSR near_off[ti..ti+1].
+extern "C" __global__ void airborne_exact_batched(
+    const double* __restrict__ rll_b, const float* __restrict__ rxa_b,
+    const double* __restrict__ sll, const float* __restrict__ sf, const int* __restrict__ si,
+    const float* __restrict__ npd, const float* __restrict__ w,
+    const int* __restrict__ near_off, const int* __restrict__ near_idx, int nreg, int ntiles,
+    float* __restrict__ out_b)
+{
+    long gid = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid >= (long)ntiles * TPX * TPX) return;
+    int ti = (int)(gid / (TPX * TPX));
+    int pix = (int)(gid % (TPX * TPX));
+    int py = pix >> 8, px = pix & 255;
+    const double* rll = rll_b + (long)ti * 3 * TPX;
+    double rx_lat = rll[py], rx_lon = rll[TPX + px], mpdl = rll[2 * TPX + py];
+    float rx_elev = rxa_b[(long)ti * TPX * TPX + pix];
+    const float* npd_dep = npd + NPD_NC * (NPD_NB + 1);
+    float e[3] = {0.0f, 0.0f, 0.0f};
+    int lo = near_off[ti], hi = near_off[ti + 1];
+    for (int j = lo; j < hi; j++) {
+        int s = near_idx[j];
+        int cls = si[s * 4 + 1];
+        float sel;
+        if (airborne_sel(sll[s], sll[nreg + s], sf + s * 12, cls, si[s*4+2], si[s*4+0],
+                         rx_lat, rx_lon, mpdl, rx_elev, npd, npd_dep, &sel)) {
+            e[si[s * 4 + 3]] += fexpf_nc(sel * (float)LN10 * 0.1f) * w[cls];
+        }
+    }
+    float* out = out_b + (long)ti * TPX * TPX * 3;
+    out[pix * 3 + 0] = e[0]; out[pix * 3 + 1] = e[1]; out[pix * 3 + 2] = e[2];
+}
+
+// FAR batched (one level): thread per far-entry g; far_st[2g]=seg, far_st[2g+1]=tile.
+// out_coarse_b strides by tile (n*n*3 each).
+extern "C" __global__ void airborne_coarse_batched(
+    const double* __restrict__ rll_b, const float* __restrict__ rxa_b,
+    const double* __restrict__ sll, const float* __restrict__ sf, const int* __restrict__ si,
+    const float* __restrict__ npd, const float* __restrict__ w,
+    const int* __restrict__ far_st, int nfar, int nreg, int n,
+    float* __restrict__ out_coarse_b)
+{
+    int g = blockIdx.x * blockDim.x + threadIdx.x;
+    if (g >= nfar) return;
+    int s = far_st[2 * g];
+    int ti = far_st[2 * g + 1];
+    const double* rll = rll_b + (long)ti * 3 * TPX;
+    const float* rxa = rxa_b + (long)ti * TPX * TPX;
+    float* out_coarse = out_coarse_b + (long)ti * n * n * 3;
+    const float* npd_dep = npd + NPD_NC * (NPD_NB + 1);
+    double start_lat = sll[s], start_lon = sll[nreg + s];
+    const float* f = sf + s * 12;
+    int cls = si[s*4+1], is_dep = si[s*4+2], inst = si[s*4+0], period = si[s*4+3];
+    float gw = w[cls];
+    for (int ci = 0; ci < n; ci++) {
+        int py = coarse_pixel(n, ci);
+        double rx_lat = rll[py], mpdl = rll[2 * TPX + py];
+        for (int cj = 0; cj < n; cj++) {
+            int px = coarse_pixel(n, cj);
+            double rx_lon = rll[TPX + px];
+            float rx_elev = rxa[py * TPX + px];
+            float sel;
+            if (airborne_sel(start_lat, start_lon, f, cls, is_dep, inst,
+                             rx_lat, rx_lon, mpdl, rx_elev, npd, npd_dep, &sel)) {
+                float energy = fexpf_nc(sel * (float)LN10 * 0.1f) * gw;
+                atomicAdd(&out_coarse[(ci * n + cj) * 3 + period], energy);
+            }
+        }
+    }
+}
+
+// ─── M4 classify on the GPU: replace the per-tile O(nreg) candidate gate that ran
+// single-threaded on each rayon worker (the wall that capped airborne GPU util — the
+// device sat idle waiting for the CPU to decide near/far per seg). Thread per (tile,seg):
+// recompute the SAME best-case-slant gate as `classify_tile` (airborne.rs) and counting-sort
+// each seg into its tile's near / far[level] bucket entirely on device, so the O(nreg) loop
+// never touches the CPU — only a tile×4 counts array crosses PCIe. The M3 batched near/coarse
+// kernels then consume the GPU-built CSR (near_off+near_idx) and far (seg,tile) lists unchanged.
+//
+// Two passes (count then scatter) is the standard counting-sort: the gate is ~20 flops, cheap
+// to recompute, and a per-thread temp would need tile·nreg ints (impossible at world scale).
+//
+// meta_b f64[5*ntiles] per tile = [centre_lat, centre_lon, m_per_deg_lon, half_diag,
+// tile_max_rx_alt]. Seg start_lat/lon from sll (f64 — the catastrophic-cancellation site);
+// d_lon/sdy/sdz/start_alt/reach_sq from sf (f32 → promoted to f64 for the gate math, matching
+// classify_tile's f64 arithmetic; gg C5: measure parity, escalate to an f64 seg buffer only if
+// borderline near/far/drop flips exceed tolerance — the physics kernel re-gates on reach_sq so a
+// false-admit is merely wasted work, and near↔far flips at the 500 m boundary differ only by
+// exact-vs-coarse interpolation, ≪0.5 dB).
+
+#define NEAR_SLANT_SQ_D 250000.0        // NEAR_SLANT_M² (500²), airborne.rs:29
+#define COARSE_BAND0 2000.0             // COARSE_BAND_M[0], airborne.rs:30
+#define COARSE_BAND1 8000.0             // COARSE_BAND_M[1]
+
+// Shared gate (mirrors classify_tile's body): bucket 0=near, 1/2/3=far level 0/1/2, -1=dropped.
+__device__ __forceinline__ int airborne_classify_bucket(
+    const double* meta, double start_lat, double start_lon, const float* f)
+{
+    double centre_lat = meta[0], centre_lon = meta[1], mpdl = meta[2];
+    double half_diag = meta[3], tile_max_rx_alt = meta[4];
+    double x1 = (start_lon - centre_lon) * mpdl;
+    double y1 = (start_lat - centre_lat) * MLAT;
+    double dx = (double)f[1] * mpdl;             // d_lon · m_per_deg_lon
+    double dy = (double)f[2];                    // sdy
+    double len_sq = dx * dx + dy * dy;
+    double min_d_sq;
+    if (len_sq < 1.0) {
+        min_d_sq = x1 * x1 + y1 * y1;
+    } else {
+        double t_num = -(x1 * dx + y1 * dy);
+        if (t_num <= 0.0) {
+            min_d_sq = x1 * x1 + y1 * y1;
+        } else if (t_num >= len_sq) {
+            min_d_sq = (x1 + dx) * (x1 + dx) + (y1 + dy) * (y1 + dy);
+        } else {
+            double cross = dx * y1 - dy * x1;
+            min_d_sq = (cross * cross) / len_sq;
+        }
+    }
+    double horiz = sqrt(min_d_sq) - half_diag;
+    if (horiz < 0.0) horiz = 0.0;
+    double sz1 = (double)f[0], sdz = (double)f[3];
+    double seg_min_alt = fmin(sz1, sz1 + sdz);
+    double rel_alt = seg_min_alt - tile_max_rx_alt;
+    if (rel_alt < 0.0) rel_alt = 0.0;
+    double best_slant_sq = horiz * horiz + rel_alt * rel_alt;
+    if (best_slant_sq > (double)f[9]) return -1;             // reach_sq
+    if (best_slant_sq < NEAR_SLANT_SQ_D) return 0;
+    double best_slant = sqrt(best_slant_sq);
+    if (best_slant < COARSE_BAND0) return 1;
+    if (best_slant < COARSE_BAND1) return 2;
+    return 3;
+}
+
+// Pass 1: count each tile's near / far[level] candidates → counts[ntiles*4] (pre-zeroed).
+extern "C" __global__ void airborne_classify_count(
+    const double* __restrict__ meta_b, const double* __restrict__ sll,
+    const float* __restrict__ sf, int nreg, int ntiles, int* __restrict__ counts)
+{
+    long gid = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid >= (long)ntiles * nreg) return;
+    int ti = (int)(gid / nreg);
+    int s = (int)(gid % nreg);
+    int b = airborne_classify_bucket(meta_b + (long)ti * 5, sll[s], sll[nreg + s], sf + (long)s * 12);
+    if (b >= 0) atomicAdd(&counts[ti * 4 + b], 1);
+}
+
+// Pass 2: scatter each seg into the buffers the M3 kernels read. `off` = 4 blocks of (ntiles+1):
+// block 0 = near CSR (off[ti..ti+1], consumed directly by airborne_exact_batched), blocks 1/2/3 =
+// far level base offset per tile. `fill[ntiles*4]` = per-(tile,bucket) atomic cursor (pre-zeroed).
+extern "C" __global__ void airborne_classify_scatter(
+    const double* __restrict__ meta_b, const double* __restrict__ sll,
+    const float* __restrict__ sf, const int* __restrict__ off, int* __restrict__ fill,
+    int nreg, int ntiles, int* __restrict__ near_idx,
+    int* __restrict__ far_st0, int* __restrict__ far_st1, int* __restrict__ far_st2)
+{
+    long gid = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid >= (long)ntiles * nreg) return;
+    int ti = (int)(gid / nreg);
+    int s = (int)(gid % nreg);
+    int b = airborne_classify_bucket(meta_b + (long)ti * 5, sll[s], sll[nreg + s], sf + (long)s * 12);
+    if (b < 0) return;
+    if (b == 0) {
+        int pos = off[ti] + atomicAdd(&fill[ti * 4], 1);
+        near_idx[pos] = s;
+    } else {
+        int lvl = b - 1;
+        int t1 = ntiles + 1;
+        int pos = off[(lvl + 1) * t1 + ti] + atomicAdd(&fill[ti * 4 + 1 + lvl], 1);
+        int* fst = (lvl == 0) ? far_st0 : (lvl == 1) ? far_st1 : far_st2;
+        fst[2 * pos] = s;
+        fst[2 * pos + 1] = ti;
+    }
+}

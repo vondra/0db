@@ -18,13 +18,14 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use h3o::CellIndex;
+use heatmap_aircraft::accumulator::TileAccumulator;
 use heatmap_aircraft::grid::{tile_bbox, tile_range};
 use heatmap_aircraft::r4_source_cache::{R4SourceCache, SourceSel};
 use heatmap_aircraft::region_runner::{morton_order, region_tiles, tile_centre_r4};
 use heatmap_aircraft::wire_hm3::{collapse_lden_u8, write_tile, SOURCE_ID_AIRCRAFT};
 use heatmap_aircraft::worklist::{any_source_arrow, resolve_n_days};
 use noise_gpu::airborne::{region_candidates, AirborneGpu};
-use raster_reader::fused_tile_z13::{default_batch_size, TileBatch};
+use raster_reader::fused_tile_z13::{default_batch_size, FusedTileZ13, TileBatch};
 use raster_reader::RealRasters;
 use rayon::prelude::*;
 
@@ -178,12 +179,12 @@ fn main() -> Result<()> {
         args.batch_size
     };
     // Per-worker GPU + LRU, rayon over a contiguous Morton chunk per worker — mirrors
-    // build_heatmap_aircraft's par_chunks. Each worker owns its AirborneGpu and its
-    // R4SourceCache; the single-threaded `classify_tile` + TileBatch prep (the
-    // "1 core at 98%, 15 idle" wall) now runs on every core, feeding the one GPU.
-    // Byte-identical to the sequential build (same per-tile scatter_tile, commutative
-    // over regions). M1b will give each worker its own CUDA stream (new_with_stream)
-    // so the GPU launches overlap too; M1a first proves the CPU-parallelism win.
+    // build_heatmap_aircraft's par_chunks. Each worker owns its AirborneGpu (its own CUDA
+    // stream, M1b) and its R4SourceCache. The near/far candidate gate that used to run
+    // single-threaded per tile on the CPU (the "1 core at 98%, 15 idle" wall) now runs on
+    // the GPU as a counting-sort inside `scatter_region` (M4), so the device stays saturated
+    // (~95%) instead of stalling on the CPU between launches. Commutative over regions, and
+    // parity-equivalent to the per-tile `scatter_tile` (compare_hm3: 0 cells > 0.5 dB).
     let order = morton_order(&regions.keys().copied().collect::<Vec<_>>());
     let n_workers = rayon::current_num_threads().max(1);
     let chunk_size = order.len().div_ceil(n_workers).max(1);
@@ -196,7 +197,15 @@ fn main() -> Result<()> {
             let (mut w, mut s) = (0usize, 0usize);
             for &r4 in chunk {
                 let (rw, rs) = process_region_gpu(
-                    &gpu, &mut cache, &rasters, &args, z, bn, n_days, r4, &regions[&r4],
+                    &gpu,
+                    &mut cache,
+                    &rasters,
+                    &args,
+                    z,
+                    bn,
+                    n_days,
+                    r4,
+                    &regions[&r4],
                 )?;
                 w += rw;
                 s += rs;
@@ -220,9 +229,9 @@ fn main() -> Result<()> {
 
 /// Build every owned tile of one region on the GPU: load its grid_disk(1) airborne
 /// sources through `cache`, upload the region's candidate sub-segs once, then scatter
-/// each tile. Returns (tiles_written, tiles_skipped). Empty / silent regions are NOT
-/// skipped early — `scatter_tile` fast-paths an empty region to a zeroed tile, which
-/// still unlinks any stale prior tile (gg: a bare `continue` would leave ghost tiles
+/// each tile-block. Returns (tiles_written, tiles_skipped). Empty / silent regions are NOT
+/// skipped early — `scatter_region` fast-paths an empty region to zeroed tiles, which
+/// still unlink any stale prior tile (gg: a bare `continue` would leave ghost tiles
 /// in an incremental rebuild). The build-wide `!any_source_arrow` guard in `main`
 /// already returns Ok(()) before any GPU work for a no-airborne chunk.
 #[allow(clippy::too_many_arguments)]
@@ -273,15 +282,20 @@ fn process_region_gpu(
     let (mut written, mut skipped) = (0usize, 0usize);
     for ((bx, by), btiles) in &batches {
         let batch = TileBatch::build(z, *bx, *by, bn, 0.0, rasters);
-        for &(tx, ty) in btiles {
-            let tile = &batch.tiles[((ty - by) * bn + (tx - bx)) as usize];
-            let accum = gpu.scatter_tile(&resident, tile);
+        let tile_refs: Vec<&FusedTileZ13> = btiles
+            .iter()
+            .map(|&(tx, ty)| &batch.tiles[((ty - by) * bn + (tx - bx)) as usize])
+            .collect();
+        // One GPU-classify + batched launch + sync for the whole block → one TileAccumulator
+        // per tile, then the shared write below.
+        let accums: Vec<TileAccumulator> = gpu.scatter_region(&resident, &tile_refs);
+        for (&(tx, ty), accum) in btiles.iter().zip(accums.iter()) {
             let out = args
                 .output
                 .join(z.to_string())
                 .join(tx.to_string())
                 .join(format!("{ty}.bin"));
-            let cells = collapse_lden_u8(&accum, n_days as f64);
+            let cells = collapse_lden_u8(accum, n_days as f64);
             if write_tile(&out, &cells, SOURCE_ID_AIRCRAFT, !args.write_empty)? > 0 {
                 written += 1;
             } else {

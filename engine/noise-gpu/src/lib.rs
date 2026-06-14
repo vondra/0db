@@ -33,6 +33,25 @@ pub fn pack_airborne_receivers(tile: &FusedTileZ13) -> (Vec<f64>, Vec<f32>) {
     (rll, tile.rx_alt_m.clone())
 }
 
+/// Concatenate a block's tiles' receiver lattices for the M3 batched kernels: `rll`
+/// is per-tile `[lat | lon | m_per_deg_lon]` (3·TPX each), `rxa` is per-tile elevation
+/// (TPX·TPX each), tile `ti` at stride `ti·3·TPX` / `ti·TPX·TPX`. Same per-tile content
+/// as `pack_airborne_receivers`, just concatenated so one launch covers the block.
+pub fn pack_airborne_receivers_batch(tiles: &[&FusedTileZ13]) -> (Vec<f64>, Vec<f32>) {
+    let n = TILE_PX;
+    let mut rll = Vec::with_capacity(3 * n * tiles.len());
+    let mut rxa = Vec::with_capacity(n * n * tiles.len());
+    for tile in tiles {
+        rll.extend_from_slice(&tile.rx_lat);
+        rll.extend_from_slice(&tile.rx_lon);
+        for py in 0..n {
+            rll.push(M_PER_DEG_LAT * tile.rx_lat[py].to_radians().cos().max(0.2));
+        }
+        rxa.extend_from_slice(&tile.rx_alt_m);
+    }
+    (rll, rxa)
+}
+
 /// Pack a sub-seg list into the per-seg device SoA (sll, sf, si) — shared by the
 /// near launch and each far level (receivers reused, segs per level).
 pub fn pack_airborne_segs(segs: &[(SegmentPrepared, u8)]) -> (Vec<f64>, Vec<f32>, Vec<i32>) {

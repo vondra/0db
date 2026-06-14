@@ -1,13 +1,18 @@
-//! Shared region-resident GPU airborne scatter — the compute path used by BOTH the
-//! `e2-airborne` validator and the `gpu-airborne` production builder, so the two are
-//! byte-identical and the measured parity (LKPR 0.0090 dB, LOWI 0.0065 dB vs the CPU
-//! `airborne::scatter_tile`, 0 zero-sided) holds for production by construction.
+//! Region-resident GPU airborne scatter. Two entry points share the `airborne_sel` physics:
+//!   - [`AirborneGpu::scatter_tile`] — per-tile, CPU classify → near (exact per-pixel) + far
+//!     (coarse lattice). The `e2-airborne` validator checks THIS against the CPU
+//!     `airborne::scatter_tile` (byte-exact: LKPR 0.0090 dB, LOWI 0.0065 dB, 0 zero-sided).
+//!   - [`AirborneGpu::scatter_region`] — the production builder's path (M3+M4): GPU classify
+//!     (counting-sort) + batched near/coarse over a whole tile-block. Same gate + physics, so
+//!     parity holds at the dB level (compare_hm3 over Ruzyně: 0 cells > 0.5 dB) — but NOT
+//!     byte-identical run-to-run: the device atomic-scatter cursors order the near/far lists
+//!     nondeterministically, injecting ≪0.5 dB float-reduction jitter.
 //!
 //! Lifecycle, mirroring `airborne::scatter_tile`'s adaptive near/far split but on the GPU:
 //!   1. [`AirborneGpu::new`] — load the PTX + upload the NPD LUTs ONCE (device-global).
 //!   2. [`AirborneGpu::load_region`] — `prepare_segment`'d candidates → device SoA, ONCE per R4.
-//!   3. [`AirborneGpu::scatter_tile`] — per tile: cheap classify → near (exact) + far (coarse
-//!      lattice) kernels → host bilinear expand → one `TileAccumulator`.
+//!   3. [`AirborneGpu::scatter_tile`] / [`AirborneGpu::scatter_region`] — classify → near +
+//!      far kernels → host bilinear expand → one `TileAccumulator` per tile.
 
 use std::sync::Arc;
 
@@ -23,7 +28,7 @@ use noise_compute::emission::aircraft::{
 use noise_compute::types::AircraftSegment;
 use raster_reader::fused_tile_z13::{tile_pixel_size_m, FusedTileZ13, TILE_PX};
 
-use crate::{pack_airborne_receivers, pack_airborne_segs};
+use crate::{pack_airborne_receivers, pack_airborne_receivers_batch, pack_airborne_segs};
 
 const AIRBORNE_PTX: &str = include_str!(concat!(env!("OUT_DIR"), "/airborne.ptx"));
 const NEAR_SLANT_SQ: f64 = 500.0 * 500.0; // NEAR_SLANT_M² (airborne.rs:48)
@@ -195,6 +200,13 @@ pub struct AirborneGpu {
     dev: Arc<CudaDevice>,
     f_near: CudaFunction,
     f_coarse: CudaFunction,
+    /// M3 batched variants (one launch per block of tiles); same physics as f_near/f_coarse.
+    f_near_batched: CudaFunction,
+    f_coarse_batched: CudaFunction,
+    /// M4 GPU classify (counting-sort the per-tile near/far gate on device, replacing the
+    /// single-threaded CPU `classify_tile` wall) → device-built CSR for the M3 batched kernels.
+    f_classify_count: CudaFunction,
+    f_classify_scatter: CudaFunction,
     d_npd: CudaSlice<f32>,
     /// `NUM_CLASSES`-length GA hybrid weight LUT (f32). The kernel scales
     /// each sub-seg's energy by `d_w[class]` (`ga-365d-hybrid-plan.md` §2).
@@ -241,22 +253,51 @@ impl AirborneGpu {
         dev.load_ptx(
             Ptx::from_src(AIRBORNE_PTX),
             "air",
-            &["airborne_exact", "airborne_coarse"],
+            &[
+                "airborne_exact",
+                "airborne_coarse",
+                "airborne_exact_batched",
+                "airborne_coarse_batched",
+                "airborne_classify_count",
+                "airborne_classify_scatter",
+            ],
         )
         .expect("load airborne ptx");
         let f_near = dev.get_func("air", "airborne_exact").expect("fn near");
         let f_coarse = dev.get_func("air", "airborne_coarse").expect("fn coarse");
+        let f_near_batched = dev
+            .get_func("air", "airborne_exact_batched")
+            .expect("fn near_batched");
+        let f_coarse_batched = dev
+            .get_func("air", "airborne_coarse_batched")
+            .expect("fn coarse_batched");
+        let f_classify_count = dev
+            .get_func("air", "airborne_classify_count")
+            .expect("fn classify_count");
+        let f_classify_scatter = dev
+            .get_func("air", "airborne_classify_scatter")
+            .expect("fn classify_scatter");
         let d_npd = dev
             .htod_copy(NpdLuts::shared().sel_luts_flat_f32())
             .expect("upload npd");
         let d_w = dev
-            .htod_copy(class_weights.as_array().iter().map(|&x| x as f32).collect::<Vec<f32>>())
+            .htod_copy(
+                class_weights
+                    .as_array()
+                    .iter()
+                    .map(|&x| x as f32)
+                    .collect::<Vec<f32>>(),
+            )
             .expect("upload class weights");
         dev.synchronize().expect("npd + weights upload sync");
         Self {
             dev,
             f_near,
             f_coarse,
+            f_near_batched,
+            f_coarse_batched,
+            f_classify_count,
+            f_classify_scatter,
             d_npd,
             d_w,
         }
@@ -386,5 +427,257 @@ impl AirborneGpu {
             CoarseLattice::from_energy(*nn, coarse).expand_into(&mut fine);
         }
         fine
+    }
+
+    /// M3+M4 batched scatter over a BLOCK of tiles: the per-tile near/far candidate gate
+    /// (`classify_tile`'s O(nreg) loop — the single-threaded CPU wall that capped airborne GPU
+    /// util) now runs ON the device as a counting-sort, then the M3 batched kernels consume the
+    /// device-built CSR with ~1 sync + 1 copyback for the whole block. Per block:
+    ///   1. host packs a tiny per-tile `meta` (centre, m/deg lon, half-diag, max rx alt);
+    ///   2. `airborne_classify_count` → per-(tile,bucket) counts (only tile×4 ints cross PCIe);
+    ///   3. host prefix-sums counts → near CSR + far base offsets;
+    ///   4. `airborne_classify_scatter` fills near_idx + far (seg,tile) lists on device;
+    ///   5. `airborne_exact_batched` + ≤3 `airborne_coarse_batched` → ONE sync → ONE dtoh →
+    ///      host bilinear-expand per tile.
+    ///
+    /// Returns one `TileAccumulator` per input tile, in order. Same `airborne_sel` physics and
+    /// same gate as the CPU `scatter_tile`, so parity holds by construction (dB-level: the
+    /// device atomic-scatter order and f32 gate inputs admit ≪0.5 dB run-to-run jitter).
+    pub fn scatter_region(
+        &self,
+        region: &RegionResident,
+        tiles: &[&FusedTileZ13],
+    ) -> Vec<TileAccumulator> {
+        let t = tiles.len();
+        if region.nreg == 0 || t == 0 {
+            return (0..t).map(|_| TileAccumulator::new()).collect();
+        }
+        let nreg = region.nreg;
+        let nreg_i = nreg as i32;
+        let npix = TILE_PX * TILE_PX;
+        let block: u32 = 256;
+
+        // 1. Per-tile classify meta (5 f64): centre lat/lon, m_per_deg_lon, half-diag, max rx
+        //    elevation. The alt-max is O(npix) per tile — negligible vs the O(nreg) gate it feeds.
+        let mut meta = Vec::with_capacity(5 * t);
+        for &tile in tiles {
+            let b = &tile.bbox;
+            let centre_lat = (b.north_lat + b.south_lat) * 0.5;
+            let centre_lon = (b.east_lon + b.west_lon) * 0.5;
+            let px_m = tile_pixel_size_m(tile.zoom, centre_lat);
+            let half_diag = (TILE_PX as f64) * px_m * std::f64::consts::SQRT_2 * 0.5;
+            let m_per_deg_lon = M_PER_DEG_LAT * centre_lat.to_radians().cos().max(0.2);
+            let max_rx_alt = tile
+                .rx_alt_m
+                .iter()
+                .copied()
+                .fold(f32::NEG_INFINITY, f32::max) as f64;
+            meta.extend_from_slice(&[centre_lat, centre_lon, m_per_deg_lon, half_diag, max_rx_alt]);
+        }
+        let d_meta = self.dev.htod_copy(meta).expect("meta");
+
+        // 2. Pass 1 (count): thread per (tile, seg) → counts[tile*4 + bucket].
+        let threads = (t as u64) * (nreg as u64);
+        let cfg_classify = LaunchConfig {
+            grid_dim: (threads.div_ceil(block as u64) as u32, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let mut d_counts = self.dev.alloc_zeros::<i32>(t * 4).expect("counts");
+        unsafe {
+            self.f_classify_count
+                .clone()
+                .launch(
+                    cfg_classify,
+                    (
+                        &d_meta,
+                        &region.d_sll,
+                        &region.d_sf,
+                        nreg_i,
+                        t as i32,
+                        &mut d_counts,
+                    ),
+                )
+                .expect("launch classify_count");
+        }
+        self.dev.synchronize().expect("count sync");
+        let counts = self.dev.dtoh_sync_copy(&d_counts).expect("dtoh counts");
+
+        // 3. Prefix-sum → off[4*(t+1)]: block 0 = near CSR (also the batched near kernel's
+        //    near_off), blocks 1/2/3 = per-tile far-level base offset. Totals size the buffers.
+        //    Accumulate in i64 and assert each block-wide total stays < i32::MAX: that keeps
+        //    every device-side offset / scatter `pos` / far-entry `nfar` (all i32) sound — a
+        //    dense megaregion whose far[2] list crosses 2^31 entries (and ~16 GB of VRAM) is the
+        //    pending M2 work (split the region's candidates into VRAM-sized passes, accumulate
+        //    additively); fail loudly here rather than silently wrap an i32 into an OOB write.
+        let t1 = t + 1;
+        let mut off = vec![0i32; 4 * t1];
+        let mut total = [0usize; 4];
+        for bucket in 0..4 {
+            let mut acc: i64 = 0;
+            for ti in 0..t {
+                off[bucket * t1 + ti] = acc as i32;
+                acc += i64::from(counts[ti * 4 + bucket]);
+            }
+            off[bucket * t1 + t] = acc as i32;
+            assert!(
+                acc < i32::MAX as i64,
+                "airborne block bucket {bucket} total {acc} ≥ i32::MAX — region too dense for \
+                 single-pass M4; needs M2 candidate-chunking (see scatter_region doc)"
+            );
+            total[bucket] = acc as usize;
+        }
+        let d_off = self.dev.htod_copy(off).expect("off");
+
+        // 4. Pass 2 (scatter): fill near_idx + per-level far (seg,tile) lists on device.
+        //    alloc_zeros rejects 0 bytes → dummy-size empty buckets; the kernel never writes them.
+        let mut d_fill = self.dev.alloc_zeros::<i32>(t * 4).expect("fill");
+        let mut d_near_idx = self
+            .dev
+            .alloc_zeros::<i32>(total[0].max(1))
+            .expect("near_idx");
+        let mut d_far0 = self
+            .dev
+            .alloc_zeros::<i32>((2 * total[1]).max(2))
+            .expect("far0");
+        let mut d_far1 = self
+            .dev
+            .alloc_zeros::<i32>((2 * total[2]).max(2))
+            .expect("far1");
+        let mut d_far2 = self
+            .dev
+            .alloc_zeros::<i32>((2 * total[3]).max(2))
+            .expect("far2");
+        unsafe {
+            self.f_classify_scatter
+                .clone()
+                .launch(
+                    cfg_classify,
+                    (
+                        &d_meta,
+                        &region.d_sll,
+                        &region.d_sf,
+                        &d_off,
+                        &mut d_fill,
+                        nreg_i,
+                        t as i32,
+                        &mut d_near_idx,
+                        &mut d_far0,
+                        &mut d_far1,
+                        &mut d_far2,
+                    ),
+                )
+                .expect("launch classify_scatter");
+        }
+
+        // 5. Physics: receivers (concatenated) → batched near (reads off block 0 as near CSR)
+        //    + ≤3 batched coarse levels (each over its far (seg,tile) list).
+        let (rll_b, rxa_b) = pack_airborne_receivers_batch(tiles);
+        let d_rll = self.dev.htod_copy(rll_b).expect("rll_b");
+        let d_rxa = self.dev.htod_copy(rxa_b).expect("rxa_b");
+        let mut d_out = self.dev.alloc_zeros::<f32>(npix * 3 * t).expect("out_b");
+        let cfg_near = LaunchConfig {
+            grid_dim: (((t * npix) as u32).div_ceil(block), 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        unsafe {
+            self.f_near_batched
+                .clone()
+                .launch(
+                    cfg_near,
+                    (
+                        &d_rll,
+                        &d_rxa,
+                        &region.d_sll,
+                        &region.d_sf,
+                        &region.d_si,
+                        &self.d_npd,
+                        &self.d_w,
+                        &d_off,
+                        &d_near_idx,
+                        nreg_i,
+                        t as i32,
+                        &mut d_out,
+                    ),
+                )
+                .expect("launch near_batched");
+        }
+        // (far (seg,tile) device buf, nfar, lattice side n, coarse out) per level.
+        let mut fardev: Vec<(&CudaSlice<i32>, usize, usize, CudaSlice<f32>)> =
+            Vec::with_capacity(3);
+        for (lvl, d_far) in [&d_far0, &d_far1, &d_far2].into_iter().enumerate() {
+            let nn = COARSE_LEVELS_N[lvl];
+            let d_coarse = self
+                .dev
+                .alloc_zeros::<f32>(nn * nn * 3 * t)
+                .expect("coarse_b");
+            fardev.push((d_far, total[lvl + 1], nn, d_coarse));
+        }
+        for (d_far, nfar, nn, d_coarse) in fardev.iter_mut() {
+            if *nfar == 0 {
+                continue;
+            }
+            let cfg = LaunchConfig {
+                grid_dim: ((*nfar as u32).div_ceil(block), 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: 0,
+            };
+            unsafe {
+                self.f_coarse_batched
+                    .clone()
+                    .launch(
+                        cfg,
+                        (
+                            &d_rll,
+                            &d_rxa,
+                            &region.d_sll,
+                            &region.d_sf,
+                            &region.d_si,
+                            &self.d_npd,
+                            &self.d_w,
+                            *d_far,
+                            *nfar as i32,
+                            nreg_i,
+                            *nn as i32,
+                            &mut *d_coarse,
+                        ),
+                    )
+                    .expect("launch coarse_batched");
+            }
+        }
+        self.dev.synchronize().expect("batched kernel sync");
+
+        let near_all = self.dev.dtoh_sync_copy(&d_out).expect("dtoh near_b");
+        let coarse_all: Vec<(usize, Vec<f32>)> = fardev
+            .iter()
+            .map(|(_, nfar, nn, d_coarse)| {
+                if *nfar == 0 {
+                    (*nn, Vec::new())
+                } else {
+                    (
+                        *nn,
+                        self.dev.dtoh_sync_copy(d_coarse).expect("dtoh coarse_b"),
+                    )
+                }
+            })
+            .collect();
+
+        (0..t)
+            .map(|ti| {
+                let mut fine = TileAccumulator::new();
+                fine.energy
+                    .copy_from_slice(&near_all[ti * npix * 3..(ti + 1) * npix * 3]);
+                for (nn, data) in &coarse_all {
+                    if data.is_empty() {
+                        continue;
+                    }
+                    let per = nn * nn * 3;
+                    CoarseLattice::from_energy(*nn, data[ti * per..(ti + 1) * per].to_vec())
+                        .expand_into(&mut fine);
+                }
+                fine
+            })
+            .collect()
     }
 }
