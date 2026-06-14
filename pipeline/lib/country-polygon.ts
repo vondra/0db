@@ -99,10 +99,10 @@ const ISO2_TO_ISO3: Record<string, string> = {
 type Ring = ReadonlyArray<readonly [number, number]>
 
 /**
- * A load-once point-in-country tester: `true` iff `(lat, lon)` is inside any outer
- * ring of the ISO-3166-1 alpha-2 country (holes/enclaves ignored — fine for a
- * border-road gate). Throws on an alpha-2 code that is unknown or has no CGAZ
- * feature — fail loud, since a silent always-false gate would drop every match.
+ * A load-once point-in-country tester: `true` iff `(lat, lon)` is inside an outer
+ * ring of the ISO-3166-1 alpha-2 country AND not inside one of that ring's holes
+ * (foreign enclaves are excluded). Throws on an alpha-2 code that is unknown or has
+ * no CGAZ feature — fail loud, since a silent always-false gate would drop every match.
  * `makeCountryGate(iso2)` IS the reuse path for other enrichers; no need to
  * expose the raw rings.
  */

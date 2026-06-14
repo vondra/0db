@@ -109,7 +109,7 @@ L_W_total,i = 10 × log₁₀(Σ_cat 10^(L_W'/m,cat,i / 10))
 
 Fixed per-class: 65/20/15 % for motorway-class roads, 70/18/12 % otherwise. Applied even on measured AADT — sub-daily census not currently sourced.
 
-`access_factor` reductions are bypassed only when `Provenance::is_measured()` (NationalMeasured / ContinentalMeasured / GlobalMeasured); Heuristic / Baseline rows still get access reductions.
+`access_factor` reductions are bypassed only when `Provenance::is_measured()` (City/National/Continental/GlobalMeasured); NationalProxy, Heuristic and Baseline rows still get access reductions — a national proxy is a class-default estimate, not a measurement, so it must be down-scaled on restricted-access roads.
 
 A row counts as enriched only when `provenance.has_data() && aadt_light > 0` (`normalize.rs::has_enriched_traffic`) — an enriched row with zero light but nonzero heavy AADT falls back to full class defaults (known edge case). Un-enriched rows with ≥ 3 lanes get a `lane_ratio` default multiplier (ŘSD-calibrated bucket medians, `normalize.rs::lane_ratio`): motorway oneway 3 lanes ×1.42; primary 3/4 lanes ×1.37/×2.13; secondary 3 lanes ×1.83; all other buckets ×1.0. Measured rows bypass it.
 
@@ -319,7 +319,7 @@ Applied in pipeline and popup:
 - **Parallel railway ways**: counts divided by `parallel_divisor`
 - **Industrial exclusion radius**: R=√(area/π) — buildings within R of source point are not counted as screening (prevents self-screening from source's own footprint)
 
-Road `access` and `road_class` u8 enums (codes, OSM mappings, AADT-reduction factors): see `engine/osm-extract/src/classify.rs` and the consumer in `engine/noise-compute/src/normalize.rs::access_factor`. The reduction is bypassed only when `Provenance::is_measured()` is true (NationalMeasured / ContinentalMeasured / GlobalMeasured); `Heuristic`, `Baseline` and `None` rows still get access reductions.
+Road `access` and `road_class` u8 enums (codes, OSM mappings, AADT-reduction factors): see `engine/osm-extract/src/classify.rs` and the consumer in `engine/noise-compute/src/normalize.rs::access_factor`. The reduction is bypassed only when `Provenance::is_measured()` is true (City/National/Continental/GlobalMeasured); `NationalProxy`, `Heuristic`, `Baseline` and `None` rows still get access reductions.
 
 Link rationale (codes 10-12, `*_link` slip roads / ramps carry 15% of mainline AADT — HCM 7 / FEHRL / CERTU lower-range, validated against Pasito Blanco GC-1 popup): see `defaults.rs` ramp rows. `secondary_link` / `tertiary_link` stay on mainline codes (3/4) because their flow is closer to regular urban streets. For `highway=track` without a `surface` tag, the extractor defaults to `unpaved` (+2 dB rolling correction — §1 surface table).
 
