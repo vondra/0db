@@ -38,6 +38,7 @@ const PROVENANCE_TO_RUST: Record<Provenance, string> = {
   'national-measured': 'Provenance::NationalMeasured',
   'continental-measured': 'Provenance::ContinentalMeasured',
   'global-measured': 'Provenance::GlobalMeasured',
+  'national-proxy': 'Provenance::NationalProxy',
   'heuristic': 'Provenance::Heuristic',
   'baseline': 'Provenance::Baseline',
   'none': 'Provenance::None',
@@ -81,6 +82,8 @@ pub enum Provenance {
     ContinentalMeasured,
     #[serde(rename = "global-measured")]
     GlobalMeasured,
+    #[serde(rename = "national-proxy")]
+    NationalProxy,
     #[serde(rename = "heuristic")]
     Heuristic,
     #[serde(rename = "baseline")]
@@ -94,10 +97,11 @@ impl Provenance {
     /// \`pipeline/lib/sources.ts::PROVENANCE_RANK\`.
     pub fn rank(self) -> u8 {
         match self {
-            Self::CityMeasured => 6,
-            Self::NationalMeasured => 5,
-            Self::ContinentalMeasured => 4,
-            Self::GlobalMeasured => 3,
+            Self::CityMeasured => 7,
+            Self::NationalMeasured => 6,
+            Self::ContinentalMeasured => 5,
+            Self::GlobalMeasured => 4,
+            Self::NationalProxy => 3,
             Self::Heuristic => 2,
             Self::Baseline => 1,
             Self::None => 0,
@@ -111,17 +115,20 @@ impl Provenance {
             Self::NationalMeasured => "national-measured",
             Self::ContinentalMeasured => "continental-measured",
             Self::GlobalMeasured => "global-measured",
+            Self::NationalProxy => "national-proxy",
             Self::Heuristic => "heuristic",
             Self::Baseline => "baseline",
             Self::None => "none",
         }
     }
 
-    /// True if this source represents real measured data (any
-    /// measured tier — city, national, continental or global-scale
-    /// observational). Used by \`access_factor\`
-    /// to pass through measured AADT without re-applying access multipliers
-    /// (the measurement already reflects the restriction).
+    /// True if this source represents real measured data (any measured tier —
+    /// city, national, continental or global-scale observational). Used by
+    /// \`access_factor\` to pass measured AADT through without re-applying access
+    /// multipliers (a real count already reflects the restriction). Deliberately
+    /// EXCLUDES \`NationalProxy\`: a class-default estimate does NOT reflect the
+    /// restriction, so the engine must still down-scale it on private / farm /
+    /// forestry roads (gg 2026-06-14, Ondra's call).
     pub fn is_measured(self) -> bool {
         matches!(
             self,
@@ -146,10 +153,14 @@ impl Provenance {
     /// switch to the full \`as_str()\` form and this helper goes away.
     pub fn legacy_traffic_source_str(self) -> &'static str {
         match self {
+            // NationalProxy folds in here so the popup still shows its dataset
+            // attribution; the coarse 3-bucket label can't say "estimate" yet
+            // (F.4 as_str() will). The acoustic distinction lives in is_measured().
             Self::CityMeasured
             | Self::NationalMeasured
             | Self::ContinentalMeasured
-            | Self::GlobalMeasured => {
+            | Self::GlobalMeasured
+            | Self::NationalProxy => {
                 "matched_external"
             }
             Self::Heuristic => "estimated_service_tree",
@@ -268,7 +279,8 @@ mod sources_tests {
         assert!(Provenance::CityMeasured.rank() > Provenance::NationalMeasured.rank());
         assert!(Provenance::NationalMeasured.rank() > Provenance::ContinentalMeasured.rank());
         assert!(Provenance::ContinentalMeasured.rank() > Provenance::GlobalMeasured.rank());
-        assert!(Provenance::GlobalMeasured.rank() > Provenance::Heuristic.rank());
+        assert!(Provenance::GlobalMeasured.rank() > Provenance::NationalProxy.rank());
+        assert!(Provenance::NationalProxy.rank() > Provenance::Heuristic.rank());
         assert!(Provenance::Heuristic.rank() > Provenance::Baseline.rank());
         assert!(Provenance::Baseline.rank() > Provenance::None.rank());
     }

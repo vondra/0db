@@ -23,6 +23,8 @@ pub enum Provenance {
     ContinentalMeasured,
     #[serde(rename = "global-measured")]
     GlobalMeasured,
+    #[serde(rename = "national-proxy")]
+    NationalProxy,
     #[serde(rename = "heuristic")]
     Heuristic,
     #[serde(rename = "baseline")]
@@ -36,10 +38,11 @@ impl Provenance {
     /// `pipeline/lib/sources.ts::PROVENANCE_RANK`.
     pub fn rank(self) -> u8 {
         match self {
-            Self::CityMeasured => 6,
-            Self::NationalMeasured => 5,
-            Self::ContinentalMeasured => 4,
-            Self::GlobalMeasured => 3,
+            Self::CityMeasured => 7,
+            Self::NationalMeasured => 6,
+            Self::ContinentalMeasured => 5,
+            Self::GlobalMeasured => 4,
+            Self::NationalProxy => 3,
             Self::Heuristic => 2,
             Self::Baseline => 1,
             Self::None => 0,
@@ -53,17 +56,20 @@ impl Provenance {
             Self::NationalMeasured => "national-measured",
             Self::ContinentalMeasured => "continental-measured",
             Self::GlobalMeasured => "global-measured",
+            Self::NationalProxy => "national-proxy",
             Self::Heuristic => "heuristic",
             Self::Baseline => "baseline",
             Self::None => "none",
         }
     }
 
-    /// True if this source represents real measured data (any
-    /// measured tier — city, national, continental or global-scale
-    /// observational). Used by `access_factor`
-    /// to pass through measured AADT without re-applying access multipliers
-    /// (the measurement already reflects the restriction).
+    /// True if this source represents real measured data (any measured tier —
+    /// city, national, continental or global-scale observational). Used by
+    /// `access_factor` to pass measured AADT through without re-applying access
+    /// multipliers (a real count already reflects the restriction). Deliberately
+    /// EXCLUDES `NationalProxy`: a class-default estimate does NOT reflect the
+    /// restriction, so the engine must still down-scale it on private / farm /
+    /// forestry roads (gg 2026-06-14, Ondra's call).
     pub fn is_measured(self) -> bool {
         matches!(
             self,
@@ -88,10 +94,14 @@ impl Provenance {
     /// switch to the full `as_str()` form and this helper goes away.
     pub fn legacy_traffic_source_str(self) -> &'static str {
         match self {
+            // NationalProxy folds in here so the popup still shows its dataset
+            // attribution; the coarse 3-bucket label can't say "estimate" yet
+            // (F.4 as_str() will). The acoustic distinction lives in is_measured().
             Self::CityMeasured
             | Self::NationalMeasured
             | Self::ContinentalMeasured
-            | Self::GlobalMeasured => {
+            | Self::GlobalMeasured
+            | Self::NationalProxy => {
                 "matched_external"
             }
             Self::Heuristic => "estimated_service_tree",
@@ -210,7 +220,8 @@ mod sources_tests {
         assert!(Provenance::CityMeasured.rank() > Provenance::NationalMeasured.rank());
         assert!(Provenance::NationalMeasured.rank() > Provenance::ContinentalMeasured.rank());
         assert!(Provenance::ContinentalMeasured.rank() > Provenance::GlobalMeasured.rank());
-        assert!(Provenance::GlobalMeasured.rank() > Provenance::Heuristic.rank());
+        assert!(Provenance::GlobalMeasured.rank() > Provenance::NationalProxy.rank());
+        assert!(Provenance::NationalProxy.rank() > Provenance::Heuristic.rank());
         assert!(Provenance::Heuristic.rank() > Provenance::Baseline.rank());
         assert!(Provenance::Baseline.rank() > Provenance::None.rank());
     }
@@ -463,7 +474,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 1013,
         key: "bo-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "ABC Red Vial Fundamental (community ArcGIS mirror)",
         license: Some("community-mirror"),
@@ -473,7 +484,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 1014,
         key: "br-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "DNIT Rodovias Federais",
         license: Some("public-data"),
@@ -503,7 +514,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 1025,
         key: "cn-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "China Highway Network (ArcGIS mirror) + tier defaults",
         license: Some("community-mirror"),
@@ -533,7 +544,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 1034,
         key: "ec-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "CONGOPE Red Vial Ecuador (ArcGIS mirror)",
         license: Some("public-data"),
@@ -593,7 +604,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 1050,
         key: "in-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Bharatmala Road Network (Esri Living Atlas India)",
         license: Some("public-data"),
@@ -643,7 +654,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 1095,
         key: "ph-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "DPWH Road Classification (ArcGIS)",
         license: Some("public-data"),
@@ -663,7 +674,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 1098,
         key: "py-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "MOPC Rutas Nacionales (KMZ)",
         license: Some("public-data"),
@@ -693,7 +704,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 1124,
         key: "ve-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "VE360 Vialidad (SIGOT community mirror)",
         license: Some("community-mirror"),
@@ -953,7 +964,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9012,
         key: "dz-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Algeria-tuned CNOSSOS class defaults (no open per-segment AADT)",
         license: Some("derived-from-OSM"),
@@ -973,7 +984,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9180,
         key: "cd-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "DR Congo-tuned CNOSSOS class defaults (no open per-segment AADT)",
         license: Some("derived-from-OSM"),
@@ -993,7 +1004,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9231,
         key: "et-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Ethiopia-tuned CNOSSOS class defaults (ERA context; no open per-segment AADT)",
         license: Some("derived-from-OSM"),
@@ -1013,7 +1024,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9364,
         key: "ir-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Iran-tuned CNOSSOS class defaults (no open per-segment AADT)",
         license: Some("derived-from-OSM"),
@@ -1033,7 +1044,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9368,
         key: "iq-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Iraq-tuned CNOSSOS class defaults (no open per-segment AADT)",
         license: Some("derived-from-OSM"),
@@ -1053,7 +1064,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9392,
         key: "jp-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Japan MLIT Road Traffic Census R3 (2021) class defaults",
         license: Some("derived-from-OSM"),
@@ -1063,7 +1074,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9398,
         key: "kz-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Kazakhstan-tuned CNOSSOS class defaults (no open per-segment AADT)",
         license: Some("derived-from-OSM"),
@@ -1083,7 +1094,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9404,
         key: "ke-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Kenya-tuned CNOSSOS class defaults (no open per-segment AADT)",
         license: Some("derived-from-OSM"),
@@ -1113,7 +1124,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9484,
         key: "mx-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Mexico SICT/IMT Datos Viales 2025 (200m polyline match + class defaults)",
         license: Some("derived-from-OSM"),
@@ -1123,7 +1134,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9504,
         key: "ma-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Morocco-tuned CNOSSOS class defaults (no open per-segment AADT)",
         license: Some("derived-from-OSM"),
@@ -1143,7 +1154,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9566,
         key: "ng-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Nigeria-tuned CNOSSOS class defaults (FRSC/FERMA portals unavailable)",
         license: Some("derived-from-OSM"),
@@ -1163,7 +1174,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9643,
         key: "ru-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Russia-tuned CNOSSOS class defaults (no open per-segment AADT)",
         license: Some("derived-from-OSM"),
@@ -1183,7 +1194,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9729,
         key: "sd-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Sudan-tuned CNOSSOS class defaults (no open per-segment AADT)",
         license: Some("derived-from-OSM"),
@@ -1203,7 +1214,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9792,
         key: "tr-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Turkey-tuned CNOSSOS class defaults (KGM otoyol/devlet yolu context)",
         license: Some("derived-from-OSM"),
@@ -1223,7 +1234,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9804,
         key: "ua-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Ukraine-tuned CNOSSOS class defaults (Ukravtodor context)",
         license: Some("derived-from-OSM"),
@@ -1243,7 +1254,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9818,
         key: "eg-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Egypt-tuned CNOSSOS class defaults (no open per-segment AADT)",
         license: Some("derived-from-OSM"),
@@ -1263,7 +1274,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9834,
         key: "tz-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Tanzania-tuned CNOSSOS class defaults (TANROADS context)",
         license: Some("derived-from-OSM"),
@@ -1283,7 +1294,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9860,
         key: "uz-national-roads",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "roads",
         name: "Uzbekistan-tuned CNOSSOS class defaults (no open per-segment AADT)",
         license: Some("derived-from-OSM"),

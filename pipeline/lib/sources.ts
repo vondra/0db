@@ -37,6 +37,13 @@ import { DATASETS, type Dataset } from './enrichment-datasets.js'
  *   - `global-measured`       — per-facility observational dataset with
  *                               global reach (GPPD power plants, USWTDB
  *                               wind turbines, ADS-B aircraft).
+ *   - `national-proxy`        — national-scale ESTIMATE, not a measurement:
+ *                               class/corridor-default AADT or trains/day
+ *                               anchored to real national context (city tiers,
+ *                               known freight lines). Outranks OSM defaults so
+ *                               it enriches its own country, but is NOT measured
+ *                               — it can't overwrite a real measured neighbour
+ *                               and the engine still applies `access_factor`.
  *   - `heuristic`             — model-computed estimate (service-tree flow
  *                               accumulation, NACE name-keyword match).
  *   - `baseline`              — OSM-only inference or global baseline
@@ -49,6 +56,7 @@ export type Provenance =
   | 'national-measured'
   | 'continental-measured'
   | 'global-measured'
+  | 'national-proxy'
   | 'heuristic'
   | 'baseline'
   | 'none'
@@ -64,10 +72,14 @@ export const PROVENANCE_RANK: Record<Provenance, number> = {
   // Municipal counters beat national census INSIDE the city polygon: they
   // cover the same streets plus locals with denser, newer measurements
   // (city-enrichment-plan §2.3; rank guarded by polygon + coverage gates).
-  'city-measured': 6,
-  'national-measured': 5,
-  'continental-measured': 4,
-  'global-measured': 3,
+  'city-measured': 7,
+  'national-measured': 6,
+  'continental-measured': 5,
+  'global-measured': 4,
+  // national-proxy sits BELOW every real measured tier (a proxy can never
+  // overwrite a measured neighbour) but ABOVE heuristic/baseline (it still
+  // enriches OSM defaults inside its own country).
+  'national-proxy': 3,
   'heuristic': 2,
   'baseline': 1,
   'none': 0,
@@ -94,7 +106,8 @@ export interface Source {
  *
  * Mapping:
  *   priority 90 → city-measured (municipal counters; city-enrichment-plan)
- *   priority 80 → national-measured
+ *   priority 80 → national-measured, EXCEPT measurement:'proxy' → national-proxy
+ *                 (a national-scale estimate, not a real count — see Provenance)
  *   priority 70 → continental-measured
  *   priority 50 → global-measured, except global-overture / *copernicus*
  *                 which are OSM-derived / baseline rasters (baseline)
@@ -103,13 +116,15 @@ export interface Source {
  *   other       → none (defensive for malformed entries)
  *
  * Keep this function deterministic — it is exercised by the Rust codegen
- * script (`scripts/gen-sources-rs.ts`) and by the `shouldOverwrite`
- * tiebreak path.
+ * script (`gen-sources-rs.ts`) and by the `shouldOverwrite` tiebreak path.
  */
 export function provenanceFromEntry(d: Dataset): Provenance {
   if (d.id === 0) return 'none'
   if (d.priority >= 90) return 'city-measured'
-  if (d.priority >= 80) return 'national-measured'
+  // A proxy at national priority is an estimate, not a measurement: drop it to a
+  // dedicated non-measured tier so the engine re-applies access_factor and it can
+  // never overwrite a real measured neighbour (gg 2026-06-14, Ondra's call).
+  if (d.priority >= 80) return d.measurement === 'proxy' ? 'national-proxy' : 'national-measured'
   if (d.priority >= 70) return 'continental-measured'
   if (d.priority >= 50) {
     // tier-50 has three members today: GPPD (measured per-facility),
