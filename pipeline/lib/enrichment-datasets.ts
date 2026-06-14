@@ -881,6 +881,7 @@ export const DATASETS: Dataset[] = [
     id: 2004,
     layer: 'railways',
     key: 'ar-national-railway',
+    measurement: 'proxy',
     name: 'IGN GeoServer (Trenes Argentinos + Subte BA)',
     year: 2024,
     license: 'public-data',
@@ -924,6 +925,7 @@ export const DATASETS: Dataset[] = [
     id: 2021,
     layer: 'railways',
     key: 'cn-national-railway',
+    measurement: 'proxy',
     name: 'Mainland CR + Metros (ArcGIS FeatureServer mirror)',
     year: 2024,
     license: 'community-mirror',
@@ -989,6 +991,7 @@ export const DATASETS: Dataset[] = [
     id: 2037,
     layer: 'railways',
     key: 'in-national-railway',
+    measurement: 'proxy',
     name: 'Living Atlas IN Railway Network',
     year: 2024,
     license: 'public-data',
@@ -1010,6 +1013,7 @@ export const DATASETS: Dataset[] = [
     id: 2044,
     layer: 'railways',
     key: 'kr-national-railway',
+    measurement: 'proxy',
     name: 'KORAIL operator-class CNOSSOS defaults',
     year: 2025,
     license: 'derived-from-OSM',
@@ -1076,6 +1080,7 @@ export const DATASETS: Dataset[] = [
     id: 9644,
     layer: 'railways',
     key: 'ru-national-railway',
+    measurement: 'proxy',
     name: 'Russia operator-class CNOSSOS defaults (no open per-segment timetable)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1087,6 +1092,7 @@ export const DATASETS: Dataset[] = [
     id: 9567, // NG = 566 (+1 railway)
     layer: 'railways',
     key: 'ng-national-railway',
+    measurement: 'proxy',
     name: 'Nigeria operator-class CNOSSOS defaults (SGR commissioning context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1098,6 +1104,7 @@ export const DATASETS: Dataset[] = [
     id: 9819, // EG = 818 (+1 railway)
     layer: 'railways',
     key: 'eg-national-railway',
+    measurement: 'proxy',
     name: 'Egypt operator-class CNOSSOS defaults (no open per-segment timetable)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1109,6 +1116,7 @@ export const DATASETS: Dataset[] = [
     id: 9013, // DZ = 12 (+1 railway)
     layer: 'railways',
     key: 'dz-national-railway',
+    measurement: 'proxy',
     name: 'Algeria operator-class CNOSSOS defaults (SNTF context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1120,6 +1128,7 @@ export const DATASETS: Dataset[] = [
     id: 9365, // IR = 364 (+1 railway)
     layer: 'railways',
     key: 'ir-national-railway',
+    measurement: 'proxy',
     name: 'Iran operator-class CNOSSOS defaults (RAI context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1131,6 +1140,7 @@ export const DATASETS: Dataset[] = [
     id: 9405, // KE = 404 (+1 railway)
     layer: 'railways',
     key: 'ke-national-railway',
+    measurement: 'proxy',
     name: 'Kenya operator-class CNOSSOS defaults (SGR/metre-gauge context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1142,6 +1152,7 @@ export const DATASETS: Dataset[] = [
     id: 9793, // TR = 792 (+1 railway)
     layer: 'railways',
     key: 'tr-national-railway',
+    measurement: 'proxy',
     name: 'Turkey operator-class CNOSSOS defaults (TCDD context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1153,6 +1164,7 @@ export const DATASETS: Dataset[] = [
     id: 9805, // UA = 804 (+1 railway)
     layer: 'railways',
     key: 'ua-national-railway',
+    measurement: 'proxy',
     name: 'Ukraine operator-class CNOSSOS defaults (Ukrzaliznytsia context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1164,6 +1176,7 @@ export const DATASETS: Dataset[] = [
     id: 9232, // ET = 231 (+1 railway)
     layer: 'railways',
     key: 'et-national-railway',
+    measurement: 'proxy',
     name: 'Ethiopia operator-class CNOSSOS defaults (Addis-Djibouti SGR + LRT context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1175,6 +1188,7 @@ export const DATASETS: Dataset[] = [
     id: 9181, // CD = 180 (+1 railway)
     layer: 'railways',
     key: 'cd-national-railway',
+    measurement: 'proxy',
     name: 'DR Congo operator-class CNOSSOS defaults (SNCC context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1186,6 +1200,7 @@ export const DATASETS: Dataset[] = [
     id: 9835, // TZ = 834 (+1 railway)
     layer: 'railways',
     key: 'tz-national-railway',
+    measurement: 'proxy',
     name: 'Tanzania operator-class CNOSSOS defaults (TRC SGR + TAZARA context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1197,6 +1212,7 @@ export const DATASETS: Dataset[] = [
     id: 9369, // IQ = 368 (+1 railway)
     layer: 'railways',
     key: 'iq-national-railway',
+    measurement: 'proxy',
     name: 'Iraq operator-class CNOSSOS defaults (IRR context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1208,6 +1224,7 @@ export const DATASETS: Dataset[] = [
     id: 9730, // SD = 729 (+1 railway)
     layer: 'railways',
     key: 'sd-national-railway',
+    measurement: 'proxy',
     name: 'Sudan operator-class CNOSSOS defaults (SRC context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1219,6 +1236,7 @@ export const DATASETS: Dataset[] = [
     id: 9505, // MA = 504 (+1 railway)
     layer: 'railways',
     key: 'ma-national-railway',
+    measurement: 'proxy',
     name: 'Morocco operator-class CNOSSOS defaults (ONCF Al Boraq HSR + conventional context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1230,6 +1248,7 @@ export const DATASETS: Dataset[] = [
     id: 9861, // UZ = 860 (+1 railway)
     layer: 'railways',
     key: 'uz-national-railway',
+    measurement: 'proxy',
     name: 'Uzbekistan operator-class CNOSSOS defaults (UTY Afrosiyob HSR + conventional context)',
     year: 2024,
     license: 'derived-from-OSM',
@@ -1241,6 +1260,7 @@ export const DATASETS: Dataset[] = [
     id: 9399, // KZ = 398 (+1 railway)
     layer: 'railways',
     key: 'kz-national-railway',
+    measurement: 'proxy',
     name: 'Kazakhstan operator-class CNOSSOS defaults (KTZ context)',
     year: 2024,
     license: 'derived-from-OSM',

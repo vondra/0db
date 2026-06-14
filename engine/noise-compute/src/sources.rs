@@ -724,7 +724,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 2004,
         key: "ar-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "IGN GeoServer (Trenes Argentinos + Subte BA)",
         license: Some("public-data"),
@@ -764,7 +764,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 2021,
         key: "cn-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Mainland CR + Metros (ArcGIS FeatureServer mirror)",
         license: Some("community-mirror"),
@@ -824,7 +824,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 2037,
         key: "in-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Living Atlas IN Railway Network",
         license: Some("public-data"),
@@ -844,7 +844,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 2044,
         key: "kr-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "KORAIL operator-class CNOSSOS defaults",
         license: Some("derived-from-OSM"),
@@ -974,7 +974,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9013,
         key: "dz-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Algeria operator-class CNOSSOS defaults (SNTF context)",
         license: Some("derived-from-OSM"),
@@ -994,7 +994,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9181,
         key: "cd-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "DR Congo operator-class CNOSSOS defaults (SNCC context)",
         license: Some("derived-from-OSM"),
@@ -1014,7 +1014,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9232,
         key: "et-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Ethiopia operator-class CNOSSOS defaults (Addis-Djibouti SGR + LRT context)",
         license: Some("derived-from-OSM"),
@@ -1034,7 +1034,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9365,
         key: "ir-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Iran operator-class CNOSSOS defaults (RAI context)",
         license: Some("derived-from-OSM"),
@@ -1054,7 +1054,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9369,
         key: "iq-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Iraq operator-class CNOSSOS defaults (IRR context)",
         license: Some("derived-from-OSM"),
@@ -1084,7 +1084,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9399,
         key: "kz-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Kazakhstan operator-class CNOSSOS defaults (KTZ context)",
         license: Some("derived-from-OSM"),
@@ -1104,7 +1104,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9405,
         key: "ke-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Kenya operator-class CNOSSOS defaults (SGR/metre-gauge context)",
         license: Some("derived-from-OSM"),
@@ -1144,7 +1144,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9505,
         key: "ma-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Morocco operator-class CNOSSOS defaults (ONCF Al Boraq HSR + conventional context)",
         license: Some("derived-from-OSM"),
@@ -1164,7 +1164,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9567,
         key: "ng-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Nigeria operator-class CNOSSOS defaults (SGR commissioning context)",
         license: Some("derived-from-OSM"),
@@ -1184,7 +1184,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9644,
         key: "ru-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Russia operator-class CNOSSOS defaults (no open per-segment timetable)",
         license: Some("derived-from-OSM"),
@@ -1204,7 +1204,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9730,
         key: "sd-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Sudan operator-class CNOSSOS defaults (SRC context)",
         license: Some("derived-from-OSM"),
@@ -1224,7 +1224,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9793,
         key: "tr-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Turkey operator-class CNOSSOS defaults (TCDD context)",
         license: Some("derived-from-OSM"),
@@ -1244,7 +1244,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9805,
         key: "ua-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Ukraine operator-class CNOSSOS defaults (Ukrzaliznytsia context)",
         license: Some("derived-from-OSM"),
@@ -1264,7 +1264,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9819,
         key: "eg-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Egypt operator-class CNOSSOS defaults (no open per-segment timetable)",
         license: Some("derived-from-OSM"),
@@ -1284,7 +1284,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9835,
         key: "tz-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Tanzania operator-class CNOSSOS defaults (TRC SGR + TAZARA context)",
         license: Some("derived-from-OSM"),
@@ -1304,7 +1304,7 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9861,
         key: "uz-national-railway",
-        provenance: Provenance::NationalMeasured,
+        provenance: Provenance::NationalProxy,
         layer: "railways",
         name: "Uzbekistan operator-class CNOSSOS defaults (UTY Afrosiyob HSR + conventional context)",
         license: Some("derived-from-OSM"),
