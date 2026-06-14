@@ -177,6 +177,23 @@ async function parseGppd(csvText: string): Promise<Facility[]> {
 
 // ── Step 4: Parse E-PRTR CSV ──
 
+// E-PRTR Annex I main activity sectors (1-9) → representative NACE 6-digit for noise
+// profiling. DISCODATA (the live source since the industry.eea endpoint died 2026-06)
+// exposes the Annex I activity code, e.g. "5(a)" / "4(a)(viii)", NOT a NACE code. Sector
+// granularity is enough for the emission profile — the sector fixes the plant type and
+// thus the loudness class. Ref: Regulation (EC) No 166/2006 Annex I.
+const EPRTR_ANNEX_SECTOR_TO_NACE: Record<number, string> = {
+  1: '351100', // Energy: refineries, coke, thermal power, combustion → electricity/thermal
+  2: '241000', // Metals: iron, steel, ferrous/non-ferrous → basic metals
+  3: '235100', // Mineral: cement, lime, glass, ceramics → cement
+  4: '201100', // Chemical: organic/inorganic, fertilizers, pharma → basic chemicals
+  5: '382100', // Waste & waste-water management → waste treatment
+  6: '171100', // Paper & wood production → pulp/paper
+  7: '014600', // Intensive livestock & aquaculture → animal production
+  8: '101100', // Animal/vegetable products (food & beverage) → meat processing
+  9: '131000', // Other: textile, leather, surface treatment, shipyards → textiles
+}
+
 async function parseEprtr(csvText: string): Promise<Facility[]> {
   const { parse } = await import('csv-parse/sync')
 
@@ -215,7 +232,7 @@ async function parseEprtr(csvText: string): Promise<Facility[]> {
   const latCol = cols.find(c => /^(lat|y_?coord|facility_?lat)/i.test(c)) || ''
   const lonCol = cols.find(c => /^(lon|long|x_?coord|facility_?lon)/i.test(c)) || ''
   const nameCol = cols.find(c => /^(facility_?name|name|facilityname)/i.test(c)) || ''
-  const naceCol = cols.find(c => /^(nace|economic_?activity|nace_?code|main_?activity|economicactivitycode|nacemaineconomicactivitycode)/i.test(c)) || ''
+  const naceCol = cols.find(c => /^(nace|economic_?activity|nace_?code|main_?activity|economicactivitycode|nacemaineconomicactivitycode|annex_?activity|eprtr_?annex)/i.test(c)) || ''
 
   if (!latCol || !lonCol) {
     console.log(`  WARN: E-PRTR — could not identify lat/lon columns: ${cols.join(', ')}`)
@@ -243,17 +260,21 @@ function parseEprtrWithCols(records: Record<string, string>[], latCol: string, l
     if (Math.abs(lat) > 90 || Math.abs(lon) > 180) continue
 
     const name = (r[nameCol] || '').trim()
-    let nace = (r[naceCol] || '').trim()
+    const raw = (r[naceCol] || '').trim()
+    let nace: string
 
-    nace = nace.replace(/^[A-Z]\s*/i, '')
-    nace = nace.replace(/^NACE\s*/i, '')
-    nace = nace.replace(/\./g, '')
-    nace = nace.replace(/[^0-9]/g, '')
-
-    if (!nace || nace.length < 2) continue
-
-    while (nace.length < 6) nace += '0'
-    if (nace.length > 6) nace = nace.substring(0, 6)
+    // E-PRTR Annex I activity code (e.g. "5(a)", "4(a)(viii)") → map sector 1-9 to NACE.
+    // The legacy industry.eea endpoint gave a literal NACE; DISCODATA gives the Annex code.
+    const annexSector = raw.match(/^\s*(\d{1,2})\s*[.(]/)
+    if (annexSector && raw.includes('(')) {
+      nace = EPRTR_ANNEX_SECTOR_TO_NACE[parseInt(annexSector[1], 10)] || ''
+      if (!nace) continue
+    } else {
+      nace = raw.replace(/^[A-Z]\s*/i, '').replace(/^NACE\s*/i, '').replace(/\./g, '').replace(/[^0-9]/g, '')
+      if (!nace || nace.length < 2) continue
+      while (nace.length < 6) nace += '0'
+      if (nace.length > 6) nace = nace.substring(0, 6)
+    }
 
     const div = parseInt(nace.substring(0, 2), 10)
     if (div < 1 || div > 99) continue
@@ -386,8 +407,8 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
           if (field.name === 'nace_4digit' || field.name === 'source_id') continue
           columns[field.name] = table.getChild(field.name)!
         }
-        columns['nace_4digit'] = vectorFromArray(newNace, new Uint16())
-        columns['source_id'] = vectorFromArray(newDatasetId, new Uint16())
+        columns['nace_4digit'] = vectorFromArray(Array.from(newNace), new Uint16())
+        columns['source_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
         return makeTable(columns)
       })
     } catch (err: any) {
