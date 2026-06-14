@@ -42,6 +42,9 @@ export interface RailRow {
   endLon: number
   midLat: number
   midLon: number
+  /** OSM `name` ('' when absent) — lets an enricher disambiguate named corridors
+   *  (e.g. ET routes EDR vs AKR on the shared Addis–Awash trunk by line name). */
+  name: string
 }
 
 export interface WriteRailResult {
@@ -86,6 +89,7 @@ export async function writeRailTrains(
     const eLon = table.getChild('end_lon')
     const rtCol = table.getChild('rail_type')
     const usCol = table.getChild('usage')
+    const nmCol = table.getChild('name')
     const svcCol = table.getChild('service')
     if (!sLat || !sLon) return table // malformed hex — never touch
 
@@ -122,6 +126,7 @@ export async function writeRailTrains(
         endLon,
         midLat: (startLat + endLat) / 2,
         midLon: (startLon + endLon) / 2,
+        name: (nmCol?.get(i) as string) ?? '',
       }
       const m = match(row, i)
       if (!m) continue

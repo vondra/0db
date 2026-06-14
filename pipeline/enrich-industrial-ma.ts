@@ -36,18 +36,20 @@
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'
-import { inBbox } from './lib/spatial.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 
+// bbox stays for the hex-shortlist; the per-site test is the actual-polygon gate.
+// MA ∪ EH: CGAZ codes Western Sahara as a separate ESH feature, so an MA-only
+// gate drops the southern provinces (Laâyoune / Boucraa phosphate belt). Match
+// enrich-roads-ma.ts / enrich-railway-ma.ts, which gate the same union — the
+// MA-only gate also fixed the earlier EXCLUDE_ZONES Algeria bleed (gg 2026-06-14).
 const MA_BBOX: readonly [number, number, number, number] = [20.7, -17.3, 36.0, -1.0]
-
-const EXCLUDE_ZONES: ReadonlyArray<readonly [number, number, number, number]> = [
-  [20.7, -1.5, 36.0, -1.0],
-  [20.7, -17.3, 21.5, -4.8],
-]
+const inMA = makeCountryGate('MA')
+const inEH = makeCountryGate('EH')
 
 await enrichGemIndustrial({
   countryCode: 'ma',
   countryName: "Morocco",
   bbox: MA_BBOX,
-  isInside: (lat, lon) => inBbox(lat, lon, MA_BBOX) && !EXCLUDE_ZONES.some(z => inBbox(lat, lon, z)),
+  isInside: (lat, lon) => inMA(lat, lon) || inEH(lat, lon),
 })

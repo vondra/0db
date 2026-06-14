@@ -38,11 +38,16 @@
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 
+// bbox is the cheap hex-shortlist; makeCountryGate is the real per-site filter
+// (point-in-polygon against the CGAZ ADM0 boundary, so a plant just over the
+// South Sudan/Egypt/Chad/Ethiopia/Eritrea border can't land in the Sudan arrow).
 const SD_BBOX: readonly [number, number, number, number] = [8.7, 21.8, 22.2, 38.6]
 
 await enrichGemIndustrial({
   countryCode: 'sd',
   countryName: "Sudan",
   bbox: SD_BBOX,
+  isInside: makeCountryGate('SD'),
 })
