@@ -1,7 +1,7 @@
 {
-  "_doc": "Per-thread CPU rate for perfqmap's Pmark (pm = rate x threads-you-rent) = PassMark multithread CPU Mark / thread count, stored as mark+threads so pm is auditable (cross-check at cpubenchmark.net). Desktop/HEDT/server only; mobile/phone/embedded fall through to _default_unknown_rate. Matching (cpu_rates.find_entry): a real entry beats an est family-fallback, then the LONGEST 'match' substring wins -- so order does not matter and e.g. Intel 'i9-7900X' beats AMD '7900X'. est=true marks a reasoned family fallback.",
+  "_doc": "Per-thread CPU rate for perfqmap's Pmark (pm = rate x threads-you-rent) = PassMark multithread CPU Mark / thread count, stored as mark+threads so pm is auditable (cross-check at cpubenchmark.net). Desktop/HEDT/server only; mobile/phone/embedded fall through to _default_unknown_rate. Matching (cpu_rates.find_entry): a real entry beats an est family-fallback, then the LONGEST 'match' substring wins -- so order does not matter and e.g. Intel 'i9-7900X' beats AMD '7900X'. est=true marks a reasoned family fallback. _default_unknown_rate is deliberately conservative (server-tier ~700/thread, like the EPYC fallback): an unnamed CPU is usually a many-core server vast failed to label, and over-rating it (esp. multiplied by a high thread count) wrongly floats it to the top of perfqmap — better to under-rate an unknown and let a bench correct it.",
   "_passmark_source": "cpubenchmark.net multithread CPU Mark + per-CPU thread counts, fetched 2026-06-13",
-  "_default_unknown_rate": 1100,
+  "_default_unknown_rate": 700,
   "rates": [
     {"match": "9950X3D", "mark": 70152, "threads": 32},
     {"match": "9950X", "mark": 65752, "threads": 32},
