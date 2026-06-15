@@ -120,7 +120,18 @@ fn env(k: &str, d: &str) -> String {
 /// CUDA device + scatter PTX, created once — shared by the batch path and --stream (the warm
 /// context the cluster used to re-pay on every chunk spawn).
 fn warm_device() -> (Arc<CudaDevice>, CudaFunction) {
-    let dev = CudaDevice::new(0).expect("cuda");
+    warm_device_on(false)
+}
+
+/// `with_stream` ⇒ `CudaDevice::new_with_stream` (own stream, shared primary context) so the N
+/// --stream workers OVERLAP on the GPU (the gpu_airborne pattern, airborne.rs:252); `false` ⇒ the
+/// null-stream device the serial batch path uses. Each call gets its own scatter-PTX module load.
+fn warm_device_on(with_stream: bool) -> (Arc<CudaDevice>, CudaFunction) {
+    let dev = if with_stream {
+        CudaDevice::new_with_stream(0).expect("cuda")
+    } else {
+        CudaDevice::new(0).expect("cuda")
+    };
     dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["line_binned_fused"])
         .expect("ptx");
     let f = dev.get_func("s", "line_binned_fused").expect("fn");
@@ -382,6 +393,10 @@ fn process_region(
     prepared: &str,
     stats: &mut BTreeMap<&'static str, LayerStat>,
     prog: &mut Progress,
+    // Some(&mut r) ⇒ the --stream N-worker path: crop SERIALLY using THIS worker's own RealRasters
+    // (the N outer workers already parallelise across cells). None ⇒ the serial batch path: crop in
+    // PARALLEL over the per-rayon-worker RASTERS thread-local (its only parallelism). See the crop below.
+    rasters: Option<&mut RealRasters>,
 ) -> Result<(usize, usize)> {
     let total = region_tiles.len() * layers.len();
     let written0: usize = stats.values().map(|s| s.n_written).sum();
@@ -449,23 +464,38 @@ fn process_region(
             .or_default()
             .push((tx, ty));
     }
-    // Crop every block's shared halo in PARALLEL, REUSING each rayon worker's persistent
-    // RealRasters (RASTERS thread-local) so the mmap-LRU stays warm across cells. The GPU kernel
-    // loop below stays SEQUENTIAL over the SAME sorted block order, so output is byte-identical.
+    // Crop every block's shared halo. The GPU kernel loop below stays SEQUENTIAL over the SAME sorted
+    // block order regardless of how the crop runs → output is byte-identical either way.
+    //   • --stream (Some): crop SERIALLY with this worker's own RealRasters — the N outer stream-workers
+    //     already parallelise across cells; an inner par_iter would fan onto the GLOBAL rayon pool and
+    //     spin up one RealRasters per rayon thread (32 on a 9950X → mmap-LRU RAM blowup, gg-gemini/codex).
+    //   • batch (None): crop in PARALLEL over the per-rayon-worker RASTERS thread-local — its only
+    //     parallelism (the batch caller loops regions serially).
     let block_keys: Vec<(u32, u32)> = blocks.keys().copied().collect();
-    let batches: Vec<((u32, u32), TileBatch)> = block_keys
-        .par_iter()
-        .map(|&(bx, by)| {
-            RASTERS.with(|slot| {
-                let mut slot = slot.borrow_mut();
-                let rasters = slot.get_or_insert_with(|| RealRasters::new(Path::new(prepared)));
+    let batches: Vec<((u32, u32), TileBatch)> = match rasters {
+        Some(r) => block_keys
+            .iter()
+            .map(|&(bx, by)| {
                 (
                     (bx, by),
-                    TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters),
+                    TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, r),
                 )
             })
-        })
-        .collect();
+            .collect(),
+        None => block_keys
+            .par_iter()
+            .map(|&(bx, by)| {
+                RASTERS.with(|slot| {
+                    let mut slot = slot.borrow_mut();
+                    let rasters = slot.get_or_insert_with(|| RealRasters::new(Path::new(prepared)));
+                    (
+                        (bx, by),
+                        TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters),
+                    )
+                })
+            })
+            .collect(),
+    };
     for (key, batch) in &batches {
         let (bx, by) = *key;
         process_block(
@@ -505,7 +535,8 @@ fn run_stream(
     output: Option<String>,
     prepared: &str,
 ) -> Result<()> {
-    let (dev, f) = warm_device();
+    use std::collections::VecDeque;
+    use std::sync::{Condvar, Mutex};
     let barriers_enabled = env("QM_GPU_BARRIERS", "0") == "1";
     if barriers_enabled {
         eprintln!("QM_GPU_BARRIERS=1 — kernel vector-barrier screening ENABLED");
@@ -519,36 +550,116 @@ fn run_stream(
         output,
         barriers_enabled,
     };
-    let mut stats: BTreeMap<&'static str, LayerStat> = BTreeMap::new();
-    let mut prog = Progress {
-        done: 0,
-        total: 0,
-        last_beat: Instant::now(),
-    };
+    // FIXED N (default 2, NOT rayon thread count): each worker holds a whole region's source uploads +
+    // per-tile GPU scratch on its own stream + its own RealRasters, so N is bounded by VRAM/RAM, not
+    // cores (codex: a halo-only cap is unsafe). 2 fits the 12 GB cards; QM_GPU_STREAM_WORKERS overrides.
+    let n_workers: usize = env("QM_GPU_STREAM_WORKERS", "2").parse().unwrap_or(2).max(1);
     let names: Vec<&str> = layers.iter().map(|l| l.dir()).collect();
-    eprintln!("stream: layers={names:?}, halo={halo_m:.0}m, batch={batch_n} — reading R4 cells from stdin");
-    let mut out = std::io::stdout();
-    for line in std::io::stdin().lock().lines() {
-        let line = line?;
-        let hex = line.trim();
-        if hex.is_empty() {
-            continue;
-        }
-        let t = Instant::now();
-        match u64::from_str_radix(hex, 16) {
-            Ok(r4) => {
-                let tiles = region_tiles(r4, z);
-                match process_region(
-                    r4, &tiles, layers, &cfg, &dev, &f, prepared, &mut stats, &mut prog,
-                ) {
-                    Ok((w, s)) => writeln!(out, "done {r4:x} {w} {s} {}", t.elapsed().as_millis())?,
-                    Err(e) => writeln!(out, "fail {r4:x} {e}")?,
-                }
+    eprintln!(
+        "stream: layers={names:?}, halo={halo_m:.0}m, batch={batch_n}, {n_workers} worker(s) — reading R4 cells from stdin"
+    );
+
+    // Morton-locality streaming pool (mirrors gpu_airborne run_stream): a reader thread fills a shared
+    // queue in arrival (= the orchestrator's Morton) order; each warm worker drains a contiguous
+    // PULL_BATCH run, so its serial-crop RealRasters keeps the grid_disk(1) ring-cache warm across the
+    // run it builds. While worker A's kernel runs on the GPU, worker B preps the next cell on the CPU.
+    const PULL_BATCH: usize = 4;
+    // (queue of pending cells, stream-closed flag) + a condvar — same shape as gpu_airborne::StreamQueue.
+    type Work = Arc<(Mutex<(VecDeque<u64>, bool)>, Condvar)>;
+    let work: Work = Arc::new((Mutex::new((VecDeque::new(), false)), Condvar::new()));
+    let out = Arc::new(Mutex::new(std::io::stdout()));
+
+    let reader_work = Arc::clone(&work);
+    // DETACHED (not joined): on a broken-pipe abort the workers exit while this thread may still be
+    // blocked in stdin.lines() with stdin open — joining it would deadlock main (gg-gemini CRITICAL).
+    // On normal EOF it sets closed + returns; either way the OS reaps it when main returns.
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            let hex = line.trim();
+            if hex.is_empty() {
+                continue;
             }
-            Err(_) => eprintln!("stream: skip non-hex line: {hex}"),
+            match u64::from_str_radix(hex, 16) {
+                Ok(r4) => {
+                    let (lock, cv) = &*reader_work;
+                    lock.lock().unwrap().0.push_back(r4);
+                    cv.notify_one();
+                }
+                Err(_) => eprintln!("stream: skip non-hex line: {hex}"),
+            }
         }
-        out.flush()?;
-    }
+        let (lock, cv) = &*reader_work;
+        lock.lock().unwrap().1 = true; // EOF → wake workers to drain the tail + exit
+        cv.notify_all();
+    });
+
+    let cfg = &cfg;
+    std::thread::scope(|scope| {
+        for _ in 0..n_workers {
+            let work = Arc::clone(&work);
+            let out = Arc::clone(&out);
+            scope.spawn(move || {
+                // Warm per-worker state: own CUDA stream (overlaps on the GPU) + own RealRasters (the
+                // serial crop reuses it, mmap-LRU stays warm) + own stats/prog (worker-local, gg).
+                // Safe under UNIQUE centre-R4 ownership (the scheduler leases each cell once per stream):
+                // each cell's output tiles are disjoint, so two workers never write the same .bin (gg-codex).
+                let (dev, f) = warm_device_on(true);
+                let mut rasters = RealRasters::new(Path::new(prepared));
+                let mut stats: BTreeMap<&'static str, LayerStat> = BTreeMap::new();
+                let mut prog = Progress {
+                    done: 0,
+                    total: 0,
+                    last_beat: Instant::now(),
+                };
+                'worker: loop {
+                    let batch: Vec<u64> = {
+                        let (lock, cv) = &*work;
+                        let mut g = lock.lock().unwrap();
+                        loop {
+                            if !g.0.is_empty() {
+                                let take = g.0.len().min(PULL_BATCH);
+                                break g.0.drain(..take).collect();
+                            }
+                            if g.1 {
+                                break Vec::new(); // stream closed + drained → exit
+                            }
+                            g = cv.wait(g).unwrap();
+                        }
+                    };
+                    if batch.is_empty() {
+                        break;
+                    }
+                    for r4 in batch {
+                        let t = Instant::now();
+                        let tiles = region_tiles(r4, z);
+                        let line = match process_region(
+                            r4, &tiles, layers, cfg, &dev, &f, prepared, &mut stats, &mut prog,
+                            Some(&mut rasters),
+                        ) {
+                            Ok((w, s)) => format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis()),
+                            Err(e) => format!("fail {r4:x} {e}"),
+                        };
+                        let mut o = out.lock().unwrap();
+                        let ok = writeln!(o, "{line}").is_ok() && o.flush().is_ok();
+                        drop(o);
+                        if !ok {
+                            // downstream (the box-agent) closed its read end → stop the build, exactly
+                            // as the old serial path's `writeln!(…)?` did: signal EOF so every worker
+                            // drains its current batch and exits, instead of spinning on a dead pipe.
+                            let (lock, cv) = &*work;
+                            let mut g = lock.lock().unwrap();
+                            g.1 = true;
+                            g.0.clear(); // drop pending cells so peers exit NOW, not after wasted builds
+                            drop(g);
+                            cv.notify_all();
+                            break 'worker;
+                        }
+                    }
+                }
+            });
+        }
+    });
     Ok(())
 }
 
@@ -737,6 +848,7 @@ fn main() -> Result<()> {
             &prepared,
             &mut stats,
             &mut prog,
+            None, // batch path: parallel crop over the RASTERS thread-local
         )?;
     }
     let wall = t_all.elapsed().as_secs_f64();
