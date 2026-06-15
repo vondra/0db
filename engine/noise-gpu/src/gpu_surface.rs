@@ -393,10 +393,6 @@ fn process_region(
     prepared: &str,
     stats: &mut BTreeMap<&'static str, LayerStat>,
     prog: &mut Progress,
-    // Some(&mut r) ⇒ the --stream N-worker path: crop SERIALLY using THIS worker's own RealRasters
-    // (the N outer workers already parallelise across cells). None ⇒ the serial batch path: crop in
-    // PARALLEL over the per-rayon-worker RASTERS thread-local (its only parallelism). See the crop below.
-    rasters: Option<&mut RealRasters>,
 ) -> Result<(usize, usize)> {
     let total = region_tiles.len() * layers.len();
     let written0: usize = stats.values().map(|s| s.n_written).sum();
@@ -464,38 +460,26 @@ fn process_region(
             .or_default()
             .push((tx, ty));
     }
-    // Crop every block's shared halo. The GPU kernel loop below stays SEQUENTIAL over the SAME sorted
-    // block order regardless of how the crop runs → output is byte-identical either way.
-    //   • --stream (Some): crop SERIALLY with this worker's own RealRasters — the N outer stream-workers
-    //     already parallelise across cells; an inner par_iter would fan onto the GLOBAL rayon pool and
-    //     spin up one RealRasters per rayon thread (32 on a 9950X → mmap-LRU RAM blowup, gg-gemini/codex).
-    //   • batch (None): crop in PARALLEL over the per-rayon-worker RASTERS thread-local — its only
-    //     parallelism (the batch caller loops regions serially).
+    // Crop every block's shared halo in PARALLEL over a SHARED rayon pool, REUSING each rayon worker's
+    // persistent RealRasters (RASTERS thread-local) so the mmap-LRU stays warm. With the FIXED-N=2 outer
+    // --stream workers this stays bounded: both submit to the ONE global pool, so it's ≤ pool-size (≈cores)
+    // RealRasters TOTAL, not per outer worker — and the crop uses all cores instead of one, which a serial
+    // crop starved on a crop-bound box (the i9/2080ti: dense cells, weak GPU → crop is the bottleneck). The
+    // GPU kernel loop below stays SEQUENTIAL over the SAME sorted block order, so output is byte-identical.
     let block_keys: Vec<(u32, u32)> = blocks.keys().copied().collect();
-    let batches: Vec<((u32, u32), TileBatch)> = match rasters {
-        Some(r) => block_keys
-            .iter()
-            .map(|&(bx, by)| {
+    let batches: Vec<((u32, u32), TileBatch)> = block_keys
+        .par_iter()
+        .map(|&(bx, by)| {
+            RASTERS.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                let rasters = slot.get_or_insert_with(|| RealRasters::new(Path::new(prepared)));
                 (
                     (bx, by),
-                    TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, r),
+                    TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters),
                 )
             })
-            .collect(),
-        None => block_keys
-            .par_iter()
-            .map(|&(bx, by)| {
-                RASTERS.with(|slot| {
-                    let mut slot = slot.borrow_mut();
-                    let rasters = slot.get_or_insert_with(|| RealRasters::new(Path::new(prepared)));
-                    (
-                        (bx, by),
-                        TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters),
-                    )
-                })
-            })
-            .collect(),
-    };
+        })
+        .collect();
     for (key, batch) in &batches {
         let (bx, by) = *key;
         process_block(
@@ -605,7 +589,6 @@ fn run_stream(
                 // Safe under UNIQUE centre-R4 ownership (the scheduler leases each cell once per stream):
                 // each cell's output tiles are disjoint, so two workers never write the same .bin (gg-codex).
                 let (dev, f) = warm_device_on(true);
-                let mut rasters = RealRasters::new(Path::new(prepared));
                 let mut stats: BTreeMap<&'static str, LayerStat> = BTreeMap::new();
                 let mut prog = Progress {
                     done: 0,
@@ -635,7 +618,6 @@ fn run_stream(
                         let tiles = region_tiles(r4, z);
                         let line = match process_region(
                             r4, &tiles, layers, cfg, &dev, &f, prepared, &mut stats, &mut prog,
-                            Some(&mut rasters),
                         ) {
                             Ok((w, s)) => format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis()),
                             Err(e) => format!("fail {r4:x} {e}"),
@@ -848,7 +830,6 @@ fn main() -> Result<()> {
             &prepared,
             &mut stats,
             &mut prog,
-            None, // batch path: parallel crop over the RASTERS thread-local
         )?;
     }
     let wall = t_all.elapsed().as_secs_f64();
