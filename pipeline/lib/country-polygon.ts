@@ -31,7 +31,7 @@
 import { readFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
-import { pointInRing, pointToPolylineDist } from './spatial.js'
+import { pointInRing, pointToSegmentDist } from './spatial.js'
 
 const CACHE_DIR = resolve(import.meta.dirname, '..', '..', 'scripts', 'cache')
 const CGAZ_GPKG = resolve(CACHE_DIR, 'geoBoundariesCGAZ_ADM0.gpkg')
@@ -111,7 +111,11 @@ export function makeCountryGate(iso2: string): (lat: number, lon: number) => boo
   return (lat, lon) => inIndexed(idx, lat, lon)
 }
 
-type IndexedRing = { outer: Ring; holes: Ring[]; w: number; s: number; e: number; n: number }
+// `bands` is a latitude-band index of the outer ring's edges (null for small rings,
+// brute-forced): a ray-cast crossing can only come from an edge straddling the query
+// latitude, so band[⌊(lat-s)/bandH⌋] lists exactly the candidate edges — turning the
+// O(ring) point-in-polygon into O(edges-in-band) for huge rings (China/Russia).
+type IndexedRing = { outer: Ring; holes: Ring[]; w: number; s: number; e: number; n: number; bands: number[][] | null; bandH: number }
 
 /** Outer ring + interior holes + lon/lat bbox per polygon of a CGAZ geometry.
  *  Holes are enclaves of OTHER countries (e.g. a Tajik exclave inside Uzbekistan):
@@ -129,32 +133,53 @@ function buildIndexed(g: { type: string; coordinates: unknown }): IndexedRing[] 
   return polys.map(({ outer, holes }) => {
     let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity
     for (const [x, y] of outer) { if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y }
-    return { outer, holes, w, s, e, n }
+    const len = outer.length
+    // Index only rings big enough to matter (~1 band per 8 edges, capped at 256).
+    const bandCount = len > 64 ? Math.min(256, Math.ceil(len / 8)) : 0
+    let bands: number[][] | null = null
+    const bandH = bandCount > 0 ? (n - s) / bandCount || 1 : 0
+    if (bandCount > 0) {
+      bands = Array.from({ length: bandCount }, () => [] as number[])
+      for (let i = 0; i < len; i++) {
+        const j = i === 0 ? len - 1 : i - 1
+        const yi = outer[i][1], yj = outer[j][1]
+        let b0 = Math.floor((Math.min(yi, yj) - s) / bandH)
+        let b1 = Math.floor((Math.max(yi, yj) - s) / bandH)
+        if (b0 < 0) b0 = 0
+        if (b1 >= bandCount) b1 = bandCount - 1
+        for (let b = b0; b <= b1; b++) bands[b].push(i)
+      }
+    }
+    return { outer, holes, w, s, e, n, bands, bandH }
   })
+}
+
+/** Ray-cast point-in-outer-ring, using the band index when present. Identical
+ *  result to `pointInRing(lon, lat, r.outer)` — only the candidate set shrinks. */
+function inOuter(r: IndexedRing, lat: number, lon: number): boolean {
+  const { outer, bands } = r
+  if (!bands) return pointInRing(lon, lat, outer)
+  const len = outer.length
+  let b = Math.floor((lat - r.s) / r.bandH)
+  if (b < 0) b = 0; else if (b >= bands.length) b = bands.length - 1
+  let inside = false
+  for (const i of bands[b]) {
+    const j = i === 0 ? len - 1 : i - 1
+    const xi = outer[i][0], yi = outer[i][1], xj = outer[j][0], yj = outer[j][1]
+    if (((yi > lat) !== (yj > lat)) && (lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi)) inside = !inside
+  }
+  return inside
 }
 
 /** True iff the point is inside an outer ring and not inside one of its holes. */
 function inIndexed(idx: readonly IndexedRing[], lat: number, lon: number): boolean {
-  for (const { outer, holes, w, s, e, n } of idx) {
-    if (lon < w || lon > e || lat < s || lat > n) continue
-    if (!pointInRing(lon, lat, outer)) continue
-    if (holes.some(h => pointInRing(lon, lat, h))) continue // inside a foreign enclave
+  for (const r of idx) {
+    if (lon < r.w || lon > r.e || lat < r.s || lat > r.n) continue
+    if (!inOuter(r, lat, lon)) continue
+    if (r.holes.some(h => pointInRing(lon, lat, h))) continue // inside a foreign enclave
     return true
   }
   return false
-}
-
-/** Min point-to-outer-ring distance (m). PAD bbox pre-skip is safe for any few-km
- *  cap up to ~80°N (no roads beyond): 0.1° ≥ 2 km even where lon-degrees shrink. */
-function distToOuter(idx: readonly IndexedRing[], lat: number, lon: number): number {
-  const PAD = 0.1
-  let best = Infinity
-  for (const { outer, w, s, e, n } of idx) {
-    if (lon < w - PAD || lon > e + PAD || lat < s - PAD || lat > n + PAD) continue
-    const d = pointToPolylineDist(lat, lon, outer)
-    if (d < best) best = d
-  }
-  return best
 }
 
 function isoToFeature(iso2: string): { iso3: string; geometry: { type: string; coordinates: unknown } } {
@@ -178,12 +203,73 @@ function inAnyCountry(lat: number, lon: number): boolean {
   for (const { idx } of landMask()) if (inIndexed(idx, lat, lon)) return true
   return false
 }
-function otherCountryWithin(lat: number, lon: number, bufferM: number, exceptIso3: string): boolean {
+// Global grid of every country's outer-ring SEGMENTS, tagged by iso3, bucketed
+// into 0.1° (~11 km) cells, memoised + shared. The coastal gate's slow path asks
+// only a THRESHOLD ("is this country's coast within bufferM?"), never a true
+// minimum — so a query touches just the few segments in the cells within bufferM
+// instead of scanning a whole country's outer ring. distToOuter used to scan
+// China's entire border (~tens of k vertices) per offshore road, which went
+// pathological at coastal multi-border hexes (RU/CN/PRK tripoint: 10+ min/hex).
+const SEG_GRID_DEG = 0.1
+type GridSeg = { iso3: string; aLat: number; aLon: number; bLat: number; bLon: number }
+let segGrid: Map<number, GridSeg[]> | null = null
+// iy∈[0,1800), ix∈[0,3600] (lon=180 → ix=3600). The 4096 stride exceeds the ix
+// range so keys stay collision-free even for the small ±rx query overshoot.
+const segCell = (ix: number, iy: number): number => iy * 4096 + ix
+
+function buildSegGrid(): Map<number, GridSeg[]> {
+  const grid = new Map<number, GridSeg[]>()
   for (const { iso3, idx } of landMask()) {
-    if (iso3 === exceptIso3) continue
-    if (distToOuter(idx, lat, lon) <= bufferM) return true
+    for (const { outer } of idx) {
+      for (let i = 0; i < outer.length - 1; i++) {
+        const [aLon, aLat] = outer[i], [bLon, bLat] = outer[i + 1]
+        // Skip antimeridian-spanning artifacts (only ATA at ±180 in CGAZ v6.0.0):
+        // one such edge would smear across every longitude cell, and pointToSegmentDist
+        // doesn't wrap at ±180 so its distance would be bogus anyway. No road-bearing
+        // country's coast crosses the dateline seam, so dropping the edge is harmless.
+        if (Math.abs(aLon - bLon) > 180) continue
+        const seg: GridSeg = { iso3, aLat, aLon, bLat, bLon }
+        const x0 = Math.floor((Math.min(aLon, bLon) + 180) / SEG_GRID_DEG)
+        const x1 = Math.floor((Math.max(aLon, bLon) + 180) / SEG_GRID_DEG)
+        const y0 = Math.floor((Math.min(aLat, bLat) + 90) / SEG_GRID_DEG)
+        const y1 = Math.floor((Math.max(aLat, bLat) + 90) / SEG_GRID_DEG)
+        for (let ix = x0; ix <= x1; ix++)
+          for (let iy = y0; iy <= y1; iy++) {
+            const k = segCell(ix, iy), b = grid.get(k)
+            if (b) b.push(seg); else grid.set(k, [seg])
+          }
+      }
+    }
+  }
+  return grid
+}
+
+/** True iff any outer-ring segment of a country matching `want(iso3)` lies within
+ *  `distM` of the point. Replaces the per-country `distToOuter <= buf` scan. */
+function coastWithin(lat: number, lon: number, distM: number, want: (iso3: string) => boolean): boolean {
+  const grid = segGrid ?? (segGrid = buildSegGrid())
+  // Cell radius covering distM. lon degrees shrink toward the poles, so widen the
+  // lon search by 1/cosLat (floored at 0.05 ≈ 87°N — past any road).
+  const cosLat = Math.max(Math.cos(lat * Math.PI / 180), 0.05)
+  const ry = Math.ceil(distM / (SEG_GRID_DEG * 110_540)) + 1
+  const rx = Math.ceil(distM / (SEG_GRID_DEG * 111_320 * cosLat)) + 1
+  const cx = Math.floor((lon + 180) / SEG_GRID_DEG)
+  const cy = Math.floor((lat + 90) / SEG_GRID_DEG)
+  for (let ix = cx - rx; ix <= cx + rx; ix++) {
+    for (let iy = cy - ry; iy <= cy + ry; iy++) {
+      const bucket = grid.get(segCell(ix, iy))
+      if (!bucket) continue
+      for (const s of bucket) {
+        if (!want(s.iso3)) continue
+        if (pointToSegmentDist(lat, lon, s.aLat, s.aLon, s.bLat, s.bLon) <= distM) return true
+      }
+    }
   }
   return false
+}
+
+function otherCountryWithin(lat: number, lon: number, bufferM: number, exceptIso3: string): boolean {
+  return coastWithin(lat, lon, bufferM, iso3 => iso3 !== exceptIso3)
 }
 
 /**
@@ -198,13 +284,20 @@ function otherCountryWithin(lat: number, lon: number, bufferM: number, exceptIso
  * See `.claude/plans/coastal-gate-sea-buffer.md`.
  */
 export function makeCoastalCountryGate(iso2: string, bufferM = 2000): (lat: number, lon: number) => boolean {
+  // A sea buffer is a few km; reject misuse loudly — an unbounded bufferM would blow
+  // up coastWithin's cell-radius loop (gg 2026-06-15, Codex).
+  if (!(bufferM > 0 && bufferM <= 50_000)) throw new Error(`makeCoastalCountryGate: bufferM ${bufferM} out of (0, 50000] m`)
   const { iso3, geometry } = isoToFeature(iso2)
   const target = buildIndexed(geometry)
+  // Same conjunction as a strict land gate would reject on, ordered cheapest-first:
+  // the two grid-backed coast-threshold checks reject the bulk of foreign/far-sea
+  // points, so the expensive whole-polygon `inAnyCountry` PIP runs only for the few
+  // survivors (genuine sea points hugging the target's own coast).
   return (lat, lon) => {
-    if (inIndexed(target, lat, lon)) return true                  // target land — fast path (bulk)
-    if (inAnyCountry(lat, lon)) return false                      // neighbour land — strict
-    if (distToOuter(target, lat, lon) > bufferM) return false     // too far from target
-    if (otherCountryWithin(lat, lon, bufferM, iso3)) return false // strait ambiguity → reject
-    return true                                                    // over sea, uniquely nearest target
+    if (inIndexed(target, lat, lon)) return true                       // target land — fast path (bulk)
+    if (!coastWithin(lat, lon, bufferM, x => x === iso3)) return false // too far from target coast
+    if (otherCountryWithin(lat, lon, bufferM, iso3)) return false      // neighbour/strait coast within buffer
+    if (inAnyCountry(lat, lon)) return false                           // deep inside a neighbour — rare survivor
+    return true                                                         // over sea, uniquely nearest target
   }
 }
