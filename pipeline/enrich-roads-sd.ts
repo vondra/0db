@@ -59,7 +59,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_SD_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_SD_NATIONAL_ROADS
 
@@ -67,7 +67,7 @@ const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // SD coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan over neighbours
-// (Egypt/Libya/Chad/CAR/South Sudan/Ethiopia/Eritrea); makeCountryGate('SD') is
+// (Egypt/Libya/Chad/CAR/South Sudan/Ethiopia/Eritrea); makeCoastalCountryGate('SD') is
 // the real filter, so this box only needs to enclose post-2011 Sudan.
 const SD_HEX_BBOX: [number, number, number, number] = [8.7, 21.8, 22.2, 38.6]
 
@@ -148,10 +148,10 @@ function splitVehicles(aadt: number, s: Split) {
 async function main() {
   console.log(`=== SD Roads Enrichment — Sudan-tuned CNOSSOS class defaults (${YEAR}) ===\n`)
 
-  // makeCountryGate may download+convert the CGAZ boundary on a fresh host. The
+  // makeCoastalCountryGate may download+convert the CGAZ boundary on a fresh host. The
   // polygon gate stops SD AADT bleeding onto Egyptian/Libyan/Chadian/South
   // Sudanese/Ethiopian/Eritrean roads the rectangular bbox overlaps.
-  const inSD = makeCountryGate('SD')
+  const inSD = makeCoastalCountryGate('SD')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, SD_HEX_BBOX)
   console.log(`  SD-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

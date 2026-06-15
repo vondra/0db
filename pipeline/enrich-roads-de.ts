@@ -24,7 +24,7 @@ import proj4 from 'proj4'
 import { SOURCE_ID_DE_BAST_AUTOBAHN, SOURCE_ID_DE_BAST_BUNDESSTRASSEN } from './lib/source-ids.generated.js'
 import { haversineM } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 // CensusSection.ref starts with 'A' for Autobahn, 'B' for Bundesstraßen — pick per row.
 const AUTOBAHN_DATASET_ID = SOURCE_ID_DE_BAST_AUTOBAHN
@@ -34,7 +34,7 @@ const MY_SOURCE_ID = AUTOBAHN_DATASET_ID  // default for gating; actual write pi
 // DE_HEX_BBOX overlaps western CZ, and ref matches accept up to 15 km — so a German
 // "B"-road ref could land on a Bohemian road near the border. Gate by German soil
 // (same fix as PL). See pipeline/lib/country-polygon.ts.
-const inGermany = makeCountryGate('DE')
+const inGermany = makeCoastalCountryGate('DE')
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)

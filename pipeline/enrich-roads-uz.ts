@@ -5,7 +5,7 @@
  * and the Ministry of Transport publish no traffic-count datasets; the national
  * open-data portal (data.gov.uz) carries registries, not counts. So — like the
  * neighbours RU/KZ and like CN/IN/IR — we apply country-tuned class defaults over
- * OSM geometry rather than a per-segment join, gated by makeCountryGate('UZ').
+ * OSM geometry rather than a per-segment join, gated by makeCoastalCountryGate('UZ').
  *
  * ## AADT by OSM class (two-way veh/day), rural baseline
  *
@@ -58,7 +58,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_UZ_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_UZ_NATIONAL_ROADS
 
@@ -66,7 +66,7 @@ const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // UZ coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan fed to
-// iterateCountryHexes and re-checked per midpoint. The makeCountryGate('UZ')
+// iterateCountryHexes and re-checked per midpoint. The makeCoastalCountryGate('UZ')
 // polygon is the real filter; this box only skips the rest of the planet. UZ has
 // 5 land neighbours (KZ/TM/TJ/KG/AF), so the polygon gate prevents stamping Uzbek
 // AADT onto their roads (the doubly-landlocked interior is well inside the box).
@@ -136,11 +136,11 @@ function splitVehicles(aadt: number, cls: number) {
 async function main() {
   console.log(`=== UZ Roads Enrichment — Uzbekistan-tuned CNOSSOS class defaults (${YEAR}) ===\n`)
 
-  // Created here (not module scope): makeCountryGate may download+convert the CGAZ
+  // Created here (not module scope): makeCoastalCountryGate may download+convert the CGAZ
   // boundary file on a fresh host. UZ borders 5 countries; a rectangular bbox alone
   // would stamp Uzbek AADT onto Kazakh/Turkmen/Tajik/Kyrgyz/Afghan roads that lack
   // their own national enrichment — the polygon gate prevents it.
-  const inUZ = makeCountryGate('UZ')
+  const inUZ = makeCoastalCountryGate('UZ')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, UZ_HEX_BBOX)
   console.log(`  UZ-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

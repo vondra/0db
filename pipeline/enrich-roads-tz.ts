@@ -58,7 +58,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_TZ_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_TZ_NATIONAL_ROADS
 
@@ -66,7 +66,7 @@ const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // TZ coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan; the
-// makeCountryGate('TZ') polygon is the real filter, so this box only needs to
+// makeCoastalCountryGate('TZ') polygon is the real filter, so this box only needs to
 // enclose Tanzania (mainland + Zanzibar/Pemba). Overlaps KE/UG/RW/BI/CD/ZM/MW/MZ,
 // all gated out by the polygon.
 const TZ_HEX_BBOX: [number, number, number, number] = [-11.8, 29.3, -0.9, 40.5]
@@ -172,7 +172,7 @@ async function main() {
 
   // Polygon gate stops TZ AADT bleeding onto KE/UG/RW/BI/CD/ZM/MW/MZ roads the
   // rectangular bbox overlaps.
-  const inTZ = makeCountryGate('TZ')
+  const inTZ = makeCoastalCountryGate('TZ')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, TZ_HEX_BBOX)
   console.log(`  TZ-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

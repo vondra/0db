@@ -56,7 +56,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_CD_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CD_NATIONAL_ROADS
 
@@ -64,7 +64,7 @@ const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // CD coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan; the
-// makeCountryGate('CD') polygon is the real filter, so this box only needs to
+// makeCoastalCountryGate('CD') polygon is the real filter, so this box only needs to
 // enclose the DRC. Overlaps CG / CF / SS / UG / RW / BI / TZ / ZM / AO, all
 // gated out by the polygon.
 const CD_HEX_BBOX: [number, number, number, number] = [-13.5, 12.0, 5.5, 31.5]
@@ -158,7 +158,7 @@ async function main() {
 
   // Polygon gate stops CD AADT bleeding onto CG / CF / SS / UG / RW / BI / TZ /
   // ZM / AO roads the rectangular bbox overlaps.
-  const inCD = makeCountryGate('CD')
+  const inCD = makeCoastalCountryGate('CD')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, CD_HEX_BBOX)
   console.log(`  CD-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

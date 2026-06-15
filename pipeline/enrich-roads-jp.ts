@@ -43,7 +43,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_JP_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes, type RoadRow } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_JP_NATIONAL_ROADS
 const YEAR = process.env.DATA_YEAR || '2026'
@@ -52,7 +52,7 @@ const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/jp`)
 
 // JP coarse bbox [minLat,minLon,maxLat,maxLon]: Yonaguni (24.4°N,123°E) → Hokkaido
 // (45.5°N) / Nemuro (145.8°E). Sweeps in S+N Korea, a China-coast sliver and the
-// southern Kuriles — the makeCountryGate('JP') polygon is the real filter; this
+// southern Kuriles — the makeCoastalCountryGate('JP') polygon is the real filter; this
 // box only skips the rest of the planet cheaply.
 const JP_HEX_BBOX: [number, number, number, number] = [24.0, 122.0, 46.0, 146.0]
 
@@ -228,10 +228,10 @@ async function main() {
     return null
   }
 
-  // Created here (not module scope): makeCountryGate may download+convert the CGAZ
+  // Created here (not module scope): makeCoastalCountryGate may download+convert the CGAZ
   // boundary on a fresh host. JP shares the bbox with the Korean peninsula and a
   // China-coast sliver; the polygon stops JP AADT bleeding onto their roads.
-  const inJP = makeCountryGate('JP')
+  const inJP = makeCoastalCountryGate('JP')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, JP_HEX_BBOX)
   console.log(`\n  JP-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

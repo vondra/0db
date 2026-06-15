@@ -59,7 +59,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_RU_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_RU_NATIONAL_ROADS
 
@@ -69,7 +69,7 @@ const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 // RU coarse bbox [minLat,minLon,maxLat,maxLon] — fed to iterateCountryHexes (skips
 // the rest of the planet) and re-checked per midpoint. Spans Kaliningrad (~19.6°E)
 // to Chukotka (~180°E); the tiny sliver east of the antimeridian (Wrangel, far
-// Chukotka tip) is dropped — negligible roads. The makeCountryGate('RU') polygon
+// Chukotka tip) is dropped — negligible roads. The makeCoastalCountryGate('RU') polygon
 // is the real filter; this box is only a cheap pre-scan over neighbours.
 const RU_HEX_BBOX: [number, number, number, number] = [41.0, 19.0, 82.0, 180.0]
 
@@ -156,11 +156,11 @@ function splitVehicles(aadt: number, cls: number) {
 async function main() {
   console.log(`=== RU Roads Enrichment — Russia-tuned CNOSSOS class defaults (${YEAR}) ===\n`)
 
-  // Created here (not module scope): makeCountryGate may download+convert the CGAZ
+  // Created here (not module scope): makeCoastalCountryGate may download+convert the CGAZ
   // boundary file on a fresh host. RU has 14 land neighbours + the antimeridian, so
   // a rectangular bbox alone would stamp Russian AADT onto Finnish/Kazakh/Mongolian/
   // Chinese roads that lack their own national enrichment — the polygon gate prevents it.
-  const inRU = makeCountryGate('RU')
+  const inRU = makeCoastalCountryGate('RU')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, RU_HEX_BBOX)
   console.log(`  RU-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

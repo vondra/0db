@@ -56,7 +56,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_TR_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_TR_NATIONAL_ROADS
 
@@ -64,7 +64,7 @@ const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // TR coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan; the CGAZ
-// makeCountryGate('TR') polygon is the real filter (Greece/Bulgaria to the west,
+// makeCoastalCountryGate('TR') polygon is the real filter (Greece/Bulgaria to the west,
 // Georgia/Armenia/Iran/Iraq/Syria to the east all overlap this box).
 const TR_HEX_BBOX: [number, number, number, number] = [35.8, 25.6, 42.2, 44.8]
 
@@ -169,7 +169,7 @@ function splitVehicles(aadt: number, s: Split) {
 async function main() {
   console.log(`=== TR Roads Enrichment — Turkey-tuned CNOSSOS class defaults (${YEAR}) ===\n`)
 
-  const inTR = makeCountryGate('TR')
+  const inTR = makeCoastalCountryGate('TR')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, TR_HEX_BBOX)
   console.log(`  TR-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

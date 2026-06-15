@@ -61,7 +61,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_MA_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_MA_NATIONAL_ROADS
 
@@ -173,12 +173,12 @@ function splitVehicles(aadt: number, s: Split) {
 async function main() {
   console.log(`=== MA Roads Enrichment — Morocco-tuned CNOSSOS class defaults (${YEAR}) ===\n`)
 
-  // makeCountryGate may download+convert the CGAZ boundary on a fresh host. The
+  // makeCoastalCountryGate may download+convert the CGAZ boundary on a fresh host. The
   // MA ∪ EH polygon gate stops MA AADT bleeding onto Algerian/Mauritanian/Spanish
   // roads the rectangular bbox overlaps, while still covering Western Sahara
   // (a separate ESH polygon) the way enrich-industrial-ma.ts does.
-  const inMA = makeCountryGate('MA')
-  const inEH = makeCountryGate('EH')
+  const inMA = makeCoastalCountryGate('MA')
+  const inEH = makeCoastalCountryGate('EH')
   const inCountry = (lat: number, lon: number) => inMA(lat, lon) || inEH(lat, lon)
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, MA_HEX_BBOX)

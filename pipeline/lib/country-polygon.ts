@@ -31,7 +31,7 @@
 import { readFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
-import { pointInRing } from './spatial.js'
+import { pointInRing, pointToPolylineDist } from './spatial.js'
 
 const CACHE_DIR = resolve(import.meta.dirname, '..', '..', 'scripts', 'cache')
 const CGAZ_GPKG = resolve(CACHE_DIR, 'geoBoundariesCGAZ_ADM0.gpkg')
@@ -107,16 +107,18 @@ type Ring = ReadonlyArray<readonly [number, number]>
  * expose the raw rings.
  */
 export function makeCountryGate(iso2: string): (lat: number, lon: number) => boolean {
-  const code = iso2.toUpperCase()
-  const iso3 = ISO2_TO_ISO3[code]
-  if (!iso3) throw new Error(`country-polygon: unknown ISO_A2 country code ${code}`)
-  const f = cgazFeatures().find(x => x.properties.shapeGroup === iso3)
-  if (!f) throw new Error(`country-polygon: no CGAZ ADM0 feature for ${code} (${iso3})`)
-  const g = f.geometry
-  // Each Polygon = an outer ring + interior holes; a MultiPolygon is N of those.
-  // The holes are enclaves of OTHER countries (e.g. Tajik exclaves inside the
-  // Uzbek outer ring) — a point in a hole is NOT in this country, so it must be
-  // rejected or the proxy bleeds into the enclave's rows (gg 2026-06-14).
+  const idx = buildIndexed(isoToFeature(iso2).geometry)
+  return (lat, lon) => inIndexed(idx, lat, lon)
+}
+
+type IndexedRing = { outer: Ring; holes: Ring[]; w: number; s: number; e: number; n: number }
+
+/** Outer ring + interior holes + lon/lat bbox per polygon of a CGAZ geometry.
+ *  Holes are enclaves of OTHER countries (e.g. a Tajik exclave inside Uzbekistan):
+ *  a point in a hole is NOT in this country (gg 2026-06-14). The per-ring bbox is a
+ *  cheap pre-check — CGAZ rings are dense and archipelagos carry hundreds of island
+ *  rings (FRA incl. overseas: 204); the box test skips them ~free. */
+function buildIndexed(g: { type: string; coordinates: unknown }): IndexedRing[] {
   const polys: { outer: Ring; holes: Ring[] }[] = []
   if (g.type === 'Polygon') {
     const r = g.coordinates as Ring[]
@@ -124,23 +126,85 @@ export function makeCountryGate(iso2: string): (lat: number, lon: number) => boo
   } else if (g.type === 'MultiPolygon') {
     for (const poly of g.coordinates as Ring[][]) polys.push({ outer: poly[0], holes: poly.slice(1) })
   }
-  // Pair each outer ring with its lon/lat bbox for a per-ring pre-check: CGAZ rings
-  // are ~6x denser than NE's and archipelago countries carry hundreds of island
-  // rings (FRA incl. overseas: 204) — the box test skips them all for ~free
-  // (measured: DE gate 45 → 24 µs/call on DE-local points; PL unchanged within
-  // noise). Holes are only tested on an outer-ring hit, so they cost ~nothing.
-  const indexed = polys.map(({ outer, holes }) => {
+  return polys.map(({ outer, holes }) => {
     let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity
     for (const [x, y] of outer) { if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y }
     return { outer, holes, w, s, e, n }
   })
+}
+
+/** True iff the point is inside an outer ring and not inside one of its holes. */
+function inIndexed(idx: readonly IndexedRing[], lat: number, lon: number): boolean {
+  for (const { outer, holes, w, s, e, n } of idx) {
+    if (lon < w || lon > e || lat < s || lat > n) continue
+    if (!pointInRing(lon, lat, outer)) continue
+    if (holes.some(h => pointInRing(lon, lat, h))) continue // inside a foreign enclave
+    return true
+  }
+  return false
+}
+
+/** Min point-to-outer-ring distance (m). PAD bbox pre-skip is safe for any few-km
+ *  cap up to ~80°N (no roads beyond): 0.1° ≥ 2 km even where lon-degrees shrink. */
+function distToOuter(idx: readonly IndexedRing[], lat: number, lon: number): number {
+  const PAD = 0.1
+  let best = Infinity
+  for (const { outer, w, s, e, n } of idx) {
+    if (lon < w - PAD || lon > e + PAD || lat < s - PAD || lat > n + PAD) continue
+    const d = pointToPolylineDist(lat, lon, outer)
+    if (d < best) best = d
+  }
+  return best
+}
+
+function isoToFeature(iso2: string): { iso3: string; geometry: { type: string; coordinates: unknown } } {
+  const code = iso2.toUpperCase()
+  const iso3 = ISO2_TO_ISO3[code]
+  if (!iso3) throw new Error(`country-polygon: unknown ISO_A2 country code ${code}`)
+  const f = cgazFeatures().find(x => x.properties.shapeGroup === iso3)
+  if (!f) throw new Error(`country-polygon: no CGAZ ADM0 feature for ${code} (${iso3})`)
+  return { iso3, geometry: f.geometry }
+}
+
+// Global land-mask over ALL CGAZ features (incl. disputed / non-ISO), memoised +
+// shared. The coastal gate uses it to keep land borders strict and reject
+// strait-ambiguous sea points; only the rare OUTSIDE rows hit it.
+let landIdx: ReadonlyArray<{ iso3: string; idx: IndexedRing[] }> | null = null
+function landMask(): ReadonlyArray<{ iso3: string; idx: IndexedRing[] }> {
+  if (!landIdx) landIdx = cgazFeatures().map(f => ({ iso3: String(f.properties.shapeGroup), idx: buildIndexed(f.geometry) }))
+  return landIdx
+}
+function inAnyCountry(lat: number, lon: number): boolean {
+  for (const { idx } of landMask()) if (inIndexed(idx, lat, lon)) return true
+  return false
+}
+function otherCountryWithin(lat: number, lon: number, bufferM: number, exceptIso3: string): boolean {
+  for (const { iso3, idx } of landMask()) {
+    if (iso3 === exceptIso3) continue
+    if (distToOuter(idx, lat, lon) <= bufferM) return true
+  }
+  return false
+}
+
+/**
+ * Like `makeCountryGate`, but tolerant of COASTAL roads whose midpoint falls just
+ * offshore of the CGAZ polygon (the polygon coastline sits inland of OSM waterfront
+ * roads on reclaimed land — ~14 % of class-0 roads in the Lagos hex were lost this
+ * way, gg 2026-06-15). Accepts a point inside the country, OR over the sea within
+ * `bufferM` of it AND not inside / within `bufferM` of any OTHER country — so land
+ * borders stay strict (a neighbour-side point is `inAnyCountry`) and narrow straits
+ * don't double-claim. Road enrichers use THIS; `makeCountryGate` stays land-only for
+ * negative-gate callers (e.g. enrich-industrial-kr `!inNK && !inJP`).
+ * See `.claude/plans/coastal-gate-sea-buffer.md`.
+ */
+export function makeCoastalCountryGate(iso2: string, bufferM = 2000): (lat: number, lon: number) => boolean {
+  const { iso3, geometry } = isoToFeature(iso2)
+  const target = buildIndexed(geometry)
   return (lat, lon) => {
-    for (const { outer, holes, w, s, e, n } of indexed) {
-      if (lon < w || lon > e || lat < s || lat > n) continue
-      if (!pointInRing(lon, lat, outer)) continue
-      if (holes.some(h => pointInRing(lon, lat, h))) continue // inside a foreign enclave
-      return true
-    }
-    return false
+    if (inIndexed(target, lat, lon)) return true                  // target land — fast path (bulk)
+    if (inAnyCountry(lat, lon)) return false                      // neighbour land — strict
+    if (distToOuter(target, lat, lon) > bufferM) return false     // too far from target
+    if (otherCountryWithin(lat, lon, bufferM, iso3)) return false // strait ambiguity → reject
+    return true                                                    // over sea, uniquely nearest target
   }
 }

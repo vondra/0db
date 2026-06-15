@@ -55,7 +55,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_DZ_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_DZ_NATIONAL_ROADS
 
@@ -63,7 +63,7 @@ const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // DZ coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan over neighbours
-// (Morocco/Tunisia/Libya/Niger/Mali/Mauritania); makeCountryGate('DZ') is the real
+// (Morocco/Tunisia/Libya/Niger/Mali/Mauritania); makeCoastalCountryGate('DZ') is the real
 // filter, so this box only needs to enclose Algeria incl. the deep Sahara south.
 const DZ_HEX_BBOX: [number, number, number, number] = [18.9, -8.7, 37.1, 12.0]
 
@@ -173,10 +173,10 @@ function splitVehicles(aadt: number, s: Split) {
 async function main() {
   console.log(`=== DZ Roads Enrichment — Algeria-tuned CNOSSOS class defaults (${YEAR}) ===\n`)
 
-  // makeCountryGate may download+convert the CGAZ boundary on a fresh host. The
+  // makeCoastalCountryGate may download+convert the CGAZ boundary on a fresh host. The
   // polygon gate stops DZ AADT bleeding onto Moroccan/Tunisian/Libyan/Sahelian
   // roads the rectangular bbox overlaps.
-  const inDZ = makeCountryGate('DZ')
+  const inDZ = makeCoastalCountryGate('DZ')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, DZ_HEX_BBOX)
   console.log(`  DZ-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

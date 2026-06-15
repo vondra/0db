@@ -62,7 +62,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_UA_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_UA_NATIONAL_ROADS
 
@@ -72,7 +72,7 @@ const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 // UA coarse bbox [minLat,minLon,maxLat,maxLon] — fed to iterateCountryHexes (skips
 // the rest of the planet) and re-checked per midpoint. Includes Crimea (south to
 // ~44.4°N) — internationally Ukrainian, modelled at pre-war baseline. The
-// makeCountryGate('UA') polygon is the real filter; this box is only a cheap
+// makeCoastalCountryGate('UA') polygon is the real filter; this box is only a cheap
 // pre-scan over neighbours (RU/BY/PL/SK/HU/RO/MD).
 const UA_HEX_BBOX: [number, number, number, number] = [44.0, 22.0, 52.5, 40.5]
 
@@ -153,11 +153,11 @@ function splitVehicles(aadt: number, cls: number) {
 async function main() {
   console.log(`=== UA Roads Enrichment — Ukraine-tuned CNOSSOS class defaults, pre-war baseline (${YEAR}) ===\n`)
 
-  // Created here (not module scope): makeCountryGate may download+convert the CGAZ
+  // Created here (not module scope): makeCoastalCountryGate may download+convert the CGAZ
   // boundary file on a fresh host. UA has 7 land neighbours (RU/BY/PL/SK/HU/RO/MD),
   // several being enriched in parallel right now — a rectangular bbox alone would
   // stamp Ukrainian AADT onto Russian/Polish/Romanian roads. The polygon gate stops it.
-  const inUA = makeCountryGate('UA')
+  const inUA = makeCoastalCountryGate('UA')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, UA_HEX_BBOX)
   console.log(`  UA-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

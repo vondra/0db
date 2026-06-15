@@ -59,7 +59,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_IQ_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_IQ_NATIONAL_ROADS
 
@@ -67,7 +67,7 @@ const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // IQ coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan over neighbours
-// (Iran/Turkey/Syria/Jordan/Saudi/Kuwait). makeCountryGate('IQ') is the real
+// (Iran/Turkey/Syria/Jordan/Saudi/Kuwait). makeCoastalCountryGate('IQ') is the real
 // filter, so this box only needs to enclose Iraq from the Faw peninsula (~29.06)
 // up to the Turkish border (~37.4) and from the western desert (~38.7) to the
 // Iranian frontier near Basra (~48.6).
@@ -168,10 +168,10 @@ function splitVehicles(aadt: number, s: Split) {
 async function main() {
   console.log(`=== IQ Roads Enrichment — Iraq-tuned CNOSSOS class defaults (${YEAR}) ===\n`)
 
-  // makeCountryGate may download+convert the CGAZ boundary on a fresh host. The
+  // makeCoastalCountryGate may download+convert the CGAZ boundary on a fresh host. The
   // polygon gate stops IQ AADT bleeding onto the roads of the six neighbours the
   // rectangular bbox overlaps (esp. dense SW Iran across the Basra frontier).
-  const inIQ = makeCountryGate('IQ')
+  const inIQ = makeCoastalCountryGate('IQ')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, IQ_HEX_BBOX)
   console.log(`  IQ-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

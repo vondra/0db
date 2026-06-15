@@ -59,7 +59,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_NG_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_NG_NATIONAL_ROADS
 
@@ -67,7 +67,7 @@ const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // NG coarse bbox [minLat,minLon,maxLat,maxLon] — fed to iterateCountryHexes (skips
-// the rest of the planet) and re-checked per midpoint. The makeCountryGate('NG')
+// the rest of the planet) and re-checked per midpoint. The makeCoastalCountryGate('NG')
 // polygon is the real filter that keeps Benin/Niger/Chad/Cameroon out; this box
 // is only a cheap pre-scan over neighbours.
 const NG_HEX_BBOX: [number, number, number, number] = [4.0, 2.7, 13.9, 14.7]
@@ -166,7 +166,7 @@ function applySplit(aadt: number, s: Split) {
 async function main() {
   console.log(`=== NG Roads Enrichment — Nigeria-tuned CNOSSOS class defaults (${YEAR}) ===\n`)
 
-  const inNG = makeCountryGate('NG')
+  const inNG = makeCoastalCountryGate('NG')
   const hexDirs = iterateCountryHexes(H3R4_DIR, NG_HEX_BBOX)
   console.log(`  NG-bbox hexes with roads.arrow: ${hexDirs.length}\n`)
 

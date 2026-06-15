@@ -5,7 +5,7 @@
  * site is corporate HTML/PDF (RSDP progress reports, no GIS), and there is no
  * national open-data portal with traffic counts. So — like EG/KE/NG/DZ/IR — we
  * apply country-tuned class defaults over OSM geometry, gated by
- * makeCountryGate('ET'), not a per-segment join.
+ * makeCoastalCountryGate('ET'), not a per-segment join.
  *
  * Defaults are anchored to Ethiopia's real geography (docs/about/africa/et.md):
  *
@@ -54,14 +54,14 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_ET_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_ET_NATIONAL_ROADS
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
-// ET coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan; makeCountryGate('ET')
+// ET coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan; makeCoastalCountryGate('ET')
 // is the real filter, so this box only needs to enclose Ethiopia. Overlaps
 // Djibouti / Somalia / Eritrea / Sudan / South Sudan / Kenya, all gated by the polygon.
 const ET_HEX_BBOX: [number, number, number, number] = [3.4, 32.9, 14.9, 48.0]
@@ -169,7 +169,7 @@ async function main() {
 
   // Polygon gate stops ET AADT bleeding onto Djibouti / Somalia / Eritrea / Sudan /
   // South Sudan / Kenya roads the rectangular bbox overlaps.
-  const inET = makeCountryGate('ET')
+  const inET = makeCoastalCountryGate('ET')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, ET_HEX_BBOX)
   console.log(`  ET-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

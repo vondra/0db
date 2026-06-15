@@ -56,7 +56,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_IR_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_IR_NATIONAL_ROADS
 
@@ -65,7 +65,7 @@ const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // IR coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan over neighbours
 // (Iraq/Turkey/Armenia/Azerbaijan/Turkmenistan/Afghanistan/Pakistan + the Gulf
-// states). makeCountryGate('IR') is the real filter, so this box only needs to
+// states). makeCoastalCountryGate('IR') is the real filter, so this box only needs to
 // enclose Iran incl. the Caspian coast and the Persian Gulf islands.
 const IR_HEX_BBOX: [number, number, number, number] = [25.0, 44.0, 39.8, 63.5]
 
@@ -170,10 +170,10 @@ function splitVehicles(aadt: number, s: Split) {
 async function main() {
   console.log(`=== IR Roads Enrichment — Iran-tuned CNOSSOS class defaults (${YEAR}) ===\n`)
 
-  // makeCountryGate may download+convert the CGAZ boundary on a fresh host. Iran
+  // makeCoastalCountryGate may download+convert the CGAZ boundary on a fresh host. Iran
   // borders 7 countries + faces 6 Gulf states across the water; the polygon gate
   // stops IR AADT bleeding onto neighbour roads the rectangular bbox overlaps.
-  const inIR = makeCountryGate('IR')
+  const inIR = makeCoastalCountryGate('IR')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, IR_HEX_BBOX)
   console.log(`  IR-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

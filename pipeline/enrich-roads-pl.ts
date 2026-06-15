@@ -21,7 +21,7 @@ import shp from 'shpjs'
 import { SOURCE_ID_PL_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_PL_NATIONAL_ROADS
 
@@ -389,9 +389,9 @@ async function enrichArrows(segments: SegmentRecord[]): Promise<void> {
   // is accepted by ref alone — so without a country gate a Czech "I/150" was matched
   // to Polish "DW150" and given Polish AADT (150k segments, Stage-3 audit). Only
   // roads whose midpoint is on Polish soil get PL data. Created here, not at module
-  // scope: makeCountryGate may download+convert the CGAZ boundary file, and the test file
+  // scope: makeCoastalCountryGate may download+convert the CGAZ boundary file, and the test file
   // imports parseGprXls from this module.
-  const inPoland = makeCountryGate('PL')
+  const inPoland = makeCoastalCountryGate('PL')
 
   // Index by ref
   const refIndex = new Map<string, SegmentRecord[]>()

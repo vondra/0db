@@ -53,14 +53,14 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_KE_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_KE_NATIONAL_ROADS
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
-// KE coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan; the makeCountryGate('KE')
+// KE coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan; the makeCoastalCountryGate('KE')
 // polygon is the real filter, so this box only needs to enclose Kenya. Overlaps
 // Tanzania / Uganda / South Sudan / Ethiopia / Somalia, all gated out by the polygon.
 const KE_HEX_BBOX: [number, number, number, number] = [-4.7, 33.9, 5.5, 41.9]
@@ -159,7 +159,7 @@ async function main() {
 
   // Polygon gate stops KE AADT bleeding onto Tanzania / Uganda / South Sudan /
   // Ethiopia / Somalia roads the rectangular bbox overlaps.
-  const inKE = makeCountryGate('KE')
+  const inKE = makeCoastalCountryGate('KE')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, KE_HEX_BBOX)
   console.log(`  KE-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

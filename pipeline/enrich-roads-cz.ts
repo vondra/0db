@@ -16,7 +16,7 @@ import { SOURCE_ID_CZ_RSD_SCITANI } from './lib/source-ids.generated.js'
 import { pointToPolylineDist } from './lib/spatial.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CZ_RSD_SCITANI
 
@@ -146,9 +146,9 @@ async function enrichHexes(censusByRef: Map<string, CensusSection[]>): Promise<v
   // Czech road numbers repeat across the border (Slovak I/49 continues CZ I/49)
   // and the 10 km proximity cap doesn't stop a match just across the line — the
   // 2026-06 audit R9 found ~1k Slovak/Polish segments carrying ŘSD AADT. Same
-  // gate pattern as enrich-roads-pl.ts; created here because makeCountryGate
+  // gate pattern as enrich-roads-pl.ts; created here because makeCoastalCountryGate
   // may download+convert the CGAZ boundary file on first use.
-  const inCzechia = makeCountryGate('CZ')
+  const inCzechia = makeCoastalCountryGate('CZ')
   const hexDirs = iterateCountryHexes(H3R4_DIR, CZ_HEX_BBOX)
 
   let totalRoads = 0

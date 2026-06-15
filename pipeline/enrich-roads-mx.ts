@@ -51,7 +51,7 @@ import { Int32, Uint16, makeTable, vectorFromArray } from 'apache-arrow'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { SOURCE_ID_MX_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_MX_NATIONAL_ROADS
@@ -270,7 +270,7 @@ async function main() {
   let totalRoads = 0, alreadyEnriched = 0, matched = 0, hexesUpdated = 0
   // bbox alone bleeds into US/Guatemala/Belize border roads — a Mexican class-default
   // (priority 80) could overwrite US HPMS measured. Gate to the MX polygon (gg 2026-06-14).
-  const inMX = makeCountryGate('MX')
+  const inMX = makeCoastalCountryGate('MX')
   const startTime = Date.now()
 
   for (let hi = 0; hi < hexDirs.length; hi++) {

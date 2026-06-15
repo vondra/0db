@@ -71,7 +71,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_KZ_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_KZ_NATIONAL_ROADS
 
@@ -80,7 +80,7 @@ const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // KZ coarse bbox [minLat,minLon,maxLat,maxLon] — fed to iterateCountryHexes (skips
 // the rest of the planet) and re-checked per midpoint. KZ spans ~40.5–55.5°N,
-// ~46.5–87.4°E; the box is padded slightly. The makeCountryGate('KZ') polygon is the
+// ~46.5–87.4°E; the box is padded slightly. The makeCoastalCountryGate('KZ') polygon is the
 // real filter — KZ borders RU/CN/KG/UZ/TM and this box overlaps all five, so the box
 // alone would stamp Kazakh AADT onto neighbour roads that lack their own enrichment.
 const KZ_HEX_BBOX: [number, number, number, number] = [40.0, 46.0, 56.0, 88.0]
@@ -175,11 +175,11 @@ function splitVehicles(aadt: number, split: Split) {
 async function main() {
   console.log(`=== KZ Roads Enrichment — Kazakhstan-tuned CNOSSOS class defaults (${YEAR}) ===\n`)
 
-  // Created here (not module scope): makeCountryGate may download+convert the CGAZ
+  // Created here (not module scope): makeCoastalCountryGate may download+convert the CGAZ
   // boundary file on a fresh host. KZ borders RU/CN/KG/UZ/TM; a rectangular bbox alone
   // would stamp Kazakh AADT onto Russian/Chinese/Kyrgyz/Uzbek/Turkmen roads that lack
   // their own national enrichment — the polygon gate prevents it.
-  const inKZ = makeCountryGate('KZ')
+  const inKZ = makeCoastalCountryGate('KZ')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, KZ_HEX_BBOX)
   console.log(`  KZ-bbox hexes with roads.arrow: ${hexDirs.length}\n`)

@@ -54,7 +54,7 @@ import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_EG_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCoastalCountryGate } from './lib/country-polygon.js'
 
 const MY_SOURCE_ID = SOURCE_ID_EG_NATIONAL_ROADS
 
@@ -62,7 +62,7 @@ const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // EG coarse bbox [minLat,minLon,maxLat,maxLon] — cheap pre-scan over neighbours
-// (Libya/Sudan/Israel/Gaza/Saudi/Jordan); the makeCountryGate('EG') polygon is the
+// (Libya/Sudan/Israel/Gaza/Saudi/Jordan); the makeCoastalCountryGate('EG') polygon is the
 // real filter, so this box only needs to enclose Egypt incl. Sinai + Halaib triangle.
 const EG_HEX_BBOX: [number, number, number, number] = [22.0, 24.7, 31.7, 36.9]
 
@@ -160,11 +160,11 @@ function splitVehicles(aadt: number, s: Split) {
 async function main() {
   console.log(`=== EG Roads Enrichment — Egypt-tuned CNOSSOS class defaults (${YEAR}) ===\n`)
 
-  // makeCountryGate may download+convert the CGAZ boundary on a fresh host. Egypt
+  // makeCoastalCountryGate may download+convert the CGAZ boundary on a fresh host. Egypt
   // borders Libya/Sudan/Israel/Gaza and is a short hop from Saudi/Jordan; the
   // polygon gate stops EG AADT bleeding onto neighbour roads the rectangular bbox
   // overlaps (Sinai is wedged between Israel, Gaza, Saudi and Jordan).
-  const inEG = makeCountryGate('EG')
+  const inEG = makeCoastalCountryGate('EG')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, EG_HEX_BBOX)
   console.log(`  EG-bbox hexes with roads.arrow: ${hexDirs.length}\n`)
