@@ -71,7 +71,12 @@ const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 // to Chukotka (~180°E); the tiny sliver east of the antimeridian (Wrangel, far
 // Chukotka tip) is dropped — negligible roads. The makeCoastalCountryGate('RU') polygon
 // is the real filter; this box is only a cheap pre-scan over neighbours.
-const RU_HEX_BBOX: [number, number, number, number] = [41.0, 19.0, 82.0, 180.0]
+// RU_BBOX="minLat,minLon,maxLat,maxLon" narrows the scan to a sub-region (e.g.
+// re-running only the Far-East tail after a fix); already-done hexes outside the
+// window are left untouched. Defaults to all of Russia.
+const RU_HEX_BBOX: [number, number, number, number] = process.env.RU_BBOX
+  ? (process.env.RU_BBOX.split(',').map(Number) as [number, number, number, number])
+  : [41.0, 19.0, 82.0, 180.0]
 
 // ── City tiers (AADT multiplier vs rural baseline) ──
 // half = bbox half-extent in degrees around the centroid. Moscow/SPb wider to
