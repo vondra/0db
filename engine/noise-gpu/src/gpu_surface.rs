@@ -537,17 +537,24 @@ fn run_stream(
     // FIXED N (default 2, NOT rayon thread count): each worker holds a whole region's source uploads +
     // per-tile GPU scratch on its own stream + its own RealRasters, so N is bounded by VRAM/RAM, not
     // cores (codex: a halo-only cap is unsafe). 2 fits the 12 GB cards; QM_GPU_STREAM_WORKERS overrides.
-    let n_workers: usize = env("QM_GPU_STREAM_WORKERS", "2").parse().unwrap_or(2).max(1);
+    let n_workers: usize = env("QM_GPU_STREAM_WORKERS", "2")
+        .parse()
+        .unwrap_or(2)
+        .max(1);
+    let pull_batch: usize = env("QM_GPU_STREAM_PULL_BATCH", "4")
+        .parse()
+        .unwrap_or(4)
+        .max(1);
     let names: Vec<&str> = layers.iter().map(|l| l.dir()).collect();
     eprintln!(
-        "stream: layers={names:?}, halo={halo_m:.0}m, batch={batch_n}, {n_workers} worker(s) — reading R4 cells from stdin"
+        "stream: layers={names:?}, halo={halo_m:.0}m, batch={batch_n}, {n_workers} worker(s), stream-batch={pull_batch} — reading R4 cells from stdin"
     );
 
     // Morton-locality streaming pool (mirrors gpu_airborne run_stream): a reader thread fills a shared
-    // queue in arrival (= the orchestrator's Morton) order; each warm worker drains a contiguous
-    // PULL_BATCH run, so its serial-crop RealRasters keeps the grid_disk(1) ring-cache warm across the
-    // run it builds. While worker A's kernel runs on the GPU, worker B preps the next cell on the CPU.
-    const PULL_BATCH: usize = 4;
+    // queue in arrival (= the orchestrator's Morton) order; each warm worker drains a contiguous run, so
+    // its serial-crop RealRasters keeps the grid_disk(1) ring-cache warm across the run it builds. On small
+    // tmpfs boxes the agent's in-flight cap is intentionally shallow; make the run size configurable so
+    // those boxes can spread cells over every CUDA stream instead of letting one worker monopolize four cells.
     // (queue of pending cells, stream-closed flag) + a condvar — same shape as gpu_airborne::StreamQueue.
     type Work = Arc<(Mutex<(VecDeque<u64>, bool)>, Condvar)>;
     let work: Work = Arc::new((Mutex::new((VecDeque::new(), false)), Condvar::new()));
@@ -601,7 +608,7 @@ fn run_stream(
                         let mut g = lock.lock().unwrap();
                         loop {
                             if !g.0.is_empty() {
-                                let take = g.0.len().min(PULL_BATCH);
+                                let take = g.0.len().min(pull_batch);
                                 break g.0.drain(..take).collect();
                             }
                             if g.1 {
@@ -619,7 +626,9 @@ fn run_stream(
                         let line = match process_region(
                             r4, &tiles, layers, cfg, &dev, &f, prepared, &mut stats, &mut prog,
                         ) {
-                            Ok((w, s)) => format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis()),
+                            Ok((w, s)) => {
+                                format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis())
+                            }
                             Err(e) => format!("fail {r4:x} {e}"),
                         };
                         let mut o = out.lock().unwrap();

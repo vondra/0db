@@ -90,6 +90,12 @@ impl RealRasters {
         self.imd.preload_bbox(lat_min, lat_max, lon_min, lon_max);
     }
 
+    /// Pre-load only DEM tiles covering a bounding box. NPD aircraft heatmap paths need receiver altitude
+    /// and terrain AGL gates, but do not consume building, forest, or IMD rasters.
+    pub fn preload_dem_bbox(&self, lat_min: f64, lat_max: f64, lon_min: f64, lon_max: f64) {
+        self.dem.preload_bbox(lat_min, lat_max, lon_min, lon_max);
+    }
+
     /// Check if any real raster data is available.
     pub fn has_data(&self) -> bool {
         // Quick check: try sampling a known CZ point
@@ -329,6 +335,17 @@ pub struct FusedPixel {
 }
 
 impl FusedGrid {
+    pub(crate) fn empty() -> Self {
+        FusedGrid {
+            data: vec![FusedPixel::default(); 4],
+            lat_min: 0.0,
+            lon_min: 0.0,
+            inv_cell_deg: 3600.0,
+            cols: 2,
+            rows: 2,
+        }
+    }
+
     /// Build from RealRasters, cropping to bbox. ~0.2-0.5s for typical hex.
     pub fn build(rasters: &RealRasters, lat_min: f64, lat_max: f64, lon_min: f64, lon_max: f64) -> Self {
         let cell_deg = 1.0 / 3600.0;

@@ -205,6 +205,58 @@ impl FusedTileZ13 {
         }
     }
 
+    /// Build the receiver lattice and altitude only. This is for NPD aircraft heatmap paths only: airborne
+    /// and cruise read `rx_lat`, `rx_lon`, and `rx_alt_m`; cruise samples segment terrain from `RealRasters`
+    /// directly. Surface layers and airport ground-ops must use the full constructor because they consume
+    /// reflection, screening, vegetation, and ground rasters.
+    pub fn build_receiver_altitude_only(
+        zoom: u8,
+        tile_x: u32,
+        tile_y: u32,
+        rasters: &RealRasters,
+    ) -> Self {
+        let bbox = TileBbox::from_xyz(zoom, tile_x, tile_y);
+
+        let rx_lat: [f64; TILE_PX] = std::array::from_fn(|i| pixel_lat(&bbox, i as u32));
+        let rx_lon: [f64; TILE_PX] = std::array::from_fn(|i| pixel_lon(&bbox, i as u32));
+
+        let n = TILE_PX * TILE_PX;
+        let mut inner_elev_m = vec![0.0_f32; n];
+        let inner_building = vec![0_u8; n];
+        let inner_forest = vec![0_u8; n];
+        let inner_imd = vec![0_u8; n];
+        let mut rx_alt_m = vec![0.0_f32; n];
+        let rx_refl_db = vec![0.0_f32; n];
+
+        for py in 0..TILE_PX {
+            let lat = rx_lat[py];
+            let row_base = py * TILE_PX;
+            for px in 0..TILE_PX {
+                let lon = rx_lon[px];
+                let idx = row_base + px;
+                let elev = rasters.dem.sample(lat, lon) as f32;
+                inner_elev_m[idx] = elev;
+                rx_alt_m[idx] = elev + DEFAULT_RECEIVER_HEIGHT as f32;
+            }
+        }
+
+        FusedTileZ13 {
+            zoom,
+            tile_x,
+            tile_y,
+            bbox,
+            rx_lat,
+            rx_lon,
+            inner_elev_m,
+            inner_building,
+            inner_forest,
+            inner_imd,
+            rx_alt_m,
+            rx_refl_db,
+            halo: Arc::new(FusedGrid::empty()),
+        }
+    }
+
     /// Return true if `(lat, lon)` lies inside the inner-core bbox.
     #[inline]
     pub fn bbox_contains(&self, lat: f64, lon: f64) -> bool {
@@ -386,6 +438,35 @@ impl TileBatch {
         }
 
         TileBatch { zoom, base_x, base_y, batch_n, tiles }
+    }
+
+    /// Build a batch for NPD aircraft layers, which only need receiver latitude, longitude, and altitude.
+    pub fn build_receiver_altitude_only(
+        zoom: u8,
+        base_x: u32,
+        base_y: u32,
+        batch_n: u32,
+        rasters: &RealRasters,
+    ) -> Self {
+        assert!(batch_n >= 1, "batch_n must be ≥ 1");
+        let mut tiles = Vec::with_capacity((batch_n * batch_n) as usize);
+        for dy in 0..batch_n {
+            for dx in 0..batch_n {
+                tiles.push(FusedTileZ13::build_receiver_altitude_only(
+                    zoom,
+                    base_x + dx,
+                    base_y + dy,
+                    rasters,
+                ));
+            }
+        }
+        TileBatch {
+            zoom,
+            base_x,
+            base_y,
+            batch_n,
+            tiles,
+        }
     }
 }
 
