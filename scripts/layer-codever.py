@@ -24,6 +24,21 @@ EXCLUDE_BINS = {"compare_floats.rs", "compare_hm3.rs", "e2_full.rs"}
 # Global build inputs OUTSIDE the crates that still change produced tiles (e.g. rustflags=target-cpu).
 GLOBAL_BUILD = (".cargo/config.toml", ".cargo/config", "rust-toolchain.toml", "rust-toolchain")
 
+# The layer→exclusive-source partition (paths relative to engine/). The SINGLE source of truth for which
+# files are a layer's own loader/compute/emission — everything else in the closure is SHARED (over-
+# invalidates safely). A bare `layer-codever.py engine` (no <layer>=<paths> args) uses this map, so the
+# hub gets identical code_vers by calling the authority instead of re-encoding the paths (parity by
+# construction). Keep DISJOINT (--check enforces it): two layers claiming one file = stale tiles.
+DEFAULT_EXCL = {
+    "road": "heatmap-aircraft/src/source_loader_road.rs noise-compute/src/compute/roads.rs noise-compute/src/emission/road.rs",
+    "rail": "heatmap-aircraft/src/source_loader_rail.rs noise-compute/src/compute/railways.rs noise-compute/src/emission/railway.rs",
+    "industrial": "noise-compute/src/emission/industrial.rs noise-compute/src/emission/wind.rs",
+    "building": "heatmap-aircraft/src/source_loader_building.rs noise-compute/src/emission/settlement.rs",
+    "aircraft-ground": "heatmap-aircraft/src/source_loader_traffic.rs heatmap-aircraft/src/ground_ops.rs noise-compute/src/emission/airport_traffic.rs noise-compute/src/emission/gse.rs noise-compute/src/emission/aircraft/ground_ops.rs noise-compute/src/compute/aircraft_v6/airport_traffic",
+    "aircraft-airborne": "heatmap-aircraft/src/source_loader_airborne.rs heatmap-aircraft/src/airborne.rs noise-compute/src/compute/aircraft_v6/airborne.rs noise-gpu/src/gpu_airborne.rs noise-gpu/kernels/airborne.cu",
+    "aircraft-cruise": "heatmap-aircraft/src/cruise.rs noise-compute/src/compute/aircraft_v6/cruise.rs",
+}
+
 
 def closure_files(engine):
     out = set()
@@ -77,6 +92,8 @@ def main():
     engine = sys.argv[1]
     check = "--check" in sys.argv
     specs = [a for a in sys.argv[2:] if a != "--check"]
+    if not specs:   # no explicit <layer>=<paths> → the built-in partition (the hub + a bare call rely on this)
+        specs = [f"{name}={paths}" for name, paths in DEFAULT_EXCL.items()]
     excl = {}
     for a in specs:
         name, _, paths = a.partition("=")
