@@ -35,7 +35,7 @@ Historical banana plantation narrow-gauge lines (United Fruit, Tela Railroad) cl
 
 ### GEM — 44 plants, operating, ~2,721 MW
 
-Hydro 18 + solar 8 + wind 7 + bioenergy/bagasse 6 + HFO 3 + coal 2. **El Cajón (Francisco Morazán) 292 MW** largest hydro. **Cerro de Hula 102 MW** wind near Tegucigalpa. **Sugar bagasse cogeneration** (Azucarera del Norte, Cuyamel).
+Hydro 18 + solar 8 + wind 7 + bioenergy/bagasse 6 + HFO 3 + coal 2. **El Cajón ~300 MW** (Comayagua/Humuya River) — largest hydro; **Lufussa III ~450 MW** (HFO, Choloma) — largest thermal. **Viento del Norte ~50 MW** wind (Olancho). **Sugar bagasse cogeneration** (Azucarera del Norte/AZUNOSA, Chumbagua).
 
 ### Key sites not NACE classified
 - **Banana**: Cortés, Atlántida (Dole, Chiquita exports — origin of "banana republic")

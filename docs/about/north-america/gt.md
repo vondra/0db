@@ -33,7 +33,7 @@ CIV (Caminos) publishes no open AADT. Fall back to class defaults with Guatemala
 
 ### GEM — 53 plants, operating, ~2,783 MW
 
-Hydro 8 + solar 18 + bioenergy/bagasse 15 + coal 3 + HFO 4 + wind 3 + geothermal 2. **Pueblo Viejo 300 MW** hydro. **Jaguar Energy 2×150 MW** coal. **San José 139 MW** coal. **Sugar bagasse cogeneration** dominant (Ingenio La Unión 85 MW, Magdalena 72 MW, Santa Ana 64 MW). **Guatemala = Central America's largest sugar producer**.
+Hydro 8 + solar 18 + bioenergy/bagasse 15 + coal 3 + HFO 4 + wind 3 + geothermal 2. **Chixoy hydro 300 MW** (Chixoy River, Alta Verapaz) — largest hydro; **Renace I–IV cascade ~460 MW** (Cahabón River). **Jaguar Energy thermal 300 MW** (HFO, Pacific coast). **San José 139 MW** coal. **Sugar bagasse cogeneration** prominent (Ingenio Pantaleón 120 MW, La Unión, Magdalena). **Guatemala = Central America's largest sugar producer**.
 
 ### Key sites not NACE classified
 - **Cardamom**: world's #1 exporter (Alta Verapaz)

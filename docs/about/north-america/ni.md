@@ -35,10 +35,10 @@ FNE (Ferrocarril del Pacífico de Nicaragua) ceased operations 1994. Track large
 
 ### GEM — 31 plants, operating, ~1,033 MW
 
-Geothermal 4 + wind 3 + hydro 4 + bioenergy/bagasse 7 + solar 6 + HFO 5 + diesel 2. **San Jacinto-Tizate geothermal 77 MW** + **Momotombo geothermal 77 MW** — major geothermal pair. **Centroamérica hydro 50 MW**.
+Geothermal 4 + wind 3 + hydro 4 + bioenergy/bagasse 7 + solar 6 + HFO 5 + diesel 2. **San Jacinto-Tizate geothermal ~72 MW** (Telica, León) + **Momotombo geothermal ~87 MW** — major geothermal pair. **Amayo wind I+II ~63 MW** (Rivas). **Centroamérica hydro 50 MW**.
 
 ### Key sites not NACE classified
-- **Geothermal**: Momotombo volcano, San Jacinto-Tizate (Rivas) — among region's most productive fields
+- **Geothermal**: Momotombo volcano, San Jacinto-Tizate (Telica, León) — among region's most productive fields
 - **Sugar**: Chinandega — Ingenio San Antonio (Chichigalpa), Nicaragua's largest
 - **Coffee**: Matagalpa, Jinotega highlands
 - **Gold**: La Libertad mine (Chontales), Bonanza (RAAN)

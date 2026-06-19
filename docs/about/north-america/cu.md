@@ -41,7 +41,7 @@ Cuba operates the **only active national railway in the Caribbean**, ~4,000 km t
 
 ### GEM — 38 plants, operating, ~2,891 MW
 
-Thermal (oil/HFO) 14 + diesel 8 + solar 8 + wind 4 + bioenergy 4. **Antonio Guiteras 330 MW** oil — Cuba's largest. **Máximo Gómez 290 MW** + **Mariel 200 MW** oil. Soviet-era fleet with severe reliability issues.
+Thermal (oil/HFO) 14 + diesel 8 + solar 8 + wind 4 + bioenergy 4. **Mariel**, **Felton**, and **Antonio Guiteras** lead the oil-fired fleet (each ~500 MW), with **Carlos Manuel de Céspedes 300 MW** (Cienfuegos) and **Máximo Gómez 235 MW**. Soviet-era fleet with severe reliability issues.
 
 ### Key sites not NACE classified
 - **Nickel/cobalt**: Moa Bay (Sherritt International) — world's 5th largest reserves

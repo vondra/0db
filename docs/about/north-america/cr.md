@@ -35,7 +35,7 @@ Incofer operates limited suburban rail in San José metro (Pacific and Atlantic 
 
 ### GEM — 45 plants, operating, ~2,514 MW
 
-Hydro 22 + wind 7 + geothermal 3 + solar 8 + bioenergy 3 + HFO 2. **99% renewable electricity** — routinely 300+ days per year. **Reventazón hydro 305 MW** (Reventazón River) — largest. **Peñas Blancas hydro 116 MW**. **Miravalles geothermal 163 MW** — oldest geothermal in Central America.
+Hydro 22 + wind 7 + geothermal 3 + solar 8 + bioenergy 3 + HFO 2. **99% renewable electricity** — routinely 300+ days per year. **Reventazón hydro 305 MW** (Reventazón River) — largest. **Angostura hydro 177 MW** + **Arenal hydro 157 MW**. **Miravalles geothermal 166 MW** (Guanacaste; ICE, operating since 1994).
 
 ### Key sites not NACE classified
 - **Geothermal**: Miravalles, Las Pailas II — Guanacaste volcanic belt

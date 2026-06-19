@@ -35,7 +35,7 @@ FENADESAL ceased operations 2002. Track mostly removed or overgrown.
 
 ### GEM — 60 plants, operating, ~2,563 MW
 
-Geothermal 2 + hydro 8 + solar 22 + bioenergy/bagasse 10 + HFO 7 + wind 5 + coal 2 + gas 4. **15 de Septiembre hydro 156 MW**. **Cerrón Grande hydro 135 MW** (Lempa River). **Berlin geothermal 109 MW** + **Ahuachapán geothermal 95 MW** — LaGeo, geothermal world rank #9.
+Geothermal 2 + hydro 8 + solar 22 + bioenergy/bagasse 10 + HFO 7 + wind 5 + coal 2 + gas 4. **Cerrón Grande hydro ~170 MW** (Lempa River, Chalatenango) — largest hydro; **15 de Septiembre hydro 156 MW** (Lempa River). **Berlín geothermal 109 MW** + **Ahuachapán geothermal 95 MW** — LaGeo, geothermal world rank #9.
 
 ### Key sites not NACE classified
 - **Geothermal**: Ahuachapán, Berlín fields — regional geothermal leader

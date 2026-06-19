@@ -6,16 +6,19 @@ map: { center: [-99.0, 23.5], zoom: 5 }
 
 ## Road traffic
 
-### No scriptable open AADT/TDPA data
+### SICT/IMT Datos Viales 2025 (TDPA)
 
-Mexico is one of the weakest countries in the pipeline for road data. Despite SCT (Secretaría de Comunicaciones y Transportes) and INEGI publishing traffic counts, neither offers a scriptable bulk download:
+The official **Datos Viales** of SICT (Secretaría de Infraestructura, Comunicaciones y Transportes) / IMT (Instituto Mexicano del Transporte) publishes per-segment TDPA (Tránsito Diario Promedio Anual = AADT) for the federal + state highway network, but only behind a Mongo-backed JS map app (`datosviales2020.routedev.mx`) with no bulk export. The pipeline consumes the CC-BY-4.0 community scrape that snapshotted it:
 
-- **SCT/SICT Datos Viales** — ~40,000+ federal highway segments with TDPA (Tránsito Diario Promedio Anual = AADT), published via [appdatosviales.sctcloud.com.mx](http://appdatosviales.sctcloud.com.mx/) JavaScript map viewer. Per-segment exports as PDF/Excel only — no bulk URL.
-- **INEGI Red Nacional de Caminos (RNC)** — 179,535 km national road network published by [INEGI](https://www.inegi.org.mx/programas/rnc/), but downloads gated behind interactive viewer + Windows-only DescargaMasivaApp.exe. RNC publishes geometry only, no TDPA.
-- **Capufe** (federal toll road operator) — annual statistical reports as PDF only.
-- **State DOTs** — fragmented, no harmonized open data.
+- **Source**: [github.com/iChocko/Datos-Viales-SICT](https://github.com/iChocko/Datos-Viales-SICT) — universe **U1** (Red Nacional de Carreteras Pavimentadas)
+- **Records**: **4,790 segments** with real per-segment annual TDPA **plus native vehicle composition** (IMT classes A / B / C2 / C3 / T3S2… / M → CNOSSOS light/medium/heavy/moto). This is measured count data, not a class default — the strongest road input available for Mexico.
+- **TDPA-weighted national split**: ~79.5 / 7.1 / 8.2 / 5.2 (light / medium / heavy / moto)
+- **Matching**: OSM high-order roads (motorway/trunk/primary/secondary) take the nearest *type-compatible* SICT polyline within 200 m, gated by road type (Federal Cuota → motorway/trunk; Federal Libre → trunk/primary; Estatal → primary/secondary), and clipped to the Mexico polygon so a toll-road count cannot land on a US/Guatemala/Belize border road.
+- **License**: CC-BY 4.0
 
-Mexican roads currently use OSM `maxspeed` + class defaults. The Tijuana area receives ~6,000 segments from continental EU city traffic data (US cross-border).
+The SICT U1 layer is federal + state highways only. **Local roads** (tertiary/residential/service) are not in the network and fall back to Mexico class defaults (seeded from this dataset's medians). The Tijuana area also receives some segments from continental EU city traffic data (US cross-border).
+
+Other published counts remain non-scriptable: **INEGI Red Nacional de Caminos** (179,535 km network, geometry only — no TDPA, gated behind a Windows-only downloader) and **Capufe** toll statistics (PDF only).
 
 ## Railway
 
@@ -31,8 +34,7 @@ The [Secretaría de Movilidad CDMX (SEMOVI)](https://datos.cdmx.gob.mx/dataset/g
   - **Cablebús** — Line 1 (Cuautepec) + Line 2 (Constitución de 1917)
   - **Ferrocarriles Suburbanos** — Cuautitlán↔Buenavista commuter rail
   - **Trolebús** — electric buses
-- **Result**: 225 rail/tram stops captured, 1,544 segments enriched in 3 hexes
-- **Calendar limitation**: Only 30 active rail trips on the target Wednesday — the CDMX GTFS calendar is sparse/stale, capping frequency at 2 trains/day per stop. **Real Mexico City Metro frequencies are ~225× higher** (Línea 1 carries ~1.6M trips/day across 19 stations). Recommendation: clamp `findTargetWednesday` to start_date + 7 days, or pick the busiest day from calendar_dates.
+- **Frequency-based expansion**: CDMX publishes Metro / Tren Ligero as headway-based service (a single template trip in `stop_times.txt` repeated every `headway_secs`). The enricher reads `frequencies.txt` and expands each trip to its real daily departure count, so Línea 1 reflects its true ~285–570 trains/day rather than the ~2 a raw stop-time count would imply.
 
 ### Other operators
 
@@ -51,15 +53,17 @@ GHSL Built-H R2023A 100 m global raster + Overture/Microsoft Building Footprints
 
 Mexico has ~7 GW installed wind capacity, mostly in the Tehuantepec corridor (Oaxaca), Tamaulipas, and Yucatán. No federal CRE/CFE/AMDEE per-turbine open dataset exists. OSM has 3,465 `power=generator + generator:source=wind` features (matches AMDEE's ~3,247 turbines claim) — locations only, no specs. All turbines use default 2 MW / 80 m hub.
 
-### Power plants — GPPD
+### Power plants — GEM
 
-WRI Global Power Plant Database covers ~700 Mexican plants via `/enrich-global`:
+CFE (Comisión Federal de Electricidad) and CENACE publish operational data in proprietary formats without machine-readable coordinates, so the pipeline uses **GEM Global Integrated Power** (Global Energy Monitor) — **448 operating plants** in Mexico — for power-plant NACE classification, superseding the global GPPD baseline:
 
-- **PEMEX refineries**: Cadereyta, Madero, Minatitlán, Salina Cruz, Tula, Salamanca
-- **CFE thermal plants**: Tuxpan, Petacalco, Manzanillo
-- **Nuclear**: Laguna Verde (Veracruz, 1.6 GW)
-- **Hydroelectric**: Chicoasén (Manuel Moreno Torres, 2.4 GW), Malpaso, Aguamilpa
-- **Wind**: La Venta II/III (Oaxaca), Bii Hioxo, Sureste
+- **Nuclear**: Laguna Verde (Veracruz, 2×800 MW — Mexico's only nuclear plant)
+- **Hydroelectric**: Chicoasén (Manuel Moreno Torres, 2,400 MW — largest hydro), El Cajón 750 MW, La Yesca 750 MW
+- **Gas CCGT**: Manzanillo 2,100 MW (largest), Altamira 1,036 MW
+- **Solar**: Villanueva 754 MW (Coahuila — one of the largest in Latin America)
+- **Wind**: Eólica del Sur 396 MW (Oaxaca Isthmus — largest wind farm), La Venta complex
+
+PEMEX refineries (Salina Cruz, Tula, Salamanca, Minatitlán) and the Dos Bocas refinery appear as OSM industrial sites only.
 
 ### NACE/CNAE codes — RETC gap
 

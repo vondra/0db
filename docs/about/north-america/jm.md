@@ -35,7 +35,7 @@ Jamaica Railway Corporation ceased passenger operations 1992, freight 2011. Trac
 
 ### GEM — 13 plants, operating, ~885 MW
 
-Oil/HFO 5 + wind 3 + solar 2 + gas 2 + biomass 1. **Old Harbour Bay 320 MW** oil — Jamaica's largest. **Hunts Bay 100 MW** oil + **Jamaica Private Power 74 MW** oil. **Wigton wind 62 MW** — largest wind farm in English Caribbean.
+Oil/HFO 5 + wind 3 + solar 2 + gas 2 + biomass 1. **Old Harbour complex ~320 MW** (Old Harbour 200 MW oil + Old Harbour B 120 MW oil/gas) — Jamaica's largest, on Old Harbour Bay. **Bogue ~120 MW** oil/gas (Montego Bay, St. James). **Wigton wind 62 MW** — largest wind farm in English Caribbean.
 
 ### Key sites not NACE classified
 - **Bauxite/alumina**: Alcan (JAMALCO), Windalco (UC Rusal Kirkvine), Nain — dominant industry

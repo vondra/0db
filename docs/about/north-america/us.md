@@ -14,7 +14,7 @@ The [Federal Highway Administration](https://www.fhwa.dot.gov/) publishes **HPMS
 - **Records**: 235,257 polyline segments
 - **Coverage**: NHS + F_SYSTEM 1-5 (Interstate through Major Collector) across all 50 states + Alaska + Hawaii + Puerto Rico
 - **Pagination**: 2,000 segments per page × 119 pages = ~329 MB total
-- **Result**: **6,901,846 road segments enriched** across 3,533 of 8,143 US hexes
+- **Matching**: each OSM road takes the nearest HPMS segment within 200 m **of a compatible functional class** (interstate AADT can't bleed onto a nearby secondary street), gated to OSM motorway/trunk/primary/secondary/tertiary + links. Millions of major-road segments across the lower 48 + Alaska + Hawaii get measured AADT; minor/local streets stay on defaults.
 - **Top corridors** (the busiest US freeways):
   - **I-285 Atlanta** (Tom Moreland / Spaghetti Junction) — **398,000 AADT**
   - **I-405 Los Angeles** (West LA) — **386,600 AADT**
@@ -64,9 +64,8 @@ The [US Wind Turbine Database](https://eerscmap.usgs.gov/uswtdb/) (USWTDB) is a 
 
 - **Source**: [eerscmap.usgs.gov/uswtdb](https://eerscmap.usgs.gov/uswtdb/)
 - **Records**: 75,728 turbines
-- **Per-turbine fields**: `t_cap` (rated power kW), `t_hh` (hub height m), `t_rd` (rotor diameter m), `t_manu` (manufacturer), `t_model`, `t_offshore`
-- **Result**: **80,682 / 87,527 OSM wind turbines** in US hexes have specs (**92.2% coverage**) — the highest of any country in the pipeline
-- **Combined enrichment**: ~78,751 from global pass + 1,931 newly matched in US-specific run
+- **Per-turbine fields**: `t_cap` (rated power kW), `t_hh` (hub height m), `t_rd` (rotor diameter m)
+- **Matching**: OSM wind turbines lacking specs inherit rated power + hub height from the nearest USWTDB turbine (matched within a few hundred metres). Coverage is among the highest of any country given the dense USWTDB record set.
 - **License**: Public domain
 
 The US has 150+ GW installed wind capacity (largest after China), with major concentrations in Texas (West Texas wind belt), Iowa, Oklahoma, Kansas, California (Tehachapi, Altamont), and offshore on the East Coast.

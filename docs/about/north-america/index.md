@@ -17,9 +17,9 @@ North America has good global baseline coverage plus specific enrichments for US
 | **US/CA/MX road AADT** | US (HPMS, class-gated), Canada (Quebec), Mexico | Major roads get real traffic counts instead of defaults | Applied |
 | **Amtrak GTFS** | US intercity rail (520 stops) | Railway segments get real train frequencies | Applied — 34.8K segments |
 | **VIA Rail GTFS** | Canadian intercity rail (313 stops) | Railway segments get real train frequencies | Applied — with Amtrak batch |
-| **Mexico urban rail** | CDMX + Toluca GTFS | Urban rail segments get real train frequencies | Applied |
+| **Mexico urban rail** | CDMX GTFS (metro / light rail) | Urban rail segments get real train frequencies | Applied |
 | **USWTDB** | 75,728 US wind turbines | Correct hub height + rated power | Applied in /enrich-global |
-| **GPPD** | US/CA/MX power plants | NACE 35 industrial classification | Applied in /enrich-global |
+| **GPPD** | US/CA power plants (Mexico uses GEM) | NACE 35 industrial classification | Applied in /enrich-global |
 | **Overture Buildings** | US cities (NYC 86%, Chicago 78%, Toronto 79%) | Per-building screening heights | Applied in /enrich-global |
 
 ### Amtrak (US)
@@ -53,7 +53,7 @@ Global baseline (GLO-30 DEM, Overture/GHSL buildings, WorldCover forest + ground
 
 ## Per-country enrichment status
 
-1. **Guatemala** ✅ — 53 GEM plants / 2,783 MW. Pueblo Viejo 300 MW hydro. Sugar bagasse cogeneration (15 plants). FEGUA railway defunct 2007. Chicken buses + mototaxis. **2.69M roads (94%)**. See [Guatemala](gt).
+1. **Guatemala** ✅ — 53 GEM plants / 2,783 MW. Chixoy 300 MW hydro. Sugar bagasse cogeneration (15 plants). FEGUA railway defunct 2007. Chicken buses + mototaxis. **2.69M roads (94%)**. See [Guatemala](gt).
 2. **Honduras** ✅ — 44 plants / 2,721 MW. El Cajón hydro. Maquila/banana. CA-5 corridor 45% heavy. **1.39M roads (73%)**. See [Honduras](hn).
 3. **El Salvador** ✅ — 60 plants / 2,563 MW. **World #9 geothermal** (Ahuachapán, Berlín). Bitcoin legal tender. **73k roads (9% — GT overlap)**. See [El Salvador](sv).
 4. **Nicaragua** ✅ — 31 plants / 1,033 MW. San Jacinto-Tizate geothermal. Lake Nicaragua. **297k roads (33%)**. See [Nicaragua](ni).

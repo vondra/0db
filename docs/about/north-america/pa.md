@@ -35,7 +35,7 @@ Panama Canal Railway (47 km, Panama City–Colón) carries freight containers an
 
 ### GEM — 70 plants, operating, ~3,711 MW
 
-Hydro 32 + gas 10 + solar 12 + wind 6 + HFO 5 + coal 3 + bioenergy 2. **Costa Norte LNG 381 MW** + **AES Colon gas 380 MW** — largest gas plants. **Fortuna hydro 300 MW** (Chiriquí) + **Bayano hydro 150 MW**.
+Hydro 32 + gas 10 + solar 12 + wind 6 + HFO 5 + coal 3 + bioenergy 2. **Costa Norte LNG 381 MW** (AES Colón, Bahía Las Minas) — largest gas plant. **Fortuna hydro 300 MW** (Chiriquí — largest hydro) + **Bayano hydro 260 MW** (Chepo) + **Chan 75 hydro 222 MW** (Bocas del Toro).
 
 ### Key sites not NACE classified
 - **Panama Canal**: 14,000+ vessels/year — container terminal noise at Balboa, Manzanillo

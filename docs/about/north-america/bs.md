@@ -35,7 +35,7 @@ Island geography and low population density made no railway economically viable.
 
 ### GEM — 2 plants, operating, ~184 MW
 
-Oil/HFO only. **Blue Hills Power Station ~182 MW** (Nassau, New Providence) — BEC main generation. Grand Bahama Power Company operates separately on Grand Bahama island.
+Oil/HFO only. **BEC Clifton Pier ~132 MW** (New Providence, Nassau) — BEC main generation; **BEC Grand Bahama ~52 MW** (Freeport) serves Grand Bahama island.
 
 ### Key sites not NACE classified
 - **Tourism/cruise**: Nassau (Atlantis, Baha Mar), Paradise Island — dominant economy

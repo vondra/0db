@@ -35,7 +35,7 @@ Barbados Government Railway closed 1937. Track long removed.
 
 ### GEM — 11 plants, operating, ~83 MW
 
-Solar PV 6 + oil/diesel 3 + wind 2. **Trents Generating Station ~60 MW** oil — main Barbados Light & Power baseload. Rapid rooftop solar growth (~50 MW installed, mostly behind-meter).
+Mostly small solar plus a few oil/diesel units. **BLPC Spring Garden ~52 MW** (HFO, Bridgetown) — main Barbados Light & Power thermal baseload; **Trident Power ~11 MW** (HFO, St. Michael). Rapid rooftop solar growth (mostly behind-meter, BREA-registered).
 
 ### Key sites not NACE classified
 - **Rum**: Mount Gay (world's oldest brand, est. 1703), Foursquare, St. Nicholas Abbey

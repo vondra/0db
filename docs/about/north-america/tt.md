@@ -35,7 +35,7 @@ Government Railway closed 1968. No railway on Tobago.
 
 ### GEM — 17 plants, operating, ~2,057 MW
 
-Gas/CCGT 10 + wind 2 + solar 2 + diesel 2 + HFO 1. **100% gas-fired conventional generation** — Trinidad sits on natural gas reserves. **Penal/Debe gas 720 MW** + **Trinidad Generation Unlimited 720 MW** combined cycle.
+Gas/CCGT 10 + wind 2 + solar 2 + diesel 2 + HFO 1. **Almost entirely gas-fired** — Trinidad sits on natural gas reserves. **Point Lisas Power 720 MW** (gas, Point Lisas complex) — largest; **Trinity Power ~294 MW** (gas) + **Penal/Debe ~200 MW** (gas).
 
 ### Key sites not NACE classified
 - **Atlantic LNG** (Point Fortin): ~15 mtpa — world's largest LNG complex by capacity
