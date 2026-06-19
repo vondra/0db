@@ -49,7 +49,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 ### GEM Global Integrated Power — 80 plants, 60 operating, ~19.6 GW
 
-**Operating fuel**: oil/gas **56** + solar 3 + wind 1. **100% fossil fuel dominated** — one of world's highest per-capita electricity consumption (extreme AC demand in 50°C+ summers, ~99% from gas/oil). Kuwait has one of world's **highest power density per unit area** (~19.6 GW from 17,818 km²).
+**Operating fuel**: oil/gas **56** + solar 3 + wind 1. **100% fossil fuel dominated** — one of world's highest per-capita electricity consumption (extreme AC demand in 50°C+ summers, ~99% from gas/oil). Very high installed power density (~19.6 GW from 17,818 km² ≈ 1.1 MW/km²).
 
 ### Top operating plants
 

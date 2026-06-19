@@ -107,7 +107,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 | Plant | MW | Type | Notes |
 |---|---:|---|---|
-| **Atatürk Dam** | **2,405** | hydropower | **Euphrates River, GAP project** — Turkey's largest power plant, 8th largest earth-fill dam in the world |
+| **Atatürk Dam** | **2,405** | hydropower | **Euphrates River, GAP project** — Turkey's largest hydroelectric plant, 8th largest earth-fill dam in the world |
 | **Karakaya** | 1,800 | hydropower | Euphrates |
 | **Keban** | 1,330 | hydropower | Euphrates (cascade total ~5,535 MW) |
 | **Ilısu** | 1,209 | hydropower | **Tigris River, 2020** — controversial (flooded ancient Hasankeyf) |
@@ -119,9 +119,9 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 | **Afşin-Elbistan** | ~2,800+ | coal (lignite) | **Turkey's largest lignite complex** (K. Maraş) |
 | **Soma + Yeniköy + Kemerköy** | various | coal | Aegean lignite belt |
 | **Kızıldere + Efeler + Germencik** | various | geothermal | **Aydın/Denizli geothermal belt** — 68 plants, 1.7 GW |
-| **373 wind farms** | ~11 GW | wind | Aegean/Marmara wind corridor — Turkey is Europe's 5th largest wind market |
+| **373 wind farms** | ~11 GW | wind | Aegean/Marmara wind corridor — Turkey is Europe's 5th largest wind market (modelled as rotating turbine sources, not via the industrial NACE layer) |
 
-All operating plants map to **NACE 35**.
+The enricher stamps each GEM operating plant onto a nearby OSM industrial footprint with an electricity NACE code (NACE division **35**): thermal/coal/gas/geothermal/bioenergy → 3511, hydropower → 3512, solar → 3599. The 373 wind farms are excluded here — wind turbines are already modelled as their own rotating-source profile, so they are not stamped onto the industrial layer.
 
 ### Turkey does NOT have
 

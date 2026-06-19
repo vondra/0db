@@ -38,9 +38,9 @@ The **Department of Rural Roads (กรมทางหลวงชนบท, DRR
 
 ### Tier 2 — DOH Motorway + national trunk highway defaults
 
-The **Department of Highways (กรมทางหลวง, DOH)** operates the motorway (ทางหลวงพิเศษระหว่างเมือง) and trunk highway network. DOH publishes per-segment AADT as CSVs on `opendata.doh.go.th` but the portal is TCP-blocked from our egress.
+The **Department of Highways (กรมทางหลวง, DOH)** operates the motorway (ทางหลวงพิเศษระหว่างเมือง) and trunk highway network. DOH publishes per-segment AADT as CSVs on `opendata.doh.go.th`, but that portal is TCP-blocked from our egress and the reachable MOT CKAN copy of the DOH file reports annual vehicle-km (not vehicle count), so per-section DOH AADT cannot be derived openly.
 
-Motorways are enriched from DOH monthly toll-plaza counts (via MOT CKAN mirror). Trunk highways use ref-based defaults calibrated from DOH 2021 annual vehicle-km rankings + published corridor volumes:
+Motorways and trunk highways are therefore enriched by **numeric `ref` match to a hand-built AADT table** (e.g. Motorway 7, Highway 32), with values calibrated from DOH 2021 annual vehicle-km rankings + published corridor volumes — not ingested per-segment DOH counts:
 
 | Highway | Name | AADT (rural) | AADT (Bangkok) |
 |---|---|---:|---:|
@@ -139,7 +139,7 @@ WRI Global Power Plant Database via `/enrich-global` covers **196 Thai power pla
 - **Gas CCGT**: Bang Pakong (3.67 GW, Chachoengsao), Ratchaburi (3.65 GW), Wang Noi (2.1 GW), South Bangkok (1.1 GW), North Bangkok
 - **Oil/gas**: Krabi (0.96 GW)
 - **Hydroelectric**: Bhumibol (780 MW, Tak), Sirikit (500 MW, Uttaradit), Lam Takhong pumped storage (1 GW, Nakhon Ratchasima), Pak Mun (136 MW, Ubon Ratchathani)
-- **Wind**: Huai Bong / Lam Takhong (~200 MW) — Nakhon Ratchasima (SA's first utility wind), Theparak Phatthana, West Huai Bong
+- **Wind**: Huai Bong / Lam Takhong (~200 MW) — Nakhon Ratchasima (one of Thailand's first utility-scale wind farms), Theparak Phatthana, West Huai Bong
 
 ### Industrial registry (gap)
 

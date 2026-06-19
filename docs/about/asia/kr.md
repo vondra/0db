@@ -62,6 +62,14 @@ WRI Global Power Plant Database via `/enrich-global` covers ~132 Korean plants. 
 - **Hydroelectric**: Soyang Dam, Chungju Dam
 - **Wind**: Gangwon, Jeju, Youngheung, Taebaek, Daegwallyeong (12 wind farms in GPPD)
 
+The global pass also stamps GEM steel / cement / coal-mine sites where they fall in Korea.
+
+### Korean-name NACE heuristic (bespoke)
+
+GPPD catches Korea's power plants and the global name heuristic matched a handful of sites, but that keyword list is Latin-script only, so it missed every Korean-named heavy-industry giant — 포항제철소 (POSCO Pohang, a 10.1M m² steelworks), 여수국가산업단지 (Yeosu petrochemical, 25.7M m²), 현대중공업 / 삼성중공업 / 한화오션 (three of the world's largest shipyards), 현대제철, 동국제강. Those sat at the generic 93 dB factory profile, understating the loudest point sources in the country.
+
+`enrich-industrial-kr.ts` matches Korean (+ English) name tokens (제철/제강/철강 → steel, 시멘트 → cement, 조선/중공업 → shipyard, 석유화학/정유 → petrochemical, 자동차 → vehicles, 발전소/화력 → power) to a NACE 4-digit code and stamps the engine's sector profile (steel/cement 100 dB, +7 dB over generic). This is a **name heuristic** (priority 10): it fills `source_id == 0` sites and supersedes the Latin-only global heuristic, but never overrides GPPD/GEM measured matches. A POSITIVE country polygon is unusable (the generalised ADM0 coastline rejects reclaimed-land sites including the Geoje shipyards), so it gates negatively — keep a site unless it falls inside North Korea or Japan. K-PRTR (below) would replace this with measured sectors but is geofenced.
+
 ### Wind turbines
 
 Korea has ~1.7 GW installed wind capacity (very low for population due to terrain + grid constraints + offshore wind regulations). OSM has ~844 wind turbines in Korea. No per-turbine open registry from KEPCO/KEMCO.

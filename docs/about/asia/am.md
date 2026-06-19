@@ -45,7 +45,7 @@ Post-Soviet car culture, low motorcycle:
 **South Caucasus Railway** (RZHD/Russian Railways subsidiary concession) operates **~780 km** of **broad gauge (1,520 mm)**. **Turkey and Azerbaijan borders are CLOSED since 1993** — no cross-border rail except to Georgia.
 
 ### Yerevan Metro
-- **Opened 1981** — Soviet-era, **1 line, ~12.5 km, 10 stations**, ~50k daily
+- **Opened 1981** — Soviet-era, **1 line, ~13.4 km, 10 stations**, ~50k daily
 
 ### Main line
 - **Yerevan ↔ Gyumri ↔ Akhuryan ↔ Georgia border** — only international rail connection
@@ -79,9 +79,9 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 | **Metsamor (Armenian NPP)** | **448** | nuclear | **Soviet VVER-440** — **only nuclear plant in the Caucasus**. Sits in **seismic zone** (1988 earthquake closed it temporarily). Controversial — EU has urged closure. Provides ~30-40% of Armenia's electricity. |
 | **Hrazdan** | 631 (431+200) | oil/gas | Soviet-era thermal, Russian gas |
 | **Yerevan 1+2** | 496 (242+254) | oil/gas | Capital thermal |
-| **Argel (Vorotan)** | 224 | hydropower | **Vorotan cascade** — one of 3 plants |
-| **Shamb (Vorotan)** | 171 | hydropower | |
+| **Shamb (Vorotan)** | 171 | hydropower | **Vorotan cascade** (Spandaryan 76 + Shamb 171 + Tatev 157 ≈ 404 MW, ContourGlobal) |
 | **Tatev (Vorotan)** | 157 | hydropower | Near Tatev Monastery (world's longest reversible aerial tramway nearby) |
+| **Spandaryan (Vorotan)** | 76 | hydropower | Top of the Vorotan cascade |
 | **Kanaker** | 102 | hydropower | Hrazdan River, Yerevan area |
 | **38 solar plants** | ~180 total | solar | All small (<15 MW), recent growth |
 
@@ -115,5 +115,5 @@ Notable noise zones:
 - **Zvartnots International (EVN/UDYZ Yerevan)**, **Gyumri Shirak (LWN/UDSG)** — covered by global aircraft layer
 - **Metsamor Nuclear** (448 MW — only nuclear in Caucasus, seismic zone)
 - **Hrazdan + Yerevan thermal** (Russian gas)
-- **Vorotan hydro cascade** (Tatev/Shamb/Argel)
+- **Vorotan hydro cascade** (Tatev/Shamb/Spandaryan)
 - **Zangezur copper-molybdenum** (Kajaran mines)

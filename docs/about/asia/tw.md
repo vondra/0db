@@ -31,17 +31,7 @@ This is the same pipeline bug affecting Korea, Singapore, Japan, and Hong Kong.
 
 ### CNOSSOS class defaults applied
 
-For the rail segments that ARE extracted (TRA conventional rail, THSR high-speed, Taoyuan Airport MRT, Taichung MRT light rail, Alishan Forest Railway), this script applies CNOSSOS-EU class defaults:
-
-| rail_type | usage | trains/day |
-|---|---|---|
-| 0 (rail) | 0 (main) | 250 (TRA mainline + THSR) |
-| 0 (rail) | 1 (branch) | 80 (TRA branches) |
-| 2 (light_rail) | * | 350 (Taoyuan Airport MRT, Taichung MRT, Kaohsiung Circular, Wenshan-Neihu) |
-| 1 (tram) | * | 200 |
-| 3 (narrow_gauge) | * | 30 (Alishan Forest Railway) |
-
-- **Result**: 31,275 segments enriched across 27 of 27 TW hexes (69.94%)
+Taiwan has no bespoke railway enricher. The rail segments that ARE extracted (TRA conventional rail, THSR high-speed, Taoyuan Airport MRT, Taichung MRT light rail, Alishan Forest Railway) carry CNOSSOS-EU class defaults by rail type — no ingested per-line train frequencies.
 
 ### TDX GTFS gap
 
@@ -57,7 +47,7 @@ GHSL Built-H R2023A 100 m global raster + Overture Maps Foundation building foot
 
 WRI Global Power Plant Database via `/enrich-global` covers Taiwan plants. Major sources of industrial noise:
 
-- **Coal**: Taichung Power Plant (5.5 GW, the largest in Asia by capacity), Mailiao, Hsinta, Taipower Linkou
+- **Coal**: Taichung Power Plant (5.5 GW — one of the largest coal-fired plants in the world), Mailiao, Hsinta, Taipower Linkou
 - **Nuclear**: Maanshan (1.9 GW), Kuosheng, Chinshan (decommissioning)
 - **Gas**: Datan, Tatan, Tunghsiao, Taichung
 - **Hydroelectric**: Mingtan (1.6 GW pumped storage), Sun Moon Lake, Daguan
@@ -83,4 +73,4 @@ Noise hotspots include:
 - **National Freeway 1 (中山高)** through Taipei
 - **Taoyuan Airport MRT** elevated sections
 - **TRA Main Line** Tainan-Kaohsiung corridor (mixed passenger + freight)
-- **Taichung Power Plant** area (Asia's largest coal plant)
+- **Taichung Power Plant** area (one of the world's largest coal plants)

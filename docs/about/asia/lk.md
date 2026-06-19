@@ -8,7 +8,7 @@ map: { center: [80.7, 7.8], zoom: 7 }
 
 ### Class defaults only
 
-RDA (Road Development Authority) publishes no open GIS. Fall back to CNOSSOS class defaults with Colombo Tier-1 boost. **Sri Lanka is an island** — no border excludes needed → 100% coverage.
+RDA (Road Development Authority) publishes no open GIS, and there is no bespoke Sri Lanka road enricher. The engine scales its world-default motorway/trunk/primary AADT by Sri Lanka's country factor (≈1.30×) and applies the world-default vehicle mix. The Colombo Tier-1 boost and the three-wheeler-heavy vehicle split below are the **intended country-tuning, not yet ingested** — shown as the target profile. **Sri Lanka is an island** — no neighbour-country exclusions needed.
 
 ### Sri Lankan AADT defaults
 
@@ -50,7 +50,9 @@ Sri Lanka has the **world's highest three-wheeler/tuk-tuk density per capita** �
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
+### CNOSSOS class defaults
+
+No Sri Lanka rail enricher runs and Sri Lanka Railways publishes no GTFS, so rail noise uses the engine's CNOSSOS class defaults by OSM rail type — mainline heavy rail at 80 passenger + 20 freight trains/day, branch at 30 + 5. The lines below are documented as context (the Colombo suburban network carries the heaviest service; the long scenic lines are sparser than the class default assumes).
 
 ### Sri Lankan rail context
 
@@ -67,17 +69,7 @@ Sri Lanka has the **world's highest three-wheeler/tuk-tuk density per capita** �
 - **Colombo ↔ Anuradhapura ↔ Jaffna/KKS** — **restored after civil war** (fully reopened 2014 after 1990 closure)
 
 ### Coastal Line
-- **Colombo ↔ Galle ↔ Matara** — Indian Ocean coast scenic. **Devastated by 2004 Indian Ocean tsunami** (Queen of the Sea train disaster killed ~1,700 passengers — worst railway disaster in world history). Rebuilt.
-
-### trains/day defaults
-
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Colombo suburban** | 50 | 0 |
-| **Main/Hill Country line** (Colombo↔Kandy↔Badulla) | 10 | 5 |
-| **Northern line** (Colombo↔Jaffna) | 5 | 3 |
-| **Coastal line** (Colombo↔Galle↔Matara) | 10 | 2 |
-| Other/branch | 3 | 2 |
+- **Colombo ↔ Galle ↔ Matara** — Indian Ocean coast scenic. **Devastated by 2004 Indian Ocean tsunami** (Queen of the Sea train disaster — Guinness World Records lists it as the worst rail disaster, with estimates ranging from ~800 to ~1,700+ passengers killed). Rebuilt.
 
 ## Buildings
 
@@ -87,6 +79,8 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 ### GEM Global Integrated Power — 136 plants, 40 operating, ~3.72 GW
 
+Power-plant points from **GEM Global Integrated Power** (filtered to `Country_area='Sri Lanka'`, operating only) are spatial-joined to OSM industrial polygons, overriding the lower-priority global GPPD baseline.
+
 **Operating fuel**: hydropower 13 + wind 13 + oil/gas 8 + coal 3 + solar 3. Diverse mix.
 
 ### Top operating plants
@@ -95,27 +89,27 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 |---|---:|---|---|
 | **Lakvijaya (Norochcholai)** | **900** (3× 300) | coal | Puttalam — **Sri Lanka's ONLY coal plant**, Chinese-built. Controversial — frequent breakdowns + coal import dependency |
 | **Yugadanavi** | 300 | oil/gas | Kerawalapitiya, Colombo area |
-| **Kerawalapitiya LNG** | 220 | oil/gas | |
+| **Kerawalapitiya LNG (Sobadhanavi)** | 350 | oil/gas | |
 | **Victoria** | 210 | hydropower | **Mahaweli River** — largest hydro in Sri Lanka |
 | **Kotmale** | 201 | hydropower | Mahaweli cascade |
 | **Kelanitissa CCGT** | 165 | oil/gas | |
 | **Upper Kotmale** | 150 | hydropower | |
 | **Randenigala** | 122 | hydropower | |
 | **Samanalawewa** | 120 | hydropower | |
-| **Uma Oya** | 120 | hydropower | Underground, opened 2023 — controversial (caused landslides + groundwater depletion in Uva Province) |
+| **Uma Oya** | 120 | hydropower | Underground, commissioned April 2024 — controversial (caused landslides + groundwater depletion in Uva Province) |
 | **Mannar Wind** | 100 | wind | Sri Lanka's largest wind farm |
 | **13 wind farms total** | ~450 | wind | Puttalam/Mannar/Hambantota coast |
 
 All operating plants map to **NACE 35**.
 
-### Sri Lanka does NOT have
+### Not captured / context
 
-- **No RDA AADT** — zero open traffic data
-- **No Sri Lanka Railways GTFS**
-- **Sapugaskanda refinery** (Colombo area) not NACE 19 — Sri Lanka's only refinery (~50k bpd, Indian Oil Corporation subsidiary)
-- **Cement**: Lanka Cement, Holcim Lanka, Tokyo Cement — not NACE 23
-- **Garments/apparel**: Free Trade Zones (Katunayake, Biyagama, Koggala) — world's #18 garment exporter. Not NACE 13/14
-- **Tea processing**: **Ceylon tea** — ~300k ton/year, **world's #4 tea producer** (after China, India, Kenya). Not NACE 10
+- **No RDA AADT** — zero open traffic data; roads use CNOSSOS class defaults
+- **No Sri Lanka Railways GTFS** — rail uses CNOSSOS class defaults
+- **Sapugaskanda refinery** (Kelaniya, near Colombo) — Sri Lanka's only refinery (~50k bpd), operated by state **Ceylon Petroleum Corporation (CPC)** (not Indian Oil; Lanka IOC is a separate fuel-retail subsidiary). Refining is not in the power-plant dataset
+- **Cement**: Lanka Cement, Holcim Lanka, Tokyo Cement — captured globally only if matched by the GEM Cement tracker above its capacity threshold, else as OSM `landuse=industrial`
+- **Garments/apparel**: Free Trade Zones (Katunayake, Biyagama, Koggala) — Sri Lanka's top export earner; captured only as OSM `landuse=industrial`
+- **Tea processing**: **Ceylon tea** — ~300k ton/year, **world's #4 tea producer** (after China, India, Kenya). Captured only as OSM `landuse=industrial`
 - **Colombo Port** — **one of world's top-30 busiest container ports** (Indian Ocean transshipment hub between East Asia and Europe/Middle East). Not flagged
 - **Hambantota Port** — Chinese-built, controversially leased to China Merchants Port for 99 years (2017 — "debt trap" debate). Not flagged
 - **Ratnapura gem mining** — "City of Gems" (sapphires, rubies, topaz — Sri Lanka is one of world's richest gem sources)

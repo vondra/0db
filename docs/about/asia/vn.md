@@ -16,7 +16,7 @@ No per-segment AADT is published openly for Vietnam. Unlike India / China / Indo
 - **Vietnam Expressway Corporation (VEC)** does not publish traffic counts
 - OD Mekong Datahub has a 2019 classification dataset but it's stale (pre-dates most expressway expansion)
 
-Vietnamese roads use OSM `highway` classification + Vietnamese-tuned CNOSSOS defaults with Tier-1 (Hanoi/HCMC) and Tier-2 city multipliers.
+Vietnamese roads use OSM `highway` classification + CNOSSOS class defaults. There is no bespoke Vietnam road enricher: the engine scales its world-default motorway/trunk/primary AADT by Vietnam's country factor (≈1.29×) and applies the world-default vehicle mix. The Tier-1/Tier-2 multipliers and the motorcycle-heavy vehicle split below are the **intended country-tuning, not yet ingested** — they are shown as the target profile.
 
 ### AADT defaults
 
@@ -35,7 +35,7 @@ Vietnamese roads use OSM `highway` classification + Vietnamese-tuned CNOSSOS def
 
 ### Vietnamese vehicle split
 
-Vietnam has the **highest motorcycle share of any country in this pipeline** (tied with Indonesia):
+Vietnam has the **highest motorcycle share of any country documented in this atlas** (tied with Indonesia):
 
 | Tier | Light | Medium | Heavy | **Motorcycle** |
 |---|---:|---:|---:|---:|
@@ -71,14 +71,9 @@ Vietnam is rapidly building a **2,000+ km north-south expressway** ("Trans-Vietn
 - **HCMC Metro Line 2 (Ben Thanh ↔ Tham Luong)** — under construction, target 2030+
 - **Hanoi bus GTFS** (via World Bank Data Catalog, 2020-2023 vintage) is **bus-only**, not rail
 
-### CNOSSOS class defaults applied
+### CNOSSOS class defaults
 
-| rail_type | usage | Context | pax/day |
-|---|---|---|---:|
-| 0 (rail) | main in Hanoi/HCMC | commuter / station approach boost | 40 |
-| 0 (rail) | main elsewhere | **VNR Reunification Express** (~6 daily trips each dir) | 15 |
-| 0 (rail) | branch | Lao Cai / Dong Dang / Haiphong spurs | 5 |
-| 2 (light_rail) | - | **Hanoi Metro 2A**, **HCMC Metro Line 1** | 250 |
+No Vietnam rail enricher runs, so rail noise uses the engine's CNOSSOS class defaults by OSM rail type — mainline heavy rail at 80 passenger + 20 freight trains/day, branch at 30 + 5, light/metro rail at 80. There is no per-corridor service ingestion. In reality the **VNR Reunification Express** runs only ~6 trips/direction/day (far below the 80 default), while the new **Hanoi Metro 2A** and **HCMC Metro Line 1** run far more frequently than 80 — so the class default over-states intercity rail and under-states the metros.
 
 ## Buildings
 
@@ -88,7 +83,7 @@ GHSL Built-H R2023A 100 m + Overture Maps Foundation global footprints. Microsof
 
 ### GEM Global Integrated Power — 1,492 VN plants
 
-- **Source**: [GEM Global Integrated Power (August 2025)](https://services.arcgis.com/lqRTrQp2HrfnJt8U/arcgis/rest/services/Global_Integrated_Power_August_2025/FeatureServer/0) via Rice University CES GIS mirror, filtered by `Country_area='Vietnam'`
+- **Source**: [GEM Global Integrated Power (August 2025)](https://services.arcgis.com/lqRTrQp2HrfnJt8U/arcgis/rest/services/Global_Integrated_Power_August_2025/FeatureServer/0) via Rice University CES GIS mirror, filtered by `Country_area='Vietnam'` (overrides the lower-priority global GPPD baseline; only operating plants are stamped)
 - **1,492 plants**, **874 operating** (59% — the highest operating share of any country enriched so far, reflecting Vietnam's 2019-2024 renewable energy boom)
 
 **Fuel breakdown**:
@@ -100,7 +95,7 @@ GHSL Built-H R2023A 100 m + Overture Maps Foundation global footprints. Microsof
 | **Coal** | 197 | Pha Lai (Hai Duong), Quang Ninh, Hai Phong, Mong Duong, Vinh Tan (Binh Thuan), Duyen Hai (Tra Vinh), Vung Ang (Ha Tinh) |
 | **Gas CCGT** | 115 | **Phu My complex** (Ba Ria-Vung Tau — Vietnam's largest power complex, ~3.9 GW), Nhon Trach (Dong Nai), Ca Mau, Ba Ria |
 | **Hydroelectric** | 86 | **Son La (2.4 GW — Southeast Asia's largest hydro plant)**, **Lai Chau (1.2 GW)**, **Hoa Binh (1.92 GW)**, Tuyen Quang, Ban Ve, **Yaly (720 MW)**, **Tri An (400 MW)** |
-| **Nuclear** | 8 | All **cancelled** (Ninh Thuan-1 and Ninh Thuan-2 projects shelved in 2016, never operational) |
+| **Nuclear** | 8 | None operational. Ninh Thuan-1 and Ninh Thuan-2 were shelved in 2016, then **revived** in late 2024 (National Assembly restart) and added to PDP8 in 2025 — still under planning, nothing built |
 | **Bioenergy** | 5 | sugarcane bagasse cogeneration |
 
 All mapped to **NACE 35** (Electricity generation).

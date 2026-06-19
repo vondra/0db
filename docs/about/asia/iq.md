@@ -65,7 +65,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 | Plant | MW | Type | Notes |
 |---|---:|---|---|
-| **Besmaya** | **4,500** (6× 750) | oil/gas | GE gas turbines, 30 km SE of Baghdad — **Iraq's largest single complex** |
+| **Besmaya** | **4,500** | oil/gas | GE 9F CCGT (gas turbines + steam), SE of Baghdad — **Iraq's largest single complex** |
 | **Mosul Dam** | **1,052** | hydropower | **Tigris River** — **ONE OF WORLD'S MOST DANGEROUS DAMS** (geological instability, requires 24/7 grouting to prevent catastrophic collapse that could flood Mosul + Baghdad) |
 | **Maisan Oil Energy** | 987 | oil/gas | Amarah area |
 | **Erbil** | 1,500 (2× 750) | oil/gas | **KRG Kurdistan** |

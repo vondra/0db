@@ -8,9 +8,7 @@ map: { center: [90.5, 27.4], zoom: 8 }
 
 ### Class defaults only
 
-The Road Safety and Transport Authority (RSTA) publishes no open AADT. CNOSSOS class defaults applied with Thimphu Tier-1 boost (×2.0) and Tier-2 boosts (×1.4) for Phuentsholing and Phuntsholing. Bhutan has no motorways; the primary network is national highways (NH) linking dzongkhag centres.
-
-**429k road segments enriched (74% coverage).** Mountain terrain limits OSM completeness in high-altitude areas.
+The Road Safety and Transport Authority (RSTA) publishes no open AADT. CNOSSOS class defaults apply, scaled by the per-country fleet/road-density factor. Bhutan has no motorways; the primary network is national highways (NH) linking dzongkhag centres — Phuentsholing (the Indian-border commercial hub) and Gelephu carry the heaviest cross-border freight. Mountain terrain limits OSM completeness in high-altitude areas.
 
 ## Railway
 

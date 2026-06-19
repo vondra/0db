@@ -6,63 +6,41 @@ map: { center: [137.0, 36.5], zoom: 5 }
 
 ## Road traffic
 
-### MLIT 道路交通センサス令和3年度 — orphan attribute data
+### MLIT 道路交通センサス令和3年度 — applied by name/ref join
 
-[MLIT](https://www.mlit.go.jp/) (Ministry of Land, Infrastructure, Transport and Tourism) publishes the **道路交通センサス** (Road Traffic Census) every 5 years. The latest is **令和3年度** (Reiwa 3 = 2021) with ~230,000 road segments across all 47 prefectures.
+[MLIT](https://www.mlit.go.jp/) (Ministry of Land, Infrastructure, Transport and Tourism) publishes the **道路交通センサス** (Road Traffic Census) every 5 years. The latest is **令和3年度** (Reiwa 3 = 2021) with ~230,000 surveyed road sections across all 47 prefectures.
 
 - **Per-prefecture CSVs**: `https://www.mlit.go.jp/road/census/r3/data/csv/kasyo{01..47}.csv`
-- **Cached**: `data/enrichment/global/mlit-census/kasyo01.csv` (Hokkaido, 4,883 records)
-- **Encoding**: Shift-JIS, 159 columns including 24h AADT split by vehicle class, travel speed, lane count, speed limit, central divider, intersection density
+- **Cache**: `data/enrichment/2026/jp/kasyo{01..47}.csv` (Shift-JIS, 159 columns)
+- **Fields used**: 24h two-way 自動車類 count split into 小型車 (small) / 大型車 (large), plus 道路種別 (road type), 路線番号 (route number), 路線名 (route name)
 - **License**: Government of Japan Standard Terms of Use v2.0 (CC-BY-4.0 compatible)
 
-**Critical limitation**: The census CSVs are tabular only — there is **no open spatial join**. The 交通調査基本区間番号 (kasyo ID) keys into the proprietary **DRM (Digital Road Map)** by 道路地図センター, which is paid. KSJ N13-2024 (road network) has no kasyo ID. MLIT's R3 WebMap visualizer uses closed backend data.
+**Why a name/ref join, not a spatial one**: the census is keyed by 交通調査基本区間番号 (kasyo section ID), which resolves to geometry only through the proprietary **DRM (Digital Road Map)** by 道路地図センター — paid. KSJ N13 (road network) carries no kasyo ID either, so there is no open geometry to place a measured section on. What the census *does* carry is each road's identity, and Japanese OSM tags major roads with exactly those, so we join by identity:
 
-Japanese roads currently use OSM `maxspeed` + class defaults. The road AADT data exists but cannot be applied without DRM licensing or manual scraping of the WebMap.
+| 道路種別 (census road type) | OSM class | Join key |
+|---|---|---|
+| 1 / 2 — national + urban expressway | motorway | 路線名 (expressway name) |
+| 3 — 一般国道 general national highway | trunk / primary | 国道番号 (route ref) |
+| 4 / 6 — 主要地方道 / 一般県道 | secondary / tertiary | census class-median fallback |
+
+**Limitation — national-median collapse**: each matched road gets the **national median** of its route's measured sections. A route's AADT varies along its length (国道1号 ≈ 60k in Tokyo, ≈ 15k rural) and without geometry we cannot place an OSM segment on the route, so it collapses to one median. The median still lands far closer than the global default (21.6k) on the urban corridors where population and exposure concentrate. Major roads with no name/ref match fall back to the census-measured median for their OSM class.
+
+**Vehicle split**: 小型車 → light (CNOSSOS Cat1); 大型車 (buses + large trucks) → medium/heavy at 25/75 (the census gives no axle split; the large-vehicle stream is truck-dominated). Motorcycles are not in the 自動車類 24h count, so moto = 0. Residential/service roads keep the global service-tree heuristic — the census never surveyed them.
 
 ## Railway
 
-### MLIT N02-2024 station-density proxy
+### Generic CNOSSOS class defaults (no bespoke Japanese enricher)
 
-[MLIT National Land Numerical Information](https://nlftp.mlit.go.jp/ksj/) publishes **N02-24 鉄道** (Railway 2024) with 21,932 rail line sections and 10,235 stations across all Japanese operators.
+There is **no Japan-specific rail enricher**. Japan publishes no public GTFS for its major operators without API-key registration ([ODPT](https://developer.odpt.org/) requires auth), and the open geometry dataset — MLIT National Land Numerical Information **N02-24 鉄道** ([GML zip](https://nlftp.mlit.go.jp/ksj/gml/data/N02/N02-24/N02-24_GML.zip), 21,932 rail line sections + 10,235 stations, JGD2011, CC-BY-4.0) — carries no train-frequency attribute. So Japanese rail (JR East/Central/West/Kyushu/Hokkaido/Shikoku, the Tokyo/Osaka private railways and subways, the Shinkansen) falls back to the engine's **generic CNOSSOS class defaults**, keyed only by OSM `rail_type` + `usage`:
 
-- **Source**: [N02-24 GML zip](https://nlftp.mlit.go.jp/ksj/gml/data/N02/N02-24/N02-24_GML.zip) (12.7 MB, JGD2011, CC-BY-4.0)
-- **Cache**: `data/enrichment/global/mlit-census/N02-24_GML.zip`
+| rail_type | usage | pax/day | frt/day |
+|---|---|---:|---:|
+| 0 (rail) | main | 80 | 20 |
+| 0 (rail) | branch | 30 | 5 |
+| 1 (tram) | - | 120 | 0 |
+| 2 (light_rail) | - | 80 | 0 |
 
-Japan publishes no public GTFS for major rail operators without API key registration ([ODPT](https://developer.odpt.org/) requires auth). The script applies operator-class default frequencies based on N02 station presence:
-
-| Operator | Trains/day |
-|---|---|
-| **東京地下鉄** (Tokyo Metro) | 600 |
-| **東京都** (Toei Subway) / 大阪市 (Osaka Metro) | 500 |
-| **京都市/札幌市/名古屋市/横浜市/福岡市 subways** | 400 |
-| **東急/小田急/京王** (Tokyo major private) | 350 |
-| **東武/京浜急行/西武** (Tokyo private) | 300 |
-| **東日本旅客鉄道** (JR East) | 250 |
-| **近畿日本鉄道/名古屋鉄道/阪急/京阪** | 200-250 |
-| **東海旅客鉄道/西日本旅客鉄道** (JR Central, JR West) | 200 |
-| **九州旅客鉄道** (JR Kyushu) | 100 |
-| **北海道旅客鉄道** (JR Hokkaido) | 80 |
-| **四国旅客鉄道** (JR Shikoku) | 60 |
-| Other private / monorail | 100-150 |
-
-- **Result**: 559,863 railway segments enriched across 290 hexes (69.24% of all rail in JP hexes)
-
-### City coverage
-
-| City | % Enriched | Max trains/day |
-|---|---|---|
-| Kyoto | 76.8% | 400 |
-| Kobe | 76.3% | 500 |
-| Nagoya | 73.0% | 400 |
-| Osaka | 72.5% | 500 (Osaka Metro) |
-| Tokyo | 70.8% | 600 (Tokyo Metro) |
-| Yokohama | 70.1% | 400 |
-| Fukuoka | 68.7% | 400 |
-| Sapporo | 48.3% | 400 |
-
-### Gap — actual GTFS frequencies
-
-These are operator-class defaults, not real schedules. To unlock real train counts would require [ODPT](https://developer.odpt.org/) developer registration to access GTFS feeds for Tokyo Metro, Toei, JR East, JR West, JR Central, etc.
+These are the same global defaults applied everywhere without a national rail dataset — not tuned to Japanese operator frequencies (a real Tokyo Metro line runs far more than 80 trains/day). N02 could supply geometry and station density for a future enricher, and ODPT developer registration would unlock real GTFS schedules for Tokyo Metro / Toei / JR East / JR West / JR Central — neither is implemented yet. Subway lines tagged `railway=subway` in OSM are additionally not extracted (the subway-extraction limitation shared with Seoul / Bangkok / Delhi).
 
 ## Buildings
 

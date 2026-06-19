@@ -8,9 +8,7 @@ map: { center: [125.7, -8.8], zoom: 8 }
 
 ### Class defaults only
 
-The Ministry of Public Works publishes no open AADT. CNOSSOS class defaults applied with Dili Tier-1 boost (×2.0) and Baucau Tier-2 boost (×1.4). Road network OSM coverage is approximately 50% — many rural roads and mountain tracks are unmapped.
-
-**154k road segments enriched (50% coverage).** The AH25 Asian Highway (Dili ↔ Baucau ↔ Los Palos) and the southern coastal route are the main freight corridors.
+The Ministry of Public Works publishes no open AADT. CNOSSOS class defaults apply, scaled by the per-country fleet/road-density factor. Road network OSM coverage is partial — many rural roads and mountain tracks are unmapped. The AH25 Asian Highway (Dili ↔ Baucau ↔ Los Palos) and the southern coastal route are the main freight corridors.
 
 ## Railway
 

@@ -27,7 +27,7 @@ Ashghal publishes no open AADT. **Highest motorway AADT defaults of any enriched
 
 ### Qatari vehicle split
 
-**EXTREME car dominance** — **world's highest GDP per capita**, near-zero motorcycle:
+**EXTREME car dominance** — **among the world's highest GDP per capita**, near-zero motorcycle:
 
 | Tier | Light | Medium | Heavy | Motorcycle |
 |---|---:|---:|---:|---:|
@@ -86,7 +86,7 @@ All operating plants map to **NACE 35**.
 
 - **No open AADT** — Ashghal publishes nothing
 - **No Doha Metro/Lusail Tram GTFS** (real-time app exists but no open feed)
-- **QatarEnergy / North Field** not NACE 06 — **world's largest LNG exporter** (~77 Mtpa, North Field expansion to ~126 Mtpa planned). Shared with Iran's South Pars.
+- **QatarEnergy / North Field** not NACE 06 — **among the world's largest LNG exporters** (~77 Mtpa, North Field expansion to ~142 Mtpa planned by 2030). Shared with Iran's South Pars.
 - **Qatargas/RasGas LNG trains** not NACE 19 — 14+ LNG trains at Ras Laffan (world's largest LNG complex)
 - **Pearl GTL** (Shell) not NACE 19 — **world's largest gas-to-liquids plant** (140k bpd, $18.5B)
 - **Oryx GTL** (Sasol/QatarEnergy) not NACE 19 — 34k bpd GTL

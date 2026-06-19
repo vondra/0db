@@ -98,4 +98,4 @@ Notable noise zones:
 - **Barka/Sohar/Sur coastal CCGT corridor** (~8 GW total)
 - **Al Mazyunah + Ibri 2 + Manah solar** (~1,558 MW)
 - **Oman LNG Sur** (6.6 Mtpa)
-- **King Fahd Causeway approach Musandam** (Strait of Hormuz strategic location)
+- **Khasab / Musandam exclave** (Strait of Hormuz strategic chokepoint — separated from mainland Oman by UAE territory; no fixed road link)

@@ -8,15 +8,13 @@ map: { center: [127.0, 40.0], zoom: 6 }
 
 ### Class defaults only
 
-No open traffic data exists for North Korea. CNOSSOS class defaults applied with Pyongyang Tier-1 boost (×2.0) and four Tier-2 cities (×1.4): Hamhung, Chongjin, Wonsan, Kaesong. Private car ownership is negligible by policy — roads carry military, freight, and state-assigned vehicles. Heavy vehicle share elevated on strategic freight corridors (Pyongyang ↔ Sinuiju, Wonsan ↔ Chongjin).
-
-**1.95M road segments enriched (82% coverage).**
+No open traffic data exists for North Korea. CNOSSOS class defaults apply, scaled by the per-country fleet/road-density factor. Private car ownership is negligible by policy — roads carry military, freight, and state-assigned vehicles. Heavy vehicle share is elevated on strategic freight corridors (Pyongyang ↔ Sinuiju, Wonsan ↔ Chongjin).
 
 ## Railway
 
 ### Class defaults — no public timetable
 
-DPRK State Railway (Chosun Minjujuui Inmin Gonghwaguk Choldo) operates ~7,600 km of 1,435 mm gauge (mostly electrified) but publishes no timetable. Corridor defaults applied:
+DPRK State Railway (Chosun Minjujuui Inmin Gonghwaguk Choldo) operates ~7,600 km of 1,435 mm gauge (mostly electrified) but publishes no timetable. There is no bespoke railway enricher; rail carries CNOSSOS class defaults by type. The principal corridors are:
 
 - **Pyongyang ↔ Sinuiju** (Chinese border, Dandong crossing) — main freight + limited passenger
 - **Pyongyang ↔ Kaesong** — industrial corridor (Kaesong Industrial Complex)

@@ -8,7 +8,7 @@ map: { center: [84, 28.5], zoom: 6 }
 
 ### Class defaults only
 
-DoR (Department of Roads) publishes no open GIS. Fall back to CNOSSOS class defaults with Kathmandu Valley Tier-1 boost.
+DoR (Department of Roads) publishes no open GIS, and there is no bespoke Nepal road enricher. The engine scales its world-default motorway/trunk/primary AADT by Nepal's country factor (≈1.22×) and applies the world-default vehicle mix. The Kathmandu Valley Tier-1 boost and the motorcycle-heavy vehicle split below are the **intended country-tuning, not yet ingested** — shown as the target profile.
 
 ### Nepalese AADT defaults
 
@@ -51,7 +51,7 @@ Nepal is **mountainous and landlocked** between India (south) and China/Tibet (n
 
 ### Nepal has NO significant operating railway
 
-Nepal has **never had a meaningful railway network**. The 59 km **Janakpur-Jaynagar narrow gauge (762 mm)** — built 1937 — was **discontinued** (rehabilitated section with Indian gauge opened 2024 but minimal service). The planned **East-West Electric Railway** (~1,318 km across Terai) and **Nijgadh-Kathmandu** rail are **not built**. Railway enrichment was **skipped entirely**.
+Nepal has **never had a meaningful railway network**. The ~51 km **Janakpur-Jaynagar narrow gauge (762 mm)** — built 1937 — was **discontinued**; a rebuilt Indian broad-gauge (1,676 mm) line reopened in stages (Jaynagar↔Kurtha 2022, Kurtha↔Bijalpura 2023) with minimal service. The planned **East-West Electric Railway** (~1,318 km across Terai) and **Nijgadh-Kathmandu** rail are **not built**. Railway enrichment was **skipped entirely** — any OSM rail falls back to CNOSSOS class defaults.
 
 ## Buildings
 
@@ -61,14 +61,16 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 ### GEM Global Integrated Power — 366 plants, 85 operating, ~2.66 GW
 
-**Operating fuel**: hydropower **64** + solar 21. **100% RENEWABLE — ZERO fossil fuel** in GEM's operating fleet. **One of the only countries globally with a completely renewable GEM operating fleet**. Nepal has ~83 GW of theoretical hydropower potential but only ~2.66 GW installed — **one of the world's most under-exploited hydro resources**.
+Power-plant points from **GEM Global Integrated Power** (filtered to `Country_area='Nepal'`, operating only) are spatial-joined to OSM industrial polygons, overriding the lower-priority global GPPD baseline.
+
+**Operating fuel**: hydropower **64** + solar 21. **100% RENEWABLE — ZERO fossil fuel** in GEM's operating fleet. **One of the only countries globally with a completely renewable GEM operating fleet**. Nepal has ~83 GW of theoretical hydropower potential (~42 GW economically feasible); the ~2.66 GW captured here is GEM's operating fleet — national installed capacity has since passed 3 GW (~3.4 GW by early 2025), still **one of the world's most under-exploited hydro resources**.
 
 ### Top operating plants
 
 | Plant | MW | Type | Notes |
 |---|---:|---|---|
 | **Upper Tamakoshi** | **456** | hydropower | **Nepal's largest**, opened 2022, Dolakha district. Semi-storage run-of-river. |
-| **Kali Gandaki A** | 144 | hydropower | Mustang/Syangja — Nepal's largest before Upper Tamakoshi |
+| **Kali Gandaki A** | 144 | hydropower | Syangja district — Nepal's largest before Upper Tamakoshi |
 | **Solu Khola** | 86 | hydropower | |
 | **Likhu 1** | 77 | hydropower | |
 | **Middle Tamor** | 73 | hydropower | |
@@ -81,13 +83,13 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 All operating plants map to **NACE 35**.
 
-### Nepal does NOT have
+### Not captured / context
 
-- **No DoR AADT** — zero open traffic data
-- **No railway GTFS** (no railway exists)
+- **No DoR AADT** — zero open traffic data; roads use CNOSSOS class defaults
+- **No railway GTFS** (no operating railway) — any OSM rail uses CNOSSOS class defaults
 - **No significant mining or heavy industry** — Nepal's economy is services + remittances + agriculture
-- **Cement**: Hongshi-Shivam Nawalparasi (Chinese), Hetauda Cement, Udayapur Cement — not NACE 23
-- **Himal Iron & Steel** (Biratnagar) — small, not NACE 24
+- **Cement**: Hongshi-Shivam Nawalparasi (Chinese), Hetauda Cement, Udayapur Cement — captured globally only if matched by the GEM Cement tracker above its capacity threshold, else as OSM `landuse=industrial`
+- **Himal Iron & Steel** (Biratnagar) — small; captured globally only if matched by the GEM Iron & Steel tracker above its capacity threshold, else as OSM `landuse=industrial`
 - **Carpet/pashmina** (Kathmandu Valley) — traditional handicraft sector
 - **No oil/gas industry** — Nepal imports all petroleum from India (Indian Oil Corporation monopoly)
 - **No coal power** — one of very few countries with zero coal in operating fleet

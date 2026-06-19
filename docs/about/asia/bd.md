@@ -68,9 +68,8 @@ Bangladesh has **extreme CNG rickshaw + motorcycle dominance**:
 - **Bangabandhu Bridge** (1998, ~5 km) connects the two networks but requires gauge changeover
 
 ### Dhaka Metro Rail Line 6
-- **Opened December 2022** — **Bangladesh's first metro**, 21 km elevated, 16 stations
+- **Bangladesh's first metro** — first segment opened December 2022 (Uttara North↔Agargaon); full line Uttara North↔Motijheel (~21 km elevated, 16 stations) completed late 2023
 - JICA Japanese-funded, built by Shimizu/Mitsubishi consortium
-- Uttara North ↔ Motijheel (Dhaka central)
 
 ### Dhaka↔Chittagong Main Line
 - **~340 km meter gauge** — Bangladesh's busiest railway corridor
@@ -125,7 +124,7 @@ All operating plants map to **NACE 35**.
 - **No RHD AADT** — zero open traffic data
 - **No Bangladesh Railway GTFS**
 - **RMG garment factories** (Dhaka/Gazipur/Narayanganj) not NACE 13/14 — **world's #2 garment exporter after China** (~$45B/year). Millions employed. Rana Plaza collapse 2013 was the deadliest garment industry disaster.
-- **Ship-breaking** (Sitakunda, Chittagong) not NACE 38 — **world's #2 after Alang India**. Major environmental + occupational hazard concerns
+- **Ship-breaking** (Sitakunda, Chittagong) not NACE 38 — **world's #1 by tonnage** (~43% of global ship-recycling, ahead of India's Alang). Major environmental + occupational hazard concerns
 - **Eastern Refinery** (Chittagong) not NACE 19 — Bangladesh's only oil refinery
 - **Cement**: Shah Cement, Bashundhara, LafargeHolcim — not NACE 23
 - **Chittagong Port** — Bangladesh's main container port

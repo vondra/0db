@@ -52,7 +52,7 @@ Moderate, European-influenced (EU candidate):
 **Georgian Railway** operates ~1,600 km of **broad gauge (1,520 mm)** — Soviet-era infrastructure.
 
 ### Tbilisi Metro
-- **Opened 1966** — Soviet-era, **2 lines, ~27 km, 23 stations**, ~200k daily riders
+- **Opened 1966** — Soviet-era, **2 lines, ~28 km, 23 stations**, ~500k daily riders
 
 ### Main east-west line
 - **Tbilisi ↔ Gori ↔ Zestaponi ↔ Samtredia ↔ Batumi/Poti** — Georgia's rail backbone. Carries oil/manganese freight to Black Sea ports.

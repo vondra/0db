@@ -8,9 +8,7 @@ map: { center: [114.7, 4.5], zoom: 9 }
 
 ### Class defaults only
 
-The Ministry of Transport publishes no open AADT. CNOSSOS class defaults applied with Bandar Seri Begawan (BSB) Tier-1 boost (×2.0) and Tier-2 boosts (×1.4) for Kuala Belait and Seria. Brunei has high car ownership (~600 vehicles per 1,000 people) due to heavily subsidised fuel — the cheapest in Southeast Asia.
-
-**122k road segments enriched (89% coverage).**
+The Ministry of Transport publishes no open AADT. CNOSSOS class defaults apply, scaled by the per-country fleet/road-density factor. Brunei has high car ownership (~600 vehicles per 1,000 people) due to heavily subsidised fuel — the cheapest in Southeast Asia — and the Bandar Seri Begawan ↔ Kuala Belait/Seria coastal trunk carries the bulk of inter-town traffic.
 
 ## Railway
 

@@ -69,10 +69,10 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 | **Samra** | ~1,241 (429+300+300+212) | oil/gas | **Jordan's largest thermal complex** (4 units, near Zarqa) |
 | **Amman East** | 400 | oil/gas | |
 | **Al Qatrana** | 373 | oil/gas CCGT | IPP4, Ma'an area |
-| **Attarat** | 470 (2× 235) | oil/gas (oil shale) | **World's first commercial oil shale power plant** (2020, Estonian Enefit/Malaysian YTL) |
+| **Attarat** | 470 (2× 235) | oil/gas (oil shale) | **Jordan's first oil shale power plant**, world's 2nd-largest (units online 2022/2023; Estonian Enefit / Malaysian YTL / Chinese Guangdong Energy) |
 | **Rehab** | 300 | oil/gas | |
 | **Baynouna Solar** | 200 | solar | Masdar (UAE)-financed, one of Jordan's largest |
-| **Tafila Wind** | 117 | wind | **MENA's first utility-scale wind farm** (2015, InfraRed/Jordan Wind) |
+| **Tafila Wind** | 117 | wind | **Middle East's first utility-scale wind farm** (2015, Masdar / InfraRed / Jordan Wind; Morocco & Egypt had earlier North-African wind) |
 | **134 solar plants total** | ~2,500+ | solar | One of MENA's highest solar penetration rates |
 | **Aqaba thermal** | 260 (2× 130) | oil/gas | Red Sea |
 
@@ -83,13 +83,13 @@ All operating plants map to **NACE 35**.
 - **No MPWH AADT** — zero open traffic data
 - **No railway GTFS** (no significant rail)
 - **JPRC refinery** (Zarqa) not NACE 19 — Jordan's only refinery, 100k bpd
-- **JPMC phosphate mines** (Al-Abyad/Al-Hasa) not NACE 07/08 — **one of world's top-5 phosphate producers** (~9 Mtpa)
+- **JPMC phosphate mines** (Al-Abyad/Al-Hasa/Eshidiya) not NACE 07/08 — **world's ~6th-largest phosphate-rock producer + 2nd-largest exporter** (~11 Mtpa)
 - **Arab Potash Company** (Dead Sea) not NACE 08 — **world's 8th largest potash producer**
 - **Dead Sea Industries** (bromine, magnesium) — Dead Sea is one of world's most mineral-rich bodies
 - **Cement**: Lafarge Jordan (Fuheis), Qatrana Cement — not NACE 23
 - **Aqaba port** — Jordan's only sea outlet (Red Sea, ASEZA free zone)
 - **No domestic oil/gas** — Jordan imports ~95% of energy (previously from Iraq, now LNG + pipeline from Egypt/Israel)
-- **Attarat oil shale** — Jordan has world's 4th largest oil shale reserves but only 1 operating plant
+- **Attarat oil shale** — Jordan has among the world's largest oil shale reserves (~4th-8th globally) but only 1 operating plant
 
 ## Validation
 
@@ -107,10 +107,10 @@ Notable noise zones:
 - **Amman Ring Roads** (inner + outer, heavy commuter traffic)
 - **Queen Alia International (AMM/OJAI Amman)**, **Aqaba King Hussein (AQJ/OJAQ)** — covered by global aircraft layer
 - **Samra thermal complex** (~1,241 MW, near Zarqa)
-- **Attarat oil shale** (470 MW — world's first)
+- **Attarat oil shale** (470 MW — Jordan's first, world's 2nd-largest)
 - **JPRC Zarqa refinery** (100k bpd)
 - **JPMC phosphate mines** (Al-Abyad/Al-Hasa)
 - **Arab Potash Dead Sea** operations
 - **Ma'an solar cluster** (MENA's largest concentrated solar zone)
-- **Tafila Wind** (117 MW — MENA's first utility wind)
+- **Tafila Wind** (117 MW — Middle East's first utility-scale wind)
 - **Aqaba port + ASEZA** (Red Sea, only sea outlet)

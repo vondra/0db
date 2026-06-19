@@ -53,7 +53,7 @@ Pakistan has **extreme motorcycle + rickshaw dominance**:
 - **M1/M2 Motorway** — Peshawar ↔ Islamabad ↔ Lahore (~365 km, Pakistan's flagship toll motorway)
 - **M9 Motorway** — Karachi ↔ Hyderabad (~136 km)
 - **N25** — Karachi ↔ Quetta ↔ Chaman (Afghan border via Bolan Pass)
-- **N35 Karakoram Highway (KKH)** — Islamabad ↔ Gilgit ↔ Khunjerab Pass (China border) — **world's highest paved international road** (4,693m)
+- **N35 Karakoram Highway (KKH)** — Islamabad ↔ Gilgit ↔ Khunjerab Pass (China border) — **world's highest paved international border crossing** (4,693m)
 
 ## Railway
 
@@ -114,7 +114,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 | **Trimmu** | 1,263 | oil/gas RLNG | Punjab — CPEC |
 | **HBS (Haveli Bahadur Shah)** | 1,230 | oil/gas RLNG | Punjab — CPEC |
 | **Bhikki** | 1,180 | oil/gas RLNG | Punjab — CPEC. Total Punjab RLNG cluster ~5,000 MW |
-| **Karachi Nuclear (KANUPP-2+3)** | **2,200** (2× 1,100) | nuclear | **Hualong One Chinese-built** — Pakistan's only operating nuclear. KANUPP-1 (1972, Canadian CANDU) decommissioned. |
+| **Karachi Nuclear (KANUPP-2+3)** | **2,200** (2× 1,100) | nuclear | **Hualong One Chinese-built** — Pakistan's largest nuclear units (the four Chashma CNP-300 reactors are the other operating fleet). KANUPP-1 (1972, Canadian CANDU) decommissioned 2021. |
 | **Mangla Dam** | 1,070 | hydropower | Jhelum River, 1967 (British-era design, raised 2009) |
 | **Neelum-Jhelum** | 969 | hydropower | AJK, opened 2018 — controversial water dispute with India |
 | **Suki Kinari** | 884 | hydropower | KP, opened 2024 — CPEC Chinese-built |
@@ -153,7 +153,7 @@ Notable noise zones:
 - **N5 Grand Trunk Road** — Karachi↔Lahore↔Peshawar (one of Asia's oldest and busiest roads)
 - **M1/M2 Motorway** — Peshawar↔Islamabad↔Lahore
 - **M9 Motorway** — Karachi↔Hyderabad
-- **N35 Karakoram Highway** — Islamabad↔China (world's highest paved intl road)
+- **N35 Karakoram Highway** — Islamabad↔China (world's highest paved intl border crossing)
 - **Karachi** + **Lahore** megacity dense cores (×2.5 multiplier)
 - **Pakistan Railways ML-1** (Karachi↔Peshawar, ~100 trains/day at peak)
 - **Lahore Orange Line Metro** (Pakistan's first metro, 2020)

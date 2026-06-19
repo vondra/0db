@@ -74,16 +74,19 @@ All Indonesian rail operators lock their schedules behind commercial anti-scrape
 
 Only **TransJakarta BRT GTFS** is available ([gtfs.transjakarta.co.id](https://gtfs.transjakarta.co.id/files/file_gtfs.zip)) but BRT is bus, not rail.
 
-### CNOSSOS class defaults applied
+### Generic CNOSSOS class defaults (no bespoke Indonesian enricher)
 
-| rail_type | usage | highspeed | pax/day | frt/day | Use case |
-|---|---|---|---:|---:|---|
-| 0 (rail) | main in Jakarta bbox | - | 300 | 5 | **KAI Commuter** (Jabodetabek) |
-| 0 (rail) | main | true | 20 | 0 | **Whoosh HSR** Jakarta-Bandung |
-| 0 (rail) | main | - | 20 | 10 | KAI Java mainline (Jakarta↔Surabaya via Semarang/Cirebon/Surabaya, Jakarta↔Yogyakarta, Jakarta↔Bandung) + Sumatra networks |
-| 0 (rail) | branch | - | 8 | 5 | branch lines |
-| 0 (rail) | industrial | - | 0 | 10 | Sumatra coal rail (e.g. Babat-Tarahan) |
-| 2 (light_rail) | - | - | 300 | 0 | **Jakarta MRT, LRT Jakarta, Jabodebek LRT** elevated sections |
+There is **no Indonesia-specific rail enricher** — no open per-segment train counts or national GTFS exist to ingest. Indonesian rail (KAI mainlines, KAI Commuter / KCI Jabodetabek, Jakarta MRT + LRT Jakarta + Jabodebek LRT elevated sections, Whoosh HSR) therefore falls back to the engine's **generic CNOSSOS class defaults**, keyed only by OSM `rail_type` + `usage`:
+
+| rail_type | usage | pax/day | frt/day |
+|---|---|---:|---:|
+| 0 (rail) | main | 80 | 20 |
+| 0 (rail) | branch | 30 | 5 |
+| 0 (rail) | industrial | 0 | 15 |
+| 1 (tram) | - | 120 | 0 |
+| 2 (light_rail) | - | 80 | 0 |
+
+These are the same global defaults applied everywhere without a national rail dataset; they are not tuned to Indonesian ridership. (Underground MRT segments tagged `railway=subway` in OSM are additionally not extracted — the subway-extraction limitation shared with Bangkok / Delhi / Seoul — so only the elevated LRT/MRT sections reach `railways.arrow` at all.)
 
 ## Buildings
 
@@ -94,7 +97,7 @@ GHSL Built-H + Overture Maps Foundation global baseline. Microsoft contributed I
 ### GEM Global Integrated Power (974 plants)
 
 - **Source**: [GEM Global Integrated Power (August 2025)](https://services.arcgis.com/lqRTrQp2HrfnJt8U/arcgis/rest/services/Global_Integrated_Power_August_2025/FeatureServer/0) via Rice University CES GIS mirror, filtered by `Country_area='Indonesia'`
-- **974 power plants**, 479 currently operating
+- **974 power plants**, 491 currently operating
 - **Fuel breakdown**:
   - **Coal**: Paiton (Java, 3.4 GW), Suralaya (Banten, 4.0 GW), Cirebon, Tanjung Jati B (Central Java), Labuhan Angin (North Sumatra), Celukan Bawang (Bali), Pelabuhan Ratu
   - **Gas CCGT**: Grati (East Java), Priok, Muara Karang, Tanjung Priok (Jakarta), Gilimanuk (Bali), Belawan (Medan)

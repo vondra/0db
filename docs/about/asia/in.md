@@ -146,7 +146,7 @@ GHSL Built-H R2023A 100 m global raster + Overture Maps Foundation building foot
 
 ### Power Plants (Living Atlas India)
 
-**1,459 georeferenced power plants** across India — the most comprehensive national power registry in our pipeline. Supplements WRI GPPD (which stopped updating in 2022, missing Sudair / NEOM / newer Indian megaprojects).
+**1,459 georeferenced power plants** across India — the most comprehensive national power registry in our pipeline. Supplements WRI GPPD (which stopped updating in 2022, missing newer Indian megaprojects like the Bhadla / Pavagada solar parks and recent thermal additions).
 
 - **Source**: [Living Atlas Power Plants in India](https://livingatlas.esri.in/server/rest/services/India/Power_Plants/MapServer/0)
 - **Fuel breakdown**:
@@ -161,7 +161,7 @@ GHSL Built-H R2023A 100 m global raster + Overture Maps Foundation building foot
 
 ### Industrial Parks with CPCB pollution classification — the gem
 
-**4,924 industrial parks** classified by Central Pollution Control Board (CPCB) emission category:
+**4,924 industrial parks**, of which 3,026 carry a Central Pollution Control Board (CPCB) emission category (the remainder are uncategorised in the source):
 
 - **Red category** (641 parks) — cement, chemicals, metallurgy, thermal power, paper, distilleries. Mapped to NACE 24 (basic metals) in enrichment.
 - **Orange category** (645 parks) — chemicals, pharmaceuticals, textiles, food processing. Mapped to NACE 20 (chemicals).

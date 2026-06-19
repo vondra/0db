@@ -35,6 +35,8 @@ However, the **Department of Public Works and Highways (DPWH)** operates a publi
 | OSM tertiary | 1,500 | 3,000 | 2,100 |
 | OSM residential | 800 | 1,600 | 1,120 |
 
+The PH enricher writes AADT only where an OSM motorway/trunk/primary segment spatially matches a DPWH section (within 300 m) — using the DPWH-class row above, tier-multiplied. Segments with no DPWH match fall back to the engine's country-tier class defaults (the OSM rows shown for reference).
+
 **Tier-1 metro** (×2.0): Metro Manila (NCR + Bulacan/Rizal/Cavite/Laguna immediate) — bbox `[14.3–14.85°N, 120.8–121.2°E]`.
 
 **Tier-2 cities** (×1.4, 19 cities): Cebu, Davao, Quezon City, Iloilo, Bacolod, Zamboanga, Cagayan de Oro, Baguio, General Santos, Angeles, Bataan/Mariveles, Cavite City, Calamba, Tacloban, Dagupan, Olongapo, Naga, Butuan, Iligan.
@@ -49,22 +51,16 @@ However, the **Department of Public Works and Highways (DPWH)** operates a publi
 
 ## Railway
 
-### Manila multi-modal GTFS
+### CNOSSOS class defaults
 
-The Philippines' only open rail GTFS comes via the [TUMI Datahub](https://hub.tumidata.org/) mirror of the community-maintained [sakayph/gtfs](https://github.com/sakayph/gtfs) GitHub repository. It covers Metro Manila's rail and bus systems — no GTFS exists for any rail outside NCR.
+No Philippine rail enricher runs — rail noise uses CNOSSOS class defaults by OSM `railway` type (metro/light_rail vs heavy rail), not ingested service frequencies. There is no machine-readable PH rail traffic feed: the one open Manila GTFS (the community [sakayph/gtfs](https://github.com/sakayph/gtfs) repo, mirrored on the [TUMI Datahub](https://hub.tumidata.org/) as `manila.zip`) has a 2013-2020 pre-pandemic calendar and is not ingested. The Metro Manila rail corridors below are documented as context for the elevated viaducts that drive the highest urban rail noise:
 
-- **Source**: [Manila multi-modal GTFS via TUMI Datahub](https://hub.tumidata.org/dataset/5dc13962-f732-4a74-959a-dbe44d21ce5e/resource/37dda9a8-b5b6-4b39-a1df-3069fb43e753/download/manila.zip) (920 KB ZIP)
-- **Agencies**: LRTA, MRTC, PNR, LTFRB (jeepneys/buses), MARINA (ferries), FORT (shuttle)
-- **Routes**: 1,717 total, **4 rail**:
-
-| Route | Operator | Length | Stations |
+| Line | Operator | Length | Stations |
 |---|---|---|---|
 | **LRT 1** (Yellow Line, Baclaran ↔ Roosevelt/FPJ) | LRTA | 20.7 km | 20 |
-| **LRT 2** (Purple Line, Recto ↔ Antipolo) | LRTA | 14 km | 13 |
+| **LRT 2** (Purple Line, Recto ↔ Antipolo) | LRTA | ~17.6 km | 13 |
 | **MRT 3** (Blue Line, Taft Ave ↔ North Ave) | MRTC | 16.9 km | 13 |
 | **PNR Metro Commuter** (Tutuban ↔ Alabang/Calamba) | PNR | 38 km | ~14 |
-
-**Caveat**: Feed calendar validity is 2013-2020 (pre-pandemic). Route structure is still correct; headways should be verified against current operator timetables.
 
 ### Under-construction rail (not in feed)
 
@@ -82,16 +78,16 @@ GHSL Built-H R2023A 100 m + Overture Maps Foundation global footprints. No Phili
 
 ### GEM Global Integrated Power — 995 PH plants
 
-[Rice University CES GIS](https://services.arcgis.com/lqRTrQp2HrfnJt8U) mirrors the Global Energy Monitor (GEM) Global Integrated Power dataset, including **995 Philippine power plants** (255 currently operating).
+The PH industrial enricher spatial-joins power-plant points from the **Global Energy Monitor (GEM) Global Integrated Power** dataset ([Rice University CES GIS](https://services.arcgis.com/lqRTrQp2HrfnJt8U) mirror), filtered to **995 Philippine power plants** (255 currently operating). (GEM Global Integrated Power supersedes the lower-priority global GPPD baseline; only operating plants are stamped.)
 
 **Fuel breakdown** (all units):
 - **Coal**: 147 — Sual (Pangasinan, 1.2 GW), Masinloc (Zambales, 1.34 GW), Pagbilao (Quezon, 1.04 GW), Calaca (Batangas), Ilijan, Mariveles
 - **Gas CCGT**: 61 — Ilijan (Batangas, 1.2 GW), San Gabriel, Santa Rita
 - **Oil**: 17 — legacy diesel plants on outer islands
 - **Hydroelectric**: 63 — Angat (218 MW, Bulacan), San Roque (411 MW, Pangasinan), Kalayaan pumped storage (734 MW), Pantabangan (136 MW, Nueva Ecija), Caliraya, Botocan
-- **Geothermal**: 65 — **2nd-largest installed geothermal capacity globally** (~1.9 GW operational). Major fields: **Tiwi (Albay, 330 MW)**, **Mak-Ban (Laguna, 442 MW)**, **Palinpinon (Negros, 193 MW)**, **Tongonan (Leyte, 700 MW)**, **Bacman (Albay, 150 MW)**, Mindanao
+- **Geothermal**: 65 — **3rd-largest installed geothermal capacity globally** (~1.9 GW operational; behind the US and Indonesia). Major fields: **Tiwi (Albay)**, **Mak-Ban (Laguna, 442 MW)**, **Palinpinon (Negros, 193 MW)**, the **Greater Tongonan / Leyte field (~700 MW total)**, **Bacman (Albay)**, Mindanao
 - **Solar**: 359 — rapidly growing, Calatagan, Bais, various farms
-- **Wind**: 271 — Bangui (Ilocos Norte, 52 MW — first PH wind farm, 2005), Burgos (Ilocos Norte, 150 MW), Nabas, Caparispisan
+- **Wind**: 271 — Bangui (Ilocos Norte, 33 MW — first PH wind farm, 2005), Burgos (Ilocos Norte, 150 MW), Nabas, Caparispisan
 - **Bioenergy**: 10 — sugarcane cogeneration
 - **Nuclear**: 2 — Bataan Nuclear Power Plant (mothballed, never operated)
 

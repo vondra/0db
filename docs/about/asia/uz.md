@@ -43,7 +43,7 @@ No open AADT. Fall back to CNOSSOS class defaults with Tashkent Tier-1 boost. **
 **UTY (O'zbekiston Temir Yo'llari)** operates ~6,950 km of **broad gauge (1,520 mm)**. Uzbekistan has Central Asia's most developed rail system with both a metro and high-speed rail — unique in the region.
 
 ### Tashkent Metro
-- **Opened 1977** — **Central Asia's oldest metro** (predates all other Central Asian metros by decades). Soviet-era ornate stations (comparable to Moscow Metro stations in decoration). **4 lines, ~29 stations, ~40 km**.
+- **Opened 1977** — **Central Asia's oldest metro** (predates all other Central Asian metros by decades). Soviet-era ornate stations (comparable to Moscow Metro stations in decoration). **4 lines, ~50 stations, ~70 km** (Chilonzor 1977, O'zbekiston 1984, Yunusobod 2001, Circle line 2020).
 
 ### Afrosiyob HSR
 - **Tashkent ↔ Samarkand** (2011, 344 km, 2 hours) + **Samarkand ↔ Bukhara** (2016, extension). **Central Asia's first and only high-speed rail**. **Spanish Talgo trains at 250 km/h**. Named after Afrasiab, the mythical Turanian king.

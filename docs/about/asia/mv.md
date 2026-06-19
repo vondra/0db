@@ -8,9 +8,7 @@ map: { center: [73.5, 3.5], zoom: 6 }
 
 ### Class defaults only
 
-The Maldives Transport Authority publishes no open AADT. CNOSSOS class defaults applied with Malé Tier-1 boost (×2.0). There are no roads between islands — all inter-island transport is by speedboat or seaplane.
-
-**27k road segments enriched (83% coverage).** Nearly all road-mapped area is on Malé and a handful of larger inhabited islands.
+The Maldives Transport Authority publishes no open AADT. CNOSSOS class defaults apply, scaled by the per-country fleet/road-density factor. There are no roads between islands — all inter-island transport is by speedboat or seaplane. Nearly all road-mapped area is on Malé and a handful of larger inhabited islands.
 
 ## Railway
 

@@ -48,7 +48,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 | Plant | MW | Type | Notes |
 |---|---:|---|---|
-| **ALBA captive** | **2,848** (5 units) | oil/gas | Captive for **ALBA aluminium smelter** (1.56 Mtpa — **5th largest globally**, one of world's largest single-site smelters) |
+| **ALBA captive** | **2,848** (5 units) | oil/gas | Captive for **ALBA aluminium smelter** (~1.6 Mtpa — **world's largest single-site aluminium smelter** / largest ex-China) |
 | **Al-Dur** | 2,726 (4 units) | oil/gas | **IWPP desal+power** — Bahrain's largest station |
 | **Al Hidd** | 987 | oil/gas | Muharraq area desal+power |
 | **Al Ezzel** | 942 (2 units) | oil/gas | IWPP |
@@ -61,7 +61,7 @@ All operating plants map to **NACE 35**.
 
 - **No open AADT** — MOW publishes nothing
 - **No railway** (never built)
-- **ALBA aluminium** not NACE 24 — **1.56 Mtpa** (5th largest smelter globally, one of world's largest single-site). Founded 1971, expanded 6 times.
+- **ALBA aluminium** not NACE 24 — **~1.6 Mtpa** (world's largest single-site aluminium smelter / largest ex-China). Founded 1971, expanded 6 times (Line 6 added 540 ktpa in 2019).
 - **BAPCO refinery** (Sitra) not NACE 19 — **267k bpd, Bahrain's oldest industry since 1932** (Gulf's first oil refinery — oil discovered at Jebel Dukhan 1932, before Saudi Arabia/Kuwait)
 - **Jebel Dukhan oil field** — **Gulf's first oil discovery (1932)** — modest production now
 - **GPIC** (Gulf Petrochemical Industries Company) — ammonia + methanol + urea
@@ -81,7 +81,7 @@ Notable noise zones:
 
 - **King Fahd Causeway** (25 km — 65k veh/day)
 - **Manama** (entire island is dense urban)
-- **ALBA smelter** (2,848 MW captive power + 1.56 Mtpa aluminium — **dominant industrial noise source on island**)
+- **ALBA smelter** (2,848 MW captive power + ~1.6 Mtpa aluminium — **dominant industrial noise source on island**)
 - **Al-Dur power+desal** (2,726 MW)
 - **BAPCO Sitra refinery** (267k bpd)
 - **Bahrain International (BAH/OBBI)** — covered by global aircraft layer

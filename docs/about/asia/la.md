@@ -8,7 +8,7 @@ map: { center: [104, 18], zoom: 6 }
 
 ### Class defaults only
 
-MPWT publishes no open GIS. Fall back to CNOSSOS class defaults with Vientiane Tier-1 boost.
+MPWT publishes no open GIS, and there is no bespoke Lao road enricher. The engine scales its world-default motorway/trunk/primary AADT by Laos's country factor (≈1.30×) and applies the world-default vehicle mix. The Vientiane Tier-1 boost and the motorcycle-heavy vehicle split below are the **intended country-tuning, not yet ingested** — shown as the target profile.
 
 ### Lao AADT defaults
 
@@ -48,7 +48,9 @@ High motorcycle share (40-47%) — similar to Cambodia:
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
+### CNOSSOS class defaults
+
+No Lao rail enricher runs (LCR timetables are published only by the operator, not as GTFS), so rail noise uses the engine's CNOSSOS class defaults by OSM rail type — mainline heavy rail at 80 passenger + 20 freight trains/day. The LCR is documented below as context.
 
 ### Lao rail context
 
@@ -66,12 +68,7 @@ High motorcycle share (40-47%) — similar to Cambodia:
 
 **No metros, no trams, no urban rail**.
 
-### trains/day defaults
-
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Laos-China Railway (LCR, 2021)** | 20 | 10 |
-| Other (Tha Naleng 3.5 km stub) | 0 | 0 |
+The LCR runs roughly 13 passenger train pairs/day plus freight — below the class-default 80 pax/day, so the model overstates LCR rail noise somewhat.
 
 ## Buildings
 
@@ -80,6 +77,8 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 ## Industrial
 
 ### GEM Global Integrated Power — 124 plants, 58 operating, ~11.7 GW
+
+Power-plant points from **GEM Global Integrated Power** (filtered to `Country_area='Laos'`, operating only) are spatial-joined to OSM industrial polygons, overriding the lower-priority global GPPD baseline.
 
 **Operating fuel**: hydropower **44** + solar 11 + coal 3. **Laos is the "Battery of Southeast Asia"** — massive hydro cascade, mostly exporting electricity to Thailand, Vietnam, and Cambodia.
 
@@ -102,13 +101,13 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 All operating plants map to **NACE 35**.
 
-### Laos does NOT have
+### Not captured / context
 
-- **No open AADT** — MPWT is a state ministry with no public GIS
-- **No railway GTFS** (LCR timetables published by Laos-China Railway Company)
-- **Phu Bia Mining gold/copper/silver** (Xaysomboun Province) — not NACE 07
-- **Sepon gold/copper** (Savannakhet, MMG Chinese-owned — **closed 2024** after resource depletion)
-- **Lao Cement** (state) — not NACE 23
+- **No open AADT** — MPWT is a state ministry with no public GIS; roads use CNOSSOS class defaults
+- **No railway GTFS** — LCR timetables are published only by the operator; rail uses CNOSSOS class defaults
+- **Phu Bia Mining gold/copper/silver** (Xaysomboun Province) — captured only as OSM `landuse=industrial` (not a power plant)
+- **Sepon gold/copper** (Savannakhet) — still operating as LXML after MMG sold its stake to Chifeng Jilong Gold (2019); captured only as OSM `landuse=industrial`
+- **Lao Cement** (state) — captured globally only if matched by the GEM Cement tracker above its capacity threshold, else as OSM `landuse=industrial`
 - **No oil/gas industry** — Laos is landlocked and has no hydrocarbons
 - **Beerlao** (Lao Brewery, Carlsberg JV) — Laos's most famous brand
 - **Garment factories** (Vientiane) — small-scale compared to Cambodia/Bangladesh

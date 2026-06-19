@@ -45,7 +45,7 @@ Oil-rich country with high car ownership, low motorcycle (Caucasus pattern):
 **ADY (Azərbaycan Dəmir Yolları)** operates ~2,900 km of **broad gauge (1,520 mm)**.
 
 ### Baku Metro
-- **Opened 1967** — **Caucasus' oldest metro** (predates Tbilisi 1966... actually tied/close). **3 lines, ~38 km, 25 stations**, ~600k daily. Soviet ornate stations.
+- **Opened 1967** — the Caucasus' second metro (Tbilisi opened a year earlier, 1966). **3 lines, ~40 km, 27 stations**, ~600k daily. Soviet ornate stations.
 
 ### BTK Railway (Baku-Tbilisi-Kars)
 - **Opened 2017** — connects Azerbaijan → Georgia → Turkey. **Part of "Middle Corridor" (Trans-Caspian International Transport Route)** — China → Central Asia → Caspian ferry → Azerbaijan → Turkey → Europe, **bypassing Russia**.
@@ -96,7 +96,7 @@ All operating plants map to **NACE 35**.
 - **Shah Deniz** gas not NACE 06 — BP-operated, world-class (feeds TANAP/TAP to Europe)
 - **BTC Pipeline** (1,768 km Baku→Tbilisi→Ceyhan Turkey) not NACE 19
 - **SCP/TANAP/TAP** gas pipeline system (Azerbaijan→Georgia→Turkey→Greece→Italy — "Southern Gas Corridor") not NACE 19
-- **Heydar Aliyev/SOCAR refinery** (Baku, ~200k bpd) not NACE 19
+- **Heydar Aliyev/SOCAR refinery** (Baku, ~6.5 Mt/yr ≈ 125k bpd) not NACE 19
 - **Sumgayit chemical** — Soviet-era, one of Caspian's most polluted cities (aluminum, chlorine, synthetic rubber)
 - **ArcelorMittal Baku** — steel, not NACE 24
 - **Nakhchivan exclave** — separated from mainland by Armenia (borders with Armenia closed since 1993)
@@ -115,12 +115,12 @@ Notable noise zones:
 
 - **Baku** — Caspian coast, dense urban + construction boom (Flame Towers district)
 - **M3 Baku↔Ganja** — main east-west corridor
-- **Baku Metro** (1967, Caucasus' oldest, 600k daily)
+- **Baku Metro** (1967, Soviet-era, 600k daily)
 - **BTK Railway** (2017, Middle Corridor — growing China→Europe transit)
 - **Heydar Aliyev International (GYD/UBBB Baku)**, **Ganja (KVD/UBBG)**, **Lankaran (LLK/UBBL)**, **Nakhchivan (NAJ/UBBN)** — covered by global aircraft layer
 - **Azerbaijan TPS Mingachevir** (~1,800 MW)
 - **Mingachevir hydro** (424 MW)
-- **SOCAR refinery** (Baku, 200k bpd)
+- **SOCAR refinery** (Baku, ~125k bpd)
 - **Sangachal oil terminal** — BP's main Caspian export hub (BTC/SCP origin)
 - **Sumgayit industrial zone** (Soviet-era chemical, major pollution legacy)
 - **ACG offshore platforms** (Caspian — BP-operated)

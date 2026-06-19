@@ -90,7 +90,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 | **Ulaanbaatar-4 CHP** | **~889** (7 units) | coal CHP | **Mongolia's largest**, Soviet-era combined heat+power. Provides both electricity AND district heating for UB — essential in world's coldest national capital |
 | **Buuruljuut** | 150 | coal | Newer coal, SE Mongolia |
 | **Sainshand Wind** | 55 | wind | Gobi |
-| **Salkhit Wind** | 50 | wind | **Mongolia's first wind farm** (2013, Softbank-backed) |
+| **Salkhit Wind** | 50 | wind | **Mongolia's first wind farm** (2013, developed by Newcom) |
 | **Tsetsii Wind** | 50 | wind | Gobi |
 | **Dornod/Choibalsan** | 86 (50+36) | coal | Eastern Mongolia |
 | **Ulaanbaatar-3** | 50 | coal CHP | Older UB plant |
@@ -104,9 +104,9 @@ All operating plants map to **NACE 35**.
 
 - **No open AADT** — road authority publishes nothing
 - **No UBTZ GTFS** (Trans-Mongolian timetable available as PDF only)
-- **Oyu Tolgoi** (Rio Tinto, South Gobi) not NACE 07 — **world's largest known copper-gold deposit**, $12B underground expansion opened 2023 (one of mining industry's most complex projects)
+- **Oyu Tolgoi** (Rio Tinto, South Gobi) not NACE 07 — **one of the world's largest known copper-gold deposits**, underground expansion opened 2023 (one of mining industry's most complex projects)
 - **Tavan Tolgoi** (South Gobi) not NACE 05 — **world's largest untapped coking coal deposit**, Mongolian state-owned. ~6.4 Bt reserves. Exports to China via Gashuunsukhait border
-- **Erdenet Copper** not NACE 07 — one of world's top 10 copper mines (~25 Mtpa ore), joint Russia/Mongolia (originally Erdenet city was purpose-built 1974)
+- **Erdenet Copper** not NACE 07 — one of the world's largest open-pit copper mines (~25 Mtpa ore), joint Russia/Mongolia (originally Erdenet city was purpose-built 1974)
 - **Cashmere processing** — Mongolia produces ~40% of world's cashmere (Gobi Corporation, Goyo, Bodios)
 - **No oil refinery** — Mongolia imports all petroleum from Russia (extreme supply chain vulnerability)
 - **Darkhan metallurgy** (steel/iron) — small, Soviet-era

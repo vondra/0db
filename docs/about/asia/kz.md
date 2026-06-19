@@ -55,11 +55,11 @@ Kazakhstan has **very LOW motorcycle share** (1-4%) — extreme continental clim
 **KTZ (Kazakhstan Temir Zholy / Қазақстан Темір Жолы)** operates **~16,600 km** of **broad gauge (1,520 mm)** — **one of the world's largest rail networks** by length. Soviet-era infrastructure, massive freight capacity (oil, grain, coal, uranium, **China→Europe transit** is growing).
 
 ### Almaty Metro
-- **Opened 2011**, 1 line, 11 km, 9 stations — one of world's newest metros
-- Central Asia's first metro (after Tashkent, which is technically older)
+- **Opened December 2011**, 1 line, ~13 km, 11 stations (extended 2015 + 2022)
+- Central Asia's **second** metro, after Tashkent (1977)
 
 ### Astana LRT
-- **Opened 2024**, 22.4 km, 18 stations — built for EXPO 2017 (delayed)
+- **Opened May 2026**, 22.4 km, 18 stations — originally planned for EXPO 2017, then repeatedly delayed; driverless airport ↔ city line
 
 ### Major rail corridors
 - **Almaty ↔ Astana** — ~1,300 km, Kazakhstan's main passenger backbone
@@ -71,7 +71,7 @@ Kazakhstan has **very LOW motorcycle share** (1-4%) — extreme continental clim
 | Context | pax/day | frt/day |
 |---|---:|---:|
 | **Almaty Metro (2011)** | 80 | 0 |
-| **Astana LRT (2024)** | 50 | 0 |
+| **Astana LRT (2026)** | 50 | 0 |
 | **Almaty↔Astana main line** | 8 | 20 |
 | **Ekibastuz coal corridor** | 2 | **30** |
 | Other (KTZ network, incl. China transit) | 2 | 10 |

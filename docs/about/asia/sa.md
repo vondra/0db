@@ -33,7 +33,7 @@ Caveat: MoT stations are placed on rural corridor sections, so urban Highway 40 
 
 **Vehicle-class split** (CNOSSOS-tuned for Gulf oil-freight traffic): 78% light / 10% medium / 11% heavy / 1% moto — SA has an elevated heavy-vehicle share due to Aramco/SABIC/petrochem trucking.
 
-**Coverage**: **964,050 OSM segments matched across 583 hexes** — 103,281 by MoT ref, 19,372 by Riyadh PMS, 841,397 by SAU Atlas Primary/Secondary.
+**Coverage**: the major road network (OSM motorway..tertiary + `_link`) across the SA hexes is matched in priority order — MoT `ref` first, then Riyadh PMS inside the Riyadh bbox, then the SAU Atlas Primary/Secondary spatial fallback. The bulk of matches come from the SAU Atlas national fallback (most segments lack a MoT `ref` and sit outside Riyadh); the class gate keeps residential/service streets from inheriting a nearby highway's AADT.
 
 ### Blocked government portals (egress-level TCP block, not WAF)
 
@@ -50,7 +50,7 @@ The following canonical portals were investigated but are TCP-blocked from non-S
 
 ### No open GTFS for any Saudi operator
 
-Saudi Arabia publishes no GTFS feeds — for any operator. We fall back to CNOSSOS class defaults differentiated by OSM `rail_type`, `usage`, `highspeed`, and city bounding boxes.
+Saudi Arabia publishes no GTFS feeds — for any operator, and there is no bespoke SA rail enricher. Saudi rail therefore uses the engine's generic CNOSSOS class defaults, differentiated only by OSM `rail_type`, `usage`, and `highspeed` (no SA-specific traffic counts are applied).
 
 ### SAR (Saudi Arabia Railways)
 
@@ -58,7 +58,7 @@ Saudi Arabia publishes no GTFS feeds — for any operator. We fall back to CNOSS
 
 - **East Line** (former SRO) — Dammam ↔ Abqaiq ↔ Hofuf ↔ Harad ↔ Riyadh (733 km, double track). Rolling stock: 22 trainsets (passenger) + mixed freight.
 - **North Line** — Riyadh ↔ Al-Majma'ah ↔ Qassim ↔ Hail ↔ Al-Jalamid (bauxite/phosphate freight terminal) ↔ Al Jawf ↔ Qurayyat (1,250 km). 6 passenger trainsets (4 day + 2 night).
-- Applied default: **10 passenger + 20 freight trains/day** on main line (`rt=0 u=0`), 3 passenger + 8 freight on branches, 0 passenger + 20 freight on industrial sidings.
+- These mixed passenger/freight mainlines (`rail_type=0`, `usage=main`) are scored at the engine's generic heavy-rail class default — no SA-specific train counts are applied.
 
 ### Haramain High Speed Railway (HHR)
 
@@ -67,8 +67,7 @@ Saudi Arabia publishes no GTFS feeds — for any operator. We fall back to CNOSS
 - **Mecca ↔ Jeddah Airport ↔ Jeddah ↔ KAEC ↔ Rabigh ↔ Medinah** (450 km, 10 stations)
 - Fleet: 35 Talgo 350 trainsets
 - Baseline service: ~6 trains per direction per day, surging during Umrah/Hajj
-- **Tagged `highspeed=yes` in OSM** — correctly differentiated from SAR freight via the `highspeed` column
-- Applied default: **20 passenger trains/day**
+- **Tagged `highspeed=yes` in OSM** — correctly differentiated from SAR freight via the `highspeed` column, which selects the engine's high-speed-rail emission/speed profile
 
 ### Riyadh Metro (King Abdulaziz Public Transport Project)
 
@@ -85,16 +84,11 @@ Operated by [Royal Commission for Riyadh City](https://www.rcrc.gov.sa/) / [SAPT
 
 - **No GTFS published** — `rpt.sa` exposes an interactive route planner only
 - Line + station geometry available as GeoJSON from [opendata.rcrc.gov.sa](https://opendata.rcrc.gov.sa/) (6 lines, 94 stations, WGS84, KSA Open Data License)
-- **Tagged `railway=light_rail` in OSM** — correctly extracted into `railways.arrow` (unlike Dubai Metro which uses `railway=subway` and is blocked by the OSM extractor bug)
-- Applied default: **480 trains/day** within Riyadh Metro bbox [24.45–25.05°N, 46.45–46.95°E] (≈2 min avg headway, typical UTO metro)
-- Result: 419 Riyadh Metro segments enriched in the central Riyadh hex
+- **Tagged `railway=light_rail` in OSM** — so it is extracted into `railways.arrow` (unlike Dubai Metro, which uses `railway=subway` and is dropped by the OSM extractor) and scored at the engine's generic light-rail class default. No SA-specific Riyadh Metro frequency is applied.
 
 ### Al Mashaaer Al Mugaddassah Metro Southern Line (Mashair Metro)
 
-Hajj-pilgrimage-only automated metro (18 km, Arafat ↔ Muzdalifah ↔ Mina), operated by the Saudi Bin Ladin Group. Serves the Mashair during 5 days of Hajj plus limited Umrah tests.
-
-- Applied default: **50 trains/day** (hajj-annualised average) within Mecca bbox [21.30–21.55°N, 39.80–40.05°E]
-- Result: 6 Mashair segments in Mecca hex
+Hajj-pilgrimage-only automated metro (18 km, Arafat ↔ Muzdalifah ↔ Mina), built and operated by China Railway Construction Corporation (CRCC). Runs only during the few days of Hajj each year (17 twelve-car trainsets at peak). Where the line carries OSM rail tags it is scored at the engine's generic class default; its real-world service is a handful of Hajj days, so any annualised noise contribution is negligible.
 
 ## Buildings
 

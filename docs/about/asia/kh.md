@@ -8,7 +8,7 @@ map: { center: [105, 12.5], zoom: 7 }
 
 ### Class defaults only
 
-MPWT (Ministry of Public Works and Transport) publishes no open GIS. Fall back to CNOSSOS class defaults with Phnom Penh Tier-1 boost.
+MPWT (Ministry of Public Works and Transport) publishes no open GIS, and there is no bespoke Cambodia road enricher. The engine scales its world-default motorway/trunk/primary AADT by Cambodia's country factor (≈0.76×) and applies the world-default vehicle mix. The Phnom Penh Tier-1 boost and the motorcycle-heavy vehicle split below are the **intended country-tuning, not yet ingested** — shown as the target profile.
 
 ### Cambodian AADT defaults
 
@@ -47,7 +47,9 @@ Cambodia has **extreme motorcycle dominance** — ~70% of households own a motor
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
+### CNOSSOS class defaults
+
+No Cambodia rail enricher runs and no Royal Railway GTFS exists, so rail noise uses the engine's CNOSSOS class defaults by OSM rail type — mainline heavy rail at 80 passenger + 20 freight trains/day, branch at 30 + 5 (these are the generic worldwide defaults, **not** the actual very-sparse Cambodian service described below). The corridors are documented as context.
 
 ### Cambodian rail context
 
@@ -55,7 +57,7 @@ Cambodia has **extreme motorcycle dominance** — ~70% of households own a motor
 
 ### Southern Line (PP ↔ Sihanoukville)
 - **264 km**, revived 2016 — **Cambodia's main passenger rail**
-- **Only 1 train per day each way** (PP 7:00 → SHV 14:00)
+- Passenger trains run mainly on **weekends/holidays** (weekdays are largely freight)
 - Rehabilitated with ADB funding
 
 ### Northern Line (PP ↔ Poipet/Thailand)
@@ -63,14 +65,6 @@ Cambodia has **extreme motorcycle dominance** — ~70% of households own a motor
 - Planned cross-border passenger service to Bangkok (not yet operational)
 
 **No metros, no trams, no urban commuter rail** in any Cambodian city.
-
-### trains/day defaults
-
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **PP↔Sihanoukville** (southern, revived 2016) | 1 | 2 |
-| **PP↔Poipet/Thailand** (northern, freight only) | 0 | 3 |
-| Other/branch | 0 | 1 |
 
 ## Buildings
 
@@ -80,6 +74,8 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 ### GEM Global Integrated Power — 81 plants, 43 operating, ~4.06 GW
 
+Power-plant points from **GEM Global Integrated Power** (filtered to `Country_area='Cambodia'`, operating only) are spatial-joined to OSM industrial polygons, overriding the lower-priority global GPPD baseline.
+
 **Operating fuel**: solar 23 + coal 10 + hydropower 6 + oil/gas 4.
 
 ### Top operating plants
@@ -87,7 +83,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 | Plant | MW | Type | Notes |
 |---|---:|---|---|
 | **Lower Sesan 2** | 400 | hydropower | Mekong tributary — **controversial** (flooded Stung Treng indigenous villages, displaced ~5,000 people) |
-| **Sihanoukville CIIDG** | 970 (350+350+135+135) | coal | Chinese-built coal complex — **Cambodia's largest thermal cluster** |
+| **Sihanoukville CIIDG** | ~1,105 (CIIDG-2 2×350 + CIIDG-1 3×135) | coal | Chinese-built coal complex — **Cambodia's largest thermal cluster** |
 | **Stung Tatay** | 246 | hydropower | Koh Kong, Chinese-built |
 | **Russei Chrum** | 338 (206+132) | hydropower | |
 | **Kamchay** | 194 | hydropower | Chinese Sinohydro-built — **Cambodia's first modern hydro (2011)** |
@@ -97,14 +93,14 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 All operating plants map to **NACE 35**.
 
-### Cambodia does NOT have
+### Not captured / context
 
-- **No MPWT AADT** — zero open traffic data
-- **No Royal Railway GTFS**
-- **Garment factories** (Phnom Penh/Kandal/Kampong Speu) not NACE 13/14 — **world's #7 garment exporter** (after China, Bangladesh, Vietnam, India, Turkey, Indonesia)
+- **No MPWT AADT** — zero open traffic data; roads use CNOSSOS class defaults
+- **No Royal Railway GTFS** — rail uses CNOSSOS class defaults
+- **Garment factories** (Phnom Penh/Kandal/Kampong Speu) — among the world's top-10 garment exporters (~#8, behind China, Bangladesh, Vietnam, India, Turkey, Indonesia, etc.). Not power plants; captured only where OSM tags `landuse=industrial`
 - **Sihanoukville Port** — deep-water, massive Chinese investment zone
 - **Phnom Penh Autonomous Port** — Mekong river port
-- **Cement**: Chip Mong, Thai Boon Roong — not NACE 23
+- **Cement**: Chip Mong, Thai Boon Roong — captured globally only if matched by the GEM Cement tracker above its capacity threshold, else only as OSM `landuse=industrial`
 - **No oil/gas industry** — Cambodia imports all petroleum
 - **Tonle Sap Lake** — world's largest freshwater fishing ground, seasonal flood reversal
 
