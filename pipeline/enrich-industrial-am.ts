@@ -11,7 +11,7 @@
  *                                   Caucasus, controversial seismic zone, 35 km W of Yerevan)
  *     **Hrazdan 631 MW** (gas/oil, Hrazdan city — largest thermal plant)
  *     **Yerevan 1+2 496 MW** (gas turbine, Yerevan — combined cycle)
- *     **Vorotan cascade 552 MW total**: Argel 224 MW + Shamb 171 MW + Tatev 157 MW
+ *     **Vorotan cascade ~404 MW total**: Spandaryan 76 MW + Shamb 171 MW + Tatev 157 MW
  *                                        (Vorotan River gorge, Syunik — operated by ContourGlobal)
  *
  * Non-power industrial (OSM only):

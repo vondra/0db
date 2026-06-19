@@ -26,8 +26,9 @@
  *     refinery, ~1.5 MT/yr, Bangladesh Petroleum Corporation.
  *   - **Cement**: Shah Cement (Munsiganj), Bashundhara Cement, LafargeHolcim
  *     (Chhatak, Sylhet — uses Indian limestone via conveyor).
- *   - **Ship-breaking** (Sitakunda, Chittagong) — world's #2 after Alang India;
- *     200+ breaking yards, ~6M LDT/yr, notorious for labour/environmental issues.
+ *   - **Ship-breaking** (Sitakunda, Chittagong) — world's #1 by tonnage (~43% of
+ *     global ship-recycling, ahead of India's Alang); ~200 breaking yards,
+ *     notorious for labour/environmental issues.
  *   - **Chittagong Port** (Chattogram Port) — Bangladesh's main seaport,
  *     handles ~92% of national trade, ~3M TEU/yr.
  *   - **Mongla Port** (Khulna division) — second seaport, handles Indian

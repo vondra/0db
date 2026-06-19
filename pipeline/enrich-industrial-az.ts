@@ -27,7 +27,7 @@
  *   - **BTC pipeline** (Baku-Tbilisi-Ceyhan, 1,768 km, 1 Mbpd capacity)
  *   - **SCP / TANAP / TAP gas pipelines** (Southern Gas Corridor,
  *     Caspian→Turkey→Europe, 3,500 km total)
- *   - **Baku / Heydar Aliyev refinery** (~200k bpd, SOCAR)
+ *   - **Baku / Heydar Aliyev refinery** (~6.5 Mt/yr ≈ 125k bpd, SOCAR)
  *   - **Sumgayit Chemical Industrial Park** (Soviet-era, formerly one of
  *     the most polluted cities on Earth; petrochemicals, chlorine, PVC)
  *   - **ArcelorMittal Baku** (Baku Steel Company) — electric arc steel

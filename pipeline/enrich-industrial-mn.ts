@@ -16,10 +16,10 @@
  *     **Sainshand Wind 55 MW** + **Salkhit Wind 50 MW** + **Tsetsii Wind 50 MW**
  *
  * Non-power industrial (OSM only):
- *   - **Oyu Tolgoi** (Rio Tinto/Turquoise Hill, South Gobi) — world's largest
- *     known copper-gold deposit; $12B underground expansion opened 2023
- *   - **Erdenet Copper** (Erdenet city, Orkhon aimag) — one of world's top 10
- *     copper mines; entire city of ~100k built around the mine
+ *   - **Oyu Tolgoi** (Rio Tinto/Turquoise Hill, South Gobi) — one of the world's
+ *     largest known copper-gold deposits; underground expansion opened 2023
+ *   - **Erdenet Copper** (Erdenet city, Orkhon aimag) — one of the world's largest
+ *     open-pit copper mines; entire city of ~100k built around the mine
  *   - **Tavan Tolgoi** (South Gobi, Mongolian state) — world's largest untapped
  *     coking coal deposit
  *   - **Cashmere processing** — Mongolia produces ~40% of world's cashmere
