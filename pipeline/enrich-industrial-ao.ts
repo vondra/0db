@@ -11,14 +11,15 @@
  *     Operating fuel: solar 14, hydropower 6, oil/gas 4, bioenergy 1, wind 1
  *
  *   Top operating plants:
- *     **Laúca 2,070 MW** (Kwanza River, opened 2017 — **Africa's 6th largest
- *                         hydropower, Angola's largest single plant**)
+ *     **Laúca 2,070 MW** (Kwanza River, opened 2017 — **one of Africa's largest
+ *                         hydropower plants, Angola's largest single plant**)
  *     **Cambambe II 700 MW** (Kwanza River, 2017)
  *     **Capanda 520 MW** (Kwanza River, 2004)
  *     **Soyo 720 MW** (2×360 MW CCGT, Zaire province — Angola's main gas plant,
  *                      fed by Congo River basin gas)
  *     **Biópio Solar 189 MW** (Benguela — Angola's largest utility solar)
- *     **Cambambe I 180 MW** (Kwanza River, 1963 — Angola's oldest major hydro)
+ *     **Cambambe I 260 MW** (Kwanza River, 1963 — Angola's oldest major hydro;
+ *                            4×65 MW after 2016 rehab)
  *     **CFL power station 125 MW** (oil/gas, Luanda railway depot)
  *     **Biocom bioenergy 100 MW** (sugarcane bagasse, Malanje — Biocom
  *                                   sugar-ethanol complex)
@@ -35,16 +36,18 @@
  *   - **Sonangol** — state oil company, one of Africa's largest
  *     - **Offshore oil fields**: Kizomba, Plutonio, CLOV, Dalia, Girassol,
  *       Pazflor (deep-water Atlantic, Block 15/17/18)
- *     - **Angola is Africa's 2nd largest oil producer** after Nigeria
- *       (~1.1 Mbbl/day, historically OPEC member until 2023)
+ *     - **Angola is sub-Saharan Africa's 2nd largest oil producer** after
+ *       Nigeria (~3rd in Africa behind Nigeria and Libya; ~1.1 Mbbl/day,
+ *       OPEC member until its exit took effect January 2024)
  *     - **Luanda Refinery** — ~65k bpd, old (1950s)
  *     - **Lobito Refinery** — under construction (new 200k bpd facility)
  *     - **Angola LNG (Soyo)** — opened 2013, Chevron/Sonangol/BP/ENI/TotalEnergies
  *   - **Cabinda enclave** — separated from mainland by DRC strip, hosts
  *     significant offshore operations (Malongo terminal, Cabinda Gulf Oil)
  *   - **Cement**: Nova Cimangola (Luanda), Ciment de Lobito, Empresa de Cimentos de Angola
- *   - **Diamonds**: **Catoca mine** (Lunda Sul — world's #4 diamond mine,
- *     Alrosa + Endiama), Lunda Norte alluvial operations
+ *   - **Diamonds**: **Catoca mine** (Lunda Sul — among the world's largest
+ *     diamond mines by area; Endiama + Oman's Taadeen since Alrosa's 2025
+ *     divestment), Lunda Norte alluvial operations
  *   - **Iron ore**: Cassinga (historic, reopening), Cassala-Kitungo
  *   - **Luanda Port** — Africa's busiest lusophone port
  *   - **Biocom sugar-ethanol** (Malanje) — integrated sugarcane complex

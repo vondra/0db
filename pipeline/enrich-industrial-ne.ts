@@ -31,8 +31,8 @@
  *   - **Gold**: artisanal Liptako-Gourma region (SW Niger)
  *   - **Livestock**: Niger is a major Sahelian livestock exporter
  *       (cattle, goats, camels) — largest non-oil export sector
- *   - **World's lowest HDI** — poorest country on Earth by Human Development
- *       Index; very limited formal industry outside extractives
+ *   - **Among the world's lowest HDI** — one of the poorest countries on Earth
+ *       by Human Development Index; very limited formal industry outside extractives
  *
  * Usage:
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-ne.ts

@@ -23,9 +23,9 @@
  *   - **Logging/timber**: tropical forest (northern CG is dense equatorial
  *       rainforest; Sangha Trinational is a UNESCO World Heritage site)
  *   - **Sugar**: SARIS (Nkayi) — Congo's only sugar refinery
- *   - **Potash**: MagMinerals (Sintoukola project) — abandoned after 2016
- *       flooding, never produced
- *   - **Cement**: Forspak (Loutété)
+ *   - **Potash**: MagMinerals (Mengo project) — abandoned after the company's
+ *       2015 financial collapse, never produced
+ *   - **Cement**: Forspak (Dolisie/Niari), SONOCC (Loutété)
  *   - **Governance**: Sassou-Nguesso — longest-ruling African leader (president
  *       since 1979/1997); resource revenues concentrated, little diversification
  *

@@ -14,13 +14,13 @@
  *                             largest plant, plagued by technical problems
  *                             since commissioning. Chinese-built by China
  *                             National Electric Equipment Corporation)
- *     **Morupule A 132 MW** (4×33 MW coal, 1986, upgraded 2008)
+ *     **Morupule A 132 MW** (4×33 MW coal, 1986, refurbished 2016-2018)
  *     **Francistown APR 70 MW** (diesel emergency rental, Aggreko)
  *     **Kweneng/Central/NW/Gaborone Solar** (4 small solar plants, 1-11 MW)
  *
- * **Botswana imports ~40% of electricity** from South Africa (Eskom) and
- * Mozambique. **Morupule B chronic technical problems** have made the
- * country even more import-dependent.
+ * **Botswana imports a large share of its electricity** (~40%+, mostly from
+ * South Africa's Eskom, with Namibia and Zambia secondary). **Morupule B
+ * chronic technical problems** have made the country even more import-dependent.
  *
  * Non-power industrial (OSM only):
  *   - **Jwaneng Diamond Mine** (Jwaneng, S Botswana) — **world's richest
@@ -29,18 +29,19 @@
  *     Botswana from one of Africa's poorest at independence (1966) to
  *     one of its wealthiest.
  *   - **Orapa Diamond Mine** (Orapa, central) — **world's largest diamond
- *     mine by area** (world's 2nd largest open pit)
+ *     mine by area**
  *   - **Letlhakane Diamond Mine** (near Orapa) — Debswana
- *   - **Karowe Diamond Mine** (Letlhakane) — Lucara Diamond (world's 2nd
- *     largest gem diamond Lesedi La Rona 1,109ct found here 2015)
+ *   - **Karowe Diamond Mine** (Letlhakane) — Lucara Diamond (source of the
+ *     Lesedi La Rona 1,109ct, found 2015, then the world's 2nd largest
+ *     gem-quality rough diamond)
  *   - **Morupule Coal Mine** — Debswana/Minergy, feeds Morupule A+B plants
  *   - **BCL Selebi-Phikwe** — nickel/copper smelter+mine complex,
  *     **closed 2016** after commodity collapse. Selebi-Phikwe town was
  *     purpose-built for this mine (1973-2016, ~45 year lifespan).
  *   - **Gaborone industrial** — Kgale Glass, BMC (Botswana Meat Commission)
  *   - **Cement**: PPC Botswana (Gaborone)
- *   - **Soda ash**: Botswana Ash (Sua Pan, Makgadikgadi — world's largest
- *     soda ash deposit by area, mining since 1991)
+ *   - **Soda ash**: Botswana Ash (Sua Pan, Makgadikgadi — one of Africa's
+ *     larger soda ash operations, mining since 1991)
  *
  * Usage:
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-bw.ts

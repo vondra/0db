@@ -11,9 +11,8 @@
  *
  *   Top operating plants:
  *     **Ruacana 332 MW** (Kunene River, Angola border — **Namibia's largest
- *                          plant**, run-of-river hydro, 49% of total capacity.
- *                          Supply depends on Angola's upstream Matala Dam
- *                          water management.)
+ *                          plant**, hydro, 49% of total capacity. Flow depends
+ *                          on upstream storage at the Gove/Calueque dams.)
  *     **Van Eck 120 MW** (4×30 MW coal, Windhoek — Namibia's only coal
  *                          plant, obsolete, being decommissioned)
  *     **Mariental Solar 46 MW** (largest solar IPP)
@@ -21,9 +20,9 @@
  *     **22 smaller solar plants** (8-16 MW each — rapid solar rollout)
  *     **Diaz Wind Farm** (Lüderitz area, recent)
  *
- * **Namibia imports ~60% of electricity** from South Africa (NamPower ↔
- * Eskom) + Zimbabwe + Zambia + Mozambique via SAPP (Southern African
- * Power Pool).
+ * **Namibia imports ~60% of its electricity** via SAPP (Southern African
+ * Power Pool) — South Africa's Eskom is the largest single supplier, with
+ * Zambia and Zimbabwe also significant.
  *
  * Non-power industrial (OSM only):
  *   - **Rössing Uranium Mine** (Erongo, near Swakopmund) — **world's
@@ -37,9 +36,10 @@
  *     only integrated zinc mine+refinery.
  *   - **Langer Heinrich Uranium** (Erongo) — Paladin Energy, reopened 2024
  *     after 6-year care-and-maintenance (uranium price recovery).
- *   - **Tsumeb Smelter** — Dundee Precious Metals. Processes complex
- *     copper/lead/arsenic concentrates. One of the few smelters in the
- *     world that can handle high-arsenic copper ores.
+ *   - **Tsumeb Smelter** — processes complex copper/lead/arsenic
+ *     concentrates; one of the few smelters in the world that can handle
+ *     high-arsenic copper ores. Sold by Dundee Precious Metals to China's
+ *     Sinomine in 2024; smelting paused 2025 on concentrate shortage.
  *   - **Rosh Pinah zinc mine** (//Kharas) — Trevali, zinc/lead
  *   - **B2Gold Otjikoto** — gold mine (Otjozondjupa)
  *   - **Navachab gold mine** (Karibib, QKR Corp)
@@ -50,7 +50,7 @@
  *     richest fishing grounds — Benguela Current cold upwelling)
  *   - **Salt**: Walvis Bay Salt Works (one of Africa's largest)
  *   - **Diamonds**: Namdeb (De Beers/Namibia 50-50) — marine + alluvial
- *     along Skeleton Coast
+ *     along the southern Atlantic coast (Sperrgebiet, around Oranjemund)
  *
  * Usage:
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-na.ts

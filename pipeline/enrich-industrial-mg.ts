@@ -17,7 +17,7 @@
  *                                                          Antananarivo —
  *                                                          capital's main
  *                                                          thermal cluster)
- *     **Andekaleka 91 MW** (hydropower — Mangoro River, largest MG hydro)
+ *     **Andekaleka 91 MW** (hydropower — Vohitra River, largest MG hydro)
  *     **Ambatovy Nickel 120 MW** (3×40 coal captive — dedicated to the
  *                                  Ambatovy nickel/cobalt laterite mine
  *                                  and processing plant, Sumitomo/KORAM.
@@ -34,8 +34,8 @@
  *     pipeline.
  *   - **QMM / Fort Dauphin ilmenite** (Rio Tinto) — heavy mineral sands
  *     (ilmenite for titanium dioxide), Anosy region SE Madagascar
- *   - **Kraoma chromite** (Brieville/Antsirabe) — Madagascar is world's #3
- *     chromite producer
+ *   - **Kraoma chromite** (Brieville/Andriamena, Betsiboka region) — one of
+ *     Africa's larger chromite producers
  *   - **Graphite**: Tirupati Graphite (Vatomina), NextSource (Molo) — rapidly
  *     expanding sector
  *   - **Vanilla**: SAVA region (Antalaha, Sambava) — **Madagascar produces

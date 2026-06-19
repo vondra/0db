@@ -29,7 +29,8 @@
  *       Fekola (B2Gold, Kayes region), Sadiola (Barrick/AngloGold), Morila,
  *       Kalana, Syama (Resolute Mining)
  *   - **CMDT cotton** — Compagnie Malienne pour le Développement du Textile;
- *     Mali is Africa's #2 cotton producer; gins at Koutiala, Sikasso, Fana
+ *     Mali is among Africa's top cotton producers (#1-2, trading the lead with
+ *     Benin year to year); gins at Koutiala, Sikasso, Fana
  *   - **Cement**: CIMAF Dio (Bamako), Diamond Cement Astro (Bamako)
  *   - **Bamako port** (Niger River — limited river freight)
  *   - **No significant manufacturing** — economy is agriculture (cotton, gold,
