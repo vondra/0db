@@ -43,7 +43,7 @@ Iceland is the **only country in Europe that has never had a railway** — no hi
 
 ## Buildings
 
-GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
+Overture Maps Foundation global footprints (per-building heights where tagged; GHSL Built-H 100 m raster only as a sparse seed).
 
 ## Industrial
 

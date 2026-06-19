@@ -38,9 +38,9 @@ Vehicle class mapping to CNOSSOS:
 
 ## Railway
 
-### DELFI GTFS (applied via /enrich-global)
+### DELFI GTFS (applied via the continental rail pass)
 
-National GTFS feed covering all passenger rail operators (DB, private railways, S-Bahn, tram).
+National GTFS feed covering all passenger rail operators (DB, private railways, S-Bahn, tram), ingested by the Europe-wide GTFS railway enrichment (`enrich-railway-europe.ts`, `de` feed) alongside ~16 other countries.
 
 - **Stops**: 7,200+
 - **Source**: data.public-transport.earth/gtfs/de
@@ -58,11 +58,15 @@ Germany's energy facility registry from [Bundesnetzagentur](https://www.marktsta
 - Exact GPS coordinates
 - Commissioning date, manufacturer, model
 
-**Status**: Bulk export downloaded (2.9 GB). Processing pending.
+**Applied**: turbines matched to OSM `power=generator` wind turbines by proximity (<200 m); hub_height + rated_power_kw written into industrial.arrow (`enrich-industrial-de.ts`).
+
+### E-PRTR (applied via the continental industrial pass)
+
+The European Pollutant Release and Transfer Register supplies 2-digit NACE sector codes (steel, cement, chemical, waste, food, paper, etc.) for German industrial complexes, matched to OSM industrial sites within 2 km (`enrich-industrial-europe.ts`).
 
 ### GPPD (applied via /enrich-global)
 
-Global Power Plant Database covers German power plants with NACE 35 classification.
+The WRI Global Power Plant Database covers German power plants with NACE 35 (energy) classification.
 
 ## Buildings
 

@@ -14,7 +14,8 @@ SŽ (Slovenske železnice) does not publish GTFS publicly. The OPSI dataset "Reg
 
 ## Industrial
 
-- GPPD power plants (NACE 35)
+- **E-PRTR** (European Pollutant Release and Transfer Register) — NACE 2-digit sector codes (steel, cement, chemical, waste, food, etc.) for Slovenian industrial sites, matched to OSM within 2 km via the continental industrial pass (`enrich-industrial-europe.ts`).
+- **GPPD** (WRI Global Power Plant Database) — power plants with NACE 35 (energy) via `/enrich-global`.
 
 ## Buildings
 

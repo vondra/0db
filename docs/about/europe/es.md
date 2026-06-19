@@ -17,7 +17,7 @@ The Ministerio de Transportes y Movilidad Sostenible publishes the **Mapa de Tr√
 
 ### EU city traffic (from `/enrich-continent europe`)
 
-Cerema-aggregated EU AADT for Madrid, Barcelona, Valencia preserves 103,408 city-street segments.
+The harmonized EU city traffic dataset (Nature Sci. Data, 2025) supplies AADT for Madrid, Barcelona, Valencia and preserves 103,408 city-street segments.
 
 ### Regional traffic gaps
 

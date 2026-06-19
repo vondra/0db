@@ -25,7 +25,8 @@ Not applied to noise map (buses are not separate emission source in our CNOSSOS-
 
 ## Industrial
 
-- GPPD power plants (NACE 35)
+- **GPPD power plants** (NACE 35) via `/enrich-global` — the Vasilikos, Dhekelia, and Moni oil-fired stations (Cyprus has no grid interconnector, so all generation is domestic).
+- **E-PRTR** — Cypriot facilities receive NACE 2-digit sector codes via `/enrich-continent europe`.
 
 ## Validation
 

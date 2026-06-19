@@ -18,7 +18,8 @@ Malta Public Transport operates all buses. No open GTFS feed found in Mobility D
 
 ## Industrial
 
-- GPPD power plants (NACE 35)
+- **GPPD power plants** (NACE 35) via `/enrich-global` — the Delimara power station (Marsaxlokk) is Malta's main generator.
+- **E-PRTR** — Maltese facilities receive NACE 2-digit sector codes via `/enrich-continent europe`.
 
 ## Notes
 

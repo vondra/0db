@@ -16,19 +16,24 @@ map: { center: [8.2, 46.8], zoom: 8 }
 - **Status**: Cached. Needs coordinate extraction from ASTRA ArcGIS dashboard for OSM matching.
 - **ArcGIS map**: [Counting station locations](https://www.arcgis.com/apps/dashboards/1673b262537546098589ad3820e5ece2)
 
-### EU city traffic (from /enrich-global)
+### EU city traffic (continental)
 
-Zurich + Geneva AADT from EU harmonized dataset.
+Zurich + Geneva AADT from the EU harmonized 36-city dataset, applied via `/enrich-continent europe`. This is the **only road traffic currently applied** for Switzerland — Zurich and Geneva street-segment AADT, not national coverage. The SARTC counts above are cached but not yet matched to OSM geometry. Outside these two cities, roads use OSM class + CNOSSOS defaults.
 
 ## Railway
 
-### SBB/CFF GTFS (from /enrich-global)
+### SBB/CFF GTFS (continental)
 
-Swiss national transit timetable from opentransportdata.swiss.
+Swiss national transit timetable from opentransportdata.swiss, applied as one of the continental GTFS feeds via `/enrich-continent europe`.
 
 - **Stops**: 1,800+
 - **Coverage**: All SBB/CFF/FFS rail services + BLS, SOB, regional operators
 - **Applied**: trains_passenger in railways.arrow
+
+## Industrial
+
+- **E-PRTR** — Swiss regulated facilities (cement, metals, chemical, waste, food, paper) with NACE codes, applied via `/enrich-continent europe`
+- **GPPD** — power plants (NACE 35) via `/enrich-global`
 
 ## Validation
 

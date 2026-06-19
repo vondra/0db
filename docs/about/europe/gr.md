@@ -21,7 +21,8 @@ Greek road authority publishes only aggregate statistics. OSM defaults applied.
 
 ## Industrial
 
-- GPPD power plants (NACE 35)
+- **GPPD power plants** (NACE 35) via `/enrich-global` — thermal stations and the large lignite plants of Western Macedonia (Ptolemaida/Kozani).
+- **E-PRTR** — Greek facilities receive NACE 2-digit sector codes via `/enrich-continent europe` (cement, metals, refining, etc.).
 
 ## Validation
 

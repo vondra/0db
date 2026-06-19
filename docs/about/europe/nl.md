@@ -16,15 +16,15 @@ The Netherlands has arguably the world's most comprehensive road traffic monitor
 - **Access**: Requires free registration at [mijn.ndw.nu](https://mijn.ndw.nu/) — historical data via Dexter database
 - **Status**: Shapefile cached, actual traffic counts need Dexter registration
 
-### EU city traffic (from /enrich-global)
+### EU city traffic (continental)
 
-Amsterdam AADT from EU harmonized dataset.
+Amsterdam AADT from the EU harmonized 36-city dataset, applied via `/enrich-continent europe`. This is the **only road traffic currently applied** for the Netherlands — Amsterdam street-segment AADT, not the national NDW network. The NDW shapefile above is cached but its traffic counts need Dexter registration. Outside Amsterdam, roads use OSM class + CNOSSOS defaults.
 
 ## Railway
 
-### GTFS NL (from /enrich-global)
+### GTFS NL (continental)
 
-Dutch national transit feed covering NS (Nederlandse Spoorwegen) and regional operators.
+Dutch national transit feed covering NS (Nederlandse Spoorwegen) and regional operators, applied as one of the continental GTFS feeds via `/enrich-continent europe`.
 
 - **Stops**: 700+
 - **Applied**: trains_passenger in railways.arrow
@@ -43,7 +43,8 @@ The world's best open building height dataset from [TU Delft 3D Geoinformation](
 
 ## Industrial
 
-- GPPD power plants
+- **E-PRTR** — Dutch regulated facilities (cement, metals, chemical, waste, food, paper) with NACE codes, applied via `/enrich-continent europe`
+- **GPPD** — power plants (NACE 35) via `/enrich-global`
 - Wind turbine data available from RVO/Windstats.nl — not yet processed
 
 ## Validation

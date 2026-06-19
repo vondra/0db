@@ -26,7 +26,8 @@ API (Agency for Road Infrastructure) does not publish per-segment AADT. OSM defa
 
 ## Industrial
 
-- GPPD power plants (NACE 35)
+- **E-PRTR** (European Pollutant Release and Transfer Register) — NACE 2-digit sector codes for Bulgarian industrial facilities (Kremikovtsi-area metallurgy, Devnya cement, Burgas refinery, copper smelting) via `/enrich-continent europe`
+- **GPPD power plants** (NACE 35) via `/enrich-global`
 
 ## Validation
 

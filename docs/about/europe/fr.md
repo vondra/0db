@@ -18,15 +18,15 @@ National road traffic census from [Cerema](https://www.cerema.fr/) via data.gouv
 - **License**: Licence Ouverte (Etalab)
 - **Gap**: No data for routes départementales (D) or communales
 
-### EU city traffic (from /enrich-global)
+### EU city traffic (from `/enrich-continent europe`)
 
-Paris AADT from the harmonized EU city traffic dataset (Nature Sci. Data, 2025). 323,350 segments preserved.
+Paris and 10 other French cities (Lyon, Lille, Bordeaux, Marseille, Toulouse, Grenoble, Rennes, Rouen, Montpellier, Tours) carry AADT from the harmonized EU city traffic dataset (Nature Sci. Data, 2025). 323,350 segments preserved.
 
 ## Railway
 
 ### SNCF GTFS (TGV + Intercités + TER + Transilien)
 
-All SNCF rail services from [SNCF Open Data](https://data.sncf.com/).
+All SNCF rail services from [SNCF Open Data](https://data.sncf.com/), ingested by the Europe-wide GTFS railway pass (`enrich-railway-europe.ts`, `fr` + `fr-idf` feeds).
 
 - **SNCF combined**: 2,766 stops, 622 rail routes (TGV + Intercités + TER), 10,129 daily trains
 - **Transilien**: 471 stops, 24 routes (Paris commuter rail), 5,200 daily trains
@@ -36,8 +36,9 @@ All SNCF rail services from [SNCF Open Data](https://data.sncf.com/).
 
 ## Industrial
 
-- GPPD power plants (~200 facilities, NACE 35)
-- Georisques/IREP (French PRTR) — not yet processed
+- E-PRTR — 2-digit NACE sector codes for French industrial complexes via the continental industrial pass (`enrich-industrial-europe.ts`)
+- GPPD power plants (~200 facilities, NACE 35) via `/enrich-global` (WRI Global Power Plant Database)
+- Georisques/IREP (French national PRTR) — not yet processed
 
 ## Buildings
 

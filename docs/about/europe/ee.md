@@ -23,7 +23,8 @@ Transpordiamet publishes only aggregate statistics. OSM defaults applied.
 
 ## Industrial
 
-- GPPD power plants
+- **GPPD power plants** (NACE 35) via `/enrich-global` — the Narva oil-shale stations (Eesti, Balti) dominate Estonian generation.
+- **E-PRTR** — Estonian facilities receive NACE 2-digit sector codes via `/enrich-continent europe` (oil-shale processing, cement, chemicals).
 
 ## Validation
 

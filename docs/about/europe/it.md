@@ -8,7 +8,7 @@ map: { center: [12.5, 42.5], zoom: 6 }
 
 ### Anas TGM (national motorways & state roads)
 
-[Anas](https://www.stradeanas.it/) (Azienda Nazionale Autonoma delle Strade) publishes its **Traffico Giornaliero Medio** (TGM) census with 653 monitoring stations across the Italian motorway (A-*) and state highway (SS-*) network.
+[Anas](https://www.stradeanas.it/) (Azienda Nazionale Autonoma delle Strade) compiles the **Traffico Giornaliero Medio** (TGM) census; we ingest the Nov-2015 release published on the MIT open-data portal ([dati.mit.gov.it](https://dati.mit.gov.it/)), with 653 monitoring stations across the Italian motorway (A-*) and state highway (SS-*) network.
 
 - **Matching**: ref-based (e.g. `A1 Milano–Napoli`) with proximity filter
 - **Result**: 148,809 road segments enriched across 188 hexes
@@ -16,7 +16,7 @@ map: { center: [12.5, 42.5], zoom: 6 }
 
 ### EU harmonized traffic (from `/enrich-continent europe`)
 
-Cerema-aggregated EU city traffic dataset — provides AADT + HGV share for major Italian urban areas.
+The harmonized EU city traffic dataset (Nature Sci. Data, 2025) provides AADT + HGV share for Milan, the one Italian city in the dataset.
 
 ## Railway
 

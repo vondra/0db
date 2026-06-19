@@ -13,13 +13,13 @@ map: { center: [19.4, 52.0], zoom: 6 }
 - **Source**: [gov.pl/web/gddkia/generalny-pomiar-ruchu-20202021](https://www.gov.pl/web/gddkia/generalny-pomiar-ruchu-20202021)
 - **National roads**: 2,290 measurement points (A motorways, S expressways, DK national roads), full vehicle class split (motorcycles, cars, light trucks, trucks without/with trailer, buses)
 - **Provincial roads**: 3,124 segments on DW network — XLS only, no geometry (matched by ref + proximity)
-- **Result**: 1,225,790 newly enriched road segments + 659,116 preserved continental EU city traffic
+- **Result**: 1,225,790 newly enriched road segments
 - **Top corridors**: S8 around Warszawa 197k veh/day, A4 motorway 105k, S2 Warszawa southern bypass 114k, A2 east-west 100k
 - **Coverage**: 255 of 287 Polish hexes updated (88.8%)
 
-### EU city traffic (continental)
+### EU city traffic
 
-Cerema-aggregated EU AADT for Warszawa, Kraków, Wrocław via `/enrich-continent europe`.
+The harmonized EU city traffic dataset (Nature Sci. Data, 2025) includes **no Polish cities**, so Warszawa, Kraków, and other urban arterials are not covered by it — they rely on GPR national/provincial counts where a ref matches, and OSM class defaults otherwise.
 
 ### Gaps
 
@@ -82,7 +82,7 @@ Polish national cadastre (BDOT10k, EGiB) is geo-portal protected and not openly 
 
 - **E-PRTR**: ~1,500 Polish facilities receive NACE 2-digit codes via `/enrich-continent europe`. Major emitters (KGHM Polska Miedź copper smelters, ArcelorMittal steel mills, Lafarge cement, JSW coal mines, BOT Bełchatów lignite power plant — Europe's largest CO₂ emitter) are correctly classified.
 - **Power plants**: Bełchatów, Kozienice, Opole, Turów, Połaniec lignite/coal plants — all covered by WRI Global Power Plant Database via `/enrich-global`.
-- **Wind turbines**: Poland has ~7-8 GW installed wind capacity (10th in EU). URE (Urząd Regulacji Energetyki) wind installation registry returns HTTP 403 to programmatic requests, so per-turbine specs are not enriched. ~7,155 OSM wind turbines, ~52% have specs (from cross-border MaStR/USWTDB matches + OSM tags).
+- **Wind turbines**: Poland has ~7-8 GW installed wind capacity (10th in EU). URE (Urząd Regulacji Energetyki) wind installation registry returns HTTP 403 to programmatic requests, so there is no national per-turbine registry feed; specs for the ~7,155 OSM wind turbines come from OSM `generator:*` tags, plus a sliver of German MaStR turbines that fall in the cross-border zone. (USWTDB, the only global per-turbine enricher, is US-only and does not reach Poland.)
 
 ## Validation
 

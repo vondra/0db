@@ -84,7 +84,7 @@ Denmark has ~7 GW installed wind capacity (highest per capita in EU). Major offs
 
 ### NACE codes — E-PRTR
 
-European Pollutant Release and Transfer Register applied via `/enrich-continent europe`. ~400 Danish PRTR sites including:
+European Pollutant Release and Transfer Register applied via `/enrich-continent europe`. ~3,100 Danish PRTR sites including:
 
 - **Novo Nordisk** pharma (Bagsværd, Hillerød, Kalundborg)
 - **Maersk** shipping ports (Aarhus, København, Esbjerg)

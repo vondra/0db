@@ -54,7 +54,7 @@ GHSL Built-H R2023A 100 m global raster only. Portugal does **not publish a unif
 ## Industrial
 
 - **E-PRTR**: Portuguese facilities receive NACE 2-digit codes via `/enrich-continent europe`
-- **Power plants**: Cogeneration plants, hydroelectric stations, Galp refineries (Sines, Matosinhos), Pego thermal — covered by WRI Global Power Plant Database via `/enrich-global`
+- **Power plants**: Cogeneration plants, hydroelectric stations, the Galp Sines refinery — covered by WRI Global Power Plant Database via `/enrich-global`. (The Galp Matosinhos refinery and the Pego coal plant both closed in 2021; the WRI snapshot may still list them, but they no longer contribute active noise.)
 - **Wind turbines**: ~5.5 GW installed capacity across 250+ wind parks (4th in EU per capita). DGEG does not publish per-turbine open data — all turbines use OSM defaults
 
 ## Validation

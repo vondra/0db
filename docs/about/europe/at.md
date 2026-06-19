@@ -16,9 +16,9 @@ map: { center: [13.3, 47.5], zoom: 7 }
 - **Year**: 2024 (also 2012-2023 available)
 - **Status**: Cached. Needs km-marker → coordinate conversion for OSM matching.
 
-### EU city traffic (from /enrich-global)
+### EU city traffic (continental)
 
-Vienna AADT from EU harmonized dataset.
+Vienna AADT from the EU harmonized 36-city dataset, applied via `/enrich-continent europe`. This is the **only road traffic currently applied** for Austria — Vienna street-segment AADT, not national coverage. ASFINAG and BMK counts above are cached but not yet matched to OSM geometry. Outside Vienna, roads use OSM class + CNOSSOS defaults.
 
 ### BMK Dauerzählstellen
 
@@ -26,13 +26,18 @@ Federal ministry publishes automatic traffic counting results for Bundesstraßen
 
 ## Railway
 
-### ÖBB GTFS (from /enrich-global)
+### ÖBB GTFS (continental)
 
-Austrian Federal Railways timetable from ÖBB Open Data.
+Austrian Federal Railways timetable from ÖBB Open Data, applied as one of the continental GTFS feeds via `/enrich-continent europe`.
 
 - **Stops**: 1,662
 - **Applied**: trains_passenger in railways.arrow
 - **Source**: static.web.oebb.at/open-data/soll-fahrplan-gtfs/GTFS_OP_2025_obb.zip
+
+## Industrial
+
+- **E-PRTR** — Austrian regulated facilities (cement, metals, chemical, waste, food, paper) with NACE codes, applied via `/enrich-continent europe`
+- **GPPD** — power plants (NACE 35) via `/enrich-global`
 
 ## Validation
 

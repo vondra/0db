@@ -22,7 +22,8 @@ Hrvatske ceste publishes only aggregate reports. OSM road class defaults applied
 
 ## Industrial
 
-- GPPD power plants (NACE 35)
+- **E-PRTR** (European Pollutant Release and Transfer Register) — NACE 2-digit sector codes (steel, cement, chemical, waste, food, etc.) for Croatian industrial sites, matched to OSM within 2 km via the continental industrial pass (`enrich-industrial-europe.ts`).
+- **GPPD** (WRI Global Power Plant Database) — power plants with NACE 35 (energy) via `/enrich-global`.
 
 ## Validation
 

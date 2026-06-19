@@ -21,7 +21,8 @@ LVC (Latvijas valsts ceļi) publishes only aggregate statistics. OSM defaults ap
 
 ## Industrial
 
-- GPPD power plants (NACE 35)
+- **GPPD power plants** (NACE 35) via `/enrich-global` — the Rīga TEC-1/TEC-2 CHP stations and the Daugava hydro cascade (Pļaviņas, Rīga, Ķegums).
+- **E-PRTR** — Latvian facilities receive NACE 2-digit sector codes via `/enrich-continent europe`.
 
 ## Validation
 

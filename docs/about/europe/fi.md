@@ -35,7 +35,7 @@ Four GTFS feeds merged for railway enrichment:
 
 | Operator | Coverage | Source |
 |---|---|---|
-| **Fintraffic VR** | National passenger rail (VR intercity, Pendolino, IC, regional, Allegro Russia link) | [rata.digitraffic.fi/api/v1/trains/gtfs-passenger.zip](https://rata.digitraffic.fi/api/v1/trains/gtfs-passenger.zip) (requires `Accept-Encoding: gzip`) |
+| **Fintraffic VR** | National passenger rail (VR intercity, Pendolino, IC, regional) | [rata.digitraffic.fi/api/v1/trains/gtfs-passenger.zip](https://rata.digitraffic.fi/api/v1/trains/gtfs-passenger.zip) (requires `Accept-Encoding: gzip`) |
 | **HSL Helsinki** | Helsinki Region Transport — commuter rail (Kehärata, Rantarata) + Metro (M1/M2) + tram + bus | [infopalvelut.storage.hsldev.com/gtfs/hsl.zip](https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip) (69 MB, daily) |
 | **Tampere Raitiotie** | Tampere tram (2 lines) + bus | [data.itsfactory.fi/journeys/files/gtfs/latest/gtfs_tampere.zip](http://data.itsfactory.fi/journeys/files/gtfs/latest/gtfs_tampere.zip) |
 | **Föli Turku** | Turku — bus only (no tram) | [data.foli.fi/gtfs/gtfs.zip](http://data.foli.fi/gtfs/gtfs.zip) |
@@ -56,12 +56,12 @@ Four GTFS feeds merged for railway enrichment:
 | Espoo | 66.4% | 285 (HSL commuter) |
 | Helsinki | 65.3% | 601 (Päärautatieasema) |
 | Tampere | 33.1% | 272 (Raitiotie tram) |
-| Oulu | 0% | 0 |
-| Turku | 0% | 0 (Föli is bus-only) |
+| Oulu | — | 230 (VR intercity) |
+| Turku | — | 0 (Föli is bus-only) |
 
 ### Rail GTFS gaps
 
-- **Fintraffic VR calendar issue**: target Wednesday selection picks calendar midpoint (2027-02), beyond active service window. Result: only 6 active services captured, missing VR intercity Tampere/Oulu/Turku/Joensuu/Kuopio. Fix: clamp target date to start_date + 60 days.
+- **Tampere/Turku rail (VR mainline)**: VR intercity serves both Tampere and Turku, but their station tiles show sparse matched rail — Tampere's per-tile figure reflects the Raitiotie tram, and Turku (no tram, only the Föli bus feed locally) has little matched rail despite the VR terminus.
 - **Turku tram**: doesn't exist (Turku has buses only via Föli)
 
 ## Buildings
@@ -72,12 +72,8 @@ The **NLS INSPIRE WFS** at `inspire-wfs.maanmittauslaitos.fi/inspire-wfs/bu_mtk_
 
 ## Industrial
 
-- **E-PRTR**: Finnish facilities receive NACE 2-digit codes via `/enrich-continent europe`. Major emitters:
-  - **Stora Enso, UPM, Metsä Group** — pulp & paper mills (forest belt across Finland)
-  - **Outokumpu** — steel (Tornio)
-  - **Neste** — refineries (Porvoo, Naantali)
-  - **Yara** — fertilizers (Uusikaupunki, Siilinjärvi)
-- **SYKE** publishes a 51 KB shapefile of 1,018 facilities at [wwwd3.ymparisto.fi/d3/gis_data/spesific/tuotantolaitokset.zip](https://wwwd3.ymparisto.fi/d3/gis_data/spesific/tuotantolaitokset.zip) (CC-BY 4.0) but it duplicates continental E-PRTR coverage.
+- **E-PRTR**: Finnish facilities receive NACE 2-digit codes via `/enrich-continent europe` — the EU/EEA register that tracks Finland's large emitters: Stora Enso/UPM/Metsä Group pulp & paper, Outokumpu steel (Tornio), Neste refineries (Porvoo, Naantali), Yara fertilizers (Uusikaupunki, Siilinjärvi).
+- **SYKE** publishes a 51 KB shapefile of 1,018 facilities at [wwwd3.ymparisto.fi/d3/gis_data/spesific/tuotantolaitokset.zip](https://wwwd3.ymparisto.fi/d3/gis_data/spesific/tuotantolaitokset.zip) (CC-BY 4.0) that would add finer national coverage (smaller sites below the E-PRTR reporting threshold), but is not yet ingested.
 - **Wind turbines**: ~6 GW installed but no per-turbine open registry. NLS Maastotietokanta `tuulivoimala` feature class would have ~1,600 turbines but requires the same Geotorget API key.
 
 ## Validation

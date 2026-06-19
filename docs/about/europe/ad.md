@@ -8,9 +8,7 @@ map: { center: [1.52, 42.54], zoom: 11 }
 
 ### Class defaults only
 
-Servei de Circulació i Mobilitat d'Andorra publishes no open AADT. CNOSSOS class defaults applied with Andorra la Vella Tier-1 boost (×2.0) and Escaldes-Engordany Tier-2 boost (×1.4). Andorra's road network is dominated by the CG-1 (Spain border ↔ Andorra la Vella ↔ Pas de la Casa ↔ France) and CG-2 (Ordino/Canillo branches).
-
-**29k road segments enriched (68% coverage).** Mountain tracks and ski resort access roads account for some unmapped segments.
+Servei de Circulació i Mobilitat d'Andorra publishes no open AADT, and Andorra is not in the EU city-traffic dataset. No national road enrichment is applied — road segments fall back to the engine's CNOSSOS class defaults by OSM road class, plus the global service-road tree heuristic. Andorra's road network is dominated by the CG-1 (Spain border ↔ Andorra la Vella ↔ Pas de la Casa ↔ France) and CG-2 (Ordino/Canillo branches), which carry heavy duty-free and ski tourism but with class-default rather than measured traffic.
 
 ## Railway
 

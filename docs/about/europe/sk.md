@@ -10,11 +10,11 @@ map: { center: [19.7, 48.7], zoom: 7 }
 
 National railway timetable from [Železnice Slovenskej republiky](https://www.zsr.sk/).
 
-- **Source**: `zsr.sk/files/pre-cestujucich/cestovny-poriadok/gtfs/gtfs.zip`
+- **Source**: NKOD national open-data portal (`data.slovensko.sk`) — the old direct `zsr.sk/files/…/gtfs.zip` endpoint went dead in 2026-06
 - **Coverage**: 2,297 rail routes, 885 stops, 800 with train counts
 - **Result**: 35,706 railway segments enriched across 53 hexes
 - **Busiest stations**: Bratislava hl.st. 385 trains/day, Košice 235, Žilina 226, Trnava 224
-- **License**: Open (data.gov.sk)
+- **License**: Open (data.slovensko.sk)
 
 ## Road traffic
 
@@ -24,8 +24,9 @@ Slovak [SSC (Slovenská správa ciest)](https://www.ssc.sk/) publishes traffic c
 
 ## Industrial
 
-- GPPD power plants (NACE 35) from /enrich-global
-- Slovak PRTR not yet investigated
+- **E-PRTR** (European Pollutant Release and Transfer Register) — NACE 2-digit sector codes for Slovak industrial facilities (U. S. Steel Košice, Slovnaft refinery, cement, aluminium) via `/enrich-continent europe`
+- **GPPD power plants** (NACE 35) via `/enrich-global`
+- Slovak national PRTR (SHMÚ) not yet separately investigated
 
 ## Buildings
 

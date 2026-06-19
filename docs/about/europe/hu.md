@@ -22,7 +22,8 @@ Magyar Közút publishes annual traffic reports only in PDF/aggregate form. No p
 
 ## Industrial
 
-- GPPD power plants (NACE 35)
+- **E-PRTR** (European Pollutant Release and Transfer Register) — NACE 2-digit sector codes for Hungarian industrial facilities (Dunaújváros steel, Százhalombatta refinery, cement, chemical) via `/enrich-continent europe`
+- **GPPD power plants** (NACE 35) via `/enrich-global`
 
 ## Buildings
 

@@ -26,7 +26,7 @@ map: { center: [10.0, 64.5], zoom: 5 }
 
 ### Continental Norway feed (Entur via data.public-transport.earth)
 
-The continental enrichment applies a Norwegian Entur GTFS feed via `/enrich-continent europe`, providing VR national rail and commuter rail coverage.
+The continental enrichment applies a Norwegian Entur GTFS feed via `/enrich-continent europe`, providing Vy (formerly NSB) national rail and commuter rail coverage.
 
 ### City coverage
 
@@ -71,7 +71,7 @@ GHSL Built-H R2023A 100 m global raster + sparse OSM `building:levels`. Norway h
 - **Result**: 33 OSM wind turbines matched within 500 m (low — Norwegian wind farms in remote mountain terrain have OSM coordinates that differ significantly from official NVE positions)
 - **License**: NLOD 2.0
 
-Norway's wind capacity has grown rapidly — major farms include Fosen Vind (1,057 MW, the largest onshore wind project in Europe), Smøla, Tonstad, Sørmarkfjellet (130 MW Trøndelag), and offshore Hywind Tampen (88 MW floating). Equinor leads offshore development.
+Norway's wind capacity has grown rapidly — major farms include Fosen Vind (1,057 MW, the largest onshore wind project in Norway and among the largest in Europe — Sweden's Markbygden has since surpassed it), Smøla, Tonstad, Sørmarkfjellet (130 MW Trøndelag), and offshore Hywind Tampen (88 MW floating). Equinor leads offshore development.
 
 ### NACE codes — E-PRTR
 

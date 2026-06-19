@@ -18,9 +18,9 @@ National road traffic statistics from [Department for Transport](https://roadtra
 - **License**: Open Government Licence v3.0
 - **Top AADF**: M25 at 210,436 vehicles/day, M60 at 192,025, M1 at 179,502
 
-### EU city traffic (from /enrich-global)
+### EU city traffic (from `/enrich-continent europe`)
 
-London, Birmingham, Manchester, Glasgow, Edinburgh, Cardiff AADT from EU harmonized dataset. 95,100 segments.
+London, Birmingham, Manchester, Glasgow, Edinburgh, Cardiff AADT from the harmonized EU city traffic dataset (Nature Sci. Data, 2025). 95,100 segments.
 
 ## Railway
 
@@ -28,7 +28,7 @@ UK rail GTFS requires registration with ATOC/RSP (data.atoc.org). Not yet applie
 
 ## Industrial
 
-- GPPD power plants (NACE 35)
+- GPPD power plants (NACE 35) via `/enrich-global` (WRI Global Power Plant Database). The UK is outside E-PRTR (post-Brexit, no longer an EU/EEA reporter), so EU industrial coverage does not apply; GEM global trackers supply steel/cement/coal-mine sites.
 - REPD (Renewable Energy Planning Database) available but not yet processed
 
 ## Buildings

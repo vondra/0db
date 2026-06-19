@@ -18,7 +18,8 @@ All available Lithuanian GTFS feeds (Vilnius, Kaunas, Klaipėda, Panevėžys, Al
 
 ## Industrial
 
-- GPPD power plants (NACE 35)
+- **GPPD power plants** (NACE 35) via `/enrich-global` — Elektrėnai (gas) and the Kruonis pumped-storage plant (the Ignalina nuclear station closed in 2009).
+- **E-PRTR** — Lithuanian facilities receive NACE 2-digit sector codes via `/enrich-continent europe` (the Orlen/Mažeikiai refinery, Akmenė cement, chemicals).
 
 ## Validation
 

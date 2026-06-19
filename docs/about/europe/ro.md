@@ -24,7 +24,8 @@ No public source found for per-segment AADT. CNAIR publishes END noise maps but 
 
 ## Industrial
 
-- GPPD power plants (NACE 35)
+- **E-PRTR** (European Pollutant Release and Transfer Register) — NACE 2-digit sector codes for Romanian industrial facilities (steel, cement, chemical, refining, waste) via `/enrich-continent europe`
+- **GPPD power plants** (NACE 35) via `/enrich-global`
 
 ## Validation
 
