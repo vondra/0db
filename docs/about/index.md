@@ -22,11 +22,9 @@ The map computes environmental noise in three steps:
 
 2. **Sound travels and fades** — noise gets quieter with distance. Hills block it, buildings screen it, forests absorb it. We simulate this physics for every source-receiver pair using ISO 9613-2 propagation with 8 octave bands.
 
-3. **You see the result** — the map shows noise at every ~12-meter raster cell, colored from green (quiet, ~10 dB) through yellow and orange to red and purple (very loud, 80+ dB). Each source layer is independent — toggle them to see roads alone, railways alone, or everything combined.
+3. **You see the result** — the map shows noise at every ~12-meter raster cell, colored from pale at the quiet end through yellow and orange to red and deep purple (very loud, 80+ dB). Each source layer is independent — toggle them to see roads alone, railways alone, or everything combined.
 
 ![Quiet Map — noise visualization](map-overview.jpg)
-
-<!-- MAP -->
 
 ---
 
@@ -45,7 +43,7 @@ Road traffic is the dominant source of environmental noise, affecting 60–80% o
 <details>
 <summary>Technical: road emission (CNOSSOS-EU Annex II)</summary>
 
-[CNOSSOS-EU Annex II](../standards/cnossos-eu-2021-1226.pdf), 4 vehicle categories (light / medium-heavy / heavy / motorcycles) per 8 octave bands (63–8000 Hz). Rolling + propulsion components combined per band; line-source density `L_W'/m = L_W + 10·log₁₀(Q/(1000·v))`. Surface correction applied to rolling: asphalt 0 / cobblestone +4 / concrete +1 / unpaved +2 dB.
+[CNOSSOS-EU Annex II](https://eur-lex.europa.eu/eli/dir_del/2021/1226), 4 vehicle categories (light / medium-heavy / heavy / motorcycles) per 8 octave bands (63–8000 Hz). Rolling + propulsion components combined per band; line-source density `L_W'/m = L_W + 10·log₁₀(Q/(1000·v))`. Surface correction applied to rolling: asphalt 0 / cobblestone +4 / concrete +1 / unpaved +2 dB.
 
 **Default traffic volumes** (when no census data available):
 
@@ -58,8 +56,13 @@ Road traffic is the dominant source of environmental noise, affecting 60–80% o
 | Tertiary | 800 | 720 | 26 | 38 | 16 | 50 km/h | 70/18/12% |
 | Residential | 500 | 480 | 5 | 10 | 5 | 30 km/h | 70/18/12% |
 | Living street | 100 | 98 | 0 | 1 | 1 | 20 km/h | 70/18/12% |
+| Service / driveway | 250 | 240 | 2 | 5 | 3 | 20 km/h | 70/18/12% |
+| Track | 5 | 4 | 0 | 1 | 0 | 20 km/h | 70/18/12% |
+| Unclassified | 1 340 | 1 200 | 30 | 80 | 30 | 50 km/h | 70/18/12% |
 
 Time split = day (07–19) / evening (19–23) / night (23–07). Measured AADT overrides the totals; the per-period split stays fixed by class.
+
+**Service tree.** Below the named classes, OpenStreetMap has hundreds of millions of service roads, driveways, and farm tracks. They are all modelled (not dropped) but kept quiet: untagged `highway=track` is damped to ~0.5 veh/day, and local roads near buildings (residential, service, unclassified) get a *computed* count — the "service tree" — that routes each dwelling's trips through the local street network (Dijkstra flow accumulation, from cul-de-sacs down to the nearest main road) instead of a flat guess. A dead-end carries only its own houses; a collector accumulates everything that feeds into it.
 
 → Full derivation, all coefficients: `engine/noise-compute/SPEC.md` §1.
 
@@ -69,14 +72,14 @@ Time split = day (07–19) / evening (19–23) / night (23–07). Measured AADT 
 
 Rail noise affects fewer people than roads but at higher severity — a single freight corridor can dominate nighttime exposure for kilometres. Freight wagons with cast-iron block brakes are ~10 dB louder than disc-braked passenger stock, making the passenger/freight split critical.
 
-- **Data:** OpenStreetMap rail geometry + precomputed passenger/freight counts where available; otherwise line-type defaults (see country pages)
+- **Data:** OpenStreetMap rail geometry + GTFS timetables / passenger–freight counts where available; otherwise line-type defaults (see country pages)
 - **Key variables:** train count per day, passenger vs freight split, speed
 - **Impact:** Speed enters as 30×log₁₀ — twice the sensitivity of roads. One freight train at night can outweigh 10 daytime passenger trains in Lden.
 
 <details>
 <summary>Technical: railway emission (CNOSSOS-EU Annex IV / RMR)</summary>
 
-[CNOSSOS-EU Annex IV](../standards/cnossos-eu-2021-1226.pdf) RMR methodology. Per-band rolling (speed-dependent, `30·log₁₀(v/v_ref)`) + constant traction. Line density expressed per-hour, not per-day. Four vehicle types: Passenger (disc brake, v_ref 100 km/h), Freight (cast iron, v_ref 80 km/h — ~10 dB louder), Tram (50 km/h), Light rail / DMU (80 km/h). HSR > 200 km/h uses the same passenger spectrum scaled by speed — no dedicated aerodynamic model.
+[CNOSSOS-EU Annex IV](https://eur-lex.europa.eu/eli/dir_del/2021/1226) RMR methodology. Per-band rolling (speed-dependent, `30·log₁₀(v/v_ref)`) + constant traction. Line density expressed per-hour, not per-day. Four emission-coefficient sets: Passenger (disc brake, v_ref 100 km/h), Freight (cast iron, v_ref 80 km/h — ~10 dB louder), Tram (50 km/h), Light rail / DMU (80 km/h); narrow-gauge reuses light-rail, funicular reuses passenger. HSR uses the passenger spectrum scaled by speed (passenger v_max 300 km/h) — no dedicated aerodynamic model.
 
 **Default train frequencies** (when no line counts available):
 
@@ -91,7 +94,7 @@ Rail noise affects fewer people than roads but at higher severity — a single f
 | Narrow gauge | 10 | 0 | 40 km/h |
 | Funicular | 40 | 0 | 20 km/h |
 
-Measured counts override defaults; the 65/20/15 day/eve/night split stays fixed by class. Source height 0.5 m (wheel-rail contact).
+Measured counts override defaults. The day/evening/night split varies by region and by passenger vs freight — EU freight is night-heavy (≈34/11/55), since much of it runs at night. Source height 0.5 m (wheel-rail contact).
 
 → Full derivation, coefficients, simplifications: `engine/noise-compute/SPEC.md` §2.
 
@@ -108,7 +111,7 @@ The aircraft layer combines two models: airborne overflights from ADS-B radar tr
 <details>
 <summary>Technical: aircraft layer (Doc 29 + airport ground ops)</summary>
 
-**Airborne** [ECAC Doc 29](https://www.ecac-ceac.org/activities/environment/european-aviation-and-environment-working-group-eaeg/airmod) ([Vol 1](../standards/ecac-doc-29-vol1.pdf) · [Vol 2](../standards/ecac-doc-29-vol2.pdf) · [Vol 3](../standards/ecac-doc-29-vol3.pdf)). Not certified. Per-segment SEL combines NPD lookup at slant distance + speed correction + engine-installation directivity + lateral attenuation + finite-segment correction. Auto-generated from EASA ANP v2.3 (+ v9 for modern types); unknown typecodes route to the nearest anchor by engine/size class.
+**Airborne** [ECAC Doc 29](https://www.ecac-ceac.org/activities/environment/european-aviation-and-environment-working-group-eaeg/airmod) (4th Edition). Not certified. Per-segment SEL combines NPD lookup at slant distance + speed correction + engine-installation directivity + lateral attenuation + finite-segment correction. Auto-generated from EASA ANP v2.3 (+ v9 for modern types); unknown typecodes route to the nearest anchor by engine/size class.
 
 **Sample anchor profiles** (Approach SEL dB at 200–25 000 ft):
 
@@ -119,13 +122,13 @@ The aircraft layer combines two models: airborne overflights from ADS-B radar tr
 | Regional jet | CRJ9 | 90.9, 86.7, 83.3, 79.9, 74.1, 67.4, 62.4, 56.9, 50.7, 43.9 |
 | Turboprop | DH8D (Dash 8) | 88.9, 84.4, 81.1, 77.7, 71.9, 65.8, 62.3, 58.7, 55.6, 52.8 |
 | Light GA | C172 (Cessna) | 85.0, 80.0, 76.0, 72.0, 65.0, 58.0, 53.0, 47.0, 41.0, 35.0 |
-| Helicopter | EC35 | 92.0, 88.0, 85.0, 82.0, 76.0, 70.0, 65.0, 59.0, 53.0, 47.0 |
+| Helicopter | EC35 | 99.3, 95.9, 93.5, 91.0, 86.6, 81.2, 77.4, 72.7, 66.7, 59.9 |
 
 **Airport ground ops** — per-microsegment model on OSM aeroway geometry. Each ADS-B ground leg projects onto runway / taxiway microsegments (50 m perpendicular buffer); `ops_kind` comes from OSM `aeroway_type` (no speed classifier). Per-event SEL anchored at 25 m, propagated through Section 3 path effects. Runway-roll departures get Doc 29's +2 dB. DBSCAN auto-discovery covers OSM-missing airfields. Movements outside the ADS-B receiver footprint don't appear (no synthetic backfill).
 
 **Popup tabs**: *Ground* (per airport microsegment + movement kind), *Airborne* (per Stage 2A sub-segment), *Cruise* (per crossed H3-R7 hex).
 
-**Lden** per [END 2002/49/EC](../standards/end-2002-49-ec.pdf): day 12 h, evening 4 h +5 dB, night 8 h +10 dB.
+**Lden** per [END 2002/49/EC](https://eur-lex.europa.eu/eli/dir/2002/49/oj/eng): day 12 h, evening 4 h +5 dB, night 8 h +10 dB.
 
 → Full derivation, filters, ground-ops kernel, simplifications: `engine/noise-compute/SPEC.md` §5.
 
@@ -142,7 +145,7 @@ Industrial noise is spatially concentrated but locally dominant — a single cem
 <details>
 <summary>Technical: industrial emission profiles (ISO 8297 + NACE)</summary>
 
-[ISO 8297](https://www.iso.org/standard/15401.html), [CNOSSOS-EU §2.4](../standards/cnossos-eu-2021-1226.pdf). Reference area 10 000 m² (a 100 000 m² factory adds 10 dB to its base). Profile priority: registry `nace_4digit` → OSM subtype → coarse source type. Base values were authored against Czech SHM 2022 + EU Directive 2000/14/EC limits + 3M Noise Navigator measurements before the 2026-06 band normalization; they are now honest dB(A) totals (effective emission −4.9..−6.4 vs pre-audit), re-calibration pending.
+[ISO 8297](https://www.iso.org/standard/15401.html), [CNOSSOS-EU §2.4](https://eur-lex.europa.eu/eli/dir_del/2021/1226). Reference area 10 000 m² (a 100 000 m² factory adds 10 dB to its base). Profile priority: registry `nace_4digit` → OSM subtype → coarse source type. Base values were authored against Czech SHM 2022 + EU Directive 2000/14/EC limits + 3M Noise Navigator measurements before the 2026-06 band normalization; they are now honest dB(A) totals (effective emission −4.9..−6.4 vs pre-audit), re-calibration pending.
 
 **By OSM site type** (when no registry NACE):
 
@@ -178,7 +181,7 @@ Industrial noise is spatially concentrated but locally dominant — a single cem
 
 Emission bands are normalized so the A-weighted band sum equals Base Lw exactly (audit 2026-06) — Base Lw is the radiated dB(A) total, not a pre-spectrum scalar.
 
-Source height: 8 m (quarry), 10 m (heavy industry NACE 8/23/24/35), 5 m (other), hub height for wind turbines (default 105 m, tag errors clamped at 175 m).
+Source height: 8 m (quarry), 10 m (heavy industry NACE 5/8/23/24/35), 5 m (other), hub height for wind turbines (default 105 m, tag errors clamped at 175 m).
 
 **Wind turbines** (IEC 61400-11): published max LwA is nearly flat across ratings — 98 dB(A) (< 1 MW), 104 (1–2 MW), 105 (2–3 MW + unknown default), 106 (3–5 MW), 106.5 (≥ 5 MW); ratings above 8 MW are treated as OSM tag errors (unknown).
 
@@ -197,22 +200,26 @@ Noise from everyday building activity — HVAC systems, human activity, deliveri
 <details>
 <summary>Technical: building emission profiles</summary>
 
-10 building types classified from OSM tags (`building=*`, `amenity=*`, `shop=*`):
+14 building types classified from OSM tags (`building=*`, `amenity=*`, `shop=*`):
 
 | Type | OSM tags | Lw fixed | Lw/m² | Evening | Night |
 |------|----------|----------|-------|---------|-------|
-| Residential | apartments, house, detached | 45 dB | 15 | -5 | -15 |
-| Commercial | commercial, retail, shop | 55 dB | 20 | -3 | -20 |
-| Warehouse | warehouse, industrial building | 40 dB | 15 | -5 | -15 |
-| School | school, kindergarten | 60 dB | 22 | -10 | -25 |
-| Hospital | hospital, clinic | 50 dB | 18 | -3 | -5 |
-| Church | church, chapel | 50 dB | 20 | -5 | -20 |
-| Hotel | hotel, hostel | 48 dB | 16 | -2 | -10 |
-| Garage | garage, parking | 35 dB | 12 | -5 | -15 |
-| Farm | farm, barn | 40 dB | 14 | -5 | -20 |
-| Public | civic, office, government | 52 dB | 18 | -8 | -20 |
+| Apartments | apartments (residential default) | 57 dB | 21 | -5 | -10 |
+| House | house, detached, terrace | 57 dB | 18 | -5 | -8 |
+| Commercial / office | commercial, retail, office | 70 dB | 30 | -5 | -10 |
+| Food retail | supermarket, convenience (24/7 refrigeration) | 88 dB | 32 | -2 | -2 |
+| Hospitality | restaurant, café, pub, bar | 75 dB | 26 | 0 | -5 |
+| Warehouse | warehouse, industrial building | 58 dB | 21 | -3 | -8 |
+| School | school, kindergarten | 66 dB | 28 | -10 | -25 |
+| Hospital | hospital, clinic | 72 dB | 26 | -3 | -5 |
+| Church | church, chapel | 72 dB | 26 | -5 | -20 |
+| Hotel | hotel, hostel | 58 dB | 22 | -2 | -10 |
+| Garage | garage, parking | 41 dB | 18 | -5 | -15 |
+| Farm | farm, barn | 56 dB | 20 | -5 | -15 |
+| Public | civic, government, public | 62 dB | 25 | -8 | -20 |
+| Silent | sheds, roofs, huts, greenhouses, ruins | — | — | — | — |
 
-Since the 2026-06 audit the engine constants carry a +5.6..+7.0 dB(A) per-class bump on top of these bases — it compensates the emission-band normalization exactly (radiated levels unchanged, units now honest dB(A); table in `settlement.rs::building_profile`).
+Since the 2026-06 audit these are honest radiated dB(A) totals — the A-weighted band sum equals the listed Lw exactly, calibrated against measured plant/activity literature (not a pre-spectrum scalar). Source: `settlement.rs::building_profile`.
 
 Industrial / warehouse buildings inside industrial landuse polygons are handled by the industrial pipeline, not double-counted. Source at building height / 2 (mid-facade), propagated as ISO 9613-2 point source.
 
@@ -224,11 +231,25 @@ Calibration sources: EU Reg 626/2011 (residential AC units), ASHRAE Handbook Ch.
 
 ---
 
+## Defaults and enrichment
+
+The class tables above are **fallback defaults** — what we assume when no measured data exists. Where real data is available it overrides them, resolved through a four-tier cascade: **city → country → continent → world**. A place with a local traffic survey uses it; otherwise it inherits its country's value, then its continent's, then a global default.
+
+**Enrichment is class-aware.** A measured motorway count is matched only to motorway-class segments, so a residential street never inherits a neighbouring highway's traffic and a tram siding never inherits a mainline's train count (a systemic class-blind bug fixed 2026-06). Coverage today (and growing):
+
+- **Roads** — ~49 countries with national traffic data (US HPMS, EU 36-city harmonized AADT, national surveys), plus the global service-tree estimate for minor roads.
+- **Railways** — ~37 countries from GTFS passenger timetables + freight counts, family-aware (tram / siding / mainline kept separate).
+- **Industrial** — ~126 countries from pollution registries: EU-wide E-PRTR (~67k facilities), the Global Power Plant Database, and national registries (e.g. Czech IRZ); wind turbines from a global turbine inventory.
+
+Everything else falls back to the class-defaults. Each country page lists its specific sources.
+
+---
+
 ## How sound travels
 
 Sound gets quieter as it travels. On flat open ground, a road drops about 3 dB every time you double your distance. But the real world has hills, buildings, and forests that block sound further — and hard surfaces like asphalt that reflect it.
 
-We simulate these effects for every source-receiver pair using [ISO 9613-2](https://www.iso.org/standard/74047.html) ([PDF](../standards/iso-9613-2-2024.pdf)) and [CNOSSOS-EU](https://eur-lex.europa.eu/eli/dir_del/2021/1226) ([PDF](../standards/cnossos-eu-2021-1226.pdf)), computed per 8 octave bands (63–8000 Hz), then A-weighted.
+We simulate these effects for every source-receiver pair using [ISO 9613-2](https://www.iso.org/standard/74047.html) and [CNOSSOS-EU](https://eur-lex.europa.eu/eli/dir_del/2021/1226), computed per 8 octave bands (63–8000 Hz), then A-weighted.
 
 Road, railway, industrial, settlement, and aircraft ground ops use the same propagation engine. Airborne aircraft uses NPD tables where atmospheric absorption is already included.
 
@@ -236,11 +257,11 @@ Road, railway, industrial, settlement, and aircraft ground ops use the same prop
 |--------|-------------|-------------|-----------|
 | Distance | Sound spreads out — 3 dB per doubling (line), 6 dB (point) | Geometry | Baseline |
 | Atmosphere | Air absorbs high frequencies over long distances | ISO 9613-1 (15°C, 70% RH) | Baseline |
-| Ground | Soft ground (grass) absorbs; hard ground (asphalt) reflects | Copernicus IMD raster → G-factor | ~3 dB |
-| Terrain | Hills block sound via diffraction | Copernicus GLO-30 DEM (30m) | 20–25 dB |
+| Ground | Soft ground (grass) absorbs; hard ground (asphalt) reflects | Copernicus IMD (Europe) → G-factor; hard-ground default elsewhere | ~3 dB |
+| Terrain | Hills block sound via diffraction | Copernicus GLO-30 DEM (30m) | 20 dB |
 | Buildings | Buildings screen sound like walls | Overture building-height raster (30m) | 20 dB/band |
 | Vegetation | Forests absorb sound, especially high frequencies | ESA WorldCover 2021 | 2–12 dB/band |
-| Reflections | Urban canyons bounce sound, increasing levels | Building enclosure heuristic | +5 dB |
+| Reflections | Urban canyons bounce sound, increasing levels | Building enclosure heuristic | +3 dB |
 | Weather | Downwind/inversion conditions can carry sound further | Not currently modelled | — |
 
 **Key rule:** When a barrier (hill or building) is present, it replaces the ground effect — you get the larger of the two, not both (ISO 9613-2 §7.3.1). Vegetation attenuation is always additive.
@@ -263,7 +284,7 @@ L_received,i = L_emission,i − A_div,i − A_atm,i − max(A_ground,i, A_terrai
 
 **A-weighting** (IEC 61672-1): `[-26.2, -16.1, -8.6, -3.2, 0.0, 1.2, 1.0, -1.1]` dB.
 
-**Diffraction**: DEM + building heights + explicit barriers merge into one composite top-profile sampled along source→receiver; diffraction computed once over the composite so a building on a hill can't double-count Fresnel. Single edge capped at 20 dB; double/triple at 25 dB (CNOSSOS C″ thick-barrier correction). The popup splits the combined attenuation back into `terrain` + `screening` for UI breakdown, but the physics is computed together. Building reflections (§7.5) are +0–5 dB boost from local enclosure.
+**Diffraction**: DEM + building heights + explicit barriers merge into one composite top-profile sampled along source→receiver; diffraction computed once over the composite so a building on a hill can't double-count Fresnel. Capped at 20 dB in all cases (the multi-edge 25 dB cascade was retired 2026-06; one composite edge now). The popup splits the combined attenuation back into `terrain` + `screening` for UI breakdown, but the physics is computed together. Building reflections (§7.5) are a 0 / 1.5 / 3 dB boost keyed to local enclosure density.
 
 **Vegetation** (ISO 9613-2:2024 A.2.2 × 0.5 Central Europe calibration):
 
@@ -288,7 +309,7 @@ L_received,i = L_emission,i − A_div,i − A_atm,i − max(A_ground,i, A_terrai
 
 ### The noise indicator: Lden
 
-The map shows **Lden** (day-evening-night level), the European standard from [END 2002/49/EC](https://eur-lex.europa.eu/eli/dir/2002/49/oj/eng) ([PDF](../standards/end-2002-49-ec.pdf)). It weights evening noise +5 dB and night noise +10 dB to reflect the greater annoyance of noise during rest periods:
+The map shows **Lden** (day-evening-night level), the European standard from [END 2002/49/EC](https://eur-lex.europa.eu/eli/dir/2002/49/oj/eng). It weights evening noise +5 dB and night noise +10 dB to reflect the greater annoyance of noise during rest periods:
 
 ```
 Lden = 10 × log₁₀((12 × 10^(Ld/10) + 4 × 10^((Le+5)/10) + 8 × 10^((Ln+10)/10)) / 24)
@@ -300,11 +321,11 @@ Day: 07:00–19:00, evening: 19:00–23:00, night: 23:00–07:00.
 
 ### Grid
 
-A Web-Mercator raster at zoom 13 (~12 m per pixel at 50°N, varies with latitude) — fine enough to distinguish the street-facing vs garden side of a building. A zoom pyramid (z6–13) serves coarser tiles when zoomed out.
+A Web-Mercator raster at zoom 13 (~12 m per pixel at 50°N, varies with latitude) — fine enough to distinguish the street-facing vs garden side of a building. A zoom pyramid (z3–13) serves coarser tiles when zoomed out.
 
 ### Color scale
 
-Green (quiet, ~10 dB) → yellow (~45 dB) → orange (~55 dB) → red (~65 dB) → dark purple (very loud, 80+ dB). Transparent where there is no computed noise.
+A muted ramp keyed to Lden: transparent below ~15 dB, pale blue-grey at low levels, pale green ~45–50 dB, yellow ~55 dB, orange ~60 dB, red ~65 dB, deep purple at 80+ dB (very loud). Transparent where there is no computed noise.
 
 ### Toggles
 
@@ -325,7 +346,7 @@ The map can display real estate listings filtered by noise level. Each country h
 
 ### Quiet zones
 
-Highlights contiguous areas below a configurable noise threshold (default 55 dB). Useful for identifying quiet retreats, parks, and areas suitable for noise-sensitive development.
+Highlights contiguous areas below a configurable noise threshold (default 35 dB, slider 20–45). Useful for identifying quiet retreats, parks, and areas suitable for noise-sensitive development.
 
 ---
 
@@ -349,18 +370,18 @@ This model is an engineering approximation for a continental-scale noise atlas �
 | Tile propagation | Operational studies may expose a per-effect propagation breakdown | Tiles store one combined full-propagation Lden per source layer (z13 HM3); the click popup's `traces` expose per-leg / per-sub-segment detail | No per-effect (terrain/screening/vegetation) isolation at tile resolution |
 | Receiver grid | END: facade receivers (4 m height, 2 m from wall) | z13 Web-Mercator raster pixel centers (~12 m at 50°N, 4 m height) | Area average, not per-facade |
 | Road corrections | CNOSSOS-EU: gradient, intersection, temperature | Not implemented | ±1–3 dB on steep/cold roads |
-| Building reflections | ISO 9613-2 §7.5: image-source ray tracing | Simplified: local enclosure heuristic, 0–5 dB boost | May underestimate in complex geometries |
-| Settlement noise | Not standardised (END covers road/rail/aircraft/industry only) | Custom per-building model, 10 OSM building types | Novel — no standard reference values |
+| Building reflections | ISO 9613-2 §7.5: image-source ray tracing | Simplified: local enclosure heuristic, 0–3 dB boost | May underestimate in complex geometries |
+| Settlement noise | Not standardised (END covers road/rail/aircraft/industry only) | Custom per-building model, 14 OSM building types | Novel — no standard reference values |
 | Atmospheric conditions | Variable: temperature, humidity, wind speed | Fixed: 15°C, 70% RH; favourable-weather boost not applied | Seasonal/hourly variation not captured |
 
-Despite these simplifications, the model achieves MAE < 3 dB against national strategic noise maps for road noise (see country validation pages). Aircraft noise has not yet been formally validated.
+These simplifications target MAE < 3 dB against national strategic noise maps for road noise, but formal cross-country validation is still pending — the country pages document each country's reference data and regulator, not a measured error yet. Aircraft noise has not been formally validated.
 
 ---
 
 ## Validation
 
 - **Reference:** National strategic noise maps (see country pages for specifics)
-- **Methodology:** [WG-AEN Good Practice Guide](https://sicaweb.cedex.es/docs/documentacion/Good-Practice-Guide-for-Strategic-Noise-Mapping.pdf) ([PDF](../standards/wg-aen-good-practice-guide.pdf)), [EPA Ireland Guide v4](https://www.epa.ie/publications/monitoring--assessment/noise/) ([PDF](../standards/epa-ireland-noise-mapping-guide-2025.pdf))
+- **Methodology:** [WG-AEN Good Practice Guide](https://sicaweb.cedex.es/docs/documentacion/Good-Practice-Guide-for-Strategic-Noise-Mapping.pdf), [EPA Ireland Guide v4](https://www.epa.ie/publications/monitoring--assessment/noise/)
 - **Target:** MAE < 3 dB, broken down by road class and distance band
 
 ---
