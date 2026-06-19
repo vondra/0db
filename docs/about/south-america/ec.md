@@ -18,7 +18,7 @@ Ecuador's MTOP (Ministerio de Transporte y Obras Públicas) and ANT (Agencia Nac
   - **28,328 polylines** — national + 24 GAD provincial networks combined
   - Fields: `ADMINISTRA` (directa MTOP vs GAD provincial), `TIPO_VIA`, `TIPO_CALZA`, `ANCHO_CAL`, `ESTADO`, `PROVINCIA`
 
-**Ecuador publishes NO per-segment IMD/AADT in machine-readable form.** Fall back to classification-based defaults. This is the only South American country in our pipeline without any real traffic counts.
+**Ecuador publishes NO per-segment IMD/AADT in machine-readable form.** Fall back to classification-based defaults — as in Bolivia, Paraguay and Venezuela (only AR/CL/CO/PE carry surveyed per-segment counts).
 
 ### Ecuadorian AADT defaults (Costa/Sierra/Oriente regional split)
 
@@ -70,11 +70,11 @@ Ecuador has moderate motorcycle share (~15% urban). Heavy share elevated on oil 
 
 ## Railway
 
+Ecuador has **no bespoke rail enricher** — only Argentina does in South America. Ecuadorian rail noise is computed from **OSM rail geometry with class-default passenger/freight frequencies** (the table below), not from an ingested rail or transit feed.
+
 ### Metro de Quito Line 1 (opened December 2023 — Ecuador's first metro)
 
-- **Source**: `services.arcgis.com/mBg08vgayOnqC7Si/arcgis/rest/services/Metro_de_Quito/FeatureServer`
-- **Records**: 15 station points + 1 polyline (Line 1 alignment)
-- **Metro de Quito Line 1**: 22 km underground, Quitumbe ↔ El Labrador, opened December 2023. Designed for ~380,000 daily passengers. Operator: Empresa Metro de Quito.
+- **Metro de Quito Line 1**: 22 km underground, Quitumbe ↔ El Labrador, opened December 2023. Designed for ~380,000 daily passengers. Operator: Empresa Metro de Quito. A `Metro_de_Quito` ArcGIS layer (station points + Line 1 alignment) exists but is **not ingested** — Metro track geometry comes from OSM `railway=subway`, with the light_rail class default below.
 
 ### Ecuadorian rail context
 
@@ -87,6 +87,8 @@ Ecuador has extremely limited operational rail:
 - **Metrovía Guayaquil + Trolebus/Ecovía Quito** — BRT bus, NOT rail.
 
 ### trains/day defaults
+
+**Class-default frequencies** (geometry-driven, not measured train counts):
 
 | Context | pax/day | frt/day |
 |---|---:|---:|
@@ -123,7 +125,7 @@ Ecuador gets ~70% of electricity from hydropower, with the remaining from gas CC
 | **Paute Mazar** | 170 | hydropower | Azuay (Paute cascade, CELEC EP) |
 | **Paute Agoyán** | 160 | hydropower | Tungurahua |
 
-**Operating fuel breakdown**: hydropower 34, solar 17, oil/gas 14, bioenergy 2, wind 2.
+**Operating fuel breakdown**: hydropower 34, solar 18, oil/gas 14, bioenergy 2, wind 2.
 
 All mapped to **NACE 35** (Electricity generation).
 

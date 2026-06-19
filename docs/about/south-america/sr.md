@@ -35,7 +35,7 @@ Bauxite mining railway (Paramaribo–Onverwacht) closed when Alcoa/Suralco smelt
 
 ### GEM — 4 plants, operating, ~250 MW
 
-Hydro 1 + oil/diesel 3. **Afobaka hydro 189 MW** (Brokopondo Reservoir, Suriname River) — sole large hydro, provides ~50% of national electricity.
+Hydro 1 + thermal/oil 2 + solar 1. **Afobaka hydro 189 MW** (Brokopondo Reservoir, Suriname River) — sole large hydro, provides ~50% of national electricity. Plus Saramacca HFO ~36 MW, a Staatsolie refinery CHP unit, and a small Lelydorp solar farm.
 
 ### Key sites not NACE classified
 - **Bauxite legacy**: Paranam smelter (BHP/Alcoa Suralco) closed 2015; Brokopondo aluminium complex historic

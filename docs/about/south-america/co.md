@@ -93,14 +93,11 @@ Colombia is the **5th-largest coal exporter globally**. Two major coal regions g
 
 ## Railway
 
-### Estaciones SITVA (Metro de Medellín)
+Colombia has **no bespoke rail enricher** — only Argentina does in South America. Colombian rail noise is computed from **OSM rail geometry with class-default passenger/freight frequencies** (the table below), not from an ingested national rail or transit feed. The coal corridors get heavier freight counts by line type, not by matching a traffic dataset.
 
-- **Source**: `services1.arcgis.com/Qrk4Z5vQ94JXkdYM/arcgis/rest/services/Estaciones_SITVA/FeatureServer/0`
-- **Records**: **69 station points** (no track polylines)
-  - **39 METRO** (TIPO=1) — Lines A, B
-  - **10 METROCABLE** (TIPO=2) — Lines K, J, L, H, M, P (cable cars)
-  - **20 METROPLÚS / BRT** (TIPO=3) — bus rapid transit, NOT rail (excluded)
-- **Mitigation**: Geographic Metro boost via Valle de Aburrá bbox + OSM `railway=light_rail/subway` tag.
+### Metro de Medellín (SITVA, evaluated — not integrated)
+
+- The SITVA `Estaciones_SITVA` ArcGIS layer (69 station points: 39 METRO Lines A/B, 10 METROCABLE cable-car, 20 METROPLÚS BRT) was reviewed but is **not ingested** — it is station points only, with no track polylines. Metro de Medellín geometry comes from OSM (`railway=light_rail/subway`), with the light_rail/cable-car class defaults below.
 
 ### Colombian rail context
 
@@ -116,6 +113,8 @@ Colombia has extremely limited operational rail. Almost all is freight, dominate
 - **Atlantic Railway Network (FRC)** — mostly inactive
 
 ### trains/day defaults
+
+**Class-default frequencies** (geometry-driven, not measured train counts). With no Colombian rail enricher, the global rail line-type defaults apply; the coal-corridor rows below show the intended freight weighting for those mainlines:
 
 | Context | pax/day | frt/day |
 |---|---:|---:|

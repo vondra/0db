@@ -74,13 +74,12 @@ Chile is dominated by Pampean-style truck freight similar to Argentina but with 
 
 ## Railway
 
-### Red Ferroviaria Nacional
+Chile has **no bespoke rail enricher** — only Argentina does in South America. Chilean rail noise is computed from **OSM rail geometry with class-default passenger/freight frequencies** (the table below), not from an ingested national rail feed. The datasets noted here were evaluated for a future enricher but are **not currently integrated**; the defaults assign heavier freight counts to the northern mining corridors by line type, not by matching against these layers.
+
+### Red Ferroviaria Nacional (evaluated, not yet integrated)
 
 - **Source**: `services6.arcgis.com/133a00biU9FItiqJ/arcgis/rest/services/Red_Ferroviaria/FeatureServer/0`
-- **Records**: 1,244 polyline segments
-  - **890 active** (`Activ_2016='SI'`) — only these are enriched
-  - 37 inactive
-  - 317 blank (treated as inactive)
+- **Records**: 1,244 polyline segments (890 with `Activ_2016='SI'`, 37 inactive, 317 blank). Not currently ingested — rail geometry comes from OSM.
 
 ### Operators
 
@@ -98,19 +97,15 @@ Chilean rail is **freight-dominated** with limited regional passenger service. N
 
 ### Metro de Santiago
 
-- **Source**: `services9.arcgis.com/kKJR3Qt68ohAWuet/arcgis/rest/services/Lineas_actuales_metro/FeatureServer/0`
-- **Owner**: Pontificia Universidad Católica Observatorio de Ciudades (OCUC)
-- **Lines**: 6 operating lines (1, 2, 3, 4, 4A, 5, 6) — **3rd-busiest metro in Latin America** after Mexico City and São Paulo (~2.5M daily passengers pre-pandemic)
-- **Note**: The OCUC dataset still marks Lines 3 and 6 as PROYECTADA despite both being operational since 2017-2019. Geographic Santiago Metro boost via OSM `railway=subway` tag mitigates.
+- **Lines**: 6 operating lines (1, 2, 3, 4, 4A, 5, 6) — **3rd-busiest metro in Latin America** after Mexico City and São Paulo (~2.5M daily passengers pre-pandemic). The OCUC `Lineas_actuales_metro` ArcGIS layer was evaluated (it still marks Lines 3 and 6 as PROYECTADA despite operation since 2017-2019) but is **not ingested** — Metro track geometry comes from OSM `railway=subway`, with the light_rail default frequency below.
 
-### DTPM GTFS
+### DTPM GTFS (not integrated)
 
-- **Source**: Directorio de Transporte Público Metropolitano
-- **URL**: `https://www.dtpm.cl/descargas/gtfs/GTFS_20260321_v3.zip` (effective 2026-03-21, fresh)
-- **Coverage**: Red Metropolitana de Movilidad — buses + Metro + airport shuttle
-- **Status**: Downloaded but not yet integrated. Geographic Subte boost applied instead.
+- A DTPM (Directorio de Transporte Público Metropolitano) GTFS feed exists for the Red Metropolitana de Movilidad (buses + Metro). It is **not integrated** — no measured Metro frequencies are used; the light_rail class default applies instead.
 
 ### trains/day defaults
+
+These are **class-default frequencies** (geometry-driven, not measured train counts):
 
 | Context | pax/day | frt/day |
 |---|---:|---:|
@@ -122,7 +117,7 @@ Chilean rail is **freight-dominated** with limited regional passenger service. N
 | Branch lines | 1 | 4 |
 | **Metro de Santiago (light_rail Lines 1-6)** | 350 | 0 |
 | Tram | 60 | 0 |
-| Non-operational rail (Activ_2016 ≠ 'SI') | 0 | 0 (skip) |
+| Disused/abandoned rail (OSM `railway=disused/abandoned`) | 0 | 0 (skip) |
 
 ## Buildings
 

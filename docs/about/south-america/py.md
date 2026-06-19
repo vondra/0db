@@ -119,7 +119,7 @@ All operating plants map to **NACE 35** (Electricity generation).
 - **No oil refinery** — PETROPAR imports refined products via the Paraná pipeline from Paranaguá (Brazil)
 - **No major mining** — minimal limestone, granite, dolomite
 - **No heavy industry** — small cement (INC Vallemí), brewery (Cervepar Pilsen), soy processors (Cargill/ADM), nothing else
-- **No per-segment TPDA data** — one of only three SA countries in this pipeline (with Uruguay and Ecuador) without any real traffic counts
+- **No per-segment TPDA data** — like Uruguay, Ecuador, Bolivia and Venezuela, Paraguay has no real per-segment traffic counts; only AR/CL/CO/PE carry surveyed AADT in this pipeline
 
 ## Validation
 

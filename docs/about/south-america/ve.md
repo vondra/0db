@@ -84,11 +84,9 @@ High motorcycle share (~25% urban). Heavy share is **lower than rest of SA** due
 
 ## Railway
 
-### VE360 Metro + Sistema Ferroviario (145 features)
+### Class defaults only — OSM rail geometry + context defaults
 
-- **URL**: `services6.arcgis.com/lpJCO3ug8HhNiEOV/arcgis/rest/services/Metro/FeatureServer/0`
-- **Records**: 145 polyline features (originally sourced from OSM)
-- **fclass distribution**: 82 subway, 59 rail, 4 funicular (Ávila cable car)
+There is no Venezuela-specific rail enrichment. Rail geometry comes from OSM; trains/day are applied from the geographic defaults below. (The VE360 SIGOT mirror does host a Metro/Sistema Ferroviario layer, but we do not ingest it — the Vialidad road layer we do use contains only 5 incidental `Ferrocarril` segments — not a rail source.)
 
 ### Venezuelan rail context
 
@@ -125,11 +123,13 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints. No VE-spe
 
 ### VE360 Oil Infrastructure — Venezuela's only remaining functional industry
 
+Ingested as point noise sources:
+
 - **Pozos Petroleros**: **20,714 oil wells** across the Faja del Orinoco (extra-heavy crude belt — world's largest proven reserves) and Lake Maracaibo basin (traditional light crude) → NACE 06
 - **Oil plants**: 28 processing plants → NACE 19
-- **Oil stations**: 110 pumping/compressor stations → NACE 06
-- **Oil pipelines (Tuberías)**: 2,269 oleoductos + gasoductos polylines
-- **Gas flaring/venting points**: 148 points (Venezuela historically has world's highest gas flaring rates)
+- **Subestaciones Eléctricas**: 209 substations → NACE 35
+
+The SIGOT mirror also hosts oil pipelines (2,269 oleoducto/gasoducto polylines), ~110 pumping/compressor stations, and ~148 gas flaring/venting points (Venezuela historically has world's highest gas flaring rates), but these are **not currently ingested** as noise sources.
 
 ### GEM Global Integrated Power (backfill)
 

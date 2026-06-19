@@ -84,11 +84,9 @@ Moderate motorcycle share (~15% urban), elevated heavy share on mining corridors
 
 ### Lima Metro + Peruvian rail defaults
 
-Peru has extremely limited operational rail. No national rail line dataset exists for PeruRail/FCCA/Southern Peru Copper — all are private operators without open geometry.
+Peru has **no bespoke rail enricher** — only Argentina does in South America. Peruvian rail noise is computed from **OSM rail geometry with class-default passenger/freight frequencies** (the table below), not from an ingested rail feed. No national rail line dataset exists for PeruRail/FCCA/Southern Peru Copper anyway — all are private operators without open geometry — and the mining/tourist corridors get their freight/passenger weighting by line type, not by matching a traffic dataset.
 
-- **Source**: `services8.arcgis.com/2qDHoDLqu6VOlf1y/arcgis/rest/services/METRO_LIMA_WFL1/FeatureServer/0-1`
-- **Records**: 109 station points + 14 polyline segments
-- **Content**: Lima Metro Line 1 (operating) + Line 2 (under construction) + Line 4 (planned)
+A Lima Metro ArcGIS layer (`METRO_LIMA_WFL1` — Line 1 operating, Line 2 under construction, Line 4 planned) exists but is **not ingested**; Metro track geometry comes from OSM, with the light_rail class default.
 
 ### Peruvian rail operators
 
@@ -101,6 +99,8 @@ Peru has extremely limited operational rail. No national rail line dataset exist
 - **Southern Peru Copper Railway** — private mining freight, Toquepala/Cuajone ↔ Ilo port/smelter
 
 ### trains/day defaults
+
+**Class-default frequencies** (geometry-driven, not measured train counts); the corridor rows below show the intended weighting by line type:
 
 | Context | pax/day | frt/day |
 |---|---:|---:|
