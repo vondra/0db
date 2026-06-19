@@ -57,14 +57,14 @@ GHSL Built-H R2023A 100 m global raster + Overture Maps Foundation building foot
 
 ## Industrial
 
-### Power plants — GPPD
+### Power plants — GEM
 
-WRI Global Power Plant Database via `/enrich-global` covers Australian plants. Major sources of industrial noise:
+`pipeline/enrich-industrial-au.ts` filters the **GEM Global Integrated Power** database to Australia (822 operating plants) and stamps a power-generation NACE class onto the nearest OSM industrial site. (The global GPPD pass via `/enrich-global` also contributes.) Major sources of industrial noise:
 
-- **Coal**: Eraring (NSW), Bayswater (NSW), Loy Yang A/B (VIC), Stanwell (QLD), Vales Point (NSW), Mt Piper (NSW), Tarong (QLD)
-- **Gas**: Tallawarra (NSW), Hallett (SA), Kwinana (WA)
+- **Coal**: Eraring (NSW, ~2,880 MW — largest single plant), Bayswater (NSW), Loy Yang A/B (VIC), Callide (QLD), Stanwell (QLD), Vales Point (NSW), Mt Piper (NSW), Tarong (QLD)
+- **Gas**: Torrens Island (SA), Darling Downs (QLD), Tallawarra (NSW), Hallett (SA), Kwinana (WA)
 - **Hydroelectric**: Snowy 2.0 (under construction, NSW), Murray, Tumut, Gordon (Tasmania)
-- **Wind**: Macarthur (VIC), Snowtown (SA), Hornsdale (SA), Coopers Gap (QLD), Cathedral Rocks (SA), Collgar (WA)
+- **Wind**: Stockyard Hill (VIC), Macarthur (VIC), Snowtown (SA), Hornsdale (SA), Coopers Gap (QLD), Cathedral Rocks (SA), Collgar (WA)
 
 ### Wind turbines
 

@@ -45,7 +45,7 @@ No rail infrastructure. All transport by road. Nickel ore moves by truck from mi
 
 ### GEM — 39 plants, operating, ~970 MW
 
-Solar 24 + wind 7 + coal/unknown 4 + oil/gas 3 + hydro 1. **NC has the highest GEM plant count per capita of any enriched territory** (39 plants for 270k people). Three nickel smelters dominate:
+Solar 24 + wind 7 + coal/unknown 4 + oil/gas 3 + hydro 1 — an unusually dense GEM footprint for a 270k-population territory. Three nickel smelters dominate:
 
 **Doniambo** (SLN/Eramet, Nouméa) — 180+160 = **340 MW** fuel oil. Operating since 1910 — **one of world's oldest continuously operating nickel smelters**. Pyrometallurgical.
 
