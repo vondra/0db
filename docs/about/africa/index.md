@@ -1,35 +1,23 @@
 ---
 title: Africa
-intro: Noise mapping overview for Africa — global baseline plus per-country enrichment for South Africa.
+intro: Noise mapping overview for Africa — global baseline plus per-country enrichment across 39 countries.
 map: { center: [20, 5], zoom: 3 }
 ---
 
 ## Data situation
 
-Africa has no continent-wide open transport or environmental data initiatives. Transit data is exceptionally sparse — most African transit systems are informal (minibuses, matatus, tro-tros) and not digitized. **Per-country enrichment has been completed for South Africa** (most-developed African open data), using Eskom University of Pretoria mirror + GEM Global Integrated Power August 2025 + GEM Global Coal Mines 2024.
+Africa has no continent-wide open transport or environmental data initiatives. Transit data is exceptionally sparse — most African transit systems are informal (minibuses, matatus, tro-tros) and not digitized. **Per-country enrichment has nonetheless been completed for 39 countries**, mostly from GEM (Global Energy Monitor) power-plant and coal-mine registries (e.g. South Africa via the Eskom University of Pretoria mirror + GEM Global Integrated Power + GEM Global Coal Mines), with country-specific road/rail tuning (corridor + registry data, not published per-segment AADT) folded in for nine countries.
 
 ## Continental enrichment
 
-No usable datasets found. Research conducted 2026-04-10:
+No continent-wide open transport feed exists (no African equivalent of the EU's open-data directives — early GTFS sources like Gautrain, Digital Matatus, Cairo Metro and Lagos BRT were all dead or 404 when checked). Enrichment is therefore per-country, and despite the sparse data landscape **39 African countries are now enriched**:
 
-| Source | Status |
-|--------|--------|
-| South Africa Gautrain GTFS | Connection timeout |
-| South Africa MyCiTi (OpenMobilityData) | Dead (XML error) |
-| Kenya Digital Matatus (GitHub) | 404 |
-| Cairo Metro (GitHub) | 404 |
-| Lagos BRT (GitHub) | 404 |
-| DigitalTransport4Africa | Project exists but no direct downloads |
+- **Industrial** — per-country GEM (Global Energy Monitor) power-plant and coal-mine data, plus the global GPPD, applied across all ~39 enriched countries.
+- **Country-specific road/rail enrichment** — corridor + registry tuning (not published per-segment AADT), applied for 9 countries: Algeria, Egypt, Ethiopia, Kenya, Morocco, Nigeria, Sudan, Tanzania, DR Congo (corridor-default rail elsewhere).
 
 ## What the map uses (global baseline)
 
-- **DEM**: Copernicus GLO-30 (30m) — terrain diffraction
-- **Buildings**: GHSL 100m (Overture has near-zero height coverage in Africa)
-- **Forest**: ESA WorldCover 10m — good coverage of tropical forests, savannas
-- **Ground**: WorldCover-derived G-factor
-- **Industrial**: GPPD power plants — NG 55, ZA 51, EG 44, ET 26, KE 23 plants
-- **Traffic**: OSM road class defaults only
-- **Railway**: OSM rail type defaults only
+Global baseline (GLO-30 DEM, WorldCover forest + ground) applies everywhere — see [main methodology](../index.md). Africa-specific delta: building heights come from **GHSL 100 m** (Overture has near-zero height coverage in Africa, so per-building screening is coarse and many areas have near-zero modelled building height). Industrial uses **GEM + GPPD** (GEM dominant — power plants and coal mines per country; e.g. NG 55, ZA 51, EG 44, ET 26, KE 23 power plants).
 
 ## Per-country enrichment status
 
@@ -81,6 +69,3 @@ No usable datasets found. Research conducted 2026-04-10:
 38. **Cabo Verde** ✅ — 8 GEM plants / 46 MW. Wind+solar. Cesária Évora. Portuguese-speaking. **86k roads (100%)**. See [Cabo Verde](cv).
 39. **São Tomé and Príncipe** ✅ — 0 GEM plants. Cocoa. Africa's 2nd smallest. **15k roads (100%)**. See [São Tomé](st).
 
-## Methodology
-
-Same as global: CNOSSOS-EU emission + ISO 9613-2 propagation.

@@ -36,13 +36,11 @@ Source: TransLink GTFS from translink.com.au. 682 rail routes (CityTrain + QR re
 
 ## What the map uses
 
-- **DEM**: Copernicus GLO-30 (30m) — terrain diffraction
-- **Buildings**: GHSL 100m + Overture Maps 30m (Sydney 57.7% height coverage)
-- **Forest**: ESA WorldCover 10m — vegetation attenuation
-- **Ground**: WorldCover-derived G-factor
-- **Industrial**: GPPD power plants — AU 203, NZ 34 plants
-- **Railway**: Melbourne Metro + Brisbane CityTrain real frequencies; other rail uses OSM defaults
-- **Traffic**: OSM road class defaults (no AADT enrichment)
+Global baseline (GLO-30 DEM, Overture/GHSL buildings, WorldCover forest + ground) applies everywhere — see [main methodology](../index.md). Oceania-specific enrichment:
+
+- **Traffic**: New Zealand national road AADT (NZTA / Auckland) applied; Australia uses class defaults.
+- **Railway**: Melbourne Metro + Brisbane CityTrain real frequencies; other rail uses OSM defaults.
+- **Buildings**: Overture Maps 30m height where available (Sydney 57.7% coverage) on top of GHSL 100m baseline.
 
 ## Per-country enrichment priority
 
@@ -60,6 +58,3 @@ Source: TransLink GTFS from translink.com.au. 682 rail routes (CityTrain + QR re
 
 4. **Samoa** ✅ — LTA publishes nothing. GEM-only (4 tiny solar plants / ~8 MW — Satapuala 2.6+2.0, Faleolo Airport 2.1, Faleata 1.4). **NO railway**. ~200k population, 2 islands (Upolu + Savai'i — largest Polynesian island). **Left-hand traffic since 2009** (only 21st-century driving side switch, aligned with AU/NZ). Colorful wooden **"aiga" buses**. Yazaki wiring factory (only manufacturer). **~21.8k road segments enriched (100%)**. See [Samoa page](ws).
 
-## Methodology
-
-Same as global: CNOSSOS-EU emission + ISO 9613-2 propagation.

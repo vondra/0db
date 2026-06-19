@@ -10,41 +10,32 @@ Asia has no continent-wide open data mandates comparable to Europe's Environment
 
 ## Continental enrichment
 
-No multi-country Asian datasets exist (no equivalent of EU open data directives). Enrichment is per-country using the best available open data.
+No multi-country Asian datasets exist (no equivalent of EU open data directives), so enrichment is per-country using the best available open data. The major economies are now enriched:
 
-### Research findings (2026-04)
+- **Road enrichment applied** — Japan, India, China, Indonesia, Philippines, Thailand, Saudi Arabia, plus Iraq, Iran, Kazakhstan, Uzbekistan further west. Data source and method vary by country (see each country page); other countries use class defaults.
+- **Rail enrichment applied** — India (Esri Living Atlas per-segment network), China, South Korea, Thailand, Israel, UAE, India metro lines, plus Iran, Iraq, Kazakhstan, Uzbekistan further west. Other rail uses OSM defaults.
+- **Industrial** — registry/GEM enrichment across nearly all Asian countries (see per-country list below).
 
-| Country | Dataset | What | Status |
-|---------|---------|------|--------|
-| **Japan** | MLIT road traffic census (R3/2021) | AADT by road section, light/heavy split | Available — CSV from mlit.go.jp, needs GIS join (no coordinates in CSV) |
-| **Japan** | ODPT (Open Data for Public Transportation) | JR + metro GTFS timetables | Requires registration + API key |
-| **South Korea** | data.go.kr transit feeds | GTFS for various operators | Requires Korean registration |
-| **Taiwan** | TDX (Transport Data Exchange) | Rail + bus GTFS | Requires API key (returns 401) |
-| **India** | Indian Railways | No national GTFS published | Not available |
-| **China** | — | No open transit data | Not available |
-| **SE Asia** | Individual city feeds | Fragmented, no country-level data | Per-city only |
-
-### What the map uses (global baseline)
-
-All Asian countries benefit from global enrichment:
-- **DEM**: Copernicus GLO-30 (30m, 2021) — terrain diffraction
-- **Buildings**: GHSL 100m + Overture Maps per-building heights where available (Tokyo 3%, limited elsewhere)
-- **Forest**: ESA WorldCover 10m — vegetation attenuation
-- **Ground**: WorldCover-derived G-factor (no Copernicus IMD outside Europe)
-- **Industrial**: GPPD power plants (NACE 35) — sector-specific emission for power plants
-- **Wind turbines**: USWTDB (US only — Asian turbines use OSM defaults)
-- **Traffic**: OSM road class defaults (no AADT data applied outside Japan)
-- **Railway**: Indian Railways GTFS — 8,495 stations, 150K segments enriched with real train frequencies. Other countries use OSM defaults.
-
-### Per-country enrichment priority
-
-1. **Japan** — richest open data (MLIT census + ODPT, both need processing)
-2. **South Korea** — data.go.kr has GTFS but requires registration
-3. **Taiwan** — TDX API has good data but needs API key
-4. **India** — no national open transit/traffic data
-5. **China** — no open data available
+Global baseline (terrain, buildings, forest, ground) applies everywhere — see [main methodology](../index.md). Asia-specific deltas: building heights come mostly from GHSL 100 m (Overture per-building height coverage is thin, ~3% in Tokyo and lower elsewhere); ground uses the WorldCover-derived G-factor (no Copernicus IMD outside Europe); Asian wind turbines fall back to OSM defaults (USWTDB is US-only).
 
 ## Per-country enrichment status
+
+### Major economies (road / rail enrichment)
+
+- **China** ✅ — national road AADT + railway network enrichment (industrial via GEM). See [China page](cn).
+- **India** ✅ — Esri Living Atlas railway network (119,446 per-segment polylines + 1,401 metro stations) + national road AADT + GEM industrial. See [India page](in).
+- **Japan** ✅ — national road AADT (MLIT census) + GEM industrial. See [Japan page](jp).
+- **South Korea** ✅ — railway frequencies + GEM industrial (roads class-default). See [South Korea page](kr).
+- **Thailand** ✅ — road AADT + railway frequencies + GEM industrial. See [Thailand page](th).
+- **Indonesia** ✅ — national road AADT + GEM industrial. See [Indonesia page](id).
+- **Philippines** ✅ — national road AADT + GEM industrial. See [Philippines page](ph).
+- **Saudi Arabia** ✅ — national road AADT + GEM industrial. See [Saudi Arabia page](sa).
+- **Israel** ✅ — railway frequencies + GEM industrial. See [Israel page](il).
+- **UAE** ✅ — railway (Dubai RTA / Dubai Tram) + GEM industrial. See [UAE page](ae).
+- **Vietnam** ✅ — GEM industrial (roads/rail class-default). See [Vietnam page](vn).
+- **Singapore** ✅ — GEM industrial; dense Overture buildings (roads/rail class-default). See [Singapore page](sg).
+
+### GEM-enriched economies
 
 1. **Pakistan** ✅ — NHA/Pakistan Railways all corporate HTML. GEM-only (432 plants / 203 operating / **~46.3 GW — largest fleet of any enriched country**). **Tarbela Dam 4,888 MW** (Indus River, one of world's largest earth-fill dams) + **Ghazi Barotha 1,450 + Mangla 1,070 + Neelum-Jhelum 969 + Suki Kinari 884 + Karot 720** hydro cascade + **KANUPP Karachi Nuclear 2,200 MW** (Hualong One Chinese-built) + **Punjab RLNG cluster ~5,000 MW** (Balloki/Trimmu/HBS/Bhikki CPEC) + **Port Qasim/Hubco/Sahiwal coal** + 57 solar + 36 wind (Sindh Jhimpir/Gharo corridor). **Pakistan Railways ML-1** (~7,791 km broad gauge 1,676 mm, British colonial 1861, ~1,700 km backbone Karachi↔Peshawar) + **Lahore Orange Line Metro** (Pakistan's first metro, 2020, 27 km CPEC Chinese-built). **×2.5 megacity multiplier** for Karachi (~16M) + Lahore (~13M). **30% motorcycle share** (one of world's highest densities) + decorated "jingle truck" heavy fleet. **N5 Grand Trunk Road** (one of Asia's oldest, Maurya 3rd century BC). **CPEC $62B** Belt and Road flagship. **~20.5M road segments enriched** (87% of usable bbox — **largest road dataset processed**). See [Pakistan page](pk).
 2. **Bangladesh** ✅ — RHD/Bangladesh Railway/BPDB all corporate HTML. GEM-only (360 plants / 152 operating / **~27.4 GW, overwhelmingly gas-dominant** — 120 of 152 plants are oil/gas from domestic Sylhet/Comilla fields) + new **coal quartet**: **Payra 1,320 + Rampal 1,320 + Banshkhali 1,320 + Matarbari 1,200** = 5,160 MW CPEC/JICA coal + **Kaptai 230 MW** (Bangladesh's only hydro, Karnaphuli 1962). **Rooppur Nuclear 2,400 MW under construction** (Russian VVER-1200). **Bangladesh Railway ~2,956 km** with **unique dual-gauge** (broad gauge W of Jamuna, meter gauge E — Bangabandhu Bridge 1998 connects) + **Dhaka Metro Rail Line 6** (**opened Dec 2022**, 21 km elevated, JICA Japanese-funded — Bangladesh's first metro). **World's most densely populated large country** (1,182/km²). **Dhaka ×2.5 megacity** (~22M, one of world's densest cities). **CNG auto-rickshaw dominance** (world's largest CNG fleet, 22% medium share) + **32% motorcycle share** + **400,000 bicycle rickshaws** (world's largest fleet — non-motorized, excluded from CNOSSOS). **World's #2 garment exporter** ($45B/year RMG, Gazipur/Narayanganj). **Ship-breaking Chittagong** (world's #2). **Padma Bridge 2022** ($3.6B, transforming SW). **~8.03M road segments enriched (96% of total)**. See [Bangladesh page](bd).
@@ -75,6 +66,3 @@ All Asian countries benefit from global enrichment:
 26. **Timor-Leste** ✅ — 2 GEM plants / 255 MW. Newest Asian country (2002). Oil/gas. **154k roads (50%)**. See [Timor-Leste](tl).
 27. **Maldives** ✅ — 1 GEM plant / 50 MW. Island chain. Sea level rise threat. **27k roads (83%)**. See [Maldives](mv).
 
-## Methodology
-
-Same as global: CNOSSOS-EU emission + ISO 9613-2 propagation. No regional noise standards are applied — the model uses EU methodology worldwide for consistency.

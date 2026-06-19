@@ -1,41 +1,24 @@
 ---
 title: South America
-intro: Noise mapping overview for South America — per-country enrichment available for 9 Hispanic/Lusophone countries (BR, AR, CL, CO, PE, EC, UY, PY, BO).
+intro: Noise mapping overview for South America — per-country enrichment available for all 12 mainland countries.
 map: { center: [-60, -15], zoom: 3 }
 ---
 
 ## Data situation
 
-South America has no continent-wide open data initiatives for transport or environment. Transit operators rarely publish GTFS feeds, and national traffic count data is not openly available across the continent. **However, per-country enrichment has been completed for all 9 Hispanic/Lusophone South American countries** (Brazil, Argentina, Chile, Colombia, Peru, Ecuador, Uruguay, Paraguay, Bolivia), each leveraging country-specific open data portals (DNIT/SIGACONTROL for Brazil, IGN GeoServer/IDE Transporte for Argentina, MOP Vialidad/CNE/SERNAGEOMIN for Chile, INVIAS/ANM/ANH for Colombia, MTC Provías/INGEMMET/PERUMIN for Peru, CONGOPE/GEM for Ecuador, GEM-only for Uruguay, MOPC KMZ/GEM for Paraguay, MHE GeoServer/ABC community mirror for Bolivia).
+South America has no continent-wide open data initiatives for transport or environment. Transit operators rarely publish GTFS feeds, and national traffic count data is not openly available across the continent. **However, per-country enrichment has been completed for all 12 mainland countries** (Brazil, Argentina, Chile, Colombia, Peru, Ecuador, Uruguay, Paraguay, Bolivia, Venezuela, Suriname, Guyana), each leveraging country-specific open data portals or community mirrors (DNIT/SIGACONTROL for Brazil, IGN GeoServer/IDE Transporte for Argentina, MOP Vialidad/CNE/SERNAGEOMIN for Chile, INVIAS/ANM/ANH for Colombia, MTC Provías/INGEMMET/PERUMIN for Peru, CONGOPE/GEM for Ecuador, GEM-only for Uruguay, MOPC KMZ/GEM for Paraguay, MHE GeoServer/ABC community mirror for Bolivia, VE360 community mirror for Venezuela, GEM for Suriname and Guyana).
 
 ## Continental enrichment
 
-No multi-country datasets found. Research conducted 2026-04-10:
-
-| Country | Dataset | Status |
-|---------|---------|--------|
-| **Brazil** | CPTM (São Paulo trains) GTFS | Empty download (0 bytes) |
-| **Brazil** | Metro SP GTFS | 404 / HTML redirect |
-| **Chile** | DTPM Santiago GTFS | Bus-only (372 routes, no rail) |
-| **Argentina** | Buenos Aires subte GTFS (2019) | Frequency-based, missing link tables |
-| **Colombia** | TransMilenio Bogotá | 404 |
-
-### Why South America is harder
-
-- No equivalent of EU Environmental Noise Directive mandating open data
-- Metro/rail operators (MetroSP, CPTM, Subte BA, Metro Santiago) don't consistently publish GTFS
-- National road traffic census data is not openly downloadable
-- Industrial facility registries are not publicly geocoded
+No multi-country, continent-wide feed exists (no equivalent of the EU's Environmental Noise Directive mandating open data; metro/rail operators like MetroSP, CPTM, Subte BA and Metro Santiago don't consistently publish GTFS). Enrichment is instead assembled per country from national portals and community mirrors — see the per-country status below.
 
 ## What the map uses (global baseline)
 
-- **DEM**: Copernicus GLO-30 (30m) — terrain diffraction
-- **Buildings**: GHSL 100m (Overture has <1% height coverage for SA cities)
-- **Forest**: ESA WorldCover 10m — vegetation attenuation (Amazon basin well covered)
-- **Ground**: WorldCover-derived G-factor
-- **Industrial**: GPPD power plants (NACE 35) — BR 255, AR 88, CL 69, CO 36 plants
-- **Traffic**: OSM road class defaults only
-- **Railway**: OSM rail type defaults only (no train frequency data)
+Global baseline (GLO-30 DEM, GHSL buildings, WorldCover forest + ground) applies everywhere — see [main methodology](../index.md). South-America-specific notes: building heights come from **GHSL 100 m** (Overture has <1% height coverage for SA cities); WorldCover covers the Amazon basin well. Enrichment on top of the baseline:
+
+- **Traffic**: Brazil, Argentina, Chile, Colombia, Peru and Ecuador carry real national road data (per-segment AADT for AR/CL/CO/PE where surveys exist), plus Bolivia, Paraguay and Venezuela via community/mirror sources; other countries use class defaults.
+- **Industrial**: GPPD power plants (NACE 35) baseline — BR 255, AR 88, CL 69, CO 36 plants — overridden per country by national registries where available (ANEEL energy fleet in Brazil, ANM/SERNAGEOMIN/INGEMMET mining → NACE 05/07/08 in Colombia/Chile/Peru, ANH oil & gas in Colombia).
+- **Railway**: Argentina rail enrichment (Buenos Aires commuter frequencies); other countries carry rail geometry only with class-default frequencies. All remaining rail uses OSM defaults.
 
 ## Per-country enrichment status
 
@@ -52,6 +35,3 @@ No multi-country datasets found. Research conducted 2026-04-10:
 11. **Suriname** ✅ — 4 GEM plants / 250 MW. **Afobaka hydro 189 MW** (built for Suralco/Alcoa aluminium, flooded 1% of territory). Dutch-speaking. 93% forest (most forested country). **91k roads (96%)**. See [Suriname](sr).
 12. **Guyana** ✅ — 2 GEM plants / 2 MW (tiny solar only). **ExxonMobil Stabroek oil boom** (offshore, not in GEM — one of world's largest recent discoveries). English-speaking cricket country. **147k roads (92%)**. See [Guyana](gy).
 
-## Methodology
-
-Same as global: CNOSSOS-EU emission + ISO 9613-2 propagation.

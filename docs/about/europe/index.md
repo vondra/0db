@@ -61,7 +61,7 @@ Different sources propagate different distances. A motorway is audible much furt
 | Aircraft corridor | Segment midpoint only (no lateral spread) | NPD proxy profiles; all altitudes included (extrapolated beyond 25,000 ft) |
 | Industrial facility | up to 5 km | Varies by sector (NACE-differentiated), 10 dB threshold |
 | Wind turbine | up to 5 km | Elevated point source (actual hub height), 100–107 dB |
-| Settlement building | 1–2 km | Per-building acoustic capacity model, 11 OSM classes |
+| Settlement building | 1–2 km | Per-building acoustic capacity model, 14 OSM classes |
 
 ## WHO guidelines
 
@@ -89,9 +89,10 @@ European noise data is enriched at three levels: global baseline → continental
 
 | Dataset | Coverage | Impact | Status |
 |---------|----------|--------|--------|
-| **EU city traffic (AADT)** | 36 cities across 15 countries | Road segments get real traffic counts instead of defaults | Applied — 335K+ segments |
-| **GTFS railway timetables** | DE, CH, AT, NL, SE, NO, BE (7 feeds) | Railway segments get real train frequencies | Applied — 130K+ segments |
-| **GPPD power plants** | 34,936 plants worldwide (EU subset) | Industrial sites get NACE 35 classification | Applied — direct to industrial.arrow |
+| **EU city traffic (AADT)** | 36 cities across 16 countries | Road segments get real traffic counts instead of defaults | Applied — 335K+ segments |
+| **E-PRTR industrial registry** | 32 EU/EEA countries, full NACE spectrum | Industrial sites get registry NACE sector (not just power plants) | Applied — 67,413 facilities |
+| **GTFS railway timetables** | ~17 European countries (18 feeds) | Railway segments get real train frequencies | Applied |
+| **GPPD power plants** | ~35K plants worldwide (EU subset) | Industrial sites get NACE 35 classification | Applied — direct to industrial.arrow |
 | **Copernicus IMD** | Europe-wide 10m raster | Ground effect G-factor overlay on WorldCover | Applied — in raster pipeline |
 
 ### EU city traffic
@@ -100,13 +101,18 @@ Source: "Harmonized Annual Averaged Traffic Data at Street Segment Level for Eur
 
 ### GTFS railway
 
-Train frequencies from public GTFS feeds: DELFI (DE), opentransportdata.swiss (CH), ÖBB (AT), NS (NL), Trafikverket (SE), Entur (NO), NMBS/SNCB (BE). Finland skipped (bus-only feed). Busiest Wednesday selected as reference day.
+Train frequencies from public GTFS feeds across ~17 European countries: DELFI (DE), opentransportdata.swiss (CH), ÖBB (AT), NS (NL), Trafikverket (SE), Entur (NO), Fintraffic (FI), NMBS/SNCB (BE), SNCF + Transilien (FR), CFL (LU), Hellenic Train (GR), Pasažieru Vilciens (LV), Peatus.ee (EE), Sofia Traffic (BG), HŽ (HR), MÁV-START (HU), ŽSR (SK). Busiest Wednesday selected as reference day.
+
+### National road & rail enrichment
+
+Beyond the harmonized 36-city dataset, several European countries carry their own country-specific road/rail enrichment. Data source and method vary by country (published surveys, corridor-tier, network-derived tuning) — see each country page:
+
+- **Road enrichment applied** — Czechia, Germany, Spain, France, United Kingdom, Italy, Poland, Denmark, Finland, Norway, Ireland, Russia, Turkey, Ukraine.
+- **Rail enrichment applied** — Czechia, Spain, Italy, Poland, Portugal, Sweden, Denmark, Finland, Ireland, Russia, Ukraine.
 
 ### Known gaps
 
-- **E-PRTR** (30K EU industrial facilities with NACE codes): EEA restructured website to React SPA — all download endpoints broken (404/500). GPPD provides partial coverage (power plants only). Manual browser download needed.
-- **Finland railway**: National GTFS feed contains only bus data. Finnish rail operator VR publishes data separately.
-- **Traffic outside 36 cities**: Roads outside EU city traffic coverage use default AADT by road class.
+- **Traffic outside enriched coverage**: Roads outside the 36 cities and the national AADT countries use default AADT by road class.
 
 ## Non-EU per-country enrichment
 
