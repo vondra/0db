@@ -541,20 +541,15 @@ fn run_stream(
         .parse()
         .unwrap_or(2)
         .max(1);
-    let pull_batch: usize = env("QM_GPU_STREAM_PULL_BATCH", "4")
-        .parse()
-        .unwrap_or(4)
-        .max(1);
     let names: Vec<&str> = layers.iter().map(|l| l.dir()).collect();
     eprintln!(
-        "stream: layers={names:?}, halo={halo_m:.0}m, batch={batch_n}, {n_workers} worker(s), stream-batch={pull_batch} — reading R4 cells from stdin"
+        "stream: layers={names:?}, halo={halo_m:.0}m, batch={batch_n}, {n_workers} worker(s) — reading R4 cells from stdin"
     );
 
     // Morton-locality streaming pool (mirrors gpu_airborne run_stream): a reader thread fills a shared
-    // queue in arrival (= the orchestrator's Morton) order; each warm worker drains a contiguous run, so
-    // its serial-crop RealRasters keeps the grid_disk(1) ring-cache warm across the run it builds. On small
-    // tmpfs boxes the agent's in-flight cap is intentionally shallow; make the run size configurable so
-    // those boxes can spread cells over every CUDA stream instead of letting one worker monopolize four cells.
+    // queue in arrival (= the orchestrator's Morton) order; each warm worker pops ONE cell per lock
+    // acquire, so its serial-crop RealRasters keeps the grid_disk(1) ring-cache warm across the cells it
+    // builds while every CUDA stream stays fed (no worker monopolizes a batch).
     // (queue of pending cells, stream-closed flag) + a condvar — same shape as gpu_airborne::StreamQueue.
     type Work = Arc<(Mutex<(VecDeque<u64>, bool)>, Condvar)>;
     let work: Work = Arc::new((Mutex::new((VecDeque::new(), false)), Condvar::new()));
@@ -602,50 +597,43 @@ fn run_stream(
                     total: 0,
                     last_beat: Instant::now(),
                 };
-                'worker: loop {
-                    let batch: Vec<u64> = {
+                loop {
+                    let cell: Option<u64> = {
                         let (lock, cv) = &*work;
                         let mut g = lock.lock().unwrap();
                         loop {
-                            if !g.0.is_empty() {
-                                let take = g.0.len().min(pull_batch);
-                                break g.0.drain(..take).collect();
+                            if let Some(r4) = g.0.pop_front() {
+                                break Some(r4);
                             }
                             if g.1 {
-                                break Vec::new(); // stream closed + drained → exit
+                                break None; // stream closed + drained → exit
                             }
                             g = cv.wait(g).unwrap();
                         }
                     };
-                    if batch.is_empty() {
+                    let Some(r4) = cell else { break };
+                    let t = Instant::now();
+                    let tiles = region_tiles(r4, z);
+                    let line = match process_region(
+                        r4, &tiles, layers, cfg, &dev, &f, prepared, &mut stats, &mut prog,
+                    ) {
+                        Ok((w, s)) => format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis()),
+                        Err(e) => format!("fail {r4:x} {e}"),
+                    };
+                    let mut o = out.lock().unwrap();
+                    let ok = writeln!(o, "{line}").is_ok() && o.flush().is_ok();
+                    drop(o);
+                    if !ok {
+                        // downstream (the box-agent) closed its read end → stop the build, exactly
+                        // as the old serial path's `writeln!(…)?` did: signal EOF so every worker drains
+                        // and exits, instead of spinning on a dead pipe.
+                        let (lock, cv) = &*work;
+                        let mut g = lock.lock().unwrap();
+                        g.1 = true;
+                        g.0.clear(); // drop pending cells so peers exit NOW, not after wasted builds
+                        drop(g);
+                        cv.notify_all();
                         break;
-                    }
-                    for r4 in batch {
-                        let t = Instant::now();
-                        let tiles = region_tiles(r4, z);
-                        let line = match process_region(
-                            r4, &tiles, layers, cfg, &dev, &f, prepared, &mut stats, &mut prog,
-                        ) {
-                            Ok((w, s)) => {
-                                format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis())
-                            }
-                            Err(e) => format!("fail {r4:x} {e}"),
-                        };
-                        let mut o = out.lock().unwrap();
-                        let ok = writeln!(o, "{line}").is_ok() && o.flush().is_ok();
-                        drop(o);
-                        if !ok {
-                            // downstream (the box-agent) closed its read end → stop the build, exactly
-                            // as the old serial path's `writeln!(…)?` did: signal EOF so every worker
-                            // drains its current batch and exits, instead of spinning on a dead pipe.
-                            let (lock, cv) = &*work;
-                            let mut g = lock.lock().unwrap();
-                            g.1 = true;
-                            g.0.clear(); // drop pending cells so peers exit NOW, not after wasted builds
-                            drop(g);
-                            cv.notify_all();
-                            break 'worker;
-                        }
                     }
                 }
             });
