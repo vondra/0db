@@ -52,12 +52,11 @@ Libya has **Africa's largest proven oil reserves** (~48 billion barrels). The in
 
 | Plant | MW | Type | Notes |
 |---|---:|---|---|
-| **West Libya Gas Project (Mellitah)** | 2,000+ | gas CCGT | ENI + NOC; Wafa gas field |
-| **Khoms Power Station** | 1,000 | gas | East of Tripoli |
+| **West Tripoli (Janzour)** | ~380 | gas | GT units operating (GT1/GT2 + mobile); a 4×350 MW steam block is still under construction |
+| **Khoms Power Station** | 1,000 | gas | Mediterranean coast, east of Tripoli |
 | **Zawiya Power Station** | 1,000 | gas/HFO | Western; adjacent to oil refinery |
 | **Misrata Power Station** | 1,000 | gas | Western port city |
-| **Benghazi North** | 900 | gas | Eastern grid |
-| **Tripoli West** | 800 | gas/HFO | Capital supply |
+| **Benghazi North** | 900 | gas | Eastern grid (GECOL) |
 | **Tobruk Power Station** | 400 | HFO/gas | Far eastern grid |
 | **Sabha Power Station** | 200 | HFO | Southern Fezzan grid |
 

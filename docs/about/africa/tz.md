@@ -76,7 +76,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 - **Source**: `services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/Global_Integrated_Power_v1/FeatureServer/0?where=Country_area='Tanzania'`
 
-**Operating fuel**: hydropower 5 + oil/gas 4 + solar 4.
+**Operating fuel**: hydropower 6 + oil/gas 4 + solar 4.
 
 ### Top operating plants
 

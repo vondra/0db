@@ -73,7 +73,7 @@ Madagascar has **two narrow-gauge railway lines** operated by **Madarail** (priv
 - Mostly freight (cement, agricultural, Holcim Ibity)
 
 ### FCE (Fianarantsoa-Côte Est)
-- **Fianarantsoa ↔ Manakara** — 163 km, **narrow gauge (600 mm)**
+- **Fianarantsoa ↔ Manakara** — 163 km, meter gauge (1,000 mm)
 - **Tourist/heritage line** — scenic passage through eastern tropical forest. **Very slow (12+ hours for 163 km)**. Not operated by Madarail. SNCF heritage.
 
 **No other railways, no metros, no trams**.
@@ -104,7 +104,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 | Plant | MW | Type | Notes |
 |---|---:|---|---|
 | **Ambohimanambola (Trigu+Aksaf)** | 171 (105+66) | oil/gas | Near Antananarivo — capital's main thermal cluster |
-| **Andekaleka** | 91 | hydropower | Mangoro River — **Madagascar's largest hydro** |
+| **Andekaleka** | 91 | hydropower | Vohitra River — **Madagascar's largest hydro** |
 | **Ambatovy Nickel** | 120 (3× 40) | coal (captive) | Dedicated to **one of world's largest nickel laterite mines** ($8B, Sumitomo/KORAM). Connected to Toamasina by 220 km slurry pipeline |
 | **Mandraka** | 24 | hydropower | Mandraka Falls, Tana-Tamatave road |
 | **Ambatolampy Solar** | 40 (2× 20) | solar | Madagascar's largest solar |
@@ -118,9 +118,9 @@ All operating plants map to **NACE 35**.
 - **No Madarail GTFS**
 - **Ambatovy** (Moramanga) not NACE 07/24 — **one of world's largest nickel laterite mines** ($8B, Sumitomo/KORAM). Nickel + cobalt + ammonium sulphate. 220 km slurry pipeline to Toamasina
 - **QMM / Fort Dauphin ilmenite** (Rio Tinto) not NACE 07 — heavy mineral sands (ilmenite for TiO₂), Anosy region SE Madagascar
-- **Kraoma chromite** (Brieville/Antsirabe) not NACE 07 — **Madagascar is world's #3 chromite producer**
+- **Kraoma chromite** (Brieville/Andriamena, Betsiboka region) not NACE 07 — one of Africa's larger chromite producers
 - **Graphite**: Tirupati (Vatomina), NextSource (Molo) — rapidly expanding sector
-- **Vanilla**: SAVA region — **Madagascar produces ~80% of world's vanilla** (most expensive spice by weight)
+- **Vanilla**: SAVA region — **Madagascar produces ~80% of world's vanilla** (after saffron, the world's most expensive spice by weight)
 - **Cloves**: East coast — world's #2 clove producer
 - **Cement**: Holcim Madagascar (Ibity/Antsirabe)
 - **GALANA refinery** (Toamasina, small fuel distribution)
@@ -147,5 +147,5 @@ Notable noise zones:
 - **Andekaleka hydro** (91 MW, Mangoro River)
 - **Ambatovy nickel mine + captive coal plant** (120 MW, Moramanga)
 - **QMM Fort Dauphin ilmenite** (Rio Tinto)
-- **Kraoma chromite** (Brieville/Antsirabe)
+- **Kraoma chromite** (Brieville/Andriamena, Betsiboka)
 - **Toamasina port**

@@ -50,7 +50,7 @@ Almost entirely diesel generators. No national grid — each city has isolated g
 ### Key infrastructure not NACE classified
 - **Berbera Port** (Somaliland) — DP World 30-year concession (2017); UAE military base; strategic Bab-el-Mandeb position
 - **Mogadishu Port** — rehabilitated 2013+; main FGS import hub
-- **Bosaso Port** (Puntland) — world's largest live livestock export hub (camels + small ruminants)
+- **Bosaso Port** (Puntland) — major live-animal export port (camels + small ruminants); Somalia is among the world's largest livestock exporters to the Arabian Peninsula
 - **Kismayo Port** — southern agricultural/charcoal export; Al-Shabaab revenue dispute
 - **Egal International Airport** (Hargeisa, HCMH) + **Aden Adde Airport** (Mogadishu, HCMM) — covered by global aircraft layer
 - **HOT OSM** — Humanitarian OpenStreetMap Team mapping; variable road accuracy

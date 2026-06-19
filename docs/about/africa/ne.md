@@ -8,7 +8,7 @@ map: { center: [8, 16], zoom: 5 }
 
 ### Class defaults only
 
-Niger Ministry of Transport publishes no open AADT. Fall back to class defaults with Niamey Tier-1 boost. World's lowest HDI — very low traffic volumes outside the southern population strip.
+Niger Ministry of Transport publishes no open AADT. Fall back to class defaults with Niamey Tier-1 boost. Among the world's lowest HDI countries — very low traffic volumes outside the southern population strip.
 
 ### Nigerien AADT defaults
 

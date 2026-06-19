@@ -46,7 +46,7 @@ The **Addis-Djibouti Railway (EDR)** — 752 km electrified standard gauge (25 k
 
 ### GEM — 2 plants, operating, 167 MW
 
-**Doraleh 60 MW** (HFO) + **Boulaos 107 MW** (diesel, Djibouti City). Economy is entirely port services + military base rents; no significant manufacturing.
+**Boulaos** (HFO, Djibouti City — the main thermal plant, ~108 MW per GEM) + **Marabout** (HFO, Djibouti City). Both EDD-operated; Djibouti also imports across the Ethiopia interconnector. Economy is entirely port services + military base rents; no significant manufacturing.
 
 ### Key infrastructure not NACE classified
 - **Doraleh Container Terminal (DCT)** — among Africa's busiest; DP World (2006–2018), then state-managed

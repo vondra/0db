@@ -33,7 +33,7 @@ Senegal's urban transport is **dominated by minibuses**, less by motorcycles tha
 - **Ndiaga Ndiaye** — white Mercedes minibus taxis (larger than cars rapides)
 - **Dakar Dem Dikk** — official bus company (Tata/Ashok Leyland)
 - **Taxis urbains** — yellow-and-black car taxis, very common in Dakar
-- **BRT Dakar** — Bus Rapid Transit, **opened 2024**, 18.3 km corridor (first in West Africa)
+- **BRT Dakar** — Bus Rapid Transit, **opened 2024**, 18.3 km corridor (first all-electric BRT in sub-Saharan Africa; Lagos BRT predates it since 2008)
 - **Motorcycles (Jakarta/Jakartacom)** — moderate share, less than Nigeria/Kenya
 - **Charrettes** — horse/donkey carts still common in rural areas
 
@@ -118,7 +118,7 @@ All operating plants map to **NACE 35**.
 - **GTA offshore gas field** (Grand Tortue Ahmeyim) — shared with Mauritania, Eni/BP/Kosmos, **first LNG production 2024**; offshore infrastructure not captured
 - **CSS sugar mill** not classified (Compagnie Sucrière Sénégalaise, Richard-Toll)
 - **Peanut processing** (Senegal's traditional dominant crop — cargo rail historically transported peanut from the groundnut basin to Dakar)
-- **Dakar Port** — West Africa's busiest port after Lagos and Abidjan
+- **Dakar Port** — one of West Africa's major ports (Mali's main maritime gateway via the Dakar-Niger corridor)
 
 ## Validation
 
@@ -135,7 +135,7 @@ Notable noise zones:
 - **RN2 Dakar ↔ Saint-Louis ↔ Rosso** — coastal north to Mauritania
 - **Dakar Plateau + Médina + Yoff** — dense urban core of Cap-Vert peninsula
 - **TER corridor** (Dakar ↔ Diamniadio ↔ AIBD, opened 2021+2024)
-- **BRT Dakar** (18.3 km, opened 2024 — first BRT in West Africa)
+- **BRT Dakar** (18.3 km, opened 2024 — first all-electric BRT in sub-Saharan Africa)
 - **Blaise Diagne International (DSS/GOBD Dakar-Diass)**, **Saint-Louis (XLS/GOSS)**, **Ziguinchor (ZIG/GOGG)**, **Cap Skirring (CSK/GOGS)**, **Tambacounda (TUD/GOTT)** — covered by global aircraft layer
 - **Karpowership Aysegul Sultan** (235 MW floating, Dakar anchorage)
 - **Sendou coal plant** (Bargny, 125 MW — Senegal's only coal)
@@ -144,5 +144,5 @@ Notable noise zones:
 - **SAR refinery Mbao** (27k bpd)
 - **ICS phosphate complex** (Taïba/Darou Khoudoss)
 - **Ciments du Sahel + SOCOCIM cement plants** (Rufisque/Bargny)
-- **Dakar Port** — West Africa's 3rd busiest port
+- **Dakar Port** — major West African port
 - **CSS sugar mill** (Richard-Toll, Senegal River valley)

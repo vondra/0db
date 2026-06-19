@@ -94,7 +94,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 - **Source**: `services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/Global_Integrated_Power_v1/FeatureServer/0?where=Country_area='Egypt'`
 
-**Operating fuel**: oil/gas 109 + solar 68 + wind 14 + hydro 6.
+**Operating fuel**: oil/gas 109 + solar 71 + wind 14 + hydro 6.
 
 ### Top operating plants
 

@@ -64,9 +64,9 @@ Tunisia has **one of North Africa's most developed rail networks** (~2,165 km SN
 
 ### Urban transit (Tunis metropolitan area)
 
-- **Métro léger de Tunis** — **opened 1985**, Siemens-built. **Africa's first modern light rail/tram system** after Cairo Metro (1987 — but Tunis predates Cairo Metro opening). **6 lines, ~46 km, 63 stations**, standard gauge, electrified 750 V DC, 45 km/h, ~400k daily riders pre-COVID. Operated by **TRANSTU** (Société des Transports de Tunis).
+- **Métro léger de Tunis** — **opened October 1985**, Siemens-built. **Africa's first modern light rail/tram system** (predates the Cairo Metro, opened 1987). **6 lines, ~46 km, 63 stations**, standard gauge, electrified 750 V DC, 45 km/h, ~400k daily riders pre-COVID. Operated by **TRANSTU** (Société des Transports de Tunis).
 - **TGM (Tunis-Goulette-Marsa)** — **opened 1872** (steam), **electrified 1905**. **One of the oldest operating electric railways in Africa**. 18.5 km, Tunis Marine ↔ La Goulette ↔ Carthage ↔ Sidi Bou Saïd ↔ La Marsa. TRANSTU operated.
-- **RFR Tunis (Réseau Ferroviaire Rapide)** — modern commuter rail under construction, 5 lines planned. Phase 1 (Tunis ↔ Bougatfa via Borj Cedria) partially **opened 2024**. Electrified 25 kV AC.
+- **RFR Tunis (Réseau Ferroviaire Rapide)** — modern commuter rail, 5 lines planned, long-delayed. **Line E opened March 2023** (Place Barcelone ↔ Bougatfa); **Line D opened January 2025** (Bardo section). Electrified 25 kV AC.
 
 ### SNCFT intercity network
 
@@ -123,7 +123,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 | **Bizerte/Metline Wind** | — | wind | |
 | **Borj Bourguiba + Tozeur Solar** | — | solar | First utility solar |
 
-**Rades (≈1,630 MW) + Sousse (≈1,525 MW) + Mornaguia (624 MW) + Ghannouch (400 MW) + Bir Mcherga (256) + Bouchemma (250) + Thyna (246) = ~4,100 MW STEG thermal cluster** — concentrated along the Tunis↔Sousse↔Gabès coast.
+**Rades (≈1,630 MW) + Sousse (≈1,525 MW) + Mornaguia (624 MW) + Ghannouch (400 MW) + Bir Mcherga (256) + Bouchemma (250) + Thyna (246) = ~4,930 MW STEG thermal cluster** — concentrated along the Tunis↔Sousse↔Gabès coast.
 
 All operating plants map to **NACE 35**.
 

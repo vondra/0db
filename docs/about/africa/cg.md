@@ -23,13 +23,13 @@ Direction des Routes publishes no open AADT. Fall back to class defaults with Br
 
 **Tier-1 metro** (×2.0): **Brazzaville** (~2M — capital, Congo River, directly across from Kinshasa/DRC).
 
-**Tier-2 cities** (×1.4): **Pointe-Noire** (~1.2M — 2nd city, Atlantic port, oil capital, CEC gas plants), **Dolisie** (~100k — 3rd city, CFCO junction, formerly Loubomo), **Nkayi** (~70k — SARIS sugar), **Owando** (~50k — northern Cuvette, oil region), **Ouesso** (~40k — Sangha, far north, logging).
+**Tier-2 cities** (×1.4): **Pointe-Noire** (~1.2M — 2nd city, Atlantic port, oil capital, CEC gas plants), **Dolisie** (~180k — 3rd city, CFCO junction, formerly Loubomo), **Nkayi** (~70k — SARIS sugar), **Owando** (~50k — northern Cuvette, oil region), **Ouesso** (~40k — Sangha, far north, logging).
 
 ## Railway
 
-### CFCO Brazzaville↔Pointe-Noire — ~510 km, meter gauge (1,000 mm). Built 1921-1934 (French forced labor — 17,000-23,000 deaths).
+### CFCO Brazzaville↔Pointe-Noire — ~510 km, cape gauge (1,067 mm). Built 1921-1934 (French forced labor — 17,000-23,000 deaths).
 
-Connects Congo River navigation to Atlantic port. **Bilinga↔Mbinda branch** (~285 km) connects to Gabon's Transgabonais for COMILOG manganese export.
+Connects Congo River navigation to Atlantic port. **Bilinga↔Mbinda branch** (~285 km, near the Gabon border) was built to feed COMILOG manganese to the Trans-Gabon Railway; that traffic ceased after the 1991 Mvoungouti disaster (Gabon now exports via its own line), leaving the branch to general/local freight.
 
 | Context | pax/day | frt/day |
 |---|---:|---:|
@@ -46,5 +46,5 @@ Gas 4 + hydro 2 + solar 1. **CEC Pointe-Noire** (3 gas units 170+157+157 MW + **
 - **Oil**: TotalEnergies, ENI Congo — offshore Pointe-Noire, significant African oil producer
 - **Logging/timber**: northern equatorial forest (Sangha Trinational UNESCO)
 - **Sugar**: SARIS (Nkayi — Congo's only sugar refinery)
-- **Cement**: Forspak (Loutété)
-- **Potash**: MagMinerals (abandoned after 2016 flooding)
+- **Cement**: Forspak (Dolisie/Niari); SONOCC (Loutété)
+- **Potash**: MagMinerals (Mengo project — abandoned after the company's 2015 financial collapse)

@@ -53,7 +53,9 @@ Cameroon's urban transport has distinctive **yellow taxis** + dominant moto-taxi
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
+### Class defaults only
+
+No Camrail GIS/GTFS, so the trains/day defaults below are applied by rail class over the OSM geometry — no per-corridor enrichment.
 
 ### Cameroonian rail context
 

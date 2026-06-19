@@ -10,8 +10,6 @@ map: { center: [6.6, 0.2], zoom: 9 }
 
 The Direcção das Estradas publishes no open AADT. CNOSSOS class defaults applied with São Tomé city Tier-1 boost (×2.0). Two islands — São Tomé and Príncipe — with no fixed link; all inter-island transport by ferry or light aircraft.
 
-**15k road segments enriched (100% coverage).** Small island nation — complete OSM coverage.
-
 ## Railway
 
 ### São Tomé and Príncipe has no railway.

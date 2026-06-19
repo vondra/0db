@@ -10,8 +10,6 @@ map: { center: [43.7, -11.8], zoom: 9 }
 
 The Direction Générale des Routes publishes no open AADT. CNOSSOS class defaults applied with Moroni Tier-1 boost (×2.0). Three islands — Grande Comore (Ngazidja), Mohéli (Mwali), Anjouan (Nzwani) — each have separate road networks with no fixed links between them.
 
-**30k road segments enriched (77% coverage).**
-
 ## Railway
 
 ### Comoros has no railway.
@@ -22,9 +20,9 @@ No railway exists or has been planned. All inter-island transport is by ferry or
 
 ### GEM — 1 plant, ~3 MW
 
-- **Voidjou Solar** (Grande Comore, ~3 MW) — only GEM-listed plant
+- **Voidjou** (Grande Comore, ~3 MW, diesel) — only GEM-listed plant; MA-MWE-operated, main Moroni-grid supply
 
-The national utility **MA-MWE** (Mamwe — Eau et Électricité) operates diesel thermal generators on all three islands. Chronic power cuts of 4–20 hours/day are common. All diesel plants are below GEM thresholds.
+The national utility **MA-MWE** (Mamwe — Eau et Électricité) operates diesel thermal generators on all three islands. Chronic power cuts of 4–20 hours/day are common. A newer 6.3 MW solar farm at Moroni (ADFD-funded) and most diesel plants fall below GEM thresholds.
 
 ## Notes
 

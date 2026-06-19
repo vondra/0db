@@ -21,7 +21,7 @@ DNR (Direction Nationale des Routes) publishes no open AADT. Fall back to class 
 | 4 tertiary | 800 | 1,600 | 1,120 |
 | 5 residential | 350 | 700 | 490 |
 
-**Tier-1 metro** (×2.0): **Bamako** (~4M metro — capital, extreme primacy, ~20% of all Malians. Africa's fastest growing city. Sprawling along Niger River. **Sotrama** green minibuses = iconic informal public transport).
+**Tier-1 metro** (×2.0): **Bamako** (~4M metro — capital, extreme primacy, ~20% of all Malians. Among Africa's fastest-growing cities. Sprawling along Niger River. **Sotrama** green minibuses = iconic informal public transport).
 
 **Tier-2 cities** (×1.4): **Sikasso** (~300k — 2nd city, southern agricultural hub, cotton/mango), **Mopti/Sévaré** (~150k — Niger River delta junction, "Venice of Mali", crisis zone since 2012), **Ségou** (~150k — Niger River, Office du Niger rice, colonial COMATEX textile), **Kayes** (~130k — western Mali, Senegal River, rail junction, diaspora), **Koutiala** (~140k — cotton capital, CMDT), **Kati** (~120k — military garrison, seat of junta), **Gao** (~90k — northern Mali, former rebel stronghold), **Timbuktu** (~55k — UNESCO, ancient Islamic learning center).
 
@@ -45,7 +45,7 @@ Hydro 4 + oil/gas (HFO/diesel) 3 + solar 7. **Manantali 200 MW** (Senegal River,
 
 ### Key sites not NACE classified
 - **Gold mining** — Mali is **Africa's #3 gold producer**: Sadiola (Barrick/AngloGold), **Loulo-Gounkoto** (Barrick, one of Africa's largest gold complexes), **Fekola** (B2Gold), Morila, Kalana, Syama (Resolute)
-- **CMDT cotton** — Mali is **Africa's #2 cotton producer** (Compagnie Malienne pour le Développement du Textile)
+- **CMDT cotton** — Mali is one of **Africa's top cotton producers** (#1-2, trading the lead with Benin year to year — Compagnie Malienne pour le Développement du Textile)
 - **Cement**: CIMAF Dio, Diamond Cement Astro (Bamako)
 - **Northern Mali crisis** — Tuareg/jihadist insurgency since 2012, French Barkhane withdrew 2022, Wagner Group/Africa Corps since 2021
 - **Military junta since 2020/2021** — two coups, sanctions by ECOWAS (since lifted)

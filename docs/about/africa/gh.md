@@ -8,7 +8,7 @@ map: { center: [-1, 8], zoom: 6 }
 
 ### Class defaults only
 
-All Ghanaian road authorities (GHA, DFR, DUR, MRH) publish WordPress sites with no GIS. Ghana's open data portal (data.gov.gh, first in sub-Saharan Africa, 2012) has been dormant since ~2015. Fall back to CNOSSOS class defaults.
+All Ghanaian road authorities (GHA, DFR, DUR, MRH) publish WordPress sites with no GIS. Ghana's open data portal (data.gov.gh, 2012 — one of sub-Saharan Africa's earliest, alongside Kenya's 2011 initiative) has been dormant since ~2015. Fall back to CNOSSOS class defaults.
 
 ### Ghanaian AADT defaults
 
@@ -100,7 +100,7 @@ All operating plants map to **NACE 35** (Electricity generation).
 
 - **No TPDA/AADT** — zero traffic data
 - **No GTFS** for any rail system
-- **Gold mines not classified**: **Obuasi** (AngloGold Ashanti, world's largest underground gold mine by reserves), Ahafo/Akyem (Newmont), Tarkwa/Damang (Goldfields), Asanko — Ghana is world's #7 gold producer
+- **Gold mines not classified**: **Obuasi** (AngloGold Ashanti, a historic deep underground gold mine — one of Africa's largest), Ahafo/Akyem (Newmont), Tarkwa/Damang (Goldfields), Asanko — Ghana is Africa's #1 gold producer (~world #11)
 - **TOR refinery not NACE 19**: Tema Oil Refinery (45k bpd, mostly idle)
 - **VALCO not NACE 24**: Tema aluminum smelter (200 ktpa, mostly idle)
 - **Cocoa processing not NACE 10**: world's 2nd largest cocoa producer
@@ -133,7 +133,7 @@ Notable noise zones:
 - **Sunon Asogli / Kpone / Karpowership cluster** Tema (~1.5 GW combined)
 - **Tema Oil Refinery (TOR)** — mostly non-operational since 2017
 - **VALCO Tema** aluminum smelter — mostly idle
-- **Obuasi Gold Mine** — world's largest underground gold mine by reserves (AngloGold Ashanti)
+- **Obuasi Gold Mine** — historic deep underground gold mine, one of Africa's largest (AngloGold Ashanti)
 - **Tarkwa-Damang gold district** (Goldfields)
 - **Ahafo-Akyem gold district** (Newmont)
 - **Nsuta manganese mine** + **Awaso bauxite mine**

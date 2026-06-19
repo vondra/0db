@@ -23,7 +23,7 @@ Botswana is **very sparsely populated** (~2.6M in 582k km² = 4.5/km², mostly K
 | 4 tertiary | 1,000 | 2,000 | 1,400 |
 | 5 residential | 500 | 1,000 | 700 |
 
-**Tier-1 metros** (×2.0, 1 metro): **Gaborone** (~250k city / ~400k metro — Africa's one of smallest capital metros by population, but highest per-capita income in sub-Saharan Africa).
+**Tier-1 metros** (×2.0, 1 metro): **Gaborone** (~250k city / ~400k metro — one of Africa's smallest capital metros by population, in one of sub-Saharan Africa's higher-income economies).
 
 **Tier-2 cities** (×1.4, 16 cities): **Francistown** (2nd city, north hub), Molepolole, **Maun** (Okavango Delta tourism gateway), Mogoditshane (Gaborone satellite), Serowe, **Selebi-Phikwe** (BCL mine closed 2016, purpose-built mining town), **Palapye** (Morupule coal + BIH), Kanye, Mahalapye, Lobatse (BMC abattoir), **Kasane** (Chobe tourism), Nata (Makgadikgadi gateway), **Jwaneng** (diamond mine town), **Orapa** (diamond mine town), **Ghanzi** (Trans-Kalahari stop), Letlhakane (diamond).
 
@@ -93,14 +93,14 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 - **Source**: `services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/Global_Integrated_Power_v1/FeatureServer/0?where=Country_area='Botswana'`
 
-**Operating fuel**: coal 8 + solar 4 + oil/gas 1. **Botswana is extremely coal-dependent** and imports ~40% of electricity from South Africa (Eskom) and Mozambique.
+**Operating fuel**: coal 8 + solar 4 + oil/gas 1. **Botswana is extremely coal-dependent** and imports a large share of its electricity (~40%+, mostly from South Africa's Eskom, with Namibia and Zambia as secondary sources).
 
 ### Top operating plants
 
 | Plant | MW | Type | Notes |
 |---|---:|---|---|
 | **Morupule B** | **600** (4× 150) | coal | Opened 2012, Chinese-built (CNEEC) — **Botswana's largest plant**. **Chronic technical problems** since commissioning; availability often below 50% |
-| **Morupule A** | 132 (4× 33) | coal | 1986, upgraded 2008 |
+| **Morupule A** | 132 (4× 33) | coal | 1986, refurbished 2016-2018 |
 | **Francistown APR** | 70 | oil/gas | Diesel emergency rental (Aggreko) |
 | **Kweneng District Solar** | 11.3 | solar | |
 | **Central District Solar** | 2.6 | solar | |
@@ -116,14 +116,14 @@ All operating plants map to **NACE 35**.
 - **No DRTS AADT** — zero open traffic data
 - **No BR GTFS**
 - **Jwaneng Diamond Mine** not NACE 08 — **world's richest diamond mine by value** (De Beers/Debswana JV, 50-50 with Government of Botswana). The single economic asset that transformed Botswana from one of Africa's poorest at independence (1966) to one of its wealthiest.
-- **Orapa Diamond Mine** not NACE 08 — **world's largest diamond mine by area** (world's 2nd largest open pit)
-- **Letlhakane Diamond Mine** + **Karowe Diamond Mine** (Lucara — world's 2nd largest gem diamond **Lesedi La Rona 1,109 ct** found here 2015) not NACE 08
+- **Orapa Diamond Mine** not NACE 08 — **world's largest diamond mine by area**
+- **Letlhakane Diamond Mine** + **Karowe Diamond Mine** (Lucara — source of the **Lesedi La Rona 1,109 ct**, found 2015, then the world's 2nd largest gem-quality rough diamond) not NACE 08
 - **Morupule Coal Mine** not NACE 05 — feeds Morupule A+B plants
 - **BCL Selebi-Phikwe** not classified — nickel/copper smelter+mine, **closed 2016** after commodity collapse. Town was purpose-built for this mine (1973-2016, ~45 year lifespan)
-- **Botswana Ash Sua Pan** not NACE 08 — **world's largest soda ash deposit by area** (Makgadikgadi Pans), mining since 1991
-- **BMC** (Botswana Meat Commission, Lobatse) — Africa's oldest and largest livestock export abattoir
+- **Botswana Ash Sua Pan** not NACE 08 — **Africa's largest soda ash operation** (Makgadikgadi Pans), mining since 1991
+- **BMC** (Botswana Meat Commission, Lobatse) — one of Africa's major livestock export abattoirs (founded 1965, historic EU beef exporter)
 - **PPC Botswana cement** (Gaborone) not NACE 23
-- **Kgale Glass** (Gaborone) — Southern Africa's only glass manufacturer outside RSA
+- **Kgale Glass / glass works** (Gaborone)
 
 ## Validation
 
@@ -145,6 +145,6 @@ Notable noise zones:
 - **Jwaneng Diamond Mine** (world's richest)
 - **Orapa Diamond Mine** (world's largest)
 - **Karowe Diamond Mine** (Lucara)
-- **Botswana Ash Sua Pan** (soda ash)
+- **Botswana Ash Sua Pan** (Africa's largest soda ash operation)
 - **BCL Selebi-Phikwe** (closed 2016 — abandoned industrial zone)
 - **BMC Lobatse abattoir**

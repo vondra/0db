@@ -71,11 +71,11 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 ## Industrial
 
-### GEM Global Integrated Power — 90 plants, 23 operating
+### GEM Global Integrated Power — 90 plants, 25 operating
 
 - **Source**: `services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/Global_Integrated_Power_v1/FeatureServer/0?where=Country_area='Ethiopia'`
 
-**Operating fuel**: hydropower 12 + bioenergy 5 + wind 5 + solar 1.
+**Operating fuel**: hydropower 12 + wind 7 + bioenergy 5 + solar 1.
 
 ### Top operating plants
 

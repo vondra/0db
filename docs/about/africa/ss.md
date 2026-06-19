@@ -49,9 +49,9 @@ Sudan Railways narrow-gauge network did not extend functional lines into what be
 Almost entirely diesel generators. No national grid — Juba Power Station + isolated town generators. ~8% electrification, among world's lowest.
 
 ### Key sites not NACE classified
-- **Dar Petroleum (DPOC)** — China CNPC + India ONGC + Sudapet joint venture; Unity + Heglig oil fields (~130k bbl/day); 98% of government revenue
-- **Greater Nile Petroleum (GNPOC)** — Melut Basin, Upper Nile
-- **Juba Power Station** — diesel; Juba-Khartoum pipeline (suspended in disputes 2012 and 2022)
+- **Dar Petroleum (DPOC)** — CNPC + Petronas + Sinopec + Sudapet (Petrodar) consortium; **Melut Basin** (Blocks 3&7 — Palogue + Adar Yale fields, Upper Nile), South Sudan's main producing area; oil is ~90%+ of government revenue
+- **Greater Nile Petroleum (GNPOC)** — **Unity field** (Blocks 1/2/4, Muglad Basin); the adjacent Heglig field lies in the disputed Sudan-administered border zone
+- **Juba Power Station** — diesel; crude exported north via the Petrodar/GNPOC pipeline to Port Sudan (flows suspended in disputes 2012 and 2022)
 - **Juba International Airport (JUB/HSSJ)** — covered by global aircraft layer
 - **Sudd Wetland** — world's largest tropical wetland (~57,000 km²); White Nile; major ecological feature
 - **HOT OSM** — Humanitarian OpenStreetMap Team mapping; road network incomplete and variable quality

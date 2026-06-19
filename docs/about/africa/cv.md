@@ -26,7 +26,7 @@ No railway exists. All inter-island transport by ferry or TACV/inter-island air.
 - **ELECTRA diesel thermal** — each island has one or more diesel generator sets (Wartsila, MAN); main supply for non-wind islands
 - **Sal Solar** — expanding rooftop and ground-mount solar on tourist islands
 
-Cabo Verde is a regional renewable energy leader: wind + solar covered ~60% of electricity in 2023.
+Cabo Verde is a regional renewable energy leader: wind + solar covered ~20% of electricity in 2023 (target 50% by 2030), rising toward ~30% after the December 2025 Cabeólica wind + battery expansion.
 
 ## Notes
 

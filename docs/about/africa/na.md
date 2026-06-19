@@ -57,7 +57,7 @@ Similar to Botswana — **very car-dependent**, German/South African influence:
 
 ### Namibian rail context
 
-**TransNamib** operates ~2,382 km of rail — built by German South-West Africa colonial administration (1897-1914) + South African mandate era (1915-1990). Cape gauge (1,067 mm) + historic narrow gauge (600 mm) sections.
+**TransNamib** operates ~2,382 km of rail — built by German South-West Africa colonial administration (1897-1914) + South African mandate era (1915-1990). Cape gauge (1,067 mm); the original German lines were built as 600 mm narrow gauge and later regauged.
 
 ### Walvis Bay ↔ Windhoek
 - ~380 km port-capital link — **main freight artery** for uranium exports (Rössing/Husab → Walvis Bay) and imports
@@ -94,13 +94,13 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 - **Source**: `services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/Global_Integrated_Power_v1/FeatureServer/0?where=Country_area='Namibia'`
 
-**Operating fuel**: solar 22 + coal 4 + wind 1 + hydropower 1. **Namibia imports ~60% of electricity** from South Africa (NamPower ↔ Eskom) + SAPP.
+**Operating fuel**: solar 22 + coal 4 + wind 1 + hydropower 1. **Namibia imports ~60% of its electricity** via the Southern African Power Pool (SAPP) — South Africa's Eskom is the largest single supplier, with Zambia and Zimbabwe also significant.
 
 ### Top operating plants
 
 | Plant | MW | Type | Notes |
 |---|---:|---|---|
-| **Ruacana** | **332** | hydropower | **Kunene River, Angola border** — Namibia's largest plant, 49% of capacity. Run-of-river; supply depends on Angola's upstream Matala Dam water management |
+| **Ruacana** | **332** | hydropower | **Kunene River, Angola border** — Namibia's largest plant, 49% of capacity. Flow depends on upstream storage at Gove/Calueque dams |
 | **Van Eck** | 120 (4× 30) | coal | Windhoek — **Namibia's only coal plant**, obsolete, being decommissioned |
 | **Mariental Solar** | 46 | solar | Largest solar IPP |
 | **Omburu Solar** | 20 | solar | |
@@ -119,10 +119,10 @@ All operating plants map to **NACE 35**.
 - **Husab Uranium Mine** (Erongo) not NACE 07 — **one of world's largest uranium mines**, Swakop Uranium/CGN, opened 2017. Together Rössing + Husab make Namibia **world's #3 uranium producer**
 - **Langer Heinrich Uranium** (Erongo) not NACE 07 — Paladin Energy, **reopened 2024** after 6-year closure (uranium price recovery)
 - **Skorpion Zinc + Refinery** (Rosh Pinah) not NACE 07/24 — Vedanta, **closed 2020** (Africa's only integrated zinc mine+refinery)
-- **Tsumeb Smelter** not NACE 24 — Dundee Precious Metals, processes complex copper/lead/arsenic concentrates (one of world's few high-arsenic smelters)
+- **Tsumeb Smelter** not NACE 24 — processes complex copper/lead/arsenic concentrates (one of world's few high-arsenic smelters). Sold by Dundee Precious Metals to China's Sinomine in 2024; smelting paused 2025 on concentrate shortage
 - **B2Gold Otjikoto** + **Navachab Gold** (Karibib, QKR Corp) not NACE 07
 - **Rosh Pinah Zinc** (Trevali) not NACE 07
-- **Namdeb Diamonds** (De Beers/Namibia 50-50) not NACE 08 — marine + alluvial along Skeleton Coast
+- **Namdeb Diamonds** (De Beers/Namibia 50-50) not NACE 08 — marine + alluvial along the southern Atlantic coast (Sperrgebiet, around Oranjemund at the Orange River mouth)
 - **Walvis Bay Salt Works** not NACE 08 — one of Africa's largest salt operations
 - **Fishing + fish processing** (Walvis Bay, Lüderitz) — Benguela Current cold upwelling creates one of Africa's richest fishing grounds
 - **Cement**: Ohorongo (Otavi, Schwenk), Cheetah (Otjiwarongo)
@@ -148,7 +148,7 @@ Notable noise zones:
 - **Van Eck Coal** (Windhoek, 120 MW — being decommissioned)
 - **Rössing + Husab uranium mines** (Erongo — world's #3 uranium producer)
 - **Langer Heinrich uranium** (reopened 2024)
-- **Tsumeb copper smelter** (Dundee Precious Metals)
+- **Tsumeb copper smelter** (Sinomine since 2024; smelting paused 2025)
 - **Walvis Bay port + fish processing + salt**
-- **Namdeb diamond operations** (Skeleton Coast, marine mining)
+- **Namdeb diamond operations** (southern coast / Sperrgebiet around Oranjemund, marine mining)
 - **Diaz Wind Farm** (Lüderitz)

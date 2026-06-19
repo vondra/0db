@@ -82,7 +82,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 - **Source**: `services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/Global_Integrated_Power_v1/FeatureServer/0?where=Country_area='Kenya'`
 
-**Operating fuel** (in KE bbox): **geothermal 12** + solar 6 + oil/gas 5 + hydropower 5 + wind 3.
+**Operating fuel** (in KE bbox): **geothermal 16** + wind 8 + oil/gas 7 + solar 7 + hydropower 6 + bioenergy 1.
 
 ### Top operating plants
 
@@ -95,7 +95,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 | **Turkwel hydro** | 103 | hydropower | Turkwel Gorge |
 | **Kipeto wind** | 100 | wind | Kajiado |
 
-**Olkaria Geothermal Complex** — the **world's largest geothermal power complex**, ~780 MW across Olkaria I/I-AU/II/III/IV/V + wellhead generators. Kenya is #9 globally in geothermal generation, exploiting the East African Rift Valley. Appears as 12 separate entries in GEM.
+**Olkaria Geothermal Complex** — **Africa's largest geothermal power complex** and one of the largest in the world, ~780 MW across Olkaria I/I-AU/II/III/IV/V + wellhead generators. Kenya is a top-10 country globally in geothermal generation, exploiting the East African Rift Valley. Appears as 16 separate geothermal entries in GEM.
 
 **Tana River / Seven Forks hydro cascade**: Masinga (40 MW) + Kamburu (94 MW) + Gitaru (225 MW) + Kindaruma (72 MW) + Kiambere (168 MW) = ~600 MW total.
 
@@ -128,12 +128,12 @@ Notable noise zones:
 - **SGR Phase 2A Nairobi ↔ Naivasha**
 - **Nairobi commuter rail** — 4 lines
 - **Jomo Kenyatta International (NBO/HKJK Nairobi)**, **Moi International (MBA/HKMO Mombasa)**, **Wilson (WIL Nairobi GA)**, **Eldoret International (EDL/HKEL)**, **Kisumu (KIS/HKKI)**, **Malindi (MYD/HKML)** — covered by global aircraft layer
-- **Olkaria Geothermal Complex** — world's largest geothermal complex, 780 MW across the Rift Valley
+- **Olkaria Geothermal Complex** — Africa's largest geothermal complex, 780 MW across the Rift Valley
 - **Lake Turkana Wind Power** (260 MW — Africa's largest wind farm)
 - **Tana River / Seven Forks hydro cascade** (600 MW total)
 - **Kipevu power complex** Mombasa (oil/gas emergency backup)
 - **Kipevu Oil Terminal** (former Mombasa Refinery site, closed 2013)
 - **KPC Mombasa-Nairobi-Eldoret oil pipeline**
-- **Bamburi Cement Mombasa** (Africa's largest cement factory by capacity)
+- **Bamburi Cement Mombasa** (one of East Africa's largest cement plants)
 - **EABL Nairobi** (East African Breweries)
 - **EAPCC Athi River cement** (East African Portland Cement)

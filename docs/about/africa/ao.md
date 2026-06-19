@@ -107,12 +107,12 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 | Plant | MW | Type | Notes |
 |---|---:|---|---|
-| **Laúca** | **2,070** | hydropower | **Kwanza River, opened 2017** — **Africa's 6th largest hydropower**, Angola's largest single plant |
+| **Laúca** | **2,070** | hydropower | **Kwanza River, opened 2017** — **one of Africa's largest hydropower plants**, Angola's largest single plant |
 | **Cambambe II** | 700 | hydropower | Kwanza River, 2017 modernization |
 | **Soyo** | **720** (2× 360) | oil/gas CCGT | Zaire province — Angola's main gas plant, fed by Congo Basin gas (near Angola LNG facility) |
 | **Capanda** | 520 | hydropower | Kwanza River, 2004 |
 | **Biópio Solar** | 189 | solar | Benguela — **Angola's largest utility solar farm** |
-| **Cambambe I** | 180 | hydropower | Kwanza River, **1963 — Angola's oldest major hydro** |
+| **Cambambe I** | 260 | hydropower | Kwanza River, **1963 — Angola's oldest major hydro** (4× 65 MW after 2016 rehab) |
 | **CFL power station** | 125 | oil/gas | Luanda railway depot |
 | **Biocom bioenergy** | 100 | bioenergy | Malanje — sugarcane bagasse cogeneration at Biocom sugar-ethanol complex |
 | Benguela Solar | 97 | solar | |
@@ -122,7 +122,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 | **Morro do Ouro Wind** | 50 | wind | Tombwa, Namibe — **Angola's first wind farm** |
 | Lomaúm | 50 | hydropower | |
 
-**Total operating: ~5,141 MW**.
+**Total operating: ~5,220 MW**.
 
 **Under construction (not counted)**: **Caculo Cabaça 2,172 MW** — Kwanza River, under construction since 2018. When complete will be **Angola's largest power plant**, overtaking Laúca.
 
@@ -133,12 +133,12 @@ All operating plants map to **NACE 35**.
 - **No INEA AADT** — zero open traffic data
 - **No CFB/CFL/CFM GTFS** — all timetables corporate HTML only
 - **Sonangol upstream + downstream** all generic OSM industrial (should be NACE 06/19/20):
-  - **Offshore oil fields** (~1.1 Mbbl/day — **Africa's 2nd largest oil producer after Nigeria**, historically OPEC member until 2023): Kizomba, Plutonio, CLOV, Dalia, Girassol, Pazflor (deep-water Atlantic, Blocks 15/17/18)
+  - **Offshore oil fields** (~1.1 Mbbl/day — **sub-Saharan Africa's 2nd largest oil producer after Nigeria** (~3rd in Africa behind Nigeria and Libya), OPEC member until its exit took effect January 2024): Kizomba, Plutonio, CLOV, Dalia, Girassol, Pazflor (deep-water Atlantic, Blocks 15/17/18)
   - **Luanda Refinery** (~65k bpd, old)
   - **Lobito Refinery** — under construction, new 200k bpd
   - **Angola LNG Soyo** — opened 2013, Chevron/Sonangol/BP/ENI/TotalEnergies
   - **Cabinda enclave** offshore operations (Malongo terminal, Cabinda Gulf Oil)
-- **Catoca Diamond Mine** (Lunda Sul) not NACE 08 — **world's #4 diamond mine by production** (Alrosa + Endiama)
+- **Catoca Diamond Mine** (Lunda Sul) not NACE 08 — among the world's largest diamond mines by area (Endiama + Oman's Taadeen since Alrosa's 2025 divestment)
 - **Iron ore Cassinga** (historic, being reopened) not NACE 07
 - **Cement plants not NACE 23**: Nova Cimangola (Luanda), Ciment de Lobito, Empresa de Cimentos de Angola
 - **Ports**: Luanda (Africa's busiest lusophone port), **Lobito (Lobito Corridor terminus — fastest-growing port in Africa 2023-2024)**, Namibe, Cabinda
@@ -161,8 +161,8 @@ Notable noise zones:
 - **CFL Luanda commuter + mainline**
 - **CFM Namibe-Menongue** (iron ore)
 - **Luanda Quatro de Fevereiro (LAD/FNLU)**, **Lubango (SDD/FNUB)**, **Huambo (NOV/FNHU)**, **Catumbela (CBT/FNCT Benguela)**, **Namibe (MSZ/FNMO)**, **Cabinda (CAB/FNCA)**, **Menongue (SPP/FNME)**, **Saurimo (VHC/FNSA)** — covered by global aircraft layer
-- **Laúca 2,070 MW** (Kwanza River) — Africa's 6th largest hydropower
-- **Cambambe I+II + Capanda** (Kwanza River hydro cascade = ~1,400 MW)
+- **Laúca 2,070 MW** (Kwanza River) — one of Africa's largest hydropower plants
+- **Cambambe I+II + Capanda** (Kwanza River hydro cascade = ~1,480 MW)
 - **Soyo CCGT 720 MW** + **Angola LNG Soyo** (Zaire province gas complex)
 - **Biópio Solar 189 MW** (Benguela)
 - **Biocom sugar-ethanol Malanje** (bagasse cogeneration)

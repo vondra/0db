@@ -82,7 +82,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 - **Source**: `services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/Global_Integrated_Power_v1/FeatureServer/0?where=Country_area='Nigeria'`
 
-**Operating fuel**: oil/gas 73 + hydropower 5 + solar 5 + coal 4 + wind 1.
+**Operating fuel**: oil/gas 75 + coal 7 + solar 7 + hydropower 5 + wind 1.
 
 ### Top operating plants
 

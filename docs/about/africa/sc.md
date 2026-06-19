@@ -10,8 +10,6 @@ map: { center: [55.5, -4.6], zoom: 9 }
 
 The Seychelles Land Transport Agency publishes no open AADT. CNOSSOS class defaults applied with Victoria Tier-1 boost (×2.0). Mahé island accounts for ~90% of all roads and population.
 
-**31k road segments enriched (100% coverage).** Island nation — complete coverage.
-
 ## Railway
 
 ### Seychelles has no railway.
@@ -22,10 +20,10 @@ No railway was ever constructed. Public transport is bus-only (SPTC — Seychell
 
 ### GEM — 4 plants, ~72 MW
 
-- **La Gogue Power Station** (Mahé) — main PUC (Public Utilities Corporation) diesel thermal plant; Wärtsilä engines
-- **Roche Caiman Power Station** (Mahé) — secondary PUC plant
-- **Praslin Diesel** — independent island supply
-- **Inner Islands** — smaller diesel generators per island
+- **Roche Caiman Power Station** (Mahé) — main PUC (Public Utilities Corporation) diesel thermal plant; Wärtsilä engines; Mahé's largest generation site
+- **Victoria B / New Port Power Station** (Mahé) — additional PUC diesel generators near Victoria
+- **Baie Ste Anne (Praslin)** — diesel plant supplying Praslin and, by cable, La Digue (no separate La Digue station)
+- **Romainville / PUC solar** — grid-tied solar, supplementing the diesel base
 
 Solar capacity expanding rapidly under the Seychelles Sustainable Energy Authority (SSEPA) plan targeting 15% renewable by 2030.
 

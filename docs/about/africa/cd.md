@@ -38,9 +38,13 @@ Belgian colonial-era network (built 1890s-1950s). **CFMK Matadi↔Kinshasa** is 
 | **Kamina↔Ilebo** (largely abandoned) | 0 | 1 |
 | **Eastern branches** | 0 | 1 |
 
+## Buildings
+
+GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
+
 ## Industrial
 
-### GEM — 11 plants, operating, ~2,753 MW
+### GEM Global Integrated Power — 11 operating plants, ~2,753 MW
 
 Hydro 9 + solar 2 (tiny). **Inga II 1,424 MW + Inga I 351 MW** (Congo River — **Grand Inga ~40,000 MW is world's largest undeveloped hydro potential**). **N'Seke 260 + Busanga 240 + N'Zilo 108 + Mwadingusha 78** MW (Katanga hydro cascade). **Zongo I+II 225 MW** (Inkisi River near Kinshasa). SNEL state utility chronically underfunded.
 

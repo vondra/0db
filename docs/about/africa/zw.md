@@ -107,7 +107,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 
 - **Source**: `services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/Global_Integrated_Power_v1/FeatureServer/0?where=Country_area='Zimbabwe'` (supplemented with **Kariba South** — GEM lists Kariba Dam under Zambia only)
 
-**Operating fuel**: solar 18 + coal 10 + bioenergy 2 + hydropower 1.
+**Operating fuel**: solar 21 + coal 10 + bioenergy 2 + hydropower 1.
 
 ### Top operating plants
 
@@ -120,7 +120,7 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 | **Triangle** | 35 | bioenergy | **Sugarcane bagasse cogeneration**, Lowveld |
 | **Harare Thermal** | 30 | coal | Small urban plant |
 | **Vungu Solar + Nyabira Solar** | 55 | solar | |
-| **16× small solar plants** | ~140 total | solar | 5-30 MW each |
+| **19× small solar plants** | ~140 total | solar | 5-30 MW each |
 
 **Total operating: ~2,956 MW**.
 

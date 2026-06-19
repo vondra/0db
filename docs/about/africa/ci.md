@@ -54,7 +54,9 @@ Côte d'Ivoire's urban transport mixes minibuses and shared taxis more than moto
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
+### Class defaults only
+
+No Sitarail GIS/GTFS, so the trains/day defaults below are applied by rail class over the OSM geometry — no per-corridor enrichment.
 
 ### Ivorian rail context
 
@@ -89,14 +91,14 @@ GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
 | **CIPREL** | **366** (255+111) | oil/gas | Compagnie Ivoirienne de Production d'Électricité, Vridi Abidjan — ENI/EDF/IFC consortium |
 | **Soubré** | 275 | hydropower | Sassandra River, **opened 2017** — Côte d'Ivoire's newest major hydro (China-financed, Sinohydro built) |
 | **Taabo** | 210 | hydropower | Bandama River, 1979 |
-| **Agrekko Vridi** | 200 (2× 100) | oil/gas | Emergency rental gas, Vridi Abidjan |
+| **Aggreko Vridi** | 200 (2× 100) | oil/gas | Emergency rental gas, Vridi Abidjan |
 | **Kossou** | 174 | hydropower | Bandama River, 1972. **Lake Kossou** is Côte d'Ivoire's largest artificial lake (1,780 km²) |
 | **Buyo** | 165 | hydropower | Sassandra River, 1980 |
 | **Gribo-Popoli** | 112 | hydropower | Sassandra River, opened 2021 |
 | **Boundiali Solar** | 38 | solar | **Côte d'Ivoire's first utility-scale solar farm**, opened 2023 |
 | Savanes Solar | 19.7 | solar | |
 
-**Azito + CIPREL + Agrekko** thermal cluster in Abidjan's Vridi/Azito district = **1,279 MW concentrated gas generation** — largest thermal cluster in francophone West Africa. CCGT plants use natural gas from offshore Foxtrot field + new Baleine field (ENI discovery 2021-2023, first production 2023).
+**Azito + CIPREL + Aggreko** thermal cluster in Abidjan's Vridi/Azito district = **1,279 MW concentrated gas generation** — largest thermal cluster in francophone West Africa. CCGT plants use natural gas from offshore Foxtrot field + new Baleine field (ENI discovery 2021-2023, first production 2023).
 
 **Sassandra River hydro cascade** = Buyo 165 + Gribo-Popoli 112 + Soubré 275 = **552 MW** along one river, Côte d'Ivoire's main hydro artery.
 
@@ -131,7 +133,7 @@ Notable noise zones:
 - **Abidjan Plateau + Treichville + Yopougon + Abobo + Cocody + Marcory** — dense urban core
 - **Sitarail corridor** (Abidjan ↔ Bouaké ↔ Burkina) — parallel to RN1
 - **Félix-Houphouët-Boigny International (ABJ/DIAP Abidjan)**, **Yamoussoukro (ASK/DIYO)**, **Bouaké (BYK/DIBK)**, **San Pédro (SPY/DISP)**, **Korhogo (HGO/DIKO)**, **Man (MJC/DIMN)** — covered by global aircraft layer
-- **Azito + CIPREL + Agrekko Vridi thermal cluster** (1,279 MW concentrated in Abidjan's Vridi/Azito district)
+- **Azito + CIPREL + Aggreko Vridi thermal cluster** (1,279 MW concentrated in Abidjan's Vridi/Azito district)
 - **Soubré + Buyo + Gribo-Popoli hydros** (Sassandra River cascade)
 - **Kossou + Taabo hydros** (Bandama River)
 - **SIR refinery Vridi** (80k bpd, supplies 7 West African countries)

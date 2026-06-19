@@ -36,9 +36,9 @@ Sudan Ministry of Roads publishes no open AADT. CNOSSOS class defaults with Khar
 
 ## Railway
 
-### Sudan Railways Corporation (SRC) — 17k segments modelled
+### Sudan Railways Corporation (SRC) — corridor-tier defaults
 
-**~4,750 km narrow-gauge (1,067 mm)** network — one of Africa's largest historically, now severely degraded. Low operational frequency; class defaults applied.
+**~4,750 km narrow-gauge (1,067 mm Cape)** network — one of Africa's largest historically, now severely degraded. SRC publishes no GIS/GTFS, so corridor/usage tier defaults are applied over the OSM rail geometry (both `railway=rail` and `railway=narrow_gauge`, gated to Sudanese soil). Low operational frequency.
 
 ### trains/day defaults
 
@@ -54,9 +54,13 @@ Sudan Ministry of Roads publishes no open AADT. CNOSSOS class defaults with Khar
 - **Khartoum–Wadi Halfa** — Nile valley north; tourist Aswan route (largely inoperable)
 - **Khartoum–El Obeid** — western Sudan; gum arabic corridor
 
+## Buildings
+
+GHSL Built-H R2023A 100m + Overture Maps Foundation global footprints.
+
 ## Industrial
 
-### GEM — 26 plants, operating, 4,150 MW
+### GEM Global Integrated Power — 26 operating plants, ~4,150 MW
 
 **Merowe Dam 1,250 MW** (Nile, north of Khartoum) dominates. Chinese-built (Harbin Electric/CMEC, 2009); 10 Francis turbines × 125 MW each. Sudan's largest power plant.
 
@@ -69,6 +73,7 @@ Sudan Ministry of Roads publishes no open AADT. CNOSSOS class defaults with Khar
 | **Roseires Dam** | 280 | hydropower | Blue Nile; raised 2013 (new 355 MW capacity) |
 | **Garri CCGT** | 240 | gas | Khartoum North |
 | **Burri Thermal** | 200 | gas/HFO | Khartoum |
+| **Kassala Wind Farm** | 60 | wind | East Sudan, near Eritrea border |
 | **Jebel Aulia** | 30 | hydropower | White Nile, south Khartoum |
 | **Sennar Dam** | 17 | hydropower | Blue Nile, historic 1925 |
 
