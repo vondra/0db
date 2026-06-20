@@ -65,7 +65,7 @@ export function PathProfileDiagram({
   const dist = Math.max(trace.dist_m, 1)
   const hasPath = n > 0 && trace.dist_m > 0
 
-  const { elevMin, elevMax, exaggeration, xOf, yOf, xAxisTicks } =
+  const { elevMin, elevMax, xOf, yOf, xAxisTicks } =
     useMemo(() => {
       const elevs = trace.elevation_m
       // Fold, don't spread: elevation_m / building_h_m can be 10k+ samples at
@@ -87,7 +87,6 @@ export function PathProfileDiagram({
       // loop so they stay visible when the vertical pixels-per-metre
       // ratio is small.
       const scale = PLOT_H / range
-      const exag = 1
 
       const xOf = (t: number) => PAD_L + Math.max(0, Math.min(1, t)) * PLOT_W
       const yOf = (elevM: number) => PAD_T + (eMax - elevM) * scale
@@ -99,7 +98,7 @@ export function PathProfileDiagram({
         if (ticks.length > 12) break
       }
 
-      return { elevMin: eMin, elevMax: eMax, exaggeration: exag, xOf, yOf, xAxisTicks: ticks }
+      return { elevMin: eMin, elevMax: eMax, xOf, yOf, xAxisTicks: ticks }
     }, [trace, dist])
 
   // Runs of consecutive segments sharing a ground-hardness bucket share
@@ -472,11 +471,6 @@ export function PathProfileDiagram({
           {elevMin.toFixed(0)} m
         </text>
 
-        {exaggeration > 1.05 && (
-          <text x={PAD_L + PLOT_W - 4} y={PAD_T + 14} textAnchor="end" fontSize={23} fill="currentColor" opacity={0.65}>
-            ×{exaggeration.toFixed(1)} vert
-          </text>
-        )}
       </svg>
 
     </div>

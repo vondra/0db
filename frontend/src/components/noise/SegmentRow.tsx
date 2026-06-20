@@ -55,10 +55,6 @@ function displayDistance(t: SegmentTrace): number {
   return t.dist_m
 }
 
-function receivedDbHint(_t: SegmentTrace): string {
-  return POWER_SUM_HINT
-}
-
 export const SegmentRow = memo(SegmentRowImpl)
 
 function SegmentRowImpl({
@@ -102,7 +98,7 @@ function SegmentRowImpl({
           <span className="text-muted-foreground/60 shrink-0 w-14 text-right tabular-nums">
             {formatDist(Math.round(displayDistance(trace)))}
           </span>
-          <HoverText title={receivedDbHint(trace)}>
+          <HoverText title={POWER_SUM_HINT}>
             <span
               className="font-medium shrink-0 w-14 text-right tabular-nums inline-block"
               style={{ color: ldenToColor(lden) }}
