@@ -9,9 +9,7 @@ use crate::emission::road;
 use crate::sources::{provenance_of, Provenance};
 use crate::types::{RoadSegment, NUM_BANDS};
 
-use super::{
-    bands_to_f32, has_enriched_traffic, DERESTRICTED_SPEED_KMH, SPEED_LIMIT_DERESTRICTED,
-};
+use super::{bands_to_f32, has_enriched_traffic, DERESTRICTED_SPEED_KMH, SPEED_LIMIT_DERESTRICTED};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RawRoadInput {
