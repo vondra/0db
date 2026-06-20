@@ -178,9 +178,16 @@ impl FusedTileZ13 {
         // this is entirely cache-hot. `rx_refl_db` reads from the
         // (possibly shared) halo: denser than the 3×3-on-mmap probe
         // and one fewer cache hop.
+        //
+        // Pixel-lattice loops: `py`/`px` index the receiver lat/lon vectors AND
+        // compute the flat output offset `idx = py*TILE_PX + px`, so enumerate()
+        // would not remove the manual indexing. Kept verbatim (raster sampling
+        // feeds the byte-exact heatmap kernel).
+        #[allow(clippy::needless_range_loop)]
         for py in 0..TILE_PX {
             let lat = rx_lat[py];
             let row_base = py * TILE_PX;
+            #[allow(clippy::needless_range_loop)]
             for px in 0..TILE_PX {
                 let lon = rx_lon[px];
                 let idx = row_base + px;
@@ -234,9 +241,13 @@ impl FusedTileZ13 {
         let mut rx_alt_m = vec![0.0_f32; n];
         let rx_refl_db = vec![0.0_f32; n];
 
+        // Same pixel-lattice indexing as build_receiver_altitude_only above —
+        // `py`/`px` drive both the lat/lon reads and `idx = py*TILE_PX + px`.
+        #[allow(clippy::needless_range_loop)]
         for py in 0..TILE_PX {
             let lat = rx_lat[py];
             let row_base = py * TILE_PX;
+            #[allow(clippy::needless_range_loop)]
             for px in 0..TILE_PX {
                 let lon = rx_lon[px];
                 let idx = row_base + px;

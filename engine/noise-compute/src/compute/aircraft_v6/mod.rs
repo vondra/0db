@@ -256,6 +256,8 @@ pub fn compute_aircraft_v6_separable(
     let collapse = |accums: &HashMap<u64, FlightAccum>| -> NoisePeriods {
         let mut e = [0.0f64; 3];
         for acc in accums.values() {
+            // Period accumulation — `p` indexes both sides; f64 sum order is parity.
+            #[allow(clippy::needless_range_loop)]
             for p in 0..3 {
                 e[p] += acc.period_energy[p];
             }

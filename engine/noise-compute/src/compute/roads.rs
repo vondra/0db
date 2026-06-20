@@ -192,6 +192,9 @@ pub(crate) fn compute_roads(
             );
             seg_variants[pi].add(&v);
             if pi == 0 {
+                // Band energy sum (`j` indexes `emission`); f64 accumulation order
+                // is part of popup byte parity — kept as an index loop.
+                #[allow(clippy::needless_range_loop)]
                 for j in 0..NUM_BANDS {
                     day_emission_energy += crate::propagation::iso9613::fast_exp_f64(
                         emission[j] * std::f64::consts::LN_10 * 0.1,
@@ -364,6 +367,8 @@ pub(crate) fn compute_roads(
                 }
             }
         }
+        // Period-variant merge — `pi` indexes the two parallel variant arrays.
+        #[allow(clippy::needless_range_loop)]
         for pi in 0..3 {
             acc.variants[pi].add(&seg_variants[pi]);
         }

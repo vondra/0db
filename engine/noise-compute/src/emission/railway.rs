@@ -216,6 +216,9 @@ fn vehicle_emission(coeffs: &RailVehicleCoeffs, speed_kmh: f64) -> [f64; NUM_BAN
 
     let mut bands = [0.0f64; NUM_BANDS];
     let c = std::f64::consts::LN_10 * 0.1;
+    // Per-band emission: `i` indexes the parallel rolling/traction coefficient
+    // arrays and writes `bands[i]`; index loop kept, exp sum order is byte-parity.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..NUM_BANDS {
         let l_roll = coeffs.a_rolling[i] + speed_corr;
         let l_tract = coeffs.a_traction[i];

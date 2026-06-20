@@ -60,6 +60,10 @@ pub fn compute_aircraft_lw_per_meter_lin(
     is_departure: u8,
     leg_avg_speed_kt: f32,
 ) -> [f32; NUM_BANDS] {
+    // `!(v > 0.0)` NOT `v <= 0.0`: a NaN speed must return the zero-emission
+    // default, which only the negated `>` gives (`<=` is false for NaN and would
+    // fall through to compute with a NaN speed).
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
     if !(leg_avg_speed_kt > 0.0) {
         return [0.0; NUM_BANDS];
     }

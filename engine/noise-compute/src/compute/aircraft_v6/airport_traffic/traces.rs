@@ -95,6 +95,9 @@ pub(super) fn emit_segment_traces(
         let calc = |p: usize| -> [f64; NUM_BANDS] {
             let mut out = [f64::NEG_INFINITY; NUM_BANDS];
             let ps = aircraft::PERIOD_SECONDS[p];
+            // `i` indexes the 2D `received_bands_lin_per_period[p][i]` and `out[i]`;
+            // index loop kept, per-band Leq order is part of popup byte parity.
+            #[allow(clippy::needless_range_loop)]
             for i in 0..NUM_BANDS {
                 out[i] =
                     aircraft::period_leq(acc.received_bands_lin_per_period[p][i], n_days_f, ps);

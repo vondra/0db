@@ -213,6 +213,11 @@ impl ReceiverHorizon {
                 continue;
             }
             let tan_h = tan_q as f64 / TAN_SCALE;
+            // `!(a < b)` NOT `a >= b`: a NaN `tan_beta` (vertical / zero lateral)
+            // must take the `continue` branch (edge does not block), which only the
+            // negated strict `<` gives — `>=` would be false for NaN and wrongly
+            // admit the edge. See the strict-`<` note above.
+            #[allow(clippy::neg_cmp_op_on_partial_ord)]
             if !(tan_beta < tan_h) {
                 continue; // this edge does not break the line of sight
             }

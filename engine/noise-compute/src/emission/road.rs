@@ -103,6 +103,10 @@ fn vehicle_emission_energy_bands(
             bands[i] = fast_exp_f64(l_wr * db_to_ln) + fast_exp_f64(l_wp * db_to_ln);
         }
     } else {
+        // Per-band emission: `i` indexes the parallel coefficient arrays
+        // (`a_p`/`b_p`) and writes `bands[i]`; kept as an index loop (a multi-array
+        // zip is no clearer) and the fast_exp_f64 sum order is byte-parity.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..NUM_BANDS {
             let l_wp = c.a_p[i] + c.b_p[i] * speed_delta;
             bands[i] = fast_exp_f64(l_wp * db_to_ln); // propulsion-only categories: no surface correction
@@ -142,7 +146,10 @@ pub fn line_source_emission(flows: &[CategoryFlow], surface_corr_db: f64) -> [f6
             }
         }
     }
-    // Convert energy sums back to dB
+    // Convert energy sums back to dB, in place per band. Kept as an index loop
+    // (rather than `iter_mut()`) verbatim from the byte-exact emission kernel —
+    // this output feeds the popup/pipeline parity, so the form stays frozen.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..NUM_BANDS {
         total[i] = if total[i] > 0.0 {
             10.0 * total[i].log10()

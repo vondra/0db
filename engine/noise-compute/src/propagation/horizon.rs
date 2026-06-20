@@ -341,6 +341,9 @@ mod tests {
             &t, &composite, &bare, 500.0, 5, src_elev, rcv_elev, dsr, 0.05, 4.0,
         );
         let combined = diffraction_attenuation_rayleigh(&r);
+        // Test loop compares three parallel band arrays and prints `i` on failure —
+        // an index loop is clearer here than a multi-array zip.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..NUM_BANDS {
             assert!(
                 (d.terrain[i] + d.screen[i] - combined[i]).abs() < 1e-9,

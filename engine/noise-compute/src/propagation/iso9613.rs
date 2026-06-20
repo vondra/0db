@@ -21,6 +21,10 @@ const F64_EXPONENT_BIAS: i64 = 1023;
 /// Replaces 40× std::exp() per source-receiver pair in propagate_variants().
 #[inline(always)]
 pub fn fast_exp_f64(x: f64) -> f64 {
+    // `.max().min()` (NOT `.clamp()`): on a NaN input `x.max(LO).min(HI)` yields
+    // LO, whereas `x.clamp(LO, HI)` returns NaN — and the two also emit different
+    // code in this AVX2 hot path. The manual form is part of byte parity.
+    #[allow(clippy::manual_clamp)]
     let x = x.max(EXP_CLAMP_LO).min(EXP_CLAMP_HI);
     // Range reduction: e^x = 2^(x/ln2) = 2^n * e^r where |r| <= ln(2)/2
     let inv_ln2 = std::f64::consts::LOG2_E; // 1/ln(2)
