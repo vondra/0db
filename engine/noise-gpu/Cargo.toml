@@ -8,9 +8,11 @@ edition = "2021"
 # bins). Default build = the CPU-side lib alone, so a host with no CUDA toolkit (e.g.
 # he84) builds noise-gpu cleanly; the GPU path is `--features gpu` on a GPU host.
 # cuda-12060 = highest bindings cudarc 0.12 ships; the 12.x driver API is
-# forward-compatible with the box's 12.8.
+# forward-compatible with the box's 12.8. `std` re-enables DriverError's Display + Error impls
+# (cfg-gated in cudarc) so the airborne builder propagates a CUDA OOM as an anyhow error and
+# classifies it for a graceful per-cell `fail` instead of `.expect()`-panicking the whole engine.
 [dependencies]
-cudarc = { version = "0.12", default-features = false, features = ["driver", "nvrtc", "cuda-12060"], optional = true }
+cudarc = { version = "0.12", default-features = false, features = ["std", "driver", "nvrtc", "cuda-12060"], optional = true }
 raster-reader = { path = "../raster-reader" }
 heatmap-aircraft = { path = "../heatmap-aircraft" }
 noise-compute = { path = "../noise-compute" }

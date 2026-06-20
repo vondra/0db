@@ -24,7 +24,7 @@ use heatmap_aircraft::r4_source_cache::{R4SourceCache, SourceSel};
 use heatmap_aircraft::region_runner::{morton_order, region_tiles, tile_centre_r4};
 use heatmap_aircraft::wire_hm3::{collapse_lden_u8, write_tile, SOURCE_ID_AIRCRAFT};
 use heatmap_aircraft::worklist::{any_source_arrow, resolve_n_days};
-use noise_gpu::airborne::{region_candidates, AirborneGpu};
+use noise_gpu::airborne::{is_cell_unbuildable, region_candidates, AirborneGpu};
 use raster_reader::fused_tile_z13::{default_batch_size, FusedTileZ13, TileBatch};
 use raster_reader::RealRasters;
 use rayon::prelude::*;
@@ -273,7 +273,7 @@ fn process_region_gpu(
         arcs.push(cache.get_or_load(u64::from(nbr))?);
     }
     let views: Vec<_> = arcs.iter().flat_map(|a| a.airborne.views()).collect();
-    let resident = gpu.load_region(region_candidates(&views, r4, z));
+    let resident = gpu.load_region(region_candidates(&views, r4, z))?;
 
     // Pre-fault this region's DEM footprint so the per-tile build doesn't serialise on mmap page
     // faults (mirrors region_runner::preload_region). DEM-only: airborne consumes only rx_alt_m.
@@ -305,7 +305,7 @@ fn process_region_gpu(
             .collect();
         // One GPU-classify + batched launch + sync for the whole block → one TileAccumulator
         // per tile, then the shared write below.
-        let accums: Vec<TileAccumulator> = gpu.scatter_region(&resident, &tile_refs);
+        let accums: Vec<TileAccumulator> = gpu.scatter_region(&resident, &tile_refs)?;
         for (&(tx, ty), accum) in btiles.iter().zip(accums.iter()) {
             let out = args
                 .output
@@ -436,7 +436,18 @@ fn run_stream(args: &Args, z: u8) -> Result<()> {
                             Ok((w, s)) => {
                                 format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis())
                             }
-                            Err(e) => format!("fail {r4:x} {e}"),
+                            // A per-cell VRAM OOM / too-dense region: report THIS cell failed and
+                            // keep streaming (the hub leaves it unstamped → uncomputed). A clean
+                            // alloc failure leaves the CUDA context usable, so the next cell is fine.
+                            Err(e) if is_cell_unbuildable(&e) => format!("fail {r4:x} {e}"),
+                            // Anything else — a non-OOM CUDA error (illegal address, launch/sync
+                            // failure ⇒ possibly corrupted device state) or a CPU/IO failure (tile
+                            // write, source load) — is NOT safely skippable: abort so provision
+                            // restarts a clean engine instead of silently failing every later cell.
+                            Err(e) => {
+                                eprintln!("airborne: FATAL unrecoverable error on {r4:x}: {e:?}");
+                                std::process::exit(1);
+                            }
                         };
                         // One locked writeln+flush so each cell's result reaches the orchestrator at once.
                         let mut out = std::io::stdout().lock();

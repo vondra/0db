@@ -16,7 +16,9 @@
 
 use std::sync::Arc;
 
-use cudarc::driver::{CudaDevice, CudaFunction, CudaSlice, LaunchAsync, LaunchConfig};
+use anyhow::{Context, Result};
+use cudarc::driver::sys::CUresult;
+use cudarc::driver::{CudaDevice, CudaFunction, CudaSlice, DriverError, LaunchAsync, LaunchConfig};
 use cudarc::nvrtc::Ptx;
 use h3o::CellIndex;
 use heatmap_aircraft::accumulator::{CoarseLattice, TileAccumulator, COARSE_LEVELS_N};
@@ -33,6 +35,34 @@ use crate::{pack_airborne_receivers, pack_airborne_receivers_batch, pack_airborn
 const AIRBORNE_PTX: &str = include_str!(concat!(env!("OUT_DIR"), "/airborne.ptx"));
 const NEAR_SLANT_SQ: f64 = 500.0 * 500.0; // NEAR_SLANT_M² (airborne.rs:48)
 const COARSE_BAND_M: [f64; 2] = [2_000.0, 8_000.0]; // airborne.rs:96
+
+/// A region whose per-block far-list crosses `i32::MAX` entries — unbuildable in a single GPU pass
+/// (it would overflow the device offsets / need ~16 GB of VRAM). Surfaced as a per-cell skip, the
+/// same class as a VRAM OOM, NOT an engine abort.
+#[derive(Debug)]
+pub struct RegionTooDense(pub String);
+impl std::fmt::Display for RegionTooDense {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl std::error::Error for RegionTooDense {}
+
+/// True when `e` is a per-cell GPU resource limit — a VRAM out-of-memory
+/// (`CUDA_ERROR_OUT_OF_MEMORY`) or a [`RegionTooDense`] — i.e. THIS cell can't be built on THIS GPU,
+/// so the warm stream engine should report it `fail` and move on. A clean alloc failure leaves the
+/// CUDA context intact (cudarc returns `Err` before creating the slice), so the next cell is fine —
+/// no `AirborneGpu` rebuild. Any OTHER CUDA error (illegal address, launch / sync failure) is NOT
+/// skippable: it signals corrupted device state, so the caller must abort the engine (provision
+/// restarts it clean) rather than silently fail every subsequent cell.
+pub fn is_cell_unbuildable(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        matches!(
+            c.downcast_ref::<DriverError>(),
+            Some(DriverError(CUresult::CUDA_ERROR_OUT_OF_MEMORY))
+        ) || c.downcast_ref::<RegionTooDense>().is_some()
+    })
+}
 
 /// Region-prep (ONCE per R4): every candidate sub-seg in the region's admit envelope,
 /// ground-stale filtered, with `prepare_segment` applied — the expensive CPU work, done
@@ -305,20 +335,20 @@ impl AirborneGpu {
 
     /// Pack + upload a region's candidate sub-segs to the device (ONCE per R4). The returned
     /// handle is reused by every [`scatter_tile`] of that region.
-    pub fn load_region(&self, region: Vec<(SegmentPrepared, u8)>) -> RegionResident {
+    pub fn load_region(&self, region: Vec<(SegmentPrepared, u8)>) -> Result<RegionResident> {
         let (sll, sf, si) = pack_airborne_segs(&region);
         let nreg = region.len();
-        let d_sll = self.dev.htod_copy(sll).expect("upload sll");
-        let d_sf = self.dev.htod_copy(sf).expect("upload sf");
-        let d_si = self.dev.htod_copy(si).expect("upload si");
-        self.dev.synchronize().expect("region upload sync");
-        RegionResident {
+        let d_sll = self.dev.htod_copy(sll).context("upload sll")?;
+        let d_sf = self.dev.htod_copy(sf).context("upload sf")?;
+        let d_si = self.dev.htod_copy(si).context("upload si")?;
+        self.dev.synchronize().context("region upload sync")?;
+        Ok(RegionResident {
             region,
             d_sll,
             d_sf,
             d_si,
             nreg,
-        }
+        })
     }
 
     /// Scatter one tile against the resident region: classify into near/far[3] index lists,
@@ -447,10 +477,10 @@ impl AirborneGpu {
         &self,
         region: &RegionResident,
         tiles: &[&FusedTileZ13],
-    ) -> Vec<TileAccumulator> {
+    ) -> Result<Vec<TileAccumulator>> {
         let t = tiles.len();
         if region.nreg == 0 || t == 0 {
-            return (0..t).map(|_| TileAccumulator::new()).collect();
+            return Ok((0..t).map(|_| TileAccumulator::new()).collect());
         }
         let nreg = region.nreg;
         let nreg_i = nreg as i32;
@@ -474,7 +504,7 @@ impl AirborneGpu {
                 .fold(f32::NEG_INFINITY, f32::max) as f64;
             meta.extend_from_slice(&[centre_lat, centre_lon, m_per_deg_lon, half_diag, max_rx_alt]);
         }
-        let d_meta = self.dev.htod_copy(meta).expect("meta");
+        let d_meta = self.dev.htod_copy(meta).context("meta")?;
 
         // 2. Pass 1 (count): thread per (tile, seg) → counts[tile*4 + bucket].
         let threads = (t as u64) * (nreg as u64);
@@ -483,7 +513,7 @@ impl AirborneGpu {
             block_dim: (block, 1, 1),
             shared_mem_bytes: 0,
         };
-        let mut d_counts = self.dev.alloc_zeros::<i32>(t * 4).expect("counts");
+        let mut d_counts = self.dev.alloc_zeros::<i32>(t * 4).context("counts")?;
         unsafe {
             self.f_classify_count
                 .clone()
@@ -498,10 +528,10 @@ impl AirborneGpu {
                         &mut d_counts,
                     ),
                 )
-                .expect("launch classify_count");
+                .context("launch classify_count")?;
         }
-        self.dev.synchronize().expect("count sync");
-        let counts = self.dev.dtoh_sync_copy(&d_counts).expect("dtoh counts");
+        self.dev.synchronize().context("count sync")?;
+        let counts = self.dev.dtoh_sync_copy(&d_counts).context("dtoh counts")?;
 
         // 3. Prefix-sum → off[4*(t+1)]: block 0 = near CSR (also the batched near kernel's
         //    near_off), blocks 1/2/3 = per-tile far-level base offset. Totals size the buffers.
@@ -520,34 +550,38 @@ impl AirborneGpu {
                 acc += i64::from(counts[ti * 4 + bucket]);
             }
             off[bucket * t1 + t] = acc as i32;
-            assert!(
-                acc < i32::MAX as i64,
-                "airborne block bucket {bucket} total {acc} ≥ i32::MAX — region too dense for \
-                 single-pass M4; needs M2 candidate-chunking (see scatter_region doc)"
-            );
+            if acc >= i32::MAX as i64 {
+                // Surfaced as a per-cell skip (see `is_cell_unbuildable`), not a panic: the warm
+                // stream engine reports this cell `fail` and moves on instead of aborting.
+                return Err(RegionTooDense(format!(
+                    "airborne block bucket {bucket} total {acc} ≥ i32::MAX — region too dense for \
+                     single-pass GPU (would overflow device offsets / ~16 GB VRAM)"
+                ))
+                .into());
+            }
             total[bucket] = acc as usize;
         }
-        let d_off = self.dev.htod_copy(off).expect("off");
+        let d_off = self.dev.htod_copy(off).context("off")?;
 
         // 4. Pass 2 (scatter): fill near_idx + per-level far (seg,tile) lists on device.
         //    alloc_zeros rejects 0 bytes → dummy-size empty buckets; the kernel never writes them.
-        let mut d_fill = self.dev.alloc_zeros::<i32>(t * 4).expect("fill");
+        let mut d_fill = self.dev.alloc_zeros::<i32>(t * 4).context("fill")?;
         let mut d_near_idx = self
             .dev
             .alloc_zeros::<i32>(total[0].max(1))
-            .expect("near_idx");
+            .context("near_idx")?;
         let mut d_far0 = self
             .dev
             .alloc_zeros::<i32>((2 * total[1]).max(2))
-            .expect("far0");
+            .context("far0")?;
         let mut d_far1 = self
             .dev
             .alloc_zeros::<i32>((2 * total[2]).max(2))
-            .expect("far1");
+            .context("far1")?;
         let mut d_far2 = self
             .dev
             .alloc_zeros::<i32>((2 * total[3]).max(2))
-            .expect("far2");
+            .context("far2")?;
         unsafe {
             self.f_classify_scatter
                 .clone()
@@ -567,15 +601,15 @@ impl AirborneGpu {
                         &mut d_far2,
                     ),
                 )
-                .expect("launch classify_scatter");
+                .context("launch classify_scatter")?;
         }
 
         // 5. Physics: receivers (concatenated) → batched near (reads off block 0 as near CSR)
         //    + ≤3 batched coarse levels (each over its far (seg,tile) list).
         let (rll_b, rxa_b) = pack_airborne_receivers_batch(tiles);
-        let d_rll = self.dev.htod_copy(rll_b).expect("rll_b");
-        let d_rxa = self.dev.htod_copy(rxa_b).expect("rxa_b");
-        let mut d_out = self.dev.alloc_zeros::<f32>(npix * 3 * t).expect("out_b");
+        let d_rll = self.dev.htod_copy(rll_b).context("rll_b")?;
+        let d_rxa = self.dev.htod_copy(rxa_b).context("rxa_b")?;
+        let mut d_out = self.dev.alloc_zeros::<f32>(npix * 3 * t).context("out_b")?;
         let cfg_near = LaunchConfig {
             grid_dim: (((t * npix) as u32).div_ceil(block), 1, 1),
             block_dim: (block, 1, 1),
@@ -601,7 +635,7 @@ impl AirborneGpu {
                         &mut d_out,
                     ),
                 )
-                .expect("launch near_batched");
+                .context("launch near_batched")?;
         }
         // (far (seg,tile) device buf, nfar, lattice side n, coarse out) per level.
         let mut fardev: Vec<(&CudaSlice<i32>, usize, usize, CudaSlice<f32>)> =
@@ -611,7 +645,7 @@ impl AirborneGpu {
             let d_coarse = self
                 .dev
                 .alloc_zeros::<f32>(nn * nn * 3 * t)
-                .expect("coarse_b");
+                .context("coarse_b")?;
             fardev.push((d_far, total[lvl + 1], nn, d_coarse));
         }
         for (d_far, nfar, nn, d_coarse) in fardev.iter_mut() {
@@ -643,27 +677,27 @@ impl AirborneGpu {
                             &mut *d_coarse,
                         ),
                     )
-                    .expect("launch coarse_batched");
+                    .context("launch coarse_batched")?;
             }
         }
-        self.dev.synchronize().expect("batched kernel sync");
+        self.dev.synchronize().context("batched kernel sync")?;
 
-        let near_all = self.dev.dtoh_sync_copy(&d_out).expect("dtoh near_b");
+        let near_all = self.dev.dtoh_sync_copy(&d_out).context("dtoh near_b")?;
         let coarse_all: Vec<(usize, Vec<f32>)> = fardev
             .iter()
-            .map(|(_, nfar, nn, d_coarse)| {
+            .map(|(_, nfar, nn, d_coarse)| -> Result<(usize, Vec<f32>)> {
                 if *nfar == 0 {
-                    (*nn, Vec::new())
+                    Ok((*nn, Vec::new()))
                 } else {
-                    (
+                    Ok((
                         *nn,
-                        self.dev.dtoh_sync_copy(d_coarse).expect("dtoh coarse_b"),
-                    )
+                        self.dev.dtoh_sync_copy(d_coarse).context("dtoh coarse_b")?,
+                    ))
                 }
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
-        (0..t)
+        Ok((0..t)
             .map(|ti| {
                 let mut fine = TileAccumulator::new();
                 fine.energy
@@ -678,6 +712,6 @@ impl AirborneGpu {
                 }
                 fine
             })
-            .collect()
+            .collect())
     }
 }

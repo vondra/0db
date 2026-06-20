@@ -57,7 +57,7 @@ fn main() -> Result<()> {
     // superset for every tile of the R4 — independent of which tile (x,y) was passed.
     let t_prep = std::time::Instant::now();
     let region = region_candidates(&views, r4, z);
-    let resident = gpu.load_region(region);
+    let resident = gpu.load_region(region).expect("load_region");
     let t_prep_ms = t_prep.elapsed().as_secs_f64() * 1e3;
     let nreg = resident.len();
 
