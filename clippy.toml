@@ -1,0 +1,10 @@
+# Acoustic propagation natively takes 9+ physical params (source/receiver geometry,
+# distances, corrections) — bundling them into a struct just to satisfy the lint adds
+# indirection without clarity. 13 = the largest existing arg count
+# (source-reader add_v6_aircraft_to_result), so today's signatures pass while a future
+# 14-arg fn still warns.
+#
+# One file at the repo root covers all 7 crates: clippy walks up from each crate's
+# CARGO_MANIFEST_DIR to the filesystem root looking for clippy.toml, and the engine
+# crates are standalone (no [workspace]) so nothing shadows this on the way up.
+too-many-arguments-threshold = 13
