@@ -125,9 +125,8 @@ fn classify_multipolygon(rel: &osmpbf::Relation) -> Option<(FeatureType, Vec<(St
     } else if matches!(
         tag("landuse"),
         Some("industrial") | Some("quarry") | Some("farmyard")
-    ) {
-        FeatureType::Industrial
-    } else if matches!(tag("man_made"), Some("works") | Some("wastewater_plant")) {
+    ) || matches!(tag("man_made"), Some("works") | Some("wastewater_plant"))
+    {
         FeatureType::Industrial
     } else if matches!(
         tag("aeroway"),

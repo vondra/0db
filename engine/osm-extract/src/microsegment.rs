@@ -8,6 +8,7 @@
 //!   - Σ length [i..j] ≤ `max_length_m` (hard cap, default 250 m)
 //!   - every intermediate vertex `k ∈ (i, j)` has perpendicular
 //!     distance ≤ `CHORD_EPS_M` (1.0 m) to the chord (i, j)
+//!
 //! On chord-tolerance violation, emit `(i, j-1)` and restart walker
 //! from `j-1`. When a single vertex pair already exceeds `max_length`,
 //! fall back to the legacy uniform interpolation for that pair.
