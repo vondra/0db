@@ -24,7 +24,9 @@ use heatmap_aircraft::r4_source_cache::{R4SourceCache, SourceSel};
 use heatmap_aircraft::region_runner::{morton_order, region_tiles, tile_centre_r4};
 use heatmap_aircraft::wire_hm3::{collapse_lden_u8, write_tile, SOURCE_ID_AIRCRAFT};
 use heatmap_aircraft::worklist::{any_source_arrow, resolve_n_days};
-use noise_gpu::airborne::{is_cell_unbuildable, region_candidates, AirborneGpu};
+use noise_compute::emission::aircraft::SegmentPrepared;
+use noise_gpu::airborne::{is_cell_unbuildable, region_candidates, AirborneGpu, RegionTooDense};
+use noise_gpu::pack_airborne_segs;
 use raster_reader::fused_tile_z13::{default_batch_size, FusedTileZ13, TileBatch};
 use raster_reader::RealRasters;
 use rayon::prelude::*;
@@ -65,8 +67,12 @@ struct Args {
     /// Per-batch dimension. 0 = auto-detect from L3 size.
     #[arg(long, default_value_t = 0)]
     batch_size: u32,
-    /// Decoded-R4 LRU capacity (≥ grid_disk(1)=7 to cache a region's ring).
-    #[arg(long, default_value_t = 64)]
+    /// Decoded-R4 LRU capacity (≥ grid_disk(1)=7 to cache a region's ring). 16 keeps the ring
+    /// plus a locality margin warm while bounding the decoded-source baseline — 64 (the old,
+    /// untuned default) accumulated ~16 GB of dense hub-cell sources in the LRU, starving a dense
+    /// cell's region_candidates Vec of host memcap. Morton order shares 4-5 of 7 ring neighbours,
+    /// so 16 holds the working set with no extra re-decodes.
+    #[arg(long, default_value_t = 16)]
     r4_cache: usize,
     #[arg(long, default_value_t = false)]
     write_empty: bool,
@@ -243,37 +249,122 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Build every owned tile of one region on the GPU: load its grid_disk(1) airborne
-/// sources through `cache`, upload the region's candidate sub-segs once, then scatter
-/// each tile-block. Returns (tiles_written, tiles_skipped). Empty / silent regions are NOT
-/// skipped early — `scatter_region` fast-paths an empty region to zeroed tiles, which
-/// still unlink any stale prior tile (gg: a bare `continue` would leave ghost tiles
-/// in an incremental rebuild). The build-wide `!any_source_arrow` guard in `main`
-/// already returns Ok(()) before any GPU work for a no-airborne chunk.
-#[allow(clippy::too_many_arguments)]
-fn process_region_gpu(
-    gpu: &AirborneGpu,
-    cache: &mut R4SourceCache,
+/// One grid-aligned tile-block, CPU-prepped: its NW corner `(bx,by)`, the owned tiles in it,
+/// and the DEM-only `TileBatch`. `gpu_build_cell` rebuilds the `&FusedTileZ13` refs from
+/// `batch.tiles` by the same `((ty-by)*bn + (tx-bx))` index the serial path used.
+struct PrepBlock {
+    bx: u32,
+    by: u32,
+    btiles: Vec<(u32, u32)>,
+    batch: TileBatch,
+}
+
+/// One cell's CPU prep output, handed across the A2 channel to the GPU thread. Holds the
+/// pre-packed region SoA (`sll`/`sf`/`si`, ready for `upload_region` — `region` itself is
+/// dropped after packing; the stream path never reads it) and the prepped tile-blocks.
+/// `Send` because every field is a `Vec`/`usize`/`Instant` and `TileBatch` is `Vec`s of
+/// primitives + `Arc<FusedGrid>` (`FusedGrid: Send+Sync`). `t_start` is stamped at the START
+/// of prep so the reported ms = prep+build wall time per cell, matching the serial `done` line.
+/// (The cell's `r4` is NOT a field: the stream channel carries it alongside as `(u64, Result<_>)`
+/// so the GPU thread can report `fail`/FATAL even when prep itself errored and produced no cell.)
+struct PreparedCell {
+    sll: Vec<f64>,
+    sf: Vec<f32>,
+    si: Vec<i32>,
+    nreg: usize,
+    blocks: Vec<PrepBlock>,
+    t_start: Instant,
+}
+
+/// (memory.max, memory.current) of this process's cgroup-v2 scope, in bytes — the live memcap
+/// budget the memcap wrapper set. None if unreadable or unlimited ("max"), in which case the
+/// caller skips the guard (no cap to respect).
+fn cgroup_mem() -> Option<(u64, u64)> {
+    let cg = std::fs::read_to_string("/proc/self/cgroup").ok()?; // "0::/user.slice/…/run-XXX.scope"
+    let rel = cg.lines().find_map(|l| l.strip_prefix("0::"))?.trim();
+    let base = format!("/sys/fs/cgroup{rel}");
+    let max = std::fs::read_to_string(format!("{base}/memory.max")).ok()?;
+    let max = max.trim().parse::<u64>().ok()?; // "max" → parse fails → None (no cap)
+    let cur = std::fs::read_to_string(format!("{base}/memory.current"))
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    Some((max, cur))
+}
+
+/// CPU prep stage for one cell (no GPU/device touch): load its grid_disk(1) airborne sources
+/// through `cache`, `region_candidates` + pack the region SoA, then build the DEM-only tile
+/// batches for `tiles` (the cell's owned tiles — `region_tiles(r4,z)` on the stream/production
+/// path, a bbox/single-tile subset on the dev paths). The packed SoA is uploaded later by
+/// `gpu_build_cell` via `upload_region`. `region` is dropped right after packing — only the SoA
+/// crosses the channel, so host RAM per buffered cell is the SoA + its tile blocks, not the
+/// prepared-segment Vec too. (Takes no `&Args`: the output dir + write-empty flag this stage's
+/// serial predecessor referenced live in `gpu_build_cell` now, the only stage that writes tiles.)
+fn prep_cell(
     rasters: &RealRasters,
-    args: &Args,
+    cache: &mut R4SourceCache,
     z: u8,
     bn: u32,
-    n_days: u16,
     r4: u64,
     tiles: &[(u32, u32)],
-) -> Result<(usize, usize)> {
+) -> Result<PreparedCell> {
+    let t_start = Instant::now();
     if tiles.is_empty() {
-        return Ok((0, 0));
+        // No owned tiles → nothing to upload or build; empty blocks + an empty SoA. The GPU
+        // thread's `for` over `blocks` is a no-op (0 written, 0 skipped), same as the serial path.
+        return Ok(PreparedCell {
+            sll: Vec::new(),
+            sf: Vec::new(),
+            si: Vec::new(),
+            nreg: 0,
+            blocks: Vec::new(),
+            t_start,
+        });
     }
-    // Load the region's grid_disk(1) airborne sources (Arc'd — held for the region's
-    // lifetime so the merged views stay valid), then region-prep + upload ONCE.
+    // Load the region's grid_disk(1) airborne sources (Arc'd — held only for this function's
+    // lifetime so the merged views stay valid while we pack), then region-prep + pack ONCE.
     let cell = CellIndex::try_from(r4)?;
     let mut arcs = Vec::with_capacity(7);
     for nbr in cell.grid_disk::<Vec<_>>(1) {
         arcs.push(cache.get_or_load(u64::from(nbr))?);
     }
     let views: Vec<_> = arcs.iter().flat_map(|a| a.airborne.views()).collect();
-    let resident = gpu.load_region(region_candidates(&views, r4, z))?;
+    // HOST-memory guard (the host analog of `scatter_region`'s VRAM `RegionTooDense`): the ~5
+    // densest megahub cells build a `region` Vec of tens of GB that spikes the engine past its
+    // cgroup MemoryMax → an uncatchable cgroup SIGKILL that crash-loops the worker. Estimate the
+    // Vec's peak host bytes from the total sub-segment count (its element upper bound) BEFORE
+    // allocating it; if it wouldn't fit the live memcap, return RegionTooDense — the SAME
+    // graceful per-cell skip path the VRAM limit uses (run_stream reports `fail`, hub leaves the
+    // cell uncomputed; accepted for ~5 cells). When there is no cgroup cap (local dev) the guard
+    // is skipped entirely. Conservative by design (×2 for the construction peak + the packed SoA
+    // built from it, +4 GiB for the prep-ahead overlap cell): err toward skipping a borderline
+    // cell, since a skipped cell is uncomputed (accepted) but a host OOM crash-loops (not).
+    if let Some((max, cur)) = cgroup_mem() {
+        let n_sub: usize = views.iter().map(|v| v.sub_segments.start_lat.len()).sum();
+        let est = (n_sub as u64)
+            .saturating_mul(std::mem::size_of::<(SegmentPrepared, u8)>() as u64)
+            .saturating_mul(2);
+        if cur.saturating_add(est).saturating_add(4 << 30) > max {
+            return Err(RegionTooDense(format!(
+                "region ~{} GiB for {} sub-segs would exceed host memcap (cur {} + est > max {}) \
+                 — skipping",
+                est >> 30,
+                n_sub,
+                cur >> 30,
+                max >> 30
+            ))
+            .into());
+        }
+    }
+    let region = region_candidates(&views, r4, z);
+    let nreg = region.len();
+    let (sll, sf, si) = pack_airborne_segs(&region);
+    // The SoA is fully packed — the prepared-segment Vec (and the source Arcs/views it borrows)
+    // are no longer needed for the stream/scatter_region path, so drop them to bound host RAM.
+    drop(region);
+    drop(views);
+    drop(arcs);
 
     // Pre-fault this region's DEM footprint so the per-tile build doesn't serialise on mmap page
     // faults (mirrors region_runner::preload_region). DEM-only: airborne consumes only rx_alt_m.
@@ -296,20 +387,61 @@ fn process_region_gpu(
             .or_default()
             .push((tx, ty));
     }
+    let mut blocks = Vec::with_capacity(batches.len());
+    for ((bx, by), btiles) in batches {
+        let batch = TileBatch::build_receiver_altitude_only(z, bx, by, bn, rasters);
+        blocks.push(PrepBlock {
+            bx,
+            by,
+            btiles,
+            batch,
+        });
+    }
+    Ok(PreparedCell {
+        sll,
+        sf,
+        si,
+        nreg,
+        blocks,
+        t_start,
+    })
+}
+
+/// GPU build stage for one prepped cell (the only device-touching half): upload the region SoA
+/// ONCE, then per block rebuild the `&FusedTileZ13` refs, `scatter_region`, and run the EXACT
+/// serial write loop (`collapse_lden_u8` + `write_tile` + stale-unlink on shrink-to-silence).
+/// Returns (tiles_written, tiles_skipped). Empty / silent regions are NOT skipped early —
+/// `scatter_region` fast-paths an empty region to zeroed tiles, which still unlink any stale
+/// prior tile (gg: a bare `continue` would leave ghost tiles in an incremental rebuild).
+fn gpu_build_cell(
+    gpu: &AirborneGpu,
+    args: &Args,
+    n_days: u16,
+    p: PreparedCell,
+) -> Result<(usize, usize)> {
+    // No owned tiles (e.g. an off-grid cell) → no block to scatter, so skip the device upload
+    // entirely — a true no-op, matching the serial path's early `Ok((0,0))`. (A cell WITH tiles
+    // but zero airborne candidates still uploads an empty SoA below and runs `scatter_region`,
+    // which zeros + stale-unlinks every tile, exactly as before.)
+    if p.blocks.is_empty() {
+        return Ok((0, 0));
+    }
+    let resident = gpu.upload_region(p.sll, p.sf, p.si, p.nreg)?;
     let (mut written, mut skipped) = (0usize, 0usize);
-    for ((bx, by), btiles) in &batches {
-        let batch = TileBatch::build_receiver_altitude_only(z, *bx, *by, bn, rasters);
-        let tile_refs: Vec<&FusedTileZ13> = btiles
+    for block in &p.blocks {
+        let (bx, by, bn) = (block.bx, block.by, block.batch.batch_n);
+        let tile_refs: Vec<&FusedTileZ13> = block
+            .btiles
             .iter()
-            .map(|&(tx, ty)| &batch.tiles[((ty - by) * bn + (tx - bx)) as usize])
+            .map(|&(tx, ty)| &block.batch.tiles[((ty - by) * bn + (tx - bx)) as usize])
             .collect();
         // One GPU-classify + batched launch + sync for the whole block → one TileAccumulator
         // per tile, then the shared write below.
         let accums: Vec<TileAccumulator> = gpu.scatter_region(&resident, &tile_refs)?;
-        for (&(tx, ty), accum) in btiles.iter().zip(accums.iter()) {
+        for (&(tx, ty), accum) in block.btiles.iter().zip(accums.iter()) {
             let out = args
                 .output
-                .join(z.to_string())
+                .join(args.zoom.to_string())
                 .join(tx.to_string())
                 .join(format!("{ty}.bin"));
             let cells = collapse_lden_u8(accum, n_days as f64);
@@ -329,6 +461,29 @@ fn process_region_gpu(
     Ok((written, skipped))
 }
 
+/// Build every owned tile of one region on the GPU (the BATCH `par_chunks` path): CPU-prep then
+/// GPU-build, SERIAL — `prep_cell` + `gpu_build_cell` share the exact code the A2 stream pipeline
+/// splits across two threads, so this path is unchanged in behaviour. `tiles` is the cell's owned
+/// tile list (`region_tiles` for `--regions-file`, a bbox/single-tile subset for the dev modes),
+/// forwarded to `prep_cell` so the dev paths keep their explicit subset; the build-wide
+/// `!any_source_arrow` guard in `main` already returns Ok(()) before any GPU work for a
+/// no-airborne chunk.
+#[allow(clippy::too_many_arguments)]
+fn process_region_gpu(
+    gpu: &AirborneGpu,
+    cache: &mut R4SourceCache,
+    rasters: &RealRasters,
+    args: &Args,
+    z: u8,
+    bn: u32,
+    n_days: u16,
+    r4: u64,
+    tiles: &[(u32, u32)],
+) -> Result<(usize, usize)> {
+    let p = prep_cell(rasters, cache, z, bn, r4, tiles)?;
+    gpu_build_cell(gpu, args, n_days, p)
+}
+
 /// Shared streaming work queue: (pending Morton-ordered cells, stream-closed flag) under a mutex,
 /// plus a condvar to park idle workers. Workers drain a contiguous run off the front; the stdin
 /// reader pushes to the back and wakes one. (Factored to a type alias so the `let` below isn't a
@@ -342,16 +497,30 @@ type StreamQueue = std::sync::Arc<(
 /// answer to the per-chunk process spawn + inter-chunk staging stall (~39% of box wall-time)
 /// that capped the cluster's GPU at ~61% effective (a warm process sustains ~88-100%, STEP 1).
 /// One process: CUDA context + NPD LUTs + class-weights + RealRasters all resident; R4 cell IDs
-/// stream in on stdin and each is built on a warm K-in-flight rayon pool — every worker owns its
-/// `AirborneGpu` (one CUDA stream) + R4 source LRU and REUSES them across cells, identical
-/// concurrency to the batch path's `par_chunks`, just fed incrementally. One `done <r4hex>
-/// <written> <skipped> <ms>` (or `fail <r4hex> <err>`) line prints per cell AS IT FINISHES, so the
-/// orchestrator can ACK + advance its lease without waiting for the whole stream. n_days +
-/// class_weights resolve ONCE from `--seed-regions` (the orchestrator's representative source set);
-/// the streamed cells inherit that build-wide value, exactly as every chunk did in the batch cluster.
+/// stream in on stdin and each is built by an A2 CPU-prep / GPU-build double-buffer — ONE prep
+/// thread (its own `RealRasters` + R4 LRU) packs the NEXT cell while ONE GPU thread (one CUDA
+/// stream, so exactly one cell's region in VRAM — no OOM, no cell loss) builds the current one.
+/// The two stages are joined by a depth-1 `sync_channel`, so the prep thread runs at most one
+/// cell ahead (host RAM stays ~2-3 cells) and the GPU stays saturated across each cell's CPU
+/// prep instead of idling ~25% as in the serial per-worker loop. One `done <r4hex> <written>
+/// <skipped> <ms>` (or `fail <r4hex> <err>`) line prints per cell AS IT FINISHES (the GPU thread
+/// is the sole writer → no interleave), so the orchestrator can ACK + advance its lease without
+/// waiting for the whole stream. n_days + class_weights resolve ONCE from `--seed-regions` (the
+/// orchestrator's representative source set); the streamed cells inherit that build-wide value,
+/// exactly as every chunk did in the batch cluster.
+///
+/// Termination / deadlock-freedom: the reader (main scope thread) parses stdin onto the Morton
+/// work queue; on EOF it sets the closed flag + `notify_all`. The prep thread drains contiguous
+/// runs (PULL_BATCH) and on "closed + empty" breaks its loop, returns, and DROPS its `Sender`.
+/// `gpu_tx` was moved into the prep thread, so when prep exits the channel closes; the GPU
+/// thread's `for msg in rx` then ends, and the scope joins both. No stage can block forever: the
+/// bounded `send` only blocks while the channel is full, which the GPU thread always eventually
+/// drains (it never blocks except on that same `rx`); the prep `cv.wait` is always woken by the
+/// reader's per-cell `notify_one` or the EOF `notify_all`.
 fn run_stream(args: &Args, z: u8) -> Result<()> {
     use std::collections::VecDeque;
     use std::io::{BufRead, Write};
+    use std::sync::mpsc::sync_channel;
     use std::sync::{Arc, Condvar, Mutex};
 
     let seed = args.seed_regions.as_ref().context(
@@ -381,84 +550,100 @@ fn run_stream(args: &Args, z: u8) -> Result<()> {
         args.batch_size
     };
     eprintln!(
-        "stream: n_days={n_days}, batch={bn}, {} worker(s) — reading R4 cells from stdin",
-        rayon::current_num_threads()
+        "stream: n_days={n_days}, batch={bn}, A2 prep+GPU pipeline — reading R4 cells from stdin"
     );
 
-    // Morton-locality streaming pool. Warm workers pull a CONTIGUOUS run of up to PULL_BATCH cells
-    // from the front of a shared queue the reader fills in arrival (= the orchestrator's Morton)
-    // order, so each worker keeps the batch path's grid_disk(1) ring-cache reuse across the run it
-    // builds. (rayon's par_bridge work-steals SINGLE cells → interleaved across workers → ring
-    // cache-thrash: measured 76% GPU vs the batch par_chunks' 88% on the same cells + cold cache.)
-    // The mutex is held only to splice a run off the front (cheap); the GPU/CPU build runs unlocked.
+    // Morton-locality work queue. The single prep thread pulls a CONTIGUOUS run of up to
+    // PULL_BATCH cells from the front of a shared queue the reader fills in arrival (= the
+    // orchestrator's Morton) order, so its grid_disk(1) ring-cache stays warm across the run —
+    // even better than the old per-worker pool, which split the Morton stream across K caches.
+    // The mutex is held only to splice a run off the front (cheap); prep_cell runs unlocked.
     const PULL_BATCH: usize = 4;
     let work: StreamQueue = Arc::new((Mutex::new((VecDeque::new(), false)), Condvar::new()));
-    let n_workers = rayon::current_num_threads().max(1);
+    // Depth-1: the prep thread may have 1 cell buffered in the channel + 1 in flight (its `send`
+    // blocks on the 2nd), while the GPU thread holds the 1 it is building → host RAM ≈ 3 cells.
+    let (gpu_tx, gpu_rx) = sync_channel::<(u64, Result<PreparedCell>)>(1);
 
     std::thread::scope(|scope| {
-        for _ in 0..n_workers {
-            let work = Arc::clone(&work);
-            let class_weights = &class_weights;
-            scope.spawn(move || {
-                // Warm per-worker state — one CUDA stream + one R4 source LRU + one RealRasters, reused for every
-                // run this worker builds (no per-chunk re-init). The RealRasters is PER-WORKER, not shared: each
-                // worker then locks its OWN tile-store mutexes + use_counter, so a tile's ~65k samples don't
-                // contend a single shared lock across all workers (that contention was the flat 41%-CPU airborne
-                // ceiling). Same fix gpu_surface shipped (7746b452) — owned here, not thread_local, because these
-                // stream workers are one long-lived thread each. RealRasters::new is lazy (mmaps on demand).
-                let gpu = AirborneGpu::new(class_weights);
-                let rasters = RealRasters::new(&args.prepared_dir);
-                let mut cache = R4SourceCache::new(&args.h3r4_dir, args.r4_cache.max(7), SEL);
-                loop {
-                    let batch: Vec<u64> = {
-                        let (lock, cv) = &*work;
-                        let mut g = lock.lock().unwrap();
-                        loop {
-                            if !g.0.is_empty() {
-                                let take = g.0.len().min(PULL_BATCH);
-                                break g.0.drain(..take).collect();
-                            }
-                            if g.1 {
-                                break Vec::new(); // stream closed + drained → exit
-                            }
-                            g = cv.wait(g).unwrap();
+        // PREP THREAD (CPU only — no device touch). Owns its own RealRasters + R4 LRU (PER-prep,
+        // not shared: it then locks only its OWN tile-store mutexes, the fix that broke the flat
+        // 41%-CPU airborne ceiling — see 7746b452). Pulls Morton-contiguous runs, prep_cells each,
+        // and sends `(r4, Result<PreparedCell>)` (the depth-1 `send` blocks when the channel is
+        // full — the desired backpressure). Owns the ONLY Sender, so on exit the channel closes.
+        let prep_work = Arc::clone(&work);
+        scope.spawn(move || {
+            let rasters = RealRasters::new(&args.prepared_dir);
+            let mut cache = R4SourceCache::new(&args.h3r4_dir, args.r4_cache.max(7), SEL);
+            loop {
+                let batch: Vec<u64> = {
+                    let (lock, cv) = &*prep_work;
+                    let mut g = lock.lock().unwrap();
+                    loop {
+                        if !g.0.is_empty() {
+                            let take = g.0.len().min(PULL_BATCH);
+                            break g.0.drain(..take).collect();
                         }
-                    };
-                    if batch.is_empty() {
-                        break;
+                        if g.1 {
+                            break Vec::new(); // stream closed + drained → exit
+                        }
+                        g = cv.wait(g).unwrap();
                     }
-                    for r4 in batch {
-                        let t = Instant::now();
-                        let tiles = region_tiles(r4, z);
-                        let line = match process_region_gpu(
-                            &gpu, &mut cache, &rasters, args, z, bn, n_days, r4, &tiles,
-                        ) {
-                            Ok((w, s)) => {
-                                format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis())
-                            }
-                            // A per-cell VRAM OOM / too-dense region: report THIS cell failed and
-                            // keep streaming (the hub leaves it unstamped → uncomputed). A clean
-                            // alloc failure leaves the CUDA context usable, so the next cell is fine.
-                            Err(e) if is_cell_unbuildable(&e) => format!("fail {r4:x} {e}"),
-                            // Anything else — a non-OOM CUDA error (illegal address, launch/sync
-                            // failure ⇒ possibly corrupted device state) or a CPU/IO failure (tile
-                            // write, source load) — is NOT safely skippable: abort so provision
-                            // restarts a clean engine instead of silently failing every later cell.
-                            Err(e) => {
-                                eprintln!("airborne: FATAL unrecoverable error on {r4:x}: {e:?}");
-                                std::process::exit(1);
-                            }
-                        };
-                        // One locked writeln+flush so each cell's result reaches the orchestrator at once.
-                        let mut out = std::io::stdout().lock();
-                        let _ = writeln!(out, "{line}");
-                        let _ = out.flush();
+                };
+                if batch.is_empty() {
+                    break; // → return → drop gpu_tx → channel closes → GPU thread's `for` ends
+                }
+                for r4 in batch {
+                    let tiles = region_tiles(r4, z);
+                    let prepared = prep_cell(&rasters, &mut cache, z, bn, r4, &tiles);
+                    // A prep error (CPU/IO/source-load) is forwarded so the GPU thread reports it
+                    // through the SAME A1 classification (non-OOM → exit(1)). If the GPU thread has
+                    // already gone (rx dropped), send fails → drop the work and exit gracefully.
+                    if gpu_tx.send((r4, prepared)).is_err() {
+                        return;
                     }
                 }
-            });
-        }
+            }
+        });
+
+        // GPU THREAD (the only device-touching stage). Owns ONE AirborneGpu — one CUDA stream, so
+        // exactly one cell's region is resident in VRAM at a time (A2 overlaps CPU prep, NOT GPU
+        // concurrency: the threads=1 VRAM-safety is preserved). Sole stdout writer. Owns the ONLY
+        // Receiver; the loop ends when the prep thread drops the Sender.
+        let class_weights = &class_weights;
+        scope.spawn(move || {
+            let gpu = AirborneGpu::new(class_weights);
+            for (r4, prepared) in gpu_rx {
+                // ms = prep+build wall time per cell (t_start stamped at the START of prep_cell),
+                // matching the serial `done` line. Read it before gpu_build_cell consumes the cell.
+                let line = match prepared.and_then(|p| {
+                    let t_start = p.t_start;
+                    gpu_build_cell(&gpu, args, n_days, p).map(|(w, s)| (w, s, t_start))
+                }) {
+                    Ok((w, s, t_start)) => {
+                        format!("done {r4:x} {w} {s} {}", t_start.elapsed().as_millis())
+                    }
+                    // A per-cell VRAM OOM / too-dense region: report THIS cell failed and keep
+                    // streaming (the hub leaves it unstamped → uncomputed). A clean alloc failure
+                    // leaves the CUDA context usable, so the next cell is fine.
+                    Err(e) if is_cell_unbuildable(&e) => format!("fail {r4:x} {e}"),
+                    // Anything else — a non-OOM CUDA error (illegal address, launch/sync failure ⇒
+                    // possibly corrupted device state) or a CPU/IO failure (tile write, source
+                    // load, on either thread) — is NOT safely skippable: abort so provision
+                    // restarts a clean engine instead of silently failing every later cell.
+                    Err(e) => {
+                        eprintln!("airborne: FATAL unrecoverable error on {r4:x}: {e:?}");
+                        std::process::exit(1);
+                    }
+                };
+                // One locked writeln+flush so each cell's result reaches the orchestrator at once.
+                let mut out = std::io::stdout().lock();
+                let _ = writeln!(out, "{line}");
+                let _ = out.flush();
+            }
+        });
+
         // Reader on the main scope thread (StdinLock is !Send): parse hex R4s onto the queue tail in
-        // arrival order, waking one worker per cell. On EOF flag done + wake all so they drain + exit.
+        // arrival order, waking the prep thread per cell. On EOF flag done + wake it so it drains + exits.
         let stdin = std::io::stdin();
         for line in stdin.lock().lines() {
             let Ok(line) = line else { break };

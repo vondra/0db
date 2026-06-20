@@ -334,16 +334,33 @@ impl AirborneGpu {
     }
 
     /// Pack + upload a region's candidate sub-segs to the device (ONCE per R4). The returned
-    /// handle is reused by every [`scatter_tile`] of that region.
+    /// handle is reused by every [`scatter_tile`] of that region. Delegates the device upload to
+    /// [`upload_region`] (the GPU half) and keeps `region` host-side for [`scatter_tile`].
     pub fn load_region(&self, region: Vec<(SegmentPrepared, u8)>) -> Result<RegionResident> {
         let (sll, sf, si) = pack_airborne_segs(&region);
         let nreg = region.len();
+        let mut r = self.upload_region(sll, sf, si, nreg)?;
+        r.region = region;
+        Ok(r)
+    }
+
+    /// htod-upload pre-packed region SoA (the GPU half of [`load_region`]). `region` stays
+    /// host-side only for [`scatter_tile`] (the e2 validator path); the stream / `scatter_region`
+    /// path never reads it, so the A2 pipeline packs on the CPU prep thread and only this upload
+    /// touches the device — letting CPU prep of the NEXT cell overlap this cell's GPU build.
+    pub fn upload_region(
+        &self,
+        sll: Vec<f64>,
+        sf: Vec<f32>,
+        si: Vec<i32>,
+        nreg: usize,
+    ) -> Result<RegionResident> {
         let d_sll = self.dev.htod_copy(sll).context("upload sll")?;
         let d_sf = self.dev.htod_copy(sf).context("upload sf")?;
         let d_si = self.dev.htod_copy(si).context("upload si")?;
         self.dev.synchronize().context("region upload sync")?;
         Ok(RegionResident {
-            region,
+            region: Vec::new(),
             d_sll,
             d_sf,
             d_si,
