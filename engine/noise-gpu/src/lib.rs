@@ -86,9 +86,9 @@ pub fn pack_airborne_segs(segs: &[(SegmentPrepared, u8)]) -> (Vec<f64>, Vec<f32>
     (sll, sf, si)
 }
 
-/// Pixel-bin edge: an 8×8 receiver patch = one CUDA block in `line_binned`.
-pub const BIN_W: usize = 8;
-/// Bins per axis (32) and total bins per tile (1024).
+/// Pixel-bin edge: a 16×16 receiver patch = one CUDA block in `line_binned`.
+pub const BIN_W: usize = 16;
+/// Bins per axis (16) and total bins per tile (256).
 pub const BIN_TILES: usize = TILE_PX / BIN_W;
 pub const N_BINS: usize = BIN_TILES * BIN_TILES;
 
@@ -117,12 +117,17 @@ pub struct SourceBuffers {
     pub semis: Vec<f32>,
 }
 
-/// Pack a layer's line sources (tile-invariant): `seg` (4 coords), `sp`
-/// (length/reach/height/bridge), `semis` (3 periods × 8 emission bands).
+/// Pack a layer's line sources (tile-invariant): `seg` (4 coords), `sp` (12 =
+/// length/reach/height/bridge ++ 8 host-precomputed Lden band weights), `semis`
+/// (3 periods × 8 emission bands). The 8 `sp[4+i]` = `Σ_p LDEN_W[p]·emission_lin[p][i]`
+/// — the energy-budget-skip UB loop's per-band Lden weight, hoisted off the GPU
+/// (was 24 f64 mul-adds + casts per source×receiver inside `line_source`; the kernel
+/// now reads `sp[4+i]`). Byte-identical: same f64 FMA, just evaluated once on the host.
+const LDEN_W: [f64; 3] = [12.0, 12.649110640673518, 80.0]; // 4·√10 (mirror scatter.cu LDEN_W)
 pub fn pack_sources(lines: &[LineRow]) -> SourceBuffers {
     let (mut seg, mut sp, mut semis) = (
         Vec::with_capacity(lines.len() * 4),
-        Vec::with_capacity(lines.len() * 4),
+        Vec::with_capacity(lines.len() * 12),
         Vec::with_capacity(lines.len() * 24),
     );
     for r in lines {
@@ -133,6 +138,13 @@ pub fn pack_sources(lines: &[LineRow]) -> SourceBuffers {
             r.source_height_m,
             if r.bridge { 1.0 } else { 0.0 },
         ]);
+        for i in 0..8 {
+            sp.push(
+                LDEN_W[0] * r.emission_lin[0][i] as f64
+                    + LDEN_W[1] * r.emission_lin[1][i] as f64
+                    + LDEN_W[2] * r.emission_lin[2][i] as f64,
+            );
+        }
         for p in 0..3 {
             for i in 0..8 {
                 semis.push(r.emission_lin[p][i]);

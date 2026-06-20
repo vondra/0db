@@ -1,7 +1,10 @@
 // Surface scatter GPU kernels (grows into the full rail kernel per
 // docs/dev/gpu-ground-hybrid-plan.md). Ports of the noise-compute CPU path,
-// each validated GPU-vs-CPU before the next piece is added. Everything fp64 here
-// to isolate the port from precision; fp32 + stable-δ comes with the DDA pass.
+// each validated GPU-vs-CPU before the next piece is added. The hot path is already
+// fp32 — ray-march rc lerp, bilinear_elev_rc, flc, base/atm_km, fexp; the remaining
+// f64 is precision-critical and STAYS (fp32 there flips the LoS gate / reach cull or
+// regresses speed — two measured NO-GOs, docs/dev/road-rail-gpu-ledger.md): the reach
+// cull, LoS diffraction gate + δ*/fit_plane cancellation, profiles, cadence, budgets.
 // Args are packed into a few buffers (cudarc's tuple launch caps at ~12 args).
 
 #define NB 8
@@ -462,8 +465,8 @@ extern "C" __global__ void freefield_rail(
     out[pix * 3 + 2] = (float)e2;
 }
 
-#define BIN_W 8                  // pixel-bin edge (8×8 patch = one CUDA block)
-#define BIN_TILES (256 / BIN_W)  // 32 bins per axis, 1024 bins per tile
+#define BIN_W 16                 // pixel-bin edge (16×16 patch = one CUDA block)
+#define BIN_TILES (256 / BIN_W)  // 16 bins per axis, 256 bins per tile
 
 // ── One source's contribution to one receiver pixel: geometry → energy-budget
 // skip → cadence ray-march → terrain/screening/ground/veg → max(A_gr,A_bar)
@@ -491,25 +494,30 @@ __device__ __forceinline__ void line_source(
     float base = (float)refl + fc - 10.0f * log10f(2.0f * (float)PI_D * dslant);
     float atm_km = dslant / 1000.0f;
 
-    // energy-budget skip (kept/skipped/ub f64 — the ratio needs the precision)
+    // energy-budget skip (kept/skipped/ub f64 — the ratio needs the precision).
+    // The per-band Lden weight Σ_p LDEN_W[p]·em[p·8+i] is host-precomputed into
+    // sp[4+i] (pack_sources) — same f64 FMA, hoisted off the per-source×receiver hot
+    // path. Byte-identical to the in-kernel `LDEN_W[0]*em[i]+…` form.
     double ub = 0.0;
     for (int i = 0; i < NB; i++) {
         float gg_ub = fmaxf(-(float)GROUND_CF[i], 0.0f);
-        double em_lden = LDEN_W[0]*(double)em[i] + LDEN_W[1]*(double)em[8+i] + LDEN_W[2]*(double)em[16+i];
         float pdb = (base - (float)ALPHA_ATM[i] * atm_km + gg_ub + (float)A_W[i]) * (float)LN10 * 0.1f;
-        ub += em_lden * fexp((double)pdb);
+        ub += sp[4 + i] * fexp((double)pdb);
     }
     ub *= UB_SAFETY;
     if (skipped + ub <= eta * kept) { skipped += ub; return; }
 
-    // ray-march the cadence: bare elevation + building/forest/imd, in halo-RELATIVE
-    // raster coords. The per-sample ray delta `d_rf` is ≲326 cells/10 km; the
-    // absolute `src_rf` is ≤~8000 cells even for a 4×4-tile + 10 km batch, where fp32
-    // ULP is ~1.5 cm ≪ the 30 m cell — so the lerp runs in fp32 directly (mm–cm
-    // accurate; NOT incremental: `+=` would drift + break the sample↔t[i] tie). The
-    // f64 ORIGIN subtractions (cplat−lat_min, absolute lat/lon) stay f64, cast once.
+    // halo-RELATIVE ray coords (src centroid → receiver). The per-sample ray delta
+    // `d_rf` is ≲326 cells/10 km; the absolute `src_rf` is ≤~8000 cells even for a
+    // 4×4-tile + 10 km batch, where fp32 ULP is ~1.5 cm ≪ the 30 m cell — so the lerp
+    // runs in fp32 directly (mm–cm accurate; NOT incremental: `+=` would drift + break
+    // the sample↔t[i] tie). The f64 ORIGIN subtractions (cplat−lat_min, absolute
+    // lat/lon) stay f64, cast once.
     float src_rf = (float)((cplat - lat_min) * inv), src_cf = (float)((cplon - lon_min) * inv);
     float d_rf = (float)((rlat - cplat) * inv), d_cf = (float)((rlon - cplon) * inv);
+
+    // ray-march the cadence: bare elevation + building/forest/imd, in halo-RELATIVE
+    // raster coords (coords computed above).
     int n = fill_t(dend, tprof);
     for (int i = 0; i < n; i++) {
         float rf = src_rf + (float)tprof[i] * d_rf, cf = src_cf + (float)tprof[i] * d_cf;
@@ -655,7 +663,7 @@ extern "C" __global__ void line(
 
     for (int s = 0; s < nsrc; s++)
         line_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
-                    rlat, rlon, ralt, refl, eta, &seg[s * 4], &sp[s * 4], &semis[s * 24],
+                    rlat, rlon, ralt, refl, eta, &seg[s * 4], &sp[s * 12], &semis[s * 24],
                     barr, nbarr,
                     tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
     out[opix * 3 + 0] = e0;
@@ -672,9 +680,9 @@ extern "C" __global__ void line(
 // upper bound on the p2s block-corner distance ⇒ conservative superset at every
 // latitude; the per-pixel cull in line_source stays authoritative; the 0..nsrc
 // ordered replay preserves the order-dependent energy-budget skip ⇒ byte-identical
-// to `line`. One cull per source (not 64×), fixed 64-byte shared, no atomics.
+// to `line`. One cull per source (not 256×), fixed 256-byte shared, no atomics.
 // See docs/dev/gpu-binning-plan.md.
-extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 8) line_binned_fused(
+extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 2) line_binned_fused(
     const float*  __restrict__ elev,
     const float*  __restrict__ inner,
     const unsigned char* __restrict__ cover,
@@ -719,7 +727,7 @@ extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 8) line_binned_fused
             double de, cpa, cpo, fr;
             p2s(clat, clon, seg[s * 4], seg[s * 4 + 1], seg[s * 4 + 2], seg[s * 4 + 3],
                 &de, &cpa, &cpo, &fr);
-            keep[lane] = (de <= sp[s * 4 + 1] + reach) ? 1 : 0;
+            keep[lane] = (de <= sp[s * 12 + 1] + reach) ? 1 : 0;
         }
         __syncthreads();
         int chunk_n = min(BIN_W * BIN_W, nsrc - base);
@@ -727,7 +735,7 @@ extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 8) line_binned_fused
             if (keep[j])
                 line_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
                             rlat, rlon, ralt, refl, eta, &seg[(base + j) * 4],
-                            &sp[(base + j) * 4], &semis[(base + j) * 24],
+                            &sp[(base + j) * 12], &semis[(base + j) * 24],
                             barr, nbarr,
                             tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
         __syncthreads();

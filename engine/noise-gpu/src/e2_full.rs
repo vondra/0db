@@ -102,8 +102,12 @@ fn main() -> Result<()> {
         tw,
         0.0, // nbarr — the e2 CPU reference below is barrier-free (`no_barriers`)
     ];
+    // sp = 12/source: length/reach/height/bridge ++ 8 host-precomputed Lden band
+    // weights (Σ_p LDEN_W[p]·emission_lin[p][i]) — mirrors pack_sources so the shared
+    // `line`/`line_binned_fused` kernels read sp[4+i] for the energy-budget UB.
+    const LDEN_W: [f64; 3] = [12.0, 12.649110640673518, 80.0];
     let mut seg = Vec::with_capacity(nsrc * 4);
-    let mut sp = Vec::with_capacity(nsrc * 4);
+    let mut sp = Vec::with_capacity(nsrc * 12);
     let mut semis = Vec::with_capacity(nsrc * 24);
     for r in &rail {
         seg.extend_from_slice(&[r.start_lat, r.start_lon, r.end_lat, r.end_lon]);
@@ -113,6 +117,13 @@ fn main() -> Result<()> {
             r.source_height_m,
             if r.bridge { 1.0 } else { 0.0 },
         ]);
+        for i in 0..8 {
+            sp.push(
+                LDEN_W[0] * r.emission_lin[0][i] as f64
+                    + LDEN_W[1] * r.emission_lin[1][i] as f64
+                    + LDEN_W[2] * r.emission_lin[2][i] as f64,
+            );
+        }
         for p in 0..3 {
             for i in 0..8 {
                 semis.push(r.emission_lin[p][i]);
