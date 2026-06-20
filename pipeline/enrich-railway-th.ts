@@ -41,6 +41,7 @@ import { writeRailTrains } from './lib/railways-arrow.js'
 import { latLngToCell, cellToLatLng } from 'h3-js'
 import { SOURCE_ID_TH_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
+import { RAIL_TYPES, TRAM_TYPES, METRO_TYPES, parseGtfsDate, formatDate } from './lib/gtfs-enrich-core.js'
 
 const MY_SOURCE_ID = SOURCE_ID_TH_NATIONAL_RAILWAY
 
@@ -84,10 +85,9 @@ interface StopTrainCount {
   trains_freight: number
 }
 
-// GTFS route_type families
-const RAIL_TYPES = new Set([2, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109])
-const TRAM_TYPES = new Set([0, 900, 901, 902, 903, 904, 905, 906])
-const METRO_TYPES = new Set([1, 400, 401, 402, 403, 404, 405])
+// Route_type families + GtfsStop/StopTrainCount-adjacent generics live in lib/gtfs-enrich-core.ts.
+// TH keeps its own 3-family RouteFamily (rail/tram/metro), compact CSV parser, inlined
+// findTargetWednesday, and parseTime — they differ from the shared core, so stay here.
 
 // ── CSV parsing ──
 function parseCsvLine(line: string): string[] {
@@ -127,15 +127,6 @@ async function parseCsvStream(filePath: string): Promise<Record<string, string>[
   return results
 }
 
-function parseGtfsDate(yyyymmdd: string): number {
-  const y = parseInt(yyyymmdd.substring(0, 4))
-  const m = parseInt(yyyymmdd.substring(4, 6)) - 1
-  const d = parseInt(yyyymmdd.substring(6, 8))
-  return new Date(y, m, d).getTime()
-}
-function formatDate(yyyymmdd: string): string {
-  return `${yyyymmdd.substring(0, 4)}-${yyyymmdd.substring(4, 6)}-${yyyymmdd.substring(6, 8)}`
-}
 function findTargetWednesday(calendarRows: Record<string, string>[]): string {
   let minDate = '99999999', maxDate = '00000000'
   for (const row of calendarRows) {

@@ -27,6 +27,10 @@ import { latLngToCell } from 'h3-js'
 import { SOURCE_ID_GLOBAL_GTFS_TRANSIT } from './lib/source-ids.generated.js'
 import { pointToSegmentDist } from './lib/spatial.js'
 import { writeRailTrains } from './lib/railways-arrow.js'
+import {
+  RAIL_TYPES, TRAM_TYPES, METRO_TYPES, routeFamily,
+  parseGtfsDate, formatDate, type GtfsStop,
+} from './lib/gtfs-enrich-core.js'
 
 const MY_SOURCE_ID = SOURCE_ID_GLOBAL_GTFS_TRANSIT
 
@@ -53,28 +57,12 @@ interface FeedConfig {
   railRouteTypes: Set<number>
 }
 
-// GTFS route_type: 0=Tram, 1=Subway, 2=Rail, 3=Bus, 4=Ferry, 5=Cable, 6=Gondola, 7=Funicular
-// Extended: 100-199=Railway, 200-299=Coach, 400-499=Urban Rail, 700-799=Bus, 900-999=Tram, 1000-1099=Water
-const RAIL_TYPES = new Set([2, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109])
-const TRAM_TYPES = new Set([0, 900, 901, 902, 903, 904, 905, 906])
-const METRO_TYPES = new Set([1, 400, 401, 402, 403, 404, 405])
+// RAIL_TYPES/TRAM_TYPES/METRO_TYPES + routeFamily are hoisted to lib/gtfs-enrich-core.ts.
 // Per-feed allow-list value: feeds with surface trams/light-rail/metro use this, rail-only feeds use
 // RAIL_TYPES. METRO_TYPES is included so metro routes survive the per-feed filter and routeFamily can
 // map them to the 'tram' family (they enrich OSM light_rail, rail_type 2) — without it, metro-bearing
 // feeds (e.g. Sofia) would fall back to class defaults instead of real frequencies.
 const ALL_RAIL_AND_TRAM = new Set([...RAIL_TYPES, ...TRAM_TYPES, ...METRO_TYPES])
-
-// GTFS route family → OSM rail_type family (rail_type 0=rail, 1=tram, 2=light_rail).
-// Metro/light-metro is grouped with tram: OSM tags light-metro as light_rail (rail_type 2)
-// while GTFS tags it route_type 1 (Porto etc.), and true underground subways have no OSM
-// segment so never match. Conscious Occam trade-off — a subway STOP within 500 m of a
-// surface tram/light_rail segment can match it; accepted over a 3-family scheme that would
-// miss GTFS-tram-tagged light rails. Bus/ferry/etc. → null (skipped).
-function routeFamily(routeType: number): 'rail' | 'tram' | null {
-  if (RAIL_TYPES.has(routeType)) return 'rail'
-  if (TRAM_TYPES.has(routeType) || METRO_TYPES.has(routeType)) return 'tram'
-  return null
-}
 
 const FEEDS: FeedConfig[] = [
   {
@@ -267,15 +255,7 @@ const FEEDS: FeedConfig[] = [
   },
 ]
 
-// ── Types ──
-
-interface GtfsStop {
-  stop_id: string
-  lat: number
-  lon: number
-  name: string
-  h3r4: string
-}
+// ── Types (GtfsStop hoisted to lib/gtfs-enrich-core.ts) ──
 
 interface StopTrainCount {
   stop_id: string
@@ -406,17 +386,6 @@ function findTargetWednesday(calendarRows: Record<string, string>[]): string {
   }
 
   return bestDate
-}
-
-function parseGtfsDate(yyyymmdd: string): number {
-  const y = parseInt(yyyymmdd.substring(0, 4))
-  const m = parseInt(yyyymmdd.substring(4, 6)) - 1
-  const d = parseInt(yyyymmdd.substring(6, 8))
-  return new Date(y, m, d).getTime()
-}
-
-function formatDate(yyyymmdd: string): string {
-  return `${yyyymmdd.substring(0, 4)}-${yyyymmdd.substring(4, 6)}-${yyyymmdd.substring(6, 8)}`
 }
 
 // ── Step 1: Download GTFS feed ──

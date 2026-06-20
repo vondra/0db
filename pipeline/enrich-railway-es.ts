@@ -21,6 +21,11 @@ import { SOURCE_ID_ES_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { pointToSegmentDist } from './lib/spatial.js'
 import { writeRailTrains } from './lib/railways-arrow.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
+import {
+  RAIL_TYPES,
+  parseCsvLine, parseCsvStream, parseGtfsDate, formatDate, findTargetWednesday,
+  type GtfsStop,
+} from './lib/gtfs-enrich-core.js'
 
 const MY_SOURCE_ID = SOURCE_ID_ES_NATIONAL_RAILWAY
 
@@ -74,17 +79,6 @@ const BBOX: [number, number, number, number] = [35.5, -10.0, 44.0, 5.0] // [minL
 // 100-109) enter the stop pool, so a tram-route stop can never be matched by a
 // heavy-rail (rail_type=0) segment. Spanish street trams are separate operators,
 // absent from these feeds, and get a class default via the rail_type gate instead.
-const RAIL_TYPES = new Set([2, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109])
-
-// ── Types ──
-
-interface GtfsStop {
-  stop_id: string
-  lat: number
-  lon: number
-  name: string
-  h3r4: string
-}
 
 interface StopTrainCount {
   stop_id: string
@@ -94,104 +88,6 @@ interface StopTrainCount {
   h3r4: string
   trains_passenger: number
   trains_freight: number
-}
-
-// ── CSV parsing ──
-
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = []
-  let current = ''
-  let inQuotes = false
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]
-    if (inQuotes) {
-      if (ch === '"') {
-        if (i + 1 < line.length && line[i + 1] === '"') {
-          current += '"'
-          i++
-        } else {
-          inQuotes = false
-        }
-      } else {
-        current += ch
-      }
-    } else {
-      if (ch === '"') {
-        inQuotes = true
-      } else if (ch === ',') {
-        fields.push(current.trim())
-        current = ''
-      } else {
-        current += ch
-      }
-    }
-  }
-  fields.push(current.trim())
-  return fields
-}
-
-async function parseCsvStream(filePath: string): Promise<Record<string, string>[]> {
-  const results: Record<string, string>[] = []
-  const stream = createReadStream(filePath, { encoding: 'utf-8' })
-  const rl = createInterface({ input: stream, crlfDelay: Infinity })
-
-  let headers: string[] | null = null
-  for await (const rawLine of rl) {
-    const line = headers === null ? rawLine.replace(/^\uFEFF/, '') : rawLine
-    if (line.trim() === '') continue
-
-    if (!headers) {
-      headers = parseCsvLine(line)
-      continue
-    }
-    const values = parseCsvLine(line)
-    const row: Record<string, string> = {}
-    for (let i = 0; i < headers.length; i++) {
-      row[headers[i]] = values[i] || ''
-    }
-    results.push(row)
-  }
-  return results
-}
-
-// ── GTFS date helpers ──
-
-function parseGtfsDate(yyyymmdd: string): number {
-  const y = parseInt(yyyymmdd.substring(0, 4))
-  const m = parseInt(yyyymmdd.substring(4, 6)) - 1
-  const d = parseInt(yyyymmdd.substring(6, 8))
-  return new Date(y, m, d).getTime()
-}
-
-function formatDate(yyyymmdd: string): string {
-  return `${yyyymmdd.substring(0, 4)}-${yyyymmdd.substring(4, 6)}-${yyyymmdd.substring(6, 8)}`
-}
-
-function findTargetWednesday(calendarRows: Record<string, string>[]): string {
-  let minDate = '99999999'
-  let maxDate = '00000000'
-  for (const row of calendarRows) {
-    const start = row['start_date'] || ''
-    const end = row['end_date'] || ''
-    if (start && start < minDate) minDate = start
-    if (end && end > maxDate) maxDate = end
-  }
-
-  if (minDate === '99999999') {
-    const now = new Date()
-    now.setDate(now.getDate() + 7)
-    while (now.getDay() !== 3) now.setDate(now.getDate() + 1)
-    return now.toISOString().substring(0, 10).replace(/-/g, '')
-  }
-
-  const startMs = parseGtfsDate(minDate)
-  const endMs = parseGtfsDate(maxDate)
-  const midMs = startMs + (endMs - startMs) / 2
-  const mid = new Date(midMs)
-  const day = mid.getDay()
-  const offset = (3 - day + 7) % 7
-  mid.setDate(mid.getDate() + offset)
-  return mid.toISOString().substring(0, 10).replace(/-/g, '')
 }
 
 // ── Step 1: Download all configured GTFS feeds ──

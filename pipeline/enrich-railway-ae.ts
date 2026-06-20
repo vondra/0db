@@ -45,6 +45,7 @@ import { writeRailTrains } from './lib/railways-arrow.js'
 import { latLngToCell, cellToLatLng } from 'h3-js'
 import { SOURCE_ID_AE_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { pointToSegmentDist } from './lib/spatial.js'
+import { RAIL_TYPES, TRAM_TYPES, METRO_TYPES, parseGtfsDate, formatDate, type GtfsStop } from './lib/gtfs-enrich-core.js'
 
 const MY_SOURCE_ID = SOURCE_ID_AE_NATIONAL_RAILWAY
 
@@ -74,20 +75,7 @@ const FEEDS: FeedConfig[] = [
 // UAE bbox (inclusive of Musandam enclave)
 const AE_BBOX: [number, number, number, number] = [22.3, 51.0, 26.3, 56.7]
 
-// GTFS route_type: 2=Rail, 100-109=Railway subtypes, 0=Tram, 900-906=Tram subtypes,
-// 1=Subway/Metro, 400-405=Urban Railway/Monorail subtypes
-const RAIL_TYPES = new Set([2, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109])
-const TRAM_TYPES = new Set([0, 900, 901, 902, 903, 904, 905, 906])
-const METRO_TYPES = new Set([1, 400, 401, 402, 403, 404, 405])
 const ALL_RAIL_AND_TRAM = new Set([...RAIL_TYPES, ...TRAM_TYPES, ...METRO_TYPES])
-
-interface GtfsStop {
-  stop_id: string
-  lat: number
-  lon: number
-  name: string
-  h3r4: string
-}
 
 type RouteFamily = 'rail' | 'tram' | 'metro'
 
@@ -142,18 +130,7 @@ async function parseCsvStream(filePath: string): Promise<Record<string, string>[
   return results
 }
 
-// ── Date helpers ──
-
-function parseGtfsDate(yyyymmdd: string): number {
-  const y = parseInt(yyyymmdd.substring(0, 4))
-  const m = parseInt(yyyymmdd.substring(4, 6)) - 1
-  const d = parseInt(yyyymmdd.substring(6, 8))
-  return new Date(y, m, d).getTime()
-}
-
-function formatDate(yyyymmdd: string): string {
-  return `${yyyymmdd.substring(0, 4)}-${yyyymmdd.substring(4, 6)}-${yyyymmdd.substring(6, 8)}`
-}
+// ── Date helpers (parseGtfsDate/formatDate hoisted to lib/gtfs-enrich-core.ts) ──
 
 /** Find a Wednesday within the GTFS calendar validity period (midpoint heuristic). */
 function findTargetWednesday(calendarRows: Record<string, string>[]): string {
