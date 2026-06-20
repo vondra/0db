@@ -20,7 +20,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
-use cudarc::driver::{CudaDevice, CudaFunction, CudaSlice, LaunchAsync, LaunchConfig};
+use cudarc::driver::sys::CUevent_flags;
+use cudarc::driver::{result, CudaDevice, CudaFunction, CudaSlice, LaunchAsync, LaunchConfig};
 use cudarc::nvrtc::Ptx;
 use h3o::{CellIndex, LatLng};
 use heatmap_aircraft::accumulator::TileAccumulator;
@@ -46,6 +47,17 @@ const ROAD_HALO_M: f64 = 10_000.0; // motorway-class reach (matches build_heatma
 const ETA: f64 = 0.40; // energy-budget skip threshold (production default)
 const TW: f64 = 8.0; // pack_tile swizzle width — the binned kernel ignores it (only
                      // the un-binned `rail` bench kernel in e2-full swizzles by it)
+
+/// `NOISE_GPU_TIMING=1` → bracket every line-kernel launch with CUDA events and
+/// emit a `KERNEL_MS=<total>` line (the optimisation harness's median-of-N signal,
+/// isolating the kernel from the htod/dtoh copies the host-wall `t_kernel` folds
+/// in). Read once: a per-launch env lookup would add host overhead to the very
+/// thing being timed. OFF (the default) ⇒ no event create/record/sync at all, so
+/// production throughput is untouched.
+fn timing_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("NOISE_GPU_TIMING").as_deref() == Ok("1"))
+}
 
 thread_local! {
     /// One `RealRasters` per rayon worker, REUSED across every region/cell — vs the old
@@ -142,6 +154,11 @@ fn warm_device_on(with_stream: bool) -> (Arc<CudaDevice>, CudaFunction) {
 #[derive(Default)]
 struct LayerStat {
     t_kernel: f64,
+    /// Isolated kernel time from CUDA events bracketing the launch (ms), summed
+    /// over the layer's tiles. Only populated when `NOISE_GPU_TIMING=1`; the
+    /// optimisation harness's median-of-N `KERNEL_MS` (vs the host-wall `t_kernel`,
+    /// which folds in the htod/dtoh copies + sync). Stays 0 when timing is off.
+    kernel_ms: f64,
     t_bins: f64,
     t_load: f64,
     max_diff: i32,
@@ -304,6 +321,18 @@ fn process_block(
         let d_rxll = dev.htod_copy(bufs.rxll).expect("rxll");
         let d_rxar = dev.htod_copy(bufs.rxar).expect("rxar");
         let d_barr = dev.htod_copy(bufs.barr).expect("barr");
+        // CUDA-event bracket (timing only): record on the SAME stream the kernel
+        // launches on (`f.launch` → `dev.cu_stream()`), so `start`/`stop` straddle
+        // exactly the kernel — not the htod copies above or the dtoh join below. The
+        // `elapsed` read happens after dtoh_sync_copy synchronises the stream, so
+        // both events are complete. Off ⇒ no events created at all.
+        let kernel_evt = timing_enabled().then(|| {
+            let stream = *dev.cu_stream();
+            let start = result::event::create(CUevent_flags::CU_EVENT_DEFAULT).expect("evt start");
+            let stop = result::event::create(CUevent_flags::CU_EVENT_DEFAULT).expect("evt stop");
+            unsafe { result::event::record(start, stream).expect("record start") };
+            (start, stop, stream)
+        });
         unsafe {
             f.clone()
                 .launch(
@@ -315,11 +344,25 @@ fn process_block(
                 )
                 .expect("launch");
         }
+        if let Some((_, stop, stream)) = kernel_evt {
+            unsafe { result::event::record(stop, stream).expect("record stop") };
+        }
         // Overlap: prep the NEXT item on the CPU while this kernel runs on the GPU.
         pending = iter.next().map(|it| prep_timed(it, stats));
         // Join: dtoh_sync_copy waits for the kernel, then reads the result back.
         let gpu = dev.dtoh_sync_copy(&d_out).expect("dtoh");
-        stats.entry(layer.dir()).or_default().t_kernel += tk.elapsed().as_secs_f64();
+        {
+            let st = stats.entry(layer.dir()).or_default();
+            st.t_kernel += tk.elapsed().as_secs_f64();
+            if let Some((start, stop, _)) = kernel_evt {
+                // Stream is synced by dtoh above ⇒ both events are recorded.
+                st.kernel_ms += unsafe { result::event::elapsed(start, stop).expect("elapsed") } as f64;
+                unsafe {
+                    result::event::destroy(start).expect("destroy start");
+                    result::event::destroy(stop).expect("destroy stop");
+                }
+            }
+        }
 
         let mut accum = TileAccumulator::new();
         accum.energy.copy_from_slice(&gpu);
@@ -839,8 +882,14 @@ fn main() -> Result<()> {
         // gpu = the GPU-phase wall (upload + launch + sync); prep = bin + pack. The
         // pipeline OVERLAPS prep(N+1) with gpu(N), so wall < gpu + prep — the
         // top-line wall is the real cost, these are diagnostic, not additive.
+        // kernel = the CUDA-event isolated launch time (NOISE_GPU_TIMING=1 only).
+        let kernel_ms = if timing_enabled() {
+            format!(" | kernel {:.1} ms", s.kernel_ms)
+        } else {
+            String::new()
+        };
         eprintln!(
-            "  [{name}] {} tiles | gpu {:.0} ms | prep {:.0} ms | load {:.0} ms | written {} (gpu∥prep)",
+            "  [{name}] {} tiles | gpu {:.0} ms | prep {:.0} ms | load {:.0} ms | written {} (gpu∥prep){kernel_ms}",
             s.n_tiles,
             s.t_kernel * 1e3,
             s.t_bins * 1e3,
@@ -860,6 +909,13 @@ fn main() -> Result<()> {
                 s.n_cmp,
             );
         }
+    }
+    // Machine-readable total kernel time (CUDA events, all layers) for the --micro
+    // harness's median-of-N: one `KERNEL_MS=<total>` token it greps per run. Only
+    // when timing is on, so a normal build emits nothing extra.
+    if timing_enabled() {
+        let total_kernel_ms: f64 = stats.values().map(|s| s.kernel_ms).sum();
+        eprintln!("KERNEL_MS={total_kernel_ms:.3}");
     }
     if let Some(root) = &output {
         eprintln!("  → HM3 under {root}/{{{}}}/{z}", layer_names.join(","));
