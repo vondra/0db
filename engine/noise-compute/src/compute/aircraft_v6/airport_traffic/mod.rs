@@ -766,13 +766,13 @@ pub fn run(
                         .unwrap_or(serde_json::Value::Null),
                 )
             },
-            metadata: Some(SourceMetadata::Aircraft(AircraftMetadata {
+            metadata: Some(SourceMetadata::Aircraft(Box::new(AircraftMetadata {
                 variant: "ground_ops".to_string(),
                 airport_name: Some(acc.name.clone()),
                 airport_key: Some(airport_key.clone()),
                 airborne: None,
                 ground_ops: Some(metadata),
-            })),
+            }))),
         });
     }
 

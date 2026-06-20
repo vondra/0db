@@ -44,7 +44,11 @@ pub enum SourceMetadata {
     Rail(RailMetadata),
     Building(BuildingMetadata),
     Industrial(IndustrialMetadata),
-    Aircraft(AircraftMetadata),
+    // Boxed: AircraftMetadata is ~3× the next-largest variant (it nests the full
+    // airborne/ground-ops detail), so inlining it would bloat every Contributor's
+    // `Option<SourceMetadata>` to that size. serde sees through the Box, so the
+    // `{"kind":"aircraft", ..}` JSON is byte-identical (see metadata_tests).
+    Aircraft(Box<AircraftMetadata>),
 }
 
 /// Road contributor metadata — values from the **dominant segment** (highest
@@ -204,4 +208,51 @@ pub struct AircraftMetadata {
     pub airborne: Option<AircraftAirborneDetail>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ground_ops: Option<AircraftGroundOpsDetail>,
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    /// Boxing `SourceMetadata::Aircraft` must NOT change the wire JSON the popup
+    /// frontend consumes: serde sees through the `Box`, so the internally-tagged
+    /// enum still flattens the `AircraftMetadata` fields next to `"kind":"aircraft"`,
+    /// with no `Box` indirection appearing in the output. Covers both production
+    /// shapes (airborne `Some` / ground-ops `Some`) and asserts the literal byte
+    /// stream — field order, not just the key/value set.
+    #[test]
+    fn boxed_aircraft_variant_serializes_transparently() {
+        let cases = [
+            AircraftMetadata {
+                variant: "airborne".to_string(),
+                airport_name: Some("LKPR".to_string()),
+                airport_key: Some("lkpr".to_string()),
+                airborne: Some(AircraftAirborneDetail::default()),
+                ground_ops: None,
+            },
+            AircraftMetadata {
+                variant: "ground_ops".to_string(),
+                airport_name: Some("LKPR".to_string()),
+                airport_key: Some("lkpr".to_string()),
+                airborne: None,
+                ground_ops: Some(AircraftGroundOpsDetail::default()),
+            },
+        ];
+        for inner in cases {
+            // Byte-level: the tag, then the inner struct's fields in declaration
+            // order — exactly what an un-boxed `Aircraft(AircraftMetadata)` emitted
+            // (serializing through the `Box` delegates to the same `AircraftMetadata`
+            // impl, so it cannot reorder or drop a field).
+            let body = serde_json::to_string(&inner).expect("serialize inner");
+            let expected = format!("{{\"kind\":\"aircraft\",{}", &body[1..]);
+            let got = serde_json::to_string(&SourceMetadata::Aircraft(Box::new(inner.clone())))
+                .expect("serialize boxed variant");
+            assert_eq!(got, expected, "boxed {} JSON drifted", inner.variant);
+
+            // And no `Box`/tuple wrapper key leaked into the object.
+            let v = serde_json::to_value(SourceMetadata::Aircraft(Box::new(inner))).unwrap();
+            assert_eq!(v["kind"], "aircraft");
+            assert!(v.get("0").is_none(), "no tuple/Box wrapper in the JSON");
+        }
+    }
 }

@@ -167,13 +167,13 @@ pub fn compute_aircraft_v6(
             periods_free: airborne_periods.clone(),
             emission_db: airborne_periods.lden_db,
             received_bands: [0.0; NUM_BANDS],
-            metadata: Some(SourceMetadata::Aircraft(AircraftMetadata {
+            metadata: Some(SourceMetadata::Aircraft(Box::new(AircraftMetadata {
                 variant: "airborne".to_string(),
                 airport_name: None,
                 airport_key: None,
                 airborne: Some(airborne_detail.clone()),
                 ground_ops: None,
-            })),
+            }))),
         });
     }
 
