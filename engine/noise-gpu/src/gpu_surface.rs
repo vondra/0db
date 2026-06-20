@@ -227,7 +227,6 @@ type LayerSrc = (LineLayer, (CudaSlice<f64>, CudaSlice<f64>, CudaSlice<f32>));
 /// shared halo (`batch`, cropped in parallel across the region's blocks), the region's
 /// pre-loaded rows, and pre-uploaded sources (`src_dev`) — all built/uploaded once per
 /// centre-R4 region by the caller, not re-read or re-uploaded per block or tile.
-#[allow(clippy::too_many_arguments)]
 fn process_block(
     dev: &Arc<CudaDevice>,
     f: &CudaFunction,
@@ -426,7 +425,6 @@ fn process_block(
 /// and the --stream loop. Loads the region's grid_disk(1) rows + barriers once, uploads sources
 /// once, crops blocks in parallel (reusing each worker's persistent RealRasters), then runs the
 /// sequential GPU kernel loop. Returns (written, skipped) tile-layers for the `done` line.
-#[allow(clippy::too_many_arguments)]
 fn process_region(
     r4: u64,
     region_tiles: &[(u32, u32)],
@@ -552,7 +550,6 @@ fn process_region(
 /// builds each cell's owned tiles, and prints `done <r4hex> <written> <skipped> <ms>` (or
 /// `fail <r4hex> <err>`) as it finishes — the SAME line protocol as gpu-airborne --stream, so the
 /// box agent drives either worker identically.
-#[allow(clippy::too_many_arguments)]
 fn run_stream(
     z: u8,
     layers: &[LineLayer],
