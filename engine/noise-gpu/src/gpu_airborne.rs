@@ -275,8 +275,8 @@ fn process_region_gpu(
     let views: Vec<_> = arcs.iter().flat_map(|a| a.airborne.views()).collect();
     let resident = gpu.load_region(region_candidates(&views, r4, z));
 
-    // Pre-fault this region's DEM footprint so TileBatch::build doesn't serialise on mmap
-    // page faults (mirrors region_runner::preload_region).
+    // Pre-fault this region's DEM footprint so the per-tile build doesn't serialise on mmap page
+    // faults (mirrors region_runner::preload_region). DEM-only: airborne consumes only rx_alt_m.
     let (mut ps, mut pn, mut pw, mut pe) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
     for &(tx, ty) in tiles {
         let bb = tile_bbox(z, tx, ty);
@@ -285,9 +285,10 @@ fn process_region_gpu(
         pw = pw.min(bb.west_lon);
         pe = pe.max(bb.east_lon);
     }
-    rasters.preload_bbox(ps, pn, pw, pe);
+    rasters.preload_dem_bbox(ps, pn, pw, pe);
 
-    // Batch the region's tiles into grid-aligned blocks (one shared 0-halo each).
+    // Batch the region's tiles into grid-aligned blocks. DEM-only (build_receiver_altitude_only): airborne
+    // reads only rx_alt_m, so skip sampling building/forest/imd + the halo the full build would compute.
     let mut batches: BTreeMap<(u32, u32), Vec<(u32, u32)>> = BTreeMap::new();
     for &(tx, ty) in tiles {
         batches
@@ -297,7 +298,7 @@ fn process_region_gpu(
     }
     let (mut written, mut skipped) = (0usize, 0usize);
     for ((bx, by), btiles) in &batches {
-        let batch = TileBatch::build(z, *bx, *by, bn, 0.0, rasters);
+        let batch = TileBatch::build_receiver_altitude_only(z, *bx, *by, bn, rasters);
         let tile_refs: Vec<&FusedTileZ13> = btiles
             .iter()
             .map(|&(tx, ty)| &batch.tiles[((ty - by) * bn + (tx - bx)) as usize])
@@ -374,7 +375,6 @@ fn run_stream(args: &Args, z: u8) -> Result<()> {
         SEL,
         n_days,
     )?;
-    let rasters = RealRasters::new(&args.prepared_dir);
     let bn = if args.batch_size == 0 {
         default_batch_size()
     } else {
@@ -398,12 +398,16 @@ fn run_stream(args: &Args, z: u8) -> Result<()> {
     std::thread::scope(|scope| {
         for _ in 0..n_workers {
             let work = Arc::clone(&work);
-            let rasters = &rasters;
             let class_weights = &class_weights;
             scope.spawn(move || {
-                // Warm per-worker state — one CUDA stream + one R4 source LRU, reused for every run
-                // this worker builds (the whole point: no per-chunk re-init).
+                // Warm per-worker state — one CUDA stream + one R4 source LRU + one RealRasters, reused for every
+                // run this worker builds (no per-chunk re-init). The RealRasters is PER-WORKER, not shared: each
+                // worker then locks its OWN tile-store mutexes + use_counter, so a tile's ~65k samples don't
+                // contend a single shared lock across all workers (that contention was the flat 41%-CPU airborne
+                // ceiling). Same fix gpu_surface shipped (7746b452) — owned here, not thread_local, because these
+                // stream workers are one long-lived thread each. RealRasters::new is lazy (mmaps on demand).
                 let gpu = AirborneGpu::new(class_weights);
+                let rasters = RealRasters::new(&args.prepared_dir);
                 let mut cache = R4SourceCache::new(&args.h3r4_dir, args.r4_cache.max(7), SEL);
                 loop {
                     let batch: Vec<u64> = {
@@ -427,7 +431,7 @@ fn run_stream(args: &Args, z: u8) -> Result<()> {
                         let t = Instant::now();
                         let tiles = region_tiles(r4, z);
                         let line = match process_region_gpu(
-                            &gpu, &mut cache, rasters, args, z, bn, n_days, r4, &tiles,
+                            &gpu, &mut cache, &rasters, args, z, bn, n_days, r4, &tiles,
                         ) {
                             Ok((w, s)) => {
                                 format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis())
