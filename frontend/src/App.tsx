@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, lazy, Suspense } from 'react'
+import { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react'
 import { Tooltip } from '@base-ui/react/tooltip'
 import MapView from './components/MapView'
 import SearchBar from './components/SearchBar'
@@ -62,6 +62,14 @@ function MapApp() {
   const quietClustersRef = useRef(quietClustersEnabled)
   const quietThresholdRef = useRef(quietThreshold)
   const basemapRef = useRef(basemap)
+
+  // Pre-warm the lazy popup-body chunk the instant a point is clicked, so it
+  // downloads concurrently with the ~1.5 s noise compute instead of after it
+  // (gg: codex+agy — React.lazy only fetches when the component first renders,
+  // which is after data arrives; this overlaps the network with the compute).
+  useEffect(() => {
+    if (detailPosition) void import('./components/NoiseDetailContent')
+  }, [detailPosition])
 
   const syncUrl = useCallback((overrides?: Partial<{
     quietClusters: boolean

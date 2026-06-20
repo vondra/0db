@@ -1,7 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { NoiseDetailContent } from './DetailPopup'
+import { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import DetailSkeleton from './DetailSkeleton'
 import type { NoiseComputeData } from '../types/noise'
+
+// Lazy popup body — see DetailCard; off first paint, pre-warmed by App on click.
+const NoiseDetailContent = lazy(() => import('./NoiseDetailContent'))
 
 interface MobileDetailSheetProps {
   data: NoiseComputeData | null
@@ -102,7 +104,9 @@ export default function MobileDetailSheet({ data, position, error, onClose, onHi
         <div className={`pb-1 ${expanded ? 'overflow-y-auto' : ''}`} style={expanded ? { maxHeight: 'calc(50vh - 16px)' } : undefined}>
           {showSkeleton
             ? <DetailSkeleton position={position} error={error} />
-            : <NoiseDetailContent data={data!} onHighlight={onHighlight} maxSources={9} />}
+            : <Suspense fallback={<DetailSkeleton position={position} error={error} />}>
+                <NoiseDetailContent data={data!} onHighlight={onHighlight} maxSources={9} />
+              </Suspense>}
         </div>
       </div>
     </div>

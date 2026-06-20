@@ -1,9 +1,13 @@
-import { useEffect, useRef } from 'react'
+import { lazy, Suspense, useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import FloatingCard from './FloatingCard'
-import { NoiseDetailContent } from './DetailPopup'
 import DetailSkeleton from './DetailSkeleton'
 import type { NoiseComputeData } from '../types/noise'
+
+// Lazy: the popup body (+ the noise/ tree, ~3.8 kLoC) is a separate chunk, off
+// first paint. App pre-warms it on click (its detailPosition effect) so it
+// overlaps the ~1.5 s compute and the open isn't delayed.
+const NoiseDetailContent = lazy(() => import('./NoiseDetailContent'))
 
 interface DetailCardProps {
   noiseData: NoiseComputeData | null
@@ -45,7 +49,9 @@ export default function DetailCard({ noiseData, position, error, onNoiseClose, o
       </button>
       {showSkeleton
         ? <DetailSkeleton position={position} error={error} />
-        : <NoiseDetailContent data={noiseData!} onHighlight={onHighlight} />}
+        : <Suspense fallback={<DetailSkeleton position={position} error={error} />}>
+            <NoiseDetailContent data={noiseData!} onHighlight={onHighlight} />
+          </Suspense>}
     </FloatingCard>
   )
 }
