@@ -1,0 +1,15 @@
+# Pin the toolchain so clippy/rustfmt/rustc rules are reproducible across the hub
+# (he84) and the vast.ai GPU/CPU workers — a lint or format rule change is then a
+# reviewed toolchain bump, not silent drift in a future /ritual gate.
+#
+# This pins the rule/format/compiler VERSION, NOT numeric output: `.cargo/config.toml`
+# sets `target-cpu=native`, so every binary is still rebuilt per host and parity-checked
+# (CLAUDE.md "rebuild every binary you'll run"). Pinning the toolchain ≠ binary determinism.
+[toolchain]
+channel = "1.96.0"
+# Minimal matches the workers' `rustup --profile minimal` (scripts/setup-cpu-box.sh):
+# when a box auto-installs 1.96.0 on first build in this dir, fetch only rustc+cargo
+# (+ the two components below) — not the default profile's rust-docs, dead weight on
+# the ephemeral 20 GB vast disks.
+profile = "minimal"
+components = ["clippy", "rustfmt"]
