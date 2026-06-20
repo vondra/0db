@@ -7,7 +7,7 @@
 //! popup wrapper (`segment_sel::*`) and heatmap-aircraft scatter delegate
 //! here.
 
-use std::f64::consts::{LOG10_2, PI};
+use std::f64::consts::LOG10_2;
 
 use crate::propagation::iso9613::fast_exp_f64;
 use crate::types::AircraftSegment;
@@ -191,31 +191,11 @@ pub fn delta_v(speed_kt: f64, profile: &NpdProfile) -> f64 {
     }
 }
 
-/// ΔF finite segment correction (Doc 29 §4.5.6, Eq. 4-20).
-/// Full dipole formula with α/(1+α²) terms.
-#[inline]
-pub fn delta_f(q_m: f64, seg_len_m: f64, d_bar_m: f64) -> f64 {
-    if seg_len_m < 1.0 || d_bar_m < 1.0 {
-        return 0.0;
-    }
-
-    let alpha1 = -q_m / d_bar_m;
-    let alpha2 = -(q_m - seg_len_m) / d_bar_m;
-
-    let g1 = alpha1 / (1.0 + alpha1 * alpha1) + alpha1.atan();
-    let g2 = alpha2 / (1.0 + alpha2 * alpha2) + alpha2.atan();
-    let f = (g2 - g1) / PI;
-
-    10.0 * f.max(1e-15).log10()
-}
-
 // `fast_atan` / `fast_delta_f` / `fast_lateral_attenuation` replace libm
 // `atan` (~50-80 cycles) with a Padé [3/2] approximation (~8 cycles) at the
 // cost of < 0.05 dB error per ΔF and < 0.15 dB per Λ. Pipeline ships all
 // tile output through these, popup follows so popup ≡ tile parity is by
-// construction (same approximations, same regime). The exact variants
-// above remain for verification, tests, and any future acoustically
-// strict caller.
+// construction (same approximations, same regime).
 
 /// Padé [3/2] atan for |x| ≤ 1. Max error 0.0034 rad (0.19°).
 #[inline(always)]
@@ -233,7 +213,7 @@ pub fn fast_atan(x: f64) -> f64 {
     fast_atan_small(x)
 }
 
-/// Padé-atan variant of `delta_f`. Max error vs exact: < 0.05 dB.
+/// Padé-atan variant of the exact ΔF (Doc 29 §4.5.6, Eq. 4-20). Max error vs exact: < 0.05 dB.
 #[inline]
 pub fn fast_delta_f(q_m: f64, seg_len_m: f64, d_bar_m: f64) -> f64 {
     if seg_len_m < 1.0 || d_bar_m < 1.0 {
@@ -298,8 +278,8 @@ pub fn fast_lateral_attenuation(
 /// Per-installation `(installation, di_a, di_b, di_c)` constants for the
 /// inline ΔI formula in `segment_energy_kernel`. Returning the `Installation`
 /// echo lets pipeline's SoA build store both the enum and the trig
-/// coefficients in one call. Output of the inline formula matches
-/// `delta_i(beta_deg, installation)` to FP rounding for the same
+/// coefficients in one call. Output of the inline formula matches the
+/// exact Doc 29 §4.5.3 ΔI (Eq. 4-15) to FP rounding for the same
 /// `(rel_alt, slant)` pair, so swapping in this fast path doesn't move
 /// popup ↔ tile parity.
 #[inline]
@@ -372,6 +352,11 @@ pub struct AircraftKernelResult {
 /// No double-count with Filter D: D drops 100 %-fictional sub-terrain
 /// extrapolations (`t ∉ [0, 1]` only) and never attenuates; the horizon
 /// attenuates real above-terrain geometry — both can act on one pair.
+// Flat signature, not a param struct: per `clippy.toml` (threshold 13) this
+// acoustic kernel takes its segment-geometry + Doc 29 emission inputs as
+// hoisted scalars — bundling them into a struct would add indirection without
+// clarity on the per-pixel hot path (`segment_sel_at_pixel_energy`, ~65k
+// calls/segment/tile).
 #[allow(clippy::too_many_arguments)]
 #[inline]
 pub fn segment_energy_kernel<const WANT_CPA: bool>(
@@ -500,7 +485,7 @@ pub fn segment_energy_kernel<const WANT_CPA: bool>(
     let lambda = fast_lateral_attenuation(rel_alt, lateral_m, airport_ground, inst);
 
     // Inline ΔI: works off u² = rel_alt²/slant² (= sin²β) instead of trig
-    // on β. Identical math to `delta_i(beta_deg, installation)` for the
+    // on β. Identical math to the exact Doc 29 §4.5.3 ΔI (Eq. 4-15) for the
     // same (rel_alt, slant) — verified to FP rounding.
     let di = if matches!(inst, Installation::Propeller) {
         0.0
@@ -554,64 +539,6 @@ pub fn segment_energy_kernel<const WANT_CPA: bool>(
         beta_deg,
         t,
     })
-}
-
-/// Lateral attenuation Λ(β, l) = Γ(l) × Λ(β) (Doc 29 §4.5.4, Eq. 4-18/4-19).
-///
-/// Only applied to **Wing-mounted jets** per Eq. 4-19a / FAA AEDT TM §6.2.4.
-/// Fuselage-mounted engines, propeller installations, and helicopters get
-/// Λ = 0 (no engine-wing shielding).
-#[inline]
-pub fn lateral_attenuation(beta_deg: f64, lateral_m: f64, installation: Installation) -> f64 {
-    if !matches!(installation, Installation::Wing) {
-        return 0.0;
-    }
-    if beta_deg < 0.0 {
-        return 10.857;
-    }
-
-    let gamma = if lateral_m <= 914.0 {
-        1.089 * (1.0 - (-0.00274 * lateral_m).exp())
-    } else {
-        1.0
-    };
-
-    let lambda_beta = if beta_deg <= 50.0 {
-        1.137 - 0.0229 * beta_deg + 9.72 * (-0.142 * beta_deg).exp()
-    } else {
-        0.0
-    };
-
-    gamma * lambda_beta
-}
-
-/// ΔI engine installation correction (Doc 29 §4.5.3, Eq. 4-15).
-#[inline]
-pub fn delta_i(phi_deg: f64, installation: Installation) -> f64 {
-    match installation {
-        Installation::Propeller => 0.0,
-        Installation::Wing | Installation::Fuselage => {
-            let (a, b, c) = match installation {
-                Installation::Wing => (0.0039_f64, 0.062_f64, 0.8786_f64),
-                Installation::Fuselage => (0.1225_f64, 0.329_f64, 1.0_f64),
-                _ => unreachable!(),
-            };
-            let phi = phi_deg.max(0.0).to_radians();
-            let cos_phi = phi.cos();
-            let sin_phi = phi.sin();
-            let cos_2phi = (2.0 * phi).cos();
-            let sin_2phi = (2.0 * phi).sin();
-
-            let numerator = (a * cos_phi * cos_phi + sin_phi * sin_phi).powf(b);
-            let denominator = c * sin_2phi * sin_2phi + cos_2phi * cos_2phi;
-
-            if denominator > 0.0 && numerator > 0.0 {
-                10.0 * (numerator / denominator).log10()
-            } else {
-                0.0
-            }
-        }
-    }
 }
 
 /// Period durations in seconds (EU Directive 2002/49/EC).
@@ -791,44 +718,39 @@ mod tests {
     }
 
     #[test]
-    fn test_delta_f_alongside() {
-        let df = delta_f(500.0, 1000.0, 370.0);
+    fn test_fast_delta_f_alongside() {
+        let df = fast_delta_f(500.0, 1000.0, 370.0);
         assert!(df < 0.0 && df > -10.0, "ΔF = {df}");
     }
 
     #[test]
-    fn test_delta_f_behind() {
-        let df = delta_f(-500.0, 1000.0, 370.0);
+    fn test_fast_delta_f_behind() {
+        let df = fast_delta_f(-500.0, 1000.0, 370.0);
         assert!(df < -5.0, "ΔF behind = {df}");
     }
 
     #[test]
-    fn test_lateral_directly_below() {
-        let att = lateral_attenuation(90.0, 0.0, Installation::Wing);
+    fn test_fast_lateral_directly_below() {
+        // Receiver under the path (lateral≈0 ⇒ β≈90°, outside the 0–50° band) ⇒ Λ = 0.
+        let att = fast_lateral_attenuation(1000.0, 0.0, false, Installation::Wing);
         assert!(att.abs() < 0.01, "Expected 0, got {att}");
     }
 
     #[test]
-    fn test_lateral_far_side() {
-        let att = lateral_attenuation(0.1, 2000.0, Installation::Wing);
-        assert!((att - 10.86).abs() < 0.2, "Expected ~10.86, got {att}");
+    fn test_fast_lateral_far_side() {
+        // Shallow grazing angle (small β) ⇒ Λ near its ~10.86 dB peak.
+        let att = fast_lateral_attenuation(1.0, 2000.0, false, Installation::Wing);
+        assert!(
+            att > 10.0 && att < 10.9,
+            "low-β Wing Λ near peak, got {att}"
+        );
     }
 
     #[test]
-    fn test_lateral_negative_beta() {
-        let att = lateral_attenuation(-5.0, 100.0, Installation::Wing);
+    fn test_fast_lateral_negative_beta() {
+        // Below the wing-shielding geometry (β < 0) ⇒ fixed 10.857 dB.
+        let att = fast_lateral_attenuation(-5.0, 100.0, false, Installation::Wing);
         assert!((att - 10.857).abs() < 0.01);
-    }
-
-    /// Doc 29 §4.5.4 / FAA AEDT TM §6.2.4: Λ ≠ 0 only for Wing-mounted jets.
-    #[test]
-    fn test_lateral_non_wing_installations_zero() {
-        for beta in [0.1, 10.0, 30.0, 50.0, 90.0] {
-            for lat in [50.0, 500.0, 2000.0, 5000.0] {
-                assert_eq!(lateral_attenuation(beta, lat, Installation::Fuselage), 0.0);
-                assert_eq!(lateral_attenuation(beta, lat, Installation::Propeller), 0.0);
-            }
-        }
     }
 
     #[test]
@@ -851,14 +773,13 @@ mod tests {
     }
 
     #[test]
-    fn test_delta_i_propeller() {
-        assert_eq!(delta_i(45.0, Installation::Propeller), 0.0);
-    }
-
-    #[test]
-    fn test_delta_i_wing() {
-        let di = delta_i(30.0, Installation::Wing);
-        assert!(di.abs() < 2.0, "ΔI = {di}");
+    fn test_delta_i_constants() {
+        // Propeller gets no ΔI directivity (a=b=0); Wing carries the Doc 29
+        // §4.5.3 coefficients the inline kernel ΔI reads.
+        let (_, a_p, b_p, _) = delta_i_constants(Installation::Propeller);
+        assert_eq!((a_p, b_p), (0.0, 0.0));
+        let (_, a_w, b_w, c_w) = delta_i_constants(Installation::Wing);
+        assert_eq!((a_w, b_w, c_w), (0.0039, 0.062, 0.8786));
     }
 
     #[test]

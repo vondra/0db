@@ -389,7 +389,7 @@ SEL_seg = L_E(d_p) + ΔV + ΔI(φ) - Λ(β, l) + ΔF
 - **L_E**: NPD lookup at slant distance d_p (feet). 124 per-typecode profiles auto-generated from EASA ANP v2.3, bucketed at 14 aircraft noise classes (9 Wing + 2 Fuselage + 2 Prop + 1 Helicopter — `NUM_CLASSES` in `profiles_generated.rs`). The kernel evaluates the **class anchor curve**, not the per-typecode curve (mean within-class spread ~0.8 dB); unknown typecodes route through a similarity table before falling back to `FALLBACK_PROFILE_IDX` (B738-equivalent). See `scripts/build-aircraft-profiles.py`.
 - **ΔV**: Speed/duration correction (Eq. 4-14)
 - **ΔI**: Engine installation angle correction (Eq. 4-15)
-- **Λ**: Lateral attenuation (Eq. 4-18/19) — Wing-mounted jets only per Doc 29 §4.5.4 / FAA AEDT TM §6.2.4. Fuselage-mounted, propeller, and helicopter installations get Λ = 0 (gated by `installation` parameter in `fast_lateral_attenuation` / `lateral_attenuation`).
+- **Λ**: Lateral attenuation (Eq. 4-18/19) — Wing-mounted jets only per Doc 29 §4.5.4 / FAA AEDT TM §6.2.4. Fuselage-mounted, propeller, and helicopter installations get Λ = 0 (gated by `installation` parameter in `fast_lateral_attenuation`).
 - **ΔF**: Finite segment dipole correction (Eq. 4-20, full α/(1+α²) terms)
 
 ### Geometry (§4.4.1)

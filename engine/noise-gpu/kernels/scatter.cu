@@ -59,18 +59,6 @@ __device__ __forceinline__ double bilinear_elev_d(
     return v0 + fr * (v1 - v0);
 }
 
-// Standalone bilinear kernel (validated GPU-vs-CPU in e2-gpu).
-extern "C" __global__ void bilinear_elev(
-    const float* __restrict__ elev, int rows, int cols,
-    double lat_min, double lon_min, double inv_cell_deg,
-    const double* __restrict__ qlat, const double* __restrict__ qlon, int nq,
-    float* __restrict__ out)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= nq) return;
-    out[i] = (float)bilinear_elev_d(elev, rows, cols, lat_min, lon_min, inv_cell_deg, qlat[i], qlon[i]);
-}
-
 // ---- noise_compute fast_exp_f64, fp32 internals (exp2f/poly on the SFU; f64
 // emulation of exp is the dominant per-source cost on consumer Ada). Arg widened
 // in; ~1e-6 drift vs the f64 form, validated against the baseline tile.
@@ -412,57 +400,6 @@ __device__ float veg_run_length(const double* t, const unsigned char* forest, in
 __device__ void veg_bands(float depth, float* out) {
     for (int i = 0; i < NB; i++)
         out[i] = (depth <= 0.0f) ? 0.0f : fminf((float)ALPHA_VEG[i] * depth, (float)MAX_VEG[i]);
-}
-
-// FREE-FIELD rail scatter: geometry + cylindrical divergence + FLC + air + 8-band
-// emission; NO terrain/screening/ground/veg and NO budget skip (every source
-// evaluated). One thread per receiver pixel; 3-period energy out. Matches the CPU
-// free-field exactly to isolate the geometry+physics port from the coming DDA.
-//   meta = [rows, cols, lat_min, lon_min, inv_cell_deg]
-//   seg  = nsrc×4  {alat, alon, blat, blon}
-//   sp   = nsrc×3  {length_m, max_distance_m, source_height_m}
-//   semis= nsrc×24 {day[8], evening[8], night[8]} linear band energy
-//   rxll = 256 rx_lat ++ 256 rx_lon ;  rxar = npix×2 {rx_alt, rx_refl}
-extern "C" __global__ void freefield_rail(
-    const float*  __restrict__ elev,
-    const double* __restrict__ meta,
-    const double* __restrict__ seg,
-    const double* __restrict__ sp,
-    const float*  __restrict__ semis,
-    const double* __restrict__ rxll,
-    const float*  __restrict__ rxar,
-    int nsrc, float* __restrict__ out)
-{
-    int pix = blockIdx.x * blockDim.x + threadIdx.x;
-    if (pix >= 256 * 256) return;
-    int rows = (int)meta[0], cols = (int)meta[1];
-    double lat_min = meta[2], lon_min = meta[3], inv = meta[4];
-    int py = pix >> 8, pxi = pix & 255;
-    double rlat = rxll[py], rlon = rxll[256 + pxi];
-    double ralt = rxar[pix * 2], refl = rxar[pix * 2 + 1];
-    double e0 = 0.0, e1 = 0.0, e2 = 0.0;
-
-    for (int s = 0; s < nsrc; s++) {
-        double dend, cplat, cplon, frac;
-        p2s(rlat, rlon, seg[s*4], seg[s*4+1], seg[s*4+2], seg[s*4+3], &dend, &cplat, &cplon, &frac);
-        if (dend > sp[s*3+1]) continue;
-        double salt = bilinear_elev_d(elev, rows, cols, lat_min, lon_min, inv, cplat, cplon) + sp[s*3+2];
-        double dz = salt - ralt;
-        double dslant = fmax(sqrt(dend * dend + dz * dz), 1.0);
-        float fc = flc((float)sp[s*3], (float)dend, (float)fmin(fmax(frac, 0.0), 1.0));
-        double base = refl + (double)fc - 10.0 * log10(2.0 * PI_D * dslant);
-        double atm_km = dslant / 1000.0;
-        const float* em = &semis[s * 24];
-        for (int i = 0; i < NB; i++) {
-            double pf = fexp((base - ALPHA_ATM[i] * atm_km + A_W[i]) * LN10 * 0.1);
-            e0 += (double)em[i]      * pf;
-            e1 += (double)em[8 + i]  * pf;
-            e2 += (double)em[16 + i] * pf;
-        }
-    }
-    out[pix * 3 + 0] = (float)e0;
-    out[pix * 3 + 1] = (float)e1;
-    out[pix * 3 + 2] = (float)e2;
 }
 
 #define BIN_W 16                 // pixel-bin edge (16×16 patch = one CUDA block)
