@@ -4,9 +4,9 @@
 //! `airport_traffic::run` consumes.
 //!
 //! Missing file → caller MUST propagate `None` to the popup so the
-//! popup refuses to display airport-level arr/dep counts. Per Codex C4
-//! + Claude W1; no silent fallback to per-row sum (which would
-//! over-count rotations crossing N microsegments by ~N×).
+//! popup refuses to display airport-level arr/dep counts (Codex C4 and
+//! Claude W1); no silent fallback to per-row sum, which would over-count
+//! rotations crossing N microsegments by ~N×.
 
 use std::path::Path;
 
