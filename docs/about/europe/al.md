@@ -6,34 +6,17 @@ map: { center: [20.0, 41.0], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-ARRSH publishes no open AADT. Fall back to class defaults with Tirana Tier-1 boost.
+Albania publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Albania's traffic factor **≈ 1.284** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Albanian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (A2 Tirana-Elbasan, A3 Tirana-Durrës) | 22,000 | 44,000 | 30,800 |
-| 1 trunk | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metro** (×2.0): **Tirana** (~800k city / ~1M metro — capital, extreme construction boom 2010-2025, Skanderbeg Square transformation, **world's highest Mercedes-Benz per capita** from imported used German cars).
-
-**Tier-2 cities** (×1.4): **Durrës** (~175k — main Adriatic port, 30 km from Tirana), **Vlorë** (~100k — Adriatic south), **Shkodër** (~100k — Lake Skadar, northern capital), **Elbasan** (~80k — Kurum steel), **Korçë** (~75k — SE, Greek cultural influence), **Fier** (~60k — Patos-Marinza oil), **Berat** (UNESCO "City of a Thousand Windows"), **Gjirokastër** (UNESCO "City of Stone").
-
-### Albanian vehicle split
-
-European Balkans:
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Tirana) | 68% | 8% | 18% | 6% |
-| Tier-2 | 65% | 6% | 23% | 6% |
-| Rural | 56% | 4% | 36% | 4% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.284 ≈ 38,520 |
+| Trunk | 15,000 × 1.284 ≈ 19,260 |
+| Primary | 9,000 × 1.284 ≈ 11,556 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

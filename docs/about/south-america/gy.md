@@ -6,24 +6,17 @@ map: { center: [-58.9, 4.9], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MPW&C publishes no open AADT. Fall back to class defaults with Georgetown Tier-1 boost.
+Guyana publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Guyana's traffic factor **≈ 1.261** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Guyanese AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway | 13,000 | 26,000 | 18,200 |
-| 1 trunk | 5,000 | 10,000 | 7,000 |
-| 2 primary | 2,500 | 5,000 | 3,500 |
-| 3 secondary | 1,250 | 2,500 | 1,750 |
-| 4 tertiary | 500 | 1,000 | 700 |
-| 5 residential | 200 | 400 | 280 |
-
-**Tier-1 metro** (×2.0): **Georgetown** (~250k metro — capital, low-lying, Dutch-era sea walls).
-
-**Tier-2 cities** (×1.4): **Linden** (~35k — bauxite town, Demerara River).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.261 ≈ 37,830 |
+| Trunk | 15,000 × 1.261 ≈ 18,915 |
+| Primary | 9,000 × 1.261 ≈ 11,349 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

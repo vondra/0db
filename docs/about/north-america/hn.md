@@ -6,24 +6,17 @@ map: { center: [-86.9, 14.8], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-SOPTRAVI/INSEP publishes no open AADT. Fall back to class defaults with Tegucigalpa Tier-1 boost.
+Honduras publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Honduras's traffic factor **≈ 1.298** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Honduran AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (CA-5 dual) | 28,000 | 56,000 | 39,200 |
-| 1 trunk | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,000 | 2,000 | 1,400 |
-| 5 residential | 400 | 800 | 560 |
-
-**Tier-1 metro** (×2.0): **Tegucigalpa** (~1.4M metro — capital, severe congestion, no metro rail).
-
-**Tier-2 cities** (×1.4): **San Pedro Sula** (~800k — industrial capital, maquila zones), **La Ceiba** (~220k — Caribbean port), **Choloma** (~200k — SPS suburb, textiles), **El Progreso** (~180k — Aguan valley, banana), **Choluteca** (~150k — southern Pacific).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.298 ≈ 38,940 |
+| Trunk | 15,000 × 1.298 ≈ 19,470 |
+| Primary | 9,000 × 1.298 ≈ 11,682 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

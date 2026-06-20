@@ -6,35 +6,17 @@ map: { center: [17, 27], zoom: 5 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Libya's rival governments publish no AADT. CNOSSOS class defaults with Tripoli Tier-1 boost. High road dependency — Libya has **no operational railway** and a very sparse internal air network.
+Libya publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Libya's traffic factor **≈ 1.160** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Libyan AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Tripoli–Misrata coastal highway) | 40,000 | 80,000 | 56,000 |
-| 1 trunk (coastal highway + Sabha road) | 12,000 | 24,000 | 16,800 |
-| 2 primary | 6,000 | 12,000 | 8,400 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,000 | 2,000 | 1,400 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metros** (×2.0): **Tripoli** (~1.3M — GNU-controlled western capital + port), **Benghazi** (~700k — LNA-controlled eastern capital).
-
-**Tier-2 cities** (×1.4): **Misrata** (~400k — western port + steel; independent militia city), **Zawiya** (~250k — western; oil refinery), **Tobruk** (~120k — far east; WWII; HoR parliament), **Sabha** (~200k — south; Fezzan; migration hub), **Al Bayda** (~250k — Green Mountain east).
-
-### Libyan vehicle split
-
-High car ownership (subsidised fuel historically); relatively low motorcycle share for Africa.
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Tripoli/Benghazi) | 70% | 10% | 16% | 4% |
-| Tier-2 | 65% | 8% | 22% | 5% |
-| Rural | 60% | 8% | 28% | 4% |
-| **Coastal highway (Tripoli–Benghazi)** | 55% | 8% | 35% | 2% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.160 ≈ 34,800 |
+| Trunk | 15,000 × 1.160 ≈ 17,400 |
+| Primary | 9,000 × 1.160 ≈ 10,440 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

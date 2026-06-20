@@ -6,43 +6,17 @@ map: { center: [-14.5, 14.5], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-AGEROUTE (Agence des Travaux et de Gestion des Routes) and ANSD publish no open AADT. Fall back to CNOSSOS class defaults with Dakar Tier-1 boost.
+Senegal publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Senegal's traffic factor **≈ 1.078** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Senegalese AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Autoroute de l'Avenir A1/A2) | 28,000 | 56,000 | 39,200 |
-| 1 trunk (RN1 Dakar-Kidira, RN2 Dakar-Saint-Louis) | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metros** (×2.0, 1 metro): **Dakar** (~3.5M, far western Atlantic peninsula — Africa's westernmost metropolis, Cap-Vert peninsula has extreme population density on a very confined landform).
-
-**Tier-2 cities** (×1.4, 17 cities): **Touba** (Mouride religious capital, ~800k), Thiès, Kaolack, Saint-Louis (colonial capital), Mbour, Ziguinchor (Casamance), Diourbel, Louga, Tambacounda (eastern gateway), Kolda, Fatick, **Kédougou** (gold-mining region, border with Guinea/Mali), Matam, Sédhiou, Kaffrine, **Richard-Toll** (CSS sugar mill), **Diamniadio** (new administrative capital).
-
-### Senegalese vehicle split
-
-Senegal's urban transport is **dominated by minibuses**, less by motorcycles than Nigeria/Kenya:
-
-- **Cars rapides** — iconic **blue-and-yellow Renault Saviem minibuses** (1960s-70s vintage, classic Dakar icon), being phased out for AFTU modern minibuses
-- **Ndiaga Ndiaye** — white Mercedes minibus taxis (larger than cars rapides)
-- **Dakar Dem Dikk** — official bus company (Tata/Ashok Leyland)
-- **Taxis urbains** — yellow-and-black car taxis, very common in Dakar
-- **BRT Dakar** — Bus Rapid Transit, **opened 2024**, 18.3 km corridor (first all-electric BRT in sub-Saharan Africa; Lagos BRT predates it since 2008)
-- **Motorcycles (Jakarta/Jakartacom)** — moderate share, less than Nigeria/Kenya
-- **Charrettes** — horse/donkey carts still common in rural areas
-
-| Tier | Light | Medium (cars rapides/Ndiaga) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Dakar) | 55% | **18%** | 12% | 15% |
-| Tier-2 | 58% | 14% | 14% | 14% |
-| Rural | 56% | 10% | 24% | 10% |
-| **Autoroute de l'Avenir (Dakar↔AIBD)** | 68% | 8% | **18%** | 6% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.078 ≈ 32,340 |
+| Trunk | 15,000 × 1.078 ≈ 16,170 |
+| Primary | 9,000 × 1.078 ≈ 9,702 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -55,8 +29,6 @@ Senegal's urban transport is **dominated by minibuses**, less by motorcycles tha
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
-
 ### Senegalese rail context
 
 Senegal's rail network is extremely limited:
@@ -66,14 +38,12 @@ Senegal's rail network is extremely limited:
 - **ICS phosphate freight spur** — Taïba N'Diaye ↔ Thiès ↔ Mbao port. Industries Chimiques du Sénégal phosphate exports, very limited operation.
 - **No metros, no trams, no urban commuter rail outside TER**.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **TER Dakar↔AIBD (2021/2024)** | 30 | 0 |
-| **Dakar-Niger main line (defunct)** | 0 | 2 |
-| **ICS phosphate spur** | 0 | 3 |
-| Other | 0 | 1 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

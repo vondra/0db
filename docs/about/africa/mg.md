@@ -6,44 +6,17 @@ map: { center: [47, -19], zoom: 5 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-ARM (Autorité Routière de Madagascar) publishes no open GIS. Fall back to CNOSSOS class defaults with Antananarivo Tier-1 boost. **Madagascar is an island** — no neighbor-border excludes needed.
+Madagascar publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Madagascar's traffic factor **≈ 0.701** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Malagasy AADT defaults
-
-Madagascar's road infrastructure is **notoriously poor** — many RN routes are unpaved earth/mud, especially in the northern half.
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (none in MG) | 22,000 | 44,000 | 30,800 |
-| 1 trunk (RN paved) | 8,000 | 16,000 | 11,200 |
-| 2 primary | 4,000 | 8,000 | 5,600 |
-| 3 secondary | 2,000 | 4,000 | 2,800 |
-| 4 tertiary | 900 | 1,800 | 1,260 |
-| 5 residential | 450 | 900 | 630 |
-
-**Tier-1 metros** (×2.0, 1 metro): **Antananarivo** (Tana, ~3M metro — central highland plateau at ~1,300m, French colonial-era city).
-
-**Tier-2 cities** (×1.4, 15 cities): **Toamasina** (Tamatave — Madagascar's main port), **Antsirabe** (industrial, **pousse-pousse capital**), Fianarantsoa (highland), Mahajanga (NW port), Toliara/Tuléar (SW), Antsiranana/Diégo-Suarez (N), Moramanga (Ambatovy gate), Ambatondrazaka, Manakara (SE coast, FCE terminus), Nosy Be/Hell-Ville (island tourism), Fort Dauphin/Taolagnaro (QMM ilmenite), Ambanja (cocoa), Ambatolampy (solar), Mananjary.
-
-### Malagasy vehicle split
-
-Madagascar's urban transport is **unique**:
-
-- **Pousse-pousse** — pulled rickshaws, unique to Madagascar among large countries. Widespread in Antsirabe, Tuléar, smaller cities
-- **Taxi-brousse** — bush taxis (minibus/van intercity, Renault Trafic/Toyota HiAce). **Dominant mode for inter-city travel** — Madagascar's equivalent of matatus
-- **Taxi-be** — large city buses (Tana, limited)
-- **Bajaj (tuk-tuks)** — growing in Tana, Antsirabe
-- **Motorcycles** — moderate share, growing since 2015
-- **Heavy trucks**: RN2 Tana↔Toamasina backbone (port freight), RN7 Tana↔Tuléar
-
-| Tier | Light | Medium (taxi-brousse) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Antananarivo) | 50% | 18% | 15% | 17% |
-| Tier-2 | 50% | 15% | 20% | 15% |
-| Rural | 45% | 8% | 30% | 17% |
-| **RN2 Tana↔Toamasina (port freight)** | 40% | 5% | **48%** | 7% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.701 ≈ 21,030 |
+| Trunk | 15,000 × 0.701 ≈ 10,515 |
+| Primary | 9,000 × 0.701 ≈ 6,309 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -55,8 +28,6 @@ Madagascar's urban transport is **unique**:
 - **RN6** — Ambanja ↔ Antsiranana (far north)
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Malagasy rail context
 
@@ -78,14 +49,12 @@ Madagascar has **two narrow-gauge railway lines** operated by **Madarail** (priv
 
 **No other railways, no metros, no trams**.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **TCE Tana↔Toamasina** (main freight) | 1 | 6 |
-| **TA Tana↔Antsirabe** | 0 | 3 |
-| **FCE Fianarantsoa↔Manakara** (heritage/scenic) | 1 | 0 |
-| Other/branch | 0 | 1 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

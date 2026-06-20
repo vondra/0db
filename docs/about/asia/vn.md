@@ -6,44 +6,17 @@ map: { center: [107.5, 15.5], zoom: 5 }
 
 ## Road traffic
 
-### No open road data — CNOSSOS class defaults only
+### Road defaults
 
-No per-segment AADT is published openly for Vietnam. Unlike India / China / Indonesia / Philippines / Saudi Arabia, there is **no ArcGIS Online / community mirror for Vietnamese roads**. Research confirmed:
+Vietnam publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Vietnam's traffic factor **≈ 1.293** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-- `owner:esri_Vietnam` on ArcGIS Online returns zero items
-- No community road network FeatureServer exists
-- **GDRV (General Department of Roads, Tổng cục Đường bộ)** at `mt.gov.vn` publishes yearbooks and statistical reports but no machine-readable data
-- **Vietnam Expressway Corporation (VEC)** does not publish traffic counts
-- OD Mekong Datahub has a 2019 classification dataset but it's stale (pre-dates most expressway expansion)
-
-Vietnamese roads use OSM `highway` classification + CNOSSOS class defaults. There is no bespoke Vietnam road enricher: the engine scales its world-default motorway/trunk/primary AADT by Vietnam's country factor (≈1.29×) and applies the world-default vehicle mix. The Tier-1/Tier-2 multipliers and the motorcycle-heavy vehicle split below are the **intended country-tuning, not yet ingested** — they are shown as the target profile.
-
-### AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| motorway (CT / đường cao tốc) | 50,000 | 100,000 | 70,000 |
-| trunk (QL / quốc lộ) | 20,000 | 40,000 | 28,000 |
-| primary | 10,000 | 20,000 | 14,000 |
-| secondary | 4,000 | 8,000 | 5,600 |
-| tertiary | 1,500 | 3,000 | 2,100 |
-| residential | 800 | 1,600 | 1,120 |
-
-**Tier-1 cities (×2.0)**: Hanoi, Ho Chi Minh City (HCMC / Sài Gòn).
-
-**Tier-2 cities (×1.4, 20 cities)**: Haiphong, Da Nang, Can Tho, Bien Hoa, Nha Trang, Vung Tau, Hue, Nam Dinh, Vinh, Qui Nhon, Rach Gia, Long Xuyen, My Tho, Thai Nguyen, Thanh Hoa, Buon Ma Thuot, Da Lat, Phan Thiet, Pleiku, Bac Lieu.
-
-### Vietnamese vehicle split
-
-Vietnam has the **highest motorcycle share of any country documented in this atlas** (tied with Indonesia):
-
-| Tier | Light | Medium | Heavy | **Motorcycle** |
-|---|---:|---:|---:|---:|
-| Hanoi / HCMC | 25% | 5% | 5% | **65%** |
-| Tier-2 cities | 35% | 6% | 4% | **55%** |
-| Rural | 45% | 8% | 7% | **40%** |
-
-Motorcycles/scooters dominate Vietnamese urban traffic — Hanoi alone has ~6M+ registered motorcycles and HCMC ~8.5M+, forming the soundscape backbone of Vietnamese cities.
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.293 ≈ 38,790 |
+| Trunk | 15,000 × 1.293 ≈ 19,395 |
+| Primary | 9,000 × 1.293 ≈ 11,637 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National expressway network (CT / đường cao tốc)
 
@@ -118,7 +91,7 @@ Vietnam implements noise regulation via:
 
 Notable noise zones:
 
-- **Hanoi Ring Road 3 (Vành đai 3)** — 65 km elevated expressway, ~200,000 AADT in peak sections
+- **Hanoi Ring Road 3 (Vành đai 3)** — 65 km elevated expressway
 - **HCMC Ring Road 2 / Ring Road 3** — similar volumes
 - **EDSA-equivalent arterials**: Nguyen Van Cu, Nguyen Hue, Le Loi (HCMC); Hang Bai, Tran Hung Dao, Giai Phong (Hanoi)
 - **North-South Expressway corridor** (under ongoing construction, eventually Hanoi ↔ HCMC ~1,700 km)

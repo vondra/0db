@@ -6,43 +6,17 @@ map: { center: [36, -18], zoom: 5 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-ANE (Administração Nacional de Estradas) publishes no open GIS. Fall back to CNOSSOS class defaults with Greater Maputo Tier-1 boost.
+Mozambique publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Mozambique's traffic factor **≈ 1.157** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Mozambican AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (N4 Maputo-RSA toll) | 25,000 | 50,000 | 35,000 |
-| 1 trunk (EN paved) | 8,500 | 17,000 | 11,900 |
-| 2 primary | 4,200 | 8,400 | 5,880 |
-| 3 secondary | 2,000 | 4,000 | 2,800 |
-| 4 tertiary | 1,000 | 2,000 | 1,400 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metros** (×2.0, 1 metro): **Greater Maputo** (~3M, Maputo city + Matola — on Maputo Bay opposite the South African border, Africa's southernmost lusophone metropolis).
-
-**Tier-2 cities** (×1.4, 21 cities): **Beira** (2nd city, central coastal port, Beira Corridor hub), **Nampula** (north interior hub, ~750k), **Nacala** (deep-water port, Nacala Corridor terminus), Quelimane (Zambezia), **Tete** (coal hub on the Zambezi), **Pemba** (Cabo Delgado capital, near Rovuma LNG), Chimoio (Manica, near Zimbabwe border), Xai-Xai, Inhambane (tourism), Lichinga (Lake Malawi shore), Dondo (Beira satellite), Manica (Zimbabwe border), Chokwé (Limpopo valley agriculture), **Cuamba** (Nacala Corridor junction), **Moatize** (Vulcan coking coal mine), Maxixe, Mocuba, Angoche, Vilankulos (tourism), **Palma** (Mozambique LNG town), **Mocímboa da Praia** (Cabo Delgado, insurgency-affected).
-
-### Mozambican vehicle split
-
-Mozambique's urban transport is distinctive:
-
-- **Chapas** — white informal minibus taxis (blue-and-white in Maputo — **Mozambican matatu equivalent**), dominant urban public transport
-- **My Love** — informal pickup truck taxis (passengers stand in the open back)
-- **Txopelas (tuk-tuks)** — growing in Maputo, Beira, Nampula
-- **Moto-taxis (boda-boda equivalent)** — growing since ~2015
-- **TPM** (Transportes Públicos de Maputo) — official city bus company
-- **Heavy trucks** — very abundant on Maputo/Beira corridors (RSA trade, Zimbabwe freight, Moatize coal)
-
-| Tier | Light | Medium (chapas) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Maputo) | 58% | **18%** | 14% | 10% |
-| Tier-2 | 58% | 14% | 18% | 10% |
-| Rural | 55% | 8% | 29% | 8% |
-| **N4 Maputo toll road (RSA corridor)** | 62% | 6% | **28%** | 4% |
-| **EN7 Tete coal corridor** (Moatize↔Zimbabwe) | 38% | 6% | **50%** | 6% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.157 ≈ 34,710 |
+| Trunk | 15,000 × 1.157 ≈ 17,355 |
+| Primary | 9,000 × 1.157 ≈ 10,413 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -53,8 +27,6 @@ Mozambique's urban transport is distinctive:
 - **N4 / CN4 Maputo Corridor** — toll motorway (TRAC concession, continuous with RSA N4 Johannesburg-Komatipoort)
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Mozambican rail context
 
@@ -80,17 +52,12 @@ Mozambique has **3 completely separate rail networks** — a legacy of Portugues
 
 **No metros, no trams** in any Mozambican city.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Maputo commuter rail (CFM Sul)** | 15 | 0 |
-| **Ressano Garcia Line** (Maputo↔RSA) | 2 | 14 |
-| **Limpopo/Goba Lines** | 1 | 4 |
-| **Beira Corridor** (Beira↔Zimbabwe) | 1 | 10 |
-| **Sena Line** (Beira↔Moatize coal) | 1 | 8 |
-| **Nacala Corridor** (Nacala↔Moatize via Malawi) | 1 | 12 |
-| Other/branch | 0 | 2 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

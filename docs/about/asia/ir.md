@@ -50,8 +50,6 @@ Iran has **very high car ownership** — IKCO+SAIPA duopoly produces ~1M cars/ye
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
-
 ### Iranian rail context
 
 **RAI (Islamic Republic of Iran Railways)** operates ~13,000 km of standard gauge (1,435 mm). **5 urban metro systems** + extensive intercity network radiating from Tehran.

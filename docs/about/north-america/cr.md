@@ -6,24 +6,17 @@ map: { center: [-84.2, 9.9], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MOPT publishes no open AADT. Fall back to class defaults with San José Tier-1 boost.
+Costa Rica publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Costa Rica's traffic factor **≈ 1.299** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Costa Rican AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Ruta 1/27) | 30,000 | 60,000 | 42,000 |
-| 1 trunk | 12,000 | 24,000 | 16,800 |
-| 2 primary | 6,000 | 12,000 | 8,400 |
-| 3 secondary | 3,000 | 6,000 | 4,200 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metro** (×2.0): **San José** (~1.5M metro — capital, severe congestion, no metro, Incofer suburban rail minimal).
-
-**Tier-2 cities** (×1.4): **Alajuela** (~350k — airport gateway), **Desamparados** (~300k — GCR suburb), **San Carlos** (~170k — northern plains), **Cartago** (~160k — former capital, coffee).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.299 ≈ 38,970 |
+| Trunk | 15,000 × 1.299 ≈ 19,485 |
+| Primary | 9,000 × 1.299 ≈ 11,691 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

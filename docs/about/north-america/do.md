@@ -6,24 +6,17 @@ map: { center: [-70.2, 19.0], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MOPC publishes no open AADT. Fall back to class defaults with Santo Domingo Tier-1 boost.
+Dominican Republic publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Dominican Republic's traffic factor **≈ 1.299** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Dominican AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Autopista Duarte) | 32,000 | 64,000 | 44,800 |
-| 1 trunk | 13,000 | 26,000 | 18,200 |
-| 2 primary | 6,500 | 13,000 | 9,100 |
-| 3 secondary | 3,200 | 6,400 | 4,480 |
-| 4 tertiary | 1,300 | 2,600 | 1,820 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metro** (×2.0): **Santo Domingo** (~3.5M metro — largest Caribbean capital, Metro lines 1+2).
-
-**Tier-2 cities** (×1.4): **Santiago de los Caballeros** (~1.2M — second city, Cibao valley), **La Romana** (~250k — sugar, free-trade zone), **San Pedro de Macorís** (~220k — sugar, baseball), **San Francisco de Macorís** (~200k — Cibao), **Higüey** (~200k — Punta Cana gateway).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.299 ≈ 38,970 |
+| Trunk | 15,000 × 1.299 ≈ 19,485 |
+| Primary | 9,000 × 1.299 ≈ 11,691 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

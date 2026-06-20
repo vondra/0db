@@ -6,9 +6,17 @@ map: { center: [73.5, 3.5], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-The Maldives Transport Authority publishes no open AADT. CNOSSOS class defaults apply, scaled by the per-country fleet/road-density factor. There are no roads between islands — all inter-island transport is by speedboat or seaplane. Nearly all road-mapped area is on Malé and a handful of larger inhabited islands.
+Maldives publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Maldives's traffic factor **≈ 1.300** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
+
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.300 ≈ 39,000 |
+| Trunk | 15,000 × 1.300 ≈ 19,500 |
+| Primary | 9,000 × 1.300 ≈ 11,700 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

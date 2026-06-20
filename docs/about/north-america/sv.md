@@ -6,24 +6,17 @@ map: { center: [-88.9, 13.8], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only (GT overlap preserved)
+### Road defaults
 
-FOVIAL publishes no open AADT. Fall back to class defaults. Cross-border segments already covered by Guatemala enrichment are preserved.
+El Salvador publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by El Salvador's traffic factor **≈ 1.275** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Salvadoran AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway | 25,000 | 50,000 | 35,000 |
-| 1 trunk | 9,000 | 18,000 | 12,600 |
-| 2 primary | 4,500 | 9,000 | 6,300 |
-| 3 secondary | 2,200 | 4,400 | 3,080 |
-| 4 tertiary | 900 | 1,800 | 1,260 |
-| 5 residential | 350 | 700 | 490 |
-
-**Tier-1 metro** (×2.0): **San Salvador** (~2.4M metro — capital, densest road network in Central America).
-
-**Tier-2 cities** (×1.4): **Soyapango** (~330k — GS suburb, industrial), **Santa Ana** (~270k — western coffee city), **San Miguel** (~250k — eastern gateway).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.275 ≈ 38,250 |
+| Trunk | 15,000 × 1.275 ≈ 19,125 |
+| Primary | 9,000 × 1.275 ≈ 11,475 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

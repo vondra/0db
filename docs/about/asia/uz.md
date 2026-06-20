@@ -36,8 +36,6 @@ No open AADT. Fall back to CNOSSOS class defaults with Tashkent Tier-1 boost. **
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
-
 ### Uzbek rail context
 
 **UTY (O'zbekiston Temir Yo'llari)** operates ~6,950 km of **broad gauge (1,520 mm)**. Uzbekistan has Central Asia's most developed rail system with both a metro and high-speed rail — unique in the region.

@@ -6,24 +6,17 @@ map: { center: [-85.2, 12.9], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MTI publishes no open AADT. Fall back to class defaults with Managua Tier-1 boost.
+Nicaragua publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Nicaragua's traffic factor **≈ 0.970** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Nicaraguan AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (CA-1 dual) | 22,000 | 44,000 | 30,800 |
-| 1 trunk | 8,000 | 16,000 | 11,200 |
-| 2 primary | 4,000 | 8,000 | 5,600 |
-| 3 secondary | 2,000 | 4,000 | 2,800 |
-| 4 tertiary | 800 | 1,600 | 1,120 |
-| 5 residential | 300 | 600 | 420 |
-
-**Tier-1 metro** (×2.0): **Managua** (~1.5M metro — capital, high seismic risk, no metro rail).
-
-**Tier-2 cities** (×1.4): **León** (~230k — university city, near geothermal fields), **Masaya** (~170k — crafts, volcanic crater), **Matagalpa** (~150k — coffee highlands), **Granada** (~120k — colonial, Lake Nicaragua).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.970 ≈ 29,100 |
+| Trunk | 15,000 × 0.970 ≈ 14,550 |
+| Primary | 9,000 × 0.970 ≈ 8,730 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

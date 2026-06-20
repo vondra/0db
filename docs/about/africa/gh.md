@@ -6,35 +6,17 @@ map: { center: [-1, 8], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-All Ghanaian road authorities (GHA, DFR, DUR, MRH) publish WordPress sites with no GIS. Ghana's open data portal (data.gov.gh, 2012 — one of sub-Saharan Africa's earliest, alongside Kenya's 2011 initiative) has been dormant since ~2015. Fall back to CNOSSOS class defaults.
+Ghana publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Ghana's traffic factor **≈ 1.254** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Ghanaian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Accra-Tema Motorway) | 30,000 | 60,000 | 42,000 |
-| 1 trunk (N-route paved) | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metros** (×2.0, 2 metros): **Greater Accra** (~4.5M), **Kumasi** (~3.3M).
-
-**Tier-2 cities** (×1.4, 15 cities): Tamale, Sekondi-Takoradi, Tema, Cape Coast, Obuasi, Sunyani, Ho, Koforidua, Bolgatanga, Wa, Nkawkaw, Techiman, Madina, Ashaiman, Nungua.
-
-### Ghanaian vehicle split
-
-**Trotro** minibuses dominate urban transport (CNOSSOS medium, ~12% urban share). Motorcycle share moderate (~15-20%). Heavy share elevated on mineral/cocoa export corridors.
-
-| Tier | Light | Medium (trotro) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 | 58% | 12% | 12% | 18% |
-| Tier-2 | 60% | 10% | 14% | 16% |
-| Rural | 60% | 10% | 20% | 10% |
-| **Mineral/cocoa corridors** | 50% | 10% | **30%** | 10% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.254 ≈ 37,620 |
+| Trunk | 15,000 × 1.254 ≈ 18,810 |
+| Primary | 9,000 × 1.254 ≈ 11,286 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -45,8 +27,6 @@ All Ghanaian road authorities (GHA, DFR, DUR, MRH) publish WordPress sites with 
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
-
 ### Ghanaian rail context
 
 - **Tema-Mpakadan SGR** — Ghana's **first standard gauge railway**, 97 km, opened 2024. Tema Port ↔ Mpakadan near Akosombo Dam. Part of planned Accra ↔ Ouagadougou corridor.
@@ -56,14 +36,12 @@ All Ghanaian road authorities (GHA, DFR, DUR, MRH) publish WordPress sites with 
 - **Accra-Tema Urban Railway** — limited commuter service
 - **No urban metros**
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Tema-Mpakadan SGR (2024)** | 4 | 12 |
-| **Accra-Tema urban commuter** | 10 | 4 |
-| **Western Line (minerals)** | 0 | 6 |
-| **Eastern Line (degraded)** | 1 | 4 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

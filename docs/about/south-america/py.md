@@ -76,13 +76,12 @@ Paraguay has **essentially no operational rail**. The Ferrocarril Central del Pa
 - **Small spurs** at Ciudad del Este and near the Brazil border
 - **No urban metros or light rail** — Gran Asunción uses buses only
 
-### trains/day defaults (minimal)
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| Sapucai tourist / other rail | 1 | 0 |
-| Branch lines | 0 | 2 |
-| Industrial sidings | 0 | 2 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

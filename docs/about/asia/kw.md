@@ -6,34 +6,17 @@ map: { center: [47.6, 29.3], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MPW publishes no open AADT. Kuwait's road hexes were already enriched from a prior neighboring country run. Kuwait has excellent multi-lane ring motorways (1st through 7th Ring Roads) with **highest motorway AADT defaults of any enriched country** (55,000).
+Kuwait publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Kuwait's traffic factor **≈ 1.299** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Kuwaiti AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Ring Roads, expressways) | **55,000** | 110,000 | 77,000 |
-| 1 trunk | 25,000 | 50,000 | 35,000 |
-| 2 primary | 14,000 | 28,000 | 19,600 |
-| 3 secondary | 7,000 | 14,000 | 9,800 |
-| 4 tertiary | 3,000 | 6,000 | 4,200 |
-| 5 residential | 1,200 | 2,400 | 1,680 |
-
-**Tier-1 metro** (×2.0): **Kuwait City** (~3.5M metro — essentially the **entire country is one metro area**, a city-state).
-
-**Tier-2 cities** (×1.4): **Al Ahmadi** (~100k, oil capital, KNPC refinery hub), **Jahra** (~200k, NW), Sabah Al Ahmad (new satellite city).
-
-### Kuwaiti vehicle split
-
-**EXTREME car dominance** — one of world's highest car ownership rates. **Near-zero motorcycle** due to 50°C+ Gulf summer heat:
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Kuwait City) | **78%** | 4% | 16% | **2%** |
-| Tier-2 | 76% | 3% | 19% | 2% |
-| Rural/oil field | 45% | 2% | **52%** | 1% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.299 ≈ 38,970 |
+| Trunk | 15,000 × 1.299 ≈ 19,485 |
+| Primary | 9,000 × 1.299 ≈ 11,691 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

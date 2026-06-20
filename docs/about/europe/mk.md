@@ -6,24 +6,17 @@ map: { center: [21.7, 41.5], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MZSPP publishes no open AADT. Fall back to class defaults with Skopje Tier-1 boost.
+North Macedonia publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by North Macedonia's traffic factor **≈ 0.902** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### North Macedonian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (A1/E75 Corridor X) | 22,000 | 44,000 | 30,800 |
-| 1 trunk | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metro** (×2.0): **Skopje** (~600k — capital, Vardar valley, "Skopje 2014" neoclassical makeover, 1963 earthquake heritage).
-
-**Tier-2 cities** (×1.4): **Bitola** (~100k — near REK Bitola lignite), Kumanovo, Prilep (marble/tobacco), **Tetovo** (Albanian-majority), **Ohrid** (UNESCO lake), Štip, Veles, Gostivar, Strumica.
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.902 ≈ 27,060 |
+| Trunk | 15,000 × 0.902 ≈ 13,530 |
+| Primary | 9,000 × 0.902 ≈ 8,118 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

@@ -6,43 +6,17 @@ map: { center: [34, -13.5], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Roads Authority Malawi publishes no open GIS. Fall back to CNOSSOS class defaults with Lilongwe + Blantyre dual Tier-1 boost.
+Malawi publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Malawi's traffic factor **≈ 1.286** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Malawian AADT defaults
-
-Malawi is poor and has **extremely low motorization** — class defaults are among the lowest of any enriched African country.
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (M1 Lilongwe-Lusaka partial) | 20,000 | 40,000 | 28,000 |
-| 1 trunk (M routes paved) | 7,500 | 15,000 | 10,500 |
-| 2 primary | 3,800 | 7,600 | 5,320 |
-| 3 secondary | 1,800 | 3,600 | 2,520 |
-| 4 tertiary | 900 | 1,800 | 1,260 |
-| 5 residential | 450 | 900 | 630 |
-
-**Tier-1 metros** (×2.0, 2 metros): **Lilongwe** (political capital since 1975, ~1.2M metro) + **Blantyre** (commercial capital, ~800k — Malawi's oldest city, founded as Scottish Free Church of Scotland mission 1876).
-
-**Tier-2 cities** (×1.4, 20 cities): **Mzuzu** (Northern Region capital, tea country), **Zomba** (former colonial capital 1889-1975, on Zomba Plateau), Kasungu (tobacco), Mangochi (Lake Malawi tourism), **Karonga** (N, **Kayelekera uranium mine**), **Salima** (Lake Malawi, Malawi's largest solar farm), Nkhotakota, Dedza, **Balaka** (rail junction), Mulanje (tea + Mt. Mulanje), Thyolo, **Limbe** (Blantyre rail hub), **Liwonde** (Nacala Corridor junction), Mzimba, Nkhata Bay, **Dwangwa** (Illovo sugar), Ntcheu, **Nsanje** (rail terminus Lower Shire), **Mchinji** (Zambia border rail terminus), **Mwanza** (Mozambique border, Nacala Corridor exit).
-
-### Malawian vehicle split
-
-Malawi's urban transport centers on minibuses with distinctive bicycle taxi culture:
-
-- **Minibuses** — white Toyota HiAce minibus taxis (similar to Zambia/Zimbabwe)
-- **Bicycle taxis (kabaza)** — **very widespread in rural Malawi**, unique transport mode, not captured in AADT counts. Represents a significant share of passenger-km in rural areas
-- **Moto-taxis** — growing since 2015 but lower share than East Africa's boda-boda dominance
-- **AXA + National Bus** — official coach operators
-- **Heavy trucks**: Nacala Corridor transit + Tete (MZ) coal + tobacco exports to Nacala/Durban/Beira
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Lilongwe/Blantyre) | 58% | 18% | 14% | 10% |
-| Tier-2 | 58% | 13% | 19% | 10% |
-| Rural | 48% | 8% | 35% | 9% |
-| **M1 Lilongwe↔Blantyre** | 60% | 7% | **28%** | 5% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.286 ≈ 38,580 |
+| Trunk | 15,000 × 1.286 ≈ 19,290 |
+| Primary | 9,000 × 1.286 ≈ 11,574 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -53,8 +27,6 @@ Malawi's urban transport centers on minibuses with distinctive bicycle taxi cult
 - **M12** — Lilongwe ↔ Mchinji (Zambia border)
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Malawian rail context
 
@@ -75,14 +47,12 @@ Malawi's rail network is operated by **CEAR (Central East African Railways)**, p
 
 **No passenger rail of significance**, no urban commuter rail. **No metros, no trams**. CEAR is a mostly-freight concession supporting Nacala Corridor Moatize coal exports.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Nacala Corridor transit** (Nayuchi↔Nkaya↔Mwanza) | 1 | 12 |
-| **Limbe-Nsanje southern branch** | 0 | 3 |
-| **Lilongwe-Mchinji western branch** | 0 | 2 |
-| Other/branch | 0 | 1 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 
@@ -148,7 +118,7 @@ Notable noise zones:
 
 - **M1 North-South Trunk** — Karonga↔Mzuzu↔Lilongwe↔Blantyre↔Nsanje
 - **M3 Blantyre↔Mwanza** (Mozambique border, Nacala Corridor parallel)
-- **Lilongwe** + **Blantyre** dense urban cores (Malawi's dual Tier-1)
+- **Lilongwe** + **Blantyre** dense urban cores
 - **Nacala Corridor rail** (Nayuchi↔Balaka↔Mwanza — Vale/Vulcan coal transit)
 - **Lilongwe-Mchinji freight branch**
 - **Limbe-Nsanje southern branch** (historic Blantyre-to-sea)

@@ -6,34 +6,17 @@ map: { center: [46, 6], zoom: 5 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Somalia Federal Government publishes no AADT. CNOSSOS class defaults with Mogadishu Tier-1 boost. Data quality is severely limited by conflict and state fragmentation.
+Somalia publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Somalia's traffic factor **≈ 0.700** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Somali AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (none) | 10,000 | 20,000 | 14,000 |
-| 1 trunk (main inter-city paved) | 3,500 | 7,000 | 4,900 |
-| 2 primary | 1,800 | 3,600 | 2,520 |
-| 3 secondary | 700 | 1,400 | 980 |
-| 4 tertiary | 280 | 560 | 392 |
-| 5 residential | 140 | 280 | 196 |
-
-**Tier-1 metro** (×2.0): **Mogadishu** (~2.5M — capital; fortified Green Zone; recovering from Al-Shabaab).
-
-**Tier-2 cities** (×1.4): **Hargeisa** (~1.5M — Somaliland capital; de facto independent; stable), **Kismayo** (~250k — southern port), **Bosaso** (~300k — Puntland, Gulf of Aden), **Baidoa** (~300k — South West State capital), **Garowe** (~130k — Puntland capital).
-
-### Somali vehicle split
-
-Very high motorcycle share (tuk-tuks + bajaj + motorcycles dominant in low-income urban areas).
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Mogadishu) | 40% | 10% | 15% | 35% |
-| Tier-2 | 38% | 8% | 18% | 36% |
-| Rural | 30% | 6% | 28% | 36% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.700 ≈ 21,000 |
+| Trunk | 15,000 × 0.700 ≈ 10,500 |
+| Primary | 9,000 × 0.700 ≈ 6,300 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

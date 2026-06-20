@@ -6,34 +6,17 @@ map: { center: [165.5, -21.5], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-DITTT publishes no open AADT. French territory — good road infrastructure by Pacific standards. Fall back to class defaults with Nouméa Tier-1 boost.
+New Caledonia publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by New Caledonia's traffic factor **≈ 0.712** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### New Caledonian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (RT1 dual near Nouméa) | 25,000 | 50,000 | 35,000 |
-| 1 trunk (RT1 main) | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,000 | 2,000 | 1,400 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metro** (×2.0): **Nouméa** (~180k metro — capital, SLN Doniambo nickel smelter in city center).
-
-**Tier-2 cities** (×1.4): **Dumbéa** (~35k — Nouméa suburb), **Mont-Dore** (~30k — Nouméa SE), **Païta** (~25k — Nouméa W, industrial), **Koné** (~8k — North Province capital, Koniambo Nickel area), **Bourail** (~5k — central, cattle).
-
-### Vehicle split
-
-French-influenced. High car ownership for Pacific. Nickel mining trucks in rural/mining areas.
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Nouméa) | 70% | 10% | 12% | 8% |
-| Tier-2 | 65% | 8% | 20% | 7% |
-| Rural | 55% | 5% | 32% | 8% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.712 ≈ 21,360 |
+| Trunk | 15,000 × 0.712 ≈ 10,680 |
+| Primary | 9,000 × 0.712 ≈ 6,408 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

@@ -38,8 +38,6 @@ Iraqi MoT publishes no open AADT. Fall back to class defaults with Baghdad ×2.5
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
-
 ### Iraqi rail context
 
 **Iraqi Republic Railways** operates ~2,400 km of standard gauge (1,435 mm) — **mostly non-functional** post-2003 invasion + ISIS destruction 2014-2017. Baghdad-Basra is the only partially restored regular service. **Baghdad has NO metro** (planned but never built).

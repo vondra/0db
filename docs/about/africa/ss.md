@@ -6,35 +6,17 @@ map: { center: [31, 7], zoom: 5 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-South Sudan Ministry of Roads publishes no AADT. CNOSSOS class defaults with Juba Tier-1 boost. World's newest country with worst infrastructure — most roads are unpaved and impassable in rainy season.
+South Sudan publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by South Sudan's traffic factor **≈ 0.717** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### South Sudanese AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (none) | 8,000 | 16,000 | 11,200 |
-| 1 trunk (main inter-state paved — very few) | 2,500 | 5,000 | 3,500 |
-| 2 primary | 1,200 | 2,400 | 1,680 |
-| 3 secondary | 500 | 1,000 | 700 |
-| 4 tertiary | 200 | 400 | 280 |
-| 5 residential | 100 | 200 | 140 |
-
-**Tier-1 metro** (×2.0): **Juba** (~500k — capital on White Nile; largely rebuilt post-2011; NGO hub).
-
-**Tier-2 cities** (×1.4): **Malakal** (~200k — Upper Nile; oil fields), **Wau** (~200k — Western Bahr el Ghazal; Sudan border), **Yei** (~150k — Central Equatoria; Uganda corridor), **Bor** (~130k — Jonglei; 2013 civil war flashpoint).
-
-### South Sudanese vehicle split
-
-Extremely high heavy truck share on main corridors (all goods imported by road from Uganda, Kenya, Sudan).
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Juba) | 40% | 12% | 20% | 28% |
-| Tier-2 | 35% | 10% | 28% | 27% |
-| Rural | 28% | 8% | 40% | 24% |
-| **Nimule–Juba (A109)** (Uganda import corridor) | 25% | 7% | 60% | 8% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.717 ≈ 21,510 |
+| Trunk | 15,000 × 0.717 ≈ 10,755 |
+| Primary | 9,000 × 0.717 ≈ 6,453 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

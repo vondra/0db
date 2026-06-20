@@ -6,42 +6,17 @@ map: { center: [24.5, -22], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-DRTS (Department of Road Transport and Safety) and Roads Department publish no open AADT. Fall back to CNOSSOS class defaults with Gaborone Tier-1 boost.
+Botswana publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Botswana's traffic factor **≈ 1.021** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Botswana AADT defaults
-
-Botswana is **very sparsely populated** (~2.6M in 582k km² = 4.5/km², mostly Kalahari Desert). Population concentrated in the SE corridor.
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (A1 Gaborone bypass) | 22,000 | 44,000 | 30,800 |
-| 1 trunk (A-routes paved) | 8,000 | 16,000 | 11,200 |
-| 2 primary | 4,000 | 8,000 | 5,600 |
-| 3 secondary | 2,000 | 4,000 | 2,800 |
-| 4 tertiary | 1,000 | 2,000 | 1,400 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metros** (×2.0, 1 metro): **Gaborone** (~250k city / ~400k metro — one of Africa's smallest capital metros by population, in one of sub-Saharan Africa's higher-income economies).
-
-**Tier-2 cities** (×1.4, 16 cities): **Francistown** (2nd city, north hub), Molepolole, **Maun** (Okavango Delta tourism gateway), Mogoditshane (Gaborone satellite), Serowe, **Selebi-Phikwe** (BCL mine closed 2016, purpose-built mining town), **Palapye** (Morupule coal + BIH), Kanye, Mahalapye, Lobatse (BMC abattoir), **Kasane** (Chobe tourism), Nata (Makgadikgadi gateway), **Jwaneng** (diamond mine town), **Orapa** (diamond mine town), **Ghanzi** (Trans-Kalahari stop), Letlhakane (diamond).
-
-### Botswana vehicle split
-
-Botswana is **one of Africa's most car-dependent countries** — high per-capita vehicle ownership (close to South Africa level), minimal minibus/moto-taxi culture.
-
-- **Private cars** — dominant (Toyota Land Cruiser ubiquitous due to Kalahari conditions)
-- **Combis** — white minibuses, but less dominant than ZW/ZM/MW
-- **Motorcycles** — **very low share (~2-4%)**, no moto-taxi culture at all
-- **Heavy trucks**: Trans-Kalahari Highway (Namibia↔RSA transit), coal from Morupule, diamond freight, cattle transport (Botswana's traditional economy)
-
-| Tier | Light | Medium (combi) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Gaborone) | 68% | 12% | 16% | 4% |
-| Tier-2 | 66% | 10% | 20% | 4% |
-| Rural | 58% | 6% | 33% | 3% |
-| **Trans-Kalahari Highway (Namibia↔RSA)** | 50% | 4% | **44%** | 2% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.021 ≈ 30,630 |
+| Trunk | 15,000 × 1.021 ≈ 15,315 |
+| Primary | 9,000 × 1.021 ≈ 9,189 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -53,8 +28,6 @@ Botswana is **one of Africa's most car-dependent countries** — high per-capita
 - **A33** — Nata ↔ Maun (Okavango gateway)
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Botswana rail context
 
@@ -75,13 +48,12 @@ Botswana is **one of Africa's most car-dependent countries** — high per-capita
 
 **No urban commuter rail, no metros, no trams**. Population too sparse.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Main line** (Gaborone↔Francistown↔Plumtree/Ramatlabama) | 1 | 8 |
-| **Sua Pan Branch** (soda ash freight) | 0 | 4 |
-| Other/branch | 0 | 2 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

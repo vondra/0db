@@ -6,37 +6,17 @@ map: { center: [84, 28.5], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-DoR (Department of Roads) publishes no open GIS, and there is no bespoke Nepal road enricher. The engine scales its world-default motorway/trunk/primary AADT by Nepal's country factor (≈1.22×) and applies the world-default vehicle mix. The Kathmandu Valley Tier-1 boost and the motorcycle-heavy vehicle split below are the **intended country-tuning, not yet ingested** — shown as the target profile.
+Nepal publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Nepal's traffic factor **≈ 1.221** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Nepalese AADT defaults
-
-Nepal is **mountainous and landlocked** between India (south) and China/Tibet (north). Road infrastructure is limited by extreme terrain.
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Fast Track u/c) | 25,000 | 50,000 | 35,000 |
-| 1 trunk (Prithvi/Mahendra/Tribhuvan Highways) | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metro** (×2.0): **Kathmandu Valley** (~3M — Kathmandu + Lalitpur/Patan + Bhaktapur, **bowl-shaped valley trapping pollution + noise**, extreme congestion in narrow medieval streets).
-
-**Tier-2 cities** (×1.4): **Pokhara** (~450k, Annapurna gateway, tourism), **Biratnagar** (~250k, Terai industry), **Birgunj** (~250k, **main India trade gateway** — Raxaul border crossing), Lalitpur/Patan (Kathmandu satellite), Bharatpur (~300k, Chitwan), Butwal, Dharan, Nepalgunj, Janakpur, Hetauda, Dhangadhi, Itahari.
-
-### Nepalese vehicle split
-
-**EXTREME motorcycle share** (40% in Kathmandu) — motorcycles navigate narrow medieval valley streets better than cars:
-
-| Tier | Light | Medium (microbus/tempo) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Kathmandu Valley) | 30% | 15% | 15% | **40%** |
-| Tier-2 | 32% | 12% | 18% | 38% |
-| Rural | 25% | 8% | 35% | 32% |
-| **Prithvi Highway (KTM↔Pokhara)** | 35% | 8% | **45%** | 12% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.221 ≈ 36,630 |
+| Trunk | 15,000 × 1.221 ≈ 18,315 |
+| Primary | 9,000 × 1.221 ≈ 10,989 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 

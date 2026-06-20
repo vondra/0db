@@ -46,8 +46,6 @@ TANROADS/TARURA publish no open AADT. Fall back to CNOSSOS class defaults with D
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
-
 ### Tanzanian rail context
 
 - **TAZARA** — **1,860 km Chinese-built (1970-1975)**, Dar es Salaam ↔ Kapiri Mposhi (Zambia). Carries copper/cobalt from Zambian Copperbelt to Dar es Salaam port. Cape gauge.

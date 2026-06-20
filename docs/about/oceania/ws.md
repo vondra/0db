@@ -6,26 +6,17 @@ map: { center: [-172, -13.8], zoom: 9 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-LTA (Land Transport Authority) publishes no open AADT. Fall back to class defaults with Apia Tier-1 boost. Tiny island nation — 100% coverage.
+Samoa publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Samoa's traffic factor **≈ 0.727** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Samoan AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (none) | 12,000 | 24,000 | 16,800 |
-| 1 trunk (main coast road) | 6,000 | 12,000 | 8,400 |
-| 2 primary | 3,000 | 6,000 | 4,200 |
-| 3 secondary | 1,500 | 3,000 | 2,100 |
-| 4 tertiary | 600 | 1,200 | 840 |
-| 5 residential | 300 | 600 | 420 |
-
-**Tier-1 metro** (×2.0): **Apia** (~40k — capital, Upolu).
-
-**Tier-2 cities** (×1.4): **Salelologa** (~5k — Savai'i ferry terminal).
-
-**Left-hand traffic** since September 2009 — only country to switch driving side in the 21st century (aligned with AU/NZ for cheaper car imports). Colorful wooden **"aiga" buses** are distinctive Samoan public transport.
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.727 ≈ 21,810 |
+| Trunk | 15,000 × 0.727 ≈ 10,905 |
+| Primary | 9,000 × 0.727 ≈ 6,543 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

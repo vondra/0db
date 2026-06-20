@@ -6,24 +6,17 @@ map: { center: [15, -1], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Direction des Routes publishes no open AADT. Fall back to class defaults with Brazzaville Tier-1 boost.
+Republic of Congo publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Republic of Congo's traffic factor **≈ 0.717** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Congolese AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (none in CG) | 15,000 | 30,000 | 21,000 |
-| 1 trunk | 5,000 | 10,000 | 7,000 |
-| 2 primary | 2,500 | 5,000 | 3,500 |
-| 3 secondary | 1,200 | 2,400 | 1,680 |
-| 4 tertiary | 500 | 1,000 | 700 |
-| 5 residential | 250 | 500 | 350 |
-
-**Tier-1 metro** (×2.0): **Brazzaville** (~2M — capital, Congo River, directly across from Kinshasa/DRC).
-
-**Tier-2 cities** (×1.4): **Pointe-Noire** (~1.2M — 2nd city, Atlantic port, oil capital, CEC gas plants), **Dolisie** (~180k — 3rd city, CFCO junction, formerly Loubomo), **Nkayi** (~70k — SARIS sugar), **Owando** (~50k — northern Cuvette, oil region), **Ouesso** (~40k — Sangha, far north, logging).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.717 ≈ 21,510 |
+| Trunk | 15,000 × 0.717 ≈ 10,755 |
+| Primary | 9,000 × 0.717 ≈ 6,453 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

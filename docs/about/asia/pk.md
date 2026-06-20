@@ -6,46 +6,17 @@ map: { center: [69, 30], zoom: 5 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-NHA (National Highway Authority) publishes no open GIS. Fall back to CNOSSOS class defaults with Karachi/Lahore ×2.5 megacity boost.
+Pakistan publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Pakistan's traffic factor **≈ 1.262** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Pakistani AADT defaults
-
-Pakistan is the **5th most populous country in the world** (~240M). Extreme traffic density in Punjab and Sindh. **M1/M2 Lahore↔Islamabad Motorway** is Pakistan's flagship toll motorway.
-
-| OSM class | Rural | Tier-1 (×2.5) | Tier-2 (×1.6) | Tier-3 (×1.3) |
-|---|---:|---:|---:|---:|
-| 0 motorway (M1/M2/M9) | 45,000 | 112,500 | 72,000 | 58,500 |
-| 1 trunk (N-routes / GT Road) | 18,000 | 45,000 | 28,800 | 23,400 |
-| 2 primary | 10,000 | 25,000 | 16,000 | 13,000 |
-| 3 secondary | 5,000 | 12,500 | 8,000 | 6,500 |
-| 4 tertiary | 2,500 | 6,250 | 4,000 | 3,250 |
-| 5 residential | 1,000 | 2,500 | 1,600 | 1,300 |
-
-**Tier-1 megacities** (×2.5): **Karachi** (~16M metro — Pakistan's largest city, Sindh capital, major port) + **Lahore** (~13M metro — Punjab capital, cultural capital, walled city).
-
-**Tier-2 cities** (×1.6): Faisalabad ("Manchester of Pakistan", ~3.5M, textile capital), Rawalpindi (~2.1M, Islamabad twin city), Multan (~2M), Hyderabad Sindh (~2M), Peshawar (~2M, Khyber Pakhtunkhwa capital), Islamabad (~1.2M, federal capital).
-
-**Tier-3 cities** (×1.3): Quetta, Sialkot, Gujranwala, Bahawalpur, Sargodha, Sukkur, Larkana, Mardan, Abbottabad, Dera Ghazi Khan, Sahiwal, Okara, Jhang, Gujrat, Kasur.
-
-### Pakistani vehicle split
-
-Pakistan has **extreme motorcycle + rickshaw dominance**:
-
-- **Motorcycles** — **Pakistan has one of world's highest motorcycle densities** (~30% of urban traffic). Honda CD70/CG125 ubiquitous.
-- **Rickshaws (auto-rickshaws)** — Qingqi (Chinese 3-wheelers), classic green rickshaws (Karachi), Chingchi rickshaws (informal). Classified as CNOSSOS "medium".
-- **Suzuki Carry / Hiace** — minibuses/vans for urban public transport
-- **Heavy trucks** — decorated "jingle trucks" (unique Pakistani aesthetic), **dominant on N5 Grand Trunk Road** (40% heavy share)
-- **Buses**: Daewoo Express, Faisal Movers (intercity). BRT: **Islamabad Metrobus**, **Lahore Metrobus**, **Karachi Green Line BRT**
-
-| Tier | Light | Medium (rickshaw) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Karachi/Lahore) | 38% | 15% | 17% | **30%** |
-| Tier-2/3 | 45% | 12% | 15% | **28%** |
-| Rural | 35% | 8% | 35% | 22% |
-| **M1/M2 motorway** | 65% | 5% | **26%** | 4% |
-| **N5 Grand Trunk Road** | 40% | 8% | **40%** | 12% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.262 ≈ 37,860 |
+| Trunk | 15,000 × 1.262 ≈ 18,930 |
+| Primary | 9,000 × 1.262 ≈ 11,358 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -56,8 +27,6 @@ Pakistan has **extreme motorcycle + rickshaw dominance**:
 - **N35 Karakoram Highway (KKH)** — Islamabad ↔ Gilgit ↔ Khunjerab Pass (China border) — **world's highest paved international border crossing** (4,693m)
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Pakistani rail context
 
@@ -83,14 +52,12 @@ Pakistan has **extreme motorcycle + rickshaw dominance**:
 - **Rawalpindi ↔ Kohat ↔ Bannu** (KP)
 - **Hyderabad ↔ Mirpur Khas ↔ Khokhrapar** (India border, Thar Express)
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Lahore Orange Line Metro (2020)** | 200 | 0 |
-| **ML-1 Main Line** (Karachi↔Lahore↔Peshawar) | 25 | 15 |
-| **Quetta branch** (Bolan Pass) | 2 | 5 |
-| Other/branch | 2 | 3 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 
@@ -154,7 +121,7 @@ Notable noise zones:
 - **M1/M2 Motorway** — Peshawar↔Islamabad↔Lahore
 - **M9 Motorway** — Karachi↔Hyderabad
 - **N35 Karakoram Highway** — Islamabad↔China (world's highest paved intl border crossing)
-- **Karachi** + **Lahore** megacity dense cores (×2.5 multiplier)
+- **Karachi** + **Lahore** megacity dense cores
 - **Pakistan Railways ML-1** (Karachi↔Peshawar, ~100 trains/day at peak)
 - **Lahore Orange Line Metro** (Pakistan's first metro, 2020)
 - **Jinnah International (KHI/OPKC Karachi)**, **Allama Iqbal (LHE/OPLA Lahore)**, **Islamabad (ISB/OPIS)**, **Peshawar (PEW/OPPS)**, **Quetta (UET/OPQT)**, **Faisalabad (LYP/OPFA)**, **Multan (MUX/OPMF)**, **Sialkot (SKT/OPST)** — covered by global aircraft layer

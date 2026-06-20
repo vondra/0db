@@ -6,24 +6,17 @@ map: { center: [-80.1, 8.6], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MOP publishes no open AADT. Fall back to class defaults with Panama City Tier-1 boost.
+Panama publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Panama's traffic factor **≈ 0.995** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Panamanian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Corredor Norte/Sur) | 35,000 | 70,000 | 49,000 |
-| 1 trunk | 14,000 | 28,000 | 19,600 |
-| 2 primary | 7,000 | 14,000 | 9,800 |
-| 3 secondary | 3,500 | 7,000 | 4,900 |
-| 4 tertiary | 1,400 | 2,800 | 1,960 |
-| 5 residential | 550 | 1,100 | 770 |
-
-**Tier-1 metro** (×2.0): **Panama City** (~1.8M metro — financial hub, Metro lines 1+2, Cinta Costera).
-
-**Tier-2 cities** (×1.4): **San Miguelito** (~320k — metro suburb), **Arraiján** (~230k — west of canal), **David** (~150k — Chiriquí agricultural).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.995 ≈ 29,850 |
+| Trunk | 15,000 × 0.995 ≈ 14,925 |
+| Primary | 9,000 × 0.995 ≈ 8,955 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

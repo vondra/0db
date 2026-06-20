@@ -56,8 +56,6 @@ Turkey has a **European-style vehicle mix** — moderate motorcycle share (unlik
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
-
 ### Turkish rail context
 
 **TCDD** operates ~12,500 km of **standard gauge (1,435 mm)** — one of the world's larger rail networks. Turkey has invested heavily in high-speed rail and urban metros since the 2000s.

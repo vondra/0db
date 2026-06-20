@@ -6,39 +6,19 @@ map: { center: [49, 40.5], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-AYO publishes no open AADT. Fall back to class defaults with Baku Tier-1 boost.
+Azerbaijan publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Azerbaijan's traffic factor **≈ 1.118** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Azerbaijani AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (M1 Baku-Guba, M3 upgrading) | 30,000 | 60,000 | 42,000 |
-| 1 trunk | 14,000 | 28,000 | 19,600 |
-| 2 primary | 7,000 | 14,000 | 9,800 |
-| 3 secondary | 3,500 | 7,000 | 4,900 |
-| 4 tertiary | 1,600 | 3,200 | 2,240 |
-| 5 residential | 700 | 1,400 | 980 |
-
-**Tier-1 metro** (×2.0): **Baku** (~2.3M — capital, Caspian coast, UNESCO old city + futuristic Flame Towers, **COP29 host 2024**).
-
-**Tier-2 cities** (×1.4): **Ganja** (~330k, 2nd city, western AZ), **Sumgayit** (~350k, industrial satellite of Baku — **Soviet-era chemical, one of Caspian's most polluted cities**), **Mingachevir** (~100k, hydro/power hub), Lankaran (~80k, south Caspian, Iran border), Shirvan, Shaki (NW, silk road), **Nakhchivan City** (~90k, exclave capital).
-
-### Azerbaijani vehicle split
-
-Oil-rich country with high car ownership, low motorcycle (Caucasus pattern):
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Baku) | 70% | 8% | 16% | 6% |
-| Tier-2 | 66% | 6% | 22% | 6% |
-| Rural | 58% | 4% | 33% | 5% |
-| **M3 Baku↔Ganja** | 60% | 3% | **33%** | 4% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.118 ≈ 33,540 |
+| Trunk | 15,000 × 1.118 ≈ 16,770 |
+| Primary | 9,000 × 1.118 ≈ 10,062 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Azerbaijani rail context
 
@@ -53,13 +33,12 @@ Oil-rich country with high car ownership, low motorcycle (Caucasus pattern):
 ### Main trunk
 - **Baku ↔ Ganja ↔ Georgia border** — ADY main line
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Baku Metro (1967)** | 300 | 0 |
-| **BTK / Main Trunk** (Baku↔Ganja↔Georgia) | 6 | 10 |
-| Other/branch | 2 | 4 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

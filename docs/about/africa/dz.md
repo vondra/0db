@@ -53,8 +53,6 @@ Algeria is **Mediterranean/European** in vehicle mix — low motorcycle share, h
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
-
 ### Algerian rail context
 
 Algeria has **North Africa's 2nd largest rail network** (~4,200 km SNTF) plus 7 tramways and Algiers Metro.

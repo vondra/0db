@@ -6,42 +6,17 @@ map: { center: [30, -19], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-ZINARA (Zimbabwe National Road Administration) publishes no open GIS. Fall back to CNOSSOS class defaults with Greater Harare Tier-1 boost.
+Zimbabwe publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Zimbabwe's traffic factor **≈ 1.093** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Zimbabwean AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (A4 Harare-Beitbridge upgrade in progress) | 24,000 | 48,000 | 33,600 |
-| 1 trunk (A1-A9) | 9,000 | 18,000 | 12,600 |
-| 2 primary | 4,500 | 9,000 | 6,300 |
-| 3 secondary | 2,200 | 4,400 | 3,080 |
-| 4 tertiary | 1,000 | 2,000 | 1,400 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metros** (×2.0, 1 metro): **Greater Harare** (~2.5M metro — capital, built on the north-central Mashonaland plateau).
-
-**Tier-2 cities** (×1.4, 20 cities): **Bulawayo** (2nd city, Matabeleland capital), Chitungwiza (Harare satellite), **Mutare** (Manicaland, Mozambique border), Gweru (Midlands), **Kwekwe** (**ZISCO Redcliff** site — defunct steel), Kadoma, Masvingo (**Great Zimbabwe ruins**), Chinhoyi, Marondera, Ruwa, Norton, Bindura (nickel mine), Chegutu, **Zvishavane** (**Mimosa platinum mine**), **Victoria Falls** (tourism, Zambia border), **Hwange** (coalfield), **Beitbridge** (RSA border, Limpopo crossing), **Shurugwi** (**Unki platinum mine**), **Bikita** (**world's oldest and largest lithium mine** since 1953), Gwanda (**Blanket gold mine**).
-
-### Zimbabwean vehicle split
-
-Zimbabwe's urban transport centers on **kombis** + ZUPCO buses:
-
-- **Kombis** — white Toyota HiAce / Nissan Urvan minibus taxis (16-seater), dominant urban public transport (similar to matatus but with smaller fleet size than Kenya/Uganda)
-- **ZUPCO** — state bus company (Zimbabwe United Passenger Company), revived 2018 post-dollarization. Large blue buses
-- **Emergency Taxis / Mushika Shika** — unlicensed sedan taxis
-- **Motorcycle taxis** — **lower share than East Africa** (no boda-boda culture, import constraints)
-- **Heavy trucks**: Cross-border Botswana/RSA/Mozambique freight, mining haul (Zimplats platinum, Hwange coal, Bikita lithium)
-
-| Tier | Light | Medium (kombi) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Harare) | 60% | **18%** | 13% | 9% |
-| Tier-2 | 60% | 13% | 18% | 9% |
-| Rural | 55% | 8% | 30% | 7% |
-| **A4 Harare↔Beitbridge (RSA freight)** | 50% | 5% | **42%** | 3% |
-| **Hwange coal corridor** | 40% | 5% | **52%** | 3% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.093 ≈ 32,790 |
+| Trunk | 15,000 × 1.093 ≈ 16,395 |
+| Primary | 9,000 × 1.093 ≈ 9,837 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -56,8 +31,6 @@ Zimbabwe's urban transport centers on **kombis** + ZUPCO buses:
 - **A9** — Bulawayo ↔ Beitbridge (via Gwanda)
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Zimbabwean rail context
 
@@ -86,16 +59,12 @@ Zimbabwe has one of Southern Africa's better rail networks — **NRZ (National R
 
 **No metros, no trams** in any Zimbabwean city.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Harare commuter rail** (irregular) | 4 | 0 |
-| **Main trunk** (Plumtree↔Bulawayo↔Harare↔Mutare) | 1 | 8 |
-| **Vic Falls branch** (Hwange coal + Vic Falls border) | 0 | 10 |
-| **Beitbridge branch** (Bulawayo↔RSA) | 0 | 6 |
-| **Chirundu branch** (Harare↔Zambia) | 0 | 3 |
-| Other/branch | 0 | 2 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

@@ -6,43 +6,17 @@ map: { center: [9.5, 34], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-DGPC (Direction Générale des Ponts et Chaussées) and Tunisie Autoroutes SA (A1/A3/A4/A19 operator) publish no open AADT. Fall back to CNOSSOS class defaults with Grand Tunis Tier-1 boost. Tunisian baseline higher than sub-Saharan (Mediterranean traffic patterns).
+Tunisia publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Tunisia's traffic factor **≈ 1.260** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Tunisian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (A1/A3/A4/A19) | 35,000 | 70,000 | 49,000 |
-| 1 trunk (RN routes) | 13,000 | 26,000 | 18,200 |
-| 2 primary | 7,000 | 14,000 | 9,800 |
-| 3 secondary | 3,500 | 7,000 | 4,900 |
-| 4 tertiary | 1,500 | 3,000 | 2,100 |
-| 5 residential | 700 | 1,400 | 980 |
-
-**Tier-1 metros** (×2.0, 1 metro): **Grand Tunis** (~2.3M metro — Tunis + Ariana + Ben Arous + La Manouba governorates).
-
-**Tier-2 cities** (×1.4, 24 cities): **Sfax** (2nd city, phosphate port), **Sousse** (tourism + manufacturing), Kairouan (religious + historic), **Bizerte** (northern port + STIR refinery), **Gabès** (chemical industry), **Gafsa** (phosphate mining), Monastir, Nabeul, Medenine, Tataouine (extreme south), **Tozeur** (oasis, Sahara tourism), Kasserine, Béja, El Kef, Jendouba, Mahdia, Zaghouan, Siliana, **Sidi Bouzid** (Arab Spring origin), Ariana, Ben Arous, La Marsa, **Hammamet** (coastal resort), **Djerba** (island tourism hub).
-
-### Tunisian vehicle split
-
-Tunisia's transport is **more European-Mediterranean than sub-Saharan African**:
-
-- **Louage** — yellow shared taxis (8-seat intercity minibuses, Tunisia-specific — more structured than West African matatus)
-- **Taxis individuels** — red-and-white metered city taxis
-- **TRANSTU buses** — Tunis city buses (same agency as Métro léger and TGM)
-- **SRTG** regional bus societies (Société Régionale de Transport de Gouvernorat) run intercity buses
-- **Motorcycles** — low share (4-10%), Mediterranean/European pattern — much lower than sub-Saharan Africa
-- **Vespa/scooters** popular in Tunis + Sousse + Sfax
-
-| Tier | Light | Medium (louage/bus) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Grand Tunis) | 65% | 12% | 13% | 10% |
-| Tier-2 | 67% | 10% | 15% | 8% |
-| Rural | 60% | 8% | 26% | 6% |
-| **A1 Coastal Motorway (Tunis↔Sousse↔Sfax↔Gabès)** | 72% | 6% | **18%** | 4% |
-| **Gafsa phosphate corridor (RN3/RN15)** | 40% | 6% | **48%** | 6% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.260 ≈ 37,800 |
+| Trunk | 15,000 × 1.260 ≈ 18,900 |
+| Primary | 9,000 × 1.260 ≈ 11,340 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -55,8 +29,6 @@ Tunisia's transport is **more European-Mediterranean than sub-Saharan African**:
 - **RN15** — Sfax ↔ Gafsa (phosphate route)
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Tunisian rail context
 
@@ -79,17 +51,12 @@ Tunisia has **one of North Africa's most developed rail networks** (~2,165 km SN
 
 - **Sfax ↔ Gafsa ↔ Metlaoui ↔ Redeyef ↔ Tozeur** — **meter gauge**, Gafsa phosphate corridor. SNCFT's **#1 freight commodity**. The famous **"Red Lizard" (Lézard Rouge) tourist train** runs on this line.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Métro léger de Tunis (1985)** | 200 | 0 |
-| **TGM Tunis-Marsa (1872/1905)** | 80 | 0 |
-| **RFR Tunis (2024)** | 50 | 0 |
-| **SNCFT Sahel main line (Tunis-Sfax-Gabès)** | 15 | 10 |
-| **SNCFT Tunis-Bizerte** | 6 | 4 |
-| **SNCFT Gafsa phosphate corridor** | 1 | 15 |
-| Other/branch | 1 | 2 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

@@ -112,21 +112,12 @@ Colombia has extremely limited operational rail. Almost all is freight, dominate
 - **Ferrocarril del Pacífico** — Cali ↔ Buenaventura limited freight (Ferrosur)
 - **Atlantic Railway Network (FRC)** — mostly inactive
 
-### trains/day defaults
+### Rail defaults
 
-**Class-default frequencies** (geometry-driven, not measured train counts). With no Colombian rail enricher, the global rail line-type defaults apply; the coal-corridor rows below show the intended freight weighting for those mainlines:
-
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Cerrejón coal corridor (La Guajira)** | 0 | 60 |
-| **FENOCO Drummond corridor (Cesar→Santa Marta)** | 0 | 50 |
-| Pacífico Cali↔Buenaventura | 0 | 12 |
-| Other operational rural | 1 | 6 |
-| Branch lines | 0 | 4 |
-| Industrial sidings | 0 | 6 |
-| **Metro de Medellín (light_rail Lines A/B)** | 350 | 0 |
-| Tranvía Ayacucho (tram) | 200 | 0 |
-| Metrocable cable car (light_rail) | 100 | 0 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

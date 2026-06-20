@@ -6,39 +6,19 @@ map: { center: [44.8, 40], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Armenia Road Department publishes no open AADT. Fall back to class defaults with Yerevan Tier-1 boost.
+Armenia publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Armenia's traffic factor **≈ 1.287** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Armenian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (M1/M2 Yerevan bypass) | 25,000 | 50,000 | 35,000 |
-| 1 trunk | 12,000 | 24,000 | 16,800 |
-| 2 primary | 6,000 | 12,000 | 8,400 |
-| 3 secondary | 3,000 | 6,000 | 4,200 |
-| 4 tertiary | 1,400 | 2,800 | 1,960 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metro** (×2.0): **Yerevan** (~1.1M — capital, **~37% of ALL Armenians**, iconic Mt. Ararat view. Extreme capital primacy — one of the highest in the world.)
-
-**Tier-2 cities** (×1.4): **Gyumri** (~120k — 2nd city, **devastated by 1988 M6.8 earthquake**, still recovering), **Vanadzor** (~80k — 3rd city, Soviet chemical industry), **Vagharshapat/Echmiadzin** (~50k — **Holy See of the Armenian Apostolic Church**, world's oldest state religion adopted 301 AD), **Kapan** (~35k, Syunik/Zangezur, copper-molybdenum), Hrazdan, Abovyan, Artashat, Armavir, **Goris** (Syunik — scenic, near Tatev).
-
-### Armenian vehicle split
-
-Post-Soviet car culture, low motorcycle:
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Yerevan) | 68% | 8% | 18% | 6% |
-| Tier-2 | 65% | 6% | 24% | 5% |
-| Rural | 55% | 4% | 37% | 4% |
-| **M2 corridor** (Yerevan↔Sevan↔Iran) | 55% | 3% | **38%** | 4% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.287 ≈ 38,610 |
+| Trunk | 15,000 × 1.287 ≈ 19,305 |
+| Primary | 9,000 × 1.287 ≈ 11,583 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Armenian rail context
 
@@ -53,14 +33,12 @@ Post-Soviet car culture, low motorcycle:
 ### Sevan branch
 - **Yerevan ↔ Lake Sevan** — seasonal tourist + limited freight
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Yerevan Metro (1981)** | 80 | 0 |
-| **Main line** (Yerevan↔Gyumri↔Georgia) | 4 | 6 |
-| **Sevan branch** | 1 | 2 |
-| Other | 1 | 2 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

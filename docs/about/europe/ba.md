@@ -6,24 +6,17 @@ map: { center: [17.8, 44.0], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-JPAC/entity road agencies publish no open AADT. Fall back to class defaults with Sarajevo Tier-1 boost.
+Bosnia and Herzegovina publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Bosnia and Herzegovina's traffic factor **≈ 0.904** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### BiH AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Corridor Vc/A1) | 25,000 | 50,000 | 35,000 |
-| 1 trunk | 12,000 | 24,000 | 16,800 |
-| 2 primary | 6,000 | 12,000 | 8,400 |
-| 3 secondary | 3,000 | 6,000 | 4,200 |
-| 4 tertiary | 1,400 | 2,800 | 1,960 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metro** (×2.0): **Sarajevo** (~600k canton — **1992-95 siege**, **1984 Winter Olympics** city, Miljacka valley).
-
-**Tier-2 cities** (×1.4): **Banja Luka** (~200k — RS capital), **Tuzla** (~110k — coal/salt), **Zenica** (~110k — ArcelorMittal), **Mostar** (~100k — UNESCO Stari Most), Bijeljina, Brčko, Prijedor, Trebinje, Livno.
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.904 ≈ 27,120 |
+| Trunk | 15,000 × 0.904 ≈ 13,560 |
+| Primary | 9,000 × 0.904 ≈ 8,136 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

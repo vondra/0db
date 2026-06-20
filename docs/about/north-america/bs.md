@@ -6,24 +6,17 @@ map: { center: [-77.5, 24.6], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-PMH/MOWT publishes no open AADT. Fall back to class defaults with Nassau Tier-1 boost.
+The Bahamas publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by The Bahamas's traffic factor **≈ 1.261** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Bahamian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway | 18,000 | 36,000 | 25,200 |
-| 1 trunk | 7,000 | 14,000 | 9,800 |
-| 2 primary | 3,500 | 7,000 | 4,900 |
-| 3 secondary | 1,800 | 3,600 | 2,520 |
-| 4 tertiary | 700 | 1,400 | 980 |
-| 5 residential | 280 | 560 | 392 |
-
-**Tier-1 metro** (×2.0): **Nassau** (~280k metro — New Providence, cruise/tourism hub, drives on left).
-
-**Tier-2 cities** (×1.4): **Freeport** (~55k — Grand Bahama, container port + industrial).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.261 ≈ 37,830 |
+| Trunk | 15,000 × 1.261 ≈ 18,915 |
+| Primary | 9,000 × 1.261 ≈ 11,349 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

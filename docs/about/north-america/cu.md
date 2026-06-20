@@ -6,24 +6,17 @@ map: { center: [-79.5, 21.9], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MITRANS publishes no open AADT. Fall back to class defaults with Havana Tier-1 boost.
+Cuba publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Cuba's traffic factor **≈ 1.204** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Cuban AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Autopista Nacional) | 20,000 | 40,000 | 28,000 |
-| 1 trunk | 7,000 | 14,000 | 9,800 |
-| 2 primary | 3,500 | 7,000 | 4,900 |
-| 3 secondary | 1,800 | 3,600 | 2,520 |
-| 4 tertiary | 700 | 1,400 | 980 |
-| 5 residential | 280 | 560 | 392 |
-
-**Tier-1 metro** (×2.0): **Havana** (~2.1M metro — only Caribbean capital with urban rail, historic centre).
-
-**Tier-2 cities** (×1.4): **Santiago de Cuba** (~430k — second city, eastern), **Holguín** (~340k — nickel region), **Camagüey** (~320k — central cattle), **Santa Clara** (~240k — central).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.204 ≈ 36,120 |
+| Trunk | 15,000 × 1.204 ≈ 18,060 |
+| Primary | 9,000 × 1.204 ≈ 10,836 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

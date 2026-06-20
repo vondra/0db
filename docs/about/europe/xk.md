@@ -6,24 +6,17 @@ map: { center: [21.0, 42.6], zoom: 9 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-No open AADT from Kosovo road authorities. Fall back to class defaults with Pristina Tier-1 boost.
+Kosovo publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Kosovo's traffic factor **≈ 1.004** (no per-country factor; uses the European continental default). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Kosovo AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (R7 Ibrahim Rugova Hwy) | 22,000 | 44,000 | 30,800 |
-| 1 trunk | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metro** (×2.0): **Pristina** (~200k city / ~350k functional — capital).
-
-**Tier-2 cities** (×1.4): **Prizren** (~100k — historic, Ottoman old town), **Pejë/Peć** (~100k — Patriarchate, NW), **Mitrovicë** (~70k — **divided Serb/Albanian city**, Ibar bridge), Gjilan/Gnjilane, **Ferizaj** (~110k — near Camp Bondsteel), Gjakova, **Fushë Kosovë** (rail junction, historic **1389 Battle of Kosovo site**).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.004 ≈ 30,120 |
+| Trunk | 15,000 × 1.004 ≈ 15,060 |
+| Primary | 9,000 × 1.004 ≈ 9,036 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

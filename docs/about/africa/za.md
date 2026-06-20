@@ -6,37 +6,17 @@ map: { center: [24, -29], zoom: 5 }
 
 ## Road traffic
 
-### Class defaults only — SANRAL publishes nothing
+### Road defaults
 
-**SANRAL** (South African National Roads Agency Limited, `nra.co.za`) publishes **zero open spatial data**. Same for **RTMC** (Road Traffic Management Corporation) and the 9 provincial road departments. SANRAL collects extensive toll plaza data on the N1/N2/N3/N4 concessions but doesn't release it publicly.
+South Africa publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by South Africa's traffic factor **≈ 1.115** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-Fall back to Tier-1/Tier-2 city multipliers on CNOSSOS class defaults.
-
-### South African AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (N-route toll) | 40,000 | 80,000 | 56,000 |
-| 1 trunk (N-number paved) | 15,000 | 30,000 | 21,000 |
-| 2 primary (R-routes) | 7,000 | 14,000 | 9,800 |
-| 3 secondary | 3,500 | 7,000 | 4,900 |
-| 4 tertiary | 1,500 | 3,000 | 2,100 |
-| 5 residential | 700 | 1,400 | 980 |
-
-**Tier-1 metros** (×2.0, 6 metros): **Johannesburg** (~5.6M), **Pretoria (Tshwane)** (~2.9M), **Cape Town** (~4.6M), **Durban (eThekwini)** (~3.9M), **Port Elizabeth (Gqeberha)** (~1.3M Nelson Mandela Bay), **Bloemfontein**.
-
-**Tier-2 cities** (×1.4, 26 cities): East London, Pietermaritzburg, Polokwane, Kimberley, Nelspruit (Mbombela), Rustenburg, George, Potchefstroom, Klerksdorp, Welkom, Vereeniging, Emalahleni (Witbank), Middelburg, Newcastle, Uitenhage (Kariega), Stellenbosch, Paarl, Mossel Bay, Richards Bay, Mahikeng, Saldanha, Upington, Soweto, Benoni, Boksburg, Germiston.
-
-### South African vehicle split
-
-Low motorcycle share (~5-8%, British RHD legacy — motorbikes are delivery/leisure only). High heavy-vehicle share on N-route corridors.
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (6 metros) | 75% | 8% | 12% | 5% |
-| Tier-2 | 73% | 8% | 14% | 5% |
-| Rural | 60% | 8% | 27% | 5% |
-| **Coal corridor (Mpumalanga/Waterberg)** | **45%** | 8% | **42%** | 5% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.115 ≈ 33,450 |
+| Trunk | 15,000 × 1.115 ≈ 16,725 |
+| Primary | 9,000 × 1.115 ≈ 10,035 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -64,20 +44,12 @@ Transnet Freight Rail (TFR, ~20,000 route-km), PRASA, Metrorail, and Gautrain al
 - **Metrorail Eastern Cape** — Port Elizabeth, very limited.
 - **Gautrain** — 80 km high-speed commuter (OR Tambo ↔ Sandton ↔ Pretoria), opened 2010.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Sishen-Saldanha iron ore (OREX)** | 0 | 6 |
-| **Coal Line (Ermelo↔Richards Bay)** | 0 | 70 |
-| **NATCOR Durban↔Jhb** | 1 | 40 |
-| **Cape Mainline** | 1 | 30 |
-| **Metrorail Gauteng** | 100 | 6 |
-| **Metrorail Western Cape** | 120 | 4 |
-| **Metrorail KZN/PE** | 30 | 4 |
-| **Gautrain (light_rail)** | 200 | 0 |
-
-**Note on iron ore**: OREX only shows 6 trains/day because each train is 342 cars × 100 tonnes = 34,200 tonne payload. Coal Line has many more because coal trains are shorter.
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

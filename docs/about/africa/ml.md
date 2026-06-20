@@ -6,24 +6,17 @@ map: { center: [-2, 17], zoom: 5 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-DNR (Direction Nationale des Routes) publishes no open AADT. Fall back to class defaults with Bamako Tier-1 boost.
+Mali publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Mali's traffic factor **≈ 0.700** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Malian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (none in Mali) | 18,000 | 36,000 | 25,200 |
-| 1 trunk (RN paved) | 7,000 | 14,000 | 9,800 |
-| 2 primary | 3,500 | 7,000 | 4,900 |
-| 3 secondary | 1,800 | 3,600 | 2,520 |
-| 4 tertiary | 800 | 1,600 | 1,120 |
-| 5 residential | 350 | 700 | 490 |
-
-**Tier-1 metro** (×2.0): **Bamako** (~4M metro — capital, extreme primacy, ~20% of all Malians. Among Africa's fastest-growing cities. Sprawling along Niger River. **Sotrama** green minibuses = iconic informal public transport).
-
-**Tier-2 cities** (×1.4): **Sikasso** (~300k — 2nd city, southern agricultural hub, cotton/mango), **Mopti/Sévaré** (~150k — Niger River delta junction, "Venice of Mali", crisis zone since 2012), **Ségou** (~150k — Niger River, Office du Niger rice, colonial COMATEX textile), **Kayes** (~130k — western Mali, Senegal River, rail junction, diaspora), **Koutiala** (~140k — cotton capital, CMDT), **Kati** (~120k — military garrison, seat of junta), **Gao** (~90k — northern Mali, former rebel stronghold), **Timbuktu** (~55k — UNESCO, ancient Islamic learning center).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.700 ≈ 21,000 |
+| Trunk | 15,000 × 0.700 ≈ 10,500 |
+| Primary | 9,000 × 0.700 ≈ 6,300 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

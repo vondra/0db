@@ -6,35 +6,17 @@ map: { center: [105, 12.5], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MPWT (Ministry of Public Works and Transport) publishes no open GIS, and there is no bespoke Cambodia road enricher. The engine scales its world-default motorway/trunk/primary AADT by Cambodia's country factor (≈0.76×) and applies the world-default vehicle mix. The Phnom Penh Tier-1 boost and the motorcycle-heavy vehicle split below are the **intended country-tuning, not yet ingested** — shown as the target profile.
+Cambodia publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Cambodia's traffic factor **≈ 0.763** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Cambodian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (PP-SHV Expressway, 190 km, 2022 Chinese-built) | 30,000 | 60,000 | 42,000 |
-| 1 trunk (NR routes) | 12,000 | 24,000 | 16,800 |
-| 2 primary | 6,000 | 12,000 | 8,400 |
-| 3 secondary | 3,000 | 6,000 | 4,200 |
-| 4 tertiary | 1,500 | 3,000 | 2,100 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metro** (×2.0): **Phnom Penh** (~2.3M — capital, at Mekong/Tonle Sap/Bassac confluence, "Pearl of Asia").
-
-**Tier-2 cities** (×1.4): **Siem Reap** (~250k, **Angkor Wat** tourism), **Sihanoukville** (~200k, beach resort + **massive Chinese investment boom 2017-2023** transforming city), Battambang (~200k, rice capital), Kampong Cham, **Poipet** (Thailand border town, casinos), Kampong Speu, Takeo, Svay Rieng, Prey Veng, Kampot, Koh Kong.
-
-### Cambodian vehicle split
-
-Cambodia has **extreme motorcycle dominance** — ~70% of households own a motorcycle, highest in SE Asia after Vietnam:
-
-| Tier | Light | Medium (tuk-tuk) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Phnom Penh) | 30% | 12% | 12% | **46%** |
-| Tier-2 | 25% | 10% | 15% | **50%** |
-| Rural | 20% | 5% | 25% | **50%** |
-| **PP-SHV Expressway (2022)** | 60% | 5% | **30%** | 5% (motos banned) |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.763 ≈ 22,890 |
+| Trunk | 15,000 × 0.763 ≈ 11,445 |
+| Primary | 9,000 × 0.763 ≈ 6,867 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 

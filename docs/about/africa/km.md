@@ -6,9 +6,17 @@ map: { center: [43.7, -11.8], zoom: 9 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-The Direction Générale des Routes publishes no open AADT. CNOSSOS class defaults applied with Moroni Tier-1 boost (×2.0). Three islands — Grande Comore (Ngazidja), Mohéli (Mwali), Anjouan (Nzwani) — each have separate road networks with no fixed links between them.
+Comoros publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Comoros's traffic factor **≈ 0.915** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
+
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.915 ≈ 27,450 |
+| Trunk | 15,000 × 0.915 ≈ 13,725 |
+| Primary | 9,000 × 0.915 ≈ 8,235 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

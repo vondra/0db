@@ -6,35 +6,17 @@ map: { center: [27.9, 53.7], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-No open AADT from Belarusian road authorities. Fall back to class defaults with Minsk Tier-1 boost.
+Belarus publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Belarus's traffic factor **≈ 0.886** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Belarusian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (M1/E30 Moscow-Minsk-Brest) | 25,000 | 50,000 | 35,000 |
-| 1 trunk | 12,000 | 24,000 | 16,800 |
-| 2 primary | 6,000 | 12,000 | 8,400 |
-| 3 secondary | 3,000 | 6,000 | 4,200 |
-| 4 tertiary | 1,400 | 2,800 | 1,960 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metro** (×2.0): **Minsk** (~2M — capital, Soviet planned city, wide boulevards, WWII Hero City).
-
-**Tier-2 cities** (×1.4): **Gomel** (~530k — south, **near Chernobyl exclusion zone** — 1986 fallout heavily affected southern Belarus), **Mogilev** (~380k), **Vitebsk** (~370k — NE, Chagall's birthplace), **Grodno** (~370k — west, Polish border), **Brest** (~340k — Polish border, **Brest Fortress** WWII Hero-Fortress).
-
-### Belarusian vehicle split
-
-Post-Soviet, moderate car, very low motorcycle:
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Minsk) | 70% | 6% | 20% | 4% |
-| Tier-2 | 68% | 5% | 23% | 4% |
-| Rural | 58% | 3% | 36% | 3% |
-| **M1 transit corridor** | 55% | 3% | **40%** | 2% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.886 ≈ 26,580 |
+| Trunk | 15,000 × 0.886 ≈ 13,290 |
+| Primary | 9,000 × 0.886 ≈ 7,974 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

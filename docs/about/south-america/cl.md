@@ -103,21 +103,12 @@ Chilean rail is **freight-dominated** with limited regional passenger service. N
 
 - A DTPM (Directorio de Transporte Público Metropolitano) GTFS feed exists for the Red Metropolitana de Movilidad (buses + Metro). It is **not integrated** — no measured Metro frequencies are used; the light_rail class default applies instead.
 
-### trains/day defaults
+### Rail defaults
 
-These are **class-default frequencies** (geometry-driven, not measured train counts):
-
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| Santiago Metrotrén / commuter (Rancagua/Nos) | 80 | 10 |
-| Concepción Biotrén / Valparaíso Limache-Puerto | 40 | 8 |
-| **Northern mining cargo (Ferronor/FCAB Antofagasta-Tarapacá)** | 0 | 24 |
-| FEPASA central/south freight | 1 | 14 |
-| Other operational rural | 1 | 8 |
-| Branch lines | 1 | 4 |
-| **Metro de Santiago (light_rail Lines 1-6)** | 350 | 0 |
-| Tram | 60 | 0 |
-| Disused/abandoned rail (OSM `railway=disused/abandoned`) | 0 | 0 (skip) |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

@@ -6,9 +6,17 @@ map: { center: [125.7, -8.8], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-The Ministry of Public Works publishes no open AADT. CNOSSOS class defaults apply, scaled by the per-country fleet/road-density factor. Road network OSM coverage is partial — many rural roads and mountain tracks are unmapped. The AH25 Asian Highway (Dili ↔ Baucau ↔ Los Palos) and the southern coastal route are the main freight corridors.
+Timor-Leste publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Timor-Leste's traffic factor **≈ 1.165** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
+
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.165 ≈ 34,950 |
+| Trunk | 15,000 × 1.165 ≈ 17,475 |
+| Primary | 9,000 × 1.165 ≈ 10,485 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

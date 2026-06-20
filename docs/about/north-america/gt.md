@@ -6,24 +6,17 @@ map: { center: [-90.5, 15.5], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-CIV (Caminos) publishes no open AADT. Fall back to class defaults with Guatemala City Tier-1 boost.
+Guatemala publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Guatemala's traffic factor **≈ 1.298** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Guatemalan AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (CA-9/CA-1 dual) | 30,000 | 60,000 | 42,000 |
-| 1 trunk | 12,000 | 24,000 | 16,800 |
-| 2 primary | 6,000 | 12,000 | 8,400 |
-| 3 secondary | 3,000 | 6,000 | 4,200 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metro** (×2.0): **Guatemala City** (~3M metro — Central America's largest, volcanic highlands).
-
-**Tier-2 cities** (×1.4): **Villa Nueva** (~400k — GC suburb), **Mixco** (~350k — GC suburb), **Quetzaltenango/Xela** (~250k — 2nd city, Western Highlands), **Escuintla** (~120k — Pacific sugar belt), **Puerto Barrios** (~80k — Caribbean port), **Huehuetenango** (~80k — coffee, near Mexico), **Cobán** (~70k — cardamom capital of world).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.298 ≈ 38,940 |
+| Trunk | 15,000 × 1.298 ≈ 19,470 |
+| Primary | 9,000 × 1.298 ≈ 11,682 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

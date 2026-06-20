@@ -6,35 +6,17 @@ map: { center: [42.5, 11.5], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Djibouti Ministry of Equipment publishes no open AADT. CNOSSOS class defaults with Djibouti City Tier-1 boost. Very small territory (~23,000 km²) with high urban primacy (~75% in capital).
+Djibouti publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Djibouti's traffic factor **≈ 0.707** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Djiboutian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (none) | 15,000 | 30,000 | 21,000 |
-| 1 trunk (RN1 Djibouti–Ethiopia, RN2 Djibouti–Tadjoura) | 6,000 | 12,000 | 8,400 |
-| 2 primary | 3,000 | 6,000 | 4,200 |
-| 3 secondary | 1,200 | 2,400 | 1,680 |
-| 4 tertiary | 500 | 1,000 | 700 |
-| 5 residential | 250 | 500 | 350 |
-
-**Tier-1 metro** (×2.0): **Djibouti City** (~700k — capital; port; ~75% of national population).
-
-**Tier-2 cities** (×1.4): **Ali Sabieh** (~100k — southern rail junction), **Arta** (~35k), **Tadjoura** (~35k — Gulf of Tadjoura).
-
-### Djiboutian vehicle split
-
-Distinctive high share of military/logistics vehicles due to foreign base presence.
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Djibouti City) | 50% | 12% | 25% | 13% |
-| Tier-2 | 45% | 10% | 30% | 15% |
-| Rural | 38% | 8% | 40% | 14% |
-| **RN1 Ethiopia corridor** (container traffic) | 30% | 8% | 55% | 7% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.707 ≈ 21,210 |
+| Trunk | 15,000 × 0.707 ≈ 10,605 |
+| Primary | 9,000 × 0.707 ≈ 6,363 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

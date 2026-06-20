@@ -98,18 +98,12 @@ A Lima Metro ArcGIS layer (`METRO_LIMA_WFL1` — Line 1 operating, Line 2 under 
 - **Ferrocarril del Sur Oriente (FCSO)** — Arequipa ↔ Juliaca ↔ Cusco
 - **Southern Peru Copper Railway** — private mining freight, Toquepala/Cuajone ↔ Ilo port/smelter
 
-### trains/day defaults
+### Rail defaults
 
-**Class-default frequencies** (geometry-driven, not measured train counts); the corridor rows below show the intended weighting by line type:
-
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Lima Metro Line 1 (light_rail)** | 350 | 0 |
-| **Southern Peru Copper (Toquepala↔Ilo)** | 0 | 40 |
-| **Ferrocarril Central Andino (Callao↔Huancayo)** | 0 | 30 |
-| **Machu Picchu tourist corridor** | 20 | 0 |
-| Cusco/Puno/Arequipa tourist rail | 4 | 2 |
-| Other operational rural | 1 | 4 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

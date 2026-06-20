@@ -6,9 +6,17 @@ map: { center: [6.6, 0.2], zoom: 9 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-The Direcção das Estradas publishes no open AADT. CNOSSOS class defaults applied with São Tomé city Tier-1 boost (×2.0). Two islands — São Tomé and Príncipe — with no fixed link; all inter-island transport by ferry or light aircraft.
+São Tomé and Príncipe publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by São Tomé and Príncipe's traffic factor **≈ 1.252** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
+
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.252 ≈ 37,560 |
+| Trunk | 15,000 × 1.252 ≈ 18,780 |
+| Primary | 9,000 × 1.252 ≈ 11,268 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

@@ -6,24 +6,17 @@ map: { center: [19.3, 42.7], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Montenegro road authorities publish no open AADT. Fall back to class defaults with Podgorica Tier-1 boost.
+Montenegro publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Montenegro's traffic factor **≈ 0.785** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Montenegrin AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Bar-Boljare, partially open) | 18,000 | 36,000 | 25,200 |
-| 1 trunk | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metro** (×2.0): **Podgorica** (~200k — capital, Morača + Ribnica, low-rise Mediterranean feel).
-
-**Tier-2 cities** (×1.4): **Nikšić** (~60k — 2nd city, former Željezara steel), **Bar** (~40k — Adriatic port, Belgrade-Bar rail terminus), **Herceg Novi** (~30k — Boka Kotorska bay entrance), **Budva** (~20k — Adriatic tourism capital), Bijelo Polje, Berane, **Cetinje** (old royal capital, Mount Lovćen), **Kotor** (UNESCO — **Bay of Kotor**, one of Mediterranean's most dramatic fjord-like inlets).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.785 ≈ 23,550 |
+| Trunk | 15,000 × 0.785 ≈ 11,775 |
+| Primary | 9,000 × 0.785 ≈ 7,065 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

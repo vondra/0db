@@ -6,24 +6,17 @@ map: { center: [28.8, 47.0], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-ADR publishes no open AADT. Fall back to class defaults with Chișinău Tier-1 boost. No real motorway yet.
+Moldova publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Moldova's traffic factor **≈ 1.201** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Moldovan AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (M2 upgrading) | 18,000 | 36,000 | 25,200 |
-| 1 trunk | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metro** (×2.0): **Chișinău** (~700k — capital, **NO metro, NO tram** — one of few European capitals without any urban rail).
-
-**Tier-2 cities** (×1.4): **Bălți** (~150k — north, 2nd city), **Tiraspol** (~130k — **TRANSNISTRIA capital**, Russian-controlled de facto separate), **Bender/Tighina** (~90k — disputed between Moldova and Transnistria), Cahul (south), Ungheni (Romania rail crossing), **Comrat** (~25k — **Gagauzia autonomous**, Turkic minority), **Rîbnița** (~50k — Transnistria, Moldova Steel).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.201 ≈ 36,030 |
+| Trunk | 15,000 × 1.201 ≈ 18,015 |
+| Primary | 9,000 × 1.201 ≈ 10,809 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

@@ -6,41 +6,17 @@ map: { center: [17, -12], zoom: 5 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-INEA (Instituto Nacional de Estradas de Angola) publishes no open GIS. Fall back to CNOSSOS class defaults with Luanda Tier-1 boost. Angolan baseline lower than Mediterranean countries (reflecting sparse post-war road network).
+Angola publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Angola's traffic factor **≈ 0.763** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Angolan AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Via Expressa Luanda, EN1 Luanda-Viana) | 24,000 | 48,000 | 33,600 |
-| 1 trunk (EN paved) | 9,000 | 18,000 | 12,600 |
-| 2 primary | 4,500 | 9,000 | 6,300 |
-| 3 secondary | 2,200 | 4,400 | 3,080 |
-| 4 tertiary | 1,000 | 2,000 | 1,400 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metros** (×2.0, 1 metro): **Luanda** (~8M metro — **one of Africa's largest metropolises**, extreme density on narrow Atlantic coastal bluff, Lusophone Africa's largest city).
-
-**Tier-2 cities** (×1.4, 20 cities): **Huambo** (central plateau, 2nd city, historic Portuguese capital of interior), **Benguela** (coastal), **Lobito** (port + CFB railway terminus, Lobito Corridor hub), Lubango (south plateau), **Malanje** (Biocom + Kwanza hydro cluster), Kuito (Bié highlands), **Cabinda** (oil enclave, physically separated from mainland by DRC strip), Uíge (north), **Saurimo** (NE diamond region), Ndalatando (Kwanza Norte), **Menongue** (CFM south rail terminus), **Namibe** (south port, formerly Moçâmedes), **Luena** (Moxico, CFB station), **Dundo** (Lunda Norte diamond capital), Caxito (Bengo), Sumbe (Kwanza Sul), Caála (Huambo), Mbanza-Kongo (Zaire province — kingdom of Kongo historic capital), **Soyo** (Angola LNG + Soyo gas plant), Tombwa (south coast + Morro do Ouro wind farm).
-
-### Angolan vehicle split
-
-Luanda's urban transport is **distinctive**:
-
-- **Candongueiros** — blue-and-white **Toyota HiAce minibus taxis** — Luanda icon, the lusophone equivalent of matatus/daladalas. Often severely overloaded. Painted blue-and-white.
-- **Macon** — moto-taxis, growing since 2010s but less dominant than anglophone African cities
-- **Taxis individuais** — metered city taxis, less common than candongueiros
-- **TCUL** (Transportes Colectivos Urbanos de Luanda) — official city bus company, limited coverage
-- **Heavy trucks** abundant on oil-field logistics routes and port-linked corridors
-
-| Tier | Light | Medium (candongueiros) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Luanda) | 55% | **20%** | 14% | 11% |
-| Tier-2 | 58% | 15% | 17% | 10% |
-| Rural | 52% | 10% | 30% | 8% |
-| **EN100 coastal highway (Luanda↔Lobito)** | 60% | 8% | **28%** | 4% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.763 ≈ 22,890 |
+| Trunk | 15,000 × 0.763 ≈ 11,445 |
+| Primary | 9,000 × 0.763 ≈ 6,867 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -52,8 +28,6 @@ Luanda's urban transport is **distinctive**:
 - **Via Expressa Luanda** + **EN1 Luanda-Viana** — Luanda urban motorway
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Angolan rail context
 
@@ -81,15 +55,12 @@ Angola has **3 historic Portuguese colonial railways** built 1888-1929, all dest
 
 **No metros, no trams** in any Angolan city (Luanda Metro announced 2012, never built).
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Luanda CFL commuter rail** (electrified) | 30 | 0 |
-| **CFB Benguela Railway / Lobito Corridor** (copper/cobalt) | 2 | 10 |
-| **CFL mainline Luanda-Malanje** | 2 | 4 |
-| **CFM Namibe-Menongue** (iron ore) | 1 | 6 |
-| Other/branch | 0 | 1 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

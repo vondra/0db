@@ -48,8 +48,6 @@ Distinctive **blue-and-white minibus taxis** (15% urban) + **Bajaj tuktuks** (13
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
-
 ### Ethiopian rail context
 
 - **Addis-Djibouti Railway (EDR)** — **752 km electrified standard gauge** (25 kV AC), opened January 2018. **Africa's first fully electrified international cross-border railway.** Built by CCCC + CREC for US$4 billion. Addis ↔ Dire Dawa ↔ Djibouti Port (Doraleh).

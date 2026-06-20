@@ -6,24 +6,17 @@ map: { center: [-77.3, 18.1], zoom: 9 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-NWA publishes no open AADT. Fall back to class defaults with Kingston Tier-1 boost.
+Jamaica publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Jamaica's traffic factor **≈ 0.795** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Jamaican AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Highway 2000) | 22,000 | 44,000 | 30,800 |
-| 1 trunk | 8,000 | 16,000 | 11,200 |
-| 2 primary | 4,000 | 8,000 | 5,600 |
-| 3 secondary | 2,000 | 4,000 | 2,800 |
-| 4 tertiary | 800 | 1,600 | 1,120 |
-| 5 residential | 300 | 600 | 420 |
-
-**Tier-1 metro** (×2.0): **Kingston** (~580k metro — capital, container port, no metro rail).
-
-**Tier-2 cities** (×1.4): **Portmore** (~250k — Kingston dormitory city, Highway 2000), **Montego Bay** (~110k — tourism hub, cruise port).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.795 ≈ 23,850 |
+| Trunk | 15,000 × 0.795 ≈ 11,925 |
+| Primary | 9,000 × 0.795 ≈ 7,155 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

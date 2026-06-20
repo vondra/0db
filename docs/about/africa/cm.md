@@ -6,41 +6,17 @@ map: { center: [12, 6], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MINTP (Ministère des Travaux Publics) publishes no open GIS. Fall back to CNOSSOS class defaults with Yaoundé + Douala Tier-1 boost — Cameroon is unique in Africa for having **two capital cities of effectively equal importance** (Yaoundé political, Douala economic).
+Cameroon publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Cameroon's traffic factor **≈ 0.989** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Cameroonian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (A3 Yaoundé-Douala under construction) | 28,000 | 56,000 | 39,200 |
-| 1 trunk (N-route paved) | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metros** (×2.0, 2 metros — **unique dual-capital configuration in Africa**): **Yaoundé** (political capital, ~4M metro, built on seven hills) + **Douala** (economic capital, ~3.5M metro, Wouri estuary port, Central Africa's main commercial hub).
-
-**Tier-2 cities** (×1.4, 20 cities): **Bamenda** (Anglophone NW, affected by separatist crisis since 2017), Garoua (North, Benue River), Maroua (Far North), Bafoussam (West Grassfields), **Ngaoundéré** (Adamawa plateau, Transcamerounais rail terminus), Bertoua (East), **Limbé** (Anglophone SW, SONARA refinery site), **Buéa** (Anglophone SW, foot of Mt. Cameroon, former German colonial capital), Ebolowa, Kumba, Dschang, **Edéa** (Alucam aluminium smelter + Edéa hydro), **Kribi** (new deep-water port + Hilli Episeyo FLNG), **Foumban** (Bamoun kingdom historic capital), Bafia, Mbalmayo, Nkongsamba (old rail end), Tiko, Mamfe (Nigeria border), Kumbo (NW highlands).
-
-### Cameroonian vehicle split
-
-Cameroon's urban transport has distinctive **yellow taxis** + dominant moto-taxis:
-
-- **Taxis jaunes** — yellow shared intra-city taxis, not metered (negotiated flat rates), ubiquitous in Yaoundé and Douala
-- **Opep / Clando** — shared taxi minivans (similar to Abidjan Gbaka)
-- **Bendskins** (Yaoundé) / **clandos** (Douala) — **motorcycles**, major share, similar to Nigeria/Benin
-- **SOCATUR / Le Bus** — official Douala city buses (limited)
-- **Heavy trucks**: **CEMAC transit corridor** freight (Chad/CAR/RoC goods via Douala port) + timber exports → Douala
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Yaoundé/Douala) | 55% | 14% | 13% | **18%** |
-| Tier-2 | 55% | 11% | 17% | 17% |
-| Rural | 50% | 8% | 30% | 12% |
-| **N3 Yaoundé↔Douala corridor** | 58% | 7% | **30%** | 5% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.989 ≈ 29,670 |
+| Trunk | 15,000 × 0.989 ≈ 14,835 |
+| Primary | 9,000 × 0.989 ≈ 8,901 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -75,12 +51,12 @@ Cameroon has one principal rail line, the **Transcamerounais**, operated under c
 
 **No metros, no trams, no urban commuter rail** in any Cameroonian city.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Transcamerounais main line** (Douala↔Yaoundé↔Ngaoundéré) | 2 | 8 |
-| Other/branch | 0 | 1 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

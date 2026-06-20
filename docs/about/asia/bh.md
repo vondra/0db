@@ -6,25 +6,17 @@ map: { center: [50.55, 26.05], zoom: 10 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Bahrain's road hexes were pre-enriched from prior SA overlap (**entire country fits in 1 H3R4 hex**). Motorway AADT 55,000 (King Fahd Causeway approach + Shaikh Isa bin Salman Highway).
+Bahrain publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Bahrain's traffic factor **≈ 1.284** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-**Tier-1 metro** (×2.0): **Manama** (~400k — capital, but entire island is essentially one metro area with ~1.5M).
-
-**Tier-2 cities** (×1.4): **Muharraq** (airport island, former capital), **Riffa** (residential, **Bahrain F1 Grand Prix** circuit), **Sitra** (industrial, BAPCO refinery), Hamad Town, Isa Town.
-
-### Bahraini vehicle split
-
-Ultra-high car ownership, near-zero motorcycle (Gulf heat):
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Manama) | **78%** | 4% | 16% | **2%** |
-| Tier-2 | 76% | 3% | 19% | 2% |
-| King Fahd Causeway | **80%** | 2% | 16% | 2% |
-
-**King Fahd Causeway** — 25 km sea bridge to Saudi Arabia (~65,000 vehicles/day, mostly Saudi weekend traffic + commuters). One of world's longest sea bridges.
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.284 ≈ 38,520 |
+| Trunk | 15,000 × 1.284 ≈ 19,260 |
+| Primary | 9,000 × 1.284 ≈ 11,556 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

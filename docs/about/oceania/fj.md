@@ -6,34 +6,17 @@ map: { center: [178, -17.8], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-FRA (Fiji Roads Authority) publishes no open AADT. Fall back to class defaults with Suva Tier-1 boost. Island nation — no border excludes. Antimeridian handling active (Fiji straddles ~180° longitude).
+Fiji publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Fiji's traffic factor **≈ 1.082** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Fijian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Kings/Queens Rd dual) | 20,000 | 40,000 | 28,000 |
-| 1 trunk | 8,000 | 16,000 | 11,200 |
-| 2 primary | 4,000 | 8,000 | 5,600 |
-| 3 secondary | 2,000 | 4,000 | 2,800 |
-| 4 tertiary | 800 | 1,600 | 1,120 |
-| 5 residential | 400 | 800 | 560 |
-
-**Tier-1 metro** (×2.0): **Suva** (~180k metro — capital, Viti Levu SE coast. Administrative center, University of the South Pacific).
-
-**Tier-2 cities** (×1.4): **Nausori** (~55k — greater Suva, airport), **Lautoka** (~55k — 2nd city, sugar capital, Viti Levu W), **Nadi** (~45k — international tourism gateway, airport), **Labasa** (~30k — Vanua Levu, sugar), **Ba** (~15k — Viti Levu N, sugar), **Sigatoka** (~10k — Coral Coast tourism).
-
-### Fijian vehicle split
-
-Left-hand traffic (British heritage). Mostly Japanese used imports (Toyota, Nissan).
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Suva) | 65% | 12% | 15% | 8% |
-| Tier-2 | 60% | 10% | 20% | 10% |
-| Rural | 55% | 5% | 30% | 10% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.082 ≈ 32,460 |
+| Trunk | 15,000 × 1.082 ≈ 16,230 |
+| Primary | 9,000 × 1.082 ≈ 9,738 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

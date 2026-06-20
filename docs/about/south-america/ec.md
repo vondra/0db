@@ -86,15 +86,12 @@ Ecuador has extremely limited operational rail:
 - **Aerovía Guayaquil/Durán** — cable car across Guayas river (opened 2020), `aerialway` not rail.
 - **Metrovía Guayaquil + Trolebus/Ecovía Quito** — BRT bus, NOT rail.
 
-### trains/day defaults
+### Rail defaults
 
-**Class-default frequencies** (geometry-driven, not measured train counts):
-
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Quito Metro Line 1 (light_rail)** | 400 | 0 |
-| Tren Crucero tourist | 2 | 0 |
-| Other operational rural | 1 | 2 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

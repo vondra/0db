@@ -6,43 +6,17 @@ map: { center: [29.8, -2], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-RTDA (Rwanda Transport Development Agency) publishes no open GIS. Fall back to CNOSSOS class defaults with Kigali Tier-1 boost. **Rwanda has NO railway** — all freight arrives by road.
+Rwanda publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Rwanda's traffic factor **≈ 1.268** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Rwandan AADT defaults
-
-Rwanda is **Africa's most densely populated mainland country** (~14M in 26k km² = 525/km²). Extreme population density means roads have **disproportionately high noise significance** — even rural roads carry meaningful traffic.
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Kigali Convention Centre dual carriageway) | 25,000 | 50,000 | 35,000 |
-| 1 trunk (NR paved) | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metros** (×2.0, 1 metro): **Kigali** (~1.3M, built on rolling hills, **"Africa's cleanest city"** — monthly Umuganda community service + plastic bag ban since 2008).
-
-**Tier-2 cities** (×1.4, 11 cities): Butare/Huye (university city), Gitarama/Muhanga, **Ruhengeri/Musanze** (Volcanoes NP gorilla tourism gateway), **Gisenyi/Rubavu** (Lake Kivu north, DRC border), **Cyangugu/Rusizi** (Lake Kivu south, DRC/Burundi border), Kibungo/Ngoma, Byumba/Gicumbi, Kibuye/Karongi (Lake Kivu), Rwamagana, Nyanza, Nyagatare (NE).
-
-### Rwandan vehicle split
-
-Rwanda is **moto-taxi (moto) dominated** — similar to Kenya/Uganda but with **Africa's highest urban moto share** (~30% in Kigali). Kigali's hilly terrain makes cycling impractical and minibuses slow.
-
-- **Motos** — motorcycle taxis (green/orange high-vis vest), **extremely dominant in Kigali** (~40,000+ registered). Regulated with helmets/vests since 2010.
-- **Twegerane** — white minibus taxis (Kigali Urban Minibus)
-- **KBS (Kigali Bus Services)** — privatized public bus company
-- **ONATRACOM / Royal Express / Volcano Express** — intercity coaches
-- **Heavy trucks**: **All imports via road trucking** — Rwanda is landlocked. Transit from Kenya via Kampala (NR1/NR4) or Tanzania via Rusumo (NR3). **50% heavy share on freight corridors**.
-
-| Tier | Light | Medium | Heavy | Motorcycle (moto) |
-|---|---:|---:|---:|---:|
-| Tier-1 (Kigali) | 42% | 14% | 14% | **30%** |
-| Tier-2 | 44% | 12% | 18% | 26% |
-| Rural | 42% | 8% | 30% | 20% |
-| **NR1/NR4 freight corridors** (Kampala/Rusumo transit) | 38% | 5% | **50%** | 7% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.268 ≈ 38,040 |
+| Trunk | 15,000 × 1.268 ≈ 19,020 |
+| Primary | 9,000 × 1.268 ≈ 11,412 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 

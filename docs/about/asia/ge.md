@@ -6,35 +6,17 @@ map: { center: [43.5, 42], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Roads Department of Georgia publishes no open AADT. Fall back to class defaults with Tbilisi Tier-1 boost.
+Georgia publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Georgia's traffic factor **≈ 1.110** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Georgian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (E60 Tbilisi bypass) | 28,000 | 56,000 | 39,200 |
-| 1 trunk (E60/E70) | 12,000 | 24,000 | 16,800 |
-| 2 primary | 6,000 | 12,000 | 8,400 |
-| 3 secondary | 3,000 | 6,000 | 4,200 |
-| 4 tertiary | 1,400 | 2,800 | 1,960 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metro** (×2.0): **Tbilisi** (~1.2M — capital, Mtkvari/Kura River valley, unique old town with sulfur baths, rapidly modernizing).
-
-**Tier-2 cities** (×1.4): **Batumi** (~170k, Black Sea resort + port — major tourism + casino hub), **Kutaisi** (~140k, Georgia's 2nd city, Rioni Valley, low-cost Wizz Air hub), **Rustavi** (~130k, Tbilisi industrial satellite, Soviet-era steel), **Zugdidi** (~70k, Mingrelia, Abkhazia/Enguri Dam gateway), **Gori** (~50k, Stalin's birthplace), **Poti** (~40k, Black Sea port + free industrial zone), Telavi, Ozurgeti, Akhaltsikhe.
-
-### Georgian vehicle split
-
-Moderate, European-influenced (EU candidate):
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Tbilisi) | 65% | 10% | 18% | 7% |
-| Tier-2 | 62% | 8% | 24% | 6% |
-| Rural | 55% | 5% | 35% | 5% |
-| **E60 corridor** (Tbilisi↔Kutaisi↔Batumi) | 60% | 4% | **32%** | 4% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.110 ≈ 33,300 |
+| Trunk | 15,000 × 1.110 ≈ 16,650 |
+| Primary | 9,000 × 1.110 ≈ 9,990 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -44,8 +26,6 @@ Moderate, European-influenced (EU candidate):
 - **S1** — Tbilisi ↔ Batumi via Akhaltsikhe (southern route, bypasses Rikoti)
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Georgian rail context
 
@@ -61,13 +41,12 @@ Moderate, European-influenced (EU candidate):
 - **Tbilisi ↔ Azerbaijan** (Kakheti east)
 - **Samtredia ↔ Zugdidi** (Mingrelia, near Abkhazia)
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Tbilisi Metro (1966)** | 150 | 0 |
-| **Main line** (Tbilisi↔Kutaisi↔Batumi/Poti) | 6 | 10 |
-| Other/branch | 2 | 3 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

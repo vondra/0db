@@ -6,35 +6,17 @@ map: { center: [36.5, 31.5], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MPWH publishes no open AADT. Fall back to class defaults with Amman Tier-1 boost. **Jordan has NO significant operating railway** — railway enrichment skipped.
+Jordan publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Jordan's traffic factor **≈ 1.292** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Jordanian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Desert Highway) | 35,000 | 70,000 | 49,000 |
-| 1 trunk (ring roads, trunk) | 16,000 | 32,000 | 22,400 |
-| 2 primary | 8,000 | 16,000 | 11,200 |
-| 3 secondary | 4,000 | 8,000 | 5,600 |
-| 4 tertiary | 1,800 | 3,600 | 2,520 |
-| 5 residential | 800 | 1,600 | 1,120 |
-
-**Tier-1 metro** (×2.0): **Amman** (~4M metro — Jordan's dominant city, **~40% of population**, hilly terrain with 7+ jabals/hills, heavy congestion).
-
-**Tier-2 cities** (×1.4): **Zarqa** (~500k, Amman satellite, industrial + JPRC refinery), **Irbid** (~400k, north, university city), **Aqaba** (~200k, **Jordan's only Red Sea port + SEZ + tourism**), Salt, Madaba, Mafraq, Karak, Jerash, **Ma'an** (south, one of MENA's largest solar clusters).
-
-### Jordanian vehicle split
-
-High car ownership (Jordan has very high per-capita vehicle ownership for Middle East):
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Amman) | 72% | 6% | 16% | 6% |
-| Tier-2 | 70% | 5% | 20% | 5% |
-| Rural | 60% | 3% | 33% | 4% |
-| **Desert Highway (Amman↔Aqaba)** | 55% | 3% | **40%** | 2% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.292 ≈ 38,760 |
+| Trunk | 15,000 × 1.292 ≈ 19,380 |
+| Primary | 9,000 × 1.292 ≈ 11,628 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -103,7 +85,7 @@ Jordan implements environmental protection via:
 Notable noise zones:
 
 - **Amman** — hilly capital, extreme congestion (7+ jabals)
-- **Desert Highway** (Amman↔Aqaba, 40% heavy freight)
+- **Desert Highway** (Amman↔Aqaba freight corridor)
 - **Amman Ring Roads** (inner + outer, heavy commuter traffic)
 - **Queen Alia International (AMM/OJAI Amman)**, **Aqaba King Hussein (AQJ/OJAQ)** — covered by global aircraft layer
 - **Samra thermal complex** (~1,241 MW, near Zarqa)

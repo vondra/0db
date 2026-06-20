@@ -6,37 +6,17 @@ map: { center: [80.7, 7.8], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-RDA (Road Development Authority) publishes no open GIS, and there is no bespoke Sri Lanka road enricher. The engine scales its world-default motorway/trunk/primary AADT by Sri Lanka's country factor (≈1.30×) and applies the world-default vehicle mix. The Colombo Tier-1 boost and the three-wheeler-heavy vehicle split below are the **intended country-tuning, not yet ingested** — shown as the target profile. **Sri Lanka is an island** — no neighbour-country exclusions needed.
+Sri Lanka publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Sri Lanka's traffic factor **≈ 1.298** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Sri Lankan AADT defaults
-
-Sri Lanka has a **surprisingly developed expressway system** for a 66k km² island (E01 Southern 2011 + E02 Outer Circular + E03 Colombo-Katunayake + E04 Central).
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (E01/E02/E03/E04 expressways) | 35,000 | 70,000 | 49,000 |
-| 1 trunk (A-routes) | 15,000 | 30,000 | 21,000 |
-| 2 primary | 8,000 | 16,000 | 11,200 |
-| 3 secondary | 4,000 | 8,000 | 5,600 |
-| 4 tertiary | 2,000 | 4,000 | 2,800 |
-| 5 residential | 800 | 1,600 | 1,120 |
-
-**Tier-1 metro** (×2.0): **Greater Colombo** (~5.6M — Colombo + Sri Jayawardenepura Kotte (official capital) + Dehiwala-Mount Lavinia + Moratuwa + Gampaha corridor).
-
-**Tier-2 cities** (×1.4, 12 cities): **Kandy** (~150k, cultural capital, Temple of the Tooth, hill country), **Galle** (~100k, colonial Dutch fort, tourism), **Jaffna** (~90k, Tamil north, post-civil war recovery), Negombo (~150k, airport area), Batticaloa, **Trincomalee** (east coast, natural deepwater harbor — one of world's largest), Kurunegala, Ratnapura (gem city), **Anuradhapura** (ancient capital), Matara, **Nuwara Eliya** (British hill station, tea country at 1,868m), Badulla.
-
-### Sri Lankan vehicle split
-
-Sri Lanka has the **world's highest three-wheeler/tuk-tuk density per capita** — ~1 million registered three-wheelers for 22 million people:
-
-| Tier | Light | Medium (three-wheeler) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Colombo) | 40% | **25%** | 12% | 23% |
-| Tier-2 | 35% | **25%** | 15% | 25% |
-| Rural | 30% | **20%** | 25% | 25% |
-| **E01/E03 Expressway** | 65% | 5% | **28%** | 2% (tuk-tuks banned) |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.298 ≈ 38,940 |
+| Trunk | 15,000 × 1.298 ≈ 19,470 |
+| Primary | 9,000 × 1.298 ≈ 11,682 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 

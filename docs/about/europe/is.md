@@ -6,34 +6,17 @@ map: { center: [-19.0, 65.0], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Vegagerðin publishes no open AADT (though Iceland does publish some traffic counts — not yet integrated). Fall back to class defaults with Reykjavík Tier-1 boost. **Island = no border excludes → 100% coverage.**
+Iceland publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Iceland's traffic factor **≈ 0.933** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Icelandic AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Reykjanesbaut to Keflavík airport) | 25,000 | 50,000 | 35,000 |
-| 1 trunk (Route 1 Ring Road, 1,322 km) | 8,000 | 16,000 | 11,200 |
-| 2 primary | 4,000 | 8,000 | 5,600 |
-| 3 secondary | 2,000 | 4,000 | 2,800 |
-| 4 tertiary | 800 | 1,600 | 1,120 |
-| 5 residential | 400 | 800 | 560 |
-
-**Tier-1 metro** (×2.0): **Reykjavík** (~135k city / ~230k Capital Region — **~63% of all Icelanders** live here, extreme capital primacy similar to Mongolia's Ulaanbaatar).
-
-**Tier-2 cities** (×1.4): **Kópavogur** (~38k — Reykjavík satellite), **Hafnarfjörður** (~30k — **ISAL aluminium smelter**), **Akureyri** (~19k — "Capital of North Iceland", only other town >10k), Reykjanesbær/Keflavík (~18k — airport), Selfoss.
-
-### Icelandic vehicle split
-
-High car ownership (one of world's highest per capita — Viking 4×4 culture), very low motorcycle (subarctic):
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Reykjavík) | **78%** | 4% | 14% | 4% |
-| Tier-2 | 75% | 3% | 18% | 4% |
-| Rural | 65% | 2% | 30% | 3% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.933 ≈ 27,990 |
+| Trunk | 15,000 × 0.933 ≈ 13,995 |
+| Primary | 9,000 × 0.933 ≈ 8,397 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

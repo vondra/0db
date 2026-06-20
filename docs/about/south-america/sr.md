@@ -6,24 +6,17 @@ map: { center: [-56.0, 4.0], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MOW publishes no open AADT. Fall back to class defaults with Paramaribo Tier-1 boost.
+Suriname publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Suriname's traffic factor **≈ 1.283** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Surinamese AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway | 14,000 | 28,000 | 19,600 |
-| 1 trunk | 5,500 | 11,000 | 7,700 |
-| 2 primary | 2,800 | 5,600 | 3,920 |
-| 3 secondary | 1,400 | 2,800 | 1,960 |
-| 4 tertiary | 550 | 1,100 | 770 |
-| 5 residential | 220 | 440 | 308 |
-
-**Tier-1 metro** (×2.0): **Paramaribo** (~240k metro — capital, UNESCO historic centre, Dutch colonial architecture).
-
-**Tier-2 cities** (×1.4): **Lelydorp** (~18k — Wanica, peri-urban Paramaribo).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.283 ≈ 38,490 |
+| Trunk | 15,000 × 1.283 ≈ 19,245 |
+| Primary | 9,000 × 1.283 ≈ 11,547 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

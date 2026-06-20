@@ -6,43 +6,17 @@ map: { center: [32, 1.5], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-UNRA (Uganda National Roads Authority) publishes no open GIS despite having a GIS department. Fall back to CNOSSOS class defaults with Greater Kampala Tier-1 boost.
+Uganda publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Uganda's traffic factor **≈ 1.296** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Ugandan AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Kampala-Entebbe Expressway 2018) | 28,000 | 56,000 | 39,200 |
-| 1 trunk (A paved) | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metros** (×2.0, 1 metro): **Greater Kampala** (~3.5M metro — built on seven hills + Wakiso suburbs).
-
-**Tier-2 cities** (×1.4, 20 cities): **Entebbe** (Lake Victoria, international airport), **Jinja** (source of the Nile, industrial hub, Bujagali + Nalubaale hydros), Gulu (Acholi north), Lira (north-central), Mbarara (SW cattle country), Mbale (Mt. Elgon east), **Hoima** (**oil capital**, Lake Albert hub), Soroti (Teso region), Kabale (SW, Rwanda border), Masaka, **Kasese** (**Kilembe copper**, Rwenzori Mountains), Fort Portal (Toro, tea country), **Tororo** (Tororo Cement, Kenya border), Arua (West Nile region), Iganga, Mukono (Kampala east satellite), Wakiso, Kitgum (NE Acholi), Moroto (Karamoja), **Buliisa** (Tilenga oil field).
-
-### Ugandan vehicle split
-
-Uganda's urban transport is **boda-boda dominated**:
-
-- **Boda-boda** — motorcycle taxis, **dominant in Kampala and most Ugandan towns**. **Estimated 200,000+ registered in Kampala alone** — one of the highest per-capita motorcycle taxi rates in Africa
-- **Matatu** — white minibus taxis (Toyota HiAce), shared intercity and urban transport (similar to Kenyan matatus)
-- **Kamunye** — 14-seat city matatus specifically in Kampala
-- **Special Hires** — shared sedan taxis
-- **Pioneer Easy Bus** — official Kampala bus service (**discontinued 2022** — city has no functioning public bus network since)
-- **Heavy trucks**: Kampala ↔ Mombasa freight corridor (Uganda's only sea outlet), EACOP construction, Kilembe copper
-
-| Tier | Light | Medium (matatu) | Heavy | Motorcycle (boda-boda) |
-|---|---:|---:|---:|---:|
-| Tier-1 (Kampala) | 45% | 15% | 12% | **28%** |
-| Tier-2 | 48% | 13% | 15% | 24% |
-| Rural | 50% | 10% | 25% | 15% |
-| **Kampala↔Mombasa highway (A109)** | 45% | 7% | **40%** | 8% |
-| **Hoima/Lake Albert oil corridor** | 40% | 6% | **48%** | 6% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.296 ≈ 38,880 |
+| Trunk | 15,000 × 1.296 ≈ 19,440 |
+| Primary | 9,000 × 1.296 ≈ 11,664 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -56,8 +30,6 @@ Uganda's urban transport is **boda-boda dominated**:
 - **Kampala-Jinja Expressway** — under construction
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Ugandan rail context
 
@@ -81,15 +53,12 @@ Uganda has a **very limited operating rail network** — a legacy of the Ugandan
 
 **No metros, no trams** in any Ugandan city.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Kampala commuter rail (2015)** | 20 | 0 |
-| **Eastern main line** (Malaba↔Kampala, Kenya freight transit) | 1 | 10 |
-| **Northern line** (Tororo↔Gulu↔Pakwach) | 0 | 3 |
-| **Western line** (Kampala↔Kasese, mostly defunct) | 0 | 1 |
-| Other/branch | 0 | 1 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

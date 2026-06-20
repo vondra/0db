@@ -6,37 +6,17 @@ map: { center: [35.8, 33.9], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MoPWT publishes no open AADT. Fall back to class defaults with Beirut Tier-1 boost. **Lebanon has NO railway and NO public transit system** — one of the most car-dependent countries in the Middle East.
+Lebanon publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Lebanon's traffic factor **≈ 1.123** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Lebanese AADT defaults
-
-Lebanon is **tiny** (10,452 km²) but densely populated along the coast. Traffic is extreme in Beirut and the coastal corridor.
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (A1 Beirut-Tripoli, A3 Beirut-Sidon) | 35,000 | 70,000 | 49,000 |
-| 1 trunk | 18,000 | 36,000 | 25,200 |
-| 2 primary | 10,000 | 20,000 | 14,000 |
-| 3 secondary | 5,000 | 10,000 | 7,000 |
-| 4 tertiary | 2,200 | 4,400 | 3,080 |
-| 5 residential | 900 | 1,800 | 1,260 |
-
-**Tier-1 metro** (×2.0): **Beirut** (~2.4M metro — Mediterranean coast, extreme congestion, **NO public transit system** beyond informal minibuses and "service" shared taxis. **August 4, 2020 port explosion** (218 killed, 7,000 injured, $15B damage) devastated central port area.)
-
-**Tier-2 cities** (×1.4): **Tripoli** (~500k, 2nd city, north), **Sidon/Saida** (~250k, south), **Tyre/Sour** (~200k, south, UNIFIL zone), Jounieh (~100k, Keserwan coast), **Byblos/Jbeil** (one of world's oldest continuously inhabited cities, ~7,000 years), **Zahle** (~100k, Bekaa Valley), **Baalbek** (~80k, Bekaa, UNESCO Roman ruins — Temple of Jupiter, one of world's largest Roman structures).
-
-### Lebanese vehicle split
-
-**Extreme car dominance** — no public transit:
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Beirut) | **74%** | 6% | 14% | 6% |
-| Tier-2 | 72% | 5% | 18% | 5% |
-| Rural | 65% | 3% | 28% | 4% |
-| **A1 Coastal motorway** | 70% | 3% | 24% | 3% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.123 ≈ 33,690 |
+| Trunk | 15,000 × 1.123 ≈ 16,845 |
+| Primary | 9,000 × 1.123 ≈ 10,107 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

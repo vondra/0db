@@ -6,24 +6,17 @@ map: { center: [-61.3, 10.5], zoom: 9 }
 
 ## Road traffic
 
-### Class defaults only (VE overlap preserved)
+### Road defaults
 
-T&TEC/NIDCO publishes no open AADT. Fall back to class defaults. Cross-border segments already covered by Venezuela enrichment are preserved.
+Trinidad and Tobago publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Trinidad and Tobago's traffic factor **≈ 1.292** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Trinidad and Tobago AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Churchill-Roosevelt) | 38,000 | 76,000 | 53,200 |
-| 1 trunk | 15,000 | 30,000 | 21,000 |
-| 2 primary | 7,500 | 15,000 | 10,500 |
-| 3 secondary | 3,800 | 7,600 | 5,320 |
-| 4 tertiary | 1,500 | 3,000 | 2,100 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metro** (×2.0): **Port of Spain** (~400k metro — financial capital, significant traffic, no metro rail).
-
-**Tier-2 cities** (×1.4): **Chaguanas** (~85k — central commercial), **San Fernando** (~55k — southern oil city).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.292 ≈ 38,760 |
+| Trunk | 15,000 × 1.292 ≈ 19,380 |
+| Primary | 9,000 × 1.292 ≈ 11,628 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

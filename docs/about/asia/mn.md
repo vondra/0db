@@ -6,35 +6,17 @@ map: { center: [104, 47], zoom: 4 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-No open AADT from Mongolia's road authority. Fall back to CNOSSOS class defaults with Ulaanbaatar ×2.5 boost. Mongolia has **one of the world's lowest road densities** — most roads outside UB are unpaved tracks/trails.
+Mongolia publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Mongolia's traffic factor **≈ 1.203** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Mongolian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.5) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (New UB Airport road ~50 km) | 15,000 | 37,500 | 21,000 |
-| 1 trunk | 5,000 | 12,500 | 7,000 |
-| 2 primary | 2,500 | 6,250 | 3,500 |
-| 3 secondary | 1,200 | 3,000 | 1,680 |
-| 4 tertiary | 500 | 1,250 | 700 |
-| 5 residential | 300 | 750 | 420 |
-
-**Tier-1 metro** (×2.5): **Ulaanbaatar** (~1.6M — **46% of all Mongolians live in one city**, extreme capital primacy. **World's coldest national capital** (average -1°C). "Ger district" urban sprawl is unique to Mongolia — vast informal settlements of traditional felt tents with coal-burning stoves.)
-
-**Tier-2 cities** (×1.4): **Erdenet** (~100k — copper mine city, built for the mine 1974), **Darkhan** (~85k — industrial, Soviet-era planned city), Choibalsan (~40k — eastern Mongolia, Dornod Province), Khovd (~30k — western Mongolia).
-
-### Mongolian vehicle split
-
-Mongolia has **very LOW motorcycle share** (3-6%) — extreme continental climate (-30°C winters) makes year-round motorcycling impractical. High SUV/4×4 share due to terrain.
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Ulaanbaatar) | 70% | 8% | 16% | **6%** |
-| Tier-2 | 65% | 6% | 24% | 5% |
-| Rural | 50% | 3% | 44% | 3% |
-| **Gobi mining corridor** (OT/TT) | 30% | 2% | **66%** | 2% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.203 ≈ 36,090 |
+| Trunk | 15,000 × 1.203 ≈ 18,045 |
+| Primary | 9,000 × 1.203 ≈ 10,827 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -45,8 +27,6 @@ Mongolia has **very LOW motorcycle share** (3-6%) — extreme continental climat
 - **Gobi mining roads** — Oyu Tolgoi/Tavan Tolgoi ↔ Gashuunsukhait (China border) — **extremely heavy truck traffic**
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Mongolian rail context
 
@@ -65,13 +45,12 @@ Mongolia has **very LOW motorcycle share** (3-6%) — extreme continental climat
 
 **No urban metro, no tram** in any Mongolian city (UB once planned a metro but never built).
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Trans-Mongolian main line** | 4 | 8 |
-| **Erdenet branch** (copper freight) | 0 | 6 |
-| Other/branch | 0 | 2 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 
@@ -125,7 +104,7 @@ Notable noise zones:
 
 - **Ulaanbaatar** — extreme capital primacy (46% of population), congested city center + ger district sprawl
 - **Trans-Mongolian Railway** — UB ↔ Darkhan ↔ Russia / UB ↔ Zamyn-Üüd ↔ China
-- **Gobi mining truck corridor** — Oyu Tolgoi/Tavan Tolgoi ↔ China border (66% heavy share)
+- **Gobi mining truck corridor** — Oyu Tolgoi/Tavan Tolgoi ↔ China border
 - **Chinggis Khaan International (UBN/ZMUB Ulaanbaatar — new airport 2021)**, **Darkhan**, **Choibalsan (COQ/ZMCD)** — covered by global aircraft layer
 - **UB-4 CHP** (~889 MW — Mongolia's main power+heat source)
 - **Erdenet copper mine**

@@ -6,33 +6,17 @@ map: { center: [38.5, 15.5], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Eritrea Ministry of Public Works publishes no open AADT. CNOSSOS class defaults with Asmara Tier-1 boost. One of Africa's most isolated countries — data is extremely limited.
+Eritrea publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Eritrea's traffic factor **≈ 0.864** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Eritrean AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (none) | 10,000 | 20,000 | 14,000 |
-| 1 trunk (main paved highways) | 4,000 | 8,000 | 5,600 |
-| 2 primary | 2,000 | 4,000 | 2,800 |
-| 3 secondary | 800 | 1,600 | 1,120 |
-| 4 tertiary | 300 | 600 | 420 |
-| 5 residential | 150 | 300 | 210 |
-
-**Tier-1 metro** (×2.0): **Asmara** (~1.0M — capital at 2,325 m; UNESCO World Heritage Italian Modernist city).
-
-**Tier-2 cities** (×1.4): **Keren** (~100k — 2nd city, northern highlands), **Massawa** (~40k — Red Sea port), **Assab** (~25k — southern Red Sea port).
-
-### Eritrean vehicle split
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Asmara) | 55% | 12% | 18% | 15% |
-| Tier-2 | 50% | 10% | 25% | 15% |
-| Rural | 40% | 8% | 35% | 17% |
-| **Asmara–Massawa corridor** | 38% | 8% | 45% | 9% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.864 ≈ 25,920 |
+| Trunk | 15,000 × 0.864 ≈ 12,960 |
+| Primary | 9,000 × 0.864 ≈ 7,776 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

@@ -6,44 +6,17 @@ map: { center: [90, 23.5], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-RHD (Roads and Highways Department) publishes no open GIS. Fall back to CNOSSOS class defaults with Dhaka ×2.5 megacity boost.
+Bangladesh publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Bangladesh's traffic factor **≈ 0.933** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Bangladesh AADT defaults
-
-Bangladesh is the **world's most densely populated large country** (~175M in 148k km² = 1,182/km²). Traffic density is extreme in Dhaka division.
-
-| OSM class | Rural | Tier-1 (×2.5) | Tier-2 (×1.6) |
-|---|---:|---:|---:|
-| 0 motorway (Dhaka-Chittagong Expressway u/c) | 40,000 | 100,000 | 64,000 |
-| 1 trunk (N-routes) | 20,000 | 50,000 | 32,000 |
-| 2 primary | 12,000 | 30,000 | 19,200 |
-| 3 secondary | 6,000 | 15,000 | 9,600 |
-| 4 tertiary | 3,000 | 7,500 | 4,800 |
-| 5 residential | 1,200 | 3,000 | 1,920 |
-
-**Tier-1 megacity** (×2.5): **Dhaka** (~22M metro — **one of world's densest cities**, mega-traffic congestion).
-
-**Tier-2 cities** (×1.6): **Chittagong/Chattogram** (~5M, port city, ship-breaking), Khulna (~1M), Rajshahi (~800k), Sylhet (~500k), Rangpur (~350k), Comilla, **Gazipur** (garment hub adjacent to Dhaka), **Narayanganj** (garment hub, "Dundee of the East"), Mymensingh.
-
-### Bangladesh vehicle split
-
-Bangladesh has **extreme CNG rickshaw + motorcycle dominance**:
-
-- **CNG auto-rickshaws (green)** — Dhaka converted to CNG post-2002 (**world's largest CNG auto-rickshaw fleet**). 3-wheelers classified as CNOSSOS "medium"
-- **Bicycle rickshaws** — **Dhaka has ~400,000 bicycle rickshaws** (world's largest fleet) — but these are **non-motorized and do not contribute to CNOSSOS noise**
-- **Motorcycles** — extremely high share (~32% in Dhaka), growing rapidly
-- **Buses**: BRTC (state, limited), **Dhaka Metrobus BRT** planned, private buses (chaotic)
-- **Heavy trucks**: N1 Dhaka↔Chittagong Highway (port freight) — decorated trucks similar to Pakistan
-- **Tempo / Leguna** — small 3-wheeled shared vehicles, being phased out
-
-| Tier | Light | Medium (CNG/rickshaw) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Dhaka) | 32% | **22%** | 14% | **32%** |
-| Tier-2 | 40% | 18% | 16% | 26% |
-| Rural | 35% | 10% | 30% | 25% |
-| **N1 Dhaka↔Chittagong Highway** | 42% | 6% | **45%** | 7% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.933 ≈ 27,990 |
+| Trunk | 15,000 × 0.933 ≈ 13,995 |
+| Primary | 9,000 × 0.933 ≈ 8,397 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -56,8 +29,6 @@ Bangladesh has **extreme CNG rickshaw + motorcycle dominance**:
 - **Padma Bridge** (2022, $3.6B, 6.15 km) — **transformed SW Bangladesh connectivity**, largest infrastructure project in Bangladesh history
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Bangladesh rail context
 
@@ -79,14 +50,12 @@ Bangladesh has **extreme CNG rickshaw + motorcycle dominance**:
 - **Dhaka ↔ Rajshahi/Khulna** — broad gauge western network via Bangabandhu Bridge
 - Also serves India cross-border: Maitree Express (Dhaka ↔ Kolkata)
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Dhaka Metro Line 6 (2022)** | 200 | 0 |
-| **Dhaka↔Chittagong main line** (meter gauge) | 15 | 10 |
-| **Western broad gauge** (Dhaka↔Rajshahi/Khulna) | 8 | 5 |
-| Other/branch | 3 | 3 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

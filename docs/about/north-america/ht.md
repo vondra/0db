@@ -6,24 +6,17 @@ map: { center: [-72.4, 19.1], zoom: 8 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MTPTC publishes no open AADT. Fall back to class defaults with Port-au-Prince Tier-1 boost.
+Haiti publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Haiti's traffic factor **≈ 1.298** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Haitian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway | 12,000 | 24,000 | 16,800 |
-| 1 trunk | 4,500 | 9,000 | 6,300 |
-| 2 primary | 2,200 | 4,400 | 3,080 |
-| 3 secondary | 1,100 | 2,200 | 1,540 |
-| 4 tertiary | 450 | 900 | 630 |
-| 5 residential | 180 | 360 | 252 |
-
-**Tier-1 metro** (×2.0): **Port-au-Prince** (~3M metro — capital, dense informal settlements, no metro rail).
-
-**Tier-2 cities** (×1.4): **Cap-Haïtien** (~300k — northern cultural capital), **Gonaïves** (~280k — Artibonite delta).
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.298 ≈ 38,940 |
+| Trunk | 15,000 × 1.298 ≈ 19,470 |
+| Primary | 9,000 × 1.298 ≈ 11,682 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

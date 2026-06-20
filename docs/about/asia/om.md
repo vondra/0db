@@ -6,35 +6,17 @@ map: { center: [57, 21], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Oman Ministry of Transport publishes no open AADT. Fall back to class defaults with Muscat Tier-1 boost.
+Oman publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Oman's traffic factor **≈ 0.711** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Omani AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Muscat Expressway, Sultan Qaboos Hwy) | 35,000 | 70,000 | 49,000 |
-| 1 trunk | 15,000 | 30,000 | 21,000 |
-| 2 primary | 7,500 | 15,000 | 10,500 |
-| 3 secondary | 3,500 | 7,000 | 4,900 |
-| 4 tertiary | 1,500 | 3,000 | 2,100 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metro** (×2.0): **Muscat** (~1.4M — capital, stretched along Al Batinah coast, Sultan Qaboos Grand Mosque).
-
-**Tier-2 cities** (×1.4): **Salalah** (~300k, Dhofar — khareef monsoon tourism), **Sohar** (~200k, mega industrial port), **Sur** (~70k, LNG + traditional dhow building), **Nizwa** (~80k, interior fortress city), **Ibri** (~80k, Dhahirah, solar hub), **Duqm** (~30k, new $10B industrial port city), Barka, Saham, Rustaq, **Khasab** (Musandam exclave, Strait of Hormuz).
-
-### Omani vehicle split
-
-High car + 4×4 ownership (desert terrain + wealth), near-zero motorcycle:
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Muscat) | 74% | 4% | 18% | 4% |
-| Tier-2 | 70% | 3% | 24% | 3% |
-| Rural | 58% | 2% | 38% | 2% |
-| **Sohar/Duqm industrial** | 40% | 2% | **56%** | 2% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.711 ≈ 21,330 |
+| Trunk | 15,000 × 0.711 ≈ 10,665 |
+| Primary | 9,000 × 0.711 ≈ 6,399 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

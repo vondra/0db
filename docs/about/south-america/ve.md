@@ -98,15 +98,12 @@ There is no Venezuela-specific rail enrichment. Rail geometry comes from OSM; tr
 - **Ferrocarril Ferrominera Orinoco** — CVG iron ore freight, Ciudad Piar ↔ Puerto Ordaz (320 km). Cerro Bolívar iron ore → SIDOR + export.
 - **No other operational rail** — all planned networks cancelled or abandoned.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Metro de Caracas (subway)** | 400 | 0 |
-| Metro de Los Teques | 200 | 0 |
-| Metro de Valencia / Maracaibo | 60 | 0 |
-| **Sistema Ferroviario Ezequiel Zamora (Caracas↔Cúa)** | 50 | 4 |
-| **Ferrominera Orinoco (Ciudad Piar↔Puerto Ordaz)** | 0 | 24 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

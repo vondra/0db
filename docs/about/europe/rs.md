@@ -6,39 +6,19 @@ map: { center: [20.9, 44.2], zoom: 7 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Putevi Srbije publishes no open AADT. Fall back to CNOSSOS class defaults with Belgrade Tier-1 boost.
+Serbia publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Serbia's traffic factor **≈ 0.920** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Serbian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (E75 Belgrade-Niš, A1 Belgrade-Novi Sad) | 32,000 | 64,000 | 44,800 |
-| 1 trunk | 14,000 | 28,000 | 19,600 |
-| 2 primary | 7,000 | 14,000 | 9,800 |
-| 3 secondary | 3,500 | 7,000 | 4,900 |
-| 4 tertiary | 1,600 | 3,200 | 2,240 |
-| 5 residential | 700 | 1,400 | 980 |
-
-**Tier-1 metro** (×2.0): **Belgrade** (~1.7M — Danube + Sava confluence, **Balkans' largest city**, heavy congestion at Ada bridge/Gazela/Brankov bridges).
-
-**Tier-2 cities** (×1.4, 14 cities): **Novi Sad** (~380k — Vojvodina capital, EXIT festival, Danube), **Niš** (~260k — south Serbia), **Kragujevac** (~180k — **Stellantis/Fiat factory**, automotive), Subotica (~140k, Vojvodina N, Hungary border), Novi Pazar, Zrenjanin, Šabac, **Pančevo** (NIS refinery, Belgrade satellite), Čačak, Kruševac, Kraljevo, Leskovac, Vranje, **Smederevo** (**HBIS/former US Steel**).
-
-### Serbian vehicle split
-
-European standard (moderate car, low motorcycle):
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Belgrade) | 68% | 8% | 18% | 6% |
-| Tier-2 | 66% | 6% | 22% | 6% |
-| Rural | 58% | 4% | 34% | 4% |
-| **E75 Corridor X** | 62% | 4% | **30%** | 4% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.920 ≈ 27,600 |
+| Trunk | 15,000 × 0.920 ≈ 13,800 |
+| Primary | 9,000 × 0.920 ≈ 8,280 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Serbian rail context
 
@@ -54,14 +34,12 @@ European standard (moderate car, low motorcycle):
 ### Bar branch
 - **Belgrade ↔ Čačak ↔ Bar (Montenegro)** — one of **Europe's most scenic railway lines** (476 tunnels, 435 bridges, Mala Rijeka Viaduct — one of world's highest railway bridges)
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **BeoVoz commuter** | 60 | 0 |
-| **Main trunk Corridor X** (Belgrade hub radiating) | 15 | 10 |
-| **Bar branch** (Belgrade↔Montenegro) | 3 | 4 |
-| Other/branch | 3 | 4 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

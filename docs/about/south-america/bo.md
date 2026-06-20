@@ -82,16 +82,12 @@ Bolivia has **two disjoint rail networks** that don't connect to each other, ope
 - **Tren Metropolitano Cochabamba** — new urban commuter rail, 27 km, Sacaba ↔ El Castillo across Cochabamba valley. **Opened 2022**.
 - **Mi Teleférico La Paz** — 10 cable car lines across La Paz/El Alto (~32 km total, **world's largest urban cable car network**). OSM `aerialway=gondola`, NOT rail.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **FCA mining corridor (Oruro↔Uyuni↔Villazón)** | 2 | 18 |
-| **FCA branches (Oruro↔Cochabamba)** | 0 | 8 |
-| **FCO Santa Cruz↔Quijarro (Tren de la Muerte)** | 2 | 20 |
-| **FCO Santa Cruz↔Yacuiba (soy/grain)** | 0 | 16 |
-| Other operational rural | 0 | 4 |
-| **Tren Metropolitano Cochabamba (light_rail)** | 80 | 0 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

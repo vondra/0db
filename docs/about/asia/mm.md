@@ -6,37 +6,17 @@ map: { center: [96, 20], zoom: 5 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Ministry of Construction publishes no open GIS, and there is no bespoke Myanmar road enricher. The engine scales its world-default motorway/trunk/primary AADT by Myanmar's country factor (≈1.28×) and applies the world-default vehicle mix. The Yangon Tier-1 boost and vehicle split below are the **intended country-tuning, not yet ingested** — shown as the target profile. Notably, **Yangon has banned motorcycles since 2003** (a rare, widely-cited big-city moto ban), which the target profile reflects as 0% moto share in Tier-1.
+Myanmar publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Myanmar's traffic factor **≈ 1.280** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Myanmar AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Yangon-Mandalay Expressway, 587 km, 2010) | 25,000 | 50,000 | 35,000 |
-| 1 trunk | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metro** (×2.0): **Yangon** (~5.5M — former capital, economic center. **Yangon has banned motorcycles since 2003** — a rare, widely-cited big-city moto ban. In the target profile this means 0% moto share, higher car/bus/truck share.)
-
-**Tier-2 cities** (×1.4): **Mandalay** (~1.5M, cultural capital), **Naypyidaw** (~1M — capital since 2006, planned city, very spread out), Mawlamyine, Bago, Pathein, Monywa (copper), Taunggyi, Meiktila, Myingyan, Sittwe, Magway, Lashio, Pyay, Hpa-An.
-
-### Myanmar vehicle split
-
-**Yangon motorcycle ban** creates a globally unique vehicle split:
-
-| Tier | Light | Medium (bus) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Yangon — **NO MOTOS**) | 60% | **22%** | 18% | **0%** |
-| Tier-2 (normal moto) | 40% | 12% | 15% | **33%** |
-| Rural | 35% | 8% | 25% | 32% |
-| **Yangon-Mandalay Expressway** | 55% | 5% | **35%** | 5% |
-
-Outside Yangon, **motorcycles dominate** at 32-33% — similar to SE Asian norms (Vietnam/Indonesia). The contrast between Yangon (0%) and Mandalay (33%) is the sharpest intra-country moto differential of any country documented in this atlas.
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.280 ≈ 38,400 |
+| Trunk | 15,000 × 1.280 ≈ 19,200 |
+| Primary | 9,000 × 1.280 ≈ 11,520 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 

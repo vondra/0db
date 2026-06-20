@@ -6,9 +6,17 @@ map: { center: [114.7, 4.5], zoom: 9 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-The Ministry of Transport publishes no open AADT. CNOSSOS class defaults apply, scaled by the per-country fleet/road-density factor. Brunei has high car ownership (~600 vehicles per 1,000 people) due to heavily subsidised fuel — the cheapest in Southeast Asia — and the Bandar Seri Begawan ↔ Kuala Belait/Seria coastal trunk carries the bulk of inter-town traffic.
+Brunei publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Brunei's traffic factor **≈ 1.274** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
+
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.274 ≈ 38,220 |
+| Trunk | 15,000 × 1.274 ≈ 19,110 |
+| Primary | 9,000 × 1.274 ≈ 11,466 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

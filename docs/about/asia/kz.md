@@ -48,8 +48,6 @@ Kazakhstan has **very LOW motorcycle share** (1-4%) — extreme continental clim
 
 ## Railway
 
-### Class defaults + corridor bbox boosts
-
 ### Kazakh rail context
 
 **KTZ (Kazakhstan Temir Zholy / Қазақстан Темір Жолы)** operates **~16,600 km** of **broad gauge (1,520 mm)** — **one of the world's largest rail networks** by length. Soviet-era infrastructure, massive freight capacity (oil, grain, coal, uranium, **China→Europe transit** is growing).

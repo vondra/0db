@@ -6,35 +6,17 @@ map: { center: [147, -6], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-PNG DoW (Department of Works) publishes no open AADT. Most roads unpaved. Extremely rugged terrain (Owen Stanley Range, Central Highlands). Fall back to class defaults with Port Moresby Tier-1 boost.
+Papua New Guinea publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Papua New Guinea's traffic factor **≈ 0.783** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### PNG AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (none in PNG) | 15,000 | 30,000 | 21,000 |
-| 1 trunk | 5,000 | 10,000 | 7,000 |
-| 2 primary | 2,500 | 5,000 | 3,500 |
-| 3 secondary | 1,000 | 2,000 | 1,400 |
-| 4 tertiary | 400 | 800 | 560 |
-| 5 residential | 200 | 400 | 280 |
-
-**Tier-1 metro** (×2.0): **Port Moresby** (~400k — NCD capital, isolated from mainland PNG, one of world's most dangerous cities by crime).
-
-**Tier-2 cities** (×1.4): **Lae** (~150k — 2nd city, industrial port, Highlands Highway terminus), **Mt Hagen** (~50k — Western Highlands, coffee hub), **Madang** (~30k — port, Ramu NiCo gate), **Goroka** (~25k — Eastern Highlands), **Wewak** (~25k — East Sepik, WWII), **Rabaul/Kokopo** (~20k — East New Britain, volcanic), **Kimbe** (~20k — West New Britain, palm oil).
-
-### PNG vehicle split
-
-PMV (Public Motor Vehicles) minibuses dominant. Heavy trucks on Highlands Highway.
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Port Moresby) | 55% | 15% | 20% | 10% |
-| Tier-2 | 50% | 10% | 28% | 12% |
-| Rural | 40% | 5% | 40% | 15% |
-| **Highlands Highway** (mining/agri freight) | 30% | 5% | 55% | 10% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.783 ≈ 23,490 |
+| Trunk | 15,000 × 0.783 ≈ 11,745 |
+| Primary | 9,000 × 0.783 ≈ 7,047 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

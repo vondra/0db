@@ -6,41 +6,17 @@ map: { center: [27, -14], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-RDA (Road Development Agency) publishes no open GIS. Fall back to CNOSSOS class defaults with Lusaka + Copperbelt Tier-1 boost.
+Zambia publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Zambia's traffic factor **≈ 0.957** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Zambian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Lusaka bypass, T2 Kafue ring road) | 24,000 | 48,000 | 33,600 |
-| 1 trunk (T/M paved) | 8,500 | 17,000 | 11,900 |
-| 2 primary | 4,200 | 8,400 | 5,880 |
-| 3 secondary | 2,000 | 4,000 | 2,800 |
-| 4 tertiary | 1,000 | 2,000 | 1,400 |
-| 5 residential | 500 | 1,000 | 700 |
-
-**Tier-1 metros** (×2.0, 3 metros): **Lusaka** (capital, ~3M metro), **Kitwe** (Copperbelt capital ~530k), **Ndola** (Copperbelt commercial ~550k — former INDENI refinery site, closed 2019).
-
-**Tier-2 cities** (×1.4, 21 cities): **Chingola** (KCM Nchanga), **Mufulira** (Mopani smelter), Luanshya, **Chililabombwe** (KCM Konkola), **Kabwe** (historic lead/zinc), **Kapiri Mposhi** (**TAZARA+ZRL junction**), **Livingstone** (Vic Falls tourism), Chipata (Malawi border east), **Kasama** (north, TAZARA), **Solwezi** (**FQM Kansanshi** — Africa's largest copper mine), Mazabuka (**Zambia Sugar**), **Kalumbila** (**FQM Sentinel mine**), Choma, Mansa, Mongu (Barotse Plain), Chadiza, **Kafue** (Kafue Steel), Monze, **Serenje/Mpika/Nakonde** (TAZARA stations).
-
-### Zambian vehicle split
-
-Zambia's urban transport centers on minibuses + moderate motorcycle share:
-
-- **Minibuses** — white Toyota HiAce "taxis" (blue stripe in Lusaka), dominant urban public transport
-- **Blue sedan taxis** — shared city taxis
-- **Juldan Motors + Post-buses** — intercity coaches
-- **Motorcycle taxis** — **lower share than East Africa** (no boda-boda culture)
-- **Heavy trucks**: **Copperbelt copper exports** drive very high heavy share — to Dar es Salaam via parallel T2 Great North Road, to Durban via T2+Zim, to Lobito via new Angola Corridor, and via Beira Mozambique
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Lusaka/Copperbelt) | 58% | 18% | 16% | 8% |
-| Tier-2 | 58% | 14% | 20% | 8% |
-| Rural | 50% | 8% | 35% | 7% |
-| **T2 Great North Road (Cu export)** | 45% | 5% | **45%** | 5% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.957 ≈ 28,710 |
+| Trunk | 15,000 × 0.957 ≈ 14,355 |
+| Primary | 9,000 × 0.957 ≈ 8,613 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -53,8 +29,6 @@ Zambia's urban transport centers on minibuses + moderate motorcycle share:
 - **M10** — Lusaka ↔ Mongu (west, Barotse Plain)
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Zambian rail context
 
@@ -81,14 +55,12 @@ Zambia has **two separate rail networks**:
 
 **No metros, no trams** in any Zambian city.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Copperbelt mainline** (Lusaka↔Kitwe↔Chililabombwe) | 1 | 14 |
-| **Lusaka↔Livingstone** (Southern line) | 1 | 4 |
-| **TAZARA ZM section** (Kapiri Mposhi↔Tanzania border) | 2 | 12 |
-| Other/branch | 0 | 2 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

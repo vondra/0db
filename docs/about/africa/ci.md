@@ -6,42 +6,17 @@ map: { center: [-5.5, 7.5], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-AGEROUTE-CI (Agence de Gestion des Routes) publishes no open AADT. Fall back to CNOSSOS class defaults with Abidjan Tier-1 boost.
+Côte d'Ivoire publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Côte d'Ivoire's traffic factor **≈ 1.176** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Ivorian AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (A1 Abidjan-Yamoussoukro, A3 Abidjan-Bassam) | 28,000 | 56,000 | 39,200 |
-| 1 trunk (A-routes + major nat'l) | 10,000 | 20,000 | 14,000 |
-| 2 primary | 5,000 | 10,000 | 7,000 |
-| 3 secondary | 2,500 | 5,000 | 3,500 |
-| 4 tertiary | 1,200 | 2,400 | 1,680 |
-| 5 residential | 600 | 1,200 | 840 |
-
-**Tier-1 metros** (×2.0, 1 metro): **Abidjan** (~5-6M, Ébrié Lagoon, **Africa's 4th largest francophone city** after Kinshasa/Casablanca/Algiers — economic capital of Côte d'Ivoire; Yamoussoukro is the official political capital since 1983).
-
-**Tier-2 cities** (×1.4, 20 cities): **Yamoussoukro** (official political capital, **Basilique de Notre-Dame de la Paix** — world's largest basilica), **Bouaké** (2nd city, cocoa hub), Daloa (cocoa belt), **San Pédro** (world's largest cocoa export port), Korhogo (northern hub), Man (western mountains), Divo, Gagnoa, Abengourou, Anyama, **Grand-Bassam** (UNESCO colonial capital), Bingerville, Agboville, Odienné, Bondoukou, Soubré, Sassandra, Ferkessédougou, Dabou, Adzopé.
-
-### Ivorian vehicle split
-
-Côte d'Ivoire's urban transport mixes minibuses and shared taxis more than motorcycles:
-
-- **Gbaka** — informal minibus taxis of Abidjan periphery, ~14 seat
-- **Woro-Woro** — shared taxis, yellow + **commune-color-coded** (classic Abidjan)
-- **Orange taxis** — city taxis, metered
-- **SOTRA** — Société des Transports Abidjanais (official city buses + **Bateaux-Bus lagoon ferries** connecting Plateau ↔ Treichville ↔ Yopougon ↔ Abobo across Ébrié Lagoon)
-- **Abidjan BRT** — under construction, not yet operating
-- **Moto-taxis (Zémidjan)** — less dominant than in Benin/Togo but growing
-
-| Tier | Light | Medium (Gbaka/SOTRA) | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Abidjan) | 60% | **16%** | 13% | 11% |
-| Tier-2 | 60% | 12% | 16% | 12% |
-| Rural | 55% | 10% | 25% | 10% |
-| **A1 Abidjan↔Yamoussoukro motorway** | 70% | 7% | **17%** | 6% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.176 ≈ 35,280 |
+| Trunk | 15,000 × 1.176 ≈ 17,640 |
+| Primary | 9,000 × 1.176 ≈ 10,584 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -64,12 +39,12 @@ No Sitarail GIS/GTFS, so the trains/day defaults below are applied by rail class
 - **Abidjan Metro Line 1** — under construction, 37.9 km N↔S (Anyama ↔ Port-Bouët airport). French consortium (Bouygues/Colas/Alstom/Keolis/RATP), ~$1.9B, originally planned 2019 but delayed to **~2026-2027**. Standard gauge, electrified. **NOT YET OPERATING**.
 - **San Pédro planned freight rail** — to open up nickel/iron mines in western mountains. Not yet built.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Sitarail main line** (Abidjan↔Bouaké↔Burkina) | 1 | 6 |
-| Other | 0 | 1 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

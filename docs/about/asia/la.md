@@ -6,37 +6,17 @@ map: { center: [104, 18], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-MPWT publishes no open GIS, and there is no bespoke Lao road enricher. The engine scales its world-default motorway/trunk/primary AADT by Laos's country factor (≈1.30×) and applies the world-default vehicle mix. The Vientiane Tier-1 boost and the motorcycle-heavy vehicle split below are the **intended country-tuning, not yet ingested** — shown as the target profile.
+Laos publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Laos's traffic factor **≈ 1.299** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Lao AADT defaults
-
-Laos is **landlocked and mountainous** with a sparse road network. Very low traffic baseline outside Vientiane and Route 13.
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (VTE-Vang Vieng Expressway 2020) | 20,000 | 40,000 | 28,000 |
-| 1 trunk (Route 13 backbone) | 8,000 | 16,000 | 11,200 |
-| 2 primary | 4,000 | 8,000 | 5,600 |
-| 3 secondary | 2,000 | 4,000 | 2,800 |
-| 4 tertiary | 1,000 | 2,000 | 1,400 |
-| 5 residential | 400 | 800 | 560 |
-
-**Tier-1 metro** (×2.0): **Vientiane** (~800k — **one of SE Asia's smallest capitals**, low traffic by regional standards, relaxed pace).
-
-**Tier-2 cities** (×1.4): **Luang Prabang** (~90k, UNESCO World Heritage, tourism + **LCR stop** — tourism boom post-2021 railway), **Savannakhet** (~120k, central Mekong, largest city), **Pakse** (~90k, Champasak southern hub), Thakhek, **Vang Vieng** (tourism boom post-LCR), **Boten** (China border, LCR terminus — transformed by Chinese investment), Luang Namtha, Phonsavan, Xam Neua.
-
-### Lao vehicle split
-
-High motorcycle share (40-47%) — similar to Cambodia:
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Vientiane) | 38% | 10% | 12% | **40%** |
-| Tier-2 | 30% | 8% | 15% | **47%** |
-| Rural | 25% | 5% | 25% | **45%** |
-| **VTE-VV Expressway (2020)** | 55% | 5% | **35%** | 5% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.299 ≈ 38,970 |
+| Trunk | 15,000 × 1.299 ≈ 19,485 |
+| Primary | 9,000 × 1.299 ≈ 11,691 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 

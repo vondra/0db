@@ -6,9 +6,17 @@ map: { center: [127.0, 40.0], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-No open traffic data exists for North Korea. CNOSSOS class defaults apply, scaled by the per-country fleet/road-density factor. Private car ownership is negligible by policy — roads carry military, freight, and state-assigned vehicles. Heavy vehicle share is elevated on strategic freight corridors (Pyongyang ↔ Sinuiju, Wonsan ↔ Chongjin).
+North Korea publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by North Korea's traffic factor **≈ 0.835** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
+
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.835 ≈ 25,050 |
+| Trunk | 15,000 × 0.835 ≈ 12,525 |
+| Primary | 9,000 × 0.835 ≈ 7,515 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

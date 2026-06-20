@@ -6,9 +6,17 @@ map: { center: [1.52, 42.54], zoom: 11 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Servei de Circulació i Mobilitat d'Andorra publishes no open AADT, and Andorra is not in the EU city-traffic dataset. No national road enrichment is applied — road segments fall back to the engine's CNOSSOS class defaults by OSM road class, plus the global service-road tree heuristic. Andorra's road network is dominated by the CG-1 (Spain border ↔ Andorra la Vella ↔ Pas de la Casa ↔ France) and CG-2 (Ordino/Canillo branches), which carry heavy duty-free and ski tourism but with class-default rather than measured traffic.
+Andorra publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Andorra's traffic factor **≈ 1.294** (vehicles-per-km). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
+
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 1.294 ≈ 38,820 |
+| Trunk | 15,000 × 1.294 ≈ 19,410 |
+| Primary | 9,000 × 1.294 ≈ 11,646 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ## Railway
 

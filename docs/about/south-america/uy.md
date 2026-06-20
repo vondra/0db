@@ -6,36 +6,17 @@ map: { center: [-56, -33], zoom: 6 }
 
 ## Road traffic
 
-### Class defaults only (MTOP GeoServer blocked)
+### Road defaults
 
-Uruguay's **MTOP GeoServer** (`geoservicios.mtop.gub.uy/geoserver`) is the authoritative source for national road data, including **14 years of TPDA tramos (2004-2017) by road segment**, Caminería Nacional, toll plazas, weigh stations, and AFE rail geometry with direct-to-CNOSSOS `afe_velocidad_y_cargas` (max speed + axle-load). **All layers return HTTP 403 from non-UY IPs** regardless of User-Agent/Referer/headers. The WAF is IP-based, not header-based.
+Uruguay publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Uruguay's traffic factor **≈ 0.722** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-As a result, Uruguay roads use class defaults only with Gran Montevideo Tier-1 boost. This is the biggest data gap in the South American pipeline — Uruguay has the highest-quality traffic data of any SA country after Chile, but it's unreachable.
-
-### Uruguayan AADT defaults
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (Ruta Interbalnearia) | 35,000 | 70,000 | 49,000 |
-| 1 trunk (Ruta Nacional paved) | 12,000 | 24,000 | 16,800 |
-| 2 primary | 6,000 | 12,000 | 8,400 |
-| 3 secondary | 3,000 | 6,000 | 4,200 |
-| 4 tertiary | 1,500 | 3,000 | 2,100 |
-| 5 residential | 800 | 1,600 | 1,120 |
-
-**Tier-1 metros** (×2.0): **Gran Montevideo** (Montevideo + Ciudad de la Costa + Las Piedras + northern Canelones). ~50% of Uruguay's population lives within this bbox.
-
-**Tier-2 cities** (×1.4, 19 cities): Salto, Paysandú, Maldonado/Punta del Este, Rivera, Tacuarembó, Melo, Minas, Mercedes, Fray Bentos, Colonia del Sacramento, Artigas, Durazno, Florida, San José de Mayo, Trinidad, Rocha, Treinta y Tres, Canelones, Las Piedras.
-
-### Uruguayan vehicle split
-
-Moderate motorcycle share (~15% urban), moderate heavy share. Uruguay is flat pampas with cattle/soy/wheat/rice freight and pulp transport to Montevideo port.
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Gran Montevideo) | 70% | 6% | 10% | 14% |
-| Tier-2 | 70% | 8% | 12% | 10% |
-| Rural (pampas freight) | 62% | 8% | 23% | 7% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.722 ≈ 21,660 |
+| Trunk | 15,000 × 0.722 ≈ 10,830 |
+| Primary | 9,000 × 0.722 ≈ 6,498 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -59,14 +40,12 @@ MTOP GeoServer rail layers (`via_prin_act`, `afe_velocidad_y_cargas`, `afe_estac
 - **AFE (Administración de Ferrocarriles del Estado)** — state railway. Limited freight + small Montevideo suburban passenger service. The long-distance lines (Montevideo ↔ Salto) are mostly inactive since the 1980s reforms.
 - **No urban metro/light rail** — Montevideo uses buses only (STM Sistema de Transporte Metropolitano).
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Ferrocarril Central UPM corridor (Paso de los Toros→Montevideo)** | 0 | 20 |
-| Montevideo suburban commuter (AFE) | 10 | 8 |
-| Other operational rural | 0 | 4 |
-| Branch lines | 0 | 2 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 

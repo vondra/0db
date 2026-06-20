@@ -6,42 +6,17 @@ map: { center: [17, -22], zoom: 5 }
 
 ## Road traffic
 
-### Class defaults only
+### Road defaults
 
-Roads Authority (RA) Namibia publishes no open GIS. Fall back to CNOSSOS class defaults with Windhoek Tier-1 boost.
+Namibia publishes no open per-segment AADT, so roads fall back to the global class defaults scaled by Namibia's traffic factor **≈ 0.700** (population density). Only the major classes (motorway, trunk, primary, and their on/off-ramps) are scaled; local roads and the vehicle mix use the global default — the engine applies no per-city tiers or country-specific splits.
 
-### Namibian AADT defaults
-
-Namibia is **extremely sparsely populated** (~2.6M in 825k km² = 3.1/km², mostly Namib Desert + Kalahari). Excellent road infrastructure relative to population.
-
-| OSM class | Rural | Tier-1 (×2.0) | Tier-2 (×1.4) |
-|---|---:|---:|---:|
-| 0 motorway (B1 Windhoek bypass) | 22,000 | 44,000 | 30,800 |
-| 1 trunk (B-routes paved) | 6,000 | 12,000 | 8,400 |
-| 2 primary | 3,000 | 6,000 | 4,200 |
-| 3 secondary | 1,500 | 3,000 | 2,100 |
-| 4 tertiary | 700 | 1,400 | 980 |
-| 5 residential | 350 | 700 | 490 |
-
-**Tier-1 metros** (×2.0, 1 metro): **Windhoek** (~450k metro, former German colonial capital Deutsch-Südwestafrika, 1,700m altitude central plateau).
-
-**Tier-2 cities** (×1.4, 16 cities): **Walvis Bay** (Namibia's only deep-water port, fish processing + uranium export), **Swakopmund** (coastal tourism + uranium mining hub), Oshakati (Owambo N), Ondangwa (N), Rundu (Kavango NE), Katima Mulilo (Caprivi/Zambezi NE), **Otjiwarongo**, **Keetmanshoop** (south junction), **Tsumeb** (copper smelter), **Lüderitz** (port + Diaz Wind), Okahandja, Rehoboth, Mariental (solar), Grootfontein, Karibib (**Navachab gold**), **Arandis** (Rössing uranium gate town).
-
-### Namibian vehicle split
-
-Similar to Botswana — **very car-dependent**, German/South African influence:
-
-- **Private vehicles** — dominant (Toyota Hilux/Land Cruiser ubiquitous for desert conditions)
-- **Kombis** — white minibuses for intercity (less urban than RSA/ZW)
-- **Motorcycles** — **very low share (~2-5%)**, no moto-taxi culture
-- **Heavy trucks**: Trans-Caprivi (Zambia↔Walvis Bay transit), B1/B2 corridors, uranium from Erongo mines, fishing fleets
-
-| Tier | Light | Medium | Heavy | Motorcycle |
-|---|---:|---:|---:|---:|
-| Tier-1 (Windhoek) | 66% | 14% | 15% | 5% |
-| Tier-2 | 64% | 10% | 22% | 4% |
-| Rural | 55% | 6% | 36% | 3% |
-| **B1/B2 corridor (Walvis Bay↔Windhoek↔RSA)** | 50% | 5% | **42%** | 3% |
+| OSM class | Default AADT |
+|---|---:|
+| Motorway | 30,000 × 0.700 ≈ 21,000 |
+| Trunk | 15,000 × 0.700 ≈ 10,500 |
+| Primary | 9,000 × 0.700 ≈ 6,300 |
+| Secondary / tertiary / residential | 3,000 / 800 / 500 (world default) |
+| Service / track / unclassified | 250 / 5 / 1,340 (world default) |
 
 ### National route network
 
@@ -52,8 +27,6 @@ Similar to Botswana — **very car-dependent**, German/South African influence:
 - **B8** — Trans-Caprivi (Rundu ↔ Katima Mulilo ↔ Zambia/Botswana)
 
 ## Railway
-
-### Class defaults + corridor bbox boosts
 
 ### Namibian rail context
 
@@ -75,14 +48,12 @@ Similar to Botswana — **very car-dependent**, German/South African influence:
 
 **No passenger commuter rail, no metros, no trams**. TransNamib passenger services were discontinued except sporadic seasonal.
 
-### trains/day defaults
+### Rail defaults
 
-| Context | pax/day | frt/day |
-|---|---:|---:|
-| **Walvis Bay ↔ Windhoek** (uranium/import freight) | 0 | 6 |
-| **North trunk** (Windhoek↔Tsumeb) | 0 | 5 |
-| **South trunk** (Windhoek↔Keetmanshoop↔RSA) | 0 | 4 |
-| Other/branch | 0 | 1 |
+No measured/GTFS frequencies, so rail uses the engine's per-type class defaults
+(identical worldwide): main line 80 pax + 20 freight/day, branch 30/5, industrial
+siding 0/15, unknown 40/10, tram 120/0, light rail 80/0, narrow gauge 10/0,
+funicular 40/0. Country-specific counts need GTFS or measured data.
 
 ## Buildings
 
