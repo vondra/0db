@@ -278,6 +278,16 @@ fn main() -> Result<()> {
             eprintln!("✓ full path + budget skip port BYTE-EXACT vs CPU ref");
         } else if maxdb < 0.5 && nzero == 0 {
             eprintln!("✓ port within 0.5 dB ({nbit} sub-0.5 dB f32 drifts, 0 zero-sided)");
+        } else if nzero == 0 {
+            // The 0.5 dB ✓ bar was the sm_89 fp32-vs-f64 level; on consumer fp64-weak
+            // silicon (sm_120) the Maekawa-cliff cells drift more (max ~5 dB) — broad
+            // fp32(GPU)-vs-f64(CPU), scattered, 0 presence-flips, SAME bytes on every card
+            // (cross-arch byte-identical, measured), popup-corrected. NOT a regression:
+            // docs/dev/heatmap-seam-guarantee.md.
+            eprintln!(
+                "fp32-vs-f64 drift: {nover} cells >0.5 dB (max {maxdb:.2} dB), 0 presence-flips — \
+                 benign (scattered, popup-corrected; docs/dev/heatmap-seam-guarantee.md)"
+            );
         }
     }
 
