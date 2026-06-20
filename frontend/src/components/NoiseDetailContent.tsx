@@ -8,6 +8,11 @@ import { TabStrip, type PopupTab } from './noise/TabStrip'
 import { ContributorRow } from './noise/source/ContributorRow'
 import type { NoiseComputeData } from '../types/noise'
 
+// The ⏱ timing panel ships server-side compute breakdowns into the popup —
+// useful for profiling, noise for end users. Show it only when the URL carries
+// ?timings (a dev opt-in), not to everyone.
+const SHOW_TIMINGS = typeof location !== 'undefined' && new URLSearchParams(location.search).has('timings')
+
 export interface NoiseDetailContentProps {
   data: NoiseComputeData
   onHighlight?: (geometry: any | null) => void
@@ -151,7 +156,7 @@ export default function NoiseDetailContent({ data, onHighlight, maxSources }: No
 }
 
 function TimingsOverlay({ timings }: { timings: NoiseComputeData['timings'] }) {
-  if (!timings) return null
+  if (!timings || !SHOW_TIMINGS) return null
   // Sort components by cost so the dominant bucket is visible at a glance.
   const rows: Array<[string, number]> = [
     ['road', timings.road_ms],
