@@ -1,3 +1,5 @@
+//! Point-source compute kernel (buildings + industrial) — groups discretized
+//! grid points by osm_id and propagates each to the receiver.
 use crate::*;
 
 /// Compute noise from pre-discretized point sources (buildings, industrial).

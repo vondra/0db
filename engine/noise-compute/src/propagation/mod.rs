@@ -1,3 +1,5 @@
+//! Propagation (source→receiver attenuation) submodules — ISO 9613-2 divergence,
+//! ground, atmosphere, plus path effects (diffraction/screening/vegetation).
 pub mod diffraction;
 pub mod geo;
 pub mod horizon;

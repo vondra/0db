@@ -1,3 +1,5 @@
+//! Enum-code → display-name lookups (surface, rail type, rail usage) shared by
+//! the compute kernels and trace builders for popup labelling.
 pub(crate) fn surface_name(surface_type: u8) -> &'static str {
     match surface_type {
         0 => "asphalt",

@@ -1,3 +1,5 @@
+//! Per-airport `AircraftGroundOpsDetail` popup payload builder — folds the
+//! airport ground-ops accumulator + `airport_summary.arrow` counts into the popup struct.
 use super::*;
 
 /// Build the per-airport `AircraftGroundOpsDetail` payload from the

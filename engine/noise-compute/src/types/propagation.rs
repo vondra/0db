@@ -1,3 +1,5 @@
+//! Propagation result types — per-source summaries and the linear-energy
+//! propagation-variant struct (full / free-field / per-effect) the kernels fill.
 use super::*;
 
 /// Per-source-type summary.

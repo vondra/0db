@@ -1,3 +1,5 @@
+//! Aircraft popup-detail types — per-band event stats and top-flight rows
+//! (typecode, callsign, ICAO hex, geometry) shown in the aircraft popup.
 use super::*;
 
 #[derive(Debug, Clone, Default, Serialize)]

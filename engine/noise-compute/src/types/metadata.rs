@@ -1,3 +1,5 @@
+//! Contributor + source-metadata types — one top-N `Contributor` per grouped
+//! source with its A-weighted per-effect impact breakdown for the popup.
 use super::*;
 
 /// Individual noise contributor (top-N with full breakdown). The five

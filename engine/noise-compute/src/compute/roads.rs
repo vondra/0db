@@ -1,3 +1,5 @@
+//! Road compute kernel — groups road segments by (ref, name, class), emits
+//! per-period power and propagates to the receiver (CNOSSOS road). Shared by popup + heatmap.
 use crate::*;
 
 /// Compute road noise: emission per period → propagation → Lden per segment.

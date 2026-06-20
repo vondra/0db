@@ -1,3 +1,5 @@
+//! Per-segment trace types (popup-only) — per-period triples and the
+//! propagation-variant Lden breakdown shown in the "what if this effect were off" table.
 use super::*;
 
 // Per-segment traces populated only when the popup requests them; pipeline

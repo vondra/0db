@@ -1,3 +1,5 @@
+//! Input types — the `Receiver` point (lat/lon/elevation/height) and altitude
+//! helpers shared by every compute kernel.
 use super::*;
 
 /// Receiver point where noise is computed.

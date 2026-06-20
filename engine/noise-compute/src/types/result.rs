@@ -1,3 +1,5 @@
+//! Top-level `NoiseResult` type — total + per-source breakdown + top
+//! contributors + optional popup traces/timings. The shape the engine returns.
 use super::*;
 
 /// Noise computation result — periods + per-source breakdown + top contributors.

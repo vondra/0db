@@ -14,9 +14,7 @@ import { promises as fs } from 'node:fs'
 import { tableFromIPC, tableToIPC, type Table } from 'apache-arrow'
 import { shouldOverwrite } from './sources.js'
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Overwrite decision (re-exported from sources.ts for a stable call site)
-// ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * Gate for enricher writes. Returns true if `selfId` should win over the
@@ -50,9 +48,7 @@ export function updateRow(
   return true
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Concurrent-safe write wrappers
-// ═══════════════════════════════════════════════════════════════════════════
 
 /** Best-effort advisory lock using O_CREAT|O_EXCL on `{path}.lock`. */
 async function acquireLock(lockPath: string, timeoutMs = 5 * 60_000): Promise<void> {

@@ -1,3 +1,5 @@
+//! Emission (source power, Lw) submodules — one per source family plus the
+//! shared spectrum/profile tables. Root of the emission half of the kernel.
 pub mod aircraft;
 pub mod airport_traffic;
 pub mod gse;

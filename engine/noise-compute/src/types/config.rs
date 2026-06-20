@@ -1,3 +1,5 @@
+//! Compute configuration types — `ComputeConfig` toggles (terrain/screening/
+//! vegetation/top-N) and the `RasterSampler` trait popup + pipeline implement.
 /// Computation toggles.
 #[derive(Debug, Clone)]
 pub struct ComputeConfig {

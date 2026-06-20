@@ -1,3 +1,5 @@
+//! Unit tests for the airport_traffic (aircraft ground-ops) kernel — flat-ground
+//! fixtures asserting energy folding, per-period counts, and GA-window math.
 use super::*;
 
 struct FlatGround;

@@ -1,3 +1,5 @@
+//! Railway compute kernel — groups rail segments by osm_id, emits per-period
+//! power and propagates to the receiver (CNOSSOS rail). Shared by popup + heatmap.
 use crate::*;
 
 /// Memo key for `REACH_CACHE`: `(rail_type, admin ISO, speed bits, pax bits, frt bits)`.

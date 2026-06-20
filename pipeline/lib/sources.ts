@@ -18,9 +18,7 @@
 
 import { DATASETS, type Dataset } from './enrichment-datasets.js'
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Provenance enum + rank
-// ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * How authoritative the data is.
@@ -85,9 +83,7 @@ export const PROVENANCE_RANK: Record<Provenance, number> = {
   'none': 0,
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Source interface + registry
-// ═══════════════════════════════════════════════════════════════════════════
 
 export interface Source {
   id: number            // u16, globally unique, never recycled
@@ -156,9 +152,7 @@ export const SOURCES_BY_KEY = new Map<string, Source>(SOURCES.map((s) => [s.key,
 /** The sentinel "unspecified" entry (always id = 0). */
 export const UNSPECIFIED: Source = SOURCES_BY_ID.get(0)!
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Overwrite decision
-// ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * Returns `true` if a write stamped by `newId` should replace the row's

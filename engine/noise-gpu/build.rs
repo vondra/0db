@@ -1,3 +1,5 @@
+//! Build script for `noise-gpu` — compiles CUDA kernels to PTX (only under the
+//! `gpu` feature) so a CUDA-less host still builds the CPU-side lib cleanly.
 // Compile every kernels/*.cu to its own PTX (kernels/foo.cu -> $OUT_DIR/foo.ptx)
 // at build time via nvcc. This is the production path (vs runtime nvrtc): the PTX
 // is embedded in the binary and JIT-finalised by the driver at load, so one build

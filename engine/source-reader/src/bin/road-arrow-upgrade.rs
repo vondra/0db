@@ -1,3 +1,5 @@
+//! CLI tool to upgrade prepared `roads.arrow` files in place — re-stamps
+//! per-segment provenance ids across the H3R4 hex tree. Standalone binary.
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

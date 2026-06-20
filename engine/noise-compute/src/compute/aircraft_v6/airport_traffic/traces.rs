@@ -1,3 +1,5 @@
+//! Per-microsegment `SegmentTrace` emission for airport ground-traffic ops —
+//! the popup-only trace builder for the aircraft_v6 airport_traffic kernel.
 use super::*;
 
 /// Build one `SegmentTrace` per microsegment from the per-microsegment
