@@ -16,7 +16,10 @@ pub fn receiver_altitude_m(ground_elevation_m: f64, receiver_height_m: f64) -> f
 
 #[inline]
 pub fn default_receiver_altitude_m(ground_elevation_m: f64) -> f64 {
-    receiver_altitude_m(ground_elevation_m, crate::constants::DEFAULT_RECEIVER_HEIGHT)
+    receiver_altitude_m(
+        ground_elevation_m,
+        crate::constants::DEFAULT_RECEIVER_HEIGHT,
+    )
 }
 
 impl Receiver {
@@ -37,16 +40,18 @@ impl Receiver {
 
 #[cfg(test)]
 mod tests {
-    use super::{Receiver, default_receiver_altitude_m, receiver_altitude_m};
+    use super::{default_receiver_altitude_m, receiver_altitude_m, Receiver};
 
     #[test]
     fn receiver_altitude_helpers_match_receiver_struct() {
         let receiver = Receiver::new(50.0, 14.0, 123.5);
         assert_eq!(receiver.altitude_m(), default_receiver_altitude_m(123.5));
-        assert_eq!(receiver.altitude_m(), receiver_altitude_m(123.5, receiver.height_m));
+        assert_eq!(
+            receiver.altitude_m(),
+            receiver_altitude_m(123.5, receiver.height_m)
+        );
         assert_eq!(receiver.altitude_m(), 127.5);
     }
-
 }
 
 /// Road microsegment (≤250m vertex pair) with pre-joined traffic.
@@ -59,8 +64,8 @@ pub struct RoadSegment {
     pub end_lat: f64,
     pub end_lon: f64,
     pub length_m: f32,
-    pub road_class: u8,   // 0=motorway..6=living_street, 7=service, 8=track, 9=unclassified, 10=motorway_link, 11=trunk_link, 12=primary_link
-    pub speed_limit: u8,  // km/h, 0=use default, 255=derestricted (maxspeed=none) → DERESTRICTED_SPEED_KMH
+    pub road_class: u8, // 0=motorway..6=living_street, 7=service, 8=track, 9=unclassified, 10=motorway_link, 11=trunk_link, 12=primary_link
+    pub speed_limit: u8, // km/h, 0=use default, 255=derestricted (maxspeed=none) → DERESTRICTED_SPEED_KMH
     pub surface_type: u8, // 0=asphalt..4=gravel
     pub oneway: bool,
     pub lanes: u8,
@@ -70,11 +75,11 @@ pub struct RoadSegment {
     pub aadt_moto: i32,
     pub source_id: u16, // single source-of-truth stamp — see pipeline/lib/sources.ts
     pub name: String,   // OSM name tag (street/road name)
-    pub road_ref: String,   // OSM ref tag (D1, E55, I/35)
-    pub bridge: bool,       // road on bridge/viaduct
-    pub tunnel: bool,       // road in tunnel
-    pub access: u8,         // 0=default, 1=private, 2=no, 3=destination, 4=motor_vehicle=no (legacy), 5=permissive, 6=customers, 7=agricultural, 8=forestry
-    pub junction: u8,       // 0=default, 1=roundabout
+    pub road_ref: String, // OSM ref tag (D1, E55, I/35)
+    pub bridge: bool,   // road on bridge/viaduct
+    pub tunnel: bool,   // road in tunnel
+    pub access: u8, // 0=default, 1=private, 2=no, 3=destination, 4=motor_vehicle=no (legacy), 5=permissive, 6=customers, 7=agricultural, 8=forestry
+    pub junction: u8, // 0=default, 1=roundabout
     // Pre-computed by source-reader:
     pub dist_m: f64, // horizontal distance to receiver
     pub cp_lat: f64, // closest point on segment

@@ -35,68 +35,67 @@ pub struct RelationManifest {
 pub fn scan_relations(pbf_path: &Path) -> Result<RelationManifest> {
     let reader = ElementReader::from_path(pbf_path)?;
 
-    let manifest = reader
-        .par_map_reduce(
-            |element| {
-                let mut local = RelationManifest {
-                    way_to_relations: HashMap::new(),
-                    relations: HashMap::new(),
-                };
-                if let Element::Relation(rel) = element {
-                    // QM_OSM_ONLY scope: skip out-of-scope multipolygons here so
-                    // their members never enter the assembly manifest at all.
-                    if let Some((ftype, tags)) =
-                        classify_multipolygon(&rel).filter(|(ft, _)| crate::classify::scope_keeps(ft))
-                    {
-                        let mut rel_tags = Tags::new();
-                        for (k, v) in &tags {
-                            rel_tags.insert(k.clone(), v.clone());
-                        }
-                        let mut member_ways = Vec::new();
-                        for member in rel.members() {
-                            if member.member_type == RelMemberType::Way {
-                                let role = member.role().unwrap_or("outer").to_string();
-                                member_ways.push((member.member_id, role.clone()));
-                                local
-                                    .way_to_relations
-                                    .entry(member.member_id)
-                                    .or_default()
-                                    .push((rel.id(), role));
-                            }
-                        }
-                        if !member_ways.is_empty() {
-                            local.relations.insert(
-                                rel.id(),
-                                RelationInfo {
-                                    feature_type: ftype,
-                                    tags: rel_tags,
-                                    member_ways,
-                                },
-                            );
-                        }
-                    }
-                }
-                local
-            },
-            || RelationManifest {
+    let manifest = reader.par_map_reduce(
+        |element| {
+            let mut local = RelationManifest {
                 way_to_relations: HashMap::new(),
                 relations: HashMap::new(),
-            },
-            |mut a, b| {
-                // Relations are keyed by relation_id; conflicts impossible
-                // (each rel appears in exactly one PBF block).
-                a.relations.extend(b.relations);
-                // way_to_relations: same way can be a member of multiple
-                // relations across blocks, so we append instead of replace.
-                for (way_id, mut rels) in b.way_to_relations {
-                    a.way_to_relations
-                        .entry(way_id)
-                        .or_default()
-                        .append(&mut rels);
+            };
+            if let Element::Relation(rel) = element {
+                // QM_OSM_ONLY scope: skip out-of-scope multipolygons here so
+                // their members never enter the assembly manifest at all.
+                if let Some((ftype, tags)) =
+                    classify_multipolygon(&rel).filter(|(ft, _)| crate::classify::scope_keeps(ft))
+                {
+                    let mut rel_tags = Tags::new();
+                    for (k, v) in &tags {
+                        rel_tags.insert(k.clone(), v.clone());
+                    }
+                    let mut member_ways = Vec::new();
+                    for member in rel.members() {
+                        if member.member_type == RelMemberType::Way {
+                            let role = member.role().unwrap_or("outer").to_string();
+                            member_ways.push((member.member_id, role.clone()));
+                            local
+                                .way_to_relations
+                                .entry(member.member_id)
+                                .or_default()
+                                .push((rel.id(), role));
+                        }
+                    }
+                    if !member_ways.is_empty() {
+                        local.relations.insert(
+                            rel.id(),
+                            RelationInfo {
+                                feature_type: ftype,
+                                tags: rel_tags,
+                                member_ways,
+                            },
+                        );
+                    }
                 }
-                a
-            },
-        )?;
+            }
+            local
+        },
+        || RelationManifest {
+            way_to_relations: HashMap::new(),
+            relations: HashMap::new(),
+        },
+        |mut a, b| {
+            // Relations are keyed by relation_id; conflicts impossible
+            // (each rel appears in exactly one PBF block).
+            a.relations.extend(b.relations);
+            // way_to_relations: same way can be a member of multiple
+            // relations across blocks, so we append instead of replace.
+            for (way_id, mut rels) in b.way_to_relations {
+                a.way_to_relations
+                    .entry(way_id)
+                    .or_default()
+                    .append(&mut rels);
+            }
+            a
+        },
+    )?;
 
     eprintln!(
         "  Pass 0: {} multipolygon relations, {} member ways",
@@ -108,9 +107,7 @@ pub fn scan_relations(pbf_path: &Path) -> Result<RelationManifest> {
 }
 
 /// Decide whether a relation is one of the multipolygon flavours we track.
-fn classify_multipolygon(
-    rel: &osmpbf::Relation,
-) -> Option<(FeatureType, Vec<(String, String)>)> {
+fn classify_multipolygon(rel: &osmpbf::Relation) -> Option<(FeatureType, Vec<(String, String)>)> {
     let tags: Vec<(String, String)> = rel
         .tags()
         .map(|(k, v)| (k.to_string(), v.to_string()))

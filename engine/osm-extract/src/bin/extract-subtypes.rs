@@ -10,9 +10,9 @@
 //! Then patch Arrow files:
 //!   DATA_YEAR=2026 npx tsx pipeline/patch-industrial-subtype.ts subtypes.tsv
 
-use osmpbf::{ElementReader, Element};
-use std::env;
+use osmpbf::{Element, ElementReader};
 use std::collections::HashMap;
+use std::env;
 
 /// Classify from `industrial=*` tag (mirrors spill.rs site_subtype_from_tags).
 fn subtype_from_industrial_tag(val: &str) -> u8 {
@@ -35,11 +35,51 @@ fn subtype_from_industrial_tag(val: &str) -> u8 {
 /// Classify from `product=*` tag.
 fn subtype_from_product_tag(val: &str) -> u8 {
     let p = val.to_lowercase();
-    if p.contains("cement") || p.contains("concrete") || p.contains("brick") || p.contains("glass") || p.contains("ceramic") || p.contains("tile") { return 5; }
-    if p.contains("steel") || p.contains("iron") || p.contains("alumin") || p.contains("copper") || p.contains("metal") || p.contains("zinc") { return 6; }
-    if p.contains("chemical") || p.contains("petrol") || p.contains("oil") || p.contains("fuel") || p.contains("plastic") || p.contains("fertiliz") { return 4; }
-    if p.contains("food") || p.contains("sugar") || p.contains("beer") || p.contains("wine") || p.contains("flour") || p.contains("dairy") || p.contains("meat") { return 7; }
-    if p.contains("wood") || p.contains("paper") || p.contains("timber") || p.contains("lumber") || p.contains("pulp") { return 8; }
+    if p.contains("cement")
+        || p.contains("concrete")
+        || p.contains("brick")
+        || p.contains("glass")
+        || p.contains("ceramic")
+        || p.contains("tile")
+    {
+        return 5;
+    }
+    if p.contains("steel")
+        || p.contains("iron")
+        || p.contains("alumin")
+        || p.contains("copper")
+        || p.contains("metal")
+        || p.contains("zinc")
+    {
+        return 6;
+    }
+    if p.contains("chemical")
+        || p.contains("petrol")
+        || p.contains("oil")
+        || p.contains("fuel")
+        || p.contains("plastic")
+        || p.contains("fertiliz")
+    {
+        return 4;
+    }
+    if p.contains("food")
+        || p.contains("sugar")
+        || p.contains("beer")
+        || p.contains("wine")
+        || p.contains("flour")
+        || p.contains("dairy")
+        || p.contains("meat")
+    {
+        return 7;
+    }
+    if p.contains("wood")
+        || p.contains("paper")
+        || p.contains("timber")
+        || p.contains("lumber")
+        || p.contains("pulp")
+    {
+        return 8;
+    }
     0
 }
 
@@ -63,21 +103,26 @@ fn compute_subtype(tags: &[(String, String)]) -> u8 {
     for (k, v) in tags {
         if k == "industrial" {
             let st = subtype_from_industrial_tag(v);
-            if st > 0 { return st; }
+            if st > 0 {
+                return st;
+            }
         }
     }
     // Check product=*
     for (k, v) in tags {
         if k == "product" {
             let st = subtype_from_product_tag(v);
-            if st > 0 { return st; }
+            if st > 0 {
+                return st;
+            }
         }
     }
     // Check man_made=*
     // NOTE: wastewater_plant NOT classified — has dedicated source_type=4 profile (89 dB, 24/7)
     for (k, v) in tags {
-        if k == "man_made"
-            && v == "works" { return 2; }
+        if k == "man_made" && v == "works" {
+            return 2;
+        }
     }
     // Check landuse=*
     for (k, v) in tags {
@@ -91,7 +136,9 @@ fn compute_subtype(tags: &[(String, String)]) -> u8 {
     }
     // Check office=*
     for (k, _) in tags {
-        if k == "office" { return 11; }
+        if k == "office" {
+            return 11;
+        }
     }
     0
 }

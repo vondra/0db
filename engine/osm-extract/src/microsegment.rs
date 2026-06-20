@@ -24,8 +24,12 @@ fn flat_dist(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let mid_lat = (lat1 + lat2) / 2.0;
     let cos_lat = mid_lat.to_radians().cos();
     let mut dlon = lon2 - lon1;
-    if dlon > 180.0 { dlon -= 360.0; }
-    if dlon < -180.0 { dlon += 360.0; }
+    if dlon > 180.0 {
+        dlon -= 360.0;
+    }
+    if dlon < -180.0 {
+        dlon += 360.0;
+    }
     let dx = dlon * 111_320.0 * cos_lat;
     let dy = (lat2 - lat1) * 110_540.0;
     (dx * dx + dy * dy).sqrt()
@@ -39,12 +43,20 @@ pub fn bearing_deg(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f32 {
     let mid_lat = (lat1 + lat2) / 2.0;
     let cos_lat = mid_lat.to_radians().cos();
     let mut dlon = lon2 - lon1;
-    if dlon > 180.0 { dlon -= 360.0; }
-    if dlon < -180.0 { dlon += 360.0; }
+    if dlon > 180.0 {
+        dlon -= 360.0;
+    }
+    if dlon < -180.0 {
+        dlon += 360.0;
+    }
     let dx = dlon * cos_lat;
     let dy = lat2 - lat1;
     let bearing = dx.atan2(dy).to_degrees();
-    let normalised = if bearing < 0.0 { bearing + 360.0 } else { bearing };
+    let normalised = if bearing < 0.0 {
+        bearing + 360.0
+    } else {
+        bearing
+    };
     normalised as f32
 }
 
@@ -63,11 +75,19 @@ fn perp_distance_to_chord(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     let m_lon = 111_320.0 * cos_lat;
     let m_lat = 110_540.0;
     let mut bdlon = b[1] - a[1];
-    if bdlon > 180.0 { bdlon -= 360.0; }
-    if bdlon < -180.0 { bdlon += 360.0; }
+    if bdlon > 180.0 {
+        bdlon -= 360.0;
+    }
+    if bdlon < -180.0 {
+        bdlon += 360.0;
+    }
     let mut pdlon = p[1] - a[1];
-    if pdlon > 180.0 { pdlon -= 360.0; }
-    if pdlon < -180.0 { pdlon += 360.0; }
+    if pdlon > 180.0 {
+        pdlon -= 360.0;
+    }
+    if pdlon < -180.0 {
+        pdlon += 360.0;
+    }
     let bx = bdlon * m_lon;
     let by = (b[0] - a[0]) * m_lat;
     let px = pdlon * m_lon;
@@ -93,14 +113,22 @@ pub fn split(coords: &[[f64; 2]], max_length_m: f64) -> Vec<([f64; 2], [f64; 2],
     let mut i = 0usize;
     while i + 1 < coords.len() {
         let first_hop = flat_dist(
-            coords[i][0], coords[i][1],
-            coords[i + 1][0], coords[i + 1][1],
+            coords[i][0],
+            coords[i][1],
+            coords[i + 1][0],
+            coords[i + 1][1],
         );
 
         if first_hop > max_length_m {
             // Single vertex pair already exceeds the cap — fall back
             // to uniform interpolation for this pair.
-            interpolate_pair(coords[i], coords[i + 1], first_hop, max_length_m, &mut segments);
+            interpolate_pair(
+                coords[i],
+                coords[i + 1],
+                first_hop,
+                max_length_m,
+                &mut segments,
+            );
             i += 1;
             continue;
         }
@@ -112,10 +140,7 @@ pub fn split(coords: &[[f64; 2]], max_length_m: f64) -> Vec<([f64; 2], [f64; 2],
         let mut cum_len = first_hop;
         while j + 1 < coords.len() {
             let next = j + 1;
-            let extra = flat_dist(
-                coords[j][0], coords[j][1],
-                coords[next][0], coords[next][1],
-            );
+            let extra = flat_dist(coords[j][0], coords[j][1], coords[next][0], coords[next][1]);
             let candidate_len = cum_len + extra;
             if candidate_len > max_length_m {
                 break;
@@ -151,8 +176,12 @@ fn interpolate_pair(
 ) {
     let n = (dist / max_length_m).ceil() as usize;
     let mut dlon = b[1] - a[1];
-    if dlon > 180.0 { dlon -= 360.0; }
-    if dlon < -180.0 { dlon += 360.0; }
+    if dlon > 180.0 {
+        dlon -= 360.0;
+    }
+    if dlon < -180.0 {
+        dlon += 360.0;
+    }
     let seg_len = dist / n as f64;
     for j in 0..n {
         let t0 = j as f64 / n as f64;
@@ -179,11 +208,23 @@ mod tests {
         let mut coords = Vec::new();
         for i in 0..=10 {
             let t = i as f64 / 10.0;
-            coords.push([50.0, 14.0 + t * 100.0 / (111_320.0 * (50.0_f64.to_radians()).cos())]);
+            coords.push([
+                50.0,
+                14.0 + t * 100.0 / (111_320.0 * (50.0_f64.to_radians()).cos()),
+            ]);
         }
         let segs = split(&coords, 250.0);
-        assert_eq!(segs.len(), 1, "dense collinear polyline should merge to 1, got {}", segs.len());
-        assert!((segs[0].2 - 100.0).abs() < 1.0, "merged length ~100 m, got {}", segs[0].2);
+        assert_eq!(
+            segs.len(),
+            1,
+            "dense collinear polyline should merge to 1, got {}",
+            segs.len()
+        );
+        assert!(
+            (segs[0].2 - 100.0).abs() < 1.0,
+            "merged length ~100 m, got {}",
+            segs[0].2
+        );
     }
 
     /// 300 m straight line at 10 m spacing — should emit two segments
@@ -197,9 +238,17 @@ mod tests {
             coords.push([50.0, 14.0 + t * 300.0 / (111_320.0 * cos_lat)]);
         }
         let segs = split(&coords, 250.0);
-        assert_eq!(segs.len(), 2, "300 m polyline at max=250 m → 2 segs, got {}", segs.len());
+        assert_eq!(
+            segs.len(),
+            2,
+            "300 m polyline at max=250 m → 2 segs, got {}",
+            segs.len()
+        );
         let total: f32 = segs.iter().map(|s| s.2).sum();
-        assert!((total - 300.0).abs() < 1.0, "total length ~300 m, got {total}");
+        assert!(
+            (total - 300.0).abs() < 1.0,
+            "total length ~300 m, got {total}"
+        );
     }
 
     /// A sharp 90° corner mid-polyline breaks the chord tolerance so
@@ -232,12 +281,14 @@ mod tests {
     #[test]
     fn long_single_hop_uses_uniform_interpolation_fallback() {
         let cos_lat = (50.0_f64.to_radians()).cos();
-        let coords = vec![
-            [50.0, 14.0],
-            [50.0, 14.0 + 600.0 / (111_320.0 * cos_lat)],
-        ];
+        let coords = vec![[50.0, 14.0], [50.0, 14.0 + 600.0 / (111_320.0 * cos_lat)]];
         let segs = split(&coords, 250.0);
-        assert_eq!(segs.len(), 3, "600 m / 250 m max → 3 interpolated segs, got {}", segs.len());
+        assert_eq!(
+            segs.len(),
+            3,
+            "600 m / 250 m max → 3 interpolated segs, got {}",
+            segs.len()
+        );
         for s in &segs {
             assert!(
                 s.2 <= 250.0 + 0.5,

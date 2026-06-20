@@ -62,7 +62,11 @@ pub(super) fn emit_segment_traces(
             }
             out
         };
-        PerPeriod { day: calc(0), evening: calc(1), night: calc(2) }
+        PerPeriod {
+            day: calc(0),
+            evening: calc(1),
+            night: calc(2),
+        }
     };
     // A-weighted scalar Lw per period — sum-of-energies across the
     // 8 A-weighted bands divided by `n_days × period_seconds × length`.
@@ -78,7 +82,11 @@ pub(super) fn emit_segment_traces(
                 .sum();
             aircraft::period_leq(lin_a / acc.length_m, n_days_f, ps)
         };
-        PerPeriod { day: calc(0), evening: calc(1), night: calc(2) }
+        PerPeriod {
+            day: calc(0),
+            evening: calc(1),
+            night: calc(2),
+        }
     };
     // Per-band received Lp at the popup point — already A-weighted
     // and propagation-applied in the hot loop. Divide by
@@ -88,15 +96,16 @@ pub(super) fn emit_segment_traces(
             let mut out = [f64::NEG_INFINITY; NUM_BANDS];
             let ps = aircraft::PERIOD_SECONDS[p];
             for i in 0..NUM_BANDS {
-                out[i] = aircraft::period_leq(
-                    acc.received_bands_lin_per_period[p][i],
-                    n_days_f,
-                    ps,
-                );
+                out[i] =
+                    aircraft::period_leq(acc.received_bands_lin_per_period[p][i], n_days_f, ps);
             }
             out
         };
-        PerPeriod { day: calc(0), evening: calc(1), night: calc(2) }
+        PerPeriod {
+            day: calc(0),
+            evening: calc(1),
+            night: calc(2),
+        }
     };
 
     let periods_from_energy = |pe: [f64; 3]| -> crate::types::NoisePeriods {
@@ -133,8 +142,7 @@ pub(super) fn emit_segment_traces(
     }
     by_lden.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     by_lden.truncate(GROUND_TRACE_CAP);
-    let keep: std::collections::HashSet<(u64, u16)> =
-        by_lden.into_iter().map(|(k, _)| k).collect();
+    let keep: std::collections::HashSet<(u64, u16)> = by_lden.into_iter().map(|(k, _)| k).collect();
 
     for ((osm_id, segment_idx), acc) in by_microseg {
         if !keep.contains(&(osm_id, segment_idx)) {
@@ -150,7 +158,11 @@ pub(super) fn emit_segment_traces(
         // attributable to that effect at THIS specific microsegment.
         let lden_or_neg_inf = |pe: [f64; 3]| -> f64 {
             let v = periods_from_energy(pe).lden_db;
-            if v.is_finite() { v } else { f64::NEG_INFINITY }
+            if v.is_finite() {
+                v
+            } else {
+                f64::NEG_INFINITY
+            }
         };
         let lden_no_terrain = lden_or_neg_inf(acc.period_energy_no_terrain);
         let lden_no_screening = lden_or_neg_inf(acc.period_energy_no_screening);
@@ -281,9 +293,8 @@ pub(super) fn emit_segment_traces(
         let arrivals_per_day = split(acc.unique_arr_count, acc.unique_ga_arr_count);
         let departures_per_day = split(acc.unique_dep_count, acc.unique_ga_dep_count);
         // GSE is airline-pass only — no GA split.
-        let gse_per_day: [f64; NUM_GSE_CLASSES] = std::array::from_fn(|i| {
-            acc.unique_gse_count_per_class[i] as f64 / n_days_f
-        });
+        let gse_per_day: [f64; NUM_GSE_CLASSES] =
+            std::array::from_fn(|i| acc.unique_gse_count_per_class[i] as f64 / n_days_f);
         // Top-3 aircraft classes by energy share at this microsegment.
         // Mirrors the airport-level `profile_mix` so the popup row
         // can use the same renderer.
@@ -399,7 +410,10 @@ pub(super) fn emit_segment_traces(
                 no_atmospheric: lden_no_atmospheric,
             },
             aircraft_subtype: 1,
-            polyline: Some(vec![(acc.start_lat, acc.start_lon), (acc.end_lat, acc.end_lon)]),
+            polyline: Some(vec![
+                (acc.start_lat, acc.start_lon),
+                (acc.end_lat, acc.end_lon),
+            ]),
             hex_polygon: None,
             cruise_buckets: None,
             cruise_top_flights: None,

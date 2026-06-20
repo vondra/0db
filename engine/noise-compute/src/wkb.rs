@@ -314,7 +314,11 @@ pub(crate) fn parse_wkb_polygons(wkb_hex: &str) -> Vec<WkbPoly> {
         .step_by(2)
         // `.get` (not `&wkb_hex[..]`) so an odd-length hex string can't panic on the
         // final 1-char slice.
-        .filter_map(|i| wkb_hex.get(i..i + 2).and_then(|s| u8::from_str_radix(s, 16).ok()))
+        .filter_map(|i| {
+            wkb_hex
+                .get(i..i + 2)
+                .and_then(|s| u8::from_str_radix(s, 16).ok())
+        })
         .collect();
     if bytes.len() < 9 {
         return Vec::new();
@@ -599,7 +603,10 @@ mod tests {
             (50.000, 14.100),
         ];
         // parse must yield both sub-polygons.
-        assert_eq!(parse_wkb_polygons(&multipolygon_wkb(&[&[a], &[b]])).len(), 2);
+        assert_eq!(
+            parse_wkb_polygons(&multipolygon_wkb(&[&[a], &[b]])).len(),
+            2
+        );
         let cells = wkb_area_grid_points(&multipolygon_wkb(&[&[a], &[b]]), 75.0, 5);
         assert!(cells.iter().any(|c| c.lon < 14.05), "no cells in part A");
         assert!(

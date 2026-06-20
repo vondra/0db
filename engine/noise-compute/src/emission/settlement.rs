@@ -292,9 +292,7 @@ mod tests {
     #[test]
     fn food_retail_runs_at_night() {
         assert_eq!(building_profile(FOOD_RETAIL).night_offset, -2.0);
-        assert!(
-            building_profile(FOOD_RETAIL).night_offset > building_profile(3).night_offset
-        );
+        assert!(building_profile(FOOD_RETAIL).night_offset > building_profile(3).night_offset);
         // Food retail is materially louder than generic commercial (class 1).
         let fr = building_lw(&building_profile(FOOD_RETAIL), 1000.0, 1);
         let co = building_lw(&building_profile(1), 1000.0, 1);

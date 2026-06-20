@@ -168,7 +168,10 @@ fn compute_at_point_inner(
     // new `lden_free`, previously always null).
     let contrib_periods_free = |contribs: &[Contributor]| -> NoisePeriods {
         periods::sum_periods(
-            &contribs.iter().map(|c| c.periods_free.clone()).collect::<Vec<_>>(),
+            &contribs
+                .iter()
+                .map(|c| c.periods_free.clone())
+                .collect::<Vec<_>>(),
         )
     };
 
@@ -340,7 +343,15 @@ pub fn industrial_periods(
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
 ) -> NoisePeriods {
-    compute_point_sources(receiver, sources, barriers, rasters, LayerKind::Industrial, None).0
+    compute_point_sources(
+        receiver,
+        sources,
+        barriers,
+        rasters,
+        LayerKind::Industrial,
+        None,
+    )
+    .0
 }
 
 /// Building [`NoisePeriods`] at a receiver — the popup point-source path
@@ -354,13 +365,16 @@ pub fn building_periods(
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
 ) -> NoisePeriods {
-    compute_point_sources(receiver, sources, barriers, rasters, LayerKind::Building, None).0
+    compute_point_sources(
+        receiver,
+        sources,
+        barriers,
+        rasters,
+        LayerKind::Building,
+        None,
+    )
+    .0
 }
-
-
-
-
-
 
 /// Compute terrain/screening/vegetation path effects for one source-receiver pair.
 /// Returns (TerrainBreakdown, ScreeningBreakdown, VegetationBreakdown).
@@ -391,16 +405,21 @@ pub fn compute_path_effects(
     // `propagate_variants_full`; popup derives A-weighted `ΔL_A` from the
     // Contributor-level variant Lden deltas instead of any scalar here.
     let (terrain, terrain_profile_points) =
-        propagation::path_effects::terrain_attenuation_with_meta(&mut path_profile, src_height, rcv_alt);
+        propagation::path_effects::terrain_attenuation_with_meta(
+            &mut path_profile,
+            src_height,
+            rcv_alt,
+        );
 
-    let (_screening_atten, obstacle_trace) = propagation::path_effects::screening_attenuation_with_meta(
-        &mut path_profile,
-        barriers,
-        src_height,
-        rcv_alt,
-        exclusion_radius_m,
-        &terrain.attenuation_bands,
-    );
+    let (_screening_atten, obstacle_trace) =
+        propagation::path_effects::screening_attenuation_with_meta(
+            &mut path_profile,
+            barriers,
+            src_height,
+            rcv_alt,
+            exclusion_radius_m,
+            &terrain.attenuation_bands,
+        );
 
     let forest_depth = propagation::path_profile::vegetation_run_length(
         &path_profile.t,
@@ -704,7 +723,9 @@ mod tests {
         // legacy compute_aircraft was deleted. Reconstruct the same
         // 5 flights/day × 365 d B738 approach traffic as
         // `AirborneRowView`s and assert Lden via the v6 entry point.
-        use crate::compute::aircraft_v6::{compute_aircraft_v6, AirborneRowView, BBox, SubSegmentSlice};
+        use crate::compute::aircraft_v6::{
+            compute_aircraft_v6, AirborneRowView, BBox, SubSegmentSlice,
+        };
 
         let receiver = Receiver::new(50.08, 14.42, 200.0);
         let total_flights = 1825u64;

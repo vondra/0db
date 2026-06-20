@@ -14,9 +14,7 @@ use crate::types::AircraftSegment;
 
 use super::horizon::ReceiverHorizon;
 
-use super::npd::{
-    AIRCRAFT_FAR_FIELD_THRESHOLD_M, FT_PER_M, Installation, NpdLuts, NpdProfile,
-};
+use super::npd::{Installation, NpdLuts, NpdProfile, AIRCRAFT_FAR_FIELD_THRESHOLD_M, FT_PER_M};
 
 // Doc 29 reference value — slightly higher precision than the
 // crate-wide `crate::constants::M_PER_DEG_LAT` (110_540.0) used by the
@@ -65,7 +63,11 @@ pub fn segment_min_slant_sq(
     // degenerate segments (sub-mm horizontal length) `inv_lsq = 0` makes
     // `t = 0`, which is also what the kernel sees — pre-filter never
     // takes a different branch from the kernel.
-    let inv_lsq = if seg_len_sq > 1e-6 { 1.0 / seg_len_sq } else { 0.0 };
+    let inv_lsq = if seg_len_sq > 1e-6 {
+        1.0 / seg_len_sq
+    } else {
+        0.0
+    };
     let t = -(x1 * dx + y1 * dy) * inv_lsq;
     let cx = x1 + t * dx;
     let cy = y1 + t * dy;
@@ -173,7 +175,10 @@ pub fn clamped_display_cpa(cpa: &CpaResult, sdz: f64) -> (f64, f64) {
     let back = cpa.t - tc;
     let along_m = back * cpa.seg_len_m;
     let rel_alt = cpa.relative_alt_m - back * sdz;
-    ((cpa.lateral_m * cpa.lateral_m + along_m * along_m + rel_alt * rel_alt).sqrt(), rel_alt)
+    (
+        (cpa.lateral_m * cpa.lateral_m + along_m * along_m + rel_alt * rel_alt).sqrt(),
+        rel_alt,
+    )
 }
 
 /// ΔV = 10 × log10(V_ref / V_seg) (Doc 29 §4.5.1, Eq. 4-14).
@@ -286,8 +291,7 @@ pub fn fast_lateral_attenuation(
         1.0
     };
 
-    let lambda_beta =
-        1.137 - 0.0229 * beta_deg + 9.72 * fast_exp_f64(-0.142 * beta_deg);
+    let lambda_beta = 1.137 - 0.0229 * beta_deg + 9.72 * fast_exp_f64(-0.142 * beta_deg);
     gamma * lambda_beta
 }
 
@@ -630,23 +634,45 @@ mod tests {
 
     #[test]
     fn test_cpa_alongside() {
-        let cpa = compute_cpa(50.005, 14.01, 300.0, 50.0, 14.0, 1000.0, 50.01, 14.0, 1000.0);
+        let cpa = compute_cpa(
+            50.005, 14.01, 300.0, 50.0, 14.0, 1000.0, 50.01, 14.0, 1000.0,
+        );
         assert!(cpa.q_m > 0.0, "q should be positive");
-        assert!(cpa.d_p_m > 500.0 && cpa.d_p_m < 2000.0, "d_p = {}", cpa.d_p_m);
-        assert!(cpa.beta_deg > 20.0 && cpa.beta_deg < 70.0, "β = {}", cpa.beta_deg);
+        assert!(
+            cpa.d_p_m > 500.0 && cpa.d_p_m < 2000.0,
+            "d_p = {}",
+            cpa.d_p_m
+        );
+        assert!(
+            cpa.beta_deg > 20.0 && cpa.beta_deg < 70.0,
+            "β = {}",
+            cpa.beta_deg
+        );
     }
 
     #[test]
     fn test_cpa_behind_segment() {
         let cpa = compute_cpa(49.99, 14.01, 300.0, 50.0, 14.0, 1000.0, 50.01, 14.0, 1000.0);
-        assert!(cpa.q_m < 0.0, "q should be negative (behind), got {}", cpa.q_m);
+        assert!(
+            cpa.q_m < 0.0,
+            "q should be negative (behind), got {}",
+            cpa.q_m
+        );
     }
 
     #[test]
     fn test_cpa_directly_below() {
         let cpa = compute_cpa(50.005, 14.0, 300.0, 50.0, 14.0, 3000.0, 50.01, 14.0, 3000.0);
-        assert!(cpa.lateral_m < 50.0, "lateral should be ~0, got {}", cpa.lateral_m);
-        assert!(cpa.beta_deg > 80.0, "β should be ~90°, got {}", cpa.beta_deg);
+        assert!(
+            cpa.lateral_m < 50.0,
+            "lateral should be ~0, got {}",
+            cpa.lateral_m
+        );
+        assert!(
+            cpa.beta_deg > 80.0,
+            "β should be ~90°, got {}",
+            cpa.beta_deg
+        );
     }
 
     #[test]
@@ -654,10 +680,26 @@ mod tests {
         let cpa = compute_cpa(
             49.7846, 14.0306, 684.0, 49.7813, 14.0350, 0.0, 49.7863, 14.0283, 0.0,
         );
-        assert!(cpa.lateral_m < 50.0, "lateral should stay near the ridge crossing, got {}", cpa.lateral_m);
-        assert!(cpa.relative_alt_m < -600.0, "relative altitude should stay signed, got {}", cpa.relative_alt_m);
-        assert!(cpa.d_p_m > 600.0, "slant distance should include the vertical gap, got {}", cpa.d_p_m);
-        assert!(cpa.beta_deg < 0.0, "beta should be negative for segments below the receiver, got {}", cpa.beta_deg);
+        assert!(
+            cpa.lateral_m < 50.0,
+            "lateral should stay near the ridge crossing, got {}",
+            cpa.lateral_m
+        );
+        assert!(
+            cpa.relative_alt_m < -600.0,
+            "relative altitude should stay signed, got {}",
+            cpa.relative_alt_m
+        );
+        assert!(
+            cpa.d_p_m > 600.0,
+            "slant distance should include the vertical gap, got {}",
+            cpa.d_p_m
+        );
+        assert!(
+            cpa.beta_deg < 0.0,
+            "beta should be negative for segments below the receiver, got {}",
+            cpa.beta_deg
+        );
     }
 
     /// Curving-departure phantom: a short, high segment ~7 km from the receiver
@@ -672,12 +714,26 @@ mod tests {
             50.1700, 14.4197, 1509.0, // segment start (39d311 climb leg)
             50.1711, 14.4204, 1532.0, // segment end
         );
-        assert!(cpa.d_p_m < 100.0, "unclamped d_p is the phantom, got {}", cpa.d_p_m);
-        assert!(cpa.t < 0.0, "foot lies before the segment, got t = {}", cpa.t);
+        assert!(
+            cpa.d_p_m < 100.0,
+            "unclamped d_p is the phantom, got {}",
+            cpa.d_p_m
+        );
+        assert!(
+            cpa.t < 0.0,
+            "foot lies before the segment, got t = {}",
+            cpa.t
+        );
 
         let (dist, alt) = clamped_display_cpa(&cpa, 1532.0 - 1509.0);
-        assert!(dist > 5000.0, "clamped distance should be the real far approach, got {dist}");
-        assert!(alt > 1000.0, "clamped altitude should be the real climb height, got {alt}");
+        assert!(
+            dist > 5000.0,
+            "clamped distance should be the real far approach, got {dist}"
+        );
+        assert!(
+            alt > 1000.0,
+            "clamped altitude should be the real climb height, got {alt}"
+        );
     }
 
     /// Foot inside the segment → clamp is a bit-for-bit no-op (returns the
@@ -685,8 +741,14 @@ mod tests {
     /// identical to today and can't wobble a `round1` band boundary).
     #[test]
     fn clamped_display_cpa_noop_when_foot_inside() {
-        let cpa = compute_cpa(50.005, 14.01, 300.0, 50.0, 14.0, 1000.0, 50.01, 14.0, 1000.0);
-        assert!((0.0..=1.0).contains(&cpa.t), "foot should be inside, got t = {}", cpa.t);
+        let cpa = compute_cpa(
+            50.005, 14.01, 300.0, 50.0, 14.0, 1000.0, 50.01, 14.0, 1000.0,
+        );
+        assert!(
+            (0.0..=1.0).contains(&cpa.t),
+            "foot should be inside, got t = {}",
+            cpa.t
+        );
         let (dist, alt) = clamped_display_cpa(&cpa, 0.0);
         assert_eq!(dist, cpa.d_p_m);
         assert_eq!(alt, cpa.relative_alt_m);
@@ -699,11 +761,22 @@ mod tests {
     fn clamped_display_cpa_winds_back_to_end_when_foot_past_segment() {
         // N–S climbing segment at lon 14.0; receiver due north of the end.
         let cpa = compute_cpa(50.02, 14.0, 300.0, 50.0, 14.0, 1000.0, 50.01, 14.0, 1100.0);
-        assert!(cpa.t > 1.0, "foot should lie past the segment end, got t = {}", cpa.t);
+        assert!(
+            cpa.t > 1.0,
+            "foot should lie past the segment end, got t = {}",
+            cpa.t
+        );
         let (dist, alt) = clamped_display_cpa(&cpa, 1100.0 - 1000.0);
         // Altitude winds back to the end endpoint (1100 − 300 = 800 m).
-        assert!((alt - 800.0).abs() < 1.0, "clamped altitude should be the end height, got {alt}");
-        assert!(dist > cpa.d_p_m, "clamped distance should exceed the unclamped foot, got {dist} vs {}", cpa.d_p_m);
+        assert!(
+            (alt - 800.0).abs() < 1.0,
+            "clamped altitude should be the end height, got {alt}"
+        );
+        assert!(
+            dist > cpa.d_p_m,
+            "clamped distance should exceed the unclamped foot, got {dist} vs {}",
+            cpa.d_p_m
+        );
     }
 
     #[test]
@@ -760,9 +833,20 @@ mod tests {
 
     #[test]
     fn test_fast_lateral_non_wing_installations_zero() {
-        for &(rel_alt, lat) in &[(50.0, 500.0), (200.0, 500.0), (1000.0, 500.0), (5000.0, 100.0)] {
-            assert_eq!(fast_lateral_attenuation(rel_alt, lat, false, Installation::Fuselage), 0.0);
-            assert_eq!(fast_lateral_attenuation(rel_alt, lat, false, Installation::Propeller), 0.0);
+        for &(rel_alt, lat) in &[
+            (50.0, 500.0),
+            (200.0, 500.0),
+            (1000.0, 500.0),
+            (5000.0, 100.0),
+        ] {
+            assert_eq!(
+                fast_lateral_attenuation(rel_alt, lat, false, Installation::Fuselage),
+                0.0
+            );
+            assert_eq!(
+                fast_lateral_attenuation(rel_alt, lat, false, Installation::Propeller),
+                0.0
+            );
         }
     }
 
@@ -799,8 +883,8 @@ mod tests {
         let profile = &PROFILES[CLASS_REP_PROFILE_IDX[class_idx] as usize];
         let (inst_code, di_a, di_b, di_c) = delta_i_constants(profile.installation);
         let reach_sq = REACH_SQ_TABLE[class_idx][1]; // departure
-        // Geometry: 20 km-long flight at 8 km altitude, receiver 8 km
-        // off to the side at sea level → slant ~11 km (far field).
+                                                     // Geometry: 20 km-long flight at 8 km altitude, receiver 8 km
+                                                     // off to the side at sea level → slant ~11 km (far field).
         let start_x = -10_000.0;
         let start_y = 8_000.0;
         let end_x = 10_000.0;
@@ -810,11 +894,29 @@ mod tests {
         let kernel = |ax: f64, ay: f64, sdx: f64, sdy: f64, slen: f64| {
             let inv_lsq = 1.0 / (sdx * sdx + sdy * sdy);
             segment_energy_kernel::<true>(
-                ax, ay, sdx, sdy, 0.0,
-                alt_m, inv_lsq, slen, 0.0,
-                npd_luts, class_idx, true, dv,
-                profile.d_bar_m, inst_code, di_a, di_b, di_c,
-                false, reach_sq, f64::MIN, f64::MIN, None,
+                ax,
+                ay,
+                sdx,
+                sdy,
+                0.0,
+                alt_m,
+                inv_lsq,
+                slen,
+                0.0,
+                npd_luts,
+                class_idx,
+                true,
+                dv,
+                profile.d_bar_m,
+                inst_code,
+                di_a,
+                di_b,
+                di_c,
+                false,
+                reach_sq,
+                f64::MIN,
+                f64::MIN,
+                None,
             )
         };
         // One aggregated segment.

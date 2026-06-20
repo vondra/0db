@@ -58,7 +58,7 @@ pub fn finalize_popup_contributors(
 mod tests {
     use super::*;
     use crate::types::{
-        Contributor, NoisePeriods, PropagationBaseline, ScreeningBreakdown, LayerKind,
+        Contributor, LayerKind, NoisePeriods, PropagationBaseline, ScreeningBreakdown,
         TerrainBreakdown, VegetationBreakdown,
     };
 
@@ -115,8 +115,7 @@ mod tests {
         assert_eq!(r.shown[1].periods.lden_db, 11.0);
         // Other: Railway 10 + Industrial 9 (dropped by top_n) + Building -1 (below threshold).
         let expect = 10.0
-            * (10f64.powf(10.0 / 10.0) + 10f64.powf(9.0 / 10.0) + 10f64.powf(-1.0 / 10.0))
-                .log10();
+            * (10f64.powf(10.0 / 10.0) + 10f64.powf(9.0 / 10.0) + 10f64.powf(-1.0 / 10.0)).log10();
         assert!((r.other_lden_db - expect).abs() < 1e-9);
     }
 
@@ -146,10 +145,8 @@ mod tests {
         // All three below threshold → none shown, all aggregated.
         assert_eq!(r.shown.len(), 0);
         let expect = 10.0
-            * (10f64.powf(-5.0 / 10.0)
-                + 10f64.powf(-10.0 / 10.0)
-                + 10f64.powf(-2.0 / 10.0))
-            .log10();
+            * (10f64.powf(-5.0 / 10.0) + 10f64.powf(-10.0 / 10.0) + 10f64.powf(-2.0 / 10.0))
+                .log10();
         assert!((r.other_lden_db - expect).abs() < 1e-9);
     }
 }

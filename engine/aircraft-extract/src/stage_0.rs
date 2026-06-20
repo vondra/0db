@@ -23,7 +23,10 @@ pub fn run_stage_0(
     day_str: &str,
     output_root: &Path,
 ) -> Result<usize> {
-    started("stage0", &format!("day={day_str}, sources={}", sources.len()));
+    started(
+        "stage0",
+        &format!("day={day_str}, sources={}", sources.len()),
+    );
     let mut all = Vec::new();
     for s in sources {
         let mut flights = s
@@ -93,8 +96,7 @@ mod tests {
             return;
         }
         let out = tempdir().unwrap();
-        let sources: Vec<Box<dyn FlightSource>> =
-            vec![Box::new(AdsbTarSource::new(root))];
+        let sources: Vec<Box<dyn FlightSource>> = vec![Box::new(AdsbTarSource::new(root))];
         let n = run_stage_0(&sources, "2025-01-21", out.path()).unwrap();
         assert!(n > 100, "got {n}");
         let path = out.path().join("2025-01-21.arrow");

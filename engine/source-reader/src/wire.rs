@@ -17,9 +17,9 @@
 //! `compute_time_ms` placeholder.
 
 use noise_compute::types::{
-    Contributor, LayerKind, NoiseResult, PropagationBaseline, ScreeningBreakdown,
-    SegmentTrace, SegmentTracesSummary, SourceMetadata, SourceResult,
-    TerrainBreakdown, VegetationBreakdown, NUM_BANDS,
+    Contributor, LayerKind, NoiseResult, PropagationBaseline, ScreeningBreakdown, SegmentTrace,
+    SegmentTracesSummary, SourceMetadata, SourceResult, TerrainBreakdown, VegetationBreakdown,
+    NUM_BANDS,
 };
 use serde::Serialize;
 
@@ -41,7 +41,11 @@ fn round1(v: f64) -> f64 {
 /// `?? c.received_lden ?? 0`.
 #[inline]
 fn finite_or_zero(v: f64) -> f64 {
-    if v.is_finite() { v } else { 0.0 }
+    if v.is_finite() {
+        v
+    } else {
+        0.0
+    }
 }
 
 #[derive(Serialize)]
@@ -192,12 +196,7 @@ pub struct WireResult {
     pub timings: Option<WireTimings>,
 }
 
-pub fn build_wire_result(
-    result: NoiseResult,
-    lat: f64,
-    lng: f64,
-    elevation: f64,
-) -> WireResult {
+pub fn build_wire_result(result: NoiseResult, lat: f64, lng: f64, elevation: f64) -> WireResult {
     WireResult {
         h3_index: String::new(),
         h3_center: [lat, lng],

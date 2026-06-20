@@ -322,18 +322,18 @@ mod tests {
     fn airborne_with_terrain_rejects_steep_climb_below_midpath_peak() {
         let seg = AircraftSegment {
             flight_id: 1,
-            profile_idx: 0,            // jet
+            profile_idx: 0, // jet
             is_departure: true,
             on_ground: false,
             period: 0,
             date_id: 0,
-            start_lat: 47.25,           // LOWI-ish geometry
+            start_lat: 47.25, // LOWI-ish geometry
             start_lon: 11.34,
-            start_alt_m: 1000.0,        // lowland start
+            start_alt_m: 1000.0, // lowland start
             end_lat: 47.27,
             end_lon: 11.40,
-            end_alt_m: 2000.0,          // higher end (still below peak)
-            speed_kt: 200.0,            // jet ≥ 80 kt
+            end_alt_m: 2000.0, // higher end (still below peak)
+            speed_kt: 200.0,   // jet ≥ 80 kt
             segment_length_m: 5000.0,
             ground_context: GROUND_CONTEXT_NONE,
             ground_ops_kind: GROUND_OPS_KIND_NONE,
@@ -342,11 +342,11 @@ mod tests {
             source_id: AIRCRAFT_ADSB_SOURCE_ID,
         };
         let terrain = SegmentTerrain {
-            start_elev: 700.0,  // start AGL = 300 m, OK
-            q1_elev: 1100.0,    // q1_alt = 1250 → AGL = 150, OK
-            mid_elev: 1800.0,   // peak  → mid_alt = 1500 m → AGL = -300 m
-            q3_elev: 1750.0,    // q3_alt = 1750 → AGL = 0, OK
-            end_elev: 1700.0,   // end   AGL = 300 m, OK
+            start_elev: 700.0, // start AGL = 300 m, OK
+            q1_elev: 1100.0,   // q1_alt = 1250 → AGL = 150, OK
+            mid_elev: 1800.0,  // peak  → mid_alt = 1500 m → AGL = -300 m
+            q3_elev: 1750.0,   // q3_alt = 1750 → AGL = 0, OK
+            end_elev: 1700.0,  // end   AGL = 300 m, OK
         };
         // max_alt = 2000 ≥ mid_elev - 30 = 1770: passes the max gate.
         // mid_alt = 1500 < mid_elev - 30 = 1770: fails the mid gate.
@@ -388,8 +388,8 @@ mod tests {
         // q1_alt - q1_elev = -250 m. Other points safe.
         let terrain = SegmentTerrain {
             start_elev: 700.0,
-            q1_elev: 1500.0,   // narrow ridge at frac=0.25
-            mid_elev: 1100.0,  // dips back
+            q1_elev: 1500.0,  // narrow ridge at frac=0.25
+            mid_elev: 1100.0, // dips back
             q3_elev: 1500.0,
             end_elev: 1700.0,
         };
@@ -486,8 +486,8 @@ mod tests {
             end_lat: 50.001,
             end_lon: 14.001,
             end_alt_m: 252.0,
-            speed_kt: 60.0,             // would trigger RUNWAY_ROLL for fixed-wing
-            segment_length_m: 800.0,    // ditto
+            speed_kt: 60.0,          // would trigger RUNWAY_ROLL for fixed-wing
+            segment_length_m: 800.0, // ditto
             ground_context: GROUND_CONTEXT_AIRPORT_LINE,
             ground_ops_kind: GROUND_OPS_KIND_NONE,
             count_weight: 1.0,
@@ -501,7 +501,10 @@ mod tests {
             segment_length_m: 50.0,
             ..fast_seg.clone()
         };
-        assert_eq!(ground_ops_kind_fallback(&slow_seg), GROUND_OPS_KIND_APRON_MOVEMENT);
+        assert_eq!(
+            ground_ops_kind_fallback(&slow_seg),
+            GROUND_OPS_KIND_APRON_MOVEMENT
+        );
 
         // Sanity: a non-helicopter (B738) at the same fast settings still
         // hits RUNWAY_ROLL. Confirms the gate is helicopter-specific.
@@ -510,6 +513,9 @@ mod tests {
             profile_idx: jet_profile_idx,
             ..fast_seg
         };
-        assert_eq!(ground_ops_kind_fallback(&jet_seg), GROUND_OPS_KIND_RUNWAY_ROLL);
+        assert_eq!(
+            ground_ops_kind_fallback(&jet_seg),
+            GROUND_OPS_KIND_RUNWAY_ROLL
+        );
     }
 }

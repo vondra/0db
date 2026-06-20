@@ -256,8 +256,7 @@ pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {
         let unique_mov = column::<UInt32Array>(&b, "unique_movement_count")?;
         let unique_arr = column::<UInt32Array>(&b, "unique_arr_count")?;
         let unique_dep = column::<UInt32Array>(&b, "unique_dep_count")?;
-        let unique_gse_list =
-            column::<FixedSizeListArray>(&b, "unique_gse_count_per_class")?;
+        let unique_gse_list = column::<FixedSizeListArray>(&b, "unique_gse_count_per_class")?;
         let gse_buf = unique_gse_list
             .values()
             .as_any()
@@ -357,8 +356,8 @@ mod tests {
             ops_kind: 1, // runway
             is_departure: 1,
             veh_kind: 0,
-            class_idx: 2,  // WING_B738
-            period: 0,     // day
+            class_idx: 2, // WING_B738
+            period: 0,    // day
             // 8 strictly distinct values — a transposition of any two
             // positions changes the read-back.
             band_energy_lin: [1.0e6, 2.0e6, 3.0e6, 4.0e6, 5.0e6, 6.0e6, 7.0e6, 8.0e6],
@@ -408,7 +407,9 @@ mod tests {
         row_gse.microseg_unique_ga_arr_count = 0;
         row_gse.microseg_unique_ga_dep_count = 0;
         // Distinct band values so a row offset bug surfaces.
-        row_gse.band_energy_lin = [10.0e6, 20.0e6, 30.0e6, 40.0e6, 50.0e6, 60.0e6, 70.0e6, 80.0e6];
+        row_gse.band_energy_lin = [
+            10.0e6, 20.0e6, 30.0e6, 40.0e6, 50.0e6, 60.0e6, 70.0e6, 80.0e6,
+        ];
         let rows = vec![sample_row(), row_gse.clone()];
         write_airport_traffic(&path, &rows, 14, 365).unwrap();
         let read = read_airport_traffic(&path).unwrap();

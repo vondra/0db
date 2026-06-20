@@ -115,7 +115,10 @@ impl NodeCache {
             let file = OpenOptions::new().read(true).write(true).open(cache_path);
             if let Ok(file) = file {
                 if file.metadata().map(|m| m.len()).ok() == Some(file_size) {
-                    eprintln!("  node cache: REUSING {} (QM_REUSE_NODE_CACHE=1)", cache_path.display());
+                    eprintln!(
+                        "  node cache: REUSING {} (QM_REUSE_NODE_CACHE=1)",
+                        cache_path.display()
+                    );
                     let mmap = unsafe { MmapMut::map_mut(&file)? };
                     return Ok(NodeCache { mmap, count: 0 });
                 }

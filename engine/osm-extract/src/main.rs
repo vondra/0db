@@ -260,9 +260,7 @@ fn main() -> Result<()> {
                         && (coords[0][0] - coords.last().unwrap()[0]).abs() < 1e-7
                         && (coords[0][1] - coords.last().unwrap()[1]).abs() < 1e-7
                         && matches!(
-                            way.tags()
-                                .find(|(k, _)| *k == "aeroway")
-                                .map(|(_, v)| v),
+                            way.tags().find(|(k, _)| *k == "aeroway").map(|(_, v)| v),
                             Some("runway") | Some("airstrip")
                         )
                     {
@@ -344,8 +342,14 @@ fn main() -> Result<()> {
                 }
                 if let Some(kind) = classify::node_kind_node(&node) {
                     let tags = classify::extract_node_settlement_tags_node(&node);
-                    features_total +=
-                        emit_settlement_node(&mut spiller, kind, node.id(), node.lat(), node.lon(), &tags);
+                    features_total += emit_settlement_node(
+                        &mut spiller,
+                        kind,
+                        node.id(),
+                        node.lat(),
+                        node.lon(),
+                        &tags,
+                    );
                 }
             }
             Element::DenseNode(node) => {
@@ -381,8 +385,14 @@ fn main() -> Result<()> {
                 }
                 if let Some(kind) = classify::node_kind_dense(&node) {
                     let tags = classify::extract_node_settlement_tags_dense(&node);
-                    features_total +=
-                        emit_settlement_node(&mut spiller, kind, node.id(), node.lat(), node.lon(), &tags);
+                    features_total += emit_settlement_node(
+                        &mut spiller,
+                        kind,
+                        node.id(),
+                        node.lat(),
+                        node.lon(),
+                        &tags,
+                    );
                 }
             }
             _ => {}

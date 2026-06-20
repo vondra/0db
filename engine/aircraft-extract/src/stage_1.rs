@@ -30,8 +30,8 @@ pub fn run_stage_1(
     rasters: &RealRasters,
 ) -> Result<usize> {
     let in_path = input_dir.join(format!("{day_str}.arrow"));
-    let flights = read_flights(&in_path)
-        .with_context(|| format!("read flights {}", in_path.display()))?;
+    let flights =
+        read_flights(&in_path).with_context(|| format!("read flights {}", in_path.display()))?;
     let date_id = parse_date_id(day_str);
     let n_flights = flights.len();
     started("stage1", &format!("day={day_str}, {n_flights} flights"));
@@ -57,16 +57,15 @@ pub fn run_stage_1(
     write_segments(&out_path, &segments)?;
     finished(
         "stage1",
-        &format!("day={day_str}, {n_flights} flights → {} segments", segments.len()),
+        &format!(
+            "day={day_str}, {n_flights} flights → {} segments",
+            segments.len()
+        ),
     );
     Ok(segments.len())
 }
 
-fn stage_1_one_flight(
-    flight: &Flight,
-    rasters: &RealRasters,
-    date_id: i16,
-) -> Vec<FlightSegment> {
+fn stage_1_one_flight(flight: &Flight, rasters: &RealRasters, date_id: i16) -> Vec<FlightSegment> {
     if flight.points.len() < 2 {
         return Vec::new();
     }
@@ -148,7 +147,10 @@ fn stage_1_one_flight(
     // jet 150 m AGL floor (popup `segment_filters.rs:252-255`) is
     // not at Stage 1 either — moves to Stage 2A where the resolved
     // aerodrome centroid is available.
-    segments.into_iter().filter(airborne_endpoints_above_terrain).collect()
+    segments
+        .into_iter()
+        .filter(airborne_endpoints_above_terrain)
+        .collect()
 }
 
 /// Endpoint AGL ≥ −30 m gate. Catches Mode-S altitude decode errors
@@ -162,7 +164,7 @@ fn stage_1_one_flight(
 /// (popup kept them under `<` semantics, but NaN propagation downstream
 /// is worse than early drop).
 fn airborne_endpoints_above_terrain(seg: &crate::flight::FlightSegment) -> bool {
-    use crate::flight::{Phase, segment_flags};
+    use crate::flight::{segment_flags, Phase};
     if seg.phase == Phase::Ground || (seg.flags & segment_flags::ON_GROUND) != 0 {
         return true;
     }
@@ -203,25 +205,111 @@ pub fn read_flights(path: &Path) -> Result<Vec<Flight>> {
     let (_, batches) = read_record_batches(path)?;
     let mut out = Vec::new();
     for b in batches {
-        let flight_id = b.column_by_name("flight_id").unwrap().as_any().downcast_ref::<UInt64Array>().unwrap();
-        let callsign = b.column_by_name("callsign").unwrap().as_any().downcast_ref::<StringArray>().unwrap();
-        let atype = b.column_by_name("aircraft_type").unwrap().as_any().downcast_ref::<FixedSizeBinaryArray>().unwrap();
-        let prof = b.column_by_name("profile_idx").unwrap().as_any().downcast_ref::<UInt8Array>().unwrap();
-        let src = b.column_by_name("source_id").unwrap().as_any().downcast_ref::<UInt8Array>().unwrap();
-        let orig = b.column_by_name("origin").unwrap().as_any().downcast_ref::<UInt8Array>().unwrap();
-        let veh_kind = b.column_by_name("veh_kind").unwrap().as_any().downcast_ref::<UInt8Array>().unwrap();
-        let gse_class = b.column_by_name("gse_class").unwrap().as_any().downcast_ref::<UInt8Array>().unwrap();
-        let base_ts = b.column_by_name("base_timestamp").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
-        let pts_list = b.column_by_name("points").unwrap().as_any().downcast_ref::<ListArray>().unwrap();
-        let pts_struct = pts_list.values().as_any().downcast_ref::<StructArray>().unwrap();
-        let pt_ts = pts_struct.column(0).as_any().downcast_ref::<Float32Array>().unwrap();
-        let pt_lat = pts_struct.column(1).as_any().downcast_ref::<Float32Array>().unwrap();
-        let pt_lon = pts_struct.column(2).as_any().downcast_ref::<Float32Array>().unwrap();
-        let pt_alt = pts_struct.column(3).as_any().downcast_ref::<Float32Array>().unwrap();
-        let pt_speed = pts_struct.column(4).as_any().downcast_ref::<Float32Array>().unwrap();
-        let pt_track = pts_struct.column(5).as_any().downcast_ref::<Float32Array>().unwrap();
-        let pt_baro = pts_struct.column(6).as_any().downcast_ref::<Float32Array>().unwrap();
-        let pt_flags = pts_struct.column(7).as_any().downcast_ref::<UInt8Array>().unwrap();
+        let flight_id = b
+            .column_by_name("flight_id")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .unwrap();
+        let callsign = b
+            .column_by_name("callsign")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let atype = b
+            .column_by_name("aircraft_type")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<FixedSizeBinaryArray>()
+            .unwrap();
+        let prof = b
+            .column_by_name("profile_idx")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<UInt8Array>()
+            .unwrap();
+        let src = b
+            .column_by_name("source_id")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<UInt8Array>()
+            .unwrap();
+        let orig = b
+            .column_by_name("origin")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<UInt8Array>()
+            .unwrap();
+        let veh_kind = b
+            .column_by_name("veh_kind")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<UInt8Array>()
+            .unwrap();
+        let gse_class = b
+            .column_by_name("gse_class")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<UInt8Array>()
+            .unwrap();
+        let base_ts = b
+            .column_by_name("base_timestamp")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let pts_list = b
+            .column_by_name("points")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let pts_struct = pts_list
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let pt_ts = pts_struct
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        let pt_lat = pts_struct
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        let pt_lon = pts_struct
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        let pt_alt = pts_struct
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        let pt_speed = pts_struct
+            .column(4)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        let pt_track = pts_struct
+            .column(5)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        let pt_baro = pts_struct
+            .column(6)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        let pt_flags = pts_struct
+            .column(7)
+            .as_any()
+            .downcast_ref::<UInt8Array>()
+            .unwrap();
         let offsets = pts_list.value_offsets();
 
         for i in 0..b.num_rows() {
@@ -265,7 +353,7 @@ pub fn read_flights(path: &Path) -> Result<Vec<Flight>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flight::{Phase, segment_flags, FlightSegment};
+    use crate::flight::{segment_flags, FlightSegment, Phase};
     use crate::source::FlightSource;
     use crate::source_adsb_tar::AdsbTarSource;
     use tempfile::tempdir;
@@ -335,9 +423,9 @@ mod tests {
         // sailplane flights; the Stage 1 mirror drop must catch them.
         let tmp = tempdir().unwrap();
         let rasters = RealRasters::new(tmp.path()); // no tiles → elev 0 m
-        // Kinematics must satisfy `segment_is_keepable` for the blank
-        // control: blank → FALLBACK (jet-classed), so speed must clear
-        // JET_STALL_SPEED_KT. ~250 kt ≈ 3.9 km per 30 s step.
+                                                    // Kinematics must satisfy `segment_is_keepable` for the blank
+                                                    // control: blank → FALLBACK (jet-classed), so speed must clear
+                                                    // JET_STALL_SPEED_KT. ~250 kt ≈ 3.9 km per 30 s step.
         let mk = |typecode: &str| Flight {
             flight_id: 1,
             callsign: String::new(),
@@ -348,9 +436,36 @@ mod tests {
             veh_kind: 0,
             gse_class: 0,
             points: vec![
-                TracePoint { timestamp: 0.0, lat: 47.320, lon: 11.48, alt_ft: 8000.0, speed_kt: 250.0, track_deg: 0.0, baro_rate_fpm: 0.0, flags: 0 },
-                TracePoint { timestamp: 30.0, lat: 47.355, lon: 11.48, alt_ft: 8000.0, speed_kt: 250.0, track_deg: 0.0, baro_rate_fpm: 0.0, flags: 0 },
-                TracePoint { timestamp: 60.0, lat: 47.390, lon: 11.48, alt_ft: 8000.0, speed_kt: 250.0, track_deg: 0.0, baro_rate_fpm: 0.0, flags: 0 },
+                TracePoint {
+                    timestamp: 0.0,
+                    lat: 47.320,
+                    lon: 11.48,
+                    alt_ft: 8000.0,
+                    speed_kt: 250.0,
+                    track_deg: 0.0,
+                    baro_rate_fpm: 0.0,
+                    flags: 0,
+                },
+                TracePoint {
+                    timestamp: 30.0,
+                    lat: 47.355,
+                    lon: 11.48,
+                    alt_ft: 8000.0,
+                    speed_kt: 250.0,
+                    track_deg: 0.0,
+                    baro_rate_fpm: 0.0,
+                    flags: 0,
+                },
+                TracePoint {
+                    timestamp: 60.0,
+                    lat: 47.390,
+                    lon: 11.48,
+                    alt_ft: 8000.0,
+                    speed_kt: 250.0,
+                    track_deg: 0.0,
+                    baro_rate_fpm: 0.0,
+                    flags: 0,
+                },
             ],
         };
         assert!(stage_1_one_flight(&mk("VENT"), &rasters, 0).is_empty());
@@ -373,18 +488,11 @@ mod tests {
         std::fs::create_dir_all(&stage0_dir).unwrap();
         std::fs::create_dir_all(&stage1_dir).unwrap();
 
-        let sources: Vec<Box<dyn FlightSource>> =
-            vec![Box::new(AdsbTarSource::new(cache))];
+        let sources: Vec<Box<dyn FlightSource>> = vec![Box::new(AdsbTarSource::new(cache))];
         crate::stage_0::run_stage_0(&sources, "2025-01-21", &stage0_dir).unwrap();
 
         let rasters = RealRasters::new(std::path::Path::new(prepared));
-        let n = run_stage_1(
-            &stage0_dir,
-            &stage1_dir,
-            "2025-01-21",
-            &rasters,
-        )
-        .unwrap();
+        let n = run_stage_1(&stage0_dir, &stage1_dir, "2025-01-21", &rasters).unwrap();
         assert!(n > 1000, "got only {n} segments");
         let path = stage1_dir.join("2025-01-21.arrow");
         assert!(path.exists());

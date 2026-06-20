@@ -18,7 +18,9 @@
 //! near-endpoint barrier that the hull's LOS-excess ranking systematically
 //! under-weighted (excess favours near-source obstacles, where the LOS sits low).
 
-use super::diffraction::{compute_single_edge, diffraction_attenuation_rayleigh, DiffractionResult};
+use super::diffraction::{
+    compute_single_edge, diffraction_attenuation_rayleigh, DiffractionResult,
+};
 use crate::types::NUM_BANDS;
 
 /// Per-band terrain (bare-earth δ\*) + screening (composite-edge increment) for
@@ -130,7 +132,8 @@ pub fn solve_single_edge(
         return EdgeDiffraction::ZERO;
     }
     let (terrain, _) = single_edge_atten(t, bare, bare, total_dist, src_height, rcv_height);
-    let (combined, c_res) = single_edge_atten(t, composite, bare, total_dist, src_height, rcv_height);
+    let (combined, c_res) =
+        single_edge_atten(t, composite, bare, total_dist, src_height, rcv_height);
 
     // A_screen = clamped INCREMENT → terrain + screen = max(A_terrain, A_combined) per band.
     let mut screen = [0.0; NUM_BANDS];
@@ -144,7 +147,12 @@ pub fn solve_single_edge(
         }
         None => (-1.0, 0.0),
     };
-    EdgeDiffraction { terrain, screen, edge_to_rcv_m, edge_height_m }
+    EdgeDiffraction {
+        terrain,
+        screen,
+        edge_to_rcv_m,
+        edge_height_m,
+    }
 }
 
 /// One raster cell crossed along a source ray: along-ray ground distance from
@@ -301,7 +309,7 @@ mod tests {
         let mut composite = bare.clone();
         composite[5] = 108.0; // mid-path, 8 m
         composite[9] = 108.0; // near receiver (t=0.9), same 8 m
-        // Symmetric heights (src≈rcv height) so the only discriminator is δ.
+                              // Symmetric heights (src≈rcv height) so the only discriminator is δ.
         let d = solve_single_edge(&t, &bare, &composite, 500.0, 2.0, 2.0);
         assert!(
             (d.edge_to_rcv_m - 50.0).abs() < 1.0,
@@ -329,7 +337,9 @@ mod tests {
         let src_elev = bare[0] + 0.05;
         let rcv_elev = bare[10] + 4.0;
         let dsr = (500.0 * 500.0 + (rcv_elev - src_elev).powi(2)).sqrt();
-        let r = compute_single_edge(&t, &composite, &bare, 500.0, 5, src_elev, rcv_elev, dsr, 0.05, 4.0);
+        let r = compute_single_edge(
+            &t, &composite, &bare, 500.0, 5, src_elev, rcv_elev, dsr, 0.05, 4.0,
+        );
         let combined = diffraction_attenuation_rayleigh(&r);
         for i in 0..NUM_BANDS {
             assert!(
@@ -342,7 +352,13 @@ mod tests {
     }
 
     fn cell(dist_m: f32, ground_m: f32, composite_m: f32) -> HorizonCell {
-        HorizonCell { dist_m, ground_m, composite_m, imd_u8: 50, forest_u8: 0 }
+        HorizonCell {
+            dist_m,
+            ground_m,
+            composite_m,
+            imd_u8: 50,
+            forest_u8: 0,
+        }
     }
 
     /// `diffraction_for` must build the `[origin, …cells…, receiver]` profile
@@ -370,7 +386,10 @@ mod tests {
             assert!((from_horizon.terrain[i] - direct.terrain[i]).abs() < 1e-9);
             assert!((from_horizon.screen[i] - direct.screen[i]).abs() < 1e-9);
         }
-        assert!(from_horizon.screen.iter().any(|&a| a > 0.0), "building must screen");
+        assert!(
+            from_horizon.screen.iter().any(|&a| a > 0.0),
+            "building must screen"
+        );
         assert!((from_horizon.edge_to_rcv_m - 250.0).abs() < 1.0);
     }
 
@@ -397,20 +416,30 @@ mod tests {
         let t: Vec<f64> = (0..n).map(|i| i as f64 / (n - 1) as f64).collect();
         let d = solve_single_edge(&t, &bare, &bare, 1850.0, 0.05, 4.0);
         assert_eq!(d.terrain[0], 0.0, "63 Hz must be gated by δ*");
-        assert!(d.terrain[4] > 5.0, "1 kHz should pass the gate, got {:.3}", d.terrain[4]);
+        assert!(
+            d.terrain[4] > 5.0,
+            "1 kHz should pass the gate, got {:.3}",
+            d.terrain[4]
+        );
     }
 
     fn cover_cell(dist_m: f32, imd_u8: u8, forest_u8: u8) -> HorizonCell {
-        HorizonCell { dist_m, ground_m: 0.0, composite_m: 0.0, imd_u8, forest_u8 }
+        HorizonCell {
+            dist_m,
+            ground_m: 0.0,
+            composite_m: 0.0,
+            imd_u8,
+            forest_u8,
+        }
     }
 
     #[test]
     fn ground_g_and_forest_depth_over_prefix() {
         let horizon = Horizon {
             cells: vec![
-                cover_cell(100.0, 0, 100),   // soft ground, forest
-                cover_cell(200.0, 0, 100),   // soft, forest
-                cover_cell(300.0, 100, 0),   // hard, no forest
+                cover_cell(100.0, 0, 100), // soft ground, forest
+                cover_cell(200.0, 0, 100), // soft, forest
+                cover_cell(300.0, 100, 0), // hard, no forest
             ],
             origin_ground_m: 0.0,
         };

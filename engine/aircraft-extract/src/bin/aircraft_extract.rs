@@ -13,11 +13,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 use aircraft_extract::airport_index::AerodromeIndex;
 use aircraft_extract::airport_io::{read_global_airport_lines, read_global_airports};
 use aircraft_extract::progress::ts;
+use aircraft_extract::scope::ScopeBbox;
 use aircraft_extract::source::FlightSource;
 use aircraft_extract::source_adsb_tar::{AdsbTarSource, ClassWindowFilter};
 use aircraft_extract::stage_0::run_stage_0;
 use aircraft_extract::stage_1::run_stage_1;
-use aircraft_extract::scope::ScopeBbox;
 use aircraft_extract::stage_2a::run_stage_2a;
 use aircraft_extract::stage_2b::run_stage_2b;
 use aircraft_extract::stage_2c::run_stage_2c;
@@ -311,7 +311,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     init_rayon_pool(cli.max_threads)?;
     match cli.cmd {
-        Cmd::Stage0 { adsb_cache, out, day, class_filter } => {
+        Cmd::Stage0 {
+            adsb_cache,
+            out,
+            day,
+            class_filter,
+        } => {
             std::fs::create_dir_all(&out)?;
             let sources: Vec<Box<dyn FlightSource>> = vec![Box::new(
                 AdsbTarSource::new(adsb_cache).with_class_filter(class_filter.window()),
@@ -319,13 +324,23 @@ fn main() -> Result<()> {
             let n = run_stage_0(&sources, &day, &out)?;
             eprintln!("{} [stage0] {day}: {n} flights", ts());
         }
-        Cmd::Stage1 { flights_dir, out, day, prepared_dir } => {
+        Cmd::Stage1 {
+            flights_dir,
+            out,
+            day,
+            prepared_dir,
+        } => {
             std::fs::create_dir_all(&out)?;
             let rasters = RealRasters::new(&prepared_dir);
             let n = run_stage_1(&flights_dir, &out, &day, &rasters)?;
             eprintln!("{} [stage1] {day}: {n} segments", ts());
         }
-        Cmd::Shuffle { segments_dir, ga_segments_dir, out_dir, scope_bbox } => {
+        Cmd::Shuffle {
+            segments_dir,
+            ga_segments_dir,
+            out_dir,
+            scope_bbox,
+        } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             let day_paths = list_segments_day_paths_multi(&segments_dir)?;
             let ga_day_paths = list_segments_day_paths_multi(&ga_segments_dir)?;
@@ -343,15 +358,17 @@ fn main() -> Result<()> {
                 out_dir.display()
             );
         }
-        Cmd::Stage1_5 { segments_by_r4, h3r4_dir, scope_bbox } => {
+        Cmd::Stage1_5 {
+            segments_by_r4,
+            h3r4_dir,
+            scope_bbox,
+        } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             require_input_dir_exists("--segments-by-r4", &segments_by_r4)?;
-            let areas = read_global_airports(&h3r4_dir).with_context(|| {
-                format!("read airport_areas.arrow from {}", h3r4_dir.display())
-            })?;
-            let lines = read_global_airport_lines(&h3r4_dir).with_context(|| {
-                format!("read airport_lines.arrow from {}", h3r4_dir.display())
-            })?;
+            let areas = read_global_airports(&h3r4_dir)
+                .with_context(|| format!("read airport_areas.arrow from {}", h3r4_dir.display()))?;
+            let lines = read_global_airport_lines(&h3r4_dir)
+                .with_context(|| format!("read airport_lines.arrow from {}", h3r4_dir.display()))?;
             eprintln!(
                 "{} [stage1.5] loaded {} aerodromes + {} airport lines globally",
                 ts(),
@@ -366,7 +383,10 @@ fn main() -> Result<()> {
                 &h3r4_dir,
                 scope.as_ref(),
             )?;
-            eprintln!("{} [stage1.5] {n} R4s populated with synth airport_lines", ts());
+            eprintln!(
+                "{} [stage1.5] {n} R4s populated with synth airport_lines",
+                ts()
+            );
         }
         Cmd::Stage2a {
             segments_by_r4,
@@ -390,14 +410,31 @@ fn main() -> Result<()> {
             )?;
             eprintln!("{} [stage2a] {n} R4 hexes written", ts());
         }
-        Cmd::Stage2b { segments_dir, h3r4_dir, n_days, scope_bbox, fail_on_ga_cruise } => {
+        Cmd::Stage2b {
+            segments_dir,
+            h3r4_dir,
+            n_days,
+            scope_bbox,
+            fail_on_ga_cruise,
+        } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             require_input_dir_exists("--segments-dir", &segments_dir)?;
             let day_paths = list_segments_day_paths(&segments_dir)?;
-            let n = run_stage_2b(&day_paths, &h3r4_dir, n_days, scope.as_ref(), fail_on_ga_cruise)?;
+            let n = run_stage_2b(
+                &day_paths,
+                &h3r4_dir,
+                n_days,
+                scope.as_ref(),
+                fail_on_ga_cruise,
+            )?;
             eprintln!("{} [stage2b] {n} R4 hexes written", ts());
         }
-        Cmd::Stage2c { segments_by_r4, h3r4_dir, n_days, scope_bbox } => {
+        Cmd::Stage2c {
+            segments_by_r4,
+            h3r4_dir,
+            n_days,
+            scope_bbox,
+        } => {
             let scope = parse_scope(scope_bbox.as_deref())?;
             require_input_dir_exists("--segments-by-r4", &segments_by_r4)?;
             let areas = read_global_airports(&h3r4_dir)
@@ -518,9 +555,11 @@ fn main() -> Result<()> {
                     // Same physical dir as the airline segments would feed
                     // every airline day into BOTH passes (double energy
                     // under two pass keys) — refuse.
-                    if dir.canonicalize().ok().is_some_and(|ga| {
-                        segments_dir.canonicalize().ok() == Some(ga)
-                    }) {
+                    if dir
+                        .canonicalize()
+                        .ok()
+                        .is_some_and(|ga| segments_dir.canonicalize().ok() == Some(ga))
+                    {
                         anyhow::bail!(
                             "--ga-segments-dir {} is the airline segments dir itself; \
                              point it at the GA pass's work dir (e.g. <ga-work>/segments)",
@@ -609,9 +648,8 @@ fn main() -> Result<()> {
                 let mut ok_paths: Vec<PathBuf> = Vec::new();
                 let mut failed_days: Vec<String> = Vec::new();
                 for chunk in days.chunks(max_concurrent) {
-                    let (mut ok, mut fail): (Vec<PathBuf>, Vec<String>) = chunk
-                        .par_iter()
-                        .partition_map(|day| {
+                    let (mut ok, mut fail): (Vec<PathBuf>, Vec<String>) =
+                        chunk.par_iter().partition_map(|day| {
                             let done_path = done_dir.join(format!("{day}.arrow"));
                             match run_day(
                                 day,
@@ -1033,7 +1071,10 @@ fn read_window_n_days(by_r4_dir: &Path) -> Result<u16> {
         .parse::<u16>()
         .with_context(|| format!("parse n_days from {}", path.display()))?;
     if n == 0 {
-        anyhow::bail!("day-count manifest {} is 0 — re-run `--from-stage shuffle`", path.display());
+        anyhow::bail!(
+            "day-count manifest {} is 0 — re-run `--from-stage shuffle`",
+            path.display()
+        );
     }
     Ok(n)
 }
@@ -1079,7 +1120,9 @@ fn from_stage_name(from_stage: FromStage) -> &'static str {
 
 fn init_rayon_pool(max_threads: Option<NonZeroUsize>) -> Result<()> {
     let Some(n) = max_threads else { return Ok(()) };
-    rayon::ThreadPoolBuilder::new().num_threads(n.get()).build_global()?;
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(n.get())
+        .build_global()?;
     eprintln!("{} [rayon] global pool = {} threads", ts(), n);
     Ok(())
 }

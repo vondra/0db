@@ -53,7 +53,11 @@ pub fn bearing_deg(lat1: f32, lon1: f32, lat2: f32, lon2: f32) -> f32 {
 /// Smallest unsigned compass-heading difference in degrees [0, 180].
 pub fn heading_diff(a: f32, b: f32) -> f32 {
     let d = (b - a).abs();
-    if d > 180.0 { 360.0 - d } else { d }
+    if d > 180.0 {
+        360.0 - d
+    } else {
+        d
+    }
 }
 
 /// Antimeridian-safe midpoint. Output longitude wrapped to `(-180, 180]`.
@@ -144,7 +148,15 @@ pub fn line_cell_clip_length(
     let boundary: Vec<(f32, f32)> = cell
         .boundary()
         .iter()
-        .map(|ll| to_local_xy(anchor_lat, anchor_lon, cos_lat, ll.lat() as f32, ll.lng() as f32))
+        .map(|ll| {
+            to_local_xy(
+                anchor_lat,
+                anchor_lon,
+                cos_lat,
+                ll.lat() as f32,
+                ll.lng() as f32,
+            )
+        })
         .collect();
     if boundary.len() < 3 {
         return 0.0;
@@ -245,7 +257,10 @@ mod tests {
         let east = bearing_deg(50.0, 14.0, 50.0, 14.05);
         assert!((east - 90.0).abs() < 0.5, "east bearing got {east}");
         let north = bearing_deg(50.0, 14.0, 50.05, 14.0);
-        assert!(!north.is_nan() && !(0.5..=359.5).contains(&north), "north bearing got {north}");
+        assert!(
+            !north.is_nan() && !(0.5..=359.5).contains(&north),
+            "north bearing got {north}"
+        );
     }
 
     #[test]

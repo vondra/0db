@@ -21,7 +21,7 @@
 
 use std::collections::HashMap;
 
-use crate::geo::{M_PER_DEG_LAT, M_PER_DEG_LON_EQUATOR, flat_dist};
+use crate::geo::{flat_dist, M_PER_DEG_LAT, M_PER_DEG_LON_EQUATOR};
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -236,7 +236,12 @@ fn fit_strip(members: &[(f32, f32)]) -> DiscoveredStrip {
 
     let pts_m: Vec<(f32, f32)> = members
         .iter()
-        .map(|&(lat, lon)| ((lon - mean_lon) * m_per_deg_lon, (lat - mean_lat) * M_PER_DEG_LAT))
+        .map(|&(lat, lon)| {
+            (
+                (lon - mean_lon) * m_per_deg_lon,
+                (lat - mean_lat) * M_PER_DEG_LAT,
+            )
+        })
         .collect();
     // Covariance matrix in (x=east, y=north) meters.
     let mut sxx = 0.0f32;
@@ -293,7 +298,11 @@ fn fit_strip(members: &[(f32, f32)]) -> DiscoveredStrip {
         deg
     };
 
-    let is_line = if l2 > 1e-3 { l1 / l2 > 5.0 } else { length_m > 50.0 };
+    let is_line = if l2 > 1e-3 {
+        l1 / l2 > 5.0
+    } else {
+        length_m > 50.0
+    };
 
     DiscoveredStrip {
         center_lat: mean_lat,
@@ -429,6 +438,9 @@ mod tests {
             .collect();
         let out = discover_strips(&pts, 50.0, 5);
         assert!(!out.is_empty());
-        assert_eq!(out[0].width_m, 10.0, "tight 2m spread should clamp up to 10");
+        assert_eq!(
+            out[0].width_m, 10.0,
+            "tight 2m spread should clamp up to 10"
+        );
     }
 }

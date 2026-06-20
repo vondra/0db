@@ -177,18 +177,29 @@ fn column<'a, T: arrow::array::Array + 'static>(
 /// non-GA + GA windows (`ga_*` columns; `ga-365d-hybrid-plan.md` §2).
 fn part_schema() -> Arc<Schema> {
     let u64_list = DataType::List(Arc::new(Field::new("item", DataType::UInt64, false)));
-    let fixed_of = |n: i32| {
-        DataType::FixedSizeList(Arc::new(Field::new("item", u64_list.clone(), false)), n)
-    };
+    let fixed_of =
+        |n: i32| DataType::FixedSizeList(Arc::new(Field::new("item", u64_list.clone(), false)), n);
     Arc::new(Schema::new(vec![
         Field::new("airport_key", DataType::Utf8, false),
         Field::new("arr_fids", u64_list.clone(), false),
         Field::new("dep_fids", u64_list.clone(), false),
-        Field::new("gse_fids_per_class", fixed_of(arrow_schemas::NUM_GSE_CLASSES), false),
-        Field::new("ops_fids_per_kind", fixed_of(arrow_schemas::NUM_OPS_KINDS), false),
+        Field::new(
+            "gse_fids_per_class",
+            fixed_of(arrow_schemas::NUM_GSE_CLASSES),
+            false,
+        ),
+        Field::new(
+            "ops_fids_per_kind",
+            fixed_of(arrow_schemas::NUM_OPS_KINDS),
+            false,
+        ),
         Field::new("ga_arr_fids", u64_list.clone(), false),
         Field::new("ga_dep_fids", u64_list.clone(), false),
-        Field::new("ga_ops_fids_per_kind", fixed_of(arrow_schemas::NUM_OPS_KINDS), false),
+        Field::new(
+            "ga_ops_fids_per_kind",
+            fixed_of(arrow_schemas::NUM_OPS_KINDS),
+            false,
+        ),
     ]))
 }
 
@@ -240,7 +251,12 @@ fn build_fixed_list_of_u64_list<'a>(
         None,
     );
     let item = DataType::List(Arc::new(Field::new("item", DataType::UInt64, false)));
-    FixedSizeListArray::new(Arc::new(Field::new("item", item, false)), k, Arc::new(inner), None)
+    FixedSizeListArray::new(
+        Arc::new(Field::new("item", item, false)),
+        k,
+        Arc::new(inner),
+        None,
+    )
 }
 
 pub(crate) fn write_airport_summary_part(
@@ -257,13 +273,37 @@ pub(crate) fn write_airport_summary_part(
     let ops = arrow_schemas::NUM_OPS_KINDS;
     let columns: Vec<ArrayRef> = vec![
         Arc::new(airport_key.finish()),
-        Arc::new(build_u64_list(rows.iter().map(|r| r.arr_fids.as_slice()), n)),
-        Arc::new(build_u64_list(rows.iter().map(|r| r.dep_fids.as_slice()), n)),
-        Arc::new(build_fixed_list_of_u64_list(rows.iter().map(|r| r.gse_fids_per_class.as_slice()), n, gse)),
-        Arc::new(build_fixed_list_of_u64_list(rows.iter().map(|r| r.ops_fids_per_kind.as_slice()), n, ops)),
-        Arc::new(build_u64_list(rows.iter().map(|r| r.ga_arr_fids.as_slice()), n)),
-        Arc::new(build_u64_list(rows.iter().map(|r| r.ga_dep_fids.as_slice()), n)),
-        Arc::new(build_fixed_list_of_u64_list(rows.iter().map(|r| r.ga_ops_fids_per_kind.as_slice()), n, ops)),
+        Arc::new(build_u64_list(
+            rows.iter().map(|r| r.arr_fids.as_slice()),
+            n,
+        )),
+        Arc::new(build_u64_list(
+            rows.iter().map(|r| r.dep_fids.as_slice()),
+            n,
+        )),
+        Arc::new(build_fixed_list_of_u64_list(
+            rows.iter().map(|r| r.gse_fids_per_class.as_slice()),
+            n,
+            gse,
+        )),
+        Arc::new(build_fixed_list_of_u64_list(
+            rows.iter().map(|r| r.ops_fids_per_kind.as_slice()),
+            n,
+            ops,
+        )),
+        Arc::new(build_u64_list(
+            rows.iter().map(|r| r.ga_arr_fids.as_slice()),
+            n,
+        )),
+        Arc::new(build_u64_list(
+            rows.iter().map(|r| r.ga_dep_fids.as_slice()),
+            n,
+        )),
+        Arc::new(build_fixed_list_of_u64_list(
+            rows.iter().map(|r| r.ga_ops_fids_per_kind.as_slice()),
+            n,
+            ops,
+        )),
     ];
     let batch = RecordBatch::try_new(schema.clone(), columns)?;
     if let Some(parent) = path.parent() {
@@ -342,17 +382,20 @@ pub(crate) fn read_airport_summary_part(path: &Path) -> Result<Vec<AirportSummar
         let airport_key = column::<StringArray>(&batch, "airport_key")?;
         let arr = read_u64_list(column::<ListArray>(&batch, "arr_fids")?)?;
         let dep = read_u64_list(column::<ListArray>(&batch, "dep_fids")?)?;
-        let gse = read_fixed_list_of_u64_list::<GSE>(
-            column::<FixedSizeListArray>(&batch, "gse_fids_per_class")?,
-        )?;
-        let ops = read_fixed_list_of_u64_list::<OPS>(
-            column::<FixedSizeListArray>(&batch, "ops_fids_per_kind")?,
-        )?;
+        let gse = read_fixed_list_of_u64_list::<GSE>(column::<FixedSizeListArray>(
+            &batch,
+            "gse_fids_per_class",
+        )?)?;
+        let ops = read_fixed_list_of_u64_list::<OPS>(column::<FixedSizeListArray>(
+            &batch,
+            "ops_fids_per_kind",
+        )?)?;
         let ga_arr = read_u64_list(column::<ListArray>(&batch, "ga_arr_fids")?)?;
         let ga_dep = read_u64_list(column::<ListArray>(&batch, "ga_dep_fids")?)?;
-        let ga_ops = read_fixed_list_of_u64_list::<OPS>(
-            column::<FixedSizeListArray>(&batch, "ga_ops_fids_per_kind")?,
-        )?;
+        let ga_ops = read_fixed_list_of_u64_list::<OPS>(column::<FixedSizeListArray>(
+            &batch,
+            "ga_ops_fids_per_kind",
+        )?)?;
         for i in 0..batch.num_rows() {
             out.push(AirportSummaryPartRow {
                 airport_key: airport_key.value(i).to_string(),
@@ -395,7 +438,10 @@ mod tests {
         write_airport_summary(&path, &rows).unwrap();
         let read = read_airport_summary(&path).unwrap();
         assert_eq!(read.len(), 1);
-        assert_eq!(read[0], rows[0], "every field incl. the GA split must round-trip");
+        assert_eq!(
+            read[0], rows[0],
+            "every field incl. the GA split must round-trip"
+        );
     }
 
     #[test]
@@ -430,7 +476,10 @@ mod tests {
         assert_eq!(read[0].airport_key, rows[0].airport_key);
         assert_eq!(read[0].arr_fids, rows[0].arr_fids);
         assert_eq!(read[0].dep_fids, rows[0].dep_fids);
-        assert_eq!(read[0].ga_arr_fids, rows[0].ga_arr_fids, "GA arr split round-trips");
+        assert_eq!(
+            read[0].ga_arr_fids, rows[0].ga_arr_fids,
+            "GA arr split round-trips"
+        );
         assert_eq!(read[0].ga_dep_fids, rows[0].ga_dep_fids);
         for c in 0..arrow_schemas::NUM_GSE_CLASSES as usize {
             assert_eq!(

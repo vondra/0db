@@ -435,8 +435,16 @@ mod tests {
         .unwrap();
         assert_eq!(nbatch, 3, "5 rows / chunk 2 → 3 record batches");
 
-        let ids: Vec<u64> = read_segments(&p).unwrap().iter().map(|s| s.flight_id).collect();
-        assert_eq!(ids, vec![0, 1, 2, 3, 4], "read_segments concatenates in row order");
+        let ids: Vec<u64> = read_segments(&p)
+            .unwrap()
+            .iter()
+            .map(|s| s.flight_id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![0, 1, 2, 3, 4],
+            "read_segments concatenates in row order"
+        );
 
         let mut streamed = Vec::new();
         for_each_segment_batch(&p, |b| {

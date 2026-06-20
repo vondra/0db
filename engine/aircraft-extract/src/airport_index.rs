@@ -153,21 +153,23 @@ mod tests {
         // varied latitude (incl. high lat where lon cells shrink), a tie pair, and
         // the antimeridian band (flat_dist is naive there — index must match it).
         let areas = vec![
-            area(1, 50.10, 14.26, 0.0, 5, "LKPR"),        // floor radius
-            area(2, 50.12, 14.30, 3.0e8, 5, "BIG"),       // ~9.8 km radius
-            area(3, 49.78, 14.17, 1.0e6, 5, "DOBRIS"),    // floor (sqrt→564m)
-            area(4, 69.50, 18.90, 5.0e7, 5, "TROMSO"),    // high lat
-            area(5, 0.0, 179.95, 2.0e7, 5, "DATELINE"),   // near +180
-            area(6, 50.1001, 14.2601, 0.0, 5, "TIE"),     // overlaps LKPR
-            area(7, 50.20, 14.40, 2.0e7, 3, "NOT_AERO"),  // aeroway != 5 → ignored
-            area(8, 51.00, 15.00, 0.0, 5, ""),            // empty key → nearest skips
+            area(1, 50.10, 14.26, 0.0, 5, "LKPR"),       // floor radius
+            area(2, 50.12, 14.30, 3.0e8, 5, "BIG"),      // ~9.8 km radius
+            area(3, 49.78, 14.17, 1.0e6, 5, "DOBRIS"),   // floor (sqrt→564m)
+            area(4, 69.50, 18.90, 5.0e7, 5, "TROMSO"),   // high lat
+            area(5, 0.0, 179.95, 2.0e7, 5, "DATELINE"),  // near +180
+            area(6, 50.1001, 14.2601, 0.0, 5, "TIE"),    // overlaps LKPR
+            area(7, 50.20, 14.40, 2.0e7, 3, "NOT_AERO"), // aeroway != 5 → ignored
+            area(8, 51.00, 15.00, 0.0, 5, ""),           // empty key → nearest skips
         ];
         let idx = AerodromeIndex::build(&areas);
 
         // Deterministic LCG over a grid around the fixtures + global sweep.
         let mut s: u64 = 0x9E3779B97F4A7C15;
         let mut rng = || {
-            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (s >> 33) as f64 / (1u64 << 31) as f64 // [0,1)
         };
         for _ in 0..200_000 {

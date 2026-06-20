@@ -6,9 +6,9 @@
 pub mod fused_tile_z13;
 pub mod tile;
 
-use std::path::Path;
 use noise_compute::types::RasterSampler;
-use tile::{TileStore, DType, Interp};
+use std::path::Path;
+use tile::{DType, Interp, TileStore};
 
 pub use tile::RawTile;
 
@@ -50,19 +50,35 @@ impl RealRasters {
 
         // DEM: Copernicus GLO-30 primary (.hgt), SRTM fallback (.hgt)
         let dem = TileStore::new(
-            data_dir.join("dem/copernicus"), 3601, DType::I16BE, Interp::Bilinear, 0.0, ".hgt",
+            data_dir.join("dem/copernicus"),
+            3601,
+            DType::I16BE,
+            Interp::Bilinear,
+            0.0,
+            ".hgt",
             dem_cache_tiles,
-        ).with_alt_dir(data_dir.join("dem/srtm"), ".hgt");
+        )
+        .with_alt_dir(data_dir.join("dem/srtm"), ".hgt");
 
         // Building height: u8 (meters), 3601×3601 (Overture 30m), nearest-neighbor
         let building = TileStore::new(
-            data_dir.join("rasters/building"), 3601, DType::U8, Interp::Nearest, 0.0, ".raw",
+            data_dir.join("rasters/building"),
+            3601,
+            DType::U8,
+            Interp::Nearest,
+            0.0,
+            ".raw",
             building_cache_tiles,
         );
 
         // Forest cover: u8 (0/100%), 3601×3601 (WorldCover 30m), nearest-neighbor
         let forest = TileStore::new(
-            data_dir.join("rasters/forest"), 3601, DType::U8, Interp::Nearest, 0.0, ".raw",
+            data_dir.join("rasters/forest"),
+            3601,
+            DType::U8,
+            Interp::Nearest,
+            0.0,
+            ".raw",
             forest_cache_tiles,
         );
 
@@ -74,18 +90,29 @@ impl RealRasters {
         // plus synced Scandinavia) missing northern LAND tiles read hard too;
         // he84's complete tree is the production truth.
         let imd = TileStore::new(
-            data_dir.join("rasters/imd"), 3601, DType::U8, Interp::Bilinear, 100.0, ".raw",
+            data_dir.join("rasters/imd"),
+            3601,
+            DType::U8,
+            Interp::Bilinear,
+            100.0,
+            ".raw",
             imd_cache_tiles,
         );
 
-        RealRasters { dem, building, forest, imd }
+        RealRasters {
+            dem,
+            building,
+            forest,
+            imd,
+        }
     }
 
     /// Pre-load all tiles covering a bounding box. Call before rayon par_iter.
     /// After this, all sample() calls within bbox are lock-free (cache hits).
     pub fn preload_bbox(&self, lat_min: f64, lat_max: f64, lon_min: f64, lon_max: f64) {
         self.dem.preload_bbox(lat_min, lat_max, lon_min, lon_max);
-        self.building.preload_bbox(lat_min, lat_max, lon_min, lon_max);
+        self.building
+            .preload_bbox(lat_min, lat_max, lon_min, lon_max);
         self.forest.preload_bbox(lat_min, lat_max, lon_min, lon_max);
         self.imd.preload_bbox(lat_min, lat_max, lon_min, lon_max);
     }
@@ -168,8 +195,8 @@ impl RasterSampler for RealRasters {
         // Praha (50°N), shrinking to 220 × 75 m at Tromsø (70°N).
         // Converting to metric isotropises the enclosure footprint.
         let step_lat_deg = ENCLOSURE_RADIUS_M / noise_compute::constants::M_PER_DEG_LAT;
-        let step_lon_deg = ENCLOSURE_RADIUS_M
-            / noise_compute::constants::m_per_deg_lon(lat.to_radians());
+        let step_lon_deg =
+            ENCLOSURE_RADIUS_M / noise_compute::constants::m_per_deg_lon(lat.to_radians());
         let mut tall_count = 0;
         let mut total = 0;
         for dr in [-1, 0, 1] {
@@ -180,20 +207,33 @@ impl RasterSampler for RealRasters {
                 // diverging from `FusedGrid::building_enclosure`.
                 let probe_lon =
                     ((lon + dc as f64 * step_lon_deg + 180.0).rem_euclid(360.0)) - 180.0;
-                let h = self.building.sample(lat + dr as f64 * step_lat_deg, probe_lon);
-                if h > 5.0 { tall_count += 1; }
+                let h = self
+                    .building
+                    .sample(lat + dr as f64 * step_lat_deg, probe_lon);
+                if h > 5.0 {
+                    tall_count += 1;
+                }
                 total += 1;
             }
         }
         let density = tall_count as f64 / total as f64;
-        if density > 0.5 { 3.0 }
-        else if density > 0.2 { 1.5 }
-        else { 0.0 }
+        if density > 0.5 {
+            3.0
+        } else if density > 0.2 {
+            1.5
+        } else {
+            0.0
+        }
     }
 
     fn max_building_along_path(
-        &self, src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64,
-        dist_m: f64, excl_start_m: f64,
+        &self,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        dist_m: f64,
+        excl_start_m: f64,
     ) -> (f64, f64) {
         // Adaptive step locked to raster cell multiples (Overture 30 m):
         //   ≤1 km  → 1× cell  (~30.7 m, full resolution)
@@ -201,9 +241,13 @@ impl RasterSampler for RealRasters {
         //   >3 km  → 6× cell  (~184 m)
         // Fine cadence catches obstacles consistent with the 30 m building raster;
         // tile-cached lookups keep per-sample cost near zero.
-        let step = if dist_m <= 1000.0 { CELL_M }
-            else if dist_m <= 3000.0 { CELL_M * 3.0 }
-            else { CELL_M * 6.0 };
+        let step = if dist_m <= 1000.0 {
+            CELL_M
+        } else if dist_m <= 3000.0 {
+            CELL_M * 3.0
+        } else {
+            CELL_M * 6.0
+        };
         let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
         let mut max_bh = 0.0f64;
         let mut max_t = 0.5;
@@ -211,23 +255,39 @@ impl RasterSampler for RealRasters {
         let mut cached_tile = None;
         for k in 1..n {
             let t = k as f64 / n as f64;
-            if excl_start_m > 0.0 && t * dist_m < excl_start_m { continue; }
+            if excl_start_m > 0.0 && t * dist_m < excl_start_m {
+                continue;
+            }
             let lat = src_lat + t * (rcv_lat - src_lat);
             let lon = src_lon + t * (rcv_lon - src_lon);
-            let bh = self.building.sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
-            if bh > max_bh { max_bh = bh; max_t = t; }
+            let bh = self
+                .building
+                .sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
+            if bh > max_bh {
+                max_bh = bh;
+                max_t = t;
+            }
         }
         (max_bh, max_t)
     }
 
     fn max_building_along_path_stats(
-        &self, src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64,
-        dist_m: f64, excl_start_m: f64,
+        &self,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        dist_m: f64,
+        excl_start_m: f64,
     ) -> (f64, f64, u32, f64) {
         // Same scan as max_building_along_path but returns sample count + step for popup transparency.
-        let step = if dist_m <= 1000.0 { CELL_M }
-            else if dist_m <= 3000.0 { CELL_M * 3.0 }
-            else { CELL_M * 6.0 };
+        let step = if dist_m <= 1000.0 {
+            CELL_M
+        } else if dist_m <= 3000.0 {
+            CELL_M * 3.0
+        } else {
+            CELL_M * 6.0
+        };
         let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
         let mut max_bh = 0.0f64;
         let mut max_t = 0.5;
@@ -236,19 +296,30 @@ impl RasterSampler for RealRasters {
         let mut cached_tile = None;
         for k in 1..n {
             let t = k as f64 / n as f64;
-            if excl_start_m > 0.0 && t * dist_m < excl_start_m { continue; }
+            if excl_start_m > 0.0 && t * dist_m < excl_start_m {
+                continue;
+            }
             let lat = src_lat + t * (rcv_lat - src_lat);
             let lon = src_lon + t * (rcv_lon - src_lon);
-            let bh = self.building.sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
+            let bh = self
+                .building
+                .sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
             taken += 1;
-            if bh > max_bh { max_bh = bh; max_t = t; }
+            if bh > max_bh {
+                max_bh = bh;
+                max_t = t;
+            }
         }
         (max_bh, max_t, taken, step)
     }
 
     fn build_path_profile(
         &self,
-        src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64, dist_m: f64,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        dist_m: f64,
         out: &mut noise_compute::propagation::PathProfile,
     ) {
         out.clear();
@@ -280,10 +351,18 @@ impl RasterSampler for RealRasters {
         for &t in &out.t {
             let lat = src_lat + t * (rcv_lat - src_lat);
             let lon = src_lon + t * (rcv_lon - src_lon);
-            let elev = self.dem.sample_cached(lat, lon, &mut dem_key, &mut dem_tile);
-            let bh = self.building.sample_cached(lat, lon, &mut bld_key, &mut bld_tile);
-            let fr = self.forest.sample_cached(lat, lon, &mut for_key, &mut for_tile);
-            let imd = self.imd.sample_cached(lat, lon, &mut imd_key, &mut imd_tile);
+            let elev = self
+                .dem
+                .sample_cached(lat, lon, &mut dem_key, &mut dem_tile);
+            let bh = self
+                .building
+                .sample_cached(lat, lon, &mut bld_key, &mut bld_tile);
+            let fr = self
+                .forest
+                .sample_cached(lat, lon, &mut for_key, &mut for_tile);
+            let imd = self
+                .imd
+                .sample_cached(lat, lon, &mut imd_key, &mut imd_tile);
             out.elevation_m.push(elev as f32);
             out.building_h_m.push(bh.clamp(0.0, 255.0) as u8);
             out.forest_u8.push(fr.clamp(0.0, 255.0) as u8);
@@ -327,11 +406,11 @@ pub struct FusedGrid {
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
 pub struct FusedPixel {
-    pub elevation: f32,  // DEM (meters, full precision bilinear)
-    pub building: u8,    // building height (meters)
-    pub forest: u8,      // forest cover (0 or 100)
-    pub imd: u8,         // imperviousness 0-100
-    pub _pad: u8, // total: 4+1+1+1+1 = 8 bytes per pixel
+    pub elevation: f32, // DEM (meters, full precision bilinear)
+    pub building: u8,   // building height (meters)
+    pub forest: u8,     // forest cover (0 or 100)
+    pub imd: u8,        // imperviousness 0-100
+    pub _pad: u8,       // total: 4+1+1+1+1 = 8 bytes per pixel
 }
 
 impl FusedGrid {
@@ -347,7 +426,13 @@ impl FusedGrid {
     }
 
     /// Build from RealRasters, cropping to bbox. ~0.2-0.5s for typical hex.
-    pub fn build(rasters: &RealRasters, lat_min: f64, lat_max: f64, lon_min: f64, lon_max: f64) -> Self {
+    pub fn build(
+        rasters: &RealRasters,
+        lat_min: f64,
+        lat_max: f64,
+        lon_min: f64,
+        lon_max: f64,
+    ) -> Self {
         let cell_deg = 1.0 / 3600.0;
         let inv_cell_deg = 3600.0;
 
@@ -391,7 +476,14 @@ impl FusedGrid {
             }
         }
 
-        FusedGrid { data, lat_min: lat_lo, lon_min: lon_lo, inv_cell_deg, cols, rows }
+        FusedGrid {
+            data,
+            lat_min: lat_lo,
+            lon_min: lon_lo,
+            inv_cell_deg,
+            cols,
+            rows,
+        }
     }
 
     /// Rasterise one noise-barrier segment into the BUILDING channel: every
@@ -429,7 +521,12 @@ impl FusedGrid {
         height_m: f32,
     ) {
         let h = height_m.round().clamp(0.0, 255.0) as u8;
-        if h == 0 || !(start_lat.is_finite() && start_lon.is_finite() && end_lat.is_finite() && end_lon.is_finite()) {
+        if h == 0
+            || !(start_lat.is_finite()
+                && start_lon.is_finite()
+                && end_lat.is_finite()
+                && end_lon.is_finite())
+        {
             return;
         }
         // Continuous coords in floor-grid space: +0.5 shifts the rounding
@@ -458,8 +555,16 @@ impl FusedGrid {
         // boundary, then constant per-cell increments — Amanatides & Woo.
         let inv_du = (u1 - u0).abs().recip(); // ∞ when the segment is axis-parallel
         let inv_dv = (v1 - v0).abs().recip();
-        let mut t_max_r = if step_r > 0 { (r + 1) as f64 - u0 } else { u0 - r as f64 } * inv_du;
-        let mut t_max_c = if step_c > 0 { (c + 1) as f64 - v0 } else { v0 - c as f64 } * inv_dv;
+        let mut t_max_r = if step_r > 0 {
+            (r + 1) as f64 - u0
+        } else {
+            u0 - r as f64
+        } * inv_du;
+        let mut t_max_c = if step_c > 0 {
+            (c + 1) as f64 - v0
+        } else {
+            v0 - c as f64
+        } * inv_dv;
         // Supercover visits exactly |Δr| + |Δc| + 1 cells; the +4 pads float
         // edge cases so a boundary-grazing segment can't loop unbounded.
         let mut guard = (r_end - r).abs() + (c_end - c).abs() + 4;
@@ -566,8 +671,8 @@ impl noise_compute::types::RasterSampler for FusedGrid {
         // Mirror RealRasters::building_enclosure: metric 3×3 probe at
         // ENCLOSURE_RADIUS_M (75 m). Required for popup/pipeline parity.
         let step_lat_deg = ENCLOSURE_RADIUS_M / noise_compute::constants::M_PER_DEG_LAT;
-        let step_lon_deg = ENCLOSURE_RADIUS_M
-            / noise_compute::constants::m_per_deg_lon(lat.to_radians());
+        let step_lon_deg =
+            ENCLOSURE_RADIUS_M / noise_compute::constants::m_per_deg_lon(lat.to_radians());
         let mut tall = 0;
         let mut total = 0;
         for dr in [-1, 0, 1] {
@@ -581,17 +686,30 @@ impl noise_compute::types::RasterSampler for FusedGrid {
                 let h = self
                     .pixel(lat + dr as f64 * step_lat_deg, probe_lon)
                     .building;
-                if h > 5 { tall += 1; }
+                if h > 5 {
+                    tall += 1;
+                }
                 total += 1;
             }
         }
         let density = tall as f64 / total as f64;
-        if density > 0.5 { 3.0 } else if density > 0.2 { 1.5 } else { 0.0 }
+        if density > 0.5 {
+            3.0
+        } else if density > 0.2 {
+            1.5
+        } else {
+            0.0
+        }
     }
 
     fn max_building_along_path(
-        &self, src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64,
-        dist_m: f64, excl_start_m: f64,
+        &self,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        dist_m: f64,
+        excl_start_m: f64,
     ) -> (f64, f64) {
         // Mirror RealRasters / trait-default cadence exactly (uniform
         // cell / 3 × cell / 6 × cell by distance band). Previous version
@@ -626,7 +744,11 @@ impl noise_compute::types::RasterSampler for FusedGrid {
 
     fn build_path_profile(
         &self,
-        src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64, dist_m: f64,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        dist_m: f64,
         out: &mut noise_compute::propagation::PathProfile,
     ) {
         noise_compute::propagation::path_profile::fill_t_values(dist_m, &mut out.t);
@@ -643,7 +765,11 @@ impl FusedGrid {
     /// stays on the exact [`RasterSampler::build_path_profile`].
     pub fn build_path_profile_coarse_mid(
         &self,
-        src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64, dist_m: f64,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        dist_m: f64,
         cfg: noise_compute::propagation::path_profile::CoarseMid,
         out: &mut noise_compute::propagation::PathProfile,
     ) {
@@ -656,7 +782,11 @@ impl FusedGrid {
     /// (only the `out.t` fill differs); keeps the ray-march loop in one place.
     fn fill_profile_rasters(
         &self,
-        src_lat: f64, src_lon: f64, rcv_lat: f64, rcv_lon: f64, dist_m: f64,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        dist_m: f64,
         out: &mut noise_compute::propagation::PathProfile,
     ) {
         // `out.t` is already filled by the caller's cadence. Clear-then-refill the
@@ -686,7 +816,8 @@ impl FusedGrid {
         let d_rf = (rcv_lat - src_lat) * self.inv_cell_deg;
         let d_cf = (rcv_lon - src_lon) * self.inv_cell_deg;
         for &t in &out.t {
-            let (elev, bh, fr_u8, imd_u8) = self.lookup_fused_rc(src_rf + t * d_rf, src_cf + t * d_cf);
+            let (elev, bh, fr_u8, imd_u8) =
+                self.lookup_fused_rc(src_rf + t * d_rf, src_cf + t * d_cf);
             out.elevation_m.push(elev);
             out.building_h_m.push(bh);
             out.forest_u8.push(fr_u8);
@@ -742,7 +873,13 @@ impl FusedGrid {
     /// bilinear lookup needs: `rf = (lat − lat_min)·inv_cell_deg`, `cf` likewise.
     #[inline]
     pub fn geom(&self) -> (f64, f64, f64, usize, usize) {
-        (self.lat_min, self.lon_min, self.inv_cell_deg, self.rows, self.cols)
+        (
+            self.lat_min,
+            self.lon_min,
+            self.inv_cell_deg,
+            self.rows,
+            self.cols,
+        )
     }
 
     /// Bilinear elevation + IMD, nearest-neighbour building + forest.
@@ -817,13 +954,20 @@ mod tests {
     fn prepared_available() -> bool {
         let dir = Path::new("../../data/prepared/dem/copernicus");
         std::fs::read_dir(dir)
-            .map(|mut iter| iter.any(|e| e.ok().is_some_and(|e| e.path().extension().is_some_and(|x| x == "hgt"))))
+            .map(|mut iter| {
+                iter.any(|e| {
+                    e.ok()
+                        .is_some_and(|e| e.path().extension().is_some_and(|x| x == "hgt"))
+                })
+            })
             .unwrap_or(false)
     }
 
     #[test]
     fn test_elevation_brno() {
-        if !prepared_available() { return; }
+        if !prepared_available() {
+            return;
+        }
         let r = test_rasters();
         let elev = r.elevation(49.195, 16.608);
         assert!(elev > 150.0 && elev < 400.0, "Brno elevation: {elev}m");
@@ -831,11 +975,16 @@ mod tests {
 
     #[test]
     fn test_elevation_not_flat_200() {
-        if !prepared_available() { return; }
+        if !prepared_available() {
+            return;
+        }
         let r = test_rasters();
         let e1 = r.elevation(49.195, 16.608);
         let e2 = r.elevation(49.5, 16.0);
-        assert!((e1 - e2).abs() > 10.0, "Should not be flat: e1={e1}, e2={e2}");
+        assert!(
+            (e1 - e2).abs() > 10.0,
+            "Should not be flat: e1={e1}, e2={e2}"
+        );
     }
 
     /// Audit B3: a coordinate with no IMD tile on disk is open ocean — the
@@ -851,22 +1000,30 @@ mod tests {
         let r = test_rasters();
         let imd = r.imd.sample(30.0, -45.0);
         assert_eq!(imd, 100.0, "missing IMD tile must default to 100 (hard)");
-        assert_eq!(r.ground_g(30.0, -45.0), 0.0, "ocean ground must be hard (G=0)");
+        assert_eq!(
+            r.ground_g(30.0, -45.0),
+            0.0,
+            "ocean ground must be hard (G=0)"
+        );
     }
 
     #[test]
     fn test_ground_g_varies() {
-        if !prepared_available() { return; }
+        if !prepared_available() {
+            return;
+        }
         let r = test_rasters();
         let g1 = r.ground_g(49.195, 16.608); // urban
-        let g2 = r.ground_g(49.3, 16.4);      // rural
+        let g2 = r.ground_g(49.3, 16.4); // rural
         assert!((0.0..=1.0).contains(&g1), "G urban: {g1}");
         assert!((0.0..=1.0).contains(&g2), "G rural: {g2}");
     }
 
     #[test]
     fn test_building_height() {
-        if !prepared_available() { return; }
+        if !prepared_available() {
+            return;
+        }
         let r = test_rasters();
         let h = r.building_height(49.195, 16.608);
         assert!((0.0..=255.0).contains(&h), "Building height: {h}m");
@@ -878,7 +1035,9 @@ mod tests {
     // `data/prepared/` is not populated — no `#[ignore]` needed.
 
     fn test_fused() -> Option<(RealRasters, FusedGrid)> {
-        if !prepared_available() { return None; }
+        if !prepared_available() {
+            return None;
+        }
         let r = test_rasters();
         // Small Brno-area bbox — keeps the grid in L1/L2.
         let fg = FusedGrid::build(&r, 49.18, 49.22, 16.58, 16.63);
@@ -887,10 +1046,14 @@ mod tests {
 
     #[test]
     fn fused_ground_g_parity() {
-        let Some((real, fg)) = test_fused() else { return; };
+        let Some((real, fg)) = test_fused() else {
+            return;
+        };
         // Grid of points across the Brno bbox including hex-edge cases.
         for (lat, lon) in &[
-            (49.20, 16.60), (49.195, 16.608), (49.19, 16.59),
+            (49.20, 16.60),
+            (49.195, 16.608),
+            (49.19, 16.59),
             (49.181, 16.581), // near bbox edge
             (49.215, 16.625), // opposite corner
         ] {
@@ -904,36 +1067,36 @@ mod tests {
             assert!(
                 (g_real - g_fused).abs() < 0.05,
                 "ground_g divergence at ({}, {}): real={g_real:.4} fused={g_fused:.4}",
-                lat, lon
+                lat,
+                lon
             );
         }
     }
 
     #[test]
     fn fused_elevation_parity() {
-        let Some((real, fg)) = test_fused() else { return; };
-        for (lat, lon) in &[
-            (49.20, 16.60), (49.195, 16.608),
-            (49.181, 16.581),
-        ] {
+        let Some((real, fg)) = test_fused() else {
+            return;
+        };
+        for (lat, lon) in &[(49.20, 16.60), (49.195, 16.608), (49.181, 16.581)] {
             let e_real = real.elevation(*lat, *lon);
             let e_fused = fg.elevation(*lat, *lon);
             // f32 precision in FusedPixel + f64 in RealRasters → sub-1 cm.
             assert!(
                 (e_real - e_fused).abs() < 0.05,
                 "elevation divergence at ({}, {}): real={e_real:.4} fused={e_fused:.4}",
-                lat, lon
+                lat,
+                lon
             );
         }
     }
 
     #[test]
     fn fused_building_height_parity() {
-        let Some((real, fg)) = test_fused() else { return; };
-        for (lat, lon) in &[
-            (49.195, 16.608), (49.20, 16.60),
-            (49.215, 16.625),
-        ] {
+        let Some((real, fg)) = test_fused() else {
+            return;
+        };
+        for (lat, lon) in &[(49.195, 16.608), (49.20, 16.60), (49.215, 16.625)] {
             let h_real = real.building_height(*lat, *lon);
             let h_fused = fg.building_height(*lat, *lon);
             assert_eq!(
@@ -951,8 +1114,10 @@ mod tests {
         // probe to edge pixels at hex boundaries. Current 8-cell margin
         // covers the metric probe (ENCLOSURE_RADIUS_M = 75 m ≈ 2.4 lat
         // cells, ~3.4 lon cells at 50°N) plus rounding slack.
-        let Some((real, fg)) = test_fused() else { return; };
-        let lat = 49.181;  // 1 cell from bbox min (49.18)
+        let Some((real, fg)) = test_fused() else {
+            return;
+        };
+        let lat = 49.181; // 1 cell from bbox min (49.18)
         let lon = 16.581;
         let e_real = real.building_enclosure(lat, lon);
         let e_fused = fg.building_enclosure(lat, lon);
@@ -968,10 +1133,12 @@ mod tests {
         // Query outside the FusedGrid bbox — pre-fix would extrapolate
         // linearly into space (negative `fr`/`fc`). Post-fix clamps to
         // the edge elevation.
-        let Some((_, fg)) = test_fused() else { return; };
-        let e_edge = fg.elevation(49.18, 16.58);         // at bbox edge
-        let e_outside = fg.elevation(49.10, 16.50);      // far outside
-        // Both must be finite and plausible CZ elevations.
+        let Some((_, fg)) = test_fused() else {
+            return;
+        };
+        let e_edge = fg.elevation(49.18, 16.58); // at bbox edge
+        let e_outside = fg.elevation(49.10, 16.50); // far outside
+                                                    // Both must be finite and plausible CZ elevations.
         assert!(e_edge.is_finite() && e_outside.is_finite());
         assert!(e_outside > -1000.0 && e_outside < 10_000.0);
     }
@@ -985,7 +1152,9 @@ mod tests {
         // (Pacific tiles are not in `data/prepared/`), so we assert the
         // function is finite and matches between RealRasters / FusedGrid
         // at both wrap polarities — the fix's purpose is parity.
-        if !prepared_available() { return; }
+        if !prepared_available() {
+            return;
+        }
         let r = test_rasters();
         let lat = 0.0;
         for &lon in &[179.9995_f64, -179.9995_f64] {
@@ -1048,7 +1217,11 @@ mod tests {
             "diagonal burn {} cells — looks 8-connected, supercover expected",
             cells.len()
         );
-        assert!(cells.len() <= 76, "diagonal burn {} cells > |Δr|+|Δc|+1 bound", cells.len());
+        assert!(
+            cells.len() <= 76,
+            "diagonal burn {} cells > |Δr|+|Δc|+1 bound",
+            cells.len()
+        );
     }
 
     #[test]
@@ -1058,13 +1231,20 @@ mod tests {
         fg.burn_building_max(0.02, 0.01, 0.02, 0.02, 2.0);
         let cells = burned_cells(&fg);
         assert!(!cells.is_empty());
-        assert!(cells.iter().all(|&(_, _, h)| h == 5), "max(existing, h), never overwrite down");
+        assert!(
+            cells.iter().all(|&(_, _, h)| h == 5),
+            "max(existing, h), never overwrite down"
+        );
 
         // Entirely outside the grid → nothing painted, especially no edge smear.
         let before = cells.len();
         fg.burn_building_max(5.0, 5.0, 5.1, 5.1, 3.0);
         fg.burn_building_max(-1.0, 0.02, -2.0, 0.02, 3.0);
-        assert_eq!(burned_cells(&fg).len(), before, "out-of-grid burn must be a no-op");
+        assert_eq!(
+            burned_cells(&fg).len(),
+            before,
+            "out-of-grid burn must be a no-op"
+        );
 
         // Degenerate point segment → exactly one new cell.
         fg.burn_building_max(0.04, 0.04, 0.04, 0.04, 4.0);

@@ -101,9 +101,7 @@ impl Provenance {
             | Self::NationalMeasured
             | Self::ContinentalMeasured
             | Self::GlobalMeasured
-            | Self::NationalProxy => {
-                "matched_external"
-            }
+            | Self::NationalProxy => "matched_external",
             Self::Heuristic => "estimated_service_tree",
             Self::Baseline | Self::None => "default_by_class",
         }
@@ -245,7 +243,12 @@ mod sources_tests {
         // in id-ascending order. Lock the invariant so a hand-edit to
         // sources.rs (or a reordered DATASETS) can't silently break lookup.
         for pair in SOURCES.windows(2) {
-            assert!(pair[0].id < pair[1].id, "SOURCES not sorted by id: {} then {}", pair[0].id, pair[1].id);
+            assert!(
+                pair[0].id < pair[1].id,
+                "SOURCES not sorted by id: {} then {}",
+                pair[0].id,
+                pair[1].id
+            );
         }
     }
 }

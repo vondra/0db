@@ -17,9 +17,9 @@ use std::collections::HashMap;
 use crate::compute::aircraft_v6::state::{FlightAccum, TopFlightCandidate};
 use crate::emission::aircraft::ReceiverHorizon;
 use crate::types::{
-    AircraftBandData, AircraftMetadata, Contributor, LayerKind, NoisePeriods,
-    PropagationBaseline, RasterSampler, Receiver, ScreeningBreakdown, SourceMetadata,
-    TerrainBreakdown, TraceCollector, VegetationBreakdown,
+    AircraftBandData, AircraftMetadata, Contributor, LayerKind, NoisePeriods, PropagationBaseline,
+    RasterSampler, Receiver, ScreeningBreakdown, SourceMetadata, TerrainBreakdown, TraceCollector,
+    VegetationBreakdown,
 };
 
 pub mod airborne;
@@ -311,8 +311,7 @@ mod tests {
     fn separable_silence_when_no_data() {
         let receiver = Receiver::new(50.10, 14.262, 0.0);
         let w = crate::emission::aircraft::ClassWeights::uniform();
-        let breakdown =
-            compute_aircraft_v6_separable(&receiver, &[], &[], &FlatGround, 1, &w);
+        let breakdown = compute_aircraft_v6_separable(&receiver, &[], &[], &FlatGround, 1, &w);
         assert!(!breakdown.airborne.lden_db.is_finite());
         assert!(!breakdown.cruise.lden_db.is_finite());
     }

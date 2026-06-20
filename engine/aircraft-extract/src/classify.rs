@@ -101,7 +101,10 @@ mod tests {
             on_ground: &[false; 4],
             agl_m: &[9000.0, 8500.0, 7500.0, 7000.0],
         });
-        assert_eq!(phases, vec![Phase::Cruise, Phase::Cruise, Phase::Cruise, Phase::Airborne]);
+        assert_eq!(
+            phases,
+            vec![Phase::Cruise, Phase::Cruise, Phase::Cruise, Phase::Airborne]
+        );
     }
 
     #[test]
@@ -110,7 +113,15 @@ mod tests {
             on_ground: &[false; 4],
             agl_m: &[7000.0, 7620.0, 7900.0, 8100.0],
         });
-        assert_eq!(phases, vec![Phase::Airborne, Phase::Airborne, Phase::Airborne, Phase::Cruise]);
+        assert_eq!(
+            phases,
+            vec![
+                Phase::Airborne,
+                Phase::Airborne,
+                Phase::Airborne,
+                Phase::Cruise
+            ]
+        );
     }
 
     #[test]

@@ -9,8 +9,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use arrow::array::{
-    Array, BinaryArray, Float32Array, Float64Array, Int16Array, Int64Array, StringArray,
-    UInt8Array,
+    Array, BinaryArray, Float32Array, Float64Array, Int16Array, Int64Array, StringArray, UInt8Array,
 };
 use arrow::ipc::reader::FileReader;
 use arrow::record_batch::RecordBatch;
@@ -100,25 +99,46 @@ fn read_batches(path: &Path) -> Result<Vec<RecordBatch>> {
 }
 
 fn col_str<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a StringArray> {
-    batch.column_by_name(name)?.as_any().downcast_ref::<StringArray>()
+    batch
+        .column_by_name(name)?
+        .as_any()
+        .downcast_ref::<StringArray>()
 }
 fn col_i64<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Int64Array> {
-    batch.column_by_name(name)?.as_any().downcast_ref::<Int64Array>()
+    batch
+        .column_by_name(name)?
+        .as_any()
+        .downcast_ref::<Int64Array>()
 }
 fn col_f64<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Float64Array> {
-    batch.column_by_name(name)?.as_any().downcast_ref::<Float64Array>()
+    batch
+        .column_by_name(name)?
+        .as_any()
+        .downcast_ref::<Float64Array>()
 }
 fn col_f32<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Float32Array> {
-    batch.column_by_name(name)?.as_any().downcast_ref::<Float32Array>()
+    batch
+        .column_by_name(name)?
+        .as_any()
+        .downcast_ref::<Float32Array>()
 }
 fn col_u8<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a UInt8Array> {
-    batch.column_by_name(name)?.as_any().downcast_ref::<UInt8Array>()
+    batch
+        .column_by_name(name)?
+        .as_any()
+        .downcast_ref::<UInt8Array>()
 }
 fn col_i16<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a Int16Array> {
-    batch.column_by_name(name)?.as_any().downcast_ref::<Int16Array>()
+    batch
+        .column_by_name(name)?
+        .as_any()
+        .downcast_ref::<Int16Array>()
 }
 fn col_binary<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a BinaryArray> {
-    batch.column_by_name(name)?.as_any().downcast_ref::<BinaryArray>()
+    batch
+        .column_by_name(name)?
+        .as_any()
+        .downcast_ref::<BinaryArray>()
 }
 
 fn airport_key(name: &str, icao: &str, iata: &str) -> String {

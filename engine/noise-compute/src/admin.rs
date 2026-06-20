@@ -128,15 +128,10 @@ pub fn load_admin_table(path: &Path) -> io::Result<HashMap<u64, Admin>> {
     if &bytes[0..8] != MAGIC {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!(
-                "bad magic: expected {:?}, got {:?}",
-                MAGIC,
-                &bytes[0..8]
-            ),
+            format!("bad magic: expected {:?}, got {:?}", MAGIC, &bytes[0..8]),
         ));
     }
-    let count =
-        u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+    let count = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
     let expected_len = 12 + count * RECORD_SIZE;
     if bytes.len() != expected_len {
         return Err(io::Error::new(
@@ -157,9 +152,15 @@ pub fn load_admin_table(path: &Path) -> io::Result<HashMap<u64, Admin>> {
         let hex_id = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
         let continent = Continent::from_u8(bytes[off + 8]);
         let country_iso = [bytes[off + 9], bytes[off + 10]];
-        let city_id =
-            u16::from_le_bytes([bytes[off + 11], bytes[off + 12]]);
-        table.insert(hex_id, Admin { continent, country_iso, city_id });
+        let city_id = u16::from_le_bytes([bytes[off + 11], bytes[off + 12]]);
+        table.insert(
+            hex_id,
+            Admin {
+                continent,
+                country_iso,
+                city_id,
+            },
+        );
         off += RECORD_SIZE;
     }
     Ok(table)
@@ -298,12 +299,18 @@ mod tests {
         // CI does not fail.
         let path = Path::new("../../data/prepared/h3r4-admin.bin");
         if !path.exists() {
-            eprintln!("skipping: {} not found — run `npm run build:h3-admin`", path.display());
+            eprintln!(
+                "skipping: {} not found — run `npm run build:h3-admin`",
+                path.display()
+            );
             return;
         }
         let table = load_admin_table(path).expect("failed to load admin table");
         assert!(!table.is_empty(), "table should have entries");
-        let known = table.values().filter(|a| a.country_code().is_some()).count();
+        let known = table
+            .values()
+            .filter(|a| a.country_code().is_some())
+            .count();
         assert!(known > 0, "at least some hexes must classify to a country");
     }
 

@@ -12,9 +12,7 @@ use std::path::Path;
 
 use arrow::array::Array;
 use arrow::record_batch::RecordBatch;
-use noise_compute::compute::aircraft_v6::{
-    airport_traffic::AirportSummaryEntry, NUM_GSE_CLASSES,
-};
+use noise_compute::compute::aircraft_v6::{airport_traffic::AirportSummaryEntry, NUM_GSE_CLASSES};
 
 use super::columns::{col_fixed_size_list, col_str, col_u32};
 
@@ -57,7 +55,8 @@ impl AirportSummaryAccum {
             col_u32(batch, "airport_unique_ga_arr_count"),
             col_u32(batch, "airport_unique_ga_dep_count"),
             col_fixed_size_list(batch, "airport_unique_ga_ops_count_per_kind"),
-        ) else {
+        )
+        else {
             return;
         };
         if gse_list.value_length() != NUM_GSE_CLASSES as i32
@@ -126,7 +125,10 @@ pub fn load_airport_summary(path: &Path) -> Result<Option<AirportSummaryAccum>, 
     let f = File::open(path)
         .map_err(|e| format!("open airport_summary.arrow at {}: {e}", path.display()))?;
     let r = FileReader::try_new(BufReader::new(f), None).map_err(|e| {
-        format!("arrow ipc {} (re-extract aircraft pipeline?): {e}", path.display())
+        format!(
+            "arrow ipc {} (re-extract aircraft pipeline?): {e}",
+            path.display()
+        )
     })?;
     let schema = r.schema();
     // Defence-in-depth: check both `schema_version` and the dimensional
@@ -154,9 +156,7 @@ pub fn load_airport_summary(path: &Path) -> Result<Option<AirportSummaryAccum>, 
     }
     let mut batches = Vec::new();
     for b in r {
-        let batch = b.map_err(|e| {
-            format!("read batch from {}: {e}", path.display())
-        })?;
+        let batch = b.map_err(|e| format!("read batch from {}: {e}", path.display()))?;
         batches.push(batch);
     }
     Ok(Some(AirportSummaryAccum::new(&batches)))

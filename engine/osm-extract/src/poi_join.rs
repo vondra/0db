@@ -40,9 +40,12 @@ impl PoiIndex {
             else {
                 continue;
             };
-            if let (Ok(h), Ok(lat), Ok(lon), Ok(class)) =
-                (h.parse::<u64>(), lat.parse::<f64>(), lon.parse::<f64>(), class.parse::<u8>())
-            {
+            if let (Ok(h), Ok(lat), Ok(lon), Ok(class)) = (
+                h.parse::<u64>(),
+                lat.parse::<f64>(),
+                lon.parse::<f64>(),
+                class.parse::<u8>(),
+            ) {
                 by_hex.entry(h).or_default().push((lat, lon, class));
             }
         }
@@ -60,14 +63,14 @@ impl PoiIndex {
 /// then everything else. SILENT never wins (a POI implies activity).
 fn poi_priority(class: u8) -> u8 {
     match class {
-        3 => 6,             // school
-        4 => 5,             // hospital
+        3 => 6, // school
+        4 => 5, // hospital
         c if c == st::FOOD_RETAIL => 4,
         c if c == st::HOSPITALITY => 3,
-        5 => 2,             // worship
-        6 => 2,             // hotel
+        5 => 2, // worship
+        6 => 2, // hotel
         st::SILENT => 0,
-        _ => 1,             // commercial / public / garage
+        _ => 1, // commercial / public / garage
     }
 }
 

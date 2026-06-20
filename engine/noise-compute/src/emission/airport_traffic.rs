@@ -39,9 +39,8 @@
 use crate::types::NUM_BANDS;
 
 use super::aircraft::{
-    GROUND_OPS_APRON_SPECTRUM_SHAPE, GROUND_OPS_KIND_APRON_MOVEMENT,
-    GROUND_OPS_KIND_RUNWAY_ROLL, GROUND_OPS_KIND_TAXI,
-    GROUND_OPS_REF_OFFSET_M, GROUND_OPS_RUNWAY_DEPARTURE_BONUS_DB,
+    GROUND_OPS_APRON_SPECTRUM_SHAPE, GROUND_OPS_KIND_APRON_MOVEMENT, GROUND_OPS_KIND_RUNWAY_ROLL,
+    GROUND_OPS_KIND_TAXI, GROUND_OPS_REF_OFFSET_M, GROUND_OPS_RUNWAY_DEPARTURE_BONUS_DB,
     GROUND_OPS_RUNWAY_SPECTRUM_SHAPE, GROUND_OPS_SPEED_CLAMP_DB, GROUND_OPS_TAXI_SPECTRUM_SHAPE,
     SURFACE_APRON_SPEED_KT, SURFACE_RUNWAY_SPEED_KT, SURFACE_TAXIWAY_SPEED_KT,
 };
@@ -313,8 +312,7 @@ mod tests {
             (GROUND_OPS_KIND_TAXI, 1, 18.0),
             (GROUND_OPS_KIND_APRON_MOVEMENT, 2, 12.0),
         ] {
-            let total =
-                sum_z_band_levels_db(&aircraft_lw_per_meter_z_db(2, kind, 0, nominal_kt));
+            let total = sum_z_band_levels_db(&aircraft_lw_per_meter_z_db(2, kind, 0, nominal_kt));
             let anchor = GROUND_OPS_REFERENCE_LW_PER_METER_DB[2][kind_idx];
             assert!(
                 (total - anchor).abs() < 1e-6,
@@ -328,9 +326,8 @@ mod tests {
     /// to exactly −3.
     #[test]
     fn aircraft_dwell_clamp_pins_at_plus_minus_3_db() {
-        let total = |kind: u8, kt: f32| {
-            sum_z_band_levels_db(&aircraft_lw_per_meter_z_db(2, kind, 0, kt))
-        };
+        let total =
+            |kind: u8, kt: f32| sum_z_band_levels_db(&aircraft_lw_per_meter_z_db(2, kind, 0, kt));
         let runway_nominal = total(GROUND_OPS_KIND_RUNWAY_ROLL, 70.0);
         let taxi_nominal = total(GROUND_OPS_KIND_TAXI, 18.0);
         let pin = |delta: f64, expected: f64, label: &str| {
@@ -339,9 +336,21 @@ mod tests {
                 "{label}: expected {expected:+} dB exactly, got {delta}"
             );
         };
-        pin(total(GROUND_OPS_KIND_RUNWAY_ROLL, 20.0) - runway_nominal, 3.0, "runway 20 kt");
-        pin(total(GROUND_OPS_KIND_TAXI, 8.0) - taxi_nominal, 3.0, "taxi 8 kt");
-        pin(total(GROUND_OPS_KIND_TAXI, 36.0) - taxi_nominal, -3.0, "taxi 36 kt");
+        pin(
+            total(GROUND_OPS_KIND_RUNWAY_ROLL, 20.0) - runway_nominal,
+            3.0,
+            "runway 20 kt",
+        );
+        pin(
+            total(GROUND_OPS_KIND_TAXI, 8.0) - taxi_nominal,
+            3.0,
+            "taxi 8 kt",
+        );
+        pin(
+            total(GROUND_OPS_KIND_TAXI, 36.0) - taxi_nominal,
+            -3.0,
+            "taxi 36 kt",
+        );
     }
 
     #[test]
@@ -431,7 +440,10 @@ mod tests {
         let bands = aircraft_lw_per_meter_z_db(2, GROUND_OPS_KIND_TAXI, 0, 18.0);
         let z = sum_z_band_levels_db(&bands);
         let a = sum_a_weighted_band_levels_db(&bands);
-        assert!(a < z, "A-weighted total ({a}) must be < Z-weighted total ({z})");
+        assert!(
+            a < z,
+            "A-weighted total ({a}) must be < Z-weighted total ({z})"
+        );
     }
 
     #[test]

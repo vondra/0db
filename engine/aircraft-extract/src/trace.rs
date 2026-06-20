@@ -387,7 +387,10 @@ struct ConcatReader<R> {
 
 impl<R: Read> ConcatReader<R> {
     fn new(readers: Vec<R>) -> Self {
-        Self { readers, current: 0 }
+        Self {
+            readers,
+            current: 0,
+        }
     }
 }
 
@@ -418,12 +421,10 @@ mod tests {
 
     #[test]
     fn parses_ground_altitude_marker() {
-        let raw = gz(
-            r#"{"icao":"49d261","t":"PC12","timestamp":1000,"trace":[
+        let raw = gz(r#"{"icao":"49d261","t":"PC12","timestamp":1000,"trace":[
                 [10,50.0,14.0,"ground",12.0,90.0,0,0],
                 [20,50.001,14.001,600.0,80.0,120.0,0,0]
-            ]}"#,
-        );
+            ]}"#);
         let t = parse_trace(raw.as_slice()).unwrap().unwrap();
         assert_eq!(t.points.len(), 2);
         assert!(t.points[0].alt_is_ground());
@@ -436,12 +437,10 @@ mod tests {
 
     #[test]
     fn parses_bitfield_on_ground() {
-        let raw = gz(
-            r#"{"icao":"49c083","t":"WT9","timestamp":2000,"trace":[
+        let raw = gz(r#"{"icao":"49c083","t":"WT9","timestamp":2000,"trace":[
                 [10,50.0,14.0,300.0,40.0,90.0,1,0],
                 [20,50.001,14.001,400.0,60.0,120.0,0,0]
-            ]}"#,
-        );
+            ]}"#);
         let t = parse_trace(raw.as_slice()).unwrap().unwrap();
         assert!(t.points[0].on_ground_raw());
         assert!(!t.points[0].alt_is_ground());
@@ -450,7 +449,9 @@ mod tests {
 
     #[test]
     fn drops_traces_with_fewer_than_two_points() {
-        let raw = gz(r#"{"icao":"abc123","t":"B738","timestamp":1,"trace":[[1,50.0,14.0,1000.0,250.0,90.0,0,0]]}"#);
+        let raw = gz(
+            r#"{"icao":"abc123","t":"B738","timestamp":1,"trace":[[1,50.0,14.0,1000.0,250.0,90.0,0,0]]}"#,
+        );
         assert!(parse_trace(raw.as_slice()).unwrap().is_none());
     }
 
@@ -459,14 +460,12 @@ mod tests {
         // adsb.lol col 8 is sometimes a meta object carrying `flight`,
         // sometimes null. The parser records each value transition;
         // duplicates from re-emitted meta blocks must coalesce.
-        let raw = gz(
-            r#"{"icao":"49d328","t":"A320","timestamp":1000,"trace":[
+        let raw = gz(r#"{"icao":"49d328","t":"A320","timestamp":1000,"trace":[
                 [10,50.0,14.0,1000.0,250.0,90.0,0,0,null],
                 [20,50.001,14.001,1100.0,250.0,90.0,0,0,{"flight":"TVS100P  "}],
                 [30,50.002,14.002,1200.0,250.0,90.0,0,0,{"flight":"TVS100P  "}],
                 [40,50.003,14.003,1300.0,250.0,90.0,0,0,{"flight":"TVS200X  "}]
-            ]}"#,
-        );
+            ]}"#);
         let t = parse_trace(raw.as_slice()).unwrap().unwrap();
         assert_eq!(t.callsigns.len(), 2);
         assert_eq!(t.callsigns[0].point_idx, 1);
@@ -477,12 +476,10 @@ mod tests {
 
     #[test]
     fn callsign_metadata_optional() {
-        let raw = gz(
-            r#"{"icao":"49d262","t":"PC12","timestamp":1000,"trace":[
+        let raw = gz(r#"{"icao":"49d262","t":"PC12","timestamp":1000,"trace":[
                 [10,50.0,14.0,1000.0,250.0,90.0,0,0],
                 [20,50.001,14.001,1100.0,250.0,90.0,0,0]
-            ]}"#,
-        );
+            ]}"#);
         let t = parse_trace(raw.as_slice()).unwrap().unwrap();
         assert!(t.callsigns.is_empty());
     }
@@ -490,12 +487,10 @@ mod tests {
     #[test]
     fn missing_baro_rate_defaults_to_zero() {
         // 7-element row (no baro_rate column) should still parse.
-        let raw = gz(
-            r#"{"icao":"49d262","t":"PC12","timestamp":1000,"trace":[
+        let raw = gz(r#"{"icao":"49d262","t":"PC12","timestamp":1000,"trace":[
                 [10,50.0,14.0,500.0,80.0,90.0,0],
                 [20,50.001,14.001,600.0,80.0,90.0,0]
-            ]}"#,
-        );
+            ]}"#);
         let t = parse_trace(raw.as_slice()).unwrap().unwrap();
         assert_eq!(t.points[0].baro_rate_fpm, 0.0);
     }
@@ -536,7 +531,10 @@ mod tests {
         // Empty string value is a valid HIT (blank typecode = FALLBACK).
         assert_eq!(scan_json_typecode(br#"{"t":""}"#), Some(String::new()));
         // No "t" key at all (noRegData TIS-B shape) → miss.
-        assert_eq!(scan_json_typecode(br#"{"icao":"c","noRegData":true}"#), None);
+        assert_eq!(
+            scan_json_typecode(br#"{"icao":"c","noRegData":true}"#),
+            None
+        );
         // Non-string value → miss (full parse decides).
         assert_eq!(scan_json_typecode(br#"{"t":null}"#), None);
         // Value cut off by the probe window → miss, NOT a partial hit.
@@ -561,7 +559,10 @@ mod tests {
         assert_eq!(probe_typecode_prefix(&early), Some("B738".to_string()));
         // "t" pushed past the probe window by a long desc → miss.
         let pad = "x".repeat(TYPECODE_PROBE_DECOMPRESSED_BYTES + 64);
-        let late = gz(&trace_json("bbb222", &format!(r#""desc":"{pad}","t":"C172","#)));
+        let late = gz(&trace_json(
+            "bbb222",
+            &format!(r#""desc":"{pad}","t":"C172","#),
+        ));
         assert_eq!(probe_typecode_prefix(&late), None);
         // Not gzip at all → miss (full parse path decides).
         assert_eq!(probe_typecode_prefix(b"plain bytes, not gzip"), None);
@@ -593,7 +594,10 @@ mod tests {
             "{\n  \"icao\": \"bbb222\",\n  \"t\": \"C172\",\n  \"timestamp\": 1000,\n  \"trace\": [\n    [10,50.0,14.0,1000.0,250.0,90.0,0,0],\n    [20,50.001,14.001,1100.0,250.0,90.0,0,0]\n  ]\n}",
         );
         let pad = "x".repeat(TYPECODE_PROBE_DECOMPRESSED_BYTES + 64);
-        let c172_late = gz(&trace_json("ccc333", &format!(r#""desc":"{pad}","t":"C172","#)));
+        let c172_late = gz(&trace_json(
+            "ccc333",
+            &format!(r#""desc":"{pad}","t":"C172","#),
+        ));
         let no_typecode = gz(&trace_json("ddd444", ""));
         let dir = day_dir_with_tar(&[
             ("traces/11/trace_full_aaa111.json", b738.as_slice()),
@@ -602,8 +606,7 @@ mod tests {
             ("traces/44/trace_full_ddd444.json", no_typecode.as_slice()),
         ]);
         let keep_ga = |tc: &str| tc == "C172";
-        let (traces, stats) =
-            read_day_traces_filtered(dir.path(), Some(&keep_ga)).unwrap();
+        let (traces, stats) = read_day_traces_filtered(dir.path(), Some(&keep_ga)).unwrap();
         let mut kept: Vec<&str> = traces.iter().map(|t| t.icao24.as_str()).collect();
         kept.sort_unstable();
         assert_eq!(
@@ -613,8 +616,14 @@ mod tests {
         );
         assert!(traces.iter().all(|t| t.aircraft_type == "C172"));
         assert_eq!(stats.probe_hits, 2, "B738 + pretty C172");
-        assert_eq!(stats.skipped_pre_parse, 1, "B738 dropped without full parse");
-        assert_eq!(stats.probe_misses, 2, "late-t + no-t fell back to full parse");
+        assert_eq!(
+            stats.skipped_pre_parse, 1,
+            "B738 dropped without full parse"
+        );
+        assert_eq!(
+            stats.probe_misses, 2,
+            "late-t + no-t fell back to full parse"
+        );
 
         // Without a prefilter the same tar yields every trace and zero
         // probe activity — the default path is untouched.
@@ -628,7 +637,9 @@ mod tests {
     /// fixtures. Skipped when the cache is missing.
     #[test]
     fn smoke_real_praha_cache() {
-        let day = Path::new("/0db.app/v4.0-wt2/data/source/flights-cache/radius/praha-150km/2025/2025-01-21");
+        let day = Path::new(
+            "/0db.app/v4.0-wt2/data/source/flights-cache/radius/praha-150km/2025/2025-01-21",
+        );
         if !day.exists() {
             return;
         }

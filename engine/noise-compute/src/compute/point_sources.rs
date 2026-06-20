@@ -81,7 +81,7 @@ pub(crate) fn compute_point_sources(
             );
         let (screening_atten, obstacle_trace) =
             propagation::path_effects::screening_attenuation_with_meta(
-        &mut path_profile,
+                &mut path_profile,
                 barriers,
                 src_alt,
                 rcv_alt,

@@ -33,10 +33,7 @@ use crate::progress::{finished, started, Milestone};
 /// airports × that scale dominated by a few large hubs ≈ low GB total
 /// in worst case. Acceptable for the reduce step; if it pinches at
 /// global scale, swap to a streaming sort+uniq pattern.
-pub fn run_airport_summary_reduce(
-    parts_root: &Path,
-    output_path: &Path,
-) -> Result<usize> {
+pub fn run_airport_summary_reduce(parts_root: &Path, output_path: &Path) -> Result<usize> {
     if !parts_root.exists() {
         eprintln!(
             "{} [stage2c/reduce] no airport_summary_parts/ at {} — writing empty summary",
@@ -54,7 +51,10 @@ pub fn run_airport_summary_reduce(
     let r4_entries: Vec<_> = std::fs::read_dir(parts_root)
         .with_context(|| format!("read_dir {}", parts_root.display()))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    started("stage2c/reduce", &format!("{} R4 subdirs", r4_entries.len()));
+    started(
+        "stage2c/reduce",
+        &format!("{} R4 subdirs", r4_entries.len()),
+    );
 
     // Walk every R4 subdir and absorb its part.arrow.
     for entry in r4_entries {
@@ -66,13 +66,10 @@ pub fn run_airport_summary_reduce(
         if !part_path.exists() {
             continue;
         }
-        let rows = read_airport_summary_part(&part_path).with_context(|| {
-            format!("read airport_summary_parts at {}", part_path.display())
-        })?;
+        let rows = read_airport_summary_part(&part_path)
+            .with_context(|| format!("read airport_summary_parts at {}", part_path.display()))?;
         for row in rows {
-            let entry = by_airport
-                .entry(row.airport_key.clone())
-                .or_default();
+            let entry = by_airport.entry(row.airport_key.clone()).or_default();
             for fid in row.arr_fids {
                 entry.arr.insert(fid);
             }
@@ -135,7 +132,10 @@ pub fn run_airport_summary_reduce(
     write_airport_summary(output_path, &rows)?;
     finished(
         "stage2c/reduce",
-        &format!("{n} airports from {n_parts} R4 parts → {}", output_path.display()),
+        &format!(
+            "{n} airports from {n_parts} R4 parts → {}",
+            output_path.display()
+        ),
     );
     Ok(n)
 }

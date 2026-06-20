@@ -315,4 +315,3 @@ pub fn continent_scale(continent: Continent) -> Option<f64> {
         Continent::Unknown => None,
     }
 }
-

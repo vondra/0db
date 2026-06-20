@@ -15,9 +15,7 @@
 
 use std::sync::Arc;
 
-use noise_compute::constants::{
-    DEFAULT_RECEIVER_HEIGHT, M_PER_DEG_LAT, m_per_deg_lon,
-};
+use noise_compute::constants::{m_per_deg_lon, DEFAULT_RECEIVER_HEIGHT, M_PER_DEG_LAT};
 use noise_compute::types::RasterSampler;
 
 use crate::{FusedGrid, RealRasters};
@@ -55,8 +53,16 @@ impl TileBbox {
         let west_lon = xf / n * 360.0 - 180.0;
         let east_lon = (xf + 1.0) / n * 360.0 - 180.0;
         let north_lat = (PI * (1.0 - 2.0 * yf / n)).sinh().atan().to_degrees();
-        let south_lat = (PI * (1.0 - 2.0 * (yf + 1.0) / n)).sinh().atan().to_degrees();
-        TileBbox { west_lon, east_lon, north_lat, south_lat }
+        let south_lat = (PI * (1.0 - 2.0 * (yf + 1.0) / n))
+            .sinh()
+            .atan()
+            .to_degrees();
+        TileBbox {
+            west_lon,
+            east_lon,
+            north_lat,
+            south_lat,
+        }
     }
 }
 
@@ -437,7 +443,13 @@ impl TileBatch {
             }
         }
 
-        TileBatch { zoom, base_x, base_y, batch_n, tiles }
+        TileBatch {
+            zoom,
+            base_x,
+            base_y,
+            batch_n,
+            tiles,
+        }
     }
 
     /// Build a batch for NPD aircraft layers, which only need receiver latitude, longitude, and altitude.
@@ -513,7 +525,11 @@ mod tests {
         // Cargo runs tests from the crate root, so resolve relative to it.
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let p = PathBuf::from(manifest_dir).join("../../data/prepared");
-        if p.exists() { Some(p) } else { None }
+        if p.exists() {
+            Some(p)
+        } else {
+            None
+        }
     }
 
     #[test]
@@ -522,18 +538,25 @@ mod tests {
         let bbox = TileBbox::from_xyz(13, 4420, 2773);
         assert!(
             bbox.south_lat > 49.9 && bbox.north_lat < 50.3,
-            "lat range {:.3}..{:.3}", bbox.south_lat, bbox.north_lat
+            "lat range {:.3}..{:.3}",
+            bbox.south_lat,
+            bbox.north_lat
         );
         assert!(
             bbox.west_lon > 14.0 && bbox.east_lon < 14.5,
-            "lon range {:.3}..{:.3}", bbox.west_lon, bbox.east_lon
+            "lon range {:.3}..{:.3}",
+            bbox.west_lon,
+            bbox.east_lon
         );
     }
 
     #[test]
     fn pixel_size_at_praha_z13() {
         let px_m = tile_pixel_size_m(13, 50.10);
-        assert!((px_m - 12.3).abs() < 0.5, "z=13 px size at Praha = {px_m:.3} m");
+        assert!(
+            (px_m - 12.3).abs() < 0.5,
+            "z=13 px size at Praha = {px_m:.3} m"
+        );
     }
 
     #[test]
@@ -572,7 +595,10 @@ mod tests {
         assert_eq!(tile.rx_alt_m.len(), TILE_PX * TILE_PX);
         // Praha DEM around 200-400 m; receiver alt = DEM + 4 m.
         let mid = tile.rx_alt(128, 128);
-        assert!(mid > 100.0 && mid < 500.0, "Praha tile centre alt = {mid} m");
+        assert!(
+            mid > 100.0 && mid < 500.0,
+            "Praha tile centre alt = {mid} m"
+        );
     }
 
     #[test]

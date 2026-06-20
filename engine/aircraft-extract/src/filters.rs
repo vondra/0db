@@ -88,9 +88,7 @@ pub fn point_is_sane(pt: &TracePoint) -> bool {
         return false;
     }
     if let Some(alt_ft) = pt.airborne_alt_ft() {
-        if !alt_ft.is_finite()
-            || !(MIN_PLAUSIBLE_ALT_FT..=MAX_PLAUSIBLE_ALT_FT).contains(&alt_ft)
-        {
+        if !alt_ft.is_finite() || !(MIN_PLAUSIBLE_ALT_FT..=MAX_PLAUSIBLE_ALT_FT).contains(&alt_ft) {
             return false;
         }
     }
@@ -156,11 +154,7 @@ fn scan_for_sustained_descent(points: &[TracePoint]) -> Option<usize> {
     None
 }
 
-fn backtrack_to_last_credible(
-    points: &[TracePoint],
-    agl_m: &[f32],
-    anomaly_idx: usize,
-) -> usize {
+fn backtrack_to_last_credible(points: &[TracePoint], agl_m: &[f32], anomaly_idx: usize) -> usize {
     // Walk back to the last point whose AGL is comfortably above the
     // floor (>= 0 m) — the descent that LED to the anomaly may have
     // been fabricated for several samples before crossing the floor.
@@ -171,11 +165,7 @@ fn backtrack_to_last_credible(
     idx.min(points.len())
 }
 
-fn drop_teleport_points(
-    points: &mut Vec<TracePoint>,
-    agl_m: &mut Vec<f32>,
-    elev_m: &mut Vec<f32>,
-) {
+fn drop_teleport_points(points: &mut Vec<TracePoint>, agl_m: &mut Vec<f32>, elev_m: &mut Vec<f32>) {
     if points.len() < 2 {
         return;
     }
@@ -303,7 +293,11 @@ mod tests {
     fn point_is_sane_keeps_subsea_aerodrome_when_on_ground() {
         // Dead Sea / Bet She'an — alt < 0 is real on the ground.
         let p = pt(
-            0.0, 32.5, 35.5, 0.0, 0.0,
+            0.0,
+            32.5,
+            35.5,
+            0.0,
+            0.0,
             crate::trace::FLAG_ALT_IS_GROUND | crate::trace::FLAG_ON_GROUND_RAW,
         );
         assert!(point_is_sane(&p));
@@ -374,43 +368,63 @@ mod tests {
     #[test]
     fn segment_is_keepable_rejects_supersonic_teleport() {
         // 200 km / 30 s = 24 000 kt — mode-S decode error.
-        assert!(!segment_is_keepable(200_000.0, 30.0, 0.0, 0.0, 250.0, 0, true));
+        assert!(!segment_is_keepable(
+            200_000.0, 30.0, 0.0, 0.0, 250.0, 0, true
+        ));
     }
 
     #[test]
     fn segment_is_keepable_keeps_legitimate_oceanic_segment() {
         // 200 km / 30 min = 400 kt — real cruise across an ADS-B
         // coverage hole.
-        assert!(segment_is_keepable(200_000.0, 1800.0, 10_500.0, 10_500.0, 450.0, 0, true));
+        assert!(segment_is_keepable(
+            200_000.0, 1800.0, 10_500.0, 10_500.0, 450.0, 0, true
+        ));
     }
 
     #[test]
     fn segment_is_keepable_rejects_nonpositive_dt() {
-        assert!(!segment_is_keepable(1000.0, 0.0, 100.0, 200.0, 250.0, 0, true));
-        assert!(!segment_is_keepable(1000.0, -5.0, 100.0, 200.0, 250.0, 0, true));
+        assert!(!segment_is_keepable(
+            1000.0, 0.0, 100.0, 200.0, 250.0, 0, true
+        ));
+        assert!(!segment_is_keepable(
+            1000.0, -5.0, 100.0, 200.0, 250.0, 0, true
+        ));
     }
 
     #[test]
     fn segment_is_keepable_rejects_underground() {
-        assert!(!segment_is_keepable(1000.0, 5.0, -500.0, -400.0, 250.0, 0, true));
+        assert!(!segment_is_keepable(
+            1000.0, 5.0, -500.0, -400.0, 250.0, 0, true
+        ));
     }
 
     #[test]
     fn segment_is_keepable_keeps_sane_jet_segment() {
-        assert!(segment_is_keepable(1000.0, 5.0, 100.0, 200.0, 250.0, 0, true));
+        assert!(segment_is_keepable(
+            1000.0, 5.0, 100.0, 200.0, 250.0, 0, true
+        ));
     }
 
     #[test]
     fn segment_is_keepable_rejects_helicopter_above_ceiling() {
         let heli = noise_compute::emission::aircraft::profile_idx("EC35");
         // Spike: one endpoint at FL250+ → reject (typical mode-S decode error).
-        assert!(!segment_is_keepable(1000.0, 5.0, 200.0, 7_500.0, 80.0, heli, true));
+        assert!(!segment_is_keepable(
+            1000.0, 5.0, 200.0, 7_500.0, 80.0, heli, true
+        ));
         // Sustained legitimate civil ops at FL130 over 3 km terrain ≈ 1 km AGL → keep.
-        assert!(segment_is_keepable(1000.0, 5.0, 800.0, 1_000.0, 80.0, heli, true));
+        assert!(segment_is_keepable(
+            1000.0, 5.0, 800.0, 1_000.0, 80.0, heli, true
+        ));
         // Right at ceiling — keep (strict > comparison, matches HARD_AGL_FLOOR convention).
-        assert!(segment_is_keepable(1000.0, 5.0, 4_000.0, 5_000.0, 80.0, heli, true));
+        assert!(segment_is_keepable(
+            1000.0, 5.0, 4_000.0, 5_000.0, 80.0, heli, true
+        ));
         // Same-altitude jet at 7.5 km is not affected by the heli filter.
         let jet = noise_compute::emission::aircraft::profile_idx("B738");
-        assert!(segment_is_keepable(1000.0, 5.0, 200.0, 7_500.0, 250.0, jet, true));
+        assert!(segment_is_keepable(
+            1000.0, 5.0, 200.0, 7_500.0, 250.0, jet, true
+        ));
     }
 }

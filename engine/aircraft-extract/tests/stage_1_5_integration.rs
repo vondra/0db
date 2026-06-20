@@ -186,19 +186,20 @@ fn stage_1_5_then_stage_2c_round_trips_synth_airport_key() {
     let by_r4_dir = tmp.path().join("segments_by_r4");
     let by_r4_r4_dir = by_r4_dir.join(&r4_hex);
     std::fs::create_dir_all(&by_r4_r4_dir).unwrap();
-    aircraft_extract::arrow_io::write_segments(
-        &by_r4_r4_dir.join("ground.arrow"),
-        &segs,
-    )
-    .unwrap();
+    aircraft_extract::arrow_io::write_segments(&by_r4_r4_dir.join("ground.arrow"), &segs).unwrap();
 
     // No `airport_areas.arrow` file → empty global aerodromes →
     // cluster gets classified as SynthAirport (not Reattribute).
     let areas: Vec<noise_compute::types::AirportArea> = Vec::new();
 
-    let r1_5 =
-        run_stage_airport_discover(&by_r4_dir, &AerodromeIndex::build(&areas), &[], h3r4_dir, None)
-            .unwrap();
+    let r1_5 = run_stage_airport_discover(
+        &by_r4_dir,
+        &AerodromeIndex::build(&areas),
+        &[],
+        h3r4_dir,
+        None,
+    )
+    .unwrap();
     assert_eq!(r1_5, 1, "Stage 1.5 should populate exactly one R4");
 
     let synth_lines_path = r4_dir.join("synth_airport_lines.arrow");
@@ -212,7 +213,10 @@ fn stage_1_5_then_stage_2c_round_trips_synth_airport_key() {
     // emits airport_traffic.arrow with rows under the synth key.
     let n_days = 1u16;
     let r2c = run_airport_traffic(&by_r4_dir, &areas, h3r4_dir, n_days, 0, None).unwrap();
-    assert_eq!(r2c, 1, "Stage 2C should write airport_traffic.arrow for one R4");
+    assert_eq!(
+        r2c, 1,
+        "Stage 2C should write airport_traffic.arrow for one R4"
+    );
 
     let traffic_path = r4_dir.join("airport_traffic.arrow");
     let traffic_rows = read_airport_traffic(&traffic_path).unwrap();

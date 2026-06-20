@@ -37,21 +37,21 @@ pub type Aadt = (f64, f64, f64, f64);
 // `default_road_traffic(class)` wrapper) see zero behavior change.
 
 pub const WORLD_DEFAULT: [Aadt; 13] = [
-    (21600.0, 2400.0, 5700.0, 300.0),  // 0 motorway — 30k
-    (11700.0, 1200.0, 1800.0, 300.0),  // 1 trunk — 15k
-    (7470.0, 540.0, 810.0, 180.0),     // 2 primary
-    (2640.0, 120.0, 180.0, 60.0),      // 3 secondary
-    (720.0, 26.0, 38.0, 16.0),         // 4 tertiary
-    (480.0, 5.0, 10.0, 5.0),           // 5 residential
-    (98.0, 0.0, 1.0, 1.0),             // 6 living_street
-    (240.0, 2.0, 5.0, 3.0),            // 7 service: parking aisles, driveways
-    (4.0, 0.0, 1.0, 0.0),              // 8 track: tractor + occasional delivery
-    (1200.0, 30.0, 80.0, 30.0),        // 9 unclassified: rural connector
+    (21600.0, 2400.0, 5700.0, 300.0), // 0 motorway — 30k
+    (11700.0, 1200.0, 1800.0, 300.0), // 1 trunk — 15k
+    (7470.0, 540.0, 810.0, 180.0),    // 2 primary
+    (2640.0, 120.0, 180.0, 60.0),     // 3 secondary
+    (720.0, 26.0, 38.0, 16.0),        // 4 tertiary
+    (480.0, 5.0, 10.0, 5.0),          // 5 residential
+    (98.0, 0.0, 1.0, 1.0),            // 6 living_street
+    (240.0, 2.0, 5.0, 3.0),           // 7 service: parking aisles, driveways
+    (4.0, 0.0, 1.0, 0.0),             // 8 track: tractor + occasional delivery
+    (1200.0, 30.0, 80.0, 30.0),       // 9 unclassified: rural connector
     // Ramps — 15 % of the respective mainline (HCM 7 / FEHRL / CERTU
     // lower-range typical, calibrated against Pasito Blanco GC-1 popup).
-    (3240.0, 360.0, 855.0, 45.0),      // 10 motorway_link — 4500
-    (1755.0, 180.0, 270.0, 45.0),      // 11 trunk_link    — 2250
-    (1120.5, 81.0, 121.5, 27.0),       // 12 primary_link  — 1350
+    (3240.0, 360.0, 855.0, 45.0), // 10 motorway_link — 4500
+    (1755.0, 180.0, 270.0, 45.0), // 11 trunk_link    — 2250
+    (1120.5, 81.0, 121.5, 27.0),  // 12 primary_link  — 1350
 ];
 
 // Re-export the dedicated module so existing callers (`CITY_SAO_PAULO` …)
@@ -99,11 +99,11 @@ fn city_default(city_id: u16, class: u8) -> Option<Aadt> {
         // Source: pipeline/enrich-roads-br.ts CLASS_AADT × tierMultiplier(1)
         // × splitVehicles(tier=1).
         (CITY_SAO_PAULO, 0) | (CITY_RIO, 0) => Some((70000.0, 10000.0, 15000.0, 5000.0)), // 100k motorway
-        (CITY_SAO_PAULO, 1) | (CITY_RIO, 1) => Some((35000.0, 5000.0, 7500.0, 2500.0)),   // 50k trunk
-        (CITY_SAO_PAULO, 2) | (CITY_RIO, 2) => Some((16800.0, 2400.0, 3600.0, 1200.0)),   // 24k primary
-        (CITY_SAO_PAULO, 3) | (CITY_RIO, 3) => Some((7000.0, 1000.0, 1500.0, 500.0)),     // 10k secondary
-        (CITY_SAO_PAULO, 4) | (CITY_RIO, 4) => Some((2800.0, 400.0, 600.0, 200.0)),       // 4k tertiary
-        (CITY_SAO_PAULO, 5) | (CITY_RIO, 5) => Some((1400.0, 200.0, 300.0, 100.0)),       // 2k residential
+        (CITY_SAO_PAULO, 1) | (CITY_RIO, 1) => Some((35000.0, 5000.0, 7500.0, 2500.0)), // 50k trunk
+        (CITY_SAO_PAULO, 2) | (CITY_RIO, 2) => Some((16800.0, 2400.0, 3600.0, 1200.0)), // 24k primary
+        (CITY_SAO_PAULO, 3) | (CITY_RIO, 3) => Some((7000.0, 1000.0, 1500.0, 500.0)), // 10k secondary
+        (CITY_SAO_PAULO, 4) | (CITY_RIO, 4) => Some((2800.0, 400.0, 600.0, 200.0)),   // 4k tertiary
+        (CITY_SAO_PAULO, 5) | (CITY_RIO, 5) => Some((1400.0, 200.0, 300.0, 100.0)), // 2k residential
 
         // ─── Bangkok — TH tier-1 (×1.5) split 60/8/7/25 ────────────────────
         // Source: pipeline/enrich-roads-th.ts THBKK_MULT = 1.5 + thaiClassSplit(isBangkok=true).
@@ -144,8 +144,7 @@ fn city_default(city_id: u16, class: u8) -> Option<Aadt> {
 /// Encoded as a bitmask (1 << class) for O(1) set membership: each
 /// `country_default` call shaves ~6 cmp branches off the hot fallback
 /// path that fires for every `source_id == 0` segment.
-const GDP_SCALED_MASK: u16 = (1 << 0) | (1 << 1) | (1 << 2)
-    | (1 << 10) | (1 << 11) | (1 << 12);
+const GDP_SCALED_MASK: u16 = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 10) | (1 << 11) | (1 << 12);
 
 #[inline]
 fn is_traffic_scaled(class: u8) -> bool {
@@ -169,12 +168,12 @@ fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
         // Source: pipeline/enrich-roads-th.ts THAI_RURAL class defaults
         // × thaiClassSplit(isBangkok=false). Rural baseline, Bangkok hex
         // overrides via CITY_BANGKOK above.
-        (b"TH", 0) => return Some((37200.0, 6000.0, 7800.0, 9000.0)),  // 60k motorway
-        (b"TH", 1) => return Some((18600.0, 3000.0, 3900.0, 4500.0)),  // 30k trunk
-        (b"TH", 2) => return Some((9300.0, 1500.0, 1950.0, 2250.0)),   // 15k primary
-        (b"TH", 3) => return Some((3720.0, 600.0, 780.0, 900.0)),      // 6k secondary
-        (b"TH", 4) => return Some((1550.0, 250.0, 325.0, 375.0)),      // 2.5k tertiary
-        (b"TH", 5) => return Some((744.0, 120.0, 156.0, 180.0)),       // 1.2k residential
+        (b"TH", 0) => return Some((37200.0, 6000.0, 7800.0, 9000.0)), // 60k motorway
+        (b"TH", 1) => return Some((18600.0, 3000.0, 3900.0, 4500.0)), // 30k trunk
+        (b"TH", 2) => return Some((9300.0, 1500.0, 1950.0, 2250.0)),  // 15k primary
+        (b"TH", 3) => return Some((3720.0, 600.0, 780.0, 900.0)),     // 6k secondary
+        (b"TH", 4) => return Some((1550.0, 250.0, 325.0, 375.0)),     // 2.5k tertiary
+        (b"TH", 5) => return Some((744.0, 120.0, 156.0, 180.0)),      // 1.2k residential
 
         _ => {}
     }
@@ -187,7 +186,12 @@ fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
     let scale = crate::country_defaults_generated::country_scale(iso)?;
     let class_idx = (class as usize).min(WORLD_DEFAULT.len() - 1);
     let base = WORLD_DEFAULT[class_idx];
-    Some((base.0 * scale, base.1 * scale, base.2 * scale, base.3 * scale))
+    Some((
+        base.0 * scale,
+        base.1 * scale,
+        base.2 * scale,
+        base.3 * scale,
+    ))
 }
 
 // Sparse — only where a continent-wide skew is known to diverge from the EU
@@ -206,7 +210,12 @@ fn continent_default(continent: Continent, class: u8) -> Option<Aadt> {
     let scale = crate::country_defaults_generated::continent_scale(continent)?;
     let class_idx = (class as usize).min(WORLD_DEFAULT.len() - 1);
     let base = WORLD_DEFAULT[class_idx];
-    Some((base.0 * scale, base.1 * scale, base.2 * scale, base.3 * scale))
+    Some((
+        base.0 * scale,
+        base.1 * scale,
+        base.2 * scale,
+        base.3 * scale,
+    ))
 }
 
 #[cfg(test)]
@@ -224,10 +233,7 @@ mod tests {
     #[test]
     fn world_default_matches_legacy_motorway() {
         // Baseline check: cascade with Admin::UNKNOWN = WORLD_DEFAULT.
-        assert_eq!(
-            resolve_traffic_default(0, Admin::UNKNOWN),
-            WORLD_DEFAULT[0]
-        );
+        assert_eq!(resolve_traffic_default(0, Admin::UNKNOWN), WORLD_DEFAULT[0]);
     }
 
     #[test]
@@ -237,7 +243,11 @@ mod tests {
         let a = admin_for(b"US", 0, Continent::NorthAmerica);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 28_000.0 && total < 30_000.0, "US motorway ≈ 29k, got {}", total);
+        assert!(
+            total > 28_000.0 && total < 30_000.0,
+            "US motorway ≈ 29k, got {}",
+            total
+        );
     }
 
     #[test]
@@ -245,7 +255,11 @@ mod tests {
         let a = admin_for(b"BR", 0, Continent::SouthAmerica);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!((total - 50000.0).abs() < 1.0, "BR rural motorway total should be 50k, got {}", total);
+        assert!(
+            (total - 50000.0).abs() < 1.0,
+            "BR rural motorway total should be 50k, got {}",
+            total
+        );
     }
 
     #[test]
@@ -253,7 +267,11 @@ mod tests {
         let a = admin_for(b"BR", CITY_SAO_PAULO, Continent::SouthAmerica);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!((total - 100000.0).abs() < 1.0, "SP motorway total should be 100k, got {}", total);
+        assert!(
+            (total - 100000.0).abs() < 1.0,
+            "SP motorway total should be 100k, got {}",
+            total
+        );
     }
 
     #[test]
@@ -261,9 +279,17 @@ mod tests {
         let a = admin_for(b"TH", CITY_BANGKOK, Continent::Asia);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!((total - 90000.0).abs() < 1.0, "BKK motorway total should be 90k, got {}", total);
+        assert!(
+            (total - 90000.0).abs() < 1.0,
+            "BKK motorway total should be 90k, got {}",
+            total
+        );
         // Bangkok split is 60/8/7/25 — motorcycles 25 %.
-        assert!(x / total > 0.20 && x / total < 0.30, "moto share should be ~25% in BKK, got {}", x / total);
+        assert!(
+            x / total > 0.20 && x / total < 0.30,
+            "moto share should be ~25% in BKK, got {}",
+            x / total
+        );
     }
 
     #[test]
@@ -271,7 +297,11 @@ mod tests {
         let a = admin_for(b"TH", 0, Continent::Asia);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!((total - 60000.0).abs() < 1.0, "TH rural motorway total should be 60k, got {}", total);
+        assert!(
+            (total - 60000.0).abs() < 1.0,
+            "TH rural motorway total should be 60k, got {}",
+            total
+        );
     }
 
     #[test]
@@ -302,7 +332,11 @@ mod tests {
         let a = admin_for(b"DZ", 0, Continent::Africa);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 29_000.0 && total < 32_000.0, "DZ motorway ≈ 30.5k, got {}", total);
+        assert!(
+            total > 29_000.0 && total < 32_000.0,
+            "DZ motorway ≈ 30.5k, got {}",
+            total
+        );
     }
 
     #[test]
@@ -320,7 +354,11 @@ mod tests {
         let a = admin_for(b"DE", 0, Continent::Europe);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!((total - 30_000.0).abs() < 100.0, "DE motorway ≈ 30k, got {}", total);
+        assert!(
+            (total - 30_000.0).abs() < 100.0,
+            "DE motorway ≈ 30k, got {}",
+            total
+        );
     }
 
     #[test]
@@ -330,7 +368,11 @@ mod tests {
         let a = admin_for(b"SG", 0, Continent::Asia);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 38_000.0 && total < 40_000.0, "SG motorway ≈ 39k, got {}", total);
+        assert!(
+            total > 38_000.0 && total < 40_000.0,
+            "SG motorway ≈ 39k, got {}",
+            total
+        );
     }
 
     #[test]
@@ -340,7 +382,11 @@ mod tests {
         let a = admin_for(b"NO", 0, Continent::Europe);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 22_000.0 && total < 25_000.0, "NO motorway ≈ 24k, got {}", total);
+        assert!(
+            total > 22_000.0 && total < 25_000.0,
+            "NO motorway ≈ 24k, got {}",
+            total
+        );
     }
 
     #[test]
@@ -350,7 +396,11 @@ mod tests {
         let a = admin_for(b"ET", 0, Continent::Africa);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 20_000.0 && total < 22_000.0, "ET motorway ≈ 21k, got {}", total);
+        assert!(
+            total > 20_000.0 && total < 22_000.0,
+            "ET motorway ≈ 21k, got {}",
+            total
+        );
     }
 
     #[test]
@@ -360,7 +410,11 @@ mod tests {
         let a = admin_for(b"NG", 0, Continent::Africa);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 37_000.0 && total < 40_000.0, "NG motorway ≈ 38.5k, got {}", total);
+        assert!(
+            total > 37_000.0 && total < 40_000.0,
+            "NG motorway ≈ 38.5k, got {}",
+            total
+        );
     }
 
     #[test]
@@ -371,7 +425,11 @@ mod tests {
         let a = admin_for(b"AO", 0, Continent::Africa);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 21_000.0 && total < 25_000.0, "AO motorway ≈ 23k (density fallback), got {}", total);
+        assert!(
+            total > 21_000.0 && total < 25_000.0,
+            "AO motorway ≈ 23k (density fallback), got {}",
+            total
+        );
     }
 
     #[test]
@@ -406,7 +464,11 @@ mod tests {
         let a = admin_for(b"ZZ", 0, Continent::Africa);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
-        assert!(total > 30_000.0 && total < 33_000.0, "Africa continent mtw ≈ 31.7k, got {}", total);
+        assert!(
+            total > 30_000.0 && total < 33_000.0,
+            "Africa continent mtw ≈ 31.7k, got {}",
+            total
+        );
     }
 
     #[test]

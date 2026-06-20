@@ -46,23 +46,42 @@ impl CruiseRowAccum {
             if n == 0 {
                 continue;
             }
-            let Some(r8) = col_u64(batch, "r7_hex") else { continue };
-            let Some(class) = col_u8(batch, "class") else { continue };
-            let Some(rep_pi) = col_u8(batch, "rep_profile_idx") else { continue };
-            let Some(fl_bin) = col_u8(batch, "fl_bin") else { continue };
-            let Some(period) = col_u8(batch, "period") else { continue };
-            let Some(sum_len) = col_f32(batch, "sum_length_m") else { continue };
-            let Some(rep_len) = col_f32(batch, "rep_len_m") else { continue };
-            let Some(rep_alt) = col_f32(batch, "rep_alt_m") else { continue };
-            let Some(rep_speed) = col_f32(batch, "rep_speed_kt") else { continue };
-            let Some(unique_count) = col_u32(batch, "unique_count") else { continue };
+            let Some(r8) = col_u64(batch, "r7_hex") else {
+                continue;
+            };
+            let Some(class) = col_u8(batch, "class") else {
+                continue;
+            };
+            let Some(rep_pi) = col_u8(batch, "rep_profile_idx") else {
+                continue;
+            };
+            let Some(fl_bin) = col_u8(batch, "fl_bin") else {
+                continue;
+            };
+            let Some(period) = col_u8(batch, "period") else {
+                continue;
+            };
+            let Some(sum_len) = col_f32(batch, "sum_length_m") else {
+                continue;
+            };
+            let Some(rep_len) = col_f32(batch, "rep_len_m") else {
+                continue;
+            };
+            let Some(rep_alt) = col_f32(batch, "rep_alt_m") else {
+                continue;
+            };
+            let Some(rep_speed) = col_f32(batch, "rep_speed_kt") else {
+                continue;
+            };
+            let Some(unique_count) = col_u32(batch, "unique_count") else {
+                continue;
+            };
             let source_id = col_u8(batch, "source_id");
             let origin = col_u8(batch, "origin");
-            let Some(cand_list) = col_list(batch, "top_candidates") else { continue };
-            let Some(cand_struct) = cand_list
-                .values()
-                .as_any()
-                .downcast_ref::<StructArray>()
+            let Some(cand_list) = col_list(batch, "top_candidates") else {
+                continue;
+            };
+            let Some(cand_struct) = cand_list.values().as_any().downcast_ref::<StructArray>()
             else {
                 continue;
             };
@@ -161,11 +180,8 @@ impl CruiseRowAccum {
     /// and noise-compute's per-row `&[CruiseTopCandidateView]` doesn't
     /// need to be reconstructed on each access.
     pub fn views(&self) -> CruiseViewSlices<'_> {
-        let cand_views: Vec<Vec<CruiseTopCandidateView<'_>>> = self
-            .rows
-            .iter()
-            .map(Self::build_candidate_views)
-            .collect();
+        let cand_views: Vec<Vec<CruiseTopCandidateView<'_>>> =
+            self.rows.iter().map(Self::build_candidate_views).collect();
         CruiseViewSlices {
             rows: &self.rows,
             cand_views,

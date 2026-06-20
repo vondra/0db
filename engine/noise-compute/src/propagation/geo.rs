@@ -299,10 +299,12 @@ mod tests {
         // half) or fraction = 0.0 (right half), with closest point
         // at the boundary between halves.
         let l_half: f64 = 100.0;
-        let theta_left_half = (l_half / d).atan();  // d1=L, d2=0
+        let theta_left_half = (l_half / d).atan(); // d1=L, d2=0
         let theta_right_half = (l_half / d).atan(); // d1=0, d2=L
         let theta_halves_sum = theta_left_half + theta_right_half;
-        assert!((theta_halves_sum - theta_parent).abs() < 1e-6,
-                "split halves angle {theta_halves_sum} != parent angle {theta_parent}");
+        assert!(
+            (theta_halves_sum - theta_parent).abs() < 1e-6,
+            "split halves angle {theta_halves_sum} != parent angle {theta_parent}"
+        );
     }
 }

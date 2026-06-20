@@ -12,10 +12,10 @@ pub struct AircraftTopFlight {
     pub lmax_db: f64,
     pub cpa_distance_m: f64,
     pub altitude_m: f64,
-    pub period: u8, // 0=day, 1=evening, 2=night
+    pub period: u8,   // 0=day, 1=evening, 2=night
     pub date: String, // ISO date "2024-03-15"
     pub profile: String,
-    pub energy_pct: f64, // % of total airborne Lden energy
+    pub energy_pct: f64,         // % of total airborne Lden energy
     pub geometry: [[f64; 2]; 2], // [[start_lon, start_lat], [end_lon, end_lat]]
     /// ICAO typecode (e.g. "B738", "A320") as carried by Stage 0 from
     /// adsb.lol metadata. Empty when typecode was unknown at extract

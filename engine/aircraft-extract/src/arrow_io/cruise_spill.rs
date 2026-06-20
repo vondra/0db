@@ -222,8 +222,7 @@ pub(crate) fn write_cruise_spill(path: &Path, rows: &[CruiseSpillRow]) -> Result
         ],
     )?;
 
-    let f = File::create(path)
-        .with_context(|| format!("create spill {}", path.display()))?;
+    let f = File::create(path).with_context(|| format!("create spill {}", path.display()))?;
     // BufWriter coalesces FileWriter's many small writes into one
     // syscall per ~8 KB — meaningful at 1024 small files per flush.
     let mut w = FileWriter::try_new(BufWriter::new(f), &schema)?;

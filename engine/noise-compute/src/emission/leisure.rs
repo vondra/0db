@@ -42,9 +42,8 @@ pub fn sport_class(sport: &str) -> Option<u8> {
         "tennis" => TENNIS,
         "basketball" | "netball" | "handball" => BASKETBALL,
         // Ball-sport pitches all share the football/pitch anchor.
-        "soccer" | "football" | "american_football" | "rugby" | "rugby_union"
-        | "rugby_league" | "field_hockey" | "hockey" | "baseball" | "cricket"
-        | "multi" => PITCH,
+        "soccer" | "football" | "american_football" | "rugby" | "rugby_union" | "rugby_league"
+        | "field_hockey" | "hockey" | "baseball" | "cricket" | "multi" => PITCH,
         "swimming" => POOL,
         _ => return None,
     })
@@ -83,7 +82,7 @@ pub fn leisure_profile(sport: u8) -> LeisureProfile {
             lw: 90.0,
             // HF-weighted, impulsive racket/ball pock on glass.
             spectrum: [-6.0, -4.0, -2.0, -1.0, 0.0, 1.0, 2.0, 1.0],
-            evening_offset: 0.0,   // plays 07–23; evening is peak
+            evening_offset: 0.0, // plays 07–23; evening is peak
             night_offset: -15.0,
             ref_capacity: 0.0,
         },
@@ -187,11 +186,23 @@ mod tests {
 
     #[test]
     fn radiated_dba_equals_lw_for_all_leisure_classes() {
-        for s in [PITCH, PADEL, TENNIS, BASKETBALL, PLAYGROUND, POOL, OUTDOOR_SEATING, STADIUM] {
+        for s in [
+            PITCH,
+            PADEL,
+            TENNIS,
+            BASKETBALL,
+            PLAYGROUND,
+            POOL,
+            OUTDOOR_SEATING,
+            STADIUM,
+        ] {
             let p = leisure_profile(s);
             let lw = leisure_lw(&p, None);
             let aw = a_weighted_total(&leisure_emission_bands(&p, lw));
-            assert!((aw - lw).abs() < 1e-6, "sport {s}: radiated {aw:.6} != lw {lw:.6}");
+            assert!(
+                (aw - lw).abs() < 1e-6,
+                "sport {s}: radiated {aw:.6} != lw {lw:.6}"
+            );
         }
     }
 
@@ -202,7 +213,10 @@ mod tests {
         let padel = leisure_profile(PADEL).lw;
         let tennis = leisure_profile(TENNIS).lw;
         let basket = leisure_profile(BASKETBALL).lw;
-        assert!((padel - tennis - 6.0).abs() < 1e-9, "padel must be tennis +6");
+        assert!(
+            (padel - tennis - 6.0).abs() < 1e-9,
+            "padel must be tennis +6"
+        );
         assert!(tennis > basket);
     }
 
@@ -225,7 +239,7 @@ mod tests {
     #[test]
     fn leisure_lw_clamps_tag_error_capacity() {
         let p = leisure_profile(OUTDOOR_SEATING); // ref 50, anchor 88
-        // Above the cap, Lw collapses to the cap's level — never higher.
+                                                  // Above the cap, Lw collapses to the cap's level — never higher.
         assert_eq!(
             leisure_lw(&p, Some(1_000_000)),
             leisure_lw(&p, Some(LEISURE_MAX_CAPACITY))
@@ -234,7 +248,10 @@ mod tests {
         // 1e6 would give.
         assert!(leisure_lw(&p, Some(1_000_000)) < p.lw + 24.0);
         // Below the cap, scaling is unchanged.
-        assert_eq!(leisure_lw(&p, Some(100)), p.lw + 10.0 * (100.0_f64 / 50.0).log10());
+        assert_eq!(
+            leisure_lw(&p, Some(100)),
+            p.lw + 10.0 * (100.0_f64 / 50.0).log10()
+        );
     }
 
     #[test]

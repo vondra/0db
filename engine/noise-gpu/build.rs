@@ -29,7 +29,11 @@ fn main() {
     let num_classes = fs::read_to_string(gen)
         .expect("profiles_generated.rs not found next to noise-gpu")
         .lines()
-        .find_map(|l| l.strip_prefix("pub const NUM_CLASSES: usize = ")?.strip_suffix(';').map(str::to_owned))
+        .find_map(|l| {
+            l.strip_prefix("pub const NUM_CLASSES: usize = ")?
+                .strip_suffix(';')
+                .map(str::to_owned)
+        })
         .expect("NUM_CLASSES const not found in profiles_generated.rs");
     for entry in fs::read_dir("kernels").expect("kernels/ dir") {
         let path = entry.unwrap().path();
@@ -37,7 +41,12 @@ fn main() {
             let stem = path.file_stem().unwrap().to_str().unwrap();
             let ptx = out.join(format!("{stem}.ptx"));
             let status = Command::new("nvcc")
-                .args(["-ptx", &format!("-arch={arch}"), "-O3", &format!("-DNPD_NC={num_classes}")])
+                .args([
+                    "-ptx",
+                    &format!("-arch={arch}"),
+                    "-O3",
+                    &format!("-DNPD_NC={num_classes}"),
+                ])
                 .arg(&path)
                 .arg("-o")
                 .arg(&ptx)

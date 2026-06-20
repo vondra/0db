@@ -92,18 +92,18 @@ pub const SURFACE_CORR: [f64; 5] = [
 ///  10=motorway_link, 11=trunk_link, 12=primary_link).
 pub const ROAD_MAX_RADIUS: [f64; 13] = [
     10_000.0, // 0: motorway
-     7_000.0, // 1: trunk
-     5_000.0, // 2: primary
-     3_000.0, // 3: secondary
-     1_600.0, // 4: tertiary
-       800.0, // 5: residential
-       400.0, // 6: living_street
-       500.0, // 7: service (parking aisles, driveways)
-       300.0, // 8: track (agricultural / forestry)
-     2_000.0, // 9: unclassified (rural connector between villages)
-     1_200.0, // 10: motorway_link (ramp — 15 % traffic, shorter audible reach)
-       900.0, // 11: trunk_link
-       600.0, // 12: primary_link
+    7_000.0,  // 1: trunk
+    5_000.0,  // 2: primary
+    3_000.0,  // 3: secondary
+    1_600.0,  // 4: tertiary
+    800.0,    // 5: residential
+    400.0,    // 6: living_street
+    500.0,    // 7: service (parking aisles, driveways)
+    300.0,    // 8: track (agricultural / forestry)
+    2_000.0,  // 9: unclassified (rural connector between villages)
+    1_200.0,  // 10: motorway_link (ramp — 15 % traffic, shorter audible reach)
+    900.0,    // 11: trunk_link
+    600.0,    // 12: primary_link
 ];
 
 /// Railway reach clamp + boundary convention.

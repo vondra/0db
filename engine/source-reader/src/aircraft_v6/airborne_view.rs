@@ -84,18 +84,37 @@ impl<'a> AirborneRowAccum<'a> {
             if n == 0 {
                 continue;
             }
-            let Some(flight_id) = col_u64(batch, "flight_id") else { continue };
-            let Some(callsign) = col_str(batch, "callsign") else { continue };
-            let Some(aircraft_type) =
-                col_fixed_size_binary(batch, "aircraft_type", 4) else { continue };
-            let Some(profile_idx) = col_u8(batch, "profile_idx") else { continue };
-            let Some(source_id) = col_u8(batch, "source_id") else { continue };
+            let Some(flight_id) = col_u64(batch, "flight_id") else {
+                continue;
+            };
+            let Some(callsign) = col_str(batch, "callsign") else {
+                continue;
+            };
+            let Some(aircraft_type) = col_fixed_size_binary(batch, "aircraft_type", 4) else {
+                continue;
+            };
+            let Some(profile_idx) = col_u8(batch, "profile_idx") else {
+                continue;
+            };
+            let Some(source_id) = col_u8(batch, "source_id") else {
+                continue;
+            };
             let origin = col_u8(batch, "origin");
-            let Some(bb_min_lat) = col_f32(batch, "bbox_min_lat") else { continue };
-            let Some(bb_max_lat) = col_f32(batch, "bbox_max_lat") else { continue };
-            let Some(bb_min_lon) = col_f32(batch, "bbox_min_lon") else { continue };
-            let Some(bb_max_lon) = col_f32(batch, "bbox_max_lon") else { continue };
-            let Some(sub_list) = col_list(batch, "sub_segments") else { continue };
+            let Some(bb_min_lat) = col_f32(batch, "bbox_min_lat") else {
+                continue;
+            };
+            let Some(bb_max_lat) = col_f32(batch, "bbox_max_lat") else {
+                continue;
+            };
+            let Some(bb_min_lon) = col_f32(batch, "bbox_min_lon") else {
+                continue;
+            };
+            let Some(bb_max_lon) = col_f32(batch, "bbox_max_lon") else {
+                continue;
+            };
+            let Some(sub_list) = col_list(batch, "sub_segments") else {
+                continue;
+            };
             let Some(sub_struct) = sub_list.values().as_any().downcast_ref::<StructArray>() else {
                 continue;
             };

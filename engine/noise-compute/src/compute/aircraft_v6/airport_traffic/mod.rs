@@ -171,20 +171,26 @@ fn compute_microseg_path(
     // CNOSSOS heavy-vehicle source height (4 m) — same as road.
     let src_alt = rasters.elevation(src_lat, src_lon) + GROUND_OPS_SOURCE_HEIGHT_M;
     let mut path_profile = PathProfile::new();
-    rasters.build_path_profile(src_lat, src_lon, rcv_lat, rcv_lon, d_to_recv, &mut path_profile);
+    rasters.build_path_profile(
+        src_lat,
+        src_lon,
+        rcv_lat,
+        rcv_lon,
+        d_to_recv,
+        &mut path_profile,
+    );
 
     let ground_g = path_effects::ground_g_from_profile(&path_profile);
     let (terrain, _terrain_profile_points) =
         path_effects::terrain_attenuation_with_meta(&mut path_profile, src_alt, rcv_alt);
-    let (screening_atten, _obstacle_trace) =
-        path_effects::screening_attenuation_with_meta(
-            &mut path_profile,
-            barriers,
-            src_alt,
-            rcv_alt,
-            0.0, // no exclusion radius — airport ground source is point-like
-            &terrain.attenuation_bands,
-        );
+    let (screening_atten, _obstacle_trace) = path_effects::screening_attenuation_with_meta(
+        &mut path_profile,
+        barriers,
+        src_alt,
+        rcv_alt,
+        0.0, // no exclusion radius — airport ground source is point-like
+        &terrain.attenuation_bands,
+    );
     let vegetation_atten = path_effects::vegetation_attenuation_path(&path_profile);
 
     MicrosegPath {
@@ -424,14 +430,7 @@ pub fn run(
             .entry((row.osm_id, row.segment_idx))
             .or_insert_with(|| {
                 compute_microseg_path(
-                    rasters,
-                    barriers,
-                    cp_lat,
-                    cp_lon,
-                    recv_lat,
-                    recv_lon,
-                    d_to_recv,
-                    rcv_alt,
+                    rasters, barriers, cp_lat, cp_lon, recv_lat, recv_lon, d_to_recv, rcv_alt,
                 )
             });
 
@@ -482,7 +481,11 @@ pub fn run(
             let a_bar_no_t = a_scr;
             let a_bar_no_s = a_terr;
             let max_gob = |a_bar: f64| -> f64 {
-                if a_bar > 0.0 { a_gr.max(a_bar) } else { a_gr }
+                if a_bar > 0.0 {
+                    a_gr.max(a_bar)
+                } else {
+                    a_gr
+                }
             };
             let gob_full = max_gob(a_bar_full);
             let gob_no_t = max_gob(a_bar_no_t);
@@ -495,18 +498,18 @@ pub fn run(
             // popup propagation breakdown.
             let path_base = geo_recv_db + refl_db;
             let base = path_base - atm_atten_db;
-            prop_full[i]            = db_to_lin(base - gob_full - a_veg);
-            prop_no_terrain[i]      = db_to_lin(base - gob_no_t - a_veg);
-            prop_no_screening[i]    = db_to_lin(base - gob_no_s - a_veg);
-            prop_no_vegetation[i]   = db_to_lin(base - gob_full);
-            prop_no_atmospheric[i]  = db_to_lin(path_base - gob_full - a_veg);
+            prop_full[i] = db_to_lin(base - gob_full - a_veg);
+            prop_no_terrain[i] = db_to_lin(base - gob_no_t - a_veg);
+            prop_no_screening[i] = db_to_lin(base - gob_no_s - a_veg);
+            prop_no_vegetation[i] = db_to_lin(base - gob_full);
+            prop_no_atmospheric[i] = db_to_lin(path_base - gob_full - a_veg);
             // `no_ground` semantics per road kernel: keep A_bar (= terrain
             // + screening), drop A_gr from the max (i.e. use A_bar alone
             // as the obstacle term). For receivers behind a hill /
             // building this is essentially a no-op (gob was already
             // a_bar); over flat soft ground it removes the ground
             // absorption.
-            prop_no_ground[i]       = db_to_lin(base - a_bar_full - a_veg);
+            prop_no_ground[i] = db_to_lin(base - a_bar_full - a_veg);
         }
 
         // A-weighted linear energy at the receiver. Per-band Z energy
@@ -558,22 +561,24 @@ pub fn run(
             acc
         } else {
             let display_name = synth_airport_display_name(row.airport_key);
-            by_airport.entry(row.airport_key.to_string()).or_insert_with(|| AirportAcc {
-                name: format!("Aircraft - {display_name} ground ops"),
-                period_energy: [0.0; 3],
-                period_energy_no_terrain: [0.0; 3],
-                period_energy_no_screening: [0.0; 3],
-                period_energy_no_vegetation: [0.0; 3],
-                period_energy_no_atmospheric: [0.0; 3],
-                period_energy_no_ground: [0.0; 3],
-                class_energy: [0.0; NUM_CLASSES],
-                runway_period_energy: [0.0; 3],
-                taxi_period_energy: [0.0; 3],
-                apron_period_energy: [0.0; 3],
-                sum_energy: 0.0,
-                sum_energy_x_dist: 0.0,
-                sum_energy_25m: 0.0,
-            })
+            by_airport
+                .entry(row.airport_key.to_string())
+                .or_insert_with(|| AirportAcc {
+                    name: format!("Aircraft - {display_name} ground ops"),
+                    period_energy: [0.0; 3],
+                    period_energy_no_terrain: [0.0; 3],
+                    period_energy_no_screening: [0.0; 3],
+                    period_energy_no_vegetation: [0.0; 3],
+                    period_energy_no_atmospheric: [0.0; 3],
+                    period_energy_no_ground: [0.0; 3],
+                    class_energy: [0.0; NUM_CLASSES],
+                    runway_period_energy: [0.0; 3],
+                    taxi_period_energy: [0.0; 3],
+                    apron_period_energy: [0.0; 3],
+                    sum_energy: 0.0,
+                    sum_energy_x_dist: 0.0,
+                    sum_energy_25m: 0.0,
+                })
         };
         // Writer-contract guards. Stage 2C never emits
         // - `veh_kind` ∉ {0=aircraft, 1=GSE}
@@ -749,12 +754,17 @@ pub fn run(
                 let pairs: Vec<((f32, f32), (f32, f32))> = by_microseg
                     .values()
                     .filter(|m| m.airport_key.as_str() == airport_key.as_str())
-                    .map(|m| (
-                        (m.start_lat as f32, m.start_lon as f32),
-                        (m.end_lat as f32, m.end_lon as f32),
-                    ))
+                    .map(|m| {
+                        (
+                            (m.start_lat as f32, m.start_lon as f32),
+                            (m.end_lat as f32, m.end_lon as f32),
+                        )
+                    })
                     .collect();
-                Some(serde_json::from_str(&multiline_geojson(&pairs)).unwrap_or(serde_json::Value::Null))
+                Some(
+                    serde_json::from_str(&multiline_geojson(&pairs))
+                        .unwrap_or(serde_json::Value::Null),
+                )
             },
             metadata: Some(SourceMetadata::Aircraft(AircraftMetadata {
                 variant: "ground_ops".to_string(),
@@ -788,8 +798,6 @@ pub fn run(
     out
 }
 
-
-
 fn multiline_geojson(segments: &[((f32, f32), (f32, f32))]) -> String {
     if segments.is_empty() {
         return "{\"type\":\"MultiLineString\",\"coordinates\":[]}".to_string();
@@ -808,11 +816,10 @@ fn multiline_geojson(segments: &[((f32, f32), (f32, f32))]) -> String {
     s
 }
 
-
-mod traces;
 mod metadata;
-use traces::emit_segment_traces;
+mod traces;
 use metadata::build_ground_ops_metadata;
+use traces::emit_segment_traces;
 
 #[cfg(test)]
 mod tests;

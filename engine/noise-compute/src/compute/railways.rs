@@ -100,7 +100,11 @@ pub(crate) fn compute_railways(
         }
 
         let rail_type = RailType::from_u8(seg.rail_type);
-        let speed = if seg.speed_kmh > 0.0 { seg.speed_kmh } else { 80.0 };
+        let speed = if seg.speed_kmh > 0.0 {
+            seg.speed_kmh
+        } else {
+            80.0
+        };
         let q_pax = seg.trains_passenger.max(0.0);
         let q_frt = seg.trains_freight.max(0.0);
         if q_pax + q_frt <= 0.0 {
@@ -161,10 +165,16 @@ pub(crate) fn compute_railways(
             let me = periods
                 .iter()
                 .map(|&(pax_pct, frt_pct, hours)| {
-                    railway::railway_emission(rail_type, speed, q_pax * pax_pct, q_frt * frt_pct, hours)
-                        .iter()
-                        .cloned()
-                        .fold(f64::NEG_INFINITY, f64::max)
+                    railway::railway_emission(
+                        rail_type,
+                        speed,
+                        q_pax * pax_pct,
+                        q_frt * frt_pct,
+                        hours,
+                    )
+                    .iter()
+                    .cloned()
+                    .fold(f64::NEG_INFINITY, f64::max)
                 })
                 .fold(f64::NEG_INFINITY, f64::max);
             if geo::below_free_field_threshold_line(me, seg.dist_m, 0.0) {
@@ -199,7 +209,7 @@ pub(crate) fn compute_railways(
             );
         let (screening_atten, obstacle_trace) =
             propagation::path_effects::screening_attenuation_with_meta(
-        &mut path_profile,
+                &mut path_profile,
                 barriers,
                 src_alt,
                 rcv_alt,

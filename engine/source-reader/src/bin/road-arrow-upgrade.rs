@@ -139,10 +139,12 @@ fn upgrade_hex(prepared_dir: &Path, hex_id: &str, run_at_unix: &str) -> Result<T
                     "default_by_class" => default_segments += 1,
                     // An unknown bucket means the fold's contract changed — fail
                     // loud, don't silently miscount (the bug class this kills).
-                    other => return Err(format!(
+                    other => {
+                        return Err(format!(
                         "unexpected traffic_source bucket {other:?} (source_id {}, hex {hex_id})",
                         sids.value(i)
-                    )),
+                    ))
+                    }
                 }
             }
         } else {

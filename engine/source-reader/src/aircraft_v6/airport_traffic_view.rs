@@ -9,7 +9,7 @@ use arrow::array::Array;
 use arrow::record_batch::RecordBatch;
 use noise_compute::compute::aircraft_v6::{AirportTrafficRowView, NUM_GSE_CLASSES};
 
-use super::columns::{col_fixed_size_list, col_f32, col_str, col_u16, col_u32, col_u64, col_u8};
+use super::columns::{col_f32, col_fixed_size_list, col_str, col_u16, col_u32, col_u64, col_u8};
 
 const NUM_BANDS: usize = 8;
 
@@ -136,7 +136,8 @@ impl AirportTrafficRowAccum {
             col_u32(batch, "microseg_unique_ga_count"),
             col_u32(batch, "microseg_unique_ga_arr_count"),
             col_u32(batch, "microseg_unique_ga_dep_count"),
-        ) else {
+        )
+        else {
             return;
         };
         if bands.value_length() != NUM_BANDS as i32 {
@@ -208,7 +209,8 @@ impl AirportTrafficRowAccum {
             row_microseg_gse.copy_from_slice(&microseg_gse_buf[lo_g..lo_g + NUM_GSE_CLASSES]);
             self.microseg_unique_gse_count_per_class
                 .push(row_microseg_gse);
-            self.microseg_unique_ga_count.push(microseg_unique_ga.value(i));
+            self.microseg_unique_ga_count
+                .push(microseg_unique_ga.value(i));
             self.microseg_unique_ga_arr_count
                 .push(microseg_unique_ga_arr.value(i));
             self.microseg_unique_ga_dep_count
@@ -241,8 +243,7 @@ impl AirportTrafficRowAccum {
                 microseg_unique_count: self.microseg_unique_count[i],
                 microseg_unique_arr_count: self.microseg_unique_arr_count[i],
                 microseg_unique_dep_count: self.microseg_unique_dep_count[i],
-                microseg_unique_gse_count_per_class: &self
-                    .microseg_unique_gse_count_per_class[i],
+                microseg_unique_gse_count_per_class: &self.microseg_unique_gse_count_per_class[i],
                 microseg_unique_ga_count: self.microseg_unique_ga_count[i],
                 microseg_unique_ga_arr_count: self.microseg_unique_ga_arr_count[i],
                 microseg_unique_ga_dep_count: self.microseg_unique_ga_dep_count[i],

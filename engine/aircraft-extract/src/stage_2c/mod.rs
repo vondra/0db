@@ -60,11 +60,7 @@ pub fn run_stage_2c(
     // write fresh files. R4s that have no traffic this run would otherwise
     // retain a prior-run file (possibly older schema) and the popup
     // reader would fatal-fail on schema_version mismatch.
-    let wiped = crate::wipe::wipe_stale_arrows_for_scope(
-        h3r4_dir,
-        "airport_traffic.arrow",
-        scope,
-    )?;
+    let wiped = crate::wipe::wipe_stale_arrows_for_scope(h3r4_dir, "airport_traffic.arrow", scope)?;
     if wiped > 0 {
         eprintln!(
             "{} [stage2c] wiped {wiped} stale airport_traffic.arrow file(s) before write",
@@ -166,9 +162,7 @@ mod tests {
         let lon1 = 14.001;
         let mid_lat = lat;
         let mid_lon = (lon0 + lon1) * 0.5;
-        let r4 = u64::from(
-            lat_lon_to_cell(mid_lat, mid_lon, Resolution::Four).expect("valid r4"),
-        );
+        let r4 = u64::from(lat_lon_to_cell(mid_lat, mid_lon, Resolution::Four).expect("valid r4"));
         let r4_h3r4_dir = h3r4_dir.join(r4_hex_str(r4));
         let r4_input_dir = by_r4_dir.join(r4_hex_str(r4));
         std::fs::create_dir_all(&r4_h3r4_dir).unwrap();
@@ -276,11 +270,7 @@ mod tests {
         let h3r4_dir = tmp.path().join("h3r4");
         // Praha R4 — in-scope. No ground.arrow input → writer does
         // not emit a fresh airport_traffic.arrow for this run.
-        let r4 = u64::from(
-            LatLng::new(50.10, 14.26)
-                .unwrap()
-                .to_cell(Resolution::Four),
-        );
+        let r4 = u64::from(LatLng::new(50.10, 14.26).unwrap().to_cell(Resolution::Four));
         let r4_dir = h3r4_dir.join(r4_hex_str(r4));
         std::fs::create_dir_all(&r4_dir).unwrap();
         let stale = r4_dir.join("airport_traffic.arrow");
@@ -309,11 +299,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let by_r4_dir = tmp.path().join("segments_by_r4");
         let h3r4_dir = tmp.path().join("h3r4");
-        let r4 = u64::from(
-            LatLng::new(50.10, 14.26)
-                .unwrap()
-                .to_cell(Resolution::Four),
-        );
+        let r4 = u64::from(LatLng::new(50.10, 14.26).unwrap().to_cell(Resolution::Four));
         // Pre-populate a fresh-looking airport_traffic.arrow in
         // h3r4_dir to confirm precheck keeps it intact on rejection.
         let h3r4_r4 = h3r4_dir.join(r4_hex_str(r4));

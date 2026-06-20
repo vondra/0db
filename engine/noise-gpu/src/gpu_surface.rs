@@ -356,7 +356,8 @@ fn process_block(
             st.t_kernel += tk.elapsed().as_secs_f64();
             if let Some((start, stop, _)) = kernel_evt {
                 // Stream is synced by dtoh above ⇒ both events are recorded.
-                st.kernel_ms += unsafe { result::event::elapsed(start, stop).expect("elapsed") } as f64;
+                st.kernel_ms +=
+                    unsafe { result::event::elapsed(start, stop).expect("elapsed") } as f64;
                 unsafe {
                     result::event::destroy(start).expect("destroy start");
                     result::event::destroy(stop).expect("destroy stop");

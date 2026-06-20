@@ -57,8 +57,7 @@ fn shuffle_bucket(r4: u64) -> u64 {
 }
 
 fn r4_of_midpoint(seg: &FlightSegment) -> Option<u64> {
-    let (mid_lat, mid_lon) =
-        midpoint(seg.start_lat, seg.start_lon, seg.end_lat, seg.end_lon);
+    let (mid_lat, mid_lon) = midpoint(seg.start_lat, seg.start_lon, seg.end_lat, seg.end_lon);
     lat_lon_to_cell(mid_lat as f64, mid_lon as f64, Resolution::Four).map(u64::from)
 }
 
@@ -143,8 +142,22 @@ pub fn shuffle_per_r4(
     );
     let pass_a_start = std::time::Instant::now();
     let counter = Milestone::new("shuffle/passA", "segments", 1_000_000);
-    pass_a(day_paths, "air", PASS_A_PEAK_PER_DAY_GB, &temp_dir, scope, &counter)?;
-    pass_a(ga_day_paths, "ga", PASS_A_GA_PEAK_PER_DAY_GB, &temp_dir, scope, &counter)?;
+    pass_a(
+        day_paths,
+        "air",
+        PASS_A_PEAK_PER_DAY_GB,
+        &temp_dir,
+        scope,
+        &counter,
+    )?;
+    pass_a(
+        ga_day_paths,
+        "ga",
+        PASS_A_GA_PEAK_PER_DAY_GB,
+        &temp_dir,
+        scope,
+        &counter,
+    )?;
     let pass_a_total = counter.total();
     finished(
         "shuffle/passA",
@@ -155,7 +168,10 @@ pub fn shuffle_per_r4(
         ),
     );
 
-    started("shuffle/passB", &format!("{} hash buckets", SHUFFLE_HASH_BUCKETS));
+    started(
+        "shuffle/passB",
+        &format!("{} hash buckets", SHUFFLE_HASH_BUCKETS),
+    );
     let pass_b_start = std::time::Instant::now();
     let pass_b_shards = pass_b(&temp_dir, out_dir)?;
     finished(
@@ -237,42 +253,42 @@ fn pass_a(
     // limit, whichever is smaller). Within a chunk par_iter still fills cores.
     for chunk in day_paths.chunks(pass_a_max_concurrent_days(day_paths.len(), peak_per_day_gb)) {
         chunk.par_iter().try_for_each(|day_path| -> Result<()> {
-        let segments = read_segments(day_path)
-            .with_context(|| format!("read {}", day_path.display()))?;
-        let day_stem = day_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| anyhow::anyhow!("missing file stem: {}", day_path.display()))?;
+            let segments =
+                read_segments(day_path).with_context(|| format!("read {}", day_path.display()))?;
+            let day_stem = day_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| anyhow::anyhow!("missing file stem: {}", day_path.display()))?;
 
-        let mut buckets: HashMap<(&'static str, u64), Vec<FlightSegment>> = HashMap::new();
-        let mut kept = 0u64;
-        for seg in segments {
-            let Some(phase) = phase_name(seg.phase) else {
-                continue;
-            };
-            let Some(r4) = r4_of_midpoint(&seg) else {
-                continue;
-            };
-            if let Some(s) = scope {
-                if !s.contains_r4(r4) {
+            let mut buckets: HashMap<(&'static str, u64), Vec<FlightSegment>> = HashMap::new();
+            let mut kept = 0u64;
+            for seg in segments {
+                let Some(phase) = phase_name(seg.phase) else {
                     continue;
+                };
+                let Some(r4) = r4_of_midpoint(&seg) else {
+                    continue;
+                };
+                if let Some(s) = scope {
+                    if !s.contains_r4(r4) {
+                        continue;
+                    }
                 }
+                buckets
+                    .entry((phase, shuffle_bucket(r4)))
+                    .or_default()
+                    .push(seg);
+                kept += 1;
             }
-            buckets
-                .entry((phase, shuffle_bucket(r4)))
-                .or_default()
-                .push(seg);
-            kept += 1;
-        }
 
-        // Sequential per-bucket write — paths are unique per
-        // (phase, hash, pass, day) so no worker writes the same file.
-        for ((phase, hash), segs) in buckets {
-            write_segments(&pass_a_path(temp_dir, phase, hash, pass, day_stem), &segs)?;
-        }
-        counter.add(kept);
-        Ok(())
-    })?;
+            // Sequential per-bucket write — paths are unique per
+            // (phase, hash, pass, day) so no worker writes the same file.
+            for ((phase, hash), segs) in buckets {
+                write_segments(&pass_a_path(temp_dir, phase, hash, pass, day_stem), &segs)?;
+            }
+            counter.add(kept);
+            Ok(())
+        })?;
     }
     Ok(())
 }
@@ -295,7 +311,10 @@ fn pass_a_max_concurrent_days(num_days: usize, peak_per_day_gb: f64) -> usize {
         .unwrap_or(16u64 * 1024 * 1024 * 1024);
     let cgroup = std::fs::read_to_string("/proc/self/cgroup")
         .ok()
-        .and_then(|cg| cg.lines().find_map(|l| l.strip_prefix("0::").map(str::to_owned)))
+        .and_then(|cg| {
+            cg.lines()
+                .find_map(|l| l.strip_prefix("0::").map(str::to_owned))
+        })
         .and_then(|rel| {
             std::fs::read_to_string(format!("/sys/fs/cgroup{}/memory.max", rel.trim())).ok()
         })
@@ -384,34 +403,34 @@ fn pass_b(temp_dir: &Path, out_dir: &Path) -> Result<u64> {
         (0..SHUFFLE_HASH_BUCKETS)
             .into_par_iter()
             .try_for_each(|hash| -> Result<()> {
-            let mut shards_this_bucket = 0u64;
-            for phase in phases {
-                let parts = list_pass_a_parts(&pass_a_bucket_dir(temp_dir, phase, hash))?;
-                if parts.is_empty() {
-                    continue;
-                }
-                let mut by_r4: HashMap<u64, Vec<FlightSegment>> = HashMap::new();
-                for part in &parts {
-                    let segs = read_segments(part)
-                        .with_context(|| format!("read {}", part.display()))?;
-                    for seg in segs {
-                        let Some(r4) = r4_of_midpoint(&seg) else {
-                            continue;
-                        };
-                        by_r4.entry(r4).or_default().push(seg);
+                let mut shards_this_bucket = 0u64;
+                for phase in phases {
+                    let parts = list_pass_a_parts(&pass_a_bucket_dir(temp_dir, phase, hash))?;
+                    if parts.is_empty() {
+                        continue;
+                    }
+                    let mut by_r4: HashMap<u64, Vec<FlightSegment>> = HashMap::new();
+                    for part in &parts {
+                        let segs = read_segments(part)
+                            .with_context(|| format!("read {}", part.display()))?;
+                        for seg in segs {
+                            let Some(r4) = r4_of_midpoint(&seg) else {
+                                continue;
+                            };
+                            by_r4.entry(r4).or_default().push(seg);
+                        }
+                    }
+                    for (r4, segs) in by_r4 {
+                        let r4_dir = out_dir.join(r4_hex_str(r4));
+                        std::fs::create_dir_all(&r4_dir)?;
+                        write_segments(&r4_dir.join(format!("{phase}.arrow")), &segs)?;
+                        shards_this_bucket += 1;
                     }
                 }
-                for (r4, segs) in by_r4 {
-                    let r4_dir = out_dir.join(r4_hex_str(r4));
-                    std::fs::create_dir_all(&r4_dir)?;
-                    write_segments(&r4_dir.join(format!("{phase}.arrow")), &segs)?;
-                    shards_this_bucket += 1;
-                }
-            }
-            bucket_counter.add(1);
-            shard_counter.add(shards_this_bucket);
-            Ok(())
-        })
+                bucket_counter.add(1);
+                shard_counter.add(shards_this_bucket);
+                Ok(())
+            })
     })?;
     Ok(shard_counter.total())
 }
@@ -428,9 +447,7 @@ pub fn list_r4_shards(
         Ok(r) => r,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => {
-            return Err(e).with_context(|| {
-                format!("read_dir {}", segments_by_r4_dir.display())
-            })
+            return Err(e).with_context(|| format!("read_dir {}", segments_by_r4_dir.display()))
         }
     };
     let mut out = Vec::new();
@@ -575,8 +592,7 @@ mod tests {
             .filter(|e| e.path().is_dir())
             .collect();
         assert_eq!(r4_dirs.len(), 1);
-        let airborne =
-            read_segments(&r4_dirs[0].path().join("airborne.arrow")).unwrap();
+        let airborne = read_segments(&r4_dirs[0].path().join("airborne.arrow")).unwrap();
         assert_eq!(airborne.len(), 1);
         assert_eq!(airborne[0].flight_id, 1);
     }
@@ -595,7 +611,10 @@ mod tests {
             .filter(|e| e.path().is_dir())
             .count();
         assert_eq!(subdirs, 0, "no R4 shard dirs for empty input");
-        assert_eq!(std::fs::read_to_string(out_dir.join("n_days")).unwrap(), "0");
+        assert_eq!(
+            std::fs::read_to_string(out_dir.join("n_days")).unwrap(),
+            "0"
+        );
         assert!(!out_dir.join("ga_n_days").exists());
         assert!(!tmp.path().join("temp_shuffle").exists());
     }
@@ -621,8 +640,14 @@ mod tests {
         let out_dir = tmp.path().join("segments_by_r4");
         shuffle_per_r4(&[air_day], &[ga_day], &out_dir, None).unwrap();
 
-        assert_eq!(std::fs::read_to_string(out_dir.join("n_days")).unwrap(), "1");
-        assert_eq!(std::fs::read_to_string(out_dir.join("ga_n_days")).unwrap(), "1");
+        assert_eq!(
+            std::fs::read_to_string(out_dir.join("n_days")).unwrap(),
+            "1"
+        );
+        assert_eq!(
+            std::fs::read_to_string(out_dir.join("ga_n_days")).unwrap(),
+            "1"
+        );
         let r4_dirs: Vec<_> = std::fs::read_dir(&out_dir)
             .unwrap()
             .filter_map(|e| e.ok())
@@ -635,7 +660,11 @@ mod tests {
             .map(|s| s.flight_id)
             .collect();
         fids.sort_unstable();
-        assert_eq!(fids, [1, 2], "both passes' segments must survive the stem collision");
+        assert_eq!(
+            fids,
+            [1, 2],
+            "both passes' segments must survive the stem collision"
+        );
     }
 
     /// Duplicate day stems WITHIN one pass list would collide on one

@@ -85,10 +85,22 @@ const WORLD_FREIGHT: [f64; 3] = [12.0 / 24.0, 4.0 / 24.0, 8.0 / 24.0];
 /// Non-EU passenger — `derived`, same reasoning as [`EU_PAX`].
 const WORLD_PAX: [f64; 3] = [0.70, 0.20, 0.10];
 
-const TD_EU_RAIL: RailTimeDist = RailTimeDist { pax: EU_PAX, frt: EU_FREIGHT };
-const TD_EU_TRAM: RailTimeDist = RailTimeDist { pax: TRAM_PAX, frt: TRAM_PAX };
-const TD_WORLD_RAIL: RailTimeDist = RailTimeDist { pax: WORLD_PAX, frt: WORLD_FREIGHT };
-const TD_WORLD_TRAM: RailTimeDist = RailTimeDist { pax: TRAM_PAX, frt: TRAM_PAX };
+const TD_EU_RAIL: RailTimeDist = RailTimeDist {
+    pax: EU_PAX,
+    frt: EU_FREIGHT,
+};
+const TD_EU_TRAM: RailTimeDist = RailTimeDist {
+    pax: TRAM_PAX,
+    frt: TRAM_PAX,
+};
+const TD_WORLD_RAIL: RailTimeDist = RailTimeDist {
+    pax: WORLD_PAX,
+    frt: WORLD_FREIGHT,
+};
+const TD_WORLD_TRAM: RailTimeDist = RailTimeDist {
+    pax: TRAM_PAX,
+    frt: TRAM_PAX,
+};
 
 /// ISO-3166 alpha-2 whitelist for the EU-derived freight table: EU27 + CH + NO
 /// + UK. Keyed on the country code, NOT [`crate::admin::Continent::Europe`] —
@@ -379,7 +391,7 @@ pub fn rail_reach_m(
     let target = RAILWAY_REACH_TARGET_LDEN_DB;
     let mut lo = 100.0_f64; // below floor; bisection bracket, clamp finalises
     let mut hi = 50_000.0_f64; // above ceiling; widest bracket we ever need
-    // 40 log-halvings: (ln(50000)-ln(100))/2^40 → sub-millimetre, ample margin.
+                               // 40 log-halvings: (ln(50000)-ln(100))/2^40 → sub-millimetre, ample margin.
     for _ in 0..40 {
         let mid = ((lo.ln() + hi.ln()) * 0.5).exp();
         if free_field_lden_at(admin, rail_type, speed_kmh, q_pax, q_frt, mid) > target {
@@ -440,15 +452,15 @@ mod tests {
     fn test_leq_day_vs_night_same_count() {
         // Same trains passed per period — shorter period means higher hourly flow,
         // so Leq over 4 h (evening) is louder than Leq over 12 h (day).
-        let day = a_weighted_total(&railway_emission(
-            RailType::Rail, 100.0, 100.0, 10.0, 12.0,
-        ));
-        let eve = a_weighted_total(&railway_emission(
-            RailType::Rail, 100.0, 100.0, 10.0, 4.0,
-        ));
+        let day = a_weighted_total(&railway_emission(RailType::Rail, 100.0, 100.0, 10.0, 12.0));
+        let eve = a_weighted_total(&railway_emission(RailType::Rail, 100.0, 100.0, 10.0, 4.0));
         let diff = eve - day;
         // +10·log10(12/4) ≈ 4.77 dB expected
-        assert!((diff - 4.77).abs() < 0.1, "expected +4.77 dB, got {:.2}", diff);
+        assert!(
+            (diff - 4.77).abs() < 0.1,
+            "expected +4.77 dB, got {:.2}",
+            diff
+        );
     }
 
     /// The reach solver must put the free-field Lden of each representative row
@@ -467,9 +479,17 @@ mod tests {
         ] {
             let r = rail_reach_m(admin, rt, sp, qp, qf);
             // All three crossings fall strictly inside the clamp band.
-            assert!(r > 2_000.0 && r < 10_000.0, "{:?} reach {r} hit a clamp", rt);
+            assert!(
+                r > 2_000.0 && r < 10_000.0,
+                "{:?} reach {r} hit a clamp",
+                rt
+            );
             let lden = free_field_lden_at(admin, rt, sp, qp, qf, r);
-            assert!((lden - 25.0).abs() < 0.05, "{:?} Lden@reach = {lden:.3}, want 25", rt);
+            assert!(
+                (lden - 25.0).abs() < 0.05,
+                "{:?} Lden@reach = {lden:.3}, want 25",
+                rt
+            );
         }
     }
 
@@ -484,7 +504,10 @@ mod tests {
     #[test]
     fn default_mainline_reach_post_c1() {
         let r = rail_reach_m(Admin::UNKNOWN, RailType::Rail, 80.0, 80.0, 20.0);
-        assert!((7_400.0..=8_100.0).contains(&r), "world mainline reach {r:.0} m, want ≈7.7 km");
+        assert!(
+            (7_400.0..=8_100.0).contains(&r),
+            "world mainline reach {r:.0} m, want ≈7.7 km"
+        );
     }
 
     /// C1: the SAME default mainline under an EU region (CZ) reaches FARTHER than
@@ -493,10 +516,17 @@ mod tests {
     /// is the whole point of C1; magnitude is bounded by the 10 km clamp.
     #[test]
     fn eu_mainline_reach_exceeds_world() {
-        let cz = Admin { continent: crate::admin::Continent::Europe, country_iso: *b"CZ", city_id: 0 };
+        let cz = Admin {
+            continent: crate::admin::Continent::Europe,
+            country_iso: *b"CZ",
+            city_id: 0,
+        };
         let eu = rail_reach_m(cz, RailType::Rail, 80.0, 80.0, 20.0);
         let world = rail_reach_m(Admin::UNKNOWN, RailType::Rail, 80.0, 80.0, 20.0);
-        assert!(eu > world, "EU mainline reach {eu:.0} must exceed world {world:.0}");
+        assert!(
+            eu > world,
+            "EU mainline reach {eu:.0} must exceed world {world:.0}"
+        );
     }
 
     /// HONESTY FIX: a 300 km/h high-speed PASSENGER corridor is 30.8 dB @ 7 km
@@ -506,7 +536,10 @@ mod tests {
     #[test]
     fn highspeed_reach_extends_to_9km() {
         let r = rail_reach_m(Admin::UNKNOWN, RailType::Rail, 300.0, 80.0, 0.0);
-        assert!((9_000.0..=9_700.0).contains(&r), "HS reach {r:.0} m, want ≈9-9.5 km");
+        assert!(
+            (9_000.0..=9_700.0).contains(&r),
+            "HS reach {r:.0} m, want ≈9-9.5 km"
+        );
     }
 
     /// PERF WIN: tram (120 services/day @ 40 km/h) is only 16.8 dB @ 7 km —
@@ -518,10 +551,19 @@ mod tests {
     fn tram_reach_shrinks_below_mainline() {
         let admin = Admin::UNKNOWN;
         let tram = rail_reach_m(admin, RailType::Tram, 40.0, 120.0, 0.0);
-        assert!((3_500.0..=4_500.0).contains(&tram), "tram reach {tram:.0} m, want ≈3.5-4.5 km");
+        assert!(
+            (3_500.0..=4_500.0).contains(&tram),
+            "tram reach {tram:.0} m, want ≈3.5-4.5 km"
+        );
         let light = rail_reach_m(admin, RailType::LightRail, 60.0, 80.0, 0.0);
-        assert!(light < tram, "light-rail {light:.0} should be < tram {tram:.0}");
-        assert!(light < 7_000.0, "light-rail {light:.0} must be well under the old 7 km");
+        assert!(
+            light < tram,
+            "light-rail {light:.0} should be < tram {tram:.0}"
+        );
+        assert!(
+            light < 7_000.0,
+            "light-rail {light:.0} must be well under the old 7 km"
+        );
     }
 
     /// Clamp floor: a near-silent stub (one passenger train/day @ 80 km/h
@@ -532,9 +574,15 @@ mod tests {
     fn reach_clamps_at_floor_and_ceiling() {
         let admin = Admin::UNKNOWN;
         let stub = rail_reach_m(admin, RailType::Rail, 80.0, 1.0, 0.0);
-        assert_eq!(stub, 2_000.0, "degenerate-quiet row must clamp to the 2 km floor");
+        assert_eq!(
+            stub, 2_000.0,
+            "degenerate-quiet row must clamp to the 2 km floor"
+        );
         let loud = rail_reach_m(admin, RailType::Rail, 250.0, 200.0, 80.0);
-        assert_eq!(loud, 10_000.0, "loud HS-freight corridor must clamp to the 10 km ceiling");
+        assert_eq!(
+            loud, 10_000.0,
+            "loud HS-freight corridor must clamp to the 10 km ceiling"
+        );
     }
 
     // ── C1: per-region, per-category period shares ──────────────────────────
@@ -555,9 +603,21 @@ mod tests {
     /// night ∈ [0.05, 0.15]; tram night ≤ 0.08; non-EU freight night = 8/24.
     #[test]
     fn time_dist_plausibility_bands() {
-        assert!((0.45..=0.60).contains(&TD_EU_RAIL.frt[2]), "EU frt night {}", TD_EU_RAIL.frt[2]);
-        assert!((0.05..=0.15).contains(&TD_EU_RAIL.pax[2]), "EU pax night {}", TD_EU_RAIL.pax[2]);
-        assert!(TD_EU_TRAM.pax[2] <= 0.08, "tram night {}", TD_EU_TRAM.pax[2]);
+        assert!(
+            (0.45..=0.60).contains(&TD_EU_RAIL.frt[2]),
+            "EU frt night {}",
+            TD_EU_RAIL.frt[2]
+        );
+        assert!(
+            (0.05..=0.15).contains(&TD_EU_RAIL.pax[2]),
+            "EU pax night {}",
+            TD_EU_RAIL.pax[2]
+        );
+        assert!(
+            TD_EU_TRAM.pax[2] <= 0.08,
+            "tram night {}",
+            TD_EU_TRAM.pax[2]
+        );
         assert!(
             (TD_WORLD_RAIL.frt[2] - 8.0 / 24.0).abs() < 1e-9,
             "non-EU frt night {} != 8/24",
@@ -569,17 +629,41 @@ mod tests {
     /// of 284 — must ship, not the rounded-then-drifted 0.33/0.13/0.54.
     #[test]
     fn eu_freight_exact_derived_fractions() {
-        assert!((TD_EU_RAIL.frt[0] - 0.340_67).abs() < 1e-4, "{}", TD_EU_RAIL.frt[0]);
-        assert!((TD_EU_RAIL.frt[1] - 0.113_56).abs() < 1e-4, "{}", TD_EU_RAIL.frt[1]);
-        assert!((TD_EU_RAIL.frt[2] - 0.545_77).abs() < 1e-4, "{}", TD_EU_RAIL.frt[2]);
+        assert!(
+            (TD_EU_RAIL.frt[0] - 0.340_67).abs() < 1e-4,
+            "{}",
+            TD_EU_RAIL.frt[0]
+        );
+        assert!(
+            (TD_EU_RAIL.frt[1] - 0.113_56).abs() < 1e-4,
+            "{}",
+            TD_EU_RAIL.frt[1]
+        );
+        assert!(
+            (TD_EU_RAIL.frt[2] - 0.545_77).abs() < 1e-4,
+            "{}",
+            TD_EU_RAIL.frt[2]
+        );
     }
 
     /// The resolver hands trams/light-rail/etc the urban PAX curve in BOTH slots
     /// (no freight ever applies to rail_type 1-4). Plan risk §5.
     #[test]
     fn freight_shares_never_apply_to_non_rail_types() {
-        for rt in [RailType::Tram, RailType::LightRail, RailType::NarrowGauge, RailType::Funicular] {
-            for admin in [Admin::UNKNOWN, Admin { continent: crate::admin::Continent::Europe, country_iso: *b"DE", city_id: 0 }] {
+        for rt in [
+            RailType::Tram,
+            RailType::LightRail,
+            RailType::NarrowGauge,
+            RailType::Funicular,
+        ] {
+            for admin in [
+                Admin::UNKNOWN,
+                Admin {
+                    continent: crate::admin::Continent::Europe,
+                    country_iso: *b"DE",
+                    city_id: 0,
+                },
+            ] {
                 let td = rail_time_dist(admin, rt);
                 assert_eq!(td.pax, td.frt, "{rt:?} must have frt == pax (no freight)");
             }
@@ -592,12 +676,25 @@ mod tests {
     #[test]
     fn geographic_europe_outside_whitelist_is_world() {
         for iso in [*b"RU", *b"UA", *b"BY"] {
-            let admin = Admin { continent: crate::admin::Continent::Europe, country_iso: iso, city_id: 0 };
+            let admin = Admin {
+                continent: crate::admin::Continent::Europe,
+                country_iso: iso,
+                city_id: 0,
+            };
             let td = rail_time_dist(admin, RailType::Rail);
-            assert_eq!(td.frt, TD_WORLD_RAIL.frt, "{:?} must take the world freight split", std::str::from_utf8(&iso));
+            assert_eq!(
+                td.frt,
+                TD_WORLD_RAIL.frt,
+                "{:?} must take the world freight split",
+                std::str::from_utf8(&iso)
+            );
         }
         // …while a whitelisted EU country (FR) takes the EU split.
-        let fr = Admin { continent: crate::admin::Continent::Europe, country_iso: *b"FR", city_id: 0 };
+        let fr = Admin {
+            continent: crate::admin::Continent::Europe,
+            country_iso: *b"FR",
+            city_id: 0,
+        };
         assert_eq!(rail_time_dist(fr, RailType::Rail).frt, TD_EU_RAIL.frt);
     }
 
@@ -609,7 +706,11 @@ mod tests {
     /// and require an exact match to `free_field_lden_at`.
     #[test]
     fn solver_period_model_matches_kernel_split() {
-        let cz = Admin { continent: crate::admin::Continent::Europe, country_iso: *b"CZ", city_id: 0 };
+        let cz = Admin {
+            continent: crate::admin::Continent::Europe,
+            country_iso: *b"CZ",
+            city_id: 0,
+        };
         let (rt, sp, qp, qf, d) = (RailType::Rail, 80.0, 80.0, 20.0, 3_500.0);
         // Independent re-derivation using the public shared helper.
         let td = rail_time_dist(cz, rt);
@@ -623,9 +724,13 @@ mod tests {
             a_weighted_total(&bands)
         };
         let [(pd, fd, hd), (pe, fe, he), (pn, fn_, hn)] = td.periods();
-        let want = crate::periods::compute_lden(recv(pd, fd, hd), recv(pe, fe, he), recv(pn, fn_, hn));
+        let want =
+            crate::periods::compute_lden(recv(pd, fd, hd), recv(pe, fe, he), recv(pn, fn_, hn));
         let got = free_field_lden_at(cz, rt, sp, qp, qf, d);
-        assert!((want - got).abs() < 1e-9, "kernel split {want} != solver {got}");
+        assert!(
+            (want - got).abs() < 1e-9,
+            "kernel split {want} != solver {got}"
+        );
     }
 
     /// C1 CORE INVARIANT: a mixed EU line's `Ln − Lden` must NOT equal the old
@@ -634,12 +739,22 @@ mod tests {
     /// energy exceed day — the physical point of the freight night split.
     #[test]
     fn eu_split_breaks_minus_7_91_identity_and_night_exceeds_day() {
-        let cz = Admin { continent: crate::admin::Continent::Europe, country_iso: *b"CZ", city_id: 0 };
+        let cz = Admin {
+            continent: crate::admin::Continent::Europe,
+            country_iso: *b"CZ",
+            city_id: 0,
+        };
         let td = rail_time_dist(cz, RailType::Rail);
         // Mixed line 80 pax + 60 freight: per-period A-weighted received-equivalent
         // (use the emission Leq directly — period geometry is common).
         let aw = |pax_pct: f64, frt_pct: f64, h: f64| {
-            a_weighted_total(&railway_emission(RailType::Rail, 80.0, 80.0 * pax_pct, 60.0 * frt_pct, h))
+            a_weighted_total(&railway_emission(
+                RailType::Rail,
+                80.0,
+                80.0 * pax_pct,
+                60.0 * frt_pct,
+                h,
+            ))
         };
         let [(pd, fd, hd), (pe, fe, he), (pn, fn_, hn)] = td.periods();
         let (ld, le, ln) = (aw(pd, fd, hd), aw(pe, fe, he), aw(pn, fn_, hn));
@@ -650,7 +765,10 @@ mod tests {
             ln - lden
         );
         // Freight-heavy: night hourly Leq exceeds day hourly Leq.
-        assert!(ln > ld, "freight-heavy EU night Leq {ln:.1} must exceed day {ld:.1}");
+        assert!(
+            ln > ld,
+            "freight-heavy EU night Leq {ln:.1} must exceed day {ld:.1}"
+        );
     }
 
     /// GATE UPPER-BOUND REGRESSION (Codex /gg CRITICAL): the popup early-exit in
@@ -662,7 +780,11 @@ mod tests {
     /// stays above it, so the segment survives the gate.
     #[test]
     fn early_gate_screens_on_loudest_period_not_day() {
-        let cz = Admin { continent: crate::admin::Continent::Europe, country_iso: *b"CZ", city_id: 0 };
+        let cz = Admin {
+            continent: crate::admin::Continent::Europe,
+            country_iso: *b"CZ",
+            city_id: 0,
+        };
         let td = rail_time_dist(cz, RailType::Rail);
         // Quiet slow EU freight (a near-silent service/branch stub: effective
         // 0.02 freight/day @ 30 km/h). Loud rows never expose the window — the
@@ -681,12 +803,16 @@ mod tests {
             .iter()
             .map(|&(p, f, h)| max_band(p, f, h))
             .fold(f64::NEG_INFINITY, f64::max);
-        assert!(loudest > day, "night must be the loudest period for EU freight");
+        assert!(
+            loudest > day,
+            "night must be the loudest period for EU freight"
+        );
         // 1500 m sits inside the day-prunes / loudest-keeps window (measured
         // 1200–1900 m for this row).
         let d = 1_500.0;
         let day_pruned = crate::propagation::geo::below_free_field_threshold_line(day, d, 0.0);
-        let loudest_kept = !crate::propagation::geo::below_free_field_threshold_line(loudest, d, 0.0);
+        let loudest_kept =
+            !crate::propagation::geo::below_free_field_threshold_line(loudest, d, 0.0);
         assert!(
             day_pruned && loudest_kept,
             "at {d} m: day-gate prunes ({day_pruned}) but max-over-periods keeps ({loudest_kept}) — the bug the gate fix closes",
@@ -698,8 +824,14 @@ mod tests {
     /// −0.8 ± 0.2 dB). Computed against the retired flat 0.65/0.20/0.15 split.
     #[test]
     fn pax_only_lden_shift_vs_old_flat_split() {
-        let cz = Admin { continent: crate::admin::Continent::Europe, country_iso: *b"CZ", city_id: 0 };
-        let aw = |pct: f64, h: f64| a_weighted_total(&railway_emission(RailType::Rail, 100.0, 80.0 * pct, 0.0, h));
+        let cz = Admin {
+            continent: crate::admin::Continent::Europe,
+            country_iso: *b"CZ",
+            city_id: 0,
+        };
+        let aw = |pct: f64, h: f64| {
+            a_weighted_total(&railway_emission(RailType::Rail, 100.0, 80.0 * pct, 0.0, h))
+        };
         // New (EU pax 0.70/0.20/0.10):
         let td = rail_time_dist(cz, RailType::Rail);
         let new = crate::periods::compute_lden(
@@ -710,6 +842,9 @@ mod tests {
         // Old flat 0.65/0.20/0.15:
         let old = crate::periods::compute_lden(aw(0.65, 12.0), aw(0.20, 4.0), aw(0.15, 8.0));
         let shift = new - old;
-        assert!((shift - (-0.8)).abs() <= 0.2, "pax-only Lden shift {shift:.2} dB, want -0.8±0.2");
+        assert!(
+            (shift - (-0.8)).abs() <= 0.2,
+            "pax-only Lden shift {shift:.2} dB, want -0.8±0.2"
+        );
     }
 }

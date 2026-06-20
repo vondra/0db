@@ -40,7 +40,14 @@ pub fn sample_days_by_class_vector(n_days: u16, ga_n_days: u16) -> String {
     use noise_compute::emission::aircraft::{is_ga_sampled_class, NUM_CLASSES};
     let ga = if ga_n_days == 0 { n_days } else { ga_n_days };
     (0..NUM_CLASSES)
-        .map(|c| if is_ga_sampled_class(c as u8) { ga } else { n_days }.to_string())
+        .map(|c| {
+            if is_ga_sampled_class(c as u8) {
+                ga
+            } else {
+                n_days
+            }
+            .to_string()
+        })
         .collect::<Vec<_>>()
         .join(",")
 }
@@ -211,9 +218,7 @@ pub const AIRBORNE_CONTRACT_V4: &str = "airborne_v4";
 /// crash (v2 reading v1's extra columns through a 13-col offset) or
 /// silently zero-out terrain at every chord midpoint (v2 cuts read
 /// from v1 columns that don't exist).
-pub fn assert_airborne_contract_v2(
-    metadata: &HashMap<String, String>,
-) -> anyhow::Result<()> {
+pub fn assert_airborne_contract_v2(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
     match metadata.get("airborne_contract").map(String::as_str) {
         Some(AIRBORNE_CONTRACT_V4) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
@@ -308,9 +313,7 @@ pub fn cruise_schema() -> Arc<Schema> {
 /// matches [`CRUISE_CONTRACT_V17`]. Older files MUST be
 /// rejected — the popup/heatmap readers silently skip batches whose
 /// expected columns are missing, hiding the version skew.
-pub fn assert_cruise_contract(
-    metadata: &HashMap<String, String>,
-) -> anyhow::Result<()> {
+pub fn assert_cruise_contract(metadata: &HashMap<String, String>) -> anyhow::Result<()> {
     match metadata.get("cruise_contract").map(String::as_str) {
         Some(CRUISE_CONTRACT_V17) => Ok(()),
         Some(other) => Err(anyhow::anyhow!(
@@ -439,11 +442,7 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
         Field::new("unique_movement_count", DataType::UInt32, false),
         Field::new("unique_arr_count", DataType::UInt32, false),
         Field::new("unique_dep_count", DataType::UInt32, false),
-        Field::new(
-            "unique_gse_count_per_class",
-            gse_per_class.clone(),
-            false,
-        ),
+        Field::new("unique_gse_count_per_class", gse_per_class.clone(), false),
         // Per-microsegment UNION (replicated across rows). Lets the
         // popup populate per-microseg movement counts without a UNION
         // join over per-row scalars. v9: these three count NON-GA-class
@@ -453,11 +452,7 @@ pub fn airport_traffic_schema() -> Arc<Schema> {
         Field::new("microseg_unique_count", DataType::UInt32, false),
         Field::new("microseg_unique_arr_count", DataType::UInt32, false),
         Field::new("microseg_unique_dep_count", DataType::UInt32, false),
-        Field::new(
-            "microseg_unique_gse_count_per_class",
-            gse_per_class,
-            false,
-        ),
+        Field::new("microseg_unique_gse_count_per_class", gse_per_class, false),
         // v9 GA-class microseg UNION (PROP_C172 + HELICOPTER): the 365-day
         // window split of the three columns above. Zero on non-hybrid
         // extracts (no flights routed to the GA window) — then the popup's
@@ -487,9 +482,7 @@ pub fn assert_airport_traffic_contract_v9(
         Some(other) => Err(anyhow::anyhow!(
             "airport_traffic_contract mismatch: expected {AIRPORT_TRAFFIC_CONTRACT_V9}, got {other}"
         )),
-        None => Err(anyhow::anyhow!(
-            "airport_traffic_contract metadata missing"
-        )),
+        None => Err(anyhow::anyhow!("airport_traffic_contract metadata missing")),
     }
 }
 
@@ -523,7 +516,11 @@ pub fn airport_summary_schema() -> Arc<Schema> {
         // GA-class (365-day) window.
         Field::new("airport_unique_ga_arr_count", DataType::UInt32, false),
         Field::new("airport_unique_ga_dep_count", DataType::UInt32, false),
-        Field::new("airport_unique_ga_ops_count_per_kind", ops_per_kind(), false),
+        Field::new(
+            "airport_unique_ga_ops_count_per_kind",
+            ops_per_kind(),
+            false,
+        ),
     ];
     Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
         ("kind", "airport_summary"),
@@ -542,9 +539,7 @@ pub fn assert_airport_summary_contract_v2(
         Some(other) => Err(anyhow::anyhow!(
             "airport_summary_contract mismatch: expected {AIRPORT_SUMMARY_CONTRACT_V2}, got {other}"
         )),
-        None => Err(anyhow::anyhow!(
-            "airport_summary_contract metadata missing"
-        )),
+        None => Err(anyhow::anyhow!("airport_summary_contract metadata missing")),
     }
 }
 
@@ -572,9 +567,7 @@ pub fn synth_airport_lines_schema() -> Arc<Schema> {
         Field::new("aeroway_type", DataType::UInt8, false),
         Field::new("name", DataType::Utf8, false),
     ];
-    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
-        ("kind", "synth_airport_lines"),
-    ])))
+    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[("kind", "synth_airport_lines")])))
 }
 
 /// Stage 1.5 — `h3r4/<hex>/synth_airport_areas.arrow`. One row per
@@ -591,9 +584,7 @@ pub fn synth_airport_areas_schema() -> Arc<Schema> {
         Field::new("centroid_lon", DataType::Float64, false),
         Field::new("area_m2", DataType::Float32, false),
     ];
-    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[
-        ("kind", "synth_airport_areas"),
-    ])))
+    Arc::new(Schema::new(fields).with_metadata(base_metadata(&[("kind", "synth_airport_areas")])))
 }
 
 /// Verify a loaded file's metadata matches the current
@@ -638,9 +629,17 @@ mod tests {
     fn synth_airport_schemas_carry_required_columns() {
         let lines = synth_airport_lines_schema();
         for required in [
-            "osm_id", "segment_idx", "airport_key",
-            "start_lat", "start_lon", "end_lat", "end_lon",
-            "length_m", "heading_deg", "aeroway_type", "name",
+            "osm_id",
+            "segment_idx",
+            "airport_key",
+            "start_lat",
+            "start_lon",
+            "end_lat",
+            "end_lon",
+            "length_m",
+            "heading_deg",
+            "aeroway_type",
+            "name",
         ] {
             assert!(
                 lines.field_with_name(required).is_ok(),
@@ -649,8 +648,13 @@ mod tests {
         }
         let areas = synth_airport_areas_schema();
         for required in [
-            "osm_id", "airport_key", "name", "aeroway_type",
-            "centroid_lat", "centroid_lon", "area_m2",
+            "osm_id",
+            "airport_key",
+            "name",
+            "aeroway_type",
+            "centroid_lat",
+            "centroid_lon",
+            "area_m2",
         ] {
             assert!(
                 areas.field_with_name(required).is_ok(),
@@ -674,7 +678,9 @@ mod tests {
     fn airport_traffic_schema_carries_contract_metadata() {
         let s = airport_traffic_schema();
         assert_eq!(
-            s.metadata().get("airport_traffic_contract").map(String::as_str),
+            s.metadata()
+                .get("airport_traffic_contract")
+                .map(String::as_str),
             Some(AIRPORT_TRAFFIC_CONTRACT_V9)
         );
     }
@@ -683,15 +689,31 @@ mod tests {
     fn airport_traffic_schema_has_required_columns() {
         let s = airport_traffic_schema();
         for required in [
-            "airport_key", "osm_id", "segment_idx", "geometry_kind",
-            "start_lat", "start_lon", "end_lat", "end_lon", "length_m",
-            "ops_kind", "is_departure", "veh_kind", "class_idx", "period",
+            "airport_key",
+            "osm_id",
+            "segment_idx",
+            "geometry_kind",
+            "start_lat",
+            "start_lon",
+            "end_lat",
+            "end_lon",
+            "length_m",
+            "ops_kind",
+            "is_departure",
+            "veh_kind",
+            "class_idx",
+            "period",
             "band_energy_lin",
-            "unique_movement_count", "unique_arr_count", "unique_dep_count",
+            "unique_movement_count",
+            "unique_arr_count",
+            "unique_dep_count",
             "unique_gse_count_per_class",
-            "microseg_unique_count", "microseg_unique_arr_count",
-            "microseg_unique_dep_count", "microseg_unique_gse_count_per_class",
-            "microseg_unique_ga_count", "microseg_unique_ga_arr_count",
+            "microseg_unique_count",
+            "microseg_unique_arr_count",
+            "microseg_unique_dep_count",
+            "microseg_unique_gse_count_per_class",
+            "microseg_unique_ga_count",
+            "microseg_unique_ga_arr_count",
             "microseg_unique_ga_dep_count",
         ] {
             assert!(
@@ -705,9 +727,19 @@ mod tests {
     fn cruise_schema_v16_required_columns() {
         let s = cruise_schema();
         for required in [
-            "r7_hex", "class", "rep_profile_idx", "fl_bin", "period",
-            "sum_length_m", "rep_len_m", "rep_alt_m", "rep_speed_kt",
-            "unique_count", "top_candidates", "source_id", "origin",
+            "r7_hex",
+            "class",
+            "rep_profile_idx",
+            "fl_bin",
+            "period",
+            "sum_length_m",
+            "rep_len_m",
+            "rep_alt_m",
+            "rep_speed_kt",
+            "unique_count",
+            "top_candidates",
+            "source_id",
+            "origin",
         ] {
             assert!(
                 s.field_with_name(required).is_ok(),
@@ -721,7 +753,11 @@ mod tests {
             "cruise schema v16 must NOT carry `flags` column"
         );
         // v14 explicitly DROPS the per-fid lists.
-        for dropped in ["cruise_flight_ids", "cruise_aircraft_types", "cruise_callsigns"] {
+        for dropped in [
+            "cruise_flight_ids",
+            "cruise_aircraft_types",
+            "cruise_callsigns",
+        ] {
             assert!(
                 s.field_with_name(dropped).is_err(),
                 "cruise v14 schema must NOT carry the v13 {dropped} column"
@@ -733,7 +769,9 @@ mod tests {
     fn airport_summary_schema_carries_contract_metadata() {
         let s = airport_summary_schema();
         assert_eq!(
-            s.metadata().get("airport_summary_contract").map(String::as_str),
+            s.metadata()
+                .get("airport_summary_contract")
+                .map(String::as_str),
             Some(AIRPORT_SUMMARY_CONTRACT_V2)
         );
     }
@@ -754,9 +792,12 @@ mod tests {
 
     #[test]
     fn assert_schema_version_rejects_old_versions() {
-        for old in ["v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13"] {
-            let md: HashMap<String, String> =
-                [("schema_version".into(), old.into())].into_iter().collect();
+        for old in [
+            "v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13",
+        ] {
+            let md: HashMap<String, String> = [("schema_version".into(), old.into())]
+                .into_iter()
+                .collect();
             assert!(
                 assert_schema_version(&md).is_err(),
                 "expected reject for {old}"
@@ -769,5 +810,4 @@ mod tests {
         let md: HashMap<String, String> = HashMap::new();
         assert!(assert_schema_version(&md).is_err());
     }
-
 }

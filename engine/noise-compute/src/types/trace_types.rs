@@ -27,8 +27,7 @@ pub struct LdenVariants {
     pub no_atmospheric: f64,
 }
 
-impl LdenVariants {
-}
+impl LdenVariants {}
 
 impl PerPeriod<[f64; NUM_BANDS]> {
     /// Per-period band triple where every band is `f64::NEG_INFINITY`

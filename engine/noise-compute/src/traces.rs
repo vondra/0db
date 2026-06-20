@@ -92,7 +92,11 @@ pub fn ground_atten_bands(ground_g: f64) -> [f64; NUM_BANDS] {
 /// Consumes a `PathProfile` into a serializable `PathProfileTrace` (dropping
 /// the internal `elevation_f64_scratch` buffer). Takes the profile by value
 /// so callers can `std::mem::take(...)` to avoid cloning the sample arrays.
-pub fn path_profile_into_trace(profile: PathProfile, src_alt_m: f64, rcv_alt_m: f64) -> PathProfileTrace {
+pub fn path_profile_into_trace(
+    profile: PathProfile,
+    src_alt_m: f64,
+    rcv_alt_m: f64,
+) -> PathProfileTrace {
     PathProfileTrace {
         t: profile.t,
         elevation_m: profile.elevation_m,
@@ -132,7 +136,11 @@ pub fn vegetation_runs_and_depth(t: &[f64], forest: &[u8], dist_m: f64) -> (Vec<
         } else {
             if run_len >= 10.0 {
                 if let Some(start) = run_start_t {
-                    runs.push(ForestRun { t_start: start, t_end: t[i - 1], len_m: run_len });
+                    runs.push(ForestRun {
+                        t_start: start,
+                        t_end: t[i - 1],
+                        len_m: run_len,
+                    });
                     total_depth += run_len;
                 }
             }
@@ -142,7 +150,11 @@ pub fn vegetation_runs_and_depth(t: &[f64], forest: &[u8], dist_m: f64) -> (Vec<
     }
     if run_len >= 10.0 {
         if let Some(start) = run_start_t {
-            runs.push(ForestRun { t_start: start, t_end: t[t.len() - 1], len_m: run_len });
+            runs.push(ForestRun {
+                t_start: start,
+                t_end: t[t.len() - 1],
+                len_m: run_len,
+            });
             total_depth += run_len;
         }
     }
@@ -157,7 +169,11 @@ pub fn screening_trace(
 ) -> ScreeningTrace {
     ScreeningTrace {
         attenuation_bands: atten_bands,
-        obstacle: if obstacle.kind == "none" { None } else { Some(obstacle) },
+        obstacle: if obstacle.kind == "none" {
+            None
+        } else {
+            Some(obstacle)
+        },
     }
 }
 
@@ -301,13 +317,13 @@ pub(crate) fn build_point_segment_trace(inputs: BuildPointTrace<'_>) -> SegmentT
             (
                 label,
                 // `src.source_height_m` for buildings is the mid-facade
-            // anchor (= building_height / 2, per CNOSSOS-EU §2.5.5
-            // and `prepare_building_points`). The popup user sees a
-            // row labeled "Height" so present the FULL building
-            // height by doubling. The mid-facade source_height_m
-            // remains available on `baseline.source_height_m` for
-            // the ISO 9613-2 anchor display.
-            EmissionTrace::Building {
+                // anchor (= building_height / 2, per CNOSSOS-EU §2.5.5
+                // and `prepare_building_points`). The popup user sees a
+                // row labeled "Height" so present the FULL building
+                // height by doubling. The mid-facade source_height_m
+                // remains available on `baseline.source_height_m` for
+                // the ISO 9613-2 anchor display.
+                EmissionTrace::Building {
                     building_type: label,
                     height_m: src.source_height_m * 2.0,
                     floors: src.floors,
@@ -451,8 +467,16 @@ pub(crate) fn build_rail_segment_trace(inputs: BuildRailTrace<'_>) -> SegmentTra
         emission: EmissionTrace::Railway {
             trains_passenger: q_pax,
             trains_freight: q_frt,
-            trains_passenger_source: if seg.trains_passenger_source == 0 { "arrow" } else { "default_by_type" },
-            trains_freight_source: if seg.trains_freight_source == 0 { "arrow" } else { "default_by_type" },
+            trains_passenger_source: if seg.trains_passenger_source == 0 {
+                "arrow"
+            } else {
+                "default_by_type"
+            },
+            trains_freight_source: if seg.trains_freight_source == 0 {
+                "arrow"
+            } else {
+                "default_by_type"
+            },
             source_id: seg.source_id,
             provenance: crate::sources::dataset_meta(seg.source_id),
             speed_kmh,
@@ -648,9 +672,18 @@ mod tests {
             attenuation_bands: [1.0; NUM_BANDS],
             n_edges: 3,
             edges: vec![
-                EdgePoint { t: 0.2, elevation_m: 120.0 },
-                EdgePoint { t: 0.5, elevation_m: 140.0 },
-                EdgePoint { t: 0.8, elevation_m: 130.0 },
+                EdgePoint {
+                    t: 0.2,
+                    elevation_m: 120.0,
+                },
+                EdgePoint {
+                    t: 0.5,
+                    elevation_m: 140.0,
+                },
+                EdgePoint {
+                    t: 0.8,
+                    elevation_m: 130.0,
+                },
             ],
             delta_star_m: 0.12,
             edge_distance_m: 900.0,
@@ -668,7 +701,10 @@ mod tests {
 
     #[test]
     fn screening_trace_shape() {
-        let obstacle = ScreeningObstacleTrace { kind: "none", ..Default::default() };
+        let obstacle = ScreeningObstacleTrace {
+            kind: "none",
+            ..Default::default()
+        };
         assert_bands_no_scalar(&screening_trace([0.0; NUM_BANDS], obstacle));
     }
 

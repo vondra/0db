@@ -138,10 +138,7 @@ pub(crate) struct SynthAirportAreaRow {
 /// sibling-`.tmp` + rename atomicity guarantee and the
 /// `create_dir_all` on the parent — so a missing R4 directory at
 /// the destination is created on first emission.
-pub(crate) fn write_synth_airport_lines(
-    path: &Path,
-    rows: &[SynthAirportLineRow],
-) -> Result<()> {
+pub(crate) fn write_synth_airport_lines(path: &Path, rows: &[SynthAirportLineRow]) -> Result<()> {
     let n = rows.len();
     let schema = synth_airport_lines_schema();
 
@@ -193,10 +190,7 @@ pub(crate) fn write_synth_airport_lines(
 
 /// Truncate-and-rewrite `synth_airport_areas.arrow` at `path`. Same
 /// atomic + parent-create behaviour as [`write_synth_airport_lines`].
-pub(crate) fn write_synth_airport_areas(
-    path: &Path,
-    rows: &[SynthAirportAreaRow],
-) -> Result<()> {
+pub(crate) fn write_synth_airport_areas(path: &Path, rows: &[SynthAirportAreaRow]) -> Result<()> {
     let n = rows.len();
     let schema = synth_airport_areas_schema();
 
@@ -327,15 +321,7 @@ pub(crate) fn read_synth_airport_areas(path: &Path) -> Result<Vec<SynthAirportAr
     let (_schema, batches) = read_all_batches(path)?;
     for batch in batches {
         let n = batch.num_rows();
-        let (
-            Some(osm_id),
-            Some(key),
-            Some(name),
-            Some(at),
-            Some(clat),
-            Some(clon),
-            Some(area),
-        ) = (
+        let (Some(osm_id), Some(key), Some(name), Some(at), Some(clat), Some(clon), Some(area)) = (
             col_u64(&batch, "osm_id"),
             col_str(&batch, "airport_key"),
             col_str(&batch, "name"),
@@ -343,8 +329,7 @@ pub(crate) fn read_synth_airport_areas(path: &Path) -> Result<Vec<SynthAirportAr
             col_f64(&batch, "centroid_lat"),
             col_f64(&batch, "centroid_lon"),
             col_f32(&batch, "area_m2"),
-        )
-        else {
+        ) else {
             anyhow::bail!(
                 "synth_airport_areas.arrow at {} is missing required columns; \
                  re-extract the aircraft pipeline",
@@ -529,7 +514,11 @@ mod tests {
         let path = tmp.path().join("synth_airport_lines.arrow");
         write_synth_airport_lines(
             &path,
-            &[sample_lines_row(0), sample_lines_row(1), sample_lines_row(2)],
+            &[
+                sample_lines_row(0),
+                sample_lines_row(1),
+                sample_lines_row(2),
+            ],
         )
         .unwrap();
         assert_eq!(read_synth_airport_lines(&path).unwrap().len(), 3);

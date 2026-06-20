@@ -86,15 +86,15 @@ pub fn icao_is_ground_vehicle(icao24: u32) -> bool {
 /// the vehicle role is ambiguous (most fleets are dominated by tractors
 /// + tugs, which are MEDIUM-class).
 static GSE_CALLSIGN_MAP: &[(&str, u8)] = &[
-    ("POZAR", GSE_CLASS_HEAVY),    // ARFF / fire truck
-    ("PLET", GSE_CLASS_HEAVY),     // pushback tractor — 30-50 t narrow-body
-                                   // class places it in CNOSSOS CAT3 by axle
-                                   // mass, not CAT2 (3/4 /gg reviewers).
-    ("FOLLOW", GSE_CLASS_LIGHT),   // follow-me car
-    ("UDRZBA", GSE_CLASS_MEDIUM),  // maintenance — defensible mid default
-    ("METEO", GSE_CLASS_LIGHT),    // meteorology
-    ("PTACNIK", GSE_CLASS_LIGHT),  // bird control (vehicle only — pyro impulses unmodelled)
-    ("EMIL", GSE_CLASS_LIGHT),     // ramp coordination
+    ("POZAR", GSE_CLASS_HEAVY), // ARFF / fire truck
+    ("PLET", GSE_CLASS_HEAVY),  // pushback tractor — 30-50 t narrow-body
+    // class places it in CNOSSOS CAT3 by axle
+    // mass, not CAT2 (3/4 /gg reviewers).
+    ("FOLLOW", GSE_CLASS_LIGHT),  // follow-me car
+    ("UDRZBA", GSE_CLASS_MEDIUM), // maintenance — defensible mid default
+    ("METEO", GSE_CLASS_LIGHT),   // meteorology
+    ("PTACNIK", GSE_CLASS_LIGHT), // bird control (vehicle only — pyro impulses unmodelled)
+    ("EMIL", GSE_CLASS_LIGHT),    // ramp coordination
 ];
 
 pub fn classify_gse_callsign(callsign: &str) -> u8 {
@@ -171,8 +171,17 @@ mod tests {
         let light = a_weighted_total(&GSE_LW_BANDS_DB[GSE_CLASS_LIGHT as usize]);
         let medium = a_weighted_total(&GSE_LW_BANDS_DB[GSE_CLASS_MEDIUM as usize]);
         let heavy = a_weighted_total(&GSE_LW_BANDS_DB[GSE_CLASS_HEAVY as usize]);
-        assert!((87.3..91.3).contains(&light), "LIGHT={light} outside 87.3-91.3 dB(A)");
-        assert!((98.2..102.2).contains(&medium), "MEDIUM={medium} outside 98.2-102.2 dB(A)");
-        assert!((101.3..105.3).contains(&heavy), "HEAVY={heavy} outside 101.3-105.3 dB(A)");
+        assert!(
+            (87.3..91.3).contains(&light),
+            "LIGHT={light} outside 87.3-91.3 dB(A)"
+        );
+        assert!(
+            (98.2..102.2).contains(&medium),
+            "MEDIUM={medium} outside 98.2-102.2 dB(A)"
+        );
+        assert!(
+            (101.3..105.3).contains(&heavy),
+            "HEAVY={heavy} outside 101.3-105.3 dB(A)"
+        );
     }
 }

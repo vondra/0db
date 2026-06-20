@@ -58,7 +58,7 @@ pub struct RoadMetadata {
     pub aadt_heavy_raw: i32,
     pub aadt_moto_raw: i32,
     pub traffic_source: &'static str, // "matched_external" | "estimated_service_tree" | "default_by_class"
-    pub dominant_source_id: u16,     // dataset identity (single source of truth: pipeline/lib/sources.ts → engine/noise-compute/src/sources.rs; 0 = unspecified). Resolved into `provenance` field below.
+    pub dominant_source_id: u16, // dataset identity (single source of truth: pipeline/lib/sources.ts → engine/noise-compute/src/sources.rs; 0 = unspecified). Resolved into `provenance` field below.
     pub speed_posted_kmh: Option<u8>, // raw OSM maxspeed (Some(0) = untagged); None = derestricted (maxspeed=none) — no number exists to display
 
     // Nominal ("road total, both directions") — arrow's raw number if

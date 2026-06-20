@@ -24,15 +24,21 @@ pub(super) fn build_ground_ops_metadata(
     // function docstring. v9: each split count = `non_ga / n_days +
     // ga / ga_n_days` so a one-off GA rotation reads at its true
     // 365-day frequency (delta 2).
-    let (arrivals_per_day, departures_per_day, gse_per_day, observed_movements_per_day,
-         runway_ops, taxi_ops, apron_ops) = if let Some(entry) = summary_entry {
+    let (
+        arrivals_per_day,
+        departures_per_day,
+        gse_per_day,
+        observed_movements_per_day,
+        runway_ops,
+        taxi_ops,
+        apron_ops,
+    ) = if let Some(entry) = summary_entry {
         let split = |non_ga: u32, ga: u32| non_ga as f64 / n_days_f + ga as f64 / ga_n_days_f;
         let arr = split(entry.arr_count, entry.ga_arr_count);
         let dep = split(entry.dep_count, entry.ga_dep_count);
         // GSE is airline-pass only — no GA split.
-        let gse: [f64; NUM_GSE_CLASSES] = std::array::from_fn(|i| {
-            entry.gse_count_per_class[i] as f64 / n_days_f
-        });
+        let gse: [f64; NUM_GSE_CLASSES] =
+            std::array::from_fn(|i| entry.gse_count_per_class[i] as f64 / n_days_f);
         // observed_movements_per_day = runway ops (arr ∪ dep). The
         // summary's `ops_count_per_kind[0]` is already the airport-
         // level runway UNION (VEH_KIND=0); use it instead of
@@ -77,8 +83,7 @@ pub(super) fn build_ground_ops_metadata(
         .into_iter()
         .take(PROFILE_MIX_TOP_N)
         .map(|(class_idx, energy)| {
-            let rep_profile_idx =
-                aircraft::CLASS_REP_PROFILE_IDX[class_idx as usize] as usize;
+            let rep_profile_idx = aircraft::CLASS_REP_PROFILE_IDX[class_idx as usize] as usize;
             ProfileMixEntry {
                 class: class_idx,
                 share: energy / total_class_energy,
@@ -120,9 +125,21 @@ pub(super) fn build_ground_ops_metadata(
     // subtract from the full Lden. Negative for attenuating
     // effects.
     let lden_delta_db = |variant_period_energy: [f64; 3]| -> f64 {
-        let v_ld = aircraft::period_leq(variant_period_energy[0], n_days_f, aircraft::PERIOD_SECONDS[0]);
-        let v_le = aircraft::period_leq(variant_period_energy[1], n_days_f, aircraft::PERIOD_SECONDS[1]);
-        let v_ln = aircraft::period_leq(variant_period_energy[2], n_days_f, aircraft::PERIOD_SECONDS[2]);
+        let v_ld = aircraft::period_leq(
+            variant_period_energy[0],
+            n_days_f,
+            aircraft::PERIOD_SECONDS[0],
+        );
+        let v_le = aircraft::period_leq(
+            variant_period_energy[1],
+            n_days_f,
+            aircraft::PERIOD_SECONDS[1],
+        );
+        let v_ln = aircraft::period_leq(
+            variant_period_energy[2],
+            n_days_f,
+            aircraft::PERIOD_SECONDS[2],
+        );
         let v_periods = periods::periods(v_ld, v_le, v_ln);
         if !periods.lden_db.is_finite() || !v_periods.lden_db.is_finite() {
             return 0.0;

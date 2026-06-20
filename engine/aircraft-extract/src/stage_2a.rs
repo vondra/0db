@@ -23,9 +23,7 @@ use anyhow::{Context, Result};
 use rayon::prelude::*;
 
 use crate::arrow_io::read_segments;
-use crate::flight::{
-    segment_flags, AirborneEvent, AirborneSubSegment, FlightSegment, Phase,
-};
+use crate::flight::{segment_flags, AirborneEvent, AirborneSubSegment, FlightSegment, Phase};
 use crate::geo::r4_hex_str;
 use crate::progress::{finished, human, started, ts, Milestone};
 use crate::scope::ScopeBbox;
@@ -60,11 +58,7 @@ pub fn run_stage_2a(
     // retain a prior-run file (possibly older schema) and the popup
     // reader would fatal-fail on schema_version mismatch. Symmetric to
     // the Stage 2B/2C guards.
-    let wiped = crate::wipe::wipe_stale_arrows_for_scope(
-        h3r4_dir,
-        "airborne.arrow",
-        scope,
-    )?;
+    let wiped = crate::wipe::wipe_stale_arrows_for_scope(h3r4_dir, "airborne.arrow", scope)?;
     if wiped > 0 {
         eprintln!(
             "{} [stage2a] wiped {wiped} stale airborne.arrow file(s) before write",
@@ -94,7 +88,12 @@ pub fn run_stage_2a(
             evt_counter.add(events.len() as u64);
             let dir = h3r4_dir.join(r4_hex_str(*r4));
             std::fs::create_dir_all(&dir)?;
-            crate::arrow_io::write_airborne(&dir.join("airborne.arrow"), &events, n_days, ga_n_days)?;
+            crate::arrow_io::write_airborne(
+                &dir.join("airborne.arrow"),
+                &events,
+                n_days,
+                ga_n_days,
+            )?;
             written.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(())
         })?;
@@ -131,7 +130,10 @@ fn aggregate_events_for_r4(
             .or_insert_with(|| AirborneEventBuilder::new(seg))
             .push(seg, rasters);
     }
-    by_flight.into_values().map(AirborneEventBuilder::finish).collect()
+    by_flight
+        .into_values()
+        .map(AirborneEventBuilder::finish)
+        .collect()
 }
 
 struct AirborneEventBuilder {
@@ -171,22 +173,10 @@ impl AirborneEventBuilder {
         if seg.is_departure() {
             flags |= segment_flags::IS_DEPARTURE;
         }
-        self.bbox_min_lat = self
-            .bbox_min_lat
-            .min(seg.start_lat)
-            .min(seg.end_lat);
-        self.bbox_max_lat = self
-            .bbox_max_lat
-            .max(seg.start_lat)
-            .max(seg.end_lat);
-        self.bbox_min_lon = self
-            .bbox_min_lon
-            .min(seg.start_lon)
-            .min(seg.end_lon);
-        self.bbox_max_lon = self
-            .bbox_max_lon
-            .max(seg.start_lon)
-            .max(seg.end_lon);
+        self.bbox_min_lat = self.bbox_min_lat.min(seg.start_lat).min(seg.end_lat);
+        self.bbox_max_lat = self.bbox_max_lat.max(seg.start_lat).max(seg.end_lat);
+        self.bbox_min_lon = self.bbox_min_lon.min(seg.start_lon).min(seg.end_lon);
+        self.bbox_max_lon = self.bbox_max_lon.max(seg.start_lon).max(seg.end_lon);
         self.total_length_m += seg.length_m;
         // v16 (K3): only start/end terrain elevs are stored — the popup
         // no longer needs q1 / mid / q3 because the chord mountain-peak
@@ -356,11 +346,7 @@ mod tests {
         let h3r4 = tmp.path().join("h3r4");
         // Praha R4 — in-scope. No segments_by_r4 input → writer does
         // not emit a fresh airborne.arrow for this run.
-        let r4 = u64::from(
-            LatLng::new(50.10, 14.26)
-                .unwrap()
-                .to_cell(Resolution::Four),
-        );
+        let r4 = u64::from(LatLng::new(50.10, 14.26).unwrap().to_cell(Resolution::Four));
         let r4_dir = h3r4.join(r4_hex_str(r4));
         std::fs::create_dir_all(&r4_dir).unwrap();
         let stale = r4_dir.join("airborne.arrow");

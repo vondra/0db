@@ -42,8 +42,7 @@ pub const HORIZON_SECTORS: usize = 32;
 /// smaller horizon angle. Within-band erasure remains only when both
 /// ridges fall in ONE band — bands are sized to keep that rare.
 const NUM_BUCKETS: usize = 6;
-const BUCKET_BREAK_M: [f64; NUM_BUCKETS] =
-    [500.0, 1_000.0, 2_000.0, 3_500.0, 5_500.0, 8_000.0];
+const BUCKET_BREAK_M: [f64; NUM_BUCKETS] = [500.0, 1_000.0, 2_000.0, 3_500.0, 5_500.0, 8_000.0];
 
 /// Exponential radial march 30 m → 8 km, 48 samples/sector (~1.5 k
 /// DEM reads per receiver) — matches the surface bilateral-cadence
@@ -117,8 +116,8 @@ impl ReceiverHorizon {
     ) -> Self {
         let cos_lat = lat.to_radians().cos().max(0.2);
         let m_per_deg_lon = M_PER_DEG_LAT * cos_lat;
-        let growth =
-            (BUCKET_BREAK_M[NUM_BUCKETS - 1] / MARCH_START_M).powf(1.0 / (MARCH_SAMPLES - 1) as f64);
+        let growth = (BUCKET_BREAK_M[NUM_BUCKETS - 1] / MARCH_START_M)
+            .powf(1.0 / (MARCH_SAMPLES - 1) as f64);
 
         let mut sectors = [[(0i16, 0u16); NUM_BUCKETS]; HORIZON_SECTORS];
         let mut max_tan_q = i16::MIN;
@@ -155,8 +154,9 @@ impl ReceiverHorizon {
                 if r_edge == 0.0 {
                     continue; // band never sampled — stays (0, 0), skipped at query
                 }
-                let tan_q =
-                    (tan * TAN_SCALE).round().clamp(i16::MIN as f64, i16::MAX as f64) as i16;
+                let tan_q = (tan * TAN_SCALE)
+                    .round()
+                    .clamp(i16::MIN as f64, i16::MAX as f64) as i16;
                 buckets[b] = (tan_q, r_edge.round() as u16);
                 max_tan_q = max_tan_q.max(tan_q);
             }
@@ -171,7 +171,10 @@ impl ReceiverHorizon {
             // rel_alt still routes through the explicit `<= 0` arm.
             0.0
         };
-        ReceiverHorizon { sectors, max_sin_sq }
+        ReceiverHorizon {
+            sectors,
+            max_sin_sq,
+        }
     }
 
     /// Screening insertion loss (dB ≥ 0) for an aircraft whose CPA foot
@@ -252,8 +255,8 @@ fn sector_of(east_m: f64, north_m: f64) -> usize {
             a - PI
         }
     };
-    ((angle * (HORIZON_SECTORS as f64) / TAU).floor() as i64)
-        .rem_euclid(HORIZON_SECTORS as i64) as usize
+    ((angle * (HORIZON_SECTORS as f64) / TAU).floor() as i64).rem_euclid(HORIZON_SECTORS as i64)
+        as usize
 }
 
 #[cfg(test)]
@@ -268,7 +271,10 @@ mod tests {
     fn local_sampler(f: impl Fn(f64, f64) -> f64) -> impl Fn(f64, f64) -> f64 {
         let m_per_deg_lon = M_PER_DEG_LAT * RX_LAT.to_radians().cos().max(0.2);
         move |lat: f64, lon: f64| {
-            f((lon - RX_LON) * m_per_deg_lon, (lat - RX_LAT) * M_PER_DEG_LAT)
+            f(
+                (lon - RX_LON) * m_per_deg_lon,
+                (lat - RX_LAT) * M_PER_DEG_LAT,
+            )
         }
     }
 
@@ -297,7 +303,12 @@ mod tests {
     #[test]
     fn single_ridge_lands_in_correct_sector_and_band() {
         // 200 m ridge band 1.9-2.1 km due east over flat 300 m ground.
-        let hz = ReceiverHorizon::build(east_ridge(1_900.0, 2_100.0, 500.0, 300.0), RX_LAT, RX_LON, 300.0);
+        let hz = ReceiverHorizon::build(
+            east_ridge(1_900.0, 2_100.0, 500.0, 300.0),
+            RX_LAT,
+            RX_LON,
+            300.0,
+        );
 
         // Sector 0 (az 0-11.25°, marched at 5.625°): ONLY the
         // (1 km, 2 km] band holds the ridge (range-max — bands beyond
@@ -308,7 +319,11 @@ mod tests {
             (0.095..0.110).contains(&t),
             "(1,2] km band tan = {t} (expected ≈ 200 m / ~1.9-2.0 km)"
         );
-        assert!((1_900..=2_100).contains(&ridge_band.1), "edge distance {} outside ridge", ridge_band.1);
+        assert!(
+            (1_900..=2_100).contains(&ridge_band.1),
+            "edge distance {} outside ridge",
+            ridge_band.1
+        );
         for b in [0, 1, 3, 4, 5] {
             assert!(
                 hz.sectors[0][b].0 <= 0,
@@ -344,7 +359,10 @@ mod tests {
         });
         let hz = ReceiverHorizon::build(sampler, RX_LAT, RX_LON, 304.0);
         let dz = hz.screening_dz(5_000.0, 0.0, 5_000.0, 250.0);
-        assert!(dz > 0.0, "nearer 4 km ridge must screen despite the steeper 7 km one, got {dz}");
+        assert!(
+            dz > 0.0,
+            "nearer 4 km ridge must screen despite the steeper 7 km one, got {dz}"
+        );
     }
 
     /// Dz-ranking regression (Codex /gg 2026-06-12): a far edge close
@@ -369,7 +387,10 @@ mod tests {
         // β tan = 0.08 — under both edges. Exact δ: lip ≈ 0.3 m (~6 dB
         // anchored), ridge ≈ 9 m (18 dB cap).
         let dz = hz.screening_dz(5_000.0, 0.0, 5_000.0, 400.0);
-        assert!(dz > 15.0, "far ridge's δ must dominate the near lip, got {dz}");
+        assert!(
+            dz > 15.0,
+            "far ridge's δ must dominate the near lip, got {dz}"
+        );
     }
 
     /// Delta 4 regression: a 4 km ridge must screen a 5 km-lateral
@@ -378,19 +399,35 @@ mod tests {
     /// the ≤8 km bucket.
     #[test]
     fn bucket_blind_zone_4km_ridge_5km_lateral_screens() {
-        let hz = ReceiverHorizon::build(east_ridge(3_900.0, 4_100.0, 710.0, 300.0), RX_LAT, RX_LON, 304.0);
+        let hz = ReceiverHorizon::build(
+            east_ridge(3_900.0, 4_100.0, 710.0, 300.0),
+            RX_LAT,
+            RX_LON,
+            304.0,
+        );
         // Aircraft at β ≈ 2.9° (tan 0.05), below the ≈ 0.105 ridge tan.
         let dz = hz.screening_dz(5_000.0, 0.0, 5_000.0, 250.0);
-        assert!(dz > 0.0, "4 km ridge must bind for a 5 km-lateral aircraft, got {dz}");
+        assert!(
+            dz > 0.0,
+            "4 km ridge must bind for a 5 km-lateral aircraft, got {dz}"
+        );
     }
 
     /// Ridge beyond the aircraft cannot screen: every stored edge has
     /// r_edge > lateral, so no bucket qualifies.
     #[test]
     fn ridge_beyond_aircraft_does_not_screen() {
-        let hz = ReceiverHorizon::build(east_ridge(3_900.0, 4_100.0, 710.0, 300.0), RX_LAT, RX_LON, 304.0);
+        let hz = ReceiverHorizon::build(
+            east_ridge(3_900.0, 4_100.0, 710.0, 300.0),
+            RX_LAT,
+            RX_LON,
+            304.0,
+        );
         let dz = hz.screening_dz(3_500.0, 0.0, 3_500.0, 175.0);
-        assert_eq!(dz, 0.0, "edge at ~3.9 km lies beyond a 3.5 km-lateral aircraft");
+        assert_eq!(
+            dz, 0.0,
+            "edge at ~3.9 km lies beyond a 3.5 km-lateral aircraft"
+        );
     }
 
     /// Signed horizons (plan §9): a hilltop receiver above a downslope
@@ -400,9 +437,8 @@ mod tests {
     #[test]
     fn negative_horizon_blocks_only_below_downslope() {
         // Terrain falls at −0.1 from a 1 000 m summit in every direction.
-        let sampler = local_sampler(|east, north| {
-            1_000.0 - 0.1 * (east * east + north * north).sqrt()
-        });
+        let sampler =
+            local_sampler(|east, north| 1_000.0 - 0.1 * (east * east + north * north).sqrt());
         let hz = ReceiverHorizon::build(sampler, RX_LAT, RX_LON, 1_000.0);
         assert_eq!(hz.max_sin_sq, 0.0, "all-downhill horizon must clamp to 0");
 
@@ -410,14 +446,22 @@ mod tests {
         assert_eq!(hz.screening_dz(1_000.0, 0.0, 1_000.0, -50.0), 0.0);
         // β = −11.3° (below the horizon): blocked by the near slope edge.
         let dz = hz.screening_dz(1_000.0, 0.0, 1_000.0, -200.0);
-        assert!(dz.is_finite() && dz > 0.0, "below-horizon descent must screen, got {dz}");
+        assert!(
+            dz.is_finite() && dz > 0.0,
+            "below-horizon descent must screen, got {dz}"
+        );
     }
 
     #[test]
     fn dz_cap_is_18_db() {
         // Near-unity-tan wall at ~500 m, aircraft at β = 0 → δ ≈ 250 m,
         // far past the ~6.4 m needed to saturate the cap.
-        let hz = ReceiverHorizon::build(east_ridge(480.0, 530.0, 800.0, 300.0), RX_LAT, RX_LON, 300.0);
+        let hz = ReceiverHorizon::build(
+            east_ridge(480.0, 530.0, 800.0, 300.0),
+            RX_LAT,
+            RX_LON,
+            300.0,
+        );
         let dz = hz.screening_dz(3_000.0, 0.0, 3_000.0, 0.0);
         assert_eq!(dz, DZ_CAP_DB);
     }
@@ -430,7 +474,12 @@ mod tests {
     #[test]
     fn dz_smooth_across_shadow_boundary() {
         // Gentle edge: tan ≈ 0.126 at ~158 m, aircraft lateral 5 km.
-        let hz = ReceiverHorizon::build(east_ridge(150.0, 250.0, 320.0, 300.0), RX_LAT, RX_LON, 300.0);
+        let hz = ReceiverHorizon::build(
+            east_ridge(150.0, 250.0, 320.0, 300.0),
+            RX_LAT,
+            RX_LON,
+            300.0,
+        );
         let lateral = 5_000.0;
         let mut prev: Option<f64> = None;
         let mut saw_blocked = false;
@@ -455,7 +504,10 @@ mod tests {
             }
             prev = Some(dz);
         }
-        assert!(saw_blocked && saw_open, "sweep must straddle the shadow boundary");
+        assert!(
+            saw_blocked && saw_open,
+            "sweep must straddle the shadow boundary"
+        );
     }
 
     #[test]

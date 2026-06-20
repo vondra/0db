@@ -242,9 +242,7 @@ impl Spiller {
                     tags.get("addr:street").unwrap_or(&String::new()),
                     tags.get("addr:housenumber").unwrap_or(&String::new()),
                     // settlement v2 phase 2: opening_hours → day-fraction u8.
-                    classify::opening_hours_fraction(
-                        tags.get("opening_hours").map(|s| s.as_str())
-                    ),
+                    classify::opening_hours_fraction(tags.get("opening_hours").map(|s| s.as_str())),
                 );
             }
             FeatureType::Leisure => {
@@ -255,9 +253,7 @@ impl Spiller {
                     classify::parse_capacity(tags)
                         .map(|c| c.to_string())
                         .unwrap_or_default(),
-                    classify::opening_hours_fraction(
-                        tags.get("opening_hours").map(|s| s.as_str())
-                    ),
+                    classify::opening_hours_fraction(tags.get("opening_hours").map(|s| s.as_str())),
                     tags.get("name").unwrap_or(&String::new()),
                 );
             }
@@ -348,7 +344,12 @@ impl Spiller {
 /// barns. Function POIs reuse [`poi_class`] (shared with the finalize join).
 fn building_type_from_tags(tags: &Tags) -> u8 {
     let get = |k: &str| tags.get(k).map(|s| s.as_str());
-    if let Some(c) = poi_class(get("amenity"), get("shop"), get("healthcare"), get("tourism")) {
+    if let Some(c) = poi_class(
+        get("amenity"),
+        get("shop"),
+        get("healthcare"),
+        get("tourism"),
+    ) {
         return c;
     }
     // farm_auxiliary + livestock → real farm building, not a silent shed.
@@ -400,10 +401,8 @@ pub fn poi_class(
     }
     if let Some(s) = shop {
         match s {
-            "supermarket" | "convenience" | "wholesale" | "greengrocer" | "butcher"
-            | "bakery" | "deli" | "frozen_food" | "mall" | "department_store" => {
-                return Some(st::FOOD_RETAIL)
-            }
+            "supermarket" | "convenience" | "wholesale" | "greengrocer" | "butcher" | "bakery"
+            | "deli" | "frozen_food" | "mall" | "department_store" => return Some(st::FOOD_RETAIL),
             "" => {}
             _ => return Some(1), // any other shop = commercial
         }
@@ -435,8 +434,8 @@ fn building_type(val: &str) -> u8 {
         // Apartments / generic residential keep type 0 (no garden term).
         "residential" | "apartments" | "dormitory" => 0,
         // Single-family houses get the HOUSE class (garden + heat pump).
-        "house" | "detached" | "semidetached_house" | "semidetached" | "terrace"
-        | "bungalow" | "houseboat" | "cabin" => st::HOUSE,
+        "house" | "detached" | "semidetached_house" | "semidetached" | "terrace" | "bungalow"
+        | "houseboat" | "cabin" => st::HOUSE,
         "supermarket" => st::FOOD_RETAIL,
         "restaurant" | "cafe" | "pub" | "bar" | "fast_food" => st::HOSPITALITY,
         "commercial" | "retail" | "office" | "kiosk" => 1,
@@ -455,9 +454,9 @@ fn building_type(val: &str) -> u8 {
         // building_type_from_tags livestock check overrides it to farm.
         "shed" | "roof" | "hut" | "outbuilding" | "greenhouse" | "static_caravan"
         | "carport_roof" | "ruins" | "ruin" | "construction" | "collapsed" | "service"
-        | "allotment_house" | "boathouse" | "bunker" | "tent" | "container"
-        | "storage_tank" | "silo" | "hangar" | "conservatory" | "ger" | "farm_auxiliary"
-        | "transformer_tower" | "water_tower" | "no" => st::SILENT,
+        | "allotment_house" | "boathouse" | "bunker" | "tent" | "container" | "storage_tank"
+        | "silo" | "hangar" | "conservatory" | "ger" | "farm_auxiliary" | "transformer_tower"
+        | "water_tower" | "no" => st::SILENT,
         "yes" | "" => 0, // default to residential-apartments
         _ => 0,
     }
@@ -519,7 +518,8 @@ fn site_subtype_from_tags(tags: &Tags) -> u8 {
             "oil" | "chemical" | "refinery" | "gas" => return 4,
             "cement" | "glass" | "brickyard" | "ceramics" => return 5,
             "steelmaking" | "smelting" | "foundry" | "metal" | "aluminium" | "iron" => return 6,
-            "brewery" | "winery" | "distillery" | "bakery" | "food" | "slaughterhouse" | "sugar" => return 7,
+            "brewery" | "winery" | "distillery" | "bakery" | "food" | "slaughterhouse"
+            | "sugar" => return 7,
             "sawmill" | "timber" | "lumber" | "paper" | "pulp" | "woodworking" => return 8,
             "scrap_yard" | "recycling" | "waste" | "landfill" => return 9,
             "farm" | "agriculture" | "horticulture" | "greenhouse" => return 10,
@@ -530,17 +530,59 @@ fn site_subtype_from_tags(tags: &Tags) -> u8 {
     // Check product=* tag
     if let Some(prod) = tags.get("product") {
         let p = prod.to_lowercase();
-        if p.contains("cement") || p.contains("concrete") || p.contains("brick") || p.contains("glass") || p.contains("ceramic") || p.contains("tile") { return 5; }
-        if p.contains("steel") || p.contains("iron") || p.contains("alumin") || p.contains("copper") || p.contains("metal") || p.contains("zinc") { return 6; }
-        if p.contains("chemical") || p.contains("petrol") || p.contains("oil") || p.contains("fuel") || p.contains("plastic") || p.contains("fertiliz") { return 4; }
-        if p.contains("food") || p.contains("sugar") || p.contains("beer") || p.contains("wine") || p.contains("flour") || p.contains("dairy") || p.contains("meat") { return 7; }
-        if p.contains("wood") || p.contains("paper") || p.contains("timber") || p.contains("lumber") || p.contains("pulp") { return 8; }
+        if p.contains("cement")
+            || p.contains("concrete")
+            || p.contains("brick")
+            || p.contains("glass")
+            || p.contains("ceramic")
+            || p.contains("tile")
+        {
+            return 5;
+        }
+        if p.contains("steel")
+            || p.contains("iron")
+            || p.contains("alumin")
+            || p.contains("copper")
+            || p.contains("metal")
+            || p.contains("zinc")
+        {
+            return 6;
+        }
+        if p.contains("chemical")
+            || p.contains("petrol")
+            || p.contains("oil")
+            || p.contains("fuel")
+            || p.contains("plastic")
+            || p.contains("fertiliz")
+        {
+            return 4;
+        }
+        if p.contains("food")
+            || p.contains("sugar")
+            || p.contains("beer")
+            || p.contains("wine")
+            || p.contains("flour")
+            || p.contains("dairy")
+            || p.contains("meat")
+        {
+            return 7;
+        }
+        if p.contains("wood")
+            || p.contains("paper")
+            || p.contains("timber")
+            || p.contains("lumber")
+            || p.contains("pulp")
+        {
+            return 8;
+        }
     }
     // Check man_made=* for additional classification
     // NOTE: wastewater_plant intentionally NOT classified — it has a dedicated
     // source_type=4 profile (89 dB, 24/7) which is more accurate than waste subtype=9 (93 dB).
     if let Some(mm) = tags.get("man_made") {
-        if mm.as_str() == "works" { return 2 }
+        if mm.as_str() == "works" {
+            return 2;
+        }
     }
     // Check landuse refinements
     if let Some(lu) = tags.get("landuse") {
@@ -623,7 +665,15 @@ mod settlement_class_tests {
 
     #[test]
     fn silent_tail_routed_out_of_residential() {
-        for v in ["shed", "roof", "hut", "greenhouse", "ruins", "construction", "carport_roof"] {
+        for v in [
+            "shed",
+            "roof",
+            "hut",
+            "greenhouse",
+            "ruins",
+            "construction",
+            "carport_roof",
+        ] {
             assert_eq!(building_type(v), st::SILENT, "{v} must be SILENT");
         }
         // The default for genuinely-unknown small footprints stays residential
@@ -635,9 +685,18 @@ mod settlement_class_tests {
     fn poi_class_priorities() {
         assert_eq!(poi_class(Some("hospital"), None, None, None), Some(4));
         assert_eq!(poi_class(Some("school"), None, None, None), Some(3));
-        assert_eq!(poi_class(Some("cafe"), None, None, None), Some(st::HOSPITALITY));
-        assert_eq!(poi_class(None, Some("supermarket"), None, None), Some(st::FOOD_RETAIL));
-        assert_eq!(poi_class(None, Some("convenience"), None, None), Some(st::FOOD_RETAIL));
+        assert_eq!(
+            poi_class(Some("cafe"), None, None, None),
+            Some(st::HOSPITALITY)
+        );
+        assert_eq!(
+            poi_class(None, Some("supermarket"), None, None),
+            Some(st::FOOD_RETAIL)
+        );
+        assert_eq!(
+            poi_class(None, Some("convenience"), None, None),
+            Some(st::FOOD_RETAIL)
+        );
         assert_eq!(poi_class(None, Some("clothes"), None, None), Some(1));
         assert_eq!(poi_class(None, None, Some("hospital"), None), Some(4));
         assert_eq!(poi_class(None, None, None, Some("hotel")), Some(6));

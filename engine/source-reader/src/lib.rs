@@ -183,7 +183,12 @@ pub fn collect_from_hex_data(
         // applies each row's exact `rail_reach_m` cutoff. Pre-filtering at the old
         // 7 km blanket would silently drop a loud HS corridor 8-10 km out before
         // its honest reach could admit it.
-        let railways = query_railways_from_batches(&data.railway_batches, lat, lng, noise_compute::constants::RAILWAY_REACH_CEILING);
+        let railways = query_railways_from_batches(
+            &data.railway_batches,
+            lat,
+            lng,
+            noise_compute::constants::RAILWAY_REACH_CEILING,
+        );
         // Receiver-hex admin for the C1 per-region period model. Only the scaled
         // counts / speed of `norm` feed `RailSegment` here; `compute_railways`
         // re-resolves the same admin for emission + reach, so this is for
@@ -246,7 +251,12 @@ pub fn collect_from_hex_data(
             });
         }
 
-        let roads = query_roads_from_batches(&data.road_batches, lat, lng, noise_compute::constants::ROAD_MAX_RADIUS[0]);
+        let roads = query_roads_from_batches(
+            &data.road_batches,
+            lat,
+            lng,
+            noise_compute::constants::ROAD_MAX_RADIUS[0],
+        );
         for r in roads {
             all_roads.push(noise_compute::types::RoadSegment {
                 osm_id: r.osm_id,
@@ -279,12 +289,8 @@ pub fn collect_from_hex_data(
             });
         }
 
-        let buildings = query_buildings_from_batches(
-            &data.building_batches,
-            lat,
-            lng,
-            BUILDING_QUERY_RADIUS_M,
-        );
+        let buildings =
+            query_buildings_from_batches(&data.building_batches, lat, lng, BUILDING_QUERY_RADIUS_M);
         for b in buildings {
             let display_name = if !b.name.is_empty() {
                 b.name.clone()
@@ -325,15 +331,10 @@ pub fn collect_from_hex_data(
         // (settlement v2 phase 2): same point-source compute, tagged with
         // `source_type = LEISURE_TYPE_BASE + sport` so the popup names a padel
         // court correctly (see source_names::building_type_name).
-        let leisure = query_leisure_from_batches(
-            &data.leisure_batches,
-            lat,
-            lng,
-            BUILDING_QUERY_RADIUS_M,
-        );
+        let leisure =
+            query_leisure_from_batches(&data.leisure_batches, lat, lng, BUILDING_QUERY_RADIUS_M);
         for lz in leisure {
-            let source_type =
-                noise_compute::types::LEISURE_TYPE_BASE.saturating_add(lz.sport);
+            let source_type = noise_compute::types::LEISURE_TYPE_BASE.saturating_add(lz.sport);
             let prepared_points = noise_compute::normalize::prepare_leisure_points(
                 noise_compute::normalize::RawLeisureInput {
                     centroid_lat: lz.centroid_lat,
@@ -415,7 +416,8 @@ pub fn collect_from_hex_data(
                     }
                 });
 
-                let sub = batch.column_by_name("site_subtype")
+                let sub = batch
+                    .column_by_name("site_subtype")
                     .and_then(|c| c.as_any().downcast_ref::<arrow::array::UInt8Array>())
                     .map(|a| a.value(i))
                     .unwrap_or(0);
@@ -443,7 +445,8 @@ pub fn collect_from_hex_data(
                         }),
                         area_m2,
                         polygon_wkb: &wkb_hex,
-                        nace_4digit: batch.column_by_name("nace_4digit")
+                        nace_4digit: batch
+                            .column_by_name("nace_4digit")
                             .and_then(|c| c.as_any().downcast_ref::<arrow::array::UInt16Array>())
                             .map(|a| a.value(i))
                             .filter(|&v| v > 0),
@@ -452,19 +455,15 @@ pub fn collect_from_hex_data(
                 // Dataset stamp (GEM / E-PRTR / …) → popup provenance tooltip.
                 // `with_metadata` leaves source_id at 0 (shared with the
                 // building path, which has no stamp column).
-                let row_source_id = batch.column_by_name("source_id")
+                let row_source_id = batch
+                    .column_by_name("source_id")
                     .and_then(|c| c.as_any().downcast_ref::<arrow::array::UInt16Array>())
                     .map(|a| a.value(i))
                     .unwrap_or(0);
                 for prepared in prepared_points {
                     let pt_dist = crate::geo::flat_dist(lat, lng, prepared.lat, prepared.lon);
-                    let mut ps = prepared.with_metadata(
-                        osm_id,
-                        st,
-                        iname.clone(),
-                        wkb_hex.clone(),
-                        pt_dist,
-                    );
+                    let mut ps =
+                        prepared.with_metadata(osm_id, st, iname.clone(), wkb_hex.clone(), pt_dist);
                     ps.source_id = row_source_id;
                     all_industrial.push(ps);
                 }
@@ -490,11 +489,9 @@ pub fn collect_from_hex_data(
         // not a data copy.
         all_airborne_batches.extend(data.aircraft_airborne_batches.iter().cloned());
         all_cruise_batches.extend(data.aircraft_cruise_batches.iter().cloned());
-        all_airport_traffic_batches
-            .extend(data.aircraft_airport_traffic_batches.iter().cloned());
+        all_airport_traffic_batches.extend(data.aircraft_airport_traffic_batches.iter().cloned());
         all_airport_lines_batches.extend(data.airport_lines_batches.iter().cloned());
-        all_synth_airport_lines_batches
-            .extend(data.synth_airport_lines_batches.iter().cloned());
+        all_synth_airport_lines_batches.extend(data.synth_airport_lines_batches.iter().cloned());
     }
 
     all_barriers.sort_unstable_by(|a, b| {
@@ -694,8 +691,16 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         ..Default::default()
     };
 
-    let n_airborne = sources.aircraft_airborne_batches.iter().map(|b| b.num_rows()).sum::<usize>();
-    let n_cruise = sources.aircraft_cruise_batches.iter().map(|b| b.num_rows()).sum::<usize>();
+    let n_airborne = sources
+        .aircraft_airborne_batches
+        .iter()
+        .map(|b| b.num_rows())
+        .sum::<usize>();
+    let n_cruise = sources
+        .aircraft_cruise_batches
+        .iter()
+        .map(|b| b.num_rows())
+        .sum::<usize>();
     let n_traffic = sources
         .aircraft_airport_traffic_batches
         .iter()
@@ -780,7 +785,7 @@ fn apply_segment_top_k_with_cap(
     traces: &mut noise_compute::types::TraceCollector,
     per_kind_cap: usize,
 ) -> noise_compute::types::SegmentTracesSummary {
-    use noise_compute::types::{SegmentTracesSummary, LayerKind};
+    use noise_compute::types::{LayerKind, SegmentTracesSummary};
 
     let mut summary = SegmentTracesSummary {
         total_count: traces.segments.len() as u32,
@@ -806,7 +811,8 @@ fn apply_segment_top_k_with_cap(
         }
     };
 
-    let mut per_kind_total: std::collections::HashMap<LayerKind, u32> = std::collections::HashMap::new();
+    let mut per_kind_total: std::collections::HashMap<LayerKind, u32> =
+        std::collections::HashMap::new();
     let mut aircraft_ground_total = 0u32;
     let mut aircraft_cruise_total = 0u32;
     for seg in &traces.segments {
@@ -830,9 +836,12 @@ fn apply_segment_top_k_with_cap(
     summary.aircraft_airborne_total = traces.airborne_above_cutoff;
     summary.aircraft_cruise_total = aircraft_cruise_total;
 
-    traces
-        .segments
-        .sort_unstable_by(|a, b| b.received_lden.full.partial_cmp(&a.received_lden.full).unwrap_or(std::cmp::Ordering::Equal));
+    traces.segments.sort_unstable_by(|a, b| {
+        b.received_lden
+            .full
+            .partial_cmp(&a.received_lden.full)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut per_kind: std::collections::HashMap<LayerKind, u32> = std::collections::HashMap::new();
     let mut aircraft_ground_count = 0u32;
@@ -906,7 +915,6 @@ fn apply_segment_top_k_with_cap(
 
     summary
 }
-
 
 /// Stub raster sampler — flat terrain, no buildings, no vegetation.
 /// Used as fallback when DEM/raster tiles are not available on disk.

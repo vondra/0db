@@ -19,7 +19,9 @@ mod cruise_view;
 use std::path::Path;
 
 use arrow::record_batch::RecordBatch;
-use noise_compute::compute::aircraft_v6::{airport_traffic as compute_airport_traffic, compute_aircraft_v6};
+use noise_compute::compute::aircraft_v6::{
+    airport_traffic as compute_airport_traffic, compute_aircraft_v6,
+};
 use noise_compute::types::{
     LayerKind, NoisePeriods, NoiseResult, RasterSampler, Receiver, SourceMetadata, SourceResult,
     TraceCollector,
@@ -60,7 +62,8 @@ fn build_osm_ref_lookup(batches: &[RecordBatch]) -> HashMap<u64, String> {
             // Synth osm_ids (bit 63 set) live in
             // `synth_airport_lines.arrow`, not here, so the i64 → u64
             // cast is bit-identical for every row in this file.
-            out.entry(osm_id.value(i) as u64).or_insert_with(|| r.to_string());
+            out.entry(osm_id.value(i) as u64)
+                .or_insert_with(|| r.to_string());
         }
     }
     out
@@ -89,11 +92,11 @@ fn build_class_weights(
         return Ok(ClassWeights::uniform());
     }
     let mut stamp: Option<String> = None;
-    for batch in airborne_batches.iter().chain(airport_traffic_batches.iter()) {
-        let v = batch
-            .schema_ref()
-            .metadata()
-            .get(SAMPLE_DAYS_BY_CLASS_KEY);
+    for batch in airborne_batches
+        .iter()
+        .chain(airport_traffic_batches.iter())
+    {
+        let v = batch.schema_ref().metadata().get(SAMPLE_DAYS_BY_CLASS_KEY);
         match (v, &stamp) {
             (Some(v), None) => stamp = Some(v.clone()),
             (Some(v), Some(seen)) if v != seen => {
@@ -167,8 +170,7 @@ pub fn add_v6_aircraft_to_result(
     // compat shim): the arrows predate the hybrid contract and must be
     // re-extracted. The contract bumps (airborne v4 / airport_traffic v9)
     // already reject such files above; this is the in-kernel safety net.
-    let class_weights =
-        build_class_weights(airborne_batches, airport_traffic_batches, n_days)?;
+    let class_weights = build_class_weights(airborne_batches, airport_traffic_batches, n_days)?;
     let airborne_rows = AirborneRowAccum::new(airborne_batches);
     let cruise_rows = CruiseRowAccum::new(cruise_batches);
     let traffic_rows = AirportTrafficRowAccum::new(airport_traffic_batches);
@@ -326,7 +328,10 @@ pub fn add_v6_aircraft_to_result(
     // visibility into popup aircraft arrows there); now that we have
     // rows, bump the score and drop the stale "no ADS-B data" note.
     result.confidence.overall = (result.confidence.overall + 0.15).min(1.0);
-    result.confidence.notes.retain(|n| !n.starts_with("Aircraft:"));
+    result
+        .confidence
+        .notes
+        .retain(|n| !n.starts_with("Aircraft:"));
 
     // Compute aircraft `periods_free` from the contributors before we
     // hand them off. Airborne and cruise kernels apply no terrain /
@@ -496,7 +501,10 @@ const LEGACY_AIRBORNE_CONTRACTS: &[&str] = &[];
 pub(super) const EXPECTED_CRUISE_CONTRACT: &str = "cruise_v17";
 
 fn accept_legacy() -> bool {
-    matches!(std::env::var("ACCEPT_LEGACY_AIRCRAFT_SCHEMA").as_deref(), Ok("1"))
+    matches!(
+        std::env::var("ACCEPT_LEGACY_AIRCRAFT_SCHEMA").as_deref(),
+        Ok("1")
+    )
 }
 
 /// Verify `schema_version` on every batch in the slice — the caller
@@ -574,10 +582,7 @@ pub(super) fn assert_airport_traffic_contract(
 /// have three extra terrain columns the v2 popup reader would silently
 /// alias over `terrain_end_elev_m`, producing wrong Filter D cuts on
 /// every airborne sub-segment.
-pub(super) fn assert_airborne_contract(
-    label: &str,
-    batches: &[RecordBatch],
-) -> Result<(), String> {
+pub(super) fn assert_airborne_contract(label: &str, batches: &[RecordBatch]) -> Result<(), String> {
     assert_schema_version(label, batches)?;
     let allow_legacy = accept_legacy();
     for (idx, batch) in batches.iter().enumerate() {
@@ -608,10 +613,7 @@ pub(super) fn assert_airborne_contract(
 /// Guard the `cruise.arrow` spatial-resolution contract. Pre-v15 files
 /// stored an `r8_hex` column; the popup/heatmap readers silently skip
 /// batches whose `r7_hex` column is missing, hiding the version skew.
-pub(super) fn assert_cruise_contract(
-    label: &str,
-    batches: &[RecordBatch],
-) -> Result<(), String> {
+pub(super) fn assert_cruise_contract(label: &str, batches: &[RecordBatch]) -> Result<(), String> {
     assert_schema_version(label, batches)?;
     for (idx, batch) in batches.iter().enumerate() {
         let c = batch
@@ -630,4 +632,3 @@ pub(super) fn assert_cruise_contract(
     }
     Ok(())
 }
-

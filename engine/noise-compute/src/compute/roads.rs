@@ -41,7 +41,7 @@ pub(crate) fn compute_roads(
         dominant_aadt_heavy_effective: f64,
         dominant_aadt_moto_effective: f64,
         dominant_traffic_source: &'static str, // "matched_external" | "estimated_service_tree" | "default_by_class"
-        dominant_source_id: u16,              // dataset identity from pipeline/lib/enrichment-datasets.ts
+        dominant_source_id: u16, // dataset identity from pipeline/lib/enrichment-datasets.ts
         dominant_speed_posted: u8,
         dominant_speed_used: f64,
         dominant_speed_source: &'static str, // "osm_posted" | "default_by_class" | "roundabout_cap"
@@ -83,8 +83,7 @@ pub(crate) fn compute_roads(
     let admin = crate::admin::admin_for_latlng(receiver.lat, receiver.lon);
 
     for seg in roads {
-        let Some(norm) = normalize::normalize_road_segment(seg, admin)
-        else {
+        let Some(norm) = normalize::normalize_road_segment(seg, admin) else {
             continue;
         };
         let class_idx = norm.class_idx;
@@ -154,7 +153,7 @@ pub(crate) fn compute_roads(
             );
         let (screening_atten, obstacle_trace) =
             propagation::path_effects::screening_attenuation_with_meta(
-        &mut path_profile,
+                &mut path_profile,
                 barriers,
                 src_alt,
                 rcv_alt,
@@ -542,8 +541,7 @@ pub(crate) fn compute_roads(
             dominant_source_id: acc.dominant_source_id,
             // Derestricted has no posted number — None keeps the popup from
             // rendering the 255 sentinel as "255 km/h" (/gg W4).
-            speed_posted_kmh: (acc.dominant_speed_posted
-                != normalize::SPEED_LIMIT_DERESTRICTED)
+            speed_posted_kmh: (acc.dominant_speed_posted != normalize::SPEED_LIMIT_DERESTRICTED)
                 .then_some(acc.dominant_speed_posted),
             aadt_light_nominal: acc.dominant_aadt_light_nominal,
             aadt_medium_nominal: acc.dominant_aadt_medium_nominal,

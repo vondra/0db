@@ -55,7 +55,11 @@ fn main() -> Result<()> {
 
     let r4 = tile_centre_r4(z, x, y).context("tile centre")?;
     let cell = CellIndex::try_from(r4)?;
-    let ring: Vec<u64> = cell.grid_disk::<Vec<_>>(1).into_iter().map(u64::from).collect();
+    let ring: Vec<u64> = cell
+        .grid_disk::<Vec<_>>(1)
+        .into_iter()
+        .map(u64::from)
+        .collect();
     let rasters = RealRasters::new(Path::new(&prepared));
     // C1 rail per-region period split needs the admin table. The bench loads rail
     // directly (no surface binary in the loop), so init it here too — else the
@@ -164,15 +168,26 @@ fn main() -> Result<()> {
 
     // ---- GPU ----
     let dev = CudaDevice::new(0).expect("cuda");
-    dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["line", "line_binned_fused"])
-        .expect("ptx");
+    dev.load_ptx(
+        Ptx::from_src(SCATTER_PTX),
+        "s",
+        &["line", "line_binned_fused"],
+    )
+    .expect("ptx");
     // NOISE_GPU_KERNEL: line (scan-all, default) | line_binned_fused (GPU-side binning).
     // line_binned_fused uses the 1024×64 binned launch; line is pixel-major. The two must
     // agree byte-for-byte — the conservative-cull + ordered-replay parity check.
     let mode = env("NOISE_GPU_KERNEL", "line");
     let binned_launch = mode == "line_binned_fused";
     let f = dev
-        .get_func("s", if binned_launch { "line_binned_fused" } else { "line" })
+        .get_func(
+            "s",
+            if binned_launch {
+                "line_binned_fused"
+            } else {
+                "line"
+            },
+        )
         .expect("fn");
     let d_elev = dev.htod_copy(elev).expect("elev");
     let d_inner = dev.htod_copy(inner).expect("inner");
@@ -212,8 +227,18 @@ fn main() -> Result<()> {
         f.launch(
             cfg,
             (
-                &d_elev, &d_inner, &d_cover, &d_meta, &d_seg, &d_sp, &d_semis, &d_rxll, &d_rxar,
-                &d_barr, nsrc as i32, &mut d_out,
+                &d_elev,
+                &d_inner,
+                &d_cover,
+                &d_meta,
+                &d_seg,
+                &d_sp,
+                &d_semis,
+                &d_rxll,
+                &d_rxar,
+                &d_barr,
+                nsrc as i32,
+                &mut d_out,
             ),
         )
         .expect("launch");

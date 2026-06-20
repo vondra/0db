@@ -87,12 +87,7 @@ fn is_surface_signature(pt: &TracePoint, agl_m: f32) -> bool {
         && pt.baro_rate_fpm.abs() <= SURFACE_MAX_BARO_RATE_FPM
 }
 
-fn infer_edge_ground(
-    points: &[TracePoint],
-    agl_m: &[f32],
-    flags: &mut [bool],
-    is_prefix: bool,
-) {
+fn infer_edge_ground(points: &[TracePoint], agl_m: &[f32], flags: &mut [bool], is_prefix: bool) {
     let n = points.len();
     let edge_len = n.min(SURFACE_EDGE_WINDOW_POINTS);
     if edge_len == 0 {
@@ -241,8 +236,8 @@ mod tests {
         let points = vec![
             pt(0.0, 8.0, 0.0, false),
             pt(0.0, 10.0, 0.0, false),
-            pt(25.0, 12.0, 0.0, false),  // 7.6 m AGL — still ground
-            pt(50.0, 18.0, 0.0, false),  // 15.2 m AGL — now airborne
+            pt(25.0, 12.0, 0.0, false), // 7.6 m AGL — still ground
+            pt(50.0, 18.0, 0.0, false), // 15.2 m AGL — now airborne
             pt(800.0, 200.0, 0.0, false),
             pt(2_000.0, 250.0, 0.0, false),
             pt(4_000.0, 280.0, 0.0, false),
@@ -263,8 +258,8 @@ mod tests {
         let points = vec![
             pt(13_000.0, 8.0, 0.0, false),
             pt(13_010.0, 10.0, 0.0, false),
-            pt(13_025.0, 12.0, 0.0, false),  // 7.6 m AGL — ground
-            pt(13_050.0, 18.0, 0.0, false),  // 15.2 m AGL — airborne
+            pt(13_025.0, 12.0, 0.0, false), // 7.6 m AGL — ground
+            pt(13_050.0, 18.0, 0.0, false), // 15.2 m AGL — airborne
             pt(13_800.0, 200.0, 0.0, false),
             pt(15_000.0, 250.0, 0.0, false),
             pt(17_000.0, 280.0, 0.0, false),
@@ -300,7 +295,10 @@ mod tests {
         // 26 ft = 7.93 m, under both surface (9 m) and raw (24 m) gates.
         assert!(raw_ground_signal(&p, agl));
         // Even at 20 m AGL (DEM way off), raw gate still accepts.
-        assert!(raw_ground_signal(&pt(1_247.0 + 66.0, 15.0, 0.0, true), 20.0));
+        assert!(raw_ground_signal(
+            &pt(1_247.0 + 66.0, 15.0, 0.0, true),
+            20.0
+        ));
     }
 
     #[test]
@@ -310,7 +308,7 @@ mod tests {
         // be classified ground. The raw gate (24 m) rejects on AGL
         // grounds; even if a hypothetical implementation relaxed it,
         // the 140 kt speed gate would also reject.
-        let p = pt(100.0, 145.0, -800.0, true);  // ~30 m AGL, 145 kt, descending
+        let p = pt(100.0, 145.0, -800.0, true); // ~30 m AGL, 145 kt, descending
         assert!(!raw_ground_signal(&p, 30.0));
     }
 
@@ -329,9 +327,9 @@ mod tests {
         // gate would leave a slow GA climb flagged "ground" for
         // ~30 s after rotation.
         let points = vec![
-            pt(0.0, 8.0, 0.0, true),       // taxi, raw bit set → ground
-            pt(0.0, 100.0, 200.0, true),   // accelerating
-            pt(50.0, 130.0, 1500.0, false), // rotation, 15 m AGL — still in inference window
+            pt(0.0, 8.0, 0.0, true),         // taxi, raw bit set → ground
+            pt(0.0, 100.0, 200.0, true),     // accelerating
+            pt(50.0, 130.0, 1500.0, false),  // rotation, 15 m AGL — still in inference window
             pt(150.0, 140.0, 1800.0, false), // 45 m AGL, 140 kt climbing — must NOT be ground
             pt(400.0, 150.0, 1900.0, false), // 122 m AGL — clearly airborne
             pt(800.0, 160.0, 1900.0, false),
@@ -342,7 +340,10 @@ mod tests {
         // 45 m AGL climb: surface signature fails (> 9 m), and
         // edge-strong-airborne (50 m) kicks in just above this,
         // terminating the inference window before this point.
-        assert!(!flags[3], "45 m AGL climb must be airborne, got flags={flags:?}");
+        assert!(
+            !flags[3],
+            "45 m AGL climb must be airborne, got flags={flags:?}"
+        );
         assert!(!flags[4] && !flags[5]);
     }
 }

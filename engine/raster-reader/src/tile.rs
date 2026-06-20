@@ -3,12 +3,12 @@
 //! Mmap'd on demand (lazy) or pre-loaded for pipeline.
 //! Thread-safe: mmap is read-only, slot cache is bounded to avoid unbounded global growth.
 
+use memmap2::Mmap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use memmap2::Mmap;
 
 /// Data type of raw tile pixels.
 #[derive(Debug, Clone, Copy)]
@@ -53,7 +53,11 @@ impl RawTile {
             return None;
         }
 
-        Some(RawTile { mmap, grid_size, dtype })
+        Some(RawTile {
+            mmap,
+            grid_size,
+            dtype,
+        })
     }
 
     /// Read raw pixel value at (row, col). Row 0 = north edge.
@@ -69,7 +73,11 @@ impl RawTile {
                 let off = idx * 2;
                 let val = i16::from_be_bytes([self.mmap[off], self.mmap[off + 1]]);
                 // SRTM void = -32768 → return 0
-                if val == -32768 { 0.0 } else { val as f64 }
+                if val == -32768 {
+                    0.0
+                } else {
+                    val as f64
+                }
             }
         }
     }
@@ -94,7 +102,9 @@ impl RawTile {
         let v11 = self.read_pixel(r1, c1);
 
         // Skip void neighbors (SRTM)
-        if v00 == 0.0 && v01 == 0.0 && v10 == 0.0 && v11 == 0.0 { return 0.0; }
+        if v00 == 0.0 && v01 == 0.0 && v10 == 0.0 && v11 == 0.0 {
+            return 0.0;
+        }
 
         let v0 = v00 + fc * (v01 - v00);
         let v1 = v10 + fc * (v11 - v10);
@@ -139,8 +149,13 @@ pub struct TileStore {
 
 impl TileStore {
     pub fn new(
-        dir: PathBuf, grid_size: u32, dtype: DType, interp: Interp,
-        default_value: f64, extension: &'static str, max_loaded_tiles: usize,
+        dir: PathBuf,
+        grid_size: u32,
+        dtype: DType,
+        interp: Interp,
+        default_value: f64,
+        extension: &'static str,
+        max_loaded_tiles: usize,
     ) -> Self {
         let mut tiles = Vec::with_capacity(TILE_SLOTS);
         let mut touches = Vec::with_capacity(TILE_SLOTS);
@@ -149,8 +164,14 @@ impl TileStore {
             touches.push(AtomicU64::new(0));
         }
         TileStore {
-            dir, alt_dir: None, grid_size, dtype, interp,
-            default_value, extension, alt_extension: None,
+            dir,
+            alt_dir: None,
+            grid_size,
+            dtype,
+            interp,
+            default_value,
+            extension,
+            alt_extension: None,
             max_loaded_tiles: max_loaded_tiles.max(1),
             loaded_tiles: AtomicUsize::new(0),
             use_counter: AtomicU64::new(1),
@@ -200,9 +221,13 @@ impl TileStore {
             let mut best_stamp = u64::MAX;
 
             for idx in 0..TILE_SLOTS {
-                if idx == preserve_idx { continue; }
+                if idx == preserve_idx {
+                    continue;
+                }
                 let stamp = self.touches[idx].load(Ordering::Relaxed);
-                if stamp == 0 || stamp >= best_stamp { continue; }
+                if stamp == 0 || stamp >= best_stamp {
+                    continue;
+                }
                 best_stamp = stamp;
                 best_idx = Some(idx);
             }
@@ -239,13 +264,23 @@ impl TileStore {
 
         let ns = if lat_int >= 0 { 'N' } else { 'S' };
         let ew = if lon_int >= 0 { 'E' } else { 'W' };
-        let base = format!("{}{:02}{}{:03}", ns, lat_int.unsigned_abs(), ew, lon_int.unsigned_abs());
+        let base = format!(
+            "{}{:02}{}{:03}",
+            ns,
+            lat_int.unsigned_abs(),
+            ew,
+            lon_int.unsigned_abs()
+        );
         let primary = self.dir.join(format!("{}{}", base, self.extension));
         let loaded = if primary.exists() {
             RawTile::load(&primary, self.grid_size, self.dtype)
         } else if let (Some(alt_dir), Some(alt_ext)) = (&self.alt_dir, self.alt_extension) {
             let alt = alt_dir.join(format!("{}{}", base, alt_ext));
-            if alt.exists() { RawTile::load(&alt, self.grid_size, self.dtype) } else { None }
+            if alt.exists() {
+                RawTile::load(&alt, self.grid_size, self.dtype)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -284,7 +319,7 @@ impl TileStore {
     fn to_tile_key(lat: f64, lon: f64) -> (i32, i32, f64, f64) {
         let lat_int = lat.floor() as i32;
         let lon_int = lon.floor() as i32;
-        let frac_lat = lat - lat_int as f64;  // 0..1 within tile
+        let frac_lat = lat - lat_int as f64; // 0..1 within tile
         let frac_lon = lon - lon_int as f64;
         (lat_int, lon_int, frac_lat, frac_lon)
     }
@@ -352,7 +387,9 @@ impl TileStore {
         let tile = self
             .get_tile_fast(lat_int, lon_int)
             .or_else(|| self.get_tile(lat_int, lon_int));
-        let Some(tile) = tile else { return self.default_value };
+        let Some(tile) = tile else {
+            return self.default_value;
+        };
         let (frac_row, frac_col) = Self::frac_to_pixel(frac_lat, frac_lon, tile.grid_size);
         match interp {
             Interp::Bilinear => tile.sample_bilinear(frac_row, frac_col),
@@ -364,11 +401,19 @@ impl TileStore {
     /// bumps when consecutive samples fall within the same 1° tile (common in path
     /// sampling). Cache hit path touches zero atomics.
     #[inline]
-    pub fn sample_cached(&self, lat: f64, lon: f64, cached_key: &mut (i32, i32), cached_tile: &mut Option<Arc<RawTile>>) -> f64 {
+    pub fn sample_cached(
+        &self,
+        lat: f64,
+        lon: f64,
+        cached_key: &mut (i32, i32),
+        cached_tile: &mut Option<Arc<RawTile>>,
+    ) -> f64 {
         let (lat_int, lon_int, frac_lat, frac_lon) = Self::to_tile_key(lat, lon);
         if (lat_int, lon_int) != *cached_key {
             *cached_key = (lat_int, lon_int);
-            *cached_tile = self.get_tile_fast(lat_int, lon_int).or_else(|| self.get_tile(lat_int, lon_int));
+            *cached_tile = self
+                .get_tile_fast(lat_int, lon_int)
+                .or_else(|| self.get_tile(lat_int, lon_int));
         }
         match cached_tile.as_deref() {
             Some(t) => self.sample_tile(t, frac_lat, frac_lon),
@@ -397,7 +442,9 @@ impl TileStore {
                 .get_tile_fast(lat_int, lon_int)
                 .or_else(|| self.get_tile(lat_int, lon_int));
         }
-        let Some(tile) = cached_tile.as_deref() else { return self.default_value };
+        let Some(tile) = cached_tile.as_deref() else {
+            return self.default_value;
+        };
         let (frac_row, frac_col) = Self::frac_to_pixel(frac_lat, frac_lon, tile.grid_size);
         match interp {
             Interp::Bilinear => tile.sample_bilinear(frac_row, frac_col),
@@ -415,9 +462,13 @@ impl TileStore {
         // Adaptive resolution: full at <1km, 3× coarser 1-3km, 6× coarser >3km.
         // Major terrain features (100m+ wide) detected at all distances.
         let cell_m = 110_540.0 / (self.grid_size - 1) as f64;
-        let step_m = if dist_m <= 1000.0 { cell_m }
-            else if dist_m <= 3000.0 { cell_m * 3.0 }
-            else { cell_m * 6.0 };
+        let step_m = if dist_m <= 1000.0 {
+            cell_m
+        } else if dist_m <= 3000.0 {
+            cell_m * 3.0
+        } else {
+            cell_m * 6.0
+        };
         let steps = (dist_m / step_m).ceil().max(3.0) as usize;
 
         let mut cached_key = (i32::MIN, i32::MIN);
@@ -435,7 +486,12 @@ impl TileStore {
     /// Maximum value along path + its position (for building screening).
     /// Returns (max_value, distance_from_start_m, distance_to_end_m).
     pub fn max_along_path_with_pos(
-        &self, lat1: f64, lon1: f64, lat2: f64, lon2: f64, total_dist_m: f64,
+        &self,
+        lat1: f64,
+        lon1: f64,
+        lat2: f64,
+        lon2: f64,
+        total_dist_m: f64,
     ) -> (f64, f64, f64) {
         let cell_m = 110_540.0 / (self.grid_size - 1) as f64;
         let steps = (total_dist_m / cell_m).ceil().max(3.0) as usize;
@@ -445,7 +501,8 @@ impl TileStore {
         let mut cached_key = (i32::MIN, i32::MIN);
         let mut cached_tile: Option<Arc<RawTile>> = None;
 
-        for i in 1..steps - 1 {  // skip source and receiver positions
+        for i in 1..steps - 1 {
+            // skip source and receiver positions
             let t = i as f64 / (steps - 1).max(1) as f64;
             let lat = lat1 + t * (lat2 - lat1);
             let lon = lon1 + t * (lon2 - lon1);
@@ -462,7 +519,12 @@ impl TileStore {
     /// Cumulative distance through cells above threshold (for forest depth).
     /// Requires minimum contiguous depth of 10m.
     pub fn cumulative_along_path(
-        &self, lat1: f64, lon1: f64, lat2: f64, lon2: f64, threshold: f64,
+        &self,
+        lat1: f64,
+        lon1: f64,
+        lat2: f64,
+        lon2: f64,
+        threshold: f64,
     ) -> f64 {
         let cos_lat = ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
         let dlat = (lat2 - lat1) * 110_540.0;
@@ -534,12 +596,17 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore]  // requires ../../source-data/dem/srtm fixtures
+    #[ignore] // requires ../../source-data/dem/srtm fixtures
     fn test_srtm_brno() {
         // Real SRTM tile for Brno area
         let store = TileStore::new(
             PathBuf::from("../../source-data/dem/srtm"),
-            1201, DType::I16BE, Interp::Bilinear, 0.0, ".hgt", 4,
+            1201,
+            DType::I16BE,
+            Interp::Bilinear,
+            0.0,
+            ".hgt",
+            4,
         );
         // Brno center: ~200-250m elevation
         let elev = store.sample(49.195, 16.608);
@@ -547,14 +614,22 @@ mod tests {
 
         // Somewhere in the mountains (Vysočina): should be higher
         let elev2 = store.sample(49.5, 16.0);
-        assert!(elev2 > 300.0 && elev2 < 800.0, "Vysočina elevation: {elev2}m");
+        assert!(
+            elev2 > 300.0 && elev2 < 800.0,
+            "Vysočina elevation: {elev2}m"
+        );
     }
 
     #[test]
     fn test_building_brno() {
         let store = TileStore::new(
             PathBuf::from("../../source-data/rasters/building"),
-            1201, DType::U8, Interp::Nearest, 0.0, ".raw", 4,
+            1201,
+            DType::U8,
+            Interp::Nearest,
+            0.0,
+            ".raw",
+            4,
         );
         // Sample in Brno center — should find some buildings
         let h = store.sample(49.195, 16.608);
@@ -566,7 +641,12 @@ mod tests {
     fn test_missing_tile() {
         let store = TileStore::new(
             PathBuf::from("/nonexistent"),
-            1201, DType::U8, Interp::Nearest, 42.0, ".raw", 1,
+            1201,
+            DType::U8,
+            Interp::Nearest,
+            42.0,
+            ".raw",
+            1,
         );
         assert_eq!(store.sample(49.0, 16.0), 42.0);
     }
@@ -580,7 +660,12 @@ mod tests {
     fn sample_with_overrides_store_interp_for_missing_tile() {
         let store = TileStore::new(
             PathBuf::from("/nonexistent"),
-            1201, DType::I16BE, Interp::Bilinear, 7.0, ".hgt", 1,
+            1201,
+            DType::I16BE,
+            Interp::Bilinear,
+            7.0,
+            ".hgt",
+            1,
         );
         assert_eq!(store.sample(49.0, 16.0), 7.0);
         assert_eq!(store.sample_with(49.0, 16.0, Interp::Nearest), 7.0);

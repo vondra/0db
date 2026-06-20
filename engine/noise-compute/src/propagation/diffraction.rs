@@ -45,9 +45,16 @@ fn empty_result() -> DiffractionResult {
 /// composite (or bare) top the δ geometry runs on; `ols_profile` MUST be
 /// bare-earth elevation for the §2.5.6(c) mean-ground fit.
 pub(super) fn compute_single_edge(
-    t: &[f64], edge_profile: &[f64], ols_profile: &[f64], total_dist: f64, idx: usize,
-    src_elev: f64, rcv_elev: f64, dsr: f64,
-    source_height: f64, receiver_height: f64,
+    t: &[f64],
+    edge_profile: &[f64],
+    ols_profile: &[f64],
+    total_dist: f64,
+    idx: usize,
+    src_elev: f64,
+    rcv_elev: f64,
+    dsr: f64,
+    source_height: f64,
+    receiver_height: f64,
 ) -> DiffractionResult {
     let los = src_elev + (rcv_elev - src_elev) * t[idx];
     if edge_profile[idx] <= los {
@@ -58,8 +65,14 @@ pub(super) fn compute_single_edge(
     let top = edge_profile[idx];
     let d_sb = (d_sg * d_sg + (top - src_elev).powi(2)).sqrt();
     let d_br = (d_rg * d_rg + (top - rcv_elev).powi(2)).sqrt();
-    let delta_star =
-        compute_delta_star(t, ols_profile, idx, total_dist, source_height, receiver_height);
+    let delta_star = compute_delta_star(
+        t,
+        ols_profile,
+        idx,
+        total_dist,
+        source_height,
+        receiver_height,
+    );
     DiffractionResult {
         delta: d_sb + d_br - dsr,
         is_double: false,
@@ -133,7 +146,11 @@ fn maekawa_bands(
     if delta <= 0.0 {
         return atten;
     }
-    let cap = if is_double { DOUBLE_DIFF_CAP } else { SINGLE_DIFF_CAP };
+    let cap = if is_double {
+        DOUBLE_DIFF_CAP
+    } else {
+        SINGLE_DIFF_CAP
+    };
 
     for i in 0..NUM_BANDS {
         let lambda = SPEED_OF_SOUND / BAND_FREQ[i];
@@ -167,7 +184,12 @@ pub fn diffraction_attenuation_with_edge(
 }
 
 pub fn diffraction_attenuation_rayleigh(result: &DiffractionResult) -> [f64; NUM_BANDS] {
-    maekawa_bands(result.delta, result.is_double, result.edge_distance, result.delta_star)
+    maekawa_bands(
+        result.delta,
+        result.is_double,
+        result.edge_distance,
+        result.delta_star,
+    )
 }
 
 #[cfg(test)]
@@ -209,10 +231,15 @@ mod tests {
             assert!(
                 (a_01[i] - a_025[i]).abs() < 1e-9 && (a_01[i] - a_029[i]).abs() < 1e-9,
                 "band {i}: C3 must be 1 across e ∈ [0.1, 0.29], got {:.4}/{:.4}/{:.4}",
-                a_01[i], a_025[i], a_029[i]
+                a_01[i],
+                a_025[i],
+                a_029[i]
             );
         }
         let a_large_e = maekawa_bands(0.1, true, 100.0, 0.0);
-        assert!(a_large_e[4] > a_01[4] + 1.0, "C3 effect above 0.3 m must be visible");
+        assert!(
+            a_large_e[4] > a_01[4] + 1.0,
+            "C3 effect above 0.3 m must be visible"
+        );
     }
 }

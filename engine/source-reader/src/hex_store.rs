@@ -186,7 +186,6 @@ fn load_arrow_mmap(path: &Path, mmaps: &mut Vec<Arc<Mmap>>) -> Vec<RecordBatch> 
     batches
 }
 
-
 /// Road segment query result (references into mmap'd data, minimal copy).
 #[derive(serde::Serialize)]
 pub struct RoadResult {

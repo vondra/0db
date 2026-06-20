@@ -194,8 +194,7 @@ fn fill_t_values_inner(dist_m: f64, buf: &mut Vec<f64>, coarse_mid: Option<Coars
             let t = i as f64 / (n - 1) as f64;
             // Skip uniform sample if it's within 3m of a near-endpoint probe.
             if emit_near
-                && ((t - near_t).abs() * dist_m < 3.0
-                    || ((1.0 - t) - near_t).abs() * dist_m < 3.0)
+                && ((t - near_t).abs() * dist_m < 3.0 || ((1.0 - t) - near_t).abs() * dist_m < 3.0)
             {
                 continue;
             }
@@ -425,7 +424,11 @@ mod tests {
     /// Default surface-heatmap coarse-middle config: full-res within ~200 m of
     /// each end (per owner design), coarse far-field step ×2.
     fn default_coarse_mid() -> CoarseMid {
-        CoarseMid { src_zone_m: 200.0, rx_zone_m: 200.0, mid_stride: 2 }
+        CoarseMid {
+            src_zone_m: 200.0,
+            rx_zone_m: 200.0,
+            mid_stride: 2,
+        }
     }
 
     /// stride=1 (with INFINITY zones, as the kernel sets when disabled) is a no-op
@@ -439,7 +442,11 @@ mod tests {
             fill_t_values_coarse_mid(
                 d,
                 &mut coarse,
-                CoarseMid { src_zone_m: f64::INFINITY, rx_zone_m: f64::INFINITY, mid_stride: 1 },
+                CoarseMid {
+                    src_zone_m: f64::INFINITY,
+                    rx_zone_m: f64::INFINITY,
+                    mid_stride: 1,
+                },
             );
             assert_eq!(exact, coarse, "d={d}: stride=1 must equal exact");
         }
@@ -454,7 +461,10 @@ mod tests {
             fill_t_values(d, &mut exact);
             let mut coarse = Vec::new();
             fill_t_values_coarse_mid(d, &mut coarse, default_coarse_mid());
-            assert_eq!(exact, coarse, "d={d}: short uniform branch must be unchanged");
+            assert_eq!(
+                exact, coarse,
+                "d={d}: short uniform branch must be unchanged"
+            );
         }
     }
 
@@ -469,14 +479,27 @@ mod tests {
         fill_t_values_coarse_mid(
             d,
             &mut coarse,
-            CoarseMid { src_zone_m: zone, rx_zone_m: zone, mid_stride: 2 },
+            CoarseMid {
+                src_zone_m: zone,
+                rx_zone_m: zone,
+                mid_stride: 2,
+            },
         );
         assert_eq!(coarse[0], 0.0, "starts at source");
-        assert!((coarse.last().unwrap() - 1.0).abs() < 1e-9, "ends at receiver");
+        assert!(
+            (coarse.last().unwrap() - 1.0).abs() < 1e-9,
+            "ends at receiver"
+        );
         // 10 m near-probes at both ends.
-        assert!((coarse[1] * d - NEAR_OFFSET_M).abs() < 1.0, "near-source 10 m probe");
+        assert!(
+            (coarse[1] * d - NEAR_OFFSET_M).abs() < 1.0,
+            "near-source 10 m probe"
+        );
         let n = coarse.len();
-        assert!(((1.0 - coarse[n - 2]) * d - NEAR_OFFSET_M).abs() < 1.0, "near-rx 10 m probe");
+        assert!(
+            ((1.0 - coarse[n - 2]) * d - NEAR_OFFSET_M).abs() < 1.0,
+            "near-rx 10 m probe"
+        );
         // The exact cadence's within-zone ramp samples (≤ zone m from source) all
         // appear in the coarse output (the dense near-field is untouched).
         let mut exact = Vec::new();
@@ -520,7 +543,11 @@ mod tests {
         fill_t_values_coarse_mid(
             d,
             &mut wide,
-            CoarseMid { src_zone_m: 800.0, rx_zone_m: 800.0, mid_stride: 2 },
+            CoarseMid {
+                src_zone_m: 800.0,
+                rx_zone_m: 800.0,
+                mid_stride: 2,
+            },
         );
         assert!(
             narrow.len() < wide.len() && wide.len() < exact.len(),
@@ -544,7 +571,10 @@ mod tests {
         }
         // With 10 m near-probes, first gap is ≤ 10 m + tolerance.
         let first_gap_m = (buf[1] - buf[0]) * 200.0;
-        assert!(first_gap_m <= NEAR_OFFSET_M + 1.0, "first gap ≤ 10m, got {first_gap_m}");
+        assert!(
+            first_gap_m <= NEAR_OFFSET_M + 1.0,
+            "first gap ≤ 10m, got {first_gap_m}"
+        );
     }
 
     #[test]

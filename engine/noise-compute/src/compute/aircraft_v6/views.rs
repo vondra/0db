@@ -191,4 +191,3 @@ pub struct CruiseRowView<'a> {
     /// Bounded top-K identity slice ranked by `peak_lmax_25m_db` desc.
     pub top_candidates: &'a [CruiseTopCandidateView<'a>],
 }
-

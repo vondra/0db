@@ -37,21 +37,21 @@ pub static CLASS_NAMES: [&str; NUM_CLASSES] = [
 ];
 
 pub static IS_JET: [bool; NUM_CLASSES] = [
-    true, // WING_FALLBACK
-    true, // WING_A320
-    true, // WING_B738
+    true,  // WING_FALLBACK
+    true,  // WING_A320
+    true,  // WING_B738
     false, // PROP_C172
-    true, // WING_B38M
-    true, // WING_B789
-    true, // WING_A21N
-    true, // WING_A321
-    true, // WING_A20N
-    true, // WING_A319
-    true, // FUSE_CRJ9
-    true, // WING_B748
+    true,  // WING_B38M
+    true,  // WING_B789
+    true,  // WING_A21N
+    true,  // WING_A321
+    true,  // WING_A20N
+    true,  // WING_A319
+    true,  // FUSE_CRJ9
+    true,  // WING_B748
     false, // HELICOPTER
     false, // PROP_DH8D
-    true, // FUSE_C56X
+    true,  // FUSE_C56X
 ];
 
 /// Runway-roll, taxi, apron per-metre `LW'` (dB re 1 pW/m), per noise
@@ -66,81 +66,81 @@ pub static GROUND_OPS_REFERENCE_LW_PER_METER_DB: [[f64; 3]; NUM_CLASSES] = [
     [113.01, 101.01, 95.01], // WING_FALLBACK
     [113.01, 101.01, 95.01], // WING_A320
     [113.01, 101.01, 95.01], // WING_B738
-    [101.01, 89.01, 83.01], // PROP_C172
+    [101.01, 89.01, 83.01],  // PROP_C172
     [113.01, 101.01, 95.01], // WING_B38M
     [117.01, 105.01, 99.01], // WING_B789
     [113.01, 101.01, 95.01], // WING_A21N
-    [106.51, 94.51, 88.51], // WING_A321
-    [103.11, 91.11, 85.11], // WING_A20N
+    [106.51, 94.51, 88.51],  // WING_A321
+    [103.11, 91.11, 85.11],  // WING_A20N
     [113.01, 101.01, 95.01], // WING_A319
-    [109.01, 97.01, 91.01], // FUSE_CRJ9
+    [109.01, 97.01, 91.01],  // FUSE_CRJ9
     [117.01, 105.01, 99.01], // WING_B748
-    [103.01, 91.01, 85.01], // HELICOPTER
-    [106.01, 94.01, 88.01], // PROP_DH8D
-    [108.01, 96.01, 90.01], // FUSE_C56X
+    [103.01, 91.01, 85.01],  // HELICOPTER
+    [106.01, 94.01, 88.01],  // PROP_DH8D
+    [108.01, 96.01, 90.01],  // FUSE_C56X
 ];
 
 /// Per-profile → noise class lookup (dense u8 index). Computed by
 /// Voronoi assignment to nearest anchor (L∞ on 20-D NPD vector,
 /// constrained to same Installation; helicopters pinned).
 pub static CLASS_OF_PROFILE: [u8; NUM_PROFILES] = [
-    2, // B738 → WING_B738
-    2, // B739 → WING_B738
-    0, // B737 → WING_FALLBACK
-    0, // B734 → WING_FALLBACK
-    0, // B735 → WING_FALLBACK
-    0, // B733 → WING_FALLBACK
-    0, // B736 → WING_FALLBACK
-    4, // B38M → WING_B38M
-    4, // B39M → WING_B38M
-    4, // B37M → WING_B38M
-    1, // A320 → WING_A320
-    8, // A20N → WING_A20N
-    9, // A319 → WING_A319
-    9, // A19N → WING_A319
-    9, // BCS3 → WING_A319
-    9, // BCS1 → WING_A319
-    7, // A321 → WING_A321
-    6, // A21N → WING_A21N
-    1, // B752 → WING_A320
-    1, // B753 → WING_A320
-    5, // B772 → WING_B789
-    2, // B773 → WING_B738
+    2,  // B738 → WING_B738
+    2,  // B739 → WING_B738
+    0,  // B737 → WING_FALLBACK
+    0,  // B734 → WING_FALLBACK
+    0,  // B735 → WING_FALLBACK
+    0,  // B733 → WING_FALLBACK
+    0,  // B736 → WING_FALLBACK
+    4,  // B38M → WING_B38M
+    4,  // B39M → WING_B38M
+    4,  // B37M → WING_B38M
+    1,  // A320 → WING_A320
+    8,  // A20N → WING_A20N
+    9,  // A319 → WING_A319
+    9,  // A19N → WING_A319
+    9,  // BCS3 → WING_A319
+    9,  // BCS1 → WING_A319
+    7,  // A321 → WING_A321
+    6,  // A21N → WING_A21N
+    1,  // B752 → WING_A320
+    1,  // B753 → WING_A320
+    5,  // B772 → WING_B789
+    2,  // B773 → WING_B738
     11, // B77W → WING_B748
-    5, // B77L → WING_B789
-    2, // B77F → WING_B738
-    5, // B788 → WING_B789
-    5, // B789 → WING_B789
-    5, // B78X → WING_B789
-    2, // A332 → WING_B738
-    0, // A333 → WING_FALLBACK
-    0, // A338 → WING_FALLBACK
-    1, // A339 → WING_A320
-    1, // A359 → WING_A320
-    0, // A35K → WING_FALLBACK
-    2, // A306 → WING_B738
-    2, // A310 → WING_B738
-    5, // B763 → WING_B789
-    0, // B764 → WING_FALLBACK
+    5,  // B77L → WING_B789
+    2,  // B77F → WING_B738
+    5,  // B788 → WING_B789
+    5,  // B789 → WING_B789
+    5,  // B78X → WING_B789
+    2,  // A332 → WING_B738
+    0,  // A333 → WING_FALLBACK
+    0,  // A338 → WING_FALLBACK
+    1,  // A339 → WING_A320
+    1,  // A359 → WING_A320
+    0,  // A35K → WING_FALLBACK
+    2,  // A306 → WING_B738
+    2,  // A310 → WING_B738
+    5,  // B763 → WING_B789
+    0,  // B764 → WING_FALLBACK
     11, // MD11 → WING_B748
-    5, // DC10 → WING_B789
-    5, // L101 → WING_B789
+    5,  // DC10 → WING_B789
+    5,  // L101 → WING_B789
     11, // B744 → WING_B748
     11, // B748 → WING_B748
     11, // B741 → WING_B748
     11, // B742 → WING_B748
-    5, // A342 → WING_B789
-    5, // A343 → WING_B789
-    5, // A346 → WING_B789
-    0, // A388 → WING_FALLBACK
+    5,  // A342 → WING_B789
+    5,  // A343 → WING_B789
+    5,  // A346 → WING_B789
+    0,  // A388 → WING_FALLBACK
     11, // IL76 → WING_B748
-    1, // E170 → WING_A320
-    1, // E75L → WING_A320
-    1, // E75S → WING_A320
-    1, // E190 → WING_A320
-    1, // E195 → WING_A320
-    6, // E290 → WING_A21N
-    6, // E295 → WING_A21N
+    1,  // E170 → WING_A320
+    1,  // E75L → WING_A320
+    1,  // E75S → WING_A320
+    1,  // E190 → WING_A320
+    1,  // E195 → WING_A320
+    6,  // E290 → WING_A21N
+    6,  // E295 → WING_A21N
     10, // CRJ2 → FUSE_CRJ9
     10, // CRJ7 → FUSE_CRJ9
     10, // CRJ9 → FUSE_CRJ9
@@ -168,24 +168,24 @@ pub static CLASS_OF_PROFILE: [u8; NUM_PROFILES] = [
     13, // F50 → PROP_DH8D
     10, // F70 → FUSE_CRJ9
     13, // JS41 → PROP_DH8D
-    3, // C172 → PROP_C172
-    3, // C152 → PROP_C172
-    3, // C182 → PROP_C172
-    3, // PA28 → PROP_C172
-    3, // PA34 → PROP_C172
-    3, // SR20 → PROP_C172
-    3, // SR22 → PROP_C172
-    3, // DA40 → PROP_C172
-    3, // DA42 → PROP_C172
-    3, // P28A → PROP_C172
-    3, // C210 → PROP_C172
-    3, // BE36 → PROP_C172
-    3, // M20P → PROP_C172
-    3, // C206 → PROP_C172
-    3, // PA32 → PROP_C172
-    3, // PA44 → PROP_C172
-    3, // RV7 → PROP_C172
-    3, // RV8 → PROP_C172
+    3,  // C172 → PROP_C172
+    3,  // C152 → PROP_C172
+    3,  // C182 → PROP_C172
+    3,  // PA28 → PROP_C172
+    3,  // PA34 → PROP_C172
+    3,  // SR20 → PROP_C172
+    3,  // SR22 → PROP_C172
+    3,  // DA40 → PROP_C172
+    3,  // DA42 → PROP_C172
+    3,  // P28A → PROP_C172
+    3,  // C210 → PROP_C172
+    3,  // BE36 → PROP_C172
+    3,  // M20P → PROP_C172
+    3,  // C206 → PROP_C172
+    3,  // PA32 → PROP_C172
+    3,  // PA44 → PROP_C172
+    3,  // RV7 → PROP_C172
+    3,  // RV8 → PROP_C172
     12, // EC35 → HELICOPTER
     12, // EC45 → HELICOPTER
     12, // EC55 → HELICOPTER
@@ -207,7 +207,7 @@ pub static CLASS_OF_PROFILE: [u8; NUM_PROFILES] = [
     12, // BK17 → HELICOPTER
     12, // B505 → HELICOPTER
     12, // GYRO → HELICOPTER
-    0, // FALLBACK → WING_FALLBACK
+    0,  // FALLBACK → WING_FALLBACK
 ];
 
 /// Anchor profile_idx for each noise class. Anchor = exact NPD vector
@@ -216,27 +216,29 @@ pub static CLASS_OF_PROFILE: [u8; NUM_PROFILES] = [
 /// synth surface emitter, and by popup display name.
 pub static CLASS_REP_PROFILE_IDX: [u8; NUM_CLASSES] = [
     123, // WING_FALLBACK → FALLBACK
-    10, // WING_A320 → A320
-    0, // WING_B738 → B738
-    84, // PROP_C172 → C172
-    7, // WING_B38M → B38M
-    26, // WING_B789 → B789
-    17, // WING_A21N → A21N
-    16, // WING_A321 → A321
-    11, // WING_A20N → A20N
-    12, // WING_A319 → A319
-    59, // FUSE_CRJ9 → CRJ9
-    42, // WING_B748 → B748
+    10,  // WING_A320 → A320
+    0,   // WING_B738 → B738
+    84,  // PROP_C172 → C172
+    7,   // WING_B38M → B38M
+    26,  // WING_B789 → B789
+    17,  // WING_A21N → A21N
+    16,  // WING_A321 → A321
+    11,  // WING_A20N → A20N
+    12,  // WING_A319 → A319
+    59,  // FUSE_CRJ9 → CRJ9
+    42,  // WING_B748 → B748
     107, // HELICOPTER → AS50
-    74, // PROP_DH8D → DH8D
-    62, // FUSE_C56X → C56X
+    74,  // PROP_DH8D → DH8D
+    62,  // FUSE_C56X → C56X
 ];
 
 pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B738/737800",
         [94.5, 90.4, 87.4, 84.1, 78.7, 72.4, 67.5, 62.3, 54.9, 48.5],
-        [108.4, 104.5, 102.0, 99.3, 95.0, 89.9, 86.4, 81.5, 75.5, 69.5],
+        [
+            108.4, 104.5, 102.0, 99.3, 95.0, 89.9, 86.4, 81.5, 75.5, 69.5,
+        ],
         [91.8, 84.8, 80.1, 75.1, 67.1, 58.4, 51.7, 44.7, 36.5, 28.3],
         [107.2, 100.9, 96.5, 91.9, 84.7, 76.8, 71.4, 64.6, 57.7, 50.4],
         160.0,
@@ -246,7 +248,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B739/737800",
         [94.5, 90.4, 87.4, 84.1, 78.7, 72.4, 67.5, 62.3, 54.9, 48.5],
-        [108.4, 104.5, 102.0, 99.3, 95.0, 89.9, 86.4, 81.5, 75.5, 69.5],
+        [
+            108.4, 104.5, 102.0, 99.3, 95.0, 89.9, 86.4, 81.5, 75.5, 69.5,
+        ],
         [91.8, 84.8, 80.1, 75.1, 67.1, 58.4, 51.7, 44.7, 36.5, 28.3],
         [107.2, 100.9, 96.5, 91.9, 84.7, 76.8, 71.4, 64.6, 57.7, 50.4],
         160.0,
@@ -396,7 +400,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "A321/A321-232",
         [94.6, 90.2, 86.9, 83.4, 77.7, 71.2, 66.2, 60.5, 54.3, 47.6],
-        [107.5, 103.5, 100.9, 98.0, 93.2, 87.6, 83.4, 78.6, 73.0, 67.1],
+        [
+            107.5, 103.5, 100.9, 98.0, 93.2, 87.6, 83.4, 78.6, 73.0, 67.1,
+        ],
         [91.8, 84.4, 79.6, 74.5, 66.3, 57.2, 50.5, 43.2, 35.2, 26.9],
         [107.0, 100.0, 95.3, 90.4, 82.6, 74.2, 68.1, 61.5, 54.0, 45.8],
         160.0,
@@ -416,7 +422,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B752/757PW",
         [95.1, 90.8, 87.7, 84.3, 78.7, 72.0, 66.8, 61.1, 54.7, 48.2],
-        [105.5, 102.5, 100.2, 97.7, 93.3, 87.3, 82.3, 76.5, 69.7, 62.6],
+        [
+            105.5, 102.5, 100.2, 97.7, 93.3, 87.3, 82.3, 76.5, 69.7, 62.6,
+        ],
         [93.3, 86.7, 82.1, 77.1, 69.2, 60.2, 53.4, 46.2, 38.2, 30.2],
         [103.7, 98.4, 94.6, 90.5, 83.8, 75.5, 68.9, 61.6, 53.2, 44.6],
         160.0,
@@ -426,7 +434,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B753/757PW",
         [95.1, 90.8, 87.7, 84.3, 78.7, 72.0, 66.8, 61.1, 54.7, 48.2],
-        [105.5, 102.5, 100.2, 97.7, 93.3, 87.3, 82.3, 76.5, 69.7, 62.6],
+        [
+            105.5, 102.5, 100.2, 97.7, 93.3, 87.3, 82.3, 76.5, 69.7, 62.6,
+        ],
         [93.3, 86.7, 82.1, 77.1, 69.2, 60.2, 53.4, 46.2, 38.2, 30.2],
         [103.7, 98.4, 94.6, 90.5, 83.8, 75.5, 68.9, 61.6, 53.2, 44.6],
         160.0,
@@ -436,7 +446,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B772/777200",
         [97.7, 92.8, 89.5, 86.3, 80.9, 74.9, 70.4, 65.5, 60.5, 55.8],
-        [109.1, 105.4, 102.7, 99.7, 95.0, 89.6, 85.7, 81.3, 77.0, 73.0],
+        [
+            109.1, 105.4, 102.7, 99.7, 95.0, 89.6, 85.7, 81.3, 77.0, 73.0,
+        ],
         [94.2, 86.8, 81.8, 76.8, 68.9, 60.3, 54.1, 47.5, 40.8, 34.5],
         [109.0, 102.4, 97.8, 92.9, 85.2, 76.7, 70.8, 64.4, 58.0, 52.0],
         160.0,
@@ -446,7 +458,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B773/777300",
         [97.4, 92.1, 88.8, 85.3, 80.0, 74.0, 69.6, 64.8, 59.3, 52.8],
-        [111.6, 108.0, 105.4, 102.7, 98.0, 92.7, 88.7, 84.2, 78.7, 72.0],
+        [
+            111.6, 108.0, 105.4, 102.7, 98.0, 92.7, 88.7, 84.2, 78.7, 72.0,
+        ],
         [93.6, 85.9, 80.9, 75.9, 68.1, 59.5, 53.3, 46.7, 39.2, 30.3],
         [110.5, 104.0, 99.6, 95.1, 88.0, 80.3, 74.4, 67.9, 60.5, 52.0],
         160.0,
@@ -456,9 +470,13 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B77W/7773ER",
         [99.2, 94.5, 91.4, 88.2, 83.0, 77.1, 72.7, 67.8, 62.9, 58.2],
-        [111.4, 107.6, 104.8, 101.8, 96.8, 90.9, 86.5, 81.6, 76.8, 71.9],
+        [
+            111.4, 107.6, 104.8, 101.8, 96.8, 90.9, 86.5, 81.6, 76.8, 71.9,
+        ],
         [95.8, 88.5, 83.8, 78.9, 71.1, 62.7, 56.6, 50.1, 43.4, 37.1],
-        [112.5, 105.8, 101.2, 96.3, 88.4, 79.6, 73.4, 66.3, 59.3, 52.1],
+        [
+            112.5, 105.8, 101.2, 96.3, 88.4, 79.6, 73.4, 66.3, 59.3, 52.1,
+        ],
         160.0,
         370.0,
         Installation::Wing,
@@ -466,7 +484,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B77L/777200",
         [97.7, 92.8, 89.5, 86.3, 80.9, 74.9, 70.4, 65.5, 60.5, 55.8],
-        [109.1, 105.4, 102.7, 99.7, 95.0, 89.6, 85.7, 81.3, 77.0, 73.0],
+        [
+            109.1, 105.4, 102.7, 99.7, 95.0, 89.6, 85.7, 81.3, 77.0, 73.0,
+        ],
         [94.2, 86.8, 81.8, 76.8, 68.9, 60.3, 54.1, 47.5, 40.8, 34.5],
         [109.0, 102.4, 97.8, 92.9, 85.2, 76.7, 70.8, 64.4, 58.0, 52.0],
         160.0,
@@ -476,7 +496,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B77F/777300",
         [97.4, 92.1, 88.8, 85.3, 80.0, 74.0, 69.6, 64.8, 59.3, 52.8],
-        [111.6, 108.0, 105.4, 102.7, 98.0, 92.7, 88.7, 84.2, 78.7, 72.0],
+        [
+            111.6, 108.0, 105.4, 102.7, 98.0, 92.7, 88.7, 84.2, 78.7, 72.0,
+        ],
         [93.6, 85.9, 80.9, 75.9, 68.1, 59.5, 53.3, 46.7, 39.2, 30.3],
         [110.5, 104.0, 99.6, 95.1, 88.0, 80.3, 74.4, 67.9, 60.5, 52.0],
         160.0,
@@ -516,7 +538,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "A332/A330-301",
         [99.1, 93.5, 90.3, 87.1, 81.9, 76.1, 71.7, 66.6, 60.3, 53.7],
-        [112.7, 108.3, 105.4, 102.5, 97.6, 91.9, 87.7, 82.5, 76.5, 70.4],
+        [
+            112.7, 108.3, 105.4, 102.5, 97.6, 91.9, 87.7, 82.5, 76.5, 70.4,
+        ],
         [93.8, 86.6, 82.0, 77.2, 69.6, 61.4, 55.4, 48.7, 41.1, 33.0],
         [111.7, 104.4, 99.6, 94.5, 86.6, 78.4, 72.4, 65.6, 57.6, 48.8],
         160.0,
@@ -526,7 +550,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "A333/A330-343",
         [97.4, 93.0, 89.8, 86.6, 81.5, 75.7, 71.4, 66.3, 60.5, 54.1],
-        [109.1, 105.1, 102.4, 99.5, 94.6, 88.9, 84.5, 79.4, 73.4, 67.3],
+        [
+            109.1, 105.1, 102.4, 99.5, 94.6, 88.9, 84.5, 79.4, 73.4, 67.3,
+        ],
         [93.6, 86.6, 81.9, 77.1, 69.4, 61.2, 55.3, 48.7, 41.2, 33.4],
         [108.7, 101.6, 96.9, 91.9, 83.9, 75.1, 68.9, 62.0, 54.1, 45.5],
         160.0,
@@ -536,7 +562,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "A338/A330-343",
         [97.4, 93.0, 89.8, 86.6, 81.5, 75.7, 71.4, 66.3, 60.5, 54.1],
-        [109.1, 105.1, 102.4, 99.5, 94.6, 88.9, 84.5, 79.4, 73.4, 67.3],
+        [
+            109.1, 105.1, 102.4, 99.5, 94.6, 88.9, 84.5, 79.4, 73.4, 67.3,
+        ],
         [93.6, 86.6, 81.9, 77.1, 69.4, 61.2, 55.3, 48.7, 41.2, 33.4],
         [108.7, 101.6, 96.9, 91.9, 83.9, 75.1, 68.9, 62.0, 54.1, 45.5],
         160.0,
@@ -566,7 +594,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "A35K/A350-1041",
         [95.4, 91.7, 88.9, 85.8, 80.6, 74.4, 69.9, 64.7, 59.1, 53.5],
-        [108.4, 104.7, 101.8, 98.8, 93.7, 87.8, 83.4, 78.4, 72.5, 66.3],
+        [
+            108.4, 104.7, 101.8, 98.8, 93.7, 87.8, 83.4, 78.4, 72.5, 66.3,
+        ],
         [91.1, 85.4, 81.1, 76.5, 68.9, 60.3, 54.2, 47.6, 40.5, 33.4],
         [105.3, 99.8, 95.4, 90.7, 83.0, 74.5, 68.4, 61.5, 53.9, 45.9],
         160.0,
@@ -576,7 +606,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "A306/A330-301",
         [99.1, 93.5, 90.3, 87.1, 81.9, 76.1, 71.7, 66.6, 60.3, 53.7],
-        [112.7, 108.3, 105.4, 102.5, 97.6, 91.9, 87.7, 82.5, 76.5, 70.4],
+        [
+            112.7, 108.3, 105.4, 102.5, 97.6, 91.9, 87.7, 82.5, 76.5, 70.4,
+        ],
         [93.8, 86.6, 82.0, 77.2, 69.6, 61.4, 55.4, 48.7, 41.1, 33.0],
         [111.7, 104.4, 99.6, 94.5, 86.6, 78.4, 72.4, 65.6, 57.6, 48.8],
         160.0,
@@ -586,7 +618,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "A310/A330-301",
         [99.1, 93.5, 90.3, 87.1, 81.9, 76.1, 71.7, 66.6, 60.3, 53.7],
-        [112.7, 108.3, 105.4, 102.5, 97.6, 91.9, 87.7, 82.5, 76.5, 70.4],
+        [
+            112.7, 108.3, 105.4, 102.5, 97.6, 91.9, 87.7, 82.5, 76.5, 70.4,
+        ],
         [93.8, 86.6, 82.0, 77.2, 69.6, 61.4, 55.4, 48.7, 41.1, 33.0],
         [111.7, 104.4, 99.6, 94.5, 86.6, 78.4, 72.4, 65.6, 57.6, 48.8],
         160.0,
@@ -596,7 +630,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B763/767300",
         [98.1, 93.9, 90.8, 87.4, 81.4, 75.0, 70.3, 65.7, 60.6, 55.7],
-        [106.2, 103.1, 100.8, 98.2, 93.6, 87.6, 83.1, 78.1, 72.5, 66.8],
+        [
+            106.2, 103.1, 100.8, 98.2, 93.6, 87.6, 83.1, 78.1, 72.5, 66.8,
+        ],
         [96.3, 89.8, 85.2, 80.2, 71.9, 63.2, 56.9, 50.8, 44.1, 37.7],
         [104.4, 99.0, 95.2, 91.0, 84.1, 75.8, 69.7, 63.2, 56.0, 48.8],
         160.0,
@@ -606,7 +642,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B764/767400",
         [95.9, 93.2, 90.4, 87.2, 82.1, 76.2, 71.6, 66.4, 60.4, 53.5],
-        [109.8, 106.1, 103.6, 100.8, 96.1, 90.8, 86.9, 82.6, 77.5, 71.2],
+        [
+            109.8, 106.1, 103.6, 100.8, 96.1, 90.8, 86.9, 82.6, 77.5, 71.2,
+        ],
         [94.4, 87.4, 82.8, 78.0, 70.4, 61.9, 55.7, 48.8, 40.9, 31.7],
         [109.7, 103.2, 98.8, 94.0, 86.4, 78.2, 72.5, 66.2, 59.0, 50.4],
         160.0,
@@ -616,9 +654,13 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "MD11/MD11GE",
         [99.5, 95.1, 91.4, 88.3, 82.5, 76.3, 71.9, 66.6, 61.3, 56.3],
-        [113.2, 109.2, 106.4, 103.7, 98.2, 94.2, 89.7, 85.2, 79.2, 72.0],
+        [
+            113.2, 109.2, 106.4, 103.7, 98.2, 94.2, 89.7, 85.2, 79.2, 72.0,
+        ],
         [97.7, 91.0, 85.8, 81.1, 73.0, 64.5, 58.5, 51.7, 44.8, 38.3],
-        [111.4, 105.1, 100.8, 96.5, 88.7, 82.4, 76.3, 70.3, 62.7, 54.0],
+        [
+            111.4, 105.1, 100.8, 96.5, 88.7, 82.4, 76.3, 70.3, 62.7, 54.0,
+        ],
         160.0,
         370.0,
         Installation::Wing,
@@ -626,7 +668,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "DC10/DC1030",
         [100.7, 95.5, 91.7, 87.5, 81.1, 74.0, 68.8, 63.0, 56.3, 49.7],
-        [110.9, 106.6, 103.3, 100.0, 94.3, 87.8, 83.0, 77.6, 71.4, 65.1],
+        [
+            110.9, 106.6, 103.3, 100.0, 94.3, 87.8, 83.0, 77.6, 71.4, 65.1,
+        ],
         [99.2, 92.0, 86.6, 81.0, 72.1, 63.0, 56.5, 49.1, 40.8, 32.5],
         [107.8, 101.1, 96.5, 91.5, 83.7, 74.9, 68.7, 61.7, 53.8, 46.2],
         160.0,
@@ -636,7 +680,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "L101/L1011",
         [100.7, 95.5, 91.7, 87.5, 81.1, 74.0, 68.8, 63.0, 56.3, 49.7],
-        [111.4, 107.1, 103.8, 100.5, 94.8, 88.3, 83.5, 78.1, 71.9, 65.6],
+        [
+            111.4, 107.1, 103.8, 100.5, 94.8, 88.3, 83.5, 78.1, 71.9, 65.6,
+        ],
         [99.2, 92.0, 86.6, 81.0, 72.1, 63.0, 56.5, 49.1, 40.8, 32.5],
         [108.3, 101.6, 97.0, 92.0, 84.2, 75.4, 69.2, 62.2, 54.3, 46.7],
         160.0,
@@ -646,9 +692,13 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B744/747400",
         [102.9, 98.2, 94.9, 91.5, 86.1, 80.1, 75.6, 70.5, 65.2, 60.1],
-        [113.5, 109.6, 106.9, 104.0, 99.2, 94.2, 90.5, 86.1, 81.7, 77.5],
+        [
+            113.5, 109.6, 106.9, 104.0, 99.2, 94.2, 90.5, 86.1, 81.7, 77.5,
+        ],
         [99.8, 92.4, 87.3, 82.0, 74.1, 65.7, 59.6, 52.8, 45.8, 39.1],
-        [113.3, 106.5, 101.7, 96.9, 89.1, 81.0, 75.3, 68.9, 62.5, 56.4],
+        [
+            113.3, 106.5, 101.7, 96.9, 89.1, 81.0, 75.3, 68.9, 62.5, 56.4,
+        ],
         160.0,
         370.0,
         Installation::Wing,
@@ -656,7 +706,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B748/7478",
         [101.0, 96.8, 93.9, 90.9, 85.7, 79.7, 75.1, 70.0, 64.9, 60.1],
-        [110.1, 106.3, 103.5, 100.6, 95.5, 89.7, 85.3, 80.2, 75.1, 70.2],
+        [
+            110.1, 106.3, 103.5, 100.6, 95.5, 89.7, 85.3, 80.2, 75.1, 70.2,
+        ],
         [99.0, 91.8, 87.0, 82.2, 74.4, 65.9, 59.6, 52.8, 45.9, 39.4],
         [110.1, 103.4, 98.7, 93.8, 85.8, 76.9, 70.5, 63.2, 55.9, 49.0],
         160.0,
@@ -666,9 +718,13 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B741/747100",
         [108.2, 103.5, 99.9, 96.0, 89.1, 80.6, 74.2, 67.6, 60.9, 53.7],
-        [120.2, 115.4, 111.7, 107.5, 100.3, 92.7, 87.4, 81.5, 75.0, 67.7],
+        [
+            120.2, 115.4, 111.7, 107.5, 100.3, 92.7, 87.4, 81.5, 75.0, 67.7,
+        ],
         [106.5, 99.5, 94.5, 89.0, 79.8, 69.1, 61.2, 53.2, 44.9, 36.3],
-        [117.9, 110.8, 105.7, 100.0, 90.5, 80.6, 73.8, 66.5, 58.5, 49.7],
+        [
+            117.9, 110.8, 105.7, 100.0, 90.5, 80.6, 73.8, 66.5, 58.5, 49.7,
+        ],
         160.0,
         370.0,
         Installation::Wing,
@@ -676,9 +732,13 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "B742/747200",
         [102.3, 97.8, 94.3, 90.5, 84.4, 77.7, 72.9, 67.3, 60.7, 53.3],
-        [113.8, 109.4, 106.1, 102.5, 96.9, 90.7, 86.2, 81.1, 75.1, 68.5],
+        [
+            113.8, 109.4, 106.1, 102.5, 96.9, 90.7, 86.2, 81.1, 75.1, 68.5,
+        ],
         [103.0, 95.5, 90.2, 84.3, 75.1, 66.0, 59.7, 52.6, 44.5, 35.6],
-        [115.7, 108.1, 102.8, 97.3, 88.7, 80.1, 74.1, 67.5, 59.9, 51.9],
+        [
+            115.7, 108.1, 102.8, 97.3, 88.7, 80.1, 74.1, 67.5, 59.9, 51.9,
+        ],
         160.0,
         370.0,
         Installation::Wing,
@@ -686,7 +746,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "A342/A340-211",
         [98.7, 92.8, 89.9, 86.8, 81.7, 76.0, 71.7, 66.6, 60.8, 54.3],
-        [108.0, 103.5, 100.5, 97.4, 92.1, 86.2, 81.7, 76.2, 70.7, 64.6],
+        [
+            108.0, 103.5, 100.5, 97.4, 92.1, 86.2, 81.7, 76.2, 70.7, 64.6,
+        ],
         [93.3, 86.6, 82.1, 77.3, 69.7, 61.5, 55.6, 48.9, 41.5, 33.6],
         [106.9, 99.4, 94.4, 89.3, 81.0, 71.9, 65.4, 58.3, 50.2, 41.5],
         160.0,
@@ -696,7 +758,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "A343/A340-211",
         [98.7, 92.8, 89.9, 86.8, 81.7, 76.0, 71.7, 66.6, 60.8, 54.3],
-        [108.0, 103.5, 100.5, 97.4, 92.1, 86.2, 81.7, 76.2, 70.7, 64.6],
+        [
+            108.0, 103.5, 100.5, 97.4, 92.1, 86.2, 81.7, 76.2, 70.7, 64.6,
+        ],
         [93.3, 86.6, 82.1, 77.3, 69.7, 61.5, 55.6, 48.9, 41.5, 33.6],
         [106.9, 99.4, 94.4, 89.3, 81.0, 71.9, 65.4, 58.3, 50.2, 41.5],
         160.0,
@@ -706,7 +770,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "A346/A340-642",
         [99.0, 94.3, 91.0, 87.7, 82.3, 76.1, 71.5, 66.3, 60.4, 53.9],
-        [108.6, 104.4, 101.5, 98.4, 93.3, 87.3, 82.8, 77.6, 71.6, 65.1],
+        [
+            108.6, 104.4, 101.5, 98.4, 93.3, 87.3, 82.8, 77.6, 71.6, 65.1,
+        ],
         [94.6, 88.1, 83.3, 78.3, 70.5, 61.8, 55.6, 48.7, 41.1, 33.2],
         [107.8, 100.4, 95.4, 90.3, 82.2, 73.2, 66.6, 59.3, 51.3, 43.0],
         160.0,
@@ -716,7 +782,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "A388/A380-841",
         [98.5, 93.7, 90.5, 87.2, 82.0, 76.0, 71.5, 66.4, 60.6, 54.3],
-        [110.3, 106.6, 103.7, 100.7, 95.7, 89.9, 85.5, 80.4, 74.6, 68.4],
+        [
+            110.3, 106.6, 103.7, 100.7, 95.7, 89.9, 85.5, 80.4, 74.6, 68.4,
+        ],
         [93.1, 86.6, 82.2, 77.5, 69.9, 61.4, 55.3, 48.6, 41.2, 33.5],
         [107.0, 101.2, 97.0, 92.3, 84.6, 76.0, 69.8, 62.8, 55.0, 46.8],
         160.0,
@@ -726,9 +794,13 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "IL76/747200",
         [102.3, 97.8, 94.3, 90.5, 84.4, 77.7, 72.9, 67.3, 60.7, 53.3],
-        [113.8, 109.4, 106.1, 102.5, 96.9, 90.7, 86.2, 81.1, 75.1, 68.5],
+        [
+            113.8, 109.4, 106.1, 102.5, 96.9, 90.7, 86.2, 81.1, 75.1, 68.5,
+        ],
         [103.0, 95.5, 90.2, 84.3, 75.1, 66.0, 59.7, 52.6, 44.5, 35.6],
-        [115.7, 108.1, 102.8, 97.3, 88.7, 80.1, 74.1, 67.5, 59.9, 51.9],
+        [
+            115.7, 108.1, 102.8, 97.3, 88.7, 80.1, 74.1, 67.5, 59.9, 51.9,
+        ],
         160.0,
         370.0,
         Installation::Wing,
@@ -926,7 +998,9 @@ pub static PROFILES: [NpdProfile; NUM_PROFILES] = [
     NpdProfile::new(
         "LJ60/LEAR35",
         [93.7, 89.0, 85.6, 81.8, 75.6, 68.9, 64.1, 58.8, 53.1, 46.9],
-        [110.5, 105.0, 101.1, 97.1, 90.6, 83.0, 77.1, 70.3, 62.5, 53.8],
+        [
+            110.5, 105.0, 101.1, 97.1, 90.6, 83.0, 77.1, 70.3, 62.5, 53.8,
+        ],
         [91.1, 84.2, 79.2, 73.9, 65.5, 56.6, 50.2, 43.5, 36.3, 28.6],
         [107.5, 99.8, 94.4, 88.9, 80.1, 70.3, 62.9, 54.6, 45.3, 35.0],
         160.0,
@@ -1640,10 +1714,30 @@ fn similarity_fallback(typecode: &str) -> u8 {
     // SF*→DH8D and helicopter arms below (GLID would otherwise evaluate as
     // a CRJ-900, AS2x as an EC-135). C172 = quietest available profile,
     // least-wrong if ever evaluated.
-    if matches!(b, b"GLID" | b"VENT" | b"DISC" | b"DUOD" | b"NIMB" | b"JANU"
-                     | [b'A', b'S', b'2', b'0'..=b'9'] | b"AS14" | b"AS30" | b"AS31"
-                     | b"DG40" | b"DG50" | b"DG60" | b"DG80" | b"DG1T"
-                     | b"LS8" | b"LS9" | b"LS10" | b"G103" | b"PK20" | b"BALL") {
+    if matches!(
+        b,
+        b"GLID"
+            | b"VENT"
+            | b"DISC"
+            | b"DUOD"
+            | b"NIMB"
+            | b"JANU"
+            | [b'A', b'S', b'2', b'0'..=b'9']
+            | b"AS14"
+            | b"AS30"
+            | b"AS31"
+            | b"DG40"
+            | b"DG50"
+            | b"DG60"
+            | b"DG80"
+            | b"DG1T"
+            | b"LS8"
+            | b"LS9"
+            | b"LS10"
+            | b"G103"
+            | b"PK20"
+            | b"BALL"
+    ) {
         return profile_idx("C172");
     }
     // GA piston singles (+ light piston twins — same PROP_C172 Voronoi class):
@@ -1654,9 +1748,26 @@ fn similarity_fallback(typecode: &str) -> u8 {
     // Previously fell to the jet-flavoured FALLBACK energy-mean — +10..25 dB
     // vs reality for light pistons (audit 2026-06 airborne A1; DR40 alone =
     // 1,437 rows in a 600-R4 Europe sample).
-    if matches!(b, b"DR40" | b"DR22" | b"HR20" | b"P208" | b"TWEN" | b"G115"
-                     | b"AA5" | b"M20T" | b"TB20" | b"TOBA" | b"TAMP" | b"A210"
-                     | b"RALL" | b"AC11" | b"AS02" | b"P06T" | b"P68") {
+    if matches!(
+        b,
+        b"DR40"
+            | b"DR22"
+            | b"HR20"
+            | b"P208"
+            | b"TWEN"
+            | b"G115"
+            | b"AA5"
+            | b"M20T"
+            | b"TB20"
+            | b"TOBA"
+            | b"TAMP"
+            | b"A210"
+            | b"RALL"
+            | b"AC11"
+            | b"AS02"
+            | b"P06T"
+            | b"P68"
+    ) {
         return profile_idx("C172");
     }
     // Powered ultralights / LSA (Rotax 912 class) + touring motor gliders:
@@ -1673,12 +1784,37 @@ fn similarity_fallback(typecode: &str) -> u8 {
     // intent). GYRO is strict-mapped to HELICOPTER in the typecode table.
     // Verified in ICAO 8643 (2026-06-11). Ordering: ECHO/ASTO must precede
     // the EC*/AS* helicopter arm, SF25 the SF*→SAAB turboprop arm.
-    if matches!(b, b"WT9" | b"C42" | b"ULAC" | b"SIRA" | b"ECHO" | b"ASTO"
-                     | b"FDCT" | b"VL3" | b"PIVI" | b"BREZ" | b"EV97" | b"EVSS"
-                     | b"NG5" | b"BR23" | b"CRUZ" | b"SLG2" | b"SD4" | b"AAT3"
-                     | b"SHRK" | b"ALTO" | b"SAVG" | b"EUPA"
-                     | b"PARA" | b"SHIP"
-                     | b"DIMO" | b"SF25" | b"G109" | b"AS16") {
+    if matches!(
+        b,
+        b"WT9"
+            | b"C42"
+            | b"ULAC"
+            | b"SIRA"
+            | b"ECHO"
+            | b"ASTO"
+            | b"FDCT"
+            | b"VL3"
+            | b"PIVI"
+            | b"BREZ"
+            | b"EV97"
+            | b"EVSS"
+            | b"NG5"
+            | b"BR23"
+            | b"CRUZ"
+            | b"SLG2"
+            | b"SD4"
+            | b"AAT3"
+            | b"SHRK"
+            | b"ALTO"
+            | b"SAVG"
+            | b"EUPA"
+            | b"PARA"
+            | b"SHIP"
+            | b"DIMO"
+            | b"SF25"
+            | b"G109"
+            | b"AS16"
+    ) {
         return profile_idx("C172");
     }
     // C-130 Hercules and C-130J Super Hercules — military 4-engine turboprop
@@ -1699,33 +1835,50 @@ fn similarity_fallback(typecode: &str) -> u8 {
     }
     // Cessna piston twins (C30x Skymaster, C310, C337, C340, C40x, C44x)
     // and remaining piston singles (C206/C207 Stationair, C210 Centurion).
-    if matches!(b, [b'C', b'2', b'0', b'6' | b'7'] | [b'C', b'2', b'1', b'0']
-                     | [b'C', b'3', _, _] | [b'C', b'4', _, _]) {
+    if matches!(
+        b,
+        [b'C', b'2', b'0', b'6' | b'7']
+            | [b'C', b'2', b'1', b'0']
+            | [b'C', b'3', _, _]
+            | [b'C', b'4', _, _]
+    ) {
         return profile_idx("C172");
     }
     // Cessna business jets — Citation Mustang/CJ (C25x), Citation 5xx/6xx/7xx series.
-    if matches!(b, [b'C', b'2', b'5', _] | [b'C', b'5', _, _]
-                     | [b'C', b'6', _, _] | [b'C', b'7', _, _]) {
+    if matches!(
+        b,
+        [b'C', b'2', b'5', _] | [b'C', b'5', _, _] | [b'C', b'6', _, _] | [b'C', b'7', _, _]
+    ) {
         return profile_idx("C56X");
     }
     // Beechcraft Bonanza/Baron/Duke piston singles + twins (BE19/23/24/3x/5x/6x/76/77/80/88).
     // Carved out of the BE turboprop bucket — Codex/Gemini /gg flagged BE35→DH8D as a
     // 10+ dB overestimate (Bonanza is a piston single, not a King Air).
-    if matches!(b, [b'B', b'E', b'1', b'9']
-                     | [b'B', b'E', b'2', b'3' | b'4']
-                     | [b'B', b'E', b'3', _]
-                     | [b'B', b'E', b'5', _]
-                     | [b'B', b'E', b'6', _]
-                     | [b'B', b'E', b'7', b'6' | b'7']
-                     | b"BE17" | b"BE80" | b"BE88") {
+    if matches!(
+        b,
+        [b'B', b'E', b'1', b'9']
+            | [b'B', b'E', b'2', b'3' | b'4']
+            | [b'B', b'E', b'3', _]
+            | [b'B', b'E', b'5', _]
+            | [b'B', b'E', b'6', _]
+            | [b'B', b'E', b'7', b'6' | b'7']
+            | b"BE17"
+            | b"BE80"
+            | b"BE88"
+    ) {
         return profile_idx("C172");
     }
     // Beechcraft King Air turboprops (BE9x / BE10 / BE20), Beechjet (BE40, small jet)
     // and Beech 1900/350 commuter turboprops.
-    if matches!(b, [b'B', b'E', b'9', _]
-                     | b"BE10" | b"BE20" | b"BE40"
-                     | [b'B', b'1', b'9', b'0']
-                     | [b'B', b'3', b'5', b'0']) {
+    if matches!(
+        b,
+        [b'B', b'E', b'9', _]
+            | b"BE10"
+            | b"BE20"
+            | b"BE40"
+            | [b'B', b'1', b'9', b'0']
+            | [b'B', b'3', b'5', b'0']
+    ) {
         return profile_idx("DH8D");
     }
     // Boeing 717-200 (B712) — rear-fuselage twin-jet (MD-95 derivative), acoustically
@@ -1739,16 +1892,25 @@ fn similarity_fallback(typecode: &str) -> u8 {
         return profile_idx("DH8D");
     }
     // Piper PA-2x/3x/4x — piston/turboprop singles+twins
-    if matches!(b, [b'P', b'A', _, _] | [b'P', b'2', b'8', _] | [b'P', b'3', b'2', _] | [b'P', b'4', b'6', _]) {
+    if matches!(
+        b,
+        [b'P', b'A', _, _] | [b'P', b'2', b'8', _] | [b'P', b'3', b'2', _] | [b'P', b'4', b'6', _]
+    ) {
         return profile_idx("C172");
     }
     // Bombardier Challenger CL-30/35/60/64 + Gulfstream/Hawker — business jet
     // (`GLF*` is subsumed by [b'G', b'L', _, _] above — kept earlier as docs.)
-    if matches!(b, [b'C', b'L', _, _] | [b'G', b'L', _, _] | [b'H', b'2', b'5', _]) {
+    if matches!(
+        b,
+        [b'C', b'L', _, _] | [b'G', b'L', _, _] | [b'H', b'2', b'5', _]
+    ) {
         return profile_idx("CRJ9");
     }
     // Falcon / Learjet / Embraer business jet (Phenom / Legacy)
-    if matches!(b, [b'F', b'9', b'0', b'0'] | [b'F', b'2', b'T', b'H'] | [b'L', b'J', _, _]) {
+    if matches!(
+        b,
+        [b'F', b'9', b'0', b'0'] | [b'F', b'2', b'T', b'H'] | [b'L', b'J', _, _]
+    ) {
         return profile_idx("CRJ9");
     }
     if matches!(b, [b'E', _, _, b'P' | b'L']) {
@@ -1765,11 +1927,21 @@ fn similarity_fallback(typecode: &str) -> u8 {
         return profile_idx("CRJ9");
     }
     // ATR turboprops, Dash 8, SAAB 340/Shorts, Daher TBM
-    if matches!(b, [b'A', b'T', _, _] | [b'D', b'H', b'8', _] | [b'S', b'F', _, _] | [b'T', b'B', b'M', _]) {
+    if matches!(
+        b,
+        [b'A', b'T', _, _] | [b'D', b'H', b'8', _] | [b'S', b'F', _, _] | [b'T', b'B', b'M', _]
+    ) {
         return profile_idx("DH8D");
     }
     // Cirrus SR / S22, Diamond DA, Vans RV — GA piston singles
-    if matches!(b, [b'S', b'R', _, _] | [b'S', b'2', b'2', _] | [b'D', b'A', _, _] | [b'D', b'V', _, _] | [b'R', b'V', _, _]) {
+    if matches!(
+        b,
+        [b'S', b'R', _, _]
+            | [b'S', b'2', b'2', _]
+            | [b'D', b'A', _, _]
+            | [b'D', b'V', _, _]
+            | [b'R', b'V', _, _]
+    ) {
         return profile_idx("C172");
     }
     // 3-char RV* codes (RV3 / RV4 / RV6 / RV7 / RV8 / RV9 — Vans homebuilt)
@@ -1779,7 +1951,10 @@ fn similarity_fallback(typecode: &str) -> u8 {
     // BAe 146 / Avro RJ — 4-engine rear-fuselage regional jet
     // (carved out before the Bell B4xx helicopter pattern, which would otherwise
     //  route a 4-engine jet to a single-rotor helicopter — Codex/Gemini /gg flag).
-    if matches!(b, b"B461" | b"B462" | b"B463" | b"B14R" | b"RJ70" | b"RJ85" | b"RJ1H") {
+    if matches!(
+        b,
+        b"B461" | b"B462" | b"B463" | b"B14R" | b"RJ70" | b"RJ85" | b"RJ1H"
+    ) {
         return profile_idx("CRJ9");
     }
     // IAI 1125 Astra / Gulfstream G100 (ASTR) — mid-size bizjet. Found during
@@ -1805,7 +1980,10 @@ fn similarity_fallback(typecode: &str) -> u8 {
     // Sikorsky H-60 / S-70 / S-76 / S-92, Robinson R22/44/66, plus UHEL —
     // ICAO 8643 special designator for ultralight helicopters (Mosquito
     // class): piston like an R22, EC35 is the only rotorcraft anchor.
-    if matches!(b, b"H60" | b"R22" | b"R44" | b"R66" | b"S70" | b"S76" | b"S92" | b"UHEL") {
+    if matches!(
+        b,
+        b"H60" | b"R22" | b"R44" | b"R66" | b"S70" | b"S76" | b"S92" | b"UHEL"
+    ) {
         return profile_idx("EC35");
     }
     // Leonardo AW + Airbus H-series 4-char codes
@@ -1846,10 +2024,26 @@ pub fn is_non_aircraft_typecode(typecode: &str) -> bool {
 pub fn is_negligible_noise_typecode(typecode: &str) -> bool {
     matches!(
         typecode.trim().as_bytes(),
-        b"GLID" | b"VENT" | b"DISC" | b"DUOD" | b"NIMB" | b"JANU"
-            | [b'A', b'S', b'2', b'0'..=b'9'] | b"AS14" | b"AS30" | b"AS31"
-            | b"DG40" | b"DG50" | b"DG60" | b"DG80" | b"DG1T"
-            | b"LS8" | b"LS9" | b"LS10" | b"G103" | b"PK20" | b"BALL"
+        b"GLID"
+            | b"VENT"
+            | b"DISC"
+            | b"DUOD"
+            | b"NIMB"
+            | b"JANU"
+            | [b'A', b'S', b'2', b'0'..=b'9']
+            | b"AS14"
+            | b"AS30"
+            | b"AS31"
+            | b"DG40"
+            | b"DG50"
+            | b"DG60"
+            | b"DG80"
+            | b"DG1T"
+            | b"LS8"
+            | b"LS9"
+            | b"LS10"
+            | b"G103"
+            | b"PK20"
+            | b"BALL"
     )
 }
-

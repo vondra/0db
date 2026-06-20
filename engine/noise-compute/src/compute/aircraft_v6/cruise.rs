@@ -233,17 +233,19 @@ pub fn scatter(
                 entry.class_at_peak = class_idx;
             }
 
-            let cand = top_flight_candidates.entry(fid).or_insert(TopFlightCandidate {
-                peak_lmax: f64::NEG_INFINITY,
-                peak_altitude_m: 0.0,
-                peak_period: row.period,
-                peak_seg_start: [0.0; 2],
-                peak_seg_end: [0.0; 2],
-                min_dist_m: f64::MAX,
-                profile_idx: row.rep_profile_idx,
-                aircraft_type: *cand_view.aircraft_type,
-                callsign: cand_view.callsign.to_string(),
-            });
+            let cand = top_flight_candidates
+                .entry(fid)
+                .or_insert(TopFlightCandidate {
+                    peak_lmax: f64::NEG_INFINITY,
+                    peak_altitude_m: 0.0,
+                    peak_period: row.period,
+                    peak_seg_start: [0.0; 2],
+                    peak_seg_end: [0.0; 2],
+                    min_dist_m: f64::MAX,
+                    profile_idx: row.rep_profile_idx,
+                    aircraft_type: *cand_view.aircraft_type,
+                    callsign: cand_view.callsign.to_string(),
+                });
             if lmax > cand.peak_lmax {
                 cand.peak_lmax = lmax;
                 cand.peak_altitude_m = disp_alt;
@@ -274,13 +276,16 @@ pub fn scatter(
             });
             for cand_view in row.top_candidates.iter() {
                 entry.n_unique_flights.insert(cand_view.flight_id);
-                let cand = entry.top_fids.entry(cand_view.flight_id).or_insert(HexTopFlight {
-                    peak_lmax: f64::NEG_INFINITY,
-                    altitude_m: 0.0,
-                    class_idx: class_idx as u8,
-                    aircraft_type: *cand_view.aircraft_type,
-                    callsign: cand_view.callsign.to_string(),
-                });
+                let cand = entry
+                    .top_fids
+                    .entry(cand_view.flight_id)
+                    .or_insert(HexTopFlight {
+                        peak_lmax: f64::NEG_INFINITY,
+                        altitude_m: 0.0,
+                        class_idx: class_idx as u8,
+                        aircraft_type: *cand_view.aircraft_type,
+                        callsign: cand_view.callsign.to_string(),
+                    });
                 if lmax > cand.peak_lmax {
                     cand.peak_lmax = lmax;
                     cand.altitude_m = disp_alt;

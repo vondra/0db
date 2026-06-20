@@ -633,10 +633,7 @@ mod tests {
                     full.no_vegetation_energy.to_bits()
                 );
                 for i in 0..NUM_BANDS {
-                    assert_eq!(
-                        pipe.band_energy[i].to_bits(),
-                        full.band_energy[i].to_bits()
-                    );
+                    assert_eq!(pipe.band_energy[i].to_bits(), full.band_energy[i].to_bits());
                 }
                 // Pipeline path leaves no_ground / no_atmospheric at zero;
                 // popup path populates them.

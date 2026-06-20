@@ -12,7 +12,9 @@ use super::horizon::single_edge_atten;
 use super::path_profile::{path_integral_u8, vegetation_run_length, PathProfile};
 use super::vegetation;
 use crate::constants::{M_PER_DEG_LAT, M_PER_DEG_LON_EQ};
-use crate::types::{Barrier, EdgePoint, ObstacleEdge, ScreeningObstacleTrace, TerrainTrace, NUM_BANDS};
+use crate::types::{
+    Barrier, EdgePoint, ObstacleEdge, ScreeningObstacleTrace, TerrainTrace, NUM_BANDS,
+};
 
 /// Terrain diffraction attenuation per band from a `PathProfile`.
 ///
@@ -102,7 +104,13 @@ fn compute_terrain_diffraction<'a>(
     let prof_f64 = PathProfile::elevation_f64_from(elevation_f64_scratch, elevation_m);
     // Single-edge δ over bare-earth (was the multi-edge hull compute_path_difference).
     let (bands, diff) = single_edge_atten(t, prof_f64, prof_f64, dist_m, src_h, rcv_h);
-    Some(TerrainDiffraction { bands, diff: diff?, prof_f64, t, n })
+    Some(TerrainDiffraction {
+        bands,
+        diff: diff?,
+        prof_f64,
+        t,
+        n,
+    })
 }
 
 /// Terrain attenuation + single-edge trace for popup tooltips.
@@ -120,7 +128,13 @@ pub fn terrain_attenuation_with_meta(
     let Some(res) = compute_terrain_diffraction(profile, src_elev, rcv_alt) else {
         return (empty_terrain_trace(), 0);
     };
-    let TerrainDiffraction { bands, diff, prof_f64, t, n } = res;
+    let TerrainDiffraction {
+        bands,
+        diff,
+        prof_f64,
+        t,
+        n,
+    } = res;
     let idx = diff.edge_indices[0];
 
     let trace = TerrainTrace {
@@ -128,7 +142,10 @@ pub fn terrain_attenuation_with_meta(
         is_double: false,
         attenuation_bands: bands,
         n_edges: 1,
-        edges: vec![EdgePoint { t: t[idx], elevation_m: prof_f64[idx] }],
+        edges: vec![EdgePoint {
+            t: t[idx],
+            elevation_m: prof_f64[idx],
+        }],
         delta_star_m: diff.delta_star,
         edge_distance_m: 0.0,
         dominant_edge_idx: 0,
@@ -173,7 +190,12 @@ pub fn screening_attenuation(
         return [0.0; NUM_BANDS];
     }
     let (atten, _) = screening_attenuation_with_meta(
-        profile, barriers, src_elev, rcv_alt, exclusion_radius_m, terrain_atten,
+        profile,
+        barriers,
+        src_elev,
+        rcv_alt,
+        exclusion_radius_m,
+        terrain_atten,
     );
     atten
 }
@@ -274,8 +296,7 @@ pub fn screening_attenuation_with_meta(
         composite_h_scratch,
         ..
     } = profile;
-    let elevation_f64: &[f64] =
-        PathProfile::elevation_f64_from(elevation_f64_scratch, elevation_m);
+    let elevation_f64: &[f64] = PathProfile::elevation_f64_from(elevation_f64_scratch, elevation_m);
 
     // 3. Composite top profile = elevation + max(building_h, barrier_at), with
     //    exclusion radius zeroing buildings near the source (not barriers —
@@ -338,7 +359,11 @@ pub fn screening_attenuation_with_meta(
     } else {
         building_h_m[idx] as f64
     };
-    let kind: &'static str = if (barrier_at[idx] as f64) > bh_eff { "barrier" } else { "building" };
+    let kind: &'static str = if (barrier_at[idx] as f64) > bh_eff {
+        "barrier"
+    } else {
+        "building"
+    };
     let los_edge = src_elev + (rcv_alt - src_elev) * t[idx];
     let screen_h = composite_h_scratch[idx] - los_edge;
     let height_m = above;
@@ -352,7 +377,12 @@ pub fn screening_attenuation_with_meta(
         samples_taken,
         step_m: step_m_med,
         n_edges: 1,
-        edges: vec![ObstacleEdge { kind, t: t[idx], height_m, screen_h_m: screen_h }],
+        edges: vec![ObstacleEdge {
+            kind,
+            t: t[idx],
+            height_m,
+            screen_h_m: screen_h,
+        }],
     };
 
     (atten_screen, trace)
@@ -387,8 +417,7 @@ fn nearest_t_index(t: &[f64], t_query: f64) -> usize {
 /// `profile.forest_u8[]`. Non-uniform t spacing is weighted by interval length
 /// so endpoints (dense) don't dominate — fixes the pre-existing FusedGrid bias.
 pub fn vegetation_attenuation_path(profile: &PathProfile) -> [f64; NUM_BANDS] {
-    let forest_depth =
-        vegetation_run_length(&profile.t, &profile.forest_u8, profile.dist_m);
+    let forest_depth = vegetation_run_length(&profile.t, &profile.forest_u8, profile.dist_m);
     vegetation::vegetation_attenuation(forest_depth)
 }
 
@@ -448,18 +477,23 @@ mod tests {
             .t
             .iter()
             .enumerate()
-            .min_by(|(_, &a), (_, &b)| {
-                ((a - 0.35).abs()).partial_cmp(&((b - 0.35).abs())).unwrap()
-            })
+            .min_by(|(_, &a), (_, &b)| ((a - 0.35).abs()).partial_cmp(&((b - 0.35).abs())).unwrap())
             .unwrap();
         p.elevation_m[spike_idx] = 40.0;
 
         let src_elev = 10.05;
         let rcv_alt = 11.5;
         let (trace, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
-        assert!(trace.delta_m > 0.0, "ridge at t=0.35 must trigger diffraction");
+        assert!(
+            trace.delta_m > 0.0,
+            "ridge at t=0.35 must trigger diffraction"
+        );
         assert!(trace.n_edges >= 1, "expected at least one diffraction edge");
-        assert_eq!(trace.edges.len(), trace.n_edges as usize, "edges vec must match n_edges");
+        assert_eq!(
+            trace.edges.len(),
+            trace.n_edges as usize,
+            "edges vec must match n_edges"
+        );
     }
 
     #[test]
@@ -472,9 +506,7 @@ mod tests {
             .t
             .iter()
             .enumerate()
-            .min_by(|(_, &a), (_, &b)| {
-                ((a - 0.03).abs()).partial_cmp(&((b - 0.03).abs())).unwrap()
-            })
+            .min_by(|(_, &a), (_, &b)| ((a - 0.03).abs()).partial_cmp(&((b - 0.03).abs())).unwrap())
             .unwrap();
         p.elevation_m[cliff_idx] = 40.0;
 
@@ -493,9 +525,7 @@ mod tests {
             .t
             .iter()
             .enumerate()
-            .min_by(|(_, &a), (_, &b)| {
-                ((a - 0.97).abs()).partial_cmp(&((b - 0.97).abs())).unwrap()
-            })
+            .min_by(|(_, &a), (_, &b)| ((a - 0.97).abs()).partial_cmp(&((b - 0.97).abs())).unwrap())
             .unwrap();
         p.elevation_m[spike_idx] = 40.0;
 
@@ -513,9 +543,7 @@ mod tests {
             .t
             .iter()
             .enumerate()
-            .min_by(|(_, &a), (_, &b)| {
-                ((a - 0.4).abs()).partial_cmp(&((b - 0.4).abs())).unwrap()
-            })
+            .min_by(|(_, &a), (_, &b)| ((a - 0.4).abs()).partial_cmp(&((b - 0.4).abs())).unwrap())
             .unwrap();
         p.building_h_m[idx] = 20;
         let terrain_atten = [0.0_f64; NUM_BANDS];
@@ -523,7 +551,11 @@ mod tests {
             screening_attenuation_with_meta(&mut p, &[], 0.01, 1.5, 0.0, &terrain_atten);
         assert_eq!(trace.kind, "building");
         assert!(trace.height_m == 20.0);
-        assert_eq!(trace.edges.len(), trace.n_edges as usize, "edges vec must match n_edges");
+        assert_eq!(
+            trace.edges.len(),
+            trace.n_edges as usize,
+            "edges vec must match n_edges"
+        );
         assert!(
             atten.iter().any(|&a| a > 0.0),
             "building at t=0.4 should produce screening"
@@ -612,9 +644,7 @@ mod tests {
             .t
             .iter()
             .enumerate()
-            .min_by(|(_, &a), (_, &b)| {
-                ((a - 0.5).abs()).partial_cmp(&((b - 0.5).abs())).unwrap()
-            })
+            .min_by(|(_, &a), (_, &b)| ((a - 0.5).abs()).partial_cmp(&((b - 0.5).abs())).unwrap())
             .unwrap();
         p.elevation_m[spike] = 40.0;
         // building_h_m all zero — guaranteed by build_flat_profile.
@@ -627,8 +657,14 @@ mod tests {
             0.0,
             &terrain_trace.attenuation_bands,
         );
-        assert_eq!(screening_trace.kind, "none", "bare hill is not a screening obstacle");
+        assert_eq!(
+            screening_trace.kind, "none",
+            "bare hill is not a screening obstacle"
+        );
         assert_eq!(screening_trace.n_edges, 0);
-        assert!(atten.iter().all(|&a| a == 0.0), "no screening increment over terrain");
+        assert!(
+            atten.iter().all(|&a| a == 0.0),
+            "no screening increment over terrain"
+        );
     }
 }

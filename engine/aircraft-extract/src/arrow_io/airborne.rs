@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use arrow::array::{
-    Array, ArrayRef, FixedSizeBinaryBuilder, Float32Builder, Int16Builder, ListArray, StringBuilder,
-    StructArray, UInt64Builder, UInt8Builder,
+    Array, ArrayRef, FixedSizeBinaryBuilder, Float32Builder, Int16Builder, ListArray,
+    StringBuilder, StructArray, UInt64Builder, UInt8Builder,
 };
 use arrow::buffer::OffsetBuffer;
 use arrow::datatypes::{DataType, Field};
@@ -235,8 +235,17 @@ mod tests {
             .unwrap();
         assert!((t_start.value(0) - 200.0).abs() < 1e-3);
         assert!((t_end.value(0) - 220.0).abs() < 1e-3);
-        assert!(sub_struct.column_by_name("terrain_q1_elev_m").is_none(), "v16 must NOT carry q1");
-        assert!(sub_struct.column_by_name("terrain_mid_elev_m").is_none(), "v16 must NOT carry mid");
-        assert!(sub_struct.column_by_name("terrain_q3_elev_m").is_none(), "v16 must NOT carry q3");
+        assert!(
+            sub_struct.column_by_name("terrain_q1_elev_m").is_none(),
+            "v16 must NOT carry q1"
+        );
+        assert!(
+            sub_struct.column_by_name("terrain_mid_elev_m").is_none(),
+            "v16 must NOT carry mid"
+        );
+        assert!(
+            sub_struct.column_by_name("terrain_q3_elev_m").is_none(),
+            "v16 must NOT carry q3"
+        );
     }
 }

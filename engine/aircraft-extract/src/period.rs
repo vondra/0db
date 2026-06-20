@@ -101,8 +101,7 @@ pub fn period_from_timestamp(ts: f64, lat: f64, lon: f64) -> u8 {
         return 2;
     }
     let tz = resolve_tz(lat, lon);
-    let utc =
-        DateTime::<Utc>::from_timestamp(ts as i64, 0).unwrap_or(DateTime::<Utc>::UNIX_EPOCH);
+    let utc = DateTime::<Utc>::from_timestamp(ts as i64, 0).unwrap_or(DateTime::<Utc>::UNIX_EPOCH);
     match utc.with_timezone(&tz).hour() {
         7..=18 => 0,
         19..=22 => 1,

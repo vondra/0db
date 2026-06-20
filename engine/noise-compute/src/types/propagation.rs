@@ -31,7 +31,7 @@ pub struct PropagationVariants {
     pub no_screening_energy: f64,      // full minus building screening
     pub no_vegetation_energy: f64,     // full minus vegetation
     pub no_ground_energy: f64,         // full minus ground effect (popup-only; 0 on pipeline path)
-    pub no_atmospheric_energy: f64,    // full minus atmospheric absorption (popup-only; 0 on pipeline path)
+    pub no_atmospheric_energy: f64, // full minus atmospheric absorption (popup-only; 0 on pipeline path)
     pub band_energy: [f64; NUM_BANDS], // per-band received levels (linear energy, A-weighted)
 }
 

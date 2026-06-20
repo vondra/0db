@@ -44,13 +44,12 @@ pub const LEISURE_TYPE_BASE: u8 = 100;
 /// Octave band center frequencies [Hz].
 pub const BAND_FREQ: [f64; NUM_BANDS] = [63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0];
 
-
-mod inputs;
-mod config;
-mod result;
 mod aircraft_detail;
-mod propagation;
+mod config;
+mod inputs;
 mod metadata;
+mod propagation;
+mod result;
 mod trace_types;
 
 pub use aircraft_detail::*;

@@ -123,7 +123,6 @@ pub fn project_leg_onto_airport_lines(
     out
 }
 
-
 /// Length of the leg `L1→L2` lying within the `max_perp_m` buffer of
 /// segment `seg`. 0 when no overlap.
 ///
@@ -197,9 +196,9 @@ fn clipped_overlap_m(
     let mut t_max = 1.0f32;
     let pq = [
         (-leg_dx, l1x + s_half),     // left edge x = -s_half
-        (leg_dx, s_half - l1x),       // right edge x = +s_half
-        (-leg_dy, l1y + max_perp_m),  // bottom edge y = -max_perp_m
-        (leg_dy, max_perp_m - l1y),   // top edge y = +max_perp_m
+        (leg_dx, s_half - l1x),      // right edge x = +s_half
+        (-leg_dy, l1y + max_perp_m), // bottom edge y = -max_perp_m
+        (leg_dy, max_perp_m - l1y),  // top edge y = +max_perp_m
     ];
     for (p, q) in pq {
         // 1e-6 m is below the noise floor of the (lat,lon)→meter
@@ -239,7 +238,14 @@ fn clipped_overlap_m(
 mod tests {
     use super::*;
 
-    fn segment(osm_id: u64, segment_idx: u16, sla: f32, slo: f32, ela: f32, elo: f32) -> AirportLineSegment {
+    fn segment(
+        osm_id: u64,
+        segment_idx: u16,
+        sla: f32,
+        slo: f32,
+        ela: f32,
+        elo: f32,
+    ) -> AirportLineSegment {
         AirportLineSegment {
             osm_id,
             segment_idx,
@@ -257,7 +263,12 @@ mod tests {
         // Leg overlays segment exactly (both ~250 m, same line).
         let s = segment(1, 0, 50.105, 14.255, 50.106, 14.258);
         let out = project_leg_onto_airport_lines(
-            s.start_lat, s.start_lon, s.end_lat, s.end_lon, &[s], 50.0,
+            s.start_lat,
+            s.start_lon,
+            s.end_lat,
+            s.end_lon,
+            &[s],
+            50.0,
         );
         assert_eq!(out.len(), 1);
         let leg_len = flat_dist(s.start_lat, s.start_lon, s.end_lat, s.end_lon);
@@ -272,9 +283,7 @@ mod tests {
     fn leg_far_from_segment_returns_zero() {
         // Leg is 1 km north of the segment (50.110 vs 50.105 ≈ 553 m).
         let s = segment(1, 0, 50.105, 14.255, 50.106, 14.258);
-        let out = project_leg_onto_airport_lines(
-            50.115, 14.255, 50.116, 14.258, &[s], 50.0,
-        );
+        let out = project_leg_onto_airport_lines(50.115, 14.255, 50.116, 14.258, &[s], 50.0);
         assert!(out.is_empty(), "leg far above should not overlap");
     }
 
@@ -291,7 +300,12 @@ mod tests {
         let north_offset_m = 100.0;
         let dlat = north_offset_m / M_PER_DEG_LAT;
         let out = project_leg_onto_airport_lines(
-            mid_lat - dlat, mid_lon, mid_lat + dlat, mid_lon, &[s], 50.0,
+            mid_lat - dlat,
+            mid_lon,
+            mid_lat + dlat,
+            mid_lon,
+            &[s],
+            50.0,
         );
         assert_eq!(out.len(), 1);
         assert!(
@@ -311,7 +325,12 @@ mod tests {
         let cos50 = (50.105f32.to_radians()).cos();
         let dlon_100m = 100.0 / (M_PER_DEG_LON_EQUATOR * cos50);
         let out = project_leg_onto_airport_lines(
-            50.105, s.start_lon - dlon_100m, 50.105, s.start_lon + dlon_100m, &[s], 50.0,
+            50.105,
+            s.start_lon - dlon_100m,
+            50.105,
+            s.start_lon + dlon_100m,
+            &[s],
+            50.0,
         );
         assert_eq!(out.len(), 1);
         assert!(
@@ -327,7 +346,12 @@ mod tests {
         let s = segment(1, 0, 50.105, 14.250, 50.105, 14.260);
         let dlat_30m = 30.0 / M_PER_DEG_LAT;
         let out = project_leg_onto_airport_lines(
-            50.105 + dlat_30m, 14.252, 50.105 + dlat_30m, 14.258, &[s], 50.0,
+            50.105 + dlat_30m,
+            14.252,
+            50.105 + dlat_30m,
+            14.258,
+            &[s],
+            50.0,
         );
         assert_eq!(out.len(), 1);
         let expected = flat_dist(50.105, 14.252, 50.105, 14.258);
@@ -344,7 +368,12 @@ mod tests {
         let s = segment(1, 0, 50.105, 14.250, 50.105, 14.260);
         let dlat_60m = 60.0 / M_PER_DEG_LAT;
         let out = project_leg_onto_airport_lines(
-            50.105 + dlat_60m, 14.252, 50.105 + dlat_60m, 14.258, &[s], 50.0,
+            50.105 + dlat_60m,
+            14.252,
+            50.105 + dlat_60m,
+            14.258,
+            &[s],
+            50.0,
         );
         assert!(out.is_empty(), "60 m perpendicular offset > 50 m max_perp");
     }
@@ -355,9 +384,8 @@ mod tests {
         let s1 = segment(1, 0, 50.105, 14.250, 50.105, 14.253);
         let s2 = segment(1, 1, 50.105, 14.253, 50.105, 14.256);
         let s3 = segment(1, 2, 50.105, 14.256, 50.105, 14.259);
-        let out = project_leg_onto_airport_lines(
-            50.105, 14.250, 50.105, 14.259, &[s1, s2, s3], 50.0,
-        );
+        let out =
+            project_leg_onto_airport_lines(50.105, 14.250, 50.105, 14.259, &[s1, s2, s3], 50.0);
         assert_eq!(out.len(), 3, "leg should hit all three segments");
         let total: f32 = out.iter().map(|h| h.length_within_segment_m).sum();
         let leg_len = flat_dist(50.105, 14.250, 50.105, 14.259);
@@ -372,18 +400,14 @@ mod tests {
     #[test]
     fn degenerate_zero_length_segment_skipped() {
         let s = segment(1, 0, 50.105, 14.255, 50.105, 14.255);
-        let out = project_leg_onto_airport_lines(
-            50.105, 14.255, 50.106, 14.258, &[s], 50.0,
-        );
+        let out = project_leg_onto_airport_lines(50.105, 14.255, 50.106, 14.258, &[s], 50.0);
         assert!(out.is_empty(), "zero-length seg must produce no overlap");
     }
 
     #[test]
     fn degenerate_zero_length_leg_returns_no_overlap() {
         let s = segment(1, 0, 50.105, 14.250, 50.105, 14.260);
-        let out = project_leg_onto_airport_lines(
-            50.105, 14.255, 50.105, 14.255, &[s], 50.0,
-        );
+        let out = project_leg_onto_airport_lines(50.105, 14.255, 50.105, 14.255, &[s], 50.0);
         assert!(out.is_empty(), "point leg must produce no overlap");
     }
 
@@ -401,9 +425,7 @@ mod tests {
         let dlat_40m = 40.0 / M_PER_DEG_LAT;
         let leg_sla = 50.105 + dlat_40m;
         let leg_ela = leg_sla;
-        let out = project_leg_onto_airport_lines(
-            leg_sla, 14.252, leg_ela, 14.258, &[s1, s2], 50.0,
-        );
+        let out = project_leg_onto_airport_lines(leg_sla, 14.252, leg_ela, 14.258, &[s1, s2], 50.0);
         assert_eq!(out.len(), 2, "leg between two parallel segs must hit both");
         let leg_len = flat_dist(leg_sla, 14.252, leg_ela, 14.258);
         let total: f32 = out.iter().map(|h| h.length_within_segment_m).sum();
@@ -438,8 +460,10 @@ mod tests {
         let dlat = offset_m / M_PER_DEG_LAT;
         let dlon = offset_m / (M_PER_DEG_LON_EQUATOR * cos_mid);
         let out = project_leg_onto_airport_lines(
-            mid_lat - dlat, mid_lon - dlon,
-            mid_lat + dlat, mid_lon + dlon,
+            mid_lat - dlat,
+            mid_lon - dlon,
+            mid_lat + dlat,
+            mid_lon + dlon,
             &[s],
             50.0,
         );
@@ -469,10 +493,12 @@ mod tests {
         let leg_ela = 50.108;
         let leg_slo = 14.255;
         let leg_elo = 14.260;
-        let out = project_leg_onto_airport_lines(
-            leg_sla, leg_slo, leg_ela, leg_elo, &[s1, s2], 50.0,
+        let out =
+            project_leg_onto_airport_lines(leg_sla, leg_slo, leg_ela, leg_elo, &[s1, s2], 50.0);
+        assert!(
+            !out.is_empty(),
+            "leg through 90° turn must hit at least one seg"
         );
-        assert!(!out.is_empty(), "leg through 90° turn must hit at least one seg");
         let leg_len = flat_dist(leg_sla, leg_slo, leg_ela, leg_elo);
         let total: f32 = out.iter().map(|h| h.length_within_segment_m).sum();
         assert!(
@@ -489,9 +515,7 @@ mod tests {
         // cannot legitimately wrap. Without the guard, the midpoint
         // would land at lon=0 (the Atlantic) and produce garbage.
         let s = segment(1, 0, 50.105, 179.999, 50.105, -179.999);
-        let out = project_leg_onto_airport_lines(
-            50.105, 179.999, 50.105, 179.998, &[s], 50.0,
-        );
+        let out = project_leg_onto_airport_lines(50.105, 179.999, 50.105, 179.998, &[s], 50.0);
         assert!(out.is_empty(), "antimeridian-wrapped seg must be rejected");
     }
 
@@ -505,8 +529,10 @@ mod tests {
         let perp_offset_lat = 0.00009; // ~10 m north
         let perp_offset_lon = -0.000156; // ~10 m west @ 50°N (cos≈0.643)
         let out = project_leg_onto_airport_lines(
-            s.start_lat + perp_offset_lat, s.start_lon + perp_offset_lon,
-            s.end_lat + perp_offset_lat, s.end_lon + perp_offset_lon,
+            s.start_lat + perp_offset_lat,
+            s.start_lon + perp_offset_lon,
+            s.end_lat + perp_offset_lat,
+            s.end_lon + perp_offset_lon,
             &[s],
             50.0,
         );

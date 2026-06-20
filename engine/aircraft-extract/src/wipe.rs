@@ -58,9 +58,7 @@ pub fn wipe_stale_arrows_for_scope(
     let read = match std::fs::read_dir(h3r4_dir) {
         Ok(r) => r,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => {
-            return Err(e).with_context(|| format!("read_dir {}", h3r4_dir.display()))
-        }
+        Err(e) => return Err(e).with_context(|| format!("read_dir {}", h3r4_dir.display())),
     };
     let mut removed = 0usize;
     for entry in read {
@@ -102,7 +100,11 @@ pub fn wipe_stale_arrows_for_scope(
         // NotFound as a no-op; any other error is fatal.
         match std::fs::remove_file(&stale) {
             Ok(()) => {
-                eprintln!("{} [wipe] removed stale {}", crate::progress::ts(), stale.display());
+                eprintln!(
+                    "{} [wipe] removed stale {}",
+                    crate::progress::ts(),
+                    stale.display()
+                );
                 removed += 1;
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -231,7 +233,11 @@ mod tests {
     fn h3_cell_at_wrong_resolution_is_left_alone() {
         let tmp = tempfile::tempdir().unwrap();
         let h3r4 = tmp.path().join("h3r4");
-        let r7 = u64::from(LatLng::new(50.10, 14.26).unwrap().to_cell(Resolution::Seven));
+        let r7 = u64::from(
+            LatLng::new(50.10, 14.26)
+                .unwrap()
+                .to_cell(Resolution::Seven),
+        );
         let r7_dir = h3r4.join(format!("{r7:015x}"));
         std::fs::create_dir_all(&r7_dir).unwrap();
         std::fs::write(r7_dir.join("airport_traffic.arrow"), b"keep").unwrap();
@@ -243,8 +249,7 @@ mod tests {
     #[test]
     fn rejects_filename_with_forward_slash() {
         let tmp = tempfile::tempdir().unwrap();
-        let err = wipe_stale_arrows_for_scope(tmp.path(), "sub/path.arrow", None)
-            .unwrap_err();
+        let err = wipe_stale_arrows_for_scope(tmp.path(), "sub/path.arrow", None).unwrap_err();
         assert!(
             err.to_string().contains("basename"),
             "error must mention basename invariant, got: {err}",
@@ -254,8 +259,7 @@ mod tests {
     #[test]
     fn rejects_filename_with_backslash() {
         let tmp = tempfile::tempdir().unwrap();
-        let err = wipe_stale_arrows_for_scope(tmp.path(), "sub\\path.arrow", None)
-            .unwrap_err();
+        let err = wipe_stale_arrows_for_scope(tmp.path(), "sub\\path.arrow", None).unwrap_err();
         assert!(err.to_string().contains("basename"), "got: {err}");
     }
 
