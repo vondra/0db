@@ -337,8 +337,8 @@ pub fn add_v6_aircraft_to_result(
     // hand them off. Airborne and cruise kernels apply no terrain /
     // screening (Doc 29 free-field NPD), so each contributor's
     // `periods_free == periods`. Ground ops sets the same — see TODO on
-    // `SourceResult.periods_free` doc in noise-compute/src/types.rs to
-    // pull real free-field periods out of the airport_traffic kernel
+    // `SourceResult.periods_free` doc in noise-compute/src/types/propagation.rs
+    // to pull real free-field periods out of the airport_traffic kernel
     // variants (Codex /gg #80 CRITICAL — acceptable approximation today
     // because the field was always null before this commit).
     let aircraft_periods_free = noise_compute::periods::sum_periods(
