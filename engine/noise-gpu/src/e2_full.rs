@@ -8,7 +8,6 @@
 //!
 //!   NOISE_GPU_PREPARED=/dev/shm/qmap/prepared NOISE_GPU_BASELINE=/root/baseline \
 //!   NOISE_GPU_HALO_M=10000 e2-full <tile_x> <tile_y>
-use std::f64::consts::{LN_10, PI};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -19,12 +18,7 @@ use heatmap_aircraft::accumulator::TileAccumulator;
 use heatmap_aircraft::region_runner::tile_centre_r4;
 use heatmap_aircraft::source_loader_rail::RailData;
 use heatmap_aircraft::wire_hm3::{collapse_lden_surface_u8, read_tile};
-use noise_compute::constants::{ALPHA_ATM, A_WEIGHTING, GROUND_CF};
-use noise_compute::propagation::geo::{finite_line_correction, point_to_segment_full};
-use noise_compute::propagation::iso9613::fast_exp_f64;
-use noise_compute::propagation::path_effects;
-use noise_compute::propagation::PathProfile;
-use noise_compute::types::{Barrier, RasterSampler};
+use noise_compute::types::Barrier;
 use noise_gpu::{BIN_W, N_BINS};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch};
 use raster_reader::RealRasters;
@@ -32,10 +26,6 @@ use raster_reader::RealRasters;
 const SCATTER_PTX: &str = include_str!(concat!(env!("OUT_DIR"), "/scatter.ptx"));
 const TILE_PX: usize = 256;
 const NO_DATA: u8 = 255;
-/// Lden period weights = scatter_line::LDEN_WEIGHTS (12/4/8h × 0/5/10 dB).
-const LDEN_WEIGHTS: [f64; 3] = [12.0, 4.0 * 3.1622776601683795, 80.0];
-/// scatter_line::UB_SAFETY — inflate the skip upper bound past fast_exp wobble.
-const UB_SAFETY: f64 = 1.0001;
 
 fn env(k: &str, d: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| d.to_string())
@@ -148,116 +138,28 @@ fn main() -> Result<()> {
         cover.push(p.imd);
     }
 
-    // ---- CPU reference: full scatter_band (incl. skip), via real engine fns.
-    // Skipped entirely under NOISE_GPU_ONLY (the GPU→u8 baseline diff stands alone).
+    // ---- CPU reference: the PRODUCTION unified kernel, not a hand-copied mirror
+    // (CLAUDE.md anti-mirror rule). scatter_line::scatter_tile_with_cfg builds the
+    // same per-pixel terms (cylindrical divergence + clamped-foot FLC), runs the
+    // identical energy-budget skip with the same η (its budget_eta() reads the same
+    // SURFACE_BUDGET_ETA env this bin clamps into `eta` above), and accumulates f32
+    // into a TileAccumulator whose `.energy` is the exact [py][px][period] layout
+    // of `cpu`. `None` cadence = the EXACT ray-march (build_path_profile), matching
+    // the GPU kernel's default mstride=1. Barrier-free (meta nbarr = 0 above), so an
+    // empty barrier slice. Skipped under NOISE_GPU_ONLY — the GPU→u8 baseline diff
+    // stands alone.
     let mut cpu = vec![0f32; n * 3];
-    let mut prof = PathProfile::new();
-    let no_barriers: &[Barrier] = &[];
-    for py in (0..TILE_PX).filter(|_| !gpu_only) {
-        let rlat = tile.rx_lat[py];
-        for px in 0..TILE_PX {
-            let pix = py * TILE_PX + px;
-            let (rlon, ralt, refl) = (
-                tile.rx_lon[px],
-                tile.rx_alt_m[pix] as f64,
-                tile.rx_refl_db[pix] as f64,
-            );
-            let mut energy = [0f32; 3];
-            let (mut kept, mut skipped) = (0f64, 0f64);
-            for r in &rail {
-                let pts = point_to_segment_full(
-                    rlat,
-                    rlon,
-                    r.start_lat,
-                    r.start_lon,
-                    r.end_lat,
-                    r.end_lon,
-                );
-                if pts.d_endpoint_m > r.max_distance_m {
-                    continue;
-                }
-                let salt = tile.elevation(pts.cp_lat, pts.cp_lon) + r.source_height_m;
-                let dslant = (pts.d_endpoint_m.powi(2) + (salt - ralt).powi(2))
-                    .sqrt()
-                    .max(1.0);
-                let flc = finite_line_correction(
-                    r.length_m as f64,
-                    pts.d_endpoint_m,
-                    pts.fraction.clamp(0.0, 1.0),
-                );
-                let base = refl + flc - 10.0 * (2.0 * PI * dslant).log10();
-                let atm_km = dslant / 1000.0;
-
-                // energy-budget skip: best-case Lden (no terrain/screen/veg, max
-                // ground gain) is a provable upper bound — drop if within η of kept.
-                let mut ub = 0.0;
-                for i in 0..8 {
-                    let gg_ub = (-GROUND_CF[i]).max(0.0);
-                    let em_lden = LDEN_WEIGHTS[0] * r.emission_lin[0][i] as f64
-                        + LDEN_WEIGHTS[1] * r.emission_lin[1][i] as f64
-                        + LDEN_WEIGHTS[2] * r.emission_lin[2][i] as f64;
-                    ub += em_lden
-                        * fast_exp_f64(
-                            (base - ALPHA_ATM[i] * atm_km + gg_ub + A_WEIGHTING[i]) * LN_10 * 0.1,
-                        );
-                }
-                ub *= UB_SAFETY;
-                if skipped + ub <= eta * kept {
-                    skipped += ub;
-                    continue;
-                }
-
-                tile.build_path_profile(
-                    pts.cp_lat,
-                    pts.cp_lon,
-                    rlat,
-                    rlon,
-                    pts.d_endpoint_m,
-                    &mut prof,
-                );
-                let ground_g = if r.bridge {
-                    0.0
-                } else {
-                    path_effects::ground_g_from_profile(&prof)
-                };
-                let terrain = path_effects::terrain_attenuation(&mut prof, salt, ralt);
-                let screening = path_effects::screening_attenuation(
-                    &mut prof,
-                    no_barriers,
-                    salt,
-                    ralt,
-                    0.0,
-                    &terrain,
-                );
-                let veg = path_effects::vegetation_attenuation_path(&prof);
-                let mut pf = [0.0f64; 8];
-                for (i, pf_i) in pf.iter_mut().enumerate() {
-                    let a_gr = GROUND_CF[i] * ground_g;
-                    let a_bar = terrain[i] + screening[i];
-                    let gob = if a_bar > 0.0 { a_gr.max(a_bar) } else { a_gr };
-                    *pf_i = fast_exp_f64(
-                        (base - ALPHA_ATM[i] * atm_km - gob - veg[i] + A_WEIGHTING[i])
-                            * LN_10
-                            * 0.1,
-                    );
-                }
-                let mut kept_add = 0.0;
-                for p in 0..3 {
-                    let mut power = 0.0;
-                    for (i, &pf_i) in pf.iter().enumerate() {
-                        power += r.emission_lin[p][i] as f64 * pf_i;
-                    }
-                    if power.is_finite() && power > 0.0 {
-                        energy[p] += power as f32;
-                        kept_add += power * LDEN_WEIGHTS[p];
-                    }
-                }
-                kept += kept_add;
-            }
-            cpu[pix * 3] = energy[0];
-            cpu[pix * 3 + 1] = energy[1];
-            cpu[pix * 3 + 2] = energy[2];
-        }
+    if !gpu_only {
+        let no_barriers: &[Barrier] = &[];
+        let mut accum = TileAccumulator::new();
+        heatmap_aircraft::scatter_line::scatter_tile_with_cfg(
+            tile,
+            &rail,
+            no_barriers,
+            &mut accum,
+            None,
+        );
+        cpu.copy_from_slice(&accum.energy);
     }
 
     // ---- GPU ----
