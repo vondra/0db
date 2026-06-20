@@ -22,42 +22,29 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use cudarc::driver::sys::CUevent_flags;
 use cudarc::driver::{result, CudaDevice, CudaFunction, CudaSlice, LaunchAsync, LaunchConfig};
-use cudarc::nvrtc::Ptx;
-use h3o::{CellIndex, LatLng};
+use h3o::CellIndex;
 use heatmap_aircraft::accumulator::TileAccumulator;
 use heatmap_aircraft::grid::tile_range;
 use heatmap_aircraft::region_runner::{read_r4_file, region_tiles, tile_centre_r4};
 use heatmap_aircraft::source_line::LineRow;
 use heatmap_aircraft::source_loader_barrier::BarrierData;
-use heatmap_aircraft::source_loader_rail::RailData;
-use heatmap_aircraft::source_loader_road::RoadData;
-use heatmap_aircraft::wire_hm3::{
-    collapse_lden_surface_u8, read_tile, write_tile, SOURCE_ID_RAIL, SOURCE_ID_ROAD,
-};
+use heatmap_aircraft::wire_hm3::{collapse_lden_surface_u8, read_tile, write_tile};
 use noise_compute::admin;
-use noise_compute::constants::RAILWAY_REACH_CEILING;
 use noise_gpu::{pack_sources, pack_tile, TileBuffers, BIN_W, N_BINS};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
 use rayon::prelude::*;
 
-const SCATTER_PTX: &str = include_str!(concat!(env!("OUT_DIR"), "/scatter.ptx"));
+// One-time GPU/layer setup lives in the sibling `gpu_init` module; the hot
+// kernel-launch path (process_block/region, run_stream, main) stays here.
+#[path = "gpu_init.rs"]
+mod gpu_init;
+use gpu_init::{timing_enabled, warm_device, warm_device_on, LineLayer, Progress};
+
 const NO_DATA: u8 = 255;
-const ROAD_HALO_M: f64 = 10_000.0; // motorway-class reach (matches build_heatmap_surface)
 const ETA: f64 = 0.40; // energy-budget skip threshold (production default)
 const TW: f64 = 8.0; // pack_tile swizzle width — the binned kernel ignores it (only
                      // the un-binned `rail` bench kernel in e2-full swizzles by it)
-
-/// `NOISE_GPU_TIMING=1` → bracket every line-kernel launch with CUDA events and
-/// emit a `KERNEL_MS=<total>` line (the optimisation harness's median-of-N signal,
-/// isolating the kernel from the htod/dtoh copies the host-wall `t_kernel` folds
-/// in). Read once: a per-launch env lookup would add host overhead to the very
-/// thing being timed. OFF (the default) ⇒ no event create/record/sync at all, so
-/// production throughput is untouched.
-fn timing_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("NOISE_GPU_TIMING").as_deref() == Ok("1"))
-}
 
 thread_local! {
     /// One `RealRasters` per rayon worker, REUSED across every region/cell — vs the old
@@ -69,85 +56,8 @@ thread_local! {
     static RASTERS: RefCell<Option<RealRasters>> = const { RefCell::new(None) };
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum LineLayer {
-    Road,
-    Rail,
-}
-
-impl LineLayer {
-    fn parse(s: &str) -> Result<Self> {
-        match s {
-            "road" => Ok(Self::Road),
-            "rail" => Ok(Self::Rail),
-            _ => bail!("unknown line layer {s:?} (road|rail)"),
-        }
-    }
-    fn dir(self) -> &'static str {
-        match self {
-            Self::Road => "road",
-            Self::Rail => "rail",
-        }
-    }
-    fn source_id(self) -> u8 {
-        match self {
-            Self::Road => SOURCE_ID_ROAD,
-            Self::Rail => SOURCE_ID_RAIL,
-        }
-    }
-    /// Per-layer halo reach; the kernel still culls each source at its own
-    /// per-row `max_distance_m` (the rail loader bakes each segment's solved
-    /// 25 dB reach), so a block's shared halo can use the widest of these
-    /// without changing a shorter-reach layer's output. Rail uses the per-row
-    /// reach CEILING so a row extended to the clamp still ray-marches terrain
-    /// along its whole path.
-    fn halo_m(self) -> f64 {
-        match self {
-            Self::Road => ROAD_HALO_M,
-            Self::Rail => RAILWAY_REACH_CEILING,
-        }
-    }
-    /// Load this layer's `grid_disk(1)` line rows for a region. Road resolves the
-    /// admin area for its default-AADT fallback; rail for the C1 per-region period
-    /// split (EU freight ~55 % at night). The admin lookup is hoisted OUT of the
-    /// match so it reaches `RailData::load_for_r4s` too (Gemini delta 5).
-    fn load_rows(self, h3r4: &Path, ring: &[u64], cell: CellIndex) -> Result<Vec<LineRow>> {
-        let ll = LatLng::from(cell);
-        let admin = admin::admin_for_latlng(ll.lat(), ll.lng());
-        Ok(match self {
-            Self::Road => RoadData::load_for_r4s(h3r4, ring, admin)
-                .context("load roads")?
-                .into_rows(),
-            Self::Rail => RailData::load_for_r4s(h3r4, ring, admin)
-                .context("load rail")?
-                .into_rows(),
-        })
-    }
-}
-
 fn env(k: &str, d: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| d.to_string())
-}
-
-/// CUDA device + scatter PTX, created once — shared by the batch path and --stream (the warm
-/// context the cluster used to re-pay on every chunk spawn).
-fn warm_device() -> (Arc<CudaDevice>, CudaFunction) {
-    warm_device_on(false)
-}
-
-/// `with_stream` ⇒ `CudaDevice::new_with_stream` (own stream, shared primary context) so the N
-/// --stream workers OVERLAP on the GPU (the gpu_airborne pattern, airborne.rs:252); `false` ⇒ the
-/// null-stream device the serial batch path uses. Each call gets its own scatter-PTX module load.
-fn warm_device_on(with_stream: bool) -> (Arc<CudaDevice>, CudaFunction) {
-    let dev = if with_stream {
-        CudaDevice::new_with_stream(0).expect("cuda")
-    } else {
-        CudaDevice::new(0).expect("cuda")
-    };
-    dev.load_ptx(Ptx::from_src(SCATTER_PTX), "s", &["line_binned_fused"])
-        .expect("ptx");
-    let f = dev.get_func("s", "line_binned_fused").expect("fn");
-    (dev, f)
 }
 
 /// Per-layer end-to-end counters (timings in seconds, summed over tiles).
@@ -191,32 +101,6 @@ struct Cfg {
     /// cluster default ON, bare-binary default OFF. See the spike record
     /// (.claude/plans/heatmap-orchestrator-audit/).
     barriers_enabled: bool,
-}
-
-/// Heartbeat so a multi-block region build is observable, not a silent wait.
-struct Progress {
-    done: usize,
-    total: usize,
-    last_beat: Instant,
-}
-
-impl Progress {
-    fn tick(&mut self) {
-        self.done += 1;
-        if self.last_beat.elapsed().as_secs() >= 30 {
-            if self.total > 0 {
-                eprintln!(
-                    "  … {}/{} tile-layers ({:.0}%)",
-                    self.done,
-                    self.total,
-                    self.done as f64 / self.total as f64 * 100.0
-                );
-            } else {
-                eprintln!("  … {} tile-layers built (stream)", self.done);
-            }
-            self.last_beat = Instant::now();
-        }
-    }
 }
 
 /// A layer's GPU-resident source buffers (`seg`, `sp`, `semis`), uploaded once per
