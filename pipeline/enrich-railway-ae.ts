@@ -40,12 +40,11 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, create
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
+import { writeRailTrains } from './lib/railways-arrow.js'
 import { latLngToCell, cellToLatLng } from 'h3-js'
 import { SOURCE_ID_AE_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
-import { flatDist, pointToSegmentDist } from './lib/spatial.js'
+import { pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_AE_NATIONAL_RAILWAY
 
@@ -474,11 +473,9 @@ function defaultTrains(railType: number, usage: number): { pax: number; frt: num
   return { pax: 5, frt: 40 }                    // main (Etihad Rail Stage 1 Ghuweifat↔Fujairah freight)
 }
 
-// ── Geometry ──
-
 // ── Step 3: Match + enrich all UAE railway hexes ──
 
-function enrichHexes(allStopCounts: StopTrainCount[]): void {
+async function enrichHexes(allStopCounts: StopTrainCount[]): Promise<void> {
   // Index stops by (hex, family) so matching only considers the right family
   const stopsByHexFam = new Map<string, StopTrainCount[]>()
   for (const sc of allStopCounts) {
@@ -510,30 +507,6 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
 
   for (let hi = 0; hi < aeHexes.length; hi++) {
     const hexId = aeHexes[hi]
-    const railPath = resolve(H3R4_DIR, hexId, 'railways.arrow')
-    const buf = readFileSync(railPath)
-    const table = tableFromIPC(buf)
-    const n = table.numRows
-    if (n === 0) continue
-
-    const startLat = table.getChild('start_lat')!
-    const startLon = table.getChild('start_lon')!
-    const endLat = table.getChild('end_lat')!
-    const endLon = table.getChild('end_lon')!
-    const railTypeCol = table.getChild('rail_type')!
-    const usageCol = table.getChild('usage')!
-    const serviceCol = table.getChild('service')
-
-    // Always overwrite (fresh enrichment per run — this script owns AE railways)
-    const existingSourceId = table.getChild('source_id')
-    const trainsPax = new Int32Array(n)
-    const trainsFrt = new Int32Array(n)
-    const sourceId = new Uint16Array(n)
-    for (let i = 0; i < n; i++) {
-      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-    }
-
-    totalRails += n
 
     // Build per-family spatial grids for stops in this hex
     const buildGrid = (fam: RouteFamily) => {
@@ -550,20 +523,15 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     const railGrid = buildGrid('rail')
     // metro stops are never matched — Dubai Metro is railway=subway (not extracted)
 
-    let hexMatched = 0
-    for (let i = 0; i < n; i++) {
-      const service = serviceCol ? ((serviceCol.get(i) as number) ?? 0) : 0
-      if (service > 0) { skippedService++; continue }
+    // FAMILY routing (tram grid for rail_type 1, rail grid for 0) → GTFS
+    // nearest-stop match → CNOSSOS class-default fallback, all inside the match
+    // closure. writeRailTrains owns the service-skip, the priority gate, and the
+    // byte-identical write.
+    const r = await writeRailTrains(resolve(H3R4_DIR, hexId, 'railways.arrow'), (row) => {
+      if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
 
-      const rt = (railTypeCol.get(i) as number) ?? 0
-      const us = (usageCol.get(i) as number) ?? 0
-
-      const sLat = startLat.get(i) as number
-      const sLon = startLon.get(i) as number
-      const eLat = endLat.get(i) as number
-      const eLon = endLon.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
+      const rt = row.railType
+      const us = row.usage
 
       // Pick the right family grid: tram→tram, rail→rail, light_rail→(none for AE)
       let grid: Map<string, StopTrainCount[]> | null = null
@@ -576,51 +544,30 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
         let bestStop: StopTrainCount | null = null
         for (let dy = -1; dy <= 1; dy++) {
           for (let dx = -1; dx <= 1; dx++) {
-            const k = `${Math.floor(midLat * 100) + dy}_${Math.floor(midLon * 100) + dx}`
+            const k = `${Math.floor(row.midLat * 100) + dy}_${Math.floor(row.midLon * 100) + dx}`
             const cell = grid.get(k)
             if (!cell) continue
             for (const sc of cell) {
-              const d = pointToSegmentDist(sc.lat, sc.lon, sLat, sLon, eLat, eLon)
+              const d = pointToSegmentDist(sc.lat, sc.lon, row.startLat, row.startLon, row.endLat, row.endLon)
               if (d < bestDist) { bestDist = d; bestStop = sc }
             }
           }
         }
         if (bestStop) {
-          trainsPax[i] = bestStop.trains_passenger
-          trainsFrt[i] = bestStop.trains_freight
-          sourceId[i] = MY_SOURCE_ID
-          hexMatched++
           matchedFromGtfs++
-          continue
+          return { pax: bestStop.trains_passenger, frt: bestStop.trains_freight, sourceId: MY_SOURCE_ID }
         }
       }
 
       // Fallback: CNOSSOS class default
       const def = defaultTrains(rt, us)
-      trainsPax[i] = def.pax
-      trainsFrt[i] = def.frt
-      sourceId[i] = MY_SOURCE_ID
-      hexMatched++
       matchedFromDefaults++
-    }
+      return { pax: def.pax, frt: def.frt, sourceId: MY_SOURCE_ID }
+    })
 
-    if (hexMatched === 0) continue
-
-    const columns: Record<string, any> = {}
-    for (const field of table.schema.fields) {
-      if (field.name === 'trains_passenger') continue
-      if (field.name === 'trains_freight') continue
-      if (field.name === 'source_id') continue
-      columns[field.name] = table.getChild(field.name)!
-    }
-    columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
-    columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
-
-    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-
-    const newTable = makeTable(columns)
-    writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
-    hexesUpdated++
+    totalRails += r.rows
+    skippedService += r.skippedService
+    if (r.updated) hexesUpdated++
 
     const elapsed = Date.now() - startTime
     if (elapsed > 10_000 && hi % 20 === 0) {
@@ -680,7 +627,7 @@ async function main() {
   }
 
   console.log(`\n  Enriching railways.arrow files (GTFS + class defaults)...`)
-  enrichHexes(merged)
+  await enrichHexes(merged)
   console.log(`\n=== Done ===`)
 }
 

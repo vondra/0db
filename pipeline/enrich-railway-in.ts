@@ -17,9 +17,13 @@
  *    Lucknow, Jaipur, Pune, Bhopal.
  *    URL: `livingatlas.esri.in/server1/rest/services/MetroNetwork/India_Metro_Network/MapServer`
  *
- * Strategy: spatial match OSM railway segments to the nearest Living Atlas line
- * within 500m. Apply trains/day default based on:
- *   - Metro match (within city bbox): 400 trains/day (typical UTO)
+ * Strategy: per-family spatial match of OSM railway segments to the nearest Living
+ * Atlas line within 500m. The feed is split into two family grids so a tram/
+ * light_rail row can NEVER inherit a heavy-rail count (the Mumbai ~1,300/day bug):
+ *   - rail_type 0 (heavy rail) → matches only IR network features (`isMetro:false`)
+ *   - rail_type 1/2 (tram / light_rail) → matches only metro features (`isMetro:true`)
+ * Apply trains/day default based on the matched feature:
+ *   - Metro match: 400 trains/day (typical UTO)
  *   - Mumbai suburban (Central/Western Railway within Mumbai bbox): 1,300/day
  *     (world's busiest suburban system: 2,342 daily services across 3 lines)
  *   - Delhi suburban (Northern Railway within Delhi NCR bbox): 350/day
@@ -37,20 +41,23 @@
  * Singapore, Seoul, Tokyo, HK, Mexico City). The Living Atlas Metro Network
  * geometry is cached but cannot be matched to OSM subway segments because
  * they're not in railways.arrow. Some elevated sections tagged `light_rail`
- * WILL match.
+ * WILL match (the tram/light-rail family grid).
+ *
+ * writeRailTrains owns the read + seed + SERVICE-SKIP + the priority gate
+ * (shouldOverwrite) + fail-loud validation + byte-identical write; only the
+ * per-row family routing + class-default fallback lives in the match closure.
  *
  * Usage:
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-in.ts
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
+import { writeRailTrains } from './lib/railways-arrow.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_IN_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
-import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
+import { inBbox, pointToSegmentDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_IN_NATIONAL_RAILWAY
 
@@ -243,9 +250,16 @@ function classDefault(railType: number, usage: number): { pax: number; frt: numb
 async function main() {
   console.log(`=== IN Railway Enrichment — Living Atlas IR Network + Metros (${YEAR}) ===\n`)
   const rails = loadLivingAtlasRails()
-  console.log(`  Loaded Living Atlas rails: ${rails.length} features (${rails.filter(r => r.isMetro).length} metro + ${rails.filter(r => !r.isMetro).length} IR)`)
-  const grid = buildGrid(rails)
-  console.log(`  Spatial grid cells: ${grid.size}\n`)
+  const metroFeats = rails.filter(r => r.isMetro)
+  const irFeats = rails.filter(r => !r.isMetro)
+  console.log(`  Loaded Living Atlas rails: ${rails.length} features (${metroFeats.length} metro + ${irFeats.length} IR)`)
+
+  // Split the feed into per-family grids so cross-family inheritance is impossible:
+  // heavy rail (rail_type 0) may only match IR network features; tram / light_rail
+  // (rail_type 1/2) may only match metro features. (Mirrors th's tram/rail grids.)
+  const railGrid = buildGrid(irFeats)
+  const tramGrid = buildGrid(metroFeats)
+  console.log(`  Spatial grid cells: ${railGrid.size} rail, ${tramGrid.size} tram/metro\n`)
 
   const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
   const hexDirs: string[] = []
@@ -259,92 +273,48 @@ async function main() {
   }
   console.log(`  IN-bbox hexes with railways.arrow: ${hexDirs.length}`)
 
-  let totalRails = 0, excluded = 0, alreadyEnriched = 0, skippedService = 0
+  let totalRails = 0, excluded = 0, skippedService = 0
   let matchedAtlas = 0, matchedDefault = 0
   let hexesUpdated = 0
   const startTime = Date.now()
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
     const hex = hexDirs[hi]
-    const railPath = resolve(H3R4_DIR, hex, 'railways.arrow')
-    const buf = readFileSync(railPath)
-    const table = tableFromIPC(buf)
-    const n = table.numRows
-    if (n === 0) continue
 
-    const startLat = table.getChild('start_lat')!
-    const startLon = table.getChild('start_lon')!
-    const endLat = table.getChild('end_lat')!
-    const endLon = table.getChild('end_lon')!
-    const railTypeCol = table.getChild('rail_type')!
-    const usageCol = table.getChild('usage')!
-    const serviceCol = table.getChild('service')
-    const existingPax = table.getChild('trains_passenger')
-    const existingFrt = table.getChild('trains_freight')
-    const existingSourceId = table.getChild('source_id')
+    // FAMILY routing (rail grid for rail_type 0, tram/metro grid for 1/2) →
+    // Living Atlas nearest-feature match → CNOSSOS class-default fallback, all
+    // inside the match closure. writeRailTrains owns the service-skip, the
+    // priority gate, and the byte-identical write.
+    const r = await writeRailTrains(resolve(H3R4_DIR, hex, 'railways.arrow'), (row) => {
+      if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
+      if (!inBbox(row.midLat, row.midLon, IN_BBOX)) return null
+      if (inAnyZone(row.midLat, row.midLon)) { excluded++; return null }
 
-    const trainsPax = new Int32Array(n)
-    const trainsFrt = new Int32Array(n)
-    const sourceId = new Uint16Array(n)
-    for (let i = 0; i < n; i++) {
-      trainsPax[i] = (existingPax?.get(i) as number) ?? 0
-      trainsFrt[i] = (existingFrt?.get(i) as number) ?? 0
+      const rt = row.railType
+      const us = row.usage
 
-      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-    }
-    totalRails += n
-
-    let hexMatched = 0
-    for (let i = 0; i < n; i++) {
-      const service = (serviceCol?.get(i) as number) ?? 0
-      if (service > 0) { skippedService++; continue }
-      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
-
-      const sLat = startLat.get(i) as number
-      const sLon = startLon.get(i) as number
-      const eLat = endLat.get(i) as number
-      const eLon = endLon.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
-
-      if (!inBbox(midLat, midLon, IN_BBOX)) continue
-      if (inAnyZone(midLat, midLon)) { excluded++; continue }
-
-      const rt = (railTypeCol.get(i) as number) ?? 0
-      const us = (usageCol.get(i) as number) ?? 0
-
-      // Spatial match to Living Atlas (500m radius)
-      const near = nearestRail(midLat, midLon, grid, 500)
-      let pax = 0, frt = 0
-      if (near) {
-        const t = trainsFromFeature(near, midLat, midLon)
-        pax = t.pax; frt = t.frt
-        matchedAtlas++
-      } else {
-        const d = classDefault(rt, us)
-        pax = d.pax; frt = d.frt
-        matchedDefault++
+      // Heavy rail matches only IR features; tram/light_rail only metro features.
+      // A null grid (narrow gauge / funicular) falls straight to the class default,
+      // so a tram near a mainline can never inherit the mainline's suburban count.
+      const grid = rt === 0 ? railGrid : rt === 1 || rt === 2 ? tramGrid : null
+      if (grid) {
+        const near = nearestRail(row.midLat, row.midLon, grid, 500)
+        if (near) {
+          const t = trainsFromFeature(near, row.midLat, row.midLon)
+          matchedAtlas++
+          return { pax: t.pax, frt: t.frt, sourceId: MY_SOURCE_ID }
+        }
       }
-      trainsPax[i] = pax
-      trainsFrt[i] = frt
-      sourceId[i] = MY_SOURCE_ID
-      hexMatched++
-    }
 
-    if (hexMatched > 0) {
-      const columns: Record<string, any> = {}
-      for (const field of table.schema.fields) {
-        if (field.name === 'trains_passenger' || field.name === 'trains_freight') continue
-        columns[field.name] = table.getChild(field.name)!
-      }
-      columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
-      columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
+      // Fallback: CNOSSOS class default (fill-by-type, never a silent track).
+      const d = classDefault(rt, us)
+      matchedDefault++
+      return { pax: d.pax, frt: d.frt, sourceId: MY_SOURCE_ID }
+    })
 
-      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-      const newTable = makeTable(columns)
-      writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
-      hexesUpdated++
-    }
+    totalRails += r.rows
+    skippedService += r.skippedService
+    if (r.updated) hexesUpdated++
 
     const elapsed = Date.now() - startTime
     if (elapsed > 10_000 && hi % 50 === 0) {
@@ -355,7 +325,6 @@ async function main() {
   console.log(`\n=== Results ===`)
   console.log(`  Total rails scanned:        ${totalRails.toLocaleString()}`)
   console.log(`  Skipped service tracks:     ${skippedService.toLocaleString()}`)
-  console.log(`  Already enriched (preserved): ${alreadyEnriched.toLocaleString()}`)
   console.log(`  Excluded (neighbours):      ${excluded.toLocaleString()}`)
   console.log(`  Matched by Living Atlas:    ${matchedAtlas.toLocaleString()}`)
   console.log(`  Matched by class default:   ${matchedDefault.toLocaleString()}`)

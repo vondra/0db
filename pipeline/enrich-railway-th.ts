@@ -36,9 +36,8 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, create
 import { resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
+import { writeRailTrains } from './lib/railways-arrow.js'
 import { latLngToCell, cellToLatLng } from 'h3-js'
 import { SOURCE_ID_TH_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
@@ -372,7 +371,7 @@ function defaultTrains(railType: number, usage: number): { pax: number; frt: num
   return { pax: 20, frt: 10 }                      // SRT main line (Bangkok↔Chiang Mai etc.)
 }
 
-function enrichHexes(allStopCounts: StopTrainCount[]): void {
+async function enrichHexes(allStopCounts: StopTrainCount[]): Promise<void> {
   // Index stops by (hex, family)
   const stopsByHexFam = new Map<string, StopTrainCount[]>()
   for (const sc of allStopCounts) {
@@ -402,35 +401,8 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
 
   for (let hi = 0; hi < thHexes.length; hi++) {
     const hex = thHexes[hi]
-    const railPath = resolve(H3R4_DIR, hex, 'railways.arrow')
-    const buf = readFileSync(railPath)
-    const table = tableFromIPC(buf)
-    const n = table.numRows
-    if (n === 0) continue
 
-    const startLat = table.getChild('start_lat')!
-    const startLon = table.getChild('start_lon')!
-    const endLat = table.getChild('end_lat')!
-    const endLon = table.getChild('end_lon')!
-    const railTypeCol = table.getChild('rail_type')!
-    const usageCol = table.getChild('usage')!
-    const serviceCol = table.getChild('service')
-    const existingPax = table.getChild('trains_passenger')
-    const existingFrt = table.getChild('trains_freight')
-    const existingSourceId = table.getChild('source_id')
-
-    const trainsPax = new Int32Array(n)
-    const trainsFrt = new Int32Array(n)
-    const sourceId = new Uint16Array(n)
-    for (let i = 0; i < n; i++) {
-      trainsPax[i] = (existingPax?.get(i) as number) ?? 0
-      trainsFrt[i] = (existingFrt?.get(i) as number) ?? 0
-
-      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-    }
-    totalRails += n
-
-    // Build family grids for this hex
+    // Build family grids for this hex (GTFS stops indexed by 0.01-deg cell).
     const buildGrid = (fam: RouteFamily) => {
       const grid = new Map<string, StopTrainCount[]>()
       const stops = stopsByHexFam.get(`${hex}/${fam}`) || []
@@ -444,77 +416,48 @@ function enrichHexes(allStopCounts: StopTrainCount[]): void {
     const tramGrid = buildGrid('tram')
     const railGrid = buildGrid('rail')
 
-    let hexMatched = 0
-    for (let i = 0; i < n; i++) {
-      const service = (serviceCol?.get(i) as number) ?? 0
-      if (service > 0) { skippedService++; continue }
-      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
+    // FAMILY routing (tram grid for rail_type 1/2, rail grid for 0) → GTFS
+    // nearest-stop match → CNOSSOS class-default fallback, all inside the match
+    // closure. writeRailTrains owns the service-skip, the priority gate, and the
+    // byte-identical write.
+    const r = await writeRailTrains(resolve(H3R4_DIR, hex, 'railways.arrow'), (row) => {
+      if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
+      if (!inBbox(row.midLat, row.midLon, TH_BBOX)) return null
+      if (inExclusion(row.midLat, row.midLon)) { excluded++; return null }
 
-      const sLat = startLat.get(i) as number
-      const sLon = startLon.get(i) as number
-      const eLat = endLat.get(i) as number
-      const eLon = endLon.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
+      const rt = row.railType
+      const us = row.usage
 
-      if (!inBbox(midLat, midLon, TH_BBOX)) continue
-      if (inExclusion(midLat, midLon)) { excluded++; continue }
-
-      const rt = (railTypeCol.get(i) as number) ?? 0
-      const us = (usageCol.get(i) as number) ?? 0
-
-      // GTFS match: tram for rt=1/2, rail for rt=0
-      let grid: Map<string, StopTrainCount[]> | null = null
-      if (rt === 1 || rt === 2) grid = tramGrid
-      else if (rt === 0) grid = railGrid
-
+      const grid = rt === 1 || rt === 2 ? tramGrid : rt === 0 ? railGrid : null
       if (grid && grid.size > 0) {
         let bestDist = 500
         let bestStop: StopTrainCount | null = null
         for (let dy = -1; dy <= 1; dy++) {
           for (let dx = -1; dx <= 1; dx++) {
-            const k = `${Math.floor(midLat * 100) + dy}_${Math.floor(midLon * 100) + dx}`
+            const k = `${Math.floor(row.midLat * 100) + dy}_${Math.floor(row.midLon * 100) + dx}`
             const cell = grid.get(k)
             if (!cell) continue
             for (const sc of cell) {
-              const d = pointToSegmentDist(sc.lat, sc.lon, sLat, sLon, eLat, eLon)
+              const d = pointToSegmentDist(sc.lat, sc.lon, row.startLat, row.startLon, row.endLat, row.endLon)
               if (d < bestDist) { bestDist = d; bestStop = sc }
             }
           }
         }
         if (bestStop) {
-          trainsPax[i] = bestStop.trains_passenger
-          trainsFrt[i] = bestStop.trains_freight
-          sourceId[i] = MY_SOURCE_ID
-          hexMatched++
           matchedGtfs++
-          continue
+          return { pax: bestStop.trains_passenger, frt: bestStop.trains_freight, sourceId: MY_SOURCE_ID }
         }
       }
 
-      // Fallback: CNOSSOS class default
+      // Fallback: CNOSSOS class default (fill-by-type, never a silent track).
       const def = defaultTrains(rt, us)
-      trainsPax[i] = def.pax
-      trainsFrt[i] = def.frt
-      sourceId[i] = MY_SOURCE_ID
-      hexMatched++
       matchedDefaults++
-    }
+      return { pax: def.pax, frt: def.frt, sourceId: MY_SOURCE_ID }
+    })
 
-    if (hexMatched > 0) {
-      const columns: Record<string, any> = {}
-      for (const field of table.schema.fields) {
-        if (field.name === 'trains_passenger' || field.name === 'trains_freight') continue
-        columns[field.name] = table.getChild(field.name)!
-      }
-      columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
-      columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
-
-      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-      const newTable = makeTable(columns)
-      writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
-      hexesUpdated++
-    }
+    totalRails += r.rows
+    skippedService += r.skippedService
+    if (r.updated) hexesUpdated++
 
     const elapsed = Date.now() - startTime
     if (elapsed > 10_000 && hi % 20 === 0) {
@@ -551,7 +494,7 @@ async function main() {
   }
 
   console.log(`\n  Enriching railways.arrow files...`)
-  enrichHexes(merged)
+  await enrichHexes(merged)
   console.log(`\n=== Done ===`)
 }
 

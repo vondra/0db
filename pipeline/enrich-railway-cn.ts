@@ -37,8 +37,14 @@
  * metros ARE extracted into `railways.arrow` and CAN be enriched directly via
  * spatial match to the Mainland/3 layer. **China dodges the subway bug.**
  *
- * The trade-off: Chinese OSM rail is conflated with heavy rail, so we need
- * ServiceType from the Mainland service to distinguish metro from mainline.
+ * The trade-off: Chinese OSM rail is conflated with heavy rail (a metro and a
+ * mainline are both `rail_type=0`), so the feed's own family tag is the only
+ * way to tell metro from mainline. We split the feed into a national heavy-rail
+ * grid (Mainland/4) and a metro grid (Mainland/3), then FAMILY-GATE the match:
+ * an OSM `rail_type=0` row may match either grid (it's genuinely ambiguous —
+ * nearest polyline wins), but a `rail_type=1/2` tram/light_rail row may match
+ * the METRO grid ONLY. That gate makes cross-family inheritance impossible: a
+ * surface tram can no longer pick up a neighbouring HSR line's ~180 trains/day.
  *
  * ## trains/day defaults
  *
@@ -67,14 +73,13 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-cn.ts
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
+import { writeRailTrains } from './lib/railways-arrow.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_CN_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
-import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
+import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CN_NATIONAL_RAILWAY
 
@@ -106,15 +111,6 @@ const EXCLUDE_ZONES: Array<{ name: string; bbox: [number, number, number, number
 function inExclusion(lat: number, lon: number): boolean {
   for (const z of EXCLUDE_ZONES) if (inBbox(lat, lon, z.bbox)) return true
   return false
-}
-
-function pointToPolylineDist(pLat: number, pLon: number, coords: [number, number][]): number {
-  let best = Infinity
-  for (let i = 0; i < coords.length - 1; i++) {
-    const d = pointToSegmentDist(pLat, pLon, coords[i][1], coords[i][0], coords[i + 1][1], coords[i + 1][0])
-    if (d < best) best = d
-  }
-  return best
 }
 
 // ── Load Mainland rail + metro ──
@@ -193,19 +189,23 @@ function buildGrid(features: RailFeat[]): Map<string, RailFeat[]> {
   return grid
 }
 
-function nearestRail(midLat: number, midLon: number, grid: Map<string, RailFeat[]>, radiusM: number): RailFeat | null {
+/** Nearest feed polyline within `radiusM`, searching ONLY the supplied grids
+ *  (the caller restricts which families are eligible — see the match closure). */
+function nearestRail(midLat: number, midLon: number, grids: Map<string, RailFeat[]>[], radiusM: number): RailFeat | null {
   const reach = Math.max(1, Math.ceil(radiusM / 1000))
   const baseLat = Math.floor(midLat * 100)
   const baseLon = Math.floor(midLon * 100)
   let best: RailFeat | null = null
   let bestDist = radiusM
-  for (let dy = -reach; dy <= reach; dy++) {
-    for (let dx = -reach; dx <= reach; dx++) {
-      const cell = grid.get(`${baseLat + dy}_${baseLon + dx}`)
-      if (!cell) continue
-      for (const feat of cell) {
-        const d = pointToPolylineDist(midLat, midLon, feat.coords)
-        if (d < bestDist) { bestDist = d; best = feat }
+  for (const grid of grids) {
+    for (let dy = -reach; dy <= reach; dy++) {
+      for (let dx = -reach; dx <= reach; dx++) {
+        const cell = grid.get(`${baseLat + dy}_${baseLon + dx}`)
+        if (!cell) continue
+        for (const feat of cell) {
+          const d = pointToPolylineDist(midLat, midLon, feat.coords)
+          if (d < bestDist) { bestDist = d; best = feat }
+        }
       }
     }
   }
@@ -250,11 +250,19 @@ function classDefault(rt: number, us: number): { pax: number; frt: number } {
 async function main() {
   console.log(`=== CN Railway Enrichment — Mainland (CR + metros) (${YEAR}) ===\n`)
   const rails = loadRails()
-  const nMetro = rails.filter(r => r.isMetro).length
-  const nNat = rails.length - nMetro
-  console.log(`  Loaded: ${rails.length} (${nNat} national rail + ${nMetro} metro)`)
-  const grid = buildGrid(rails)
-  console.log(`  Grid cells: ${grid.size}\n`)
+  const metroFeats = rails.filter(r => r.isMetro)
+  const nationalFeats = rails.filter(r => !r.isMetro)
+  console.log(`  Loaded: ${rails.length} (${nationalFeats.length} national rail + ${metroFeats.length} metro)`)
+
+  // FAMILY-SPLIT grids: a metro/light-rail grid and a national heavy-rail grid,
+  // tagged from the feed itself (Mainland/3 = metro, Mainland/4 = heavy rail).
+  // The per-row FAMILY GATE in the match closure decides which grids an OSM row
+  // may inherit from — crucially, a tram (rail_type 1/2) is barred from the
+  // national grid, killing the family-blind bug that handed a tram up to ~180
+  // trains/day. Mirrors th's tram-grid vs rail-grid split.
+  const metroGrid = buildGrid(metroFeats)
+  const nationalGrid = buildGrid(nationalFeats)
+  console.log(`  Grid cells: national=${nationalGrid.size}, metro=${metroGrid.size}\n`)
 
   const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
   const hexDirs: string[] = []
@@ -268,91 +276,56 @@ async function main() {
   }
   console.log(`  CN-bbox hexes with railways.arrow: ${hexDirs.length}`)
 
-  let totalRails = 0, excluded = 0, alreadyEnriched = 0, skippedService = 0
+  let totalRails = 0, excluded = 0, skippedService = 0
   let matchedMainland = 0, matchedDefault = 0
   let hexesUpdated = 0
   const startTime = Date.now()
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
     const hex = hexDirs[hi]
-    const railPath = resolve(H3R4_DIR, hex, 'railways.arrow')
-    const buf = readFileSync(railPath)
-    const table = tableFromIPC(buf)
-    const n = table.numRows
-    if (n === 0) continue
 
-    const startLat = table.getChild('start_lat')!
-    const startLon = table.getChild('start_lon')!
-    const endLat = table.getChild('end_lat')!
-    const endLon = table.getChild('end_lon')!
-    const railTypeCol = table.getChild('rail_type')!
-    const usageCol = table.getChild('usage')!
-    const serviceCol = table.getChild('service')
-    const existingPax = table.getChild('trains_passenger')
-    const existingFrt = table.getChild('trains_freight')
-    const existingSourceId = table.getChild('source_id')
+    // FAMILY-gated routing (see the gate comment in the closure) → nearest-polyline
+    // match → CNOSSOS class-default fallback, all inside the match closure.
+    // writeRailTrains owns the service-skip, the priority gate, and the
+    // byte-identical write.
+    const r = await writeRailTrains(resolve(H3R4_DIR, hex, 'railways.arrow'), (row) => {
+      if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
+      if (!inBbox(row.midLat, row.midLon, CN_BBOX)) return null
+      if (inExclusion(row.midLat, row.midLon)) { excluded++; return null }
 
-    const trainsPax = new Int32Array(n)
-    const trainsFrt = new Int32Array(n)
-    const sourceId = new Uint16Array(n)
-    for (let i = 0; i < n; i++) {
-      trainsPax[i] = (existingPax?.get(i) as number) ?? 0
-      trainsFrt[i] = (existingFrt?.get(i) as number) ?? 0
+      const rt = row.railType
+      const us = row.usage
 
-      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-    }
-    totalRails += n
-
-    let hexMatched = 0
-    for (let i = 0; i < n; i++) {
-      const service = (serviceCol?.get(i) as number) ?? 0
-      if (service > 0) { skippedService++; continue }
-      if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
-
-      const sLat = startLat.get(i) as number
-      const sLon = startLon.get(i) as number
-      const eLat = endLat.get(i) as number
-      const eLon = endLon.get(i) as number
-      const midLat = (sLat + eLat) / 2
-      const midLon = (sLon + eLon) / 2
-
-      if (!inBbox(midLat, midLon, CN_BBOX)) continue
-      if (inExclusion(midLat, midLon)) { excluded++; continue }
-
-      const rt = (railTypeCol.get(i) as number) ?? 0
-      const us = (usageCol.get(i) as number) ?? 0
-
-      const near = nearestRail(midLat, midLon, grid, 500)
-      let pax = 0, frt = 0
-      if (near) {
-        const t = trainsFromFeature(near)
-        pax = t.pax; frt = t.frt
-        matchedMainland++
-      } else {
-        const d = classDefault(rt, us)
-        pax = d.pax; frt = d.frt
-        matchedDefault++
+      // FAMILY GATE — which feed grids this OSM row may inherit from.
+      //   rt 1 (tram) / rt 2 (light_rail) ⇒ METRO grid ONLY. A surface tram can
+      //     NEVER match a national heavy/HSR polyline — that was the family-blind
+      //     bug (a tram sitting near a mainline inherited up to ~180 trains/day).
+      //   rt 0 (rail) ⇒ national OR metro. Chinese metros are tagged
+      //     `railway=rail` in OSM (→ rt 0, confirmed Guangzhou Line 18), so a rt-0
+      //     row is genuinely either a mainline or a metro; the feed's own family
+      //     tag (Mainland/4 vs /3) is the only disambiguator, so both are eligible
+      //     and nearest-polyline wins. No cross-family leak: rt 1/2 still can't
+      //     reach the national grid.
+      //   rt 3/4 (narrow_gauge / funicular) ⇒ no feed family → class default.
+      const grids = rt === 1 || rt === 2 ? [metroGrid] : rt === 0 ? [nationalGrid, metroGrid] : []
+      if (grids.length > 0) {
+        const near = nearestRail(row.midLat, row.midLon, grids, 500)
+        if (near) {
+          const t = trainsFromFeature(near)
+          matchedMainland++
+          return { pax: t.pax, frt: t.frt, sourceId: MY_SOURCE_ID }
+        }
       }
-      trainsPax[i] = pax
-      trainsFrt[i] = frt
-      sourceId[i] = MY_SOURCE_ID
-      hexMatched++
-    }
 
-    if (hexMatched > 0) {
-      const columns: Record<string, any> = {}
-      for (const field of table.schema.fields) {
-        if (field.name === 'trains_passenger' || field.name === 'trains_freight') continue
-        columns[field.name] = table.getChild(field.name)!
-      }
-      columns['trains_passenger'] = vectorFromArray(trainsPax, new Int32())
-      columns['trains_freight'] = vectorFromArray(trainsFrt, new Int32())
+      // Fallback: CNOSSOS class default (fill-by-type, never a silent track).
+      const d = classDefault(rt, us)
+      matchedDefault++
+      return { pax: d.pax, frt: d.frt, sourceId: MY_SOURCE_ID }
+    })
 
-      columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-      const newTable = makeTable(columns)
-      writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
-      hexesUpdated++
-    }
+    totalRails += r.rows
+    skippedService += r.skippedService
+    if (r.updated) hexesUpdated++
 
     const elapsed = Date.now() - startTime
     if (elapsed > 10_000 && hi % 50 === 0) {
@@ -363,7 +336,6 @@ async function main() {
   console.log(`\n=== Results ===`)
   console.log(`  Total rails scanned:        ${totalRails.toLocaleString()}`)
   console.log(`  Skipped service tracks:     ${skippedService.toLocaleString()}`)
-  console.log(`  Already enriched (preserved): ${alreadyEnriched.toLocaleString()}`)
   console.log(`  Excluded (neighbours):      ${excluded.toLocaleString()}`)
   console.log(`  Matched by Mainland:        ${matchedMainland.toLocaleString()}`)
   console.log(`  Matched by class default:   ${matchedDefault.toLocaleString()}`)
