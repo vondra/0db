@@ -212,8 +212,9 @@ pub(crate) fn compute_roads(
             2 | 12 => Some(2),
             _ => None,
         };
-        let effective_ref = if seg.road_ref.is_empty() && infer_target_class.is_some() {
-            let target = infer_target_class.unwrap();
+        let effective_ref = if let (true, Some(target)) =
+            (seg.road_ref.is_empty(), infer_target_class)
+        {
             let mut best_ref = String::new();
             let mut best_dist = f64::MAX;
             for other in roads.iter() {

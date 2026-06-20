@@ -102,8 +102,8 @@ const TD_WORLD_TRAM: RailTimeDist = RailTimeDist {
     frt: TRAM_PAX,
 };
 
-/// ISO-3166 alpha-2 whitelist for the EU-derived freight table: EU27 + CH + NO
-/// + UK. Keyed on the country code, NOT [`crate::admin::Continent::Europe`] —
+/// ISO-3166 alpha-2 whitelist for the EU-derived freight table: EU27 plus CH,
+/// NO, UK. Keyed on the country code, NOT [`crate::admin::Continent::Europe`] —
 /// that label is *geographic* Europe (it includes RU-west / UA / BY), and the
 /// EP/EBA freight curve is only sourced for the central/western EU corridor
 /// network (Codex delta 2). Geographic-Europe countries outside this list fall
@@ -601,6 +601,9 @@ mod tests {
 
     /// Plausibility bands (plan §3.5): EU freight night ∈ [0.45, 0.60]; EU pax
     /// night ∈ [0.05, 0.15]; tram night ≤ 0.08; non-EU freight night = 8/24.
+    // assertions_on_constants: the tram bound asserts a single const ≤ literal;
+    // kept as a runtime guard (with its message) alongside the range checks it sits with.
+    #[allow(clippy::assertions_on_constants)]
     #[test]
     fn time_dist_plausibility_bands() {
         assert!(

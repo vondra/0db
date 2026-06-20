@@ -5,9 +5,8 @@
 //! Architecture: airborne and cruise rows each scatter directly onto
 //! their own per-row kernels:
 //! * airborne: per-sub-segment Doc 29 SEL → `FlightAccum` per real fid
-//! * cruise:   per-bucket Doc 29 SEL × density → `FlightAccum` per
-//!             synth fid + `CruiseFlightStats` per real fid for band
-//!             counter dedup
+//! * cruise: per-bucket Doc 29 SEL × density → `FlightAccum` per synth fid
+//!   + `CruiseFlightStats` per real fid for band counter dedup
 //!
 //! Ground operations live in the parallel `airport_traffic` compute
 //! path invoked by source-reader after this function returns.

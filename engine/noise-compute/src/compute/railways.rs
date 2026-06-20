@@ -1,14 +1,15 @@
 use crate::*;
 
+/// Memo key for `REACH_CACHE`: `(rail_type, admin ISO, speed bits, pax bits, frt bits)`.
+type ReachKey = (u8, [u8; 2], u64, u64, u64);
+
 thread_local! {
     /// Exact-key memo for `rail_reach_m` — see the comment at the call site.
-    /// Keyed on `(rail_type, admin ISO, speed bits, pax bits, frt bits)`: raw
-    /// f64 bits (no quantization semantics to reason about) plus the admin code
-    /// (C1's per-region split changes the solved reach). Per-thread keeps the
-    /// popup single-threaded-per-request contract.
-    static REACH_CACHE: std::cell::RefCell<
-        std::collections::HashMap<(u8, [u8; 2], u64, u64, u64), f64>,
-    > = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Keyed on raw f64 bits (no quantization semantics to reason about) plus the
+    /// admin code (C1's per-region split changes the solved reach). Per-thread keeps
+    /// the popup single-threaded-per-request contract.
+    static REACH_CACHE: std::cell::RefCell<std::collections::HashMap<ReachKey, f64>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 /// Compute railway noise — grouped by osm_id with geometry.

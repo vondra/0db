@@ -21,7 +21,7 @@
 //! residential emitters from enumeration §C′, now Lw 0), [`HOUSE`] (split from
 //! apartments — same heat-pump floor, gentler plan §C night cut), [`FOOD_RETAIL`]
 //! (24/7 refrigeration, night −2 not −20), and [`HOSPITALITY`] (kitchen extract
-//! + evening voices). Classes 0–9 stay byte-stable; the spill `building_type()`
+//! plus evening voices). Classes 0–9 stay byte-stable; the spill `building_type()`
 //! enumerates the new u8s, the finalize POI join reclassifies `building=yes`.
 
 use crate::types::NUM_BANDS;

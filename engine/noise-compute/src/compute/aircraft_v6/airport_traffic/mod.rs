@@ -751,7 +751,7 @@ pub fn run(
                 // exact duplicates. `airport_key` uniqueness per
                 // microseg is guaranteed by Stage 2C's R4Cache key
                 // resolution (airport_traffic_writer.rs:511).
-                let pairs: Vec<((f32, f32), (f32, f32))> = by_microseg
+                let pairs: Vec<LatLonSegment> = by_microseg
                     .values()
                     .filter(|m| m.airport_key.as_str() == airport_key.as_str())
                     .map(|m| {
@@ -798,7 +798,10 @@ pub fn run(
     out
 }
 
-fn multiline_geojson(segments: &[((f32, f32), (f32, f32))]) -> String {
+/// One ground-ops microsegment as `((start_lat, start_lon), (end_lat, end_lon))` f32 pairs.
+type LatLonSegment = ((f32, f32), (f32, f32));
+
+fn multiline_geojson(segments: &[LatLonSegment]) -> String {
     if segments.is_empty() {
         return "{\"type\":\"MultiLineString\",\"coordinates\":[]}".to_string();
     }

@@ -153,8 +153,8 @@ pub fn a_weighted_total(bands: &[f64; NUM_BANDS]) -> f64 {
 /// single SIMD pass.
 ///
 /// `FULL=false` is the pipeline path: 5 variants (full / free_field / no_terrain
-/// / no_screening / no_vegetation). Pipeline tile output only reads `full_energy`
-/// + `free_field_energy` + `band_energy`; the other variants feed per-effect
+/// / no_screening / no_vegetation). Pipeline tile output only reads `full_energy`,
+/// `free_field_energy`, and `band_energy`; the other variants feed per-effect
 /// contribution visualizations.
 ///
 /// `FULL=true` is the popup path: adds `no_ground` and `no_atmospheric` so the
