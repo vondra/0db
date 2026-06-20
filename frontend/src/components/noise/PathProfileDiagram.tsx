@@ -140,6 +140,16 @@ export function PathProfileDiagram({
     return out
   }, [trace, n, xOf, yOf])
 
+  // Raster-sample ring indices, capped at ~200 so an airport path (n in the
+  // thousands) doesn't emit thousands of <circle> nodes and freeze the popup on
+  // expand. Skips i=0 (source) / i=n-1 (receiver) — they get their own markers.
+  const ringSamples = useMemo(() => {
+    const stride = Math.max(1, Math.ceil((n - 2) / 200))
+    const out: number[] = []
+    for (let i = 1; i <= n - 2; i += stride) out.push(i)
+    return out
+  }, [n])
+
   const buildingRects = useMemo(() => {
     const rects: { x: number; y: number; w: number; h: number }[] = []
     for (let i = 0; i < n; i++) {
@@ -388,7 +398,7 @@ export function PathProfileDiagram({
             the path. Skip i=0 (source) and i=n-1 (receiver) — they get
             their own filled blue/red markers below. Drawn before the
             apex so the green apex dot paints on top when they coincide. */}
-        {Array.from({ length: Math.max(0, n - 2) }, (_, k) => k + 1).map(i => (
+        {ringSamples.map(i => (
           <circle
             key={`sp-${i}`}
             cx={xOf(trace.t[i])}
