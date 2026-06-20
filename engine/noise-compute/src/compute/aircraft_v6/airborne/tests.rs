@@ -1,0 +1,437 @@
+    use super::*;
+    use crate::flight_id;
+
+    /// `rank_key = energy * AIRBORNE_RANK_W[period]` must produce the same
+    /// ordering as the actual `received_lden.full` Lden computed by the
+    /// trace builder. If this drifts (e.g. someone changes Lden weights
+    /// without updating AIRBORNE_RANK_W), the heap will drop the wrong
+    /// sub-segments — Lden parity holds (heap doesn't gate energy) but
+    /// the popup "top-K segments" tab shows misranked rows.
+    #[test]
+    fn rank_key_ordering_matches_received_lden_full() {
+        use crate::periods::compute_lden;
+
+        // 12 mixed-period mixed-energy cases. Period 0 = day (no penalty),
+        // 1 = evening (+5 dB), 2 = night (+10 dB).
+        let cases: Vec<(usize, f64)> = vec![
+            (0, 1e-6),
+            (0, 1e-4),
+            (0, 1e-2),
+            (0, 1.0),
+            (1, 1e-6),
+            (1, 1e-4),
+            (1, 1e-2),
+            (1, 1.0),
+            (2, 1e-6),
+            (2, 1e-4),
+            (2, 1e-2),
+            (2, 1.0),
+        ];
+        let n_days = 1.0;
+
+        let scored: Vec<(f64, f64)> = cases
+            .iter()
+            .map(|&(period, energy)| {
+                let rank_key = energy * AIRBORNE_RANK_W[period];
+                // Mirror traces/aircraft.rs:aircraft_period_variants:
+                // each period's input is energy / (n_days * PERIOD_SECONDS[i]).
+                let mut normed = [0.0_f64; 3];
+                normed[period] = energy / (n_days * aircraft::PERIOD_SECONDS[period]);
+                let lden = compute_lden(normed[0], normed[1], normed[2]);
+                (rank_key, lden)
+            })
+            .collect();
+
+        // Sort ascending by each key; the two orders must match index-for-index.
+        let mut by_key: Vec<usize> = (0..scored.len()).collect();
+        by_key.sort_by(|&a, &b| scored[a].0.total_cmp(&scored[b].0));
+        let mut by_lden: Vec<usize> = (0..scored.len()).collect();
+        by_lden.sort_by(|&a, &b| scored[a].1.total_cmp(&scored[b].1));
+
+        assert_eq!(
+            by_key, by_lden,
+            "rank_key order diverges from received_lden.full order: \
+             rank_key = energy * AIRBORNE_RANK_W[period] is no longer \
+             monotone with the Lden formula in periods::compute_lden. \
+             Update AIRBORNE_RANK_W to match the new weights."
+        );
+    }
+
+    /// Sanity: the cutoff sits well below the empirical popup top-K
+    /// rank floor (~40 dB Lden ≈ ~50 dB Lmax at LKPR). Bumping this
+    /// above 35 dB risks dropping segments the user might rank in.
+    /// If a future ranking change moves the floor, fail loudly here
+    /// rather than silently culling segments.
+    // assertions_on_constants: deliberate — these guard a hand-tuned calibration
+    // constant and carry an operator-facing message (which a `const {}` block can't),
+    // so they stay runtime test assertions that fail loudly if the constant drifts.
+    #[allow(clippy::assertions_on_constants)]
+    #[test]
+    fn trace_cutoff_constant_safely_below_lkpr_rank_floor() {
+        assert!(
+            AIRBORNE_TRACE_CUTOFF_DB <= 35.0,
+            "AIRBORNE_TRACE_CUTOFF_DB ({}) crept above the empirical LKPR top-150 \
+             rank floor (~50 dB Lmax). Drop the constant or recalibrate against \
+             a fresh LKPR popup baseline.",
+            AIRBORNE_TRACE_CUTOFF_DB
+        );
+        // Lower bound guard: a near-zero cutoff would defeat the optimisation.
+        assert!(AIRBORNE_TRACE_CUTOFF_DB >= 10.0);
+    }
+
+    // The former `is_near_airport_*` tests were removed when the fn
+    // itself was deleted (2026-05-23). The carve-out it gated never
+    // fired in production — Stage 1 + Stage 2A already correctly
+    // classify low-AGL near-airport approaches; aircraft Lden delta
+    // when the popup-side stale filter is bypassed entirely:
+    // 0.000 dB across LKPR / Praha / Brdy / Šumava / 10 km W Praha.
+
+    fn make_flight(
+        peak_lmax: f64,
+        period_energy_total: f64,
+        is_cruise: bool,
+        typecode: [u8; 4],
+        callsign: &str,
+    ) -> FlightAccum {
+        let mut acc = FlightAccum::new(0, 1.0, is_cruise, typecode, callsign.to_string());
+        acc.peak_lmax = peak_lmax;
+        acc.peak_sel = peak_lmax - 5.0;
+        acc.period_energy[0] = period_energy_total;
+        acc.peak_altitude_m = 200.0;
+        acc.min_dist_m = 500.0;
+        acc.peak_seg_start = [14.26, 50.10];
+        acc.peak_seg_end = [14.27, 50.11];
+        acc
+    }
+
+    #[test]
+    fn build_top_flights_orders_descending_and_drops_silent() {
+        let mut flights: HashMap<u64, FlightAccum> = HashMap::new();
+        // Three loud, one silent (zero energy → dropped), one cruise (dropped).
+        flights.insert(
+            flight_id::pack_real(0xAAAAAA, 1_700_000_000).unwrap(),
+            make_flight(70.0, 100.0, false, *b"B738", "TVS100P"),
+        );
+        flights.insert(
+            flight_id::pack_real(0xBBBBBB, 1_700_000_001).unwrap(),
+            make_flight(80.0, 200.0, false, *b"A320", "CSA1"),
+        );
+        flights.insert(
+            flight_id::pack_real(0xCCCCCC, 1_700_000_002).unwrap(),
+            make_flight(60.0, 50.0, false, *b"CRJ\0", "RYR1"),
+        );
+        flights.insert(
+            flight_id::pack_real(0xDDDDDD, 1_700_000_003).unwrap(),
+            make_flight(90.0, 0.0, false, *b"H25B", "EJM"), // silent
+        );
+        flights.insert(
+            flight_id::pack_real(0xEEEEEE, 1_700_000_004).unwrap(),
+            make_flight(95.0, 300.0, true, *b"B789", ""), // cruise
+        );
+
+        let cruise_cands: HashMap<u64, TopFlightCandidate> = HashMap::new();
+        let out = build_top_flights(&flights, &cruise_cands, 350.0);
+        assert_eq!(out.len(), 3, "got {} top flights", out.len());
+        assert_eq!(out[0].lmax_db, 80.0);
+        assert_eq!(out[0].aircraft_type, "A320");
+        assert_eq!(out[0].callsign, "CSA1");
+        assert!(!out[0].synthetic);
+        assert_eq!(out[0].icao_hex.len(), 6);
+        // 200/350 = 57.1 % → round1 = 57.1
+        assert!((out[0].energy_pct - 57.1).abs() < 0.05);
+        assert_eq!(out[1].lmax_db, 70.0);
+        assert_eq!(out[1].aircraft_type, "B738");
+        assert_eq!(out[2].lmax_db, 60.0);
+        assert_eq!(out[2].aircraft_type, "CRJ", "NUL pad must be trimmed");
+    }
+
+    #[test]
+    fn build_top_flights_caps_at_top_n() {
+        let mut flights: HashMap<u64, FlightAccum> = HashMap::new();
+        // 30 unique flights with descending peak_lmax; expect TOP_FLIGHTS_N kept.
+        for i in 0..30u64 {
+            let lmax = 100.0 - i as f64;
+            flights.insert(
+                flight_id::pack_real(0x100000 + i as u32, 1_700_000_000 + i as u32).unwrap(),
+                make_flight(lmax, 10.0, false, *b"B738", "TVS"),
+            );
+        }
+        let cruise_cands: HashMap<u64, TopFlightCandidate> = HashMap::new();
+        let out = build_top_flights(&flights, &cruise_cands, 300.0);
+        assert_eq!(out.len(), TOP_FLIGHTS_N);
+        // Loudest preserved.
+        assert_eq!(out[0].lmax_db, 100.0);
+        // Last kept = TOP_FLIGHTS_N - 1th loudest = 100 - 19 = 81.
+        assert_eq!(out[TOP_FLIGHTS_N - 1].lmax_db, 81.0);
+    }
+
+    #[test]
+    fn build_top_flights_synth_fid_marks_synthetic() {
+        let mut flights: HashMap<u64, FlightAccum> = HashMap::new();
+        let synth_fid = flight_id::pack_synth(0x1234_5678);
+        flights.insert(synth_fid, make_flight(75.0, 50.0, false, [0; 4], ""));
+        let cruise_cands: HashMap<u64, TopFlightCandidate> = HashMap::new();
+        let out = build_top_flights(&flights, &cruise_cands, 50.0);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].synthetic);
+        assert!(out[0].icao_hex.is_empty());
+        assert!(out[0].start_unix.is_none());
+        assert!(out[0].aircraft_type.is_empty());
+        assert!(out[0].callsign.is_empty());
+    }
+
+    fn make_cruise_cand(peak_lmax: f64, typecode: [u8; 4], callsign: &str) -> TopFlightCandidate {
+        TopFlightCandidate {
+            peak_lmax,
+            peak_altitude_m: 9000.0,
+            peak_period: 0,
+            peak_seg_start: [14.4, 50.0],
+            peak_seg_end: [14.5, 50.0],
+            min_dist_m: 9100.0,
+            profile_idx: 0,
+            aircraft_type: typecode,
+            callsign: callsign.to_string(),
+        }
+    }
+
+    #[test]
+    fn build_top_flights_interleaves_airborne_and_cruise() {
+        let mut flights: HashMap<u64, FlightAccum> = HashMap::new();
+        flights.insert(
+            flight_id::pack_real(0xA1, 1_700_000_000).unwrap(),
+            make_flight(80.0, 100.0, false, *b"A320", "AIR1"),
+        );
+        flights.insert(
+            flight_id::pack_real(0xA2, 1_700_000_001).unwrap(),
+            make_flight(60.0, 50.0, false, *b"B738", "AIR2"),
+        );
+
+        let mut cruise_cands: HashMap<u64, TopFlightCandidate> = HashMap::new();
+        // Cruise candidate louder than AIR2 → must interleave between
+        // the two airborne entries.
+        cruise_cands.insert(
+            flight_id::pack_real(0xC1, 1_700_000_010).unwrap(),
+            make_cruise_cand(70.0, *b"B777", "CRZ1"),
+        );
+
+        let out = build_top_flights(&flights, &cruise_cands, 150.0);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].callsign, "AIR1");
+        assert_eq!(out[1].callsign, "CRZ1", "cruise must interleave by Lmax");
+        assert_eq!(out[1].aircraft_type, "B777");
+        assert_eq!(out[1].energy_pct, 0.0, "cruise rows carry energy_pct=0");
+        assert!(!out[1].synthetic, "real cruise fid is not synthetic");
+        assert_eq!(out[2].callsign, "AIR2");
+    }
+
+    #[test]
+    fn build_top_flights_dedupes_same_fid_in_both_maps() {
+        let dual_fid = flight_id::pack_real(0xDEAD, 1_700_000_100).unwrap();
+        let mut flights: HashMap<u64, FlightAccum> = HashMap::new();
+        flights.insert(dual_fid, make_flight(75.0, 50.0, false, *b"A320", "DUAL"));
+
+        let mut cruise_cands: HashMap<u64, TopFlightCandidate> = HashMap::new();
+        cruise_cands.insert(dual_fid, make_cruise_cand(60.0, *b"A320", "DUAL"));
+
+        let out = build_top_flights(&flights, &cruise_cands, 50.0);
+        assert_eq!(out.len(), 1, "same real fid must not appear twice");
+        assert_eq!(out[0].callsign, "DUAL");
+        assert!(out[0].energy_pct > 0.0, "airborne entry kept (real energy)");
+    }
+
+    #[test]
+    fn build_top_flights_synth_cruise_fid_is_marked_synthetic() {
+        let flights: HashMap<u64, FlightAccum> = HashMap::new();
+        let mut cruise_cands: HashMap<u64, TopFlightCandidate> = HashMap::new();
+        let synth = flight_id::pack_synth(0xABCD);
+        cruise_cands.insert(synth, make_cruise_cand(50.0, [0; 4], ""));
+        let out = build_top_flights(&flights, &cruise_cands, 1.0);
+        assert_eq!(out.len(), 1);
+        assert!(
+            out[0].synthetic,
+            "synth cruise fid must surface as synthetic"
+        );
+        assert!(out[0].start_unix.is_none());
+    }
+
+    /// One airborne sub-seg passing ~250 m abeam the receiver at ~150 m
+    /// AGL, for the given ICAO typecode. Used by the mixed-window GA
+    /// hybrid scatter test.
+    fn one_subseg_row<'a>(fid: u64, typecode: &str, cols: &'a OneSubSeg) -> AirborneRowView<'a> {
+        use crate::compute::aircraft_v6::views::{BBox, SubSegmentSlice};
+        AirborneRowView {
+            flight_id: fid,
+            callsign: "",
+            aircraft_type: cols.typebuf,
+            profile_idx: aircraft::profile_idx(typecode),
+            source_id: 0,
+            origin: 0,
+            sub_segments: SubSegmentSlice {
+                start_lat: &cols.start_lat,
+                start_lon: &cols.start_lon,
+                start_alt_m: &cols.alt,
+                end_lat: &cols.end_lat,
+                end_lon: &cols.end_lon,
+                end_alt_m: &cols.alt,
+                speed_kt: &cols.speed,
+                length_m: &cols.length,
+                period: &cols.period,
+                date_id: &cols.date_id,
+                flags: &cols.flags,
+                terrain_start_elev_m: &cols.elev,
+                terrain_end_elev_m: &cols.elev,
+            },
+            bbox: BBox {
+                min_lat: cols.start_lat[0].min(cols.end_lat[0]),
+                max_lat: cols.start_lat[0].max(cols.end_lat[0]),
+                min_lon: cols.start_lon[0].min(cols.end_lon[0]),
+                max_lon: cols.start_lon[0].max(cols.end_lon[0]),
+            },
+        }
+    }
+
+    struct OneSubSeg {
+        typebuf: [u8; 4],
+        start_lat: [f32; 1],
+        start_lon: [f32; 1],
+        end_lat: [f32; 1],
+        end_lon: [f32; 1],
+        alt: [f32; 1],
+        speed: [f32; 1],
+        length: [f32; 1],
+        period: [u8; 1],
+        date_id: [i16; 1],
+        flags: [u8; 1],
+        elev: [f32; 1],
+    }
+
+    fn one_subseg(typecode: &str) -> OneSubSeg {
+        let mut typebuf = [0u8; 4];
+        let b = typecode.as_bytes();
+        typebuf[..b.len()].copy_from_slice(b);
+        OneSubSeg {
+            typebuf,
+            // ~250 m E-W track abeam a receiver at 14.250 / 50.100.
+            start_lat: [50.1015],
+            start_lon: [14.2480],
+            end_lat: [50.1015],
+            end_lon: [14.2520],
+            alt: [150.0],
+            speed: [120.0],
+            length: [285.0],
+            period: [0],
+            date_id: [0],
+            flags: [0], // arrival
+            elev: [0.0],
+        }
+    }
+
+    struct FlatGround;
+    impl crate::types::RasterSampler for FlatGround {
+        fn elevation(&self, _: f64, _: f64) -> f64 {
+            0.0
+        }
+        fn building_height(&self, _: f64, _: f64) -> f64 {
+            0.0
+        }
+        fn ground_g(&self, _: f64, _: f64) -> f64 {
+            1.0
+        }
+        fn building_enclosure(&self, _: f64, _: f64) -> f64 {
+            0.0
+        }
+    }
+
+    /// Mixed-window GA hybrid scatter: with a 12-day airline window and a
+    /// 365-day GA window, a GA-class (C172) flight's accumulated energy +
+    /// count weight must be exactly `12/365` of the same flight scattered
+    /// under the uniform LUT, while an airline-class (B738) flight stays
+    /// at `1.0`. This is the +14.8 dB Kytín phantom kill, in one assert.
+    #[test]
+    fn mixed_window_ga_weighted_airline_unchanged() {
+        let receiver = Receiver::new(50.100, 14.250, 0.0);
+        // Build the hybrid LUT: GA classes → 365, airline classes → 12.
+        let vec: String = (0..aircraft::NUM_CLASSES)
+            .map(|c| {
+                if aircraft::is_ga_sampled_class(c as u8) {
+                    "365"
+                } else {
+                    "12"
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let hybrid = aircraft::ClassWeights::parse(Some(&vec), 12).unwrap();
+        let uniform = aircraft::ClassWeights::uniform();
+
+        for (typecode, expect_ga) in [("C172", true), ("R44", true), ("B738", false)] {
+            let cols = one_subseg(typecode);
+            let row = [one_subseg_row(
+                flight_id::pack_real(0xABCD01, 1_700_000_000).unwrap(),
+                typecode,
+                &cols,
+            )];
+            let uni = scatter(&receiver, &row, 12.0, &uniform, None, 0, None);
+            let hyb = scatter(&receiver, &row, 12.0, &hybrid, None, 0, None);
+            let e_uni: f64 = uni
+                .values()
+                .map(|a| a.period_energy.iter().sum::<f64>())
+                .sum();
+            let e_hyb: f64 = hyb
+                .values()
+                .map(|a| a.period_energy.iter().sum::<f64>())
+                .sum();
+            assert!(
+                e_uni > 0.0,
+                "{typecode}: sub-seg must be audible at the receiver"
+            );
+            let expected_ratio = if expect_ga { 12.0 / 365.0 } else { 1.0 };
+            assert!(
+                (e_hyb / e_uni - expected_ratio).abs() < 1e-9,
+                "{typecode}: hybrid/uniform energy ratio {} != {expected_ratio}",
+                e_hyb / e_uni
+            );
+            // Count weight rides the same factor (helicopter_flights_per_day,
+            // observed_flights_per_day).
+            let fw = hyb.values().next().unwrap().flight_weight;
+            assert!(
+                (fw - expected_ratio).abs() < 1e-9,
+                "{typecode}: flight_weight {fw} != {expected_ratio}"
+            );
+        }
+    }
+
+    /// `compute_aircraft_v6_separable` carries the GA weight end-to-end:
+    /// the airborne periods of a lone GA flight drop ~10·log10(365/12) ≈
+    /// 14.8 dB vs the uniform window (the Kytín correction).
+    #[test]
+    fn ga_hybrid_drops_airborne_lden_by_14_8_db() {
+        use crate::compute::aircraft_v6::compute_aircraft_v6_separable;
+        let receiver = Receiver::new(50.100, 14.250, 0.0);
+        let cols = one_subseg("R44");
+        let row = [one_subseg_row(
+            flight_id::pack_real(0xBEEF02, 1_700_000_000).unwrap(),
+            "R44",
+            &cols,
+        )];
+        let vec: String = (0..aircraft::NUM_CLASSES)
+            .map(|c| {
+                if aircraft::is_ga_sampled_class(c as u8) {
+                    "365"
+                } else {
+                    "12"
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let hybrid = aircraft::ClassWeights::parse(Some(&vec), 12).unwrap();
+        let uniform = aircraft::ClassWeights::uniform();
+        let uni = compute_aircraft_v6_separable(&receiver, &row, &[], &FlatGround, 12, &uniform);
+        let hyb = compute_aircraft_v6_separable(&receiver, &row, &[], &FlatGround, 12, &hybrid);
+        let drop = uni.airborne.lden_db - hyb.airborne.lden_db;
+        let expected = 10.0 * (365.0f64 / 12.0).log10(); // ≈ 14.83 dB
+        assert!(
+            (drop - expected).abs() < 0.05,
+            "GA hybrid airborne Lden drop {drop:.2} dB != {expected:.2} dB"
+        );
+    }

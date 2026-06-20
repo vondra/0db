@@ -1,0 +1,765 @@
+//! Direct row-view scatter for airborne popup arrows. Each
+//! `AirborneRowView` carries one row's sub-segment columns; this kernel
+//! iterates the sub-segments, runs the standard Doc 29 SEL chain
+//! (`SegmentTerrain` cache + Filter D inline + `segment_sel_with_terrain`,
+//! then an Lmax LUT lookup) and updates per-real-flight `FlightAccum`s.
+//! No `AircraftSegment` `Vec` is allocated — segments are built on the
+//! stack per iteration.
+
+use std::cmp::{Ordering, Reverse};
+use std::collections::{BinaryHeap, HashMap};
+
+use crate::compute::aircraft_v6::state::{BandStats, FlightAccum, TopFlightCandidate};
+use crate::compute::aircraft_v6::views::AirborneRowView;
+use crate::emission::aircraft;
+use crate::propagation::iso9613::fast_exp_f64;
+use crate::types::{
+    AircraftAirborneDetail, AircraftEventBandStats, AircraftSegment, AircraftTopFlight,
+    NoisePeriods, Receiver, SegmentTrace, TraceCollector,
+};
+
+/// Maximum number of `top_flights` rows the popup returns. Frontend
+/// renders a sortable table; 20 is the empirical break-even between
+/// "user can see all the loud flights" and "table fits without paging".
+const TOP_FLIGHTS_N: usize = 20;
+
+/// Lmax (dB) below which sub-segment traces are not built. Saves
+/// ~95 % of `SegmentTrace` allocations at LKPR.
+///
+/// Safety margin (worst case, generous): a single transit yields
+/// SEL ≈ Lmax + 15 dB for the loudest profile classes; over a 24 h
+/// daily window the contribution is SEL − 10·log10(86400) + 10 dB
+/// night penalty = (Lmax+15) − 49.4 + 10 ≈ Lmax − 24.4 dB. With
+/// Lmax = 25 dB that puts a single-event Lden contribution near
+/// 0.6 dB — already well below the popup segment tab's empirical
+/// rank floor of ~40 dB Lden (LKPR top-150). Below 25 dB Lmax a
+/// sub-segment cannot survive the user-visible cap regardless of
+/// the SEL/Lmax delta assumed. Energy accumulation (period_energy,
+/// peak_lmax updates) runs regardless — only the SegmentTrace
+/// allocation + push are gated, so Lden parity is held.
+const AIRBORNE_TRACE_CUTOFF_DB: f64 = 25.0;
+
+/// Monotone-with-`received_lden.full` rank key used by the bounded
+/// top-K heap. Avoids per-sub-seg `compute_lden` calls (3× exp + 1× log10
+/// ≈ 120 ns) — `received_lden.full` is
+///   `10·log10(W[period] · energy / (n_days · 86400)) + … silent-period floors`
+/// and `10·log10(·)` plus the common `/(n_days · 86400)` are monotone.
+/// So we rank by `energy * AIRBORNE_RANK_W[period]` (3 ops: index + mul).
+/// `W[period]` is the standard Doc 9613 Lden time-weight per period.
+const AIRBORNE_RANK_W: [f64; 3] = [
+    // day:     12 h × 1.0     ⇒ 12 / 43200 s
+    12.0 / 43200.0,
+    // evening: 4 h × 10^0.5   ⇒ 4·√10 / 14400 s
+    4.0 * 3.162277660168379_f64 / 14400.0,
+    // night:   8 h × 10^1.0   ⇒ 80 / 28800 s
+    80.0 / 28800.0,
+];
+
+/// One entry of the bounded top-K airborne trace heap. Ranks by
+/// `rank_key` (linear, monotone with `received_lden.full`) using
+/// `f64::total_cmp` so heap pop/peek give a total order even with
+/// NaN edge cases.
+struct ScoredTrace {
+    rank_key: f64,
+    trace: SegmentTrace,
+}
+
+impl PartialEq for ScoredTrace {
+    fn eq(&self, other: &Self) -> bool {
+        self.rank_key.total_cmp(&other.rank_key).is_eq()
+    }
+}
+impl Eq for ScoredTrace {}
+impl PartialOrd for ScoredTrace {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for ScoredTrace {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.rank_key.total_cmp(&other.rank_key)
+    }
+}
+
+/// Scatter the airborne row set onto a per-real-flight accumulator
+/// table. Caller passes the resulting flights map to `build_detail` for
+/// Doc 29 normalization (`n_days × period_seconds`).
+///
+/// `horizon` enables C2 terrain screening inside the shared kernel
+/// (`Some` only on the popup path under `QM_AIRBORNE_HORIZON=1`);
+/// `None` is byte-identical to the pre-C2 scatter.
+///
+/// Per-sub-segment `SegmentTrace`s land in `traces.segments` so the
+/// Noise Segments popup tab can render one row per Doc 29 SEL call
+/// instead of one row per flight (the popup's actual compute unit).
+pub fn scatter(
+    receiver: &Receiver,
+    rows: &[AirborneRowView<'_>],
+    n_days_f: f64,
+    // GA 365-day hybrid per-class weight LUT (`ga-365d-hybrid-plan.md` §2).
+    // Each row's energy AND its count (`flight_weight`) are multiplied by
+    // `class_weights.get(class)` so a 365-day-sampled GA one-off divides by
+    // 365 not 12. Uniform (all-1.0) for non-hybrid extracts.
+    class_weights: &aircraft::ClassWeights,
+    horizon: Option<&aircraft::ReceiverHorizon>,
+    trace_cap: usize,
+    mut traces: Option<&mut TraceCollector>,
+) -> HashMap<u64, FlightAccum> {
+    let rx_elev = receiver.altitude_m();
+    let npd_luts = aircraft::NpdLuts::shared();
+    let mut flights: HashMap<u64, FlightAccum> = HashMap::new();
+    // Bounded top-K min-heap (size `trace_cap`). We rank by `rank_key`
+    // (monotone with received_lden.full) and use `Reverse` so the heap
+    // root is the *weakest* kept trace — pop+push replaces it when a
+    // stronger candidate arrives. Avoids ~4.4 M `SegmentTrace`
+    // allocations at LKPR (only ~150 + a few hundred replacements
+    // actually allocate; the rest skip the trace builder entirely).
+    let mut heap: BinaryHeap<Reverse<ScoredTrace>> = if traces.is_some() && trace_cap > 0 {
+        BinaryHeap::with_capacity(trace_cap)
+    } else {
+        BinaryHeap::new()
+    };
+
+    // Bbox prefilter at the conservative max-class reach (16 km) —
+    // drops rows whose stored bbox is fully outside the receiver
+    // envelope. Per v15 the row's sub-segments already carry pre-sampled
+    // terrain, so the savings from the prune are now segment-construction
+    // + NPD-lookup cost rather than raster I/O. Must stay at the global
+    // 16 km cap, not per-row noise-class reach: the kernel
+    // (`doc29.rs:359-366`) uses the UNCLAMPED foot of perpendicular for
+    // its slant test, so a row whose endpoints lie just outside a
+    // smaller class envelope can still have an unclamped foot inside
+    // class reach and survive ΔF. Tightening the bbox here would
+    // false-reject those rows (Codex /gg 2026-05-24 CRITICAL).
+    // The per-class gate fires at the per-direction line-distance check
+    // below and inside `segment_sel_with_terrain`. At airport density a
+    // popup touches ~21 k rows (3 k/R4 × 7 R4); the prune drops 60-80 %
+    // of those rows before per-sub-seg work.
+    let radius_lat_deg = aircraft::meters_to_lat_deg(aircraft::AIRCRAFT_MAX_HORIZONTAL_REACH_M);
+    let radius_lon_deg =
+        aircraft::meters_to_lon_deg(receiver.lat, aircraft::AIRCRAFT_MAX_HORIZONTAL_REACH_M);
+    let env_min_lat = (receiver.lat - radius_lat_deg) as f32;
+    let env_max_lat = (receiver.lat + radius_lat_deg) as f32;
+    let env_min_lon_raw = receiver.lon - radius_lon_deg;
+    let env_max_lon_raw = receiver.lon + radius_lon_deg;
+    // Antimeridian-safe envelope: if the receiver's reach radius would
+    // wrap past ±180°, fall back to a no-op longitude prune. Stored
+    // bboxes are in [-180, 180]; the simple comparison `bb.max_lon <
+    // env_min_lon` would otherwise drop sources on the other side of
+    // the dateline. /gg (Codex) flagged this as a global-atlas
+    // false-negative silence bug. Latitude is bounded ±90 so it never
+    // wraps; only longitude gets the guard.
+    let lon_prune_active = env_min_lon_raw >= -180.0 && env_max_lon_raw <= 180.0;
+    let env_min_lon = env_min_lon_raw as f32;
+    let env_max_lon = env_max_lon_raw as f32;
+
+    // Sub-seg line-distance projection constants — receiver-relative
+    // meters factors are computed ONCE outside the loops.
+    // BUG FIX (Codex /gg 2026-05-24): `m_per_deg_lon` expects RADIANS,
+    // we were passing degrees. At 50 °N that made east/west metres
+    // ~1.5× too large, mis-projecting the line-distance check.
+    // Also mirror the kernel's lat factor (constants module's
+    // `M_PER_DEG_LAT` differs from `aircraft::M_PER_DEG_LAT = 111132.92`
+    // — Codex flagged the discrepancy; we match the kernel's value so
+    // the prefilter geometry is bit-identical to `segment_sel_with_overrides`).
+    let cos_lat = receiver.lat.to_radians().cos().max(0.2);
+    let rx_m_per_lon = aircraft::M_PER_DEG_LAT * cos_lat;
+    let rx_m_per_lat = aircraft::M_PER_DEG_LAT;
+
+    for row in rows {
+        let bb = &row.bbox;
+        if bb.max_lat < env_min_lat || bb.min_lat > env_max_lat {
+            continue;
+        }
+        if lon_prune_active && (bb.max_lon < env_min_lon || bb.min_lon > env_max_lon) {
+            continue;
+        }
+        // Per-class reach for the per-direction line-distance gate
+        // below. The kernel uses the same `REACH_SQ_TABLE[class_idx][is_dep]`
+        // internally (`segment_sel.rs:196`), so rejecting earlier on
+        // `cross² > reach² × len²` (unclamped line-distance squared,
+        // matches `doc29.rs:359` exactly) cannot false-reject anything
+        // the kernel would accept. Light classes (≈ 8 km reach) gain
+        // most.
+        let class_idx = aircraft::noise_class_of(row.profile_idx) as usize;
+        let reach_sq_class = aircraft::REACH_SQ_TABLE[class_idx];
+        // GA hybrid weight for this row's class (`ga-365d-hybrid-plan.md` §2)
+        // — one f64 per row, applied to every sub-seg's energy + the flight's
+        // count. A whole airborne row is one flight = one class, so the
+        // weight is row-constant.
+        let class_weight = class_weights.get(class_idx as u8);
+        let sub = row.sub_segments;
+        let n = sub.len();
+        for i in 0..n {
+            // Per-sub-seg prefilter, two layers:
+            // (a) cheap lat/lon endpoint bbox in the 16 km envelope —
+            //     rejects ~90 % of sub-segs whose endpoints sit fully
+            //     outside (~6 ns).
+            // (b) line-distance check on the unclamped extension at
+            //     the per-class per-direction reach — handles the
+            //     borderline case where both endpoints lie just outside
+            //     the bbox but the track points through the receiver.
+            //     Mirrors the kernel's CPA geometry (`doc29.rs:359`) so
+            //     a sub-seg the kernel would accept never gets pruned
+            //     here (~10 ns).
+            //
+            // The full kernel (`segment_sel_with_cuts`) is ~60 ns/sub-
+            // seg, so this two-layer prefilter is a clear net win even
+            // when both checks must run.
+            let s_lat_f = sub.start_lat[i];
+            let e_lat_f = sub.end_lat[i];
+            let sub_max_lat = s_lat_f.max(e_lat_f);
+            let sub_min_lat = s_lat_f.min(e_lat_f);
+            if sub_max_lat < env_min_lat || sub_min_lat > env_max_lat {
+                continue;
+            }
+            let s_lon_f = sub.start_lon[i];
+            let e_lon_f = sub.end_lon[i];
+            if lon_prune_active {
+                let sub_max_lon = s_lon_f.max(e_lon_f);
+                let sub_min_lon = s_lon_f.min(e_lon_f);
+                if sub_max_lon < env_min_lon || sub_min_lon > env_max_lon {
+                    continue;
+                }
+            }
+            // Layer (b): line-distance to receiver, in receiver-local
+            // meters. Cross product squared vs `reach² × seg_len²`
+            // avoids a sqrt and a divide. For degenerate sub-segs
+            // (seg_len ≈ 0) the bbox check above already covers the
+            // endpoint-only case, so we skip the line test there.
+            let ax = (s_lon_f as f64 - receiver.lon) * rx_m_per_lon;
+            let ay = (s_lat_f as f64 - receiver.lat) * rx_m_per_lat;
+            let bx = (e_lon_f as f64 - receiver.lon) * rx_m_per_lon;
+            let by = (e_lat_f as f64 - receiver.lat) * rx_m_per_lat;
+            let sdx = bx - ax;
+            let sdy = by - ay;
+            let seg_len_sq = sdx * sdx + sdy * sdy;
+            let flags = sub.flags[i];
+            let is_departure = flags & 0b001 != 0;
+            if seg_len_sq > 1.0 {
+                let cross = ax * sdy - ay * sdx;
+                let cross_sq = cross * cross;
+                let reach_sq_dir = reach_sq_class[is_departure as usize];
+                if cross_sq > reach_sq_dir * seg_len_sq {
+                    continue;
+                }
+            }
+            // Stack-only segment — `segment_sel_with_terrain` and the
+            // validity gates only need `&AircraftSegment`, not Vec storage.
+            //
+            // `ground_context = NONE` for every airborne sub-segment. The
+            // popup-side `is_near_airport` carve-out (run every popup query
+            // over ~561 airport centroids at LKPR — 944 ns × 22 M sub-segs
+            // = 21 s) was a defensive guard against Stage 1 misclassifying
+            // 0-15 m AGL near-airport approaches as airborne. Empirically
+            // (5-receiver SKIP_STALE comparison, 2026-05-23) the carve-out
+            // NEVER fired — Stage 1's `ground_inference.rs` (32-point edge
+            // window + surface signature) already correctly routes those
+            // points to ground.arrow. Aircraft Lden delta when the stale
+            // filter is bypassed entirely: 0.000 dB on all five reference
+            // receivers (LKPR / Praha / Brdy / Šumava / 10 km W Praha).
+            let seg = AircraftSegment {
+                flight_id: row.flight_id,
+                profile_idx: row.profile_idx,
+                is_departure,
+                on_ground: false,
+                period: sub.period[i],
+                date_id: sub.date_id[i],
+                start_lat: sub.start_lat[i] as f64,
+                start_lon: sub.start_lon[i] as f64,
+                start_alt_m: sub.start_alt_m[i],
+                end_lat: sub.end_lat[i] as f64,
+                end_lon: sub.end_lon[i] as f64,
+                end_alt_m: sub.end_alt_m[i],
+                speed_kt: sub.speed_kt[i],
+                segment_length_m: sub.length_m[i],
+                count_weight: 1.0,
+                surface_model: false,
+                ground_context: aircraft::GROUND_CONTEXT_NONE,
+                ground_ops_kind: aircraft::GROUND_OPS_KIND_NONE,
+                source_id: row.source_id as u16,
+            };
+            // v16 (K3): only start/end terrain elevs are pre-sampled at
+            // extract time. The chord mountain-peak check (mid/q1/q3 AGL
+            // gate) moved to Stage 1, so the popup hot path no longer
+            // calls `is_valid_airborne_with_terrain`. The endpoint
+            // ground-stale gate still runs (start/end AGL ≤ 15 m), and
+            // Filter D's extrapolation cuts are receiver-dependent — they
+            // stay here, fed from the two stored endpoint elevs.
+            let start_elev = sub.terrain_start_elev_m[i] as f64;
+            let end_elev = sub.terrain_end_elev_m[i] as f64;
+            let terrain = aircraft::SegmentTerrain {
+                start_elev,
+                // q1/mid/q3 zeroed: the popup-side validity calls that
+                // touched these moved to Stage 1; the structure is kept
+                // for cruise (`compute/aircraft_v6/cruise.rs`) which still
+                // calls `SegmentTerrain::sample` against rasters.
+                q1_elev: 0.0,
+                mid_elev: 0.0,
+                q3_elev: 0.0,
+                end_elev,
+            };
+            if aircraft::is_ground_stale_with_terrain(&seg, &terrain) {
+                continue;
+            }
+            let Some((sel, cpa)) = aircraft::segment_sel_with_cuts(
+                &seg,
+                receiver.lat,
+                receiver.lon,
+                rx_elev,
+                start_elev - 30.0,
+                end_elev - 30.0,
+                npd_luts,
+                horizon,
+            ) else {
+                continue;
+            };
+            // GA hybrid weight folded into the per-sub-seg energy here so
+            // EVERY downstream consumer (period totals, band stats, trace
+            // rank/energies) sees the 1/365-scaled value with no further
+            // per-site multiply. `flight_weight = class_weight` carries the
+            // SAME factor through the count machinery (helicopter_flights_
+            // per_day, observed_flights_per_day) — (12/365)/12 = 1/365 per
+            // one-off (`ga-365d-hybrid-plan.md` §2).
+            let energy = fast_exp_f64(sel * std::f64::consts::LN_10 * 0.1) * class_weight;
+            let period = (seg.period.min(2)) as usize;
+            let acc = flights.entry(row.flight_id).or_insert_with(|| {
+                FlightAccum::new(
+                    row.profile_idx,
+                    class_weight,
+                    false,
+                    row.aircraft_type,
+                    row.callsign.to_string(),
+                )
+            });
+            acc.period_energy[period] += energy;
+
+            let class_idx = aircraft::noise_class_of(seg.profile_idx) as usize;
+            // Display metrics use the CLAMPED CPA — the closest the aircraft
+            // actually reaches while on this segment — so a curving track's
+            // extrapolated infinite-line foot can't report a phantom near pass
+            // (see `clamped_display_cpa`). `sel`/`energy` above keep the
+            // unclamped `cpa`; ΔF needs the infinite-line `q_m`.
+            let sdz = seg.end_alt_m as f64 - seg.start_alt_m as f64;
+            let (disp_dist, disp_alt) = aircraft::clamped_display_cpa(&cpa, sdz);
+            // log2 × LOG10_2 ≡ log10 at f64; matches the kernel's NPD-lookup
+            // distance idiom (doc29.rs:376), same identity as d0317794.
+            let log_d =
+                (disp_dist * aircraft::FT_PER_M).max(100.0).log2() * std::f64::consts::LOG10_2;
+            let lmax = npd_luts.lookup_lmax(class_idx, seg.is_departure, log_d);
+            if lmax > acc.peak_lmax {
+                acc.peak_lmax = lmax;
+                acc.peak_sel = sel;
+                acc.peak_altitude_m = disp_alt;
+                acc.peak_period = seg.period;
+                acc.peak_date_id = seg.date_id;
+                acc.peak_seg_start = [seg.start_lon, seg.start_lat];
+                acc.peak_seg_end = [seg.end_lon, seg.end_lat];
+            }
+            if disp_dist < acc.min_dist_m {
+                acc.min_dist_m = disp_dist;
+            }
+
+            if lmax >= AIRBORNE_TRACE_CUTOFF_DB {
+                if let Some(t) = traces.as_deref_mut() {
+                    // Maintain the "N visible" denominator regardless of
+                    // whether this sub-seg's trace survives the heap.
+                    t.airborne_above_cutoff = t.airborne_above_cutoff.saturating_add(1);
+
+                    if trace_cap > 0 {
+                        let rank_key = energy * AIRBORNE_RANK_W[period];
+                        // Skip the trace builder unless this sub-seg can
+                        // displace the weakest kept trace.
+                        let should_build = heap.len() < trace_cap
+                            || heap.peek().map(|w| rank_key > w.0.rank_key).unwrap_or(true);
+                        if should_build {
+                            let mut period_energies = [0.0f64; 3];
+                            period_energies[period] = energy;
+                            // TODO Tier 3: extend AircraftKernelResult with the
+                            // Doc 29 decomposition (sel_npd / ΔV / ΔI / Λ / ΔF)
+                            // computed inside segment_energy_kernel and pipe it
+                            // here. For now use a placeholder that records the
+                            // final SEL only — the popup-side Section4Doc29
+                            // displays it as a single-value bar until the
+                            // kernel split lands. `d_p_m` / `d_bar_m` below stay
+                            // on the UNCLAMPED `cpa.d_p_m` on purpose: this
+                            // breakdown describes the SEL/NPD energy computation
+                            // (infinite-line distance), not the clamped display
+                            // CPA carried in `cpa_distance_m` / `d_slant_m` above.
+                            let placeholder_doc29 = crate::types::Doc29Breakdown {
+                                sel_npd_db: sel,
+                                delta_v_db: 0.0,
+                                delta_i_db: 0.0,
+                                lambda_db: 0.0,
+                                delta_f_db: 0.0,
+                                d_p_m: cpa.d_p_m,
+                                lateral_m: 0.0,
+                                beta_deg: 90.0,
+                                seg_len_m: seg.segment_length_m as f64,
+                                d_bar_m: cpa.d_p_m,
+                                installation: "wing",
+                                cffk_fast_path: cpa.d_p_m > 7620.0,
+                            };
+                            let trace = crate::traces::build_aircraft_airborne_subsegment_trace(
+                                crate::traces::BuildAircraftAirborneSubSegmentTrace {
+                                    callsign: row.callsign,
+                                    aircraft_type: &row.aircraft_type,
+                                    class_name: aircraft::CLASS_NAMES[class_idx],
+                                    flight_id: row.flight_id,
+                                    start_lat: seg.start_lat,
+                                    start_lon: seg.start_lon,
+                                    end_lat: seg.end_lat,
+                                    end_lon: seg.end_lon,
+                                    cpa_distance_m: disp_dist,
+                                    altitude_m_at_cpa: disp_alt,
+                                    d_slant_m: disp_dist.max(1.0),
+                                    is_departure: seg.is_departure,
+                                    period_energies,
+                                    n_days: n_days_f,
+                                    doc29: placeholder_doc29,
+                                },
+                            );
+                            let scored = ScoredTrace { rank_key, trace };
+                            if heap.len() < trace_cap {
+                                heap.push(Reverse(scored));
+                            } else {
+                                heap.pop();
+                                heap.push(Reverse(scored));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Drain bounded top-K heap into `t.segments`. No sort needed:
+    // `apply_segment_top_k_with_cap` (source-reader) re-sorts the entire
+    // Vec by `received_lden.full` desc — it has to, because road / rail /
+    // cruise / ground traces are mixed in. An in-scatter sort would be
+    // redundant work.
+    if let Some(t) = traces {
+        t.segments
+            .extend(heap.into_iter().map(|Reverse(st)| st.trace));
+    }
+    flights
+}
+
+/// Build airborne-side `AircraftAirborneDetail` and the airborne-only
+/// periods (Doc 29 normalized). Walks airborne flights for per-band
+/// stats; folds cruise period_energy into the periods total via the
+/// separate `cruise_flights` table — keeping the synth-fid namespaces
+/// disjoint per /gg (Codex) guidance.
+#[allow(clippy::too_many_arguments)]
+pub fn build_detail(
+    flights: &HashMap<u64, FlightAccum>,
+    cruise_flights: &HashMap<u64, FlightAccum>,
+    cruise_transit_count: usize,
+    top_flight_candidates: &HashMap<u64, TopFlightCandidate>,
+    cruise_band_stats: &[BandStats; 3],
+    n_days_f: f64,
+    // GA-class window for the popup's per-class "Data" row (delta 7);
+    // equals `n_days_f` for non-hybrid extracts.
+    ga_n_days_f: f64,
+) -> (NoisePeriods, AircraftAirborneDetail) {
+    use crate::periods;
+
+    let mut airborne_energy = [0.0f64; 3];
+    let mut band_faint = BandStats::new();
+    let mut band_audible = BandStats::new();
+    let mut band_disruptive = BandStats::new();
+    let mut helicopter_count = 0.0f64;
+    let mut global_peak_lmax = f64::NEG_INFINITY;
+
+    // Cruise period_energy folds into the airborne total — the popup
+    // exposes a single Aircraft Lden, not separate cruise / airborne
+    // numbers. Cruise band counters come via `cruise_band_stats`
+    // (real-fid dedup) so we don't iterate cruise here for those.
+    for acc in cruise_flights.values() {
+        // Period accumulation (day/evening/night) — `p` indexes both sides; the
+        // f64 sum order across flights is part of popup byte parity.
+        #[allow(clippy::needless_range_loop)]
+        for p in 0..3 {
+            airborne_energy[p] += acc.period_energy[p];
+        }
+        if acc.peak_lmax > global_peak_lmax {
+            global_peak_lmax = acc.peak_lmax;
+        }
+    }
+
+    // Sampling-fragility accumulators (see AircraftAirborneDetail docs):
+    // real airborne flights only — cruise buckets are aggregate-stable by
+    // construction and synthetic fids carry no date.
+    let mut energy_by_day: HashMap<u32, f64> = HashMap::new();
+    let mut max_flight_energy = 0.0f64;
+
+    for (&flight_id, acc) in flights.iter() {
+        // Period accumulation — same byte-parity sum order as the cruise loop above.
+        #[allow(clippy::needless_range_loop)]
+        for p in 0..3 {
+            airborne_energy[p] += acc.period_energy[p];
+        }
+        let flight_energy: f64 = acc.period_energy.iter().sum();
+        if flight_energy <= 0.0 {
+            continue;
+        }
+        if acc.peak_lmax > global_peak_lmax {
+            global_peak_lmax = acc.peak_lmax;
+        }
+        if acc.is_cruise {
+            continue;
+        }
+        if let crate::flight_id::FlightIdKind::Real { start_unix, .. } =
+            crate::flight_id::unpack(flight_id)
+        {
+            *energy_by_day.entry(start_unix / 86_400).or_default() += flight_energy;
+            max_flight_energy = max_flight_energy.max(flight_energy);
+        }
+        if aircraft::is_helicopter_profile(acc.profile_idx) {
+            helicopter_count += acc.flight_weight / n_days_f;
+        }
+        let cls = aircraft::noise_class_of(acc.profile_idx) as usize;
+        let weight = acc.flight_weight.round().max(1.0) as u32;
+        // Band stats want average altitude per event, not CPA distance.
+        // /gg (Codex) caught a regression where this fed `min_dist_m`
+        // into `alt_sum` — popup band detail then reported CPA values
+        // labelled as altitude. Use the peak-encounter altitude
+        // weighted by flight_weight to match cruise.rs band stats.
+        let alt_w_sum = acc.peak_altitude_m * acc.flight_weight;
+        if acc.peak_lmax > 30.0 {
+            band_faint.add_event(acc.flight_weight, alt_w_sum, cls, weight);
+            if acc.peak_lmax > 45.0 {
+                band_audible.add_event(acc.flight_weight, alt_w_sum, cls, weight);
+                if acc.peak_lmax > 60.0 {
+                    band_disruptive.add_event(acc.flight_weight, alt_w_sum, cls, weight);
+                }
+            }
+        }
+    }
+
+    // Cruise band counters routed via the dedicated cruise dedup table —
+    // `cruise.rs::scatter` populated `cruise_band_stats` per band so a
+    // single transit crossing many R7 cells counts once per band.
+    for (band, cruise) in [&mut band_faint, &mut band_audible, &mut band_disruptive]
+        .into_iter()
+        .zip(cruise_band_stats.iter())
+    {
+        band.count += cruise.count;
+        band.alt_sum += cruise.alt_sum;
+        for k in 0..aircraft::NUM_CLASSES {
+            band.class_counts[k] += cruise.class_counts[k];
+        }
+    }
+
+    let airborne_periods = if airborne_energy.iter().sum::<f64>() > 0.0 {
+        let ld = aircraft::period_leq(airborne_energy[0], n_days_f, aircraft::PERIOD_SECONDS[0]);
+        let le = aircraft::period_leq(airborne_energy[1], n_days_f, aircraft::PERIOD_SECONDS[1]);
+        let ln = aircraft::period_leq(airborne_energy[2], n_days_f, aircraft::PERIOD_SECONDS[2]);
+        periods::periods(ld, le, ln)
+    } else {
+        NoisePeriods::silence()
+    };
+
+    let observed_flights_per_day: f64 = flights
+        .values()
+        .filter(|f| !f.is_cruise && f.period_energy.iter().sum::<f64>() > 0.0)
+        .map(|f| f.flight_weight / n_days_f)
+        .sum();
+    // Cruise transits seen at this receiver, real-fid deduped (count
+    // passed in by `compute_aircraft_v6` from `cruise_flight_stats`).
+    // Distinct from `observed_flights_per_day` (airborne only). Acts as
+    // a context counter for the Lmax band rows: cruise transits whose
+    // `peak_lmax` crosses 30/45/60 dB inflate band counts above the
+    // airborne flight count, and naming the cruise total separately
+    // makes that delta legible. (Below-threshold cruise transits are
+    // included here but don't enter the bands — the row is therefore
+    // an upper bound on the cruise contribution, not an exact remainder.)
+    let cruise_transits_per_day = cruise_transit_count as f64 / n_days_f;
+
+    let total_airborne_energy: f64 = airborne_energy.iter().sum();
+    let top_flights = build_top_flights(flights, top_flight_candidates, total_airborne_energy);
+
+    let (top_day_energy_share, top_day_date) = energy_by_day
+        .iter()
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .filter(|_| total_airborne_energy > 0.0)
+        .map(|(&day, &e)| (e / total_airborne_energy, date_from_unix(day * 86_400)))
+        .unwrap_or((0.0, String::new()));
+    let top_flight_energy_share = if total_airborne_energy > 0.0 {
+        max_flight_energy / total_airborne_energy
+    } else {
+        0.0
+    };
+
+    let to_band = |band: &BandStats| AircraftEventBandStats {
+        observed_events_per_day: band.count / n_days_f,
+        avg_altitude_m: if band.count > 0.0 {
+            band.alt_sum / band.count
+        } else {
+            0.0
+        },
+        top_aircraft: band.top_type().to_string(),
+    };
+    let detail = AircraftAirborneDetail {
+        periods: airborne_periods.clone(),
+        observed_flights_per_day,
+        helicopter_flights_per_day: helicopter_count,
+        cruise_transits_per_day,
+        lmax_peak: if global_peak_lmax > -900.0 {
+            Some(global_peak_lmax)
+        } else {
+            None
+        },
+        faint: to_band(&band_faint),
+        audible: to_band(&band_audible),
+        disruptive: to_band(&band_disruptive),
+        top_day_energy_share: round3(top_day_energy_share),
+        top_day_date,
+        top_flight_energy_share: round3(top_flight_energy_share),
+        sample_days: n_days_f as u32,
+        ga_sample_days: ga_n_days_f as u32,
+        top_flights,
+    };
+
+    (airborne_periods, detail)
+}
+
+/// Top-N flights by `peak_lmax` interleaving airborne (`flights`,
+/// real fid) and cruise (`cruise_candidates`, real fid). Bounded
+/// insertion sort so a busy airport doesn't pay the full `O(n log n)`.
+/// Cruise rows show `energy_pct = 0` because the bucket aggregates many
+/// real fids and per-fid energy split would be artificial.
+fn build_top_flights(
+    flights: &HashMap<u64, FlightAccum>,
+    cruise_candidates: &HashMap<u64, TopFlightCandidate>,
+    total_airborne_energy: f64,
+) -> Vec<AircraftTopFlight> {
+    use std::cmp::Ordering;
+
+    let mut top: Vec<(f64, u64, AircraftTopFlight)> = Vec::with_capacity(TOP_FLIGHTS_N + 1);
+    let mut try_insert = |peak_lmax: f64, fid: u64, entry: AircraftTopFlight| {
+        let pos = top
+            .iter()
+            .position(|(lm, _, _)| peak_lmax > *lm)
+            .unwrap_or(top.len());
+        if pos < TOP_FLIGHTS_N {
+            top.insert(pos, (peak_lmax, fid, entry));
+            top.truncate(TOP_FLIGHTS_N);
+        }
+    };
+
+    for (&fid, acc) in flights.iter() {
+        if acc.is_cruise {
+            continue;
+        }
+        let flight_energy: f64 = acc.period_energy.iter().sum();
+        if flight_energy <= 0.0 || acc.peak_lmax <= -900.0 {
+            continue;
+        }
+        let energy_pct = if total_airborne_energy > 0.0 {
+            flight_energy / total_airborne_energy * 100.0
+        } else {
+            0.0
+        };
+        try_insert(
+            acc.peak_lmax,
+            fid,
+            airborne_top_flight_entry(fid, acc, energy_pct),
+        );
+    }
+
+    for (&fid, cand) in cruise_candidates.iter() {
+        if cand.peak_lmax <= -900.0 {
+            continue;
+        }
+        // Same real fid in both maps means the flight had both an
+        // airborne sub-segment encounter and a cruise bucket encounter
+        // in receiver radius — keep the airborne entry (sub-segment-level
+        // granularity, real `energy_pct`) and skip the cruise dup.
+        if flights.contains_key(&fid) {
+            continue;
+        }
+        try_insert(cand.peak_lmax, fid, cruise_top_flight_entry(fid, cand));
+    }
+
+    // Stable total order: descending peak_lmax, ascending fid as final
+    // tiebreak so equal-Lmax + equal-callsign rows don't fall back to
+    // HashMap iteration order.
+    top.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(Ordering::Equal)
+            .then(a.1.cmp(&b.1))
+    });
+
+    top.into_iter().map(|(_, _, e)| e).collect()
+}
+
+fn airborne_top_flight_entry(fid: u64, acc: &FlightAccum, energy_pct: f64) -> AircraftTopFlight {
+    let (icao_hex, start_unix) = crate::flight_id::icao_hex_and_start_unix(fid);
+    let synthetic = start_unix.is_none();
+    AircraftTopFlight {
+        lmax_db: round1(acc.peak_lmax),
+        cpa_distance_m: round1(acc.min_dist_m),
+        altitude_m: round1(acc.peak_altitude_m),
+        period: acc.peak_period,
+        date: date_from_id(acc.peak_date_id),
+        profile: aircraft::PROFILES[aircraft::clamp_profile_idx(acc.profile_idx)]
+            .name
+            .to_string(),
+        aircraft_type: aircraft::typecode_to_string(&acc.aircraft_type),
+        callsign: acc.callsign.clone(),
+        energy_pct: round1(energy_pct),
+        geometry: [
+            [acc.peak_seg_start[0], acc.peak_seg_start[1]],
+            [acc.peak_seg_end[0], acc.peak_seg_end[1]],
+        ],
+        icao_hex,
+        start_unix,
+        synthetic,
+    }
+}
+
+fn cruise_top_flight_entry(fid: u64, cand: &TopFlightCandidate) -> AircraftTopFlight {
+    let (icao_hex, start_unix) = crate::flight_id::icao_hex_and_start_unix(fid);
+    // `date` is the flight's start_unix-derived date (when ADS-B first
+    // saw the flight, ~= takeoff); not the overflight encounter time.
+    // Cruise scatter has no per-encounter timestamp — Stage 2B
+    // aggregates by R7 cell, dropping individual sample timing.
+    let date = start_unix.map(date_from_unix).unwrap_or_default();
+    AircraftTopFlight {
+        lmax_db: round1(cand.peak_lmax),
+        cpa_distance_m: round1(cand.min_dist_m),
+        altitude_m: round1(cand.peak_altitude_m),
+        period: cand.peak_period,
+        date,
+        profile: aircraft::PROFILES[aircraft::clamp_profile_idx(cand.profile_idx)]
+            .name
+            .to_string(),
+        aircraft_type: aircraft::typecode_to_string(&cand.aircraft_type),
+        callsign: cand.callsign.clone(),
+        // Cruise bucket aggregates many real fids; per-fid energy share
+        // would be artificial, so we report 0 instead of fabricating one.
+        energy_pct: 0.0,
+        geometry: [
+            [cand.peak_seg_start[0], cand.peak_seg_start[1]],
+            [cand.peak_seg_end[0], cand.peak_seg_end[1]],
+        ],
+        icao_hex,
+        start_unix,
+        synthetic: start_unix.is_none(),
+    }
+}
+
+#[inline]
+fn round1(v: f64) -> f64 {
+    (v * 10.0).round() / 10.0
+}
+
+#[inline]
+fn round3(v: f64) -> f64 {
+    (v * 1000.0).round() / 1000.0
+}
+
+use super::dates::{date_from_id, date_from_unix};
+
+#[cfg(test)]
+mod tests;
