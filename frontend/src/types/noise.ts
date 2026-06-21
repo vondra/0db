@@ -1,7 +1,7 @@
 // Types matching /api/noise-onfly-v2 response — shared between DetailPopup,
 // App (state) and MapView (prop plumbing).
 
-export interface SourceSummary {
+interface SourceSummary {
   source_type: string
   lden: number | null
   lden_free: number | null
@@ -12,14 +12,14 @@ export interface SourceSummary {
   displayed_count: number
 }
 
-export interface PropagationBaseline {
+interface PropagationBaseline {
   /** Divergence loss at the closest segment (≤ 0). */
   geometric_db: number
   /** G value the engine read from the raster at the closest segment (0..1). */
   ground_factor: number
 }
 
-export interface NoisePeriodsData {
+interface NoisePeriodsData {
   // Engine emits f64::NEG_INFINITY for silent periods → serde_json renders
   // those as JSON null. Use `fmtDb` / `fmtDbValue` from utils/formatters.ts
   // to render — bare `.toFixed(1)` will crash at runtime.
@@ -29,23 +29,23 @@ export interface NoisePeriodsData {
   lden_db: number | null
 }
 
-export interface TerrainBreakdownData {
+interface TerrainBreakdownData {
   delta_m: number
   is_double: boolean
   profile_points: number
 }
 
-export interface ScreeningBreakdownData {
+interface ScreeningBreakdownData {
   building_path_m: number
   obstacle: ScreeningObstacleTrace | null
 }
 
-export interface VegetationBreakdownData {
+interface VegetationBreakdownData {
   forest_depth_m: number
   sampled_path_m: number
 }
 
-export interface ScreeningObstacleTrace {
+interface ScreeningObstacleTrace {
   kind: 'building' | 'barrier' | 'none'
   /** Height of the DOMINANT (max LOS excess) sample — not the leftmost. */
   height_m: number
@@ -64,7 +64,7 @@ export interface ScreeningObstacleTrace {
   edges: ObstacleEdge[]
 }
 
-export interface ObstacleEdge {
+interface ObstacleEdge {
   /** 'terrain' = bare-earth hill (no building/barrier on top at this edge). */
   kind: 'terrain' | 'building' | 'barrier'
   t: number
@@ -86,7 +86,7 @@ export interface DatasetProvenance {
   url: string | null
 }
 
-export interface RoadMetadata {
+interface RoadMetadata {
   kind: 'road'
   aadt_light_raw: number
   aadt_medium_raw: number
@@ -128,7 +128,7 @@ export interface RoadMetadata {
   obstacle_max_segment_idx: number
 }
 
-export interface RailMetadata {
+interface RailMetadata {
   kind: 'rail'
   trains_passenger_raw: number
   trains_freight_raw: number
@@ -161,7 +161,7 @@ export interface RailMetadata {
   obstacle_max_segment_idx: number
 }
 
-export interface BuildingMetadata {
+interface BuildingMetadata {
   kind: 'building'
   height_m: number
   floors: number
@@ -170,7 +170,7 @@ export interface BuildingMetadata {
   address: string
 }
 
-export interface IndustrialMetadata {
+interface IndustrialMetadata {
   kind: 'industrial'
   area_m2: number
   source_type: string
@@ -181,7 +181,7 @@ export interface IndustrialMetadata {
   provenance?: DatasetProvenance | null
 }
 
-export interface AircraftEventBandStats {
+interface AircraftEventBandStats {
   observed_events_per_day: number
   avg_altitude_m: number
   top_aircraft: string
@@ -225,7 +225,7 @@ export interface CruiseHexTopFlight {
   class_name: string
 }
 
-export interface AircraftAirborneDetail {
+interface AircraftAirborneDetail {
   periods: NoisePeriodsData
   observed_flights_per_day: number
   helicopter_flights_per_day: number
@@ -268,7 +268,7 @@ export interface AircraftAirborneDetail {
   top_flights?: AircraftTopFlight[]
 }
 
-export interface AircraftGroundOpsClassDetail {
+interface AircraftGroundOpsClassDetail {
   periods: NoisePeriodsData
   observed_movements_per_day: number | null
   modeled_movements_per_day: number | null
@@ -276,13 +276,13 @@ export interface AircraftGroundOpsClassDetail {
 
 /** Ground-ops profile-mix entry: noise class, its share of linear
  *  received energy, and the ICAO typecode of the class anchor. */
-export interface ProfileMixEntry {
+interface ProfileMixEntry {
   class: number
   share: number
   rep_typecode: string
 }
 
-export interface AircraftGroundOpsDetail {
+interface AircraftGroundOpsDetail {
   periods: NoisePeriodsData
   periods_free: NoisePeriodsData
   observed_movements_per_day: number | null
@@ -331,7 +331,7 @@ export interface AircraftMetadata {
   ground_ops?: AircraftGroundOpsDetail | null
 }
 
-export type SourceMetadata =
+type SourceMetadata =
   | RoadMetadata
   | RailMetadata
   | BuildingMetadata
@@ -387,7 +387,7 @@ export interface NoiseComputeData {
   timings?: PopupTimings | null
 }
 
-export interface PopupTimings {
+interface PopupTimings {
   load_ms: number
   collect_ms: number
   road_ms: number
@@ -414,13 +414,13 @@ export type SegmentKind =
   | 'building'
   | 'industrial'
 
-export interface PerPeriod<T> {
+interface PerPeriod<T> {
   day: T
   evening: T
   night: T
 }
 
-export interface LdenVariants {
+interface LdenVariants {
   full: number
   /** Divergence + atmospheric + ground only, no path effects. */
   free_field: number
@@ -433,7 +433,7 @@ export interface LdenVariants {
   no_atmospheric: number
 }
 
-export interface ForestRun {
+interface ForestRun {
   t_start: number
   t_end: number
   len_m: number
@@ -455,7 +455,7 @@ export interface PathProfileTrace {
   rcv_alt_m: number
 }
 
-export interface BaselineTrace {
+interface BaselineTrace {
   geometric_db: number
   atmospheric_bands: number[]
   ground_factor_g: number
@@ -466,7 +466,7 @@ export interface BaselineTrace {
   reflection_boost_db: number
 }
 
-export interface TerrainTrace {
+interface TerrainTrace {
   delta_m: number
   /** Back-compat flag: true for 2 OR 3 edges. UI should read `n_edges`
    * for the exact count (single / double / triple). */
@@ -487,24 +487,24 @@ export interface TerrainTrace {
   dominant_edge_idx: number
 }
 
-export interface ScreeningTrace {
+interface ScreeningTrace {
   attenuation_bands: number[]
   obstacle: ScreeningObstacleTrace | null
 }
 
-export interface VegetationTrace {
+interface VegetationTrace {
   forest_depth_m: number
   sampled_path_m: number
   attenuation_bands: number[]
   forest_runs: ForestRun[]
 }
 
-export interface GroundTrace {
+interface GroundTrace {
   factor_g: number
   attenuation_bands: number[]
 }
 
-export type EmissionTrace =
+type EmissionTrace =
   | {
       kind: 'road'
       aadt_light: number
@@ -616,11 +616,11 @@ export type EmissionTrace =
  * for surface sources. `Doc29` carries ICAO Doc 29 Eq. 4-8b decomposition
  * for aircraft airborne sub-segments + cruise hexes.
  */
-export type PropagationBreakdown =
+type PropagationBreakdown =
   | { model: 'cnossos' } & CnossosBreakdown
   | { model: 'doc29' } & Doc29Breakdown
 
-export interface CnossosBreakdown {
+interface CnossosBreakdown {
   baseline: BaselineTrace
   path_profile: PathProfileTrace
   terrain: TerrainTrace
@@ -634,7 +634,7 @@ export interface CnossosBreakdown {
   received_bands: PerPeriod<number[]>
 }
 
-export interface Doc29Breakdown {
+interface Doc29Breakdown {
   sel_npd_db: number
   delta_v_db: number
   delta_i_db: number
@@ -650,7 +650,7 @@ export interface Doc29Breakdown {
   cffk_fast_path: boolean
 }
 
-export interface CruiseBucketBreakdown {
+interface CruiseBucketBreakdown {
   class: number
   fl_bin: number
   period: number
