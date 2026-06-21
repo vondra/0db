@@ -10,8 +10,10 @@
 //!
 //! Lifecycle, mirroring `airborne::scatter_tile`'s adaptive near/far split but on the GPU:
 //!   1. [`AirborneGpu::new`] — load the PTX + upload the NPD LUTs ONCE (device-global).
-//!   2. [`AirborneGpu::load_region`] — `prepare_segment`'d candidates → device SoA, ONCE per R4.
-//!   3. [`AirborneGpu::scatter_tile`] / [`AirborneGpu::scatter_region`] — classify → near +
+//!   2. [`AirborneGpu::upload_region`] (production: SoA packed on the prep thread) or [`load_region`]
+//!      (the `e2-airborne` validator: packs on-device) — candidates → device SoA, ONCE per R4.
+//!   3. [`AirborneGpu::scatter_region`] (production, whole tile-block) / [`AirborneGpu::scatter_tile`]
+//!      (validator, per-tile byte-exact reference) — classify → near +
 //!      far kernels → host bilinear expand → one `TileAccumulator` per tile.
 
 use std::sync::Arc;
@@ -285,6 +287,9 @@ pub struct AirborneGpu {
     /// `NUM_CLASSES`-length GA hybrid weight LUT (f32). The kernel scales
     /// each sub-seg's energy by `d_w[class]` (`ga-365d-hybrid-plan.md` §2).
     d_w: CudaSlice<f32>,
+    /// Total VRAM (bytes) of this device, queried once at open — the M2 chunked build derives its
+    /// candidate-chunk size from it (no hand-set chunk knob; see `gpu_airborne::max_candidates_per_chunk`).
+    vram_total: u64,
 }
 
 /// One R4's candidate sub-segs, resident on the device (the expensive `prepare_segment` +
@@ -364,6 +369,12 @@ impl AirborneGpu {
             )
             .expect("upload class weights");
         dev.synchronize().expect("npd + weights upload sync");
+        // Total VRAM, queried once (the context is current after `new_with_stream`) — the M2 chunked
+        // build derives its candidate-chunk size from it. Fall back to the 11 GB fleet floor if the
+        // query fails, so the chunk is always sized conservatively.
+        let vram_total = cudarc::driver::result::mem_get_info()
+            .map(|(_free, total)| total as u64)
+            .unwrap_or(11 << 30);
         Self {
             dev,
             f_near,
@@ -374,7 +385,15 @@ impl AirborneGpu {
             f_classify_scatter,
             d_npd,
             d_w,
+            vram_total,
         }
+    }
+
+    /// Total VRAM (bytes) of this device (queried once at open). The M2 chunked build sizes its
+    /// candidate chunk from this — a bigger card takes fewer passes — mirroring how
+    /// `default_batch_size` derives the tile batch from L3, so there's no hand-set chunk knob.
+    pub fn vram_total_bytes(&self) -> u64 {
+        self.vram_total
     }
 
     /// Pack + upload a region's candidate sub-segs to the device (ONCE per R4). The returned
@@ -598,9 +617,10 @@ impl AirborneGpu {
         //    near_off), blocks 1/2/3 = per-tile far-level base offset. Totals size the buffers.
         //    Accumulate in i64 and assert each block-wide total stays < i32::MAX: that keeps
         //    every device-side offset / scatter `pos` / far-entry `nfar` (all i32) sound — a
-        //    dense megaregion whose far[2] list crosses 2^31 entries (and ~16 GB of VRAM) is the
-        //    pending M2 work (split the region's candidates into VRAM-sized passes, accumulate
-        //    additively); fail loudly here rather than silently wrap an i32 into an OOB write.
+        //    dense megaregion whose far[2] list crosses 2^31 entries (and ~16 GB of VRAM) is what the
+        //    M2 chunked build handles — failing loudly HERE is its trigger: `is_cell_unbuildable`
+        //    catches this `RegionTooDense` and routes the cell to `gpu_build_cell_chunked` (VRAM-sized
+        //    passes, additive accumulation). Never silently wrap an i32 into an OOB write.
         let t1 = t + 1;
         let mut off = vec![0i32; 4 * t1];
         let mut total = [0usize; 4];
