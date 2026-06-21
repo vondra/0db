@@ -11,7 +11,7 @@
 
 import { mkdirSync, existsSync, writeFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { decompress } from 'fzstd'
+import { brotliDecompressSync } from 'node:zlib'
 
 const RATE_LIMIT_MS = 1200
 const PHOTO_RATE_MS = 300
@@ -214,28 +214,17 @@ function loadTotalTile(tx: number, ty: number): Uint8Array | null {
   // Bail (tile -> null, those properties get noise=null) on any format drift
   // rather than silently mis-sampling, mirroring the frontend HM3 decoder.
   const bail = () => { totalTileCache.set(key, null); return null }
-  const buf = readFileSync(path)
-  if (buf.length < 20 || buf.toString('ascii', 0, 4) !== 'HM3 ') return bail()
-  if (buf.readUInt8(4) !== 1 || buf.readUInt16LE(8) !== TILE_PX || buf.readUInt8(11) !== 1) return bail()
-  const isDense = (buf.readUInt8(7) & 1) !== 0
-  const payloadLen = buf.readUInt32LE(16)
-  const body = decompress(new Uint8Array(buf.buffer, buf.byteOffset + 20, payloadLen))
-
-  const cells = new Uint8Array(TILE_PX * TILE_PX).fill(NO_DATA)
-  if (isDense) {
-    if (body.length < TILE_PX * TILE_PX) return bail()
-    cells.set(body.subarray(0, TILE_PX * TILE_PX))
-  } else {
-    if (body.length < 32) return bail()
-    const mask = body.subarray(0, 32)
-    let off = 32
-    for (let py = 0; py < TILE_PX; py++) {
-      if ((mask[py >> 3] & (1 << (py & 7))) === 0) continue
-      if (off + TILE_PX > body.length) return bail()
-      cells.set(body.subarray(off, off + TILE_PX), py * TILE_PX)
-      off += TILE_PX
-    }
+  // HM3 v2: the whole file is one Brotli stream of magic+version+source_id+cells.
+  let raw: Buffer
+  try {
+    raw = brotliDecompressSync(readFileSync(path))
+  } catch {
+    return bail()
   }
+  if (raw.length !== 6 + TILE_PX * TILE_PX || raw.toString('ascii', 0, 4) !== 'HM3 ' || raw.readUInt8(4) !== 2) {
+    return bail()
+  }
+  const cells = raw.subarray(6) // 256×256 cells; 255 = NO_DATA
   totalTileCache.set(key, cells)
   return cells
 }
