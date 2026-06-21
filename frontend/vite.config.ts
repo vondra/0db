@@ -5,10 +5,6 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // The HM3 compositor worker imports the decoder (which lazy-imports fzstd), so
-  // its bundle is code-split — that needs ES module format (Vite's default
-  // 'iife' worker format can't do code-splitting).
-  worker: { format: 'es' },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
