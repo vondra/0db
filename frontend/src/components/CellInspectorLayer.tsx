@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Source, Layer, useMap } from 'react-map-gl/maplibre'
 import { HEATMAP_LAYERS } from './HeatmapV3Overlay'
+import { lngLatToTile, tileXToLng, tileYToLat } from '../lib/tile-math'
 
 const TILE_SIZE = 64
 const CELL_STEP_DEG = 1 / 3600
@@ -200,22 +201,12 @@ function renderLines(values: Partial<Record<DataLayer, number | null>>): ReactNo
   return rows
 }
 
-function lngLatToTile(lng: number, lat: number, z: number): { x: number; y: number } {
-  const n = Math.pow(2, z)
-  const latRad = (lat * Math.PI) / 180
-  return {
-    x: Math.floor(((lng + 180) / 360) * n),
-    y: Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n),
-  }
-}
-
 function tileBbox(z: number, x: number, y: number) {
-  const n = Math.pow(2, z)
   return {
-    lonWest: (x / n) * 360 - 180,
-    lonEast: ((x + 1) / n) * 360 - 180,
-    latNorth: (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / n))) * 180) / Math.PI,
-    latSouth: (Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + 1)) / n))) * 180) / Math.PI,
+    lonWest: tileXToLng(x, z),
+    lonEast: tileXToLng(x + 1, z),
+    latNorth: tileYToLat(y, z),
+    latSouth: tileYToLat(y + 1, z),
   }
 }
 
