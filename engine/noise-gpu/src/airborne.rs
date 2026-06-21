@@ -80,7 +80,38 @@ pub fn region_candidates(
     r4: u64,
     zoom: u8,
 ) -> Vec<(SegmentPrepared, u8)> {
-    let cell = CellIndex::try_from(r4).expect("valid R4 cell");
+    // The unbounded case of `for_each_region_chunk`: one chunk = every candidate. usize::MAX is
+    // never reached, so `f` fires once at the end and we MOVE the buffer out (no per-element clone).
+    let mut out = Vec::new();
+    for_each_region_chunk(views, r4, zoom, usize::MAX, |chunk| {
+        if out.is_empty() {
+            out = chunk;
+        } else {
+            out.extend(chunk);
+        }
+        Ok(())
+    })
+    .expect("region_candidates closure is infallible");
+    out
+}
+
+/// Build the region's candidate sub-segs in BOUNDED chunks, invoking `f` once per chunk of at most
+/// `max_per_chunk` candidates (passed BY VALUE so the caller packs+uploads it, then the buffer is
+/// reused for the next chunk → host RAM stays one chunk, not the whole Vec). Same envelope +
+/// ground-stale filter + `prepare_segment` as [`region_candidates`] (which IS this, unbounded) — so
+/// chunked and one-pass classify the SAME candidates; summing each chunk's per-tile energy
+/// (`TileAccumulator::merge_from`, additive in the linear domain) reconstructs the one-pass result.
+/// This is M2: the ~5 densest megahub cells whose full candidate Vec is tens of GB (Phoenix:
+/// 308M subsegs ≈ 78 GiB host / >24 GB VRAM) build in VRAM/host-sized passes on ANY card, instead
+/// of OOM-crashing or being `RegionTooDense`-skipped. `f`'s error aborts the walk.
+pub fn for_each_region_chunk(
+    views: &[AirborneRowView<'_>],
+    r4: u64,
+    zoom: u8,
+    max_per_chunk: usize,
+    mut f: impl FnMut(Vec<(SegmentPrepared, u8)>) -> Result<()>,
+) -> Result<()> {
+    let cell = CellIndex::try_from(r4).context("valid R4 cell")?;
     let (mut s, mut n, mut w, mut e) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
     for ll in cell.boundary().iter() {
         s = s.min(ll.lat());
@@ -105,7 +136,14 @@ pub fn region_candidates(
     let env_min_lon = (w - pad_lon) as f32;
     let env_max_lon = (e + pad_lon) as f32;
 
-    let mut out = Vec::new();
+    // Pre-size the buffer to a bounded chunk (so a pass fills without re-allocating); for the
+    // unbounded `region_candidates` case grow from small — NOT a 16M pre-alloc on every tiny cell.
+    let cap = if max_per_chunk >= (1 << 28) {
+        4096
+    } else {
+        max_per_chunk
+    };
+    let mut buf: Vec<(SegmentPrepared, u8)> = Vec::with_capacity(cap);
     for v in views {
         let bb = &v.bbox;
         if bb.max_lat < env_min_lat || bb.min_lat > env_max_lat {
@@ -150,10 +188,16 @@ pub fn region_candidates(
                 continue;
             }
             let prepared = prepare_segment(&seg, start_elev - 30.0, end_elev - 30.0);
-            out.push((prepared, seg.period));
+            buf.push((prepared, seg.period));
+            if buf.len() >= max_per_chunk {
+                f(std::mem::replace(&mut buf, Vec::with_capacity(cap)))?;
+            }
         }
     }
-    out
+    if !buf.is_empty() {
+        f(buf)?;
+    }
+    Ok(())
 }
 
 /// Per-tile classify (CHEAP — no prepare_segment): which region candidates are near / far[level]

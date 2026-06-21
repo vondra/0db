@@ -25,7 +25,9 @@ use heatmap_aircraft::region_runner::{morton_order, region_tiles, tile_centre_r4
 use heatmap_aircraft::wire_hm3::{collapse_lden_u8, write_tile, SOURCE_ID_AIRCRAFT};
 use heatmap_aircraft::worklist::{any_source_arrow, resolve_n_days};
 use noise_compute::emission::aircraft::SegmentPrepared;
-use noise_gpu::airborne::{is_cell_unbuildable, region_candidates, AirborneGpu, RegionTooDense};
+use noise_gpu::airborne::{
+    for_each_region_chunk, is_cell_unbuildable, region_candidates, AirborneGpu,
+};
 use noise_gpu::pack_airborne_segs;
 use raster_reader::fused_tile_z13::{default_batch_size, FusedTileZ13, TileBatch};
 use raster_reader::RealRasters;
@@ -37,6 +39,25 @@ const SEL: SourceSel = SourceSel {
     airborne: true,
     traffic: false,
 };
+
+/// M2 chunk size: max candidate sub-segs uploaded per VRAM pass for a too-big cell. The COST that
+/// dominates the chunked build is the per-pass × per-block `scatter_region` calls (Phoenix at 16M =
+/// ~20 passes × ~31 blocks = ~620 launches+syncs+copybacks — the actual ~20-min wall, NOT the ~90 s
+/// CPU prep; /gg 2026-06-21 Codex+Gemini). So size the chunk as LARGE as the smallest target card's
+/// VRAM allows → fewest passes: 64M ≈ a 5 GB SoA (~80 B/cand) + one tile-block's scatter scratch
+/// (far-list ≤ 64M×batch_n² = 256M < i32::MAX, ~2 GB) ≈ 7 GB, inside the 11 GB 2080ti / 12 GB 5070,
+/// and cuts Phoenix to ~5 passes (~155 launches). Host peak ≈ 208 B/cand → ~13 GB at 64M (fits 60 GB
+/// boxes). Each pass's per-tile energy is `merge_from`-summed (additive) into the running
+/// accumulators, reconstructing the one-pass result on ANY card. Tunable via `NOISE_GPU_AIRBORNE_CHUNK`
+/// (raise on a bigger-VRAM card; lower to force many passes when parity-testing the accumulation).
+const DEFAULT_CHUNK: usize = 64_000_000;
+fn max_candidates_per_chunk() -> usize {
+    std::env::var("NOISE_GPU_AIRBORNE_CHUNK")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_CHUNK)
+}
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -274,11 +295,14 @@ struct PreparedCell {
     nreg: usize,
     blocks: Vec<PrepBlock>,
     t_start: Instant,
+    /// M2: the region's full candidate Vec wouldn't fit one host/VRAM pass, so prep produced NO SoA
+    /// — the GPU stage rebuilds + builds this cell CHUNKED (`gpu_build_cell_chunked`) instead. Set
+    /// only for the ~5 densest megahubs; every other cell stays the one-pass A2 fast path.
+    too_big: bool,
 }
 
 /// (memory.max, memory.current) of this process's cgroup-v2 scope, in bytes — the live memcap
-/// budget the memcap wrapper set. None if unreadable or unlimited ("max"), in which case the
-/// caller skips the guard (no cap to respect).
+/// budget the memcap wrapper set. None if unreadable or unlimited ("max").
 fn cgroup_mem() -> Option<(u64, u64)> {
     let cg = std::fs::read_to_string("/proc/self/cgroup").ok()?; // "0::/user.slice/…/run-XXX.scope"
     let rel = cg.lines().find_map(|l| l.strip_prefix("0::"))?.trim();
@@ -291,6 +315,68 @@ fn cgroup_mem() -> Option<(u64, u64)> {
         .parse::<u64>()
         .ok()?;
     Some((max, cur))
+}
+
+/// Read a `/proc/meminfo` "Key:   N kB" line as bytes.
+fn meminfo_bytes(mi: &str, key: &str) -> Option<u64> {
+    mi.lines()
+        .find_map(|l| l.strip_prefix(key))
+        .and_then(|r| r.trim().strip_suffix(" kB"))
+        .and_then(|n| n.trim().parse::<u64>().ok())
+        .map(|kb| kb * 1024)
+}
+
+/// Host-memory budget (max, current) in bytes for the region-Vec guard: the cgroup memcap when the
+/// engine runs under one, ELSE physical RAM from `/proc/meminfo` (`MemTotal` as the cap, `MemTotal
+/// − MemAvailable` as current — `MemAvailable` already discounts reclaimable page cache, e.g. the
+/// scratch arrows, so it is the genuinely-used floor). The fallback is the fix for the 2026-06-21
+/// SIGABRT crash: a vast docker container's `memory.max` is often "max" (unlimited), so `cgroup_mem`
+/// returned None and `prep_cell` SKIPPED the guard entirely → a megahub's tens-of-GB `region` Vec
+/// exhausted physical RAM → Rust alloc abort (an UNcatchable SIGABRT that crash-loops the worker,
+/// sealing nothing). Guarding against physical RAM makes a too-big cell graceful-skip
+/// (`RegionTooDense` → `fail`) on ANY box, capped or not.
+fn host_mem_budget() -> Option<(u64, u64)> {
+    if let Some(cg) = cgroup_mem() {
+        return Some(cg);
+    }
+    let mi = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let total = meminfo_bytes(&mi, "MemTotal:")?;
+    let avail = meminfo_bytes(&mi, "MemAvailable:")?;
+    Some((total, total.saturating_sub(avail)))
+}
+
+/// Pre-fault the tiles' DEM footprint, then batch them into grid-aligned DEM-only blocks
+/// (`build_receiver_altitude_only`: airborne reads only `rx_alt_m`, so skip building/forest/imd +
+/// the halo a full build computes). The block topology (which z13 tiles land in which batch, and
+/// each batch's receiver-altitude grid) is built ONE way for BOTH the one-pass prep (`prep_cell`)
+/// and the M2 chunked build (`gpu_build_cell_chunked`) — CLAUDE.md one source of truth: a divergence
+/// here would scatter the chunked megahubs against a different receiver grid than the one-pass cells.
+fn build_dem_blocks(rasters: &RealRasters, z: u8, bn: u32, tiles: &[(u32, u32)]) -> Vec<PrepBlock> {
+    let (mut ps, mut pn, mut pw, mut pe) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+    for &(tx, ty) in tiles {
+        let bb = tile_bbox(z, tx, ty);
+        ps = ps.min(bb.south_lat);
+        pn = pn.max(bb.north_lat);
+        pw = pw.min(bb.west_lon);
+        pe = pe.max(bb.east_lon);
+    }
+    rasters.preload_dem_bbox(ps, pn, pw, pe);
+    let mut batches: BTreeMap<(u32, u32), Vec<(u32, u32)>> = BTreeMap::new();
+    for &(tx, ty) in tiles {
+        batches
+            .entry(((tx / bn) * bn, (ty / bn) * bn))
+            .or_default()
+            .push((tx, ty));
+    }
+    batches
+        .into_iter()
+        .map(|((bx, by), btiles)| PrepBlock {
+            bx,
+            by,
+            batch: TileBatch::build_receiver_altitude_only(z, bx, by, bn, rasters),
+            btiles,
+        })
+        .collect()
 }
 
 /// CPU prep stage for one cell (no GPU/device touch): load its grid_disk(1) airborne sources
@@ -320,6 +406,7 @@ fn prep_cell(
             nreg: 0,
             blocks: Vec::new(),
             t_start,
+            too_big: false,
         });
     }
     // Load the region's grid_disk(1) airborne sources (Arc'd — held only for this function's
@@ -332,29 +419,42 @@ fn prep_cell(
     let views: Vec<_> = arcs.iter().flat_map(|a| a.airborne.views()).collect();
     // HOST-memory guard (the host analog of `scatter_region`'s VRAM `RegionTooDense`): the ~5
     // densest megahub cells build a `region` Vec of tens of GB that spikes the engine past its
-    // cgroup MemoryMax → an uncatchable cgroup SIGKILL that crash-loops the worker. Estimate the
-    // Vec's peak host bytes from the total sub-segment count (its element upper bound) BEFORE
-    // allocating it; if it wouldn't fit the live memcap, return RegionTooDense — the SAME
-    // graceful per-cell skip path the VRAM limit uses (run_stream reports `fail`, hub leaves the
-    // cell uncomputed; accepted for ~5 cells). When there is no cgroup cap (local dev) the guard
-    // is skipped entirely. Conservative by design (×2 for the construction peak + the packed SoA
-    // built from it, +4 GiB for the prep-ahead overlap cell): err toward skipping a borderline
-    // cell, since a skipped cell is uncomputed (accepted) but a host OOM crash-loops (not).
-    if let Some((max, cur)) = cgroup_mem() {
+    // memory budget → an uncatchable cgroup SIGKILL (capped) or Rust alloc SIGABRT (uncapped) that
+    // crash-loops the worker. Estimate the Vec's peak host bytes from the total sub-segment count
+    // (its element upper bound) BEFORE allocating it; if it wouldn't fit the live budget, return
+    // RegionTooDense — the SAME graceful per-cell skip path the VRAM limit uses (run_stream reports
+    // `fail`, hub leaves the cell uncomputed; accepted for ~5 cells). The budget is the cgroup
+    // memcap when capped, else physical RAM (`host_mem_budget` — the fix for the SIGABRT a vast
+    // box's unlimited container `memory.max` used to cause). Conservative (×2 for the construction
+    // peak + the packed SoA built from it, +4 GiB for the prep-ahead overlap cell): err toward
+    // skipping a borderline cell, since a skipped cell is uncomputed (accepted) but an OOM crashes.
+    if let Some((max, cur)) = host_mem_budget() {
         let n_sub: usize = views.iter().map(|v| v.sub_segments.start_lat.len()).sum();
         let est = (n_sub as u64)
             .saturating_mul(std::mem::size_of::<(SegmentPrepared, u8)>() as u64)
             .saturating_mul(2);
         if cur.saturating_add(est).saturating_add(4 << 30) > max {
-            return Err(RegionTooDense(format!(
-                "region ~{} GiB for {} sub-segs would exceed host memcap (cur {} + est > max {}) \
-                 — skipping",
+            // M2: too big for ONE host pass → don't skip, build CHUNKED. Return a lightweight marker
+            // (no SoA packed) so the GPU stage re-loads the region + builds it in VRAM-sized passes
+            // (`gpu_build_cell_chunked`). The chunked path's host peak is the source Arcs + one
+            // chunk, so it fits ANY box — this guard now routes, it no longer leaves cells uncomputed.
+            eprintln!(
+                "cell {r4:x}: region ~{} GiB for {} sub-segs exceeds one-pass host budget \
+                 (cur {} + est > max {}) — building CHUNKED",
                 est >> 30,
                 n_sub,
                 cur >> 30,
                 max >> 30
-            ))
-            .into());
+            );
+            return Ok(PreparedCell {
+                sll: Vec::new(),
+                sf: Vec::new(),
+                si: Vec::new(),
+                nreg: 0,
+                blocks: Vec::new(),
+                t_start,
+                too_big: true,
+            });
         }
     }
     let region = region_candidates(&views, r4, z);
@@ -366,37 +466,9 @@ fn prep_cell(
     drop(views);
     drop(arcs);
 
-    // Pre-fault this region's DEM footprint so the per-tile build doesn't serialise on mmap page
-    // faults (mirrors region_runner::preload_region). DEM-only: airborne consumes only rx_alt_m.
-    let (mut ps, mut pn, mut pw, mut pe) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
-    for &(tx, ty) in tiles {
-        let bb = tile_bbox(z, tx, ty);
-        ps = ps.min(bb.south_lat);
-        pn = pn.max(bb.north_lat);
-        pw = pw.min(bb.west_lon);
-        pe = pe.max(bb.east_lon);
-    }
-    rasters.preload_dem_bbox(ps, pn, pw, pe);
-
-    // Batch the region's tiles into grid-aligned blocks. DEM-only (build_receiver_altitude_only): airborne
-    // reads only rx_alt_m, so skip sampling building/forest/imd + the halo the full build would compute.
-    let mut batches: BTreeMap<(u32, u32), Vec<(u32, u32)>> = BTreeMap::new();
-    for &(tx, ty) in tiles {
-        batches
-            .entry(((tx / bn) * bn, (ty / bn) * bn))
-            .or_default()
-            .push((tx, ty));
-    }
-    let mut blocks = Vec::with_capacity(batches.len());
-    for ((bx, by), btiles) in batches {
-        let batch = TileBatch::build_receiver_altitude_only(z, bx, by, bn, rasters);
-        blocks.push(PrepBlock {
-            bx,
-            by,
-            btiles,
-            batch,
-        });
-    }
+    // Pre-fault the DEM footprint + batch the tiles into DEM-only blocks (shared with the M2 chunked
+    // build — one source of truth for the block topology, see `build_dem_blocks`).
+    let blocks = build_dem_blocks(rasters, z, bn, tiles);
     Ok(PreparedCell {
         sll,
         sf,
@@ -404,7 +476,35 @@ fn prep_cell(
         nreg,
         blocks,
         t_start,
+        too_big: false,
     })
+}
+
+/// Collapse one tile's accumulator to Lden bytes and write it — or, if the (re)build shrank the tile
+/// to silence, unlink any stale prior tile so an incremental recombine/pyramid can't read phantom
+/// energy (mirrors the CPU builder). Returns whether a tile was written. One source of truth for the
+/// write + stale-unlink, shared by the one-pass (`gpu_build_cell`) and M2 chunked builds.
+fn write_tile_accumulator(
+    args: &Args,
+    n_days: u16,
+    tx: u32,
+    ty: u32,
+    accum: &TileAccumulator,
+) -> Result<bool> {
+    let out = args
+        .output
+        .join(args.zoom.to_string())
+        .join(tx.to_string())
+        .join(format!("{ty}.bin"));
+    let cells = collapse_lden_u8(accum, n_days as f64);
+    if write_tile(&out, &cells, SOURCE_ID_AIRCRAFT, !args.write_empty)? > 0 {
+        Ok(true)
+    } else {
+        if out.exists() {
+            std::fs::remove_file(&out).with_context(|| format!("rm stale {}", out.display()))?;
+        }
+        Ok(false)
+    }
 }
 
 /// GPU build stage for one prepped cell (the only device-touching half): upload the region SoA
@@ -439,21 +539,92 @@ fn gpu_build_cell(
         // per tile, then the shared write below.
         let accums: Vec<TileAccumulator> = gpu.scatter_region(&resident, &tile_refs)?;
         for (&(tx, ty), accum) in block.btiles.iter().zip(accums.iter()) {
-            let out = args
-                .output
-                .join(args.zoom.to_string())
-                .join(tx.to_string())
-                .join(format!("{ty}.bin"));
-            let cells = collapse_lden_u8(accum, n_days as f64);
-            if write_tile(&out, &cells, SOURCE_ID_AIRCRAFT, !args.write_empty)? > 0 {
+            if write_tile_accumulator(args, n_days, tx, ty, accum)? {
                 written += 1;
             } else {
-                // Re-run shrank this tile to silence — unlink any stale prior tile so an
-                // incremental recombine/pyramid can't read phantom energy (mirrors CPU builder).
-                if out.exists() {
-                    std::fs::remove_file(&out)
-                        .with_context(|| format!("rm stale {}", out.display()))?;
-                }
+                skipped += 1;
+            }
+        }
+    }
+    Ok((written, skipped))
+}
+
+/// M2 chunked build (the fallback for a cell whose full region won't fit one host/VRAM pass): build
+/// the cell in `MAX_CANDIDATES_PER_CHUNK`-sized candidate passes, summing each pass's per-tile energy
+/// into running accumulators (`TileAccumulator::merge_from` — additive in the linear domain, so the
+/// sum reconstructs the one-pass result), then write once. Unlike the A2 fast path this re-loads the
+/// region's sources HERE (the GPU thread's own cache), since a too-big cell never crossed the prep
+/// channel with a packed SoA — accepted: it's the ~5 densest cells of 44k, so the lost prep-ahead is
+/// noise. Bounds host RAM to the source Arcs + one chunk's candidates, and VRAM to one chunk's SoA +
+/// a block's scatter scratch — so even the 11 GB 2080ti / a 16 GB card builds Phoenix. Routed to by
+/// BOTH triggers: `prep_cell`'s host-budget guard (`too_big`) and a one-pass VRAM limit
+/// (`is_cell_unbuildable` from `gpu_build_cell`).
+fn gpu_build_cell_chunked(
+    gpu: &AirborneGpu,
+    cache: &mut R4SourceCache,
+    rasters: &RealRasters,
+    args: &Args,
+    n_days: u16,
+    z: u8,
+    bn: u32,
+    r4: u64,
+    tiles: &[(u32, u32)],
+) -> Result<(usize, usize)> {
+    // `tiles` is the cell's owned-tile worklist (passed in, NOT recomputed) so a dev `--bbox`/
+    // `--tile-x` subset that falls through to the chunked path builds the SAME tiles the one-pass
+    // path would — production passes `region_tiles(r4,z)` (the whole cell), so it's unchanged there.
+    if tiles.is_empty() {
+        return Ok((0, 0));
+    }
+    // Load the region's grid_disk(1) airborne sources (held for the whole chunk loop, since every
+    // chunk re-reads them — the cheap part; the expensive candidate Vec is what we chunk).
+    let cell = CellIndex::try_from(r4)?;
+    let mut arcs = Vec::with_capacity(7);
+    for nbr in cell.grid_disk::<Vec<_>>(1) {
+        arcs.push(cache.get_or_load(u64::from(nbr))?);
+    }
+    let views: Vec<_> = arcs.iter().flat_map(|a| a.airborne.views()).collect();
+
+    // DEM tile-blocks (same topology as the one-pass prep, built ONCE here + reused across every
+    // chunk's scatter) + a zeroed running accumulator per owned tile, parallel to each block's `btiles`.
+    let blocks = build_dem_blocks(rasters, z, bn, tiles);
+    let mut running: Vec<Vec<TileAccumulator>> = blocks
+        .iter()
+        .map(|b| b.btiles.iter().map(|_| TileAccumulator::new()).collect())
+        .collect();
+
+    // Chunk loop: each pass uploads its own candidate SoA, scatters every block against it, and
+    // ADDS the result into the running accumulators. The resident drops at the end of the closure
+    // body, freeing the chunk's VRAM before the next pass.
+    for_each_region_chunk(&views, r4, z, max_candidates_per_chunk(), |chunk| {
+        let nreg = chunk.len();
+        let (sll, sf, si) = pack_airborne_segs(&chunk);
+        drop(chunk);
+        let resident = gpu.upload_region(sll, sf, si, nreg)?;
+        for (block, run) in blocks.iter().zip(running.iter_mut()) {
+            let nb = block.batch.batch_n;
+            let tile_refs: Vec<&FusedTileZ13> = block
+                .btiles
+                .iter()
+                .map(|&(tx, ty)| {
+                    &block.batch.tiles[((ty - block.by) * nb + (tx - block.bx)) as usize]
+                })
+                .collect();
+            let accums = gpu.scatter_region(&resident, &tile_refs)?;
+            for (acc_run, acc_chunk) in run.iter_mut().zip(accums.iter()) {
+                acc_run.merge_from(acc_chunk);
+            }
+        }
+        Ok(())
+    })?;
+
+    // Write the accumulated tiles (same collapse + stale-unlink-on-silence as `gpu_build_cell`).
+    let (mut written, mut skipped) = (0usize, 0usize);
+    for (block, run) in blocks.iter().zip(running.iter()) {
+        for (&(tx, ty), accum) in block.btiles.iter().zip(run.iter()) {
+            if write_tile_accumulator(args, n_days, tx, ty, accum)? {
+                written += 1;
+            } else {
                 skipped += 1;
             }
         }
@@ -481,7 +652,19 @@ fn process_region_gpu(
     tiles: &[(u32, u32)],
 ) -> Result<(usize, usize)> {
     let p = prep_cell(rasters, cache, z, bn, r4, tiles)?;
-    gpu_build_cell(gpu, args, n_days, p)
+    if p.too_big {
+        // host-too-big for one pass → M2 chunked build.
+        return gpu_build_cell_chunked(gpu, cache, rasters, args, n_days, z, bn, r4, tiles);
+    }
+    match gpu_build_cell(gpu, args, n_days, p) {
+        // One-pass hit a per-cell VRAM limit (`upload_region` OOM / `RegionTooDense`) → fall back to
+        // the chunked build instead of skipping, so a card too small for the one-pass SoA still
+        // builds the cell. (upload_region OOMs before any tile is written → clean rebuild.)
+        Err(e) if is_cell_unbuildable(&e) => {
+            gpu_build_cell_chunked(gpu, cache, rasters, args, n_days, z, bn, r4, tiles)
+        }
+        other => other,
+    }
 }
 
 /// Shared streaming work queue: (pending Morton-ordered cells, stream-closed flag) under a mutex,
@@ -612,12 +795,48 @@ fn run_stream(args: &Args, z: u8) -> Result<()> {
         let class_weights = &class_weights;
         scope.spawn(move || {
             let gpu = AirborneGpu::new(class_weights);
+            // Own cache + rasters for the M2 chunked fallback (a too-big cell never crossed the prep
+            // channel with a SoA, so the GPU thread re-loads its sources here). Idle for the common
+            // one-pass cells — only the ~5 densest touch it.
+            let mut gpu_cache = R4SourceCache::new(&args.h3r4_dir, args.r4_cache.max(7), SEL);
+            let gpu_rasters = RealRasters::new(&args.prepared_dir);
             for (r4, prepared) in gpu_rx {
                 // ms = prep+build wall time per cell (t_start stamped at the START of prep_cell),
                 // matching the serial `done` line. Read it before gpu_build_cell consumes the cell.
                 let line = match prepared.and_then(|p| {
                     let t_start = p.t_start;
-                    gpu_build_cell(&gpu, args, n_days, p).map(|(w, s)| (w, s, t_start))
+                    // Production stream worklist = the whole cell, so the chunked fallback's `tiles`
+                    // is `region_tiles(r4,z)` (matches what the prep thread built this cell against).
+                    let r = if p.too_big {
+                        gpu_build_cell_chunked(
+                            &gpu,
+                            &mut gpu_cache,
+                            &gpu_rasters,
+                            args,
+                            n_days,
+                            z,
+                            bn,
+                            r4,
+                            &region_tiles(r4, z),
+                        )
+                    } else {
+                        match gpu_build_cell(&gpu, args, n_days, p) {
+                            // one-pass VRAM limit → chunk instead of failing the cell.
+                            Err(e) if is_cell_unbuildable(&e) => gpu_build_cell_chunked(
+                                &gpu,
+                                &mut gpu_cache,
+                                &gpu_rasters,
+                                args,
+                                n_days,
+                                z,
+                                bn,
+                                r4,
+                                &region_tiles(r4, z),
+                            ),
+                            other => other,
+                        }
+                    };
+                    r.map(|(w, s)| (w, s, t_start))
                 }) {
                     Ok((w, s, t_start)) => {
                         format!("done {r4:x} {w} {s} {}", t_start.elapsed().as_millis())
