@@ -1,0 +1,265 @@
+//! GPU build stage for the gpu-airborne bin: scatter a prepped cell's candidate SoA into
+//! per-tile accumulators and write the z13 HM3 tiles. Routes one-pass vs the M2 chunked build,
+//! and exposes `process_region_gpu` (the batch `par_chunks` per-cell prep+build).
+
+use anyhow::{Context, Result};
+use h3o::CellIndex;
+use heatmap_aircraft::accumulator::TileAccumulator;
+use heatmap_aircraft::r4_source_cache::R4SourceCache;
+use heatmap_aircraft::wire_hm3::{collapse_lden_u8, write_tile, SOURCE_ID_AIRCRAFT};
+use noise_gpu::airborne::{for_each_region_chunk, is_cell_unbuildable, AirborneGpu};
+use noise_gpu::pack_airborne_segs;
+use raster_reader::fused_tile_z13::FusedTileZ13;
+use raster_reader::RealRasters;
+
+use crate::prep::{build_dem_blocks, prep_cell, PrepBlock, PreparedCell};
+use crate::Args;
+
+/// M2 candidate-chunk size: how many sub-segs to upload per VRAM pass for a too-big cell, DERIVED
+/// from the card's VRAM (like `default_batch_size` from L3 — no hand-set knob). A chunk's VRAM ≈ its
+/// SoA + one tile-block's scatter scratch — empirically ~7 GB at 64M on the 11 GB fleet floor — so
+/// budget `(vram − 4 GB headroom for the NPD LUTs + sources + scratch) ÷ 117 B/cand`, clamped to keep
+/// the far-list offset (cand × batch_n², batch_n ≤ 4) < 2^31 and the host peak (~208 B/cand) sane. So
+/// an 11 GB card → ~64M (~5 passes for Phoenix's 308M; the wall is the per-pass scatter calls, not
+/// CPU prep — /gg 2026-06-21 Codex+Gemini), a 24 GB card → the 120M cap (~3 passes). Each pass's
+/// per-tile energy is `merge_from`-summed (additive), reconstructing the one-pass result on ANY card.
+/// `NOISE_GPU_AIRBORNE_CHUNK` stays ONLY as a test override (force many small passes to parity-test
+/// the accumulation), not a tuning knob.
+fn max_candidates_per_chunk(vram_total_bytes: u64) -> usize {
+    if let Some(n) = std::env::var("NOISE_GPU_AIRBORNE_CHUNK")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+    {
+        return n;
+    }
+    const HEADROOM: u64 = 4 << 30; // NPD LUTs + sources + scatter scratch + margin
+    const BYTES_PER_CAND: u64 = 117; // measured: 64M ≈ 7 GB usable on the 11 GB floor
+    let usable = vram_total_bytes.saturating_sub(HEADROOM);
+    ((usable / BYTES_PER_CAND) as usize).clamp(8_000_000, 120_000_000)
+}
+
+/// Collapse one tile's accumulator to Lden bytes and write it — or, if the (re)build shrank the tile
+/// to silence, unlink any stale prior tile so an incremental recombine/pyramid can't read phantom
+/// energy (mirrors the CPU builder). Returns whether a tile was written. One source of truth for the
+/// write + stale-unlink, shared by the one-pass (`gpu_build_cell`) and M2 chunked builds.
+fn write_tile_accumulator(
+    args: &Args,
+    n_days: u16,
+    tx: u32,
+    ty: u32,
+    accum: &TileAccumulator,
+) -> Result<bool> {
+    let out = args
+        .output
+        .join(args.zoom.to_string())
+        .join(tx.to_string())
+        .join(format!("{ty}.bin"));
+    let cells = collapse_lden_u8(accum, n_days as f64);
+    if write_tile(&out, &cells, SOURCE_ID_AIRCRAFT, !args.write_empty)? > 0 {
+        Ok(true)
+    } else {
+        if out.exists() {
+            std::fs::remove_file(&out).with_context(|| format!("rm stale {}", out.display()))?;
+        }
+        Ok(false)
+    }
+}
+
+/// The `&FusedTileZ13` receiver-grid refs for a block's owned tiles, in `btiles` order — the index
+/// math `((ty-by)*batch_n + (tx-bx))` that locates each tile in its batch lives ONCE here, shared by
+/// the one-pass and chunked scatter (a divergence would scatter against the wrong receiver grid).
+fn block_tile_refs(block: &PrepBlock) -> Vec<&FusedTileZ13> {
+    let (bx, by, bn) = (block.bx, block.by, block.batch.batch_n);
+    block
+        .btiles
+        .iter()
+        .map(|&(tx, ty)| &block.batch.tiles[((ty - by) * bn + (tx - bx)) as usize])
+        .collect()
+}
+
+/// One zeroed `TileAccumulator` per owned tile, parallel to each block's `btiles` — the running sum a
+/// build folds its candidate chunk(s) into.
+fn new_running(blocks: &[PrepBlock]) -> Vec<Vec<TileAccumulator>> {
+    blocks
+        .iter()
+        .map(|b| b.btiles.iter().map(|_| TileAccumulator::new()).collect())
+        .collect()
+}
+
+/// Upload ONE candidate chunk's SoA, scatter every block against it, and ADD each block's per-tile
+/// energy into `running` (`merge_from` — additive in the linear domain). `resident` drops at function
+/// end, freeing the chunk's VRAM before the caller's next chunk. THE shared scatter core: the
+/// one-pass build folds a single whole-region chunk; the M2 chunked build folds many. An empty SoA is
+/// fine — `scatter_region` fast-paths it to zeros (which still stale-unlink at write).
+fn scatter_chunk_into_running(
+    gpu: &AirborneGpu,
+    blocks: &[PrepBlock],
+    running: &mut [Vec<TileAccumulator>],
+    sll: Vec<f64>,
+    sf: Vec<f32>,
+    si: Vec<i32>,
+    nreg: usize,
+) -> Result<()> {
+    let resident = gpu.upload_region(sll, sf, si, nreg)?;
+    for (block, run) in blocks.iter().zip(running.iter_mut()) {
+        let accums = gpu.scatter_region(&resident, &block_tile_refs(block))?;
+        for (acc_run, acc_chunk) in run.iter_mut().zip(accums.iter()) {
+            acc_run.merge_from(acc_chunk);
+        }
+    }
+    Ok(())
+}
+
+/// Collapse + write every accumulated tile (`write_tile_accumulator`: write, else stale-unlink),
+/// returning (written, skipped). The shared tail of both build paths.
+fn write_running(
+    args: &Args,
+    n_days: u16,
+    blocks: &[PrepBlock],
+    running: &[Vec<TileAccumulator>],
+) -> Result<(usize, usize)> {
+    let (mut written, mut skipped) = (0usize, 0usize);
+    for (block, run) in blocks.iter().zip(running.iter()) {
+        for (&(tx, ty), accum) in block.btiles.iter().zip(run.iter()) {
+            if write_tile_accumulator(args, n_days, tx, ty, accum)? {
+                written += 1;
+            } else {
+                skipped += 1;
+            }
+        }
+    }
+    Ok((written, skipped))
+}
+
+/// GPU build stage for a one-pass (fits-one-pass) cell: fold its single whole-region SoA chunk into
+/// the running accumulators, then write. The one-pass case is just "one chunk" of the same fold+write
+/// the M2 chunked path uses (`scatter_chunk_into_running` + `write_running`) — `merge_from` from a
+/// zeroed accumulator is an exact f32 copy, so output is byte-identical to a direct write. Empty /
+/// silent regions are NOT skipped early: the single (possibly empty) fold zeros + stale-unlinks every
+/// tile (a bare `continue` would leave ghost tiles in an incremental rebuild).
+fn gpu_build_cell(
+    gpu: &AirborneGpu,
+    args: &Args,
+    n_days: u16,
+    p: PreparedCell,
+) -> Result<(usize, usize)> {
+    // No owned tiles (off-grid cell) → nothing to scatter; skip the device upload (matches the serial
+    // path's early Ok((0,0))). A cell WITH tiles but zero candidates still folds its empty SoA below.
+    if p.blocks.is_empty() {
+        return Ok((0, 0));
+    }
+    let mut running = new_running(&p.blocks);
+    scatter_chunk_into_running(gpu, &p.blocks, &mut running, p.sll, p.sf, p.si, p.nreg)?;
+    write_running(args, n_days, &p.blocks, &running)
+}
+
+/// M2 chunked build (the fallback for a cell whose full region won't fit one host/VRAM pass): build
+/// the cell in `MAX_CANDIDATES_PER_CHUNK`-sized candidate passes, summing each pass's per-tile energy
+/// into running accumulators (`TileAccumulator::merge_from` — additive in the linear domain, so the
+/// sum reconstructs the one-pass result), then write once. Unlike the A2 fast path this re-loads the
+/// region's sources HERE (the GPU thread's own cache), since a too-big cell never crossed the prep
+/// channel with a packed SoA — accepted: it's the ~5 densest cells of 44k, so the lost prep-ahead is
+/// noise. Bounds host RAM to the source Arcs + one chunk's candidates, and VRAM to one chunk's SoA +
+/// a block's scatter scratch — so even the 11 GB 2080ti / a 16 GB card builds Phoenix. Routed to by
+/// BOTH triggers: `prep_cell`'s host-budget guard (`too_big`) and a one-pass VRAM limit
+/// (`is_cell_unbuildable` from `gpu_build_cell`).
+fn gpu_build_cell_chunked(
+    gpu: &AirborneGpu,
+    cache: &mut R4SourceCache,
+    rasters: &RealRasters,
+    args: &Args,
+    n_days: u16,
+    z: u8,
+    bn: u32,
+    r4: u64,
+    tiles: &[(u32, u32)],
+) -> Result<(usize, usize)> {
+    // `tiles` is the cell's owned-tile worklist (passed in, NOT recomputed) so a dev `--bbox`/
+    // `--tile-x` subset that falls through to the chunked path builds the SAME tiles the one-pass
+    // path would — production passes `region_tiles(r4,z)` (the whole cell), so it's unchanged there.
+    if tiles.is_empty() {
+        return Ok((0, 0));
+    }
+    // Load the region's grid_disk(1) airborne sources (held for the whole chunk loop, since every
+    // chunk re-reads them — the cheap part; the expensive candidate Vec is what we chunk).
+    let cell = CellIndex::try_from(r4)?;
+    let mut arcs = Vec::with_capacity(7);
+    for nbr in cell.grid_disk::<Vec<_>>(1) {
+        arcs.push(cache.get_or_load(u64::from(nbr))?);
+    }
+    let views: Vec<_> = arcs.iter().flat_map(|a| a.airborne.views()).collect();
+
+    // DEM tile-blocks (same topology as the one-pass prep, built ONCE, reused across chunks) + a
+    // zeroed running accumulator per owned tile.
+    let blocks = build_dem_blocks(rasters, z, bn, tiles);
+    let mut running = new_running(&blocks);
+    // Fold each VRAM-sized candidate chunk into the running accumulators — the SAME scatter core the
+    // one-pass build runs once, here run once per chunk (additive, so the sum = the one-pass result).
+    for_each_region_chunk(
+        &views,
+        r4,
+        z,
+        max_candidates_per_chunk(gpu.vram_total_bytes()),
+        |chunk| {
+            let nreg = chunk.len();
+            let (sll, sf, si) = pack_airborne_segs(&chunk);
+            drop(chunk);
+            scatter_chunk_into_running(gpu, &blocks, &mut running, sll, sf, si, nreg)
+        },
+    )?;
+    write_running(args, n_days, &blocks, &running)
+}
+
+/// Build every owned tile of one region on the GPU (the BATCH `par_chunks` path): CPU-prep then
+/// GPU-build, SERIAL — `prep_cell` + `gpu_build_cell` share the exact code the A2 stream pipeline
+/// splits across two threads, so this path is unchanged in behaviour. `tiles` is the cell's owned
+/// tile list (`region_tiles` for `--regions-file`, a bbox/single-tile subset for the dev modes),
+/// forwarded to `prep_cell` so the dev paths keep their explicit subset; the build-wide
+/// `!any_source_arrow` guard in `main` already returns Ok(()) before any GPU work for a
+/// no-airborne chunk.
+/// Route a prepped cell to its build path: one-pass (`gpu_build_cell`) for the common case, else the
+/// M2 chunked build (`gpu_build_cell_chunked`) when the cell is too big for ONE host pass (`too_big`,
+/// set by `prep_cell`'s host-budget guard) OR hits a one-pass VRAM limit (`is_cell_unbuildable` — a
+/// card too small for the SoA; `upload_region` OOMs before any tile is written → clean rebuild). The
+/// ONE place this two-trigger routing lives, shared by the batch (`process_region_gpu`) and stream
+/// (`run_stream`) paths so the two can't drift.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_prepared_cell(
+    gpu: &AirborneGpu,
+    cache: &mut R4SourceCache,
+    rasters: &RealRasters,
+    args: &Args,
+    n_days: u16,
+    z: u8,
+    bn: u32,
+    r4: u64,
+    p: PreparedCell,
+    tiles: &[(u32, u32)],
+) -> Result<(usize, usize)> {
+    if p.too_big {
+        return gpu_build_cell_chunked(gpu, cache, rasters, args, n_days, z, bn, r4, tiles);
+    }
+    match gpu_build_cell(gpu, args, n_days, p) {
+        Err(e) if is_cell_unbuildable(&e) => {
+            gpu_build_cell_chunked(gpu, cache, rasters, args, n_days, z, bn, r4, tiles)
+        }
+        other => other,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn process_region_gpu(
+    gpu: &AirborneGpu,
+    cache: &mut R4SourceCache,
+    rasters: &RealRasters,
+    args: &Args,
+    z: u8,
+    bn: u32,
+    n_days: u16,
+    r4: u64,
+    tiles: &[(u32, u32)],
+) -> Result<(usize, usize)> {
+    let p = prep_cell(rasters, cache, z, bn, r4, tiles)?;
+    build_prepared_cell(gpu, cache, rasters, args, n_days, z, bn, r4, p, tiles)
+}
