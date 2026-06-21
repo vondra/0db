@@ -52,7 +52,7 @@ function lerpStop(db: number): { rgb: [number, number, number]; op: number } {
 }
 
 /** Interpolated dB → [r, g, b, a] (0-255 each). Sub-floor renders transparent. */
-export function paletteColor(db: number): [number, number, number, number] {
+function paletteColor(db: number): [number, number, number, number] {
   if (!Number.isFinite(db)) return NO_COLOR
   // Sub-floor cells render transparent — see [`STOPS`] header.
   if (db < STOPS[0].db) return NO_COLOR

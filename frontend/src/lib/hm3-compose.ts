@@ -22,7 +22,7 @@ const ENERGY = (() => {
  * in the same encoding, clamped at 254 so the palette saturates instead of
  * wrapping.
  */
-export function sumEnergy(grids: Uint8Array[]): Uint8Array {
+function sumEnergy(grids: Uint8Array[]): Uint8Array {
   const n = grids[0].length
   const out = new Uint8Array(n).fill(NO_DATA)
   for (let i = 0; i < n; i++) {

@@ -7,11 +7,9 @@ edition = "2021"
 osmpbf = "0.3"
 h3o = "0.7"
 arrow = { version = "54", features = ["ipc"] }
-parquet = { version = "54", features = ["arrow"] }
 memmap2 = "0.9"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
-indicatif = "0.17"
 rayon = "1"
 noise-compute = { path = "../noise-compute" }
 

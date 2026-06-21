@@ -26,7 +26,7 @@ const kindMap = (fn: (k: SegmentKind) => boolean): Record<SegmentKind, boolean> 
 
 type UnifiedEntry = { trace: SegmentTrace; sortKey: number }
 
-export function traceKind(t: SegmentTrace): SegmentKind {
+function traceKind(t: SegmentTrace): SegmentKind {
   if (t.kind === 'aircraft') {
     switch (t.aircraft_subtype) {
       case AIRCRAFT_SUBTYPE.GROUND:

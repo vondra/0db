@@ -8,11 +8,9 @@
     "check:sources": "tsx lib/gen-sources-rs.ts && git diff --exit-code --quiet ../engine/noise-compute/src/sources.rs || { echo 'sources.rs is out of date — run npm run gen:sources and commit both files.'; exit 1; }"
   },
   "dependencies": {
-    "@types/proj4": "^2.5.6",
     "apache-arrow": "^21.1.0",
     "csv-parse": "^6.2.1",
     "fzstd": "^0.1.1",
-    "geotiff": "^3.0.5",
     "h3-js": "^4.4.0",
     "proj4": "^2.20.8",
     "shpjs": "^6.2.0",

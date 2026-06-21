@@ -91,7 +91,6 @@ async function main(): Promise<void> {
 
 ## Pipeline integration
 - engine/raster-reader/src/lib.rs reads dem/copernicus/ first, falls back to dem/srtm/
-- server/src/engine/dem-reader.ts does the same for popup-side lookups
 - Dropping newer .hgt tiles in-place is sufficient — no code changes required
 
 ## Reproduction

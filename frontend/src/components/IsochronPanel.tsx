@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Radar } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
-export interface IsochronRequest {
+interface IsochronRequest {
   lat: number
   lng: number
   time: number

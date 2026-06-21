@@ -323,7 +323,7 @@ function setPixel(pixels: Buffer, W: number, x: number, y: number, r: number, g:
   pixels[off] = r; pixels[off + 1] = g; pixels[off + 2] = b; pixels[off + 3] = a
 }
 
-export function tileToLatLonBbox(z: number, x: number, y: number) {
+function tileToLatLonBbox(z: number, x: number, y: number) {
   const n = 2 ** z
   const lonWest = (x / n) * 360 - 180
   const lonEast = ((x + 1) / n) * 360 - 180
@@ -396,7 +396,7 @@ export async function renderTile(layer: LayerId, z: number, x: number, y: number
 
 // 64×64 = 4 KB (u8) / 8 KB (i16) per tile. Matches the PNG bbox so the
 // client can sample by pixel coord from either endpoint interchangeably.
-export const DATA_TILE_SIZE = 64
+const DATA_TILE_SIZE = 64
 
 /**
  * Raw raster values for a map tile — DEM as Int16 big-endian (metres,
@@ -448,7 +448,7 @@ export async function renderDataTile(
   return buf
 }
 
-export function encodePNG(width: number, height: number, rgba: Buffer): Buffer {
+function encodePNG(width: number, height: number, rgba: Buffer): Buffer {
   const filtered = Buffer.alloc(height * (1 + width * 4))
   for (let y = 0; y < height; y++) {
     filtered[y * (1 + width * 4)] = 0 // filter: none

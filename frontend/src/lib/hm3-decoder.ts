@@ -24,7 +24,7 @@
 
 export const TILE_PX = 256
 export const NO_DATA = 255
-export const HM3_HEADER_BYTES = 20
+const HM3_HEADER_BYTES = 20
 const MAGIC = 'HM3 '
 const VERSION = 1
 const QUANT_KIND_U8_HALF_DB = 1
@@ -49,7 +49,7 @@ export async function fetchAndDecodeHM3(url: string, signal?: AbortSignal): Prom
   return decodeHM3(buf)
 }
 
-export async function decodeHM3(buf: ArrayBuffer): Promise<DecodedHM3Tile> {
+async function decodeHM3(buf: ArrayBuffer): Promise<DecodedHM3Tile> {
   if (buf.byteLength < HM3_HEADER_BYTES) {
     throw new Error(`HM3 too short: ${buf.byteLength} B`)
   }

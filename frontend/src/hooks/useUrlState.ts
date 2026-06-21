@@ -13,7 +13,7 @@ export const QUIET_THRESHOLD_MIN = 20
 export const QUIET_THRESHOLD_MAX = 45
 export const QUIET_THRESHOLD_DEFAULT = 35
 export const QUIET_THRESHOLD_STEP = 0.5
-export const ALL_RASTER_OVERLAY_IDS = [
+const ALL_RASTER_OVERLAY_IDS = [
   ...HEATMAP_LAYERS,
   'dem',
   'building-height', // Overture building-height raster — distinct from the `building` noise layer
@@ -39,7 +39,7 @@ export const EMPTY_RASTER_OVERLAYS: Record<string, boolean> = Object.fromEntries
 // Default view: all seven noise layers on (advanced rasters off). With every
 // layer on, MapView fetches the single precomputed `total` tile rather than
 // summing seven — the fast path ~80% of visitors get without touching the UI.
-export const DEFAULT_RASTER_OVERLAYS: Record<string, boolean> = {
+const DEFAULT_RASTER_OVERLAYS: Record<string, boolean> = {
   ...EMPTY_RASTER_OVERLAYS,
   ...Object.fromEntries(HEATMAP_LAYERS.map(id => [id, true])),
 }
@@ -110,7 +110,7 @@ function parseHash(): UrlState {
   }
 }
 
-export function buildHash(state: {
+function buildHash(state: {
   lat: number
   lng: number
   zoom: number

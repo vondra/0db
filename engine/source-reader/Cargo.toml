@@ -15,12 +15,8 @@ napi = { version = "2", features = ["serde-json"], optional = true }
 napi-derive = { version = "2", optional = true }
 arrow = { version = "54", default-features = false, features = ["ipc", "ffi"] }
 memmap2 = "0.9"
-anyhow = "1"
-flate2 = "1"
-tar = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rstar = "0.12"
 h3o = "0.7"
 noise-compute = { path = "../noise-compute" }
 raster-reader = { path = "../raster-reader" }
