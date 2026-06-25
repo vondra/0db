@@ -36,3 +36,4 @@ logs/
 .data-hub-key.pem
 scripts/data-hub-cert.pem
 scripts/.host-costs.lock
+scripts/.hub-env

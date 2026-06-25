@@ -238,6 +238,31 @@ pub fn dataset_meta(id: u16) -> Option<DatasetMeta> {
         url: s.url,
     })
 }
+`
+
+// Defence in depth — `get_source` in Rust uses binary_search_by_key, which
+// requires the emitted array to be sorted by id. We sort here so a
+// developer grouping new entries by country / layer in enrichment-datasets.ts
+// can't silently break the lookup.
+const sortedSources = [...SOURCES].sort((a, b) => a.id - b.id)
+const entries = sortedSources.map((s) => {
+  return `    Source {
+        id: ${s.id},
+        key: ${rustStr(s.key)},
+        provenance: ${PROVENANCE_TO_RUST[s.provenance]},
+        layer: ${rustStr(s.layer)},
+        name: ${rustStr(s.name)},
+        license: ${rustOptStr(s.license)},
+        url: ${rustOptStr(s.url)},
+        year: ${rustOptU16(s.year)},
+    },`
+}).join('\n')
+
+// Tests come AFTER pub const SOURCES so clippy::items_after_test_module doesn't fire.
+const output = `${HEADER}
+pub const SOURCES: &[Source] = &[
+${entries}
+];
 
 #[cfg(test)]
 mod sources_tests {
@@ -308,30 +333,6 @@ mod sources_tests {
         }
     }
 }
-`
-
-// Defence in depth — `get_source` in Rust uses binary_search_by_key, which
-// requires the emitted array to be sorted by id. We sort here so a
-// developer grouping new entries by country / layer in enrichment-datasets.ts
-// can't silently break the lookup.
-const sortedSources = [...SOURCES].sort((a, b) => a.id - b.id)
-const entries = sortedSources.map((s) => {
-  return `    Source {
-        id: ${s.id},
-        key: ${rustStr(s.key)},
-        provenance: ${PROVENANCE_TO_RUST[s.provenance]},
-        layer: ${rustStr(s.layer)},
-        name: ${rustStr(s.name)},
-        license: ${rustOptStr(s.license)},
-        url: ${rustOptStr(s.url)},
-        year: ${rustOptU16(s.year)},
-    },`
-}).join('\n')
-
-const output = `${HEADER}
-pub const SOURCES: &[Source] = &[
-${entries}
-];
 `
 
 writeFileSync(OUTPUT_PATH, output)

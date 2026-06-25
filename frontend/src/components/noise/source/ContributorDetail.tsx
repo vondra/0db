@@ -88,12 +88,25 @@ export function ContributorDetail({ c }: { c: Contributor }) {
       ], 18, 14)
     }
     return txtTable([
-      'Point source Lw',
-      'Summed over all sub-points',
+      'Area-scaled sound power Lw',
+      'Lw = perm2 + 10·log10(footprint)',
+      'summed over the source sub-points',
       '',
       { sep: true },
-      ['Total', `${c.emission_db.toFixed(1)} dB`],
-    ], 18, 12)
+      ['Total Lw', `${c.emission_db.toFixed(1)} dB`],
+    ], 20, 12)
+  })()
+
+  // Tooltip HEADER must match the body: roads / rails / ground-roll are line
+  // sources (CNOSSOS L'w per metre); buildings / industrial / leisure are our
+  // area-scaled POINT sources (total Lw — NOT CNOSSOS, which has no building
+  // source model; see /about/methodology).
+  const emissionTitle = (() => {
+    const k = c.metadata?.kind
+    if (k === 'road') return 'Road emission — CNOSSOS-EU line source'
+    if (k === 'rail') return 'Railway emission — CNOSSOS-EU line source'
+    if (k === 'aircraft') return 'Aircraft ground-roll — line source'
+    return 'Sound power Lw — area-scaled point source'
   })()
 
   const baselineText = txtTable([
@@ -299,7 +312,7 @@ export function ContributorDetail({ c }: { c: Contributor }) {
           <MetadataRows c={c} />
           {lineRow(
             <MetricLabel term="emission" />,
-            <DataPoint title="CNOSSOS-EU line-source emission" text={emissionText}>
+            <DataPoint title={emissionTitle} text={emissionText}>
               {c.emission_db.toFixed(1)} dB
             </DataPoint>,
           )}

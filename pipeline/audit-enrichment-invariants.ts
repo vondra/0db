@@ -60,6 +60,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tableFromIPC, type Table, type Vector } from 'apache-arrow'
 import { DATASETS } from './lib/enrichment-datasets.js'
+import { isMeasured } from './lib/sources.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { makeCountryGate } from './lib/country-polygon.js'
 import { MAX_BUILDING_TYPE, V2_SPECIFIC_TYPE_MIN } from './lib/buildings-arrow.js'
@@ -373,6 +374,52 @@ const roads = scanLayer('roads.arrow', (t, hex) => {
       }
     }
   }
+
+  // R13 continuity-gap (complement of the continuity-fill, NOT a flow-jump): a
+  // MEASURED major segment sharing a degree-2 endpoint with an UNMEASURED
+  // (source_id==0) segment of the SAME canonical ref — a coverage gap where the
+  // measured flow should continue but the row falls to the engine class default
+  // (the physically-impossible jump continuity-fill repairs). Boolean, no ratio:
+  // source_id==0 rows carry 0 in Arrow, the class default is applied in Rust
+  // (normalize/road.rs). After the fill runs this flags only what it couldn't
+  // reach — cross-hex, ref-less or conflicting-anchor gaps worth human triage.
+  {
+    const ref = t.getChild('ref')
+    if (ref && eLat && eLon) {
+      const canon = (r: string | null) => (r ? r.trim().toUpperCase().replace(/\s+/g, '') : '')
+      const major = (c: number) => c <= 4 || (c >= 10 && c <= 12)
+      const byEp = new Map<string, Array<{ i: number; src: number; r: string }>>()
+      for (let i = 0; i < t.numRows; i++) {
+        const c = (cls.get(i) as number) ?? 0
+        if (!major(c)) continue
+        const r = canon((ref.get(i) as string | null) ?? null)
+        if (!r) continue
+        const a = `${(sLat.get(i) as number).toFixed(5)},${(sLon.get(i) as number).toFixed(5)}`
+        const b = `${(eLat.get(i) as number).toFixed(5)},${(eLon.get(i) as number).toFixed(5)}`
+        const id = (src.get(i) as number) ?? 0
+        for (const k of [a, b]) {
+          const arr = byEp.get(k) ?? []
+          arr.push({ i, src: id, r })
+          byEp.set(k, arr)
+        }
+      }
+      const flagged = new Set<string>()
+      for (const [k, list] of byEp) {
+        if (list.length !== 2) continue // degree-2 major only (no junction / same-ref fork)
+        const [A, B] = list
+        if (A.r !== B.r) continue // ref changes here → not the same road
+        const meas = isMeasured(A.src) ? A : isMeasured(B.src) ? B : null
+        const gap = A.src === 0 ? A : B.src === 0 ? B : null
+        if (!meas || !gap || meas === gap) continue
+        const fkey = `${meas.r}:${k}`
+        if (flagged.has(fkey)) continue
+        flagged.add(fkey)
+        const [la2, lo2] = k.split(',').map(Number)
+        report('R13 continuity-gap', hex, gap.i, osm ? Number(osm.get(gap.i)) : null, gap.src, la2, lo2,
+          `ref=${meas.r} measured neighbour but this major segment is default (coverage gap)`)
+      }
+    }
+  }
   return checked
 })
 
@@ -507,6 +554,7 @@ const FIX_HINTS: Record<string, string> = {
   'R10 layer-mismatch': 'Wrong dataset-id constant in the enricher — stamp the id registered for this layer, then reset + re-enrich.',
   'R11 unknown-country': "Dataset key's country prefix has no CGAZ/ISO-3166 identity — fix the key, or add the prefix to NON_COUNTRY_PREFIXES / CITY_COUNTRY in this scanner.",
   'R12 buildings-contract': 'Settlement v2 contract broken — a rewrite dropped/garbled schema metadata. Rewrite buildings.arrow ONLY via lib/buildings-arrow.ts::writeBuildingEnrichment; re-extract the hex (osm-to-h3r4.sh) to restore the stamp.',
+  'R13 continuity-gap': 'A measured major road continues into a same-ref default segment with no junction between them — run enrich-roads-continuity-fill.ts (it copies the measured value across). Residue after the fill = cross-hex gap, ref-less road, or conflicting anchors; triage by hand.',
 }
 
 console.log(`=== Enrichment invariant scan — bbox ${BBOX.join(',')} (${YEAR}) ===`)

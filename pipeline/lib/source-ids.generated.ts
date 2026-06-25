@@ -8,6 +8,7 @@ export const SOURCE_ID_UNSPECIFIED = 0 as const // unspecified
 export const SOURCE_ID_GLOBAL_ADSB_PLANET = 1 as const // global-adsb-planet
 export const SOURCE_ID_EU_CITY_TRAFFIC = 10 as const // eu-city-traffic
 export const SOURCE_ID_SERVICE_TREE_HEURISTIC = 11 as const // service-tree-heuristic
+export const SOURCE_ID_ROAD_CONTINUITY_HEURISTIC = 12 as const // road-continuity-heuristic
 export const SOURCE_ID_CZ_RSD_SCITANI = 20 as const // cz-rsd-scitani
 export const SOURCE_ID_US_FHWA_HPMS = 21 as const // us-fhwa-hpms
 export const SOURCE_ID_DE_BAST_AUTOBAHN = 22 as const // de-bast-autobahn

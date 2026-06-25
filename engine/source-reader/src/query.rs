@@ -282,7 +282,6 @@ pub fn collect_from_hex_data(
                     centroid_lon: lz.centroid_lon,
                     sport: lz.sport,
                     area_m2: (lz.area_m2 > 0.0).then_some(lz.area_m2 as f64),
-                    capacity: (lz.capacity > 0).then_some(lz.capacity),
                     polygon_wkb: &lz.polygon_wkb,
                 },
             );

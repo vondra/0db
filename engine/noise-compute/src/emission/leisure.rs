@@ -1,12 +1,12 @@
-//! Leisure-area (sports / play / open-air hospitality) noise emission —
-//! settlement v2 phase 2. These OSM features carry NO `building=*`, so the
-//! extractor dropped them entirely before phase 2; they now spill to their own
-//! `leisure.arrow` with a `sport` u8 + optional capacity, and
-//! [`crate::normalize::prepare_leisure_points`] samples them over the same
-//! `wkb_area_grid_points` GEOMETRY as the industrial path (75 m cells) — but
-//! with leisure semantics: ~1.5 m source height (voices/rackets, not roof
-//! plant), an Lw-derived audibility reach, and the per-sport day/evening/night
-//! pattern below. NOT GFA-scaled (the level is activity-driven, not floor-area).
+//! Leisure-area (sports / play / open-air hospitality) noise emission. These
+//! OSM features carry NO `building=*` (a padel court / playground / café terrace
+//! is not a building), so they spill to their own `leisure.arrow` and
+//! [`crate::normalize::prepare_leisure_points`] discretises them through the SAME
+//! area grid + area-law as buildings — UNIFIED: `lw = settlement::area_lw(..)`
+//! over the polygon area (a bigger court / terrace is louder). The ONLY thing
+//! that differs from a building is PHYSICAL: the source sits on the open ground
+//! (~1.5 m, voices/rackets, not roof plant) with no floors. Per-sport spectrum +
+//! day/evening/night pattern below.
 //!
 //! Calibration is the plan §A/§C anchors (dual /gg-reviewed; per-sport source
 //! cited inline). All `lw` are HONEST radiated dB(A) (`a_weighted_total(bands)
@@ -28,7 +28,7 @@ pub const BASKETBALL: u8 = 3;
 pub const PLAYGROUND: u8 = 4;
 pub const POOL: u8 = 5;
 /// Open-air hospitality seating (`amenity=biergarten`, `outdoor_seating=yes`,
-/// `leisure=outdoor_seating`) — patron voices, capacity-scaled.
+/// `leisure=outdoor_seating`) — patron voices, area-scaled like everything else.
 pub const OUTDOOR_SEATING: u8 = 6;
 /// Stadium / large sports ground — pitch + crowd + PA; rare match-day events,
 /// kept at pitch level (do NOT over-weight, plan §A "Stadium").
@@ -49,104 +49,142 @@ pub fn sport_class(sport: &str) -> Option<u8> {
     })
 }
 
-/// Per-leisure-area emission profile. Unlike buildings there is no GFA term —
-/// `lw` is the whole-source radiated dB(A) for one typical facility (capacity
-/// scaling for crowd sources is applied in `prepare_leisure_points` via
-/// `+10·log10(N/N_ref)`). Source height is fixed (~1.5 m) in the prep path.
+/// Per-leisure-area emission profile — the SAME area-law as a building
+/// (`settlement::area_lw`): a low fixed floor plus a per-m² term over the
+/// polygon area. Source height is fixed (~1.5 m) in the prep path; no floors.
 pub struct LeisureProfile {
-    /// Whole-source radiated dB(A) for one typical facility at reference
-    /// capacity. `prepare_leisure_points` distributes this over the area cells.
-    pub lw: f64,
-    /// Relative dB per 8-band [63..8k]; A-sum-normalized to `lw`.
+    /// Minimum plant floor (dB) — the shared `settlement::area_lw` form. Leisure
+    /// has no real fixed plant, so this is a low common floor; the per-m² term
+    /// carries the level.
+    pub lw_fixed: f64,
+    /// Per-m² of leisure AREA (dB/m²) — the SAME area-law as buildings
+    /// (`settlement::area_lw`). Replaces the old capacity scaling: the OSM polygon
+    /// area IS the source size (a 2-court padel / a 300-seat garden is bigger ⇒
+    /// louder), so the whole emission model is now unified on AREA, not capacity.
+    pub lw_per_m2: f64,
+    /// Typical facility footprint (m²) the anchor below assumes — also the
+    /// fallback area for a leisure NODE with no polygon (a court ~200, a café
+    /// terrace ~50). `area_lw(lw_fixed, lw_per_m2, ref_area_m2)` == the cited anchor.
+    pub ref_area_m2: f64,
+    /// Relative dB per 8-band [63..8k]; A-sum-normalized to the radiated lw.
     pub spectrum: [f64; NUM_BANDS],
     pub evening_offset: f64,
     pub night_offset: f64,
-    /// Reference capacity (seats/people) the `lw` anchor assumes. Crowd sources
-    /// (`OUTDOOR_SEATING`, `PLAYGROUND`) scale by `10·log10(capacity/ref)`;
-    /// `0.0` = not capacity-scaled (court/pitch level is per-facility).
-    pub ref_capacity: f64,
 }
 
 /// Emission profile by leisure class id (see the `pub const`s).
 ///
-/// Anchors (plan §A): padel Lw 90 (racket "pock" on glass, +6 vs tennis,
-/// ~1000/h, padelcreations + Higgins); tennis Lw 84 (LFmax 58.4/strike TUM,
-/// padel −6); basketball/MUGA Lmax 45–53 @receptor (UBC/BKL) → pitch −6;
-/// football pitch Lw 88 (58 LAeq,1h @10 m, Sport England AGP); playground
-/// schoolyard −5 PROP-MEAS (no clean per-child Lw); pool boundary PROP-MEAS,
-/// summer-only annualized; outdoor seating 71 dB(A)/guest (Lärmfibel
-/// Biergärten, LWA,B = 71 + 10·log n).
+/// ANNUALIZATION (the honest weak spot — END/CNOSSOS does NOT model sport; no
+/// standard prescribes a yearly Lden for a court). Each `lw_per_m2` below is an
+/// ACTIVE peak-use sound power (measured, cited per arm) MINUS a transparent
+/// duty cut to a year-average Lden:
+///   annual Lden = active Lw  −  seasonal  −  daily-duty
+///     seasonal  : outdoor play ~6 months/yr → −3 dB (pool ~4 mo → −5; play ~−2)
+///     daily-duty: a court is in active use ~6 of 24 h (day+evening) → −6 dB
+///                 (stadium: match days only ~25/yr → −12)
+/// Net ≈ −9 dB for outdoor sport. Assumptions are LISTED on /about (nothing
+/// invented). Indoor halls are indistinguishable in OSM → treated as outdoor
+/// (a stated limitation). PROP-MEAS = no clean measured Lw; a flagged estimate.
+///
+/// Active anchors (pre-annualization): padel 90 (racket "pock" on glass,
+/// padelcreations + Higgins); tennis 84 (LFmax 58.4/strike, TU München);
+/// football pitch 88 (58 LAeq,1h @10 m, Sport England AGP); basketball pitch−6
+/// (UBC/BKL); playground PROP-MEAS; pool PROP-MEAS; outdoor seating 71 dB(A)/
+/// guest (Lärmfibel Biergärten).
 pub fn leisure_profile(sport: u8) -> LeisureProfile {
+    // All leisure shares a low fixed floor; `lw_per_m2` over the polygon area
+    // carries the level (shared `settlement::area_lw`). Each anchor in the
+    // comment = area_lw(FLOOR, lw_per_m2, ref_area_m2) = the year-average Lden.
+    const FLOOR: f64 = 40.0;
     match sport {
         PADEL => LeisureProfile {
-            lw: 90.0,
-            // HF-weighted, impulsive racket/ball pock on glass.
+            // active 90 (racket "pock" on glass; padelcreations + Higgins) − 9
+            // annual (−3 season −6 duty) → year Lden 81 @ ~200 m². The 2024–26
+            // complaint class; stays the loudest sport. HF-weighted, impulsive.
+            lw_fixed: FLOOR,
+            lw_per_m2: 58.0,
+            ref_area_m2: 200.0,
             spectrum: [-6.0, -4.0, -2.0, -1.0, 0.0, 1.0, 2.0, 1.0],
             evening_offset: 0.0, // plays 07–23; evening is peak
             night_offset: -15.0,
-            ref_capacity: 0.0,
         },
         TENNIS => LeisureProfile {
-            lw: 84.0,
+            // active 84 (LFmax 58.4/strike, TU München) − 9 annual (−3 season
+            // −6 duty) → year Lden 74 @ ~260 m². Indoor halls look the same in
+            // OSM → treated as outdoor (a stated /about limitation).
+            lw_fixed: FLOOR,
+            lw_per_m2: 50.0,
+            ref_area_m2: 260.0,
             spectrum: [-5.0, -4.0, -2.0, -1.0, 0.0, 1.0, 1.0, 0.0],
             evening_offset: -3.0,
             night_offset: -20.0,
-            ref_capacity: 0.0,
         },
         BASKETBALL => LeisureProfile {
-            // tennis −6 (ball bounce on hard court, less impulsive than rackets).
-            lw: 78.0,
+            // active tennis−6 (ball bounce on hard court) − 9 annual → year Lden
+            // 68 @ ~420 m².
+            lw_fixed: FLOOR,
+            lw_per_m2: 42.0,
+            ref_area_m2: 420.0,
             spectrum: [-4.0, -3.0, -1.0, 0.0, 0.0, 0.0, 0.0, -1.0],
             evening_offset: -3.0,
             night_offset: -20.0,
-            ref_capacity: 0.0,
         },
         PLAYGROUND => LeisureProfile {
-            // schoolyard −5 (child play area source); PROP-MEAS per-child Lw.
-            // Day-heavy, year-round; voices mid-band. ref_capacity scaling lets
-            // a tagged `capacity` lift a large playground above the default.
-            lw: 80.0,
+            // child play (PROP-MEAS — no clean per-child Lw) − 8 annual (−2
+            // weather −6 duty; used more of the year than a court) → year Lden
+            // 71 @ ~200 m². Day-heavy.
+            lw_fixed: FLOOR,
+            lw_per_m2: 48.0,
+            ref_area_m2: 200.0,
             spectrum: [-3.0, -1.0, 1.0, 2.0, 1.0, 0.0, -2.0, -5.0],
             evening_offset: -5.0,
             night_offset: -25.0,
-            ref_capacity: 20.0, // ~20 children at a typical sídliště hřiště
         },
         POOL => LeisureProfile {
-            // outdoor lido — splash/voice; PROP-MEAS boundary LAeq; summer-only
-            // (May–Sep) annualized into the level, mid-band.
-            lw: 82.0,
+            // outdoor lido splash/voice (PROP-MEAS) − 9 annual (−5 summer-only
+            // May–Sep −4 duty) → year Lden 76 @ ~400 m².
+            lw_fixed: FLOOR,
+            lw_per_m2: 50.0,
+            ref_area_m2: 400.0,
             spectrum: [-3.0, -2.0, 0.0, 1.0, 1.0, 0.0, -2.0, -5.0],
             evening_offset: -5.0,
             night_offset: -25.0,
-            ref_capacity: 0.0,
         },
         OUTDOOR_SEATING => LeisureProfile {
-            // beer garden / café terrace — raised-speech voices, 71 dB(A)/guest
-            // (Lärmfibel). lw here = 50-seat reference (71 + 10·log10(50) = 88);
-            // a tagged `seats`/`capacity` rescales via ref_capacity. Evening
-            // peak, strongly summer (annualized), quiet 22:00+.
-            lw: 88.0,
+            // beer garden / café terrace patron voices (Lärmfibel/VDI 3770 71
+            // dB(A)/guest raised speech). Annualized HARD (~−16): warm season only +
+            // meal-time hours (not all day) + conversational (not continuous). And
+            // these are mostly bare `outdoor_seating=yes` NODES with no size (~84 %
+            // of them), so a node assumes a SMALL ~12 m² terrace (a few tables) → ~66
+            // dB — not a 50-seat beer garden. A mapped 50 m² terrace → ~72, 200 m² →
+            // ~78. (Was 65 / 50 m² → a flat 82 that lit the whole map as loud dots.)
+            lw_fixed: FLOOR,
+            lw_per_m2: 55.0,
+            ref_area_m2: 12.0,
             spectrum: [-2.0, -1.0, 1.0, 2.0, 1.0, 0.0, -3.0, -6.0],
             evening_offset: 0.0,
             night_offset: -15.0,
-            ref_capacity: 50.0,
         },
         STADIUM => LeisureProfile {
-            // pitch + crowd/PA, but match days only (~20–30/yr) → annualized
-            // close to a pitch; do NOT over-weight (plan §A).
-            lw: 90.0,
+            // pitch + crowd/PA, match days ONLY (~25/yr) − 12 duty → year Lden 78
+            // @ ~7000 m². Do NOT over-weight (rare events, big footprint).
+            lw_fixed: FLOOR,
+            lw_per_m2: 40.0,
+            ref_area_m2: 7000.0,
             spectrum: [-2.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -4.0],
             evening_offset: -3.0,
             night_offset: -12.0,
-            ref_capacity: 0.0,
         },
-        // PITCH (0) + any unknown → generic ball-sport pitch.
+        // PITCH (0) + any unknown → generic ball-sport pitch. active 88 (58
+        // LAeq,1h @10 m, Sport England AGP) − 9 annual → year Lden 78 @ ~7000 m²
+        // (a typical ~1100 m² pitch lands ~70).
         _ => LeisureProfile {
-            lw: 88.0,
+            lw_fixed: FLOOR,
+            lw_per_m2: 40.0,
+            ref_area_m2: 7000.0,
             spectrum: [-2.0, -1.0, 0.0, 1.0, 1.0, 0.0, -2.0, -4.0],
             evening_offset: -3.0,
             night_offset: -10.0, // floodlit pitches run to ~22:00
-            ref_capacity: 0.0,
         },
     }
 }
@@ -157,26 +195,11 @@ pub fn leisure_emission_bands(profile: &LeisureProfile, lw: f64) -> [f64; NUM_BA
     super::spectrum::normalized_emission_bands(lw, &profile.spectrum)
 }
 
-/// Plausible upper bound on a simultaneous open-air leisure crowd. OSM
-/// `seats`/`capacity` is a free integer tag; a typo or vandalism (`capacity=
-/// 100000`) would otherwise drive `leisure_lw` past 120 dB and paint a multi-km
-/// phantom hotspot. Clamp it, mirroring the wind-turbine tag-error clamp in
-/// `normalize::prepare_industrial_points`. 10 000 covers the largest real
-/// biergarten (Munich Hirschgarten ~8 000 seats); only PLAYGROUND /
-/// OUTDOOR_SEATING (the `ref_capacity > 0` classes) are capacity-scaled.
-const LEISURE_MAX_CAPACITY: u32 = 10_000;
-
-/// Capacity-adjusted whole-source Lw. Crowd sources (`ref_capacity > 0`) build
-/// up by `10·log10(capacity / ref_capacity)` from a tagged `seats`/`capacity`
-/// (clamped to `LEISURE_MAX_CAPACITY` against tag errors); court/pitch sources
-/// ignore capacity (the impact level is per-facility).
-pub fn leisure_lw(profile: &LeisureProfile, capacity: Option<u32>) -> f64 {
-    match (profile.ref_capacity, capacity) {
-        (r, Some(c)) if r > 0.0 && c > 0 => {
-            profile.lw + 10.0 * (c.min(LEISURE_MAX_CAPACITY) as f64 / r).log10()
-        }
-        _ => profile.lw,
-    }
+/// Leisure Lw — the shared [`crate::emission::settlement::area_lw`] over the
+/// leisure polygon area (a bigger court / terrace is louder). Unified with
+/// buildings; the polygon area replaces the old per-facility capacity scaling.
+pub fn leisure_lw(profile: &LeisureProfile, area_m2: f64) -> f64 {
+    crate::emission::settlement::area_lw(profile.lw_fixed, profile.lw_per_m2, area_m2)
 }
 
 #[cfg(test)]
@@ -197,7 +220,7 @@ mod tests {
             STADIUM,
         ] {
             let p = leisure_profile(s);
-            let lw = leisure_lw(&p, None);
+            let lw = leisure_lw(&p, 500.0);
             let aw = a_weighted_total(&leisure_emission_bands(&p, lw));
             assert!(
                 (aw - lw).abs() < 1e-6,
@@ -206,52 +229,34 @@ mod tests {
         }
     }
 
-    /// The plan's loudness ordering must hold: padel ≫ tennis ≫ basketball,
-    /// padel +6 over tennis (the 2024–26 complaint class).
+    /// The plan's loudness ordering must hold (each at its reference court):
+    /// padel ≫ tennis ≫ basketball — padel is the 2024–26 complaint class.
     #[test]
     fn padel_louder_than_tennis_louder_than_basketball() {
-        let padel = leisure_profile(PADEL).lw;
-        let tennis = leisure_profile(TENNIS).lw;
-        let basket = leisure_profile(BASKETBALL).lw;
+        let anchor = |s: u8| {
+            let p = leisure_profile(s);
+            leisure_lw(&p, p.ref_area_m2)
+        };
+        assert!(anchor(PADEL) > anchor(TENNIS), "padel must beat tennis");
         assert!(
-            (padel - tennis - 6.0).abs() < 1e-9,
-            "padel must be tennis +6"
+            anchor(TENNIS) > anchor(BASKETBALL),
+            "tennis must beat basketball"
         );
-        assert!(tennis > basket);
     }
 
-    /// Capacity build-up: a 100-seat beer garden is +3 dB over the 50-seat
-    /// reference (10·log10(100/50)); a court ignores capacity.
+    /// Unified area scaling (replaces the old capacity build-up): a leisure
+    /// source scales with its polygon AREA, +3 dB per doubling, and the anchor
+    /// holds at the profile's reference footprint.
     #[test]
-    fn outdoor_seating_scales_with_seats() {
-        let p = leisure_profile(OUTDOOR_SEATING);
-        let ref_lw = leisure_lw(&p, Some(50));
-        let big = leisure_lw(&p, Some(100));
-        assert!((ref_lw - p.lw).abs() < 1e-9, "ref capacity = anchor lw");
-        assert!((big - p.lw - 3.0103).abs() < 1e-3, "100 seats = +3 dB");
-        // Courts ignore capacity.
-        assert_eq!(leisure_lw(&leisure_profile(PADEL), Some(999)), 90.0);
-    }
-
-    /// OSM `capacity`/`seats` is a free, vandalizable tag; an absurd value must be
-    /// clamped, not amplified into a 120+ dB phantom source (mirrors the
-    /// wind-turbine tag-error clamp).
-    #[test]
-    fn leisure_lw_clamps_tag_error_capacity() {
-        let p = leisure_profile(OUTDOOR_SEATING); // ref 50, anchor 88
-                                                  // Above the cap, Lw collapses to the cap's level — never higher.
-        assert_eq!(
-            leisure_lw(&p, Some(1_000_000)),
-            leisure_lw(&p, Some(LEISURE_MAX_CAPACITY))
+    fn leisure_scales_with_area() {
+        let p = leisure_profile(OUTDOOR_SEATING); // node default ~12 m² ≈ 66 dB
+        let small = leisure_lw(&p, p.ref_area_m2);
+        let big = leisure_lw(&p, p.ref_area_m2 * 2.0);
+        assert!(
+            (small - 65.8).abs() < 0.2,
+            "node-default terrace: {small:.1}"
         );
-        // Ceiling = 88 + 10·log10(10000/50) = 111 dB, not the 131 dB an unclamped
-        // 1e6 would give.
-        assert!(leisure_lw(&p, Some(1_000_000)) < p.lw + 24.0);
-        // Below the cap, scaling is unchanged.
-        assert_eq!(
-            leisure_lw(&p, Some(100)),
-            p.lw + 10.0 * (100.0_f64 / 50.0).log10()
-        );
+        assert!((big - small - 3.0103).abs() < 0.05, "doubling area = +3 dB");
     }
 
     #[test]

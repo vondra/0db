@@ -152,6 +152,21 @@ export const SOURCES_BY_KEY = new Map<string, Source>(SOURCES.map((s) => [s.key,
 /** The sentinel "unspecified" entry (always id = 0). */
 export const UNSPECIFIED: Source = SOURCES_BY_ID.get(0)!
 
+/**
+ * True if `id` carries REAL measured data — TS mirror of Rust
+ * `Provenance::is_measured` (`engine/noise-compute/src/sources.rs`): any of the
+ * four measured tiers (city/national/continental/global), which is exactly
+ * `PROVENANCE_RANK >= global-measured`. Deliberately EXCLUDES `national-proxy`
+ * (a class-default estimate), `heuristic` (service-tree / continuity-fill self)
+ * and `baseline`. The continuity-fill uses it to pick anchors it may propagate
+ * from — only hard measurements anchor, never another heuristic (so re-runs
+ * can't chain off their own output).
+ */
+export function isMeasured(id: number): boolean {
+  const s = SOURCES_BY_ID.get(id)
+  return s ? PROVENANCE_RANK[s.provenance] >= PROVENANCE_RANK['global-measured'] : false
+}
+
 // Overwrite decision
 
 /**

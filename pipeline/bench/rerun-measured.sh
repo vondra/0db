@@ -43,7 +43,10 @@ export DATA_YEAR LOG_DIR
 # planet extract, where it has the freshest road_class / oneway state. Re-
 # running it here would duplicate a 3 h job. rerun-measured handles ONLY
 # measured / census / cadastre enrichers.
-ROADS=$(ls pipeline/enrich-roads-*.ts 2>/dev/null | grep -v '/enrich-roads-service-tree\.ts$')
+# continuity-fill is also excluded here and run in Phase 4 instead: it is a
+# post-measured pass (needs every national + city anchor in place first), not a
+# measured source, so it must run AFTER Phase 2/3, never alongside them.
+ROADS=$(ls pipeline/enrich-roads-*.ts 2>/dev/null | grep -vE '/enrich-roads-(service-tree|continuity-fill)\.ts$')
 RAILWAYS=$(ls pipeline/enrich-railway-*.ts 2>/dev/null)
 BUILDINGS=$(ls pipeline/enrich-buildings-*.ts 2>/dev/null)
 INDUSTRIAL=$(ls pipeline/enrich-industrial-*.ts 2>/dev/null)
@@ -80,6 +83,19 @@ echo "$ROADS $RAILWAYS $BUILDINGS $INDUSTRIAL" | tr ' ' '\n' | grep -v '^$' | \
 log ""
 log "Phase 3: City enrichers (sequential)"
 run_one pipeline/enrich-cities-roads.ts
+
+# ── Phase 4: Continuity fill (junction-bounded same-ref) — AFTER all measured
+# road enrichers (national + city) so every anchor is in place. Copies a measured
+# AADT across same-ref no-junction gaps on major roads (0-4); independent of
+# service-tree (5-9). Per-hex self-contained → sharded like service-tree
+# (osm-to-h3r4.sh) so the full planet finishes in minutes not hours. ──
+log ""
+log "Phase 4: Continuity fill (sharded x $JOBS)"
+CONT_SHARDS="${CONT_SHARDS:-96}"
+seq 0 $((CONT_SHARDS - 1)) | xargs -P "$JOBS" -I{} bash -c \
+    'SHARD="$1/'"$CONT_SHARDS"'" DATA_YEAR="'"$YEAR"'" npx tsx pipeline/enrich-roads-continuity-fill.ts > "'"$LOG_DIR"'/continuity-fill-$1.log" 2>&1' _ {}
+cont_filled=$(grep -h "segments filled" "$LOG_DIR"/continuity-fill-*.log 2>/dev/null | grep -oE "^  [0-9]+" | awk '{s+=$1} END {print s+0}')
+log "  continuity-fill: $cont_filled segments filled"
 
 # ── Summary ──
 log ""

@@ -44,6 +44,20 @@ pub const FOOD_RETAIL: u8 = 12;
 /// canopy-extract fan + evening patron voices. Plan §A row "restaurant/café".
 pub const HOSPITALITY: u8 = 13;
 
+/// FOOTPRINT-scaled classes: noise scales with the ground footprint, NOT
+/// `GFA = footprint × floors`. Two reasons a class lands here:
+///   • single-story tall HALL — warehouse/factory (2), church nave (5), farm
+///     barn (8): one acoustic volume, and `height/3` would mint phantom floors.
+///   • GROUND-FLOOR ACTIVITY — the retail box ([`FOOD_RETAIL`]) and hospitality
+///     ([`HOSPITALITY`]): the POI join types the WHOLE building (a café in a
+///     6-floor block becomes hospitality with floors=6), but the kitchen / patron
+///     / refrigeration noise sits on the ground floor — it must NOT ×floors.
+/// Genuine multi-story occupancy (residential, office, hotel, hospital, school)
+/// keeps GFA — there each floor adds dwellings / plant / occupants.
+pub fn is_shed_type(building_type: u8) -> bool {
+    matches!(building_type, 2 | 5 | 8 | FOOD_RETAIL | HOSPITALITY)
+}
+
 /// Building emission profile.
 pub struct BuildingProfile {
     pub lw_fixed: f64,              // point sources (loading dock, HVAC unit) [dB]
@@ -65,8 +79,11 @@ pub fn building_profile(building_type: u8) -> BuildingProfile {
             // Anchor: 1 ASHP outdoor unit Lw 54–62 (Daikin EN14825; EU 813/2013
             // cap 65) running day+night → whole-house fixed term ≈ 57; night cut
             // −10 not −15 (heat pumps run hardest on winter nights; plan §A/§C).
+            // settlement v3 (gg2): per_m² 21→25 — a big AC/HP-heavy block scales
+            // up GENTLY (20k m² → Lw ~68), NOT the full ~35 size-law (that gives
+            // 78, unrealistic where district/gas heating has no outdoor plant).
             lw_fixed: 57.0,
-            lw_per_m2: 21.0,
+            lw_per_m2: 25.0,
             spectrum: [-1.0, -1.0, 0.0, 1.0, 1.0, 0.0, -3.0, -6.0],
             evening_offset: -5.0,
             night_offset: -10.0,
@@ -85,11 +102,15 @@ pub fn building_profile(building_type: u8) -> BuildingProfile {
             night_offset: -10.0,
         },
         2 => BuildingProfile {
-            // warehouse/industrial building — roof/facade breakout only
-            // (outdoor yard activity = industrial layer, no double-count).
-            // Anchor: plan §A Lw ~60 breakout; 24/7 DCs exist → night −8.
+            // warehouse / factory / manufacture building — roof+facade breakout of
+            // the indoor process. settlement v3 (gg2): per_m² 21→45 fixes the
+            // ~30 dB undershoot of a STANDALONE factory (was a quiet flat 58) — a
+            // 1000 m² hall now ~75, 200 m² workshop ~68, 5000 m² shed ~82.
+            // FOOTPRINT-scaled (is_shed_type) so a tall hall isn't height/3 floors.
+            // ONE conservative light-industrial profile for factory AND warehouse
+            // (a heavy forge undershoots ~5 dB — accepted, Occam). 24/7 DCs → −8.
             lw_fixed: 58.0,
-            lw_per_m2: 21.0,
+            lw_per_m2: 45.0,
             spectrum: [0.0, 1.0, 1.0, 0.0, -1.0, -2.0, -4.0, -7.0],
             evening_offset: -3.0,
             night_offset: -8.0,
@@ -181,29 +202,36 @@ pub fn building_profile(building_type: u8) -> BuildingProfile {
             // the continuous house level here (keeping nominal = the heat-pump
             // floor, so the offsets stay plan-faithful).
             lw_fixed: 57.0,
-            lw_per_m2: 18.0,
+            // per_m² 18→22 (settlement v3): gentle size scaling, smaller than
+            // apartments (single-family, no shared AHU); a big house ≈ HP floor.
+            lw_per_m2: 22.0,
             spectrum: [-1.0, -1.0, 0.0, 1.0, 1.0, 0.0, -3.0, -6.0],
             evening_offset: -5.0,
             night_offset: -8.0,
         },
         FOOD_RETAIL => BuildingProfile {
-            // food retail — rooftop refrigeration condensers (air-cooled ≈
-            // cooling-tower fan; reefer Lw 102 RWDI over 16 units) run 24/7 →
-            // plant Lw ~88 fixed, strong area term, LF-dominant spectrum
-            // (condenser fans). Night −2 (NOT −20): the single worst phase-1
-            // finding (audit B2). Plan §A "food retail / supermarket".
-            lw_fixed: 88.0,
-            lw_per_m2: 32.0,
+            // food retail — rooftop refrigeration condensers + car-park/trolley
+            // activity, run 24/7 → night −2 (NOT −20: the single worst phase-1
+            // finding, audit B2). settlement v3 (gg2): RE-ANCHORED to ONE
+            // refrigeration unit (45–65 Lw, N ∝ sales area) — NOT the truck-reefer
+            // Lw 102 conflation that made every shop a flat 88. fix 88→55,
+            // per_m² 32→48 → SIZE scales: večerka 80 m² ~67, supermarket 1000 ~78,
+            // hypermarket 5000 ~85. FOOTPRINT-scaled (is_shed_type). LF-dominant
+            // (condenser fans). Sources: Parkplatzlärmstudie (activity) + RWDI.
+            lw_fixed: 55.0,
+            lw_per_m2: 48.0,
             spectrum: [1.0, 2.0, 1.0, 0.0, -1.0, -2.0, -4.0, -7.0],
             evening_offset: -2.0,
             night_offset: -2.0,
         },
         HOSPITALITY => BuildingProfile {
-            // restaurant/café/pub — continuous canopy kitchen-extract fan
-            // (Lw 75–85 Guyer) + evening patron voices; evening +0 (peak),
-            // mid (voices) + LF (extract). Plan §A "restaurant/café kitchen".
-            lw_fixed: 75.0,
-            lw_per_m2: 26.0,
+            // restaurant/café/pub — canopy kitchen-extract fan (Lw 68–75 Guyer)
+            // + evening patron voices (VDI 3770 / LfU Biergarten, per seating
+            // area). settlement v3 (gg2): fix 75→68, per_m² 26→50 → SIZE scales:
+            // café 50 m² ~71, restaurant 250 ~75 (v2 anchor), large 1000 ~80.
+            // evening +0 (patron peak), mid (voices) + LF (extract).
+            lw_fixed: 68.0,
+            lw_per_m2: 50.0,
             spectrum: [-1.0, 0.0, 1.0, 1.0, 1.0, 0.0, -3.0, -6.0],
             evening_offset: 0.0,
             night_offset: -5.0,
@@ -220,12 +248,24 @@ pub fn building_profile(building_type: u8) -> BuildingProfile {
     }
 }
 
-/// Compute building Lw from profile and building dimensions.
-pub fn building_lw(profile: &BuildingProfile, area_m2: f64, floors: u8) -> f64 {
-    let gfa = area_m2 * floors.max(1) as f64;
-    let e_fixed = 10f64.powf(profile.lw_fixed / 10.0);
-    let e_dist = gfa * 10f64.powf(profile.lw_per_m2 / 10.0);
+/// The shared AREA-LAW — the ONE formula behind every settlement AND leisure
+/// source (one source of truth, [`crate::emission::leisure`] uses it too):
+///   `Lw = 10·log10(10^(fix/10) + area·10^(per_m²/10))`
+/// `fix` is the minimum plant floor (a tiny building/terrace still hums); the
+/// `per_m²` term dominates once `area` grows → size scales at +10 dB / decade.
+pub fn area_lw(lw_fixed: f64, lw_per_m2: f64, area_m2: f64) -> f64 {
+    let e_fixed = 10f64.powf(lw_fixed / 10.0);
+    let e_dist = area_m2 * 10f64.powf(lw_per_m2 / 10.0);
     10.0 * (e_fixed + e_dist).log10()
+}
+
+/// Building Lw — the shared [`area_lw`] over gross floor area (footprint × floors).
+pub fn building_lw(profile: &BuildingProfile, area_m2: f64, floors: u8) -> f64 {
+    area_lw(
+        profile.lw_fixed,
+        profile.lw_per_m2,
+        area_m2 * floors.max(1) as f64,
+    )
 }
 
 /// Compute emission bands for a building (day period), normalized so
@@ -249,9 +289,9 @@ mod tests {
     fn test_residential_lw() {
         let p = building_profile(0);
         let lw = building_lw(&p, 200.0, 3);
-        // GFA = 600 m²: 10·log₁₀(10^5.7 + 600×10^2.1) ≈ 57.6 — the v2 phase-1
-        // calibration (heat-pump-era fixed term 57 dominates a small house).
-        assert!((lw - 57.61).abs() < 0.1, "residential: {:.2}", lw);
+        // GFA = 600 m²: 10·log₁₀(10^5.7 + 600×10^2.5) ≈ 58.4 — settlement v3 gentle
+        // size scaling (per_m² 25); the heat-pump fixed term 57 still anchors small.
+        assert!((lw - 58.39).abs() < 0.1, "residential: {:.2}", lw);
     }
 
     /// v2 invariant: constants are honest radiated dB(A) — for EVERY emitting
@@ -299,6 +339,24 @@ mod tests {
         assert!(fr > co + 5.0, "food-retail {fr:.1} vs commercial {co:.1}");
     }
 
+    /// settlement v3: SIZE must matter — FOOD_RETAIL spans ≥12 dB across a 100×
+    /// footprint (the old flat fix 88 gave 0.2 dB: every shop = a hypermarket).
+    #[test]
+    fn food_retail_scales_with_size() {
+        let p = building_profile(FOOD_RETAIL);
+        let small = building_lw(&p, 80.0, 1);
+        let large = building_lw(&p, 8000.0, 1);
+        assert!(
+            small < 70.0,
+            "small shop {small:.1} should be well below the old 88"
+        );
+        assert!(
+            large - small >= 12.0,
+            "size span {:.1} dB too flat",
+            large - small
+        );
+    }
+
     #[test]
     fn test_commercial_louder() {
         let rp = building_profile(0); // residential
@@ -331,5 +389,75 @@ mod tests {
         let d = building_max_dist(50.0);
         assert!(d > 50.0 && d < 500.0, "d={:.0}", d);
         assert_eq!(building_max_dist(90.0), 2000.0); // capped
+    }
+
+    /// On-demand whole-model overview (not a gate): prints every building +
+    /// leisure class's resulting Lw at a small + large footprint, so the model
+    /// reads at a glance. `cargo test emission_review_table -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn emission_review_table() {
+        use crate::emission::leisure;
+        let bnames: [(u8, &str); 14] = [
+            (0, "residential/apt"),
+            (1, "commercial/office"),
+            (2, "warehouse/factory"),
+            (3, "school"),
+            (4, "hospital"),
+            (5, "church"),
+            (6, "hotel"),
+            (7, "garage"),
+            (8, "farm"),
+            (9, "public/civic"),
+            (SILENT, "SILENT shed"),
+            (HOUSE, "house"),
+            (FOOD_RETAIL, "food retail"),
+            (HOSPITALITY, "hospitality"),
+        ];
+        println!("\nBUILDING  Lw = 10log10(10^(fix/10) + GFA*10^(perm2/10))   GFA = area*floors (footprint if shed)");
+        println!(
+            "{:<20}{:>5}{:>7}{:>10}{:>11}{:>11}",
+            "class", "fix", "perm2", "scale", "Lw@200m2", "Lw@3000m2"
+        );
+        for (t, name) in bnames {
+            if t == SILENT {
+                println!("{name:<20}   (emits nothing)");
+                continue;
+            }
+            let p = building_profile(t);
+            let shed = is_shed_type(t);
+            let fl = if shed { 1 } else { 3 };
+            let scale = if shed { "footprint" } else { "GFA(x3fl)" };
+            let small = building_lw(&p, 200.0, fl);
+            let large = building_lw(&p, 3000.0, fl);
+            println!(
+                "{:<20}{:>5.0}{:>7.0}{:>10}{:>11.1}{:>11.1}",
+                name, p.lw_fixed, p.lw_per_m2, scale, small, large
+            );
+        }
+        let lnames: [(u8, &str); 8] = [
+            (leisure::PITCH, "pitch"),
+            (leisure::PADEL, "padel"),
+            (leisure::TENNIS, "tennis"),
+            (leisure::BASKETBALL, "basketball"),
+            (leisure::PLAYGROUND, "playground"),
+            (leisure::POOL, "pool"),
+            (leisure::OUTDOOR_SEATING, "outdoor seating"),
+            (leisure::STADIUM, "stadium"),
+        ];
+        println!("\nLEISURE  SAME area-law (now UNIFIED): Lw = 10log10(10^(fix/10) + area*10^(perm2/10))");
+        println!(
+            "{:<20}{:>5}{:>7}{:>9}{:>11}",
+            "class", "fix", "perm2", "ref_m2", "Lw@ref"
+        );
+        for (s, name) in lnames {
+            let p = leisure::leisure_profile(s);
+            let at_ref = leisure::leisure_lw(&p, p.ref_area_m2);
+            println!(
+                "{:<20}{:>5.0}{:>7.0}{:>9.0}{:>11.1}",
+                name, p.lw_fixed, p.lw_per_m2, p.ref_area_m2, at_ref
+            );
+        }
+        println!();
     }
 }

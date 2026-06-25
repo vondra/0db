@@ -124,8 +124,9 @@ fn classify_multipolygon(rel: &osmpbf::Relation) -> Option<(FeatureType, Vec<(St
         FeatureType::Building
     } else if matches!(
         tag("landuse"),
-        Some("industrial") | Some("quarry") | Some("farmyard")
+        Some("industrial" | "quarry" | "farmyard" | "landfill" | "port" | "harbour")
     ) || matches!(tag("man_made"), Some("works") | Some("wastewater_plant"))
+        || matches!(tag("power"), Some("plant") | Some("substation"))
     {
         FeatureType::Industrial
     } else if matches!(
@@ -134,6 +135,18 @@ fn classify_multipolygon(rel: &osmpbf::Relation) -> Option<(FeatureType, Vec<(St
     ) || tag("amenity") == Some("heliport")
     {
         FeatureType::AirportArea
+    } else if crate::spill::poi_class(
+        tag("amenity"),
+        tag("shop"),
+        tag("healthcare"),
+        tag("tourism"),
+    )
+    .is_some()
+        || matches!(tag("landuse"), Some("retail") | Some("commercial"))
+    {
+        // Functional AREA relation with no building tag: a mall (shop=mall),
+        // hospital or school campus, retail/commercial zone (audit 2026-06).
+        FeatureType::Building
     } else {
         return None;
     };

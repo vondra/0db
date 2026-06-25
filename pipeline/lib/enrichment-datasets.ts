@@ -113,6 +113,25 @@ export const DATASETS: Dataset[] = [
     priority: 10,
     measurement: 'derived',
   },
+  {
+    // Junction-bounded same-ref continuity fill: copies a MEASURED neighbour's
+    // AADT across an unmeasured major-road segment of the same road when no
+    // junction lets traffic leave between them (flow conservation). Heuristic
+    // tier (priority 10) so any real measurement still wins and the engine
+    // re-applies access_factor. See enrich-roads-continuity-fill.ts.
+    id: 12,
+    layer: 'roads',
+    key: 'road-continuity-heuristic',
+    name: 'Same-ref continuity fill (junction-bounded)',
+    year: 2026,
+    license: 'project-internal',
+    url: null,
+    priority: 10,
+    measurement: 'derived',
+    // Major roads only (0-4 + links) — the fill must never stamp a local
+    // street; the scanner's coverage invariant (R1) enforces it per-row.
+    roadCoverage: MAJOR_ROAD_COVERAGE,
+  },
 
   // ── Roads: national ──
   {

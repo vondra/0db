@@ -53,17 +53,31 @@ const SUBTYPE_LABELS: Record<string, Record<string, string>> = {
     wind_turbine: 'Wind turbine',
   },
   building: {
-    residential_multi: 'Apartment building',
-    residential_single: 'House',
-    commercial: 'Commercial / retail',
-    warehouse: 'Warehouse',
-    education: 'School / kindergarten',
+    // Keys ARE the backend names (source_names.rs::building_type_name) — keep in
+    // sync. Leisure sport areas fold into the building layer, so their names live
+    // here too (one source of truth for every building-layer label).
+    residential_multi: 'Apartments',
+    residential_house: 'House',
+    commercial: 'Commercial / office',
+    food_retail: 'Shop / supermarket',
+    restaurant_bar: 'Restaurant / bar',
+    warehouse: 'Warehouse / factory',
+    education: 'School',
     healthcare: 'Hospital / clinic',
     worship: 'Church',
-    public: 'Public building',
-    hospitality: 'Restaurant / bar',
+    hotel: 'Hotel',
     garage: 'Garage / parking',
-    farm: 'Farm building',
+    farm: 'Farm',
+    public: 'Public building',
+    silent: 'Building',
+    padel_court: 'Padel court',
+    tennis_court: 'Tennis court',
+    ball_court: 'Ball court',
+    playground: 'Playground',
+    swimming_pool: 'Swimming pool',
+    outdoor_seating: 'Outdoor seating',
+    stadium: 'Stadium',
+    sports_pitch: 'Sports pitch',
     default: 'Building',
   },
   aircraft: { mixed: 'Aircraft', aircraft: 'Aircraft' },
@@ -96,9 +110,9 @@ export function formatDist(m: number): string {
 
 export function lineRow(label: ReactNode, value: ReactNode, muted?: boolean) {
   return (
-    <div className={`flex justify-between ${muted ? 'text-muted-foreground/40' : ''}`}>
-      <span>{label}</span>
-      <span className={muted ? '' : 'text-foreground'}>{value}</span>
+    <div className={`flex justify-between gap-3 ${muted ? 'text-muted-foreground/40' : ''}`}>
+      <span className="shrink-0">{label}</span>
+      <span className={`text-right ${muted ? '' : 'text-foreground'}`}>{value}</span>
     </div>
   )
 }

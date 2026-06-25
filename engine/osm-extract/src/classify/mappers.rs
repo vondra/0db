@@ -15,7 +15,12 @@ pub fn leisure_sport_class(tags: &Tags) -> u8 {
         if let Some(c) = sport
             .split(';')
             .filter_map(|s| lz::sport_class(s.trim().to_ascii_lowercase().as_str()))
-            .max_by_key(|&c| lz::leisure_profile(c).lw as i64)
+            .max_by_key(|&c| {
+                // Loudest by Lw at its reference footprint (the profile lost its
+                // scalar `lw`; size-law is the source of truth now).
+                let p = lz::leisure_profile(c);
+                lz::leisure_lw(&p, p.ref_area_m2) as i64
+            })
         {
             return c;
         }

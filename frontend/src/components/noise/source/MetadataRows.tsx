@@ -1,7 +1,7 @@
 import type { Contributor } from '../../../types/noise'
 import { fmt, fmtFloat, fmtInt, fmtCompact, txtTable, type TableRow } from '../../../utils/formatters'
 import { MetricLabel, DataPoint } from '../noise-tooltips'
-import { formatProv, lineRow, railTrainSourceLine, roadSourceDescription } from '../shared'
+import { formatProv, lineRow, railTrainSourceLine, roadSourceDescription, subtypeLabel } from '../shared'
 
 // Road traffic source / rail train source helpers live in shared.tsx so the
 // same source-attribution wording is reused here and in the Noise segments
@@ -235,17 +235,19 @@ export function MetadataRows({ c }: { c: Contributor }) {
   }
 
   if (m.kind === 'building') {
+    const typeLabel = subtypeLabel('building', m.building_type)
     const buildingText = txtTable([
-      ['Type', m.building_type],
-      ['Height', `${m.height_m.toFixed(1)} m`],
-      ...(m.floors > 0 ? [['Floors', String(m.floors)] as [string, string]] : []),
+      ['Type', typeLabel],
+      ...(m.height_m > 0 ? [['Height', `${m.height_m.toFixed(1)} m`] as [string, string]] : []),
+      ...(m.floors > 1 ? [['Floors', String(m.floors)] as [string, string]] : []),
       ...(m.area_m2 > 0 ? [['Footprint', `${Math.round(m.area_m2).toLocaleString()} m²`] as [string, string]] : []),
       ...(m.address ? ['', `Address: ${m.address}`] : []),
     ], 14, 20)
+    // Collapsed line stays short (no wrap): type + floors only when multi-storey.
     return lineRow(
       'Building',
       <DataPoint title="Building metadata" text={buildingText}>
-        {m.building_type} · {m.height_m.toFixed(0)} m{m.floors > 0 ? ` · ${m.floors} fl.` : ''}
+        {typeLabel}{m.floors > 1 ? ` · ${m.floors} fl.` : ''}
       </DataPoint>,
     )
   }
@@ -260,7 +262,7 @@ export function MetadataRows({ c }: { c: Contributor }) {
       ...(m.nace ? [['NACE', m.nace] as [string, string]] : []),
       ...(m.grid_point_count > 0 ? [['Grid points', String(m.grid_point_count)] as [string, string]] : []),
       ...(m.grid_point_count > 1
-        ? ['', 'Large sites discretized into an H3 grid.', 'Each point carries Lw − 10·log₁₀(N).']
+        ? ['', 'Large sites split into a 75 m grid;', 'each cell carries its area share', 'of the total sound power.']
         : []),
     ], 16, 16)
     const summary = m.area_m2 > 0

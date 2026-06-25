@@ -42,8 +42,10 @@ pub struct RawLeisureInput<'a> {
     pub centroid_lon: f64,
     /// `leisure::PITCH`/`PADEL`/… class id.
     pub sport: u8,
+    /// Polygon footprint — the ONLY size driver (unified area-law with
+    /// buildings). A leisure NODE with no polygon falls back to the profile's
+    /// reference footprint in `prepare_leisure_points`.
     pub area_m2: Option<f64>,
-    pub capacity: Option<u32>,
     pub polygon_wkb: &'a str,
 }
 
@@ -77,7 +79,10 @@ pub struct PreparedPoint {
 }
 
 const INDUSTRIAL_AREA_CELL_M: f64 = 75.0;
+const BUILDING_AREA_CELL_M: f64 = 30.0;
 const INDUSTRIAL_AREA_CELL_SAMPLES: usize = 5;
+const INDUSTRIAL_AREA_THRESHOLD_M2: f64 = 5_000.0;
+const BUILDING_AREA_THRESHOLD_M2: f64 = 2_000.0;
 
 impl PreparedPoint {
     pub fn with_metadata(
@@ -112,6 +117,95 @@ impl PreparedPoint {
     }
 }
 
+/// Geometry + popup metadata for one AREA source (building / industrial /
+/// leisure footprint), consumed by [`discretize_area_source`].
+struct AreaSource<'a> {
+    polygon_wkb: &'a str,
+    centroid_lat: f64,
+    centroid_lon: f64,
+    area_m2: f64,
+    /// Footprint at/below which a single centroid point carries the full
+    /// emission (building 2000 m², industrial/leisure 5000 m²).
+    grid_threshold_m2: f64,
+    /// Square-grid cell pitch (building 30 m, industrial/leisure 75 m).
+    cell_m: f64,
+    source_height_m: f32,
+    max_radius_m: f64,
+    /// Echoed to `PreparedPoint` for the popup trace (0 / None outside
+    /// buildings & wind turbines).
+    floors: u8,
+    hub_height_m: Option<f32>,
+    rated_power_kw: Option<f32>,
+}
+
+/// Discretise an AREA source into per-cell [`PreparedPoint`]s — ONE source of
+/// truth for building / industrial / leisure. Above `grid_threshold_m2` the
+/// footprint is gridded at `cell_m` (`wkb::wkb_area_grid_points`): each cell
+/// carries its AREA FRACTION of the emission
+/// (`Lw_cell = Lw − 10·log10(area_tot/area_cell)`, energy-conserving) and a
+/// self-screening exclusion radius `√(area_cell/π)` so the source's own
+/// footprint is neither a propagation barrier
+/// (`path_effects::screening_attenuation`) nor a 1/r² singularity
+/// (`geo::effective_area_source_dist`). Below the threshold (or no polygon) →
+/// one centroid point with the full emission.
+fn discretize_area_source(
+    src: AreaSource<'_>,
+    lw_day: [f32; NUM_BANDS],
+    lw_evening: [f32; NUM_BANDS],
+    lw_night: [f32; NUM_BANDS],
+) -> Vec<PreparedPoint> {
+    let weighted_points: Vec<(f64, f64, f64)> =
+        if src.area_m2 > src.grid_threshold_m2 && !src.polygon_wkb.is_empty() {
+            let cells = crate::wkb::wkb_area_grid_points(
+                src.polygon_wkb,
+                src.cell_m,
+                INDUSTRIAL_AREA_CELL_SAMPLES,
+            );
+            if cells.len() > 1 {
+                let sampled_area = cells.iter().map(|p| p.area_m2).sum::<f64>().max(1.0);
+                cells
+                    .into_iter()
+                    .map(|p| (p.lat, p.lon, p.area_m2 * src.area_m2 / sampled_area))
+                    .collect()
+            } else {
+                vec![(src.centroid_lat, src.centroid_lon, src.area_m2)]
+            }
+        } else {
+            vec![(src.centroid_lat, src.centroid_lon, src.area_m2)]
+        };
+    let n_points = weighted_points.len().min(u16::MAX as usize) as u16;
+
+    weighted_points
+        .into_iter()
+        .map(|(lat, lon, point_area)| {
+            let lw_split = 10.0 * ((src.area_m2 / point_area.max(1.0)) as f32).log10();
+            let mut day = lw_day;
+            let mut evening = lw_evening;
+            let mut night = lw_night;
+            for band in 0..NUM_BANDS {
+                day[band] -= lw_split;
+                evening[band] -= lw_split;
+                night[band] -= lw_split;
+            }
+            PreparedPoint {
+                lat,
+                lon,
+                source_height_m: src.source_height_m,
+                lw_day: day,
+                lw_evening: evening,
+                lw_night: night,
+                n_points,
+                exclusion_radius_m: (point_area as f32 / std::f32::consts::PI).sqrt(),
+                max_radius_m: src.max_radius_m,
+                floors: src.floors,
+                area_m2: src.area_m2 as f32,
+                hub_height_m: src.hub_height_m,
+                rated_power_kw: src.rated_power_kw,
+            }
+        })
+        .collect()
+}
+
 pub fn prepare_building_points(input: RawBuildingInput<'_>) -> Vec<PreparedPoint> {
     let actual_height = if input.height_m > 0.0 {
         input.height_m
@@ -128,7 +222,15 @@ pub fn prepare_building_points(input: RawBuildingInput<'_>) -> Vec<PreparedPoint
     let area = resolve_area_m2(input.area_m2, input.polygon_wkb, 100.0);
 
     let profile = settlement::building_profile(input.building_type);
-    let lw = settlement::building_lw(&profile, area, actual_floors);
+    // Shed-types (warehouse/factory/church/farm/retail box) scale on FOOTPRINT,
+    // not floors: a tall single-story hall must not be counted as `height/3`
+    // floors (see `settlement::is_shed_type`).
+    let lw_floors = if settlement::is_shed_type(input.building_type) {
+        1
+    } else {
+        actual_floors
+    };
+    let lw = settlement::building_lw(&profile, area, lw_floors);
     if lw < 10.0 {
         return Vec::new();
     }
@@ -141,56 +243,26 @@ pub fn prepare_building_points(input: RawBuildingInput<'_>) -> Vec<PreparedPoint
         lw_night[i] += profile.night_offset as f32;
     }
 
-    // Cull radius solved against the honest radiated lw (settlement v2
-    // phase 1): the W7 net-zero contract that kept the pre-C7 radius is gone
-    // together with the AW_* compensated constants — one scalar, one meaning.
-    let max_radius_m = settlement::building_max_dist(lw).min(2000.0);
-    let grid_spacing = if area > 2000.0 { 30.0 } else { 0.0 };
-    let grid_points = if grid_spacing > 0.0 && !input.polygon_wkb.is_empty() {
-        let pts = crate::wkb::wkb_grid_points(input.polygon_wkb, grid_spacing);
-        if pts.len() > 1 {
-            pts
-        } else {
-            vec![(input.centroid_lat, input.centroid_lon)]
-        }
-    } else {
-        vec![(input.centroid_lat, input.centroid_lon)]
-    };
-    let n_points = grid_points.len() as u16;
-    let lw_split = if n_points > 1 {
-        10.0 * (n_points as f32).log10()
-    } else {
-        0.0
-    };
-
-    grid_points
-        .into_iter()
-        .map(|(lat, lon)| {
-            let mut day = lw_day;
-            let mut evening = lw_evening;
-            let mut night = lw_night;
-            for band in 0..NUM_BANDS {
-                day[band] -= lw_split;
-                evening[band] -= lw_split;
-                night[band] -= lw_split;
-            }
-            PreparedPoint {
-                lat,
-                lon,
-                source_height_m: actual_height / 2.0,
-                lw_day: day,
-                lw_evening: evening,
-                lw_night: night,
-                n_points,
-                exclusion_radius_m: 0.0,
-                max_radius_m,
-                floors: actual_floors,
-                area_m2: area as f32,
-                hub_height_m: None,
-                rated_power_kw: None,
-            }
-        })
-        .collect()
+    // Cull radius solved against the honest radiated lw (settlement v2 phase 1):
+    // one scalar, one meaning (`building_max_dist` caps at 2 km internally).
+    discretize_area_source(
+        AreaSource {
+            polygon_wkb: input.polygon_wkb,
+            centroid_lat: input.centroid_lat,
+            centroid_lon: input.centroid_lon,
+            area_m2: area,
+            grid_threshold_m2: BUILDING_AREA_THRESHOLD_M2,
+            cell_m: BUILDING_AREA_CELL_M,
+            source_height_m: actual_height / 2.0,
+            max_radius_m: settlement::building_max_dist(lw),
+            floors: lw_floors,
+            hub_height_m: None,
+            rated_power_kw: None,
+        },
+        lw_day,
+        lw_evening,
+        lw_night,
+    )
 }
 
 pub fn prepare_industrial_points(input: RawIndustrialInput<'_>) -> Vec<PreparedPoint> {
@@ -264,77 +336,41 @@ pub fn prepare_industrial_points(input: RawIndustrialInput<'_>) -> Vec<PreparedP
             _ => 5.0,
         }
     };
-    let weighted_points: Vec<(f64, f64, f64)> = if area > 5_000.0 && !input.polygon_wkb.is_empty() {
-        let cells = crate::wkb::wkb_area_grid_points(
-            input.polygon_wkb,
-            INDUSTRIAL_AREA_CELL_M,
-            INDUSTRIAL_AREA_CELL_SAMPLES,
-        );
-        if cells.len() > 1 {
-            let sampled_area = cells.iter().map(|p| p.area_m2).sum::<f64>().max(1.0);
-            cells
-                .into_iter()
-                .map(|p| (p.lat, p.lon, p.area_m2 * area / sampled_area))
-                .collect()
-        } else {
-            vec![(input.centroid_lat, input.centroid_lon, area)]
-        }
-    } else {
-        vec![(input.centroid_lat, input.centroid_lon, area)]
-    };
-    let n_points = weighted_points.len().min(u16::MAX as usize) as u16;
-
-    weighted_points
-        .into_iter()
-        .map(|(lat, lon, point_area)| {
-            let mut day = lw_day;
-            let mut evening = lw_evening;
-            let mut night = lw_night;
-            let lw_split = 10.0 * ((area / point_area.max(1.0)) as f32).log10();
-            for band in 0..NUM_BANDS {
-                day[band] -= lw_split;
-                evening[band] -= lw_split;
-                night[band] -= lw_split;
-            }
-            let exclusion_radius_m = (point_area as f32 / std::f32::consts::PI).sqrt();
-            PreparedPoint {
-                lat,
-                lon,
-                source_height_m,
-                lw_day: day,
-                lw_evening: evening,
-                lw_night: night,
-                n_points,
-                exclusion_radius_m,
-                max_radius_m: crate::constants::INDUSTRIAL_MAX_RADIUS,
-                floors: 0,
-                area_m2: area as f32,
-                hub_height_m: None,
-                rated_power_kw: None,
-            }
-        })
-        .collect()
+    discretize_area_source(
+        AreaSource {
+            polygon_wkb: input.polygon_wkb,
+            centroid_lat: input.centroid_lat,
+            centroid_lon: input.centroid_lon,
+            area_m2: area,
+            grid_threshold_m2: INDUSTRIAL_AREA_THRESHOLD_M2,
+            cell_m: INDUSTRIAL_AREA_CELL_M,
+            source_height_m,
+            max_radius_m: crate::constants::INDUSTRIAL_MAX_RADIUS,
+            floors: 0,
+            hub_height_m: None,
+            rated_power_kw: None,
+        },
+        lw_day,
+        lw_evening,
+        lw_night,
+    )
 }
 
-/// Default leisure footprint when the row has no polygon/area (e.g. a
-/// `leisure=playground` node): a small court-sized 600 m². Below the area-grid
-/// threshold so it stays a single centroid point.
-const LEISURE_DEFAULT_AREA_M2: f64 = 600.0;
 /// Leisure areas are LOCAL activity sources — cap reach like buildings (2 km),
 /// never the 4 km industrial-plant reach.
 const LEISURE_MAX_RADIUS_M: f64 = 2_000.0;
 
-/// Discretise one leisure AREA source into per-cell [`PreparedPoint`]s. Reuses
-/// the industrial area-grid GEOMETRY (`wkb_area_grid_points`, 75 m cells with
-/// the same self-screening `√(cell_area/π)` exclusion) but with LEISURE
-/// semantics: a fixed per-facility `lw` from `leisure::leisure_profile` (capacity
-/// build-up applied to the WHOLE source, then split across cells by area
-/// fraction — energy-conserving), ~1.5 m source height, and an Lw-derived reach
-/// capped at 2 km. Returns `[]` when the source is sub-audible.
+/// Discretise one leisure AREA source into per-cell [`PreparedPoint`]s — the
+/// shared [`discretize_area_source`] (same area-weighted 75 m grid + self-screening
+/// `√(cell_area/π)` exclusion as industrial), at ~1.5 m height (voices/rackets,
+/// not roof plant) with an Lw-derived reach capped at 2 km. The level is the
+/// AREA-scaled [`leisure::leisure_lw`] (UNIFIED with buildings — `settlement::area_lw`);
+/// a node with no polygon falls back to the profile's reference footprint.
+/// Returns `[]` when the source is sub-audible.
 pub fn prepare_leisure_points(input: RawLeisureInput<'_>) -> Vec<PreparedPoint> {
-    let area = resolve_area_m2(input.area_m2, input.polygon_wkb, LEISURE_DEFAULT_AREA_M2);
     let profile = leisure::leisure_profile(input.sport);
-    let lw = leisure::leisure_lw(&profile, input.capacity);
+    let area = resolve_area_m2(input.area_m2, input.polygon_wkb, profile.ref_area_m2);
+    let lw = leisure::leisure_lw(&profile, area);
     if lw < 10.0 {
         return Vec::new();
     }
@@ -348,55 +384,24 @@ pub fn prepare_leisure_points(input: RawLeisureInput<'_>) -> Vec<PreparedPoint> 
     }
 
     let max_radius_m = settlement::building_max_dist(lw).min(LEISURE_MAX_RADIUS_M);
-    let weighted_points: Vec<(f64, f64, f64)> = if area > 5_000.0 && !input.polygon_wkb.is_empty() {
-        let cells = crate::wkb::wkb_area_grid_points(
-            input.polygon_wkb,
-            INDUSTRIAL_AREA_CELL_M,
-            INDUSTRIAL_AREA_CELL_SAMPLES,
-        );
-        if cells.len() > 1 {
-            let sampled_area = cells.iter().map(|p| p.area_m2).sum::<f64>().max(1.0);
-            cells
-                .into_iter()
-                .map(|p| (p.lat, p.lon, p.area_m2 * area / sampled_area))
-                .collect()
-        } else {
-            vec![(input.centroid_lat, input.centroid_lon, area)]
-        }
-    } else {
-        vec![(input.centroid_lat, input.centroid_lon, area)]
-    };
-    let n_points = weighted_points.len().min(u16::MAX as usize) as u16;
-
-    weighted_points
-        .into_iter()
-        .map(|(lat, lon, point_area)| {
-            let mut day = lw_day;
-            let mut evening = lw_evening;
-            let mut night = lw_night;
-            let lw_split = 10.0 * ((area / point_area.max(1.0)) as f32).log10();
-            for band in 0..NUM_BANDS {
-                day[band] -= lw_split;
-                evening[band] -= lw_split;
-                night[band] -= lw_split;
-            }
-            PreparedPoint {
-                lat,
-                lon,
-                source_height_m: crate::constants::SOURCE_HEIGHT_INDUSTRIAL_OPEN as f32,
-                lw_day: day,
-                lw_evening: evening,
-                lw_night: night,
-                n_points,
-                exclusion_radius_m: (point_area as f32 / std::f32::consts::PI).sqrt(),
-                max_radius_m,
-                floors: 0,
-                area_m2: area as f32,
-                hub_height_m: None,
-                rated_power_kw: None,
-            }
-        })
-        .collect()
+    discretize_area_source(
+        AreaSource {
+            polygon_wkb: input.polygon_wkb,
+            centroid_lat: input.centroid_lat,
+            centroid_lon: input.centroid_lon,
+            area_m2: area,
+            grid_threshold_m2: INDUSTRIAL_AREA_THRESHOLD_M2,
+            cell_m: INDUSTRIAL_AREA_CELL_M,
+            source_height_m: crate::constants::SOURCE_HEIGHT_INDUSTRIAL_OPEN as f32,
+            max_radius_m,
+            floors: 0,
+            hub_height_m: None,
+            rated_power_kw: None,
+        },
+        lw_day,
+        lw_evening,
+        lw_night,
+    )
 }
 
 #[cfg(test)]
@@ -529,54 +534,48 @@ mod tests {
         assert!((aw - 105.0).abs() < 1e-3, "clamped-power turbine LwA: {aw}");
     }
 
-    /// A leisure area source: 1.5 m height, Lw-derived reach, capacity scaling,
-    /// and energy-conserving split over the area grid (settlement v2 phase 2).
+    /// A leisure area source: 1.5 m height, Lw-derived reach, AREA scaling
+    /// (unified with buildings), energy-conserving split over the area grid.
     #[test]
     fn prepared_leisure_padel_court_emits_at_15m_height() {
         let points = prepare_leisure_points(RawLeisureInput {
             centroid_lat: 50.0,
             centroid_lon: 14.0,
             sport: leisure::PADEL,
-            area_m2: Some(300.0), // single court → centroid point
-            capacity: None,
+            area_m2: Some(200.0), // reference court footprint → centroid point
             polygon_wkb: "",
         });
         assert_eq!(points.len(), 1);
         assert!((points[0].source_height_m - 1.5).abs() < 1e-6);
         assert!(points[0].max_radius_m > 0.0 && points[0].max_radius_m <= 2_000.0);
         assert_eq!(points[0].floors, 0);
-        // Day A-sum equals the padel anchor (90 dB) for a single un-split point.
+        // Day A-sum equals the annualized padel anchor (~81 dB at the 200 m²
+        // reference: active 90 − 9 dB season/duty).
         let day: [f64; NUM_BANDS] = std::array::from_fn(|i| points[0].lw_day[i] as f64);
         let aw = crate::propagation::iso9613::a_weighted_total(&day);
-        assert!((aw - 90.0).abs() < 1e-3, "padel day LwA: {aw}");
+        assert!((aw - 81.0).abs() < 0.2, "padel day LwA: {aw}");
     }
 
-    /// Sub-audible leisure (impossible here, but the gate must hold): a class
-    /// with lw < 10 returns no points. Use capacity=0-equivalent via a tiny
-    /// hand-built profile is overkill; instead assert a normal class is audible.
+    /// Unified AREA scaling (replaces the old per-seat capacity build-up): a
+    /// leisure source scales with its polygon area — 800 m² vs 200 m² = +6 dB.
     #[test]
-    fn prepared_leisure_outdoor_seating_scales_capacity() {
-        let small = prepare_leisure_points(RawLeisureInput {
-            centroid_lat: 50.0,
-            centroid_lon: 14.0,
-            sport: leisure::OUTDOOR_SEATING,
-            area_m2: Some(200.0),
-            capacity: Some(50),
-            polygon_wkb: "",
-        });
-        let big = prepare_leisure_points(RawLeisureInput {
-            centroid_lat: 50.0,
-            centroid_lon: 14.0,
-            sport: leisure::OUTDOOR_SEATING,
-            area_m2: Some(200.0),
-            capacity: Some(200),
-            polygon_wkb: "",
-        });
+    fn prepared_leisure_outdoor_seating_scales_area() {
+        let mk = |area: f64| {
+            prepare_leisure_points(RawLeisureInput {
+                centroid_lat: 50.0,
+                centroid_lon: 14.0,
+                sport: leisure::OUTDOOR_SEATING,
+                area_m2: Some(area),
+                polygon_wkb: "",
+            })
+        };
+        let small = mk(200.0);
+        let big = mk(800.0);
         let aw = |p: &PreparedPoint| {
             let d: [f64; NUM_BANDS] = std::array::from_fn(|i| p.lw_day[i] as f64);
             crate::propagation::iso9613::a_weighted_total(&d)
         };
-        // 200 vs 50 seats = +6 dB (10·log10(4)).
+        // 800 vs 200 m² = ×4 area = +6 dB (10·log10(4)).
         assert!((aw(&big[0]) - aw(&small[0]) - 6.0206).abs() < 1e-2);
     }
 }

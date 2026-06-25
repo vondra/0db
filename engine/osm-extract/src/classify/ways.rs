@@ -76,14 +76,84 @@ fn classify_way_unscoped(way: &Way) -> Option<FeatureType> {
         return Some(FeatureType::Leisure);
     }
 
-    // Industrial landuse
-    if let Some("industrial" | "quarry" | "farmyard") = tag("landuse") {
+    // Industrial landuse + power infrastructure (audit 2026-06: substations /
+    // landfills / ports were vanishing).
+    if let Some("industrial" | "quarry" | "farmyard" | "landfill" | "port" | "harbour") =
+        tag("landuse")
+    {
         return Some(FeatureType::Industrial);
     }
     if let Some("works" | "wastewater_plant") = tag("man_made") {
         return Some(FeatureType::Industrial);
     }
+    if let Some("plant" | "substation") = tag("power") {
+        return Some(FeatureType::Industrial);
+    }
 
+    // Functional AREA with no `building` tag IS a noise source: a mall master
+    // polygon (shop=mall), a hospital ground, a school yard, a retail/commercial
+    // zone. FUNCTION is the gate, not just `building=` (audit 2026-06). Reuses
+    // poi_class so the area classifies identically to the same function on a
+    // building; the overlap with sub-buildings inside it is suppressed in
+    // finalize (an area containing real buildings defers to them).
+    if is_functional_area(&tags) {
+        return Some(FeatureType::Building);
+    }
+
+    None
+}
+
+/// True if a tag set is a functional building AREA worth keeping even without a
+/// `building` tag: a noise-relevant `amenity`/`shop`/`healthcare`/`tourism` POI,
+/// or a retail/commercial landuse zone. Shared by way + relation routing.
+pub(crate) fn is_functional_area(tags: &[(&str, &str)]) -> bool {
+    let tag = |k: &str| tags.iter().find(|(key, _)| *key == k).map(|(_, v)| *v);
+    crate::spill::poi_class(
+        tag("amenity"),
+        tag("shop"),
+        tag("healthcare"),
+        tag("tourism"),
+    )
+    .is_some()
+        || matches!(tag("landuse"), Some("retail" | "commercial"))
+}
+
+/// Observability: for a way that classified to `None` (vanished from the map),
+/// the noise-relevant tag it carried that arguably SHOULD route it but currently
+/// doesn't. Drives the extract's fall-through report so a silent gap is visible.
+/// Returns `None` for genuinely irrelevant ways (the overwhelming majority).
+pub fn fallthrough_reason(way: &Way) -> Option<String> {
+    let tags = way.tags().collect::<Vec<_>>();
+    let tag = |k: &str| tags.iter().find(|(key, _)| *key == k).map(|(_, v)| *v);
+    // Car parks are vehicle sources (Parkplatzlärm), a separate concern from the
+    // building layer — don't report them as a building gap.
+    if matches!(
+        tag("amenity"),
+        Some("parking" | "parking_space" | "parking_entrance")
+    ) {
+        return None;
+    }
+    // A functional POI as an AREA (no building wrapper) — mall / hospital / school.
+    if crate::spill::poi_class(
+        tag("amenity"),
+        tag("shop"),
+        tag("healthcare"),
+        tag("tourism"),
+    )
+    .is_some()
+    {
+        let kind = tag("shop")
+            .map(|v| format!("shop={v}"))
+            .or_else(|| tag("amenity").map(|v| format!("amenity={v}")))
+            .unwrap_or_else(|| "poi".into());
+        return Some(kind);
+    }
+    if let Some(v @ ("retail" | "commercial" | "port" | "harbour" | "landfill")) = tag("landuse") {
+        return Some(format!("landuse={v}"));
+    }
+    if let Some(v @ ("plant" | "substation")) = tag("power") {
+        return Some(format!("power={v}"));
+    }
     None
 }
 

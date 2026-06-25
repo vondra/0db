@@ -179,53 +179,6 @@ fn ring_area_offset(
     Some((area_m2, off))
 }
 
-/// Generate grid points inside a WKB polygon for distributed emission.
-///
-/// WHY: A single centroid point source creates unrealistic "donut" patterns
-/// (quiet inside large facility, loud ring at centroid distance).
-/// Distributed points spread emission across the real footprint.
-/// Each point gets Lw_per_point = Lw_total - 10×log₁₀(N) (energy-conserving).
-///
-/// spacing_m: approximate grid spacing in meters (30m for buildings, 150m for industrial)
-/// Returns: Vec of (lat, lon) points inside the polygon. At least 1 (centroid fallback).
-pub fn wkb_grid_points(wkb_hex: &str, spacing_m: f64) -> Vec<(f64, f64)> {
-    let polys = parse_wkb_polygons(wkb_hex);
-    if polys.is_empty() {
-        return vec![];
-    }
-
-    let (min_lat, max_lat, min_lon, max_lon) = outer_ring_bbox(&polys);
-
-    // Convert spacing to degrees
-    let mid_lat = (min_lat + max_lat) / 2.0;
-    let lat_step = spacing_m / M_PER_DEG_LAT;
-    let lon_step = spacing_m / (M_PER_DEG_LON_EQ * mid_lat.to_radians().cos().max(0.1));
-
-    // Generate grid with GLOBAL phase — snap to nearest grid line, not polygon bbox.
-    // This prevents raster-pattern artifacts from per-polygon grid alignment.
-    let mut points = Vec::new();
-    let lat_start = (min_lat / lat_step).floor() * lat_step + lat_step / 2.0;
-    let lon_start = (min_lon / lon_step).floor() * lon_step + lon_step / 2.0;
-    let mut lat = lat_start;
-    while lat <= max_lat {
-        let mut lon = lon_start;
-        while lon <= max_lon {
-            if point_in_any_polygon(lat, lon, &polys) {
-                points.push((lat, lon));
-            }
-            lon += lon_step;
-        }
-        lat += lat_step;
-    }
-
-    // Fallback: at least the footprint centroid.
-    if points.is_empty() {
-        points.push(footprint_centroid(&polys));
-    }
-
-    points
-}
-
 /// Generate weighted square area cells inside a WKB polygon.
 ///
 /// Each returned point represents the covered polygon area inside one global

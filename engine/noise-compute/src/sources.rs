@@ -220,6 +220,16 @@ pub const SOURCES: &[Source] = &[
         year: Some(2025),
     },
     Source {
+        id: 12,
+        key: "road-continuity-heuristic",
+        provenance: Provenance::Heuristic,
+        layer: "roads",
+        name: "Same-ref continuity fill (junction-bounded)",
+        license: Some("project-internal"),
+        url: None,
+        year: Some(2026),
+    },
+    Source {
         id: 20,
         key: "cz-rsd-scitani",
         provenance: Provenance::NationalMeasured,

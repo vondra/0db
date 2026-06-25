@@ -562,7 +562,6 @@ pub struct LeisureResult {
     pub centroid_lon: f64,
     /// `emission::leisure` class id (PITCH/PADEL/…).
     pub sport: u8,
-    pub capacity: u32,
     pub area_m2: f32,
     pub name: String,
     pub polygon_wkb: String,
@@ -586,7 +585,6 @@ pub fn query_leisure_from_batches(
             continue;
         };
         let sport = col_u8(batch, "sport");
-        let capacity = col_u32(batch, "capacity");
         let area = col_f32(batch, "area_m2");
         let name = col_str(batch, "name");
         let wkb = col_binary(batch, "polygon_wkb");
@@ -603,7 +601,6 @@ pub fn query_leisure_from_batches(
                 centroid_lat: c_lat,
                 centroid_lon: c_lon,
                 sport: sport.map(|a| a.value(i)).unwrap_or(0),
-                capacity: capacity.map(|a| a.value(i)).unwrap_or(0),
                 area_m2: area.map(|a| a.value(i)).unwrap_or(0.0),
                 name: name.map(|a| a.value(i).to_string()).unwrap_or_default(),
                 polygon_wkb: wkb.map(|a| hex_encode(a.value(i))).unwrap_or_default(),

@@ -17,6 +17,7 @@ mod spill;
 use anyhow::Result;
 use clap::Parser;
 use osmpbf::{Element, ElementReader};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -96,6 +97,9 @@ fn main() -> Result<()> {
     let mut ways_total = 0u64;
     let mut features_total = 0u64;
     let mut rels_assembled = 0u64;
+    // Observability: noise-relevant ways that classified to None and vanished
+    // (a functional AREA with no building wrapper). Reported after Pass 2.
+    let mut fallthrough_tags: HashMap<String, u64> = HashMap::new();
 
     reader.for_each(|element| {
         match element {
@@ -151,9 +155,12 @@ fn main() -> Result<()> {
                                             t.insert(k.clone(), v.clone());
                                         }
                                     }
-                                    if !t.contains_key("building") {
-                                        t.insert("building".into(), "yes".into());
-                                    }
+                                    // NOTE: a relation with no `building` tag is a
+                                    // FUNCTIONAL AREA (shop=mall / amenity=hospital
+                                    // multipolygon). Leave the building tag ABSENT so
+                                    // `building_type_from_tags` classifies it by
+                                    // function (poi_class) and the spill flags it as an
+                                    // area-source for finalize overlap-suppression.
                                     t
                                 }
                                 classify::FeatureType::Industrial => {
@@ -230,7 +237,16 @@ fn main() -> Result<()> {
                 // Also process the way itself if it has its own relevant tags
                 // (a way can be both a relation member AND a standalone feature,
                 //  but usually relation members don't have building= tags themselves)
-                if let Some(mut ftype) = classify::classify_way(&way) {
+                let way_class = classify::classify_way(&way);
+                // Observability: a standalone way that vanished (None) yet carried a
+                // noise-relevant functional tag (a mall / hospital / school AREA with
+                // no building wrapper) — record it so the gap is never silent.
+                if way_class.is_none() && !is_relation_member {
+                    if let Some(reason) = classify::fallthrough_reason(&way) {
+                        *fallthrough_tags.entry(reason).or_insert(0) += 1;
+                    }
+                }
+                if let Some(mut ftype) = way_class {
                     // Skip if this way is an outer member of a polygon relation;
                     // the relation's assembled multipolygon already covers it.
                     // AirportLine ways inside an aeroway=aerodrome multipolygon
@@ -408,6 +424,20 @@ fn main() -> Result<()> {
         t2.elapsed().as_secs_f64()
     );
 
+    // Classification blind spots — the two SILENT failure modes made visible so a
+    // gap is never invisible (a new unmapped tag, a vanished functional area).
+    eprintln!("\n  ── Classification blind spots ──");
+    report_top(
+        "  building=* → residential DEFAULT (unmapped tag)",
+        &spiller.audit.default_residential,
+        12,
+    );
+    report_top(
+        "  functional AREA vanished (no building tag → routing fall-through)",
+        &fallthrough_tags,
+        12,
+    );
+
     // Free node cache before finalize (saves ~64 GB disk for planet)
     drop(cache);
     if cli.node_cache.exists() {
@@ -429,6 +459,27 @@ fn main() -> Result<()> {
     std::fs::remove_dir_all(&cli.spill_dir).ok();
     eprintln!("\n=== Done: {:.1}s ===", t0.elapsed().as_secs_f64());
     Ok(())
+}
+
+/// Print the top-N entries of a blind-spot counter (descending), or nothing if
+/// empty. Single source for both classification-gap reports.
+fn report_top(label: &str, counts: &HashMap<String, u64>, top_n: usize) {
+    if counts.is_empty() {
+        return;
+    }
+    let total: u64 = counts.values().sum();
+    let mut v: Vec<(&String, &u64)> = counts.iter().collect();
+    v.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    let top: Vec<String> = v
+        .iter()
+        .take(top_n)
+        .map(|(k, c)| format!("{k}={c}"))
+        .collect();
+    eprintln!(
+        "{label}: {total} total, {} distinct\n      {}",
+        counts.len(),
+        top.join("  ")
+    );
 }
 
 fn h3_res4(lat: f64, lon: f64) -> Option<u64> {

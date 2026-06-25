@@ -28,8 +28,10 @@ export const METRIC_DEFS: Record<string, MetricDef> = {
   emission: {
     label: "Emission",
     description:
-      "Sound power level at the source before any propagation. For roads and railways, per-meter line-source emission from CNOSSOS-EU vehicle-count × speed coefficients.",
-    standard: "CNOSSOS-EU Part 2",
+      "Sound power level (Lw) at the source, before any propagation. Roads and railways are LINE sources — per-metre L'w from CNOSSOS-EU vehicle/train counts × speed coefficients. Buildings, industrial sites and leisure areas are POINT sources — total Lw from an area-law (per-m² emission + 10·log10 footprint) discretised over the polygon. The building/leisure layer is a non-standard extension (CNOSSOS models no building source); it is grounded in EN ISO 12354-4 / VDI / DIN engineering data — see /about/methodology.",
+    descriptionPublic:
+      "How much noise the source makes at the source itself, before the sound travels out. Roads and railways are modelled as lines — louder with more and faster traffic. Buildings, industry and sports/leisure areas are modelled from their size — a bigger footprint is louder.",
+    standard: "CNOSSOS-EU Part 2 (road/rail) · engineering area-law (buildings/leisure)",
   },
   aadt: {
     label: "Traffic",

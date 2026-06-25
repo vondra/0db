@@ -45,7 +45,7 @@ pub(crate) fn building_type_name(bt: u8) -> &'static str {
         3 => "education",
         4 => "healthcare",
         5 => "worship",
-        6 => "hospitality",
+        6 => "hotel",
         7 => "garage",
         8 => "farm",
         9 => "public",
@@ -55,7 +55,7 @@ pub(crate) fn building_type_name(bt: u8) -> &'static str {
         10 => "silent",
         11 => "residential_house",
         12 => "food_retail",
-        13 => "hospitality_kitchen",
+        13 => "restaurant_bar",
         _ => "default",
     }
 }

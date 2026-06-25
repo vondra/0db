@@ -36,6 +36,8 @@ Each source is modelled independently — toggle, compare, and explore them in t
 
 Road traffic is the dominant source of environmental noise, affecting 60–80% of exposed population in most countries. We model each road segment using the European CNOSSOS-EU standard with 4 vehicle categories (light vehicles, medium trucks, heavy trucks, motorcycles) and compute rolling noise + propulsion noise per octave band.
 
+> **Explain-it-simply.** A car makes noise two ways: tyres hissing on the road, and the engine. More cars = louder — but not in a simple way: twice the traffic adds only +3 dB (your ears hear a doubling of sound energy as a small step). One heavy truck is about as loud as ten cars, so the *share* of trucks matters more than the raw count.
+
 - **Data:** OpenStreetMap geometry + measured/enriched traffic counts where available; otherwise class-based defaults (see country pages)
 - **Key variables:** traffic volume (AADT), vehicle mix (especially heavy vehicle share), speed, road surface
 - **Impact:** Doubling traffic = +3 dB. One truck is as loud as ~10 cars. Surface type shifts noise by up to 4 dB.
@@ -72,6 +74,8 @@ Time split = day (07–19) / evening (19–23) / night (23–07). Measured AADT 
 
 Rail noise affects fewer people than roads but at higher severity — a single freight corridor can dominate nighttime exposure for kilometres. Freight wagons with cast-iron block brakes are ~10 dB louder than disc-braked passenger stock, making the passenger/freight split critical.
 
+> **Explain-it-simply.** A train is loud mostly where the wheels meet the rail. Old freight wagons with cast-iron brakes scrape the wheels rough, so they roar ~10× louder than a smooth modern passenger train. That is why one freight train rumbling through at night can outweigh ten passenger trains during the day in the yearly average.
+
 - **Data:** OpenStreetMap rail geometry + GTFS timetables / passenger–freight counts where available; otherwise line-type defaults (see country pages)
 - **Key variables:** train count per day, passenger vs freight split, speed
 - **Impact:** Speed enters as 30×log₁₀ — twice the sensitivity of roads. One freight train at night can outweigh 10 daytime passenger trains in Lden.
@@ -103,6 +107,8 @@ Measured counts override defaults. The day/evening/night split varies by region 
 ### Aircraft
 
 The aircraft layer combines two models: airborne overflights from ADS-B radar trajectories, processed through NPD (Noise-Power-Distance) profiles inspired by ECAC Doc 29, and airport ground operations (runway roll, taxi, apron movement) extracted directly from low-altitude / on-ground ADS-B trajectories with the nearest mapped aerodrome attached for identity. The map shows everything together; the popup splits aircraft into three tabs — ground paths, airborne sub-segments, and cruise hexes.
+
+> **Explain-it-simply.** You hear a plane as it crosses the sky — the lower and bigger it is, the louder. We follow the *real* flights for a whole year from radar (the same ADS-B signal flight-trackers use), and for each aircraft type we have a measured loudness-vs-distance table. At airports we separately count the take-off roll, taxiing and parking. We only show flights the radar actually saw — no made-up traffic.
 
 - **Data:** ADS-B trajectories from [adsb.lol](https://adsb.lol) (full year, all altitudes) + OSM aeroway lines (runways / taxiways) and aerodrome polygons. ADS-B ground legs project onto OSM microsegments to derive per-microsegment movements.
 - **Per-typecode aircraft profiles** auto-generated from EASA ANP v2.3 (Aircraft Noise and Performance database) — covers Boeing 737/747/757/767/777/787, Airbus A319/A320/A321/A330/A340/A350/A380, Embraer E-Jets, ATR, Dash 8, plus light GA and helicopter placeholders for types not in ANP.
@@ -137,6 +143,8 @@ The aircraft layer combines two models: airborne overflights from ADS-B radar tr
 ### Industrial and wind turbines
 
 Industrial noise is spatially concentrated but locally dominant — a single cement plant or wind farm can define the noise environment for kilometres. We classify each site by registry NACE sector when available, otherwise by OSM industrial subtype or coarse source type. The range across sectors is ~30 dB: a farm (70 dB) vs a cement plant (100 dB).
+
+> **Explain-it-simply.** A factory or quarry makes the same noise over and over — machines, ventilation, trucks. A big cement works is heard for kilometres; a farmyard barely. We look up what each site actually *does* from Europe's pollution-registry records (a cement plant is far louder than a warehouse) and scale it by how large the site is. Wind turbines are special — their loudness barely changes with size, so we set it from the rated power.
 
 - **Data:** OpenStreetMap industrial landuse + NACE codes from national pollution registries (IRZ, E-PRTR, GPPD)
 - **Wind turbines:** IEC 61400-11 model, emission based on rated power (98–106.5 dB(A) Lw)
@@ -189,43 +197,104 @@ Source height: 8 m (quarry), 10 m (heavy industry NACE 5/8/23/24/35), 5 m (other
 
 </details>
 
-### Buildings and settlements
+### Buildings, settlements & leisure
 
-Noise from everyday building activity — HVAC systems, human activity, deliveries, playgrounds. Each building is an individual noise source classified by its OpenStreetMap type. This is a custom model — not a CNOSSOS-EU standard source.
+Everyday activity makes noise: rooftop air-conditioning and refrigeration, kitchen extracts, deliveries, voices on a restaurant terrace, a school yard, a padel court. We model each building — and each open-air sports / play / hospitality area — as its own noise source, sized by **how big it is**.
 
-- **Data:** OpenStreetMap building polygons with type, height, floors, area
-- **Model:** Two-component Lw: fixed sources (HVAC, loading dock) + distributed sources scaling with gross floor area
-- **Formula:** `Lw = 10 × log₁₀(10^(Lw_fixed/10) + GFA × 10^(Lw_per_m²/10))` where GFA = footprint × floors
+> **Explain-it-simply.** Every building hums a little — the air-con on the roof, the fridges in a shop, the kitchen fan, people coming and going. A **bigger** building hums **louder**, the same way a bigger loudspeaker is louder than a small one — so we work out the noise from the building's size on the map. Sport and playgrounds are only loud while someone is *playing*: a tennis court is silent at 3 a.m. and silent in January. So we take the loud-while-playing level and spread it over the whole year to get a fair yearly average.
+
+This is a **custom extension, not a CNOSSOS-EU standard source**: the EU Environmental Noise Directive maps only road, rail, aircraft and large industry, and treats buildings purely as *obstacles* that block sound. Our settlement layer rests on real engineering standards (EN ISO 12354-4 façade breakout, VDI 2571 / 3770, DIN 18005, the Bavarian *Parkplatzlärmstudie*) — but it is an extension, and we say so plainly.
+
+- **Data:** OpenStreetMap building polygons (type, height, floors, area) + leisure / sport areas
+- **Model:** one **area-law** — a bigger source is louder; the same rule for a warehouse, a supermarket, a restaurant terrace and a football pitch
+- **Impact:** twice as big ≈ +3 dB; a 10-floor block over its footprint ≈ +10 dB vs one floor
+
+#### The exact maths
+
+Each source radiates a total **sound power** `Lw` (like the wattage of a loudspeaker — how much sound it pours out *before* any travels to you):
+
+```
+Lw = 10 · log₁₀( 10^(fix/10)  +  area_m² · 10^(per_m²/10) )
+```
+
+- `fix` = a small fixed floor in dB (even a tiny shop has one humming AC unit).
+- `per_m²` = how many dB each square metre adds; **it differs per category** (a restaurant kitchen radiates more per m² than a garage).
+- `area_m²` = footprint **× floors** for a stacked block (flats/offices); **footprint only** for one tall volume (a warehouse, a church nave, a supermarket hall — it is not "4 floors" just because it is 12 m tall).
+
+Every ×10 of area adds ~10 dB. **But you never hear all of `Lw`** — a big building is chopped into a 30 m grid and each piece travels to you separately, so from up close only the near wall is loud (the far corners are far away). A 114 000 m² hall has `Lw` 100 dB but lands ~44 dB at 50 m. `Lw` is the *engine*, not the *level at your window*.
+
+> **Worked example — a shop (`fix 55, per_m² 48`).** An 80 m² *večerka* → Lw ≈ 67 dB · a 1 000 m² supermarket → ≈ 78 · a 5 000 m² hypermarket → ≈ 85. The small shop is ~18 dB quieter than the hypermarket — size finally matters.
+
+**Sport — how a yearly average comes from a loud-while-playing level.** A court is only in use part of the day, part of the year. So:
+
+```
+yearly Lden = active Lw  −  seasonal  −  daily-duty
+                            ~6 mo/yr     ~6 of 24 h in use
+                             −3 dB         −6 dB         ≈ −9 dB
+```
+
+Every number above is a **stated assumption**, not a measurement — listed here so you can argue with it. (Stadiums: match days only ~25/yr → −12 dB. Indoor halls look identical to outdoor in OSM, so we treat them as outdoor — a known limitation.)
 
 <details>
-<summary>Technical: building emission profiles</summary>
+<summary>Technical: deployed building profiles + statistics</summary>
 
-14 building types classified from OSM tags (`building=*`, `amenity=*`, `shop=*`):
+Per type from `settlement.rs::building_profile`. **Scale** = whether floors multiply the area. Evening / Night are dB offsets on the daytime level (the END +5 / +10 annoyance penalties are added separately when the three periods collapse to Lden). **Share** = fraction of all buildings worldwide in our data (sampled).
 
-| Type | OSM tags | Lw fixed | Lw/m² | Evening | Night |
-|------|----------|----------|-------|---------|-------|
-| Apartments | apartments (residential default) | 57 dB | 21 | -5 | -10 |
-| House | house, detached, terrace | 57 dB | 18 | -5 | -8 |
-| Commercial / office | commercial, retail, office | 70 dB | 30 | -5 | -10 |
-| Food retail | supermarket, convenience (24/7 refrigeration) | 88 dB | 32 | -2 | -2 |
-| Hospitality | restaurant, café, pub, bar | 75 dB | 26 | 0 | -5 |
-| Warehouse | warehouse, industrial building | 58 dB | 21 | -3 | -8 |
-| School | school, kindergarten | 66 dB | 28 | -10 | -25 |
-| Hospital | hospital, clinic | 72 dB | 26 | -3 | -5 |
-| Church | church, chapel | 72 dB | 26 | -5 | -20 |
-| Hotel | hotel, hostel | 58 dB | 22 | -2 | -10 |
-| Garage | garage, parking | 41 dB | 18 | -5 | -15 |
-| Farm | farm, barn | 56 dB | 20 | -5 | -15 |
-| Public | civic, government, public | 62 dB | 25 | -8 | -20 |
-| Silent | sheds, roofs, huts, greenhouses, ruins | — | — | — | — |
+| Type | OSM tags | fix | per_m² | Scale | Eve | Night | Share |
+|------|----------|-----|--------|-------|-----|-------|-------|
+| Apartments | apartments, residential, `yes` | 57 | 25 | × floors | −5 | −10 | 86 % |
+| House | house, detached, terrace | 57 | 22 | × floors | −5 | −8 | 8 % |
+| Silent | sheds, roofs, huts, greenhouses, ruins | — | — | — | — | — | 1.7 % |
+| Garage | garage, parking | 41 | 18 | × floors | −5 | −15 | 1.2 % |
+| Commercial / office | commercial, retail, office | 70 | 30 | × floors | −5 | −10 | 0.7 % |
+| Warehouse / factory | warehouse, industrial, station | 58 | 45 | footprint | −3 | −8 | 0.5 % |
+| School | school, kindergarten | 66 | 28 | × floors | −10 | −25 | 0.4 % |
+| Farm | farm, barn | 56 | 20 | footprint | −5 | −15 | 0.4 % |
+| Restaurant / bar | restaurant, café, pub, bar | 68 | 50 | footprint | 0 | −5 | 0.3 % |
+| Church | church, chapel, monastery | 72 | 26 | footprint | −5 | −20 | 0.2 % |
+| Shop / supermarket | supermarket, convenience, mall | 55 | 48 | footprint | −2 | −2 | 0.2 % |
+| Public / civic | civic, government, stadium | 62 | 25 | × floors | −8 | −20 | 0.1 % |
+| Hospital | hospital, clinic | 72 | 26 | × floors | −3 | −5 | 0.1 % |
+| Hotel | hotel, hostel | 58 | 22 | × floors | −2 | −10 | 0.1 % |
 
-Since the 2026-06 audit these are honest radiated dB(A) totals — the A-weighted band sum equals the listed Lw exactly, calibrated against measured plant/activity literature (not a pre-spectrum scalar). Source: `settlement.rs::building_profile`.
+`building=yes` (~79 % of all polygons, no specific type) defaults to apartments. **~1.7 % are *silent*** (sheds, roofs, ruins, greenhouses — uninhabited / unheated) and emit nothing. Each building radiates from height / 2 (mid-facade) as an ISO 9613-2 point source.
 
-Industrial / warehouse buildings inside industrial landuse polygons are handled by the industrial pipeline, not double-counted. Source at building height / 2 (mid-facade), propagated as ISO 9613-2 point source.
+**A specific structural tag wins over an amenity POI inside it** (fixed 2026-06): a `building=warehouse` or `building=stadium` with an `amenity=bar` is a warehouse / stadium, **not** a restaurant the size of the whole envelope. (This was the Strahov-Stadium-as-100 dB-restaurant bug.) Only generic envelopes (`building=yes`/`commercial`) take their type from the amenity.
 
-Calibration sources: EU Reg 626/2011 (residential AC units), ASHRAE Handbook Ch.48 (HVAC Lw vs capacity), BS 4142:2014 (commercial noise assessment).
+</details>
 
-→ Discretization (centroid vs interior grid), fallback chains: `engine/noise-compute/SPEC.md` §7.
+<details>
+<summary>Technical: leisure profiles + statistics</summary>
+
+**Leisure uses the identical area-law** (`leisure.rs`) — sized by polygon, radiating at ~1.5 m (voices and rackets, not roof plant), no floors. `Lw @ ref` is the **annualised** year-average at the reference size; the active (loud-while-playing) anchor and its source are listed. **Share** = fraction of all leisure areas worldwide (sampled).
+
+| Area | per_m² | ref size | Lw @ ref | active anchor (source) | Share |
+|------|--------|----------|----------|------------------------|-------|
+| Padel court | 58 | 200 m² | 81 dB | 90 — racket on glass (padelcreations + Higgins) | 0.1 % |
+| Football pitch | 40 | 7 000 m² | 78 dB | 88 — 58 LAeq @10 m (Sport England AGP) | 47 % |
+| Stadium | 40 | 7 000 m² | 78 dB | pitch + crowd, ~25 match days/yr | 0.9 % |
+| Swimming pool | 50 | 400 m² | 76 dB | lido splash/voice — PROP-MEAS | 2.7 % |
+| Tennis court | 50 | 260 m² | 74 dB | 84 — 58.4 dB/strike (TU München) | 13 % |
+| Playground | 48 | 200 m² | 71 dB | child play — PROP-MEAS | 19 % |
+| Basketball court | 42 | 420 m² | 68 dB | tennis − 6 (ball on hard court) | 7 % |
+| Outdoor seating | 55 | 12 m² (bare node) | 66 dB | 71 dB/guest (Lärmfibel Biergarten) | 9 % |
+
+A leisure node with no polygon (most `outdoor_seating=yes` points) assumes the small reference footprint, not a 50-seat beer garden. **PROP-MEAS** = no clean measured Lw exists; a conservative flagged placeholder, queued for measurement — never shown as measured.
+
+</details>
+
+<details>
+<summary>Honest provenance — the weak spots</summary>
+
+**Calibration.** Building per-m² is anchored to measured façade levels so the *median* building did **not** change — only size-scaling was added: Chodov shopping centre ~45 dB, Staroměstské náměstí ~51 dB. Per-family sources: factory / warehouse breakout (EN ISO 12354-4, VDI 2571, DIN 18005); retail & terrace activity (Bavarian *Parkplatzlärmstudie*, VDI 3770, LfU Biergarten); residential heat-pump floor (EU 813/2013, Daikin EN 14825); HVAC (ASHRAE Ch. 48); assessment frame (BS 4142, TA Lärm).
+
+**What is thin — we don't pretend otherwise.**
+- No measured *whole-factory* Lw vs its m² exists in the literature; the per-m² slope is planning data (DIN 18005) + breakout physics (EN 12354-4).
+- The **sport annualisation** (active → yearly) has **no standard** — END/CNOSSOS does not model sport. Our duty cuts (season, hours) are reasoned assumptions, listed above so they can be checked, not derived from a norm. The nearest standard, German 18. BImSchV, rates a single venue, not a yearly map.
+- Per-store refrigeration is built up from unit data; terrace-patron levels are never measured with a clean breakdown; some figures come from secondary *Gutachten*.
+- Indoor sports halls are indistinguishable from outdoor courts in OSM.
+
+→ Discretization (centroid vs interior grid), the solid-footprint tile fill, fallback chains: `engine/noise-compute/SPEC.md` §7.
 
 </details>
 
@@ -371,7 +440,7 @@ This model is an engineering approximation for a continental-scale noise atlas �
 | Receiver grid | END: facade receivers (4 m height, 2 m from wall) | z13 Web-Mercator raster pixel centers (~12 m at 50°N, 4 m height) | Area average, not per-facade |
 | Road corrections | CNOSSOS-EU: gradient, intersection, temperature | Not implemented | ±1–3 dB on steep/cold roads |
 | Building reflections | ISO 9613-2 §7.5: image-source ray tracing | Simplified: local enclosure heuristic, 0–3 dB boost | May underestimate in complex geometries |
-| Settlement noise | Not standardised (END covers road/rail/aircraft/industry only) | Custom per-building model, 14 OSM building types | Novel — no standard reference values |
+| Settlement noise | Not standardised (END covers road/rail/aircraft/industry only) | Unified area-law: 14 building types + leisure areas | Extension — built on EN ISO 12354-4 / VDI / DIN engineering data |
 | Atmospheric conditions | Variable: temperature, humidity, wind speed | Fixed: 15°C, 70% RH; favourable-weather boost not applied | Seasonal/hourly variation not captured |
 
 These simplifications target MAE < 3 dB against national strategic noise maps for road noise, but formal cross-country validation is still pending — the country pages document each country's reference data and regulator, not a measured error yet. Aircraft noise has not been formally validated.

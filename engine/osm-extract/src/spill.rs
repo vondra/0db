@@ -17,11 +17,24 @@ struct BucketFile {
     writer: BufWriter<File>,
 }
 
+/// Observability for the two SILENT failure modes of building classification (so
+/// a blind spot is never invisible — reported at the end of every extract):
+/// an unrecognised `building=*` value that fell to the residential(0) default.
+/// The routing fall-through (a functional area that vanished) is counted in
+/// `main` where the `None` happens.
+#[derive(Default)]
+pub struct ExtractAudit {
+    /// `building=X` → residential(0) where X is neither recognised nor a known
+    /// residential synonym (a real `building=yes` is the intended default, not a trap).
+    pub default_residential: HashMap<String, u64>,
+}
+
 pub struct Spiller {
     dir: PathBuf,
     num_buckets: usize,
     /// (feature_type_name, bucket_idx) → writer
     writers: HashMap<(String, usize), BucketFile>,
+    pub audit: ExtractAudit,
 }
 
 impl Spiller {
@@ -31,6 +44,7 @@ impl Spiller {
             dir: dir.to_path_buf(),
             num_buckets,
             writers: HashMap::new(),
+            audit: ExtractAudit::default(),
         })
     }
 
@@ -217,6 +231,25 @@ impl Spiller {
         let bucket = ((hex_id >> 28) as usize) % self.num_buckets;
         let name = ftype.name();
 
+        // Classify the building ONCE before borrowing a writer, so observability can
+        // record a silent residential-default without a second classification pass.
+        let building_bt =
+            matches!(ftype, FeatureType::Building).then(|| building_type_from_tags(tags));
+        // A Building feature with NO `building` tag is a FUNCTIONAL AREA (mall /
+        // hospital / school / zone routed by function). Flagged so finalize can
+        // suppress it where it merely wraps real buildings (anti-double-count).
+        let is_area_source = building_bt.is_some() && !tags.contains_key("building");
+        if building_bt == Some(0) {
+            if let Some(b) = tags.get("building") {
+                if !matches!(
+                    b.as_str(),
+                    "yes" | "" | "residential" | "apartments" | "dormitory"
+                ) {
+                    *self.audit.default_residential.entry(b.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+
         let w = &mut self.get_writer(name, bucket).writer;
         let _ = write!(w, "{}\t{}\t{:.7}\t{:.7}", hex_id, osm_id, clat, clon);
 
@@ -224,10 +257,10 @@ impl Spiller {
             FeatureType::Building => {
                 // Use amenity/shop/healthcare tags to override building type classification.
                 // WHY: building=yes + amenity=school → type 3 (school), not 0 (residential).
-                let bt = building_type_from_tags(tags);
+                let bt = building_bt.unwrap();
                 let _ = write!(
                     w,
-                    "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     bt,
                     tags.get("building:use")
                         .map(|s| building_use(s))
@@ -243,6 +276,7 @@ impl Spiller {
                     tags.get("addr:housenumber").unwrap_or(&String::new()),
                     // settlement v2 phase 2: opening_hours → day-fraction u8.
                     classify::opening_hours_fraction(tags.get("opening_hours").map(|s| s.as_str())),
+                    is_area_source as u8,
                 );
             }
             FeatureType::Leisure => {
@@ -344,6 +378,19 @@ impl Spiller {
 /// barns. Function POIs reuse [`poi_class`] (shared with the finalize join).
 fn building_type_from_tags(tags: &Tags) -> u8 {
     let get = |k: &str| tags.get(k).map(|s| s.as_str());
+    // A SPECIFIC structural `building=*` (warehouse, stadium, train_station, …)
+    // describes the whole envelope and BEATS an amenity POI tagged inside it: a
+    // `building=warehouse` + `amenity=bar` is a warehouse with a staff bar, not a
+    // 100 dB "restaurant" the size of the warehouse. Generic envelopes
+    // (yes/commercial/retail/house/…) are NOT structural and defer to the POI
+    // below, which gives them their function (a `building=yes` + `amenity=cafe`
+    // IS a café). Fixes Strahov Stadium / airport terminals / breweries that
+    // were stamped restaurant_bar on a 10⁵ m² footprint.
+    if let Some(b) = get("building") {
+        if building_overrides_poi(b) {
+            return building_type(b);
+        }
+    }
     if let Some(c) = poi_class(
         get("amenity"),
         get("shop"),
@@ -360,6 +407,44 @@ fn building_type_from_tags(tags: &Tags) -> u8 {
     }
     // Fallback to building tag
     tags.get("building").map(|s| building_type(s)).unwrap_or(0)
+}
+
+/// A `building=*` value naming a large / specific STRUCTURE whose emission is
+/// set by the whole envelope, not by an `amenity` POI tagged inside it (a
+/// stadium / warehouse / station / church with a bar is NOT a bar). Generic
+/// envelopes (`yes`, `commercial`, `retail`, `office`, `residential`, `house`,
+/// `apartments`) are deliberately ABSENT — they defer to the POI that gives them
+/// their function.
+fn building_overrides_poi(b: &str) -> bool {
+    matches!(
+        b,
+        "warehouse"
+            | "industrial"
+            | "manufacture"
+            | "stadium"
+            | "grandstand"
+            | "sports_hall"
+            | "sports_centre"
+            | "train_station"
+            | "transportation"
+            | "hospital"
+            | "school"
+            | "university"
+            | "college"
+            | "kindergarten"
+            | "church"
+            | "cathedral"
+            | "chapel"
+            | "mosque"
+            | "synagogue"
+            | "temple"
+            | "monastery"
+            | "hangar"
+            | "farm"
+            | "barn"
+            | "stable"
+            | "cowshed"
+    )
 }
 
 /// The emission class implied by a function POI (`amenity`/`shop`/`healthcare`/
@@ -436,17 +521,35 @@ fn building_type(val: &str) -> u8 {
         // Single-family houses get the HOUSE class (garden + heat pump).
         "house" | "detached" | "semidetached_house" | "semidetached" | "terrace" | "bungalow"
         | "houseboat" | "cabin" => st::HOUSE,
-        "supermarket" => st::FOOD_RETAIL,
+        // Retail buildings — malls, shops, supermarkets — are SHOPPING activity
+        // (car park + deliveries + refrigeration), the FOOD_RETAIL profile, NOT
+        // the office-HVAC commercial one. Westfield Chodov is dozens of
+        // `building=retail` polygons; as commercial they barely showed (the
+        // `shop=mall` master polygon has no `building` tag, so it never reaches
+        // buildings.arrow — the retail sub-buildings are what carry the mall).
+        "supermarket" | "retail" => st::FOOD_RETAIL,
         "restaurant" | "cafe" | "pub" | "bar" | "fast_food" => st::HOSPITALITY,
-        "commercial" | "retail" | "office" | "kiosk" => 1,
-        "industrial" | "warehouse" | "manufacture" => 2,
-        "school" | "university" | "college" | "kindergarten" => 3,
+        // Transport hubs: HVAC + concourse activity, commercial-grade plant.
+        "commercial" | "office" | "kiosk" | "train_station" | "transportation" => 1,
+        // data_center: 24/7 chiller plant, closer to a works than an office.
+        "industrial" | "warehouse" | "manufacture" | "workshop" | "data_center" => 2,
+        "school" | "university" | "college" | "kindergarten" | "education" => 3,
         "hospital" | "clinic" => 4,
-        "church" | "cathedral" | "chapel" | "mosque" | "synagogue" | "temple" => 5,
+        "church" | "cathedral" | "chapel" | "mosque" | "synagogue" | "temple" | "monastery"
+        | "religious" | "wayside_shrine" | "presbytery" | "shrine" => 5,
         "hotel" | "hostel" | "motel" => 6,
         "garage" | "garages" | "carport" | "parking" => 7,
         "farm" | "barn" | "stable" | "sty" | "cowshed" => 8,
-        "public" | "civic" | "government" => 9,
+        // Large semi-open sports structures: occasional crowds, mostly empty
+        // concrete — a moderate public-grade level, NOT a footprint-scaled
+        // restaurant (Strahov Stadium was 100 dB as restaurant_bar).
+        // `fire_station` here mirrors the `amenity=fire_station` POI class (was a
+        // silent-trap default, audit 2026-06).
+        // Civic / cultural / tourist public buildings (castle, museum, halls) —
+        // moderate public-grade level (audit 2026-06 long tail).
+        "public" | "civic" | "government" | "government_office" | "cultural" | "fire_station"
+        | "castle" | "museum" | "hall" | "funeral_hall" | "historic" | "stadium" | "grandstand"
+        | "sports_hall" | "sports_centre" => 9,
         // §C′ SILENT tail: uninhabited / unheated / infra structures. Routing
         // these out of residential is the largest correctness win of phase 2
         // (~2.6 % of all buildings stop emitting phantom residential noise).
@@ -456,7 +559,14 @@ fn building_type(val: &str) -> u8 {
         | "carport_roof" | "ruins" | "ruin" | "construction" | "collapsed" | "service"
         | "allotment_house" | "boathouse" | "bunker" | "tent" | "container" | "storage_tank"
         | "silo" | "hangar" | "conservatory" | "ger" | "farm_auxiliary" | "transformer_tower"
-        | "water_tower" | "no" => st::SILENT,
+        | "water_tower" | "no"
+        // Infra / uninhabited structures that were silent-trap residential
+        // defaults (audit 2026-06): bridges, towers, public toilets, lift shafts,
+        // utility cabinets, gate/guard huts, abandoned shells, stairwells, chimneys.
+        | "bridge" | "tower" | "toilets" | "elevator" | "tech_cab" | "guardhouse"
+        | "gatehouse" | "pavilion" | "abandoned" | "stairs" | "staircase" | "chimney"
+        | "demolished" | "forestry" | "signal_box" | "security_booth" | "shelter"
+        | "proposed" | "ship" => st::SILENT,
         "yes" | "" => 0, // default to residential-apartments
         _ => 0,
     }
@@ -656,10 +766,11 @@ mod settlement_class_tests {
     #[test]
     fn building_type_food_retail_and_hospitality() {
         assert_eq!(building_type("supermarket"), st::FOOD_RETAIL);
+        assert_eq!(building_type("retail"), st::FOOD_RETAIL); // malls/shops = shopping activity
         assert_eq!(building_type("restaurant"), st::HOSPITALITY);
         assert_eq!(building_type("pub"), st::HOSPITALITY);
-        // generic retail/office stay commercial.
-        assert_eq!(building_type("retail"), 1);
+        // generic commercial/office stay commercial (offices, not shops).
+        assert_eq!(building_type("commercial"), 1);
         assert_eq!(building_type("office"), 1);
     }
 
