@@ -88,8 +88,13 @@ HEX_COUNT=$(find "$OUTPUT_DIR" -maxdepth 1 -type d 2>/dev/null | wc -l)
 OUTPUT_SIZE=$(du -sh "$OUTPUT_DIR" 2>/dev/null | cut -f1)
 
 log ""
-log "Cleaning up node cache ..."
+# Reclaim scratch the moment the binary is done with it: the node cache (~100 GB)
+# AND the sort spill (~190 GB) are useless after finalize. Leaving the spill behind
+# stranded ~250 GB of dead scratch per run on /tmp (the qm-reextract leak, fixed
+# 2026-06-25). Output arrows are already written to OUTPUT_DIR, not scratch.
+log "Cleaning up scratch (node cache + spill) ..."
 rm -f "$NODE_CACHE"
+rm -rf "$SPILL_DIR"
 
 if [ "$RUN_SERVICE_TREE" = "1" ]; then
     if [ ! -d "$PROJECT_DIR/pipeline/node_modules" ]; then
