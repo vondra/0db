@@ -14,9 +14,9 @@ use super::{schema_with_contract, LEISURE_CONTRACT_V1};
 use crate::spill::hex_decode;
 
 /// `leisure.arrow` (settlement v2 phase 2): one row per leisure AREA source
-/// (sports pitch / playground / pool / beer garden). Geometry + `sport` class +
-/// optional `capacity`; the consumer's `prepare_leisure_points` derives the
-/// emission. Its own v1 contract — a NEW file, never confused with buildings.
+/// (sports pitch / playground / pool / beer garden). Geometry + `sport` class
+/// drive the emission; `prepare_leisure_points` now scales on `area_m2` alone.
+/// Its own v1 contract — a NEW file, never confused with buildings.
 pub(super) fn write_leisure(rows: &[Vec<String>], path: &Path) -> Result<()> {
     let n = rows.len();
     let schema = schema_with_contract(
@@ -26,7 +26,10 @@ pub(super) fn write_leisure(rows: &[Vec<String>], path: &Path) -> Result<()> {
             Field::new("centroid_lon", DataType::Float64, false),
             // emission::leisure class id (PITCH/PADEL/…).
             Field::new("sport", DataType::UInt8, false),
-            // 0 = unknown/absent; seats/people for crowd scaling.
+            // Vestigial: still populated from the TSV (`parse_capacity`) but no
+            // longer read — the area-law unification dropped capacity scaling.
+            // Kept only to hold LEISURE_CONTRACT_V1; drop on the next contract
+            // bump + world re-extract.
             Field::new("capacity", DataType::UInt32, false),
             Field::new("opening_hours_frac", DataType::UInt8, false),
             Field::new("name", DataType::Utf8, true),

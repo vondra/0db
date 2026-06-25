@@ -33,9 +33,9 @@ pub struct RawIndustrialInput<'a> {
 
 /// One `leisure.arrow` row — a sports/play/open-air-hospitality AREA source
 /// (settlement v2 phase 2). `sport` selects the per-type level
-/// (`leisure::leisure_profile`); `capacity` (seats/people) scales crowd
-/// sources. No floors/height — leisure is an open-air activity source at a
-/// fixed ~1.5 m, not a GFA-scaled building.
+/// (`leisure::leisure_profile`); the polygon `area_m2` is the only size driver
+/// (unified area-law with buildings). No floors/height — leisure is an open-air
+/// activity source at a fixed ~1.5 m, not a GFA-scaled building.
 #[derive(Debug, Clone, Copy)]
 pub struct RawLeisureInput<'a> {
     pub centroid_lat: f64,
@@ -80,7 +80,9 @@ pub struct PreparedPoint {
 
 const INDUSTRIAL_AREA_CELL_M: f64 = 75.0;
 const BUILDING_AREA_CELL_M: f64 = 30.0;
-const INDUSTRIAL_AREA_CELL_SAMPLES: usize = 5;
+/// Sub-cell sampling density for `wkb_area_grid_points`, shared by every area
+/// source (building / industrial / leisure) — not industrial-specific.
+const AREA_CELL_SAMPLES: usize = 5;
 const INDUSTRIAL_AREA_THRESHOLD_M2: f64 = 5_000.0;
 const BUILDING_AREA_THRESHOLD_M2: f64 = 2_000.0;
 
@@ -138,6 +140,23 @@ struct AreaSource<'a> {
     rated_power_kw: Option<f32>,
 }
 
+/// Derive the evening + night band arrays from the day bands by adding the
+/// profile's flat per-period offset to every band. Shared by building /
+/// industrial / leisure so the period derivation can't drift between them.
+fn period_offset_bands(
+    lw_day: [f32; NUM_BANDS],
+    evening_offset: f64,
+    night_offset: f64,
+) -> ([f32; NUM_BANDS], [f32; NUM_BANDS]) {
+    let mut evening = lw_day;
+    let mut night = lw_day;
+    for i in 0..NUM_BANDS {
+        evening[i] += evening_offset as f32;
+        night[i] += night_offset as f32;
+    }
+    (evening, night)
+}
+
 /// Discretise an AREA source into per-cell [`PreparedPoint`]s — ONE source of
 /// truth for building / industrial / leisure. Above `grid_threshold_m2` the
 /// footprint is gridded at `cell_m` (`wkb::wkb_area_grid_points`): each cell
@@ -156,11 +175,8 @@ fn discretize_area_source(
 ) -> Vec<PreparedPoint> {
     let weighted_points: Vec<(f64, f64, f64)> =
         if src.area_m2 > src.grid_threshold_m2 && !src.polygon_wkb.is_empty() {
-            let cells = crate::wkb::wkb_area_grid_points(
-                src.polygon_wkb,
-                src.cell_m,
-                INDUSTRIAL_AREA_CELL_SAMPLES,
-            );
+            let cells =
+                crate::wkb::wkb_area_grid_points(src.polygon_wkb, src.cell_m, AREA_CELL_SAMPLES);
             if cells.len() > 1 {
                 let sampled_area = cells.iter().map(|p| p.area_m2).sum::<f64>().max(1.0);
                 cells
@@ -222,9 +238,8 @@ pub fn prepare_building_points(input: RawBuildingInput<'_>) -> Vec<PreparedPoint
     let area = resolve_area_m2(input.area_m2, input.polygon_wkb, 100.0);
 
     let profile = settlement::building_profile(input.building_type);
-    // Shed-types (warehouse/factory/church/farm/retail box) scale on FOOTPRINT,
-    // not floors: a tall single-story hall must not be counted as `height/3`
-    // floors (see `settlement::is_shed_type`).
+    // Shed-types scale on FOOTPRINT, not floors, so a tall single-story hall
+    // isn't counted as `height/3` floors (rationale in `settlement::is_shed_type`).
     let lw_floors = if settlement::is_shed_type(input.building_type) {
         1
     } else {
@@ -236,12 +251,8 @@ pub fn prepare_building_points(input: RawBuildingInput<'_>) -> Vec<PreparedPoint
     }
 
     let lw_day = bands_to_f32(settlement::building_emission_bands(&profile, lw));
-    let mut lw_evening = lw_day;
-    let mut lw_night = lw_day;
-    for i in 0..NUM_BANDS {
-        lw_evening[i] += profile.evening_offset as f32;
-        lw_night[i] += profile.night_offset as f32;
-    }
+    let (lw_evening, lw_night) =
+        period_offset_bands(lw_day, profile.evening_offset, profile.night_offset);
 
     // Cull radius solved against the honest radiated lw (settlement v2 phase 1):
     // one scalar, one meaning (`building_max_dist` caps at 2 km internally).
@@ -319,12 +330,8 @@ pub fn prepare_industrial_points(input: RawIndustrialInput<'_>) -> Vec<PreparedP
     }
 
     let lw_day = bands_to_f32(industrial::industrial_emission_bands(&profile, lw));
-    let mut lw_evening = lw_day;
-    let mut lw_night = lw_day;
-    for i in 0..NUM_BANDS {
-        lw_evening[i] += profile.evening_offset as f32;
-        lw_night[i] += profile.night_offset as f32;
-    }
+    let (lw_evening, lw_night) =
+        period_offset_bands(lw_day, profile.evening_offset, profile.night_offset);
 
     let source_height_m = if input.source_type == 1 {
         8.0
@@ -376,12 +383,8 @@ pub fn prepare_leisure_points(input: RawLeisureInput<'_>) -> Vec<PreparedPoint> 
     }
 
     let lw_day = bands_to_f32(leisure::leisure_emission_bands(&profile, lw));
-    let mut lw_evening = lw_day;
-    let mut lw_night = lw_day;
-    for i in 0..NUM_BANDS {
-        lw_evening[i] += profile.evening_offset as f32;
-        lw_night[i] += profile.night_offset as f32;
-    }
+    let (lw_evening, lw_night) =
+        period_offset_bands(lw_day, profile.evening_offset, profile.night_offset);
 
     let max_radius_m = settlement::building_max_dist(lw).min(LEISURE_MAX_RADIUS_M);
     discretize_area_source(

@@ -96,7 +96,7 @@ fn classify_way_unscoped(way: &Way) -> Option<FeatureType> {
     // poi_class so the area classifies identically to the same function on a
     // building; the overlap with sub-buildings inside it is suppressed in
     // finalize (an area containing real buildings defers to them).
-    if is_functional_area(&tags) {
+    if is_functional_area(tag) {
         return Some(FeatureType::Building);
     }
 
@@ -105,9 +105,9 @@ fn classify_way_unscoped(way: &Way) -> Option<FeatureType> {
 
 /// True if a tag set is a functional building AREA worth keeping even without a
 /// `building` tag: a noise-relevant `amenity`/`shop`/`healthcare`/`tourism` POI,
-/// or a retail/commercial landuse zone. Shared by way + relation routing.
-pub(crate) fn is_functional_area(tags: &[(&str, &str)]) -> bool {
-    let tag = |k: &str| tags.iter().find(|(key, _)| *key == k).map(|(_, v)| *v);
+/// or a retail/commercial landuse zone. Takes a `tag` lookup so way + relation
+/// routing share ONE definition (each already has its own closure).
+pub(crate) fn is_functional_area<'a>(tag: impl Fn(&str) -> Option<&'a str>) -> bool {
     crate::spill::poi_class(
         tag("amenity"),
         tag("shop"),

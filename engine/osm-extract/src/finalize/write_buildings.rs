@@ -124,13 +124,9 @@ pub(super) fn write_buildings(
             poi_index,
             join_stats,
         );
-        // Size guard: an `amenity=restaurant/bar` POI on a footprint far larger
-        // than any real restaurant is a small tenant of a big structure (airport
-        // terminal, brewery, food court) — NOT a 14 000 m² "restaurant" the
-        // footprint area-law would blow up to ~100 dB. Above 4000 m² fall back to
-        // commercial (generic HVAC envelope). FOOD_RETAIL is exempt: hypermarkets
-        // legitimately reach 5–15 k m². (Specific structural tags already win in
-        // `building_type_from_tags`; this catches the `building=yes`+amenity case.)
+        // Catches the `building=yes` + `amenity=restaurant` case (specific
+        // structural tags already won in `building_type_from_tags`); rationale on
+        // the fn.
         let bt = downgrade_oversized_restaurant(bt, area_opt);
         osm_id.append_value(row[1].parse().unwrap_or(0));
         clat.append_value(row[2].parse().unwrap_or(0.0));

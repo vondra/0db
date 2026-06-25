@@ -135,15 +135,7 @@ fn classify_multipolygon(rel: &osmpbf::Relation) -> Option<(FeatureType, Vec<(St
     ) || tag("amenity") == Some("heliport")
     {
         FeatureType::AirportArea
-    } else if crate::spill::poi_class(
-        tag("amenity"),
-        tag("shop"),
-        tag("healthcare"),
-        tag("tourism"),
-    )
-    .is_some()
-        || matches!(tag("landuse"), Some("retail") | Some("commercial"))
-    {
+    } else if crate::classify::is_functional_area(tag) {
         // Functional AREA relation with no building tag: a mall (shop=mall),
         // hospital or school campus, retail/commercial zone (audit 2026-06).
         FeatureType::Building

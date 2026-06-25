@@ -240,13 +240,13 @@ impl Spiller {
         // suppress it where it merely wraps real buildings (anti-double-count).
         let is_area_source = building_bt.is_some() && !tags.contains_key("building");
         if building_bt == Some(0) {
-            if let Some(b) = tags.get("building") {
-                if !matches!(
+            if let Some(b) = tags.get("building").filter(|b| {
+                !matches!(
                     b.as_str(),
                     "yes" | "" | "residential" | "apartments" | "dormitory"
-                ) {
-                    *self.audit.default_residential.entry(b.clone()).or_insert(0) += 1;
-                }
+                )
+            }) {
+                *self.audit.default_residential.entry(b.clone()).or_insert(0) += 1;
             }
         }
 
