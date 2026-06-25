@@ -30,7 +30,7 @@ For now, `trains_freight` remains 0 in the enriched data. CNOSSOS-EU defaults ar
 ## Industrial data
 
 - **OpenStreetMap** — Industrial/commercial landuse polygons with `industrial=*` sub-tags (factory, warehouse, sawmill, scrap_yard, wastewater_plant, etc.)
-- **E-PRTR (European Pollutant Release and Transfer Register)** — supplies 2-digit NACE sector codes for Czech industrial complexes (CZ is an E-PRTR reporter), spatially joined to OSM industrial sites within 2 km via the continental industrial pass (`enrich-industrial-europe.ts`). GPPD (power plants, NACE 35) and the GEM steel/cement/coal-mine trackers add coverage via `/enrich-global`.
+- **E-PRTR (European Pollutant Release and Transfer Register)** — supplies 2-digit NACE sector codes for Czech industrial complexes (CZ is an E-PRTR reporter), spatially joined to OSM industrial sites within 2 km via the continental industrial pass (`enrich-global-industrial.ts`). GPPD (power plants, NACE 35) and the GEM steel/cement/coal-mine trackers add coverage via `/enrich-global`.
 - **[IRZ (Integrovaný registr znečišťování)](https://www.irz.cz/)** — the Czech national pollution register (ČHMÚ) is registered as a higher-priority national source but is not yet ingested; Czech sector codes currently come from E-PRTR.
 - **[SHM 2022 industrial contours](https://geoportal.mzcr.cz/server/rest/services/SHM2022/INSPIRE/MapServer)** — Official industrial noise contours in 6 agglomerations (Praha, Brno, Ostrava, Plzeň, Olomouc, Liberec), used for model calibration and validation
 

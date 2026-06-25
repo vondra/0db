@@ -65,7 +65,7 @@ rm -f "$LOG_DIR/_failures.txt"
 # ── Phase 1: Continental + Global (dependencies for country priority) ──
 log ""
 log "Phase 1: Global + Continental"
-for s in $GLOBAL pipeline/enrich-roads-europe.ts pipeline/enrich-railway-europe.ts pipeline/enrich-industrial-europe.ts; do
+for s in $GLOBAL pipeline/enrich-roads-europe.ts pipeline/enrich-railway-europe.ts; do
     [ -f "$s" ] && run_one "$s"
 done
 

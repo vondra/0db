@@ -36,7 +36,7 @@ All SNCF rail services from [SNCF Open Data](https://data.sncf.com/), ingested b
 
 ## Industrial
 
-- E-PRTR — 2-digit NACE sector codes for French industrial complexes via the continental industrial pass (`enrich-industrial-europe.ts`)
+- E-PRTR — 2-digit NACE sector codes for French industrial complexes via the continental industrial pass (`enrich-global-industrial.ts`)
 - GPPD power plants (~200 facilities, NACE 35) via `/enrich-global` (WRI Global Power Plant Database)
 - Georisques/IREP (French national PRTR) — not yet processed
 

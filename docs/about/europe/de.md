@@ -62,7 +62,7 @@ Germany's energy facility registry from [Bundesnetzagentur](https://www.marktsta
 
 ### E-PRTR (applied via the continental industrial pass)
 
-The European Pollutant Release and Transfer Register supplies 2-digit NACE sector codes (steel, cement, chemical, waste, food, paper, etc.) for German industrial complexes, matched to OSM industrial sites within 2 km (`enrich-industrial-europe.ts`).
+The European Pollutant Release and Transfer Register supplies 2-digit NACE sector codes (steel, cement, chemical, waste, food, paper, etc.) for German industrial complexes, matched to OSM industrial sites within 2 km (`enrich-global-industrial.ts`).
 
 ### GPPD (applied via /enrich-global)
 

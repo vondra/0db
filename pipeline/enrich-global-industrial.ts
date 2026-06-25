@@ -21,8 +21,8 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
-import { latLngToCell } from 'h3-js'
-import { SOURCES_BY_KEY } from './lib/sources.js'
+import { latLngToCell, gridDisk } from 'h3-js'
+import { SOURCES_BY_ID, PROVENANCE_RANK } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import {
   SOURCE_ID_EUROPE_EPRTR,
@@ -98,6 +98,24 @@ const EPRTR_URLS = [
 
 const GPPD_DATASET_ID = SOURCE_ID_GLOBAL_GPPD
 const EPRTR_DATASET_ID = SOURCE_ID_EUROPE_EPRTR
+
+// E-PRTR/GPPD coordinates are reporting centroids, not the OSM polygon's spot,
+// and big sites span >500 m, so match within 2 km. Restored from the old EU-only
+// pass after /gg (2026-06-25) found a refactor had silently shrunk this to 500 m,
+// dropping ~75% of matches. Sites are spatially sparse → over-reach is rare, and
+// the authority/nearest pick below resolves the dense-zone overlaps.
+const SEARCH_RADIUS_M = 2000
+
+// Dataset id + authority rank of a facility, used to prefer the higher-authority
+// source when several cover one polygon (E-PRTR continental-measured 5 > GPPD/GEM
+// global-measured 4) instead of letting a merely-nearer GPPD point win — the
+// authority order docs promise (cz-irz > europe-eprtr > {gppd, GEM}).
+const facilityDatasetId = (fac: Facility): number =>
+  fac.source === 'eprtr' ? EPRTR_DATASET_ID
+    : fac.source === 'gppd' ? GPPD_DATASET_ID
+    : GEM_DATASET_ID[fac.source.slice('gem-'.length) as GemTracker['key']]
+const facilityRank = (fac: Facility): number =>
+  PROVENANCE_RANK[SOURCES_BY_ID.get(facilityDatasetId(fac))?.provenance ?? 'none']
 
 // ── Types ──
 
@@ -458,8 +476,24 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
       lastLog = now
     }
 
-    const hexFacilities = facByHex.get(hexId)
-    if (!hexFacilities || hexFacilities.length === 0) continue
+    // Gather facilities from this hex AND its 6 neighbours: a facility just across
+    // an R4 boundary can still be within SEARCH_RADIUS_M of a polygon in this hex.
+    // Same-hex-only (the post-refactor state) silently dropped those border matches.
+    const hexFacilities = gridDisk(hexId, 1).flatMap(h => facByHex.get(h) ?? [])
+    if (hexFacilities.length === 0) continue
+
+    // Precompute id/rank/nace4 once per facility (constant across every polygon in
+    // the hex) and drop the empty-nace GPPD sentinel (wind / blank-fuel) here so it
+    // can never shadow a real match. The per-polygon loop below is then pure selection.
+    const candidates = hexFacilities
+      .filter(f => f.nace !== '')
+      .map(f => ({
+        lat: f.lat, lon: f.lon, source: f.source,
+        nace4: Math.floor((parseInt(f.nace, 10) || 0) / 100),
+        id: facilityDatasetId(f),
+        rank: facilityRank(f),
+      }))
+    if (candidates.length === 0) continue
 
     const indPath = resolve(H3R4_DIR, hexId, 'industrial.arrow')
     if (!existsSync(indPath)) continue
@@ -492,32 +526,28 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
           const lat = clat.get(i) as number
           const lon = clon.get(i) as number
 
-          let bestDist = 500
-          let bestFac: Facility | null = null
-
-          for (const fac of hexFacilities) {
-            const d = flatDist(lat, lon, fac.lat, fac.lon)
-            if (d < bestDist) {
+          // Pick the highest-authority facility within radius, tie-broken by distance.
+          let bestRank = -1
+          let bestDist = SEARCH_RADIUS_M
+          let best: typeof candidates[number] | null = null
+          for (const c of candidates) {
+            const d = flatDist(lat, lon, c.lat, c.lon)
+            if (d >= SEARCH_RADIUS_M) continue
+            if (c.rank > bestRank || (c.rank === bestRank && d < bestDist)) {
+              bestRank = c.rank
               bestDist = d
-              bestFac = fac
+              best = c
             }
           }
 
-          // Empty nace is the GPPD skip sentinel (wind / blank-fuel plants) — leave
-          // the OSM row untouched: no nace_4digit, no source_id stamp.
-          if (bestFac && bestFac.nace !== '') {
-            const nace6 = parseInt(bestFac.nace, 10) || 0
-            const nace4 = Math.floor(nace6 / 100)
-            const myId = bestFac.source === 'eprtr' ? EPRTR_DATASET_ID
-              : bestFac.source === 'gppd' ? GPPD_DATASET_ID
-              : GEM_DATASET_ID[bestFac.source.slice('gem-'.length) as GemTracker['key']]
+          if (best) {
             const existingId = existingSourceId[i]
-            if (shouldOverwrite(existingId, myId)) {
-              newNace[i] = nace4
-              newDatasetId[i] = myId
+            if (shouldOverwrite(existingId, best.id)) {
+              newNace[i] = best.nace4
+              newDatasetId[i] = best.id
               hexMatched++
               totalMatched++
-              matchedBySource.set(bestFac.source, (matchedBySource.get(bestFac.source) ?? 0) + 1)
+              matchedBySource.set(best.source, (matchedBySource.get(best.source) ?? 0) + 1)
               anyChanged = true
             }
           }
@@ -544,7 +574,7 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
   console.log(`\n=== Spatial Join Results ===`)
   console.log(`  Hexes scanned: ${hexesProcessed} (${hexesWithMatches} with matches)`)
   console.log(`  Industrial sites scanned: ${totalIndustrial}`)
-  console.log(`  Matches (facility → OSM polygon within 500m): ${totalMatched}`)
+  console.log(`  Matches (facility → OSM polygon within 2km): ${totalMatched}`)
   for (const [src, n] of [...matchedBySource].sort((a, b) => b[1] - a[1])) {
     console.log(`    ${src}: ${n}`)
   }
@@ -620,8 +650,9 @@ async function main() {
 - **GEM Coal Mine** (NACE 0510): ${GEM_TRACKERS[2].url} → ${m('gem-coalmine')} matched, CC-BY-4.0
 
 ## Matching
-- Spatial join: facility lat/lon → nearest OSM industrial polygon centroid within 500m
-- H3R4 pre-filter: only compare facilities and polygons in the same H3 resolution-4 hex
+- Spatial join: facility lat/lon → OSM industrial polygon centroid within 2 km
+- H3R4 pre-filter: compare a polygon against facilities in its hex and the 6 neighbours
+  (border-safe), preferring the highest-authority source then the nearest
 - Written directly to industrial.arrow per-row (nace_4digit + source_id)
 - Dataset priority preserves national registries (cz-irz > europe-eprtr > {global-gppd, GEM})
 - GEM trackers stamp only active sites (status operating / operating pre-retirement)
@@ -631,7 +662,7 @@ async function main() {
 - GEM trackers add three heavy-industry sectors worldwide (steel / cement / coal mining),
   but only sites ≥ tracker capacity threshold (e.g. steel ≥ 500 ktpa) — small sites need
   country-specific registries
-- Facilities without a nearby OSM industrial polygon (within 500m) are not matched
+- Facilities without a nearby OSM industrial polygon (within 2 km) are not matched
 - GEM map GeoJSON is the public subset; the gated form download carries finer per-unit detail
 
 ## Run date
