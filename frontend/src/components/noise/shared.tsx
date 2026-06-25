@@ -190,9 +190,14 @@ export function roadSourceDescription(
     )
   }
   if (trafficSource === 'estimated_service_tree') {
+    // The "heuristic" tier covers two datasets: the service-tree (local roads,
+    // trips accumulated from buildings) and the continuity-fill (major roads,
+    // a measured neighbour's AADT carried along the same road). Name whichever
+    // it actually is via the dataset; both are estimates, not measurements.
+    const name = provenance ? formatProv(provenance) : 'Service-tree heuristic'
     return (
-      `Source: Service-tree heuristic — ${roadClass} class\n` +
-      `  (AADT inherited from upstream higher-class road)`
+      `Source: ${name} — ${roadClass} class\n` +
+      `  (estimated AADT, not a direct measurement)`
     )
   }
   return (

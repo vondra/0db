@@ -56,9 +56,12 @@ if (BBOX && (BBOX.length !== 4 || BBOX.some((x) => !Number.isFinite(x)))) {
   process.exit(1)
 }
 
-/** Cumulative metres a measured value may propagate from its anchor before we
- *  stop — bounds the blast radius of one wrong anchor (2026-06 /gg). */
-const MAX_FILL_M = 2000
+// No distance cap (Ondra 2026-06-25): the per-hex scope (~22 km) already bounds
+// the reach, and the flow DECREASES at every junction — it dies to the class
+// default on its own wherever side roads exist. A hard cap only chopped LEGITIMATE
+// flow on long junction-free stretches (a motorway between exits really does carry
+// a constant volume; cars don't vanish). A wrong anchor's reach is bounded by the
+// hex and caught by the R13 audit, not by an arbitrary metre count.
 /** Two anchors redistributing into the same segment whose totals differ by more
  *  than this are a real disagreement → skip it. Within it, take the lower
  *  (conservative). For choosing/vetoing here, NOT audit severity. */
@@ -95,7 +98,6 @@ interface Seg {
   total: number
   a: string
   b: string
-  len: number
 }
 
 /** A vehicle-class flow vector + provenance (which anchor produced it). */
@@ -136,7 +138,6 @@ async function processHex(arrowPath: string): Promise<{ filled: number; conflict
   const refC = table.getChild('ref')
   const clsC = table.getChild('road_class')
   const srcC = table.getChild('source_id')
-  const lenC = table.getChild('length_m')
   const sLatC = table.getChild('start_lat')
   const sLonC = table.getChild('start_lon')
   const eLatC = table.getChild('end_lat')
@@ -172,7 +173,6 @@ async function processHex(arrowPath: string): Promise<{ filled: number; conflict
       total: light + medium + heavy + moto,
       a,
       b,
-      len: (lenC?.get(i) as number) ?? 0,
     })
     for (const k of [a, b]) {
       const arr = endpoint.get(k)
@@ -210,12 +210,12 @@ async function processHex(arrowPath: string): Promise<{ filled: number; conflict
   for (const A of segs) {
     if (!isMeasured(A.source) || A.total <= 0) continue
     const seen = new Set<number>([A.i])
-    const queue: Array<{ seg: number; v: Flow; dist: number }> = [
-      { seg: A.i, v: { light: A.light, medium: A.medium, heavy: A.heavy, moto: A.moto, total: A.total, anchor: A.i }, dist: 0 },
+    const queue: Array<{ seg: number; v: Flow }> = [
+      { seg: A.i, v: { light: A.light, medium: A.medium, heavy: A.heavy, moto: A.moto, total: A.total, anchor: A.i } },
     ]
     let head = 0
     while (head < queue.length) {
-      const { seg, v, dist } = queue[head++]
+      const { seg, v } = queue[head++]
       for (const ep of [segs[seg].a, segs[seg].b]) {
         const outs = (endpoint.get(ep) ?? []).filter((j) => j !== seg)
         if (outs.length === 0) continue
@@ -246,13 +246,11 @@ async function processHex(arrowPath: string): Promise<{ filled: number; conflict
           // Stop once the flow has fallen to the segment's own class default — the
           // engine default already covers it, and propagating less is meaningless.
           if (tTotal <= classDefaultTotal(o.cls)) continue
-          const newDist = dist + o.len
-          if (newDist > MAX_FILL_M) continue
           seen.add(t)
           const vt = scaleFlow(v, tTotal, v.anchor)
           // Only carry flow onward through segments we actually accepted — a
           // disputed (conflicted) segment is a dead-end, not a downstream seed.
-          if (record(t, vt)) queue.push({ seg: t, v: vt, dist: newDist })
+          if (record(t, vt)) queue.push({ seg: t, v: vt })
         }
       }
     }
