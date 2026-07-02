@@ -16,10 +16,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import {
-  tableFromIPC, tableToIPC, makeTable, vectorFromArray,
-  Float32, Float64, Int64, Uint8, Uint16,
-} from 'apache-arrow'
+import { tableFromIPC, tableToIPC, tableFromArrays } from 'apache-arrow'
 import { writeBuildingEnrichment } from './buildings-arrow.js'
 
 // cz-ruian-vfr — a real national registry id, so shouldOverwrite(0, id) passes.
@@ -32,17 +29,17 @@ after(() => rmSync(TMP, { recursive: true, force: true }))
  *  (11 HOUSE, 12 FOOD_RETAIL) classes. types[i] / floors 0 for i<2. */
 function writeV2Fixture(name: string, types: number[]): string {
   const n = types.length
-  const t = makeTable({
-    osm_id: vectorFromArray(BigInt64Array.from(types.map((_, i) => BigInt(1000 + i))), new Int64()),
-    centroid_lat: vectorFromArray(Float64Array.from(types.map((_, i) => 49.9 + i * 1e-4)), new Float64()),
-    centroid_lon: vectorFromArray(Float64Array.from(types.map((_, i) => 14.2 + i * 1e-4)), new Float64()),
-    building_type: vectorFromArray(Uint8Array.from(types), new Uint8()),
-    building_use: vectorFromArray(new Uint8Array(n), new Uint8()),
-    height: vectorFromArray(Float32Array.from(types.map(() => 7.5)), new Float32()),
-    floors: vectorFromArray(Uint8Array.from(types.map((_, i) => (i < 2 ? 0 : 2))), new Uint8()),
-    area_m2: vectorFromArray(Float32Array.from(types.map(() => 120)), new Float32()),
-    source_id: vectorFromArray(new Uint16Array(n), new Uint16()),
-    opening_hours_frac: vectorFromArray(Uint8Array.from(types.map(() => 2)), new Uint8()),
+  const t = tableFromArrays({
+    osm_id: BigInt64Array.from(types.map((_, i) => BigInt(1000 + i))),
+    centroid_lat: Float64Array.from(types.map((_, i) => 49.9 + i * 1e-4)),
+    centroid_lon: Float64Array.from(types.map((_, i) => 14.2 + i * 1e-4)),
+    building_type: Uint8Array.from(types),
+    building_use: new Uint8Array(n),
+    height: Float32Array.from(types.map(() => 7.5)),
+    floors: Uint8Array.from(types.map((_, i) => (i < 2 ? 0 : 2))),
+    area_m2: Float32Array.from(types.map(() => 120)),
+    source_id: new Uint16Array(n),
+    opening_hours_frac: Uint8Array.from(types.map(() => 2)),
   })
   t.schema.metadata.set('buildings_contract', 'buildings_v2')
   const path = join(TMP, name)
@@ -113,12 +110,12 @@ test('no-op match leaves the file byte-identical', async () => {
 })
 
 test('a v1 arrow (no contract metadata) round-trips without inventing one', async () => {
-  const t = makeTable({
-    centroid_lat: vectorFromArray(Float64Array.from([49.9]), new Float64()),
-    centroid_lon: vectorFromArray(Float64Array.from([14.2]), new Float64()),
-    building_type: vectorFromArray(Uint8Array.from([1]), new Uint8()),
-    floors: vectorFromArray(Uint8Array.from([0]), new Uint8()),
-    source_id: vectorFromArray(new Uint16Array(1), new Uint16()),
+  const t = tableFromArrays({
+    centroid_lat: Float64Array.from([49.9]),
+    centroid_lon: Float64Array.from([14.2]),
+    building_type: Uint8Array.from([1]),
+    floors: Uint8Array.from([0]),
+    source_id: new Uint16Array(1),
   })
   const path = join(TMP, 'v1.arrow')
   writeFileSync(path, Buffer.from(tableToIPC(t, 'file')))

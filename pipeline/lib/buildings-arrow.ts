@@ -21,7 +21,7 @@
  *     still apply.
  */
 
-import { Field, RecordBatch, Schema, Table, makeTable, vectorFromArray, Uint8, Uint16 } from 'apache-arrow'
+import { Field, RecordBatch, Schema, Table, makeTable, makeVector } from 'apache-arrow'
 import { shouldOverwrite, withArrowWrite } from './provenance.js'
 
 /** Highest building_type class id shipped by the engine — 13 = HOSPITALITY
@@ -150,17 +150,16 @@ export async function writeBuildingEnrichment(
     if (!any) return table // no change → withArrowWrite leaves bytes untouched
     result.updated = true
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- apache-arrow's
-    // makeTable/vectorFromArray overloads don't model TypedArray cleanly; same
-    // accepted wart as roads-arrow.ts (tsx, no typecheck gate).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mixed Vector/makeVector
+    // record vs makeTable's TypedArray-only typing (see roads-arrow.ts).
     const cols: Record<string, any> = {}
     for (const f of table.schema.fields) {
       if (['floors', 'building_type', 'source_id'].includes(f.name)) continue
       cols[f.name] = table.getChild(f.name)!
     }
-    cols['floors'] = vectorFromArray(floors, new Uint8())
-    cols['building_type'] = vectorFromArray(btype, new Uint8())
-    cols['source_id'] = vectorFromArray(src, new Uint16())
+    cols['floors'] = makeVector(floors)
+    cols['building_type'] = makeVector(btype)
+    cols['source_id'] = makeVector(src)
 
     // makeTable infers a bare schema; rebuild it under the ORIGINAL metadata
     // (the v2 `buildings_contract` stamp lives there), per-field metadata and

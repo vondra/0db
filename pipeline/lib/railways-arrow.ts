@@ -16,7 +16,7 @@
  * so that stays per-country (see `enrich-railway-th.ts` for the reference shape).
  */
 
-import { Int32, Uint16, vectorFromArray, makeTable, type Table } from 'apache-arrow'
+import { makeVector, makeTable, type Table } from 'apache-arrow'
 import { shouldOverwrite, withArrowWrite } from './provenance.js'
 
 /** Train counts per day + the provenance id to stamp on one matched railway row. */
@@ -151,16 +151,16 @@ export async function writeRailTrains(
     if (!any) return table // no change → withArrowWrite leaves bytes untouched
     updated = true
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- apache-arrow's
-    // makeTable/vectorFromArray overloads don't model TypedArray cleanly (see roads-arrow.ts).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mixed Vector/makeVector
+    // record vs makeTable's TypedArray-only typing (see roads-arrow.ts).
     const cols: Record<string, any> = {}
     for (const f of table.schema.fields) {
       if (['trains_passenger', 'trains_freight', 'source_id'].includes(f.name)) continue
       cols[f.name] = table.getChild(f.name)!
     }
-    cols['trains_passenger'] = vectorFromArray(pax, new Int32())
-    cols['trains_freight'] = vectorFromArray(frt, new Int32())
-    cols['source_id'] = vectorFromArray(src, new Uint16())
+    cols['trains_passenger'] = makeVector(pax)
+    cols['trains_freight'] = makeVector(frt)
+    cols['source_id'] = makeVector(src)
     return makeTable(cols)
   })
 

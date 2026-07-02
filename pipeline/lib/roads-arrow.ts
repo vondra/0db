@@ -12,7 +12,7 @@
 
 import { existsSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { Int32, Uint16, vectorFromArray, makeTable, type Table } from 'apache-arrow'
+import { makeVector, makeTable, type Table } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
 import { shouldOverwrite, withArrowWrite } from './provenance.js'
 import { inBbox } from './spatial.js'
@@ -170,19 +170,19 @@ export async function writeRoadAadt(
     if (!any) return table // no change → withArrowWrite leaves bytes untouched
     updated = true
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- apache-arrow's
-    // makeTable/vectorFromArray overloads don't model TypedArray cleanly; the 31
-    // enrichers all use `any` here and it's correct at runtime (tsx, no typecheck gate).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- makeTable's typing
+    // is Record<string, TypedArray>, but we mix existing Vectors (getChild) with fresh
+    // makeVector columns — fine at runtime, so `any` bridges the too-narrow constraint.
     const cols: Record<string, any> = {}
     for (const f of table.schema.fields) {
       if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(f.name)) continue
       cols[f.name] = table.getChild(f.name)!
     }
-    cols['aadt_light'] = vectorFromArray(light, new Int32())
-    cols['aadt_medium'] = vectorFromArray(medium, new Int32())
-    cols['aadt_heavy'] = vectorFromArray(heavy, new Int32())
-    cols['aadt_moto'] = vectorFromArray(moto, new Int32())
-    cols['source_id'] = vectorFromArray(src, new Uint16())
+    cols['aadt_light'] = makeVector(light)
+    cols['aadt_medium'] = makeVector(medium)
+    cols['aadt_heavy'] = makeVector(heavy)
+    cols['aadt_moto'] = makeVector(moto)
+    cols['source_id'] = makeVector(src)
     return makeTable(cols)
   })
 
