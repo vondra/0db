@@ -40,12 +40,12 @@
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
+import { makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
-import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
-import { flatDistM, inBbox, pointInRing } from './lib/spatial.js'
+import { NATIONAL_MIX, stampOneWinner } from './lib/enrich-industrial-gem.js'
+import type { MatchFacility } from './lib/facility-match.js'
+import { inBbox, pointInRing } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -65,6 +65,11 @@ function inExcluded(lat: number, lon: number): boolean {
   for (const b of EXCLUDE_ZONES) if (inBbox(lat, lon, b)) return true
   return false
 }
+
+function inColombia(lat: number, lon: number): boolean {
+  return inBbox(lat, lon, CO_BBOX) && !inExcluded(lat, lon)
+}
+
 interface Site {
   lat: number; lon: number; name: string; nace: string; source: string
 }
@@ -90,6 +95,14 @@ function fuelToNace(fuel: string): string | null {
   if (/solar|csp|photovolt|pv/.test(fuel)) return '359900'  // 55 dB
   if (/coal|nuclear|gas|oil|biomass|bioenergy|thermal|fossil|diesel|peat/.test(fuel)) return '351100'  // 97 dB
   return null  // blank/unknown → skip
+}
+
+/** The padded-string arithmetic BOTH tiers use to turn a NACE string into the
+ *  arrow uint16 — 2-digit ANM/ANH codes pad to 6 then truncate ('05' → 500,
+ *  '06' → 600), 6-digit GEM codes pass through ('351100' → 3511). */
+function naceStringToUint16(nace: string): number {
+  const nace6Raw = nace.length < 6 ? (nace + '0000').substring(0, 6) : nace
+  return Math.floor((parseInt(nace6Raw, 10) || 0) / 100)
 }
 
 function loadGemPlants(): Site[] {
@@ -227,13 +240,40 @@ async function main() {
   const oilGasPolys = loadOilGasBlocks()
   console.log(`  ANH producing oil/gas blocks: ${oilGasPolys.length}`)
 
-  // Spatial grid for points (GEM)
-  const pointGrid = new Map<string, Site[]>()
-  for (const s of gemPlants) {
-    const key = `${Math.floor(s.lat * 10)}_${Math.floor(s.lon * 10)}`
-    if (!pointGrid.has(key)) pointGrid.set(key, [])
-    pointGrid.get(key)!.push(s)
+  // The core's empty-guard only covers ALL-empty: a partially-loaded run would
+  // reset area stamps it cannot re-stamp (/gg Codex) — any empty source is fatal.
+  // (Tier 1's reset also wipes the ANM/ANH containment stamps tier 2 re-creates.)
+  const sourceFeatureCounts: Array<[string, number]> = [
+    ['power-plants-gem.geojson', gemPlants.length],
+    ['mining-titles.geojson', miningPolys.length],
+    ['oil-gas-blocks.geojson', oilGasPolys.length],
+  ]
+  for (const [file, count] of sourceFeatureCounts) {
+    if (count === 0) {
+      console.error(`FATAL: ${file} missing/empty — refusing to reset stamps this run cannot replace`)
+      process.exit(1)
+    }
   }
+
+  // Tier order matters: the one-winner core runs FIRST (it resets ALL our old 330
+  // stamps inside CO, then elects one polygon per GEM plant); the ANM/ANH
+  // containment tier runs SECOND, so a mining title / oil block containing a row
+  // legitimately overrides a GEM winner (existingId === selfId passes
+  // shouldOverwrite). Reversed, the reset would wipe the containment stamps.
+  const facilities: MatchFacility[] = []
+  for (const s of gemPlants) {
+    facilities.push({ lat: s.lat, lon: s.lon, nace4: naceStringToUint16(s.nace), ...NATIONAL_MIX })
+  }
+  await stampOneWinner({
+    facilities,
+    isInside: inColombia,
+    // hexGate: plain bbox — a border hex centred in an EXCLUDE_ZONE still holds in-CO rows whose old stamps must be swept
+    hexGate: (la, lo) => inBbox(la, lo, CO_BBOX),
+    searchRadiusM: 2000,
+    resetSourceIds: [NATIONAL_MIX.id],
+    label: 'CO',
+    h3r4Dir: H3R4_DIR,
+  })
 
   // Spatial grid for polygon bboxes (ANM mining + ANH oil/gas)
   // Each polygon is registered in all 0.5° cells it overlaps
@@ -253,9 +293,9 @@ async function main() {
   }
   for (const p of miningPolys) registerPoly(p)
   for (const p of oilGasPolys) registerPoly(p)
-  console.log(`  Polygon grid cells: ${polyGrid.size}`)
+  console.log(`\n  Polygon grid cells: ${polyGrid.size}`)
 
-  const MY_SOURCE_ID = SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX
+  const MY_SOURCE_ID = NATIONAL_MIX.id
 
   const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
   const hexDirs: string[] = []
@@ -302,7 +342,7 @@ async function main() {
 
           let chosen: { nace: string; source: string } | null = null
 
-          // 1. Point-in-polygon for ANM mining + ANH oil/gas
+          // Point-in-polygon for ANM mining + ANH oil/gas
           const polyKey = `${Math.floor(lat * 2)}_${Math.floor(lon * 2)}`
           const cell = polyGrid.get(polyKey)
           if (cell) {
@@ -315,32 +355,8 @@ async function main() {
             }
           }
 
-          // 2. Nearest GEM power plant within 2 km
-          if (!chosen) {
-            const baseLat = Math.floor(lat * 10)
-            const baseLon = Math.floor(lon * 10)
-            let best: Site | null = null
-            let bestDist = 2000
-            for (let dy = -2; dy <= 2; dy++) {
-              for (let dx = -2; dx <= 2; dx++) {
-                const c = pointGrid.get(`${baseLat + dy}_${baseLon + dx}`)
-                if (!c) continue
-                for (const s of c) {
-                  const d = flatDistM(lat, lon, s.lat, s.lon)
-                  if (d < bestDist) { bestDist = d; best = s }
-                }
-              }
-            }
-            if (best) {
-              chosen = { nace: best.nace, source: best.source }
-            }
-          }
-
           if (chosen) {
-            // ANM mining yields 2-digit NACE codes ('05', '07', '08'); pad to 6-digit before truncating.
-            const nace6Raw = chosen.nace.length < 6 ? (chosen.nace + '0000').substring(0, 6) : chosen.nace
-            const nace6 = parseInt(nace6Raw, 10) || 0
-            const nace4 = Math.floor(nace6 / 100)
+            const nace4 = naceStringToUint16(chosen.nace)
             const existingId = existingSourceId[i]
             if (shouldOverwrite(existingId, MY_SOURCE_ID)) {
               newNace[i] = nace4
@@ -366,7 +382,7 @@ async function main() {
     } catch {}
   }
 
-  console.log(`=== Results ===`)
+  console.log(`=== Results (ANM/ANH polygon containment tier) ===`)
   console.log(`  OSM industrial sites scanned: ${totalOsm.toLocaleString()}`)
   console.log(`  Matched:                      ${matched.toLocaleString()}`)
   console.log(`  By source:`)

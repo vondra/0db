@@ -30,15 +30,11 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-py.ts
  */
 
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
-import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
-import { cellToLatLng } from 'h3-js'
-import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
-import { flatDistM, inBbox } from './lib/spatial.js'
-import { DEFAULT_FUEL_TO_NACE } from './lib/enrich-industrial-gem.js'
+import { DEFAULT_FUEL_TO_NACE, NATIONAL_MIX, stampOneWinner } from './lib/enrich-industrial-gem.js'
+import type { MatchFacility } from './lib/facility-match.js'
+import { inBbox } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -118,104 +114,26 @@ async function main() {
     console.log(`    ${p.fuel.padEnd(12)} ${p.name.substring(0, 50)} @ (${p.lat.toFixed(2)}, ${p.lon.toFixed(2)})`)
   }
 
-  const grid = new Map<string, IndSite[]>()
-  for (const s of allPlants) {
-    const key = `${Math.floor(s.lat * 10)}_${Math.floor(s.lon * 10)}`
-    if (!grid.has(key)) grid.set(key, [])
-    grid.get(key)!.push(s)
+  const facilities: MatchFacility[] = []
+  for (const p of allPlants) {
+    const nace4 = DEFAULT_FUEL_TO_NACE(p.fuel) // wind/blank → null → skip
+    if (nace4 == null) continue
+    facilities.push({ lat: p.lat, lon: p.lon, nace4, ...NATIONAL_MIX })
   }
-
-  const MY_SOURCE_ID = SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX
-
-  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
-  const hexDirs: string[] = []
-  for (const hex of allHexes) {
-    try {
-      const [lat, lon] = cellToLatLng(hex)
-      if (inBbox(lat, lon, PY_BBOX) && existsSync(resolve(H3R4_DIR, hex, 'industrial.arrow'))) hexDirs.push(hex)
-    } catch {}
-  }
-  console.log(`  PY-bbox hexes with industrial.arrow: ${hexDirs.length}\n`)
-
-  let totalOsm = 0, matched = 0, newEntries = 0
-
-  for (const hex of hexDirs) {
-    const arrowPath = resolve(H3R4_DIR, hex, 'industrial.arrow')
-    if (!existsSync(arrowPath)) continue
-    try {
-      await withArrowWrite(arrowPath, table => {
-        const n = table.numRows
-        if (n === 0) return table
-        const osmId = table.getChild('osm_id')
-        const centroidLat = table.getChild('centroid_lat') ?? table.getChild('lat')
-        const centroidLon = table.getChild('centroid_lon') ?? table.getChild('lon')
-        const existingNaceCol = table.getChild('nace_4digit')
-        const existingDatasetIdCol = table.getChild('source_id')
-        if (!osmId || !centroidLat || !centroidLon) return table
-        const newNace = new Uint16Array(n)
-        const newDatasetId = new Uint16Array(n)
-        const existingSourceId = new Uint16Array(n)
-        for (let j = 0; j < n; j++) {
-          newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
-          existingSourceId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
-          newDatasetId[j] = existingSourceId[j]
-        }
-        let anyChanged = false
-
-        for (let i = 0; i < n; i++) {
-          totalOsm++
-          const lat = centroidLat.get(i) as number
-          const lon = centroidLon.get(i) as number
-          if (lat == null || lon == null) continue
-
-          // 3 km search radius (Itaipú + Yacyretá are massive)
-          const searchRadius = 3000
-          const baseLat = Math.floor(lat * 10)
-          const baseLon = Math.floor(lon * 10)
-          let best: IndSite | null = null
-          let bestDist = searchRadius
-          for (let dy = -3; dy <= 3; dy++) {
-            for (let dx = -3; dx <= 3; dx++) {
-              const cell = grid.get(`${baseLat + dy}_${baseLon + dx}`)
-              if (!cell) continue
-              for (const s of cell) {
-                const d = flatDistM(lat, lon, s.lat, s.lon)
-                if (d < bestDist) { bestDist = d; best = s }
-              }
-            }
-          }
-          if (best) {
-            // Hydro→3512 (90 dB), solar→3599 (55 dB), thermal→3511 (97 dB);
-            // wind (source_type=10) and blank/unknown fuel return null → skip.
-            const nace4 = DEFAULT_FUEL_TO_NACE(best.fuel)
-            if (nace4 == null) continue
-            const existingId = existingSourceId[i]
-            if (shouldOverwrite(existingId, MY_SOURCE_ID)) {
-              newNace[i] = nace4
-              newDatasetId[i] = MY_SOURCE_ID
-              if (existingId === 0) newEntries++
-              matched++
-              anyChanged = true
-            }
-          }
-        }
-        if (!anyChanged) return table
-        const columns: Record<string, any> = {}
-        for (const field of table.schema.fields) {
-          if (field.name === 'nace_4digit' || field.name === 'source_id') continue
-          columns[field.name] = table.getChild(field.name)!
-        }
-        columns['nace_4digit'] = vectorFromArray(newNace, new Uint16())
-        columns['source_id'] = vectorFromArray(newDatasetId, new Uint16())
-        return makeTable(columns)
-      })
-    } catch {}
-  }
-
-  console.log(`=== Results ===`)
-  console.log(`  OSM industrial sites scanned: ${totalOsm.toLocaleString()}`)
-  console.log(`  Matched:                      ${matched.toLocaleString()}`)
-  console.log(`  New/updated arrow rows:       ${newEntries.toLocaleString()}`)
+  // The old carpet loop had NO per-row country gate — every polygon in the PY bbox
+  // (including Brazilian/Argentine ones across the Paraná) could inherit a stamp.
+  // The core gates candidates AND the reset via isInside = inPyOrBorder: that is
+  // the intended fix, not an omission.
+  await stampOneWinner({
+    facilities,
+    isInside: inPyOrBorder,
+    // hexGate: plain bbox — a border hex centred in an EXCLUDE_ZONE still holds in-PY rows whose old stamps must be swept
+    hexGate: (la, lo) => inBbox(la, lo, PY_BBOX),
+    searchRadiusM: 3000,
+    resetSourceIds: [NATIONAL_MIX.id],
+    label: 'PY',
+    h3r4Dir: H3R4_DIR,
+  })
 }
 
 main().catch(err => { console.error('Error:', err); process.exit(1) })

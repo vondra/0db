@@ -34,14 +34,11 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-industrial-ve.ts
  */
 
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { tableFromIPC, makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
-import { SOURCES_BY_KEY } from './lib/sources.js'
-import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
-import { cellToLatLng } from 'h3-js'
-import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
-import { flatDistM, inBbox } from './lib/spatial.js'
+import { NATIONAL_MIX, stampOneWinner } from './lib/enrich-industrial-gem.js'
+import type { MatchFacility } from './lib/facility-match.js'
+import { inBbox } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -63,6 +60,11 @@ function inExcluded(lat: number, lon: number): boolean {
   for (const b of EXCLUDE_ZONES) if (inBbox(lat, lon, b)) return true
   return false
 }
+
+function inVenezuela(lat: number, lon: number): boolean {
+  return inBbox(lat, lon, VE_BBOX) && !inExcluded(lat, lon)
+}
+
 interface IndSite {
   lat: number; lon: number; name: string; nace: string; source: string
 }
@@ -80,6 +82,14 @@ function fuelToNace(fuel: string): string | null {
   if (/solar|csp|photovolt|pv/.test(fuel)) return '359900'  // 55 dB
   if (/coal|nuclear|gas|oil|biomass|bioenergy|thermal|fossil|diesel|peat/.test(fuel)) return '351100'  // 97 dB
   return null  // blank/unknown → skip
+}
+
+/** NACE values may be 2-digit ('06', '19') or 6-digit ('351100'); pad to
+ *  6-digit then truncate to the arrow uint16 ('06' → 600, '19' → 1900,
+ *  '351100' → 3511) — same arithmetic the old carpet loop used. */
+function naceStringToUint16(nace: string): number {
+  const nace6Raw = nace.length < 6 ? (nace + '0000').substring(0, 6) : nace
+  return Math.floor((parseInt(nace6Raw, 10) || 0) / 100)
 }
 
 function loadVePowerPlants(): IndSite[] {
@@ -219,6 +229,22 @@ async function main() {
   const gem = loadGemPlants()
   console.log(`  GEM operating plants:        ${gem.length}`)
 
+  // The core's empty-guard only covers ALL-empty: a partially-loaded run would
+  // reset area stamps it cannot re-stamp (/gg Codex) — any empty source is fatal.
+  const sourceFeatureCounts: Array<[string, number]> = [
+    ['power-plants-ve360.geojson', vePower.length],
+    ['substations-ve360.geojson', veSubs.length],
+    ['oil-wells.geojson', veOilWells.length],
+    ['oil-plants.geojson', veOilPlants.length],
+    ['power-plants-gem.geojson', gem.length],
+  ]
+  for (const [file, count] of sourceFeatureCounts) {
+    if (count === 0) {
+      console.error(`FATAL: ${file} missing/empty — refusing to reset stamps this run cannot replace`)
+      process.exit(1)
+    }
+  }
+
   // Dedup by coordinate
   const seen = new Set<string>()
   const allSites: IndSite[] = []
@@ -231,109 +257,20 @@ async function main() {
   }
   console.log(`  Total unique sites:          ${allSites.length}`)
 
-  const grid = new Map<string, IndSite[]>()
+  const facilities: MatchFacility[] = []
   for (const s of allSites) {
-    const key = `${Math.floor(s.lat * 10)}_${Math.floor(s.lon * 10)}`
-    if (!grid.has(key)) grid.set(key, [])
-    grid.get(key)!.push(s)
+    facilities.push({ lat: s.lat, lon: s.lon, nace4: naceStringToUint16(s.nace), ...NATIONAL_MIX })
   }
-
-  const MY_SOURCE_ID = SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX
-
-  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
-  const hexDirs: string[] = []
-  for (const hex of allHexes) {
-    try {
-      const [lat, lon] = cellToLatLng(hex)
-      if (inBbox(lat, lon, VE_BBOX) && existsSync(resolve(H3R4_DIR, hex, 'industrial.arrow'))) hexDirs.push(hex)
-    } catch {}
-  }
-  console.log(`  VE-bbox hexes with industrial.arrow: ${hexDirs.length}\n`)
-
-  let totalOsm = 0, matched = 0, newEntries = 0
-  const bySource: Record<string, number> = {}
-
-  for (const hex of hexDirs) {
-    const arrowPath = resolve(H3R4_DIR, hex, 'industrial.arrow')
-    if (!existsSync(arrowPath)) continue
-    try {
-      await withArrowWrite(arrowPath, table => {
-        const n = table.numRows
-        if (n === 0) return table
-        const osmId = table.getChild('osm_id')
-        const centroidLat = table.getChild('centroid_lat') ?? table.getChild('lat')
-        const centroidLon = table.getChild('centroid_lon') ?? table.getChild('lon')
-        const existingNaceCol = table.getChild('nace_4digit')
-        const existingDatasetIdCol = table.getChild('source_id')
-        if (!osmId || !centroidLat || !centroidLon) return table
-        const newNace = new Uint16Array(n)
-        const newDatasetId = new Uint16Array(n)
-        const existingSourceId = new Uint16Array(n)
-        for (let j = 0; j < n; j++) {
-          newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
-          existingSourceId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
-          newDatasetId[j] = existingSourceId[j]
-        }
-        let anyChanged = false
-
-        for (let i = 0; i < n; i++) {
-          totalOsm++
-          const lat = centroidLat.get(i) as number
-          const lon = centroidLon.get(i) as number
-          if (lat == null || lon == null) continue
-          if (!inBbox(lat, lon, VE_BBOX) || inExcluded(lat, lon)) continue
-
-          const searchRadius = 2000
-          const baseLat = Math.floor(lat * 10)
-          const baseLon = Math.floor(lon * 10)
-          let best: IndSite | null = null
-          let bestDist = searchRadius
-          for (let dy = -2; dy <= 2; dy++) {
-            for (let dx = -2; dx <= 2; dx++) {
-              const cell = grid.get(`${baseLat + dy}_${baseLon + dx}`)
-              if (!cell) continue
-              for (const s of cell) {
-                const d = flatDistM(lat, lon, s.lat, s.lon)
-                if (d < bestDist) { bestDist = d; best = s }
-              }
-            }
-          }
-          if (best) {
-            // NACE values may be 2-digit ('07') or 6-digit ('351100'); pad to 6-digit.
-            const nace6Raw = best.nace.length < 6 ? (best.nace + '0000').substring(0, 6) : best.nace
-            const nace6 = parseInt(nace6Raw, 10) || 0
-            const nace4 = Math.floor(nace6 / 100)
-            const existingId = existingSourceId[i]
-            if (shouldOverwrite(existingId, MY_SOURCE_ID)) {
-              newNace[i] = nace4
-              newDatasetId[i] = MY_SOURCE_ID
-              if (existingId === 0) newEntries++
-              matched++
-              anyChanged = true
-            }
-          }
-        }
-        if (!anyChanged) return table
-        const columns: Record<string, any> = {}
-        for (const field of table.schema.fields) {
-          if (field.name === 'nace_4digit' || field.name === 'source_id') continue
-          columns[field.name] = table.getChild(field.name)!
-        }
-        columns['nace_4digit'] = vectorFromArray(newNace, new Uint16())
-        columns['source_id'] = vectorFromArray(newDatasetId, new Uint16())
-        return makeTable(columns)
-      })
-    } catch {}
-  }
-
-  console.log(`=== Results ===`)
-  console.log(`  OSM industrial sites scanned: ${totalOsm.toLocaleString()}`)
-  console.log(`  Matched:                      ${matched.toLocaleString()}`)
-  console.log(`  By source:`)
-  for (const [k, v] of Object.entries(bySource).sort((a, b) => b[1] - a[1])) {
-    console.log(`    ${k.padEnd(15)} ${v}`)
-  }
-  console.log(`  New/updated arrow rows:       ${newEntries.toLocaleString()}`)
+  await stampOneWinner({
+    facilities,
+    isInside: inVenezuela,
+    // hexGate: plain bbox — a border hex centred in an EXCLUDE_ZONE still holds in-VE rows whose old stamps must be swept
+    hexGate: (la, lo) => inBbox(la, lo, VE_BBOX),
+    searchRadiusM: 2000,
+    resetSourceIds: [NATIONAL_MIX.id],
+    label: 'VE',
+    h3r4Dir: H3R4_DIR,
+  })
 }
 
 main().catch(err => { console.error('Error:', err); process.exit(1) })
