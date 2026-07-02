@@ -12,6 +12,7 @@
   "groups": {
     "line": { "layers": ["road", "rail"], "seed_arrow": "roads.arrow", "rasters": "surface" },
     "rest": { "layers": ["industrial", "building", "aircraft-ground"], "seed_arrow": "airport_traffic.arrow", "rasters": "surface" },
+    "industrial": { "layers": ["industrial"], "seed_arrow": "industrial.arrow", "rasters": "surface", "on_demand": true },
     "cruise": { "layers": ["aircraft-cruise"], "seed_arrow": "cruise.arrow", "rasters": "dem" },
     "airborne": { "layers": ["aircraft-airborne"], "seed_arrow": "airborne.arrow", "rasters": "dem" }
   },
@@ -19,6 +20,7 @@
     "gpu-line": { "group": "line", "gpu": true, "binary": "gpu-surface", "flags": "--stream --layers road,rail --output {OUTPUT}" },
     "cpu-line": { "group": "line", "gpu": false, "binary": "build-heatmap-surface", "flags": "--stream --source ground --exclude industrial --exclude building --exclude aircraft-ground --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}" },
     "cpu-rest": { "group": "rest", "gpu": false, "binary": "build-heatmap-surface", "flags": "--stream --source ground --exclude road --exclude rail --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}" },
+    "cpu-industrial": { "group": "industrial", "gpu": false, "binary": "build-heatmap-surface", "flags": "--stream --source ground --exclude road --exclude rail --exclude building --exclude aircraft-ground --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}" },
     "cpu-cruise": { "group": "cruise", "gpu": false, "binary": "build-heatmap-aircraft", "flags": "--stream --source cruise --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}/aircraft-cruise" },
     "gpu-airborne": { "group": "airborne", "gpu": true, "binary": "gpu-airborne", "flags": "--stream --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}/aircraft-airborne" },
     "cpu-airborne": { "group": "airborne", "gpu": false, "binary": "build-heatmap-aircraft", "flags": "--stream --source airborne --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}/aircraft-airborne" }
