@@ -48,6 +48,27 @@ export interface MatchPolygon {
   subtype: number
 }
 
+/** industrial.arrow rows → MatchPolygon[] (row index preserved — winners write back by row).
+ *  Shared by the global enricher and the GEM per-country driver, so the column mapping
+ *  can't drift between them. `table` is an apache-arrow Table (typed loosely to keep this
+ *  module dependency-free). */
+export function readPolygons(table: { numRows: number; getChild: (n: string) => { get: (i: number) => unknown } | null }): MatchPolygon[] {
+  const clat = table.getChild('centroid_lat')
+  const clon = table.getChild('centroid_lon')
+  const area = table.getChild('area_m2')
+  const subtype = table.getChild('site_subtype')
+  const out: MatchPolygon[] = []
+  for (let i = 0; i < table.numRows; i++) {
+    out.push({
+      lat: (clat?.get(i) as number) ?? 0,
+      lon: (clon?.get(i) as number) ?? 0,
+      areaM2: (area?.get(i) as number) ?? 0,
+      subtype: (subtype?.get(i) as number) ?? 0,
+    })
+  }
+  return out
+}
+
 /**
  * Distance from the facility point to the polygon's approximate BOUNDARY:
  * centroid distance minus the equivalent-circle radius √(area/π). ≤ 0 reads

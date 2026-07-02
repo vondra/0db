@@ -15,12 +15,14 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { makeTable, makeVector } from 'apache-arrow'
+import { makeTable, makeVector, tableFromIPC } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
 
 import { shouldOverwrite, withArrowWrite } from './provenance.js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './source-ids.generated.js'
-import { flatDistM, inBbox } from './spatial.js'
+import { SOURCES_BY_ID, PROVENANCE_RANK } from './sources.js'
+import { bestCandidate, contestBeats, readPolygons, type MatchFacility, type MatchPolygon } from './facility-match.js'
+import { inBbox } from './spatial.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -75,6 +77,8 @@ export async function enrichGemIndustrial(args: EnrichGemArgs): Promise<void> {
   const searchRadiusM = args.searchRadiusM ?? 2000
   const upper = args.countryCode.toUpperCase()
   const MY_SOURCE_ID = SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX
+  const MY_RANK = PROVENANCE_RANK[SOURCES_BY_ID.get(MY_SOURCE_ID)?.provenance ?? 'none']
+  const MY_YEAR = SOURCES_BY_ID.get(MY_SOURCE_ID)?.year ?? 0
 
   console.log(`=== ${upper} Industrial Enrichment — GEM Global Integrated Power (${YEAR}) ===\n`)
 
@@ -107,13 +111,6 @@ export async function enrichGemIndustrial(args: EnrichGemArgs): Promise<void> {
     console.log(`    ${f.padEnd(15)} ${c}`)
   }
 
-  const grid = new Map<string, GemSite[]>()
-  for (const s of plants) {
-    const key = `${Math.floor(s.lat * 10)}_${Math.floor(s.lon * 10)}`
-    if (!grid.has(key)) grid.set(key, [])
-    grid.get(key)!.push(s)
-  }
-
   if (!existsSync(H3R4_DIR)) {
     console.log(`  ${H3R4_DIR} does not exist — nothing to enrich.`)
     return
@@ -128,65 +125,101 @@ export async function enrichGemIndustrial(args: EnrichGemArgs): Promise<void> {
   }
   console.log(`  ${upper}-bbox hexes with industrial.arrow: ${hexDirs.length}\n`)
 
+  // ONE plant, ONE polygon — same contract as enrich-global-industrial.ts (the old
+  // inverse loop stamped every polygon within radius of a plant; see dda746a1). Pass 1
+  // (read-only) elects each plant's best polygon country-wide via lib/facility-match;
+  // a polygon claimed twice goes to the nearer plant. Pass 2 resets THIS country's old
+  // id-330 stamps (only inside isInside — other countries' stamps are not ours) and
+  // writes the winners. plants==0 (missing/empty GEM cache) → no-op, never a wipe.
+  const prepared: MatchFacility[] = []
+  for (const p of plants) {
+    const nace = fuelToNace(p.fuel)
+    if (nace == null) continue // wind / blank-fuel — never stamps
+    prepared.push({ lat: p.lat, lon: p.lon, nace4: nace, id: MY_SOURCE_ID, rank: MY_RANK, year: MY_YEAR })
+  }
+  if (prepared.length === 0) {
+    // No stampable plants (missing/empty GEM cache, or wind-only country): a run that cannot
+    // re-stamp must not touch the arrows — the reset would silently wipe this country's old
+    // stamps with nothing to replace them (/gg consensus CRITICAL; Argentina lost 25 rows to
+    // exactly this before the guard existed).
+    console.log('  No stampable plants — leaving existing stamps untouched (no-op).')
+    return
+  }
+
   let totalOsm = 0
   let matched = 0
-  let newEntries = 0
+  let totalReset = 0
 
+  // pass 1: best polygon per plant, reduced across every hex in the country
+  const bestByPlant = new Map<MatchFacility, { hex: string; row: number; edge: number }>()
+  const polysByHex = new Map<string, MatchPolygon[]>()
   for (const hex of hexDirs) {
     const arrowPath = resolve(H3R4_DIR, hex, 'industrial.arrow')
-    if (!existsSync(arrowPath)) continue
+    let polygons: MatchPolygon[]
+    try {
+      polygons = readPolygons(tableFromIPC(readFileSync(arrowPath)))
+    } catch { continue }
+    polysByHex.set(hex, polygons)
+    totalOsm += polygons.length
+    // Border hexes (H3 centre in-country) can hold OUT-of-country polygons; a winner across
+    // the border couldn't be reset by us later (the reset is isInside-gated) and isn't ours
+    // to stamp. Mask them out by teleporting to an impossible coordinate — indexes must stay
+    // aligned with the arrow rows, so filtering the array is not an option (/gg Codex).
+    const gated = polygons.map((p) => (isInside(p.lat, p.lon) ? p : { ...p, lat: 90, lon: 180 }))
+    for (const fac of prepared) {
+      const cand = bestCandidate(fac, gated, searchRadiusM)
+      if (!cand) continue
+      const prev = bestByPlant.get(fac)
+      if (!prev || cand.edge < prev.edge) bestByPlant.set(fac, { hex, row: cand.row, edge: cand.edge })
+    }
+  }
+
+  // contested polygon → nearer plant (all candidates share id/rank/year here)
+  const winnersByHex = new Map<string, Map<number, { fac: MatchFacility; edge: number }>>()
+  for (const [fac, w] of bestByPlant) {
+    const rows = winnersByHex.get(w.hex) ?? new Map<number, { fac: MatchFacility; edge: number }>()
+    winnersByHex.set(w.hex, rows)
+    const cur = rows.get(w.row)
+    if (!cur || contestBeats({ rank: fac.rank, year: fac.year, id: fac.id, edge: w.edge },
+      { rank: cur.fac.rank, year: cur.fac.year, id: cur.fac.id, edge: cur.edge })) rows.set(w.row, { fac, edge: w.edge })
+  }
+
+  // pass 2: reset our old country-scoped stamps, then stamp the winners
+  for (const hex of hexDirs) {
+    const winners = winnersByHex.get(hex)
+    const polygons = polysByHex.get(hex)
+    if (!polygons) continue
+    const arrowPath = resolve(H3R4_DIR, hex, 'industrial.arrow')
     try {
       await withArrowWrite(arrowPath, table => {
         const n = table.numRows
         if (n === 0) return table
-        const osmId = table.getChild('osm_id')
-        const centroidLat = table.getChild('centroid_lat') ?? table.getChild('lat')
-        const centroidLon = table.getChild('centroid_lon') ?? table.getChild('lon')
         const existingNaceCol = table.getChild('nace_4digit')
         const existingDatasetIdCol = table.getChild('source_id')
-        if (!osmId || !centroidLat || !centroidLon) return table
-
         const newNace = new Uint16Array(n)
         const newDatasetId = new Uint16Array(n)
-        const existingSourceId = new Uint16Array(n)
         for (let j = 0; j < n; j++) {
           newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
-          existingSourceId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
-          newDatasetId[j] = existingSourceId[j]
+          newDatasetId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
         }
-
         let anyChanged = false
         for (let i = 0; i < n; i++) {
-          totalOsm++
-          const lat = centroidLat.get(i) as number
-          const lon = centroidLon.get(i) as number
-          if (lat == null || lon == null) continue
-          if (!isInside(lat, lon)) continue
-
-          const baseLat = Math.floor(lat * 10)
-          const baseLon = Math.floor(lon * 10)
-          let best: GemSite | null = null
-          let bestDist = searchRadiusM
-          for (let dy = -2; dy <= 2; dy++) {
-            for (let dx = -2; dx <= 2; dx++) {
-              const cell = grid.get(`${baseLat + dy}_${baseLon + dx}`)
-              if (!cell) continue
-              for (const s of cell) {
-                const d = flatDistM(lat, lon, s.lat, s.lon)
-                if (d < bestDist) { bestDist = d; best = s }
-              }
-            }
-          }
-          if (!best) continue
-          const nace = fuelToNace(best.fuel)
-          if (nace == null) continue // wind / blank-fuel → leave the row untouched
-          const existingId = existingSourceId[i]
-          if (!shouldOverwrite(existingId, MY_SOURCE_ID)) continue
-          newNace[i] = nace
-          newDatasetId[i] = MY_SOURCE_ID
-          if (existingId === 0) newEntries++
-          matched++
+          if (newDatasetId[i] !== MY_SOURCE_ID) continue
+          if (!isInside(polygons[i]?.lat ?? 0, polygons[i]?.lon ?? 0)) continue
+          newNace[i] = 0
+          newDatasetId[i] = 0
+          totalReset++
           anyChanged = true
+        }
+        if (winners) {
+          for (const [row, w] of winners) {
+            if (row >= n) continue
+            if (!shouldOverwrite(newDatasetId[row], w.fac.id)) continue
+            newNace[row] = w.fac.nace4
+            newDatasetId[row] = w.fac.id
+            matched++
+            anyChanged = true
+          }
         }
         if (!anyChanged) return table
 
@@ -205,6 +238,7 @@ export async function enrichGemIndustrial(args: EnrichGemArgs): Promise<void> {
 
   console.log(`=== Results ===`)
   console.log(`  OSM industrial sites scanned: ${totalOsm.toLocaleString()}`)
-  console.log(`  Matched:                      ${matched.toLocaleString()}`)
-  console.log(`  New/updated arrow rows:       ${newEntries.toLocaleString()}`)
+  console.log(`  Old stamps reset:             ${totalReset.toLocaleString()}`)
+  console.log(`  Plants with a polygon:        ${bestByPlant.size.toLocaleString()} of ${prepared.length.toLocaleString()}`)
+  console.log(`  Polygons stamped:             ${matched.toLocaleString()} (max 1 per plant)`)
 }

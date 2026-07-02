@@ -24,10 +24,10 @@
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { makeTable, tableFromIPC, vectorFromArray, Uint16, type Table } from 'apache-arrow'
+import { makeTable, tableFromIPC, vectorFromArray, Uint16 } from 'apache-arrow'
 import { latLngToCell, gridDisk } from 'h3-js'
 import { SOURCES_BY_ID, PROVENANCE_RANK } from './lib/sources.js'
-import { bestCandidate, contestBeats, type MatchPolygon } from './lib/facility-match.js'
+import { bestCandidate, contestBeats, readPolygons, type MatchPolygon } from './lib/facility-match.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import {
   SOURCE_ID_EUROPE_EPRTR,
@@ -487,23 +487,6 @@ function prepareFacilities(all: Facility[]): PreparedFacility[] {
 
 function hexArrowPath(hexId: string): string {
   return resolve(H3R4_DIR, hexId, 'industrial.arrow')
-}
-
-function readPolygons(table: Table): MatchPolygon[] {
-  const clat = table.getChild('centroid_lat')
-  const clon = table.getChild('centroid_lon')
-  const area = table.getChild('area_m2')
-  const subtype = table.getChild('site_subtype')
-  const out: MatchPolygon[] = []
-  for (let i = 0; i < table.numRows; i++) {
-    out.push({
-      lat: (clat?.get(i) as number) ?? 0,
-      lon: (clon?.get(i) as number) ?? 0,
-      areaM2: (area?.get(i) as number) ?? 0,
-      subtype: (subtype?.get(i) as number) ?? 0,
-    })
-  }
-  return out
 }
 
 /** Returns matches per source (for the provenance report); all other stats are logged here. */
