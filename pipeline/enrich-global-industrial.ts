@@ -1,8 +1,11 @@
 /**
- * Global industrial enrichment: GPPD (power plants) + E-PRTR (EU facilities).
+ * Global industrial enrichment: GPPD (power plants) + E-PRTR (EU facilities)
+ * + GEM heavy industry (steel / cement / coal mines).
  *
- * Downloads two global/EU datasets, spatial-joins to OSM industrial polygons,
- * and writes nace_4digit + source_id directly into industrial.arrow.
+ * Downloads the registries and stamps nace_4digit + source_id directly into
+ * industrial.arrow — ONE polygon per facility (a registry row describes a single
+ * site; selection rules live in lib/facility-match.ts). Old stamps from these
+ * sources are reset first, so a re-run fully replaces this enricher's output.
  *
  * WHY: OSM only gives generic "landuse=industrial". GPPD provides ~35K power plants
  * worldwide (→ NACE 35, electricity generation). E-PRTR provides ~30K EU regulated
@@ -16,13 +19,15 @@
  *   cd pipeline && npx tsx enrich-global-industrial.ts
  *   cd pipeline && npx tsx enrich-global-industrial.ts --force-download
  *   cd pipeline && npx tsx enrich-global-industrial.ts --enrich-only
+ *   cd pipeline && npx tsx enrich-global-industrial.ts --enrich-only --cells=8419429ffffffff,841e309ffffffff
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { makeTable, vectorFromArray, Uint16 } from 'apache-arrow'
+import { makeTable, tableFromIPC, vectorFromArray, Uint16, type Table } from 'apache-arrow'
 import { latLngToCell, gridDisk } from 'h3-js'
 import { SOURCES_BY_ID, PROVENANCE_RANK } from './lib/sources.js'
+import { bestCandidate, contestBeats, type MatchPolygon } from './lib/facility-match.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import {
   SOURCE_ID_EUROPE_EPRTR,
@@ -31,7 +36,6 @@ import {
   SOURCE_ID_GLOBAL_GEM_CEMENT,
   SOURCE_ID_GLOBAL_GEM_COALMINE,
 } from './lib/source-ids.generated.js'
-import { flatDist } from './lib/spatial.js'
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -41,6 +45,12 @@ const EPRTR_CACHE = resolve(CACHE_DIR, 'eprtr-facilities.csv')
 
 const forceDownload = process.argv.includes('--force-download')
 const enrichOnly = process.argv.includes('--enrich-only')
+// --cells=<h3r4,h3r4,…> — verification isolation: touch ONLY these cells (small-cells-first
+// rule; used for the York+Dobříš before/after checks, never in a production world run).
+// NOTE: neighbour-hex facilities are still admitted, so a cell-local decision can differ
+// slightly from the world pass (a facility whose true winner lies outside the cell set).
+const cellsArg = process.argv.find(a => a.startsWith('--cells='))
+const onlyCells = cellsArg ? new Set(cellsArg.slice('--cells='.length).split(',').filter(Boolean)) : null
 
 const GPPD_URL = 'https://raw.githubusercontent.com/wri/global-power-plant-database/master/output_database/global_power_plant_database.csv'
 
@@ -126,8 +136,6 @@ interface Facility {
   nace: string   // 6-digit NACE code string, e.g. "350000"
   source: 'gppd' | 'eprtr' | 'gem-steel' | 'gem-cement' | 'gem-coalmine'
 }
-
-// ── Flat-earth distance (meters) ──
 
 // ── Step 1: Download GPPD ──
 
@@ -425,8 +433,8 @@ function parseGem(t: GemTracker, jsonText: string): Facility[] {
 
 // ── Step 5: Build spatial index (facilities grouped by H3R4 hex) ──
 
-function groupByHex(facilities: Facility[]): Map<string, Facility[]> {
-  const byHex = new Map<string, Facility[]>()
+function groupByHex<T extends Facility>(facilities: T[]): Map<string, T[]> {
+  const byHex = new Map<string, T[]>()
   let skipped = 0
 
   for (const fac of facilities) {
@@ -444,112 +452,175 @@ function groupByHex(facilities: Facility[]): Map<string, Facility[]> {
   return byHex
 }
 
-// ── Step 6: Spatial join to OSM industrial polygons ──
+// ── Step 6: Facility→polygon match — ONE facility, ONE site ──
+//
+// A registry row describes a single site, so it stamps a single OSM polygon.
+// Selection rules + the old carpet-join backstory live in lib/facility-match.ts.
+//
+// Two passes so a facility near an R4 border converges to ONE winner globally
+// (deciding per hex would let it win once in each neighbouring arrow — /gg Codex):
+//   pass 1 (read-only)  every hex → best candidate per facility, reduced globally
+//   phase B             polygon contested by several facilities → contestBeats
+//   pass 2 (write)      reset our old stamps (only sources that parsed OK) + stamp winners
 
-async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
-  totalIndustrial: number
-  totalMatched: number
-  hexesWithMatches: number
-  hexesProcessed: number
-  matchedBySource: Map<Facility['source'], number>
-}> {
-  const hexDirs = readdirSync(H3R4_DIR).filter(d =>
-    d.length === 15 && d.endsWith('ffffffff'),
-  )
+interface PreparedFacility extends Facility {
+  nace4: number
+  id: number
+  rank: number
+  year: number
+}
 
-  let totalIndustrial = 0
-  let totalMatched = 0
-  let hexesProcessed = 0
-  let hexesWithMatches = 0
-  const matchedBySource = new Map<Facility['source'], number>()
+// Drop the empty-nace sentinel (wind / blank-fuel) and precompute the contest
+// fields once per facility — the match loops are then pure selection.
+function prepareFacilities(all: Facility[]): PreparedFacility[] {
+  return all.filter(f => f.nace !== '').map(f => {
+    const id = facilityDatasetId(f)
+    return {
+      ...f,
+      nace4: Math.floor((parseInt(f.nace, 10) || 0) / 100),
+      id,
+      rank: facilityRank(f),
+      year: SOURCES_BY_ID.get(id)?.year ?? 0,
+    }
+  })
+}
+
+function hexArrowPath(hexId: string): string {
+  return resolve(H3R4_DIR, hexId, 'industrial.arrow')
+}
+
+function readPolygons(table: Table): MatchPolygon[] {
+  const clat = table.getChild('centroid_lat')
+  const clon = table.getChild('centroid_lon')
+  const area = table.getChild('area_m2')
+  const subtype = table.getChild('site_subtype')
+  const out: MatchPolygon[] = []
+  for (let i = 0; i < table.numRows; i++) {
+    out.push({
+      lat: (clat?.get(i) as number) ?? 0,
+      lon: (clon?.get(i) as number) ?? 0,
+      areaM2: (area?.get(i) as number) ?? 0,
+      subtype: (subtype?.get(i) as number) ?? 0,
+    })
+  }
+  return out
+}
+
+/** Returns matches per source (for the provenance report); all other stats are logged here. */
+async function enrichHexes(
+  facByHex: Map<string, PreparedFacility[]>,
+  resetIds: Set<number>,
+  onlyCells: Set<string> | null,
+): Promise<Map<Facility['source'], number>> {
+  const hexDirs = readdirSync(H3R4_DIR)
+    .filter(d => d.length === 15 && d.endsWith('ffffffff'))
+    .filter(d => !onlyCells || onlyCells.has(d))
+
   const startTime = Date.now()
   let lastLog = startTime
-
-  for (const hexId of hexDirs) {
-    hexesProcessed++
-
+  const progress = (phase: string, i: number) => {
     const now = Date.now()
     if (now - lastLog >= 10_000) {
-      const pct = (hexesProcessed / hexDirs.length * 100).toFixed(1)
-      const elapsed = ((now - startTime) / 1000).toFixed(0)
-      console.log(`  Progress: ${hexesProcessed}/${hexDirs.length} hexes (${pct}%), ${totalMatched} matches, ${elapsed}s elapsed`)
+      console.log(`  ${phase}: ${i}/${hexDirs.length} hexes, ${((now - startTime) / 1000).toFixed(0)}s elapsed`)
       lastLog = now
     }
+  }
 
-    // Gather facilities from this hex AND its 6 neighbours: a facility just across
-    // an R4 boundary can still be within SEARCH_RADIUS_M of a polygon in this hex.
-    // Same-hex-only (the post-refactor state) silently dropped those border matches.
+  // ── pass 1: globally best polygon per facility (read-only) ──
+  const bestByFac = new Map<PreparedFacility, { hex: string; row: number; edge: number }>()
+  let totalIndustrial = 0
+  for (const [i, hexId] of hexDirs.entries()) {
+    progress('match', i + 1)
+    // this hex AND its 6 neighbours: a facility just across an R4 border can still
+    // be within SEARCH_RADIUS_M of a polygon in this hex
     const hexFacilities = gridDisk(hexId, 1).flatMap(h => facByHex.get(h) ?? [])
     if (hexFacilities.length === 0) continue
-
-    // Precompute id/rank/nace4 once per facility (constant across every polygon in
-    // the hex) and drop the empty-nace GPPD sentinel (wind / blank-fuel) here so it
-    // can never shadow a real match. The per-polygon loop below is then pure selection.
-    const candidates = hexFacilities
-      .filter(f => f.nace !== '')
-      .map(f => ({
-        lat: f.lat, lon: f.lon, source: f.source,
-        nace4: Math.floor((parseInt(f.nace, 10) || 0) / 100),
-        id: facilityDatasetId(f),
-        rank: facilityRank(f),
-      }))
-    if (candidates.length === 0) continue
-
-    const indPath = resolve(H3R4_DIR, hexId, 'industrial.arrow')
+    const indPath = hexArrowPath(hexId)
     if (!existsSync(indPath)) continue
+    let polygons: MatchPolygon[]
+    try {
+      polygons = readPolygons(tableFromIPC(readFileSync(indPath)))
+    } catch (err: any) {
+      console.log(`  WARN: unreadable ${indPath}: ${err.message}`)
+      continue
+    }
+    totalIndustrial += polygons.length
+    for (const fac of hexFacilities) {
+      const cand = bestCandidate(fac, polygons, SEARCH_RADIUS_M)
+      if (!cand) continue
+      const prev = bestByFac.get(fac)
+      if (!prev || cand.edge < prev.edge) bestByFac.set(fac, { hex: hexId, row: cand.row, edge: cand.edge })
+    }
+  }
+
+  // ── phase B: a polygon claimed by several facilities → shouldOverwrite order ──
+  const winnersByHex = new Map<string, Map<number, { fac: PreparedFacility; edge: number }>>()
+  for (const [fac, w] of bestByFac) {
+    const rows = winnersByHex.get(w.hex) ?? new Map<number, { fac: PreparedFacility; edge: number }>()
+    winnersByHex.set(w.hex, rows)
+    const cur = rows.get(w.row)
+    if (!cur || contestBeats(
+      { rank: fac.rank, year: fac.year, id: fac.id, edge: w.edge },
+      { rank: cur.fac.rank, year: cur.fac.year, id: cur.fac.id, edge: cur.edge },
+    )) rows.set(w.row, { fac, edge: w.edge })
+  }
+
+  // ── pass 2: reset-then-stamp (write) ──
+  let totalMatched = 0
+  let totalReset = 0
+  let hexesWithMatches = 0
+  const matchedBySource = new Map<Facility['source'], number>()
+  for (const [i, hexId] of hexDirs.entries()) {
+    progress('write', i + 1)
+    const winners = winnersByHex.get(hexId)
+    const indPath = hexArrowPath(hexId)
+    if (!existsSync(indPath)) continue
+    // Even a hex with no winner today gets the reset sweep: a retired/dropped
+    // facility (GEM filters inactive plants; E-PRTR reporting years move) leaves
+    // old carpet stamps behind with nothing in reach to replace them — skipping
+    // would strand them as phantom heavy industry forever (/gg consensus).
+    // withArrowWrite only rewrites the file when something actually changed.
+    if (!winners && resetIds.size === 0) continue
 
     try {
       await withArrowWrite(indPath, table => {
         const n = table.numRows
         if (n === 0) return table
-        totalIndustrial += n
 
-        const clat = table.getChild('centroid_lat')
-        const clon = table.getChild('centroid_lon')
-        const osmIds = table.getChild('osm_id')
         const existingNaceCol = table.getChild('nace_4digit')
         const existingDatasetIdCol = table.getChild('source_id')
-        if (!clat || !clon || !osmIds) return table
-
         const newNace = new Uint16Array(n)
         const newDatasetId = new Uint16Array(n)
-        const existingSourceId = new Uint16Array(n)
         for (let j = 0; j < n; j++) {
           newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
-          existingSourceId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
-          newDatasetId[j] = existingSourceId[j]
+          newDatasetId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
         }
-        let hexMatched = 0
         let anyChanged = false
 
+        // reset OUR previous stamps (only sources that parsed OK this run — a failed
+        // download must never wipe rows it can't re-stamp, /gg Codex CRITICAL)
         for (let i = 0; i < n; i++) {
-          const lat = clat.get(i) as number
-          const lon = clon.get(i) as number
-
-          // Pick the highest-authority facility within radius, tie-broken by distance.
-          let bestRank = -1
-          let bestDist = SEARCH_RADIUS_M
-          let best: typeof candidates[number] | null = null
-          for (const c of candidates) {
-            const d = flatDist(lat, lon, c.lat, c.lon)
-            if (d >= SEARCH_RADIUS_M) continue
-            if (c.rank > bestRank || (c.rank === bestRank && d < bestDist)) {
-              bestRank = c.rank
-              bestDist = d
-              best = c
-            }
+          if (resetIds.has(newDatasetId[i])) {
+            newNace[i] = 0
+            newDatasetId[i] = 0
+            totalReset++
+            anyChanged = true
           }
+        }
 
-          if (best) {
-            const existingId = existingSourceId[i]
-            if (shouldOverwrite(existingId, best.id)) {
-              newNace[i] = best.nace4
-              newDatasetId[i] = best.id
-              hexMatched++
-              totalMatched++
-              matchedBySource.set(best.source, (matchedBySource.get(best.source) ?? 0) + 1)
-              anyChanged = true
-            }
+        // stamp this hex's winners — ONE polygon per facility, decided globally
+        let hexMatched = 0
+        if (winners) {
+          for (const [row, w] of winners) {
+            if (row >= n) continue
+            if (!shouldOverwrite(newDatasetId[row], w.fac.id)) continue
+            newNace[row] = w.fac.nace4
+            newDatasetId[row] = w.fac.id
+            hexMatched++
+            totalMatched++
+            matchedBySource.set(w.fac.source, (matchedBySource.get(w.fac.source) ?? 0) + 1)
+            anyChanged = true
+            if (onlyCells) console.log(`    ${hexId} row ${row}: ${w.fac.source} nace4=${w.fac.nace4} edge=${w.edge.toFixed(0)}m (${w.fac.name})`)
           }
         }
 
@@ -571,16 +642,18 @@ async function enrichHexes(facByHex: Map<string, Facility[]>): Promise<{
   }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-  console.log(`\n=== Spatial Join Results ===`)
-  console.log(`  Hexes scanned: ${hexesProcessed} (${hexesWithMatches} with matches)`)
-  console.log(`  Industrial sites scanned: ${totalIndustrial}`)
-  console.log(`  Matches (facility → OSM polygon within 2km): ${totalMatched}`)
-  for (const [src, n] of [...matchedBySource].sort((a, b) => b[1] - a[1])) {
-    console.log(`    ${src}: ${n}`)
+  console.log(`\n=== Facility→Polygon Match Results ===`)
+  console.log(`  Hexes scanned: ${hexDirs.length} (${hexesWithMatches} with matches)`)
+  console.log(`  Industrial polygons scanned: ${totalIndustrial}`)
+  console.log(`  Old stamps reset: ${totalReset} (sources: ${[...resetIds].join(', ') || 'none'})`)
+  console.log(`  Facilities with a winner: ${bestByFac.size} of ${[...facByHex.values()].flat().length}`)
+  console.log(`  Polygons stamped: ${totalMatched} (max 1 per facility by construction)`)
+  for (const [src, cnt] of [...matchedBySource].sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${src}: ${cnt}`)
   }
   console.log(`  Time: ${elapsed}s`)
 
-  return { totalIndustrial, totalMatched, hexesWithMatches, hexesProcessed, matchedBySource }
+  return matchedBySource
 }
 
 // ── Main ──
@@ -616,9 +689,13 @@ async function main() {
 
   console.log('\n--- Step 4b: Download + parse GEM heavy-industry trackers ---')
   let gemFacilities: Facility[] = []
+  const gemCounts = new Map<GemTracker['key'], number>()
   for (const t of GEM_TRACKERS) {
     const json = await downloadGem(t)
-    if (json) gemFacilities = gemFacilities.concat(parseGem(t, json))
+    if (!json) continue
+    const parsed = parseGem(t, json)
+    gemCounts.set(t.key, parsed.length)
+    gemFacilities = gemFacilities.concat(parsed)
   }
 
   const allFacilities = [...gppdFacilities, ...eprtrFacilities, ...gemFacilities]
@@ -629,13 +706,29 @@ async function main() {
     process.exit(1)
   }
 
+  // A source participates FULLY or not at all: its old stamps are reset AND its
+  // facilities stamp only when it parsed a big-enough share of its normal size
+  // this run (GPPD ~35 k, E-PRTR ~85 k, GEM 900-4 000 — floors catch a corrupt/
+  // truncated download, /gg Codex). A sub-floor source stamping WITHOUT its reset
+  // would leave a mixed state: fresh stamps on top of its stale carpet (/gg Gemini).
+  const resetIds = new Set<number>()
+  if (gppdFacilities.length >= 1000) resetIds.add(GPPD_DATASET_ID)
+  if (eprtrFacilities.length >= 10_000) resetIds.add(EPRTR_DATASET_ID)
+  for (const t of GEM_TRACKERS) {
+    if ((gemCounts.get(t.key) ?? 0) >= 100) resetIds.add(GEM_DATASET_ID[t.key])
+  }
+  const participating = (f: Facility) => resetIds.has(facilityDatasetId(f))
+  const excluded = allFacilities.filter(f => !participating(f)).length
+  if (excluded > 0) console.log(`  WARN: ${excluded} facilities EXCLUDED (their source parsed below its safety floor — fix the download and re-run)`)
+  console.log(`  Participating source ids this run: ${[...resetIds].join(', ') || 'NONE (no source parsed sanely)'}`)
+
   // ── Spatial index ──
   console.log('\n--- Step 5: Group by H3R4 hex ---')
-  const facByHex = groupByHex(allFacilities)
+  const facByHex = groupByHex(prepareFacilities(allFacilities.filter(participating)))
 
-  // ── Spatial join (writes directly into industrial.arrow) ──
-  console.log('\n--- Step 6: Spatial join to OSM industrial polygons ---')
-  const { matchedBySource } = await enrichHexes(facByHex)
+  // ── Facility→polygon match (writes directly into industrial.arrow) ──
+  console.log('\n--- Step 6: Facility→polygon match (one facility, one site) ---')
+  const matchedBySource = await enrichHexes(facByHex, resetIds, onlyCells)
   const m = (s: Facility['source']) => matchedBySource.get(s) ?? 0
 
   // ── Provenance ──
@@ -650,9 +743,14 @@ async function main() {
 - **GEM Coal Mine** (NACE 0510): ${GEM_TRACKERS[2].url} → ${m('gem-coalmine')} matched, CC-BY-4.0
 
 ## Matching
-- Spatial join: facility lat/lon → OSM industrial polygon centroid within 2 km
-- H3R4 pre-filter: compare a polygon against facilities in its hex and the 6 neighbours
-  (border-safe), preferring the highest-authority source then the nearest
+- ONE polygon per facility: each registry point picks a single OSM industrial polygon
+  within 2 km, scored by distance to the polygon EDGE (centroid dist − √(area/π)), so a
+  large plant beats a nearer shed; quiet subtypes (farm/warehouse/office) accept only
+  their own industry family (always — a registry point ON an office is typically its
+  registered address, not the plant)
+- A polygon claimed by several facilities goes to the higher authority (rank → year → id),
+  edge distance last; decided globally, so a facility near an R4 border wins exactly once
+- Previous stamps from these sources are reset first (only sources that parsed this run)
 - Written directly to industrial.arrow per-row (nace_4digit + source_id)
 - Dataset priority preserves national registries (cz-irz > europe-eprtr > {global-gppd, GEM})
 - GEM trackers stamp only active sites (status operating / operating pre-retirement)
