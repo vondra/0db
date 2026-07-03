@@ -126,9 +126,17 @@ function parseCsv(csvPath: string): CountPoint[] {
     })
   }
 
-  const points = [...latest.values()].filter(p => p.total > 0)
+  const all = [...latest.values()].filter(p => p.total > 0)
+  // Age gate: keep only points re-counted within the dataset's last 10 years (year >
+  // maxYear−10); anything older is a ghost of a re-routed road — DfT never re-counts
+  // detrunked sections. Live case: A168 at Wetherby,
+  // last counted 2006 (69,891 = the old A1) vs its 2024 neighbours at 1,540-4,112; the
+  // A1(M) that took the traffic opened 2009. 10,582 of 44,319 points (24 %) are that old,
+  // 186 of them motorway-calibre (>30k) — measured 2026-07-03, task #14.
+  const maxYear = Math.max(...all.map(p => p.year))
+  const points = all.filter(p => p.year > maxYear - 10)
   writeFileSync(CACHE_JSON, JSON.stringify(points))
-  console.log(`  ${points.length} count points (most recent year per point)`)
+  console.log(`  ${points.length} count points (most recent year per point; dropped ${all.length - points.length} not re-counted since ${maxYear - 10})`)
   console.log(`  By category: M=${points.filter(p=>p.road_category==='M').length} A=${points.filter(p=>p.road_category==='PA'||p.road_category==='TA').length} B=${points.filter(p=>p.road_category==='PB'||p.road_category==='TB').length}`)
   return points
 }
