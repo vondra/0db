@@ -1,5 +1,5 @@
 import type { CruiseHexTopFlight } from '../../../types/noise'
-import { globeAdsbTraceHref, metersToKm } from '../../../utils/formatters'
+import { adsbTraceHref, metersToKm } from '../../../utils/formatters'
 import { aircraftFlightTooltip } from '../../../utils/aircraft-types'
 import { HoverText } from '../../ui/info-tip'
 
@@ -30,7 +30,7 @@ export function CruiseLoudestFlights({ tops }: { tops: CruiseHexTopFlight[] }) {
               </HoverText>
             </th>
             <th className="text-right">
-              <HoverText title={"Aircraft type + identity\n\nCell shows the 4-letter ICAO designator (B738, A320, …); hover for the full model + ICAO 24-bit hex address. Click to open the trace on globe.adsbexchange.com."}>
+              <HoverText title={"Aircraft type + identity\n\nCell shows the 4-letter ICAO designator (B738, A320, …); hover for the full model + ICAO 24-bit hex address. Click to open the flight trace on its source network's globe."}>
                 Aircraft
               </HoverText>
             </th>
@@ -45,7 +45,9 @@ export function CruiseLoudestFlights({ tops }: { tops: CruiseHexTopFlight[] }) {
               callsign: f.callsign,
               icaoHex: hex,
             })
-            const globeHref = hex && f.date ? globeAdsbTraceHref(hex, f.date) : null
+            const globeHref = hex && f.date
+              ? adsbTraceHref(hex, f.date, { noiseClass: f.class_name, typecode: f.aircraft_type })
+              : null
             const dateCell = `${f.date ? f.date.slice(5) : '—'} ${f.time_utc ? f.time_utc.slice(0, 5) : ''}`
             // Synthetic cruise rows (empty hex ⇒ empty date/time per
             // `cruise.rs:316-317`) drop the date HoverText: the bare cell

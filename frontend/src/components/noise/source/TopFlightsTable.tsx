@@ -1,5 +1,5 @@
 import type { AircraftTopFlight } from '../../../types/noise'
-import { globeAdsbTraceHref, metersToKm, unixToIsoDate, unixToIsoDateTimeUtc } from '../../../utils/formatters'
+import { adsbTraceHref, metersToKm, unixToIsoDate, unixToIsoDateTimeUtc } from '../../../utils/formatters'
 import { aircraftFlightTooltip, displayTypecode, parseProfileName } from '../../../utils/aircraft-types'
 import { HoverText } from '../../ui/info-tip'
 import { PERIOD_LABELS, PERIOD_LABELS_DETAIL, PERIOD_TOOLTIP } from '../shared'
@@ -33,7 +33,7 @@ export function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFli
               {detailed ? <HoverText title={`Date & period\n\n${PERIOD_TOOLTIP}`}>Date</HoverText> : 'Date'}
             </th>
             <th className="text-right">
-              {detailed ? <HoverText title={"Aircraft type + identity. Cell shows the 4-letter ICAO designator (B738, A320, …) or 'Average NPD' if no real typecode was carried in ADS-B. Click to open the trace on globe.adsbexchange.com."}>Aircraft</HoverText> : 'Aircraft'}
+              {detailed ? <HoverText title={"Aircraft type + identity. Cell shows the 4-letter ICAO designator (B738, A320, …) or 'Average NPD' if no real typecode was carried in ADS-B. Click to open the flight trace on its source network's globe (adsb.lol for GA/heli, adsbexchange for airliners)."}>Aircraft</HoverText> : 'Aircraft'}
             </th>
             <th className="text-right">
               {detailed ? <HoverText title={"Energy share (%)\n\nThis flight's contribution to total airborne Lden energy.\n100% = this single flight causes all airborne noise.\nEnergy is in linear (not dB) scale, so a flight with 90%\ndominates even if other flights have similar Lmax."}>%</HoverText> : '%'}
@@ -76,7 +76,7 @@ export function TopFlightsTable({ flights, detailed }: { flights: AircraftTopFli
               ? unixToIsoDate(f.start_unix)
               : f.date
             const globeHref = icaoHex && !isSynth && traceDate
-              ? globeAdsbTraceHref(icaoHex, traceDate)
+              ? adsbTraceHref(icaoHex, traceDate, { typecode: rawTypecode })
               : null
             return (
               <tr key={i} className="[&_td]:text-right">

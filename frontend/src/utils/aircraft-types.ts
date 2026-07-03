@@ -189,7 +189,7 @@ export function aircraftTooltip(typecode: string, className?: string | null): st
 
 /**
  * Top-flight cell tooltip — `aircraftTooltip` (type/class/NPD) plus the
- * per-flight identity block (callsign + ICAO hex + globe.adsbexchange.com hint
+ * per-flight identity block (callsign + ICAO hex + trace-globe click hint
  * when the row is clickable). Missing `icaoHex` is the synthetic signal:
  * the identity block degrades to a "Synthetic id" line so the table
  * doesn't show empty hex / phantom "click to open trace" hints. Pass
@@ -215,5 +215,5 @@ export function aircraftFlightTooltip(opts: {
     return `${base}\n\nSynthetic id — anonymous-transponder trace or cruise R7 bucket aggregate; no single per-flight identity`
   }
   const csLine = opts.callsign ? `\nCallsign: ${opts.callsign}` : ''
-  return `${base}${csLine}\n\nICAO hex: ${(opts.icaoHex ?? '').toUpperCase()}\nClick to open trace on globe.adsbexchange.com`
+  return `${base}${csLine}\n\nICAO hex: ${(opts.icaoHex ?? '').toUpperCase()}\nClick to open the flight trace (adsb.lol for GA/heli, adsbexchange for airliners)`
 }

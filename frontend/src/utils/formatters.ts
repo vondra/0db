@@ -62,19 +62,32 @@ export function unixToIsoDateTimeUtc(unix: number): string {
   return new Date(unix * 1000).toISOString().replace('T', ' ').replace(/\..+/, ' UTC')
 }
 
-/** globe.adsbexchange.com trace deep-link for an ICAO 24-bit hex. When
- *  `date` ("YYYY-MM-DD") is supplied the link opens that day's trace;
- *  otherwise it opens the aircraft's current/recent track. adsbexchange
- *  is the only public globe still serving per-day historical traces —
- *  globe.adsb.lol 302-redirects to a new landing page whose
- *  /globe_history/ endpoint 404s (verified 2026-07-03). Callers pass
- *  raw wire hex (lowercase) or display hex (uppercase); normalize here
- *  so every href is identical — the query itself is case-insensitive. */
-export function globeAdsbTraceHref(icaoHex: string, date?: string | null): string {
+import { PROFILE_CLASS } from './profile-class.generated'
+
+/** Flight-tracker trace deep-link for an ICAO 24-bit hex, routed to the
+ *  network that actually SOURCED the flight (feeder communities differ, so
+ *  the sourcing network's globe is the one guaranteed to hold the trace):
+ *  GA + helicopter classes come from the adsb.lol 365-day archive →
+ *  adsb.lol globe; every other class comes from the ADSBexchange
+ *  first-of-month TAR samples (12 d/yr) → globe.adsbexchange.com. The GA
+ *  set mirrors the engine's `is_ga_sampled_class` (npd/mod.rs); class is
+ *  taken from the wire `class_name` when present, else derived from the
+ *  typecode via the generated PROFILE_CLASS table (same table the extract
+ *  uses). Both globes verified to replay per-day traces via
+ *  `?icao=…&showTrace=YYYY-MM-DD` (owner + live check, 2026-07-03).
+ *  Callers pass raw wire hex (lowercase) or display hex (uppercase);
+ *  normalize here so every href is identical. */
+export function adsbTraceHref(
+  icaoHex: string,
+  date?: string | null,
+  opts?: { noiseClass?: string | null; typecode?: string | null },
+): string {
+  const cls = opts?.noiseClass || (opts?.typecode ? PROFILE_CLASS[opts.typecode.toUpperCase()] : undefined)
+  const host = cls === 'PROP_C172' || cls === 'HELICOPTER'
+    ? 'https://adsb.lol/'
+    : 'https://globe.adsbexchange.com/'
   const hex = icaoHex.toUpperCase()
-  return date
-    ? `https://globe.adsbexchange.com/?icao=${hex}&showTrace=${date}`
-    : `https://globe.adsbexchange.com/?icao=${hex}`
+  return date ? `${host}?icao=${hex}&showTrace=${date}` : `${host}?icao=${hex}`
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { SegmentTrace } from '../../../types/noise'
-import { globeAdsbTraceHref, unixToIsoDate, unixToIsoDateTimeUtc } from '../../../utils/formatters'
+import { adsbTraceHref, unixToIsoDate, unixToIsoDateTimeUtc } from '../../../utils/formatters'
 import {
   aircraftFlightTooltip,
   aircraftTooltip,
@@ -205,7 +205,7 @@ export function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.Reac
         })
         callsignValue = (
           <HoverText title={tooltip}>
-            <a href={globeAdsbTraceHref(e.icao_hex, date)} target="_blank" rel="noopener noreferrer" className="hover:underline">
+            <a href={adsbTraceHref(e.icao_hex, date, { typecode: e.aircraft_type })} target="_blank" rel="noopener noreferrer" className="hover:underline">
               {linkText}
             </a>
           </HoverText>

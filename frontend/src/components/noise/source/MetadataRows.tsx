@@ -297,7 +297,7 @@ export function MetadataRows({ c }: { c: Contributor }) {
       ? `jets ${nDays} d/yr · GA+heli ${gaDays} d/yr.`
       : `Lden averaged from ${nDays ?? '–'} sample days/yr.`
     const sampleText = txtTable([
-      'ADS-B flight tracks (adsbexchange).',
+      'ADS-B flight tracks (adsbexchange + adsb.lol).',
       basisLine,
       ...(sparse
         ? [
