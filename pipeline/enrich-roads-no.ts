@@ -22,15 +22,33 @@ import { resolve } from 'node:path'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_NO_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { haversineM } from './lib/spatial.js'
-import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
+import { writeRoadAadt, iterateCountryHexes, osmRoadClassRank, ROAD_CLASS_RANK_TOLERANCE } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_NO_NATIONAL_ROADS
 
-// NVDB covers the Norwegian STATE + COUNTY road network (riksveg/fylkesveg = OSM motorway(0)/trunk(1)/
-// primary(2)/secondary(3)/tertiary(4) + their _link variants), never residential(5)/service(7)/etc.,
-// so writeRoadAadt is gated to this set — a quiet street can no longer inherit a nearby state/county
-// road's AADT (the Oslo "Teisenveien" = 55,000 bug).
+// NVDB Trafikkmengde is NOT a state+county-only feed: the vegref prefix splits the
+// 47,438 downloaded records into EV 5,096 / RV 2,080 / FV 16,373 / KV 23,173 (49%!)
+// / PV 658, plus 42 SV skogsbilveg and 12 under-construction EA/RA/FA — half of it
+// sits on MUNICIPAL (KV) and private (PV) roads. nvdbVegrefRank keeps only EV/RV/FV
+// and drops the rest at parse, so a municipal side-street count can never stamp the
+// state road next to it. The kept records target OSM motorway(0)..tertiary(4) +
+// _link variants, never residential(5)/service(7)/etc., so writeRoadAadt is gated
+// to this set — a quiet street can no longer inherit a nearby road's AADT (the
+// Oslo "Teisenveien" = 55,000 bug).
 const NO_COVERAGE = new Set([0, 1, 2, 3, 4, 10, 11, 12])
+
+// Vegkategori (vegref prefix) → rank on the OSM 0..4 scale. EV europaveg / RV
+// riksveg → 1 (trunk): many Norwegian E-roads and riksveger are 2-lane rural
+// roads tagged trunk/primary in OSM, so trunk-rank ±ROAD_CLASS_RANK_TOLERANCE
+// admits motorway..primary without letting an E6 count reach a secondary street.
+// FV fylkesveg → 2 (primary): ±1 admits trunk..secondary. null = drop (KV
+// kommunal / PV privat / SV skogsbil sit below the classes we stamp).
+function nvdbVegrefRank(vegref: string): number | null {
+  const prefix = vegref.slice(0, 2).toUpperCase()
+  if (prefix === 'EV' || prefix === 'RV') return 1
+  if (prefix === 'FV') return 2
+  return null
+}
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -51,6 +69,7 @@ const NO_HEX_BBOX: [number, number, number, number] = [57.9, 4.5, 71.2, 31.2]
 interface NvdbRecord {
   id: number
   vegref: string
+  rank: number // nvdbVegrefRank(vegref) — EV/RV 1, FV 2; KV/PV/other never parsed
   midLat: number
   midLon: number
   aadt: number
@@ -65,7 +84,18 @@ interface NvdbRecord {
 async function downloadAll(): Promise<NvdbRecord[]> {
   if (!forceDownload && existsSync(CACHE_PARSED)) {
     console.log(`  Using cached parsed: ${CACHE_PARSED}`)
-    return JSON.parse(readFileSync(CACHE_PARSED, 'utf-8'))
+    // Re-derive rank from the cached vegref: caches written before the class gate
+    // landed carry no rank field and still contain the KV/PV records — normalizing
+    // here keeps them usable without a re-download (idempotent on new caches too).
+    const cached: NvdbRecord[] = JSON.parse(readFileSync(CACHE_PARSED, 'utf-8'))
+    const kept: NvdbRecord[] = []
+    for (const r of cached) {
+      const rank = nvdbVegrefRank(r.vegref || '')
+      if (rank === null) continue
+      kept.push({ ...r, rank })
+    }
+    console.log(`  ${kept.length}/${cached.length} records after the EV/RV/FV class filter`)
+    return kept
   }
   if (enrichOnly) throw new Error('--enrich-only but NVDB cache missing')
 
@@ -147,6 +177,8 @@ function parseObject(obj: any): NvdbRecord | null {
   if (midLat < NO_HEX_BBOX[0] || midLat > NO_HEX_BBOX[2] || midLon < NO_HEX_BBOX[1] || midLon > NO_HEX_BBOX[3]) return null
 
   const vegref = obj.lokasjon?.vegsystemreferanser?.[0]?.kortform || ''
+  const rank = nvdbVegrefRank(vegref)
+  if (rank === null) return null // KV/PV/SV/anlegg-phase — see nvdbVegrefRank
 
   // CNOSSOS vehicle classes:
   //   moto = 1% of aadt (no NO moto column)
@@ -162,6 +194,7 @@ function parseObject(obj: any): NvdbRecord | null {
   return {
     id,
     vegref,
+    rank,
     midLat,
     midLon,
     aadt,
@@ -202,9 +235,10 @@ async function enrichArrows(sites: NvdbRecord[]): Promise<void> {
           return null
         }
 
-        // Nearest NVDB centroid within 200 m, via the 1km spatial grid (3×3 cells).
+        // Nearest class-compatible NVDB centroid within 200 m, via the 1km spatial grid (3×3 cells).
         const gy = Math.floor(row.midLat * 100)
         const gx = Math.floor(row.midLon * 100)
+        const rowRank = osmRoadClassRank(row.roadClass)
         let best: NvdbRecord | null = null
         let bestDist = 200
 
@@ -213,6 +247,8 @@ async function enrichArrows(sites: NvdbRecord[]): Promise<void> {
             const cell = grid.get(`${gy + dy}_${gx + dx}`)
             if (!cell) continue
             for (const s of cell) {
+              // Class-compatible records only — a secondary street must not inherit an E6 ÅDT.
+              if (Math.abs(s.rank - rowRank) > ROAD_CLASS_RANK_TOLERANCE) continue
               const d = haversineM(row.midLat, row.midLon, s.midLat, s.midLon)
               if (d < bestDist) { bestDist = d; best = s }
             }

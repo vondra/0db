@@ -20,7 +20,7 @@ import { resolve } from 'node:path'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_NZ_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { haversineM } from './lib/spatial.js'
-import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
+import { writeRoadAadt, iterateCountryHexes, osmRoadClassRank, ROAD_CLASS_RANK_TOLERANCE } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_NZ_NATIONAL_ROADS
 
@@ -28,6 +28,26 @@ const MY_SOURCE_ID = SOURCE_ID_NZ_NATIONAL_ROADS
 // trunk(1)/primary(2)/secondary(3)/tertiary(4) + their _link variants), not residential(5)/service(7)/
 // etc., so writeRoadAadt is gated to this set — a quiet street can't inherit a nearby highway's AADT.
 const NZ_COVERAGE = new Set([0, 1, 2, 3, 4, 10, 11, 12])
+
+// NZTA ONRC (One Network Road Classification) → rank on the OSM 0..4 scale.
+// Measured split of the aadt>0 carriageway rows: High Volume 24.6% / Regional
+// 22.4% / Primary Collector 21.2% / Arterial 14.7% / National 12.2% / Secondary
+// Collector 3.5% / null 1.2% / Access 0.1%. "High Volume" is ONRC's TOP tier
+// (short for National High Volume — median AADT 13,631 vs National's 7,365; the
+// Auckland/Wellington/Christchurch motorway network), so it ranks 0 alongside
+// National. Secondary Collector (median AADT 881) ranks 4 like the US's lowest
+// kept tier. Access and null/unknown → drop at parse: a segment whose class we
+// can't place must not stamp anything — unmatched beats confidently wrong.
+function onrcRank(onrc: unknown): number | null {
+  switch (String(onrc ?? '')) {
+    case 'High Volume': case 'National': return 0
+    case 'Regional': return 1
+    case 'Arterial': return 2
+    case 'Primary Collector': return 3
+    case 'Secondary Collector': return 4
+    default: return null // 'Access', null, anything unrecognized
+  }
+}
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -49,6 +69,9 @@ interface NzRoadSegment {
   midLon: number
   aadt: number
   heavyPct: number
+  /** onrcRank for NZTA segments; null for AT Auckland points (no class field),
+   *  which the match gate then takes on proximity alone. */
+  rank: number | null
   aadt_light: number
   aadt_medium: number
   aadt_heavy: number
@@ -95,19 +118,20 @@ function extractCentroid(geom: any): [number, number] | null {
   return [sumLat / n, sumLon / n]
 }
 
-function makeRecord(lat: number, lon: number, aadt: number, heavyPct: number): NzRoadSegment {
+function makeRecord(lat: number, lon: number, aadt: number, heavyPct: number, rank: number | null): NzRoadSegment {
   const aadt_moto = Math.round(aadt * 0.01)
   const totalHeavy = Math.round(aadt * heavyPct / 100)
   const aadt_medium = Math.round(totalHeavy * 0.20) // buses + light trucks
   const aadt_heavy = totalHeavy - aadt_medium
   const aadt_light = Math.max(0, aadt - totalHeavy - aadt_moto)
-  return { midLat: lat, midLon: lon, aadt, heavyPct, aadt_light, aadt_medium, aadt_heavy, aadt_moto }
+  return { midLat: lat, midLon: lon, aadt, heavyPct, rank, aadt_light, aadt_medium, aadt_heavy, aadt_moto }
 }
 
 function parseAll(): NzRoadSegment[] {
   const records: NzRoadSegment[] = []
 
   // 1. NZTA carriageway pages
+  let onrcDropped = 0
   for (let p = 0; p < 6; p++) {
     const offset = p * 2000
     const path = resolve(CACHE_DIR, `nzta-page-${offset}.json`)
@@ -117,13 +141,15 @@ function parseAll(): NzRoadSegment[] {
       const props = feat.properties || {}
       const aadt = parseInt(props.trafficADTEst || props.trafficADTCount || '0')
       if (aadt <= 0) continue
+      const rank = onrcRank(props.ONRC)
+      if (rank === null) { onrcDropped++; continue } // Access / null ONRC — see onrcRank
       const heavyPct = parseFloat(props.loadingPcHeavy || '8') // default 8% if missing
       const coords = extractCentroid(feat.geometry)
       if (!coords) continue
-      records.push(makeRecord(coords[0], coords[1], aadt, heavyPct))
+      records.push(makeRecord(coords[0], coords[1], aadt, heavyPct, rank))
     }
   }
-  console.log(`  NZTA carriageway: ${records.length} segments`)
+  console.log(`  NZTA carriageway: ${records.length} segments (${onrcDropped} dropped: Access/unknown ONRC)`)
 
   // 2. AT Auckland AADT points
   const atBefore = records.length
@@ -136,7 +162,11 @@ function parseAll(): NzRoadSegment[] {
       const heavyPct = parseFloat(props.pcheavy || '0')
       const coords = extractCentroid(feat.geometry)
       if (!coords) continue
-      records.push(makeRecord(coords[0], coords[1], adt, heavyPct))
+      // AT publishes no road-class field → rank null: the match gate skips the
+      // class check for these records. They are dense urban point counters ON
+      // the road they measure (≤200 m nearest-match), so the cross-class risk is
+      // small, while dropping them would forfeit all Auckland coverage.
+      records.push(makeRecord(coords[0], coords[1], adt, heavyPct, null))
     }
   }
   console.log(`  AT Auckland: ${records.length - atBefore} additional points`)
@@ -171,6 +201,7 @@ async function enrichArrows(sites: NzRoadSegment[]): Promise<void> {
         // Nearest stored point/centroid within a 3×3 grid neighborhood, 200m cap.
         const gy = Math.floor(row.midLat * 100)
         const gx = Math.floor(row.midLon * 100)
+        const rowRank = osmRoadClassRank(row.roadClass)
         let best: NzRoadSegment | null = null
         let bestDist = 200
 
@@ -179,6 +210,10 @@ async function enrichArrows(sites: NzRoadSegment[]): Promise<void> {
             const cell = grid.get(`${gy + dy}_${gx + dx}`)
             if (!cell) continue
             for (const s of cell) {
+              // NZTA segments must be class-compatible — a tertiary street must not
+              // inherit SH1's AADT. AT Auckland records (rank null) match by proximity
+              // alone, exactly as before the gate.
+              if (s.rank !== null && Math.abs(s.rank - rowRank) > ROAD_CLASS_RANK_TOLERANCE) continue
               const d = haversineM(row.midLat, row.midLon, s.midLat, s.midLon)
               if (d < bestDist) { bestDist = d; best = s }
             }

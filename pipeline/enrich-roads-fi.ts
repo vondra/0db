@@ -28,7 +28,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_FI_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { haversineM } from './lib/spatial.js'
-import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
+import { writeRoadAadt, iterateCountryHexes, osmRoadClassRank, ROAD_CLASS_RANK_TOLERANCE } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_FI_NATIONAL_ROADS
 
@@ -37,6 +37,20 @@ const MY_SOURCE_ID = SOURCE_ID_FI_NATIONAL_ROADS
 // It never surveys residential(5)/service(7)/etc., so writeRoadAadt is gated to this set — a quiet
 // street can no longer inherit a nearby state road's AADT (the Helsinki "Heinämiehentie" = 103,418 bug).
 const FI_COVERAGE = new Set([0, 1, 2, 3, 4, 10, 11, 12])
+
+// Väylävirasto has no functional-class column — the Finnish road NUMBER is the
+// class (national numbering: 1-39 valtatie + 40-99 kantatie main roads, 100-999
+// seututie regional, ≥1000 yhdystie connector). Measured split of the 2024 feed:
+// <100 = 12.6%, 100-999 = 12.7%, ≥1000 = 74.7% of 18,064 segments. Ranked on
+// the OSM 0..4 scale so the ±ROAD_CLASS_RANK_TOLERANCE match gate blocks a
+// yhdystie count from stamping a motorway and a valtatie count from bleeding
+// onto a tertiary street across a junction.
+// Kehä I (101) and Kehä II (102): Helsinki's motorway-grade ring roads carry
+// seututie NUMBERS but valtatie traffic — Kehä I is Finland's busiest road
+// (KVL 108,372). At rank 2 its count legally bled onto adjacent OSM
+// secondaries at interchanges (Kaarelantie, verified 2026-07-03) → rank 0.
+const fiRoadNumberRank = (tie: number): number =>
+  (tie === 101 || tie === 102 || tie < 100 ? 0 : tie < 1000 ? 2 : 4)
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -54,6 +68,7 @@ const WFS_BASE = 'https://avoinapi.vaylapilvi.fi/vaylatiedot/wfs'
 interface FiRoadSegment {
   internalId: number
   tie: number  // road number
+  rank: number // fiRoadNumberRank(tie)
   midLat: number
   midLon: number
   kvl: number
@@ -135,9 +150,11 @@ function parseAllPages(): FiRoadSegment[] {
       const aadt_medium = 0
       const aadt_light = Math.max(0, kvl - kvlRaskas - aadt_moto)
 
+      const tie = parseInt(props.alkusijainti_tie || '0')
       records.push({
         internalId: parseInt(props.internal_id || '0'),
-        tie: parseInt(props.alkusijainti_tie || '0'),
+        tie,
+        rank: fiRoadNumberRank(tie),
         midLat: lat,
         midLon: lon,
         kvl,
@@ -185,9 +202,10 @@ async function enrichArrows(sites: FiRoadSegment[]): Promise<void> {
         const midLat = row.midLat
         const midLon = row.midLon
 
-        // Nearest within 200m
+        // Nearest class-compatible segment within 200m
         const gy = Math.floor(midLat * 100)
         const gx = Math.floor(midLon * 100)
+        const rowRank = osmRoadClassRank(row.roadClass)
         let best: FiRoadSegment | null = null
         let bestDist = 200
 
@@ -196,6 +214,8 @@ async function enrichArrows(sites: FiRoadSegment[]): Promise<void> {
             const cell = grid.get(`${gy + dy}_${gx + dx}`)
             if (!cell) continue
             for (const s of cell) {
+              // Class-compatible segments only — a tertiary street must not inherit a valtatie's KVL.
+              if (Math.abs(s.rank - rowRank) > ROAD_CLASS_RANK_TOLERANCE) continue
               const d = haversineM(midLat, midLon, s.midLat, s.midLon)
               if (d < bestDist) { bestDist = d; best = s }
             }

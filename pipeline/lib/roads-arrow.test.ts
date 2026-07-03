@@ -17,7 +17,7 @@ import {
   Table, vectorFromArray, tableFromIPC, tableToIPC,
   Float64, Int32, Uint8, Uint16, Utf8,
 } from 'apache-arrow'
-import { writeRoadAadt, type RoadRow } from './roads-arrow.js'
+import { writeRoadAadt, osmRoadClassRank, type RoadRow } from './roads-arrow.js'
 
 // cz-rsd-scitani — a real national-measured registry id, so shouldOverwrite(0, id) passes.
 const STAMP_ID = 20
@@ -90,6 +90,12 @@ test('coverage gate: out-of-coverage classes never reach match, columns stay unt
   }
   // Non-AADT columns survive the rebuild verbatim.
   assert.equal(t.getChild('ref')!.get(3), 'R3')
+})
+
+test('osmRoadClassRank: majors 0..4 verbatim, links collapse to parent, minors → 6', () => {
+  assert.deepEqual([0, 1, 2, 3, 4].map(osmRoadClassRank), [0, 1, 2, 3, 4])
+  assert.deepEqual([10, 11, 12].map(osmRoadClassRank), [0, 1, 2], 'links rank as their parent class')
+  assert.deepEqual([5, 6, 7, 8, 9].map(osmRoadClassRank), [6, 6, 6, 6, 6], 'minor classes unreachable at ±1 even rank-only')
 })
 
 test('fail-loud: NaN column in match payload throws, file left unchanged', async () => {

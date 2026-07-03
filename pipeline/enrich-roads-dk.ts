@@ -5,6 +5,8 @@
  *   typeNames=OPEN_DATA_NOEGLETAL_VIEW
  *   ~22,000 measurement records from 2023-2025 (paginated 3000/request)
  *   Per-station: AADT, HDT (weekday), LBIL_AADT (heavy trucks), GNS_HASTIGHED (mean speed)
+ *   VEJBESTYRER (road administrator) tells the tier: '0' = Vejdirektoratet state
+ *   net, 3-digit code = kommune — 4/5 of the stations are municipal.
  *
  * Pre-downloaded into mastra-page-N.json files via curl. Script aggregates to
  * one record per (VEJNR, KILOMETER) keeping the most recent year.
@@ -22,14 +24,26 @@ import { shouldOverwrite } from './lib/provenance.js'
 import proj4 from 'proj4'
 import { SOURCE_ID_DK_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { haversineM } from './lib/spatial.js'
-import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
+import { writeRoadAadt, iterateCountryHexes, osmRoadClassRank, ROAD_CLASS_RANK_TOLERANCE } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_DK_NATIONAL_ROADS
 
-// Mastra covers the Danish STATE road network (statsveje = OSM motorway(0)/trunk(1)/primary(2)/
-// secondary(3)/tertiary(4) + their _link variants), never residential(5)/service(7)/etc., so
-// writeRoadAadt is gated to this set — a quiet street can no longer inherit a nearby state road's AADT.
+// Mastra is NOT the state road network alone: VEJBESTYRER (road administrator)
+// splits the motor-vehicle stations into '0' = Vejdirektoratet state net (20.5%,
+// median AADT 6,608 — motorways + trunk routes) and 3-digit kommune codes (79.5%,
+// median AADT 1,205 — collector-grade municipal counts). writeRoadAadt stays gated
+// to OSM motorway(0)..tertiary(4) + _link variants so no count stamps a
+// residential/service street, and dkVejbestyrerRank keeps each tier in its class
+// neighbourhood — a kommune collector count must never stamp the E20.
 const DK_COVERAGE = new Set([0, 1, 2, 3, 4, 10, 11, 12])
+
+// VEJBESTYRER → rank on the OSM 0..4 scale. State '0' → 1 (trunk): the state net
+// spans motorway..primary, exactly what ±ROAD_CLASS_RANK_TOLERANCE admits.
+// Kommune codes → 4 (tertiary): ±1 admits secondary..tertiary only, mirroring how
+// the US ranks its lowest kept tier (Major Collector → 4). The measured kommune
+// profile backs it: median 1,205 / p99 16,607 / max 30,408 AADT — collector
+// volumes; letting them stamp a primary would mostly UNDER-state real traffic.
+const dkVejbestyrerRank = (vejbestyrer: string): number => (vejbestyrer === '0' ? 1 : 4)
 
 const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -56,6 +70,7 @@ const DK_HEX_BBOX: [number, number, number, number] = DK_BBOX
 interface MastraRecord {
   vejnr: number
   vejnavn: string
+  vejbestyrer: string // '0' = state, 3-digit = kommune
   kilometer: number
   meter: number
   aar: number
@@ -70,6 +85,7 @@ interface MastraRecord {
 interface SegmentAadt {
   vejnr: number
   ref: string  // normalized
+  rank: number // dkVejbestyrerRank of the kept (latest-year) record
   midLat: number
   midLon: number
   aadt_total: number
@@ -121,6 +137,7 @@ function parseAllPages(): MastraRecord[] {
       records.push({
         vejnr,
         vejnavn: (p.VEJNAVN || '').toString(),
+        vejbestyrer: String(p.VEJBESTYRER ?? '').trim(),
         kilometer: parseInt(p.KILOMETER || '0'),
         meter: parseInt(p.METER || '0'),
         aar: parseInt(p.AAR || '0'),
@@ -166,6 +183,7 @@ function aggregateLatest(records: MastraRecord[]): SegmentAadt[] {
     out.push({
       vejnr: r.vejnr,
       ref,
+      rank: dkVejbestyrerRank(r.vejbestyrer),
       midLat: r.lat,
       midLon: r.lon,
       aadt_total: r.aadt,
@@ -206,9 +224,10 @@ async function enrichArrows(sites: SegmentAadt[]): Promise<void> {
           return null
         }
 
-        // Find nearest Mastra point within 200m (per-station data, no ref matching).
+        // Find nearest class-compatible Mastra point within 200m (per-station data, no ref matching).
         const gy = Math.floor(row.midLat * 100)
         const gx = Math.floor(row.midLon * 100)
+        const rowRank = osmRoadClassRank(row.roadClass)
         let best: SegmentAadt | null = null
         let bestDist = 200
 
@@ -217,6 +236,8 @@ async function enrichArrows(sites: SegmentAadt[]): Promise<void> {
             const cell = grid.get(`${gy + dy}_${gx + dx}`)
             if (!cell) continue
             for (const s of cell) {
+              // Class-compatible stations only — a tertiary street must not inherit the E20's count.
+              if (Math.abs(s.rank - rowRank) > ROAD_CLASS_RANK_TOLERANCE) continue
               const d = haversineM(row.midLat, row.midLon, s.midLat, s.midLon)
               if (d < bestDist) { bestDist = d; best = s }
             }

@@ -17,6 +17,23 @@ import { cellToLatLng } from 'h3-js'
 import { shouldOverwrite, withArrowWrite } from './provenance.js'
 import { inBbox } from './spatial.js'
 
+/** OSM `road_class` collapsed to the 0..4 major-road rank used by the
+ *  source-class ↔ OSM-class compatibility gate (0 motorway, 1 trunk, 2 primary,
+ *  3 secondary, 4 tertiary; link codes 10/11/12 collapse to their parent).
+ *  Everything below tertiary (residential/living_street/service/track/
+ *  unclassified) maps to 5, out of reach of any 0..4 source rank at ±1.
+ *  Each enricher pairs this with a source-side rank map (e.g. HPMS F_SYSTEM in
+ *  enrich-roads-us.ts) and rejects matches where the ranks differ by more than
+ *  ROAD_CLASS_RANK_TOLERANCE — the fix for the "Papermill Drive" cross-class
+ *  proximity bug (a secondary inheriting a nearby interstate's 184k AADT). */
+export const osmRoadClassRank = (roadClass: number): number =>
+  roadClass <= 4 ? roadClass : roadClass === 10 ? 0 : roadClass === 11 ? 1 : roadClass === 12 ? 2 : 6
+
+/** Max |source rank − OSM rank| a match may span: 1 tolerates the usual
+ *  source ↔ OSM off-by-one tagging variance while still blocking
+ *  interstate→secondary (|0 − 3| = 3). From the US pilot (a2a35343). */
+export const ROAD_CLASS_RANK_TOLERANCE = 1
+
 /** AADT per CNOSSOS class + the provenance id to stamp on one matched road row.
  *  `sourceId` is per-row on purpose — DE writes Autobahn vs Bundesstraße ids in
  *  a single pass (`enrich-roads-de.ts`). */

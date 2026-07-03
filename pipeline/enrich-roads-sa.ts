@@ -18,8 +18,8 @@
  *    1,604 lane-level polylines inside Riyadh metro area with CLASS (A-D),
  *    NO_OF_LANE, STREET_WID, DIRECTION, STREET_NAM. Class + lane count is
  *    mapped to estimated AADT via CNOSSOS rule-of-thumb (Class A 5-lane
- *    ~50k AADT, Class D 2-lane ~2k AADT). Spatially matched to OSM segments
- *    within 200 m inside the Riyadh bbox.
+ *    ~50k AADT, Class D 2-lane ~2k AADT). Spatially matched to class-compatible
+ *    OSM segments within 200 m inside the Riyadh bbox.
  *    URL: https://services9.arcgis.com/7cs4rq15YlksXBMf/arcgis/rest/services/
  *         RiyadhPMS/FeatureServer/0/query?where=1=1&outFields=*&f=geojson&
  *         outSR=4326&resultRecordCount=2000
@@ -27,7 +27,8 @@
  * 3. **Interactive Atlas of SA** (ArcGIS Online public feature service)
  *    3,555 national road polylines with RTT_DESCRI (Primary / Secondary Route)
  *    classification. Used as a national fallback for segments NOT matched
- *    by MoT (ref-based) or Riyadh PMS. Spatially matched within 500 m.
+ *    by MoT (ref-based) or Riyadh PMS. Spatially matched within 250 m,
+ *    class-compatible only.
  *    URL: https://services6.arcgis.com/UBlzpwddcwD1J1A0/arcgis/rest/services/
  *         Interactive_atlas_of_spatial_features_and_transportation_networks_in_Saudi_Arabia_WFL1/
  *         FeatureServer/6/query?where=1=1&outFields=*&f=geojson&outSR=4326
@@ -53,7 +54,7 @@ import { read as xlsxRead, utils as xlsxUtils } from 'xlsx'
 import { shouldOverwrite } from './lib/provenance.js'
 import { SOURCE_ID_SA_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
-import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
+import { writeRoadAadt, iterateCountryHexes, osmRoadClassRank, ROAD_CLASS_RANK_TOLERANCE } from './lib/roads-arrow.js'
 
 const MY_SOURCE_ID = SOURCE_ID_SA_NATIONAL_ROADS
 
@@ -152,6 +153,9 @@ function buildRefAadtMap(stations: MotStation[]): Map<string, number> {
 interface GeoFeature {
   coords: [number, number][]  // LineString or first ring of MultiLineString
   props: Record<string, any>
+  /** Source-class rank on the OSM 0..4 scale (riyadhPmsRank / sauAtlasRank),
+   *  gated against osmRoadClassRank inside nearestInGrid. */
+  rank: number
 }
 
 async function downloadGeoJson(url: string, cachePath: string): Promise<any> {
@@ -185,7 +189,8 @@ async function loadRiyadhPms(): Promise<GeoFeature[]> {
     if (geom.type === 'LineString') coords = geom.coordinates
     else if (geom.type === 'MultiLineString') coords = geom.coordinates[0] || []
     if (coords.length < 2) continue
-    out.push({ coords, props: f.properties || {} })
+    const props = f.properties || {}
+    out.push({ coords, props, rank: riyadhPmsRank(props.CLASS || '') })
   }
   console.log(`  Riyadh PMS features: ${out.length}`)
   return out
@@ -221,7 +226,8 @@ async function loadSauAtlas(): Promise<GeoFeature[]> {
     if (geom.type === 'LineString') coords = geom.coordinates
     else if (geom.type === 'MultiLineString') coords = geom.coordinates[0] || []
     if (coords.length < 2) continue
-    out.push({ coords, props: f.properties || {} })
+    const props = f.properties || {}
+    out.push({ coords, props, rank: sauAtlasRank(props.RTT_DESCRI || '') })
   }
   console.log(`  SAU Atlas features: ${out.length}`)
   return out
@@ -257,12 +263,30 @@ function riyadhPmsAadt(cls: string, lanes: number): number {
   return 4000  // unknown class fallback
 }
 
+/** Riyadh PMS CLASS → rank on the OSM 0..4 scale, aligned with the volume tiers
+ * riyadhPmsAadt assigns: A ≈ 22-50k urban freeway/arterial (King Fahd Rd is OSM
+ * motorway) → 0, B ≈ 8-18k arterial → 1, C ≈ 3.5-6k collector → 2, D ≈ 0.9-1.8k
+ * local street → 3. Measured feed: A 18.7% / B 30.4% / C 34.0% / D 17.0%, no
+ * blanks — unknown → 2 mirrors riyadhPmsAadt's 4,000-AADT (C-range) fallback. */
+function riyadhPmsRank(cls: string): number {
+  const c = (cls || '').toUpperCase().trim()
+  return c === 'A' ? 0 : c === 'B' ? 1 : c === 'C' ? 2 : c === 'D' ? 3 : 2
+}
+
 /** SA Atlas RTT_DESCRI → AADT estimate (rural national averages). */
 function sauAtlasAadt(rttDescri: string): number {
   const s = (rttDescri || '').toLowerCase()
   if (s.includes('primary')) return 6000     // Primary Route — rural Saudi highways
   if (s.includes('secondary')) return 1500   // Secondary Route — collector roads
   return 800                                  // Unknown / Local
+}
+
+/** SAU Atlas RTT_DESCRI → rank, aligned with sauAtlasAadt's tiers: Primary Route
+ * (36.4% of the feed) → 1, Secondary Route (60.4%) → 3, Unknown/blank (3.2%) → 4
+ * matching the 800-AADT local fallback. */
+function sauAtlasRank(rttDescri: string): number {
+  const s = (rttDescri || '').toLowerCase()
+  return s.includes('primary') ? 1 : s.includes('secondary') ? 3 : 4
 }
 
 // ── Geometry helpers ──
@@ -286,11 +310,17 @@ function buildPolylineGrid(features: GeoFeature[]): Map<string, GeoFeature[]> {
   return grid
 }
 
-/** Find nearest polyline within search radius via the grid index. */
+/** Find the nearest CLASS-COMPATIBLE polyline within the search radius via the
+ * grid index. `rowRank` is the OSM row's osmRoadClassRank; candidates whose
+ * source rank differs by more than ROAD_CLASS_RANK_TOLERANCE are skipped, so the
+ * Tier 2/3 spatial fallbacks can't hand a motorway-grade AADT to a tertiary
+ * street (Tier 1 ref match stays ungated — a shared ref is inherently
+ * class-correct). */
 function nearestInGrid(
   midLat: number, midLon: number,
   grid: Map<string, GeoFeature[]>,
   searchRadiusM: number,
+  rowRank: number,
 ): { feat: GeoFeature; dist: number } | null {
   const reach = Math.max(1, Math.ceil(searchRadiusM / 1000))
   let best: GeoFeature | null = null
@@ -302,6 +332,7 @@ function nearestInGrid(
       const cell = grid.get(`${baseLat + dy}_${baseLon + dx}`)
       if (!cell) continue
       for (const feat of cell) {
+        if (Math.abs(feat.rank - rowRank) > ROAD_CLASS_RANK_TOLERANCE) continue
         const d = pointToPolylineDist(midLat, midLon, feat.coords)
         if (d < bestDist) { bestDist = d; best = feat }
       }
@@ -371,6 +402,7 @@ async function main() {
         if (!inBbox(midLat, midLon, SA_BBOX)) return null
         if (inAnyZone(midLat, midLon)) { excluded++; return null }
 
+        const rowRank = osmRoadClassRank(row.roadClass) // for the Tier 2/3 class gates
         let aadt = 0
         let matchedBy: 'mot' | 'pms' | 'atlas' | null = null
 
@@ -391,7 +423,7 @@ async function main() {
 
         // Tier 2: Riyadh PMS (inside Riyadh bbox only)
         if (!matchedBy && inBbox(midLat, midLon, RIYADH_BBOX)) {
-          const near = nearestInGrid(midLat, midLon, riyadhGrid, 200)
+          const near = nearestInGrid(midLat, midLon, riyadhGrid, 200, rowRank)
           if (near) {
             aadt = riyadhPmsAadt(near.feat.props.CLASS || '', parseInt(near.feat.props.NO_OF_LANE) || 2)
             matchedBy = 'pms'
@@ -403,7 +435,7 @@ async function main() {
         // segment inherit an unrelated nearby road's class/AADT; the coverage gate already excludes
         // residential, this curbs the in-coverage over-reach).
         if (!matchedBy) {
-          const near = nearestInGrid(midLat, midLon, atlasGrid, 250)
+          const near = nearestInGrid(midLat, midLon, atlasGrid, 250, rowRank)
           if (near) {
             aadt = sauAtlasAadt(near.feat.props.RTT_DESCRI || '')
             matchedBy = 'atlas'
