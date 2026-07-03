@@ -36,7 +36,7 @@ Source: TransLink GTFS from translink.com.au. 682 rail routes (CityTrain + QR re
 
 ## What the map uses
 
-Global baseline (GLO-30 DEM, Overture/GHSL buildings, WorldCover forest + ground) applies everywhere — see [main methodology](../index.md). Oceania-specific enrichment:
+Global baseline (GLO-30 DEM, Overture/GHSL buildings, WorldCover forest + ground) applies everywhere — see [main methodology](/about). Oceania-specific enrichment:
 
 - **Traffic**: New Zealand national road AADT (NZTA / Auckland) applied; Australia uses class defaults.
 - **Railway**: Melbourne Metro + Brisbane CityTrain real frequencies; other rail uses OSM defaults.

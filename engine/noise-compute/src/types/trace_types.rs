@@ -81,19 +81,18 @@ pub struct EdgePoint {
 /// Per-segment terrain diffraction trace (engine's `path_effects` output).
 /// Scalar summary lives on [`Contributor::terrain_impact_db`] as A-weighted ΔL_A.
 ///
-/// `edges` lists the `n_edges` diffraction edges the multi-edge algorithm
-/// picked (upper convex hull + top-3 cap). `dominant_edge_idx` is the index
-/// into `edges` of the edge with the largest LOS excess — this is the edge
-/// the Rayleigh δ* fit is anchored at, and the one the popup SVG highlights.
-/// `edges[0]` is the leftmost edge by `t`, NOT the dominant one.
+/// Since the 2026-06-01 single-edge δ rewrite (SPEC §3.5) the algorithm picks
+/// ONE edge — the candidate with the largest path-length difference δ — so
+/// `n_edges` is 0 or 1 and `dominant_edge_idx` is always 0. The multi-edge
+/// fields (`is_double`, `edge_distance_m`, multi-entry `edges`) survive at
+/// their degenerate values for wire-compat with the popup schema.
 #[derive(Debug, Clone, Serialize)]
 pub struct TerrainTrace {
     pub delta_m: f64,
-    /// `true` when the combined result used 2 OR 3 edges (back-compat — UI
-    /// should read `n_edges` for exact count).
+    /// Always `false` under the single-edge model (kept for wire-compat).
     pub is_double: bool,
     pub attenuation_bands: [f64; NUM_BANDS],
-    /// Number of diffraction edges (0, 1, 2 or 3).
+    /// Number of diffraction edges (0 or 1 under the single-edge model).
     pub n_edges: u8,
     /// Edge vertices (length == `n_edges`).
     pub edges: Vec<EdgePoint>,
@@ -102,11 +101,11 @@ pub struct TerrainTrace {
     /// mean ground planes. Zero when there is no obstruction. Used as
     /// `δ ≤ λ/4 − δ*` per-band gate.
     pub delta_star_m: f64,
-    /// First-to-last edge distance `|E₁→Eₙ|` (metres). Feeds the CNOSSOS C₃
-    /// thick-barrier correction. Zero for single-edge or no-edge results.
+    /// First-to-last edge distance `|E₁→Eₙ|` (metres). Was the CNOSSOS C₃
+    /// thick-barrier input; zero under the single-edge model (wire-compat).
     pub edge_distance_m: f64,
-    /// Index into `edges` of the edge with maximum LOS excess. 0 when
-    /// `n_edges == 0` (no meaningful edge).
+    /// Index into `edges` of the dominant (max-δ) edge — always 0 under the
+    /// single-edge model.
     pub dominant_edge_idx: u8,
 }
 

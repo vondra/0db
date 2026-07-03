@@ -4,7 +4,7 @@ Engineering formulas inspired by CNOSSOS-EU 2021/1226, ISO 9613-2:2024, and ECAC
 
 **Purpose**: Global noise atlas for public information ("where do I hear noise"). Not regulatory END mapping.
 
-*Last verified against code: 2026-06-10 (whole-file audit of `noise-compute`, `source-reader`, `aircraft-extract`, `raster-reader`).*
+*Last verified against code: 2026-06-10 (whole-file audit of `noise-compute`, `source-reader`, `aircraft-extract`, `raster-reader`); targeted re-sync 2026-07-03 (C1 rail split · per-row rail reach · settlement v2/v3 + leisure · GA 365-day hybrid · C2 airborne horizon · 15 aircraft classes).*
 
 ## Constants
 
@@ -113,7 +113,7 @@ Fixed per-class: 65/20/15 % for motorway-class roads, 70/18/12 % otherwise. Appl
 
 `access_factor` reductions are bypassed only when `Provenance::is_measured()` (City/National/Continental/GlobalMeasured); NationalProxy, Heuristic and Baseline rows still get access reductions — a national proxy is a class-default estimate, not a measurement, so it must be down-scaled on restricted-access roads.
 
-A row counts as enriched only when `provenance.has_data() && aadt_light > 0` (`normalize.rs::has_enriched_traffic`) — an enriched row with zero light but nonzero heavy AADT falls back to full class defaults (known edge case). Un-enriched rows with ≥ 3 lanes get a `lane_ratio` default multiplier (ŘSD-calibrated bucket medians, `normalize.rs::lane_ratio`): motorway oneway 3 lanes ×1.42; primary 3/4 lanes ×1.37/×2.13; secondary 3 lanes ×1.83; all other buckets ×1.0. Measured rows bypass it.
+A row counts as enriched only when `provenance.has_data() && aadt_light > 0` (`normalize::has_enriched_traffic`) — an enriched row with zero light but nonzero heavy AADT falls back to full class defaults (known edge case). Un-enriched rows with ≥ 3 lanes get a `lane_ratio` default multiplier (ŘSD-calibrated bucket medians, `normalize::lane_ratio`): motorway oneway 3 lanes ×1.42; primary 3/4 lanes ×1.37/×2.13; secondary 3 lanes ×1.83; all other buckets ×1.0. Measured rows bypass it.
 
 ---
 
@@ -131,7 +131,7 @@ where:
 - A_rolling / A_traction: entire-train A-weighted reference spectrum per vehicle type, peaked at 500–1000 Hz (ISO 3095 / CNOSSOS rail spectrum)
 - v in km/h, clamped to `[20, v_max]`
 - v_ref per vehicle type (see Rail vehicle types below)
-- Q = trains **in the period** after the 65 / 20 / 15 day-evening-night split of the daily count
+- Q = trains **in the period** after the per-region day/evening/night split of the daily count (see "Day/evening/night split" below)
 - T_h = period hours: 12 day / 4 evening / 8 night
 - B_rolling = 30 (speed-dependent rolling noise exponent)
 
@@ -150,9 +150,29 @@ This is the CNOSSOS Annex IV line-source density (NoiseModelling-compatible).
 
 High-speed passenger (`v > 200 km/h`) is served by the passenger rolling spectrum scaled via `30·log₁₀(v/v_ref)` — not a dedicated aerodynamic model.
 
-### Day/evening/night split
+### Day/evening/night split (C1 — per-region, per-category)
 
-Fixed 65/20/15 % applied identically to passenger and freight — no asymmetric split for night-biased freight where it would be realistic.
+`rail_time_dist(admin, rail_type)` (`emission/railway.rs::RailTimeDist`)
+replaced the old flat 65/20/15 that was applied to passenger and freight
+alike — the cause of rail `L_night` always being exactly `Lden − 7.91 dB`
+(audit rail-report §G.4). Shares of the daily count (END periods 12/4/8 h):
+
+| Region × category | day | evening | night |
+|---|---|---|---|
+| EU freight | 0.3407 | 0.1136 | **0.5458** |
+| EU passenger | 0.70 | 0.20 | 0.10 |
+| Tram / light-rail / narrow-gauge / funicular (all regions) | 0.70 | 0.25 | 0.05 |
+| Non-EU freight (continuous 24/7, uniform) | 0.50 | 0.1667 | 0.3333 |
+| Non-EU passenger | 0.70 | 0.20 | 0.10 |
+
+EU freight is measured-derived from EP IPOL-TRAN ET(2012)474533 Table 22
+(Rheintalbahn 129 day-trains / 155 night-trains), corroborated by EBA
+Lärm-Monitoring 2023; "EU" is a 30-country ISO whitelist (EU27 + CH/NO/GB)
+keyed on country code — NOT geographic Europe — resolved per row via the
+process-wide `h3r4-admin.bin` table (`admin.rs::admin_for_latlng`). All
+three consumers — popup kernel (`compute/railways.rs`), heatmap loader
+(`normalize/rail.rs`), and the reach solver — iterate one shared
+`RailTimeDist::periods()`, so the share model cannot fork.
 
 Post-adjustments applied even on measured counts: `service > 0` → counts × **0.02**; `parallel_divisor > 1` → counts divided by that factor.
 
@@ -169,7 +189,7 @@ Post-adjustments applied even on measured counts: `service > 0` → counts × **
 | NarrowGauge | 10 + 0 | 40 km/h |
 | Funicular | 40 + 0 | 20 km/h |
 
-`maxspeed` tag wins when present (unit-aware parse at extract — mph postings like WCML "125 mph" now convert instead of dropping to 0); missing `maxspeed` with `highspeed=yes` → 300 km/h (`normalize.rs::normalize_rail`). The railways `maxspeed` column is **UInt16** since 2026-06 (300+ km/h overflowed u8); readers (`hex_store::col_u16_or_u8`, `source_loader_rail`) also accept legacy UInt8 arrows until the next world OSM re-extract.
+`maxspeed` tag wins when present (unit-aware parse at extract — mph postings like WCML "125 mph" now convert instead of dropping to 0); missing `maxspeed` with `highspeed=yes` → 300 km/h (`normalize::normalize_rail`). The railways `maxspeed` column is **UInt16** since 2026-06 (300+ km/h overflowed u8); readers (`hex_store::col_u16_or_u8`, `source_loader_rail`) also accept legacy UInt8 arrows until the next world OSM re-extract.
 
 ---
 
@@ -271,7 +291,7 @@ See §3.5a for the shared path-sampling scheme.
 
 ### 3.5a Unified path sampler
 
-DEM, Overture building height, WorldCover forest cover and IMD imperviousness are all sampled along the source→receiver line by a single bilateral cadence — density highest near endpoints (Fresnel zone narrowest), coarsest in the middle. Implementation + cadence rationale: `propagation::path_profile::fill_t_values`. Terrain diffraction, building screening, vegetation depth, and ground-effect G all read from the resulting `PathProfile`.
+DEM, Overture building height, WorldCover forest cover and IMD imperviousness are all sampled along the source→receiver line by a single bilateral cadence — density highest near endpoints (Fresnel zone narrowest), coarsest in the middle. Implementation + cadence rationale: `propagation::path_profile::fill_t_values`. Terrain diffraction, building screening, vegetation depth, and ground-effect G all read from the resulting `PathProfile`. The surface **heatmap** additionally runs a coarser distance-dependent middle cadence (`fill_t_values_coarse_mid`) and a per-source-direction horizon ray-cache (`propagation/horizon.rs::Horizon`) — heatmap-only speed approximations; the popup always uses the exact cadence.
 
 ### 3.5b Combined terrain + building + barrier screening
 
@@ -280,7 +300,7 @@ Diffraction is computed once over a composite top profile (`elevation + max(buil
 ### 3.6 Building screening (ISO 9613-2, per-band)
 Samples Overture Maps 30m building raster at the same bilateral cadence (§3.5a). Explicit `noise_barrier` geometries compete with raster buildings. For industrial sources, screening samples inside the source's own footprint are skipped via an exclusion radius.
 
-**Barrier consumers (B8/C9, 2026-06-11).** Popup and ALL CPU surface heatmap kernels (road/rail `scatter_line`, industrial/building `scatter_point`, aircraft `ground_ops`) feed `barriers.arrow` vector barriers into the §3.5b composite via the shared `screening_attenuation`; the heatmap prepares one slice per z13 tile (`heatmap-aircraft::source_loader_barrier::BarrierData::for_tile` — sorted ascending by a conservative lower-bound distance; contract documented on `types::Barrier`). The **GPU line kernels (`noise-gpu`, road/rail on GPU cluster boxes) screen the SAME vector barriers behind the `QM_GPU_BARRIERS` gate** (default OFF): the per-tile `for_tile` slice is uploaded and the kernel applies the identical projection-and-snap (`scatter.cu` `line_source`; measured on RTX 5070 mean 0.002 / max 1.5 dB vs the CPU truth). Burning barriers into the 30 m cover raster was the rejected alternative — it was measured acoustically unsound, the §3.5a bilateral cadence (≥ ~30 m sample spacing) stepping over a one-cell-thin burned wall on most paths (mean +3.7 / max +13.8 dB under-screening at wall-adjacent shadow pixels vs the vector path; decision record: `heatmap-aircraft/tests/barrier_screening.rs`). With the gate OFF the GPU lane uploads no barriers and the C9 orchestrator gate (build-heatmap.sh / cluster-build-chunk.sh) routes barrier-carrying R4s (~1.5% of hexes) to the CPU builders, as before; flipping `QM_GPU_BARRIERS=1` keeps them on the GPU — `build-heatmap.sh` / the cluster launchers now default it ON (owner-directed 2026-06-13, mean 0.002 / max 1.5 dB validated; the kernel env default stays 0 for direct callers like the popup), so the "(default OFF)" above is the kernel-env default, not the launcher default.
+**Barrier consumers (B8/C9, 2026-06-11).** Popup and ALL CPU surface heatmap kernels (road/rail `scatter_line`, industrial/building `scatter_point`, aircraft `ground_ops`) feed `barriers.arrow` vector barriers into the §3.5b composite via the shared `screening_attenuation`; the heatmap prepares one slice per z13 tile (`heatmap-aircraft::source_loader_barrier::BarrierData::for_tile` — sorted ascending by a conservative lower-bound distance; contract documented on `types::Barrier`). The **GPU line kernels (`noise-gpu`, road/rail on GPU cluster boxes) screen the SAME vector barriers behind the `QM_GPU_BARRIERS` gate** (default OFF): the per-tile `for_tile` slice is uploaded and the kernel applies the identical projection-and-snap (`scatter.cu` `line_source`; measured on RTX 5070 mean 0.002 / max 1.5 dB vs the CPU truth). Burning barriers into the 30 m cover raster was the rejected alternative — it was measured acoustically unsound, the §3.5a bilateral cadence (≥ ~30 m sample spacing) stepping over a one-cell-thin burned wall on most paths (mean +3.7 / max +13.8 dB under-screening at wall-adjacent shadow pixels vs the vector path; decision record: `heatmap-aircraft/tests/barrier_screening.rs`). With the gate OFF the GPU lane uploads no barriers and the C9 orchestrator gate (build-heatmap.sh / the world orchestrator) routes barrier-carrying R4s (~1.5% of hexes) to the CPU builders, as before; flipping `QM_GPU_BARRIERS=1` keeps them on the GPU — `build-heatmap.sh` / the cluster launchers now default it ON (owner-directed 2026-06-13, mean 0.002 / max 1.5 dB validated; the kernel env default stays 0 for direct callers like the popup), so the "(default OFF)" above is the kernel-env default, not the launcher default.
 
 **Screening is not computed standalone.** Buildings and barriers are merged into the §3.5b composite top profile (`elevation + max(building_h, barrier_h)`) and diffraction is computed once by the §3.5 single-edge algorithm (max-δ edge, Rayleigh gate). The per-band screening cap inherits from §3.5 — 20 dB — not a dedicated building-only cap.
 
@@ -321,7 +341,7 @@ Applied in pipeline and popup:
 - **Parallel railway ways**: counts divided by `parallel_divisor`
 - **Industrial exclusion radius**: R=√(area/π) — buildings within R of source point are not counted as screening (prevents self-screening from source's own footprint)
 
-Road `access` and `road_class` u8 enums (codes, OSM mappings, AADT-reduction factors): see `engine/osm-extract/src/classify.rs` and the consumer in `engine/noise-compute/src/normalize.rs::access_factor`. The reduction is bypassed only when `Provenance::is_measured()` is true (City/National/Continental/GlobalMeasured); `NationalProxy`, `Heuristic`, `Baseline` and `None` rows still get access reductions.
+Road `access` and `road_class` u8 enums (codes, OSM mappings, AADT-reduction factors): see `engine/osm-extract/src/classify.rs` and the consumer in `engine/noise-compute/src/normalize/road.rs::access_factor`. The reduction is bypassed only when `Provenance::is_measured()` is true (City/National/Continental/GlobalMeasured); `NationalProxy`, `Heuristic`, `Baseline` and `None` rows still get access reductions.
 
 Link rationale (codes 10-12, `*_link` slip roads / ramps carry 15% of mainline AADT — HCM 7 / FEHRL / CERTU lower-range, validated against Pasito Blanco GC-1 popup): see `defaults.rs` ramp rows. `secondary_link` / `tertiary_link` stay on mainline codes (3/4) because their flow is closer to regular urban streets. For `highway=track` without a `surface` tag, the extractor defaults to `unpaved` (+2 dB rolling correction — §1 surface table).
 
@@ -345,11 +365,24 @@ is not evaluated at all:
 | Source | Max radius |
 |---|---|
 | Road (by class) | motorway 10 km · trunk 7 km · primary 5 km · secondary 3 km · unclassified 2 km · tertiary 1.6 km · motorway_link 1.2 km · trunk_link 900 m · residential 800 m · primary_link 600 m · service 500 m · living_street 400 m · track 300 m |
-| Railway (all types) | 7 km |
+| Railway | per-row: solved to the 25 dB free-field Lden boundary, clamped [2 km, 10 km] (see below) |
 | Industrial | 4 km |
 | Building | fade radius from Lw, capped 2 km |
 | Aircraft ground ops | runway 5 km · taxi 3 km · apron 1.5 km |
 | Aircraft airborne/cruise | 16 km horizontal envelope + per-class slant reach (§5.1) |
+
+**Rail reach is solved per row** (`emission/railway.rs::rail_reach_m`):
+each segment reaches to the distance where its OWN free-field Lden falls
+to `RAILWAY_REACH_TARGET_LDEN_DB = 25 dB` (bisection over log-distance, 40
+steps in [100 m, 50 km]), clamped **[2 km, 10 km]** (`constants.rs`). The
+old blanket 7 km ("all types") is retired — a quiet branch line truncating
+at the same distance as a 300 km/h corridor was a correctness bug.
+Value-neutral for a default mainline (80 pax + 20 frt @ 80 km/h crosses
+25 dB at ≈ 7 km); quiet rows shrink, loud/HS corridors extend toward the
+10 km ceiling (the existing road-halo budget). Known shared convention gap
+(documented on the constants): the solve is free-field UNREFLECTED while
+kernels add receiver reflection (up to ~+5 dB) — affects only the 25–30 dB
+fringe at facades; the 7 km blanket had the same gap.
 
 Additionally a **free-field early-exit**
 (`geo.rs::below_free_field_threshold[_line]`): when emission minus a
@@ -388,7 +421,7 @@ SEPARATE from ISO 9613-2. Airborne Doc 29 is empirical NPD-based, not path-traci
 SEL_seg = L_E(d_p) + ΔV + ΔI(φ) - Λ(β, l) + ΔF
 ```
 
-- **L_E**: NPD lookup at slant distance d_p (feet). 124 per-typecode profiles auto-generated from EASA ANP v2.3, bucketed at 14 aircraft noise classes (9 Wing + 2 Fuselage + 2 Prop + 1 Helicopter — `NUM_CLASSES` in `profiles_generated.rs`). The kernel evaluates the **class anchor curve**, not the per-typecode curve (mean within-class spread ~0.8 dB); unknown typecodes route through a similarity table before falling back to `FALLBACK_PROFILE_IDX` (B738-equivalent). See `scripts/build-aircraft-profiles.py`.
+- **L_E**: NPD lookup at slant distance d_p (feet). 124 per-typecode profiles auto-generated from EASA ANP v2.3, bucketed at 15 aircraft noise classes (10 Wing + 2 Fuselage + 2 Prop + 1 Helicopter — `NUM_CLASSES` in `profiles_generated.rs`). The kernel evaluates the **class anchor curve**, not the per-typecode curve (mean within-class spread ~0.8 dB); unknown typecodes route through a similarity table before falling back to `FALLBACK_PROFILE_IDX` (B738-equivalent). See `scripts/build-aircraft-profiles.py`.
 - **ΔV**: Speed/duration correction (Eq. 4-14)
 - **ΔI**: Engine installation angle correction (Eq. 4-15)
 - **Λ**: Lateral attenuation (Eq. 4-18/19) — Wing-mounted jets only per Doc 29 §4.5.4 / FAA AEDT TM §6.2.4. Fuselage-mounted, propeller, and helicopter installations get Λ = 0 (gated by `installation` parameter in `fast_lateral_attenuation`).
@@ -486,7 +519,7 @@ to one event (regression: `cffk_partition_preserves_linear_energy` in
 
 Output-affecting kernel gates: segments whose SEL lands **< 20 dB** return no
 energy (`doc29.rs`, both CFFK and full paths); per-class × direction slant
-**reach envelopes** at the 40 dB NPD threshold (`REACH_SQ_TABLE`, `npd.rs`)
+**reach envelopes** at the 40 dB NPD threshold (`REACH_SQ_TABLE`, `aircraft/npd/mod.rs`)
 reject far geometry before evaluation; NPD lookup distance floors at 100 ft.
 The heatmap additionally routes far receivers through a coarse lattice
 (`NEAR_SLANT_M = 500 m` exact zone, coarse bands at 2 km / 8 km) — heatmap-only
@@ -509,7 +542,7 @@ same arrows.
 
 Popup loads target R4 + 6 ring-1 neighbours so R4-straddling rows stay
 visible. Per-row prune radius: `AIRCRAFT_MAX_HORIZONTAL_REACH_M = 16 km`
-(in `aircraft/npd.rs`); airborne uses baked per-row bbox, cruise uses
+(in `aircraft/npd/mod.rs`); airborne uses baked per-row bbox, cruise uses
 R7-cell-centre + half-diagonal. Antimeridian-crossing rows skip the
 bbox prune (degenerate global envelopes).
 
@@ -524,18 +557,41 @@ Leq_period = 10 × log₁₀(E_period / (n_days × T_period))
 T_day = 43200s, T_evening = 14400s, T_night = 28800s
 ```
 
+**GA 365-day hybrid weighting**: every airborne/ground row's energy AND
+movement count is additionally scaled by a per-class weight
+`w[c] = n_days / sample_days_by_class[c]`
+(`emission/aircraft/npd/mod.rs::ClassWeights`) before the `÷ n_days`
+above. Airline classes are sampled over the same `n_days` window (w = 1);
+GA classes (`PROP_C172`, `HELICOPTER`) are sampled over **365 days**
+(w = n_days/365 ≈ 0.033 at n_days = 12), so a one-off GA flight
+contributes 1/365 of its energy instead of 1/12 — kills the +14.8 dB
+Kytín phantom while leaving genuinely-daily GA patterns unchanged. The
+per-class day vector rides in arrow metadata (`sample_days_by_class`);
+parsing FAILS LOUD on pre-hybrid arrows (no uniform fallback —
+re-extract). GA movement counts divide by `ga_n_days`; the popup exposes
+`sample_days` / `ga_sample_days` transparency fields.
+
 ### Octave bands
 **Airborne / cruise**: ❌ BROADBAND ONLY. Doc 29 NPD returns a single SEL
 value; per-band data is not fabricated for the airborne kernel. Path
 effects (Section 3) skip the per-band chain — the airborne kernel uses
-only NPD lookup + Δv/ΔI/Λ/ΔF and lateral attenuation, never terrain /
-screening / vegetation per band.
+only NPD lookup + Δv/ΔI/Λ/ΔF and lateral attenuation, never per-band
+terrain / screening / vegetation.
+
+**One optional exception (C2)**: receiver terrain-horizon screening
+(`emission/aircraft/horizon.rs`) — ISO 9613-2 §7.4 single-edge Dz over a
+32-sector × 6-range-band quantized DEM horizon, applied AEDT-style as
+`max(Dz, Λ)` (LOS blockage and lateral attenuation are mutually exclusive,
+never summed), capped at 18 dB, broadband (λ_eff = 0.685 m ≈ 500 Hz).
+Default OFF (byte-identical output without it); popup-only behind
+`QM_AIRBORNE_HORIZON=1`; cruise is structurally exempt.
 
 **Ground ops**: 8-band emission via per-class spectrum templates
 (`GROUND_OPS_RUNWAY_SPECTRUM_SHAPE` / `GROUND_OPS_TAXI_SPECTRUM_SHAPE` /
 `GROUND_OPS_APRON_SPECTRUM_SHAPE` in `aircraft/ground_ops.rs`). Popup
-runs `propagate_variants_full` per leg with full Section 3 path effects
-on every band — see §5.2.
+builds the Section-3 path-effect variants inline per row from a
+per-microsegment path cache (same 6-variant contract as
+`propagate_variants_full`) on every band — see §5.2.
 
 ### Per-event peak Lmax (informational only)
 
@@ -545,7 +601,7 @@ Lmax_event = lookup_lmax(class_idx, is_departure, log10(d_display_ft))
 where `d_display` is the clamped display CPA distance (see Geometry above).
 
 Per-class LAmax NPD LUTs ingested from the ANP CSVs alongside the SEL
-NPDs (`build_lmax_lut` in `emission/aircraft/npd.rs`). 200–25 000 ft
+NPDs (`build_lmax_lut` in `emission/aircraft/npd/mod.rs`). 200–25 000 ft
 log-linear interpolation; below 200 ft extends the first-two-point slope;
 above 25 000 ft extrapolates as `−20·log10(d/d_ref)` + per-profile
 `alpha_eff` (same fit as SEL — LAmax and SEL share source spectrum).
@@ -689,7 +745,7 @@ and an `airborne_above_cutoff` counter feeds the truncation flag).
 ## 6. Industrial Emission
 
 ### Source geometry
-Discretized at load/query time in `normalize.rs::prepare_industrial_points`
+Discretized at load/query time in `normalize::prepare_industrial_points`
 (shared by popup and heatmap — parity by construction):
 - **Wind turbine** (`source_type = 10`): single point at centroid
 - **Non-wind, area ≤ 5000 m²**: centroid
@@ -723,7 +779,7 @@ family (audit I-03); effective industrial emission dropped by exactly that
 much. Test-locked at 1e-9 for every profile.
 
 baseLw from a resolution chain — NACE 4-digit → NACE 2-digit → OSM
-`site_subtype` (13 profiles) → `source_type`. Values were authored against
+`site_subtype` (12 profiles) → `source_type`. Values were authored against
 Czech SHM 2022 while the bands still carried the hidden spectrum surplus —
 post-normalization they undershoot by that surplus; re-calibration is
 backlog (C8a, area-density model I-04):
@@ -739,7 +795,7 @@ Area scaling clamped to [100 m², 50 ha] to prevent OSM polygon artifacts.
 
 ### Source height
 - quarry (`source_type = 1`): 8m
-- heavy industry (NACE 8/23/24/35): 10m
+- heavy industry (NACE divisions 05/08/23/24/35 — coal mining, mining & quarrying, cement/minerals, metallurgy, power): 10m
 - other industrial: 5m
 - wind turbine: `hub_height`
 
@@ -778,44 +834,82 @@ R_excl). Max radius 4 km (§3.13); popup queries sources within 5 km.
 ## 7. Settlement (buildings)
 
 ### Source geometry
-Discretized at load/query time in `normalize.rs::prepare_building_points`
-(shared by popup and heatmap):
+Discretized at load/query time in `normalize/points.rs::prepare_building_points`
+(shared by popup and heatmap) via the shared area discretizer
+`discretize_area_source` — ONE mechanism for building / industrial / leisure:
 - small / missing-polygon buildings: centroid
 - buildings with `area > 2000 m²` and polygon available: interior grid at **30 m** spacing
 - if grid generation yields only one point, fallback to centroid
-- energy split is uniform: `Lw_point = Lw − 10×log₁₀(N)` (unlike industrial's
-  area-weighted split)
+- energy split is **area-weighted**, identical to industrial:
+  `Lw_cell = Lw − 10×log₁₀(area_total / area_cell)` (energy-conserving);
+  each cell carries a self-screening exclusion radius `√(area_cell/π)`
 - missing area defaults to 100 m²; missing height → floors × 3 m → 8 m;
   missing floors → ceil(height / 3); sources with Lw < 10 dB are dropped
+- **shed-type classes scale on FOOTPRINT, not floors**
+  (`settlement.rs::is_shed_type` — warehouse/factory, church, farm,
+  FOOD_RETAIL, HOSPITALITY): a tall single-story hall must not mint
+  `height/3` phantom floors, and ground-floor activity (kitchen,
+  refrigeration) must not multiply up a 6-floor block
 
-Each source gets a fade-out radius from emitted Lw, capped at **2 km**
-(popup query radius 2 km). The radius is solved against the
-pre-normalization scalar (`Lw − a_weighted_total(spectrum)`) to keep the
-pre-B4+B6 cull behavior exactly (W7 net-zero); the honest-Lw radius
-(~×2.1 for small buildings, <1e-3 dB acoustic effect) is deferred to the
-C8a recalibration.
+Each source gets a fade-out radius solved from its **honest radiated Lw**
+(`settlement.rs::building_max_dist`), capped at **2 km** (popup query
+radius 2 km); test `building_cull_radius_matches_honest_lw`.
 
 ### Emission (custom model, NOT standardized)
 ```
 Lw = 10 × log₁₀(10^(Lw_fixed/10) + GFA × 10^(Lw_per_m²/10))
-where GFA = area_m² × floors
+where GFA = area_m² × floors   (footprint only for shed-types, see above)
 ```
-Current implementation has **10 building classes + default fallback** (residential, commercial, warehouse, school, hospital, church, hotel, garage, farm, public). Type / geometry / area resolution chains live in `settlement.rs`.
+**14 building classes** (settlement v2 phase 2, 2026-06-12): phase-1
+classes 0–9 (residential, commercial, warehouse, school, hospital, church,
+hotel, garage, farm, public) plus `SILENT` (10 — sheds/roofs/huts, Lw 0;
+kills the ~18 M phantom residential emitters), `HOUSE` (11 — split from
+apartments, gentler −8 night cut), `FOOD_RETAIL` (12 — 24/7 rooftop
+refrigeration, night −2 dB instead of −20), `HOSPITALITY` (13 — kitchen
+extract + evening voices). Class ids are byte-stable (the arrow stores the
+raw u8 — renumbering would silently re-profile every cached building).
+Type / geometry / area resolution chains live in `settlement.rs`.
 
-Bands carry the same normalization invariant as industrial
-(`a_weighted_total(bands) == Lw`). To keep the audit wave acoustically
-net-zero for settlement (/gg verdict W7), every class's
-`Lw_fixed`/`Lw_per_m²` was bumped by exactly its spectrum's A-weighted
-offset (+5.6..+7.0 dB — old→new table in `settlement.rs::building_profile`),
-so radiated dB(A) is unchanged; honest units now, real recalibration is
-backlog C8a. Test-locked by the
-`building_radiated_dba_unchanged_by_normalization` pin.
+Constants are **honest measured-anchored dB(A)** (settlement v2 phase 1,
+2026-06-12): the pre-v2 heuristic values and their W7 net-zero spectrum
+compensation are GONE — do not reintroduce offsets; band normalization
+happens once in `spectrum::normalized_emission_bands`, and
+`a_weighted_total(bands) == Lw` is pin-tested by
+`radiated_dba_equals_lw_for_all_classes`. Per-class anchors cite measured
+plant/activity literature inline (`settlement.rs::building_profile`);
+settlement v3 re-tuned residential `Lw_per_m²` 21→25 and warehouse/factory
+21→45 (fixes a ~30 dB standalone-factory undershoot). The C8a
+recalibration backlog now applies to **industrial only** (§6).
 
 ### Source height
 height/2 (mid-facade). Consistent in emission AND propagation (fix V33 mismatch).
 
 ### Propagation
 ISO 9613-2 point source.
+
+### 7a. Leisure areas (sport / play / open-air hospitality)
+
+Settlement v2 phase-2 sibling family for OSM features that carry no
+`building=*` (`emission/leisure.rs`): 8 classes — generic pitch, padel,
+tennis, basketball, playground, pool, outdoor seating (biergarten /
+`outdoor_seating=yes`), stadium. Own `leisure.arrow`;
+`normalize/points.rs::prepare_leisure_points` discretises through the
+shared area-weighted discretizer (industrial 75 m grid + `√(cell/π)`
+self-screening). Differences from buildings are physical only: source
+height ~1.5 m (voices/rackets, not roof plant), no floors, reach
+`min(Lw fade radius, 2 km)`.
+
+Levels use the SAME area-law as buildings (`settlement::area_lw` over the
+polygon area; a node with no polygon falls back to the profile's reference
+footprint). Each class anchors an ACTIVE measured sound power (cited
+inline; padel 90 dB(A) is the loudest — the 2024–26 complaint class) minus
+a transparent annualization cut (season −3 dB, daily duty −6 dB; pool −5
+season; stadium −12 match-days-only) — END/CNOSSOS has no sport model, so
+the annual-Lden convention is ours and its assumptions are listed on
+/about. `PROP-MEAS`-flagged classes (playground, pool) ship conservative
+placeholders, never presented as measured. Rendered within the
+**building** layer (`LEISURE_TYPE_BASE = 100` id offset,
+`types/source_names.rs`).
 
 ---
 
@@ -941,7 +1035,7 @@ mid-range over-estimates a typical quiet regional link.
 
 ### Track access factor
 
-`engine/noise-compute/src/normalize.rs::access_factor` collapses
+`engine/noise-compute/src/normalize/road.rs::access_factor` collapses
 `highway=track` segments with `access=0` (untagged) to the same
 multiplier as explicit `access=agricultural` (×0.1 of the class-8
 default = 0.5 veh/day). Rationale:

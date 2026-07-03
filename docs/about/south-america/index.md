@@ -14,7 +14,7 @@ No multi-country, continent-wide feed exists (no equivalent of the EU's Environm
 
 ## What the map uses (global baseline)
 
-Global baseline (GLO-30 DEM, GHSL buildings, WorldCover forest + ground) applies everywhere — see [main methodology](../index.md). South-America-specific notes: building heights come from **GHSL 100 m** (Overture has <1% height coverage for SA cities); WorldCover covers the Amazon basin well. Enrichment on top of the baseline:
+Global baseline (GLO-30 DEM, GHSL buildings, WorldCover forest + ground) applies everywhere — see [main methodology](/about). South-America-specific notes: building heights come from **GHSL 100 m** (Overture has <1% height coverage for SA cities); WorldCover covers the Amazon basin well. Enrichment on top of the baseline:
 
 - **Traffic**: Brazil, Argentina, Chile, Colombia, Peru and Ecuador carry real national road data (per-segment AADT for AR/CL/CO/PE where surveys exist), plus Bolivia, Paraguay and Venezuela via community/mirror sources; other countries use class defaults.
 - **Industrial**: GPPD power plants (NACE 35) baseline — BR 255, AR 88, CL 69, CO 36 plants — overridden per country by national registries where available (ANEEL energy fleet in Brazil, ANM/SERNAGEOMIN/INGEMMET mining → NACE 05/07/08 in Colombia/Chile/Peru, ANH oil & gas in Colombia).

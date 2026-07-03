@@ -14,10 +14,10 @@ The [Common Noise Assessment Methods](https://publications.jrc.ec.europa.eu/repo
 
 - **Road emission model** — Noise power per vehicle category, speed, and road surface
 - **Railway emission model** — Noise per train type, speed, track properties
-- **Industrial emission model** — NACE sector-differentiated source power levels (21 sectors + 17 sub-types), calibrated against SHM contours using IRZ/E-PRTR facility registry data
+- **Industrial emission model** — NACE sector-differentiated source power levels (20 NACE sector profiles + 12 OSM sub-type profiles), anchored to measured literature values, with sector codes from IRZ/E-PRTR facility registry data; re-calibration against official SHM contours is pending
 - **Propagation model** — Sound attenuation through distance, ground, terrain, buildings, and atmosphere
 
-Quiet Map implements CNOSSOS-EU emission models for road (Annex II), railway (Annex IV), and industrial sources, with ISO 9613-2 propagation. Aircraft noise uses an NPD-based approach inspired by ECAC Doc 29 (referenced by CNOSSOS-EU §2.7) but is not a certified implementation — see [methodology page](../index.md#aircraft) for details.
+Quiet Map implements CNOSSOS-EU emission models for road (Annex II), railway (Annex IV), and industrial sources, with ISO 9613-2 propagation. Aircraft noise uses an NPD-based approach inspired by ECAC Doc 29 (referenced by CNOSSOS-EU §2.7) but is not a certified implementation — see [methodology page](/about#aircraft) for details.
 
 ## ISO 9613-2
 
@@ -30,7 +30,7 @@ The propagation model follows [ISO 9613-2](https://www.iso.org/standard/61049.ht
 
 ## Propagation factors
 
-Each factor can be toggled independently in the map's advanced settings, so you can see how much terrain, forest, or buildings affect noise at any location.
+Click any point on the map to see how much terrain, forest, and buildings attenuate noise there — the popup shows a read-only per-source breakdown of each path effect. The map's advanced settings can additionally display the input rasters (elevation, building heights, forest, noise barriers) as overlays.
 
 | Factor | What it does |
 |--------|-------------|
@@ -40,9 +40,9 @@ Each factor can be toggled independently in the map's advanced settings, so you 
 | **Terrain diffraction** | Hills and ridges can block sound — a ridge can reduce noise by 10 dB or more |
 | **Building screening** | Buildings between source and receiver block and reflect sound |
 | **Forest attenuation** | Dense vegetation absorbs and scatters sound energy |
-| **Meteorological** | Wind direction and temperature inversions affect sound paths |
+| **Meteorological** | Defined as a placeholder only — not applied; the maps assume neutral propagation conditions (see note below) |
 
-Meteorological correction uses favourable propagation probability P_FAV = 0.5 (Central Europe default, per CNOSSOS-EU §2.5.21).
+A favourable-propagation probability (P_FAV = 0.5, per CNOSSOS-EU §2.5.21) is defined in the code as a placeholder but is not applied — the maps assume neutral propagation conditions.
 
 ## How far noise travels
 
@@ -53,15 +53,14 @@ Different sources propagate different distances. A motorway is audible much furt
 | Motorway | 10 km | High speed, heavy traffic, continuous noise |
 | Trunk road | 7 km | Moderate-heavy traffic |
 | Primary road | 5 km | Moderate traffic |
-| Secondary road | 5 km | Local traffic, increased range for 10 dB threshold |
-| Tertiary road | 4 km | Low traffic |
-| Residential road | 3 km | Very low traffic |
-| Main railway | up to 10 km | Heavy freight trains, high sound power |
-| Local railway / tram | 5 km | Lower sound power |
-| Aircraft corridor | Segment midpoint only (no lateral spread) | NPD proxy profiles; all altitudes included (extrapolated beyond 25,000 ft) |
-| Industrial facility | up to 5 km | Varies by sector (NACE-differentiated), 10 dB threshold |
-| Wind turbine | up to 5 km | Elevated point source (actual hub height), 100–107 dB |
-| Settlement building | 1–2 km | Per-building acoustic capacity model, 14 OSM classes |
+| Secondary road | 3 km | Local traffic |
+| Tertiary road | 1.6 km | Low traffic |
+| Residential road | 800 m | Very low traffic |
+| Railway (incl. tram) | 2–10 km, solved per line | Each line reaches to where its own free-field level falls to 25 dB — quiet branch lines stop early, busy freight corridors carry far |
+| Aircraft corridor | Overhead — all altitudes (NPD extrapolated beyond 25,000 ft) | Doc 29 kernel with real lateral geometry: closest point of approach + lateral attenuation per sub-segment; 124 ANP-derived profiles in 15 noise classes (proxy profile only for unknown typecodes) |
+| Industrial facility | up to 4 km | Varies by sector (NACE-differentiated) |
+| Wind turbine | up to 4 km | Elevated point source (actual hub height), 98–106.5 dB |
+| Settlement building | 1–2 km | Per-building area-law sound-power model, 14 OSM classes |
 
 ## WHO guidelines
 

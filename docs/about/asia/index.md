@@ -16,7 +16,7 @@ No multi-country Asian datasets exist (no equivalent of EU open data directives)
 - **Rail enrichment applied** — India (Esri Living Atlas per-segment network), China, South Korea, Thailand, Israel, UAE, India metro lines, plus Iran, Iraq, Kazakhstan, Uzbekistan further west. Other rail uses OSM defaults.
 - **Industrial** — registry/GEM enrichment across nearly all Asian countries (see per-country list below).
 
-Global baseline (terrain, buildings, forest, ground) applies everywhere — see [main methodology](../index.md). Asia-specific deltas: building heights come mostly from GHSL 100 m (Overture per-building height coverage is thin, ~3% in Tokyo and lower elsewhere); ground uses the WorldCover-derived G-factor (no Copernicus IMD outside Europe); Asian wind turbines fall back to OSM defaults (USWTDB is US-only).
+Global baseline (terrain, buildings, forest, ground) applies everywhere — see [main methodology](/about). Asia-specific deltas: building heights come mostly from GHSL 100 m (Overture per-building height coverage is thin, ~3% in Tokyo and lower elsewhere); ground uses the WorldCover-derived G-factor (no Copernicus IMD outside Europe); Asian wind turbines fall back to OSM defaults (USWTDB is US-only).
 
 ## Per-country enrichment status
 

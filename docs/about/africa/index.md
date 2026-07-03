@@ -17,7 +17,7 @@ No continent-wide open transport feed exists (no African equivalent of the EU's 
 
 ## What the map uses (global baseline)
 
-Global baseline (GLO-30 DEM, WorldCover forest + ground) applies everywhere — see [main methodology](../index.md). Africa-specific delta: building heights come from **GHSL 100 m** (Overture has near-zero height coverage in Africa, so per-building screening is coarse and many areas have near-zero modelled building height). Industrial uses **GEM + GPPD** (GEM dominant — power plants and coal mines per country; e.g. NG 55, ZA 51, EG 44, ET 26, KE 23 power plants).
+Global baseline (GLO-30 DEM, WorldCover forest + ground) applies everywhere — see [main methodology](/about). Africa-specific delta: building heights come from **GHSL 100 m** (Overture has near-zero height coverage in Africa, so per-building screening is coarse and many areas have near-zero modelled building height). Industrial uses **GEM + GPPD** (GEM dominant — power plants and coal mines per country; e.g. NG 55, ZA 51, EG 44, ET 26, KE 23 power plants).
 
 ## Per-country enrichment status
 

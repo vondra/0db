@@ -15,9 +15,10 @@
 //!   area-density model is backlog I-04);
 //! - wind / Pchery transect: ≈ −4..−5 dB (spectrum −6.4, flat-LUT +1.0,
 //!   small hub-geometry term; audit measured the transect +4..+5 dB hot);
-//! - settlement/buildings: net 0.0 — class constants in `settlement.rs`
-//!   carry a compensating bump equal to each spectrum's offset (/gg W7),
-//!   so radiated dB(A) is unchanged until the real C8a recalibration.
+//! - settlement/buildings: was net 0.0 via the W7 compensating bump; that
+//!   bump was since REPLACED by honest measured-anchored constants
+//!   (settlement v2 phase 1, 2026-06-12 — `settlement.rs` module doc). The
+//!   C8a recalibration note now applies to industrial only.
 
 use crate::propagation::iso9613::a_weighted_total;
 use crate::types::NUM_BANDS;

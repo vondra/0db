@@ -17,15 +17,15 @@ map: { center: [15.5, 49.8], zoom: 7 }
 - **Result**: 528,123 Czech railway segments enriched with real passenger train counts (34.7% coverage on segments in matched hexes)
 - **Busiest**: Praha hl.n. ↔ Pha hl.n. Lc105-102 at 276 trains/day, Brno hl.n. přednádr. ↔ Brno hl.n. at 246/day
 - **[SŽ maximum line speeds](https://provoz.spravazeleznic.cz/portal/Show.aspx?path=/Data/Mapy/rychlosti.pdf)** — "Největší traťové rychlosti" map, used alongside OSM `maxspeed` tags
-- **Speed-dependent emission** using CNOSSOS-EU Annex IV / RMR: `Lw'/m = Lw0 + 10·log₁₀(Q / (T·1000·v)) + 30·log₁₀(v/v_ref)` where `Q` = trains in the period (daily count split 65/20/15 day/evening/night), `T` = period hours, `v` = line speed in km/h. See `engine/noise-compute/SPEC.md §2` for the full derivation.
+- **Speed-dependent emission** using CNOSSOS-EU Annex IV / RMR: `Lw'/m = Lw0 + 10·log₁₀(Q / (T·1000·v)) + 30·log₁₀(v/v_ref)` where `Q` = trains in the period (daily passenger counts split 70/20/10 day/evening/night; freight is night-heavy at ≈34/11/55), `T` = period hours, `v` = line speed in km/h. See `engine/noise-compute/SPEC.md §2` for the full derivation.
 - Typical Czech corridor speeds: I. corridor (Praha–Brno) up to 160 km/h, regional lines 80–100 km/h, tram 40–60 km/h
-- Vehicle mapping: RegioPanter/RegioShuttle → RMR Cat-8a (disc-braked EMU), older coaches → Cat-1 (cast iron), freight → Cat-4 (block-braked wagons — realistic for current Czech fleet)
+- Vehicle mapping: four emission-coefficient families — passenger (disc-braked, v_ref 100 km/h), freight (cast-iron block brakes, v_ref 80 km/h, ~10 dB louder), tram (v_ref 50 km/h), and light rail (v_ref 80 km/h)
 
 ### Freight data gap
 
 The CIS JR JR2026.zip dataset contains **passenger trains only** (all 13,252 files are `PA_` prefix = passenger). Freight timetables (GVD) are managed internally by Správa železnic and **not publicly distributed** as machine-readable data. Only aggregated annual statistics are available in PDF form (Statistická ročenka SŽ).
 
-For now, `trains_freight` remains 0 in the enriched data. CNOSSOS-EU defaults are applied for major freight corridors (Děčín–Praha–Břeclav E65, Praha–Plzeň–Cheb E55, Brno–Přerov–Ostrava E30). The Czech freight fleet remains predominantly RMR Cat-4 (block-braked wagons).
+For now, `trains_freight` remains 0 in the enriched data. CNOSSOS-EU defaults are applied for major freight corridors (Děčín–Praha–Břeclav E65, Praha–Plzeň–Cheb E55, Brno–Přerov–Ostrava E30). The Czech freight fleet remains predominantly block-braked wagons, matching the freight coefficient family.
 
 ## Industrial data
 
@@ -41,9 +41,9 @@ For now, `trains_freight` remains 0 in the enriched data. CNOSSOS-EU defaults ar
 
 ## Aircraft data
 
-- **OpenSky Network** — Historical ADS-B trajectories over Czech airspace
+- **[adsb.lol](https://adsb.lol)** — Historical ADS-B trajectories over Czech airspace
 - Flight paths, altitudes, and aircraft types extracted for noise computation
-- Airport noise contours validated against official SHM measurements
+- Aircraft noise is not yet formally validated; official SHM airport contours are the planned reference
 
 ## Terrain elevation
 
@@ -60,7 +60,7 @@ For now, `trains_freight` remains 0 in the enriched data. CNOSSOS-EU defaults ar
 
 - **[Strategic Noise Maps (SHM)](https://shm.env.cz/) / [CENIA](https://www.cenia.cz/)** — Official strategic noise maps used as validation reference
 - Target accuracy: mean absolute error below 3 dB compared to SHM reference data
-- Validation runs automatically after each model update
+- Validation is a manual benchmark suite run before releases
 - **[Prague Geoportal](https://atlas.geoportalpraha.cz/)** — Prague noise maps with layers:
   - Noise level — day (6:00–22:00) and night (22:00–6:00) per Czech national definition (differs from END standard 07–19/19–23/23–07; Quiet Map uses the END periods for its own Lden calculation)
   - Strategic noise map 2022 (SHM) — Ldvn bands (day) and Ln bands (night)
@@ -78,5 +78,5 @@ Sources updated twice daily via cron:
 Categories: stavební pozemky, lesy, louky, pole, zahrady, komerční.
 
 Properties displayed on the map with noise level at their location.
-Default filter: properties below 45 dB Lden (WHO outdoor guideline).
+Default filter: properties below 60 dB Lden (adjustable 40–75 dB).
 Only listings with verified GPS coordinates are included.

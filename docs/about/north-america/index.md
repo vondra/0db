@@ -44,7 +44,7 @@ Source: VIA Rail GTFS from viarail.ca (current). 313 stops, 64 daily trains acro
 
 ## What the map uses
 
-Global baseline (GLO-30 DEM, Overture/GHSL buildings, WorldCover forest + ground) applies everywhere — see [main methodology](../index.md). North-America-specific enrichment:
+Global baseline (GLO-30 DEM, Overture/GHSL buildings, WorldCover forest + ground) applies everywhere — see [main methodology](/about). North-America-specific enrichment:
 
 - **Traffic**: US (HPMS, class-gated), Canada (Quebec), and Mexico road AADT on major roads; minor roads use class defaults.
 - **Railway**: Amtrak + VIA Rail + Mexico urban rail (CDMX + Toluca GTFS) real train frequencies; all other rail uses OSM defaults.

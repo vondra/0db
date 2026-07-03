@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Per-layer code_ver for the cluster's incremental-regen stamps (build-heatmap-cluster.sh, regen
-plan Part A). code_ver[L] = a CONTENT set-hash over SHARED ∪ L's EXCLUSIVE files, where SHARED = the
+"""Per-layer code_ver for the world build's incremental-regen stamps.
+code_ver[L] = a CONTENT set-hash over SHARED ∪ L's EXCLUSIVE files, where SHARED = the
 heatmap COMPUTE closure (the 4 compute crates' production *.rs/*.cu/Cargo.{toml,lock} + the global
 build config .cargo/config.toml / rust-toolchain) MINUS every layer's exclusive files. A content hash,
 NOT a max-mtime: a backdated git checkout or an rsync -a that preserves an old mtime still flips it

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Master extraction script: rasters + ADS-B + OSM in parallel.
+# Master extraction script: rasters + OSM in parallel; aircraft/ADS-B starts
+# after OSM finishes (Stage 2C needs airport_areas.arrow).
 #
 # Usage:
 #   ./scripts/run-extraction.sh              # all steps
