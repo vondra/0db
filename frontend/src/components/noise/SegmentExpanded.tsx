@@ -39,7 +39,6 @@ export function SegmentExpanded({ trace }: { trace: SegmentTrace }) {
           <PathProfileDiagram
             trace={trace.propagation.path_profile}
             terrainEdges={trace.propagation.terrain.edges}
-            dominantEdgeIdx={trace.propagation.terrain.dominant_edge_idx}
           />
           <HoverText
             title={

@@ -58,10 +58,10 @@ import { writeRailTrains } from './lib/railways-arrow.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_IN_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { inBbox, pointToSegmentDist } from './lib/spatial.js'
+import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_IN_NATIONAL_RAILWAY
 
-const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/in`)
 

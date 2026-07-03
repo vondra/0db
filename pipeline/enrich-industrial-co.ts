@@ -46,8 +46,8 @@ import { cellToLatLng } from 'h3-js'
 import { NATIONAL_MIX, stampOneWinner } from './lib/enrich-industrial-gem.js'
 import type { MatchFacility } from './lib/facility-match.js'
 import { inBbox, pointInRing } from './lib/spatial.js'
+import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
-const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/co`)
 

@@ -38,9 +38,9 @@ import { withArrowWrite, shouldOverwrite } from './lib/provenance.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { makeCountryGate } from './lib/country-polygon.js'
 import { SOURCE_ID_KR_INDUSTRIAL_NAMES } from './lib/source-ids.generated.js'
+import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_KR_INDUSTRIAL_NAMES
-const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // KR coarse bbox [minLat,minLon,maxLat,maxLon] — sweeps in NK + a China sliver;

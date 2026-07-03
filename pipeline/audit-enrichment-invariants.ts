@@ -64,9 +64,9 @@ import { isMeasured } from './lib/sources.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { makeCountryGate } from './lib/country-polygon.js'
 import { MAX_BUILDING_TYPE, V2_SPECIFIC_TYPE_MIN } from './lib/buildings-arrow.js'
+import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const YEAR = process.env.DATA_YEAR || readFileSync(resolve(__dirname, '..', 'DATA_YEAR'), 'utf8').trim()
 const H3R4_DIR = resolve(__dirname, '..', 'data', 'prepared', YEAR, 'h3r4')
 
 // Wind keyword set — copied from NAME_RULES 'wind (skip)' in

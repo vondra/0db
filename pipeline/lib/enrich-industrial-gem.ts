@@ -23,6 +23,7 @@ import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './source-ids.generated
 import { SOURCES_BY_ID, PROVENANCE_RANK } from './sources.js'
 import { bestCandidate, contestBeats, readPolygons, type MatchFacility, type MatchPolygon } from './facility-match.js'
 import { inBbox } from './spatial.js'
+import { DATA_YEAR as YEAR } from './data-year.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -225,7 +226,6 @@ export async function stampOneWinner(a: StampOneWinnerArgs): Promise<void> {
 }
 
 export async function enrichGemIndustrial(args: EnrichGemArgs): Promise<void> {
-  const YEAR = process.env.DATA_YEAR || '2026'
   const H3R4_DIR = resolve(__dirname, `../../data/prepared/${YEAR}/h3r4`)
   const CACHE_DIR = resolve(__dirname, `../../data/enrichment/${YEAR}/${args.countryCode}`)
   const isInside = args.isInside ?? ((lat: number, lon: number) => inBbox(lat, lon, args.bbox))

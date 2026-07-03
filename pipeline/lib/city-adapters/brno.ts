@@ -26,8 +26,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { CityRecord } from './types.js'
+import { DATA_YEAR as YEAR } from '../data-year.js'
 
-const YEAR = process.env.DATA_YEAR ?? '2026'
 const CACHE_DIR = resolve(import.meta.dirname, '..', '..', '..', 'data', 'enrichment', YEAR, 'cz', 'city-brno')
 const QUERY_URL =
   'https://services6.arcgis.com/fUWVlHWZNxUvTUh8/arcgis/rest/services/intenzita_dopravy_pentlogramy/FeatureServer/0/query' +

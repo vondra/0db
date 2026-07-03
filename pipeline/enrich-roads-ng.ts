@@ -60,10 +60,10 @@ import { SOURCE_ID_NG_NATIONAL_ROADS } from './lib/source-ids.generated.js'
 import { inBbox } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
 import { makeCoastalCountryGate } from './lib/country-polygon.js'
+import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_NG_NATIONAL_ROADS
 
-const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
 // NG coarse bbox [minLat,minLon,maxLat,maxLon] — fed to iterateCountryHexes (skips

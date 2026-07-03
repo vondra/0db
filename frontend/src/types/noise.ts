@@ -31,7 +31,6 @@ interface NoisePeriodsData {
 
 interface TerrainBreakdownData {
   delta_m: number
-  is_double: boolean
   profile_points: number
 }
 
@@ -468,23 +467,14 @@ interface BaselineTrace {
 
 interface TerrainTrace {
   delta_m: number
-  /** Back-compat flag: true for 2 OR 3 edges. UI should read `n_edges`
-   * for the exact count (single / double / triple). */
-  is_double: boolean
   attenuation_bands: number[]
-  /** Number of diffraction edges (0, 1, 2, or 3). */
-  n_edges: number
-  /** Edge vertices from the upper-convex-hull algorithm. Length == n_edges. */
+  /** Edge vertices — single-edge model: empty (clear path) or exactly the
+   * one max-δ dominant edge. */
   edges: EdgePoint[]
   /** CNOSSOS §2.5.6(c) Rayleigh δ* — path difference over the dominant edge
    * with mirror source/receiver across the bare-earth mean-ground planes.
    * Zero when there is no obstruction. Feeds the per-band `δ ≤ λ/4 − δ*` gate. */
   delta_star_m: number
-  /** First-to-last edge distance |E₁→Eₙ| (metres) — feeds CNOSSOS C₃.
-   * Zero for single-edge or no-edge results. */
-  edge_distance_m: number
-  /** Index into `edges` of the edge with max LOS excess. 0 when n_edges == 0. */
-  dominant_edge_idx: number
 }
 
 interface ScreeningTrace {

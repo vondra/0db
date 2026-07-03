@@ -98,7 +98,12 @@ export async function docsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/docs/about', async () => serveDoc([]))
   app.get('/api/docs/about/*', async (request) => {
     const wildcard = (request.params as Record<string, string>)['*']
-    return serveDoc(wildcard.split('/').filter(Boolean))
+    // Tolerate links written with a literal .md suffix (authors copy file
+    // paths): /about/europe/index.md → /about/europe, /about/europe/cz.md →
+    // /about/europe/cz — resolution below is extension-less.
+    const segments = wildcard.replace(/\.md$/, '').split('/').filter(Boolean)
+    if (segments.at(-1) === 'index') segments.pop()
+    return serveDoc(segments)
   })
 }
 

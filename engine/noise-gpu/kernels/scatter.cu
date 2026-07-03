@@ -300,7 +300,7 @@ __device__ double dstar(const double* t, const double* prof, int n, int d_idx,
     return v > 0.0 ? v : 0.0;
 }
 
-// ---- diffraction::maekawa_bands (single edge: is_double=false ⇒ c3=1, cap 20). fp32.
+// ---- diffraction::maekawa_bands (single edge, cap 20). fp32.
 __device__ void maek_single(float delta, float dstar_v, float* bands) {
     for (int i = 0; i < NB; i++) bands[i] = 0.0f;
     if (delta <= 0.0f) return;

@@ -142,7 +142,7 @@ pub fn solve_single_edge(
     }
     let (edge_to_rcv_m, edge_height_m) = match c_res {
         Some(r) => {
-            let i = r.edge_indices[0];
+            let i = r.edge_idx;
             ((1.0 - t[i]) * total_dist, composite[i] - bare[i])
         }
         None => (-1.0, 0.0),

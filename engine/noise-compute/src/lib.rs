@@ -432,7 +432,6 @@ pub fn compute_path_effects(
     (
         TerrainBreakdown {
             delta_m: (terrain.delta_m * 100.0).round() / 100.0,
-            is_double: terrain.is_double,
             profile_points: terrain_profile_points,
         },
         ScreeningBreakdown {

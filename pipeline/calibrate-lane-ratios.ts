@@ -18,8 +18,8 @@ import { resolve } from 'node:path'
 import { tableFromIPC } from 'apache-arrow'
 import { SOURCES_BY_ID, PROVENANCE_RANK } from './lib/sources.js'
 import { DATASETS } from './lib/enrichment-datasets.js'
+import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
-const YEAR = process.env.DATA_YEAR || '2026'
 const MEASUREMENT_BY_ID = new Map(DATASETS.map((d) => [d.id, d.measurement]))
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 

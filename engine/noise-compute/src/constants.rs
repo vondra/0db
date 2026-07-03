@@ -36,9 +36,8 @@ pub const DEFAULT_RECEIVER_HEIGHT: f64 = 4.0;
 /// Favourable propagation probability (CNOSSOS-EU §2.5.21, Central Europe).
 pub const P_FAV: f64 = 0.5;
 
-/// Diffraction attenuation caps [dB].
+/// Diffraction attenuation cap [dB] (single-edge model).
 pub const SINGLE_DIFF_CAP: f64 = 20.0;
-pub const DOUBLE_DIFF_CAP: f64 = 25.0;
 
 /// Maximum building screening attenuation per band [dB].
 /// ISO 9613-2 allows 20-25 dB for single/double diffraction.

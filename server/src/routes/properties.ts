@@ -2,8 +2,8 @@ import path from 'node:path'
 import { existsSync, readFileSync, mkdirSync } from 'node:fs'
 import type { FastifyInstance } from 'fastify'
 import fastifyStatic from '@fastify/static'
+import { DATA_YEAR as YEAR } from '../data-year.js'
 
-const YEAR = process.env.DATA_YEAR || '2026'
 const PROPERTIES_DIR = path.resolve(import.meta.dirname, '..', '..', '..', 'data', 'prepared', YEAR, 'properties')
 const PROPERTIES_JSON = path.join(PROPERTIES_DIR, 'properties.json')
 const PHOTOS_DIR = path.join(PROPERTIES_DIR, 'photos')

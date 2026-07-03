@@ -19,8 +19,8 @@ import {
   type Table,
 } from 'apache-arrow'
 import { withArrowWrite } from '../lib/provenance.js'
+import { DATA_YEAR as YEAR } from '../lib/data-year.js'
 
-const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = `/home/vondra/0db-app/data/prepared/${YEAR}/h3r4`
 
 type Layer = 'roads' | 'railways' | 'buildings' | 'industrial'

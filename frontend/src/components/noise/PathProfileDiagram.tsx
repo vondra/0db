@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import type { EdgePoint, PathProfileTrace } from '../../types/noise'
 import { HoverText } from '../ui/info-tip'
-import { DIAGRAM_COLORS, EDGE_SUBSCRIPTS, formatDist } from './shared'
+import { DIAGRAM_COLORS, formatDist } from './shared'
 
 const VB_W = 600
 const VB_H = 220
@@ -47,19 +47,14 @@ function imdLabel(imd: number): string {
 
 export interface PathProfileDiagramProps {
   trace: PathProfileTrace
-  /** Engine-detected diffraction edges (upper convex hull of elevation profile
-   * above LOS). Length matches `TerrainTrace.n_edges`. When undefined / empty
-   * no apex marker is drawn. */
+  /** Engine-detected diffraction edge (single-edge model: at most the one
+   * max-δ dominant edge). When undefined / empty no apex marker is drawn. */
   terrainEdges?: EdgePoint[]
-  /** Index into `terrainEdges` of the edge with maximum LOS excess
-   * (= engine's δ* anchor). UI highlights this one. */
-  dominantEdgeIdx?: number
 }
 
 export function PathProfileDiagram({
   trace,
   terrainEdges,
-  dominantEdgeIdx,
 }: PathProfileDiagramProps) {
   const n = trace.t.length
   const dist = Math.max(trace.dist_m, 1)
@@ -213,38 +208,14 @@ export function PathProfileDiagram({
   // (engine returns ground + height_m via Receiver::altitude_m).
   const rcvY = yOf(trace.rcv_alt_m)
 
-  // Multi-apex rendering: one marker per diffraction edge (N ≤ 3). The edge
-  // with max LOS excess (engine's δ* anchor) gets a filled dot; the others
-  // are outline-only so the dominant one reads visually. Labels E₁/E₂/E₃
-  // use subscript Unicode. When two adjacent markers are < 30 px apart we
-  // drop the non-dominant label to avoid collision.
+  // Apex rendering: the single-edge model yields at most ONE diffraction
+  // edge — the engine's max-δ dominant edge (δ* anchor) — drawn as a filled
+  // dot with an E₁ label.
   const apexMarkers = useMemo(() => {
     if (!terrainEdges || terrainEdges.length === 0) return []
-    const dominantIdx = Math.min(
-      Math.max(dominantEdgeIdx ?? 0, 0),
-      terrainEdges.length - 1,
-    )
-    const placed = terrainEdges.map((e, i) => ({
-      i,
-      isDominant: i === dominantIdx,
-      label: `E${EDGE_SUBSCRIPTS[i] ?? String(i + 1)}`,
-      x: xOf(e.t),
-      y: yOf(e.elevation_m),
-    }))
-    // Drop subdominant labels that crowd a dominant one.
-    const MIN_LABEL_GAP = 30
-    for (const m of placed) {
-      if (m.isDominant) continue
-      for (const n of placed) {
-        if (n === m || !n.isDominant) continue
-        if (Math.abs(n.x - m.x) < MIN_LABEL_GAP) {
-          ;(m as typeof m & { hideLabel?: boolean }).hideLabel = true
-          break
-        }
-      }
-    }
-    return placed as Array<(typeof placed)[number] & { hideLabel?: boolean }>
-  }, [terrainEdges, dominantEdgeIdx, xOf, yOf])
+    const e = terrainEdges[0]
+    return [{ i: 0, isDominant: true, label: 'E₁', x: xOf(e.t), y: yOf(e.elevation_m), hideLabel: false }]
+  }, [terrainEdges, xOf, yOf])
 
   // All hooks are above this point, so the early return can't change hook order.
   if (!hasPath) {

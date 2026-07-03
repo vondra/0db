@@ -10,34 +10,26 @@
 use crate::constants::*;
 use crate::types::NUM_BANDS;
 
-/// Single-edge diffraction geometry + the CNOSSOS Rayleigh δ\*. `is_double`,
-/// `edge_distance`, and `n_edges>1` are legacy multi-edge fields retained for
-/// the popup trace + the `diffraction_attenuation` band math; the surface kernel
-/// only ever produces a single edge (`is_double=false`, `edge_distance=0`,
-/// `n_edges ∈ {0,1}`).
+/// Single-edge diffraction geometry + the CNOSSOS Rayleigh δ\*.
 pub struct DiffractionResult {
-    pub delta: f64,         // path difference in meters
-    pub is_double: bool,    // always false for the single-edge kernel
-    pub edge_distance: f64, // always 0 for the single-edge kernel
+    pub delta: f64, // path difference in meters
     /// CNOSSOS-EU §2.5.6(c) Rayleigh δ*: path difference over the dominant edge
     /// with mirror source/receiver reflected across the per-side mean ground
     /// planes. 0.0 when there is no obstruction.
     pub delta_star: f64,
     /// Number of diffraction edges found (0 = clear path, 1 = dominant edge).
     pub n_edges: u8,
-    /// Profile sample index of the dominant edge in `edge_indices[0]`.
-    pub edge_indices: [usize; 3],
+    /// Profile sample index of the dominant edge (meaningful when `n_edges == 1`).
+    pub edge_idx: usize,
 }
 
 #[inline]
 fn empty_result() -> DiffractionResult {
     DiffractionResult {
         delta: 0.0,
-        is_double: false,
-        edge_distance: 0.0,
         delta_star: 0.0,
         n_edges: 0,
-        edge_indices: [0; 3],
+        edge_idx: 0,
     }
 }
 
@@ -75,11 +67,9 @@ pub(super) fn compute_single_edge(
     );
     DiffractionResult {
         delta: d_sb + d_br - dsr,
-        is_double: false,
-        edge_distance: 0.0,
         delta_star,
         n_edges: 1,
-        edge_indices: [idx, 0, 0],
+        edge_idx: idx,
     }
 }
 
@@ -136,60 +126,29 @@ fn fit_plane(ts: &[f64], zs: &[f64], t_offset: f64, total_dist: f64) -> (f64, f6
     (a, b)
 }
 
-fn maekawa_bands(
-    delta: f64,
-    is_double: bool,
-    edge_distance: f64,
-    delta_star: f64,
-) -> [f64; NUM_BANDS] {
+fn maekawa_bands(delta: f64, delta_star: f64) -> [f64; NUM_BANDS] {
     let mut atten = [0.0_f64; NUM_BANDS];
     if delta <= 0.0 {
         return atten;
     }
-    let cap = if is_double {
-        DOUBLE_DIFF_CAP
-    } else {
-        SINGLE_DIFF_CAP
-    };
-
     for i in 0..NUM_BANDS {
         let lambda = SPEED_OF_SOUND / BAND_FREQ[i];
         if delta <= lambda / 4.0 - delta_star {
             continue;
         }
-        // CNOSSOS §2.5.23: C'' = 1 when the edge-span e ≤ 0.3 m (noise floor).
-        let c3 = if is_double && edge_distance > 0.3 {
-            let r = 5.0 * lambda / edge_distance;
-            let r2 = r * r;
-            (1.0 + r2) / (1.0 / 3.0 + r2)
-        } else {
-            1.0
-        };
-        let a_bar = 10.0 * (3.0 + c3 * 20.0 * delta * BAND_FREQ[i] / SPEED_OF_SOUND).log10();
-        atten[i] = a_bar.min(cap);
+        let a_bar = 10.0 * (3.0 + 20.0 * delta * BAND_FREQ[i] / SPEED_OF_SOUND).log10();
+        atten[i] = a_bar.min(SINGLE_DIFF_CAP);
     }
     atten
 }
 
-pub fn diffraction_attenuation(delta: f64, is_double: bool) -> [f64; NUM_BANDS] {
-    maekawa_bands(delta, is_double, 0.0, f64::INFINITY)
-}
-
-pub fn diffraction_attenuation_with_edge(
-    delta: f64,
-    is_double: bool,
-    edge_distance: f64,
-) -> [f64; NUM_BANDS] {
-    maekawa_bands(delta, is_double, edge_distance, f64::INFINITY)
+/// Pure Maekawa band attenuation (no Rayleigh gate) — reference-vector helper.
+pub fn diffraction_attenuation(delta: f64) -> [f64; NUM_BANDS] {
+    maekawa_bands(delta, f64::INFINITY)
 }
 
 pub fn diffraction_attenuation_rayleigh(result: &DiffractionResult) -> [f64; NUM_BANDS] {
-    maekawa_bands(
-        result.delta,
-        result.is_double,
-        result.edge_distance,
-        result.delta_star,
-    )
+    maekawa_bands(result.delta, result.delta_star)
 }
 
 #[cfg(test)]
@@ -198,48 +157,12 @@ mod tests {
 
     #[test]
     fn test_k6_barrier_atten() {
-        let atten = diffraction_attenuation(0.5, false);
+        let atten = diffraction_attenuation(0.5);
         let at_1khz = atten[4];
         assert!(
             (at_1khz - 15.28).abs() < 1.0,
             "K6 1kHz: expected ~15.28, got {:.2}",
             at_1khz
-        );
-    }
-
-    #[test]
-    fn test_k7_double_barrier_band_math() {
-        // Maekawa double-cap band math (δ=1.0 m, 25 dB cap) — retained for the
-        // `diffraction_attenuation` API even though the single-edge kernel never
-        // produces is_double=true. At 1 kHz with C₃=1 (edge_distance=0 → C'' floor),
-        // a_bar = 10·log10(3 + 20·1.0·1000/340) ≈ 17.91 dB.
-        let atten = diffraction_attenuation(1.0, true);
-        let at_1khz = atten[4];
-        assert!(
-            at_1khz > 14.0 && at_1khz < 20.0,
-            "K7 Maekawa 1kHz: expected ~17.9, got {:.2}",
-            at_1khz
-        );
-    }
-
-    #[test]
-    fn test_c3_floor_short_edge_distance() {
-        let a_01 = maekawa_bands(0.1, true, 0.1, 0.0);
-        let a_025 = maekawa_bands(0.1, true, 0.25, 0.0);
-        let a_029 = maekawa_bands(0.1, true, 0.29, 0.0);
-        for i in 0..NUM_BANDS {
-            assert!(
-                (a_01[i] - a_025[i]).abs() < 1e-9 && (a_01[i] - a_029[i]).abs() < 1e-9,
-                "band {i}: C3 must be 1 across e ∈ [0.1, 0.29], got {:.4}/{:.4}/{:.4}",
-                a_01[i],
-                a_025[i],
-                a_029[i]
-            );
-        }
-        let a_large_e = maekawa_bands(0.1, true, 100.0, 0.0);
-        assert!(
-            a_large_e[4] > a_01[4] + 1.0,
-            "C3 effect above 0.3 m must be visible"
         );
     }
 }

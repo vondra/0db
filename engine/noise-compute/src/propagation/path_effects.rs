@@ -45,13 +45,9 @@ pub fn terrain_attenuation(
 fn empty_terrain_trace() -> TerrainTrace {
     TerrainTrace {
         delta_m: 0.0,
-        is_double: false,
         attenuation_bands: [0.0; NUM_BANDS],
-        n_edges: 0,
         edges: Vec::new(),
         delta_star_m: 0.0,
-        edge_distance_m: 0.0,
-        dominant_edge_idx: 0,
     }
 }
 
@@ -117,7 +113,7 @@ fn compute_terrain_diffraction<'a>(
 ///
 /// Returns `(trace, profile_points)` where `trace` carries per-band attenuation,
 /// the diffraction δ, the Rayleigh δ\*, and the single max-δ edge over bare earth
-/// (`n_edges` is 0 for a clear path, else 1; see `horizon::single_edge_atten`).
+/// (`edges` is empty for a clear path; see `horizon::single_edge_atten`).
 /// `profile_points` is the raw sample count the engine scanned — surfaced to
 /// popup as transparency metadata.
 pub fn terrain_attenuation_with_meta(
@@ -135,20 +131,16 @@ pub fn terrain_attenuation_with_meta(
         t,
         n,
     } = res;
-    let idx = diff.edge_indices[0];
+    let idx = diff.edge_idx;
 
     let trace = TerrainTrace {
         delta_m: diff.delta,
-        is_double: false,
         attenuation_bands: bands,
-        n_edges: 1,
         edges: vec![EdgePoint {
             t: t[idx],
             elevation_m: prof_f64[idx],
         }],
         delta_star_m: diff.delta_star,
-        edge_distance_m: 0.0,
-        dominant_edge_idx: 0,
     };
     (trace, n as u32)
 }
@@ -345,7 +337,7 @@ pub fn screening_attenuation_with_meta(
     // 7. The single δ-edge → trace. A bare-terrain dominant edge is owned by
     //    terrain_attenuation, NOT a screening obstacle (atten_screen is 0 here) —
     //    report "none" so the popup doesn't list a terrain hill as a barrier.
-    let idx = res.edge_indices[0];
+    let idx = res.edge_idx;
     let above = (composite_h_scratch[idx] - elevation_f64[idx]).max(0.0);
     if above <= 0.0 {
         let mut tr = make_empty();
@@ -461,7 +453,6 @@ mod tests {
         let rcv_alt = 11.5;
         let (trace, _) = terrain_attenuation_with_meta(&mut p, src_elev, rcv_alt);
         assert_eq!(trace.delta_m, 0.0, "flat profile should not diffract");
-        assert_eq!(trace.n_edges, 0);
         assert!(trace.edges.is_empty());
         assert!(trace.attenuation_bands.iter().all(|&a| a == 0.0));
     }
@@ -488,11 +479,10 @@ mod tests {
             trace.delta_m > 0.0,
             "ridge at t=0.35 must trigger diffraction"
         );
-        assert!(trace.n_edges >= 1, "expected at least one diffraction edge");
         assert_eq!(
             trace.edges.len(),
-            trace.n_edges as usize,
-            "edges vec must match n_edges"
+            1,
+            "expected exactly the one dominant diffraction edge"
         );
     }
 

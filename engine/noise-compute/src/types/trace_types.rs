@@ -81,32 +81,20 @@ pub struct EdgePoint {
 /// Per-segment terrain diffraction trace (engine's `path_effects` output).
 /// Scalar summary lives on [`Contributor::terrain_impact_db`] as A-weighted ΔL_A.
 ///
-/// Since the 2026-06-01 single-edge δ rewrite (SPEC §3.5) the algorithm picks
-/// ONE edge — the candidate with the largest path-length difference δ — so
-/// `n_edges` is 0 or 1 and `dominant_edge_idx` is always 0. The multi-edge
-/// fields (`is_double`, `edge_distance_m`, multi-entry `edges`) survive at
-/// their degenerate values for wire-compat with the popup schema.
+/// Single-edge model (SPEC §3.5, 2026-06-01 rewrite): the algorithm picks ONE
+/// edge — the candidate with the largest path-length difference δ — so
+/// `n_edges` is 0 or 1 and `edges` holds at most that dominant edge.
 #[derive(Debug, Clone, Serialize)]
 pub struct TerrainTrace {
     pub delta_m: f64,
-    /// Always `false` under the single-edge model (kept for wire-compat).
-    pub is_double: bool,
     pub attenuation_bands: [f64; NUM_BANDS],
-    /// Number of diffraction edges (0 or 1 under the single-edge model).
-    pub n_edges: u8,
-    /// Edge vertices (length == `n_edges`).
+    /// Edge vertices — empty (clear path) or exactly the dominant edge.
     pub edges: Vec<EdgePoint>,
     /// CNOSSOS §2.5.6(c) Rayleigh δ\* — path difference over the dominant
     /// edge with mirror source/receiver reflected across OLS-fitted per-side
     /// mean ground planes. Zero when there is no obstruction. Used as
     /// `δ ≤ λ/4 − δ*` per-band gate.
     pub delta_star_m: f64,
-    /// First-to-last edge distance `|E₁→Eₙ|` (metres). Was the CNOSSOS C₃
-    /// thick-barrier input; zero under the single-edge model (wire-compat).
-    pub edge_distance_m: f64,
-    /// Index into `edges` of the dominant (max-δ) edge — always 0 under the
-    /// single-edge model.
-    pub dominant_edge_idx: u8,
 }
 
 /// Per-segment building / barrier screening trace. Scalar summary lives on

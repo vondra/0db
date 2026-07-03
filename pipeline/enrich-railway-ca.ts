@@ -26,10 +26,10 @@ import { pointToSegmentDist } from './lib/spatial.js'
 import { writeRailTrains } from './lib/railways-arrow.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { computeStopFrequenciesForFeed, type StopTrainCount } from './lib/gtfs-enrich-core.js'
+import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CA_NATIONAL_RAILWAY
 
-const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/ca`)
 // Versioned filename: the family-aware schema added a mandatory `family` field, so a

@@ -160,32 +160,22 @@ export function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
   // Same split rule: LABEL concept, VALUE computation details.
   const obstructionRows: [React.ReactNode, React.ReactNode][] = [
     (() => {
-      const edgeLabel =
-        terrain.n_edges === 1 ? 'single edge'
-        : terrain.n_edges === 2 ? 'double edge'
-        : terrain.n_edges === 3 ? 'triple edge'
-        : null
       const labelTooltip =
-        'A_bar — Terrain diffraction (ISO 9613-2 §7.4 / CNOSSOS §2.5.6).\n\n' +
+        'A_bar — Terrain diffraction (ISO 9613-2 §7.3 / CNOSSOS §2.5.6).\n\n' +
         'Sound bending over hills, cuttings, berms — any DEM feature\n' +
-        'above the line-of-sight. Maekawa formula per band with a C₃\n' +
-        'frequency term. Engine picks up to 3 edges from the upper\n' +
-        'convex hull of the profile; N = 3 triggers a project-specific\n' +
-        'cascade variant.'
+        'above the line-of-sight. Maekawa formula per band, capped at\n' +
+        '20 dB. The engine picks the single edge with the largest\n' +
+        'path-length difference δ (max-δ selection).'
       const deltaStr = terrain.delta_m > 0
-        ? `δ = ${terrain.delta_m.toFixed(2)} m, ${edgeLabel ?? 'N edges'}`
+        ? `δ = ${terrain.delta_m.toFixed(2)} m, single edge`
         : 'no obstruction'
-      const triple = terrain.n_edges === 3
-        ? '\n\nN=3 cascade δ = |S→E₁|+|E₁→E₂|+|E₂→E₃|+|E₃→R|−|S→R|,\ne = |E₁→E₃|, cap 25 dB.'
-        : ''
       const valueTooltip =
         `${deltaStr}.\n\n` +
         'Maekawa per-band output below.\n' +
         'Scalar = A-weighted ΔL_A (full − no_terrain Lden).\n' +
-        'Rayleigh δ* gate is reported on its own row when it zeroes any band.' +
-        triple
-      const terrainParens = edgeLabel
-        ? ` (δ ${terrain.delta_m.toFixed(2)} m, ${edgeLabel})`
+        'Rayleigh δ* gate is reported on its own row when it zeroes any band.'
+      const terrainParens = terrain.delta_m > 0
+        ? ` (δ ${terrain.delta_m.toFixed(2)} m, single edge)`
         : isScalarOnly
           ? ''
           : ' (none)'

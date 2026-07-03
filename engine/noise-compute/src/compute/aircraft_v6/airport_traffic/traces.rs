@@ -379,13 +379,9 @@ pub(super) fn emit_segment_traces(
                 },
                 terrain: TerrainTrace {
                     delta_m: 0.0,
-                    is_double: false,
                     attenuation_bands: terrain_bands,
-                    n_edges: 0,
                     edges: Vec::new(),
                     delta_star_m: 0.0,
-                    edge_distance_m: 0.0,
-                    dominant_edge_idx: 0,
                 },
                 screening: ScreeningTrace {
                     attenuation_bands: screening_bands,

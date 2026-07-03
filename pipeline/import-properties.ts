@@ -12,10 +12,10 @@
 import { mkdirSync, existsSync, writeFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { brotliDecompressSync } from 'node:zlib'
+import { DATA_YEAR } from './lib/data-year.js'
 
 const RATE_LIMIT_MS = 1200
 const PHOTO_RATE_MS = 300
-const DATA_YEAR = process.env.DATA_YEAR || '2026'
 // Properties + photos live under one year-based dir, served at /api/properties.
 const PROPERTIES_DIR = resolve(import.meta.dirname, '..', 'data', 'prepared', DATA_YEAR, 'properties')
 const PHOTOS_DIR = resolve(PROPERTIES_DIR, 'photos')

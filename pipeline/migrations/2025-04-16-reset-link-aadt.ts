@@ -16,8 +16,8 @@ import {
 } from 'apache-arrow'
 import { SOURCES_BY_KEY } from '../lib/sources.js'
 import { SOURCE_ID_SERVICE_TREE_HEURISTIC } from '../lib/source-ids.generated.js'
+import { DATA_YEAR as YEAR } from '../lib/data-year.js'
 
-const YEAR = process.env.DATA_YEAR || '2026'
 const DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const PREFIX = process.argv.includes('--prefix')
   ? process.argv[process.argv.indexOf('--prefix') + 1]

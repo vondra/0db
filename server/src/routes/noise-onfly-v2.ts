@@ -17,8 +17,9 @@ import {
 // `total_lden_free: null` regressions (Rust struct renames silently
 // diverged from Node's reshape). Single source of truth, ~30-50 ms saved.
 
+import { DATA_YEAR as YEAR } from '../data-year.js'
+
 const SOURCE_READER_PATH = resolve(import.meta.dirname, '../../../engine/source-reader/target/release/libsource_reader.so')
-const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = process.env.H3R4_DIR || resolve(import.meta.dirname, `../../../data/prepared/${YEAR}/h3r4`)
 const WORKER_URL = new URL('../workers/noise-onfly-worker.mjs', import.meta.url)
 const NOISE_ONFLY_WORK_TIMEOUT_MS = Number(process.env.NOISE_ONFLY_WORK_TIMEOUT_MS || '30000')

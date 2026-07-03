@@ -32,8 +32,8 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import * as XLSX from 'xlsx'
 import type { CityRecord } from './types.js'
+import { DATA_YEAR as YEAR } from '../data-year.js'
 
-const YEAR = process.env.DATA_YEAR ?? '2026'
 const CACHE_DIR = resolve(import.meta.dirname, '..', '..', '..', 'data', 'enrichment', YEAR, 'cz', 'city-praha')
 const XLSX_URL = 'https://cdn.tsk-praha.cz/portal/2026/05/Intenzity-dopravy-v-Praze_2025.xlsx'
 const XLSX_PATH = resolve(CACHE_DIR, 'intenzity-2025.xlsx')

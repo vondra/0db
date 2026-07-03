@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { deflateSync, crc32 } from 'node:zlib'
 import { tableFromIPC } from 'apache-arrow'
+import { DATA_YEAR } from '../data-year.js'
 
 type LayerId = 'dem' | 'building' | 'forest' | 'barriers'
 
@@ -178,7 +179,7 @@ function yieldToEventLoop(): Promise<void> {
 
 async function loadAllBarriersAsync(): Promise<BarrierSegment[]> {
   if (barrierSegments) return barrierSegments
-  const h3r4Dir = join(DATA_DIR, process.env.DATA_YEAR || '2026', 'h3r4')
+  const h3r4Dir = join(DATA_DIR, DATA_YEAR, 'h3r4')
   const result: BarrierSegment[] = []
   if (!existsSync(h3r4Dir)) { barrierSegments = result; return result }
   const hexDirs = readdirSync(h3r4Dir)

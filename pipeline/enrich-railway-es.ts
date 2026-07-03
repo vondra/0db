@@ -26,10 +26,10 @@ import {
   parseCsvLine, parseCsvStream, parseGtfsDate, formatDate, findTargetWednesday,
   type GtfsStop,
 } from './lib/gtfs-enrich-core.js'
+import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_ES_NATIONAL_RAILWAY
 
-const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/es`)
 const CACHE_STOP_FREQ = resolve(CACHE_DIR, 'renfe-stop-frequencies.json')

@@ -651,52 +651,11 @@ mod tests {
     fn terrain_trace_shape() {
         let trace = TerrainTrace {
             delta_m: 0.0,
-            is_double: false,
             attenuation_bands: [0.0; NUM_BANDS],
-            n_edges: 0,
             edges: Vec::new(),
             delta_star_m: 0.0,
-            edge_distance_m: 0.0,
-            dominant_edge_idx: 0,
         };
         assert_bands_no_scalar(&trace);
-    }
-
-    #[test]
-    fn terrain_trace_edges_match_n_edges() {
-        // Shape guarantee: edges.len() == n_edges after serde round-trip.
-        use crate::types::EdgePoint;
-        let trace = TerrainTrace {
-            delta_m: 0.5,
-            is_double: true,
-            attenuation_bands: [1.0; NUM_BANDS],
-            n_edges: 3,
-            edges: vec![
-                EdgePoint {
-                    t: 0.2,
-                    elevation_m: 120.0,
-                },
-                EdgePoint {
-                    t: 0.5,
-                    elevation_m: 140.0,
-                },
-                EdgePoint {
-                    t: 0.8,
-                    elevation_m: 130.0,
-                },
-            ],
-            delta_star_m: 0.12,
-            edge_distance_m: 900.0,
-            dominant_edge_idx: 1,
-        };
-        let json = serde_json::to_string(&trace).unwrap();
-        let roundtrip: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let edges_len = roundtrip["edges"].as_array().unwrap().len();
-        let n_edges = roundtrip["n_edges"].as_u64().unwrap();
-        assert_eq!(
-            edges_len as u64, n_edges,
-            "edges.len() must match n_edges after serde"
-        );
     }
 
     #[test]

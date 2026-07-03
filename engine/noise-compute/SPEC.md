@@ -271,8 +271,8 @@ deliberately replaced LOS-excess ranking, which systematically under-weighted
 barriers close to either endpoint. The multi-edge upper-convex-hull cascade
 (double/triple Fresnel, C₃ thick-barrier term, 25 dB cap) was **removed
 2026-06-01** in the single-edge δ rewrite (commits `efba2c1b`…`f2b526ce`); the
-double-edge band math survives in `diffraction.rs::maekawa_bands` but is
-unreachable. The GPU kernel (`noise-gpu/kernels/scatter.cu`) mirrors the same
+last unreachable double-edge remnant (`maekawa_bands` C₃ arm + 25 dB cap +
+the `is_double`/`edge_distance` trace fields) was deleted 2026-07-03. The GPU kernel (`noise-gpu/kernels/scatter.cu`) mirrors the same
 single-edge selection. The attenuation cap is therefore **20 dB in all cases**.
 
 δ* is the path-length difference computed using the same dominant edge D but with mirror source S\* and mirror receiver R\* reflected **vertically** across their respective mean ground planes. Each mean ground plane is an unweighted least-squares line fit over the DEM profile samples on that side (including D itself). D is the single max-δ edge selected above.
@@ -922,7 +922,7 @@ placeholders, never presented as measured. Rendered within the
 | K4 | Propagation 100m, G=0, line source | 28.58 dB attenuation | ISO 9613-2 |
 | K5 | Propagation 100m, G=1, line source | 31.66 dB attenuation | ISO 9613-2 |
 | K6 | Single barrier 50m, δ=0.5m, G=0 | 15.28 dB barrier atten | ISO 9613-2 |
-| K7 | retired 2026-06-01 — double-edge unreachable in the single-edge model; test retargeted to Maekawa-only (~17.9 dB) | — | ISO 9613-2 §7.4 |
+| K7 | removed — the double-edge band math was deleted 2026-07-03 (single-edge only; K6 covers Maekawa) | — | — |
 | K8 | Lden: Ld=60, Le=55, Ln=50 | 60.00 dB | END 2002/49/EC |
 
 ---

@@ -21,8 +21,8 @@ import { execSync } from 'node:child_process'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Float32 } from 'apache-arrow'
 import { latLngToCell } from 'h3-js'
 import { flatDist } from './lib/spatial.js'
+import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
-const YEAR = process.env.DATA_YEAR || '2026'
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, '../data/enrichment/global')
 const CACHE_CSV = resolve(CACHE_DIR, 'uswtdb.csv')

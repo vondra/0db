@@ -134,8 +134,7 @@ pub struct PropagationBaseline {
 /// derived from the variant Lden across all grouped segments.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TerrainBreakdown {
-    pub delta_m: f64,    // path difference (meters)
-    pub is_double: bool, // single vs double diffraction
+    pub delta_m: f64, // path difference (meters)
     /// Transparency metadata: terrain profile sample count (0 if no hill detected).
     pub profile_points: u32,
 }
