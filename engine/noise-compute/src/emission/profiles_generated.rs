@@ -1745,6 +1745,13 @@ fn similarity_fallback(typecode: &str) -> u8 {
     // AA-5, Mooney M20K (M20T), Socata TB-9/TB-10/TB-20, Aquila A210, MS-880
     // Rallye, Commander 114, FFA AS-202 Bravo, Tecnam P2006T, Partenavia
     // P-68. Each verified L1P/L2P piston in ICAO 8643 (2026-06-11).
+    // 2026-07-03 (CZ FALLBACK scan + dual /gg vs ICAO 8643): Zlin Z-42/142/242
+    // + Z-43/143 + Z-26 + Z-50 (largest real type on FALLBACK in CZ — 78
+    // flights/49 cells; the Novy Knin case: one Z-42 pass = 66 % of a point's
+    // airborne dB on the jet fallback), Cessna R182 (C82R — escapes the C1xx
+    // pattern), Fournier RF-6/RF-10, Jodel D150, Extra 300/NG, and Zenair
+    // CH-601 (CH60 — L1P fixed-wing; the CZ scan draft mislabelled it a
+    // helicopter, /gg Codex caught it).
     // Previously fell to the jet-flavoured FALLBACK energy-mean — +10..25 dB
     // vs reality for light pistons (audit 2026-06 airborne A1; DR40 alone =
     // 1,437 rows in a 600-R4 Europe sample).
@@ -1767,6 +1774,17 @@ fn similarity_fallback(typecode: &str) -> u8 {
             | b"AS02"
             | b"P06T"
             | b"P68"
+            | b"Z42"
+            | b"Z43"
+            | b"Z26"
+            | b"Z50"
+            | b"C82R"
+            | b"CH60"
+            | b"RF6"
+            | b"RF10"
+            | b"D150"
+            | b"E300"
+            | b"EXNG"
     ) {
         return profile_idx("C172");
     }
@@ -1782,6 +1800,10 @@ fn similarity_fallback(typecode: &str) -> u8 {
     // engine-on too — without this arm they fell to the jet FALLBACK (PARA
     // only dodged it via the Piper PA** pattern below; explicit here for
     // intent). GYRO is strict-mapped to HELICOPTER in the typecode table.
+    // 2026-07-03: ATEC Faeta (FAET) + Zephyr (ZEPH/ZEP2), TL-2000 Sting
+    // (TL20), Jabiru J400, Alpi Pioneer 300 (PNR3) — Czech/eur UL classics
+    // concentrated locally, invisible to the global-volume scan that seeded
+    // this list (dual /gg vs ICAO 8643).
     // Verified in ICAO 8643 (2026-06-11). Ordering: ECHO/ASTO must precede
     // the EC*/AS* helicopter arm, SF25 the SF*→SAAB turboprop arm.
     if matches!(
@@ -1814,13 +1836,23 @@ fn similarity_fallback(typecode: &str) -> u8 {
             | b"SF25"
             | b"G109"
             | b"AS16"
+            | b"FAET"
+            | b"ZEPH"
+            | b"ZEP2"
+            | b"TL20"
+            | b"J400"
+            | b"PNR3"
     ) {
         return profile_idx("C172");
     }
     // C-130 Hercules and C-130J Super Hercules — military 4-engine turboprop
     // (would otherwise hit the C1xx Cessna piston bucket and produce a 20+ dB
     //  underestimate; DH8D anchor is the closest single-class fit).
-    if matches!(b, b"C130" | b"C30J") {
+    // + Shorts Skyvan (SC7, para-ops), CASA C-295 + Dornier 328 (Kbely),
+    // and Antonov An-2: a 1000 hp radial-piston biplane — acoustically the
+    // DH8D curve, NOT C172 (dual /gg 2026-07-03: do not pick the class for
+    // its 365-day weighting; para-ops burstiness noted to the owner).
+    if matches!(b, b"C130" | b"C30J" | b"SC7" | b"C295" | b"D328" | b"AN2") {
         return profile_idx("DH8D");
     }
     // Cessna piston singles (C150 / C152 / C170 / C172 / C177 / C180 / C182 / C185)
@@ -1902,7 +1934,7 @@ fn similarity_fallback(typecode: &str) -> u8 {
     // (`GLF*` is subsumed by [b'G', b'L', _, _] above — kept earlier as docs.)
     if matches!(
         b,
-        [b'C', b'L', _, _] | [b'G', b'L', _, _] | [b'H', b'2', b'5', _]
+        [b'C', b'L', _, _] | [b'G', b'L', _, _] | [b'H', b'2', b'5', _] | b"G280"
     ) {
         return profile_idx("CRJ9");
     }
@@ -1980,9 +2012,26 @@ fn similarity_fallback(typecode: &str) -> u8 {
     // Sikorsky H-60 / S-70 / S-76 / S-92, Robinson R22/44/66, plus UHEL —
     // ICAO 8643 special designator for ultralight helicopters (Mosquito
     // class): piston like an R22, EC35 is the only rotorcraft anchor.
+    // + Mil Mi-8/17 (MI8), PZL W-3 Sokol (W3, police/army CZ), Bell 212
+    // (B212 — the B4xx pattern misses it), Schweizer 269 (H269), Guimbal
+    // Cabri G2 (G2CA, H1P piston trainer), Magni M-16 gyro (MM16 — gyros
+    // follow the GYRO→rotorcraft convention). Dual /gg vs ICAO 8643 2026-07-03.
     if matches!(
         b,
-        b"H60" | b"R22" | b"R44" | b"R66" | b"S70" | b"S76" | b"S92" | b"UHEL"
+        b"H60"
+            | b"R22"
+            | b"R44"
+            | b"R66"
+            | b"S70"
+            | b"S76"
+            | b"S92"
+            | b"UHEL"
+            | b"MI8"
+            | b"W3"
+            | b"B212"
+            | b"H269"
+            | b"G2CA"
+            | b"MM16"
     ) {
         return profile_idx("EC35");
     }
