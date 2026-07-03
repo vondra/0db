@@ -1,7 +1,7 @@
 # Standards & Reference Documents
 
-Local mirrors of key standards and directives used by Quiet Map.
-PDFs are not in git — download with `./download.sh` or manually.
+Local mirrors of key standards and directives used by Quiet Map. All files
+here are committed to git.
 
 ## Documents
 
@@ -15,6 +15,7 @@ PDFs are not in git — download with `./download.sh` or manually.
 | `ecac-doc-29-vol3.pdf` | ECAC Doc 29 Vol 3 — Aircraft noise (Verification) | [ECAC](https://www.ecac-ceac.org/activities/environment/european-aviation-and-environment-working-group-eaeg/airmod) |
 | `epa-ireland-noise-mapping-guide-2025.pdf` | EPA Ireland — Strategic Noise Mapping Guide v4 (2025) | [EPA.ie](https://www.epa.ie/publications/monitoring--assessment/noise/) |
 | `wg-aen-good-practice-guide.pdf` | WG-AEN — Good Practice Guide for Strategic Noise Mapping | [CEDEX](https://sicaweb.cedex.es/docs/documentacion/Good-Practice-Guide-for-Strategic-Noise-Mapping.pdf) |
+| `parkplatzlaermstudie-6ed-extracted.txt` | Bavarian Parkplatzlärmstudie, 6th ed. (parking/bus-station noise emissions) — text extraction of the PDF, greppable; source for settlement-layer activity constants (`emission/settlement.rs`) | [LfU Bayern](https://www.bestellen.bayern.de/shoplink/lfu_all_00087.htm) |
 
 ## Not available for direct download
 
