@@ -108,7 +108,37 @@ if [ "$RUN_SERVICE_TREE" = "1" ]; then
     SVC_SHARDS="${SVC_SHARDS:-96}"
     SVC_JOBS="${SVC_JOBS:-$(nproc)}"
     SVC_LOG_DIR="$SCRATCH_ROOT/svc-tree-logs"
-    export SVC_SHARDS SVC_LOG_DIR YEAR
+    BUP_LOG_DIR="$SCRATCH_ROOT/built-up-logs"
+    export SVC_SHARDS SVC_LOG_DIR BUP_LOG_DIR YEAR
+
+    # built_up flag (urban/rural from the building raster, task #15) BEFORE
+    # service-tree — order between the two is irrelevant for correctness (this
+    # pass only writes the built_up column), it just belongs with the other
+    # fresh-extract road passes. Same per-hex SHARD parallelism as service-tree.
+    log "Running built-up road flagging ($SVC_SHARDS shards x $SVC_JOBS jobs) ..."
+    rm -rf "$BUP_LOG_DIR"; mkdir -p "$BUP_LOG_DIR"
+    (
+        cd "$PROJECT_DIR/pipeline"
+        seq 0 $((SVC_SHARDS - 1)) | xargs -P "$SVC_JOBS" -I{} bash -c \
+            'SHARD="$1/$SVC_SHARDS" DATA_YEAR="$YEAR" node_modules/.bin/tsx enrich-roads-built-up.ts > "$BUP_LOG_DIR/shard-$1.log" 2>&1' _ {}
+    ) || true
+    # Same completion gate as service-tree: a shard counts only if it reached
+    # "=== Results" — catches OOM-kills / missing tsx, not just error strings.
+    set +e
+    bup_done=$(grep -lF "=== Results" "$BUP_LOG_DIR"/shard-*.log 2>/dev/null | wc -l)
+    bup_stats=$(grep -h "segments:" "$BUP_LOG_DIR"/shard-*.log 2>/dev/null | \
+        awk '{rows+=$1; urban+=$3; rural+=$6; unk+=$9} END {printf "%d segments (%d urban / %d rural / %d unknown)", rows, urban, rural, unk}')
+    set -e
+    log "  built-up: ${bup_stats:-no output}, $bup_done/$SVC_SHARDS shards completed"
+    if [ "$bup_done" -ne "$SVC_SHARDS" ]; then
+        # FATAL, not a warning: a partial built_up pass silently degrades untagged-road
+        # speeds for whole regions (engine reads absent/0 as "use legacy") — re-running
+        # this script is idempotent, so failing hard costs nothing (/gg Codex).
+        log "  FATAL: $((SVC_SHARDS - bup_done)) built-up shard(s) did NOT complete (died/OOM/missing-binary) — see $BUP_LOG_DIR"
+        exit 1
+    fi
+
+    log ""
     log "Running service-tree road enrichment ($SVC_SHARDS shards x $SVC_JOBS jobs) ..."
     rm -rf "$SVC_LOG_DIR"; mkdir -p "$SVC_LOG_DIR"
     # Per-hex flow accumulation is single-threaded, but every hex is self-contained
