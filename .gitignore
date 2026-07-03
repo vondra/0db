@@ -38,3 +38,4 @@ scripts/data-hub-cert.pem
 scripts/.host-costs.lock
 scripts/.hub-env
 scripts/.hosts.lock
+.gemini/
