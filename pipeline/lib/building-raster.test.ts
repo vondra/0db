@@ -19,7 +19,7 @@ import {
   BUILT_UP_RURAL,
   BUILT_UP_URBAN,
   BUILT_UP_MIN_BUILT_PIXELS,
-} from './building-raster.ts'
+} from './building-raster.js'
 
 const SIDE = 11 // synthetic tile: 11×11 px over 1°×1° → max index 10
 
@@ -83,11 +83,13 @@ test('building-raster sampler', async (t) => {
     rmSync(emptyDir, { recursive: true, force: true })
   })
 
-  await t.test('non-square file is treated as missing', () => {
+  await t.test('non-square (corrupt) file THROWS — only a truly absent tile is unknown', () => {
+    // built_up=0 is contractually "covering tile ABSENT"; a present-but-broken
+    // tile failing silently would mis-classify a whole country (/gg Codex).
     const badDir = mkdtempSync(join(tmpdir(), 'building-raster-test-'))
     writeFileSync(join(badDir, 'N10E020.raw'), Buffer.alloc(SIDE * SIDE + 1, 1))
     const badSampler = new BuildingRasterSampler(badDir)
-    assert.equal(badSampler.builtPixelCount(10.5, 20.5, 1), null)
+    assert.throws(() => badSampler.builtPixelCount(10.5, 20.5, 1), /non-square building tile/)
     rmSync(badDir, { recursive: true, force: true })
   })
 
