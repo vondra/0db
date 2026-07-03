@@ -185,7 +185,7 @@ export function emissionInputRows(t: SegmentTrace): [React.ReactNode, React.Reac
     }
     case 'aircraft_airborne': {
       // Callsign is the discoverable click target — users recognize callsigns
-      // ("TVS100P") more readily than 6-hex ICAO addresses, so the globe.adsb.lol
+      // ("TVS100P") more readily than 6-hex ICAO addresses, so the globe.adsbexchange.com
       // trace link hangs off the callsign value and the ICAO hex lives in the
       // hover tooltip instead of consuming a row of its own. Synthetic (empty
       // icao_hex) fids stay plain text — no transponder hex = no globe deep-link.

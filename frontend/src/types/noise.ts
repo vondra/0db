@@ -579,7 +579,7 @@ type EmissionTrace =
       /** Empty for synthetic (anonymous-transponder) fids. */
       icao_hex: string
       /** Flight start (Unix s); `null` for synthetic. UI derives the
-       *  YYYY-MM-DD date for the globe.adsb.lol trace deep-link. */
+       *  YYYY-MM-DD date for the globe.adsbexchange.com trace deep-link. */
       start_unix: number | null
     }
   | {

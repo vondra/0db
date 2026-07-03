@@ -30,7 +30,7 @@ export function CruiseLoudestFlights({ tops }: { tops: CruiseHexTopFlight[] }) {
               </HoverText>
             </th>
             <th className="text-right">
-              <HoverText title={"Aircraft type + identity\n\nCell shows the 4-letter ICAO designator (B738, A320, …); hover for the full model + ICAO 24-bit hex address. Click to open the trace on globe.adsb.lol."}>
+              <HoverText title={"Aircraft type + identity\n\nCell shows the 4-letter ICAO designator (B738, A320, …); hover for the full model + ICAO 24-bit hex address. Click to open the trace on globe.adsbexchange.com."}>
                 Aircraft
               </HoverText>
             </th>

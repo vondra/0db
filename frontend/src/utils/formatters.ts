@@ -48,8 +48,9 @@ export function metersToKm(m: number, digits = 2): string {
   return (m / 1000).toFixed(digits)
 }
 
-/** Unix seconds → "YYYY-MM-DD" (UTC). Used for globe.adsb.lol trace
- *  deep-links whose `showTrace=` query parameter expects an ISO date. */
+/** Unix seconds → "YYYY-MM-DD" (UTC). Used for globe.adsbexchange.com
+ *  trace deep-links whose `showTrace=` query parameter expects an ISO
+ *  date. */
 export function unixToIsoDate(unix: number): string {
   return new Date(unix * 1000).toISOString().slice(0, 10)
 }
@@ -61,15 +62,19 @@ export function unixToIsoDateTimeUtc(unix: number): string {
   return new Date(unix * 1000).toISOString().replace('T', ' ').replace(/\..+/, ' UTC')
 }
 
-/** globe.adsb.lol trace deep-link for an ICAO 24-bit hex. When `date`
- *  ("YYYY-MM-DD") is supplied the link opens that day's trace; otherwise
- *  it opens the aircraft's current/recent track. Hex is uppercased for
- *  display consistency — the adsb.lol query is case-insensitive. */
+/** globe.adsbexchange.com trace deep-link for an ICAO 24-bit hex. When
+ *  `date` ("YYYY-MM-DD") is supplied the link opens that day's trace;
+ *  otherwise it opens the aircraft's current/recent track. adsbexchange
+ *  is the only public globe still serving per-day historical traces —
+ *  globe.adsb.lol 302-redirects to a new landing page whose
+ *  /globe_history/ endpoint 404s (verified 2026-07-03). Callers pass
+ *  raw wire hex (lowercase) or display hex (uppercase); normalize here
+ *  so every href is identical — the query itself is case-insensitive. */
 export function globeAdsbTraceHref(icaoHex: string, date?: string | null): string {
   const hex = icaoHex.toUpperCase()
   return date
-    ? `https://globe.adsb.lol/?icao=${hex}&showTrace=${date}`
-    : `https://globe.adsb.lol/?icao=${hex}`
+    ? `https://globe.adsbexchange.com/?icao=${hex}&showTrace=${date}`
+    : `https://globe.adsbexchange.com/?icao=${hex}`
 }
 
 /**
