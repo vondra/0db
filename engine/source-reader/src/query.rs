@@ -223,6 +223,7 @@ pub fn collect_from_hex_data(
                 tunnel: r.tunnel,
                 access: r.access,
                 junction: r.junction,
+                built_up: r.built_up,
                 dist_m: r.dist_m,
                 cp_lat: r.cp_lat,
                 cp_lon: r.cp_lon,

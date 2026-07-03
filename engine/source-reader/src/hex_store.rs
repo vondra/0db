@@ -208,6 +208,7 @@ pub struct RoadResult {
     pub tunnel: bool,
     pub access: u8,
     pub junction: u8,
+    pub built_up: u8,
     pub aadt_light: i32,
     pub aadt_medium: i32,
     pub aadt_heavy: i32,
@@ -256,6 +257,8 @@ pub fn query_roads_from_batches(
             .and_then(|c| c.as_any().downcast_ref());
         let access_col = col_u8(batch, "access");
         let junction_col = col_u8(batch, "junction");
+        // Absent on pre-migration arrows → 0 = unknown → the legacy speed table.
+        let built_up_col = col_u8(batch, "built_up");
         let aadt_l = col_i32(batch, "aadt_light");
         let aadt_m = col_i32(batch, "aadt_medium");
         let aadt_h = col_i32(batch, "aadt_heavy");
@@ -308,6 +311,7 @@ pub fn query_roads_from_batches(
                 tunnel: tunnel_col.map(|a| a.value(i)).unwrap_or(false),
                 access: access_col.map(|a| a.value(i)).unwrap_or(0),
                 junction: junction_col.map(|a| a.value(i)).unwrap_or(0),
+                built_up: built_up_col.map(|a| a.value(i)).unwrap_or(0),
             };
             let Some(norm) = noise_compute::normalize::normalize_road(raw, admin) else {
                 continue;
@@ -344,6 +348,7 @@ pub fn query_roads_from_batches(
                 tunnel: raw.tunnel,
                 access: raw.access,
                 junction: raw.junction,
+                built_up: raw.built_up,
                 aadt_light: raw.aadt_light,
                 aadt_medium: raw.aadt_medium,
                 aadt_heavy: raw.aadt_heavy,

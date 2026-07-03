@@ -218,6 +218,53 @@ fn continent_default(continent: Continent, class: u8) -> Option<Aadt> {
     ))
 }
 
+// ── Legal default SPEEDS for untagged maxspeed (task #15, 2026-07-03) ──────────────
+//
+// Scope is deliberately NARROW (/gg consensus Codex+Gemini): only untagged main-network
+// classes resolve through the country table — 0 motorway, 1 trunk, 2/3/4/9 by the
+// segment's built-up flag. Residential/living/service/track (5-8) and links (10-12)
+// KEEP the legacy low defaults: routing them to a national urban limit would raise
+// local streets +20-30 km/h (≈ +10 dB) worldwide with no supporting evidence.
+
+use crate::country_speed_defaults_generated::COUNTRY_SPEEDS;
+
+/// `built_up` comes from the roads.arrow column of the same name, sampled from the
+/// building raster at extract/migration time: 0 = unknown (column absent or raster
+/// missing — NEVER guess rural, fall back to the legacy table), 1 = rural, 2 = urban.
+pub const BUILT_UP_UNKNOWN: u8 = 0;
+pub const BUILT_UP_RURAL: u8 = 1;
+pub const BUILT_UP_URBAN: u8 = 2;
+
+/// The country's LEGAL implicit speed for an untagged road, or None → caller uses the
+/// legacy `default_road_speed` world table. Receiver-country approximation: the admin
+/// is the receiver's/region's, not the segment's — the same accepted border
+/// approximation the AADT cascade above makes.
+pub fn resolve_speed_default(class: u8, admin: Admin, built_up: u8) -> Option<f64> {
+    let row = COUNTRY_SPEEDS
+        .binary_search_by(|(iso, _)| iso[..].cmp(&admin.country_iso[..]))
+        .ok()
+        .map(|i| COUNTRY_SPEEDS[i].1)?;
+    let [urban, rural, motorway, motorroad] = row;
+    let v = match class {
+        0 => motorway,
+        // trunk: motorroad where the country defines one (CZ 110), else rural
+        1 => {
+            if motorroad > 0 {
+                motorroad
+            } else {
+                rural
+            }
+        }
+        2 | 3 | 4 | 9 => match built_up {
+            BUILT_UP_URBAN => urban,
+            BUILT_UP_RURAL => rural,
+            _ => 0, // unknown → legacy table (/gg Codex: absent raster must not mean "rural")
+        },
+        _ => 0, // 5-8 local + 10-12 links: legacy table by design
+    };
+    (v > 0).then_some(v as f64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,6 +516,34 @@ mod tests {
             "Africa continent mtw ≈ 31.7k, got {}",
             total
         );
+    }
+
+    #[test]
+    fn speed_default_gb_matrix() {
+        // GB legal: urban 48 (30 mph), rural 97 (60 mph), motorway 113 (70 mph).
+        let gb = admin_for(b"GB", 0, Continent::Europe);
+        assert_eq!(resolve_speed_default(4, gb, BUILT_UP_RURAL), Some(97.0));
+        assert_eq!(resolve_speed_default(4, gb, BUILT_UP_URBAN), Some(48.0));
+        // unknown built-up → None → caller's legacy table (never guess rural)
+        assert_eq!(resolve_speed_default(4, gb, BUILT_UP_UNKNOWN), None);
+        assert_eq!(resolve_speed_default(0, gb, BUILT_UP_UNKNOWN), Some(113.0));
+        // GB defines no motorroad → trunk falls to rural
+        assert_eq!(resolve_speed_default(1, gb, BUILT_UP_UNKNOWN), Some(97.0));
+    }
+
+    #[test]
+    fn speed_default_scope_and_fallbacks() {
+        let cz = admin_for(b"CZ", 0, Continent::Europe);
+        // residential/living/service/track + links stay on the legacy table by design
+        for class in [5u8, 6, 7, 8, 10, 11, 12] {
+            assert_eq!(resolve_speed_default(class, cz, BUILT_UP_URBAN), None);
+        }
+        assert_eq!(resolve_speed_default(0, cz, BUILT_UP_UNKNOWN), Some(130.0));
+        assert_eq!(resolve_speed_default(1, cz, BUILT_UP_UNKNOWN), Some(110.0)); // CZ motorroad
+        assert_eq!(resolve_speed_default(3, cz, BUILT_UP_RURAL), Some(90.0));
+        // country without a table row → None (legacy behavior everywhere)
+        let zz = admin_for(b"ZZ", 0, Continent::Unknown);
+        assert_eq!(resolve_speed_default(4, zz, BUILT_UP_RURAL), None);
     }
 
     #[test]

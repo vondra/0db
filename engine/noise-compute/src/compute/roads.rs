@@ -469,18 +469,22 @@ pub(crate) fn compute_roads(
             acc.dominant_source_id = seg.source_id;
             acc.dominant_speed_posted = seg.speed_limit;
             acc.dominant_speed_used = speed;
-            acc.dominant_speed_source = if seg.junction == 1 {
-                if speed < base_speed {
-                    "roundabout_cap"
-                } else {
-                    "osm_posted"
-                }
+            // Roundabout labels the source only when the cap actually REDUCED the speed —
+            // an untagged roundabout whose default is already ≤30 falls through to the
+            // real provenance chain below (/gg Codex: it read "osm_posted" with no tag).
+            acc.dominant_speed_source = if seg.junction == 1 && speed < base_speed {
+                "roundabout_cap"
             } else if seg.speed_limit == normalize::SPEED_LIMIT_DERESTRICTED {
                 // maxspeed=none: no posted number exists; emission models
                 // DERESTRICTED_SPEED_KMH. UI renders "no limit".
                 "derestricted"
             } else if seg.speed_limit > 0 {
                 "osm_posted"
+            } else if crate::defaults::resolve_speed_default(seg.road_class, admin, seg.built_up)
+                .is_some()
+            {
+                // Untagged, resolved from the country's legal implicit limit (task #15).
+                "country_legal_default"
             } else {
                 "default_by_class"
             };

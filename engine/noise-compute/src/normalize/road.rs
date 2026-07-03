@@ -4,7 +4,10 @@
 
 use crate::admin::Admin;
 use crate::constants::{SOURCE_HEIGHT_ROAD, SURFACE_CORR};
-use crate::defaults::{build_traffic_default_cache, resolve_traffic_default, Aadt, WORLD_DEFAULT};
+use crate::defaults::{
+    build_traffic_default_cache, resolve_speed_default, resolve_traffic_default, Aadt,
+    WORLD_DEFAULT,
+};
 use crate::emission::road;
 use crate::sources::{provenance_of, Provenance};
 use crate::types::{RoadSegment, NUM_BANDS};
@@ -30,6 +33,9 @@ pub struct RawRoadInput {
     pub tunnel: bool,
     pub access: u8,
     pub junction: u8,
+    /// Building-raster flag for the LEGAL speed default of untagged roads
+    /// (defaults.rs: 0 unknown → legacy table, 1 rural, 2 urban).
+    pub built_up: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -99,7 +105,7 @@ impl NormalizedRoad {
 /// is reused.
 pub fn normalize_road(input: RawRoadInput, admin: Admin) -> Option<NormalizedRoad> {
     let cache = build_traffic_default_cache(admin);
-    normalize_road_with_cache(input, &cache)
+    normalize_road_with_cache(input, admin, &cache)
 }
 
 /// Cache-aware variant of [`normalize_road`]. The 13-entry slice is
@@ -108,6 +114,7 @@ pub fn normalize_road(input: RawRoadInput, admin: Admin) -> Option<NormalizedRoa
 /// up to four hash-map / binary-search hops through the cascade.
 pub fn normalize_road_with_cache(
     input: RawRoadInput,
+    admin: Admin,
     defaults_cache: &[Aadt; WORLD_DEFAULT.len()],
 ) -> Option<NormalizedRoad> {
     if input.tunnel || input.access == 2 || input.access == 4 {
@@ -145,7 +152,12 @@ pub fn normalize_road_with_cache(
     } else if input.speed_limit > 0 {
         input.speed_limit as f64
     } else {
-        default_road_speed(class_idx)
+        // Untagged: the country's LEGAL implicit limit (urban/rural via the built_up
+        // raster flag) beats the one-global-number table — a tagged/untagged boundary
+        // mid-road painted a ±5-6 dB colour seam (Wetherby, task #15). Falls back to
+        // the legacy table when the country or the built-up flag is unknown.
+        resolve_speed_default(input.road_class, admin, input.built_up)
+            .unwrap_or_else(|| default_road_speed(class_idx))
     };
     let speed_kmh = if input.junction == 1 {
         base_speed_kmh.min(30.0)
@@ -188,6 +200,7 @@ pub fn normalize_road_segment(seg: &RoadSegment, admin: Admin) -> Option<Normali
             tunnel: seg.tunnel,
             access: seg.access,
             junction: seg.junction,
+            built_up: seg.built_up,
         },
         admin,
     )
@@ -375,6 +388,7 @@ mod tests {
                 tunnel: false,
                 access: 0,
                 junction: 0,
+                built_up: 0,
             },
             Admin::UNKNOWN,
         )
@@ -406,6 +420,7 @@ mod tests {
                 tunnel: false,
                 access: 0,
                 junction: 0,
+                built_up: 0,
             },
             Admin::UNKNOWN,
         )

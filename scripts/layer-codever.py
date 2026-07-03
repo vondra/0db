@@ -30,12 +30,18 @@ GLOBAL_BUILD = (".cargo/config.toml", ".cargo/config", "rust-toolchain.toml", "r
 # hub gets identical code_vers by calling the authority instead of re-encoding the paths (parity by
 # construction). Keep DISJOINT (--check enforces it): two layers claiming one file = stale tiles.
 DEFAULT_EXCL = {
-    "road": "heatmap-aircraft/src/source_loader_road.rs noise-compute/src/compute/roads.rs noise-compute/src/emission/road.rs",
+    # normalize/road.rs + the defaults cascade + its generated tables are road-only (grep-proven
+    # 2026-07-03: the sole cross-crate consumer is source_loader_road.rs, already in this set) —
+    # keeping them SHARED re-staled the whole world on every road-emission tweak.
+    "road": "heatmap-aircraft/src/source_loader_road.rs noise-compute/src/compute/roads.rs noise-compute/src/emission/road.rs"
+            " noise-compute/src/normalize/road.rs noise-compute/src/defaults.rs"
+            " noise-compute/src/city_consts_generated.rs noise-compute/src/country_defaults_generated.rs"
+            " noise-compute/src/country_speed_defaults_generated.rs",
     "rail": "heatmap-aircraft/src/source_loader_rail.rs noise-compute/src/compute/railways.rs noise-compute/src/emission/railway.rs",
     "industrial": "noise-compute/src/emission/industrial.rs noise-compute/src/emission/wind.rs",
     "building": "heatmap-aircraft/src/source_loader_building.rs noise-compute/src/emission/settlement.rs",
     "aircraft-ground": "heatmap-aircraft/src/source_loader_traffic.rs heatmap-aircraft/src/ground_ops.rs noise-compute/src/emission/airport_traffic.rs noise-compute/src/emission/gse.rs noise-compute/src/emission/aircraft/ground_ops.rs noise-compute/src/compute/aircraft_v6/airport_traffic",
-    "aircraft-airborne": "heatmap-aircraft/src/source_loader_airborne.rs heatmap-aircraft/src/airborne.rs noise-compute/src/compute/aircraft_v6/airborne.rs noise-gpu/src/gpu_airborne.rs noise-gpu/kernels/airborne.cu",
+    "aircraft-airborne": "heatmap-aircraft/src/source_loader_airborne.rs heatmap-aircraft/src/airborne.rs noise-compute/src/compute/aircraft_v6/airborne noise-gpu/src/gpu_airborne.rs noise-gpu/kernels/airborne.cu",
     "aircraft-cruise": "heatmap-aircraft/src/cruise.rs noise-compute/src/compute/aircraft_v6/cruise.rs",
 }
 

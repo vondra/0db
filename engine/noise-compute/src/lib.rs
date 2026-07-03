@@ -12,6 +12,7 @@ pub mod compute;
 pub mod confidence;
 pub mod constants;
 pub mod country_defaults_generated;
+pub mod country_speed_defaults_generated;
 pub mod defaults;
 pub mod emission;
 pub mod flight_id;
@@ -502,6 +503,7 @@ mod tests {
             tunnel: false,
             access: 0,
             junction: 0,
+            built_up: 0,
         }];
 
         let result = compute_at_point(
@@ -571,6 +573,7 @@ mod tests {
             tunnel: false,
             access: 0,
             junction: 0,
+            built_up: 0,
         }];
         let railways = vec![RailSegment {
             osm_id: 2,
@@ -691,6 +694,7 @@ mod tests {
             tunnel: false,
             access: 0,
             junction: 0,
+            built_up: 0,
         }];
 
         let result = compute_at_point(
@@ -866,6 +870,7 @@ mod tests {
             tunnel: false,
             access: 0,
             junction: 0,
+            built_up: 0,
         }];
         let railways = vec![RailSegment {
             osm_id: 2,

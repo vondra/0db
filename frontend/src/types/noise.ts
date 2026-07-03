@@ -106,7 +106,7 @@ interface RoadMetadata {
   aadt_heavy_effective: number
   aadt_moto_effective: number
   speed_kmh: number
-  speed_source: 'osm_posted' | 'default_by_class' | 'roundabout_cap' | 'derestricted'
+  speed_source: 'osm_posted' | 'default_by_class' | 'country_legal_default' | 'roundabout_cap' | 'derestricted'
   road_class: string
   surface: string
   surface_corr_db: number
