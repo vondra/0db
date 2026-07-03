@@ -1,36 +1,188 @@
 {
-  "_doc": "SINGLE SOURCE OF TRUTH for the cluster's layer/group topology. hub.mjs (JSON.parse), world-stamps.py (json.load), provision.sh + stream-region-to-box.sh (jq) all DERIVE from this — never re-encode a group's layers/arrows/seed/binary by hand (that is the fix-one-miss-the-rest drift this file removes). Derived, NOT stored: a group's stage-excludes = every layer arrow NOT in its own layers; the tile-layer set = the union of all groups' layers. NOT covered here: layer-codever.py's per-layer engine-source-file partition (DEFAULT_EXCL) — that is code-versioning, not topology, and stays its own authority. Placeholders {OUTPUT} {SEED} {H3R4} {PREP} {ZOOM} in worker_types.flags are substituted at launch (provision.sh / worker.py).",
+  "_doc": "SINGLE SOURCE OF TRUTH for the cluster's layer/group topology. hub.mjs (JSON.parse), world-stamps.py (json.load), provision.sh + stream-region-to-box.sh (jq) all DERIVE from this \u2014 never re-encode a group's layers/arrows/seed/binary by hand (that is the fix-one-miss-the-rest drift this file removes). Derived, NOT stored: a group's stage-excludes = every layer arrow NOT in its own layers; the tile-layer set = the union of all groups' layers. NOT covered here: layer-codever.py's per-layer engine-source-file partition (DEFAULT_EXCL) \u2014 that is code-versioning, not topology, and stays its own authority. Placeholders {OUTPUT} {SEED} {H3R4} {PREP} {ZOOM} in worker_types.flags are substituted at launch (provision.sh / worker.py).",
   "layers": {
-    "road": { "arrows": ["roads.arrow"] },
-    "rail": { "arrows": ["railways.arrow"] },
-    "industrial": { "arrows": ["industrial.arrow"] },
-    "building": { "arrows": ["buildings.arrow", "leisure.arrow"] },
-    "aircraft-ground": { "arrows": ["airport_traffic.arrow"] },
-    "aircraft-airborne": { "arrows": ["airborne.arrow"] },
-    "aircraft-cruise": { "arrows": ["cruise.arrow"] }
+    "road": {
+      "arrows": [
+        "roads.arrow"
+      ]
+    },
+    "rail": {
+      "arrows": [
+        "railways.arrow"
+      ]
+    },
+    "industrial": {
+      "arrows": [
+        "industrial.arrow"
+      ]
+    },
+    "building": {
+      "arrows": [
+        "buildings.arrow",
+        "leisure.arrow"
+      ]
+    },
+    "aircraft-ground": {
+      "arrows": [
+        "airport_traffic.arrow"
+      ]
+    },
+    "aircraft-airborne": {
+      "arrows": [
+        "airborne.arrow"
+      ]
+    },
+    "aircraft-cruise": {
+      "arrows": [
+        "cruise.arrow"
+      ]
+    }
   },
   "groups": {
-    "line": { "layers": ["road", "rail"], "seed_arrow": "roads.arrow", "rasters": "surface" },
-    "rest": { "layers": ["industrial", "building", "aircraft-ground"], "seed_arrow": "airport_traffic.arrow", "rasters": "surface" },
-    "industrial": { "layers": ["industrial"], "seed_arrow": "industrial.arrow", "rasters": "surface", "on_demand": true },
-    "ground": { "layers": ["aircraft-ground"], "seed_arrow": "airport_traffic.arrow", "rasters": "surface", "on_demand": true },
-    "building": { "layers": ["building"], "seed_arrow": "buildings.arrow", "rasters": "surface", "on_demand": true },
-    "road": { "layers": ["road"], "seed_arrow": "roads.arrow", "rasters": "surface", "on_demand": true },
-    "rail": { "layers": ["rail"], "seed_arrow": "railways.arrow", "rasters": "surface", "on_demand": true },
-    "cruise": { "layers": ["aircraft-cruise"], "seed_arrow": "cruise.arrow", "rasters": "dem" },
-    "airborne": { "layers": ["aircraft-airborne"], "seed_arrow": "airborne.arrow", "rasters": "dem" }
+    "line": {
+      "layers": [
+        "road",
+        "rail"
+      ],
+      "seed_arrow": "roads.arrow",
+      "rasters": "surface"
+    },
+    "rest": {
+      "layers": [
+        "industrial",
+        "building",
+        "aircraft-ground"
+      ],
+      "seed_arrow": "airport_traffic.arrow",
+      "rasters": "surface"
+    },
+    "industrial": {
+      "layers": [
+        "industrial"
+      ],
+      "seed_arrow": "industrial.arrow",
+      "rasters": "surface",
+      "on_demand": true
+    },
+    "ground": {
+      "layers": [
+        "aircraft-ground"
+      ],
+      "seed_arrow": "airport_traffic.arrow",
+      "rasters": "surface",
+      "on_demand": true
+    },
+    "building": {
+      "layers": [
+        "building"
+      ],
+      "seed_arrow": "buildings.arrow",
+      "rasters": "surface",
+      "on_demand": true
+    },
+    "road": {
+      "layers": [
+        "road"
+      ],
+      "seed_arrow": "roads.arrow",
+      "rasters": "surface",
+      "on_demand": true
+    },
+    "rail": {
+      "layers": [
+        "rail"
+      ],
+      "seed_arrow": "railways.arrow",
+      "rasters": "surface",
+      "on_demand": true
+    },
+    "cruise": {
+      "layers": [
+        "aircraft-cruise"
+      ],
+      "seed_arrow": "cruise.arrow",
+      "rasters": "dem"
+    },
+    "airborne": {
+      "layers": [
+        "aircraft-airborne"
+      ],
+      "seed_arrow": "airborne.arrow",
+      "rasters": "dem"
+    }
   },
   "worker_types": {
-    "gpu-line": { "group": "line", "gpu": true, "binary": "gpu-surface", "flags": "--stream --layers road,rail --output {OUTPUT}" },
-    "cpu-line": { "group": "line", "gpu": false, "binary": "build-heatmap-surface", "flags": "--stream --source ground --exclude industrial --exclude building --exclude aircraft-ground --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}" },
-    "cpu-rest": { "group": "rest", "gpu": false, "binary": "build-heatmap-surface", "flags": "--stream --source ground --exclude road --exclude rail --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}" },
-    "cpu-industrial": { "group": "industrial", "gpu": false, "binary": "build-heatmap-surface", "flags": "--stream --source ground --exclude road --exclude rail --exclude building --exclude aircraft-ground --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}" },
-    "cpu-ground": { "group": "ground", "gpu": false, "binary": "build-heatmap-surface", "flags": "--stream --source ground --exclude road --exclude rail --exclude industrial --exclude building --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}" },
-    "cpu-building": { "group": "building", "gpu": false, "binary": "build-heatmap-surface", "flags": "--stream --source ground --exclude road --exclude rail --exclude industrial --exclude aircraft-ground --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}" },
-    "cpu-road": { "group": "road", "gpu": false, "binary": "build-heatmap-surface", "flags": "--stream --source ground --exclude rail --exclude industrial --exclude building --exclude aircraft-ground --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}" },
-    "cpu-rail": { "group": "rail", "gpu": false, "binary": "build-heatmap-surface", "flags": "--stream --source ground --exclude road --exclude industrial --exclude building --exclude aircraft-ground --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}" },
-    "cpu-cruise": { "group": "cruise", "gpu": false, "binary": "build-heatmap-aircraft", "flags": "--stream --source cruise --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}/aircraft-cruise" },
-    "gpu-airborne": { "group": "airborne", "gpu": true, "binary": "gpu-airborne", "flags": "--stream --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}/aircraft-airborne" },
-    "cpu-airborne": { "group": "airborne", "gpu": false, "binary": "build-heatmap-aircraft", "flags": "--stream --source airborne --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}/aircraft-airborne" }
+    "gpu-line": {
+      "group": "line",
+      "gpu": true,
+      "binary": "gpu-surface",
+      "flags": "--stream --layers road,rail --output {OUTPUT}"
+    },
+    "cpu-line": {
+      "group": "line",
+      "gpu": false,
+      "binary": "build-heatmap-surface",
+      "flags": "--stream --source ground --exclude industrial --exclude building --exclude aircraft-ground --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}"
+    },
+    "cpu-rest": {
+      "group": "rest",
+      "gpu": false,
+      "binary": "build-heatmap-surface",
+      "flags": "--stream --source ground --exclude road --exclude rail --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}"
+    },
+    "cpu-industrial": {
+      "group": "industrial",
+      "gpu": false,
+      "binary": "build-heatmap-surface",
+      "flags": "--stream --source ground --exclude road --exclude rail --exclude building --exclude aircraft-ground --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}"
+    },
+    "cpu-ground": {
+      "group": "ground",
+      "gpu": false,
+      "binary": "build-heatmap-surface",
+      "flags": "--stream --source ground --exclude road --exclude rail --exclude industrial --exclude building --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}"
+    },
+    "cpu-building": {
+      "group": "building",
+      "gpu": false,
+      "binary": "build-heatmap-surface",
+      "flags": "--stream --source ground --exclude road --exclude rail --exclude industrial --exclude aircraft-ground --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}"
+    },
+    "cpu-road": {
+      "group": "road",
+      "gpu": false,
+      "binary": "build-heatmap-surface",
+      "flags": "--stream --source ground --exclude rail --exclude industrial --exclude building --exclude aircraft-ground --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}"
+    },
+    "cpu-rail": {
+      "group": "rail",
+      "gpu": false,
+      "binary": "build-heatmap-surface",
+      "flags": "--stream --source ground --exclude road --exclude industrial --exclude building --exclude aircraft-ground --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}"
+    },
+    "cpu-cruise": {
+      "group": "cruise",
+      "gpu": false,
+      "binary": "build-heatmap-aircraft",
+      "flags": "--stream --source cruise --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}/aircraft-cruise"
+    },
+    "gpu-airborne": {
+      "group": "airborne",
+      "gpu": true,
+      "binary": "gpu-airborne",
+      "flags": "--stream --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}/aircraft-airborne"
+    },
+    "cpu-airborne": {
+      "group": "airborne",
+      "gpu": false,
+      "binary": "build-heatmap-aircraft",
+      "flags": "--stream --source airborne --seed-regions {SEED} --h3r4-dir {H3R4} --prepared-dir {PREP} --zoom {ZOOM} --output {OUTPUT}/aircraft-airborne"
+    },
+    "gpu-road": {
+      "group": "road",
+      "gpu": true,
+      "binary": "gpu-surface",
+      "flags": "--stream --layers road --output {OUTPUT}"
+    }
   }
 }
