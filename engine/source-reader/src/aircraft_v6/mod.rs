@@ -174,51 +174,48 @@ pub fn add_v6_aircraft_to_result(
     let airborne_rows = AirborneRowAccum::new(airborne_batches);
     let cruise_rows = CruiseRowAccum::new(cruise_batches);
     let traffic_rows = AirportTrafficRowAccum::new(airport_traffic_batches);
-    // Plan §4.3 + Codex C4: when airport_traffic.arrow rows exist but
-    // the airport_summary.arrow sidecar is missing, this is a FATAL
-    // pipeline state (Stage 2C reduce did not run, or operator
-    // forgot to copy the sidecar). Loud `eprintln!` + `Err` so the
-    // popup HTTP path surfaces a 500 instead of silently displaying
-    // zero arr/dep counts (which look indistinguishable from "no
-    // ADS-B data" at the receiver). When BOTH airport_traffic and
-    // the sidecar are absent (rural receiver, no aircraft), no
-    // sidecar lookup is required and `None` propagates harmlessly.
+    // Only the `!traffic_views.is_empty()` branch below ever consults the
+    // summary lookup, so when this popup's 7-hex ring holds no airport_traffic
+    // rows the whole-world ~11 MB airport_summary.arrow is never used. Gate the
+    // load on `has_traffic_rows` so an empty-desert / no-airport click skips the
+    // open + Arrow parse + ~50k-row HashMap build entirely. Before this gate
+    // EVERY popup (incl. rural clicks with zero nearby aircraft) paid the full
+    // load one line before the `total_rows == 0` bail-out below — and, uncached,
+    // re-paid it on every request, which is a real CPU wall at popup scale.
     //
-    // `airport_summary_path = None` is treated identically to a
-    // present-but-empty file: if traffic rows exist the call MUST
-    // fail loud (per /gg Gemini audit) — otherwise a caller that
-    // forgets to wire the path silently returns zero counts.
+    // When traffic rows DO exist the sidecar is MANDATORY (Plan §4.3 + Codex C4
+    // + /gg Gemini audit): a missing sidecar or unwired path is a FATAL pipeline
+    // state (Stage 2C reduce did not run, or operator forgot to copy it), raised
+    // as a loud `eprintln!` + `Err` so the popup HTTP path returns 500 instead of
+    // silently showing zero arr/dep counts (indistinguishable from "no ADS-B data").
     let has_traffic_rows = !airport_traffic_batches.is_empty();
-    let airport_summary_accum = match airport_summary_path {
-        Some(p) => {
-            let loaded = load_airport_summary(p)?;
-            if loaded.is_none() && has_traffic_rows {
-                eprintln!(
-                    "ERROR: airport_traffic.arrow rows present but airport_summary.arrow \
-                     missing at {} — Stage 2C reduce phase did not run, or scope changed \
-                     between extract and popup. Re-extract or copy the sidecar.",
-                    p.display()
-                );
-                return Err(format!(
-                    "airport_summary.arrow missing at {} (required when airport_traffic.arrow present) \
-                     — re-run Stage 2C reduce phase",
-                    p.display()
-                ));
-            }
-            loaded
-        }
-        None if has_traffic_rows => {
+    let airport_summary_accum = if !has_traffic_rows {
+        None
+    } else {
+        let p = airport_summary_path.ok_or_else(|| {
             eprintln!(
                 "ERROR: airport_traffic.arrow rows present but airport_summary_path is None \
                  — caller must wire the sidecar location whenever traffic rows are loaded."
             );
-            return Err(
-                "airport_summary_path = None with airport_traffic.arrow rows present \
-                 — wire `<prepared>/aircraft/airport_summary.arrow`"
-                    .to_string(),
+            "airport_summary_path = None with airport_traffic.arrow rows present \
+             — wire `<prepared>/aircraft/airport_summary.arrow`"
+                .to_string()
+        })?;
+        let loaded = load_airport_summary(p)?;
+        if loaded.is_none() {
+            eprintln!(
+                "ERROR: airport_traffic.arrow rows present but airport_summary.arrow \
+                 missing at {} — Stage 2C reduce phase did not run, or scope changed \
+                 between extract and popup. Re-extract or copy the sidecar.",
+                p.display()
             );
+            return Err(format!(
+                "airport_summary.arrow missing at {} (required when airport_traffic.arrow present) \
+                 — re-run Stage 2C reduce phase",
+                p.display()
+            ));
         }
-        None => None,
+        loaded
     };
 
     let airborne_views = airborne_rows.views();
