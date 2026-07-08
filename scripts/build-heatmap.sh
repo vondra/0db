@@ -41,12 +41,20 @@ log() { echo "[build-heatmap] $(date '+%H:%M:%S') $*"; }
 # log. pipefail (set above) still propagates the builder's exit status.
 stamp() { while IFS= read -r line; do printf '%s %s\n' "$(date '+%H:%M:%S')" "$line"; done; }
 
-# HM3 header source_id per layer (mirrors wire_hm3.rs SOURCE_ID_*).
-declare -A SID=(
-  [road]=1 [rail]=2 [industrial]=4 [building]=5
-  [aircraft-airborne]=3 [aircraft-cruise]=3 [aircraft-ground]=3
-)
 ALL_LAYERS=(road rail industrial building aircraft-airborne aircraft-cruise aircraft-ground)
+
+# Storage redesign 2026-07 (#17 landed, #19 pending): pyramid + combine now run
+# on TILE STORES (z*.qtsi/.qtsd), but this script's kernels still emit loose
+# per-cell tiles — the kernel→store writer is the #19 work item. Fail LOUDLY at
+# the pyramid/combine stage instead of dying on an unknown flag. Interim manual
+# flow for a FULL layer rebuild into a fresh output tree:
+#   tile-store-transcode <loose-layer-dir> <store-root>/<layer>
+#   build-pyramid --store-dir <store-root>/<layer> --base-zoom 13 --dst-zoom 3
+#   build-heatmap-combine --store-root <store-root> --zoom 13
+die_store_migration() {
+  log "FATAL: pyramid/combine moved to tile stores (storage redesign); this kernel flow's store glue lands with #19 — see the note above this function"
+  exit 1
+}
 
 # Parse --source + combine flags; forward everything else (the selection:
 # --bbox / --tile-x/--tile-y / --world / --shard) verbatim to the builders.
@@ -209,8 +217,7 @@ PY
       [ -n "$gpu_pid" ] && wait "$gpu_pid"
       [ -n "$cpu_pid" ] && wait "$cpu_pid"
       for L in "${SURFACE_LAYERS[@]}"; do
-        log "pyramid $L z$ZOOM → z6 (bbox)"
-        "$PYR" --tiles-dir "$OUTPUT/$L" --base-zoom "$ZOOM" --dst-zoom 3 --source-id "${SID[$L]}" --bbox "$bbox"
+        die_store_migration
       done
     else
       # The full surface set (all / ground) → one shared-halo `ground` pass; a
@@ -221,8 +228,7 @@ PY
       scripts/memcap "$SURFACE" --source "$SRC" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
         --prepared-dir "$PREP" --output "$OUTPUT" "${SEL_ARGS[@]}" 2>&1 | stamp
       for L in "${SURFACE_LAYERS[@]}"; do
-        log "pyramid $L z$ZOOM → z6${bbox:+ (bbox)}"
-        "$PYR" --tiles-dir "$OUTPUT/$L" --base-zoom "$ZOOM" --dst-zoom 3 --source-id "${SID[$L]}" ${bbox:+--bbox "$bbox"}
+        die_store_migration
       done
     fi
   fi
@@ -237,8 +243,7 @@ PY
     if $is_shard; then
       log "sharded — built z$ZOOM only; pyramid $L after merging shards"
     else
-      log "pyramid $L z$ZOOM → z6${bbox:+ (bbox)}"
-      "$PYR" --tiles-dir "$LDIR" --base-zoom "$ZOOM" --dst-zoom 3 --source-id "${SID[$L]}" ${bbox:+--bbox "$bbox"}
+      die_store_migration
     fi
   done
 fi
@@ -247,13 +252,8 @@ fi
 if $NO_COMBINE; then
   log "skip combine (--no-combine)"
 elif $is_shard; then
-  log "sharded — run combine after merging shards: $COMBINE --tiles-root $OUTPUT --zoom $ZOOM"
+  log "sharded — run combine after merging shards: $COMBINE --store-root <store-root> --zoom $ZOOM"
 else
-  log "combine → $OUTPUT/total"
-  if [ -n "$bbox" ]; then
-    "$COMBINE" --tiles-root "$OUTPUT" --zoom "$ZOOM" --bbox "$bbox"
-  else
-    "$COMBINE" --tiles-root "$OUTPUT" --zoom "$ZOOM"
-  fi
+  die_store_migration
 fi
 log "done → $OUTPUT"
