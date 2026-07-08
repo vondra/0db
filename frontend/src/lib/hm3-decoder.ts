@@ -1,20 +1,20 @@
 // HM3 binary tile decoder (browser-side).
 //
-// HM3 v2 tiles are served with `Content-Encoding: br`, so the browser has already
-// Brotli-decompressed the response — off the main thread, in its network stack —
-// by the time `fetch().arrayBuffer()` resolves. This decoder therefore does NO
-// decompression: it validates the 6-byte header and returns the raw cells.
-// Mirror of `engine/heatmap-aircraft/src/wire_hm3.rs`:
-//   0:4  magic "HM3 "   4:1  version = 2   5:1  source_id   6:…  256×256 u8 cells
+// HM3 v3 tiles (the 512@z12 world) are served with `Content-Encoding: br`, so
+// the browser has already Brotli-decompressed the response — off the main
+// thread, in its network stack — by the time `fetch().arrayBuffer()` resolves.
+// This decoder therefore does NO decompression: it validates the 6-byte header
+// and returns the raw cells. Mirror of `engine/heatmap-aircraft/src/wire_hm3.rs`:
+//   0:4  magic "HM3 "   4:1  version = 3   5:1  source_id   6:…  512×512 u8 cells
 
-export const TILE_PX = 256
+export const TILE_PX = 512
 export const NO_DATA = 255
 const HEADER_BYTES = 6
 const MAGIC = 'HM3 '
-const VERSION = 2
+const VERSION = 3
 
 export interface DecodedHM3Tile {
-  /** `TILE_PX * TILE_PX` cells, row-major (py * 256 + px). 255 = no data. */
+  /** `TILE_PX * TILE_PX` cells, row-major (py * TILE_PX + px). 255 = no data. */
   cells: Uint8Array
   /** Layer discriminator from the header (frontend palette/legend metadata). */
   sourceId: number
@@ -33,7 +33,7 @@ export async function fetchAndDecodeHM3(url: string, signal?: AbortSignal): Prom
   return decodeHM3(await res.arrayBuffer())
 }
 
-/** Validate the (already-decompressed) HM3 v2 bytes and return the cell grid. */
+/** Validate the (already-decompressed) HM3 v3 bytes and return the cell grid. */
 export function decodeHM3(buf: ArrayBuffer): DecodedHM3Tile {
   const expected = HEADER_BYTES + TILE_PX * TILE_PX
   if (buf.byteLength !== expected) {

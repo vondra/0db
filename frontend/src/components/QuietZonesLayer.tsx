@@ -5,19 +5,19 @@ import { BitmapLayer } from '@deck.gl/layers'
 import { useMap } from 'react-map-gl/maplibre'
 
 import { fetchAndDecodeHM3, TILE_PX, NO_DATA } from '../lib/hm3-decoder'
-import { tileUrl, useTileBuild } from '../lib/tile-urls'
+import { BASE_ZOOM, tileUrl, useTileBuild } from '../lib/tile-urls'
 
 // Translucent green wash over pixels whose total Lden is at or below the
 // user threshold. The legacy feature traced H3 hex clusters into outlined
 // polygons (h3-js + flood-fill + boundary stitching) — all of which existed
-// only because hexes had no raster to shade. The heatmap is now a z13 raster,
+// only because hexes had no raster to shade. The heatmap is now a raster,
 // so thresholding its pixels into a green bitmap is pixel-accurate and reuses
 // the HM3 tile machinery with none of that complexity.
 const QUIET_RGBA = [22, 163, 74, 110] as const // green-600 @ ~0.43
 
-const MIN_ZOOM = 6
-// deck upscales the z=13 texture for higher viewport zooms; we don't ship z14+.
-const MAX_ZOOM = 13
+// Display floor for the wash — zoomed further out the green blobs read as
+// noise, not places (the `total` data itself goes down to z2).
+const MIN_ZOOM = 5
 
 interface Props {
   enabled: boolean
@@ -28,7 +28,7 @@ interface Props {
 
 /**
  * Highlight quiet areas: a deck.gl `TileLayer` over the precomputed `total`
- * z13 raster that paints every pixel at or below `threshold` dB green. deck
+ * raster that paints every pixel at or below `threshold` dB green. deck
  * handles viewport tile loading; a threshold change re-keys the layer so the
  * mask recomputes. Its own overlay sits above the heatmap so the wash shows
  * over the faint sub-40 dB heatmap colours.
@@ -54,7 +54,10 @@ export default function QuietZonesLayer({ enabled, threshold }: Props): null {
 
   useEffect(() => {
     if (!overlay) return
-    overlay.setProps({ layers: enabled ? [makeQuietLayer(threshold, build)] : [] })
+    // build === null → no published generation yet → nothing to mount.
+    overlay.setProps({
+      layers: enabled && build !== null ? [makeQuietLayer(threshold, build)] : [],
+    })
   }, [overlay, enabled, threshold, build])
 
   return null
@@ -69,7 +72,8 @@ function makeQuietLayer(threshold: number, build: string) {
     // its tile cache instead of masking stale-generation tiles.
     id: `quiet-zones-${build}`,
     minZoom: MIN_ZOOM,
-    maxZoom: MAX_ZOOM,
+    // deck upscales the base texture for deeper viewport zooms.
+    maxZoom: BASE_ZOOM,
     tileSize: TILE_PX,
     // getTileData returns the raw decoded cells (threshold-independent), so a
     // threshold change keeps the tile cache instead of refetching. The object

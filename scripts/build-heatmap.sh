@@ -51,7 +51,7 @@ ALL_LAYERS=(road rail industrial building aircraft-airborne aircraft-cruise airc
 # flow for a FULL layer rebuild into a fresh output tree:
 #   tile-store-transcode <loose-layer-dir> <store-root>/<layer>
 #   build-pyramid --store-dir <store-root>/<layer> --base-zoom 13 --dst-zoom 3
-#   build-heatmap-combine --store-root <store-root> --zoom 13
+#   build-heatmap-combine --store-root <store-root>   (zoom derived from stores)
 die_store_migration() {
   log "FATAL: pyramid/combine moved to tile stores (storage redesign); this kernel flow's store glue lands with #19 — see the note above this function"
   exit 1
@@ -260,11 +260,11 @@ fi
 if $NO_COMBINE; then
   log "skip combine (--no-combine)"
 elif $is_shard; then
-  log "sharded — run combine after merging shards: $COMBINE --store-root <store-root> --zoom $ZOOM"
+  log "sharded — run combine after merging shards: $COMBINE --store-root <store-root>"
 elif [ -n "$bbox" ]; then
   die_store_migration
 else
   log "combine → ${OUTPUT}-store/total"
-  "$COMBINE" --store-root "${OUTPUT}-store" --zoom "$ZOOM"
+  "$COMBINE" --store-root "${OUTPUT}-store"
 fi
 log "done → ${OUTPUT}-store (pack + publish: tile-store-pack <store-root> <pmtiles-dir> b<N>)"
