@@ -33,6 +33,7 @@ SURFACE="$TARGET/build-heatmap-surface"
 AIRCRAFT="$TARGET/build-heatmap-aircraft"
 PYR="$TARGET/build-pyramid"
 COMBINE="$TARGET/build-heatmap-combine"
+TRANSCODE="$TARGET/tile-store-transcode"
 GPU_SURFACE="engine/noise-gpu/target/release/gpu-surface"  # --gpu: line layers on GPU
 
 log() { echo "[build-heatmap] $(date '+%H:%M:%S') $*"; }
@@ -228,7 +229,10 @@ PY
       scripts/memcap "$SURFACE" --source "$SRC" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
         --prepared-dir "$PREP" --output "$OUTPUT" "${SEL_ARGS[@]}" 2>&1 | stamp
       for L in "${SURFACE_LAYERS[@]}"; do
-        die_store_migration
+        if [ -n "$bbox" ]; then die_store_migration; fi
+        log "transcode $L → store (parity-gated) + pyramid z$ZOOM→z3"
+        "$TRANSCODE" "$OUTPUT/$L" "${OUTPUT}-store/$L"
+        "$PYR" --store-dir "${OUTPUT}-store/$L" --base-zoom "$ZOOM" --dst-zoom 3
       done
     fi
   fi
@@ -242,8 +246,12 @@ PY
       --prepared-dir "$PREP" --output "$LDIR" "${SEL_ARGS[@]}"
     if $is_shard; then
       log "sharded — built z$ZOOM only; pyramid $L after merging shards"
-    else
+    elif [ -n "$bbox" ]; then
       die_store_migration
+    else
+      log "transcode $L → store (parity-gated) + pyramid z$ZOOM→z3"
+      "$TRANSCODE" "$LDIR" "${OUTPUT}-store/$L"
+      "$PYR" --store-dir "${OUTPUT}-store/$L" --base-zoom "$ZOOM" --dst-zoom 3
     fi
   done
 fi
@@ -253,7 +261,10 @@ if $NO_COMBINE; then
   log "skip combine (--no-combine)"
 elif $is_shard; then
   log "sharded — run combine after merging shards: $COMBINE --store-root <store-root> --zoom $ZOOM"
-else
+elif [ -n "$bbox" ]; then
   die_store_migration
+else
+  log "combine → ${OUTPUT}-store/total"
+  "$COMBINE" --store-root "${OUTPUT}-store" --zoom "$ZOOM"
 fi
-log "done → $OUTPUT"
+log "done → ${OUTPUT}-store (pack + publish: tile-store-pack <store-root> <pmtiles-dir> b<N>)"
