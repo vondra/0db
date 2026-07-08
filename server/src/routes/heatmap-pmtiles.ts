@@ -40,13 +40,20 @@ class FileHandleSource implements Source {
   }
 
   async getBytes(offset: number, length: number): Promise<RangeResponse> {
+    // Loop to `length` or EOF: a positional read MAY legally return fewer
+    // bytes than asked even mid-file, and a short directory/tile read would
+    // otherwise become a spurious parse failure. EOF clamp stays: the lib's
+    // initial header probe asks for 16 KiB unconditionally, which overshoots
+    // on a near-empty archive.
     const data = new ArrayBuffer(length)
-    const { bytesRead } = await this.handle.read(new Uint8Array(data), 0, length, offset)
-    // Short read = EOF clamp: the lib's initial header probe asks for 16 KiB
-    // unconditionally, which overshoots on a near-empty archive. Exact-length
-    // directory/tile reads only come up short on a truncated file, and then the
-    // directory/tile parse fails loudly right after.
-    return bytesRead === length ? { data } : { data: data.slice(0, bytesRead) }
+    const view = new Uint8Array(data)
+    let filled = 0
+    while (filled < length) {
+      const { bytesRead } = await this.handle.read(view, filled, length - filled, offset + filled)
+      if (bytesRead === 0) break // EOF
+      filled += bytesRead
+    }
+    return filled === length ? { data } : { data: data.slice(0, filled) }
   }
 }
 
@@ -94,11 +101,13 @@ async function openHeatmapArchive(path: string): Promise<OpenArchive> {
     // Brotli shipping is only correct while the packer keeps gzip directories
     // and Brotli (or undeclared) tile entries.
     if (header.internalCompression !== Compression.Gzip
-      && header.internalCompression !== Compression.None
-      && header.internalCompression !== Compression.Unknown) {
+      && header.internalCompression !== Compression.None) {
       throw new Error(`unsupported internal compression ${header.internalCompression}`)
     }
-    if (header.tileCompression === Compression.Gzip || header.tileCompression === Compression.Zstd) {
+    // Strictly Brotli — the packer always declares it, and this route ships
+    // bytes with `Content-Encoding: br` unconditionally. Anything else in the
+    // header means packer drift; fail loud rather than serve corrupt bytes.
+    if (header.tileCompression !== Compression.Brotli) {
       throw new Error(`tile compression ${header.tileCompression} contradicts verbatim-Brotli serving`)
     }
     return { pmtiles, handle }
@@ -121,7 +130,15 @@ function getHeatmapArchive(build: string, layer: string): Promise<OpenArchive> {
     if (oldestKey !== undefined && oldestKey !== key) {
       const evicted = archiveCache.get(oldestKey)
       archiveCache.delete(oldestKey)
-      evicted?.then((a) => a.handle.close()).catch(() => {})
+      // Close on a grace delay, not immediately: a request that grabbed this
+      // OpenArchive microseconds before eviction may still be mid-getZxy on
+      // the FileHandle. In-flight reads finish in milliseconds; 60 s is a
+      // comfortable bound, and the fd of a deleted old build holds its disk
+      // space until closed — so close we must, just not under the reader.
+      const evictedAt = setTimeout(() => {
+        evicted?.then((a) => a.handle.close()).catch(() => {})
+      }, 60_000)
+      evictedAt.unref?.()
     }
   }
   return entry

@@ -5,7 +5,7 @@ import { BitmapLayer } from '@deck.gl/layers'
 import { useMap } from 'react-map-gl/maplibre'
 
 import { fetchAndDecodeHM3, TILE_PX, NO_DATA } from '../lib/hm3-decoder'
-import { tileBuildKey, tileUrl } from '../lib/tile-urls'
+import { tileUrl, useTileBuild } from '../lib/tile-urls'
 
 // Translucent green wash over pixels whose total Lden is at or below the
 // user threshold. The legacy feature traced H3 hex clusters into outlined
@@ -35,6 +35,9 @@ interface Props {
  */
 export default function QuietZonesLayer({ enabled, threshold }: Props): null {
   const { current: mapRef } = useMap()
+  // Generation snapshot — the layer id + fetch URLs are keyed by it (a flip
+  // re-renders and re-keys instead of mixing generations in deck's cache).
+  const build = useTileBuild()
   const [overlay, setOverlay] = useState<MapboxOverlay | null>(null)
 
   useEffect(() => {
@@ -51,20 +54,20 @@ export default function QuietZonesLayer({ enabled, threshold }: Props): null {
 
   useEffect(() => {
     if (!overlay) return
-    overlay.setProps({ layers: enabled ? [makeQuietLayer(threshold)] : [] })
-  }, [overlay, enabled, threshold])
+    overlay.setProps({ layers: enabled ? [makeQuietLayer(threshold, build)] : [] })
+  }, [overlay, enabled, threshold, build])
 
   return null
 }
 
 type QuietTile = { cells: Uint8Array }
 
-function makeQuietLayer(threshold: number) {
+function makeQuietLayer(threshold: number, build: string) {
   const maxByte = threshold * 2 // HM3 encodes dB × 2
   return new TileLayer<QuietTile | null>({
-    // Build token in the id: a generation flip re-keys the layer so deck drops
-    // its tile cache instead of masking stale-generation tiles (see tileBuildKey).
-    id: `quiet-zones-${tileBuildKey()}`,
+    // Generation snapshot in the id: a flip re-keys the layer so deck drops
+    // its tile cache instead of masking stale-generation tiles.
+    id: `quiet-zones-${build}`,
     minZoom: MIN_ZOOM,
     maxZoom: MAX_ZOOM,
     tileSize: TILE_PX,
@@ -73,7 +76,7 @@ function makeQuietLayer(threshold: number) {
     // wrapper is required — deck.gl's TileLayer mishandles a bare typed array
     // as tile data (it never reaches renderSubLayers as-is).
     getTileData: async ({ index, signal }) => {
-      const url = tileUrl('total', index.z, index.x, index.y)
+      const url = tileUrl(build, 'total', index.z, index.x, index.y)
       try {
         const decoded = await fetchAndDecodeHM3(url, signal)
         return decoded ? { cells: decoded.cells } : null
