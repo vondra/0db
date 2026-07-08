@@ -9,6 +9,8 @@ import { propertiesRoutes } from './routes/properties.js'
 import { rasterTileRoutes } from './routes/raster-tiles.js'
 import { aircraftRoutes } from './routes/aircraft.js'
 import { heatmapV3Routes } from './routes/heatmap-v3.js'
+import { heatmapPmtilesRoutes } from './routes/heatmap-pmtiles.js'
+import { tilesManifestRoutes } from './routes/tiles-manifest.js'
 import { clusterRoutes } from './routes/cluster.js'
 
 export async function buildApp(opts: { logger?: boolean } = {}): Promise<FastifyInstance> {
@@ -28,6 +30,10 @@ export async function buildApp(opts: { logger?: boolean } = {}): Promise<Fastify
   await app.register(rasterTileRoutes)
   await app.register(aircraftRoutes)
   await app.register(heatmapV3Routes)
+  // Dual-read during the pmtiles migration: the versioned archive route +
+  // manifest serve alongside the loose-file route above.
+  await app.register(heatmapPmtilesRoutes)
+  await app.register(tilesManifestRoutes)
   await app.register(clusterRoutes)
 
   return app

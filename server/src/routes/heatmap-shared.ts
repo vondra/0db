@@ -1,0 +1,58 @@
+// Shared validation + path constants for the heatmap tile routes:
+// heatmap-v3.ts (loose .bin files), heatmap-pmtiles.ts (versioned archives)
+// and tiles-manifest.ts. One source of truth for the layer allowlist and the
+// z/x/y bounds so the two serving paths can never drift apart.
+
+import { resolve } from 'node:path'
+import { DATA_YEAR as YEAR } from '../data-year.js'
+
+export const MIN_ZOOM = 3 // total/ pyramid extends to z3 (whole-world overview); per-layer trees start at z6
+export const MAX_ZOOM = 13
+
+// Each ID is its own tile tree / pmtiles archive with a distinct HM3
+// `source_id` byte in the header. `total` is the precomputed energy-sum of
+// every layer (build-heatmap-combine) — the default all-layers-on view served
+// as one tile fetch.
+export const ALLOWED_LAYERS = new Set([
+  'total',
+  'road',
+  'rail',
+  'industrial',
+  'building',
+  'aircraft-ground',
+  'aircraft-airborne',
+  'aircraft-cruise',
+])
+
+export interface TileParams {
+  layer: string
+  z: number
+  x: number
+  y: number
+}
+
+/**
+ * Validate the `:layer/:z/:x/:y` route params shared by both tile routes.
+ * Returns the parsed params, or a human-readable error string the route
+ * replies 400 with.
+ */
+export function parseTileParams(p: { layer: string; z: string; x: string; y: string }):
+  | TileParams
+  | string {
+  if (!ALLOWED_LAYERS.has(p.layer)) {
+    return `layer must be one of ${[...ALLOWED_LAYERS].join(', ')}`
+  }
+  const z = Number(p.z); const x = Number(p.x); const y = Number(p.y)
+  if (!Number.isInteger(z) || z < MIN_ZOOM || z > MAX_ZOOM) return 'bad zoom'
+  const max = 2 ** z
+  if (!Number.isInteger(x) || x < 0 || x >= max) return 'bad x'
+  if (!Number.isInteger(y) || y < 0 || y >= max) return 'bad y'
+  return { layer: p.layer, z, x, y }
+}
+
+// PMTILES_DIR lets a server instance read another checkout's archives,
+// mirroring the HEATMAP_TILES_DIR / H3R4_DIR override pattern. Defaults to
+// this checkout's data/. Holds `{layer}.{build}.pmtiles` + `current.json`.
+export const PMTILES_BASE = process.env.PMTILES_DIR
+  ? resolve(process.env.PMTILES_DIR)
+  : resolve(import.meta.dirname, '..', '..', '..', 'data', 'tiles', YEAR, 'pmtiles')

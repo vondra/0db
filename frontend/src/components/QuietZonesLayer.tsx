@@ -5,6 +5,7 @@ import { BitmapLayer } from '@deck.gl/layers'
 import { useMap } from 'react-map-gl/maplibre'
 
 import { fetchAndDecodeHM3, TILE_PX, NO_DATA } from '../lib/hm3-decoder'
+import { tileBuildKey, tileUrl } from '../lib/tile-urls'
 
 // Translucent green wash over pixels whose total Lden is at or below the
 // user threshold. The legacy feature traced H3 hex clusters into outlined
@@ -61,7 +62,9 @@ type QuietTile = { cells: Uint8Array }
 function makeQuietLayer(threshold: number) {
   const maxByte = threshold * 2 // HM3 encodes dB × 2
   return new TileLayer<QuietTile | null>({
-    id: 'quiet-zones',
+    // Build token in the id: a generation flip re-keys the layer so deck drops
+    // its tile cache instead of masking stale-generation tiles (see tileBuildKey).
+    id: `quiet-zones-${tileBuildKey()}`,
     minZoom: MIN_ZOOM,
     maxZoom: MAX_ZOOM,
     tileSize: TILE_PX,
@@ -70,7 +73,7 @@ function makeQuietLayer(threshold: number) {
     // wrapper is required — deck.gl's TileLayer mishandles a bare typed array
     // as tile data (it never reaches renderSubLayers as-is).
     getTileData: async ({ index, signal }) => {
-      const url = `/api/heatmap-v3/total/${index.z}/${index.x}/${index.y}.bin`
+      const url = tileUrl('total', index.z, index.x, index.y)
       try {
         const decoded = await fetchAndDecodeHM3(url, signal)
         return decoded ? { cells: decoded.cells } : null
