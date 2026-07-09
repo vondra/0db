@@ -5,6 +5,7 @@ import FlyToLocation from './FlyToLocation'
 import DetailPopup from './DetailPopup'
 import QuietZonesLayer from './QuietZonesLayer'
 import RealEstateLayer from './RealEstateLayer'
+import ValidationLayer, { type ValidationSelection } from './ValidationLayer'
 import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
 import HeatmapOverlay, { HEATMAP_LAYERS } from './HeatmapOverlay'
@@ -34,12 +35,15 @@ interface MapViewProps {
   realEstateFilters?: import('./RealEstateLayer').RealEstateFilters
   onPropertySelect?: (property: import('./RealEstateLayer').Property | null) => void
   rasterOverlays?: Record<string, boolean>
+  validationEnabled?: boolean
+  onValidationSelect?: (selection: ValidationSelection) => void
 }
 
 export default function MapView({
   selectedLocation, initialCenter, initialZoom,
   basemap, onViewChange, onDetailData, onDetailPositionChange, onDetailError, detailPosition,
   quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters, onPropertySelect, rasterOverlays,
+  validationEnabled, onValidationSelect,
 }: MapViewProps) {
   const center = initialCenter ?? [49.8, 15.5]
   const zoom = initialZoom ?? 8
@@ -103,6 +107,11 @@ export default function MapView({
       {/* After the heatmap + quiet overlays so the property markers (their own
           deck overlay) stack on top rather than being hidden under the heatmap. */}
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
+      {/* Validation anchors above every data overlay — a dot click also lands
+          the ordinary map click, so the noise popup opens for the same spot
+          (measured next to modelled is the point). Mounted only with `val=1`
+          so ordinary visitors never pay for the extra overlay. */}
+      {validationEnabled && <ValidationLayer onSelect={onValidationSelect} />}
       <HoverTooltip sources={activeHeatmapSources} />
       <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} />
       <IsochronLayer geojson={isochronGeojson ?? null} />

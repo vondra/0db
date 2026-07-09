@@ -10,9 +10,11 @@ import MobileDetailSheet from './components/MobileDetailSheet'
 import BasemapBar from './components/BasemapBar'
 import PropertyCard from './components/PropertyCard'
 import FloatingCard from './components/FloatingCard'
+import ValidationCard from './components/ValidationCard'
 import { useUrlState, EMPTY_RASTER_OVERLAYS, QUIET_THRESHOLD_DEFAULT } from './hooks/useUrlState'
 import type { SelectedLocation } from './components/FlyToLocation'
 import type { RealEstateFilters, Property } from './components/RealEstateLayer'
+import type { ValidationSelection } from './components/ValidationLayer'
 import type { NoiseComputeData } from './types/noise'
 import { DEFAULT_BASEMAP, type BasemapId } from './utils/basemaps'
 
@@ -55,6 +57,11 @@ function MapApp() {
   const [rasterOverlays, setRasterOverlays] = useState<Record<string, boolean>>(
     initial.rasterOverlays ?? { ...EMPTY_RASTER_OVERLAYS },
   )
+  // Validation-anchor overlay (owner/QA tool): enabled only via `val=1` in
+  // the URL; a clicked anchor renders its card in the right column while the
+  // ordinary noise popup opens for the same spot underneath.
+  const validationEnabled = initial.validation
+  const [validationSelection, setValidationSelection] = useState<ValidationSelection | null>(null)
   const rasterOverlaysRef = useRef(rasterOverlays)
   rasterOverlaysRef.current = rasterOverlays
 
@@ -91,8 +98,9 @@ function MapApp() {
       detailPosition: overrides?.detailPosition ?? null,
       basemap: overrides?.basemap ?? basemapRef.current,
       rasterOverlays: overrides?.rasterOverlays ?? rasterOverlaysRef.current,
+      validation: validationEnabled,
     })
-  }, [updateUrl])
+  }, [updateUrl, validationEnabled])
 
   const handleRasterOverlaysChange = useCallback((next: Record<string, boolean>) => {
     setRasterOverlays(next)
@@ -204,6 +212,14 @@ function MapApp() {
               onRasterOverlayChange={handleRasterOverlaysChange}
             />
           </div>
+          {validationSelection && (
+            <div className="pointer-events-auto">
+              <ValidationCard
+                selection={validationSelection}
+                onClose={() => setValidationSelection(null)}
+              />
+            </div>
+          )}
           <div className="pointer-events-auto">
             <DetailCard
               noiseData={noiseDetailData}
@@ -247,6 +263,8 @@ function MapApp() {
         realEstateFilters={realEstateFilters}
         onPropertySelect={setSelectedProperty}
         rasterOverlays={rasterOverlays}
+        validationEnabled={validationEnabled}
+        onValidationSelect={setValidationSelection}
       />
 
       {/* Mobile: layers toggle button */}

@@ -30,6 +30,8 @@ export interface UrlState {
   detailPosition: { lat: number; lng: number } | null
   basemap: BasemapId
   rasterOverlays: Record<string, boolean>
+  /** `val=1` — validation-anchor overlay (owner/QA tool, off by default). */
+  validation: boolean
 }
 
 export const EMPTY_RASTER_OVERLAYS: Record<string, boolean> = Object.fromEntries(
@@ -65,6 +67,7 @@ function parseHash(): UrlState {
       detailPosition: null,
       basemap: DEFAULT_BASEMAP,
       rasterOverlays: { ...DEFAULT_RASTER_OVERLAYS },
+      validation: false,
     }
   }
 
@@ -107,6 +110,7 @@ function parseHash(): UrlState {
     detailPosition,
     basemap: (params.get('bm') as BasemapId) || DEFAULT_BASEMAP,
     rasterOverlays,
+    validation: params.get('val') === '1',
   }
 }
 
@@ -119,6 +123,7 @@ function buildHash(state: {
   detailPosition?: { lat: number; lng: number } | null
   basemap?: BasemapId
   rasterOverlays?: Record<string, boolean>
+  validation?: boolean
 }): string {
   const parts: string[] = [
     `lat=${state.lat.toFixed(4)}`,
@@ -133,6 +138,10 @@ function buildHash(state: {
 
   if (state.detailPosition) {
     parts.push(`d=${state.detailPosition.lat.toFixed(4)},${state.detailPosition.lng.toFixed(4)}`)
+  }
+
+  if (state.validation) {
+    parts.push('val=1')
   }
 
   if (state.basemap && state.basemap !== DEFAULT_BASEMAP) {
@@ -166,6 +175,7 @@ export function useUrlState() {
     detailPosition?: { lat: number; lng: number } | null
     basemap?: BasemapId
     rasterOverlays?: Record<string, boolean>
+    validation?: boolean
   }) => {
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(() => {
