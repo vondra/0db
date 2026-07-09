@@ -11,6 +11,7 @@ import { aircraftRoutes } from './routes/aircraft.js'
 import { heatmapPmtilesRoutes } from './routes/heatmap-pmtiles.js'
 import { tilesManifestRoutes } from './routes/tiles-manifest.js'
 import { clusterRoutes } from './routes/cluster.js'
+import { validationViewRoutes } from './routes/validation-view.js'
 
 export async function buildApp(opts: { logger?: boolean } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: opts.logger ?? false })
@@ -34,6 +35,7 @@ export async function buildApp(opts: { logger?: boolean } = {}): Promise<Fastify
   await app.register(heatmapPmtilesRoutes)
   await app.register(tilesManifestRoutes)
   await app.register(clusterRoutes)
+  await app.register(validationViewRoutes)
 
   return app
 }
