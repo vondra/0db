@@ -9,11 +9,12 @@
 // failed with "cannot allocate memory in static TLS block" and the popup
 // 503'd until process restart (hit live on he84 2026-07-09). With a stable
 // path, glibc keys the already-loaded object by name and returns the cached
-// handle — no TLS growth, and also NO new code until process restart
-// (the name match wins over the fresh inode; restart-after-rebuild remains
-// the contract). The size/mtime check merely keeps the slot copy current for
-// the NEXT server start without a 3.5 MB copy on every recycle.
-// Details: docs/dev/binary-rebuild.md.
+// handle — no TLS growth, and also NO new code until process restart (the
+// name match wins over the fresh inode — verified empirically 2026-07-09:
+// unlink+copy then dlopen same path does NOT re-run constructors, 60×; the
+// distinct-path variant is what exhausted TLS live on he84). The size/mtime
+// check merely keeps the slot copy current for the NEXT server start without
+// a 3.5 MB copy on every recycle. Details: docs/dev/binary-rebuild.md.
 
 import { parentPort, threadId, workerData } from 'node:worker_threads'
 import { copyFileSync, existsSync, lstatSync, readdirSync, statSync, unlinkSync, utimesSync } from 'node:fs'
@@ -24,9 +25,13 @@ const req = createRequire(import.meta.url)
 
 const { sourceReaderPath, h3r4Dir, slotIndex } = workerData
 const sourceReaderDir = dirname(sourceReaderPath)
-// threadId fallback keeps direct spawns working; the supervisor always passes
-// slotIndex so pool recycles reuse one stable path per slot.
-const nodePath = resolve(sourceReaderDir, `libsource_reader.worker-slot-${slotIndex ?? threadId}.node`)
+// threadId fallback keeps direct spawns working (distinct `tid-` prefix so
+// the sweep below can reap them); the supervisor always passes slotIndex so
+// pool recycles reuse one stable path per slot.
+const nodePath = resolve(
+  sourceReaderDir,
+  slotIndex == null ? `libsource_reader.worker-tid-${threadId}.node` : `libsource_reader.worker-slot-${slotIndex}.node`,
+)
 
 if (!existsSync(sourceReaderPath)) {
   throw new Error(
@@ -34,10 +39,10 @@ if (!existsSync(sourceReaderPath)) {
   )
 }
 
-// Sweep legacy per-threadId copies (unbounded growth from the pre-slot-path
-// era); slot files are stable and must survive.
+// Sweep legacy per-threadId copies (pre-slot-path era) AND stale tid-
+// fallback copies from direct spawns; slot files are stable and must survive.
 for (const entry of readdirSync(sourceReaderDir)) {
-  if (!/^libsource_reader\.worker-\d+\.node$/.test(entry)) {
+  if (!/^libsource_reader\.worker-(tid-)?\d+\.node$/.test(entry)) {
     continue
   }
   if (resolve(sourceReaderDir, entry) === nodePath) {
@@ -58,11 +63,13 @@ const needsFreshCopy = () => {
   // Hard link to the source would defeat the whole point of copying (cargo
   // rewriting the .so would mutate the mapped file) — recopy to break it.
   if (src.dev === dst.dev && src.ino === dst.ino) return true
-  // Copies get the source's mtime stamped on (utimesSync below), so exact
-  // mtime+size equality means current. Plain `newer-than` would miss an
-  // rsync'd rebuild that preserves an OLDER source mtime (rsync -t between
-  // hosts is a normal flow here).
-  return src.size !== dst.size || src.mtimeMs !== dst.mtimeMs
+  // Copies get the source's mtime stamped on (utimesSync below), so mtime+size
+  // equality means current. Plain `newer-than` would miss an rsync'd rebuild
+  // that preserves an OLDER source mtime (rsync -t between hosts is a normal
+  // flow here). Tolerance, not strict equality: utimesSync rounds the
+  // sub-millisecond fraction (…238.8228 → …239 measured), strict !== would
+  // recopy on every recycle.
+  return src.size !== dst.size || Math.abs(src.mtimeMs - dst.mtimeMs) > 2
 }
 if (needsFreshCopy()) {
   // Unlink first: a NEW inode. Writing into the existing file would corrupt
