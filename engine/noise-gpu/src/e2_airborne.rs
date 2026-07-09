@@ -28,7 +28,7 @@ fn env(k: &str, d: &str) -> String {
 fn main() -> Result<()> {
     let a: Vec<String> = std::env::args().collect();
     let (x, y): (u32, u32) = (a[1].parse()?, a[2].parse()?);
-    let z = 13u8;
+    let z = 12u8; // 512@z12 base (the old z13@256 lattice)
     let prepared = env("NOISE_GPU_PREPARED", "/dev/shm/qmap/prepared");
     let year = env("DATA_YEAR", "2026");
     let h3r4 = format!("{prepared}/{year}/h3r4");

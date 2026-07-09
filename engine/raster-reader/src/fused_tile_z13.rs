@@ -1,5 +1,6 @@
-//! Per-tile raster cache aligned with the Mercator z=13 receiver lattice
-//! plus a WGS84 30 m halo extending the bbox by `HALO_M`.
+//! Per-tile raster cache aligned with the Mercator receiver lattice (z12
+//! base with 512-px tiles — the same physical lattice as the pre-2026-07
+//! z13@256) plus a WGS84 30 m halo extending the bbox by `HALO_M`.
 //!
 //! The inner core (`TILE_PX × TILE_PX` Mercator-aligned cells) matches the
 //! output HM tile lattice 1:1 — receiver `(py, px)` indexes every layer
@@ -9,8 +10,8 @@
 //! Path-profile rays exiting the inner bbox fall through to the halo
 //! `FusedGrid` (lat/lon lookup at native source-raster resolution).
 //!
-//! Builds in ~ms per tile (samples 65 536 inner + ~1.5M halo cells from
-//! `RealRasters` mmap). Lives in L2/L3 for the duration of one tile's
+//! Builds in ~ms per tile (samples 262 144 inner + ~1.5M halo cells from
+//! `RealRasters` mmap). Lives in L3 for the duration of one tile's
 //! compute, then drops.
 
 use std::sync::Arc;
@@ -20,8 +21,9 @@ use noise_compute::types::RasterSampler;
 
 use crate::{FusedGrid, RealRasters};
 
-/// Side length of one output tile in receiver pixels.
-pub const TILE_PX: usize = 256;
+/// Side length of one output tile in receiver pixels. 512 since the 2026-07
+/// shift — lockstep with heatmap-aircraft grid.rs and the CUDA TPX.
+pub const TILE_PX: usize = 512;
 
 /// Halo extension on each side of the tile bbox, in metres. Conservative
 /// upper bound covering the airborne `AIRCRAFT_MAX_HORIZONTAL_REACH_M` =
@@ -32,8 +34,12 @@ pub const TILE_PX: usize = 256;
 /// halo.
 pub const HALO_M: f64 = 16_000.0;
 
-/// Equatorial m/px at zoom 0. = 2 π R / 256 with R = 6 378 137.
-const EQUATORIAL_M_PER_PX_Z0: f64 = 156_543.033_928_041;
+/// Equatorial m/px at zoom 0. = 2 π R / TILE_PX with R = 6 378 137 — the
+/// divisor IS the tile side (512), so the physical pixel size at the base
+/// zoom is unchanged by the 512@z12 shift (z12·512 ≡ z13·256 lattice).
+/// If TILE_PX ever changes again, this constant MUST scale inversely or
+/// every physical pixel size silently corrupts all propagation physics.
+const EQUATORIAL_M_PER_PX_Z0: f64 = 78_271.516_964_020_5;
 
 /// Mercator tile bbox in lat/lon (EPSG:4326).
 #[derive(Debug, Clone, Copy)]
@@ -495,9 +501,10 @@ impl TileBatch {
 
 /// Read /sys L3 size and pick a default batch dimension N.
 ///
-/// Working set per batch ≈ 17 MB halo (Praha) + N² × 0.5 MB inner. The
-/// three buckets map to the canonical Linux Ryzen / EPYC L3 sizes seen
-/// on our two dev servers; everything is fallthrough-safe.
+/// Working set per batch ≈ 17 MB halo (Praha) + N² × 2 MB inner (512² cells
+/// since the 2026-07 shift; was 0.5 MB at 256²). N=2/3/4 → ~25/35/49 MB —
+/// the three buckets still land inside the canonical Ryzen / EPYC L3 sizes
+/// on our dev servers; everything is fallthrough-safe.
 ///
 /// Override at runtime with a CLI flag — this is the default if none.
 pub fn default_batch_size() -> u32 {
@@ -545,8 +552,8 @@ mod tests {
 
     #[test]
     fn praha_tile_bbox_round_trips() {
-        // Praha LKPR (50.10°N, 14.26°E) → z=13 tile (4420, 2773).
-        let bbox = TileBbox::from_xyz(13, 4420, 2773);
+        // Praha LKPR (50.10°N, 14.26°E) → z=12 tile (2210, 1386).
+        let bbox = TileBbox::from_xyz(12, 2210, 1386);
         assert!(
             bbox.south_lat > 49.9 && bbox.north_lat < 50.3,
             "lat range {:.3}..{:.3}",
@@ -562,26 +569,28 @@ mod tests {
     }
 
     #[test]
-    fn pixel_size_at_praha_z13() {
-        let px_m = tile_pixel_size_m(13, 50.10);
+    fn pixel_size_at_praha_base_zoom() {
+        // z12 with 512-px tiles = the same physical lattice as the old
+        // z13@256, so the pixel size at Praha must still be ~12.3 m.
+        let px_m = tile_pixel_size_m(12, 50.10);
         assert!(
             (px_m - 12.3).abs() < 0.5,
-            "z=13 px size at Praha = {px_m:.3} m"
+            "z=12 px size at Praha = {px_m:.3} m"
         );
     }
 
     #[test]
     fn pixel_centres_inside_bbox() {
-        let bbox = TileBbox::from_xyz(13, 4420, 2773);
-        let lat = pixel_lat(&bbox, 128);
-        let lon = pixel_lon(&bbox, 128);
+        let bbox = TileBbox::from_xyz(12, 2210, 1386);
+        let lat = pixel_lat(&bbox, 256);
+        let lon = pixel_lon(&bbox, 256);
         assert!(lat <= bbox.north_lat && lat >= bbox.south_lat);
         assert!(lon >= bbox.west_lon && lon <= bbox.east_lon);
     }
 
     #[test]
     fn latlon_round_trip_via_inner_idx() {
-        let bbox = TileBbox::from_xyz(13, 4420, 2773);
+        let bbox = TileBbox::from_xyz(12, 2210, 1386);
         let bbox_centre_lat = (bbox.north_lat + bbox.south_lat) * 0.5;
         let bbox_centre_lon = (bbox.east_lon + bbox.west_lon) * 0.5;
         let n = TILE_PX as f64;
@@ -589,8 +598,8 @@ mod tests {
         let lon_frac = (bbox_centre_lon - bbox.west_lon) / (bbox.east_lon - bbox.west_lon);
         let py = (lat_frac * n).floor() as usize;
         let px = (lon_frac * n).floor() as usize;
-        assert_eq!(py, 128);
-        assert_eq!(px, 128);
+        assert_eq!(py, TILE_PX / 2);
+        assert_eq!(px, TILE_PX / 2);
     }
 
     #[test]
@@ -600,12 +609,12 @@ mod tests {
             return;
         };
         let rasters = RealRasters::new(&root);
-        let tile = FusedTileZ13::build(13, 4493, 2823, HALO_M, &rasters);
-        assert_eq!(tile.zoom, 13);
+        let tile = FusedTileZ13::build(12, 2246, 1411, HALO_M, &rasters);
+        assert_eq!(tile.zoom, 12);
         assert_eq!(tile.inner_elev_m.len(), TILE_PX * TILE_PX);
         assert_eq!(tile.rx_alt_m.len(), TILE_PX * TILE_PX);
         // Praha DEM around 200-400 m; receiver alt = DEM + 4 m.
-        let mid = tile.rx_alt(128, 128);
+        let mid = tile.rx_alt(256, 256);
         assert!(
             mid > 100.0 && mid < 500.0,
             "Praha tile centre alt = {mid} m"
@@ -629,7 +638,7 @@ mod tests {
             return;
         };
         let rasters = RealRasters::new(&root);
-        let batch = TileBatch::build(13, 4420, 2773, 2, HALO_M, &rasters);
+        let batch = TileBatch::build(12, 2210, 1386, 2, HALO_M, &rasters);
         assert_eq!(batch.tiles.len(), 4);
         // All four tiles must point at the same FusedGrid allocation.
         let halo0 = Arc::as_ptr(&batch.tiles[0].halo);
@@ -637,13 +646,13 @@ mod tests {
             assert_eq!(Arc::as_ptr(&t.halo), halo0, "halo not shared");
         }
         // Row-major tile ordering: (dx, dy) → idx dy*N + dx.
-        assert_eq!(batch.tiles[0].tile_x, 4420);
-        assert_eq!(batch.tiles[0].tile_y, 2773);
-        assert_eq!(batch.tiles[1].tile_x, 4421);
-        assert_eq!(batch.tiles[1].tile_y, 2773);
-        assert_eq!(batch.tiles[2].tile_x, 4420);
-        assert_eq!(batch.tiles[2].tile_y, 2774);
-        assert_eq!(batch.tiles[3].tile_x, 4421);
-        assert_eq!(batch.tiles[3].tile_y, 2774);
+        assert_eq!(batch.tiles[0].tile_x, 2210);
+        assert_eq!(batch.tiles[0].tile_y, 1386);
+        assert_eq!(batch.tiles[1].tile_x, 2211);
+        assert_eq!(batch.tiles[1].tile_y, 1386);
+        assert_eq!(batch.tiles[2].tile_x, 2210);
+        assert_eq!(batch.tiles[2].tile_y, 1387);
+        assert_eq!(batch.tiles[3].tile_x, 2211);
+        assert_eq!(batch.tiles[3].tile_y, 1387);
     }
 }

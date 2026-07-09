@@ -8,11 +8,8 @@ import { DATA_YEAR as YEAR } from '../data-year.js'
 
 // 512@z12 world (2026-07 shift): the base level is z12 (512-px tiles carry the
 // old z13-pixel lattice); total/'s pyramid reaches z2, per-layer archives z5.
-// MAX stays 13 through the b0→b1 transition (a restart mid-window must not
-// 400 the still-live b0 generation; b1 answers z13 with a clean 204) —
-// tighten to 12 in Phase B when the last v2 world is gone.
 export const MIN_ZOOM = 2
-export const MAX_ZOOM = 13
+export const MAX_ZOOM = 12
 
 // Each ID is its own tile tree / pmtiles archive with a distinct HM3
 // `source_id` byte in the header. `total` is the precomputed energy-sum of

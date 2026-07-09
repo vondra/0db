@@ -21,14 +21,13 @@ test('rejects unknown layers with the allowlist message', () => {
 })
 
 test('rejects out-of-range and non-integer zoom', () => {
-  // 512@z12 world; MAX stays 13 through the b0→b1 transition (see
-  // heatmap-shared.ts) — tighten to 12 in Phase B.
-  for (const z of ['1', '14', '6.5', 'abc', '']) {
+  // 512@z12 world: valid zooms are 2..=12.
+  for (const z of ['1', '13', '6.5', 'abc', '']) {
     assert.equal(parseTileParams({ layer: 'total', z, x: '0', y: '0' }), 'bad zoom')
   }
   // Bounds themselves are valid.
   assert.deepEqual(parseTileParams({ layer: 'total', z: '2', x: '0', y: '0' }), { layer: 'total', z: 2, x: 0, y: 0 })
-  assert.deepEqual(parseTileParams({ layer: 'total', z: '13', x: '0', y: '0' }), { layer: 'total', z: 13, x: 0, y: 0 })
+  assert.deepEqual(parseTileParams({ layer: 'total', z: '12', x: '0', y: '0' }), { layer: 'total', z: 12, x: 0, y: 0 })
 })
 
 test('bounds x and y by 2^z', () => {

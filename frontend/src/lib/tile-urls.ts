@@ -18,11 +18,12 @@ import { useSyncExternalStore } from 'react'
 
 // The published tile world's zoom band — ONE source for every component
 // (mirrors server heatmap-shared.ts and what the packer writes). Base level
-// z12: 512-px tiles carrying the old z13-pixel lattice; `total/` pyramids to
-// z2, per-layer archives to z5.
+// z12: 512-px tiles carrying the old z13-pixel lattice; EVERY layer pyramids
+// down to z2 — a single-layer view at world zoom is a first-class use case
+// (deck's TileLayer renders NOTHING below its minZoom, so a deeper floor
+// blanked e.g. roads-only at z4 — owner report 2026-07-09).
 export const BASE_ZOOM = 12
-export const MIN_ZOOM_TOTAL = 2
-export const MIN_ZOOM_LAYER = 5
+export const MIN_ZOOM = 2
 
 const BUILD_ID = /^b\d+$/
 const MANIFEST_POLL_MS = 10 * 60 * 1000

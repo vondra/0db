@@ -286,7 +286,7 @@ fn segment_sel_with_overrides<const WANT_CPA: bool>(
 }
 
 // Hoisted three-stage variant of `segment_sel_with_cuts` for the heatmap
-// fast path (one segment × 65 536 pixels per tile). The split exists
+// fast path (one segment × 262 144 pixels per tile). The split exists
 // because `m_per_deg_lon = M_PER_DEG_LAT · cos(rx_lat)` is row-level —
 // `sdx`, `slen`, `inv_lsq` all derive from it, so they shift from
 // per-pixel work in `segment_sel_with_overrides` to per-row work here.

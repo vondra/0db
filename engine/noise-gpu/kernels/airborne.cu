@@ -16,15 +16,18 @@
 // E2/E3: max 0.0003 dB, 0 zero-sided vs the f64 QM_AIRBORNE_FORCE_EXACT oracle.
 //
 // cudarc tuple launch caps ~12 args, so inputs are packed into a few buffers:
-//   rll  f64[3*256]  = receiver lat[0..256] | lon[256..512] | m_per_deg_lon[512..768]
-//   rxa  f32[256*256]= receiver elevation per pixel (row-major py*256+px)
+//   rll  f64[3*TPX]  = receiver lat[0..TPX] | lon[TPX..2TPX] | m_per_deg_lon[2TPX..3TPX]
+//   rxa  f32[TPX*TPX]= receiver elevation per pixel (row-major py*TPX+px)
 //   sll  f64[2*N]    = per-seg start_lat[s] | start_lon[N+s]  (absolute coords)
 //   sf   f32[12*N]   = per-seg [start_alt,d_lon,sdy,sdz,dv,d_bar,di_a,di_b,di_c,
 //                               reach_sq,tcut_start,tcut_end] (stride 12)
 //   si   i32[4*N]    = per-seg [inst,class_idx,is_dep,period] (stride 4)
 //   npd  f32[2*NC*(NB+1)] = NPD SEL LUT, approach[0..] | departure[NC*(NB+1)..]
 
-#define TPX 256                         // tile is 256×256 receivers
+#define TPX 512                         // tile side in receivers — lockstep with
+                                        // TILE_PX in raster-reader/heatmap-aircraft
+#define TPX_SHIFT 9                     // log2(TPX): pix >> TPX_SHIFT = py
+#define TPX_MASK (TPX - 1)              // pix & TPX_MASK = px
 #define MLAT 111132.92                  // M_PER_DEG_LAT (Doc 29 value, doc29.rs:25)
 #define LN10 2.302585092994046
 #define LOG10_2 0.3010299956639812
@@ -175,7 +178,7 @@ extern "C" __global__ void airborne_exact(
 {
     int pix = blockIdx.x * blockDim.x + threadIdx.x;
     if (pix >= TPX * TPX) return;
-    int py = pix >> 8, px = pix & 255;
+    int py = pix >> TPX_SHIFT, px = pix & TPX_MASK;
     double rx_lat = rll[py], rx_lon = rll[TPX + px], mpdl = rll[2 * TPX + py];
     float rx_elev = rxa[pix];
     const float* npd_dep = npd + NPD_NC * (NPD_NB + 1);
@@ -193,7 +196,7 @@ extern "C" __global__ void airborne_exact(
 }
 
 // FAR (coarse lattice): one thread per far sub-seg, accumulating onto an n×n receiver
-// lattice via atomicAdd (the field is smooth at far slant, so n² ≪ 65536 nodes suffice;
+// lattice via atomicAdd (the field is smooth at far slant, so n² ≪ TPX² nodes suffice;
 // the host bilinear-expands the lattice into the fine grid). Mirrors the CPU CoarseLattice
 // path (airborne.rs:362-404). Thread-per-seg keeps full occupancy even where most far
 // segs land (level 2 = 3×3 nodes, hundreds-of-thousands of segs).
@@ -249,7 +252,7 @@ extern "C" __global__ void airborne_exact_batched(
     if (gid >= (long)ntiles * TPX * TPX) return;
     int ti = (int)(gid / (TPX * TPX));
     int pix = (int)(gid % (TPX * TPX));
-    int py = pix >> 8, px = pix & 255;
+    int py = pix >> TPX_SHIFT, px = pix & TPX_MASK;
     const double* rll = rll_b + (long)ti * 3 * TPX;
     double rx_lat = rll[py], rx_lon = rll[TPX + px], mpdl = rll[2 * TPX + py];
     float rx_elev = rxa_b[(long)ti * TPX * TPX + pix];

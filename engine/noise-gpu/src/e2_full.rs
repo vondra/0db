@@ -4,7 +4,7 @@
 //!       (terrain/screening/veg/ground) AND the same per-pixel skip, f32 energy
 //!       accumulation (matching TileAccumulator) — byte-exact isolates the port.
 //!   (2) GPU energy → collapse_lden_surface_u8 → diff vs the production baseline
-//!       tile (/root/baseline/rail/13/x/y.bin), the true scatter_tile output.
+//!       tile (/root/baseline/rail/12/x/y.bin), the true scatter_tile output.
 //!
 //!   NOISE_GPU_PREPARED=/dev/shm/qmap/prepared NOISE_GPU_BASELINE=/root/baseline \
 //!   NOISE_GPU_HALO_M=10000 e2-full <tile_x> <tile_y>
@@ -20,11 +20,10 @@ use heatmap_aircraft::source_loader_rail::RailData;
 use heatmap_aircraft::wire_hm3::{collapse_lden_surface_u8, read_tile};
 use noise_compute::types::Barrier;
 use noise_gpu::{BIN_W, N_BINS};
-use raster_reader::fused_tile_z13::{default_batch_size, TileBatch};
+use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
 
 const SCATTER_PTX: &str = include_str!(concat!(env!("OUT_DIR"), "/scatter.ptx"));
-const TILE_PX: usize = 256;
 const NO_DATA: u8 = 255;
 
 fn env(k: &str, d: &str) -> String {
@@ -34,7 +33,7 @@ fn env(k: &str, d: &str) -> String {
 fn main() -> Result<()> {
     let a: Vec<String> = std::env::args().collect();
     let (x, y): (u32, u32) = (a[1].parse()?, a[2].parse()?);
-    let z = 13u8;
+    let z = 12u8; // 512@z12 base (the old z13@256 lattice)
     let prepared = env("NOISE_GPU_PREPARED", "/dev/shm/qmap/prepared");
     let baseline = env("NOISE_GPU_BASELINE", "/root/baseline");
     let year = env("DATA_YEAR", "2026");
@@ -48,7 +47,7 @@ fn main() -> Result<()> {
     // baseline diff. For fast fp32 drift/perf iteration, where byte-exact-vs-CPU
     // is moot anyway.
     let gpu_only = std::env::var("NOISE_GPU_ONLY").is_ok();
-    // Swizzle tile width (must divide 256): the cache-blocking knob. 8×8 measured
+    // Swizzle tile width (must divide TILE_PX): the cache-blocking knob. 8×8 measured
     // best on the 4060 (rays overlap most in a ~96 m tile).
     let tw: f64 = env("NOISE_GPU_TW", "8").parse::<f64>().unwrap_or(8.0);
     let h3r4 = format!("{prepared}/{year}/h3r4");
@@ -124,7 +123,7 @@ fn main() -> Result<()> {
             }
         }
     }
-    let mut rxll = Vec::with_capacity(512);
+    let mut rxll = Vec::with_capacity(2 * TILE_PX);
     rxll.extend_from_slice(&tile.rx_lat);
     rxll.extend_from_slice(&tile.rx_lon);
     let mut rxar = Vec::with_capacity(n * 2);
@@ -297,7 +296,7 @@ fn main() -> Result<()> {
     accum.energy.copy_from_slice(&gpu);
     let cells = collapse_lden_surface_u8(&accum);
     let base_path = Path::new(&baseline)
-        .join("rail/13")
+        .join(format!("rail/{z}"))
         .join(x.to_string())
         .join(format!("{y}.bin"));
     if base_path.exists() {

@@ -1,6 +1,6 @@
 #!/bin/bash
 # build-heatmap.sh — orchestrate the whole noise heatmap: build each requested
-# layer's z13 tiles + zoom pyramid (z6-12), then the precomputed `total/`
+# layer's z12 tiles + zoom pyramid (z2-11), then the precomputed `total/`
 # (energy-sum of every layer, the default all-layers-on view).
 #
 # Each layer is its own tile tree under heatmap-v3/{layer}/ with a distinct
@@ -18,7 +18,7 @@
 #   ./scripts/build-heatmap.sh --combine-only                            # just rebuild total/ from existing layers
 #   ./scripts/build-heatmap.sh --source road --bbox <…> --no-combine     # build a layer, skip total/
 #
-# Env: DATA_YEAR=2026  DATA_ROOT=data  OUTPUT=$DATA_ROOT/tiles/$DATA_YEAR/heatmap-v3  ZOOM=13
+# Env: DATA_YEAR=2026  DATA_ROOT=data  OUTPUT=$DATA_ROOT/tiles/$DATA_YEAR/heatmap-v3  ZOOM=12
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -27,7 +27,7 @@ DATA_ROOT="${DATA_ROOT:-data}"
 H3R4="$DATA_ROOT/prepared/$DATA_YEAR/h3r4"
 PREP="$DATA_ROOT/prepared"
 OUTPUT="${OUTPUT:-$DATA_ROOT/tiles/$DATA_YEAR/heatmap-v3}"
-ZOOM="${ZOOM:-13}"
+ZOOM="${ZOOM:-12}"
 TARGET=engine/heatmap-aircraft/target/release
 SURFACE="$TARGET/build-heatmap-surface"
 AIRCRAFT="$TARGET/build-heatmap-aircraft"
@@ -50,7 +50,7 @@ ALL_LAYERS=(road rail industrial building aircraft-airborne aircraft-cruise airc
 # the pyramid/combine stage instead of dying on an unknown flag. Interim manual
 # flow for a FULL layer rebuild into a fresh output tree:
 #   tile-store-transcode <loose-layer-dir> <store-root>/<layer>
-#   build-pyramid --store-dir <store-root>/<layer> --base-zoom 13 --dst-zoom 3
+#   build-pyramid --store-dir <store-root>/<layer> --base-zoom 12 --dst-zoom 2
 #   build-heatmap-combine --store-root <store-root>   (zoom derived from stores)
 die_store_migration() {
   log "FATAL: pyramid/combine moved to tile stores (storage redesign); this kernel flow's store glue lands with #19 — see the note above this function"

@@ -8,6 +8,8 @@
 // Args are packed into a few buffers (cudarc's tuple launch caps at ~12 args).
 
 #define NB 8
+#define TPX 512                 // tile side in receiver px — lockstep with
+                                // raster-reader/heatmap-aircraft TILE_PX (512@z12 shift)
 #define M_LAT 110540.0          // M_PER_DEG_LAT
 #define M_LON_EQ 111320.0       // M_PER_DEG_LON_EQ
 #define LN10 2.302585092994046
@@ -135,7 +137,7 @@ __device__ __forceinline__ float bilinear_elev_rc(
 
 // ---- FusedTileZ13::elevation — the production SOURCE-ground lookup. Inside the
 // tile bbox: nearest inner-grid cell (latlon_to_inner_idx; DEM bilinear pre-baked
-// at the 256×256 pixel centres). Outside: halo bilinear. scatter_band reads the
+// at the TPX×TPX pixel centres). Outside: halo bilinear. scatter_band reads the
 // source ground this way (NOT halo.lookup_fused), so the kernel must too.
 //   bb = [north_lat, south_lat, west_lon, east_lon]
 __device__ __forceinline__ double tile_elev(
@@ -146,9 +148,9 @@ __device__ __forceinline__ double tile_elev(
     if (lat >= bb[1] && lat <= bb[0] && lon >= bb[2] && lon <= bb[3]) {
         double latf = (bb[0] - lat) / (bb[0] - bb[1]);
         double lonf = (lon - bb[2]) / (bb[3] - bb[2]);
-        int py = (int)fmin(fmax(floor(latf * 256.0), 0.0), 255.0);
-        int px = (int)fmin(fmax(floor(lonf * 256.0), 0.0), 255.0);
-        return inner[py * 256 + px];
+        int py = (int)fmin(fmax(floor(latf * (double)TPX), 0.0), (double)(TPX - 1));
+        int px = (int)fmin(fmax(floor(lonf * (double)TPX), 0.0), (double)(TPX - 1));
+        return inner[py * TPX + px];
     }
     return bilinear_elev_d(elev, rows, cols, lat_min, lon_min, inv, lat, lon);
 }
@@ -403,7 +405,7 @@ __device__ void veg_bands(float depth, float* out) {
 }
 
 #define BIN_W 16                 // pixel-bin edge (16×16 patch = one CUDA block)
-#define BIN_TILES (256 / BIN_W)  // 16 bins per axis, 256 bins per tile
+#define BIN_TILES (TPX / BIN_W)  // 32 bins per axis, 1024 bins per tile
 
 // ── One source's contribution to one receiver pixel: geometry → energy-budget
 // skip → cadence ray-march → terrain/screening/ground/veg → max(A_gr,A_bar)
@@ -558,7 +560,7 @@ __device__ __forceinline__ void line_source(
 // variant. Per-period energy in f32 (matching TileAccumulator), kept in f64.
 //   meta = [rows, cols, lat_min, lon_min, inv, north, south, west, east, eta,
 //           tile_width, nbarr]
-//   inner = 256×256 tile DEM; cover = halo [building,forest,imd] u8; sp = nsrc×4.
+//   inner = TPX×TPX tile DEM; cover = halo [building,forest,imd] u8; sp = nsrc×4.
 //   barr = nbarr×4 {lat, lon, height_m, dist_m} — this tile's sorted for_tile()
 //   barrier slice (nbarr in meta[11]; cudarc's tuple launch caps at 12 args).
 extern "C" __global__ void line(
@@ -575,22 +577,22 @@ extern "C" __global__ void line(
     int nsrc, float* __restrict__ out)
 {
     int pix = blockIdx.x * blockDim.x + threadIdx.x;
-    if (pix >= 256 * 256) return;
+    if (pix >= TPX * TPX) return;
     int rows = (int)meta[0], cols = (int)meta[1];
     double lat_min = meta[2], lon_min = meta[3], inv = meta[4];
     const double* bb = &meta[5];   // north_lat, south_lat, west_lon, east_lon
     double eta = meta[9];
     // Tiled (swizzled) pixel mapping: consecutive threads fill a 16×16 pixel tile
     // before the next, so each warp/block covers a COMPACT 2D region — its rays to a
-    // given source overlap, keeping the terrain halo L2-hot. Row-major (pix>>8,
-    // pix&255) gave each warp a 32-wide stripe whose rays fanned out. Output is
+    // given source overlap, keeping the terrain halo L2-hot. Row-major decomposition
+    // gave each warp a 32-wide stripe whose rays fanned out. Output is
     // identical; only the memory access pattern changes.
-    int TW = (int)meta[10], TPR = 256 / TW;   // tile width (swept; must divide 256)
+    int TW = (int)meta[10], TPR = TPX / TW;   // tile width (swept; must divide TPX)
     int tl = pix / (TW * TW), it = pix % (TW * TW);
     int py = (tl / TPR) * TW + it / TW;
     int pxi = (tl % TPR) * TW + it % TW;
-    int opix = py * 256 + pxi;   // actual pixel index (rxar/out are pixel-indexed)
-    double rlat = rxll[py], rlon = rxll[256 + pxi];
+    int opix = py * TPX + pxi;   // actual pixel index (rxar/out are pixel-indexed)
+    double rlat = rxll[py], rlon = rxll[TPX + pxi];
     double ralt = rxar[opix * 2], refl = rxar[opix * 2 + 1];
     int nbarr = (int)meta[11];
     float e0 = 0.0f, e1 = 0.0f, e2 = 0.0f;
@@ -609,15 +611,16 @@ extern "C" __global__ void line(
 }
 
 // Binned scatter — bins ON the GPU (deletes the CPU build_pixel_bins prep, the
-// gpu-surface bottleneck). Same 8×8-block / 64-thread mapping as line_binned, but
-// instead of a CPU CSR bin it scans all nsrc sources in 64-source CHUNKS: the 64
-// lanes cull one chunk cooperatively (one source per lane) into shared keep[64],
+// gpu-surface bottleneck). Same 16×16-block / 256-thread mapping as line_binned, but
+// instead of a CPU CSR bin it scans all nsrc sources in 256-source CHUNKS: the 256
+// lanes cull one chunk cooperatively (one source per lane) into shared keep[256],
 // then REPLAY that chunk in source order, each thread (= its own pixel) calling
 // line_source only on survivors. cos=1 block radius (block_reach_ub) is a universal
 // upper bound on the p2s block-corner distance ⇒ conservative superset at every
 // latitude; the per-pixel cull in line_source stays authoritative; the 0..nsrc
 // ordered replay preserves the order-dependent energy-budget skip ⇒ byte-identical
-// to `line`. One cull per source (not 256×), fixed 256-byte shared, no atomics.
+// to `line`. One cull per source (not once per pixel), fixed BIN_W²-byte shared,
+// no atomics.
 // See docs/dev/gpu-binning-plan.md.
 extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 2) line_binned_fused(
     const float*  __restrict__ elev,
@@ -642,8 +645,8 @@ extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 2) line_binned_fused
     int py0 = by * BIN_W, py1 = by * BIN_W + BIN_W - 1;
     int px0 = bx * BIN_W, px1 = bx * BIN_W + BIN_W - 1;
     int py = py0 + lane / BIN_W, pxi = px0 + lane % BIN_W;
-    int opix = py * 256 + pxi;
-    double rlat = rxll[py], rlon = rxll[256 + pxi];
+    int opix = py * TPX + pxi;
+    double rlat = rxll[py], rlon = rxll[TPX + pxi];
     double ralt = rxar[opix * 2], refl = rxar[opix * 2 + 1];
     int nbarr = (int)meta[11];
     float e0 = 0.0f, e1 = 0.0f, e2 = 0.0f;
@@ -653,9 +656,9 @@ extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 2) line_binned_fused
 
     // Block centre + cos=1 radius UB — once per thread (all lanes agree, no divergence).
     double clat = 0.5 * (rxll[py0] + rxll[py1]);
-    double clon = 0.5 * (rxll[256 + px0] + rxll[256 + px1]);
+    double clon = 0.5 * (rxll[TPX + px0] + rxll[TPX + px1]);
     double reach = block_reach_ub(0.5 * fabs(rxll[py1] - rxll[py0]) * M_LAT,
-                                  0.5 * fabs(rxll[256 + px1] - rxll[256 + px0]));
+                                  0.5 * fabs(rxll[TPX + px1] - rxll[TPX + px0]));
     __shared__ unsigned char keep[BIN_W * BIN_W];
     for (int base = 0; base < nsrc; base += BIN_W * BIN_W) {
         int s = base + lane;

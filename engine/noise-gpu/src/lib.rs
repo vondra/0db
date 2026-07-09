@@ -90,7 +90,7 @@ pub fn pack_airborne_segs(segs: &[(SegmentPrepared, u8)]) -> (Vec<f64>, Vec<f32>
 pub const BIN_W: usize = 16;
 /// Bins per axis (an internal step for `N_BINS`; not part of the public binning API like `BIN_W`).
 const BIN_TILES: usize = TILE_PX / BIN_W;
-/// Bins per tile (256) — `line_binned`'s grid dim.
+/// Bins per tile (BIN_TILES², 1024 at 512 px) — `line_binned`'s grid dim.
 pub const N_BINS: usize = BIN_TILES * BIN_TILES;
 
 /// Per-tile non-halo buffers packed for the `line`/`line_binned_fused` kernels (the halo

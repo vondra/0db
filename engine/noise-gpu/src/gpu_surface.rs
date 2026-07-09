@@ -613,7 +613,7 @@ fn main() -> Result<()> {
         .map(LineLayer::parse)
         .collect::<Result<_>>()?;
 
-    let z = 13u8;
+    let z = 12u8; // 512@z12 base (the old z13@256 lattice)
     let prepared = env("NOISE_GPU_PREPARED", "/dev/shm/qmap/prepared");
     let baseline = env("NOISE_GPU_BASELINE", ""); // empty ⇒ no diff (production)
     let year = env("DATA_YEAR", "2026");

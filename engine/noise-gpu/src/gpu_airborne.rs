@@ -66,7 +66,7 @@ pub(crate) struct Args {
     tile_x: Option<u32>,
     #[arg(long)]
     tile_y: Option<u32>,
-    #[arg(long, default_value_t = 13)]
+    #[arg(long, default_value_t = 12)]
     pub(crate) zoom: u8,
     #[arg(long)]
     pub(crate) h3r4_dir: PathBuf,

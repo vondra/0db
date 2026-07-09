@@ -433,7 +433,7 @@ impl AirborneGpu {
 
     /// Scatter one tile against the resident region: classify into near/far[3] index lists,
     /// launch the near (exact per-pixel) + far (coarse lattice) kernels, bilinear-expand each
-    /// far level on the host, and return the fused `TileAccumulator` (3 periods × 256² cells).
+    /// far level on the host, and return the fused `TileAccumulator` (3 periods × TILE_PX² cells).
     pub fn scatter_tile(&self, region: &RegionResident, tile: &FusedTileZ13) -> TileAccumulator {
         // Empty region → silent tile; skip all device work (common for rural R4s at world scale).
         if region.nreg == 0 {

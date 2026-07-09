@@ -60,7 +60,7 @@ const MARCH_SAMPLES: usize = 48;
 /// (finer at steep angles); range ±8.0 tan ≈ ±82.9°, clamped beyond
 /// (slot-canyon horizons above 82.9° under-screen — acceptably rare).
 /// WHY quantize at all in P0: 4 B/entry → 776 B/receiver is the P3
-/// heatmap budget driver (65 536 px × 768 B ≈ 50 MB/tile; P3 can halve
+/// heatmap budget driver (262 144 px × 768 B ≈ 200 MB/tile; P3 can halve
 /// via u8 r at 64 m steps if it bites); the popup shares the struct so
 /// popup ≡ heatmap stays parity-by-construction.
 const TAN_SCALE: f64 = 4096.0;
