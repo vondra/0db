@@ -33,11 +33,12 @@ const NOISE_ONFLY_POOL_SIZE = Number(process.env.NOISE_ONFLY_POOL_SIZE || '4')
 
 export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
   const supervisor = new NoiseOnflySupervisor({
-    createWorker: () =>
+    createWorker: (slotIndex) =>
       new Worker(WORKER_URL, {
         workerData: {
           sourceReaderPath: SOURCE_READER_PATH,
           h3r4Dir: H3R4_DIR,
+          slotIndex,
         },
       }),
     maxQueue: NOISE_ONFLY_MAX_QUEUE,

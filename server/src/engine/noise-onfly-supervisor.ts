@@ -17,7 +17,12 @@ export interface NoiseOnflyWorker {
   on(event: 'exit', listener: (code: number) => void): this
 }
 
-export type NoiseOnflyWorkerFactory = () => NoiseOnflyWorker
+/**
+ * Factory receives the pool slot index so the worker can keep a SLOT-STABLE
+ * addon copy path (static-TLS invariant — see workers/noise-onfly-worker.mjs
+ * header). Factories that don't care may ignore the argument.
+ */
+export type NoiseOnflyWorkerFactory = (slotIndex: number) => NoiseOnflyWorker
 
 type SupervisorLogger = (
   level: SupervisorLogLevel,
@@ -297,7 +302,7 @@ export class NoiseOnflySupervisor {
       return slot.worker
     }
 
-    const current = this.createWorker()
+    const current = this.createWorker(slot.index)
     current.on('message', (message) => {
       this.handleWorkerMessage(slot, current, message)
     })
