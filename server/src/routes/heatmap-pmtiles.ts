@@ -145,7 +145,7 @@ function getHeatmapArchive(build: string, layer: string): Promise<OpenArchive> {
 }
 
 /**
- * GET /api/heatmap-v3/:build/:layer/:z/:x/:y.bin
+ * GET /api/tiles/:build/:layer/:z/:x/:y.bin
  *
  * Same wire contract as the loose-file route (raw HM3 v2 bytes, whole-file
  * Brotli, `Content-Encoding: br`), but addressed inside an immutable build:
@@ -156,7 +156,7 @@ function getHeatmapArchive(build: string, layer: string): Promise<OpenArchive> {
  */
 export async function heatmapPmtilesRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { build: string; layer: string; z: string; x: string; y: string } }>(
-    '/api/heatmap-v3/:build/:layer/:z/:x/:y.bin',
+    '/api/tiles/:build/:layer/:z/:x/:y.bin',
     // Bodies are already Brotli (served with Content-Encoding: br) — opt out of
     // @fastify/compress so it doesn't re-compress incompressible bytes.
     { compress: false },

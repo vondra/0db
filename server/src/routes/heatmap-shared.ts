@@ -1,5 +1,5 @@
 // Shared validation + path constants for the heatmap tile routes:
-// heatmap-v3.ts (loose .bin files), heatmap-pmtiles.ts (versioned archives)
+// heatmap-pmtiles.ts (versioned pmtiles archives)
 // and tiles-manifest.ts. One source of truth for the layer allowlist and the
 // z/x/y bounds so the two serving paths can never drift apart.
 
@@ -53,7 +53,7 @@ export function parseTileParams(p: { layer: string; z: string; x: string; y: str
 }
 
 // PMTILES_DIR lets a server instance read another checkout's archives,
-// mirroring the HEATMAP_TILES_DIR / H3R4_DIR override pattern. Defaults to
+// mirroring the H3R4_DIR override pattern. Defaults to
 // this checkout's data/. Holds `{layer}.{build}.pmtiles` + `current.json`.
 export const PMTILES_BASE = process.env.PMTILES_DIR
   ? resolve(process.env.PMTILES_DIR)

@@ -19,7 +19,11 @@ const PHOTO_RATE_MS = 300
 // Properties + photos live under one year-based dir, served at /api/properties.
 const PROPERTIES_DIR = resolve(import.meta.dirname, '..', 'data', 'prepared', DATA_YEAR, 'properties')
 const PHOTOS_DIR = resolve(PROPERTIES_DIR, 'photos')
-// Noise sampled from the z13 `total` HM3 raster (the live heatmap).
+// Noise sampled from the `total` HM3 raster. DEAD PATH since the 2026-07
+// storage redesign (loose tree deleted; world is 512@z12 pmtiles/store) —
+// the guard below refuses to run rather than silently import zero-noise
+// listings. Port: read /api/tiles/{build}/total/{z}/{x}/{y}.bin (HM3 v3,
+// 512² cells) or the tile store, then delete this note.
 const TOTAL_Z13_DIR = resolve(import.meta.dirname, '..', 'data', 'tiles', DATA_YEAR, 'heatmap-v3', 'total', '13')
 const PER_PAGE = 60
 const MAX_PAGES = 500
@@ -275,6 +279,15 @@ function writePropertiesJson(listings: RawListing[]): void {
 
 async function main(): Promise<void> {
   console.log('=== Property Import (CZ) ===\n')
+  // Refuse to import against the retired loose tree — a silent miss would
+  // stamp every listing with zero noise (see the TOTAL_Z13_DIR note).
+  if (!existsSync(TOTAL_Z13_DIR)) {
+    console.error(
+      `FATAL: noise raster dir gone (${TOTAL_Z13_DIR}) — this importer still ` +
+        'reads the pre-2026-07 loose tree; port it to the tile store/pmtiles first.',
+    )
+    process.exit(1)
+  }
 
   const listings = await fetchSreality()
 

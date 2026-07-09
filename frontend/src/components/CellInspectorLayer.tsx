@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Source, Layer, useMap } from 'react-map-gl/maplibre'
-import { HEATMAP_LAYERS } from './HeatmapV3Overlay'
+import { HEATMAP_LAYERS } from './HeatmapOverlay'
 import { lngLatToTile, tileXToLng, tileYToLat } from '../lib/tile-math'
 
 const TILE_SIZE = 64

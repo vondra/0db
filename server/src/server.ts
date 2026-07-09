@@ -7,9 +7,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const app = await buildApp({ logger: true })
 
-// Serve frontend production build
+// Serve frontend production build. preCompressed: the build writes sibling
+// .br files (frontend/scripts/precompress.mjs, brotli max quality) — served
+// verbatim to br-capable clients, beating on-the-fly q4-ish compression at
+// zero per-request CPU.
 const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist')
-app.register(fastifyStatic, { root: frontendDist })
+app.register(fastifyStatic, { root: frontendDist, preCompressed: true })
 
 // SPA fallback: non-API routes serve index.html
 app.setNotFoundHandler(async (request, reply) => {

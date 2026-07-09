@@ -1,6 +1,6 @@
 import { useCallback, useRef, useMemo } from 'react'
 import { DEFAULT_BASEMAP, type BasemapId } from '../utils/basemaps'
-import { HEATMAP_LAYERS } from '../components/HeatmapV3Overlay'
+import { HEATMAP_LAYERS } from '../components/HeatmapOverlay'
 
 const DEFAULT_LAT = 49.8
 const DEFAULT_LNG = 15.5

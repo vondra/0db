@@ -6,7 +6,7 @@ interface RasterOverlayLayerProps {
 }
 
 /// `url` overrides the default `/api/raster/{id}/{z}/{x}/{y}.png` when
-/// non-empty. Aircraft heatmap lives in [`HeatmapV3Layer`] — separate
+/// non-empty. Aircraft heatmap lives in [`HeatmapOverlay`] — separate
 /// component since it consumes the HM3 client-decoded route, not a
 /// MapLibre raster source.
 const LAYERS = [

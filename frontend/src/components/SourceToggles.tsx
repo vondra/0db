@@ -1,6 +1,6 @@
 import { Car, TrainFront, Plane, Building2, Factory } from 'lucide-react'
 import type { ReactNode } from 'react'
-import type { HeatmapLayer } from './HeatmapV3Overlay'
+import type { HeatmapLayer } from './HeatmapOverlay'
 import { Switch } from './ui/switch'
 
 interface LayerRow {

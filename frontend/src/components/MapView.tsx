@@ -7,8 +7,8 @@ import QuietZonesLayer from './QuietZonesLayer'
 import RealEstateLayer from './RealEstateLayer'
 import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
-import HeatmapV3Overlay, { HEATMAP_LAYERS } from './HeatmapV3Overlay'
-import HeatmapV3HoverTooltip from './HeatmapV3HoverTooltip'
+import HeatmapOverlay, { HEATMAP_LAYERS } from './HeatmapOverlay'
+import HoverTooltip from './HoverTooltip'
 import CellInspectorLayer from './CellInspectorLayer'
 import MapStateSync from './MapStateSync'
 import { DEFAULT_BASEMAP, loadBasemapStyle, type BasemapId } from '../utils/basemaps'
@@ -95,7 +95,7 @@ export default function MapView({
           it always draws above the HM3 tiles. A separate MapLibre
           Source/Layer would sit under the non-interleaved deck canvas
           and disappear whenever any heatmap was active. */}
-      <HeatmapV3Overlay
+      <HeatmapOverlay
         sources={activeHeatmapSources}
         highlightGeometry={highlightGeometry ?? null}
       />
@@ -103,7 +103,7 @@ export default function MapView({
       {/* After the heatmap + quiet overlays so the property markers (their own
           deck overlay) stack on top rather than being hidden under the heatmap. */}
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
-      <HeatmapV3HoverTooltip sources={activeHeatmapSources} />
+      <HoverTooltip sources={activeHeatmapSources} />
       <CellInspectorLayer rasterOverlays={rasterOverlays ?? {}} />
       <IsochronLayer geojson={isochronGeojson ?? null} />
       <FlyToLocation location={selectedLocation ?? null} onArrived={handleArrived} />

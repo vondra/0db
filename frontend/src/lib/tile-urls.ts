@@ -51,7 +51,7 @@ function snapshot(): string | null {
  * `build` — the caller passes the snapshot its layer was constructed with.
  */
 export function tileUrl(build: string, source: string, z: number, x: number, y: number): string {
-  return `/api/heatmap-v3/${build}/${source}/${z}/${x}/${y}.bin`
+  return `/api/tiles/${build}/${source}/${z}/${x}/${y}.bin`
 }
 
 /**

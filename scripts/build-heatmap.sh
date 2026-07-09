@@ -3,7 +3,7 @@
 # layer's z12 tiles + zoom pyramid (z2-11), then the precomputed `total/`
 # (energy-sum of every layer, the default all-layers-on view).
 #
-# Each layer is its own tile tree under heatmap-v3/{layer}/ with a distinct
+# Each layer is its own loose staging tree under build/{layer}/ with a distinct
 # HM3 source_id; `total/` is derived by build-heatmap-combine. Regenerating one
 # layer = rebuild its tree + re-run combine (which re-reads the untouched
 # layers). The surface kernels (road/rail/industrial/building) take a bbox or a
@@ -18,7 +18,7 @@
 #   ./scripts/build-heatmap.sh --combine-only                            # just rebuild total/ from existing layers
 #   ./scripts/build-heatmap.sh --source road --bbox <…> --no-combine     # build a layer, skip total/
 #
-# Env: DATA_YEAR=2026  DATA_ROOT=data  OUTPUT=$DATA_ROOT/tiles/$DATA_YEAR/heatmap-v3  ZOOM=12
+# Env: DATA_YEAR=2026  DATA_ROOT=data  OUTPUT=$DATA_ROOT/tiles/$DATA_YEAR/build  ZOOM=12
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,7 +26,10 @@ DATA_YEAR="${DATA_YEAR:-$(cat DATA_YEAR)}"  # default from committed ./DATA_YEAR
 DATA_ROOT="${DATA_ROOT:-data}"
 H3R4="$DATA_ROOT/prepared/$DATA_YEAR/h3r4"
 PREP="$DATA_ROOT/prepared"
-OUTPUT="${OUTPUT:-$DATA_ROOT/tiles/$DATA_YEAR/heatmap-v3}"
+OUTPUT="${OUTPUT:-$DATA_ROOT/tiles/$DATA_YEAR/build}"
+# The tile STORE root is its own path, NOT derived from the staging root — the
+# 2026-07-09 rename decoupled them (staging=build/, store=store/; /gg Codex).
+STORE_ROOT="${STORE_ROOT:-$DATA_ROOT/tiles/$DATA_YEAR/store}"
 ZOOM="${ZOOM:-12}"
 TARGET=engine/heatmap-aircraft/target/release
 SURFACE="$TARGET/build-heatmap-surface"
@@ -231,8 +234,8 @@ PY
       for L in "${SURFACE_LAYERS[@]}"; do
         if [ -n "$bbox" ]; then die_store_migration; fi
         log "transcode $L → store (parity-gated) + pyramid z$ZOOM→z3"
-        "$TRANSCODE" "$OUTPUT/$L" "${OUTPUT}-store/$L"
-        "$PYR" --store-dir "${OUTPUT}-store/$L" --base-zoom "$ZOOM" --dst-zoom 3
+        "$TRANSCODE" "$OUTPUT/$L" "$STORE_ROOT/$L"
+        "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2
       done
     fi
   fi
@@ -250,8 +253,8 @@ PY
       die_store_migration
     else
       log "transcode $L → store (parity-gated) + pyramid z$ZOOM→z3"
-      "$TRANSCODE" "$LDIR" "${OUTPUT}-store/$L"
-      "$PYR" --store-dir "${OUTPUT}-store/$L" --base-zoom "$ZOOM" --dst-zoom 3
+      "$TRANSCODE" "$LDIR" "$STORE_ROOT/$L"
+      "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2
     fi
   done
 fi
@@ -264,7 +267,7 @@ elif $is_shard; then
 elif [ -n "$bbox" ]; then
   die_store_migration
 else
-  log "combine → ${OUTPUT}-store/total"
-  "$COMBINE" --store-root "${OUTPUT}-store"
+  log "combine → $STORE_ROOT/total"
+  "$COMBINE" --store-root "$STORE_ROOT"
 fi
-log "done → ${OUTPUT}-store (pack + publish: tile-store-pack <store-root> <pmtiles-dir> b<N>)"
+log "done → $STORE_ROOT (pack + publish: tile-store-pack <store-root> <pmtiles-dir> b<N>)"
