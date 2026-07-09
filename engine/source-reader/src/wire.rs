@@ -55,6 +55,15 @@ pub struct WireSource {
     pub lden: f64,
     #[serde(serialize_with = "noise_compute::types::serialize_lden_db_opt")]
     pub lden_free: f64,
+    /// Per-source `L_day` (END 07:00–19:00, no penalty). Together with `le`
+    /// this completes the period split on the wire — validation v2 ingests
+    /// networks publishing ld/le/ln and must band each period directly
+    /// (validation-v2-plan.md build order §1). `null` when silent.
+    #[serde(serialize_with = "noise_compute::types::serialize_lden_db_opt")]
+    pub ld: f64,
+    /// Per-source `L_evening` (END 19:00–23:00, no penalty). `null` when silent.
+    #[serde(serialize_with = "noise_compute::types::serialize_lden_db_opt")]
+    pub le: f64,
     /// Per-source `L_night` (END 23:00–07:00, no penalty) — exposed so the
     /// frontend + /check-world can band the night metric directly (C1: rail Ln
     /// is no longer the flat `Lden − 7.91`). `null` when the period is silent.
@@ -70,6 +79,8 @@ impl From<SourceResult> for WireSource {
             source_type: s.source_type,
             lden: s.periods.lden_db,
             lden_free: s.periods_free.lden_db,
+            ld: s.periods.ld_db,
+            le: s.periods.le_db,
             ln: s.periods.ln_db,
             segment_count: s.segment_count,
             displayed_count: s.displayed_count,

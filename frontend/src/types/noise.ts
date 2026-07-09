@@ -5,6 +5,11 @@ interface SourceSummary {
   source_type: string
   lden: number | null
   lden_free: number | null
+  /** Per-source L_day (END 07:00–19:00, no penalty). null = silent period.
+   * Full period split on the wire for validation v2 (ld/le/ln networks). */
+  ld: number | null
+  /** Per-source L_evening (END 19:00–23:00, no penalty). null = silent period. */
+  le: number | null
   /** Per-source L_night (END 23:00–07:00, no penalty). null = silent period.
    * Surfaced for the C1 rail night split (rail Ln no longer = Lden − 7.91). */
   ln: number | null
