@@ -1,0 +1,100 @@
+{
+ "$doc": "EBA Lärmmonitoring station registry. Coordinates are TOWN CENTROIDS (Nominatim/OSM, fetched 2026-07-09, ODbL) — the measurement mast (7.5 m from track centre, 1.2 m above rail top) is NOT yet geolocated; coord_uncertainty_m ~3000. Refine to mast positions to unlock level comparison; until then the snapshot anchors rail TRAFFIC inputs (train counts, freight share, speeds) and the level TREND.",
+ "stations": {
+  "Elmshorn": {
+   "lat": 53.75325,
+   "lng": 9.65246,
+   "strecke": "1220 Hamburg – Kiel"
+  },
+  "Schwarzenbek": {
+   "lat": 53.50312,
+   "lng": 10.47856,
+   "strecke": "6100 Berlin – Hamburg"
+  },
+  "Nienburg": {
+   "lat": 52.64878,
+   "lng": 9.25781,
+   "strecke": "1740 Wunstorf – Bremen"
+  },
+  "Celle": {
+   "lat": 52.62406,
+   "lng": 10.08105,
+   "strecke": "1720 Lehrte – Hamburg"
+  },
+  "Stadthagen": {
+   "lat": 52.32897,
+   "lng": 9.20535,
+   "strecke": "1700 Hannover – Minden"
+  },
+  "Eilsleben": {
+   "lat": 52.14704,
+   "lng": 11.21219,
+   "strecke": "6110 Braunschweig – Magdeburg"
+  },
+  "Telgte": {
+   "lat": 51.98352,
+   "lng": 7.78486,
+   "strecke": "2200 Wanne-Eickel – Hamburg"
+  },
+  "Emmerich": {
+   "lat": 51.83221,
+   "lng": 6.24283,
+   "strecke": "2270 Oberhausen – Emmerich (Grenze)"
+  },
+  "Radebeul": {
+   "lat": 51.09998,
+   "lng": 13.6768,
+   "strecke": "6248 Berlin – Dresden"
+  },
+  "Saalfeld": {
+   "lat": 50.64791,
+   "lng": 11.361,
+   "strecke": "6305 Großheringen – Saalfeld"
+  },
+  "Bad Hersfeld": {
+   "lat": 50.86042,
+   "lng": 9.67677,
+   "strecke": "3600 Bebra – Fulda"
+  },
+  "Andernach": {
+   "lat": 50.43919,
+   "lng": 7.40231,
+   "strecke": "2630 Köln – Bingen"
+  },
+  "Lahnstein": {
+   "lat": 50.30903,
+   "lng": 7.60446,
+   "strecke": "3507 Koblenz – Wiesbaden"
+  },
+  "Karlstadt": {
+   "lat": 49.96329,
+   "lng": 9.77887,
+   "strecke": "5200 Würzburg – Aschaffenburg"
+  },
+  "Osterhofen": {
+   "lat": 48.70196,
+   "lng": 13.02014,
+   "strecke": "5830 Regensburg – Passau"
+  },
+  "Rosenheim": {
+   "lat": 47.85579,
+   "lng": 12.1273,
+   "strecke": "5510 München – Rosenheim"
+  },
+  "Göppingen": {
+   "lat": 48.70314,
+   "lng": 9.65411,
+   "strecke": "4700 Stuttgart – Ulm"
+  },
+  "Emmendingen": {
+   "lat": 48.12066,
+   "lng": 7.85099,
+   "strecke": "4000 Mannheim – Basel"
+  },
+  "Fürstenwalde": {
+   "lat": 52.35802,
+   "lng": 14.06499,
+   "strecke": "6153 Berlin – Guben"
+  }
+ }
+}
