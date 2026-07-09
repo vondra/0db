@@ -5,7 +5,12 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true
   },
-  "include": ["*.ts"]
+  "include": [
+    "*.ts",
+    "validation/*.ts"
+  ]
 }
