@@ -1,5 +1,11 @@
 /**
- * Import Czech real estate listings from Sreality.cz → one properties.json.
+ * Import Czech real estate listings from Bezrealitky.cz → one properties.json.
+ *
+ * Source history: Sreality.cz's v2 API died with their 2026 site redesign AND
+ * their 2026-04 terms now prohibit database extraction outright — dropped for
+ * good (research 2026-07-10). Bezrealitky serves complete listing JSON in the
+ * server-rendered __NEXT_DATA__ Apollo cache, no auth, and its terms carry no
+ * scraping ban; same land+house scope as before.
  *
  * Noise is sampled from the z13 `total` HM3 raster (the live heatmap), not the
  * deprecated H3 tiles. Output: data/prepared/{DATA_YEAR}/properties/properties.json
@@ -60,109 +66,119 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms))
 }
 
-async function fetchJson(url: string): Promise<any> {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': '0db.app/1.0 noise-map' },
-    signal: AbortSignal.timeout(30000),
-  })
-  return res.json()
-}
+// ── Bezrealitky ──
 
-// ── Sreality ──
-
-const SREALITY_URL_SLUGS: Record<number, string> = {
-  18: 'komercni', 19: 'bydleni', 20: 'pole', 21: 'les', 22: 'louka', 23: 'zahrada',
-  33: 'chata', 35: 'pamatka', 37: 'rodinny', 39: 'vila', 40: 'na-klic', 43: 'chalupa', 44: 'zemedelska-usedlost',
-}
-const SREALITY_MAIN_SLUG: Record<number, string> = { 2: 'dum', 3: 'pozemek' }
-const SREALITY_TYPE_SLUG: Record<number, string> = { 1: 'prodej', 2: 'pronajem' }
-
-const SREALITY_QUERIES: [number, number, string, string][] = [
-  [3, 1, 'land', 'buy'],
-  [3, 2, 'land', 'rent'],
-  [2, 1, 'house', 'buy'],
-  [2, 2, 'house', 'rent'],
+const BEZREALITKY_QUERIES: [string, string, string, string][] = [
+  // [estateType, offerType, our property type, our listing kind] — same
+  // land+house scope the map always had (About: "Focus: land plots").
+  ['POZEMEK', 'PRODEJ', 'land', 'buy'],
+  ['POZEMEK', 'PRONAJEM', 'land', 'rent'],
+  ['DUM', 'PRODEJ', 'house', 'buy'],
+  ['DUM', 'PRONAJEM', 'house', 'rent'],
 ]
 
-async function fetchSreality(): Promise<RawListing[]> {
+const BR_PAGE_SIZE = 15 // fixed by their search page
+
+interface BrAdvert {
+  id: string
+  uri: string
+  price: number | null
+  currency: string | null
+  surface: number | null
+  surfaceLand: number | null
+  gps: { lat: number; lng: number } | null
+  mainImage: { __ref: string } | null
+  [localeKeyed: string]: unknown
+}
+
+/** Pull one search page's __NEXT_DATA__ Apollo cache. Returns the adverts,
+ *  the Image cache (photo URLs) and totalCount for pagination. */
+async function fetchBezrealitkyPage(
+  estateType: string,
+  offerType: string,
+  page: number,
+): Promise<{ adverts: BrAdvert[]; images: Map<string, string>; total: number }> {
+  const url = `https://www.bezrealitky.com/search?currency=CZK&estateType=${estateType}&offerType=${offerType}&page=${page}`
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) 0db.app/1.0 noise-map' },
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const html = await res.text()
+  const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/s)
+  if (!m) throw new Error('__NEXT_DATA__ missing — site layout drift')
+  const cache = JSON.parse(m[1])?.props?.pageProps?.apolloCache ?? {}
+
+  const images = new Map<string, string>()
+  for (const [key, value] of Object.entries(cache)) {
+    if (!key.startsWith('Image:')) continue
+    const v = value as Record<string, unknown>
+    const thumb = v['url({"filter":"RECORD_THUMB"})'] ?? v['url({"filter":"RECORD_MAIN"})']
+    if (typeof thumb === 'string') images.set(key, thumb)
+  }
+  const adverts = Object.entries(cache)
+    .filter(([k]) => k.startsWith('Advert:'))
+    .map(([, v]) => v as BrAdvert)
+
+  let total = 0
+  const root = (cache.ROOT_QUERY ?? {}) as Record<string, { totalCount?: number }>
+  for (const [key, value] of Object.entries(root)) {
+    // Match OUR list query (full pagination shape), not the sidebar teasers.
+    if (key.startsWith('listAdverts') && key.includes('"offset"') && value?.totalCount != null) {
+      total = value.totalCount
+      break
+    }
+  }
+  return { adverts, images, total }
+}
+
+async function fetchBezrealitky(): Promise<RawListing[]> {
   const listings: RawListing[] = []
 
-  for (const [mainCb, typeCb, propertyType, listingType] of SREALITY_QUERIES) {
-    const mainSlug = SREALITY_MAIN_SLUG[mainCb]
-    const typeSlug = SREALITY_TYPE_SLUG[typeCb]
+  for (const [estateType, offerType, propertyType, listingType] of BEZREALITKY_QUERIES) {
+    console.log(`  Fetching Bezrealitky ${estateType} ${offerType}...`)
     let page = 1
-    let total = 0
-
-    console.log(`  Fetching Sreality ${mainSlug} ${typeSlug}...`)
-
-    while (page <= MAX_PAGES) {
-      const url = `https://www.sreality.cz/api/cs/v2/estates?category_main_cb=${mainCb}&category_type_cb=${typeCb}&per_page=${PER_PAGE}&page=${page}`
+    let pages = 1
+    while (page <= Math.min(pages, MAX_PAGES)) {
       try {
-        const data = await fetchJson(url)
+        const { adverts, images, total } = await fetchBezrealitkyPage(estateType, offerType, page)
         if (page === 1) {
-          total = data.result_size || 0
-          console.log(`    Total: ${total}, ~${Math.ceil(total / PER_PAGE)} pages`)
+          pages = Math.ceil(total / BR_PAGE_SIZE)
+          console.log(`    Total: ${total}, ${pages} pages`)
         }
-
-        const estates = data._embedded?.estates || []
-        if (estates.length === 0) break
-
-        for (const e of estates) {
-          const gps = e.gps
-          if (!gps?.lat || !gps?.lon) continue
-
-          const subCb = e.seo?.category_sub_cb
-          const urlSlug = SREALITY_URL_SLUGS[subCb] || 'bydleni'
-
-          let photoUrl: string | null = null
-          const imgs = e._links?.images
-          if (Array.isArray(imgs) && imgs.length > 0) {
-            const href = imgs[0].href
-            if (href) photoUrl = href.replace(/\?.*$/, '') + '?fl=res,400,300,3|jpg,80'
-          }
-
+        for (const a of adverts) {
+          if (!a.gps || a.price == null) continue
+          const addressEn = a['address({"locale":"EN"})']
+          const title = typeof addressEn === 'string' && addressEn
+            ? addressEn
+            : a.uri.replace(/^\d+-nabidka-/, '').replaceAll('-', ' ')
           listings.push({
-            id: `sreality-${e.hash_id}`,
-            title: e.name || (propertyType === 'land' ? 'Pozemek' : 'Dům'),
-            price: e.price || 0,
-            lat: gps.lat,
-            lng: gps.lon,
-            area: (() => { const m = e.name?.match(/(\d[\d\s]*)\s*m²/); return m ? parseInt(m[1].replace(/\s/g, '')) : null })(),
+            id: `bezrealitky-${a.id}`,
+            title,
+            price: a.price,
+            lat: a.gps.lat,
+            lng: a.gps.lng,
+            area: a.surfaceLand ?? a.surface ?? null,
             type: propertyType,
             listing: listingType,
-            url: `https://www.sreality.cz/detail/${typeSlug}/${mainSlug}/${urlSlug}/${e.seo?.locality || 'cz'}/${e.hash_id}`,
-            photo: photoUrl,
-            source: 'sreality',
+            url: `https://www.bezrealitky.cz/nemovitosti-byty-domy/${a.uri}`,
+            photo: (a.mainImage && images.get(a.mainImage.__ref)) || null,
+            source: 'bezrealitky',
           })
         }
-
-        if (page % 50 === 0) console.log(`    Page ${page}/${Math.ceil(total / PER_PAGE)} — ${listings.length} total`)
-        page++
-        await sleep(RATE_LIMIT_MS)
-      } catch (err: any) {
-        console.error(`    Error page ${page}: ${err.message}`)
-        if (page > 3) break
-        await sleep(5000)
-        page++
+      } catch (err) {
+        console.log(`    Error page ${page}: ${err instanceof Error ? err.message : err}`)
       }
+      page++
+      await new Promise(r => setTimeout(r, RATE_LIMIT_MS))
     }
   }
 
-  console.log(`  Sreality: ${listings.length} listings`)
   return listings
 }
 
 // ── Photo download (into the properties photos dir) ──
 
 async function downloadPhotos(listings: RawListing[]): Promise<number> {
-  let cookie = ''
-  try {
-    const res = await fetch('https://www.sreality.cz/', {
-      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' },
-    })
-    cookie = (res.headers.getSetCookie?.() || []).map((c: string) => c.split(';')[0]).join('; ')
-  } catch {}
-
   mkdirSync(PHOTOS_DIR, { recursive: true })
   let downloaded = 0, skipped = 0, failed = 0
 
@@ -175,8 +191,6 @@ async function downloadPhotos(listings: RawListing[]): Promise<number> {
       const res = await fetch(l.photo, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-          'Referer': 'https://www.sreality.cz/',
-          'Cookie': cookie,
           'Accept': 'image/*',
         },
         signal: AbortSignal.timeout(10000),
@@ -288,7 +302,7 @@ async function writePropertiesJson(listings: RawListing[]): Promise<void> {
 // ── Main ──
 
 async function main(): Promise<void> {
-  console.log('=== Property Import (CZ) ===\n')
+  console.log('=== Property Import (CZ / Bezrealitky) ===\n')
   // Resolve the published tile build up front — refusing to run beats
   // silently stamping every listing with noise=null.
   try {
@@ -299,7 +313,7 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  const listings = await fetchSreality()
+  const listings = await fetchBezrealitky()
 
   const seen = new Set<string>()
   const deduped = listings.filter(l => {
