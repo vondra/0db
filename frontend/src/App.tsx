@@ -199,7 +199,10 @@ function MapApp() {
 
       {/* UI overlays */}
       <div className="absolute inset-0 z-[1002] pointer-events-none">
-        <div className="hidden md:flex absolute top-3 right-3 flex-col gap-2 w-[320px]">
+        {/* bottom-14 + clip: the card column must never run under the About
+            footer chip (owner report 2026-07-10); DetailCard scrolls its own
+            content, anything beyond the cap is clipped, not overlaid. */}
+        <div className="hidden md:flex absolute top-3 right-3 bottom-14 flex-col gap-2 w-[320px] overflow-hidden">
           <div className="pointer-events-auto">
             <ControlCard
               quietClustersEnabled={quietClustersEnabled}
@@ -302,7 +305,8 @@ function MapApp() {
       {/* Mobile: detail sheet */}
       <a
         href="/about"
-        className="hidden md:block fixed bottom-1.5 right-2 z-[1001] px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground bg-white/80 rounded shadow-sm"
+        className="hidden md:block fixed bottom-2 right-2 z-[1003] rounded bg-white px-2.5 py-1 text-sm text-foreground hover:bg-[#f2f2f2]"
+        style={{ boxShadow: '0 0 0 2px rgba(0,0,0,.1)' }}
       >
         About 0db.app
       </a>
