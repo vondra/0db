@@ -26,8 +26,9 @@ const TMP = mkdtempSync(join(tmpdir(), 'roads-arrow-test-'))
 after(() => rmSync(TMP, { recursive: true, force: true }))
 
 /** Tiny roads.arrow on disk with the columns writeRoadAadt reads/rewrites.
- *  Seeds distinctive AADT values (1000+i pattern) so "untouched" is provable. */
-function writeRoadsFixture(name: string, classes: number[]): string {
+ *  Seeds distinctive AADT values (1000+i pattern) so "untouched" is provable.
+ *  `speeds` (parallel to classes) adds a speed_limit column when given. */
+function writeRoadsFixture(name: string, classes: number[], speeds?: number[]): string {
   const idx = [...classes.keys()]
   const table = new Table({
     ref: vectorFromArray(idx.map(i => `R${i}`), new Utf8()),
@@ -36,6 +37,7 @@ function writeRoadsFixture(name: string, classes: number[]): string {
     end_lat: vectorFromArray(idx.map(i => 50.0 + i * 0.001 + 0.0005), new Float64()),
     end_lon: vectorFromArray(idx.map(i => 14.0 + i * 0.001 + 0.0005), new Float64()),
     road_class: vectorFromArray(classes, new Uint8()),
+    ...(speeds ? { speed_limit: vectorFromArray(speeds, new Uint8()) } : {}),
     aadt_light: vectorFromArray(idx.map(i => 1000 + i), new Int32()),
     aadt_medium: vectorFromArray(idx.map(i => 2000 + i), new Int32()),
     aadt_heavy: vectorFromArray(idx.map(i => 3000 + i), new Int32()),
@@ -155,4 +157,64 @@ test('retract: disowns owned rows (incl. out-of-coverage) and zeroes AADT; count
   assert.equal(light[0], 0, 'retracted AADT zeroed')
   assert.equal(light[1], 111, 'kept AADT intact')
   assert.equal(light[2], 111, 'foreign AADT intact')
+})
+
+// ── R7 taper: the speed_taper derived-annotation column ─────────────────────
+
+// Taper id from the registry (baseline rank — writes only onto empty rows).
+const TAPER_ID = 9862
+
+test('speedTaper: column created on first write; OSM speed_limit never touched', async () => {
+  const path = writeRoadsFixture('taper-write.arrow', [4, 4], [0, 90])
+  await writeRoadAadt(path, (_row, i) =>
+    i === 0 ? { light: 500, medium: 10, heavy: 20, moto: 5, sourceId: TAPER_ID, speedTaper: 73 } : null)
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('speed_taper')!.get(0), 73, 'graded speed in its own column')
+  assert.equal(t.getChild('speed_taper')!.get(1), 0, 'untouched row reads 0')
+  assert.equal(t.getChild('speed_limit')!.get(0), 0, 'OSM tag column untouched (row untagged)')
+  assert.equal(t.getChild('speed_limit')!.get(1), 90, 'OSM tag preserved verbatim')
+  assert.equal(t.getChild('source_id')!.get(0), TAPER_ID)
+
+  // AADT-only write on a schema WITHOUT the column must not invent it.
+  const plain = writeRoadsFixture('taper-nocol.arrow', [2])
+  await writeRoadAadt(plain, () => ({ light: 700, medium: 1, heavy: 2, moto: 3, sourceId: 20 }))
+  assert.equal(tableFromIPC(readFileSync(plain)).getChild('speed_taper'), null, 'no column invented')
+
+  // Out-of-range payloads fail loud (0 means "omit", 255 is the derestricted sentinel).
+  for (const bad of [0, 255, 70.5]) {
+    await assert.rejects(
+      writeRoadAadt(path, () => ({ light: 1, medium: 0, heavy: 0, moto: 0, sourceId: TAPER_ID, speedTaper: bad })),
+      /invalid speedTaper/,
+      `speedTaper ${bad} rejected`,
+    )
+  }
+})
+
+test('speedTaper is a derived annotation: any overwrite or retract clears it unless restated', async () => {
+  const path = writeRoadsFixture('taper-clear.arrow', [4, 4], [0, 0])
+  await writeRoadAadt(path, (_row, i) =>
+    i === 0
+      ? { light: 500, medium: 10, heavy: 20, moto: 5, sourceId: TAPER_ID, speedTaper: 73 }
+      : { light: 0, medium: 0, heavy: 0, moto: 0, sourceId: TAPER_ID, speedTaper: 61 })
+
+  // Taper re-run restates row 0 (new grade) and drops row 1 (retract sweep).
+  await writeRoadAadt(
+    path,
+    (_row, i) => (i === 0 ? { light: 450, medium: 9, heavy: 18, moto: 4, sourceId: TAPER_ID, speedTaper: 68 } : null),
+    undefined,
+    undefined,
+    { sourceId: TAPER_ID, when: (_row, i) => i !== 0 },
+  )
+  let t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('speed_taper')!.get(0), 68, 'restated grade wins')
+  assert.equal(t.getChild('speed_taper')!.get(1), 0, 'retracted row cleared')
+  assert.equal(t.getChild('source_id')!.get(1), 0)
+
+  // A higher-rank census overwrite of the tapered row clears the annotation —
+  // the ramp was computed from the state the census just replaced.
+  await writeRoadAadt(path, (_row, i) =>
+    i === 0 ? { light: 9000, medium: 200, heavy: 300, moto: 20, sourceId: 20 } : null)
+  t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('source_id')!.get(0), 20, 'census owns the row now')
+  assert.equal(t.getChild('speed_taper')!.get(0), 0, 'stale graded speed cannot hide behind the census stamp')
 })

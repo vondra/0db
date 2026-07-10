@@ -45,6 +45,14 @@ export interface RoadAadt {
   heavy: number
   moto: number
   sourceId: number
+  /** R7 taper graded effective speed (km/h, 1-254) → the dedicated
+   *  `speed_taper` column; the OSM `speed_limit` tag is NEVER written by any
+   *  enricher. `speed_taper` is a derived annotation, not owned data: EVERY
+   *  accepted write clears it unless the payload restates it (a data change
+   *  voids the refinement computed from the old state — /gg Codex+Gemini
+   *  consensus on the ownership-aliasing bug class), and every retract clears
+   *  it too. The column is created on first use; absent reads as 0. */
+  speedTaper?: number
 }
 
 /** Read-only view of one road row, handed to the match callback. */
@@ -144,6 +152,7 @@ export async function writeRoadAadt(
     const exH = table.getChild('aadt_heavy')
     const exMo = table.getChild('aadt_moto')
     const exSrc = table.getChild('source_id')
+    const exTaper = table.getChild('speed_taper')
 
     const light = new Int32Array(n)
     const medium = new Int32Array(n)
@@ -156,6 +165,21 @@ export async function writeRoadAadt(
       heavy[i] = (exH?.get(i) as number) ?? 0
       moto[i] = (exMo?.get(i) as number) ?? 0
       src[i] = (exSrc?.get(i) as number) ?? 0
+    }
+    // speed_taper materializes LAZILY on the first row whose value actually
+    // changes — the overwhelmingly common AADT-only write on taper-free rows
+    // (every national enricher, world-wide) must not pay an O(n) rebuild of a
+    // column it never touches; untouched it flows through the generic
+    // verbatim-copy path below (and is never invented on schemas without it).
+    let taper: Uint8Array | null = null
+    const taperAt = (i: number): number => (taper ? taper[i] : ((exTaper?.get(i) as number) ?? 0))
+    const setTaper = (i: number, v: number): void => {
+      if (taperAt(i) === v) return
+      if (!taper) {
+        taper = new Uint8Array(n)
+        for (let k = 0; k < n; k++) taper[k] = (exTaper?.get(k) as number) ?? 0
+      }
+      taper[i] = v
     }
 
     let any = false
@@ -186,6 +210,7 @@ export async function writeRoadAadt(
         heavy[i] = 0
         moto[i] = 0
         src[i] = 0
+        setTaper(i, 0) // a disowned row's taper refinement is void with it
         retracted++
         any = true
         continue
@@ -209,12 +234,23 @@ export async function writeRoadAadt(
       ) {
         throw new Error(`writeRoadAadt: invalid match at row ${i} in ${arrowPath}: ${JSON.stringify(m)}`)
       }
+      if (
+        m.speedTaper !== undefined &&
+        (!Number.isInteger(m.speedTaper) || m.speedTaper < 1 || m.speedTaper > 254)
+      ) {
+        throw new Error(`writeRoadAadt: invalid speedTaper at row ${i} in ${arrowPath}: ${JSON.stringify(m)}`)
+      }
       if (!shouldOverwrite(src[i], m.sourceId)) continue // priority gate OWNED here
       light[i] = m.light
       medium[i] = m.medium
       heavy[i] = m.heavy
       moto[i] = m.moto
       src[i] = m.sourceId
+      // Derived-annotation rule (see RoadAadt.speedTaper): the write RESTATES
+      // the taper refinement or clears it — new data voids a ramp computed
+      // from the old state, so a census overwrite of a tapered row can never
+      // strand a stale graded speed behind a fresh stamp.
+      setTaper(i, m.speedTaper ?? 0)
       matched++
       any = true
       onApplied?.(row, i, m)
@@ -222,12 +258,18 @@ export async function writeRoadAadt(
     if (!any) return table // no change → withArrowWrite leaves bytes untouched
     updated = true
 
+    // speed_taper is rebuilt only when some row's value actually changed
+    // (lazy materialization above) — untouched it passes through verbatim;
+    // a first-ever taper write ADDS the column to the schema (loaders read
+    // an absent column as all-zero, so old files need no migration).
+    const rebuilt = ['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id']
+    if (taper) rebuilt.push('speed_taper')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- makeTable's typing
     // is Record<string, TypedArray>, but we mix existing Vectors (getChild) with fresh
     // makeVector columns — fine at runtime, so `any` bridges the too-narrow constraint.
     const cols: Record<string, any> = {}
     for (const f of table.schema.fields) {
-      if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(f.name)) continue
+      if (rebuilt.includes(f.name)) continue
       cols[f.name] = table.getChild(f.name)!
     }
     cols['aadt_light'] = makeVector(light)
@@ -235,6 +277,7 @@ export async function writeRoadAadt(
     cols['aadt_heavy'] = makeVector(heavy)
     cols['aadt_moto'] = makeVector(moto)
     cols['source_id'] = makeVector(src)
+    if (taper) cols['speed_taper'] = makeVector(taper)
     return makeTable(cols)
   })
 

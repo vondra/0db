@@ -209,6 +209,7 @@ pub fn collect_from_hex_data(
                 length_m: r.length_m,
                 road_class: r.road_class,
                 speed_limit: r.speed_limit,
+                speed_taper: r.speed_taper,
                 surface_type: r.surface_type,
                 oneway: r.oneway,
                 lanes: r.lanes,

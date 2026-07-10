@@ -20,6 +20,9 @@ pub struct RawRoadInput {
     /// km/h; 0 = untagged (class default), [`SPEED_LIMIT_DERESTRICTED`]
     /// = `maxspeed=none` → [`DERESTRICTED_SPEED_KMH`].
     pub speed_limit: u8,
+    /// R7 taper graded effective speed (km/h, 0 = none) — consulted only when
+    /// `speed_limit` is 0; ranks above the legal/class default it refines.
+    pub speed_taper: u8,
     pub surface_type: u8,
     pub oneway: bool,
     pub lanes: u8,
@@ -151,6 +154,11 @@ pub fn normalize_road_with_cache(
         DERESTRICTED_SPEED_KMH
     } else if input.speed_limit > 0 {
         input.speed_limit as f64
+    } else if input.speed_taper > 0 {
+        // R7 taper: a graded effective speed at a junction-free step — a
+        // refinement of the default the row would otherwise get, so it ranks
+        // between the OSM tag (real law) and the legal/class default.
+        input.speed_taper as f64
     } else {
         // Untagged: the country's LEGAL implicit limit (urban/rural via the built_up
         // raster flag) beats the one-global-number table — a tagged/untagged boundary
@@ -189,6 +197,7 @@ pub fn normalize_road_segment(seg: &RoadSegment, admin: Admin) -> Option<Normali
         RawRoadInput {
             road_class: seg.road_class,
             speed_limit: seg.speed_limit,
+            speed_taper: seg.speed_taper,
             surface_type: seg.surface_type,
             oneway: seg.oneway,
             lanes: seg.lanes,
@@ -377,6 +386,7 @@ mod tests {
             RawRoadInput {
                 road_class: 4,
                 speed_limit: 90,
+                speed_taper: 0,
                 surface_type: 0,
                 oneway: false,
                 lanes: 0,
@@ -409,6 +419,7 @@ mod tests {
             RawRoadInput {
                 road_class: 0,
                 speed_limit: SPEED_LIMIT_DERESTRICTED,
+                speed_taper: 0,
                 surface_type: 0,
                 oneway: false,
                 lanes: 0,

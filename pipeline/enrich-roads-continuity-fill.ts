@@ -43,6 +43,7 @@ import { SOURCE_ID_ROAD_CONTINUITY_HEURISTIC } from './lib/source-ids.generated.
 import { isMeasured } from './lib/sources.js'
 import { classDefaultTotal } from './lib/road-class-defaults.js'
 import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
+import { nodeKey } from './lib/spatial.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_ROAD_CONTINUITY_HEURISTIC
@@ -79,11 +80,6 @@ const FILLABLE = new Set([0, 1, 2, 3, 4, 10, 11, 12])
  *  and simplest (aligns with R5 / R13). */
 function canonRef(r: string | null): string {
   return r ? r.trim().toUpperCase().replace(/\s+/g, '') : ''
-}
-/** Endpoint identity — round to ~1 m so segments that share a node match
- *  (same scheme as service-tree's nodeKey). */
-function nodeKey(lat: number, lon: number): string {
-  return `${lat.toFixed(5)}_${lon.toFixed(5)}`
 }
 
 interface Seg {

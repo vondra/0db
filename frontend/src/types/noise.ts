@@ -110,7 +110,15 @@ interface RoadMetadata {
   aadt_heavy_effective: number
   aadt_moto_effective: number
   speed_kmh: number
-  speed_source: 'osm_posted' | 'default_by_class' | 'country_legal_default' | 'roundabout_cap' | 'derestricted'
+  speed_source:
+    | 'osm_posted'
+    | 'default_by_class'
+    | 'country_legal_default'
+    | 'roundabout_cap'
+    | 'derestricted'
+    // R7 taper graded effective speed at a junction-free step — a refinement
+    // of the default, NOT a posted limit (engine compute/roads.rs).
+    | 'graded_transition'
   road_class: string
   surface: string
   surface_corr_db: number

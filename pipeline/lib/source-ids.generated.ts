@@ -111,3 +111,4 @@ export const SOURCE_ID_TZ_NATIONAL_ROADS = 9834 as const // tz-national-roads
 export const SOURCE_ID_TZ_NATIONAL_RAILWAY = 9835 as const // tz-national-railway
 export const SOURCE_ID_UZ_NATIONAL_ROADS = 9860 as const // uz-national-roads
 export const SOURCE_ID_UZ_NATIONAL_RAILWAY = 9861 as const // uz-national-railway
+export const SOURCE_ID_OSM_TRANSITION_TAPER = 9862 as const // osm-transition-taper

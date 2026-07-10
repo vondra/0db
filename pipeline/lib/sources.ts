@@ -16,12 +16,14 @@
  *     idempotent.
  */
 
-import { DATASETS, type Dataset } from './enrichment-datasets.js'
+import { DATASETS, type Dataset, type Provenance } from './enrichment-datasets.js'
 
 // Provenance enum + rank
 
 /**
- * How authoritative the data is.
+ * How authoritative the data is. (The `Provenance` TYPE lives in
+ * `enrichment-datasets.ts` — upstream of this module — so a dataset entry can
+ * DECLARE its tier; it is re-exported here, the historical import site.)
  *
  * - `city-measured` — per-segment match against a municipal traffic counter
  *   inside a city polygon; denser/newer than the national census it overrides
@@ -46,18 +48,10 @@ import { DATASETS, type Dataset } from './enrichment-datasets.js'
  *                               accumulation, NACE name-keyword match).
  *   - `baseline`              — OSM-only inference or global baseline
  *                               coverage (Overture buildings, Copernicus
- *                               DEM, OSM tag-only fallback).
+ *                               DEM, OSM tag-only fallback, R7 taper).
  *   - `none`                  — sentinel for unenriched rows (id = 0).
  */
-export type Provenance =
-  | 'city-measured'
-  | 'national-measured'
-  | 'continental-measured'
-  | 'global-measured'
-  | 'national-proxy'
-  | 'heuristic'
-  | 'baseline'
-  | 'none'
+export type { Provenance }
 
 /**
  * Lexicographic rank for `shouldOverwrite`. Higher rank wins.
@@ -97,16 +91,16 @@ export interface Source {
 }
 
 /**
- * Derive a `Provenance` label from the legacy `priority` field plus a
- * couple of per-key manual overrides for ambiguous tier-50 entries.
+ * Derive a `Provenance` label: an entry's own `provenance` declaration wins
+ * (Overture/Copernicus baselines, R7 taper), otherwise the legacy `priority`
+ * ladder decides.
  *
  * Mapping:
  *   priority 90 → city-measured (municipal counters; city-enrichment-plan)
  *   priority 80 → national-measured, EXCEPT measurement:'proxy' → national-proxy
  *                 (a national-scale estimate, not a real count — see Provenance)
  *   priority 70 → continental-measured
- *   priority 50 → global-measured, except global-overture / *copernicus*
- *                 which are OSM-derived / baseline rasters (baseline)
+ *   priority 50 → global-measured
  *   priority 10 → heuristic
  *   priority 0  → none (sentinel)
  *   other       → none (defensive for malformed entries)
@@ -116,20 +110,14 @@ export interface Source {
  */
 export function provenanceFromEntry(d: Dataset): Provenance {
   if (d.id === 0) return 'none'
+  if (d.provenance) return d.provenance
   if (d.priority >= 90) return 'city-measured'
   // A proxy at national priority is an estimate, not a measurement: drop it to a
   // dedicated non-measured tier so the engine re-applies access_factor and it can
   // never overwrite a real measured neighbour (gg 2026-06-14, Ondra's call).
   if (d.priority >= 80) return d.measurement === 'proxy' ? 'national-proxy' : 'national-measured'
   if (d.priority >= 70) return 'continental-measured'
-  if (d.priority >= 50) {
-    // tier-50 has three members today: GPPD (measured per-facility),
-    // Overture buildings (OSM-derived inference), Copernicus DEM (global
-    // raster baseline). Only GPPD qualifies as "measured".
-    if (d.key.includes('overture')) return 'baseline'
-    if (d.key.includes('copernicus')) return 'baseline'
-    return 'global-measured'
-  }
+  if (d.priority >= 50) return 'global-measured'
   if (d.priority >= 10) return 'heuristic'
   return 'none'
 }

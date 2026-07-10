@@ -198,6 +198,8 @@ pub struct RoadResult {
     pub length_m: f32,
     pub road_class: u8,
     pub speed_limit: u8,
+    /// R7 taper graded effective speed (0 = none; absent column reads 0).
+    pub speed_taper: u8,
     pub surface_type: u8,
     pub oneway: bool,
     pub lanes: u8,
@@ -244,6 +246,8 @@ pub fn query_roads_from_batches(
         let len = col_f32(batch, "length_m");
         let rclass = col_u8(batch, "road_class");
         let speed = col_u8(batch, "speed_limit");
+        // Absent on pre-taper arrows → 0 = none (R7 taper writes it).
+        let speed_taper_col = col_u8(batch, "speed_taper");
         let surface = col_u8(batch, "surface_type");
         let ow = col_bool(batch, "oneway");
         let lanes = col_u8(batch, "lanes");
@@ -300,6 +304,7 @@ pub fn query_roads_from_batches(
             let raw = noise_compute::normalize::RawRoadInput {
                 road_class: rclass.map(|a| a.value(i)).unwrap_or(0),
                 speed_limit: speed.map(|a| a.value(i)).unwrap_or(0),
+                speed_taper: speed_taper_col.map(|a| a.value(i)).unwrap_or(0),
                 surface_type: surface.map(|a| a.value(i)).unwrap_or(0),
                 oneway: ow.map(|a| a.value(i)).unwrap_or(false),
                 lanes: lanes.map(|a| a.value(i)).unwrap_or(0),
@@ -339,6 +344,7 @@ pub fn query_roads_from_batches(
                 length_m: len.map(|a| a.value(i)).unwrap_or(0.0),
                 road_class: raw.road_class,
                 speed_limit: raw.speed_limit,
+                speed_taper: raw.speed_taper,
                 surface_type: raw.surface_type,
                 oneway: raw.oneway,
                 lanes: raw.lanes,

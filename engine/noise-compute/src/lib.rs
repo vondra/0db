@@ -484,6 +484,7 @@ mod tests {
             length_m: 220.0,
             road_class: 0, // motorway
             speed_limit: 100,
+            speed_taper: 0,
             surface_type: 0,
             oneway: false,
             lanes: 2,
@@ -554,6 +555,7 @@ mod tests {
             length_m: 220.0,
             road_class: 2,
             speed_limit: 50,
+            speed_taper: 0,
             surface_type: 0,
             oneway: false,
             lanes: 2,
@@ -675,6 +677,7 @@ mod tests {
             length_m: 22.0,
             road_class: 5, // residential
             speed_limit: 30,
+            speed_taper: 0,
             surface_type: 0,
             oneway: false,
             lanes: 1,
@@ -851,6 +854,7 @@ mod tests {
             length_m: 220.0,
             road_class: 2,
             speed_limit: 50,
+            speed_taper: 0,
             surface_type: 0,
             oneway: false,
             lanes: 2,

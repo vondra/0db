@@ -480,6 +480,11 @@ pub(crate) fn compute_roads(
                 "derestricted"
             } else if seg.speed_limit > 0 {
                 "osm_posted"
+            } else if seg.speed_taper > 0 {
+                // R7 taper graded effective speed — NOT a legal limit; the
+                // dedicated label keeps the popup honest ("osm_posted" here
+                // would claim a sign that does not exist).
+                "graded_transition"
             } else if crate::defaults::resolve_speed_default(seg.road_class, admin, seg.built_up)
                 .is_some()
             {

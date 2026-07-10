@@ -68,6 +68,12 @@ pub struct RoadSegment {
     pub length_m: f32,
     pub road_class: u8, // 0=motorway..6=living_street, 7=service, 8=track, 9=unclassified, 10=motorway_link, 11=trunk_link, 12=primary_link
     pub speed_limit: u8, // km/h, 0=use default, 255=derestricted (maxspeed=none) → DERESTRICTED_SPEED_KMH
+    // R7 taper: graded EFFECTIVE speed at a junction-free step (km/h, 0=none).
+    // Own column so the OSM legal tag stays untouched and provenance stays
+    // per-meaning: consulted only when speed_limit is 0, never a posted limit
+    // (popup labels it "graded_transition"). Written by enrich-roads-taper.ts;
+    // arrows without the column read as 0.
+    pub speed_taper: u8,
     pub surface_type: u8, // 0=asphalt..4=gravel
     pub oneway: bool,
     pub lanes: u8,

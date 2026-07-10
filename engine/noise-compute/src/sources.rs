@@ -1249,6 +1249,16 @@ pub const SOURCES: &[Source] = &[
         url: None,
         year: Some(2024),
     },
+    Source {
+        id: 9862,
+        key: "osm-transition-taper",
+        provenance: Provenance::Baseline,
+        layer: "roads",
+        name: "Transition taper (graded junction-free speed/AADT steps)",
+        license: Some("project-internal"),
+        url: None,
+        year: Some(2026),
+    },
 ];
 
 #[cfg(test)]

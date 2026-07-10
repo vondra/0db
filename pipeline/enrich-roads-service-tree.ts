@@ -24,6 +24,7 @@ import { resolve } from 'node:path'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCE_ID_SERVICE_TREE_HEURISTIC } from './lib/source-ids.generated.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
+import { nodeKey } from './lib/spatial.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_SERVICE_TREE_HEURISTIC
@@ -174,9 +175,6 @@ function pointToSegmentDistXY(
   return Math.sqrt(ex * ex + ey * ey)
 }
 
-function nodeKey(lat: number, lon: number): string {
-  return `${lat.toFixed(5)}_${lon.toFixed(5)}`
-}
 
 function packGridKey(latLocal: number, lonLocal: number): number {
   return (latLocal << GRID_KEY_BITS) | (lonLocal & GRID_KEY_MASK)
@@ -871,6 +869,13 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
     sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
   }
 
+  // speed_taper is a derived annotation (see lib/roads-arrow.ts RoadAadt):
+  // claiming a row VOIDS any taper ramp computed from its old state — this
+  // bulk path must clear it exactly like the shared writer does, or a stale
+  // graded speed would hide behind the service-tree stamp (/gg Codex).
+  const existingTaper = roadTable.getChild('speed_taper')
+  let taperCol: Uint8Array | null = null
+
   let enriched = 0
   for (const [seg, aadt] of segAADT) {
     // Eligibility was already gated via shouldOverwrite() in buildGraph().
@@ -881,12 +886,21 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
     aadtHeavy[seg] = aadt.heavy
     aadtMoto[seg] = aadt.moto
     sourceId[seg] = MY_SOURCE_ID
+    if (existingTaper && ((existingTaper.get(seg) as number) ?? 0) !== 0) {
+      if (!taperCol) {
+        taperCol = new Uint8Array(n)
+        for (let k = 0; k < n; k++) taperCol[k] = (existingTaper.get(k) as number) ?? 0
+      }
+      taperCol[seg] = 0
+    }
     enriched++
   }
 
   const columns: Record<string, any> = {}
+  const rebuilt = ['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id']
+  if (taperCol) rebuilt.push('speed_taper')
   for (const field of roadTable.schema.fields) {
-    if (['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id'].includes(field.name)) continue
+    if (rebuilt.includes(field.name)) continue
     columns[field.name] = roadTable.getChild(field.name)!
   }
   columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
@@ -894,6 +908,7 @@ function processHex(hexId: string): { enriched: number; totalResidential: number
   columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
   columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
   columns['source_id'] = vectorFromArray(sourceId, new Uint16())
+  if (taperCol) columns['speed_taper'] = vectorFromArray(taperCol, new Uint8())
   const newTable = makeTable(columns)
   writeFileSync(roadsPath, Buffer.from(tableToIPC(newTable, 'file')))
 

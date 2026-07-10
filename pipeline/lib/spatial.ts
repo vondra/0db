@@ -21,6 +21,17 @@ const M_PER_DEG_LAT = 110_540
 const M_PER_DEG_LON_EQ = 111_320
 
 /**
+ * Endpoint identity for road-segment topology: quantize to ~1 m so segments
+ * that share a physical node compare equal. THE shared scheme for every pass
+ * that chains segments by endpoints (service-tree, continuity-fill, R7 taper)
+ * — the passes must agree on node identity or their topologies silently
+ * diverge.
+ */
+export function nodeKey(lat: number, lon: number): string {
+  return `${lat.toFixed(5)}_${lon.toFixed(5)}`
+}
+
+/**
  * Flat-earth distance in metres between two (lat, lon) points. Same
  * algorithm as the engine's `flat_dist` — accurate to <0.3 % at <50 km.
  * Hot-loop callers that have a hex-level cosLat should pre-project to

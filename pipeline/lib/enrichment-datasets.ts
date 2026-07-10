@@ -22,6 +22,23 @@
  * See plan at /home/vondra/.claude/plans/cached-gliding-kettle.md for rationale.
  */
 
+/**
+ * How authoritative a dataset is — the rank driver for `shouldOverwrite`.
+ * Defined HERE (upstream of `sources.ts`, which imports this module) so an
+ * entry can DECLARE its provenance when the priority-ladder derivation in
+ * `sources.ts::provenanceFromEntry` would misfile it. Full tier semantics:
+ * `sources.ts` docstrings.
+ */
+export type Provenance =
+  | 'city-measured'
+  | 'national-measured'
+  | 'continental-measured'
+  | 'global-measured'
+  | 'national-proxy'
+  | 'heuristic'
+  | 'baseline'
+  | 'none'
+
 export interface Dataset {
   id: number
   layer: 'roads' | 'railways' | 'buildings' | 'industrial' | 'aircraft' | 'any'
@@ -31,6 +48,12 @@ export interface Dataset {
   license: string | null
   url: string | null
   priority: number
+  /** Declared provenance tier — overrides the priority-ladder derivation in
+   *  `sources.ts::provenanceFromEntry`. Use when the ladder position lies
+   *  about the real rank (Overture/Copernicus are baselines at global-tier
+   *  priority; the R7 taper is a baseline at heuristic-tier priority so every
+   *  real enricher overwrites it). Absent = derive from `priority`. */
+  provenance?: Provenance
   /** Road classes (engine inputs.rs codes: 0 motorway..4 tertiary, 10-12 links)
    *  this source may stamp — mirrors the `coverage` set its enricher passes to
    *  `writeRoadAadt`. Absent = the enricher declares no class gate; the
@@ -131,6 +154,30 @@ export const DATASETS: Dataset[] = [
     // Major roads only (0-4 + links) — the fill must never stamp a local
     // street; the scanner's coverage invariant (R1) enforces it per-row.
     roadCoverage: MAJOR_ROAD_COVERAGE,
+  },
+  {
+    // R7 transition taper (owner 2026-07-10): grades speed/AADT steps between
+    // adjacent same-road segments with no junction between them — a car
+    // decelerates over distance, it does not step. Writes ONLY onto rows with
+    // source_id=0 AND untagged speed; declared BASELINE so every real
+    // enricher (census, continental, service-tree, continuity) freely
+    // overwrites taper rows on its next run. See enrich-roads-taper.ts +
+    // docs/dev/roads-traffic-model-audit.md §6 R7.
+    id: 9862,
+    layer: 'roads',
+    key: 'osm-transition-taper',
+    name: 'Transition taper (graded junction-free speed/AADT steps)',
+    year: 2026,
+    license: 'project-internal',
+    url: null,
+    priority: 10,
+    provenance: 'baseline',
+    measurement: 'derived',
+    // Through-traffic classes only — local streets (5-8) carry values too
+    // small for a visible cliff; links are junction-adjacent by nature.
+    // 0/1 excluded is CZ-v1 scoping (census covers them there) — revisit
+    // per-country when the taper widens past CZ (NAPI resolution export).
+    roadCoverage: [2, 3, 4, 9],
   },
 
   // ── Roads: national ──
@@ -1326,6 +1373,7 @@ export const DATASETS: Dataset[] = [
     license: 'CDLA-Permissive-2.0',
     url: 'https://overturemaps.org/',
     priority: 50,
+    provenance: 'baseline', // OSM-derived inference, not a measurement
   },
   {
     id: 9002,
@@ -1336,6 +1384,7 @@ export const DATASETS: Dataset[] = [
     license: 'CC-BY-4.0',
     url: 'https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model',
     priority: 50,
+    provenance: 'baseline', // global raster baseline, not a measurement
   },
 ]
 
