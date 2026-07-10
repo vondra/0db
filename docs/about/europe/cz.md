@@ -62,7 +62,7 @@ For now, `trains_freight` remains 0 in the enriched data. CNOSSOS-EU defaults ar
 - Target accuracy: mean absolute error below 3 dB compared to SHM reference data
 - Validation is a manual benchmark suite run before releases
 - **[Prague Geoportal](https://atlas.geoportalpraha.cz/)** — Prague noise maps with layers:
-  - Noise level — day (6:00–22:00) and night (22:00–6:00) per Czech national definition (differs from END standard 07–19/19–23/23–07; Quiet Map uses the END periods for its own Lden calculation)
+  - Noise level — day (6:00–22:00) and night (22:00–6:00) per Czech national definition (differs from END standard 07–19/19–23/23–07; 0db.app uses the END periods for its own Lden calculation)
   - Strategic noise map 2022 (SHM) — Ldvn bands (day) and Ln bands (night)
   - Useful for per-street validation in Prague area
 

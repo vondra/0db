@@ -1,12 +1,14 @@
 ---
-title: Quiet Map
-intro: World noise atlas — find quiet places to live, work, and relax.
+title: 0db.app
+intro: Find your quiet place. A world atlas of environmental noise — roads, railways, aircraft, and industry.
 map: { center: [15, 30], zoom: 2 }
 ---
 
 ## Mission
 
-Quiet Map shows how loud the world really is — and helps you find the quiet.
+**Make noise visible. Make quiet possible.**
+
+0db.app shows how loud the world really is — and helps you find the quiet.
 
 1. **Find quiet places** — search any address, explore the map, discover where to live, work, or relax without noise
 2. **Understand noise** — see which sources contribute (roads, railways, aircraft, industry) and how terrain, buildings, and forests reduce it
@@ -24,7 +26,7 @@ The map computes environmental noise in three steps:
 
 3. **You see the result** — the map shows noise at every ~12-meter raster cell, colored from pale at the quiet end through yellow and orange to red and deep purple (very loud, 80+ dB). Each source layer is independent — toggle them to see roads alone, railways alone, or everything combined.
 
-![Quiet Map — noise visualization](map-overview.jpg)
+![0db.app — noise visualization](map-overview.jpg)
 
 ---
 
@@ -421,7 +423,7 @@ Shades every map pixel below a configurable noise threshold (default 35 dB, slid
 
 ## What we measure
 
-Human-made noise is not the same as natural sound. A forest at 50 dB with birdsong feels quiet. A road at 50 dB with traffic feels loud. Quiet Map measures environmental noise from human sources — transport, industry, and urban activity — not nature.
+Human-made noise is not the same as natural sound. A forest at 50 dB with birdsong feels quiet. A road at 50 dB with traffic feels loud. 0db.app measures environmental noise from human sources — transport, industry, and urban activity — not nature.
 
 ---
 
@@ -455,7 +457,7 @@ These simplifications target MAE < 3 dB against national strategic noise maps fo
 
 ---
 
-Quiet Map is an open-source project. All computations are transparent and reproducible from public data.
+0db.app is an open-source project. All computations are transparent and reproducible from public data.
 
 ## Attribution
 

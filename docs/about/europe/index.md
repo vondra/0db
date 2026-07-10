@@ -6,7 +6,7 @@ map: { center: [15, 50], zoom: 4 }
 
 ## Environmental Noise Directive (END)
 
-The EU [Environmental Noise Directive 2002/49/EC](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=celex%3A32002L0049) requires member states to produce strategic noise maps for major roads, railways, airports, and cities. Quiet Map uses the same methodology but extends coverage to all sources and locations, not just those above the directive's thresholds.
+The EU [Environmental Noise Directive 2002/49/EC](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=celex%3A32002L0049) requires member states to produce strategic noise maps for major roads, railways, airports, and cities. 0db.app uses the same methodology but extends coverage to all sources and locations, not just those above the directive's thresholds.
 
 ## CNOSSOS-EU
 
@@ -17,7 +17,7 @@ The [Common Noise Assessment Methods](https://publications.jrc.ec.europa.eu/repo
 - **Industrial emission model** — NACE sector-differentiated source power levels (20 NACE sector profiles + 12 OSM sub-type profiles), anchored to measured literature values, with sector codes from IRZ/E-PRTR facility registry data; re-calibration against official SHM contours is pending
 - **Propagation model** — Sound attenuation through distance, ground, terrain, buildings, and atmosphere
 
-Quiet Map implements CNOSSOS-EU emission models for road (Annex II), railway (Annex IV), and industrial sources, with ISO 9613-2 propagation. Aircraft noise uses an NPD-based approach inspired by ECAC Doc 29 (referenced by CNOSSOS-EU §2.7) but is not a certified implementation — see [methodology page](/about#aircraft) for details.
+0db.app implements CNOSSOS-EU emission models for road (Annex II), railway (Annex IV), and industrial sources, with ISO 9613-2 propagation. Aircraft noise uses an NPD-based approach inspired by ECAC Doc 29 (referenced by CNOSSOS-EU §2.7) but is not a certified implementation — see [methodology page](/about#aircraft) for details.
 
 ## ISO 9613-2
 

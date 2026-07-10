@@ -17,6 +17,7 @@ import type { RealEstateFilters, Property } from './components/RealEstateLayer'
 import type { ValidationSelection } from './components/ValidationLayer'
 import type { NoiseComputeData } from './types/noise'
 import { DEFAULT_BASEMAP, type BasemapId } from './utils/basemaps'
+import { setDocumentTitle } from './utils/page-title'
 
 const AboutPage = lazy(() => import('./components/AboutPage'))
 
@@ -77,6 +78,30 @@ function MapApp() {
   useEffect(() => {
     if (detailPosition) void import('./components/NoiseDetailContent')
   }, [detailPosition])
+
+  // Tab/share title tracks the open popup: reverse-geocode the position
+  // (place-level, server-cached) and compose "Dejvice, Praha - 62 dB -
+  // 0db.app" — place first, never the number (owner spec 2026-07-10).
+  const [detailPlaceName, setDetailPlaceName] = useState<string | null>(null)
+  useEffect(() => {
+    // Clear synchronously so a moved popup never shows the previous place
+    // next to the new position's dB while the new lookup is in flight.
+    setDetailPlaceName(null)
+    if (!detailPosition) return
+    const controller = new AbortController()
+    fetch(`/api/reverse?lat=${detailPosition.lat}&lon=${detailPosition.lng}`, { signal: controller.signal })
+      .then(res => (res.ok ? res.json() : null))
+      .then(json => setDetailPlaceName(json?.place ?? null))
+      .catch(() => { if (!controller.signal.aborted) setDetailPlaceName(null) })
+    return () => controller.abort()
+  }, [detailPosition])
+
+  const detailTotalLden = noiseDetailData?.total_lden ?? null
+  useEffect(() => {
+    setDocumentTitle(detailPosition
+      ? [detailPlaceName, detailTotalLden != null ? `${Math.round(detailTotalLden)} dB` : null]
+      : [])
+  }, [detailPosition, detailPlaceName, detailTotalLden])
 
   const syncUrl = useCallback((overrides?: Partial<{
     quietClusters: boolean

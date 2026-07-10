@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import Markdown from 'react-markdown'
+import { setDocumentTitle } from '../utils/page-title'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 
@@ -60,7 +61,12 @@ export default function AboutPage() {
   useEffect(() => {
     fetch(apiUrl)
       .then(res => { if (!res.ok) throw new Error(`${res.status}`); return res.json() })
-      .then(setDoc)
+      .then((data: DocData) => {
+        setDoc(data)
+        // Root About = "About - 0db.app"; subpages carry their own title
+        // ("Czechia - 0db.app"). /about is a full page load, no restore needed.
+        setDocumentTitle([data.breadcrumb.length > 1 ? data.title : 'About'])
+      })
       .catch(err => setError(err.message))
   }, [apiUrl])
 
