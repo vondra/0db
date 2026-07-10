@@ -68,14 +68,14 @@ For now, `trains_freight` remains 0 in the enriched data. CNOSSOS-EU defaults ar
 
 ## Real estate
 
-Sources updated twice daily via cron:
+Sources updated twice daily:
 
-| Source | Type | Listings | Notes |
-|--------|------|----------|-------|
-| [Sreality.cz](https://sreality.cz) | Agency listings | ~27k land plots | Largest CZ portal, owned by Seznam.cz |
-| [Bezrealitky.cz](https://bezrealitky.cz) | Direct sellers | ~1.5k land plots | No agency fees (TODO: API integration) |
+| Source | Type | Notes |
+|--------|------|-------|
+| [Bezrealitky.cz](https://bezrealitky.cz) | Direct sellers (land plots + houses) | Active source since 2026-07 |
+| ~~Sreality.cz~~ | — | Retired: the public API was removed with the 2026 site redesign and their terms now prohibit database extraction |
 
-Categories: stavební pozemky, lesy, louky, pole, zahrady, komerční.
+Categories: stavební pozemky, lesy, louky, pole, zahrady + rodinné domy.
 
 Properties displayed on the map with noise level at their location.
 Default filter: properties below 60 dB Lden (adjustable 40–75 dB).

@@ -7,8 +7,8 @@
  * server-rendered __NEXT_DATA__ Apollo cache, no auth, and its terms carry no
  * scraping ban; same land+house scope as before.
  *
- * Noise is sampled from the z13 `total` HM3 raster (the live heatmap), not the
- * deprecated H3 tiles. Output: data/prepared/{DATA_YEAR}/properties/properties.json
+ * Noise is sampled from the published z12 `total` HM3 raster (the live
+ * heatmap). Output: data/prepared/{DATA_YEAR}/properties/properties.json
  * + photos/, served at /api/properties. No H3 / h3-js.
  *
  * Usage:
