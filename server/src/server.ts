@@ -23,8 +23,9 @@ app.setNotFoundHandler(async (request, reply) => {
 })
 
 const port = Number(process.env.PORT) || 8501
+const host = process.env.HOST || '0.0.0.0'
 
-app.listen({ port, host: '0.0.0.0' }, (err) => {
+app.listen({ port, host }, (err) => {
   if (err) {
     app.log.error(err)
     process.exit(1)
