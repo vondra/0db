@@ -62,18 +62,56 @@ impl HexStore {
             h3r4_dir: String::new(),
         }
     }
+}
 
-    fn ensure_hex(&mut self, hex_id: &str) -> &HexData {
-        self.hexes.entry(hex_id.to_string()).or_insert_with(|| {
-            let dir = format!("{}/{}", self.h3r4_dir, hex_id);
-            match load_hex(&dir) {
-                Ok(data) => data,
-                Err(e) => {
-                    eprintln!("  source-reader: failed to load hex {}: {}", hex_id, e);
-                    HexData::empty()
-                }
-            }
-        })
+/// Make every hex in `hex_ids` resident, loading the missing ones IN
+/// PARALLEL and OUTSIDE the store lock. Cold loads used to run
+/// sequentially (7 hexes × ~12 files) under a held write lock — the whole
+/// point of a shared store (all pool workers read one cache since
+/// 2026-07-10) is that one visitor's cold load must neither serialize with
+/// nor block everyone else's warm queries. First insert wins on a race —
+/// the duplicate load is dropped, which is rare and harmless.
+#[cfg(feature = "node")]
+fn ensure_hexes_parallel(hex_ids: &[String]) {
+    let missing: Vec<String> = {
+        let store = STORE.read().expect("hex store poisoned");
+        hex_ids
+            .iter()
+            .filter(|id| !store.hexes.contains_key(id.as_str()))
+            .cloned()
+            .collect()
+    };
+    if missing.is_empty() {
+        return;
+    }
+    let h3r4_dir = STORE.read().expect("hex store poisoned").h3r4_dir.clone();
+    let loaded: Vec<(String, HexData)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = missing
+            .iter()
+            .map(|hex_id| {
+                let dir = format!("{h3r4_dir}/{hex_id}");
+                scope.spawn(move || match load_hex(&dir) {
+                    Ok(data) => data,
+                    Err(e) => {
+                        eprintln!("  source-reader: failed to load hex {hex_id}: {e}");
+                        HexData::empty()
+                    }
+                })
+            })
+            .collect();
+        missing
+            .iter()
+            .cloned()
+            .zip(
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("hex load panicked")),
+            )
+            .collect()
+    });
+    let mut store = STORE.write().expect("hex store poisoned");
+    for (id, data) in loaded {
+        store.hexes.entry(id).or_insert(data);
     }
 }
 
@@ -83,6 +121,16 @@ pub fn source_init(h3r4_dir: String) -> napi::Result<String> {
     let mut store = STORE
         .write()
         .map_err(|e| Error::new(Status::GenericFailure, format!("{e}")))?;
+    // The pool workers share ONE library instance (single addon path since
+    // 2026-07-10), so every worker spawn/recycle calls source_init on the
+    // SAME store — re-init with an unchanged dir must keep the shared cache,
+    // not clear it out from under the other workers.
+    if store.h3r4_dir == h3r4_dir {
+        return Ok(format!(
+            "source-reader already initialized: {h3r4_dir} ({} hexes cached, shared store)",
+            store.hexes.len()
+        ));
+    }
     store.h3r4_dir = h3r4_dir.clone();
     store.hexes.clear();
 
@@ -117,13 +165,16 @@ pub fn source_init(h3r4_dir: String) -> napi::Result<String> {
 #[napi]
 pub fn query_roads(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<String> {
     let hex_ids = geo::grid_disk_r4(lat, lng);
-    let mut store = STORE
-        .write()
+    ensure_hexes_parallel(&hex_ids);
+    let store = STORE
+        .read()
         .map_err(|e| Error::new(Status::GenericFailure, format!("{e}")))?;
 
     let mut all_results = Vec::new();
     for hex_id in &hex_ids {
-        let data = store.ensure_hex(hex_id);
+        let Some(data) = store.hexes.get(hex_id.as_str()) else {
+            continue;
+        };
         let mut results = query_roads_from_batches(&data.road_batches, lat, lng, max_radius_m);
         all_results.append(&mut results);
     }
@@ -135,13 +186,16 @@ pub fn query_roads(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<String
 #[napi]
 pub fn query_buildings(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<String> {
     let hex_ids = geo::grid_disk_r4(lat, lng);
-    let mut store = STORE
-        .write()
+    ensure_hexes_parallel(&hex_ids);
+    let store = STORE
+        .read()
         .map_err(|e| Error::new(Status::GenericFailure, format!("{e}")))?;
 
     let mut all_results = Vec::new();
     for hex_id in &hex_ids {
-        let data = store.ensure_hex(hex_id);
+        let Some(data) = store.hexes.get(hex_id.as_str()) else {
+            continue;
+        };
         let mut results =
             query_buildings_from_batches(&data.building_batches, lat, lng, max_radius_m);
         all_results.append(&mut results);
@@ -154,13 +208,16 @@ pub fn query_buildings(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<St
 #[napi]
 pub fn query_barriers(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<String> {
     let hex_ids = geo::grid_disk_r4(lat, lng);
-    let mut store = STORE
-        .write()
+    ensure_hexes_parallel(&hex_ids);
+    let store = STORE
+        .read()
         .map_err(|e| Error::new(Status::GenericFailure, format!("{e}")))?;
 
     let mut all_results = Vec::new();
     for hex_id in &hex_ids {
-        let data = store.ensure_hex(hex_id);
+        let Some(data) = store.hexes.get(hex_id.as_str()) else {
+            continue;
+        };
         let mut results =
             query_barriers_from_batches(&data.barrier_batches, lat, lng, max_radius_m);
         all_results.append(&mut results);
@@ -211,14 +268,13 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
     let t_start = std::time::Instant::now();
 
     let hex_ids = geo::grid_disk_r4(lat, lng);
-    let mut store = STORE
-        .write()
+    // Load missing hexes in parallel WITHOUT holding the store lock, then
+    // collect under a read lock — concurrent popups on other workers keep
+    // running against the shared cache during a cold load.
+    ensure_hexes_parallel(&hex_ids);
+    let store = STORE
+        .read()
         .map_err(|e| Error::new(Status::GenericFailure, format!("{e}")))?;
-
-    // Pre-load all hexes, then collect refs for the shared helper.
-    for hex_id in &hex_ids {
-        store.ensure_hex(hex_id);
-    }
     let hex_refs: Vec<&hex_store::HexData> = hex_ids
         .iter()
         .filter_map(|id| store.hexes.get(id.as_str()))

@@ -25,13 +25,16 @@ const req = createRequire(import.meta.url)
 
 const { sourceReaderPath, h3r4Dir, slotIndex } = workerData
 const sourceReaderDir = dirname(sourceReaderPath)
-// threadId fallback keeps direct spawns working (distinct `tid-` prefix so
-// the sweep below can reap them); the supervisor always passes slotIndex so
-// pool recycles reuse one stable path per slot.
-const nodePath = resolve(
-  sourceReaderDir,
-  slotIndex == null ? `libsource_reader.worker-tid-${threadId}.node` : `libsource_reader.worker-slot-${slotIndex}.node`,
-)
+// ONE shared copy path for every worker (2026-07-10): glibc name-caches
+// dlopen by path, so all pool workers get the SAME library instance — the
+// Rust hex cache and sidecar cache are shared across the pool (an area
+// loads once, not once per worker) and static TLS is consumed once. The
+// name-cache semantics were verified empirically (same-path reload does not
+// re-run constructors). Rust statics are lock-protected; source_init is
+// idempotent for an unchanged data dir.
+const nodePath = resolve(sourceReaderDir, 'libsource_reader.worker-shared.node')
+void slotIndex
+void threadId
 
 if (!existsSync(sourceReaderPath)) {
   throw new Error(
@@ -39,10 +42,10 @@ if (!existsSync(sourceReaderPath)) {
   )
 }
 
-// Sweep legacy per-threadId copies (pre-slot-path era) AND stale tid-
-// fallback copies from direct spawns; slot files are stable and must survive.
+// Sweep obsolete copies from earlier schemes (per-threadId, per-slot, tid-
+// fallback); only the single shared file survives.
 for (const entry of readdirSync(sourceReaderDir)) {
-  if (!/^libsource_reader\.worker-(tid-)?\d+\.node$/.test(entry)) {
+  if (!/^libsource_reader\.worker-(tid-|slot-)?\d+\.node$/.test(entry)) {
     continue
   }
   if (resolve(sourceReaderDir, entry) === nodePath) {
