@@ -25,11 +25,12 @@ const WORKER_URL = new URL('../workers/noise-onfly-worker.mjs', import.meta.url)
 const NOISE_ONFLY_WORK_TIMEOUT_MS = Number(process.env.NOISE_ONFLY_WORK_TIMEOUT_MS || '30000')
 const NOISE_ONFLY_QUEUE_TIMEOUT_MS = Number(process.env.NOISE_ONFLY_QUEUE_TIMEOUT_MS || '10000')
 const NOISE_ONFLY_MAX_QUEUE = Number(process.env.NOISE_ONFLY_MAX_QUEUE || '8')
-// Pool of NAPI workers — each holds its own ~150 MB Rust state (R-trees
-// per loaded R4) so memory scales linearly. Mmap'd Arrow + DEM rasters are
-// shared via OS page cache. Default 4 covers typical concurrent-user
-// clicks on the map without queueing.
-const NOISE_ONFLY_POOL_SIZE = Number(process.env.NOISE_ONFLY_POOL_SIZE || '4')
+// Pool of NAPI workers — one popup computes on ONE worker thread; the pool
+// size is the number of CONCURRENT visitors served without queueing. Each
+// worker keeps its own loaded-area cache (mmap-backed, so RSS is mostly
+// shared page cache). Default 8 (owner 2026-07-10, production sizing);
+// override per box with NOISE_ONFLY_POOL_SIZE.
+const NOISE_ONFLY_POOL_SIZE = Number(process.env.NOISE_ONFLY_POOL_SIZE || '8')
 
 export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
   const supervisor = new NoiseOnflySupervisor({

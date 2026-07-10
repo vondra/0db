@@ -112,6 +112,52 @@ impl AirportSummaryAccum {
     }
 }
 
+/// Process-wide cache for the parsed sidecar, keyed by (path, mtime, len).
+/// The popup previously re-read and re-parsed the ~11 MB global file on
+/// EVERY query near an airport (owner report 2026-07-10). On an idle box the
+/// parse is a small share of aircraft_ground_ms (compute dominates); what the
+/// cache removes is the per-query disk I/O and its jitter under load — the
+/// file only changes on an aircraft re-extract, at which point the mtime/len
+/// key rolls the cache naturally. One instance per worker (each worker loads
+/// its own addon copy).
+type SummaryCacheEntry = (
+    std::path::PathBuf,
+    std::time::SystemTime,
+    u64,
+    std::sync::Arc<AirportSummaryAccum>,
+);
+static SUMMARY_CACHE: std::sync::RwLock<Option<SummaryCacheEntry>> = std::sync::RwLock::new(None);
+
+/// Cached wrapper around [`load_airport_summary`] — same absent/`Err`
+/// semantics; hits clone an `Arc` instead of touching the disk.
+pub fn load_airport_summary_cached(
+    path: &Path,
+) -> Result<Option<std::sync::Arc<AirportSummaryAccum>>, String> {
+    let Ok(meta) = std::fs::metadata(path) else {
+        // Missing/unstattable: defer to the uncached path (which maps
+        // absent → Ok(None)) and drop any stale entry for this path.
+        let mut w = SUMMARY_CACHE.write().unwrap();
+        if w.as_ref().is_some_and(|(p, ..)| p == path) {
+            *w = None;
+        }
+        return load_airport_summary(path).map(|o| o.map(std::sync::Arc::new));
+    };
+    let mtime = meta
+        .modified()
+        .map_err(|e| format!("mtime {}: {e}", path.display()))?;
+    let len = meta.len();
+    if let Some((p, m, l, accum)) = SUMMARY_CACHE.read().unwrap().as_ref() {
+        if p == path && *m == mtime && *l == len {
+            return Ok(Some(accum.clone()));
+        }
+    }
+    let loaded = load_airport_summary(path)?.map(std::sync::Arc::new);
+    if let Some(accum) = &loaded {
+        *SUMMARY_CACHE.write().unwrap() = Some((path.to_path_buf(), mtime, len, accum.clone()));
+    }
+    Ok(loaded)
+}
+
 /// Load `airport_summary.arrow` from disk. Returns `Ok(None)` when the
 /// file is absent (popup MUST then refuse to populate airport-level
 /// counts), `Err` only on actual read failure.

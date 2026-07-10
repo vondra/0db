@@ -28,7 +28,7 @@ use noise_compute::types::{
 };
 
 use airborne_view::AirborneRowAccum;
-use airport_summary_view::load_airport_summary;
+use airport_summary_view::load_airport_summary_cached;
 use airport_traffic_view::AirportTrafficRowAccum;
 use cruise_view::CruiseRowAccum;
 use std::collections::HashMap;
@@ -201,7 +201,7 @@ pub fn add_v6_aircraft_to_result(
              — wire `<prepared>/aircraft/airport_summary.arrow`"
                 .to_string()
         })?;
-        let loaded = load_airport_summary(p)?;
+        let loaded = load_airport_summary_cached(p)?;
         if loaded.is_none() {
             eprintln!(
                 "ERROR: airport_traffic.arrow rows present but airport_summary.arrow \
