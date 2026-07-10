@@ -333,8 +333,8 @@ Applied ONCE per receiver, not per source-receiver path. Maximum is 3 dB — the
 ### 3.10 Transport-specific adjustments
 Applied in pipeline and popup:
 - **Bridge**: G=0 (hard surface, overrides IMD raster)
-- **Tunnel**: segment skipped entirely (sound contained inside)
-- **Access codes 2 (no) / 4 (legacy motor_vehicle=no)**: segment dropped entirely, like tunnels
+- **Tunnel**: segment skipped entirely (sound contained inside) — the only unconditional drop
+- **Access codes 2 (no) / 4 (legacy motor_vehicle=no)**: segment dropped UNLESS it carries measured AADT (`is_measured` + `aadt_light > 0`) — see the exception paragraph below (Neratovice case)
 - **Oneway road**: AADT × 0.5 (approximation: half the traffic of two-way)
 - **Junction**: speed capped at 30 km/h (junction code 1 = roundabout; mini-roundabouts (code 2) currently NOT capped — known gap)
 - **Service railway** (yard/siding/spur): counts × 0.02
@@ -342,6 +342,8 @@ Applied in pipeline and popup:
 - **Industrial exclusion radius**: R=√(area/π) — buildings within R of source point are not counted as screening (prevents self-screening from source's own footprint)
 
 Road `access` and `road_class` u8 enums (codes, OSM mappings, AADT-reduction factors): see `engine/osm-extract/src/classify.rs` and the consumer in `engine/noise-compute/src/normalize/road.rs::access_factor`. The reduction is bypassed only when `Provenance::is_measured()` is true (City/National/Continental/GlobalMeasured); `NationalProxy`, `Heuristic`, `Baseline` and `None` rows still get access reductions.
+
+`access=no` / `motor_vehicle=no` (codes 2/4) DROP the segment from emission entirely — except when the row carries measured AADT (`is_measured` + `aadt_light > 0`): a national census counting traffic on a "closed" road proves the flattened OSM tag hides an exception (bus lanes, destination modifiers, stale closures), so measured reality wins (Neratovice "Nádražní" case, 2026-07-10; ~500 such segments in CZ). Heuristic estimates never resurrect a closed road; tunnels are always dropped.
 
 Link rationale (codes 10-12, `*_link` slip roads / ramps carry 15% of mainline AADT — HCM 7 / FEHRL / CERTU lower-range, validated against Pasito Blanco GC-1 popup): see `defaults.rs` ramp rows. `secondary_link` / `tertiary_link` stay on mainline codes (3/4) because their flow is closer to regular urban streets. For `highway=track` without a `surface` tag, the extractor defaults to `unpaved` (+2 dB rolling correction — §1 surface table).
 

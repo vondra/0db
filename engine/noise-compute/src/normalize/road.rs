@@ -120,7 +120,26 @@ pub fn normalize_road_with_cache(
     admin: Admin,
     defaults_cache: &[Aadt; WORLD_DEFAULT.len()],
 ) -> Option<NormalizedRoad> {
-    if input.tunnel || input.access == 2 || input.access == 4 {
+    // access=no / motor_vehicle=no drops a segment ONLY when no MEASUREMENT
+    // contradicts the tag: a national census counting thousands of vehicles on
+    // an access=no primary (Neratovice "Nádražní", owner case 2026-07-10) is
+    // proof the flattened OSM tag hides an exception (bus=yes, destination
+    // modifiers, temporary closures) — measured reality outranks tag
+    // interpretation, mirroring access_factor's measured pass-through.
+    // Deliberately is_measured, not has_data: a heuristic estimate (service
+    // tree, taper) is a guess and must not resurrect a legally closed road.
+    // The aadt_light > 0 guard is load-bearing: a measured-tier stamp with
+    // zero light traffic would otherwise fall through to CLASS DEFAULTS
+    // downstream (has_enriched_traffic is false) — full mainline noise on an
+    // empty closed road. Known residual (shared with access_factor's bypass):
+    // `measurement='derived'` registry ids mix counts and estimates under one
+    // measured-tier id, so a derived ESTIMATE can pass this gate — the R1b
+    // registry batch splits those ids (docs/dev/roads-traffic-model-audit.md §8).
+    // Tunnels stay dropped unconditionally (the emission is underground).
+    if input.tunnel
+        || (matches!(input.access, 2 | 4)
+            && !(input.provenance.is_measured() && input.aadt_light > 0))
+    {
         return None;
     }
 
@@ -378,6 +397,99 @@ mod tests {
         assert_eq!(access_factor(0, Prov_None, 8), 0.1); // untagged track → implicit ag
         assert_eq!(access_factor(0, Prov_None, 5), 1.0); // untagged residential → unchanged
         assert_eq!(access_factor(0, NationalMeasured, 8), 1.0); // measured track → pass-through
+    }
+
+    /// access=no drops a defaults-only segment, but a MEASURED count proves
+    /// traffic exists (Neratovice case) — the segment must emit; heuristic
+    /// stamps must not resurrect it.
+    #[test]
+    fn access_no_yields_to_measured_traffic_only() {
+        let base = RawRoadInput {
+            road_class: 2,
+            speed_limit: 50,
+            speed_taper: 0,
+            surface_type: 0,
+            oneway: false,
+            lanes: 0,
+            aadt_light: 0,
+            aadt_medium: 0,
+            aadt_heavy: 0,
+            aadt_moto: 0,
+            provenance: Provenance::None,
+            tunnel: false,
+            access: 2,
+            junction: 0,
+            built_up: 0,
+        };
+        assert!(
+            normalize_road(base, Admin::UNKNOWN).is_none(),
+            "unmeasured access=no drops"
+        );
+
+        let measured = RawRoadInput {
+            aadt_light: 8824,
+            aadt_medium: 516,
+            aadt_heavy: 1497,
+            provenance: Provenance::NationalMeasured,
+            ..base
+        };
+        let road = normalize_road(measured, Admin::UNKNOWN).expect("measured access=no emits");
+        assert!(
+            (road.light_aadt - 8824.0).abs() < 1e-9,
+            "census AADT passes through"
+        );
+
+        let heuristic = RawRoadInput {
+            aadt_light: 500,
+            provenance: Provenance::Heuristic,
+            ..base
+        };
+        assert!(
+            normalize_road(heuristic, Admin::UNKNOWN).is_none(),
+            "a heuristic guess must not resurrect a closed road"
+        );
+        let proxy = RawRoadInput {
+            aadt_light: 500,
+            provenance: Provenance::NationalProxy,
+            ..base
+        };
+        assert!(
+            normalize_road(proxy, Admin::UNKNOWN).is_none(),
+            "a national proxy estimate must not resurrect a closed road"
+        );
+
+        // The aadt_light > 0 conjunct is load-bearing: measured-tier stamp with
+        // zero light traffic (heavy-only industrial gate) must stay dropped —
+        // it would otherwise fall through to full class defaults downstream.
+        let heavy_only = RawRoadInput {
+            aadt_light: 0,
+            aadt_heavy: 500,
+            provenance: Provenance::NationalMeasured,
+            ..base
+        };
+        assert!(
+            normalize_road(heavy_only, Admin::UNKNOWN).is_none(),
+            "measured heavy-only with zero light traffic stays dropped (fail closed)"
+        );
+
+        // motor_vehicle=no (code 4) follows the same gate as access=no (2).
+        let mvno = RawRoadInput {
+            access: 4,
+            ..measured
+        };
+        assert!(
+            normalize_road(mvno, Admin::UNKNOWN).is_some(),
+            "code 4 + measured emits"
+        );
+
+        let tunnel = RawRoadInput {
+            tunnel: true,
+            ..measured
+        };
+        assert!(
+            normalize_road(tunnel, Admin::UNKNOWN).is_none(),
+            "tunnels stay dropped"
+        );
     }
 
     #[test]
