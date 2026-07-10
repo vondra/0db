@@ -97,7 +97,10 @@ export default function MapView({
       {/* Precise location is user-triggered (Google pattern): the initial view
           only approximates from browser language (utils/initial-view.ts); GPS
           fires on this button's click, when the permission prompt is expected. */}
-      <GeolocateControl position="bottom-left" fitBoundsOptions={{ maxZoom: 14 }} />
+      {/* trackUserLocation is what makes the button STATEFUL (blue while
+          following, outline when the map pans away) — without it maplibre
+          never applies the -active class at all. */}
+      <GeolocateControl position="bottom-left" trackUserLocation showUserLocation fitBoundsOptions={{ maxZoom: 14 }} />
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
       {/* Highlight rides on the same deck.gl canvas as the heatmap so
           it always draws above the HM3 tiles. A separate MapLibre

@@ -34,7 +34,7 @@ export default function BasemapBar({ basemap, onBasemapChange }: BasemapBarProps
     <>
       {/* Desktop: vertical column, bottom-left — a gap above the locate
           button, which sits a gap above +/- (Google-like stack). */}
-      <div className="hidden md:flex flex-col items-start fixed bottom-[124px] left-[10px] z-[1002]">
+      <div className="hidden md:flex flex-col items-start fixed bottom-[131px] left-[10px] z-[1002]">
         <div className="rounded bg-white overflow-hidden" style={{ boxShadow: '0 0 0 2px rgba(0,0,0,.1)' }}>
           {BASEMAPS.map((b, i) => (
             <button
