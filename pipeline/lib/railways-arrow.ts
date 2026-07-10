@@ -53,6 +53,28 @@ export interface WriteRailResult {
   updated: boolean
   /** Rows skipped because `service > 0` (sidings/yards) — never offered to `match`. */
   skippedService: number
+  /** Rows this dataset previously owned and has now disowned via `retract`
+   *  (stamp + train counts reset to zero, open for lower-priority enrichers). */
+  retracted: number
+}
+
+/** Self-healing: disown rows a dataset previously stamped but would no longer
+ *  claim under its CURRENT matching rules (e.g. an OSM edit that reclassifies
+ *  an already-GTFS-stamped mainline segment as a yard track, or a re-import
+ *  that no longer routes through a corridor it used to claim) — the rail
+ *  twin of `RoadRetract` in `roads-arrow.ts`.
+ *  `when` is evaluated for every row whose `source_id` equals `sourceId`,
+ *  BEFORE the service-skip gate — retraction is about disowning, not
+ *  matching, so it must reach rows the dataset would no longer even reach
+ *  today (e.g. a row now `service > 0`, which `match` never sees). A retract
+ *  zeroes trains_passenger/trains_freight and the stamp; the row becomes free
+ *  for the next lower-priority pass. A dataset can only ever retract rows it
+ *  owns — `sourceId` is compared against the row, not trusted from the
+ *  caller's match logic. Rails have no taper-style derived annotation, so a
+ *  retract here is just the three payload columns. */
+export interface RailRetract {
+  sourceId: number
+  when: (row: RailRow, i: number) => boolean
 }
 
 /**
@@ -72,10 +94,12 @@ export async function writeRailTrains(
   arrowPath: string,
   match: (row: RailRow, i: number) => RailTrains | null,
   onApplied?: (row: RailRow, i: number, applied: RailTrains) => void,
+  retract?: RailRetract,
 ): Promise<WriteRailResult> {
   let rows = 0
   let matched = 0
   let skippedService = 0
+  let retracted = 0
   let updated = false
 
   await withArrowWrite(arrowPath, (table: Table): Table => {
@@ -108,10 +132,6 @@ export async function writeRailTrains(
 
     let any = false
     for (let i = 0; i < n; i++) {
-      // Service tracks (yards/sidings/spurs) never inherit a count — centralized
-      // here so no enricher can forget it (the CZ 94,928-siding bug).
-      if (((svcCol?.get(i) as number) ?? 0) > 0) { skippedService++; continue }
-
       const startLat = sLat.get(i) as number
       const startLon = sLon.get(i) as number
       const endLat = (eLat?.get(i) as number) ?? startLat
@@ -128,6 +148,22 @@ export async function writeRailTrains(
         midLon: (startLon + endLon) / 2,
         name: (nmCol?.get(i) as string) ?? '',
       }
+      // Self-heal BEFORE the service-skip gate: a row this dataset owns but
+      // would no longer claim is disowned even when it's now a siding (that
+      // is precisely the mis-stamp being healed) — mirrors the retract-before-
+      // coverage-gate ordering in writeRoadAadt.
+      if (retract && src[i] === retract.sourceId && retract.when(row, i)) {
+        pax[i] = 0
+        frt[i] = 0
+        src[i] = 0
+        retracted++
+        any = true
+        continue
+      }
+      // Service tracks (yards/sidings/spurs) never inherit a count — centralized
+      // here so no enricher can forget it (the CZ 94,928-siding bug).
+      if (((svcCol?.get(i) as number) ?? 0) > 0) { skippedService++; continue }
+
       const m = match(row, i)
       if (!m) continue
       // Fail loud on a malformed match — TypedArrays silently coerce/truncate a bad
@@ -164,5 +200,5 @@ export async function writeRailTrains(
     return makeTable(cols)
   })
 
-  return { rows, matched, updated, skippedService }
+  return { rows, matched, updated, skippedService, retracted }
 }

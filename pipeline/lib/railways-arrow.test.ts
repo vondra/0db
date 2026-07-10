@@ -31,8 +31,17 @@ const TMP = mkdtempSync(join(tmpdir(), 'railways-arrow-test-'))
 after(() => rmSync(TMP, { recursive: true, force: true }))
 
 /** Tiny railways.arrow on disk. rows = [railType, service] pairs; seeds
- *  distinctive counts (10+i / 20+i) so "untouched" is provable. */
-function writeRailFixture(name: string, rows: Array<[railType: number, service: number]>): string {
+ *  distinctive counts (10+i / 20+i) so "untouched" is provable. `sourceIds`
+ *  (parallel to rows) pre-seeds an existing stamp per row — default unstamped
+ *  — for retract tests that need an already-owned row a live writer pass
+ *  could never itself produce (e.g. a stamped row later reclassified as a
+ *  siding, which the service-skip gate would keep `match` from ever
+ *  reaching). */
+function writeRailFixture(
+  name: string,
+  rows: Array<[railType: number, service: number]>,
+  sourceIds?: number[],
+): string {
   const idx = [...rows.keys()]
   const table = new Table({
     start_lat: vectorFromArray(idx.map(i => 50.0 + i * 0.001), new Float64()),
@@ -45,7 +54,7 @@ function writeRailFixture(name: string, rows: Array<[railType: number, service: 
     trains_passenger: vectorFromArray(idx.map(i => 10 + i), new Int32()),
     trains_freight: vectorFromArray(idx.map(i => 20 + i), new Int32()),
     parallel_divisor: vectorFromArray(idx.map(() => 1), new Uint8()),
-    source_id: vectorFromArray(idx.map(() => 0), new Uint16()),
+    source_id: vectorFromArray(idx.map(i => sourceIds?.[i] ?? 0), new Uint16()),
   })
   const path = join(TMP, name)
   writeFileSync(path, Buffer.from(tableToIPC(table, 'file')))
@@ -116,4 +125,53 @@ test('fail-loud: non-integer pax in match payload throws, file left unchanged', 
     /invalid match/,
   )
   assert.deepEqual(readFileSync(path), before, 'failed write must not mutate the arrow')
+})
+
+// ── RETRACT self-heal (rail twin of the roads-arrow.test.ts retract case) ───
+
+test('retract: disowns owned rows (incl. now-service) and zeroes counts; counter reports them', async () => {
+  // The rail twin of the roads "Zelená 20" heal: a row stamped by GTFS id 110
+  // while healthy, later reclassified as a siding (service=2) by an OSM edit,
+  // must be disowned even though the service-skip gate would otherwise keep
+  // `match` from ever reaching it — retraction runs BEFORE that gate. A row
+  // owned by the same id that stayed healthy is left alone. A row owned by
+  // ANOTHER id is never touched even though it would also satisfy `when`.
+  const rows: Array<[railType: number, service: number]> = [[0, 2], [0, 0], [0, 2]]
+  const path = writeRailFixture('retract.arrow', rows, [110, 110, 99])
+
+  const result = await writeRailTrains(
+    path,
+    () => null, // no new matches — pure heal pass
+    undefined,
+    { sourceId: 110, when: (row, i) => row.railType === 0 && rows[i][1] > 0 },
+  )
+  assert.equal(result.retracted, 1, 'exactly the now-service row owned by 110')
+  assert.equal(result.matched, 0, 'pure heal pass matches nothing new')
+  assert.equal(result.updated, true)
+
+  const t = tableFromIPC(readFileSync(path))
+  const src = [...Array(3)].map((_, i) => t.getChild('source_id')!.get(i))
+  const pax = [...Array(3)].map((_, i) => t.getChild('trains_passenger')!.get(i))
+  const frt = [...Array(3)].map((_, i) => t.getChild('trains_freight')!.get(i))
+  assert.deepEqual(src, [0, 110, 99], 'row0 disowned, row1 kept, foreign row2 untouched despite matching `when`')
+  assert.equal(pax[0], 0, 'retracted passenger count zeroed')
+  assert.equal(frt[0], 0, 'retracted freight count zeroed')
+  assert.equal(pax[1], 11, 'kept counts intact')
+  assert.equal(frt[1], 21, 'kept counts intact')
+  assert.equal(pax[2], 12, 'foreign counts intact despite matching `when`')
+  assert.equal(frt[2], 22, 'foreign counts intact despite matching `when`')
+})
+
+test('retract: a heal pass that retracts nothing leaves the file byte-identical', async () => {
+  const path = writeRailFixture('retract-noop.arrow', [[0, 0], [1, 2]], [110, 110])
+  const before = readFileSync(path)
+  const result = await writeRailTrains(
+    path,
+    () => null,
+    undefined,
+    { sourceId: 110, when: () => false }, // dataset owns both rows but heals neither
+  )
+  assert.equal(result.retracted, 0)
+  assert.equal(result.updated, false)
+  assert.deepEqual(readFileSync(path), before, 'no-op retract pass must not rewrite the file')
 })
