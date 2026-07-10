@@ -21,7 +21,9 @@ import { inBbox } from './spatial.js'
  *  source-class ↔ OSM-class compatibility gate (0 motorway, 1 trunk, 2 primary,
  *  3 secondary, 4 tertiary; link codes 10/11/12 collapse to their parent).
  *  Everything below tertiary (residential/living_street/service/track/
- *  unclassified) maps to 5, out of reach of any 0..4 source rank at ±1.
+ *  unclassified) maps to 6 — TWO past tertiary, so it stays out of reach of
+ *  any 0..4 source rank even at the ±1 tolerance. (A stale "maps to 5" claim
+ *  here once misled a review into a phantom coverage-leak finding.)
  *  Each enricher pairs this with a source-side rank map (e.g. HPMS F_SYSTEM in
  *  enrich-roads-us.ts) and rejects matches where the ranks differ by more than
  *  ROAD_CLASS_RANK_TOLERANCE — the fix for the "Papermill Drive" cross-class
@@ -75,6 +77,24 @@ export interface WriteRoadResult {
   /** Rows whose `road_class` fell outside the source's `coverage` set — skipped
    *  before `match` ran, so a major-road dataset cannot stamp a minor road. */
   skipped: number
+  /** Rows this dataset previously owned and has now disowned via `retract`
+   *  (stamp + AADT reset to zero, open for lower-priority enrichers). */
+  retracted: number
+}
+
+/** Self-healing: disown rows a dataset previously stamped but would no longer
+ *  claim under its CURRENT matching rules (e.g. the ŘSD count that landed on a
+ *  service street through a free-text ref — "Zelená 20" → "20" → I/20).
+ *  `when` is evaluated for every row whose `source_id` equals `sourceId`,
+ *  BEFORE the coverage gate — retraction is about disowning, not matching, so
+ *  it must reach rows whose class the dataset no longer even covers. A retract
+ *  zeroes the four AADT columns and the stamp; the row becomes free for the
+ *  service-tree / continuity passes on their next run. A dataset can only ever
+ *  retract rows it owns — `sourceId` is compared against the row, not trusted
+ *  from the caller's match logic. */
+export interface RoadRetract {
+  sourceId: number
+  when: (row: RoadRow, i: number) => boolean
 }
 
 /**
@@ -96,10 +116,12 @@ export async function writeRoadAadt(
   match: (row: RoadRow, i: number) => RoadAadt | null,
   onApplied?: (row: RoadRow, i: number, applied: RoadAadt) => void,
   coverage?: ReadonlySet<number>,
+  retract?: RoadRetract,
 ): Promise<WriteRoadResult> {
   let rows = 0
   let matched = 0
   let skipped = 0
+  let retracted = 0
   let updated = false
 
   await withArrowWrite(arrowPath, (table: Table): Table => {
@@ -155,6 +177,19 @@ export async function writeRoadAadt(
         name: (nameCol?.get(i) as string | null) ?? null,
         osmId: osmIdCol ? Number(osmIdCol.get(i)) : null,
       }
+      // Self-heal BEFORE the coverage gate: a row this dataset owns but would
+      // no longer claim is disowned even when its class now falls outside
+      // coverage (that is precisely the mis-stamp being healed).
+      if (retract && src[i] === retract.sourceId && retract.when(row, i)) {
+        light[i] = 0
+        medium[i] = 0
+        heavy[i] = 0
+        moto[i] = 0
+        src[i] = 0
+        retracted++
+        any = true
+        continue
+      }
       // Class gate (centralized so no enricher can forget it): a source whose
       // `coverage` set omits this row's `road_class` never reaches `match`, so a
       // major-road dataset can't bleed onto a residential/service street — the
@@ -203,7 +238,7 @@ export async function writeRoadAadt(
     return makeTable(cols)
   })
 
-  return { rows, matched, updated, skipped }
+  return { rows, matched, updated, skipped, retracted }
 }
 
 /**

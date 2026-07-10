@@ -125,3 +125,34 @@ test('fail-loud: sourceId 0/unknown payload throws (SA-bug shape)', async () => 
     /invalid match/,
   )
 })
+
+test('retract: disowns owned rows (incl. out-of-coverage) and zeroes AADT; counter reports them', async () => {
+  // The "Zelená 20" heal shape: a class-7 service row stamped by census id 20
+  // must be disowned even though class 7 is outside the dataset's coverage —
+  // retraction runs BEFORE the coverage gate. A class-2 row owned by the same
+  // id with a healthy ref stays; a row owned by ANOTHER id is never touched.
+  const classes = [7, 2, 7]
+  const path = writeRoadsFixture('retract.arrow', classes)
+  // Re-stamp fixture: row0 owned by 20 (bad: class 7), row1 owned by 20
+  // (good: class 2), row2 owned by 99 (foreign — untouchable).
+  await writeRoadAadt(path, (row, i) =>
+    ({ light: 111, medium: 0, heavy: 0, moto: 0, sourceId: i === 2 ? 99 : 20 }))
+
+  const result = await writeRoadAadt(
+    path,
+    () => null, // no new matches — pure heal pass
+    undefined,
+    new Set([0, 1, 2, 3, 4, 10, 11, 12]),
+    { sourceId: 20, when: (row) => osmRoadClassRank(row.roadClass) > 4 },
+  )
+  assert.equal(result.retracted, 1, 'exactly the class-7 row owned by 20')
+  assert.equal(result.updated, true)
+
+  const t = tableFromIPC(readFileSync(path))
+  const src = [...Array(3)].map((_, i) => t.getChild('source_id')!.get(i))
+  const light = [...Array(3)].map((_, i) => t.getChild('aadt_light')!.get(i))
+  assert.deepEqual(src, [0, 20, 99], 'row0 disowned, row1 kept, foreign row untouched')
+  assert.equal(light[0], 0, 'retracted AADT zeroed')
+  assert.equal(light[1], 111, 'kept AADT intact')
+  assert.equal(light[2], 111, 'foreign AADT intact')
+})

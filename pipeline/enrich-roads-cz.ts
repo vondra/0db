@@ -15,11 +15,21 @@ import { resolve } from 'node:path'
 import { SOURCE_ID_CZ_RSD_SCITANI } from './lib/source-ids.generated.js'
 import { pointToPolylineDist } from './lib/spatial.js'
 import { shouldOverwrite } from './lib/provenance.js'
-import { writeRoadAadt, iterateCountryHexes } from './lib/roads-arrow.js'
+import {
+  writeRoadAadt,
+  iterateCountryHexes,
+  osmRoadClassRank,
+  ROAD_CLASS_RANK_TOLERANCE,
+  type RoadRow,
+} from './lib/roads-arrow.js'
+import { pathToFileURL } from 'node:url'
 import { makeCoastalCountryGate } from './lib/country-polygon.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CZ_RSD_SCITANI
+
+/** ŘSD surveys numbered roads only: majors 0-4 + their link classes. */
+const RSD_COVERAGE: ReadonlySet<number> = new Set([0, 1, 2, 3, 4, 10, 11, 12])
 
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/cz`)
@@ -43,6 +53,10 @@ const PAGE_SIZE = 2000
 //   cat4 PTW    = M
 interface CensusSection {
   ref: string           // normalized road ref
+  /** ŘSD road-category rank on the shared 0..4 scale (D→0, I→1, II→3, III→4)
+   *  — gated against `osmRoadClassRank` so a count can never land on a road
+   *  class it does not belong to, whatever its ref looks like. */
+  rank: number
   aadt_light: number
   aadt_medium: number
   aadt_heavy: number
@@ -113,6 +127,7 @@ function parseCensus(features: any[]): Map<string, CensusSection[]> {
 
     const section: CensusSection = {
       ref,
+      rank: rsdRank(String(a.PSILNICE || ''), String(a.PKOD_R || '')),
       aadt_light: (a.O || 0) + (a.LN || 0),
       aadt_medium: (a.SN || 0) + (a.A || 0) + (a.TR || 0) + (a.TRP || 0),
       aadt_heavy: (a.TN || 0) + (a.TNP || 0) + (a.SNP || 0) + (a.NSN || 0) + (a.AK || 0),
@@ -153,8 +168,45 @@ async function enrichHexes(censusByRef: Map<string, CensusSection[]>): Promise<v
 
   let totalRoads = 0
   let totalMatched = 0
+  let totalRetracted = 0
   let hexesUpdated = 0
   const matchByClass = new Map<number, { matched: number; total: number }>()
+
+  // ONE claim rule, used from both sides: the match callback stamps rows it
+  // returns a section for, and the retract disowns owned rows it returns null
+  // for — so "what the current rules claim" cannot drift between the two
+  // (/gg Codex: an earlier class-only retract left 2,724 rank-mismatched
+  // stamps from the free-text era grandfathered in).
+  const matchSection = (row: RoadRow): CensusSection | null => {
+    // Coverage, EXPLICITLY (not just via the writer's gate): matchSection is
+    // also the retract oracle, so an out-of-coverage row must read as
+    // "no claim" here — never silently spared by the writer skipping it
+    // (/gg Gemini). Rank 6 for locals would reject them anyway; this makes
+    // the invariant independent of that arithmetic.
+    if (!RSD_COVERAGE.has(row.roadClass)) return null
+    // Ref match is MANDATORY — no proximity-only fallback.
+    if (!row.ref) return null
+    if (!inCzechia(row.midLat, row.midLon)) return null
+    const normalized = normalizeOsmRef(row.ref)
+    if (!normalized) return null
+    const candidates = censusByRef.get(normalized)
+    if (!candidates || candidates.length === 0) return null
+
+    // Rank gate FIRST, then nearest: filtering after picking the closest
+    // would let a rank-incompatible section (e.g. the expressway leg of a
+    // renumbered corridor) SHADOW a compatible one a few metres farther
+    // (/gg Gemini). Distance is point-to-polyline, so the section boundary
+    // lands at the real junction, not a centroid bisector.
+    const rowRank = osmRoadClassRank(row.roadClass)
+    let best: CensusSection | null = null
+    let bestDist = 10_000 // avoid wrong matches on same-numbered roads far away
+    for (const candidate of candidates) {
+      if (Math.abs(rowRank - candidate.rank) > ROAD_CLASS_RANK_TOLERANCE) continue
+      const d = pointToPolylineDist(row.midLat, row.midLon, candidate.coords)
+      if (d < bestDist) { best = candidate; bestDist = d }
+    }
+    return best
+  }
 
   for (const hexId of hexDirs) {
     const r = await writeRoadAadt(
@@ -168,24 +220,8 @@ async function enrichHexes(censusByRef: Map<string, CensusSection[]>): Promise<v
         // already owns the row (writeRoadAadt re-checks the gate — this only saves work).
         if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
 
-        // Ref match is MANDATORY — no proximity-only fallback.
-        if (!row.ref) return null
-        if (!inCzechia(row.midLat, row.midLon)) return null
-        const normalized = normalizeOsmRef(row.ref)
-        if (!normalized) return null
-        const candidates = censusByRef.get(normalized)
-        if (!candidates || candidates.length === 0) return null
-
-        // Pick the section whose LINE is closest to the segment midpoint
-        // (point-to-polyline, not centroid → the boundary lands at the real
-        // junction, not the perpendicular bisector of two centroids).
-        let best = candidates[0]
-        let bestDist = pointToPolylineDist(row.midLat, row.midLon, best.coords)
-        for (let j = 1; j < candidates.length; j++) {
-          const d = pointToPolylineDist(row.midLat, row.midLon, candidates[j].coords)
-          if (d < bestDist) { best = candidates[j]; bestDist = d }
-        }
-        if (bestDist > 10_000) return null // avoid wrong matches on same-numbered roads far away
+        const best = matchSection(row)
+        if (!best) return null
 
         // Do NOT halve for oneway — ŘSD = bidirectional total; the engine applies
         // oneway_factor=0.5. (The priority gate + atomic write live in writeRoadAadt.)
@@ -195,14 +231,28 @@ async function enrichHexes(censusByRef: Map<string, CensusSection[]>): Promise<v
         }
       },
       (row) => { matchByClass.get(row.roadClass)!.matched++ },
+      // ŘSD surveys numbered roads only — majors + their links. The writer's
+      // coverage gate keeps locals (5-9) out of `match` entirely (the same
+      // set also lives inside matchSection for the retract oracle).
+      RSD_COVERAGE,
+      // Self-heal: disown every owned row the CURRENT rules would not claim —
+      // the exact negation of the match path above (shared matchSection), so
+      // free-text refs, local classes AND rank-mismatched relics all heal.
+      // Freed rows fall to service-tree / continuity / engine defaults.
+      {
+        sourceId: MY_SOURCE_ID,
+        when: (row) => matchSection(row) === null,
+      },
     )
     totalRoads += r.rows
     totalMatched += r.matched
+    totalRetracted += r.retracted
     if (r.updated) hexesUpdated++
   }
 
   console.log(`\n=== Results ===`)
   console.log(`  ${totalMatched} / ${totalRoads} segments matched (${(totalMatched / totalRoads * 100).toFixed(1)}%)`)
+  console.log(`  ${totalRetracted} previously-stamped rows retracted (strict-ref / class heal)`)
   console.log(`  ${hexesUpdated} / ${hexDirs.length} hexes updated`)
   console.log(`\n  Per road class:`)
   for (const [cls, stats] of [...matchByClass.entries()].sort((a, b) => a[0] - b[0])) {
@@ -226,17 +276,37 @@ function normalizeRsdRef(psilnice: string, pkodR: string): string {
   return num
 }
 
-/** Normalize OSM ref: "I/34" → "34", "D1" → "D1", "E50" → skip */
-function normalizeOsmRef(ref: string): string {
-  const r = ref.trim()
-  if (/^D\d/.test(r)) return r             // D1, D5 → keep
-  if (/^E\d/.test(r)) return ''             // E-roads → skip (international numbering)
-  // Strip Roman numeral prefix: "I/34" → "34", "II/150" → "150"
-  const m = r.match(/^[IV]+\/(\d+)/)
-  if (m) return m[1]
-  // Plain number
-  const num = r.replace(/\D/g, '')
-  return num || ''
+/** ŘSD road category → the shared 0..4 class rank (see `osmRoadClassRank`).
+ *  The category lives in PKOD_R — PSILNICE is a BARE number for everything
+ *  but D-roads (measured from the 2026 cache: PKOD_R 1='D8', 2='3' (I/3),
+ *  3='603' (II/603), 4='11628' (III/11628), 5='D4', 6='34' (I/34, E-route)).
+ *  D/expressway → 0, silnice I → 1 (±1 tolerance spans motorway- and
+ *  primary-tagged OSM ways), II → 3, III → 4. Unknown codes → 1, the most
+ *  restrictive of the plausible readings. */
+export function rsdRank(psilnice: string, pkodR: string): number {
+  if (pkodR === '1' || pkodR === '5' || /^D\d/.test(psilnice.trim())) return 0
+  if (pkodR === '3') return 3
+  if (pkodR === '4') return 4
+  return 1 // PKOD_R 2/6 — silnice I
+}
+
+/** Normalize OSM ref: "I/34" → "34", "II/150" → "150", "D1" → "D1",
+ *  "E50" → skip. Multi-value refs ("II/150;E55") take the first token that
+ *  normalizes. Every branch is anchored to the WHOLE token — free text like
+ *  "Zelená 20" (a street address mis-tagged as ref) must never reduce to "20"
+ *  and inherit silnice I/20's count (2026-07 audit, Plzeň parking aisle at
+ *  17,531 AADT). */
+export function normalizeOsmRef(ref: string): string {
+  for (const tok of ref.split(';')) {
+    const r = tok.trim()
+    if (/^D\d+$/.test(r)) return r          // D1, D5 → keep
+    if (/^E\d+$/.test(r)) continue          // E-roads → skip (international numbering)
+    // Whole-token road number, with or without the Roman prefix:
+    // "I/34" → "34", "II/150" → "150", "III/104a" → "104", "150" → "150".
+    const m = r.match(/^(?:[IV]+\/)?(\d+)[a-zA-Z]?$/)
+    if (m) return m[1]
+  }
+  return ''
 }
 
 /** Flat-earth distance in meters */
@@ -261,4 +331,8 @@ async function main() {
   console.log(`\n=== Done ===`)
 }
 
-main().catch(err => { console.error('Error:', err); process.exit(1) })
+// Import-safe: run only when invoked directly — the unit tests import the
+// exported helpers and must never trigger a download/enrichment (/gg Codex).
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch(err => { console.error('Error:', err); process.exit(1) })
+}
