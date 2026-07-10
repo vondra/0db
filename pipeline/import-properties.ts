@@ -9,9 +9,8 @@
  *   npx tsx import-properties.ts
  */
 
-import { mkdirSync, existsSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdirSync, existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { brotliDecompressSync } from 'node:zlib'
 import { DATA_YEAR } from './lib/data-year.js'
 
 const RATE_LIMIT_MS = 1200
@@ -19,12 +18,11 @@ const PHOTO_RATE_MS = 300
 // Properties + photos live under one year-based dir, served at /api/properties.
 const PROPERTIES_DIR = resolve(import.meta.dirname, '..', 'data', 'prepared', DATA_YEAR, 'properties')
 const PHOTOS_DIR = resolve(PROPERTIES_DIR, 'photos')
-// Noise sampled from the `total` HM3 raster. DEAD PATH since the 2026-07
-// storage redesign (loose tree deleted; world is 512@z12 pmtiles/store) —
-// the guard below refuses to run rather than silently import zero-noise
-// listings. Port: read /api/tiles/{build}/total/{z}/{x}/{y}.bin (HM3 v3,
-// 512² cells) or the tile store, then delete this note.
-const TOTAL_Z13_DIR = resolve(import.meta.dirname, '..', 'data', 'tiles', DATA_YEAR, 'heatmap-v3', 'total', '13')
+// Noise sampled from the published `total` heatmap over HTTP — the same
+// immutable pmtiles build the map serves (build-id from /api/tiles-manifest),
+// so listings and the visible heatmap can never disagree. Ported 2026-07-10
+// from the retired pre-512 loose z13 tree.
+const TILE_SERVER = process.env.PROPERTIES_TILE_SERVER || 'http://localhost:8531'
 const PER_PAGE = 60
 const MAX_PAGES = 500
 
@@ -200,50 +198,61 @@ async function downloadPhotos(listings: RawListing[]): Promise<number> {
   return downloaded
 }
 
-// ── Noise from the z13 `total` HM3 raster ──
+// ── Noise from the published `total` heatmap (512@z12, HM3 v3, HTTP) ──
 
-const TILE_PX = 256
+const TILE_PX = 512
+const TILE_Z = 12
 const NO_DATA = 255
+let tileBuild: string | null = null
 const totalTileCache = new Map<string, Uint8Array | null>()
 
-/** Decode one z13 `total` HM3 tile to its 256×256 cell bytes (255 = no data). */
-function loadTotalTile(tx: number, ty: number): Uint8Array | null {
+/** Resolve the published tile generation once; FATAL when nothing is
+ *  published — a silent miss would stamp every listing noise=null. */
+async function resolveTileBuild(): Promise<string> {
+  const res = await fetch(`${TILE_SERVER}/api/tiles-manifest`)
+  if (!res.ok) throw new Error(`tiles-manifest: HTTP ${res.status} on ${TILE_SERVER}`)
+  const manifest = (await res.json()) as { build?: string }
+  if (!manifest.build) throw new Error('tiles-manifest has no build — publish tiles first (tile-store-pack)')
+  return manifest.build
+}
+
+/** Fetch + decode one z12 `total` HM3 v3 tile (512² cells; 255 = no data).
+ *  The server sends Content-Encoding: br — Node's fetch decompresses
+ *  transparently, so we only validate the 6-byte header. Any format drift
+ *  bails to null (those listings get noise=null) rather than mis-sampling. */
+async function loadTotalTile(tx: number, ty: number): Promise<Uint8Array | null> {
   const key = `${tx}/${ty}`
   const cached = totalTileCache.get(key)
   if (cached !== undefined) return cached
-
-  const path = resolve(TOTAL_Z13_DIR, String(tx), `${ty}.bin`)
-  if (!existsSync(path)) { totalTileCache.set(key, null); return null }
-
-  // Bail (tile -> null, those properties get noise=null) on any format drift
-  // rather than silently mis-sampling, mirroring the frontend HM3 decoder.
   const bail = () => { totalTileCache.set(key, null); return null }
-  // HM3 v2: the whole file is one Brotli stream of magic+version+source_id+cells.
-  let raw: Buffer
+  let buf: ArrayBuffer
   try {
-    raw = brotliDecompressSync(readFileSync(path))
+    const res = await fetch(`${TILE_SERVER}/api/tiles/${tileBuild}/total/${TILE_Z}/${tx}/${ty}.bin`)
+    if (res.status === 204) return bail()
+    if (!res.ok) return bail()
+    buf = await res.arrayBuffer()
   } catch {
     return bail()
   }
-  if (raw.length !== 6 + TILE_PX * TILE_PX || raw.toString('ascii', 0, 4) !== 'HM3 ' || raw.readUInt8(4) !== 2) {
-    return bail()
-  }
-  const cells = raw.subarray(6) // 256×256 cells; 255 = NO_DATA
+  const bytes = new Uint8Array(buf)
+  if (bytes.length !== 6 + TILE_PX * TILE_PX) return bail()
+  if (String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) !== 'HM3 ' || bytes[4] !== 3) return bail()
+  const cells = bytes.subarray(6)
   totalTileCache.set(key, cells)
   return cells
 }
 
 /** Total Lden (dB) at a point, or null beyond computed coverage. Web-Mercator
- *  z13 tile math mirrors the renderer + the heatmap hover tooltip. */
-function sampleTotalLden(lat: number, lng: number): number | null {
-  const n = 2 ** 13
+ *  z12/512px tile math mirrors the renderer + the heatmap hover tooltip. */
+async function sampleTotalLden(lat: number, lng: number): Promise<number | null> {
+  const n = 2 ** TILE_Z
   const latRad = (lat * Math.PI) / 180
   const merc = Math.log(Math.tan(latRad) + 1 / Math.cos(latRad))
   const xFloat = ((lng + 180) / 360) * n
   const yFloat = ((1 - merc / Math.PI) / 2) * n
   const tx = Math.floor(xFloat)
   const ty = Math.floor(yFloat)
-  const cells = loadTotalTile(tx, ty)
+  const cells = await loadTotalTile(tx, ty)
   if (!cells) return null
   const px = Math.min(TILE_PX - 1, Math.floor((xFloat - tx) * TILE_PX))
   const py = Math.min(TILE_PX - 1, Math.floor((yFloat - ty) * TILE_PX))
@@ -253,21 +262,22 @@ function sampleTotalLden(lat: number, lng: number): number | null {
 
 // ── Write one properties.json ──
 
-function writePropertiesJson(listings: RawListing[]): void {
+async function writePropertiesJson(listings: RawListing[]): Promise<void> {
   const today = new Date().toISOString().slice(0, 10)
   let withNoise = 0
 
-  const props: Property[] = listings.map((l) => {
-    const noise = sampleTotalLden(l.lat, l.lng)
+  const props: Property[] = []
+  for (const l of listings) {
+    const noise = await sampleTotalLden(l.lat, l.lng)
     if (noise !== null) withNoise++
     const localPhoto = resolve(PHOTOS_DIR, `${l.id}.jpg`)
     const photo = existsSync(localPhoto) ? `/api/properties/photos/${l.id}.jpg` : l.photo
-    return {
+    props.push({
       id: l.id, lat: l.lat, lng: l.lng, type: l.type, listing: l.listing,
       price: l.price, currency: 'CZK', area: l.area, title: l.title,
       url: l.url, photo, noise, updated: today,
-    }
-  })
+    })
+  }
 
   mkdirSync(PROPERTIES_DIR, { recursive: true })
   writeFileSync(resolve(PROPERTIES_DIR, 'properties.json'), JSON.stringify(props))
@@ -279,13 +289,13 @@ function writePropertiesJson(listings: RawListing[]): void {
 
 async function main(): Promise<void> {
   console.log('=== Property Import (CZ) ===\n')
-  // Refuse to import against the retired loose tree — a silent miss would
-  // stamp every listing with zero noise (see the TOTAL_Z13_DIR note).
-  if (!existsSync(TOTAL_Z13_DIR)) {
-    console.error(
-      `FATAL: noise raster dir gone (${TOTAL_Z13_DIR}) — this importer still ` +
-        'reads the pre-2026-07 loose tree; port it to the tile store/pmtiles first.',
-    )
+  // Resolve the published tile build up front — refusing to run beats
+  // silently stamping every listing with noise=null.
+  try {
+    tileBuild = await resolveTileBuild()
+    console.log(`  Noise source: ${TILE_SERVER} build ${tileBuild} (total @ z${TILE_Z})`)
+  } catch (err) {
+    console.error(`FATAL: ${err instanceof Error ? err.message : err}`)
     process.exit(1)
   }
 
@@ -305,7 +315,7 @@ async function main(): Promise<void> {
   await downloadPhotos(deduped)
 
   console.log('\n  Writing properties.json...')
-  writePropertiesJson(deduped)
+  await writePropertiesJson(deduped)
 
   console.log('\n=== Done ===')
 }
