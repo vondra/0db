@@ -191,6 +191,7 @@ export const DATASETS: Dataset[] = [
     url: 'https://geoportal.rsd.cz/',
     priority: 80,
     measurement: 'counted',
+    roadCoverage: [0, 1, 2, 3, 4, 10, 11, 12], // mirrors RSD_COVERAGE in enrich-roads-cz.ts (R1b bucket A)
   },
   {
     id: 9003,
@@ -209,6 +210,7 @@ export const DATASETS: Dataset[] = [
      * is not published with the file, so per plan §2.6 the unexpanded proxy
      * must not enter counted-only consumers (~+5-8% vs true AADT,
      * conservative). Matched inside the Prague ADM2 polygon. */
+    roadCoverage: [1, 2, 3, 4, 5, 11, 12], // mirrors city-datasets.ts coverage (R1b bucket B)
   },
   {
     id: 9004,
@@ -228,6 +230,7 @@ export const DATASETS: Dataset[] = [
      * non-pandemic year (2025; the adapter logs + caches the year it
      * picked). No proxy rows, no gap-fill. Matched by station point
      * proximity inside the Wien(Stadt) ADM2 polygon. */
+    roadCoverage: [1, 2, 3, 4, 5, 11, 12], // mirrors city-datasets.ts coverage (R1b bucket B)
   },
   {
     id: 9005,
@@ -248,6 +251,7 @@ export const DATASETS: Dataset[] = [
      * per row, which is exactly the plan-§2.6 "mixed under one id" case.
      * Matched by section-line proximity inside the Brno-City ADM2
      * polygon. */
+    roadCoverage: [1, 2, 3, 4, 5, 9, 11, 12], // mirrors city-datasets.ts coverage (R1b bucket B)
   },
   {
     id: 21,
@@ -490,6 +494,7 @@ export const DATASETS: Dataset[] = [
     url: 'https://www.donneesquebec.ca/recherche/dataset/debit-de-circulation',
     priority: 80,
     measurement: 'counted',
+    roadCoverage: [0, 1, 2, 3, 4, 10, 11, 12], // mirrors MTQ_COVERAGE in enrich-roads-ca.ts (R1b bucket A)
   },
   {
     id: 1023,
@@ -743,6 +748,7 @@ export const DATASETS: Dataset[] = [
     // No published per-segment counts — country-tuned class defaults anchored to
     // AUTOSTAT/Avtodor/Rosstat aggregates (same shape as CN/IN, ids 1025/1050).
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors RU_COVERAGE in enrich-roads-ru.ts (R1b bucket A)
   },
   {
     id: 9566, // NG = 566
@@ -754,6 +760,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors NG_COVERAGE in enrich-roads-ng.ts (R1b bucket A)
   },
   {
     id: 9818, // EG = 818
@@ -776,6 +783,7 @@ export const DATASETS: Dataset[] = [
     url: 'https://www.mlit.go.jp/road/census/r3/',
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 10, 11, 12], // mirrors JP_COVERAGE in enrich-roads-jp.ts (R1b bucket A)
   },
   {
     id: 9484, // MX = 484
@@ -798,6 +806,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors DZ_COVERAGE in enrich-roads-dz.ts (R1b bucket A)
   },
   {
     id: 9364, // IR = 364
@@ -809,6 +818,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors IR_COVERAGE in enrich-roads-ir.ts (R1b bucket A)
   },
   {
     id: 9404, // KE = 404
@@ -820,6 +830,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors KE_COVERAGE in enrich-roads-ke.ts (R1b bucket A)
   },
   {
     id: 9792, // TR = 792
@@ -831,6 +842,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors TR_COVERAGE in enrich-roads-tr.ts (R1b bucket A)
   },
   {
     id: 9804, // UA = 804
@@ -842,6 +854,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors UA_COVERAGE in enrich-roads-ua.ts (R1b bucket A)
   },
   {
     id: 9231, // ET = 231
@@ -853,6 +866,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors ET_COVERAGE in enrich-roads-et.ts (R1b bucket A)
   },
   {
     id: 9180, // CD = 180
@@ -864,6 +878,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors CD_COVERAGE in enrich-roads-cd.ts (R1b bucket A)
   },
   {
     id: 9834, // TZ = 834
@@ -875,6 +890,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors TZ_COVERAGE in enrich-roads-tz.ts (R1b bucket A)
   },
   {
     id: 9368, // IQ = 368
@@ -886,6 +902,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors IQ_COVERAGE in enrich-roads-iq.ts (R1b bucket A)
   },
   {
     id: 9729, // SD = 729
@@ -897,6 +914,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors SD_COVERAGE in enrich-roads-sd.ts (R1b bucket A)
   },
   {
     id: 9504, // MA = 504
@@ -908,6 +926,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors MA_COVERAGE in enrich-roads-ma.ts (R1b bucket A)
   },
   {
     id: 9860, // UZ = 860
@@ -919,6 +938,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors UZ_COVERAGE in enrich-roads-uz.ts (R1b bucket A)
   },
   {
     id: 9398, // KZ = 398
@@ -930,6 +950,7 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 80,
     measurement: 'proxy',
+    roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors KZ_COVERAGE in enrich-roads-kz.ts (R1b bucket A)
   },
 
   // ── Railways: national (OSM-only) ──
