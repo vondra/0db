@@ -1,7 +1,9 @@
 //! Finalize: read spill buckets → group by hex_id → write Arrow IPC per hex directory.
 
 use anyhow::Result;
+use arrow::array::ArrayRef;
 use arrow::datatypes::{Field, Schema};
+use arrow::ipc::writer::FileWriter;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -227,4 +229,60 @@ fn schema_with_contract(fields: Vec<Field>, key: &str, value: &str) -> Schema {
     let mut md = HashMap::new();
     md.insert(key.to_string(), value.to_string());
     Schema::new(fields).with_metadata(md)
+}
+
+/// The ONE arrow-write path for all 8 layer writers: rows are spatially
+/// sorted, chunked into record batches, and per-batch bboxes stamped into
+/// schema metadata so the popup reader can skip out-of-reach batches without
+/// decoding them (docs/dev/popup-batch-pruning.md). `row_bboxes` MUST be
+/// parallel to the APPENDED rows — a writer that `continue`s a malformed TSV
+/// row pushes no bbox for it.
+pub(super) fn write_arrow_spatially_batched(
+    path: &Path,
+    schema: Schema,
+    columns: Vec<ArrayRef>,
+    row_bboxes: &[arrow_batching::RowBbox],
+) -> Result<()> {
+    let (schema, batches) = arrow_batching::spatially_batched(schema, columns, row_bboxes)?;
+    let file = File::create(path)?;
+    let mut writer = FileWriter::try_new(file, &schema)?;
+    for batch in &batches {
+        writer.write(batch)?;
+    }
+    writer.finish()?;
+    Ok(())
+}
+
+/// Row envelope of a ≤250 m microsegment (roads/railways/barriers/airport
+/// lines): the segment's endpoint box.
+pub(super) fn segment_row_bbox(
+    s_lat: f64,
+    s_lon: f64,
+    e_lat: f64,
+    e_lon: f64,
+) -> arrow_batching::RowBbox {
+    [
+        s_lat.min(e_lat),
+        s_lon.min(e_lon),
+        s_lat.max(e_lat),
+        s_lon.max(e_lon),
+    ]
+}
+
+/// Row envelope of a polygon-or-point feature: the exact WKB footprint bbox
+/// when present — centroid-only would under-prune large areas (an audible
+/// plant edge can sit kilometres from its centroid) — else a degenerate
+/// point box at the centroid.
+pub(super) fn polygon_row_bbox(
+    wkb_hex: &str,
+    centroid_lat: f64,
+    centroid_lon: f64,
+) -> arrow_batching::RowBbox {
+    if !wkb_hex.is_empty() {
+        if let Some(fp) = noise_compute::wkb::WkbFootprint::parse(wkb_hex) {
+            let (min_lat, max_lat, min_lon, max_lon) = fp.bbox();
+            return [min_lat, min_lon, max_lat, max_lon];
+        }
+    }
+    [centroid_lat, centroid_lon, centroid_lat, centroid_lon]
 }

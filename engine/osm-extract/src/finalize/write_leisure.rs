@@ -4,13 +4,12 @@
 use anyhow::Result;
 use arrow::array::*;
 use arrow::datatypes::*;
-use arrow::ipc::writer::FileWriter;
-use arrow::record_batch::RecordBatch;
-use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use super::{schema_with_contract, LEISURE_CONTRACT_V1};
+use super::{
+    polygon_row_bbox, schema_with_contract, write_arrow_spatially_batched, LEISURE_CONTRACT_V1,
+};
 use crate::spill::hex_decode;
 
 /// `leisure.arrow` (settlement v2 phase 2): one row per leisure AREA source
@@ -49,6 +48,7 @@ pub(super) fn write_leisure(rows: &[Vec<String>], path: &Path) -> Result<()> {
     let mut name = StringBuilder::with_capacity(n, n * 8);
     let mut wkb = BinaryBuilder::with_capacity(n, n * 100);
     let mut area_m2 = Float32Builder::with_capacity(n);
+    let mut row_bboxes = Vec::with_capacity(n);
 
     for row in rows {
         // TSV: hex_id(0) osm_id(1) clat(2) clon(3) sport(4) capacity(5)
@@ -56,9 +56,16 @@ pub(super) fn write_leisure(rows: &[Vec<String>], path: &Path) -> Result<()> {
         if row.len() < 8 {
             continue;
         }
+        let c_lat: f64 = row[2].parse().unwrap_or(0.0);
+        let c_lon: f64 = row[3].parse().unwrap_or(0.0);
+        row_bboxes.push(polygon_row_bbox(
+            row.get(8).map(|s| s.as_str()).unwrap_or(""),
+            c_lat,
+            c_lon,
+        ));
         osm_id.append_value(row[1].parse().unwrap_or(0));
-        clat.append_value(row[2].parse().unwrap_or(0.0));
-        clon.append_value(row[3].parse().unwrap_or(0.0));
+        clat.append_value(c_lat);
+        clon.append_value(c_lon);
         sport.append_value(row[4].parse().unwrap_or(0));
         // capacity is empty-or-number in the TSV.
         capacity.append_value(row.get(5).and_then(|s| s.parse().ok()).unwrap_or(0));
@@ -82,8 +89,9 @@ pub(super) fn write_leisure(rows: &[Vec<String>], path: &Path) -> Result<()> {
         }
     }
 
-    let batch = RecordBatch::try_new(
-        Arc::new(schema),
+    write_arrow_spatially_batched(
+        path,
+        schema,
         vec![
             Arc::new(osm_id.finish()),
             Arc::new(clat.finish()),
@@ -95,11 +103,6 @@ pub(super) fn write_leisure(rows: &[Vec<String>], path: &Path) -> Result<()> {
             Arc::new(wkb.finish()),
             Arc::new(area_m2.finish()),
         ],
-    )?;
-
-    let file = File::create(path)?;
-    let mut writer = FileWriter::try_new(file, &batch.schema())?;
-    writer.write(&batch)?;
-    writer.finish()?;
-    Ok(())
+        &row_bboxes,
+    )
 }

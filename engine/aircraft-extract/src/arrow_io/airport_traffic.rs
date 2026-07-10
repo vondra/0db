@@ -144,8 +144,17 @@ pub fn write_airport_traffic(
     let mut band_values: Vec<f32> = Vec::with_capacity(n * NUM_BANDS);
     let mut gse_values: Vec<u32> = Vec::with_capacity(n * NUM_GSE_CLASSES);
     let mut microseg_gse_values: Vec<u32> = Vec::with_capacity(n * NUM_GSE_CLASSES);
+    // Popup batch pruning (docs/dev/popup-batch-pruning.md): microsegment
+    // endpoint box per row; f32→f64 is exact.
+    let mut row_bboxes = Vec::with_capacity(n);
 
     for r in rows {
+        row_bboxes.push([
+            r.start_lat.min(r.end_lat) as f64,
+            r.start_lon.min(r.end_lon) as f64,
+            r.start_lat.max(r.end_lat) as f64,
+            r.start_lon.max(r.end_lon) as f64,
+        ]);
         airport_key.append_value(&r.airport_key);
         osm_id.append_value(r.osm_id);
         segment_idx.append_value(r.segment_idx);
@@ -222,8 +231,9 @@ pub fn write_airport_traffic(
         Arc::new(microseg_unique_ga_arr.finish()),
         Arc::new(microseg_unique_ga_dep.finish()),
     ];
-    let batch = RecordBatch::try_new(schema.clone(), columns)?;
-    write_record_batches(path, &schema, &[batch])
+    let (schema, batches) =
+        arrow_batching::spatially_batched(schema.as_ref().clone(), columns, &row_bboxes)?;
+    write_record_batches(path, &schema, &batches)
 }
 
 pub fn read_airport_traffic(path: &Path) -> Result<Vec<AirportTrafficRow>> {

@@ -10,7 +10,6 @@ use arrow::array::{
 };
 use arrow::buffer::OffsetBuffer;
 use arrow::datatypes::{DataType, Field};
-use arrow::record_batch::RecordBatch;
 
 use crate::arrow_schemas;
 use crate::flight::AirborneEvent;
@@ -40,6 +39,10 @@ pub fn write_airborne(
     let mut bb_max_la = Float32Builder::with_capacity(n);
     let mut bb_min_lo = Float32Builder::with_capacity(n);
     let mut bb_max_lo = Float32Builder::with_capacity(n);
+    // Popup batch pruning: the per-event bbox doubles as the spatial-sort key
+    // (docs/dev/popup-batch-pruning.md); f32→f64 is exact, so the batch bbox
+    // bounds the f32 coordinates the reader tests against.
+    let mut row_bboxes = Vec::with_capacity(n);
 
     let sub_struct_fields = match schema.field_with_name("sub_segments")?.data_type() {
         DataType::List(item) => match item.data_type() {
@@ -63,6 +66,12 @@ pub fn write_airborne(
         bb_max_la.append_value(r.bbox_max_lat);
         bb_min_lo.append_value(r.bbox_min_lon);
         bb_max_lo.append_value(r.bbox_max_lon);
+        row_bboxes.push([
+            r.bbox_min_lat as f64,
+            r.bbox_min_lon as f64,
+            r.bbox_max_lat as f64,
+            r.bbox_max_lon as f64,
+        ]);
         total_subs += r.sub_segments.len();
         sub_off.push(total_subs as i32);
     }
@@ -145,8 +154,9 @@ pub fn write_airborne(
         Arc::new(bb_min_lo.finish()),
         Arc::new(bb_max_lo.finish()),
     ];
-    let batch = RecordBatch::try_new(schema.clone(), columns)?;
-    write_record_batches(path, &schema, &[batch])
+    let (schema, batches) =
+        arrow_batching::spatially_batched(schema.as_ref().clone(), columns, &row_bboxes)?;
+    write_record_batches(path, &schema, &batches)
 }
 
 #[cfg(test)]

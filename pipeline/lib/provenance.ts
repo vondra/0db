@@ -11,8 +11,13 @@
  */
 
 import { promises as fs } from 'node:fs'
-import { tableFromIPC, tableToIPC, type Table } from 'apache-arrow'
+import { Field, RecordBatch, Schema, Table, tableFromIPC, tableToIPC } from 'apache-arrow'
 import { shouldOverwrite } from './sources.js'
+
+/** Schema-metadata key of the per-batch bbox list written by the extractors
+ *  (engine/arrow-batching). Valid ONLY while batch boundaries and row count
+ *  match what the extractor wrote — see preserveArrowShape. */
+const QM_BATCH_BBOXES_KEY = 'qm_batch_bboxes'
 
 // Overwrite decision (re-exported from sources.ts for a stable call site)
 
@@ -95,10 +100,66 @@ export async function withArrowWrite(
     const input = tableFromIPC(bytes)
     const output = await fn(input)
     if (output === input) return   // no-op: nothing changed → leave the file untouched
-    await fs.writeFile(tmpPath, Buffer.from(tableToIPC(output, 'file')))
+    const normalized = preserveArrowShape(input, output)
+    await fs.writeFile(tmpPath, Buffer.from(tableToIPC(normalized, 'file')))
     await fs.rename(tmpPath, arrowPath)
   } finally {
     await releaseLock(lockPath)
   }
+}
+
+/**
+ * Re-impose the INPUT file's schema metadata, per-field flags and — when the
+ * row count is unchanged — record-batch boundaries on the callback's output.
+ *
+ * Callbacks rebuild tables via bare `makeTable()`, which silently drops schema
+ * metadata (bricking contract-gated files: `buildings_contract` aborts the
+ * heatmap loader) and collapses record batches (invalidating the extractors'
+ * `qm_batch_bboxes` popup-pruning metadata). Centralized HERE so no enricher
+ * can forget it — the same class of fix `buildings-arrow.ts` carries locally.
+ * A callback that deliberately sets metadata still wins (output keys override
+ * input keys).
+ *
+ * `qm_batch_bboxes` is kept ONLY when row count AND final batch count match
+ * the input — bboxes describe exact row/batch positions, so any reshape makes
+ * them stale, and a stale value must be deleted, never carried (the reader's
+ * count-guard would miss a same-count-different-rows lie).
+ */
+function preserveArrowShape(input: Table, output: Table): Table {
+  const metadata = new Map(input.schema.metadata)
+  for (const [k, v] of output.schema.metadata) metadata.set(k, v)
+
+  const fields = output.schema.fields.map(f => {
+    const orig = input.schema.fields.find(o => o.name === f.name)
+    return orig ? new Field(f.name, f.type, orig.nullable, orig.metadata) : f
+  })
+
+  // Restore the input's batch boundaries when the callback reshaped them
+  // (value-only patches keep row order, so the original chunking is exact).
+  // Boundary equality must compare per-batch ROW COUNTS, not just the batch
+  // count — same-count-different-boundaries would silently misalign the
+  // bbox↔batch mapping (Gemini /gg 2026-07-10).
+  const boundariesMatch = (batches: readonly RecordBatch[]): boolean =>
+    batches.length === input.batches.length &&
+    input.batches.every((b, i) => b.numRows === batches[i].numRows)
+
+  let batches = output.batches
+  if (output.numRows === input.numRows && input.batches.length > 1 && !boundariesMatch(batches)) {
+    const resliced: RecordBatch[] = []
+    let offset = 0
+    for (const b of input.batches) {
+      const part = output.slice(offset, offset + b.numRows)
+      if (part.batches.length !== 1) { resliced.length = 0; break }
+      resliced.push(part.batches[0])
+      offset += b.numRows
+    }
+    if (resliced.length === input.batches.length) batches = resliced
+  }
+
+  const shapePreserved = output.numRows === input.numRows && boundariesMatch(batches)
+  if (!shapePreserved) metadata.delete(QM_BATCH_BBOXES_KEY)
+
+  const schema = new Schema(fields, metadata)
+  return new Table(schema, batches.map(b => new RecordBatch(schema, b.data)))
 }
 

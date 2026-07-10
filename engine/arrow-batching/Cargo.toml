@@ -1,0 +1,16 @@
+[package]
+name = "arrow-batching"
+version = "0.1.0"
+edition = "2021"
+description = "Spatially-batched arrow format shared by extract writers (osm-extract, aircraft-extract) and the popup reader (source-reader)"
+
+[lib]
+name = "arrow_batching"
+path = "src/lib.rs"
+
+[dependencies]
+arrow = "54"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

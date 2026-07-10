@@ -4,11 +4,10 @@
 use anyhow::Result;
 use arrow::array::*;
 use arrow::datatypes::*;
-use arrow::ipc::writer::FileWriter;
-use arrow::record_batch::RecordBatch;
-use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
+
+use super::{segment_row_bbox, write_arrow_spatially_batched};
 
 pub(super) fn write_roads(rows: &[Vec<String>], path: &Path) -> Result<()> {
     let n = rows.len();
@@ -65,6 +64,7 @@ pub(super) fn write_roads(rows: &[Vec<String>], path: &Path) -> Result<()> {
     let mut junction = UInt8Builder::with_capacity(n);
     let mut access = UInt8Builder::with_capacity(n);
     let mut source_id = UInt16Builder::with_capacity(n);
+    let mut row_bboxes = Vec::with_capacity(n);
 
     for row in rows {
         // TSV: hex_id(0) osm_id(1) seg_idx(2) slat(3) slon(4) elat(5) elon(6) len(7)
@@ -73,12 +73,17 @@ pub(super) fn write_roads(rows: &[Vec<String>], path: &Path) -> Result<()> {
         if row.len() < 21 {
             continue;
         }
+        let s_lat: f64 = row[3].parse().unwrap_or(0.0);
+        let s_lon: f64 = row[4].parse().unwrap_or(0.0);
+        let e_lat: f64 = row[5].parse().unwrap_or(0.0);
+        let e_lon: f64 = row[6].parse().unwrap_or(0.0);
+        row_bboxes.push(segment_row_bbox(s_lat, s_lon, e_lat, e_lon));
         osm_id.append_value(row[1].parse().unwrap_or(0));
         seg_idx.append_value(row[2].parse().unwrap_or(0));
-        slat.append_value(row[3].parse().unwrap_or(0.0));
-        slon.append_value(row[4].parse().unwrap_or(0.0));
-        elat.append_value(row[5].parse().unwrap_or(0.0));
-        elon.append_value(row[6].parse().unwrap_or(0.0));
+        slat.append_value(s_lat);
+        slon.append_value(s_lon);
+        elat.append_value(e_lat);
+        elon.append_value(e_lon);
         len.append_value(row[7].parse().unwrap_or(0.0));
         rclass.append_value(row[8].parse().unwrap_or(0));
         speed.append_value(row[9].parse().unwrap_or(0));
@@ -96,8 +101,9 @@ pub(super) fn write_roads(rows: &[Vec<String>], path: &Path) -> Result<()> {
         source_id.append_value(0);
     }
 
-    let batch = RecordBatch::try_new(
-        Arc::new(schema),
+    write_arrow_spatially_batched(
+        path,
+        schema,
         vec![
             Arc::new(osm_id.finish()),
             Arc::new(seg_idx.finish()),
@@ -121,11 +127,6 @@ pub(super) fn write_roads(rows: &[Vec<String>], path: &Path) -> Result<()> {
             Arc::new(access.finish()),
             Arc::new(source_id.finish()),
         ],
-    )?;
-
-    let file = File::create(path)?;
-    let mut writer = FileWriter::try_new(file, &batch.schema())?;
-    writer.write(&batch)?;
-    writer.finish()?;
-    Ok(())
+        &row_bboxes,
+    )
 }

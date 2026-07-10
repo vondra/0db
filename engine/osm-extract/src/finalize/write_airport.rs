@@ -5,12 +5,10 @@
 use anyhow::Result;
 use arrow::array::*;
 use arrow::datatypes::*;
-use arrow::ipc::writer::FileWriter;
-use arrow::record_batch::RecordBatch;
-use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
+use super::{polygon_row_bbox, segment_row_bbox, write_arrow_spatially_batched};
 use crate::spill::hex_decode;
 
 pub(super) fn write_airport_areas(rows: &[Vec<String>], path: &Path) -> Result<()> {
@@ -48,6 +46,7 @@ pub(super) fn write_airport_areas(rows: &[Vec<String>], path: &Path) -> Result<(
     let mut access = StringBuilder::with_capacity(n, n * 8);
     let mut wkb = BinaryBuilder::with_capacity(n, n * 100);
     let mut area_m2 = Float32Builder::with_capacity(n);
+    let mut row_bboxes = Vec::with_capacity(n);
 
     for row in rows {
         // TSV: hex_id(0) osm_id(1) clat(2) clon(3) aeroway_type(4) name(5) ref(6) icao(7)
@@ -55,9 +54,16 @@ pub(super) fn write_airport_areas(rows: &[Vec<String>], path: &Path) -> Result<(
         if row.len() < 14 {
             continue;
         }
+        let c_lat: f64 = row[2].parse().unwrap_or(0.0);
+        let c_lon: f64 = row[3].parse().unwrap_or(0.0);
+        row_bboxes.push(polygon_row_bbox(
+            row.get(14).map(|s| s.as_str()).unwrap_or(""),
+            c_lat,
+            c_lon,
+        ));
         osm_id.append_value(row[1].parse().unwrap_or(0));
-        clat.append_value(row[2].parse().unwrap_or(0.0));
-        clon.append_value(row[3].parse().unwrap_or(0.0));
+        clat.append_value(c_lat);
+        clon.append_value(c_lon);
         aeroway_type.append_value(row[4].parse().unwrap_or(255));
         name.append_value(row.get(5).map(|s| s.as_str()).unwrap_or(""));
         ref_col.append_value(row.get(6).map(|s| s.as_str()).unwrap_or(""));
@@ -91,8 +97,9 @@ pub(super) fn write_airport_areas(rows: &[Vec<String>], path: &Path) -> Result<(
         }
     }
 
-    let batch = RecordBatch::try_new(
-        Arc::new(schema),
+    write_arrow_spatially_batched(
+        path,
+        schema,
         vec![
             Arc::new(osm_id.finish()),
             Arc::new(clat.finish()),
@@ -110,13 +117,8 @@ pub(super) fn write_airport_areas(rows: &[Vec<String>], path: &Path) -> Result<(
             Arc::new(wkb.finish()),
             Arc::new(area_m2.finish()),
         ],
-    )?;
-
-    let file = File::create(path)?;
-    let mut writer = FileWriter::try_new(file, &batch.schema())?;
-    writer.write(&batch)?;
-    writer.finish()?;
-    Ok(())
+        &row_bboxes,
+    )
 }
 
 /// `airport_lines.arrow`: one row per ≤250m microsegment of OSM aeroway
@@ -156,6 +158,7 @@ pub(super) fn write_airport_lines(rows: &[Vec<String>], path: &Path) -> Result<(
     let mut ref_col = StringBuilder::with_capacity(n, n * 4);
     let mut surface = StringBuilder::with_capacity(n, n * 8);
     let mut width_m = Float32Builder::with_capacity(n);
+    let mut row_bboxes = Vec::with_capacity(n);
 
     for row in rows {
         // TSV: hex_id(0) osm_id(1) seg_idx(2) slat(3) slon(4) elat(5) elon(6)
@@ -163,12 +166,17 @@ pub(super) fn write_airport_lines(rows: &[Vec<String>], path: &Path) -> Result<(
         if row.len() < 12 {
             continue;
         }
+        let s_lat: f64 = row[3].parse().unwrap_or(0.0);
+        let s_lon: f64 = row[4].parse().unwrap_or(0.0);
+        let e_lat: f64 = row[5].parse().unwrap_or(0.0);
+        let e_lon: f64 = row[6].parse().unwrap_or(0.0);
+        row_bboxes.push(segment_row_bbox(s_lat, s_lon, e_lat, e_lon));
         osm_id.append_value(row[1].parse().unwrap_or(0));
         seg_idx.append_value(row[2].parse().unwrap_or(0));
-        slat.append_value(row[3].parse().unwrap_or(0.0));
-        slon.append_value(row[4].parse().unwrap_or(0.0));
-        elat.append_value(row[5].parse().unwrap_or(0.0));
-        elon.append_value(row[6].parse().unwrap_or(0.0));
+        slat.append_value(s_lat);
+        slon.append_value(s_lon);
+        elat.append_value(e_lat);
+        elon.append_value(e_lon);
         len.append_value(row[7].parse().unwrap_or(0.0));
         heading.append_value(row[8].parse().unwrap_or(0.0));
         // 255 = "other" sentinel matching airport_areas convention
@@ -192,8 +200,9 @@ pub(super) fn write_airport_lines(rows: &[Vec<String>], path: &Path) -> Result<(
         }
     }
 
-    let batch = RecordBatch::try_new(
-        Arc::new(schema),
+    write_arrow_spatially_batched(
+        path,
+        schema,
         vec![
             Arc::new(osm_id.finish()),
             Arc::new(seg_idx.finish()),
@@ -208,11 +217,6 @@ pub(super) fn write_airport_lines(rows: &[Vec<String>], path: &Path) -> Result<(
             Arc::new(surface.finish()),
             Arc::new(width_m.finish()),
         ],
-    )?;
-
-    let file = File::create(path)?;
-    let mut writer = FileWriter::try_new(file, &batch.schema())?;
-    writer.write(&batch)?;
-    writer.finish()?;
-    Ok(())
+        &row_bboxes,
+    )
 }

@@ -5,13 +5,12 @@
 use anyhow::Result;
 use arrow::array::*;
 use arrow::datatypes::*;
-use arrow::ipc::writer::FileWriter;
-use arrow::record_batch::RecordBatch;
-use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use super::{schema_with_contract, BUILDINGS_CONTRACT_V2};
+use super::{
+    polygon_row_bbox, schema_with_contract, write_arrow_spatially_batched, BUILDINGS_CONTRACT_V2,
+};
 use crate::poi_join::{joined_building_type, JoinStats, PoiIndex};
 use crate::spill::hex_decode;
 
@@ -83,6 +82,7 @@ pub(super) fn write_buildings(
     let mut source_id = UInt16Builder::with_capacity(n);
     let mut wkb = BinaryBuilder::with_capacity(n, n * 100);
     let mut opening = UInt8Builder::with_capacity(n);
+    let mut row_bboxes = Vec::with_capacity(n);
 
     // Centroids of the REAL buildings in this hex (those with a `building` tag,
     // area_source=0). A functional-AREA source (mall / hospital / school / zone,
@@ -128,9 +128,12 @@ pub(super) fn write_buildings(
         // structural tags already won in `building_type_from_tags`); rationale on
         // the fn.
         let bt = downgrade_oversized_restaurant(bt, area_opt);
+        let c_lat: f64 = row[2].parse().unwrap_or(0.0);
+        let c_lon: f64 = row[3].parse().unwrap_or(0.0);
+        row_bboxes.push(polygon_row_bbox(wkb_hex, c_lat, c_lon));
         osm_id.append_value(row[1].parse().unwrap_or(0));
-        clat.append_value(row[2].parse().unwrap_or(0.0));
-        clon.append_value(row[3].parse().unwrap_or(0.0));
+        clat.append_value(c_lat);
+        clon.append_value(c_lon);
         btype.append_value(bt);
         buse.append_value(row[5].parse().unwrap_or(0));
         let h: f32 = row[6].parse().unwrap_or(0.0);
@@ -160,8 +163,9 @@ pub(super) fn write_buildings(
         source_id.append_value(0);
     }
 
-    let batch = RecordBatch::try_new(
-        Arc::new(schema),
+    write_arrow_spatially_batched(
+        path,
+        schema,
         vec![
             Arc::new(osm_id.finish()),
             Arc::new(clat.finish()),
@@ -178,11 +182,6 @@ pub(super) fn write_buildings(
             Arc::new(source_id.finish()),
             Arc::new(opening.finish()),
         ],
-    )?;
-
-    let file = File::create(path)?;
-    let mut writer = FileWriter::try_new(file, &batch.schema())?;
-    writer.write(&batch)?;
-    writer.finish()?;
-    Ok(())
+        &row_bboxes,
+    )
 }
