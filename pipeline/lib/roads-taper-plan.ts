@@ -132,6 +132,9 @@ export interface TaperStats {
   speedOnly: number
   aadtOnly: number
   both: number
+  /** Detected boundaries per kind (census-edge / speed-tag-edge / class-flip /
+   *  built-up-flip) — the discontinuity scanner's aggregation unit. */
+  kindCounts: Record<string, number>
   /** Top boundaries by estimated step, for screenshot targeting. */
   top: Array<{ lat: number; lon: number; db: number; kind: string }>
 }
@@ -142,7 +145,9 @@ export function buildTaperPlan(
   segs: Seg[],
   country: CountrySpeeds,
 ): { plan: Map<number, PlanEntry>; stats: TaperStats } {
-  const stats: TaperStats = { boundaries: 0, skippedUnscaled: 0, speedOnly: 0, aadtOnly: 0, both: 0, top: [] }
+  const stats: TaperStats = {
+    boundaries: 0, skippedUnscaled: 0, speedOnly: 0, aadtOnly: 0, both: 0, kindCounts: {}, top: [],
+  }
 
   // Node topology from through classes only (service/track driveways do not
   // split through-traffic, so they make neither junctions nor continuations).
@@ -312,6 +317,7 @@ export function buildTaperPlan(
         isEnriched(p) !== isEnriched(q) ? 'census-edge'
         : (p.speedTag > 0) !== (q.speedTag > 0) ? 'speed-tag-edge'
         : p.cls !== q.cls ? 'class-flip' : 'built-up-flip'
+      stats.kindCounts[kind] = (stats.kindCounts[kind] ?? 0) + 1
       const [latS, lonS] = via.split('_').map(Number)
       stats.top.push({ lat: latS, lon: lonS, db, kind })
 

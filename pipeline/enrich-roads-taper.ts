@@ -46,7 +46,9 @@ const COUNTRY_SPEED_TABLE = JSON.parse(
   readFileSync(resolve(import.meta.dirname, 'lib/country-speed-defaults.generated.json'), 'utf8'),
 ) as Record<string, CountrySpeeds>
 
-function readSegs(arrowPath: string): Seg[] {
+/** Read one hex's roads.arrow into planner segments — shared with the
+ *  discontinuity scanner (audit-map-discontinuities.ts). */
+export function readSegs(arrowPath: string): Seg[] {
   const table = tableFromIPC(readFileSync(arrowPath))
   const col = (name: string) => table.getChild(name)
   const [osmC, idxC, sLatC, sLonC, eLatC, eLonC, lenC, clsC, spdC, srcC, juncC, accC, buC] = [
@@ -153,7 +155,7 @@ async function main() {
   console.log(`taper ${WRITE ? 'WRITE' : 'dry-run'}: ${hexes.length} hexes in bbox ${BBOX.join(',')}`)
 
   const sum: TaperStats & { stamped: number; prior: number } = {
-    boundaries: 0, skippedUnscaled: 0, speedOnly: 0, aadtOnly: 0, both: 0, top: [], stamped: 0, prior: 0,
+    boundaries: 0, skippedUnscaled: 0, speedOnly: 0, aadtOnly: 0, both: 0, kindCounts: {}, top: [], stamped: 0, prior: 0,
   }
   for (let at = 0; at < hexes.length; at += HEX_CONCURRENCY) {
     const chunk = hexes.slice(at, at + HEX_CONCURRENCY)
