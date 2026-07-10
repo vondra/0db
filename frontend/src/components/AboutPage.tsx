@@ -14,8 +14,11 @@ interface DocData {
 const PROSE = [
   'prose prose-sm max-w-none',
   'prose-headings:text-foreground',
-  'prose-h2:text-sm prose-h2:font-medium prose-h2:uppercase prose-h2:tracking-wider prose-h2:text-muted-foreground prose-h2:mt-10 prose-h2:mb-2',
-  'prose-h3:text-xl prose-h3:font-bold prose-h3:mt-10 prose-h3:mb-3',
+  // Classic descending hierarchy (owner 2026-07-10): the previous
+  // h2-as-small-caps-eyebrow rendered section titles SMALLER than their
+  // subsections and read as inverted importance.
+  'prose-h2:text-2xl prose-h2:font-bold prose-h2:mt-12 prose-h2:mb-3',
+  'prose-h3:text-lg prose-h3:font-semibold prose-h3:mt-8 prose-h3:mb-2',
   'prose-p:text-muted-foreground prose-p:leading-relaxed',
   'prose-a:text-primary prose-a:no-underline hover:prose-a:underline',
   'prose-li:text-muted-foreground',
@@ -26,6 +29,26 @@ const PROSE = [
   '[&_details]:border [&_details]:border-border [&_details]:rounded-lg [&_details]:px-4 [&_details]:py-2 [&_details]:my-3',
   '[&_details_summary]:cursor-pointer [&_details_summary]:text-foreground [&_details_summary]:font-medium [&_details_summary]:text-sm',
 ].join(' ')
+
+/** Footer with the contact address assembled at render time from parts —
+ *  the literal string never appears in the bundle or static HTML, which
+ *  defeats source-grepping harvesters (the mailbot + Resend filtering handle
+ *  whatever gets through anyway). */
+function PageFooter() {
+  const contact = ['info', '0db.app'].join('@')
+  return (
+    <div className="mt-12 flex items-center justify-between border-t border-border pt-6 text-sm text-muted-foreground/60">
+      <a href="https://0db.app" className="hover:underline">0db.app</a>
+      <a
+        href="#contact"
+        onClick={(e) => { e.preventDefault(); window.location.href = `mailto:${contact}` }}
+        className="hover:underline"
+      >
+        {contact}
+      </a>
+    </div>
+  )
+}
 
 export default function AboutPage() {
   const [doc, setDoc] = useState<DocData | null>(null)
@@ -113,9 +136,7 @@ export default function AboutPage() {
 
         {!doc && !error && <div className="text-muted-foreground">Loading...</div>}
 
-        <div className="mt-12 pt-6 border-t border-border text-sm text-muted-foreground/60">
-          <a href="https://0db.app" className="hover:underline">0db.app</a>
-        </div>
+        <PageFooter />
       </div>
     </div>
   )
