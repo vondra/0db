@@ -72,7 +72,9 @@ pub fn spatially_batched(
         return Ok((schema, vec![batch]));
     }
 
-    let num_batches = n.div_ceil(TARGET_ROWS_PER_BATCH).clamp(1, MAX_BATCHES_PER_FILE);
+    let num_batches = n
+        .div_ceil(TARGET_ROWS_PER_BATCH)
+        .clamp(1, MAX_BATCHES_PER_FILE);
     let rows_per_batch = n.div_ceil(num_batches);
 
     let (columns, ordered_bboxes) = if num_batches > 1 {
@@ -101,8 +103,14 @@ pub fn spatially_batched(
     }
 
     let mut metadata: HashMap<String, String> = base_schema.metadata().clone();
-    metadata.insert(QM_BATCH_BBOXES_KEY.to_string(), encode_batch_bboxes(&batch_bboxes));
-    let schema = Arc::new(Schema::new_with_metadata(base_schema.fields().clone(), metadata));
+    metadata.insert(
+        QM_BATCH_BBOXES_KEY.to_string(),
+        encode_batch_bboxes(&batch_bboxes),
+    );
+    let schema = Arc::new(Schema::new_with_metadata(
+        base_schema.fields().clone(),
+        metadata,
+    ));
 
     let full = RecordBatch::try_new(schema.clone(), columns)?;
     let batches = (0..batch_bboxes.len())
@@ -197,8 +205,11 @@ pub fn point_to_bbox_distance_m(lat: f64, lon: f64, bbox: &RowBbox) -> f64 {
     haversine_m(lat, lon, clat, clon)
 }
 
-/// Haversine on the WGS-84 mean radius — same formula family as the engine's
-/// geo helpers; exactness is irrelevant here (prune radii carry km of slack).
+/// Haversine on the WGS-84 mean radius (~111,195 m/°lat). NOTE: the engine's
+/// row-level filters use flat-earth metrics with ~110,540 m/°lat, i.e. THIS
+/// function measures the same physical gap ~0.6% longer — callers gating
+/// against row-filter radii must add slack (see source-reader's
+/// GATE_RADIUS_SLACK) or a boundary row's batch gets dropped.
 fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     const R: f64 = 6_371_000.0;
     let (dlat, dlon) = ((lat2 - lat1).to_radians(), (lon2 - lon1).to_radians());
@@ -257,9 +268,21 @@ mod tests {
         // Row multiset preserved + every row inside its batch's bbox.
         let mut seen = vec![false; n];
         for (bi, batch) in batches.iter().enumerate() {
-            let ids = batch.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
-            let lats = batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
-            let lons = batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+            let ids = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap();
+            let lats = batch
+                .column(1)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap();
+            let lons = batch
+                .column(2)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap();
             for i in 0..batch.num_rows() {
                 let id = ids.value(i) as usize;
                 assert!(!seen[id], "duplicate row {id}");
@@ -286,7 +309,11 @@ mod tests {
         let (schema, cols, bboxes) = synthetic(100);
         let (schema, batches) = spatially_batched(schema, cols, &bboxes).unwrap();
         assert_eq!(batches.len(), 1);
-        let ids = batches[0].column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+        let ids = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
         assert!((0..100).all(|i| ids.value(i) == i as i64));
         let parsed =
             parse_batch_bboxes(schema.metadata().get(QM_BATCH_BBOXES_KEY).unwrap()).unwrap();
@@ -296,12 +323,14 @@ mod tests {
     #[test]
     fn existing_metadata_preserved() {
         let (schema, cols, bboxes) = synthetic(10);
-        let schema = schema.with_metadata(
-            [("buildings_contract".to_string(), "buildings_v2".to_string())].into(),
-        );
+        let schema = schema
+            .with_metadata([("buildings_contract".to_string(), "buildings_v2".to_string())].into());
         let (schema, _) = spatially_batched(schema, cols, &bboxes).unwrap();
         assert_eq!(
-            schema.metadata().get("buildings_contract").map(String::as_str),
+            schema
+                .metadata()
+                .get("buildings_contract")
+                .map(String::as_str),
             Some("buildings_v2")
         );
         assert!(schema.metadata().contains_key(QM_BATCH_BBOXES_KEY));

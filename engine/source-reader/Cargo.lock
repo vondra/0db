@@ -84,6 +84,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrow-batching"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+]
+
+[[package]]
 name = "arrow-buffer"
 version = "54.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -960,6 +967,7 @@ name = "source-reader"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "arrow-batching",
  "h3o",
  "memmap2",
  "mimalloc",

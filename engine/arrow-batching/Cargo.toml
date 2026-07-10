@@ -9,7 +9,9 @@ name = "arrow_batching"
 path = "src/lib.rs"
 
 [dependencies]
-arrow = "54"
+# default-features off: source-reader disables them too, and a bare "54"
+# would drag arrow-csv/arrow-json into every dependent's lockfile.
+arrow = { version = "54", default-features = false }
 
 [profile.release]
 opt-level = 3

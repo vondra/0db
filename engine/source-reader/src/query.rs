@@ -83,31 +83,68 @@ pub fn collect_from_hex_data(
 
     let mut date_ids = std::collections::HashSet::new();
     let mut n_days_from_metadata: Option<u16> = None;
-    let scan_metadata = |batch: &arrow::record_batch::RecordBatch,
-                         n_days: &mut Option<u16>,
-                         date_ids: &mut std::collections::HashSet<i16>| {
-        if let Some(md) = batch.schema_ref().metadata().get("n_days") {
-            if let Ok(v) = md.parse::<u16>() {
-                *n_days = Some(n_days.map(|m| m.max(v)).unwrap_or(v));
-            }
-        }
-        if let Some(did) = batch
-            .column_by_name("date_id")
-            .and_then(|c| c.as_any().downcast_ref::<arrow::array::Int16Array>())
-        {
-            for i in 0..did.len() {
-                date_ids.insert(did.value(i));
-            }
-        }
-    };
+    // Prune aircraft batches per hex ONCE; the collection below consumes the
+    // result. Airborne/cruise use the kernel-identical AXIS envelope (a
+    // circular gate is narrower and would drop corner batches the kernel's
+    // row prefilter accepts — Codex /gg 2026-07-10); airport_traffic's row
+    // accept is a planar circle, so the slack-carrying circular gate fits.
+    let airborne_gate = airborne_envelope_gate(lat, lng);
+    let per_hex_aircraft: Vec<(
+        Vec<arrow::record_batch::RecordBatch>,
+        Vec<arrow::record_batch::RecordBatch>,
+        Vec<arrow::record_batch::RecordBatch>,
+    )> = hex_data
+        .iter()
+        .map(|data| {
+            (
+                data.aircraft_airborne.batches_where(&airborne_gate),
+                data.aircraft_cruise.batches_where(&airborne_gate),
+                data.aircraft_airport_traffic.batches_within(
+                    lat,
+                    lng,
+                    noise_compute::constants::GROUND_OPS_RUNWAY_MAX_RADIUS,
+                ),
+            )
+        })
+        .collect();
+    // n_days is FILE-level schema metadata — read it without decoding any
+    // batch. The legacy date_id fallback (pre-metadata extracts) must scan
+    // the FULL files, never the pruned lists: a pruned scan would shrink the
+    // divisor to "days with flights near this click" and inflate Lden
+    // (Gemini /gg 2026-07-10; unreachable today — bboxes imply n_days — but
+    // the invariant must not live in two places).
     for data in hex_data {
-        for batch in data
-            .aircraft_airborne_batches
-            .iter()
-            .chain(data.aircraft_cruise_batches.iter())
-            .chain(data.aircraft_airport_traffic_batches.iter())
-        {
-            scan_metadata(batch, &mut n_days_from_metadata, &mut date_ids);
+        for arrow in [
+            &data.aircraft_airborne,
+            &data.aircraft_cruise,
+            &data.aircraft_airport_traffic,
+        ] {
+            if let Some(md) = arrow.schema().and_then(|s| s.metadata().get("n_days")) {
+                if let Ok(v) = md.parse::<u16>() {
+                    n_days_from_metadata =
+                        Some(n_days_from_metadata.map(|m| m.max(v)).unwrap_or(v));
+                }
+            }
+        }
+    }
+    if n_days_from_metadata.is_none() {
+        for data in hex_data {
+            for arrow in [
+                &data.aircraft_airborne,
+                &data.aircraft_cruise,
+                &data.aircraft_airport_traffic,
+            ] {
+                for batch in arrow.batches_all() {
+                    if let Some(did) = batch
+                        .column_by_name("date_id")
+                        .and_then(|c| c.as_any().downcast_ref::<arrow::array::Int16Array>())
+                    {
+                        for i in 0..did.len() {
+                            date_ids.insert(did.value(i));
+                        }
+                    }
+                }
+            }
         }
     }
     let n_days = n_days_from_metadata.unwrap_or({
@@ -118,14 +155,19 @@ pub fn collect_from_hex_data(
         }
     });
 
-    for data in hex_data {
+    for (data, (airborne_batches, cruise_batches, airport_traffic_batches)) in
+        hex_data.iter().zip(per_hex_aircraft)
+    {
         // Spatial candidate pre-filter: load every rail row within the WIDEST
         // possible per-row reach (the clamp ceiling, 10 km), then `compute_railways`
         // applies each row's exact `rail_reach_m` cutoff. Pre-filtering at the old
         // 7 km blanket would silently drop a loud HS corridor 8-10 km out before
-        // its honest reach could admit it.
+        // its honest reach could admit it. The batch gate uses the SAME ceiling.
+        let railway_batches =
+            data.railways
+                .batches_within(lat, lng, noise_compute::constants::RAILWAY_REACH_CEILING);
         let railways = query_railways_from_batches(
-            &data.railway_batches,
+            &railway_batches,
             lat,
             lng,
             noise_compute::constants::RAILWAY_REACH_CEILING,
@@ -192,8 +234,11 @@ pub fn collect_from_hex_data(
             });
         }
 
+        let road_batches =
+            data.roads
+                .batches_within(lat, lng, noise_compute::constants::ROAD_MAX_RADIUS[0]);
         let roads = query_roads_from_batches(
-            &data.road_batches,
+            &road_batches,
             lat,
             lng,
             noise_compute::constants::ROAD_MAX_RADIUS[0],
@@ -232,8 +277,11 @@ pub fn collect_from_hex_data(
             });
         }
 
+        let building_batches = data
+            .buildings
+            .batches_within(lat, lng, BUILDING_QUERY_RADIUS_M);
         let buildings =
-            query_buildings_from_batches(&data.building_batches, lat, lng, BUILDING_QUERY_RADIUS_M);
+            query_buildings_from_batches(&building_batches, lat, lng, BUILDING_QUERY_RADIUS_M);
         for b in buildings {
             let display_name = if !b.name.is_empty() {
                 b.name.clone()
@@ -274,8 +322,11 @@ pub fn collect_from_hex_data(
         // (settlement v2 phase 2): same point-source compute, tagged with
         // `source_type = LEISURE_TYPE_BASE + sport` so the popup names a padel
         // court correctly (see source_names::building_type_name).
+        let leisure_batches = data
+            .leisure
+            .batches_within(lat, lng, BUILDING_QUERY_RADIUS_M);
         let leisure =
-            query_leisure_from_batches(&data.leisure_batches, lat, lng, BUILDING_QUERY_RADIUS_M);
+            query_leisure_from_batches(&leisure_batches, lat, lng, BUILDING_QUERY_RADIUS_M);
         for lz in leisure {
             let source_type = noise_compute::types::LEISURE_TYPE_BASE.saturating_add(lz.sport);
             let prepared_points = noise_compute::normalize::prepare_leisure_points(
@@ -299,7 +350,10 @@ pub fn collect_from_hex_data(
             }
         }
 
-        for batch in &data.industrial_batches {
+        for batch in &data
+            .industrial
+            .batches_within(lat, lng, INDUSTRIAL_QUERY_RADIUS_M)
+        {
             let n = batch.num_rows();
             let clat: Option<&arrow::array::Float64Array> = batch
                 .column_by_name("centroid_lat")
@@ -414,7 +468,8 @@ pub fn collect_from_hex_data(
 
         // 10 km matches the road source radius — barriers along the full source→receiver
         // path are needed for screening, not just near the receiver.
-        let barriers = query_barriers_from_batches(&data.barrier_batches, lat, lng, 10_000.0);
+        let barrier_batches = data.barriers.batches_within(lat, lng, 10_000.0);
+        let barriers = query_barriers_from_batches(&barrier_batches, lat, lng, 10_000.0);
         for b in barriers {
             all_barriers.push(noise_compute::types::Barrier {
                 osm_id: b.osm_id,
@@ -425,13 +480,13 @@ pub fn collect_from_hex_data(
             });
         }
 
-        // Aircraft popup arrows: per-row reach prune + emission
-        // contract live inside compute_aircraft_v6. Cloning
-        // RecordBatch is a refcount bump on Arc-backed Arrow buffers,
-        // not a data copy.
-        all_airborne_batches.extend(data.aircraft_airborne_batches.iter().cloned());
-        all_cruise_batches.extend(data.aircraft_cruise_batches.iter().cloned());
-        all_airport_traffic_batches.extend(data.aircraft_airport_traffic_batches.iter().cloned());
+        // Aircraft popup arrows: bbox-gated above (per_hex_aircraft);
+        // per-row reach prune + emission contract live inside
+        // compute_aircraft_v6. RecordBatch clones are refcount bumps on
+        // Arc-backed Arrow buffers, not data copies.
+        all_airborne_batches.extend(airborne_batches);
+        all_cruise_batches.extend(cruise_batches);
+        all_airport_traffic_batches.extend(airport_traffic_batches);
         all_airport_lines_batches.extend(data.airport_lines_batches.iter().cloned());
         all_synth_airport_lines_batches.extend(data.synth_airport_lines_batches.iter().cloned());
     }
@@ -591,4 +646,55 @@ pub(crate) fn apply_segment_top_k_with_cap(
     }
 
     summary
+}
+
+/// Batch-level replica of the airborne kernel's row prefilter
+/// (`noise-compute/src/compute/aircraft_v6/airborne/mod.rs`): an AXIS-ALIGNED
+/// envelope at the 16 km reach cap with the antimeridian wrap guard. A
+/// circular gate would be strictly narrower — a bbox corner passes both axis
+/// tests at up to reach·√2 point distance, and the kernel keeps such rows
+/// (off-segment CPA on the unclamped extension) — so it would drop audible
+/// batches (Codex /gg 2026-07-10). Batch bbox ⊇ row bboxes, so envelope
+/// overlap here is implied whenever any contained row overlaps.
+fn airborne_envelope_gate(lat: f64, lng: f64) -> impl Fn(&arrow_batching::RowBbox) -> bool {
+    use noise_compute::emission::aircraft;
+    let reach = aircraft::AIRCRAFT_MAX_HORIZONTAL_REACH_M;
+    let radius_lat_deg = aircraft::meters_to_lat_deg(reach);
+    let radius_lon_deg = aircraft::meters_to_lon_deg(lat, reach);
+    let env_min_lat = lat - radius_lat_deg;
+    let env_max_lat = lat + radius_lat_deg;
+    let env_min_lon = lng - radius_lon_deg;
+    let env_max_lon = lng + radius_lon_deg;
+    // Same wrap rule as the kernel: an envelope reaching past ±180° turns
+    // the longitude prune off (stored bboxes are normalized to [-180, 180]).
+    let lon_prune_active = env_min_lon >= -180.0 && env_max_lon <= 180.0;
+    move |bb: &arrow_batching::RowBbox| {
+        if bb[2] < env_min_lat || bb[0] > env_max_lat {
+            return false;
+        }
+        !(lon_prune_active && (bb[3] < env_min_lon || bb[1] > env_max_lon))
+    }
+}
+
+#[cfg(test)]
+mod airborne_gate_tests {
+    #[test]
+    fn corner_batch_passes_axis_envelope_but_not_a_circle() {
+        let keep = super::airborne_envelope_gate(0.0, 0.0);
+        // Codex /gg corner case: bbox ~20.4 km away point-to-point but both
+        // axis distances ~14.4 km < 16 km — the kernel's row filter keeps
+        // such rows, so the batch gate must too.
+        let bb = [0.13, 0.13, 0.14, 0.14];
+        assert!(keep(&bb));
+        assert!(arrow_batching::point_to_bbox_distance_m(0.0, 0.0, &bb) > 16_000.0);
+        // Far on both axes → pruned.
+        assert!(!keep(&[1.0, 1.0, 1.1, 1.1]));
+    }
+
+    #[test]
+    fn antimeridian_receiver_disables_longitude_prune_keeps_latitude_prune() {
+        let keep = super::airborne_envelope_gate(0.0, 179.95);
+        assert!(keep(&[0.0, -179.9, 0.1, -179.8]));
+        assert!(!keep(&[5.0, -179.9, 5.1, -179.8]));
+    }
 }

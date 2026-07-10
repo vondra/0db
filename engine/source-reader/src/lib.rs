@@ -175,7 +175,8 @@ pub fn query_roads(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<String
         let Some(data) = store.hexes.get(hex_id.as_str()) else {
             continue;
         };
-        let mut results = query_roads_from_batches(&data.road_batches, lat, lng, max_radius_m);
+        let road_batches = data.roads.batches_within(lat, lng, max_radius_m);
+        let mut results = query_roads_from_batches(&road_batches, lat, lng, max_radius_m);
         all_results.append(&mut results);
     }
 
@@ -196,8 +197,8 @@ pub fn query_buildings(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<St
         let Some(data) = store.hexes.get(hex_id.as_str()) else {
             continue;
         };
-        let mut results =
-            query_buildings_from_batches(&data.building_batches, lat, lng, max_radius_m);
+        let building_batches = data.buildings.batches_within(lat, lng, max_radius_m);
+        let mut results = query_buildings_from_batches(&building_batches, lat, lng, max_radius_m);
         all_results.append(&mut results);
     }
 
@@ -218,8 +219,8 @@ pub fn query_barriers(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<Str
         let Some(data) = store.hexes.get(hex_id.as_str()) else {
             continue;
         };
-        let mut results =
-            query_barriers_from_batches(&data.barrier_batches, lat, lng, max_radius_m);
+        let barrier_batches = data.barriers.batches_within(lat, lng, max_radius_m);
+        let mut results = query_barriers_from_batches(&barrier_batches, lat, lng, max_radius_m);
         all_results.append(&mut results);
     }
 

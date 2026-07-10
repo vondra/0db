@@ -244,12 +244,20 @@ pub(super) fn write_arrow_spatially_batched(
     row_bboxes: &[arrow_batching::RowBbox],
 ) -> Result<()> {
     let (schema, batches) = arrow_batching::spatially_batched(schema, columns, row_bboxes)?;
-    let file = File::create(path)?;
+    // Sibling-temp + rename, mirroring aircraft-extract's write_record_batches:
+    // a re-extract runs while Fastify serves the OLD files, and the popup's
+    // lazy reader keeps mmaps open long past load time — truncating the live
+    // inode via File::create(path) would SIGBUS a later first-touch decode
+    // (Codex /gg 2026-07-10). rename() keeps the old inode alive for open
+    // maps and swaps readers to the new file atomically.
+    let tmp_path = path.with_extension("arrow.tmp");
+    let file = File::create(&tmp_path)?;
     let mut writer = FileWriter::try_new(file, &schema)?;
     for batch in &batches {
         writer.write(batch)?;
     }
     writer.finish()?;
+    fs::rename(&tmp_path, path)?;
     Ok(())
 }
 

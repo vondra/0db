@@ -1,7 +1,12 @@
-//! Load Arrow IPC File-format files via mmap. Zero-copy — data stays in mmap'd pages.
+//! Load Arrow IPC File-format files via mmap, decoding record batches LAZILY.
 //!
-//! Instead of copying into Vec<Struct>, we keep arrow RecordBatch references.
-//! Queries iterate directly over mmap'd column arrays.
+//! Files written after the popup-batch-pruning change (commit 70a1bd2c) carry
+//! `qm_batch_bboxes` schema metadata: queries decode only the batches whose
+//! bbox lies within the source class's audibility radius of the click
+//! (docs/dev/popup-batch-pruning.md). Old single-batch files have no key and
+//! decode in full — same rows as before, just on first touch instead of at
+//! load time. Decoded batches are cached per slot (OnceLock), so the shared
+//! store's warm path is unchanged and RAM is strictly <= the old eager load.
 
 use arrow::array::*;
 use arrow::ipc::reader::FileReader;
@@ -10,33 +15,155 @@ use memmap2::Mmap;
 use std::fs::File;
 use std::io::Cursor;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-/// All source data for one H3 res-4 hex — mmap'd Arrow IPC files.
+/// One arrow file, opened (footer + schema only) but not decoded. Missing or
+/// unreadable files behave as empty. `batch_bboxes` is `Some` ONLY when the
+/// metadata entry count matches the file's batch count — any mismatch (old
+/// files, enrichment rewrites that re-chunked) degrades to load-all, never to
+/// wrong pruning.
+pub struct LazyArrow {
+    mmap: Option<Arc<Mmap>>,
+    schema: Option<arrow::datatypes::SchemaRef>,
+    batch_bboxes: Option<Vec<arrow_batching::RowBbox>>,
+    slots: Vec<OnceLock<Option<RecordBatch>>>,
+}
+
+impl LazyArrow {
+    pub fn empty() -> Self {
+        LazyArrow {
+            mmap: None,
+            schema: None,
+            batch_bboxes: None,
+            slots: Vec::new(),
+        }
+    }
+
+    /// Open `path`: mmap + IPC footer + schema. NO batch bodies are decoded
+    /// here — `ensure_hexes_parallel` calls this for whole rings, and cold
+    /// clicks must not pay for batches they will prune.
+    pub fn open(path: &Path) -> Self {
+        if !path.exists() {
+            return Self::empty();
+        }
+        let Ok(file) = File::open(path) else {
+            return Self::empty();
+        };
+        let Ok(mmap) = (unsafe { Mmap::map(&file) }) else {
+            return Self::empty();
+        };
+        let mmap = Arc::new(mmap);
+        let reader = match FileReader::try_new(Cursor::new(mmap.as_ref().as_ref()), None) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("  source-reader: failed to read {}: {}", path.display(), e);
+                return Self::empty();
+            }
+        };
+        let schema = reader.schema();
+        let num_batches = reader.num_batches();
+        let batch_bboxes = schema
+            .metadata()
+            .get(arrow_batching::QM_BATCH_BBOXES_KEY)
+            .and_then(|v| arrow_batching::parse_batch_bboxes(v))
+            .filter(|b| b.len() == num_batches);
+        LazyArrow {
+            mmap: Some(mmap),
+            schema: Some(schema),
+            batch_bboxes,
+            slots: (0..num_batches).map(|_| OnceLock::new()).collect(),
+        }
+    }
+
+    /// File-level schema (None for missing/unreadable files) — metadata like
+    /// contracts and `n_days` is readable WITHOUT decoding any batch.
+    pub fn schema(&self) -> Option<&arrow::datatypes::SchemaRef> {
+        self.schema.as_ref()
+    }
+
+    /// Decode batch `i` on first touch; a decode error caches as None (skip),
+    /// matching the old eager loader's silent-drop of unreadable batches.
+    fn batch(&self, i: usize) -> Option<&RecordBatch> {
+        let mmap = self.mmap.as_ref()?;
+        self.slots[i]
+            .get_or_init(|| {
+                let mut reader =
+                    FileReader::try_new(Cursor::new(mmap.as_ref().as_ref()), None).ok()?;
+                reader.set_index(i).ok()?;
+                reader.next()?.ok()
+            })
+            .as_ref()
+    }
+
+    /// Every batch of the file (compat path + consumers that must see all
+    /// rows, e.g. the airport-lines anchor extractor).
+    pub fn batches_all(&self) -> Vec<RecordBatch> {
+        (0..self.slots.len())
+            .filter_map(|i| self.batch(i).cloned())
+            .collect()
+    }
+
+    /// Batches whose bbox passes `keep` — the generic prune gate. Files
+    /// without valid bbox metadata return everything. The predicate MUST be
+    /// a superset of the class's row-level accept (batch bbox ⊇ row bboxes),
+    /// or pruning drops audible sources.
+    pub fn batches_where(
+        &self,
+        keep: impl Fn(&arrow_batching::RowBbox) -> bool,
+    ) -> Vec<RecordBatch> {
+        let Some(bboxes) = &self.batch_bboxes else {
+            return self.batches_all();
+        };
+        (0..self.slots.len())
+            .filter(|&i| keep(&bboxes[i]))
+            .filter_map(|i| self.batch(i).cloned())
+            .collect()
+    }
+
+    /// Circular gate for classes whose row-level accept is a planar
+    /// distance ≤ radius. GATE_RADIUS_SLACK covers the metric mismatch:
+    /// the gate's haversine measures ~111195 m/°lat while the row filters
+    /// use flat 110540 m/°lat (`geo::flat_dist`), i.e. the gate sees a
+    /// source up to ~0.6% FARTHER than the row filter does — without slack
+    /// a row at 9,999 m planar (10,058 m haversine) would lose its batch
+    /// (Codex /gg 2026-07-10). 2% strictly covers the mismatch + f32 bbox
+    /// rounding; over-admitting a borderline batch costs one decode.
+    pub fn batches_within(&self, lat: f64, lon: f64, radius_m: f64) -> Vec<RecordBatch> {
+        const GATE_RADIUS_SLACK: f64 = 1.02;
+        self.batches_where(|bb| {
+            arrow_batching::point_to_bbox_distance_m(lat, lon, bb) <= radius_m * GATE_RADIUS_SLACK
+        })
+    }
+}
+
+/// All source data for one H3 res-4 hex — lazily-decoded Arrow IPC files.
 pub struct HexData {
+    /// Eagerly-loaded small files keep their mmaps alive here; LazyArrow
+    /// fields own their mmap internally.
     _mmaps: Vec<Arc<Mmap>>,
-    pub road_batches: Vec<RecordBatch>,
-    pub railway_batches: Vec<RecordBatch>,
-    pub building_batches: Vec<RecordBatch>,
-    pub barrier_batches: Vec<RecordBatch>,
-    pub industrial_batches: Vec<RecordBatch>,
+    pub roads: LazyArrow,
+    pub railways: LazyArrow,
+    pub buildings: LazyArrow,
+    pub barriers: LazyArrow,
+    pub industrial: LazyArrow,
     /// Leisure AREA sources (`leisure.arrow`, settlement v2 phase 2) — sports
     /// pitch / playground / pool / beer garden. Folded into the building
     /// (settlement) layer in the popup.
-    pub leisure_batches: Vec<RecordBatch>,
-    pub aircraft_airborne_batches: Vec<RecordBatch>,
-    pub aircraft_cruise_batches: Vec<RecordBatch>,
+    pub leisure: LazyArrow,
+    pub aircraft_airborne: LazyArrow,
+    pub aircraft_cruise: LazyArrow,
     /// Per-microsegment sparse traffic counters
     /// (`airport_traffic.arrow`). See [`add_v6_aircraft_to_result`].
-    pub aircraft_airport_traffic_batches: Vec<RecordBatch>,
+    pub aircraft_airport_traffic: LazyArrow,
     /// OSM aeroway microsegments (`airport_lines.arrow`). Carries
     /// `osm_id` + `segment_idx` + nullable `ref` (e.g. "RWY 06/24")
     /// per microsegment. Source-reader uses this to map per-row
     /// airport_traffic.arrow rows back to their OSM way identifier so
     /// the popup can label SegmentTraces "LKPR RWY 06/24" instead of
     /// the generic "LKPR runway-roll". The same batches feed the
-    /// per-osm_id runway-end anchor extractor that gates the airborne
-    /// 6 km airport-context test.
+    /// per-osm_id runway-end anchor extractor. EAGER on purpose: the
+    /// file is tiny and its consumers (labels + anchors) reason about
+    /// runways possibly far from the click — pruning buys nothing.
     pub airport_lines_batches: Vec<RecordBatch>,
     /// Stage 1.5 DBSCAN-discovered airstrips
     /// (`synth_airport_lines.arrow`). Same microsegment shape as the
@@ -44,6 +171,7 @@ pub struct HexData {
     /// and an explicit `airport_key` column. Fed to the runway-end
     /// anchor extractor alongside the real lines so auto-discovered
     /// strips contribute to the airborne airport-context gate.
+    /// EAGER for the same reason as `airport_lines_batches`.
     pub synth_airport_lines_batches: Vec<RecordBatch>,
 }
 
@@ -51,22 +179,23 @@ impl HexData {
     pub fn empty() -> Self {
         HexData {
             _mmaps: vec![],
-            road_batches: vec![],
-            railway_batches: vec![],
-            building_batches: vec![],
-            barrier_batches: vec![],
-            industrial_batches: vec![],
-            leisure_batches: vec![],
-            aircraft_airborne_batches: vec![],
-            aircraft_cruise_batches: vec![],
-            aircraft_airport_traffic_batches: vec![],
+            roads: LazyArrow::empty(),
+            railways: LazyArrow::empty(),
+            buildings: LazyArrow::empty(),
+            barriers: LazyArrow::empty(),
+            industrial: LazyArrow::empty(),
+            leisure: LazyArrow::empty(),
+            aircraft_airborne: LazyArrow::empty(),
+            aircraft_cruise: LazyArrow::empty(),
+            aircraft_airport_traffic: LazyArrow::empty(),
             airport_lines_batches: vec![],
             synth_airport_lines_batches: vec![],
         }
     }
 }
 
-/// Load all source data from a hex directory via mmap (zero-copy).
+/// Load all source data from a hex directory. Only footers + schemas are
+/// read here; batch bodies decode lazily at query time (`batches_within`).
 pub fn load_hex(dir: &str) -> Result<HexData, String> {
     let path = Path::new(dir);
     if !path.exists() {
@@ -75,32 +204,26 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
 
     let mut mmaps = Vec::new();
 
-    let road_batches = load_arrow_mmap(&path.join("roads.arrow"), &mut mmaps);
-    let railway_batches = load_arrow_mmap(&path.join("railways.arrow"), &mut mmaps);
-    let building_batches = load_arrow_mmap(&path.join("buildings.arrow"), &mut mmaps);
-    let barrier_batches = load_arrow_mmap(&path.join("barriers.arrow"), &mut mmaps);
-    let industrial_batches = load_arrow_mmap(&path.join("industrial.arrow"), &mut mmaps);
-    let leisure_batches = load_arrow_mmap(&path.join("leisure.arrow"), &mut mmaps);
+    let buildings = LazyArrow::open(&path.join("buildings.arrow"));
+    let leisure = LazyArrow::open(&path.join("leisure.arrow"));
     // settlement v2 phase 2: buildings re-numbered building_type + added columns,
     // leisure is a NEW file. A stale v1 buildings.arrow would feed OLD type ids
     // through the NEW emission profiles → silently wrong popup numbers. Fail loud
-    // (Convention-B per-file contract); the fix is re-extract.
-    let building_batches = check_contract(
-        building_batches,
+    // (Convention-B per-file contract); the fix is re-extract. Schema-level —
+    // no batch decode needed.
+    check_contract(
+        &buildings,
         "buildings_contract",
         BUILDINGS_CONTRACT_V2,
         "buildings.arrow",
     )?;
-    let leisure_batches = check_contract(
-        leisure_batches,
+    check_contract(
+        &leisure,
         "leisure_contract",
         LEISURE_CONTRACT_V1,
         "leisure.arrow",
     )?;
-    let aircraft_airborne_batches = load_arrow_mmap(&path.join("airborne.arrow"), &mut mmaps);
-    let aircraft_cruise_batches = load_arrow_mmap(&path.join("cruise.arrow"), &mut mmaps);
-    let aircraft_airport_traffic_batches =
-        load_arrow_mmap(&path.join("airport_traffic.arrow"), &mut mmaps);
+
     let airport_lines_batches = load_arrow_mmap(&path.join("airport_lines.arrow"), &mut mmaps);
     // Stage 1.5's synth strips live alongside the real OSM lines in
     // each R4 dir. Optional — older extracts predate Stage 1.5; the
@@ -110,15 +233,15 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
 
     Ok(HexData {
         _mmaps: mmaps,
-        road_batches,
-        railway_batches,
-        building_batches,
-        barrier_batches,
-        industrial_batches,
-        leisure_batches,
-        aircraft_airborne_batches,
-        aircraft_cruise_batches,
-        aircraft_airport_traffic_batches,
+        roads: LazyArrow::open(&path.join("roads.arrow")),
+        railways: LazyArrow::open(&path.join("railways.arrow")),
+        buildings,
+        barriers: LazyArrow::open(&path.join("barriers.arrow")),
+        industrial: LazyArrow::open(&path.join("industrial.arrow")),
+        leisure,
+        aircraft_airborne: LazyArrow::open(&path.join("airborne.arrow")),
+        aircraft_cruise: LazyArrow::open(&path.join("cruise.arrow")),
+        aircraft_airport_traffic: LazyArrow::open(&path.join("airport_traffic.arrow")),
         airport_lines_batches,
         synth_airport_lines_batches,
     })
@@ -130,26 +253,21 @@ pub fn load_hex(dir: &str) -> Result<HexData, String> {
 pub const BUILDINGS_CONTRACT_V2: &str = "buildings_v2";
 pub const LEISURE_CONTRACT_V1: &str = "leisure_v1";
 
-/// Verify every batch of a settlement arrow carries the expected per-file
-/// contract stamp (Convention-B). Empty input passes (missing file is fine).
-/// Returns the batches unchanged on success, an `Err(String)` on mismatch so
-/// `load_hex` fails loud rather than serving mis-profiled buildings.
-fn check_contract(
-    batches: Vec<RecordBatch>,
-    key: &str,
-    expected: &str,
-    label: &str,
-) -> Result<Vec<RecordBatch>, String> {
-    for batch in &batches {
-        let c = batch.schema_ref().metadata().get(key).map(String::as_str);
-        if c != Some(expected) {
-            return Err(format!(
-                "{label} {key} mismatch (expected {expected}, got {c:?}) — \
-                 re-extract OSM (settlement v2 phase 2)"
-            ));
-        }
+/// Verify a settlement arrow's file-level schema carries the expected
+/// per-file contract stamp (Convention-B). Missing file passes. Fails loud
+/// on mismatch so `load_hex` never serves mis-profiled buildings.
+fn check_contract(arrow: &LazyArrow, key: &str, expected: &str, label: &str) -> Result<(), String> {
+    let Some(schema) = arrow.schema() else {
+        return Ok(());
+    };
+    let c = schema.metadata().get(key).map(String::as_str);
+    if c != Some(expected) {
+        return Err(format!(
+            "{label} {key} mismatch (expected {expected}, got {c:?}) — \
+             re-extract OSM (settlement v2 phase 2)"
+        ));
     }
-    Ok(batches)
+    Ok(())
 }
 
 /// Mmap an Arrow IPC File and return its RecordBatches (zero-copy).
