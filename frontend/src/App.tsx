@@ -305,8 +305,7 @@ function MapApp() {
       {/* Mobile: detail sheet */}
       <a
         href="/about"
-        className="hidden md:block fixed bottom-2 right-2 z-[1003] rounded bg-white px-2.5 py-1 text-sm text-foreground hover:bg-[#f2f2f2]"
-        style={{ boxShadow: '0 0 0 2px rgba(0,0,0,.1)' }}
+        className="hidden md:block fixed bottom-2 right-2 z-[1003] rounded-md border border-black/5 bg-white/95 px-2 py-0.5 text-xs text-muted-foreground shadow-lg backdrop-blur-md hover:text-foreground"
       >
         About 0db.app
       </a>
