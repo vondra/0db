@@ -7,7 +7,7 @@ import { useMap } from 'react-map-gl/maplibre'
 import { fetchAndDecodeHM3, TILE_PX, NO_DATA } from '../lib/hm3-decoder'
 import { composeToImageData } from '../lib/hm3-compose'
 import { lngLatToTileFloat, tileXToLng, tileYToLat } from '../lib/tile-math'
-import { BASE_ZOOM, MIN_ZOOM, tileUrl, useTileBuild } from '../lib/tile-urls'
+import { BASE_ZOOM, MIN_ZOOM, buildKey, tileUrl, useTileBuild, type TileBuilds } from '../lib/tile-urls'
 
 // The seven toggleable noise layers. All share the same HM3 format + palette
 // (Lden), so the tile fetch/decode/energy-sum loop is layer-agnostic.
@@ -212,12 +212,12 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
  *  id (deck's cache key) and every fetch URL use it, so the layer can never mix
  *  generations even if the module-level build advances mid-flight. */
 function makeHeatmapTileLayer(
-  build: string,
+  build: TileBuilds,
   sources: readonly HeatmapSource[],
   beforeId: string | undefined,
 ) {
   return new TileLayer<HeatTile | null>({
-    id: `hm3-tiles-${build}-${sources.join('+')}`,
+    id: `hm3-tiles-${buildKey(build, sources)}`,
     // beforeId on the TileLayer (NOT its sublayers): MapboxOverlay slots only the
     // top-level deck layer; the tile BitmapLayers draw inside it. Spread because
     // _TileLayerProps doesn't type beforeId though MapboxOverlay reads it at runtime.
@@ -271,8 +271,8 @@ type Range = { z: number; span: number; x0: number; x1: number; y0: number; y1: 
  *  only while it still matches the live view (else the cached one is stale → fall
  *  back to tiles). The build snapshot makes a mid-session generation flip rebuild
  *  the composite instead of keeping stale-generation pixels. */
-function compositeSig(build: string, sources: readonly HeatmapSource[], range: Range): string {
-  return `${build}|${[...sources].join(',')}|${range.x0},${range.x1},${range.y0},${range.y1}`
+function compositeSig(build: TileBuilds, sources: readonly HeatmapSource[], range: Range): string {
+  return `${buildKey(build, sources)}|${[...sources].join(',')}|${range.x0},${range.x1},${range.y0},${range.y1}`
 }
 
 /** The base-zoom tile range covering `bounds` (+ a 1-tile margin), clamped to the world. */
@@ -294,7 +294,7 @@ function baseRange(bounds: LngLatBounds): Range {
 async function buildComposite(
   range: Range,
   sources: readonly HeatmapSource[],
-  build: string,
+  build: TileBuilds,
 ): Promise<Composite | null> {
   const { z, span, x0, x1, y0, y1, cols, rows } = range
   if (cols < 1 || rows < 1 || cols * rows > MAX_COMPOSITE_TILES) return null

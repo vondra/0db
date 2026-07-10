@@ -5,7 +5,7 @@ import { BitmapLayer } from '@deck.gl/layers'
 import { useMap } from 'react-map-gl/maplibre'
 
 import { fetchAndDecodeHM3, TILE_PX, NO_DATA } from '../lib/hm3-decoder'
-import { BASE_ZOOM, tileUrl, useTileBuild } from '../lib/tile-urls'
+import { BASE_ZOOM, buildKey, tileUrl, useTileBuild, type TileBuilds } from '../lib/tile-urls'
 
 // Translucent green wash over pixels whose total Lden is at or below the
 // user threshold. The legacy feature traced H3 hex clusters into outlined
@@ -65,12 +65,12 @@ export default function QuietZonesLayer({ enabled, threshold }: Props): null {
 
 type QuietTile = { cells: Uint8Array }
 
-function makeQuietLayer(threshold: number, build: string) {
+function makeQuietLayer(threshold: number, build: TileBuilds) {
   const maxByte = threshold * 2 // HM3 encodes dB × 2
   return new TileLayer<QuietTile | null>({
     // Generation snapshot in the id: a flip re-keys the layer so deck drops
     // its tile cache instead of masking stale-generation tiles.
-    id: `quiet-zones-${build}`,
+    id: `quiet-zones-${buildKey(build, ['total'])}`,
     minZoom: MIN_ZOOM,
     // deck upscales the base texture for deeper viewport zooms.
     maxZoom: BASE_ZOOM,

@@ -26,14 +26,25 @@ export const BASE_ZOOM = 12
 export const MIN_ZOOM = 2
 
 const BUILD_ID = /^b\d+$/
+const FILE_BUILD = /\.(b\d+)\.pmtiles$/
 const MANIFEST_POLL_MS = 10 * 60 * 1000
 
-let currentBuild: string | null = null
+/** The published generation set: `latest` labels the manifest as a whole and
+ *  keys deck layer ids / composite signatures; `byLayer` carries each layer's
+ *  OWN build — a partial republish (e.g. road-only b3 over a b2 world) flips
+ *  only that layer's URLs, and the untouched layers re-fetch straight from
+ *  the browser's immutable cache. */
+export interface TileBuilds {
+  latest: string
+  byLayer: Record<string, string>
+}
+
+let currentBuilds: TileBuilds | null = null
 const listeners = new Set<() => void>()
 
-/** The current tile generation, or `null` before any manifest resolves —
+/** The current tile generations, or `null` before any manifest resolves —
  *  subscribe, snapshot, pass down; render no tile layers while `null`. */
-export function useTileBuild(): string | null {
+export function useTileBuild(): TileBuilds | null {
   return useSyncExternalStore(subscribe, snapshot)
 }
 
@@ -42,16 +53,29 @@ function subscribe(cb: () => void): () => void {
   return () => listeners.delete(cb)
 }
 
-function snapshot(): string | null {
-  return currentBuild
+function snapshot(): TileBuilds | null {
+  return currentBuilds
 }
 
 /**
- * URL for one HM3 tile of `source` (a layer id or 'total') in generation
- * `build` — the caller passes the snapshot its layer was constructed with.
+ * URL for one HM3 tile of `source` (a layer id or 'total') — the caller
+ * passes the snapshot its layer was constructed with; the URL carries the
+ * SOURCE's own build so partial republishes stay per-layer exact.
  */
-export function tileUrl(build: string, source: string, z: number, x: number, y: number): string {
-  return `/api/tiles/${build}/${source}/${z}/${x}/${y}.bin`
+export function tileUrl(builds: TileBuilds, source: string, z: number, x: number, y: number): string {
+  const b = builds.byLayer[source] ?? builds.latest
+  return `/api/tiles/${b}/${source}/${z}/${x}/${y}.bin`
+}
+
+/**
+ * Cache-identity string for a SET of sources: each source's own build. Deck
+ * layer ids and composite signatures key on THIS, not on `latest` — so a
+ * partial flip re-keys exactly the layers whose archives changed (unchanged
+ * layers keep their deck tile cache), and a same-`latest` sequential partial
+ * still re-keys the layer it republished (/gg Codex + Gemini consensus).
+ */
+export function buildKey(builds: TileBuilds, sources: readonly string[]): string {
+  return sources.map((s) => `${s}:${builds.byLayer[s] ?? builds.latest}`).join('|')
 }
 
 /**
@@ -78,16 +102,29 @@ async function refreshTileBuild(): Promise<void> {
   try {
     const res = await fetch('/api/tiles-manifest', { cache: 'no-cache' })
     if (!res.ok) return // nothing published yet → stay as-is
-    const manifest = (await res.json()) as { build?: unknown }
-    if (
-      typeof manifest.build === 'string' &&
-      BUILD_ID.test(manifest.build) &&
-      manifest.build !== currentBuild
-    ) {
-      currentBuild = manifest.build
+    const manifest = (await res.json()) as {
+      build?: unknown
+      layers?: Record<string, { build?: unknown; file?: unknown }>
+    }
+    if (typeof manifest.build !== 'string' || !BUILD_ID.test(manifest.build)) return
+    const byLayer: Record<string, string> = {}
+    for (const [layer, entry] of Object.entries(manifest.layers ?? {})) {
+      // Per-layer build straight from the entry; pre-partial-pack manifests
+      // lack it — recover it from the archive filename instead.
+      const b =
+        typeof entry.build === 'string' && BUILD_ID.test(entry.build)
+          ? entry.build
+          : typeof entry.file === 'string'
+            ? FILE_BUILD.exec(entry.file)?.[1]
+            : undefined
+      byLayer[layer] = b ?? manifest.build
+    }
+    const next: TileBuilds = { latest: manifest.build, byLayer }
+    if (JSON.stringify(next) !== JSON.stringify(currentBuilds)) {
+      currentBuilds = next
       for (const cb of listeners) cb()
     }
   } catch {
-    // Network hiccup — keep the current build; the next poll retries.
+    // Network hiccup — keep the current builds; the next poll retries.
   }
 }

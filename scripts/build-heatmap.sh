@@ -47,18 +47,15 @@ stamp() { while IFS= read -r line; do printf '%s %s\n' "$(date '+%H:%M:%S')" "$l
 
 ALL_LAYERS=(road rail industrial building aircraft-airborne aircraft-cruise aircraft-ground)
 
-# Storage redesign 2026-07 (#17 landed, #19 pending): pyramid + combine now run
-# on TILE STORES (z*.qtsi/.qtsd), but this script's kernels still emit loose
-# per-cell tiles — the kernel→store writer is the #19 work item. Fail LOUDLY at
-# the pyramid/combine stage instead of dying on an unknown flag. Interim manual
-# flow for a FULL layer rebuild into a fresh output tree:
-#   tile-store-transcode <loose-layer-dir> <store-root>/<layer>
-#   build-pyramid --store-dir <store-root>/<layer> --base-zoom 12 --dst-zoom 2
-#   build-heatmap-combine --store-root <store-root>   (zoom derived from stores)
-die_store_migration() {
-  log "FATAL: pyramid/combine moved to tile stores (storage redesign); this kernel flow's store glue lands with #19 — see the note above this function"
-  exit 1
-}
+# Storage redesign 2026-07: kernels stage loose per-cell tiles, then the glue
+# into the store depends on the run shape —
+#   FULL rebuild : tile-store-transcode (fresh store + exhaustive byte parity;
+#                  a green exit licenses deleting the staging tree)
+#   BBOX rebuild : tile-store-ingest    (merge-in-place; every blob decoded +
+#                  validated + source_id-checked before it enters the store)
+# A bbox run stages into a RUN-SCOPED dir so the ingest sees exactly this
+# run's layers, never leftovers from an older staging.
+INGEST="$TARGET/tile-store-ingest"
 
 # Parse --source + combine flags; forward everything else (the selection:
 # --bbox / --tile-x/--tile-y / --world / --shard) verbatim to the builders.
@@ -92,11 +89,21 @@ for ((i = 0; i < ${#SEL_ARGS[@]}; i++)); do
   esac
 done
 
+# Bbox runs stage into a run-scoped dir (see the glue note above) and the
+# staging is deleted after a clean ingest — it is reproducible kernel output.
+if [ -n "$bbox" ]; then
+  OUTPUT="$OUTPUT/.bbox-run-$$"
+  mkdir -p "$OUTPUT"
+  # Deleted ONLY on success (end of script) — a failed run keeps its staging
+  # for post-mortem (/gg both models).
+  BBOX_STAGING="$OUTPUT"
+fi
+
 # Rebuild — Fastify dlopen + long jobs cache stale binaries (CLAUDE.md).
 log "rebuilding (release)"
 cargo build --release --manifest-path engine/heatmap-aircraft/Cargo.toml \
   --bin build-heatmap-surface --bin build-heatmap-aircraft \
-  --bin build-pyramid --bin build-heatmap-combine
+  --bin build-pyramid --bin build-heatmap-combine --bin tile-store-ingest --bin tile-store-transcode
 
 if ! $COMBINE_ONLY; then
   # Split requested layers into the GROUND family (one shared-halo pass) and
@@ -220,8 +227,11 @@ PY
       fi
       [ -n "$gpu_pid" ] && wait "$gpu_pid"
       [ -n "$cpu_pid" ] && wait "$cpu_pid"
+      log "ingest staged layers (bbox) → store"
+      "$INGEST" "$STORE_ROOT" "$OUTPUT" --rebuilt-bbox "$bbox"
       for L in "${SURFACE_LAYERS[@]}"; do
-        die_store_migration
+        [ -f "$STORE_ROOT/$L/z$ZOOM.qtsi" ] || continue
+        "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2 --bbox "$bbox"
       done
     else
       # The full surface set (all / ground) → one shared-halo `ground` pass; a
@@ -231,12 +241,20 @@ PY
       log "build surface $SRC (${SURFACE_LAYERS[*]}) → $OUTPUT/{layer}"
       scripts/memcap "$SURFACE" --source "$SRC" --zoom "$ZOOM" --h3r4-dir "$H3R4" \
         --prepared-dir "$PREP" --output "$OUTPUT" "${SEL_ARGS[@]}" 2>&1 | stamp
-      for L in "${SURFACE_LAYERS[@]}"; do
-        if [ -n "$bbox" ]; then die_store_migration; fi
-        log "transcode $L → store (parity-gated) + pyramid z$ZOOM→z3"
-        "$TRANSCODE" "$OUTPUT/$L" "$STORE_ROOT/$L"
-        "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2
-      done
+      if [ -n "$bbox" ]; then
+        log "ingest staged layers (bbox) → store"
+        "$INGEST" "$STORE_ROOT" "$OUTPUT" --rebuilt-bbox "$bbox"
+        for L in "${SURFACE_LAYERS[@]}"; do
+          [ -f "$STORE_ROOT/$L/z$ZOOM.qtsi" ] || continue
+          "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2 --bbox "$bbox"
+        done
+      else
+        for L in "${SURFACE_LAYERS[@]}"; do
+          log "transcode $L → store (parity-gated) + pyramid z$ZOOM→z2"
+          "$TRANSCODE" "$OUTPUT/$L" "$STORE_ROOT/$L"
+          "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2
+        done
+      fi
     fi
   fi
 
@@ -250,9 +268,16 @@ PY
     if $is_shard; then
       log "sharded — built z$ZOOM only; pyramid $L after merging shards"
     elif [ -n "$bbox" ]; then
-      die_store_migration
+      # Ingest EXACTLY this layer: move its staging under a fresh root so the
+      # ingest walk cannot re-consume sibling layers built earlier in the loop.
+      log "ingest $L (bbox) → store + pyramid"
+      run=$(mktemp -d "$OUTPUT/.ingest-$L.XXXXXX")
+      mv "$LDIR" "$run/$L"
+      "$INGEST" "$STORE_ROOT" "$run" --rebuilt-bbox "$bbox"
+      rm -rf "$run"
+      "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2 --bbox "$bbox"
     else
-      log "transcode $L → store (parity-gated) + pyramid z$ZOOM→z3"
+      log "transcode $L → store (parity-gated) + pyramid z$ZOOM→z2"
       "$TRANSCODE" "$LDIR" "$STORE_ROOT/$L"
       "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2
     fi
@@ -265,9 +290,11 @@ if $NO_COMBINE; then
 elif $is_shard; then
   log "sharded — run combine after merging shards: $COMBINE --store-root <store-root>"
 elif [ -n "$bbox" ]; then
-  die_store_migration
+  log "combine (bbox) → $STORE_ROOT/total"
+  "$COMBINE" --store-root "$STORE_ROOT" --bbox "$bbox"
 else
   log "combine → $STORE_ROOT/total"
   "$COMBINE" --store-root "$STORE_ROOT"
 fi
+[ -n "${BBOX_STAGING:-}" ] && rm -rf "$BBOX_STAGING"
 log "done → $STORE_ROOT (pack + publish: tile-store-pack <store-root> <pmtiles-dir> b<N>)"
