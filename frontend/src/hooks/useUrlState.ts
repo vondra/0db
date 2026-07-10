@@ -1,10 +1,7 @@
 import { useCallback, useRef, useMemo } from 'react'
 import { DEFAULT_BASEMAP, type BasemapId } from '../utils/basemaps'
 import { HEATMAP_LAYERS } from '../components/HeatmapOverlay'
-
-const DEFAULT_LAT = 49.8
-const DEFAULT_LNG = 15.5
-const DEFAULT_ZOOM = 8
+import { resolveInitialView } from '../utils/initial-view'
 // Quiet-zone slider spec — highlight pixels whose total Lden is ≤ this.
 // Range targets genuinely quiet places: 20 dB (rural quiet) to 45 dB (calm
 // suburb). Step 0.5 dB matches the HM3 raster's native resolution (1 byte =
@@ -57,11 +54,15 @@ function parseQuietThreshold(raw: string | null): number {
 
 function parseHash(): UrlState {
   const hash = window.location.hash.slice(1)
+  // First visit (no shared link) — and the missing-coordinate fallback for a
+  // partial hash like `#val=1`: approximate the visitor's country from
+  // browser languages, else whole Europe — see utils/initial-view.ts.
+  const view = resolveInitialView()
   if (!hash) {
     return {
-      lat: DEFAULT_LAT,
-      lng: DEFAULT_LNG,
-      zoom: DEFAULT_ZOOM,
+      lat: view.lat,
+      lng: view.lng,
+      zoom: view.zoom,
       quietClusters: false,
       quietThreshold: QUIET_THRESHOLD_DEFAULT,
       detailPosition: null,
@@ -102,9 +103,9 @@ function parseHash(): UrlState {
   const parsedZoom = parseFloat(params.get('z') || '')
 
   return {
-    lat: Number.isFinite(parsedLat) ? parsedLat : DEFAULT_LAT,
-    lng: Number.isFinite(parsedLng) ? parsedLng : DEFAULT_LNG,
-    zoom: Number.isFinite(parsedZoom) ? parsedZoom : DEFAULT_ZOOM,
+    lat: Number.isFinite(parsedLat) ? parsedLat : view.lat,
+    lng: Number.isFinite(parsedLng) ? parsedLng : view.lng,
+    zoom: Number.isFinite(parsedZoom) ? parsedZoom : view.zoom,
     quietClusters: params.get('qc') === '1',
     quietThreshold: parseQuietThreshold(params.get('qt')),
     detailPosition,

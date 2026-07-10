@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
-import Map, { NavigationControl } from 'react-map-gl/maplibre'
+import Map, { NavigationControl, GeolocateControl } from 'react-map-gl/maplibre'
 import type { StyleSpecification } from 'maplibre-gl'
 import FlyToLocation from './FlyToLocation'
 import DetailPopup from './DetailPopup'
@@ -94,6 +94,10 @@ export default function MapView({
       dragPan={{ deceleration: 4000, maxSpeed: 1100 }}
     >
       <NavigationControl position="bottom-left" showCompass={false} />
+      {/* Precise location is user-triggered (Google pattern): the initial view
+          only approximates from browser language (utils/initial-view.ts); GPS
+          fires on this button's click, when the permission prompt is expected. */}
+      <GeolocateControl position="bottom-left" fitBoundsOptions={{ maxZoom: 14 }} />
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
       {/* Highlight rides on the same deck.gl canvas as the heatmap so
           it always draws above the HM3 tiles. A separate MapLibre
