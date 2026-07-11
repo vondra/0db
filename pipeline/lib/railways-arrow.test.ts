@@ -302,3 +302,62 @@ test('retract fall-through: match re-claims a coincidental tuple in the same pas
   assert.equal(t.getChild('trains_passenger')!.get(0), 144)
   assert.equal(t.getChild('source_id')!.get(0), 110)
 })
+// ── #31.7 countryGate: central national-ownership gate ──────────────────────
+// Fixture rows march east (start lon 14.0 + 0.001·i, end +0.0005): a border at
+// 14.00225 puts rows 0-1 wholly inside, makes row 2 a genuine straddler
+// (start in, mid+end out) and row 3 wholly foreign.
+
+test('countryGate: wholly-foreign rows never offered to match; straddlers and domestic rows are', async () => {
+  const gate = (_lat: number, lon: number) => lon < 14.00225
+  const path = writeRailFixture('country-gate.arrow', [[0, 0], [0, 0], [0, 0], [0, 0]])
+  const offered: number[] = []
+  const r = await writeRailTrains(
+    path,
+    (_row, i) => { offered.push(i); return { pax: 7, frt: 1, sourceId: STAMP_ID } },
+    undefined,
+    undefined,
+    gate,
+  )
+  assert.deepEqual(offered, [0, 1, 2], 'rows 0-1 domestic + row 2 straddler offered; row 3 wholly foreign skipped')
+  assert.equal(r.skippedForeign, 1)
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('source_id')!.get(2), STAMP_ID, 'border-straddler IS claimable (R9 semantics)')
+  assert.equal(t.getChild('source_id')!.get(3), 0, 'foreign row never stamped')
+  assert.equal(t.getChild('trains_passenger')!.get(3), 13, 'foreign row payload untouched')
+})
+
+test('countryGate: retract still reaches the foreign rows the gate hides from match', async () => {
+  // The heal path: a foreign row THIS id owns must be disownable in the very
+  // pass that can no longer stamp it. Border west of everything → all foreign.
+  const gate = (_lat: number, lon: number) => lon < 13.0
+  const path = writeRailFixture('country-gate-retract.arrow', [[0, 0], [0, 0]], [STAMP_ID, STAMP_ID])
+  const r = await writeRailTrains(
+    path,
+    () => { throw new Error('match must never run — every row is wholly foreign') },
+    undefined,
+    { sourceId: STAMP_ID, when: () => true },
+    gate,
+  )
+  assert.equal(r.retracted, 2, 'both foreign owned rows disowned')
+  assert.equal(r.matched, 0)
+  assert.equal(r.skippedForeign, 2)
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('source_id')!.get(0), 0)
+  assert.equal(t.getChild('trains_passenger')!.get(0), 0)
+})
+
+test('fail-loud: unregistered positive id and non-railways layer id both throw (#31.4b)', async () => {
+  // shouldOverwrite deliberately treats an unknown EXISTING id as legacy — so
+  // the writer itself must refuse to CREATE one, and a roads id (20,
+  // cz-rsd-scitani) must never stamp a rail row.
+  const p1 = writeRailFixture('unreg-src.arrow', [[0, 0]])
+  await assert.rejects(
+    writeRailTrains(p1, () => ({ pax: 1, frt: 0, sourceId: 65000 })),
+    /not a registered railways source/,
+  )
+  const p2 = writeRailFixture('wrong-layer-src.arrow', [[0, 0]])
+  await assert.rejects(
+    writeRailTrains(p2, () => ({ pax: 1, frt: 0, sourceId: 20 })),
+    /not a registered railways source/,
+  )
+})

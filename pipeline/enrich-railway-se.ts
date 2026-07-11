@@ -19,7 +19,7 @@ import { pathToFileURL } from 'node:url'
 import { execSync } from 'node:child_process'
 import { SOURCE_ID_SE_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import {
   computeStopFrequenciesForFeed, nearestGridStop,
@@ -263,16 +263,17 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
         // longer reaches the row (same family routing + 500 m grid join as `match`) —
         // a row a live stop still covers is re-stamped with the real count instead.
         when: (row) => {
-          // Country-bleed disown (#26C): ANY owned row physically outside SE is
+          // Country-bleed disown (#26C): ANY owned row physically wholly outside SE (start+mid+end — genuine border-straddlers stay ours; shared R9 predicate) is
           // foreign track this feed must not speak for — even when its count was
           // a real through-train figure, ownership belongs to the local country's
           // own timetable (its national enricher re-stamps on its next run).
-          if (!inSe(row.midLat, row.midLon)) return true
+          if (segmentWhollyOutside(inSe, row.midLat, row.midLon, row.startLat, row.startLon, row.endLat, row.endLon)) return true
           if (!wasOldFallbackStamp(row)) return false
           const grid = row.railType === 0 ? railGrid : (row.railType === 1 || row.railType === 2) ? tramGrid : null
           return !grid || nearestGridStop(grid, row) === null
         },
       } : undefined,
+      inSe, // #31.7 central country gate — see writeRailTrains
     )
     totalRails += r.rows
     totalStamped += r.matched

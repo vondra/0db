@@ -202,9 +202,12 @@ async function runGateStep(
   const ndjsonPath = resolve(logDir, 'gate-invariants.ndjson')
   const summaryPath = resolve(logDir, 'gate-invariants.summary.json')
   const logPath = resolve(logDir, 'gate-invariants.log')
+  // No IO flag on purpose: the auditor is fail-closed by DEFAULT (exit 3 on
+  // unreadable arrow / broken extract schema; --lenient-io is the exploratory
+  // opt-out a gate must never pass) — gate.ts hard-fails exit 3 either way.
   const plumbed: PlanStep = {
     ...gate,
-    args: [...gate.args, '--ndjson', ndjsonPath, '--summary-json', summaryPath, '--fail-on-io'],
+    args: [...gate.args, '--ndjson', ndjsonPath, '--summary-json', summaryPath],
   }
   log(`gate: ${plumbed.script} ${plumbed.args.join(' ')}`)
   const r = await runStep(plumbed, logPath)

@@ -48,6 +48,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 import { flatDistM, inBbox, pointInRing } from './lib/spatial.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
@@ -157,6 +158,10 @@ function loadPolys(path: string, nameField: string, nace: string, source: string
 }
 
 async function main() {
+  // #31 round-2: this direct 330 writer must honour the same national-ownership
+  // polygon as stampOneWinner — the shared id's bbox/exclusion gate alone can
+  // still stamp a neighbour's rows (R9 cannot see 330: no country identity).
+  const inPeCountry = makeCountryGate('PE')
   console.log(`=== PE Industrial Enrichment — GEM + INGEMMET + PERUMIN (${YEAR}) ===\n`)
 
   // Points: GEM power plants + INGEMMET yacimientos
@@ -281,7 +286,7 @@ async function main() {
           const lat = centroidLat.get(i) as number
           const lon = centroidLon.get(i) as number
           if (lat == null || lon == null) continue
-          if (!inBbox(lat, lon, PE_BBOX) || inExcluded(lat, lon)) continue
+          if (!inBbox(lat, lon, PE_BBOX) || inExcluded(lat, lon) || !inPeCountry(lat, lon)) continue
 
           let chosen: { nace: string; source: string } | null = null
 

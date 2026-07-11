@@ -188,12 +188,17 @@ export const DATASETS: Dataset[] = [
     // (30+5). Dead branches drop ~9 dB out of the red (Trať 162: 75→66 dB)
     // without going silent. BASELINE rank: any real measurement overwrites;
     // explicit frt=1 stops the engine's per-column zero-defaulting from
-    // re-adding 5 freight. v1 scope: CZ (verified coverage); other countries
-    // as their coverage is confirmed (#26B).
+    // re-adding 5 freight.
+    // "Silence" is a NATIONAL claim — CZPTT can only testify about Czech
+    // track — so the key is cc-prefixed like every national feed: that is
+    // what makes heal-rail-country-bleed sweep its foreign residue (the
+    // un-prefixed original stamped 168,749 rows on DE/AT/PL/SK track inside
+    // the CZ pass bbox; #31 CZ finding). Each future silent-capable country
+    // gets its OWN cc-keyed id, never a shared one (#26B).
     id: 9863,
     layer: 'railways',
-    key: 'rail-timetable-silent',
-    name: 'Timetable-silent residual (no scheduled service)',
+    key: 'cz-timetable-silent',
+    name: 'CZ timetable-silent residual (CZPTT has no scheduled service)',
     year: 2026,
     license: 'project-internal',
     url: null,

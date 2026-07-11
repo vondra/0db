@@ -23,6 +23,7 @@ import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './source-ids.generated
 import { SOURCES_BY_ID, PROVENANCE_RANK } from './sources.js'
 import { bestCandidate, contestBeats, readPolygons, type MatchFacility, type MatchPolygon } from './facility-match.js'
 import { inBbox } from './spatial.js'
+import { makeCountryGate } from './country-polygon.js'
 import { DATA_YEAR as YEAR } from './data-year.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -64,6 +65,11 @@ export interface EnrichGemArgs {
    *  hydro→3512 (90 dB), thermal/nuclear/fossil/etc→3511 (97 dB); wind and blank-fuel
    *  return null. */
   fuelToNace?: (fuel: string) => number | null
+  /** National-ownership gate override. Defaults to
+   *  `makeCountryGate(countryCode)`; pass explicitly only when the code has no
+   *  CGAZ polygon (makeCountryGate throws — fail loud beats a silent
+   *  all-false gate). See StampOneWinnerArgs.countryGate. */
+  countryGate?: (lat: number, lon: number) => boolean
 }
 
 // Source of truth for power-plant noise class. Wind is SKIPPED: turbines are already
@@ -92,8 +98,33 @@ export interface StampOneWinnerArgs {
    *  (/gg Codex — VN coastal hexes were skipped entirely under the strict gate). */
   hexGate?: (lat: number, lon: number) => boolean
   searchRadiusM: number
-  /** OUR source ids: rows carrying one of these inside isInside are reset before stamping. */
+  /** OUR source ids: rows carrying one of these inside isInside AND inside
+   *  `countryGate` are reset before stamping. */
   resetSourceIds: readonly number[]
+  /** National-ownership gate — this pass's own COUNTRY polygon
+   *  (`makeCountryGate(iso)`). `source_id` 330 is SHARED by every generic
+   *  country pass, so BOTH destructive arms are scoped by it: the reset may
+   *  clear and the winner write may stamp only rows inside the pass's own
+   *  country. The old bbox-wide blanket reset deleted a NEIGHBOUR's winners
+   *  wherever hand bboxes overlap (ML's bbox blankets BF — 6 BF winner rows
+   *  zeroed on every ML run; #31.1 CRITICAL); a geometry-proximity scope (the
+   *  first fix attempt) broke CO's two-tier sweep and stayed ambiguous within
+   *  `searchRadiusM` of a border. The polygon is the unambiguous ownership
+   *  signal, sweeps DELETED sites' stale stamps too, and is the same medicine
+   *  as the rail writers' #26C/#31.7 countryGate. Per-ROW test, never a
+   *  hex-centre gate — coastal sites keep working (the VN lesson was about
+   *  hex-centre gating, not point tests). Known residue: a legacy stamp whose
+   *  polygon sits in NO country (offshore / CGAZ gap) is unreachable by every
+   *  pass — the one-off orphan sweep is a chain-level audit+heal follow-up
+   *  (#31 remainder), not a per-pass concern. */
+  countryGate: (lat: number, lon: number) => boolean
+  /** True when the source dataset PARSED non-empty (any status/fuel, before
+   *  the operating/fuel filters). Allows a sweep-only run when `facilities`
+   *  filtered down to zero — a country whose last plant retired heals its
+   *  stale stamps instead of freezing them forever. With the dataset
+   *  missing/empty this stays false and the pass is a hard no-op (a run that
+   *  cannot re-stamp must never reset — the Argentina lesson). */
+  datasetNonEmpty?: boolean
   /** Log prefix, e.g. "ZA". */
   label: string
   /** data/prepared/<year>/h3r4 root. */
@@ -105,13 +136,18 @@ export interface StampOneWinnerArgs {
  * every bespoke national enricher (za/cn/ve/…), so the ONE-site-ONE-polygon contract can't
  * drift per country. Pass 1 (read-only) elects each site's best polygon across the whole
  * area via lib/facility-match; a polygon claimed twice goes to contestBeats (identical
- * rank/year/id ⇒ the nearer site). Pass 2 resets `resetSourceIds` rows inside `isInside`,
- * then writes the winners through shouldOverwrite.
+ * rank/year/id ⇒ the nearer site). Pass 2 resets `resetSourceIds` rows inside
+ * `isInside ∧ countryGate` (the pass's own country — never a sibling's, see
+ * `countryGate`), then writes the winners through shouldOverwrite, also
+ * countryGate-scoped.
  */
 export async function stampOneWinner(a: StampOneWinnerArgs): Promise<void> {
-  if (a.facilities.length === 0) {
-    console.log('  No stampable sites — leaving existing stamps untouched (no-op).')
+  if (a.facilities.length === 0 && !a.datasetNonEmpty) {
+    console.log('  No stampable sites and no parsed dataset — leaving existing stamps untouched (no-op).')
     return
+  }
+  if (a.facilities.length === 0) {
+    console.log('  0 stampable sites but the dataset parsed non-empty — sweep-only run (stale stamps heal, nothing stamped).')
   }
   if (!existsSync(a.h3r4Dir)) {
     console.log(`  ${a.h3r4Dir} does not exist — nothing to enrich.`)
@@ -142,11 +178,11 @@ export async function stampOneWinner(a: StampOneWinnerArgs): Promise<void> {
     } catch { continue }
     polysByHex.set(hex, polygons)
     totalOsm += polygons.length
-    // Border hexes (H3 centre in-area) can hold OUT-of-area polygons; a winner across the
-    // border couldn't be reset by us later (the reset is isInside-gated) and isn't ours to
-    // stamp. Mask them by teleporting to an impossible coordinate — indexes must stay
-    // aligned with the arrow rows, so filtering the array is not an option (/gg Codex).
-    const gated = polygons.map((p) => (a.isInside(p.lat, p.lon) ? p : { ...p, lat: 90, lon: 180 }))
+    // Border hexes (H3 centre in-area) can hold OUT-of-area/foreign polygons; a winner
+    // there isn't ours to stamp (countryGate re-checks at write). Mask them by
+    // teleporting to an impossible coordinate — indexes must stay aligned with the
+    // arrow rows, so filtering the array is not an option (/gg Codex).
+    const gated = polygons.map((p) => (a.isInside(p.lat, p.lon) && a.countryGate(p.lat, p.lon) ? p : { ...p, lat: 90, lon: 180 }))
     for (const fac of a.facilities) {
       const cand = bestCandidate(fac, gated, a.searchRadiusM)
       if (!cand) continue
@@ -165,7 +201,8 @@ export async function stampOneWinner(a: StampOneWinnerArgs): Promise<void> {
       { rank: cur.fac.rank, year: cur.fac.year, id: cur.fac.id, edge: cur.edge })) rows.set(w.row, { fac, edge: w.edge })
   }
 
-  // pass 2: reset our old area-scoped stamps, then stamp the winners
+  // pass 2: reset our old stamps inside OUR OWN COUNTRY (never a sibling's —
+  // the shared id's other territory belongs to its pass), then stamp the winners
   const resetIds = new Set(a.resetSourceIds)
   for (const hex of hexDirs) {
     const winners = winnersByHex.get(hex)
@@ -187,7 +224,9 @@ export async function stampOneWinner(a: StampOneWinnerArgs): Promise<void> {
         let anyChanged = false
         for (let i = 0; i < n; i++) {
           if (!resetIds.has(newDatasetId[i])) continue
-          if (!a.isInside(polygons[i]?.lat ?? 0, polygons[i]?.lon ?? 0)) continue
+          const p = polygons[i]
+          if (!p || !a.isInside(p.lat, p.lon)) continue
+          if (!a.countryGate(p.lat, p.lon)) continue // sibling country's row — not ours to clear (#31.1)
           newNace[i] = 0
           newDatasetId[i] = 0
           totalReset++
@@ -237,6 +276,10 @@ export async function enrichGemIndustrial(args: EnrichGemArgs): Promise<void> {
   console.log(`=== ${upper} Industrial Enrichment — GEM Global Integrated Power (${YEAR}) ===\n`)
 
   const plants: GemSite[] = []
+  // Parsed-count BEFORE the status/fuel filters: proves the feed loaded, which
+  // is what authorizes a sweep-only run when every plant retired (see
+  // `datasetNonEmpty` on stampOneWinner).
+  let parsedSites = 0
   const gemPath = resolve(CACHE_DIR, 'power-plants-gem.geojson')
   if (existsSync(gemPath)) {
     const fc = JSON.parse(readFileSync(gemPath, 'utf-8'))
@@ -246,6 +289,7 @@ export async function enrichGemIndustrial(args: EnrichGemArgs): Promise<void> {
       const [lon, lat] = g.coordinates ?? []
       if (lat == null || lon == null) continue
       if (!isInside(lat, lon)) continue
+      parsedSites++
       const p = f.properties ?? {}
       const status = (p.Status ?? '').toString().toLowerCase()
       if (!status.includes('operating')) continue
@@ -276,8 +320,15 @@ export async function enrichGemIndustrial(args: EnrichGemArgs): Promise<void> {
   await stampOneWinner({
     facilities: prepared,
     isInside,
+    // The documented shortlist contract: bbox drives WHICH HEXES are visited,
+    // isInside only gates rows. Without this, a custom polygon/exclude-zone
+    // isInside also became the hex-CENTRE test and border hexes vanished from
+    // match AND sweep (the VN coastal lesson; #31 round-2 Codex).
+    hexGate: (lat, lon) => inBbox(lat, lon, args.bbox),
     searchRadiusM,
     resetSourceIds: [MY_SOURCE_ID],
+    countryGate: args.countryGate ?? makeCountryGate(args.countryCode),
+    datasetNonEmpty: parsedSites > 0,
     label: upper,
     h3r4Dir: H3R4_DIR,
   })

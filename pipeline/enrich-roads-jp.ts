@@ -124,12 +124,20 @@ function loadCensus(): Census {
     else m.set(k, [v])
   }
 
-  let files = 0
   let sections = 0
+  // #31.2 completeness gate: EVERY prefecture must parse non-empty BEFORE any
+  // write. The class-median fallback is computed over ALL loaded sections, so a
+  // 1/47 fragment would silently become the NATIONWIDE default for every
+  // unmatched major road — a partial cache must hard-fail, never degrade.
+  const unusable: string[] = []
   for (let p = 1; p <= 47; p++) {
-    const path = resolve(CACHE_DIR, `kasyo${String(p).padStart(2, '0')}.csv`)
-    if (!existsSync(path)) continue
-    files++
+    const fileName = `kasyo${String(p).padStart(2, '0')}.csv`
+    const path = resolve(CACHE_DIR, fileName)
+    if (!existsSync(path)) {
+      unusable.push(`${fileName} (missing)`)
+      continue
+    }
+    const sectionsBefore = sections
     const text = new TextDecoder('shift_jis').decode(readFileSync(path))
     const lines = text.split(/\r?\n/)
     for (let i = 1; i < lines.length; i++) {
@@ -137,14 +145,19 @@ function loadCensus(): Census {
       if (!line) continue
       const f = line.split(',')
       if (f.length <= C_LARGE) continue
+      // Usable = a row the enrichment actually consumes: surveyed AND of a
+      // mapped road type. Counting unmapped types let a malformed future
+      // fragment pass the 47-file gate while contributing nothing (#31.2).
+      const type = f[C_TYPE]
+      const classes = TYPE_TO_CLASSES[type] ?? []
+      if (classes.length === 0) continue
       const small = parseInt(f[C_SMALL], 10) || 0
       const large = parseInt(f[C_LARGE], 10) || 0
       if (small + large <= 0) continue // 推定不能 / unsurveyed — would poison the median
       const v: Veh = { small, large }
       sections++
 
-      const type = f[C_TYPE]
-      for (const cls of TYPE_TO_CLASSES[type] ?? []) pushArr(classRows, cls, v)
+      for (const cls of classes) pushArr(classRows, cls, v)
       if (type === '3') {
         const ref = leadingDigits(f[C_ROUTE])
         if (ref) pushArr(refRows, ref, v)
@@ -153,8 +166,14 @@ function loadCensus(): Census {
         if (name) pushArr(nameRows, name, v)
       }
     }
+    if (sections === sectionsBefore) unusable.push(`${fileName} (0 usable sections — wrong encoding/format or empty file)`)
   }
-  if (files === 0) throw new Error(`No kasyo CSVs found in ${CACHE_DIR} — run the JP census download first`)
+  if (unusable.length > 0) {
+    throw new Error(
+      `JP census incomplete: ${unusable.length}/47 prefecture file(s) unusable in ${CACHE_DIR}: ` +
+      `${unusable.join(', ')}. Refusing to enrich from a fragment — re-stage all 47 kasyo CSVs first.`,
+    )
+  }
 
   const toMed = (arr: Veh[]): Veh => ({
     small: median(arr.map((v) => v.small)),
@@ -165,7 +184,7 @@ function loadCensus(): Census {
   const classMed = new Map([...classRows].map(([k, a]) => [k, toMed(a)]))
   const expwyNames = [...expwyByName.keys()].sort((a, b) => b.length - a.length)
 
-  console.log(`  census: ${files}/47 prefecture files, ${sections.toLocaleString()} surveyed sections`)
+  console.log(`  census: 47/47 prefecture files (hard-gated above), ${sections.toLocaleString()} usable sections`)
   console.log(`    routes: ${natlByRef.size} 国道 numbers, ${expwyByName.size} expressway names`)
   return { natlByRef, expwyByName, expwyNames, classMed, sections }
 }

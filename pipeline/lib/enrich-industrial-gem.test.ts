@@ -7,15 +7,25 @@
  * (`nace: '351100'`), and the inline ternary that sent wind→351200 with a
  * 351100 catch-all (`...('wind') ? 351200 : 351100`).
  *
+ * Also pins the #31.1 country-scoped ownership of `stampOneWinner`: sibling
+ * passes share source_id 330, so a pass may reset (and stamp) ONLY rows inside
+ * its own COUNTRY polygon — never its whole hand bbox (the
+ * ML-bbox-blankets-BF data-loss shape), and never proximity-scoped (which
+ * broke CO's two-tier sweep and stayed border-ambiguous).
+ *
  * Run: `cd pipeline && npx tsx --test lib/enrich-industrial-gem.test.ts`
  */
 
-import { test } from 'node:test'
+import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DEFAULT_FUEL_TO_NACE } from './enrich-industrial-gem.js'
+import { tableFromIPC, tableToIPC, vectorFromArray, Table, Float64, Uint8, Uint16 } from 'apache-arrow'
+import { cellToLatLng, latLngToCell } from 'h3-js'
+import { DEFAULT_FUEL_TO_NACE, NATIONAL_MIX, stampOneWinner } from './enrich-industrial-gem.js'
+import { inBbox } from './spatial.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -47,6 +57,125 @@ test('thermal family → 3511 (97 dB)', () => {
   for (const fuel of ['coal', 'gas', 'nuclear', 'biomass', 'oil', 'geothermal']) {
     assert.equal(DEFAULT_FUEL_TO_NACE(fuel), 3511, `${fuel} must map to 3511`)
   }
+})
+
+// ── stampOneWinner: country-scoped ownership (#31.1) ────────────────────────
+// Two "country" passes share source_id 330; their hand BBOXES overlap (the
+// BF/ML shape) but their COUNTRY polygons are disjoint (a border at
+// C_LON + 0.075). Pass A stamps its winner inside the bbox overlap; pass B must
+// (a) NOT reset A's row — inside B's bbox but inside country A (the old
+//     blanket clear zeroed it),
+// (b) still reset ITS OWN stale stamp anywhere in country B (self-heal is
+//     country-wide — the CO two-tier sweep semantics), and
+// (c) stamp its own winner.
+
+const HEX = latLngToCell(0.1, -0.3, 4)
+const [C_LAT, C_LON] = cellToLatLng(HEX)
+// Overlapping bboxes around the hex centre: A reaches 0.3° east of centre,
+// B starts 0.3° west of it — everything below sits inside BOTH.
+const BBOX_A: readonly [number, number, number, number] = [C_LAT - 1, C_LON - 1.7, C_LAT + 1, C_LON + 0.3]
+const BBOX_B: readonly [number, number, number, number] = [C_LAT - 1, C_LON - 0.3, C_LAT + 1, C_LON + 1.7]
+const inA = (lat: number, lon: number) => inBbox(lat, lon, BBOX_A)
+const inB = (lat: number, lon: number) => inBbox(lat, lon, BBOX_B)
+// Disjoint "country polygons": the border runs at C_LON + 0.075.
+const BORDER_LON = C_LON + 0.075
+const countryA = (_lat: number, lon: number) => lon < BORDER_LON
+const countryB = (_lat: number, lon: number) => lon >= BORDER_LON
+
+// row 0: A's winner polygon (bbox-overlap zone, country A, ~550 m from plant A)
+// row 1: B's winner polygon (country B, ~110 m from plant B)
+// row 2: B's STALE stamp from a previous run (country B, ~1.1 km from plant B)
+const POLY = [
+  { lat: C_LAT, lon: C_LON - 0.1 },
+  { lat: C_LAT, lon: C_LON + 0.25 },
+  { lat: C_LAT + 0.01, lon: C_LON + 0.25 },
+]
+const PLANT_A = { lat: C_LAT, lon: C_LON - 0.1 + 0.005, nace4: 3511, ...NATIONAL_MIX }
+const PLANT_B = { lat: C_LAT, lon: C_LON + 0.25 + 0.001, nace4: 3599, ...NATIONAL_MIX }
+
+const stampDir = mkdtempSync(join(tmpdir(), 'gem-stamp-'))
+after(() => rmSync(stampDir, { recursive: true, force: true }))
+
+function writeIndustrialArrow(sourceIds: number[], naces: number[]): string {
+  const table = new Table({
+    centroid_lat: vectorFromArray(POLY.map((p) => p.lat), new Float64()),
+    centroid_lon: vectorFromArray(POLY.map((p) => p.lon), new Float64()),
+    area_m2: vectorFromArray([10_000, 10_000, 10_000], new Float64()),
+    site_subtype: vectorFromArray([0, 0, 0], new Uint8()),
+    nace_4digit: vectorFromArray(naces, new Uint16()),
+    source_id: vectorFromArray(sourceIds, new Uint16()),
+  })
+  const hexDir = join(stampDir, 'h3r4', HEX)
+  mkdirSync(hexDir, { recursive: true })
+  const path = join(hexDir, 'industrial.arrow')
+  writeFileSync(path, Buffer.from(tableToIPC(table, 'file')))
+  return path
+}
+
+function readStamps(path: string): Array<{ src: number; nace: number }> {
+  const t = tableFromIPC(readFileSync(path))
+  const src = t.getChild('source_id')!
+  const nace = t.getChild('nace_4digit')!
+  return [...Array(t.numRows).keys()].map((i) => ({ src: src.get(i) as number, nace: nace.get(i) as number }))
+}
+
+test('stampOneWinner: overlapping sibling pass never clears across the border, own stale stamp heals country-wide', async () => {
+  // Start state: row 2 carries B's stale 330 stamp from "yesterday's" run.
+  const arrowPath = writeIndustrialArrow([0, 0, NATIONAL_MIX.id], [0, 0, 3511])
+  const h3r4Dir = join(stampDir, 'h3r4')
+
+  await stampOneWinner({
+    facilities: [PLANT_A], isInside: inA, countryGate: countryA, searchRadiusM: 2000,
+    resetSourceIds: [NATIONAL_MIX.id], label: 'AA', h3r4Dir,
+  })
+  let rows = readStamps(arrowPath)
+  assert.equal(rows[0].src, NATIONAL_MIX.id, 'pass A stamps its winner')
+  assert.equal(rows[0].nace, 3511)
+  assert.equal(rows[2].src, NATIONAL_MIX.id,
+    "pass A must NOT reset B's stale row — inside A's bbox but inside country B")
+
+  await stampOneWinner({
+    facilities: [PLANT_B], isInside: inB, countryGate: countryB, searchRadiusM: 2000,
+    resetSourceIds: [NATIONAL_MIX.id], label: 'BB', h3r4Dir,
+  })
+  rows = readStamps(arrowPath)
+  assert.equal(rows[0].src, NATIONAL_MIX.id,
+    "pass B must NOT zero A's winner — the ML-blankets-BF data-loss shape")
+  assert.equal(rows[0].nace, 3511)
+  assert.equal(rows[1].src, NATIONAL_MIX.id, 'pass B stamps its own winner')
+  assert.equal(rows[1].nace, 3599)
+  assert.equal(rows[2].src, 0, 'pass B resets its own stale stamp — own country, no proximity needed')
+  assert.equal(rows[2].nace, 0)
+})
+
+test('stampOneWinner: stale stamp of a DELETED site sweeps (country scope, not proximity); sweep-only run heals with zero facilities', async () => {
+  // Row 2's site vanished from the dataset entirely (the CO tier-2 / deleted-site
+  // shape a proximity scope could never heal): with searchRadiusM=300 no facility
+  // is near row 2, yet the country-wide reset must still sweep it.
+  const arrowPath = writeIndustrialArrow([0, 0, NATIONAL_MIX.id], [0, 0, 3599])
+  const h3r4Dir = join(stampDir, 'h3r4')
+
+  await stampOneWinner({
+    facilities: [PLANT_B], isInside: inB, countryGate: countryB, searchRadiusM: 300,
+    resetSourceIds: [NATIONAL_MIX.id], label: 'BB', h3r4Dir,
+  })
+  let rows = readStamps(arrowPath)
+  assert.equal(rows[1].src, NATIONAL_MIX.id, 'winner still stamped')
+  assert.equal(rows[2].src, 0, "deleted site's stale stamp swept — ownership is the country, not a radius")
+
+  // Sweep-only: every plant retired (facilities []), dataset provably parsed →
+  // stale stamps heal; without the parsed proof the pass must stay a no-op.
+  const arrowPath2 = writeIndustrialArrow([0, 0, NATIONAL_MIX.id], [0, 0, 3599])
+  await stampOneWinner({
+    facilities: [], isInside: inB, countryGate: countryB, searchRadiusM: 2000,
+    resetSourceIds: [NATIONAL_MIX.id], label: 'BB', h3r4Dir,
+  })
+  assert.equal(readStamps(arrowPath2)[2].src, NATIONAL_MIX.id, 'no facilities + no parsed dataset → hard no-op')
+  await stampOneWinner({
+    facilities: [], isInside: inB, countryGate: countryB, searchRadiusM: 2000,
+    resetSourceIds: [NATIONAL_MIX.id], datasetNonEmpty: true, label: 'BB', h3r4Dir,
+  })
+  assert.equal(readStamps(arrowPath2)[2].src, 0, 'retired-only country heals its stale stamps (sweep-only run)')
 })
 
 // ── Static-source regression: enrich-industrial-{co,ve,za}.ts ───────────────

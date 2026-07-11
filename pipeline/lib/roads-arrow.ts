@@ -15,6 +15,7 @@ import { resolve } from 'node:path'
 import { makeVector, makeTable, type Table } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
 import { shouldOverwrite, withArrowWrite } from './provenance.js'
+import { isMeasured, SOURCES_BY_ID } from './sources.js'
 import { inBbox } from './spatial.js'
 
 /** OSM `road_class` collapsed to the 0..4 major-road rank used by the
@@ -213,7 +214,12 @@ export async function writeRoadAadt(
         setTaper(i, 0) // a disowned row's taper refinement is void with it
         retracted++
         any = true
-        continue
+        // NO `continue` — fall through so `match` may re-claim the row in this
+        // SAME pass (mirrors writeRailTrains; /gg Codex+Gemini consensus on the
+        // rail twin, re-confirmed by /gg #31 round 2 here): a real measurement
+        // that happens to trip the retract fingerprint is re-stamped
+        // immediately, never dropped for a cycle. Such a row counts in BOTH
+        // `retracted` and `matched`.
       }
       // Class gate (centralized so no enricher can forget it): a source whose
       // `coverage` set omits this row's `road_class` never reaches `match`, so a
@@ -239,6 +245,25 @@ export async function writeRoadAadt(
         (!Number.isInteger(m.speedTaper) || m.speedTaper < 1 || m.speedTaper > 254)
       ) {
         throw new Error(`writeRoadAadt: invalid speedTaper at row ${i} in ${arrowPath}: ${JSON.stringify(m)}`)
+      }
+      // Registry-membership + layer check (#31.4): `shouldOverwrite` deliberately
+      // treats an UNKNOWN existing id as legacy-to-replace, so a typo'd positive
+      // id (e.g. 65000) would otherwise pass every downstream gate — including
+      // the measured-zero guard below, since isMeasured(unknown) is false. A
+      // road writer accepts only registered ROADS sources.
+      if (SOURCES_BY_ID.get(m.sourceId)?.layer !== 'roads') {
+        throw new Error(`writeRoadAadt: sourceId ${m.sourceId} is not a registered roads source (row ${i} in ${arrowPath})`)
+      }
+      // Measured sources publish counts — an all-zero payload under a measured
+      // id is a loader/join failure (the auditor's R7 zero-write shape), never
+      // data: a closed road is ABSENT from a census, not surveyed as 0/0/0/0
+      // (#31.4). Zero AADT stays legal for non-measured tiers: the R7 taper
+      // (baseline rank) stamps speed-only rows with zero AADT by design.
+      if (
+        m.light === 0 && m.medium === 0 && m.heavy === 0 && m.moto === 0 &&
+        isMeasured(m.sourceId)
+      ) {
+        throw new Error(`writeRoadAadt: all-zero AADT from measured source at row ${i} in ${arrowPath}: ${JSON.stringify(m)}`)
       }
       if (!shouldOverwrite(src[i], m.sourceId)) continue // priority gate OWNED here
       light[i] = m.light

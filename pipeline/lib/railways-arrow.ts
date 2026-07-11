@@ -28,6 +28,8 @@
 
 import { makeVector, makeTable, type Table } from 'apache-arrow'
 import { shouldOverwrite, withArrowWrite } from './provenance.js'
+import { SOURCES_BY_ID } from './sources.js'
+import { segmentWhollyOutside } from './country-polygon.js'
 
 /** Train counts per day + the provenance id to stamp on one matched railway row. */
 export interface RailTrains {
@@ -69,6 +71,9 @@ export interface WriteRailResult {
   updated: boolean
   /** Rows skipped because `service > 0` (sidings/yards) — never offered to `match`. */
   skippedService: number
+  /** Rows skipped by `countryGate` (segment wholly outside the source's country)
+   *  — never offered to `match`; the retract arms still reached them. */
+  skippedForeign: number
   /** Rows this dataset previously owned and has now disowned via `retract`
    *  (stamp + train counts reset to zero, open for lower-priority enrichers). */
   retracted: number
@@ -110,16 +115,29 @@ export interface RailRetract {
  * see the module header's provenance-honesty rule; the old advice to fallback
  * inside `match` was the design the 2026-07-10 purge deleted). `onApplied` fires
  * only after the priority gate accepts a match — count matched there.
+ *
+ * `countryGate` (#31.7) is THE national-ownership gate, centralized so no
+ * per-country enricher can forget it: when set, `match` is never offered a
+ * segment wholly outside the country (start+mid+end all foreign — the R9
+ * auditor rule via `segmentWhollyOutside`, so genuine border-straddlers stay
+ * claimable). Without it, a border stop's 500 m grid join stamps rows across
+ * the border and heal-rail-country-bleed retracts them every run (ping-pong;
+ * DE↔CZ held 151 such rows). Every NATIONAL enricher must pass its
+ * `makeCountryGate(iso)`; only the continental aggregate (europe) and
+ * multi-country passes legitimately omit it. Retract `when` country arms use
+ * the same predicate directly — the two sides must agree or they oscillate.
  */
 export async function writeRailTrains(
   arrowPath: string,
   match: (row: RailRow, i: number) => RailTrains | null,
   onApplied?: (row: RailRow, i: number, applied: RailTrains) => void,
   retract?: RailRetract,
+  countryGate?: (lat: number, lon: number) => boolean,
 ): Promise<WriteRailResult> {
   let rows = 0
   let matched = 0
   let skippedService = 0
+  let skippedForeign = 0
   let retracted = 0
   let updated = false
 
@@ -205,6 +223,14 @@ export async function writeRailTrains(
         continue
       }
 
+      // #31.7 national-ownership gate — see the function doc. Placed AFTER the
+      // retract/service arms (disowning must reach foreign rows; that is the
+      // heal) and BEFORE match (stamping must not).
+      if (countryGate && segmentWhollyOutside(countryGate, row.midLat, row.midLon, startLat, startLon, endLat, endLon)) {
+        skippedForeign++
+        continue
+      }
+
       const m = match(row, i)
       if (!m) continue
       // Fail loud on a malformed match — TypedArrays silently coerce/truncate a bad
@@ -216,6 +242,13 @@ export async function writeRailTrains(
         !Number.isInteger(m.sourceId) || m.sourceId <= 0 || m.sourceId > 0xffff
       ) {
         throw new Error(`writeRailTrains: invalid match at row ${i} in ${arrowPath}: ${JSON.stringify(m)}`)
+      }
+      // Registry-membership + layer check (#31.4 twin): `shouldOverwrite` deliberately
+      // treats an UNKNOWN existing id as legacy-to-replace, so without this a typo'd
+      // positive id would sail through every downstream gate and stamp garbage
+      // provenance. A rail writer accepts only registered RAILWAYS sources.
+      if (SOURCES_BY_ID.get(m.sourceId)?.layer !== 'railways') {
+        throw new Error(`writeRailTrains: sourceId ${m.sourceId} is not a registered railways source (row ${i} in ${arrowPath})`)
       }
       if (!shouldOverwrite(src[i], m.sourceId)) continue // priority gate OWNED here
       pax[i] = m.pax
@@ -241,7 +274,7 @@ export async function writeRailTrains(
     return makeTable(cols)
   })
 
-  return { rows, matched, updated, skippedService, retracted }
+  return { rows, matched, updated, skippedService, skippedForeign, retracted }
 }
 
 export interface WriteRailParallelDivisorResult {

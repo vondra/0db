@@ -40,6 +40,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 import { flatDistM, inBbox } from './lib/spatial.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
@@ -180,6 +181,10 @@ function loadSubstations(): IndSite[] {
 }
 
 async function main() {
+  // #31 round-2: this direct 330 writer must honour the same national-ownership
+  // polygon as stampOneWinner — the shared id's bbox/exclusion gate alone can
+  // still stamp a neighbour's rows (R9 cannot see 330: no country identity).
+  const inClCountry = makeCountryGate('CL')
   console.log(`=== CL Industrial Enrichment — CNE + SERNAGEOMIN + GEM (${YEAR}) ===\n`)
 
   const cneThermal = loadCnehermal()
@@ -255,7 +260,7 @@ async function main() {
           const lat = centroidLat.get(i) as number
           const lon = centroidLon.get(i) as number
           if (lat == null || lon == null) continue
-          if (!inBbox(lat, lon, CL_BBOX) || inExcluded(lat, lon)) continue
+          if (!inBbox(lat, lon, CL_BBOX) || inExcluded(lat, lon) || !inClCountry(lat, lon)) continue
 
           // 2 km search radius — solar/wind farms have large polygons
           const searchRadius = 2000

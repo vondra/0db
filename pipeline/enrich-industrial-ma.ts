@@ -52,4 +52,9 @@ await enrichGemIndustrial({
   countryName: "Morocco",
   bbox: MA_BBOX,
   isInside: (lat, lon) => inMA(lat, lon) || inEH(lat, lon),
+  // Ownership matches the declared scope: this pass IS the MA ∪ EH pass (no
+  // separate EH enricher exists) — without the override the default
+  // makeCountryGate('ma') silently narrowed reset+stamp to MA proper (#31
+  // round-2 Codex) and EH stamps became unsweepable.
+  countryGate: (lat, lon) => inMA(lat, lon) || inEH(lat, lon),
 })

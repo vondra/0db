@@ -406,6 +406,15 @@ async function downloadGtfs(feed: FeedConfig): Promise<string> {
   const zipPath = resolve(feedDir, 'gtfs.zip')
   const extractDir = resolve(feedDir, 'extracted')
 
+  // #31.6: the staged cache uses a FLAT layout (stops.txt beside gtfs.zip,
+  // extracted in place) — accept it, or --enrich-only silently no-ops on all
+  // 23 staged feeds while hunting <id>/extracted/ (every throw below is
+  // caught per-feed and a 0-feed run exits 0).
+  if (!forceDownload && existsSync(resolve(feedDir, 'stops.txt'))) {
+    console.log(`  [${feed.id}] Using cached GTFS (flat layout): ${feedDir}`)
+    return feedDir
+  }
+
   if (!forceDownload && existsSync(resolve(extractDir, 'stops.txt'))) {
     console.log(`  [${feed.id}] Using cached GTFS: ${extractDir}`)
     return extractDir

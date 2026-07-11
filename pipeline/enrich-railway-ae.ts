@@ -38,6 +38,7 @@ import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { shouldOverwrite } from './lib/provenance.js'
 import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
+import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
 import { latLngToCell, cellToLatLng } from 'h3-js'
 import { SOURCE_ID_AE_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import {
@@ -490,6 +491,12 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
   }
   console.log(`  UAE hexes with railways.arrow: ${aeHexes.length}`)
 
+  // #31.7 national-ownership gate (round 2): AE_BBOX brushes Oman (Musandam +
+  // the Al Ain border) and this pass had NO gate at all — the last of the
+  // national rail enrichers still able to stamp foreign rows. Built here, not
+  // at module scope: makeCountryGate may download CGAZ on first use.
+  const inAe = makeCountryGate('AE')
+
   let totalRails = 0
   let matchedFromGtfs = 0, totalRetracted = 0
   let skippedService = 0
@@ -545,11 +552,16 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
       // longer reaches the row (same family routing + 500 m grid join as `match`) —
       // a row a live stop still covers is re-stamped with the real count instead.
       when: (row) => {
+        // Country-bleed disown (#26C/#31.7): any owned row WHOLLY outside AE
+        // (start+mid+end — the shared R9 predicate) is foreign track this feed
+        // must not speak for; genuine border-straddlers stay ours.
+        if (segmentWhollyOutside(inAe, row.midLat, row.midLon, row.startLat, row.startLon, row.endLat, row.endLon)) return true
         if (!wasOldFallbackStamp(row)) return false
         const grid = row.railType === 1 ? tramGrid : row.railType === 0 ? railGrid : null
         return !grid || nearestGridStop(grid, row) === null
       },
-    } : undefined)
+    } : undefined,
+    inAe) // #31.7 central country gate — see writeRailTrains
 
     totalRails += r.rows
     totalRetracted += r.retracted

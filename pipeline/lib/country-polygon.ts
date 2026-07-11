@@ -112,6 +112,25 @@ export function makeCountryGate(iso2: string): (lat: number, lon: number) => boo
   return (lat, lon) => inIndexed(idx, lat, lon)
 }
 
+/**
+ * THE national-ownership predicate for segment geometry — a segment is foreign
+ * to a country only when start, mid AND end all lie outside its polygon. This
+ * is the auditor's R9 rule verbatim; the writeRailTrains countryGate, the
+ * enrichers' retract `when` country arms and heal-rail-country-bleed MUST all
+ * use it, or a genuine border-straddler oscillates between "heal retracts it"
+ * and "the national enricher may not re-claim it" (#31.7 follow-up: 7 real
+ * DE/CZ straddling rows were being deleted by the stricter midpoint-only
+ * check). Midpoint first — the cheap majority case for in-country rows.
+ */
+export function segmentWhollyOutside(
+  gate: (lat: number, lon: number) => boolean,
+  midLat: number, midLon: number,
+  startLat: number, startLon: number,
+  endLat: number, endLon: number,
+): boolean {
+  return !gate(midLat, midLon) && !gate(startLat, startLon) && !gate(endLat, endLon)
+}
+
 // `bands` is a latitude-band index of the outer ring's edges (null for small rings,
 // brute-forced): a ray-cast crossing can only come from an edge straddling the query
 // latitude, so band[⌊(lat-s)/bandH⌋] lists exactly the candidate edges — turning the

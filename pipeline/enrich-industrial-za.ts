@@ -40,6 +40,7 @@ import { resolve } from 'node:path'
 import { NATIONAL_MIX, stampOneWinner } from './lib/enrich-industrial-gem.js'
 import type { MatchFacility } from './lib/facility-match.js'
 import { inBbox } from './lib/spatial.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -233,6 +234,7 @@ async function main() {
     hexGate: (la, lo) => inBbox(la, lo, ZA_BBOX),
     searchRadiusM: 2000,
     resetSourceIds: [NATIONAL_MIX.id],
+    countryGate: makeCountryGate('ZA'),
     label: 'ZA',
     h3r4Dir: H3R4_DIR,
   })

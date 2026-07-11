@@ -48,7 +48,7 @@
  * Usage:
  *   DATA_YEAR=2025 npx tsx pipeline/audit-enrichment-invariants.ts \
  *     --bbox S,W,N,E [--bbox S,W,N,E …] [--sample N] [--fix-hint] \
- *     [--ndjson <path>] [--summary-json <path>] [--fail-on-io]
+ *     [--ndjson <path>] [--summary-json <path>] [--lenient-io]
  *
  * `--bbox` is REPEATABLE: country scopes pass their per-polygon padded bbox
  * list (never the union envelope); hexes are deduped across the boxes so an
@@ -61,13 +61,15 @@
  * the chain gate diffs these as a multiset against its baseline.
  * `--summary-json <path>` writes machine totals {total, counts: rule|source→n,
  * ioErrors} — the gate cross-checks NDJSON line count against `total`.
- * `--fail-on-io` turns operational I/O damage (unreadable arrow file, missing
- * EXTRACT-core column) into exit 3 — distinct from violations so a crash can
- * never be baselined as "resolved". Chain-only columns (aadt_*, trains_*,
- * nace_4digit) legitimately don't exist on never-enriched hexes and stay a
- * skip, not an IO error.
+ * Operational I/O damage (unreadable arrow file, missing EXTRACT-core column)
+ * is FATAL BY DEFAULT — exit 3, distinct from violations so a crash/corrupt
+ * hex can never be baselined as "resolved" (#31.3: fail-open let a damaged hex
+ * scan as CLEAN). `--lenient-io` downgrades it to the stderr warnings only —
+ * for exploratory scans over known-damaged trees, NEVER for a gate. Chain-only
+ * columns (aadt_*, trains_*, nace_4digit) legitimately don't exist on
+ * never-enriched hexes and stay a skip, not an IO error.
  * Exits 0 clean, 1 on violations (prints a table, first 50 rows), 2 on usage,
- * 3 on operational I/O errors when --fail-on-io is set.
+ * 3 on operational I/O errors (unless --lenient-io).
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -77,7 +79,7 @@ import { tableFromIPC, type Table, type Vector } from 'apache-arrow'
 import { DATASETS } from './lib/enrichment-datasets.js'
 import { isMeasured } from './lib/sources.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
 import { MAX_BUILDING_TYPE, V2_SPECIFIC_TYPE_MIN } from './lib/buildings-arrow.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
@@ -115,7 +117,7 @@ function argAll(name: string): string[] {
 const bboxArgsRaw = argAll('--bbox')
 if (bboxArgsRaw.length === 0) {
   console.error(
-    'Usage: npx tsx pipeline/audit-enrichment-invariants.ts --bbox S,W,N,E [--bbox …] [--sample N] [--fix-hint] [--ndjson <path>] [--summary-json <path>] [--fail-on-io]',
+    'Usage: npx tsx pipeline/audit-enrichment-invariants.ts --bbox S,W,N,E [--bbox …] [--sample N] [--fix-hint] [--ndjson <path>] [--summary-json <path>] [--lenient-io]',
   )
   process.exit(2)
 }
@@ -132,15 +134,15 @@ const SAMPLE = arg('--sample') ? Math.max(1, parseInt(arg('--sample')!, 10)) : I
 const FIX_HINT = process.argv.includes('--fix-hint')
 const NDJSON_PATH = arg('--ndjson')
 const SUMMARY_PATH = arg('--summary-json')
-const FAIL_ON_IO = process.argv.includes('--fail-on-io')
+const LENIENT_IO = process.argv.includes('--lenient-io')
 
 // ── operational I/O errors (distinct from invariant violations) ──────────────
 
 const ioErrors: Array<{ hex: string; layer: string; error: string }> = []
 
-/** Unreadable file / broken extract-core schema. Always a stderr warning (a
- *  silently skipped hex is how corruption used to pass as CLEAN); fatal exit 3
- *  only under --fail-on-io so existing callers keep their exit contract. */
+/** Unreadable file / broken extract-core schema. Fatal exit 3 by DEFAULT (a
+ *  silently skipped hex is how corruption used to pass as CLEAN); --lenient-io
+ *  keeps only the stderr warning for exploratory scans over damaged trees. */
 function reportIoError(hex: string, layer: string, error: string): void {
   ioErrors.push({ hex, layer, error })
   console.error(`IO ERROR ${layer} ${hex}: ${error}`)
@@ -253,8 +255,7 @@ function checkCountryBleed(
   const cc = COUNTRY_BY_ID.get(id)
   if (!cc) return
   const gate = GATES.get(cc)
-  if (!gate || gate(midLat, midLon)) return
-  if (gate(aLat, aLon) || gate(bLat, bLon)) return
+  if (!gate || !segmentWhollyOutside(gate, midLat, midLon, aLat, aLon, bLat, bLon)) return
   report('R9 country-bleed', hex, i, osmId, id, midLat, midLon,
     `source is ${cc}-bound but segment lies outside ${cc} (start+mid+end all foreign)`)
 }
@@ -666,8 +667,10 @@ if (SUMMARY_PATH) {
 }
 
 // Operational damage outranks the violation verdict: a corrupt hex must exit 3
-// (chain FAIL, not baselineable), never fold into exit 0/1 semantics.
-if (FAIL_ON_IO && ioErrors.length > 0) {
+// (chain FAIL, not baselineable), never fold into exit 0/1 semantics. Fail-
+// closed is the DEFAULT (#31.3); --lenient-io is the explicit exploratory
+// escape hatch and still prints every warning above.
+if (!LENIENT_IO && ioErrors.length > 0) {
   console.error(`\n${ioErrors.length} OPERATIONAL I/O ERROR(S) — unreadable arrow or broken extract-core schema (exit 3):`)
   for (const e of ioErrors.slice(0, 20)) console.error(`  ${e.layer} ${e.hex}: ${e.error}`)
   if (ioErrors.length > 20) console.error(`  … and ${ioErrors.length - 20} more`)

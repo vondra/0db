@@ -40,6 +40,7 @@ import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 import { flatDistM, inBbox } from './lib/spatial.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
@@ -160,6 +161,10 @@ function loadIndustrialParks(): IndustrialSite[] {
 // ── Match industrial sites to OSM industrial polygons ──
 
 async function main() {
+  // #31 round-2: this direct 330 writer must honour the same national-ownership
+  // polygon as stampOneWinner — the shared id's bbox/exclusion gate alone can
+  // still stamp a neighbour's rows (R9 cannot see 330: no country identity).
+  const inInCountry = makeCountryGate('IN')
   console.log(`=== IN Industrial Enrichment — Living Atlas India (${YEAR}) ===\n`)
 
   const power = loadPowerPlants()
@@ -224,7 +229,7 @@ async function main() {
           const lat = centroidLat.get(i) as number
           const lon = centroidLon.get(i) as number
           if (lat == null || lon == null) continue
-          if (!inBbox(lat, lon, IN_BBOX) || inExcluded(lat, lon)) continue
+          if (!inBbox(lat, lon, IN_BBOX) || inExcluded(lat, lon) || !inInCountry(lat, lon)) continue
 
           // Find nearest industrial site within 1000m
           const baseLat = Math.floor(lat * 10)

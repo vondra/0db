@@ -22,7 +22,7 @@
  *   here; calibrating DE freight vs EBA corridor shares is the
  *   experiments-lane follow-up.
  *
- * NO timetable-silent residual for DE (rail-timetable-silent id 9863 stays
+ * NO timetable-silent residual for DE (cz-timetable-silent id 9863 stays
  *   CZ-only): DE coverage is measured, not yet proven — see the
  *   timetableCoverage verdict this script prints after a full run.
  *
@@ -39,7 +39,7 @@ import { execSync } from 'node:child_process'
 import { tableFromIPC } from 'apache-arrow'
 import { SOURCE_ID_DE_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { writeRailTrains } from './lib/railways-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import {
   computeStopFrequenciesForFeed, nearestGridStop, describeIncompleteFeeds,
@@ -262,13 +262,14 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
       // an input artifact and disown REAL stamps.
       retractSafe ? {
         sourceId: MY_SOURCE_ID,
-        // Country-bleed disown (#26C): ANY owned row physically outside DE is
+        // Country-bleed disown (#26C): ANY owned row physically wholly outside DE (start+mid+end — genuine border-straddlers stay ours; shared R9 predicate) is
         // foreign track this feed must not speak for — even when its count was
         // a real DB through-train figure, ownership belongs to the local
         // country's own timetable. No tuple fingerprint clause: this id has no
         // pre-purge fallback history (see the block comment above enrichHexes).
-        when: (row) => !inDe(row.midLat, row.midLon),
+        when: (row) => segmentWhollyOutside(inDe, row.midLat, row.midLon, row.startLat, row.startLon, row.endLat, row.endLon),
       } : undefined,
+      inDe, // #31.7 central country gate — see writeRailTrains
     )
     totalRails += r.rows
     totalStamped += r.matched

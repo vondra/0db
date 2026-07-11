@@ -128,6 +128,22 @@ test('fail-loud: sourceId 0/unknown payload throws (SA-bug shape)', async () => 
   )
 })
 
+test('fail-loud: unregistered positive id and non-roads layer id both throw (#31.4b)', async () => {
+  // shouldOverwrite deliberately treats an unknown EXISTING id as legacy — so
+  // the writer itself must refuse to CREATE one (65000), and a rail id (110,
+  // cz-szcd-gtfs) must never stamp a road row.
+  const p1 = writeRoadsFixture('unreg-src.arrow', [0])
+  await assert.rejects(
+    writeRoadAadt(p1, () => ({ light: 5, medium: 1, heavy: 1, moto: 1, sourceId: 65000 })),
+    /not a registered roads source/,
+  )
+  const p2 = writeRoadsFixture('wrong-layer-src.arrow', [0])
+  await assert.rejects(
+    writeRoadAadt(p2, () => ({ light: 5, medium: 1, heavy: 1, moto: 1, sourceId: 110 })),
+    /not a registered roads source/,
+  )
+})
+
 test('retract: disowns owned rows (incl. out-of-coverage) and zeroes AADT; counter reports them', async () => {
   // The "Zelená 20" heal shape: a class-7 service row stamped by census id 20
   // must be disowned even though class 7 is outside the dataset's coverage —
@@ -136,9 +152,10 @@ test('retract: disowns owned rows (incl. out-of-coverage) and zeroes AADT; count
   const classes = [7, 2, 7]
   const path = writeRoadsFixture('retract.arrow', classes)
   // Re-stamp fixture: row0 owned by 20 (bad: class 7), row1 owned by 20
-  // (good: class 2), row2 owned by 99 (foreign — untouchable).
+  // (good: class 2), row2 owned by 12 (foreign, road-continuity-heuristic —
+  // untouchable; must be a REGISTERED roads id since #31.4b).
   await writeRoadAadt(path, (row, i) =>
-    ({ light: 111, medium: 0, heavy: 0, moto: 0, sourceId: i === 2 ? 99 : 20 }))
+    ({ light: 111, medium: 0, heavy: 0, moto: 0, sourceId: i === 2 ? 12 : 20 }))
 
   const result = await writeRoadAadt(
     path,
@@ -153,16 +170,56 @@ test('retract: disowns owned rows (incl. out-of-coverage) and zeroes AADT; count
   const t = tableFromIPC(readFileSync(path))
   const src = [...Array(3)].map((_, i) => t.getChild('source_id')!.get(i))
   const light = [...Array(3)].map((_, i) => t.getChild('aadt_light')!.get(i))
-  assert.deepEqual(src, [0, 20, 99], 'row0 disowned, row1 kept, foreign row untouched')
+  assert.deepEqual(src, [0, 20, 12], 'row0 disowned, row1 kept, foreign row untouched')
   assert.equal(light[0], 0, 'retracted AADT zeroed')
   assert.equal(light[1], 111, 'kept AADT intact')
   assert.equal(light[2], 111, 'foreign AADT intact')
+})
+
+test('retract: falls through to match — a re-claimable row is re-stamped in the SAME pass', async () => {
+  // The rail-twin consensus fix (/gg #31 round 2): a real measurement that
+  // happens to trip the retract fingerprint must not be dropped for a cycle.
+  const path = writeRoadsFixture('retract-reclaim.arrow', [2])
+  await writeRoadAadt(path, () => ({ light: 111, medium: 0, heavy: 0, moto: 0, sourceId: 20 }))
+  const r = await writeRoadAadt(
+    path,
+    () => ({ light: 500, medium: 10, heavy: 5, moto: 2, sourceId: 20 }), // today's join still reaches it
+    undefined,
+    new Set([0, 1, 2, 3, 4, 10, 11, 12]),
+    { sourceId: 20, when: () => true }, // legacy-tuple fingerprint fires
+  )
+  assert.equal(r.retracted, 1)
+  assert.equal(r.matched, 1, 'same-pass re-claim, counted in both')
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('aadt_light')!.get(0), 500)
+  assert.equal(t.getChild('source_id')!.get(0), 20)
 })
 
 // ── R7 taper: the speed_taper derived-annotation column ─────────────────────
 
 // Taper id from the registry (baseline rank — writes only onto empty rows).
 const TAPER_ID = 9862
+
+test('fail-loud: all-zero AADT under a MEASURED id throws; non-measured zero write stays legal (#31.4)', async () => {
+  // The auditor's R7 zero-write shape at the writer: a measured census that
+  // "surveyed" 0/0/0/0 is a loader/join failure, never data.
+  const path = writeRoadsFixture('zero-measured.arrow', [2])
+  const before = readFileSync(path)
+  await assert.rejects(
+    writeRoadAadt(path, () => ({ light: 0, medium: 0, heavy: 0, moto: 0, sourceId: STAMP_ID })),
+    /all-zero AADT from measured source/,
+  )
+  assert.deepEqual(readFileSync(path), before, 'failed write must not mutate the arrow')
+
+  // The R7 taper (baseline rank, isMeasured=false) stamps speed-only rows with
+  // zero AADT BY DESIGN — the guard must not reject it.
+  const taperPath = writeRoadsFixture('zero-taper.arrow', [4], [0])
+  await writeRoadAadt(taperPath, () =>
+    ({ light: 0, medium: 0, heavy: 0, moto: 0, sourceId: TAPER_ID, speedTaper: 61 }))
+  const t = tableFromIPC(readFileSync(taperPath))
+  assert.equal(t.getChild('source_id')!.get(0), TAPER_ID, 'baseline-rank zero write accepted')
+  assert.equal(t.getChild('speed_taper')!.get(0), 61)
+})
 
 test('speedTaper: column created on first write; OSM speed_limit never touched', async () => {
   const path = writeRoadsFixture('taper-write.arrow', [4, 4], [0, 90])

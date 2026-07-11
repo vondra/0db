@@ -112,5 +112,5 @@ export const SOURCE_ID_TZ_NATIONAL_RAILWAY = 9835 as const // tz-national-railwa
 export const SOURCE_ID_UZ_NATIONAL_ROADS = 9860 as const // uz-national-roads
 export const SOURCE_ID_UZ_NATIONAL_RAILWAY = 9861 as const // uz-national-railway
 export const SOURCE_ID_OSM_TRANSITION_TAPER = 9862 as const // osm-transition-taper
-export const SOURCE_ID_RAIL_TIMETABLE_SILENT = 9863 as const // rail-timetable-silent
+export const SOURCE_ID_CZ_TIMETABLE_SILENT = 9863 as const // cz-timetable-silent
 export const SOURCE_ID_DE_NATIONAL_RAILWAY = 9864 as const // de-national-railway

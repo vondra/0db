@@ -153,6 +153,13 @@ export function gateVerdict(inputs: GateInputs): GateVerdict {
   if ('pass' in machine) return machine
   const { fingerprints, summary } = machine
 
+  // Belt over the exit-3 braces: an auditor run that REPORTS operational I/O
+  // errors in its machine summary must never gate-pass, whatever its exit code
+  // said (a --lenient-io run exits 0/1 with ioErrors > 0; #31.3).
+  if (summary.ioErrors !== 0) {
+    return fail([`auditor summary reports ${summary.ioErrors} operational I/O error(s) — not baselineable; FAIL`])
+  }
+
   if (inputs.code === 0) {
     if (summary.total !== 0) return fail([`auditor exited 0 but summary reports ${summary.total} violation(s) — inconsistent, FAIL`])
     return { pass: true, lines: ['gate CLEAN — no invariant violations'] }
@@ -208,8 +215,14 @@ export function gateVerdict(inputs: GateInputs): GateVerdict {
 /** Build a v2 baseline from a finished auditor run's machine outputs. Throws
  *  when the outputs are inconsistent (never write a baseline off a crash). */
 export function buildBaseline(dataYear: string, scope: string, ndjsonText: string, summaryText: string): GateBaseline {
+  // Same belt as gateVerdict: a summary reporting operational I/O errors must
+  // never become a BASELINE either — a re-baseline over a damaged tree would
+  // launder the damage as "expected" (#31 round-2 Codex).
   const machine = readMachineOutputs({ ndjsonText, summaryText })
   if ('pass' in machine) throw new Error(machine.lines.join('; '))
+  if (machine.summary.ioErrors !== 0) {
+    throw new Error(`refusing to baseline: auditor summary reports ${machine.summary.ioErrors} operational I/O error(s)`)
+  }
   return {
     dataYear,
     scope,

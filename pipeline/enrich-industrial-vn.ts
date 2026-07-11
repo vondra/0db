@@ -82,6 +82,7 @@ async function main() {
     hexGate: (la, lo) => inBbox(la, lo, VN_BBOX),
     searchRadiusM: 1500,
     resetSourceIds: [NATIONAL_MIX.id],
+    countryGate: inVN,
     label: 'VN',
     h3r4Dir: H3R4_DIR,
   })

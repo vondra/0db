@@ -22,7 +22,7 @@ import { latLngToCell } from 'h3-js'
 import { SOURCE_ID_MX_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
 import {
   RAIL_TYPES, TRAM_TYPES, METRO_TYPES, routeFamily, nearestGridStop,
   parseCsvLine, parseCsvStream, parseGtfsDate, formatDate, findTargetWednesday,
@@ -507,7 +507,7 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
   const hexDirs = iterateCountryHexes(H3R4_DIR, PT_BBOX, 'railways.arrow')
   console.log(`  MX hexes with railways.arrow: ${hexDirs.length}`)
 
-  let totalRails = 0, totalStamped = 0, totalRetracted = 0, skippedService = 0, hexesUpdated = 0, outsideMX = 0
+  let totalRails = 0, totalStamped = 0, totalRetracted = 0, skippedService = 0, hexesUpdated = 0
   const startTime = Date.now()
 
   for (let hi = 0; hi < hexDirs.length; hi++) {
@@ -525,9 +525,6 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
     const r = await writeRailTrains(
       resolve(H3R4_DIR, hexId, 'railways.arrow'),
       (row) => {
-        // Country gate first: skip segments outside Mexico (Guatemala/Belize) so
-        // neither a GTFS match nor the class default stamps them with MX data.
-        if (!inMX(row.midLat, row.midLon)) { outsideMX++; return null }
         // Family gate: heavy rail (rail_type 0) → suburban rail stops; tram/light_rail
         // (rail_type 1/2) → metro/light-rail stops. Cross-family matches can't happen.
         const grid = row.railType === 0 ? railGrid : (row.railType === 1 || row.railType === 2) ? tramGrid : null
@@ -550,16 +547,17 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
         // longer reaches the row (same family routing + 500 m grid join as `match`) —
         // a row a live stop still covers is re-stamped with the real count instead.
         when: (row) => {
-          // Country-bleed disown (#26C): ANY owned row physically outside MX is
+          // Country-bleed disown (#26C): ANY owned row physically wholly outside MX (start+mid+end — genuine border-straddlers stay ours; shared R9 predicate) is
           // foreign track this feed must not speak for — even when its count was
           // a real through-train figure, ownership belongs to the local country's
           // own timetable (its national enricher re-stamps on its next run).
-          if (!inMX(row.midLat, row.midLon)) return true
+          if (segmentWhollyOutside(inMX, row.midLat, row.midLon, row.startLat, row.startLon, row.endLat, row.endLon)) return true
           if (!wasOldFallbackStamp(row)) return false
           const grid = row.railType === 0 ? railGrid : (row.railType === 1 || row.railType === 2) ? tramGrid : null
           return !grid || nearestGridStop(grid, row) === null
         },
       } : undefined,
+      inMX, // #31.7 central country gate — see writeRailTrains
     )
     totalRails += r.rows
     totalStamped += r.matched
@@ -574,7 +572,6 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
 
   console.log(`\n=== Results ===`)
   console.log(`  Railway segments scanned:  ${totalRails.toLocaleString()}`)
-  console.log(`  Outside MX polygon:        ${outsideMX.toLocaleString()}`)
   console.log(`  Skipped service tracks:    ${skippedService.toLocaleString()}`)
   console.log(`  Matched by GTFS:           ${totalStamped.toLocaleString()}`)
   console.log(`  Retracted legacy defaults: ${totalRetracted.toLocaleString()}`)

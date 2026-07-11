@@ -128,7 +128,7 @@ const ROADS_REQUIRED_CACHE: Record<string, string[]> = {
   br: [`${YEAR}/br/dnit-federal-highways.geojson`],
   cn: [`${YEAR}/cn/highway-network.geojson`],
   in: [`${YEAR}/in/bharatmala-roads.geojson`],
-  jp: [`${YEAR}/jp`], // 47 manually-staged kasyo*.csv — dir presence is the check
+  jp: [`${YEAR}/jp`], // 47 manually-staged kasyo*.csv — dir presence pre-checks here; the enricher itself hard-fails unless all 47 parse non-empty (#31.2)
   mx: [`${YEAR}/mx/sict-datosviales/u1_segmentos.geojson`],
   ph: [`${YEAR}/ph/roads-classification.geojson`],
 }
@@ -199,7 +199,7 @@ const NOTE_ROADS_NATIONAL =
 const NOTE_RAIL_NATIONAL =
   'national rail counts → writeRailTrains (service-skip + priority gate). retractSafe: the script retracts its own legacy stamps ONLY over a provably complete feed snapshot (v2 cache records feedsLoadedNonEmpty); an incomplete/missing feed withholds retract and logs one loud line — running cache-only is always safe.'
 const NOTE_INDUSTRIAL_NATIONAL =
-  'NACE stamping via lib/enrich-industrial-gem stampOneWinner (one facility, one polygon). FOOTGUN: never run `npm run gen:sources` while any chain step is in flight — source-id drift splits stamps across two ids (auditor R0).'
+  'NACE stamping via lib/enrich-industrial-gem stampOneWinner (one facility, one polygon). FOOTGUN: never run `npm run gen:sources` while any chain step is in flight — source-id drift splits stamps across two ids (auditor R0). KNOWN GAP (#31.6, fix deferred into the #29 feed work): a GEM country whose power-plants-gem.geojson is missing runs as a silent no-op (stampOneWinner refuses to reset what it cannot re-stamp, so nothing is lost — but nothing is stamped either and the step still exits 0).'
 const NOTE_BUILDINGS_NATIONAL =
   'national cadastre floors/type → writeBuildingEnrichment. A fresh extract resets buildings.arrow source_id to 0, so this must re-run even though rasters survive.'
 
@@ -405,7 +405,7 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
       country: null,
       args: c.present ? ['--enrich-only'] : [],
       notes:
-        'EU 36-city segment traffic (continental-measured) — the prior national censuses overwrite. Cache is NOT year-stamped (data/enrichment/global/eu-city-traffic). --enrich-only skips per-city on a missing file, never aborts.',
+        'EU 36-city segment traffic (continental-measured) — the prior national censuses overwrite. Cache is NOT year-stamped (data/enrichment/global/eu-city-traffic). --enrich-only skips per-city on a missing file, never aborts. KNOWN GAP (#31.6, fix deferred into the #29 feed work): no completeness floor — the step succeeds with 1/36 city files present; the loader consumes ONLY `<lowercase-city>.geojson`, so the staged `City_METRIC_YEAR` raws do NOT count — just 2/36 are consumable today (brno, vienna); normalize the raws before any world run (#29/#31 codex).',
       skipReason: !inEnvelope
         ? 'scope outside the EU city-traffic envelope [34,-32,72,45]'
         : c.present
@@ -443,7 +443,7 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
       country: null,
       args: c.present ? ['--enrich-only'] : [],
       notes:
-        'Continental GTFS aggregate (24 feeds incl. IN/US/CA/AU — one shared source id). NEVER pass --feed in a chain run: any subset forces retract-unsafe for the whole pass. Cache is NOT year-stamped (data/enrichment/global/gtfs).',
+        'Continental GTFS aggregate (23 feeds incl. IN/US/CA/AU — one shared source id). NEVER pass --feed in a chain run: any subset forces retract-unsafe for the whole pass. Cache is NOT year-stamped (data/enrichment/global/gtfs). KNOWN GAP (#31.6, fix deferred into the #29 feed work): no completeness floor on STAMPING — a missing feed only withholds retract (retract-unsafe machinery), the pass still stamps from the partial subset and exits 0; the cache is staged in the FLAT per-feed layout (stops.txt beside gtfs.zip), accepted by the loader since #31; verify per-feed stops.txt before a world run.',
       skipReason: !covered
         ? `no feed covers ${scope.iso2} (feed countries: ${[...RAILWAY_EUROPE_FEED_COUNTRIES].join(' ')})`
         : c.present
@@ -455,7 +455,7 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
   // ── national (roads → railways → buildings → industrial, alpha per family) ─
   const perStepNote: Record<string, string> = {
     'railway-cz':
-      'bespoke CZPTT path (predates writeRailTrains; migration queued #26). Also stamps SOURCE_ID_RAIL_TIMETABLE_SILENT (2 pax/1 frt) on timetable-silent lines and computes czpttKey parallel divisors — both gated on retractSafe.',
+      'bespoke CZPTT path (predates writeRailTrains; migration queued #26). Also stamps SOURCE_ID_CZ_TIMETABLE_SILENT (2 pax/1 frt) on timetable-silent lines and computes czpttKey parallel divisors — both gated on retractSafe.',
     'railway-kr': 'pure retract heal (KR publishes no rail data; match() never stamps). Deliberately no retractSafe gate — no inputs exist to be incomplete.',
     'roads-ru': 'env RU_BBOX="S,W,N,E" can narrow a resume — chain runs it unset (full RU).',
     'roads-mx': 'runs its own clearStaleStamps() pre-pass (manual withArrowWrite) before matching.',
@@ -511,7 +511,7 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
       layer: 'roads',
       country: null,
       notes:
-        'building-driven AADT for local classes 5-9, source_id==0 rows only — AFTER national/city so census-claimed locals are never touched. osm-to-h3r4.sh tail already runs it sharded on a fresh extract; a re-run is idempotent (use --from to skip when the extract is hours old).',
+        'building-driven AADT for local classes 5-9, source_id==0 rows only — AFTER national/city so census-claimed locals are never touched. osm-to-h3r4.sh tail already runs it sharded on a fresh extract; a re-run is idempotent (use --from to skip when the extract is hours old). Never run two overlapping-scope chains concurrently: processHex holds the per-hex arrow lock across its whole compute (minutes on dense hexes) and the second process would hit the 5-minute lock timeout.',
       skipReason: null,
     },
     (b) => (b ? ['--bbox', serializeBbox(b)] : []),
@@ -596,8 +596,9 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
   // SINGLE step even for multi-polygon scopes: the auditor accepts repeated
   // --bbox and dedups hexes internally, so the fingerprint multiset counts
   // every violation exactly once. run.ts appends the machine-output plumbing
-  // (--ndjson/--summary-json/--fail-on-io) at spawn time — paths live in the
-  // per-run log dir the manifest cannot know.
+  // (--ndjson/--summary-json) at spawn time — paths live in the per-run log
+  // dir the manifest cannot know. I/O damage is exit 3 by the auditor's own
+  // DEFAULT (--lenient-io exists for exploratory scans, never passed here).
   push({
     id: 'gate-invariants',
     script: 'audit-enrichment-invariants.ts',

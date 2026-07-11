@@ -58,7 +58,7 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { shouldOverwrite } from './lib/provenance.js'
 import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_IN_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { inBbox, pointToSegmentDist } from './lib/spatial.js'
@@ -369,16 +369,18 @@ async function main() {
       // longer reaches the row (same family routing + 500 m feature join as `match`) —
       // a row a live feature still covers is re-stamped with the real count instead.
       when: (row) => {
-        // Country-bleed disown (#26C): ANY owned row physically outside IN is
+        // Country-bleed disown (#26C): ANY owned row physically wholly outside IN (start+mid+end — genuine border-straddlers stay ours; shared R9 predicate) is
         // foreign track this feed must not speak for — even when its count was
         // a real through-train figure, ownership belongs to the local country's
         // own timetable (its national enricher re-stamps on its next run).
-        if (!inIn(row.midLat, row.midLon)) return true
+        if (segmentWhollyOutside(inIn, row.midLat, row.midLon, row.startLat, row.startLon, row.endLat, row.endLon)) return true
         if (!wasOldFallbackStamp(row)) return false
         const grid = row.railType === 0 ? railGrid : row.railType === 1 || row.railType === 2 ? tramGrid : null
         return !grid || nearestRail(row.midLat, row.midLon, grid, 500) === null
       },
-    } : undefined)
+    } : undefined,
+    inIn, // #31.7 central country gate — see writeRailTrains
+    )
 
     totalRails += r.rows
     totalRetracted += r.retracted

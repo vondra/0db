@@ -20,12 +20,15 @@ import { pathToFileURL } from 'node:url'
 import { execSync } from 'node:child_process'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
-import { SOURCE_ID_CZ_SZCD_GTFS, SOURCE_ID_RAIL_TIMETABLE_SILENT } from './lib/source-ids.generated.js'
+import { SOURCE_ID_CZ_SZCD_GTFS, SOURCE_ID_CZ_TIMETABLE_SILENT } from './lib/source-ids.generated.js'
 import { flatDist, pointToSegmentDist } from './lib/spatial.js'
+import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
 import { logRetractSkippedIncompleteInputs } from './lib/gtfs-enrich-core.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CZ_SZCD_GTFS
+
+
 
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/cz`)
@@ -298,6 +301,12 @@ function enrichHexes(
   segments: Map<string, SegmentCount>,
   stationGPS: Map<string, StationGPS>,
 ): void {
+  // #31.7 national-ownership gate — the CZ twin of the writeRailTrains
+  // countryGate this bespoke (pre-writeRailTrains) path cannot use. CZPTT and
+  // the timetable-silent residual may testify about CZECH track only. Built
+  // HERE, not at module top: makeCountryGate may download CGAZ on first use
+  // and imports must stay side-effect-free (#31 round-2 Codex).
+  const inCz = makeCountryGate('CZ')
   // Build GPS lookup for CZPTT station codes
   // Match CZPTT station names to OSM station names
   const codeToGPS = new Map<string, { lat: number; lon: number }>()
@@ -464,6 +473,25 @@ function enrichHexes(
         }
       }
 
+      // #31.7 country gate — the hex prefilter bbox (48–51.5 / 11.5–19.5)
+      // deliberately reaches into DE/AT/PL/SK (Dresden, Vienna) so healing can
+      // REACH foreign rows: first disown anything this pass's ids ever stamped
+      // out there (the un-gated original left 168,749 foreign timetable-silent
+      // rows), then never match/silence foreign rows again. Geometry needs no
+      // retractSafe: a foreign row is foreign regardless of feed completeness.
+      // Same all-three-points predicate as the R9 auditor and
+      // heal-rail-country-bleed — genuine border-straddlers stay ours.
+      if (segmentWhollyOutside(inCz, midLat, midLon, sLat, sLon, eLat, eLon)) {
+        if (sourceId[i] === MY_SOURCE_ID || sourceId[i] === SOURCE_ID_CZ_TIMETABLE_SILENT) {
+          trainsPax[i] = 0
+          trainsFrt[i] = 0
+          sourceId[i] = 0
+          retractedIdx.push(i) // divisor reset below, like every disown
+          hexRetracted++
+        }
+        continue
+      }
+
       // Priority gate: if a higher-priority dataset already owns this row, leave it.
       if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
 
@@ -492,10 +520,10 @@ function enrichHexes(
         // explicit non-zero stops the engine's per-column zero-defaulting
         // from re-adding 5 freight. Gated on retractSafe: an unloaded
         // timetable must never testify to silence.
-        if (retractSafe && shouldOverwrite(sourceId[i], SOURCE_ID_RAIL_TIMETABLE_SILENT)) {
+        if (retractSafe && shouldOverwrite(sourceId[i], SOURCE_ID_CZ_TIMETABLE_SILENT)) {
           trainsPax[i] = 2
           trainsFrt[i] = 1
-          sourceId[i] = SOURCE_ID_RAIL_TIMETABLE_SILENT
+          sourceId[i] = SOURCE_ID_CZ_TIMETABLE_SILENT
           hexSilent++
         }
         continue
@@ -583,7 +611,7 @@ function enrichHexes(
   console.log(`\n=== Results ===`)
   console.log(`  ${totalMatched} / ${totalRails} railway segments enriched (${(totalMatched / totalRails * 100).toFixed(1)}%)`)
   console.log(`  ${totalRetracted.toLocaleString()} legacy fallback stamps retracted`)
-  console.log(`  ${totalSilent.toLocaleString()} timetable-silent residuals stamped (2 pax + 1 frt; id ${SOURCE_ID_RAIL_TIMETABLE_SILENT})`)
+  console.log(`  ${totalSilent.toLocaleString()} timetable-silent residuals stamped (2 pax + 1 frt; id ${SOURCE_ID_CZ_TIMETABLE_SILENT})`)
   console.log(`  ${skippedService.toLocaleString()} service tracks skipped (not stamped)`)
   console.log(`  ${hexesUpdated} / ${hexDirs.length} hexes updated`)
 }

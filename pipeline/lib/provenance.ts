@@ -4,7 +4,8 @@
  * All enrichment layers (roads, railways, buildings, industrial) now live in
  * per-hex Arrow files:
  *  - `shouldOverwrite()` / `updateRow()` gate the whole-row update (payload + id together).
- *  - `withArrowWrite()` wraps read-modify-write with `flock + tmp + rename`.
+ *  - `withArrowWrite()` wraps read-modify-write with an advisory lockfile
+ *    (PID-liveness stale recovery) + tmp + rename.
  *
  * Callers declare their dataset id at the top of the script and pass the helper
  * a callback that writes the value columns only if the helper decided to overwrite.
@@ -55,26 +56,107 @@ export function updateRow(
 
 // Concurrent-safe write wrappers
 
-/** Best-effort advisory lock using O_CREAT|O_EXCL on `{path}.lock`. */
+/** Best-effort advisory lock via O_CREAT|O_EXCL on `{path}.lock` (NOT the
+ *  flock(2) syscall) with PID-liveness stale-lock recovery: the lockfile body
+ *  is the holder's PID; on contention the holder is probed with `kill(pid, 0)`
+ *  and a DEAD holder's lock is removed and immediately re-contested. Without
+ *  recovery, one SIGKILL/OOM (which skips `finally`) bricks every later writer
+ *  on that hex for good — and dense-hex writers like service-tree hold the
+ *  lock across whole-compute windows (#31.5). Same-host semantics only: PIDs
+ *  mean nothing across machines, and all h3r4 writers run on the build host by
+ *  design. The two-reapers window is closed by the `.reap` mutex and the
+ *  empty-inode window by a 2 s creation grace (see inline comments); the
+ *  residual exposure is PID reuse, which can only make us WAIT, not corrupt. */
 async function acquireLock(lockPath: string, timeoutMs = 5 * 60_000): Promise<void> {
   const start = Date.now()
-  const pid = `${process.pid}-${Date.now()}`
   while (Date.now() - start < timeoutMs) {
     try {
-      await fs.writeFile(lockPath, pid, { flag: 'wx' })
+      await fs.writeFile(lockPath, String(process.pid), { flag: 'wx' })
       return
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
-      // Lock held — back off 100–400 ms with jitter.
+      let body: string
+      try {
+        body = await fs.readFile(lockPath, 'utf-8')
+      } catch {
+        continue // lock vanished between EEXIST and read — re-contest at once
+      }
+      // parseInt also digests the legacy `pid-timestamp` body shape.
+      const holderPid = parseInt(body, 10)
+      let holderAlive: boolean
+      if (!Number.isInteger(holderPid) || holderPid <= 0) {
+        // Empty/garbled body: `wx` publishes the inode BEFORE the pid write
+        // lands (open→write is two syscalls), so a freshly-created lock reads
+        // as '' for a moment — reaping it would delete a LIVE writer's lock
+        // (#31 round-2 Codex CRITICAL). Only a garbled lock that has SAT there
+        // past the creation grace is genuinely orphaned (writer crashed
+        // between the two syscalls).
+        const st = await fs.stat(lockPath).catch(() => null)
+        holderAlive = st === null || Date.now() - st.mtimeMs < 2000
+      } else {
+        try {
+          process.kill(holderPid, 0)
+          holderAlive = true
+        } catch (probe: unknown) {
+          // ESRCH = no such process (dead). EPERM = alive but not ours — keep waiting.
+          holderAlive = (probe as NodeJS.ErrnoException).code !== 'ESRCH'
+        }
+      }
+      if (!holderAlive) {
+        // Serialize the reap through a `.reap` O_EXCL mutex: without it, two
+        // waiters could both pass the body recheck in the microsecond window
+        // between one's unlink and its re-create, and the second unlink would
+        // delete a FRESHLY acquired lock → two live writers on one arrow
+        // (/gg #31 round 2, Gemini CRITICAL). The .reap file lives microseconds,
+        // so its own stale case (reaper SIGKILLed inside) is handled by the
+        // same PID probe and a benign unlink race.
+        const reapPath = `${lockPath}.reap`
+        try {
+          await fs.writeFile(reapPath, String(process.pid), { flag: 'wx' })
+        } catch {
+          // Same empty-inode grace as the main lock: a fresh .reap may read ''.
+          const reaperPid = parseInt(await fs.readFile(reapPath, 'utf-8').catch(() => ''), 10)
+          let reaperAlive: boolean
+          if (!Number.isInteger(reaperPid) || reaperPid <= 0) {
+            const st = await fs.stat(reapPath).catch(() => null)
+            reaperAlive = st === null || Date.now() - st.mtimeMs < 2000
+          } else {
+            try {
+              process.kill(reaperPid, 0)
+              reaperAlive = true
+            } catch (probe: unknown) {
+              reaperAlive = (probe as NodeJS.ErrnoException).code !== 'ESRCH'
+            }
+          }
+          if (!reaperAlive) await fs.unlink(reapPath).catch(() => {})
+          await new Promise(r => setTimeout(r, 50 + Math.random() * 100))
+          continue
+        }
+        try {
+          // Holder of .reap: recheck the body, then unlink — no concurrent
+          // reaper can interleave between these two lines now.
+          const recheck = await fs.readFile(lockPath, 'utf-8').catch(() => null)
+          if (recheck === body) await fs.unlink(lockPath).catch(() => {})
+        } finally {
+          await fs.unlink(reapPath).catch(() => {})
+        }
+        continue // re-contest via O_EXCL — exactly one waiter wins
+      }
+      // Lock held by a live process — back off 100–400 ms with jitter.
       await new Promise(r => setTimeout(r, 100 + Math.random() * 300))
     }
   }
-  throw new Error(`acquireLock timeout on ${lockPath} after ${timeoutMs} ms`)
+  throw new Error(`acquireLock timeout on ${lockPath} after ${timeoutMs} ms (live holder — a stale lock would have been reaped)`)
 }
 
 async function releaseLock(lockPath: string): Promise<void> {
   try {
-    await fs.unlink(lockPath)
+    // Ownership-verified: if a reaper (wrongly or rightly) took our lock and a
+    // SUCCESSOR now holds it, a blind unlink would free the successor's lock
+    // for a third writer (#31 round-2 Codex). Losing the lock mid-hold is
+    // already an anomaly; never compound it.
+    const body = await fs.readFile(lockPath, 'utf-8')
+    if (body === String(process.pid)) await fs.unlink(lockPath)
   } catch {
     /* best-effort */
   }

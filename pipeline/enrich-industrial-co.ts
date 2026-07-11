@@ -46,6 +46,7 @@ import { cellToLatLng } from 'h3-js'
 import { NATIONAL_MIX, stampOneWinner } from './lib/enrich-industrial-gem.js'
 import type { MatchFacility } from './lib/facility-match.js'
 import { inBbox, pointInRing } from './lib/spatial.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
@@ -229,6 +230,10 @@ function loadOilGasBlocks(): PolySite[] {
 }
 
 async function main() {
+  // #31 round-2: this direct 330 writer must honour the same national-ownership
+  // polygon as stampOneWinner — the shared id's bbox/exclusion gate alone can
+  // still stamp a neighbour's rows (R9 cannot see 330: no country identity).
+  const inCoCountry = makeCountryGate('CO')
   console.log(`=== CO Industrial Enrichment — GEM + ANM Mining + ANH Oil/Gas (${YEAR}) ===\n`)
 
   const gemPlants = loadGemPlants()
@@ -256,7 +261,9 @@ async function main() {
   }
 
   // Tier order matters: the one-winner core runs FIRST (it resets ALL our old 330
-  // stamps inside CO, then elects one polygon per GEM plant); the ANM/ANH
+  // stamps inside CO's country polygon (countryGate — the reset is country-wide
+  // within CO, which is what re-sweeps the ANM/ANH containment stamps tier 2
+  // re-creates), then elects one polygon per GEM plant); the ANM/ANH
   // containment tier runs SECOND, so a mining title / oil block containing a row
   // legitimately overrides a GEM winner (existingId === selfId passes
   // shouldOverwrite). Reversed, the reset would wipe the containment stamps.
@@ -271,6 +278,7 @@ async function main() {
     hexGate: (la, lo) => inBbox(la, lo, CO_BBOX),
     searchRadiusM: 2000,
     resetSourceIds: [NATIONAL_MIX.id],
+    countryGate: makeCountryGate('CO'),
     label: 'CO',
     h3r4Dir: H3R4_DIR,
   })
@@ -338,7 +346,7 @@ async function main() {
           const lat = centroidLat.get(i) as number
           const lon = centroidLon.get(i) as number
           if (lat == null || lon == null) continue
-          if (!inBbox(lat, lon, CO_BBOX) || inExcluded(lat, lon)) continue
+          if (!inBbox(lat, lon, CO_BBOX) || inExcluded(lat, lon) || !inCoCountry(lat, lon)) continue
 
           let chosen: { nace: string; source: string } | null = null
 

@@ -44,6 +44,7 @@
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'
+import { inBbox } from './lib/spatial.js'
 
 const NC_BBOX: readonly [number, number, number, number] = [-23.0, 163.5, -19.5, 168.5]
 
@@ -51,4 +52,9 @@ await enrichGemIndustrial({
   countryCode: 'nc',
   countryName: "New Caledonia",
   bbox: NC_BBOX,
+  // CGAZ has no standalone NCL feature (French territories fold into FRA), so
+  // makeCountryGate('nc') throws. The bbox IS a safe ownership gate here: an
+  // isolated archipelago — nearest foreign land (Vanuatu) is ~500 km away and
+  // no sibling pass's territory intersects this box (#31 round-2 Codex).
+  countryGate: (lat, lon) => inBbox(lat, lon, NC_BBOX),
 })

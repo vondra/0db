@@ -15,7 +15,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tableFromIPC, type Table } from 'apache-arrow'
 import { readAdminIso } from './lib/admin-iso.js'
-import { SOURCES, SOURCES_BY_ID, PROVENANCE_RANK, SOURCE_ID_RAIL_TIMETABLE_SILENT } from './lib/sources.js'
+import { SOURCES, SOURCES_BY_ID, PROVENANCE_RANK, SOURCE_ID_CZ_TIMETABLE_SILENT } from './lib/sources.js'
 import { DATASETS, type Dataset } from './lib/enrichment-datasets.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
@@ -143,7 +143,7 @@ function scanRailwaysHex(arrowPath: string, agg: RailAgg): void {
       const f = agg.families[railFamilyIdx(rt ? rt[i] : 0)]
       f.segs++
       f.meters += lenM ? lenM[i] : 0
-      if (id === SOURCE_ID_RAIL_TIMETABLE_SILENT) f.silent++
+      if (id === SOURCE_ID_CZ_TIMETABLE_SILENT) f.silent++
       else if (id !== 0) f.timetable++
       else f.src0++
       const ui = Math.min(us ? us[i] : 0, 3)

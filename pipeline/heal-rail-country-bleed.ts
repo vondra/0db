@@ -24,7 +24,7 @@ import { resolve } from 'node:path'
 import { tableFromIPC } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
 import { SOURCES } from './lib/sources.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
 import { writeRailTrains } from './lib/railways-arrow.js'
 import { inBbox } from './lib/spatial.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
@@ -47,11 +47,20 @@ function nationalRailSources(): Array<{ id: number; iso: string; key: string }> 
 
 /** True when the heal's write pass would retract row `i` — MUST mirror
  *  writeRailTrains' two retract branches exactly (lib/railways-arrow.ts):
- *  (a) own row whose MIDPOINT lies outside the source's country (`when`), and
+ *  (a) own row WHOLLY outside the source's country (`when` — start+mid+end all
+ *  foreign, the shared R9 predicate; a genuine border-straddler is NOT foreign
+ *  and must be kept, or the heal deletes what the writer's countryGate then
+ *  refuses to re-claim), and
  *  (b) own SERVICE row anywhere (service rows can never be legitimately
  *  stamped; the writer clears them regardless of `when`). */
-function wouldRetract(inCountry: (lat: number, lon: number) => boolean, midLat: number, midLon: number, service: number): boolean {
-  return !inCountry(midLat, midLon) || service > 0
+function wouldRetract(
+  inCountry: (lat: number, lon: number) => boolean,
+  midLat: number, midLon: number,
+  startLat: number, startLon: number,
+  endLat: number, endLon: number,
+  service: number,
+): boolean {
+  return segmentWhollyOutside(inCountry, midLat, midLon, startLat, startLon, endLat, endLon) || service > 0
 }
 
 async function main() {
@@ -120,9 +129,10 @@ async function main() {
         if (!id || !byId.has(id)) continue
         const s = byId.get(id)!
         const startLat = sLat.get(i) as number, startLon = sLon.get(i) as number
-        const midLat = (((eLat?.get(i) as number) ?? startLat) + startLat) / 2
-        const midLon = (((eLon?.get(i) as number) ?? startLon) + startLon) / 2
-        if (wouldRetract(gateFor(s.iso), midLat, midLon, (svc?.get(i) as number) ?? 0)) {
+        const endLat2 = (eLat?.get(i) as number) ?? startLat, endLon2 = (eLon?.get(i) as number) ?? startLon
+        const midLat = (endLat2 + startLat) / 2
+        const midLon = (endLon2 + startLon) / 2
+        if (wouldRetract(gateFor(s.iso), midLat, midLon, startLat, startLon, endLat2, endLon2, (svc?.get(i) as number) ?? 0)) {
           totalRetracted++
           perSource.set(s.key, (perSource.get(s.key) ?? 0) + 1)
           hexHit = true
@@ -134,7 +144,7 @@ async function main() {
         const inCountry = gateFor(s.iso)
         const r = await writeRailTrains(path, () => null, undefined, {
           sourceId: id,
-          when: (row) => !inCountry(row.midLat, row.midLon),
+          when: (row) => segmentWhollyOutside(inCountry, row.midLat, row.midLon, row.startLat, row.startLon, row.endLat, row.endLon),
         })
         if (r.retracted > 0) {
           totalRetracted += r.retracted

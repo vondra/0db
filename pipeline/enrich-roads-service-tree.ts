@@ -17,11 +17,11 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-roads-service-tree.ts --bbox 17.5,-180,71.5,-65  # one country
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { SOURCES_BY_KEY } from './lib/sources.js'
-import { shouldOverwrite } from './lib/provenance.js'
+import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
-import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
+import { tableFromIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { SOURCE_ID_SERVICE_TREE_HEURISTIC } from './lib/source-ids.generated.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { nodeKey } from './lib/spatial.js'
@@ -232,7 +232,10 @@ export function estimateDwellings(buildingType: number, floors: number, areaMr2:
 }
 
 export function splitAADT(totalTrips: number): { light: number; medium: number; heavy: number; moto: number } {
-  const total = Math.max(totalTrips, MIN_AADT)
+  // Integerized at the source: the columns are Int32 and the idempotence
+  // no-op compares stored ints against this candidate — a float `light`
+  // (22 !== 22.08) would flag every re-run as changed (#31 round-2 Codex).
+  const total = Math.round(Math.max(totalTrips, MIN_AADT))
   const medium = Math.round(total * SPLIT_MEDIUM)
   const heavy = Math.round(total * SPLIT_HEAVY)
   const moto = Math.round(total * SPLIT_MOTO)
@@ -786,138 +789,163 @@ function debugFlow(segFlow: Map<number, number>, osmIdCol: any, target: number, 
 
 // ---------- Process one hex ----------
 
-function processHex(hexId: string): { enriched: number; totalResidential: number } | null {
+/** #31.5: the whole read→compute→write runs INSIDE `withArrowWrite` — the same
+ *  advisory-lockfile (PID-liveness stale recovery) + tmp + rename + schema/batch-shape preservation every other road
+ *  writer uses. The previous raw `writeFileSync(tableToIPC(...))` dropped
+ *  schema metadata and collapsed record batches (voiding the extractors'
+ *  `qm_batch_bboxes` popup pruning), had no lock against a concurrent writer,
+ *  and re-serialized the file even when no row changed. Returning the input
+ *  table on any no-op path keeps the hex byte-identical. */
+async function processHex(hexId: string): Promise<{ enriched: number; totalResidential: number } | null> {
   const roadsPath = resolve(H3R4_DIR, hexId, 'roads.arrow')
   const buildingsPath = resolve(H3R4_DIR, hexId, 'buildings.arrow')
   if (!existsSync(roadsPath) || !existsSync(buildingsPath)) return null
 
-  const roadTable = tableFromIPC(readFileSync(roadsPath))
-  const n = roadTable.numRows
-  if (n === 0) return null
+  let result: { enriched: number; totalResidential: number } | null = null
+  await withArrowWrite(roadsPath, (roadTable) => {
+    const n = roadTable.numRows
+    if (n === 0) return roadTable
 
-  const buildingTable = tableFromIPC(readFileSync(buildingsPath))
-  if (buildingTable.numRows === 0) return null
+    const buildingTable = tableFromIPC(readFileSync(buildingsPath))
+    if (buildingTable.numRows === 0) return roadTable
 
-  const graph = buildGraph(roadTable)
+    const graph = buildGraph(roadTable)
 
-  let eligibleCount = 0
-  for (let i = 0; i < n; i++) if (graph.eligible[i]) eligibleCount++
-  if (eligibleCount === 0) return null
+    let eligibleCount = 0
+    for (let i = 0; i < n; i++) if (graph.eligible[i]) eligibleCount++
+    if (eligibleCount === 0) return roadTable
 
-  const components = findComponents(graph)
-  if (components.length === 0) return null
+    const components = findComponents(graph)
+    if (components.length === 0) return roadTable
 
-  const bg = buildBuildingGrid(buildingTable)
-  const startLat = roadTable.getChild('start_lat')!
-  const startLon = roadTable.getChild('start_lon')!
-  const endLat = roadTable.getChild('end_lat')!
-  const endLon = roadTable.getChild('end_lon')!
-  const lengthCol = roadTable.getChild('length_m')!
+    const bg = buildBuildingGrid(buildingTable)
+    const startLat = roadTable.getChild('start_lat')!
+    const startLon = roadTable.getChild('start_lon')!
+    const endLat = roadTable.getChild('end_lat')!
+    const endLon = roadTable.getChild('end_lon')!
+    const lengthCol = roadTable.getChild('length_m')!
 
-  // A.3: global building→segment assignment. One pass over every eligible
-  // segment across all components — each building now lands on exactly one
-  // segment, no more double-counting across primary-road-split components.
-  // (Spread `push(...comp.segments)` overflows the V8 call stack when a
-  // single urban component holds >100 k segments — use explicit loops.)
-  let eligibleCapacity = 0
-  for (const comp of components) eligibleCapacity += comp.segments.length
-  const eligibleSegments: number[] = new Array(eligibleCapacity)
-  let writeIdx = 0
-  for (const comp of components) {
-    const segs = comp.segments
-    for (let i = 0; i < segs.length; i++) eligibleSegments[writeIdx++] = segs[i]
-  }
-  const globalBestSeg = assignBuildingsGlobally(
-    eligibleSegments, startLat, startLon, endLat, endLon, bg,
-  )
-
-  // Flow accumulation per component, reading the precomputed seg→dwellings
-  // map by direct lookup (no per-component re-scan of every building).
-  const segAADT = new Map<number, { light: number; medium: number; heavy: number; moto: number }>()
-  const roadClassCol = roadTable.getChild('road_class')
-  const debugTarget = parseDebugOsmId()
-  const osmIdCol = debugTarget !== null ? roadTable.getChild('osm_id') : undefined
-  for (const comp of components) {
-    const segFlow = flowAccumulate(comp, graph.segNodeIds, lengthCol, globalBestSeg)
-    if (osmIdCol) debugFlow(segFlow, osmIdCol, debugTarget!, globalBestSeg)
-    for (const [seg, trips] of segFlow) {
-      const cls = (roadClassCol?.get(seg) as number) ?? 5
-      const capped = Math.min(trips, SERVICE_TREE_CAP_PER_CLASS[cls] ?? Infinity)
-      segAADT.set(seg, splitAADT(capped))
+    // A.3: global building→segment assignment. One pass over every eligible
+    // segment across all components — each building now lands on exactly one
+    // segment, no more double-counting across primary-road-split components.
+    // (Spread `push(...comp.segments)` overflows the V8 call stack when a
+    // single urban component holds >100 k segments — use explicit loops.)
+    let eligibleCapacity = 0
+    for (const comp of components) eligibleCapacity += comp.segments.length
+    const eligibleSegments: number[] = new Array(eligibleCapacity)
+    let writeIdx = 0
+    for (const comp of components) {
+      const segs = comp.segments
+      for (let i = 0; i < segs.length; i++) eligibleSegments[writeIdx++] = segs[i]
     }
-  }
+    const globalBestSeg = assignBuildingsGlobally(
+      eligibleSegments, startLat, startLon, endLat, endLon, bg,
+    )
 
-  if (segAADT.size === 0) return null
-
-  // Write back — EC pattern: copy existing values first
-  const existingLight = roadTable.getChild('aadt_light')
-  const existingMed = roadTable.getChild('aadt_medium')
-  const existingHvy = roadTable.getChild('aadt_heavy')
-  const existingMoto = roadTable.getChild('aadt_moto')
-  const existingSourceId = roadTable.getChild('source_id')
-  const aadtLight = new Int32Array(n)
-  const aadtMedium = new Int32Array(n)
-  const aadtHeavy = new Int32Array(n)
-  const aadtMoto = new Int32Array(n)
-  const sourceId = new Uint16Array(n)
-
-  for (let i = 0; i < n; i++) {
-    aadtLight[i] = (existingLight?.get(i) as number) ?? 0
-    aadtMedium[i] = (existingMed?.get(i) as number) ?? 0
-    aadtHeavy[i] = (existingHvy?.get(i) as number) ?? 0
-    aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
-    sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
-  }
-
-  // speed_taper is a derived annotation (see lib/roads-arrow.ts RoadAadt):
-  // claiming a row VOIDS any taper ramp computed from its old state — this
-  // bulk path must clear it exactly like the shared writer does, or a stale
-  // graded speed would hide behind the service-tree stamp (/gg Codex).
-  const existingTaper = roadTable.getChild('speed_taper')
-  let taperCol: Uint8Array | null = null
-
-  let enriched = 0
-  for (const [seg, aadt] of segAADT) {
-    // Eligibility was already gated via shouldOverwrite() in buildGraph().
-    // Whole-row atomic write — payload + dataset_id together.
-    if (!shouldOverwrite(sourceId[seg], MY_SOURCE_ID)) continue
-    aadtLight[seg] = aadt.light
-    aadtMedium[seg] = aadt.medium
-    aadtHeavy[seg] = aadt.heavy
-    aadtMoto[seg] = aadt.moto
-    sourceId[seg] = MY_SOURCE_ID
-    if (existingTaper && ((existingTaper.get(seg) as number) ?? 0) !== 0) {
-      if (!taperCol) {
-        taperCol = new Uint8Array(n)
-        for (let k = 0; k < n; k++) taperCol[k] = (existingTaper.get(k) as number) ?? 0
+    // Flow accumulation per component, reading the precomputed seg→dwellings
+    // map by direct lookup (no per-component re-scan of every building).
+    const segAADT = new Map<number, { light: number; medium: number; heavy: number; moto: number }>()
+    const roadClassCol = roadTable.getChild('road_class')
+    const debugTarget = parseDebugOsmId()
+    const osmIdCol = debugTarget !== null ? roadTable.getChild('osm_id') : undefined
+    for (const comp of components) {
+      const segFlow = flowAccumulate(comp, graph.segNodeIds, lengthCol, globalBestSeg)
+      if (osmIdCol) debugFlow(segFlow, osmIdCol, debugTarget!, globalBestSeg)
+      for (const [seg, trips] of segFlow) {
+        const cls = (roadClassCol?.get(seg) as number) ?? 5
+        const capped = Math.min(trips, SERVICE_TREE_CAP_PER_CLASS[cls] ?? Infinity)
+        segAADT.set(seg, splitAADT(capped))
       }
-      taperCol[seg] = 0
     }
-    enriched++
-  }
 
-  const columns: Record<string, any> = {}
-  const rebuilt = ['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id']
-  if (taperCol) rebuilt.push('speed_taper')
-  for (const field of roadTable.schema.fields) {
-    if (rebuilt.includes(field.name)) continue
-    columns[field.name] = roadTable.getChild(field.name)!
-  }
-  columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
-  columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
-  columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
-  columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
-  columns['source_id'] = vectorFromArray(sourceId, new Uint16())
-  if (taperCol) columns['speed_taper'] = vectorFromArray(taperCol, new Uint8())
-  const newTable = makeTable(columns)
-  writeFileSync(roadsPath, Buffer.from(tableToIPC(newTable, 'file')))
+    if (segAADT.size === 0) return roadTable
 
-  return { enriched, totalResidential: eligibleCount }
+    // Write back — EC pattern: copy existing values first
+    const existingLight = roadTable.getChild('aadt_light')
+    const existingMed = roadTable.getChild('aadt_medium')
+    const existingHvy = roadTable.getChild('aadt_heavy')
+    const existingMoto = roadTable.getChild('aadt_moto')
+    const existingSourceId = roadTable.getChild('source_id')
+    const aadtLight = new Int32Array(n)
+    const aadtMedium = new Int32Array(n)
+    const aadtHeavy = new Int32Array(n)
+    const aadtMoto = new Int32Array(n)
+    const sourceId = new Uint16Array(n)
+
+    for (let i = 0; i < n; i++) {
+      aadtLight[i] = (existingLight?.get(i) as number) ?? 0
+      aadtMedium[i] = (existingMed?.get(i) as number) ?? 0
+      aadtHeavy[i] = (existingHvy?.get(i) as number) ?? 0
+      aadtMoto[i] = (existingMoto?.get(i) as number) ?? 0
+      sourceId[i] = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
+    }
+
+    // speed_taper is a derived annotation (see lib/roads-arrow.ts RoadAadt):
+    // claiming a row VOIDS any taper ramp computed from its old state — this
+    // bulk path must clear it exactly like the shared writer does, or a stale
+    // graded speed would hide behind the service-tree stamp (/gg Codex).
+    const existingTaper = roadTable.getChild('speed_taper')
+    let taperCol: Uint8Array | null = null
+
+    let enriched = 0
+    let valueChanged = false
+    for (const [seg, aadt] of segAADT) {
+      // Eligibility was already gated via shouldOverwrite() in buildGraph().
+      // Whole-row atomic write — payload + dataset_id together.
+      if (!shouldOverwrite(sourceId[seg], MY_SOURCE_ID)) continue
+      if (
+        aadtLight[seg] !== aadt.light || aadtMedium[seg] !== aadt.medium ||
+        aadtHeavy[seg] !== aadt.heavy || aadtMoto[seg] !== aadt.moto ||
+        sourceId[seg] !== MY_SOURCE_ID
+      ) valueChanged = true
+      aadtLight[seg] = aadt.light
+      aadtMedium[seg] = aadt.medium
+      aadtHeavy[seg] = aadt.heavy
+      aadtMoto[seg] = aadt.moto
+      sourceId[seg] = MY_SOURCE_ID
+      if (existingTaper && ((existingTaper.get(seg) as number) ?? 0) !== 0) {
+        if (!taperCol) {
+          taperCol = new Uint8Array(n)
+          for (let k = 0; k < n; k++) taperCol[k] = (existingTaper.get(k) as number) ?? 0
+        }
+        taperCol[seg] = 0
+      }
+      enriched++
+    }
+
+    // Idempotent re-run: buildGraph pre-gates shouldOverwrite, so every
+    // accepted row usually just RESTATES what is already on disk (the old
+    // `enriched === 0` no-op was unreachable for non-empty segAADT — /gg #31).
+    // Compare values instead: nothing moved and no taper cleared → return the
+    // input table and withArrowWrite leaves the file byte-identical, which is
+    // what keeps a world-chain re-run from rewriting every hex it visits.
+    if (!valueChanged && !taperCol) {
+      result = { enriched, totalResidential: eligibleCount }
+      return roadTable
+    }
+
+    const columns: Record<string, any> = {}
+    const rebuilt = ['aadt_light', 'aadt_medium', 'aadt_heavy', 'aadt_moto', 'source_id']
+    if (taperCol) rebuilt.push('speed_taper')
+    for (const field of roadTable.schema.fields) {
+      if (rebuilt.includes(field.name)) continue
+      columns[field.name] = roadTable.getChild(field.name)!
+    }
+    columns['aadt_light'] = vectorFromArray(aadtLight, new Int32())
+    columns['aadt_medium'] = vectorFromArray(aadtMedium, new Int32())
+    columns['aadt_heavy'] = vectorFromArray(aadtHeavy, new Int32())
+    columns['aadt_moto'] = vectorFromArray(aadtMoto, new Int32())
+    columns['source_id'] = vectorFromArray(sourceId, new Uint16())
+    if (taperCol) columns['speed_taper'] = vectorFromArray(taperCol, new Uint8())
+    result = { enriched, totalResidential: eligibleCount }
+    return makeTable(columns)
+  })
+  return result
 }
 
 // ---------- Main ----------
 
-function main() {
+async function main() {
   if (!existsSync(H3R4_DIR)) {
     console.error(`ERROR: H3R4 directory not found: ${H3R4_DIR}`)
     process.exit(1)
@@ -970,7 +998,7 @@ function main() {
 
   for (let hi = START_INDEX; hi < END_INDEX; hi++) {
     const hexId = hexDirs[hi]
-    const result = processHex(hexId)
+    const result = await processHex(hexId)
 
     if (result) {
       hexesEnriched++
@@ -998,5 +1026,8 @@ function main() {
 
 // Run main only when this file is invoked as a script — not when imported by tests.
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main()
+  main().catch((err) => {
+    console.error('Error:', err)
+    process.exit(1)
+  })
 }

@@ -163,3 +163,33 @@ test('withArrowWrite: row-count change deletes stale qm_batch_bboxes, keeps cont
     await fs.rm(tmpDir, { recursive: true })
   }
 })
+// ─── stale-lock recovery (#31.5) ─────────────────────────────────────────────
+
+
+test('withArrowWrite: reaps an EMPTY lockfile only after the creation grace', async () => {
+  // The wx empty-inode window: a crashed-mid-create lock has an empty body.
+  // Backdate its mtime past the 2 s grace — must be reaped, not block 5 min.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'prov-lock-empty-'))
+  const arrowPath = path.join(dir, 'roads.arrow')
+  const table = new Table({ v: vectorFromArray([1], new Int32()) })
+  await fs.writeFile(arrowPath, Buffer.from(tableToIPC(table, 'file')))
+  await fs.writeFile(`${arrowPath}.lock`, '')
+  const old = new Date(Date.now() - 60_000)
+  await fs.utimes(`${arrowPath}.lock`, old, old)
+  await withArrowWrite(arrowPath, t => t)
+  assert.equal((await fs.readdir(dir)).includes('roads.arrow.lock'), false)
+  await fs.rm(dir, { recursive: true, force: true })
+})
+
+test('withArrowWrite: reaps a dead holder\'s lockfile instead of timing out', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'prov-lock-'))
+  const arrowPath = path.join(dir, 'roads.arrow')
+  const table = new Table({ v: vectorFromArray([1, 2, 3], new Int32()) })
+  await fs.writeFile(arrowPath, Buffer.from(tableToIPC(table, 'file')))
+  // A SIGKILLed/OOMed writer leaves its lockfile behind; PID 2^22+1 is above
+  // every default pid_max ceiling, so it is provably not a live process.
+  await fs.writeFile(`${arrowPath}.lock`, String(2 ** 22 + 1))
+  await withArrowWrite(arrowPath, t => t) // must acquire promptly, not block 5 min
+  assert.equal((await fs.readdir(dir)).includes('roads.arrow.lock'), false, 'lock released after the reaped acquisition')
+  await fs.rm(dir, { recursive: true, force: true })
+})

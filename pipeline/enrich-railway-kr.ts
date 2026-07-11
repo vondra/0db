@@ -24,7 +24,7 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
 import { SOURCE_ID_KR_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
@@ -82,10 +82,12 @@ async function main() {
       {
         sourceId: MY_SOURCE_ID,
         when: (row) => {
-          // Country-bleed disown (#26C): ANY owned row physically outside KR is
-          // foreign track the KORAIL id must not speak for (KR_BBOX brushes
-          // North Korea and Kyushu/Tsushima) — disowned regardless of values.
-          if (!inKr(row.midLat, row.midLon)) return true
+          // Country-bleed disown (#26C/#31.7): any owned row WHOLLY outside KR
+          // (start+mid+end — the shared R9 predicate) is foreign track the
+          // KORAIL id must not speak for (KR_BBOX brushes North Korea and
+          // Kyushu/Tsushima). Midpoint-only here used to delete genuine
+          // DMZ-crossing straddlers every run.
+          if (segmentWhollyOutside(inKr, row.midLat, row.midLon, row.startLat, row.startLon, row.endLat, row.endLon)) return true
           return wasOldFallbackStamp(row)
         },
       },

@@ -1261,10 +1261,10 @@ pub const SOURCES: &[Source] = &[
     },
     Source {
         id: 9863,
-        key: "rail-timetable-silent",
+        key: "cz-timetable-silent",
         provenance: Provenance::Baseline,
         layer: "railways",
-        name: "Timetable-silent residual (no scheduled service)",
+        name: "CZ timetable-silent residual (CZPTT has no scheduled service)",
         license: Some("project-internal"),
         url: None,
         year: Some(2026),
