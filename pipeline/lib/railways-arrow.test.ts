@@ -21,7 +21,7 @@ import {
   Table, vectorFromArray, tableFromIPC, tableToIPC,
   Float64, Int32, Uint8, Uint16,
 } from 'apache-arrow'
-import { writeRailTrains, type RailRow } from './railways-arrow.js'
+import { writeRailTrains, writeRailParallelDivisor, type RailRow } from './railways-arrow.js'
 
 // cz-szcd-gtfs — a real national-measured registry id, so shouldOverwrite(0, id) passes.
 const STAMP_ID = 110
@@ -41,9 +41,11 @@ function writeRailFixture(
   name: string,
   rows: Array<[railType: number, service: number]>,
   sourceIds?: number[],
+  divisors?: number[] | null, // undefined → all 1; null → OMIT the parallel_divisor column
 ): string {
   const idx = [...rows.keys()]
-  const table = new Table({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous Vector record
+  const cols: Record<string, any> = {
     start_lat: vectorFromArray(idx.map(i => 50.0 + i * 0.001), new Float64()),
     start_lon: vectorFromArray(idx.map(i => 14.0 + i * 0.001), new Float64()),
     end_lat: vectorFromArray(idx.map(i => 50.0 + i * 0.001 + 0.0005), new Float64()),
@@ -53,9 +55,12 @@ function writeRailFixture(
     service: vectorFromArray(rows.map(r => r[1]), new Uint8()),
     trains_passenger: vectorFromArray(idx.map(i => 10 + i), new Int32()),
     trains_freight: vectorFromArray(idx.map(i => 20 + i), new Int32()),
-    parallel_divisor: vectorFromArray(idx.map(() => 1), new Uint8()),
     source_id: vectorFromArray(idx.map(i => sourceIds?.[i] ?? 0), new Uint16()),
-  })
+  }
+  if (divisors !== null) {
+    cols['parallel_divisor'] = vectorFromArray(idx.map(i => divisors?.[i] ?? 1), new Uint8())
+  }
+  const table = new Table(cols)
   const path = join(TMP, name)
   writeFileSync(path, Buffer.from(tableToIPC(table, 'file')))
   return path
@@ -213,6 +218,70 @@ test('retract: a heal pass that retracts nothing leaves the file byte-identical'
   assert.equal(result.retracted, 0)
   assert.equal(result.updated, false)
   assert.deepEqual(readFileSync(path), before, 'no-op retract pass must not rewrite the file')
+})
+
+// ── writeRailParallelDivisor (task #30: shared parallel-track divisor) ──────
+
+test('parallel divisor: rebuilds only parallel_divisor, null keeps, other columns verbatim', async () => {
+  const path = writeRailFixture('pdiv-basic.arrow', [[0, 0], [0, 0], [0, 2]])
+  const result = await writeRailParallelDivisor(path, (i) => (i === 0 ? 2 : null))
+  assert.deepEqual(
+    { rows: result.rows, changedRows: result.changedRows, updated: result.updated },
+    { rows: 3, changedRows: 1, updated: true },
+  )
+  const t = tableFromIPC(readFileSync(path))
+  const div = t.getChild('parallel_divisor')!
+  assert.deepEqual([div.get(0), div.get(1), div.get(2)], [2, 1, 1])
+  // Every other column copied verbatim — seeded counts + provenance intact.
+  assert.equal(t.getChild('trains_passenger')!.get(1), 11)
+  assert.equal(t.getChild('trains_freight')!.get(2), 22)
+  assert.equal(t.getChild('source_id')!.get(0), 0)
+  assert.equal(t.getChild('service')!.get(2), 2)
+})
+
+test('parallel divisor: no value change leaves the file byte-identical (all-null and same-value)', async () => {
+  const path = writeRailFixture('pdiv-noop.arrow', [[0, 0], [0, 0]], undefined, [2, 1])
+  const before = readFileSync(path)
+  const r1 = await writeRailParallelDivisor(path, () => null)
+  assert.deepEqual({ changedRows: r1.changedRows, updated: r1.updated }, { changedRows: 0, updated: false })
+  const r2 = await writeRailParallelDivisor(path, (i) => (i === 0 ? 2 : 1)) // equals stored values
+  assert.deepEqual({ changedRows: r2.changedRows, updated: r2.updated }, { changedRows: 0, updated: false })
+  assert.deepEqual(readFileSync(path), before, 'no-op passes must not rewrite the file')
+})
+
+test('parallel divisor: missing column + only 1/null results → NOT materialized (engine default is 1)', async () => {
+  const path = writeRailFixture('pdiv-absent-noop.arrow', [[0, 0], [0, 0]], undefined, null)
+  assert.equal(tableFromIPC(readFileSync(path)).getChild('parallel_divisor'), null, 'fixture sanity')
+  const before = readFileSync(path)
+  const result = await writeRailParallelDivisor(path, (i) => (i === 0 ? 1 : null))
+  assert.equal(result.updated, false)
+  assert.deepEqual(readFileSync(path), before, 'an all-1 column must not be added')
+})
+
+test('parallel divisor: missing column is added when a row needs a value > 1', async () => {
+  const path = writeRailFixture('pdiv-absent-add.arrow', [[0, 0], [0, 0]], undefined, null)
+  const result = await writeRailParallelDivisor(path, (i) => (i === 1 ? 3 : null))
+  assert.deepEqual({ changedRows: result.changedRows, updated: result.updated }, { changedRows: 1, updated: true })
+  const t = tableFromIPC(readFileSync(path))
+  const div = t.getChild('parallel_divisor')!
+  assert.deepEqual([div.get(0), div.get(1)], [1, 3], 'kept rows default to 1 in the new column')
+})
+
+test('parallel divisor: floor — 0 is stored as 1 (writer is policy-free; only-raise lives in the caller)', async () => {
+  const path = writeRailFixture('pdiv-floor.arrow', [[0, 0]], undefined, [2])
+  const result = await writeRailParallelDivisor(path, () => 0)
+  assert.deepEqual({ changedRows: result.changedRows, updated: result.updated }, { changedRows: 1, updated: true })
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('parallel_divisor')!.get(0), 1, '0 floored to 1 — and the writer WILL lower when told to')
+})
+
+test('parallel divisor: fail-loud on non-integer / negative / >255, file left unchanged', async () => {
+  const path = writeRailFixture('pdiv-invalid.arrow', [[0, 0]])
+  const before = readFileSync(path)
+  for (const bad of [2.5, -1, 300]) {
+    await assert.rejects(writeRailParallelDivisor(path, () => bad), /invalid divisor/)
+  }
+  assert.deepEqual(readFileSync(path), before, 'failed writes must not mutate the arrow')
 })
 
 test('retract fall-through: match re-claims a coincidental tuple in the same pass', async () => {

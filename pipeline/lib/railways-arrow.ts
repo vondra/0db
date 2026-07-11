@@ -20,6 +20,10 @@
  * "we don't know" case. Enrichers must NEVER stamp a class-default guess under
  * their measured-tier id (the pre-2026-07-10 fallback design did; each enricher
  * now carries an OLD_FALLBACK retract signature to disown those stamps).
+ *
+ * Also hosts `writeRailParallelDivisor` — the dedicated `parallel_divisor`
+ * column writer used by the shared parallel-track pass
+ * (enrich-railways-parallel.ts, task #30).
  */
 
 import { makeVector, makeTable, type Table } from 'apache-arrow'
@@ -238,4 +242,81 @@ export async function writeRailTrains(
   })
 
   return { rows, matched, updated, skippedService, retracted }
+}
+
+export interface WriteRailParallelDivisorResult {
+  rows: number
+  /** Rows whose stored divisor actually changed value. */
+  changedRows: number
+  /** True when the file was rewritten (false = byte-identical skip). */
+  updated: boolean
+}
+
+/**
+ * Rebuild ONLY the `parallel_divisor` column (Uint8) of one railways.arrow —
+ * every other column copied verbatim, atomic 'file'-format write via
+ * `withArrowWrite`, byte-identical skip when no row changes value (a missing
+ * column is only materialized when some row actually needs a value ≠ 1 — the
+ * engine readers default an absent column to 1, hex_store/source_loader_rail
+ * `unwrap_or(1)`).
+ *
+ * `divisorForRow(i)` returns the divisor to store for row i, or `null` to keep
+ * the row's existing value verbatim. Non-null values are floored at 1 (0 → 1:
+ * a divisor can never mean less than "one track"); non-integer, negative or
+ * >255 values throw with the file untouched — TypedArray coercion would
+ * silently truncate them (the road "wrote zeros" bug class).
+ *
+ * POLICY-FREE by design: the column carries no provenance, so any write
+ * asymmetry (e.g. enrich-railways-parallel.ts's only-raise-from-1 rule that
+ * protects the CZ czpttKey-computed divisors) lives in the CALLER's decision
+ * function — this writer stores exactly what it is told.
+ */
+export async function writeRailParallelDivisor(
+  arrowPath: string,
+  divisorForRow: (i: number) => number | null,
+): Promise<WriteRailParallelDivisorResult> {
+  let rows = 0
+  let changedRows = 0
+  let updated = false
+
+  await withArrowWrite(arrowPath, (table: Table): Table => {
+    const n = table.numRows
+    rows = n
+    if (n === 0) return table
+
+    const exDiv = table.getChild('parallel_divisor')
+    const next = new Uint8Array(n)
+    let any = false
+    for (let i = 0; i < n; i++) {
+      // Raw existing value (not floored): a null-keep must preserve bytes, not heal.
+      const existing = exDiv ? ((exDiv.get(i) as number) ?? 1) : 1
+      const v = divisorForRow(i)
+      if (v === null) {
+        next[i] = existing
+        continue
+      }
+      if (!Number.isInteger(v) || v < 0 || v > 255) {
+        throw new Error(`writeRailParallelDivisor: invalid divisor at row ${i} in ${arrowPath}: ${v}`)
+      }
+      next[i] = Math.max(1, v) // divisor floor — never below "one track"
+      if (next[i] !== existing) {
+        changedRows++
+        any = true
+      }
+    }
+    if (!any) return table // no value change → withArrowWrite leaves bytes untouched
+    updated = true
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mixed Vector/makeVector
+    // record vs makeTable's TypedArray-only typing (see writeRailTrains above).
+    const cols: Record<string, any> = {}
+    for (const f of table.schema.fields) {
+      if (f.name === 'parallel_divisor') continue
+      cols[f.name] = table.getChild(f.name)!
+    }
+    cols['parallel_divisor'] = makeVector(next)
+    return makeTable(cols)
+  })
+
+  return { rows, changedRows, updated }
 }
