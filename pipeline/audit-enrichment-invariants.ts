@@ -47,15 +47,30 @@
  *
  * Usage:
  *   DATA_YEAR=2025 npx tsx pipeline/audit-enrichment-invariants.ts \
- *     --bbox S,W,N,E [--sample N] [--fix-hint]
+ *     --bbox S,W,N,E [--bbox S,W,N,E …] [--sample N] [--fix-hint] \
+ *     [--ndjson <path>] [--summary-json <path>] [--fail-on-io]
  *
+ * `--bbox` is REPEATABLE: country scopes pass their per-polygon padded bbox
+ * list (never the union envelope); hexes are deduped across the boxes so an
+ * overlap never double-counts a violation. Single-bbox callers are unchanged.
  * `--sample N` checks at most ~N evenly-strided rows per hex per layer
  * (R5 always scans full hexes — adjacency needs every segment).
  * `--fix-hint` appends a per-rule remediation hint for every rule that fired.
- * Exits 0 clean, 1 on violations (prints a table, first 50 rows), 2 on usage.
+ * `--ndjson <path>` writes one JSON line per violation with the stable
+ * fingerprint fields {rule, source, hex, osm_id, row, lat5, lon5} (+detail) —
+ * the chain gate diffs these as a multiset against its baseline.
+ * `--summary-json <path>` writes machine totals {total, counts: rule|source→n,
+ * ioErrors} — the gate cross-checks NDJSON line count against `total`.
+ * `--fail-on-io` turns operational I/O damage (unreadable arrow file, missing
+ * EXTRACT-core column) into exit 3 — distinct from violations so a crash can
+ * never be baselined as "resolved". Chain-only columns (aadt_*, trains_*,
+ * nace_4digit) legitimately don't exist on never-enriched hexes and stay a
+ * skip, not an IO error.
+ * Exits 0 clean, 1 on violations (prints a table, first 50 rows), 2 on usage,
+ * 3 on operational I/O errors when --fail-on-io is set.
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tableFromIPC, type Table, type Vector } from 'apache-arrow'
@@ -89,19 +104,57 @@ function arg(name: string): string | null {
   return i >= 0 ? process.argv[i + 1] ?? null : null
 }
 
-const bboxArg = arg('--bbox')
-if (!bboxArg) {
-  console.error('Usage: npx tsx pipeline/audit-enrichment-invariants.ts --bbox S,W,N,E [--sample N] [--fix-hint]')
+function argAll(name: string): string[] {
+  const out: string[] = []
+  for (let i = 0; i < process.argv.length - 1; i++) {
+    if (process.argv[i] === name) out.push(process.argv[i + 1])
+  }
+  return out
+}
+
+const bboxArgsRaw = argAll('--bbox')
+if (bboxArgsRaw.length === 0) {
+  console.error(
+    'Usage: npx tsx pipeline/audit-enrichment-invariants.ts --bbox S,W,N,E [--bbox …] [--sample N] [--fix-hint] [--ndjson <path>] [--summary-json <path>] [--fail-on-io]',
+  )
   process.exit(2)
 }
-const [s, w, n, e] = bboxArg.split(',').map(Number)
-if (![s, w, n, e].every(Number.isFinite) || s >= n || w >= e) {
-  console.error(`Invalid --bbox '${bboxArg}' — expected S,W,N,E with S<N and W<E`)
-  process.exit(2)
+const BBOXES: Array<[number, number, number, number]> = [] // each [minLat, minLon, maxLat, maxLon]
+for (const bboxArg of bboxArgsRaw) {
+  const [s, w, n, e] = bboxArg.split(',').map(Number)
+  if (![s, w, n, e].every(Number.isFinite) || s >= n || w >= e) {
+    console.error(`Invalid --bbox '${bboxArg}' — expected S,W,N,E with S<N and W<E`)
+    process.exit(2)
+  }
+  BBOXES.push([s, w, n, e])
 }
-const BBOX: [number, number, number, number] = [s, w, n, e] // [minLat, minLon, maxLat, maxLon]
 const SAMPLE = arg('--sample') ? Math.max(1, parseInt(arg('--sample')!, 10)) : Infinity
 const FIX_HINT = process.argv.includes('--fix-hint')
+const NDJSON_PATH = arg('--ndjson')
+const SUMMARY_PATH = arg('--summary-json')
+const FAIL_ON_IO = process.argv.includes('--fail-on-io')
+
+// ── operational I/O errors (distinct from invariant violations) ──────────────
+
+const ioErrors: Array<{ hex: string; layer: string; error: string }> = []
+
+/** Unreadable file / broken extract-core schema. Always a stderr warning (a
+ *  silently skipped hex is how corruption used to pass as CLEAN); fatal exit 3
+ *  only under --fail-on-io so existing callers keep their exit contract. */
+function reportIoError(hex: string, layer: string, error: string): void {
+  ioErrors.push({ hex, layer, error })
+  console.error(`IO ERROR ${layer} ${hex}: ${error}`)
+}
+
+/** EXTRACT-core columns exist on every hex the extractor wrote — absence is
+ *  file damage, not "not yet enriched". Chain-only columns are NOT listed here
+ *  on purpose (see module doc). */
+function requireCoreColumns(t: Table, hex: string, layerFile: string, names: string[]): boolean {
+  const missing = names.filter((c) => !t.getChild(c))
+  if (missing.length === 0) return true
+  reportIoError(hex, layerFile, `missing extract-core column(s): ${missing.join(', ')}`)
+  return false
+}
 
 // ── capability registry ──────────────────────────────────────────────────────
 
@@ -214,16 +267,30 @@ function* sampleRows(numRows: number): Generator<number> {
   for (let i = 0; i < numRows; i += stride) yield i
 }
 
+/** Hexes covered by ANY of the --bbox instances, deduped: country scopes pass
+ *  a per-polygon padded bbox list and overlapping padded boxes must not
+ *  double-count a hex's violations in the gate's fingerprint multiset. */
+function hexesInScope(layerFile: string): string[] {
+  const seen = new Set<string>()
+  for (const b of BBOXES) for (const h of iterateCountryHexes(H3R4_DIR, b, layerFile)) seen.add(h)
+  return [...seen].sort()
+}
+
 function scanLayer(
   layerFile: string,
   checkTable: (t: Table, hex: string) => number,
 ): { hexes: number; rows: number; ms: number } {
   const t0 = Date.now()
-  const hexes = iterateCountryHexes(H3R4_DIR, BBOX, layerFile)
+  const hexes = hexesInScope(layerFile)
   let rows = 0
   for (const hex of hexes) {
     let table: Table
-    try { table = tableFromIPC(readFileSync(resolve(H3R4_DIR, hex, layerFile))) } catch { continue }
+    try {
+      table = tableFromIPC(readFileSync(resolve(H3R4_DIR, hex, layerFile)))
+    } catch (err) {
+      reportIoError(hex, layerFile, `unreadable arrow: ${err instanceof Error ? err.message : err}`)
+      continue
+    }
     rows += checkTable(table, hex)
   }
   return { hexes: hexes.length, rows, ms: Date.now() - t0 }
@@ -266,6 +333,8 @@ const roads = scanLayer('roads.arrow', (t, hex) => {
   const sLat = t.getChild('start_lat'), sLon = t.getChild('start_lon')
   const eLat = t.getChild('end_lat'), eLon = t.getChild('end_lon')
   const med = t.getChild('aadt_medium'), hev = t.getChild('aadt_heavy')
+  if (!requireCoreColumns(t, hex, 'roads.arrow', ['road_class', 'source_id', 'start_lat', 'start_lon'])) return 0
+  // aadt_* are chain-only: absent = hex never road-enriched → skip (not an IO error).
   if (!cls || !light || !moto || !src || !sLat || !sLon) return 0
   let checked = 0
   for (const i of sampleRows(t.numRows)) {
@@ -433,6 +502,8 @@ const rails = scanLayer('railways.arrow', (t, hex) => {
   const osm = t.getChild('osm_id')
   const sLat = t.getChild('start_lat'), sLon = t.getChild('start_lon')
   const eLat = t.getChild('end_lat'), eLon = t.getChild('end_lon')
+  if (!requireCoreColumns(t, hex, 'railways.arrow', ['rail_type', 'source_id', 'start_lat', 'start_lon'])) return 0
+  // trains_passenger is chain-only: absent = hex never rail-enriched → skip.
   if (!rt || !pax || !src || !sLat || !sLon) return 0
   let checked = 0
   for (const i of sampleRows(t.numRows)) {
@@ -469,6 +540,8 @@ const industrial = scanLayer('industrial.arrow', (t, hex) => {
   const src = t.getChild('source_id')
   const osm = t.getChild('osm_id')
   const lat = t.getChild('centroid_lat'), lon = t.getChild('centroid_lon')
+  if (!requireCoreColumns(t, hex, 'industrial.arrow', ['name', 'source_id', 'centroid_lat', 'centroid_lon'])) return 0
+  // nace_4digit is chain-only: absent = hex never industrial-enriched → skip.
   if (!name || !nace || !src || !lat || !lon) return 0
   let checked = 0
   for (const i of sampleRows(t.numRows)) {
@@ -502,6 +575,7 @@ const buildings = scanLayer('buildings.arrow', (t, hex) => {
   const src = t.getChild('source_id')
   const osm = t.getChild('osm_id')
   const lat = t.getChild('centroid_lat'), lon = t.getChild('centroid_lon')
+  if (!requireCoreColumns(t, hex, 'buildings.arrow', ['building_type', 'centroid_lat', 'centroid_lon'])) return 0
   if (!btype || !lat || !lon) return 0
   const hexLat = (lat.get(0) as number) ?? 0, hexLon = (lon.get(0) as number) ?? 0
 
@@ -557,12 +631,48 @@ const FIX_HINTS: Record<string, string> = {
   'R13 continuity-gap': 'A measured major road continues into a same-ref default segment with no junction between them — run enrich-roads-continuity-fill.ts (it copies the measured value across). Residue after the fill = cross-hex gap, ref-less road, or conflicting anchors; triage by hand.',
 }
 
-console.log(`=== Enrichment invariant scan — bbox ${BBOX.join(',')} (${YEAR}) ===`)
+console.log(`=== Enrichment invariant scan — ${BBOXES.length} bbox(es) ${BBOXES.map((b) => b.join(',')).join(' | ')} (${YEAR}) ===`)
 if (SAMPLE !== Infinity) console.log(`  sampling: ~${SAMPLE} rows per hex per layer`)
 console.log(`  roads      ${roads.hexes} hexes  ${roads.rows.toLocaleString()} rows checked  ${(roads.ms / 1000).toFixed(1)}s`)
 console.log(`  railways   ${rails.hexes} hexes  ${rails.rows.toLocaleString()} rows checked  ${(rails.ms / 1000).toFixed(1)}s`)
 console.log(`  industrial ${industrial.hexes} hexes  ${industrial.rows.toLocaleString()} rows checked  ${(industrial.ms / 1000).toFixed(1)}s`)
 console.log(`  buildings  ${buildings.hexes} hexes  ${buildings.rows.toLocaleString()} rows checked  ${(buildings.ms / 1000).toFixed(1)}s`)
+
+// ── machine outputs — written on EVERY exit path so the chain gate can never
+// mistake a missing file for "all resolved" (it fails on absent/unparsable). ──
+if (NDJSON_PATH) {
+  const lines = violations.map((v) =>
+    JSON.stringify({
+      rule: v.rule, source: v.source, hex: v.hex, osm_id: v.osmId, row: v.row,
+      // toFixed(5) STRINGS: a stable textual fingerprint immune to float re-formatting.
+      lat5: v.lat.toFixed(5), lon5: v.lon.toFixed(5),
+      detail: v.detail,
+    }),
+  )
+  writeFileSync(NDJSON_PATH, lines.length > 0 ? lines.join('\n') + '\n' : '')
+}
+if (SUMMARY_PATH) {
+  const counts: Record<string, number> = {}
+  for (const [rule, perSource] of byRuleSource) {
+    for (const [srcKey, c] of perSource) counts[`${rule}|${srcKey}`] = c
+  }
+  writeFileSync(
+    SUMMARY_PATH,
+    JSON.stringify(
+      { dataYear: YEAR, bboxes: BBOXES.map((b) => b.join(',')), total: violations.length, counts, ioErrors: ioErrors.length },
+      null, 2,
+    ) + '\n',
+  )
+}
+
+// Operational damage outranks the violation verdict: a corrupt hex must exit 3
+// (chain FAIL, not baselineable), never fold into exit 0/1 semantics.
+if (FAIL_ON_IO && ioErrors.length > 0) {
+  console.error(`\n${ioErrors.length} OPERATIONAL I/O ERROR(S) — unreadable arrow or broken extract-core schema (exit 3):`)
+  for (const e of ioErrors.slice(0, 20)) console.error(`  ${e.layer} ${e.hex}: ${e.error}`)
+  if (ioErrors.length > 20) console.error(`  … and ${ioErrors.length - 20} more`)
+  process.exit(3)
+}
 
 if (violations.length === 0) {
   console.log(`\nCLEAN — no invariant violations.`)

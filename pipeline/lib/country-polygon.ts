@@ -68,7 +68,8 @@ function cgazFeatures(): ReadonlyArray<CgazFeature> {
 // features are numeric US-DoS disputed-area codes with no ISO identity).
 // Dependent territories with their own alpha-2 (HK, PR, GI, …) are not separate
 // CGAZ features — they are absent here and fail loud below by design.
-const ISO2_TO_ISO3: Record<string, string> = {
+// Exported for chain/scope.ts (country → CGAZ bbox derivation) — ONE iso table.
+export const ISO2_TO_ISO3: Record<string, string> = {
   AD: 'AND', AE: 'ARE', AF: 'AFG', AG: 'ATG', AL: 'ALB', AM: 'ARM', AO: 'AGO', AQ: 'ATA',
   AR: 'ARG', AT: 'AUT', AU: 'AUS', AZ: 'AZE', BA: 'BIH', BB: 'BRB', BD: 'BGD', BE: 'BEL',
   BF: 'BFA', BG: 'BGR', BH: 'BHR', BI: 'BDI', BJ: 'BEN', BN: 'BRN', BO: 'BOL', BR: 'BRA',

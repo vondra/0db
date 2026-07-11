@@ -13,6 +13,11 @@
 //! Usage:
 //!   DATA_YEAR=2026 npx tsx pipeline/heal-rail-country-bleed.ts --bbox S,W,N,E
 //!   DATA_YEAR=2026 npx tsx pipeline/heal-rail-country-bleed.ts --world
+//!   … --verify   report-only: writes NOTHING, exits 1 when the heal WOULD
+//!                retract anything. The chain runs the heal BEFORE the rail
+//!                claimers (so freed rows are reclaimable in the same run) and
+//!                this verify AFTER them — a nonzero exit means some claimer
+//!                re-stamped foreign rows and must itself be fixed.
 
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -40,12 +45,22 @@ function nationalRailSources(): Array<{ id: number; iso: string; key: string }> 
   return out
 }
 
+/** True when the heal's write pass would retract row `i` — MUST mirror
+ *  writeRailTrains' two retract branches exactly (lib/railways-arrow.ts):
+ *  (a) own row whose MIDPOINT lies outside the source's country (`when`), and
+ *  (b) own SERVICE row anywhere (service rows can never be legitimately
+ *  stamped; the writer clears them regardless of `when`). */
+function wouldRetract(inCountry: (lat: number, lon: number) => boolean, midLat: number, midLon: number, service: number): boolean {
+  return !inCountry(midLat, midLon) || service > 0
+}
+
 async function main() {
   const world = process.argv.includes('--world')
+  const verify = process.argv.includes('--verify')
   const bboxArg = process.argv.includes('--bbox') ? process.argv[process.argv.indexOf('--bbox') + 1] : ''
   const BBOX = bboxArg ? (bboxArg.split(',').map(Number) as [number, number, number, number]) : null
   if (!world && (!BBOX || BBOX.length !== 4 || BBOX.some((x) => !Number.isFinite(x)))) {
-    console.error('Usage: heal-rail-country-bleed.ts --bbox S,W,N,E | --world')
+    console.error('Usage: heal-rail-country-bleed.ts --bbox S,W,N,E | --world [--verify]')
     process.exit(1)
   }
 
@@ -60,7 +75,9 @@ async function main() {
     return g
   }
   const byId = new Map(sources.map((s) => [s.id, s]))
-  console.log(`country-bleed heal: ${sources.length} national rail sources, scope ${world ? 'WORLD' : BBOX!.join(',')}`)
+  console.log(
+    `country-bleed ${verify ? 'VERIFY (read-only)' : 'heal'}: ${sources.length} national rail sources, scope ${world ? 'WORLD' : BBOX!.join(',')}`,
+  )
 
   let hexesTouched = 0
   let totalRetracted = 0
@@ -91,26 +108,54 @@ async function main() {
     if (present.size === 0) continue
 
     let hexHit = false
-    for (const id of present) {
-      const s = byId.get(id)!
-      const inCountry = gateFor(s.iso)
-      const r = await writeRailTrains(path, () => null, undefined, {
-        sourceId: id,
-        when: (row) => !inCountry(row.midLat, row.midLon),
-      })
-      if (r.retracted > 0) {
-        totalRetracted += r.retracted
-        perSource.set(s.key, (perSource.get(s.key) ?? 0) + r.retracted)
-        hexHit = true
+    if (verify) {
+      // Read-only twin of the write pass below — same skip conditions
+      // (writeRailTrains never touches a hex without start_lat/start_lon).
+      const sLat = t.getChild('start_lat'), sLon = t.getChild('start_lon')
+      const eLat = t.getChild('end_lat'), eLon = t.getChild('end_lon')
+      const svc = t.getChild('service')
+      if (!sLat || !sLon) continue
+      for (let i = 0; i < t.numRows; i++) {
+        const id = srcCol.get(i) as number
+        if (!id || !byId.has(id)) continue
+        const s = byId.get(id)!
+        const startLat = sLat.get(i) as number, startLon = sLon.get(i) as number
+        const midLat = (((eLat?.get(i) as number) ?? startLat) + startLat) / 2
+        const midLon = (((eLon?.get(i) as number) ?? startLon) + startLon) / 2
+        if (wouldRetract(gateFor(s.iso), midLat, midLon, (svc?.get(i) as number) ?? 0)) {
+          totalRetracted++
+          perSource.set(s.key, (perSource.get(s.key) ?? 0) + 1)
+          hexHit = true
+        }
+      }
+    } else {
+      for (const id of present) {
+        const s = byId.get(id)!
+        const inCountry = gateFor(s.iso)
+        const r = await writeRailTrains(path, () => null, undefined, {
+          sourceId: id,
+          when: (row) => !inCountry(row.midLat, row.midLon),
+        })
+        if (r.retracted > 0) {
+          totalRetracted += r.retracted
+          perSource.set(s.key, (perSource.get(s.key) ?? 0) + r.retracted)
+          hexHit = true
+        }
       }
     }
     if (hexHit) hexesTouched++
   }
 
-  console.log(`\n=== country-bleed heal done ===`)
-  console.log(`  ${totalRetracted.toLocaleString()} foreign rows disowned across ${hexesTouched} hexes`)
+  console.log(`\n=== country-bleed ${verify ? 'verify' : 'heal'} done ===`)
+  console.log(
+    `  ${totalRetracted.toLocaleString()} foreign rows ${verify ? 'WOULD BE disowned' : 'disowned'} across ${hexesTouched} hexes`,
+  )
   for (const [key, n] of [...perSource].sort((a, b) => b[1] - a[1]).slice(0, 15)) {
     console.log(`    ${key}: ${n.toLocaleString()}`)
+  }
+  if (verify && totalRetracted > 0) {
+    console.error('VERIFY FAIL: a rail claimer re-stamped rows the heal would retract — fix that enricher, then re-run the chain.')
+    process.exit(1)
   }
 }
 
