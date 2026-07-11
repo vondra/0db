@@ -58,6 +58,7 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { shouldOverwrite } from './lib/provenance.js'
 import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_IN_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { inBbox, pointToSegmentDist } from './lib/spatial.js'
@@ -267,7 +268,22 @@ const wasOldFallbackStamp = (row: RailRow): boolean => {
 
 async function main() {
   console.log(`=== IN Railway Enrichment — Living Atlas IR Network + Metros (${YEAR}) ===\n`)
-  const rails = loadLivingAtlasRails()
+  let rails = loadLivingAtlasRails()
+  // COUNTRY GATE (#26C): a national feed can carry cross-border links (IR runs
+  // into Pakistan/Bangladesh/Nepal border stations), so the raw feature list may
+  // contain foreign polylines — joining those would stamp a neighbour's track
+  // under this feed's id, and the same-rank higher-id tiebreak can beat the
+  // neighbour's own national source (mechanism: the PL feed stamped 11,856 km of
+  // CZ track, 7fac2349). A national feed only speaks for its own country's
+  // network: entirely-foreign polylines are dropped BEFORE any grid is built (a
+  // line with at least one vertex inside IN stays whole — its foreign-side rows
+  // are guarded per-row by the match gates and the retract country arm).
+  const inIn = makeCountryGate('IN')
+  const rawCount = rails.length
+  rails = rails.filter((feat) => feat.coords.some(([lon, lat]) => inIn(lat, lon)))
+  if (rawCount !== rails.length) {
+    console.log(`  country gate: ${rawCount - rails.length} foreign polylines dropped (cross-border links)`)
+  }
   const metroFeats = rails.filter(r => r.isMetro)
   const irFeats = rails.filter(r => !r.isMetro)
   console.log(`  Loaded Living Atlas rails: ${rails.length} features (${metroFeats.length} metro + ${irFeats.length} IR)`)
@@ -353,6 +369,11 @@ async function main() {
       // longer reaches the row (same family routing + 500 m feature join as `match`) —
       // a row a live feature still covers is re-stamped with the real count instead.
       when: (row) => {
+        // Country-bleed disown (#26C): ANY owned row physically outside IN is
+        // foreign track this feed must not speak for — even when its count was
+        // a real through-train figure, ownership belongs to the local country's
+        // own timetable (its national enricher re-stamps on its next run).
+        if (!inIn(row.midLat, row.midLon)) return true
         if (!wasOldFallbackStamp(row)) return false
         const grid = row.railType === 0 ? railGrid : row.railType === 1 || row.railType === 2 ? tramGrid : null
         return !grid || nearestRail(row.midLat, row.midLon, grid, 500) === null

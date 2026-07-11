@@ -19,6 +19,7 @@ import { pathToFileURL } from 'node:url'
 import { execSync } from 'node:child_process'
 import { SOURCE_ID_DK_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import {
   computeStopFrequenciesForFeed, nearestGridStop,
@@ -197,6 +198,18 @@ const wasOldFallbackStamp = (row: RailRow): boolean => {
 }
 
 async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean): Promise<void> {
+  // COUNTRY GATE (#26C): a national feed can carry international through-services,
+  // so the raw stop list may contain foreign stations — joining those would stamp
+  // a neighbour's track under this feed's id, and the same-rank higher-id tiebreak
+  // can beat the neighbour's own national source (mechanism: the PL feed stamped
+  // 11,856 km of CZ track, 7fac2349). A national feed only speaks for its own
+  // country's network: foreign stops are dropped BEFORE any grid is built.
+  const inDk = makeCountryGate('DK')
+  const rawCount = allStopCounts.length
+  allStopCounts = allStopCounts.filter((sc) => inDk(sc.lat, sc.lon))
+  if (rawCount !== allStopCounts.length) {
+    console.log(`  country gate: ${rawCount - allStopCounts.length} foreign stops dropped (international through-services)`)
+  }
   // Group stops by H3R4 hex
   const stopsByHex = new Map<string, StopTrainCount[]>()
   for (const sc of allStopCounts) {
@@ -250,6 +263,11 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
         // longer reaches the row (same family routing + 500 m grid join as `match`) —
         // a row a live stop still covers is re-stamped with the real count instead.
         when: (row) => {
+          // Country-bleed disown (#26C): ANY owned row physically outside DK is
+          // foreign track this feed must not speak for — even when its count was
+          // a real through-train figure, ownership belongs to the local country's
+          // own timetable (its national enricher re-stamps on its next run).
+          if (!inDk(row.midLat, row.midLon)) return true
           if (!wasOldFallbackStamp(row)) return false
           const grid = row.railType === 0 ? railGrid : (row.railType === 1 || row.railType === 2) ? tramGrid : null
           return !grid || nearestGridStop(grid, row) === null

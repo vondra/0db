@@ -20,6 +20,7 @@ import { createInterface } from 'node:readline'
 import { latLngToCell } from 'h3-js'
 import { SOURCE_ID_ES_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import {
   RAIL_TYPES, nearestGridStop,
@@ -466,6 +467,19 @@ const wasOldFallbackStamp = (row: RailRow): boolean => {
 }
 
 async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean): Promise<void> {
+  // COUNTRY GATE (#26C): a national feed can carry international through-services
+  // (RENFE AV/LD runs into France, Celta into Portugal), so the raw stop list may
+  // contain foreign stations — joining those would stamp a neighbour's track under
+  // this feed's id, and the same-rank higher-id tiebreak can beat the neighbour's
+  // own national source (mechanism: the PL feed stamped 11,856 km of CZ track,
+  // 7fac2349). A national feed only speaks for its own country's network: foreign
+  // stops are dropped BEFORE any grid is built.
+  const inEs = makeCountryGate('ES')
+  const rawCount = allStopCounts.length
+  allStopCounts = allStopCounts.filter((sc) => inEs(sc.lat, sc.lon))
+  if (rawCount !== allStopCounts.length) {
+    console.log(`  country gate: ${rawCount - allStopCounts.length} foreign stops dropped (international through-services)`)
+  }
   // Group RENFE/Cercanías/FGC stops by H3R4 hex
   const stopsByHex = new Map<string, StopTrainCount[]>()
   for (const sc of allStopCounts) {
@@ -519,6 +533,11 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
         // 500 m stop-join corroboration (a live-covered row is re-stamped by `match`),
         // non-heavy rows never had a join, so the exact tuple alone is the signature.
         when: (row) => {
+          // Country-bleed disown (#26C): ANY owned row physically outside ES is
+          // foreign track this feed must not speak for — even when its count was
+          // a real through-train figure, ownership belongs to the local country's
+          // own timetable (its national enricher re-stamps on its next run).
+          if (!inEs(row.midLat, row.midLon)) return true
           if (!wasOldFallbackStamp(row)) return false
           return row.railType !== 0 || nearestGridStop(grid, row) === null
         },

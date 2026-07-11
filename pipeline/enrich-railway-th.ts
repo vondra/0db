@@ -41,6 +41,7 @@ import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { shouldOverwrite } from './lib/provenance.js'
 import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 import { latLngToCell, cellToLatLng } from 'h3-js'
 import { SOURCE_ID_TH_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { inBbox } from './lib/spatial.js'
@@ -381,6 +382,21 @@ const wasOldFallbackStamp = (row: RailRow): boolean => {
 }
 
 async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean): Promise<void> {
+  // COUNTRY GATE (#26C): a national feed can carry international through-services
+  // (SRT runs to Sungai Kolok/Malaysia border and Vientiane/Laos), so the raw stop
+  // list may contain foreign stations — joining those would stamp a neighbour's
+  // track under this feed's id, and the same-rank higher-id tiebreak can beat the
+  // neighbour's own national source (mechanism: the PL feed stamped 11,856 km of
+  // CZ track, 7fac2349). A national feed only speaks for its own country's
+  // network: foreign stops are dropped BEFORE any grid is built (the polygon gate
+  // subsumes the coarse TH_BBOX pre-filter for stops; EXCLUDE_ZONES stay as the
+  // row-side guard in `match`).
+  const inTh = makeCountryGate('TH')
+  const rawCount = allStopCounts.length
+  allStopCounts = allStopCounts.filter((sc) => inTh(sc.lat, sc.lon))
+  if (rawCount !== allStopCounts.length) {
+    console.log(`  country gate: ${rawCount - allStopCounts.length} foreign stops dropped (international through-services)`)
+  }
   // Index stops by (hex, family)
   const stopsByHexFam = new Map<string, StopTrainCount[]>()
   for (const sc of allStopCounts) {
@@ -457,6 +473,11 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
       // longer reaches the row (same family routing + 500 m grid join as `match`) —
       // a row a live stop still covers is re-stamped with the real count instead.
       when: (row) => {
+        // Country-bleed disown (#26C): ANY owned row physically outside TH is
+        // foreign track this feed must not speak for — even when its count was
+        // a real through-train figure, ownership belongs to the local country's
+        // own timetable (its national enricher re-stamps on its next run).
+        if (!inTh(row.midLat, row.midLon)) return true
         if (!wasOldFallbackStamp(row)) return false
         const grid = row.railType === 1 || row.railType === 2 ? tramGrid : row.railType === 0 ? railGrid : null
         return !grid || nearestGridStop(grid, row) === null

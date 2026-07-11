@@ -24,6 +24,7 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
+import { makeCountryGate } from './lib/country-polygon.js'
 import { SOURCE_ID_KR_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
@@ -58,6 +59,10 @@ async function main() {
   const hexDirs = iterateCountryHexes(H3R4_DIR, KR_BBOX, 'railways.arrow')
   console.log(`  KR-bbox hexes with railways.arrow: ${hexDirs.length}\n`)
 
+  // Created here (not module scope): makeCountryGate may download+convert the
+  // CGAZ polygon on first run — keep that off the import path.
+  const inKr = makeCountryGate('KR')
+
   let totalRows = 0, totalRetracted = 0, hexesUpdated = 0
   const startTime = Date.now()
 
@@ -74,7 +79,16 @@ async function main() {
       // KORAIL source id + the exact OLD_FALLBACK tuple — every such row is a legacy
       // class-default stamp (misjoin analysis /tmp/quietmap-v4/gtfs-rail-misjoin.md §3;
       // no measured KR count was ever written, see header).
-      { sourceId: MY_SOURCE_ID, when: wasOldFallbackStamp },
+      {
+        sourceId: MY_SOURCE_ID,
+        when: (row) => {
+          // Country-bleed disown (#26C): ANY owned row physically outside KR is
+          // foreign track the KORAIL id must not speak for (KR_BBOX brushes
+          // North Korea and Kyushu/Tsushima) — disowned regardless of values.
+          if (!inKr(row.midLat, row.midLon)) return true
+          return wasOldFallbackStamp(row)
+        },
+      },
     )
     totalRows += r.rows
     totalRetracted += r.retracted

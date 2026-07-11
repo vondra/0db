@@ -12,6 +12,15 @@
  * segments the feeds don't reach STAY at source_id=0 on purpose (engine
  * defaults own unknowns — no class-default stamping under this source id).
  *
+ * #26C country-bleed gate: deliberately NOT wired here. This aggregate is
+ * multi-country by design — many national feeds share one source id
+ * (SOURCE_ID_GLOBAL_GTFS_TRANSIT), so a single makeCountryGate cannot say which
+ * country a stop or an owned row belongs to; a blanket gate would either drop
+ * nothing or disown every row outside one arbitrary country. Wiring it needs a
+ * per-feed ownership design first (gate each feed's stops by its own `country`
+ * field, and define who may retract shared-id rows). Single-country template:
+ * enrich-railway-pl.ts (7fac2349).
+ *
  * Usage:
  *   npx tsx enrich-railway-europe.ts
  *   npx tsx enrich-railway-europe.ts --force-download
