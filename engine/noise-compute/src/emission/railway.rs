@@ -293,9 +293,22 @@ pub fn default_traffic(rail_type: RailType, usage: u8) -> (f64, f64) {
 }
 
 /// Default speed when maxspeed tag is missing.
+///
+/// Tram 25 km/h (was 40 until 2026-07-11): OSM tram ways almost never carry
+/// maxspeed, so the default IS the fleet's modelled speed. European street
+/// trams average ~18-19 km/h commercial speed incl. stops (TRAM Barcelona
+/// publishes 18.6; Prague DPP ~19), with 20-35 km/h between stops — 25 is
+/// the between-stops street-running middle. At 40 the rolling term
+/// (30·log10(v/50)) made a single modelled tram line exceed a street NMT's
+/// measured TOTAL ambient (Barcelona station 9907, finding
+/// 2026-07-10-bcn-tram-emission-hot; −3.9 dB/line A-weighted at 25 incl.
+/// traction + the +10·log10(1/v) density term). A Europe-first
+/// street-running prior, not a measured global constant — Reserved-track trams running 45-55 are now
+/// under-defaulted — accepted until tram speeds are enriched from GTFS
+/// stop-to-stop times (finding's follow-up), which fixes both directions.
 pub fn default_speed(rail_type: RailType) -> f64 {
     match rail_type {
-        RailType::Tram => 40.0,
+        RailType::Tram => 25.0,
         RailType::LightRail => 60.0,
         RailType::NarrowGauge => 40.0,
         RailType::Funicular => 20.0,

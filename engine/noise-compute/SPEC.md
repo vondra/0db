@@ -184,7 +184,7 @@ Post-adjustments applied even on measured counts: `service > 0` → counts × **
 | Rail, branch | 30 + 5 | 80 km/h |
 | Rail, industrial siding | 0 + 15 | 80 km/h |
 | Rail, unknown usage | 40 + 10 | 80 km/h |
-| Tram | 120 + 0 | 40 km/h |
+| Tram | 120 + 0 | 25 km/h |
 | LightRail | 80 + 0 | 60 km/h |
 | NarrowGauge | 10 + 0 | 40 km/h |
 | Funicular | 40 + 0 | 20 km/h |

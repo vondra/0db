@@ -127,7 +127,11 @@ pub fn normalize_rail_segment(seg: &RailSegment, admin: Admin) -> NormalizedRail
         speed_kmh: if seg.speed_kmh > 0.0 {
             seg.speed_kmh
         } else {
-            80.0
+            // SSOT fallback — a hardcoded 80 here silently diverged from
+            // default_speed for non-Rail types (Codex /gg 2026-07-11).
+            crate::emission::railway::default_speed(crate::emission::railway::RailType::from_u8(
+                seg.rail_type,
+            ))
         },
         scaled_passenger_per_day: seg.trains_passenger.max(0.0),
         scaled_freight_per_day: seg.trains_freight.max(0.0),
@@ -252,5 +256,29 @@ mod tests {
             want(td.pax[2], td.frt[2], 8.0),
             "night period parity"
         );
+    }
+}
+
+#[cfg(test)]
+mod tram_default_speed_tests {
+    use super::*;
+
+    /// Locks the 2026-07-11 tram street-running prior (finding
+    /// bcn-tram-emission-hot): missing maxspeed on a tram row resolves to
+    /// 25 km/h through normalize_rail, and the segment path shares the SSOT.
+    #[test]
+    fn missing_maxspeed_tram_resolves_to_25() {
+        let raw = RawRailInput {
+            rail_type: 1, // Tram
+            usage: 0,
+            maxspeed: 0,
+            highspeed: false,
+            trains_passenger: 0,
+            trains_freight: 0,
+            service: 0,
+            parallel_divisor: 1,
+        };
+        let norm = normalize_rail(raw, crate::admin::Admin::UNKNOWN);
+        assert_eq!(norm.speed_kmh, 25.0);
     }
 }
