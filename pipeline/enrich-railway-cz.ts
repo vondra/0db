@@ -20,7 +20,7 @@ import { pathToFileURL } from 'node:url'
 import { execSync } from 'node:child_process'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
-import { SOURCE_ID_CZ_SZCD_GTFS } from './lib/source-ids.generated.js'
+import { SOURCE_ID_CZ_SZCD_GTFS, SOURCE_ID_RAIL_TIMETABLE_SILENT } from './lib/source-ids.generated.js'
 import { flatDist, pointToSegmentDist } from './lib/spatial.js'
 import { logRetractSkippedIncompleteInputs } from './lib/gtfs-enrich-core.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
@@ -421,6 +421,7 @@ function enrichHexes(
     const mids: { lat: number; lon: number }[] = new Array(n)
     let hexMatched = 0
     let hexRetracted = 0
+    let hexSilent = 0
     const retractedIdx: number[] = []
 
     for (let i = 0; i < n; i++) {
@@ -477,9 +478,26 @@ function enrichHexes(
       if (rt !== 0) continue
 
       const m = nearestCzpttSegment(midLat, midLon)
-      // No CZPTT match: leave the row untouched — never stamp a guess under a
-      // measured-tier source id (the pre-2026-07-10 fallback did; see OLD_FALLBACK).
-      if (!m) continue
+      if (!m) {
+        // No CZPTT match. CZPTT is the infrastructure manager's timetable —
+        // every operator's train on the SŽ network is in it BY CONSTRUCTION,
+        // so with a complete snapshot a heavy-rail line it does not know has
+        // NO scheduled service. Owner decision 2026-07-11 (option b,
+        // gtfs-silent-decision.md): stamp a small explicit residual — 2 pax +
+        // 1 frt/day (occasional special/inspection/unscheduled runs) under
+        // the BASELINE-rank timetable-silent id: ~−9 dB vs the engine branch
+        // default on dead lines (Trať 162: 75→66 dB). frt=1 is deliberate —
+        // explicit non-zero stops the engine's per-column zero-defaulting
+        // from re-adding 5 freight. Gated on retractSafe: an unloaded
+        // timetable must never testify to silence.
+        if (retractSafe && shouldOverwrite(sourceId[i], SOURCE_ID_RAIL_TIMETABLE_SILENT)) {
+          trainsPax[i] = 2
+          trainsFrt[i] = 1
+          sourceId[i] = SOURCE_ID_RAIL_TIMETABLE_SILENT
+          hexSilent++
+        }
+        continue
+      }
 
       // Whole-row atomic write — payload + dataset_id together.
       trainsPax[i] = m.seg.passenger
@@ -489,7 +507,7 @@ function enrichHexes(
       hexMatched++
     }
 
-    if (hexMatched === 0 && hexRetracted === 0) continue
+    if (hexMatched === 0 && hexRetracted === 0 && hexSilent === 0) continue
 
     // ── Parallel-way detection ──
     // For each matched segment, count distinct osm_ids with:
@@ -552,6 +570,7 @@ function enrichHexes(
     writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
     totalMatched += hexMatched
     totalRetracted += hexRetracted
+    totalSilent += hexSilent
     hexesUpdated++
 
     if (hexesUpdated % 20 === 0) {
@@ -562,6 +581,7 @@ function enrichHexes(
   console.log(`\n=== Results ===`)
   console.log(`  ${totalMatched} / ${totalRails} railway segments enriched (${(totalMatched / totalRails * 100).toFixed(1)}%)`)
   console.log(`  ${totalRetracted.toLocaleString()} legacy fallback stamps retracted`)
+  console.log(`  ${totalSilent.toLocaleString()} timetable-silent residuals stamped (2 pax + 1 frt; id ${SOURCE_ID_RAIL_TIMETABLE_SILENT})`)
   console.log(`  ${skippedService.toLocaleString()} service tracks skipped (not stamped)`)
   console.log(`  ${hexesUpdated} / ${hexDirs.length} hexes updated`)
 }
