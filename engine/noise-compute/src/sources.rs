@@ -1269,6 +1269,16 @@ pub const SOURCES: &[Source] = &[
         url: None,
         year: Some(2026),
     },
+    Source {
+        id: 9864,
+        key: "de-national-railway",
+        provenance: Provenance::NationalMeasured,
+        layer: "railways",
+        name: "DELFI national GTFS via gtfs.de (de_full)",
+        license: Some("CC-BY-4.0"),
+        url: Some("https://gtfs.de/en/feeds/de_full/"),
+        year: Some(2026),
+    },
 ];
 
 #[cfg(test)]

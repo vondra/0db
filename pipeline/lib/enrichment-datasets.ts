@@ -1045,6 +1045,24 @@ export const DATASETS: Dataset[] = [
     railFamilies: ['rail', 'tram'], // mirrors the match closure (/gg W5)
   },
   {
+    // gtfs.de flattens the DELFI NAP NeTEx dataset (all ~12 state systems +
+    // DB long-distance) into one plain-GTFS national aggregate. Passenger-only:
+    // DB InfraGO publishes no freight paths (rail-timetable acquisition matrix
+    // 2026-07), so enrich-railway-de.ts stamps frt=0 and the engine's per-column
+    // zero-default supplies interim freight (normalize/rail.rs). id 9864 =
+    // allocator max+1; the 2xxx rail block was a one-time batch, not reserved slots.
+    id: 9864,
+    layer: 'railways',
+    key: 'de-national-railway',
+    name: 'DELFI national GTFS via gtfs.de (de_full)',
+    year: 2026,
+    license: 'CC-BY-4.0',
+    url: 'https://gtfs.de/en/feeds/de_full/',
+    priority: 80,
+    measurement: 'counted',
+    railFamilies: ['rail', 'tram'],
+  },
+  {
     id: 2024,
     layer: 'railways',
     key: 'dk-national-railway',

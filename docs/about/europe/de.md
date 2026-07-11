@@ -38,14 +38,15 @@ Vehicle class mapping to CNOSSOS:
 
 ## Railway
 
-### DELFI GTFS (applied via the continental rail pass)
+### gtfs.de de_full (DELFI national GTFS)
 
-National GTFS feed covering all passenger rail operators (DB, private railways, S-Bahn, tram), ingested by the Europe-wide GTFS railway enrichment (`enrich-railway-europe.ts`, `de` feed) alongside ~16 other countries.
+National passenger timetable for all of Germany: the DELFI NAP dataset (all ~12 state systems + DB long-distance) flattened to plain GTFS by [gtfs.de](https://gtfs.de/en/feeds/de_full/), applied by the dedicated national enricher `enrich-railway-de.ts` (2026-07).
 
-- **Stops**: 7,200+
-- **Source**: data.public-transport.earth/gtfs/de
-- **Applied**: trains_passenger column in railways.arrow
-- **Gap**: Freight train frequencies not available from GTFS
+- **Source**: [gtfs.de de_full](https://gtfs.de/en/feeds/de_full/) (DELFI e.V. data), CC-BY 4.0, refreshed daily
+- **Snapshot**: 2026-07-11 — 1.58 M trips, 656 k stops; 124,240 rail/tram trips on the reference Wednesday
+- **Stops with train counts**: 23,772 in Germany (7,389 heavy-rail + 16,383 tram/U-Bahn family)
+- **Applied**: `trains_passenger` on 217,154 railway segments (35.7% of German mainline segments — coverage concentrates around stations; through-running between stations keeps class defaults)
+- **Gap**: freight — DB InfraGO publishes no freight paths; freight noise uses the engine's per-class defaults until a freight source or calibration exists
 
 ## Industrial / Wind energy
 
