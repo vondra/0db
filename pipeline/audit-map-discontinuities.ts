@@ -23,6 +23,7 @@ import { readSegs } from './enrich-roads-taper.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { nodeKey } from './lib/spatial.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
+import { readAdminIso } from './lib/admin-iso.js'
 
 const COUNTRY_SPEED_TABLE = JSON.parse(
   readFileSync(resolve(import.meta.dirname, 'lib/country-speed-defaults.generated.json'), 'utf8'),
@@ -63,25 +64,6 @@ interface CountryAgg {
 }
 
 interface TopEntry { lat: number; lon: number; db: number; kind: string; iso: string }
-
-/** hex(u64 as hex-string, lowercase, no padding trim issues) → ISO2. Record
- *  layout mirrors engine admin.rs::load: 12-byte header, then 13-byte records
- *  [u64 hex LE, u8 continent, 2×u8 ISO chars, u16 city LE]. */
-function readAdminIso(binPath: string): Map<string, string> {
-  const out = new Map<string, string>()
-  if (!existsSync(binPath)) return out
-  const b = readFileSync(binPath)
-  const n = (b.length - 12) / 13
-  for (let i = 0; i < n; i++) {
-    const off = 12 + i * 13
-    const hex = b.readBigUInt64LE(off).toString(16)
-    const c1 = b[off + 9]
-    const c2 = b[off + 10]
-    if (c1 === 0) continue
-    out.set(hex, String.fromCharCode(c1, c2))
-  }
-  return out
-}
 
 interface RailScan { fallbackRows: number; stampedRows: number; fullFallbackWays: number; ways: number; steps: number; top: TopEntry[] }
 
