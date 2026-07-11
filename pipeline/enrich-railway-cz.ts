@@ -16,11 +16,13 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 
 import { SOURCES_BY_KEY } from './lib/sources.js'
 import { shouldOverwrite } from './lib/provenance.js'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { execSync } from 'node:child_process'
 import { tableFromIPC, tableToIPC, vectorFromArray, makeTable, Int32, Uint8, Uint16 } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_CZ_SZCD_GTFS } from './lib/source-ids.generated.js'
 import { flatDist, pointToSegmentDist } from './lib/spatial.js'
+import { logRetractSkippedIncompleteInputs } from './lib/gtfs-enrich-core.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CZ_SZCD_GTFS
@@ -173,10 +175,16 @@ async function getTrainCounts(): Promise<Map<string, SegmentCount>> {
     console.log(`  NOTE: JR2026.zip is passenger-only. Freight data not available from this source.`)
   }
 
-  // Cache
-  const obj: Record<string, SegmentCount> = {}
-  for (const [k, v] of segments) obj[k] = v
-  writeFileSync(CACHE_TRAINS, JSON.stringify(obj))
+  // Cache — never persist an empty parse: a poisoned cache would feed every later
+  // --enrich-only run an empty snapshot (the .broken fossils in CACHE_DIR are
+  // exactly that failure), silently starving matching AND the retract evidence.
+  if (segments.size > 0) {
+    const obj: Record<string, SegmentCount> = {}
+    for (const [k, v] of segments) obj[k] = v
+    writeFileSync(CACHE_TRAINS, JSON.stringify(obj))
+  } else {
+    console.log(`  NOT caching empty CZPTT parse (${xmlFiles.length} XMLs yielded 0 segments)`)
+  }
 
   // Cleanup XMLs to save space
   execSync(`rm -rf "${xmlDir}"`)
@@ -230,9 +238,15 @@ async function getStationGPS(): Promise<Map<string, StationGPS>> {
   }
   console.log(`  ${stations.size} OSM stations with GPS`)
 
-  const obj: Record<string, StationGPS> = {}
-  for (const [k, v] of stations) obj[k] = v
-  writeFileSync(CACHE_STATIONS, JSON.stringify(obj))
+  // Never persist an empty station set — an Overpass overload can return a valid
+  // 200 with zero elements, and a poisoned cache starves every later run.
+  if (stations.size > 0) {
+    const obj: Record<string, StationGPS> = {}
+    for (const [k, v] of stations) obj[k] = v
+    writeFileSync(CACHE_STATIONS, JSON.stringify(obj))
+  } else {
+    console.log('  NOT caching empty OSM station response')
+  }
 
   return stations
 }
@@ -253,24 +267,31 @@ function normName(s: string): string {
     .replace(/ě/g, 'e')
 }
 
-// CNOSSOS operator-class fallback, used where the CZPTT timetable has no match
-// (tram/light_rail — CZPTT is heavy-rail only — and minor/unmatched heavy-rail
-// lines). Keeps a track from going silent now that the family gate stops it
-// inheriting a neighbouring mainline's count. Provenance of the constants:
-// tram/light_rail/narrow/funicular/branch mirror enrich-railway-kr.ts (similar
-// developed-country urban-rail intensity); industrial freight=8 mirrors
-// enrich-railway-th.ts; heavy-rail main=50pax/10frt is a conservative floor —
-// CZPTT covers the busy mains comprehensively, so an unmatched main is a minor or
-// freight-only line (≈hourly each way + light freight), not a trunk.
+// Retract signature for stamps the pre-2026-07-10 fallback design wrote: the deleted
+// class-default table, verbatim. Trať 162 was the proof case — 4,244 CZ branch ways
+// (59% of src=110 branch ways) carried the literal 80/0 stamped as Správa železnic
+// timetable data (/tmp/quietmap-v4/gtfs-rail-misjoin.md). A row still owned by
+// MY_SOURCE_ID whose counts exactly equal its class tuple was filled by that fallback,
+// not measured — exact-tuple + usage ambiguity is negligible (CZPTT real matches are
+// passenger-only and non-round: 65/66/71/72, never exactly 80), and for heavy rail the
+// retract re-runs today's CZPTT join, so a live-covered row is re-stamped with the real
+// count, never disowned. No-match rows now stay source_id=0: the ENGINE default table
+// (engine/noise-compute/src/emission/railway.rs::default_traffic) owns the "we don't
+// know" case. DELETE this retract (and OLD_FALLBACK) after the world rail repaint
+// confirms 0 retractions.
 // rail_type: 0=rail 1=tram 2=light_rail 3=narrow_gauge 4=funicular; usage: 0=main 1=branch 2=industrial
-function defaultTrains(railType: number, usage: number): { pax: number; frt: number } {
-  if (railType === 2) return { pax: 250, frt: 0 } // light_rail (urban)
-  if (railType === 1) return { pax: 200, frt: 0 } // tram
-  if (railType === 3) return { pax: 30, frt: 0 }  // narrow gauge
-  if (railType === 4) return { pax: 30, frt: 0 }  // funicular
-  if (usage === 1) return { pax: 80, frt: 0 }     // heavy-rail branch
-  if (usage === 2) return { pax: 0, frt: 8 }      // industrial spur
-  return { pax: 50, frt: 10 }                     // heavy-rail main without a CZPTT match (minor line)
+const OLD_FALLBACK = (railType: number, usage: number): [pax: number, frt: number] => {
+  if (railType === 2) return [250, 0] // light_rail (urban)
+  if (railType === 1) return [200, 0] // tram
+  if (railType === 3) return [30, 0]  // narrow gauge
+  if (railType === 4) return [30, 0]  // funicular
+  if (usage === 1) return [80, 0]     // heavy-rail branch (the Trať 162 constant)
+  if (usage === 2) return [0, 8]      // industrial spur
+  return [50, 10]                     // heavy-rail main
+}
+const wasOldFallbackStamp = (railType: number, usage: number, pax: number, frt: number): boolean => {
+  const [fpax, ffrt] = OLD_FALLBACK(railType, usage)
+  return pax === fpax && frt === ffrt
 }
 
 function enrichHexes(
@@ -334,7 +355,40 @@ function enrichHexes(
   }
   console.log(`  ${gpsSegments.length} CZPTT segments with GPS (of ${segments.size} total)`)
 
-  let totalRails = 0, totalMatched = 0, hexesUpdated = 0, skippedService = 0
+  // CRITICAL-1b (/gg Codex): a retract may only run over a PROVABLY COMPLETE input
+  // snapshot — CZPTT segments AND OSM station GPS both loaded non-empty AND the
+  // name join actually resolved (either cache can silently persist an empty result:
+  // an empty JR2026 unzip, or an Overpass 200 with zero elements). With any of them
+  // hollow, nearestCzpttSegment() returns null everywhere, `stillClaimed` is always
+  // false, and every OLD_FALLBACK-tuple row in CZ would be disowned with nothing to
+  // re-stamp it. Only the retract is gated — matching simply stamps less.
+  const incompleteInputs: string[] = []
+  if (segments.size === 0) incompleteInputs.push('CZPTT segment counts empty (czptt-segment-counts.json)')
+  if (stationGPS.size === 0) incompleteInputs.push('OSM station GPS empty (osm-stations.json)')
+  if (incompleteInputs.length === 0 && gpsSegments.length === 0) incompleteInputs.push('station-name join resolved zero CZPTT segments to GPS')
+  const retractSafe = incompleteInputs.length === 0
+  if (!retractSafe) logRetractSkippedIncompleteInputs(incompleteInputs.join('; '))
+
+  /** Nearest CZPTT station-pair segment within 500 m of a row midpoint — the ONE
+   *  spatial join for BOTH the live matcher and the OLD_FALLBACK retract
+   *  corroboration (same radius, same distance function), so a row can never be
+   *  disowned that the matcher would still claim, or vice versa. */
+  function nearestCzpttSegment(midLat: number, midLon: number): { seg: SegmentCount; key: string } | null {
+    let bestDist = 500 // was 5000 — a station-pair midpoint 5 km away is not "this track"
+    let best: { seg: SegmentCount; key: string } | null = null
+    for (const gs of gpsSegments) {
+      const d = pointToSegmentDist(midLat, midLon, gs.fromLat, gs.fromLon, gs.toLat, gs.toLon)
+      if (d < bestDist) {
+        bestDist = d
+        // Canonicalize key: sort station codes so from→to = to→from
+        const codes = [gs.seg.from_code, gs.seg.to_code].sort()
+        best = { seg: gs.seg, key: codes[0] + '-' + codes[1] }
+      }
+    }
+    return best
+  }
+
+  let totalRails = 0, totalMatched = 0, totalRetracted = 0, hexesUpdated = 0, skippedService = 0
 
   for (const hexId of hexDirs) {
     const railPath = resolve(H3R4_DIR, hexId, 'railways.arrow')
@@ -366,6 +420,8 @@ function enrichHexes(
     const matchedKeys: string[] = new Array(n).fill('')
     const mids: { lat: number; lon: number }[] = new Array(n)
     let hexMatched = 0
+    let hexRetracted = 0
+    const retractedIdx: number[] = []
 
     for (let i = 0; i < n; i++) {
       trainsPax[i] = (existingTrainsPax?.get(i) as number) ?? 0
@@ -382,6 +438,29 @@ function enrichHexes(
       const midLon = (sLon + eLon) / 2
       mids[i] = { lat: midLat, lon: midLon }
 
+      const rt = railTypeCol ? (railTypeCol.get(i) as number) : 0
+      const us = usageCol ? (usageCol.get(i) as number) : 0
+
+      // OLD_FALLBACK retract (self-heal, mirrors the writeRailTrains ordering: BEFORE
+      // the priority gate and the service skip — disowning must reach rows matching
+      // would never see). A row this dataset owns whose counts exactly equal the
+      // deleted class-default tuple is disowned, UNLESS today's CZPTT join still
+      // reaches it (heavy rail only) — then the matcher below re-stamps it with the
+      // real count in this same pass. retractSafe (CRITICAL-1b): only over a provably
+      // complete snapshot — otherwise "no CZPTT segment near this row" is an input
+      // artifact, not evidence, and would disown REAL stamps.
+      if (retractSafe && sourceId[i] === MY_SOURCE_ID && wasOldFallbackStamp(rt, us, trainsPax[i], trainsFrt[i])) {
+        const stillClaimed = rt === 0 && nearestCzpttSegment(midLat, midLon) !== null
+        if (!stillClaimed) {
+          trainsPax[i] = 0
+          trainsFrt[i] = 0
+          sourceId[i] = 0
+          retractedIdx.push(i) // divisor reset below — a stale ×N must not halve the engine default
+          hexRetracted++
+          continue
+        }
+      }
+
       // Priority gate: if a higher-priority dataset already owns this row, leave it.
       if (!shouldOverwrite(sourceId[i], MY_SOURCE_ID)) continue
 
@@ -390,53 +469,38 @@ function enrichHexes(
       const service = serviceCol ? (serviceCol.get(i) as number) : 0
       if (service > 0) { skippedService++; continue }
 
-      const rt = railTypeCol ? (railTypeCol.get(i) as number) : 0
-      const us = usageCol ? (usageCol.get(i) as number) : 0
-
       // Family gate: CZPTT is the national HEAVY-RAIL timetable, so only rail_type=0
       // may inherit a CZPTT segment's count. tram(1)/light_rail(2)/narrow(3)/funicular(4)
-      // get a class default instead — a Prague tram was inheriting a 217-train/day
-      // mainline up to 5 km away (the 14,799-tram bug).
-      if (rt === 0) {
-        let bestDist = 500 // was 5000 — a station-pair midpoint 5 km away is not "this track"
-        let bestSeg: SegmentCount | null = null
-        let bestKey = ''
-        for (const gs of gpsSegments) {
-          const d = pointToSegmentDist(midLat, midLon, gs.fromLat, gs.fromLon, gs.toLat, gs.toLon)
-          if (d < bestDist) {
-            bestDist = d
-            bestSeg = gs.seg
-            // Canonicalize key: sort station codes so from→to = to→from
-            const codes = [gs.seg.from_code, gs.seg.to_code].sort()
-            bestKey = codes[0] + '-' + codes[1]
-          }
-        }
-        if (bestSeg) {
-          // Whole-row atomic write — payload + dataset_id together.
-          trainsPax[i] = bestSeg.passenger
-          trainsFrt[i] = bestSeg.freight
-          sourceId[i] = MY_SOURCE_ID
-          matchedKeys[i] = bestKey
-          hexMatched++
-          continue
-        }
-      }
+      // have no CZPTT data and stay source_id=0 — the ENGINE default table
+      // (emission/railway.rs::default_traffic) owns them. (A Prague tram was inheriting
+      // a 217-train/day mainline up to 5 km away — the 14,799-tram bug.)
+      if (rt !== 0) continue
 
-      // Fallback (non-heavy-rail, or heavy-rail with no CZPTT match): class default
-      // so no track is left silent (owner-confirmed L2 — fill by type).
-      const def = defaultTrains(rt, us)
-      trainsPax[i] = def.pax
-      trainsFrt[i] = def.frt
+      const m = nearestCzpttSegment(midLat, midLon)
+      // No CZPTT match: leave the row untouched — never stamp a guess under a
+      // measured-tier source id (the pre-2026-07-10 fallback did; see OLD_FALLBACK).
+      if (!m) continue
+
+      // Whole-row atomic write — payload + dataset_id together.
+      trainsPax[i] = m.seg.passenger
+      trainsFrt[i] = m.seg.freight
       sourceId[i] = MY_SOURCE_ID
+      matchedKeys[i] = m.key
       hexMatched++
     }
 
-    if (hexMatched === 0) continue
+    if (hexMatched === 0 && hexRetracted === 0) continue
 
     // ── Parallel-way detection ──
     // For each matched segment, count distinct osm_ids with:
     // same czpttKey + within 50m + different osm_id + same rail_type + same usage + service=0
+    // Retract-only hexes (hexMatched === 0) must PRESERVE the existing column:
+    // rebuilding it from ones would silently reset divisors that belong to
+    // rows this pass never touched (/gg Codex W2).
+    const exDiv = table.getChild('parallel_divisor')
     const parallelDiv = new Uint8Array(n).fill(1)
+    if (exDiv) for (let i = 0; i < n; i++) parallelDiv[i] = (exDiv.get(i) as number) || 1
+    for (const i of retractedIdx) parallelDiv[i] = 1 // disowned row: divisor is void with the stamp
 
     for (let i = 0; i < n; i++) {
       if (!matchedKeys[i]) continue
@@ -487,6 +551,7 @@ function enrichHexes(
     const newTable = makeTable(columns)
     writeFileSync(railPath, Buffer.from(tableToIPC(newTable, 'file')))
     totalMatched += hexMatched
+    totalRetracted += hexRetracted
     hexesUpdated++
 
     if (hexesUpdated % 20 === 0) {
@@ -496,6 +561,7 @@ function enrichHexes(
 
   console.log(`\n=== Results ===`)
   console.log(`  ${totalMatched} / ${totalRails} railway segments enriched (${(totalMatched / totalRails * 100).toFixed(1)}%)`)
+  console.log(`  ${totalRetracted.toLocaleString()} legacy fallback stamps retracted`)
   console.log(`  ${skippedService.toLocaleString()} service tracks skipped (not stamped)`)
   console.log(`  ${hexesUpdated} / ${hexDirs.length} hexes updated`)
 }
@@ -519,4 +585,8 @@ async function main() {
   console.log(`\n=== Done ===`)
 }
 
-main().catch(err => { console.error('Error:', err); process.exit(1) })
+// Import-safe: run only when invoked directly — importing this file must never
+// trigger a download/enrichment pass (pattern from enrich-roads-cz.ts).
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch(err => { console.error('Error:', err); process.exit(1) })
+}

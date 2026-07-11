@@ -162,8 +162,47 @@ test('retract: disowns owned rows (incl. now-service) and zeroes counts; counter
   assert.equal(frt[2], 22, 'foreign counts intact despite matching `when`')
 })
 
+test('retract: value fingerprint — `when` sees existingPax/existingFrt and disowns only the exact tuple', async () => {
+  // The OLD_FALLBACK heal shape (task #26): every enricher retracts rows whose
+  // CURRENT counts exactly equal the legacy class-default tuple it used to stamp.
+  // Fixture seeds pax=10+i / frt=20+i, so (10, 20) fingerprints row 0 only; row 1
+  // (11/21) is the "same owner, real-looking values" row that must survive.
+  const path = writeRailFixture('retract-fingerprint.arrow', [[0, 0], [0, 0]], [110, 110])
+
+  const result = await writeRailTrains(
+    path,
+    () => null,
+    undefined,
+    { sourceId: 110, when: (row) => row.existingPax === 10 && row.existingFrt === 20 },
+  )
+  assert.equal(result.retracted, 1, 'only the tuple-valued row is disowned')
+
+  const t = tableFromIPC(readFileSync(path))
+  assert.deepEqual(
+    [t.getChild('source_id')!.get(0), t.getChild('source_id')!.get(1)],
+    [0, 110],
+    'fingerprinted row disowned, differently-valued row kept',
+  )
+  assert.equal(t.getChild('trains_passenger')!.get(1), 11, 'kept row counts intact')
+})
+
+test('retract: an owned SERVICE row is auto-healed even when `when` declines', async () => {
+  // Row1 is service=2 yet carries the dataset's own stamp — a state the
+  // service-skip gate forbids creating, so ownership alone proves it stale
+  // (the CZ 94,928-siding legacy; /gg Codex W1). `when: false` must not
+  // protect it; the non-service owned row0 stays untouched.
+  const path = writeRailFixture('retract-svc.arrow', [[0, 0], [1, 2]], [110, 110])
+  const result = await writeRailTrains(path, () => null, undefined,
+    { sourceId: 110, when: () => false })
+  assert.equal(result.retracted, 1, 'exactly the owned service row')
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('source_id')!.get(1), 0, 'service row disowned')
+  assert.equal(t.getChild('source_id')!.get(0), 110, 'non-service owned row kept (when=false)')
+})
+
 test('retract: a heal pass that retracts nothing leaves the file byte-identical', async () => {
-  const path = writeRailFixture('retract-noop.arrow', [[0, 0], [1, 2]], [110, 110])
+  // Both rows NON-service — an owned service row is auto-healed by design (above).
+  const path = writeRailFixture('retract-noop.arrow', [[0, 0], [1, 0]], [110, 110])
   const before = readFileSync(path)
   const result = await writeRailTrains(
     path,
@@ -174,4 +213,23 @@ test('retract: a heal pass that retracts nothing leaves the file byte-identical'
   assert.equal(result.retracted, 0)
   assert.equal(result.updated, false)
   assert.deepEqual(readFileSync(path), before, 'no-op retract pass must not rewrite the file')
+})
+
+test('retract fall-through: match re-claims a coincidental tuple in the same pass', async () => {
+  // Row0 carries the dataset's stamp; the fingerprint says "legacy tuple" but
+  // the live join (simulated: `match` returns a real count) still covers it —
+  // the retract zeroes, match re-stamps in the SAME pass, the row is never
+  // lost (/gg Codex+Gemini consensus CRITICAL; the BE 200/0 tram collision).
+  const path = writeRailFixture('retract-reclaim.arrow', [[0, 0]], [110])
+  const result = await writeRailTrains(
+    path,
+    () => ({ pax: 144, frt: 12, sourceId: 110 }),
+    undefined,
+    { sourceId: 110, when: () => true },
+  )
+  assert.equal(result.retracted, 1)
+  assert.equal(result.matched, 1, 'same-pass re-claim')
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('trains_passenger')!.get(0), 144)
+  assert.equal(t.getChild('source_id')!.get(0), 110)
 })

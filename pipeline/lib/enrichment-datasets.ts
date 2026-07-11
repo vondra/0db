@@ -179,6 +179,29 @@ export const DATASETS: Dataset[] = [
     // per-country when the taper widens past CZ (NAPI resolution export).
     roadCoverage: [2, 3, 4, 9],
   },
+  {
+    // Timetable-silent residual (owner decision 2026-07-11, option b of
+    // /tmp/quietmap-v4/gtfs-silent-decision.md): in a country whose rail
+    // enricher has full national timetable coverage, a line the timetable
+    // does NOT know gets a small explicit residual (2 pax + 1 frt/day —
+    // occasional special/freight runs) instead of the engine branch default
+    // (30+5). Dead branches drop ~9 dB out of the red (Trať 162: 75→66 dB)
+    // without going silent. BASELINE rank: any real measurement overwrites;
+    // explicit frt=1 stops the engine's per-column zero-defaulting from
+    // re-adding 5 freight. v1 scope: CZ (verified coverage); other countries
+    // as their coverage is confirmed (#26B).
+    id: 9863,
+    layer: 'railways',
+    key: 'rail-timetable-silent',
+    name: 'Timetable-silent residual (no scheduled service)',
+    year: 2026,
+    license: 'project-internal',
+    url: null,
+    priority: 10,
+    provenance: 'baseline',
+    measurement: 'derived',
+    railFamilies: ['rail'],
+  },
 
   // ── Roads: national ──
   {
@@ -963,6 +986,7 @@ export const DATASETS: Dataset[] = [
     license: 'open-data',
     url: 'https://www.dubaipulse.gov.ae/',
     priority: 80,
+    railFamilies: ['rail', 'tram'], // mirrors the match closure (/gg W5)
   },
   {
     id: 2004,
@@ -995,7 +1019,7 @@ export const DATASETS: Dataset[] = [
     license: 'open-data',
     url: 'https://stibmivb.opendatasoft.com/',
     priority: 80,
-    railFamilies: ['rail', 'tram'],
+    railFamilies: ['tram'], // match claims tram/light_rail only (/gg W5),
   },
   {
     id: 2015,
@@ -1018,6 +1042,7 @@ export const DATASETS: Dataset[] = [
     license: 'community-mirror',
     url: 'https://services7.arcgis.com/m6uLpqj7MgjPU371/',
     priority: 80,
+    railFamilies: ['rail', 'tram'], // mirrors the match closure (/gg W5)
   },
   {
     id: 2024,
@@ -1084,6 +1109,7 @@ export const DATASETS: Dataset[] = [
     license: 'public-data',
     url: 'https://livingatlas.esri.in/',
     priority: 80,
+    railFamilies: ['rail', 'tram'], // mirrors the match closure (/gg W5)
   },
   {
     id: 2040,

@@ -31,10 +31,13 @@ const COUNTRY_SPEED_TABLE = JSON.parse(
  *  table miss): all-zero buckets → resolveSpeed's legacy world table. */
 const NO_COUNTRY: CountrySpeeds = [0, 0, 0, 0]
 
-/** The 19 rail enrichers' shared fallback tuples (pax, frt) by usage /
- *  rail_type (enrich-railway-*.ts defaultTrains — all copies identical;
- *  see /tmp gtfs-rail-misjoin findings + task #26). A stamped row exactly
- *  matching its tuple is a fallback masquerading as measured data. */
+/** The canonical PRE-2026-07-10 rail-enricher fallback tuples (pax, frt) by
+ *  usage / rail_type. The live fallback was purged under task #26 — each
+ *  enricher keeps its tuple table only as an OLD_FALLBACK retract signature
+ *  (th/ae/kr/cn/in had country-specific tuples this canonical table does NOT
+ *  cover). Until the world rail repaint, stamped DATA still carries these:
+ *  a row exactly matching its tuple is a legacy fallback masquerading as
+ *  measured data. */
 const RAIL_FALLBACK: Array<{ railType?: number; usage?: number; pax: number; frt: number }> = [
   { railType: 2, pax: 250, frt: 0 },
   { railType: 1, pax: 200, frt: 0 },

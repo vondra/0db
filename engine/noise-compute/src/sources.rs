@@ -1259,6 +1259,16 @@ pub const SOURCES: &[Source] = &[
         url: None,
         year: Some(2026),
     },
+    Source {
+        id: 9863,
+        key: "rail-timetable-silent",
+        provenance: Provenance::Baseline,
+        layer: "railways",
+        name: "Timetable-silent residual (no scheduled service)",
+        license: Some("project-internal"),
+        url: None,
+        year: Some(2026),
+    },
 ];
 
 #[cfg(test)]

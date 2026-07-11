@@ -10,10 +10,16 @@
  *   2. PRIORITY GATE — `shouldOverwrite` decides per row, so a national feed
  *      can't clobber a higher-rank neighbour's cross-border rows.
  *
- * The FAMILY routing (rail↔rail_type 0, tram↔1/2) + the CNOSSOS class-default
- * fallback (owner-confirmed L2: fill by type, no silent track) live in the
- * per-feed `match` closure — each national GTFS classifies its own route_types,
- * so that stays per-country (see `enrich-railway-th.ts` for the reference shape).
+ * The FAMILY routing (rail↔rail_type 0, tram↔1/2) lives in the per-feed `match`
+ * closure — each national GTFS classifies its own route_types, so that stays
+ * per-country (see `enrich-railway-th.ts` for the reference shape).
+ *
+ * PROVENANCE HONESTY: `match` returns null when the feed has no real answer —
+ * the row stays source_id=0 and the ENGINE default table
+ * (engine/noise-compute/src/emission/railway.rs::default_traffic) owns the
+ * "we don't know" case. Enrichers must NEVER stamp a class-default guess under
+ * their measured-tier id (the pre-2026-07-10 fallback design did; each enricher
+ * now carries an OLD_FALLBACK retract signature to disown those stamps).
  */
 
 import { makeVector, makeTable, type Table } from 'apache-arrow'
@@ -36,6 +42,12 @@ export interface RailRow {
    *  higher-priority dataset owns it: `if (!shouldOverwrite(row.existingSourceId, MY_ID)) return null`.
    *  The writer re-applies the same gate, so this is a perf shortcut, never the safety net. */
   existingSourceId: number
+  /** Current trains_passenger / trains_freight on the row. Exists so a `retract`
+   *  `when` can fingerprint legacy stamps by their exact value tuple (the
+   *  pre-2026-07-10 class-default fallbacks each enricher now disowns via its
+   *  OLD_FALLBACK signature) — match closures should not read these. */
+  existingPax: number
+  existingFrt: number
   startLat: number
   startLon: number
   endLat: number
@@ -66,9 +78,13 @@ export interface WriteRailResult {
  *  `when` is evaluated for every row whose `source_id` equals `sourceId`,
  *  BEFORE the service-skip gate — retraction is about disowning, not
  *  matching, so it must reach rows the dataset would no longer even reach
- *  today (e.g. a row now `service > 0`, which `match` never sees). A retract
- *  zeroes trains_passenger/trains_freight and the stamp; the row becomes free
- *  for the next lower-priority pass. A dataset can only ever retract rows it
+ *  today (e.g. a row now `service > 0`, which `match` never sees). `when` may
+ *  fingerprint by the row's current values (`existingPax`/`existingFrt`) — how
+ *  the legacy class-default stamps are recognized. A retract
+ *  zeroes trains_passenger/trains_freight and the stamp; `match` STILL runs on
+ *  the row in the same pass and may immediately re-claim it (a real count that
+ *  coincidentally equals a legacy tuple is re-stamped, never lost) — such a row
+ *  counts in BOTH `retracted` and `matched`. A dataset can only ever retract rows it
  *  owns — `sourceId` is compared against the row, not trusted from the
  *  caller's match logic. Rails have no taper-style derived annotation, so a
  *  retract here is just the three payload columns. */
@@ -86,9 +102,10 @@ export interface RailRetract {
  * the file stays byte-identical.
  *
  * `match(row, i)` is invoked for every NON-SERVICE row (return `null` = leave the
- * row as-is). Do the family routing + class-default fallback inside it; for L2
- * (fill by type) it should rarely return null. `onApplied` fires only after the
- * priority gate accepts a match — count matched there, not before the gate.
+ * row as-is; source_id stays 0 and the ENGINE default table owns the unknown —
+ * see the module header's provenance-honesty rule; the old advice to fallback
+ * inside `match` was the design the 2026-07-10 purge deleted). `onApplied` fires
+ * only after the priority gate accepts a match — count matched there.
  */
 export async function writeRailTrains(
   arrowPath: string,
@@ -140,6 +157,10 @@ export async function writeRailTrains(
         railType: (rtCol?.get(i) as number) ?? 0,
         usage: (usCol?.get(i) as number) ?? 0,
         existingSourceId: src[i],
+        // Reading the seeded arrays is safe: index i is only mutated at iteration i,
+        // after this row object is built — so these are the pre-pass values.
+        existingPax: pax[i],
+        existingFrt: frt[i],
         startLat,
         startLon,
         endLat,
@@ -150,19 +171,35 @@ export async function writeRailTrains(
       }
       // Self-heal BEFORE the service-skip gate: a row this dataset owns but
       // would no longer claim is disowned even when it's now a siding (that
-      // is precisely the mis-stamp being healed) — mirrors the retract-before-
-      // coverage-gate ordering in writeRoadAadt.
+      // is precisely the mis-stamp being healed). NO `continue` — the pass
+      // falls through so `match` may re-claim the row in the SAME pass: a
+      // real measurement that coincidentally equals a legacy tuple (BE cache
+      // holds 5 genuine tram rows at exactly 200/0 — /gg Codex+Gemini
+      // consensus CRITICAL) is re-stamped immediately, never lost.
       if (retract && src[i] === retract.sourceId && retract.when(row, i)) {
         pax[i] = 0
         frt[i] = 0
         src[i] = 0
         retracted++
         any = true
-        continue
       }
       // Service tracks (yards/sidings/spurs) never inherit a count — centralized
-      // here so no enricher can forget it (the CZ 94,928-siding bug).
-      if (((svcCol?.get(i) as number) ?? 0) > 0) { skippedService++; continue }
+      // here so no enricher can forget it (the CZ 94,928-siding bug). A row the
+      // retracting source still OWNS here is stale by definition (service rows
+      // can never be legitimately stamped — this very gate blocks it), so it is
+      // cleared regardless of `when` (/gg Codex W1: the "reclassified as siding
+      // near a live stop" case, where corroboration returns when=false).
+      if (((svcCol?.get(i) as number) ?? 0) > 0) {
+        if (retract && src[i] === retract.sourceId) {
+          pax[i] = 0
+          frt[i] = 0
+          src[i] = 0
+          retracted++
+          any = true
+        }
+        skippedService++
+        continue
+      }
 
       const m = match(row, i)
       if (!m) continue

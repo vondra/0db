@@ -75,17 +75,22 @@
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { shouldOverwrite } from './lib/provenance.js'
-import { writeRailTrains } from './lib/railways-arrow.js'
+import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_CN_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
+import { logRetractSkippedIncompleteInputs } from './lib/gtfs-enrich-core.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_CN_NATIONAL_RAILWAY
 
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/cn`)
+// Hoisted so main() can verify input-file presence for the retractSafe gate.
+const RAILWAY_NATIONAL_GEOJSON = resolve(CACHE_DIR, 'railway-national.geojson')
+const METRO_LINES_GEOJSON = resolve(CACHE_DIR, 'metro-lines.geojson')
 
 const CN_BBOX: [number, number, number, number] = [18.0, 73.0, 54.0, 135.5]
 
@@ -125,9 +130,8 @@ interface RailFeat {
 function loadRails(): RailFeat[] {
   const out: RailFeat[] = []
 
-  const natPath = resolve(CACHE_DIR, 'railway-national.geojson')
-  if (existsSync(natPath)) {
-    const fc = JSON.parse(readFileSync(natPath, 'utf-8'))
+  if (existsSync(RAILWAY_NATIONAL_GEOJSON)) {
+    const fc = JSON.parse(readFileSync(RAILWAY_NATIONAL_GEOJSON, 'utf-8'))
     for (const f of fc.features || []) {
       const g = f.geometry
       if (!g) continue
@@ -146,9 +150,8 @@ function loadRails(): RailFeat[] {
     }
   }
 
-  const metroPath = resolve(CACHE_DIR, 'metro-lines.geojson')
-  if (existsSync(metroPath)) {
-    const fc = JSON.parse(readFileSync(metroPath, 'utf-8'))
+  if (existsSync(METRO_LINES_GEOJSON)) {
+    const fc = JSON.parse(readFileSync(METRO_LINES_GEOJSON, 'utf-8'))
     for (const f of fc.features || []) {
       const g = f.geometry
       if (!g) continue
@@ -237,14 +240,29 @@ function trainsFromFeature(feat: RailFeat): { pax: number; frt: number } {
   return { pax: 25, frt: 10 }
 }
 
-function classDefault(rt: number, us: number): { pax: number; frt: number } {
-  if (rt === 2) return { pax: 300, frt: 0 }  // light_rail
-  if (rt === 1) return { pax: 200, frt: 0 }  // tram
-  if (rt === 3) return { pax: 10, frt: 0 }
-  if (rt === 4) return { pax: 5, frt: 0 }
-  if (us === 1) return { pax: 10, frt: 10 }
-  if (us === 2) return { pax: 0, frt: 15 }
-  return { pax: 20, frt: 15 }  // mainline default for China
+// Retract signature for stamps the pre-2026-07-10 fallback design wrote: CN's deleted
+// class-default table (was named `classDefault` here — same disease as the other
+// enrichers' `defaultTrains`, purged with them under task #26). A row still owned by
+// MY_SOURCE_ID whose counts exactly equal its class tuple was filled by that fallback,
+// not matched to a Mainland polyline — exact-tuple + family ambiguity is negligible
+// (/tmp/quietmap-v4/gtfs-rail-misjoin.md §3), and the retract's `when` re-runs today's
+// polyline join, so a live-covered row (e.g. a Streetcar at a real 200/0) is re-stamped
+// by `match`, never disowned. No-match rows now return null: source_id stays 0 and the
+// ENGINE default table (engine/noise-compute/src/emission/railway.rs::default_traffic)
+// owns the "we don't know" case. DELETE this retract (and OLD_FALLBACK) after the world
+// rail repaint confirms 0 retractions.
+const OLD_FALLBACK = (railType: number, usage: number): [pax: number, frt: number] => {
+  if (railType === 2) return [300, 0]  // light_rail
+  if (railType === 1) return [200, 0]  // tram
+  if (railType === 3) return [10, 0]
+  if (railType === 4) return [5, 0]
+  if (usage === 1) return [10, 10]
+  if (usage === 2) return [0, 15]
+  return [20, 15]  // mainline default for China
+}
+const wasOldFallbackStamp = (row: RailRow): boolean => {
+  const [pax, frt] = OLD_FALLBACK(row.railType, row.usage)
+  return row.existingPax === pax && row.existingFrt === frt
 }
 
 async function main() {
@@ -264,6 +282,20 @@ async function main() {
   const nationalGrid = buildGrid(nationalFeats)
   console.log(`  Grid cells: national=${nationalGrid.size}, metro=${metroGrid.size}\n`)
 
+  // CRITICAL-1b (/gg Codex): a retract may only run over a PROVABLY COMPLETE input
+  // snapshot — both Mainland cache files present AND parsed to non-empty operating
+  // sets. loadRails silently skips a missing file (fine for enrichment: matching
+  // simply stamps less), but a missing/empty family grid makes the retract's
+  // polyline corroboration read "no coverage" over that whole family and disown
+  // REAL stamps. Only the retract is gated — never the stamping.
+  const incompleteInputs: string[] = []
+  if (!existsSync(RAILWAY_NATIONAL_GEOJSON)) incompleteInputs.push(`missing ${RAILWAY_NATIONAL_GEOJSON}`)
+  else if (nationalFeats.length === 0) incompleteInputs.push('railway-national.geojson parsed to zero operating lines')
+  if (!existsSync(METRO_LINES_GEOJSON)) incompleteInputs.push(`missing ${METRO_LINES_GEOJSON}`)
+  else if (metroFeats.length === 0) incompleteInputs.push('metro-lines.geojson parsed to zero operating lines')
+  const retractSafe = incompleteInputs.length === 0
+  if (!retractSafe) logRetractSkippedIncompleteInputs(incompleteInputs.join('; '))
+
   const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
   const hexDirs: string[] = []
   for (const hex of allHexes) {
@@ -277,7 +309,7 @@ async function main() {
   console.log(`  CN-bbox hexes with railways.arrow: ${hexDirs.length}`)
 
   let totalRails = 0, excluded = 0, skippedService = 0
-  let matchedMainland = 0, matchedDefault = 0
+  let matchedMainland = 0, totalRetracted = 0
   let hexesUpdated = 0
   const startTime = Date.now()
 
@@ -285,16 +317,15 @@ async function main() {
     const hex = hexDirs[hi]
 
     // FAMILY-gated routing (see the gate comment in the closure) → nearest-polyline
-    // match → CNOSSOS class-default fallback, all inside the match closure.
-    // writeRailTrains owns the service-skip, the priority gate, and the
-    // byte-identical write.
+    // match, all inside the match closure; no-match rows return null (engine
+    // default_traffic owns unknowns). writeRailTrains owns the service-skip, the
+    // priority gate, the retract self-heal, and the byte-identical write.
     const r = await writeRailTrains(resolve(H3R4_DIR, hex, 'railways.arrow'), (row) => {
       if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
       if (!inBbox(row.midLat, row.midLon, CN_BBOX)) return null
       if (inExclusion(row.midLat, row.midLon)) { excluded++; return null }
 
       const rt = row.railType
-      const us = row.usage
 
       // FAMILY GATE — which feed grids this OSM row may inherit from.
       //   rt 1 (tram) / rt 2 (light_rail) ⇒ METRO grid ONLY. A surface tram can
@@ -306,7 +337,7 @@ async function main() {
       //     tag (Mainland/4 vs /3) is the only disambiguator, so both are eligible
       //     and nearest-polyline wins. No cross-family leak: rt 1/2 still can't
       //     reach the national grid.
-      //   rt 3/4 (narrow_gauge / funicular) ⇒ no feed family → class default.
+      //   rt 3/4 (narrow_gauge / funicular) ⇒ no feed family → null (engine default).
       const grids = rt === 1 || rt === 2 ? [metroGrid] : rt === 0 ? [nationalGrid, metroGrid] : []
       if (grids.length > 0) {
         const near = nearestRail(row.midLat, row.midLon, grids, 500)
@@ -317,19 +348,34 @@ async function main() {
         }
       }
 
-      // Fallback: CNOSSOS class default (fill-by-type, never a silent track).
-      const d = classDefault(rt, us)
-      matchedDefault++
-      return { pax: d.pax, frt: d.frt, sourceId: MY_SOURCE_ID }
-    })
+      // No Mainland match (or unhandled rail_type): return null — the row stays/goes
+      // source_id=0 and the ENGINE default table (emission/railway.rs::default_traffic)
+      // owns the unknown. Never stamp a guess under MY_SOURCE_ID.
+      return null
+    }, undefined,
+    // CRITICAL-1b: retract only over a provably complete snapshot (retractSafe) —
+    // with a missing/empty Mainland file, "no polyline covers this row" is an input
+    // artifact, not evidence, and would disown REAL stamps.
+    retractSafe ? {
+      sourceId: MY_SOURCE_ID,
+      // Disown a legacy pre-2026-07-10 class-default stamp ONLY when today's join no
+      // longer reaches the row (same family routing + 500 m polyline join as `match`) —
+      // a row a live polyline still covers is re-stamped with the real count instead.
+      when: (row) => {
+        if (!wasOldFallbackStamp(row)) return false
+        const grids = row.railType === 1 || row.railType === 2 ? [metroGrid] : row.railType === 0 ? [nationalGrid, metroGrid] : []
+        return grids.length === 0 || nearestRail(row.midLat, row.midLon, grids, 500) === null
+      },
+    } : undefined)
 
     totalRails += r.rows
+    totalRetracted += r.retracted
     skippedService += r.skippedService
     if (r.updated) hexesUpdated++
 
     const elapsed = Date.now() - startTime
     if (elapsed > 10_000 && hi % 50 === 0) {
-      console.log(`  [${(elapsed / 1000).toFixed(0)}s] ${hi + 1}/${hexDirs.length}, ${matchedMainland} mainland + ${matchedDefault} default`)
+      console.log(`  [${(elapsed / 1000).toFixed(0)}s] ${hi + 1}/${hexDirs.length}, ${matchedMainland} mainland, ${totalRetracted} retracted`)
     }
   }
 
@@ -337,11 +383,13 @@ async function main() {
   console.log(`  Total rails scanned:        ${totalRails.toLocaleString()}`)
   console.log(`  Skipped service tracks:     ${skippedService.toLocaleString()}`)
   console.log(`  Excluded (neighbours):      ${excluded.toLocaleString()}`)
-  console.log(`  Matched by Mainland:        ${matchedMainland.toLocaleString()}`)
-  console.log(`  Matched by class default:   ${matchedDefault.toLocaleString()}`)
-  const tot = matchedMainland + matchedDefault
-  console.log(`  Total enriched:             ${tot.toLocaleString()} (${(100 * tot / Math.max(totalRails, 1)).toFixed(2)}%)`)
+  console.log(`  Matched by Mainland:        ${matchedMainland.toLocaleString()} (${(100 * matchedMainland / Math.max(totalRails, 1)).toFixed(2)}%)`)
+  console.log(`  Retracted legacy defaults:  ${totalRetracted.toLocaleString()}`)
   console.log(`  Hexes updated:              ${hexesUpdated}/${hexDirs.length}`)
 }
 
-main().catch(err => { console.error('Error:', err); process.exit(1) })
+// Import-safe: run only when invoked directly — importing this file must never
+// trigger a download/enrichment pass (pattern from enrich-roads-cz.ts).
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch(err => { console.error('Error:', err); process.exit(1) })
+}

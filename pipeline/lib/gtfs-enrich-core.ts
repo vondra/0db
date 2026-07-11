@@ -6,16 +6,19 @@
  * CSV parsing, GTFS date math, the calendar-midpoint Wednesday service-day picker,
  * the route_type → family classification sets, and the two shared row shapes.
  *
- * Per-country code (feed URLs, bbox + exclusion zones, `defaultTrains`/class-default
- * VALUES, match/closure logic) stays in each `enrich-railway-<cc>.ts` file — only
- * the truly identical generics live here. Implementations are kept verbatim from the
- * pre-dedup files so behavior is byte-unchanged.
+ * Per-country code (feed URLs, bbox + exclusion zones, match/closure logic) stays in
+ * each `enrich-railway-<cc>.ts` file — only the truly identical generics live here.
+ * Implementations are kept verbatim from the pre-dedup files so behavior is
+ * byte-unchanged. No-match rows return null (source_id stays 0): the ENGINE default
+ * table (engine/noise-compute/src/emission/railway.rs::default_traffic) is the single
+ * "we don't know" authority — per-country class-default stamping was purged 2026-07-10.
  */
 
-import { createReadStream, existsSync } from 'node:fs'
+import { createReadStream, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { latLngToCell } from 'h3-js'
+import { pointToSegmentDist } from './spatial.js'
 
 // ── GTFS route_type families ──
 
@@ -56,6 +59,41 @@ export interface StopTrainCount {
   family: 'rail' | 'tram'
   trains_passenger: number
   trains_freight: number
+}
+
+// ── Stop↔segment proximity join ──
+
+/** Nearest GTFS stop within `radiusM` of a railway row's segment, looked up in the
+ *  0.01°-cell stop grid every per-hex enricher builds. The longitude cell span is
+ *  latitude-aware: 0.01° lon shrinks below 500 m past ~63°N (Scandinavian feeds),
+ *  where a fixed 3×3 window silently under-searched (/gg Codex W4 — codified from
+ *  the old inline joins, now fixed once here). Latitude cells are ~1.11 km, so ±1
+ *  always covers a 500 m radius. Known, accepted limit: the search anchors on the
+ *  row MIDPOINT — a stop near the far END of a very long segment can sit outside
+ *  the window (preserved pre-purge behavior; segments are 6-120 m, negligible).
+ *  ONE source of truth for this join: the per-country `match` closures AND the
+ *  OLD_FALLBACK retract corroborations must use the same join, otherwise a row
+ *  could be disowned that `match` would still claim (or vice versa). */
+export function nearestGridStop<S extends { lat: number; lon: number }>(
+  grid: ReadonlyMap<string, S[]>,
+  row: { startLat: number; startLon: number; endLat: number; endLon: number; midLat: number; midLon: number },
+  radiusM = 500,
+): S | null {
+  let bestDist = radiusM
+  let best: S | null = null
+  const gy = Math.floor(row.midLat * 100), gx = Math.floor(row.midLon * 100)
+  // Cells needed so dx spans radiusM of longitude at this latitude.
+  const lonCellM = 1111.949 * Math.max(0.05, Math.cos((row.midLat * Math.PI) / 180))
+  const dxMax = Math.max(1, Math.ceil(radiusM / lonCellM))
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -dxMax; dx <= dxMax; dx++) {
+    const cell = grid.get(`${gy + dy}_${gx + dx}`)
+    if (!cell) continue
+    for (const sc of cell) {
+      const d = pointToSegmentDist(sc.lat, sc.lon, row.startLat, row.startLon, row.endLat, row.endLon)
+      if (d < bestDist) { bestDist = d; best = sc }
+    }
+  }
+  return best
 }
 
 // ── CSV parsing ──
@@ -166,6 +204,60 @@ export function findTargetWednesday(calendarRows: Record<string, string>[]): str
   const offset = (3 - day + 7) % 7
   mid.setDate(mid.getDate() + offset)
   return mid.toISOString().substring(0, 10).replace(/-/g, '')
+}
+
+// ── Retract safety (CRITICAL-1b) ──
+// A retract may only run over a PROVABLY COMPLETE input snapshot: when a feed
+// silently fails to load (every downloadAllGtfs tolerates per-feed failure so
+// enrichment can still stamp from the rest), the retract's join corroboration
+// reads "no coverage" over that feed's region — an input artifact, not evidence —
+// and would disown REAL stamps. These helpers carry the completeness evidence.
+
+/** '' when every configured feed is in the loaded-non-empty list; otherwise the
+ *  detail for the mandated "retract skipped — incomplete inputs (…)" log line. */
+export function describeIncompleteFeeds(
+  configuredFeedIds: readonly string[],
+  loadedNonEmptyFeedIds: readonly string[],
+): string {
+  const loaded = new Set(loadedNonEmptyFeedIds)
+  const missing = configuredFeedIds.filter(id => !loaded.has(id))
+  return missing.length === 0 ? '' : `feeds missing or parsed empty: ${missing.join(',')}`
+}
+
+/** The ONE loud line every enricher prints when it withholds `retract` from
+ *  writeRailTrains — uniform wording so ops can grep a run log for it. */
+export function logRetractSkippedIncompleteInputs(detail: string): void {
+  console.error(`\n!!! retract skipped — incomplete inputs (${detail}) — legacy OLD_FALLBACK stamps stay in place this run`)
+}
+
+// ── Merged stop-frequency cache with feed provenance ──
+// The merged CACHE_FREQUENCIES snapshot used to be a bare stops array written
+// UNCONDITIONALLY — a partial-feed run could poison it and every later
+// cache-served run would both under-enrich and (worse) pass a partial snapshot
+// to the retract. v2 records which feeds contributed non-empty parses, and the
+// enrichers only persist complete snapshots.
+
+/** `stops` is generic: per-country enrichers carry slightly different
+ *  StopTrainCount shapes (ae adds a 'metro' family). */
+interface MergedStopCacheV2<T> {
+  v: 2
+  feedsLoadedNonEmpty: string[]
+  stops: T[]
+}
+
+export function writeMergedStopCache<T>(path: string, feedsLoadedNonEmpty: string[], stops: T[]): void {
+  const payload: MergedStopCacheV2<T> = { v: 2, feedsLoadedNonEmpty, stops }
+  writeFileSync(path, JSON.stringify(payload))
+}
+
+/** `feedsLoadedNonEmpty === null` marks a legacy bare-array cache: its stops are
+ *  fine for enrichment, but its completeness is unprovable, so callers must treat
+ *  it as retract-unsafe. Refresh path: delete the cache file (feed extracts are
+ *  cached separately, so the rebuild needs no network) or --force-download. */
+export function readMergedStopCache<T>(path: string): { stops: T[]; feedsLoadedNonEmpty: string[] | null } {
+  const parsed = JSON.parse(readFileSync(path, 'utf-8')) as T[] | MergedStopCacheV2<T>
+  if (Array.isArray(parsed)) return { stops: parsed, feedsLoadedNonEmpty: null }
+  return { stops: parsed.stops ?? [], feedsLoadedNonEmpty: parsed.feedsLoadedNonEmpty ?? [] }
 }
 
 // ── Per-feed stop-frequency computation ──

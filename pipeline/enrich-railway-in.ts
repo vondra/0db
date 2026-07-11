@@ -45,7 +45,9 @@
  *
  * writeRailTrains owns the read + seed + SERVICE-SKIP + the priority gate
  * (shouldOverwrite) + fail-loud validation + byte-identical write; only the
- * per-row family routing + class-default fallback lives in the match closure.
+ * per-row family routing lives in the match closure; no-match rows stay
+ * source_id=0 (engine default_traffic owns unknowns — the class-default
+ * fallback was purged 2026-07-10, see OLD_FALLBACK retract).
  *
  * Usage:
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-in.ts
@@ -53,17 +55,22 @@
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { shouldOverwrite } from './lib/provenance.js'
-import { writeRailTrains } from './lib/railways-arrow.js'
+import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
 import { cellToLatLng } from 'h3-js'
 import { SOURCE_ID_IN_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { inBbox, pointToSegmentDist } from './lib/spatial.js'
+import { logRetractSkippedIncompleteInputs } from './lib/gtfs-enrich-core.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_IN_NATIONAL_RAILWAY
 
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/in`)
+// Hoisted so main() can verify input-file presence for the retractSafe gate.
+const RAILWAY_NETWORK_GEOJSON = resolve(CACHE_DIR, 'railway-network.geojson')
+const METRO_LINES_GEOJSON = resolve(CACHE_DIR, 'metro-lines.geojson')
 
 const IN_BBOX: [number, number, number, number] = [6.5, 68.0, 37.0, 98.0]
 
@@ -118,11 +125,9 @@ interface RailFeat {
 }
 
 function loadLivingAtlasRails(): RailFeat[] {
-  const railPath = resolve(CACHE_DIR, 'railway-network.geojson')
-  const metroPath = resolve(CACHE_DIR, 'metro-lines.geojson')
   const out: RailFeat[] = []
-  if (existsSync(railPath)) {
-    const fc = JSON.parse(readFileSync(railPath, 'utf-8'))
+  if (existsSync(RAILWAY_NETWORK_GEOJSON)) {
+    const fc = JSON.parse(readFileSync(RAILWAY_NETWORK_GEOJSON, 'utf-8'))
     for (const f of fc.features || []) {
       const g = f.geometry
       if (!g) continue
@@ -140,8 +145,8 @@ function loadLivingAtlasRails(): RailFeat[] {
       })
     }
   }
-  if (existsSync(metroPath)) {
-    const fc = JSON.parse(readFileSync(metroPath, 'utf-8'))
+  if (existsSync(METRO_LINES_GEOJSON)) {
+    const fc = JSON.parse(readFileSync(METRO_LINES_GEOJSON, 'utf-8'))
     for (const f of fc.features || []) {
       const g = f.geometry
       if (!g) continue
@@ -235,16 +240,29 @@ function trainsFromFeature(feat: RailFeat, midLat: number, midLon: number): { pa
   return { pax: 8, frt: 5 }                            // local / low-speed
 }
 
-// CNOSSOS class default fallback (when no Living Atlas match)
-function classDefault(railType: number, usage: number): { pax: number; frt: number } {
-  if (railType === 2) return { pax: 200, frt: 0 }  // light_rail (metro elevated)
-  if (railType === 1) return { pax: 200, frt: 0 }  // tram
-  if (railType === 3) return { pax: 10, frt: 0 }
-  if (railType === 4) return { pax: 5, frt: 0 }
-  // rail_type=0
-  if (usage === 1) return { pax: 5, frt: 5 }
-  if (usage === 2) return { pax: 0, frt: 10 }
-  return { pax: 12, frt: 8 }
+// Retract signature for stamps the pre-2026-07-10 fallback design wrote: IN's deleted
+// class-default table (was named `classDefault` here — same disease as the other
+// enrichers' `defaultTrains`, purged with them under task #26). A row still owned by
+// MY_SOURCE_ID whose counts exactly equal its class tuple was filled by that fallback,
+// not matched to a Living Atlas feature — exact-tuple + family ambiguity is negligible
+// (/tmp/quietmap-v4/gtfs-rail-misjoin.md §3), and the retract's `when` re-runs today's
+// feature join, so a live-covered row is re-stamped by `match`, never disowned.
+// No-match rows now return null: source_id stays 0 and the ENGINE default table
+// (engine/noise-compute/src/emission/railway.rs::default_traffic) owns the "we don't
+// know" case. DELETE this retract (and OLD_FALLBACK) after the world rail repaint
+// confirms 0 retractions.
+const OLD_FALLBACK = (railType: number, usage: number): [pax: number, frt: number] => {
+  if (railType === 2) return [200, 0]  // light_rail (metro elevated)
+  if (railType === 1) return [200, 0]  // tram
+  if (railType === 3) return [10, 0]
+  if (railType === 4) return [5, 0]
+  if (usage === 1) return [5, 5]
+  if (usage === 2) return [0, 10]
+  return [12, 8]
+}
+const wasOldFallbackStamp = (row: RailRow): boolean => {
+  const [pax, frt] = OLD_FALLBACK(row.railType, row.usage)
+  return row.existingPax === pax && row.existingFrt === frt
 }
 
 async function main() {
@@ -261,6 +279,20 @@ async function main() {
   const tramGrid = buildGrid(metroFeats)
   console.log(`  Spatial grid cells: ${railGrid.size} rail, ${tramGrid.size} tram/metro\n`)
 
+  // CRITICAL-1b (/gg Codex): a retract may only run over a PROVABLY COMPLETE input
+  // snapshot — both Living Atlas cache files present AND parsed non-empty.
+  // loadLivingAtlasRails silently skips a missing file (fine for enrichment:
+  // matching simply stamps less), but a missing/empty family grid makes the
+  // retract's feature corroboration read "no coverage" over that whole family and
+  // disown REAL stamps. Only the retract is gated — never the stamping.
+  const incompleteInputs: string[] = []
+  if (!existsSync(RAILWAY_NETWORK_GEOJSON)) incompleteInputs.push(`missing ${RAILWAY_NETWORK_GEOJSON}`)
+  else if (irFeats.length === 0) incompleteInputs.push('railway-network.geojson parsed to zero features')
+  if (!existsSync(METRO_LINES_GEOJSON)) incompleteInputs.push(`missing ${METRO_LINES_GEOJSON}`)
+  else if (metroFeats.length === 0) incompleteInputs.push('metro-lines.geojson parsed to zero features')
+  const retractSafe = incompleteInputs.length === 0
+  if (!retractSafe) logRetractSkippedIncompleteInputs(incompleteInputs.join('; '))
+
   const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
   const hexDirs: string[] = []
   for (const hex of allHexes) {
@@ -274,7 +306,7 @@ async function main() {
   console.log(`  IN-bbox hexes with railways.arrow: ${hexDirs.length}`)
 
   let totalRails = 0, excluded = 0, skippedService = 0
-  let matchedAtlas = 0, matchedDefault = 0
+  let matchedAtlas = 0, totalRetracted = 0
   let hexesUpdated = 0
   const startTime = Date.now()
 
@@ -282,20 +314,20 @@ async function main() {
     const hex = hexDirs[hi]
 
     // FAMILY routing (rail grid for rail_type 0, tram/metro grid for 1/2) →
-    // Living Atlas nearest-feature match → CNOSSOS class-default fallback, all
-    // inside the match closure. writeRailTrains owns the service-skip, the
-    // priority gate, and the byte-identical write.
+    // Living Atlas nearest-feature match, all inside the match closure; no-match
+    // rows return null (engine default_traffic owns unknowns). writeRailTrains owns
+    // the service-skip, the priority gate, the retract self-heal, and the
+    // byte-identical write.
     const r = await writeRailTrains(resolve(H3R4_DIR, hex, 'railways.arrow'), (row) => {
       if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
       if (!inBbox(row.midLat, row.midLon, IN_BBOX)) return null
       if (inAnyZone(row.midLat, row.midLon)) { excluded++; return null }
 
       const rt = row.railType
-      const us = row.usage
 
       // Heavy rail matches only IR features; tram/light_rail only metro features.
-      // A null grid (narrow gauge / funicular) falls straight to the class default,
-      // so a tram near a mainline can never inherit the mainline's suburban count.
+      // A null grid (narrow gauge / funicular) has no feed family → null (engine
+      // default), so a tram near a mainline can never inherit the mainline's count.
       const grid = rt === 0 ? railGrid : rt === 1 || rt === 2 ? tramGrid : null
       if (grid) {
         const near = nearestRail(row.midLat, row.midLon, grid, 500)
@@ -306,19 +338,35 @@ async function main() {
         }
       }
 
-      // Fallback: CNOSSOS class default (fill-by-type, never a silent track).
-      const d = classDefault(rt, us)
-      matchedDefault++
-      return { pax: d.pax, frt: d.frt, sourceId: MY_SOURCE_ID }
-    })
+      // No Living Atlas match (or unhandled rail_type): return null — the row
+      // stays/goes source_id=0 and the ENGINE default table
+      // (emission/railway.rs::default_traffic) owns the unknown. Never stamp a
+      // guess under MY_SOURCE_ID.
+      return null
+    }, undefined,
+    // CRITICAL-1b: retract only over a provably complete snapshot (retractSafe) —
+    // with a missing/empty Living Atlas file, "no feature covers this row" is an
+    // input artifact, not evidence, and would disown REAL stamps.
+    retractSafe ? {
+      sourceId: MY_SOURCE_ID,
+      // Disown a legacy pre-2026-07-10 class-default stamp ONLY when today's join no
+      // longer reaches the row (same family routing + 500 m feature join as `match`) —
+      // a row a live feature still covers is re-stamped with the real count instead.
+      when: (row) => {
+        if (!wasOldFallbackStamp(row)) return false
+        const grid = row.railType === 0 ? railGrid : row.railType === 1 || row.railType === 2 ? tramGrid : null
+        return !grid || nearestRail(row.midLat, row.midLon, grid, 500) === null
+      },
+    } : undefined)
 
     totalRails += r.rows
+    totalRetracted += r.retracted
     skippedService += r.skippedService
     if (r.updated) hexesUpdated++
 
     const elapsed = Date.now() - startTime
     if (elapsed > 10_000 && hi % 50 === 0) {
-      console.log(`  [${(elapsed / 1000).toFixed(0)}s] ${hi + 1}/${hexDirs.length}, ${matchedAtlas} atlas + ${matchedDefault} default`)
+      console.log(`  [${(elapsed / 1000).toFixed(0)}s] ${hi + 1}/${hexDirs.length}, ${matchedAtlas} atlas, ${totalRetracted} retracted`)
     }
   }
 
@@ -326,11 +374,13 @@ async function main() {
   console.log(`  Total rails scanned:        ${totalRails.toLocaleString()}`)
   console.log(`  Skipped service tracks:     ${skippedService.toLocaleString()}`)
   console.log(`  Excluded (neighbours):      ${excluded.toLocaleString()}`)
-  console.log(`  Matched by Living Atlas:    ${matchedAtlas.toLocaleString()}`)
-  console.log(`  Matched by class default:   ${matchedDefault.toLocaleString()}`)
-  const tot = matchedAtlas + matchedDefault
-  console.log(`  Total enriched:             ${tot.toLocaleString()} (${(100 * tot / Math.max(totalRails, 1)).toFixed(2)}%)`)
+  console.log(`  Matched by Living Atlas:    ${matchedAtlas.toLocaleString()} (${(100 * matchedAtlas / Math.max(totalRails, 1)).toFixed(2)}%)`)
+  console.log(`  Retracted legacy defaults:  ${totalRetracted.toLocaleString()}`)
   console.log(`  Hexes updated:              ${hexesUpdated}/${hexDirs.length}`)
 }
 
-main().catch(err => { console.error('Error:', err); process.exit(1) })
+// Import-safe: run only when invoked directly — importing this file must never
+// trigger a download/enrichment pass (pattern from enrich-roads-cz.ts).
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch(err => { console.error('Error:', err); process.exit(1) })
+}

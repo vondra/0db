@@ -22,9 +22,11 @@
  * Mirror: `https://github.com/asiripanich/bangkok-gtfs` (daily snapshots since
  * April 2022).
  *
- * Applied by: exact per-family GTFS match + CNOSSOS Thailand class defaults
- * fallback. SRT passenger stops ×2 for bidirectional travel. Metro routes
- * parsed but no matches — documented in provenance.
+ * Applied by: exact per-family GTFS match; segments the feed doesn't reach stay
+ * source_id=0 (engine default_traffic owns unknowns — the Thailand class-default
+ * fallback was purged 2026-07-10, see OLD_FALLBACK retract). SRT passenger stops
+ * ×2 for bidirectional travel. Metro routes parsed but no matches — documented
+ * in provenance.
  *
  * Usage:
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-th.ts
@@ -32,16 +34,20 @@
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-th.ts --enrich-only
  */
 
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
+import { writeFileSync, readdirSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { shouldOverwrite } from './lib/provenance.js'
-import { writeRailTrains } from './lib/railways-arrow.js'
+import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
 import { latLngToCell, cellToLatLng } from 'h3-js'
 import { SOURCE_ID_TH_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
-import { flatDist, inBbox, pointToSegmentDist } from './lib/spatial.js'
-import { RAIL_TYPES, TRAM_TYPES, METRO_TYPES, parseGtfsDate, formatDate } from './lib/gtfs-enrich-core.js'
+import { inBbox } from './lib/spatial.js'
+import {
+  RAIL_TYPES, TRAM_TYPES, METRO_TYPES, nearestGridStop, parseGtfsDate, formatDate,
+  logRetractSkippedIncompleteInputs, readMergedStopCache, writeMergedStopCache,
+} from './lib/gtfs-enrich-core.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_TH_NATIONAL_RAILWAY
@@ -350,19 +356,31 @@ function parseTime(s: string): number {
   return parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseInt(m[3])
 }
 
-// CNOSSOS class defaults (fallback for segments without GTFS match)
-function defaultTrains(railType: number, usage: number): { pax: number; frt: number } {
-  if (railType === 2) return { pax: 200, frt: 0 }  // light_rail (BTS, ARL elevated)
-  if (railType === 1) return { pax: 200, frt: 0 }  // tram (none in TH outside Bangkok BTS fallback)
-  if (railType === 3) return { pax: 20, frt: 0 }   // narrow gauge
-  if (railType === 4) return { pax: 10, frt: 0 }   // funicular
-  // rail_type=0 heavy rail
-  if (usage === 1) return { pax: 6, frt: 4 }       // SRT branch line
-  if (usage === 2) return { pax: 0, frt: 8 }       // industrial
-  return { pax: 20, frt: 10 }                      // SRT main line (Bangkok↔Chiang Mai etc.)
+// Retract signature for stamps the pre-2026-07-10 fallback design wrote: TH's deleted
+// class-default table, verbatim (differs from the canonical EU table — SRT tuples).
+// A row still owned by MY_SOURCE_ID whose counts exactly equal its class tuple was
+// filled by that fallback, not measured — exact-tuple + family ambiguity is negligible
+// (/tmp/quietmap-v4/gtfs-rail-misjoin.md §3), and the retract's `when` re-runs today's
+// stop join, so a live-covered row is re-stamped by `match`, never disowned. No-match
+// rows now return null: source_id stays 0 and the ENGINE default table
+// (engine/noise-compute/src/emission/railway.rs::default_traffic) owns the "we don't
+// know" case. DELETE this retract (and OLD_FALLBACK) after the world rail repaint
+// confirms 0 retractions.
+const OLD_FALLBACK = (railType: number, usage: number): [pax: number, frt: number] => {
+  if (railType === 2) return [200, 0]  // light_rail (BTS, ARL elevated)
+  if (railType === 1) return [200, 0]  // tram
+  if (railType === 3) return [20, 0]   // narrow gauge
+  if (railType === 4) return [10, 0]   // funicular
+  if (usage === 1) return [6, 4]       // SRT branch line
+  if (usage === 2) return [0, 8]       // industrial
+  return [20, 10]                      // SRT main line
+}
+const wasOldFallbackStamp = (row: RailRow): boolean => {
+  const [pax, frt] = OLD_FALLBACK(row.railType, row.usage)
+  return row.existingPax === pax && row.existingFrt === frt
 }
 
-async function enrichHexes(allStopCounts: StopTrainCount[]): Promise<void> {
+async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean): Promise<void> {
   // Index stops by (hex, family)
   const stopsByHexFam = new Map<string, StopTrainCount[]>()
   for (const sc of allStopCounts) {
@@ -374,7 +392,8 @@ async function enrichHexes(allStopCounts: StopTrainCount[]): Promise<void> {
   for (const k of stopsByHexFam.keys()) hexesWithStops.add(k.split('/')[0])
   console.log(`  GTFS stops span ${hexesWithStops.size} H3R4 hexes`)
 
-  // Scan all TH-bbox hexes (not just ones with stops) so we apply class defaults everywhere
+  // Scan all TH-bbox hexes (not just ones with stops) so the OLD_FALLBACK retract
+  // reaches hexes whose stop coverage vanished (class defaults themselves are purged)
   const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
   const thHexes: string[] = []
   for (const hex of allHexes) {
@@ -386,7 +405,7 @@ async function enrichHexes(allStopCounts: StopTrainCount[]): Promise<void> {
   console.log(`  TH hexes with railways.arrow: ${thHexes.length}`)
 
   let totalRails = 0, skippedService = 0, skippedExisting = 0, excluded = 0
-  let matchedGtfs = 0, matchedDefaults = 0
+  let matchedGtfs = 0, totalRetracted = 0
   let hexesUpdated = 0
   const startTime = Date.now()
 
@@ -408,51 +427,50 @@ async function enrichHexes(allStopCounts: StopTrainCount[]): Promise<void> {
     const railGrid = buildGrid('rail')
 
     // FAMILY routing (tram grid for rail_type 1/2, rail grid for 0) → GTFS
-    // nearest-stop match → CNOSSOS class-default fallback, all inside the match
-    // closure. writeRailTrains owns the service-skip, the priority gate, and the
-    // byte-identical write.
+    // nearest-stop match, all inside the match closure; no-match rows return null
+    // (engine default_traffic owns unknowns). writeRailTrains owns the service-skip,
+    // the priority gate, the retract self-heal, and the byte-identical write.
     const r = await writeRailTrains(resolve(H3R4_DIR, hex, 'railways.arrow'), (row) => {
       if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
       if (!inBbox(row.midLat, row.midLon, TH_BBOX)) return null
       if (inExclusion(row.midLat, row.midLon)) { excluded++; return null }
 
       const rt = row.railType
-      const us = row.usage
-
       const grid = rt === 1 || rt === 2 ? tramGrid : rt === 0 ? railGrid : null
-      if (grid && grid.size > 0) {
-        let bestDist = 500
-        let bestStop: StopTrainCount | null = null
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            const k = `${Math.floor(row.midLat * 100) + dy}_${Math.floor(row.midLon * 100) + dx}`
-            const cell = grid.get(k)
-            if (!cell) continue
-            for (const sc of cell) {
-              const d = pointToSegmentDist(sc.lat, sc.lon, row.startLat, row.startLon, row.endLat, row.endLon)
-              if (d < bestDist) { bestDist = d; bestStop = sc }
-            }
-          }
-        }
-        if (bestStop) {
-          matchedGtfs++
-          return { pax: bestStop.trains_passenger, frt: bestStop.trains_freight, sourceId: MY_SOURCE_ID }
-        }
+      const bestStop = grid ? nearestGridStop(grid, row) : null
+      if (bestStop) {
+        matchedGtfs++
+        return { pax: bestStop.trains_passenger, frt: bestStop.trains_freight, sourceId: MY_SOURCE_ID }
       }
 
-      // Fallback: CNOSSOS class default (fill-by-type, never a silent track).
-      const def = defaultTrains(rt, us)
-      matchedDefaults++
-      return { pax: def.pax, frt: def.frt, sourceId: MY_SOURCE_ID }
-    })
+      // No GTFS match (or unhandled rail_type): return null — the row stays/goes
+      // source_id=0 and the ENGINE default table (emission/railway.rs::default_traffic)
+      // owns the unknown. Never stamp a guess under MY_SOURCE_ID.
+      return null
+    }, undefined,
+    // CRITICAL-1b: retract only over a provably complete snapshot (retractSafe) —
+    // with an empty/failed feed parse, "no stop covers this row" is an input
+    // artifact, not evidence, and would disown REAL stamps.
+    retractSafe ? {
+      sourceId: MY_SOURCE_ID,
+      // Disown a legacy pre-2026-07-10 class-default stamp ONLY when today's join no
+      // longer reaches the row (same family routing + 500 m grid join as `match`) —
+      // a row a live stop still covers is re-stamped with the real count instead.
+      when: (row) => {
+        if (!wasOldFallbackStamp(row)) return false
+        const grid = row.railType === 1 || row.railType === 2 ? tramGrid : row.railType === 0 ? railGrid : null
+        return !grid || nearestGridStop(grid, row) === null
+      },
+    } : undefined)
 
     totalRails += r.rows
+    totalRetracted += r.retracted
     skippedService += r.skippedService
     if (r.updated) hexesUpdated++
 
     const elapsed = Date.now() - startTime
     if (elapsed > 10_000 && hi % 20 === 0) {
-      console.log(`  [${(elapsed / 1000).toFixed(0)}s] ${hi + 1}/${thHexes.length} hexes, ${matchedGtfs} GTFS + ${matchedDefaults} defaults`)
+      console.log(`  [${(elapsed / 1000).toFixed(0)}s] ${hi + 1}/${thHexes.length} hexes, ${matchedGtfs} GTFS, ${totalRetracted} retracted`)
     }
   }
 
@@ -461,9 +479,8 @@ async function enrichHexes(allStopCounts: StopTrainCount[]): Promise<void> {
   console.log(`  Skipped service tracks:   ${skippedService.toLocaleString()}`)
   console.log(`  Skipped already enriched: ${skippedExisting.toLocaleString()}`)
   console.log(`  Excluded (neighbours):    ${excluded.toLocaleString()}`)
-  console.log(`  Matched by GTFS:          ${matchedGtfs.toLocaleString()}`)
-  console.log(`  Matched by class default: ${matchedDefaults.toLocaleString()}`)
-  console.log(`  Total matched:            ${(matchedGtfs + matchedDefaults).toLocaleString()} (${((matchedGtfs + matchedDefaults) / Math.max(totalRails, 1) * 100).toFixed(2)}%)`)
+  console.log(`  Matched by GTFS:          ${matchedGtfs.toLocaleString()} (${(matchedGtfs / Math.max(totalRails, 1) * 100).toFixed(2)}%)`)
+  console.log(`  Retracted legacy defaults: ${totalRetracted.toLocaleString()}`)
   console.log(`  Hexes updated:            ${hexesUpdated}/${thHexes.length}`)
 }
 
@@ -472,21 +489,47 @@ async function main() {
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
   console.log(`  Cache:    ${CACHE_DIR}`)
 
+  // CRITICAL-1b (/gg Codex): a retract may only run over a PROVABLY COMPLETE input
+  // snapshot. TH has a SINGLE feed, so non-empty stops ARE the completeness proof
+  // (both fresh and cached — a legacy bare-array cache proves itself the same way).
+  // An empty snapshot would make the retract's join corroboration read "no coverage"
+  // nationwide and wipe every legacy TH stamp. Only the retract is gated.
   let merged: StopTrainCount[]
+  let retractUnsafeDetail: string
   if (!forceDownload && existsSync(CACHE_FREQUENCIES)) {
     console.log(`\n  Using cached stop frequencies: ${CACHE_FREQUENCIES}`)
-    merged = JSON.parse(readFileSync(CACHE_FREQUENCIES, 'utf-8'))
+    const cached = readMergedStopCache<StopTrainCount>(CACHE_FREQUENCIES)
+    merged = cached.stops
+    retractUnsafeDetail = merged.length > 0 ? '' : `cached snapshot is empty: ${CACHE_FREQUENCIES}`
     console.log(`  ${merged.length} stops in cache`)
   } else {
     const dir = await downloadGtfs()
     merged = await computeStopFrequencies(dir)
-    writeFileSync(CACHE_FREQUENCIES, JSON.stringify(merged))
-    console.log(`  Cached frequencies to ${CACHE_FREQUENCIES}`)
+    retractUnsafeDetail = merged.length > 0 ? '' : 'namtang feed parsed to zero rail stops'
+    if (retractUnsafeDetail === '') {
+      writeMergedStopCache(CACHE_FREQUENCIES, ['namtang'], merged)
+      console.log(`  Cached frequencies to ${CACHE_FREQUENCIES}`)
+    } else {
+      // Never persist an empty snapshot: a poisoned cache would silently starve
+      // every later cache-served run (both enrichment and the retract evidence).
+      console.log(`  NOT caching empty snapshot (${retractUnsafeDetail})`)
+    }
+  }
+  const retractSafe = retractUnsafeDetail === ''
+  if (!retractSafe) logRetractSkippedIncompleteInputs(retractUnsafeDetail)
+
+  if (merged.length === 0) {
+    console.log(`\nNo GTFS data to enrich. Exiting.`)
+    return
   }
 
   console.log(`\n  Enriching railways.arrow files...`)
-  await enrichHexes(merged)
+  await enrichHexes(merged, retractSafe)
   console.log(`\n=== Done ===`)
 }
 
-main().catch(err => { console.error('Error:', err); process.exit(1) })
+// Import-safe: run only when invoked directly — importing this file must never
+// trigger a download/enrichment pass (pattern from enrich-roads-cz.ts).
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch(err => { console.error('Error:', err); process.exit(1) })
+}
