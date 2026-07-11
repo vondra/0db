@@ -388,7 +388,7 @@ function enrichHexes(
     return best
   }
 
-  let totalRails = 0, totalMatched = 0, totalRetracted = 0, hexesUpdated = 0, skippedService = 0
+  let totalRails = 0, totalMatched = 0, totalRetracted = 0, totalSilent = 0, hexesUpdated = 0, skippedService = 0
 
   for (const hexId of hexDirs) {
     const railPath = resolve(H3R4_DIR, hexId, 'railways.arrow')
@@ -458,7 +458,9 @@ function enrichHexes(
           sourceId[i] = 0
           retractedIdx.push(i) // divisor reset below — a stale ×N must not halve the engine default
           hexRetracted++
-          continue
+          // NO continue — fall through (mirrors writeRailTrains): the row now
+          // reaches the matcher, and a CZPTT-unknown line picks up its
+          // timetable-silent residual in this SAME pass instead of the next.
         }
       }
 
