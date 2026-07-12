@@ -351,6 +351,10 @@ async function main() {
         if (!source) return null  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
         const split = splitVehicles(aadt, tier)
+        // regNear.feat.lhrt is a raw `double` gated only by `> 0` (no lower floor) —
+        // a sub-~1 LHRT rounds every class share to zero at any tier's split (#31.4).
+        // Never stamp 0/0/0/0 under this measured id; treat it as unmatched instead.
+        if (split.light + split.medium + split.heavy + split.moto === 0) return null
         return {
           light: split.light, medium: split.medium,
           heavy: split.heavy, moto: split.moto, sourceId: MY_SOURCE_ID,

@@ -57,7 +57,16 @@ interface CensusSection {
 async function downloadTmja(): Promise<CensusSection[]> {
   if (!forceDownload && existsSync(CACHE_JSON)) {
     console.log(`  Using cached: ${CACHE_JSON}`)
-    return JSON.parse(readFileSync(CACHE_JSON, 'utf-8'))
+    // The cache may predate the zero-split filter in parseCsvFiles below — the
+    // same filter must run on BOTH load paths or a stale cache re-trips the
+    // #31.4 writer guard (writeRoadAadt rejects an all-zero payload under a
+    // measured id).
+    const cached: CensusSection[] = JSON.parse(readFileSync(CACHE_JSON, 'utf-8'))
+    const usable = cached.filter((s) => s.aadt_light + s.aadt_medium + s.aadt_heavy + s.aadt_moto > 0)
+    if (usable.length < cached.length) {
+      console.log(`  ${cached.length - usable.length} cached sections dropped (TMJA rounds to zero AADT split — cannot stamp zeros under a measured id)`)
+    }
+    return usable
   }
 
   mkdirSync(CACHE_DIR, { recursive: true })
@@ -108,6 +117,7 @@ function parseCsvFiles(): CensusSection[] {
 
     let parsed = 0
     let skipped = 0
+    let skippedZeroSplit = 0
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i].split(';')
       const route = cols[iRoute] || ''
@@ -154,10 +164,19 @@ function parseCsvFiles(): CensusSection[] {
       const aadt_heavy = totalHV - aadt_medium
       const aadt_light = Math.round(tmja - totalHV - aadt_moto)
 
+      // A TMJA under 0.5 rounds every class to zero (sum = round(tmja) exactly,
+      // by construction above) — the #31.4 writer guard rejects an all-zero
+      // payload under this MEASURED id, so skip and count rather than fabricate
+      // a "surveyed as zero" claim.
+      if (aadt_light + aadt_medium + aadt_heavy + aadt_moto === 0) {
+        skippedZeroSplit++
+        continue
+      }
+
       sections.push({ route, ref, lat, lon, coords, tmja: Math.round(tmja), ratio_pl: ratioHV, aadt_light, aadt_medium, aadt_heavy, aadt_moto })
       parsed++
     }
-    console.log(`  ${label}: ${parsed} sections, ${skipped} skipped`)
+    console.log(`  ${label}: ${parsed} sections, ${skipped} skipped, ${skippedZeroSplit} skipped (rounds to zero AADT split)`)
   }
 
   writeFileSync(CACHE_JSON, JSON.stringify(sections))

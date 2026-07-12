@@ -150,7 +150,12 @@ function parseStations(geojson: any): Map<string, TgmStation[]> {
 
     // TGM value
     const tgm = props.TGM ?? props.tgm
-    const aadt = typeof tgm === 'number' ? tgm : parseFloat(String(tgm || ''))
+    const tgmFloat = typeof tgm === 'number' ? tgm : parseFloat(String(tgm || ''))
+    // Check the ROUNDED value, not the raw float: a TGM in (0, 0.5) is truthy and > 0
+    // pre-rounding but Math.round()s to zero traffic — splitTgm would then stamp
+    // 0/0/0/0 under this measured id (#31.4). Zero-traffic TGM joins the same skip
+    // bucket as "no TGM" — they mean the same thing downstream.
+    const aadt = Math.round(tgmFloat)
     if (!aadt || isNaN(aadt) || aadt <= 0) { skippedNoTgm++; continue }
 
     // Coordinates (Point geometry: [lon, lat, optional z])
@@ -165,7 +170,7 @@ function parseStations(geojson: any): Map<string, TgmStation[]> {
     const ref = normalizeAnasRef(strada)
     if (!ref) { skippedNoRef++; continue }
 
-    const station: TgmStation = { ref, aadt: Math.round(aadt), lat, lon }
+    const station: TgmStation = { ref, aadt, lat, lon }
     if (!byRef.has(ref)) byRef.set(ref, [])
     byRef.get(ref)!.push(station)
   }

@@ -108,7 +108,11 @@ function parseTramos(): TramoSection[] {
     const imdLig = parseFloat(props.imdlig || '0')
     const imdPes = parseFloat(props.imdpes || '0')
 
-    if (!via || imdTot <= 0) { skipped++; continue }
+    // NaN-safe positive check: a few MITMA tramos carry a non-numeric imdtot;
+    // `imdTot <= 0` let NaN through (NaN<=0 is false) and the match's ||0
+    // fallbacks then stamped 0/0/0/0 under the measured id — the exact shape
+    // the #31.4 writer guard rejects (it halted the world chain here).
+    if (!via || !(imdTot > 0)) { skipped++; continue }
 
     // Flatten MultiLineString → [lon, lat] vertices; matched per-segment, not by centroid.
     const rawCoords = feat.geometry?.coordinates
@@ -214,13 +218,14 @@ async function enrichArrows(sections: TramoSection[]): Promise<void> {
 
         // Match within 30 km along ref (corridors are long)
         if (!best || bestDist >= 30_000) return null
-        // `|| 0`: a few MITMA tramos have a non-numeric imdtot → NaN aadt (the
-        // `imdTot <= 0` parse skip misses NaN). The old code coerced these to 0 via
-        // Int32Array assignment; reproduce that exactly (writeRoadAadt rejects NaN).
-        return {
-          light: best.aadt_light || 0, medium: best.aadt_medium || 0,
-          heavy: best.aadt_heavy || 0, moto: best.aadt_moto || 0, sourceId: MY_SOURCE_ID,
-        }
+        // NaN tramos are skipped at parse now; `|| 0` stays as a belt for a
+        // single NaN class column. If EVERY class still lands on 0 (tiny
+        // imdTot with NaN splits), skip — never stamp zeros under a measured
+        // id (#31.4).
+        const light = best.aadt_light || 0, medium = best.aadt_medium || 0
+        const heavy = best.aadt_heavy || 0, moto = best.aadt_moto || 0
+        if (light + medium + heavy + moto === 0) return null
+        return { light, medium, heavy, moto, sourceId: MY_SOURCE_ID }
       },
       () => { matched++ },
     )

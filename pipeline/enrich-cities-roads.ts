@@ -268,6 +268,7 @@ async function enrichCity(slug: string): Promise<void> {
   }
 
   let totalMatched = 0
+  let zeroSplitSkipped = 0
   for (const hex of hexes) {
     const res = await writeRoadAadt(resolve(H3R4_DIR, hex, 'roads.arrow'), (row): RoadAadt | null => {
       // Rank fast-exit first (cheap), THEN the polygon gate — the
@@ -280,6 +281,16 @@ async function enrichCity(slug: string): Promise<void> {
         (row.name ? byName.get(normStreet(row.name)) : undefined) ??
         (geoRecs.length > 0 ? nearestGeoRec(geoRecs, row, capM) : undefined)
       if (!rec) return null
+      // Generic guard for EVERY adapter (Praha's length-weighted mean, Wien's
+      // kfz-minus-lkw clamp, Brno's thousands split — and any future city):
+      // each can legitimately round every class to zero for a low-traffic
+      // street/station. Catching it HERE, after city.load() and downstream of
+      // any adapter cache, means no per-adapter cache-bypass duplication is
+      // needed (#31.4 — never stamp zeros under a measured id).
+      if (rec.aadtLight + rec.aadtMedium + rec.aadtHeavy + rec.aadtMoto === 0) {
+        zeroSplitSkipped++
+        return null
+      }
       return {
         light: rec.aadtLight,
         medium: rec.aadtMedium,
@@ -290,7 +301,8 @@ async function enrichCity(slug: string): Promise<void> {
     }, undefined, city.coverage)
     totalMatched += res.matched
   }
-  console.log(`[cities] ${slug}: stamped ${totalMatched} rows across ${hexes.length} hexes`)
+  const zeroNote = zeroSplitSkipped > 0 ? ` (${zeroSplitSkipped} rows skipped: zero AADT split under a measured id)` : ''
+  console.log(`[cities] ${slug}: stamped ${totalMatched} rows across ${hexes.length} hexes${zeroNote}`)
   if (totalMatched === 0) {
     throw new Error(`[cities] ${slug}: 0 rows matched — name normalization or gate regression?`)
   }

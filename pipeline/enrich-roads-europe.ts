@@ -333,13 +333,16 @@ async function enrichHexes(allRecords: Map<string, TrafficRecord[]>): Promise<{
         const mediumAadt = totalAadt * 0.02
         const lightAadt = totalAadt - heavyAadt - motoAadt - mediumAadt
 
-        return {
-          light: Math.max(0, Math.round(lightAadt)),
-          medium: Math.max(0, Math.round(mediumAadt)),
-          heavy: Math.max(0, Math.round(heavyAadt)),
-          moto: Math.max(0, Math.round(motoAadt)),
-          sourceId: MY_SOURCE_ID,
-        }
+        const light = Math.max(0, Math.round(lightAadt))
+        const medium = Math.max(0, Math.round(mediumAadt))
+        const heavy = Math.max(0, Math.round(heavyAadt))
+        const moto = Math.max(0, Math.round(motoAadt))
+        // record.aadt is itself a rounded value (parseCity) and can round below 1
+        // for a sub-0.5 raw reading — every class then rounds to zero. Never stamp
+        // that under this MEASURED id (#31.4); the row falls through to a
+        // lower-priority enricher instead.
+        if (light + medium + heavy + moto === 0) return null
+        return { light, medium, heavy, moto, sourceId: MY_SOURCE_ID }
       },
       (row) => { matchByClass.get(row.roadClass)!.matched++ },
     )

@@ -144,12 +144,13 @@ async function loadDrrAadt(): Promise<Map<string, DrrAadt>> {
   const text = readFileSync(path, 'utf-8')
   const rows = parseCsv(text)
   const out = new Map<string, DrrAadt>()
+  let skippedNoSplit = 0
   for (const r of rows) {
     const code = (r['road_code'] || '').trim()
     if (!code) continue
     const aadt = parseFloat(r['sum_AADT'] || '0')
     if (!isFinite(aadt) || aadt <= 0) continue
-    out.set(code, {
+    const rec: DrrAadt = {
       road_code: code,
       aadt_total: aadt,
       mc: parseFloat(r['MC'] || '0'),
@@ -164,9 +165,16 @@ async function loadDrrAadt(): Promise<Map<string, DrrAadt>> {
       art6: parseFloat(r['ART6'] || '0'),
       bd: parseFloat(r['BD'] || '0'),
       drt: parseFloat(r['DRT'] || '0'),
-    })
+    }
+    // sum_AADT can be positive while every per-class column (MC/SV/SVT/TB2/.../DRT)
+    // is blank — the same shape as DE's BASt SVZ sections (#31.4): drrToCnossos
+    // would then compute an all-zero split under this MEASURED id. Skip and count
+    // rather than fabricate a class breakdown the source never published.
+    const split = drrToCnossos(rec)
+    if (split.light + split.medium + split.heavy + split.moto === 0) { skippedNoSplit++; continue }
+    out.set(code, rec)
   }
-  console.log(`  DRR roads loaded: ${out.size}`)
+  console.log(`  DRR roads loaded: ${out.size}, ${skippedNoSplit} skipped (sum_AADT without class split)`)
   return out
 }
 

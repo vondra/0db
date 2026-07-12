@@ -228,10 +228,26 @@ export function parseGprXls(path: string, label: string): Map<string, XlsRecord>
 
 // ── Step 3: load SHP and join with XLS ──
 
+/** Neither the XLS join (independent columns — blank class fields under a
+ *  published SDRR total) nor the SDRR-only fallback (total → class-share
+ *  split, rounds to zero for a tiny total) can prove a non-zero split up
+ *  front — filter once, here, rather than at each of the three push sites
+ *  below (#31.4: writeRoadAadt rejects an all-zero payload under a measured
+ *  id). Applied to BOTH the fresh-build result and the cached-JSON path
+ *  (the cache may predate this filter). */
+function dropZeroSplit(segments: SegmentRecord[], label: string): SegmentRecord[] {
+  const usable = segments.filter((s) => s.aadt_light + s.aadt_medium + s.aadt_heavy + s.aadt_moto > 0)
+  if (usable.length < segments.length) {
+    console.log(`  ${label}: ${segments.length - usable.length} segments dropped (SDRR total without class split — cannot stamp zeros under a measured id)`)
+  }
+  return usable
+}
+
 async function buildSegments(): Promise<SegmentRecord[]> {
   if (!forceDownload && existsSync(CACHE_PARSED)) {
     console.log(`  Using cached parsed segments: ${CACHE_PARSED}`)
-    return JSON.parse(readFileSync(CACHE_PARSED, 'utf-8'))
+    const cached: SegmentRecord[] = JSON.parse(readFileSync(CACHE_PARSED, 'utf-8'))
+    return dropZeroSplit(cached, 'cached')
   }
 
   console.log(`  Loading national SHP via shpjs...`)
@@ -307,9 +323,11 @@ async function buildSegments(): Promise<SegmentRecord[]> {
   }
   console.log(`  Provincial: ${provincialAdded} added (no geometry, ref-only matching)`)
 
-  writeFileSync(CACHE_PARSED, JSON.stringify(segments))
-  console.log(`  Cached ${segments.length} segments to ${CACHE_PARSED}`)
-  return segments
+  const usable = dropZeroSplit(segments, 'fresh-parsed')
+
+  writeFileSync(CACHE_PARSED, JSON.stringify(usable))
+  console.log(`  Cached ${usable.length} segments to ${CACHE_PARSED}`)
+  return usable
 }
 
 function extractCentroid(geom: any): [number, number] | null {

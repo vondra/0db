@@ -386,6 +386,12 @@ async function main() {
         if (aadt === 0) return null  // A.1: unmatched → source_id=0 → engine country-tier cascade
 
         const split = splitVehicles(aadt, tier, region, mining && tier === 0)
+        // A small-but-real dIMD (raw MTC GeoJSON float, no integer floor) can round
+        // every class to zero: the mining split's dominant share is only 45% (<50%),
+        // so aadt=1 alone gives light=round(0.45)=0 across all four classes. The
+        // #31.4 writer guard rejects an all-zero payload under this MEASURED id —
+        // skip rather than fabricate a "surveyed as zero" claim.
+        if (split.light + split.medium + split.heavy + split.moto === 0) return null
         return {
           light: split.light, medium: split.medium,
           heavy: split.heavy, moto: split.moto, sourceId: MY_SOURCE_ID,

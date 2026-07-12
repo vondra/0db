@@ -52,7 +52,16 @@ interface CountPoint {
 async function downloadDft(): Promise<CountPoint[]> {
   if (!forceDownload && existsSync(CACHE_JSON)) {
     console.log(`  Using cached: ${CACHE_JSON}`)
-    return JSON.parse(readFileSync(CACHE_JSON, 'utf-8'))
+    // The cache predates the class-split filter in parseCsv below — a count point
+    // can carry a positive all_motor_vehicles total while the five individual class
+    // columns are blank (the BASt/DE shape, #31.4); the same filter must run on
+    // BOTH load paths or a stale cache re-trips writeRoadAadt's measured-zero guard.
+    const cached: CountPoint[] = JSON.parse(readFileSync(CACHE_JSON, 'utf-8'))
+    const usable = cached.filter((p) => p.aadt_light + p.aadt_medium + p.aadt_heavy + p.aadt_moto > 0)
+    if (usable.length < cached.length) {
+      console.log(`  ${cached.length - usable.length} cached points dropped (AADF total without class split — cannot stamp zeros under a measured id)`)
+    }
+    return usable
   }
 
   mkdirSync(CACHE_DIR, { recursive: true })
@@ -134,9 +143,15 @@ function parseCsv(csvPath: string): CountPoint[] {
   // A1(M) that took the traffic opened 2009. 10,582 of 44,319 points (24 %) are that old,
   // 186 of them motorway-calibre (>30k) — measured 2026-07-03, task #14.
   const maxYear = Math.max(...all.map(p => p.year))
-  const points = all.filter(p => p.year > maxYear - 10)
+  const recent = all.filter(p => p.year > maxYear - 10)
+  // all_motor_vehicles (total, checked above) is a separate DfT column from the five
+  // per-class columns — a blank cars/LGV/bus/HGV/moto cell silently becomes 0 via
+  // `|| 0` while total stays positive (the BASt/DE shape, #31.4): stamping that under
+  // this measured id would write 0/0/0/0. Skip and count instead.
+  const points = recent.filter(p => p.aadt_light + p.aadt_medium + p.aadt_heavy + p.aadt_moto > 0)
+  const skippedNoSplit = recent.length - points.length
   writeFileSync(CACHE_JSON, JSON.stringify(points))
-  console.log(`  ${points.length} count points (most recent year per point; dropped ${all.length - points.length} not re-counted since ${maxYear - 10})`)
+  console.log(`  ${points.length} count points (most recent year per point; dropped ${all.length - recent.length} not re-counted since ${maxYear - 10}, ${skippedNoSplit} skipped (AADF total without class split))`)
   console.log(`  By category: M=${points.filter(p=>p.road_category==='M').length} A=${points.filter(p=>p.road_category==='PA'||p.road_category==='TA').length} B=${points.filter(p=>p.road_category==='PB'||p.road_category==='TB').length}`)
   return points
 }
