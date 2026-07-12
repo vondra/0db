@@ -161,11 +161,17 @@ pub struct DatasetMeta {
     pub year: Option<u16>,
     pub license: Option<&'static str>,
     pub url: Option<&'static str>,
+    /// Provenance tier of this dataset, forwarded verbatim so the popup UI can
+    /// label measured vs national-proxy without re-deriving from a second
+    /// registry (the Node/Rust split moved DatasetMeta into Rust for exactly
+    /// this — 0db-codex ProvenanceTier consumer). Wire = the serde-rename
+    /// kebab (`"national-measured"`, `"national-proxy"`, …).
+    pub tier: Provenance,
 }
 
-/// `dataset_meta(id)` returns the wire-shape `DatasetMeta { name,
-/// year, license, url }` used for popup display. `None` for id 0 /
-/// unknown ids — the popup then renders its per-kind fallback line.
+/// `dataset_meta(id)` returns the wire-shape `DatasetMeta { name, year,
+/// license, url, tier }` used for popup display. `None` for id 0 / unknown
+/// ids — the popup then renders its per-kind fallback line.
 pub fn dataset_meta(id: u16) -> Option<DatasetMeta> {
     if id == 0 {
         return None; // sentinel row exists in SOURCES but is not a dataset
@@ -175,6 +181,7 @@ pub fn dataset_meta(id: u16) -> Option<DatasetMeta> {
         year: s.year,
         license: s.license,
         url: s.url,
+        tier: s.provenance,
     })
 }
 
@@ -1298,6 +1305,26 @@ mod sources_tests {
     fn dataset_meta_zero_is_none() {
         assert!(crate::sources::dataset_meta(0).is_none());
         assert!(crate::sources::dataset_meta(20).is_some()); // cz-rsd
+    }
+
+    #[test]
+    fn dataset_meta_tier_serializes() {
+        // The popup UI (0db-codex ProvenanceTier) reads DatasetMeta.tier to
+        // label measured vs national-proxy. Pin the wire strings so a rename
+        // can't silently break the consumer: id 20 = national-measured,
+        // 1013/2037 = national-proxy.
+        let m20 = crate::sources::dataset_meta(20).unwrap(); // cz-rsd-scitani
+        assert_eq!(m20.tier, Provenance::NationalMeasured);
+        assert_eq!(
+            serde_json::to_value(m20).unwrap()["tier"],
+            "national-measured"
+        );
+        for proxy in [1013u16, 2037] {
+            // bo-national-roads, in-national-railway
+            let m = crate::sources::dataset_meta(proxy).unwrap();
+            assert_eq!(m.tier, Provenance::NationalProxy);
+            assert_eq!(serde_json::to_value(m).unwrap()["tier"], "national-proxy");
+        }
     }
 
     #[test]
