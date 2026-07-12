@@ -500,8 +500,9 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
       layer: 'railways',
       country: null,
       args: c.present ? ['--enrich-only'] : [],
+      expectMinInputs: 23, // #31.6: all 23 GTFS feeds must load non-empty; the enricher emits QM_COMPLETENESS so a partial (au-vic yields 0) is recorded, not silently stamped.
       notes:
-        'Continental GTFS aggregate (23 feeds incl. IN/US/CA/AU — one shared source id). NEVER pass --feed in a chain run: any subset forces retract-unsafe for the whole pass. Cache is NOT year-stamped (data/enrichment/global/gtfs). KNOWN GAP (#31.6, fix deferred into the #29 feed work): no completeness floor on STAMPING — a missing feed only withholds retract (retract-unsafe machinery), the pass still stamps from the partial subset and exits 0; the cache is staged in the FLAT per-feed layout (stops.txt beside gtfs.zip), accepted by the loader since #31; verify per-feed stops.txt before a world run.',
+        'Continental GTFS aggregate (23 feeds incl. IN/US/CA/AU — one shared source id). NEVER pass --feed in a chain run: any subset forces retract-unsafe for the whole pass. Cache is NOT year-stamped (data/enrichment/global/gtfs). #31.6: the enricher now emits a QM_COMPLETENESS marker (feeds-loaded/23) and this floor records the gap — au-vic (nested PTV zip-of-zips) currently loads 0, so a full run reports 22/23 partial; it needs nested-zip extraction (a namespaced GTFS merge, tracked) before a clean world run. FLAT per-feed cache layout accepted since #31.',
       skipReason: !covered
         ? `no feed covers ${scope.iso2} (feed countries: ${[...RAILWAY_EUROPE_FEED_COUNTRIES].join(' ')})`
         : c.present

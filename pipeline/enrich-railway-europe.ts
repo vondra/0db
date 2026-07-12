@@ -961,13 +961,29 @@ async function main() {
     }
   }
 
+  const failedFeedIds = feedResults.filter(r => r.failed).map(r => r.id)
+  const emptyFeedIds = feedResults.filter(r => !r.failed && r.stops === 0).map(r => r.id)
+
+  // #31.6 completeness marker → chain status.json + the completeness floor.
+  // `actual` = feeds that loaded non-empty; a subset --feed run reports against
+  // its own count (never claims the full 23). A full run short of FEEDS.length
+  // is `partial` — au-vic (nested PTV zip-of-zips) currently yields 0 and the
+  // step stamped 369k segs from the other 22 and passed; the floor now records
+  // that gap instead of hiding it. KNOWN: au-vic needs nested-zip extraction
+  // (a namespaced GTFS merge — focused fix, tracked) to reach 23/23.
+  {
+    const loaded = feedResults.filter((r) => !r.failed && r.stops > 0).length
+    const denom = requestedFeeds ? feeds.length : FEEDS.length
+    const state = loaded >= denom ? 'complete' : loaded === 0 ? 'missing' : 'partial'
+    const detail = `${loaded}/${denom} feeds loaded${failedFeedIds.length ? `; failed: ${failedFeedIds.join(',')}` : ''}${emptyFeedIds.length ? `; empty: ${emptyFeedIds.join(',')}` : ''}`
+    console.log(`QM_COMPLETENESS ${JSON.stringify({ actual: loaded, state, detail })}`)
+  }
+
   // CRITICAL-1b (/gg Codex): a retract may only run over a PROVABLY COMPLETE input
   // snapshot — every configured feed loaded non-empty, no --feed subset. Otherwise
   // the retract's join corroboration reads "no coverage" where the input simply was
   // not loaded and disowns REAL stamps. Enrichment (stamping) stays allowed on a
   // partial snapshot — only the retract is gated.
-  const failedFeedIds = feedResults.filter(r => r.failed).map(r => r.id)
-  const emptyFeedIds = feedResults.filter(r => !r.failed && r.stops === 0).map(r => r.id)
   const retractSafe = requestedFeeds === null && failedFeedIds.length === 0 && emptyFeedIds.length === 0
   if (!retractSafe) {
     const detail = [
