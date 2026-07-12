@@ -8,10 +8,12 @@
  * direct anchors for OUR rail traffic inputs (the rail-freight-R1/R2 gap),
  * which is this network's primary value. Report states U = 1.3 dB (k=2).
  *
- * Coordinates come from pipeline/validation/eba-stations.json — currently
- * TOWN CENTROIDS (±~3 km); the mast positions are not yet geolocated, so
- * level comparison stays trend-only (laeq_windows is not band_capable
- * anyway — German day/night windows, never converted to Lden).
+ * Coordinates come from pipeline/validation/eba-stations.json as committed,
+ * deterministic synthetic receivers on the named line. They are not surveyed
+ * mast positions; the registry preserves each town centroid + snap derivation
+ * and the snapshot declares kilometre-scale along-track uncertainty. This
+ * adapter refuses incomplete derivations. Level comparison remains trend-only
+ * because German windows are not END Lden.
  *
  * Requires `pdftotext` (poppler-utils). Run:
  *   npx tsx pipeline/validation/snapshot-eba.ts --year 2023
@@ -34,7 +36,19 @@ if (!Number.isInteger(year)) {
 }
 
 const registry = JSON.parse(readFileSync(REGISTRY_PATH, 'utf8')) as {
-  stations: Record<string, { lat: number; lng: number; strecke: string }>
+  stations: Record<string, {
+    lat: number; lng: number; strecke: string
+    town_centroid: { lat: number; lng: number }
+    snap: { strecke: string; from_centroid_m: number; mast_offset_m: number }
+  }>
+}
+for (const [name, station] of Object.entries(registry.stations)) {
+  if (!Number.isFinite(station.lat) || !Number.isFinite(station.lng)
+    || !Number.isFinite(station.town_centroid?.lat) || !Number.isFinite(station.town_centroid?.lng)
+    || station.snap?.strecke !== /^(\d+)/.exec(station.strecke)?.[1]
+    || station.snap?.mast_offset_m !== 7.5) {
+    throw new Error(`[eba] registry station ${name} lacks a complete deterministic trackside geolocation`)
+  }
 }
 
 // ── 1. Fetch + text-extract the annual report ───────────────────────────────
@@ -86,11 +100,15 @@ for (const line of text.split('\n')) {
   }
 }
 
-const complete = [...stations.entries()].filter(([, w]) => w['24h'] && w.tag && w.nacht)
-if (complete.length < 10) throw new Error(`[eba] only ${complete.length} complete stations parsed — report layout drift`)
-for (const name of Object.keys(registry.stations)) {
-  if (!stations.has(name)) console.error(`[eba] registry station ${name} absent from the ${year} report (commissioned later?) — skipped`)
+const incomplete = [...stations.entries()]
+  .filter(([, windows]) => !windows['24h'] || !windows.tag || !windows.nacht)
+  .map(([name, windows]) => `${name} (${(['24h', 'tag', 'nacht'] as const).filter(window => !windows[window]).join(', ')} missing)`)
+if (incomplete.length > 0) throw new Error(`[eba] incomplete table rows: ${incomplete.join('; ')} — report layout drift`)
+const missing = Object.keys(registry.stations).filter(name => !stations.has(name))
+if (missing.length > 0) {
+  throw new Error(`[eba] ${missing.length} registry stations absent from the ${year} report: ${missing.join(', ')} — review commissioning metadata or parser layout`)
 }
+const complete = [...stations.entries()] as Array<[string, Record<'24h' | 'tag' | 'nacht', Metrics>]>
 
 // ── 3. Persist + snapshot ───────────────────────────────────────────────────
 
@@ -102,7 +120,7 @@ const upAnnual = db.prepare('INSERT OR REPLACE INTO annual_value (network, stati
 const META = JSON.stringify({ report: pdfUrl, uncertainty_db: 1.3 })
 for (const [name, w] of complete) {
   const reg = registry.stations[name]
-  upStation.run(NETWORK, name, `${name} (Strecke ${reg.strecke})`, reg.lat, reg.lng, JSON.stringify({ strecke: reg.strecke, geometry: 'mic 7.5 m from track centre, 1.2 m above rail top; coords = town centroid' }))
+  upStation.run(NETWORK, name, `${name} (Strecke ${reg.strecke})`, reg.lat, reg.lng, JSON.stringify({ strecke: reg.strecke, geometry: 'synthetic receiver 7.5 m from the nearest named line segment; surveyed mast position unpublished', town_centroid: reg.town_centroid, snap: reg.snap }))
   const metrics: Record<string, number> = {
     laeq_24h: w['24h']!.level, laeq_tag_0622: w.tag!.level, laeq_nacht_2206: w.nacht!.level,
     trains_per_day: w['24h']!.trains, freight_trains_per_day: w['24h']!.freight,
@@ -115,19 +133,29 @@ db.exec('COMMIT')
 db.close()
 
 const path = writeSnapshot({
+  schema_version: 2,
   network: NETWORK,
+  country_code: 'DE',
   year,
   license: 'Eisenbahn-Bundesamt Lärm-Monitoring Jahresbericht (public federal report; cite the report)',
   source: [pdfUrl, 'https://www.laerm-monitoring.de/Standorte'],
   fetched_at: new Date().toISOString(),
   mode: 'source:railway',
+  anchor_type: 'measurement',
+  regime: 'rail',
+  tags: ['near', 'rail_count_measured'],
+  comparison_mode: 'trend_only',
+  comparison_tolerance_db: null,
+  comparison_tolerance_basis: null,
+  measured_metric_field: 'laeq_tag_0622',
+  model_metric_field: 'lden',
   commensurability: {
     metric_variant: 'laeq_windows',
     dominance: 'near_source',
     receiver_convention: 'free_field',
     height_m: 1.2,
-    coord_uncertainty_m: 3000,
-    note: 'German Tag 06–22 / Nacht 22–06 windows at the standardized 7.5 m pass-by geometry; U = 1.3 dB (k=2) per report. Coords are town centroids until masts are geolocated — LEVELS are trend anchors; the per-station train counts / freight share / speeds are the primary anchors (rail traffic inputs).',
+    coord_uncertainty_m: 6000,
+    note: 'German Tag 06–22 / Nacht 22–06 windows at the standardized 7.5 m pass-by geometry; U = 1.3 dB (k=2) per report. Coords are reproducible synthetic receivers on the named VzG line, not surveyed mast positions; along-track uncertainty is up to about 6 km. LEVELS are trend anchors only; per-station train counts / freight share / speeds are the primary anchors.',
   },
   method: 'pdftotext -layout over the annual report; strict-row parse of Tabelle 7 (24h) + Tabelle 8 (Tag/Nacht); station names validated against eba-stations.json',
   stations: complete.map(([name, w]) => ({
@@ -135,6 +163,8 @@ const path = writeSnapshot({
     name: `${name} (Strecke ${registry.stations[name].strecke})`,
     lat: registry.stations[name].lat,
     lng: registry.stations[name].lng,
+    town_centroid: registry.stations[name].town_centroid,
+    snap: registry.stations[name].snap,
     laeq_24h: w['24h']!.level,
     laeq_tag_0622: w.tag!.level,
     laeq_nacht_2206: w.nacht!.level,

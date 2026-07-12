@@ -1,5 +1,7 @@
 {
+  "schema_version": 2,
   "network": "zrh-nmt",
+  "country_code": "CH",
   "year": 2024,
   "license": "Flughafen Zürich AG annual report (public figures; cite the report)",
   "source": [
@@ -7,6 +9,14 @@
   ],
   "fetched_at": "2026-07-09T14:46:37.906Z",
   "mode": "source:aircraft",
+  "anchor_type": "measurement",
+  "regime": "aircraft",
+  "tags": [],
+  "comparison_mode": "trend_only",
+  "comparison_tolerance_db": null,
+  "comparison_tolerance_basis": null,
+  "measured_metric_field": "laeq_tag_0622",
+  "model_metric_field": "lden",
   "commensurability": {
     "metric_variant": "laeq_windows",
     "dominance": "event_classified",

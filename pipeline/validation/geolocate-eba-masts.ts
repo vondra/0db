@@ -1,16 +1,20 @@
 /**
- * Geolocate EBA Lärm-Monitoring masts onto their VzG line (popup-batch of the
+ * Reproduce EBA Lärm-Monitoring synthetic receivers on their VzG line
  * validation v2 rail lane): the 2023 snapshot shipped TOWN CENTROIDS
  * (coord_uncertainty_m 3000, levels trend-only). Each station name carries its
  * VzG number ("Telgte, Strecke 2200: …"); German OSM tracks carry that number
  * in `ref`, so the mast can be snapped to the nearest matching-ref rail
- * segment in our own arrows — cross-track exact (mast stands 7.5 m off the
- * track), along-track ambiguity irrelevant on a homogeneous corridor.
- * Rewrites the snapshot coords in place + drops coord_uncertainty_m to 200.
+ * segment in our own arrows. This establishes a repeatable 7.5 m model
+ * receiver, not the unpublished mast position; along-track uncertainty stays
+ * explicit and may be kilometres even on a nominally homogeneous corridor.
+ * The approved coordinates are now frozen in eba-stations.json and emitted
+ * atomically by snapshot-eba.ts. This script is audit-only: it recomputes the
+ * snap against a prepared dataset and refuses drift; it never rewrites an
+ * approved snapshot behind the adapter's back.
  *
  * Run: npx tsx pipeline/validation/geolocate-eba-masts.ts
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tableFromIPC } from 'apache-arrow'
 import { latLngToCell, gridDisk } from 'h3-js'
@@ -62,23 +66,19 @@ for (const st of snap.stations) {
     const toTownY = (origin.lat - best.lat) * M_PER_DEG_LAT
     if (nx * toTownX + ny * toTownY < 0) { nx = -nx; ny = -ny }
     const MAST_OFFSET_M = 7.5
-    st.town_centroid = origin
-    st.lat = Number((best.lat + (ny * MAST_OFFSET_M) / M_PER_DEG_LAT).toFixed(6))
-    st.lng = Number((best.lng + (nx * MAST_OFFSET_M) / (111_320 * cosLat)).toFixed(6))
-    st.snap = { strecke, from_centroid_m: Math.round(best.dist), mast_offset_m: MAST_OFFSET_M }
-    console.log(`${st.station_id}: snapped to Strecke ${strecke} — ${Math.round(best.dist)} m from centroid, +7.5 m off-track`)
+    const candidateLat = Number((best.lat + (ny * MAST_OFFSET_M) / M_PER_DEG_LAT).toFixed(6))
+    const candidateLng = Number((best.lng + (nx * MAST_OFFSET_M) / (111_320 * cosLat)).toFixed(6))
+    const driftM = Math.hypot(
+      (candidateLat - st.lat) * M_PER_DEG_LAT,
+      (candidateLng - st.lng) * 111_320 * cosLat,
+    )
+    if (driftM > 1) throw new Error(`${st.station_id}: prepared rail geometry moved frozen receiver by ${driftM.toFixed(1)} m — review and update eba-stations.json explicitly`)
+    console.log(`${st.station_id}: frozen Strecke ${strecke} receiver reproduced within ${driftM.toFixed(1)} m`)
     snapped++
   } else {
     console.log(`${st.station_id}: Strecke ${strecke} NOT FOUND within ring-1 — kept centroid`)
   }
 }
 
-if (snapped > 0) {
-  snap.commensurability.coord_uncertainty_m = 200
-  snap.commensurability.note = snap.commensurability.note.replace(
-    'Coords are town centroids until masts are geolocated',
-    `Coords snapped onto the named VzG line via OSM ref (geolocate-eba-masts.ts, ${snapped}/${snap.stations.length} stations; cross-track exact, along-track ±km on a homogeneous corridor)`,
-  )
-  writeFileSync(SNAP_PATH, JSON.stringify(snap, null, 1) + '\n')
-  console.log(`\nwrote ${SNAP_PATH} (${snapped}/${snap.stations.length} snapped, coord_uncertainty_m -> 200)`)
-}
+if (snapped !== snap.stations.length) throw new Error(`only ${snapped}/${snap.stations.length} frozen receivers reproduced`)
+console.log(`\nverified ${snapped}/${snap.stations.length} frozen EBA receivers; no files written`)

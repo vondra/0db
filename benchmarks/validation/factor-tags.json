@@ -42,6 +42,7 @@
     "grade_crossing": { "section": "rail_source", "unmodelled": "full", "note": "horns/bells unmodelled; matters for US points" },
     "gtfs_derived": { "section": "rail_provenance" },
     "timetable_national": { "section": "rail_provenance" },
+    "rail_count_measured": { "section": "rail_provenance", "note": "observed train counts, not a timetable/default" },
     "rail_default": { "section": "rail_provenance" },
     "stock_mix_assumed": { "section": "rail_provenance", "note": "disc vs cast-iron" },
     "hub_approach": { "section": "aircraft_source" },
@@ -174,7 +175,7 @@
     "near_source": "geometry makes the tagged source dominant beyond doubt",
     "map_crosscheck": "official per-source map layer provides the source split"
   },
-  "receiver_conventions": ["facade", "free_field", "roof", "nmt_pole", "raster_pixel"],
+  "receiver_conventions": ["facade", "free_field", "roof", "nmt_pole", "raster_pixel", "mixed"],
   "interactions": [
     { "a": ["mot_free"], "b": ["far_3"], "why": "vzdálená dálnice — distant hum, most-complained-about case" },
     { "a": ["noise_wall"], "b": ["near", "mid", "far_1"], "why": "wall effect vs distance ladder" },

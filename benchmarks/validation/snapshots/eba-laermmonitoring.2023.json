@@ -1,5 +1,7 @@
 {
+ "schema_version": 2,
  "network": "eba-laermmonitoring",
+ "country_code": "DE",
  "year": 2023,
  "license": "Eisenbahn-Bundesamt Lärm-Monitoring Jahresbericht (public federal report; cite the report)",
  "source": [
@@ -8,13 +10,24 @@
  ],
  "fetched_at": "2026-07-09T15:36:31.507Z",
  "mode": "source:railway",
+ "anchor_type": "measurement",
+ "regime": "rail",
+ "tags": [
+  "near",
+  "rail_count_measured"
+ ],
+ "comparison_mode": "trend_only",
+ "comparison_tolerance_db": null,
+ "comparison_tolerance_basis": null,
+ "measured_metric_field": "laeq_tag_0622",
+ "model_metric_field": "lden",
  "commensurability": {
   "metric_variant": "laeq_windows",
   "dominance": "near_source",
   "receiver_convention": "free_field",
   "height_m": 1.2,
-  "coord_uncertainty_m": 200,
-  "note": "German Tag 06–22 / Nacht 22–06 windows at the standardized 7.5 m pass-by geometry; U = 1.3 dB (k=2) per report. Coords snapped onto the named VzG line via OSM ref (geolocate-eba-masts.ts, 19/19 stations; cross-track exact, along-track ±km on a homogeneous corridor) — LEVELS are trend anchors; the per-station train counts / freight share / speeds are the primary anchors (rail traffic inputs)."
+  "coord_uncertainty_m": 6000,
+  "note": "German Tag 06–22 / Nacht 22–06 windows at the standardized 7.5 m pass-by geometry; U = 1.3 dB (k=2) per report. Coords are reproducible synthetic receivers on the named VzG line, not surveyed mast positions; along-track uncertainty is up to about 6 km. LEVELS are trend anchors only; per-station train counts / freight share / speeds are the primary anchors."
  },
  "method": "pdftotext -layout over the annual report; strict-row parse of Tabelle 7 (24h) + Tabelle 8 (Tag/Nacht); station names validated against eba-stations.json",
  "stations": [

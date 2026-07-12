@@ -162,16 +162,26 @@ async function main() {
 
 function writeYearSnapshot(year: number, stations: SnapshotStation[]) {
   const snapshot: Snapshot = {
+    schema_version: 2,
     network: 'bruitparif-rumeur',
+    country_code: 'FR',
     year,
     license: 'PENDING WRITTEN CONFIRMATION — Licence Ouverte v2.0 provably covers carto only; Rumeur API reuse to be confirmed with Bruitparif (attribute "Bruitparif" regardless)',
     source: [`${BASE}/SiteListByTags/json`, `${BASE}/PeriodicValues2/json`],
     fetched_at: new Date().toISOString(),
     mode: 'total',
+    anchor_type: 'measurement',
+    regime: 'mixed',
+    tags: [],
+    comparison_mode: 'upper_bound',
+    comparison_tolerance_db: 2,
+    comparison_tolerance_basis: 'Project diagnostic +2 dB upper allowance for annual aggregation and mixed receiver siting; not a measurement confidence interval.',
+    measured_metric_field: 'lden',
+    model_metric_field: 'lden',
     commensurability: {
       metric_variant: 'lden',
       dominance: 'total_ambient',
-      receiver_convention: 'mixed_mast_facade_roof',
+      receiver_convention: 'mixed',
       coord_uncertainty_m: 10,
       note:
         'Server-computed annual Lden/Ln (PeriodicValues2 periods=Y) with a 0-1 completeness weight; ' +

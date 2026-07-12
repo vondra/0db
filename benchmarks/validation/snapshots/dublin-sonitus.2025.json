@@ -1,5 +1,7 @@
 {
+  "schema_version": 2,
   "network": "dublin-sonitus",
+  "country_code": "IE",
   "year": 2025,
   "license": "CC BY — Dublin City Council (data.smartdublin.ie Sonitus API dataset; credentials published in the dataset readme for reuse)",
   "source": [
@@ -8,6 +10,14 @@
   ],
   "fetched_at": "2026-07-12T12:48:59.133Z",
   "mode": "total",
+  "anchor_type": "measurement",
+  "regime": "mixed",
+  "tags": [],
+  "comparison_mode": "upper_bound",
+  "comparison_tolerance_db": 2,
+  "comparison_tolerance_basis": "Project diagnostic +2 dB upper allowance for annual aggregation and receiver siting; not a measurement confidence interval.",
+  "measured_metric_field": "lden",
+  "model_metric_field": "lden",
   "commensurability": {
     "metric_variant": "period_split",
     "dominance": "total_ambient",
@@ -76,30 +86,6 @@
       "lden": 73.8,
       "months_covered": 11,
       "coverage_pct": 93.7
-    },
-    {
-      "station_id": "01528",
-      "name": "Noise 20 — Drumcondra Temp Replacement",
-      "lat": 53.369847,
-      "lng": -6.258945,
-      "ld": 55.4,
-      "le": 39.9,
-      "ln": 36.6,
-      "lden": 52.9,
-      "months_covered": 10,
-      "coverage_pct": 85.5
-    },
-    {
-      "station_id": "01534",
-      "name": "Noise 14 — Woodstock Gardens Temp replacement",
-      "lat": 53.324203,
-      "lng": -6.292218,
-      "ld": 51.4,
-      "le": 48.1,
-      "ln": 47,
-      "lden": 54.3,
-      "months_covered": 11,
-      "coverage_pct": 94.4
     },
     {
       "station_id": "01548",

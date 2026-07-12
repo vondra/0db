@@ -67,6 +67,11 @@ if (!stationsCsvUrl) throw new Error('[barcelona] installation registry CSV not 
 // ── 2. Installation registry → station table ───────────────────────────────
 
 type Station = { id: string; name: string; lat: number; lng: number; font: string; district: string; installed: string; deinstalled: string }
+// Only exact catalog equivalences are tagged. In particular, portal Font
+// `TRÀNSIT` does not establish a road class and `OCI` is broader than
+// nightlife, so neither is guessed into a narrower model factor.
+const factorTagsForFont = (font: string): string[] =>
+  font === 'ZONA DE VIANANTS' ? ['pedestrian_zone'] : []
 const stations = new Map<string, Station>()
 {
   const r = await fetch(stationsCsvUrl, { signal: AbortSignal.timeout(60000) })
@@ -218,6 +223,7 @@ for (const [id, byDate] of acc) {
   }
   snapshotStations.push({
     station_id: id, name: st.name, lat: st.lat, lng: st.lng,
+    tags: factorTagsForFont(st.font),
     font: st.font, district: st.district,
     ld: +ld!.toFixed(1), le: +le!.toFixed(1), ln: +ln!.toFixed(1), lden: +lden.toFixed(1),
     months_covered: monthsCovered, coverage_pct: +(minCoverage * 100).toFixed(1),
@@ -229,12 +235,22 @@ db.close()
 
 snapshotStations.sort((a, b) => a.station_id.localeCompare(b.station_id, undefined, { numeric: true }))
 const path = writeSnapshot({
+  schema_version: 2,
   network: NETWORK,
+  country_code: 'ES',
   year,
   license: 'CC BY 4.0 — Ajuntament de Barcelona, Open Data BCN',
   source: [`${PORTAL}/dataset/${DATA_PACKAGE}`, `${PORTAL}/dataset/${STATIONS_PACKAGE}`],
   fetched_at: new Date().toISOString(),
   mode: 'total',
+  anchor_type: 'measurement',
+  regime: 'mixed',
+  tags: ['dense_urban'],
+  comparison_mode: 'upper_bound',
+  comparison_tolerance_db: 2,
+  comparison_tolerance_basis: 'Project diagnostic +2 dB upper allowance for annual aggregation and receiver siting; not a measurement confidence interval.',
+  measured_metric_field: 'lden',
+  model_metric_field: 'lden',
   commensurability: {
     metric_variant: 'period_split',
     dominance: 'total_ambient',

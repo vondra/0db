@@ -1,0 +1,10 @@
+{
+  "$doc": "Only these reviewed, committed network snapshots may enter validation reports or product views. Local/pending adapters (notably Bruitparif until its licence is confirmed) are deliberately absent.",
+  "version": 1,
+  "files": [
+    "barcelona-xarxa-soroll.2025.json",
+    "dublin-sonitus.2025.json",
+    "eba-laermmonitoring.2023.json",
+    "zrh-nmt.2024.json"
+  ]
+}

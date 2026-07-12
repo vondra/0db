@@ -1,5 +1,7 @@
 {
+  "schema_version": 2,
   "network": "barcelona-xarxa-soroll",
+  "country_code": "ES",
   "year": 2025,
   "license": "CC BY 4.0 — Ajuntament de Barcelona, Open Data BCN",
   "source": [
@@ -8,6 +10,16 @@
   ],
   "fetched_at": "2026-07-09T14:48:48.842Z",
   "mode": "total",
+  "anchor_type": "measurement",
+  "regime": "mixed",
+  "tags": [
+    "dense_urban"
+  ],
+  "comparison_mode": "upper_bound",
+  "comparison_tolerance_db": 2,
+  "comparison_tolerance_basis": "Project diagnostic +2 dB upper allowance for annual aggregation and receiver siting; not a measurement confidence interval.",
+  "measured_metric_field": "lden",
+  "model_metric_field": "lden",
   "commensurability": {
     "metric_variant": "period_split",
     "dominance": "total_ambient",
@@ -1114,6 +1126,9 @@
       "name": "C Fluvià 92",
       "lat": 41.40918,
       "lng": 2.205049,
+      "tags": [
+        "pedestrian_zone"
+      ],
       "font": "ZONA DE VIANANTS",
       "district": "Sant Martí",
       "ld": 52.3,
@@ -1156,6 +1171,9 @@
       "name": "C Rocafort 114",
       "lat": 41.380659,
       "lng": 2.151654,
+      "tags": [
+        "pedestrian_zone"
+      ],
       "font": "ZONA DE VIANANTS",
       "district": "Eixample",
       "ld": 60.8,
@@ -1184,6 +1202,9 @@
       "name": "C Comte Borrell 154",
       "lat": 41.383009,
       "lng": 2.155245,
+      "tags": [
+        "pedestrian_zone"
+      ],
       "font": "ZONA DE VIANANTS",
       "district": "Eixample",
       "ld": 62.3,
@@ -1212,6 +1233,9 @@
       "name": "C Girona 72",
       "lat": 41.395167,
       "lng": 2.170906,
+      "tags": [
+        "pedestrian_zone"
+      ],
       "font": "ZONA DE VIANANTS",
       "district": "Eixample",
       "ld": 62.2,
@@ -1940,6 +1964,9 @@
       "name": "C Puigcerdà 127",
       "lat": 41.415023,
       "lng": 2.209767,
+      "tags": [
+        "pedestrian_zone"
+      ],
       "font": "ZONA DE VIANANTS",
       "district": "Sant Martí",
       "ld": 59.1,
@@ -1982,6 +2009,9 @@
       "name": "C Puigcerdà 104",
       "lat": 41.413928,
       "lng": 2.211427,
+      "tags": [
+        "pedestrian_zone"
+      ],
       "font": "ZONA DE VIANANTS",
       "district": "Sant Martí",
       "ld": 57.1,
@@ -2122,6 +2152,9 @@
       "name": "C Andana de l'Estació 3",
       "lat": 41.441308,
       "lng": 2.193772,
+      "tags": [
+        "pedestrian_zone"
+      ],
       "font": "ZONA DE VIANANTS",
       "district": "Sant Andreu",
       "ld": 67.3,
@@ -2136,6 +2169,9 @@
       "name": "C de Martin Luther King",
       "lat": 41.440129,
       "lng": 2.193858,
+      "tags": [
+        "pedestrian_zone"
+      ],
       "font": "ZONA DE VIANANTS",
       "district": "Sant Andreu",
       "ld": 65.2,
@@ -2150,6 +2186,9 @@
       "name": "Pl Estació",
       "lat": 41.435728,
       "lng": 2.193741,
+      "tags": [
+        "pedestrian_zone"
+      ],
       "font": "ZONA DE VIANANTS",
       "district": "Sant Andreu",
       "ld": 58.4,
@@ -2164,6 +2203,9 @@
       "name": "C Fluvià 129",
       "lat": 41.410096,
       "lng": 2.203376,
+      "tags": [
+        "pedestrian_zone"
+      ],
       "font": "ZONA DE VIANANTS",
       "district": "Sant Martí",
       "ld": 59.6,

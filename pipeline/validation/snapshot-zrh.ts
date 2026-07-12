@@ -74,12 +74,22 @@ console.error(`[zrh] stored ${years.length} report years (${years.join(', ')}) Ã
 const idx = years.indexOf(year)
 const values = quads[idx].split('/').map(Number)
 const path = writeSnapshot({
+  schema_version: 2,
   network: NETWORK,
+  country_code: 'CH',
   year,
   license: 'Flughafen ZÃ¼rich AG annual report (public figures; cite the report)',
   source: [url],
   fetched_at: new Date().toISOString(),
   mode: 'source:aircraft',
+  anchor_type: 'measurement',
+  regime: 'aircraft',
+  tags: [],
+  comparison_mode: 'trend_only',
+  comparison_tolerance_db: null,
+  comparison_tolerance_basis: null,
+  measured_metric_field: 'laeq_tag_0622',
+  model_metric_field: 'lden',
   commensurability: {
     metric_variant: 'laeq_windows',
     dominance: 'event_classified',

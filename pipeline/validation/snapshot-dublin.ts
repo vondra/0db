@@ -23,7 +23,7 @@
  */
 import {
   endPeriodForLocalHour, energeticMeanDb, ldenFromPeriods, openValidationDb,
-  PERIOD_MINUTES_PER_DAY, writeSnapshot, type EndPeriod,
+  PERIOD_MINUTES_PER_DAY, writeSnapshot, type EndPeriod, type SnapshotStation,
 } from './lib.ts'
 
 const NETWORK = 'dublin-sonitus'
@@ -137,7 +137,7 @@ async function main() {
   db.prepare('DELETE FROM daily_period WHERE network = ? AND date LIKE ?').run(NETWORK, `${year}-%`)
   db.prepare('DELETE FROM annual_value WHERE network = ? AND year = ?').run(NETWORK, year)
 
-  const snapshotStations = []
+  const snapshotStations: SnapshotStation[] = []
   for (const { mon, serial, byDate } of reduced) {
 
     const total: Record<EndPeriod, [number, number]> = { ld: [0, 0], le: [0, 0], ln: [0, 0] }
@@ -180,32 +180,53 @@ async function main() {
       months_covered: monthsCovered, coverage_pct: +(minCoverage * 100).toFixed(1),
     })
   }
-  // A temp-replacement instrument shares its host site's coordinates and
-  // (having run in parallel) its year — two snapshot rows at one point would
-  // double-weight the site in any aggregate. Registered (dashboard) serials
-  // win; a replacement stays only where the host itself failed the gate.
-  const byCoord = new Map<string, (typeof snapshotStations)[number]>()
-  for (const st of snapshotStations) {
-    const key = `${st.lat.toFixed(5)},${st.lng.toFixed(5)}`
-    const cur = byCoord.get(key)
-    const isRegistered = categoryBySerial.has(st.station_id)
-    if (!cur || (isRegistered && !categoryBySerial.has(cur.station_id))) byCoord.set(key, st)
-    else if (cur) console.error(`[dublin] ${st.station_id} (${st.name}): co-located with ${cur.station_id} — deduped`)
+  // A temporary replacement can report the same year in parallel with its
+  // host instrument. Portal coordinates differ by a few metres, so decimal
+  // string equality is not a valid site identity. Drop a replacement only
+  // when an independently named non-replacement passed the gate within 25 m;
+  // otherwise retain it (the host may have failed coverage or been removed).
+  const distanceM = (a: (typeof snapshotStations)[number], b: (typeof snapshotStations)[number]) => {
+    const lat = ((a.lat + b.lat) / 2) * Math.PI / 180
+    return Math.hypot((a.lat - b.lat) * 110_540, (a.lng - b.lng) * 111_320 * Math.cos(lat))
   }
+  const isReplacement = (station: (typeof snapshotStations)[number]) => /temp(?:orary)?\s+replacement/i.test(station.name)
+  const siteKey = (station: (typeof snapshotStations)[number]) => station.name
+    .replace(/^Noise\s+\S+\s+—\s+/i, '')
+    .replace(/\s+temp(?:orary)?\s+replacement$/i, '')
+    .trim()
+    .toLocaleLowerCase('en-IE')
+  const deduplicated = snapshotStations.filter(station => {
+    if (!isReplacement(station)) return true
+    const host = snapshotStations.find(candidate => !isReplacement(candidate)
+      && (siteKey(candidate) === siteKey(station) || distanceM(station, candidate) <= 25))
+    if (!host) return true
+    console.error(`[dublin] ${station.station_id} (${station.name}): replacement for host ${host.station_id}; portal coordinates differ by ${distanceM(station, host).toFixed(1)} m — deduped`)
+    return false
+  })
   snapshotStations.length = 0
-  snapshotStations.push(...byCoord.values())
+  snapshotStations.push(...deduplicated)
   if (snapshotStations.length === 0) throw new Error('[dublin] 0 stations pass the coverage gate — refusing a silently empty snapshot')
   db.exec('COMMIT')
   db.close()
 
   snapshotStations.sort((a, b) => a.station_id.localeCompare(b.station_id, undefined, { numeric: true }))
   const path = writeSnapshot({
+    schema_version: 2,
     network: NETWORK,
+    country_code: 'IE',
     year,
     license: 'CC BY — Dublin City Council (data.smartdublin.ie Sonitus API dataset; credentials published in the dataset readme for reuse)',
     source: [`${API} (POST /api/monitors, /api/hourly-averages)`, SITE_MONITORS],
     fetched_at: new Date().toISOString(),
     mode: 'total',
+    anchor_type: 'measurement',
+    regime: 'mixed',
+    tags: [],
+    comparison_mode: 'upper_bound',
+    comparison_tolerance_db: 2,
+    comparison_tolerance_basis: 'Project diagnostic +2 dB upper allowance for annual aggregation and receiver siting; not a measurement confidence interval.',
+    measured_metric_field: 'lden',
+    model_metric_field: 'lden',
     commensurability: {
       metric_variant: 'period_split',
       dominance: 'total_ambient',

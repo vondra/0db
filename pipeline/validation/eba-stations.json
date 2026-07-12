@@ -1,100 +1,271 @@
 {
- "$doc": "EBA Lärmmonitoring station registry. Coordinates are TOWN CENTROIDS (Nominatim/OSM, fetched 2026-07-09, ODbL) — the measurement mast (7.5 m from track centre, 1.2 m above rail top) is NOT yet geolocated; coord_uncertainty_m ~3000. Refine to mast positions to unlock level comparison; until then the snapshot anchors rail TRAFFIC inputs (train counts, freight share, speeds) and the level TREND.",
+ "doc": "EBA Lärmmonitoring station registry with committed deterministic synthetic receivers. lat/lng are 7.5 m from the nearest named VzG segment to the town centroid, not surveyed mast coordinates; town_centroid and snap preserve the frozen derivation. Along-track uncertainty reaches about 6 km and is declared by the snapshot. snapshot-eba.ts refuses any incomplete entry.",
  "stations": {
-  "Elmshorn": {
-   "lat": 53.75325,
-   "lng": 9.65246,
-   "strecke": "1220 Hamburg – Kiel"
-  },
-  "Schwarzenbek": {
-   "lat": 53.50312,
-   "lng": 10.47856,
-   "strecke": "6100 Berlin – Hamburg"
-  },
-  "Nienburg": {
-   "lat": 52.64878,
-   "lng": 9.25781,
-   "strecke": "1740 Wunstorf – Bremen"
-  },
-  "Celle": {
-   "lat": 52.62406,
-   "lng": 10.08105,
-   "strecke": "1720 Lehrte – Hamburg"
-  },
-  "Stadthagen": {
-   "lat": 52.32897,
-   "lng": 9.20535,
-   "strecke": "1700 Hannover – Minden"
-  },
-  "Eilsleben": {
-   "lat": 52.14704,
-   "lng": 11.21219,
-   "strecke": "6110 Braunschweig – Magdeburg"
-  },
-  "Telgte": {
-   "lat": 51.98352,
-   "lng": 7.78486,
-   "strecke": "2200 Wanne-Eickel – Hamburg"
-  },
-  "Emmerich": {
-   "lat": 51.83221,
-   "lng": 6.24283,
-   "strecke": "2270 Oberhausen – Emmerich (Grenze)"
-  },
-  "Radebeul": {
-   "lat": 51.09998,
-   "lng": 13.6768,
-   "strecke": "6248 Berlin – Dresden"
-  },
-  "Saalfeld": {
-   "lat": 50.64791,
-   "lng": 11.361,
-   "strecke": "6305 Großheringen – Saalfeld"
+  "Andernach": {
+   "lat": 50.436724,
+   "lng": 7.399109,
+   "strecke": "2630 Köln – Bingen",
+   "town_centroid": {
+    "lat": 50.43919,
+    "lng": 7.40231
+   },
+   "snap": {
+    "strecke": "2630",
+    "from_centroid_m": 362,
+    "mast_offset_m": 7.5
+   }
   },
   "Bad Hersfeld": {
-   "lat": 50.86042,
-   "lng": 9.67677,
-   "strecke": "3600 Bebra – Fulda"
+   "lat": 50.862657,
+   "lng": 9.713965,
+   "strecke": "3600 Bebra – Fulda",
+   "town_centroid": {
+    "lat": 50.86042,
+    "lng": 9.67677
+   },
+   "snap": {
+    "strecke": "3600",
+    "from_centroid_m": 2633,
+    "mast_offset_m": 7.5
+   }
   },
-  "Andernach": {
-   "lat": 50.43919,
-   "lng": 7.40231,
-   "strecke": "2630 Köln – Bingen"
+  "Celle": {
+   "lat": 52.626056,
+   "lng": 10.0639,
+   "strecke": "1720 Lehrte – Hamburg",
+   "town_centroid": {
+    "lat": 52.62406,
+    "lng": 10.08105
+   },
+   "snap": {
+    "strecke": "1720",
+    "from_centroid_m": 1187,
+    "mast_offset_m": 7.5
+   }
   },
-  "Lahnstein": {
-   "lat": 50.30903,
-   "lng": 7.60446,
-   "strecke": "3507 Koblenz – Wiesbaden"
+  "Eilsleben": {
+   "lat": 52.150194,
+   "lng": 11.215347,
+   "strecke": "6110 Braunschweig – Magdeburg",
+   "town_centroid": {
+    "lat": 52.14704,
+    "lng": 11.21219
+   },
+   "snap": {
+    "strecke": "6110",
+    "from_centroid_m": 416,
+    "mast_offset_m": 7.5
+   }
   },
-  "Karlstadt": {
-   "lat": 49.96329,
-   "lng": 9.77887,
-   "strecke": "5200 Würzburg – Aschaffenburg"
-  },
-  "Osterhofen": {
-   "lat": 48.70196,
-   "lng": 13.02014,
-   "strecke": "5830 Regensburg – Passau"
-  },
-  "Rosenheim": {
-   "lat": 47.85579,
-   "lng": 12.1273,
-   "strecke": "5510 München – Rosenheim"
-  },
-  "Göppingen": {
-   "lat": 48.70314,
-   "lng": 9.65411,
-   "strecke": "4700 Stuttgart – Ulm"
+  "Elmshorn": {
+   "lat": 53.754012,
+   "lng": 9.659274,
+   "strecke": "1220 Hamburg – Kiel",
+   "town_centroid": {
+    "lat": 53.75325,
+    "lng": 9.65246
+   },
+   "snap": {
+    "strecke": "1220",
+    "from_centroid_m": 464,
+    "mast_offset_m": 7.5
+   }
   },
   "Emmendingen": {
-   "lat": 48.12066,
-   "lng": 7.85099,
-   "strecke": "4000 Mannheim – Basel"
+   "lat": 48.118901,
+   "lng": 7.849042,
+   "strecke": "4000 Mannheim – Basel",
+   "town_centroid": {
+    "lat": 48.12066,
+    "lng": 7.85099
+   },
+   "snap": {
+    "strecke": "4000",
+    "from_centroid_m": 250,
+    "mast_offset_m": 7.5
+   }
+  },
+  "Emmerich": {
+   "lat": 51.835494,
+   "lng": 6.244952,
+   "strecke": "2270 Oberhausen – Emmerich (Grenze)",
+   "town_centroid": {
+    "lat": 51.83221,
+    "lng": 6.24283
+   },
+   "snap": {
+    "strecke": "2270",
+    "from_centroid_m": 399,
+    "mast_offset_m": 7.5
+   }
   },
   "Fürstenwalde": {
-   "lat": 52.35802,
-   "lng": 14.06499,
-   "strecke": "6153 Berlin – Guben"
+   "lat": 52.364617,
+   "lng": 14.068481,
+   "strecke": "6153 Berlin – Guben",
+   "town_centroid": {
+    "lat": 52.35802,
+    "lng": 14.06499
+   },
+   "snap": {
+    "strecke": "6153",
+    "from_centroid_m": 774,
+    "mast_offset_m": 7.5
+   }
+  },
+  "Göppingen": {
+   "lat": 48.699826,
+   "lng": 9.653178,
+   "strecke": "4700 Stuttgart – Ulm",
+   "town_centroid": {
+    "lat": 48.70314,
+    "lng": 9.65411
+   },
+   "snap": {
+    "strecke": "4700",
+    "from_centroid_m": 380,
+    "mast_offset_m": 7.5
+   }
+  },
+  "Karlstadt": {
+   "lat": 49.96206,
+   "lng": 9.768414,
+   "strecke": "5200 Würzburg – Aschaffenburg",
+   "town_centroid": {
+    "lat": 49.96329,
+    "lng": 9.77887
+   },
+   "snap": {
+    "strecke": "5200",
+    "from_centroid_m": 768,
+    "mast_offset_m": 7.5
+   }
+  },
+  "Lahnstein": {
+   "lat": 50.309009,
+   "lng": 7.601507,
+   "strecke": "3507 Koblenz – Wiesbaden",
+   "town_centroid": {
+    "lat": 50.30903,
+    "lng": 7.60446
+   },
+   "snap": {
+    "strecke": "3507",
+    "from_centroid_m": 217,
+    "mast_offset_m": 7.5
+   }
+  },
+  "Nienburg": {
+   "lat": 52.635262,
+   "lng": 9.249364,
+   "strecke": "1740 Wunstorf – Bremen",
+   "town_centroid": {
+    "lat": 52.64878,
+    "lng": 9.25781
+   },
+   "snap": {
+    "strecke": "1740",
+    "from_centroid_m": 1607,
+    "mast_offset_m": 7.5
+   }
+  },
+  "Osterhofen": {
+   "lat": 48.696092,
+   "lng": 13.016927,
+   "strecke": "5830 Regensburg – Passau",
+   "town_centroid": {
+    "lat": 48.70196,
+    "lng": 13.02014
+   },
+   "snap": {
+    "strecke": "5830",
+    "from_centroid_m": 698,
+    "mast_offset_m": 7.5
+   }
+  },
+  "Radebeul": {
+   "lat": 51.079825,
+   "lng": 13.653712,
+   "strecke": "6248 Berlin – Dresden",
+   "town_centroid": {
+    "lat": 51.09998,
+    "lng": 13.6768
+   },
+   "snap": {
+    "strecke": "6248",
+    "from_centroid_m": 2759,
+    "mast_offset_m": 7.5
+   }
+  },
+  "Rosenheim": {
+   "lat": 47.850592,
+   "lng": 12.118127,
+   "strecke": "5510 München – Rosenheim",
+   "town_centroid": {
+    "lat": 47.85579,
+    "lng": 12.1273
+   },
+   "snap": {
+    "strecke": "5510",
+    "from_centroid_m": 901,
+    "mast_offset_m": 7.5
+   }
+  },
+  "Saalfeld": {
+   "lat": 50.651705,
+   "lng": 11.374736,
+   "strecke": "6305 Großheringen – Saalfeld",
+   "town_centroid": {
+    "lat": 50.64791,
+    "lng": 11.361
+   },
+   "snap": {
+    "strecke": "6305",
+    "from_centroid_m": 1063,
+    "mast_offset_m": 7.5
+   }
+  },
+  "Schwarzenbek": {
+   "lat": 53.504572,
+   "lng": 10.47963,
+   "strecke": "6100 Berlin – Hamburg",
+   "town_centroid": {
+    "lat": 53.50312,
+    "lng": 10.47856
+   },
+   "snap": {
+    "strecke": "6100",
+    "from_centroid_m": 183,
+    "mast_offset_m": 7.5
+   }
+  },
+  "Stadthagen": {
+   "lat": 52.335,
+   "lng": 9.203144,
+   "strecke": "1700 Hannover – Minden",
+   "town_centroid": {
+    "lat": 52.32897,
+    "lng": 9.20535
+   },
+   "snap": {
+    "strecke": "1700",
+    "from_centroid_m": 691,
+    "mast_offset_m": 7.5
+   }
+  },
+  "Telgte": {
+   "lat": 52.019725,
+   "lng": 7.725139,
+   "strecke": "2200 Wanne-Eickel – Hamburg",
+   "town_centroid": {
+    "lat": 51.98352,
+    "lng": 7.78486
+   },
+   "snap": {
+    "strecke": "2200",
+    "from_centroid_m": 5733,
+    "mast_offset_m": 7.5
+   }
   }
  }
 }
