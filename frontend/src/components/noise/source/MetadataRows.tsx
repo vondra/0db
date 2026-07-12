@@ -3,9 +3,9 @@ import { fmt, fmtFloat, fmtInt, fmtCompact, txtTable, type TableRow } from '../.
 import { MetricLabel, DataPoint } from '../noise-tooltips'
 import { formatProv, lineRow, railTrainSourceLine, roadSourceDescription, subtypeLabel } from '../shared'
 
-// Road traffic source / rail train source helpers live in shared.tsx so the
-// same source-attribution wording is reused here and in the Noise segments
-// tab (SegmentExpanded). The per-effect propagation tooltips differ by tab:
+// Road and rail source helpers are shared with the Noise segments tab
+// (SegmentExpanded), so both views use identical attribution wording. The
+// per-effect propagation tooltips differ by tab:
 // ContributorRow uses `MetricLabel` default mode='public' (plain-language
 // descriptions from `descriptionPublic`); SegmentExpanded uses inline
 // HoverText with full technical detail (formulas, δ*, Rayleigh gate).
@@ -59,6 +59,9 @@ export function MetadataRows({ c }: { c: Contributor }) {
     const wholeHeavy = m.aadt_heavy_effective / onewayFactor
     const wholeMoto = m.aadt_moto_effective / onewayFactor
     const sourceLines = roadSourceDescription(m.traffic_source, m.provenance, m.road_class).split('\n')
+    const defaultFootnote = m.provenance?.tier === 'baseline'
+      ? '* model-derived baseline (see source above)'
+      : '* class default (no census match for this segment)'
     const trafficText = txtTable([
       ...sourceLines,
       '',
@@ -69,7 +72,7 @@ export function MetadataRows({ c }: { c: Contributor }) {
       ...(wholeMoto > 0 ? [['  Moto', fmtInt(Math.round(wholeMoto))] as [string, string]] : []),
       { sep: true },
       ['  Total', `${fmtInt(Math.round(wholeRoadTotal))}/day${isDefault ? '*' : ''}`] as [string, string],
-      ...(isDefault ? ['', '* class default (no census match for this segment)'] : []),
+      ...(isDefault ? ['', defaultFootnote] : []),
       ...(hasAccessLane
         ? [
             '',

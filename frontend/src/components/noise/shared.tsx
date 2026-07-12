@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import type { DatasetProvenance } from '../../types/noise'
 
 // Vocabulary shared across Sources (ContributorRow) and Segments
 // (SegmentRow) tabs in the noise detail popup. Kept in one place so the
@@ -155,75 +154,11 @@ export const DIAGRAM_COLORS = {
 export const EDGE_SUBSCRIPTS = ['₁', '₂', '₃'] as const
 
 // ── Provenance helpers — one unified "Source:" description shared by the
-// Noise-sources and Noise-segments tabs so wording stays identical. The
-// segments tab uses the same tooltip text as its parent contributor; only
-// the granularity differs (per-segment vs grouped-segment aggregates).
-
-export type RoadTrafficSource =
-  | 'matched_external'
-  | 'estimated_service_tree'
-  | 'default_by_class'
-
-export type RailTrainSource = 'arrow' | 'default_by_type'
-
-export function formatProv(p: DatasetProvenance | null | undefined): string {
-  if (!p) return ''
-  const parts: string[] = [p.name]
-  if (p.year != null) parts.push(`(${p.year})`)
-  if (p.license) parts.push(`· ${p.license}`)
-  return parts.join(' ')
-}
-
-/** Road traffic source block. Lines stay ≤ 50 chars so they never wrap in
- * the 28 rem tooltip. Pattern: "Source:" headline, optional URL, one tiny
- * parenthetical method hint. No deep indent, no wrapping. */
-export function roadSourceDescription(
-  trafficSource: RoadTrafficSource,
-  provenance: DatasetProvenance | null | undefined,
-  roadClass: string,
-): string {
-  if (trafficSource === 'matched_external' && provenance) {
-    const url = provenance.url ? `\n  ${provenance.url}` : ''
-    return (
-      `Source: ${formatProv(provenance)}${url}\n` +
-      `  (measured AADT per OSM way)`
-    )
-  }
-  if (trafficSource === 'estimated_service_tree') {
-    // The "heuristic" tier covers two datasets: the service-tree (local roads,
-    // trips accumulated from buildings) and the continuity-fill (major roads,
-    // a measured neighbour's AADT carried along the same road). Name whichever
-    // it actually is via the dataset; both are estimates, not measurements.
-    const name = provenance ? formatProv(provenance) : 'Service-tree heuristic'
-    return (
-      `Source: ${name} — ${roadClass} class\n` +
-      `  (estimated AADT, not a direct measurement)`
-    )
-  }
-  return (
-    `Source: CNOSSOS Annex II default — ${roadClass} class\n` +
-    `  (no enrichment data in this area)`
-  )
-}
-
-/** Rail train source block for one category. Same ≤ 50 chars rule. */
-export function railTrainSourceLine(
-  source: RailTrainSource,
-  provenance: DatasetProvenance | null | undefined,
-  railType: string,
-): string {
-  if (source === 'arrow' && provenance) {
-    const url = provenance.url ? `\n  ${provenance.url}` : ''
-    return (
-      `${formatProv(provenance)}${url}\n` +
-      `  (measured daily count per OSM way)`
-    )
-  }
-  return (
-    `CNOSSOS Annex IV default — ${railType}\n` +
-    `  (no enrichment data)`
-  )
-}
+// Noise-sources and Noise-segments tabs so wording stays identical. Kept in a
+// pure TypeScript module so its trust-sensitive wording has dependency-free
+// unit tests.
+export { formatProv, railTrainSourceLine, roadSourceDescription } from './provenance'
+export type { RailTrainSource, RoadTrafficSource } from './provenance'
 
 /**
  * GeoJSON LineString from two lat/lon pairs (input order [lat, lon]). Used to

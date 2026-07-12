@@ -83,7 +83,28 @@ export interface EdgePoint {
   elevation_m: number
 }
 
+export type ProvenanceTier =
+  | 'city-measured'
+  | 'national-measured'
+  | 'continental-measured'
+  | 'global-measured'
+  | 'national-proxy'
+  | 'heuristic'
+  | 'baseline'
+  | 'none'
+
+export type RoadTrafficSource =
+  | 'matched_external'
+  | 'estimated_service_tree'
+  | 'default_by_class'
+
+export type RailTrainSource = 'arrow' | 'default_by_type'
+
 export interface DatasetProvenance {
+  /** Authority tier from the shared dataset registry. It identifies explicit
+   * national proxies, but does not by itself prove counted vs derived data.
+   * Optional only for a rolling deploy against an older popup backend. */
+  tier?: ProvenanceTier
   name: string
   year: number | null
   license: string | null
@@ -96,7 +117,7 @@ interface RoadMetadata {
   aadt_medium_raw: number
   aadt_heavy_raw: number
   aadt_moto_raw: number
-  traffic_source: 'matched_external' | 'estimated_service_tree' | 'default_by_class'
+  traffic_source: RoadTrafficSource
   dominant_dataset_id?: number
   provenance?: DatasetProvenance | null
   /** Raw OSM maxspeed; null = derestricted (`maxspeed=none`) — no number exists. */
@@ -144,8 +165,8 @@ interface RailMetadata {
   kind: 'rail'
   trains_passenger_raw: number
   trains_freight_raw: number
-  trains_passenger_source: 'arrow' | 'default_by_type'
-  trains_freight_source: 'arrow' | 'default_by_type'
+  trains_passenger_source: RailTrainSource
+  trains_freight_source: RailTrainSource
   dataset_id?: number
   provenance?: DatasetProvenance | null
   maxspeed_posted_kmh: number
@@ -517,7 +538,7 @@ type EmissionTrace =
       speed_kmh: number
       surface_corr_db: number
       surface: string
-      traffic_source: 'matched_external' | 'estimated_service_tree' | 'default_by_class'
+      traffic_source: RoadTrafficSource
       dataset_id: number
       provenance?: DatasetProvenance | null
       road_class: string
@@ -530,8 +551,8 @@ type EmissionTrace =
       kind: 'railway'
       trains_passenger: number
       trains_freight: number
-      trains_passenger_source: 'arrow' | 'default_by_type'
-      trains_freight_source: 'arrow' | 'default_by_type'
+      trains_passenger_source: RailTrainSource
+      trains_freight_source: RailTrainSource
       dataset_id: number
       provenance?: DatasetProvenance | null
       speed_kmh: number
