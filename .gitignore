@@ -1,5 +1,15 @@
 node_modules/
 dist/
+/server/dist
+/server/dist.next
+/server/dist.previous
+/.server-dist/
+/.server-deps/
+/.release.lock
+/frontend/dist.stage/
+/frontend/dist.check/
+/frontend/dist.previous/
+/frontend/dist.previous.older/
 *.log
 .env
 

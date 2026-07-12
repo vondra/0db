@@ -43,8 +43,15 @@ function parseTileParams(
   return { layer, z, x, y }
 }
 
-export async function rasterTileRoutes(app: FastifyInstance): Promise<void> {
-  preloadBarriers().catch(err => console.error('barrier preload failed:', err))
+export type RasterTileRouteOptions = { preloadRuntimeData?: boolean }
+
+export async function rasterTileRoutes(
+  app: FastifyInstance,
+  options: RasterTileRouteOptions = {},
+): Promise<void> {
+  if (options.preloadRuntimeData) {
+    preloadBarriers().catch(err => app.log.error(err, 'barrier preload failed'))
+  }
 
   app.get<{ Params: { layer: string; z: string; x: string; y: string } }>(
     '/api/raster/:layer/:z/:x/:y.png',

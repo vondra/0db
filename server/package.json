@@ -4,8 +4,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/start.mjs",
+    "test": "node --import tsx --test src/*.test.ts src/**/*.test.ts",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "@fastify/compress": "^8.3.1",

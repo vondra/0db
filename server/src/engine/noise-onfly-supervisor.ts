@@ -7,7 +7,7 @@ export type NoiseOnflyWorkerReply = {
   error?: string
 }
 
-export type NoiseOnflyOp = 'point' | 'unfiltered'
+export type NoiseOnflyOp = 'point' | 'unfiltered' | 'ready'
 
 export interface NoiseOnflyWorker {
   postMessage(message: { id: number; lat: number; lng: number; op?: NoiseOnflyOp }): void
@@ -18,9 +18,8 @@ export interface NoiseOnflyWorker {
 }
 
 /**
- * Factory receives the pool slot index so the worker can keep a SLOT-STABLE
- * addon copy path (static-TLS invariant — see workers/noise-onfly-worker.mjs
- * header). Factories that don't care may ignore the argument.
+ * Factory receives the pool slot index for callers that keep slot-local
+ * resources. Factories that don't care may ignore it.
  */
 export type NoiseOnflyWorkerFactory = (slotIndex: number) => NoiseOnflyWorker
 
@@ -155,6 +154,18 @@ export class NoiseOnflySupervisor {
 
   async queryNoiseAtPointUnfiltered(lat: number, lng: number, signal?: AbortSignal): Promise<string> {
     return this.enqueue(lat, lng, 'unfiltered', signal)
+  }
+
+  /**
+   * Spawn one real pool worker and verify that it loaded the N-API addon and
+   * completed sourceInit. The worker deliberately does not query a point, so
+   * readiness cannot pre-cache mutable H3 cells during an enrichment repaint.
+   */
+  async checkReady(): Promise<void> {
+    const response = JSON.parse(await this.enqueue(0, 0, 'ready')) as { ready?: unknown }
+    if (response.ready !== true) {
+      throw unavailableError('noise-onfly worker returned an invalid readiness response')
+    }
   }
 
   private async enqueue(lat: number, lng: number, op: NoiseOnflyOp, signal?: AbortSignal): Promise<string> {

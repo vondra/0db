@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node scripts/test.mjs",
+    "test:all": "INCLUDE_NETWORK_TESTS=1 node scripts/test.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "typecheck:validation": "tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --esModuleInterop --skipLibCheck --allowImportingTsExtensions validation/*.ts",
     "audit:invariants": "tsx audit-enrichment-invariants.ts",
     "chain": "tsx chain/run.ts",
     "gen:sources": "tsx lib/gen-sources-rs.ts",

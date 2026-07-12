@@ -1,7 +1,7 @@
 // Noise-onfly NAPI worker: loads libsource_reader and answers point queries.
 //
-// Addon-copy invariant (2026-07-09): each pool SLOT owns one stable copy path
-// (libsource_reader.worker-slot-N.node). Never per-thread paths: every
+// Addon-copy invariant (2026-07-10): the parent prepares one stable shared
+// path before it creates any pool Worker. Never use per-thread paths: every
 // DISTINCT PATH dlopen'd into the server process consumes glibc's fixed
 // static-TLS surplus and worker terminate does NOT give it back —
 // per-threadId copies made every recycle (request timeout, worker error)
@@ -13,18 +13,17 @@
 // name match wins over the fresh inode — verified empirically 2026-07-09:
 // unlink+copy then dlopen same path does NOT re-run constructors, 60×; the
 // distinct-path variant is what exhausted TLS live on he84). The size/mtime
-// check merely keeps the slot copy current for the NEXT server start without
-// a 3.5 MB copy on every recycle. Details: docs/dev/binary-rebuild.md.
+// parent-side size/mtime check keeps that copy current for the NEXT server
+// process without racing pool startup. Details: docs/dev/binary-rebuild.md.
 
-import { parentPort, threadId, workerData } from 'node:worker_threads'
-import { copyFileSync, existsSync, lstatSync, readdirSync, statSync, unlinkSync, utimesSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { parentPort, workerData } from 'node:worker_threads'
+import { existsSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
 const req = createRequire(import.meta.url)
 
-const { sourceReaderPath, h3r4Dir, slotIndex } = workerData
-const sourceReaderDir = dirname(sourceReaderPath)
+const { sourceReaderNodePath, h3r4Dir } = workerData
+const readinessReferenceHex = '841e309ffffffff'
 // ONE shared copy path for every worker (2026-07-10): glibc name-caches
 // dlopen by path, so all pool workers get the SAME library instance — the
 // Rust hex cache and sidecar cache are shared across the pool (an area
@@ -32,68 +31,18 @@ const sourceReaderDir = dirname(sourceReaderPath)
 // name-cache semantics were verified empirically (same-path reload does not
 // re-run constructors). Rust statics are lock-protected; source_init is
 // idempotent for an unchanged data dir.
-const nodePath = resolve(sourceReaderDir, 'libsource_reader.worker-shared.node')
-void slotIndex
-void threadId
-
-if (!existsSync(sourceReaderPath)) {
+if (!existsSync(sourceReaderNodePath)) {
   throw new Error(
-    `libsource_reader.so not found at ${sourceReaderPath} — run: cd engine/source-reader && cargo build --release`,
+    `prepared source-reader addon not found at ${sourceReaderNodePath} — restart the server`,
   )
 }
-
-// Sweep obsolete copies from earlier schemes (per-threadId, per-slot, tid-
-// fallback); only the single shared file survives.
-for (const entry of readdirSync(sourceReaderDir)) {
-  if (!/^libsource_reader\.worker-(tid-|slot-)?\d+\.node$/.test(entry)) {
-    continue
-  }
-  if (resolve(sourceReaderDir, entry) === nodePath) {
-    continue
-  }
-  try {
-    unlinkSync(resolve(sourceReaderDir, entry))
-  } catch {
-    // ignore stale addon cleanup failures
-  }
-}
-
-const needsFreshCopy = () => {
-  if (!existsSync(nodePath)) return true
-  if (lstatSync(nodePath).isSymbolicLink()) return true
-  const src = statSync(sourceReaderPath)
-  const dst = statSync(nodePath)
-  // Hard link to the source would defeat the whole point of copying (cargo
-  // rewriting the .so would mutate the mapped file) — recopy to break it.
-  if (src.dev === dst.dev && src.ino === dst.ino) return true
-  // Copies get the source's mtime stamped on (utimesSync below), so mtime+size
-  // equality means current. Plain `newer-than` would miss an rsync'd rebuild
-  // that preserves an OLDER source mtime (rsync -t between hosts is a normal
-  // flow here). Tolerance, not strict equality: utimesSync rounds the
-  // sub-millisecond fraction (…238.8228 → …239 measured), strict !== would
-  // recopy on every recycle.
-  return src.size !== dst.size || Math.abs(src.mtimeMs - dst.mtimeMs) > 2
-}
-if (needsFreshCopy()) {
-  // Unlink first: a NEW inode. Writing into the existing file would corrupt
-  // code pages if any live worker still has it mapped.
-  try {
-    unlinkSync(nodePath)
-  } catch {
-    // first copy — nothing to unlink
-  }
-  copyFileSync(sourceReaderPath, nodePath)
-  const src = statSync(sourceReaderPath)
-  utimesSync(nodePath, src.atime, src.mtime)
-}
-
-const st = statSync(sourceReaderPath)
+const st = statSync(sourceReaderNodePath)
 console.log(
-  `noise-onfly-worker: loaded ${nodePath} ` +
+  `noise-onfly-worker: loaded ${sourceReaderNodePath} ` +
   `(mtime=${st.mtime.toISOString()} size=${st.size})`,
 )
 
-const sourceModule = req(nodePath)
+const sourceModule = req(sourceReaderNodePath)
 if (existsSync(h3r4Dir)) {
   const msg = sourceModule.sourceInit(h3r4Dir)
   console.log(`noise-onfly-worker: ${msg}`)
@@ -101,6 +50,20 @@ if (existsSync(h3r4Dir)) {
 
 parentPort?.on('message', ({ id, lat, lng, op }) => {
   try {
+    if (op === 'ready') {
+      // Re-run the idempotent init so a worker created during a transient data
+      // outage cannot later report ready with an unset native source dir.
+      sourceModule.sourceInit(h3r4Dir)
+      const referenceRows = sourceModule.sourceValidateReference(
+        h3r4Dir,
+        readinessReferenceHex,
+      )
+      if (!Number.isInteger(referenceRows) || referenceRows <= 0) {
+        throw new Error(`invalid readiness reference row count: ${referenceRows}`)
+      }
+      parentPort?.postMessage({ id, ok: true, resultJson: '{"ready":true}' })
+      return
+    }
     const fn = op === 'unfiltered'
       ? sourceModule.queryNoiseAtPointUnfiltered
       : sourceModule.queryNoiseAtPoint

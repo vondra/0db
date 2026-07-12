@@ -28,11 +28,11 @@ async function waitFor(predicate: () => boolean, timeoutMs = 250): Promise<void>
 }
 
 class FakeWorker extends EventEmitter implements NoiseOnflyWorker {
-  readonly postMessages: Array<{ id: number; lat: number; lng: number }> = []
+  readonly postMessages: Array<{ id: number; lat: number; lng: number; op?: string }> = []
   private terminatePromise: Promise<number> = Promise.resolve(0)
   private terminateResolve: ((value: number) => void) | null = null
 
-  postMessage(message: { id: number; lat: number; lng: number }): void {
+  postMessage(message: { id: number; lat: number; lng: number; op?: string }): void {
     this.postMessages.push(message)
   }
 
@@ -176,4 +176,27 @@ test('worker timeout waits for terminate before dispatching the next request', a
 
   workers[1].replyAt(0, '{"second":true}')
   assert.equal(await second, '{"second":true}')
+})
+
+test('readiness uses a real pool worker without querying a point', async (t) => {
+  const workers: FakeWorker[] = []
+  const supervisor = new NoiseOnflySupervisor({
+    createWorker: () => {
+      const worker = new FakeWorker()
+      workers.push(worker)
+      return worker
+    },
+    maxQueue: 1,
+    queueTimeoutMs: 1000,
+    workTimeoutMs: 1000,
+  })
+  t.after(async () => supervisor.close())
+
+  const ready = supervisor.checkReady()
+  await waitFor(() => workers.length === 1 && workers[0].postMessages.length === 1)
+  assert.equal(workers[0].postMessages[0].op, 'ready')
+  assert.equal(workers[0].postMessages[0].lat, 0)
+  assert.equal(workers[0].postMessages[0].lng, 0)
+  workers[0].replyAt(0, '{"ready":true}')
+  await ready
 })

@@ -4,11 +4,12 @@
 
 import type { FastifyInstance } from 'fastify'
 import { Worker } from 'node:worker_threads'
-import { resolve } from 'node:path'
 import {
   NoiseOnflyRequestError,
   NoiseOnflySupervisor,
 } from '../engine/noise-onfly-supervisor.js'
+import { prepareSourceReaderAddon } from '../engine/source-reader-addon.js'
+import { H3R4_DIR, SOURCE_READER_PATH } from '../runtime-paths.js'
 
 // Wire shape is built entirely in Rust (engine/source-reader/src/wire.rs).
 // Node forwards the JSON string after one sentinel replace for
@@ -17,10 +18,6 @@ import {
 // `total_lden_free: null` regressions (Rust struct renames silently
 // diverged from Node's reshape). Single source of truth, ~30-50 ms saved.
 
-import { DATA_YEAR as YEAR } from '../data-year.js'
-
-const SOURCE_READER_PATH = resolve(import.meta.dirname, '../../../engine/source-reader/target/release/libsource_reader.so')
-const H3R4_DIR = process.env.H3R4_DIR || resolve(import.meta.dirname, `../../../data/prepared/${YEAR}/h3r4`)
 const WORKER_URL = new URL('../workers/noise-onfly-worker.mjs', import.meta.url)
 const NOISE_ONFLY_WORK_TIMEOUT_MS = Number(process.env.NOISE_ONFLY_WORK_TIMEOUT_MS || '30000')
 const NOISE_ONFLY_QUEUE_TIMEOUT_MS = Number(process.env.NOISE_ONFLY_QUEUE_TIMEOUT_MS || '10000')
@@ -32,16 +29,19 @@ const NOISE_ONFLY_MAX_QUEUE = Number(process.env.NOISE_ONFLY_MAX_QUEUE || '8')
 // override per box with NOISE_ONFLY_POOL_SIZE.
 const NOISE_ONFLY_POOL_SIZE = Number(process.env.NOISE_ONFLY_POOL_SIZE || '8')
 
-export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
+export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<() => Promise<void>> {
   const supervisor = new NoiseOnflySupervisor({
-    createWorker: (slotIndex) =>
-      new Worker(WORKER_URL, {
+    createWorker: () => {
+      // Cheap when current, and self-heals if an operator removed the stable
+      // copy while this process was alive.
+      const sourceReaderNodePath = prepareSourceReaderAddon(SOURCE_READER_PATH)
+      return new Worker(WORKER_URL, {
         workerData: {
-          sourceReaderPath: SOURCE_READER_PATH,
+          sourceReaderNodePath,
           h3r4Dir: H3R4_DIR,
-          slotIndex,
         },
-      }),
+      })
+    },
     maxQueue: NOISE_ONFLY_MAX_QUEUE,
     queueTimeoutMs: NOISE_ONFLY_QUEUE_TIMEOUT_MS,
     workTimeoutMs: NOISE_ONFLY_WORK_TIMEOUT_MS,
@@ -115,4 +115,6 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<void> {
       }
     }
   )
+
+  return async () => supervisor.checkReady()
 }

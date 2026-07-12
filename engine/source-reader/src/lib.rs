@@ -161,6 +161,22 @@ pub fn source_init(h3r4_dir: String) -> napi::Result<String> {
     ))
 }
 
+/// Strictly parse one known non-empty roads archive for runtime readiness.
+/// Unlike popup queries, this does not read from or write to `STORE`, so a
+/// readiness probe can never pin a partially rewritten H3 cell in the cache.
+#[cfg(feature = "node")]
+#[napi]
+pub fn source_validate_reference(h3r4_dir: String, hex_id: String) -> napi::Result<u32> {
+    let rows = hex_store::validate_reference_roads(std::path::Path::new(&h3r4_dir), &hex_id)
+        .map_err(|error| Error::new(Status::GenericFailure, error))?;
+    u32::try_from(rows).map_err(|_| {
+        Error::new(
+            Status::GenericFailure,
+            format!("reference roads row count exceeds u32: {rows}"),
+        )
+    })
+}
+
 #[cfg(feature = "node")]
 #[napi]
 pub fn query_roads(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<String> {

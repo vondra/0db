@@ -113,8 +113,11 @@ export default function HoverTooltip({ sources }: Props) {
   // render time, so the value here equals the pixel colour under
   // the cursor. Builds the display string directly: '…' while
   // tiles load, '—' outside the data island, 'NN.N dB' otherwise.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const readout = useMemo(() => {
+    // The epoch is an explicit invalidation signal for mutations inside the
+    // ref-backed tile cache; reading it makes that dependency visible to the
+    // hooks checker without moving large tile arrays into React state.
+    void tileEpoch
     if (!tileInfo || build === null) return null
     const { z, tx, ty, px, py } = tileInfo
     let sumLin = 0

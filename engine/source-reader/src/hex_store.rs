@@ -9,6 +9,7 @@
 //! store's warm path is unchanged and RAM is strictly <= the old eager load.
 
 use arrow::array::*;
+use arrow::datatypes::DataType;
 use arrow::ipc::reader::FileReader;
 use arrow::record_batch::RecordBatch;
 use memmap2::Mmap;
@@ -302,6 +303,64 @@ fn load_arrow_mmap(path: &Path, mmaps: &mut Vec<Arc<Mmap>>) -> Vec<RecordBatch> 
     mmaps.push(mmap);
 
     batches
+}
+
+/// Strictly parse the committed readiness cell's roads archive without adding
+/// it to the process-wide H3 cache. The normal popup loader is deliberately
+/// tolerant of missing/corrupt optional files and converts Arrow errors to an
+/// empty batch list; readiness needs the opposite contract for its one known
+/// non-empty reference file.
+pub fn validate_reference_roads(h3r4_dir: &Path, hex_id: &str) -> Result<usize, String> {
+    // H3 indexes are fixed-width hexadecimal strings. Besides catching caller
+    // mistakes, this keeps the native helper confined below h3r4_dir.
+    if hex_id.len() != 15 || !hex_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("invalid H3 reference cell: {hex_id:?}"));
+    }
+
+    let path = h3r4_dir.join(hex_id).join("roads.arrow");
+    let file =
+        File::open(&path).map_err(|error| format!("failed to open {}: {error}", path.display()))?;
+    let reader = FileReader::try_new(file, None)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let schema = reader.schema();
+    for (name, expected) in [
+        ("osm_id", DataType::Int64),
+        ("start_lat", DataType::Float64),
+        ("start_lon", DataType::Float64),
+        ("end_lat", DataType::Float64),
+        ("end_lon", DataType::Float64),
+    ] {
+        let field = schema.field_with_name(name).map_err(|_| {
+            format!(
+                "{} roads schema is missing required column {name}",
+                path.display()
+            )
+        })?;
+        if field.data_type() != &expected {
+            return Err(format!(
+                "{} roads schema column {name} must have type {expected:?}, got {:?}",
+                path.display(),
+                field.data_type()
+            ));
+        }
+    }
+
+    let mut rows = 0usize;
+    for (batch_index, batch) in reader.enumerate() {
+        let batch = batch.map_err(|error| {
+            format!(
+                "failed to read {} batch {batch_index}: {error}",
+                path.display()
+            )
+        })?;
+        rows = rows
+            .checked_add(batch.num_rows())
+            .ok_or_else(|| format!("row count overflow in {}", path.display()))?;
+    }
+    if rows == 0 {
+        return Err(format!("{} contains no road rows", path.display()));
+    }
+    Ok(rows)
 }
 
 /// Road segment query result (references into mmap'd data, minimal copy).
@@ -923,6 +982,60 @@ mod synth_load_tests {
         w.finish().unwrap();
     }
 
+    fn write_reference_roads(path: &Path, batch_rows: &[usize]) {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("osm_id", DataType::Int64, false),
+            Field::new("start_lat", DataType::Float64, false),
+            Field::new("start_lon", DataType::Float64, false),
+            Field::new("end_lat", DataType::Float64, false),
+            Field::new("end_lon", DataType::Float64, false),
+        ]));
+        let f = File::create(path).unwrap();
+        let mut w = FileWriter::try_new(f, &schema).unwrap();
+        for &rows in batch_rows {
+            let osm_ids = Int64Array::from_iter_values((0..rows).map(|row| row as i64));
+            let coordinates = || Float64Array::from_iter_values((0..rows).map(|row| row as f64));
+            let batch = RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(osm_ids),
+                    Arc::new(coordinates()),
+                    Arc::new(coordinates()),
+                    Arc::new(coordinates()),
+                    Arc::new(coordinates()),
+                ],
+            )
+            .unwrap();
+            w.write(&batch).unwrap();
+        }
+        w.finish().unwrap();
+    }
+
+    fn write_wrong_schema_roads(path: &Path) {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("osm_id", DataType::Int64, false),
+            Field::new("start_lat", DataType::Float32, false),
+            Field::new("start_lon", DataType::Float64, false),
+            Field::new("end_lat", DataType::Float64, false),
+            Field::new("end_lon", DataType::Float64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int64Array::from(vec![1])),
+                Arc::new(Float32Array::from(vec![50.0])),
+                Arc::new(Float64Array::from(vec![14.0])),
+                Arc::new(Float64Array::from(vec![50.1])),
+                Arc::new(Float64Array::from(vec![14.1])),
+            ],
+        )
+        .unwrap();
+        let f = File::create(path).unwrap();
+        let mut w = FileWriter::try_new(f, &schema).unwrap();
+        w.write(&batch).unwrap();
+        w.finish().unwrap();
+    }
+
     #[test]
     fn load_hex_reads_synth_airport_lines_when_present() {
         let dir = tempfile::tempdir().unwrap();
@@ -937,6 +1050,58 @@ mod synth_load_tests {
         let dir = tempfile::tempdir().unwrap();
         let hex = load_hex(dir.path().to_str().unwrap()).unwrap();
         assert!(hex.synth_airport_lines_batches.is_empty());
+    }
+
+    #[test]
+    fn validate_reference_roads_strictly_reads_all_batches_without_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let hex_id = "841e309ffffffff";
+        let hex_dir = root.path().join(hex_id);
+        std::fs::create_dir(&hex_dir).unwrap();
+        write_reference_roads(&hex_dir.join("roads.arrow"), &[1, 1]);
+
+        assert_eq!(validate_reference_roads(root.path(), hex_id).unwrap(), 2);
+    }
+
+    #[test]
+    fn validate_reference_roads_rejects_corrupt_or_empty_arrow() {
+        let root = tempfile::tempdir().unwrap();
+        let hex_id = "841e309ffffffff";
+        let hex_dir = root.path().join(hex_id);
+        std::fs::create_dir(&hex_dir).unwrap();
+        let roads = hex_dir.join("roads.arrow");
+
+        std::fs::write(&roads, b"not an Arrow IPC file").unwrap();
+        assert!(validate_reference_roads(root.path(), hex_id)
+            .unwrap_err()
+            .contains("failed to read"));
+
+        write_reference_roads(&roads, &[0]);
+        assert!(validate_reference_roads(root.path(), hex_id)
+            .unwrap_err()
+            .contains("contains no road rows"));
+    }
+
+    #[test]
+    fn validate_reference_roads_rejects_wrong_query_schema() {
+        let root = tempfile::tempdir().unwrap();
+        let hex_id = "841e309ffffffff";
+        let hex_dir = root.path().join(hex_id);
+        std::fs::create_dir(&hex_dir).unwrap();
+        let roads = hex_dir.join("roads.arrow");
+        write_wrong_schema_roads(&roads);
+
+        let error = validate_reference_roads(root.path(), hex_id).unwrap_err();
+        assert!(error.contains("start_lat"), "unexpected error: {error}");
+        assert!(error.contains("Float64"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn validate_reference_roads_rejects_path_traversal() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(validate_reference_roads(root.path(), "../roads.arrow")
+            .unwrap_err()
+            .contains("invalid H3 reference cell"));
     }
 
     /// `col_u16_or_u8` must read both the new UInt16 rail `maxspeed`

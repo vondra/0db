@@ -1,3 +1,6 @@
 #!/usr/bin/env bash
 # Fires after `git merge` (and after `git pull` which is fetch+merge).
-exec "$(dirname "$0")/_engine-rebuild.sh" "HEAD@{1}" "HEAD"
+# ORIG_HEAD is the semantic pre-merge commit. HEAD@{1} is reflog-relative and
+# can still point behind an earlier rebase while this hook is running, which
+# caused docs-only fast-forwards to rebuild every engine crate.
+exec "$(dirname "$0")/_engine-rebuild.sh" "ORIG_HEAD" "HEAD"

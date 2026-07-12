@@ -25,7 +25,7 @@ export default function App() {
   // Route split: /about and the map app must not share one component instance,
   // or the early return would skip MapApp's hooks on the next render and break
   // React's hook order (Rules-of-Hooks). Keep all map state inside MapApp.
-  if (window.location.pathname.startsWith('/about')) {
+  if (window.location.pathname === '/about' || window.location.pathname.startsWith('/about/')) {
     return (
       <Suspense fallback={<div className="h-screen w-screen bg-[#fafaf8]" />}>
         <AboutPage />

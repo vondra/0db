@@ -24,6 +24,7 @@ export interface NoiseDetailContentProps {
 // chunk — DetailCard / MobileDetailSheet import it via React.lazy and show
 // DetailSkeleton until both the ~1.5 s noise compute AND this chunk land.
 export default function NoiseDetailContent({ data, onHighlight, maxSources }: NoiseDetailContentProps) {
+  const [centerLat, centerLng] = data.h3_center
   // Hide silence-sentinel values (sources with no audible contribution at this point).
   // The Rust engine returns periods even for empty source classes; their Lden falls
   // to ~−113 dB (silence) which is meaningless to display in the breakdown.
@@ -51,7 +52,7 @@ export default function NoiseDetailContent({ data, onHighlight, maxSources }: No
   useEffect(() => {
     setFullSegments(null)
     setLoadingFull(false)
-  }, [data.h3_center[0], data.h3_center[1]])
+  }, [centerLat, centerLng])
 
   const displaySegments = fullSegments?.segments ?? data.segments ?? []
   const displayMeta = fullSegments?.meta ?? data.segments_meta ?? null
@@ -63,8 +64,7 @@ export default function NoiseDetailContent({ data, onHighlight, maxSources }: No
     if (loadingFull) return
     setLoadingFull(true)
     try {
-      const [lat, lng] = data.h3_center
-      const r = await fetch(`/api/noise-onfly-v2?lat=${lat}&lng=${lng}&full=1`)
+      const r = await fetch(`/api/noise-onfly-v2?lat=${centerLat}&lng=${centerLng}&full=1`)
       if (!r.ok) throw new Error(`fetch failed: ${r.status}`)
       const next = (await r.json()) as NoiseComputeData
       setFullSegments({
@@ -92,7 +92,7 @@ export default function NoiseDetailContent({ data, onHighlight, maxSources }: No
             </span>
             <div className="text-right pr-6">
               <div className="text-xs text-muted-foreground/60 font-mono leading-tight">
-                {data.h3_center[0].toFixed(4)}, {data.h3_center[1].toFixed(4)}
+                {centerLat.toFixed(4)}, {centerLng.toFixed(4)}
               </div>
               {data.elevation_m > 0 && (
                 <div className="text-xs text-muted-foreground/60 font-mono leading-tight">{Math.round(data.elevation_m)} m a.s.l.</div>
