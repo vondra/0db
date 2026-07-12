@@ -235,6 +235,7 @@ async function main() {
     searchRadiusM: 2000,
     resetSourceIds: [NATIONAL_MIX.id],
     countryGate: makeCountryGate('ZA'),
+    datasetNonEmpty: allSites.length > 0, // deduped union of all ZA sources, pre-NACE-filter
     label: 'ZA',
     h3r4Dir: H3R4_DIR,
   })

@@ -67,16 +67,18 @@ function inPyOrBorder(lat: number, lon: number): boolean {
 
 interface IndSite { lat: number; lon: number; name: string; fuel: string }
 
-function loadPlants(file: string): IndSite[] {
+function loadPlants(file: string): { sites: IndSite[]; parsedInArea: number } {
   const path = resolve(CACHE_DIR, file)
-  if (!existsSync(path)) return []
+  if (!existsSync(path)) return { sites: [], parsedInArea: 0 }
   const fc = JSON.parse(readFileSync(path, 'utf-8'))
   const out: IndSite[] = []
+  let parsedInArea = 0 // pre-status parse count (coords valid) — feeds datasetNonEmpty
   for (const f of fc.features || []) {
     const g = f.geometry
     if (!g || g.type !== 'Point') continue
     const [lon, lat] = g.coordinates || []
     if (lat == null || lon == null) continue
+    parsedInArea++
     const p = f.properties || {}
     const status = (p.Status || '').toString().toLowerCase()
     if (!status.includes('operating')) continue
@@ -92,14 +94,26 @@ function loadPlants(file: string): IndSite[] {
       fuel: (p.Type || 'unknown').toString().toLowerCase(),
     })
   }
-  return out
+  return { sites: out, parsedInArea }
 }
 
 async function main() {
   console.log(`=== PY Industrial Enrichment — GEM + cross-border hydro (${YEAR}) ===\n`)
 
-  const pyPlants = loadPlants('power-plants-gem-py.geojson')
-  const borderPlants = loadPlants('power-plants-gem-border.geojson')
+  const pyLoad = loadPlants('power-plants-gem-py.geojson')
+  const borderLoad = loadPlants('power-plants-gem-border.geojson')
+  // BOTH files are load-bearing: with the border file missing, the domestic
+  // facilities still trigger the country-wide reset and the old Itaipú /
+  // Yacyretá stamps could never be restated (round-3 Codex). Same fatal
+  // pattern as CO: refuse to reset what this run cannot replace.
+  for (const [file, load] of [['power-plants-gem-py.geojson', pyLoad], ['power-plants-gem-border.geojson', borderLoad]] as const) {
+    if (load.parsedInArea === 0) {
+      console.error(`FATAL: ${file} missing/empty — refusing to reset stamps this run cannot replace`)
+      process.exit(1)
+    }
+  }
+  const pyPlants = pyLoad.sites
+  const borderPlants = borderLoad.sites
 
   // Merge by coordinate (Acaray may be in both)
   const seen = new Set<string>()
@@ -133,6 +147,7 @@ async function main() {
     searchRadiusM: 3000,
     resetSourceIds: [NATIONAL_MIX.id],
     countryGate: makeCountryGate('PY'),
+    datasetNonEmpty: true, // both files hard-gated non-empty above
     label: 'PY',
     h3r4Dir: H3R4_DIR,
   })

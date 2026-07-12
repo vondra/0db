@@ -53,17 +53,19 @@ function inFiji(lat: number, lon: number): boolean {
 
 interface IndSite { lat: number; lon: number; name: string; fuel: string }
 
-function loadGemPlants(): IndSite[] {
+function loadGemPlants(): { sites: IndSite[]; parsedInArea: number } {
   const path = resolve(CACHE_DIR, 'power-plants-gem.geojson')
-  if (!existsSync(path)) return []
+  if (!existsSync(path)) return { sites: [], parsedInArea: 0 }
   const fc = JSON.parse(readFileSync(path, 'utf-8'))
   const out: IndSite[] = []
+  let parsedInArea = 0 // pre-status count — feeds datasetNonEmpty (retired-only FJ must still sweep)
   for (const f of fc.features || []) {
     const g = f.geometry
     if (!g || g.type !== 'Point') continue
     const [lon, lat] = g.coordinates || []
     if (lat == null || lon == null) continue
     if (!inFiji(lat, lon)) continue
+    parsedInArea++
     const p = f.properties || {}
     const status = (p.Status || '').toString().toLowerCase()
     if (!status.includes('operating')) continue
@@ -73,13 +75,13 @@ function loadGemPlants(): IndSite[] {
       fuel: (p.Type || 'unknown').toString().toLowerCase(),
     })
   }
-  return out
+  return { sites: out, parsedInArea }
 }
 
 async function main() {
   console.log(`=== FJ Industrial Enrichment — GEM Global Integrated Power (${YEAR}) ===\n`)
 
-  const plants = loadGemPlants()
+  const { sites: plants, parsedInArea } = loadGemPlants()
   const fuelCounts: Record<string, number> = {}
   for (const p of plants) fuelCounts[p.fuel] = (fuelCounts[p.fuel] || 0) + 1
   console.log(`  GEM operating plants in FJ: ${plants.length}`)
@@ -99,6 +101,7 @@ async function main() {
     searchRadiusM: 2000,
     resetSourceIds: [NATIONAL_MIX.id],
     countryGate: makeCountryGate('FJ'),
+    datasetNonEmpty: parsedInArea > 0, // pre-status parse count from the loader
     label: 'FJ',
     h3r4Dir: H3R4_DIR,
   })

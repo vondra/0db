@@ -45,16 +45,19 @@
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'
 import { inBbox } from './lib/spatial.js'
+import { NON_CGAZ_OWNERSHIP_BBOXES } from './lib/country-polygon.js'
 
-const NC_BBOX: readonly [number, number, number, number] = [-23.0, 163.5, -19.5, 168.5]
+// SSOT: the same bbox `makeAnyCountryGate` treats as an ownership area — if
+// the two ever diverged, R14/heal-industrial-orphans would sweep legitimate
+// NC stamps (Usine Koniambo was a round-3 false positive; #32).
+const NC_BBOX = NON_CGAZ_OWNERSHIP_BBOXES.find((t) => t.iso2 === 'NC')!.bbox
 
 await enrichGemIndustrial({
   countryCode: 'nc',
   countryName: "New Caledonia",
   bbox: NC_BBOX,
-  // CGAZ has no standalone NCL feature (French territories fold into FRA), so
-  // makeCountryGate('nc') throws. The bbox IS a safe ownership gate here: an
-  // isolated archipelago — nearest foreign land (Vanuatu) is ~500 km away and
-  // no sibling pass's territory intersects this box (#31 round-2 Codex).
+  // CGAZ has no NCL feature, so makeCountryGate('nc') throws. The bbox IS a
+  // safe ownership gate (isolated archipelago) and is REGISTERED in
+  // NON_CGAZ_OWNERSHIP_BBOXES so the orphan machinery honours it too.
   countryGate: (lat, lon) => inBbox(lat, lon, NC_BBOX),
 })

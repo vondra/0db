@@ -156,6 +156,7 @@ async function main() {
     searchRadiusM: 1500,
     resetSourceIds: [NATIONAL_MIX.id],
     countryGate: makeCountryGate('CN'),
+    datasetNonEmpty: facilities.length > 0, // = sum of per-fuel registries (loaders keep operating plants only; the file-level fatal guard aborts on any empty registry, so an all-retired CN reads as abort, not sweep — accepted)
     label: 'CN',
     h3r4Dir: H3R4_DIR,
   })

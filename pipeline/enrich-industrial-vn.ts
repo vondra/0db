@@ -38,17 +38,19 @@ const VN_BBOX: [number, number, number, number] = [8.3, 102.1, 23.5, 109.5]
 
 interface IndSite { lat: number; lon: number; name: string; fuel: string }
 
-function loadPlants(inVN: (lat: number, lon: number) => boolean): IndSite[] {
+function loadPlants(inVN: (lat: number, lon: number) => boolean): { sites: IndSite[]; parsedInArea: number } {
   const path = resolve(CACHE_DIR, 'power-plants.geojson')
-  if (!existsSync(path)) return []
+  if (!existsSync(path)) return { sites: [], parsedInArea: 0 }
   const fc = JSON.parse(readFileSync(path, 'utf-8'))
   const out: IndSite[] = []
+  let parsedInArea = 0 // pre-status count — feeds datasetNonEmpty (a retired-only country must still sweep)
   for (const f of fc.features || []) {
     const g = f.geometry
     if (!g || g.type !== 'Point') continue
     const [lon, lat] = g.coordinates
     if (lat == null || lon == null) continue
     if (!inBbox(lat, lon, VN_BBOX) || !inVN(lat, lon)) continue
+    parsedInArea++
     const p = f.properties || {}
     const status = (p.Status || '').toString().toLowerCase()
     if (status && status !== 'operating') continue
@@ -58,7 +60,7 @@ function loadPlants(inVN: (lat: number, lon: number) => boolean): IndSite[] {
       fuel: (p.Type || p.Fuel || 'unknown').toString(),
     })
   }
-  return out
+  return { sites: out, parsedInArea }
 }
 
 async function main() {
@@ -66,7 +68,7 @@ async function main() {
   // Built here, not at module scope: the first call may download/convert CGAZ.
   const inVN = makeCountryGate('VN')
   const isInside = (lat: number, lon: number) => inBbox(lat, lon, VN_BBOX) && inVN(lat, lon)
-  const plants = loadPlants(inVN)
+  const { sites: plants, parsedInArea } = loadPlants(inVN)
   console.log(`  Operating power plants: ${plants.length}`)
 
   const facilities: MatchFacility[] = []
@@ -83,6 +85,7 @@ async function main() {
     searchRadiusM: 1500,
     resetSourceIds: [NATIONAL_MIX.id],
     countryGate: inVN,
+    datasetNonEmpty: parsedInArea > 0, // pre-status parse count from the loader
     label: 'VN',
     h3r4Dir: H3R4_DIR,
   })

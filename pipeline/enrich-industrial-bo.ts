@@ -242,6 +242,7 @@ async function main() {
     searchRadiusM: 2000,
     resetSourceIds: [NATIONAL_MIX.id],
     countryGate: makeCountryGate('BO'),
+    datasetNonEmpty: allSites.length > 0, // deduped union of all BO sources, pre-fuel-filter
     label: 'BO',
     h3r4Dir: H3R4_DIR,
   })

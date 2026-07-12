@@ -95,29 +95,10 @@ const METRO_LINES_GEOJSON = resolve(CACHE_DIR, 'metro-lines.geojson')
 
 const CN_BBOX: [number, number, number, number] = [18.0, 73.0, 54.0, 135.5]
 
-// Same exclusion zones as roads
-const EXCLUDE_ZONES: Array<{ name: string; bbox: [number, number, number, number] }> = [
-  { name: 'India-south', bbox: [18.0, 73.0, 29.0, 85.0] },
-  { name: 'Pakistan-West', bbox: [24.0, 73.0, 37.5, 74.5] },
-  { name: 'Nepal', bbox: [26.5, 80.0, 30.5, 88.2] },
-  { name: 'Bhutan', bbox: [26.7, 88.8, 28.3, 92.1] },
-  { name: 'Myanmar', bbox: [18.0, 92.0, 28.5, 100.5] },
-  { name: 'Laos', bbox: [13.0, 100.0, 22.5, 107.8] },
-  { name: 'Vietnam', bbox: [8.0, 102.0, 23.5, 110.0] },
-  { name: 'Thailand', bbox: [5.0, 97.0, 21.0, 106.0] },
-  { name: 'Central Asia', bbox: [36.0, 73.0, 50.0, 81.0] },
-  { name: 'Mongolia', bbox: [42.0, 88.0, 54.0, 120.0] },
-  { name: 'North Korea', bbox: [37.5, 124.0, 43.0, 131.0] },
-  { name: 'South Korea', bbox: [33.0, 126.0, 38.5, 130.0] },
-  { name: 'Russia Far East', bbox: [50.0, 115.0, 54.0, 135.5] },
-  { name: 'Japan', bbox: [24.0, 129.0, 54.0, 135.5] },
-  { name: 'Taiwan', bbox: [21.8, 119.5, 25.5, 122.1] },
-]
-
-function inExclusion(lat: number, lon: number): boolean {
-  for (const z of EXCLUDE_ZONES) if (inBbox(lat, lon, z.bbox)) return true
-  return false
-}
+// Neighbour exclusion boxes DELETED (#32, /gg #31 round-2 Codex): the central
+// writeRailTrains countryGate (exact CGAZ polygon) owns national scope now, and
+// the hand rectangles provably clipped DOMESTIC territory (the CN 'Vietnam' box
+// held Nanning, IN 'Pakistan' held Ahmedabad, TH 'Malaysia' held Sungai Kolok).
 
 // ── Load Mainland rail + metro ──
 
@@ -324,7 +305,7 @@ async function main() {
   }
   console.log(`  CN-bbox hexes with railways.arrow: ${hexDirs.length}`)
 
-  let totalRails = 0, excluded = 0, skippedService = 0
+  let totalRails = 0, skippedService = 0
   let matchedMainland = 0, totalRetracted = 0
   let hexesUpdated = 0
   const startTime = Date.now()
@@ -339,7 +320,6 @@ async function main() {
     const r = await writeRailTrains(resolve(H3R4_DIR, hex, 'railways.arrow'), (row) => {
       if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
       if (!inBbox(row.midLat, row.midLon, CN_BBOX)) return null
-      if (inExclusion(row.midLat, row.midLon)) { excluded++; return null }
 
       const rt = row.railType
 
@@ -405,7 +385,6 @@ async function main() {
   console.log(`\n=== Results ===`)
   console.log(`  Total rails scanned:        ${totalRails.toLocaleString()}`)
   console.log(`  Skipped service tracks:     ${skippedService.toLocaleString()}`)
-  console.log(`  Excluded (neighbours):      ${excluded.toLocaleString()}`)
   console.log(`  Matched by Mainland:        ${matchedMainland.toLocaleString()} (${(100 * matchedMainland / Math.max(totalRails, 1)).toFixed(2)}%)`)
   console.log(`  Retracted legacy defaults:  ${totalRetracted.toLocaleString()}`)
   console.log(`  Hexes updated:              ${hexesUpdated}/${hexDirs.length}`)

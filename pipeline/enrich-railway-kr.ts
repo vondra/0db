@@ -91,6 +91,7 @@ async function main() {
           return wasOldFallbackStamp(row)
         },
       },
+      inKr, // #31.7 central country gate — see writeRailTrains
     )
     totalRows += r.rows
     totalRetracted += r.retracted

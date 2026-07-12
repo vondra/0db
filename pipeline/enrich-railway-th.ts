@@ -62,21 +62,14 @@ const enrichOnly = process.argv.includes('--enrich-only')
 
 const FEED_URL = 'https://namtang-api.otp.go.th/download/namtang-gtfs.zip'
 
-// Thailand bbox + exclusion zones for neighbour countries.
+// Scope: the exact CGAZ TH polygon via the central writeRailTrains countryGate (#31.7).
 // Conservative bboxes that don't clip Chiang Mai (18.8N/98.99E),
 // Korat (14.97N/102.1E), Udon Thani (17.41N/102.79E), Surat Thani (9.1N/99.3E).
 const TH_BBOX: [number, number, number, number] = [5.5, 97.3, 20.5, 105.7]
-const EXCLUDE_ZONES: Array<{ name: string; bbox: [number, number, number, number] }> = [
-  { name: 'Myanmar',  bbox: [10.0, 97.3, 20.5, 98.3] },
-  { name: 'Laos',     bbox: [17.9, 101.0, 22.5, 106.0] },
-  { name: 'Cambodia', bbox: [10.0, 103.3, 14.7, 107.0] },
-  { name: 'Vietnam',  bbox: [8.0, 104.5, 23.5, 109.5] },
-  { name: 'Malaysia', bbox: [1.0, 99.5, 6.3, 104.5] },
-]
-function inExclusion(lat: number, lon: number): boolean {
-  for (const z of EXCLUDE_ZONES) if (inBbox(lat, lon, z.bbox)) return true
-  return false
-}
+// Neighbour exclusion boxes DELETED (#32, /gg #31 round-2 Codex): the central
+// writeRailTrains countryGate (exact CGAZ polygon) owns national scope now, and
+// the hand rectangles provably clipped DOMESTIC territory (the CN 'Vietnam' box
+// held Nanning, IN 'Pakistan' held Ahmedabad, TH 'Malaysia' held Sungai Kolok).
 
 type RouteFamily = 'rail' | 'tram' | 'metro'
 
@@ -389,8 +382,8 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
   // neighbour's own national source (mechanism: the PL feed stamped 11,856 km of
   // CZ track, 7fac2349). A national feed only speaks for its own country's
   // network: foreign stops are dropped BEFORE any grid is built (the polygon gate
-  // subsumes the coarse TH_BBOX pre-filter for stops; EXCLUDE_ZONES stay as the
-  // row-side guard in `match`).
+  // subsumes the coarse TH_BBOX pre-filter for stops; the row side is owned by
+  // the central writeRailTrains countryGate — the old EXCLUDE_ZONES are gone, #32).
   const inTh = makeCountryGate('TH')
   const rawCount = allStopCounts.length
   allStopCounts = allStopCounts.filter((sc) => inTh(sc.lat, sc.lon))
@@ -420,7 +413,7 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
   }
   console.log(`  TH hexes with railways.arrow: ${thHexes.length}`)
 
-  let totalRails = 0, skippedService = 0, skippedExisting = 0, excluded = 0
+  let totalRails = 0, skippedService = 0, skippedExisting = 0
   let matchedGtfs = 0, totalRetracted = 0
   let hexesUpdated = 0
   const startTime = Date.now()
@@ -449,7 +442,6 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
     const r = await writeRailTrains(resolve(H3R4_DIR, hex, 'railways.arrow'), (row) => {
       if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
       if (!inBbox(row.midLat, row.midLon, TH_BBOX)) return null
-      if (inExclusion(row.midLat, row.midLon)) { excluded++; return null }
 
       const rt = row.railType
       const grid = rt === 1 || rt === 2 ? tramGrid : rt === 0 ? railGrid : null
@@ -501,7 +493,6 @@ async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean
   console.log(`  Total rails scanned:      ${totalRails.toLocaleString()}`)
   console.log(`  Skipped service tracks:   ${skippedService.toLocaleString()}`)
   console.log(`  Skipped already enriched: ${skippedExisting.toLocaleString()}`)
-  console.log(`  Excluded (neighbours):    ${excluded.toLocaleString()}`)
   console.log(`  Matched by GTFS:          ${matchedGtfs.toLocaleString()} (${(matchedGtfs / Math.max(totalRails, 1) * 100).toFixed(2)}%)`)
   console.log(`  Retracted legacy defaults: ${totalRetracted.toLocaleString()}`)
   console.log(`  Hexes updated:            ${hexesUpdated}/${thHexes.length}`)

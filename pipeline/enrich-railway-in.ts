@@ -33,7 +33,7 @@
  *   - Speed < 60 km/h broad gauge: 10 pax + 5 freight
  *   - Metre/Narrow gauge: 5 pax (heritage)
  *
- * Exclusion zones for Pakistan, Nepal, Bhutan, Bangladesh, Myanmar, Sri Lanka,
+ *   Scope: the exact CGAZ IN polygon via the central writeRailTrains countryGate (#31.7).
  * China.
  *
  * Note: Delhi Metro and most other Indian metros are tagged `railway=subway`
@@ -75,16 +75,10 @@ const METRO_LINES_GEOJSON = resolve(CACHE_DIR, 'metro-lines.geojson')
 
 const IN_BBOX: [number, number, number, number] = [6.5, 68.0, 37.0, 98.0]
 
-// Exclusion zones for neighbours — tight to avoid clipping Delhi / Kolkata.
-const EXCLUDE_ZONES: Array<{ name: string; bbox: [number, number, number, number] }> = [
-  { name: 'Pakistan', bbox: [23.0, 68.0, 37.0, 73.8] },
-  { name: 'China', bbox: [30.5, 76.0, 37.0, 98.0] },
-  { name: 'Nepal', bbox: [26.5, 80.1, 30.5, 88.2] },
-  { name: 'Bhutan', bbox: [26.7, 88.8, 28.3, 92.1] },
-  { name: 'Bangladesh', bbox: [20.5, 88.8, 26.7, 92.8] },
-  { name: 'Myanmar', bbox: [9.5, 93.6, 28.5, 102.0] },
-  { name: 'Sri Lanka', bbox: [5.9, 79.5, 9.9, 82.0] },
-]
+// Neighbour exclusion boxes DELETED (#32, /gg #31 round-2 Codex): the central
+// writeRailTrains countryGate (exact CGAZ polygon) owns national scope now,
+// and the hand rectangles provably clipped DOMESTIC territory (the 'Pakistan'
+// box held Ahmedabad's west flank).
 
 // Indian metro cities (broader bbox for suburban rail)
 const MUMBAI_BBOX: [number, number, number, number] = [18.9, 72.7, 19.4, 73.3]
@@ -99,11 +93,6 @@ const KOCHI_BBOX: [number, number, number, number] = [9.8, 76.1, 10.1, 76.4]
 const LUCKNOW_BBOX: [number, number, number, number] = [26.75, 80.8, 27.0, 81.1]
 const JAIPUR_BBOX: [number, number, number, number] = [26.8, 75.7, 27.0, 76.0]
 const NAGPUR_BBOX: [number, number, number, number] = [21.05, 79.0, 21.25, 79.2]
-
-function inAnyZone(lat: number, lon: number): boolean {
-  for (const z of EXCLUDE_ZONES) if (inBbox(lat, lon, z.bbox)) return true
-  return false
-}
 
 function pointToPolylineDist(pLat: number, pLon: number, coords: [number, number][]): number {
   let best = Infinity
@@ -321,7 +310,7 @@ async function main() {
   }
   console.log(`  IN-bbox hexes with railways.arrow: ${hexDirs.length}`)
 
-  let totalRails = 0, excluded = 0, skippedService = 0
+  let totalRails = 0, skippedService = 0
   let matchedAtlas = 0, totalRetracted = 0
   let hexesUpdated = 0
   const startTime = Date.now()
@@ -337,7 +326,6 @@ async function main() {
     const r = await writeRailTrains(resolve(H3R4_DIR, hex, 'railways.arrow'), (row) => {
       if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
       if (!inBbox(row.midLat, row.midLon, IN_BBOX)) return null
-      if (inAnyZone(row.midLat, row.midLon)) { excluded++; return null }
 
       const rt = row.railType
 
@@ -396,7 +384,6 @@ async function main() {
   console.log(`\n=== Results ===`)
   console.log(`  Total rails scanned:        ${totalRails.toLocaleString()}`)
   console.log(`  Skipped service tracks:     ${skippedService.toLocaleString()}`)
-  console.log(`  Excluded (neighbours):      ${excluded.toLocaleString()}`)
   console.log(`  Matched by Living Atlas:    ${matchedAtlas.toLocaleString()} (${(100 * matchedAtlas / Math.max(totalRails, 1)).toFixed(2)}%)`)
   console.log(`  Retracted legacy defaults:  ${totalRetracted.toLocaleString()}`)
   console.log(`  Hexes updated:              ${hexesUpdated}/${hexDirs.length}`)

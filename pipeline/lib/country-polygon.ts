@@ -113,6 +113,65 @@ export function makeCountryGate(iso2: string): (lat: number, lon: number) => boo
 }
 
 /**
+ * Ownership areas CGAZ cannot express — used by BOTH sides of the ownership
+ * machinery, or they contradict each other (#32 /gg round-3 Codex):
+ *
+ * `NON_CGAZ_OWNERSHIP_BBOXES`: territories with NO CGAZ ADM0 feature at all,
+ * where a pass legitimately owns by bbox (isolated — no foreign land inside
+ * the box). Folded into `makeAnyCountryGate`, else R14/heal-industrial-orphans
+ * treats their legitimate stamps as orphans (Usine Koniambo was among the
+ * false positives); the territory's own pass imports the SAME entry for its
+ * countryGate override.
+ *
+ * `COUNTRY_TERRITORY_EXTENSIONS`: source countries whose national network
+ * legitimately spans an extra CGAZ territory. `makeOwnershipGate` unions them;
+ * the R9 auditor, heal-rail-country-bleed AND the country's enrichers must all
+ * use it — deriving bare `makeCountryGate(iso)` on one side turns the other
+ * side's stamps into "foreign" and the chain ping-pongs (40 real EH rows of
+ * ma-national-railway were one generic-heal run away from deletion).
+ */
+export const NON_CGAZ_OWNERSHIP_BBOXES: ReadonlyArray<{ iso2: string; bbox: readonly [number, number, number, number] }> = [
+  // New Caledonia — no CGAZ feature (not even under FRA's rings); nearest
+  // foreign land (Vanuatu) ~500 km, so the bbox IS a safe ownership area.
+  { iso2: 'NC', bbox: [-23.0, 163.5, -19.5, 168.5] },
+]
+
+export const COUNTRY_TERRITORY_EXTENSIONS: Readonly<Record<string, readonly string[]>> = {
+  MA: ['EH'], // ONCF network + GEM scope span Western Sahara (CGAZ ESH)
+}
+
+/** Union of a country's polygon and its declared territory extensions — THE
+ *  ownership gate every national-source consumer must use (writer countryGate,
+ *  R9 auditor, heal-rail-country-bleed). Identical to makeCountryGate for the
+ *  ~200 countries without extensions. */
+export function makeOwnershipGate(iso2: string): (lat: number, lon: number) => boolean {
+  const gates = [makeCountryGate(iso2), ...(COUNTRY_TERRITORY_EXTENSIONS[iso2.toUpperCase()] ?? []).map(makeCountryGate)]
+  if (gates.length === 1) return gates[0]
+  return (lat, lon) => gates.some(g => g(lat, lon))
+}
+
+/**
+ * Lazy WORLD membership tester: true when (lat, lon) lies inside ANY CGAZ ADM0
+ * country OR inside a declared non-CGAZ ownership bbox (see above). Powers the industrial shared-id orphan rule (#32 / auditor R13): a
+ * stamp in no country at all is unreachable by every national pass since #31
+ * (both destructive arms are countryGate-scoped), so it can only be stale
+ * legacy. One flat ring index over the whole CGAZ set — the per-ring bbox
+ * pre-check keeps far-out misses (open sea) nearly free. Built on first call,
+ * cached for the process.
+ */
+export function makeAnyCountryGate(): (lat: number, lon: number) => boolean {
+  let all: IndexedRing[] | null = null
+  return (lat, lon) => {
+    for (const t of NON_CGAZ_OWNERSHIP_BBOXES) {
+      const [S, W, N, E] = t.bbox
+      if (lat >= S && lat <= N && lon >= W && lon <= E) return true
+    }
+    if (!all) all = cgazFeatures().flatMap(f => buildIndexed(f.geometry))
+    return inIndexed(all, lat, lon)
+  }
+}
+
+/**
  * THE national-ownership predicate for segment geometry — a segment is foreign
  * to a country only when start, mid AND end all lie outside its polygon. This
  * is the auditor's R9 rule verbatim; the writeRailTrains countryGate, the

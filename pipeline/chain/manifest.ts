@@ -340,6 +340,25 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
     (b) => (b ? ['--bbox', serializeBbox(b)] : []),
   )
 
+  // BEFORE every industrial claimer INCLUDING global-industrial (round-3
+  // Codex: GPPD same-rank-lower-id cannot overwrite 330, so healing after it
+  // strands the row empty until the NEXT chain run — 74 such rows found):
+  // orphaned shared-id stamps (auditor R14) are unreachable by every national
+  // pass since #31, so only this sweep can clear them, and GPPD must get its
+  // chance at the freed rows in this same run.
+  pushPerBbox(
+    {
+      id: 'industrial-heal-orphans',
+      script: 'heal-industrial-orphans.ts',
+      phase: 'global-priors',
+      layer: 'industrial',
+      country: null,
+      notes:
+        'clears shared-id (330) stamps whose centroid lies in no CGAZ country (auditor R14 write-side twin) — post-#31 passes cannot create new ones (countryGate scopes stamp+reset), so this drains legacy orphans once and then stays a no-op.',
+      skipReason: null,
+    },
+    (b) => (b ? ['--bbox', serializeBbox(b)] : ['--world']),
+  )
   // ── global-priors ──────────────────────────────────────────────────────────
   {
     const c = cacheState(['global/gppd.csv'])

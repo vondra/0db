@@ -126,7 +126,7 @@ test('stampOneWinner: overlapping sibling pass never clears across the border, o
 
   await stampOneWinner({
     facilities: [PLANT_A], isInside: inA, countryGate: countryA, searchRadiusM: 2000,
-    resetSourceIds: [NATIONAL_MIX.id], label: 'AA', h3r4Dir,
+    resetSourceIds: [NATIONAL_MIX.id], datasetNonEmpty: false, label: 'AA', h3r4Dir,
   })
   let rows = readStamps(arrowPath)
   assert.equal(rows[0].src, NATIONAL_MIX.id, 'pass A stamps its winner')
@@ -136,7 +136,7 @@ test('stampOneWinner: overlapping sibling pass never clears across the border, o
 
   await stampOneWinner({
     facilities: [PLANT_B], isInside: inB, countryGate: countryB, searchRadiusM: 2000,
-    resetSourceIds: [NATIONAL_MIX.id], label: 'BB', h3r4Dir,
+    resetSourceIds: [NATIONAL_MIX.id], datasetNonEmpty: false, label: 'BB', h3r4Dir,
   })
   rows = readStamps(arrowPath)
   assert.equal(rows[0].src, NATIONAL_MIX.id,
@@ -157,7 +157,7 @@ test('stampOneWinner: stale stamp of a DELETED site sweeps (country scope, not p
 
   await stampOneWinner({
     facilities: [PLANT_B], isInside: inB, countryGate: countryB, searchRadiusM: 300,
-    resetSourceIds: [NATIONAL_MIX.id], label: 'BB', h3r4Dir,
+    resetSourceIds: [NATIONAL_MIX.id], datasetNonEmpty: false, label: 'BB', h3r4Dir,
   })
   let rows = readStamps(arrowPath)
   assert.equal(rows[1].src, NATIONAL_MIX.id, 'winner still stamped')
@@ -168,7 +168,7 @@ test('stampOneWinner: stale stamp of a DELETED site sweeps (country scope, not p
   const arrowPath2 = writeIndustrialArrow([0, 0, NATIONAL_MIX.id], [0, 0, 3599])
   await stampOneWinner({
     facilities: [], isInside: inB, countryGate: countryB, searchRadiusM: 2000,
-    resetSourceIds: [NATIONAL_MIX.id], label: 'BB', h3r4Dir,
+    resetSourceIds: [NATIONAL_MIX.id], datasetNonEmpty: false, label: 'BB', h3r4Dir,
   })
   assert.equal(readStamps(arrowPath2)[2].src, NATIONAL_MIX.id, 'no facilities + no parsed dataset → hard no-op')
   await stampOneWinner({

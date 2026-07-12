@@ -56,17 +56,19 @@ interface IndSite {
   fuel: string
 }
 
-function loadPowerPlants(): IndSite[] {
+function loadPowerPlants(): { sites: IndSite[]; parsedInArea: number } {
   const path = resolve(CACHE_DIR, 'power-plants.geojson')
-  if (!existsSync(path)) return []
+  if (!existsSync(path)) return { sites: [], parsedInArea: 0 }
   const fc = JSON.parse(readFileSync(path, 'utf-8'))
   const out: IndSite[] = []
+  let parsedInArea = 0 // pre-status count — feeds datasetNonEmpty (a retired-only country must still sweep)
   for (const f of fc.features || []) {
     const g = f.geometry
     if (!g || g.type !== 'Point') continue
     const [lon, lat] = g.coordinates
     if (lat == null || lon == null) continue
     if (!inBbox(lat, lon, ID_BBOX) || inExcluded(lat, lon)) continue
+    parsedInArea++
     const p = f.properties || {}
     const status = (p.Status || '').toString().toLowerCase()
     if (status && status !== 'operating') continue
@@ -76,13 +78,13 @@ function loadPowerPlants(): IndSite[] {
       fuel: (p.Fuel || p.Type || 'unknown').toString(),
     })
   }
-  return out
+  return { sites: out, parsedInArea }
 }
 
 async function main() {
   console.log(`=== ID Industrial Enrichment — GEM Global Integrated Power (${YEAR}) ===\n`)
 
-  const plants = loadPowerPlants()
+  const { sites: plants, parsedInArea } = loadPowerPlants()
   console.log(`  Operating power plants: ${plants.length}`)
 
   const facilities: MatchFacility[] = []
@@ -99,6 +101,7 @@ async function main() {
     searchRadiusM: 1500,
     resetSourceIds: [NATIONAL_MIX.id],
     countryGate: makeCountryGate('ID'),
+    datasetNonEmpty: parsedInArea > 0, // pre-status parse count from the loader
     label: 'ID',
     h3r4Dir: H3R4_DIR,
   })

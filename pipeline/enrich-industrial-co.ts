@@ -279,6 +279,9 @@ async function main() {
     searchRadiusM: 2000,
     resetSourceIds: [NATIONAL_MIX.id],
     countryGate: makeCountryGate('CO'),
+    // The FATAL empty-source guard above exits before this call whenever any of
+    // the three CO files is missing/empty — reaching here IS the parse proof.
+    datasetNonEmpty: true,
     label: 'CO',
     h3r4Dir: H3R4_DIR,
   })

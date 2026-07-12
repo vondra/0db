@@ -24,7 +24,7 @@ import { resolve } from 'node:path'
 import { tableFromIPC } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
 import { SOURCES } from './lib/sources.js'
-import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
+import { makeOwnershipGate, segmentWhollyOutside } from './lib/country-polygon.js'
 import { writeRailTrains } from './lib/railways-arrow.js'
 import { inBbox } from './lib/spatial.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
@@ -78,7 +78,7 @@ async function main() {
   const gateFor = (iso: string) => {
     let g = gates.get(iso)
     if (!g) {
-      g = makeCountryGate(iso)
+      g = makeOwnershipGate(iso) // country + declared territory extensions (MA∪EH) — same union the writer uses
       gates.set(iso, g)
     }
     return g

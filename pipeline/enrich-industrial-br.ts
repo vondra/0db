@@ -169,6 +169,7 @@ async function main() {
     searchRadiusM: 2000,
     resetSourceIds: [NATIONAL_MIX.id],
     countryGate: makeCountryGate('BR'),
+    datasetNonEmpty: allSites.length > 0, // includes wind — parsed pre-filter
     label: 'BR',
     h3r4Dir: H3R4_DIR,
   })

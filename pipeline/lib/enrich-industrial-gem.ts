@@ -118,13 +118,16 @@ export interface StampOneWinnerArgs {
    *  pass — the one-off orphan sweep is a chain-level audit+heal follow-up
    *  (#31 remainder), not a per-pass concern. */
   countryGate: (lat: number, lon: number) => boolean
-  /** True when the source dataset PARSED non-empty (any status/fuel, before
-   *  the operating/fuel filters). Allows a sweep-only run when `facilities`
-   *  filtered down to zero — a country whose last plant retired heals its
-   *  stale stamps instead of freezing them forever. With the dataset
-   *  missing/empty this stays false and the pass is a hard no-op (a run that
-   *  cannot re-stamp must never reset — the Argentina lesson). */
-  datasetNonEmpty?: boolean
+  /** True when the source dataset PARSED non-empty (any status/fuel, BEFORE
+   *  the operating/fuel filters — count features as they parse, not after).
+   *  Allows a sweep-only run when `facilities` filtered down to zero — a
+   *  country whose last plant retired heals its stale stamps instead of
+   *  freezing them forever. With the dataset missing/empty pass false and the
+   *  run is a hard no-op (a run that cannot re-stamp must never reset — the
+   *  Argentina lesson). REQUIRED, not defaulted (#31 round-2 Codex): a caller
+   *  that never states feed completeness silently conflates "all plants
+   *  retired" with "file missing" and freezes stale stamps for good. */
+  datasetNonEmpty: boolean
   /** Log prefix, e.g. "ZA". */
   label: string
   /** data/prepared/<year>/h3r4 root. */

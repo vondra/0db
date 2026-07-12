@@ -270,6 +270,7 @@ async function main() {
     searchRadiusM: 2000,
     resetSourceIds: [NATIONAL_MIX.id],
     countryGate: makeCountryGate('VE'),
+    datasetNonEmpty: allSites.length > 0, // deduped union of all VE sources, pre-NACE-filter
     label: 'VE',
     h3r4Dir: H3R4_DIR,
   })

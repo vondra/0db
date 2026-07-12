@@ -155,7 +155,7 @@ async function main() {
   const hexDirs = iterateCountryHexes(H3R4_DIR, ET_HEX_BBOX, 'railways.arrow')
   console.log(`  ET-bbox hexes with railways.arrow: ${hexDirs.length}\n`)
 
-  let totalRows = 0, enriched = 0, hexesUpdated = 0, preserved = 0, outsideET = 0, skippedService = 0
+  let totalRows = 0, enriched = 0, hexesUpdated = 0, preserved = 0, skippedService = 0
   const tierCount: Record<string, number> = {}
   let sumPax = 0, sumFrt = 0
   const startTime = Date.now()
@@ -167,7 +167,6 @@ async function main() {
       (row) => {
         if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) { preserved++; return null }
         if (!inBbox(row.midLat, row.midLon, ET_HEX_BBOX)) return null
-        if (!inET(row.midLat, row.midLon)) { outsideET++; return null }
         const t = classify(row.midLat, row.midLon, row.railType, row.name)
         if (!t) return null
         return { pax: t.pax, frt: t.frt, sourceId: MY_SOURCE_ID }
@@ -179,6 +178,8 @@ async function main() {
         sumPax += applied.pax
         sumFrt += applied.frt
       },
+      undefined,
+      inET, // #31.7 central country gate — see writeRailTrains
     )
     totalRows += r.rows
     skippedService += r.skippedService
@@ -194,7 +195,6 @@ async function main() {
   console.log(`  Total rail rows scanned: ${totalRows.toLocaleString()}`)
   console.log(`  Skipped service tracks:  ${skippedService.toLocaleString()}`)
   console.log(`  Preserved (higher prio): ${preserved.toLocaleString()}`)
-  console.log(`  Outside ET polygon:      ${outsideET.toLocaleString()}`)
   console.log(`  Enriched:                ${enriched.toLocaleString()}`)
   console.log(`  Hexes updated:           ${hexesUpdated}/${hexDirs.length}`)
   console.log(`\n  By tier:`)

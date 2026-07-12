@@ -53,7 +53,7 @@ import { SOURCE_ID_MA_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { inBbox, pointToPolylineDist } from './lib/spatial.js'
 import { writeRailTrains } from './lib/railways-arrow.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeOwnershipGate,  } from './lib/country-polygon.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_MA_NATIONAL_RAILWAY
@@ -125,14 +125,15 @@ function classify(lat: number, lon: number, railType: number, usage: number): { 
 async function main() {
   console.log(`=== MA Railway Enrichment — ONCF/Al Boraq/OCP/tramway corridor-tier defaults (${YEAR}) ===\n`)
 
-  const inMA = makeCountryGate('MA')
-  const inEH = makeCountryGate('EH')
-  const inCountry = (lat: number, lon: number) => inMA(lat, lon) || inEH(lat, lon)
+  // MA∪EH via the SSOT union (COUNTRY_TERRITORY_EXTENSIONS) — the auditor and
+  // heal-rail-country-bleed derive the SAME gate for source key `ma-…`, so the
+  // three sides can never disagree about Western Sahara rows (#32 round-3).
+  const inCountry = makeOwnershipGate('MA')
 
   const hexDirs = iterateCountryHexes(H3R4_DIR, MA_HEX_BBOX, 'railways.arrow')
   console.log(`  MA-bbox hexes with railways.arrow: ${hexDirs.length}\n`)
 
-  let totalRows = 0, enriched = 0, hexesUpdated = 0, preserved = 0, outsideMA = 0, skippedService = 0
+  let totalRows = 0, enriched = 0, hexesUpdated = 0, preserved = 0, skippedService = 0
   const tierCount: Record<string, number> = {}
   let sumPax = 0, sumFrt = 0
   const startTime = Date.now()
@@ -150,7 +151,6 @@ async function main() {
       (row) => {
         if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) { preserved++; return null }
         if (!inBbox(row.midLat, row.midLon, MA_HEX_BBOX)) return null
-        if (!inCountry(row.midLat, row.midLon)) { outsideMA++; return null }
         const t = classify(row.midLat, row.midLon, row.railType, row.usage)
         if (!t) return null
         return { pax: t.pax, frt: t.frt, sourceId: MY_SOURCE_ID }
@@ -162,6 +162,8 @@ async function main() {
         sumPax += applied.pax
         sumFrt += applied.frt
       },
+      undefined,
+      inCountry, // #31.7 central country gate — see writeRailTrains
     )
     totalRows += r.rows
     skippedService += r.skippedService
@@ -177,7 +179,6 @@ async function main() {
   console.log(`  Total rail rows scanned: ${totalRows.toLocaleString()}`)
   console.log(`  Skipped service tracks:  ${skippedService.toLocaleString()}`)
   console.log(`  Preserved (higher prio): ${preserved.toLocaleString()}`)
-  console.log(`  Outside MA∪EH polygon:   ${outsideMA.toLocaleString()}`)
   console.log(`  Enriched:                ${enriched.toLocaleString()}`)
   console.log(`  Hexes updated:           ${hexesUpdated}/${hexDirs.length}`)
   console.log(`\n  By tier:`)

@@ -38,6 +38,10 @@
  *                         nor 'any' (wrong dataset-id constant in an enricher)
  *   R11 unknown-country — registry-level: a dataset key carries a country prefix
  *                         that CGAZ/ISO-3166 cannot resolve (checked once at start)
+ *   R14 industrial-orphan — a shared-id (national-mix 330) industrial stamp
+ *       whose centroid lies in NO ownership area (CGAZ country ∪ declared
+ *       non-CGAZ bboxes): unreachable by every national pass since #31 —
+ *       stale by construction. Healed by heal-industrial-orphans.ts.
  *   R12 buildings-contract — settlement v2 (Convention-B): a stamped
  *                         buildings.arrow must carry exactly `buildings_v2` +
  *                         the opening_hours_frac column; an UNstamped file must
@@ -79,7 +83,8 @@ import { tableFromIPC, type Table, type Vector } from 'apache-arrow'
 import { DATASETS } from './lib/enrichment-datasets.js'
 import { isMeasured } from './lib/sources.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
-import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
+import { makeOwnershipGate, segmentWhollyOutside, makeAnyCountryGate } from './lib/country-polygon.js'
+import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
 import { MAX_BUILDING_TYPE, V2_SPECIFIC_TYPE_MIN } from './lib/buildings-arrow.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
@@ -237,7 +242,7 @@ function report(
 const GATES = new Map<string, ((lat: number, lon: number) => boolean) | null>()
 for (const cc of new Set(COUNTRY_BY_ID.values())) {
   try {
-    GATES.set(cc, makeCountryGate(cc))
+    GATES.set(cc, makeOwnershipGate(cc)) // country + territory extensions (MA∪EH) — mirrors the writer/heal union
   } catch (err) {
     GATES.set(cc, null)
     const keys = DATASETS.filter(d => COUNTRY_BY_ID.get(d.id) === cc).map(d => d.key).join(', ')
@@ -533,7 +538,11 @@ const rails = scanLayer('railways.arrow', (t, hex) => {
   return checked
 })
 
-// ── R0/R4/R9/R10: industrial ─────────────────────────────────────────────────
+// ── R0/R4/R9/R10/R14: industrial ─────────────────────────────────────────────
+
+// World membership for R14 — built on the first shared-id row seen, never for scopes
+// with no shared-id stamps.
+const inAnyCountry = makeAnyCountryGate()
 
 const industrial = scanLayer('industrial.arrow', (t, hex) => {
   const name = t.getChild('name')
@@ -552,6 +561,12 @@ const industrial = scanLayer('industrial.arrow', (t, hex) => {
     const oid = osm ? Number(osm.get(i)) : null
     checkSourceRegistry('industrial', hex, i, oid, id, la, lo)
     checkCountryBleed(hex, i, oid, id, la, lo, la, lo, la, lo)
+    // R14: the shared national-mix id has no country identity, so R9 cannot see
+    // it — but a stamp in NO ownership area is provably orphaned (see header).
+    if (id === SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX && Number.isFinite(la) && Number.isFinite(lo) && !inAnyCountry(la, lo)) {
+      report('R14 industrial-orphan', hex, i, oid, id, la, lo,
+        'shared-id stamp outside every ownership area — unreachable by any national pass since #31')
+    }
     const nc = (nace.get(i) as number) ?? 0
     if (!POWER_NACE.has(nc)) continue
     const nm = (name.get(i) as string | null) ?? ''
@@ -616,6 +631,7 @@ const buildings = scanLayer('buildings.arrow', (t, hex) => {
 // ── summary ──────────────────────────────────────────────────────────────────
 
 const FIX_HINTS: Record<string, string> = {
+  'R14 industrial-orphan': 'run heal-industrial-orphans.ts over the scope (chain step industrial-heal-orphans does this) — legacy shared-id stamps outside every ownership area',
   'R0 unknown-source': 'Register the id in lib/enrichment-datasets.ts (allocate-dataset-id.ts) or fix the enricher stamping a raw id, then reset + re-enrich the bbox.',
   'R1 road-coverage': 'The enricher bypassed its class gate — pass the declared coverage set to writeRoadAadt, then reset + re-enrich the affected hexes.',
   'R2 moto-scramble': 'Loader column mapping scrambled (cars in the moto column, the PL provincial XLS shape) — fix the source loader, reset + re-enrich. If the country genuinely rides motos, declare highMoto on the dataset.',

@@ -36,7 +36,7 @@
  */
 
 import { enrichGemIndustrial } from './lib/enrich-industrial-gem.js'
-import { makeCountryGate } from './lib/country-polygon.js'
+import { makeOwnershipGate } from './lib/country-polygon.js'
 
 // bbox stays for the hex-shortlist; the per-site test is the actual-polygon gate.
 // MA ∪ EH: CGAZ codes Western Sahara as a separate ESH feature, so an MA-only
@@ -44,17 +44,13 @@ import { makeCountryGate } from './lib/country-polygon.js'
 // enrich-roads-ma.ts / enrich-railway-ma.ts, which gate the same union — the
 // MA-only gate also fixed the earlier EXCLUDE_ZONES Algeria bleed (gg 2026-06-14).
 const MA_BBOX: readonly [number, number, number, number] = [20.7, -17.3, 36.0, -1.0]
-const inMA = makeCountryGate('MA')
-const inEH = makeCountryGate('EH')
+// MA∪EH via the SSOT union — see COUNTRY_TERRITORY_EXTENSIONS (#32 round-3).
+const inCountry = makeOwnershipGate('MA')
 
 await enrichGemIndustrial({
   countryCode: 'ma',
   countryName: "Morocco",
   bbox: MA_BBOX,
-  isInside: (lat, lon) => inMA(lat, lon) || inEH(lat, lon),
-  // Ownership matches the declared scope: this pass IS the MA ∪ EH pass (no
-  // separate EH enricher exists) — without the override the default
-  // makeCountryGate('ma') silently narrowed reset+stamp to MA proper (#31
-  // round-2 Codex) and EH stamps became unsweepable.
-  countryGate: (lat, lon) => inMA(lat, lon) || inEH(lat, lon),
+  isInside: inCountry,
+  countryGate: inCountry,
 })
