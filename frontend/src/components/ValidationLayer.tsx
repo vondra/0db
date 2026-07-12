@@ -50,6 +50,11 @@ export interface ValidationStation {
   months_covered?: number
   coverage_pct?: number
   model: Record<string, number | null> | null
+  measured_metric_field: string
+  model_metric_field: string
+  measured_value: number | null
+  model_value: number | null
+  delta_db: number | null
   delta_lden: number | null
   verdict: string | null
   dominant_source: string | null
@@ -63,7 +68,20 @@ export interface ValidationNetwork {
   license: string
   source: string[]
   commensurability: Record<string, unknown>
-  delta_meta: { trend_only: boolean } | null
+  comparison_mode: 'two_sided' | 'upper_bound' | 'trend_only'
+  comparison_tolerance_db: number | null
+  comparison_tolerance_basis: string | null
+  measured_metric_field: string
+  model_metric_field: string
+  delta_meta: {
+    trend_only: boolean
+    comparison_mode: string
+    comparison_tolerance_db: number | null
+    comparison_tolerance_basis: string | null
+    measured_metric_field: string
+    model_metric_field: string
+    server_identity: unknown
+  } | null
   stations: ValidationStation[]
 }
 
@@ -81,11 +99,11 @@ export type ValidationSelection =
 // Colours match the /validation workbench 1:1 — one vocabulary everywhere.
 const FIXTURE_RGB: Record<string, [number, number, number]> = {
   'OK': [46, 125, 50], 'EXTERNAL-GAP': [239, 108, 0], 'KNOWN-GAP': [142, 36, 170],
-  'PENDING': [117, 117, 117], 'DRIFT': [198, 40, 40], 'ERROR': [198, 40, 40], 'SKIPPED': [189, 189, 189],
+  'PENDING': [117, 117, 117], 'WITHHELD': [96, 125, 139], 'DRIFT': [198, 40, 40], 'ERROR': [198, 40, 40], 'SKIPPED': [189, 189, 189],
 }
 const STATION_RGB: Record<string, [number, number, number]> = {
   above: [198, 40, 40], within_bound: [46, 125, 50], below: [239, 108, 0],
-  unattributable: [120, 144, 156], trend_only: [92, 107, 192],
+  unattributable: [120, 144, 156], trend_only: [92, 107, 192], holdout_withheld: [96, 125, 139],
 }
 const FALLBACK_RGB: [number, number, number] = [141, 110, 99]
 
@@ -145,7 +163,7 @@ export default function ValidationLayer({ onSelect }: Props): null {
           pickable: true,
           radiusUnits: 'pixels',
           getPosition: (d) => [d.station.lng, d.station.lat],
-          getRadius: (d) => 3.5 + Math.min(7, Math.abs(d.station.delta_lden ?? 0) * 0.45),
+          getRadius: (d) => 3.5 + Math.min(7, Math.abs(d.station.delta_db ?? d.station.delta_lden ?? 0) * 0.45),
           getFillColor: (d) => [...(STATION_RGB[d.station.verdict ?? ''] ?? FALLBACK_RGB), 205] as [number, number, number, number],
           getLineColor: [255, 255, 255, 230],
           getLineWidth: 1,

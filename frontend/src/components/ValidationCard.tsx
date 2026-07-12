@@ -7,11 +7,11 @@ import type { ValidationSelection } from './ValidationLayer'
 
 const FIXTURE_COLOR: Record<string, string> = {
   'OK': '#2e7d32', 'EXTERNAL-GAP': '#ef6c00', 'KNOWN-GAP': '#8e24aa',
-  'PENDING': '#757575', 'DRIFT': '#c62828', 'ERROR': '#c62828', 'SKIPPED': '#bdbdbd',
+  'PENDING': '#757575', 'WITHHELD': '#607d8b', 'DRIFT': '#c62828', 'ERROR': '#c62828', 'SKIPPED': '#bdbdbd',
 }
 const STATION_COLOR: Record<string, string> = {
   above: '#c62828', within_bound: '#2e7d32', below: '#ef6c00',
-  unattributable: '#78909c', trend_only: '#5c6bc0',
+  unattributable: '#78909c', trend_only: '#5c6bc0', holdout_withheld: '#607d8b',
 }
 
 const fmt = (v: number | null | undefined, digits = 1) => (v == null ? '—' : v.toFixed(digits))
@@ -102,16 +102,28 @@ function StationBody({ s, net }: {
       </div>
       <table className="w-full border-collapse">
         <tbody>
-          {s.delta_lden != null ? (
-            <Row label="Δ lden">
-              <b>{s.delta_lden > 0 ? '+' : ''}{fmt(s.delta_lden)}</b> dB → <span className="font-semibold" style={{ color: STATION_COLOR[verdict] ?? '#8d6e63' }}>{verdict}</span>
+          {s.delta_db != null ? (
+            <Row label={`Δ ${s.model_metric_field}−${s.measured_metric_field}`}>
+              <b>{s.delta_db > 0 ? '+' : ''}{fmt(s.delta_db)}</b> dB → <span className="font-semibold" style={{ color: STATION_COLOR[verdict] ?? '#8d6e63' }}>{verdict}</span>
             </Row>
           ) : (
             <Row label="comparison">
               <span className="font-semibold" style={{ color: STATION_COLOR[verdict] ?? '#8d6e63' }}>{verdict}</span>
-              {net.delta_meta?.trend_only ? ' (window metric — trend anchor)' : ''}
+              {net.comparison_mode === 'trend_only' ? ' (explicit trend-only anchor)' : ''}
             </Row>
           )}
+          <Row label="comparison mode">
+            {net.comparison_mode}
+            {net.comparison_tolerance_db != null
+              ? net.comparison_mode === 'upper_bound'
+                ? ` · +${net.comparison_tolerance_db} dB upper allowance`
+                : ` · ±${net.comparison_tolerance_db} dB`
+              : ''}
+          </Row>
+          {net.comparison_tolerance_basis && <Row label="tolerance basis">{net.comparison_tolerance_basis}</Row>}
+          <Row label="explicit values">
+            measured {s.measured_metric_field} <b>{fmt(s.measured_value)}</b> · model {s.model_metric_field} <b>{fmt(s.model_value)}</b>
+          </Row>
           {s.dominant_source && <Row label="model dominant">{s.dominant_source}</Row>}
           {LEVEL_METRICS.filter((k) => s[k] != null).map((k) => (
             <Row key={k} label={k}>

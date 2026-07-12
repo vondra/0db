@@ -11,9 +11,11 @@ import { aircraftRoutes } from './routes/aircraft.js'
 import { heatmapPmtilesRoutes } from './routes/heatmap-pmtiles.js'
 import { tilesManifestRoutes } from './routes/tiles-manifest.js'
 import { validationViewRoutes } from './routes/validation-view.js'
+import { runtimeIdentityRoutes } from './routes/runtime-identity.js'
 import { healthRoutes } from './routes/health.js'
 import { createReadinessCheck, type ReadinessCheck } from './runtime-readiness.js'
 import { requireLoopback } from './internal-access.js'
+import { createCurrentRuntimeIdentityProvider } from './current-runtime-identity.js'
 
 export type BuildAppOptions = {
   logger?: boolean
@@ -55,7 +57,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // with the loose trees.
   await app.register(heatmapPmtilesRoutes)
   await app.register(tilesManifestRoutes)
-  await app.register(validationViewRoutes)
+  const runtimeIdentityProvider = createCurrentRuntimeIdentityProvider()
+  await app.register(validationViewRoutes, { runtimeIdentityProvider })
+  await app.register(runtimeIdentityRoutes, { runtimeIdentityProvider })
 
   const readiness = opts.readinessCheck ?? createReadinessCheck({ engineProbe })
   await healthRoutes(app, readiness)

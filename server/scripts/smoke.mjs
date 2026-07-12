@@ -1,7 +1,7 @@
 // Start the compiled production entrypoint, probe it over loopback, and shut
 // it down gracefully. Uses a temporary frontend and never needs project data.
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -18,10 +18,19 @@ for (const relative of [
   'dist.next/app.js',
   'dist.next/workers/noise-onfly-worker.mjs',
   'dist.next/pages/validation.html',
+  'dist.next/runtime-identity.json',
+  'dist.next/validation-runtime/comparison-runtime.mjs',
+  'dist.next/validation-runtime/holdouts-runtime.mjs',
+  'dist.next/validation-runtime/server-identity.mjs',
+  'dist.next/validation-runtime/snapshot-loader.mjs',
 ]) {
   if (!existsSync(resolve(serverRoot, relative))) {
     throw new Error(`compiled smoke missing ${relative}; run npm run build first`)
   }
+}
+const compiledValidationRoute = await readFile(resolve(serverRoot, 'dist.next/routes/validation-view.js'), 'utf8')
+if (compiledValidationRoute.includes('../../../pipeline/')) {
+  throw new Error('compiled validation route imports mutable pipeline code outside its immutable release')
 }
 
 async function freeLoopbackPort() {
@@ -105,6 +114,17 @@ try {
   if (!live?.ok) throw new Error(`compiled server did not become live\n${output}`)
   if (JSON.stringify(await live.json()) !== '{"status":"ok"}') {
     throw new Error('compiled liveness returned an unexpected body')
+  }
+
+  const identity = await fetch(`http://127.0.0.1:${port}/api/runtime-identity`)
+  const identityBody = await identity.json()
+  if (!identity.ok
+    || identity.headers.get('cache-control') !== 'no-store'
+    || identityBody.status !== 'incomplete'
+    || identityBody.identity_complete !== false
+    || identityBody.prepared_revision !== null
+    || identityBody.build?.schema_version !== 1) {
+    throw new Error(`compiled runtime identity returned an unexpected response: ${JSON.stringify(identityBody)}`)
   }
 
   const root = await fetch(`http://127.0.0.1:${port}/`)

@@ -12,11 +12,12 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { dirname, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   prepareRelease,
   pruneUnusedReleases,
@@ -32,6 +33,54 @@ const frontendSource = frontendArg >= 0 && process.argv[frontendArg + 1]
   ? resolve(serverRoot, process.argv[frontendArg + 1])
   : null
 if (frontendArg >= 0 && !frontendSource) throw new Error('--frontend-dir requires a path')
+
+const repoRoot = resolve(serverRoot, '..')
+
+function runGit(args, encoding = 'utf8') {
+  return spawnSync('git', args, {
+    cwd: repoRoot,
+    encoding,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+}
+
+/**
+ * Fingerprint every Git-visible source byte used to identify this release.
+ * Sampling before and after the build prevents a concurrent commit or edit
+ * from labelling mixed output as a clean release from the new commit.
+ */
+function sourceTreeIdentity() {
+  const repository = runGit(['rev-parse', '--is-inside-work-tree'])
+  if (repository.status !== 0 || repository.stdout.trim() !== 'true') {
+    return { gitCommit: null, gitDirty: null, fingerprint: null }
+  }
+
+  const commit = runGit(['rev-parse', '--verify', 'HEAD'])
+  const trackedDiff = runGit(['diff', '--no-ext-diff', '--binary', 'HEAD', '--'], null)
+  const untracked = runGit(['ls-files', '--others', '--exclude-standard', '-z'])
+  for (const result of [commit, trackedDiff, untracked]) {
+    if (result.status !== 0) {
+      throw new Error(`cannot fingerprint source tree: ${String(result.stderr).trim() || 'git command failed'}`)
+    }
+  }
+
+  const untrackedPaths = untracked.stdout.split('\0').filter(Boolean).sort()
+  const hash = createHash('sha256')
+    .update('tracked-diff\0')
+    .update(trackedDiff.stdout)
+  for (const path of untrackedPaths) {
+    hash.update('\0untracked-path\0').update(path).update('\0content\0')
+    hash.update(readFileSync(resolve(repoRoot, path)))
+  }
+  return {
+    gitCommit: commit.stdout.trim(),
+    gitDirty: trackedDiff.stdout.length > 0 || untrackedPaths.length > 0,
+    fingerprint: hash.digest('hex'),
+  }
+}
+
+const sourceIdentityBefore = sourceTreeIdentity()
 mkdirSync(releaseRoot, { recursive: true })
 const dependencyRoot = resolve(serverRoot, '..', '.server-deps')
 mkdirSync(dependencyRoot, { recursive: true })
@@ -96,6 +145,10 @@ if (compiled.status !== 0) {
 const runtimeAssets = [
   ['src/workers/noise-onfly-worker.mjs', 'workers/noise-onfly-worker.mjs'],
   ['src/pages/validation.html', 'pages/validation.html'],
+  ['../pipeline/validation/comparison-runtime.mjs', 'validation-runtime/comparison-runtime.mjs'],
+  ['../pipeline/validation/holdouts-runtime.mjs', 'validation-runtime/holdouts-runtime.mjs'],
+  ['../pipeline/validation/server-identity.mjs', 'validation-runtime/server-identity.mjs'],
+  ['../pipeline/validation/snapshot-loader.mjs', 'validation-runtime/snapshot-loader.mjs'],
 ]
 for (const [sourceRelative, destinationRelative] of runtimeAssets) {
   const source = resolve(serverRoot, sourceRelative)
@@ -124,6 +177,31 @@ if (existsSync(nativeSource) && statSync(nativeSource).isFile() && statSync(nati
   rmSync(stage, { recursive: true, force: true })
   throw new Error(`missing required native addon: ${nativeSource}`)
 }
+
+const sourceIdentityAfter = sourceTreeIdentity()
+if (JSON.stringify(sourceIdentityBefore) !== JSON.stringify(sourceIdentityAfter)) {
+  throw new Error('source tree changed during server build; refusing to publish a mixed release')
+}
+
+const bundledNative = resolve(stage, 'native/libsource_reader.so')
+const nativeSourceReaderSha256 = existsSync(bundledNative)
+  ? createHash('sha256').update(readFileSync(bundledNative)).digest('hex')
+  : null
+const { parseRuntimeIdentity } = await import(
+  pathToFileURL(resolve(stage, 'runtime-identity.js')).href
+)
+const runtimeIdentity = parseRuntimeIdentity({
+  schema_version: 1,
+  git_commit: sourceIdentityBefore.gitCommit,
+  git_dirty: sourceIdentityBefore.gitDirty,
+  built_at: new Date().toISOString(),
+  native_source_reader_sha256: nativeSourceReaderSha256,
+})
+const runtimeIdentityPath = resolve(stage, 'runtime-identity.json')
+writeFileSync(runtimeIdentityPath, `${JSON.stringify(runtimeIdentity, null, 2)}\n`, { flag: 'wx' })
+// Validate the bytes that will be renamed into the immutable release, not only
+// the in-memory value that produced them.
+parseRuntimeIdentity(JSON.parse(readFileSync(runtimeIdentityPath, 'utf8')))
 
 for (const relative of ['server.js', 'workers/noise-onfly-worker.mjs']) {
   const checked = spawnSync(process.execPath, ['--check', resolve(stage, relative)], {
