@@ -91,6 +91,13 @@ export interface PlanStep {
    *  'ran-by-extract-tail' + --assume-fresh-extract skips the step because the
    *  osm-to-h3r4.sh tail just produced identical output. */
   skipIf?: 'ran-by-extract-tail'
+  /** #31.6 completeness FLOOR: the minimum number of input parts this step
+   *  must load (36 EU cities, 23 GTFS feeds) for its stamp to be trusted. The
+   *  step reports its actual via a QM_COMPLETENESS marker; run.ts records the
+   *  {expected, actual, state} in status.json and (once wired) fails the chain
+   *  on a floored step that loaded short — the no-implicit-partial-stamp rule.
+   *  Absent/0 = the step consumes no declared multi-part feed. */
+  expectMinInputs?: number
 }
 
 // ── cache-behavior spec tables (from the 2026-07-11 full-file sweep) ─────────

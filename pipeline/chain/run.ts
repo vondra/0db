@@ -30,6 +30,10 @@ import { parseScope, type ResolvedScope } from './scope.js'
 import { buildPlan, PHASES, PIPELINE_DIR, REPO_ROOT, type Phase, type PlanStep } from './manifest.js'
 import { gateVerdict, buildBaseline, type GateVerdict } from './gate.js'
 import { runInventory } from './inventory.js'
+import {
+  writeChainStatus, parseCompletenessMarker, stepIsComplete,
+  type ChainStatus, type StepStatus, type GateStatus,
+} from './status.js'
 
 const BASELINE_PATH = resolve(import.meta.dirname, 'gate-baseline.json')
 const TSX_BIN = resolve(PIPELINE_DIR, 'node_modules', '.bin', 'tsx')
@@ -240,6 +244,30 @@ function gateVerdictForRun(
   })
 }
 
+/** Lift the gate step's machine verdict into the status contract (#31.6).
+ *  `census-no-baseline` (exit 1 with ioErrors=0 and no baseline sealed FOR
+ *  THIS SCOPE) is NOT a data fault — a world run today has only the CZ
+ *  baseline, so its 1.44M census is expected, not a regression. */
+function buildGateStatus(summaryText: string | null, pass: boolean, scope: ResolvedScope): GateStatus {
+  let ioErrors = 1, total = 0
+  try {
+    const s = JSON.parse(summaryText ?? '{}')
+    ioErrors = typeof s.ioErrors === 'number' ? s.ioErrors : 1
+    total = typeof s.total === 'number' ? s.total : 0
+  } catch {
+    return { ioErrors: 1, total: 0, newAboveBaseline: null, verdict: 'fail' }
+  }
+  let baselineForScope = false
+  const bt = readFileOrNull(BASELINE_PATH)
+  if (bt !== null) {
+    try { baselineForScope = (JSON.parse(bt) as { scope?: string }).scope === scope.canonical } catch { /* unparsable */ }
+  }
+  const verdict: GateStatus['verdict'] = pass
+    ? 'pass'
+    : baselineForScope ? 'fail' : (ioErrors === 0 ? 'census-no-baseline' : 'fail')
+  return { ioErrors, total, newAboveBaseline: baselineForScope ? (pass ? 0 : null) : null, verdict }
+}
+
 // ── plan printing ────────────────────────────────────────────────────────────
 
 function printPlan(scope: ResolvedScope, steps: PlanStep[], excluded: number): void {
@@ -370,9 +398,39 @@ async function main(): Promise<number> {
   log(`plan digest ${digest} (${planPath})`)
   log(`${steps.length} steps (${steps.filter((s) => !s.skipReason).length} runnable); reminder: do NOT run gen:sources while this is in flight`)
 
+  // #31.6 status contract: rewritten after every step so a crashed run still
+  // leaves an honest partial record. See chain/status.ts (the schema SSOT,
+  // consumed read-only by the gate-before-sync / repaint trigger).
+  const statusPath = resolve(logDir, 'status.json')
+  const startedAt = new Date().toISOString()
+  const statusSteps: StepStatus[] = []
+  let gateStatus: GateStatus | null = null
+  const flush = (outcome: ChainStatus['outcome']): void => {
+    const status: ChainStatus = {
+      runId, dataYear: YEAR, scope: scope.canonical, startedAt,
+      finishedAt: outcome === 'running' ? null : new Date().toISOString(),
+      outcome, gate: gateStatus,
+      safeToSync: outcome === 'complete' && (gateStatus?.ioErrors ?? 1) === 0 && statusSteps.every(stepIsComplete),
+      steps: statusSteps,
+    }
+    writeChainStatus(statusPath, status)
+  }
+  // The floored-step completeness for a step comes from its own log's
+  // QM_COMPLETENESS marker; expected floor is the manifest's (0 until declared).
+  const completenessFor = (step: PlanStep, logPath: string): StepStatus['completeness'] => {
+    const expected = step.expectMinInputs ?? 0
+    let marker: ReturnType<typeof parseCompletenessMarker> = null
+    try { marker = parseCompletenessMarker(readFileSync(logPath, 'utf-8')) } catch { /* no log */ }
+    if (!marker) return expected > 0 ? { expected, actual: 0, state: 'missing', detail: 'no completeness marker emitted' } : null
+    return { expected, actual: marker.actual, state: marker.state, detail: marker.detail }
+  }
+  flush('running')
+
   for (const step of steps) {
     if (step.skipReason) {
       log(`SKIP ${step.id} — ${step.skipReason}`)
+      statusSteps.push({ id: step.id, phase: step.phase, status: 'skipped', durationMs: 0, skipReason: step.skipReason })
+      flush('running')
       continue
     }
     const t0 = Date.now()
@@ -381,12 +439,16 @@ async function main(): Promise<number> {
       const { r, ndjsonText, summaryText, logPath } = await runGateStep(step, logDir)
       const dt = ((Date.now() - t0) / 1000).toFixed(1)
       const verdict = gateVerdictForRun(r, ndjsonText, summaryText, scope)
+      gateStatus = buildGateStatus(summaryText, verdict.pass, scope)
       for (const line of verdict.lines) log(`  gate: ${line}`)
+      statusSteps.push({ id: step.id, phase: step.phase, status: verdict.pass ? 'done' : 'failed', durationMs: Date.now() - t0 })
       if (!verdict.pass) {
         log(`FAILED ${step.id} after ${dt}s — log: ${logPath}`)
+        flush('failed')
         return 1
       }
       log(`DONE ${step.id} in ${dt}s (gate passed)`)
+      flush('running')
       continue
     }
 
@@ -397,11 +459,16 @@ async function main(): Promise<number> {
     if (stepCrashed(r) || r.code !== 0) {
       log(`FAILED ${step.id} ${describeExit(r)} after ${dt}s — log: ${logPath}`)
       log(`resume after fixing with: ${resumeHint(step.id)}`)
+      statusSteps.push({ id: step.id, phase: step.phase, status: 'failed', durationMs: Date.now() - t0, lastLine: r.lastLine, completeness: completenessFor(step, logPath) })
+      flush('failed')
       return 1
     }
+    statusSteps.push({ id: step.id, phase: step.phase, status: 'done', durationMs: Date.now() - t0, lastLine: r.lastLine, completeness: completenessFor(step, logPath) })
+    flush('running')
     log(`DONE ${step.id} in ${dt}s${r.lastLine ? ` — ${r.lastLine}` : ''}`)
   }
-  log('chain complete')
+  flush('complete')
+  log(`chain complete — status ${statusPath}`)
   return 0
 }
 
