@@ -78,7 +78,15 @@ async function downloadSvz(): Promise<CensusSection[]> {
   // Check for pre-parsed JSON cache
   if (!forceDownload && existsSync(CACHE_JSON)) {
     console.log(`  Using cached parsed data: ${CACHE_JSON}`)
-    return JSON.parse(readFileSync(CACHE_JSON, 'utf-8'))
+    // The cache predates the split-required rule below and may still hold
+    // sections whose per-class columns are all blank — the same filter must
+    // run on BOTH load paths or the cached path re-trips the #31.4 guard.
+    const cached: CensusSection[] = JSON.parse(readFileSync(CACHE_JSON, 'utf-8'))
+    const usable = cached.filter((s) => s.aadt_light + s.aadt_medium + s.aadt_heavy + s.aadt_moto > 0)
+    if (usable.length < cached.length) {
+      console.log(`  ${cached.length - usable.length} cached sections dropped (DTV without class split — cannot stamp zeros under a measured id)`)
+    }
+    return usable
   }
   if (enrichOnly && !existsSync(CACHE_JSON)) {
     // Try to parse from Excel cache
@@ -153,6 +161,7 @@ async function parseBothFiles(): Promise<CensusSection[]> {
 
     let parsed = 0
     let skipped = 0
+    let skippedNoSplit = 0
     for (let i = 1; i < data.length; i++) {
       const row = data[i]
       const road = String(row[iStr] || '').trim()
@@ -173,21 +182,35 @@ async function parseBothFiles(): Promise<CensusSection[]> {
 
       const ref = road.replace(/\s+/g, '')  // "A 1" → "A1"
 
+      const aadt_light = Math.round(Number(row[iLVm]) || 0)
+      const aadt_medium = Math.round((Number(row[iBus]) || 0) + (Number(row[iLoA]) || 0))
+      const aadt_heavy = Math.round(Number(row[iLZ]) || 0)
+      const aadt_moto = Math.round(Number(row[iKrad]) || 0)
+      // Some SVZ sections publish a DTV total with the per-class columns blank.
+      // Our schema stamps the four classes, not the total — stamping 0/0/0/0
+      // under a MEASURED id is the R7 zero-write shape the writer now rejects
+      // (#31.4 guard tripped exactly here, hex 841e36d row 44033). Fabricating
+      // a split under a measured id would overclaim; skip and count instead.
+      if (aadt_light + aadt_medium + aadt_heavy + aadt_moto === 0) {
+        skippedNoSplit++
+        continue
+      }
+
       sections.push({
         road,
         ref,
         tkzst: String(row[iTKZST] || ''),
         lat, lon,
         dtv: Math.round(dtv),
-        aadt_light: Math.round(Number(row[iLVm]) || 0),
-        aadt_medium: Math.round((Number(row[iBus]) || 0) + (Number(row[iLoA]) || 0)),
-        aadt_heavy: Math.round(Number(row[iLZ]) || 0),
-        aadt_moto: Math.round(Number(row[iKrad]) || 0),
+        aadt_light,
+        aadt_medium,
+        aadt_heavy,
+        aadt_moto,
       })
       parsed++
     }
 
-    console.log(`  ${label}: ${parsed} sections parsed, ${skipped} skipped (no coords/DTV)`)
+    console.log(`  ${label}: ${parsed} sections parsed, ${skipped} skipped (no coords/DTV), ${skippedNoSplit} skipped (DTV without class split)`)
   }
 
   // Cache as JSON
