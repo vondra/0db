@@ -461,8 +461,9 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
       layer: 'roads',
       country: null,
       args: c.present ? ['--enrich-only'] : [],
+      expectMinInputs: 36, // #31.6: all 36 treated cities must load (enricher now normalizes the staged raws under --enrich-only)
       notes:
-        'EU 36-city segment traffic (continental-measured) — the prior national censuses overwrite. Cache is NOT year-stamped (data/enrichment/global/eu-city-traffic). --enrich-only skips per-city on a missing file, never aborts. KNOWN GAP (#31.6, fix deferred into the #29 feed work): no completeness floor — the step succeeds with 1/36 city files present; the loader consumes ONLY `<lowercase-city>.geojson`, so the staged `City_METRIC_YEAR` raws do NOT count — just 2/36 are consumable today (brno, vienna); normalize the raws before any world run (#29/#31 codex).',
+        'EU 36-city segment traffic (continental-measured) — the prior national censuses overwrite. Cache is NOT year-stamped (data/enrichment/global/eu-city-traffic). #31.6: --enrich-only now normalizes the staged `<City>_<METRIC>_<YEAR>.geojson` raws into the consumed `<city>.geojson` so all 36 load offline (was 2/36); the enricher emits a QM_COMPLETENESS marker and expectMinInputs floors it so a partial fragment can no longer stamp as done.',
       skipReason: !inEnvelope
         ? 'scope outside the EU city-traffic envelope [34,-32,72,45]'
         : c.present

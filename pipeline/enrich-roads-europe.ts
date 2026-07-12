@@ -19,7 +19,7 @@
  *   cd pipeline && npx tsx enrich-roads-europe.ts --enrich-only
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { latLngToCell } from 'h3-js'
 import { shouldOverwrite } from './lib/provenance.js'
@@ -136,6 +136,21 @@ function pickLatestFile(files: string[]): string | null {
   return best || files[files.length - 1]  // fallback to last alphabetically
 }
 
+/** #31.6: the treated raws stage as `<CityName>_<METRIC>_<YEAR>.geojson`, but
+ *  the loader consumes only the normalized `<city>.geojson`. Under --enrich-only
+ *  (no network) 34/36 cities were never normalized, so the world chain stamped
+ *  a 2-city fragment and passed. Pick the latest-year raw for a city straight
+ *  from the cache dir — the exact file `discoverFiles`+`pickLatestFile` would
+ *  have chosen online — so --enrich-only reaches 36/36 without a download. */
+export function pickLatestRawForCity(cityName: string, dir: string = CACHE_DIR): string | null {
+  const prefix = `${cityName.toLowerCase()}_`
+  const raws = readdirSync(dir).filter(
+    (f) => f.toLowerCase().startsWith(prefix) && /\d{4}\.geojson$/i.test(f),
+  )
+  const chosen = pickLatestFile(raws)
+  return chosen ? resolve(dir, chosen) : null
+}
+
 /** Download a single city's GeoJSON, caching locally */
 async function downloadCity(
   country: string, city: string, cityName: string
@@ -145,7 +160,15 @@ async function downloadCity(
   // Check cache
   if (enrichOnly || (!forceDownload && existsSync(cacheFile))) {
     if (!existsSync(cacheFile)) {
-      console.log(`  SKIP ${cityName}: --enrich-only but no cache`)
+      // Normalize from a staged raw before giving up — the 2/36→36/36 fix.
+      const raw = pickLatestRawForCity(cityName)
+      if (raw) {
+        const text = readFileSync(raw, 'utf-8')
+        writeFileSync(cacheFile, text) // materialize <city>.geojson for future runs
+        console.log(`  ${cityName}: normalized from ${raw.split('/').pop()}`)
+        return JSON.parse(text)
+      }
+      console.log(`  SKIP ${cityName}: --enrich-only but no cache and no staged raw`)
       return null
     }
     return JSON.parse(readFileSync(cacheFile, 'utf-8'))
@@ -406,6 +429,12 @@ async function main() {
 
   console.log(`\n  Total: ${totalFeatures} traffic records from ${citiesLoaded} cities in ${allRecords.size} hexes\n`)
 
+  // #31.6 completeness marker → chain status.json + the completeness gate.
+  // `complete` iff every declared city loaded; else `partial` (a 2/36 fragment
+  // must never silently stamp as done again).
+  const compState = citiesLoaded >= CITIES.length ? 'complete' : citiesLoaded === 0 ? 'missing' : 'partial'
+  console.log(`QM_COMPLETENESS ${JSON.stringify({ actual: citiesLoaded, state: compState, detail: `${citiesLoaded}/${CITIES.length} cities` })}`)
+
   if (totalFeatures === 0) {
     console.log('  No traffic records to enrich. Done.')
     return
@@ -458,4 +487,7 @@ ${CITIES.map(c => `- ${c[2]} (${c[0]})`).join('\n')}
   console.log(`\n=== Done ===`)
 }
 
-main().catch(err => { console.error('Error:', err); process.exit(1) })
+// Run only as a script — importable for tests (pickLatestRawForCity).
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(err => { console.error('Error:', err); process.exit(1) })
+}
