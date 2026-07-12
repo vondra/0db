@@ -1,0 +1,213 @@
+{
+  "network": "dublin-sonitus",
+  "year": 2025,
+  "license": "CC BY — Dublin City Council (data.smartdublin.ie Sonitus API dataset; credentials published in the dataset readme for reuse)",
+  "source": [
+    "https://data.smartdublin.ie/sonitus-api (POST /api/monitors, /api/hourly-averages)",
+    "https://dublincityairandnoise.ie/assets/php/get-monitors.php"
+  ],
+  "fetched_at": "2026-07-12T12:48:59.133Z",
+  "mode": "total",
+  "commensurability": {
+    "metric_variant": "period_split",
+    "dominance": "total_ambient",
+    "receiver_convention": "nmt_pole",
+    "coord_uncertainty_m": 15,
+    "note": "END Ld/Le/Ln from Sonitus hourly LAeq over local hours (60-min energy weights), Lden per END weighting; 28-day API windows chained across the year. Street/park mics hear everything — asymmetric rule: model_total ≤ measured + U only."
+  },
+  "method": "POST hourly-averages per monitor in 13×28-day windows → daily END-period energy sums (SQLite) → annual energetic means",
+  "stations": [
+    {
+      "station_id": "10.1.1.1",
+      "name": "Noise 1 — Drumcondra Library",
+      "lat": 53.369864,
+      "lng": -6.258966,
+      "ld": 55.4,
+      "le": 39.9,
+      "ln": 36.6,
+      "lden": 52.9,
+      "months_covered": 10,
+      "coverage_pct": 85.7
+    },
+    {
+      "station_id": "10.1.1.7",
+      "name": "Noise 7 — Woodstock Gardens",
+      "lat": 53.323524,
+      "lng": -6.247734,
+      "ld": 51.3,
+      "le": 48.1,
+      "ln": 47,
+      "lden": 54.3,
+      "months_covered": 11,
+      "coverage_pct": 94.5
+    },
+    {
+      "station_id": "10.1.1.12",
+      "name": "Noise 12 — Blessington Basin",
+      "lat": 53.357153,
+      "lng": -6.270895,
+      "ld": 58.4,
+      "le": 54.1,
+      "ln": 51.4,
+      "lden": 59.7,
+      "months_covered": 10,
+      "coverage_pct": 88.3
+    },
+    {
+      "station_id": "01508",
+      "name": "Noise 3 — Ballyfermot Civic Centre",
+      "lat": 53.343337,
+      "lng": -6.362923,
+      "ld": 69.9,
+      "le": 58.8,
+      "ln": 53.8,
+      "lden": 67.9,
+      "months_covered": 11,
+      "coverage_pct": 94.2
+    },
+    {
+      "station_id": "01509",
+      "name": "Noise 17 — Strand Road",
+      "lat": 53.3279804,
+      "lng": -6.2088104,
+      "ld": 71.1,
+      "le": 69.4,
+      "ln": 65.8,
+      "lden": 73.8,
+      "months_covered": 11,
+      "coverage_pct": 93.7
+    },
+    {
+      "station_id": "01528",
+      "name": "Noise 20 — Drumcondra Temp Replacement",
+      "lat": 53.369847,
+      "lng": -6.258945,
+      "ld": 55.4,
+      "le": 39.9,
+      "ln": 36.6,
+      "lden": 52.9,
+      "months_covered": 10,
+      "coverage_pct": 85.5
+    },
+    {
+      "station_id": "01534",
+      "name": "Noise 14 — Woodstock Gardens Temp replacement",
+      "lat": 53.324203,
+      "lng": -6.292218,
+      "ld": 51.4,
+      "le": 48.1,
+      "ln": 47,
+      "lden": 54.3,
+      "months_covered": 11,
+      "coverage_pct": 94.4
+    },
+    {
+      "station_id": "01548",
+      "name": "Noise 5 — DCC Rowing Club",
+      "lat": 53.346116,
+      "lng": -6.321013,
+      "ld": 58.5,
+      "le": 55.8,
+      "ln": 52.5,
+      "lden": 60.6,
+      "months_covered": 10,
+      "coverage_pct": 89.9
+    },
+    {
+      "station_id": "01549",
+      "name": "Noise 15 — Mellows Park",
+      "lat": 53.390338,
+      "lng": -6.303911,
+      "ld": 64.2,
+      "le": 59.3,
+      "ln": 54.4,
+      "lden": 64.3,
+      "months_covered": 10,
+      "coverage_pct": 87
+    },
+    {
+      "station_id": "01550",
+      "name": "Noise 13 — Dolphins Barn",
+      "lat": 53.331059,
+      "lng": -6.292452,
+      "ld": 72,
+      "le": 57.9,
+      "ln": 53,
+      "lden": 69.5,
+      "months_covered": 11,
+      "coverage_pct": 94.5
+    },
+    {
+      "station_id": "01575",
+      "name": "Noise 9 — Raheny",
+      "lat": 53.379996,
+      "lng": -6.172829,
+      "ld": 68.3,
+      "le": 56.9,
+      "ln": 52.4,
+      "lden": 66.2,
+      "months_covered": 11,
+      "coverage_pct": 94.2
+    },
+    {
+      "station_id": "01737",
+      "name": "Noise 10 — Ringsend Sports Centre",
+      "lat": 53.340031,
+      "lng": -6.2200231,
+      "ld": 75.6,
+      "le": 55.4,
+      "ln": 52.9,
+      "lden": 72.8,
+      "months_covered": 11,
+      "coverage_pct": 94
+    },
+    {
+      "station_id": "01749",
+      "name": "Noise 2 — Bull Island",
+      "lat": 53.36866,
+      "lng": -6.149316,
+      "ld": 46,
+      "le": 46,
+      "ln": 46.5,
+      "lden": 52.7,
+      "months_covered": 10,
+      "coverage_pct": 89.5
+    },
+    {
+      "station_id": "01870",
+      "name": "Noise 8 — Navan Road",
+      "lat": 53.370758,
+      "lng": -6.325578,
+      "ld": 69.5,
+      "le": 54.4,
+      "ln": 52.2,
+      "lden": 67.1,
+      "months_covered": 10,
+      "coverage_pct": 83.7
+    },
+    {
+      "station_id": "10115",
+      "name": "Noise 6 — Walkinstown",
+      "lat": 53.319492,
+      "lng": -6.321945,
+      "ld": 58.7,
+      "le": 54.5,
+      "ln": 49.3,
+      "lden": 59,
+      "months_covered": 11,
+      "coverage_pct": 93.9
+    },
+    {
+      "station_id": "10118",
+      "name": "Noise 4 — Ballymun",
+      "lat": 53.390401,
+      "lng": -6.264755,
+      "ld": 66.7,
+      "le": 65.7,
+      "ln": 61,
+      "lden": 69.3,
+      "months_covered": 10,
+      "coverage_pct": 89.3
+    }
+  ]
+}
