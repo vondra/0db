@@ -413,6 +413,37 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
     notes: 'Copernicus GLO-30 DEM under prepared/dem/copernicus.',
     skipReason: 'raster-side one-time global enrichment — DEM is year-shared and survives an OSM re-extract; run manually via /enrich-global',
   })
+  // PRE-heal, deliberately BEFORE every ROAD claimer incl. roads-europe (/gg
+  // #33 Codex CRITICAL — same one-cycle hole flagged for rail): a legacy
+  // foreign/zero stamp outranks the EU continental claimer via shouldOverwrite,
+  // so healing AFTER roads-europe strands the row a whole run before the right
+  // source can re-claim it. Heal first → the freed rows re-claim in this run.
+  pushPerBbox(
+    {
+      id: 'road-heal-country-bleed',
+      script: 'heal-road-country-bleed.ts',
+      phase: 'global-priors',
+      layer: 'roads',
+      country: null,
+      notes:
+        'registry-driven disown of national ROAD stamps outside their own country (auditor R9 write-side twin, #33) — runs BEFORE every road claimer so the freed rows are re-claimed (correct country / heuristics) in this same run. writeRoadAadt auto-gates the STAMP side from each national id, so this drains legacy bbox-bleed once and then stays a no-op.',
+      skipReason: null,
+    },
+    (b) => (b ? ['--bbox', serializeBbox(b)] : ['--world']),
+  )
+  pushPerBbox(
+    {
+      id: 'road-heal-zero-write',
+      script: 'heal-road-zero-write.ts',
+      phase: 'global-priors',
+      layer: 'roads',
+      country: null,
+      notes:
+        'clears measured-source rows with all-zero AADT (auditor R7 write-side twin, #33) — legacy pre-#31.4-guard rows (de-bast/es/pl). Post-guard writers reject the shape, so this too drains once and stays a no-op; runs BEFORE every road claimer so the freed rows re-claim.',
+      skipReason: null,
+    },
+    (b) => (b ? ['--bbox', serializeBbox(b)] : ['--world']),
+  )
   {
     const inEnvelope = scopeIntersects(ROADS_EUROPE_BBOX)
     const c = cacheState(['global/eu-city-traffic'])
@@ -562,6 +593,19 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
       country: null,
       notes:
         'read-only --verify pass of heal-rail-country-bleed AFTER all rail claimers: exit 1 = a claimer wrote country-bleed rows in this run (auditor R9 would fire) — fix that enricher and re-run.',
+      skipReason: null,
+    },
+    (b) => (b ? ['--bbox', serializeBbox(b), '--verify'] : ['--world', '--verify']),
+  )
+  pushPerBbox(
+    {
+      id: 'road-heal-verify',
+      script: 'heal-road-country-bleed.ts',
+      phase: 'heuristics',
+      layer: 'roads',
+      country: null,
+      notes:
+        'read-only --verify pass of heal-road-country-bleed AFTER all road claimers: exit 1 = a claimer wrote country-bleed rows this run (writeRoadAadt auto-gate should make this impossible — a nonzero exit means a bespoke road writer bypassed the shared writer).',
       skipReason: null,
     },
     (b) => (b ? ['--bbox', serializeBbox(b), '--verify'] : ['--world', '--verify']),

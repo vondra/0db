@@ -16,7 +16,45 @@ import { makeVector, makeTable, type Table } from 'apache-arrow'
 import { cellToLatLng } from 'h3-js'
 import { shouldOverwrite, withArrowWrite } from './provenance.js'
 import { isMeasured, SOURCES_BY_ID } from './sources.js'
+import { makeOwnershipGate, hasCountryPolygon, segmentWhollyOutside } from './country-polygon.js'
 import { inBbox } from './spatial.js'
+
+/** National-ownership gate for a stamped `source_id` — so no per-country
+ *  enricher can forget it (the rail countryGate is opt-in per caller; this is
+ *  automatic and unforgettable, #33). Anchored on the PROVENANCE TIER, not on
+ *  the key string: only `national-measured` / `national-proxy` sources are
+ *  country-scoped and gated. A continental (`eu-city-traffic`) or global source
+ *  legitimately spans many countries and is NEVER gated — so a future global
+ *  source keyed like `us-…` can't be misread as US-only and silently blocked
+ *  from the rest of the world (/gg #33 Gemini CRITICAL). The country then comes
+ *  from the national key's `cc-` prefix; a national source whose ISO has no
+ *  CGAZ polygon (logged once) stays ungated — the heal/auditor still catch it —
+ *  rather than dropping every row to a silent all-false gate. Cached per
+ *  source_id for the run. */
+const gateBySourceId = new Map<number, ((lat: number, lon: number) => boolean) | null>()
+const missingGateWarned = new Set<string>()
+function nationalGateForSource(sourceId: number): ((lat: number, lon: number) => boolean) | null {
+  const cached = gateBySourceId.get(sourceId)
+  if (cached !== undefined) return cached
+  let gate: ((lat: number, lon: number) => boolean) | null = null
+  const source = SOURCES_BY_ID.get(sourceId)
+  const isNational = source?.provenance === 'national-measured' || source?.provenance === 'national-proxy'
+  const m = isNational ? /^([a-z]{2})-/.exec(source!.key) : null
+  if (m) {
+    const iso = m[1].toUpperCase()
+    // hasCountryPolygon separates "not a mappable country" (ungate — a bbox
+    // territory) from an I/O failure loading CGAZ (propagates LOUD, never
+    // silently ungates a declared national source — /gg #33 Codex).
+    if (hasCountryPolygon(iso)) {
+      gate = makeOwnershipGate(iso)
+    } else if (!missingGateWarned.has(iso)) {
+      console.warn(`  writeRoadAadt: no CGAZ polygon for ${iso} (source ${source!.key}) — country gate skipped for it`)
+      missingGateWarned.add(iso)
+    }
+  }
+  gateBySourceId.set(sourceId, gate)
+  return gate
+}
 
 /** OSM `road_class` collapsed to the 0..4 major-road rank used by the
  *  source-class ↔ OSM-class compatibility gate (0 motorway, 1 trunk, 2 primary,
@@ -86,6 +124,9 @@ export interface WriteRoadResult {
   /** Rows whose `road_class` fell outside the source's `coverage` set — skipped
    *  before `match` ran, so a major-road dataset cannot stamp a minor road. */
   skipped: number
+  /** Rows skipped by `countryGate` (segment wholly outside the source's country)
+   *  — never offered to `match`; the retract arm still reached them (#33). */
+  skippedForeign: number
   /** Rows this dataset previously owned and has now disowned via `retract`
    *  (stamp + AADT reset to zero, open for lower-priority enrichers). */
   retracted: number
@@ -119,6 +160,13 @@ export interface RoadRetract {
  * dataset that only surveys major roads physically cannot stamp a minor one.
  * `onApplied(row, i)` fires only after the priority gate accepts a match — count
  * per-class matched there (the count must follow the gate, not precede it).
+ *
+ * National ownership (#33) is AUTOMATIC: a match whose `sourceId` carries a
+ * `cc-` country prefix is refused on any segment wholly outside that country
+ * (start+mid+end all foreign — `nationalGateForSource` + `segmentWhollyOutside`;
+ * `result.skippedForeign`). No enricher passes or can forget it — unlike the
+ * rail `countryGate`, which is per-caller opt-in. `heal-road-country-bleed`
+ * clears legacy foreign stamps via the `retract` arm.
  */
 export async function writeRoadAadt(
   arrowPath: string,
@@ -130,6 +178,7 @@ export async function writeRoadAadt(
   let rows = 0
   let matched = 0
   let skipped = 0
+  let skippedForeign = 0
   let retracted = 0
   let updated = false
 
@@ -254,6 +303,19 @@ export async function writeRoadAadt(
       if (SOURCES_BY_ID.get(m.sourceId)?.layer !== 'roads') {
         throw new Error(`writeRoadAadt: sourceId ${m.sourceId} is not a registered roads source (row ${i} in ${arrowPath})`)
       }
+      // #33 national-ownership gate, auto-derived from the stamped id's country
+      // prefix: a national road census must not STAMP a segment wholly outside
+      // its own country (start+mid+end all foreign — the shared R9 predicate;
+      // border-straddlers stay claimable). Ungated ref-matching within a bbox
+      // that reaches into neighbours stamped ~200k foreign rows (world gate
+      // 2026-07-12: TR into Greece/Iran, JP's grid over Korea). The retract arm
+      // above already passed — disowning foreign rows IS the heal, stamping
+      // them is the bug. World-scoped heuristics (no cc- key) return null here.
+      const gate = nationalGateForSource(m.sourceId)
+      if (gate && segmentWhollyOutside(gate, row.midLat, row.midLon, startLat, startLon, endLat, endLon)) {
+        skippedForeign++
+        continue
+      }
       // Measured sources publish counts — an all-zero payload under a measured
       // id is a loader/join failure (the auditor's R7 zero-write shape), never
       // data: a closed road is ABSENT from a census, not surveyed as 0/0/0/0
@@ -306,7 +368,7 @@ export async function writeRoadAadt(
     return makeTable(cols)
   })
 
-  return { rows, matched, updated, skipped, retracted }
+  return { rows, matched, updated, skipped, skippedForeign, retracted }
 }
 
 /**

@@ -372,7 +372,11 @@ const roads = scanLayer('roads.arrow', (t, hex) => {
     } else if (total > AADT_IMPOSSIBLE) {
       report('R6 value-range', hex, i, oid, id, la, lo, `total AADT ${total} > ${AADT_IMPOSSIBLE} (physically impossible)`)
     }
-    if (id > 0 && total === 0 && (PRIORITY_BY_ID.get(id) ?? 0) >= 70) {
+    if (id > 0 && total === 0 && isMeasured(id)) {
+      // isMeasured (not priority>=70) so the rule matches the writeRoadAadt
+      // guard + heal-road-zero-write EXACTLY (/gg #33 Codex): priority>=70
+      // wrongly flagged national-PROXY zeros (which the writer allows) and
+      // missed global-measured zeros (which the writer rejects).
       report('R7 zero-write', hex, i, oid, id, la, lo, `stamped by measured source but all AADT columns are 0`)
     }
     if (c > 12) {

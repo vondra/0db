@@ -270,6 +270,18 @@ function isoToFeature(iso2: string): { iso3: string; geometry: { type: string; c
   return { iso3, geometry: f.geometry }
 }
 
+/** True iff CGAZ has an ADM0 polygon for this alpha-2 — the CLEAN pre-check
+ *  callers use instead of catching makeCountryGate's throw, so a genuinely
+ *  country-less territory (NC/HK/PR/…) reads as `false` (expected: use a bbox
+ *  override) while an I/O failure loading CGAZ (download / GDAL / corrupt file)
+ *  still propagates LOUD from `cgazFeatures()` rather than being swallowed as
+ *  "ungate this source" (/gg #33 Codex CRITICAL — fail-open masked I/O damage). */
+export function hasCountryPolygon(iso2: string): boolean {
+  const iso3 = ISO2_TO_ISO3[iso2.toUpperCase()]
+  if (!iso3) return false
+  return cgazFeatures().some(x => x.properties.shapeGroup === iso3)
+}
+
 // Global land-mask over ALL CGAZ features (incl. disputed / non-ISO), memoised +
 // shared. The coastal gate uses it to keep land borders strict and reject
 // strait-ambiguous sea points; only the rare OUTSIDE rows hit it.

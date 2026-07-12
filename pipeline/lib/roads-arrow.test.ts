@@ -10,7 +10,7 @@
 
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -193,6 +193,39 @@ test('retract: falls through to match — a re-claimable row is re-stamped in th
   const t = tableFromIPC(readFileSync(path))
   assert.equal(t.getChild('aadt_light')!.get(0), 500)
   assert.equal(t.getChild('source_id')!.get(0), 20)
+})
+
+// ── #33 auto-derived national-ownership gate ────────────────────────────────
+// The fixture rows sit at ~50.0N/14.0E (Prague, CZ). A national road source
+// whose cc- prefix is NOT Czech must be refused there (segment wholly outside
+// its country); a CZ source and a world-scoped heuristic (no cc- prefix) stamp
+// normally. Needs the CGAZ cache (present on dev/build hosts).
+
+// Skip on a cold checkout: the auto-gate builds a real CGAZ polygon, and a
+// unit test must not trigger the 162 MB download + GDAL convert (/gg #33
+// Codex). Present on every dev/build host; country-polygon.test.ts covers the
+// predicates themselves.
+const CGAZ_CACHE = join(import.meta.dirname, '..', '..', 'scripts', 'cache', 'geoBoundariesCGAZ_ADM0_s0005.geojson')
+test('countryGate auto-derive: a foreign national id is refused; CZ id and heuristic stamp', { skip: !existsSync(CGAZ_CACHE) }, async () => {
+  // US census (id 21, cc- = us) at Prague → wholly foreign → skippedForeign.
+  const usPath = writeRoadsFixture('foreign-us.arrow', [0, 2])
+  const before = readFileSync(usPath)
+  const rUs = await writeRoadAadt(usPath, () => ({ light: 5000, medium: 100, heavy: 50, moto: 10, sourceId: 21 }))
+  assert.equal(rUs.matched, 0, 'no US row stamped at Prague')
+  assert.equal(rUs.skippedForeign, 2)
+  assert.deepEqual(readFileSync(usPath), before, 'foreign-only write leaves the arrow byte-identical')
+
+  // CZ census (id 20) at Prague → domestic → stamped.
+  const czPath = writeRoadsFixture('domestic-cz.arrow', [0, 2])
+  const rCz = await writeRoadAadt(czPath, () => ({ light: 5000, medium: 100, heavy: 50, moto: 10, sourceId: 20 }))
+  assert.equal(rCz.matched, 2, 'CZ rows stamped in CZ')
+  assert.equal(rCz.skippedForeign, 0)
+
+  // Service-tree heuristic (id 11, no cc- prefix) → world-scoped, never gated.
+  const heurPath = writeRoadsFixture('heuristic.arrow', [5, 5])
+  const rHeur = await writeRoadAadt(heurPath, () => ({ light: 200, medium: 2, heavy: 4, moto: 2, sourceId: 11 }))
+  assert.equal(rHeur.matched, 2, 'heuristic stamps regardless of location')
+  assert.equal(rHeur.skippedForeign, 0)
 })
 
 // ── R7 taper: the speed_taper derived-annotation column ─────────────────────
