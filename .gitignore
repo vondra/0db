@@ -49,3 +49,5 @@ scripts/.host-costs.lock
 scripts/.hub-env
 scripts/.hosts.lock
 .gemini/
+# Bruitparif Rumeur licence unverified for the API (adapter header) — local-only until confirmed
+benchmarks/validation/snapshots/bruitparif-*.json
