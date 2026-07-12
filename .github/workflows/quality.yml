@@ -1,15 +1,35 @@
-name: quality
+name: quality / Node
 
 on:
   pull_request:
+    paths:
+      - .github/workflows/quality.yml
+      - .githooks/**
+      - DATA_YEAR
+      - frontend/**
+      - pipeline/**
+      - server/**
+      - scripts/check-fast.sh
+      - scripts/test-git-hooks.sh
+      - start.sh
   push:
     branches: [main]
+    paths:
+      - .github/workflows/quality.yml
+      - .githooks/**
+      - DATA_YEAR
+      - frontend/**
+      - pipeline/**
+      - server/**
+      - scripts/check-fast.sh
+      - scripts/test-git-hooks.sh
+      - start.sh
 
 permissions:
   contents: read
 
 concurrency:
-  group: quality-${{ github.ref }}
+  group: quality-node-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -30,6 +50,11 @@ jobs:
             server/package-lock.json
             frontend/package-lock.json
             pipeline/package-lock.json
+      - name: Install pipeline system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes --no-install-recommends gdal-bin
+          ogr2ogr --version
       - run: npm ci
         working-directory: server
       - run: npm ci
@@ -41,17 +66,3 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: git diff --check "$BASE_SHA" "$GITHUB_SHA"
       - run: ./scripts/check-fast.sh node
-
-  rust:
-    name: Rust acoustic kernel
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      CARGO_TERM_COLOR: always
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          persist-credentials: false
-      # rust-toolchain.toml pins rustc, rustfmt, and clippy. The hosted runner's
-      # rustup installs that exact toolchain on the first cargo invocation.
-      - run: ./scripts/check-fast.sh rust

@@ -1,0 +1,47 @@
+name: quality / Rust
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/quality-rust.yml
+      - .cargo/**
+      - clippy.toml
+      - engine/**
+      - rust-toolchain.toml
+      - scripts/check-fast.sh
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/quality-rust.yml
+      - .cargo/**
+      - clippy.toml
+      - engine/**
+      - rust-toolchain.toml
+      - scripts/check-fast.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-rust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust acoustic kernel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check committed whitespace
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: git diff --check "$BASE_SHA" "$GITHUB_SHA"
+      # rust-toolchain.toml pins rustc, rustfmt, and clippy. The hosted runner's
+      # rustup installs that exact toolchain on the first cargo invocation.
+      - run: ./scripts/check-fast.sh rust
