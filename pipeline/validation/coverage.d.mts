@@ -1,6 +1,5 @@
 export type CoverageAnchor = {
   id: string
-  stable_key: string
   origin: 'point' | 'station'
   network: string | null
   anchor_type: 'measurement' | 'official_map' | 'regression'

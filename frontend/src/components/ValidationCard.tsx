@@ -1,17 +1,18 @@
-// Right-column card for a clicked validation anchor — the React sibling of
-// the /validation workbench panels: model vs measured, both bands, what the
+// Right-column card for a clicked validation anchor on the single React QA
+// map: model vs measured, both bands, what the
 // external source measures, provenance, tags. Clicking a dot also opens the
 // ordinary noise DetailCard for the same spot, so this card deliberately
 // repeats no live-model breakdown.
-import type { ValidationSelection } from './ValidationLayer'
+import type { ValidationArtifactMeta, ValidationPayload, ValidationSelection } from './ValidationLayer'
 
 const FIXTURE_COLOR: Record<string, string> = {
   'OK': '#2e7d32', 'EXTERNAL-GAP': '#ef6c00', 'KNOWN-GAP': '#8e24aa',
-  'PENDING': '#757575', 'WITHHELD': '#607d8b', 'DRIFT': '#c62828', 'ERROR': '#c62828', 'SKIPPED': '#bdbdbd',
+  'PENDING': '#757575', 'DRIFT': '#c62828', 'ERROR': '#c62828', 'SKIPPED': '#bdbdbd',
 }
 const STATION_COLOR: Record<string, string> = {
   above: '#c62828', within_bound: '#2e7d32', below: '#ef6c00',
-  unattributable: '#78909c', trend_only: '#5c6bc0', holdout_withheld: '#607d8b',
+  unattributable: '#78909c', trend_only: '#5c6bc0',
+  error: '#c62828', no_coverage: '#bdbdbd',
 }
 
 const fmt = (v: number | null | undefined, digits = 1) => (v == null ? '—' : v.toFixed(digits))
@@ -36,6 +37,44 @@ export default function ValidationCard({ selection, onClose }: {
     <div className="rounded-lg bg-white p-3 text-[13px] shadow max-h-[52vh] overflow-y-auto" style={{ boxShadow: '0 0 0 2px rgba(0,0,0,.06)' }}>
       <button onClick={onClose} className="float-right text-muted-foreground hover:text-foreground" aria-label="Close validation card">×</button>
       {selection.kind === 'fixture' ? <FixtureBody f={selection.fixture} /> : <StationBody s={selection.station} net={selection.network} />}
+    </div>
+  )
+}
+
+function Meta({ value }: { value: ValidationArtifactMeta }) {
+  const runner = value.runner_commit
+    ? ` · runner ${value.runner_commit.slice(0, 12)}${value.runner_dirty ? '+dirty' : ''}${value.requested_data_year != null ? ` · requested data ${value.requested_data_year}` : ''}`
+    : ''
+  return (
+    <span className="break-all">
+      {value.generated_at ?? 'unknown time'} · queried {value.server ?? 'unknown server'} · model build not exposed by server{runner}
+    </span>
+  )
+}
+
+/** Always-visible provenance/warning summary for the single React QA map. */
+export function ValidationStatusCard({ payload }: { payload: ValidationPayload | null }) {
+  const deltas = payload?.networks.filter(network => network.delta_meta != null) ?? []
+  return (
+    <div className="rounded-lg bg-white p-3 text-[11px] shadow" style={{ boxShadow: '0 0 0 2px rgba(0,0,0,.06)' }}>
+      <div className="font-semibold text-[13px]">Validation QA</div>
+      {!payload ? <div className="text-muted-foreground">Loading catalogs…</div> : (
+        <>
+          <div className="mt-1"><b>external truth:</b> {payload.networks.length} approved committed snapshots</div>
+          <div><b>world model run:</b> {payload.lastrun ? <Meta value={payload.lastrun} /> : 'not available'}</div>
+          <div><b>complete station-query artifacts:</b> {deltas.length}/{payload.networks.length}</div>
+          {deltas.map(network => (
+            <div key={`${network.network}:${network.year}`} className="pl-2 text-muted-foreground">
+              {network.network} {network.year}: <Meta value={network.delta_meta!} />
+            </div>
+          ))}
+          {payload.warnings.length > 0 && (
+            <ul className="mt-1 list-disc pl-4 text-amber-800">
+              {payload.warnings.map((warning, index) => <li key={`${index}:${warning}`}>{warning}</li>)}
+            </ul>
+          )}
+        </>
+      )}
     </div>
   )
 }

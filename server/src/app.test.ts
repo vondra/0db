@@ -30,3 +30,12 @@ test('noindex is an explicit deployment property', async (t) => {
   assert.equal(response.statusCode, 200)
   assert.equal(response.headers['x-robots-tag'], 'noindex, nofollow, noarchive')
 })
+
+test('responses expose one process-coherence token for long model runs', async (t) => {
+  const app = await buildApp({ readinessCheck: ready })
+  t.after(async () => app.close())
+  const live = await app.inject('/api/live')
+  const missing = await app.inject('/does-not-exist')
+  assert.match(String(live.headers['x-0db-instance']), /^[0-9a-f-]{36}$/)
+  assert.equal(missing.headers['x-0db-instance'], live.headers['x-0db-instance'])
+})

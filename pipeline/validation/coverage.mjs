@@ -3,8 +3,6 @@
  * It performs no file/network I/O: callers supply parsed world fixtures,
  * committed network snapshots and the factor vocabulary.
  */
-import { networkHoldoutKey, worldHoldoutKey } from './holdouts-runtime.mjs'
-
 const ANCHOR_TYPES = ['measurement', 'official_map', 'regression']
 
 function authoredTags(tags, label, vocab) {
@@ -48,11 +46,10 @@ export function derivedCoverageTags(anchor, vocab) {
   return tags
 }
 
-function normalizeAnchor({ id, stableKey, origin, network = null, anchorType, tags, pairId = null }) {
+function normalizeAnchor({ id, origin, network = null, anchorType, tags, pairId = null }) {
   if (!ANCHOR_TYPES.includes(anchorType)) throw new Error(`${id}: unknown anchor_type ${JSON.stringify(anchorType)}`)
   return {
     id,
-    stable_key: stableKey,
     origin,
     network,
     anchor_type: anchorType,
@@ -77,7 +74,6 @@ export function normalizeCoverageAnchors(points, snapshots, vocab) {
     const tags = authoredTags(point.tags, label, vocab)
     anchors.push(normalizeAnchor({
       id: point.id,
-      stableKey: worldHoldoutKey(point.id),
       origin: 'point',
       anchorType: point.anchor_type,
       tags: [...tags, ...derivedCoverageTags(point, vocab)],
@@ -98,7 +94,6 @@ export function normalizeCoverageAnchors(points, snapshots, vocab) {
       const stationTags = station.tags == null ? [] : authoredTags(station.tags, stationLabel, vocab)
       anchors.push(normalizeAnchor({
         id: `network/${snapshot.network}/${snapshot.year}/${station.station_id}`,
-        stableKey: networkHoldoutKey(snapshot.network, station.station_id),
         origin: 'station',
         network: snapshot.network,
         anchorType: snapshot.anchor_type,

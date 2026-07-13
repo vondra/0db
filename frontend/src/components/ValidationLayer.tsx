@@ -3,9 +3,8 @@
 // pickable dots over the noise heatmap — colour = gate status / Δ verdict,
 // size = |distance from external truth|. Data comes from
 // /api/validation/points (see server/src/routes/validation-view.ts); the
-// standalone workbench at /validation shows the same anchors without the
-// noise context. Enabled via the `val=1` URL flag — an owner/QA tool, not a
-// visitor feature. A dot click ALSO lands a normal map click underneath, so
+// React map enabled by the `val=1` URL flag — an owner/QA tool, not a visitor
+// feature. A dot click ALSO lands a normal map click underneath, so
 // the live noise popup opens for the same spot — measured next to modelled
 // is the point of putting the anchors on this map.
 import { useEffect, useState } from 'react'
@@ -55,7 +54,6 @@ export interface ValidationStation {
   measured_value: number | null
   model_value: number | null
   delta_db: number | null
-  delta_lden: number | null
   verdict: string | null
   dominant_source: string | null
   [metric: string]: unknown
@@ -73,20 +71,20 @@ export interface ValidationNetwork {
   comparison_tolerance_basis: string | null
   measured_metric_field: string
   model_metric_field: string
-  delta_meta: {
-    trend_only: boolean
-    comparison_mode: string
-    comparison_tolerance_db: number | null
-    comparison_tolerance_basis: string | null
-    measured_metric_field: string
-    model_metric_field: string
-    server_identity: unknown
-  } | null
+  delta_meta: ValidationArtifactMeta | null
   stations: ValidationStation[]
 }
 
+export interface ValidationArtifactMeta {
+  generated_at: string | null
+  server: string | null
+  runner_commit: string | null
+  runner_dirty: boolean | null
+  requested_data_year: number | null
+}
+
 export interface ValidationPayload {
-  lastrun: { server: string; commit: string; timestamp: string; data_year: number } | null
+  lastrun: ValidationArtifactMeta | null
   warnings: string[]
   fixtures: ValidationFixture[]
   networks: ValidationNetwork[]
@@ -96,27 +94,51 @@ export type ValidationSelection =
   | { kind: 'fixture'; fixture: ValidationFixture }
   | { kind: 'station'; station: ValidationStation; network: ValidationNetwork }
 
-// Colours match the /validation workbench 1:1 — one vocabulary everywhere.
 const FIXTURE_RGB: Record<string, [number, number, number]> = {
   'OK': [46, 125, 50], 'EXTERNAL-GAP': [239, 108, 0], 'KNOWN-GAP': [142, 36, 170],
-  'PENDING': [117, 117, 117], 'WITHHELD': [96, 125, 139], 'DRIFT': [198, 40, 40], 'ERROR': [198, 40, 40], 'SKIPPED': [189, 189, 189],
+  'PENDING': [117, 117, 117], 'DRIFT': [198, 40, 40], 'ERROR': [198, 40, 40], 'SKIPPED': [189, 189, 189],
 }
 const STATION_RGB: Record<string, [number, number, number]> = {
   above: [198, 40, 40], within_bound: [46, 125, 50], below: [239, 108, 0],
-  unattributable: [120, 144, 156], trend_only: [92, 107, 192], holdout_withheld: [96, 125, 139],
+  unattributable: [120, 144, 156], trend_only: [92, 107, 192],
+  error: [198, 40, 40], no_coverage: [189, 189, 189],
 }
 const FALLBACK_RGB: [number, number, number] = [141, 110, 99]
 
 interface Props {
+  payload: ValidationPayload | null
   onSelect?: (selection: ValidationSelection) => void
+}
+
+/** Fetch once for the QA map; the same payload drives its status and dots. */
+export function useValidationPayload(enabled: boolean): ValidationPayload | null {
+  const [payload, setPayload] = useState<ValidationPayload | null>(null)
+  useEffect(() => {
+    if (!enabled) return
+    let cancelled = false
+    void fetch('/api/validation/points')
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return response.json()
+      })
+      .then((data: ValidationPayload) => { if (!cancelled) setPayload(data) })
+      .catch((error) => {
+        if (!cancelled) setPayload({
+          lastrun: null,
+          warnings: [`validation API failed — ${error instanceof Error ? error.message : String(error)}`],
+          fixtures: [], networks: [],
+        })
+      })
+    return () => { cancelled = true }
+  }, [enabled])
+  return payload
 }
 
 /** Mounted ONLY while the `val=1` flag is on (MapView) — ordinary visitors
  *  never pay for the extra deck overlay. Desktop-only QA surface. */
-export default function ValidationLayer({ onSelect }: Props): null {
+export default function ValidationLayer({ payload, onSelect }: Props): null {
   const { current: mapRef } = useMap()
   const [overlay, setOverlay] = useState<MapboxOverlay | null>(null)
-  const [payload, setPayload] = useState<ValidationPayload | null>(null)
 
   useEffect(() => {
     if (!mapRef) return
@@ -129,24 +151,6 @@ export default function ValidationLayer({ onSelect }: Props): null {
       setOverlay(null)
     }
   }, [mapRef])
-
-  useEffect(() => {
-    if (payload) return
-    let cancelled = false
-    void fetch('/api/validation/points')
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json()
-      })
-      .then((data: ValidationPayload) => {
-        if (!cancelled) setPayload(data)
-      })
-      // QA must see WHY the map is empty, not just an anchor-less map.
-      .catch((err) => console.warn('[validation] /api/validation/points failed:', err))
-    return () => {
-      cancelled = true
-    }
-  }, [payload])
 
   useEffect(() => {
     if (!overlay) return
@@ -163,7 +167,7 @@ export default function ValidationLayer({ onSelect }: Props): null {
           pickable: true,
           radiusUnits: 'pixels',
           getPosition: (d) => [d.station.lng, d.station.lat],
-          getRadius: (d) => 3.5 + Math.min(7, Math.abs(d.station.delta_db ?? d.station.delta_lden ?? 0) * 0.45),
+          getRadius: (d) => 3.5 + Math.min(7, Math.abs(d.station.delta_db ?? 0) * 0.45),
           getFillColor: (d) => [...(STATION_RGB[d.station.verdict ?? ''] ?? FALLBACK_RGB), 205] as [number, number, number, number],
           getLineColor: [255, 255, 255, 230],
           getLineWidth: 1,

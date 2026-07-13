@@ -10,7 +10,7 @@ Fixtures and per-server baselines consumed by the `/check-heatmap`,
   scenario-labeled. Stable fixture, rarely edited.
 - **`world-points.json`** — external-validation points anchored to
   measured/published reality (traffic counts, SHM/Defra noise maps, airport
-  monitors), each with an audit-authored `expected_model_band`. Consumed by
+  monitors), each with an audit-authored `regression_band`. Consumed by
   `/check-world` (breakdown in its SKILL.md); per-host results land in
   `world-baseline.<hostname>.json`.
 - **`aircraft-vs-shm/`** — LKPR aircraft-vs-SHM raster fixture + result CSVs
