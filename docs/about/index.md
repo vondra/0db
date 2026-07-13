@@ -441,9 +441,13 @@ These simplifications target MAE < 3 dB against national strategic noise maps fo
 
 ## Validation
 
-- **Reference:** National strategic noise maps (see country pages for specifics)
-- **Methodology:** [WG-AEN Good Practice Guide](https://sicaweb.cedex.es/docs/documentacion/Good-Practice-Guide-for-Strategic-Noise-Mapping.pdf), [EPA Ireland Guide v4](https://www.epa.ie/publications/monitoring--assessment/noise/)
-- **Target:** MAE < 3 dB, broken down by road class and distance band
+Accuracy is a continuous loop, not a one-off benchmark: measure the gap against real monitoring stations → attribute the cause → fix the data or the model → re-measure. Every confirmed gap becomes a short finding committed openly in the repository.
+
+- **Primary reference — real measurements.** Annual per-station levels from public monitoring networks: city networks (Barcelona, Dublin), airport monitoring terminals (Prague, Zürich, Amsterdam, Frankfurt, San Francisco), and German rail-corridor stations (EBA) — several hundred station-years across five countries, and growing. Each station carries commensurability metadata (metric variant, receiver height, coordinate uncertainty) so a comparison is only made where it is honest.
+- **Honest comparison.** A street microphone hears everything at once — traffic, voices, weather — so a single modelled layer is checked there only as an *upper bound* (the model must never exceed the measured total). Event-classified airport terminals and near-source geometries allow a full two-sided check.
+- **Official maps as a benchmark, not a target.** National strategic noise maps (END / SHM) cross-check our results and probe our input data — a systematic gap that tracks a data regime points at enrichment, not physics — never as a calibration target.
+- **Already corrected by the loop.** A street-tram default speed and the double-counting of parallel rail tracks were each surfaced by a measurement station and fixed, then re-verified against the same stations.
+- **Target:** mean absolute error < 3 dB vs national strategic maps for road noise. A formal cross-country MAE is still pending — the per-network gap tables and a layer × country uncertainty breakdown are the interim measure.
 
 ---
 
