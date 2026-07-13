@@ -1,6 +1,6 @@
-// Deterministic pipeline unit-test discovery. The city-polygon integration
-// test downloads national boundary datasets when its cache is cold, so the
-// required fast gate excludes it; `npm run test:all` opts into network I/O.
+// Deterministic pipeline unit-test discovery. The polygon integration tests
+// download boundary datasets when their caches are cold, so the required fast
+// gate excludes them; `npm run test:all` opts into network I/O.
 import { readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { dirname, relative, resolve } from 'node:path'
@@ -20,9 +20,10 @@ function collect(dir) {
 }
 
 const includeNetwork = process.env.INCLUDE_NETWORK_TESTS === '1'
+const networkTests = new Set(['lib/city-polygon.test.ts', 'lib/country-polygon.test.ts'])
 const tests = collect(pipelineRoot)
   .map((file) => relative(pipelineRoot, file))
-  .filter((file) => includeNetwork || file !== 'lib/city-polygon.test.ts')
+  .filter((file) => includeNetwork || !networkTests.has(file))
   .sort()
 
 if (tests.length === 0) throw new Error('no pipeline tests discovered')
