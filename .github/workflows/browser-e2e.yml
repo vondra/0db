@@ -1,0 +1,48 @@
+name: quality / Browser E2E (advisory)
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/browser-e2e.yml
+      - frontend/**
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/browser-e2e.yml
+      - frontend/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: Desktop + mobile map flow
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22.15.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - name: Use runner Chrome (no browser download)
+        run: google-chrome --version
+      - run: npm run e2e
+        working-directory: frontend
+      - name: Upload failure trace and screenshots
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: browser-e2e-${{ github.run_id }}
+          path: frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 7

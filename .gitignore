@@ -10,6 +10,8 @@ dist/
 /frontend/dist.check/
 /frontend/dist.previous/
 /frontend/dist.previous.older/
+/frontend/test-results/
+/frontend/playwright-report/
 *.log
 .env
 

@@ -144,6 +144,7 @@ export default function HoverTooltip({ sources }: Props) {
 
   return (
     <div
+      data-testid="heatmap-hover"
       style={{
         position: 'fixed',
         left: hover.clientX + 14,

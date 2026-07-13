@@ -43,6 +43,7 @@ function OnOffRow({ id, label, tooltip, icon, active, onToggle }: OnOffRowProps)
     <button
       onClick={onToggle}
       title={tooltip}
+      aria-pressed={active}
       data-testid={`layer-${id}`}
       className="flex w-full items-center gap-2.5 py-1.5 px-1 rounded-lg hover:bg-black/5 transition-colors cursor-pointer"
     >
