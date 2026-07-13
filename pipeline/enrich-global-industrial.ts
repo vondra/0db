@@ -24,10 +24,10 @@
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { makeTable, tableFromIPC, vectorFromArray, Uint16 } from 'apache-arrow'
+import { makeTable, tableFromIPC, vectorFromArray, Uint16, Uint8 } from 'apache-arrow'
 import { latLngToCell, gridDisk } from 'h3-js'
 import { SOURCES_BY_ID, PROVENANCE_RANK } from './lib/sources.js'
-import { bestCandidate, contestBeats, readPolygons, type MatchPolygon } from './lib/facility-match.js'
+import { bestCandidate, contestBeats, readPolygons, overlapLosers, type MatchPolygon, type OverlapWinner } from './lib/facility-match.js'
 import { shouldOverwrite, withArrowWrite } from './lib/provenance.js'
 import {
   SOURCE_ID_EUROPE_EPRTR,
@@ -510,7 +510,7 @@ async function enrichHexes(
   }
 
   // ── pass 1: globally best polygon per facility (read-only) ──
-  const bestByFac = new Map<PreparedFacility, { hex: string; row: number; edge: number }>()
+  const bestByFac = new Map<PreparedFacility, { hex: string; row: number; edge: number; lat: number; lon: number; areaM2: number }>()
   let totalIndustrial = 0
   for (const [i, hexId] of hexDirs.entries()) {
     progress('match', i + 1)
@@ -532,21 +532,43 @@ async function enrichHexes(
       const cand = bestCandidate(fac, polygons, SEARCH_RADIUS_M)
       if (!cand) continue
       const prev = bestByFac.get(fac)
-      if (!prev || cand.edge < prev.edge) bestByFac.set(fac, { hex: hexId, row: cand.row, edge: cand.edge })
+      if (!prev || cand.edge < prev.edge) {
+        const p = polygons[cand.row]
+        bestByFac.set(fac, { hex: hexId, row: cand.row, edge: cand.edge, lat: p.lat, lon: p.lon, areaM2: p.areaM2 })
+      }
     }
   }
 
   // ── phase B: a polygon claimed by several facilities → shouldOverwrite order ──
-  const winnersByHex = new Map<string, Map<number, { fac: PreparedFacility; edge: number }>>()
+  type Winner = { fac: PreparedFacility; edge: number; lat: number; lon: number; areaM2: number }
+  const winnersByHex = new Map<string, Map<number, Winner>>()
   for (const [fac, w] of bestByFac) {
-    const rows = winnersByHex.get(w.hex) ?? new Map<number, { fac: PreparedFacility; edge: number }>()
+    const rows = winnersByHex.get(w.hex) ?? new Map<number, Winner>()
     winnersByHex.set(w.hex, rows)
     const cur = rows.get(w.row)
     if (!cur || contestBeats(
       { rank: fac.rank, year: fac.year, id: fac.id, edge: w.edge },
       { rank: cur.fac.rank, year: cur.fac.year, id: cur.fac.id, edge: cur.edge },
-    )) rows.set(w.row, { fac, edge: w.edge })
+    )) rows.set(w.row, { fac, edge: w.edge, lat: w.lat, lon: w.lon, areaM2: w.areaM2 })
   }
+
+  // ── phase B2: I-07 dual-registry overlap dedup — across winning ROWS (not
+  // facilities), collapse same-site duplicates (E-PRTR + GPPD/GEM each won a
+  // different coincident polygon for ONE physical plant → both emit, +2.7 dB at
+  // Temelín). overlapLosers reuses the same contestBeats authority, so E-PRTR
+  // (rank 5) keeps its row; the loser gets a `suppressed=1` marker (below) that
+  // both loaders skip. Idempotent: recomputed from scratch every run. ──
+  const overlapCandidates: OverlapWinner[] = []
+  for (const [hex, rows] of winnersByHex) {
+    for (const [row, w] of rows) {
+      overlapCandidates.push({
+        key: `${hex}:${row}`, lat: w.lat, lon: w.lon, areaM2: w.areaM2,
+        rank: w.fac.rank, year: w.fac.year, id: w.fac.id, edge: w.edge,
+      })
+    }
+  }
+  const suppressedKeys = overlapLosers(overlapCandidates)
+  if (suppressedKeys.size > 0) console.log(`  I-07 overlap dedup: ${suppressedKeys.size} duplicate polygon(s) suppressed`)
 
   // ── pass 2: reset-then-stamp (write) ──
   let totalMatched = 0
@@ -572,8 +594,10 @@ async function enrichHexes(
 
         const existingNaceCol = table.getChild('nace_4digit')
         const existingDatasetIdCol = table.getChild('source_id')
+        const existingSuppressedCol = table.getChild('suppressed')
         const newNace = new Uint16Array(n)
         const newDatasetId = new Uint16Array(n)
+        const newSuppressed = new Uint8Array(n) // I-07 marker, recomputed fresh every run (0 = emits)
         for (let j = 0; j < n; j++) {
           newNace[j] = (existingNaceCol?.get(j) as number) ?? 0
           newDatasetId[j] = (existingDatasetIdCol?.get(j) as number) ?? 0
@@ -608,15 +632,25 @@ async function enrichHexes(
         }
 
         if (hexMatched > 0) hexesWithMatches++
+
+        // I-07: mark overlap-dedup losers suppressed. Recomputed fresh each run
+        // (default 0), so a row that is no longer a duplicate clears back to 0 —
+        // the change is detected against the existing column so the file rewrites.
+        for (let i = 0; i < n; i++) {
+          if (suppressedKeys.has(`${hexId}:${i}`)) newSuppressed[i] = 1
+          if (newSuppressed[i] !== ((existingSuppressedCol?.get(i) as number) ?? 0)) anyChanged = true
+        }
+
         if (!anyChanged) return table
 
         const columns: Record<string, any> = {}
         for (const field of table.schema.fields) {
-          if (field.name === 'nace_4digit' || field.name === 'source_id') continue
+          if (field.name === 'nace_4digit' || field.name === 'source_id' || field.name === 'suppressed') continue
           columns[field.name] = table.getChild(field.name)!
         }
         columns['nace_4digit'] = vectorFromArray(Array.from(newNace), new Uint16())
         columns['source_id'] = vectorFromArray(Array.from(newDatasetId), new Uint16())
+        columns['suppressed'] = vectorFromArray(Array.from(newSuppressed), new Uint8())
         return makeTable(columns)
       })
     } catch (err: any) {

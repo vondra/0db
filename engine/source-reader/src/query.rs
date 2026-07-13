@@ -390,6 +390,17 @@ pub fn collect_from_hex_data(
                 if dist > INDUSTRIAL_QUERY_RADIUS_M {
                     continue;
                 }
+                // I-07 dedup: skip a same-site duplicate row the enricher suppressed
+                // (kept parity with the heatmap loader — both must skip it).
+                if batch
+                    .column_by_name("suppressed")
+                    .and_then(|c| c.as_any().downcast_ref::<arrow::array::UInt8Array>())
+                    .map(|a| a.value(i))
+                    .unwrap_or(0)
+                    != 0
+                {
+                    continue;
+                }
 
                 let st = stype.map(|a| a.value(i)).unwrap_or(0);
                 let iname = ind_name.map(|a| a.value(i).to_string()).unwrap_or_default();
