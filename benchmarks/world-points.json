@@ -694,12 +694,12 @@
     "anchor_type": "official_map",
     "role": "regression",
     "tags": [
-      "steel_2410",
-      "heavy_cap_guard",
-      "foreign_guard",
+      "plant_247",
       "near",
       "site_area_scaling",
-      "suburban"
+      "heavy_vs_light_split",
+      "suburban",
+      "coastal_windy"
     ],
     "external": {
       "value": "Lden 65 (RIVM industrie Lden actueel, GRAY_INDEX continuous dB) at Velsen-Noord, adjacent to Tata Steel IJmuiden",
@@ -739,12 +739,11 @@
     "anchor_type": "official_map",
     "role": "regression",
     "tags": [
-      "steel_2410",
-      "heavy_cap_guard",
-      "foreign_guard",
+      "plant_247",
       "near",
-      "distance_tail",
-      "urban"
+      "site_area_scaling",
+      "heavy_vs_light_split",
+      "dense_urban"
     ],
     "external": {
       "value": "Lden 60 dB(A) (LANUV NRW IND_DEN, literal computed dB(A)) at ThyssenKrupp Steel Duisburg core",
@@ -784,11 +783,11 @@
     "anchor_type": "official_map",
     "role": "regression",
     "tags": [
-      "chemical_2011",
-      "heavy_cap_guard",
-      "foreign_guard",
+      "plant_247",
       "near",
-      "refinery",
+      "site_area_scaling",
+      "heavy_vs_light_split",
+      "port",
       "suburban"
     ],
     "external": {
