@@ -14,12 +14,11 @@ test('cluster dashboard: absent unless enabled, else under the /a/ admin prefix 
   t.after(async () => withCluster.close())
   assert.equal(withCluster.hasRoute({ method: 'GET', url: '/a/cluster' }), true)
 
-  // No Fastify-level IP guard — access control is the Caddy basic_auth on
-  // dev.0db.app/a/* (see /etc/caddy/Caddyfile). A reachable request (the shell
-  // TUI over loopback, or an authed proxied client) reaches the route regardless
-  // of the forwarded public IP. cachedStatus() warms in the background, so a
-  // fresh server answers 200 (warm) or 503 (still warming) — both prove the route
-  // is REACHED, never a 404/guard. (Asserting 200 alone is a warming race.)
+  // Two-layer access control: Caddy basic_auth at the edge + requireLocalPeer here.
+  // A request whose SOCKET peer is loopback (Caddy proxies from localhost; the shell TUI)
+  // reaches the route regardless of the forwarded public IP. cachedStatus() warms in the
+  // background, so a fresh server answers 200 (warm) or 503 (warming) — both prove REACHED
+  // (asserting 200 alone is a warming race).
   const reached = await withCluster.inject({
     method: 'GET',
     url: '/a/api/cluster/status',
@@ -30,6 +29,11 @@ test('cluster dashboard: absent unless enabled, else under the /a/ admin prefix 
     reached.statusCode === 200 || reached.statusCode === 503,
     `dashboard route must respond (200 warm / 503 warming), got ${reached.statusCode}`,
   )
+
+  // A DIRECT hit on the public port (non-loopback socket, bypassing Caddy + basic_auth)
+  // is 404'd by requireLocalPeer — the raw port can't leak box IPs / costs.
+  const direct = await withCluster.inject({ method: 'GET', url: '/a/api/cluster/status', remoteAddress: '203.0.113.20' })
+  assert.equal(direct.statusCode, 404)
 })
 
 test('noindex is an explicit deployment property', async (t) => {

@@ -14,6 +14,7 @@ import { tilesManifestRoutes } from './routes/tiles-manifest.js'
 import { validationViewRoutes } from './routes/validation-view.js'
 import { healthRoutes } from './routes/health.js'
 import { createReadinessCheck, type ReadinessCheck } from './runtime-readiness.js'
+import { requireLocalPeer } from './internal-access.js'
 
 // Deliberately identifies only this Node process, not its build or data. Long
 // validation runs use it to reject results spanning a restart/deploy.
@@ -75,14 +76,17 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     // Dynamic import means a public-only process never even loads code that
     // reads SSH inventory, worker logs, costs, or cluster telemetry.
     const { clusterRoutes } = await import('./routes/cluster.js')
-    // Internal admin area (owner 2026-07-13): all internal tooling lives under the
-    // /a/ prefix — cluster now (→ /a/cluster + /a/api/cluster/status), validation
-    // and future admins later. Public exposure is gated at the edge by Caddy
-    // basic_auth on dev.0db.app/a/* (it surfaces box IPs, telemetry, and $ costs).
-    // Un-authed reach is loopback-only (the shell TUI + this box); the public map
-    // itself stays open. NOTE the prefix must match cluster-page.ts's poll URL and
-    // scripts/cluster-dash.py's URL.
-    await app.register(clusterRoutes, { prefix: '/a' })
+    // Internal admin area under the /a/ prefix — cluster now (→ /a/cluster +
+    // /a/api/cluster/status), other admins later. TWO layers of access control, because
+    // it surfaces box IPs, telemetry, and $ costs: Caddy basic_auth on dev.0db.app/a/*
+    // (the password), AND requireLocalPeer here so a DIRECT hit on the public :8520 port
+    // (bypassing Caddy — the box has no firewall) can't reach it. Caddy proxies from
+    // loopback so authed public requests + the local TUI pass; the public map stays open.
+    // NOTE the prefix must match cluster-page.ts's poll URL and scripts/cluster-dash.py.
+    await app.register(async (adminApp) => {
+      adminApp.addHook('onRequest', requireLocalPeer)
+      await adminApp.register(clusterRoutes)
+    }, { prefix: '/a' })
   }
 
   return app
