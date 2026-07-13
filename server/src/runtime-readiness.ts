@@ -48,9 +48,40 @@ async function checkPreparedData(h3r4Dir: string): Promise<void> {
   await requireNonEmptyFile(join(h3r4Dir, REFERENCE_HEX, 'roads.arrow'))
 }
 
-type ManifestLayer = { file?: unknown; bytes?: unknown; build?: unknown }
+type PublisherProof = {
+  schema?: unknown
+  sha256?: unknown
+  dev?: unknown
+  ino?: unknown
+  size?: unknown
+  mtime_ns?: unknown
+  ctime_ns?: unknown
+}
+type ManifestLayer = {
+  file?: unknown
+  bytes?: unknown
+  build?: unknown
+  sha256?: unknown
+  publisher_proof?: PublisherProof
+}
 
 const BUILD_ID = /^b[0-9]+$/
+const SHA256 = /^[a-f0-9]{64}$/
+const UNSIGNED_DECIMAL = /^(0|[1-9][0-9]*)$/
+const SIGNED_DECIMAL = /^(0|-?[1-9][0-9]*)$/
+
+function proofInteger(
+  value: unknown,
+  field: string,
+  manifestPath: string,
+  layer: string,
+  signed = false,
+): bigint {
+  if (typeof value !== 'string' || !(signed ? SIGNED_DECIMAL : UNSIGNED_DECIMAL).test(value)) {
+    throw new Error(`${manifestPath} layer ${layer} has invalid publisher proof ${field}`)
+  }
+  return BigInt(value)
+}
 
 async function checkPmtiles(pmtilesDir: string): Promise<void> {
   const manifestPath = join(pmtilesDir, 'current.json')
@@ -92,10 +123,34 @@ async function checkPmtiles(pmtilesDir: string): Promise<void> {
     if (!Number.isSafeInteger(entry.bytes) || (entry.bytes as number) <= 0) {
       throw new Error(`${manifestPath} layer ${layer} has invalid bytes`)
     }
+    if (typeof entry.sha256 !== 'string' || !SHA256.test(entry.sha256)) {
+      throw new Error(`${manifestPath} layer ${layer} has invalid sha256`)
+    }
+    const proof = entry.publisher_proof
+    if (!proof || proof.schema !== 'sha256-posix-stat-v1' || proof.sha256 !== entry.sha256) {
+      throw new Error(`${manifestPath} layer ${layer} has no matching publisher proof`)
+    }
     const archivePath = join(pmtilesDir, entry.file)
-    const archive = await stat(archivePath)
-    if (!archive.isFile() || archive.size !== entry.bytes) {
+    const archive = await stat(archivePath, { bigint: true })
+    if (!archive.isFile() || archive.size !== BigInt(entry.bytes as number)) {
       throw new Error(`${archivePath} size ${archive.size} does not match manifest ${entry.bytes}`)
+    }
+    const expectedIdentity = {
+      dev: proofInteger(proof.dev, 'dev', manifestPath, layer),
+      ino: proofInteger(proof.ino, 'ino', manifestPath, layer),
+      size: proofInteger(proof.size, 'size', manifestPath, layer),
+      mtimeNs: proofInteger(proof.mtime_ns, 'mtime_ns', manifestPath, layer, true),
+      ctimeNs: proofInteger(proof.ctime_ns, 'ctime_ns', manifestPath, layer, true),
+    }
+    if (expectedIdentity.dev !== archive.dev
+      || expectedIdentity.ino !== archive.ino
+      || expectedIdentity.size !== archive.size
+      || expectedIdentity.mtimeNs !== archive.mtimeNs
+      || expectedIdentity.ctimeNs !== archive.ctimeNs) {
+      throw new Error(`${archivePath} identity does not match its sha256 publisher proof`)
+    }
+    if (expectedIdentity.size !== BigInt(entry.bytes as number)) {
+      throw new Error(`${manifestPath} layer ${layer} publisher proof size does not match bytes`)
     }
   }
 }

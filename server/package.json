@@ -7,7 +7,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "node scripts/build.mjs",
     "start": "node scripts/start.mjs",
-    "test": "node --import tsx --test src/*.test.ts src/**/*.test.ts",
+    "test": "node --import tsx --test src/*.test.ts src/**/*.test.ts scripts/*.test.mjs",
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {

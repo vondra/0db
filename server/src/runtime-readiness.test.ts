@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { chmod, mkdir, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -7,6 +8,19 @@ import { ALLOWED_LAYERS } from './routes/heatmap-shared.js'
 import { createReadinessCheck } from './runtime-readiness.js'
 
 const REFERENCE_HEX = '841e309ffffffff'
+
+async function publisherProof(path: string, sha256: string) {
+  const info = await stat(path, { bigint: true })
+  return {
+    schema: 'sha256-posix-stat-v1',
+    sha256,
+    dev: info.dev.toString(),
+    ino: info.ino.toString(),
+    size: info.size.toString(),
+    mtime_ns: info.mtimeNs.toString(),
+    ctime_ns: info.ctimeNs.toString(),
+  }
+}
 
 async function readinessFixture() {
   const root = await mkdtemp(join(tmpdir(), '0db-ready-'))
@@ -18,12 +32,23 @@ async function readinessFixture() {
   await writeFile(sourceReaderPath, 'native-addon')
   await writeFile(join(h3r4Dir, REFERENCE_HEX, 'roads.arrow'), 'arrow-data')
 
-  const layers: Record<string, { file: string; bytes: number }> = {}
+  const layers: Record<string, {
+    file: string
+    bytes: number
+    sha256: string
+    publisher_proof: Awaited<ReturnType<typeof publisherProof>>
+  }> = {}
   for (const layer of ALLOWED_LAYERS) {
     const file = `${layer}.b1.pmtiles`
     const content = `pmtiles-${layer}`
     await writeFile(join(pmtilesDir, file), content)
-    layers[layer] = { file, bytes: Buffer.byteLength(content) }
+    const sha256 = createHash('sha256').update(content).digest('hex')
+    layers[layer] = {
+      file,
+      bytes: Buffer.byteLength(content),
+      sha256,
+      publisher_proof: await publisherProof(join(pmtilesDir, file), sha256),
+    }
   }
   await writeFile(join(pmtilesDir, 'current.json'), JSON.stringify({ build: 'b1', layers }))
   return { root, sourceReaderPath, h3r4Dir, pmtilesDir, layers }
@@ -74,7 +99,7 @@ test('readiness rejects a manifest file name that the tile route would not serve
   t.after(async () => rm(fixture.root, { recursive: true, force: true }))
   const total = fixture.layers.total
   const road = fixture.layers.road
-  fixture.layers.total = { file: road.file, bytes: road.bytes }
+  fixture.layers.total = { ...road }
   await writeFile(
     join(fixture.pmtilesDir, 'current.json'),
     JSON.stringify({ build: 'b1', layers: fixture.layers }),
@@ -123,7 +148,16 @@ test('readiness accepts a consistent partial-publish manifest', async (t) => {
   await writeFile(join(fixture.pmtilesDir, file), content)
   const layers = {
     ...fixture.layers,
-    total: { file, build: 'b2', bytes: Buffer.byteLength(content) },
+    total: {
+      file,
+      build: 'b2',
+      bytes: Buffer.byteLength(content),
+      sha256: createHash('sha256').update(content).digest('hex'),
+      publisher_proof: await publisherProof(
+        join(fixture.pmtilesDir, file),
+        createHash('sha256').update(content).digest('hex'),
+      ),
+    },
   }
   await writeFile(
     join(fixture.pmtilesDir, 'current.json'),
@@ -169,4 +203,76 @@ test('filesystem failures are retried immediately during startup', async (t) => 
 
   await writeFile(roadsPath, 'repaired-arrow-data')
   assert.equal((await check()).ready, true)
+})
+
+test('readiness rejects a same-size atomic PMTiles replacement', async (t) => {
+  const fixture = await readinessFixture()
+  t.after(async () => rm(fixture.root, { recursive: true, force: true }))
+  const total = fixture.layers.total
+  const archivePath = join(fixture.pmtilesDir, total.file)
+  const replacement = join(fixture.pmtilesDir, '.replacement.pmtiles')
+  await writeFile(replacement, 'pmtiles-total')
+  await rename(replacement, archivePath)
+
+  const result = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(result.ready, false)
+  assert.deepEqual(result.failed, ['pmtiles'])
+  assert.match(result.errors.pmtiles ?? '', /identity does not match its sha256 publisher proof/)
+})
+
+test('readiness rejects manifest and proof sha256 changes that break their binding', async (t) => {
+  const fixture = await readinessFixture()
+  t.after(async () => rm(fixture.root, { recursive: true, force: true }))
+  const total = fixture.layers.total
+  total.sha256 = '0'.repeat(64)
+  await writeFile(
+    join(fixture.pmtilesDir, 'current.json'),
+    JSON.stringify({ build: 'b1', layers: fixture.layers }),
+  )
+  const badManifest = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(badManifest.ready, false)
+  assert.match(badManifest.errors.pmtiles ?? '', /no matching publisher proof/)
+
+  const originalSha256 = total.publisher_proof.sha256
+  total.sha256 = originalSha256
+  total.publisher_proof.sha256 = '0'.repeat(64)
+  await writeFile(
+    join(fixture.pmtilesDir, 'current.json'),
+    JSON.stringify({ build: 'b1', layers: fixture.layers }),
+  )
+  const badProof = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(badProof.ready, false)
+  assert.match(badProof.errors.pmtiles ?? '', /no matching publisher proof/)
+})
+
+test('readiness never opens PMTiles archive content after publisher verification', async (t) => {
+  const fixture = await readinessFixture()
+  t.after(async () => rm(fixture.root, { recursive: true, force: true }))
+  for (const entry of Object.values(fixture.layers)) {
+    const archivePath = join(fixture.pmtilesDir, entry.file)
+    await chmod(archivePath, 0o000)
+    entry.publisher_proof = await publisherProof(archivePath, entry.sha256)
+  }
+  await writeFile(
+    join(fixture.pmtilesDir, 'current.json'),
+    JSON.stringify({ build: 'b1', layers: fixture.layers }),
+  )
+  const result = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.deepEqual(result, { ready: true, failed: [], errors: {} })
 })

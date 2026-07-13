@@ -27,6 +27,7 @@ import {
   serverRoot,
 } from './release-layout.mjs'
 import { ensureReleaseLock } from './release-lock.mjs'
+import { assertInstalledDependenciesMatchLock } from './dependency-lock.mjs'
 
 ensureReleaseLock(fileURLToPath(import.meta.url))
 const requireNative = process.argv.includes('--require-native')
@@ -83,19 +84,40 @@ function treeFingerprint(root) {
 
 const nativeSource = resolve(serverRoot, '..', 'engine/source-reader/target/release/libsource_reader.so')
 const sourceInputsBefore = sourceInputFingerprint()
+const dependencyLock = readFileSync(resolve(serverRoot, 'package-lock.json'))
+// A release is named after package-lock.json, so copying modules installed
+// from a different lock would permanently mislabel and cache stale code.
+// Validate against the exact bytes hashed below; the final source fingerprint
+// also refuses publication if an editor changes the lock during this build.
+const dependencyLockOptions = { rootLockContents: dependencyLock.toString('utf8') }
+assertInstalledDependenciesMatchLock(serverRoot, dependencyLockOptions)
 const frontendInputBefore = frontendSource ? treeFingerprint(frontendSource) : null
 const nativeInputBefore = fileFingerprint(nativeSource)
 mkdirSync(releaseRoot, { recursive: true })
 const dependencyRoot = resolve(serverRoot, '..', '.server-deps')
 mkdirSync(dependencyRoot, { recursive: true })
 const dependencyHash = createHash('sha256')
-  .update(readFileSync(resolve(serverRoot, 'package-lock.json')))
+  .update(dependencyLock)
   .update(`\0${process.platform}\0${process.arch}\0${process.versions.modules}`)
   .digest('hex')
   .slice(0, 20)
 const dependencySnapshot = resolve(dependencyRoot, `deps-${dependencyHash}`)
 const dependencyModules = resolve(dependencySnapshot, 'node_modules')
-if (!existsSync(resolve(dependencyModules, 'fastify/package.json'))) {
+let dependencySnapshotValid = false
+if (existsSync(resolve(dependencyModules, 'fastify/package.json'))) {
+  try {
+    assertInstalledDependenciesMatchLock(serverRoot, {
+      ...dependencyLockOptions,
+      nodeModulesRoot: dependencyModules,
+    })
+    dependencySnapshotValid = true
+  } catch {
+    // A build predating the lock check may have poisoned this cache key.
+    // The live node_modules was validated above, so rebuilding is local-only.
+    rmSync(dependencySnapshot, { recursive: true, force: true })
+  }
+}
+if (!dependencySnapshotValid) {
   const dependencyStage = resolve(dependencyRoot, `.stage-deps-${dependencyHash}-${process.pid}`)
   try {
     rmSync(dependencySnapshot, { recursive: true, force: true })
@@ -107,6 +129,7 @@ if (!existsSync(resolve(dependencyModules, 'fastify/package.json'))) {
       verbatimSymlinks: true,
     })
     renameSync(dependencyStage, dependencySnapshot)
+    dependencySnapshotValid = true
   } finally {
     rmSync(dependencyStage, { recursive: true, force: true })
   }
@@ -115,6 +138,10 @@ if (!statSync(dependencyModules).isDirectory()
   || !existsSync(resolve(dependencyModules, 'fastify/package.json'))) {
   throw new Error(`invalid server dependency snapshot: ${dependencySnapshot}`)
 }
+assertInstalledDependenciesMatchLock(serverRoot, {
+  ...dependencyLockOptions,
+  nodeModulesRoot: dependencyModules,
+})
 const releaseName = `release-${new Date().toISOString().replace(/[^0-9TZ]/g, '')}-${process.pid}`
 const stage = resolve(releaseRoot, `.stage-${releaseName}`)
 const release = resolve(releaseRoot, releaseName)
