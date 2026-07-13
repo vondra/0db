@@ -66,6 +66,11 @@ interface FeedConfig {
   boundingBox: [number, number, number, number]  // [minLat, minLon, maxLat, maxLon] for sanity checks
   // GTFS route_type values that count as rail (2=rail, 0=tram, 1=subway, etc)
   railRouteTypes: Set<number>
+  // Map this feed's METRO_TYPES routes to the 'rail' family (heavy rail) instead
+  // of the default 'tram'/light_rail. Set where the operator tags heavy suburban
+  // rail as GTFS "metro" (400-405) but OSM carries it as railway=rail — Melbourne
+  // Metro Trains (au-vic feed 2, 35 route_type-400 routes) are the reference case.
+  metroAsRail?: boolean
 }
 
 // RAIL_TYPES/TRAM_TYPES/METRO_TYPES + routeFamily are hoisted to lib/gtfs-enrich-core.ts.
@@ -75,7 +80,17 @@ interface FeedConfig {
 // feeds (e.g. Sofia) would fall back to class defaults instead of real frequencies.
 const ALL_RAIL_AND_TRAM = new Set([...RAIL_TYPES, ...TRAM_TYPES, ...METRO_TYPES])
 
-const FEEDS: FeedConfig[] = [
+/** The OSM rail family a route of this type maps to FOR THIS FEED, or null if the
+ *  feed doesn't count that type. Gates on the feed's allow-list first, then
+ *  overrides metro→'rail' for feeds that carry heavy suburban rail under GTFS
+ *  metro types (metroAsRail), else defers to the global routeFamily. */
+export function railFamilyFor(routeType: number, feed: FeedConfig): 'rail' | 'tram' | null {
+  if (!feed.railRouteTypes.has(routeType)) return null
+  if (feed.metroAsRail && METRO_TYPES.has(routeType)) return 'rail'
+  return routeFamily(routeType)
+}
+
+export const FEEDS: FeedConfig[] = [
   {
     id: 'de',
     name: 'Germany (DELFI)',
@@ -250,11 +265,18 @@ const FEEDS: FeedConfig[] = [
   },
   {
     id: 'au-vic',
-    name: 'Australia Victoria (PTV Metro Trains)',
+    // PTV publishes ONE gtfs.zip that unzips into mode-split subfeeds
+    // (1=V/Line regional rail, 2=Metro Trains, 3=Yarra Trams, 4-6/10-11=bus,
+    // 10=interstate rail) each as its own <N>/google_transit.zip. downloadGtfs
+    // extracts + processes the rail-bearing subfeeds; RAIL∪METRO keeps V/Line
+    // (type 2) AND Metro Trains (type 400) — with metroAsRail the metro maps to
+    // heavy rail (OSM railway=rail), not light_rail. Trams (type 0) stay out.
+    name: 'Australia Victoria (PTV V/Line + Metro Trains)',
     url: 'https://data.ptv.vic.gov.au/downloads/gtfs.zip',
     country: 'AU',
     boundingBox: [-39.2, 140.9, -33.9, 150.0],
-    railRouteTypes: RAIL_TYPES,
+    railRouteTypes: new Set([...RAIL_TYPES, ...METRO_TYPES]),
+    metroAsRail: true,
   },
   {
     id: 'au-qld',
@@ -277,6 +299,24 @@ interface StopTrainCount {
   family: 'rail' | 'tram'
   trains_passenger: number
   trains_freight: number   // GTFS rarely has freight, but keep for consistency
+}
+
+/** Sum departures of stops at the same rounded location (~11m) + family into one
+ *  row. Merges platforms of one station AND the same physical stop appearing in
+ *  several subfeeds of a nested feed (au-vic Southern Cross carries V/Line + the
+ *  interstate service under one stop_id in feeds 1 and 10 — /gg Codex confirmed
+ *  they would otherwise not sum, since the downstream picks the single nearest
+ *  stop per segment, not their total). Distinct platforms keep distinct coords,
+ *  so cross-track counts are NOT over-summed. */
+export function dedupeStopsByLocation(stops: StopTrainCount[]): StopTrainCount[] {
+  const byLoc = new Map<string, StopTrainCount>()
+  for (const sc of stops) {
+    const key = `${sc.lat.toFixed(4)}_${sc.lon.toFixed(4)}_${sc.family}`
+    const existing = byLoc.get(key)
+    if (existing) existing.trains_passenger += sc.trains_passenger
+    else byLoc.set(key, { ...sc })
+  }
+  return [...byLoc.values()]
 }
 
 // ── GTFS parsing ──
@@ -401,10 +441,87 @@ function findTargetWednesday(calendarRows: Record<string, string>[]): string {
 
 // ── Step 1: Download GTFS feed ──
 
-async function downloadGtfs(feed: FeedConfig): Promise<string> {
+const REQUIRED_GTFS_FILES = ['stops.txt', 'stop_times.txt', 'trips.txt', 'routes.txt'] as const
+
+/** A PTV-style feed ships ONE outer gtfs.zip that unzips into numbered subfeeds,
+ *  each its own <N>/google_transit.zip (mode-split: rail / tram / bus). Return
+ *  the subfeed zips present directly under dir (empty for the normal flat
+ *  layout). */
+export function findInnerGtfsZips(dir: string): { label: string; zip: string }[] {
+  if (!existsSync(dir)) return []
+  const out: { label: string; zip: string }[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const zip = resolve(dir, entry.name, 'google_transit.zip')
+    if (existsSync(zip)) out.push({ label: entry.name, zip })
+  }
+  return out.sort((a, b) => a.label.localeCompare(b.label))
+}
+
+/** Cheap peek: does this subfeed carry ≥1 route of a type this feed counts as
+ *  rail? Reads only routes.txt (unzip -p, no full unpack) so a pure-bus subfeed
+ *  is skipped before its large stop_times is ever extracted. Uses the SAME
+ *  feed.railRouteTypes set as the parse filter — never a divergent copy. */
+export function innerFeedHasRail(zipPath: string, feed: FeedConfig): boolean {
+  let txt: string
+  try {
+    txt = execSync(`unzip -p "${zipPath}" routes.txt`, { timeout: 30_000, maxBuffer: 128 * 1024 * 1024 }).toString('utf-8')
+  } catch {
+    return false
+  }
+  const lines = txt.split('\n')
+  if (lines.length < 2) return false
+  const ti = parseCsvLine(lines[0].replace(/^\uFEFF/, '')).indexOf('route_type')
+  if (ti < 0) return false
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === '') continue
+    const rt = parseInt(parseCsvLine(lines[i])[ti] || '', 10)
+    if (Number.isFinite(rt) && feed.railRouteTypes.has(rt)) return true
+  }
+  return false
+}
+
+/** Extract the rail-bearing subfeeds of a nested PTV-style feed into
+ *  <parent>/<N>/extracted/ (reused if present) and return those dirs.
+ *  computeStopFrequencies then runs once per subfeed and the caller concatenates
+ *  — NO cross-feed GTFS merge (each subfeed keeps its own id space; stops at a
+ *  shared location sum downstream by coordinate). */
+function extractNestedRailFeeds(feed: FeedConfig, inner: { label: string; zip: string }[]): string[] {
+  const dirs: string[] = []
+  for (const { label, zip } of inner) {
+    const dest = resolve(zip, '..', 'extracted')
+    if (existsSync(resolve(dest, 'stops.txt'))) { dirs.push(dest); continue }
+    if (!innerFeedHasRail(zip, feed)) {
+      console.log(`  [${feed.id}] subfeed ${label}: no rail routes — skipping`)
+      continue
+    }
+    mkdirSync(dest, { recursive: true })
+    execSync(`unzip -o -q "${zip}" -d "${dest}"`, { timeout: 120_000 })
+    for (const f of REQUIRED_GTFS_FILES) {
+      if (!existsSync(resolve(dest, f))) throw new Error(`GTFS feed ${feed.id} subfeed ${label} missing required file: ${f}`)
+    }
+    console.log(`  [${feed.id}] subfeed ${label}: extracted rail GTFS → ${dest}`)
+    dirs.push(dest)
+  }
+  return dirs
+}
+
+/** Resolve a feed to one or more flat GTFS extract dirs. A normal feed yields
+ *  [dir]; a nested PTV-style feed yields one dir per rail-bearing subfeed. */
+export async function downloadGtfs(feed: FeedConfig): Promise<string[]> {
   const feedDir = resolve(CACHE_DIR, feed.id)
   const zipPath = resolve(feedDir, 'gtfs.zip')
   const extractDir = resolve(feedDir, 'extracted')
+
+  // Nested PTV-style layout (au-vic): the outer gtfs.zip has unzipped into
+  // <N>/google_transit.zip subfeeds — process the rail-bearing ones. Checked
+  // FIRST because such a feed has no flat stops.txt of its own. The staged
+  // cache unzips in place (feedDir/<N>/), a fresh download into extractDir/<N>/
+  // — look in both so a re-run after a fresh download still finds the subfeeds
+  // (/gg Gemini).
+  const inner = findInnerGtfsZips(feedDir)
+  const nested = inner.length > 0 ? inner : findInnerGtfsZips(extractDir)
+  if (nested.length > 0) return extractNestedRailFeeds(feed, nested)
 
   // #31.6: the staged cache uses a FLAT layout (stops.txt beside gtfs.zip,
   // extracted in place) — accept it, or --enrich-only silently no-ops on all
@@ -412,18 +529,18 @@ async function downloadGtfs(feed: FeedConfig): Promise<string> {
   // caught per-feed and a 0-feed run exits 0).
   if (!forceDownload && existsSync(resolve(feedDir, 'stops.txt'))) {
     console.log(`  [${feed.id}] Using cached GTFS (flat layout): ${feedDir}`)
-    return feedDir
+    return [feedDir]
   }
 
   if (!forceDownload && existsSync(resolve(extractDir, 'stops.txt'))) {
     console.log(`  [${feed.id}] Using cached GTFS: ${extractDir}`)
-    return extractDir
+    return [extractDir]
   }
   if (enrichOnly) {
     if (!existsSync(resolve(extractDir, 'stops.txt'))) {
       throw new Error(`--enrich-only but no cached GTFS for ${feed.id} at ${extractDir}`)
     }
-    return extractDir
+    return [extractDir]
   }
 
   mkdirSync(feedDir, { recursive: true })
@@ -446,30 +563,36 @@ async function downloadGtfs(feed: FeedConfig): Promise<string> {
 
   mkdirSync(extractDir, { recursive: true })
   execSync(`unzip -o -q "${zipPath}" -d "${extractDir}"`, { timeout: 120_000 })
+  execSync(`rm -f "${zipPath}"`) // reclaim space before returning either way
 
-  // Verify essential files exist
-  for (const f of ['stops.txt', 'stop_times.txt', 'trips.txt', 'routes.txt']) {
-    if (!existsSync(resolve(extractDir, f))) {
-      throw new Error(`GTFS feed ${feed.id} missing required file: ${f}`)
+  // Flat GTFS (the common case)?
+  if (existsSync(resolve(extractDir, 'stops.txt'))) {
+    for (const f of REQUIRED_GTFS_FILES) {
+      if (!existsSync(resolve(extractDir, f))) throw new Error(`GTFS feed ${feed.id} missing required file: ${f}`)
     }
+    return [extractDir]
   }
-
-  // Clean up ZIP to save space
-  execSync(`rm -f "${zipPath}"`)
-
-  return extractDir
+  // A nested outer zip unzips to <N>/google_transit.zip subfeeds instead.
+  const freshInner = findInnerGtfsZips(extractDir)
+  if (freshInner.length > 0) return extractNestedRailFeeds(feed, freshInner)
+  throw new Error(`GTFS feed ${feed.id}: unzip produced neither flat stops.txt nor <N>/google_transit.zip subfeeds`)
 }
 
 // ── Step 2: Parse GTFS and compute stop frequencies ──
 
-async function computeStopFrequencies(
+export async function computeStopFrequencies(
   extractDir: string,
   feed: FeedConfig,
 ): Promise<StopTrainCount[]> {
   // Versioned filename: the family-aware schema added a mandatory `family` field, so a
   // pre-migration cache (family-less stops) must NOT be reused — a stale entry would lack
   // a family and break the rail↔tram grid routing. A new name forces a clean rebuild.
-  const cacheFile = resolve(CACHE_DIR, feed.id, 'family-frequencies.json')
+  // Keyed by extractDir (NOT feed.id): a nested feed processes several subfeeds through
+  // this function under one feed.id, so a feed.id key would make the subfeeds overwrite
+  // each other's cache and double-count on the next run. A STAGED flat feed returns
+  // [feedDir] (extractDir==feedDir) so its cache path is unchanged; a freshly downloaded
+  // flat feed (extractDir==feedDir/extracted) just gets a harmless one-time rebuild.
+  const cacheFile = resolve(extractDir, 'family-frequencies.json')
   if (!forceDownload && existsSync(cacheFile)) {
     console.log(`  [${feed.id}] Using cached stop frequencies: ${cacheFile}`)
     return JSON.parse(readFileSync(cacheFile, 'utf-8'))
@@ -492,8 +615,7 @@ async function computeStopFrequencies(
   // (a rail-only feed yields only rail-family stops; an ALL_RAIL_AND_TRAM feed yields mixed).
   const routeFam = new Map<string, 'rail' | 'tram'>()
   for (const [routeId, routeType] of routeTypeMap) {
-    if (!feed.railRouteTypes.has(routeType)) continue
-    const fam = routeFamily(routeType)
+    const fam = railFamilyFor(routeType, feed)
     if (fam) routeFam.set(routeId, fam)
   }
   console.log(`  [${feed.id}] ${routeFam.size} rail/tram routes`)
@@ -727,19 +849,8 @@ async function computeStopFrequencies(
     }
   }
 
-  // Deduplicate: multiple stop_ids might resolve to same parent coords
-  // Group by rounded lat/lon (to ~10m) + family and sum
-  const dedupMap = new Map<string, StopTrainCount>()
-  for (const sc of results) {
-    const key = `${sc.lat.toFixed(4)}_${sc.lon.toFixed(4)}_${sc.family}`
-    const existing = dedupMap.get(key)
-    if (existing) {
-      existing.trains_passenger += sc.trains_passenger
-    } else {
-      dedupMap.set(key, { ...sc })
-    }
-  }
-  const deduped = [...dedupMap.values()]
+  // Multiple stop_ids (platforms) can resolve to the same parent coords — sum them.
+  const deduped = dedupeStopsByLocation(results)
 
   console.log(`  [${feed.id}] ${deduped.length} stops with train counts (${resolvedViaParent} resolved via parent station)`)
 
@@ -758,9 +869,7 @@ async function computeStopFrequencies(
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
   console.log(`  [${feed.id}] GTFS parsing took ${elapsed}s`)
 
-  // Cache results
-  const cacheDir = resolve(CACHE_DIR, feed.id)
-  mkdirSync(cacheDir, { recursive: true })
+  // Cache results (cacheFile is under extractDir, which already exists)
   writeFileSync(cacheFile, JSON.stringify(deduped))
   console.log(`  [${feed.id}] Cached to ${cacheFile}`)
 
@@ -942,8 +1051,15 @@ async function main() {
   for (const feed of feeds) {
     console.log(`\n--- Feed: ${feed.name} (${feed.id}) ---`)
     try {
-      const extractDir = await downloadGtfs(feed)
-      const stops = await computeStopFrequencies(extractDir, feed)
+      // A feed resolves to ≥1 flat GTFS dir (one for a normal feed, one per
+      // rail-bearing subfeed for a nested PTV feed) — concat their stop counts,
+      // then re-dedupe by location so a station shared across subfeeds (au-vic
+      // Southern Cross: V/Line feed 1 + interstate feed 10) sums instead of the
+      // downstream nearest-stop pick keeping only one. No-op for a single dir.
+      const extractDirs = await downloadGtfs(feed)
+      let stops: StopTrainCount[] = []
+      for (const dir of extractDirs) stops = stops.concat(await computeStopFrequencies(dir, feed))
+      if (extractDirs.length > 1) stops = dedupeStopsByLocation(stops)
       allStopCounts.push(...stops)
       feedResults.push({ id: feed.id, stops: stops.length })
     } catch (err: any) {
@@ -967,10 +1083,10 @@ async function main() {
   // #31.6 completeness marker → chain status.json + the completeness floor.
   // `actual` = feeds that loaded non-empty; a subset --feed run reports against
   // its own count (never claims the full 23). A full run short of FEEDS.length
-  // is `partial` — au-vic (nested PTV zip-of-zips) currently yields 0 and the
-  // step stamped 369k segs from the other 22 and passed; the floor now records
-  // that gap instead of hiding it. KNOWN: au-vic needs nested-zip extraction
-  // (a namespaced GTFS merge — focused fix, tracked) to reach 23/23.
+  // is `partial`. au-vic (nested PTV zip-of-zips) is now handled per-subfeed by
+  // downloadGtfs (V/Line + Metro Trains → rail), so a full staged run reaches
+  // 23/23; a subfeed that fails to extract still drops au-vic to non-empty-only
+  // honestly rather than stamping a partial as done.
   {
     const loaded = feedResults.filter((r) => !r.failed && r.stops > 0).length
     const denom = requestedFeeds ? feeds.length : FEEDS.length
