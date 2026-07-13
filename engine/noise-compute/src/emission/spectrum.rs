@@ -65,8 +65,9 @@ mod tests {
     fn check_industrial_profile(profile: &industrial::IndustrialProfile, what: &str) {
         // Natural Lw at the area-clamp extremes + the 1 ha reference + an
         // arbitrary level — the invariant must hold for any lw.
-        for area in [100.0, 10_000.0, 500_000.0] {
-            let lw = industrial::industrial_lw(profile, area);
+        for area in [100.0, 10_000.0, 500_000.0, 3_000_000.0] {
+            let lw =
+                industrial::industrial_lw(profile, area, industrial::INDUSTRIAL_AREA_CAP_HEAVY_M2);
             assert_invariant(lw, &profile.spectrum, what);
         }
         assert_invariant(61.7, &profile.spectrum, what);

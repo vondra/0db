@@ -324,7 +324,8 @@ pub fn prepare_industrial_points(input: RawIndustrialInput<'_>) -> Vec<PreparedP
         .and_then(industrial::nace_profile)
         .or_else(|| industrial::subtype_profile(input.site_subtype))
         .unwrap_or_else(|| industrial::industrial_profile(input.source_type));
-    let lw = industrial::industrial_lw(&profile, area);
+    let area_cap = industrial::sector_area_cap_m2(input.nace_4digit, input.site_subtype);
+    let lw = industrial::industrial_lw(&profile, area, area_cap);
     if lw < 10.0 {
         return Vec::new();
     }

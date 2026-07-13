@@ -678,12 +678,147 @@
       "correction_provenance": null
     },
     "regression_band": [
-      39.96,
-      43.96
+      45.4,
+      49.4
     ],
-    "known_gap": "industrial-I04-area-cap-heavy",
-    "tolerance_note": "audit model 50.3 (−20..−25): 50 ha area cap + wrong NACE on heavy industry (I-04/I-05); band = SHM target; B4+B6 deepens the undershoot by design (area-density model is backlog I-04) | v2 2026-07-09: band=live 41.96 +/-2; I-04 area-cap gap -28 stays the deepest industrial EXTERNAL-GAP (area-density model backlog)",
+    "known_gap": "industrial-distance-tail-underdecay",
+    "tolerance_note": "v3 2026-07-13 (Wave 2): re-banded to live 47.4 (C1 +5.4 landed; Fix B did NOT move this pixel — its industrial is small local sites, not the steelworks). CORRECTION of the old '-28 area-cap emission gap': Wave 2 multi-country guards proved the Nova hut steelworks NEAR-FIELD now MATCHES official maps (NL Tata 65.9 vs 65, DE Duisburg 57.2 vs 60, CZ Nova hut edge 63.8) after C1+FixB. This fixture sits ~3 km from Nova hut in a mixed small-industry area, so its 47.4-vs-SHM-70/75 gap is NOT emission mis-calibration — it is (a) fixture placement (popup aggregate here != the steelworks) and (b) the distance-tail under-decay common to all official END maps (our ISO 9613-2 field falls off faster than END favorable-propagation beyond ~1.5 km). Cranking base_lw to close it would over-predict the near-field (see ind_tata_ijmuiden_velsen 65.9 vs 65). Remaining EXTERNAL-GAP driver = the distance tail, a propagation question, not I-04.",
     "caveats": "facility identity at the pixel unverified; SHM models reverse-engineered source powers"
+  },
+  {
+    "id": "ind_tata_ijmuiden_velsen",
+    "lat": 52.474,
+    "lng": 4.633,
+    "mode": "source:industrial",
+    "host": "any",
+    "anchor_type": "official_map",
+    "role": "regression",
+    "tags": [
+      "steel_2410",
+      "heavy_cap_guard",
+      "foreign_guard",
+      "near",
+      "site_area_scaling",
+      "suburban"
+    ],
+    "external": {
+      "value": "Lden 65 (RIVM industrie Lden actueel, GRAY_INDEX continuous dB) at Velsen-Noord, adjacent to Tata Steel IJmuiden",
+      "metric": "NL RIVM 'Geluid lden industrie actueel' raster (END 4th round)",
+      "year": 2021,
+      "url": "https://data.rivm.nl/geo/alo/ows?LAYERS=rivm_Geluid_lden_industrie_actueel",
+      "months_covered": 12,
+      "annualization_method": "official END annual industry model (NL RIVM continuous-dB raster)",
+      "band": [
+        63,
+        67
+      ]
+    },
+    "commensurability": {
+      "metric_variant": "lden_band",
+      "dominance": "map_crosscheck",
+      "receiver_convention": "raster_pixel",
+      "height_m": 4,
+      "coord_uncertainty_m": 25,
+      "facade_correction_db": 0,
+      "correction_provenance": null
+    },
+    "regression_band": [
+      63.9,
+      67.9
+    ],
+    "known_gap": null,
+    "tolerance_note": "Fix B heavy-cap over-prediction GUARD (CRITICAL 7). Adjacent to Tata Steel IJmuiden (Europe's 2nd-largest integrated steelworks, subtype 6). Model 65.9 vs official 65 = PARITY at the plant edge after C1+FixB — the tightest over-prediction margin in the set; a future emission change pushing this above 67 is over-predicting. regression_band pins the Fix-B (pre steel->2410 re-enrich) state; re-enrich adds ~+3, re-band then. Steep field gradient (65 at edge, ~49 along centroid-E 1 km S) — band frozen from a 2026-07-13 read, not re-fetched.",
+    "caveats": "RIVM raster is a receptor-facade Lden; industrial popup aggregate here dominated by the steelworks (total 66.0, industrial 65.9)"
+  },
+  {
+    "id": "ind_thyssenkrupp_duisburg",
+    "lat": 51.48,
+    "lng": 6.71,
+    "mode": "source:industrial",
+    "host": "any",
+    "anchor_type": "official_map",
+    "role": "regression",
+    "tags": [
+      "steel_2410",
+      "heavy_cap_guard",
+      "foreign_guard",
+      "near",
+      "distance_tail",
+      "urban"
+    ],
+    "external": {
+      "value": "Lden 60 dB(A) (LANUV NRW IND_DEN, literal computed dB(A)) at ThyssenKrupp Steel Duisburg core",
+      "metric": "DE-NRW LANUV Umgebungslaerm Stufe 4 (2022) industry Lden raster",
+      "year": 2022,
+      "url": "https://www.wms.nrw.de/umwelt/laerm_stufe4?LAYERS=IND_DEN",
+      "months_covered": 12,
+      "annualization_method": "official END annual industry model (LANUV NRW, literal dB(A))",
+      "band": [
+        58,
+        62
+      ]
+    },
+    "commensurability": {
+      "metric_variant": "lden_band",
+      "dominance": "map_crosscheck",
+      "receiver_convention": "raster_pixel",
+      "height_m": 4,
+      "coord_uncertainty_m": 25,
+      "facade_correction_db": 0,
+      "correction_provenance": null
+    },
+    "regression_band": [
+      55.2,
+      59.2
+    ],
+    "known_gap": "industrial-distance-tail-underdecay",
+    "tolerance_note": "Fix B heavy-cap guard, 2nd country. ThyssenKrupp Steel Duisburg (subtype 6). Model 57.2 vs official 60 (-2.8) at the plant core; field is a flat ~55 plateau to 1.1 km E (model within +/-2) then under-decays beyond ~1.4 km (Delta -6..-12 by 2 km) — the distance-tail gap common to all END maps. No over-prediction anywhere near the plant. regression_band pins Fix-B pre-re-enrich.",
+    "caveats": "LANUV IND_DEN is a literal computed dB(A) (not a 5-dB band floor); industrial-dominant (57.2 vs road 51, rail 50.5)"
+  },
+  {
+    "id": "ind_shell_pernis_botlek",
+    "lat": 51.881,
+    "lng": 4.404,
+    "mode": "source:industrial",
+    "host": "any",
+    "anchor_type": "official_map",
+    "role": "regression",
+    "tags": [
+      "chemical_2011",
+      "heavy_cap_guard",
+      "foreign_guard",
+      "near",
+      "refinery",
+      "suburban"
+    ],
+    "external": {
+      "value": "Lden 56 (RIVM industrie Lden actueel, continuous dB) at Pernis village, beside the Shell Pernis / Botlek petrochemical complex",
+      "metric": "NL RIVM 'Geluid lden industrie actueel' raster (END 4th round)",
+      "year": 2021,
+      "url": "https://data.rivm.nl/geo/alo/ows?LAYERS=rivm_Geluid_lden_industrie_actueel",
+      "months_covered": 12,
+      "annualization_method": "official END annual industry model (NL RIVM continuous-dB raster)",
+      "band": [
+        54,
+        58
+      ]
+    },
+    "commensurability": {
+      "metric_variant": "lden_band",
+      "dominance": "map_crosscheck",
+      "receiver_convention": "raster_pixel",
+      "height_m": 4,
+      "coord_uncertainty_m": 25,
+      "facade_correction_db": 0,
+      "correction_provenance": null
+    },
+    "regression_band": [
+      50.7,
+      54.7
+    ],
+    "known_gap": "industrial-distance-tail-underdecay",
+    "tolerance_note": "Fix B heavy-cap guard for CHEMICAL (subtype 4 / NACE 19-20), the other uncapped heavy family — confirms the raise doesn't over-predict refineries. Shell Pernis / Botlek (one of Europe's largest petrochemical clusters). Model 52.7 vs official 56 (-3.3) at Pernis village; no over-prediction (Botlek core 58.7 vs 65 also under). regression_band pins Fix-B pre-re-enrich.",
+    "caveats": "RIVM continuous-dB receptor raster; industrial-dominant (52.7 vs rail 50.1, road 48.4)"
   },
   {
     "id": "ind_mrac_quarry",
@@ -722,8 +857,8 @@
       "correction_provenance": null
     },
     "regression_band": [
-      35.47,
-      39.47
+      40.6,
+      44.6
     ],
     "known_gap": "industrial-I18-quarry-emission-floor",
     "tolerance_note": "band = measured 52.5 day → Lden via the audit's quarry-profile offset −1.6 (industrial-report §G item 7) ≈ 50.9 ±2; audit quarry contributor 39.4 (−11, I-18); live industrial source 42.6; C7 (B4+B6) deepens by ~−4.9 (quarry spectrum normalization) by design | v2 2026-07-09: band=live 37.47 +/-2 (post-C7 quarry spectrum state); measured target stays external.band -> EXTERNAL-GAP -11.4 (I-18 emission floor)",
@@ -757,10 +892,10 @@
       "dominance": "total_ambient"
     },
     "regression_band": [
-      33.82,
-      37.82
+      39.4,
+      43.4
     ],
-    "tolerance_note": "band = post-C7 (B4+B6) expectation 36.9 ±2: pre-C7 audit model 42.4 + spectrum normalization −5.4..−5.7 across the village-site mix (NPP 3511 = −5.65); → Lday ≈ 31.5 vs measured 33.9, slightly cold post-fix. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 35.82 +/-2 (post-C7 state inside the old post-C7 expectation band)",
+    "tolerance_note": "band = post-C7 (B4+B6) expectation 36.9 ±2: pre-C7 audit model 42.4 + spectrum normalization −5.4..−5.7 across the village-site mix (NPP 3511 = −5.65); → Lday ≈ 31.5 vs measured 33.9, slightly cold post-fix. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 35.82 +/-2 (post-C7 state inside the old post-C7 expectation band) | v3 2026-07-13 (Wave 2): re-banded to live 41.4 (C1 +5.6 landed uniformly). This now reads +7.5 OVER the 33.9 LAeq measurement — a KNOWN over-prediction from the NPP polygon double-count (I-07) compounded by C1, NOT a calibration signal (0-month LAeq spot, SSOT-barred). Fix I-07 (MultiPolygon dedup), not base_lw, is the lever. Flagged, deferred.",
     "caveats": "industrial total dominated by small village sites, not the NPP; NPP polygon double-counted (I-07)"
   },
   {
@@ -798,8 +933,8 @@
       "correction_provenance": null
     },
     "regression_band": [
-      21.1,
-      25.1
+      27.6,
+      31.6
     ],
     "known_gap": "industrial-I02-multipolygon-extraction",
     "tolerance_note": "Spolana (~1 km² chemical plant) is entirely absent from arrows — multi-outer relation dropped at extraction (I-02); audit model 30.4 comes from OTHER sites; band = audit's plausible real range; heals at re-extract with MultiPolygon WKB | v2 2026-07-09: band=live 23.10 +/-2; I-02 multipolygon absence visible as EXTERNAL-GAP -16.9; NOTE the 2026 re-extract did NOT close I-02 -- verify the MultiPolygon WKB fix ever shipped",
@@ -835,8 +970,8 @@
       "dominance": "near_source"
     },
     "regression_band": [
-      49.28,
-      53.28
+      49.3,
+      53.3
     ],
     "tolerance_note": "band = post-C7 (B4+B6) ledger 52 ±2: pre-C7 state 57.30 + turbine shift (spectrum −6.41, wind LUT 3 MW 105→106 +1.0, hub default 80→105 m ≈ −0.4) ≈ 51.5; Theodor-mine contributor shifts only −4.9..−5.6; IEC hand calc (§G.1) expects 52–53. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 51.28 +/-2 (IEC expectation 52-53 holds post-C7)",
     "caveats": "receiver 200 m due S of turbine 517373610 (50.19618, 14.1288); second turbine 410 m NE contributes"
@@ -871,8 +1006,8 @@
       "dominance": "near_source"
     },
     "regression_band": [
-      41.14,
-      45.14
+      41.3,
+      45.3
     ],
     "tolerance_note": "band = post-C7 (B4+B6) ledger 44 ±2: pre-C7 state 48.80 + turbine shift ≈ −5.5 (spectrum −6.41, LUT +1.0, hub ≈ −0.1) ≈ 43.3; IEC hand calc (§G.1) expects 44–45. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 43.14 +/-2 (IEC expectation 44-45 holds)",
     "caveats": "DK comparison point: our turbine-only Lp at ~500 m ≈ 41.3 dB(A) sits at the top of the measured envelope for a larger farm at 8 m/s"
@@ -907,8 +1042,8 @@
       "dominance": "near_source"
     },
     "regression_band": [
-      35.12,
-      39.12
+      37.2,
+      41.2
     ],
     "tolerance_note": "band = post-C7 (B4+B6) ledger 38 ±2: pre-C7 state 42.92 + turbine shift ≈ −5.4 (spectrum −6.41, LUT +1.0); IEC hand calc (§G.1) expects 38–39. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 37.12 +/-2 (IEC expectation 38-39 holds)",
     "caveats": "gap partially from the 'Býv. důl Theodor' site at 467 m (audit §G.1)"

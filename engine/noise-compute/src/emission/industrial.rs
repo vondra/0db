@@ -348,11 +348,41 @@ pub fn subtype_profile(subtype: u8) -> Option<IndustrialProfile> {
     }
 }
 
-/// Compute industrial Lw from profile and site area.
-/// Area capped at 500,000 m² (50 ha) — larger OSM polygons contain buffer zones,
-/// not additional emission sources. (Wave 2 makes this cap per-sector: heavy
-/// industry radiates across its whole footprint, so the flat cap under-predicts
-/// a steelworks; low-fill sectors keep it. See docs/dev plan I-04.)
+/// Effective-area cap for the area-law (Fix B, Wave 2). Below the flat 50 ha
+/// cap a warehouse estate is mostly empty yard, so more area ≠ more emission —
+/// but a steelworks / cement works / refinery / quarry genuinely radiates
+/// across its whole footprint, and the flat cap clamped a 538 ha works to 50 ha
+/// (−10 dB). Values are data-derived from the world industrial footprint
+/// distribution (2026-07 sample, 44 k polygons): ALL-industrial p99 = 71 ha,
+/// HEAVY p99 = 299 ha, LOW-FILL p99 = 35 ha. Low-fill / everything-else keep
+/// 50 ha (their p99 is below it — the cap barely bites, and the artifact guard
+/// stays); the clearly-distributed heavy divisions get 300 ha (heavy p99),
+/// which still clamps the multi-thousand-ha OSM-zone artifacts (heavy max was
+/// 8 350 ha — a whole region, not one plant). C2 residual + the multi-country
+/// guards may tune this.
+pub const INDUSTRIAL_AREA_CAP_M2: f64 = 500_000.0;
+pub const INDUSTRIAL_AREA_CAP_HEAVY_M2: f64 = 3_000_000.0;
+
+/// Heavy = emission genuinely fills the footprint: mining/coal (05|08),
+/// coke/refining + chemicals (19|20), cement/minerals (23), metallurgy (24),
+/// and their OSM subtypes (quarry 3, chemical/refinery 4, cement 5, steel 6).
+/// Power (35) stays capped — its emission is concentrated (turbine hall,
+/// cooling towers), and a double-counted Temelín NPP polygon already exists
+/// (Codex CRITICAL 7). Logistics/office keep the default cap by omission.
+pub fn sector_area_cap_m2(nace_4digit: Option<u16>, site_subtype: u8) -> f64 {
+    let heavy_div = nace_4digit
+        .map(|n| n / 100)
+        .is_some_and(|d| matches!(d, 5 | 8 | 19 | 20 | 23 | 24));
+    let heavy_subtype = matches!(site_subtype, 3..=6);
+    if heavy_div || heavy_subtype {
+        INDUSTRIAL_AREA_CAP_HEAVY_M2
+    } else {
+        INDUSTRIAL_AREA_CAP_M2
+    }
+}
+
+/// Compute industrial Lw from profile, site area, and the resolved sector's
+/// effective-area cap (`sector_area_cap_m2`).
 ///
 /// **C1 spectral-debt migration (2026-07).** Every `base_lw` above was
 /// calibrated against CZ SHM 2022 UNDER the pre-2026-06 normalization, which
@@ -365,8 +395,8 @@ pub fn subtype_profile(subtype: u8) -> Option<IndustrialProfile> {
 /// (which is correct) is NOT reverted. The per-sector residual against
 /// multi-country anchors is C2 (Wave 2). Wind (source_type 10) never reaches
 /// this fn — it returns early in `prepare_industrial_points`.
-pub fn industrial_lw(profile: &IndustrialProfile, area_m2: f64) -> f64 {
-    let effective = area_m2.clamp(100.0, 500_000.0);
+pub fn industrial_lw(profile: &IndustrialProfile, area_m2: f64, max_effective_area_m2: f64) -> f64 {
+    let effective = area_m2.clamp(100.0, max_effective_area_m2);
     let spectral_debt = crate::propagation::iso9613::a_weighted_total(&profile.spectrum);
     profile.base_lw + spectral_debt + 10.0 * (effective / 10000.0).log10()
 }
@@ -374,4 +404,54 @@ pub fn industrial_lw(profile: &IndustrialProfile, area_m2: f64) -> f64 {
 /// Compute emission bands, normalized so `a_weighted_total(bands) == lw`.
 pub fn industrial_emission_bands(profile: &IndustrialProfile, lw: f64) -> [f64; NUM_BANDS] {
     super::spectrum::normalized_emission_bands(lw, &profile.spectrum)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heavy_sectors_get_the_raised_cap_low_fill_keep_50ha() {
+        // steel by NACE 24, by subtype 6; quarry/chemical/cement divisions.
+        assert_eq!(
+            sector_area_cap_m2(Some(2410), 0),
+            INDUSTRIAL_AREA_CAP_HEAVY_M2
+        );
+        assert_eq!(sector_area_cap_m2(None, 6), INDUSTRIAL_AREA_CAP_HEAVY_M2);
+        assert_eq!(
+            sector_area_cap_m2(Some(810), 0),
+            INDUSTRIAL_AREA_CAP_HEAVY_M2
+        );
+        assert_eq!(
+            sector_area_cap_m2(Some(2011), 0),
+            INDUSTRIAL_AREA_CAP_HEAVY_M2
+        );
+        // low-fill + power + generic keep the default 50 ha cap.
+        assert_eq!(sector_area_cap_m2(Some(5210), 1), INDUSTRIAL_AREA_CAP_M2); // warehouse
+        assert_eq!(sector_area_cap_m2(Some(3511), 0), INDUSTRIAL_AREA_CAP_M2); // power (concentrated)
+        assert_eq!(sector_area_cap_m2(None, 0), INDUSTRIAL_AREA_CAP_M2); // generic
+    }
+
+    #[test]
+    fn raised_cap_recovers_a_big_steelworks_low_fill_unchanged() {
+        let steel = nace_profile(2410).unwrap();
+        let debt = crate::propagation::iso9613::a_weighted_total(&steel.spectrum);
+        // A 300 ha steelworks under the heavy cap vs the old flat 50 ha cap:
+        // exactly +10*log10(300/50) = +7.78 dB of area growth recovered.
+        let at_50ha = industrial_lw(&steel, 3_000_000.0, INDUSTRIAL_AREA_CAP_M2);
+        let at_300ha = industrial_lw(&steel, 3_000_000.0, INDUSTRIAL_AREA_CAP_HEAVY_M2);
+        assert!((at_300ha - at_50ha - 10.0 * (300.0f64 / 50.0).log10()).abs() < 1e-9);
+        // C1 present: at the 1 ha reference the Lw is base_lw + spectral debt.
+        assert!(
+            (industrial_lw(&steel, 10_000.0, INDUSTRIAL_AREA_CAP_M2) - (steel.base_lw + debt))
+                .abs()
+                < 1e-9
+        );
+        // Low-fill (warehouse) is byte-identical either way below 50 ha.
+        let wh = nace_profile(5210).unwrap();
+        assert_eq!(
+            industrial_lw(&wh, 400_000.0, sector_area_cap_m2(Some(5210), 1)),
+            industrial_lw(&wh, 400_000.0, INDUSTRIAL_AREA_CAP_M2),
+        );
+    }
 }
