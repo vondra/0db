@@ -106,7 +106,9 @@ test('missing dataset metadata never falls through to a CNOSSOS default label', 
   assert.doesNotMatch(rail, /CNOSSOS/i)
 })
 
-test('a stamped model baseline is not mislabeled as an untouched class default', () => {
+test('speed-only baseline provenance does not override the class-default traffic source', () => {
+  // Regression: taper rows can carry baseline provenance while raw AADT stays
+  // zero, so the engine reports default_by_class and uses the class default.
   const description = roadSourceDescription(
     'default_by_class',
     dataset('baseline', { name: 'Transition taper' }),
@@ -115,8 +117,10 @@ test('a stamped model baseline is not mislabeled as an untouched class default',
   assert.equal(
     description,
     'Source: Transition taper (2024) · CC-BY-4.0 — secondary class\n' +
-      '  (model-derived traffic baseline, not a class-default count)',
+      '  (class-default traffic count; listed source may apply to speed only)',
   )
+  assert.doesNotMatch(description, /model-derived/i)
+  assert.doesNotMatch(description, /not a class-default/i)
   assert.doesNotMatch(description, /no enrichment data/i)
 })
 

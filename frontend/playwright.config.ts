@@ -37,7 +37,9 @@ export default defineConfig({
   webServer: realMode ? undefined : {
     command: 'npm run preview:check',
     url: 'http://127.0.0.1:4173',
-    reuseExistingServer: !process.env.CI,
+    // Never attach to a preview started from another checkout. The command's
+    // --strictPort then turns an occupied port into a visible test failure.
+    reuseExistingServer: false,
     timeout: 30_000,
   },
 })

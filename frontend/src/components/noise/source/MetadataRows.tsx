@@ -59,8 +59,10 @@ export function MetadataRows({ c }: { c: Contributor }) {
     const wholeHeavy = m.aadt_heavy_effective / onewayFactor
     const wholeMoto = m.aadt_moto_effective / onewayFactor
     const sourceLines = roadSourceDescription(m.traffic_source, m.provenance, m.road_class).split('\n')
+    // A baseline provenance record can be speed-only; `default_by_class`
+    // remains the source of the traffic count in that case.
     const defaultFootnote = m.provenance?.tier === 'baseline'
-      ? '* model-derived baseline (see source above)'
+      ? '* class default; listed source may apply to speed only'
       : '* class default (no census match for this segment)'
     const trafficText = txtTable([
       ...sourceLines,

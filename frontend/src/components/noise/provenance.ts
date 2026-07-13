@@ -79,9 +79,12 @@ export function roadSourceDescription(
   }
   if (trafficSource === 'default_by_class' && provenance) {
     const url = provenance.url ? `\n  ${provenance.url}` : ''
+    // `trafficSource` is authoritative for AADT. In particular, the taper can
+    // stamp baseline provenance for a speed-only adjustment while leaving raw
+    // AADT empty, in which case the engine still uses the class default.
     const method = provenance.tier === 'baseline'
-      ? 'model-derived traffic baseline, not a class-default count'
-      : 'road-traffic baseline; exact method unavailable'
+      ? 'class-default traffic count; listed source may apply to speed only'
+      : 'class-default traffic count; source metadata does not establish AADT'
     return (
       `Source: ${formatProv(provenance)}${url} — ${roadClass} class\n` +
       `  (${method})`

@@ -4,8 +4,10 @@ on:
   pull_request:
     paths:
       - .github/workflows/quality.yml
+      - .claude/skills/check-*/**
       - .githooks/**
       - DATA_YEAR
+      - benchmarks/**
       - frontend/**
       - pipeline/**
       - server/**
@@ -16,8 +18,10 @@ on:
     branches: [main]
     paths:
       - .github/workflows/quality.yml
+      - .claude/skills/check-*/**
       - .githooks/**
       - DATA_YEAR
+      - benchmarks/**
       - frontend/**
       - pipeline/**
       - server/**
