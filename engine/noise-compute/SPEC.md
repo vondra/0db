@@ -770,8 +770,19 @@ singularity for receivers inside the source polygon).
 
 ### Emission
 ```
-Lw = baseLw + 10 × log₁₀(clamp(area_m², 100, 500000) / 10000)
+Lw = baseLw + a_weighted_total(spectrum) + 10 × log₁₀(clamp(area_m², 100, cap) / 10000)
 ```
+`cap = sector_area_cap_m2` (Fix B, 2026-07): 50 ha default; **300 ha** for heavy
+divisions that radiate across their whole footprint (coal/mining 05|08,
+coke+chemicals 19|20, cement 23, metallurgy 24) and their OSM subtypes
+(quarry/chemical/cement/steel) — a 538 ha steelworks is no longer clamped to
+50 ha. Power (NACE 35) stays 50 ha (concentrated source); the I-04 area-density
+model was evaluated and rejected. The `a_weighted_total(spectrum)` term is the
+**C1 spectral-debt restore** (2026-07): it adds the exact per-profile scalar
+into Lw, so — via the normalization invariant below (`a_weighted_total(bands)
+== Lw`) — the radiated dB(A) is lifted by that scalar, recovering the SHM-era
+level WITHOUT reverting normalization. This closed the −4.9..−6.4 dB undershoot
+described next.
 
 **Normalization invariant** (audit 2026-06 B4+B6, `emission/spectrum.rs`):
 emission bands are `Lw + spectrum_i − a_weighted_total(spectrum)`, so
@@ -782,9 +793,11 @@ much. Test-locked at 1e-9 for every profile.
 
 baseLw from a resolution chain — NACE 4-digit → NACE 2-digit → OSM
 `site_subtype` (12 profiles) → `source_type`. Values were authored against
-Czech SHM 2022 while the bands still carried the hidden spectrum surplus —
-post-normalization they undershoot by that surplus; re-calibration is
-backlog (C8a, area-density model I-04):
+Czech SHM 2022 while the bands still carried the hidden spectrum surplus. The
+2026-06 normalization removed it (a −4.9..−6.4 dB undershoot); the C1
+spectral-debt restore (2026-07, above) adds it back, so these baseLw values now
+radiate ~as authored. A residual per-sector calibration (C2) was measured NOT
+warranted — near-plant matches official maps in 3 countries (Wave 2 finding):
 - Heavy industry (cement, steel, mining, quarry): 99-100 dB
 - Power: thermal (NACE 3511) 97 dB, hydro 90 dB, solar (synthetic NACE 3599) 55 dB
 - Medium industry (chemical, food, works): 88-95 dB
@@ -793,7 +806,8 @@ backlog (C8a, area-density model I-04):
 Every profile carries `evening_offset` / `night_offset` (e.g. quarry −20 dB
 night, wastewater 0 = 24/7, school −25 dB night); wind turbines are flat 24/7.
 
-Area scaling clamped to [100 m², 50 ha] to prevent OSM polygon artifacts.
+Area scaling clamped to [100 m², cap] (50 ha default / 300 ha heavy — see
+`sector_area_cap_m2` above) to prevent OSM polygon artifacts.
 
 ### Source height
 - quarry (`source_type = 1`): 8m
