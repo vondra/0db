@@ -36,9 +36,7 @@ Each source is modelled independently — toggle, compare, and explore them in t
 
 ### Roads
 
-Road traffic is the dominant source of environmental noise, affecting 60–80% of exposed population in most countries. We model each road segment using the European CNOSSOS-EU standard with 4 vehicle categories (light vehicles, medium trucks, heavy trucks, motorcycles) and compute rolling noise + propulsion noise per octave band.
-
-> **Explain-it-simply.** A car makes noise two ways: tyres hissing on the road, and the engine. More cars = louder — but not in a simple way: twice the traffic adds only +3 dB (your ears hear a doubling of sound energy as a small step). One heavy truck carries several times a car's sound energy — roughly 5–8×, depending on speed — so the *share* of trucks matters more than the raw count.
+Road traffic is the dominant source of environmental noise, affecting 60–80% of exposed population in most countries. A car makes noise two ways — tyres on the road and the engine — so we model each segment with the European CNOSSOS-EU standard across 4 vehicle categories (light vehicles, medium trucks, heavy trucks, motorcycles), computing rolling + propulsion noise per octave band.
 
 - **Data:** OpenStreetMap geometry + measured/enriched traffic counts where available; otherwise class-based defaults (see country pages)
 - **Key variables:** traffic volume (AADT), vehicle mix (especially heavy vehicle share), speed, road surface
@@ -76,8 +74,6 @@ Time split = day (07–19) / evening (19–23) / night (23–07). Measured AADT 
 
 Rail noise affects fewer people than roads but at higher severity — a single freight corridor can dominate nighttime exposure for kilometres. Freight wagons with cast-iron block brakes are ~10 dB louder than disc-braked passenger stock, making the passenger/freight split critical.
 
-> **Explain-it-simply.** A train is loud mostly where the wheels meet the rail. Old freight wagons with cast-iron brakes scrape the wheels rough, so they roar ~10× louder than a smooth modern passenger train. That is why one freight train rumbling through at night can outweigh ten passenger trains during the day in the yearly average.
-
 - **Data:** OpenStreetMap rail geometry + GTFS timetables / passenger–freight counts where available; otherwise line-type defaults (see country pages)
 - **Key variables:** train count per day, passenger vs freight split, speed
 - **Impact:** Speed matters a lot: doubling train speed adds roughly 9 dB. One freight train at night can outweigh 10 daytime passenger trains in Lden.
@@ -110,10 +106,8 @@ Measured counts override defaults. The day/evening/night split varies by region 
 
 The aircraft layer combines two models: airborne overflights from ADS-B radar trajectories, processed through NPD (Noise-Power-Distance) profiles inspired by ECAC Doc 29, and airport ground operations (runway roll, taxi, apron movement) extracted directly from low-altitude / on-ground ADS-B trajectories with the nearest mapped aerodrome attached for identity. The map shows everything together; the popup splits aircraft into three tabs — ground paths, airborne sub-segments, and cruise hexes.
 
-> **Explain-it-simply.** You hear a plane as it crosses the sky — the lower and bigger it is, the louder. We follow the *real* flights from radar (the same ADS-B signal flight-trackers use) — scheduled traffic sampled across the year, small planes and helicopters followed the whole year — and for each aircraft type we have a measured loudness-vs-distance table. At airports we separately count the take-off roll, taxiing and parking. We only show flights the radar actually saw — no made-up traffic.
-
 - **Data:** ADS-B trajectories from two feeds — [ADSBExchange](https://www.adsbexchange.com) samples (1st of each month, 12 days/year) for airline and other scheduled traffic, and [adsb.lol](https://adsb.lol) community feeds sampled across all 365 days for GA and helicopter traffic, whose occasional flights need the full year to be weighted honestly — plus OSM aeroway lines (runways / taxiways) and aerodrome polygons. ADS-B ground legs project onto OSM microsegments to derive per-microsegment movements.
-- **Per-typecode aircraft profiles** auto-generated from EASA ANP v2.3 (Aircraft Noise and Performance database) — covers Boeing 737/747/757/767/777/787, Airbus A319/A320/A321/A330/A340/A350/A380, Embraer E-Jets, ATR, Dash 8 — plus dedicated light-GA (Cessna 172) and helicopter noise classes, sampled over a full 365-day window so occasional GA and helicopter flights are weighted honestly in the yearly average.
+- **Per-typecode aircraft profiles** auto-generated from EASA ANP v2.3 (Aircraft Noise and Performance database) — covers Boeing 737/747/757/767/777/787, Airbus A319/A320/A321/A330/A340/A350/A380, Embraer E-Jets, ATR, Dash 8 — plus dedicated light-GA (Cessna 172) and helicopter noise classes.
 - **Limitations:** Most modern jets (737 MAX, A320neo, A321neo) have dedicated profiles from EASA ANP v2.3 + supplementary v9 sources; less-common variants fall back to a similarity-based mapping by engine type and size class. Ground ops show what ADS-B observed — no synthetic backfill, so movements outside the receiver coverage don't appear. Where no volunteer ADS-B feeder is nearby, low-altitude flights are not received at all and the map shows only high-altitude cruise noise (~20 dB) — a limit of the data source, not the model. Day/evening/night periods are derived from the segment-midpoint coordinate using an IANA timezone database (DST-aware). Atlas-scale patterns, not certified airport contouring.
 
 <details>
@@ -144,9 +138,7 @@ The aircraft layer combines two models: airborne overflights from ADS-B radar tr
 
 ### Industrial and wind turbines
 
-Industrial noise is spatially concentrated but locally dominant — a single cement plant or wind farm can define the noise environment for kilometres. We classify each site by registry NACE sector when available, otherwise by OSM industrial subtype or coarse source type. The range across sectors is ~30 dB: a farm (70 dB) vs a cement plant (100 dB).
-
-> **Explain-it-simply.** A factory or quarry makes the same noise over and over — machines, ventilation, trucks. A big cement works is heard for kilometres; a farmyard barely. We look up what each site actually *does* from Europe's pollution-registry records (a cement plant is far louder than a warehouse) and scale it by how large the site is. Wind turbines are special — their loudness barely changes with size, so we set it from the rated power.
+Industrial noise is spatially concentrated, near-constant, and locally dominant — machines, ventilation and truck movements repeat hour after hour, and a single cement plant or wind farm can define the noise environment for kilometres. We classify each site by registry NACE sector when available (what it actually *does* — a cement works is far louder than a warehouse), otherwise by OSM industrial subtype or coarse source type, then scale by site area. The range across sectors is ~30 dB: a farm (70 dB) vs a cement plant (100 dB). Wind turbines are the exception — loudness barely changes with size, so it comes from the rated power.
 
 - **Data:** OpenStreetMap industrial landuse + NACE codes from pollution registries (EU-wide E-PRTR, Global Power Plant Database)
 - **Wind turbines:** IEC 61400-11 model, emission based on rated power (98–106.5 dB(A) Lw)
@@ -201,9 +193,7 @@ Source height: 8 m (quarry), 10 m (heavy industry NACE 5/8/23/24/35), 5 m (other
 
 ### Buildings, settlements & leisure
 
-Everyday activity makes noise: rooftop air-conditioning and refrigeration, kitchen extracts, deliveries, voices on a restaurant terrace, a school yard, a padel court. We model each building — and each open-air sports / play / hospitality area — as its own noise source, sized by **how big it is**.
-
-> **Explain-it-simply.** Every building hums a little — the air-con on the roof, the fridges in a shop, the kitchen fan, people coming and going. A **bigger** building hums **louder**, the same way a bigger loudspeaker is louder than a small one — so we work out the noise from the building's size on the map. Sport and playgrounds are only loud while someone is *playing*: a tennis court is silent at 3 a.m. and silent in January. So we take the loud-while-playing level and spread it over the whole year to get a fair yearly average.
+Everyday activity makes noise: rooftop air-conditioning and refrigeration, kitchen extracts, deliveries, voices on a restaurant terrace, a school yard, a padel court. We model each building — and each open-air sports / play / hospitality area — as its own noise source, sized by **how big it is** (a bigger source is louder, the same way a bigger loudspeaker is).
 
 This is a **custom extension, not a CNOSSOS-EU standard source**: the EU Environmental Noise Directive maps only road, rail, aircraft and large industry, and treats buildings purely as *obstacles* that block sound. Our settlement layer rests on real engineering standards (EN ISO 12354-4 façade breakout, VDI 2571 / 3770, DIN 18005, the Bavarian *Parkplatzlärmstudie*) — but it is an extension, and we say so plainly.
 
@@ -445,7 +435,7 @@ This model is an engineering approximation for a continental-scale noise atlas �
 | Settlement noise | Not standardised (END covers road/rail/aircraft/industry only) | Unified area-law: 14 building types + leisure areas | Extension — built on EN ISO 12354-4 / VDI / DIN engineering data |
 | Atmospheric conditions | Variable: temperature, humidity, wind speed | Fixed: 15°C, 70% RH; favourable-weather boost not applied | Seasonal/hourly variation not captured |
 
-These simplifications target MAE < 3 dB against national strategic noise maps for road noise. Formal cross-country MAE validation is still pending, but an internal accuracy loop against real measurement stations is active — anchored points across road, rail, industrial and aircraft (airport monitoring terminals at Prague, Zürich, Amsterdam, Frankfurt, San Francisco; city networks like Barcelona; German rail-corridor stations), with findings tracked openly in the repository.
+These simplifications target MAE < 3 dB against national strategic noise maps for road noise. Formal cross-country MAE validation is still pending, but an internal accuracy loop against real measurement stations is active — several hundred station-years across airport monitoring terminals (Prague, Zürich, Amsterdam, Frankfurt, San Francisco), city networks (Barcelona, Paris, Dublin), and German rail-corridor stations, with findings tracked openly in the repository.
 
 ---
 
