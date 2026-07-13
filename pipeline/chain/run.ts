@@ -20,6 +20,14 @@
 //! fail); crash/signal/exit-3/unparsable output always fail — never "resolved".
 //! --update-gate-baseline re-baselines after an intentional heal (review the
 //! diff before committing the new file).
+//!
+//! Completeness (#31.6): a feed step declares expectMinInputs (36 EU cities,
+//! 23 GTFS feeds) and prints a QM_COMPLETENESS marker. safeToSync is TRUE only
+//! when every floored plan step is not-applicable to the scope or ran-and-met
+//! its floor (plannedCompletenessSatisfied) — a --from resume / --phase subset
+//! that skipped a floored step certifies FALSE, never blind-true. A WORLD run
+//! also FAILS (exit 1) on a short/absent floored step; --allow-partial downgrades
+//! that to a warning (dev / narrow scope) but can never make safeToSync true.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs'
 import { resolve } from 'node:path'
@@ -31,8 +39,8 @@ import { buildPlan, PHASES, PIPELINE_DIR, REPO_ROOT, type Phase, type PlanStep }
 import { gateVerdict, buildBaseline, type GateVerdict } from './gate.js'
 import { runInventory } from './inventory.js'
 import {
-  writeChainStatus, parseCompletenessMarker, stepIsComplete,
-  type ChainStatus, type StepStatus, type GateStatus,
+  writeChainStatus, parseCompletenessMarker, plannedCompletenessSatisfied, stepIsComplete,
+  type ChainStatus, type StepStatus, type GateStatus, type FlooredPlanStep,
 } from './status.js'
 
 const BASELINE_PATH = resolve(import.meta.dirname, 'gate-baseline.json')
@@ -43,7 +51,7 @@ const TSX_BIN = resolve(PIPELINE_DIR, 'node_modules', '.bin', 'tsx')
 const USAGE =
   'Usage: npx tsx chain/run.ts --scope country:CC|bbox:S,W,N,E|world [--phase <name>|all] [--dry-run]\n' +
   '                            [--from <stepId> --plan <plan.json>] [--assume-fresh-extract]\n' +
-  '                            [--update-gate-baseline] | --inventory'
+  '                            [--allow-partial] [--update-gate-baseline] | --inventory'
 
 interface CliOptions {
   scope: string | null
@@ -54,12 +62,14 @@ interface CliOptions {
   inventory: boolean
   updateGateBaseline: boolean
   assumeFreshExtract: boolean
+  allowPartial: boolean
 }
 
 function parseCliArgs(argv: string[]): CliOptions | null {
   const opts: CliOptions = {
     scope: null, phase: 'all', from: null, plan: null,
     dryRun: false, inventory: false, updateGateBaseline: false, assumeFreshExtract: false,
+    allowPartial: false,
   }
   const valueFlags: Record<string, (v: string) => void> = {
     '--scope': (v) => (opts.scope = v),
@@ -72,6 +82,12 @@ function parseCliArgs(argv: string[]): CliOptions | null {
     '--inventory': () => (opts.inventory = true),
     '--update-gate-baseline': () => (opts.updateGateBaseline = true),
     '--assume-fresh-extract': () => (opts.assumeFreshExtract = true),
+    // #31.6: a world run FAILS when a floored step (expectMinInputs) loaded short
+    // or its cache was missing — no partial feed ships as a clean, sync-safe run.
+    // --allow-partial downgrades that to a warning (status.json still records
+    // safeToSync=false) for dev / narrow-scope work; NEVER pass before a world
+    // repaint. It can turn a failing exit into 0 but can NEVER make safeToSync true.
+    '--allow-partial': () => (opts.allowPartial = true),
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -158,8 +174,11 @@ function runStep(step: PlanStep, logPath: string): Promise<StepResult> {
       res({ code: 127, signal: null, lastLine: `spawn failed: ${err.message}` })
     })
     child.on('close', (code, signal) => {
-      sink.end()
-      res({ code, signal, lastLine })
+      // Resolve only AFTER the log stream has fully flushed — completenessFor
+      // reads this file synchronously right after, and a QM_COMPLETENESS marker
+      // still buffered would be misread as 'missing' (a spurious completeness
+      // failure on a genuinely complete run). #31.6 /gg.
+      sink.end(() => res({ code, signal, lastLine }))
     })
   })
 }
@@ -405,12 +424,18 @@ async function main(): Promise<number> {
   const startedAt = new Date().toISOString()
   const statusSteps: StepStatus[] = []
   let gateStatus: GateStatus | null = null
+  // Certify over the FULL resolved plan (allSteps), not the possibly-sliced
+  // `steps` this session runs — a --from resume / --phase subset must not let a
+  // floored step it skipped certify blind-safe (#31.6 /gg CRITICAL).
+  const flooredPlan: FlooredPlanStep[] = allSteps
+    .filter((s) => (s.expectMinInputs ?? 0) > 0)
+    .map((s) => ({ id: s.id, skipKind: s.skipKind }))
   const flush = (outcome: ChainStatus['outcome']): void => {
     const status: ChainStatus = {
       runId, dataYear: YEAR, scope: scope.canonical, startedAt,
       finishedAt: outcome === 'running' ? null : new Date().toISOString(),
       outcome, gate: gateStatus,
-      safeToSync: outcome === 'complete' && (gateStatus?.ioErrors ?? 1) === 0 && statusSteps.every(stepIsComplete),
+      safeToSync: outcome === 'complete' && (gateStatus?.ioErrors ?? 1) === 0 && plannedCompletenessSatisfied(flooredPlan, statusSteps),
       steps: statusSteps,
     }
     writeChainStatus(statusPath, status)
@@ -436,6 +461,32 @@ async function main(): Promise<number> {
     const t0 = Date.now()
 
     if (step.phase === 'gate') {
+      // #31.6 completeness enforcement — BEFORE the (expensive) auditor. A FRESH
+      // FULL WORLD run whose floored steps loaded short or whose cache was missing
+      // must FAIL, not certify a partial feed as a clean run — the exit code, not
+      // just safeToSync, enforces it (the chain "enforces, not notes"). Scoped to
+      // a fresh full world run: a --from resume ran the floored steps in an earlier
+      // session (its data may be complete, so it must not be blocked — it records
+      // safeToSync=false but exits 0), a --phase subset never claimed to, and a
+      // narrow scope's global feed may be legitimately irrelevant. --allow-partial
+      // downgrades even the fresh-full-world fail to a warning (safeToSync stays
+      // false regardless).
+      const isFreshFullWorld = scope.kind === 'world' && opts.phase === 'all' && opts.from === null
+      if (isFreshFullWorld && !plannedCompletenessSatisfied(flooredPlan, statusSteps)) {
+        for (const ps of flooredPlan) {
+          const s = statusSteps.find((x) => x.id === ps.id)
+          if (ps.skipKind === 'not-applicable' || (s?.status === 'done' && stepIsComplete(s))) continue
+          const c = s?.completeness
+          const detail = s ? `${c?.actual ?? '?'}/${c?.expected ?? '?'} (${s.status})` : 'not run this session'
+          log(`  INCOMPLETE ${ps.id}: ${detail}${ps.skipKind === 'input-missing' ? ' — cache missing' : ''}`)
+        }
+        if (!opts.allowPartial) {
+          log(`FAILED completeness — a floored step is short/absent; data NOT safe to gate/sync/repaint (pass --allow-partial to override for dev)`)
+          flush('failed')
+          return 1
+        }
+        log(`  --allow-partial: completeness gap TOLERATED (dev only — safeToSync stays false, NEVER repaint off this run)`)
+      }
       const { r, ndjsonText, summaryText, logPath } = await runGateStep(step, logDir)
       const dt = ((Date.now() - t0) / 1000).toFixed(1)
       const verdict = gateVerdictForRun(r, ndjsonText, summaryText, scope)

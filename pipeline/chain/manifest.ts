@@ -87,6 +87,12 @@ export interface PlanStep {
   notes: string
   /** Non-null = step is listed but not executed; the reason is always printed. */
   skipReason: string | null
+  /** Structured skip reason for a FLOORED step's completeness certificate
+   *  (#31.6): 'not-applicable' = irrelevant to this scope (does not block a
+   *  certificate); 'input-missing' = its feed cache is absent (BLOCKS — the feed
+   *  should apply here but its input is gone). Parsed free-text is not trusted;
+   *  this is the machine field. Only set where a floored step is skipped. */
+  skipKind?: 'not-applicable' | 'input-missing'
   /** Conditional-skip marker honored by run.ts flags only (never automatic):
    *  'ran-by-extract-tail' + --assume-fresh-extract skips the step because the
    *  osm-to-h3r4.sh tail just produced identical output. */
@@ -94,8 +100,9 @@ export interface PlanStep {
   /** #31.6 completeness FLOOR: the minimum number of input parts this step
    *  must load (36 EU cities, 23 GTFS feeds) for its stamp to be trusted. The
    *  step reports its actual via a QM_COMPLETENESS marker; run.ts records the
-   *  {expected, actual, state} in status.json and (once wired) fails the chain
-   *  on a floored step that loaded short — the no-implicit-partial-stamp rule.
+   *  {expected, actual, state} in status.json, clears safeToSync when a floored
+   *  step loaded short (plannedCompletenessSatisfied), and FAILS a world run on
+   *  it unless --allow-partial — the no-implicit-partial-stamp rule.
    *  Absent/0 = the step consumes no declared multi-part feed. */
   expectMinInputs?: number
 }
@@ -469,6 +476,7 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
         : c.present
           ? null
           : 'cache missing (data/enrichment/global/eu-city-traffic) — chain never downloads mid-run',
+      skipKind: !inEnvelope ? 'not-applicable' : !c.present ? 'input-missing' : undefined,
     })
   }
   // PRE-heal, deliberately BEFORE every rail claimer (/gg Codex CRITICAL): the
@@ -508,6 +516,7 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
         : c.present
           ? null
           : 'cache missing (data/enrichment/global/gtfs) — chain never downloads mid-run',
+      skipKind: !covered ? 'not-applicable' : !c.present ? 'input-missing' : undefined,
     })
   }
 

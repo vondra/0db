@@ -12,8 +12,8 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
-  parseCompletenessMarker, stepIsComplete, writeChainStatus,
-  type ChainStatus, type StepStatus,
+  parseCompletenessMarker, stepIsComplete, plannedCompletenessSatisfied, writeChainStatus,
+  type ChainStatus, type StepStatus, type FlooredPlanStep,
 } from './status.js'
 
 const TMP = mkdtempSync(join(tmpdir(), 'chain-status-'))
@@ -36,13 +36,44 @@ test('parseCompletenessMarker: absent → null; malformed → skipped, not throw
   assert.equal(parseCompletenessMarker('QM_COMPLETENESS {"state":"partial"}'), null) // missing actual
 })
 
-test('stepIsComplete: null/complete/empty-valid safe; partial/missing unsafe', () => {
+test('stepIsComplete: runner is SSOT — count met for floored, unfloored always safe', () => {
   const base = { id: 'x', phase: 'global-priors', status: 'done', durationMs: 1 } as const
   assert.equal(stepIsComplete({ ...base }), true, 'no floor → safe')
   assert.equal(stepIsComplete({ ...base, completeness: { expected: 36, actual: 36, state: 'complete' } }), true)
-  assert.equal(stepIsComplete({ ...base, completeness: { expected: 0, actual: 0, state: 'empty-valid' } }), true)
+  assert.equal(stepIsComplete({ ...base, completeness: { expected: 0, actual: 0, state: 'empty-valid' } }), true, 'unfloored empty-valid safe')
   assert.equal(stepIsComplete({ ...base, completeness: { expected: 36, actual: 2, state: 'partial' } }), false)
   assert.equal(stepIsComplete({ ...base, completeness: { expected: 23, actual: 0, state: 'missing' } }), false)
+  // numeric SSOT: a producer's 'complete' with actual<expected is NOT trusted
+  assert.equal(stepIsComplete({ ...base, completeness: { expected: 36, actual: 2, state: 'complete' } }), false, 'lying complete')
+  // a fixed catalog cannot pass as empty-valid with 0 loaded
+  assert.equal(stepIsComplete({ ...base, completeness: { expected: 36, actual: 0, state: 'empty-valid' } }), false, 'floored empty-valid')
+  // a stray marker on a non-floored (expected 0) step never fails the run
+  assert.equal(stepIsComplete({ ...base, completeness: { expected: 0, actual: 0, state: 'partial' } }), true, 'unfloored partial ignored')
+})
+
+test('plannedCompletenessSatisfied: whole-plan certificate (resume/phase/skip/count)', () => {
+  const plan: FlooredPlanStep[] = [{ id: 'roads-europe' }, { id: 'railway-europe' }]
+  const done = (id: string, actual: number, expected: number): StepStatus => ({
+    id, phase: 'global-priors', status: 'done', durationMs: 1,
+    completeness: { expected, actual, state: actual >= expected ? 'complete' : 'partial' },
+  })
+  // both floored steps ran and met their floor → certified
+  assert.equal(plannedCompletenessSatisfied(plan, [done('roads-europe', 36, 36), done('railway-europe', 23, 23)]), true)
+  // one loaded short → not certified
+  assert.equal(plannedCompletenessSatisfied(plan, [done('roads-europe', 36, 36), done('railway-europe', 22, 23)]), false)
+  // a --from resume / --phase subset never ran railway-europe → unverifiable → not certified
+  assert.equal(plannedCompletenessSatisfied(plan, [done('roads-europe', 36, 36)]), false)
+  // input-missing skip (cache absent) → not certified
+  const planMissing: FlooredPlanStep[] = [{ id: 'roads-europe' }, { id: 'railway-europe', skipKind: 'input-missing' }]
+  assert.equal(plannedCompletenessSatisfied(planMissing, [done('roads-europe', 36, 36),
+    { id: 'railway-europe', phase: 'global-priors', status: 'skipped', durationMs: 0 }]), false)
+  // not-applicable skip (irrelevant to scope) → does NOT block
+  const planNA: FlooredPlanStep[] = [{ id: 'roads-europe' }, { id: 'railway-europe', skipKind: 'not-applicable' }]
+  assert.equal(plannedCompletenessSatisfied(planNA, [done('roads-europe', 36, 36)]), true)
+  // a floored step that ran but carries NO completeness record → not certified
+  // (belt against a completenessFor that stopped synthesizing 'missing')
+  assert.equal(plannedCompletenessSatisfied([{ id: 'roads-europe' }],
+    [{ id: 'roads-europe', phase: 'global-priors', status: 'done', durationMs: 1, completeness: null }]), false)
 })
 
 test('writeChainStatus: atomic round-trip, shape preserved', () => {
