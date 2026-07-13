@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Per-layer code_ver for the world build's incremental-regen stamps.
 code_ver[L] = a CONTENT set-hash over SHARED ∪ L's EXCLUSIVE files, where SHARED = the
-heatmap COMPUTE closure (the 4 compute crates' production *.rs/*.cu/Cargo.{toml,lock} + the global
-build config .cargo/config.toml / rust-toolchain) MINUS every layer's exclusive files. A content hash,
+heatmap COMPUTE closure (the 4 compute crates' production *.rs/*.cu/Cargo.toml + the global
+build config .cargo/config.toml / rust-toolchain) MINUS every layer's exclusive files. Cargo.lock is
+EXCLUDED — it is host/feature-dependent (a gpu build adds CUDA deps), so hashing it cv-gated every
+gpu-line box off the cpu-only planner's cv (see closure_files). A content hash,
 NOT a max-mtime: a backdated git checkout or an rsync -a that preserves an old mtime still flips it
 (/gg: codex). SHARED-by-subtraction is the safety property: no production file can be silently missed,
 so editing shared physics rebuilds ALL layers (safe over-invalidation) while editing a layer-exclusive
@@ -55,7 +57,14 @@ def closure_files(engine):
             for fn in fns:
                 if fn in EXCLUDE_BINS:
                     continue
-                if fn.endswith((".rs", ".cu")) or fn in ("Cargo.toml", "Cargo.lock"):
+                # Cargo.lock is DELIBERATELY excluded (2026-07-13): it is not source, and it is
+                # host/feature-dependent — a gpu-feature build (gpu-surface on noise-gpu) resolves
+                # extra CUDA deps into noise-gpu/Cargo.lock, so every gpu-line box hashed a DIFFERENT
+                # cv than the (cpu-only) planner and the hub cv-gate refused ALL its claims — the fast
+                # GPU boxes could never build. The recipe (source) is what changes output; a dep pin is
+                # captured by the crates' Cargo.toml + the source that uses it. So hash *.rs/*.cu + Cargo.toml
+                # only. (If a silent within-range dep bump ever needs to re-stale, bump a source file.)
+                if fn.endswith((".rs", ".cu")) or fn == "Cargo.toml":
                     out.add(os.path.join(dp, fn))
     repo = os.path.dirname(os.path.abspath(engine))
     for g in GLOBAL_BUILD:
