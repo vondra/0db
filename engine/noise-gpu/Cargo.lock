@@ -37,6 +37,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrow",
+ "arrow-batching",
  "chrono",
  "chrono-tz",
  "clap",
@@ -179,6 +180,13 @@ dependencies = [
  "half",
  "hashbrown 0.15.5",
  "num",
+]
+
+[[package]]
+name = "arrow-batching"
+version = "0.1.0"
+dependencies = [
+ "arrow",
 ]
 
 [[package]]
@@ -888,6 +896,7 @@ dependencies = [
  "pmtiles",
  "raster-reader",
  "rayon",
+ "serde_json",
  "sha2",
  "zstd",
 ]
