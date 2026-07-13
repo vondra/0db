@@ -4,25 +4,32 @@ import { buildApp } from './app.js'
 
 const ready = async () => ({ ready: true as const, failed: [], errors: {} })
 
-test('cluster routes: absent unless enabled, then PUBLIC read-only (owner "pust ho" 2026-07-13)', async (t) => {
+test('cluster dashboard: absent unless enabled, else under the /a/ admin prefix (Caddy basic_auth gates the edge)', async (t) => {
   const publicApp = await buildApp({ readinessCheck: ready, enableClusterRoutes: false })
   t.after(async () => publicApp.close())
-  assert.equal(publicApp.hasRoute({ method: 'GET', url: '/cluster' }), false)
-  assert.equal(publicApp.hasRoute({ method: 'GET', url: '/api/cluster/status' }), false)
+  assert.equal(publicApp.hasRoute({ method: 'GET', url: '/a/cluster' }), false)
+  assert.equal(publicApp.hasRoute({ method: 'GET', url: '/a/api/cluster/status' }), false)
 
   const withCluster = await buildApp({ readinessCheck: ready, enableClusterRoutes: true })
   t.after(async () => withCluster.close())
-  assert.equal(withCluster.hasRoute({ method: 'GET', url: '/cluster' }), true)
+  assert.equal(withCluster.hasRoute({ method: 'GET', url: '/a/cluster' }), true)
 
-  // The loopback guard was removed (owner call): a proxied public request now
-  // reaches the read-only dashboard instead of a 404.
-  const proxiedPublic = await withCluster.inject({
+  // No Fastify-level IP guard — access control is the Caddy basic_auth on
+  // dev.0db.app/a/* (see /etc/caddy/Caddyfile). A reachable request (the shell
+  // TUI over loopback, or an authed proxied client) reaches the route regardless
+  // of the forwarded public IP. cachedStatus() warms in the background, so a
+  // fresh server answers 200 (warm) or 503 (still warming) — both prove the route
+  // is REACHED, never a 404/guard. (Asserting 200 alone is a warming race.)
+  const reached = await withCluster.inject({
     method: 'GET',
-    url: '/api/cluster/status',
+    url: '/a/api/cluster/status',
     remoteAddress: '127.0.0.1',
     headers: { 'x-forwarded-for': '203.0.113.20' },
   })
-  assert.equal(proxiedPublic.statusCode, 200)
+  assert.ok(
+    reached.statusCode === 200 || reached.statusCode === 503,
+    `dashboard route must respond (200 warm / 503 warming), got ${reached.statusCode}`,
+  )
 })
 
 test('noindex is an explicit deployment property', async (t) => {

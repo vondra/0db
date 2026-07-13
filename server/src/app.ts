@@ -75,11 +75,14 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     // Dynamic import means a public-only process never even loads code that
     // reads SSH inventory, worker logs, costs, or cluster telemetry.
     const { clusterRoutes } = await import('./routes/cluster.js')
-    // PUBLIC read-only dashboard (owner "pust ho" 2026-07-13): the loopback guard is
-    // gone so /cluster + /api/cluster/status are reachable on dev.0db.app. NOTE it
-    // exposes box inventory + telemetry + costs on the (noindex'd) dev subdomain —
-    // re-add `requireLoopback` as an onRequest hook, or basic-auth, to re-guard.
-    await app.register(clusterRoutes)
+    // Internal admin area (owner 2026-07-13): all internal tooling lives under the
+    // /a/ prefix — cluster now (→ /a/cluster + /a/api/cluster/status), validation
+    // and future admins later. Public exposure is gated at the edge by Caddy
+    // basic_auth on dev.0db.app/a/* (it surfaces box IPs, telemetry, and $ costs).
+    // Un-authed reach is loopback-only (the shell TUI + this box); the public map
+    // itself stays open. NOTE the prefix must match cluster-page.ts's poll URL and
+    // scripts/cluster-dash.py's URL.
+    await app.register(clusterRoutes, { prefix: '/a' })
   }
 
   return app
