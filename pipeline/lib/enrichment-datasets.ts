@@ -647,6 +647,7 @@ export const DATASETS: Dataset[] = [
     url: 'https://livingatlas.esri.in/',
     priority: 80,
     measurement: 'proxy',
+    highMoto: true, // India rides two-wheelers — moto genuinely exceeds 0.5×cars, so R2 must not flag it (enrich-roads-in.ts sets up to 40% moto)
   },
   {
     id: 1054,
@@ -751,6 +752,7 @@ export const DATASETS: Dataset[] = [
     url: 'https://datagov.mot.go.th/',
     priority: 80,
     measurement: 'derived',
+    highMoto: true, // Thailand is motorcycle-dominant — R2 must not flag its real moto share
   },
   {
     id: 1124,
@@ -789,6 +791,7 @@ export const DATASETS: Dataset[] = [
     priority: 80,
     measurement: 'proxy',
     roadCoverage: [0, 1, 2, 3, 4, 5, 10, 11, 12], // mirrors NG_COVERAGE in enrich-roads-ng.ts (R1b bucket A)
+    highMoto: true, // "Okada" motorcycle taxis + "keke" tricycles dominate — enrich-roads-ng.ts sets 35% moto by design; R2 must not flag it
   },
   {
     id: 9818, // EG = 818
