@@ -35,7 +35,7 @@ import { createHash } from 'node:crypto'
 import { DATA_YEAR as YEAR } from '../lib/data-year.js'
 import { parseScope, type ResolvedScope } from './scope.js'
 import { buildPlan, PHASES, PIPELINE_DIR, REPO_ROOT, type Phase, type PlanStep } from './manifest.js'
-import { gateVerdict, buildBaseline, type GateVerdict } from './gate.js'
+import { gateVerdict, buildBaseline, baselinePreflightProblem, type GateVerdict } from './gate.js'
 import { runInventory } from './inventory.js'
 import {
   writeChainStatus, parseCompletenessMarker, stepIsComplete,
@@ -214,6 +214,25 @@ function readFileOrNull(path: string): string | null {
   }
 }
 
+type LoadedGateBaseline =
+  | { ok: true; baseline: unknown }
+  | { ok: false; lines: string[] }
+
+function loadGateBaseline(): LoadedGateBaseline {
+  let text: string
+  try {
+    text = readFileSync(BASELINE_PATH, 'utf8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true, baseline: null }
+    return { ok: false, lines: [`gate-baseline.json is unreadable (${err instanceof Error ? err.message : err}) — fix access before running the auditor`] }
+  }
+  try {
+    return { ok: true, baseline: JSON.parse(text) }
+  } catch {
+    return { ok: false, lines: ['gate-baseline.json is unparsable — fix or regenerate with --update-gate-baseline'] }
+  }
+}
+
 /** Run the auditor step with machine-output plumbing appended; verdict via
  *  chain/gate.ts. Also used by --update-gate-baseline (which then consumes the
  *  same ndjson/summary files). */
@@ -242,30 +261,23 @@ function gateVerdictForRun(
   summaryText: string | null,
   scope: ResolvedScope,
 ): GateVerdict {
-  let baseline: unknown = null
-  const baselineText = readFileOrNull(BASELINE_PATH)
-  if (baselineText !== null) {
-    try {
-      baseline = JSON.parse(baselineText)
-    } catch {
-      return { pass: false, lines: ['gate-baseline.json is unparsable — fix or regenerate with --update-gate-baseline'] }
-    }
-  }
+  const loaded = loadGateBaseline()
+  if (!loaded.ok) return { pass: false, lines: loaded.lines }
   return gateVerdict({
     code: r.code,
     signal: r.signal,
     ndjsonText,
     summaryText,
-    baseline,
+    baseline: loaded.baseline,
     dataYear: YEAR,
     scope: scope.canonical,
   })
 }
 
 /** Lift the gate step's machine verdict into the status contract (#31.6).
- *  `census-no-baseline` (exit 1 with ioErrors=0 and no baseline sealed FOR
- *  THIS SCOPE) is NOT a data fault — a world run today has only the CZ
- *  baseline, so its 1.44M census is expected, not a regression. */
+ *  `census-no-baseline` (exit 1 with ioErrors=0 and no baseline file) is not an
+ *  I/O fault. An existing baseline for another year/scope is rejected by the
+ *  cheap preflight before the auditor and therefore never reaches here. */
 function buildGateStatus(summaryText: string | null, pass: boolean, scope: ResolvedScope): GateStatus {
   let ioErrors = 1, total = 0
   try {
@@ -476,6 +488,20 @@ async function main(): Promise<number> {
           return 1
         }
         log(`  --allow-partial: completeness gap TOLERATED (dev only — safeToSync stays false, NEVER repaint off this run)`)
+      }
+      // A sealed baseline for another year/scope can never pass this gate, so
+      // reject it before the auditor scans billions of rows and writes hundreds
+      // of MB. No baseline at all still runs as the intentional census path; a
+      // clean tree can pass without one and violations get the existing hint.
+      const loadedBaseline = loadGateBaseline()
+      let baselineProblem: string[] | null = loadedBaseline.ok ? null : loadedBaseline.lines
+      if (loadedBaseline.ok) baselineProblem = baselinePreflightProblem(loadedBaseline.baseline, YEAR, scope.canonical)
+      if (baselineProblem !== null) {
+        for (const line of baselineProblem) log(`  gate preflight: ${line}`)
+        log(`FAILED ${step.id} before auditor — run DATA_YEAR=${YEAR} npx tsx chain/run.ts --scope ${opts.scope} --update-gate-baseline to seal this scope deliberately`)
+        statusSteps.push({ id: step.id, phase: step.phase, status: 'failed', durationMs: Date.now() - t0, lastLine: baselineProblem[0] })
+        flush('failed')
+        return 1
       }
       const { r, ndjsonText, summaryText, logPath } = await runGateStep(step, logDir)
       const dt = ((Date.now() - t0) / 1000).toFixed(1)

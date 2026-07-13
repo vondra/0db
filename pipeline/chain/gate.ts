@@ -100,15 +100,65 @@ export interface GateInputs {
 }
 
 function isBaselineV2(b: unknown): b is GateBaseline {
+  if (typeof b !== 'object' || b === null) return false
+  const candidate = b as Partial<GateBaseline>
+  const fingerprints = candidate.fingerprints
   return (
-    typeof b === 'object' && b !== null &&
-    typeof (b as GateBaseline).dataYear === 'string' &&
-    typeof (b as GateBaseline).scope === 'string' &&
-    typeof (b as GateBaseline).fingerprints === 'object' && (b as GateBaseline).fingerprints !== null
+    typeof candidate.dataYear === 'string' &&
+    typeof candidate.scope === 'string' &&
+    typeof candidate.createdAt === 'string' && Number.isFinite(Date.parse(candidate.createdAt)) &&
+    typeof fingerprints === 'object' && fingerprints !== null && !Array.isArray(fingerprints) &&
+    Object.values(fingerprints as Record<string, unknown>)
+      .every((count) => typeof count === 'number' && Number.isSafeInteger(count) && count > 0)
   )
 }
 
 const fail = (lines: string[]): GateVerdict => ({ pass: false, lines })
+
+export type BaselineIdentityResult =
+  | { valid: true; baseline: GateBaseline }
+  | { valid: false; lines: string[] }
+
+/** Validate the cheap, run-wide part of the gate contract before launching the
+ * expensive auditor. Kept pure so run.ts and gateVerdict cannot drift. */
+export function validateBaselineIdentity(
+  baseline: unknown,
+  dataYear: string,
+  scope: string,
+): BaselineIdentityResult {
+  if (baseline === null) {
+    return {
+      valid: false,
+      lines: [
+        'NO baseline exists (pipeline/chain/gate-baseline.json)',
+        'create one from the current pre-existing state: --update-gate-baseline (review before trusting)',
+      ],
+    }
+  }
+  if (!isBaselineV2(baseline)) {
+    return { valid: false, lines: ['gate-baseline.json is not fingerprint format v2 — regenerate with --update-gate-baseline for this scope'] }
+  }
+  if (baseline.dataYear !== dataYear) {
+    return { valid: false, lines: [`baseline is for DATA_YEAR ${baseline.dataYear}, this run is ${dataYear} — mismatch always fails; re-baseline deliberately`] }
+  }
+  if (baseline.scope !== scope) {
+    return { valid: false, lines: [`baseline is for scope '${baseline.scope}', this run is '${scope}' — a baseline never transfers between scopes`] }
+  }
+  return { valid: true, baseline }
+}
+
+/** Preflight differs deliberately from the post-audit verdict: no baseline is
+ * a valid census run, while an existing but incompatible baseline is a known
+ * failure that must not pay for the auditor. */
+export function baselinePreflightProblem(
+  baseline: unknown,
+  dataYear: string,
+  scope: string,
+): string[] | null {
+  if (baseline === null) return null
+  const identity = validateBaselineIdentity(baseline, dataYear, scope)
+  return identity.valid ? null : identity.lines
+}
 
 /** Parse + cross-check the auditor machine outputs. Returns the fingerprint
  *  multiset or a FAIL verdict (never both). */
@@ -167,22 +217,9 @@ export function gateVerdict(inputs: GateInputs): GateVerdict {
 
   // exit 1 — violations present; diff the multiset against the baseline.
   if (summary.total === 0) return fail(['auditor exited 1 but reported 0 violations — inconsistent, FAIL'])
-  if (inputs.baseline === null) {
-    return fail([
-      'violations found and NO baseline exists (pipeline/chain/gate-baseline.json)',
-      'create one from the current pre-existing state: --update-gate-baseline (review before trusting)',
-    ])
-  }
-  if (!isBaselineV2(inputs.baseline)) {
-    return fail(['gate-baseline.json is not fingerprint format v2 — regenerate with --update-gate-baseline for this scope'])
-  }
-  const baseline = inputs.baseline
-  if (baseline.dataYear !== inputs.dataYear) {
-    return fail([`baseline is for DATA_YEAR ${baseline.dataYear}, this run is ${inputs.dataYear} — mismatch always fails; re-baseline deliberately`])
-  }
-  if (baseline.scope !== inputs.scope) {
-    return fail([`baseline is for scope '${baseline.scope}', this run is '${inputs.scope}' — a baseline never transfers between scopes`])
-  }
+  const identity = validateBaselineIdentity(inputs.baseline, inputs.dataYear, inputs.scope)
+  if (!identity.valid) return fail(identity.lines)
+  const { baseline } = identity
 
   const lines: string[] = []
   let newTotal = 0
