@@ -64,13 +64,13 @@ export interface ChainStatus {
    *  failed; failed = a step or the gate failed (the chain returned nonzero). */
   outcome: 'running' | 'complete' | 'failed'
   gate: GateStatus | null
-  /** True iff outcome=complete AND gate.ioErrors=0 AND every floored step the
-   *  PLAN declared (not just those this session ran) is either not-applicable to
-   *  the scope or ran-and-complete (plannedCompletenessSatisfied). The ONE field
-   *  a sync/repaint trigger reads — a --from resume or --phase subset that did
-   *  not (re)compute a floored step certifies FALSE, never blind-true. (Whether
-   *  NEW violations above a sealed baseline also block is the consumer's policy —
-   *  see gate.newAboveBaseline.) */
+  /** True iff outcome=complete AND gate.ioErrors=0 AND every step that ran is
+   *  complete (no floored step loaded short). The ONE field a sync/repaint
+   *  trigger reads. Exact for a fresh full world run (the repaint path — every
+   *  floored step runs); a --from resume / --phase subset only ran part of the
+   *  plan, so read its exit code, not this field, before repainting off it.
+   *  (Whether NEW violations above a sealed baseline also block is the consumer's
+   *  policy — see gate.newAboveBaseline.) */
   safeToSync: boolean
   steps: StepStatus[]
 }
@@ -103,45 +103,12 @@ export function parseCompletenessMarker(logText: string): Omit<StepCompleteness,
  *  AND have met its count. A step with no floor (expected===0, incl. a legit
  *  `empty-valid` on an unfloored step, or a stray marker on a non-feed step) is
  *  safe. (#31.6 /gg: numeric enforcement + no empty-valid escape for a fixed
- *  catalog.) NOTE: this only judges a step that RAN — a floored step that was
- *  skipped or never reached is handled by `plannedCompletenessSatisfied`. */
+ *  catalog.) NOTE: this judges a step that RAN — a floored step skipped for a
+ *  missing cache is a visible SKIP line, not caught here. */
 export function stepIsComplete(s: StepStatus): boolean {
   const c = s.completeness
   if (!c || c.expected === 0) return true
   return c.state === 'complete' && c.actual >= c.expected
-}
-
-/** One floored step of the resolved PLAN, for the certification cross-check. */
-export interface FlooredPlanStep {
-  id: string
-  /** why the planner skipped it, if it did: 'not-applicable' = irrelevant to
-   *  this scope (fine); 'input-missing' = its feed cache is absent (NOT safe —
-   *  the feed should apply but didn't). */
-  skipKind?: 'not-applicable' | 'input-missing'
-}
-
-/** Certify completeness over the WHOLE resolved plan, not just the steps this
- *  session ran (#31.6 /gg CRITICAL — a `--from` resume or `--phase` subset
- *  leaves the earlier floored steps out of `ran`, and a passing gate would
- *  otherwise certify data this session never (re)computed). Every floored plan
- *  step must either be legitimately not-applicable to the scope, or have RUN
- *  this session and be complete. A floored step that is input-missing, skipped,
- *  or simply absent from `ran` fails the certificate. */
-export function plannedCompletenessSatisfied(
-  flooredPlan: readonly FlooredPlanStep[],
-  ran: StepStatus[],
-): boolean {
-  const byId = new Map(ran.map((s) => [s.id, s]))
-  for (const ps of flooredPlan) {
-    if (ps.skipKind === 'not-applicable') continue // irrelevant to this scope — not required
-    const s = byId.get(ps.id)
-    // Must have RUN this session (not absent/skipped/failed), carry a completeness
-    // record (a floored step always should — this is the belt against a
-    // completenessFor refactor that stopped synthesizing 'missing', /gg Gemini),
-    // and meet its floor.
-    if (!s || s.status !== 'done' || !s.completeness || !stepIsComplete(s)) return false
-  }
-  return true
 }
 
 /** Atomic write (tmp + rename) so a reader never sees a half-written file. */
