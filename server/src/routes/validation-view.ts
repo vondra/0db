@@ -3,6 +3,11 @@ import type { FastifyInstance } from 'fastify'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import {
+  currentValidationCohort,
+  type ValidationCohort,
+  type ValidationCohortProvider,
+} from '../validation-cohort.js'
 
 const DEFAULT_ROOT = resolve(import.meta.dirname, '../../..')
 const SNAPSHOT_FILE = /^([a-z0-9]+(?:-[a-z0-9]+)*)\.(\d{4})\.json$/
@@ -18,6 +23,7 @@ type Obj = Record<string, unknown>
 type Meta = {
   generated_at: string | null
   server: string | null
+  model_cohort: string | null
   runner_commit: string | null
   runner_dirty: boolean | null
   requested_data_year: number | null
@@ -43,6 +49,7 @@ function fileSha256(path: string): string | null {
 function metadata(value: Obj, time: 'timestamp' | 'generated_at'): Meta {
   return {
     generated_at: text(value[time]), server: text(value.server),
+    model_cohort: text(value.model_cohort),
     runner_commit: text(value.runner_commit),
     runner_dirty: typeof value.runner_dirty === 'boolean' ? value.runner_dirty : null,
     requested_data_year: finite(value.requested_data_year),
@@ -121,10 +128,31 @@ function deltaResult(row: Obj, modelField: string): Obj | null {
   return { model, query_status: queryStatus, dominant_source: text(row.dominant_source) }
 }
 
-export async function validationViewRoutes(app: FastifyInstance, options: { repoRoot?: string } = {}): Promise<void> {
+export async function validationViewRoutes(app: FastifyInstance, options: {
+  repoRoot?: string
+  cohortProvider?: ValidationCohortProvider
+} = {}): Promise<void> {
   const root = options.repoRoot ?? DEFAULT_ROOT
+  const cohortProvider = options.cohortProvider ?? currentValidationCohort
+
+  app.get('/api/validation/cohort', async (_request, reply) => {
+    reply.header('Cache-Control', 'no-store')
+    try {
+      return reply.send(await cohortProvider())
+    } catch (error) {
+      app.log.error(error, 'validation cohort fingerprint failed')
+      return reply.code(503).send({ error: 'validation cohort unavailable' })
+    }
+  })
+
   app.get('/api/validation/points', async (_request, reply) => {
     const warnings: string[] = []
+    let currentCohort: ValidationCohort | null = null
+    try {
+      currentCohort = await cohortProvider()
+    } catch (error) {
+      warnings.push(`model cohort unavailable — model results hidden; ${error instanceof Error ? error.message : String(error)}`)
+    }
     const pointPath = resolve(root, 'benchmarks/world-points.json')
     const points = catalogRows(readJson(pointPath, 'world fixture catalog', warnings), 'id', 'world fixture', warnings,
       row => Number.isFinite(row.lat) && Number.isFinite(row.lng) ? null : 'has non-finite coordinates')
@@ -141,6 +169,8 @@ export async function validationViewRoutes(app: FastifyInstance, options: { repo
         warnings.push('world model run has unsupported schema_version — ignored; rerun /check-world')
       } else if (!fixturesSha256 || text(parsed.fixtures_sha256) !== fixturesSha256) {
         warnings.push('world model run belongs to different fixture content — ignored; rerun /check-world')
+      } else if (!currentCohort || text(parsed.model_cohort) !== currentCohort.cohort_id) {
+        warnings.push('world model run belongs to a different model/data cohort — ignored; rerun /check-world')
       } else run = parsed
     } else warnings.push('no world model run — run /check-world; fixtures show without model values')
     const runById = artifactRows(run ? run.results : [], 'id', pointIds, 'world model run', warnings, worldResult)
@@ -206,6 +236,8 @@ export async function validationViewRoutes(app: FastifyInstance, options: { repo
           warnings.push(`${snapshot.network}/${snapshot.year} model delta has a different catalog identity — ignored; regenerate it`)
         } else if (!snapshotSha256 || text(parsed.snapshot_sha256) !== snapshotSha256) {
           warnings.push(`${snapshot.network}/${snapshot.year} model delta belongs to different snapshot content — ignored; regenerate it`)
+        } else if (!currentCohort || text(parsed.model_cohort) !== currentCohort.cohort_id) {
+          warnings.push(`${snapshot.network}/${snapshot.year} model delta belongs to a different model/data cohort — ignored; regenerate it`)
         } else delta = parsed
       } else warnings.push(`${snapshot.network}/${snapshot.year}: no model delta artifact; measurements remain visible`)
       const deltaById = artifactRows(
@@ -245,7 +277,13 @@ export async function validationViewRoutes(app: FastifyInstance, options: { repo
         }),
       })
     }
-    return reply.send({ lastrun: run ? metadata(run, 'timestamp') : null, warnings, fixtures, networks })
+    return reply.send({
+      model_cohort: currentCohort,
+      lastrun: run ? metadata(run, 'timestamp') : null,
+      warnings,
+      fixtures,
+      networks,
+    })
   })
   app.get('/validation', async (_request, reply) => reply.redirect('/#val=1'))
 }

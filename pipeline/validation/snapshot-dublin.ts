@@ -22,6 +22,7 @@
  * Run: npx tsx pipeline/validation/snapshot-dublin.ts --year 2025
  */
 import {
+  boundedCoveragePercent,
   endPeriodForLocalHour, energeticMeanDb, ldenFromPeriods, openValidationDb,
   PERIOD_MINUTES_PER_DAY, writeSnapshot, type EndPeriod, type SnapshotStation,
 } from './lib.ts'
@@ -165,7 +166,8 @@ async function main() {
     const lden = ldenFromPeriods(ld, le, ln)
     const name = `${mon.label ?? serial} — ${mon.location ?? ''}`.trim()
     upStation.run(NETWORK, serial, name, Number(mon.latitude), Number(mon.longitude), JSON.stringify({ last_calibrated: mon.last_calibrated ?? null }))
-    const meta = JSON.stringify({ min_period_coverage_pct: +(minCoverage * 100).toFixed(1), months_covered: monthsCovered })
+    const coveragePct = boundedCoveragePercent(minCoverage)
+    const meta = JSON.stringify({ min_period_coverage_pct: coveragePct, months_covered: monthsCovered })
     for (const [metric, value] of Object.entries({ ld, le, ln, lden })) {
       if (value != null) upAnnual.run(NETWORK, serial, year, metric, +value.toFixed(2), meta)
     }
@@ -177,7 +179,7 @@ async function main() {
     snapshotStations.push({
       station_id: serial, name, lat: Number(mon.latitude), lng: Number(mon.longitude),
       ld: +ld!.toFixed(1), le: +le!.toFixed(1), ln: +ln!.toFixed(1), lden: +lden.toFixed(1),
-      months_covered: monthsCovered, coverage_pct: +(minCoverage * 100).toFixed(1),
+      months_covered: monthsCovered, coverage_pct: coveragePct,
     })
   }
   // A temporary replacement can report the same year in parallel with its

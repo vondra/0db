@@ -18,6 +18,7 @@ import { loadApprovedSnapshots } from './snapshot-loader.mjs'
 const SERVER = process.env.CHECK_WORLD_SERVER || 'http://localhost:8520'
 const CONCURRENCY = 2
 const INSTANCE_HEADER = 'x-0db-instance'
+const COHORT_TIMEOUT_MS = Number(process.env.CHECK_WORLD_COHORT_TIMEOUT_MS || '60000')
 const snapshotIndex = process.argv.indexOf('--snapshot')
 const snapshotArg = snapshotIndex >= 0 ? process.argv[snapshotIndex + 1] : null
 if (!snapshotArg) {
@@ -57,6 +58,42 @@ function requireSameInstance(response: Response, label: string): void {
     coherenceError ??= `${label}: server instance changed (${serverInstance} → ${actual ?? 'missing'})`
     throw new Error(coherenceError)
   }
+}
+
+type ModelCohort = {
+  schema_version: 1
+  cohort_id: string
+  cache_ttl_ms: number
+  runtime_sha256: string
+  prepared_sha256: string
+}
+
+async function fetchModelCohort(label: string): Promise<ModelCohort> {
+  const response = await fetch(`${SERVER}/api/validation/cohort`, {
+    signal: AbortSignal.timeout(COHORT_TIMEOUT_MS),
+  })
+  requireSameInstance(response, label)
+  if (!response.ok) throw new Error(`${label}: HTTP ${response.status}`)
+  const value = await response.json() as Partial<ModelCohort>
+  if (value.schema_version !== 1
+    || !/^[a-f0-9]{64}$/.test(value.cohort_id ?? '')
+    || !Number.isInteger(value.cache_ttl_ms) || (value.cache_ttl_ms ?? -1) < 0
+    || (value.cache_ttl_ms ?? Infinity) > 60_000
+    || !/^[a-f0-9]{64}$/.test(value.runtime_sha256 ?? '')
+    || !/^[a-f0-9]{64}$/.test(value.prepared_sha256 ?? '')) {
+    throw new Error(`${label}: malformed validation cohort response`)
+  }
+  return value as ModelCohort
+}
+
+let modelCohort: ModelCohort
+let modelCohortReceivedAt: number
+try {
+  modelCohort = await fetchModelCohort('initial model cohort')
+  modelCohortReceivedAt = Date.now()
+} catch (error) {
+  console.error(`[delta] cannot establish model/data cohort (${error instanceof Error ? error.message : String(error)}) — refusing a potentially mixed run`)
+  process.exit(2)
 }
 
 type ModelValues = { lden: number | null; ld: number | null; le: number | null; ln: number | null }
@@ -136,10 +173,19 @@ await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
   }
 }))
 
+// Do not compare the cached initial fingerprint to itself on a very fast run.
+const cohortCacheRemainingMs = modelCohort.cache_ttl_ms - (Date.now() - modelCohortReceivedAt)
+if (cohortCacheRemainingMs > 0) {
+  await new Promise(resolveWait => setTimeout(resolveWait, cohortCacheRemainingMs + 25))
+}
 try {
   const finalHealth = await fetch(`${SERVER}/api/health`, { signal: AbortSignal.timeout(3000) })
   if (!finalHealth.ok) throw new Error(`HTTP ${finalHealth.status}`)
   requireSameInstance(finalHealth, 'final health check')
+  const finalCohort = await fetchModelCohort('final model cohort')
+  if (finalCohort.cohort_id !== modelCohort.cohort_id) {
+    coherenceError ??= `model/data cohort changed (${modelCohort.cohort_id.slice(0, 12)} → ${finalCohort.cohort_id.slice(0, 12)})`
+  }
 } catch (error) {
   coherenceError ??= `final health check failed: ${error instanceof Error ? error.message : String(error)}`
 }
@@ -153,7 +199,11 @@ const comparisonLabel = snapshot.comparison_mode === 'trend_only'
   : snapshot.comparison_mode === 'upper_bound'
     ? `UPPER BOUND: model ≤ measured + ${snapshot.comparison_tolerance_db} dB`
     : `TWO SIDED: tolerance ±${snapshot.comparison_tolerance_db} dB`
-const output = ['', `Δ table — ${snapshot.network} ${snapshot.year} vs ${SERVER} (${comparisonLabel})`]
+const output = [
+  '',
+  `Δ table — ${snapshot.network} ${snapshot.year} vs ${SERVER} (${comparisonLabel})`,
+  `model/data cohort ${modelCohort.cohort_id.slice(0, 12)}`,
+]
 output.push(`${'station'.padEnd(10)} ${'name'.padEnd(34)} ${snapshot.measured_metric_field.padStart(14)} ${snapshot.model_metric_field.padStart(12)} ${'Δdb'.padStart(6)}  ${'verdict'.padEnd(15)} dominant`)
 const verdicts: Array<ComparisonVerdict | 'no_coverage'> = []
 for (const [index, row] of rows.entries()) {
@@ -183,6 +233,7 @@ try {
     server: SERVER,
     generated_at: new Date().toISOString(),
     snapshot_sha256: snapshotSha256,
+    model_cohort: modelCohort.cohort_id,
     rows,
   }, null, 2) + '\n', { flag: 'wx' })
   renameSync(temporary, outPath)

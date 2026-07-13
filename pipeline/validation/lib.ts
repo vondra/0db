@@ -32,6 +32,17 @@ export function energeticMeanDb(energySum: number, n: number): number | null {
   return 10 * Math.log10(energySum / n)
 }
 
+/**
+ * Adapters tolerate at most 0.5% timestamp/window rounding overlap, but the
+ * committed schema must never claim more than complete (100%) coverage.
+ */
+export function boundedCoveragePercent(fraction: number): number {
+  if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1.005) {
+    throw new Error(`coverage fraction must be finite and in 0..1.005 (got ${fraction})`)
+  }
+  return Math.min(100, +(fraction * 100).toFixed(1))
+}
+
 /** END Lden from period levels (levels may be null when a period is silent/missing). */
 export function ldenFromPeriods(ld: number | null, le: number | null, ln: number | null): number | null {
   if (ld == null || le == null || ln == null) return null

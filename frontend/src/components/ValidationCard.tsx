@@ -19,6 +19,7 @@ const fmt = (v: number | null | undefined, digits = 1) => (v == null ? '—' : v
 const band = (b: [number | null, number | null] | null | undefined) =>
   b ? `[${b[0] ?? '·'}, ${b[1] ?? '·'}]` : '—'
 const safeUrl = (u: string | null | undefined) => (typeof u === 'string' && /^https?:\/\//i.test(u) ? u : null)
+const shortCohort = (id: string | null | undefined) => id ? id.slice(0, 12) : 'unavailable'
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -47,7 +48,7 @@ function Meta({ value }: { value: ValidationArtifactMeta }) {
     : ''
   return (
     <span className="break-all">
-      {value.generated_at ?? 'unknown time'} · queried {value.server ?? 'unknown server'} · model build not exposed by server{runner}
+      {value.generated_at ?? 'unknown time'} · queried {value.server ?? 'unknown server'} · cohort {shortCohort(value.model_cohort)}{runner}
     </span>
   )
 }
@@ -60,7 +61,8 @@ export function ValidationStatusCard({ payload }: { payload: ValidationPayload |
       <div className="font-semibold text-[13px]">Validation QA</div>
       {!payload ? <div className="text-muted-foreground">Loading catalogs…</div> : (
         <>
-          <div className="mt-1"><b>external truth:</b> {payload.networks.length} approved committed snapshots</div>
+          <div className="mt-1"><b>current model cohort:</b> {shortCohort(payload.model_cohort?.cohort_id)}</div>
+          <div><b>external truth:</b> {payload.networks.length} approved committed snapshots</div>
           <div><b>world model run:</b> {payload.lastrun ? <Meta value={payload.lastrun} /> : 'not available'}</div>
           <div><b>complete station-query artifacts:</b> {deltas.length}/{payload.networks.length}</div>
           {deltas.map(network => (

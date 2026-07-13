@@ -20,6 +20,7 @@ import { resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import {
+  boundedCoveragePercent,
   assertDir, ckanResources, endPeriodForLocalHour, energeticMeanDb, ldenFromPeriods,
   openValidationDb, PERIOD_MINUTES_PER_DAY, splitCsvLine, VALIDATION_DATA_DIR, writeSnapshot,
   type EndPeriod,
@@ -213,7 +214,8 @@ for (const [id, byDate] of acc) {
   const ln = energeticMeanDb(...total.ln)
   const lden = ldenFromPeriods(ld, le, ln)
   upStation.run(NETWORK, id, st.name, st.lat, st.lng, JSON.stringify({ font: st.font, district: st.district, installed: st.installed, deinstalled: st.deinstalled }))
-  const meta = JSON.stringify({ min_period_coverage_pct: +(minCoverage * 100).toFixed(1), months_covered: monthsCovered })
+  const coveragePct = boundedCoveragePercent(minCoverage)
+  const meta = JSON.stringify({ min_period_coverage_pct: coveragePct, months_covered: monthsCovered })
   for (const [metric, value] of Object.entries({ ld, le, ln, lden })) {
     if (value != null) upAnnual.run(NETWORK, id, year, metric, +value.toFixed(2), meta)
   }
@@ -226,7 +228,7 @@ for (const [id, byDate] of acc) {
     tags: factorTagsForFont(st.font),
     font: st.font, district: st.district,
     ld: +ld!.toFixed(1), le: +le!.toFixed(1), ln: +ln!.toFixed(1), lden: +lden.toFixed(1),
-    months_covered: monthsCovered, coverage_pct: +(minCoverage * 100).toFixed(1),
+    months_covered: monthsCovered, coverage_pct: coveragePct,
   })
 }
 if (snapshotStations.length === 0) throw new Error('[barcelona] 0 stations pass the coverage gate — refusing a silently empty snapshot')

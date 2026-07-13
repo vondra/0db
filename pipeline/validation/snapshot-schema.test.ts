@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { REPO_ROOT, validateSnapshot, type Snapshot } from './lib.ts'
+import { boundedCoveragePercent, REPO_ROOT, validateSnapshot, type Snapshot } from './lib.ts'
 import { loadApprovedSnapshots, validateApprovedSnapshotIdentity } from './snapshot-loader.mjs'
 
 const expected = {
@@ -12,6 +12,13 @@ const expected = {
   'eba-laermmonitoring.2023.json': ['eba-laermmonitoring', 'DE', 19, 'trend_only', null],
   'zrh-nmt.2024.json': ['zrh-nmt', 'CH', 4, 'trend_only', null],
 } as const
+
+test('adapter coverage rounding cannot publish more than 100 percent', () => {
+  assert.equal(boundedCoveragePercent(0.7), 70)
+  assert.equal(boundedCoveragePercent(1), 100)
+  assert.equal(boundedCoveragePercent(1.005), 100)
+  assert.throws(() => boundedCoveragePercent(1.006), /0\.\.1\.005/)
+})
 
 test('approved measurement catalog is internally consistent', () => {
   const snapshots = new Map<string, Snapshot>()

@@ -78,12 +78,23 @@ export interface ValidationNetwork {
 export interface ValidationArtifactMeta {
   generated_at: string | null
   server: string | null
+  model_cohort: string | null
   runner_commit: string | null
   runner_dirty: boolean | null
   requested_data_year: number | null
 }
 
+export interface ValidationCohort {
+  schema_version: 1
+  cohort_id: string
+  cache_ttl_ms: number
+  data_year: string
+  runtime_sha256: string
+  prepared_sha256: string
+}
+
 export interface ValidationPayload {
+  model_cohort: ValidationCohort | null
   lastrun: ValidationArtifactMeta | null
   warnings: string[]
   fixtures: ValidationFixture[]
@@ -124,6 +135,7 @@ export function useValidationPayload(enabled: boolean): ValidationPayload | null
       .then((data: ValidationPayload) => { if (!cancelled) setPayload(data) })
       .catch((error) => {
         if (!cancelled) setPayload({
+          model_cohort: null,
           lastrun: null,
           warnings: [`validation API failed — ${error instanceof Error ? error.message : String(error)}`],
           fixtures: [], networks: [],
