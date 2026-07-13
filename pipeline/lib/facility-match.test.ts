@@ -8,7 +8,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bestCandidate, contestBeats, edgeDistM, quietGateBlocks, type MatchFacility, type MatchPolygon } from './facility-match.js'
+import { bestCandidate, contestBeats, edgeDistM, quietGateBlocks, overlapLosers, overlapsSameSite, type MatchFacility, type MatchPolygon, type OverlapWinner } from './facility-match.js'
 import { flatDist } from './spatial.js'
 
 const fac = (over: Partial<MatchFacility> = {}): MatchFacility =>
@@ -96,4 +96,46 @@ test('polygon contest mirrors shouldOverwrite: rank, then year, then id, then di
 
 test('spatial.flatDist sanity: 1° latitude = the canonical 110.54 km', () => {
   assert.ok(Math.abs(flatDist(50, 14, 51, 14) - 110_540) < 1)   // spatial.ts M_PER_DEG_LAT
+})
+
+// ── I-07 dual-registry overlap dedup (Wave 2 B) ──────────────────────────────
+const win = (over: Partial<OverlapWinner> = {}): OverlapWinner =>
+  ({ key: 'k', lat: 49.18, lon: 14.376, areaM2: 1_200_000, rank: 5, year: 2022, id: 310, edge: 0, ...over })
+
+test('I-07: two coincident different-registry polygons → the lower-provenance row is suppressed', () => {
+  const eprtr = win({ key: 'A', areaM2: 1_231_457, rank: 5, id: 310 })              // Temelín E-PRTR 123 ha
+  const gppd = win({ key: 'B', areaM2: 1_433_333, rank: 4, id: 300, lat: 49.18 + mLat(30) }) // GPPD 143 ha, ~30 m off
+  assert.deepEqual([...overlapLosers([eprtr, gppd])], ['B'], 'E-PRTR (rank 5) survives, GPPD (rank 4) suppressed')
+})
+
+test('I-07: adjacent DISTINCT plants (centroids far apart) are never merged', () => {
+  const a = win({ key: 'A', areaM2: 500_000 })                                        // r≈399 m → 0.5r≈199 m threshold
+  const b = win({ key: 'B', areaM2: 500_000, rank: 4, id: 300, lat: 49.18 + mLat(700) }) // 700 m apart
+  assert.equal(overlapLosers([a, b]).size, 0)
+})
+
+test('I-07: small coincident sites below the 10 ha floor are left alone', () => {
+  const a = win({ key: 'A', areaM2: 50_000 })
+  const b = win({ key: 'B', areaM2: 55_000, rank: 4, id: 300, lat: 49.18 + mLat(10) })
+  assert.equal(overlapLosers([a, b]).size, 0)
+})
+
+test('I-07: a big zone and a small nested tenant (area ratio too large) are not merged', () => {
+  const zone = win({ key: 'Z', areaM2: 1_000_000 })
+  const tenant = win({ key: 'T', areaM2: 100_000, rank: 4, id: 300, lat: 49.18 + mLat(20) }) // 10× ratio
+  assert.equal(overlapLosers([zone, tenant]).size, 0)
+})
+
+test('I-07: only mutual-best pairs collapse; an unrelated third plant is untouched (no transitive merge)', () => {
+  const a = win({ key: 'A', areaM2: 1_200_000, rank: 5, id: 310 })
+  const b = win({ key: 'B', areaM2: 1_300_000, rank: 4, id: 300, lat: 49.18 + mLat(40) })
+  const c = win({ key: 'C', areaM2: 1_200_000, rank: 5, id: 310, lat: 55.0, lon: 10.0 }) // far away
+  assert.deepEqual([...overlapLosers([a, b, c])].sort(), ['B'], 'A/B collapse, C untouched')
+})
+
+test('overlapsSameSite: coincident + similar-size + sizable = true; far / below-floor = false', () => {
+  const base = win({ areaM2: 1_200_000 })
+  assert.ok(overlapsSameSite(base, win({ areaM2: 1_300_000, lat: 49.18 + mLat(30) })))
+  assert.ok(!overlapsSameSite(base, win({ areaM2: 1_300_000, lat: 49.18 + mLat(2000) })), 'far centroid')
+  assert.ok(!overlapsSameSite(win({ areaM2: 50_000 }), win({ areaM2: 55_000 })), 'below area floor')
 })

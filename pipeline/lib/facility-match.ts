@@ -159,3 +159,98 @@ export function bestCandidate(
   }
   return best
 }
+
+// ── I-07 dual-registry overlap dedup (Wave 2 B, dual /gg REV 2) ──────────────
+// Two facilities from DIFFERENT registries can each win a DIFFERENT but coincident
+// OSM polygon for ONE physical plant (Temelín: E-PRTR 123 ha + GPPD 143 ha, both
+// emit → measured +2.7 dB). The per-row contest above never compares them — they
+// are different rows. This reconciles ACROSS winning rows so one physical site
+// emits once. MVP is COLUMNS-ONLY (centroid + area): the TS enricher can't call
+// Rust `wkb.rs` (both /gg reviewers), so a real WKB-intersection test is a deferred
+// upgrade. It is deliberately CONSERVATIVE — only similar-size, sizable,
+// centroid-coincident polygons (the whole-site-duplicate shape) — so distinct
+// adjacent plants and small nested tenants are never merged.
+
+/** Only plants this large are de-duplicated: the double-count matters for big
+ *  sites, and a high floor keeps small sheds safe. */
+export const OVERLAP_MIN_AREA_M2 = 100_000 // 10 ha
+/** Two footprints of the SAME site sit within this size ratio; beyond it it is a
+ *  big-zone-vs-small-tenant pair (a nested case), not a whole-site duplicate. */
+export const OVERLAP_AREA_RATIO_MAX = 2.5
+/** Centroids must be within this fraction of the smaller polygon's equivalent
+ *  radius √(area/π): coincident whole-site polygons pass; side-by-side plants
+ *  (centroids ≈ √area apart) do not. */
+export const OVERLAP_CENTROID_RADIUS_FACTOR = 0.5
+
+/** One winning polygon row entering overlap reconciliation. `key` is a stable
+ *  cross-hex row identifier (e.g. `${hex}:${row}`); the provenance triple + edge
+ *  feed the existing `contestBeats` authority. */
+export interface OverlapWinner {
+  key: string
+  lat: number
+  lon: number
+  areaM2: number
+  rank: number
+  year: number
+  id: number
+  edge: number
+}
+
+/** True when two winning polygons are the SAME physical site under the conservative
+ *  whole-site-duplicate rule (sizable, similar size, centroid-coincident). */
+export function overlapsSameSite(a: OverlapWinner, b: OverlapWinner): boolean {
+  const amin = Math.min(a.areaM2, b.areaM2)
+  if (amin < OVERLAP_MIN_AREA_M2) return false
+  if (Math.max(a.areaM2, b.areaM2) / amin > OVERLAP_AREA_RATIO_MAX) return false
+  const rMin = Math.sqrt(amin / Math.PI)
+  return flatDist(a.lat, a.lon, b.lat, b.lon) <= OVERLAP_CENTROID_RADIUS_FACTOR * rMin
+}
+
+/**
+ * Keys to SUPPRESS so each physical site emits once. For every ISOLATED
+ * MUTUAL-BEST overlapping pair — two winners that are each other's nearest
+ * overlapping partner (no transitive 3+ merges collapsing an industrial estate,
+ * /gg Codex) — the `contestBeats` LOSER is suppressed (E-PRTR rank 5 keeps its
+ * row over GPPD/GEM rank 4). Internally spatially bucketed so `bestPartner` is
+ * computed over each winner's true neighbourhood in ~O(n), not global O(n²), and
+ * so a cross-H3R4-border pair is still seen (the caller need not pre-group).
+ */
+export function overlapLosers(winners: OverlapWinner[]): Set<string> {
+  const CELL = 0.02 // ~2 km — wider than any merge distance (≤0.5·r; a 1000 ha plant's r≈1.8 km)
+  const buckets = new Map<string, number[]>()
+  const cellOf = (lat: number, lon: number): [number, number] => [Math.floor(lat / CELL), Math.floor(lon / CELL)]
+  winners.forEach((w, i) => {
+    const [cl, co] = cellOf(w.lat, w.lon)
+    const k = `${cl}:${co}`
+    const arr = buckets.get(k)
+    if (arr) arr.push(i)
+    else buckets.set(k, [i])
+  })
+  const bestPartner = new Array<number>(winners.length).fill(-1)
+  for (let i = 0; i < winners.length; i++) {
+    const [cl, co] = cellOf(winners[i].lat, winners[i].lon)
+    let bestD = Infinity
+    for (let dl = -1; dl <= 1; dl++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        for (const j of buckets.get(`${cl + dl}:${co + dc}`) ?? []) {
+          if (i === j || !overlapsSameSite(winners[i], winners[j])) continue
+          const d = flatDist(winners[i].lat, winners[i].lon, winners[j].lat, winners[j].lon)
+          if (d < bestD) { bestD = d; bestPartner[i] = j }
+        }
+      }
+    }
+  }
+  const losers = new Set<string>()
+  for (let i = 0; i < winners.length; i++) {
+    const j = bestPartner[i]
+    if (j < 0 || bestPartner[j] !== i || i > j) continue // mutual-best, once per pair
+    const a = winners[i]
+    const b = winners[j]
+    const aBeatsB = contestBeats(
+      { rank: a.rank, year: a.year, id: a.id, edge: a.edge },
+      { rank: b.rank, year: b.year, id: b.id, edge: b.edge },
+    )
+    losers.add(aBeatsB ? b.key : a.key)
+  }
+  return losers
+}
