@@ -14,7 +14,6 @@ import { tilesManifestRoutes } from './routes/tiles-manifest.js'
 import { validationViewRoutes } from './routes/validation-view.js'
 import { healthRoutes } from './routes/health.js'
 import { createReadinessCheck, type ReadinessCheck } from './runtime-readiness.js'
-import { requireLoopback } from './internal-access.js'
 
 // Deliberately identifies only this Node process, not its build or data. Long
 // validation runs use it to reject results spanning a restart/deploy.
@@ -76,10 +75,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     // Dynamic import means a public-only process never even loads code that
     // reads SSH inventory, worker logs, costs, or cluster telemetry.
     const { clusterRoutes } = await import('./routes/cluster.js')
-    await app.register(async (internalApp) => {
-      internalApp.addHook('onRequest', requireLoopback)
-      await internalApp.register(clusterRoutes)
-    })
+    // PUBLIC read-only dashboard (owner "pust ho" 2026-07-13): the loopback guard is
+    // gone so /cluster + /api/cluster/status are reachable on dev.0db.app. NOTE it
+    // exposes box inventory + telemetry + costs on the (noindex'd) dev subdomain —
+    // re-add `requireLoopback` as an onRequest hook, or basic-auth, to re-guard.
+    await app.register(clusterRoutes)
   }
 
   return app

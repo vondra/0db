@@ -4,23 +4,25 @@ import { buildApp } from './app.js'
 
 const ready = async () => ({ ready: true as const, failed: [], errors: {} })
 
-test('cluster routes have a secure default and require loopback when enabled', async (t) => {
+test('cluster routes: absent unless enabled, then PUBLIC read-only (owner "pust ho" 2026-07-13)', async (t) => {
   const publicApp = await buildApp({ readinessCheck: ready, enableClusterRoutes: false })
   t.after(async () => publicApp.close())
   assert.equal(publicApp.hasRoute({ method: 'GET', url: '/cluster' }), false)
   assert.equal(publicApp.hasRoute({ method: 'GET', url: '/api/cluster/status' }), false)
 
-  const internalApp = await buildApp({ readinessCheck: ready, enableClusterRoutes: true })
-  t.after(async () => internalApp.close())
-  assert.equal(internalApp.hasRoute({ method: 'GET', url: '/cluster' }), true)
+  const withCluster = await buildApp({ readinessCheck: ready, enableClusterRoutes: true })
+  t.after(async () => withCluster.close())
+  assert.equal(withCluster.hasRoute({ method: 'GET', url: '/cluster' }), true)
 
-  const proxiedPublic = await internalApp.inject({
+  // The loopback guard was removed (owner call): a proxied public request now
+  // reaches the read-only dashboard instead of a 404.
+  const proxiedPublic = await withCluster.inject({
     method: 'GET',
     url: '/api/cluster/status',
     remoteAddress: '127.0.0.1',
     headers: { 'x-forwarded-for': '203.0.113.20' },
   })
-  assert.equal(proxiedPublic.statusCode, 404)
+  assert.equal(proxiedPublic.statusCode, 200)
 })
 
 test('noindex is an explicit deployment property', async (t) => {
