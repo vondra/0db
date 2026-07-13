@@ -56,6 +56,25 @@ test('office blocks everything outside containment; radius excludes far polygons
   assert.equal(bestCandidate(fac(), [poly({ lat: 50.0 + mLat(2500) })], 2000), null)
 })
 
+test('steel polygon rejects its on-site power block, takes metallurgy (Ostrava/Nová huť, Codex CRITICAL 6)', () => {
+  // A giant steel polygon (subtype 6) is the smallest edge distance for miles.
+  // The on-site power facility (NACE 3511) must NOT capture it; a metallurgy
+  // facility (2410) must. Rejected → the polygon keeps its steel profile.
+  const steel = [poly({ subtype: 6, areaM2: 5_379_612 })]
+  assert.ok(quietGateBlocks(6, 3511), 'steel + power (3511) blocked')
+  assert.equal(bestCandidate(fac({ nace4: 3511 }), steel, 2000), null, 'power block cannot stamp the steelworks')
+  assert.ok(!quietGateBlocks(6, 2410), 'steel + metallurgy (2410) allowed')
+  assert.ok(bestCandidate(fac({ nace4: 2410 }), steel, 2000), 'metallurgy stamps the steelworks')
+})
+
+test('heavy-subtype gate: quarry/chemical/cement accept only their division; port stays open', () => {
+  assert.ok(quietGateBlocks(3, 2410) && !quietGateBlocks(3, 810), 'quarry ⇐ mining 08 only')
+  assert.ok(quietGateBlocks(4, 2410) && !quietGateBlocks(4, 2011), 'chemical ⇐ 19|20 only')
+  assert.ok(quietGateBlocks(5, 2410) && !quietGateBlocks(5, 2351), 'cement ⇐ 23 only')
+  assert.ok(!quietGateBlocks(12, 2011) && !quietGateBlocks(12, 1011), 'port not gated — hosts many sectors')
+  assert.ok(!quietGateBlocks(0, 3511) && !quietGateBlocks(2, 3511), 'generic/factory still accept any NACE')
+})
+
 test('cross-hex reduce keeps exactly one winner per facility', () => {
   // simulate two hexes: caller keeps the min-edge candidate across both
   const hexA = [poly({ lat: 50.0 + mLat(900) })]

@@ -27,8 +27,29 @@ import { flatDist } from './spatial.js'
 
 // Subtype codes from engine/osm-extract/src/spill.rs site_subtype_from_tags().
 const SUBTYPE_WAREHOUSE = 1
+const SUBTYPE_QUARRY = 3
+const SUBTYPE_CHEMICAL = 4
+const SUBTYPE_CEMENT = 5
+const SUBTYPE_STEEL = 6
 const SUBTYPE_FARM = 10
 const SUBTYPE_OFFICE = 11
+
+/** Heavy subtypes whose OSM tag strongly implies the sector → the polygon
+ *  accepts ONLY a facility in a compatible NACE division; anything else is
+ *  rejected so it can't down- or cross-classify a monolithic heavy site. This
+ *  is the real Ostrava fix (/gg Codex CRITICAL 6): Nová huť is `site_subtype=6`
+ *  (steel), so its 5.38 M m² polygon — the smallest edge distance for miles —
+ *  must reject the on-site power block (NACE 3511) and take metallurgy (24), or
+ *  fall back to the correct steel profile. NACE 2-digit divisions: quarry ⇐ coal
+ *  05 / mining 08, chemical ⇐ coke-petroleum 19 / chemicals 20, cement ⇐ 23,
+ *  steel ⇐ basic metals 24. Port (subtype 12) is deliberately NOT gated — real
+ *  ports host chemical / food / metal tenants, so a strict gate would under-stamp. */
+const HEAVY_SUBTYPE_NACE: Record<number, ReadonlySet<number>> = {
+  [SUBTYPE_QUARRY]: new Set([5, 8]),
+  [SUBTYPE_CHEMICAL]: new Set([19, 20]),
+  [SUBTYPE_CEMENT]: new Set([23]),
+  [SUBTYPE_STEEL]: new Set([24]),
+}
 
 /** What one registry row brings to the contest (precomputed once per facility). */
 export interface MatchFacility {
@@ -87,13 +108,17 @@ export function edgeDistM(f: { lat: number; lon: number }, p: MatchPolygon): num
  * classic HQ-registered-address failure, not a signal (/gg Gemini CRITICAL).
  * Families per /gg #4: farm ⇐ NACE 01-03 (a livestock E-PRTR facility SHOULD
  * stamp the farm), warehouse ⇐ 46/47/52 (wholesale/logistics), office ⇐ nothing.
- * Everything else (factory/generic/mine/…) accepts any NACE.
+ * The heavy monolithic subtypes (quarry/chemical/cement/steel) accept only
+ * their own division (see HEAVY_SUBTYPE_NACE). Everything else — generic
+ * industrial (0), factory (2), and port (12) — accepts any NACE.
  */
 export function quietGateBlocks(subtype: number, nace4: number): boolean {
   const div = Math.floor(nace4 / 100) // NACE 2-digit division — the engine's own granularity
   if (subtype === SUBTYPE_FARM) return !(div >= 1 && div <= 3)
   if (subtype === SUBTYPE_WAREHOUSE) return !(div === 46 || div === 47 || div === 52)
   if (subtype === SUBTYPE_OFFICE) return true
+  const heavy = HEAVY_SUBTYPE_NACE[subtype]
+  if (heavy) return !heavy.has(div)
   return false
 }
 

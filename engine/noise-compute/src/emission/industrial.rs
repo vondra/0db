@@ -350,10 +350,25 @@ pub fn subtype_profile(subtype: u8) -> Option<IndustrialProfile> {
 
 /// Compute industrial Lw from profile and site area.
 /// Area capped at 500,000 m² (50 ha) — larger OSM polygons contain buffer zones,
-/// not additional emission sources.
+/// not additional emission sources. (Wave 2 makes this cap per-sector: heavy
+/// industry radiates across its whole footprint, so the flat cap under-predicts
+/// a steelworks; low-fill sectors keep it. See docs/dev plan I-04.)
+///
+/// **C1 spectral-debt migration (2026-07).** Every `base_lw` above was
+/// calibrated against CZ SHM 2022 UNDER the pre-2026-06 normalization, which
+/// emitted `base_lw + a_weighted_total(spectrum)` — a hidden +4.9..+6.4 dB(A)
+/// surplus (audit I-03). The 2026-06 fix (`spectrum::normalized_emission_bands`)
+/// correctly made `base_lw` the honest A-weighted total, which dropped effective
+/// emission by exactly that surplus and left the whole layer ~5-6 dB low.
+/// Adding the SAME deterministic scalar back here restores the SHM-era
+/// calibration under the corrected spectrum — no fit, and the normalization
+/// (which is correct) is NOT reverted. The per-sector residual against
+/// multi-country anchors is C2 (Wave 2). Wind (source_type 10) never reaches
+/// this fn — it returns early in `prepare_industrial_points`.
 pub fn industrial_lw(profile: &IndustrialProfile, area_m2: f64) -> f64 {
     let effective = area_m2.clamp(100.0, 500_000.0);
-    profile.base_lw + 10.0 * (effective / 10000.0).log10()
+    let spectral_debt = crate::propagation::iso9613::a_weighted_total(&profile.spectrum);
+    profile.base_lw + spectral_debt + 10.0 * (effective / 10000.0).log10()
 }
 
 /// Compute emission bands, normalized so `a_weighted_total(bands) == lw`.
