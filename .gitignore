@@ -50,6 +50,8 @@ scripts/data-hub-cert.pem
 scripts/.host-costs.lock
 scripts/.hub-env
 scripts/.hosts.lock
+# fleet provisioning state (local, per-machine — same category as scripts/hosts above)
+scripts/world/fleet.sqlite*
 .gemini/
 # Bruitparif Rumeur licence unverified for the API (adapter header) — local-only until confirmed
 benchmarks/validation/snapshots/bruitparif-*.json
