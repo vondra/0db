@@ -205,7 +205,15 @@ test('filesystem failures are retried immediately during startup', async (t) => 
   assert.equal((await check()).ready, true)
 })
 
-test('readiness rejects a same-size atomic PMTiles replacement', async (t) => {
+// The readiness contract was RELAXED on purpose (owner call, 2026-07-15): the boot-time
+// stat-identity gate (dev/ino/ctime vs the publisher proof) caught zero real faults in
+// production and broke the first deploy after a PLANNED storage move (Track D: every
+// archive's inode changed, readiness went permanently red, release activation blocked).
+// Content integrity belongs to pack-time validation, fsck and --rebind-verified; boot-time
+// readiness keeps only the cheap operational invariants (manifest coherence + exact size).
+// These tests LOCK IN the relaxation so a future "harden readiness" pass can't quietly
+// re-introduce the planned-maintenance foot-gun without meeting this decision record.
+test('readiness ACCEPTS a same-size archive replacement — identity is deliberately not verified at boot', async (t) => {
   const fixture = await readinessFixture()
   t.after(async () => rm(fixture.root, { recursive: true, force: true }))
   const total = fixture.layers.total
@@ -219,16 +227,15 @@ test('readiness rejects a same-size atomic PMTiles replacement', async (t) => {
     engineProbe: async () => {},
     filesystemCacheMs: 0,
   })()
-  assert.equal(result.ready, false)
-  assert.deepEqual(result.failed, ['pmtiles'])
-  assert.match(result.errors.pmtiles ?? '', /identity does not match its sha256 publisher proof/)
+  assert.equal(result.ready, true)
 })
 
-test('readiness rejects manifest and proof sha256 changes that break their binding', async (t) => {
+test('readiness still rejects a malformed manifest sha256, but ignores proof mutations', async (t) => {
   const fixture = await readinessFixture()
   t.after(async () => rm(fixture.root, { recursive: true, force: true }))
   const total = fixture.layers.total
-  total.sha256 = '0'.repeat(64)
+  const goodSha256 = total.sha256
+  total.sha256 = 'NOT-A-SHA'
   await writeFile(
     join(fixture.pmtilesDir, 'current.json'),
     JSON.stringify({ build: 'b1', layers: fixture.layers }),
@@ -239,22 +246,20 @@ test('readiness rejects manifest and proof sha256 changes that break their bindi
     filesystemCacheMs: 0,
   })()
   assert.equal(badManifest.ready, false)
-  assert.match(badManifest.errors.pmtiles ?? '', /no matching publisher proof/)
+  assert.match(badManifest.errors.pmtiles ?? '', /invalid sha256/)
 
-  const originalSha256 = total.publisher_proof.sha256
-  total.sha256 = originalSha256
-  total.publisher_proof.sha256 = '0'.repeat(64)
+  total.sha256 = goodSha256
+  total.publisher_proof.sha256 = '0'.repeat(64)   // stale proof — boot-time readiness must not care
   await writeFile(
     join(fixture.pmtilesDir, 'current.json'),
     JSON.stringify({ build: 'b1', layers: fixture.layers }),
   )
-  const badProof = await createReadinessCheck({
+  const staleProof = await createReadinessCheck({
     ...fixture,
     engineProbe: async () => {},
     filesystemCacheMs: 0,
   })()
-  assert.equal(badProof.ready, false)
-  assert.match(badProof.errors.pmtiles ?? '', /no matching publisher proof/)
+  assert.equal(staleProof.ready, true)
 })
 
 test('readiness never opens PMTiles archive content after publisher verification', async (t) => {

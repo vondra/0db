@@ -67,21 +67,6 @@ type ManifestLayer = {
 
 const BUILD_ID = /^b[0-9]+$/
 const SHA256 = /^[a-f0-9]{64}$/
-const UNSIGNED_DECIMAL = /^(0|[1-9][0-9]*)$/
-const SIGNED_DECIMAL = /^(0|-?[1-9][0-9]*)$/
-
-function proofInteger(
-  value: unknown,
-  field: string,
-  manifestPath: string,
-  layer: string,
-  signed = false,
-): bigint {
-  if (typeof value !== 'string' || !(signed ? SIGNED_DECIMAL : UNSIGNED_DECIMAL).test(value)) {
-    throw new Error(`${manifestPath} layer ${layer} has invalid publisher proof ${field}`)
-  }
-  return BigInt(value)
-}
 
 async function checkPmtiles(pmtilesDir: string): Promise<void> {
   const manifestPath = join(pmtilesDir, 'current.json')
@@ -126,31 +111,24 @@ async function checkPmtiles(pmtilesDir: string): Promise<void> {
     if (typeof entry.sha256 !== 'string' || !SHA256.test(entry.sha256)) {
       throw new Error(`${manifestPath} layer ${layer} has invalid sha256`)
     }
-    const proof = entry.publisher_proof
-    if (!proof || proof.schema !== 'sha256-posix-stat-v1' || proof.sha256 !== entry.sha256) {
-      throw new Error(`${manifestPath} layer ${layer} has no matching publisher proof`)
-    }
+    // DELIBERATELY NO stat-identity (dev/ino/ctime) verification here any more (owner call,
+    // 2026-07-15). The strict identity gate ("sha256-posix-stat-v1" proof ↔ live stat) shipped
+    // 2026-07-14 and its production record was: real faults caught 0, deploys broken 1 — the
+    // planned Track D relocation of pmtiles/ to /data1 legitimately changed dev+ino+ctime of
+    // every archive, readiness went permanently red, and start.sh could no longer activate any
+    // release until a 330 GB content re-hash re-bound the proofs. This project MOVES its data
+    // on purpose (disk rebalances, the planned second server), so inode-identity fires exactly
+    // during planned maintenance — while the incident class that motivated it (the packer
+    // writing corrupt bytes, 2026-07-13) is structurally uncatchable by ANY post-publish check
+    // that trusts the packer's own attestation. Content integrity lives where reading the
+    // bytes is worth it: pack-time validation (tile-store-pack's decode checks), fsck, and the
+    // on-demand --rebind-verified full re-hash. Boot-time readiness keeps the cheap invariants
+    // that catch real operational mistakes: manifest coherence, per-layer completeness, safe
+    // archive names, and exact size match (truncation / wrong-file swap).
     const archivePath = join(pmtilesDir, entry.file)
     const archive = await stat(archivePath, { bigint: true })
     if (!archive.isFile() || archive.size !== BigInt(entry.bytes as number)) {
       throw new Error(`${archivePath} size ${archive.size} does not match manifest ${entry.bytes}`)
-    }
-    const expectedIdentity = {
-      dev: proofInteger(proof.dev, 'dev', manifestPath, layer),
-      ino: proofInteger(proof.ino, 'ino', manifestPath, layer),
-      size: proofInteger(proof.size, 'size', manifestPath, layer),
-      mtimeNs: proofInteger(proof.mtime_ns, 'mtime_ns', manifestPath, layer, true),
-      ctimeNs: proofInteger(proof.ctime_ns, 'ctime_ns', manifestPath, layer, true),
-    }
-    if (expectedIdentity.dev !== archive.dev
-      || expectedIdentity.ino !== archive.ino
-      || expectedIdentity.size !== archive.size
-      || expectedIdentity.mtimeNs !== archive.mtimeNs
-      || expectedIdentity.ctimeNs !== archive.ctimeNs) {
-      throw new Error(`${archivePath} identity does not match its sha256 publisher proof`)
-    }
-    if (expectedIdentity.size !== BigInt(entry.bytes as number)) {
-      throw new Error(`${manifestPath} layer ${layer} publisher proof size does not match bytes`)
     }
   }
 }
