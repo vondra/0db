@@ -484,3 +484,10 @@ Our web server keeps standard access logs (IP address, requested URL without que
 Questions or requests: [hello@0db.app](mailto:hello@0db.app).
 
 </details>
+
+---
+
+## Contact & status
+
+- **Email:** [hello@0db.app](mailto:hello@0db.app)
+- **Service status:** [status.0db.app](https://status.0db.app) — live uptime of the map and tiles
