@@ -1,9 +1,22 @@
 #!/usr/bin/env node
-// One-time transition for archives published by the pre-proof tile-store-pack.
-// The old packer already computed every manifest sha256 after finalizing the
-// immutable file. This command explicitly trusts that publisher attestation,
-// binds it to the archive's current stat identity, and atomically replaces the
-// manifest. It never reads archive content and never runs automatically.
+// Publisher-proof maintenance for the pmtiles manifest. Two explicit modes,
+// neither ever runs automatically:
+//
+//   --trust-existing-packer-output   One-time transition for archives published
+//       by the pre-proof tile-store-pack: trusts the old packer's manifest
+//       sha256 attestation (never reads archive content) and binds it to the
+//       archive's current stat identity.
+//
+//   --rebind-verified   Re-bind identities after a LEGITIMATE whole-archive
+//       move (e.g. the 2026-07-14 Track D relocation of pmtiles/ from /data2
+//       to /data1: rsync preserves mtime and bytes, but dev/ino/ctime change
+//       by definition, so every sha256-posix-stat-v1 proof goes stale and
+//       readiness hard-fails — hit live 2026-07-15, first qm-app restart
+//       after the move). STRONGER trust anchor than the legacy mode: it
+//       re-hashes every archive's full content and requires it to equal the
+//       manifest sha256 before stamping the new identity — nothing is trusted
+//       that isn't re-verified, so a tampered archive can't launder a fresh
+//       proof through a "move".
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { basename, join, resolve } from 'node:path'
@@ -68,7 +81,12 @@ export async function bootstrapPublisherProofs(pmtilesDir, expectedManifestSha25
     entry.publisher_proof = proof(archive, entry.sha256)
   }
 
-  // Detect even an out-of-band writer that ignores .pack.lock before rename.
+  return atomicReplaceManifest(pmtilesDir, manifestPath, original, manifest, actualManifestSha256)
+}
+
+// Shared atomic tail for both modes: re-read to detect even an out-of-band
+// writer that ignores .pack.lock, then write-fsync-rename-dirsync.
+async function atomicReplaceManifest(pmtilesDir, manifestPath, original, manifest, beforeSha256) {
   const beforePublish = await readFile(manifestPath)
   if (!beforePublish.equals(original)) throw new Error('current.json changed during proof bootstrap')
 
@@ -89,17 +107,70 @@ export async function bootstrapPublisherProofs(pmtilesDir, expectedManifestSha25
     if (handle) await handle.close().catch(() => {})
     await rm(temporary, { force: true })
   }
-  return { before: actualManifestSha256, after: digest(replacement) }
+  return { before: beforeSha256, after: digest(replacement) }
+}
+
+// --rebind-verified: see the file header. Every archive is FULLY re-hashed and
+// must equal the manifest sha256; identity is stat'd from the SAME open handle
+// before and after the hash and must not change mid-read (the readiness
+// checker's own "stable open file identity" discipline) — only then is the
+// fresh identity stamped into the proof.
+export async function rebindVerifiedProofs(pmtilesDir) {
+  const manifestPath = join(pmtilesDir, 'current.json')
+  const original = await readFile(manifestPath)
+  const manifest = JSON.parse(original.toString('utf8'))
+  if (!manifest.layers || typeof manifest.layers !== 'object') {
+    throw new Error('current.json has no layers object')
+  }
+  for (const [layer, entry] of Object.entries(manifest.layers)) {
+    if (!entry || typeof entry !== 'object'
+      || typeof entry.file !== 'string' || basename(entry.file) !== entry.file
+      || typeof entry.sha256 !== 'string' || !SHA256.test(entry.sha256)
+      || !Number.isSafeInteger(entry.bytes) || entry.bytes <= 0) {
+      throw new Error(`current.json layer ${layer} is not a valid packer entry`)
+    }
+    const proofBefore = entry.publisher_proof
+    if (!proofBefore || proofBefore.schema !== 'sha256-posix-stat-v1' || proofBefore.sha256 !== entry.sha256) {
+      throw new Error(
+        `current.json layer ${layer} has no consistent publisher_proof — this mode only `
+        + 're-binds a moved-but-already-proofed manifest (legacy manifests: --trust-existing-packer-output)',
+      )
+    }
+    const handle = await open(join(pmtilesDir, entry.file), 'r')
+    try {
+      const before = await handle.stat({ bigint: true })
+      if (!before.isFile() || before.size !== BigInt(entry.bytes)) {
+        throw new Error(`current.json layer ${layer} archive size does not match its published bytes`)
+      }
+      const hash = createHash('sha256')
+      for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk)
+      const actual = hash.digest('hex')
+      if (actual !== entry.sha256) {
+        throw new Error(`current.json layer ${layer} archive content sha256 ${actual} != manifest ${entry.sha256} — REFUSING to re-bind a changed archive`)
+      }
+      const after = await handle.stat({ bigint: true })
+      if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
+        || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) {
+        throw new Error(`current.json layer ${layer} archive changed while being verified`)
+      }
+      entry.publisher_proof = proof(after, entry.sha256)
+    } finally {
+      await handle.close().catch(() => {})
+    }
+  }
+  return atomicReplaceManifest(pmtilesDir, manifestPath, original, manifest, digest(original))
 }
 
 async function main() {
-  const [directory, trustFlag, expectedFlag, expected] = process.argv.slice(2)
-  if (trustFlag !== '--trust-existing-packer-output'
-    || expectedFlag !== '--expected-manifest-sha256'
-    || !expected || !SHA256.test(expected)) {
+  const [directory, modeFlag, expectedFlag, expected] = process.argv.slice(2)
+  const legacy = modeFlag === '--trust-existing-packer-output'
+    && expectedFlag === '--expected-manifest-sha256' && expected && SHA256.test(expected)
+  const rebind = modeFlag === '--rebind-verified' && expectedFlag === undefined
+  if (!legacy && !rebind) {
     throw new Error(
       'usage: bootstrap-pmtiles-proof.mjs <pmtiles-dir> '
-      + '--trust-existing-packer-output --expected-manifest-sha256 <sha256>',
+      + '--trust-existing-packer-output --expected-manifest-sha256 <sha256>\n'
+      + '   or: bootstrap-pmtiles-proof.mjs <pmtiles-dir> --rebind-verified',
     )
   }
   const pmtilesDir = resolve(directory)
@@ -113,8 +184,10 @@ async function main() {
     })
     process.exit(locked.status ?? 1)
   }
-  const result = await bootstrapPublisherProofs(pmtilesDir, expected)
-  console.log(`publisher proofs bootstrapped atomically: ${result.before} -> ${result.after}`)
+  const result = legacy
+    ? await bootstrapPublisherProofs(pmtilesDir, expected)
+    : await rebindVerifiedProofs(pmtilesDir)
+  console.log(`publisher proofs ${legacy ? 'bootstrapped' : 're-bound (content-verified)'} atomically: ${result.before} -> ${result.after}`)
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
