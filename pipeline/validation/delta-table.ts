@@ -14,6 +14,7 @@ import { resolve } from 'node:path'
 import { REPO_ROOT, VALIDATION_DATA_DIR, validateSnapshot, type Snapshot } from './lib.ts'
 import { classifyComparison, type ComparisonVerdict } from './comparison.ts'
 import { loadApprovedSnapshots } from './snapshot-loader.mjs'
+import { fetchModelCohort as fetchModelCohortShared, type ModelCohort } from './cohort-client.mjs'
 
 const SERVER = process.env.CHECK_WORLD_SERVER || 'http://localhost:8520'
 const CONCURRENCY = 2
@@ -60,31 +61,12 @@ function requireSameInstance(response: Response, label: string): void {
   }
 }
 
-type ModelCohort = {
-  schema_version: 1
-  cohort_id: string
-  cache_ttl_ms: number
-  runtime_sha256: string
-  prepared_sha256: string
-}
-
-async function fetchModelCohort(label: string): Promise<ModelCohort> {
-  const response = await fetch(`${SERVER}/api/validation/cohort`, {
-    signal: AbortSignal.timeout(COHORT_TIMEOUT_MS),
-  })
-  requireSameInstance(response, label)
-  if (!response.ok) throw new Error(`${label}: HTTP ${response.status}`)
-  const value = await response.json() as Partial<ModelCohort>
-  if (value.schema_version !== 1
-    || !/^[a-f0-9]{64}$/.test(value.cohort_id ?? '')
-    || !Number.isInteger(value.cache_ttl_ms) || (value.cache_ttl_ms ?? -1) < 0
-    || (value.cache_ttl_ms ?? Infinity) > 60_000
-    || !/^[a-f0-9]{64}$/.test(value.runtime_sha256 ?? '')
-    || !/^[a-f0-9]{64}$/.test(value.prepared_sha256 ?? '')) {
-    throw new Error(`${label}: malformed validation cohort response`)
-  }
-  return value as ModelCohort
-}
+// The /api/validation/cohort contract lives ONCE in cohort-client.mjs (shared with the
+// /check-world skill's run.mjs — /simplify 2026-07-15); this wrapper only pins our SERVER,
+// timeout, and the per-run instance-coherence check.
+const fetchModelCohort = (label: string): Promise<ModelCohort> => fetchModelCohortShared({
+  server: SERVER, timeoutMs: COHORT_TIMEOUT_MS, label, onResponse: requireSameInstance,
+})
 
 let modelCohort: ModelCohort
 let modelCohortReceivedAt: number

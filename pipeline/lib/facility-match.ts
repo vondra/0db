@@ -96,8 +96,12 @@ export function readPolygons(table: { numRows: number; getChild: (n: string) => 
  * "inside". This is containment-lite — real WKB point-in-polygon only if
  * verification ever shows this losing true matches (/gg resolution #3).
  */
+/** Equivalent-circle radius of a polygon area — the one containment-lite primitive shared by
+ * edgeDistM and overlapsSameSite (a future point-in-polygon upgrade replaces exactly this). */
+const equivalentCircleRadiusM = (areaM2: number): number => Math.sqrt(Math.max(areaM2, 0) / Math.PI)
+
 export function edgeDistM(f: { lat: number; lon: number }, p: MatchPolygon): number {
-  return flatDist(f.lat, f.lon, p.lat, p.lon) - Math.sqrt(Math.max(p.areaM2, 0) / Math.PI)
+  return flatDist(f.lat, f.lon, p.lat, p.lon) - equivalentCircleRadiusM(p.areaM2)
 }
 
 /**
@@ -202,7 +206,7 @@ export function overlapsSameSite(a: OverlapWinner, b: OverlapWinner): boolean {
   const amin = Math.min(a.areaM2, b.areaM2)
   if (amin < OVERLAP_MIN_AREA_M2) return false
   if (Math.max(a.areaM2, b.areaM2) / amin > OVERLAP_AREA_RATIO_MAX) return false
-  const rMin = Math.sqrt(amin / Math.PI)
+  const rMin = equivalentCircleRadiusM(amin)
   return flatDist(a.lat, a.lon, b.lat, b.lon) <= OVERLAP_CENTROID_RADIUS_FACTOR * rMin
 }
 

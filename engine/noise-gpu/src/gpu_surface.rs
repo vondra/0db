@@ -441,9 +441,10 @@ fn process_region(
 }
 
 /// STREAM mode (`--stream`): the persistent warm surface worker the cluster orchestrator feeds.
-/// CUDA context + scatter PTX + admin table resident, and ONE process-wide RealRasters shared by
-/// every stream worker and every rayon crop worker for the whole cell stream, so the mmap-LRU
-/// stays warm across regions AND its cap stays a true process bound (see the module comment).
+/// CUDA context + scatter PTX + admin table resident, and a PER-THREAD RealRasters instance
+/// (thread_local RASTERS — zero cross-thread sync; see the decision record above: the shared
+/// store was tried and reverted, cache contention gutted crop throughput) reused across the
+/// whole cell stream, so each thread's mmap-LRU stays warm across regions.
 /// Reads output R4 cell IDs (one hex/line) from stdin, builds each cell's owned tiles, and prints
 /// `done <r4hex> <written> <skipped> <ms>` (or `fail <r4hex> <err>`) as it finishes — the SAME
 /// line protocol as gpu-airborne --stream, so the box agent drives either worker identically.

@@ -20,23 +20,21 @@ async function cohortFixture(t: TestContext) {
   await writeFile(preparedPath, 'prepared-a')
   await writeFile(sourceReaderPath, 'native-addon')
 
+  const providerOptions = {
+    cacheMs: 0,
+    dataYear: '2099',
+    h3r4Dir,
+    preparedAuxiliaryInputs: [],
+    runtimeIdentityInputs: [],
+    runtimeRoot,
+    sourceReaderPath,
+  }
   return {
     h3r4Dir,
     preparedPath,
     runtimePath,
-    providerOptions: {
-      cacheMs: 0,
-      dataYear: '2099',
-      h3r4Dir,
-      preparedAuxiliaryInputs: [],
-      runtimeIdentityInputs: [],
-      runtimeRoot,
-      sourceReaderPath,
-    },
-    provider: createValidationCohortProvider({
-      cacheMs: 0, dataYear: '2099', h3r4Dir, preparedAuxiliaryInputs: [], runtimeIdentityInputs: [],
-      runtimeRoot, sourceReaderPath,
-    }),
+    providerOptions,
+    provider: createValidationCohortProvider(providerOptions),
   }
 }
 
