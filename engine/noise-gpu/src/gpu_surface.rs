@@ -12,6 +12,7 @@
 //!   # a whole region (production), road+rail → HM3:
 //!   NOISE_GPU_PREPARED=/dev/shm/qmap/prepared DATA_YEAR=2026 \
 //!     gpu-surface --layers road,rail --bbox 38.27,-9.78,39.17,-8.50 --output OUT
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -45,21 +46,27 @@ const ETA: f64 = 0.40; // energy-budget skip threshold (production default)
 const TW: f64 = 8.0; // pack_tile swizzle width — the binned kernel ignores it (only
                      // the un-binned `rail` bench kernel in e2-full swizzles by it)
 
-// Raster access is ONE process-wide `RealRasters`, shared by reference across every rayon
-// crop worker and every --stream worker — NOT per-thread. A previous revision kept a
-// thread_local instance per rayon worker "so the mmap-LRU stays warm", reasoning each
-// instance is LRU-bounded so it "never grows over a multi-day --stream run" — true per
-// instance, catastrophically multiplied in aggregate: the pool has ~cores workers, so a
-// 48-thread box ran up to 48 independent caches, each entitled to the full per-store cap,
-// with the SAME 1° tile mmapped by every worker whose cells happened to touch it. Confirmed
-// live 2026-07-15 (boxes 44905696/44910849 idle 8h/2h): gpu-surface held 791 distinct
-// dem/raster tiles mapped (~12 GB), one file mapped 31×, while build-heatmap-surface — which
-// has always shared ONE RealRasters across all its rayon workers — sat exactly at the
-// 288-tile cap with every file mapped once. The pinned tmpfs bytes zeroed the agent's
-// free-scratch budget, so the hub stopped granting work and the box starved silently.
-// TileStore is slot-level-locked (Vec<Mutex<TileSlot>>), so cross-thread sharing is the
-// design raster-reader was built for; one shared store is also strictly WARMER than
-// per-thread stores (every worker sees every other worker's loads).
+thread_local! {
+    /// One `RealRasters` per rayon worker, REUSED across every region/cell. This is a
+    /// DELIBERATE, twice-decided design — do not "fix" it to a single shared store again:
+    ///
+    /// 2026-07-15 morning, a shared process-wide store replaced this to stop an aggregate
+    /// mmap leak (48 threads × per-thread caps pinned ~12 GB of tmpfs, one tile mapped 31×,
+    /// two boxes starved 8h/2h because the agent's evict() rightly refuses to delete mapped
+    /// files). The leak diagnosis was right; the fix location was wrong: sharing put slot
+    /// Mutexes + LRU touch atomics onto the crop hot path, and with 24-48 rayon workers
+    /// sampling millions of pixels the cache-line traffic gutted crop throughput — GPUs
+    /// dropped from saturated to ~30-50% duty in 4-7s bursts (owner caught it on the
+    /// dashboard within the hour; CPU read "96% busy" doing coherence work). Reverted the
+    /// same day: per-thread stores have ZERO cross-thread synchronization, which is what
+    /// line-rate cropping actually needs — the L2/cache-locality argument, per the owner.
+    ///
+    /// The DISK side of the original incident is solved in the right layers instead:
+    /// the agent's lease budget counts evictable cache as free (economics fix), and its
+    /// starved self-heal recycles a pinned-full engine within ~3 minutes (fresh process =
+    /// zero mmaps = evict can finally reclaim) — the 8-hour silent stall cannot recur.
+    static RASTERS: RefCell<Option<RealRasters>> = const { RefCell::new(None) };
+}
 
 fn env(k: &str, d: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| d.to_string())
@@ -312,10 +319,9 @@ fn process_block(
 
 /// Build one centre-R4 region's owned tiles for every layer — the shared body of the batch loop
 /// and the --stream loop. Loads the region's grid_disk(1) rows + barriers once, uploads sources
-/// once, crops blocks in parallel over the ONE shared process-wide `rasters` (see the module
-/// comment above — per-thread instances multiplied the mmap-LRU cap by pool size and starved
-/// two boxes), then runs the sequential GPU kernel loop. Returns (written, skipped) tile-layers
-/// for the `done` line.
+/// once, crops blocks in parallel (each rayon worker on its own persistent RASTERS instance —
+/// see the thread_local's decision-record comment), then runs the sequential GPU kernel loop.
+/// Returns (written, skipped) tile-layers for the `done` line.
 fn process_region(
     r4: u64,
     region_tiles: &[(u32, u32)],
@@ -323,7 +329,7 @@ fn process_region(
     cfg: &Cfg,
     dev: &Arc<CudaDevice>,
     f: &CudaFunction,
-    rasters: &RealRasters,
+    prepared: &str,
     stats: &mut BTreeMap<&'static str, LayerStat>,
     prog: &mut Progress,
 ) -> Result<(usize, usize)> {
@@ -393,21 +399,24 @@ fn process_region(
             .or_default()
             .push((tx, ty));
     }
-    // Crop every block's shared halo in PARALLEL over a SHARED rayon pool, all workers reading the
-    // ONE shared `rasters` (slot-level Mutexes inside TileStore make this safe AND keep the LRU cap
-    // a true process-wide bound — the per-thread-instance revision this replaces let the cap
-    // multiply by pool size; see the module comment). The crop uses all cores instead of one, which
-    // a serial crop starved on a crop-bound box (the i9/2080ti: dense cells, weak GPU → crop is the
-    // bottleneck). The GPU kernel loop below stays SEQUENTIAL over the SAME sorted block order, so
-    // output is byte-identical.
+    // Crop every block's shared halo in PARALLEL over a SHARED rayon pool, REUSING each rayon
+    // worker's persistent RealRasters (RASTERS thread_local — zero cross-thread synchronization
+    // on the sampling hot path; see the decision record at the thread_local). The crop uses all
+    // cores instead of one, which a serial crop starved on a crop-bound box (the i9/2080ti:
+    // dense cells, weak GPU → crop is the bottleneck). The GPU kernel loop below stays
+    // SEQUENTIAL over the SAME sorted block order, so output is byte-identical.
     let block_keys: Vec<(u32, u32)> = blocks.keys().copied().collect();
     let batches: Vec<((u32, u32), TileBatch)> = block_keys
         .par_iter()
         .map(|&(bx, by)| {
-            (
-                (bx, by),
-                TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters),
-            )
+            RASTERS.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                let rasters = slot.get_or_insert_with(|| RealRasters::new(Path::new(prepared)));
+                (
+                    (bx, by),
+                    TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters),
+                )
+            })
         })
         .collect();
     for (key, batch) in &batches {
@@ -470,9 +479,6 @@ fn run_stream(
         .parse()
         .unwrap_or(2)
         .max(1);
-    // The ONE process-wide raster store (see module comment) — shared by reference into every
-    // stream worker below and, through process_region, every rayon crop worker.
-    let rasters = RealRasters::new(Path::new(prepared));
     let names: Vec<&str> = layers.iter().map(|l| l.dir()).collect();
     eprintln!(
         "stream: layers={names:?}, halo={halo_m:.0}m, batch={batch_n}, {n_workers} worker(s) — reading R4 cells from stdin"
@@ -513,14 +519,13 @@ fn run_stream(
     });
 
     let cfg = &cfg;
-    let rasters = &rasters;
     std::thread::scope(|scope| {
         for _ in 0..n_workers {
             let work = Arc::clone(&work);
             let out = Arc::clone(&out);
             scope.spawn(move || {
                 // Warm per-worker state: own CUDA stream (overlaps on the GPU) + own stats/prog
-                // (worker-local, gg); rasters are the ONE shared process store, not per-worker.
+                // (worker-local, gg); raster access via the per-rayon-thread RASTERS instances.
                 // Safe under UNIQUE centre-R4 ownership (the scheduler leases each cell once per stream):
                 // each cell's output tiles are disjoint, so two workers never write the same .bin (gg-codex).
                 let (dev, f) = warm_device_on(true);
@@ -548,7 +553,7 @@ fn run_stream(
                     let t = Instant::now();
                     let tiles = region_tiles(r4, z);
                     let line = match process_region(
-                        r4, &tiles, layers, cfg, &dev, &f, rasters, &mut stats, &mut prog,
+                        r4, &tiles, layers, cfg, &dev, &f, prepared, &mut stats, &mut prog,
                     ) {
                         Ok((w, s)) => format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis()),
                         Err(e) => format!("fail {r4:x} {e}"),
@@ -726,9 +731,6 @@ fn main() -> Result<()> {
     );
 
     let (dev, f) = warm_device();
-    // The ONE process-wide raster store (see module comment) — shared across every
-    // region's parallel crop below.
-    let rasters = RealRasters::new(Path::new(&prepared));
 
     // OFF by default: no production change until per-box-validated. When set, the
     // C9 gate routes barrier-bearing chunks here instead of demoting them to CPU.
@@ -760,7 +762,7 @@ fn main() -> Result<()> {
             &cfg,
             &dev,
             &f,
-            &rasters,
+            &prepared,
             &mut stats,
             &mut prog,
         )?;
