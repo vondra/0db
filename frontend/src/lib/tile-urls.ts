@@ -37,6 +37,10 @@ const MANIFEST_POLL_MS = 10 * 60 * 1000
 export interface TileBuilds {
   latest: string
   byLayer: Record<string, string>
+  /** Tile hostname prefix (manifest `tile_base`, e.g. "https://t.0db.app") —
+   *  '' = same-origin. Deployment topology, delivered with the manifest so a
+   *  serving move never needs a frontend rebuild. */
+  base: string
 }
 
 let currentBuilds: TileBuilds | null = null
@@ -64,7 +68,7 @@ function snapshot(): TileBuilds | null {
  */
 export function tileUrl(builds: TileBuilds, source: string, z: number, x: number, y: number): string {
   const b = builds.byLayer[source] ?? builds.latest
-  return `/api/tiles/${b}/${source}/${z}/${x}/${y}.bin`
+  return `${builds.base}/api/tiles/${b}/${source}/${z}/${x}/${y}.bin`
 }
 
 /**
@@ -104,6 +108,7 @@ async function refreshTileBuild(): Promise<void> {
     if (!res.ok) return // nothing published yet → stay as-is
     const manifest = (await res.json()) as {
       build?: unknown
+      tile_base?: unknown
       layers?: Record<string, { build?: unknown; file?: unknown }>
     }
     if (typeof manifest.build !== 'string' || !BUILD_ID.test(manifest.build)) return
@@ -119,7 +124,12 @@ async function refreshTileBuild(): Promise<void> {
             : undefined
       byLayer[layer] = b ?? manifest.build
     }
-    const next: TileBuilds = { latest: manifest.build, byLayer }
+    // Only an https/relative-safe absolute base is accepted — anything odd
+    // degrades to same-origin rather than sending tile traffic somewhere weird.
+    const base = typeof manifest.tile_base === 'string' && /^https:\/\/[a-z0-9.-]+$/i.test(manifest.tile_base)
+      ? manifest.tile_base
+      : ''
+    const next: TileBuilds = { latest: manifest.build, byLayer, base }
     if (JSON.stringify(next) !== JSON.stringify(currentBuilds)) {
       currentBuilds = next
       for (const cb of listeners) cb()

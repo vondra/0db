@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { TreePine, Home } from 'lucide-react'
+import { TreePine } from 'lucide-react'
 import type { RealEstateFilters } from './RealEstateLayer'
 import { QUIET_THRESHOLD_MIN, QUIET_THRESHOLD_MAX, QUIET_THRESHOLD_STEP } from '../hooks/useUrlState'
 import { Switch } from './ui/switch'
@@ -55,7 +55,6 @@ function NoiseSlider({ value, onChange, min, max, step = 1, testId }: {
 export default function OverlayControls({
   quietClustersEnabled, onQuietClustersChange,
   quietThreshold, onQuietThresholdChange,
-  realEstateFilters: f, onRealEstateChange,
 }: OverlayControlsProps) {
   return (
     <div>
@@ -70,33 +69,10 @@ export default function OverlayControls({
         <NoiseSlider value={quietThreshold} onChange={onQuietThresholdChange} min={QUIET_THRESHOLD_MIN} max={QUIET_THRESHOLD_MAX} step={QUIET_THRESHOLD_STEP} testId="quiet-threshold" />
       )}
 
-      <ToggleRow
-        active={f.enabled}
-        icon={<Home className="size-4" />}
-        label="Properties"
-        tooltip="Show properties for sale/rent with noise levels"
-        onClick={() => onRealEstateChange({ ...f, enabled: !f.enabled })}
-      />
-      {f.enabled && (
-        <div className="ml-7 mt-0.5 mb-1 space-y-1.5">
-          <div className="flex gap-1">
-            {(['all', 'land', 'house'] as const).map(t => (
-              <button key={t} onClick={() => onRealEstateChange({ ...f, propertyType: t })}
-                className={`px-2 py-0.5 text-[11px] rounded-md transition-colors ${
-                  f.propertyType === t ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-accent'
-                }`}>{t === 'all' ? 'All' : t === 'land' ? 'Land' : 'Houses'}</button>
-            ))}
-            <span className="mx-1 border-l border-border" />
-            {(['buy', 'rent'] as const).map(t => (
-              <button key={t} onClick={() => onRealEstateChange({ ...f, listingType: f.listingType === t ? 'all' : t })}
-                className={`px-2 py-0.5 text-[11px] rounded-md transition-colors ${
-                  f.listingType === t ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-accent'
-                }`}>{t === 'buy' ? 'Buy' : 'Rent'}</button>
-            ))}
-          </div>
-          <NoiseSlider value={f.maxNoise} onChange={(v) => onRealEstateChange({ ...f, maxNoise: v })} min={40} max={75} testId="max-noise" />
-        </div>
-      )}
+      {/* Properties (real estate) HIDDEN before launch (owner 2026-07-15): the data
+          pipeline isn't ready and a dead toggle would confuse visitors. The layer,
+          filters, URL state and props all stay wired — restore by re-adding the
+          ToggleRow + filter block (git history of this file has the exact JSX). */}
     </div>
   )
 }

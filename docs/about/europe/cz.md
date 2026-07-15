@@ -66,17 +66,9 @@ For now, `trains_freight` remains 0 in the enriched data. CNOSSOS-EU defaults ar
   - Strategic noise map 2022 (SHM) — Ldvn bands (day) and Ln bands (night)
   - Useful for per-street validation in Prague area
 
-## Real estate
+## Real estate — in preparation
 
-Sources updated twice daily:
-
-| Source | Type | Notes |
-|--------|------|-------|
-| [Bezrealitky.cz](https://bezrealitky.cz) | Direct sellers (land plots + houses) | Active source since 2026-07 |
-| ~~Sreality.cz~~ | — | Retired: the public API was removed with the 2026 site redesign and their terms now prohibit database extraction |
-
-Categories: stavební pozemky, lesy, louky, pole, zahrady + rodinné domy.
-
-Properties displayed on the map with noise level at their location.
-Default filter: properties below 60 dB Lden (adjustable 40–75 dB).
-Only listings with verified GPS coordinates are included.
+Real-estate listings filtered by noise level are planned for the Czech Republic
+but not available yet — we are preparing the data sources. The feature will show
+land plots and houses on the map with the noise level at their location and a
+configurable Lden filter.

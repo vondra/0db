@@ -391,19 +391,15 @@ A muted ramp keyed to Lden: transparent below ~15 dB, pale blue-grey at low leve
 ### Toggles
 
 - **Source layers:** Roads, Railways, Industrial, Buildings, and Aircraft (ground ops, airborne, cruise) — each toggleable independently
-- **Overlays:** Quiet zones (areas below a threshold), Properties (real estate filtered by noise)
+- **Overlays:** Quiet zones (areas below a threshold)
 
 ---
 
 ## Overlays
 
-### Real estate
+### Real estate — in preparation
 
-The map can display real estate listings filtered by noise level. Czech listings come from Bezrealitky.cz (rebuilt 2026-07 after Sreality retired its public API); more countries are being evaluated — see individual country pages.
-
-- Each property's noise is sampled from the published z12 noise raster at its location — the same tiles the map shows
-- Default filter: show only properties below 60 dB Lden
-- Focus: land plots and houses — building plots, forests, meadows, gardens, and residential houses
+Real-estate listings filtered by noise level are planned but not available yet — we are preparing the data sources. The feature will sample each property's noise from the published z12 noise raster (the same tiles the map shows) and filter listings by a configurable Lden threshold.
 
 ### Quiet zones
 
