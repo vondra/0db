@@ -22,7 +22,7 @@ import os, sys, hashlib
 # the heatmap COMPUTE crates — NOT aircraft-extract / osm-extract (data prep; their edits change DATA,
 # bumping data_ver via arrow mtimes, not code). Validator-only bins are dropped (not production output).
 CRATES = ("heatmap-aircraft", "noise-compute", "noise-gpu", "raster-reader")
-EXCLUDE_BINS = {"compare_floats.rs", "compare_hm3.rs", "e2_full.rs"}
+EXCLUDE_BINS = {"compare_floats.rs", "compare_hm3.rs", "e2_full.rs", "tile_store_fsck.rs"}
 # Global build inputs OUTSIDE the crates that still change produced tiles (e.g. rustflags=target-cpu).
 GLOBAL_BUILD = (".cargo/config.toml", ".cargo/config", "rust-toolchain.toml", "rust-toolchain")
 
