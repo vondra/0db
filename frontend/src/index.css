@@ -66,14 +66,25 @@ html, body {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231565c0' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='2' x2='5' y1='12' y2='12'/%3E%3Cline x1='19' x2='22' y1='12' y2='12'/%3E%3Cline x1='12' x2='12' y1='2' y2='5'/%3E%3Cline x1='12' x2='12' y1='19' y2='22'/%3E%3Ccircle cx='12' cy='12' r='7'/%3E%3Ccircle cx='12' cy='12' r='2.5' fill='%231565c0' stroke='none'/%3E%3C/svg%3E") !important;
 }
 
-/* Mobile: pinch replaces +/- (hidden), but the LOCATE button stays — lift
-   the corner above the horizontal basemap row. */
+/* Mobile: pinch replaces +/- (hidden). The LOCATE button sits on the basemap
+   row's baseline, directly to its RIGHT, at the row's 44 px tap-target size
+   (owner report 2026-07-15: it hid small under the row). left = 10px corner
+   + 3×44px BasemapBar buttons + 10px gap — keep in sync with BasemapBar.tsx. */
 @media (max-width: 767px) {
   .maplibregl-ctrl-bottom-left {
-    bottom: 72px !important;
+    bottom: 16px !important;
+    left: 156px !important;   /* 10px VISUAL gap: both boxes carry a 2px ring shadow */
   }
   .maplibregl-ctrl-bottom-left .maplibregl-ctrl-group:has(button.maplibregl-ctrl-zoom-in) {
     display: none !important;
+  }
+  .maplibregl-ctrl-bottom-left .maplibregl-ctrl-group:has(button.maplibregl-ctrl-geolocate) {
+    margin: 0;
+    border-radius: 10px;   /* = the row's rounded-lg (var(--radius)) */
+  }
+  .maplibregl-ctrl button.maplibregl-ctrl-geolocate {
+    width: 44px;
+    height: 44px;
   }
 }
 
