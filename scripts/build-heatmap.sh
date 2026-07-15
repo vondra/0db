@@ -40,6 +40,26 @@ TRANSCODE="$TARGET/tile-store-transcode"
 GPU_SURFACE="engine/noise-gpu/target/release/gpu-surface"  # --gpu: line layers on GPU
 
 log() { echo "[build-heatmap] $(date '+%H:%M:%S') $*"; }
+
+# Manual pyramid/combine writes take the SAME _combine flock qm-combine and worldctl publish
+# hold (/gg Codex, 2026-07-15: this path used to run UNLOCKED — a manual full combine could
+# TileStore::create-truncate total/ or a pyramid level mid-sidecar-write). BLOCKING acquire:
+# a manual run waits out the sidecar's batch (seconds-to-minutes), never skips or races.
+# Scoped per invocation, not around the whole script: the long kernel builds between store
+# writes must not starve qm-combine. Base-zoom ingest/transcode intentionally NOT wrapped —
+# concurrent base writes are the sidecar's documented, self-healing normal (its own header),
+# and tile-store-ingest carries its own store-root flock. LOCK is computed from the CANONICAL
+# stamps dir (combine-loop.sh's key), never from $OUTPUT — bbox runs reassign OUTPUT to a
+# run-scoped staging dir and a lock file there would lock nothing anyone else checks.
+source "$(dirname "${BASH_SOURCE[0]}")/world/store-lock.sh"
+COMBINE_LOCK="$DATA_ROOT/tiles/$DATA_YEAR/build/.stamps/.master._combine.lock"
+run_locked() {
+  mkdir -p "$(dirname "$COMBINE_LOCK")"
+  lock_acquire_wait "$COMBINE_LOCK"
+  "$@"; local rc=$?
+  lock_release
+  return "$rc"
+}
 # Wall-clock-stamp each line of a long builder's output (same clock as log()), so
 # the multi-day surface heartbeat carries "when" — throughput/ETA is read off the
 # log. pipefail (set above) still propagates the builder's exit status.
@@ -231,7 +251,7 @@ PY
       "$INGEST" "$STORE_ROOT" "$OUTPUT" --rebuilt-bbox "$bbox"
       for L in "${SURFACE_LAYERS[@]}"; do
         [ -f "$STORE_ROOT/$L/z$ZOOM.qtsi" ] || continue
-        "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2 --bbox "$bbox"
+        run_locked "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2 --bbox "$bbox"
       done
     else
       # The full surface set (all / ground) → one shared-halo `ground` pass; a
@@ -246,13 +266,13 @@ PY
         "$INGEST" "$STORE_ROOT" "$OUTPUT" --rebuilt-bbox "$bbox"
         for L in "${SURFACE_LAYERS[@]}"; do
           [ -f "$STORE_ROOT/$L/z$ZOOM.qtsi" ] || continue
-          "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2 --bbox "$bbox"
+          run_locked "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2 --bbox "$bbox"
         done
       else
         for L in "${SURFACE_LAYERS[@]}"; do
           log "transcode $L → store (parity-gated) + pyramid z$ZOOM→z2"
           "$TRANSCODE" "$OUTPUT/$L" "$STORE_ROOT/$L"
-          "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2
+          run_locked "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2
         done
       fi
     fi
@@ -275,11 +295,11 @@ PY
       mv "$LDIR" "$run/$L"
       "$INGEST" "$STORE_ROOT" "$run" --rebuilt-bbox "$bbox"
       rm -rf "$run"
-      "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2 --bbox "$bbox"
+      run_locked "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2 --bbox "$bbox"
     else
       log "transcode $L → store (parity-gated) + pyramid z$ZOOM→z2"
       "$TRANSCODE" "$LDIR" "$STORE_ROOT/$L"
-      "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2
+      run_locked "$PYR" --store-dir "$STORE_ROOT/$L" --base-zoom "$ZOOM" --dst-zoom 2
     fi
   done
 fi
@@ -291,10 +311,10 @@ elif $is_shard; then
   log "sharded — run combine after merging shards: $COMBINE --store-root <store-root>"
 elif [ -n "$bbox" ]; then
   log "combine (bbox) → $STORE_ROOT/total"
-  "$COMBINE" --store-root "$STORE_ROOT" --bbox "$bbox"
+  run_locked "$COMBINE" --store-root "$STORE_ROOT" --bbox "$bbox"
 else
   log "combine → $STORE_ROOT/total"
-  "$COMBINE" --store-root "$STORE_ROOT"
+  run_locked "$COMBINE" --store-root "$STORE_ROOT"
 fi
 [ -n "${BBOX_STAGING:-}" ] && rm -rf "$BBOX_STAGING"
 log "done → $STORE_ROOT (pack + publish: tile-store-pack <store-root> <pmtiles-dir> b<N>)"
