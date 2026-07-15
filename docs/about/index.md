@@ -461,3 +461,26 @@ Accuracy is a continuous loop, not a one-off benchmark: measure the gap against 
 - **Road, railway & airport geometry:** © [OpenStreetMap](https://www.openstreetmap.org/) contributors (ODbL)
 - **Flight data:** [ADSBExchange](https://www.adsbexchange.com/) (airline traffic samples) + [adsb.lol](https://adsb.lol/) (ADS-B community feeds — GA & helicopters)
 - **Map rendering:** [MapLibre GL JS](https://maplibre.org/) (open source)
+
+---
+
+## Data license & terms of use
+
+The map, tiles and API are provided as a **service**, free to use and embed with attribution:
+
+- **You may** link to 0db.app, embed the map or screenshots in your articles, apps and projects — with a visible attribution "**0db.app**" linking back here, plus "© OpenStreetMap contributors" (our models build on OpenStreetMap and other open data).
+- **You may not** bulk-download tiles, scrape or mirror the dataset, or republish a copy of the map as your own service.
+- **Commercial or high-volume use** (resale, white-label, heavy API traffic): [contact us](mailto:hello@0db.app) — we're friendly.
+
+Raw model data is not distributed. Noise values are model estimates (CNOSSOS-EU / ISO 9613-2 based), not measurements — see the methodology above for accuracy and limitations.
+
+<details>
+<summary><strong>Privacy</strong></summary>
+
+0db.app uses **no cookies, no trackers, no analytics scripts** — which is why there is no consent banner to click away.
+
+Our web server keeps standard access logs (IP address, requested URL without query parameters, browser user-agent) for security and operations — the legal basis is legitimate interest (GDPR art. 6(1)(f)). Logs rotate automatically and are kept at most 30 days, then deleted. They are not shared with anyone and are not used for profiling.
+
+Questions or requests: [hello@0db.app](mailto:hello@0db.app).
+
+</details>
