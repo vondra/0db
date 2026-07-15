@@ -1,7 +1,9 @@
 import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
 import compress from '@fastify/compress'
+import rateLimit from '@fastify/rate-limit'
 import { randomUUID } from 'node:crypto'
+import { isLoopbackClient, rateLimitClientKey } from './rate-limit.js'
 import { searchRoutes } from './routes/search.js'
 import { noiseOnflyV2Routes } from './routes/noise-onfly-v2.js'
 import { isochronRoutes } from './routes/isochron.js'
@@ -49,6 +51,22 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   }
 
   await app.register(compress)
+
+  // Opt-in only (global: false): solely the expensive endpoints — popup noise
+  // compute + Photon geocode proxies — carry `config.rateLimit` (see
+  // rate-limit.ts). Tile and asset routes stay unlimited by construction.
+  await app.register(rateLimit, {
+    global: false,
+    // Local unproxied callers (check-popup/check-world parity skills, smoke
+    // tests) are exempt — see isLoopbackClient for why this is not spoofable.
+    allowList: (request) => isLoopbackClient(request.ip),
+    keyGenerator: (request) => rateLimitClientKey(request.ip),
+    errorResponseBuilder: (_request, context) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `Rate limit exceeded (${context.max} requests per second). Retry shortly.`,
+    }),
+  })
 
   await app.register(searchRoutes)
   // Registered directly because the readiness probe is a capability returned

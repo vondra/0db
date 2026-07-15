@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify'
+import { EXPENSIVE_ROUTE_RATE_LIMIT } from '../rate-limit.js'
 
 interface SearchResult {
   display_name: string
@@ -101,7 +102,11 @@ function formatReversePlace(p: PhotonFeature['properties']): string | null {
 }
 
 export async function searchRoutes(app: FastifyInstance) {
-  app.get<{ Querystring: { q?: string; lat?: string; lon?: string } }>('/api/search', async (request, reply) => {
+  // Both geocode routes proxy the external Photon service — rate-limited per
+  // client (owner directive 2026-07-15) to protect Photon etiquette and us.
+  app.get<{ Querystring: { q?: string; lat?: string; lon?: string } }>('/api/search', {
+    config: { rateLimit: EXPENSIVE_ROUTE_RATE_LIMIT },
+  }, async (request, reply) => {
     const q = request.query.q?.trim()
     if (!q || q.length < 2) return reply.send([])
 
@@ -147,7 +152,9 @@ export async function searchRoutes(app: FastifyInstance) {
   // Reverse geocode for the tab/share title — place-first titles like
   // "Dejvice, Praha - 62 dB - 0db.app" (owner spec 2026-07-10). Same Photon
   // instance and etiquette as /api/search; ~100 m server-side cache.
-  app.get<{ Querystring: { lat?: string; lon?: string } }>('/api/reverse', async (request, reply) => {
+  app.get<{ Querystring: { lat?: string; lon?: string } }>('/api/reverse', {
+    config: { rateLimit: EXPENSIVE_ROUTE_RATE_LIMIT },
+  }, async (request, reply) => {
     const lat = parseFloat(request.query.lat ?? '')
     const lon = parseFloat(request.query.lon ?? '')
     if (!Number.isFinite(lat) || Math.abs(lat) > 90 || !Number.isFinite(lon) || Math.abs(lon) > 180) {

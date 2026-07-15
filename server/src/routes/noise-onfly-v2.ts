@@ -9,6 +9,7 @@ import {
   NoiseOnflySupervisor,
 } from '../engine/noise-onfly-supervisor.js'
 import { prepareSourceReaderAddon } from '../engine/source-reader-addon.js'
+import { EXPENSIVE_ROUTE_RATE_LIMIT } from '../rate-limit.js'
 import { H3R4_DIR, SOURCE_READER_PATH } from '../runtime-paths.js'
 
 // Wire shape is built entirely in Rust (engine/source-reader/src/wire.rs).
@@ -61,6 +62,9 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<() => Pr
 
   app.get<{ Querystring: { lat?: string; lng?: string; full?: string } }>(
     '/api/noise-onfly-v2',
+    // The popup compute is the most expensive public surface (one worker
+    // thread per query) — rate-limited per client (owner directive 2026-07-15).
+    { config: { rateLimit: EXPENSIVE_ROUTE_RATE_LIMIT } },
     async (request, reply) => {
       const lat = parseFloat(request.query.lat ?? '')
       const lng = parseFloat(request.query.lng ?? '')
