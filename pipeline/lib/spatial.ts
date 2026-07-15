@@ -15,10 +15,24 @@
  *     midpoint) — matches `engine/noise-compute/src/propagation/geo.rs::flat_dist`,
  *     accurate to <0.3 % at <50 km. Use `haversineM` if you specifically
  *     need spheroidal accuracy beyond that range.
+ *   - Antimeridian: `flatDist`/`pointToSegmentDist`/`pointToSegmentParamT` wrap
+ *     the longitude delta to [-180, 180] before projecting (mirrors
+ *     `engine/osm-extract/src/microsegment.rs::flat_dist`'s own wrap) — a point
+ *     trio straddling ±180° must read as physically close, not ~half the
+ *     planet away. Grid/bbox indexes built on RAW lat/lon (`nodeKey`,
+ *     `coordKey4dp`, and every cell-keyed grid in rail-graph.ts/
+ *     rail-graph-metrics.ts) do NOT get this treatment — no railway segment in
+ *     the dataset crosses ±180°; revisit if one ever does.
  */
 
-const M_PER_DEG_LAT = 110_540
-const M_PER_DEG_LON_EQ = 111_320
+/** Metres per degree of latitude / longitude-at-the-equator, flat-earth
+ *  approximation (see module doc). Exported so every caller that needs the
+ *  raw projection constants (rather than a ready-made distance/param helper)
+ *  shares the SAME numbers instead of re-declaring a local copy that could
+ *  drift — e.g. rail-graph.ts's bearing/heading math, which needs a
+ *  t-parameter and a compass heading this module's own helpers don't return. */
+export const M_PER_DEG_LAT = 110_540
+export const M_PER_DEG_LON_EQ = 111_320
 
 /**
  * Endpoint identity for road-segment topology: quantize to ~1 m so segments
@@ -32,6 +46,38 @@ export function nodeKey(lat: number, lon: number): string {
 }
 
 /**
+ * Station/stop identity: quantize to 4dp (~11 m) so two records at the same
+ * physical location (duplicate platform rows, a GTFS child stop resolved to
+ * its parent, a rail-graph node reached from two directions) compare equal.
+ * The 4dp sibling of `nodeKey`'s 5dp — coarser on purpose: a station's GPS
+ * varies more between sources than a road/rail segment's own extracted
+ * vertex does. Used by the graph-walk's canonical pair keys, the rail-stops
+ * sidecar's stop dedup, and GTFS station identity (`gtfs-stop-pairs.ts`'s
+ * `stationKey`) — these call sites MUST stay byte-identical, or the same
+ * physical station could hash to different keys across files.
+ */
+export function coordKey4dp(lat: number, lon: number): string {
+  return `${lat.toFixed(4)},${lon.toFixed(4)}`
+}
+
+/**
+ * Wraps a longitude DELTA (degrees, `lon2 - lon1`) to [-180, 180] — the short
+ * way around the globe. Mirrors `engine/osm-extract/src/microsegment.rs::
+ * flat_dist`'s own antimeridian handling: without it, a point/segment trio
+ * that straddles ±180° (e.g. 179.9° -> -179.9°, physically ~22 km apart)
+ * projects to a ~359.8° delta and reports ~40,000 km instead. Exported so
+ * every DISTANCE helper below shares one wrap instead of each re-deriving it
+ * (and so rail-graph-metrics.ts's `headingDeg`, which duplicates the same
+ * lon-delta-then-project pattern for a compass bearing rather than a
+ * distance, can reuse it too).
+ */
+export function wrapLonDeltaDeg(deltaDeg: number): number {
+  if (deltaDeg > 180) return deltaDeg - 360
+  if (deltaDeg < -180) return deltaDeg + 360
+  return deltaDeg
+}
+
+/**
  * Flat-earth distance in metres between two (lat, lon) points. Same
  * algorithm as the engine's `flat_dist` — accurate to <0.3 % at <50 km.
  * Hot-loop callers that have a hex-level cosLat should pre-project to
@@ -40,7 +86,7 @@ export function nodeKey(lat: number, lon: number): string {
  */
 export function flatDist(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const cosLat = Math.cos(((lat1 + lat2) / 2) * Math.PI / 180)
-  const dx = (lon2 - lon1) * M_PER_DEG_LON_EQ * cosLat
+  const dx = wrapLonDeltaDeg(lon2 - lon1) * M_PER_DEG_LON_EQ * cosLat
   const dy = (lat2 - lat1) * M_PER_DEG_LAT
   return Math.sqrt(dx * dx + dy * dy)
 }
@@ -71,6 +117,12 @@ export function haversineM(lat1: number, lon1: number, lat2: number, lon2: numbe
  * Single-shot helper — for hot loops that compute many distances against
  * the same segment, pre-project once and use a pure-arithmetic kernel
  * (see service-tree's `pointToSegmentDistXY`).
+ *
+ * Projects `p` and `b` as longitude DELTAS relative to `a` (each wrapped via
+ * `wrapLonDeltaDeg`) rather than each point's absolute `lon * constant` — the
+ * pre-2026-07-16 version used absolute projection, which blows up for a
+ * segment/point trio straddling ±180° even though only the differences ever
+ * feed the math (mirrors `microsegment.rs::perp_distance_to_chord`).
  */
 export function pointToSegmentDist(
   pLat: number, pLon: number,
@@ -78,21 +130,44 @@ export function pointToSegmentDist(
   bLat: number, bLon: number,
 ): number {
   const cosLat = Math.cos(pLat * Math.PI / 180)
-  const px = pLon * M_PER_DEG_LON_EQ * cosLat
-  const py = pLat * M_PER_DEG_LAT
-  const ax = aLon * M_PER_DEG_LON_EQ * cosLat
-  const ay = aLat * M_PER_DEG_LAT
-  const bx = bLon * M_PER_DEG_LON_EQ * cosLat
-  const by = bLat * M_PER_DEG_LAT
-  const dx = bx - ax
-  const dy = by - ay
-  const lenSq = dx * dx + dy * dy
+  const px = wrapLonDeltaDeg(pLon - aLon) * M_PER_DEG_LON_EQ * cosLat
+  const py = (pLat - aLat) * M_PER_DEG_LAT
+  const bx = wrapLonDeltaDeg(bLon - aLon) * M_PER_DEG_LON_EQ * cosLat
+  const by = (bLat - aLat) * M_PER_DEG_LAT
+  const lenSq = bx * bx + by * by
   if (lenSq < 1e-6) return flatDist(pLat, pLon, aLat, aLon)
-  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq
+  let t = (px * bx + py * by) / lenSq
   t = Math.max(0, Math.min(1, t))
-  const cx = ax + t * dx
-  const cy = ay + t * dy
+  const cx = t * bx
+  const cy = t * by
   return Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy))
+}
+
+/**
+ * Same flat-earth projection as `pointToSegmentDist`, but returns the
+ * clamped parameter `t` along `a -> b` (0 at `a`, 1 at `b`) instead of the
+ * distance. Kept as a SEPARATE function rather than having
+ * `pointToSegmentDist` return both: the overwhelming majority of call sites
+ * only want the distance, and T-junction healing (rail-graph.ts) is the only
+ * caller that needs the projected LOCATION on the segment rather than merely
+ * how close a point sits to it. Same delta-relative-to-`a` antimeridian wrap
+ * as `pointToSegmentDist` (see its doc) — the two must stay in lockstep or a
+ * ±180°-straddling segment would heal at a different point than it measures.
+ */
+export function pointToSegmentParamT(
+  pLat: number, pLon: number,
+  aLat: number, aLon: number,
+  bLat: number, bLon: number,
+): number {
+  const cosLat = Math.cos(pLat * Math.PI / 180)
+  const px = wrapLonDeltaDeg(pLon - aLon) * M_PER_DEG_LON_EQ * cosLat
+  const py = (pLat - aLat) * M_PER_DEG_LAT
+  const bx = wrapLonDeltaDeg(bLon - aLon) * M_PER_DEG_LON_EQ * cosLat
+  const by = (bLat - aLat) * M_PER_DEG_LAT
+  const lenSq = bx * bx + by * by
+  if (lenSq < 1e-6) return 0
+  const t = (px * bx + py * by) / lenSq
+  return Math.max(0, Math.min(1, t))
 }
 
 /**

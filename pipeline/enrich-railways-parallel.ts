@@ -5,9 +5,10 @@
 //! (docs/validation/findings/2026-07-11-de-mainline-trackside-hot.md). On
 //! unenriched rows every parallel track carries the FULL usage default, so an
 //! n-track corridor emits n× its real traffic. `parallel_divisor` divides
-//! per-track traffic; enrich-railway-cz.ts already computes it for
-//! CZPTT-matched rows under its czpttKey identity. This pass is the shared,
-//! timetable-free version for everywhere else, keyed on OSM corridor identity.
+//! per-track traffic. This pass computes it OSM-corridor-side, keyed on OSM
+//! ref/name identity, for every source that DID NOT migrate to the graph-walk
+//! driver (rail-walk-enrich.ts) — see WALK-MANAGED SOURCES below for the ones
+//! that did.
 //!
 //! CORRIDOR IDENTITY (deterministic, geometry-light): rows group by
 //! (first non-empty of [ref, name]) + rail_type + usage. `service > 0` rows
@@ -18,9 +19,8 @@
 //!
 //! DIVISOR: per row, min(3, count of DISTINCT osm_id in the same corridor
 //! group with a segment within 50 m of the row's midpoint, self included) —
-//! the semantics of enrich-railway-cz.ts's inline detection, but with
-//! point-to-segment distance instead of mid-to-mid (mid-to-mid misses parallel
-//! tracks whose microsegment phase is offset by ~half a segment). A candidate
+//! point-to-segment distance (not mid-to-mid, which misses parallel tracks
+//! whose microsegment phase is offset by ~half a segment). A candidate
 //! segment sharing an endpoint node (nodeKey) with the row is skipped:
 //! consecutive ways of ONE track meet at a node, and near that junction a
 //! short end-segment's midpoint lies within 50 m of the continuation way
@@ -29,15 +29,21 @@
 //! way's SECOND segment can still slip inside 50 m — a sliver-local halving,
 //! accepted.
 //!
-//! ONLY-RAISE ASYMMETRY vs CZ: enrich-railway-cz.ts computes divisors for
-//! CZPTT-matched rows under a STRONGER identity (czpttKey) and must keep
-//! winning, but the column carries no provenance. Rule v1: this pass only
-//! RAISES a divisor from 1 — it writes where current == 1 and computed > 1.
-//! CZ values > 1 are never lowered (nor raised); a CZ-computed 1 is
-//! indistinguishable from the default 1 and may be raised, which is fine —
-//! both identities agree real multi-track is parallel. Idempotent by
-//! construction (second run: current > 1 → keep). Full column provenance is
-//! the #30 follow-up if this ever proves too coarse.
+//! WALK-MANAGED SOURCES (2026-07-16 — replaces the old czpttKey-identity
+//! asymmetry now that CZ's bespoke chord matcher is gone, migration #26): a
+//! row's `source_id` may name a dataset flagged `railDivisorFromWalk` in
+//! enrichment-datasets.ts (today: cz-szcd-gtfs, cz-timetable-silent) — the
+//! graph-walk driver already computed (or deliberately left at 1) that row's
+//! divisor via its own lateral parallel-track spread
+//! (rail-graph-metrics.ts::applyParallelSpread), and this pass must never
+//! touch it: raising a walk-set 1 would be exactly as wrong as lowering a
+//! walk-set 3. Such rows are excluded from grouping entirely — neither a
+//! divisor RECIPIENT nor a candidate counted toward a neighbour's divisor.
+//!
+//! ONLY-RAISE (every other, non-walk-managed source): this pass writes where
+//! current == 1 and computed > 1, never lowers. Idempotent by construction
+//! (second run: current > 1 → keep). Full column provenance is the #30
+//! follow-up if this ever proves too coarse.
 //!
 //! Usage:
 //!   DATA_YEAR=2026 npx tsx pipeline/enrich-railways-parallel.ts --bbox 47.3,5.9,55.1,15.0
@@ -52,7 +58,13 @@ import { tableFromIPC } from 'apache-arrow'
 import { writeRailParallelDivisor } from './lib/railways-arrow.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { nodeKey, pointToSegmentDist } from './lib/spatial.js'
+import { DATASETS } from './lib/enrichment-datasets.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
+
+/** Dataset ids whose rows the graph-walk driver already owns the divisor
+ *  for (see WALK-MANAGED SOURCES in the module doc) — this pass must never
+ *  group or write over them. */
+const RAIL_DIVISOR_FROM_WALK_SOURCE_IDS = new Set(DATASETS.filter((d) => d.railDivisorFromWalk).map((d) => d.id))
 
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 
@@ -79,6 +91,11 @@ export interface ParallelRailRow {
   railType: number
   usage: number
   service: number
+  /** Dataset id this row is currently stamped under (0 = unspecified) — used
+   *  ONLY to exclude rows a `railDivisorFromWalk` source owns (see the
+   *  WALK-MANAGED SOURCES module doc); not otherwise part of the corridor
+   *  grouping identity. */
+  sourceId: number
   startLat: number
   startLon: number
   endLat: number
@@ -87,8 +104,9 @@ export interface ParallelRailRow {
 
 /**
  * Per-row parallel-track divisor for one hex's rows: `null` = row not eligible
- * (service > 0 or no corridor token — leave whatever is stored), else
- * min(3, distinct osm_ids of the row's corridor within 50 m, self included).
+ * (service > 0, no corridor token, or owned by a walk-managed source — leave
+ * whatever is stored), else min(3, distinct osm_ids of the row's corridor
+ * within 50 m, self included).
  */
 export function computeParallelDivisors(rows: ParallelRailRow[]): Array<number | null> {
   const n = rows.length
@@ -99,6 +117,7 @@ export function computeParallelDivisors(rows: ParallelRailRow[]): Array<number |
     const r = rows[i]
     if (r.service > 0) continue // sidings/yards/spurs: excluded entirely
     if (!r.corridorToken) continue // no ref, no name → no corridor identity, no guessing
+    if (RAIL_DIVISOR_FROM_WALK_SOURCE_IDS.has(r.sourceId)) continue // the walk owns this row's divisor
     const key = `${r.corridorToken}\x1f${r.railType}\x1f${r.usage}`
     let g = groups.get(key)
     if (!g) groups.set(key, (g = []))
@@ -244,6 +263,7 @@ export async function enrichHexRailParallelDivisor(
   const rtCol = table.getChild('rail_type')
   const usCol = table.getChild('usage')
   const svcCol = table.getChild('service')
+  const srcCol = table.getChild('source_id')
 
   const rows: ParallelRailRow[] = new Array(n)
   for (let i = 0; i < n; i++) {
@@ -258,6 +278,7 @@ export async function enrichHexRailParallelDivisor(
       railType: (rtCol?.get(i) as number) ?? 0,
       usage: (usCol?.get(i) as number) ?? 0,
       service,
+      sourceId: (srcCol?.get(i) as number) ?? 0,
       startLat,
       startLon,
       endLat: (eLat?.get(i) as number) ?? startLat,

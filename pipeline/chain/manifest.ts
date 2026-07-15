@@ -39,8 +39,8 @@
 //!                   speed_taper on overwrite/retract by contract).
 //!   gate            audit-enrichment-invariants.ts with machine outputs;
 //!                   run.ts diffs the per-violation fingerprint MULTISET
-//!                   against pipeline/chain/gate-baseline.json (NEW
-//!                   fingerprints fail; pre-existing pass with a warning;
+//!                   against pipeline/chain/gate-baselines/{year}.{scope}.json
+//!                   (NEW fingerprints fail; pre-existing pass with a warning;
 //!                   crash/signal/exit-3 always fails).
 //!
 //! Chain-wide footguns (enforced by run.ts, documented here as the SSOT):
@@ -147,7 +147,9 @@ const RAIL_CACHED_DOWNLOAD: Record<string, string[]> = {
   au: [`${YEAR}/au/gtfs-family-frequencies.json`],
   be: [`${YEAR}/be/gtfs-family-frequencies.json`],
   ca: [`${YEAR}/ca/gtfs-family-frequencies.json`],
-  cz: [`${YEAR}/cz/czptt-segment-counts.json`],
+  // czptt-train-sequences.json since the #26 graph-walk rewrite (2026-07-16);
+  // the pre-#26 czptt-segment-counts.json is a fossil the enricher ignores.
+  cz: [`${YEAR}/cz/czptt-train-sequences.json`],
   de: [`${YEAR}/de/gtfs-family-frequencies.json`],
   dk: [`${YEAR}/dk/gtfs-family-frequencies.json`],
   es: [`${YEAR}/es/renfe-stop-frequencies.json`],
@@ -515,7 +517,7 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
   // ── national (roads → railways → buildings → industrial, alpha per family) ─
   const perStepNote: Record<string, string> = {
     'railway-cz':
-      'bespoke CZPTT path (predates writeRailTrains; migration queued #26). Also stamps SOURCE_ID_CZ_TIMETABLE_SILENT (2 pax/1 frt) on timetable-silent lines and computes czpttKey parallel divisors — both gated on retractSafe.',
+      'graph-walk path onto the shared enrichRailwaysByGraphWalk driver (migration #26 complete, 2026-07-16): CZPTT sequences are paired AFTER GPS resolution and walked across the CZ rail graph. Still stamps SOURCE_ID_CZ_TIMETABLE_SILENT (2 pax/1 frt) on failure-free components the walk never reaches, and parallel_divisor via the walk\'s own lateral spread (no more czpttKey) — retract/silent/divisor all gated on retractSafe AND enableDestructive (--stamp-only forces the latter false for Phase-3 Step A).',
     'railway-kr': 'pure retract heal (KR publishes no rail data; match() never stamps). Deliberately no retractSafe gate — no inputs exist to be incomplete.',
     'roads-ru': 'env RU_BBOX="S,W,N,E" can narrow a resume — chain runs it unset (full RU).',
     'roads-mx': 'runs its own clearStaleStamps() pre-pass (manual withArrowWrite) before matching.',
@@ -628,7 +630,7 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
       layer: 'railways',
       country: null,
       notes:
-        'shared parallel-track divisor, only-raise-from-1 rule — MUST run after all rail enrichers: enrich-railway-cz computes stronger czpttKey divisors that this pass must not precede (only-raise protects values > 1, and a pre-run would grade rows CZ later re-derives).',
+        'shared OSM-corridor parallel-track divisor, only-raise-from-1 rule, for sources NOT flagged railDivisorFromWalk in enrichment-datasets.ts — walk-managed sources (cz-szcd-gtfs, cz-timetable-silent) get their divisor from the graph-walk driver\'s own lateral spread and this pass skips their rows entirely (czpttKey identity is gone; migration #26).',
       skipReason: null,
     },
     (b) => (b ? ['--bbox', serializeBbox(b)] : ['--world']),
@@ -680,7 +682,7 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
     country: null,
     args: bboxes ? bboxes.flatMap((b) => ['--bbox', serializeBbox(b)]) : ['--bbox', '-90,-180,90,180'],
     notes:
-      'READ-ONLY acceptance gate (rules R0-R13). run.ts diffs the per-violation fingerprint MULTISET against pipeline/chain/gate-baseline.json: any fingerprint above its baseline count FAILS the chain; pre-existing ones pass with a warning; exit 3 (I/O damage) always fails.',
+      'READ-ONLY acceptance gate (rules R0-R16, incl. the rail continuity R15 flow-jump / R16 continuity-gap detectors). run.ts diffs the per-violation fingerprint MULTISET against pipeline/chain/gate-baselines/{year}.{scope}.json (one file per DATA_YEAR + exact scope): any fingerprint above its baseline count FAILS the chain; pre-existing ones pass with a warning; exit 3 (I/O damage) always fails.',
     skipReason: null,
   })
 

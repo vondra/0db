@@ -14,12 +14,14 @@
 //!
 //! Gate semantics (chain/gate.ts): the auditor emits machine outputs
 //! (--ndjson per-violation fingerprints + --summary-json totals); run.ts diffs
-//! the fingerprint MULTISET against pipeline/chain/gate-baseline.json — any
-//! fingerprint above its baseline count FAILS the chain, resolved ones are
-//! noted. The baseline is keyed to DATA_YEAR + exact scope (mismatch = hard
-//! fail); crash/signal/exit-3/unparsable output always fail — never "resolved".
-//! --update-gate-baseline re-baselines after an intentional heal (review the
-//! diff before committing the new file).
+//! the fingerprint MULTISET against a PER-SCOPE baseline file
+//! (chain/gate-baselines/{dataYear}.{scope-slug}.json) — any fingerprint
+//! above its baseline count FAILS the chain, resolved ones are noted. The
+//! baseline is keyed to DATA_YEAR + exact scope (mismatch = hard fail);
+//! crash/signal/exit-3/unparsable output always fail — never "resolved". An
+//! absent baseline is a valid CENSUS run — the first `--update-gate-baseline`
+//! for a scope establishes it; --update-gate-baseline re-baselines after an
+//! intentional heal (review the diff before committing the new file).
 //!
 //! Completeness (#31.6): a feed step declares expectMinInputs (36 EU cities,
 //! 23 GTFS feeds) and prints a QM_COMPLETENESS marker. safeToSync is TRUE only
@@ -35,14 +37,21 @@ import { createHash } from 'node:crypto'
 import { DATA_YEAR as YEAR } from '../lib/data-year.js'
 import { parseScope, type ResolvedScope } from './scope.js'
 import { buildPlan, PHASES, PIPELINE_DIR, REPO_ROOT, type Phase, type PlanStep } from './manifest.js'
-import { gateVerdict, buildBaseline, baselinePreflightProblem, type GateVerdict } from './gate.js'
+import {
+  gateVerdict, buildBaseline, baselinePreflightProblem, resolveGateBaseline, scopeBaselineSlug,
+  type GateVerdict,
+} from './gate.js'
 import { runInventory } from './inventory.js'
 import {
   writeChainStatus, parseCompletenessMarker, stepIsComplete,
   type ChainStatus, type StepStatus, type GateStatus,
 } from './status.js'
 
-const BASELINE_PATH = resolve(import.meta.dirname, 'gate-baseline.json')
+// Per-scope baselines (see gate.ts's module doc): one file per (dataYear,
+// scope) under gate-baselines/.
+const BASELINES_DIR = resolve(import.meta.dirname, 'gate-baselines')
+const perScopeBaselinePath = (dataYear: string, scope: string): string =>
+  resolve(BASELINES_DIR, `${dataYear}.${scopeBaselineSlug(scope)}.json`)
 const TSX_BIN = resolve(PIPELINE_DIR, 'node_modules', '.bin', 'tsx')
 
 // ── strict argv (a typo like --dry-rnu must never start a live chain) ────────
@@ -206,31 +215,35 @@ interface PlanFile {
 
 // ── gate plumbing ────────────────────────────────────────────────────────────
 
+/** `null` means "no baseline/output file at this path" (ENOENT) — a valid,
+ *  common case (a first CENSUS run, a gate step that produced nothing).
+ *  Anything else (EACCES, EISDIR, EIO, a transient FS fault) is rethrown:
+ *  before this fix (2026-07-16 /gg review item 9), a permissions/IO fault
+ *  read identically to "no baseline", silently downgrading a damaged-disk or
+ *  misconfigured-permissions gate run into "first census" instead of failing
+ *  loud. */
 function readFileOrNull(path: string): string | null {
   try {
     return readFileSync(path, 'utf8')
-  } catch {
-    return null
+  } catch (err) {
+    if (err && typeof err === 'object' && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw err
   }
 }
 
 type LoadedGateBaseline =
-  | { ok: true; baseline: unknown }
+  | { ok: true; baseline: unknown; path: string }
   | { ok: false; lines: string[] }
 
-function loadGateBaseline(): LoadedGateBaseline {
-  let text: string
-  try {
-    text = readFileSync(BASELINE_PATH, 'utf8')
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true, baseline: null }
-    return { ok: false, lines: [`gate-baseline.json is unreadable (${err instanceof Error ? err.message : err}) — fix access before running the auditor`] }
-  }
-  try {
-    return { ok: true, baseline: JSON.parse(text) }
-  } catch {
-    return { ok: false, lines: ['gate-baseline.json is unparsable — fix or regenerate with --update-gate-baseline'] }
-  }
+/** Resolve which baseline THIS (dataYear, scope) run should gate against.
+ *  File I/O only — the read logic itself is `resolveGateBaseline` (gate.ts),
+ *  pure and unit-tested there. */
+function loadGateBaseline(dataYear: string, scope: string): LoadedGateBaseline {
+  const perScopePath = perScopeBaselinePath(dataYear, scope)
+  const perScopeText = readFileOrNull(perScopePath)
+  const resolved = resolveGateBaseline(perScopeText)
+  if (!resolved.ok) return { ok: false, lines: resolved.lines }
+  return { ok: true, baseline: resolved.baseline, path: perScopePath }
 }
 
 /** Run the auditor step with machine-output plumbing appended; verdict via
@@ -261,7 +274,7 @@ function gateVerdictForRun(
   summaryText: string | null,
   scope: ResolvedScope,
 ): GateVerdict {
-  const loaded = loadGateBaseline()
+  const loaded = loadGateBaseline(YEAR, scope.canonical)
   if (!loaded.ok) return { pass: false, lines: loaded.lines }
   return gateVerdict({
     code: r.code,
@@ -287,11 +300,12 @@ function buildGateStatus(summaryText: string | null, pass: boolean, scope: Resol
   } catch {
     return { ioErrors: 1, total: 0, newAboveBaseline: null, verdict: 'fail' }
   }
-  let baselineForScope = false
-  const bt = readFileOrNull(BASELINE_PATH)
-  if (bt !== null) {
-    try { baselineForScope = (JSON.parse(bt) as { scope?: string }).scope === scope.canonical } catch { /* unparsable */ }
-  }
+  // Reuse the SAME resolution loadGateBaseline uses for the real gate run —
+  // a hand-rolled second read of the legacy path here would drift the moment
+  // the per-scope layout landed (it did: this used to read BASELINE_PATH
+  // directly and would have silently gone stale for every non-legacy scope).
+  const loaded = loadGateBaseline(YEAR, scope.canonical)
+  const baselineForScope = loaded.ok && loaded.baseline !== null
   const verdict: GateStatus['verdict'] = pass
     ? 'pass'
     : baselineForScope ? 'fail' : (ioErrors === 0 ? 'census-no-baseline' : 'fail')
@@ -399,9 +413,11 @@ async function main(): Promise<number> {
     }
     try {
       const baseline = buildBaseline(YEAR, scope.canonical, ndjsonText ?? '', summaryText ?? '{}')
-      writeFileSync(BASELINE_PATH, JSON.stringify(baseline, null, 2) + '\n')
+      const perScopePath = perScopeBaselinePath(YEAR, scope.canonical)
+      mkdirSync(BASELINES_DIR, { recursive: true })
+      writeFileSync(perScopePath, JSON.stringify(baseline, null, 2) + '\n')
       const total = Object.values(baseline.fingerprints).reduce((a, b) => a + b, 0)
-      log(`baseline written: ${BASELINE_PATH} (${total} violation(s), ${Object.keys(baseline.fingerprints).length} fingerprints, scope ${baseline.scope}, DATA_YEAR ${baseline.dataYear})`)
+      log(`baseline written: ${perScopePath} (${total} violation(s), ${Object.keys(baseline.fingerprints).length} fingerprints, scope ${baseline.scope}, DATA_YEAR ${baseline.dataYear})`)
       return 0
     } catch (err) {
       log(`auditor machine output inconsistent — no baseline written: ${err instanceof Error ? err.message : err}`)
@@ -493,7 +509,7 @@ async function main(): Promise<number> {
       // reject it before the auditor scans billions of rows and writes hundreds
       // of MB. No baseline at all still runs as the intentional census path; a
       // clean tree can pass without one and violations get the existing hint.
-      const loadedBaseline = loadGateBaseline()
+      const loadedBaseline = loadGateBaseline(YEAR, scope.canonical)
       let baselineProblem: string[] | null = loadedBaseline.ok ? null : loadedBaseline.lines
       if (loadedBaseline.ok) baselineProblem = baselinePreflightProblem(loadedBaseline.baseline, YEAR, scope.canonical)
       if (baselineProblem !== null) {

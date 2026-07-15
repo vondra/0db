@@ -284,6 +284,105 @@ test('parallel divisor: fail-loud on non-integer / negative / >255, file left un
   assert.deepEqual(readFileSync(path), before, 'failed writes must not mutate the arrow')
 })
 
+test('retract: multi-id sourceId disowns rows owned by ANY of the listed ids in one pass', async () => {
+  // A migration shape: a dataset absorbing two retired predecessor ids (205,
+  // 300) alongside its own (110) disowns all three in a single sweep — a row
+  // owned by an id NOT in the list must survive untouched.
+  const rows: Array<[railType: number, service: number]> = [[0, 0], [0, 0], [0, 0], [0, 0]]
+  const path = writeRailFixture('retract-multi-id.arrow', rows, [110, 205, 300, 99])
+
+  const result = await writeRailTrains(
+    path,
+    () => null,
+    undefined,
+    { sourceId: [110, 205, 300], when: () => true },
+  )
+  assert.equal(result.retracted, 3, 'rows owned by any of the 3 listed ids are disowned')
+  assert.equal(result.updated, true)
+
+  const t = tableFromIPC(readFileSync(path))
+  const src = [...Array(4)].map((_, i) => t.getChild('source_id')!.get(i))
+  assert.deepEqual(src, [0, 0, 0, 99], 'row3 (owned by an unlisted id) is untouched')
+  const pax = [...Array(4)].map((_, i) => t.getChild('trains_passenger')!.get(i))
+  assert.deepEqual(pax, [0, 0, 0, 13], 'the three disowned rows are zeroed; the untouched row (10+3) keeps its seeded count')
+})
+
+test('retract resets parallel_divisor to 1 in BOTH arms; kept and foreign rows keep theirs', async () => {
+  // row0: non-service, owned, `when` fires → the when-gated retract arm.
+  // row1: now-service, owned → auto-healed via the service-skip arm regardless of `when`.
+  // row2: non-service, owned, `when` false → kept, divisor untouched.
+  // row3: non-service, owned by a DIFFERENT id → never a retract candidate, divisor untouched.
+  const rows: Array<[railType: number, service: number]> = [[0, 0], [0, 2], [0, 0], [0, 0]]
+  const path = writeRailFixture('retract-divisor-reset.arrow', rows, [110, 110, 110, 99], [3, 4, 5, 6])
+
+  const result = await writeRailTrains(
+    path,
+    () => null,
+    undefined,
+    { sourceId: 110, when: (_row, i) => i === 0 }, // only row0 satisfies `when`
+  )
+  assert.equal(result.retracted, 2, 'row0 (when-arm) + row1 (service-arm)')
+
+  const t = tableFromIPC(readFileSync(path))
+  const div = [...Array(4)].map((_, i) => t.getChild('parallel_divisor')!.get(i))
+  assert.deepEqual(div, [1, 1, 5, 6], 'the two retracted rows reset to 1; kept row2 and foreign row3 untouched')
+})
+
+test('retract that only fires on already-divisor-1 rows leaves parallel_divisor untouched (no spurious write)', async () => {
+  // Every owned row's divisor is already 1 — resetting to 1 is not a value
+  // change, so the column must not even be rebuilt (verbatim copy suffices).
+  const path = writeRailFixture('retract-divisor-noop.arrow', [[0, 0]], [110], [1])
+  const result = await writeRailTrains(path, () => null, undefined, { sourceId: 110, when: () => true })
+  assert.equal(result.retracted, 1)
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('parallel_divisor')!.get(0), 1)
+})
+
+test('retract on a hex with NO parallel_divisor column leaves it absent (never materializes an all-1 column)', async () => {
+  const path = writeRailFixture('retract-divisor-absent.arrow', [[0, 0]], [110], null)
+  assert.equal(tableFromIPC(readFileSync(path)).getChild('parallel_divisor'), null, 'fixture sanity')
+  const result = await writeRailTrains(path, () => null, undefined, { sourceId: 110, when: () => true })
+  assert.equal(result.retracted, 1, 'retract still fires and zeroes the stamp')
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('parallel_divisor'), null, 'no column materialized for a never-divisor\'d hex')
+  assert.equal(t.getChild('source_id')!.get(0), 0)
+})
+
+// ── Value-diff idempotence (world-scale walk re-runs must be byte-no-ops) ───
+
+test('idempotent match: identical pax/frt/sourceId re-stamp does not rewrite the file (matched still counts)', async () => {
+  // Row already carries exactly what `match` is about to return — a second
+  // pass over already-correct data (the world-scale re-run case).
+  const path = writeRailFixture('idempotent-match.arrow', [[0, 0]], [STAMP_ID])
+  const before = readFileSync(path)
+  const result = await writeRailTrains(path, () => ({ pax: 10, frt: 20, sourceId: STAMP_ID }))
+  assert.equal(result.matched, 1, '`matched` still counts the accepted match — callers log it as GTFS-stamped')
+  assert.equal(result.updated, false, 'no row value actually changed → byte-identical skip')
+  assert.deepEqual(readFileSync(path), before, 'identical re-stamp must not rewrite bytes')
+})
+
+test('changed match: a genuinely different pax value DOES rewrite the file', async () => {
+  const path = writeRailFixture('changed-match-pax.arrow', [[0, 0]], [STAMP_ID])
+  const result = await writeRailTrains(path, () => ({ pax: 999, frt: 20, sourceId: STAMP_ID }))
+  assert.equal(result.matched, 1)
+  assert.equal(result.updated, true, 'a real value change must still rewrite the file')
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('trains_passenger')!.get(0), 999)
+})
+
+test('changed match: same pax/frt but a different sourceId still counts as a change', async () => {
+  // Unstamped row (source_id=0) already carries the seeded pax/frt fixture
+  // values; `match` returns those same counts under a real registered rail id
+  // (2000 = ae-national-railway) — the id transition alone must force a write.
+  const AE_RAILWAY_ID = 2000
+  const path = writeRailFixture('changed-match-source-only.arrow', [[0, 0]])
+  const result = await writeRailTrains(path, () => ({ pax: 10, frt: 20, sourceId: AE_RAILWAY_ID }))
+  assert.equal(result.matched, 1)
+  assert.equal(result.updated, true, 'source_id 0 → real id is a change even when pax/frt are unchanged')
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('source_id')!.get(0), AE_RAILWAY_ID)
+})
+
 test('retract fall-through: match re-claims a coincidental tuple in the same pass', async () => {
   // Row0 carries the dataset's stamp; the fingerprint says "legacy tuple" but
   // the live join (simulated: `match` returns a real count) still covers it —
@@ -302,6 +401,54 @@ test('retract fall-through: match re-claims a coincidental tuple in the same pas
   assert.equal(t.getChild('trains_passenger')!.get(0), 144)
   assert.equal(t.getChild('source_id')!.get(0), 110)
 })
+
+// ── Atomic counts+divisor (2026-07-16 /gg review item A.1): `divisor` on
+// RailTrains rides in the SAME write as pax/frt/sourceId — never a separate
+// pass a stamp-only/inspection mode could skip. ─────────────────────────────
+
+test('atomic divisor: a match carrying `divisor` sets parallel_divisor in the SAME write, materializing an absent column', async () => {
+  const path = writeRailFixture('divisor-set.arrow', [[0, 0]], undefined, null) // no column at all
+  assert.equal(tableFromIPC(readFileSync(path)).getChild('parallel_divisor'), null, 'fixture sanity')
+  const result = await writeRailTrains(path, () => ({ pax: 5, frt: 0, sourceId: STAMP_ID, divisor: 3 }))
+  assert.equal(result.matched, 1)
+  assert.equal(result.updated, true)
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('parallel_divisor')!.get(0), 3, 'divisor set in the same match, no separate writeRailParallelDivisor call needed')
+  assert.equal(t.getChild('trains_passenger')!.get(0), 5)
+})
+
+test('atomic divisor: identical re-run INCLUDING divisor is a byte-no-op (value-diff idempotence now covers divisor)', async () => {
+  const path = writeRailFixture('divisor-idempotent.arrow', [[0, 0]], [STAMP_ID], [3])
+  const before = readFileSync(path)
+  // Fixture seeds pax=10, frt=20 for row 0 (see writeRailFixture doc) — match
+  // reproduces exactly what's already on disk, divisor included.
+  const result = await writeRailTrains(path, () => ({ pax: 10, frt: 20, sourceId: STAMP_ID, divisor: 3 }))
+  assert.equal(result.matched, 1, 'still counts as an accepted match')
+  assert.equal(result.updated, false, 'nothing actually changed, incl. divisor — byte-no-op')
+  assert.deepEqual(readFileSync(path), before, 'identical re-stamp (incl. divisor) must not rewrite bytes')
+})
+
+test('atomic divisor: retract-then-reclaim in the SAME pass ends at the match\'s new divisor, not the retract\'s interim 1', async () => {
+  // Row is owned by 110 with a stale divisor (5); the SAME pass both retracts
+  // it (fingerprint `when` fires) and immediately re-claims it with a real
+  // count carrying a DIFFERENT divisor (7) — order is retract-zeroes then
+  // match-sets, so the row must land on 7, never stuck at the retract's
+  // interim reset-to-1.
+  const path = writeRailFixture('retract-reclaim-divisor.arrow', [[0, 0]], [110], [5])
+  const result = await writeRailTrains(
+    path,
+    () => ({ pax: 144, frt: 12, sourceId: 110, divisor: 7 }),
+    undefined,
+    { sourceId: 110, when: () => true },
+  )
+  assert.equal(result.retracted, 1)
+  assert.equal(result.matched, 1, 'same-pass re-claim')
+  const t = tableFromIPC(readFileSync(path))
+  assert.equal(t.getChild('parallel_divisor')!.get(0), 7, 'ends at the NEW divisor, not voided to 1')
+  assert.equal(t.getChild('trains_passenger')!.get(0), 144)
+  assert.equal(t.getChild('source_id')!.get(0), 110)
+})
+
 // ── #31.7 countryGate: central national-ownership gate ──────────────────────
 // Fixture rows march east (start lon 14.0 + 0.001·i, end +0.0005): a border at
 // 14.00225 puts rows 0-1 wholly inside, makes row 2 a genuine straddler

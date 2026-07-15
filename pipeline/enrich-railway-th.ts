@@ -46,7 +46,7 @@ import { latLngToCell, cellToLatLng } from 'h3-js'
 import { SOURCE_ID_TH_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { inBbox } from './lib/spatial.js'
 import {
-  RAIL_TYPES, TRAM_TYPES, METRO_TYPES, nearestGridStop, parseGtfsDate, formatDate,
+  RAIL_TYPES, TRAM_TYPES, METRO_TYPES, nearestGridStop, parseGtfsDate, formatDate, parseTime,
   logRetractSkippedIncompleteInputs, readMergedStopCache, writeMergedStopCache,
 } from './lib/gtfs-enrich-core.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
@@ -86,8 +86,9 @@ interface StopTrainCount {
 }
 
 // Route_type families + GtfsStop/StopTrainCount-adjacent generics live in lib/gtfs-enrich-core.ts.
-// TH keeps its own 3-family RouteFamily (rail/tram/metro), compact CSV parser, inlined
-// findTargetWednesday, and parseTime — they differ from the shared core, so stay here.
+// TH keeps its own 3-family RouteFamily (rail/tram/metro), compact CSV parser, and inlined
+// findTargetWednesday — they differ from the shared core, so stay here. parseTime is
+// byte-identical and hoisted (2026-07-16).
 
 // ── CSV parsing ──
 function parseCsvLine(line: string): string[] {
@@ -342,12 +343,6 @@ async function computeStopFrequencies(dir: string): Promise<StopTrainCount[]> {
     }
   }
   return deduped
-}
-
-function parseTime(s: string): number {
-  const m = /^(\d+):(\d+):(\d+)$/.exec(s.trim())
-  if (!m) return -1
-  return parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseInt(m[3])
 }
 
 // Retract signature for stamps the pre-2026-07-10 fallback design wrote: TH's deleted

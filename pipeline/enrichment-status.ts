@@ -7,6 +7,16 @@
 //! own receiver-country approximation, so border hexes carry some neighbour
 //! rows). Powers owner questions and contributor onboarding walkthroughs.
 //!
+//! The railways section also prints a rail CONTINUITY block (2026-07-15
+//! railway continuity plan, Phase 2): pax/freight measured km, silent km,
+//! engine-default km and seam/jump endpoint counts, split main vs branch —
+//! row collection is SHARED with audit-enrichment-invariants.ts's R15/R16 via
+//! lib/rail-endpoint-rows.ts (collectRailEndpointRows) so the two tools'
+//! numbers can never drift. Unlike the rest of this file's hex-admin scoping,
+//! the continuity block gates each ROW by its own CGAZ midpoint (lib/
+//! country-polygon.ts) — a border hex's admin-iso approximation would
+//! otherwise bleed a neighbour's track into this country's km totals.
+//!
 //! Usage:
 //!   DATA_YEAR=2026 npx tsx pipeline/enrichment-status.ts --country CZ \
 //!     [--layer roads|railways|all] [--json out.json]
@@ -18,6 +28,9 @@ import { readAdminIso } from './lib/admin-iso.js'
 import { SOURCES, SOURCES_BY_ID, PROVENANCE_RANK, SOURCE_ID_CZ_TIMETABLE_SILENT } from './lib/sources.js'
 import { DATASETS, type Dataset } from './lib/enrichment-datasets.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
+import { collectRailEndpointRows, loadRailStopsIndex, RAIL_STOPS_UNAVAILABLE_WARNING } from './lib/rail-endpoint-rows.js'
+import { findRailFlowJumps, findRailContinuityGaps } from './lib/rail-graph-metrics.js'
+import { makeOwnershipGate, hasCountryPolygon } from './lib/country-polygon.js'
 
 // Optional research artifacts — their sections appear only when the files exist.
 const DISCONTINUITY_REPORT = '/tmp/quietmap-v4/disc-world-merged.json'
@@ -222,6 +235,128 @@ function printRailways(agg: RailAgg, registry: Dataset[]): void {
   printBlock('  ', 'registry  ', regLines.length ? regLines : ['no railway sources declared for this country'])
 }
 
+// ── Rail continuity block (2026-07-15 railway continuity plan, Phase 2) ──
+// Row collection is SHARED with audit-enrichment-invariants.ts's R15/R16 via
+// lib/rail-endpoint-rows.ts so the two tools' numbers can never drift.
+
+interface RailContinuityBand {
+  paxMeasuredM: number
+  frtMeasuredM: number
+  bothMeasuredM: number
+  effectiveDefaultFreightM: number
+  silentM: number
+  defaultM: number
+  seamEndpoints: number
+  jumpEndpoints: number
+}
+const newRailContinuityBand = (): RailContinuityBand => ({
+  paxMeasuredM: 0, frtMeasuredM: 0, bothMeasuredM: 0, effectiveDefaultFreightM: 0,
+  silentM: 0, defaultM: 0, seamEndpoints: 0, jumpEndpoints: 0,
+})
+
+interface RailContinuityResult {
+  bands: { main: RailContinuityBand; branch: RailContinuityBand }
+  stopsAvailable: boolean
+  countryGateAvailable: boolean
+}
+
+/** usage 0 → main, 1 → branch, everything else (2 industrial, unknown) is
+ *  outside the main/branch split this block reports. */
+const railContinuityBandOf = (usage: number): 'main' | 'branch' | null =>
+  usage === 0 ? 'main' : usage === 1 ? 'branch' : null
+
+function computeRailContinuity(h3r4Dir: string, hexes: string[], country: string): RailContinuityResult {
+  const { rows, ioErrors } = collectRailEndpointRows(h3r4Dir, hexes)
+  if (ioErrors.length > 0) {
+    console.error(`  rail-continuity: ${ioErrors.length} hex(es) with unreadable/damaged railways.arrow (informational — status is read-only, not a gate):`)
+    for (const e of ioErrors.slice(0, 10)) console.error(`    ${e.hex}: ${e.error}`)
+  }
+
+  // Row-level CGAZ ownership gate — the hex set above comes from
+  // h3r4-admin.bin (H3-centroid country approximation), which bleeds a
+  // border hex's neighbour rows into this country's totals; gating each
+  // row's own midpoint is the same fix R9/the auditor use for segments.
+  const countryGateAvailable = hasCountryPolygon(country)
+  let countryGate: ((lat: number, lon: number) => boolean) | null = null
+  if (countryGateAvailable) {
+    try {
+      countryGate = makeOwnershipGate(country)
+    } catch {
+      countryGate = null
+    }
+  }
+  const inCountry = (lat: number, lon: number): boolean => !countryGate || countryGate(lat, lon)
+
+  const stopsIndex = loadRailStopsIndex(h3r4Dir)
+
+  const bands = { main: newRailContinuityBand(), branch: newRailContinuityBand() }
+  for (const r of rows) {
+    const midLat = (r.startLat + r.endLat) / 2, midLon = (r.startLon + r.endLon) / 2
+    if (!inCountry(midLat, midLon)) continue
+    const band = railContinuityBandOf(r.usage)
+    if (!band) continue
+    const b = bands[band]
+    if (r.sourceId === 0) { b.defaultM += r.lengthM; continue }
+    if (SOURCES_BY_ID.get(r.sourceId)?.key.endsWith('-timetable-silent')) { b.silentM += r.lengthM; continue }
+    if (r.pax > 0) b.paxMeasuredM += r.lengthM
+    if (r.frt > 0) b.frtMeasuredM += r.lengthM
+    if (r.pax > 0 && r.frt > 0) b.bothMeasuredM += r.lengthM
+    // source_id>0, frt==0 — the engine's per-column zero-defaulting re-adds
+    // class-default freight; a pax-only GTFS country must show up here, not
+    // just look "measured" via pax_measured_km.
+    if (r.frt === 0) b.effectiveDefaultFreightM += r.lengthM
+  }
+
+  // A violation's two sides can straddle main/branch (a branch spur off a
+  // main line) — attributed to the LOWER usage code (main wins a mixed pair,
+  // same "the more important line dominates" call the auditor's own
+  // higher-effective-total pick makes for hex/row/osm_id).
+  const rowByKey = new Map(rows.map((r) => [r.key, r]))
+  const bandOfPair = (aKey: string, bKey: string): 'main' | 'branch' | null => {
+    const a = rowByKey.get(aKey), b = rowByKey.get(bKey)
+    return railContinuityBandOf(Math.min(a?.usage ?? 0, b?.usage ?? 0))
+  }
+  for (const v of findRailFlowJumps(rows, stopsIndex)) {
+    if (!inCountry(v.endpointLat, v.endpointLon)) continue
+    const band = bandOfPair(v.aKey, v.bKey)
+    if (band) bands[band].jumpEndpoints++
+  }
+  for (const v of findRailContinuityGaps(rows, stopsIndex)) {
+    if (!inCountry(v.endpointLat, v.endpointLon)) continue
+    const band = bandOfPair(v.aKey, v.bKey)
+    if (band) bands[band].seamEndpoints++
+  }
+
+  return { bands, stopsAvailable: stopsIndex !== null, countryGateAvailable }
+}
+
+function printRailContinuity(result: RailContinuityResult): void {
+  console.log(
+    `\n  continuity (km${result.countryGateAvailable ? ', row-level CGAZ match' : ' — NO CGAZ polygon for this country, hex-admin only'})`,
+  )
+  if (!result.stopsAvailable) console.log(`    ${RAIL_STOPS_UNAVAILABLE_WARNING}`)
+  for (const band of ['main', 'branch'] as const) {
+    const b = result.bands[band]
+    console.log(
+      `    ${band.padEnd(7)} pax-measured ${kmOf(b.paxMeasuredM).padStart(6)} km · frt-measured ${kmOf(b.frtMeasuredM).padStart(6)} km · ` +
+      `both ${kmOf(b.bothMeasuredM).padStart(6)} km · default-freight ${kmOf(b.effectiveDefaultFreightM).padStart(6)} km · ` +
+      `silent ${kmOf(b.silentM).padStart(6)} km · default ${kmOf(b.defaultM).padStart(6)} km · ` +
+      `seam_endpoints ${b.seamEndpoints} · jump_endpoints ${b.jumpEndpoints}`,
+    )
+  }
+}
+
+const railContinuityBandJson = (b: RailContinuityBand) => ({
+  pax_measured_km: Math.round(b.paxMeasuredM / 1000),
+  frt_measured_km: Math.round(b.frtMeasuredM / 1000),
+  both_measured_km: Math.round(b.bothMeasuredM / 1000),
+  effective_default_freight_km: Math.round(b.effectiveDefaultFreightM / 1000),
+  silent_km: Math.round(b.silentM / 1000),
+  default_km: Math.round(b.defaultM / 1000),
+  seam_endpoints: b.seamEndpoints,
+  jump_endpoints: b.jumpEndpoints,
+})
+
 function printGaps(roads: RoadsAgg | null, rail: RailAgg | null, undeclared: string[], acquisition: string | null): void {
   console.log('\nGAPS')
   if (roads) {
@@ -344,10 +479,12 @@ function main(): void {
     : []
   const undeclared = undeclaredSourceLines(roads, rail, ccPrefix)
   const acquisition = rail ? acquisitionStep(country) : null
+  const railContinuity = rail ? computeRailContinuity(h3r4Dir, hexes, country) : null
 
   console.log(`ENRICHMENT STATUS  ${country} · year ${YEAR} · ${hexes.length} hexes`)
   if (roads) printRoads(roads, disc)
   if (rail) printRailways(rail, railRegistry)
+  if (railContinuity) printRailContinuity(railContinuity)
   printGaps(roads, rail, undeclared, acquisition)
   const elapsedS = (Date.now() - t0) / 1000
   console.log(`\nscan  roads ${roads ? roads.files : '—'} files · railways ${rail ? rail.files : '—'} files · ${elapsedS.toFixed(1)} s · ${h3r4Dir}`)
@@ -387,6 +524,12 @@ function main(): void {
           railFamilies: d.railFamilies ?? null,
           timetableCoverage: (d as { timetableCoverage?: unknown }).timetableCoverage ?? null,
         })),
+        continuity: railContinuity && {
+          countryGateAvailable: railContinuity.countryGateAvailable,
+          stopsSidecarAvailable: railContinuity.stopsAvailable,
+          main: railContinuityBandJson(railContinuity.bands.main),
+          branch: railContinuityBandJson(railContinuity.bands.branch),
+        },
       },
       gaps: { undeclared, nextAcquisition: rail ? acquisition : null },
     }, null, 1))

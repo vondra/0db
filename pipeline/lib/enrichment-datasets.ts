@@ -78,6 +78,13 @@ export interface Dataset {
    *  (ID, PH, …) — the invariant scanner's moto-scramble rule (R2) would
    *  otherwise flag every row; it skips ids declaring this. */
   highMoto?: boolean
+  /** Divisors on rows stamped by this source are computed by the graph-walk's
+   *  lateral parallel-track spread (`rail-graph-metrics.ts::applyParallelSpread`,
+   *  driven by `rail-walk-enrich.ts`) — the generic token-grouped only-raise
+   *  pass (`enrich-railways-parallel.ts`) must never override them, including
+   *  raising a divisor the walk deliberately set to 1. Absent = the generic
+   *  pass owns this source's divisors as usual. */
+  railDivisorFromWalk?: true
 }
 
 /** Classes 0-4 + links — the standard major-road census coverage every
@@ -206,6 +213,7 @@ export const DATASETS: Dataset[] = [
     provenance: 'baseline',
     measurement: 'derived',
     railFamilies: ['rail'],
+    railDivisorFromWalk: true,
   },
 
   // ── Roads: national ──
@@ -351,6 +359,7 @@ export const DATASETS: Dataset[] = [
     url: 'https://www.spravazeleznic.cz/',
     priority: 80,
     railFamilies: ['rail'], // CZPTT is heavy-rail only; trams get class defaults
+    railDivisorFromWalk: true,
   },
 
   // ── Buildings: national ──

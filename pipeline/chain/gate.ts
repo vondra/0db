@@ -1,17 +1,27 @@
 //! Chain gate verdict — pure logic over the auditor's MACHINE outputs
 //! (--ndjson + --summary-json), separated from run.ts so it is importable by
 //! tests (run.ts executes main() on import). The gate is a fingerprint
-//! MULTISET diff against pipeline/chain/gate-baseline.json: any fingerprint
-//! whose count exceeds the baseline fails the chain (new damage); fingerprints
-//! present only in the baseline are reported as resolved. Counting per
-//! rule|source alone is lossy — 1 336 old offenders could vanish while 1 200
-//! new ones appear in the same bucket and a count diff would pass (/gg Codex
+//! MULTISET diff against a per-scope baseline: any fingerprint whose count
+//! exceeds the baseline fails the chain (new damage); fingerprints present
+//! only in the baseline are reported as resolved. Counting per rule|source
+//! alone is lossy — 1 336 old offenders could vanish while 1 200 new ones
+//! appear in the same bucket and a count diff would pass (/gg Codex
 //! CRITICAL) — hence per-row fingerprints.
 //!
 //! Fail-closed by construction: a signal/null exit, an unexpected exit code,
 //! a missing/unparsable summary or NDJSON file, an NDJSON line count that
 //! disagrees with the summary grand total, or a baseline written for a
 //! different DATA_YEAR/scope are all hard FAILs — never "all resolved".
+//!
+//! Baselines live one per scope: `pipeline/chain/gate-baselines/{dataYear}.
+//! {scope-slug}.json` (scope-slug = scope.canonical with ':' → '-', e.g.
+//! "country:CZ" → "country-CZ" — see `scopeBaselineSlug`). `resolveGateBaseline`
+//! is the pure (no file I/O — run.ts owns reading the per-scope file) read
+//! logic: absent file = no baseline (the census path — the first
+//! `--update-gate-baseline` for a scope establishes it), unparsable file
+//! fails closed. Distinct per-scope filenames make cross-scope leakage
+//! structurally impossible — there is no shared file two scopes could ever
+//! read from each other.
 
 /** v2 baseline — keyed to the exact run identity. `fingerprints` is a
  *  multiset: fingerprint string → occurrence count. */
@@ -130,7 +140,7 @@ export function validateBaselineIdentity(
     return {
       valid: false,
       lines: [
-        'NO baseline exists (pipeline/chain/gate-baseline.json)',
+        `NO baseline exists (pipeline/chain/gate-baselines/${dataYear}.${scopeBaselineSlug(scope)}.json)`,
         'create one from the current pre-existing state: --update-gate-baseline (review before trusting)',
       ],
     }
@@ -265,5 +275,40 @@ export function buildBaseline(dataYear: string, scope: string, ndjsonText: strin
     scope,
     createdAt: new Date().toISOString(),
     fingerprints: Object.fromEntries([...machine.fingerprints.entries()].sort((a, b) => a[0].localeCompare(b[0]))),
+  }
+}
+
+// ── Per-scope baseline file resolution (pure — run.ts owns the file I/O) ────
+
+/** Filesystem-safe slug for a scope's per-scope baseline filename: the ':' in
+ *  "country:CZ" would otherwise read like a path separator on some tools.
+ *  Bbox scopes keep their commas (a legal filename character everywhere this
+ *  runs) — collisions are impossible since a bbox scope's canonical string is
+ *  already unique per exact bbox. */
+export function scopeBaselineSlug(scope: string): string {
+  return scope.replace(/:/g, '-')
+}
+
+export type ResolveGateBaselineResult =
+  | { ok: true; baseline: unknown }
+  | { ok: false; lines: string[] }
+
+/**
+ * Resolve which baseline a run should gate against, given the RAW contents of
+ * the per-scope baseline file — this function never touches the filesystem
+ * itself (run.ts reads `perScopeText` and passes it in), so it stays pure and
+ * directly testable.
+ *
+ * Absent file (`null`) = no baseline — the census path; downstream identity
+ * checks (`validateBaselineIdentity`) still enforce the exact DATA_YEAR once
+ * a baseline IS returned. An unparsable file fails closed, never silently
+ * "no baseline".
+ */
+export function resolveGateBaseline(perScopeText: string | null): ResolveGateBaselineResult {
+  if (perScopeText === null) return { ok: true, baseline: null }
+  try {
+    return { ok: true, baseline: JSON.parse(perScopeText) }
+  } catch {
+    return { ok: false, lines: ['per-scope gate baseline is unparsable — fix or regenerate with --update-gate-baseline'] }
   }
 }

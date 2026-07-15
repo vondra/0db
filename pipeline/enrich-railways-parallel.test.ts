@@ -2,8 +2,10 @@
  * Tests for the shared parallel-track divisor pass (task #30 part 1) —
  * synthetic one-hex railways.arrow fixtures exercising corridor identity
  * (ref/name + rail_type + usage), the 50 m point-to-segment neighbour rule,
- * the nodeKey junction exclusion, the ≤3 clamp, and the only-raise-from-1
- * asymmetry that protects CZ czpttKey divisors.
+ * the nodeKey junction exclusion, the ≤3 clamp, the only-raise-from-1 rule,
+ * and the walk-managed-source exclusion (`railDivisorFromWalk` in
+ * enrichment-datasets.ts) that keeps this pass off rows the graph-walk
+ * driver's own lateral spread already owns.
  *
  * Run: `cd pipeline && npx tsx --test enrich-railways-parallel.test.ts`
  */
@@ -33,6 +35,8 @@ interface FxRow {
   railType?: number
   usage?: number
   service?: number
+  /** Dataset id this row is stamped under; defaults to 0 (unspecified). */
+  sourceId?: number
   start: [lat: number, lon: number]
   end: [lat: number, lon: number]
   divisor?: number // any row setting this materializes the parallel_divisor column
@@ -66,7 +70,7 @@ function writeFixture(name: string, rows: FxRow[]): string {
     service: vectorFromArray(rows.map(r => r.service ?? 0), new Uint8()),
     trains_passenger: vectorFromArray(idx.map(i => 10 + i), new Int32()),
     trains_freight: vectorFromArray(idx.map(i => 20 + i), new Int32()),
-    source_id: vectorFromArray(idx.map(() => 0), new Uint16()),
+    source_id: vectorFromArray(rows.map(r => r.sourceId ?? 0), new Uint16()),
   }
   if (rows.some(r => r.divisor !== undefined)) {
     cols['parallel_divisor'] = vectorFromArray(rows.map(r => r.divisor ?? 1), new Uint8())
@@ -220,4 +224,20 @@ test('idempotent: a second run writes nothing (raised rows are now current > 1)'
   )
   assert.deepEqual(readFileSync(path), afterFirst)
   assert.deepEqual(readDivisors(path), [2, 2])
+})
+
+test('walk-managed source (railDivisorFromWalk): its divisor-1 rows are never raised; an unflagged source in the same shape still is', async () => {
+  const path = writeFixture('walk-managed.arrow', [
+    // cz-szcd-gtfs (id 110) is flagged railDivisorFromWalk in enrichment-datasets.ts —
+    // the graph-walk driver already decided divisor 1 here and this pass must
+    // not raise it even though the geometry looks like a genuine parallel pair.
+    { osm: 200, ref: 'W', sourceId: 110, ...NS(14.0), divisor: 1 },
+    { osm: 201, ref: 'W', sourceId: 110, ...NS(14.0 + LON_STEP), divisor: 1 },
+    // Same corridor shape, stamped by an UNFLAGGED source (100 = global-gtfs-transit) — still raised.
+    { osm: 202, ref: 'U', sourceId: 100, ...NS(14.0 + 2 * LON_STEP), divisor: 1 },
+    { osm: 203, ref: 'U', sourceId: 100, ...NS(14.0 + 3 * LON_STEP), divisor: 1 },
+  ])
+  const s = await enrichHexRailParallelDivisor(path)
+  assert.equal(s.eligibleRows, 2, 'the two walk-managed rows never enter the corridor-eligible count at all')
+  assert.deepEqual(readDivisors(path), [1, 1, 2, 2])
 })

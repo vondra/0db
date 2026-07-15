@@ -52,7 +52,10 @@ function nationalRailSources(): Array<{ id: number; iso: string; key: string }> 
  *  and must be kept, or the heal deletes what the writer's countryGate then
  *  refuses to re-claim), and
  *  (b) own SERVICE row anywhere (service rows can never be legitimately
- *  stamped; the writer clears them regardless of `when`). */
+ *  stamped; the writer clears them regardless of `when`).
+ *  Sibling implementation of the SAME policy over `segmentWhollyOutside`:
+ *  rail-walk-enrich.ts's country-bleed retract arm — a future policy change
+ *  here must update both. */
 function wouldRetract(
   inCountry: (lat: number, lon: number) => boolean,
   midLat: number, midLon: number,

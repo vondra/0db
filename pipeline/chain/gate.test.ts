@@ -7,7 +7,10 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { baselinePreflightProblem, validateBaselineIdentity, type GateBaseline } from './gate.js'
+import {
+  baselinePreflightProblem, validateBaselineIdentity, resolveGateBaseline, scopeBaselineSlug,
+  type GateBaseline,
+} from './gate.js'
 
 const BASELINE: GateBaseline = {
   dataYear: '2026',
@@ -47,4 +50,36 @@ test('baseline preflight preserves census only when the baseline is absent', () 
     baselinePreflightProblem(BASELINE, '2026', 'world')?.join('\n') ?? '',
     /baseline is for scope 'country:CZ'/,
   )
+})
+
+test('scopeBaselineSlug replaces only the scope-kind separator', () => {
+  assert.equal(scopeBaselineSlug('country:CZ'), 'country-CZ')
+  assert.equal(scopeBaselineSlug('world'), 'world')
+  assert.equal(scopeBaselineSlug('bbox:49.7,13.9,50.4,15.0'), 'bbox-49.7,13.9,50.4,15.0')
+})
+
+test('resolveGateBaseline: present per-scope file is read and returned (per-scope roundtrip)', () => {
+  const perScope = JSON.stringify(BASELINE)
+  const result = resolveGateBaseline(perScope)
+  assert.equal(result.ok, true)
+  if (result.ok) assert.deepEqual(result.baseline, BASELINE)
+})
+
+test('resolveGateBaseline: absent per-scope file is a clean census (no baseline) — cross-scope isolation is now structural', () => {
+  // A CZ per-scope baseline is simply not found for a DE run: each scope
+  // reads its OWN file (`{dataYear}.{scopeBaselineSlug(scope)}.json`, distinct
+  // by construction — see the 'scopeBaselineSlug' test above), so there is no
+  // shared file two scopes could ever leak through. This function only ever
+  // sees the ONE file run.ts already resolved for the caller's own scope.
+  const result = resolveGateBaseline(null)
+  assert.equal(result.ok, true)
+  if (result.ok) assert.equal(result.baseline, null)
+  // Sanity: the "no baseline" result stays census for any scope's preflight.
+  assert.equal(baselinePreflightProblem(result.ok ? result.baseline : 'unreachable', '2026', 'country:DE'), null)
+})
+
+test('resolveGateBaseline: unparsable per-scope JSON fails closed, never silently "no baseline"', () => {
+  const bad = resolveGateBaseline('{not json')
+  assert.equal(bad.ok, false)
+  if (!bad.ok) assert.match(bad.lines.join('\n'), /per-scope gate baseline is unparsable/)
 })

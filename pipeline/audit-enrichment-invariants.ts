@@ -48,6 +48,30 @@
  *                         not contain v2 POI-join type ids 10-13 (that shape =
  *                         an enricher rewrite dropped the schema metadata, and
  *                         the heatmap loader fail-loud rejects the file)
+ *   R15 rail-flow-jump  — cross-source EFFECTIVE rail traffic (engine
+ *                         zero-default + parallel_divisor mirror, see
+ *                         lib/rail-graph.ts::effectiveRailTraffic) jumps >3x
+ *                         at a degree-2 heavy-rail non-service node with no
+ *                         junction/stop to explain it, once effective max
+ *                         >=20 trains/day — the trať 200 shape (110->9863,
+ *                         raw 16+0 vs 2+1 hides the floor, effective 36 vs 3
+ *                         clears it)
+ *   R16 rail-continuity-gap (rail) — same candidate node, one side measured
+ *                         (source_id>0) and the other an unmeasured engine-
+ *                         default row (source_id==0), EFFECTIVE totals >3x
+ *                         apart — the rail twin of R13, but comparing what the
+ *                         engine actually renders, not raw stamped ints
+ *
+ *   R15/R16 run on a SCOPE-WIDE endpoint index — never per-hex like R5/R13
+ *   accept for roads — because the bug class they catch (banding at a wrong
+ *   section boundary) sits exactly on H3 borders: railways.arrow rows are
+ *   assigned to hexes by midpoint, so a per-hex adjacency scan would miss a
+ *   seam that straddles two hexes. See collectRailEndpointRows
+ *   (lib/rail-endpoint-rows.ts) and findRailFlowJumps/findRailContinuityGaps
+ *   (lib/rail-graph-metrics.ts) — both fail-closed on missing end_lat/
+ *   end_lon/usage/service columns (EXTRACT-core for this rule) and degrade to
+ *   junction-only exemption (no rail-stops sidecar yet) with a loud warning,
+ *   never a silent narrower scan.
  *
  * Usage:
  *   DATA_YEAR=2025 npx tsx pipeline/audit-enrichment-invariants.ts \
@@ -87,6 +111,9 @@ import { makeOwnershipGate, segmentWhollyOutside, makeAnyCountryGate } from './l
 import { SOURCE_ID_GLOBAL_INDUSTRIAL_NATIONAL_MIX } from './lib/source-ids.generated.js'
 import { MAX_BUILDING_TYPE, V2_SPECIFIC_TYPE_MIN } from './lib/buildings-arrow.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
+import { collectRailEndpointRows, loadRailStopsIndex, RAIL_STOPS_UNAVAILABLE_WARNING } from './lib/rail-endpoint-rows.js'
+import { findRailFlowJumps, findRailContinuityGaps } from './lib/rail-graph-metrics.js'
+import type { RailContinuityViolation } from './lib/rail-graph.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const H3R4_DIR = resolve(__dirname, '..', 'data', 'prepared', YEAR, 'h3r4')
@@ -225,9 +252,15 @@ const byRuleSource = new Map<string, Map<string, number>>()
 function report(
   rule: string, hex: string, row: number, osmId: number | null,
   sourceId: number, lat: number, lon: number, detail: string,
+  // R15/R16 override the per-source label with a canonical PAIR + severity
+  // bucket (/gg item 13): the pair must be IN the fingerprint fields — this
+  // `source` value feeds --ndjson's `source` field, part of fingerprintOf in
+  // chain/gate.ts — not only in `detail`, since the gate diffs fingerprints
+  // (rule|source|hex|osm_id|row|lat5|lon5) and never looks at detail.
+  sourceLabelOverride?: string,
 ): void {
   byRule.set(rule, (byRule.get(rule) ?? 0) + 1)
-  const source = KEY_BY_ID.get(sourceId) ?? `id ${sourceId}`
+  const source = sourceLabelOverride ?? (KEY_BY_ID.get(sourceId) ?? `id ${sourceId}`)
   const perSource = byRuleSource.get(rule) ?? new Map<string, number>()
   perSource.set(source, (perSource.get(source) ?? 0) + 1)
   byRuleSource.set(rule, perSource)
@@ -632,6 +665,65 @@ const buildings = scanLayer('buildings.arrow', (t, hex) => {
   return checked
 })
 
+// ── R15/R16: rail continuity (2026-07-15 railway continuity plan, Phase 2) ──
+// A SEPARATE, full-row pass over the SAME hex set the railways scan above
+// used (hexesInScope('railways.arrow')) — deliberately outside scanLayer's
+// sampled loop, AFTER every per-layer scan (never inside the railways scan's
+// sampleRows loop: R5 already establishes that adjacency needs every
+// segment, and R15/R16 need the same full-row guarantee scope-wide, not just
+// per-hex — see the module doc and /gg item 10).
+const railContinuity = (() => {
+  const t0 = Date.now()
+  const hexes = hexesInScope('railways.arrow')
+  const { rows, ioErrors: rowIoErrors } = collectRailEndpointRows(H3R4_DIR, hexes)
+  // Dedup against ioErrors the sampled railways scan above already recorded
+  // for the SAME hex (an unreadable file is unreadable either pass); a
+  // genuinely NEW error — this rule's stricter end_lat/end_lon/usage/service
+  // requirement catching a file the sampled scan's looser column set let
+  // through — still reports.
+  const alreadyFlagged = new Set(ioErrors.filter((e) => e.layer === 'railways.arrow').map((e) => e.hex))
+  for (const e of rowIoErrors) {
+    if (alreadyFlagged.has(e.hex)) continue
+    reportIoError(e.hex, 'railways.arrow', e.error)
+  }
+
+  // Missing/empty sidecar is NOT a violation and NOT an IO error — it means
+  // walk-based sources (plan Phase 1) have not run in this tree yet. R15/R16
+  // still run, just with the junction-only exemption (a real stop boundary
+  // without a sidecar entry will over-fire until the sidecar lands).
+  const stopsIndex = loadRailStopsIndex(H3R4_DIR)
+  if (!stopsIndex) console.error(`R15/R16: ${RAIL_STOPS_UNAVAILABLE_WARNING}`)
+
+  const rowByKey = new Map(rows.map((r) => [r.key, r]))
+  const keyOfSource = (id: number): string => KEY_BY_ID.get(id) ?? `id ${id}`
+  const severityBucket = (ratio: number): 'x3-10' | 'x10-30' | 'x30+' =>
+    ratio >= 30 ? 'x30+' : ratio >= 10 ? 'x10-30' : 'x3-10'
+
+  const reportViolation = (rule: string, v: RailContinuityViolation): void => {
+    // hex/row/osm_id = the higher-effective-total side's — the side actually
+    // carrying the (wrong) audible traffic is the one worth triaging first.
+    const higherIsA = v.effA.total >= v.effB.total
+    const higherKey = higherIsA ? v.aKey : v.bKey
+    const higherSourceId = higherIsA ? v.aSourceId : v.bSourceId
+    const [hex, rowIdxStr] = higherKey.split(':')
+    const row = rowByKey.get(higherKey)
+    const osmId = row && row.osmId ? Number(row.osmId) : null
+    const pairLabel = `${keyOfSource(v.aSourceId)}→${keyOfSource(v.bSourceId)}|${severityBucket(v.ratio)}`
+    const detail =
+      `${keyOfSource(v.aSourceId)}→${keyOfSource(v.bSourceId)} eff pax ${v.effA.pax.toFixed(1)}/${v.effB.pax.toFixed(1)} ` +
+      `frt ${v.effA.frt.toFixed(1)}/${v.effB.frt.toFixed(1)} total ${v.effA.total.toFixed(1)}/${v.effB.total.toFixed(1)} ` +
+      `(col=${v.column}, ${v.ratio.toFixed(1)}x)`
+    report(rule, hex, Number(rowIdxStr), osmId, higherSourceId, v.endpointLat, v.endpointLon, detail, pairLabel)
+  }
+
+  const jumps = findRailFlowJumps(rows, stopsIndex)
+  for (const v of jumps) reportViolation('R15 rail-flow-jump', v)
+  const gaps = findRailContinuityGaps(rows, stopsIndex)
+  for (const v of gaps) reportViolation('R16 rail-continuity-gap', v)
+
+  return { hexes: hexes.length, rows: rows.length, jumps: jumps.length, gaps: gaps.length, ms: Date.now() - t0 }
+})()
+
 // ── summary ──────────────────────────────────────────────────────────────────
 
 const FIX_HINTS: Record<string, string> = {
@@ -650,6 +742,8 @@ const FIX_HINTS: Record<string, string> = {
   'R11 unknown-country': "Dataset key's country prefix has no CGAZ/ISO-3166 identity — fix the key, or add the prefix to NON_COUNTRY_PREFIXES / CITY_COUNTRY in this scanner.",
   'R12 buildings-contract': 'Settlement v2 contract broken — a rewrite dropped/garbled schema metadata. Rewrite buildings.arrow ONLY via lib/buildings-arrow.ts::writeBuildingEnrichment; re-extract the hex (osm-to-h3r4.sh) to restore the stamp.',
   'R13 continuity-gap': 'A measured major road continues into a same-ref default segment with no junction between them — run enrich-roads-continuity-fill.ts (it copies the measured value across). Residue after the fill = cross-hex gap, ref-less road, or conflicting anchors; triage by hand.',
+  'R15 rail-flow-jump': "banding/matcher artifact or a genuinely wrong section value — re-run the graph-walk matcher for this line; a legit service boundary means a missing stop in the country's rail-stops sidecar",
+  'R16 rail-continuity-gap': 'measured line continues into an engine-default row — between-stop gap the walk should cover; residue = genuine end-of-data, document in provenance.md',
 }
 
 console.log(`=== Enrichment invariant scan — ${BBOXES.length} bbox(es) ${BBOXES.map((b) => b.join(',')).join(' | ')} (${YEAR}) ===`)
@@ -658,6 +752,10 @@ console.log(`  roads      ${roads.hexes} hexes  ${roads.rows.toLocaleString()} r
 console.log(`  railways   ${rails.hexes} hexes  ${rails.rows.toLocaleString()} rows checked  ${(rails.ms / 1000).toFixed(1)}s`)
 console.log(`  industrial ${industrial.hexes} hexes  ${industrial.rows.toLocaleString()} rows checked  ${(industrial.ms / 1000).toFixed(1)}s`)
 console.log(`  buildings  ${buildings.hexes} hexes  ${buildings.rows.toLocaleString()} rows checked  ${(buildings.ms / 1000).toFixed(1)}s`)
+console.log(
+  `  rail-continuity ${railContinuity.hexes} hexes  ${railContinuity.rows.toLocaleString()} rows checked  ` +
+  `${railContinuity.jumps} R15  ${railContinuity.gaps} R16  ${(railContinuity.ms / 1000).toFixed(1)}s`,
+)
 
 // ── machine outputs — written on EVERY exit path so the chain gate can never
 // mistake a missing file for "all resolved" (it fails on absent/unparsable). ──
