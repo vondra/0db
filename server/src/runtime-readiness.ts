@@ -48,21 +48,14 @@ async function checkPreparedData(h3r4Dir: string): Promise<void> {
   await requireNonEmptyFile(join(h3r4Dir, REFERENCE_HEX, 'roads.arrow'))
 }
 
-type PublisherProof = {
-  schema?: unknown
-  sha256?: unknown
-  dev?: unknown
-  ino?: unknown
-  size?: unknown
-  mtime_ns?: unknown
-  ctime_ns?: unknown
-}
+// publisher_proof still EXISTS in manifests (tile-store-pack writes it; fsck and
+// --rebind-verified consume it) — this reader just no longer judges it, so it has
+// no type here. See the decision comment inside checkPmtiles().
 type ManifestLayer = {
   file?: unknown
   bytes?: unknown
   build?: unknown
   sha256?: unknown
-  publisher_proof?: PublisherProof
 }
 
 const BUILD_ID = /^b[0-9]+$/

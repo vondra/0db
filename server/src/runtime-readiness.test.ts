@@ -262,7 +262,7 @@ test('readiness still rejects a malformed manifest sha256, but ignores proof mut
   assert.equal(staleProof.ready, true)
 })
 
-test('readiness never opens PMTiles archive content after publisher verification', async (t) => {
+test('readiness never opens PMTiles archive content (stat-only, always)', async (t) => {
   const fixture = await readinessFixture()
   t.after(async () => rm(fixture.root, { recursive: true, force: true }))
   for (const entry of Object.values(fixture.layers)) {

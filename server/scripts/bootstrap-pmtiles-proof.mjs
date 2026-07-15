@@ -10,9 +10,12 @@
 //   --rebind-verified   Re-bind identities after a LEGITIMATE whole-archive
 //       move (e.g. the 2026-07-14 Track D relocation of pmtiles/ from /data2
 //       to /data1: rsync preserves mtime and bytes, but dev/ino/ctime change
-//       by definition, so every sha256-posix-stat-v1 proof goes stale and
-//       readiness hard-fails — hit live 2026-07-15, first qm-app restart
-//       after the move). STRONGER trust anchor than the legacy mode: it
+//       by definition, so every sha256-posix-stat-v1 proof goes stale). Stale
+//       proofs no longer fail boot-time readiness (identity gate removed by
+//       owner decision, 2026-07-15) — but tile-store-pack still VERIFIES the
+//       retained archives' proofs on every partial publish, so a post-move
+//       partial pack fails until this rebind runs. STRONGER trust anchor
+//       than the legacy mode: it
 //       re-hashes every archive's full content and requires it to equal the
 //       manifest sha256 before stamping the new identity — nothing is trusted
 //       that isn't re-verified, so a tampered archive can't launder a fresh
