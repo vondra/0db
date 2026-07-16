@@ -19,11 +19,11 @@
  *     GPS-less pseudo-locations ("Km 67,500", "vl. v km 75,245",
  *     "odb.výh.101") by construction instead of losing the whole inter-station
  *     stretch to a radius miss (the trať 200 banding bug this migration fixes).
- *   - `OLD_FALLBACK`/`wasOldFallbackStamp` -> the driver's per-component
+ *   - `OLD_FALLBACK`/`wasOldFallbackStamp` -> the driver's quarantine-gated
  *     retract arm: any row this file's ids (110, 9863) stamped that the walk
- *     no longer claims, in a failure-free graph component, is disowned — and
- *     the silent residual re-claims genuinely dead lines in the SAME pass,
- *     like the old fallback's "no continue" fallthrough did.
+ *     no longer claims, outside every failed pair's quarantine region, is
+ *     disowned — and the silent residual re-claims genuinely dead lines in
+ *     the SAME pass, like the old fallback's "no continue" fallthrough did.
  *   - the bespoke `enrichHexes` (hand-rolled Arrow read/write, the inline
  *     czpttKey parallel-divisor pass, `gpsSegments` chord list) -> gone
  *     entirely. Arrow I/O is `writeRailTrains`/`writeRailParallelDivisor`
@@ -99,7 +99,7 @@ const TARGET_DATE = '2026-04-08'
 
 // #31.7 country gate — this hex prefilter bbox (48-51.5 / 11.5-19.5)
 // deliberately reaches into DE/AT/PL/SK (Dresden, Vienna) so the driver's
-// country-bleed retract arm can find + disown any foreign row this dataset
+// bleed retract arm (bleedGate = the same CZ gate) can find + disown any foreign row this dataset
 // (or its bespoke predecessor) ever stamped out there — same rationale as the
 // R9 auditor's segmentWhollyOutside predicate.
 const CZ_BBOX: readonly [number, number, number, number] = [48.0, 11.5, 51.5, 19.5]
@@ -445,8 +445,12 @@ async function main() {
     pairs,
     sourceId: MY_SOURCE_ID,
     countryGate,
+    // Nationally-owned ids (110/9863) — this dataset's own country gate IS
+    // the union of every territory it may legitimately stamp, so the bleed
+    // arm uses the same gate (driver contract, 2026-07-16 item 1).
+    bleedGate: countryGate,
     // Owner decision 2026-07-11 (option b, gtfs-silent-decision.md): a
-    // failure-free component the walk never reaches has NO scheduled service
+    // quarantine-free stretch the walk never reaches has NO scheduled service
     // by construction (CZPTT is the infrastructure manager's timetable —
     // every operator's SŽ-network train is in it), so it gets a small
     // explicit residual (2 pax + 1 frt/day) under the BASELINE-rank
@@ -454,7 +458,7 @@ async function main() {
     silentResidual: { sourceId: SOURCE_ID_CZ_TIMETABLE_SILENT, pax: 2, frt: 1 },
     // Both ids this file has ever stamped (live match + silent residual) are
     // retractable in the same pass — a row the walk no longer claims under
-    // either id is disowned (per-component gated) and can be re-claimed by
+    // either id is disowned (quarantine-gated) and can be re-claimed by
     // the walk or the residual this same run.
     retract: { sourceIds: [MY_SOURCE_ID, SOURCE_ID_CZ_TIMETABLE_SILENT] },
     retractSafe,

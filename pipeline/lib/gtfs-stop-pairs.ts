@@ -8,8 +8,18 @@
  * Built on the two generic helpers extracted from `gtfs-enrich-core.ts`:
  * `computeActiveTripFamiliesForFeed` (routes + calendar + trips -> trip_id family map,
  * with the 2026-07-15 calendar-zero-active fix) and `loadStopsWithCoords` /
- * `resolveStopViaParent` (stops + parent-station fallback). Not yet wired into any
- * `enrich-railway-*.ts` enricher — that wiring is a later phase of the plan.
+ * `resolveStopViaParent` (stops + parent-station fallback). Wired into
+ * `enrich-railway-europe.ts` (Phase 4, 2026-07-16) for the heavy-rail graph walk.
+ *
+ * Every feed contributes through this ONE shared pair accumulator. The
+ * 2026-07-16 mirror-group/trip-fingerprint dedup that briefly lived here
+ * (`tripFingerprint`/`mergeMirrorGroupTripBundles`/`emitTripFingerprints`) was
+ * DELETED the same day on a data verdict: the FR national and Île-de-France
+ * caches share only 7 of 3 537/6 193 coordinate keys, so cross-producer
+ * fingerprints could never match and the dedup could never do its job — while
+ * its bypass of the pair cache also skipped the shape-conflict drop and
+ * false-merged within-feed duplicate trips. Cross-feed overlap policy now
+ * lives in the europe registry instead (fr-idf is declared tram-only there).
  */
 
 import { existsSync, createReadStream } from 'node:fs'
@@ -29,8 +39,9 @@ import type { RailStationPairCount } from './rail-graph.js'
 export type { RailStationPairCount }
 
 export interface StopPairFrequenciesOptions {
-  /** Bounding box for stops.txt out-of-bounds pruning (1° margin), same convention as
-   *  `loadStopsWithCoords`/`computeStopFrequenciesForFeed`. Omit to keep every stop. */
+  /** Bounding box for stops.txt out-of-bounds pruning (`GTFS_BORDER_MARGIN_DEG`
+   *  margin), same convention as `loadStopsWithCoords`/
+   *  `computeStopFrequenciesForFeed`. Omit to keep every stop. */
   bbox?: readonly [number, number, number, number]
   /** Route-type -> family classifier. Defaults to RAIL_TYPES-only (tram/metro excluded).
    *  Pass a metroAsRail-style override (e.g. europe's `railFamilyFor` narrowed to 'rail')
@@ -356,7 +367,9 @@ export async function computeStopPairFrequenciesForFeed(
       sequence.push(stop)
     }
 
-    for (let i = 0; i < sequence.length - 1; i++) addPair(sequence[i], sequence[i + 1], boost, shape, shapeId)
+    for (let i = 0; i < sequence.length - 1; i++) {
+      addPair(sequence[i], sequence[i + 1], boost, shape, shapeId)
+    }
   }
 
   const pairs = [...pairMap.values()]

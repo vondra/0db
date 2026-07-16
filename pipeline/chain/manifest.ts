@@ -60,6 +60,7 @@ import { readdirSync, existsSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { DATA_YEAR as YEAR } from '../lib/data-year.js'
 import { CITY_DATASETS } from '../lib/city-datasets.js'
+import { FEEDS as EUROPE_FEEDS } from '../enrich-railway-europe.js'
 import { bboxIntersects, countryIntersectsBbox, serializeBbox, type Bbox, type ResolvedScope } from './scope.js'
 
 export const PIPELINE_DIR = resolve(import.meta.dirname, '..')
@@ -92,7 +93,8 @@ export interface PlanStep {
    *  osm-to-h3r4.sh tail just produced identical output. */
   skipIf?: 'ran-by-extract-tail'
   /** #31.6 completeness FLOOR: the minimum number of input parts this step
-   *  must load (36 EU cities, 23 GTFS feeds) for its stamp to be trusted. The
+   *  must load (36 EU cities; every feed in the europe GTFS registry — derived
+   *  from FEEDS.length, never hand-written) for its stamp to be trusted. The
    *  step reports its actual via a QM_COMPLETENESS marker; run.ts records the
    *  {expected, actual, state} in status.json, clears safeToSync when a floored
    *  step loaded short, and FAILS a fresh full world run on it unless
@@ -190,13 +192,23 @@ const BUILDINGS_CACHED_DOWNLOAD: Record<string, string[]> = {
   es: [`${YEAR}/es/catastro-buildings.json`],
 }
 
-/** Countries enrich-railway-europe.ts actually carries feeds for (mirrors its
- *  FEEDS table: de ch at nl se no fi be in us ca fr lu gr lv ee bg hr hu sk +
- *  au-vic/au-qld) — despite the name it is NOT Europe-only. Used only to skip
- *  the step under a country scope it cannot touch. */
-const RAILWAY_EUROPE_FEED_COUNTRIES = new Set([
-  'de', 'ch', 'at', 'nl', 'se', 'no', 'fi', 'be', 'in', 'us', 'ca', 'fr', 'lu', 'gr', 'lv', 'ee', 'bg', 'hr', 'hu', 'sk', 'au',
-])
+/** Countries `enrich-railway-europe.ts` actually carries feeds for — DERIVED
+ *  from its own `FEEDS` registry (2026-07-16 Phase 4), not a hand-maintained
+ *  duplicate: the pre-Phase-4 version of this table was a literal copy-paste
+ *  of the FEEDS country list with a comment warning it could drift, and the
+ *  plan's own inventory undercounted europe's feed/country count once before
+ *  (see the plan's Country inventory section) — importing the registry
+ *  directly makes that drift structurally impossible. Despite the script's
+ *  name this is NOT Europe-only (carries IN/US/CA/AU too). Used to (a) skip
+ *  the step under a country/bbox scope it cannot touch and (b) floor each
+ *  per-country invocation's `expectMinInputs` at that country's OWN feed
+ *  count (`RAILWAY_EUROPE_FEED_COUNT_BY_COUNTRY`). */
+const RAILWAY_EUROPE_FEED_COUNTRIES = new Set(EUROPE_FEEDS.map((f) => f.country.toLowerCase()))
+const RAILWAY_EUROPE_FEED_COUNT_BY_COUNTRY: Record<string, number> = {}
+for (const f of EUROPE_FEEDS) {
+  const cc = f.country.toLowerCase()
+  RAILWAY_EUROPE_FEED_COUNT_BY_COUNTRY[cc] = (RAILWAY_EUROPE_FEED_COUNT_BY_COUNTRY[cc] ?? 0) + 1
+}
 /** enrich-roads-europe.ts scan envelope (its EU_HEX_BBOX). */
 const ROADS_EUROPE_BBOX: Bbox = [34, -32, 72, 45]
 /** US CGAZ bbox is antimeridian-wide; USWTDB relevance test uses CONUS+AK+HI. */
@@ -494,24 +506,62 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
     (b) => (b ? ['--bbox', serializeBbox(b)] : ['--world']),
   )
   {
-    const covered = scope.kind !== 'country' || RAILWAY_EUROPE_FEED_COUNTRIES.has(scope.iso2!.toLowerCase())
     const c = cacheState(['global/gtfs'])
-    push({
-      id: 'railway-europe',
-      script: 'enrich-railway-europe.ts',
-      phase: 'global-priors',
-      layer: 'railways',
-      country: null,
-      args: c.present ? ['--enrich-only'] : [],
-      expectMinInputs: 23, // #31.6: all 23 GTFS feeds must load non-empty; the enricher emits QM_COMPLETENESS so a partial (au-vic yields 0) is recorded, not silently stamped.
-      notes:
-        'Continental GTFS aggregate (23 feeds incl. IN/US/CA/AU — one shared source id). NEVER pass --feed in a chain run: any subset forces retract-unsafe for the whole pass. Cache is NOT year-stamped (data/enrichment/global/gtfs). #31.6: the enricher now emits a QM_COMPLETENESS marker (feeds-loaded/23) and this floor records the gap — au-vic (nested PTV zip-of-zips) currently loads 0, so a full run reports 22/23 partial; it needs nested-zip extraction (a namespaced GTFS merge, tracked) before a clean world run. FLAT per-feed cache layout accepted since #31.',
-      skipReason: !covered
-        ? `no feed covers ${scope.iso2} (feed countries: ${[...RAILWAY_EUROPE_FEED_COUNTRIES].join(' ')})`
-        : c.present
-          ? null
-          : 'cache missing (data/enrichment/global/gtfs) — chain never downloads mid-run',
-    })
+    const cacheSkipReason = c.present ? null : 'cache missing (data/enrichment/global/gtfs) — chain never downloads mid-run'
+    if (scope.kind === 'world') {
+      // World mode: the enricher's OWN all-countries loop (processCountry
+      // per country, sequentially) plus the CRITICAL-2 legacy retract sweep
+      // — unchanged since before Phase 4.
+      push({
+        id: 'railway-europe',
+        script: 'enrich-railway-europe.ts',
+        phase: 'global-priors',
+        layer: 'railways',
+        country: null,
+        args: c.present ? ['--enrich-only'] : [],
+        // #31.6 floor DERIVED from the registry (2026-07-16 /gg fix batch
+        // item 7 — the hand-written 23 here drifted the moment FEEDS changed):
+        // every registered GTFS feed must load non-empty; the enricher emits
+        // QM_COMPLETENESS so a partial (au-vic yields 0) is recorded, not
+        // silently stamped.
+        expectMinInputs: EUROPE_FEEDS.length,
+        notes:
+          `Continental GTFS aggregate (${EUROPE_FEEDS.length} feeds incl. IN/US/CA/AU — one shared source id), run as the enricher's own all-countries SEQUENTIAL loop (2026-07-16 Phase 4). NEVER pass --feed in a chain run: any subset forces retract-unsafe for the whole pass. Cache is NOT year-stamped (data/enrichment/global/gtfs). #31.6: the enricher emits a QM_COMPLETENESS marker (feeds-loaded/${EUROPE_FEEDS.length}, aggregated across every country) and this floor records the gap — au-vic (nested PTV zip-of-zips) currently loads 0, so a full run reports one short of the floor. FLAT per-feed cache layout accepted since #31.`,
+        skipReason: cacheSkipReason,
+      })
+    } else {
+      // Per-country fan-out (2026-07-16 Phase 4 / /gg review item 7): a
+      // country:XX (or bbox) scope must scope the europe aggregate to XX's
+      // own feed(s) + a border-buffered rail graph via `--country CC`
+      // (`processCountry` — the SAME path the all-countries loop uses), not
+      // mutate the whole continent + run the world-wide CRITICAL-2 sweep.
+      // Mirrors nationalStep's own scope-resolution precedence: a country
+      // with no CGAZ feature is listed with an explicit skip (never silent);
+      // a country simply outside this scope is excluded entirely, like any
+      // national step for a country outside the scope.
+      for (const cc of [...RAILWAY_EUROPE_FEED_COUNTRIES].sort()) {
+        const feedCount = RAILWAY_EUROPE_FEED_COUNT_BY_COUNTRY[cc] ?? 1
+        const step: PlanStep = {
+          id: `railway-europe-${cc}`,
+          script: 'enrich-railway-europe.ts',
+          phase: 'global-priors',
+          layer: 'railways',
+          country: cc,
+          args: [...(c.present ? ['--enrich-only'] : []), '--country', cc.toUpperCase()],
+          expectMinInputs: feedCount,
+          notes:
+            `per-country invocation (2026-07-16 Phase 4): scopes to ${cc.toUpperCase()}'s own ${feedCount} feed(s) + a 0.5°-buffered rail graph via the enricher's --country flag — fixes /gg item 7 (a country:XX chain scope used to run the WHOLE 23-feed aggregate + the world-wide retract sweep). The CRITICAL-2 legacy OLD_FALLBACK sweep runs ONLY under world scope, never here.`,
+          skipReason: cacheSkipReason,
+        }
+        const inScope = countryInScope(cc, scope)
+        if (inScope === 'unresolvable') {
+          step.skipReason = `country '${cc.toUpperCase()}' has no CGAZ ADM0 feature (dependent territory) — bbox scoping cannot place it; runs under --scope world or country:${cc.toUpperCase()}`
+          push(step)
+        } else {
+          pushIf(inScope, step)
+        }
+      }
+    }
   }
 
   // ── national (roads → railways → buildings → industrial, alpha per family) ─

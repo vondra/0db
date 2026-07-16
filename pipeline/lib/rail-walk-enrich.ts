@@ -8,17 +8,24 @@
  * behind the shared walk result, and the rail-stops sidecar the R15/R16
  * stop exemption reads.
  *
- * Per-component evidence (plan point 8): the silent residual and the
- * destructive retract arm are gated on `RailWalkResult.failedComponents`,
- * never on a global %-walked figure — a failed/ambiguous pair anywhere in a
- * graph component withholds both for that WHOLE component, so one bad GTFS
- * pair elsewhere in the same run can never make this driver quietly disown
- * or silence a cleanly-walked corridor. The one exception: `unlocalizedPairs`
- * (neither end of a pair snapped onto the graph) can't be attributed to any
- * component at all, so it suppresses the silent residual GLOBALLY instead —
- * see `enrichRailwaysByGraphWalk`'s doc (2026-07-16 /gg review item 4).
+ * Per-pair quarantine ellipse (2026-07-16 Step-B refinement, replaces the
+ * per-component gating this module used until then): the silent residual and
+ * the destructive retract arm are gated on
+ * `RailWalkResult.quarantinedSegmentKeys` — every stampable segment inside
+ * the bounded region a FAILED pair was actually allowed to search (or, for an
+ * unlocalized pair, within `UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M` of its
+ * straight chord) — never on the pair's WHOLE graph component. Per-component
+ * withholding was verified on a live CZ Step-A run to quarantine the entire
+ * national network behind 150 failed pairs out of 2 461, because rail is one
+ * connected component nationwide (9 failed components included the main CZ
+ * mainline, 31 245 km); the bounded-search ellipse is strictly tighter
+ * evidence and no longer needs a separate global-suppression case for
+ * unlocalized pairs either — see `rail-graph-metrics.ts`'s module doc and
+ * `RailWalkResult`'s doc (rail-graph.ts) for the full rationale.
+ * `RailWalkResult.failedComponents` survives only for `perComponentFailedKm`
+ * comparison logging below (deprecated).
  *
- * `enableDestructive` gates `retract` (in full, including the country-bleed
+ * `enableDestructive` gates `retract` (in full, including the `bleedGate`
  * sub-arm below) AND the silent residual — divisors ride with every accepted
  * `match` (walk-stamped or silent) in EVERY mode, since `RailTrains.divisor`
  * is part of the atomic counts+divisor write `writeRailTrains` itself now
@@ -52,30 +59,46 @@ export interface RailWalkEnrichOptions {
   bbox: readonly [number, number, number, number]
   pairs: RailStationPairCount[]
   sourceId: number
-  /** Passed straight to `writeRailTrains` (the #31.7 national-ownership gate). */
+  /** Passed straight to `writeRailTrains` (the #31.7 national-ownership gate).
+   *  Also bounds this run's RETRACT testimony: a row wholly outside it is
+   *  outside what this run's feeds testify about, so the ordinary
+   *  quarantine-gated retract arm never disowns it — only `bleedGate` (when
+   *  provided) can. */
   countryGate?: (lat: number, lon: number) => boolean
+  /** Geometry-evidence gate for the BLEED retract arm (2026-07-16 /gg fix
+   *  batch item 1). When provided, a row wholly outside THIS gate is
+   *  disowned on geometry alone (bypassing `retractSafe`/quarantine — but
+   *  never `enableDestructive`); when omitted, the bleed arm is OFF
+   *  entirely. Contract: a nationally-owned id passes its own country gate
+   *  here (CZ does); a SHARED multi-country id must pass the UNION of every
+   *  territory the id may legitimately stamp — a single country's gate would
+   *  disown rows a neighbouring country's run legitimately stamped under the
+   *  SAME id (the CH-run-kills-southern-DE-rows bug) — or omit it and leave
+   *  foreign healing to a dedicated sweep (heal-rail-country-bleed.ts). */
+  bleedGate?: (lat: number, lon: number) => boolean
   /** Per-hex extra match arm (tram stop-join etc.) — consulted only for rows
    *  the walk did not stamp. Same shape as a `writeRailTrains` match closure. */
   extraMatch?: (row: RailRow, i: number, hexId: string) => RailTrains | null
   /** CZ option-b residual. Applied ONLY when destructive ops are enabled AND
-   *  the row's graph component has zero failed/ambiguous pairs AND the walk
-   *  as a whole has zero unlocalized pairs (see module doc). The divisor
-   *  actually stamped rides from `walk.divisorBySegmentKey`, not from this
-   *  option — a quiet double-track must render at its true (2+1)/2, never
-   *  the undivided (2+1)/1. */
+   *  `retractSafe` holds AND the row sits outside EVERY failed pair's
+   *  quarantine region (`RailWalkResult.quarantinedSegmentKeys` — the
+   *  per-pair admissible-path ellipse/ball/chord, see rail-graph.ts). The
+   *  divisor actually stamped rides from `walk.divisorBySegmentKey`, not
+   *  from this option — a quiet double-track must render at its true
+   *  (2+1)/2, never the undivided (2+1)/1. */
   silentResidual?: { sourceId: number; pax: number; frt: number }
-  /** Ids this driver may disown. Retract (incl. the country-bleed sub-arm)
+  /** Ids this driver may disown. Retract (incl. the `bleedGate` sub-arm)
    *  fires ONLY when `enableDestructive` is true — see module doc; in
    *  stamp-only NO retract object is even built. Within a destructive run:
-   *  ordinary rows need `retractSafe` AND a failure-free component; the
-   *  country-bleed arm (row wholly outside `countryGate`) bypasses BOTH of
-   *  those (but still requires `enableDestructive`) — geometry is its own
-   *  evidence a national dataset never owned that row (/gg finding). */
+   *  ordinary rows need `retractSafe` AND freedom from every failed pair's
+   *  quarantine region; the bleed arm (row wholly outside `bleedGate`)
+   *  bypasses BOTH of those (but still requires `enableDestructive`) —
+   *  geometry is its own evidence the id never legitimately owned that row. */
   retract?: { sourceIds: readonly number[] }
   /** Caller's input-completeness verdict (feeds loaded non-empty etc.). */
   retractSafe: boolean
   /** Phase-3 Step A: stamp-only proof mode — when false, NO retract object is
-   *  constructed at all (no country-bleed heal, no per-component reclaim
+   *  constructed at all (no bleed heal, no quarantine-gated reclaim
    *  check, no always-on service-arm auto-heal either) and NO silent residual
    *  fires. Walk-stamped rows still land with their FULL atomic write
    *  (pax/frt/sourceId AND divisor) in every mode — stamp-only only means
@@ -90,7 +113,7 @@ export interface RailWalkEnrichStats {
   rows: number
   /** Rows the WALK itself stamped (a train count landed via `pairs` + the graph). */
   stamped: number
-  /** Rows disowned this run — country-bleed arm + per-component destructive retract, combined. */
+  /** Rows disowned this run — bleed-gate arm + quarantine-gated destructive retract, combined. */
   retracted: number
   /** Rows stamped by the CZ option-b silent residual (never the walk, never `extraMatch`). */
   silentStamped: number
@@ -99,16 +122,25 @@ export interface RailWalkEnrichStats {
   walk: {
     failures: RailWalkResult['failures']
     failedComponentCount: number
-    /** Pairs where NEITHER end snapped onto the graph — see module doc; a
-     *  nonzero count suppresses the silent residual for THIS ENTIRE run. */
+    /** Pairs where NEITHER end snapped onto the graph — stats-only telemetry
+     *  (2026-07-16 Step-B refinement dropped the old global silent-residual
+     *  suppression; see module doc). */
     unlocalizedPairs: number
     pairsWalked: number
     pairsTotal: number
   }
-  /** Track-km of stampable (heavy-rail, non-traversal) rows sitting in a
-   *  graph component the walk marked failed — the "how much is still stuck"
-   *  figure, computed from the same segments the graph was built from. */
+  /** DEPRECATED (2026-07-16 Step-B refinement) — comparison-logging only.
+   *  Track-km of stampable (heavy-rail, non-traversal) rows sitting in a
+   *  graph component the walk marked failed. Retract/silent no longer key off
+   *  this (see `quarantinedKm`); kept to show how much tighter the
+   *  bounded-search ellipse is in practice. */
   perComponentFailedKm: number
+  /** Track-km of stampable rows inside `RailWalkResult.quarantinedSegmentKeys`
+   *  — the "how much is still stuck" figure retract/silent actually withhold
+   *  on now, computed from the same segments the graph was built from.
+   *  Always <= `perComponentFailedKm` (the ellipse is a subset of the whole
+   *  component). */
+  quarantinedKm: number
   /** '' when nothing was written this run (never-cache-empty; see
    *  `writeStopsSidecarIfAny`) — a caller must not treat this as a path. */
   sidecarPath: string
@@ -173,8 +205,10 @@ function collectGraphSegments(h3r4Dir: string, hexIds: readonly string[]): RailG
   return segments
 }
 
-/** Track-km of stampable rows (railType 0, non-traversal — the graph's own
- *  candidates for a walk stamp) whose component the walk marked failed. */
+/** DEPRECATED (2026-07-16 Step-B refinement) — comparison-logging only, see
+ *  `RailWalkEnrichStats.perComponentFailedKm`'s doc. Track-km of stampable
+ *  rows (railType 0, non-traversal — the graph's own candidates for a walk
+ *  stamp) whose component the walk marked failed. */
 function computePerComponentFailedKm(
   graph: RailGraph,
   segments: readonly RailGraphSegmentInput[],
@@ -185,6 +219,23 @@ function computePerComponentFailedKm(
     if (seg.isTraversalOnly) continue
     const component = graph.componentOfSegmentKey.get(seg.key)
     if (component !== undefined && failedComponents.has(component)) m += seg.lengthM
+  }
+  return m / 1000
+}
+
+/** Track-km of stampable rows sitting inside
+ *  `RailWalkResult.quarantinedSegmentKeys` — the figure retract/silent
+ *  actually withhold on now (2026-07-16 Step-B refinement). Always
+ *  <= `computePerComponentFailedKm`'s result on the same walk, since the
+ *  bounded-search ellipse is a subset of the pair's whole component. */
+function computeQuarantinedKm(
+  segments: readonly RailGraphSegmentInput[],
+  quarantinedSegmentKeys: ReadonlySet<string>,
+): number {
+  let m = 0
+  for (const seg of segments) {
+    if (seg.isTraversalOnly) continue
+    if (quarantinedSegmentKeys.has(seg.key)) m += seg.lengthM
   }
   return m / 1000
 }
@@ -281,22 +332,8 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
   const graph = buildRailGraph(segments)
   const walk = walkRailStationPairs(graph, opts.pairs)
 
-  // An unlocalized pair (neither end snapped) could belong to ANY component —
-  // failedComponents can't have caught it, so it withholds the silent
-  // residual for the WHOLE run rather than trusting a per-component gate
-  // that has nothing to key on (2026-07-16 /gg review item 4).
-  const silentSuppressedGlobally = walk.unlocalizedPairs > 0
-  if (silentSuppressedGlobally) {
-    console.error(
-      `\n!!! rail-walk-enrich: ${walk.unlocalizedPairs} unlocalized pair(s) (neither end snapped onto the ` +
-      `graph) — silent residual suppressed for this ENTIRE run (an unlocatable pair could belong to any ` +
-      `component). Retract still applies per-component as usual.`,
-    )
-  }
-
-  const wholeRowOutsideCountry = (row: RailRow): boolean =>
-    opts.countryGate !== undefined &&
-    segmentWhollyOutside(opts.countryGate, row.midLat, row.midLon, row.startLat, row.startLon, row.endLat, row.endLon)
+  const rowWhollyOutside = (gate: (lat: number, lon: number) => boolean, row: RailRow): boolean =>
+    segmentWhollyOutside(gate, row.midLat, row.midLon, row.startLat, row.startLon, row.endLat, row.endLon)
 
   let rows = 0
   let stamped = 0
@@ -325,16 +362,16 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
           // walk's own divisor, never an undivided count next to a divided sibling).
           return { pax: Math.round(stamp.pax), frt: Math.round(stamp.frt), sourceId: opts.sourceId, divisor: stamp.divisor }
         }
-        if (opts.silentResidual && opts.enableDestructive && opts.retractSafe && !silentSuppressedGlobally && row.railType === 0) {
-          const component = graph.componentOfSegmentKey.get(key)
-          if (component !== undefined && !walk.failedComponents.has(component)) {
-            acceptedBranch.set(i, 'silent')
-            // A quiet double-track must render at its true divided count, not the
-            // engine's undivided default — divisorBySegmentKey covers every
-            // sibling-bearing segment independent of whether the WALK stamped it
-            // (rail-graph-metrics.ts's applyParallelSpread, /gg review item 2).
-            return { ...opts.silentResidual, divisor: walk.divisorBySegmentKey.get(key) ?? 1 }
-          }
+        if (
+          opts.silentResidual && opts.enableDestructive && opts.retractSafe && row.railType === 0 &&
+          !walk.quarantinedSegmentKeys.has(key)
+        ) {
+          acceptedBranch.set(i, 'silent')
+          // A quiet double-track must render at its true divided count, not the
+          // engine's undivided default — divisorBySegmentKey covers every
+          // sibling-bearing segment independent of whether the WALK stamped it
+          // (rail-graph-metrics.ts's applyParallelSpread, /gg review item 2).
+          return { ...opts.silentResidual, divisor: walk.divisorBySegmentKey.get(key) ?? 1 }
         }
         return opts.extraMatch?.(row, i, hexId) ?? null
       },
@@ -353,25 +390,34 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
         ? {
             sourceId: opts.retract.sourceIds,
             when: (row, i) => {
-              // Country-bleed arm: bypasses retractSafe/component health (geometry
-              // is its own evidence a national dataset never owned this row — /gg
-              // finding) but NOT enableDestructive, since the object above is only
-              // ever constructed when that's already true. Sibling implementation
-              // of the SAME policy over `segmentWhollyOutside`:
+              // BLEED arm (2026-07-16 /gg fix batch item 1): fires ONLY when the
+              // caller provided a `bleedGate`, and uses IT — never `countryGate`.
+              // Bypasses retractSafe/quarantine health (geometry is its own
+              // evidence the id never legitimately owned this row) but NOT
+              // enableDestructive, since the object above is only ever
+              // constructed when that's already true. Sibling implementation of
+              // the SAME policy over `segmentWhollyOutside`:
               // heal-rail-country-bleed.ts's `wouldRetract` — a future policy
               // change here must update both.
-              if (wholeRowOutsideCountry(row)) return true
+              if (opts.bleedGate && rowWhollyOutside(opts.bleedGate, row)) return true
+              // Testimony guard (item 1's other half): a row wholly outside
+              // `countryGate` is outside what THIS run's feeds testify about —
+              // the ordinary arm below must never disown it (a shared
+              // multi-country id's row here belongs to ANOTHER country's run;
+              // only the bleed arm above, whose gate spans every legitimate
+              // territory, may condemn it on geometry).
+              if (opts.countryGate && rowWhollyOutside(opts.countryGate, row)) return false
               if (!opts.retractSafe) return false
               const key = segmentKey(hexId, i)
               if (walk.stampsBySegmentKey.has(key)) return false // the walk still claims this row this pass
-              // componentFailureFree: a row with NO graph component (a tram, or any
-              // family the graph never admitted) carries no failure evidence either —
-              // `failedComponents.has(undefined)` is trivially false, so such a row is
-              // disownable on ordinary priority-gate terms, same as a road/rail
-              // predecessor-id migration would expect. A graph row's OWN component
-              // must simply not be flagged failed.
-              const component = graph.componentOfSegmentKey.get(key)
-              return component === undefined || !walk.failedComponents.has(component)
+              // quarantineFree (2026-07-16 Step-B refinement): a row NEVER inside
+              // any failed pair's quarantine region — including a row with NO
+              // graph component at all (a tram, or any family the graph never
+              // admitted), which by construction can never appear in
+              // `quarantinedSegmentKeys` either — is disownable on ordinary
+              // priority-gate terms, same as a road/rail predecessor-id migration
+              // would expect. Strictly tighter than the old whole-component check.
+              return !walk.quarantinedSegmentKeys.has(key)
             },
           }
         : undefined,
@@ -384,7 +430,8 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
     skippedForeign += result.skippedForeign
   }
 
-  const perComponentFailedKm = computePerComponentFailedKm(graph, segments, walk.failedComponents)
+  const perComponentFailedKm = computePerComponentFailedKm(graph, segments, walk.failedComponents) // deprecated, comparison logging only
+  const quarantinedKm = computeQuarantinedKm(segments, walk.quarantinedSegmentKeys)
   const stops = collectSnappedStops(graph, opts.pairs)
   if (stops.length === 0) warnIfStaleSidecarRemains(opts.h3r4Dir, opts.sidecar.scope)
   const sidecarPath = writeStopsSidecarIfAny(opts.h3r4Dir, opts.sidecar, stops)
@@ -405,6 +452,7 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
       pairsTotal: walk.pairsTotal,
     },
     perComponentFailedKm,
+    quarantinedKm,
     sidecarPath,
   }
 
@@ -413,8 +461,8 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
     `(${stats.silentStamped} silent, ${stats.retracted} retracted) — pairs ${stats.walk.pairsWalked}/${stats.walk.pairsTotal} walked; ` +
     `failures snap=${stats.walk.failures.snapFailed} disconnected=${stats.walk.failures.disconnected} ` +
     `detour=${stats.walk.failures.detourRejected} ambiguous=${stats.walk.failures.ambiguous}; ` +
-    `${stats.walk.failedComponentCount} failed component(s), ${stats.walk.unlocalizedPairs} unlocalized, ` +
-    `${stats.perComponentFailedKm.toFixed(1)} km stuck`,
+    `${stats.walk.failedComponentCount} failed component(s) (${stats.perComponentFailedKm.toFixed(1)} km, deprecated), ` +
+    `${stats.quarantinedKm.toFixed(1)} km quarantined, ${stats.walk.unlocalizedPairs} unlocalized`,
   )
 
   return stats

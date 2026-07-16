@@ -386,6 +386,18 @@ export function readMergedStopCache<T>(path: string): { stops: T[]; feedsLoadedN
 
 // ── Stops with coordinates + parent-station resolution ──
 
+/** ONE border margin (degrees) for BOTH sides of the GTFS geometry envelope
+ *  (2026-07-16 /gg fix batch item 6): the stops kept by `loadStopsWithCoords`
+ *  AND the rail-graph country bbox (`enrich-railway-europe.ts`'s
+ *  `countryBboxFor`) must pad by the SAME margin — the old mismatch (stops
+ *  1°, graph 0.5°) let cross-border stops form pairs whose graph end was
+ *  never loaded, so every such pair snap-failed and its endpoint-radius
+ *  quarantine froze retract/silent around the border for no real reason.
+ *  Tradeoff of 0.5° (~55 km): a genuinely cross-border line running farther
+ *  out than that loses its foreign tail's pairs — accepted for now; revisit
+ *  per-country in the dedicated cross-border sweep. */
+export const GTFS_BORDER_MARGIN_DEG = 0.5
+
 export interface StopsWithCoords {
   /** stop_id -> parsed stop, valid-coords (and in-bounds, when `bbox` was given) only. */
   stopsMap: Map<string, GtfsStop>
@@ -400,9 +412,9 @@ export interface StopsWithCoords {
 /**
  * stops.txt -> coordinate map + parent-station index, shared by the per-stop frequency
  * counter (`computeStopFrequenciesForFeed`) and the station-pair parser
- * (`gtfs-stop-pairs.ts`). `bbox` (with the same 1° border margin the pre-dedup enrichers
- * used) drops stops far outside the country the caller cares about; omit it to keep
- * every stop with valid coordinates.
+ * (`gtfs-stop-pairs.ts`). `bbox` (padded by `GTFS_BORDER_MARGIN_DEG`, the SAME margin
+ * the rail-graph country bbox uses — see the constant's doc) drops stops far outside
+ * the country the caller cares about; omit it to keep every stop with valid coordinates.
  */
 export async function loadStopsWithCoords(
   extractDir: string,
@@ -420,7 +432,8 @@ export async function loadStopsWithCoords(
 
     if (bbox) {
       const [minLat, minLon, maxLat, maxLon] = bbox
-      if (lat < minLat - 1 || lat > maxLat + 1 || lon < minLon - 1 || lon > maxLon + 1) {
+      const m = GTFS_BORDER_MARGIN_DEG
+      if (lat < minLat - m || lat > maxLat + m || lon < minLon - m || lon > maxLon + m) {
         skippedOutOfBounds++
         continue
       }

@@ -22,6 +22,22 @@
  * (`effectiveRailTraffic`) across source ids instead of raw AADT within one
  * source — a raw 16+0 vs 2+1 misses the >=20/day floor entirely, but the
  * engine actually renders 36 vs 3 once zero-defaulting applies.
+ *
+ * Two Step-B refinements (2026-07-16), both verified against a live CZ
+ * Step-A run (2 461 pairs, 150 failed): `altPathIsParallelTwin` exempts an
+ * 'ambiguous' verdict when the alt path found by the penalized re-run is
+ * merely the best path's own parallel twin — this killed 113 of the 150
+ * failed pairs, all Czech double-track lines the ambiguity probe mistook for
+ * a genuine second corridor. `quarantineAdmissiblePathEllipse` /
+ * `quarantineEndpointRadius` / `quarantineUnlocalizedPairChord` replace
+ * `failedComponents`-driven withholding with per-pair evidence shapes
+ * (`RailWalkResult.quarantinedSegmentKeys`) — per-component granularity had
+ * withheld retract/silent across the ENTIRE national network on 9 failed
+ * components, because rail is one connected component nationwide; the
+ * admissible-path ellipse (both ends snapped) is strictly tighter evidence,
+ * and the ball/chord shapes cover the ends the graph could not localize.
+ * `failedComponents` survives only for comparison logging
+ * (rail-walk-enrich.ts's deprecated `perComponentFailedKm`).
  */
 
 import { nodeKey, haversineM, pointToSegmentDist, pointToPolylineDist, coordKey4dp, wrapLonDeltaDeg, M_PER_DEG_LAT, M_PER_DEG_LON_EQ } from './spatial.js'
@@ -31,6 +47,7 @@ import {
   type RailStopsIndex, type RailEndpointRow, type RailContinuityViolation,
   effectiveRailTraffic, snapToNearestRailGraphNode,
   WALK_DETOUR_RATIO, WALK_DETOUR_SLACK_M, WALK_AMBIGUITY_LENGTH_RATIO, WALK_AMBIGUITY_SHARED_EDGE_FRACTION,
+  WALK_TWIN_ALT_EDGE_FRACTION, WALK_TWIN_MAX_NONTWIN_RUN_M, UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M,
   SHAPE_CORRIDOR_TOLERANCE_M, PARALLEL_SPREAD_RADIUS_M, RAIL_JUMP_RATIO, RAIL_MIN_EFFECTIVE_TRAINS_PER_DAY,
   RAIL_STOP_EXEMPT_RADIUS_M,
 } from './rail-graph.js'
@@ -44,7 +61,14 @@ function isRoutable(e: RailGraphEdge): boolean {
   return e.isTraversalOnly || e.railType === 0
 }
 
-interface ShortestPathResult { lengthM: number; edgeIndices: Set<number> }
+interface ShortestPathResult {
+  lengthM: number
+  edgeIndices: Set<number>
+  /** The path's edges in BACKTRACK order (to -> from). Order only matters to
+   *  the twin exemption's contiguous non-twin-run cap
+   *  (`WALK_TWIN_MAX_NONTWIN_RUN_M`), where a run is direction-agnostic. */
+  edgeOrder: number[]
+}
 
 /** Reusable Dijkstra scratch buffers, sized to ONE graph's `nodeCount`. REAL
  *  scale blocker this fixes: a Europe union graph (~5M nodes) x ~1e5 station
@@ -141,16 +165,18 @@ export function dijkstraShortestPath(
   if (dist[toNode] === Infinity) return null
 
   const edgeIndices = new Set<number>()
+  const edgeOrder: number[] = []
   let lengthM = 0
   let cur = toNode
   while (cur !== fromNode) {
     const edgeIdx = prevEdge[cur]
     if (edgeIdx === -1) return null // defensive: should be unreachable given dist[toNode] finite
     edgeIndices.add(edgeIdx)
+    edgeOrder.push(edgeIdx)
     lengthM += graph.edges[edgeIdx].lengthM
     cur = prevNode[cur]
   }
-  return { lengthM, edgeIndices }
+  return { lengthM, edgeIndices, edgeOrder }
 }
 
 // ── Parallel-track spread ────────────────────────────────────────────────────
@@ -284,22 +310,38 @@ function longitudinalOverlapM(a: SegGeom, b: SegGeom): { overlapM: number; aSpan
  *    `applyParallelSpread`'s doc for the accepted-error bound it trades off
  *    against exact conservation): a short segment can accept a long one that
  *    only just touches it, while the long one rejects the short one back. */
+/** Geometry-only core of the sibling probe (2026-07-16 Step-B refinement —
+ *  extracted so the ambiguity probe's twin-alt-path check, which has no
+ *  osmId/railType/usage/shared-node/overlap gates of its own to apply, can
+ *  reuse the SAME token/heading/radius arms rather than re-deriving them —
+ *  see `altPathIsParallelTwin`). `aHeadingDeg` is passed in rather than
+ *  recomputed here because `parallelSiblingLateralM` already has it in scope
+ *  from its own heading-gate call below; `b`'s shape only needs the fields a
+ *  bare `RailGraphEdge` already carries, so the ambiguity check can call this
+ *  directly on graph edges with no `SegGeom` reconstruction. */
+function lateralTwinGate(
+  aHeadingDeg: number, aCorridorToken: string, aMidLat: number, aMidLon: number,
+  b: { corridorToken: string; startLat: number; startLon: number; endLat: number; endLon: number },
+): number | null {
+  if (aCorridorToken !== '' && b.corridorToken !== '' && aCorridorToken !== b.corridorToken) return null
+  const tokenConfirmed = aCorridorToken !== '' && aCorridorToken === b.corridorToken
+  const maxLateralM = tokenConfirmed ? PARALLEL_SPREAD_RADIUS_M : PARALLEL_SPREAD_TOKENLESS_RADIUS_M
+  const maxHeadingDeltaDeg = tokenConfirmed ? 20 : 10
+  const hB = headingDeg(b.startLat, b.startLon, b.endLat, b.endLon)
+  if (headingDeltaMod180(aHeadingDeg, hB) >= maxHeadingDeltaDeg) return null
+  const lateralM = pointToSegmentDist(aMidLat, aMidLon, b.startLat, b.startLon, b.endLat, b.endLon)
+  if (lateralM >= maxLateralM) return null
+  return lateralM
+}
+
 function parallelSiblingLateralM(a: SegGeom, aMidLat: number, aMidLon: number, b: SegGeom): number | null {
   if (a.osmId === b.osmId) return null
   if (a.railType !== b.railType || a.usage !== b.usage) return null
   if (a.nodeA === b.nodeA || a.nodeA === b.nodeB || a.nodeB === b.nodeA || a.nodeB === b.nodeB) return null
-  if (a.corridorToken !== '' && b.corridorToken !== '' && a.corridorToken !== b.corridorToken) return null
-  const tokenConfirmed = a.corridorToken !== '' && a.corridorToken === b.corridorToken
-  const maxLateralM = tokenConfirmed ? PARALLEL_SPREAD_RADIUS_M : PARALLEL_SPREAD_TOKENLESS_RADIUS_M
-  const maxHeadingDeltaDeg = tokenConfirmed ? 20 : 10
-  const hA = headingDeg(a.startLat, a.startLon, a.endLat, a.endLon)
-  const hB = headingDeg(b.startLat, b.startLon, b.endLat, b.endLon)
-  if (headingDeltaMod180(hA, hB) >= maxHeadingDeltaDeg) return null
   const { overlapM, aSpanM } = longitudinalOverlapM(a, b)
   if (overlapM < Math.max(PARALLEL_SPREAD_MIN_OVERLAP_ABS_M, PARALLEL_SPREAD_MIN_OVERLAP_FRACTION * aSpanM)) return null
-  const lateralM = pointToSegmentDist(aMidLat, aMidLon, b.startLat, b.startLon, b.endLat, b.endLon)
-  if (lateralM >= maxLateralM) return null
-  return lateralM
+  const hA = headingDeg(a.startLat, a.startLon, a.endLat, a.endLon)
+  return lateralTwinGate(hA, a.corridorToken, aMidLat, aMidLon, b)
 }
 
 /** Grid cell for the sibling candidate search. ~110 m of latitude — segment
@@ -362,14 +404,19 @@ const PARALLEL_GRID_CELL_DEG = 0.001
  *  overlap boundary — rejected per SPEC's Occam's-razor rule: the bug class
  *  this pass fixes was a ~12 dB double-count over KILOMETRES of banded
  *  corridor, and a <=250 m sliver at <=1.76 dB is not worth the row-splitting
- *  complexity to close. */
+ *  complexity to close.
+ *
+ *  `geomByKey` (2026-07-16 Step-B refinement): built ONCE by the caller
+ *  (`walkRailStationPairs`, via `collectSegmentGeometry`) and passed in
+ *  rather than recomputed here, since the same map is now also read for the
+ *  unlocalized-pair chord-vicinity quarantine — one reconstruction per walk,
+ *  not two. */
 function applyParallelSpread(
   graph: RailGraph,
   stamps: Map<string, { pax: number; frt: number; divisor: number }>,
   divisorBySegmentKey: Map<string, number>,
+  geomByKey: Map<string, SegGeom>,
 ): void {
-  const geomByKey = collectSegmentGeometry(graph)
-
   const stampableGeomByKey = new Map<string, SegGeom>()
   const bodyGrid = new Map<string, string[]>() // cell -> keys of segments whose body bbox covers the cell
   for (const [k, g] of geomByKey) {
@@ -438,6 +485,248 @@ function applyParallelSpread(
   }
 }
 
+// ── Twin-track ambiguity exemption ──────────────────────────────────────────
+
+/** Is `alt` merely the PARALLEL TWIN of `best` (the sibling track of a
+ *  double-track line the ambiguity probe would otherwise fail on), rather
+ *  than a genuinely different corridor (2026-07-16 Step-B refinement, plan
+ *  item 1 — verified on live Step-A data: 113 of 150 failed pairs)?
+ *
+ *  For every stampable edge of `alt` NOT already shared with `best`, this
+ *  measures the lateral distance from that edge's own midpoint to the
+ *  nearest STAMPABLE `best`-path edge's body, reusing
+ *  `parallelSiblingLateralM`'s own geometry arms via `lateralTwinGate` (same
+ *  ≤15 m token-less / ≤50 m equal-token radius, heading within the matching
+ *  arm's limit) — deliberately WITHOUT the sibling probe's osmId/usage/
+ *  shared-node/longitudinal-overlap gates, which answer "is this my
+ *  divisor-sharing sibling at this exact cross-section" (a different
+ *  question); here only "does this alt edge run alongside the best path at
+ *  all" matters. `best`'s own edges are grid-accelerated (a small, bounded
+ *  set — the walk's own detour bound already caps it) so the probe never
+ *  scans the whole graph.
+ *
+ *  The verdict is LENGTH-weighted with a contiguity cap (2026-07-16 /gg fix
+ *  batch item 5 — an edge-count fraction let 8 short twin stubs outvote 2
+ *  long off-corridor edges): the pair is NOT ambiguous only when (a) at
+ *  least `WALK_TWIN_ALT_EDGE_FRACTION` of alt's non-shared stampable LENGTH
+ *  passes the twin gate AND (b) the longest CONTIGUOUS non-twin stretch
+ *  along alt's own edge order stays within `WALK_TWIN_MAX_NONTWIN_RUN_M` —
+ *  a genuine second corridor shows one long unbroken non-twin run even when
+ *  short twin edges pad the fraction. Run bookkeeping: shared (best-path)
+ *  edges and twin edges both terminate a run; traversal-only/non-stampable
+ *  edges are neutral (neither extend nor terminate — a crossover mid-
+ *  corridor must not launder a long foreign stretch into short ones). When
+ *  the twin verdict holds, the parallel-spread pass (`applyParallelSpread`)
+ *  unifies the two tracks on its own once the best path is stamped
+ *  normally. A CZ double-track line produces exactly this shape — the alt
+ *  path is the sibling track, fully disjoint edges, near-equal length.
+ *  Genuine dual corridors (Praha Vršovice->Holešovice via Libeň vs via
+ *  Bubny) sit hundreds of metres apart, so none of their edges ever pass
+ *  the radius gate and this returns false. */
+function altPathIsParallelTwin(graph: RailGraph, best: ShortestPathResult, alt: ShortestPathResult): boolean {
+  const bestStampableIndices: number[] = []
+  for (const idx of best.edgeIndices) {
+    const e = graph.edges[idx]
+    if (!e.isTraversalOnly && e.railType === 0) bestStampableIndices.push(idx)
+  }
+  if (bestStampableIndices.length === 0) return false // nothing stampable to compare a twin against
+
+  // Grid-accelerate over best's own (small) edge set: bbox cell -> edge indices.
+  const bestGrid = new Map<string, number[]>()
+  for (const idx of bestStampableIndices) {
+    const e = graph.edges[idx]
+    const laMin = Math.floor(Math.min(e.startLat, e.endLat) / PARALLEL_GRID_CELL_DEG)
+    const laMax = Math.floor(Math.max(e.startLat, e.endLat) / PARALLEL_GRID_CELL_DEG)
+    const loMin = Math.floor(Math.min(e.startLon, e.endLon) / PARALLEL_GRID_CELL_DEG)
+    const loMax = Math.floor(Math.max(e.startLon, e.endLon) / PARALLEL_GRID_CELL_DEG)
+    for (let la = laMin; la <= laMax; la++) {
+      for (let lo = loMin; lo <= loMax; lo++) {
+        const cell = `${la}_${lo}`
+        const arr = bestGrid.get(cell)
+        if (arr) arr.push(idx); else bestGrid.set(cell, [idx])
+      }
+    }
+  }
+
+  let nonSharedStampableLenM = 0
+  let twinLenM = 0
+  let currentNonTwinRunM = 0
+  let longestNonTwinRunM = 0
+  const endNonTwinRun = (): void => {
+    if (currentNonTwinRunM > longestNonTwinRunM) longestNonTwinRunM = currentNonTwinRunM
+    currentNonTwinRunM = 0
+  }
+  for (const altIdx of alt.edgeOrder) {
+    if (best.edgeIndices.has(altIdx)) { endNonTwinRun(); continue } // shared with best — unambiguous overlap terminates a run
+    const e = graph.edges[altIdx]
+    if (e.isTraversalOnly || e.railType !== 0) continue // neutral: no length, and must not launder a run (see doc)
+    nonSharedStampableLenM += e.lengthM
+
+    const midLat = (e.startLat + e.endLat) / 2
+    const midLon = (e.startLon + e.endLon) / 2
+    const hA = headingDeg(e.startLat, e.startLon, e.endLat, e.endLon)
+    const latSpanM = PARALLEL_GRID_CELL_DEG * M_PER_DEG_LAT
+    const lonSpanM = PARALLEL_GRID_CELL_DEG * M_PER_DEG_LON_EQ * Math.max(0.05, Math.cos(midLat * Math.PI / 180))
+    const dyMax = Math.max(1, Math.ceil(PARALLEL_SPREAD_RADIUS_M / latSpanM))
+    const dxMax = Math.max(1, Math.ceil(PARALLEL_SPREAD_RADIUS_M / lonSpanM))
+    const gy = Math.floor(midLat / PARALLEL_GRID_CELL_DEG)
+    const gx = Math.floor(midLon / PARALLEL_GRID_CELL_DEG)
+
+    let isTwin = false
+    const probed = new Set<number>()
+    for (let dy = -dyMax; dy <= dyMax && !isTwin; dy++) {
+      for (let dx = -dxMax; dx <= dxMax && !isTwin; dx++) {
+        const arr = bestGrid.get(`${gy + dy}_${gx + dx}`)
+        if (!arr) continue
+        for (const bestIdx of arr) {
+          if (probed.has(bestIdx)) continue
+          probed.add(bestIdx)
+          const b = graph.edges[bestIdx]
+          if (lateralTwinGate(hA, e.corridorToken, midLat, midLon, b) !== null) { isTwin = true; break }
+        }
+      }
+    }
+    if (isTwin) { twinLenM += e.lengthM; endNonTwinRun() }
+    else currentNonTwinRunM += e.lengthM
+  }
+  endNonTwinRun() // the path may END mid-run — the tail run competes too
+
+  // Alt barely differs from best (only via traversal-only crossovers, never a
+  // stampable edge of its own) — trivially the same route, not ambiguous.
+  if (nonSharedStampableLenM === 0) return true
+  if (longestNonTwinRunM > WALK_TWIN_MAX_NONTWIN_RUN_M) return false // one long foreign stretch = a real second corridor
+  return twinLenM / nonSharedStampableLenM >= WALK_TWIN_ALT_EDGE_FRACTION
+}
+
+// ── Per-pair failure quarantine ─────────────────────────────────────────────
+
+/** Bounded Dijkstra distance flood — no target node, no backtrack. Returns
+ *  node -> TRUE path cost for every node settled within `boundM`; once a
+ *  popped node's OWN distance exceeds the bound, nothing reachable through
+ *  it can still be inside, so relaxation stops there. Reuses `scratch`
+ *  exactly like `dijkstraShortestPath` (reset at entry, `touched` drained by
+ *  the next reuse); the result Map is copied OUT of the scratch so a second
+ *  flood on the same scratch (the ellipse case below) can't clobber it. */
+function floodNodeDistancesWithinBound(
+  graph: RailGraph, fromNode: number, boundM: number, scratch: DijkstraScratch,
+): Map<number, number> {
+  resetDijkstraScratch(scratch)
+  const { dist, visited } = scratch
+  const within = new Map<number, number>()
+  dist[fromNode] = 0
+  scratch.touched.push(fromNode)
+  const heap = new MinHeap()
+  heap.push(0, fromNode)
+
+  while (heap.size > 0) {
+    const { dist: d, node } = heap.pop()
+    if (visited[node]) continue
+    visited[node] = 1
+    if (d > boundM) continue // beyond the bound — record nothing, relax nothing further
+    within.set(node, d)
+
+    for (const edgeIdx of graph.adjacency[node]) {
+      const e = graph.edges[edgeIdx]
+      if (!isRoutable(e)) continue
+      const other = e.nodeA === node ? e.nodeB : e.nodeA
+      if (visited[other]) continue
+      const nd = d + e.lengthM
+      if (nd < dist[other]) {
+        if (dist[other] === Infinity) scratch.touched.push(other)
+        dist[other] = nd
+        heap.push(nd, other)
+      }
+    }
+  }
+  return within
+}
+
+/** ENDPOINT-RADIUS quarantine — the one-snapped-end shape (2026-07-16 /gg
+ *  fix batch item 4): with the pair's OTHER end unknown, no ellipse can be
+ *  drawn, so the honest evidence region is everything within the pair's own
+ *  bound of the end that DID snap. A stampable segment is quarantined when
+ *  the NEARER of its two endpoints lies within `boundM` of path cost — the
+ *  far-end distance is inspected explicitly (min over the edge's endpoints),
+ *  never implied by whichever endpoint a flood happened to touch first. */
+function quarantineEndpointRadius(
+  graph: RailGraph, fromNode: number, boundM: number, scratch: DijkstraScratch, quarantine: Set<string>,
+): void {
+  const within = floodNodeDistancesWithinBound(graph, fromNode, boundM, scratch)
+  for (const node of within.keys()) {
+    // Every edge incident to an in-bound node has min(endpoint dist) <= bound
+    // by construction; an edge whose BOTH endpoints are out of bound has no
+    // in-bound node to be reached from and is never added.
+    for (const edgeIdx of graph.adjacency[node]) {
+      const e = graph.edges[edgeIdx]
+      if (!e.isTraversalOnly && e.railType === 0) quarantine.add(e.parentKey)
+    }
+  }
+}
+
+/** TRUE-ELLIPSE quarantine — the both-ends-snapped shape (2026-07-16 /gg fix
+ *  batch item 4, replaces the union of two endpoint balls): two bounded
+ *  distance floods (from A and from B, each bounded by the pair's own
+ *  `WALK_DETOUR_RATIO * greatCircle + WALK_DETOUR_SLACK_M` bound — the SAME
+ *  bound `detourRejected` enforces), then a stampable edge is quarantined
+ *  only when min over its two endpoints u of (distA(u) + distB(u)) <= bound
+ *  — the honest reachable-by-any-admissible-path region. The far end of an
+ *  incident edge is checked explicitly here too: under the old two-ball
+ *  union an edge was added the moment a flood touched one endpoint, which
+ *  leaked whole dead-end branches (their far ends can never sit on an
+ *  admissible A-B path — distA+distB grows by 2x the branch depth).
+ *
+ *  AMBIGUOUS pairs ONLY (review round, 2026-07-16): the ellipse is the
+ *  honest shape precisely when admissible paths EXIST and the walk merely
+ *  cannot pick one. For detourRejected/disconnected the ellipse is empty by
+ *  construction (no admissible path at all) — but those pairs' trains still
+ *  run (the timetable says so; the GRAPH is what failed: broken topology,
+ *  missing link, over-bound geometry), so an empty quarantine would leave
+ *  their segments "unclaimed, unquarantined" and the silent residual would
+ *  stamp a LIVE line at 2+1/day (real case: Čelákovice–Čelákovice zastávka
+ *  is detourRejected — its commuter line must not go silent). Those failure
+ *  kinds therefore take `quarantineEndpointRadius` balls around every
+ *  SNAPPED endpoint instead: the traffic is somewhere near these stations,
+ *  we cannot say where. */
+function quarantineAdmissiblePathEllipse(
+  graph: RailGraph, fromNode: number, toNode: number, boundM: number, scratch: DijkstraScratch, quarantine: Set<string>,
+): void {
+  const distA = floodNodeDistancesWithinBound(graph, fromNode, boundM, scratch)
+  const distB = floodNodeDistancesWithinBound(graph, toNode, boundM, scratch)
+  const [smaller, other] = distA.size <= distB.size ? [distA, distB] : [distB, distA]
+  for (const [node, d1] of smaller) {
+    const d2 = other.get(node)
+    if (d2 === undefined || d1 + d2 > boundM) continue
+    // This endpoint sits on an admissible A-B path, so every incident
+    // stampable edge satisfies the min-over-endpoints criterion through it.
+    for (const edgeIdx of graph.adjacency[node]) {
+      const e = graph.edges[edgeIdx]
+      if (!e.isTraversalOnly && e.railType === 0) quarantine.add(e.parentKey)
+    }
+  }
+}
+
+/** Quarantines every stampable segment whose midpoint lies within
+ *  `UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M` of an UNLOCALIZED pair's straight
+ *  chord (2026-07-16 Step-B refinement, plan item 2) — there is no snapped
+ *  node to flood a bounded search from, so proximity to the raw chord is the
+ *  next-tightest evidence available. `geomByKey` is the SAME map
+ *  `applyParallelSpread` builds from (passed in by `walkRailStationPairs`,
+ *  see its doc) — one reconstruction per walk. */
+function quarantineUnlocalizedPairChord(
+  geomByKey: Map<string, SegGeom>,
+  cp: { fromLat: number; fromLon: number; toLat: number; toLon: number },
+  quarantine: Set<string>,
+): void {
+  for (const [key, g] of geomByKey) {
+    if (g.railType !== 0 || g.isTraversalOnly) continue
+    const midLat = (g.startLat + g.endLat) / 2
+    const midLon = (g.startLon + g.endLon) / 2
+    if (pointToSegmentDist(midLat, midLon, cp.fromLat, cp.fromLon, cp.toLat, cp.toLon) <= UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M) {
+      quarantine.add(key)
+    }
+  }
+}
+
 // ── Canonical pair accumulation + walk ────────────────────────────────────────
 
 interface CanonicalPair {
@@ -483,22 +772,29 @@ export function walkRailStationPairs(graph: RailGraph, pairs: RailStationPairCou
   const divisorBySegmentKey = new Map<string, number>()
   const failures = { snapFailed: 0, disconnected: 0, detourRejected: 0, ambiguous: 0 }
   const failedPairChords: RailWalkResult['failedPairChords'] = []
+  // STATS ONLY (2026-07-16 Step-B refinement) — see RailWalkResult's doc.
+  // `quarantinedSegmentKeys` below is what retract/silent actually key off.
   const failedComponents = new Set<number>()
-  // A pair where NEITHER end snapped could belong to ANY component — unlike a
-  // one-end-snapped failure (attributable to the component that DID
-  // resolve), it can't be localized at all. Counted separately so downstream
-  // callers (rail-walk-enrich.ts) can withhold silent-residual eligibility
-  // GLOBALLY when this is nonzero, rather than trusting failedComponents to
-  // have caught it (2026-07-16 /gg review item 4).
+  const quarantinedSegmentKeys = new Set<string>()
+  // Neither end snapped — stats-only telemetry now (see RailWalkResult doc);
+  // the pair's own quarantine is handled via quarantineUnlocalizedPairChord
+  // below instead of a global suppression flag.
   let unlocalizedPairs = 0
 
   const canonicalPairs = accumulateCanonicalPairs(pairs)
   const pairsTotal = canonicalPairs.size
   let pairsWalked = 0
 
+  // Built ONCE (2026-07-16 Step-B refinement): the unlocalized-pair chord
+  // quarantine needs every stampable segment's geometry, and
+  // applyParallelSpread needs the exact same map — share it instead of
+  // reconstructing twice.
+  const geomByKey = collectSegmentGeometry(graph)
+
   // ONE scratch for every search over this graph (see DijkstraScratch doc) —
   // a country/world union graph runs up to two searches (best path + the
-  // ambiguity probe's penalized re-run) per canonical pair, and re-allocating
+  // ambiguity probe's penalized re-run) per canonical pair, plus now up to
+  // two bounded quarantine floods per FAILED pair, and re-allocating
   // nodeCount-sized arrays that many times is the real scale blocker.
   const scratch = createDijkstraScratch(graph.nodeCount)
 
@@ -508,15 +804,47 @@ export function walkRailStationPairs(graph: RailGraph, pairs: RailStationPairCou
       failedPairChords.push({ fromLat: cp.fromLat, fromLon: cp.fromLon, toLat: cp.toLat, toLon: cp.toLon, reason })
     }
 
+    // This pair's OWN detour bound — identical formula to the
+    // `detourRejected` gate below, computed unconditionally up front because
+    // the quarantine shapes need it on EVERY failure path, not only that one
+    // (2026-07-16 Step-B refinement, plan item 2).
+    const greatCircleM = haversineM(cp.fromLat, cp.fromLon, cp.toLat, cp.toLon)
+    const bound = WALK_DETOUR_RATIO * greatCircleM + WALK_DETOUR_SLACK_M
+    // Per-failure-reason quarantine shapes (item 4 + review round):
+    // endpoint-radius ball around a SNAPPED end — for snapFailed (the end
+    // that did snap), disconnected and detourRejected (both ends): those
+    // pairs' trains exist, the GRAPH failed to place them, so the evidence
+    // region is "near this station, bound B" per snapped end.
+    const quarantineEndpoint = (nodeId: number): void => {
+      if (nodeId !== -1) quarantineEndpointRadius(graph, nodeId, bound, scratch, quarantinedSegmentKeys)
+    }
+    // AMBIGUOUS only: the true admissible-path ellipse — admissible paths
+    // exist, the walk just cannot pick one (see
+    // quarantineAdmissiblePathEllipse's doc for why the other failure kinds
+    // must NOT use it).
+    const quarantineBetweenEnds = (fromNodeId: number, toNodeId: number): void => {
+      quarantineAdmissiblePathEllipse(graph, fromNodeId, toNodeId, bound, scratch, quarantinedSegmentKeys)
+    }
+
     const fromNode = snapToNearestRailGraphNode(graph, cp.fromLat, cp.fromLon)
     const toNode = snapToNearestRailGraphNode(graph, cp.toLat, cp.toLon)
     if (fromNode === -1 || toNode === -1) {
       // Add the component of EVERY end that DID snap — a one-end-snapped pair
-      // still localizes evidence to that side's component, and must withhold
-      // silent/retract there exactly like 'disconnected'/'detourRejected' do.
+      // still localizes evidence to that side's component, and its quarantine
+      // is the endpoint-radius ball around that end (the far end is unknown,
+      // so no ellipse can be drawn).
       if (fromNode !== -1) failedComponents.add(graph.componentOfNode[fromNode])
       if (toNode !== -1) failedComponents.add(graph.componentOfNode[toNode])
-      if (fromNode === -1 && toNode === -1) unlocalizedPairs++
+      quarantineEndpoint(fromNode)
+      quarantineEndpoint(toNode)
+      if (fromNode === -1 && toNode === -1) {
+        // Neither end snapped — no node to flood a bounded search from at
+        // all, so fall back to the pair's straight-chord vicinity instead
+        // (2026-07-16 Step-B refinement, plan item 2: this replaces the old
+        // global silent-residual suppression).
+        unlocalizedPairs++
+        quarantineUnlocalizedPairChord(geomByKey, cp, quarantinedSegmentKeys)
+      }
       fail('snapFailed')
       continue
     }
@@ -524,6 +852,10 @@ export function walkRailStationPairs(graph: RailGraph, pairs: RailStationPairCou
     if (graph.componentOfNode[fromNode] !== graph.componentOfNode[toNode]) {
       failedComponents.add(graph.componentOfNode[fromNode])
       failedComponents.add(graph.componentOfNode[toNode])
+      // Balls, not the ellipse (review round): the trains exist, the graph is
+      // broken between the components — quarantine near BOTH stations.
+      quarantineEndpoint(fromNode)
+      quarantineEndpoint(toNode)
       fail('disconnected')
       continue
     }
@@ -536,14 +868,23 @@ export function walkRailStationPairs(graph: RailGraph, pairs: RailStationPairCou
       // into 'disconnected' rather than inventing a 5th failure category for
       // what is, practically, the same class of problem at a finer grain.
       failedComponents.add(graph.componentOfNode[fromNode])
+      // Balls (review round): no routable route exists, but the trains do —
+      // quarantine near both stations rather than the empty ellipse.
+      quarantineEndpoint(fromNode)
+      quarantineEndpoint(toNode)
       fail('disconnected')
       continue
     }
 
-    const greatCircleM = haversineM(cp.fromLat, cp.fromLon, cp.toLat, cp.toLon)
-    const bound = WALK_DETOUR_RATIO * greatCircleM + WALK_DETOUR_SLACK_M
     if (best.lengthM > bound) {
       failedComponents.add(graph.componentOfNode[fromNode])
+      // Balls (review round): every A-B path exceeds the bound, so the
+      // ellipse would be empty — yet the timetable's trains run SOMEWHERE
+      // near these stations (Čelákovice case: the graph geometry is what
+      // failed). An empty quarantine would hand a live line to the silent
+      // residual at 2+1/day.
+      quarantineEndpoint(fromNode)
+      quarantineEndpoint(toNode)
       fail('detourRejected')
       continue
     }
@@ -551,9 +892,12 @@ export function walkRailStationPairs(graph: RailGraph, pairs: RailStationPairCou
     // Ambiguity proxy (spec step 4): penalize the best path's own edges 3x and
     // re-run. If an alternate route still completes within 20% of the best
     // path's TRUE length while reusing less than half its edges, the walk
-    // cannot tell which corridor should carry the count — fail rather than
-    // guess. Skipped entirely when a shape polyline already constrained the
-    // search (the shape IS the disambiguation).
+    // cannot tell which corridor should carry the count — UNLESS the alt path
+    // turns out to be the best path's own parallel twin (2026-07-16 Step-B
+    // refinement, plan item 1: `altPathIsParallelTwin` — a double-track
+    // line's sibling track, not a genuinely different corridor). Skipped
+    // entirely when a shape polyline already constrained the search (the
+    // shape IS the disambiguation).
     if (!cp.shapePolyline) {
       const alt = dijkstraShortestPath(
         graph, fromNode, toNode, null,
@@ -564,8 +908,12 @@ export function walkRailStationPairs(graph: RailGraph, pairs: RailStationPairCou
         let shared = 0
         for (const idx of alt.edgeIndices) if (best.edgeIndices.has(idx)) shared++
         const sharedFraction = best.edgeIndices.size === 0 ? 1 : shared / best.edgeIndices.size
-        if (alt.lengthM <= WALK_AMBIGUITY_LENGTH_RATIO * best.lengthM && sharedFraction < WALK_AMBIGUITY_SHARED_EDGE_FRACTION) {
+        if (
+          alt.lengthM <= WALK_AMBIGUITY_LENGTH_RATIO * best.lengthM && sharedFraction < WALK_AMBIGUITY_SHARED_EDGE_FRACTION &&
+          !altPathIsParallelTwin(graph, best, alt)
+        ) {
           failedComponents.add(graph.componentOfNode[fromNode])
+          quarantineBetweenEnds(fromNode, toNode) // the one failure kind with a NON-empty ellipse: admissible corridors exist, the walk just can't pick one
           fail('ambiguous')
           continue
         }
@@ -591,11 +939,11 @@ export function walkRailStationPairs(graph: RailGraph, pairs: RailStationPairCou
     }
   }
 
-  applyParallelSpread(graph, stampsBySegmentKey, divisorBySegmentKey)
+  applyParallelSpread(graph, stampsBySegmentKey, divisorBySegmentKey, geomByKey)
 
   return {
     stampsBySegmentKey, divisorBySegmentKey, failures, failedPairChords, failedComponents,
-    unlocalizedPairs, pairsWalked, pairsTotal,
+    quarantinedSegmentKeys, unlocalizedPairs, pairsWalked, pairsTotal,
   }
 }
 

@@ -150,6 +150,89 @@ test('walk: a shapePolyline hugging one corridor disambiguates it (ambiguity pro
   assert.equal(result.stampsBySegmentKey.has('A-S'), false, 'south corridor excluded by the shape constraint')
 })
 
+// ── Twin-track ambiguity exemption (2026-07-16 Step-B refinement, plan item 1:
+// verified on live CZ Step-A data — 113 of 150 failed pairs were double-track
+// lines the ambiguity probe mistook for a genuine second corridor). A
+// double-track line joined at both ends via crossovers produces exactly this
+// shape: the direct track is shorter (no crossover detour) and wins as
+// `best`; the ONLY alternate route once `best`'s edges are penalized is
+// crossover -> sibling track -> crossover, fully disjoint from `best` and
+// near-equal length — genuinely ambiguous-LOOKING, but the sibling passes the
+// parallel-spread's own lateral-twin gate, so it is not a different corridor
+// at all. ─────────────────────────────────────────────────────────────────
+
+function buildCrossoverJoinedDoubleTrack(offsetM: number) {
+  const offsetDeg = offsetM / 110_540
+  const track1 = seg({ key: 'track1', startLat: 50.000, startLon: 14.000, endLat: 50.000, endLon: 14.030 })
+  const track2 = seg({ key: 'track2', osmId: 'osmTrack2', startLat: 50.000 + offsetDeg, startLon: 14.000, endLat: 50.000 + offsetDeg, endLon: 14.030 })
+  // Crossovers (service=crossover -> isTraversalOnly): connect the two tracks
+  // at each end so the SAME two graph nodes (A/B, snapped by the query below)
+  // admit two topologically distinct routes — a real double-track's own
+  // switches, not a fixture artifact.
+  const crossIn = seg({ key: 'crossIn', startLat: 50.000, startLon: 14.000, endLat: 50.000 + offsetDeg, endLon: 14.000, isTraversalOnly: true })
+  const crossOut = seg({ key: 'crossOut', startLat: 50.000, startLon: 14.030, endLat: 50.000 + offsetDeg, endLon: 14.030, isTraversalOnly: true })
+  return buildRailGraph([track1, track2, crossIn, crossOut])
+}
+
+test('walk: a token-less double-track joined at both ends via crossovers is NOT ambiguous — walks the direct track and spreads to the sibling', () => {
+  const g = buildCrossoverJoinedDoubleTrack(8) // ~8 m lateral — genuine double-track spacing
+  const result = walkRailStationPairs(g, [
+    { fromLat: 50.000, fromLon: 14.000, toLat: 50.000, toLon: 14.030, pax: 20, frt: 4 },
+  ])
+  assert.equal(result.failures.ambiguous, 0, 'the sibling-track alt path is exempted as a parallel twin, not a genuine second corridor')
+  assert.equal(result.pairsWalked, 1)
+  assert.deepEqual(result.stampsBySegmentKey.get('track1'), { pax: 20, frt: 4, divisor: 2 }, 'walked directly')
+  assert.deepEqual(result.stampsBySegmentKey.get('track2'), { pax: 20, frt: 4, divisor: 2 }, 'unwalked sibling still spreads — the parallel-track pass runs exactly as normal once the pair is no longer failed')
+})
+
+test('walk: two corridors ~100 m+ apart (beyond even the confirmed-token 50 m radius) are genuinely disjoint and STAY ambiguous', () => {
+  const g = buildCrossoverJoinedDoubleTrack(120) // ~120 m — real distinct-corridor spacing, not a double-track
+  const result = walkRailStationPairs(g, [
+    { fromLat: 50.000, fromLon: 14.000, toLat: 50.000, toLon: 14.030, pax: 20, frt: 4 },
+  ])
+  assert.equal(result.failures.ambiguous, 1, 'no lateral-twin gate passes at 120 m — a genuinely different corridor, not a sibling track')
+  assert.equal(result.pairsWalked, 0)
+  assert.equal(result.stampsBySegmentKey.size, 0)
+})
+
+test('twin exemption is LENGTH-weighted with a contiguity cap (item 5): 8 short twin stubs + 2 long ~100 m-lateral edges stay ambiguous', () => {
+  // The reviewer's repro: the alt path carries 8 x ~8 m sibling stubs that
+  // pass the lateral-twin gate (8 m offset) plus 2 long edges (~659 m +
+  // ~723 m) bulging ~100 m laterally off the best track. By EDGE COUNT the
+  // twins are 8/10 = 0.8 >= WALK_TWIN_ALT_EDGE_FRACTION — the pre-item-5 bug
+  // exempted this as a parallel twin. By LENGTH the twins are 64 m of
+  // ~1 446 m (~4 %), and the two long edges form one CONTIGUOUS non-twin run
+  // of ~1 382 m >> WALK_TWIN_MAX_NONTWIN_RUN_M — the pair must STAY ambiguous.
+  const latOff8 = 50 + 8 / 110_540           // sibling track ~8 m north of the best track
+  const latOff108 = latOff8 + 100 / 110_540  // the bulge apex ~108 m north
+  const dLon8 = 8 / (111_320 * Math.cos(50 * Math.PI / 180)) // ~8 m of longitude at lat 50
+  const altSegs = []
+  for (let i = 0; i < 8; i++) {
+    altSegs.push(seg({
+      key: `stub${i}`, osmId: 'osmAlt',
+      startLat: latOff8, startLon: 14.000 + i * dLon8,
+      endLat: latOff8, endLon: 14.000 + (i + 1) * dLon8,
+    }))
+  }
+  const stubsEndLon = 14.000 + 8 * dLon8
+  const g = buildRailGraph([
+    seg({ key: 'track1', osmId: 'osmBest', startLat: 50.000, startLon: 14.000, endLat: 50.000, endLon: 14.020 }),
+    ...altSegs,
+    seg({ key: 'long1', osmId: 'osmAlt', startLat: latOff8, startLon: stubsEndLon, endLat: latOff108, endLon: 14.010 }),
+    seg({ key: 'long2', osmId: 'osmAlt', startLat: latOff108, startLon: 14.010, endLat: latOff8, endLon: 14.020 }),
+    // Crossovers join the two tracks at both ends so the penalized re-run can
+    // route A -> sibling -> B at all (same shape as buildCrossoverJoinedDoubleTrack).
+    seg({ key: 'crossIn', startLat: 50.000, startLon: 14.000, endLat: latOff8, endLon: 14.000, isTraversalOnly: true }),
+    seg({ key: 'crossOut', startLat: 50.000, startLon: 14.020, endLat: latOff8, endLon: 14.020, isTraversalOnly: true }),
+  ])
+  const result = walkRailStationPairs(g, [
+    { fromLat: 50.000, fromLon: 14.000, toLat: 50.000, toLon: 14.020, pax: 20, frt: 4 },
+  ])
+  assert.equal(result.failures.ambiguous, 1, 'length fraction ~4 % < 0.8 AND the ~1.4 km contiguous non-twin run busts the 300 m cap — an edge-count fraction (8/10 = 0.8) would wrongly exempt this')
+  assert.equal(result.pairsWalked, 0)
+  assert.equal(result.stampsBySegmentKey.size, 0)
+})
+
 // ── Disconnected pair ────────────────────────────────────────────────────────
 
 test('walk: a pair across two disconnected components fails and records both components', () => {
@@ -163,6 +246,8 @@ test('walk: a pair across two disconnected components fails and records both com
   assert.equal(result.pairsWalked, 0)
   assert.equal(result.stampsBySegmentKey.size, 0)
   assert.equal(result.failedComponents.size, 2)
+  assert.equal(result.quarantinedSegmentKeys.has('t1'), true, 'item 4 review round: disconnected takes endpoint balls — the from-side track is protected')
+  assert.equal(result.quarantinedSegmentKeys.has('t2'), true, 'and the to-side track too — the trains exist, the graph is broken between them')
 })
 
 // ── snapFailed: per-end component attribution + unlocalized pairs (2026-07-16
@@ -193,6 +278,102 @@ test('walk: a pair where NEITHER end snaps increments unlocalizedPairs and flags
   assert.equal(result.failures.snapFailed, 1)
   assert.equal(result.failedComponents.size, 0, 'nothing snapped — no component to blame')
   assert.equal(result.unlocalizedPairs, 1, 'unlocatable pair counted separately — it could belong to ANY component')
+})
+
+// ── Per-pair failure quarantine (2026-07-16 Step-B refinement + /gg fix
+// batch item 4 + review round) — replaces per-component retract/silent
+// withholding with the FAILED pair's own evidence shape PER FAILURE REASON:
+// 'ambiguous' -> the TRUE admissible-path ellipse (admissible paths exist);
+// 'detourRejected'/'disconnected' -> endpoint-radius balls around both
+// snapped ends (the trains exist, the graph failed to place them);
+// one-end 'snapFailed' -> the ball around the snapped end; unlocalized ->
+// chord vicinity. Verified on live CZ Step-A data: rail is one connected
+// component nationwide, so `failedComponents` alone had withheld
+// retract/silent across the ENTIRE 31 245 km mainline behind just 9 of 150
+// failed pairs. ──────────────────────────────────────────────────────────────
+
+test('quarantine (item 4 + review round): a detour-rejected pair takes endpoint-radius BALLS — near branches quarantined, a branch past the bound is not', () => {
+  // Same shape as the 'detour gate rejects' test above (A/B ~7.15 km apart
+  // chord -> bound ~19.87 km; the only route between them detours ~221 km
+  // south, so this pair fails 'detourRejected'). The admissible-path ellipse
+  // would be EMPTY here (distA+distB >= ~221 km everywhere) — but the pair's
+  // trains exist and only the GRAPH failed to place them, so the honest
+  // shape is a ball of radius bound around EACH snapped end (Čelákovice
+  // case: an empty quarantine would hand a live commuter line to the silent
+  // residual). A anchors a three-hop dead-end chain due north
+  // (~10.50 km/hop): chain0 (at A) and chain1 (at M1, ~10.50 km — within the
+  // ball) ARE quarantined; chain2 (at M2, ~21.00 km — past the bound) is not.
+  const a = seg({ key: 'a-p', startLat: 50.000, startLon: 14.000, endLat: 49.000, endLon: 14.050 })
+  const b = seg({ key: 'p-b', startLat: 49.000, startLon: 14.050, endLat: 50.000, endLon: 14.100 })
+  const chain0 = seg({ key: 'chain0', startLat: 50.000, startLon: 14.000, endLat: 50.095, endLon: 14.000 })
+  const chain1 = seg({ key: 'chain1', startLat: 50.095, startLon: 14.000, endLat: 50.190, endLon: 14.000 })
+  const chain2 = seg({ key: 'chain2', startLat: 50.190, startLon: 14.000, endLat: 50.285, endLon: 14.000 })
+  const g = buildRailGraph([a, b, chain0, chain1, chain2])
+
+  const result = walkRailStationPairs(g, [
+    { fromLat: 50.000, fromLon: 14.000, toLat: 50.000, toLon: 14.100, pax: 5, frt: 0 },
+  ])
+  assert.equal(result.failures.detourRejected, 1, 'fixture sanity: same shape as the existing detour-gate test')
+  assert.equal(
+    g.componentOfSegmentKey.get('a-p'), g.componentOfSegmentKey.get('chain2'),
+    'fixture sanity: ONE connected component spans the detour pair AND the far chain',
+  )
+  assert.equal(result.quarantinedSegmentKeys.has('a-p'), true, 'inside A\'s ball — the pair\'s own detour segment')
+  assert.equal(result.quarantinedSegmentKeys.has('p-b'), true, 'inside B\'s ball')
+  assert.equal(result.quarantinedSegmentKeys.has('chain0'), true, 'dead-end branch NEAR the failed endpoint IS quarantined (starts at A itself)')
+  assert.equal(result.quarantinedSegmentKeys.has('chain1'), true, 'still inside A\'s ball (starts at M1, ~10.50 km of ~19.87 km)')
+  assert.equal(result.quarantinedSegmentKeys.has('chain2'), false, 'past the bound — the ball stays bounded; the OLD component-wide gate would have quarantined it too')
+})
+
+test('quarantine ellipse (item 4): an ambiguous pair quarantines its admissible corridors, but a dead-end branch opposite the target escapes the distA+distB bound', () => {
+  // The two-corridor ambiguous shape (buildTwoCorridorGraph geometry inline:
+  // A/B ~7.16 km chord -> bound ~19.89 km; each corridor ~7.49 km — well
+  // within the bound, so the ellipse is NON-empty). A additionally anchors a
+  // two-hop dead-end tail running due WEST, opposite the target: tail1
+  // (A -> W1, ~7.01 km) and tail2 (W1 -> W2, ~7.01 km further). tail1 is
+  // quarantined through its A endpoint (distA 0 + distB ~7.49 km <= bound —
+  // min over the edge's two endpoints). tail2's endpoints both fail the sum
+  // (W1: ~7.01 + ~14.50 = ~21.5 km > bound) — NOT quarantined, even though
+  // the OLD union of endpoint balls (W1 at ~7.0 km, W2 at ~14.0 km of a
+  // ~19.9 km ball radius) leaked over both tail hops. This is the
+  // incident-edge far-end fix: an edge is judged by BOTH endpoints' summed
+  // distances, never added just because a flood touched its near end.
+  const an = seg({ key: 'A-N', startLat: 50.000, startLon: 14.000, endLat: 50.010, endLon: 14.050 })
+  const nb = seg({ key: 'N-B', startLat: 50.010, startLon: 14.050, endLat: 50.000, endLon: 14.100 })
+  const as_ = seg({ key: 'A-S', startLat: 50.000, startLon: 14.000, endLat: 49.990, endLon: 14.050 })
+  const sb = seg({ key: 'S-B', startLat: 49.990, startLon: 14.050, endLat: 50.000, endLon: 14.100 })
+  const tail1 = seg({ key: 'tail1', startLat: 50.000, startLon: 14.000, endLat: 50.000, endLon: 13.902 })
+  const tail2 = seg({ key: 'tail2', startLat: 50.000, startLon: 13.902, endLat: 50.000, endLon: 13.804 })
+  const g = buildRailGraph([an, nb, as_, sb, tail1, tail2])
+
+  const result = walkRailStationPairs(g, [
+    { fromLat: 50.000, fromLon: 14.000, toLat: 50.000, toLon: 14.100, pax: 7, frt: 0 },
+  ])
+  assert.equal(result.failures.ambiguous, 1, 'fixture sanity: two disjoint similar-length corridors, no shape')
+  for (const k of ['A-N', 'N-B', 'A-S', 'S-B']) {
+    assert.equal(result.quarantinedSegmentKeys.has(k), true, `${k} lies on an admissible corridor — inside the ellipse`)
+  }
+  assert.equal(result.quarantinedSegmentKeys.has('tail1'), true, 'tail1 qualifies through its A endpoint (min over the edge\'s two endpoints)')
+  assert.equal(result.quarantinedSegmentKeys.has('tail2'), false, 'dead-end branch opposite the target: both endpoints exceed the distA+distB bound — the old two-ball union leaked here')
+})
+
+test('quarantine: an unlocalized pair (neither end snaps) quarantines only stampable segments within 5 km of its own straight chord', () => {
+  // The chord runs due north along lon 10.000 from (10.000,10.000) to
+  // (11.000,10.000) (~111 km). `near` sits exactly on that chord; `far` sits
+  // thousands of km away. Neither track's own nodes are within
+  // STATION_SNAP_RADIUS_M of either query endpoint, so the pair itself fails
+  // to snap on both ends.
+  const near = seg({ key: 'near', startLat: 10.010, startLon: 10.000, endLat: 10.011, endLon: 10.000 })
+  const far = seg({ key: 'far', startLat: 55.000, startLon: 19.000, endLat: 55.001, endLon: 19.000 })
+  const g = buildRailGraph([near, far])
+
+  const result = walkRailStationPairs(g, [
+    { fromLat: 10.000, fromLon: 10.000, toLat: 11.000, toLon: 10.000, pax: 5, frt: 0 },
+  ])
+  assert.equal(result.unlocalizedPairs, 1, 'fixture sanity: neither end snaps onto either track')
+  assert.equal(result.failedComponents.size, 0, 'nothing snapped — no component to flood a bounded search from')
+  assert.equal(result.quarantinedSegmentKeys.has('near'), true, 'within UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M (5 km) of the chord')
+  assert.equal(result.quarantinedSegmentKeys.has('far'), false, 'thousands of km from the chord — untouched')
 })
 
 // ── Dijkstra scratch reuse ───────────────────────────────────────────────────

@@ -58,6 +58,42 @@ export const RAIL_JUMP_RATIO = 3
 export const RAIL_MIN_EFFECTIVE_TRAINS_PER_DAY = 20
 /** Parallel-track sibling search radius (segment-midpoint distance, metres). */
 export const PARALLEL_SPREAD_RADIUS_M = 50
+/** Twin-track ambiguity exemption (2026-07-16 Step-B refinement, verified on
+ *  live CZ Step-A data: 113 of 150 failed pairs): before failing a pair as
+ *  'ambiguous', the walk tests whether the alt path found by the penalized
+ *  re-run is merely the PARALLEL TWIN of the best path (the sibling track of
+ *  a double-track line) rather than a genuinely different corridor. If at
+ *  least this fraction of alt's own non-shared stampable LENGTH passes the
+ *  parallel-spread's own lateral-twin geometry gate (`lateralTwinGate` in
+ *  rail-graph-metrics.ts — same ≤15 m token-less / ≤50 m equal-token radius
+ *  + heading arms `parallelSiblingLateralM` uses) against the best path's
+ *  edges, the pair is NOT ambiguous — the parallel spread unifies the two
+ *  tracks anyway. LENGTH-weighted (2026-07-16 /gg fix batch item 5): an
+ *  edge-count fraction let 8 short twin stubs outvote 2 long off-corridor
+ *  edges (8/10 edges "twin" while ~95 % of the alt's LENGTH ran elsewhere).
+ *  Genuine dual corridors (e.g. Praha Vršovice->Holešovice via Libeň vs via
+ *  Bubny) sit hundreds of metres apart and stay ambiguous. */
+export const WALK_TWIN_ALT_EDGE_FRACTION = 0.8
+/** Hard cap on the longest CONTIGUOUS non-twin stretch of the alt path
+ *  (metres, contiguity along the alt path's own edge order — 2026-07-16 /gg
+ *  fix batch item 5, alongside the length-weighted fraction above): a real
+ *  double-track's non-twin bits are short switch/station throats, while a
+ *  genuinely different corridor shows ONE long unbroken non-twin run even
+ *  when enough short twin edges pad the overall fraction. 300 m ≈ the
+ *  longest CZ interlocking throat observed on the Step-A data — anything
+ *  longer is a separate corridor, not a sibling track. */
+export const WALK_TWIN_MAX_NONTWIN_RUN_M = 300
+/** Quarantine radius for an UNLOCALIZED pair (neither endpoint snapped onto
+ *  the graph — e.g. the Osoblaha narrow-gauge trains whose stations have no
+ *  heavy-rail nearby): every stampable segment whose midpoint lies within
+ *  this distance of the pair's straight chord is quarantined (2026-07-16
+ *  Step-B refinement, plan item 2). An un-snappable pair can't localize a
+ *  bounded graph search the way a snapped one can (there is no node to flood
+ *  from), so its evidence is scoped by raw chord proximity instead — and,
+ *  unlike the pre-refinement design, this withholding stays local to the
+ *  chord's vicinity rather than suppressing the silent residual for the
+ *  entire run. */
+export const UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M = 5000
 
 /** Grid cell size (degrees) for every proximity index in this module: the
  *  T-junction segment-body grid, the node snap grid and the rail-stops grid.
@@ -491,14 +527,44 @@ export interface RailWalkResult {
     fromLat: number; fromLon: number; toLat: number; toLon: number
     reason: 'snapFailed' | 'disconnected' | 'detourRejected' | 'ambiguous'
   }>
-  /** Component ids touched by ANY failed pair — drives per-component
-   *  retract/silent withholding downstream (never a global gate). */
+  /** Component ids touched by ANY failed pair — STATS ONLY (2026-07-16
+   *  Step-B refinement). Per-component granularity quarantined the WHOLE
+   *  connected network wherever rail forms one component: Step-A live-run
+   *  evidence found 9 failed components — including the entire CZ mainline,
+   *  31 245 km — behind only 150 failed pairs out of 2 461 (rail is one
+   *  connected component nationwide, so any single failed pair withheld
+   *  retract/silent everywhere). Retract and the silent residual
+   *  (rail-walk-enrich.ts) now key off `quarantinedSegmentKeys` — the pair's
+   *  OWN bounded search ellipse — instead; this field survives only for
+   *  `perComponentFailedKm` comparison logging (deprecated). */
   failedComponents: Set<number>
+  /** Every stampable segment (`RailGraphSegmentInput.key`) inside a FAILED
+   *  pair's own evidence region — strictly tighter than `failedComponents`
+   *  (2026-07-16 Step-B refinement + /gg fix batch item 4 + review round).
+   *  The shape follows the FAILURE REASON, all built from THAT PAIR's own
+   *  `WALK_DETOUR_RATIO * greatCircle + WALK_DETOUR_SLACK_M` bound (the same
+   *  bound `detourRejected` enforces):
+   *  'ambiguous' -> the true admissible-path ellipse (a segment qualifies
+   *  only when min over its two endpoints of distFrom+distTo is within the
+   *  bound) — admissible corridors exist, the walk just can't pick one.
+   *  'detourRejected' / 'disconnected' -> endpoint-radius balls around BOTH
+   *  snapped ends: no admissible path exists (the ellipse would be empty),
+   *  yet the timetable's trains run somewhere near these stations — the
+   *  GRAPH is what failed, so silent/retract must stay away from both
+   *  vicinities (Čelákovice–Čelákovice zastávka: a detour-rejected commuter
+   *  line must not go silent at 2+1/day).
+   *  'snapFailed' with ONE end snapped -> the ball around that end (the far
+   *  end is unknown). NEITHER end snapped -> every stampable segment within
+   *  `UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M` of the pair's straight chord.
+   *  Retract and the silent residual (rail-walk-enrich.ts) withhold on
+   *  SEGMENT membership here, never on the segment's whole component. */
+  quarantinedSegmentKeys: Set<string>
   /** Pairs where NEITHER endpoint snapped onto the graph (both ends failed
-   *  `snapToNearestRailGraphNode`) — an unlocatable pair could belong to ANY
-   *  component, so it can withhold silent-residual eligibility GLOBALLY
-   *  (rail-walk-enrich.ts), unlike a one-end-snapped failure which is
-   *  attributed to the component that DID resolve. */
+   *  `snapToNearestRailGraphNode`) — quarantined via the chord-vicinity
+   *  radius above (there is no node to flood a bounded search from), NOT by
+   *  suppressing the silent residual globally (2026-07-16 Step-B refinement
+   *  dropped that semantics — it quarantined entire clean runs behind one
+   *  unrelated stray pair). This count is stats-only telemetry now. */
   unlocalizedPairs: number
   pairsWalked: number
   pairsTotal: number

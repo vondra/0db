@@ -2,9 +2,11 @@
  * Driver-level tests for `enrichRailwaysByGraphWalk` (rail-walk-enrich.ts).
  * `rail-graph.ts`/`rail-graph-metrics.ts` already lock the pure topology and
  * routing invariants (T-junction healing, Dijkstra, ambiguity, parallel
- * spread) — these tests exercise the I/O DRIVER built on top: cross-hex
- * stitching, the enableDestructive gate, per-component retract/silent
- * withholding, the country-bleed retract arm, and the rail-stops sidecar.
+ * spread, the 2026-07-16 Step-B quarantine ellipse) — these tests exercise
+ * the I/O DRIVER built on top: cross-hex stitching, the enableDestructive
+ * gate, quarantine-gated retract/silent withholding, the bleed-gate
+ * retract arm (item 1: explicit `bleedGate`, never `countryGate`), and the
+ * rail-stops sidecar.
  *
  * Two real H3 res-4 cells (SPEC reference hexes) are used as directory names
  * so `iterateCountryHexes`'s `cellToLatLng` validity check passes; the
@@ -261,9 +263,15 @@ test('enableDestructive=true + failure-free component: silent residual on the un
   assert.equal(c.div(3), 1)
 })
 
-// ── (d) a failed pair withholds silent+retract for its WHOLE component ──────
+// ── (d) a DISCONNECTED pair takes endpoint-radius BALLS around both snapped
+// ends (item 4 review round: its trains exist, the graph is broken between
+// the stations — an empty ellipse would hand live lines to the silent
+// residual). Both tiny components here sit entirely inside the pair's own
+// bound (~292 km, from the ~116 km chord), so silent and retract are fully
+// withheld — see rail-graph-metrics.test.ts for the ball's outer limit and
+// the ambiguous-only ellipse. ───────────────────────────────────────────────
 
-test('component with a failed pair: no silent, no retract there — stamps only, and the taxonomy/km numbers are exact', async () => {
+test('a disconnected pair\'s endpoint balls withhold silent+retract near both stations — stamps only, and the taxonomy/km numbers are exact', async () => {
   const h3r4Dir = freshScopeDir('failed-component')
   const rowEF = { startLat: 52.100, startLon: 16.100, endLat: 52.101, endLon: 16.100 } // row0
   const rowFG = { startLat: 52.101, startLon: 16.100, endLat: 52.102, endLon: 16.100 } // row1
@@ -285,32 +293,81 @@ test('component with a failed pair: no silent, no retract there — stamps only,
   })
 
   assert.equal(stats.stamped, 0, 'the only pair failed — nothing walked')
-  assert.equal(stats.silentStamped, 0, 'component 1 is flagged failed — no silent even though otherwise eligible')
-  assert.equal(stats.retracted, 0, 'row2 legacy stamp survives — its component is flagged failed')
+  assert.equal(stats.silentStamped, 0, 'both tiny components sit entirely inside the endpoint balls — no silent even though otherwise eligible')
+  assert.equal(stats.retracted, 0, 'row2 legacy stamp survives — it sits inside E\'s ball')
   assert.equal(stats.walk.failures.disconnected, 1)
-  assert.equal(stats.walk.failedComponentCount, 2, 'both endpoints\' components are flagged')
+  assert.equal(stats.walk.failedComponentCount, 2, 'both endpoints\' components are flagged (stats only now)')
 
   const expectedKm = (segLengthM(rowEF) + segLengthM(rowFG) + segLengthM(rowFH) + segLengthM(rowPQ)) / 1000
   assert.ok(
     Math.abs(stats.perComponentFailedKm - expectedKm) < 1e-6,
-    `perComponentFailedKm ${stats.perComponentFailedKm} ~= ${expectedKm}`,
+    `perComponentFailedKm ${stats.perComponentFailedKm} ~= ${expectedKm} (deprecated comparison figure)`,
+  )
+  assert.ok(
+    Math.abs(stats.quarantinedKm - expectedKm) < 1e-6,
+    `quarantinedKm ${stats.quarantinedKm} ~= ${expectedKm} — the endpoint balls sweep both tiny components in full here`,
   )
 
   const c = readCols(resolve(h3r4Dir, HEX_A, 'railways.arrow'))
   assert.equal(c.src(0), 0, 'row0 (E-F) unstamped baseline, untouched')
   assert.equal(c.src(1), 0, 'row1 (F-G) unstamped baseline, untouched')
-  assert.equal(c.src(2), 999, 'row2 (F-H) legacy stamp survives untouched')
+  assert.equal(c.src(2), 999, 'row2 (F-H) legacy stamp survives untouched — a live-but-unroutable line must not go silent at 2+1/day')
   assert.equal(c.pax(2), 15)
   assert.equal(c.frt(2), 3)
 })
 
-// ── (e) country-bleed retract arm: requires enableDestructive=true, but ─────
-// bypasses retractSafe/component health WITHIN a destructive run (2026-07-16
-// /gg review item 3 — `enableDestructive` now gates the retract object as a
-// WHOLE; the old design let the bleed arm fire even in stamp-only, silently
-// mutating data in a mode documented as inspection-safe).
+// ── (d2) an AMBIGUOUS pair (the ONE failure kind that takes the
+// admissible-path ellipse — item 4 + review round) withholds silent inside
+// that region but not on a dead-end tail past the distA+distB bound —
+// exactly the property `failedComponents` could never express, since the
+// whole component would have withheld silent everywhere. ────────────────────
 
-test('country-bleed retract: fires when enableDestructive=true even with retractSafe=false; a straddler survives', async () => {
+test('an ambiguous pair\'s admissible-path ellipse withholds silent inside it — a dead-end tail past the sum bound still gets silently stamped', async () => {
+  const h3r4Dir = freshScopeDir('quarantine-ellipse-vs-far-branch')
+  // Same geometry as rail-graph-metrics.test.ts's ellipse test: two disjoint
+  // similar-length corridors A-N-B / A-S-B (~7.49 km each; chord ~7.16 km ->
+  // bound ~19.89 km) fail 'ambiguous'; A also anchors a two-hop dead-end tail
+  // running WEST, opposite B. tail1 qualifies through its A endpoint
+  // (distA 0 + distB ~7.49 km <= bound); tail2's endpoints both bust the sum
+  // (~21.5 km) — OUTSIDE the ellipse, silent applies there.
+  const rowAN = { startLat: 50.000, startLon: 14.000, endLat: 50.010, endLon: 14.050 }
+  const rowNB = { startLat: 50.010, startLon: 14.050, endLat: 50.000, endLon: 14.100 }
+  const rowAS = { startLat: 50.000, startLon: 14.000, endLat: 49.990, endLon: 14.050 }
+  const rowSB = { startLat: 49.990, startLon: 14.050, endLat: 50.000, endLon: 14.100 }
+  const rowTail1 = { startLat: 50.000, startLon: 14.000, endLat: 50.000, endLon: 13.902 }
+  const rowTail2 = { startLat: 50.000, startLon: 13.902, endLat: 50.000, endLon: 13.804 }
+  putHex(h3r4Dir, HEX_A, [rowAN, rowNB, rowAS, rowSB, rowTail1, rowTail2])
+
+  const stats = await enrichRailwaysByGraphWalk({
+    h3r4Dir,
+    bbox: BBOX,
+    pairs: [{ fromLat: 50.000, fromLon: 14.000, toLat: 50.000, toLon: 14.100, pax: 5, frt: 0 }],
+    sourceId: STAMP_ID,
+    silentResidual: { sourceId: GLOBAL_GTFS_ID, pax: 2, frt: 1 },
+    retractSafe: true,
+    enableDestructive: true,
+    sidecar: { scope: 'quarantine-ellipse-vs-far-branch-scope', extractFingerprint: 'fp-far', feeds: [] },
+  })
+
+  assert.equal(stats.walk.failures.ambiguous, 1)
+  assert.equal(stats.silentStamped, 1, 'only rowTail2 (outside the ellipse) is silent-eligible — the OLD component-wide gate would have withheld it too')
+
+  const c = readCols(resolve(h3r4Dir, HEX_A, 'railways.arrow'))
+  assert.equal(c.src(0), 0, 'row0 (A-N) — an admissible corridor, inside the ellipse')
+  assert.equal(c.src(1), 0, 'row1 (N-B) — inside the ellipse')
+  assert.equal(c.src(2), 0, 'row2 (A-S) — the competing corridor, inside the ellipse')
+  assert.equal(c.src(3), 0, 'row3 (S-B) — inside the ellipse')
+  assert.equal(c.src(4), 0, 'row4 (tail1) — qualifies through its A endpoint (min over the edge\'s two endpoints)')
+  assert.equal(c.src(5), GLOBAL_GTFS_ID, 'row5 (tail2) — OUTSIDE the ellipse: silent applies even though it shares a component with the failed pair')
+})
+
+// ── (e) bleed-gate retract arm (item 1): requires enableDestructive=true, ───
+// but bypasses retractSafe/quarantine health WITHIN a destructive run
+// (2026-07-16 /gg review item 3 — `enableDestructive` gates the retract
+// object as a WHOLE). The arm runs ONLY when an explicit `bleedGate` is
+// provided — a nationally-owned id (CZ) passes its own country gate here.
+
+test('bleed retract (explicit bleedGate): fires when enableDestructive=true even with retractSafe=false; a straddler survives', async () => {
   const h3r4Dir = freshScopeDir('country-bleed')
   const gate = (_lat: number, lon: number) => lon < 14.05 // "domestic" = west of 14.05
   putHex(h3r4Dir, HEX_A, [
@@ -324,6 +381,7 @@ test('country-bleed retract: fires when enableDestructive=true even with retract
     pairs: [],
     sourceId: STAMP_ID,
     countryGate: gate,
+    bleedGate: gate, // nationally-owned id: its own country gate IS the union of its legitimate territory
     retract: { sourceIds: [999] },
     retractSafe: false, // deliberately false — the bleed arm must fire anyway (WITHIN a destructive run)
     enableDestructive: true,
@@ -339,6 +397,44 @@ test('country-bleed retract: fires when enableDestructive=true even with retract
   assert.equal(c.frt(0), 0)
   assert.equal(c.src(1), 999, 'straddler survives — geometry does not condemn it')
   assert.equal(c.pax(1), 25)
+})
+
+test('shared-id contract (item 1): countryGate WITHOUT bleedGate never disowns an out-of-gate row — the bleed arm is OFF and the ordinary arm is testimony-bound', async () => {
+  // The order-destroying bug this pins: a per-country europe run (CH) whose
+  // bbox overlaps a neighbour (southern DE) must NOT disown the SHARED
+  // GLOBAL_GTFS_TRANSIT rows the neighbour's own run legitimately stamped —
+  // neither via a bleed arm keyed off its own countryGate (bleed is off
+  // without an explicit bleedGate) nor via the ordinary retractSafe arm (a
+  // run's feeds testify only about the territory inside its countryGate).
+  const h3r4Dir = freshScopeDir('shared-id-no-bleed')
+  const gate = (_lat: number, lon: number) => lon < 14.05 // "domestic" = west of 14.05
+  putHex(h3r4Dir, HEX_A, [
+    { startLat: 50.200, startLon: 15.000, endLat: 50.200, endLon: 15.001, sourceId: 999, pax: 20, frt: 4 }, // row0: wholly foreign — a NEIGHBOUR's legitimate stamp under the shared id
+    { startLat: 50.201, startLon: 14.000, endLat: 50.201, endLon: 14.001, sourceId: 999, pax: 30, frt: 6 }, // row1: domestic stale stamp — ordinary retract still applies
+  ])
+
+  const stats = await enrichRailwaysByGraphWalk({
+    h3r4Dir,
+    bbox: BBOX,
+    pairs: [], // this run's walk claims nothing — both rows are retract candidates on paper
+    sourceId: STAMP_ID,
+    countryGate: gate,
+    // NO bleedGate — the per-country europe mode contract.
+    retract: { sourceIds: [999] },
+    retractSafe: true, // even a provably complete snapshot must not reach across the border
+    enableDestructive: true,
+    sidecar: { scope: 'shared-id-no-bleed-scope', extractFingerprint: 'fp-shared', feeds: [] },
+  })
+
+  assert.equal(stats.retracted, 1, 'ONLY the domestic stale row is disowned')
+  assert.equal(stats.skippedForeign, 1, 'the foreign row is never offered to match either')
+
+  const c = readCols(resolve(h3r4Dir, HEX_A, 'railways.arrow'))
+  assert.equal(c.src(0), 999, 'out-of-gate row of the shared id SURVIVES — foreign healing belongs to the union-gated world mode / heal-rail-country-bleed.ts')
+  assert.equal(c.pax(0), 20)
+  assert.equal(c.frt(0), 4)
+  assert.equal(c.src(1), 0, 'domestic stale row is disowned on ordinary quarantine-free terms — the testimony guard does not blunt in-gate healing')
+  assert.equal(c.pax(1), 0)
 })
 
 test('stamp-only (enableDestructive=false): retract is entirely suppressed — foreign-owned and service rows both survive untouched', async () => {
@@ -363,9 +459,10 @@ test('stamp-only (enableDestructive=false): retract is entirely suppressed — f
     pairs: [],
     sourceId: STAMP_ID,
     countryGate: gate,
+    bleedGate: gate, // even an explicit bleed gate must stay inert in stamp-only
     retract: { sourceIds: [999] },
     retractSafe: true,
-    enableDestructive: false, // stamp-only: retract must be entirely suppressed, incl. the country-bleed + service-arm heals
+    enableDestructive: false, // stamp-only: retract must be entirely suppressed, incl. the bleed + service-arm heals
     sidecar: { scope: 'stamp-only-scope', extractFingerprint: 'fp-f', feeds: [] },
   })
 
@@ -504,31 +601,36 @@ test('second identical run over unchanged silent-eligible siblings is a byte-no-
   assert.deepEqual(afterSecondRun, afterFirstRun, 'byte-identical re-run: divisor + stamp already correct, no rewrite')
 })
 
-// ── (h) unlocalized pairs suppress the silent residual GLOBALLY, not per-
-// component (2026-07-16 /gg review item 4) ─────────────────────────────────
+// ── (h) an unlocalized pair quarantines only its own chord vicinity — NOT the
+// whole run, and not by component either (2026-07-16 Step-B refinement
+// replaced the old global silent-residual suppression: it quarantined every
+// clean row in a run behind one unrelated stray pair). ──────────────────────
 
-test('a globally unlocalized pair (neither end snaps) suppresses the silent residual for the WHOLE run, even on an otherwise-clean component', async () => {
-  const h3r4Dir = freshScopeDir('unlocalized-suppresses-silent')
+test('an unlocalized pair (neither end snaps) quarantines only stampable segments within 5 km of its own straight chord — a row far from the chord still gets silently stamped', async () => {
+  const h3r4Dir = freshScopeDir('unlocalized-chord-vicinity')
   putHex(h3r4Dir, HEX_A, [
-    { startLat: 55.000, startLon: 19.000, endLat: 55.001, endLon: 19.000 }, // row0 — its own component is never individually flagged
+    { startLat: 10.010, startLon: 10.000, endLat: 10.011, endLon: 10.000 }, // row0 — sits ON the pair's own chord, INSIDE the 5 km quarantine radius
+    { startLat: 55.000, startLon: 19.000, endLat: 55.001, endLon: 19.000 }, // row1 — thousands of km from the chord, untouched
   ])
 
   const stats = await enrichRailwaysByGraphWalk({
     h3r4Dir,
     bbox: BBOX,
-    // Neither end of this pair is anywhere near the graph — unlocalizable.
+    // Neither end of this pair is anywhere near either row's own nodes —
+    // unlocalizable (both ends fail to snap).
     pairs: [{ fromLat: 10.000, fromLon: 10.000, toLat: 11.000, toLon: 10.000, pax: 5, frt: 0 }],
     sourceId: STAMP_ID,
     silentResidual: { sourceId: GLOBAL_GTFS_ID, pax: 2, frt: 1 },
     retractSafe: true,
     enableDestructive: true,
-    sidecar: { scope: 'unlocalized-scope', extractFingerprint: 'fp-h', feeds: [] },
+    sidecar: { scope: 'unlocalized-chord-scope', extractFingerprint: 'fp-h', feeds: [] },
   })
 
   assert.equal(stats.walk.unlocalizedPairs, 1)
-  assert.equal(stats.walk.failedComponentCount, 0, 'row0\'s own component is never individually flagged failed')
-  assert.equal(stats.silentStamped, 0, 'silent is suppressed GLOBALLY by the unlocalized pair, not per-component')
+  assert.equal(stats.walk.failedComponentCount, 0, 'nothing snapped — no component to blame either')
+  assert.equal(stats.silentStamped, 1, 'only row1 (far from the chord) is silent-eligible — row0 sits inside the 5 km quarantine vicinity')
 
   const c = readCols(resolve(h3r4Dir, HEX_A, 'railways.arrow'))
-  assert.equal(c.src(0), 0, 'row0 stays unstamped — an unlocatable pair could have belonged to its component')
+  assert.equal(c.src(0), 0, 'row0 quarantined by chord vicinity — stays unstamped')
+  assert.equal(c.src(1), GLOBAL_GTFS_ID, 'row1 far from the chord — silently stamped like any other clean row, NOT suppressed by the unrelated unlocalized pair')
 })

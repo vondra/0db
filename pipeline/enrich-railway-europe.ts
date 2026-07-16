@@ -1,32 +1,56 @@
 /**
- * Enrich railways.arrow with real train frequencies from GTFS feeds.
+ * Enrich railways.arrow with real train frequencies from GTFS feeds — the
+ * continental multi-country aggregate (2026-07-16 Phase 4 rewrite, plan
+ * `pro-e-sd-zaj-m-wobbly-liskov`).
  *
- * Downloads GTFS feeds (starting with Germany / GTFS.DE), parses
- * stop_times + trips + routes + calendar to count trains per day per
- * stop, then matches GTFS stops to OSM railway segments by proximity
- * and writes trains_passenger / trains_freight columns.
+ * HEAVY RAIL (rail_type 0) now runs on the shared graph-walk driver
+ * (`lib/rail-walk-enrich.ts`): per feed, `computeStopPairFrequenciesForFeed`
+ * (lib/gtfs-stop-pairs.ts) turns stop_times.txt into station-PAIR frequencies;
+ * every feed contributes through that ONE shared pair accumulator
+ * (`enrichRailwaysByGraphWalk`'s own canonical accumulator does the final
+ * SUM). Cross-feed overlap policy is a REGISTRY property: fr-idf is declared
+ * tram-only (see its entry — the 2026-07-16 trip-fingerprint mirror dedup was
+ * deleted on the 7-shared-keys data verdict documented there).
+ * TRAM/light-rail (rail_type 1/2) keeps the pre-Phase-4
+ * `nearestGridStop` 500 m stop-join (stop spacing is well under the radius —
+ * banding was a heavy-rail-only bug, plan Key decisions), wired in as the
+ * walk driver's `extraMatch` fallback arm.
  *
- * WHY: Most railways.arrow segments have trains_passenger=0 and
- * trains_freight=0, so the engine falls back to default_traffic(rail_type,
- * usage). GTFS feeds provide actual train frequencies for passenger services;
- * segments the feeds don't reach STAY at source_id=0 on purpose (engine
- * defaults own unknowns — no class-default stamping under this source id).
+ * PER-COUNTRY EXECUTION (plan Phase 4 point 2 / /gg review item 7): `--country
+ * CC` processes ONLY that country's own feed(s) against a border-buffered
+ * rail graph (union of its feeds' `boundingBox`, padded 0.5°) — fixes
+ * `country:XX` chain scope silently mutating ALL of Europe. No argument runs
+ * EVERY country found in FEEDS, SEQUENTIALLY, each through the exact same
+ * per-country path `processCountry` uses for `--country`; the world-wide
+ * legacy OLD_FALLBACK retract sweep (CRITICAL-2, unchanged) stays but runs
+ * ONLY after that all-countries loop, never under `--country`.
  *
- * #26C country-bleed gate: deliberately NOT wired here. This aggregate is
- * multi-country by design — many national feeds share one source id
- * (SOURCE_ID_GLOBAL_GTFS_TRANSIT), so a single makeCountryGate cannot say which
- * country a stop or an owned row belongs to; a blanket gate would either drop
- * nothing or disown every row outside one arbitrary country. Wiring it needs a
- * per-feed ownership design first (gate each feed's stops by its own `country`
- * field, and define who may retract shared-id rows). Single-country template:
- * enrich-railway-pl.ts (7fac2349).
+ * #26C-scoped ownership: unlike the old whole-aggregate design, a per-country
+ * run now DOES gate by `makeCountryGate(cc)` (#31.7) — the country scoping
+ * this rewrite adds makes "which country does this row belong to" answerable
+ * per invocation, so the previous "can't wire a country gate on a
+ * multi-country blob" objection no longer applies once each country runs on
+ * its own feed(s) alone.
+ *
+ * WHY (unchanged): segments the feeds don't reach STAY at source_id=0 on
+ * purpose (engine defaults own unknowns — no class-default stamping under
+ * this source id, and Europe is not silent-residual-capable, #26B — that
+ * exists only for CZ's timetable, owner decision 2026-07-11 option b).
  *
  * Usage:
- *   npx tsx enrich-railway-europe.ts
+ *   npx tsx enrich-railway-europe.ts                    # all countries, sequential
+ *   npx tsx enrich-railway-europe.ts --country DE       # Germany only
+ *   npx tsx enrich-railway-europe.ts --country FR --stamp-only
  *   npx tsx enrich-railway-europe.ts --force-download
  *   npx tsx enrich-railway-europe.ts --enrich-only
- *   npx tsx enrich-railway-europe.ts --feed=de          # Germany only
- *   npx tsx enrich-railway-europe.ts --feed=de,ch,at    # Multiple feeds
+ *   npx tsx enrich-railway-europe.ts --feed=de          # manual debug: one feed only
+ *   npx tsx enrich-railway-europe.ts --feed=de,ch,at    # manual debug: several feeds
+ *
+ * --stamp-only: Phase-3/4 Step A rollout control (same semantics as
+ * enrich-railway-cz.ts) — enableDestructive=false: the run still walk-stamps
+ * heavy-rail counts AND divisors (atomic with the stamp, railways-arrow.ts
+ * module doc invariant 3) and still runs the tram stop-join, but NO retract
+ * (per-country or the world CRITICAL-2 sweep) and NO country-bleed heal fire.
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, createReadStream, readdirSync } from 'node:fs'
@@ -35,12 +59,17 @@ import { pathToFileURL } from 'node:url'
 import { execSync } from 'node:child_process'
 import { gunzipSync } from 'node:zlib'
 import { createInterface } from 'node:readline'
-import { latLngToCell } from 'h3-js'
+import { latLngToCell, gridDisk } from 'h3-js'
 import { SOURCE_ID_GLOBAL_GTFS_TRANSIT } from './lib/source-ids.generated.js'
-import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
+import { writeRailTrains, type RailRow, type RailTrains } from './lib/railways-arrow.js'
+import { makeCountryGate } from './lib/country-polygon.js'
+import { iterateCountryHexes } from './lib/roads-arrow.js'
+import { enrichRailwaysByGraphWalk } from './lib/rail-walk-enrich.js'
+import type { RailStationPairCount } from './lib/rail-graph.js'
+import { computeStopPairFrequenciesForFeed } from './lib/gtfs-stop-pairs.js'
 import {
   RAIL_TYPES, TRAM_TYPES, METRO_TYPES, routeFamily, nearestGridStop,
-  parseGtfsDate, formatDate, logRetractSkippedIncompleteInputs, type GtfsStop,
+  parseGtfsDate, formatDate, logRetractSkippedIncompleteInputs, GTFS_BORDER_MARGIN_DEG, type GtfsStop,
 } from './lib/gtfs-enrich-core.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
@@ -51,10 +80,19 @@ const CACHE_DIR = resolve(import.meta.dirname, '../data/enrichment/global/gtfs')
 
 const forceDownload = process.argv.includes('--force-download')
 const enrichOnly = process.argv.includes('--enrich-only')
+const stampOnly = process.argv.includes('--stamp-only')
 
-// Parse --feed=xx,yy argument
+// Parse --feed=xx,yy argument — manual debug knob (chain runs never pass it;
+// see the manifest note on the 'railway-europe*' steps): narrows the feed
+// list within whichever country/all-countries selection is also in effect.
 const feedArg = process.argv.find(a => a.startsWith('--feed='))
 const requestedFeeds = feedArg ? feedArg.replace('--feed=', '').split(',').map(s => s.trim().toLowerCase()) : null
+
+// --country CC (bare `--country XX` or `--country=XX`, either spelling).
+const countryArgEq = process.argv.find(a => a.startsWith('--country='))
+const countryArgIdx = process.argv.indexOf('--country')
+const countryArg = (countryArgEq ? countryArgEq.slice('--country='.length) : countryArgIdx >= 0 ? process.argv[countryArgIdx + 1] : undefined)
+  ?.toUpperCase()
 
 // ── Feed registry ──
 
@@ -62,7 +100,11 @@ interface FeedConfig {
   id: string
   name: string
   url: string
-  country: string       // ISO 3166-1 alpha-2
+  country: string       // ISO 3166-1 alpha-2 this feed testifies about — its PRIMARY
+                         // country even for a feed whose name suggests otherwise
+                         // (none of today's 23 are genuinely multi-country; if one
+                         // ever is, this is still the country the per-country
+                         // `processCountry` run attributes it to).
   boundingBox: [number, number, number, number]  // [minLat, minLon, maxLat, maxLon] for sanity checks
   // GTFS route_type values that count as rail (2=rail, 0=tram, 1=subway, etc)
   railRouteTypes: Set<number>
@@ -71,6 +113,13 @@ interface FeedConfig {
   // rail as GTFS "metro" (400-405) but OSM carries it as railway=rail — Melbourne
   // Metro Trains (au-vic feed 2, 35 route_type-400 routes) are the reference case.
   metroAsRail?: boolean
+  // Cross-feed overlap policy: pairs from every feed are always SUMMED by the
+  // walk's canonical accumulator. A feed that would double-publish another
+  // feed's heavy rail must instead narrow its OWN railRouteTypes allow-list so
+  // the overlapping family never leaves it (fr-idf is the reference case — see
+  // its entry). The 2026-07-16 mirrorGroup/trip-fingerprint dedup was deleted
+  // the same day: FR national × IDF caches share only 7 of 3 537/6 193
+  // coordinate keys, so cross-producer fingerprints could never match.
 }
 
 // RAIL_TYPES/TRAM_TYPES/METRO_TYPES + routeFamily are hoisted to lib/gtfs-enrich-core.ts.
@@ -188,6 +237,11 @@ export const FEEDS: FeedConfig[] = [
     country: 'FR',
     boundingBox: [41.3, -5.2, 51.1, 9.6],
     railRouteTypes: ALL_RAIL_AND_TRAM,
+    // THE national heavy-rail authority for FR, Île-de-France included: this
+    // SNCF export already carries the Transilien/RER trains, so 'fr-idf' is
+    // declared tram-only (see its entry) instead of being deduped against
+    // this feed — the deleted 2026-07-16 trip-fingerprint dedup could never
+    // match the two producers (7 shared coordinate keys of 3 537/6 193).
   },
   {
     id: 'lu',
@@ -261,7 +315,18 @@ export const FEEDS: FeedConfig[] = [
     url: 'https://eu.ftp.opendatasoft.com/sncf/gtfs/transilien-gtfs.zip',
     country: 'FR',
     boundingBox: [48.1, 1.4, 49.2, 3.6],
-    railRouteTypes: RAIL_TYPES,
+    // TRAM/LIGHT-RAIL ONLY (2026-07-16 /gg fix batch item 2): this feed's
+    // heavy-rail (Transilien/RER) trains are ALREADY published in the
+    // national 'fr' feed above, so counting them here would double-stamp
+    // every Île-de-France line; only tram/light-rail route_types (SNCF
+    // tram-train services) remain counted from this feed. The alternative —
+    // trip-fingerprint dedup against 'fr' — was built and DELETED the same
+    // day on a data verdict: the two producers' caches share only 7 of
+    // 3 537/6 193 coordinate keys, so fingerprints could never match, while
+    // the dedup path also bypassed the shape-conflict drop and false-merged
+    // within-feed duplicate trips. Being tram-only, this feed never makes
+    // heavy-rail retract claims (see feedDeclaresHeavyRail).
+    railRouteTypes: TRAM_TYPES,
   },
   {
     id: 'au-vic',
@@ -277,6 +342,9 @@ export const FEEDS: FeedConfig[] = [
     boundingBox: [-39.2, 140.9, -33.9, 150.0],
     railRouteTypes: new Set([...RAIL_TYPES, ...METRO_TYPES]),
     metroAsRail: true,
+    // No overlap with au-qld: Victoria vs Queensland are geographically
+    // disjoint networks (boundingBoxes don't overlap) — no shared physical
+    // train can appear in both, so the plain SUM is already correct.
   },
   {
     id: 'au-qld',
@@ -285,12 +353,13 @@ export const FEEDS: FeedConfig[] = [
     country: 'AU',
     boundingBox: [-29.2, 150.5, -26.0, 153.6],
     railRouteTypes: RAIL_TYPES,
+    // See au-vic's comment — disjoint network, plain SUM.
   },
 ]
 
 // ── Types (GtfsStop hoisted to lib/gtfs-enrich-core.ts) ──
 
-interface StopTrainCount {
+export interface StopTrainCount {
   stop_id: string
   lat: number
   lon: number
@@ -783,10 +852,11 @@ export async function computeStopFrequencies(
     const lon = parseFloat(r['stop_lon'] || '')
     if (!lat || !lon || isNaN(lat) || isNaN(lon)) { skippedNoCoords++; continue }
 
-    // Bounding box sanity check
+    // Bounding box sanity check — the SAME shared border margin as the pair
+    // parser's stops envelope and the country graph bbox (item 6).
     const [minLat, minLon, maxLat, maxLon] = feed.boundingBox
-    // Allow 1 degree margin for stops near borders
-    if (lat < minLat - 1 || lat > maxLat + 1 || lon < minLon - 1 || lon > maxLon + 1) {
+    const m = GTFS_BORDER_MARGIN_DEG
+    if (lat < minLat - m || lat > maxLat + m || lon < minLon - m || lon > maxLon + m) {
       skippedOutOfBounds++
       continue
     }
@@ -902,127 +972,318 @@ const wasOldFallbackStamp = (row: RailRow): boolean => {
   return row.existingPax === pax && row.existingFrt === frt
 }
 
-async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean): Promise<void> {
-  // Group stops by H3R4 hex
-  const stopsByHex = new Map<string, StopTrainCount[]>()
-  for (const sc of allStopCounts) {
-    if (!stopsByHex.has(sc.h3r4)) stopsByHex.set(sc.h3r4, [])
-    stopsByHex.get(sc.h3r4)!.push(sc)
+interface CountryFeedOutcome {
+  feed: FeedConfig
+  tramStops: StopTrainCount[]
+  pairs: RailStationPairCount[]
+  failed: string | null
+}
+
+interface CountryProcessResult {
+  cc: string
+  /** Hex ids `iterateCountryHexes` returned for this country's bbox — the
+   *  walk driver's own visitation set, recomputed here (cheap: a readdir +
+   *  filter, no re-parse) so main() can union it across countries and tell
+   *  the CRITICAL-2 sweep which hexes NOT to re-touch. Empty when nothing
+   *  was walked (no GTFS data this country). */
+  hexes: string[]
+  retractSafe: boolean
+  loaded: number
+  denom: number
+}
+
+/** Country bbox for the per-country border-buffer graph (plan Phase 4 point
+ *  2): the UNION of this country's own feed(s) `boundingBox` — already
+ *  hand-curated per feed for the stops.txt sanity check — padded 0.5° so the
+ *  rail graph can bridge a station just across the border. Derived from data
+ *  the registry already carries: no separate hand-authored per-country bbox
+ *  table to drift out of sync with FEEDS, and no CGAZ overseas-territory
+ *  blow-up (a country's own feed bbox is already scoped to where its network
+ *  actually runs — unlike a union of ALL that country's CGAZ ADM0 polygons,
+ *  which for FR/US/etc. would span oceans via dependent territories no GTFS
+ *  feed here ever covers). */
+export function countryBboxFor(cc: string): [number, number, number, number] {
+  const feeds = FEEDS.filter(f => f.country === cc)
+  if (feeds.length === 0) throw new Error(`countryBboxFor: no FEEDS entry carries country '${cc}'`)
+  // SAME margin as the stops envelope (GTFS_BORDER_MARGIN_DEG — item 6): a
+  // stop kept by loadStopsWithCoords must always find its rail graph loaded,
+  // or every cross-border pair snap-fails into an endpoint quarantine.
+  const MARGIN = GTFS_BORDER_MARGIN_DEG
+  let minLat = Infinity, minLon = Infinity, maxLat = -Infinity, maxLon = -Infinity
+  for (const f of feeds) {
+    minLat = Math.min(minLat, f.boundingBox[0])
+    minLon = Math.min(minLon, f.boundingBox[1])
+    maxLat = Math.max(maxLat, f.boundingBox[2])
+    maxLon = Math.max(maxLon, f.boundingBox[3])
   }
-  console.log(`  Stops span ${stopsByHex.size} H3R4 hexes`)
+  return [
+    Math.max(-90, minLat - MARGIN),
+    Math.max(-180, minLon - MARGIN),
+    Math.min(90, maxLat + MARGIN),
+    Math.min(180, maxLon + MARGIN),
+  ]
+}
 
-  // Multi-country continental feed has no single bbox — the ENRICH pass scans only
-  // hexes that carry europe stops; hexes with zero europe stops are left to the
-  // national/global passes. The OLD_FALLBACK heal is NOT bounded by that: the
-  // retract-only sweep below (CRITICAL-2) visits every remaining railways.arrow hex,
-  // so a hex whose stop coverage vanished since the legacy stamp is healed too.
-  let totalRails = 0, totalStamped = 0, totalRetracted = 0, skippedService = 0, hexesUpdated = 0, hexesScanned = 0
-  const startTime = Date.now()
+/** Tram/light-rail `extraMatch` fallback arm for `enrichRailwaysByGraphWalk`
+ *  — the pre-Phase-4 `nearestGridStop` 500 m join, UNCHANGED for this family
+ *  (heavy rail moved to the graph walk; tram stop spacing is well under the
+ *  radius, so banding was never a tram bug — plan Key decisions: "Trams keep
+ *  the 500 m stop-join v1"). FIX (2026-07-16 review): the pre-Phase-4 design
+ *  built one grid per hex from ONLY that hex's own stops, missing a tram
+ *  stop sitting just over a hex boundary from the segment querying it — the
+ *  grid for hex H now merges stops from H AND its k=1 ring (`gridDisk`, 7
+ *  hexes total, origin included). Memoized per hexId (rebuilt only when
+ *  hexId CHANGES from the previous call) since `enrichRailwaysByGraphWalk`
+ *  processes every row of one hex's railways.arrow together before moving to
+ *  the next — the ring merge is paid once per hex, not once per row. */
+export function buildTramExtraMatch(tramStops: readonly StopTrainCount[]): (row: RailRow, i: number, hexId: string) => RailTrains | null {
+  const stopsByHex = new Map<string, StopTrainCount[]>()
+  for (const sc of tramStops) {
+    const arr = stopsByHex.get(sc.h3r4)
+    if (arr) arr.push(sc); else stopsByHex.set(sc.h3r4, [sc])
+  }
 
-  for (const hexId of stopsByHex.keys()) {
+  let cachedHexId: string | null = null
+  let cachedGrid: Map<string, StopTrainCount[]> = new Map()
+
+  return (row, _i, hexId) => {
+    if (row.railType !== 1 && row.railType !== 2) return null // heavy rail is walk-only, other families never match
+    if (hexId !== cachedHexId) {
+      cachedHexId = hexId
+      const grid = new Map<string, StopTrainCount[]>()
+      for (const nb of gridDisk(hexId, 1)) {
+        for (const sc of stopsByHex.get(nb) ?? []) {
+          const key = `${Math.floor(sc.lat * 100)}_${Math.floor(sc.lon * 100)}`
+          const cell = grid.get(key)
+          if (cell) cell.push(sc); else grid.set(key, [sc])
+        }
+      }
+      cachedGrid = grid
+    }
+    const bestStop = nearestGridStop(cachedGrid, row)
+    if (!bestStop) return null
+    return { pax: bestStop.trains_passenger, frt: bestStop.trains_freight, sourceId: MY_SOURCE_ID }
+  }
+}
+
+/** Downloads one feed and computes BOTH the tram per-stop counts (unchanged
+ *  `nearestGridStop` join input) and the heavy-rail station-PAIR counts (the
+ *  new graph-walk input) from the SAME extract dir(s) — a nested PTV-style
+ *  feed (au-vic) yields several dirs, concatenated the same way both arms
+ *  already did before this rewrite. A tram-only feed (fr-idf) simply yields
+ *  zero pairs through the same code path — its allow-list never maps a route
+ *  to 'rail'. */
+async function loadCountryFeed(feed: FeedConfig): Promise<CountryFeedOutcome> {
+  try {
+    const extractDirs = await downloadGtfs(feed)
+    let tramStops: StopTrainCount[] = []
+    let pairs: RailStationPairCount[] = []
+    for (const dir of extractDirs) {
+      const stopCounts = await computeStopFrequencies(dir, feed)
+      tramStops = tramStops.concat(stopCounts.filter(s => s.family === 'tram'))
+
+      const pairResult = await computeStopPairFrequenciesForFeed(dir, {
+        bbox: feed.boundingBox,
+        // Narrowed to 'rail' only: heavy rail is this function's whole remit
+        // (tram stays on the per-stop join above) — reuses the SAME per-feed
+        // allow-list + metroAsRail override as the per-stop path, just
+        // dropping the 'tram' outcome.
+        familyOf: (routeType) => (railFamilyFor(routeType, feed) === 'rail' ? 'rail' : null),
+        // Same target-day policy as computeStopFrequencies's busiest-Wednesday
+        // sampler, so pax counts describe the SAME day across both arms.
+        dateSelection: findTargetWednesday,
+        optionsKey: 'europe-busiest-wed',
+      })
+      pairs = pairs.concat(pairResult.pairs)
+    }
+    if (extractDirs.length > 1) tramStops = dedupeStopsByLocation(tramStops)
+    return { feed, tramStops, pairs, failed: null }
+  } catch (err: any) {
+    console.error(`  [${feed.id}] FAILED: ${err.message}`)
+    return { feed, tramStops: [], pairs: [], failed: err.message }
+  }
+}
+
+/** Does this feed's own allow-list (+ metroAsRail override) map ANY route
+ *  type to heavy rail? Derived from the registry data the feed already
+ *  carries — no separate "declares heavy rail" flag to drift out of sync.
+ *  Drives the per-family completeness rule below AND documents which feeds
+ *  can ever contribute heavy-rail retract evidence (a tram-only feed like
+ *  fr-idf never can). */
+export function feedDeclaresHeavyRail(feed: FeedConfig): boolean {
+  return [...feed.railRouteTypes].some(rt => railFamilyFor(rt, feed) === 'rail')
+}
+
+/** Per-family completeness (2026-07-16 /gg fix batch item 3): a feed only
+ *  counts LOADED when the family that carries its retract evidence actually
+ *  parsed non-empty. The old any-part-non-empty test let a working tram part
+ *  mask an empty heavy-rail part — retractSafe then allowed the run to
+ *  disown every prior heavy-rail stamp with nothing to re-claim it. A feed
+ *  that declares heavy rail therefore requires non-empty PAIRS; a tram-only
+ *  feed (fr-idf) is exempt from the pairs requirement (it never makes
+ *  heavy-rail retract claims) and requires its tram part instead. */
+export function feedPartsIncomplete(feed: FeedConfig, tramStopCount: number, pairCount: number): boolean {
+  if (feedDeclaresHeavyRail(feed)) return pairCount === 0
+  return tramStopCount === 0
+}
+
+/** UNION bleed gate for the shared GLOBAL_GTFS_TRANSIT id (item 1, world
+ *  mode only): the id is stamped by EVERY country in FEEDS, so a row is
+ *  disownable-by-geometry only when it lies outside the union of ALL those
+ *  territories — a single country's gate here would disown rows a
+ *  neighbouring country's pass legitimately stamped (the CH-run-kills-
+ *  southern-DE-rows bug). Gates are built lazily on the first call (ONE
+ *  build per process) because makeCountryGate may download CGAZ on first
+ *  use and module import must stay side-effect-free. */
+function buildSharedIdUnionBleedGate(): (lat: number, lon: number) => boolean {
+  let gates: Array<(lat: number, lon: number) => boolean> | null = null
+  return (lat, lon) => {
+    if (!gates) gates = [...new Set(FEEDS.map(f => f.country))].map(cc => makeCountryGate(cc))
+    return gates.some(g => g(lat, lon))
+  }
+}
+
+/** Runs the FULL per-country pipeline: download+parse this country's own
+ *  feed(s), build heavy-rail station pairs (every feed summed through the
+ *  walk's ONE canonical accumulator) and the tram stop grid, then ONE
+ *  `enrichRailwaysByGraphWalk` call scoped to a border-buffered country
+ *  bbox. This is the SAME function `--country CC` and the all-countries loop
+ *  both call — a `country:XX` chain scope and a full run touch identical
+ *  code, never two paths that can drift (plan Phase 4 point 2 / /gg review
+ *  item 7). Returns `null` when FEEDS carries no feed for `cc` at all
+ *  (nothing to do — not an error, since not every country has a europe feed).
+ *
+ *  `bleedGate` (item 1): geometry-evidence gate for the driver's bleed
+ *  retract arm. Omitted in per-country mode — a single country's run must
+ *  never disown the SHARED id's rows another country legitimately stamped;
+ *  foreign residue of the shared id is healed by the world-mode legacy sweep
+ *  + heal-rail-country-bleed.ts. World mode passes the FEEDS-union gate. */
+async function processCountry(cc: string, bleedGate?: (lat: number, lon: number) => boolean): Promise<CountryProcessResult | null> {
+  const feeds = FEEDS.filter(f => f.country === cc && (!requestedFeeds || requestedFeeds.includes(f.id)))
+  if (feeds.length === 0) return null
+
+  console.log(`\n=== Country: ${cc} (${feeds.length} feed(s): ${feeds.map(f => f.id).join(', ')}) ===`)
+
+  const outcomes: CountryFeedOutcome[] = []
+  for (const feed of feeds) {
+    console.log(`\n--- Feed: ${feed.name} (${feed.id}) ---`)
+    outcomes.push(await loadCountryFeed(feed))
+  }
+
+  const failedFeedIds = outcomes.filter(o => o.failed).map(o => o.feed.id)
+  // Per-family completeness (item 3): `feedPartsIncomplete` — a heavy-rail
+  // feed whose PAIRS parsed empty is NOT loaded even when its tram part
+  // worked, so retractSafe below can never disown heavy-rail stamps on a
+  // tram-only snapshot; a tram-only feed is judged on its tram part alone.
+  const emptyFeedIds = outcomes
+    .filter(o => !o.failed && feedPartsIncomplete(o.feed, o.tramStops.length, o.pairs.length))
+    .map(o => o.feed.id)
+  const loaded = outcomes.length - failedFeedIds.length - emptyFeedIds.length
+  const denom = feeds.length
+
+  // #31.6 completeness marker, scoped to THIS country's own feed count (plan
+  // Phase 4 point 2: "per-country mode emits its own marker with that
+  // country's feed count") — never claims the global 23.
+  {
+    const state = loaded >= denom ? 'complete' : loaded === 0 ? 'missing' : 'partial'
+    const detail = `${loaded}/${denom} feeds loaded${failedFeedIds.length ? `; failed: ${failedFeedIds.join(',')}` : ''}${emptyFeedIds.length ? `; empty: ${emptyFeedIds.join(',')}` : ''}`
+    console.log(`QM_COMPLETENESS ${JSON.stringify({ actual: loaded, state, detail })}`)
+  }
+
+  // CRITICAL-1b (/gg Codex, unchanged rationale): a retract may only run over a
+  // PROVABLY COMPLETE input snapshot for THIS country — every one of its own
+  // feeds loaded non-empty, no --feed subset narrowing it.
+  const retractSafe = requestedFeeds === null && failedFeedIds.length === 0 && emptyFeedIds.length === 0
+  if (!retractSafe) {
+    logRetractSkippedIncompleteInputs([
+      requestedFeeds !== null ? `--feed subset run: ${requestedFeeds.join(',')}` : '',
+      failedFeedIds.length > 0 ? `failed feeds: ${failedFeedIds.join(',')}` : '',
+      emptyFeedIds.length > 0 ? `feeds parsed empty: ${emptyFeedIds.join(',')}` : '',
+    ].filter(Boolean).join('; '))
+  }
+
+  // Plain concatenation — `accumulateCanonicalPairs` downstream (inside the
+  // walk) sums by canonical OD key regardless of how many source arrays
+  // contributed; overlap policy lives in the registry (fr-idf tram-only),
+  // never in a merge step here.
+  const pairs: RailStationPairCount[] = outcomes.flatMap(o => o.pairs)
+
+  const tramStops = dedupeStopsByLocation(outcomes.flatMap(o => o.tramStops))
+  console.log(`  [${cc}] ${pairs.length} heavy-rail station pairs, ${tramStops.length} tram/light-rail stops`)
+
+  if (pairs.length === 0 && tramStops.length === 0) {
+    console.log(`  [${cc}] No GTFS data to enrich — skipping the walk.`)
+    return { cc, hexes: [], retractSafe, loaded, denom }
+  }
+
+  const bbox = countryBboxFor(cc)
+  const countryGate = makeCountryGate(cc)
+  const stats = await enrichRailwaysByGraphWalk({
+    h3r4Dir: H3R4_DIR,
+    bbox,
+    pairs,
+    sourceId: MY_SOURCE_ID,
+    countryGate,
+    // Item 1: SHARED-id bleed evidence — absent in per-country mode (this
+    // run's gate covers only ONE of the territories the id legitimately
+    // stamps), the FEEDS-union gate in world mode. See processCountry's doc.
+    bleedGate,
+    extraMatch: buildTramExtraMatch(tramStops),
+    // Single id — europe has no retired predecessor id to absorb (unlike CZ's
+    // migration #26, this file's own source id is unchanged across this rewrite).
+    retract: { sourceIds: [MY_SOURCE_ID] },
+    retractSafe,
+    enableDestructive: !stampOnly,
+    // #26B: europe is NOT silent-capable (silentResidual omitted) — a
+    // quarantine-free row the walk never reaches simply stays at
+    // source_id=0 for the engine's own class default, same as before this
+    // rewrite; only CZ's timetable evidence (owner decision option b)
+    // justifies a residual.
+    sidecar: {
+      scope: `europe-${cc.toLowerCase()}`,
+      extractFingerprint: `europe-gtfs:${feeds.map(f => f.id).join('+')}`,
+      feeds: feeds.map(f => f.id),
+    },
+  })
+  console.log(`  [${cc}] walk stats: ${JSON.stringify(stats)}`)
+
+  return { cc, hexes: iterateCountryHexes(H3R4_DIR, bbox, 'railways.arrow'), retractSafe, loaded, denom }
+}
+
+/** CRITICAL-2 (/gg Codex, unchanged since before Phase 4): stale
+ *  pre-2026-07-10 OLD_FALLBACK stamps hide precisely in hexes with ZERO
+ *  stops today (their stop coverage vanished since the legacy stamp) — no
+ *  per-country walk visits those, since a country's own bbox only reaches
+ *  hexes ITS OWN feeds cover. Retract-only pass (`match` is `() => null`)
+ *  over every railways.arrow hex NOT already visited this run; runs ONLY in
+ *  all-countries mode (never under `--country` — plan Phase 4: "the
+ *  world-wide legacy retract sweep... stays but runs ONLY in the
+ *  all-countries mode") and only when every country this run processed was
+ *  itself retract-safe (see main()). */
+async function runLegacyFallbackSweep(alreadyVisitedHexIds: ReadonlySet<string>): Promise<void> {
+  let sweepScanned = 0, sweepUpdated = 0, sweepRetracted = 0
+  const sweepStart = Date.now()
+  const allHexDirs = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
+  console.log(`\n  Retract-only sweep: ${allHexDirs.length} hex dirs enumerated, ${alreadyVisitedHexIds.size} already visited this run`)
+  for (const hexId of allHexDirs) {
+    if (alreadyVisitedHexIds.has(hexId)) continue
     const railPath = resolve(H3R4_DIR, hexId, 'railways.arrow')
     if (!existsSync(railPath)) continue
-    hexesScanned++
-
-    // Build this hex's two family grids once (0.01° ≈ 1 km cells).
-    const railGrid = new Map<string, StopTrainCount[]>()
-    const tramGrid = new Map<string, StopTrainCount[]>()
-    for (const sc of stopsByHex.get(hexId)!) {
-      const key = `${Math.floor(sc.lat * 100)}_${Math.floor(sc.lon * 100)}`
-      const grid = sc.family === 'rail' ? railGrid : tramGrid
-      if (!grid.has(key)) grid.set(key, [])
-      grid.get(key)!.push(sc)
-    }
-
-    const r = await writeRailTrains(
-      railPath,
-      (row) => {
-        // Family gate: heavy rail (rail_type 0) → rail stops; tram/light_rail
-        // (rail_type 1/2) → tram/metro stops. Cross-family matches can't happen.
-        const grid = row.railType === 0 ? railGrid : (row.railType === 1 || row.railType === 2) ? tramGrid : null
-        const bestStop = grid ? nearestGridStop(grid, row) : null
-        if (bestStop) {
-          return { pax: bestStop.trains_passenger, frt: bestStop.trains_freight, sourceId: MY_SOURCE_ID }
-        }
-        // No GTFS match (or unhandled rail_type): return null — the row stays/goes
-        // source_id=0 and the ENGINE default table (emission/railway.rs::default_traffic)
-        // owns the unknown. Never stamp a guess under MY_SOURCE_ID.
-        return null
-      },
-      undefined,
-      // CRITICAL-1b: retract only over a provably complete snapshot (retractSafe) —
-      // with a --feed subset or a failed/empty feed, "no stop covers this row" is
-      // an input artifact, not evidence, and would disown REAL stamps.
-      retractSafe ? {
-        sourceId: MY_SOURCE_ID,
-        // Disown a legacy pre-2026-07-10 class-default stamp ONLY when today's join no
-        // longer reaches the row (same family routing + 500 m grid join as `match`) —
-        // a row a live stop still covers is re-stamped with the real count instead.
-        when: (row) => {
-          if (!wasOldFallbackStamp(row)) return false
-          const grid = row.railType === 0 ? railGrid : (row.railType === 1 || row.railType === 2) ? tramGrid : null
-          return !grid || nearestGridStop(grid, row) === null
-        },
-      } : undefined,
-    )
-    totalRails += r.rows
-    totalStamped += r.matched
-    totalRetracted += r.retracted
-    skippedService += r.skippedService
-    if (r.updated) hexesUpdated++
-
-    const elapsed = Date.now() - startTime
-    if (elapsed > 0 && hexesScanned % 50 === 0) {
-      console.log(`  [${(elapsed / 1000).toFixed(0)}s] ${hexesScanned} hexes, ${hexesUpdated} updated, ${totalStamped.toLocaleString()} GTFS-stamped, ${totalRetracted.toLocaleString()} retracted`)
+    sweepScanned++
+    const r = await writeRailTrains(railPath, () => null, undefined, { sourceId: MY_SOURCE_ID, when: wasOldFallbackStamp })
+    sweepRetracted += r.retracted
+    if (r.updated) sweepUpdated++
+    if (sweepScanned % 2000 === 0) {
+      console.log(`  [sweep ${((Date.now() - sweepStart) / 1000).toFixed(0)}s] ${sweepScanned} stopless hexes, ${sweepUpdated} updated, ${sweepRetracted.toLocaleString()} retracted`)
     }
   }
-
-  // CRITICAL-2 (/gg Codex): stale OLD_FALLBACK stamps hide precisely in hexes with
-  // ZERO stops today (their stop coverage vanished since the legacy stamp), which the
-  // enrich pass above never visits. Sweep every OTHER railways.arrow hex with a
-  // retract-only pass — match is `() => null` (the sweep never stamps), and with a
-  // provably complete snapshot (retractSafe gate) "zero stops in this hex" is a true
-  // negative, so the join corroboration is vacuous and the exact tuple fingerprint
-  // alone identifies a legacy stamp. Full readdir enumeration of H3R4_DIR (~9 s);
-  // hexes already visited above are skipped — their retract ran WITH the stop join.
-  let sweepScanned = 0, sweepUpdated = 0, sweepRetracted = 0
-  if (retractSafe) {
-    const sweepStart = Date.now()
-    const allHexDirs = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
-    console.log(`\n  Retract-only sweep: ${allHexDirs.length} hex dirs enumerated, ${stopsByHex.size} stop-bearing already visited`)
-    for (const hexId of allHexDirs) {
-      if (stopsByHex.has(hexId)) continue
-      const railPath = resolve(H3R4_DIR, hexId, 'railways.arrow')
-      if (!existsSync(railPath)) continue
-      sweepScanned++
-      const r = await writeRailTrains(railPath, () => null, undefined, {
-        sourceId: MY_SOURCE_ID,
-        when: wasOldFallbackStamp,
-      })
-      sweepRetracted += r.retracted
-      if (r.updated) sweepUpdated++
-      if (sweepScanned % 2000 === 0) {
-        console.log(`  [sweep ${((Date.now() - sweepStart) / 1000).toFixed(0)}s] ${sweepScanned} stopless hexes, ${sweepUpdated} updated, ${sweepRetracted.toLocaleString()} retracted`)
-      }
-    }
-    console.log(`  Retract-only sweep done in ${((Date.now() - sweepStart) / 1000).toFixed(0)}s`)
-  }
-
-  console.log(`\n=== Enrichment Results ===`)
-  console.log(`  Railway segments scanned:  ${totalRails.toLocaleString()}`)
-  console.log(`  Skipped service tracks:    ${skippedService.toLocaleString()}`)
-  console.log(`  Matched by GTFS:           ${totalStamped.toLocaleString()}`)
-  console.log(`  Retracted legacy defaults: ${totalRetracted.toLocaleString()}`)
-  console.log(`  Hexes updated:             ${hexesUpdated}/${hexesScanned}`)
-  if (retractSafe) {
-    console.log(`  Retract sweep (stopless hexes): ${sweepRetracted.toLocaleString()} retracted, ${sweepUpdated}/${sweepScanned} hexes updated`)
-  }
+  console.log(`  Retract-only sweep done in ${((Date.now() - sweepStart) / 1000).toFixed(0)}s — ${sweepRetracted.toLocaleString()} retracted, ${sweepUpdated}/${sweepScanned} hexes updated`)
 }
 
 // ── Main ──
 
 async function main() {
-  console.log(`=== Global Railway GTFS Enrichment ===\n`)
+  console.log(`=== Europe/Global Railway GTFS Enrichment (Phase 4: graph-walk) ===\n`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
   console.log(`  Cache: ${CACHE_DIR}`)
   console.log(`  Year: ${YEAR}\n`)
@@ -1032,94 +1293,67 @@ async function main() {
     process.exit(1)
   }
 
-  // Select feeds to process
-  const feeds = requestedFeeds
-    ? FEEDS.filter(f => requestedFeeds.includes(f.id))
-    : FEEDS
-
-  if (feeds.length === 0) {
-    console.error(`ERROR: No matching feeds. Available: ${FEEDS.map(f => f.id).join(', ')}`)
-    process.exit(1)
-  }
-
-  console.log(`  Processing ${feeds.length} feed(s): ${feeds.map(f => `${f.id} (${f.name})`).join(', ')}\n`)
-
-  // Collect all stop counts across feeds
-  const allStopCounts: StopTrainCount[] = []
-  const feedResults: { id: string; stops: number; failed?: string }[] = []
-
-  for (const feed of feeds) {
-    console.log(`\n--- Feed: ${feed.name} (${feed.id}) ---`)
-    try {
-      // A feed resolves to ≥1 flat GTFS dir (one for a normal feed, one per
-      // rail-bearing subfeed for a nested PTV feed) — concat their stop counts,
-      // then re-dedupe by location so a station shared across subfeeds (au-vic
-      // Southern Cross: V/Line feed 1 + interstate feed 10) sums instead of the
-      // downstream nearest-stop pick keeping only one. No-op for a single dir.
-      const extractDirs = await downloadGtfs(feed)
-      let stops: StopTrainCount[] = []
-      for (const dir of extractDirs) stops = stops.concat(await computeStopFrequencies(dir, feed))
-      if (extractDirs.length > 1) stops = dedupeStopsByLocation(stops)
-      allStopCounts.push(...stops)
-      feedResults.push({ id: feed.id, stops: stops.length })
-    } catch (err: any) {
-      console.error(`  [${feed.id}] FAILED: ${err.message}`)
-      feedResults.push({ id: feed.id, stops: 0, failed: err.message })
+  if (countryArg) {
+    // NO bleedGate (item 1): a per-country run's own gate covers only one of
+    // the territories the shared id legitimately stamps — bleed stays off and
+    // foreign residue is left to the world-mode sweep + heal-rail-country-bleed.ts.
+    const result = await processCountry(countryArg)
+    if (!result) {
+      const known = [...new Set(FEEDS.map(f => f.country))].sort()
+      console.error(`ERROR: no FEEDS entry carries country '${countryArg}' (available: ${known.join(' ')})`)
+      process.exit(1)
     }
-  }
-
-  console.log(`\n\n--- Feed Summary ---`)
-  for (const r of feedResults) {
-    if (r.failed) {
-      console.log(`  ${r.id}: FAILED — ${r.failed}`)
-    } else {
-      console.log(`  ${r.id}: ${r.stops} stops with frequencies`)
-    }
-  }
-
-  const failedFeedIds = feedResults.filter(r => r.failed).map(r => r.id)
-  const emptyFeedIds = feedResults.filter(r => !r.failed && r.stops === 0).map(r => r.id)
-
-  // #31.6 completeness marker → chain status.json + the completeness floor.
-  // `actual` = feeds that loaded non-empty; a subset --feed run reports against
-  // its own count (never claims the full 23). A full run short of FEEDS.length
-  // is `partial`. au-vic (nested PTV zip-of-zips) is now handled per-subfeed by
-  // downloadGtfs (V/Line + Metro Trains → rail), so a full staged run reaches
-  // 23/23; a subfeed that fails to extract still drops au-vic to non-empty-only
-  // honestly rather than stamping a partial as done.
-  {
-    const loaded = feedResults.filter((r) => !r.failed && r.stops > 0).length
-    const denom = requestedFeeds ? feeds.length : FEEDS.length
-    const state = loaded >= denom ? 'complete' : loaded === 0 ? 'missing' : 'partial'
-    const detail = `${loaded}/${denom} feeds loaded${failedFeedIds.length ? `; failed: ${failedFeedIds.join(',')}` : ''}${emptyFeedIds.length ? `; empty: ${emptyFeedIds.join(',')}` : ''}`
-    console.log(`QM_COMPLETENESS ${JSON.stringify({ actual: loaded, state, detail })}`)
-  }
-
-  // CRITICAL-1b (/gg Codex): a retract may only run over a PROVABLY COMPLETE input
-  // snapshot — every configured feed loaded non-empty, no --feed subset. Otherwise
-  // the retract's join corroboration reads "no coverage" where the input simply was
-  // not loaded and disowns REAL stamps. Enrichment (stamping) stays allowed on a
-  // partial snapshot — only the retract is gated.
-  const retractSafe = requestedFeeds === null && failedFeedIds.length === 0 && emptyFeedIds.length === 0
-  if (!retractSafe) {
-    const detail = [
-      requestedFeeds !== null ? `--feed subset run: ${requestedFeeds.join(',')}` : '',
-      failedFeedIds.length > 0 ? `failed feeds: ${failedFeedIds.join(',')}` : '',
-      emptyFeedIds.length > 0 ? `feeds parsed empty: ${emptyFeedIds.join(',')}` : '',
-    ].filter(Boolean).join('; ')
-    logRetractSkippedIncompleteInputs(detail)
-  }
-
-  if (allStopCounts.length === 0) {
-    console.log(`\nNo GTFS data to enrich. Exiting.`)
+    console.log(`\n=== Done (country:${countryArg}, ${stampOnly ? 'stamp-only — Step A proof mode' : 'destructive ops enabled'}) ===`)
     return
   }
 
-  console.log(`\n\n--- Enriching railways.arrow ---`)
-  console.log(`  Total GTFS stops: ${allStopCounts.length}`)
-  await enrichHexes(allStopCounts, retractSafe)
+  // ALL-COUNTRIES MODE: every country FEEDS carries, SEQUENTIALLY, through the
+  // exact same processCountry() a --country invocation uses (plan Phase 4
+  // point 2). The world-wide CRITICAL-2 legacy sweep runs ONLY here.
+  const countries = [...new Set(FEEDS.map(f => f.country))]
+  console.log(`  Processing ${countries.length} countries sequentially: ${countries.join(' ')}\n`)
 
-  console.log(`\n=== Done ===`)
+  const allVisited = new Set<string>()
+  let totalLoaded = 0
+  let totalDenom = 0
+  let anyCountryIncomplete = requestedFeeds !== null
+
+  // World mode runs with the shared id's UNION bleed gate (item 1): rows
+  // outside EVERY feed country's territory are geometry-evidence stale and
+  // disownable; rows inside another feed country's territory are that
+  // country's own run's business, never this one's.
+  const sharedIdUnionBleedGate = buildSharedIdUnionBleedGate()
+
+  for (const cc of countries) {
+    const result = await processCountry(cc, sharedIdUnionBleedGate)
+    if (!result) continue
+    for (const h of result.hexes) allVisited.add(h)
+    totalLoaded += result.loaded
+    totalDenom += result.denom
+    if (!result.retractSafe) anyCountryIncomplete = true
+  }
+
+  // Aggregate marker — printed LAST among every QM_COMPLETENESS line this
+  // process emits (each processCountry call above already printed its own
+  // per-country marker), so chain/status.ts's parseCompletenessMarker (which
+  // keeps only the LAST match in the log) reports the world total against
+  // the manifest's FEEDS-derived expectMinInputs floor (item 7: no more
+  // hand-written 23) — the per-country lines are informational only.
+  {
+    const state = totalLoaded >= totalDenom ? 'complete' : totalLoaded === 0 ? 'missing' : 'partial'
+    const detail = `${totalLoaded}/${totalDenom} feeds loaded across ${countries.length} countries`
+    console.log(`\nQM_COMPLETENESS ${JSON.stringify({ actual: totalLoaded, state, detail })}`)
+  }
+
+  if (stampOnly) {
+    console.log(`\n  Retract-only sweep SKIPPED — --stamp-only (Step A proof mode).`)
+  } else if (anyCountryIncomplete) {
+    console.log(`\n  Retract-only sweep SKIPPED — at least one country ran retract-unsafe this pass (see its own log lines above).`)
+  } else {
+    await runLegacyFallbackSweep(allVisited)
+  }
+
+  console.log(`\n=== Done (all countries, ${stampOnly ? 'stamp-only — Step A proof mode' : 'destructive ops enabled'}) ===`)
 }
 
 // Import-safe: run only when invoked directly — importing this file must never

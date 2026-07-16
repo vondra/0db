@@ -116,6 +116,11 @@ test('trať 200 real-corridor regression: the graph-walk corrects the pre-fix 11
   assert.equal(result.failures.detourRejected, 0)
   assert.equal(result.failures.disconnected, 0)
   assert.equal(result.failures.snapFailed, 0)
+  // 2026-07-16 Step-B refinement: zero failed pairs on this corridor slice
+  // means zero quarantine — the per-pair quarantine shapes (rail-graph-
+  // metrics.ts's quarantineAdmissiblePathEllipse / quarantineEndpointRadius)
+  // never fire without a failure to localize in the first place.
+  assert.equal(result.quarantinedSegmentKeys.size, 0, 'no failed pairs on this corridor slice — nothing quarantined')
 
   // ── (b) The walk corrects rows on BOTH sides of the old 110/9863 seam ──
   const oldStampByKey = new Map<string, { sourceId: number; pax: number }>()
