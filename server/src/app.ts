@@ -14,6 +14,7 @@ import { aircraftRoutes } from './routes/aircraft.js'
 import { heatmapPmtilesRoutes } from './routes/heatmap-pmtiles.js'
 import { tilesManifestRoutes } from './routes/tiles-manifest.js'
 import { validationViewRoutes } from './routes/validation-view.js'
+import { mailInboundRoutes } from './routes/mail-inbound.js'
 import { healthRoutes } from './routes/health.js'
 import { createReadinessCheck, type ReadinessCheck } from './runtime-readiness.js'
 import { requireLocalPeer } from './internal-access.js'
@@ -84,6 +85,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(heatmapPmtilesRoutes)
   await app.register(tilesManifestRoutes)
   await app.register(validationViewRoutes)
+  // Inbound-mail archive webhook (Cloudflare Email Worker → he84). Encapsulated
+  // so its raw MIME content-type parser never touches the JSON routes.
+  await app.register(mailInboundRoutes)
 
   const readiness = opts.readinessCheck ?? createReadinessCheck({ engineProbe })
   await healthRoutes(app, readiness)
