@@ -135,6 +135,33 @@ test('walk: two competing similar-length disjoint corridors fail as ambiguous (n
   assert.equal(result.stampsBySegmentKey.size, 0)
 })
 
+// DE Step A v2 diagnostics (2026-07-16 failure analysis, fix 3): an
+// 'ambiguous' failure record must carry the alt-vs-best path geometry
+// summary — the v3 twin-gate tuning input (see summarizeAmbiguousGeometry's
+// doc, rail-graph-metrics.ts). Reuses the SAME two-mirror-corridor fixture
+// as the test above (~1.1 km north / ~1.1 km south of the direct chord —
+// clearly not a parallel-twin double-track), so the alt path's lateral
+// spread from the best path must be on the order of kilometres, not metres.
+test('walk: an ambiguous failure record carries the alt-path geometry summary (lateral spread + heading delta) for v3 twin-gate tuning', () => {
+  const { g } = buildTwoCorridorGraph()
+  const result = walkRailStationPairs(g, [
+    { fromLat: 50.000, fromLon: 14.000, toLat: 50.000, toLon: 14.100, pax: 7, frt: 0 },
+  ])
+  assert.equal(result.failures.ambiguous, 1)
+  assert.equal(result.failedPairChords.length, 1)
+  const rec = result.failedPairChords[0]
+  assert.equal(rec.reason, 'ambiguous')
+  assert.equal(rec.snapDistanceM, undefined, 'diagnostics are reason-specific — ambiguous never carries snapDistanceM')
+  assert.ok(rec.ambiguousGeometry, 'ambiguous record must carry the geometry summary')
+  const { lateralSpreadM, headingDeltaDeg } = rec.ambiguousGeometry!
+  assert.ok(
+    lateralSpreadM.min <= lateralSpreadM.median && lateralSpreadM.median <= lateralSpreadM.max,
+    `min <= median <= max (got ${JSON.stringify(lateralSpreadM)})`,
+  )
+  assert.ok(lateralSpreadM.min > 500, 'the two mirror corridors sit ~2.2 km apart at their widest — nowhere near a parallel-twin spacing (tens of metres)')
+  assert.ok(headingDeltaDeg >= 0 && headingDeltaDeg <= 90, 'heading delta is folded mod 180, so it never exceeds 90')
+})
+
 test('walk: a shapePolyline hugging one corridor disambiguates it (ambiguity probe skipped)', () => {
   const { g } = buildTwoCorridorGraph()
   const result = walkRailStationPairs(g, [
@@ -298,6 +325,71 @@ test('walk: a pair with only ONE end snapping marks THAT end\'s component failed
   assert.equal(result.failures.snapFailed, 1)
   assert.equal(result.failedComponents.size, 1, 'the snapped end\'s component IS flagged')
   assert.equal(result.unlocalizedPairs, 0, 'one end resolved — this pair is localizable, not counted as unlocalized')
+})
+
+// DE Step A v2 diagnostics (2026-07-16 failure analysis, fix 3): a snapFailed
+// record must carry the pair's own coords plus the TRUE distance from each
+// unsnapped endpoint to the nearest graph node, so a v3 tuning pass can tell
+// "missed the 300 m radius by a few metres" from "nowhere near this network
+// at all" without re-running the whole enrichment.
+test('walk: a snapFailed record carries the pair coords plus the true distance to nearest graph node for the end that failed to snap', () => {
+  const track1 = seg({ key: 't1', startLat: 50.000, startLon: 14.000, endLat: 50.000, endLon: 14.010 })
+  const g = buildRailGraph([track1])
+  // The `to` end sits ~5 km north of the track — well outside
+  // STATION_SNAP_RADIUS_M (300 m) but close enough to stay under
+  // nearestRailGraphNodeDistanceM's search ceiling, so the diagnostic
+  // resolves to a real, assertable number instead of the 'unreachable'
+  // sentinel.
+  const result = walkRailStationPairs(g, [
+    { fromLat: 50.000, fromLon: 14.000, toLat: 50.045, toLon: 14.005, pax: 5, frt: 0 },
+  ])
+  assert.equal(result.failures.snapFailed, 1)
+  assert.equal(result.failedPairChords.length, 1)
+  const rec = result.failedPairChords[0]
+  assert.equal(rec.reason, 'snapFailed')
+  assert.equal(rec.fromLat, 50.000)
+  assert.equal(rec.toLat, 50.045)
+  assert.equal(rec.ambiguousGeometry, undefined, 'diagnostics are reason-specific — snapFailed never carries ambiguousGeometry')
+  assert.ok(rec.snapDistanceM, 'must carry per-end snap distances')
+  assert.equal(rec.snapDistanceM!.from, null, 'the FROM end snapped fine — nothing to diagnose there')
+  const to = rec.snapDistanceM!.to
+  assert.ok(typeof to === 'number' && to > 300 && to < 10_000,
+    `the TO end is ~5 km from the only track — well beyond STATION_SNAP_RADIUS_M but still a sane, findable distance (got ${to})`)
+})
+
+test('walk: an unlocalized pair (neither end snaps) records the true distance to the nearest graph node for BOTH ends', () => {
+  const track1 = seg({ key: 't1', startLat: 50.000, startLon: 14.000, endLat: 50.000, endLon: 14.010 })
+  const g = buildRailGraph([track1])
+  const result = walkRailStationPairs(g, [
+    { fromLat: 50.040, fromLon: 14.000, toLat: 50.045, toLon: 14.010, pax: 5, frt: 0 }, // both ~4-5 km from the only track
+  ])
+  assert.equal(result.unlocalizedPairs, 1)
+  assert.equal(result.failedPairChords.length, 1)
+  const rec = result.failedPairChords[0]
+  assert.ok(rec.snapDistanceM, 'must carry per-end snap distances')
+  assert.ok(typeof rec.snapDistanceM!.from === 'number' && rec.snapDistanceM!.from > 300, 'the FROM end also failed to snap')
+  assert.ok(typeof rec.snapDistanceM!.to === 'number' && rec.snapDistanceM!.to > 300, 'the TO end also failed to snap')
+})
+
+// Codex review item 3 (2026-07-16): these records are JSON-persisted
+// (rail-stops sidecar), Infinity serializes to null, and null already means
+// "this end snapped fine" — an endpoint beyond the search ceiling must carry
+// the explicit 'unreachable' sentinel instead, and it must SURVIVE a JSON
+// round-trip distinguishable from the snapped-fine null.
+test('walk: an endpoint with no graph node within the search ceiling records \'unreachable\', never Infinity — JSON round-trip keeps it distinct from null', () => {
+  const track1 = seg({ key: 't1', startLat: 50.000, startLon: 14.000, endLat: 50.000, endLon: 14.010 })
+  const g = buildRailGraph([track1])
+  // FROM snaps exactly; TO sits ~1100 km away — beyond the 200 km ceiling.
+  const result = walkRailStationPairs(g, [
+    { fromLat: 50.000, fromLon: 14.000, toLat: 60.000, toLon: 14.000, pax: 5, frt: 0 },
+  ])
+  assert.equal(result.failures.snapFailed, 1)
+  const rec = result.failedPairChords[0]
+  assert.equal(rec.snapDistanceM!.from, null, 'snapped fine')
+  assert.equal(rec.snapDistanceM!.to, 'unreachable', 'beyond the ceiling — the JSON-safe sentinel, never Infinity')
+  const roundTripped = JSON.parse(JSON.stringify(rec)) as typeof rec
+  assert.equal(roundTripped.snapDistanceM!.from, null)
+  assert.equal(roundTripped.snapDistanceM!.to, 'unreachable', 'survives JSON — Infinity would have collapsed to null here')
 })
 
 test('walk: a pair where NEITHER end snaps increments unlocalizedPairs and flags no component', () => {

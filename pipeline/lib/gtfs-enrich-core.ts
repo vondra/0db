@@ -345,8 +345,12 @@ export interface ActiveTripFamiliesResult<F extends string> {
  *  callers treat a throw as feed-not-loaded (retract-unsafe), never as
  *  "this feed legitimately has no rail". Shared by
  *  `computeActiveTripFamiliesForFeed` and `declaredRouteFamiliesForFeed` so
- *  the two can never disagree on what counts as malformed. */
-async function parseRoutesTxtOrThrow(extractDir: string): Promise<Record<string, string>[]> {
+ *  the two can never disagree on what counts as malformed. Exported for
+ *  callers that need the RAW rows once for several derived views (DE's
+ *  route_type-histogram + declares-rail preflight builds both from one
+ *  parse, enrich-railway-de.ts) — reuse this, never a bare parseCsvStream,
+ *  so the malformed-file contract stays in one place. */
+export async function parseRoutesTxtOrThrow(extractDir: string): Promise<Record<string, string>[]> {
   const path = resolve(extractDir, 'routes.txt')
   const rows = await parseCsvStream(path)
   if (rows.length === 0) {

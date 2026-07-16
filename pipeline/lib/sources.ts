@@ -88,6 +88,11 @@ export interface Source {
   license: string | null
   url: string | null
   year: number | null   // used for same-rank tiebreak (newer wins)
+  /** Single-country ownership (see `isNationallyOwnedSource`): true for the
+   *  city/national provenance tiers by construction, plus any entry the
+   *  registry explicitly flags `nationallyOwned` (cz-timetable-silent —
+   *  baseline tier, still CZ-only testimony). */
+  nationallyOwned: boolean
 }
 
 /**
@@ -122,17 +127,29 @@ export function provenanceFromEntry(d: Dataset): Provenance {
   return 'none'
 }
 
+/** Provenance tiers that imply single-country ownership by construction — a
+ *  municipal counter or national census/timetable speaks for exactly one
+ *  country's territory. Continental/global tiers are multi-country by
+ *  definition; heuristic/baseline tiers are owner-neutral UNLESS the registry
+ *  entry itself declares `nationallyOwned` (cz-timetable-silent). */
+const NATIONALLY_OWNED_PROVENANCE_TIERS: ReadonlySet<Provenance> =
+  new Set(['city-measured', 'national-measured', 'national-proxy'])
+
 /** The unified SOURCES array — one entry per dataset, with derived provenance. */
-export const SOURCES: readonly Source[] = DATASETS.map<Source>((d) => ({
-  id: d.id,
-  key: d.key,
-  provenance: provenanceFromEntry(d),
-  layer: d.layer,
-  name: d.name,
-  license: d.license,
-  url: d.url,
-  year: d.year,
-}))
+export const SOURCES: readonly Source[] = DATASETS.map<Source>((d) => {
+  const provenance = provenanceFromEntry(d)
+  return {
+    id: d.id,
+    key: d.key,
+    provenance,
+    layer: d.layer,
+    name: d.name,
+    license: d.license,
+    url: d.url,
+    year: d.year,
+    nationallyOwned: NATIONALLY_OWNED_PROVENANCE_TIERS.has(provenance) || d.nationallyOwned === true,
+  }
+})
 
 export const SOURCES_BY_ID = new Map<number, Source>(SOURCES.map((s) => [s.id, s]))
 export const SOURCES_BY_KEY = new Map<string, Source>(SOURCES.map((s) => [s.key, s]))
@@ -153,6 +170,24 @@ export const UNSPECIFIED: Source = SOURCES_BY_ID.get(0)!
 export function isMeasured(id: number): boolean {
   const s = SOURCES_BY_ID.get(id)
   return s ? PROVENANCE_RANK[s.provenance] >= PROVENANCE_RANK['global-measured'] : false
+}
+
+/**
+ * True when `id` is a SINGLE-COUNTRY-owned source: the city/national
+ * provenance tiers (a municipal counter / national census / national
+ * timetable testifies about exactly one country) plus any registry entry
+ * explicitly flagged `nationallyOwned` (cz-timetable-silent — baseline tier,
+ * still CZ-only testimony). Unknown/sentinel ids are NOT nationally owned.
+ *
+ * Consumer: the rail-walk driver's foreign-national stamp guard
+ * (`rail-walk-enrich.ts`, DE Step A v2 Codex review item 4, 2026-07-16) —
+ * a walk must never overwrite ANOTHER country's national data, even where
+ * `shouldOverwrite`'s rank/year ladder alone would allow it (verified live:
+ * DE 9864 vs CZ 110 is a same-rank newer-year win, and CZ prepared data is
+ * FINAL). Territory, not rank, is the boundary between two national feeds.
+ */
+export function isNationallyOwnedSource(id: number): boolean {
+  return SOURCES_BY_ID.get(id)?.nationallyOwned === true
 }
 
 // Overwrite decision

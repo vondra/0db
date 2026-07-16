@@ -85,6 +85,16 @@ export interface Dataset {
    *  raising a divisor the walk deliberately set to 1. Absent = the generic
    *  pass owns this source's divisors as usual. */
   railDivisorFromWalk?: true
+  /** Single-country ownership for a source whose PROVENANCE TIER alone does
+   *  not already say so (DE Step A v2 Codex review item 4, 2026-07-16):
+   *  `cz-timetable-silent` is baseline-tier — a residual claim, not a
+   *  measurement — yet only the CZ enricher may stamp or overwrite it (the
+   *  claim "CZPTT proves no scheduled service here" is national testimony a
+   *  foreign feed cannot refute). City/national tiers are nationally owned
+   *  by construction and never need this flag. Consumed by
+   *  `sources.ts::isNationallyOwnedSource` → the rail-walk driver's
+   *  foreign-national stamp guard (`rail-walk-enrich.ts`). */
+  nationallyOwned?: true
 }
 
 /** Classes 0-4 + links — the standard major-road census coverage every
@@ -214,6 +224,12 @@ export const DATASETS: Dataset[] = [
     measurement: 'derived',
     railFamilies: ['rail'],
     railDivisorFromWalk: true,
+    // Baseline tier yet CZ-owned (see the field's doc): the rail-walk
+    // foreign-national guard must protect these rows from a neighbour's
+    // higher-rank walk (verified live: DE's widened Step A v2 scope reaches
+    // border rows carrying this id, and shouldOverwrite(baseline,
+    // national-measured) alone would hand them to DE).
+    nationallyOwned: true,
   },
 
   // ── Roads: national ──

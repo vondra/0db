@@ -401,19 +401,18 @@ export function buildRailGraph(segments: RailGraphSegmentInput[]): RailGraph {
   }
 }
 
-/** Nearest graph node to `(lat, lon)` within `maxSnapM`, or -1. Never falls
- *  back to a chord match (Key decisions: "snap failure => drop pair"); the
- *  caller (walkRailStationPairs) records the failure instead of guessing. */
-export function snapToNearestRailGraphNode(
-  graph: RailGraph,
-  lat: number,
-  lon: number,
-  maxSnapM: number = STATION_SNAP_RADIUS_M,
-): number {
+/** Box-scan a graph's node grid for the nearest node within `radiusM`
+ *  (returns `null` when nothing falls inside the scanned box). Shared core
+ *  of `snapToNearestRailGraphNode` (which additionally enforces `d <=
+ *  radiusM` on the result — the box itself can extend slightly past a true
+ *  circle at its corners) and `nearestRailGraphNodeDistanceM` (which wants
+ *  the true nearest distance with NO radius cutoff at all, see that
+ *  function's doc). */
+function nearestNodeInGrid(graph: RailGraph, lat: number, lon: number, radiusM: number): { nodeId: number; distM: number } | null {
   const latSpanM = SPATIAL_INDEX_CELL_DEG * M_PER_DEG_LAT
   const lonSpanM = SPATIAL_INDEX_CELL_DEG * M_PER_DEG_LON_EQ * Math.max(0.05, Math.cos(lat * Math.PI / 180))
-  const dyMax = Math.max(1, Math.ceil(maxSnapM / latSpanM))
-  const dxMax = Math.max(1, Math.ceil(maxSnapM / lonSpanM))
+  const dyMax = Math.max(1, Math.ceil(radiusM / latSpanM))
+  const dxMax = Math.max(1, Math.ceil(radiusM / lonSpanM))
   const gy = Math.floor(lat / SPATIAL_INDEX_CELL_DEG)
   const gx = Math.floor(lon / SPATIAL_INDEX_CELL_DEG)
   let best = -1
@@ -425,14 +424,67 @@ export function snapToNearestRailGraphNode(
       for (const nodeId of arr) {
         const n = graph.nodes[nodeId]
         const d = flatDist(lat, lon, n.lat, n.lon)
-        if (d <= maxSnapM && d < bestDist) {
-          bestDist = d
-          best = nodeId
-        }
+        if (d < bestDist) { bestDist = d; best = nodeId }
       }
     }
   }
-  return best
+  return best === -1 ? null : { nodeId: best, distM: bestDist }
+}
+
+/** Nearest graph node to `(lat, lon)` within `maxSnapM`, or -1. Never falls
+ *  back to a chord match (Key decisions: "snap failure => drop pair"); the
+ *  caller (walkRailStationPairs) records the failure instead of guessing. */
+export function snapToNearestRailGraphNode(
+  graph: RailGraph,
+  lat: number,
+  lon: number,
+  maxSnapM: number = STATION_SNAP_RADIUS_M,
+): number {
+  const hit = nearestNodeInGrid(graph, lat, lon, maxSnapM)
+  return hit && hit.distM <= maxSnapM ? hit.nodeId : -1
+}
+
+/** DIAGNOSTIC-ONLY (DE Step A v2, 2026-07-16 failure analysis, fix 3): the
+ *  TRUE distance to the nearest graph node, with no `STATION_SNAP_RADIUS_M`
+ *  cutoff at all — unlike `snapToNearestRailGraphNode` (which by design
+ *  never reports a near-miss, only pass/fail: "snap failure => drop pair"),
+ *  a v3 twin-gate tuning pass needs to tell "this stop missed the 300 m
+ *  radius by 20 m" from "this stop is 5 km from any rail at all", since the
+ *  fix differs (raise the radius vs. the pair is simply not near this
+ *  network). Called ONLY for a pair whose endpoint already failed to snap
+ *  (never on the hot walk path).
+ *
+ *  Search: widen the box radius geometrically from `STATION_SNAP_RADIUS_M`
+ *  (x4 per retry), CLAMPED to one final pass exactly AT `ceilingM` (Codex
+ *  review item 2, 2026-07-16: a bare x4 ladder jumps 76.8 km -> 307 km and
+ *  never scans the declared-ceiling band at all — verified: a node at
+ *  99 486 m returned Infinity). On the first non-empty box, do ONE refining
+ *  rescan with the hit's own distance as the radius (Codex review item 1:
+ *  box != circle — the first non-empty BOX's best can be beaten by a nearer
+ *  node in a cell the box did not cover, verified counterexample 1961.86 m
+ *  reported where 1669.15 m exists; the refining box fully covers the circle
+ *  of radius `hit.distM`, and the true nearest is <= that, so the rescan's
+ *  best IS the true nearest). Returns `Infinity` for an empty graph or when
+ *  every box up to and including the ceiling pass is empty. */
+export function nearestRailGraphNodeDistanceM(
+  graph: RailGraph,
+  lat: number,
+  lon: number,
+  ceilingM: number = 200_000,
+): number {
+  if (graph.nodeCount === 0) return Infinity
+  let radiusM = STATION_SNAP_RADIUS_M
+  for (;;) {
+    const hit = nearestNodeInGrid(graph, lat, lon, radiusM)
+    if (hit) {
+      // Refining rescan (item 1): `hit.distM` upper-bounds the true nearest,
+      // and a box of that radius covers the whole circle it defines — the
+      // rescan can never come back empty (the hit itself is inside it).
+      return nearestNodeInGrid(graph, lat, lon, hit.distM)!.distM
+    }
+    if (radiusM >= ceilingM) return Infinity
+    radiusM = Math.min(radiusM * 4, ceilingM)
+  }
 }
 
 // ── Effective traffic (engine zero-defaulting mirror) ───────────────────────
@@ -539,10 +591,9 @@ export interface RailWalkResult {
    *  branch reads this with `?? 1`). */
   divisorBySegmentKey: Map<string, number>
   failures: { snapFailed: number; disconnected: number; detourRejected: number; ambiguous: number }
-  failedPairChords: Array<{
-    fromLat: number; fromLon: number; toLat: number; toLon: number
-    reason: 'snapFailed' | 'disconnected' | 'detourRejected' | 'ambiguous'
-  }>
+  /** See `RailFailedPairRecord`'s doc for the reason-specific diagnostics
+   *  each entry carries. */
+  failedPairChords: RailFailedPairRecord[]
   /** Component ids touched by ANY failed pair — STATS ONLY (2026-07-16
    *  Step-B refinement). Per-component granularity quarantined the WHOLE
    *  connected network wherever rail forms one component: Step-A live-run
@@ -584,6 +635,41 @@ export interface RailWalkResult {
   unlocalizedPairs: number
   pairsWalked: number
   pairsTotal: number
+}
+
+/** Per-failed-pair chord + reason, EXTENDED with reason-specific diagnostics
+ *  (DE Step A v2, 2026-07-16 failure analysis, fix 3) — the input a v3
+ *  twin-gate tuning pass needs, computed ONLY for the failed pair that
+ *  actually needs it (never on the hot walk path, per that failure
+ *  analysis's "keep it cheap" constraint):
+ *  - `ambiguousGeometry` ('ambiguous' only): how far apart (laterally) and
+ *    how differently-oriented the alt path runs from the best path's own
+ *    edges (`summarizeAmbiguousGeometry`, rail-graph-metrics.ts) — a small
+ *    spread + a small heading delta that STILL failed the twin exemption
+ *    (`altPathIsParallelTwin`) is exactly the signal `WALK_TWIN_*` tuning
+ *    needs; a large spread confirms a genuinely different corridor.
+ *  - `snapDistanceM` ('snapFailed', including the neither-end-snapped
+ *    subset `unlocalizedPairs` counts): the TRUE distance from each
+ *    unsnapped endpoint to the nearest graph node
+ *    (`nearestRailGraphNodeDistanceM`, ignoring `STATION_SNAP_RADIUS_M`).
+ *    Per endpoint: `null` = this end snapped fine (nothing to diagnose);
+ *    a number = true metres to the nearest node; `'unreachable'` = nothing
+ *    within that function's search ceiling. The string sentinel exists
+ *    because these records are JSON-persisted (rail-stops sidecar) and
+ *    `Infinity` serializes to `null` — which would silently re-label a
+ *    totally-unreachable stop as "snapped fine" (Codex review item 3,
+ *    2026-07-16).
+ *  Absent for 'disconnected'/'detourRejected': those already have a clear
+ *  graph-topology cause (component split / detour bound), not an
+ *  ambiguous-classification or snap-radius question. */
+export interface RailFailedPairRecord {
+  fromLat: number; fromLon: number; toLat: number; toLon: number
+  reason: 'snapFailed' | 'disconnected' | 'detourRejected' | 'ambiguous'
+  ambiguousGeometry?: {
+    lateralSpreadM: { min: number; median: number; max: number }
+    headingDeltaDeg: number
+  }
+  snapDistanceM?: { from: number | 'unreachable' | null; to: number | 'unreachable' | null }
 }
 
 export interface RailEndpointRow {
@@ -629,4 +715,13 @@ export interface RailStopsSidecarV1 {
   feeds: string[]
   generatedAt: string
   stops: Array<{ lat: number; lon: number }>
+  /** Every failed pair's chord + reason + diagnostics from THIS SAME walk
+   *  (DE Step A v2, 2026-07-16 failure analysis, fix 3) — additive field on
+   *  the ONE existing per-run JSON artifact a walk produces, so a v3
+   *  twin-gate tuning pass can inspect WHY pairs failed without re-running
+   *  the whole enrichment (no new file family). Optional: absent on a
+   *  sidecar written before this field existed; `loadRailStopsIndex`
+   *  (rail-endpoint-rows.ts, the R15/R16 stop exemption reader) never reads
+   *  it, so that reader's contract is unaffected either way. */
+  failedPairChords?: RailFailedPairRecord[]
 }

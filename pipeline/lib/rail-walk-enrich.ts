@@ -51,6 +51,7 @@ import {
 import { walkRailStationPairs } from './rail-graph-metrics.js'
 import { writeRailTrains, type RailRow, type RailTrains } from './railways-arrow.js'
 import { segmentWhollyOutside } from './country-polygon.js'
+import { isNationallyOwnedSource } from './sources.js'
 
 export interface RailWalkEnrichOptions {
   h3r4Dir: string
@@ -119,6 +120,15 @@ export interface RailWalkEnrichStats {
   silentStamped: number
   skippedService: number
   skippedForeign: number
+  /** Rows a stamp candidate existed for but was withheld because the row's
+   *  EXISTING source id is ANOTHER country's nationally-owned data (the
+   *  foreign-national stamp guard — see the match closure below and
+   *  `sources.ts::isNationallyOwnedSource`; DE Step A v2 Codex review item
+   *  4, 2026-07-16). A persistently non-zero count on a national run means
+   *  its graph scope reaches across a border into a neighbour's finished
+   *  territory — expected for border-straddling rows, worth investigating
+   *  when large. */
+  skippedForeignNational: number
   walk: {
     failures: RailWalkResult['failures']
     failedComponentCount: number
@@ -273,41 +283,68 @@ function sidecarPathFor(h3r4Dir: string, scope: string): string {
   return resolve(h3r4Dir, '..', 'rail-stops', `${scope}.json`)
 }
 
-/** Sidecar visibility (2026-07-16 /gg review item 12, partial fix — full
- *  extract-identity invalidation is deferred, see TODO below): when THIS run
- *  snapped zero stop endpoints onto the graph, `writeStopsSidecarIfAny` below
- *  writes nothing — but if a sidecar file for this scope already exists from
- *  an EARLIER run, it silently remains in force for the R15/R16 stop
- *  exemption, potentially describing a graph/extract that no longer matches.
- *  Never deleted here (a sidecar is additive evidence, not a claim of "no
- *  stations exist" — the never-cache-empty rule cuts both ways), but a
- *  zero-stops run must say so loudly rather than let staleness go unnoticed.
+/** Zero-snapped-stops visibility (2026-07-16 /gg review item 12, reshaped by
+ *  the DE Step A v2 Codex review item 5 — full extract-identity invalidation
+ *  is still deferred, see TODO below). Two zero-stop cases:
+ *
+ *  - `diagnosticsWillBeWritten` (this walk produced failure records):
+ *    `writeStopsSidecarIfAny` WILL write the sidecar — empty `stops`, full
+ *    `failedPairChords` — because a run whose every endpoint missed the
+ *    graph is exactly the run whose diagnostics matter most (the DE Step A
+ *    failure mode), and losing them would force a full re-run to see why.
+ *    Cost accepted with open eyes: an earlier sidecar's stop evidence for
+ *    this scope is REPLACED by an empty list, so R15/R16's stop exemption
+ *    goes dark here until a healthy re-run — hence the loud warning.
+ *  - otherwise (no pairs at all → nothing to write): an earlier sidecar, if
+ *    any, silently remains in force for R15/R16, potentially describing a
+ *    graph/extract that no longer matches — never deleted here (additive
+ *    evidence, not a claim of "no stations exist"), but said loudly.
  *
  *  TODO(2026-07-16): hard extract-identity invalidation (compare the
  *  sidecar's `extractFingerprint` against the CURRENT run's and expire a
  *  mismatch) lands with the osm-extract stations layer (planned for the next
  *  Planet re-extract) — see the `pro-e-sd-zaj-m-wobbly-liskov` plan's later
  *  phase. Until then this is a loud warning, not an automatic fix. */
-function warnIfStaleSidecarRemains(h3r4Dir: string, scope: string): void {
+function warnZeroSnappedStops(h3r4Dir: string, scope: string, diagnosticsWillBeWritten: boolean): void {
   const path = sidecarPathFor(h3r4Dir, scope)
+  if (diagnosticsWillBeWritten) {
+    console.error(
+      `\n!!! rail-stops sidecar EMPTIED: zero stop endpoints snapped onto the graph this run — ` +
+      `${path} is being written with failure diagnostics only (empty stops), so R15/R16's stop ` +
+      `exemption for this scope is now empty${existsSync(path) ? ' (stop evidence from an earlier run was replaced)' : ''}. ` +
+      `Inspect its failedPairChords for why nothing snapped, then re-run after fixing the extract/pairs.`,
+    )
+    return
+  }
   if (!existsSync(path)) return
   console.error(
     `\n!!! rail-stops sidecar STALE: zero stop endpoints snapped onto the graph this run, but ` +
     `${path} still exists from an earlier run — R15/R16's stop exemption keeps using it as-is ` +
-    `(not deleted; see warnIfStaleSidecarRemains's doc for why). Verify the extract/pairs this run ` +
+    `(not deleted; see warnZeroSnappedStops's doc for why). Verify the extract/pairs this run ` +
     `actually used before trusting that exemption.`,
   )
 }
 
-/** See `warnIfStaleSidecarRemains`'s doc for why a zero-stop run intentionally
- *  never writes here (never-cache-empty). Returns '' when nothing was
- *  written. */
+/** Returns '' when nothing was written — only a walk with NEITHER snapped
+ *  stops NOR failure records (i.e. no pairs at all) writes nothing; see
+ *  `warnZeroSnappedStops`'s doc for the zero-stops-but-failures case.
+ *
+ *  `failedPairChords` (DE Step A v2, 2026-07-16 failure analysis, fix 3 +
+ *  Codex review item 5): persisted alongside the stops THIS SAME walk
+ *  snapped — the sidecar is the ONE existing per-run JSON artifact a walk
+ *  produces, so a v3 twin-gate tuning pass reads failure diagnostics from
+ *  here instead of re-running the whole enrichment (no new file family).
+ *  Written even when ZERO stops snapped, as long as there are failure
+ *  records — the all-endpoints-missed run is precisely the one whose
+ *  diagnostics must survive (Codex item 5: the old stops-only early return
+ *  silently dropped them). */
 function writeStopsSidecarIfAny(
   h3r4Dir: string,
   sidecar: RailWalkEnrichOptions['sidecar'],
   stops: ReadonlyArray<{ lat: number; lon: number }>,
+  failedPairChords: RailWalkResult['failedPairChords'],
 ): string {
-  if (stops.length === 0) return ''
+  if (stops.length === 0 && failedPairChords.length === 0) return ''
   const preparedRoot = resolve(h3r4Dir, '..')
   const year = basename(preparedRoot)
   const dir = resolve(preparedRoot, 'rail-stops')
@@ -321,6 +358,7 @@ function writeStopsSidecarIfAny(
     feeds: sidecar.feeds,
     generatedAt: new Date().toISOString(),
     stops: [...stops],
+    failedPairChords,
   }
   writeFileSync(path, JSON.stringify(payload))
   return path
@@ -341,6 +379,18 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
   let silentStamped = 0
   let skippedService = 0
   let skippedForeign = 0
+  let skippedForeignNational = 0
+
+  // Every id THIS run legitimately stamps or absorbs: its own stamp id, its
+  // silent-residual id, and any (predecessor) ids its retract may disown.
+  // The foreign-national guard below must never block a run from updating or
+  // reclaiming its OWN rows — only ANOTHER country's national data is
+  // untouchable (DE Step A v2 Codex review item 4, 2026-07-16).
+  const runOwnSourceIds = new Set<number>([
+    opts.sourceId,
+    ...(opts.silentResidual ? [opts.silentResidual.sourceId] : []),
+    ...(opts.retract?.sourceIds ?? []),
+  ])
 
   for (const hexId of hexIds) {
     const path = resolve(opts.h3r4Dir, hexId, 'railways.arrow')
@@ -349,31 +399,53 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
     // own return value can't distinguish a rejected candidate from an applied one.
     const acceptedBranch = new Map<number, 'walk' | 'silent'>()
 
+    // The three candidate arms (walk stamp / silent residual / extraMatch),
+    // unchanged in substance — hoisted out of the match closure so the
+    // foreign-national guard below can veto ONE computed candidate instead of
+    // being copy-pasted into every arm.
+    const candidateFor = (row: RailRow, i: number, key: string): { trains: RailTrains; branch: 'walk' | 'silent' | 'extra' } | null => {
+      const stamp = walk.stampsBySegmentKey.get(key)
+      if (stamp) {
+        // Divisor rides with the stamp in the SAME atomic write (railways-arrow.ts
+        // module doc invariant 3) — no separate writeRailParallelDivisor pass, and
+        // this fires regardless of enableDestructive (stamp-only still gets the
+        // walk's own divisor, never an undivided count next to a divided sibling).
+        return { trains: { pax: Math.round(stamp.pax), frt: Math.round(stamp.frt), sourceId: opts.sourceId, divisor: stamp.divisor }, branch: 'walk' }
+      }
+      if (
+        opts.silentResidual && opts.enableDestructive && opts.retractSafe && row.railType === 0 &&
+        !walk.quarantinedSegmentKeys.has(key)
+      ) {
+        // A quiet double-track must render at its true divided count, not the
+        // engine's undivided default — divisorBySegmentKey covers every
+        // sibling-bearing segment independent of whether the WALK stamped it
+        // (rail-graph-metrics.ts's applyParallelSpread, /gg review item 2).
+        return { trains: { ...opts.silentResidual, divisor: walk.divisorBySegmentKey.get(key) ?? 1 }, branch: 'silent' }
+      }
+      const extra = opts.extraMatch?.(row, i, hexId)
+      return extra ? { trains: extra, branch: 'extra' } : null
+    }
+
     const result = await writeRailTrains(
       path,
       (row, i) => {
-        const key = segmentKey(hexId, i)
-        const stamp = walk.stampsBySegmentKey.get(key)
-        if (stamp) {
-          acceptedBranch.set(i, 'walk')
-          // Divisor rides with the stamp in the SAME atomic write (railways-arrow.ts
-          // module doc invariant 3) — no separate writeRailParallelDivisor pass, and
-          // this fires regardless of enableDestructive (stamp-only still gets the
-          // walk's own divisor, never an undivided count next to a divided sibling).
-          return { pax: Math.round(stamp.pax), frt: Math.round(stamp.frt), sourceId: opts.sourceId, divisor: stamp.divisor }
+        const candidate = candidateFor(row, i, segmentKey(hexId, i))
+        if (!candidate) return null
+        // FOREIGN-NATIONAL STAMP GUARD (DE Step A v2 Codex review item 4,
+        // 2026-07-16): a row whose EXISTING id is another country's
+        // nationally-owned data (isNationallyOwnedSource — provenance-tier +
+        // registry-flag driven, see sources.ts) is never overwritten by this
+        // run, REGARDLESS of `shouldOverwrite`'s rank/year ladder. Verified
+        // live risk: DE 9864 vs CZ 110 is a same-rank newer-year win and CZ
+        // 9863 is baseline-tier — both would fall to the priority gate alone,
+        // yet CZ prepared data is FINAL; territory, not rank, separates two
+        // national feeds. The run's OWN ids stay updatable/reclaimable.
+        if (!runOwnSourceIds.has(row.existingSourceId) && isNationallyOwnedSource(row.existingSourceId)) {
+          skippedForeignNational++
+          return null
         }
-        if (
-          opts.silentResidual && opts.enableDestructive && opts.retractSafe && row.railType === 0 &&
-          !walk.quarantinedSegmentKeys.has(key)
-        ) {
-          acceptedBranch.set(i, 'silent')
-          // A quiet double-track must render at its true divided count, not the
-          // engine's undivided default — divisorBySegmentKey covers every
-          // sibling-bearing segment independent of whether the WALK stamped it
-          // (rail-graph-metrics.ts's applyParallelSpread, /gg review item 2).
-          return { ...opts.silentResidual, divisor: walk.divisorBySegmentKey.get(key) ?? 1 }
-        }
-        return opts.extraMatch?.(row, i, hexId) ?? null
+        if (candidate.branch !== 'extra') acceptedBranch.set(i, candidate.branch)
+        return candidate.trains
       },
       (_row, i) => {
         const branch = acceptedBranch.get(i)
@@ -433,8 +505,8 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
   const perComponentFailedKm = computePerComponentFailedKm(graph, segments, walk.failedComponents) // deprecated, comparison logging only
   const quarantinedKm = computeQuarantinedKm(segments, walk.quarantinedSegmentKeys)
   const stops = collectSnappedStops(graph, opts.pairs)
-  if (stops.length === 0) warnIfStaleSidecarRemains(opts.h3r4Dir, opts.sidecar.scope)
-  const sidecarPath = writeStopsSidecarIfAny(opts.h3r4Dir, opts.sidecar, stops)
+  if (stops.length === 0) warnZeroSnappedStops(opts.h3r4Dir, opts.sidecar.scope, walk.failedPairChords.length > 0)
+  const sidecarPath = writeStopsSidecarIfAny(opts.h3r4Dir, opts.sidecar, stops, walk.failedPairChords)
 
   const stats: RailWalkEnrichStats = {
     hexes: hexIds.length,
@@ -444,6 +516,7 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
     silentStamped,
     skippedService,
     skippedForeign,
+    skippedForeignNational,
     walk: {
       failures: walk.failures,
       failedComponentCount: walk.failedComponents.size,
@@ -458,7 +531,8 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
 
   console.log(
     `rail-walk-enrich: ${stats.hexes} hexes, ${stats.rows} rows, ${stats.stamped} stamped ` +
-    `(${stats.silentStamped} silent, ${stats.retracted} retracted) — pairs ${stats.walk.pairsWalked}/${stats.walk.pairsTotal} walked; ` +
+    `(${stats.silentStamped} silent, ${stats.retracted} retracted, ${stats.skippedForeignNational} foreign-national skipped) — ` +
+    `pairs ${stats.walk.pairsWalked}/${stats.walk.pairsTotal} walked; ` +
     `failures snap=${stats.walk.failures.snapFailed} disconnected=${stats.walk.failures.disconnected} ` +
     `detour=${stats.walk.failures.detourRejected} ambiguous=${stats.walk.failures.ambiguous}; ` +
     `${stats.walk.failedComponentCount} failed component(s) (${stats.perComponentFailedKm.toFixed(1)} km, deprecated), ` +

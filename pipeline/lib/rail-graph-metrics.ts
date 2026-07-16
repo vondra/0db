@@ -43,9 +43,9 @@
 import { nodeKey, haversineM, pointToSegmentDist, pointToPolylineDist, coordKey4dp, wrapLonDeltaDeg, M_PER_DEG_LAT, M_PER_DEG_LON_EQ } from './spatial.js'
 import { MinHeap } from './min-heap.js'
 import {
-  type RailGraph, type RailGraphEdge, type RailStationPairCount, type RailWalkResult,
+  type RailGraph, type RailGraphEdge, type RailStationPairCount, type RailWalkResult, type RailFailedPairRecord,
   type RailStopsIndex, type RailEndpointRow, type RailContinuityViolation,
-  effectiveRailTraffic, snapToNearestRailGraphNode,
+  effectiveRailTraffic, snapToNearestRailGraphNode, nearestRailGraphNodeDistanceM,
   WALK_DETOUR_RATIO, WALK_DETOUR_SLACK_M, WALK_AMBIGUITY_LENGTH_RATIO, WALK_AMBIGUITY_SHARED_EDGE_FRACTION,
   WALK_TWIN_ALT_EDGE_FRACTION, WALK_TWIN_LATERAL_M, WALK_TWIN_MAX_NONTWIN_RUN_M, UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M,
   SHAPE_CORRIDOR_TOLERANCE_M, PARALLEL_SPREAD_RADIUS_M, RAIL_JUMP_RATIO, RAIL_MIN_EFFECTIVE_TRAINS_PER_DAY,
@@ -607,6 +607,77 @@ function altPathIsParallelTwin(graph: RailGraph, best: ShortestPathResult, alt: 
   return twinLenM / nonSharedStampableLenM >= WALK_TWIN_ALT_EDGE_FRACTION
 }
 
+/** DE Step A v2 diagnostics (2026-07-16 failure analysis, fix 3): summarizes
+ *  how far apart (laterally) and how differently-oriented an 'ambiguous'
+ *  pair's alt path runs from its best path — the v3 twin-gate tuning input
+ *  `RailWalkResult.failedPairChords`'s `ambiguousGeometry` carries. Computed
+ *  ONLY for a pair the walk already marked 'ambiguous' (never on the hot
+ *  path); reuses the same lateral/heading primitives `altPathIsParallelTwin`
+ *  gates on, but reports the full distribution (min/median/max across every
+ *  non-shared stampable alt edge) instead of a single pass/fail — a pair
+ *  that just barely missed the twin exemption (spread a few metres over
+ *  `WALK_TWIN_LATERAL_M`) looks very different from one whose alt path runs
+ *  hundreds of metres away, even though both fail the same boolean gate.
+ *  `headingDeltaDeg` reports the heading delta AT the edge with the SMALLEST
+ *  lateral spread (the closest-matching local pair) — the single most
+ *  informative number for "is the nearest candidate corridor even roughly
+ *  parallel, or does it diverge immediately". No grid acceleration (unlike
+ *  `altPathIsParallelTwin`'s `bestGrid`): both edge sets are already bounded
+ *  by the pair's own detour bound, and this runs only for a rare failed
+ *  pair, so an O(altEdges * bestEdges) scan is cheap in practice. Returns
+ *  `undefined` when there is nothing stampable to compare (mirrors
+ *  `altPathIsParallelTwin`'s own early return). */
+function summarizeAmbiguousGeometry(
+  graph: RailGraph, best: ShortestPathResult, alt: ShortestPathResult,
+): RailFailedPairRecord['ambiguousGeometry'] {
+  const bestStampableIndices: number[] = []
+  for (const idx of best.edgeIndices) {
+    const e = graph.edges[idx]
+    if (!e.isTraversalOnly && e.railType === 0) bestStampableIndices.push(idx)
+  }
+  if (bestStampableIndices.length === 0) return undefined
+
+  const lateralByEdgeM: number[] = []
+  let closestLateralM = Infinity
+  let headingDeltaAtClosestDeg = 0
+  for (const altIdx of alt.edgeIndices) {
+    if (best.edgeIndices.has(altIdx)) continue // shared with best — not part of the "how different is alt" question
+    const e = graph.edges[altIdx]
+    if (e.isTraversalOnly || e.railType !== 0) continue
+    const midLat = (e.startLat + e.endLat) / 2
+    const midLon = (e.startLon + e.endLon) / 2
+    const hAlt = headingDeg(e.startLat, e.startLon, e.endLat, e.endLon)
+
+    let nearestLateralM = Infinity
+    let nearestHeadingDeltaDeg = 0
+    for (const bIdx of bestStampableIndices) {
+      const b = graph.edges[bIdx]
+      const d = pointToSegmentDist(midLat, midLon, b.startLat, b.startLon, b.endLat, b.endLon)
+      if (d < nearestLateralM) {
+        nearestLateralM = d
+        nearestHeadingDeltaDeg = headingDeltaMod180(hAlt, headingDeg(b.startLat, b.startLon, b.endLat, b.endLon))
+      }
+    }
+    if (nearestLateralM === Infinity) continue
+    lateralByEdgeM.push(nearestLateralM)
+    if (nearestLateralM < closestLateralM) {
+      closestLateralM = nearestLateralM
+      headingDeltaAtClosestDeg = nearestHeadingDeltaDeg
+    }
+  }
+  if (lateralByEdgeM.length === 0) return undefined
+
+  lateralByEdgeM.sort((a, b) => a - b)
+  return {
+    lateralSpreadM: {
+      min: lateralByEdgeM[0],
+      median: lateralByEdgeM[Math.floor(lateralByEdgeM.length / 2)],
+      max: lateralByEdgeM[lateralByEdgeM.length - 1],
+    },
+    headingDeltaDeg: headingDeltaAtClosestDeg,
+  }
+}
+
 // ── Per-pair failure quarantine ─────────────────────────────────────────────
 
 /** Bounded Dijkstra distance flood — no target node, no backtrack. Returns
@@ -808,9 +879,20 @@ export function walkRailStationPairs(graph: RailGraph, pairs: RailStationPairCou
   const scratch = createDijkstraScratch(graph.nodeCount)
 
   for (const cp of canonicalPairs.values()) {
-    const fail = (reason: RailWalkResult['failedPairChords'][number]['reason']) => {
+    // DE Step A v2 diagnostics (2026-07-16 failure analysis, fix 3):
+    // `diagnostics` carries the reason-specific fields (`RailFailedPairRecord`'s
+    // doc) — `ambiguousGeometry` for 'ambiguous', `snapDistanceM` for
+    // 'snapFailed' — computed by the caller ONLY on the failure path that
+    // needs it, never here unconditionally.
+    const fail = (
+      reason: RailFailedPairRecord['reason'],
+      diagnostics?: Pick<RailFailedPairRecord, 'ambiguousGeometry' | 'snapDistanceM'>,
+    ) => {
       failures[reason]++
-      failedPairChords.push({ fromLat: cp.fromLat, fromLon: cp.fromLon, toLat: cp.toLat, toLon: cp.toLon, reason })
+      failedPairChords.push({
+        fromLat: cp.fromLat, fromLon: cp.fromLon, toLat: cp.toLat, toLon: cp.toLon, reason,
+        ...diagnostics,
+      })
     }
 
     // This pair's OWN detour bound — identical formula to the
@@ -854,7 +936,23 @@ export function walkRailStationPairs(graph: RailGraph, pairs: RailStationPairCou
         unlocalizedPairs++
         quarantineUnlocalizedPairChord(geomByKey, cp, quarantinedSegmentKeys)
       }
-      fail('snapFailed')
+      // DE Step A v2 diagnostics (fix 3): the TRUE distance to the nearest
+      // graph node for whichever end(s) failed to snap — `null` for an end
+      // that DID snap (nothing to diagnose there); `'unreachable'` when
+      // nothing lies within the search ceiling, NEVER `Infinity` (these
+      // records are JSON-persisted, and Infinity serializes to null — the
+      // "snapped fine" sentinel; Codex review item 3, 2026-07-16). Cheap:
+      // computed only for this failed pair, never on the hot walk path.
+      const snapDistanceForUnsnappedEnd = (lat: number, lon: number): number | 'unreachable' => {
+        const d = nearestRailGraphNodeDistanceM(graph, lat, lon)
+        return Number.isFinite(d) ? d : 'unreachable'
+      }
+      fail('snapFailed', {
+        snapDistanceM: {
+          from: fromNode === -1 ? snapDistanceForUnsnappedEnd(cp.fromLat, cp.fromLon) : null,
+          to: toNode === -1 ? snapDistanceForUnsnappedEnd(cp.toLat, cp.toLon) : null,
+        },
+      })
       continue
     }
 
@@ -923,7 +1021,9 @@ export function walkRailStationPairs(graph: RailGraph, pairs: RailStationPairCou
         ) {
           failedComponents.add(graph.componentOfNode[fromNode])
           quarantineBetweenEnds(fromNode, toNode) // the one failure kind with a NON-empty ellipse: admissible corridors exist, the walk just can't pick one
-          fail('ambiguous')
+          // DE Step A v2 diagnostics (fix 3): the v3 twin-gate tuning input —
+          // see summarizeAmbiguousGeometry's doc.
+          fail('ambiguous', { ambiguousGeometry: summarizeAmbiguousGeometry(graph, best, alt) })
           continue
         }
       }

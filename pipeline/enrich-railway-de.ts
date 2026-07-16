@@ -73,7 +73,7 @@ import {
   computeStopFrequenciesForFeed, dedupeStopsByLocation, buildTramExtraMatch, routeFamily,
   declaredRouteFamiliesForFeed, describeIncompleteFamilies,
   describeIncompleteFeeds, logRetractSkippedIncompleteInputs, readMergedStopCache, writeMergedStopCache,
-  GTFS_BORDER_MARGIN_DEG, type StopTrainCount,
+  parseRoutesTxtOrThrow, type StopTrainCount,
 } from './lib/gtfs-enrich-core.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
@@ -106,15 +106,29 @@ const FEEDS: FeedConfig[] = [
 // Germany bounding box (task #30.2 reference bbox)
 const DE_BBOX: [number, number, number, number] = [47.3, 5.9, 55.1, 15.0]
 
-// Same 0.5° margin as `loadStopsWithCoords`'s GTFS geometry envelope (item 6,
-// gtfs-enrich-core.ts) — the graph-walk scope must reach every hex a
-// cross-border stop's pair could land in, or a DE-CH/AT/PL through-train's
-// foreign endpoint never snaps and the whole pair quarantines for no real
-// reason. Stop/pair PARSING itself gets the UNPADDED `DE_BBOX` — the margin
-// is applied internally by `loadStopsWithCoords`.
+// DE OVERRIDE of the shared 0.5° GTFS_BORDER_MARGIN_DEG graph-scope padding
+// (DE Step A v2, 2026-07-16 failure analysis): Step A walked only 58% of DE's
+// pairs, and the failure analysis attributes a fixable share of the
+// 'disconnected' class to cross-border pairs whose German endpoint sits well
+// inside the old 0.5° margin but whose long DB/SBB/ÖBB/ČD through-trunk runs
+// deep enough into the neighbour (Basel, Salzburg, Emmerich, Bad Schandau)
+// that the graph-walk's own hex scope never reached it. 1.0° (~110 km)
+// reaches those corridors; the next Step A run's own pairsWalked/failure
+// counters measure the actual gain. This is a HEX-ITERATION SCOPE ONLY
+// (which railways.arrow files collectGraphSegments reads into the walk's
+// graph) — it does not touch GTFS_BORDER_MARGIN_DEG itself (still the
+// stop/pair-parsing margin every other country shares) or the
+// bleedGate/country-disown logic below, which stays gated on `inDe` exactly
+// as before.
+const DE_GRAPH_MARGIN_DEG = 1.0
+
+// Stop/pair PARSING itself gets the UNPADDED `DE_BBOX` — the margin there is
+// applied internally by `loadStopsWithCoords` (GTFS_BORDER_MARGIN_DEG, item 6
+// gtfs-enrich-core.ts) and is NOT widened by DE_GRAPH_MARGIN_DEG above; only
+// the graph-walk's own hex scope is.
 const GRAPH_BBOX: [number, number, number, number] = [
-  DE_BBOX[0] - GTFS_BORDER_MARGIN_DEG, DE_BBOX[1] - GTFS_BORDER_MARGIN_DEG,
-  DE_BBOX[2] + GTFS_BORDER_MARGIN_DEG, DE_BBOX[3] + GTFS_BORDER_MARGIN_DEG,
+  DE_BBOX[0] - DE_GRAPH_MARGIN_DEG, DE_BBOX[1] - DE_GRAPH_MARGIN_DEG,
+  DE_BBOX[2] + DE_GRAPH_MARGIN_DEG, DE_BBOX[3] + DE_GRAPH_MARGIN_DEG,
 ]
 
 // ── Step 1: Download GTFS feed (UNCHANGED — per-country cache/download quirks) ──
@@ -199,6 +213,61 @@ async function downloadAllGtfs(): Promise<Array<{ feed: FeedConfig; dir: string 
   return results
 }
 
+// ── Declared-route-families preflight (DE Step A v2, 2026-07-16 failure
+//    analysis, fix 2) ──
+
+/** HARD-FAIL preflight (DE Step A v2, 2026-07-16 failure analysis, fix 2):
+ *  ONE `parseRoutesTxtOrThrow` pass (the shared malformed-routes.txt
+ *  contract, gtfs-enrich-core.ts) feeds BOTH derived views — the route_type
+ *  histogram log and the declares-rail check (Codex review item 7: histogram
+ *  + declared-families each parsing routes.txt separately was a parse too
+ *  many).
+ *
+ *  Histogram: raw route_type counts grouped by the shared `routeFamily`
+ *  classifier into rail vs tram/metro vs other, so a silently-broken
+ *  download shows up as a wrong SHAPE (e.g. rail=0, other=21033) instead of
+ *  requiring a manual diff against the module doc's 2026-07-11 snapshot.
+ *  Numbers are always computed from THIS run's own extract, never
+ *  hand-copied from that snapshot.
+ *
+ *  Hard fail: unlike `enrich-railway-europe.ts`'s registry — which
+ *  legitimately hosts tram-only feeds (fr-idf) and merely marks them
+ *  "incomplete" via `describeIncompleteFamilies`, never throwing — DE has
+ *  exactly ONE nationally-owned feed verified to always carry heavy rail
+ *  (module doc: rail×1060). A run whose feed declares NO 'rail' family is
+ *  not a legitimate variant for THIS feed: the download/extract is broken
+ *  (wrong redirect, truncated zip, an upstream regression silently swapping
+ *  in a tram/bus-only file) — a case the softer per-feed completeness loop
+ *  below would otherwise absorb as "feed issue" and continue walking 0
+ *  pairs, looking like a plain coverage gap instead of the input-integrity
+ *  failure it actually is. Runs BEFORE the walk, outside any try/catch, so
+ *  the throw always propagates to main()'s own catch (`process.exit(1)`)
+ *  rather than being downgraded to a soft `feedIssues` entry. */
+async function preflightRouteFamiliesOrThrow(dir: string, feedId: string): Promise<void> {
+  const routesRaw = await parseRoutesTxtOrThrow(dir)
+  const byRouteType = new Map<number, number>()
+  for (const r of routesRaw) {
+    const rt = parseInt(r['route_type'] || '3', 10)
+    byRouteType.set(rt, (byRouteType.get(rt) ?? 0) + 1)
+  }
+  let rail = 0, tramMetro = 0, other = 0
+  for (const [rt, n] of byRouteType) {
+    const fam = routeFamily(rt)
+    if (fam === 'rail') rail += n
+    else if (fam === 'tram') tramMetro += n
+    else other += n
+  }
+  const breakdown = [...byRouteType.entries()].sort((a, b) => a[0] - b[0]).map(([rt, n]) => `${rt}×${n}`).join(', ')
+  console.log(`  [${feedId}] route_type histogram: rail=${rail} tram/metro=${tramMetro} other=${other} (raw: ${breakdown})`)
+
+  if (rail === 0) {
+    throw new Error(
+      `[${feedId}] declares NO 'rail' route_type family — DELFI de_full is verified to always carry heavy rail; ` +
+      `treat this as a broken download/extract, not a legitimate 0-rail feed (DE Step A v2 preflight)`,
+    )
+  }
+}
+
 // ── Main ──
 
 async function main() {
@@ -214,6 +283,12 @@ async function main() {
   // downloadAllGtfs is always needed — even a merged-stop-cache hit below still
   // needs a real extractDir per feed for the pair parser's own per-extractDir cache.
   const feeds = await downloadAllGtfs()
+
+  // DE Step A v2 preflight (fix 2): HARD-FAIL before anything else if a feed
+  // declares no 'rail' route_type at all — see preflightRouteFamiliesOrThrow's
+  // doc for why this is a DE-specific throw (unlike europe's tolerant registry).
+  for (const { feed, dir } of feeds) await preflightRouteFamiliesOrThrow(dir, feed.id)
+
   const stopCacheHit = !forceDownload && existsSync(CACHE_FREQUENCIES)
 
   // ── Per-feed parse: declared families + heavy-rail STATION PAIRS (+ stops on

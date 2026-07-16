@@ -33,6 +33,12 @@ import { enrichRailwaysByGraphWalk } from './rail-walk-enrich.js'
 // writeRailTrains's registry-membership check accepts them.
 const STAMP_ID = 110
 const GLOBAL_GTFS_ID = 100
+// The foreign-national guard fixture trio (test e3): de-national-railway walks,
+// cz-szcd-gtfs (national-measured) + cz-timetable-silent (baseline tier,
+// `nationallyOwned` registry flag) must both survive it.
+const DE_NATIONAL_ID = 9864
+const CZ_NATIONAL_ID = STAMP_ID
+const CZ_SILENT_ID = 9863
 
 // Reference hexes (CLAUDE.md "Reference hexes"): Dobříš ~49.865,13.960; Ruzyně
 // ~50.141,14.424. Only their VALIDITY as H3 res-4 cells + centroid-in-bbox
@@ -172,6 +178,9 @@ test('two-hex scope: line crosses the hex boundary, walk stitches across it, bot
   assert.equal(sidecar.scope, 'two-hex-scope')
   assert.deepEqual(sidecar.feeds, ['feedA'])
   assert.equal(sidecar.stops.length, 2, 'both station endpoints, deduped at 4dp')
+  // DE Step A v2 (2026-07-16 failure analysis, fix 3): the sidecar always
+  // carries failedPairChords now, even when — as here — nothing failed.
+  assert.deepEqual(sidecar.failedPairChords, [])
 })
 
 // ── (b) enableDestructive=false: walk stamps (incl. their divisor) land, ────
@@ -359,6 +368,16 @@ test('an ambiguous pair\'s admissible-path ellipse withholds silent inside it �
   assert.equal(c.src(3), 0, 'row3 (S-B) — inside the ellipse')
   assert.equal(c.src(4), 0, 'row4 (tail1) — qualifies through its A endpoint (min over the edge\'s two endpoints)')
   assert.equal(c.src(5), GLOBAL_GTFS_ID, 'row5 (tail2) — OUTSIDE the ellipse: silent applies even though it shares a component with the failed pair')
+
+  // DE Step A v2 (2026-07-16 failure analysis, fix 3): the driver persists
+  // the failed pair's diagnostics into the SAME sidecar A/B's snapped stops
+  // already write — a v3 tuning pass reads this file instead of re-running
+  // the whole enrichment.
+  assert.notEqual(stats.sidecarPath, '')
+  const sidecar = JSON.parse(readFileSync(stats.sidecarPath, 'utf8'))
+  assert.equal(sidecar.failedPairChords.length, 1)
+  assert.equal(sidecar.failedPairChords[0].reason, 'ambiguous')
+  assert.ok(sidecar.failedPairChords[0].ambiguousGeometry, 'persisted record carries the v3 tuning geometry summary')
 })
 
 // ── (e) bleed-gate retract arm (item 1): requires enableDestructive=true, ───
@@ -475,13 +494,66 @@ test('stamp-only (enableDestructive=false): retract is entirely suppressed — f
   assert.equal(c.pax(1), 30)
 })
 
-// ── (f) sidecar: never-cache-empty ──────────────────────────────────────────
+// ── (e3) foreign-national stamp guard (DE Step A v2 Codex review item 4,
+// 2026-07-16): a walk must never overwrite ANOTHER country's nationally-owned
+// rows, even where shouldOverwrite's rank/year ladder alone would allow it —
+// verified live risk on the widened DE scope: DE 9864 vs CZ 110 is a
+// same-rank newer-year win, and CZ 9863 (timetable-silent) is baseline-tier;
+// both would fall to the priority gate alone, yet CZ prepared data is FINAL.
+// The run's OWN national id keeps updating normally. ─────────────────────────
 
-test('sidecar: not written when zero pair endpoints snap onto the graph', async () => {
+test('foreign-national guard: rows owned by another country\'s national ids (110 CZPTT, 9863 CZ silent) survive a DE walk crossing them; DE\'s own rows update', async () => {
+  const h3r4Dir = freshScopeDir('foreign-national-guard')
+  // Four collinear on-path segments + one off-path foreign row (row4) that
+  // never gets a stamp candidate and therefore must NOT count as "skipped".
+  putHex(h3r4Dir, HEX_A, [
+    { startLat: 50.000, startLon: 14.000, endLat: 50.001, endLon: 14.000, sourceId: CZ_NATIONAL_ID, pax: 30, frt: 6 }, // row0: CZ national-measured
+    { startLat: 50.001, startLon: 14.000, endLat: 50.002, endLon: 14.000, sourceId: CZ_SILENT_ID, pax: 2, frt: 1 },   // row1: CZ silent residual (baseline tier, nationallyOwned flag)
+    { startLat: 50.002, startLon: 14.000, endLat: 50.003, endLon: 14.000, sourceId: DE_NATIONAL_ID, pax: 7, frt: 0 }, // row2: DE's own earlier stamp
+    { startLat: 50.003, startLon: 14.000, endLat: 50.004, endLon: 14.000 },                                            // row3: unstamped
+    { startLat: 50.900, startLon: 14.000, endLat: 50.901, endLon: 14.000, sourceId: CZ_NATIONAL_ID, pax: 40, frt: 8 }, // row4: foreign-owned but OFF the walked path — no candidate, no skip count
+  ])
+
+  const stats = await enrichRailwaysByGraphWalk({
+    h3r4Dir,
+    bbox: BBOX,
+    pairs: [{ fromLat: 50.000, fromLon: 14.000, toLat: 50.004, toLon: 14.000, pax: 16, frt: 0 }],
+    sourceId: DE_NATIONAL_ID,
+    retractSafe: true,
+    enableDestructive: false, // guard applies in EVERY mode — stamp-only included
+    sidecar: { scope: 'foreign-national-guard-scope', extractFingerprint: 'fp-fng', feeds: [] },
+  })
+
+  assert.equal(stats.skippedForeignNational, 2, 'rows 0+1 had a walk candidate withheld; off-path row4 has no candidate and never counts')
+  assert.equal(stats.stamped, 2, 'rows 2+3 — DE\'s own row re-stamps, the empty row stamps fresh')
+
+  const c = readCols(resolve(h3r4Dir, HEX_A, 'railways.arrow'))
+  assert.equal(c.src(0), CZ_NATIONAL_ID, 'CZ national-measured row survives — shouldOverwrite(110, 9864) alone is a newer-year WIN for DE, only the guard protects it')
+  assert.equal(c.pax(0), 30)
+  assert.equal(c.frt(0), 6)
+  assert.equal(c.src(1), CZ_SILENT_ID, 'CZ silent-residual row survives — baseline tier, nationally owned via the registry flag')
+  assert.equal(c.pax(1), 2)
+  assert.equal(c.frt(1), 1)
+  assert.equal(c.src(2), DE_NATIONAL_ID, 'DE\'s OWN row is not foreign — updates normally')
+  assert.equal(c.pax(2), 16, 'walk count replaces the earlier own stamp')
+  assert.equal(c.src(3), DE_NATIONAL_ID, 'empty row stamps fresh')
+  assert.equal(c.pax(3), 16)
+  assert.equal(c.src(4), CZ_NATIONAL_ID, 'off-path foreign row untouched')
+  assert.equal(c.pax(4), 40)
+})
+
+// ── (f) sidecar: zero-snap semantics (Codex review item 5, 2026-07-16 — a
+// run with failure records writes them even when ZERO stops snapped; only a
+// walk with neither stops nor failures writes nothing) ──────────────────────
+
+test('sidecar: written with EMPTY stops but full failure diagnostics when zero pair endpoints snap onto the graph', async (t) => {
   const h3r4Dir = freshScopeDir('sidecar-empty')
   putHex(h3r4Dir, HEX_A, [
     { startLat: 50.300, startLon: 14.300, endLat: 50.301, endLon: 14.300 },
   ])
+
+  const errors: string[] = []
+  t.mock.method(console, 'error', (msg: string) => { errors.push(String(msg)) })
 
   const stats = await enrichRailwaysByGraphWalk({
     h3r4Dir,
@@ -494,11 +566,37 @@ test('sidecar: not written when zero pair endpoints snap onto the graph', async 
   })
 
   assert.equal(stats.walk.failures.snapFailed, 1)
-  assert.equal(stats.sidecarPath, '', 'never-cache-empty: no stops snapped')
-  assert.ok(!existsSync(resolve(h3r4Dir, '..', 'rail-stops', 'empty-scope.json')))
+  // Codex item 5: the all-endpoints-missed run is precisely the one whose
+  // diagnostics must survive — the old stops-only early return dropped them.
+  assert.notEqual(stats.sidecarPath, '', 'failure records exist — the sidecar IS written')
+  const sidecar = JSON.parse(readFileSync(stats.sidecarPath, 'utf8'))
+  assert.deepEqual(sidecar.stops, [], 'zero stops snapped')
+  assert.equal(sidecar.failedPairChords.length, 1)
+  assert.equal(sidecar.failedPairChords[0].reason, 'snapFailed')
+  assert.ok(errors.some((e) => e.includes('EMPTIED')), 'a loud warning says the stop-exemption evidence for this scope is empty')
 })
 
-test('sidecar: a STALE sidecar from an earlier run triggers a loud warning when THIS run snaps zero stops, and is left in place untouched', async (t) => {
+test('sidecar: a walk with NEITHER snapped stops NOR failure records writes nothing (no pairs at all)', async () => {
+  const h3r4Dir = freshScopeDir('sidecar-nothing')
+  putHex(h3r4Dir, HEX_A, [
+    { startLat: 50.300, startLon: 14.300, endLat: 50.301, endLon: 14.300 },
+  ])
+
+  const stats = await enrichRailwaysByGraphWalk({
+    h3r4Dir,
+    bbox: BBOX,
+    pairs: [],
+    sourceId: STAMP_ID,
+    retractSafe: true,
+    enableDestructive: false,
+    sidecar: { scope: 'nothing-scope', extractFingerprint: 'fp-nothing', feeds: [] },
+  })
+
+  assert.equal(stats.sidecarPath, '', 'nothing to record — nothing written')
+  assert.ok(!existsSync(resolve(h3r4Dir, '..', 'rail-stops', 'nothing-scope.json')))
+})
+
+test('sidecar: a zero-snap run with failure records REPLACES an earlier sidecar (empty stops + diagnostics) and warns loudly; a no-pairs run leaves it untouched', async (t) => {
   const h3r4Dir = freshScopeDir('sidecar-stale')
   putHex(h3r4Dir, HEX_A, [
     { startLat: 50.400, startLon: 14.400, endLat: 50.401, endLon: 14.400 },
@@ -517,26 +615,44 @@ test('sidecar: a STALE sidecar from an earlier run triggers a loud warning when 
   assert.notEqual(first.sidecarPath, '')
   const sidecarBefore = readFileSync(first.sidecarPath, 'utf8')
 
-  // Second run, SAME scope: this pair snaps onto nothing (e.g. a re-run
-  // against a shrunk `pairs` list) — zero stops THIS time, yet the earlier
-  // sidecar file from the first run still exists on disk.
+  // Second run, SAME scope, NO pairs at all: nothing written, the earlier
+  // sidecar silently remains in force — with the STALE warning (unchanged
+  // pre-item-5 semantics for this sub-case).
   const errors: string[] = []
   t.mock.method(console, 'error', (msg: string) => { errors.push(String(msg)) })
 
   const second = await enrichRailwaysByGraphWalk({
     h3r4Dir,
     bbox: BBOX,
-    pairs: [{ fromLat: 10.0, fromLon: 10.0, toLat: 10.001, toLon: 10.0, pax: 5, frt: 0 }], // nowhere near the graph
+    pairs: [],
     sourceId: STAMP_ID,
     retractSafe: true,
     enableDestructive: false,
     sidecar: { scope: 'stale-scope', extractFingerprint: 'fp-stale-2', feeds: ['feedX'] },
   })
-
-  assert.equal(second.sidecarPath, '', 'never-cache-empty: this run itself still writes nothing')
+  assert.equal(second.sidecarPath, '', 'no pairs — this run writes nothing')
   assert.ok(errors.some((e) => e.includes('STALE')), 'a loud warning names the stale sidecar')
-  assert.ok(existsSync(first.sidecarPath), 'the earlier sidecar file is NOT deleted')
-  assert.equal(readFileSync(first.sidecarPath, 'utf8'), sidecarBefore, 'and is left byte-identical — additive evidence, never auto-invalidated here')
+  assert.equal(readFileSync(first.sidecarPath, 'utf8'), sidecarBefore, 'the earlier sidecar is left byte-identical')
+
+  // Third run, SAME scope, pairs that snap onto nothing: failure diagnostics
+  // exist, so the sidecar IS rewritten — empty stops (R15/R16 evidence for
+  // this scope goes dark until a healthy re-run, said loudly) + the records.
+  errors.length = 0
+  const third = await enrichRailwaysByGraphWalk({
+    h3r4Dir,
+    bbox: BBOX,
+    pairs: [{ fromLat: 10.0, fromLon: 10.0, toLat: 10.001, toLon: 10.0, pax: 5, frt: 0 }], // nowhere near the graph
+    sourceId: STAMP_ID,
+    retractSafe: true,
+    enableDestructive: false,
+    sidecar: { scope: 'stale-scope', extractFingerprint: 'fp-stale-3', feeds: ['feedX'] },
+  })
+  assert.equal(third.sidecarPath, first.sidecarPath, 'same scope — same file, rewritten')
+  const rewritten = JSON.parse(readFileSync(first.sidecarPath, 'utf8'))
+  assert.deepEqual(rewritten.stops, [], 'the earlier stop evidence was replaced by this run\'s (empty) truth')
+  assert.equal(rewritten.extractFingerprint, 'fp-stale-3')
+  assert.equal(rewritten.failedPairChords.length, 1)
+  assert.ok(errors.some((e) => e.includes('EMPTIED')), 'the replacement is announced loudly')
 })
 
 // ── (g) silent residual: divisor rides from the graph's own lateral spread ──
