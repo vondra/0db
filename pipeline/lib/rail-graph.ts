@@ -26,6 +26,34 @@ import { nodeKey, flatDist, pointToSegmentDist, pointToSegmentParamT, M_PER_DEG_
 
 // ── Tunables (cited at each use site) ───────────────────────────────────────
 
+/** Rail families the graph WALK routes and stamps: standard heavy rail (0)
+ *  and narrow gauge (3). Narrow gauge added 2026-07-16 (CH Step A: 826 snap
+ *  + 643 unlocalized failures = the metre-gauge networks — RhB/MGB/zb run
+ *  >100 trains/day yet the engine's narrow-gauge class default is 10/day,
+ *  so walking real GTFS counts onto them is a large accuracy win, not just
+ *  a snap fix; same class as CZ's Osoblaha). GTFS route_type=2 trains do
+ *  not distinguish gauge, and the shortest path virtually never crosses a
+ *  gauge break (physically separate tracks; the rare dual-gauge section is
+ *  genuinely shared). Trams/light rail (1/2) stay on the 500 m stop-join;
+ *  funicular (4) carries no timetable counts worth walking. Code list must
+ *  stay consistent with `defaultRailTraffic` below and the engine's
+ *  `RailType::from_u8` (emission/railway.rs) — three hand-synced tables. */
+export function isWalkableRailType(railType: number): boolean {
+  return railType === 0 || railType === 3
+}
+
+/** Bit for `RailGraph.nodeFamilyMask` — which walkable FAMILY an edge
+ *  belongs to. A walk must stay within ONE family (2026-07-16 Codex review
+ *  C1): standard and narrow tracks can share an OSM node (joint stations,
+ *  dual-gauge throats), and a family-blind Dijkstra would happily route a
+ *  standard-gauge pair over a shorter narrow shortcut — a physically
+ *  impossible gauge switch, stamping the wrong track. */
+export function walkFamilyBit(railType: number): number {
+  return railType === 0 ? 1 : railType === 3 ? 2 : 0
+}
+/** The walkable families a two-attempt walk tries, standard first. */
+export const WALK_FAMILY_MASKS = [1, 2] as const
+
 /** A GTFS/CZPTT stop's GPS must resolve to a graph node within this radius or
  *  the pair is dropped (never a chord fallback — see plan Key decisions). */
 export const STATION_SNAP_RADIUS_M = 300
@@ -58,52 +86,80 @@ export const RAIL_JUMP_RATIO = 3
 export const RAIL_MIN_EFFECTIVE_TRAINS_PER_DAY = 20
 /** Parallel-track sibling search radius (segment-midpoint distance, metres). */
 export const PARALLEL_SPREAD_RADIUS_M = 50
-/** Twin-track ambiguity exemption (2026-07-16 Step-B refinement, verified on
- *  live CZ Step-A data: 113 of 150 failed pairs): before failing a pair as
+/** Twin-track ambiguity exemption (2026-07-16 Step-B refinement; REDESIGNED
+ *  the same day in the DE v3 tuning round): before failing a pair as
  *  'ambiguous', the walk tests whether the alt path found by the penalized
  *  re-run is merely the PARALLEL TWIN of the best path (the sibling track of
- *  a double-track line) rather than a genuinely different corridor. If at
- *  least this fraction of alt's own non-shared stampable LENGTH passes the
- *  twin-classification gate (`WALK_TWIN_LATERAL_M` lateral + heading <10°,
- *  mod 180 — NOT the spread's token arms, see that constant's two-radius
- *  reasoning) against the best path's
- *  edges, the pair is NOT ambiguous — the parallel spread unifies the two
- *  tracks anyway. LENGTH-weighted (2026-07-16 /gg fix batch item 5): an
- *  edge-count fraction let 8 short twin stubs outvote 2 long off-corridor
- *  edges (8/10 edges "twin" while ~95 % of the alt's LENGTH ran elsewhere).
- *  Genuine dual corridors (e.g. Praha Vršovice->Holešovice via Libeň vs via
- *  Bubny) sit hundreds of metres apart and stay ambiguous. */
-export const WALK_TWIN_ALT_EDGE_FRACTION = 0.8
-/** Lateral radius of the ambiguity TWIN-CLASSIFICATION gate — deliberately
- *  its OWN constant, NOT the parallel spread's token arms (2026-07-16 review
- *  round; provenance: CZ Step-A v3 run, ambiguous 29 -> 71 regression when
- *  the twin gate reused the spread's 15 m token-less radius). TWO radii
- *  because the two passes answer different questions: the SPREAD divides
- *  acoustic energy between sibling tracks, so it must be strict (15 m
- *  token-less — real double-track spacing, never two distinct lines); twin
- *  CLASSIFICATION only distinguishes "sibling track" from "different
- *  corridor", and around island platforms parallel tracks legitimately
- *  spread to 20-40 m for 300-600 m — those station throats must stay twins
- *  (they'd otherwise form a contiguous non-twin run that trips
- *  `WALK_TWIN_MAX_NONTWIN_RUN_M`), while a genuine second corridor (Praha
- *  Vršovice-Libeň shapes) sits hundreds of metres away. 50 m absorbs
- *  station throats (~50 m tops) with margin to spare against real
- *  corridors. Heading gate stays <10° (mod 180). */
-export const WALK_TWIN_LATERAL_M = 50
-/** Hard cap on the longest CONTIGUOUS non-twin stretch of the alt path
- *  (metres, contiguity along the alt path's own edge order — 2026-07-16 /gg
- *  fix batch item 5, alongside the length-weighted fraction above): a
- *  genuinely different corridor shows ONE long unbroken run beyond
- *  `WALK_TWIN_LATERAL_M` lateral even when enough short twin edges pad the
- *  overall fraction; with the 50 m classification radius absorbing station
- *  throats (see above), anything staying laterally distant for longer than
- *  this is a separate corridor, not a sibling track. */
-export const WALK_TWIN_MAX_NONTWIN_RUN_M = 300
-/** Quarantine radius for an UNLOCALIZED pair (neither endpoint snapped onto
- *  the graph — e.g. the Osoblaha narrow-gauge trains whose stations have no
- *  heavy-rail nearby): every stampable segment whose midpoint lies within
- *  this distance of the pair's straight chord is quarantined (2026-07-16
- *  Step-B refinement, plan item 2). An un-snappable pair can't localize a
+ *  a double/quad-track corridor) rather than a genuinely different corridor.
+ *  The verdict is a LENGTH-WEIGHTED QUANTILE gate on ONE metric — the
+ *  lateral distance from each non-shared stampable alt edge (at its
+ *  midpoint) to the nearest best-path stampable edge (`twinGateMetrics`,
+ *  rail-graph-metrics.ts — no heading filter: length aggregation already
+ *  reads a crossing route as far, while a heading filter would misfile
+ *  excursion transition ramps as FAR): twin iff the
+ *  length-weighted MEDIAN lateral <= WALK_TWIN_MEDIAN_LATERAL_M AND at most
+ *  WALK_TWIN_FAR_LENGTH_FRACTION of that length sits >=
+ *  WALK_TWIN_FAR_LATERAL_M away. The failed-pair diagnostic records the
+ *  SAME numbers (`ambiguousGeometry.twinGate`), so tuning input and tuned
+ *  gate can never drift apart.
+ *
+ *  Provenance (DE Step A v2 sidecar, 1 775 ambiguous pairs, 2026-07-16):
+ *  the mass is sibling tracks — per-pair MEDIAN lateral p75 = 5.2 m (real
+ *  track spacing), plus 477 pairs at 25-50 m (S-Bahn systems on their own
+ *  parallel alignment); genuine dual corridors (Rhine left/right bank) sit
+ *  >= 200 m away for most of their length (87 pairs). What failed v2's gate
+ *  was the excursion around German stations/yards: per-pair MAX lateral
+ *  p25-p75 = 293-552 m, right at/over the old 300 m contiguous-run cap
+ *  (calibrated on ~300 m CZ station throats — German throats and yard
+ *  bypasses run 0.5-2 km). The quantile gate replaces BOTH the 0.8
+ *  length-fraction and the contiguous-run cap: a bounded excursion (<= 10 %
+ *  of length) no longer votes, while a genuinely different corridor still
+ *  fails on the median (its alt runs far away for >= half its length). The
+ *  CZ regressions that shaped the v2 gate keep their verdicts under 50 m
+ *  (fixtures assert them): the 8-stubs-padding repro's length-weighted
+ *  median is ~58 m (> 50 -> ambiguous), corridors 120 m apart median 120,
+ *  Vršovice->Holešovice via Libeň vs via Bubny hundreds of metres, the
+ *  30 m island-platform throat median 8 m (-> twin). Heading is NOT
+ *  gated (see twinGateMetrics). NOT the spread's token arms (15/50 m): the
+ *  SPREAD divides acoustic energy so it must stay strict; twin
+ *  CLASSIFICATION only separates "same corridor" from "different
+ *  corridor". */
+export const WALK_TWIN_MEDIAN_LATERAL_M = 50
+/** Length-weighted p75 gate — the guard for the 50-500 m middle band the
+ *  median + far gates alone leave open (2026-07-16 Codex review C2: a
+ *  disjoint alternate with 59% of its length at 8 m and 41% at 100-200 m
+ *  passed as a twin — median 8, nothing FAR — despite plausibly being a
+ *  genuine alternate alignment). At most a quarter of the alt's non-shared
+ *  length may sit beyond this: bounded station/yard excursions (DE v2:
+ *  excursion apexes 293-552 m over well under 25% of multi-km pairs) stay
+ *  twins; an alt spending 25%+ of its length 120+ m away reads as a
+ *  separate alignment and stays ambiguous. */
+export const WALK_TWIN_P75_LATERAL_M = 120
+/** Lateral distance beyond which an alt edge counts as FAR — plainly not
+ *  running alongside the best path. Distances are clamped here (the exact
+ *  value past the cap changes no verdict, and it bounds the grid ring
+ *  search). NOTE the DE v2 numbers: max-lateral p75 = 552 m, so a quarter+
+ *  of real excursions REACH past this value — those pairs pass not because
+ *  of the clamp but because the far part stays under
+ *  WALK_TWIN_FAR_LENGTH_FRACTION of their length. The clamp separates
+ *  "near the corridor" from "plainly elsewhere"; the fraction is what
+ *  tolerates bounded excursions. */
+export const WALK_TWIN_FAR_LATERAL_M = 500
+/** Maximum fraction of alt's non-shared stampable LENGTH allowed at or
+ *  beyond WALK_TWIN_FAR_LATERAL_M: bounded station/yard excursions on
+ *  multi-km station pairs stay well under this; a genuinely different
+ *  corridor spends most of its length far away and fails long before the
+ *  median gate even matters. */
+export const WALK_TWIN_FAR_LENGTH_FRACTION = 0.10
+/** Chord-vicinity band radius (`quarantineChordVicinity`) — TWO roles since
+ *  the 2026-07-16 quarantine redesign: (a) the WHOLE quarantine of an
+ *  UNLOCALIZED pair (neither endpoint snapped onto the graph — e.g. the
+ *  Osoblaha narrow-gauge trains before rail_type 3 became walkable), and
+ *  (b) the corridor-band half of `quarantineGraphlessPair`, unioned onto
+ *  EVERY snapFailed/disconnected/detourRejected pair. Tuning it moves both.
+ *  Every stampable segment whose midpoint lies within this distance of the
+ *  pair's straight chord is quarantined (2026-07-16 Step-B refinement,
+ *  plan item 2). An un-snappable pair can't localize a
  *  bounded graph search the way a snapped one can (there is no node to flood
  *  from), so its evidence is scoped by raw chord proximity instead — and,
  *  unlike the pre-refinement design, this withholding stays local to the
@@ -198,6 +254,10 @@ export interface RailGraph {
   componentOfNode: Int32Array
   /** grid cell ("latCell_lonCell") -> node ids, for snap queries. */
   nodeGrid: Map<string, number[]>
+  /** node id -> OR of `walkFamilyBit` over its incident edges
+   *  (traversal-only crossovers set BOTH bits — family-agnostic snap
+   *  anchors): which walkable families a station can snap onto here. */
+  nodeFamilyMask: Uint8Array
 }
 
 // ── Construction ─────────────────────────────────────────────────────────────
@@ -382,6 +442,18 @@ export function buildRailGraph(segments: RailGraphSegmentInput[]): RailGraph {
 
   const componentOfNode = computeComponents(nodes.length, adjacency, edges)
 
+  const nodeFamilyMask = new Uint8Array(nodes.length)
+  for (const e of edges) {
+    // Traversal-only crossovers are family-agnostic SNAP anchors (a station
+    // GPS can sit nearest a throat node whose only edges are crossovers) —
+    // they set BOTH bits. This cannot re-open a gauge switch: the walk's
+    // family filter still rejects the other family's stampable edges on the
+    // crossover's far side.
+    const bit = e.isTraversalOnly ? 3 : walkFamilyBit(e.railType)
+    nodeFamilyMask[e.nodeA] |= bit
+    nodeFamilyMask[e.nodeB] |= bit
+  }
+
   const componentOfSegmentKey = new Map<string, number>()
   for (const e of edges) {
     if (!componentOfSegmentKey.has(e.parentKey)) {
@@ -398,6 +470,7 @@ export function buildRailGraph(segments: RailGraphSegmentInput[]): RailGraph {
     adjacency,
     componentOfNode,
     nodeGrid: buildNodeGrid(nodes),
+    nodeFamilyMask,
   }
 }
 
@@ -408,7 +481,7 @@ export function buildRailGraph(segments: RailGraphSegmentInput[]): RailGraph {
  *  circle at its corners) and `nearestRailGraphNodeDistanceM` (which wants
  *  the true nearest distance with NO radius cutoff at all, see that
  *  function's doc). */
-function nearestNodeInGrid(graph: RailGraph, lat: number, lon: number, radiusM: number): { nodeId: number; distM: number } | null {
+function nearestNodeInGrid(graph: RailGraph, lat: number, lon: number, radiusM: number, familyMask = 0): { nodeId: number; distM: number } | null {
   const latSpanM = SPATIAL_INDEX_CELL_DEG * M_PER_DEG_LAT
   const lonSpanM = SPATIAL_INDEX_CELL_DEG * M_PER_DEG_LON_EQ * Math.max(0.05, Math.cos(lat * Math.PI / 180))
   const dyMax = Math.max(1, Math.ceil(radiusM / latSpanM))
@@ -422,6 +495,7 @@ function nearestNodeInGrid(graph: RailGraph, lat: number, lon: number, radiusM: 
       const arr = graph.nodeGrid.get(`${gy + dy}_${gx + dx}`)
       if (!arr) continue
       for (const nodeId of arr) {
+        if (familyMask !== 0 && (graph.nodeFamilyMask[nodeId] & familyMask) === 0) continue
         const n = graph.nodes[nodeId]
         const d = flatDist(lat, lon, n.lat, n.lon)
         if (d < bestDist) { bestDist = d; best = nodeId }
@@ -442,6 +516,22 @@ export function snapToNearestRailGraphNode(
 ): number {
   const hit = nearestNodeInGrid(graph, lat, lon, maxSnapM)
   return hit && hit.distM <= maxSnapM ? hit.nodeId : -1
+}
+
+/** Family-filtered snap WITH the hit distance — the two-attempt walk (Codex
+ *  C1) snaps each endpoint per walkable family and prefers the family whose
+ *  stations sit closer to its own tracks (an RhB station GPS lies on the
+ *  metre-gauge platform, metres from narrow track and tens of metres from
+ *  any SBB node — snap distance IS the gauge evidence GTFS lacks). */
+export function snapToNearestFamilyNode(
+  graph: RailGraph,
+  lat: number,
+  lon: number,
+  familyMask: number,
+  maxSnapM: number = STATION_SNAP_RADIUS_M,
+): { nodeId: number; distM: number } | null {
+  const hit = nearestNodeInGrid(graph, lat, lon, maxSnapM, familyMask)
+  return hit && hit.distM <= maxSnapM ? hit : null
 }
 
 /** DIAGNOSTIC-ONLY (DE Step A v2, 2026-07-16 failure analysis, fix 3): the
@@ -601,28 +691,26 @@ export interface RailWalkResult {
    *  31 245 km — behind only 150 failed pairs out of 2 461 (rail is one
    *  connected component nationwide, so any single failed pair withheld
    *  retract/silent everywhere). Retract and the silent residual
-   *  (rail-walk-enrich.ts) now key off `quarantinedSegmentKeys` — the pair's
-   *  OWN bounded search ellipse — instead; this field survives only for
-   *  `perComponentFailedKm` comparison logging (deprecated). */
+   *  (rail-walk-enrich.ts) now key off `quarantinedSegmentKeys` — the
+   *  pair's OWN per-reason evidence shape — instead; this field survives
+   *  only for `perComponentFailedKm` comparison logging (deprecated). */
   failedComponents: Set<number>
   /** Every stampable segment (`RailGraphSegmentInput.key`) inside a FAILED
    *  pair's own evidence region — strictly tighter than `failedComponents`
-   *  (2026-07-16 Step-B refinement + /gg fix batch item 4 + review round).
-   *  The shape follows the FAILURE REASON, all built from THAT PAIR's own
-   *  `WALK_DETOUR_RATIO * greatCircle + WALK_DETOUR_SLACK_M` bound (the same
-   *  bound `detourRejected` enforces):
-   *  'ambiguous' -> the true admissible-path ellipse (a segment qualifies
-   *  only when min over its two endpoints of distFrom+distTo is within the
-   *  bound) — admissible corridors exist, the walk just can't pick one.
-   *  'detourRejected' / 'disconnected' -> endpoint-radius balls around BOTH
-   *  snapped ends: no admissible path exists (the ellipse would be empty),
-   *  yet the timetable's trains run somewhere near these stations — the
-   *  GRAPH is what failed, so silent/retract must stay away from both
-   *  vicinities (Čelákovice–Čelákovice zastávka: a detour-rejected commuter
-   *  line must not go silent at 2+1/day).
-   *  'snapFailed' with ONE end snapped -> the ball around that end (the far
-   *  end is unknown). NEITHER end snapped -> every stampable segment within
-   *  `UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M` of the pair's straight chord.
+   *  (2026-07-16 Step-B refinement, /gg fix batch item 4, review round +
+   *  the same-day quarantine redesign). The shape follows the FAILURE
+   *  REASON (see each function in rail-graph-metrics.ts):
+   *  'ambiguous' -> the union of the pair's own candidate paths
+   *  (`quarantineAmbiguousPathUnion`) — admissible corridors exist, the
+   *  walk just can't pick one, so exactly those corridors are withheld.
+   *  'detourRejected' / 'disconnected' / 'snapFailed' -> chord-vicinity
+   *  band + capped graph fingers (`quarantineGraphlessPair`): no admissible
+   *  GRAPH path exists, yet the timetable's trains run somewhere along the
+   *  pair's corridor — the GRAPH is what failed, so silent/retract must
+   *  stay away from it (Čelákovice–Čelákovice zastávka: a detour-rejected
+   *  commuter line must not go silent at 2+1/day).
+   *  NEITHER end snapped -> the chord band alone
+   *  (`quarantineChordVicinity`, `UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M`).
    *  Retract and the silent residual (rail-walk-enrich.ts) withhold on
    *  SEGMENT membership here, never on the segment's whole component. */
   quarantinedSegmentKeys: Set<string>
@@ -659,17 +747,29 @@ export interface RailWalkResult {
  *    `Infinity` serializes to `null` — which would silently re-label a
  *    totally-unreachable stop as "snapped fine" (Codex review item 3,
  *    2026-07-16).
- *  Absent for 'disconnected'/'detourRejected': those already have a clear
- *  graph-topology cause (component split / detour bound), not an
- *  ambiguous-classification or snap-radius question. */
+ *  - `detourGeometry` ('detourRejected' only): the graph's own best route
+ *    length vs the bound it failed — the tuning input for the detour
+ *    ratio/slack (added 2026-07-16; CH Alpine rack/spiral lines
+ *    legitimately exceed 2.5x on short chords).
+ *  Absent for 'disconnected': a component split already names its own
+ *  cause. */
 export interface RailFailedPairRecord {
   fromLat: number; fromLon: number; toLat: number; toLon: number
   reason: 'snapFailed' | 'disconnected' | 'detourRejected' | 'ambiguous'
   ambiguousGeometry?: {
     lateralSpreadM: { min: number; median: number; max: number }
     headingDeltaDeg: number
+    /** The twin GATE's own numbers for this pair (`twinGateMetrics` —
+     *  length-weighted, FAR-clamped; no heading filter, see that function's
+     *  doc), so a tuning pass reads exactly what the verdict was computed
+     *  from. Absent when the alt path has no non-shared stampable length. */
+    twinGate?: { medianLateralM: number; p75LateralM: number; farLengthFraction: number }
   }
   snapDistanceM?: { from: number | 'unreachable' | null; to: number | 'unreachable' | null }
+  /** 'detourRejected' only: the graph's own best route length vs the bound
+   *  it failed — the tuning input for the detour ratio/slack (CH Alpine
+   *  rack/spiral lines legitimately exceed 2.5x on short chords). */
+  detourGeometry?: { bestPathM: number; boundM: number }
 }
 
 export interface RailEndpointRow {

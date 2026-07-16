@@ -8,20 +8,21 @@
  * behind the shared walk result, and the rail-stops sidecar the R15/R16
  * stop exemption reads.
  *
- * Per-pair quarantine ellipse (2026-07-16 Step-B refinement, replaces the
- * per-component gating this module used until then): the silent residual and
- * the destructive retract arm are gated on
- * `RailWalkResult.quarantinedSegmentKeys` — every stampable segment inside
- * the bounded region a FAILED pair was actually allowed to search (or, for an
- * unlocalized pair, within `UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M` of its
- * straight chord) — never on the pair's WHOLE graph component. Per-component
- * withholding was verified on a live CZ Step-A run to quarantine the entire
- * national network behind 150 failed pairs out of 2 461, because rail is one
- * connected component nationwide (9 failed components included the main CZ
- * mainline, 31 245 km); the bounded-search ellipse is strictly tighter
- * evidence and no longer needs a separate global-suppression case for
- * unlocalized pairs either — see `rail-graph-metrics.ts`'s module doc and
- * `RailWalkResult`'s doc (rail-graph.ts) for the full rationale.
+ * Per-pair quarantine (2026-07-16 Step-B refinement + same-day redesign,
+ * replaces the per-component gating this module used until then): the
+ * silent residual and the destructive retract arm are gated on
+ * `RailWalkResult.quarantinedSegmentKeys` — per failure kind, the union of
+ * the pair's candidate paths (ambiguous) or a chord-vicinity band + capped
+ * graph fingers (snapFailed/disconnected/detourRejected; unlocalized pairs
+ * get the band alone) — never on the pair's WHOLE graph component.
+ * Per-component withholding was verified on a live CZ Step-A run to
+ * quarantine the entire national network behind 150 failed pairs out of
+ * 2 461, because rail is one connected component nationwide (9 failed
+ * components included the main CZ mainline, 31 245 km); the per-pair shapes
+ * are strictly tighter evidence and no longer need a separate
+ * global-suppression case for unlocalized pairs either — see
+ * `rail-graph-metrics.ts`'s module doc and `RailWalkResult`'s doc
+ * (rail-graph.ts) for the full rationale.
  * `RailWalkResult.failedComponents` survives only for `perComponentFailedKm`
  * comparison logging below (deprecated).
  *
@@ -47,6 +48,7 @@ import {
   buildRailGraph, snapToNearestRailGraphNode,
   type RailGraph, type RailGraphSegmentInput, type RailStationPairCount, type RailWalkResult,
   type RailStopsSidecarV1,
+  isWalkableRailType,
 } from './rail-graph.js'
 import { walkRailStationPairs } from './rail-graph-metrics.js'
 import { writeRailTrains, type RailRow, type RailTrains } from './railways-arrow.js'
@@ -83,7 +85,8 @@ export interface RailWalkEnrichOptions {
   /** CZ option-b residual. Applied ONLY when destructive ops are enabled AND
    *  `retractSafe` holds AND the row sits outside EVERY failed pair's
    *  quarantine region (`RailWalkResult.quarantinedSegmentKeys` — the
-   *  per-pair admissible-path ellipse/ball/chord, see rail-graph.ts). The
+   *  per-pair evidence shape: candidate-path union / chord band + fingers,
+   *  see rail-graph.ts). The
    *  divisor actually stamped rides from `walk.divisorBySegmentKey`, not
    *  from this option — a quiet double-track must render at its true
    *  (2+1)/2, never the undivided (2+1)/1. */
@@ -143,14 +146,19 @@ export interface RailWalkEnrichStats {
    *  Track-km of stampable (heavy-rail, non-traversal) rows sitting in a
    *  graph component the walk marked failed. Retract/silent no longer key off
    *  this (see `quarantinedKm`); kept to show how much tighter the
-   *  bounded-search ellipse is in practice. */
+   *  per-pair evidence shapes are in practice. */
   perComponentFailedKm: number
   /** Track-km of stampable rows inside `RailWalkResult.quarantinedSegmentKeys`
    *  — the "how much is still stuck" figure retract/silent actually withhold
    *  on now, computed from the same segments the graph was built from.
-   *  Always <= `perComponentFailedKm` (the ellipse is a subset of the whole
+   *  Usually <= `perComponentFailedKm`, but NOT always (an unlocalized
+   *  pair has no failed component yet still lays a chord band — Codex
+   *  review INFO). Typically far below it (the evidence shape is a subset of the whole
    *  component). */
   quarantinedKm: number
+  /** Track-km of ALL stampable rows in the scope's graph — the denominator
+   *  that makes `quarantinedKm` readable on its own. */
+  stampableKm: number
   /** '' when nothing was written this run (never-cache-empty; see
    *  `writeStopsSidecarIfAny`) — a caller must not treat this as a path. */
   sidecarPath: string
@@ -164,11 +172,13 @@ function segmentKey(hexId: string, rowIndex: number): string {
 }
 
 /** Phase 1 (graph inputs): reads every hex's `railways.arrow` ONCE and keeps
- *  only what `buildRailGraph` needs. Per the plan: rows with
- *  `railType===0 && service===0` are stampable graph edges; `service===4`
- *  crossovers enter traversal-only (connect topology, never stamped); every
- *  other family/service combination never enters the graph at all — a tram
- *  can neither carry nor bridge a heavy-rail count. */
+ *  only what `buildRailGraph` needs. Per the plan (+ the 2026-07-16
+ *  narrow-gauge extension, see `isWalkableRailType`): rows with a walkable
+ *  family (heavy rail 0, narrow gauge 3) and `service===0` are stampable
+ *  graph edges; `service===4` crossovers enter traversal-only (connect
+ *  topology, never stamped); every other family/service combination never
+ *  enters the graph at all — a tram can neither carry nor bridge a train
+ *  count. */
 function collectGraphSegments(h3r4Dir: string, hexIds: readonly string[]): RailGraphSegmentInput[] {
   const segments: RailGraphSegmentInput[] = []
   for (const hexId of hexIds) {
@@ -192,7 +202,7 @@ function collectGraphSegments(h3r4Dir: string, hexIds: readonly string[]): RailG
       const railType = (rtCol?.get(i) as number) ?? 0
       const service = (svcCol?.get(i) as number) ?? 0
       const isTraversalOnly = service === 4
-      if (!isTraversalOnly && !(railType === 0 && service === 0)) continue // never in the graph
+      if (!isTraversalOnly && !(isWalkableRailType(railType) && service === 0)) continue // never in the graph
 
       const startLat = sLat.get(i) as number
       const startLon = sLon.get(i) as number
@@ -217,8 +227,8 @@ function collectGraphSegments(h3r4Dir: string, hexIds: readonly string[]): RailG
 
 /** DEPRECATED (2026-07-16 Step-B refinement) — comparison-logging only, see
  *  `RailWalkEnrichStats.perComponentFailedKm`'s doc. Track-km of stampable
- *  rows (railType 0, non-traversal — the graph's own candidates for a walk
- *  stamp) whose component the walk marked failed. */
+ *  rows (walkable family, non-traversal — the graph's own candidates for a
+ *  walk stamp) whose component the walk marked failed. */
 function computePerComponentFailedKm(
   graph: RailGraph,
   segments: readonly RailGraphSegmentInput[],
@@ -233,11 +243,19 @@ function computePerComponentFailedKm(
   return m / 1000
 }
 
+/** Track-km of ALL stampable (non-traversal) rows in the scope's graph —
+ *  the denominator that makes `computeQuarantinedKm`'s output readable. */
+function computeStampableKm(segments: readonly RailGraphSegmentInput[]): number {
+  let km = 0
+  for (const s of segments) if (!s.isTraversalOnly) km += s.lengthM / 1000
+  return km
+}
+
 /** Track-km of stampable rows sitting inside
  *  `RailWalkResult.quarantinedSegmentKeys` — the figure retract/silent
  *  actually withhold on now (2026-07-16 Step-B refinement). Always
  *  <= `computePerComponentFailedKm`'s result on the same walk, since the
- *  bounded-search ellipse is a subset of the pair's whole component. */
+ *  bounded evidence shape is a subset of the pair's whole component. */
 function computeQuarantinedKm(
   segments: readonly RailGraphSegmentInput[],
   quarantinedSegmentKeys: ReadonlySet<string>,
@@ -413,7 +431,7 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
         return { trains: { pax: Math.round(stamp.pax), frt: Math.round(stamp.frt), sourceId: opts.sourceId, divisor: stamp.divisor }, branch: 'walk' }
       }
       if (
-        opts.silentResidual && opts.enableDestructive && opts.retractSafe && row.railType === 0 &&
+        opts.silentResidual && opts.enableDestructive && opts.retractSafe && isWalkableRailType(row.railType) &&
         !walk.quarantinedSegmentKeys.has(key)
       ) {
         // A quiet double-track must render at its true divided count, not the
@@ -504,6 +522,7 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
 
   const perComponentFailedKm = computePerComponentFailedKm(graph, segments, walk.failedComponents) // deprecated, comparison logging only
   const quarantinedKm = computeQuarantinedKm(segments, walk.quarantinedSegmentKeys)
+  const stampableKm = computeStampableKm(segments)
   const stops = collectSnappedStops(graph, opts.pairs)
   if (stops.length === 0) warnZeroSnappedStops(opts.h3r4Dir, opts.sidecar.scope, walk.failedPairChords.length > 0)
   const sidecarPath = writeStopsSidecarIfAny(opts.h3r4Dir, opts.sidecar, stops, walk.failedPairChords)
@@ -526,6 +545,7 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
     },
     perComponentFailedKm,
     quarantinedKm,
+    stampableKm,
     sidecarPath,
   }
 
@@ -536,7 +556,7 @@ export async function enrichRailwaysByGraphWalk(opts: RailWalkEnrichOptions): Pr
     `failures snap=${stats.walk.failures.snapFailed} disconnected=${stats.walk.failures.disconnected} ` +
     `detour=${stats.walk.failures.detourRejected} ambiguous=${stats.walk.failures.ambiguous}; ` +
     `${stats.walk.failedComponentCount} failed component(s) (${stats.perComponentFailedKm.toFixed(1)} km, deprecated), ` +
-    `${stats.quarantinedKm.toFixed(1)} km quarantined, ${stats.walk.unlocalizedPairs} unlocalized`,
+    `${stats.quarantinedKm.toFixed(1)} of ${stats.stampableKm.toFixed(1)} stampable km quarantined, ${stats.walk.unlocalizedPairs} unlocalized`,
   )
 
   return stats

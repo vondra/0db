@@ -280,7 +280,7 @@ test('enableDestructive=true + failure-free component: silent residual on the un
 // withheld — see rail-graph-metrics.test.ts for the ball's outer limit and
 // the ambiguous-only ellipse. ───────────────────────────────────────────────
 
-test('a disconnected pair\'s endpoint balls withhold silent+retract near both stations — stamps only, and the taxonomy/km numbers are exact', async () => {
+test('a disconnected pair\'s graphless evidence shapes withhold silent+retract near both stations — stamps only, and the taxonomy/km numbers are exact', async () => {
   const h3r4Dir = freshScopeDir('failed-component')
   const rowEF = { startLat: 52.100, startLon: 16.100, endLat: 52.101, endLon: 16.100 } // row0
   const rowFG = { startLat: 52.101, startLon: 16.100, endLat: 52.102, endLon: 16.100 } // row1
@@ -302,7 +302,7 @@ test('a disconnected pair\'s endpoint balls withhold silent+retract near both st
   })
 
   assert.equal(stats.stamped, 0, 'the only pair failed — nothing walked')
-  assert.equal(stats.silentStamped, 0, 'both tiny components sit entirely inside the endpoint balls — no silent even though otherwise eligible')
+  assert.equal(stats.silentStamped, 0, 'both tiny components sit entirely inside the graphless evidence shapes — no silent even though otherwise eligible')
   assert.equal(stats.retracted, 0, 'row2 legacy stamp survives — it sits inside E\'s ball')
   assert.equal(stats.walk.failures.disconnected, 1)
   assert.equal(stats.walk.failedComponentCount, 2, 'both endpoints\' components are flagged (stats only now)')
@@ -314,7 +314,7 @@ test('a disconnected pair\'s endpoint balls withhold silent+retract near both st
   )
   assert.ok(
     Math.abs(stats.quarantinedKm - expectedKm) < 1e-6,
-    `quarantinedKm ${stats.quarantinedKm} ~= ${expectedKm} — the endpoint balls sweep both tiny components in full here`,
+    `quarantinedKm ${stats.quarantinedKm} ~= ${expectedKm} — the graphless evidence shapes sweep both tiny components in full here`,
   )
 
   const c = readCols(resolve(h3r4Dir, HEX_A, 'railways.arrow'))
@@ -331,14 +331,16 @@ test('a disconnected pair\'s endpoint balls withhold silent+retract near both st
 // exactly the property `failedComponents` could never express, since the
 // whole component would have withheld silent everywhere. ────────────────────
 
-test('an ambiguous pair\'s admissible-path ellipse withholds silent inside it — a dead-end tail past the sum bound still gets silently stamped', async () => {
+test('an ambiguous pair\'s candidate-path union withholds silent on its corridors — dead-end tails at the station stay silent-eligible', async () => {
   const h3r4Dir = freshScopeDir('quarantine-ellipse-vs-far-branch')
-  // Same geometry as rail-graph-metrics.test.ts's ellipse test: two disjoint
-  // similar-length corridors A-N-B / A-S-B (~7.49 km each; chord ~7.16 km ->
-  // bound ~19.89 km) fail 'ambiguous'; A also anchors a two-hop dead-end tail
-  // running WEST, opposite B. tail1 qualifies through its A endpoint
-  // (distA 0 + distB ~7.49 km <= bound); tail2's endpoints both bust the sum
-  // (~21.5 km) — OUTSIDE the ellipse, silent applies there.
+  // Same geometry as rail-graph-metrics.test.ts's path-union test: two
+  // disjoint similar-length corridors A-N-B / A-S-B (~7.49 km each) fail
+  // 'ambiguous'; A also anchors a two-hop dead-end tail running WEST,
+  // opposite B. The union of candidate paths is exactly both corridors —
+  // neither tail hop carries an admissible A-B path, so silent applies to
+  // BOTH (the earlier graph-distance ellipse still leaked onto tail1
+  // through its A endpoint; scaled up, one long ambiguous leg blanketed a
+  // country).
   const rowAN = { startLat: 50.000, startLon: 14.000, endLat: 50.010, endLon: 14.050 }
   const rowNB = { startLat: 50.010, startLon: 14.050, endLat: 50.000, endLon: 14.100 }
   const rowAS = { startLat: 50.000, startLon: 14.000, endLat: 49.990, endLon: 14.050 }
@@ -359,15 +361,15 @@ test('an ambiguous pair\'s admissible-path ellipse withholds silent inside it �
   })
 
   assert.equal(stats.walk.failures.ambiguous, 1)
-  assert.equal(stats.silentStamped, 1, 'only rowTail2 (outside the ellipse) is silent-eligible — the OLD component-wide gate would have withheld it too')
+  assert.equal(stats.silentStamped, 2, 'both tail hops sit outside the candidate-path union — silent-eligible (the ellipse used to withhold tail1; the component-wide gate withheld both)')
 
   const c = readCols(resolve(h3r4Dir, HEX_A, 'railways.arrow'))
-  assert.equal(c.src(0), 0, 'row0 (A-N) — an admissible corridor, inside the ellipse')
-  assert.equal(c.src(1), 0, 'row1 (N-B) — inside the ellipse')
-  assert.equal(c.src(2), 0, 'row2 (A-S) — the competing corridor, inside the ellipse')
-  assert.equal(c.src(3), 0, 'row3 (S-B) — inside the ellipse')
-  assert.equal(c.src(4), 0, 'row4 (tail1) — qualifies through its A endpoint (min over the edge\'s two endpoints)')
-  assert.equal(c.src(5), GLOBAL_GTFS_ID, 'row5 (tail2) — OUTSIDE the ellipse: silent applies even though it shares a component with the failed pair')
+  assert.equal(c.src(0), 0, 'row0 (A-N) — a candidate corridor, withheld')
+  assert.equal(c.src(1), 0, 'row1 (N-B) — withheld')
+  assert.equal(c.src(2), 0, 'row2 (A-S) — the competing candidate corridor, withheld')
+  assert.equal(c.src(3), 0, 'row3 (S-B) — withheld')
+  assert.equal(c.src(4), GLOBAL_GTFS_ID, 'row4 (tail1) — on no candidate path: silent applies (the ellipse used to leak here through the A endpoint)')
+  assert.equal(c.src(5), GLOBAL_GTFS_ID, 'row5 (tail2) — on no candidate path: silent applies even though it shares a component with the failed pair')
 
   // DE Step A v2 (2026-07-16 failure analysis, fix 3): the driver persists
   // the failed pair's diagnostics into the SAME sidecar A/B's snapped stops
