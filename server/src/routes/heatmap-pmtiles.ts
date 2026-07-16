@@ -147,12 +147,11 @@ function getHeatmapArchive(build: string, layer: string): Promise<OpenArchive> {
 /**
  * GET /api/tiles/:build/:layer/:z/:x/:y.bin
  *
- * Same wire contract as the loose-file route (raw HM3 v2 bytes, whole-file
- * Brotli, `Content-Encoding: br`), but addressed inside an immutable build:
- * hits AND misses get `max-age=31536000, immutable` — for a published
- * generation a missing tile is a permanent fact, and the frontend re-keys the
- * URL on the next build anyway. The loose-file route stays registered for
- * dual-read during the migration.
+ * Raw HM3 v3 bytes, whole-file Brotli, `Content-Encoding: br`, addressed
+ * inside an immutable build: hits AND misses get `max-age=31536000,
+ * immutable` — for a published generation a missing tile is a permanent fact
+ * (served as 200 + empty body so the CDN caches it), and the frontend re-keys
+ * the URL on the next build anyway.
  */
 export async function heatmapPmtilesRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { build: string; layer: string; z: string; x: string; y: string } }>(
@@ -168,6 +167,10 @@ export async function heatmapPmtilesRoutes(app: FastifyInstance): Promise<void> 
       compress: false,
       onSend: async (_req, reply, payload) => {
         reply.header('Access-Control-Allow-Origin', '*')
+        // Without this the browser hides the detailed cross-origin resource
+        // timing (phase breakdown, transferSize; total duration stays visible)
+        // — needed for RUM tile-latency measurement.
+        reply.header('Timing-Allow-Origin', '*')
         return payload
       },
     },
@@ -204,10 +207,18 @@ export async function heatmapPmtilesRoutes(app: FastifyInstance): Promise<void> 
 
       // Published generations are immutable → cache the miss as hard as the hit.
       reply.header('Cache-Control', 'public, max-age=31536000, immutable')
-      if (tile === undefined) return reply.code(204).send()
+      // "No tile" is 200 + empty body, NOT 204: Cloudflare doesn't cache 204s
+      // by default (204 is not in its default cacheable-status list —
+      // developers.cloudflare.com/cache/concepts/default-cache-behavior), so
+      // every empty ocean/quiet tile would round-trip edge→origin for every
+      // visitor forever. The decoder maps an empty body to "no tile";
+      // pre-2026-07 clients throw on it and their catch paths already render
+      // the same empty tile.
+      if (tile === undefined) return reply.send(Buffer.alloc(0))
       // application/octet-stream — the body is a custom binary format (HM3),
       // stored as a whole-file Brotli stream; declare it so the browser
-      // decompresses natively. Set AFTER the 204 so a miss has no encoding.
+      // decompresses natively. Set AFTER the empty-body return so a miss
+      // carries no encoding (an empty stream is not valid Brotli).
       reply.header('Content-Type', 'application/octet-stream')
       reply.header('Content-Encoding', 'br')
       return reply.send(Buffer.from(tile.data))

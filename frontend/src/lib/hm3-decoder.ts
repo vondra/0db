@@ -23,14 +23,18 @@ export interface DecodedHM3Tile {
 /**
  * Fetch + decode one HM3 tile. The server sends `Content-Encoding: br`, so the
  * browser decompresses transparently and we only read the header + cells.
- * Returns `null` for a 204 (no tile); throws on a header/version mismatch so the
- * caller can catch and render an empty tile.
+ * Returns `null` for "no tile" — a 200 with an empty body (chosen over 204
+ * because Cloudflare doesn't cache 204s by default) or a legacy 204 from
+ * pre-2026-07 servers. Throws on a header/version mismatch so the caller can
+ * catch and render an empty tile.
  */
 export async function fetchAndDecodeHM3(url: string, signal?: AbortSignal): Promise<DecodedHM3Tile | null> {
   const res = await fetch(url, { signal })
   if (res.status === 204) return null
   if (!res.ok) throw new Error(`fetch ${url}: ${res.status}`)
-  return decodeHM3(await res.arrayBuffer())
+  const buf = await res.arrayBuffer()
+  if (buf.byteLength === 0) return null
+  return decodeHM3(buf)
 }
 
 /** Validate the (already-decompressed) HM3 v3 bytes and return the cell grid. */
