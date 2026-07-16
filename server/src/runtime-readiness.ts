@@ -6,6 +6,7 @@ import { readFile, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { ALLOWED_LAYERS, PMTILES_BASE } from './routes/heatmap-shared.js'
 import { H3R4_DIR, SOURCE_READER_PATH } from './runtime-paths.js'
+import { resolveManifestPath } from './tile-manifest-reader.js'
 
 export type ReadinessComponent = 'engine' | 'prepared-data' | 'pmtiles'
 
@@ -23,6 +24,8 @@ type ReadinessOptions = {
   sourceReaderPath?: string
   h3r4Dir?: string
   pmtilesDir?: string
+  /** Overrides process.env.TILE_ENV — tests only; see resolveTileEnv's own doc. */
+  tileEnv?: string
   now?: () => number
   filesystemCacheMs?: number
   engineRetryMs?: number
@@ -61,8 +64,11 @@ type ManifestLayer = {
 const BUILD_ID = /^b[0-9]+$/
 const SHA256 = /^[a-f0-9]{64}$/
 
-async function checkPmtiles(pmtilesDir: string): Promise<void> {
-  const manifestPath = join(pmtilesDir, 'current.json')
+async function checkPmtiles(pmtilesDir: string, tileEnv?: string): Promise<void> {
+  // Per-environment pin (docs/dev/checkout-restructure-plan.md Track 2): boot readiness must
+  // gate on THIS deployment's own pin (`current.{TILE_ENV}.json`), not the packer's shared
+  // merge head — a prod instance must never report "ready" off a build only dev has promoted.
+  const manifestPath = resolveManifestPath(pmtilesDir, tileEnv)
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
     build?: unknown
     layers?: Record<string, ManifestLayer>
@@ -130,6 +136,7 @@ export function createReadinessCheck(options: ReadinessOptions): ReadinessCheck 
   const sourceReaderPath = options.sourceReaderPath ?? SOURCE_READER_PATH
   const h3r4Dir = options.h3r4Dir ?? H3R4_DIR
   const pmtilesDir = options.pmtilesDir ?? PMTILES_BASE
+  const tileEnv = options.tileEnv
   const now = options.now ?? Date.now
   const filesystemCacheMs = options.filesystemCacheMs ?? 10_000
   const engineRetryMs = options.engineRetryMs ?? 5_000
@@ -150,7 +157,7 @@ export function createReadinessCheck(options: ReadinessOptions): ReadinessCheck 
     const checks: Array<[ReadinessComponent, () => Promise<void>]> = [
       ['engine', () => requireNonEmptyFile(sourceReaderPath)],
       ['prepared-data', () => checkPreparedData(h3r4Dir)],
-      ['pmtiles', () => checkPmtiles(pmtilesDir)],
+      ['pmtiles', () => checkPmtiles(pmtilesDir, tileEnv)],
     ]
     await Promise.all(checks.map(async ([component, check]) => {
       try {

@@ -8,6 +8,11 @@ import { ALLOWED_LAYERS } from './routes/heatmap-shared.js'
 import { createReadinessCheck } from './runtime-readiness.js'
 
 const REFERENCE_HEX = '841e309ffffffff'
+// This checkout's own env for the fixture — arbitrary but fixed, so every test that rewrites
+// the manifest writes to the SAME per-env pointer the readiness check under test also reads
+// (docs/dev/checkout-restructure-plan.md Track 2: current.{TILE_ENV}.json, not the shared
+// current.json merge head).
+const TEST_TILE_ENV = 'dev2'
 
 async function publisherProof(path: string, sha256: string) {
   const info = await stat(path, { bigint: true })
@@ -50,8 +55,8 @@ async function readinessFixture() {
       publisher_proof: await publisherProof(join(pmtilesDir, file), sha256),
     }
   }
-  await writeFile(join(pmtilesDir, 'current.json'), JSON.stringify({ build: 'b1', layers }))
-  return { root, sourceReaderPath, h3r4Dir, pmtilesDir, layers }
+  await writeFile(join(pmtilesDir, `current.${TEST_TILE_ENV}.json`), JSON.stringify({ build: 'b1', layers }))
+  return { root, sourceReaderPath, h3r4Dir, pmtilesDir, layers, tileEnv: TEST_TILE_ENV }
 }
 
 test('readiness validates artifacts, single-flights, and periodically reprobes the engine', async (t) => {
@@ -101,7 +106,7 @@ test('readiness rejects a manifest file name that the tile route would not serve
   const road = fixture.layers.road
   fixture.layers.total = { ...road }
   await writeFile(
-    join(fixture.pmtilesDir, 'current.json'),
+    join(fixture.pmtilesDir, `current.${fixture.tileEnv}.json`),
     JSON.stringify({ build: 'b1', layers: fixture.layers }),
   )
 
@@ -126,7 +131,7 @@ test('readiness rejects a per-layer build that disagrees with its archive file',
     total: { ...fixture.layers.total, build: 'b2' },
   }
   await writeFile(
-    join(fixture.pmtilesDir, 'current.json'),
+    join(fixture.pmtilesDir, `current.${fixture.tileEnv}.json`),
     JSON.stringify({ build: 'b2', layers }),
   )
 
@@ -160,7 +165,7 @@ test('readiness accepts a consistent partial-publish manifest', async (t) => {
     },
   }
   await writeFile(
-    join(fixture.pmtilesDir, 'current.json'),
+    join(fixture.pmtilesDir, `current.${fixture.tileEnv}.json`),
     JSON.stringify({ build: 'b2', layers }),
   )
 
@@ -237,7 +242,7 @@ test('readiness still rejects a malformed manifest sha256, but ignores proof mut
   const goodSha256 = total.sha256
   total.sha256 = 'NOT-A-SHA'
   await writeFile(
-    join(fixture.pmtilesDir, 'current.json'),
+    join(fixture.pmtilesDir, `current.${fixture.tileEnv}.json`),
     JSON.stringify({ build: 'b1', layers: fixture.layers }),
   )
   const badManifest = await createReadinessCheck({
@@ -251,7 +256,7 @@ test('readiness still rejects a malformed manifest sha256, but ignores proof mut
   total.sha256 = goodSha256
   total.publisher_proof.sha256 = '0'.repeat(64)   // stale proof — boot-time readiness must not care
   await writeFile(
-    join(fixture.pmtilesDir, 'current.json'),
+    join(fixture.pmtilesDir, `current.${fixture.tileEnv}.json`),
     JSON.stringify({ build: 'b1', layers: fixture.layers }),
   )
   const staleProof = await createReadinessCheck({
@@ -271,7 +276,7 @@ test('readiness never opens PMTiles archive content (stat-only, always)', async 
     entry.publisher_proof = await publisherProof(archivePath, entry.sha256)
   }
   await writeFile(
-    join(fixture.pmtilesDir, 'current.json'),
+    join(fixture.pmtilesDir, `current.${fixture.tileEnv}.json`),
     JSON.stringify({ build: 'b1', layers: fixture.layers }),
   )
   const result = await createReadinessCheck({
@@ -280,4 +285,106 @@ test('readiness never opens PMTiles archive content (stat-only, always)', async 
     filesystemCacheMs: 0,
   })()
   assert.deepEqual(result, { ready: true, failed: [], errors: {} })
+})
+
+// Track 2 (docs/dev/checkout-restructure-plan.md): readiness now gates on THIS deployment's
+// own per-environment pin (current.{TILE_ENV}.json), selected via the shared
+// tile-manifest-reader.ts, rather than the packer's shared current.json merge head.
+
+test('readiness fails closed on a missing/unrecognized TILE_ENV', async (t) => {
+  const fixture = await readinessFixture()
+  t.after(async () => rm(fixture.root, { recursive: true, force: true }))
+
+  const missing = await createReadinessCheck({
+    ...fixture,
+    tileEnv: '',
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(missing.ready, false)
+  assert.deepEqual(missing.failed, ['pmtiles'])
+  assert.match(missing.errors.pmtiles ?? '', /TILE_ENV must be one of/)
+
+  const bogus = await createReadinessCheck({
+    ...fixture,
+    tileEnv: 'staging',
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(bogus.ready, false)
+  assert.match(bogus.errors.pmtiles ?? '', /TILE_ENV must be one of/)
+})
+
+test('readiness fails closed when this env pin is missing but a legacy current.json exists (un-seeded rollout)', async (t) => {
+  const fixture = await readinessFixture()
+  t.after(async () => rm(fixture.root, { recursive: true, force: true }))
+  // Simulate a checkout mid-Track-2-rollout: the per-env pin was never seeded, but the OLD
+  // shared current.json is still sitting there from before the cutover.
+  await rm(join(fixture.pmtilesDir, `current.${fixture.tileEnv}.json`))
+  await writeFile(join(fixture.pmtilesDir, 'current.json'), JSON.stringify({ build: 'b1', layers: fixture.layers }))
+
+  const result = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(result.ready, false)
+  assert.deepEqual(result.failed, ['pmtiles'])
+  assert.match(result.errors.pmtiles ?? '', /legacy current\.json exists/)
+  assert.match(result.errors.pmtiles ?? '', /seed it/)
+})
+
+test('readiness treats a genuinely fresh checkout (neither pin nor legacy manifest) as ordinary not-ready', async (t) => {
+  const fixture = await readinessFixture()
+  t.after(async () => rm(fixture.root, { recursive: true, force: true }))
+  await rm(join(fixture.pmtilesDir, `current.${fixture.tileEnv}.json`))
+
+  const result = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(result.ready, false)
+  assert.deepEqual(result.failed, ['pmtiles'])
+  assert.doesNotMatch(result.errors.pmtiles ?? '', /seed it/, 'a fresh checkout is not a seeding error')
+})
+
+test('readiness reads THIS environment pin, never the legacy current.json, when both exist', async (t) => {
+  const fixture = await readinessFixture()
+  t.after(async () => rm(fixture.root, { recursive: true, force: true }))
+  // A stale/foreign legacy current.json sitting next to a valid per-env pin must be
+  // completely ignored — this is the exact drift Track 2 exists to prevent (prod must never
+  // read what dev's shared merge head happens to say).
+  await writeFile(join(fixture.pmtilesDir, 'current.json'), 'not even valid JSON')
+
+  const result = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.deepEqual(result, { ready: true, failed: [], errors: {} })
+})
+
+test('readiness is independent across two environments sharing one pmtiles dir', async (t) => {
+  const fixture = await readinessFixture()
+  t.after(async () => rm(fixture.root, { recursive: true, force: true }))
+  // A second environment pin, deliberately broken, must not affect THIS environment's result
+  // — each `current.{env}.json` is read in total isolation from every other one.
+  await writeFile(join(fixture.pmtilesDir, 'current.prod.json'), '{ not json')
+
+  const thisEnv = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.deepEqual(thisEnv, { ready: true, failed: [], errors: {} })
+
+  const otherEnv = await createReadinessCheck({
+    ...fixture,
+    tileEnv: 'prod',
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(otherEnv.ready, false)
+  assert.deepEqual(otherEnv.failed, ['pmtiles'])
 })
