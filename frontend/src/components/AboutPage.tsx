@@ -94,7 +94,18 @@ export default function AboutPage() {
               </nav>
             )}
 
-            <h1 className="text-3xl font-bold text-foreground mb-2">{doc.title}</h1>
+            {doc.breadcrumb.length === 1 ? (
+              <h1 className="mb-4 flex items-center gap-3">
+                <img
+                  src="/favicon.svg"
+                  alt=""
+                  className="size-14 shrink-0"
+                />
+                <span className="text-4xl font-semibold tracking-[-0.04em] text-foreground">{doc.title}</span>
+              </h1>
+            ) : (
+              <h1 className="text-3xl font-bold text-foreground mb-2">{doc.title}</h1>
+            )}
             {doc.intro && <p className="text-lg text-muted-foreground mb-6">{doc.intro}</p>}
 
             {doc.children.length > 0 && (
