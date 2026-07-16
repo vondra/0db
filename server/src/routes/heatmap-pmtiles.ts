@@ -3,6 +3,7 @@
 // loose .bin files. A build ("b0", "b1", …) is an immutable published
 // generation, so both hits and misses are cached hard by the browser.
 
+import { readFileSync } from 'node:fs'
 import { open, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -16,6 +17,7 @@ import {
   type Source,
 } from 'pmtiles'
 import { parseTileParams, PMTILES_BASE } from './heatmap-shared.js'
+import { resolveManifestPath } from '../tile-manifest-reader.js'
 
 const gunzipAsync = promisify(gunzip)
 
@@ -224,4 +226,52 @@ export async function heatmapPmtilesRoutes(app: FastifyInstance): Promise<void> 
       return reply.send(Buffer.from(tile.data))
     },
   )
+
+  // GET /api/tiles-health — the STABLE uptime-monitor endpoint (owner 2026-07-16:
+  // monitors must never pin a build id — builds are immutable and eventually GC'd,
+  // so a hardcoded ".../b8/..." check silently decays). This route resolves THIS
+  // environment's manifest and proves that a reference tile of every core layer
+  // still serves NON-EMPTY bytes from the CURRENT build — the empty body is this
+  // route family's documented miss shape, so emptiness here means "the published
+  // build lost real data", a failure, never a pass. no-store: a health probe must
+  // never be answered from a cache.
+  app.get('/api/tiles-health', async (_req, reply) => {
+    reply.header('Cache-Control', 'no-store')
+    // Dobříš — the repo's canonical reference cell (CLAUDE.md); painted in every
+    // world generation, so its z8 tile is non-empty for road/rail/total forever.
+    const lat = 49.78, lon = 14.17, z = 8
+    const x = Math.floor(((lon + 180) / 360) * 2 ** z)
+    const latRad = (lat * Math.PI) / 180
+    const y = Math.floor(((1 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2) * 2 ** z)
+
+    let manifest: { layers?: Record<string, { file?: string }> }
+    try {
+      manifest = JSON.parse(readFileSync(resolveManifestPath(PMTILES_BASE), 'utf8'))
+    } catch (e) {
+      app.log?.error?.(`tiles-health: manifest unreadable: ${(e as Error).message}`)
+      return reply.code(503).send({ ok: false, failures: ['manifest unreadable'] })
+    }
+
+    const failures: string[] = []
+    const checks: Array<{ layer: string; build: string; bytes: number }> = []
+    for (const layer of ['road', 'rail', 'total']) {
+      const file = manifest.layers?.[layer]?.file ?? ''
+      const build = /\.(b\d+)\.pmtiles$/.exec(file)?.[1]
+      if (!build) { failures.push(`${layer}: no manifest entry`); continue }
+      try {
+        const archive = await getHeatmapArchive(build, layer)
+        const tile = await archive.pmtiles.getZxy(z, x, y)
+        const bytes = tile?.data ? Buffer.from(tile.data).length : 0
+        if (bytes > 0) checks.push({ layer, build, bytes })
+        else failures.push(`${layer}@${build}: reference tile ${z}/${x}/${y} empty/missing`)
+      } catch (e) {
+        failures.push(`${layer}@${build}: ${(e as Error).message}`)
+      }
+    }
+    if (failures.length) {
+      app.log?.error?.(`tiles-health FAILED: ${failures.join(' | ')}`)
+      return reply.code(503).send({ ok: false, failures, checks })
+    }
+    return reply.send({ ok: true, checks })
+  })
 }
