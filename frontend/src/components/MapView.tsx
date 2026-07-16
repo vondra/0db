@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import Map, { NavigationControl, GeolocateControl } from 'react-map-gl/maplibre'
-import type { StyleSpecification } from 'maplibre-gl'
+import type { StyleSpecification, GeolocateControl as GeolocateControlInstance } from 'maplibre-gl'
 import FlyToLocation from './FlyToLocation'
 import DetailPopup from './DetailPopup'
 import QuietZonesLayer from './QuietZonesLayer'
@@ -38,6 +38,14 @@ interface MapViewProps {
   validationEnabled?: boolean
   validationPayload?: ValidationPayload | null
   onValidationSelect?: (selection: ValidationSelection) => void
+  /** Hands the parent a function that fires the map's GeolocateControl — the
+   *  mobile locate box in the BasemapBar row triggers GPS through it. */
+  registerGeolocateTrigger?: (trigger: () => void) => void
+  /** True while the map is actively following the user's position. */
+  onGeolocateActiveChange?: (active: boolean) => void
+  /** True once the GeolocateControl is mounted and the browser has a
+   *  geolocation API — before that a trigger tap would silently no-op. */
+  onGeolocateReadyChange?: (ready: boolean) => void
 }
 
 export default function MapView({
@@ -45,6 +53,7 @@ export default function MapView({
   basemap, onViewChange, onDetailData, onDetailPositionChange, onDetailError, detailPosition,
   quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters, onPropertySelect, rasterOverlays,
   validationEnabled, validationPayload, onValidationSelect,
+  registerGeolocateTrigger, onGeolocateActiveChange, onGeolocateReadyChange,
 }: MapViewProps) {
   const center = initialCenter ?? [49.8, 15.5]
   const zoom = initialZoom ?? 8
@@ -55,6 +64,11 @@ export default function MapView({
   const handleArrived = useCallback((pos: { lat: number; lng: number }) => {
     setFlyToPos(pos)
   }, [])
+
+  const geolocateRef = useRef<GeolocateControlInstance>(null)
+  useEffect(() => {
+    registerGeolocateTrigger?.(() => geolocateRef.current?.trigger())
+  }, [registerGeolocateTrigger])
 
   const activeHeatmapSources = useMemo(() => {
     const active = HEATMAP_LAYERS.filter(s => !!rasterOverlays?.[s])
@@ -101,7 +115,25 @@ export default function MapView({
       {/* trackUserLocation is what makes the button STATEFUL (blue while
           following, outline when the map pans away) — without it maplibre
           never applies the -active class at all. */}
-      <GeolocateControl position="bottom-left" trackUserLocation showUserLocation fitBoundsOptions={{ maxZoom: 14 }} />
+      <GeolocateControl
+        ref={(instance) => {
+          geolocateRef.current = instance
+          onGeolocateReadyChange?.(instance !== null && 'geolocation' in navigator)
+        }}
+        position="bottom-left"
+        trackUserLocation
+        showUserLocation
+        fitBoundsOptions={{ maxZoom: 14 }}
+        onTrackUserLocationStart={() => onGeolocateActiveChange?.(true)}
+        // Fires for BACKGROUND (user panned away while tracking) as well as
+        // OFF. The row's icon deliberately shows blue only while actively
+        // FOLLOWING — distinguishing the two would need maplibre's private
+        // _watchState, and the location dot stays visible either way.
+        onTrackUserLocationEnd={() => onGeolocateActiveChange?.(false)}
+        // PERMISSION_DENIED goes straight to OFF without a
+        // trackuserlocationend — without this the row's icon stays blue.
+        onError={() => onGeolocateActiveChange?.(false)}
+      />
       <RasterOverlayLayer visibleLayers={rasterOverlays ?? {}} />
       {/* Highlight rides on the same deck.gl canvas as the heatmap so
           it always draws above the HM3 tiles. A separate MapLibre

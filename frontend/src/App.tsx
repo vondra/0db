@@ -55,6 +55,15 @@ function MapApp() {
     enabled: false, propertyType: 'all', listingType: 'all', maxNoise: 60,
   })
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null)
+  // Mobile locate box lives in the BasemapBar row (one container = one
+  // baseline); it fires the map's GeolocateControl through this ref.
+  const geolocateTrigger = useRef<() => void>(() => {})
+  const [geolocateActive, setGeolocateActive] = useState(false)
+  const [geolocateReady, setGeolocateReady] = useState(false)
+  const registerGeolocateTrigger = useCallback((trigger: () => void) => {
+    geolocateTrigger.current = trigger
+  }, [])
+  const handleLocate = useCallback(() => geolocateTrigger.current(), [])
   const [rasterOverlays, setRasterOverlays] = useState<Record<string, boolean>>(
     initial.rasterOverlays ?? { ...EMPTY_RASTER_OVERLAYS },
   )
@@ -276,7 +285,13 @@ function MapApp() {
         </div>
 
         <div className="pointer-events-auto">
-          <BasemapBar basemap={basemap} onBasemapChange={handleBasemapChange} />
+          <BasemapBar
+            basemap={basemap}
+            onBasemapChange={handleBasemapChange}
+            onLocate={handleLocate}
+            locating={geolocateActive}
+            locateReady={geolocateReady}
+          />
         </div>
       </div>
 
@@ -300,6 +315,9 @@ function MapApp() {
         validationEnabled={validationEnabled}
         validationPayload={validationPayload}
         onValidationSelect={setValidationSelection}
+        registerGeolocateTrigger={registerGeolocateTrigger}
+        onGeolocateActiveChange={setGeolocateActive}
+        onGeolocateReadyChange={setGeolocateReady}
       />
 
       {/* Mobile: layers toggle button */}
