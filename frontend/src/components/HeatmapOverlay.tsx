@@ -46,7 +46,109 @@ const COMPOSITE_MARGIN = 1
 // OVERZOOM_FROM is lowered toward normal zoom).
 const MAX_COMPOSITE_TILES = 96
 
-type HeatTile = { image: ImageData }
+type HeatTile = {
+  image: ImageData
+  /** Cancels the progressive tail (fetches deck can no longer abort — it
+   *  disarms its own abort at our early resolve). Wired to onTileUnload. */
+  abortRefine?: () => void
+}
+
+// Head start before a partially-loaded tile resolves early: on a warm CDN the
+// full layer set lands inside this window, deck keeps its whole normal
+// lifecycle (request throttling + aborts, zero progressive overhead) — only
+// genuinely slow loads resolve early and refine as layers land. Their tails
+// escape deck's maxRequests budget by design: they are same-viewport work
+// that still fills the tile cache, they are bounded by the wave size, and
+// every cancellation path (eviction, re-key, unmount) can reach them —
+// enforcing the budget exactly would mean reimplementing deck's scheduler.
+const EARLY_RESOLVE_AFTER_MS = 250
+
+/**
+ * Progressive multi-layer tile load: give the full set a short head start;
+ * past it, resolve with whatever landed FIRST so the tile paints at the
+ * fastest layer's latency, then recompose as the remaining layers land
+ * (coalesced to one compose per frame per tile) by swapping the image on the
+ * same tile object — the caller's `onRefined` bumps deck's repaint trigger.
+ * The partial energy sum transiently underestimates — a lighter shade for a
+ * moment beats a blank tile — and converges to the exact sum with the last
+ * layer. A failed single layer renders as that layer being empty
+ * (pre-existing behavior).
+ *
+ * Lifecycle: deck releases its request slot and disarms its abort the moment
+ * we resolve (tile-2d-header marks the tile loaded), and it never calls
+ * onTileUnload when finalizing a whole layer — so the tail fetches run on our
+ * OWN controller, registered in `tails`: cancelled by onTileUnload (eviction)
+ * or by the component when the tile layer itself is swapped out.
+ */
+async function loadTileProgressively(
+  urls: string[],
+  deckSignal: AbortSignal | undefined,
+  onRefined: () => void,
+  tails: Set<() => void>,
+): Promise<HeatTile | null> {
+  // Single source — the common all-layers `total` case: plain fetch, deck owns
+  // the whole lifecycle, zero progressive overhead.
+  if (urls.length === 1) {
+    const d = await fetchAndDecodeHM3(urls[0], deckSignal).catch((err) => {
+      if ((err as DOMException)?.name === 'AbortError') throw err
+      return null
+    })
+    return d ? { image: composeToImageData([d.cells], TILE_PX, TILE_PX) } : null
+  }
+  const ctl = new AbortController()
+  if (deckSignal?.aborted) ctl.abort()
+  deckSignal?.addEventListener('abort', () => ctl.abort())
+  const grids: Uint8Array[] = []
+  const perFetch = urls.map((u) =>
+    fetchAndDecodeHM3(u, ctl.signal)
+      .then((d) => { if (d?.cells) grids.push(d.cells) })
+      .catch(() => { /* abort, or a failed layer → renders empty */ }),
+  )
+  const allDone = Promise.all(perFetch)
+  let allSettled = false
+  void allDone.then(() => { allSettled = true })
+  await Promise.race([
+    allDone,
+    new Promise<void>((resolve) => setTimeout(resolve, EARLY_RESOLVE_AFTER_MS)),
+  ])
+  if (!allSettled) {
+    // Slow load → progressive: wake on every settle, proceed once ANY grid
+    // landed — or everything settled, whichever comes first.
+    await Promise.race([
+      allDone,
+      new Promise<void>((resolve) => {
+        for (const p of perFetch) void p.then(() => { if (grids.length > 0) resolve() })
+      }),
+    ])
+  }
+  if (ctl.signal.aborted) throw new DOMException('tile aborted', 'AbortError')
+  if (allSettled) {
+    // Complete load (fast path): plain tile, no tail to manage.
+    return grids.length > 0 ? { image: composeToImageData(grids, TILE_PX, TILE_PX) } : null
+  }
+  const abortTail = () => ctl.abort()
+  tails.add(abortTail)
+  void allDone.then(() => tails.delete(abortTail))
+  let composedCount = grids.length
+  let scheduled = false
+  const data: HeatTile = {
+    image: composeToImageData(grids, TILE_PX, TILE_PX),
+    abortRefine: abortTail,
+  }
+  const recomposeSoon = () => {
+    if (scheduled) return
+    scheduled = true
+    requestAnimationFrame(() => {
+      scheduled = false
+      if (ctl.signal.aborted || grids.length === composedCount) return
+      composedCount = grids.length
+      data.image = composeToImageData(grids, TILE_PX, TILE_PX)
+      onRefined()
+    })
+  }
+  for (const p of perFetch) void p.then(recomposeSoon)
+  return data
+}
 type Bounds = [number, number, number, number]
 type Composite = { image: ImageData; bounds: Bounds }
 type LngLatBounds = { getWest(): number; getEast(): number; getNorth(): number; getSouth(): number }
@@ -88,6 +190,33 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
     return () => { mounted.current = false }
   }, [])
 
+  // Progressive-refine repaint: a tile whose late layers landed swapped its
+  // image in place — bump the trigger and re-apply (coalesced per frame) so
+  // deck re-runs renderSubLayers and uploads the new ImageData.
+  const refineSeq = useRef(0)
+  const refinePending = useRef(false)
+  const onRefined = useCallback(() => {
+    refineSeq.current++
+    if (refinePending.current) return
+    refinePending.current = true
+    requestAnimationFrame(() => {
+      refinePending.current = false
+      if (mounted.current) applyRef.current()
+    })
+  }, [])
+  // Live progressive tails of the CURRENT tile layer. deck never aborts a
+  // tile it already resolved and never calls onTileUnload when finalizing a
+  // whole layer — so a layer swap (build/source re-key, composite mode,
+  // unmount) must cancel the tails here.
+  const tileTails = useRef<{ key: string; aborts: Set<() => void> }>({ key: '', aborts: new Set() })
+  const dropTileTails = useCallback((nextKey: string) => {
+    if (tileTails.current.key === nextKey) return
+    for (const abort of tileTails.current.aborts) abort()
+    tileTails.current.aborts.clear()
+    tileTails.current.key = nextKey
+  }, [])
+  useEffect(() => () => dropTileTails(''), [dropTileTails])
+
   // One interleaved MapboxOverlay (shares MapLibre's GL context).
   useEffect(() => {
     if (!mapRef) return
@@ -119,6 +248,7 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
       // TileLayer (correct data, maybe a faint seam) rather than paint stale tiles,
       // until `update` rebuilds the matching composite.
       if (overzoom && c && c.sig === compositeSig(build, sources, baseRange(map.getBounds()))) {
+        dropTileTails('') // the tile layer is gone — its tails must not linger
         layers.push(new BitmapLayer({
           id: 'hm3-composite',
           image: c.image,
@@ -127,12 +257,15 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
           textureParameters: { minFilter: 'linear', magFilter: 'linear' },
         }))
       } else {
-        layers.push(makeHeatmapTileLayer(build, sources, beforeId))
+        dropTileTails(buildKey(build, sources)) // a re-key cancels the old layer's tails
+        layers.push(makeHeatmapTileLayer(build, sources, beforeId, refineSeq.current, onRefined, tileTails.current.aborts))
       }
+    } else {
+      dropTileTails('') // every source off (or no build) removes the layer too
     }
     layers.push(...makeHighlightLayers(highlightGeometry))
     overlay.setProps({ layers })
-  }, [overlay, mapRef, build, sources, highlightGeometry])
+  }, [overlay, mapRef, build, sources, highlightGeometry, onRefined, dropTileTails])
   applyRef.current = apply
 
   // Rebuild the over-zoom composite (only past OVERZOOM_FROM, only when the base range/sources
@@ -215,6 +348,9 @@ function makeHeatmapTileLayer(
   build: TileBuilds,
   sources: readonly HeatmapSource[],
   beforeId: string | undefined,
+  refineSeq: number,
+  onRefined: () => void,
+  tails: Set<() => void>,
 ) {
   return new TileLayer<HeatTile | null>({
     id: `hm3-tiles-${buildKey(build, sources)}`,
@@ -237,21 +373,28 @@ function makeHeatmapTileLayer(
     // best-available's brief parent+child overlap during a zoom double-draws the
     // colour → a dark flash. no-overlap never overlaps them.
     refinementStrategy: 'no-overlap',
-    getTileData: async ({ index, signal }) => {
+    getTileData: ({ index, signal }) => {
       const { x, y, z } = index
       const span = 2 ** z
       const wx = ((x % span) + span) % span // wrap x across the antimeridian
-      const decoded = await Promise.all(
-        sources.map((s) =>
-          fetchAndDecodeHM3(tileUrl(build, s, z, wx, y), signal).catch((err) => {
-            if ((err as DOMException)?.name === 'AbortError') throw err
-            return null
-          }),
-        ),
-      )
-      const grids = decoded.flatMap((d) => (d?.cells ? [d.cells] : []))
-      if (grids.length === 0) return null // cache the empty slot (no refetch)
-      return { image: composeToImageData(grids, TILE_PX, TILE_PX) }
+      const urls = sources.map((s) => tileUrl(build, s, z, wx, y))
+      return loadTileProgressively(urls, signal, onRefined, tails)
+    },
+    // Bumped by onRefined when a tile's late layers land — deck re-runs
+    // renderSubLayers, and only mutated tiles carry a NEW ImageData reference
+    // (unchanged tiles keep their texture; the sublayer descriptors of the
+    // visible set are recreated, a few ms coalesced to one frame per wave).
+    updateTriggers: { renderSubLayers: refineSeq },
+    // deck can no longer abort a tile once it resolved (see
+    // loadTileProgressively) — cancel the progressive tail ourselves when the
+    // tile leaves the cache, so evicted tiles stop fetching and repainting.
+    onTileUnload: (tile) => {
+      const d = tile.data
+      if (!d) return
+      // A still-pending tile can be evicted without deck aborting it — cancel
+      // its tail the moment it resolves instead of letting it refine a ghost.
+      if (d instanceof Promise) void d.then((t) => t?.abortRefine?.()).catch(() => {})
+      else d.abortRefine?.()
     },
     renderSubLayers: (props) => {
       const data = props.data as HeatTile | null
