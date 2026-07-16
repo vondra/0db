@@ -5,7 +5,7 @@ import { BitmapLayer, GeoJsonLayer } from '@deck.gl/layers'
 import { useMap } from 'react-map-gl/maplibre'
 
 import { fetchAndDecodeHM3, TILE_PX, NO_DATA } from '../lib/hm3-decoder'
-import { composeToImageData } from '../lib/hm3-compose'
+import { composeOffThread } from '../lib/compose-off-thread'
 import { lngLatToTileFloat, tileXToLng, tileYToLat } from '../lib/tile-math'
 import { BASE_ZOOM, MIN_ZOOM, WORLD_EXTENT, buildKey, tileUrl, useTileBuild, type TileBuilds } from '../lib/tile-urls'
 
@@ -93,7 +93,10 @@ async function loadTileProgressively(
       if ((err as DOMException)?.name === 'AbortError') throw err
       return null
     })
-    return d ? { image: composeToImageData([d.cells], TILE_PX, TILE_PX) } : null
+    if (!d) return null
+    const image = await composeOffThread([d.cells], TILE_PX, TILE_PX)
+    if (deckSignal?.aborted) throw new DOMException('tile aborted', 'AbortError')
+    return { image }
   }
   const ctl = new AbortController()
   if (deckSignal?.aborted) ctl.abort()
@@ -124,17 +127,19 @@ async function loadTileProgressively(
   if (ctl.signal.aborted) throw new DOMException('tile aborted', 'AbortError')
   if (allSettled) {
     // Complete load (fast path): plain tile, no tail to manage.
-    return grids.length > 0 ? { image: composeToImageData(grids, TILE_PX, TILE_PX) } : null
+    if (grids.length === 0) return null
+    const image = await composeOffThread(grids, TILE_PX, TILE_PX)
+    if (ctl.signal.aborted) throw new DOMException('tile aborted', 'AbortError')
+    return { image }
   }
   const abortTail = () => ctl.abort()
   tails.add(abortTail)
   void allDone.then(() => tails.delete(abortTail))
   let composedCount = grids.length
   let scheduled = false
-  const data: HeatTile = {
-    image: composeToImageData(grids, TILE_PX, TILE_PX),
-    abortRefine: abortTail,
-  }
+  const image = await composeOffThread(grids.slice(), TILE_PX, TILE_PX)
+  if (ctl.signal.aborted) throw new DOMException('tile aborted', 'AbortError')
+  const data: HeatTile = { image, abortRefine: abortTail }
   const recomposeSoon = () => {
     if (scheduled) return
     scheduled = true
@@ -142,8 +147,11 @@ async function loadTileProgressively(
       scheduled = false
       if (ctl.signal.aborted || grids.length === composedCount) return
       composedCount = grids.length
-      data.image = composeToImageData(grids, TILE_PX, TILE_PX)
-      onRefined()
+      void composeOffThread(grids.slice(), TILE_PX, TILE_PX).then((refined) => {
+        if (ctl.signal.aborted) return
+        data.image = refined
+        onRefined()
+      })
     })
   }
   for (const p of perFetch) void p.then(recomposeSoon)
@@ -288,7 +296,7 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
           // rebuild takes. The matching composite is painted by the apply below.
           applyRef.current()
           const seq = ++buildSeq.current
-          const built = await buildComposite(range, sources, build)
+          const built = await buildComposite(range, sources, build, () => seq !== buildSeq.current)
           if (!mounted.current || seq !== buildSeq.current) return // unmounted or superseded
           composite.current = built ? { ...built, sig } : null
         }
@@ -443,6 +451,7 @@ async function buildComposite(
   range: Range,
   sources: readonly HeatmapSource[],
   build: TileBuilds,
+  isStale: () => boolean,
 ): Promise<Composite | null> {
   const { z, span, x0, x1, y0, y1, cols, rows } = range
   if (cols < 1 || rows < 1 || cols * rows > MAX_COMPOSITE_TILES) return null
@@ -474,7 +483,11 @@ async function buildComposite(
   })
   const grids = [...gridBySource.values()]
   if (grids.length === 0) return null
-  const image = composeToImageData(grids, width, height)
+  // A pan/zoom during the fetches supersedes this composite — bail before the
+  // big compose (up to 96 tiles) so stale work never queues ahead of fresh
+  // tile composes in the single worker.
+  if (isStale()) return null
+  const image = await composeOffThread(grids, width, height)
   const bounds: Bounds = [tileXToLng(x0, z), tileYToLat(y1 + 1, z), tileXToLng(x1 + 1, z), tileYToLat(y0, z)]
   return { image, bounds }
 }
