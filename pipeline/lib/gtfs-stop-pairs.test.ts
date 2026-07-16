@@ -363,3 +363,63 @@ test('optionsKey fingerprint: a cache written under one optionsKey is not served
   const backToDefault = await computeStopPairFrequenciesForFeed(dir, { optionsKey: 'default' })
   assert.equal(backToDefault.provenance.fromCache, false, 'switching back to the original key misses too — the cache now holds the more recent write\'s fingerprint')
 })
+
+test('inputs fingerprint: touching routes.txt invalidates the pair cache — a refreshed extract can never serve the previous feed\'s pairs (2026-07-16 review item 2)', async () => {
+  const dir = join(TMP, 'inputs-fingerprint')
+  writeGtfsFixture(dir, {
+    'routes.txt': NO_CALENDAR_ROUTES,
+    'trips.txt': 'trip_id,route_id,service_id\nT1,R1,svc\n',
+    'stop_times.txt':
+      'trip_id,stop_id,stop_sequence\n' +
+      'T1,A,1\n' +
+      'T1,B,2\n',
+    'stops.txt':
+      'stop_id,stop_name,stop_lat,stop_lon\n' +
+      'A,Alpha,50.0000,14.0000\n' +
+      'B,Bravo,50.1000,14.1000\n',
+  })
+
+  const first = await computeStopPairFrequenciesForFeed(dir)
+  assert.equal(first.provenance.fromCache, false)
+  assert.equal((await computeStopPairFrequenciesForFeed(dir)).provenance.fromCache, true, 'unchanged inputs hit')
+
+  // Simulate --force-download unzipping a fresh feed over the extractDir: the
+  // rewritten routes.txt gains a second route → size (and mtime) change.
+  writeFileSync(join(dir, 'routes.txt'), NO_CALENDAR_ROUTES + 'R2,2\n')
+  const afterTouch = await computeStopPairFrequenciesForFeed(dir)
+  assert.equal(afterTouch.provenance.fromCache, false, 'a changed routes.txt MUST invalidate — stale pairs would keep stamping the old timetable and vouch retract evidence for a possibly-broken fresh feed')
+  assert.equal((await computeStopPairFrequenciesForFeed(dir)).provenance.fromCache, true, 'the recompute rewrote the cache under the NEW inputs fingerprint')
+})
+
+test('malformed routes.txt THROWS instead of returning the empty result a legitimately rail-less feed yields (2026-07-16 review item 3)', async () => {
+  const headerOnly = join(TMP, 'malformed-header-only')
+  writeGtfsFixture(headerOnly, {
+    'routes.txt': 'route_id,route_type\n',
+    'trips.txt': 'trip_id,route_id,service_id\n',
+    'stop_times.txt': 'trip_id,stop_id,stop_sequence\n',
+    'stops.txt': 'stop_id,stop_name,stop_lat,stop_lon\n',
+  })
+  await assert.rejects(() => computeStopPairFrequenciesForFeed(headerOnly), /routes\.txt parse failure/, 'header-only routes.txt is a parse failure, never "no rail routes"')
+
+  const noRouteType = join(TMP, 'malformed-no-route-type')
+  writeGtfsFixture(noRouteType, {
+    'routes.txt': 'route_id,route_short_name\nR1,S1\n',
+    'trips.txt': 'trip_id,route_id,service_id\n',
+    'stop_times.txt': 'trip_id,stop_id,stop_sequence\n',
+    'stops.txt': 'stop_id,stop_name,stop_lat,stop_lon\n',
+  })
+  await assert.rejects(() => computeStopPairFrequenciesForFeed(noRouteType), /no route_type column/, 'a routes.txt without route_type is a parse failure')
+})
+
+test('legitimately rail-less routes.txt (valid header, bus-only rows) still yields the EMPTY result, no throw (item 3\'s other direction)', async () => {
+  const dir = join(TMP, 'legit-bus-only')
+  writeGtfsFixture(dir, {
+    'routes.txt': 'route_id,route_type\nB1,3\nB2,3\n', // bus-only — Carris/Toluca shape
+    'trips.txt': 'trip_id,route_id,service_id\nT1,B1,svc\n',
+    'stop_times.txt': 'trip_id,stop_id,stop_sequence\nT1,A,1\n',
+    'stops.txt': 'stop_id,stop_name,stop_lat,stop_lon\nA,Alpha,50.0,14.0\n',
+  })
+  const result = await computeStopPairFrequenciesForFeed(dir)
+  assert.equal(result.pairs.length, 0, 'zero rail routes with a VALID header is a legitimate empty, not an error')
+  assert.equal(result.provenance.fromCache, false)
+})

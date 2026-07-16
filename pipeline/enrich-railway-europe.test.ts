@@ -101,18 +101,31 @@ test('feedDeclaresHeavyRail is DERIVED from the allow-list (+ metroAsRail), neve
   assert.equal(feedDeclaresHeavyRail(auvic), true, 'metroAsRail maps METRO types to heavy rail')
 })
 
-// ── Item 3: per-family completeness — test BOTH directions ──
+// ── Item 4 (2026-07-16 review): per-family completeness — GENUINELY both
+// directions now. `declared` comes from the feed's own routes.txt at load
+// time (declaredRouteFamiliesForFeed in loadCountryFeed); these tests pin the
+// pure rule over every declaration shape.
 
-test('feedPartsIncomplete: a heavy-rail feed whose PAIRS parsed empty is incomplete even when its tram part loaded (the masking bug direction)', () => {
-  assert.equal(feedPartsIncomplete(de, 100, 0), true, 'working tram part must NOT mask an empty heavy-rail part — retractSafe would disown heavy stamps on tram-only evidence')
-  assert.equal(feedPartsIncomplete(us, 0, 0), true, 'rail-only feed with no pairs is incomplete')
+const BOTH = new Set<'rail' | 'tram'>(['rail', 'tram'])
+const RAIL_ONLY = new Set<'rail' | 'tram'>(['rail'])
+const TRAM_ONLY = new Set<'rail' | 'tram'>(['tram'])
+const BUS_ONLY = new Set<'rail' | 'tram'>()
+
+test('feedPartsIncomplete direction 1: a feed declaring rail whose PAIRS parsed empty is incomplete even when its tram part loaded (the original masking direction)', () => {
+  assert.equal(feedPartsIncomplete(BOTH, 100, 0), true, 'working tram part must NOT mask an empty heavy-rail part — retractSafe would disown heavy stamps on tram-only evidence')
+  assert.equal(feedPartsIncomplete(RAIL_ONLY, 0, 0), true, 'rail-declaring feed with no pairs is incomplete')
 })
 
-test('feedPartsIncomplete: a heavy-rail feed with pairs loaded is complete (tram emptiness does not block); a tram-only feed is exempt from the pairs requirement', () => {
-  assert.equal(feedPartsIncomplete(de, 0, 100), false, 'heavy part loaded — complete')
-  const frIdf = FEEDS.find(f => f.id === 'fr-idf')!
-  assert.equal(feedPartsIncomplete(frIdf, 50, 0), false, 'tram-only feed judged on its tram part alone — zero pairs is its normal state')
-  assert.equal(feedPartsIncomplete(frIdf, 0, 0), true, 'tram-only feed with an empty tram part IS incomplete')
+test('feedPartsIncomplete direction 2: a feed declaring tram whose TRAM stops parsed empty is incomplete even when its pairs loaded (the direction the pre-review check accepted as complete!)', () => {
+  assert.equal(feedPartsIncomplete(BOTH, 0, 100), true, 'working heavy-rail part must NOT mask an empty tram part — the old one-directional rule passed exactly this case and let a retract disown tram stamps on rail-only evidence')
+})
+
+test('feedPartsIncomplete: undeclared families are exempt — rail-only, tram-only (fr-idf shape) and bus-only feeds are judged only on what their extract declares', () => {
+  assert.equal(feedPartsIncomplete(RAIL_ONLY, 0, 100), false, 'rail-only extract: empty tram is its normal state (HR-style ALL_RAIL_AND_TRAM allow-list with a tramless extract)')
+  assert.equal(feedPartsIncomplete(TRAM_ONLY, 50, 0), false, 'tram-only feed judged on its tram part alone — zero pairs is its normal state')
+  assert.equal(feedPartsIncomplete(TRAM_ONLY, 0, 0), true, 'tram-only feed with an empty tram part IS incomplete')
+  assert.equal(feedPartsIncomplete(BUS_ONLY, 0, 0), false, 'a feed declaring neither family is complete with nothing — it can never mask anything')
+  assert.equal(feedPartsIncomplete(BOTH, 100, 50), false, 'both declared, both parsed — complete')
 })
 
 test('per-country feed selection: filtering FEEDS by country selects exactly that country\'s own feeds, nothing else', () => {
@@ -162,7 +175,7 @@ test('buildTramExtraMatch: a tram stop registered under a NEIGHBOR hex (k=1 ring
   const tramStops: StopTrainCount[] = [
     { stop_id: 'S1', lat: 50.0001, lon: 14.0001, name: 'Neighbor Stop', h3r4: neighborHex, family: 'tram', trains_passenger: 42, trains_freight: 0 },
   ]
-  const extraMatch = buildTramExtraMatch(tramStops)
+  const extraMatch = buildTramExtraMatch(tramStops, 999999)
   const result = extraMatch(FAKE_RAIL_ROW(2), 0, originHex)
   assert.ok(result, 'the k=1 ring pulled in the neighbor hex\'s stop — a per-hex-only grid would have missed it')
   assert.equal(result!.pax, 42)
@@ -173,12 +186,12 @@ test('buildTramExtraMatch: heavy rail rows (railType 0) never match — heavy ra
   const tramStops: StopTrainCount[] = [
     { stop_id: 'S1', lat: 50.0001, lon: 14.0001, name: 'Stop', h3r4: originHex, family: 'tram', trains_passenger: 42, trains_freight: 0 },
   ]
-  const extraMatch = buildTramExtraMatch(tramStops)
+  const extraMatch = buildTramExtraMatch(tramStops, 999999)
   assert.equal(extraMatch(FAKE_RAIL_ROW(0), 0, originHex), null, 'heavy rail rows are never handled by the tram extraMatch arm')
 })
 
 test('buildTramExtraMatch: no stop anywhere in the ring returns null (never throws on an empty grid)', () => {
   const originHex = latLngToCell(50.0, 14.0, 4)
-  const extraMatch = buildTramExtraMatch([])
+  const extraMatch = buildTramExtraMatch([], 999999)
   assert.equal(extraMatch(FAKE_RAIL_ROW(1), 0, originHex), null)
 })

@@ -19,13 +19,20 @@
  * copies EXCEPT one intentional fix: a calendar present but resolving to zero active
  * services on the target date now yields zero trips instead of silently counting every
  * trip — see the BUG FIX comment on `computeActiveTripFamiliesForFeed` below.
+ *
+ * `dedupeStopsByLocation` + `buildTramExtraMatch` (2026-07-16 Phase 4 hoist from
+ * `enrich-railway-europe.ts`, plan `pro-e-sd-zaj-m-wobbly-liskov` Phase 4 point 2):
+ * the tram/light-rail `nearestGridStop` join every national enricher wires in as
+ * `enrichRailwaysByGraphWalk`'s `extraMatch` fallback arm — ONE implementation shared
+ * by `enrich-railway-europe.ts` and every `enrich-railway-{cc}.ts`, never 17 copies.
  */
 
 import { createReadStream, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createInterface } from 'node:readline'
-import { latLngToCell } from 'h3-js'
+import { latLngToCell, gridDisk } from 'h3-js'
 import { pointToSegmentDist } from './spatial.js'
+import type { RailRow, RailTrains } from './railways-arrow.js'
 
 // ── GTFS route_type families ──
 
@@ -68,6 +75,30 @@ export interface StopTrainCount {
   trains_freight: number
 }
 
+/** Sum passenger departures of stops at the same rounded location (~11 m) + family
+ *  into one row — merges platforms of one station AND the same physical stop
+ *  appearing in several feeds/subfeeds of a nested feed (au-vic's Southern Cross
+ *  carries V/Line + the interstate service under one stop_id in feeds 1 and 10 —
+ *  /gg Codex confirmed they would otherwise not sum, since the downstream picks
+ *  the single nearest stop per segment, not their total). Distinct platforms keep
+ *  distinct coords, so cross-track counts are NOT over-summed. Freight is left at
+ *  the first entry's value, unmerged — GTFS rarely carries freight service, so
+ *  this is negligible in practice. Generic over `S` so callers whose
+ *  `StopTrainCount`-shaped type adds an extra family (ae's 'metro') still get
+ *  the ONE shared implementation. */
+export function dedupeStopsByLocation<S extends { lat: number; lon: number; family: string; trains_passenger: number }>(
+  stops: readonly S[],
+): S[] {
+  const byLoc = new Map<string, S>()
+  for (const sc of stops) {
+    const key = `${sc.lat.toFixed(4)}_${sc.lon.toFixed(4)}_${sc.family}`
+    const existing = byLoc.get(key)
+    if (existing) existing.trains_passenger += sc.trains_passenger
+    else byLoc.set(key, { ...sc })
+  }
+  return [...byLoc.values()]
+}
+
 // ── Stop↔segment proximity join ──
 
 /** Nearest GTFS stop within `radiusM` of a railway row's segment, looked up in the
@@ -101,6 +132,65 @@ export function nearestGridStop<S extends { lat: number; lon: number }>(
     }
   }
   return best
+}
+
+/** Tram/light-rail `extraMatch` fallback arm for `enrichRailwaysByGraphWalk`
+ *  (2026-07-16 Phase 4 hoist from `enrich-railway-europe.ts`) — the pre-Phase-4
+ *  `nearestGridStop` 500 m join, UNCHANGED for this family (heavy rail moved
+ *  to the graph walk; tram stop spacing is well under the radius, so banding
+ *  was never a tram bug — plan Key decisions: "Trams keep the 500 m stop-join
+ *  v1"). Builds a per-hex grid from that hex AND its k=1 ring (`gridDisk`, 7
+ *  hexes total, origin included) so a tram stop sitting just over a hex
+ *  boundary from the segment querying it is still found — a per-hex-only grid
+ *  missed that case. Memoized per hexId (rebuilt only when hexId CHANGES from
+ *  the previous call) since `enrichRailwaysByGraphWalk` processes every row of
+ *  one hex's railways.arrow together before moving to the next — the ring
+ *  merge is paid once per hex, not once per row.
+ *
+ *  ONE implementation shared by `enrich-railway-europe.ts` and every national
+ *  `enrich-railway-{cc}.ts` enricher — never 17 copies. `sourceId` is the
+ *  caller's own source id to stamp on an accepted match (each national
+ *  enricher owns its own id; europe's is the shared `SOURCE_ID_GLOBAL_GTFS_TRANSIT`).
+ *
+ *  FAMILY FILTER IS INTERNAL (2026-07-16 review fix): only stops whose own
+ *  `family === 'tram'` ever enter the grid — enforced HERE, not left to the
+ *  caller. A caller handing over an unfiltered merged list (TH's legacy
+ *  3-family cache: 76 tram + 184 rail + 107 metro) used to let a heavy-rail
+ *  stop become the nearest match for a light-rail row (4 Suvarnabhumi APM
+ *  rows at 190 ARL trains/day, verified on live Arrow data). Pre-filtering
+ *  at the call site remains harmless but is no longer load-bearing. */
+export function buildTramExtraMatch<S extends { lat: number; lon: number; h3r4: string; family: string; trains_passenger: number; trains_freight: number }>(
+  tramStops: readonly S[],
+  sourceId: number,
+): (row: RailRow, i: number, hexId: string) => RailTrains | null {
+  const stopsByHex = new Map<string, S[]>()
+  for (const sc of tramStops) {
+    if (sc.family !== 'tram') continue // heavy-rail/metro stop records never join tram/light-rail track
+    const arr = stopsByHex.get(sc.h3r4)
+    if (arr) arr.push(sc); else stopsByHex.set(sc.h3r4, [sc])
+  }
+
+  let cachedHexId: string | null = null
+  let cachedGrid: Map<string, S[]> = new Map()
+
+  return (row, _i, hexId) => {
+    if (row.railType !== 1 && row.railType !== 2) return null // heavy rail is walk-only, other families never match
+    if (hexId !== cachedHexId) {
+      cachedHexId = hexId
+      const grid = new Map<string, S[]>()
+      for (const nb of gridDisk(hexId, 1)) {
+        for (const sc of stopsByHex.get(nb) ?? []) {
+          const key = `${Math.floor(sc.lat * 100)}_${Math.floor(sc.lon * 100)}`
+          const cell = grid.get(key)
+          if (cell) cell.push(sc); else grid.set(key, [sc])
+        }
+      }
+      cachedGrid = grid
+    }
+    const bestStop = nearestGridStop(cachedGrid, row)
+    if (!bestStop) return null
+    return { pax: bestStop.trains_passenger, frt: bestStop.trains_freight, sourceId }
+  }
 }
 
 // ── CSV parsing ──
@@ -248,12 +338,83 @@ export interface ActiveTripFamiliesResult<F extends string> {
  * busiest-Wednesday sampler) in place of the default midpoint-Wednesday heuristic
  * (`findTargetWednesday`).
  */
+/** routes.txt rows, failing LOUD on a malformed file (2026-07-16 review fix,
+ *  item 3): an unreadable file (propagated stream error), a header-only/empty
+ *  file, or a header without `route_type` is a PARSE FAILURE and must never
+ *  yield the same empty result a genuine tram-only/bus-only feed yields —
+ *  callers treat a throw as feed-not-loaded (retract-unsafe), never as
+ *  "this feed legitimately has no rail". Shared by
+ *  `computeActiveTripFamiliesForFeed` and `declaredRouteFamiliesForFeed` so
+ *  the two can never disagree on what counts as malformed. */
+async function parseRoutesTxtOrThrow(extractDir: string): Promise<Record<string, string>[]> {
+  const path = resolve(extractDir, 'routes.txt')
+  const rows = await parseCsvStream(path)
+  if (rows.length === 0) {
+    throw new Error(`routes.txt parse failure (${path}): header-only or empty — malformed feed, not a rail-less one`)
+  }
+  if (!('route_type' in rows[0])) {
+    throw new Error(`routes.txt parse failure (${path}): no route_type column — malformed feed, not a rail-less one`)
+  }
+  return rows
+}
+
+/** The set of families this feed's routes.txt DECLARES under `familyOf` —
+ *  the per-feed evidence base for BIDIRECTIONAL retract completeness
+ *  (2026-07-16 review fix, item 4): a feed is complete only when EVERY family
+ *  it declares parsed non-empty (declares 'rail' → station pairs > 0;
+ *  declares 'tram' → tram stops > 0; declares neither, e.g. a bus-only feed
+ *  like PT's Carris or MX's Toluca, → exempt from both, so a legitimately
+ *  empty feed can no longer pin retractSafe false forever). Data-driven from
+ *  the extract itself — replaces every hand-maintained per-country
+ *  "which feeds carry heavy rail" set, which is exactly where CA's West Coast
+ *  Express (TransLink route_type 2) got missed. Throws on malformed routes.txt
+ *  (see `parseRoutesTxtOrThrow`).
+ *
+ *  `familyOf` must be the SAME classification the caller parses with — a feed
+ *  whose pair contribution is deliberately narrowed (PL's warsaw-ztm) passes
+ *  its narrowed classifier here too, so the narrowed-away family is never
+ *  demanded back as completeness evidence. */
+export async function declaredRouteFamiliesForFeed<F extends string>(
+  extractDir: string,
+  familyOf: (routeType: number) => F | null,
+): Promise<Set<F>> {
+  const routesRaw = await parseRoutesTxtOrThrow(extractDir)
+  const declared = new Set<F>()
+  for (const r of routesRaw) {
+    const fam = familyOf(parseInt(r['route_type'] || '3'))
+    if (fam) declared.add(fam)
+  }
+  return declared
+}
+
+/** '' when this feed's parsed outputs satisfy every family its routes.txt
+ *  declares; otherwise the per-feed detail for the retract-skipped log line.
+ *  `tramStopCount === null` = per-feed tram counts are not measurable this
+ *  run (the merged v2 stop cache was served, which cannot attribute stops per
+ *  feed) — the tram direction is then vouched for by the cache's OWN recorded
+ *  provenance (whose recording rule is bidirectional since this fix) and only
+ *  re-verified on rebuild. */
+export function describeIncompleteFamilies(
+  feedId: string,
+  declared: ReadonlySet<string>,
+  pairCount: number,
+  tramStopCount: number | null,
+): string {
+  const parts: string[] = []
+  if (declared.has('rail') && pairCount === 0) parts.push('declares rail but 0 station pairs parsed')
+  if (tramStopCount !== null && declared.has('tram') && tramStopCount === 0) parts.push('declares tram but 0 tram stops parsed')
+  return parts.length === 0 ? '' : `${feedId}: ${parts.join('; ')}`
+}
+
 export async function computeActiveTripFamiliesForFeed<F extends string>(
   extractDir: string,
   familyOf: (routeType: number) => F | null,
   dateSelection?: (calendarRows: Record<string, string>[]) => string,
 ): Promise<ActiveTripFamiliesResult<F>> {
-  const routesRaw = await parseCsvStream(resolve(extractDir, 'routes.txt'))
+  // Malformed routes.txt THROWS here (2026-07-16 review fix, item 3) — both the
+  // pair parser and the per-stop counter ride this one reader, so neither can
+  // mistake a broken feed for a legitimately rail-less one.
+  const routesRaw = await parseRoutesTxtOrThrow(extractDir)
   const routeFam = new Map<string, F>()
   for (const r of routesRaw) {
     const fam = familyOf(parseInt(r['route_type'] || '3'))
@@ -482,13 +643,20 @@ export async function computeStopFrequenciesForFeed(
   feed: { id: string },
   extractDir: string,
   bbox: readonly [number, number, number, number],
+  // Route-type -> family classifier; defaults to the shared `routeFamily`
+  // (metro groups with tram). AE/TH pass a metro-EXCLUDING override here
+  // (2026-07-16 review fix, item 1): their pre-migration behavior IGNORED
+  // metro-family stops on purpose — an interchange within 500 m does not put
+  // metro trains on the tram/light-rail track — and the default's metro→tram
+  // grouping would have silently revived those counts on the next rebuild.
+  familyOf: (routeType: number) => 'rail' | 'tram' | null = routeFamily,
 ): Promise<StopTrainCount[]> {
   console.log(`\n  [${feed.id}] Parsing GTFS files...`)
   const startTime = Date.now()
 
   console.log(`  Reading routes.txt, calendar, trips.txt...`)
   const { tripFam, targetDate, calendarPresent, activeServiceIds } =
-    await computeActiveTripFamiliesForFeed(extractDir, routeFamily)
+    await computeActiveTripFamiliesForFeed(extractDir, familyOf)
   if (calendarPresent) {
     console.log(`  Target date: ${targetDate ? formatDate(targetDate) : '(unresolved)'}`)
   } else {

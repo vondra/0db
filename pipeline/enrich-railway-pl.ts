@@ -1,5 +1,9 @@
 /**
- * Enrich PL railways.arrow with train frequencies from Polish GTFS feeds.
+ * Enrich PL railways.arrow with train frequencies from Polish GTFS feeds —
+ * migrated onto the shared graph-walk driver (2026-07-16 Phase 4 point 2
+ * rewrite, plan `pro-e-sd-zaj-m-wobbly-liskov`, following
+ * `enrich-railway-dk.ts`'s pattern extended to multiple feeds like
+ * `enrich-railway-europe.ts`).
  *
  * Sources:
  *   mkuran.pl/gtfs/polish_trains.zip — unified daily-updated feed for all Polish
@@ -10,10 +14,63 @@
  *   mkuran.pl/gtfs/gzm.zip — Górnośląska Metropolia (Silesian tram + bus)
  *   mkuran.pl/gtfs/wkd.zip — Warszawska Kolej Dojazdowa (suburban)
  *
+ * MIRROR-PUBLISH OVERLAP (confirmed 2026-07-16 from the cached extracts, the
+ * europe.ts fr-idf scenario repeated): `warsaw-ztm`'s routes.txt carries FIVE
+ * route_type=2 routes — S1 Otwock–Pruszków, S2/S3/S4/S40 — that are byte-for-byte
+ * the SAME SKM Warszawa lines `polish-trains` already carries under its own
+ * `SKM` agency (route_ids `SKM_S1..SKM_S40`, identical termini). Warszawa's
+ * WTP/ZTM feed republishes SKM's timetable for its own integrated-ticket
+ * planner; `polish-trains` is the national authority for SKM (module doc
+ * already lists "SKM Warszawa" among its aggregated operators). Counting both
+ * would double-stamp every SKM Warszawa corridor. Fix (mirrors fr-idf): narrow
+ * `warsaw-ztm`'s heavy-rail PAIRS contribution to null — its real payload for
+ * this pipeline is tram (0) + metro (1), which the pairs mechanism never
+ * counts anyway (`RAIL_TYPES`-only default), so this only suppresses the 5
+ * duplicate SKM routes, never trams/metro (those stay on the per-stop
+ * `nearestGridStop` join below, unaffected by `pairsFamilyOf`). `wkd-warszawa`
+ * (WKD, a separate historic narrow corridor Warszawa Śródmieście–Grodzisk
+ * Mazowiecki, not part of PKP infrastructure and NOT listed among
+ * `polish-trains`' aggregated agencies) and `krakow-tram`/`silesia-gzm`
+ * (tram+bus only, zero RAIL_TYPES routes) carry no such overlap.
+ *
+ * HEAVY RAIL (rail_type 0) runs on `lib/rail-walk-enrich.ts`:
+ * `computeStopPairFrequenciesForFeed` (lib/gtfs-stop-pairs.ts) turns
+ * stop_times.txt into station-PAIR frequencies per feed, concatenated (every
+ * feed contributes through the walk driver's own canonical accumulator) and
+ * walked along the shortest path by `enrichRailwaysByGraphWalk`. TRAM/light-rail
+ * (rail_type 1/2 — Warszawa Metro + trams, Kraków/Silesia trams) keeps the
+ * pre-Phase-4 `nearestGridStop` 500 m stop-join (`buildTramExtraMatch`, hoisted
+ * to `lib/gtfs-enrich-core.ts` so this file shares the SAME implementation
+ * every other national enricher uses), wired in as the walk driver's
+ * `extraMatch` fallback arm.
+ *
+ * PL's source id is NATIONALLY OWNED (unlike europe's shared
+ * `SOURCE_ID_GLOBAL_GTFS_TRANSIT`): `bleedGate` is set to the SAME country
+ * gate as `countryGate` — a row wholly outside Poland is disownable on
+ * geometry alone, since this id never legitimately stamps outside PL. No
+ * predecessor source id survives from the pre-2026-07-10 class-default
+ * fallback design (PL only ever used ONE id): the driver's own generic retract
+ * (disown a previously-owned row the walk/tram-join no longer covers, given
+ * `retractSafe`) already subsumes the old OLD_FALLBACK exact-tuple check, so
+ * that class-default table is deleted outright rather than preserved via
+ * `sourceIds` composition.
+ *
+ * WHY (unchanged): segments the feeds don't reach STAY at source_id=0 on
+ * purpose — the engine default table
+ * (engine/noise-compute/src/emission/railway.rs::default_traffic) owns
+ * unknowns; PL is not silent-residual-capable (that exists only for CZ's
+ * timetable, owner decision 2026-07-11 option b).
+ *
  * Usage:
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-pl.ts
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-pl.ts --force-download
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-pl.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-pl.ts --stamp-only
+ *
+ * --stamp-only: Phase-3/4 Step A rollout control (same semantics as
+ * enrich-railway-europe.ts) — enableDestructive=false: the run still
+ * walk-stamps heavy-rail counts AND divisors and still runs the tram
+ * stop-join, but NO retract and NO country-bleed heal fire.
  */
 
 import { writeFileSync, existsSync, mkdirSync } from 'node:fs'
@@ -21,13 +78,15 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { execSync } from 'node:child_process'
 import { SOURCE_ID_PL_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
-import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
-import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
-import { iterateCountryHexes } from './lib/roads-arrow.js'
+import { makeCountryGate } from './lib/country-polygon.js'
+import { enrichRailwaysByGraphWalk } from './lib/rail-walk-enrich.js'
+import type { RailStationPairCount } from './lib/rail-graph.js'
+import { computeStopPairFrequenciesForFeed } from './lib/gtfs-stop-pairs.js'
 import {
-  computeStopFrequenciesForFeed, nearestGridStop, describeIncompleteFeeds,
-  logRetractSkippedIncompleteInputs, readMergedStopCache, writeMergedStopCache,
-  type StopTrainCount,
+  computeStopFrequenciesForFeed, dedupeStopsByLocation, buildTramExtraMatch, routeFamily,
+  declaredRouteFamiliesForFeed, describeIncompleteFamilies,
+  describeIncompleteFeeds, logRetractSkippedIncompleteInputs, readMergedStopCache, writeMergedStopCache,
+  GTFS_BORDER_MARGIN_DEG, RAIL_TYPES, type StopTrainCount,
 } from './lib/gtfs-enrich-core.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
@@ -37,11 +96,14 @@ const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/pl`)
 // Versioned filename: the family-aware schema added a mandatory `family` field, so a
 // pre-migration cache must NOT be reused (a family-less stop would fall into tramGrid →
-// heavy rail loses its count, trams re-inherit it). A new name forces a clean rebuild.
+// heavy rail loses its count, trams re-inherit it). Kept UNCHANGED across this migration
+// (manifest note): this remains the RAIL_CACHED_DOWNLOAD marker file chain/manifest.ts
+// checks — the pair parser adds its OWN per-extractDir cache alongside it, never replacing it.
 const CACHE_FREQUENCIES = resolve(CACHE_DIR, 'gtfs-family-frequencies.json')
 
 const forceDownload = process.argv.includes('--force-download')
 const enrichOnly = process.argv.includes('--enrich-only')
+const stampOnly = process.argv.includes('--stamp-only')
 
 // Poland multi-feed: unified national trains + Warszawa tram/metro + Kraków tram +
 // Silesia tram + WKD suburban
@@ -49,6 +111,18 @@ interface FeedConfig {
   id: string
   name: string
   urls: string[]
+  /** Narrow this feed's heavy-rail PAIRS contribution — omit for the default
+   *  RAIL_TYPES-only classifier. `warsaw-ztm` sets this to always-null: its 5
+   *  route_type=2 routes mirror-publish SKM Warszawa lines `polish-trains`
+   *  already carries (see module doc) — narrowing prevents double-stamping
+   *  those corridors, mirroring europe.ts's fr-idf narrowing. The
+   *  declared-families completeness check (`declaredRouteFamiliesForFeed`)
+   *  uses this SAME narrowed classifier for its rail direction, so a narrowed
+   *  feed never declares 'rail' and is exempt from the "pairs parsed
+   *  non-empty" requirement by design, not by failure — while its tram/metro
+   *  routes still declare 'tram' via the shared `routeFamily`, keeping its
+   *  tram stops demanded. */
+  pairsFamilyOf?: (routeType: number) => 'rail' | null
 }
 
 const FEEDS: FeedConfig[] = [
@@ -65,6 +139,9 @@ const FEEDS: FeedConfig[] = [
     urls: [
       'https://mkuran.pl/gtfs/warsaw.zip',
     ],
+    // See module doc "MIRROR-PUBLISH OVERLAP": this feed's route_type=2 rows
+    // ARE SKM Warszawa, already counted via polish-trains.
+    pairsFamilyOf: () => null,
   },
   {
     id: 'krakow-tram',
@@ -92,7 +169,7 @@ const FEEDS: FeedConfig[] = [
 // Poland mainland bounding box
 const PL_BBOX: [number, number, number, number] = [49.0, 14.0, 55.0, 24.5]
 
-// ── Step 1: Download GTFS feeds ──
+// ── Step 1: Download GTFS feeds (UNCHANGED — per-country cache/download quirks) ──
 
 /**
  * Download all configured GTFS feeds and return a list of extraction directories.
@@ -173,163 +250,26 @@ async function downloadAllGtfs(): Promise<Array<{ feed: FeedConfig; dir: string 
   return results
 }
 
-/** Merge stop counts from multiple feeds, deduplicating by coordinates. */
-function mergeStopCounts(perFeedCounts: StopTrainCount[][]): StopTrainCount[] {
-  const mergeMap = new Map<string, StopTrainCount>()
-  for (const counts of perFeedCounts) {
-    for (const sc of counts) {
-      const key = `${sc.lat.toFixed(4)}_${sc.lon.toFixed(4)}_${sc.family}`
-      const existing = mergeMap.get(key)
-      if (existing) {
-        existing.trains_passenger += sc.trains_passenger
-        existing.trains_freight += sc.trains_freight
-      } else {
-        mergeMap.set(key, { ...sc })
-      }
-    }
-  }
-  const merged = [...mergeMap.values()]
+// ── Step 2/3: pair the padded country bbox with the graph-walk driver ──
 
-  const paxCounts = merged.map(s => s.trains_passenger).sort((a, b) => b - a)
-  if (paxCounts.length > 0) {
-    console.log(`\n  Merged: ${merged.length} unique stops`)
-    console.log(`  Train frequency: max=${paxCounts[0]}, median=${paxCounts[Math.floor(paxCounts.length / 2)]}, min=${paxCounts[paxCounts.length - 1]}`)
-    const top5 = [...merged].sort((a, b) => b.trains_passenger - a.trains_passenger).slice(0, 5)
-    console.log(`  Busiest stops:`)
-    for (const s of top5) {
-      console.log(`    ${s.trains_passenger} trains/day: ${s.name} (${s.lat.toFixed(4)}, ${s.lon.toFixed(4)})`)
-    }
-  }
+/** Same 0.5° margin as `loadStopsWithCoords`'s GTFS geometry envelope (item 6,
+ *  gtfs-enrich-core.ts) — the graph-walk scope must reach every hex a
+ *  cross-border stop's pair could land in, or a cross-border through-train's
+ *  foreign endpoint never snaps and the whole pair quarantines for no real
+ *  reason. Stop/pair PARSING itself (`computeStopFrequenciesForFeed`,
+ *  `computeStopPairFrequenciesForFeed`) gets the UNPADDED `PL_BBOX` — the
+ *  margin is applied internally by `loadStopsWithCoords`. */
+const GRAPH_BBOX: [number, number, number, number] = [
+  PL_BBOX[0] - GTFS_BORDER_MARGIN_DEG, PL_BBOX[1] - GTFS_BORDER_MARGIN_DEG,
+  PL_BBOX[2] + GTFS_BORDER_MARGIN_DEG, PL_BBOX[3] + GTFS_BORDER_MARGIN_DEG,
+]
 
-  return merged
-}
-
-// ── Step 3: Match stops to railway segments and write Arrow ──
-
-// Retract signature for stamps the pre-2026-07-10 fallback design wrote: the deleted
-// class-default table, verbatim. A row still owned by MY_SOURCE_ID whose counts exactly
-// equal its class tuple was filled by that fallback, not measured — exact-tuple + family
-// ambiguity is negligible (/tmp/quietmap-v4/gtfs-rail-misjoin.md §3), and the retract's
-// `when` additionally re-runs today's stop join, so a live-covered row is re-stamped by
-// `match`, never disowned. No-match rows now return null: source_id stays 0 and the
-// ENGINE default table (engine/noise-compute/src/emission/railway.rs::default_traffic)
-// owns the "we don't know" case. DELETE this retract (and OLD_FALLBACK) after the world
-// rail repaint confirms 0 retractions.
-// rail_type: 0=rail 1=tram 2=light_rail 3=narrow_gauge 4=funicular; usage: 0=main 1=branch 2=industrial
-const OLD_FALLBACK = (railType: number, usage: number): [pax: number, frt: number] => {
-  if (railType === 2) return [250, 0]
-  if (railType === 1) return [200, 0]
-  if (railType === 3) return [30, 0]
-  if (railType === 4) return [30, 0]
-  if (usage === 1) return [80, 0]
-  if (usage === 2) return [0, 8]
-  return [50, 10]
-}
-const wasOldFallbackStamp = (row: RailRow): boolean => {
-  const [pax, frt] = OLD_FALLBACK(row.railType, row.usage)
-  return row.existingPax === pax && row.existingFrt === frt
-}
-
-async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean): Promise<void> {
-  // COUNTRY GATE (#26C): PKP feeds carry international through-services, so the
-  // raw stop list contains Praha, Ostrava, Wien… — joining those stamped 11,856 km
-  // of CZ track under the PL id (and the same-rank id tiebreak let it beat CZ's
-  // own national source). A national feed only speaks for its own country's
-  // network: foreign stops are dropped BEFORE any grid is built.
-  const inPl = makeCountryGate('PL')
-  const rawCount = allStopCounts.length
-  allStopCounts = allStopCounts.filter((sc) => inPl(sc.lat, sc.lon))
-  if (rawCount !== allStopCounts.length) {
-    console.log(`  country gate: ${rawCount - allStopCounts.length} foreign stops dropped (international through-services)`)
-  }
-  // Group stops by H3R4 hex
-  const stopsByHex = new Map<string, StopTrainCount[]>()
-  for (const sc of allStopCounts) {
-    if (!stopsByHex.has(sc.h3r4)) stopsByHex.set(sc.h3r4, [])
-    stopsByHex.get(sc.h3r4)!.push(sc)
-  }
-  console.log(`  Stops span ${stopsByHex.size} H3R4 hexes`)
-
-  // Scan ALL Polish hexes (not just ones with stops) so class defaults reach
-  // every track — a tram that no longer inherits a train count gets its own value.
-  const hexDirs = iterateCountryHexes(H3R4_DIR, PL_BBOX, 'railways.arrow')
-  console.log(`  PL hexes with railways.arrow: ${hexDirs.length}`)
-
-  let totalRails = 0, totalStamped = 0, totalRetracted = 0, skippedService = 0, hexesUpdated = 0
-  const startTime = Date.now()
-
-  for (let hi = 0; hi < hexDirs.length; hi++) {
-    const hexId = hexDirs[hi]
-    // Build this hex's two family grids once (0.01° ≈ 1 km cells).
-    const railGrid = new Map<string, StopTrainCount[]>()
-    const tramGrid = new Map<string, StopTrainCount[]>()
-    for (const sc of stopsByHex.get(hexId) || []) {
-      const key = `${Math.floor(sc.lat * 100)}_${Math.floor(sc.lon * 100)}`
-      const grid = sc.family === 'rail' ? railGrid : tramGrid
-      if (!grid.has(key)) grid.set(key, [])
-      grid.get(key)!.push(sc)
-    }
-
-    const r = await writeRailTrains(
-      resolve(H3R4_DIR, hexId, 'railways.arrow'),
-      (row) => {
-        // Family gate: heavy rail (rail_type 0) → train stops; tram/light_rail
-        // (rail_type 1/2) → tram/metro stops. Cross-family matches can't happen.
-        const grid = row.railType === 0 ? railGrid : (row.railType === 1 || row.railType === 2) ? tramGrid : null
-        const bestStop = grid ? nearestGridStop(grid, row) : null
-        if (bestStop) {
-          return { pax: bestStop.trains_passenger, frt: bestStop.trains_freight, sourceId: MY_SOURCE_ID }
-        }
-        // No GTFS match (or unhandled rail_type): return null — the row stays/goes
-        // source_id=0 and the ENGINE default table (emission/railway.rs::default_traffic)
-        // owns the unknown. Never stamp a guess under MY_SOURCE_ID.
-        return null
-      },
-      undefined,
-      // CRITICAL-1b: retract only over a provably complete snapshot (retractSafe) —
-      // with a silently skipped feed, "no stop covers this row" is an input artifact,
-      // not evidence, and would disown REAL stamps.
-      retractSafe ? {
-        sourceId: MY_SOURCE_ID,
-        // Disown a legacy pre-2026-07-10 class-default stamp ONLY when today's join no
-        // longer reaches the row (same family routing + 500 m grid join as `match`) —
-        // a row a live stop still covers is re-stamped with the real count instead.
-        when: (row) => {
-          // Country-bleed disown (#26C): ANY owned row physically wholly outside PL (start+mid+end — genuine border-straddlers stay ours; shared R9 predicate) is
-          // foreign track this feed must not speak for — even when its count was
-          // a real PKP through-train figure, ownership belongs to the local
-          // country's own timetable (CZ re-stamps from CZPTT on its next run).
-          if (segmentWhollyOutside(inPl, row.midLat, row.midLon, row.startLat, row.startLon, row.endLat, row.endLon)) return true
-          if (!wasOldFallbackStamp(row)) return false
-          const grid = row.railType === 0 ? railGrid : (row.railType === 1 || row.railType === 2) ? tramGrid : null
-          return !grid || nearestGridStop(grid, row) === null
-        },
-      } : undefined,
-      inPl, // #31.7 central country gate — see writeRailTrains
-    )
-    totalRails += r.rows
-    totalStamped += r.matched
-    totalRetracted += r.retracted
-    skippedService += r.skippedService
-    if (r.updated) hexesUpdated++
-
-    if (hi % 200 === 0 || hi === hexDirs.length - 1) {
-      console.log(`  [${((Date.now() - startTime) / 1000).toFixed(0)}s] ${hi + 1}/${hexDirs.length} hexes, ${hexesUpdated} updated, ${totalStamped.toLocaleString()} GTFS-stamped, ${totalRetracted.toLocaleString()} retracted`)
-    }
-  }
-
-  console.log(`\n=== Results ===`)
-  console.log(`  Railway segments scanned:  ${totalRails.toLocaleString()}`)
-  console.log(`  Skipped service tracks:    ${skippedService.toLocaleString()}`)
-  console.log(`  Matched by GTFS:           ${totalStamped.toLocaleString()}`)
-  console.log(`  Retracted legacy defaults: ${totalRetracted.toLocaleString()}`)
-  console.log(`  Hexes updated:             ${hexesUpdated}/${hexDirs.length}`)
-}
+const defaultPairFamilyOf = (routeType: number): 'rail' | null => (RAIL_TYPES.has(routeType) ? 'rail' : null)
 
 // ── Main ──
 
 async function main() {
-  console.log(`=== PL Railway Enrichment — Multi-feed GTFS (${YEAR}) ===\n`)
+  console.log(`=== PL Railway Enrichment — Multi-feed GTFS (${YEAR}, Phase 4: graph-walk) ===\n`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
   console.log(`  Cache: ${CACHE_DIR}\n`)
 
@@ -338,55 +278,162 @@ async function main() {
     process.exit(1)
   }
 
-  // CRITICAL-1b (/gg Codex): a retract may only run over a PROVABLY COMPLETE input
-  // snapshot — all five feeds loaded non-empty THIS run (or a v2 cache that
-  // recorded exactly that). downloadAllGtfs tolerates per-feed failure so enrichment
-  // can still stamp from the rest, but a missing feed makes the retract's join
-  // corroboration read "no coverage" over that feed's region and disown REAL stamps.
-  // Only the retract is gated — never the stamping.
-  let merged: StopTrainCount[]
-  let retractUnsafeDetail: string
-  if (!forceDownload && existsSync(CACHE_FREQUENCIES)) {
+  // downloadAllGtfs is always needed — even a merged-stop-cache hit below still
+  // needs a real extractDir per feed for the pair parser's own per-extractDir cache.
+  const feeds = await downloadAllGtfs()
+  const stopCacheHit = !forceDownload && existsSync(CACHE_FREQUENCIES)
+
+  // ── Per-feed parse: declared families + heavy-rail STATION PAIRS (+ stops on
+  //    cache miss). BIDIRECTIONAL completeness (2026-07-16 review item 4):
+  //    every family a feed's own routes.txt declares must have parsed non-empty
+  //    (declares rail → pairs>0, declares tram → tramStops>0; declares neither
+  //    → exempt), evaluated by the shared `describeIncompleteFamilies`. A
+  //    malformed routes.txt THROWS (item 3, `declaredRouteFamiliesForFeed`) and
+  //    is recorded as a PARSE FAILURE — never as "legitimately rail-less" (the
+  //    old file-local feedDeclaresHeavyRail returned false for a header-only
+  //    file, indistinguishable from tram-only; deleted for the shared
+  //    mechanism). Pairs are re-validated every run (their own per-extractDir
+  //    cache in computeStopPairFrequenciesForFeed is fingerprinted against the
+  //    GTFS inputs, item 2 — NOT recomputed from stop_times each run, the old
+  //    comment here claiming "always computed fresh" was wrong); the tram
+  //    direction is checked live on stop-cache miss and vouched by the v2
+  //    cache's recorded provenance on a hit (recording rule below is itself
+  //    bidirectional, so a recorded feed means BOTH directions held at write).
+  //    `warsaw-ztm` is narrowed to null (see module doc SKM mirror-publish
+  //    overlap); the other 4 feeds use the default RAIL_TYPES-only classifier
+  //    and are genuinely disjoint networks (national trains vs Kraków tram vs
+  //    Silesia tram vs WKD's own historic corridor, not part of
+  //    polish-trains' aggregated agencies) — the walk's own canonical
+  //    accumulator sums by station-pair key.
+  const perFeedPairs: RailStationPairCount[][] = []
+  const perFeedCounts: StopTrainCount[][] = []
+  const completeFeedIds: string[] = []
+  const feedIssues: string[] = []
+  for (const { feed, dir } of feeds) {
+    // COMBINED classifier for the declared-families check: the rail direction
+    // uses this feed's ACTUAL pair classifier (`pairsFamilyOf` — always-null
+    // for warsaw-ztm, so its narrowed-away SKM mirror routes are never
+    // demanded back as pair evidence), the tram direction the shared
+    // `routeFamily` the stop counter parses with (warsaw-ztm's tram/metro
+    // routes DO declare 'tram', so its tram stops are still required).
+    const pairFamilyOf = feed.pairsFamilyOf ?? defaultPairFamilyOf
+    const declaredFamilyOf = (rt: number): 'rail' | 'tram' | null =>
+      pairFamilyOf(rt) === 'rail' ? 'rail' : routeFamily(rt) === 'tram' ? 'tram' : null
+    try {
+      const declared = await declaredRouteFamiliesForFeed(dir, declaredFamilyOf)
+      const { pairs } = await computeStopPairFrequenciesForFeed(dir, {
+        bbox: PL_BBOX,
+        familyOf: pairFamilyOf,
+        optionsKey: feed.pairsFamilyOf ? `pl-${feed.id}-narrowed` : 'pl-default',
+      })
+      perFeedPairs.push(pairs)
+      let tramN: number | null = null
+      if (!stopCacheHit) {
+        const counts = await computeStopFrequenciesForFeed(feed, dir, PL_BBOX)
+        perFeedCounts.push(counts)
+        tramN = counts.filter(s => s.family === 'tram').length
+      }
+      const issue = describeIncompleteFamilies(feed.id, declared, pairs.length, tramN)
+      if (issue) feedIssues.push(issue)
+      else completeFeedIds.push(feed.id)
+      console.log(`  [${feed.id}] ${pairs.length} heavy-rail station pairs; declares [${[...declared].sort().join('+') || 'no rail family'}]`)
+    } catch (err: any) {
+      console.error(`  [${feed.id}] PARSE FAILED: ${err.message}`)
+      feedIssues.push(`${feed.id}: parse failure — ${err.message}`)
+    }
+  }
+  const pairs = perFeedPairs.flat()
+  // Feeds not present at all this run (download failed / --enrich-only with no
+  // cached extract).
+  const missingDetail = describeIncompleteFeeds(FEEDS.map(f => f.id), feeds.map(({ feed }) => feed.id))
+
+  // ── Tram stops: the merged v2 cache (the pre-existing download marker;
+  //    unchanged path) or this run's own per-feed parses. ──
+  let mergedStops: StopTrainCount[]
+  let stopsUnsafeDetail: string
+  if (stopCacheHit) {
     console.log(`  Using cached merged stop frequencies: ${CACHE_FREQUENCIES}`)
     const cached = readMergedStopCache<StopTrainCount>(CACHE_FREQUENCIES)
-    merged = cached.stops
-    retractUnsafeDetail = cached.feedsLoadedNonEmpty === null
+    mergedStops = cached.stops
+    stopsUnsafeDetail = cached.feedsLoadedNonEmpty === null
       ? `legacy merged cache without feed provenance — delete ${CACHE_FREQUENCIES} to rebuild from the cached feed extracts`
       : describeIncompleteFeeds(FEEDS.map(f => f.id), cached.feedsLoadedNonEmpty)
-    console.log(`  ${merged.length} stops in cache`)
+    console.log(`  ${mergedStops.length} stops in cache`)
   } else {
-    const feeds = await downloadAllGtfs()
-
-    const perFeedCounts: StopTrainCount[][] = []
-    for (const { feed, dir } of feeds) {
-      const counts = await computeStopFrequenciesForFeed(feed, dir, PL_BBOX)
-      perFeedCounts.push(counts)
-    }
-
-    merged = mergeStopCounts(perFeedCounts)
-
-    const feedsLoadedNonEmpty = feeds.filter((_, i) => perFeedCounts[i].length > 0).map(({ feed }) => feed.id)
-    retractUnsafeDetail = describeIncompleteFeeds(FEEDS.map(f => f.id), feedsLoadedNonEmpty)
-    if (retractUnsafeDetail === '') {
-      writeMergedStopCache(CACHE_FREQUENCIES, feedsLoadedNonEmpty, merged)
+    mergedStops = dedupeStopsByLocation(perFeedCounts.flat())
+    stopsUnsafeDetail = '' // live per-feed evaluation already sits in feedIssues
+    if (feedIssues.length === 0 && missingDetail === '') {
+      // Recording rule (item 4): a feed lands in the cache's provenance only
+      // when it passed the FULL bidirectional check this run — a later
+      // cache-served run inherits completeness both ways, not any-family.
+      writeMergedStopCache(CACHE_FREQUENCIES, completeFeedIds, mergedStops)
       console.log(`  Cached merged frequencies to ${CACHE_FREQUENCIES}`)
     } else {
       // Never persist a partial snapshot: a poisoned cache would silently starve
       // every later cache-served run (both enrichment and the retract evidence).
-      console.log(`  NOT caching partial merged snapshot (${retractUnsafeDetail})`)
+      console.log(`  NOT caching partial merged snapshot (${[...feedIssues, missingDetail].filter(Boolean).join('; ')})`)
     }
   }
+
+  // CRITICAL-1b (/gg Codex): a retract may only run over a PROVABLY COMPLETE
+  // snapshot for BOTH families every feed carries — neither direction may mask
+  // the other, since ONE retract object below covers every row regardless of
+  // family.
+  const retractUnsafeDetail = [missingDetail, ...feedIssues, stopsUnsafeDetail].filter(Boolean).join('; ')
   const retractSafe = retractUnsafeDetail === ''
   if (!retractSafe) logRetractSkippedIncompleteInputs(retractUnsafeDetail)
 
-  if (merged.length === 0) {
+  const tramStops = mergedStops.filter(s => s.family === 'tram')
+
+  if (pairs.length === 0 && tramStops.length === 0) {
     console.log(`\nNo GTFS data to enrich. Exiting.`)
     return
   }
 
-  console.log(`\n  Enriching railways.arrow files...`)
-  await enrichHexes(merged, retractSafe)
-  console.log(`\n=== Done ===`)
+  console.log(`\n  ${pairs.length} heavy-rail station pairs, ${tramStops.length} tram/light-rail stops`)
+
+  // COUNTRY GATE (#26C): PKP feeds carry international through-services, so a
+  // raw stop/pair list can reach Praha, Ostrava, Wien… — joining those would
+  // stamp a neighbour's track under this id (mechanism: the PL feed once
+  // stamped 11,856 km of CZ track, 7fac2349). A national feed only speaks for
+  // its own country's network. #31.7 central country gate — see
+  // writeRailTrains / rail-walk-enrich.ts.
+  const inPl = makeCountryGate('PL')
+
+  const stats = await enrichRailwaysByGraphWalk({
+    h3r4Dir: H3R4_DIR,
+    bbox: GRAPH_BBOX,
+    pairs,
+    sourceId: MY_SOURCE_ID,
+    countryGate: inPl,
+    // Nationally-owned id (unlike europe's shared SOURCE_ID_GLOBAL_GTFS_TRANSIT):
+    // the SAME gate doubles as the bleed arm — a row wholly outside Poland is
+    // disownable on geometry alone, since this id never legitimately stamps there.
+    bleedGate: inPl,
+    extraMatch: buildTramExtraMatch(tramStops, MY_SOURCE_ID),
+    // Single id — PL has no retired predecessor id to absorb. The pre-2026-07-10
+    // OLD_FALLBACK class-default retract is deleted outright (not preserved via
+    // sourceIds composition): the driver's own generic retract — disown a
+    // previously-owned row the walk/tram-join no longer covers, given
+    // retractSafe — already subsumes it and is strictly more correct (it
+    // re-evaluates real coverage every run instead of pattern-matching one
+    // frozen class-default tuple).
+    retract: { sourceIds: [MY_SOURCE_ID] },
+    retractSafe,
+    enableDestructive: !stampOnly,
+    // #26B: PL is NOT silent-capable (silentResidual omitted) — a
+    // quarantine-free row the walk never reaches simply stays at
+    // source_id=0 for the engine's own class default; only CZ's timetable
+    // evidence (owner decision option b) justifies a residual.
+    sidecar: {
+      scope: 'pl',
+      extractFingerprint: `pl-gtfs:${feeds.map(({ feed }) => feed.id).join('+')}`,
+      feeds: feeds.map(({ feed }) => feed.id),
+    },
+  })
+  console.log(`\n  walk stats: ${JSON.stringify(stats)}`)
+
+  console.log(`\n=== Done (${stampOnly ? 'stamp-only — Step A proof mode' : 'destructive ops enabled'}) ===`)
 }
 
 // Import-safe: run only when invoked directly — importing this file must never

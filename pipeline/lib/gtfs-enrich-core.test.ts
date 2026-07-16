@@ -5,7 +5,10 @@
  * the shared route_type → family classification every GTFS rail enricher routes
  * stops through, and the shared `computeActiveTripFamiliesForFeed` calendar logic
  * (routes + calendar + trips -> trip_id family map) used by both the per-stop
- * frequency counter and the station-pair parser (gtfs-stop-pairs.ts).
+ * frequency counter and the station-pair parser (gtfs-stop-pairs.ts). Also covers
+ * `dedupeStopsByLocation` + `buildTramExtraMatch` (2026-07-16 Phase 4 hoist from
+ * enrich-railway-europe.ts) — the ONE tram/light-rail join implementation every
+ * national enrich-railway-{cc}.ts enricher shares.
  *
  * Run: `cd pipeline && npx tsx --test lib/gtfs-enrich-core.test.ts`
  */
@@ -15,10 +18,13 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { latLngToCell, gridDisk } from 'h3-js'
 import {
   computeActiveTripFamiliesForFeed, describeIncompleteFeeds, readMergedStopCache, routeFamily,
-  writeMergedStopCache,
+  writeMergedStopCache, dedupeStopsByLocation, buildTramExtraMatch,
+  declaredRouteFamiliesForFeed, describeIncompleteFamilies, type StopTrainCount,
 } from './gtfs-enrich-core.js'
+import type { RailRow } from './railways-arrow.js'
 
 const TMP = mkdtempSync(join(tmpdir(), 'gtfs-enrich-core-test-'))
 after(() => rmSync(TMP, { recursive: true, force: true }))
@@ -179,4 +185,120 @@ test('computeActiveTripFamiliesForFeed: familyOf hook filters out non-matching r
   assert.equal(result.tripFam.size, 1)
   assert.equal(result.tripFam.get('T1'), 'rail')
   assert.equal(result.tripFam.has('T2'), false, 'tram trip excluded by the rail-only familyOf hook')
+})
+
+// ── dedupeStopsByLocation / buildTramExtraMatch (2026-07-16 Phase 4 hoist) ──
+// Shared by enrich-railway-europe.ts AND every national enrich-railway-{cc}.ts —
+// see those files' own tests for the au-vic/registry-flavored integration checks;
+// these pin the pure logic at its one source of truth.
+
+const stop = (lat: number, lon: number, pax: number, family: 'rail' | 'tram' = 'rail'): StopTrainCount =>
+  ({ stop_id: `${lat}_${lon}_${family}`, lat, lon, name: 'x', h3r4: 'h', family, trains_passenger: pax, trains_freight: 0 })
+
+test('dedupeStopsByLocation: sums same coord+family, keeps distinct coords and families apart', () => {
+  const out = dedupeStopsByLocation([
+    stop(50.0, 14.0, 10),
+    stop(50.0, 14.0, 5),           // same coord+family → sums to 15
+    stop(50.0001, 14.0, 3),        // distinct coord → stays separate
+    stop(50.0, 14.0, 7, 'tram'),   // same coord, different family → separate
+  ])
+  assert.equal(out.length, 3)
+  const rail = out.filter(s => s.family === 'rail').sort((a, b) => b.trains_passenger - a.trains_passenger)
+  assert.equal(rail[0].trains_passenger, 15)
+  assert.equal(rail[1].trains_passenger, 3)
+  assert.equal(out.find(s => s.family === 'tram')!.trains_passenger, 7)
+})
+
+const FAKE_RAIL_ROW = (railType: number): RailRow => ({
+  railType, usage: 0, existingSourceId: 0, existingPax: 0, existingFrt: 0,
+  startLat: 50.0, startLon: 14.0, endLat: 50.0, endLon: 14.0, midLat: 50.0, midLon: 14.0, name: '',
+})
+
+test('buildTramExtraMatch: matches a tram stop registered under a NEIGHBOR hex (k=1 ring), stamps the CALLER-supplied sourceId', () => {
+  const originHex = latLngToCell(50.0, 14.0, 4)
+  const neighborHex = gridDisk(originHex, 1).find(h => h !== originHex)!
+  const tramStops: StopTrainCount[] = [
+    { stop_id: 'S1', lat: 50.0001, lon: 14.0001, name: 'Neighbor Stop', h3r4: neighborHex, family: 'tram', trains_passenger: 42, trains_freight: 1 },
+  ]
+  const extraMatch = buildTramExtraMatch(tramStops, 12345)
+  const result = extraMatch(FAKE_RAIL_ROW(2), 0, originHex)
+  assert.ok(result, 'the k=1 ring pulled in the neighbor hex\'s stop')
+  assert.deepEqual(result, { pax: 42, frt: 1, sourceId: 12345 })
+})
+
+test('buildTramExtraMatch: heavy rail rows (railType 0) never match — heavy rail is walk-only', () => {
+  const originHex = latLngToCell(50.0, 14.0, 4)
+  const tramStops: StopTrainCount[] = [
+    { stop_id: 'S1', lat: 50.0001, lon: 14.0001, name: 'Stop', h3r4: originHex, family: 'tram', trains_passenger: 42, trains_freight: 0 },
+  ]
+  const extraMatch = buildTramExtraMatch(tramStops, 1)
+  assert.equal(extraMatch(FAKE_RAIL_ROW(0), 0, originHex), null)
+})
+
+test('buildTramExtraMatch: no stop anywhere in the ring returns null (never throws on an empty grid)', () => {
+  const originHex = latLngToCell(50.0, 14.0, 4)
+  const extraMatch = buildTramExtraMatch([], 1)
+  assert.equal(extraMatch(FAKE_RAIL_ROW(1), 0, originHex), null)
+})
+
+test('buildTramExtraMatch: family filter is INTERNAL — a mixed-family stop list (TH legacy 3-family cache shape) only ever matches its tram-family stops (2026-07-16 review item 1)', () => {
+  const originHex = latLngToCell(50.0, 14.0, 4)
+  // Rail and metro stops CLOSER to the row than the tram stop — under the old
+  // caller-must-prefilter contract these would win the nearest-stop join and
+  // put 190 ARL heavy-rail trains on a light-rail row (the verified TH bug).
+  const mixed: StopTrainCount[] = [
+    { stop_id: 'RAIL', lat: 50.00005, lon: 14.00005, name: 'SRT Rail', h3r4: originHex, family: 'rail', trains_passenger: 190, trains_freight: 4 },
+    { stop_id: 'METRO', lat: 50.00008, lon: 14.00008, name: 'MRT Metro', h3r4: originHex, family: 'metro' as unknown as 'rail', trains_passenger: 654, trains_freight: 0 },
+    { stop_id: 'TRAM', lat: 50.0006, lon: 14.0006, name: 'BTS Tram', h3r4: originHex, family: 'tram', trains_passenger: 42, trains_freight: 0 },
+  ]
+  const extraMatch = buildTramExtraMatch(mixed, 7)
+  const result = extraMatch(FAKE_RAIL_ROW(2), 0, originHex)
+  assert.ok(result, 'the tram-family stop still matches')
+  assert.equal(result!.pax, 42, 'ONLY the tram-family stop is eligible — nearer rail/metro stops are filtered out inside the builder, not left to the caller')
+})
+
+// ── declaredRouteFamiliesForFeed / describeIncompleteFamilies (review items 3+4) ──
+
+test('declaredRouteFamiliesForFeed: reads the declared family set from routes.txt; bus-only declares neither', async () => {
+  const mixedDir = join(TMP, 'declared-mixed')
+  writeGtfsFixture(mixedDir, { 'routes.txt': 'route_id,route_type\nR1,2\nT1,0\nB1,3\n' })
+  const declared = await declaredRouteFamiliesForFeed(mixedDir, routeFamily)
+  assert.deepEqual([...declared].sort(), ['rail', 'tram'])
+
+  const busDir = join(TMP, 'declared-bus-only')
+  writeGtfsFixture(busDir, { 'routes.txt': 'route_id,route_type\nB1,3\nB2,715\n' })
+  const busDeclared = await declaredRouteFamiliesForFeed(busDir, routeFamily)
+  assert.equal(busDeclared.size, 0, 'a bus-only feed (PT Carris / MX Toluca shape) declares NO rail families — exempt from both completeness directions')
+})
+
+test('declaredRouteFamiliesForFeed: respects a narrowed classifier — a warsaw-ztm-style pair-null override never demands back the narrowed-away family', async () => {
+  const dir = join(TMP, 'declared-narrowed')
+  writeGtfsFixture(dir, { 'routes.txt': 'route_id,route_type\nS1,2\nT1,0\n' })
+  // Pair side narrowed to always-null (mirror-publish exclusion), tram side normal:
+  const declared = await declaredRouteFamiliesForFeed(dir, (rt) => (routeFamily(rt) === 'tram' ? 'tram' : null))
+  assert.deepEqual([...declared], ['tram'], 'the excluded rail family is NOT declared — completeness will not require pairs from a feed whose pair contribution is deliberately zero')
+})
+
+test('malformed routes.txt throws from the shared reader (header-only / missing route_type) — computeActiveTripFamiliesForFeed rides the same reader (item 3)', async () => {
+  const headerOnly = join(TMP, 'declared-header-only')
+  writeGtfsFixture(headerOnly, { 'routes.txt': 'route_id,route_type\n' })
+  await assert.rejects(() => declaredRouteFamiliesForFeed(headerOnly, routeFamily), /header-only or empty/)
+  await assert.rejects(() => computeActiveTripFamiliesForFeed(headerOnly, routeFamily), /header-only or empty/)
+
+  const noType = join(TMP, 'declared-no-route-type')
+  writeGtfsFixture(noType, { 'routes.txt': 'route_id,route_short_name\nR1,IC\n' })
+  await assert.rejects(() => declaredRouteFamiliesForFeed(noType, routeFamily), /no route_type column/)
+  await assert.rejects(() => computeActiveTripFamiliesForFeed(noType, routeFamily), /no route_type column/)
+})
+
+test('describeIncompleteFamilies: BIDIRECTIONAL — each declared family independently requires its parsed output non-empty (item 4)', () => {
+  const both = new Set(['rail', 'tram'])
+  assert.equal(describeIncompleteFamilies('f', both, 100, 50), '', 'both declared, both parsed — complete')
+  assert.match(describeIncompleteFamilies('f', both, 0, 50), /declares rail but 0 station pairs/, 'working tram must NOT mask empty rail (the original masking direction)')
+  assert.match(describeIncompleteFamilies('f', both, 100, 0), /declares tram but 0 tram stops/, 'working rail must NOT mask empty tram (the direction the old any-family check missed)')
+  assert.equal(describeIncompleteFamilies('f', new Set(['rail']), 5, 0), '', 'rail-only feed: empty tram is its normal state')
+  assert.equal(describeIncompleteFamilies('f', new Set(['tram']), 0, 5), '', 'tram-only feed: empty pairs is its normal state')
+  assert.equal(describeIncompleteFamilies('f', new Set(), 0, 0), '', 'bus-only feed: exempt from both — retract can finally activate over MX/PT')
+  assert.equal(describeIncompleteFamilies('f', both, 100, null), '', 'tramStopCount null = merged-cache-served run; tram direction is vouched by the cache\'s own recorded provenance')
+  assert.match(describeIncompleteFamilies('f', both, 0, null), /declares rail/, 'the rail/pairs direction is still enforced on cache-served runs (pairs are always fresh)')
 })

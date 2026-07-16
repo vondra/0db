@@ -1,153 +1,154 @@
 /**
- * Enrich TH railways.arrow with Namtang GTFS (OTP / สนข. official transit feed).
+ * Enrich TH railways.arrow with Namtang GTFS — migrated onto the shared
+ * graph-walk driver (2026-07-16 Phase 4 point 2 rewrite, plan
+ * `pro-e-sd-zaj-m-wobbly-liskov`, following `enrich-railway-dk.ts`'s
+ * single-national-file pattern).
  *
  * Namtang (นามทาง) is the unified Thai transit feed published by the Office of
- * Transport and Traffic Policy and Planning (OTP / สนข., part of the Ministry
- * of Transport). A single 27 MB zipped GTFS covers:
+ * Transport and Traffic Policy and Planning (OTP / สนข., Ministry of
+ * Transport). A single ~27 MB zipped GTFS covers:
  *
- *   - **BTS Skytrain (BTSC)** — 5 tram/LRT routes (Sukhumvit / Silom / etc.)
- *     OSM tag: `railway=light_rail` → extracted
- *   - **MRT Bangkok (BEM)** — 4 metro routes (Blue, Purple, Yellow, Pink)
- *     OSM tag: `railway=subway` → NOT extracted (pipeline bug — same as
- *     Dubai Metro, Taipei Metro, Singapore MRT, Seoul, Tokyo, HK, Mexico City)
- *   - **Airport Rail Link / SRT Red Line (SRTET)** — Suvarnabhumi↔Phaya Thai
- *     + Bangkok Red Line suburban
- *   - **State Railway of Thailand (SRT)** — 189 national rail routes (Bangkok↔
- *     Chiang Mai / Ubon Ratchathani / Nong Khai / Sungai Kolok / Haad Yai)
- *   - **BMTA + regional buses** (211 bus routes) — excluded from rail enrichment
- *   - 943 DLT intercity bus routes + 154 TSB + 98 TC — excluded
+ *   - **SRT (State Railway of Thailand)** — 189 national heavy-rail routes
+ *     (Bangkok <-> Chiang Mai / Ubon Ratchathani / Nong Khai / Sungai Kolok /
+ *     Haad Yai) plus Airport Rail Link / SRT Red Line suburban service. GTFS
+ *     route_type 2 -> OSM `railway=rail` (rail_type 0) -> the GRAPH-WALK path.
+ *   - **BTS Skytrain (BTSC)** — 5 tram/LRT routes, GTFS route_type 0/tram ->
+ *     OSM `railway=light_rail` (rail_type 2) -> the per-stop tram join.
+ *   - **MRT Bangkok (BEM)** — 4 metro routes (Blue/Purple/Yellow/Pink), GTFS
+ *     route_type 1/400-405 ("metro"). OSM tags these `railway=subway`, which
+ *     this pipeline never extracts (same known gap as Dubai/Taipei/Singapore/
+ *     Seoul/Tokyo/HK/Mexico City metros). MRT stops are deliberately IGNORED
+ *     — `computeTramStopFrequencies`' familyOf maps METRO_TYPES → null,
+ *     exactly the pre-migration standalone 'metro' family's (non-)behavior.
+ *     The first migration draft collapsed them into BTS's 'tram' bucket via
+ *     core's `routeFamily` and argued both were dead ends against subway
+ *     geometry; the 2026-07-16 reviews disproved that: the metro STOP is not
+ *     dead — within the 500 m join radius of an interchange it can win the
+ *     match onto BTS light-rail track and stamp MRT frequencies there. An
+ *     interchange does not put metro trains on tram track (same physics fix
+ *     as AE's Dubai Metro: 87 stops / 26 tram rows / 654 trains-day there).
+ *   - BMTA + regional buses (211 routes), 943 DLT intercity + 154 TSB + 98 TC
+ *     bus routes — excluded from rail enrichment.
  *
  * Source: `https://namtang-api.otp.go.th/download/namtang-gtfs.zip` (anonymous,
- * updated daily, 27 MB zipped / 160 MB uncompressed, last-modified 2026-04-10).
- * Mirror: `https://github.com/asiripanich/bangkok-gtfs` (daily snapshots since
+ * updated daily, 27 MB zipped / 160 MB uncompressed). Mirror:
+ * `https://github.com/asiripanich/bangkok-gtfs` (daily snapshots since
  * April 2022).
  *
- * Applied by: exact per-family GTFS match; segments the feed doesn't reach stay
- * source_id=0 (engine default_traffic owns unknowns — the Thailand class-default
- * fallback was purged 2026-07-10, see OLD_FALLBACK retract). SRT passenger stops
- * ×2 for bidirectional travel. Metro routes parsed but no matches — documented
- * in provenance.
+ * HEAVY RAIL (rail_type 0, SRT) runs on `lib/rail-walk-enrich.ts`:
+ * `computeStopPairFrequenciesForFeed` (lib/gtfs-stop-pairs.ts) turns
+ * stop_times.txt into station-PAIR frequencies, walked along the shortest path
+ * by `enrichRailwaysByGraphWalk`. Its `expandFrequencies` option (default: on
+ * iff frequencies.txt exists) is the GENERIC form of the headway-multiplier
+ * this file used to hand-roll — the gtfs-stop-pairs.ts module doc cites THIS
+ * file as the "TH-multiplier style" origin of that pattern, so the pairs path
+ * gets it for free with no reimplementation here.
+ *
+ * TRAM/light-rail (rail_type 1/2 — BTS; MRT metro is EXCLUDED, see its
+ * bullet above) keeps the pre-Phase-4 `nearestGridStop` 500 m stop-join
+ * (`buildTramExtraMatch`, shared with every other national enricher).
+ * `buildTramExtraMatch` filters to `family === 'tram'` INTERNALLY — the
+ * load-bearing guard for TH's legacy 3-family bare-array stop cache (76 tram
+ * + 184 rail + 107 metro records): passed unfiltered, its ARL heavy-rail
+ * stops handed 4 Suvarnabhumi APM rail_type=2 rows 190 ARL trains/day
+ * (verified on live Arrow data by the 2026-07-16 review); the call-site
+ * filter below stays as harmless double protection. The per-stop counter
+ * (`computeTramStopFrequencies` below) is kept as a THIN local wrapper over
+ * core's primitives rather than `computeStopFrequenciesForFeed` (core's
+ * version has NO frequencies.txt support): BTS genuinely publishes
+ * headway-based service — a single template trip in stop_times.txt repeated
+ * every `headway_secs`, not one row per real departure — so without this
+ * expansion its stop counts would understate real frequency by roughly two
+ * orders of magnitude (same shape as the mx.ts frequencies.txt comment).
+ *
+ * TH's source id is NATIONALLY OWNED (like DK's, unlike europe's shared
+ * `SOURCE_ID_GLOBAL_GTFS_TRANSIT`): `bleedGate` is set to the SAME country
+ * gate as `countryGate`. No predecessor source id survives from the
+ * pre-2026-07-10 class-default fallback design (TH only ever used ONE id):
+ * the driver's own generic retract (disown a previously-owned row the
+ * walk/tram-join no longer covers, given `retractSafe`) already subsumes the
+ * old OLD_FALLBACK exact-tuple check (SRT/BTS/MRT class-default tuples), so
+ * that table is deleted outright rather than preserved via `sourceIds`
+ * composition.
+ *
+ * WHY (unchanged): segments the feed doesn't reach STAY at source_id=0 on
+ * purpose — the engine default table
+ * (engine/noise-compute/src/emission/railway.rs::default_traffic) owns
+ * unknowns; TH is not silent-residual-capable (that exists only for CZ's
+ * timetable, owner decision 2026-07-11 option b).
  *
  * Usage:
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-th.ts
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-th.ts --force-download
  *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-th.ts --enrich-only
+ *   DATA_YEAR=2026 npx tsx pipeline/enrich-railway-th.ts --stamp-only
+ *
+ * --stamp-only: Phase-3/4 Step A rollout control (same semantics as
+ * enrich-railway-europe.ts/enrich-railway-dk.ts) — enableDestructive=false:
+ * the run still walk-stamps heavy-rail counts AND divisors and still runs the
+ * tram stop-join, but NO retract and NO country-bleed heal fire.
  */
 
-import { writeFileSync, readdirSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
+import { writeFileSync, existsSync, mkdirSync, createReadStream } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { execSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { shouldOverwrite } from './lib/provenance.js'
-import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
-import { makeCountryGate, segmentWhollyOutside } from './lib/country-polygon.js'
-import { latLngToCell, cellToLatLng } from 'h3-js'
-import { SOURCE_ID_TH_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
-import { inBbox } from './lib/spatial.js'
+import { makeCountryGate } from './lib/country-polygon.js'
+import { enrichRailwaysByGraphWalk } from './lib/rail-walk-enrich.js'
+import type { RailStationPairCount } from './lib/rail-graph.js'
+import { computeStopPairFrequenciesForFeed } from './lib/gtfs-stop-pairs.js'
 import {
-  RAIL_TYPES, TRAM_TYPES, METRO_TYPES, nearestGridStop, parseGtfsDate, formatDate, parseTime,
-  logRetractSkippedIncompleteInputs, readMergedStopCache, writeMergedStopCache,
+  RAIL_TYPES, TRAM_TYPES, parseCsvLine, parseCsvStream, parseTime,
+  computeActiveTripFamiliesForFeed, loadStopsWithCoords, resolveStopViaParent,
+  dedupeStopsByLocation, buildTramExtraMatch,
+  declaredRouteFamiliesForFeed, describeIncompleteFamilies,
+  describeIncompleteFeeds, logRetractSkippedIncompleteInputs, readMergedStopCache, writeMergedStopCache,
+  GTFS_BORDER_MARGIN_DEG, type StopTrainCount,
 } from './lib/gtfs-enrich-core.js'
+import { SOURCE_ID_TH_NATIONAL_RAILWAY } from './lib/source-ids.generated.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_TH_NATIONAL_RAILWAY
 
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/th`)
+// UNCHANGED across this migration (manifest note, RAIL_CACHED_DOWNLOAD.th marker,
+// chain/manifest.ts): now holds ONLY the tram/light-rail per-stop counter (heavy
+// rail moved to computeStopPairFrequenciesForFeed's own gtfs-rail-pairs-v1.json
+// cache alongside it, never replacing it).
 const CACHE_FREQUENCIES = resolve(CACHE_DIR, 'gtfs-stop-frequencies.json')
 
 const forceDownload = process.argv.includes('--force-download')
 const enrichOnly = process.argv.includes('--enrich-only')
+const stampOnly = process.argv.includes('--stamp-only')
 
+const FEED_ID = 'namtang'
 const FEED_URL = 'https://namtang-api.otp.go.th/download/namtang-gtfs.zip'
 
 // Scope: the exact CGAZ TH polygon via the central writeRailTrains countryGate (#31.7).
-// Conservative bboxes that don't clip Chiang Mai (18.8N/98.99E),
-// Korat (14.97N/102.1E), Udon Thani (17.41N/102.79E), Surat Thani (9.1N/99.3E).
+// Conservative bbox that doesn't clip Chiang Mai (18.8N/98.99E), Korat (14.97N/102.1E),
+// Udon Thani (17.41N/102.79E), Surat Thani (9.1N/99.3E).
 const TH_BBOX: [number, number, number, number] = [5.5, 97.3, 20.5, 105.7]
 // Neighbour exclusion boxes DELETED (#32, /gg #31 round-2 Codex): the central
 // writeRailTrains countryGate (exact CGAZ polygon) owns national scope now, and
 // the hand rectangles provably clipped DOMESTIC territory (the CN 'Vietnam' box
 // held Nanning, IN 'Pakistan' held Ahmedabad, TH 'Malaysia' held Sungai Kolok).
 
-type RouteFamily = 'rail' | 'tram' | 'metro'
+/** Same 0.5° margin as `loadStopsWithCoords`'s GTFS geometry envelope (item 6,
+ *  gtfs-enrich-core.ts) — the graph-walk scope must reach every hex a
+ *  cross-border stop's pair could land in (SRT runs to Sungai Kolok/Malaysia
+ *  and Vientiane/Laos), or a through-train's foreign endpoint never snaps and
+ *  the whole pair quarantines for no real reason. Stop/pair PARSING itself
+ *  (`computeTramStopFrequencies`, `computeStopPairFrequenciesForFeed`) gets
+ *  the UNPADDED `TH_BBOX` — the margin is applied internally by
+ *  `loadStopsWithCoords`. */
+const GRAPH_BBOX: [number, number, number, number] = [
+  TH_BBOX[0] - GTFS_BORDER_MARGIN_DEG, TH_BBOX[1] - GTFS_BORDER_MARGIN_DEG,
+  TH_BBOX[2] + GTFS_BORDER_MARGIN_DEG, TH_BBOX[3] + GTFS_BORDER_MARGIN_DEG,
+]
 
-interface GtfsStop { stop_id: string; lat: number; lon: number; name: string; h3r4: string }
-interface StopTrainCount {
-  stop_id: string
-  lat: number
-  lon: number
-  name: string
-  h3r4: string
-  family: RouteFamily
-  trains_passenger: number
-  trains_freight: number
-}
-
-// Route_type families + GtfsStop/StopTrainCount-adjacent generics live in lib/gtfs-enrich-core.ts.
-// TH keeps its own 3-family RouteFamily (rail/tram/metro), compact CSV parser, and inlined
-// findTargetWednesday — they differ from the shared core, so stay here. parseTime is
-// byte-identical and hoisted (2026-07-16).
-
-// ── CSV parsing ──
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = []
-  let current = '', inQuotes = false
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]
-    if (inQuotes) {
-      if (ch === '"') {
-        if (i + 1 < line.length && line[i + 1] === '"') { current += '"'; i++ }
-        else inQuotes = false
-      } else current += ch
-    } else {
-      if (ch === '"') inQuotes = true
-      else if (ch === ',') { fields.push(current.trim()); current = '' }
-      else current += ch
-    }
-  }
-  fields.push(current.trim())
-  return fields
-}
-
-async function parseCsvStream(filePath: string): Promise<Record<string, string>[]> {
-  const results: Record<string, string>[] = []
-  const stream = createReadStream(filePath, { encoding: 'utf-8' })
-  const rl = createInterface({ input: stream, crlfDelay: Infinity })
-  let headers: string[] | null = null
-  for await (const rawLine of rl) {
-    const line = headers === null ? rawLine.replace(/^\uFEFF/, '') : rawLine
-    if (line.trim() === '') continue
-    if (!headers) { headers = parseCsvLine(line); continue }
-    const values = parseCsvLine(line)
-    const row: Record<string, string> = {}
-    for (let i = 0; i < headers.length; i++) row[headers[i]] = values[i] || ''
-    results.push(row)
-  }
-  return results
-}
-
-function findTargetWednesday(calendarRows: Record<string, string>[]): string {
-  let minDate = '99999999', maxDate = '00000000'
-  for (const row of calendarRows) {
-    const start = row['start_date'] || ''
-    const end = row['end_date'] || ''
-    if (start && start < minDate) minDate = start
-    if (end && end > maxDate) maxDate = end
-  }
-  if (minDate === '99999999') {
-    const now = new Date()
-    now.setDate(now.getDate() + 7)
-    while (now.getDay() !== 3) now.setDate(now.getDate() + 1)
-    return now.toISOString().substring(0, 10).replace(/-/g, '')
-  }
-  const midMs = parseGtfsDate(minDate) + (parseGtfsDate(maxDate) - parseGtfsDate(minDate)) / 2
-  const mid = new Date(midMs)
-  const offset = (3 - mid.getDay() + 7) % 7
-  mid.setDate(mid.getDate() + offset)
-  return mid.toISOString().substring(0, 10).replace(/-/g, '')
-}
+// ── Step 1: Download GTFS feed (UNCHANGED — TH's own single-hardcoded-feed shape) ──
 
 async function downloadGtfs(): Promise<string> {
   const extractDir = resolve(CACHE_DIR, 'gtfs-namtang')
@@ -172,86 +173,58 @@ async function downloadGtfs(): Promise<string> {
   return extractDir
 }
 
-async function computeStopFrequencies(dir: string): Promise<StopTrainCount[]> {
-  console.log(`\n  Parsing GTFS files from ${dir}...`)
-  const startTime = Date.now()
+// ── Step 2: tram/light-rail per-stop frequencies (heavy rail moved to the
+//    graph-walk pairs below) ──
 
-  // routes.txt
-  const routesRaw = await parseCsvStream(resolve(dir, 'routes.txt'))
-  const routeFamily = new Map<string, RouteFamily>()
-  let nRail = 0, nTram = 0, nMetro = 0
-  for (const r of routesRaw) {
-    const rt = parseInt(r['route_type'] || '3')
-    if (RAIL_TYPES.has(rt)) { routeFamily.set(r['route_id'], 'rail'); nRail++ }
-    else if (TRAM_TYPES.has(rt)) { routeFamily.set(r['route_id'], 'tram'); nTram++ }
-    else if (METRO_TYPES.has(rt)) { routeFamily.set(r['route_id'], 'metro'); nMetro++ }
-  }
-  console.log(`  Routes: ${routesRaw.length} total, ${routeFamily.size} rail-like (rail=${nRail}, tram=${nTram}, metro=${nMetro})`)
+/** Per-stop TRAM/light-rail frequency counter — feeds `buildTramExtraMatch`'s
+ *  500 m stop-join (rail_type 1/2 only). Namtang's METRO routes (MRT Bangkok,
+ *  GTFS route_type 1/400-405) are EXCLUDED — familyOf maps METRO_TYPES →
+ *  null, restoring the pre-migration deliberate ignore (2026-07-16 review
+ *  fix; see the module doc's MRT bullet: a 'tram'-labelled MRT stop can win
+ *  the 500 m join onto BTS track at an interchange, which is physically
+ *  wrong).
+ *
+ *  Kept as a THIN local wrapper — not core's `computeStopFrequenciesForFeed`,
+ *  which has no frequencies.txt support — because BTS genuinely publishes
+ *  headway-based service (module doc). SRT heavy rail no longer needs a
+ *  per-stop counter at all: `computeStopPairFrequenciesForFeed`'s own
+ *  `expandFrequencies` option already reimplements this exact TH-multiplier
+ *  pattern generically for the pairs path. */
+async function computeTramStopFrequencies(extractDir: string): Promise<StopTrainCount[]> {
+  const { tripFam } = await computeActiveTripFamiliesForFeed(
+    extractDir,
+    // TRAM_TYPES only — NOT `routeFamily`, whose metro→tram grouping would
+    // revive MRT counts here (the rebuild-path half of the review fix; the
+    // legacy-cache half is buildTramExtraMatch's internal family filter).
+    (routeType) => (TRAM_TYPES.has(routeType) ? 'tram' : null),
+  )
+  if (tripFam.size === 0) return []
 
-  // calendar
-  const activeServiceIds = new Set<string>()
-  const calendarPath = resolve(dir, 'calendar.txt')
-  const calendarDatesPath = resolve(dir, 'calendar_dates.txt')
-  if (existsSync(calendarPath)) {
-    const cal = await parseCsvStream(calendarPath)
-    const targetDate = findTargetWednesday(cal)
-    console.log(`  Target date: ${formatDate(targetDate)} (Wednesday)`)
-    for (const r of cal) {
-      const start = r['start_date'] || ''
-      const end = r['end_date'] || ''
-      if (r['wednesday'] === '1' && targetDate >= start && targetDate <= end) activeServiceIds.add(r['service_id'])
-    }
-    if (existsSync(calendarDatesPath)) {
-      const calDates = await parseCsvStream(calendarDatesPath)
-      for (const r of calDates) {
-        if (r['date'] !== targetDate) continue
-        if (r['exception_type'] === '1') activeServiceIds.add(r['service_id'])
-        if (r['exception_type'] === '2') activeServiceIds.delete(r['service_id'])
-      }
-    }
-  }
-  console.log(`  Active service IDs on target date: ${activeServiceIds.size}`)
-
-  // trips
-  const tripsRaw = await parseCsvStream(resolve(dir, 'trips.txt'))
-  const tripFamily = new Map<string, RouteFamily>()
-  for (const r of tripsRaw) {
-    const fam = routeFamily.get(r['route_id'])
-    if (!fam) continue
-    if (activeServiceIds.size > 0 && !activeServiceIds.has(r['service_id'])) continue
-    tripFamily.set(r['trip_id'], fam)
-  }
-  console.log(`  Rail trips on target day: ${tripFamily.size} (of ${tripsRaw.length} total)`)
-
-  // frequencies.txt (for BTS / MRT which may use headway-based service)
-  // Accumulate per-trip departures from frequencies if present
+  // frequencies.txt: expand headway-based BTS trips into a daily departure count.
   const tripBoosts = new Map<string, number>()
-  const freqPath = resolve(dir, 'frequencies.txt')
+  const freqPath = resolve(extractDir, 'frequencies.txt')
   if (existsSync(freqPath)) {
     const freqs = await parseCsvStream(freqPath)
     for (const f of freqs) {
-      const tid = f['trip_id']
-      if (!tripFamily.has(tid)) continue
+      const tripId = f['trip_id']
+      if (!tripFam.has(tripId)) continue
       const startSec = parseTime(f['start_time'] || '')
       const endSec = parseTime(f['end_time'] || '')
-      const headway = parseInt(f['headway_secs'] || '0')
+      const headway = parseInt(f['headway_secs'] || '0', 10)
       if (startSec < 0 || endSec < 0 || headway <= 0) continue
-      const durSec = Math.max(0, endSec - startSec)
-      const count = Math.max(1, Math.floor(durSec / headway))
-      tripBoosts.set(tid, (tripBoosts.get(tid) || 0) + count)
+      const count = Math.max(1, Math.floor(Math.max(0, endSec - startSec) / headway))
+      tripBoosts.set(tripId, (tripBoosts.get(tripId) || 0) + count)
     }
-    console.log(`  frequencies.txt boosts: ${tripBoosts.size} trips`)
+    console.log(`  [tram] frequencies.txt boosts: ${tripBoosts.size} trips`)
   }
+  const boostFor = (tripId: string): number => tripBoosts.get(tripId) ?? 1
 
-  // stop_times (streamed for memory)
-  console.log(`  Reading stop_times.txt (streaming)...`)
-  const stopDepartures = new Map<string, Map<RouteFamily, number>>()
-  const stStream = createReadStream(resolve(dir, 'stop_times.txt'), { encoding: 'utf-8' })
+  // stop_times.txt (streamed for memory)
+  const stopDepartures = new Map<string, number>()
+  const stStream = createReadStream(resolve(extractDir, 'stop_times.txt'), { encoding: 'utf-8' })
   const stRl = createInterface({ input: stStream, crlfDelay: Infinity })
   let stHeaders: string[] | null = null
-  let stLines = 0, stMatched = 0
   let tripIdIdx = -1, stopIdIdx = -1
-  let lastProgressTime = Date.now()
   for await (const rawLine of stRl) {
     const line = stHeaders === null ? rawLine.replace(/^\uFEFF/, '') : rawLine
     if (line.trim() === '') continue
@@ -259,282 +232,197 @@ async function computeStopFrequencies(dir: string): Promise<StopTrainCount[]> {
       stHeaders = parseCsvLine(line)
       tripIdIdx = stHeaders.indexOf('trip_id')
       stopIdIdx = stHeaders.indexOf('stop_id')
-      if (tripIdIdx < 0 || stopIdIdx < 0) throw new Error(`stop_times.txt missing columns`)
+      if (tripIdIdx < 0 || stopIdIdx < 0) throw new Error('stop_times.txt missing trip_id/stop_id')
       continue
     }
-    stLines++
     const fields = parseCsvLine(line)
-    const tid = fields[tripIdIdx]
-    const fam = tripFamily.get(tid)
-    if (!fam) continue
+    const tripId = fields[tripIdIdx]
+    if (!tripFam.has(tripId)) continue
     const stopId = fields[stopIdIdx]
-    const boost = tripBoosts.get(tid) || 1
-    let fams = stopDepartures.get(stopId)
-    if (!fams) { fams = new Map(); stopDepartures.set(stopId, fams) }
-    fams.set(fam, (fams.get(fam) || 0) + boost)
-    stMatched += boost
-    if (Date.now() - lastProgressTime > 10_000) {
-      console.log(`    ${(stLines / 1e6).toFixed(1)}M lines, ${stMatched} rail stops`)
-      lastProgressTime = Date.now()
-    }
+    stopDepartures.set(stopId, (stopDepartures.get(stopId) || 0) + boostFor(tripId))
   }
-  console.log(`  ${stLines} stop_times, ${stMatched} rail stops across ${stopDepartures.size} unique stops`)
+  console.log(`  [tram] ${stopDepartures.size} unique stops with tram/light-rail departures`)
 
-  // stops.txt
-  const stopsRaw = await parseCsvStream(resolve(dir, 'stops.txt'))
-  const stopsMap = new Map<string, GtfsStop>()
-  for (const r of stopsRaw) {
-    const lat = parseFloat(r['stop_lat'] || '')
-    const lon = parseFloat(r['stop_lon'] || '')
-    if (!lat || !lon || isNaN(lat) || isNaN(lon)) continue
-    const [minLat, minLon, maxLat, maxLon] = TH_BBOX
-    if (lat < minLat - 1 || lat > maxLat + 1 || lon < minLon - 1 || lon > maxLon + 1) continue
-    let h3r4: string
-    try { h3r4 = latLngToCell(lat, lon, 4) } catch { continue }
-    stopsMap.set(r['stop_id'], { stop_id: r['stop_id'], lat, lon, name: (r['stop_name'] || '').trim(), h3r4 })
-  }
-  console.log(`  Stops with valid coords: ${stopsMap.size}`)
-
-  // parent_station resolution
-  const childToParent = new Map<string, string>()
-  for (const r of stopsRaw) {
-    const p = (r['parent_station'] || '').trim()
-    if (p) childToParent.set(r['stop_id'], p)
-  }
-
+  const stops = await loadStopsWithCoords(extractDir, TH_BBOX)
   const results: StopTrainCount[] = []
-  for (const [stopId, families] of stopDepartures) {
-    let stop = stopsMap.get(stopId)
-    if (!stop) {
-      const pid = childToParent.get(stopId)
-      if (pid) stop = stopsMap.get(pid)
-    }
+  let resolvedViaParent = 0
+  for (const [stopId, count] of stopDepartures) {
+    const { stop, viaParent } = resolveStopViaParent(stops, stopId)
     if (!stop) continue
-    for (const [fam, count] of families) {
-      results.push({
-        stop_id: stop.stop_id,
-        lat: stop.lat, lon: stop.lon,
-        name: stop.name, h3r4: stop.h3r4,
-        family: fam,
-        trains_passenger: count,
-        trains_freight: 0,
-      })
-    }
+    if (viaParent) resolvedViaParent++
+    results.push({
+      stop_id: stop.stop_id, lat: stop.lat, lon: stop.lon, name: stop.name, h3r4: stop.h3r4,
+      family: 'tram', trains_passenger: count, trains_freight: 0,
+    })
   }
-
-  // Dedup by (coord, family)
-  const dedupMap = new Map<string, StopTrainCount>()
-  for (const sc of results) {
-    const key = `${sc.lat.toFixed(4)}_${sc.lon.toFixed(4)}_${sc.family}`
-    const existing = dedupMap.get(key)
-    if (existing) existing.trains_passenger += sc.trains_passenger
-    else dedupMap.set(key, { ...sc })
-  }
-  const deduped = [...dedupMap.values()]
-
-  console.log(`  ${deduped.length} unique (stop, family) rows`)
-  console.log(`  Parsing took ${((Date.now() - startTime) / 1000).toFixed(1)}s`)
-
-  const paxSorted = [...deduped].sort((a, b) => b.trains_passenger - a.trains_passenger)
-  if (paxSorted.length > 0) {
-    console.log(`  Top stops:`)
-    for (const s of paxSorted.slice(0, 10)) {
-      console.log(`    ${s.trains_passenger} trains/day  [${s.family}]  ${s.name.substring(0, 50)} (${s.lat.toFixed(4)}, ${s.lon.toFixed(4)})`)
-    }
-  }
+  const deduped = dedupeStopsByLocation(results)
+  console.log(`  [tram] ${deduped.length} unique tram/light-rail stops (${resolvedViaParent} resolved via parent station)`)
   return deduped
 }
 
-// Retract signature for stamps the pre-2026-07-10 fallback design wrote: TH's deleted
-// class-default table, verbatim (differs from the canonical EU table — SRT tuples).
-// A row still owned by MY_SOURCE_ID whose counts exactly equal its class tuple was
-// filled by that fallback, not measured — exact-tuple + family ambiguity is negligible
-// (/tmp/quietmap-v4/gtfs-rail-misjoin.md §3), and the retract's `when` re-runs today's
-// stop join, so a live-covered row is re-stamped by `match`, never disowned. No-match
-// rows now return null: source_id stays 0 and the ENGINE default table
-// (engine/noise-compute/src/emission/railway.rs::default_traffic) owns the "we don't
-// know" case. DELETE this retract (and OLD_FALLBACK) after the world rail repaint
-// confirms 0 retractions.
-const OLD_FALLBACK = (railType: number, usage: number): [pax: number, frt: number] => {
-  if (railType === 2) return [200, 0]  // light_rail (BTS, ARL elevated)
-  if (railType === 1) return [200, 0]  // tram
-  if (railType === 3) return [20, 0]   // narrow gauge
-  if (railType === 4) return [10, 0]   // funicular
-  if (usage === 1) return [6, 4]       // SRT branch line
-  if (usage === 2) return [0, 8]       // industrial
-  return [20, 10]                      // SRT main line
-}
-const wasOldFallbackStamp = (row: RailRow): boolean => {
-  const [pax, frt] = OLD_FALLBACK(row.railType, row.usage)
-  return row.existingPax === pax && row.existingFrt === frt
+/** TH's route_type → family classifier for the declared-families completeness
+ *  check (`declaredRouteFamiliesForFeed`) — the SAME classification the two
+ *  parsers actually apply: pairs side = `computeStopPairFrequenciesForFeed`'s
+ *  default RAIL_TYPES-only familyOf (SRT route_type 2 → 'rail'), stop side =
+ *  `computeTramStopFrequencies`' TRAM_TYPES-only familyOf (BTS → 'tram').
+ *  METRO_TYPES → null on BOTH sides (MRT is deliberately ignored, module
+ *  doc), so a declared metro family never demands completeness evidence
+ *  nobody parses. */
+function thDeclaredRouteFamily(routeType: number): 'rail' | 'tram' | null {
+  if (RAIL_TYPES.has(routeType)) return 'rail'
+  return TRAM_TYPES.has(routeType) ? 'tram' : null
 }
 
-async function enrichHexes(allStopCounts: StopTrainCount[], retractSafe: boolean): Promise<void> {
-  // COUNTRY GATE (#26C): a national feed can carry international through-services
-  // (SRT runs to Sungai Kolok/Malaysia border and Vientiane/Laos), so the raw stop
-  // list may contain foreign stations — joining those would stamp a neighbour's
-  // track under this feed's id, and the same-rank higher-id tiebreak can beat the
-  // neighbour's own national source (mechanism: the PL feed stamped 11,856 km of
-  // CZ track, 7fac2349). A national feed only speaks for its own country's
-  // network: foreign stops are dropped BEFORE any grid is built (the polygon gate
-  // subsumes the coarse TH_BBOX pre-filter for stops; the row side is owned by
-  // the central writeRailTrains countryGate — the old EXCLUDE_ZONES are gone, #32).
-  const inTh = makeCountryGate('TH')
-  const rawCount = allStopCounts.length
-  allStopCounts = allStopCounts.filter((sc) => inTh(sc.lat, sc.lon))
-  if (rawCount !== allStopCounts.length) {
-    console.log(`  country gate: ${rawCount - allStopCounts.length} foreign stops dropped (international through-services)`)
-  }
-  // Index stops by (hex, family)
-  const stopsByHexFam = new Map<string, StopTrainCount[]>()
-  for (const sc of allStopCounts) {
-    const key = `${sc.h3r4}/${sc.family}`
-    if (!stopsByHexFam.has(key)) stopsByHexFam.set(key, [])
-    stopsByHexFam.get(key)!.push(sc)
-  }
-  const hexesWithStops = new Set<string>()
-  for (const k of stopsByHexFam.keys()) hexesWithStops.add(k.split('/')[0])
-  console.log(`  GTFS stops span ${hexesWithStops.size} H3R4 hexes`)
-
-  // Scan all TH-bbox hexes (not just ones with stops) so the OLD_FALLBACK retract
-  // reaches hexes whose stop coverage vanished (class defaults themselves are purged)
-  const allHexes = readdirSync(H3R4_DIR).filter(d => d.length === 15 && d.endsWith('ffffffff'))
-  const thHexes: string[] = []
-  for (const hex of allHexes) {
-    try {
-      const [lat, lon] = cellToLatLng(hex)
-      if (inBbox(lat, lon, TH_BBOX) && existsSync(resolve(H3R4_DIR, hex, 'railways.arrow'))) thHexes.push(hex)
-    } catch {}
-  }
-  console.log(`  TH hexes with railways.arrow: ${thHexes.length}`)
-
-  let totalRails = 0, skippedService = 0, skippedExisting = 0
-  let matchedGtfs = 0, totalRetracted = 0
-  let hexesUpdated = 0
-  const startTime = Date.now()
-
-  for (let hi = 0; hi < thHexes.length; hi++) {
-    const hex = thHexes[hi]
-
-    // Build family grids for this hex (GTFS stops indexed by 0.01-deg cell).
-    const buildGrid = (fam: RouteFamily) => {
-      const grid = new Map<string, StopTrainCount[]>()
-      const stops = stopsByHexFam.get(`${hex}/${fam}`) || []
-      for (const sc of stops) {
-        const key = `${Math.floor(sc.lat * 100)}_${Math.floor(sc.lon * 100)}`
-        if (!grid.has(key)) grid.set(key, [])
-        grid.get(key)!.push(sc)
-      }
-      return grid
-    }
-    const tramGrid = buildGrid('tram')
-    const railGrid = buildGrid('rail')
-
-    // FAMILY routing (tram grid for rail_type 1/2, rail grid for 0) → GTFS
-    // nearest-stop match, all inside the match closure; no-match rows return null
-    // (engine default_traffic owns unknowns). writeRailTrains owns the service-skip,
-    // the priority gate, the retract self-heal, and the byte-identical write.
-    const r = await writeRailTrains(resolve(H3R4_DIR, hex, 'railways.arrow'), (row) => {
-      if (!shouldOverwrite(row.existingSourceId, MY_SOURCE_ID)) return null
-      if (!inBbox(row.midLat, row.midLon, TH_BBOX)) return null
-
-      const rt = row.railType
-      const grid = rt === 1 || rt === 2 ? tramGrid : rt === 0 ? railGrid : null
-      const bestStop = grid ? nearestGridStop(grid, row) : null
-      if (bestStop) {
-        matchedGtfs++
-        return { pax: bestStop.trains_passenger, frt: bestStop.trains_freight, sourceId: MY_SOURCE_ID }
-      }
-
-      // No GTFS match (or unhandled rail_type): return null — the row stays/goes
-      // source_id=0 and the ENGINE default table (emission/railway.rs::default_traffic)
-      // owns the unknown. Never stamp a guess under MY_SOURCE_ID.
-      return null
-    }, undefined,
-    // CRITICAL-1b: retract only over a provably complete snapshot (retractSafe) —
-    // with an empty/failed feed parse, "no stop covers this row" is an input
-    // artifact, not evidence, and would disown REAL stamps.
-    retractSafe ? {
-      sourceId: MY_SOURCE_ID,
-      // Disown a legacy pre-2026-07-10 class-default stamp ONLY when today's join no
-      // longer reaches the row (same family routing + 500 m grid join as `match`) —
-      // a row a live stop still covers is re-stamped with the real count instead.
-      when: (row) => {
-        // Country-bleed disown (#26C): ANY owned row physically wholly outside TH (start+mid+end — genuine border-straddlers stay ours; shared R9 predicate) is
-        // foreign track this feed must not speak for — even when its count was
-        // a real through-train figure, ownership belongs to the local country's
-        // own timetable (its national enricher re-stamps on its next run).
-        if (segmentWhollyOutside(inTh, row.midLat, row.midLon, row.startLat, row.startLon, row.endLat, row.endLon)) return true
-        if (!wasOldFallbackStamp(row)) return false
-        const grid = row.railType === 1 || row.railType === 2 ? tramGrid : row.railType === 0 ? railGrid : null
-        return !grid || nearestGridStop(grid, row) === null
-      },
-    } : undefined,
-    inTh, // #31.7 central country gate — see writeRailTrains
-    )
-
-    totalRails += r.rows
-    totalRetracted += r.retracted
-    skippedService += r.skippedService
-    if (r.updated) hexesUpdated++
-
-    const elapsed = Date.now() - startTime
-    if (elapsed > 10_000 && hi % 20 === 0) {
-      console.log(`  [${(elapsed / 1000).toFixed(0)}s] ${hi + 1}/${thHexes.length} hexes, ${matchedGtfs} GTFS, ${totalRetracted} retracted`)
-    }
-  }
-
-  console.log(`\n=== Results ===`)
-  console.log(`  Total rails scanned:      ${totalRails.toLocaleString()}`)
-  console.log(`  Skipped service tracks:   ${skippedService.toLocaleString()}`)
-  console.log(`  Skipped already enriched: ${skippedExisting.toLocaleString()}`)
-  console.log(`  Matched by GTFS:          ${matchedGtfs.toLocaleString()} (${(matchedGtfs / Math.max(totalRails, 1) * 100).toFixed(2)}%)`)
-  console.log(`  Retracted legacy defaults: ${totalRetracted.toLocaleString()}`)
-  console.log(`  Hexes updated:            ${hexesUpdated}/${thHexes.length}`)
-}
+// ── Main ──
 
 async function main() {
-  console.log(`=== TH Railway Enrichment — Namtang GTFS (${YEAR}) ===\n`)
+  console.log(`=== TH Railway Enrichment — Namtang GTFS (${YEAR}, Phase 4: graph-walk) ===\n`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
-  console.log(`  Cache:    ${CACHE_DIR}`)
+  console.log(`  Cache: ${CACHE_DIR}\n`)
 
-  // CRITICAL-1b (/gg Codex): a retract may only run over a PROVABLY COMPLETE input
-  // snapshot. TH has a SINGLE feed, so non-empty stops ARE the completeness proof
-  // (both fresh and cached — a legacy bare-array cache proves itself the same way).
-  // An empty snapshot would make the retract's join corroboration read "no coverage"
-  // nationwide and wipe every legacy TH stamp. Only the retract is gated.
-  let merged: StopTrainCount[]
-  let retractUnsafeDetail: string
-  if (!forceDownload && existsSync(CACHE_FREQUENCIES)) {
-    console.log(`\n  Using cached stop frequencies: ${CACHE_FREQUENCIES}`)
+  if (!existsSync(H3R4_DIR)) {
+    console.error(`ERROR: H3R4 directory not found: ${H3R4_DIR}`)
+    process.exit(1)
+  }
+
+  // downloadGtfs is always needed — even a merged-stop-cache hit below still
+  // needs a real extractDir for the pair parser's own per-extractDir cache.
+  // It THROWS on failure, so past this point the single feed is always
+  // present — no missing-feed completeness term exists here (unlike dk/ae's
+  // failure-tolerant multi-feed loaders).
+  const dir = await downloadGtfs()
+  const stopCacheHit = !forceDownload && existsSync(CACHE_FREQUENCIES)
+
+  // ── Single-feed parse: declared families + heavy-rail STATION PAIRS (+ tram
+  //    stops on cache miss). BIDIRECTIONAL completeness (2026-07-16 review
+  //    item 4): every family the feed's routes.txt declares under
+  //    `thDeclaredRouteFamily` must have parsed non-empty (declares rail →
+  //    pairs>0, declares tram → tramStops>0), evaluated by the shared
+  //    `describeIncompleteFamilies`. A malformed routes.txt THROWS (item 3,
+  //    `declaredRouteFamiliesForFeed`) and is recorded as a PARSE FAILURE —
+  //    never as "legitimately rail-less". Pairs are re-validated every run
+  //    (their own per-extractDir cache in computeStopPairFrequenciesForFeed
+  //    is fingerprinted against the GTFS inputs, item 2 — NOT recomputed from
+  //    stop_times each run, the old comment here claiming "always computed
+  //    fresh" was wrong); `expandFrequencies` defaults on (frequencies.txt
+  //    exists in this feed) — the generic TH-multiplier the pairs path
+  //    inherited, see module doc. The tram direction is checked live on
+  //    stop-cache miss and vouched by the v2 cache's recorded provenance on a
+  //    hit (recording rule below is itself bidirectional, so a recorded feed
+  //    means BOTH directions held at write).
+  let pairs: RailStationPairCount[] = []
+  let freshTramStops: StopTrainCount[] = []
+  const completeFeedIds: string[] = []
+  const feedIssues: string[] = []
+  try {
+    const declared = await declaredRouteFamiliesForFeed(dir, thDeclaredRouteFamily)
+    const pairResult = await computeStopPairFrequenciesForFeed(dir, { bbox: TH_BBOX, optionsKey: 'th-busiest-wed' })
+    pairs = pairResult.pairs
+    let tramN: number | null = null
+    if (!stopCacheHit) {
+      freshTramStops = await computeTramStopFrequencies(dir)
+      tramN = freshTramStops.length
+    }
+    const issue = describeIncompleteFamilies(FEED_ID, declared, pairs.length, tramN)
+    if (issue) feedIssues.push(issue)
+    else completeFeedIds.push(FEED_ID)
+    console.log(`  [${FEED_ID}] ${pairs.length} heavy-rail station pairs; declares [${[...declared].sort().join('+') || 'no rail family'}]`)
+  } catch (err: any) {
+    console.error(`  [${FEED_ID}] PARSE FAILED: ${err.message}`)
+    feedIssues.push(`${FEED_ID}: parse failure — ${err.message}`)
+  }
+
+  // ── Tram/light-rail STOPS: the v2 cache (the pre-existing download marker;
+  //    unchanged path) or this run's own parse. ──
+  let tramStops: StopTrainCount[]
+  let stopsUnsafeDetail: string
+  if (stopCacheHit) {
+    console.log(`  Using cached tram/light-rail stop frequencies: ${CACHE_FREQUENCIES}`)
     const cached = readMergedStopCache<StopTrainCount>(CACHE_FREQUENCIES)
-    merged = cached.stops
-    retractUnsafeDetail = merged.length > 0 ? '' : `cached snapshot is empty: ${CACHE_FREQUENCIES}`
-    console.log(`  ${merged.length} stops in cache`)
+    // Call-site family filter: the legacy 3-family bare-array cache carries
+    // 76 tram + 184 rail + 107 metro records, and only the tram ones may feed
+    // the stop-join. buildTramExtraMatch filters internally too (the
+    // load-bearing guard — see the module doc's Suvarnabhumi APM finding);
+    // this filter is harmless double protection and keeps the count below honest.
+    tramStops = cached.stops.filter(s => s.family === 'tram')
+    // Legacy bare-array cache: with a SINGLE feed, non-empty tram stops are
+    // themselves the completeness proof of the tram direction (the one feed
+    // parsed non-empty when the cache was written); the rail direction is
+    // re-proven live by the pairs check above every run.
+    stopsUnsafeDetail = cached.feedsLoadedNonEmpty === null
+      ? (tramStops.length > 0 ? '' : `cached snapshot has no tram stops: ${CACHE_FREQUENCIES}`)
+      : describeIncompleteFeeds([FEED_ID], cached.feedsLoadedNonEmpty)
+    console.log(`  ${tramStops.length} tram/light-rail stops in cache`)
   } else {
-    const dir = await downloadGtfs()
-    merged = await computeStopFrequencies(dir)
-    retractUnsafeDetail = merged.length > 0 ? '' : 'namtang feed parsed to zero rail stops'
-    if (retractUnsafeDetail === '') {
-      writeMergedStopCache(CACHE_FREQUENCIES, ['namtang'], merged)
-      console.log(`  Cached frequencies to ${CACHE_FREQUENCIES}`)
+    tramStops = freshTramStops
+    stopsUnsafeDetail = '' // live evaluation already sits in feedIssues
+    if (feedIssues.length === 0) {
+      // Recording rule (item 4): the feed lands in the cache's provenance only
+      // when it passed the FULL bidirectional check this run — a later
+      // cache-served run inherits completeness both ways, not any-family.
+      writeMergedStopCache(CACHE_FREQUENCIES, completeFeedIds, tramStops)
+      console.log(`  Cached tram/light-rail frequencies to ${CACHE_FREQUENCIES}`)
     } else {
-      // Never persist an empty snapshot: a poisoned cache would silently starve
+      // Never persist a partial snapshot: a poisoned cache would silently starve
       // every later cache-served run (both enrichment and the retract evidence).
-      console.log(`  NOT caching empty snapshot (${retractUnsafeDetail})`)
+      console.log(`  NOT caching partial/empty snapshot (${feedIssues.join('; ')})`)
     }
   }
+
+  // CRITICAL-1b (/gg Codex): a retract may only run over a PROVABLY COMPLETE
+  // snapshot for BOTH families this single feed carries — a working tram part
+  // must never mask an empty heavy-rail pairs part (or vice versa), since ONE
+  // retract object below covers every row regardless of family.
+  const retractUnsafeDetail = [...feedIssues, stopsUnsafeDetail].filter(Boolean).join('; ')
   const retractSafe = retractUnsafeDetail === ''
   if (!retractSafe) logRetractSkippedIncompleteInputs(retractUnsafeDetail)
 
-  if (merged.length === 0) {
+  if (pairs.length === 0 && tramStops.length === 0) {
     console.log(`\nNo GTFS data to enrich. Exiting.`)
     return
   }
 
-  console.log(`\n  Enriching railways.arrow files...`)
-  await enrichHexes(merged, retractSafe)
-  console.log(`\n=== Done ===`)
+  console.log(`\n  ${pairs.length} heavy-rail station pairs, ${tramStops.length} tram/light-rail stops`)
+
+  // COUNTRY GATE (#26C): a national feed can carry international through-services
+  // (SRT runs to Sungai Kolok/Malaysia and Vientiane/Laos), so this id must not
+  // speak for track outside Thailand — same rationale as every other national
+  // enricher (mechanism: the PL feed once stamped 11,856 km of CZ track,
+  // 7fac2349). #31.7 central country gate — see writeRailTrains / rail-walk-enrich.ts.
+  const inTh = makeCountryGate('TH')
+
+  const stats = await enrichRailwaysByGraphWalk({
+    h3r4Dir: H3R4_DIR,
+    bbox: GRAPH_BBOX,
+    pairs,
+    sourceId: MY_SOURCE_ID,
+    countryGate: inTh,
+    // Nationally-owned id (unlike europe's shared SOURCE_ID_GLOBAL_GTFS_TRANSIT):
+    // the SAME gate doubles as the bleed arm — a row wholly outside Thailand is
+    // disownable on geometry alone, since this id never legitimately stamps there.
+    bleedGate: inTh,
+    extraMatch: buildTramExtraMatch(tramStops, MY_SOURCE_ID),
+    // Single id — TH has no retired predecessor id to absorb. The pre-2026-07-10
+    // OLD_FALLBACK class-default retract is deleted outright (not preserved via
+    // sourceIds composition): the driver's own generic retract — disown a
+    // previously-owned row the walk/tram-join no longer covers, given
+    // retractSafe — already subsumes it and is strictly more correct.
+    retract: { sourceIds: [MY_SOURCE_ID] },
+    retractSafe,
+    enableDestructive: !stampOnly,
+    // #26B: TH is NOT silent-capable (silentResidual omitted) — a
+    // quarantine-free row the walk never reaches simply stays at
+    // source_id=0 for the engine's own class default; only CZ's timetable
+    // evidence (owner decision option b) justifies a residual.
+    sidecar: {
+      scope: 'th',
+      extractFingerprint: `th-gtfs:${FEED_ID}`,
+      feeds: [FEED_ID],
+    },
+  })
+  console.log(`\n  walk stats: ${JSON.stringify(stats)}`)
+
+  console.log(`\n=== Done (${stampOnly ? 'stamp-only — Step A proof mode' : 'destructive ops enabled'}) ===`)
 }
 
 // Import-safe: run only when invoked directly — importing this file must never

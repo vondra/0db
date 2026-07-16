@@ -22,7 +22,7 @@
  * lives in the europe registry instead (fr-idf is declared tram-only there).
  */
 
-import { existsSync, createReadStream } from 'node:fs'
+import { existsSync, createReadStream, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { coordKey4dp } from './spatial.js'
@@ -172,31 +172,60 @@ type PairAccumulator = RailStationPairCount
  * v2 cache envelope helpers (`writeMergedStopCache`/`readMergedStopCache`) purely for
  * their versioned on-disk shape — `feedsLoadedNonEmpty` carries no multi-feed
  * completeness signal here (this cache always describes ONE extractDir's own single
- * parse, never a merge), so its first slot is a fixed version marker and its second
- * slot carries `opts.optionsKey` (2026-07-16 /gg review item 11b): a cache hit only
- * counts when the stored key matches the CURRENT call's — a caller whose
+ * parse, never a merge), so its first slot is a fixed version marker, its second
+ * slot carries `opts.optionsKey` (2026-07-16 /gg review item 11b), and its third
+ * slot carries `gtfsPairInputsFingerprint(extractDir)` (2026-07-16 review item 2):
+ * a cache hit only counts when the stored key matches the CURRENT call's AND the
+ * GTFS input files (size+mtimeMs) are unchanged — a caller whose
  * familyOf/dateSelection/expandFrequencies/maxShapePoints shape differs from an
- * earlier writer's recomputes and overwrites instead of silently serving a parse that
- * would have come out differently. Never persists an empty parse (mirrors
+ * earlier writer's, or whose extractDir was refreshed by --force-download,
+ * recomputes and overwrites instead of silently serving a parse that would have
+ * come out differently. Never persists an empty parse (mirrors
  * gtfs-enrich-core.ts's merged-stop-cache rule): a poisoned/empty cache would silently
  * starve every later cache-served call.
  */
 const CACHE_VERSION_MARKER = 'pairs-v1'
+
+/** The GTFS inputs whose content this parser's result depends on. A change in
+ *  ANY of them (a `--force-download` unzipping a fresh feed over the old
+ *  extractDir is the reference case) must invalidate the pair cache — the
+ *  optionsKey alone cannot see it (2026-07-16 review fix, item 2: the cache
+ *  used to keep serving the OLD timetable's pairs, target date and
+ *  frequencies.txt expansion after a feed refresh, and could even vouch
+ *  "non-empty" retract evidence for a broken fresh feed). */
+const FINGERPRINT_INPUT_FILES = ['routes.txt', 'trips.txt', 'stop_times.txt', 'calendar.txt', 'calendar_dates.txt', 'frequencies.txt'] as const
+
+/** size+mtimeMs of every fingerprint input (absent files marked as such) —
+ *  cheap (6 stat calls) and refresh-proof: unzip always rewrites mtime. */
+export function gtfsPairInputsFingerprint(extractDir: string): string {
+  return FINGERPRINT_INPUT_FILES.map((f) => {
+    const p = resolve(extractDir, f)
+    if (!existsSync(p)) return `${f}:absent`
+    const st = statSync(p)
+    return `${f}:${st.size}:${Math.round(st.mtimeMs)}`
+  }).join(';')
+}
 
 export async function computeStopPairFrequenciesForFeed(
   extractDir: string,
   opts: StopPairFrequenciesOptions = {},
 ): Promise<StopPairFrequenciesResult> {
   const optionsFingerprint = opts.optionsKey ?? 'default'
+  const inputsFingerprint = gtfsPairInputsFingerprint(extractDir)
   const cachePath = resolve(extractDir, CACHE_FILENAME)
   if (existsSync(cachePath)) {
     const cached = readMergedStopCache<RailStationPairCount>(cachePath)
-    if (cached.feedsLoadedNonEmpty?.[1] === optionsFingerprint) {
+    // Hit requires BOTH the options combination AND the GTFS inputs to be the
+    // ones this cache was computed from — slot [1] carries optionsKey, slot
+    // [2] the inputs fingerprint (item 2). A cache written before the
+    // fingerprint existed simply recomputes once and is rewritten.
+    if (cached.feedsLoadedNonEmpty?.[1] === optionsFingerprint && cached.feedsLoadedNonEmpty?.[2] === inputsFingerprint) {
       return { pairs: cached.stops, provenance: emptyProvenance({ pairsAfterDedup: cached.stops.length, fromCache: true }) }
     }
-    // Options changed since this cache was written (or it predates optionsKey
-    // entirely) — fall through and recompute; the write below overwrites it
-    // with the CURRENT fingerprint rather than serving a mismatched parse.
+    // Options OR inputs changed since this cache was written (or it predates
+    // either fingerprint) — fall through and recompute; the write below
+    // overwrites it with the CURRENT fingerprints rather than serving a
+    // mismatched/stale parse.
   }
 
   const familyOf = opts.familyOf ?? defaultFamilyOf
@@ -389,10 +418,11 @@ export async function computeStopPairFrequenciesForFeed(
 
   // Never persist an empty parse — mirrors gtfs-enrich-core.ts's writeMergedStopCache
   // callers: a poisoned/empty cache would silently starve every later cache-served run.
-  // Second slot carries the CURRENT optionsFingerprint (see the module doc) so a later
-  // call under a different options shape recomputes instead of reading this one.
+  // Second slot carries the CURRENT optionsFingerprint, third the GTFS inputs
+  // fingerprint (see the module doc + item 2) so a later call under a different
+  // options shape OR a refreshed extract recomputes instead of reading this one.
   if (pairs.length > 0) {
-    writeMergedStopCache(cachePath, [CACHE_VERSION_MARKER, optionsFingerprint], pairs)
+    writeMergedStopCache(cachePath, [CACHE_VERSION_MARKER, optionsFingerprint, inputsFingerprint], pairs)
   }
 
   return { pairs, provenance }

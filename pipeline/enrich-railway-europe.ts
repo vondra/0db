@@ -14,7 +14,9 @@
  * TRAM/light-rail (rail_type 1/2) keeps the pre-Phase-4
  * `nearestGridStop` 500 m stop-join (stop spacing is well under the radius —
  * banding was a heavy-rail-only bug, plan Key decisions), wired in as the
- * walk driver's `extraMatch` fallback arm.
+ * walk driver's `extraMatch` fallback arm via `buildTramExtraMatch` — hoisted
+ * to `lib/gtfs-enrich-core.ts` so every national `enrich-railway-{cc}.ts`
+ * enricher shares the SAME implementation (2026-07-16 Phase 4 point 2).
  *
  * PER-COUNTRY EXECUTION (plan Phase 4 point 2 / /gg review item 7): `--country
  * CC` processes ONLY that country's own feed(s) against a border-buffered
@@ -59,18 +61,24 @@ import { pathToFileURL } from 'node:url'
 import { execSync } from 'node:child_process'
 import { gunzipSync } from 'node:zlib'
 import { createInterface } from 'node:readline'
-import { latLngToCell, gridDisk } from 'h3-js'
+import { latLngToCell } from 'h3-js'
 import { SOURCE_ID_GLOBAL_GTFS_TRANSIT } from './lib/source-ids.generated.js'
-import { writeRailTrains, type RailRow, type RailTrains } from './lib/railways-arrow.js'
+import { writeRailTrains, type RailRow } from './lib/railways-arrow.js'
 import { makeCountryGate } from './lib/country-polygon.js'
 import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { enrichRailwaysByGraphWalk } from './lib/rail-walk-enrich.js'
 import type { RailStationPairCount } from './lib/rail-graph.js'
 import { computeStopPairFrequenciesForFeed } from './lib/gtfs-stop-pairs.js'
 import {
-  RAIL_TYPES, TRAM_TYPES, METRO_TYPES, routeFamily, nearestGridStop,
+  RAIL_TYPES, TRAM_TYPES, METRO_TYPES, routeFamily,
   parseGtfsDate, formatDate, logRetractSkippedIncompleteInputs, GTFS_BORDER_MARGIN_DEG, type GtfsStop,
+  dedupeStopsByLocation, buildTramExtraMatch, declaredRouteFamiliesForFeed, describeIncompleteFamilies,
 } from './lib/gtfs-enrich-core.js'
+// Re-exported for enrich-railway-europe.test.ts and any other importer that
+// still names this module — the implementations live in gtfs-enrich-core.ts
+// (2026-07-16 Phase 4 hoist) so every national enrich-railway-{cc}.ts shares
+// them too, never 17 copies.
+export { dedupeStopsByLocation, buildTramExtraMatch }
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_GLOBAL_GTFS_TRANSIT
@@ -370,23 +378,8 @@ export interface StopTrainCount {
   trains_freight: number   // GTFS rarely has freight, but keep for consistency
 }
 
-/** Sum departures of stops at the same rounded location (~11m) + family into one
- *  row. Merges platforms of one station AND the same physical stop appearing in
- *  several subfeeds of a nested feed (au-vic Southern Cross carries V/Line + the
- *  interstate service under one stop_id in feeds 1 and 10 — /gg Codex confirmed
- *  they would otherwise not sum, since the downstream picks the single nearest
- *  stop per segment, not their total). Distinct platforms keep distinct coords,
- *  so cross-track counts are NOT over-summed. */
-export function dedupeStopsByLocation(stops: StopTrainCount[]): StopTrainCount[] {
-  const byLoc = new Map<string, StopTrainCount>()
-  for (const sc of stops) {
-    const key = `${sc.lat.toFixed(4)}_${sc.lon.toFixed(4)}_${sc.family}`
-    const existing = byLoc.get(key)
-    if (existing) existing.trains_passenger += sc.trains_passenger
-    else byLoc.set(key, { ...sc })
-  }
-  return [...byLoc.values()]
-}
+// dedupeStopsByLocation now lives in lib/gtfs-enrich-core.ts (2026-07-16 Phase 4
+// hoist) — imported above and re-exported for this file's own test importers.
 
 // ── GTFS parsing ──
 
@@ -976,6 +969,11 @@ interface CountryFeedOutcome {
   feed: FeedConfig
   tramStops: StopTrainCount[]
   pairs: RailStationPairCount[]
+  /** Families this feed's own routes.txt declares under its allow-list
+   *  classifier (union across a nested feed's subfeed dirs) — the evidence
+   *  base for the BIDIRECTIONAL completeness check (review item 4). Empty
+   *  when `failed` (never read then). */
+  declared: Set<'rail' | 'tram'>
   failed: string | null
 }
 
@@ -1024,47 +1022,8 @@ export function countryBboxFor(cc: string): [number, number, number, number] {
   ]
 }
 
-/** Tram/light-rail `extraMatch` fallback arm for `enrichRailwaysByGraphWalk`
- *  — the pre-Phase-4 `nearestGridStop` 500 m join, UNCHANGED for this family
- *  (heavy rail moved to the graph walk; tram stop spacing is well under the
- *  radius, so banding was never a tram bug — plan Key decisions: "Trams keep
- *  the 500 m stop-join v1"). FIX (2026-07-16 review): the pre-Phase-4 design
- *  built one grid per hex from ONLY that hex's own stops, missing a tram
- *  stop sitting just over a hex boundary from the segment querying it — the
- *  grid for hex H now merges stops from H AND its k=1 ring (`gridDisk`, 7
- *  hexes total, origin included). Memoized per hexId (rebuilt only when
- *  hexId CHANGES from the previous call) since `enrichRailwaysByGraphWalk`
- *  processes every row of one hex's railways.arrow together before moving to
- *  the next — the ring merge is paid once per hex, not once per row. */
-export function buildTramExtraMatch(tramStops: readonly StopTrainCount[]): (row: RailRow, i: number, hexId: string) => RailTrains | null {
-  const stopsByHex = new Map<string, StopTrainCount[]>()
-  for (const sc of tramStops) {
-    const arr = stopsByHex.get(sc.h3r4)
-    if (arr) arr.push(sc); else stopsByHex.set(sc.h3r4, [sc])
-  }
-
-  let cachedHexId: string | null = null
-  let cachedGrid: Map<string, StopTrainCount[]> = new Map()
-
-  return (row, _i, hexId) => {
-    if (row.railType !== 1 && row.railType !== 2) return null // heavy rail is walk-only, other families never match
-    if (hexId !== cachedHexId) {
-      cachedHexId = hexId
-      const grid = new Map<string, StopTrainCount[]>()
-      for (const nb of gridDisk(hexId, 1)) {
-        for (const sc of stopsByHex.get(nb) ?? []) {
-          const key = `${Math.floor(sc.lat * 100)}_${Math.floor(sc.lon * 100)}`
-          const cell = grid.get(key)
-          if (cell) cell.push(sc); else grid.set(key, [sc])
-        }
-      }
-      cachedGrid = grid
-    }
-    const bestStop = nearestGridStop(cachedGrid, row)
-    if (!bestStop) return null
-    return { pax: bestStop.trains_passenger, frt: bestStop.trains_freight, sourceId: MY_SOURCE_ID }
-  }
-}
+// buildTramExtraMatch now lives in lib/gtfs-enrich-core.ts (2026-07-16 Phase 4
+// hoist) — imported above and re-exported for this file's own test importers.
 
 /** Downloads one feed and computes BOTH the tram per-stop counts (unchanged
  *  `nearestGridStop` join input) and the heavy-rail station-PAIR counts (the
@@ -1078,7 +1037,15 @@ async function loadCountryFeed(feed: FeedConfig): Promise<CountryFeedOutcome> {
     const extractDirs = await downloadGtfs(feed)
     let tramStops: StopTrainCount[] = []
     let pairs: RailStationPairCount[] = []
+    const declared = new Set<'rail' | 'tram'>()
     for (const dir of extractDirs) {
+      // Declared families from THIS extract's own routes.txt, classified by the
+      // SAME allow-list (+ metroAsRail) the two parse arms use — the evidence
+      // base for bidirectional completeness (item 4). Throws on a malformed
+      // routes.txt (item 3), which the catch below records as feed FAILED —
+      // never as "legitimately declares nothing".
+      for (const fam of await declaredRouteFamiliesForFeed(dir, (rt) => railFamilyFor(rt, feed))) declared.add(fam)
+
       const stopCounts = await computeStopFrequencies(dir, feed)
       tramStops = tramStops.concat(stopCounts.filter(s => s.family === 'tram'))
 
@@ -1097,10 +1064,10 @@ async function loadCountryFeed(feed: FeedConfig): Promise<CountryFeedOutcome> {
       pairs = pairs.concat(pairResult.pairs)
     }
     if (extractDirs.length > 1) tramStops = dedupeStopsByLocation(tramStops)
-    return { feed, tramStops, pairs, failed: null }
+    return { feed, tramStops, pairs, declared, failed: null }
   } catch (err: any) {
     console.error(`  [${feed.id}] FAILED: ${err.message}`)
-    return { feed, tramStops: [], pairs: [], failed: err.message }
+    return { feed, tramStops: [], pairs: [], declared: new Set(), failed: err.message }
   }
 }
 
@@ -1114,17 +1081,20 @@ export function feedDeclaresHeavyRail(feed: FeedConfig): boolean {
   return [...feed.railRouteTypes].some(rt => railFamilyFor(rt, feed) === 'rail')
 }
 
-/** Per-family completeness (2026-07-16 /gg fix batch item 3): a feed only
- *  counts LOADED when the family that carries its retract evidence actually
- *  parsed non-empty. The old any-part-non-empty test let a working tram part
- *  mask an empty heavy-rail part — retractSafe then allowed the run to
- *  disown every prior heavy-rail stamp with nothing to re-claim it. A feed
- *  that declares heavy rail therefore requires non-empty PAIRS; a tram-only
- *  feed (fr-idf) is exempt from the pairs requirement (it never makes
- *  heavy-rail retract claims) and requires its tram part instead. */
-export function feedPartsIncomplete(feed: FeedConfig, tramStopCount: number, pairCount: number): boolean {
-  if (feedDeclaresHeavyRail(feed)) return pairCount === 0
-  return tramStopCount === 0
+/** Per-family completeness, BIDIRECTIONAL (2026-07-16 review item 4 — the
+ *  earlier one-directional version accepted `tram=0, pairs=100` as complete,
+ *  so a broken tram part could ride a working heavy-rail part into a retract
+ *  that disowned tram stamps with nothing to re-claim them; the same masking
+ *  the original item-3 fix closed in the OTHER direction). `declared` is the
+ *  family set this feed's OWN routes.txt actually declares under its own
+ *  allow-list classifier (`declaredRouteFamiliesForFeed` in loadCountryFeed)
+ *  — registry-only declaration was wrong for e.g. an ALL_RAIL_AND_TRAM feed
+ *  whose extract carries no trams (HR): a family the extract never declares
+ *  is exempt, a family it declares must have parsed non-empty. Thin shim over
+ *  the shared `describeIncompleteFamilies` (gtfs-enrich-core.ts) so europe
+ *  and the 16 national enrichers can never drift on this rule. */
+export function feedPartsIncomplete(declared: ReadonlySet<'rail' | 'tram'>, tramStopCount: number, pairCount: number): boolean {
+  return describeIncompleteFamilies('feed', declared, pairCount, tramStopCount) !== ''
 }
 
 /** UNION bleed gate for the shared GLOBAL_GTFS_TRANSIT id (item 1, world
@@ -1171,12 +1141,13 @@ async function processCountry(cc: string, bleedGate?: (lat: number, lon: number)
   }
 
   const failedFeedIds = outcomes.filter(o => o.failed).map(o => o.feed.id)
-  // Per-family completeness (item 3): `feedPartsIncomplete` — a heavy-rail
-  // feed whose PAIRS parsed empty is NOT loaded even when its tram part
-  // worked, so retractSafe below can never disown heavy-rail stamps on a
-  // tram-only snapshot; a tram-only feed is judged on its tram part alone.
+  // Per-family completeness, BIDIRECTIONAL (item 4): `feedPartsIncomplete` —
+  // every family the feed's own routes.txt declares must have parsed
+  // non-empty (declares rail → pairs>0, declares tram → tramStops>0), so
+  // retractSafe below can never disown one family's stamps on the OTHER
+  // family's working snapshot; a family the extract never declares is exempt.
   const emptyFeedIds = outcomes
-    .filter(o => !o.failed && feedPartsIncomplete(o.feed, o.tramStops.length, o.pairs.length))
+    .filter(o => !o.failed && feedPartsIncomplete(o.declared, o.tramStops.length, o.pairs.length))
     .map(o => o.feed.id)
   const loaded = outcomes.length - failedFeedIds.length - emptyFeedIds.length
   const denom = feeds.length
@@ -1228,7 +1199,7 @@ async function processCountry(cc: string, bleedGate?: (lat: number, lon: number)
     // run's gate covers only ONE of the territories the id legitimately
     // stamps), the FEEDS-union gate in world mode. See processCountry's doc.
     bleedGate,
-    extraMatch: buildTramExtraMatch(tramStops),
+    extraMatch: buildTramExtraMatch(tramStops, MY_SOURCE_ID),
     // Single id — europe has no retired predecessor id to absorb (unlike CZ's
     // migration #26, this file's own source id is unchanged across this rewrite).
     retract: { sourceIds: [MY_SOURCE_ID] },
