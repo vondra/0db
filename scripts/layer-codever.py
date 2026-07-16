@@ -41,7 +41,11 @@ DEFAULT_EXCL = {
             " noise-compute/src/country_speed_defaults_generated.rs",
     "rail": "heatmap-aircraft/src/source_loader_rail.rs noise-compute/src/compute/railways.rs noise-compute/src/emission/railway.rs",
     "industrial": "noise-compute/src/emission/industrial.rs noise-compute/src/emission/wind.rs",
-    "building": "heatmap-aircraft/src/source_loader_building.rs noise-compute/src/emission/settlement.rs",
+    # emission/leisure.rs is building-only (grep-proven 2026-07-16: its callers are
+    # normalize/points.rs' LEISURE rows — which land in the building tile, layer-spec folds
+    # leisure.arrow into building — and popup labels in source_names.rs, not painted output).
+    "building": "heatmap-aircraft/src/source_loader_building.rs noise-compute/src/emission/settlement.rs"
+                " noise-compute/src/emission/leisure.rs",
     "aircraft-ground": "heatmap-aircraft/src/source_loader_traffic.rs heatmap-aircraft/src/ground_ops.rs noise-compute/src/emission/airport_traffic.rs noise-compute/src/emission/gse.rs noise-compute/src/emission/aircraft/ground_ops.rs noise-compute/src/compute/aircraft_v6/airport_traffic",
     "aircraft-airborne": "heatmap-aircraft/src/source_loader_airborne.rs heatmap-aircraft/src/airborne.rs noise-compute/src/compute/aircraft_v6/airborne noise-gpu/src/gpu_airborne.rs noise-gpu/kernels/airborne.cu",
     "aircraft-cruise": "heatmap-aircraft/src/cruise.rs noise-compute/src/compute/aircraft_v6/cruise.rs",
@@ -104,7 +108,7 @@ def set_hash(files, repo):
     literal-path keys made GLOBAL_BUILD entries (joined onto the absolute repo root) differ per
     host (/home/vondra/0db-app vs ~/qmap), so every box computed a DIFFERENT cv from byte-identical
     sources and the v2 hub's cv gate refused all its claims (found live at cutover, 2026-07-02).
-    cv values change ONCE with this fix, identically everywhere; PERF_CUTOFF blessing keeps every
+    cv values change ONCE with this fix, identically everywhere; OUTPUT_VER blessing keeps every
     already-sealed stamp current (cv-only mismatch + seal-utc ≥ cutoff)."""
     rel = lambda f: os.path.relpath(f, repo)   # noqa: E731 — tiny local key fn
     return hashlib.sha1("\n".join(f"{rel(f)}\t{file_sig(f)}" for f in sorted(files, key=rel)).encode()).hexdigest()[:16]
