@@ -64,10 +64,18 @@ type HeatTile = {
 // enforcing the budget exactly would mean reimplementing deck's scheduler.
 const EARLY_RESOLVE_AFTER_MS = 250
 
-// Grace period before the ancestor preview may win the paint race: a warm-CDN
-// full load typically completes under this, so everyday browsing paints sharp
-// directly — the blocky preview only appears where loads are genuinely slow.
-const PREVIEW_GRACE_MS = 80
+// Grace period before the ancestor preview may win a paint race: sharp tiles
+// arriving under this paint directly — the blurred preview appears only where
+// loads are GENUINELY slow (owner report 2026-07-16: a memo-resolved preview
+// was instantly beating ~300 ms tiles, flashing blur over areas that were
+// about to be sharp). Applied in every race, measured from load start.
+const PREVIEW_GRACE_MS = 400
+
+// Upper bound on the complete-for-complete wait when deck is painting a
+// cached sharper ancestor: past it the loader degrades to progressive rather
+// than letting one hanging fetch pin the ancestor (and a deck request slot)
+// forever.
+const COMPLETE_SWAP_MAX_WAIT_MS = 4000
 
 // Ancestor fetches are memoized: a whole block of children (4^Δ tiles) shares
 // one ancestor and the browser does NOT coalesce concurrent fetches of the
@@ -76,10 +84,6 @@ const PREVIEW_GRACE_MS = 80
 // abort; 'low' priority keeps sharp tiles ahead in the network queue. (deck's
 // own sharp-path fetch of the same URL after a deep zoom-out can still
 // duplicate one request — rare, lands on the warmed CDN band, accepted.)
-// Tiles deck evicted while their load was still pending — their late resolve
-// must not register in the loaded-tile registry (see getTileData).
-const unloadedWhilePending = new WeakSet<Promise<HeatTile | null>>()
-
 type AncestorEntry = { promise: Promise<{ cells: Uint8Array } | null>; done: boolean }
 const ancestorMemo = new Map<string, AncestorEntry>()
 const ANCESTOR_MEMO_MAX = 128
@@ -189,26 +193,37 @@ async function loadTileProgressively(
       resolve()
     })().catch(() => { /* a failed preview just never shows */ })
   })
-  await Promise.race([
-    allDone,
-    new Promise<void>((resolve) => setTimeout(resolve, EARLY_RESOLVE_AFTER_MS)),
-    // The preview may only win after a grace period, so a warm-CDN full load
-    // paints sharp directly instead of flashing blocky first.
-    new Promise<void>((resolve) => setTimeout(resolve, PREVIEW_GRACE_MS)).then(() => previewReady),
-  ])
+  const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+  // The preview may only win a race after the grace period — sharp data
+  // arriving under it paints directly, no blur flash.
+  const previewEligible = delay(PREVIEW_GRACE_MS).then(() => previewReady)
+  await Promise.race([allDone, delay(EARLY_RESOLVE_AFTER_MS), previewEligible])
+  if (!allSettled && hasDeckFallback?.()) {
+    // deck is already painting a cached sharper ancestor for this tile — an
+    // early partial resolve would visibly DOWNGRADE it mid-zoom, each tile at
+    // a different moment (patchwork jumping, owner report 2026-07-16). Hold
+    // out (bounded) for the complete set; the ancestor stays up meanwhile and
+    // the swap is complete-for-complete.
+    await Promise.race([allDone, delay(COMPLETE_SWAP_MAX_WAIT_MS)])
+  }
   if (!allSettled) {
     // Slow load → progressive: wake on every settle, proceed once ANY real
     // grid landed, the ancestor preview is ready, or everything settled.
     const firstGrid = new Promise<void>((resolve) => {
       for (const p of perFetch) void p.then(() => { if (grids.length > 0) resolve() })
     })
-    await Promise.race([allDone, previewReady, firstGrid])
+    await Promise.race([allDone, previewEligible, firstGrid])
     if (!allSettled && grids.length === 0 && previewImage && hasDeckFallback?.()) {
       // A sharper cached ancestor landed while the preview was in flight —
       // resolving coarse now would HIDE it (no-overlap shows the exact tile
       // once loaded). Drop the preview and wait for real data instead.
       previewImage = null
       await Promise.race([allDone, firstGrid])
+    }
+    if (!allSettled && grids.length > 0 && hasDeckFallback?.()) {
+      // The ancestor can also land while waiting above — re-check before a
+      // PARTIAL resolve would overpaint it (bounded like the branch above).
+      await Promise.race([allDone, delay(COMPLETE_SWAP_MAX_WAIT_MS)])
     }
   }
   if (ctl.signal.aborted) throw new DOMException('tile aborted', 'AbortError')
@@ -329,14 +344,22 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
   // mirrors deck's session cache (z/x/y keys) so the ancestor preview can
   // yield to deck's own better fallback (owner policy 2026-07-16: exact zoom >
   // z−1 > z−2 > … > coarse preview > blank).
-  const tileTails = useRef<{ key: string; aborts: Set<() => void>; loaded: Set<string> }>(
-    { key: '', aborts: new Set(), loaded: new Set() },
-  )
+  const tileTails = useRef<{
+    key: string
+    aborts: Set<() => void>
+    loaded: Set<string>
+    /** In-flight request token per tile key — a resolve registers in `loaded`
+     *  only while ITS token is still current (deck can evict a pending tile
+     *  without aborting it, and it holds its own wrapper promise, so promise
+     *  identity cannot be used to detect that). */
+    inFlight: Map<string, symbol>
+  }>({ key: '', aborts: new Set(), loaded: new Set(), inFlight: new Map() })
   const dropTileTails = useCallback((nextKey: string) => {
     if (tileTails.current.key === nextKey) return
     for (const abort of tileTails.current.aborts) abort()
     tileTails.current.aborts.clear()
     tileTails.current.loaded.clear()
+    tileTails.current.inFlight.clear()
     tileTails.current.key = nextKey
   }, [])
   useEffect(() => () => dropTileTails(''), [dropTileTails])
@@ -402,7 +425,7 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
         dropTileTails(`${buildKey(build, sources)}-o${zoomOffset}`)
         layers.push(makeHeatmapTileLayer(
           build, sources, beforeId, refineSeq.current, onRefined,
-          tileTails.current.aborts, tileTails.current.loaded, zoomOffset,
+          tileTails.current, zoomOffset,
         ))
       }
     } else {
@@ -545,10 +568,10 @@ function makeHeatmapTileLayer(
   beforeId: string | undefined,
   refineSeq: number,
   onRefined: () => void,
-  tails: Set<() => void>,
-  loaded: Set<string>,
+  registry: { aborts: Set<() => void>; loaded: Set<string>; inFlight: Map<string, symbol> },
   zoomOffset: number,
 ) {
+  const { aborts: tails, loaded, inFlight } = registry
   return new TileLayer<HeatTile | null>({
     id: `hm3-tiles-${buildKey(build, sources)}-o${zoomOffset}`,
     // beforeId on the TileLayer (NOT its sublayers): MapboxOverlay slots only the
@@ -601,15 +624,19 @@ function makeHeatmapTileLayer(
             blockY: y & mask,
           }
         : null
-      let p: Promise<HeatTile | null>
-      p = loadTileProgressively(urls, signal, onRefined, tails, preview, deckFallback).then((data) => {
-        // A tile evicted while still pending gets no future onTileUnload —
-        // registering it would leave a ghost ancestor forever (and grow the
-        // set unboundedly under fast panning).
-        if (!unloadedWhilePending.has(p)) loaded.add(`${z}/${wx}/${y}`)
+      const key = `${z}/${wx}/${y}`
+      const token = Symbol(key)
+      inFlight.set(key, token)
+      return loadTileProgressively(urls, signal, onRefined, tails, preview, deckFallback).then((data) => {
+        // Register only while THIS request is still the current one for the
+        // key — a tile evicted while pending (or superseded by a newer
+        // request) must not become a ghost ancestor.
+        if (inFlight.get(key) === token) {
+          inFlight.delete(key)
+          loaded.add(key)
+        }
         return data
       })
-      return p
     },
     // Bumped by onRefined when a tile's late layers land — deck re-runs
     // renderSubLayers, and only mutated tiles carry a NEW ImageData reference
@@ -622,18 +649,15 @@ function makeHeatmapTileLayer(
     onTileUnload: (tile) => {
       const { x, y, z } = tile.index
       const span = 2 ** z
-      loaded.delete(`${z}/${((x % span) + span) % span}/${y}`)
+      const key = `${z}/${((x % span) + span) % span}/${y}`
+      loaded.delete(key)
+      inFlight.delete(key) // a pending resolve loses its token → never registers
       const d = tile.data
       if (!d) return
       // A still-pending tile can be evicted without deck aborting it — cancel
-      // its tail the moment it resolves instead of letting it refine a ghost,
-      // and bar its resolve from registering in `loaded`.
-      if (d instanceof Promise) {
-        unloadedWhilePending.add(d)
-        void d.then((t) => t?.abortRefine?.()).catch(() => {})
-      } else {
-        d.abortRefine?.()
-      }
+      // its tail the moment it resolves instead of letting it refine a ghost.
+      if (d instanceof Promise) void d.then((t) => t?.abortRefine?.()).catch(() => {})
+      else d.abortRefine?.()
     },
     renderSubLayers: (props) => {
       const data = props.data as HeatTile | null
