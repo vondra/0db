@@ -25,7 +25,9 @@ use cudarc::driver::{result, CudaDevice, CudaFunction, CudaSlice, LaunchAsync, L
 use h3o::CellIndex;
 use heatmap_aircraft::accumulator::TileAccumulator;
 use heatmap_aircraft::grid::tile_range;
-use heatmap_aircraft::region_runner::{read_r4_file, region_tiles, tile_centre_r4};
+use heatmap_aircraft::region_runner::{
+    read_r4_file, region_tiles, split_configured_layers, split_stream_line, tile_centre_r4,
+};
 use heatmap_aircraft::source_line::LineRow;
 use heatmap_aircraft::source_loader_barrier::BarrierData;
 use heatmap_aircraft::wire_hm3::{collapse_lden_surface_u8, read_tile, write_tile};
@@ -489,8 +491,11 @@ fn run_stream(
     // queue in arrival (= the orchestrator's Morton) order; each warm worker pops ONE cell per lock
     // acquire, so its serial-crop RealRasters keeps the grid_disk(1) ring-cache warm across the cells it
     // builds while every CUDA stream stays fed (no worker monopolizes a batch).
-    // (queue of pending cells, stream-closed flag) + a condvar — same shape as gpu_airborne::StreamQueue.
-    type Work = Arc<(Mutex<(VecDeque<u64>, bool)>, Condvar)>;
+    // (queue of pending (cell, per-cell stale-layers-request) pairs, stream-closed flag) + a
+    // condvar — same shape as gpu_airborne::StreamQueue. The optional `Vec<String>` is the
+    // stdin line's `layers=` token (paint-pipeline-v4 PR#1 §3) — `None` = build every
+    // configured layer, today's behavior.
+    type Work = Arc<(Mutex<(VecDeque<(u64, Option<Vec<String>>)>, bool)>, Condvar)>;
     let work: Work = Arc::new((Mutex::new((VecDeque::new(), false)), Condvar::new()));
     let out = Arc::new(Mutex::new(std::io::stdout()));
 
@@ -501,17 +506,21 @@ fn run_stream(
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines() {
             let Ok(line) = line else { break };
-            let hex = line.trim();
-            if hex.is_empty() {
+            let s = line.trim();
+            if s.is_empty() {
                 continue;
             }
+            let (hex, req_layers) = split_stream_line(s);
             match u64::from_str_radix(hex, 16) {
                 Ok(r4) => {
                     let (lock, cv) = &*reader_work;
-                    lock.lock().unwrap().0.push_back(r4);
+                    lock.lock().unwrap().0.push_back((
+                        r4,
+                        req_layers.map(|v| v.into_iter().map(str::to_string).collect()),
+                    ));
                     cv.notify_one();
                 }
-                Err(_) => eprintln!("stream: skip non-hex line: {hex}"),
+                Err(_) => eprintln!("stream: skip non-hex line: {s}"),
             }
         }
         let (lock, cv) = &*reader_work;
@@ -537,12 +546,12 @@ fn run_stream(
                     last_beat: Instant::now(),
                 };
                 loop {
-                    let cell: Option<u64> = {
+                    let cell: Option<(u64, Option<Vec<String>>)> = {
                         let (lock, cv) = &*work;
                         let mut g = lock.lock().unwrap();
                         loop {
-                            if let Some(r4) = g.0.pop_front() {
-                                break Some(r4);
+                            if let Some(cell) = g.0.pop_front() {
+                                break Some(cell);
                             }
                             if g.1 {
                                 break None; // stream closed + drained → exit
@@ -550,14 +559,31 @@ fn run_stream(
                             g = cv.wait(g).unwrap();
                         }
                     };
-                    let Some(r4) = cell else { break };
+                    let Some((r4, req_layers)) = cell else { break };
                     let t = Instant::now();
                     let tiles = region_tiles(r4, z);
-                    let line = match process_region(
-                        r4, &tiles, layers, cfg, &dev, &f, prepared, &mut stats, &mut prog,
-                    ) {
-                        Ok((w, s)) => format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis()),
-                        Err(e) => format!("fail {r4:x} {e}"),
+                    // Narrow this process's configured layers down to the requested (stale)
+                    // subset for THIS cell — absent request = build every configured layer,
+                    // today's behavior (paint-pipeline-v4 PR#1 §3). The agent only sends
+                    // `layers=` for a strict subset of the group, so an EMPTY effective set
+                    // means worker-config↔plan drift — fail LOUD (/fail → parked), never a
+                    // hollow `done` that would let the hub seal an unbuilt stale layer.
+                    let (effective, skipped) =
+                        split_configured_layers(layers, req_layers.as_deref(), |l| l.dir());
+                    let line = if effective.is_empty() {
+                        format!(
+                            "fail {r4:x} layers-request matches none of configured [{}]",
+                            skipped.join(",")
+                        )
+                    } else {
+                        match process_region(
+                            r4, &tiles, &effective, cfg, &dev, &f, prepared, &mut stats, &mut prog,
+                        ) {
+                            Ok((w, s)) => {
+                                format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis())
+                            }
+                            Err(e) => format!("fail {r4:x} {e}"),
+                        }
                     };
                     let mut o = out.lock().unwrap();
                     let ok = writeln!(o, "{line}").is_ok() && o.flush().is_ok();
