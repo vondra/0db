@@ -483,6 +483,8 @@ Raw model data is not distributed. Noise values are model estimates (CNOSSOS-EU 
 
 0db.app uses **no cookies, no trackers, no analytics scripts** — which is why there is no consent banner to click away.
 
+To open the map near you, the first view is approximated to **city level** from your IP address using an offline GeoIP database running on our own server ([IP Geolocation by DB-IP](https://db-ip.com)). The lookup happens in memory, the result is not stored, and your IP is never sent to any third party for this. Precise location is used only if you tap the locate button, via your browser's standard permission prompt.
+
 Our web server keeps standard access logs (IP address, requested URL without query parameters, browser user-agent) for security and operations — the legal basis is legitimate interest (GDPR art. 6(1)(f)). Logs rotate automatically and are kept at most 30 days, then deleted. They are not shared with anyone and are not used for profiling.
 
 Questions or requests: [hello@0db.app](mailto:hello@0db.app).

@@ -1,13 +1,14 @@
 // First-visit map view (no #hash in the URL): approximate the visitor's
-// country WITHOUT any permission prompt — Google-style layering:
+// city/country WITHOUT any permission prompt — Google-style layering:
 //   1. shared link (#hash) wins — handled by useUrlState, never reaches here
-//   2. browser language REGION subtag (cs-CZ, en-GB, de-AT…) → country view
-//   3. unambiguous single-country languages (cs, pl, hu…) → country view
-//   4. fallback: whole Europe
-// Precise location is a separate, user-triggered gesture (the maplibre
-// GeolocateControl button) — auto-prompting for GPS on load is hostile UX
-// and browsers deprioritize it. Server-side IP geolocation (MaxMind) can
-// later replace layer 2/3 with a better guess via the same return shape.
+//   2. server IP-city guess (`fetchIpCityView` → /api/initial-view, DB-IP
+//      lite on the server) — bounded, raced before the map mounts
+//   3. browser language REGION subtag (cs-CZ, en-GB, de-AT…) → country view
+//   4. unambiguous single-country languages (cs, pl, hu…) → country view
+//   5. fallback: whole Europe
+// Precise location is a separate, user-triggered gesture (the locate
+// button) — auto-prompting for GPS on load is hostile UX and browsers
+// deprioritize it.
 
 export interface InitialView {
   lat: number
@@ -59,6 +60,26 @@ const UNAMBIGUOUS_LANGUAGE_COUNTRY: Record<string, string> = {
   cs: 'CZ', sk: 'SK', pl: 'PL', hu: 'HU', sl: 'SI', hr: 'HR', ro: 'RO',
   bg: 'BG', el: 'GR', da: 'DK', nb: 'NO', nn: 'NO', fi: 'FI', et: 'EE',
   lv: 'LV', lt: 'LT', it: 'IT',
+}
+
+/**
+ * Server-side city-level guess from the visitor's IP (/api/initial-view,
+ * DB-IP City Lite looked up in memory on our origin). Bounded by `timeoutMs`
+ * so a slow origin can never hold up the first map paint; any failure,
+ * timeout or `source:'none'` → null → the language fallback below.
+ */
+export async function fetchIpCityView(timeoutMs: number): Promise<InitialView | null> {
+  try {
+    const res = await fetch('/api/initial-view', { signal: AbortSignal.timeout(timeoutMs) })
+    if (!res.ok) return null
+    const body = (await res.json()) as { source?: unknown; lat?: unknown; lng?: unknown; zoom?: unknown }
+    if (body.source !== 'ip-city') return null
+    if (typeof body.lat !== 'number' || typeof body.lng !== 'number' || typeof body.zoom !== 'number') return null
+    if (!(body.lat >= -90 && body.lat <= 90) || !(body.lng >= -180 && body.lng <= 180)) return null
+    return { lat: body.lat, lng: body.lng, zoom: body.zoom }
+  } catch {
+    return null
+  }
 }
 
 export function resolveInitialView(languages: readonly string[] = navigator.languages ?? []): InitialView {

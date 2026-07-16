@@ -65,10 +65,18 @@ export default function MapView({
     setFlyToPos(pos)
   }, [])
 
-  const geolocateRef = useRef<GeolocateControlInstance>(null)
+  const geolocateRef = useRef<GeolocateControlInstance | null>(null)
   useEffect(() => {
     registerGeolocateTrigger?.(() => geolocateRef.current?.trigger())
   }, [registerGeolocateTrigger])
+  // Stable ref callback: an inline arrow would re-fire the control's
+  // useImperativeHandle layout effect on EVERY MapView render (React appends
+  // the ref itself to the deps), cascading an extra render of the whole map
+  // tree per unrelated state change.
+  const setGeolocateRef = useCallback((instance: GeolocateControlInstance | null) => {
+    geolocateRef.current = instance
+    onGeolocateReadyChange?.(instance !== null && 'geolocation' in navigator)
+  }, [onGeolocateReadyChange])
 
   const activeHeatmapSources = useMemo(() => {
     const active = HEATMAP_LAYERS.filter(s => !!rasterOverlays?.[s])
@@ -100,9 +108,18 @@ export default function MapView({
       }}
       style={{ width: '100%', height: '100%' }}
       mapStyle={mapStyle}
+      // maplibre mounts the compact attribution EXPANDED (covering the mobile
+      // control row) and only collapses it on its own toggle click — collapse
+      // immediately; the corner ⓘ is the resting state, tap to read credits.
+      onLoad={(e) => {
+        e.target.getContainer().querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show')
+      }}
       fadeDuration={0}
       maxZoom={16}
-      attributionControl={false}
+      // Compact ⓘ: expands to the basemap sources' own credits (OSM/Carto —
+      // their licenses require on-map attribution) plus the DB-IP CC-BY
+      // credit for the IP-city initial view (/api/initial-view).
+      attributionControl={{ compact: true, customAttribution: '<a href="https://db-ip.com" target="_blank" rel="noopener">IP Geolocation by DB-IP</a>' }}
       // Defaults (deceleration 2500, maxSpeed 1400) give ~1.25 s inertia on a medium
       // flick — too sluggish. 4000 / 1100 lands around ~780 ms, between the default
       // and a Google-Maps-snappy feel.
@@ -116,10 +133,7 @@ export default function MapView({
           following, outline when the map pans away) — without it maplibre
           never applies the -active class at all. */}
       <GeolocateControl
-        ref={(instance) => {
-          geolocateRef.current = instance
-          onGeolocateReadyChange?.(instance !== null && 'geolocation' in navigator)
-        }}
+        ref={setGeolocateRef}
         position="bottom-left"
         trackUserLocation
         showUserLocation

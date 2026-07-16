@@ -17,6 +17,7 @@ import type { RealEstateFilters, Property } from './components/RealEstateLayer'
 import { useValidationPayload, type ValidationSelection } from './components/ValidationLayer'
 import type { NoiseComputeData } from './types/noise'
 import { DEFAULT_BASEMAP, type BasemapId } from './utils/basemaps'
+import { fetchIpCityView, type InitialView } from './utils/initial-view'
 import { setDocumentTitle } from './utils/page-title'
 
 const AboutPage = lazy(() => import('./components/AboutPage'))
@@ -37,6 +38,34 @@ export default function App() {
 
 function MapApp() {
   const { initial, updateUrl } = useUrlState()
+
+  // First-visit view: race the server's IP-city guess (bounded 500 ms)
+  // BEFORE the map mounts, so the first paint already shows the visitor's
+  // city — never a visible country→city jump. A #hash with explicit
+  // coordinates (a shared link) resolves immediately and skips the fetch;
+  // any fetch failure falls back to the language heuristic in `initial`.
+  const [initialView, setInitialView] = useState<InitialView | null>(
+    initial.hasExplicitView ? { lat: initial.lat, lng: initial.lng, zoom: initial.zoom } : null,
+  )
+  // While the view is unresolved the map isn't mounted, but the layer/basemap
+  // controls ARE — a toggle in that ≤500 ms window must not serialize the
+  // language-fallback coordinates into the shared URL (syncUrl guards on
+  // this; the next sync after resolution carries the toggle anyway).
+  const initialViewPendingRef = useRef(initialView === null)
+  useEffect(() => {
+    if (initialView !== null) return
+    let cancelled = false
+    void fetchIpCityView(500).then((ipView) => {
+      if (cancelled) return
+      const view = ipView ?? { lat: initial.lat, lng: initial.lng, zoom: initial.zoom }
+      // Seed the URL-composition ref too: a layer toggle before the first
+      // moveend must serialize THIS view, not the language fallback.
+      mapViewRef.current = view
+      initialViewPendingRef.current = false
+      setInitialView(view)
+    })
+    return () => { cancelled = true }
+  }, [initialView, initial])
 
   const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
   const [layersOpen, setLayersOpen] = useState(false)
@@ -123,6 +152,9 @@ function MapApp() {
     basemap: BasemapId
     rasterOverlays: Record<string, boolean>
   }>) => {
+    // Never serialize the pre-resolution language fallback (see
+    // initialViewPendingRef above) — first visits carry no hash anyway.
+    if (initialViewPendingRef.current) return
     const v = mapViewRef.current
     updateUrl({
       lat: overrides?.lat ?? v.lat,
@@ -295,10 +327,13 @@ function MapApp() {
         </div>
       </div>
 
+      {initialView === null ? (
+        <div className="h-full w-full bg-[#fafaf8]" />
+      ) : (
       <MapView
         selectedLocation={selectedLocation}
-        initialCenter={[initial.lat, initial.lng]}
-        initialZoom={initial.zoom}
+        initialCenter={[initialView.lat, initialView.lng]}
+        initialZoom={initialView.zoom}
         basemap={basemap}
         isochronGeojson={isochronGeojson}
         onViewChange={handleViewChange}
@@ -319,6 +354,7 @@ function MapApp() {
         onGeolocateActiveChange={setGeolocateActive}
         onGeolocateReadyChange={setGeolocateReady}
       />
+      )}
 
       {/* Mobile: layers toggle button */}
       {!layersOpen && (

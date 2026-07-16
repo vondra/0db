@@ -22,6 +22,10 @@ export interface UrlState {
   lat: number
   lng: number
   zoom: number
+  /** True when the #hash carried explicit coordinates (a shared link) —
+   *  false means lat/lng/zoom are the language-heuristic fallback and the
+   *  server's IP-city guess may improve on them before the map mounts. */
+  hasExplicitView: boolean
   quietClusters: boolean
   quietThreshold: number
   detailPosition: { lat: number; lng: number } | null
@@ -63,6 +67,7 @@ function parseHash(): UrlState {
       lat: view.lat,
       lng: view.lng,
       zoom: view.zoom,
+      hasExplicitView: false,
       quietClusters: false,
       quietThreshold: QUIET_THRESHOLD_DEFAULT,
       detailPosition: null,
@@ -106,6 +111,7 @@ function parseHash(): UrlState {
     lat: Number.isFinite(parsedLat) ? parsedLat : view.lat,
     lng: Number.isFinite(parsedLng) ? parsedLng : view.lng,
     zoom: Number.isFinite(parsedZoom) ? parsedZoom : view.zoom,
+    hasExplicitView: Number.isFinite(parsedLat) && Number.isFinite(parsedLng),
     quietClusters: params.get('qc') === '1',
     quietThreshold: parseQuietThreshold(params.get('qt')),
     detailPosition,

@@ -13,6 +13,7 @@ import { rasterTileRoutes } from './routes/raster-tiles.js'
 import { aircraftRoutes } from './routes/aircraft.js'
 import { heatmapPmtilesRoutes } from './routes/heatmap-pmtiles.js'
 import { tilesManifestRoutes } from './routes/tiles-manifest.js'
+import { initialViewRoutes } from './routes/initial-view.js'
 import { validationViewRoutes } from './routes/validation-view.js'
 import { mailInboundRoutes } from './routes/mail-inbound.js'
 import { healthRoutes } from './routes/health.js'
@@ -84,6 +85,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // with the loose trees.
   await app.register(heatmapPmtilesRoutes)
   await app.register(tilesManifestRoutes)
+  await app.register(initialViewRoutes)
   await app.register(validationViewRoutes)
   // Inbound-mail archive webhook (Cloudflare Email Worker → he84). Encapsulated
   // so its raw MIME content-type parser never touches the JSON routes.

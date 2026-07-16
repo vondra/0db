@@ -76,6 +76,16 @@ html, body {
   .maplibregl-ctrl-bottom-left {
     display: none !important;
   }
+  /* Attribution ⓘ tucks into the corner strip BELOW the 44px control row
+     (which starts 16px up): right of nothing, left of the layers button's
+     column, never on the controls' baseline. */
+  .maplibregl-ctrl-bottom-right {
+    bottom: 0 !important;
+    right: 64px !important;
+  }
+  .maplibregl-ctrl-bottom-right .maplibregl-ctrl-attrib {
+    margin: 0 0 2px 0;
+  }
 }
 
 :root {
