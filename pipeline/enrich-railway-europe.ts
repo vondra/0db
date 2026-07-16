@@ -694,8 +694,17 @@ export async function computeStopFrequencies(
   // Build set of active service IDs for a target Wednesday
   const activeServiceIds = new Set<string>()
 
-  if (existsSync(calendarPath)) {
-    const calendarRaw = await parseCsvStream(calendarPath)
+  // Exact-dates convention detection mirrors lib/gtfs-enrich-core.ts (same 2026-07-16 SE
+  // finding): calendar.txt whose every weekday flag is 0 carries no day information — the
+  // calendar_dates-only branch below is the correct reader for it. Duplication note: this
+  // per-stop counter is the pre-Phase-4 copy of the core's active-set logic; fold into
+  // computeActiveTripFamiliesForFeed when this counter next changes.
+  const calendarRawOrNull = existsSync(calendarPath) ? await parseCsvStream(calendarPath) : null
+  const calendarWeekdayDriven = calendarRawOrNull !== null && calendarRawOrNull.some((r) =>
+    ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].some((d) => r[d] === '1'))
+
+  if (calendarRawOrNull !== null && calendarWeekdayDriven) {
+    const calendarRaw = calendarRawOrNull
     const targetDate = findTargetWednesday(calendarRaw)
     const targetDateNum = targetDate  // YYYYMMDD string
     console.log(`  [${feed.id}] Target date: ${formatDate(targetDate)} (Wednesday)`)
@@ -719,8 +728,9 @@ export async function computeStopFrequencies(
       }
     }
   } else if (existsSync(calendarDatesPath)) {
-    // Some feeds use only calendar_dates.txt (no calendar.txt)
-    console.log(`  [${feed.id}] No calendar.txt, using calendar_dates.txt only`)
+    // Feeds with only calendar_dates.txt — or an exact-dates calendar.txt (all weekday
+    // flags 0, e.g. SE Trafiklab), which carries no usable day flags either way.
+    console.log(`  [${feed.id}] ${calendarRawOrNull ? 'calendar.txt is exact-dates (all weekday flags 0)' : 'No calendar.txt'}, using calendar_dates.txt only`)
     const calDates = await parseCsvStream(calendarDatesPath)
 
     // Find a target date: pick the most common date in the file that is a Wednesday

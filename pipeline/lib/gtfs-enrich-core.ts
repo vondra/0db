@@ -434,8 +434,19 @@ export async function computeActiveTripFamiliesForFeed<F extends string>(
   let targetDate = ''
   const calendarPresent = existsSync(calendarPath) || existsSync(calendarDatesPath)
 
-  if (existsSync(calendarPath)) {
-    const calendarRaw = await parseCsvStream(calendarPath)
+  // Exact-dates GTFS convention (SE Trafiklab, common Nordic/DE producers): calendar.txt
+  // exists but EVERY weekday flag is 0 on every row — the rows only declare validity
+  // spans, real activation lives in calendar_dates.txt add/remove exceptions. Detected
+  // 2026-07-16 on SE: the weekday-driven path sampled zero services on every Wednesday,
+  // fell to the span-midpoint fallback, and picked a date outside the operator's rolling
+  // exception horizon (SL trams: 0 active services => "feed empty" => the completeness
+  // gate blocked the world-wide legacy retract). Such a feed must take the
+  // calendar_dates-only path below instead.
+  const calendarRaw = existsSync(calendarPath) ? await parseCsvStream(calendarPath) : null
+  const weekdayDriven = calendarRaw !== null && calendarRaw.some((r) =>
+    ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].some((d) => r[d] === '1'))
+
+  if (calendarRaw !== null && weekdayDriven) {
     targetDate = (dateSelection ?? findTargetWednesday)(calendarRaw)
     for (const r of calendarRaw) {
       const start = r['start_date'] || ''

@@ -130,6 +130,33 @@ test('computeActiveTripFamiliesForFeed: calendar present + zero active services 
   )
 })
 
+test('computeActiveTripFamiliesForFeed: exact-dates calendar.txt (all weekday flags 0) takes the calendar_dates path — SE Trafiklab convention', async () => {
+  const dir = join(TMP, 'calendar-exact-dates')
+  // The 2026-07-16 SE finding: every calendar.txt row is all-zeros (rows only declare a
+  // validity span; activation lives in calendar_dates.txt add exceptions). The weekday
+  // branch would sample zero services on every Wednesday and fall to the span-midpoint
+  // fallback — a date the operator's rolling exception horizon may not even reach (SL
+  // trams: 0 active => "feed empty" => the completeness gate blocked the world sweep).
+  // 20260114 is a Wednesday.
+  writeGtfsFixture(dir, {
+    'routes.txt': RAIL_ROUTES_CSV,
+    'calendar.txt':
+      'service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n' +
+      'exact_dates_svc,0,0,0,0,0,0,0,20260101,20261231\n',
+    'calendar_dates.txt':
+      'service_id,date,exception_type\n' +
+      'exact_dates_svc,20260114,1\n' +
+      'exact_dates_svc,20260115,1\n',
+    'trips.txt': TRIPS_CSV('exact_dates_svc'),
+  })
+
+  const result = await computeActiveTripFamiliesForFeed(dir, routeFamily)
+  assert.equal(result.calendarPresent, true)
+  assert.equal(result.targetDate, '20260114', 'busiest WEDNESDAY from calendar_dates, never the span midpoint')
+  assert.equal(result.activeServiceIds.has('exact_dates_svc'), true)
+  assert.equal(result.tripFam.size, 1, 'the exact-dates service counts — before the fix this feed read as empty')
+})
+
 test('computeActiveTripFamiliesForFeed: calendar present + a matching active service still counts that trip (fix does not over-correct)', async () => {
   const dir = join(TMP, 'calendar-nonzero-active')
   writeGtfsFixture(dir, {
