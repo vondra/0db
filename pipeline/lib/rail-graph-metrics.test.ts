@@ -233,6 +233,37 @@ test('twin exemption is LENGTH-weighted with a contiguity cap (item 5): 8 short 
   assert.equal(result.stampsBySegmentKey.size, 0)
 })
 
+test('twin classification has its OWN 50 m radius (review round): a station throat widening to 30 m for 400 m stays a twin — NOT ambiguous — while the 15 m spread radius stays strict', () => {
+  // CZ Step-A v3 regression (ambiguous 29 -> 71): around island platforms
+  // parallel tracks legitimately spread to 20-40 m for 300-600 m. Under the
+  // spread's 15 m token-less radius those throat stretches read as non-twin
+  // and their contiguous run (400 m here) trips WALK_TWIN_MAX_NONTWIN_RUN_M;
+  // under the twin gate's own WALK_TWIN_LATERAL_M = 50 the throat stays a
+  // twin and the pair walks cleanly. The sibling track: 800 m at 8 m offset,
+  // a 200 m transition out (heading delta ~6.3° < 10°), 400 m at 30 m (the
+  // island-platform passage), 200 m back, ~547 m at 8 m — joined to the
+  // straight track by crossovers at both ends.
+  const latOff8 = 50 + 8 / 110_540
+  const latOff30 = 50 + 30 / 110_540
+  const g = buildRailGraph([
+    seg({ key: 'track1', osmId: 'osmBest', startLat: 50, startLon: lonAtM(0), endLat: 50, endLon: lonAtM(2147) }),
+    seg({ key: 's1', osmId: 'osmAlt', startLat: latOff8, startLon: lonAtM(0), endLat: latOff8, endLon: lonAtM(800) }),
+    seg({ key: 't1', osmId: 'osmAlt', startLat: latOff8, startLon: lonAtM(800), endLat: latOff30, endLon: lonAtM(1000) }),
+    seg({ key: 's2', osmId: 'osmAlt', startLat: latOff30, startLon: lonAtM(1000), endLat: latOff30, endLon: lonAtM(1400) }),
+    seg({ key: 't2', osmId: 'osmAlt', startLat: latOff30, startLon: lonAtM(1400), endLat: latOff8, endLon: lonAtM(1600) }),
+    seg({ key: 's3', osmId: 'osmAlt', startLat: latOff8, startLon: lonAtM(1600), endLat: latOff8, endLon: lonAtM(2147) }),
+    seg({ key: 'crossIn', startLat: 50, startLon: lonAtM(0), endLat: latOff8, endLon: lonAtM(0), isTraversalOnly: true }),
+    seg({ key: 'crossOut', startLat: 50, startLon: lonAtM(2147), endLat: latOff8, endLon: lonAtM(2147), isTraversalOnly: true }),
+  ])
+  const result = walkRailStationPairs(g, [
+    { fromLat: 50, fromLon: lonAtM(0), toLat: 50, toLon: lonAtM(2147), pax: 20, frt: 4 },
+  ])
+  assert.equal(result.failures.ambiguous, 0, 'the sibling with a 30 m station-throat passage is a twin under WALK_TWIN_LATERAL_M — the spread\'s 15 m arm would have flagged a 400 m non-twin run and tripped the cap')
+  assert.equal(result.pairsWalked, 1)
+  assert.deepEqual(result.stampsBySegmentKey.get('track1'), { pax: 20, frt: 4, divisor: 1 }, 'walked directly; no divisor — the SPREAD still refuses the 30 m throat (and the 8 m stretches fail its overlap fraction at track1\'s own midpoint)')
+  assert.equal(result.stampsBySegmentKey.has('s2'), false, 'the throat itself gets NO spread stamp: energy division keeps the strict 15 m radius — classification tolerance never leaks into acoustics')
+})
+
 // ── Disconnected pair ────────────────────────────────────────────────────────
 
 test('walk: a pair across two disconnected components fails and records both components', () => {

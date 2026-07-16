@@ -47,7 +47,7 @@ import {
   type RailStopsIndex, type RailEndpointRow, type RailContinuityViolation,
   effectiveRailTraffic, snapToNearestRailGraphNode,
   WALK_DETOUR_RATIO, WALK_DETOUR_SLACK_M, WALK_AMBIGUITY_LENGTH_RATIO, WALK_AMBIGUITY_SHARED_EDGE_FRACTION,
-  WALK_TWIN_ALT_EDGE_FRACTION, WALK_TWIN_MAX_NONTWIN_RUN_M, UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M,
+  WALK_TWIN_ALT_EDGE_FRACTION, WALK_TWIN_LATERAL_M, WALK_TWIN_MAX_NONTWIN_RUN_M, UNLOCALIZED_PAIR_QUARANTINE_RADIUS_M,
   SHAPE_CORRIDOR_TOLERANCE_M, PARALLEL_SPREAD_RADIUS_M, RAIL_JUMP_RATIO, RAIL_MIN_EFFECTIVE_TRAINS_PER_DAY,
   RAIL_STOP_EXEMPT_RADIUS_M,
 } from './rail-graph.js'
@@ -310,15 +310,16 @@ function longitudinalOverlapM(a: SegGeom, b: SegGeom): { overlapM: number; aSpan
  *    `applyParallelSpread`'s doc for the accepted-error bound it trades off
  *    against exact conservation): a short segment can accept a long one that
  *    only just touches it, while the long one rejects the short one back. */
-/** Geometry-only core of the sibling probe (2026-07-16 Step-B refinement —
- *  extracted so the ambiguity probe's twin-alt-path check, which has no
- *  osmId/railType/usage/shared-node/overlap gates of its own to apply, can
- *  reuse the SAME token/heading/radius arms rather than re-deriving them —
- *  see `altPathIsParallelTwin`). `aHeadingDeg` is passed in rather than
- *  recomputed here because `parallelSiblingLateralM` already has it in scope
- *  from its own heading-gate call below; `b`'s shape only needs the fields a
- *  bare `RailGraphEdge` already carries, so the ambiguity check can call this
- *  directly on graph edges with no `SegGeom` reconstruction. */
+/** Geometry-only core of the SPREAD's sibling probe (its token/heading/
+ *  radius arms — 15 m token-less / 50 m equal-token). Called only by
+ *  `parallelSiblingLateralM` since the 2026-07-16 review round: the
+ *  ambiguity probe's twin check briefly reused these arms, but the spread's
+ *  strict 15 m token-less radius mis-classified island-platform station
+ *  throats (20-40 m spacing) as "not a twin" — `altPathIsParallelTwin` now
+ *  carries its own `WALK_TWIN_LATERAL_M` classification gate instead (see
+ *  that constant's two-radius reasoning). `aHeadingDeg` is passed in rather
+ *  than recomputed here because the caller already has it in scope from its
+ *  own heading-gate call below. */
 function lateralTwinGate(
   aHeadingDeg: number, aCorridorToken: string, aMidLat: number, aMidLon: number,
   b: { corridorToken: string; startLat: number; startLon: number; endLat: number; endLon: number },
@@ -494,16 +495,20 @@ function applyParallelSpread(
  *
  *  For every stampable edge of `alt` NOT already shared with `best`, this
  *  measures the lateral distance from that edge's own midpoint to the
- *  nearest STAMPABLE `best`-path edge's body, reusing
- *  `parallelSiblingLateralM`'s own geometry arms via `lateralTwinGate` (same
- *  ≤15 m token-less / ≤50 m equal-token radius, heading within the matching
- *  arm's limit) — deliberately WITHOUT the sibling probe's osmId/usage/
- *  shared-node/longitudinal-overlap gates, which answer "is this my
- *  divisor-sharing sibling at this exact cross-section" (a different
- *  question); here only "does this alt edge run alongside the best path at
- *  all" matters. `best`'s own edges are grid-accelerated (a small, bounded
- *  set — the walk's own detour bound already caps it) so the probe never
- *  scans the whole graph.
+ *  nearest STAMPABLE `best`-path edge's body, through the twin
+ *  CLASSIFICATION gate: lateral < `WALK_TWIN_LATERAL_M` (50 m) + heading
+ *  <10° (mod 180) — its OWN radius, NOT the spread's token arms (2026-07-16
+ *  review round: reusing the spread's strict 15 m token-less radius made
+ *  island-platform station throats, where twin tracks legitimately spread
+ *  to 20-40 m for 300-600 m, read as contiguous non-twin runs and trip the
+ *  run cap — CZ Step-A v3: ambiguous 29 -> 71; see WALK_TWIN_LATERAL_M's
+ *  two-radius reasoning). Deliberately WITHOUT the sibling probe's
+ *  osmId/usage/shared-node/longitudinal-overlap gates, which answer "is
+ *  this my divisor-sharing sibling at this exact cross-section" (a
+ *  different question); here only "does this alt edge run alongside the
+ *  best path at all" matters. `best`'s own edges are grid-accelerated (a
+ *  small, bounded set — the walk's own detour bound already caps it) so
+ *  the probe never scans the whole graph.
  *
  *  The verdict is LENGTH-weighted with a contiguity cap (2026-07-16 /gg fix
  *  batch item 5 — an edge-count fraction let 8 short twin stubs outvote 2
@@ -567,8 +572,8 @@ function altPathIsParallelTwin(graph: RailGraph, best: ShortestPathResult, alt: 
     const hA = headingDeg(e.startLat, e.startLon, e.endLat, e.endLon)
     const latSpanM = PARALLEL_GRID_CELL_DEG * M_PER_DEG_LAT
     const lonSpanM = PARALLEL_GRID_CELL_DEG * M_PER_DEG_LON_EQ * Math.max(0.05, Math.cos(midLat * Math.PI / 180))
-    const dyMax = Math.max(1, Math.ceil(PARALLEL_SPREAD_RADIUS_M / latSpanM))
-    const dxMax = Math.max(1, Math.ceil(PARALLEL_SPREAD_RADIUS_M / lonSpanM))
+    const dyMax = Math.max(1, Math.ceil(WALK_TWIN_LATERAL_M / latSpanM))
+    const dxMax = Math.max(1, Math.ceil(WALK_TWIN_LATERAL_M / lonSpanM))
     const gy = Math.floor(midLat / PARALLEL_GRID_CELL_DEG)
     const gx = Math.floor(midLon / PARALLEL_GRID_CELL_DEG)
 
@@ -582,7 +587,11 @@ function altPathIsParallelTwin(graph: RailGraph, best: ShortestPathResult, alt: 
           if (probed.has(bestIdx)) continue
           probed.add(bestIdx)
           const b = graph.edges[bestIdx]
-          if (lateralTwinGate(hA, e.corridorToken, midLat, midLon, b) !== null) { isTwin = true; break }
+          // Twin CLASSIFICATION gate — own radius + heading, never the
+          // spread's token arms (see the function doc's two-radius reasoning).
+          const hB = headingDeg(b.startLat, b.startLon, b.endLat, b.endLon)
+          if (headingDeltaMod180(hA, hB) >= 10) continue
+          if (pointToSegmentDist(midLat, midLon, b.startLat, b.startLon, b.endLat, b.endLon) < WALK_TWIN_LATERAL_M) { isTwin = true; break }
         }
       }
     }

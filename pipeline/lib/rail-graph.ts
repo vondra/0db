@@ -64,9 +64,9 @@ export const PARALLEL_SPREAD_RADIUS_M = 50
  *  re-run is merely the PARALLEL TWIN of the best path (the sibling track of
  *  a double-track line) rather than a genuinely different corridor. If at
  *  least this fraction of alt's own non-shared stampable LENGTH passes the
- *  parallel-spread's own lateral-twin geometry gate (`lateralTwinGate` in
- *  rail-graph-metrics.ts — same ≤15 m token-less / ≤50 m equal-token radius
- *  + heading arms `parallelSiblingLateralM` uses) against the best path's
+ *  twin-classification gate (`WALK_TWIN_LATERAL_M` lateral + heading <10°,
+ *  mod 180 — NOT the spread's token arms, see that constant's two-radius
+ *  reasoning) against the best path's
  *  edges, the pair is NOT ambiguous — the parallel spread unifies the two
  *  tracks anyway. LENGTH-weighted (2026-07-16 /gg fix batch item 5): an
  *  edge-count fraction let 8 short twin stubs outvote 2 long off-corridor
@@ -74,14 +74,30 @@ export const PARALLEL_SPREAD_RADIUS_M = 50
  *  Genuine dual corridors (e.g. Praha Vršovice->Holešovice via Libeň vs via
  *  Bubny) sit hundreds of metres apart and stay ambiguous. */
 export const WALK_TWIN_ALT_EDGE_FRACTION = 0.8
+/** Lateral radius of the ambiguity TWIN-CLASSIFICATION gate — deliberately
+ *  its OWN constant, NOT the parallel spread's token arms (2026-07-16 review
+ *  round; provenance: CZ Step-A v3 run, ambiguous 29 -> 71 regression when
+ *  the twin gate reused the spread's 15 m token-less radius). TWO radii
+ *  because the two passes answer different questions: the SPREAD divides
+ *  acoustic energy between sibling tracks, so it must be strict (15 m
+ *  token-less — real double-track spacing, never two distinct lines); twin
+ *  CLASSIFICATION only distinguishes "sibling track" from "different
+ *  corridor", and around island platforms parallel tracks legitimately
+ *  spread to 20-40 m for 300-600 m — those station throats must stay twins
+ *  (they'd otherwise form a contiguous non-twin run that trips
+ *  `WALK_TWIN_MAX_NONTWIN_RUN_M`), while a genuine second corridor (Praha
+ *  Vršovice-Libeň shapes) sits hundreds of metres away. 50 m absorbs
+ *  station throats (~50 m tops) with margin to spare against real
+ *  corridors. Heading gate stays <10° (mod 180). */
+export const WALK_TWIN_LATERAL_M = 50
 /** Hard cap on the longest CONTIGUOUS non-twin stretch of the alt path
  *  (metres, contiguity along the alt path's own edge order — 2026-07-16 /gg
- *  fix batch item 5, alongside the length-weighted fraction above): a real
- *  double-track's non-twin bits are short switch/station throats, while a
- *  genuinely different corridor shows ONE long unbroken non-twin run even
- *  when enough short twin edges pad the overall fraction. 300 m ≈ the
- *  longest CZ interlocking throat observed on the Step-A data — anything
- *  longer is a separate corridor, not a sibling track. */
+ *  fix batch item 5, alongside the length-weighted fraction above): a
+ *  genuinely different corridor shows ONE long unbroken run beyond
+ *  `WALK_TWIN_LATERAL_M` lateral even when enough short twin edges pad the
+ *  overall fraction; with the 50 m classification radius absorbing station
+ *  throats (see above), anything staying laterally distant for longer than
+ *  this is a separate corridor, not a sibling track. */
 export const WALK_TWIN_MAX_NONTWIN_RUN_M = 300
 /** Quarantine radius for an UNLOCALIZED pair (neither endpoint snapped onto
  *  the graph — e.g. the Osoblaha narrow-gauge trains whose stations have no
