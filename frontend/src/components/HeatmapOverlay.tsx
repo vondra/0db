@@ -186,11 +186,10 @@ async function loadTileProgressively(
   let allSettled = false
   void allDone.then(() => { allSettled = true })
   let previewImage: ImageData | null = null
-  let previewSettled: Promise<unknown> = Promise.resolve()
   const previewReady = new Promise<void>((resolve) => {
     const spec = previewSpec
     if (!spec) return
-    previewSettled = (async () => {
+    void (async () => {
       const decoded = await Promise.all(spec.urls.map((u) => fetchAncestor(u)))
       if (previewCtl.signal.aborted) return
       const ancestors = decoded.flatMap((d) => (d?.cells ? [d.cells] : []))

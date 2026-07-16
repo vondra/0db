@@ -239,12 +239,12 @@ export async function heatmapPmtilesRoutes(app: FastifyInstance): Promise<void> 
     reply.header('Cache-Control', 'no-store')
     // Dobříš — the repo's canonical reference cell (CLAUDE.md); painted in every
     // world generation, so its z8 tile is non-empty for road/rail/total forever.
-    const lat = 49.78, lon = 14.17, z = 8
-    const x = Math.floor(((lon + 180) / 360) * 2 ** z)
-    const latRad = (lat * Math.PI) / 180
-    const y = Math.floor(((1 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2) * 2 ** z)
+    // Precomputed Web-Mercator tile of (49.78, 14.17) at z8 — a constant point
+    // needs no per-request trigonometry, and this keeps the mercator formula
+    // out of a fourth codebase location (SSOT: frontend tile-math.ts).
+    const z = 8, x = 138, y = 87
 
-    let manifest: { layers?: Record<string, { file?: string }> }
+    let manifest: { layers?: Record<string, { file?: string; build?: string }> }
     try {
       manifest = JSON.parse(readFileSync(resolveManifestPath(PMTILES_BASE), 'utf8'))
     } catch (e) {
@@ -255,8 +255,10 @@ export async function heatmapPmtilesRoutes(app: FastifyInstance): Promise<void> 
     const failures: string[] = []
     const checks: Array<{ layer: string; build: string; bytes: number }> = []
     for (const layer of ['road', 'rail', 'total']) {
-      const file = manifest.layers?.[layer]?.file ?? ''
-      const build = /\.(b\d+)\.pmtiles$/.exec(file)?.[1]
+      const entry = manifest.layers?.[layer]
+      // The entry's own build field is authoritative (per-layer builds);
+      // the filename regex only covers pre-partial-pack manifests.
+      const build = entry?.build ?? /\.(b\d+)\.pmtiles$/.exec(entry?.file ?? '')?.[1]
       if (!build) { failures.push(`${layer}: no manifest entry`); continue }
       try {
         const archive = await getHeatmapArchive(build, layer)
