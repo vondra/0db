@@ -70,8 +70,8 @@ function getWorker(): Worker | null {
 /** Energy-sum + palette-map `grids` into a `width × height` ImageData off the
  *  main thread; synchronous on-thread fallback when no worker is available.
  *  Callers pass a SNAPSHOT (`grids.slice()`) when the array can still grow.
- *  With `block`, `grids` are z-4 ancestor grids and the worker upsamples this
- *  child's sub-block of each before composing (ancestor preview). */
+ *  With `block`, `grids` are z−PREVIEW_DELTA ancestor grids and the worker
+ *  upsamples this child's sub-block of each before composing (preview). */
 export function composeOffThread(
   grids: Uint8Array[],
   width: number,

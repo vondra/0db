@@ -6,6 +6,7 @@ import { useMap } from 'react-map-gl/maplibre'
 
 import { fetchAndDecodeHM3, TILE_PX, NO_DATA } from '../lib/hm3-decoder'
 import { composeOffThread } from '../lib/compose-off-thread'
+import { PREVIEW_DELTA } from '../lib/hm3-compose'
 import { lngLatToTileFloat, tileXToLng, tileYToLat } from '../lib/tile-math'
 import { BASE_ZOOM, MIN_ZOOM, WORLD_EXTENT, buildKey, tileUrl, useTileBuild, type TileBuilds } from '../lib/tile-urls'
 
@@ -68,10 +69,10 @@ const EARLY_RESOLVE_AFTER_MS = 250
 // directly — the blocky preview only appears where loads are genuinely slow.
 const PREVIEW_GRACE_MS = 80
 
-// Ancestor fetches are memoized: 256 children share one ancestor and the
-// browser does NOT coalesce concurrent fetches of the same URL — without this
-// a cold wave fired a duplicate ancestor request per tile (owner report
-// 2026-07-16). Shared resource, so deliberately NOT tied to any one tile's
+// Ancestor fetches are memoized: a whole block of children (4^Δ tiles) shares
+// one ancestor and the browser does NOT coalesce concurrent fetches of the
+// same URL — without this a cold wave fired a duplicate ancestor request per
+// tile (owner report 2026-07-16). Shared resource, so deliberately NOT tied to any one tile's
 // abort; 'low' priority keeps sharp tiles ahead in the network queue. (deck's
 // own sharp-path fetch of the same URL after a deep zoom-out can still
 // duplicate one request — rare, lands on the warmed CDN band, accepted.)
@@ -120,12 +121,13 @@ function fetchAncestor(url: string): Promise<{ cells: Uint8Array } | null> {
  * layer. A failed single layer renders as that layer being empty
  * (pre-existing behavior).
  *
- * While the real layers load, the z-4 ANCESTOR races them as a preview: one
- * ancestor serves 256 children (browser-cached) and the warm-crawled z≤8
- * band keeps it an edge HIT, so a cold-area tile paints a blocky-but-real
- * energy field ~instantly instead of nothing. The first real compose
- * replaces it; a preview with nothing real behind it clears to transparent
- * once every layer settles empty (a preview must never lie permanently).
+ * While the real layers load, the z−Δ ANCESTOR (Δ = PREVIEW_DELTA) races
+ * them as a preview: one ancestor serves 4^Δ children (browser-cached) and
+ * the warm-crawled z≤9 band keeps it an edge HIT, so a cold-area tile paints
+ * a smooth coarse energy field ~instantly instead of nothing. The first real
+ * compose replaces it; a preview with nothing real behind it clears to
+ * transparent once every layer settles empty (a preview must never lie
+ * permanently).
  *
  * Lifecycle: deck releases its request slot and disarms its abort the moment
  * we resolve (tile-2d-header marks the tile loaded), and it never calls
@@ -435,7 +437,7 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
       window.clearTimeout(prefetchTimer.current)
       prefetchTimer.current = window.setTimeout(() => {
         const z = Math.round(Math.min(Math.max(map.getZoom(), MIN_ZOOM), BASE_ZOOM))
-        const pz = z - 4
+        const pz = z - PREVIEW_DELTA
         if (pz < MIN_ZOOM) return
         const center = map.getCenter()
         const [fx, fy] = lngLatToTileFloat(center.lng, center.lat, pz)
@@ -452,7 +454,7 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
         // first wheel step also finds its preview waiting (zoom-out ancestors
         // are already cached from the way down). moveend fires after zooms
         // too, so the ring itself re-targets on every zoom change.
-        if (pz + 1 <= BASE_ZOOM - 4) {
+        if (pz + 1 <= BASE_ZOOM - PREVIEW_DELTA) {
           const deepSpan = 2 ** (pz + 1)
           const [zx, zy] = lngLatToTileFloat(center.lng, center.lat, pz + 1)
           const ax = ((Math.floor(zx) % deepSpan) + deepSpan) % deepSpan
@@ -535,14 +537,15 @@ function makeHeatmapTileLayer(
       const span = 2 ** z
       const wx = ((x % span) + span) % span // wrap x across the antimeridian
       const urls = sources.map((s) => tileUrl(build, s, z, wx, y))
-      // z-4 ancestor for the instant preview (z6 and shallower is the warm
-      // band itself — no preview needed or possible below the z2 floor).
-      const pz = z - 4
+      // z−Δ ancestor for the instant preview (shallow zooms are the warm band
+      // itself — no preview needed or possible below the z2 floor).
+      const pz = z - PREVIEW_DELTA
+      const mask = (1 << PREVIEW_DELTA) - 1
       const preview = pz >= MIN_ZOOM
         ? {
-            urls: sources.map((s) => tileUrl(build, s, pz, wx >> 4, y >> 4)),
-            blockX: wx & 15,
-            blockY: y & 15,
+            urls: sources.map((s) => tileUrl(build, s, pz, wx >> PREVIEW_DELTA, y >> PREVIEW_DELTA)),
+            blockX: wx & mask,
+            blockY: y & mask,
           }
         : null
       return loadTileProgressively(urls, signal, onRefined, tails, preview)

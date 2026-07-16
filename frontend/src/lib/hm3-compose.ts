@@ -66,26 +66,50 @@ export function composeToImageData(grids: Uint8Array[], width: number, height: n
   return palette(combined, width, height)
 }
 
-// An ancestor 4 zooms up covers 16×16 children, so one child occupies a
-// (512/16)² sub-block of the ancestor's grid.
-const ANCESTOR_SPAN = 16
-const BLOCK = 512 / ANCESTOR_SPAN
+// The preview ancestor sits PREVIEW_DELTA zooms above its child: it covers
+// 2^Δ × 2^Δ children, one child spans a (512/2^Δ)² sub-block of its grid, and
+// the deepest ancestor needed is z(12−Δ) — which must stay inside the
+// warm-crawled band (z≤9). Δ=3 halves the visual block size vs the original
+// Δ=4 (owner feedback 2026-07-16: 16 px blocks read as broken, doubly so on
+// retina where everything paints 2× magnified).
+export const PREVIEW_DELTA = 3
 
 /**
- * Upsample one child's sub-block of a z-4 ancestor grid to a full 512² grid —
- * a blocky preview of the same energy field, painted while the child's real
- * layers load (BitmapLayer's linear filtering smooths the 16×16 blocks).
+ * Upsample one child's sub-block of its z−Δ ancestor grid to a full 512² grid
+ * — the preview painted while the child's real layers load. Bilinear in the
+ * half-dB byte space so the preview reads as an out-of-focus map rather than
+ * hard blocks; any NO_DATA corner falls back to nearest-neighbour so
+ * transparency edges stay crisp instead of bleeding.
  */
 export function upsampleAncestorBlock(ancestor: Uint8Array, blockX: number, blockY: number): Uint8Array {
-  const size = ANCESTOR_SPAN * BLOCK
+  const size = 512
+  const scale = 2 ** PREVIEW_DELTA
+  const block = size / scale
+  const ox = blockX * block
+  const oy = blockY * block
   const out = new Uint8Array(size * size)
-  const ox = blockX * BLOCK
-  const oy = blockY * BLOCK
   for (let py = 0; py < size; py++) {
-    const srcRow = (oy + (py >> 4)) * size + ox
+    const fy = oy + (py + 0.5) / scale - 0.5
+    const y0 = Math.min(Math.max(Math.floor(fy), 0), size - 1)
+    const y1 = Math.min(y0 + 1, size - 1)
+    const ty = Math.min(Math.max(fy - y0, 0), 1)
     const outRow = py * size
     for (let px = 0; px < size; px++) {
-      out[outRow + px] = ancestor[srcRow + (px >> 4)]
+      const fx = ox + (px + 0.5) / scale - 0.5
+      const x0 = Math.min(Math.max(Math.floor(fx), 0), size - 1)
+      const x1 = Math.min(x0 + 1, size - 1)
+      const tx = Math.min(Math.max(fx - x0, 0), 1)
+      const c00 = ancestor[y0 * size + x0]
+      const c10 = ancestor[y0 * size + x1]
+      const c01 = ancestor[y1 * size + x0]
+      const c11 = ancestor[y1 * size + x1]
+      if (c00 === NO_DATA || c10 === NO_DATA || c01 === NO_DATA || c11 === NO_DATA) {
+        out[outRow + px] = ty < 0.5 ? (tx < 0.5 ? c00 : c10) : (tx < 0.5 ? c01 : c11)
+      } else {
+        const top = c00 + (c10 - c00) * tx
+        const bottom = c01 + (c11 - c01) * tx
+        out[outRow + px] = Math.round(top + (bottom - top) * ty)
+      }
     }
   }
   return out

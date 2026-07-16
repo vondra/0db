@@ -10,8 +10,8 @@ type ComposeRequest = {
   grids: Uint8Array[]
   width: number
   height: number
-  /** When set, `grids` are z-4 ANCESTOR grids: upsample this child's sub-block
-   *  of each before composing (keeps that work off the main thread too). */
+  /** When set, `grids` are z−PREVIEW_DELTA ANCESTOR grids: upsample this
+   *  child's sub-block of each before composing (off the main thread too). */
   block?: { x: number; y: number }
 }
 
