@@ -25,6 +25,11 @@ import { useSyncExternalStore } from 'react'
 export const BASE_ZOOM = 12
 export const MIN_ZOOM = 2
 
+// Web-Mercator world bounds for the tile layers' `extent` prop — deck only
+// under-zooms (clamps a too-low tile zoom up to minZoom) when an extent is
+// present; without one, world views below z≈1.5 render nothing at all.
+export const WORLD_EXTENT: [number, number, number, number] = [-180, -85.051129, 180, 85.051129]
+
 const BUILD_ID = /^b\d+$/
 const FILE_BUILD = /\.(b\d+)\.pmtiles$/
 const MANIFEST_POLL_MS = 10 * 60 * 1000

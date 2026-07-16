@@ -7,7 +7,7 @@ import { useMap } from 'react-map-gl/maplibre'
 import { fetchAndDecodeHM3, TILE_PX, NO_DATA } from '../lib/hm3-decoder'
 import { composeToImageData } from '../lib/hm3-compose'
 import { lngLatToTileFloat, tileXToLng, tileYToLat } from '../lib/tile-math'
-import { BASE_ZOOM, MIN_ZOOM, buildKey, tileUrl, useTileBuild, type TileBuilds } from '../lib/tile-urls'
+import { BASE_ZOOM, MIN_ZOOM, WORLD_EXTENT, buildKey, tileUrl, useTileBuild, type TileBuilds } from '../lib/tile-urls'
 
 // The seven toggleable noise layers. All share the same HM3 format + palette
 // (Lden), so the tile fetch/decode/energy-sum loop is layer-agnostic.
@@ -224,6 +224,11 @@ function makeHeatmapTileLayer(
     ...(beforeId ? { beforeId } : {}),
     minZoom: MIN_ZOOM,
     maxZoom: BASE_ZOOM,
+    // Without an extent deck renders NOTHING once the computed tile zoom drops
+    // below minZoom (world views under z≈1.5 were blank — owner report
+    // 2026-07-16); with one it clamps to minZoom and scales the z2 world
+    // tiles instead (deck getTileIndices contract).
+    extent: WORLD_EXTENT,
     tileSize: TILE_PX,
     maxCacheSize: 512,
     // One fetch+decode per tile, so allow more in flight → faster fill.

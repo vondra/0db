@@ -71,6 +71,9 @@ function makeQuietLayer(threshold: number, build: TileBuilds) {
     // Generation snapshot in the id: a flip re-keys the layer so deck drops
     // its tile cache instead of masking stale-generation tiles.
     id: `quiet-zones-${buildKey(build, ['total'])}`,
+    // Deliberately NO `extent` prop: without one deck renders nothing below
+    // minZoom, which is exactly the z5 display floor above — an extent would
+    // clamp-and-render the green wash at world zooms instead.
     minZoom: MIN_ZOOM,
     // deck upscales the base texture for deeper viewport zooms.
     maxZoom: BASE_ZOOM,
