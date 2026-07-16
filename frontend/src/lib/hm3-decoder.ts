@@ -28,8 +28,14 @@ export interface DecodedHM3Tile {
  * pre-2026-07 servers. Throws on a header/version mismatch so the caller can
  * catch and render an empty tile.
  */
-export async function fetchAndDecodeHM3(url: string, signal?: AbortSignal): Promise<DecodedHM3Tile | null> {
-  const res = await fetch(url, { signal })
+export async function fetchAndDecodeHM3(
+  url: string,
+  signal?: AbortSignal,
+  priority?: 'low' | 'high' | 'auto',
+): Promise<DecodedHM3Tile | null> {
+  // `priority` is a Chromium fetch hint (ancestor previews yield to sharp
+  // tiles); browsers without it ignore the field.
+  const res = await fetch(url, { signal, priority } as RequestInit)
   if (res.status === 204) return null
   if (!res.ok) throw new Error(`fetch ${url}: ${res.status}`)
   const buf = await res.arrayBuffer()

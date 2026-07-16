@@ -68,6 +68,47 @@ const EARLY_RESOLVE_AFTER_MS = 250
 // directly — the blocky preview only appears where loads are genuinely slow.
 const PREVIEW_GRACE_MS = 80
 
+// Ancestor fetches are memoized: 256 children share one ancestor and the
+// browser does NOT coalesce concurrent fetches of the same URL — without this
+// a cold wave fired a duplicate ancestor request per tile (owner report
+// 2026-07-16). Shared resource, so deliberately NOT tied to any one tile's
+// abort; 'low' priority keeps sharp tiles ahead in the network queue. (deck's
+// own sharp-path fetch of the same URL after a deep zoom-out can still
+// duplicate one request — rare, lands on the warmed CDN band, accepted.)
+type AncestorEntry = { promise: Promise<{ cells: Uint8Array } | null>; done: boolean }
+const ancestorMemo = new Map<string, AncestorEntry>()
+const ANCESTOR_MEMO_MAX = 128
+function fetchAncestor(url: string): Promise<{ cells: Uint8Array } | null> {
+  const hit = ancestorMemo.get(url)
+  if (hit) {
+    // True LRU: refresh recency on every hit.
+    ancestorMemo.delete(url)
+    ancestorMemo.set(url, hit)
+    return hit.promise
+  }
+  const entry: AncestorEntry = {
+    promise: fetchAndDecodeHM3(url, undefined, 'low').catch(() => {
+      // A failed fetch must not negative-cache as "empty ancestor".
+      ancestorMemo.delete(url)
+      return null
+    }),
+    done: false,
+  }
+  void entry.promise.finally(() => { entry.done = true })
+  ancestorMemo.set(url, entry)
+  if (ancestorMemo.size > ANCESTOR_MEMO_MAX) {
+    // Evict the oldest SETTLED entry — never an in-flight promise another
+    // tile is about to share (in-flight count bounds any temporary overshoot).
+    for (const [key, e] of ancestorMemo) {
+      if (e.done) {
+        ancestorMemo.delete(key)
+        break
+      }
+    }
+  }
+  return entry.promise
+}
+
 /**
  * Progressive multi-layer tile load: give the full set a short head start;
  * past it, resolve with whatever landed FIRST so the tile paints at the
@@ -128,9 +169,8 @@ async function loadTileProgressively(
     const spec = previewSpec
     if (!spec) return
     previewSettled = (async () => {
-      const decoded = await Promise.all(
-        spec.urls.map((u) => fetchAndDecodeHM3(u, previewCtl.signal).catch(() => null)),
-      )
+      const decoded = await Promise.all(spec.urls.map((u) => fetchAncestor(u)))
+      if (previewCtl.signal.aborted) return
       const ancestors = decoded.flatMap((d) => (d?.cells ? [d.cells] : []))
       if (ancestors.length === 0 || previewCtl.signal.aborted) return
       // The worker upsamples each ancestor's sub-block AND composes — the
@@ -171,7 +211,10 @@ async function loadTileProgressively(
   }
   const abortTail = () => ctl.abort()
   tails.add(abortTail)
-  void Promise.all([allDone, previewSettled]).then(() => tails.delete(abortTail))
+  // Deregister on allDone only: the preview fetch is a SHARED memoized
+  // resource that must not pin per-tile closures in the registry; a late
+  // preview compose is already gated by previewCtl.signal.
+  void allDone.then(() => tails.delete(abortTail))
   let composedCount = grids.length
   let scheduled = false
   // Real data when any landed; otherwise the race guarantees the preview
@@ -377,6 +420,56 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
       map.off('moveend', update)
     }
   }, [mapRef, update])
+
+  // Idle ancestor prefetch (owner ask 2026-07-16): once the viewport settles,
+  // quietly pull the 3×3 ring of ancestor tiles around the view plus the
+  // centre block one zoom deeper — memoized, low-priority, ≤10 × |sources|
+  // small requests fired 600 ms after the map stops (deliberately outside
+  // deck's request budget: they must never queue ahead of sharp tiles) — so
+  // ANY pan or zoom direction already has its blurry preview in memory.
+  const prefetchTimer = useRef(0)
+  useEffect(() => {
+    if (!mapRef || build === null || sources.length === 0) return
+    const map = mapRef.getMap()
+    const prefetchRing = () => {
+      window.clearTimeout(prefetchTimer.current)
+      prefetchTimer.current = window.setTimeout(() => {
+        const z = Math.round(Math.min(Math.max(map.getZoom(), MIN_ZOOM), BASE_ZOOM))
+        const pz = z - 4
+        if (pz < MIN_ZOOM) return
+        const center = map.getCenter()
+        const [fx, fy] = lngLatToTileFloat(center.lng, center.lat, pz)
+        const span = 2 ** pz
+        for (let dy = -1; dy <= 1; dy++) {
+          const ay = Math.floor(fy) + dy
+          if (ay < 0 || ay >= span) continue
+          for (let dx = -1; dx <= 1; dx++) {
+            const ax = (((Math.floor(fx) + dx) % span) + span) % span
+            for (const s of sources) void fetchAncestor(tileUrl(build, s, pz, ax, ay))
+          }
+        }
+        // Zoom-in ahead: the centre ancestor block ONE level deeper, so the
+        // first wheel step also finds its preview waiting (zoom-out ancestors
+        // are already cached from the way down). moveend fires after zooms
+        // too, so the ring itself re-targets on every zoom change.
+        if (pz + 1 <= BASE_ZOOM - 4) {
+          const deepSpan = 2 ** (pz + 1)
+          const [zx, zy] = lngLatToTileFloat(center.lng, center.lat, pz + 1)
+          const ax = ((Math.floor(zx) % deepSpan) + deepSpan) % deepSpan
+          const ay = Math.floor(zy)
+          if (ay >= 0 && ay < deepSpan) {
+            for (const s of sources) void fetchAncestor(tileUrl(build, s, pz + 1, ax, ay))
+          }
+        }
+      }, 600)
+    }
+    map.on('moveend', prefetchRing)
+    prefetchRing()
+    return () => {
+      window.clearTimeout(prefetchTimer.current)
+      map.off('moveend', prefetchRing)
+    }
+  }, [mapRef, build, sources])
 
   // Track the basemap's first label layer as the heatmap's z-anchor (beforeId).
   useEffect(() => {
