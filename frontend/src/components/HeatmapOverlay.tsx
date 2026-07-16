@@ -76,6 +76,10 @@ const PREVIEW_GRACE_MS = 80
 // abort; 'low' priority keeps sharp tiles ahead in the network queue. (deck's
 // own sharp-path fetch of the same URL after a deep zoom-out can still
 // duplicate one request — rare, lands on the warmed CDN band, accepted.)
+// Tiles deck evicted while their load was still pending — their late resolve
+// must not register in the loaded-tile registry (see getTileData).
+const unloadedWhilePending = new WeakSet<Promise<HeatTile | null>>()
+
 type AncestorEntry = { promise: Promise<{ cells: Uint8Array } | null>; done: boolean }
 const ancestorMemo = new Map<string, AncestorEntry>()
 const ANCESTOR_MEMO_MAX = 128
@@ -141,6 +145,7 @@ async function loadTileProgressively(
   onRefined: () => void,
   tails: Set<() => void>,
   previewSpec: { urls: string[]; blockX: number; blockY: number } | null,
+  hasDeckFallback?: () => boolean,
 ): Promise<HeatTile | null> {
   const ctl = new AbortController()
   if (deckSignal?.aborted) ctl.abort()
@@ -194,13 +199,17 @@ async function loadTileProgressively(
   if (!allSettled) {
     // Slow load → progressive: wake on every settle, proceed once ANY real
     // grid landed, the ancestor preview is ready, or everything settled.
-    await Promise.race([
-      allDone,
-      previewReady,
-      new Promise<void>((resolve) => {
-        for (const p of perFetch) void p.then(() => { if (grids.length > 0) resolve() })
-      }),
-    ])
+    const firstGrid = new Promise<void>((resolve) => {
+      for (const p of perFetch) void p.then(() => { if (grids.length > 0) resolve() })
+    })
+    await Promise.race([allDone, previewReady, firstGrid])
+    if (!allSettled && grids.length === 0 && previewImage && hasDeckFallback?.()) {
+      // A sharper cached ancestor landed while the preview was in flight —
+      // resolving coarse now would HIDE it (no-overlap shows the exact tile
+      // once loaded). Drop the preview and wait for real data instead.
+      previewImage = null
+      await Promise.race([allDone, firstGrid])
+    }
   }
   if (ctl.signal.aborted) throw new DOMException('tile aborted', 'AbortError')
   if (allSettled) {
@@ -313,18 +322,38 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
       if (mounted.current) applyRef.current()
     })
   }, [])
-  // Live progressive tails of the CURRENT tile layer. deck never aborts a
-  // tile it already resolved and never calls onTileUnload when finalizing a
-  // whole layer — so a layer swap (build/source re-key, composite mode,
-  // unmount) must cancel the tails here.
-  const tileTails = useRef<{ key: string; aborts: Set<() => void> }>({ key: '', aborts: new Set() })
+  // Live progressive tails + the loaded-tile registry of the CURRENT tile
+  // layer. deck never aborts a tile it already resolved and never calls
+  // onTileUnload when finalizing a whole layer — so a layer swap (build/source
+  // re-key, composite mode, unmount) must cancel the tails here. `loaded`
+  // mirrors deck's session cache (z/x/y keys) so the ancestor preview can
+  // yield to deck's own better fallback (owner policy 2026-07-16: exact zoom >
+  // z−1 > z−2 > … > coarse preview > blank).
+  const tileTails = useRef<{ key: string; aborts: Set<() => void>; loaded: Set<string> }>(
+    { key: '', aborts: new Set(), loaded: new Set() },
+  )
   const dropTileTails = useCallback((nextKey: string) => {
     if (tileTails.current.key === nextKey) return
     for (const abort of tileTails.current.aborts) abort()
     tileTails.current.aborts.clear()
+    tileTails.current.loaded.clear()
     tileTails.current.key = nextKey
   }, [])
   useEffect(() => () => dropTileTails(''), [dropTileTails])
+  // Retina/HiDPI: fetch one pyramid level finer so one data cell ≈ one device
+  // pixel on the zooms where a finer level exists (≤ z11 viewports; z12 is the
+  // data floor). Costs 4× tiles for DPR ≥ 1.5 screens — owner call 2026-07-16
+  // ("to chci"). Re-render if the window moves to a screen with different DPR.
+  const [dpr, setDpr] = useState(() => (typeof window === 'undefined' ? 1 : window.devicePixelRatio))
+  useEffect(() => {
+    const mq = window.matchMedia(`(resolution: ${dpr}dppx)`)
+    const onChange = () => setDpr(window.devicePixelRatio)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [dpr])
+  // A DPR flip re-creates `apply` but nothing else calls it — apply NOW so the
+  // re-keyed layer (offset is part of the id) fetches the finer/coarser level.
+  useEffect(() => { applyRef.current() }, [dpr])
 
   // One interleaved MapboxOverlay (shares MapLibre's GL context).
   useEffect(() => {
@@ -366,15 +395,22 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
           textureParameters: { minFilter: 'linear', magFilter: 'linear' },
         }))
       } else {
-        dropTileTails(buildKey(build, sources)) // a re-key cancels the old layer's tails
-        layers.push(makeHeatmapTileLayer(build, sources, beforeId, refineSeq.current, onRefined, tileTails.current.aborts))
+        const zoomOffset = dpr >= 1.5 ? 1 : 0
+        // Offset is part of the registry key AND the layer id: a DPR flip must
+        // re-key the layer (deck won't recompute tile selection on an options
+        // change alone) and start a fresh loaded/tails registry with it.
+        dropTileTails(`${buildKey(build, sources)}-o${zoomOffset}`)
+        layers.push(makeHeatmapTileLayer(
+          build, sources, beforeId, refineSeq.current, onRefined,
+          tileTails.current.aborts, tileTails.current.loaded, zoomOffset,
+        ))
       }
     } else {
       dropTileTails('') // every source off (or no build) removes the layer too
     }
     layers.push(...makeHighlightLayers(highlightGeometry))
     overlay.setProps({ layers })
-  }, [overlay, mapRef, build, sources, highlightGeometry, onRefined, dropTileTails])
+  }, [overlay, mapRef, build, sources, highlightGeometry, onRefined, dropTileTails, dpr])
   applyRef.current = apply
 
   // Rebuild the over-zoom composite (only past OVERZOOM_FROM, only when the base range/sources
@@ -510,15 +546,20 @@ function makeHeatmapTileLayer(
   refineSeq: number,
   onRefined: () => void,
   tails: Set<() => void>,
+  loaded: Set<string>,
+  zoomOffset: number,
 ) {
   return new TileLayer<HeatTile | null>({
-    id: `hm3-tiles-${buildKey(build, sources)}`,
+    id: `hm3-tiles-${buildKey(build, sources)}-o${zoomOffset}`,
     // beforeId on the TileLayer (NOT its sublayers): MapboxOverlay slots only the
     // top-level deck layer; the tile BitmapLayers draw inside it. Spread because
     // _TileLayerProps doesn't type beforeId though MapboxOverlay reads it at runtime.
     ...(beforeId ? { beforeId } : {}),
     minZoom: MIN_ZOOM,
     maxZoom: BASE_ZOOM,
+    // +1 on HiDPI screens: one data cell ≈ one device pixel wherever a finer
+    // pyramid level exists (maxZoom still clamps at the z12 data floor).
+    zoomOffset,
     // Without an extent deck renders NOTHING once the computed tile zoom drops
     // below minZoom (world views under z≈1.5 were blank — owner report
     // 2026-07-16); with one it clamps to minZoom and scales the z2 world
@@ -537,18 +578,38 @@ function makeHeatmapTileLayer(
       const span = 2 ** z
       const wx = ((x % span) + span) % span // wrap x across the antimeridian
       const urls = sources.map((s) => tileUrl(build, s, z, wx, y))
+      // Owner fallback policy 2026-07-16: exact zoom > deck's cached z−1 >
+      // z−2 > … > coarse preview > blank. If ANY nearby ancestor is already
+      // session-loaded, skip the preview — deck's no-overlap refinement keeps
+      // painting that sharper ancestor until this tile's data lands (an empty
+      // resolved ancestor counts too: blank IS its truth).
+      const deckFallback = () => {
+        for (let d = 1; d <= 6 && z - d >= MIN_ZOOM; d++) {
+          if (loaded.has(`${z - d}/${wx >> d}/${y >> d}`)) return true
+        }
+        return false
+      }
+      const deckHasFallback = deckFallback()
       // z−Δ ancestor for the instant preview (shallow zooms are the warm band
       // itself — no preview needed or possible below the z2 floor).
       const pz = z - PREVIEW_DELTA
       const mask = (1 << PREVIEW_DELTA) - 1
-      const preview = pz >= MIN_ZOOM
+      const preview = !deckHasFallback && pz >= MIN_ZOOM
         ? {
             urls: sources.map((s) => tileUrl(build, s, pz, wx >> PREVIEW_DELTA, y >> PREVIEW_DELTA)),
             blockX: wx & mask,
             blockY: y & mask,
           }
         : null
-      return loadTileProgressively(urls, signal, onRefined, tails, preview)
+      let p: Promise<HeatTile | null>
+      p = loadTileProgressively(urls, signal, onRefined, tails, preview, deckFallback).then((data) => {
+        // A tile evicted while still pending gets no future onTileUnload —
+        // registering it would leave a ghost ancestor forever (and grow the
+        // set unboundedly under fast panning).
+        if (!unloadedWhilePending.has(p)) loaded.add(`${z}/${wx}/${y}`)
+        return data
+      })
+      return p
     },
     // Bumped by onRefined when a tile's late layers land — deck re-runs
     // renderSubLayers, and only mutated tiles carry a NEW ImageData reference
@@ -559,12 +620,20 @@ function makeHeatmapTileLayer(
     // loadTileProgressively) — cancel the progressive tail ourselves when the
     // tile leaves the cache, so evicted tiles stop fetching and repainting.
     onTileUnload: (tile) => {
+      const { x, y, z } = tile.index
+      const span = 2 ** z
+      loaded.delete(`${z}/${((x % span) + span) % span}/${y}`)
       const d = tile.data
       if (!d) return
       // A still-pending tile can be evicted without deck aborting it — cancel
-      // its tail the moment it resolves instead of letting it refine a ghost.
-      if (d instanceof Promise) void d.then((t) => t?.abortRefine?.()).catch(() => {})
-      else d.abortRefine?.()
+      // its tail the moment it resolves instead of letting it refine a ghost,
+      // and bar its resolve from registering in `loaded`.
+      if (d instanceof Promise) {
+        unloadedWhilePending.add(d)
+        void d.then((t) => t?.abortRefine?.()).catch(() => {})
+      } else {
+        d.abortRefine?.()
+      }
     },
     renderSubLayers: (props) => {
       const data = props.data as HeatTile | null
