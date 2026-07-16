@@ -183,6 +183,12 @@
       "gpu": true,
       "binary": "gpu-surface",
       "flags": "--stream --layers road --output {OUTPUT}"
+    },
+    "gpu-rail": {
+      "group": "rail",
+      "gpu": true,
+      "binary": "gpu-surface",
+      "flags": "--stream --layers rail --output {OUTPUT}"
     }
   }
 }
