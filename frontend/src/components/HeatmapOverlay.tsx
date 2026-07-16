@@ -47,6 +47,15 @@ const COMPOSITE_MARGIN = 1
 // OVERZOOM_FROM is lowered toward normal zoom).
 const MAX_COMPOSITE_TILES = 96
 
+// Decoded-tile cache bound. Each cached tile holds a TILE_PX² RGBA ImageData
+// (~1 MiB CPU heap) plus its GPU texture, so 192 ≈ 192 MiB decoded heap and
+// comparable GPU memory; deck may transiently exceed it for visible/selected
+// tiles. The previous 512 allowed ~½ GB on a long touring session (HiDPI
+// fills 4× faster) — a mobile-Safari tab-eviction budget. 192 ≈ 4-5 desktop
+// screenfuls, deep enough for the ancestor fallback ladder (deck never
+// evicts a visible fallback tile).
+const MAX_CACHE_TILES = 192
+
 type HeatTile = {
   image: ImageData
   /** Cancels the progressive tail (fetches deck can no longer abort — it
@@ -161,8 +170,10 @@ async function loadTileProgressively(
   if (ctl.signal.aborted) previewCtl.abort() // the chained listener below can't fire retroactively
   ctl.signal.addEventListener('abort', () => previewCtl.abort())
   const grids: Uint8Array[] = []
+  // 'high': sharp tiles outrank basemap assets and the 'low' ancestor
+  // previews in Chromium's network queue.
   const perFetch = urls.map((u) =>
-    fetchAndDecodeHM3(u, ctl.signal)
+    fetchAndDecodeHM3(u, ctl.signal, 'high')
       .then((d) => {
         if (d?.cells) {
           grids.push(d.cells)
@@ -589,7 +600,7 @@ function makeHeatmapTileLayer(
     // tiles instead (deck getTileIndices contract).
     extent: WORLD_EXTENT,
     tileSize: TILE_PX,
-    maxCacheSize: 512,
+    maxCacheSize: MAX_CACHE_TILES,
     // One fetch+decode per tile, so allow more in flight → faster fill.
     maxRequests: 12,
     // 'no-overlap', NOT 'best-available': the Lden palette is highly opaque, so
@@ -721,6 +732,9 @@ async function buildComposite(
   const decoded = await Promise.all(
     jobs.map(({ source, tx, ty }) => {
       const wx = ((tx % span) + span) % span
+      // Deliberately no priority hint: composite fetches carry no abort and a
+      // superseded batch (up to 96×|sources| requests) must not outrank the
+      // fresh view's sharp tiles.
       return fetchAndDecodeHM3(tileUrl(build, source, z, wx, ty)).catch(() => null)
     }),
   )

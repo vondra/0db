@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/favicon.ico" sizes="32x32" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Noise-tile CDN (manifest tile_base in production). Hardcoded hint: the
+         first tile fetch otherwise pays DNS+TCP+TLS serialized after JS boot +
+         manifest; a wrong guess just idles one connection. -->
+    <link rel="preconnect" href="https://t.0db.app" crossorigin />
     <link rel="preconnect" href="https://basemaps.cartocdn.com" crossorigin />
     <link rel="preconnect" href="https://a.tile.opentopomap.org" crossorigin />
     <link rel="preconnect" href="https://services.arcgisonline.com" crossorigin />
