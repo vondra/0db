@@ -3,9 +3,17 @@
 // height}); the composed pixels transfer back zero-copy. All session state
 // and fallback logic live in the client (compose-off-thread.ts).
 
-import { composeToImageData } from './hm3-compose'
+import { composeToImageData, upsampleAncestorBlock } from './hm3-compose'
 
-type ComposeRequest = { id: number; grids: Uint8Array[]; width: number; height: number }
+type ComposeRequest = {
+  id: number
+  grids: Uint8Array[]
+  width: number
+  height: number
+  /** When set, `grids` are z-4 ANCESTOR grids: upsample this child's sub-block
+   *  of each before composing (keeps that work off the main thread too). */
+  block?: { x: number; y: number }
+}
 
 const ctx = self as unknown as {
   onmessage: ((e: MessageEvent<ComposeRequest>) => void) | null
@@ -13,7 +21,8 @@ const ctx = self as unknown as {
 }
 
 ctx.onmessage = (e) => {
-  const { id, grids, width, height } = e.data
-  const image = composeToImageData(grids, width, height)
+  const { id, grids, width, height, block } = e.data
+  const cells = block ? grids.map((g) => upsampleAncestorBlock(g, block.x, block.y)) : grids
+  const image = composeToImageData(cells, width, height)
   ctx.postMessage({ id, pixels: image.data.buffer, width, height }, [image.data.buffer])
 }

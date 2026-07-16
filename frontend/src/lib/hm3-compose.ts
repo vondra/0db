@@ -65,3 +65,28 @@ export function composeToImageData(grids: Uint8Array[], width: number, height: n
   const combined = grids.length === 1 ? grids[0] : sumEnergy(grids)
   return palette(combined, width, height)
 }
+
+// An ancestor 4 zooms up covers 16×16 children, so one child occupies a
+// (512/16)² sub-block of the ancestor's grid.
+const ANCESTOR_SPAN = 16
+const BLOCK = 512 / ANCESTOR_SPAN
+
+/**
+ * Upsample one child's sub-block of a z-4 ancestor grid to a full 512² grid —
+ * a blocky preview of the same energy field, painted while the child's real
+ * layers load (BitmapLayer's linear filtering smooths the 16×16 blocks).
+ */
+export function upsampleAncestorBlock(ancestor: Uint8Array, blockX: number, blockY: number): Uint8Array {
+  const size = ANCESTOR_SPAN * BLOCK
+  const out = new Uint8Array(size * size)
+  const ox = blockX * BLOCK
+  const oy = blockY * BLOCK
+  for (let py = 0; py < size; py++) {
+    const srcRow = (oy + (py >> 4)) * size + ox
+    const outRow = py * size
+    for (let px = 0; px < size; px++) {
+      out[outRow + px] = ancestor[srcRow + (px >> 4)]
+    }
+  }
+  return out
+}

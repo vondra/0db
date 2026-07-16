@@ -63,6 +63,11 @@ type HeatTile = {
 // enforcing the budget exactly would mean reimplementing deck's scheduler.
 const EARLY_RESOLVE_AFTER_MS = 250
 
+// Grace period before the ancestor preview may win the paint race: a warm-CDN
+// full load typically completes under this, so everyday browsing paints sharp
+// directly — the blocky preview only appears where loads are genuinely slow.
+const PREVIEW_GRACE_MS = 80
+
 /**
  * Progressive multi-layer tile load: give the full set a short head start;
  * past it, resolve with whatever landed FIRST so the tile paints at the
@@ -73,6 +78,13 @@ const EARLY_RESOLVE_AFTER_MS = 250
  * moment beats a blank tile — and converges to the exact sum with the last
  * layer. A failed single layer renders as that layer being empty
  * (pre-existing behavior).
+ *
+ * While the real layers load, the z-4 ANCESTOR races them as a preview: one
+ * ancestor serves 256 children (browser-cached) and the warm-crawled z≤8
+ * band keeps it an edge HIT, so a cold-area tile paints a blocky-but-real
+ * energy field ~instantly instead of nothing. The first real compose
+ * replaces it; a preview with nothing real behind it clears to transparent
+ * once every layer settles empty (a preview must never lie permanently).
  *
  * Lifecycle: deck releases its request slot and disarms its abort the moment
  * we resolve (tile-2d-header marks the tile loaded), and it never calls
@@ -85,40 +97,64 @@ async function loadTileProgressively(
   deckSignal: AbortSignal | undefined,
   onRefined: () => void,
   tails: Set<() => void>,
+  previewSpec: { urls: string[]; blockX: number; blockY: number } | null,
 ): Promise<HeatTile | null> {
-  // Single source — the common all-layers `total` case: plain fetch, deck owns
-  // the whole lifecycle, zero progressive overhead.
-  if (urls.length === 1) {
-    const d = await fetchAndDecodeHM3(urls[0], deckSignal).catch((err) => {
-      if ((err as DOMException)?.name === 'AbortError') throw err
-      return null
-    })
-    if (!d) return null
-    const image = await composeOffThread([d.cells], TILE_PX, TILE_PX)
-    if (deckSignal?.aborted) throw new DOMException('tile aborted', 'AbortError')
-    return { image }
-  }
   const ctl = new AbortController()
   if (deckSignal?.aborted) ctl.abort()
   deckSignal?.addEventListener('abort', () => ctl.abort())
+  // The preview has its OWN controller: it dies with the tile (chained), and
+  // is also cancelled the moment it becomes useless — a real grid landed, or
+  // the load completed — without touching the real fetches.
+  const previewCtl = new AbortController()
+  if (ctl.signal.aborted) previewCtl.abort() // the chained listener below can't fire retroactively
+  ctl.signal.addEventListener('abort', () => previewCtl.abort())
   const grids: Uint8Array[] = []
   const perFetch = urls.map((u) =>
     fetchAndDecodeHM3(u, ctl.signal)
-      .then((d) => { if (d?.cells) grids.push(d.cells) })
+      .then((d) => {
+        if (d?.cells) {
+          grids.push(d.cells)
+          previewCtl.abort() // real data beats any preview from here on
+        }
+      })
       .catch(() => { /* abort, or a failed layer → renders empty */ }),
   )
   const allDone = Promise.all(perFetch)
   let allSettled = false
   void allDone.then(() => { allSettled = true })
+  let previewImage: ImageData | null = null
+  let previewSettled: Promise<unknown> = Promise.resolve()
+  const previewReady = new Promise<void>((resolve) => {
+    const spec = previewSpec
+    if (!spec) return
+    previewSettled = (async () => {
+      const decoded = await Promise.all(
+        spec.urls.map((u) => fetchAndDecodeHM3(u, previewCtl.signal).catch(() => null)),
+      )
+      const ancestors = decoded.flatMap((d) => (d?.cells ? [d.cells] : []))
+      if (ancestors.length === 0 || previewCtl.signal.aborted) return
+      // The worker upsamples each ancestor's sub-block AND composes — the
+      // main thread only ships the raw ancestor grids.
+      previewImage = await composeOffThread(ancestors, TILE_PX, TILE_PX, {
+        x: spec.blockX,
+        y: spec.blockY,
+      })
+      resolve()
+    })().catch(() => { /* a failed preview just never shows */ })
+  })
   await Promise.race([
     allDone,
     new Promise<void>((resolve) => setTimeout(resolve, EARLY_RESOLVE_AFTER_MS)),
+    // The preview may only win after a grace period, so a warm-CDN full load
+    // paints sharp directly instead of flashing blocky first.
+    new Promise<void>((resolve) => setTimeout(resolve, PREVIEW_GRACE_MS)).then(() => previewReady),
   ])
   if (!allSettled) {
-    // Slow load → progressive: wake on every settle, proceed once ANY grid
-    // landed — or everything settled, whichever comes first.
+    // Slow load → progressive: wake on every settle, proceed once ANY real
+    // grid landed, the ancestor preview is ready, or everything settled.
     await Promise.race([
       allDone,
+      previewReady,
       new Promise<void>((resolve) => {
         for (const p of perFetch) void p.then(() => { if (grids.length > 0) resolve() })
       }),
@@ -127,6 +163,7 @@ async function loadTileProgressively(
   if (ctl.signal.aborted) throw new DOMException('tile aborted', 'AbortError')
   if (allSettled) {
     // Complete load (fast path): plain tile, no tail to manage.
+    previewCtl.abort()
     if (grids.length === 0) return null
     const image = await composeOffThread(grids, TILE_PX, TILE_PX)
     if (ctl.signal.aborted) throw new DOMException('tile aborted', 'AbortError')
@@ -134,10 +171,14 @@ async function loadTileProgressively(
   }
   const abortTail = () => ctl.abort()
   tails.add(abortTail)
-  void allDone.then(() => tails.delete(abortTail))
+  void Promise.all([allDone, previewSettled]).then(() => tails.delete(abortTail))
   let composedCount = grids.length
   let scheduled = false
-  const image = await composeOffThread(grids.slice(), TILE_PX, TILE_PX)
+  // Real data when any landed; otherwise the race guarantees the preview
+  // (transparent fallback is defensive only).
+  const image = composedCount > 0
+    ? await composeOffThread(grids.slice(0, composedCount), TILE_PX, TILE_PX)
+    : previewImage ?? new ImageData(TILE_PX, TILE_PX)
   if (ctl.signal.aborted) throw new DOMException('tile aborted', 'AbortError')
   const data: HeatTile = { image, abortRefine: abortTail }
   const recomposeSoon = () => {
@@ -145,13 +186,28 @@ async function loadTileProgressively(
     scheduled = true
     requestAnimationFrame(() => {
       scheduled = false
-      if (ctl.signal.aborted || grids.length === composedCount) return
-      composedCount = grids.length
-      void composeOffThread(grids.slice(), TILE_PX, TILE_PX).then((refined) => {
-        if (ctl.signal.aborted) return
-        data.image = refined
-        onRefined()
-      })
+      if (ctl.signal.aborted) return
+      if (grids.length === composedCount) {
+        // Preview with nothing real behind it: once every layer settled
+        // empty, clear to a transparent tile instead of lying forever.
+        if (allSettled && grids.length === 0) {
+          previewCtl.abort()
+          data.image = new ImageData(TILE_PX, TILE_PX)
+          onRefined()
+        }
+        return
+      }
+      // composedCount only advances on SUCCESS — a rejected compose (worker
+      // death mid-OOM) stays retryable by the next settle.
+      const target = grids.length
+      composeOffThread(grids.slice(0, target), TILE_PX, TILE_PX)
+        .then((refined) => {
+          if (ctl.signal.aborted) return
+          composedCount = target
+          data.image = refined
+          onRefined()
+        })
+        .catch(() => { /* retried on the next settle */ })
     })
   }
   for (const p of perFetch) void p.then(recomposeSoon)
@@ -386,7 +442,17 @@ function makeHeatmapTileLayer(
       const span = 2 ** z
       const wx = ((x % span) + span) % span // wrap x across the antimeridian
       const urls = sources.map((s) => tileUrl(build, s, z, wx, y))
-      return loadTileProgressively(urls, signal, onRefined, tails)
+      // z-4 ancestor for the instant preview (z6 and shallower is the warm
+      // band itself — no preview needed or possible below the z2 floor).
+      const pz = z - 4
+      const preview = pz >= MIN_ZOOM
+        ? {
+            urls: sources.map((s) => tileUrl(build, s, pz, wx >> 4, y >> 4)),
+            blockX: wx & 15,
+            blockY: y & 15,
+          }
+        : null
+      return loadTileProgressively(urls, signal, onRefined, tails, preview)
     },
     // Bumped by onRefined when a tile's late layers land — deck re-runs
     // renderSubLayers, and only mutated tiles carry a NEW ImageData reference
