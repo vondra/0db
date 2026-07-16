@@ -14,7 +14,7 @@ edition = "2021"
 [dependencies]
 cudarc = { version = "0.12", default-features = false, features = ["std", "driver", "nvrtc", "cuda-12060"], optional = true }
 raster-reader = { path = "../raster-reader" }
-heatmap-aircraft = { path = "../heatmap-aircraft" }
+tile-painter = { path = "../tile-painter" }
 noise-compute = { path = "../noise-compute" }
 h3o = "0.7"
 anyhow = "1"

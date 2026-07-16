@@ -22,7 +22,7 @@ use noise_compute::types::RasterSampler;
 use crate::{FusedGrid, RealRasters};
 
 /// Side length of one output tile in receiver pixels. 512 since the 2026-07
-/// shift — lockstep with heatmap-aircraft grid.rs and the CUDA TPX.
+/// shift — lockstep with tile-painter grid.rs and the CUDA TPX.
 pub const TILE_PX: usize = 512;
 
 /// Halo extension on each side of the tile bbox, in metres. Conservative

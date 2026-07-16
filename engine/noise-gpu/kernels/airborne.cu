@@ -25,7 +25,7 @@
 //   npd  f32[2*NC*(NB+1)] = NPD SEL LUT, approach[0..] | departure[NC*(NB+1)..]
 
 #define TPX 512                         // tile side in receivers — lockstep with
-                                        // TILE_PX in raster-reader/heatmap-aircraft
+                                        // TILE_PX in raster-reader/tile-painter
 #define TPX_SHIFT 9                     // log2(TPX): pix >> TPX_SHIFT = py
 #define TPX_MASK (TPX - 1)              // pix & TPX_MASK = px
 #define MLAT 111132.92                  // M_PER_DEG_LAT (Doc 29 value, doc29.rs:25)

@@ -4,7 +4,7 @@
 //!   SEL_seg = L_E(P, d_p) + ΔV + ΔI(φ) - Λ(β, l) + ΔF
 //!
 //! `segment_energy_kernel` is the shared per-segment hot path; both the
-//! popup wrapper (`segment_sel::*`) and heatmap-aircraft scatter delegate
+//! popup wrapper (`segment_sel::*`) and tile-painter scatter delegate
 //! here.
 
 use std::f64::consts::LOG10_2;
@@ -19,7 +19,7 @@ use super::npd::{Installation, NpdLuts, NpdProfile, AIRCRAFT_FAR_FIELD_THRESHOLD
 // Doc 29 reference value — slightly higher precision than the
 // crate-wide `crate::constants::M_PER_DEG_LAT` (110_540.0) used by the
 // general geo helpers. Re-exported via `aircraft::*` so external callers
-// (e.g. heatmap-aircraft's per-sub-seg line-perpendicular tile-envelope
+// (e.g. tile-painter's per-sub-seg line-perpendicular tile-envelope
 // prune) project lat/lon to local meters consistent with the kernel's
 // own distance math.
 pub const M_PER_DEG_LAT: f64 = 111_132.92;

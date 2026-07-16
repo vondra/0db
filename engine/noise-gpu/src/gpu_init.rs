@@ -12,12 +12,12 @@ use anyhow::{bail, Context, Result};
 use cudarc::driver::{CudaDevice, CudaFunction};
 use cudarc::nvrtc::Ptx;
 use h3o::{CellIndex, LatLng};
-use heatmap_aircraft::source_line::LineRow;
-use heatmap_aircraft::source_loader_rail::RailData;
-use heatmap_aircraft::source_loader_road::RoadData;
-use heatmap_aircraft::wire_hm3::{SOURCE_ID_RAIL, SOURCE_ID_ROAD};
 use noise_compute::admin;
 use noise_compute::constants::RAILWAY_REACH_CEILING;
+use tile_painter::source_line::LineRow;
+use tile_painter::source_loader_rail::RailData;
+use tile_painter::source_loader_road::RoadData;
+use tile_painter::wire_hm3::{SOURCE_ID_RAIL, SOURCE_ID_ROAD};
 
 const SCATTER_PTX: &str = include_str!(concat!(env!("OUT_DIR"), "/scatter.ptx"));
 const ROAD_HALO_M: f64 = 10_000.0; // motorway-class reach (matches build_heatmap_surface)

@@ -6,10 +6,10 @@
 #[cfg(feature = "gpu")]
 pub mod airborne;
 
-use heatmap_aircraft::source_line::LineRow;
 use noise_compute::emission::aircraft::{Installation, SegmentPrepared, M_PER_DEG_LAT};
 use noise_compute::types::Barrier;
 use raster_reader::fused_tile_z13::{FusedTileZ13, TILE_PX};
+use tile_painter::source_line::LineRow;
 
 fn inst_code(inst: Installation) -> i32 {
     match inst {

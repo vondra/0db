@@ -881,27 +881,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
-name = "heatmap-aircraft"
-version = "0.1.0"
-dependencies = [
- "aircraft-extract",
- "anyhow",
- "arrow",
- "brotli",
- "clap",
- "h3o",
- "libc",
- "memmap2",
- "noise-compute",
- "pmtiles",
- "raster-reader",
- "rayon",
- "serde_json",
- "sha2",
- "zstd",
-]
-
-[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1153,10 +1132,10 @@ dependencies = [
  "clap",
  "cudarc",
  "h3o",
- "heatmap-aircraft",
  "noise-compute",
  "raster-reader",
  "rayon",
+ "tile-painter",
 ]
 
 [[package]]
@@ -1657,6 +1636,27 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tile-painter"
+version = "0.1.0"
+dependencies = [
+ "aircraft-extract",
+ "anyhow",
+ "arrow",
+ "brotli",
+ "clap",
+ "h3o",
+ "libc",
+ "memmap2",
+ "noise-compute",
+ "pmtiles",
+ "raster-reader",
+ "rayon",
+ "serde_json",
+ "sha2",
+ "zstd",
 ]
 
 [[package]]

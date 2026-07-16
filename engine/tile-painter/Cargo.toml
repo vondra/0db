@@ -1,0 +1,69 @@
+[package]
+name = "tile-painter"
+version = "0.1.0"
+edition = "2021"
+description = "Heatmap v3 — Lden raster tiles (road/rail/industrial/building/aircraft) on the Web Mercator z=12 grid"
+
+[lib]
+name = "tile_painter"
+path = "src/lib.rs"
+
+[[bin]]
+name = "build-heatmap-aircraft"
+path = "src/bin/build_heatmap_aircraft.rs"
+
+[[bin]]
+name = "build-pyramid"
+path = "src/bin/build_pyramid.rs"
+
+[[bin]]
+name = "build-heatmap-surface"
+path = "src/bin/build_heatmap_surface.rs"
+
+[[bin]]
+name = "build-heatmap-combine"
+path = "src/bin/build_heatmap_combine.rs"
+
+[[bin]]
+name = "tile-store-transcode"
+path = "src/bin/tile_store_transcode.rs"
+
+[[bin]]
+name = "tile-store-pack"
+path = "src/bin/tile_store_pack.rs"
+
+[[bin]]
+name = "tile-store-ingest"
+path = "src/bin/tile_store_ingest.rs"
+
+[[bin]]
+name = "tile-store-fsck"
+path = "src/bin/tile_store_fsck.rs"
+
+[[bin]]
+name = "tile-store-gc"
+path = "src/bin/tile_store_gc.rs"
+
+[dependencies]
+noise-compute = { path = "../noise-compute" }
+raster-reader = { path = "../raster-reader" }
+aircraft-extract = { path = "../aircraft-extract" }
+h3o = "0.7"
+arrow = { version = "54", features = ["ipc"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+rayon = "1"
+memmap2 = "0.9"
+brotli = "8"
+zstd = "0.13"
+libc = "0.2"
+pmtiles = { version = "0.23.0", default-features = false, features = ["write"] }
+sha2 = "0.11.0"
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

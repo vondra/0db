@@ -22,7 +22,7 @@
  * NACE mapping (all map to NACE 35 — Electricity supply):
  *   Coal, Gas, Nuclear, Wind, Solar, LNG → NACE 35
  *
- * This gives the heatmap-aircraft the correct industrial noise profile:
+ * This gives tile-painter the correct industrial noise profile:
  *   - Coal plants: ~100 dB base emission (NACE 35 with heavy combustion)
  *   - Gas CCGT: ~95 dB
  *   - Nuclear: ~90 dB (mostly cooling towers)

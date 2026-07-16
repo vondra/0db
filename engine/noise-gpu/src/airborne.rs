@@ -23,7 +23,6 @@ use cudarc::driver::sys::CUresult;
 use cudarc::driver::{CudaDevice, CudaFunction, CudaSlice, DriverError, LaunchAsync, LaunchConfig};
 use cudarc::nvrtc::Ptx;
 use h3o::CellIndex;
-use heatmap_aircraft::accumulator::{CoarseLattice, TileAccumulator, COARSE_LEVELS_N};
 use noise_compute::compute::aircraft_v6::AirborneRowView;
 use noise_compute::emission::aircraft::{
     self, is_ground_stale_with_terrain, prepare_segment, NpdLuts, SegmentPrepared, SegmentTerrain,
@@ -31,6 +30,7 @@ use noise_compute::emission::aircraft::{
 };
 use noise_compute::types::AircraftSegment;
 use raster_reader::fused_tile_z13::{tile_pixel_size_m, FusedTileZ13, TILE_PX};
+use tile_painter::accumulator::{CoarseLattice, TileAccumulator, COARSE_LEVELS_N};
 
 use crate::{pack_airborne_receivers, pack_airborne_receivers_batch, pack_airborne_segs};
 

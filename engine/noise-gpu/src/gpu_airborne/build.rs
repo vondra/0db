@@ -4,13 +4,13 @@
 
 use anyhow::{Context, Result};
 use h3o::CellIndex;
-use heatmap_aircraft::accumulator::TileAccumulator;
-use heatmap_aircraft::r4_source_cache::R4SourceCache;
-use heatmap_aircraft::wire_hm3::{collapse_lden_u8, write_tile, SOURCE_ID_AIRCRAFT};
 use noise_gpu::airborne::{for_each_region_chunk, is_cell_unbuildable, AirborneGpu};
 use noise_gpu::pack_airborne_segs;
 use raster_reader::fused_tile_z13::FusedTileZ13;
 use raster_reader::RealRasters;
+use tile_painter::accumulator::TileAccumulator;
+use tile_painter::r4_source_cache::R4SourceCache;
+use tile_painter::wire_hm3::{collapse_lden_u8, write_tile, SOURCE_ID_AIRCRAFT};
 
 use crate::prep::{build_dem_blocks, prep_cell, PrepBlock, PreparedCell};
 use crate::Args;

@@ -4,7 +4,7 @@
 // the browser has already Brotli-decompressed the response — off the main
 // thread, in its network stack — by the time `fetch().arrayBuffer()` resolves.
 // This decoder therefore does NO decompression: it validates the 6-byte header
-// and returns the raw cells. Mirror of `engine/heatmap-aircraft/src/wire_hm3.rs`:
+// and returns the raw cells. Mirror of `engine/tile-painter/src/wire_hm3.rs`:
 //   0:4  magic "HM3 "   4:1  version = 3   5:1  source_id   6:…  512×512 u8 cells
 
 export const TILE_PX = 512

@@ -619,7 +619,7 @@ const industrial = scanLayer('industrial.arrow', (t, hex) => {
 // ── R0/R8/R9/R10/R12: buildings ──────────────────────────────────────────────
 
 // Per-file contract stamp written by `osm-extract::finalize` and fail-loud
-// asserted by `heatmap-aircraft::schema_check::BUILDINGS_CONTRACT_V2`
+// asserted by `tile-painter::schema_check::BUILDINGS_CONTRACT_V2`
 // (branch settlement-phase2). Value is the contract — never edit casually.
 const BUILDINGS_CONTRACT_V2 = 'buildings_v2'
 

@@ -21,7 +21,7 @@ import os, sys, hashlib
 
 # the heatmap COMPUTE crates — NOT aircraft-extract / osm-extract (data prep; their edits change DATA,
 # bumping data_ver via arrow mtimes, not code). Validator-only bins are dropped (not production output).
-CRATES = ("heatmap-aircraft", "noise-compute", "noise-gpu", "raster-reader")
+CRATES = ("tile-painter", "noise-compute", "noise-gpu", "raster-reader")
 EXCLUDE_BINS = {"compare_floats.rs", "compare_hm3.rs", "e2_full.rs", "tile_store_fsck.rs"}
 # Global build inputs OUTSIDE the crates that still change produced tiles (e.g. rustflags=target-cpu).
 GLOBAL_BUILD = (".cargo/config.toml", ".cargo/config", "rust-toolchain.toml", "rust-toolchain")
@@ -35,20 +35,20 @@ DEFAULT_EXCL = {
     # normalize/road.rs + the defaults cascade + its generated tables are road-only (grep-proven
     # 2026-07-03: the sole cross-crate consumer is source_loader_road.rs, already in this set) —
     # keeping them SHARED re-staled the whole world on every road-emission tweak.
-    "road": "heatmap-aircraft/src/source_loader_road.rs noise-compute/src/compute/roads.rs noise-compute/src/emission/road.rs"
+    "road": "tile-painter/src/source_loader_road.rs noise-compute/src/compute/roads.rs noise-compute/src/emission/road.rs"
             " noise-compute/src/normalize/road.rs noise-compute/src/defaults.rs"
             " noise-compute/src/city_consts_generated.rs noise-compute/src/country_defaults_generated.rs"
             " noise-compute/src/country_speed_defaults_generated.rs",
-    "rail": "heatmap-aircraft/src/source_loader_rail.rs noise-compute/src/compute/railways.rs noise-compute/src/emission/railway.rs",
+    "rail": "tile-painter/src/source_loader_rail.rs noise-compute/src/compute/railways.rs noise-compute/src/emission/railway.rs",
     "industrial": "noise-compute/src/emission/industrial.rs noise-compute/src/emission/wind.rs",
     # emission/leisure.rs is building-only (grep-proven 2026-07-16: its callers are
     # normalize/points.rs' LEISURE rows — which land in the building tile, layer-spec folds
     # leisure.arrow into building — and popup labels in source_names.rs, not painted output).
-    "building": "heatmap-aircraft/src/source_loader_building.rs noise-compute/src/emission/settlement.rs"
+    "building": "tile-painter/src/source_loader_building.rs noise-compute/src/emission/settlement.rs"
                 " noise-compute/src/emission/leisure.rs",
-    "aircraft-ground": "heatmap-aircraft/src/source_loader_traffic.rs heatmap-aircraft/src/ground_ops.rs noise-compute/src/emission/airport_traffic.rs noise-compute/src/emission/gse.rs noise-compute/src/emission/aircraft/ground_ops.rs noise-compute/src/compute/aircraft_v6/airport_traffic",
-    "aircraft-airborne": "heatmap-aircraft/src/source_loader_airborne.rs heatmap-aircraft/src/airborne.rs noise-compute/src/compute/aircraft_v6/airborne noise-gpu/src/gpu_airborne.rs noise-gpu/kernels/airborne.cu",
-    "aircraft-cruise": "heatmap-aircraft/src/cruise.rs noise-compute/src/compute/aircraft_v6/cruise.rs",
+    "aircraft-ground": "tile-painter/src/source_loader_traffic.rs tile-painter/src/ground_ops.rs noise-compute/src/emission/airport_traffic.rs noise-compute/src/emission/gse.rs noise-compute/src/emission/aircraft/ground_ops.rs noise-compute/src/compute/aircraft_v6/airport_traffic",
+    "aircraft-airborne": "tile-painter/src/source_loader_airborne.rs tile-painter/src/airborne.rs noise-compute/src/compute/aircraft_v6/airborne noise-gpu/src/gpu_airborne.rs noise-gpu/kernels/airborne.cu",
+    "aircraft-cruise": "tile-painter/src/cruise.rs noise-compute/src/compute/aircraft_v6/cruise.rs",
 }
 
 

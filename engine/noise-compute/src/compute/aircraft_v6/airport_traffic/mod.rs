@@ -374,7 +374,7 @@ pub fn run(
     // Heatmap-parity divergence floor: the user reads popup numbers
     // off a z=13 HM3 pixel, so the popup uses the same half-pixel
     // floor on `d_perp`/`d_endpoint` that the heatmap kernel uses at
-    // `heatmap-aircraft/src/ground_ops.rs:111`. Without it, popup
+    // `tile-painter/src/ground_ops.rs:111`. Without it, popup
     // reports ~5-8 dB louder than the underlying pixel on near-line
     // receivers (line-source 1/d singularity sampled at a point).
     let pixel_floor_m = popup_pixel_floor_m(recv_lat);

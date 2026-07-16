@@ -174,7 +174,7 @@ pub fn hex_admin(hex: u64, table: &HashMap<u64, Admin>) -> Admin {
 
 // ─── Process-wide singleton ──────────────────────────────────────────────
 //
-// heatmap-aircraft, source-reader and point-debug all benefit from the
+// tile-painter, source-reader and point-debug all benefit from the
 // defaults cascade. Rather than plumb the table by reference through the
 // ~6-deep call chain (entry point → compute_at_point → compute_roads →
 // normalize_road_segment), we keep it in a process-wide OnceLock and

@@ -3,12 +3,12 @@
 //! reusing one CUDA context + LUTs + rasters across cells (no per-chunk process spawn).
 
 use anyhow::{bail, Context, Result};
-use heatmap_aircraft::r4_source_cache::R4SourceCache;
-use heatmap_aircraft::region_runner::region_tiles;
-use heatmap_aircraft::worklist::{any_source_arrow, resolve_n_days};
 use noise_gpu::airborne::{is_cell_unbuildable, AirborneGpu};
 use raster_reader::fused_tile_z13::default_batch_size;
 use raster_reader::RealRasters;
+use tile_painter::r4_source_cache::R4SourceCache;
+use tile_painter::region_runner::region_tiles;
+use tile_painter::worklist::{any_source_arrow, resolve_n_days};
 
 use crate::build::build_prepared_cell;
 use crate::prep::{prep_cell, PreparedCell};
@@ -56,7 +56,7 @@ pub(crate) fn run_stream(args: &Args, z: u8) -> Result<()> {
     let seed = args.seed_regions.as_ref().context(
         "--stream requires --seed-regions (resolves the build-wide n_days + class_weights)",
     )?;
-    let seed_r4s = heatmap_aircraft::region_runner::read_r4_file(seed)?;
+    let seed_r4s = tile_painter::region_runner::read_r4_file(seed)?;
     let source_r4s = ring_union(seed_r4s.iter().copied());
     if !any_source_arrow(&args.h3r4_dir, &source_r4s, SEL)? {
         bail!("--seed-regions has no airborne source — cannot resolve class_weights");
@@ -68,12 +68,8 @@ pub(crate) fn run_stream(args: &Args, z: u8) -> Result<()> {
         }
         _ => resolved,
     };
-    let class_weights = heatmap_aircraft::worklist::resolve_class_weights(
-        &args.h3r4_dir,
-        &source_r4s,
-        SEL,
-        n_days,
-    )?;
+    let class_weights =
+        tile_painter::worklist::resolve_class_weights(&args.h3r4_dir, &source_r4s, SEL, n_days)?;
     let bn = if args.batch_size == 0 {
         default_batch_size()
     } else {

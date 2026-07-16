@@ -274,7 +274,7 @@ function enrichHexes(turbines: Turbine[]): void {
 
     // Build nullable Float32 vectors
     // vectorFromArray with Float32 type; NaN values become the stored value.
-    // Rust heatmap-aircraft reads with .value(i) which returns 0.0 for null,
+    // Rust tile-painter reads with .value(i) which returns 0.0 for null,
     // and falls back to defaults (80m hub, 2000kW) for null/0.
     // We store actual values where enriched, null where not.
     const hubHeightNullBitmap = new Uint8Array(Math.ceil(n / 8))

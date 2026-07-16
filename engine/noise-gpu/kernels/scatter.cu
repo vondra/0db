@@ -9,7 +9,7 @@
 
 #define NB 8
 #define TPX 512                 // tile side in receiver px — lockstep with
-                                // raster-reader/heatmap-aircraft TILE_PX (512@z12 shift)
+                                // raster-reader/tile-painter TILE_PX (512@z12 shift)
 #define M_LAT 110540.0          // M_PER_DEG_LAT
 #define M_LON_EQ 111320.0       // M_PER_DEG_LON_EQ
 #define LN10 2.302585092994046
@@ -469,7 +469,7 @@ __device__ __forceinline__ void line_source(
     // point cplat/cplon → receiver), snap to the nearest tprof sample, keep the
     // tallest per sample. NEVER a raster read — the building-channel burn
     // under-screens 3.7–13.8 dB because the ray cadence steps over a one-cell
-    // wall (decision record: heatmap-aircraft tests/barrier_screening.rs).
+    // wall (decision record: tile-painter tests/barrier_screening.rs).
     // barr = nbarr×4 {lat, lon, height_m, dist_m}: the for_tile() slice, dist_m
     // a conservative lower bound sorted ascending — the same `types::Barrier`
     // early-break contract the CPU loop uses (`dist_m > dend+100` → break).

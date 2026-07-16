@@ -119,7 +119,7 @@ impl FusedGrid {
     /// was the candidate GPU barrier representation (the CUDA surface kernels
     /// read screening obstacles from the 30 m cover raster and have no
     /// vector-barrier input), but the quantified comparison —
-    /// heatmap-aircraft `tests/barrier_screening.rs::w2_vector_vs_burn_
+    /// tile-painter `tests/barrier_screening.rs::w2_vector_vs_burn_
     /// quantified_decision_record` — measured the burn UNDER-screening by
     /// mean +3.7 / max +13.8 dB at wall-adjacent shadow pixels: the bilateral
     /// ray cadence (≥ ~30 m sample spacing) steps over a one-cell-thin burned

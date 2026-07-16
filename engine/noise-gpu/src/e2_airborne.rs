@@ -13,13 +13,13 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use h3o::CellIndex;
-use heatmap_aircraft::accumulator::TileAccumulator;
-use heatmap_aircraft::airborne::scatter_tile;
-use heatmap_aircraft::region_runner::{region_tiles, tile_centre_r4};
-use heatmap_aircraft::source_loader_airborne::AirborneData;
 use noise_gpu::airborne::{region_candidates, AirborneGpu};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
+use tile_painter::accumulator::TileAccumulator;
+use tile_painter::airborne::scatter_tile;
+use tile_painter::region_runner::{region_tiles, tile_centre_r4};
+use tile_painter::source_loader_airborne::AirborneData;
 
 fn env(k: &str, d: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| d.to_string())

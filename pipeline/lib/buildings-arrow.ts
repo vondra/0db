@@ -6,7 +6,7 @@
  *
  *  1. METADATA: buildings.arrow v2 carries the per-file `buildings_contract`
  *     stamp (`osm-extract::finalize`, Convention-B) that the heatmap loader
- *     fail-loud asserts (`heatmap-aircraft::schema_check::
+ *     fail-loud asserts (`tile-painter::schema_check::
  *     read_surface_arrow_for_r4_with_contract`). A bare `makeTable()` rebuild
  *     drops ALL schema + per-field metadata, so one enrichment run would brick
  *     every touched hex for the next world build. This writer rebuilds the

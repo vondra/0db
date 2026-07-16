@@ -39,7 +39,7 @@ pub const SLANT_FLOOR_M: f64 = 5.0;
 /// while the bucket's `density = sum_length / rep_len` normalizes by
 /// `rep_len` — a `+10·log10(√2)` ≈ +1.5 dB systematic cruise
 /// over-count (2026-06 audit B2). Shared by the popup scatter and
-/// heatmap-aircraft's cruise scatter: parity by construction.
+/// tile-painter's cruise scatter: parity by construction.
 pub fn cruise_synth_offsets(lat: f64, half_len_m: f64) -> (f64, f64) {
     let axis_m = half_len_m / std::f64::consts::SQRT_2;
     (

@@ -7,13 +7,13 @@ use std::time::Instant;
 
 use anyhow::Result;
 use h3o::CellIndex;
-use heatmap_aircraft::grid::tile_bbox;
-use heatmap_aircraft::r4_source_cache::R4SourceCache;
 use noise_compute::emission::aircraft::SegmentPrepared;
 use noise_gpu::airborne::region_candidates;
 use noise_gpu::pack_airborne_segs;
 use raster_reader::fused_tile_z13::TileBatch;
 use raster_reader::RealRasters;
+use tile_painter::grid::tile_bbox;
+use tile_painter::r4_source_cache::R4SourceCache;
 
 /// One grid-aligned tile-block, CPU-prepped: its NW corner `(bx,by)`, the owned tiles in it,
 /// and the DEM-only `TileBatch`. `gpu_build_cell` rebuilds the `&FusedTileZ13` refs from

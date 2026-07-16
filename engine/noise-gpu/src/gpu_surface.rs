@@ -23,19 +23,19 @@ use anyhow::{bail, Context, Result};
 use cudarc::driver::sys::CUevent_flags;
 use cudarc::driver::{result, CudaDevice, CudaFunction, CudaSlice, LaunchAsync, LaunchConfig};
 use h3o::CellIndex;
-use heatmap_aircraft::accumulator::TileAccumulator;
-use heatmap_aircraft::grid::tile_range;
-use heatmap_aircraft::region_runner::{
-    read_r4_file, region_tiles, split_configured_layers, split_stream_line, tile_centre_r4,
-};
-use heatmap_aircraft::source_line::LineRow;
-use heatmap_aircraft::source_loader_barrier::BarrierData;
-use heatmap_aircraft::wire_hm3::{collapse_lden_surface_u8, read_tile, write_tile};
 use noise_compute::admin;
 use noise_gpu::{pack_sources, pack_tile, TileBuffers, BIN_W, N_BINS};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
 use rayon::prelude::*;
+use tile_painter::accumulator::TileAccumulator;
+use tile_painter::grid::tile_range;
+use tile_painter::region_runner::{
+    read_r4_file, region_tiles, split_configured_layers, split_stream_line, tile_centre_r4,
+};
+use tile_painter::source_line::LineRow;
+use tile_painter::source_loader_barrier::BarrierData;
+use tile_painter::wire_hm3::{collapse_lden_surface_u8, read_tile, write_tile};
 
 // One-time GPU/layer setup lives in the sibling `gpu_init` module; the hot
 // kernel-launch path (process_block/region, run_stream, main) stays here.
@@ -148,7 +148,7 @@ fn process_block(
     // (projection-and-snap inside line_source), never as a raster burn —
     // `FusedGrid::burn_building_max` was measured acoustically unsound (the ray
     // cadence steps over a one-cell-thin wall on most paths; mean +3.7 / max
-    // +13.8 dB under-screening; decision record: heatmap-aircraft
+    // +13.8 dB under-screening; decision record: tile-painter
     // tests/barrier_screening.rs).
     let mut cover = Vec::with_capacity(rows * cols * 3);
     for p in halo.pixels() {

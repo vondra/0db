@@ -343,7 +343,7 @@ async function enrichHexes(allRecords: Map<string, TrafficRecord[]>): Promise<{
         if (!record) return null
 
         // Convert directional → bidirectional total.
-        // Arrow stores bidirectional total; heatmap-aircraft applies oneway_factor=0.5.
+        // Arrow stores bidirectional total; tile-painter applies oneway_factor=0.5.
         // Dataset raw_oneway=true means the measurement is for ONE direction only.
         const dirFactor = record.isOneway ? 2 : 1
 

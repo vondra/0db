@@ -503,7 +503,7 @@ pub fn interpolate_sel(profile: &NpdProfile, slant_ft: f64, is_departure: bool) 
 }
 
 // NPD lookup table — pre-built at first access from `interpolate_sel_logd`.
-// Shared by popup `segment_sel_with_overrides` and heatmap-aircraft scatter.
+// Shared by popup `segment_sel_with_overrides` and tile-painter scatter.
 // 128 bins keep the linear-log interpolation sag < 0.05 dB against the
 // convex physics tail (`−20·log10(d) − α·d` beyond 25 000 ft) where the
 // linear-in-meters absorption curves downward faster than log-linear

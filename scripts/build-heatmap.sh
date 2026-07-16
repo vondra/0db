@@ -31,7 +31,7 @@ OUTPUT="${OUTPUT:-$DATA_ROOT/tiles/$DATA_YEAR/build}"
 # 2026-07-09 rename decoupled them (staging=build/, store=store/; /gg Codex).
 STORE_ROOT="${STORE_ROOT:-$DATA_ROOT/tiles/$DATA_YEAR/store}"
 ZOOM="${ZOOM:-12}"
-TARGET=engine/heatmap-aircraft/target/release
+TARGET=engine/tile-painter/target/release
 SURFACE="$TARGET/build-heatmap-surface"
 AIRCRAFT="$TARGET/build-heatmap-aircraft"
 PYR="$TARGET/build-pyramid"
@@ -121,7 +121,7 @@ fi
 
 # Rebuild — Fastify dlopen + long jobs cache stale binaries (CLAUDE.md).
 log "rebuilding (release)"
-cargo build --release --manifest-path engine/heatmap-aircraft/Cargo.toml \
+cargo build --release --manifest-path engine/tile-painter/Cargo.toml \
   --bin build-heatmap-surface --bin build-heatmap-aircraft \
   --bin build-pyramid --bin build-heatmap-combine --bin tile-store-ingest --bin tile-store-transcode
 

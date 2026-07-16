@@ -289,7 +289,7 @@ fn propagate_variants_impl<const FULL: bool>(
 }
 
 /// Pipeline kernel — 5 variants, no per-effect ground/atmospheric breakdown.
-/// Hot path in `heatmap-aircraft` batch compute; popup callers use
+/// Hot path in `tile-painter` batch compute; popup callers use
 /// `propagate_variants_full` instead.
 #[inline]
 pub fn propagate_variants(

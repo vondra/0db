@@ -33,14 +33,14 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use h3o::CellIndex;
-use heatmap_aircraft::grid::tile_range;
-use heatmap_aircraft::r4_source_cache::{R4SourceCache, SourceSel};
-use heatmap_aircraft::region_runner::{morton_order, region_tiles, tile_centre_r4};
-use heatmap_aircraft::worklist::{any_source_arrow, resolve_n_days};
 use noise_gpu::airborne::AirborneGpu;
 use raster_reader::fused_tile_z13::default_batch_size;
 use raster_reader::RealRasters;
 use rayon::prelude::*;
+use tile_painter::grid::tile_range;
+use tile_painter::r4_source_cache::{R4SourceCache, SourceSel};
+use tile_painter::region_runner::{morton_order, region_tiles, tile_centre_r4};
+use tile_painter::worklist::{any_source_arrow, resolve_n_days};
 
 use crate::build::process_region_gpu;
 use crate::stream::run_stream;
@@ -149,7 +149,7 @@ fn main() -> Result<()> {
     let regions: BTreeMap<u64, Vec<(u32, u32)>> =
         match (&args.regions_file, &args.bbox, args.tile_x, args.tile_y) {
             (Some(rf), None, None, None) => {
-                let r4s = heatmap_aircraft::region_runner::read_r4_file(rf)?;
+                let r4s = tile_painter::region_runner::read_r4_file(rf)?;
                 eprintln!("regions-file: {} output R4s", r4s.len());
                 r4s.into_iter()
                     .map(|r4| (r4, region_tiles(r4, z)))
@@ -196,12 +196,8 @@ fn main() -> Result<()> {
     // GA 365-day hybrid weight LUT, resolved once build-wide from the
     // source arrows' `sample_days_by_class` (consistency-asserted like
     // n_days) and uploaded device-global by `AirborneGpu::new`.
-    let class_weights = heatmap_aircraft::worklist::resolve_class_weights(
-        &args.h3r4_dir,
-        &source_r4s,
-        SEL,
-        n_days,
-    )?;
+    let class_weights =
+        tile_painter::worklist::resolve_class_weights(&args.h3r4_dir, &source_r4s, SEL, n_days)?;
     let n_tiles: usize = regions.values().map(Vec::len).sum();
     eprintln!(
         "{} region(s), {n_tiles} tile(s) at z={z}, n_days={n_days}",

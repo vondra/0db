@@ -14,14 +14,14 @@ use anyhow::{Context, Result};
 use cudarc::driver::{CudaDevice, LaunchAsync, LaunchConfig};
 use cudarc::nvrtc::Ptx;
 use h3o::CellIndex;
-use heatmap_aircraft::accumulator::TileAccumulator;
-use heatmap_aircraft::region_runner::tile_centre_r4;
-use heatmap_aircraft::source_loader_rail::RailData;
-use heatmap_aircraft::wire_hm3::{collapse_lden_surface_u8, read_tile};
 use noise_compute::types::Barrier;
 use noise_gpu::{BIN_W, N_BINS};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
+use tile_painter::accumulator::TileAccumulator;
+use tile_painter::region_runner::tile_centre_r4;
+use tile_painter::source_loader_rail::RailData;
+use tile_painter::wire_hm3::{collapse_lden_surface_u8, read_tile};
 
 const SCATTER_PTX: &str = include_str!(concat!(env!("OUT_DIR"), "/scatter.ptx"));
 const NO_DATA: u8 = 255;
@@ -155,7 +155,7 @@ fn main() -> Result<()> {
     if !gpu_only {
         let no_barriers: &[Barrier] = &[];
         let mut accum = TileAccumulator::new();
-        heatmap_aircraft::scatter_line::scatter_tile_with_cfg(
+        tile_painter::scatter_line::scatter_tile_with_cfg(
             tile,
             &rail,
             no_barriers,

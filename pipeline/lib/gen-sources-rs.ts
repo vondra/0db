@@ -192,7 +192,7 @@ pub const AIRCRAFT_ADSB_SOURCE_ID: u16 = 1;
 
 /// Binary search by id — SOURCES is emitted sorted by id (generator
 /// preserves TS \`DATASETS\` order, which is id-ascending). Called per
-/// road / rail / industrial row in heatmap-aircraft + source-reader hot
+/// road / rail / industrial row in tile-painter + source-reader hot
 /// paths, so O(log N) beats the previous O(N).
 pub fn get_source(id: u16) -> Option<&'static Source> {
     SOURCES

@@ -254,7 +254,7 @@ impl AirportArea {
 ///
 /// * Popup (`source-reader::lib`): `dist_m` is the exact receiver→midpoint
 ///   distance (one receiver per query), sorted after the per-hex merge.
-/// * Heatmap (`heatmap-aircraft::source_loader_barrier::BarrierData::for_tile`):
+/// * Heatmap (`tile-painter::source_loader_barrier::BarrierData::for_tile`):
 ///   one slice serves every receiver pixel of a z13 tile, so
 ///   `dist_m = max(0, d(midpoint, tile_centre) − tile_half_diagonal)` — by the
 ///   triangle inequality a lower bound for EVERY pixel in the tile, keeping
