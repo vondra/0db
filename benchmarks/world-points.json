@@ -1,2467 +1,2501 @@
 [
-  {
-    "id": "road_cz_d1_8025",
-    "lat": 50.00839,
-    "lng": 14.55066,
-    "mode": "source:road",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "mot_free",
-      "near",
-      "count_measured",
-      "speed_posted",
-      "suburban",
-      "hard_ground_urban"
-    ],
-    "external": {
-      "value": "AADT 81,103 veh/day, TV 21.4% — model matched byte-exact (ratio 1.000)",
-      "metric": "ŘSD Celostátní sčítání dopravy 2020, section 1-8025 (counted 07/2020–06/2021)",
-      "year": 2020,
-      "url": "https://geoportal.rsd.cz/arcgis/rest/services/ScitaniDopravy/MapServer/3/query",
-      "months_covered": 12,
-      "annualization_method": "ŘSD CSD 2020 annual section average (counted 07/2020-06/2021)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "input_data",
-      "dominance": "near_source"
-    },
-    "regression_band": [
-      76.99,
-      80.99
-    ],
-    "tolerance_note": "AADT anchor (road-report §C1); audit recorded no Lden here — band seeded from verified live state 2026-06-11 (road 79.30) ±2 | v2 2026-07-09: band=live 78.99 +/-2",
-    "caveats": "CZ 'TV' includes light commercial <3.5 t which CNOSSOS maps to cat 1 — model M+H 13.7% < ŘSD TV 21.4% is definitional, not an error"
+ {
+  "id": "road_cz_d1_8025",
+  "lat": 50.00839,
+  "lng": 14.55066,
+  "mode": "source:road",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "mot_free",
+   "near",
+   "count_measured",
+   "speed_posted",
+   "suburban",
+   "hard_ground_urban"
+  ],
+  "external": {
+   "value": "AADT 81,103 veh/day, TV 21.4% — model matched byte-exact (ratio 1.000)",
+   "metric": "ŘSD Celostátní sčítání dopravy 2020, section 1-8025 (counted 07/2020–06/2021)",
+   "year": 2020,
+   "url": "https://geoportal.rsd.cz/arcgis/rest/services/ScitaniDopravy/MapServer/3/query",
+   "months_covered": 12,
+   "annualization_method": "ŘSD CSD 2020 annual section average (counted 07/2020-06/2021)",
+   "band": null
   },
-  {
-    "id": "road_cz_d4_axis",
-    "lat": 49.8189,
-    "lng": 14.2229,
-    "mode": "source:road",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "mot_free",
-      "near",
-      "count_measured",
-      "rural_open"
-    ],
-    "pair_id": "d4_sdc_distance_pair",
-    "external": {
-      "value": "Ldvn >75",
-      "metric": "CZ SHM 2022 road raster",
-      "year": 2022,
-      "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
-      "months_covered": 12,
-      "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020)",
-      "band": [
-        75,
-        null
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      78.21,
-      82.21
-    ],
-    "tolerance_note": "audit model 80.6 consistent with SHM >75 (road-report §C2); band = SHM floor → audit model +2.4 | v2 2026-07-09: band=live 80.21 +/-2; SHM floor kept as external.band",
-    "caveats": "SHM uses the same CSD2020 traffic"
+  "commensurability": {
+   "metric_variant": "input_data",
+   "dominance": "near_source"
   },
-  {
-    "id": "road_cz_d4_115m",
-    "lat": 49.819,
-    "lng": 14.2245,
-    "mode": "source:road",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "mot_free",
-      "mid",
-      "count_measured",
-      "rural_open",
-      "soft_ground_field"
-    ],
-    "pair_id": "d4_sdc_distance_pair",
-    "external": {
-      "value": "Ldvn 60–65",
-      "metric": "CZ SHM 2022 road raster",
-      "year": 2022,
-      "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
-      "months_covered": 12,
-      "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020)",
-      "band": [
-        60,
-        65
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      66.1,
-      70.1
-    ],
-    "tolerance_note": "audit model 65.5, Δ +0.5..+5.5 mildly hot off-axis (road-report §C2); band = SHM band ∪ audit model +2.5 | v2 2026-07-09: live 68.10 = +3.1 above SHM top (audit was +0.5..+5.5 off-axis hot) -> tracked as EXTERNAL-GAP; band=live +/-2",
-    "caveats": "SHM grid/ground handling differs off-axis"
+  "regression_band": [
+   76.99,
+   80.99
+  ],
+  "tolerance_note": "AADT anchor (road-report §C1); audit recorded no Lden here — band seeded from verified live state 2026-06-11 (road 79.30) ±2 | v2 2026-07-09: band=live 78.99 +/-2",
+  "caveats": "CZ 'TV' includes light commercial <3.5 t which CNOSSOS maps to cat 1 — model M+H 13.7% < ŘSD TV 21.4% is definitional, not an error"
+ },
+ {
+  "id": "road_cz_d4_axis",
+  "lat": 49.8189,
+  "lng": 14.2229,
+  "mode": "source:road",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "mot_free",
+   "near",
+   "count_measured",
+   "rural_open"
+  ],
+  "pair_id": "d4_sdc_distance_pair",
+  "external": {
+   "value": "Ldvn >75",
+   "metric": "CZ SHM 2022 road raster",
+   "year": 2022,
+   "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
+   "months_covered": 12,
+   "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020)",
+   "band": [
+    75,
+    null
+   ]
   },
-  {
-    "id": "road_cz_praha_legerova",
-    "lat": 50.0735,
-    "lng": 14.4304,
-    "mode": "source:road",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "primary_urban",
-      "near",
-      "count_osm_default",
-      "oneway_halving",
-      "street_canyon",
-      "hard_ground_urban",
-      "dense_urban"
-    ],
-    "external": {
-      "value": "Ldvn 70–75 on-axis; TSK 2025 counted 45,500 veh/day on the street",
-      "metric": "CZ SHM 2022 road raster + TSK Praha traffic census 2025",
-      "year": 2022,
-      "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
-      "months_covered": 12,
-      "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); TSK 2025 census cited for AADT truth",
-      "band": [
-        70,
-        75
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      71.13,
-      75.13
-    ],
-    "tolerance_note": "model runs on default_by_class nominal 3,000 → −11.8 dB traffic input deficit (road-report R4); audit model 63.0; band = SHM target — flips via the Praha city enricher (plan C3.1 v2) | v2 2026-07-09: R4 CLOSED -- live 73.13 inside SHM [70,75] (city AADT enricher landed since the audit); known_gap removed; band=live +/-2",
-    "caveats": "one-way street: oneway ×0.5 halving doubles the deficit (R10)"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "road_gb_m25_j17_onroad",
-    "lat": 51.64423,
-    "lng": -0.50124,
-    "mode": "source:road",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "mot_free",
-      "near",
-      "count_measured",
-      "suburban"
-    ],
-    "pair_id": "m25_j17_wall_pair",
-    "external": {
-      "value": "Lden 81.02 (exact pixel)",
-      "metric": "Defra England Round 4 strategic noise map Lden (LimA), data year 2021",
-      "year": 2021,
-      "url": "https://environment.data.gov.uk/spatialdata/road-noise-all-metrics-england-round-4/wms",
-      "months_covered": 12,
-      "annualization_method": "Defra Round 4 annual END model (LimA), data year 2021",
-      "band": [
-        79.0,
-        83.0
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 10,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      83.07,
-      87.07
-    ],
-    "tolerance_note": "audit model 84.0, Δ +3.0 propagation-side (input AADT ratio 0.99, road-report §C1/C2); band = external −0.5 → audit model +2 | v2 2026-07-09: band=live 85.07 +/-2; external.band = Defra pixel 81.02 +/-2 -> the audit +3 propagation-side hot shows as EXTERNAL-GAP",
-    "caveats": "Defra 2021 COVID year vs our 2023-vintage DfT AADT; R3 speed default 100 actually understates"
+  "regression_band": [
+   78.21,
+   82.21
+  ],
+  "tolerance_note": "audit model 80.6 consistent with SHM >75 (road-report §C2); band = SHM floor → audit model +2.4 | v2 2026-07-09: band=live 80.21 +/-2; SHM floor kept as external.band",
+  "caveats": "SHM uses the same CSD2020 traffic"
+ },
+ {
+  "id": "road_cz_d4_115m",
+  "lat": 49.819,
+  "lng": 14.2245,
+  "mode": "source:road",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "mot_free",
+   "mid",
+   "count_measured",
+   "rural_open",
+   "soft_ground_field"
+  ],
+  "pair_id": "d4_sdc_distance_pair",
+  "external": {
+   "value": "Ldvn 60–65",
+   "metric": "CZ SHM 2022 road raster",
+   "year": 2022,
+   "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
+   "months_covered": 12,
+   "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020)",
+   "band": [
+    60,
+    65
+   ]
   },
-  {
-    "id": "road_gb_m25_j17_120m",
-    "lat": 51.6443,
-    "lng": -0.4995,
-    "mode": "source:road",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "mot_free",
-      "mid",
-      "count_measured",
-      "road_cutting",
-      "noise_wall",
-      "dem_limited_feature",
-      "suburban"
-    ],
-    "pair_id": "m25_j17_wall_pair",
-    "external": {
-      "value": "Lden 57.22 (exact pixel)",
-      "metric": "Defra England Round 4 strategic noise map Lden (LimA), data year 2021",
-      "year": 2021,
-      "url": "https://environment.data.gov.uk/spatialdata/road-noise-all-metrics-england-round-4/wms",
-      "months_covered": 12,
-      "annualization_method": "Defra Round 4 annual END model (LimA), data year 2021",
-      "band": [
-        55.2,
-        59.2
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 10,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      65.96,
-      69.96
-    ],
-    "known_gap": "road-R26-missing-barrier-data",
-    "tolerance_note": "audit model 66.9 (+9.7): no noise barriers in our data (8 segments in the whole NW-London hex) + 30 m DEM smooths the cutting (road-report R26); band = Defra ±3; heals only via barrier-data import (backlog F4), not B8 code wiring | v2 2026-07-09: band=live 67.96 +/-2; Defra pixel stays external.band -> +8.8 EXTERNAL-GAP until barrier-data import (backlog F4)",
-    "caveats": "share between missing barriers / DEM-smoothed cutting / Defra modeling differences unquantified"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "road_de_halensee_onroad",
-    "lat": 52.49726,
-    "lng": 13.283,
-    "mode": "source:road",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "mot_free",
-      "near",
-      "count_measured",
-      "dense_urban",
-      "hard_ground_urban",
-      "commuter_peaks"
-    ],
-    "pair_id": "halensee_shield_pair",
-    "external": {
-      "value": "Lden ≥75 (road layer)",
-      "metric": "Berlin Umweltatlas 2022 road Lden, 10 m grid, 4 m",
-      "year": 2022,
-      "url": "https://gdi.berlin.de/services/wms/ua_stratlaerm_2022",
-      "months_covered": 12,
-      "annualization_method": "Berlin Umweltatlas 2022 END annual model, 10 m grid, 4 m",
-      "band": [
-        75,
-        null
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 10,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      78.27,
-      82.27
-    ],
-    "tolerance_note": "audit model 81.7 consistent (road-report §C2); band = audit model ±2 (above the ≥75 floor) | v2 2026-07-09: band=live 80.27 +/-2",
-    "caveats": "AADT anchor: BASt DTV 160,966 (2016, station defective since) vs model 145,320 — truth itself stale"
+  "regression_band": [
+   66.1,
+   70.1
+  ],
+  "tolerance_note": "audit model 65.5, Δ +0.5..+5.5 mildly hot off-axis (road-report §C2); band = SHM band ∪ audit model +2.5 | v2 2026-07-09: live 68.10 = +3.1 above SHM top (audit was +0.5..+5.5 off-axis hot) -> tracked as EXTERNAL-GAP; band=live +/-2",
+  "caveats": "SHM grid/ground handling differs off-axis"
+ },
+ {
+  "id": "road_cz_praha_legerova",
+  "lat": 50.0735,
+  "lng": 14.4304,
+  "mode": "source:road",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "primary_urban",
+   "near",
+   "count_osm_default",
+   "oneway_halving",
+   "street_canyon",
+   "hard_ground_urban",
+   "dense_urban"
+  ],
+  "external": {
+   "value": "Ldvn 70–75 on-axis; TSK 2025 counted 45,500 veh/day on the street",
+   "metric": "CZ SHM 2022 road raster + TSK Praha traffic census 2025",
+   "year": 2022,
+   "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
+   "months_covered": 12,
+   "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); TSK 2025 census cited for AADT truth",
+   "band": [
+    70,
+    75
+   ]
   },
-  {
-    "id": "road_de_halensee_150m",
-    "lat": 52.4972,
-    "lng": 13.2855,
-    "mode": "source:road",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "mot_free",
-      "mid",
-      "count_measured",
-      "dense_urban",
-      "building_row_shield"
-    ],
-    "pair_id": "halensee_shield_pair",
-    "external": {
-      "value": "Lden 59–64 (road layer)",
-      "metric": "Berlin Umweltatlas 2022 road Lden, 10 m grid, 4 m",
-      "year": 2022,
-      "url": "https://gdi.berlin.de/services/wms/ua_stratlaerm_2022",
-      "months_covered": 12,
-      "annualization_method": "Berlin Umweltatlas 2022 END annual model, 10 m grid, 4 m",
-      "band": [
-        59,
-        64
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 10,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      55.57,
-      59.57
-    ],
-    "tolerance_note": "audit model 58.4 (−0.6..−5.6) — buildings screen correctly here (road-report §C2); band = audit model −2.4 → external top | v2 2026-07-09: band=live 57.57 +/-2; -1.4 below Umweltatlas band shows as EXTERNAL-GAP",
-    "caveats": "nearby Bornstedter Str. mis-snap row (R25) inflates the local road field"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "road_fr_paris_periph_sw",
-    "lat": 48.837,
-    "lng": 2.268,
-    "mode": "source:road",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "mot_congested",
-      "near",
-      "count_transferred",
-      "dense_urban",
-      "hard_ground_urban"
-    ],
-    "external": {
-      "value": "Lden 70–75 (road)",
-      "metric": "Bruitparif Paris agglo strategic map (CSB 4th échéance), road Lden",
-      "year": null,
-      "url": "https://raster.bruitparif.fr/mapproxy/service",
-      "months_covered": 12,
-      "annualization_method": "Bruitparif CSB 4th échéance END annual model",
-      "band": [
-        70,
-        75
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      62.71,
-      66.71
-    ],
-    "known_gap": "road-R25-city-matcher-missnap",
-    "tolerance_note": "audit model 67.6 (−2.4..−7.4): probe pixel = quai D7 mainline on defaults while EU-city counts landed on its link + service road; périph row carries 0 heavy (road-report R25); band = published band | v2 2026-07-09: band=live 64.71 +/-2; R25 miss-snap gap stays visible as EXTERNAL-GAP -5.3",
-    "caveats": "périph centerline 223 m from probe in OSM"
+  "regression_band": [
+   71.13,
+   75.13
+  ],
+  "tolerance_note": "model runs on default_by_class nominal 3,000 → −11.8 dB traffic input deficit (road-report R4); audit model 63.0; band = SHM target — flips via the Praha city enricher (plan C3.1 v2) | v2 2026-07-09: R4 CLOSED -- live 73.13 inside SHM [70,75] (city AADT enricher landed since the audit); known_gap removed; band=live +/-2",
+  "caveats": "one-way street: oneway ×0.5 halving doubles the deficit (R10)"
+ },
+ {
+  "id": "road_gb_m25_j17_onroad",
+  "lat": 51.64423,
+  "lng": -0.50124,
+  "mode": "source:road",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "mot_free",
+   "near",
+   "count_measured",
+   "suburban"
+  ],
+  "pair_id": "m25_j17_wall_pair",
+  "external": {
+   "value": "Lden 81.02 (exact pixel)",
+   "metric": "Defra England Round 4 strategic noise map Lden (LimA), data year 2021",
+   "year": 2021,
+   "url": "https://environment.data.gov.uk/spatialdata/road-noise-all-metrics-england-round-4/wms",
+   "months_covered": 12,
+   "annualization_method": "Defra Round 4 annual END model (LimA), data year 2021",
+   "band": [
+    79.0,
+    83.0
+   ]
   },
-  {
-    "id": "road_nl_amsterdam_overtoom",
-    "lat": 52.3606,
-    "lng": 4.8669,
-    "mode": "source:road",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "primary_urban",
-      "near",
-      "count_transferred",
-      "dense_urban",
-      "street_canyon"
-    ],
-    "external": {
-      "value": "Lden 71 wegverkeer (indicative)",
-      "metric": "RIVM 2020 road-traffic map (RMV2012)",
-      "year": 2020,
-      "url": "https://data.rivm.nl/geo/alo/wms",
-      "months_covered": 12,
-      "annualization_method": "RIVM 2020 RMV2012 annual model (indicative)",
-      "band": [
-        68,
-        74
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      57.09,
-      61.09
-    ],
-    "known_gap": "road-R4R25-city-arterial",
-    "tolerance_note": "audit model 59.3 (−11.7): S106 Overtoom mainline on defaults, counts snapped to service road + living street (road-report R4+R25); band = RIVM ±3 | v2 2026-07-09: band=live 59.09 +/-2; R4+R25 arterial gap visible as EXTERNAL-GAP -8.9",
-    "caveats": "our total there is 74.6 but tram-dominated (railway 74.5) — RIVM layer is road-only, compare the road source only"
+  "commensurability": {
+   "metric_variant": "lden",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 10,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "road_cz_hlucinsko_ii466",
-    "lat": 49.98953,
-    "lng": 18.1288,
-    "mode": "source:road",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "secondary",
-      "near",
-      "count_measured",
-      "village"
-    ],
-    "external": {
-      "value": "ŘSD section on II/466: 850 light / 55 M / 17 H / 15 moto — replaced PL-bleed row 447/16/225/1873 (+4.9 dB emission, audit R2 natural A/B)",
-      "metric": "ŘSD CSD 2020 + road-report R2",
-      "year": 2020,
-      "url": "https://geoportal.rsd.cz/arcgis/rest/services/ScitaniDopravy/MapServer/3/query",
-      "months_covered": 12,
-      "annualization_method": "ŘSD CSD 2020 annual section average",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "input_data",
-      "dominance": "near_source"
-    },
-    "regression_band": [
-      61.96,
-      65.96
-    ],
-    "tolerance_note": "post-A2 repair state verified 2026-06-11: road 59.71 with ŘSD provenance (audit-time PL-bleed value was 64.65, expected ~−5 dB per R2); band = verified ±2 | v2 2026-07-09: live 63.96 = +4.25 vs post-A2 verified 59.71 with ŘSD counts INTACT on both '466' ways (850/55/17/15, matched_external, source_id 20) -- NOT the R2 PL-bleed back; suspected speed-default or duplicate-way change in the 2026 re-extract; finding docs/validation/findings/2026-07-09-hlucinsko-plus4.md; band=live +/-2"
+  "regression_band": [
+   83.07,
+   87.07
+  ],
+  "tolerance_note": "audit model 84.0, Δ +3.0 propagation-side (input AADT ratio 0.99, road-report §C1/C2); band = external −0.5 → audit model +2 | v2 2026-07-09: band=live 85.07 +/-2; external.band = Defra pixel 81.02 +/-2 -> the audit +3 propagation-side hot shows as EXTERNAL-GAP",
+  "caveats": "Defra 2021 COVID year vs our 2023-vintage DfT AADT; R3 speed default 100 actually understates"
+ },
+ {
+  "id": "road_gb_m25_j17_120m",
+  "lat": 51.6443,
+  "lng": -0.4995,
+  "mode": "source:road",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "mot_free",
+   "mid",
+   "count_measured",
+   "road_cutting",
+   "noise_wall",
+   "dem_limited_feature",
+   "suburban"
+  ],
+  "pair_id": "m25_j17_wall_pair",
+  "external": {
+   "value": "Lden 57.22 (exact pixel)",
+   "metric": "Defra England Round 4 strategic noise map Lden (LimA), data year 2021",
+   "year": 2021,
+   "url": "https://environment.data.gov.uk/spatialdata/road-noise-all-metrics-england-round-4/wms",
+   "months_covered": 12,
+   "annualization_method": "Defra Round 4 annual END model (LimA), data year 2021",
+   "band": [
+    55.2,
+    59.2
+   ]
   },
-  {
-    "id": "road_us_seattle_i5_olive",
-    "lat": 47.61625,
-    "lng": -122.32888,
-    "mode": "source:road",
-    "host": "he84-only",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "mot_free",
-      "near",
-      "count_osm_default",
-      "dense_urban",
-      "osm_sparse"
-    ],
-    "external": {
-      "value": "WSDOT 2024 AADT 184,000 (milepost 166.20, Olive Way undercrossing); BTS 2022 24-h LAeq band 70.0–79.9 (≠Lden, 38 m/px)",
-      "metric": "WSDOT traffic REST ReportingYear 2024 + BTS National Transportation Noise Map 2022",
-      "year": 2024,
-      "url": "https://data.wsdot.wa.gov/arcgis/rest/services/Shared/TrafficData/MapServer/0",
-      "months_covered": 12,
-      "annualization_method": "WSDOT 2024 annual AADT; BTS band is 24-h LAeq (not ingested as level anchor)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "input_data",
-      "dominance": "near_source"
-    },
-    "regression_band": [
-      81.41,
-      85.41
-    ],
-    "known_gap": "road-us-i5-default-aadt",
-    "tolerance_note": "he84 verified 2026-06-11: road 80.9 (world-validation §B1); this segment default_by_class Σ29,310 → −6.4 dB input deficit, masked by on-carriageway receiver; band = he84 ±2; matcher gap-fill (world-report #7) would raise it | v2 2026-07-09: band=live 83.41 +/-2 (+2.5 vs 2026-06-11 he84 80.9 after the 2026 dataset re-extract); input-deficit KG unchanged",
-    "caveats": "surface=unpaved +1.0 dB bug on I-5 (world-report #10, extends R24); BTS band is 24-h LAeq, not Lden; SKIPPED on ry177 (no US arrows)"
+  "commensurability": {
+   "metric_variant": "lden",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 10,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "rail_usti_zalezly",
-    "lat": 50.581,
-    "lng": 14.0418,
-    "mode": "source:railway",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "ic_corridor",
-      "freight_night",
-      "mid",
-      "gtfs_derived",
-      "village",
-      "inversion_prone_valley"
-    ],
-    "external": {
-      "value": "Lden 60–65 + Ln 60–65",
-      "metric": "SHM2022 rail raster (Zeleznice_Ldvn/Ln ImageServer identify)",
-      "year": 2022,
-      "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
-      "months_covered": 12,
-      "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); real SŽ counts incl. freight",
-      "band": [
-        60,
-        65
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      51.71,
-      55.71
-    ],
-    "known_gap": "rail-freight-R1R2",
-    "tolerance_note": "freight absent (rail R1+R2) → known cold −6..−11; audit model 53.9; live 51.65 after the 2026-06-10 family-aware rail re-run sync | v2 2026-07-09: band=live 53.71 +/-2; freight gap -6..-11 visible as EXTERNAL-GAP",
-    "caveats": "SHM uses real SŽ counts incl. freight; 238 m from track; model Ln ≡ Lden − 7.91 (fixed split) → the −14..−19 night gap is invisible in Lden mode"
+  "regression_band": [
+   65.96,
+   69.96
+  ],
+  "known_gap": "road-R26-missing-barrier-data",
+  "tolerance_note": "audit model 66.9 (+9.7): no noise barriers in our data (8 segments in the whole NW-London hex) + 30 m DEM smooths the cutting (road-report R26); band = Defra ±3; heals only via barrier-data import (backlog F4), not B8 code wiring | v2 2026-07-09: band=live 67.96 +/-2; Defra pixel stays external.band -> +8.8 EXTERNAL-GAP until barrier-data import (backlog F4)",
+  "caveats": "share between missing barriers / DEM-smoothed cutting / Defra modeling differences unquantified"
+ },
+ {
+  "id": "road_de_halensee_onroad",
+  "lat": 52.49726,
+  "lng": 13.283,
+  "mode": "source:road",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "mot_free",
+   "near",
+   "count_measured",
+   "dense_urban",
+   "hard_ground_urban",
+   "commuter_peaks"
+  ],
+  "pair_id": "halensee_shield_pair",
+  "external": {
+   "value": "Lden ≥75 (road layer)",
+   "metric": "Berlin Umweltatlas 2022 road Lden, 10 m grid, 4 m",
+   "year": 2022,
+   "url": "https://gdi.berlin.de/services/wms/ua_stratlaerm_2022",
+   "months_covered": 12,
+   "annualization_method": "Berlin Umweltatlas 2022 END annual model, 10 m grid, 4 m",
+   "band": [
+    75,
+    null
+   ]
   },
-  {
-    "id": "rail_zabori",
-    "lat": 50.0284,
-    "lng": 15.3466,
-    "mode": "source:railway",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "ic_corridor",
-      "freight_night",
-      "mid",
-      "gtfs_derived",
-      "stock_mix_assumed",
-      "village"
-    ],
-    "external": {
-      "value": "Lden 65–70 + Ln 60–65",
-      "metric": "SHM2022 rail raster (Zeleznice_Ldvn/Ln ImageServer identify)",
-      "year": 2022,
-      "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
-      "months_covered": 12,
-      "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); real SŽ counts incl. freight",
-      "band": [
-        65,
-        70
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      66.08,
-      70.08
-    ],
-    "known_gap": "rail-R9-pre-retrofit-freight-spectrum",
-    "tolerance_note": "audit model 71.0 (+1..+6 hot — pre-retrofit freight spectrum R9); live 67.0 after the 2026-06-10 rail re-run sync; band = SHM band ∪ audit model +2 | v2 2026-07-09: band=live 68.08 +/-2 (inside SHM band)",
-    "caveats": "63 m from track; audit Ln agreed only because Lden overshoot cancelled night undershoot (R1)"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 10,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "rail_revnice",
-    "lat": 49.9134,
-    "lng": 14.2403,
-    "mode": "source:railway",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "ic_corridor",
-      "regional_hourly",
-      "freight_night",
-      "mid",
-      "gtfs_derived",
-      "building_row_shield",
-      "forest_belt",
-      "suburban"
-    ],
-    "external": {
-      "value": "Lden <50 (NoData) + Ln 45–50",
-      "metric": "SHM2022 rail raster (Zeleznice_Ldvn/Ln ImageServer identify)",
-      "year": 2022,
-      "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
-      "months_covered": 12,
-      "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); real SŽ counts incl. freight",
-      "band": [
-        null,
-        50
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      45.61,
-      49.61
-    ],
-    "known_gap": "rail-freight-R2",
-    "tolerance_note": "Lden in band (audit 45.2, live 45.19); the audit's Ln −8..−13 cold is the R1 night-split signature — invisible in Lden mode; band = audit ±2 capped at SHM <50 | C1 (2026-06-12) shipped the R1 night split: Ln 37.3->41.5 (SHM 45-50); the remaining ~4 dB needs R2 measured freight counts. | v2 2026-07-09: band=live 47.61 +/-2 (inside SHM <50)",
-    "caveats": "screened site (buildings, forest); 358 m from track"
+  "regression_band": [
+   78.27,
+   82.27
+  ],
+  "tolerance_note": "audit model 81.7 consistent (road-report §C2); band = audit model ±2 (above the ≥75 floor) | v2 2026-07-09: band=live 80.27 +/-2",
+  "caveats": "AADT anchor: BASt DTV 160,966 (2016, station defective since) vs model 145,320 — truth itself stale"
+ },
+ {
+  "id": "road_de_halensee_150m",
+  "lat": 52.4972,
+  "lng": 13.2855,
+  "mode": "source:road",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "mot_free",
+   "mid",
+   "count_measured",
+   "dense_urban",
+   "building_row_shield"
+  ],
+  "pair_id": "halensee_shield_pair",
+  "external": {
+   "value": "Lden 59–64 (road layer)",
+   "metric": "Berlin Umweltatlas 2022 road Lden, 10 m grid, 4 m",
+   "year": 2022,
+   "url": "https://gdi.berlin.de/services/wms/ua_stratlaerm_2022",
+   "months_covered": 12,
+   "annualization_method": "Berlin Umweltatlas 2022 END annual model, 10 m grid, 4 m",
+   "band": [
+    59,
+    64
+   ]
   },
-  {
-    "id": "ind_ostrava_kuncicky",
-    "lat": 49.824,
-    "lng": 18.301,
-    "mode": "source:industrial",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "plant_247",
-      "near",
-      "site_area_scaling",
-      "nace_match_confidence",
-      "heavy_vs_light_split",
-      "suburban"
-    ],
-    "external": {
-      "value": "Ldvn 70–75 (identify pixel class 5; >75 core on premises)",
-      "metric": "CZ SHM 2022 industry raster",
-      "year": 2022,
-      "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022/Aglomerace_Prumysl_Ldvn/ImageServer",
-      "months_covered": 12,
-      "annualization_method": "official END annual model (CZ SHM 2022 industry raster)",
-      "band": [
-        70,
-        75
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      45.4,
-      49.4
-    ],
-    "known_gap": "industrial-distance-tail-underdecay",
-    "tolerance_note": "v3 2026-07-13 (Wave 2): re-banded to live 47.4 (C1 +5.4 landed; Fix B did NOT move this pixel — its industrial is small local sites, not the steelworks). CORRECTION of the old '-28 area-cap emission gap': Wave 2 multi-country guards proved the Nova hut steelworks NEAR-FIELD now MATCHES official maps (NL Tata 65.9 vs 65, DE Duisburg 57.2 vs 60, CZ Nova hut edge 63.8) after C1+FixB. This fixture sits ~3 km from Nova hut in a mixed small-industry area, so its 47.4-vs-SHM-70/75 gap is NOT emission mis-calibration — it is (a) fixture placement (popup aggregate here != the steelworks) and (b) the distance-tail under-decay common to all official END maps (our ISO 9613-2 field falls off faster than END favorable-propagation beyond ~1.5 km). Cranking base_lw to close it would over-predict the near-field (see ind_tata_ijmuiden_velsen 65.9 vs 65). Remaining EXTERNAL-GAP driver = the distance tail, a propagation question, not I-04.",
-    "caveats": "facility identity at the pixel unverified; SHM models reverse-engineered source powers"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 10,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "ind_tata_ijmuiden_velsen",
-    "lat": 52.474,
-    "lng": 4.633,
-    "mode": "source:industrial",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "plant_247",
-      "near",
-      "site_area_scaling",
-      "heavy_vs_light_split",
-      "suburban",
-      "coastal_windy"
-    ],
-    "external": {
-      "value": "Lden 65 (RIVM industrie Lden actueel, GRAY_INDEX continuous dB) at Velsen-Noord, adjacent to Tata Steel IJmuiden",
-      "metric": "NL RIVM 'Geluid lden industrie actueel' raster (END 4th round)",
-      "year": 2021,
-      "url": "https://data.rivm.nl/geo/alo/ows?LAYERS=rivm_Geluid_lden_industrie_actueel",
-      "months_covered": 12,
-      "annualization_method": "official END annual industry model (NL RIVM continuous-dB raster)",
-      "band": [
-        63,
-        67
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      63.9,
-      67.9
-    ],
-    "known_gap": null,
-    "tolerance_note": "Fix B heavy-cap over-prediction GUARD (CRITICAL 7). Adjacent to Tata Steel IJmuiden (Europe's 2nd-largest integrated steelworks, subtype 6). Model 65.9 vs official 65 = PARITY at the plant edge after C1+FixB — the tightest over-prediction margin in the set; a future emission change pushing this above 67 is over-predicting. regression_band pins the Fix-B (pre steel->2410 re-enrich) state; re-enrich adds ~+3, re-band then. Steep field gradient (65 at edge, ~49 along centroid-E 1 km S) — band frozen from a 2026-07-13 read, not re-fetched.",
-    "caveats": "RIVM raster is a receptor-facade Lden; industrial popup aggregate here dominated by the steelworks (total 66.0, industrial 65.9)"
+  "regression_band": [
+   55.57,
+   59.57
+  ],
+  "tolerance_note": "audit model 58.4 (−0.6..−5.6) — buildings screen correctly here (road-report §C2); band = audit model −2.4 → external top | v2 2026-07-09: band=live 57.57 +/-2; -1.4 below Umweltatlas band shows as EXTERNAL-GAP",
+  "caveats": "nearby Bornstedter Str. mis-snap row (R25) inflates the local road field"
+ },
+ {
+  "id": "road_fr_paris_periph_sw",
+  "lat": 48.837,
+  "lng": 2.268,
+  "mode": "source:road",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "mot_congested",
+   "near",
+   "count_transferred",
+   "dense_urban",
+   "hard_ground_urban"
+  ],
+  "external": {
+   "value": "Lden 70–75 (road)",
+   "metric": "Bruitparif Paris agglo strategic map (CSB 4th échéance), road Lden",
+   "year": null,
+   "url": "https://raster.bruitparif.fr/mapproxy/service",
+   "months_covered": 12,
+   "annualization_method": "Bruitparif CSB 4th échéance END annual model",
+   "band": [
+    70,
+    75
+   ]
   },
-  {
-    "id": "ind_thyssenkrupp_duisburg",
-    "lat": 51.48,
-    "lng": 6.71,
-    "mode": "source:industrial",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "plant_247",
-      "near",
-      "site_area_scaling",
-      "heavy_vs_light_split",
-      "dense_urban"
-    ],
-    "external": {
-      "value": "Lden 60 dB(A) (LANUV NRW IND_DEN, literal computed dB(A)) at ThyssenKrupp Steel Duisburg core",
-      "metric": "DE-NRW LANUV Umgebungslaerm Stufe 4 (2022) industry Lden raster",
-      "year": 2022,
-      "url": "https://www.wms.nrw.de/umwelt/laerm_stufe4?LAYERS=IND_DEN",
-      "months_covered": 12,
-      "annualization_method": "official END annual industry model (LANUV NRW, literal dB(A))",
-      "band": [
-        58,
-        62
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      55.2,
-      59.2
-    ],
-    "known_gap": "industrial-distance-tail-underdecay",
-    "tolerance_note": "Fix B heavy-cap guard, 2nd country. ThyssenKrupp Steel Duisburg (subtype 6). Model 57.2 vs official 60 (-2.8) at the plant core; field is a flat ~55 plateau to 1.1 km E (model within +/-2) then under-decays beyond ~1.4 km (Delta -6..-12 by 2 km) — the distance-tail gap common to all END maps. No over-prediction anywhere near the plant. regression_band pins Fix-B pre-re-enrich.",
-    "caveats": "LANUV IND_DEN is a literal computed dB(A) (not a 5-dB band floor); industrial-dominant (57.2 vs road 51, rail 50.5)"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "ind_shell_pernis_botlek",
-    "lat": 51.881,
-    "lng": 4.404,
-    "mode": "source:industrial",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "plant_247",
-      "near",
-      "site_area_scaling",
-      "heavy_vs_light_split",
-      "port",
-      "suburban"
-    ],
-    "external": {
-      "value": "Lden 56 (RIVM industrie Lden actueel, continuous dB) at Pernis village, beside the Shell Pernis / Botlek petrochemical complex",
-      "metric": "NL RIVM 'Geluid lden industrie actueel' raster (END 4th round)",
-      "year": 2021,
-      "url": "https://data.rivm.nl/geo/alo/ows?LAYERS=rivm_Geluid_lden_industrie_actueel",
-      "months_covered": 12,
-      "annualization_method": "official END annual industry model (NL RIVM continuous-dB raster)",
-      "band": [
-        54,
-        58
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden_band",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      50.7,
-      54.7
-    ],
-    "known_gap": "industrial-distance-tail-underdecay",
-    "tolerance_note": "Fix B heavy-cap guard for CHEMICAL (subtype 4 / NACE 19-20), the other uncapped heavy family — confirms the raise doesn't over-predict refineries. Shell Pernis / Botlek (one of Europe's largest petrochemical clusters). Model 52.7 vs official 56 (-3.3) at Pernis village; no over-prediction (Botlek core 58.7 vs 65 also under). regression_band pins Fix-B pre-re-enrich.",
-    "caveats": "RIVM continuous-dB receptor raster; industrial-dominant (52.7 vs rail 50.1, road 48.4)"
+  "regression_band": [
+   62.71,
+   66.71
+  ],
+  "known_gap": "road-R25-city-matcher-missnap",
+  "tolerance_note": "audit model 67.6 (−2.4..−7.4): probe pixel = quai D7 mainline on defaults while EU-city counts landed on its link + service road; périph row carries 0 heavy (road-report R25); band = published band | v2 2026-07-09: band=live 64.71 +/-2; R25 miss-snap gap stays visible as EXTERNAL-GAP -5.3",
+  "caveats": "périph centerline 223 m from probe in OSM"
+ },
+ {
+  "id": "road_nl_amsterdam_overtoom",
+  "lat": 52.3606,
+  "lng": 4.8669,
+  "mode": "source:road",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "primary_urban",
+   "near",
+   "count_transferred",
+   "dense_urban",
+   "street_canyon"
+  ],
+  "external": {
+   "value": "Lden 71 wegverkeer (indicative)",
+   "metric": "RIVM 2020 road-traffic map (RMV2012)",
+   "year": 2020,
+   "url": "https://data.rivm.nl/geo/alo/wms",
+   "months_covered": 12,
+   "annualization_method": "RIVM 2020 RMV2012 annual model (indicative)",
+   "band": [
+    68,
+    74
+   ]
   },
-  {
-    "id": "ind_mrac_quarry",
-    "lat": 49.8285,
-    "lng": 14.701,
-    "mode": "source:industrial",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "quarry",
-      "mid",
-      "village",
-      "soft_ground_field",
-      "source_height_assumed"
-    ],
-    "external": {
-      "value": "accredited LAeq,8h day 52.5 ± 1.8 dB at ~200 m (ZÚ protokol 104642/2022; limit 50 exceeded); machinery set LwA ≈ 120–122 dB",
-      "metric": "accredited measurement, TESO hluková studie 8/2024 (EIA STC2730)",
-      "year": 2022,
-      "url": "https://portal.cenia.cz/eiasea/download/RUlBX1NUQzI3MzBfcHJpbG9oYURva3VtZW50YWNlRE9DXzE3NzY3Njg4NjExMTEyNTQ4MDQucGRm/STC2730_prilohaDokumentaceDOC_6.pdf",
-      "months_covered": 0,
-      "annualization_method": "accredited LAeq,8h day 52.5 +/-1.8 -> Lden via audit quarry-profile offset -1.6 (industrial-report §G item 7)",
-      "band": [
-        48.9,
-        52.9
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "laeq_spot_derived_lden",
-      "dominance": "near_source",
-      "receiver_convention": "free_field",
-      "height_m": null,
-      "coord_uncertainty_m": 50,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      40.6,
-      44.6
-    ],
-    "known_gap": "industrial-I18-quarry-emission-floor",
-    "tolerance_note": "band = measured 52.5 day → Lden via the audit's quarry-profile offset −1.6 (industrial-report §G item 7) ≈ 50.9 ±2; audit quarry contributor 39.4 (−11, I-18); live industrial source 42.6; C7 (B4+B6) deepens by ~−4.9 (quarry spectrum normalization) by design | v2 2026-07-09: band=live 37.47 +/-2 (post-C7 quarry spectrum state); measured target stays external.band -> EXTERNAL-GAP -11.4 (I-18 emission floor)",
-    "caveats": "mode reads the industrial source aggregate; the audit Δ was per-contributor at 229 m — other sites fold in"
+  "commensurability": {
+   "metric_variant": "lden",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "ind_temelin_npp",
-    "lat": 49.193,
-    "lng": 14.343,
-    "mode": "source:industrial",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "plant_247",
-      "far_3",
-      "village",
-      "masked_minor_source"
-    ],
-    "external": {
-      "value": "LAeq 33.9 ± 2.0 dB at Temelín village edge at full operation (35.2 at Kočín)",
-      "metric": "ETE SMR oznámení (Jacobs 10/2024), Tab. C.9",
-      "year": 2024,
-      "url": "https://www.umweltbundesamt.at/fileadmin/site/themen/energie/kernenergie/verfahren/tschechien/ete_smr_uvp/scoping/cz_files/ete_smr_oznameni_zameru_smr_ete.pdf",
-      "months_covered": 0,
-      "annualization_method": "single campaign at full operation (Jacobs 10/2024 Tab C.9); no Lden derivation applied -- LAeq spot not band-comparable",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_spot",
-      "dominance": "total_ambient"
-    },
-    "regression_band": [
-      39.4,
-      43.4
-    ],
-    "tolerance_note": "band = post-C7 (B4+B6) expectation 36.9 ±2: pre-C7 audit model 42.4 + spectrum normalization −5.4..−5.7 across the village-site mix (NPP 3511 = −5.65); → Lday ≈ 31.5 vs measured 33.9, slightly cold post-fix. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 35.82 +/-2 (post-C7 state inside the old post-C7 expectation band) | v3 2026-07-13 (Wave 2): re-banded to live 41.4 (C1 +5.6 landed uniformly). This now reads +7.5 OVER the 33.9 LAeq measurement — a KNOWN over-prediction from the NPP polygon double-count (I-07) compounded by C1, NOT a calibration signal (0-month LAeq spot, SSOT-barred). Fix I-07 (MultiPolygon dedup), not base_lw, is the lever. Flagged, deferred.",
-    "caveats": "industrial total dominated by small village sites, not the NPP; NPP polygon double-counted (I-07)"
+  "regression_band": [
+   57.09,
+   61.09
+  ],
+  "known_gap": "road-R4R25-city-arterial",
+  "tolerance_note": "audit model 59.3 (−11.7): S106 Overtoom mainline on defaults, counts snapped to service road + living street (road-report R4+R25); band = RIVM ±3 | v2 2026-07-09: band=live 59.09 +/-2; R4+R25 arterial gap visible as EXTERNAL-GAP -8.9",
+  "caveats": "our total there is 74.6 but tram-dominated (railway 74.5) — RIVM layer is road-only, compare the road source only"
+ },
+ {
+  "id": "road_cz_hlucinsko_ii466",
+  "lat": 49.98953,
+  "lng": 18.1288,
+  "mode": "source:road",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "secondary",
+   "near",
+   "count_measured",
+   "village"
+  ],
+  "external": {
+   "value": "ŘSD section on II/466: 850 light / 55 M / 17 H / 15 moto — replaced PL-bleed row 447/16/225/1873 (+4.9 dB emission, audit R2 natural A/B)",
+   "metric": "ŘSD CSD 2020 + road-report R2",
+   "year": 2020,
+   "url": "https://geoportal.rsd.cz/arcgis/rest/services/ScitaniDopravy/MapServer/3/query",
+   "months_covered": 12,
+   "annualization_method": "ŘSD CSD 2020 annual section average",
+   "band": null
   },
-  {
-    "id": "ind_spolana_libis",
-    "lat": 50.2532,
-    "lng": 14.5055,
-    "mode": "source:industrial",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "plant_247",
-      "far_1",
-      "village"
-    ],
-    "external": {
-      "value": "operator EIA: hygiene limits 50/40 dB respected at dwellings 500–800 m → plausible real plant Lden ~40–50; 2024 posudek: local exceedances are road-dominated",
-      "metric": "EIA STC2140 oznámení + PECeN posudek OV1263",
-      "year": 2024,
-      "url": "https://portal.cenia.cz/eiasea/download/RUlBX1NUQzIxNDBfb3puYW1lbmlET0NfODEzMDk5NTg2NzcwNTAyMDA1LnBkZg/STC2140_oznameni.pdf",
-      "months_covered": null,
-      "annualization_method": "EIA compliance bound (hygiene limits respected at dwellings 500-800 m) -- an envelope, not a measurement",
-      "band": [
-        40,
-        50
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "plausibility",
-      "dominance": "near_source",
-      "receiver_convention": "free_field",
-      "height_m": null,
-      "coord_uncertainty_m": 300,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      27.6,
-      31.6
-    ],
-    "known_gap": "industrial-I02-multipolygon-extraction",
-    "tolerance_note": "Spolana (~1 km² chemical plant) is entirely absent from arrows — multi-outer relation dropped at extraction (I-02); audit model 30.4 comes from OTHER sites; band = audit's plausible real range; heals at re-extract with MultiPolygon WKB | v2 2026-07-09: band=live 23.10 +/-2; I-02 multipolygon absence visible as EXTERNAL-GAP -16.9; NOTE the 2026 re-extract did NOT close I-02 -- verify the MultiPolygon WKB fix ever shipped",
-    "caveats": "external is a compliance bound, not a point measurement; receiver = Libiš dwellings"
+  "commensurability": {
+   "metric_variant": "input_data",
+   "dominance": "near_source"
   },
-  {
-    "id": "ind_pchery_wind_200m",
-    "lat": 50.194384,
-    "lng": 14.1288,
-    "mode": "source:industrial",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "wind_farm",
-      "mid",
-      "rural_open",
-      "soft_ground_field",
-      "source_height_assumed"
-    ],
-    "pair_id": "pchery_wind_ladder",
-    "external": {
-      "value": "IEC-correct hand expectation ≈ 52–53 dB Lden at 200 m (audit §G.1); DK anchor: measured 40 dB(A) @6 m/s, 42–44 @8 m/s at neighbour dwellings",
-      "metric": "IEC 61400-11-based hand calc (industrial-report §G.1) + Miljøstyrelsen 2019 neighbour-measurement campaign",
-      "year": 2019,
-      "url": "https://mst.dk/publikationer/2019/august/maaling-af-stoej-hos-vindmoellenaboer",
-      "months_covered": null,
-      "annualization_method": "IEC 61400-11 hand expectation (industrial-report §G.1); DK Miljøstyrelsen 2019 neighbour campaign as envelope",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "plausibility",
-      "dominance": "near_source"
-    },
-    "regression_band": [
-      49.3,
-      53.3
-    ],
-    "tolerance_note": "band = post-C7 (B4+B6) ledger 52 ±2: pre-C7 state 57.30 + turbine shift (spectrum −6.41, wind LUT 3 MW 105→106 +1.0, hub default 80→105 m ≈ −0.4) ≈ 51.5; Theodor-mine contributor shifts only −4.9..−5.6; IEC hand calc (§G.1) expects 52–53. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 51.28 +/-2 (IEC expectation 52-53 holds post-C7)",
-    "caveats": "receiver 200 m due S of turbine 517373610 (50.19618, 14.1288); second turbine 410 m NE contributes"
+  "regression_band": [
+   61.96,
+   65.96
+  ],
+  "tolerance_note": "post-A2 repair state verified 2026-06-11: road 59.71 with ŘSD provenance (audit-time PL-bleed value was 64.65, expected ~−5 dB per R2); band = verified ±2 | v2 2026-07-09: live 63.96 = +4.25 vs post-A2 verified 59.71 with ŘSD counts INTACT on both '466' ways (850/55/17/15, matched_external, source_id 20) -- NOT the R2 PL-bleed back; suspected speed-default or duplicate-way change in the 2026 re-extract; finding docs/validation/findings/2026-07-09-hlucinsko-plus4.md; band=live +/-2"
+ },
+ {
+  "id": "road_us_seattle_i5_olive",
+  "lat": 47.61625,
+  "lng": -122.32888,
+  "mode": "source:road",
+  "host": "he84-only",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "mot_free",
+   "near",
+   "count_osm_default",
+   "dense_urban",
+   "osm_sparse"
+  ],
+  "external": {
+   "value": "WSDOT 2024 AADT 184,000 (milepost 166.20, Olive Way undercrossing); BTS 2022 24-h LAeq band 70.0–79.9 (≠Lden, 38 m/px)",
+   "metric": "WSDOT traffic REST ReportingYear 2024 + BTS National Transportation Noise Map 2022",
+   "year": 2024,
+   "url": "https://data.wsdot.wa.gov/arcgis/rest/services/Shared/TrafficData/MapServer/0",
+   "months_covered": 12,
+   "annualization_method": "WSDOT 2024 annual AADT; BTS band is 24-h LAeq (not ingested as level anchor)",
+   "band": null
   },
-  {
-    "id": "ind_pchery_wind_500m",
-    "lat": 50.191688,
-    "lng": 14.1288,
-    "mode": "source:industrial",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "wind_farm",
-      "far_1",
-      "rural_open",
-      "soft_ground_field",
-      "source_height_assumed"
-    ],
-    "pair_id": "pchery_wind_ladder",
-    "external": {
-      "value": "IEC-correct hand expectation ≈ 44–45 dB Lden at 500 m (audit §G.1)",
-      "metric": "IEC 61400-11-based hand calc (industrial-report §G.1) + Miljøstyrelsen 2019 neighbour-measurement campaign",
-      "year": 2019,
-      "url": "https://mst.dk/publikationer/2019/august/maaling-af-stoej-hos-vindmoellenaboer",
-      "months_covered": null,
-      "annualization_method": "IEC 61400-11 hand expectation (industrial-report §G.1); DK Miljøstyrelsen 2019 neighbour campaign as envelope",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "plausibility",
-      "dominance": "near_source"
-    },
-    "regression_band": [
-      41.3,
-      45.3
-    ],
-    "tolerance_note": "band = post-C7 (B4+B6) ledger 44 ±2: pre-C7 state 48.80 + turbine shift ≈ −5.5 (spectrum −6.41, LUT +1.0, hub ≈ −0.1) ≈ 43.3; IEC hand calc (§G.1) expects 44–45. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 43.14 +/-2 (IEC expectation 44-45 holds)",
-    "caveats": "DK comparison point: our turbine-only Lp at ~500 m ≈ 41.3 dB(A) sits at the top of the measured envelope for a larger farm at 8 m/s"
+  "commensurability": {
+   "metric_variant": "input_data",
+   "dominance": "near_source"
   },
-  {
-    "id": "ind_pchery_wind_1000m",
-    "lat": 50.187197,
-    "lng": 14.1288,
-    "mode": "source:industrial",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "wind_farm",
-      "far_1",
-      "rural_open",
-      "soft_ground_field",
-      "source_height_assumed"
-    ],
-    "pair_id": "pchery_wind_ladder",
-    "external": {
-      "value": "IEC-correct hand expectation ≈ 38–39 dB Lden at 1000 m (audit §G.1)",
-      "metric": "IEC 61400-11-based hand calc (industrial-report §G.1) + Miljøstyrelsen 2019 neighbour-measurement campaign",
-      "year": 2019,
-      "url": "https://mst.dk/publikationer/2019/august/maaling-af-stoej-hos-vindmoellenaboer",
-      "months_covered": null,
-      "annualization_method": "IEC 61400-11 hand expectation (industrial-report §G.1); DK Miljøstyrelsen 2019 neighbour campaign as envelope",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "plausibility",
-      "dominance": "near_source"
-    },
-    "regression_band": [
-      37.2,
-      41.2
-    ],
-    "tolerance_note": "band = post-C7 (B4+B6) ledger 38 ±2: pre-C7 state 42.92 + turbine shift ≈ −5.4 (spectrum −6.41, LUT +1.0); IEC hand calc (§G.1) expects 38–39. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 37.12 +/-2 (IEC expectation 38-39 holds)",
-    "caveats": "gap partially from the 'Býv. důl Theodor' site at 467 m (audit §G.1)"
+  "regression_band": [
+   81.41,
+   85.41
+  ],
+  "known_gap": "road-us-i5-default-aadt",
+  "tolerance_note": "he84 verified 2026-06-11: road 80.9 (world-validation §B1); this segment default_by_class Σ29,310 → −6.4 dB input deficit, masked by on-carriageway receiver; band = he84 ±2; matcher gap-fill (world-report #7) would raise it | v2 2026-07-09: band=live 83.41 +/-2 (+2.5 vs 2026-06-11 he84 80.9 after the 2026 dataset re-extract); input-deficit KG unchanged",
+  "caveats": "surface=unpaved +1.0 dB bug on I-5 (world-report #10, extends R24); BTS band is 24-h LAeq, not Lden; SKIPPED on ry177 (no US arrows)"
+ },
+ {
+  "id": "rail_usti_zalezly",
+  "lat": 50.581,
+  "lng": 14.0418,
+  "mode": "source:railway",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "ic_corridor",
+   "freight_night",
+   "mid",
+   "gtfs_derived",
+   "village",
+   "inversion_prone_valley"
+  ],
+  "external": {
+   "value": "Lden 60–65 + Ln 60–65",
+   "metric": "SHM2022 rail raster (Zeleznice_Ldvn/Ln ImageServer identify)",
+   "year": 2022,
+   "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
+   "months_covered": 12,
+   "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); real SŽ counts incl. freight",
+   "band": [
+    60,
+    65
+   ]
   },
-  {
-    "id": "air_lkpr_rmt1_jenec",
-    "lat": 50.0889,
-    "lng": 14.2103,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village"
-    ],
-    "external": {
-      "value": "DEN 55.6 / NOC 49.1 (aircraft-specific NMT, 2025)",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2 (TANOS/Topsonic, ČSN ISO 20906; ±2.5 dB stated)",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      58.7,
-      62.7
-    ],
-    "tolerance_note": "runner reads aircraft-source Lden; audit compared hygiene windows: model DEN/NOC 56.8/53.0, Δ +1.2/+3.9 (airborne §C.1); band = verified live Lden 2026-06-11 (60.69) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 60.70 +/-2",
-    "caveats": "station coords georeferenced from the official NMT map, ±150–300 m; LKPR set mean Δ +2.8 ± 2.0 DEN (runway-closure window mismatch + fixed-thrust departures)"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "air_lkpr_rmt2_cerveny_ujezd",
-    "lat": 50.071,
-    "lng": 14.1646,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village"
-    ],
-    "external": {
-      "value": "DEN 50.0 / NOC 43.9",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      55.0,
-      59.0
-    ],
-    "tolerance_note": "audit model DEN/NOC 52.8/49.6, Δ +2.8/+5.7; band = verified live Lden 2026-06-11 (56.99) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 57.00 +/-2",
-    "caveats": "georef ±150–300 m"
+  "regression_band": [
+   51.71,
+   55.71
+  ],
+  "known_gap": "rail-freight-R1R2",
+  "tolerance_note": "freight absent (rail R1+R2) → known cold −6..−11; audit model 53.9; live 51.65 after the 2026-06-10 family-aware rail re-run sync | v2 2026-07-09: band=live 53.71 +/-2; freight gap -6..-11 visible as EXTERNAL-GAP",
+  "caveats": "SHM uses real SŽ counts incl. freight; 238 m from track; model Ln ≡ Lden − 7.91 (fixed split) → the −14..−19 night gap is invisible in Lden mode"
+ },
+ {
+  "id": "rail_zabori",
+  "lat": 50.0284,
+  "lng": 15.3466,
+  "mode": "source:railway",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "ic_corridor",
+   "freight_night",
+   "mid",
+   "gtfs_derived",
+   "stock_mix_assumed",
+   "village"
+  ],
+  "external": {
+   "value": "Lden 65–70 + Ln 60–65",
+   "metric": "SHM2022 rail raster (Zeleznice_Ldvn/Ln ImageServer identify)",
+   "year": 2022,
+   "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
+   "months_covered": 12,
+   "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); real SŽ counts incl. freight",
+   "band": [
+    65,
+    70
+   ]
   },
-  {
-    "id": "air_lkpr_rmt3_unhost",
-    "lat": 50.0815,
-    "lng": 14.1292,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "suburban"
-    ],
-    "external": {
-      "value": "DEN 50.9 / NOC 45.1",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      56.63,
-      60.63
-    ],
-    "tolerance_note": "audit model DEN/NOC 54.2/51.3, Δ +3.3/+6.2; band = verified live Lden 2026-06-11 (58.63) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 58.63 +/-2",
-    "caveats": "georef ±150–300 m"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "air_lkpr_rmt4_pavlov",
-    "lat": 50.0952,
-    "lng": 14.1646,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village"
-    ],
-    "external": {
-      "value": "DEN 51.6 / NOC 45.6",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      55.56,
-      59.56
-    ],
-    "tolerance_note": "audit model DEN/NOC 53.4/50.1, Δ +1.8/+4.5; band = verified live Lden 2026-06-11 (57.55) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 57.56 +/-2",
-    "caveats": "georef ±150–300 m"
+  "regression_band": [
+   66.08,
+   70.08
+  ],
+  "known_gap": "rail-R9-pre-retrofit-freight-spectrum",
+  "tolerance_note": "audit model 71.0 (+1..+6 hot — pre-retrofit freight spectrum R9); live 67.0 after the 2026-06-10 rail re-run sync; band = SHM band ∪ audit model +2 | v2 2026-07-09: band=live 68.08 +/-2 (inside SHM band)",
+  "caveats": "63 m from track; audit Ln agreed only because Lden overshoot cancelled night undershoot (R1)"
+ },
+ {
+  "id": "rail_revnice",
+  "lat": 49.9134,
+  "lng": 14.2403,
+  "mode": "source:railway",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "ic_corridor",
+   "regional_hourly",
+   "freight_night",
+   "mid",
+   "gtfs_derived",
+   "building_row_shield",
+   "forest_belt",
+   "suburban"
+  ],
+  "external": {
+   "value": "Lden <50 (NoData) + Ln 45–50",
+   "metric": "SHM2022 rail raster (Zeleznice_Ldvn/Ln ImageServer identify)",
+   "year": 2022,
+   "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
+   "months_covered": 12,
+   "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); real SŽ counts incl. freight",
+   "band": [
+    null,
+    50
+   ]
   },
-  {
-    "id": "air_lkpr_rmt5_hostivice",
-    "lat": 50.0814,
-    "lng": 14.2347,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "suburban"
-    ],
-    "external": {
-      "value": "DEN 42.9 / NOC 35.6",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      47.16,
-      51.16
-    ],
-    "tolerance_note": "audit model DEN/NOC 45.8/40.5, Δ +2.9/+4.9; band = verified live Lden 2026-06-11 (48.81) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 49.16 +/-2",
-    "caveats": "georef ±150–300 m"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "air_lkpr_rmt6_dobroviz",
-    "lat": 50.1144,
-    "lng": 14.2207,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village"
-    ],
-    "external": {
-      "value": "DEN 58.4 / NOC 52.5",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      62.87,
-      66.87
-    ],
-    "tolerance_note": "audit model DEN/NOC 61.5/57.2, Δ +3.1/+4.7; aircraft Lden 64.92 also cross-host-verified identical (world-validation §D); band = 64.92 ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 64.87 +/-2",
-    "caveats": "georef ±150–300 m"
+  "regression_band": [
+   45.61,
+   49.61
+  ],
+  "known_gap": "rail-freight-R2",
+  "tolerance_note": "Lden in band (audit 45.2, live 45.19); the audit's Ln −8..−13 cold is the R1 night-split signature — invisible in Lden mode; band = audit ±2 capped at SHM <50 | C1 (2026-06-12) shipped the R1 night split: Ln 37.3->41.5 (SHM 45-50); the remaining ~4 dB needs R2 measured freight counts. | v2 2026-07-09: band=live 47.61 +/-2 (inside SHM <50)",
+  "caveats": "screened site (buildings, forest); 358 m from track"
+ },
+ {
+  "id": "ind_ostrava_kuncicky",
+  "lat": 49.824,
+  "lng": 18.301,
+  "mode": "source:industrial",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "plant_247",
+   "near",
+   "site_area_scaling",
+   "nace_match_confidence",
+   "heavy_vs_light_split",
+   "suburban"
+  ],
+  "external": {
+   "value": "Ldvn 70–75 (identify pixel class 5; >75 core on premises)",
+   "metric": "CZ SHM 2022 industry raster",
+   "year": 2022,
+   "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022/Aglomerace_Prumysl_Ldvn/ImageServer",
+   "months_covered": 12,
+   "annualization_method": "official END annual model (CZ SHM 2022 industry raster)",
+   "band": [
+    70,
+    75
+   ]
   },
-  {
-    "id": "air_lkpr_rmt7_knezeves",
-    "lat": 50.1199,
-    "lng": 14.2584,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village",
-      "runway_use_mismatch"
-    ],
-    "external": {
-      "value": "DEN 55.1 / NOC 49.9",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      53.15,
-      57.15
-    ],
-    "tolerance_note": "the ONLY under-predicting LKPR station (audit DEN/NOC 53.0/46.0, Δ −2.1/−3.9) — 12/30-axis signature: our sample window carries less 12/30 traffic than the measured year (RWY 06/24 closed 4.5 months of 2025); band = verified live Lden 2026-06-11 (55.10) ±2 | v2 2026-07-09: band=live 55.15 +/-2",
-    "caveats": "georef ±150–300 m"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "air_lkpr_rmt8_horomerice_stred",
-    "lat": 50.14,
-    "lng": 14.3341,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "suburban",
-      "heli_base"
-    ],
-    "external": {
-      "value": "DEN 51.5 / NOC 45.7",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 900,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      56.81,
-      60.81
-    ],
-    "known_gap": "aircraft-heli-fallback-scope-open",
-    "tolerance_note": "band = MEASURED RMT8 DEN 51.5 ±3 (Letiste Praha 2025). GA hybrid: model 53.73 (residual +2.2 over measured — candidate heli NPD / NE-corridor ground share); pre-hybrid live ~58.9 was +7.4 over (heli phantom). Re-banded 2026-06-12; tighten to ±2 after the world re-extract re-validation. | v2 2026-07-09: FALLBACK remap (ace332fe, 2026-07-03) ingested real MI8/B412 police-heli ops -> this station sits above its 2026-06-12 measured-anchored band; modelling decision OPEN (owner 2026-07-09: heliport scope stays a documented note -- our ADS-B verified real and more complete than the official product); band=live 58.81 +/-2, kg tracks the open decision",
-    "caveats": "georef worst-case ±900 m (Horoměřice pair)"
+  "regression_band": [
+   45.4,
+   49.4
+  ],
+  "known_gap": "industrial-distance-tail-underdecay",
+  "tolerance_note": "v3 2026-07-13 (Wave 2): re-banded to live 47.4 (C1 +5.4 landed; Fix B did NOT move this pixel — its industrial is small local sites, not the steelworks). CORRECTION of the old '-28 area-cap emission gap': Wave 2 multi-country guards proved the Nova hut steelworks NEAR-FIELD now MATCHES official maps (NL Tata 65.9 vs 65, DE Duisburg 57.2 vs 60, CZ Nova hut edge 63.8) after C1+FixB. This fixture sits ~3 km from Nova hut in a mixed small-industry area, so its 47.4-vs-SHM-70/75 gap is NOT emission mis-calibration — it is (a) fixture placement (popup aggregate here != the steelworks) and (b) the distance-tail under-decay common to all official END maps (our ISO 9613-2 field falls off faster than END favorable-propagation beyond ~1.5 km). Cranking base_lw to close it would over-predict the near-field (see ind_tata_ijmuiden_velsen 65.9 vs 65). Remaining EXTERNAL-GAP driver = the distance tail, a propagation question, not I-04.",
+  "caveats": "facility identity at the pixel unverified; SHM models reverse-engineered source powers"
+ },
+ {
+  "id": "ind_tata_ijmuiden_velsen",
+  "lat": 52.474,
+  "lng": 4.633,
+  "mode": "source:industrial",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "plant_247",
+   "near",
+   "site_area_scaling",
+   "heavy_vs_light_split",
+   "suburban",
+   "coastal_windy"
+  ],
+  "external": {
+   "value": "Lden 65 (RIVM industrie Lden actueel, GRAY_INDEX continuous dB) at Velsen-Noord, adjacent to Tata Steel IJmuiden",
+   "metric": "NL RIVM 'Geluid lden industrie actueel' raster (END 4th round)",
+   "year": 2021,
+   "url": "https://data.rivm.nl/geo/alo/ows?LAYERS=rivm_Geluid_lden_industrie_actueel",
+   "months_covered": 12,
+   "annualization_method": "official END annual industry model (NL RIVM continuous-dB raster)",
+   "band": [
+    63,
+    67
+   ]
   },
-  {
-    "id": "air_lkpr_rmt9_predni_kopanina",
-    "lat": 50.1172,
-    "lng": 14.3014,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village",
-      "heli_base"
-    ],
-    "external": {
-      "value": "DEN 53.0 / NOC 46.1",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      57.34,
-      61.34
-    ],
-    "known_gap": "aircraft-heli-fallback-scope-open",
-    "tolerance_note": "band = MEASURED RMT9 DEN 53.0 ±3 (Letiste Praha 2025). GA hybrid: model 52.02 (Δ−0.98); pre-hybrid live ~59.3 was +6.3 over (strongest heli-corridor phantom — police base adjacency). Re-banded 2026-06-12. | v2 2026-07-09: FALLBACK remap (ace332fe, 2026-07-03) ingested real MI8/B412 police-heli ops -> this station sits above its 2026-06-12 measured-anchored band; modelling decision OPEN (owner 2026-07-09: heliport scope stays a documented note -- our ADS-B verified real and more complete than the official product); band=live 59.34 +/-2, kg tracks the open decision",
-    "caveats": "georef ±150–300 m"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "air_lkpr_rmt10_horomerice_jv",
-    "lat": 50.1299,
-    "lng": 14.3439,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "suburban",
-      "heli_base"
-    ],
-    "external": {
-      "value": "DEN 49.6 / NOC 43.5",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 900,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      56.06,
-      60.06
-    ],
-    "known_gap": "aircraft-heli-fallback-scope-open",
-    "tolerance_note": "band = MEASURED RMT10 DEN 49.6 ±3 (Letiste Praha 2025). GA hybrid: model 52.41 (residual +2.8 over measured); pre-hybrid live ~58.1 was +8.5 over (heli phantom). Re-banded 2026-06-12; residual tracked with rmt8. | v2 2026-07-09: FALLBACK remap (ace332fe, 2026-07-03) ingested real MI8/B412 police-heli ops -> this station sits above its 2026-06-12 measured-anchored band; modelling decision OPEN (owner 2026-07-09: heliport scope stays a documented note -- our ADS-B verified real and more complete than the official product); band=live 58.06 +/-2, kg tracks the open decision",
-    "caveats": "georef worst-case ±900 m (Horoměřice pair)"
+  "regression_band": [
+   63.9,
+   67.9
+  ],
+  "known_gap": null,
+  "tolerance_note": "Fix B heavy-cap over-prediction GUARD (CRITICAL 7). Adjacent to Tata Steel IJmuiden (Europe's 2nd-largest integrated steelworks, subtype 6). Model 65.9 vs official 65 = PARITY at the plant edge after C1+FixB — the tightest over-prediction margin in the set; a future emission change pushing this above 67 is over-predicting. regression_band pins the Fix-B (pre steel->2410 re-enrich) state; re-enrich adds ~+3, re-band then. Steep field gradient (65 at edge, ~49 along centroid-E 1 km S) — band frozen from a 2026-07-13 read, not re-fetched.",
+  "caveats": "RIVM raster is a receptor-facade Lden; industrial popup aggregate here dominated by the steelworks (total 66.0, industrial 65.9)"
+ },
+ {
+  "id": "ind_thyssenkrupp_duisburg",
+  "lat": 51.48,
+  "lng": 6.71,
+  "mode": "source:industrial",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "plant_247",
+   "near",
+   "site_area_scaling",
+   "heavy_vs_light_split",
+   "dense_urban"
+  ],
+  "external": {
+   "value": "Lden 60 dB(A) (LANUV NRW IND_DEN, literal computed dB(A)) at ThyssenKrupp Steel Duisburg core",
+   "metric": "DE-NRW LANUV Umgebungslaerm Stufe 4 (2022) industry Lden raster",
+   "year": 2022,
+   "url": "https://www.wms.nrw.de/umwelt/laerm_stufe4?LAYERS=IND_DEN",
+   "months_covered": 12,
+   "annualization_method": "official END annual industry model (LANUV NRW, literal dB(A))",
+   "band": [
+    58,
+    62
+   ]
   },
-  {
-    "id": "air_lkpr_rmt11_roztoky",
-    "lat": 50.1589,
-    "lng": 14.3946,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "suburban",
-      "heli_base"
-    ],
-    "external": {
-      "value": "DEN 50.4 / NOC 44.9",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      53.22,
-      57.22
-    ],
-    "known_gap": "aircraft-heli-fallback-scope-open",
-    "tolerance_note": "band = MEASURED RMT11 DEN 50.4 ±2 (Letiste Praha 2025). GA hybrid landed the model ON the measurement: 50.82 (Δ+0.42); pre-hybrid live 55.2 was +4.8 over measured (helicopter 14d-window phantom). Re-banded 2026-06-12 off the GA-consumer merge. | v2 2026-07-09: FALLBACK remap (ace332fe, 2026-07-03) ingested real MI8/B412 police-heli ops -> this station sits above its 2026-06-12 measured-anchored band; modelling decision OPEN (owner 2026-07-09: heliport scope stays a documented note -- our ADS-B verified real and more complete than the official product); band=live 55.22 +/-2, kg tracks the open decision",
-    "caveats": "georef ±150–300 m"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "air_lkpr_rmt12_bila_hora",
-    "lat": 50.0711,
-    "lng": 14.3208,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "suburban",
-      "runway_use_mismatch"
-    ],
-    "external": {
-      "value": "DEN 58.8 / NOC 53.5",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      61.26,
-      65.26
-    ],
-    "tolerance_note": "audit model DEN/NOC 61.5/53.6, Δ +2.7/+0.1; 12/30-axis station — 2024→2025 measured day jumped 48.1→58.8 with the runway closure (natural experiment, §C.2 addendum); band = verified live Lden 2026-06-11 (63.26) ±2 | v2 2026-07-09: band=live 63.26 +/-2",
-    "caveats": "georef ±150–300 m"
+  "regression_band": [
+   55.2,
+   59.2
+  ],
+  "known_gap": "industrial-distance-tail-underdecay",
+  "tolerance_note": "Fix B heavy-cap guard, 2nd country. ThyssenKrupp Steel Duisburg (subtype 6). Model 57.2 vs official 60 (-2.8) at the plant core; field is a flat ~55 plateau to 1.1 km E (model within +/-2) then under-decays beyond ~1.4 km (Delta -6..-12 by 2 km) — the distance-tail gap common to all END maps. No over-prediction anywhere near the plant. regression_band pins Fix-B pre-re-enrich.",
+  "caveats": "LANUV IND_DEN is a literal computed dB(A) (not a 5-dB band floor); industrial-dominant (57.2 vs road 51, rail 50.5)"
+ },
+ {
+  "id": "ind_shell_pernis_botlek",
+  "lat": 51.881,
+  "lng": 4.404,
+  "mode": "source:industrial",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "plant_247",
+   "near",
+   "site_area_scaling",
+   "heavy_vs_light_split",
+   "port",
+   "suburban"
+  ],
+  "external": {
+   "value": "Lden 56 (RIVM industrie Lden actueel, continuous dB) at Pernis village, beside the Shell Pernis / Botlek petrochemical complex",
+   "metric": "NL RIVM 'Geluid lden industrie actueel' raster (END 4th round)",
+   "year": 2021,
+   "url": "https://data.rivm.nl/geo/alo/ows?LAYERS=rivm_Geluid_lden_industrie_actueel",
+   "months_covered": 12,
+   "annualization_method": "official END annual industry model (NL RIVM continuous-dB raster)",
+   "band": [
+    54,
+    58
+   ]
   },
-  {
-    "id": "air_lkpr_rmt13_suchdol",
-    "lat": 50.1456,
-    "lng": 14.3787,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "suburban",
-      "heli_base"
-    ],
-    "external": {
-      "value": "DEN 53.5 / NOC 48.3",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      55.65,
-      59.65
-    ],
-    "known_gap": "aircraft-heli-fallback-scope-open",
-    "tolerance_note": "band = MEASURED RMT13 DEN 53.5 ±2 (Letiste Praha 2025). GA hybrid: model 54.57 (Δ+1.07); pre-hybrid live 57.66 was +4.2 over measured (heli phantom). Re-banded 2026-06-12. | v2 2026-07-09: FALLBACK remap (ace332fe, 2026-07-03) ingested real MI8/B412 police-heli ops -> this station sits above its 2026-06-12 measured-anchored band; modelling decision OPEN (owner 2026-07-09: heliport scope stays a documented note -- our ADS-B verified real and more complete than the official product); band=live 57.65 +/-2, kg tracks the open decision",
-    "caveats": "georef ±150–300 m"
+  "commensurability": {
+   "metric_variant": "lden_band",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "air_lkpr_rmt14_male_kysice",
-    "lat": 50.0588,
-    "lng": 14.082,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village"
-    ],
-    "external": {
-      "value": "DEN 50.9 / NOC 45.6",
-      "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
-      "year": 2025,
-      "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual NMT report year (Letiště Praha 2025)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      55.54,
-      59.54
-    ],
-    "tolerance_note": "audit model DEN/NOC 52.9/50.4, Δ +2.0/+4.8; band = verified live Lden 2026-06-11 (57.53) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 57.54 +/-2",
-    "caveats": "georef ±150–300 m"
+  "regression_band": [
+   50.7,
+   54.7
+  ],
+  "known_gap": "industrial-distance-tail-underdecay",
+  "tolerance_note": "Fix B heavy-cap guard for CHEMICAL (subtype 4 / NACE 19-20), the other uncapped heavy family — confirms the raise doesn't over-predict refineries. Shell Pernis / Botlek (one of Europe's largest petrochemical clusters). Model 52.7 vs official 56 (-3.3) at Pernis village; no over-prediction (Botlek core 58.7 vs 65 also under). regression_band pins Fix-B pre-re-enrich.",
+  "caveats": "RIVM continuous-dB receptor raster; industrial-dominant (52.7 vs rail 50.1, road 48.4)"
+ },
+ {
+  "id": "ind_mrac_quarry",
+  "lat": 49.8285,
+  "lng": 14.701,
+  "mode": "source:industrial",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "quarry",
+   "mid",
+   "village",
+   "soft_ground_field",
+   "source_height_assumed"
+  ],
+  "external": {
+   "value": "accredited LAeq,8h day 52.5 ± 1.8 dB at ~200 m (ZÚ protokol 104642/2022; limit 50 exceeded); machinery set LwA ≈ 120–122 dB",
+   "metric": "accredited measurement, TESO hluková studie 8/2024 (EIA STC2730)",
+   "year": 2022,
+   "url": "https://portal.cenia.cz/eiasea/download/RUlBX1NUQzI3MzBfcHJpbG9oYURva3VtZW50YWNlRE9DXzE3NzY3Njg4NjExMTEyNTQ4MDQucGRm/STC2730_prilohaDokumentaceDOC_6.pdf",
+   "months_covered": 0,
+   "annualization_method": "accredited LAeq,8h day 52.5 +/-1.8 -> Lden via audit quarry-profile offset -1.6 (industrial-report §G item 7)",
+   "band": [
+    48.9,
+    52.9
+   ]
   },
-  {
-    "id": "air_zrh_nmt1_rumlang",
-    "lat": 47.4524,
-    "lng": 8.531,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village"
-    ],
-    "external": {
-      "value": "Tag (06–22) 66 dB, 2024 (stable 65–67 across the monthly Lärmbulletin year)",
-      "metric": "Flughafen Zürich AG annual report 2024, NMT daytime aircraft levels (integer dB)",
-      "year": 2024,
-      "url": "https://report.flughafen-zuerich.ch/2024/ar/en/laerm",
-      "months_covered": 12,
-      "annualization_method": "annual report NMT Tag levels (integer dB; Swiss Tag 06-22 window)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 500,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      57.82,
-      61.82
-    ],
-    "tolerance_note": "audit model DEN 60.6 vs measured 66 → −5.4 (model LOW at ZRH: max-exposure NMT siting vs village-centre coords; Swiss Tag includes the 06–07 long-haul wave outside our DEN; A3 heavies −6.7/event); band = verified live Lden 2026-06-11 (59.77) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 59.82 +/-2",
-    "caveats": "coords are village centres, NMT exact siting unpublished → ±500 m / ±2–4 dB near gradients"
+  "commensurability": {
+   "metric_variant": "laeq_spot_derived_lden",
+   "dominance": "near_source",
+   "receiver_convention": "free_field",
+   "height_m": null,
+   "coord_uncertainty_m": 50,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "air_zrh_nmt3_oberglatt",
-    "lat": 47.4753,
-    "lng": 8.5052,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village"
-    ],
-    "external": {
-      "value": "Tag (06–22) 58 dB, 2024",
-      "metric": "Flughafen Zürich AG annual report 2024, NMT daytime aircraft levels",
-      "year": 2024,
-      "url": "https://report.flughafen-zuerich.ch/2024/ar/en/laerm",
-      "months_covered": 12,
-      "annualization_method": "annual report NMT Tag levels (integer dB; Swiss Tag 06-22 window)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 500,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      54.37,
-      58.37
-    ],
-    "tolerance_note": "audit model DEN 56.5, Δ −1.5; band = verified live Lden 2026-06-11 (56.24) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 56.37 +/-2",
-    "caveats": "village-centre coords ±500 m"
+  "regression_band": [
+   40.6,
+   44.6
+  ],
+  "known_gap": "industrial-I18-quarry-emission-floor",
+  "tolerance_note": "band = measured 52.5 day → Lden via the audit's quarry-profile offset −1.6 (industrial-report §G item 7) ≈ 50.9 ±2; audit quarry contributor 39.4 (−11, I-18); live industrial source 42.6; C7 (B4+B6) deepens by ~−4.9 (quarry spectrum normalization) by design | v2 2026-07-09: band=live 37.47 +/-2 (post-C7 quarry spectrum state); measured target stays external.band -> EXTERNAL-GAP -11.4 (I-18 emission floor)",
+  "caveats": "mode reads the industrial source aggregate; the audit Δ was per-contributor at 229 m — other sites fold in"
+ },
+ {
+  "id": "ind_temelin_npp",
+  "lat": 49.193,
+  "lng": 14.343,
+  "mode": "source:industrial",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "plant_247",
+   "far_3",
+   "village",
+   "masked_minor_source"
+  ],
+  "external": {
+   "value": "LAeq 33.9 ± 2.0 dB at Temelín village edge at full operation (35.2 at Kočín)",
+   "metric": "ETE SMR oznámení (Jacobs 10/2024), Tab. C.9",
+   "year": 2024,
+   "url": "https://www.umweltbundesamt.at/fileadmin/site/themen/energie/kernenergie/verfahren/tschechien/ete_smr_uvp/scoping/cz_files/ete_smr_oznameni_zameru_smr_ete.pdf",
+   "months_covered": 0,
+   "annualization_method": "single campaign at full operation (Jacobs 10/2024 Tab C.9); no Lden derivation applied -- LAeq spot not band-comparable",
+   "band": null
   },
-  {
-    "id": "air_zrh_nmt6_glattbrugg",
-    "lat": 47.4333,
-    "lng": 8.563,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "suburban"
-    ],
-    "external": {
-      "value": "Tag (06–22) 66 dB, 2024",
-      "metric": "Flughafen Zürich AG annual report 2024, NMT daytime aircraft levels",
-      "year": 2024,
-      "url": "https://report.flughafen-zuerich.ch/2024/ar/en/laerm",
-      "months_covered": 12,
-      "annualization_method": "annual report NMT Tag levels (integer dB; Swiss Tag 06-22 window)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 500,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      63.19,
-      67.19
-    ],
-    "tolerance_note": "audit model DEN 63.5, Δ −2.5; band = verified live Lden 2026-06-11 (63.87) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 65.19 +/-2",
-    "caveats": "village-centre coords ±500 m"
+  "commensurability": {
+   "metric_variant": "laeq_spot",
+   "dominance": "total_ambient"
   },
-  {
-    "id": "air_zrh_nmt10_nurensdorf",
-    "lat": 47.4467,
-    "lng": 8.6477,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village"
-    ],
-    "external": {
-      "value": "Tag (06–22) 58 dB, 2024",
-      "metric": "Flughafen Zürich AG annual report 2024, NMT daytime aircraft levels",
-      "year": 2024,
-      "url": "https://report.flughafen-zuerich.ch/2024/ar/en/laerm",
-      "months_covered": 12,
-      "annualization_method": "annual report NMT Tag levels (integer dB; Swiss Tag 06-22 window)",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "laeq_windows",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 500,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      52.38,
-      56.38
-    ],
-    "tolerance_note": "audit model DEN 53.2, Δ −4.8 (model low — ZRH confounders, airborne §C.2); band = verified live Lden 2026-06-11 (53.81) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 54.38 +/-2",
-    "caveats": "village-centre coords ±500 m"
+  "regression_band": [
+   39.4,
+   43.4
+  ],
+  "tolerance_note": "band = post-C7 (B4+B6) expectation 36.9 ±2: pre-C7 audit model 42.4 + spectrum normalization −5.4..−5.7 across the village-site mix (NPP 3511 = −5.65); → Lday ≈ 31.5 vs measured 33.9, slightly cold post-fix. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 35.82 +/-2 (post-C7 state inside the old post-C7 expectation band) | v3 2026-07-13 (Wave 2): re-banded to live 41.4 (C1 +5.6 landed uniformly). This now reads +7.5 OVER the 33.9 LAeq measurement — a KNOWN over-prediction from the NPP polygon double-count (I-07) compounded by C1, NOT a calibration signal (0-month LAeq spot, SSOT-barred). Fix I-07 (MultiPolygon dedup), not base_lw, is the lever. Flagged, deferred.",
+  "caveats": "industrial total dominated by small village sites, not the NPP; NPP polygon double-counted (I-07)"
+ },
+ {
+  "id": "ind_spolana_libis",
+  "lat": 50.2532,
+  "lng": 14.5055,
+  "mode": "source:industrial",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "plant_247",
+   "far_1",
+   "village"
+  ],
+  "external": {
+   "value": "operator EIA: hygiene limits 50/40 dB respected at dwellings 500–800 m → plausible real plant Lden ~40–50; 2024 posudek: local exceedances are road-dominated",
+   "metric": "EIA STC2140 oznámení + PECeN posudek OV1263",
+   "year": 2024,
+   "url": "https://portal.cenia.cz/eiasea/download/RUlBX1NUQzIxNDBfb3puYW1lbmlET0NfODEzMDk5NTg2NzcwNTAyMDA1LnBkZg/STC2140_oznameni.pdf",
+   "months_covered": null,
+   "annualization_method": "EIA compliance bound (hygiene limits respected at dwellings 500-800 m) -- an envelope, not a measurement",
+   "band": [
+    40,
+    50
+   ]
   },
-  {
-    "id": "air_ams_ub045_nieuwveen",
-    "lat": 52.1905,
-    "lng": 4.7594,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village"
-    ],
-    "external": {
-      "value": "aircraft Lden 54.2 / Lnight 43.5, gebruiksjaar 2024",
-      "metric": "ODWH Rapportage vliegtuiggeluid 2024 (Sensornet, flight-correlated; valid time 72–96%)",
-      "year": 2024,
-      "url": "https://www.odwh.nl/wp-content/uploads/Rapportage-vliegtuiggeluid-2024-.pdf",
-      "months_covered": 12,
-      "annualization_method": "gebruiksjaar 2024 annual (Nov 2023-Okt 2024), flight-correlated Sensornet",
-      "band": [
-        52.2,
-        56.2
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 100,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      53.85,
-      57.85
-    ],
-    "tolerance_note": "cleanest metric match in the audit (Dutch END windows ≡ model's); audit model Lden 55.75, Δ +1.6 (set mean +2.0 ± 1.0); band = audit model ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 55.85 +/-2; measured Lden 54.2 +/-2 stays external.band",
-    "caveats": "street-level geocode ±100 m; GJ2024 = Nov 2023–Oct 2024 vs our Jul-25..Jun-26 sample window"
+  "commensurability": {
+   "metric_variant": "plausibility",
+   "dominance": "near_source",
+   "receiver_convention": "free_field",
+   "height_m": null,
+   "coord_uncertainty_m": 300,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "air_ams_ub106_leimuiden",
-    "lat": 52.2262,
-    "lng": 4.664,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village"
-    ],
-    "external": {
-      "value": "aircraft Lden 52.5 / Lnight 43.1, gebruiksjaar 2024",
-      "metric": "ODWH Rapportage vliegtuiggeluid 2024 (Sensornet, flight-correlated)",
-      "year": 2024,
-      "url": "https://www.odwh.nl/wp-content/uploads/Rapportage-vliegtuiggeluid-2024-.pdf",
-      "months_covered": 12,
-      "annualization_method": "gebruiksjaar 2024 annual (Nov 2023-Okt 2024), flight-correlated Sensornet",
-      "band": [
-        50.5,
-        54.5
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 150,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      53.74,
-      57.74
-    ],
-    "tolerance_note": "audit model Lden 55.61, Δ +3.1; band = audit model ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 55.74 +/-2; measured Lden 52.5 +/-2 stays external.band",
-    "caveats": "street-level geocode ±150 m"
+  "regression_band": [
+   27.6,
+   31.6
+  ],
+  "known_gap": "industrial-I02-multipolygon-extraction",
+  "tolerance_note": "Spolana (~1 km² chemical plant) is entirely absent from arrows — multi-outer relation dropped at extraction (I-02); audit model 30.4 comes from OTHER sites; band = audit's plausible real range; heals at re-extract with MultiPolygon WKB | v2 2026-07-09: band=live 23.10 +/-2; I-02 multipolygon absence visible as EXTERNAL-GAP -16.9; NOTE the 2026 re-extract did NOT close I-02 -- verify the MultiPolygon WKB fix ever shipped",
+  "caveats": "external is a compliance bound, not a point measurement; receiver = Libiš dwellings"
+ },
+ {
+  "id": "ind_pchery_wind_200m",
+  "lat": 50.194384,
+  "lng": 14.1288,
+  "mode": "source:industrial",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "wind_farm",
+   "mid",
+   "rural_open",
+   "soft_ground_field",
+   "source_height_assumed"
+  ],
+  "pair_id": "pchery_wind_ladder",
+  "external": {
+   "value": "IEC-correct hand expectation ≈ 52–53 dB Lden at 200 m (audit §G.1); DK anchor: measured 40 dB(A) @6 m/s, 42–44 @8 m/s at neighbour dwellings",
+   "metric": "IEC 61400-11-based hand calc (industrial-report §G.1) + Miljøstyrelsen 2019 neighbour-measurement campaign",
+   "year": 2019,
+   "url": "https://mst.dk/publikationer/2019/august/maaling-af-stoej-hos-vindmoellenaboer",
+   "months_covered": null,
+   "annualization_method": "IEC 61400-11 hand expectation (industrial-report §G.1); DK Miljøstyrelsen 2019 neighbour campaign as envelope",
+   "band": null
   },
-  {
-    "id": "air_ams_ub022_lisse",
-    "lat": 52.255,
-    "lng": 4.5501,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "village"
-    ],
-    "external": {
-      "value": "aircraft Lden 50.7 / Lnight 38.1, gebruiksjaar 2024",
-      "metric": "ODWH Rapportage vliegtuiggeluid 2024 (Sensornet, flight-correlated)",
-      "year": 2024,
-      "url": "https://www.odwh.nl/wp-content/uploads/Rapportage-vliegtuiggeluid-2024-.pdf",
-      "months_covered": 12,
-      "annualization_method": "gebruiksjaar 2024 annual (Nov 2023-Okt 2024), flight-correlated Sensornet",
-      "band": [
-        48.7,
-        52.7
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 400,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      50.18,
-      54.18
-    ],
-    "tolerance_note": "audit model Lden 51.91, Δ +1.2 (Lnight −0.3); band = audit model ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 52.18 +/-2; measured Lden 50.7 +/-2 stays external.band",
-    "caveats": "street-level geocode ±400 m (long street)"
+  "commensurability": {
+   "metric_variant": "plausibility",
+   "dominance": "near_source"
   },
-  {
-    "id": "air_fra_mp06_raunheim",
-    "lat": 50.0114,
-    "lng": 8.4619,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "suburban"
-    ],
-    "external": {
-      "value": "day/night/Lden 59.7/51.6/61.3 — June 2024 monthly (DIN 45643, 58 dB event threshold)",
-      "metric": "Fraport Messbericht über Fluggeräusche 06/2024",
-      "year": 2024,
-      "url": "https://www.fraport.com/content/dam/fraport-company/images/umwelt/schallschutz/flugl%C3%A4rm/aktuell-gemessene-werte/messberichte/2024/06_2024%20Messberichte%20%C3%BCber%20Flugger%C3%A4usche.pdf/_jcr_content/renditions/original.media_file.download_attachment.file/06_2024%20Messberichte%20%C3%BCber%20Flugger%C3%A4usche.pdf",
-      "months_covered": 1,
-      "annualization_method": "June 2024 MONTHLY report (DIN 45643, event threshold) -- rule-1 short coverage, excluded from accuracy stats",
-      "band": [
-        59.3,
-        63.3
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 30,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      61.25,
-      65.25
-    ],
-    "tolerance_note": "audit model Lden 61.64, Δ +0.3 (monthly sample + threshold under-capture + 1 h window shift — kept out of audit means); band = audit model ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 63.25 +/-2; monthly external kept diagnostic via months_covered=1",
-    "caveats": "exact address ±30 m; aircraft source includes a negligible ground-ops fold-in (19.8 dB, 4.8 km)"
+  "regression_band": [
+   49.3,
+   53.3
+  ],
+  "tolerance_note": "band = post-C7 (B4+B6) ledger 52 ±2: pre-C7 state 57.30 + turbine shift (spectrum −6.41, wind LUT 3 MW 105→106 +1.0, hub default 80→105 m ≈ −0.4) ≈ 51.5; Theodor-mine contributor shifts only −4.9..−5.6; IEC hand calc (§G.1) expects 52–53. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 51.28 +/-2 (IEC expectation 52-53 holds post-C7)",
+  "caveats": "receiver 200 m due S of turbine 517373610 (50.19618, 14.1288); second turbine 410 m NE contributes"
+ },
+ {
+  "id": "ind_pchery_wind_500m",
+  "lat": 50.191688,
+  "lng": 14.1288,
+  "mode": "source:industrial",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "wind_farm",
+   "far_1",
+   "rural_open",
+   "soft_ground_field",
+   "source_height_assumed"
+  ],
+  "pair_id": "pchery_wind_ladder",
+  "external": {
+   "value": "IEC-correct hand expectation ≈ 44–45 dB Lden at 500 m (audit §G.1)",
+   "metric": "IEC 61400-11-based hand calc (industrial-report §G.1) + Miljøstyrelsen 2019 neighbour-measurement campaign",
+   "year": 2019,
+   "url": "https://mst.dk/publikationer/2019/august/maaling-af-stoej-hos-vindmoellenaboer",
+   "months_covered": null,
+   "annualization_method": "IEC 61400-11 hand expectation (industrial-report §G.1); DK Miljøstyrelsen 2019 neighbour campaign as envelope",
+   "band": null
   },
-  {
-    "id": "air_fra_mp11_floersheim",
-    "lat": 50.0174,
-    "lng": 8.4214,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "suburban"
-    ],
-    "external": {
-      "value": "day/night/Lden 56.5/47.1/57.5 — June 2024 monthly (DIN 45643, 60 dB event threshold)",
-      "metric": "Fraport Messbericht über Fluggeräusche 06/2024",
-      "year": 2024,
-      "url": "https://www.fraport.com/content/dam/fraport-company/images/umwelt/schallschutz/flugl%C3%A4rm/aktuell-gemessene-werte/messberichte/2024/06_2024%20Messberichte%20%C3%BCber%20Flugger%C3%A4usche.pdf/_jcr_content/renditions/original.media_file.download_attachment.file/06_2024%20Messberichte%20%C3%BCber%20Flugger%C3%A4usche.pdf",
-      "months_covered": 1,
-      "annualization_method": "June 2024 MONTHLY report (DIN 45643, event threshold) -- rule-1 short coverage, excluded from accuracy stats",
-      "band": [
-        55.5,
-        59.5
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "lden",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 200,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      58.03,
-      62.03
-    ],
-    "tolerance_note": "audit model Lden 59.53, Δ +2.0; band = audit model ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 60.03 +/-2; monthly external kept diagnostic via months_covered=1",
-    "caveats": "street geocode ±200 m"
+  "commensurability": {
+   "metric_variant": "plausibility",
+   "dominance": "near_source"
   },
-  {
-    "id": "air_sfo_site12_foster_city",
-    "lat": 37.565,
-    "lng": -122.253,
-    "mode": "source:aircraft",
-    "host": "he84-only",
-    "anchor_type": "measurement",
-    "role": "diagnostic",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "suburban"
-    ],
-    "external": {
-      "value": "annual aircraft CNEL 61.8 (Jul 2022–Jun 2023)",
-      "metric": "SFO Title 21 Q2/2023 report Table 2; station coords from DataSF",
-      "year": 2023,
-      "url": "https://noise.flysfo.com/wp-content/uploads/2023/09/SFO_2023Q2_Title21_Report.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual CNEL (Jul 2022-Jun 2023), Title 21 quarterly report",
-      "band": [
-        59.8,
-        63.8
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "cnel",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 50,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "tolerance_note": "he84 verified 2026-06-11: aircraft Lden 58.4, Δ −3.4 (world-validation §B2); CNEL ≈ Lden (evening 19–22 vs 19–23, sub-dB); band = he84 ±2 — W5/B7 re-bands | v2 2026-07-09: role=diagnostic, band withheld: the dense-cell query is load-dependent on he84 (3x HTTP 504 at the 30 s work timeout earlier 2026-07-09; a value 59.60 was then captured under light load, -0.2 vs measured CNEL band) -- promote to role=regression once dense-cell popup perf makes it reliably capturable",
-    "caveats": "flat bayshore; 12-day extract vs annual measurement; SKIPPED on ry177 (no US arrows)"
+  "regression_band": [
+   41.3,
+   45.3
+  ],
+  "tolerance_note": "band = post-C7 (B4+B6) ledger 44 ±2: pre-C7 state 48.80 + turbine shift ≈ −5.5 (spectrum −6.41, LUT +1.0, hub ≈ −0.1) ≈ 43.3; IEC hand calc (§G.1) expects 44–45. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 43.14 +/-2 (IEC expectation 44-45 holds)",
+  "caveats": "DK comparison point: our turbine-only Lp at ~500 m ≈ 41.3 dB(A) sits at the top of the measured envelope for a larger farm at 8 m/s"
+ },
+ {
+  "id": "ind_pchery_wind_1000m",
+  "lat": 50.187197,
+  "lng": 14.1288,
+  "mode": "source:industrial",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "wind_farm",
+   "far_1",
+   "rural_open",
+   "soft_ground_field",
+   "source_height_assumed"
+  ],
+  "pair_id": "pchery_wind_ladder",
+  "external": {
+   "value": "IEC-correct hand expectation ≈ 38–39 dB Lden at 1000 m (audit §G.1)",
+   "metric": "IEC 61400-11-based hand calc (industrial-report §G.1) + Miljøstyrelsen 2019 neighbour-measurement campaign",
+   "year": 2019,
+   "url": "https://mst.dk/publikationer/2019/august/maaling-af-stoej-hos-vindmoellenaboer",
+   "months_covered": null,
+   "annualization_method": "IEC 61400-11 hand expectation (industrial-report §G.1); DK Miljøstyrelsen 2019 neighbour campaign as envelope",
+   "band": null
   },
-  {
-    "id": "air_sfo_site19_pacifica",
-    "lat": 37.658,
-    "lng": -122.481,
-    "mode": "source:aircraft",
-    "host": "he84-only",
-    "anchor_type": "measurement",
-    "role": "regression",
-    "tags": [
-      "hub_approach",
-      "hub_departure",
-      "adsb_window",
-      "suburban",
-      "single_hill",
-      "coastal_windy"
-    ],
-    "external": {
-      "value": "annual aircraft CNEL 60.0 (Jul 2022–Jun 2023)",
-      "metric": "SFO Title 21 Q2/2023 report Table 2; station coords from DataSF",
-      "year": 2023,
-      "url": "https://noise.flysfo.com/wp-content/uploads/2023/09/SFO_2023Q2_Title21_Report.pdf",
-      "months_covered": 12,
-      "annualization_method": "annual CNEL (Jul 2022-Jun 2023), Title 21 quarterly report",
-      "band": [
-        58.0,
-        62.0
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "cnel",
-      "dominance": "event_classified",
-      "receiver_convention": "nmt_pole",
-      "height_m": null,
-      "coord_uncertainty_m": 50,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      62.99,
-      66.99
-    ],
-    "tolerance_note": "he84 verified 2026-06-11: aircraft Lden 63.5, Δ +3.5 — model-high consistent with missing terrain shielding (A2; coastal hills, elev 170 m); band = he84 ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 64.99 +/-2 (+1.5 vs 2026-06-11 post-FALLBACK-remap); +3.0 above measured CNEL stays EXTERNAL-GAP (missing terrain shielding, audit A2)",
-    "caveats": "SKIPPED on ry177 (no US arrows)"
+  "commensurability": {
+   "metric_variant": "plausibility",
+   "dominance": "near_source"
   },
-  {
-    "id": "cruise_sumava",
-    "lat": 49.0228,
-    "lng": 13.4977,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "cruise_remote",
-      "adsb_window",
-      "wilderness_quiet"
-    ],
-    "external": {
-      "value": "20–40 dB rural-under-corridor band; high-altitude jets audible <15% of time",
-      "metric": "NPS Report to Congress ch. 9 overflight reports",
-      "year": null,
-      "url": "https://www.nonoise.org/library/npreport/chapter9.htm",
-      "months_covered": null,
-      "annualization_method": "NPS land-type envelope (Report to Congress ch. 9) -- not a station",
-      "band": [
-        20,
-        40
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "plausibility",
-      "dominance": "total_ambient",
-      "receiver_convention": "free_field",
-      "height_m": null,
-      "coord_uncertainty_m": 1000,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      25.47,
-      29.47
-    ],
-    "tolerance_note": "band = live 28.44 ±2 post-GA-hybrid (2026-06-12, local 14d airline scope); NPS truth band 20-40 holds regardless. Re-check after the world re-extract (local praha-150km cache clips the SW corridor); B2/C5 cruise sqrt2 re-band note stays. | v2 2026-07-09: band=live 27.47 +/-2",
-    "caveats": "total there 37.5 (roads dominate); aircraft aggregate, not the cruise-only sum"
+  "regression_band": [
+   37.2,
+   41.2
+  ],
+  "tolerance_note": "band = post-C7 (B4+B6) ledger 38 ±2: pre-C7 state 42.92 + turbine shift ≈ −5.4 (spectrum −6.41, LUT +1.0); IEC hand calc (§G.1) expects 38–39. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 37.12 +/-2 (IEC expectation 38-39 holds)",
+  "caveats": "gap partially from the 'Býv. důl Theodor' site at 467 m (audit §G.1)"
+ },
+ {
+  "id": "air_lkpr_rmt1_jenec",
+  "lat": 50.0889,
+  "lng": 14.2103,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village"
+  ],
+  "external": {
+   "value": "DEN 55.6 / NOC 49.1 (aircraft-specific NMT, 2025)",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2 (TANOS/Topsonic, ČSN ISO 20906; ±2.5 dB stated)",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
   },
-  {
-    "id": "cruise_zermatt",
-    "lat": 46.02,
-    "lng": 7.75,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "cruise_remote",
-      "adsb_window",
-      "mountain_valley"
-    ],
-    "external": {
-      "value": "20–40 dB rural-under-corridor band",
-      "metric": "NPS Report to Congress ch. 9 overflight reports",
-      "year": null,
-      "url": "https://www.nonoise.org/library/npreport/chapter9.htm",
-      "months_covered": null,
-      "annualization_method": "NPS land-type envelope (Report to Congress ch. 9) -- not a station",
-      "band": [
-        20,
-        40
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "plausibility",
-      "dominance": "total_ambient",
-      "receiver_convention": "free_field",
-      "height_m": null,
-      "coord_uncertainty_m": 1000,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      29.9,
-      33.9
-    ],
-    "tolerance_note": "audit cruise-only Lden 30.0 ✓ in band; band = verified live aircraft aggregate 2026-06-11 (33.26) ±2; re-band at C5 | v2 2026-07-09: band=live 31.90 +/-2",
-    "caveats": "alpine receiver: missing Doc 29 §4.2.1 impedance adjustment ≈ −0.5..−1 dB (C9)"
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "cruise_highlands",
-    "lat": 57.1,
-    "lng": -4.7,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "cruise_remote",
-      "adsb_window",
-      "wilderness_quiet"
-    ],
-    "external": {
-      "value": "20–40 dB band, lower density",
-      "metric": "NPS Report to Congress ch. 9 overflight reports",
-      "year": null,
-      "url": "https://www.nonoise.org/library/npreport/chapter9.htm",
-      "months_covered": null,
-      "annualization_method": "NPS land-type envelope (Report to Congress ch. 9) -- not a station",
-      "band": [
-        20,
-        40
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "plausibility",
-      "dominance": "total_ambient",
-      "receiver_convention": "free_field",
-      "height_m": null,
-      "coord_uncertainty_m": 1000,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      18.9,
-      22.9
-    ],
-    "tolerance_note": "audit cruise-only Lden 21.7 ✓; band = verified live aircraft aggregate 2026-06-11 (25.19) ±2; re-band at C5 | v2 2026-07-09: live 20.90 post-FALLBACK-remap (-4.3 vs 2026-06-11) -- inside NPS truth band; band=live +/-2"
+  "regression_band": [
+   58.7,
+   62.7
+  ],
+  "tolerance_note": "runner reads aircraft-source Lden; audit compared hygiene windows: model DEN/NOC 56.8/53.0, Δ +1.2/+3.9 (airborne §C.1); band = verified live Lden 2026-06-11 (60.69) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 60.70 +/-2",
+  "caveats": "station coords georeferenced from the official NMT map, ±150–300 m; LKPR set mean Δ +2.8 ± 2.0 DEN (runway-closure window mismatch + fixed-thrust departures)"
+ },
+ {
+  "id": "air_lkpr_rmt2_cerveny_ujezd",
+  "lat": 50.071,
+  "lng": 14.1646,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village"
+  ],
+  "external": {
+   "value": "DEN 50.0 / NOC 43.9",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
   },
-  {
-    "id": "cruise_lapland",
-    "lat": 68.05,
-    "lng": 24.0,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "cruise_remote",
-      "adsb_window",
-      "wilderness_quiet"
-    ],
-    "external": {
-      "value": "near-silence expected (polar routes rerouted south since 2022)",
-      "metric": "cruise-report §C plausibility anchor",
-      "year": null,
-      "url": "https://www.nonoise.org/library/npreport/chapter9.htm",
-      "months_covered": null,
-      "annualization_method": "NPS land-type envelope (Report to Congress ch. 9) -- not a station",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "plausibility",
-      "dominance": "total_ambient"
-    },
-    "regression_band": [
-      9.64,
-      13.64
-    ],
-    "tolerance_note": "audit cruise-only Lden 9.3 ✓ plausible; band = verified live aircraft aggregate 2026-06-11 (12.12) ±2; re-band at C5 | v2 2026-07-09: band=live 11.64 +/-2",
-    "caveats": ">59°N: ry177 lacks surface rasters here but the aircraft kernel is raster-independent (world-validation §D) — value comparable across hosts"
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "cruise_extremadura",
-    "lat": 39.9,
-    "lng": -5.3,
-    "mode": "source:aircraft",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "cruise_remote",
-      "adsb_window",
-      "rural_open"
-    ],
-    "external": {
-      "value": "20–40 dB band; Madrid–Canaries/Americas corridors",
-      "metric": "NPS Report to Congress ch. 9 overflight reports",
-      "year": null,
-      "url": "https://www.nonoise.org/library/npreport/chapter9.htm",
-      "months_covered": null,
-      "annualization_method": "NPS land-type envelope (Report to Congress ch. 9) -- not a station",
-      "band": [
-        20,
-        40
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "plausibility",
-      "dominance": "total_ambient",
-      "receiver_convention": "free_field",
-      "height_m": null,
-      "coord_uncertainty_m": 1000,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      31.22,
-      35.22
-    ],
-    "tolerance_note": "audit cruise-only Lden 33.8 ✓; band = verified live aircraft aggregate 2026-06-11 (34.59) ±2; re-band at C5 | v2 2026-07-09: band=live 33.22 +/-2"
+  "regression_band": [
+   55.0,
+   59.0
+  ],
+  "tolerance_note": "audit model DEN/NOC 52.8/49.6, Δ +2.8/+5.7; band = verified live Lden 2026-06-11 (56.99) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 57.00 +/-2",
+  "caveats": "georef ±150–300 m"
+ },
+ {
+  "id": "air_lkpr_rmt3_unhost",
+  "lat": 50.0815,
+  "lng": 14.1292,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "suburban"
+  ],
+  "external": {
+   "value": "DEN 50.9 / NOC 45.1",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
   },
-  {
-    "id": "rail_usti_zalezly_ln",
-    "lat": 50.581,
-    "lng": 14.0418,
-    "mode": "source:railway",
-    "metric_field": "ln",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "ic_corridor",
-      "freight_night",
-      "mid",
-      "gtfs_derived",
-      "village",
-      "inversion_prone_valley"
-    ],
-    "external": {
-      "value": "Lden 60–65 + Ln 60–65",
-      "metric": "SHM2022 rail raster (Zeleznice_Ldvn/Ln ImageServer identify)",
-      "year": 2022,
-      "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
-      "months_covered": 12,
-      "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); real SŽ counts incl. freight",
-      "band": [
-        60,
-        65
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "ln",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      45.54,
-      49.54
-    ],
-    "known_gap": "rail-freight-R1R2",
-    "tolerance_note": "SHM Ln 60-65; C1 night split closes part of the gap, the rest needs R2 measured freight counts (plan C1 P3) | v2 2026-07-09: band=live 47.54 +/-2; night freight gap -12.5 below SHM Ln stays the loudest EXTERNAL-GAP in the set (R2 measured freight counts)",
-    "caveats": "SHM uses real SŽ counts incl. freight; 238 m from track; model Ln ≡ Lden − 7.91 (fixed split) → the −14..−19 night gap is invisible in Lden mode"
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "rail_zabori_ln",
-    "lat": 50.0284,
-    "lng": 15.3466,
-    "mode": "source:railway",
-    "metric_field": "ln",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "ic_corridor",
-      "freight_night",
-      "mid",
-      "gtfs_derived",
-      "stock_mix_assumed",
-      "village"
-    ],
-    "external": {
-      "value": "Lden 65–70 + Ln 60–65",
-      "metric": "SHM2022 rail raster (Zeleznice_Ldvn/Ln ImageServer identify)",
-      "year": 2022,
-      "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
-      "months_covered": 12,
-      "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); real SŽ counts incl. freight",
-      "band": [
-        60,
-        65
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "ln",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      59.49,
-      63.49
-    ],
-    "known_gap": "rail-R9-pre-retrofit-freight-spectrum",
-    "tolerance_note": "SHM Ln 60-65; band per C1 plan §4 | v2 2026-07-09: band=live 61.49 +/-2 (inside SHM Ln band post-C1 night split)",
-    "caveats": "63 m from track; audit Ln agreed only because Lden overshoot cancelled night undershoot (R1)"
+  "regression_band": [
+   56.63,
+   60.63
+  ],
+  "tolerance_note": "audit model DEN/NOC 54.2/51.3, Δ +3.3/+6.2; band = verified live Lden 2026-06-11 (58.63) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 58.63 +/-2",
+  "caveats": "georef ±150–300 m"
+ },
+ {
+  "id": "air_lkpr_rmt4_pavlov",
+  "lat": 50.0952,
+  "lng": 14.1646,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village"
+  ],
+  "external": {
+   "value": "DEN 51.6 / NOC 45.6",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
   },
-  {
-    "id": "rail_revnice_ln",
-    "lat": 49.9134,
-    "lng": 14.2403,
-    "mode": "source:railway",
-    "metric_field": "ln",
-    "host": "any",
-    "anchor_type": "official_map",
-    "role": "regression",
-    "tags": [
-      "ic_corridor",
-      "regional_hourly",
-      "freight_night",
-      "mid",
-      "gtfs_derived",
-      "building_row_shield",
-      "forest_belt",
-      "suburban"
-    ],
-    "external": {
-      "value": "Lden <50 (NoData) + Ln 45–50",
-      "metric": "SHM2022 rail raster (Zeleznice_Ldvn/Ln ImageServer identify)",
-      "year": 2022,
-      "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
-      "months_covered": 12,
-      "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); real SŽ counts incl. freight",
-      "band": [
-        45,
-        50
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "ln",
-      "dominance": "map_crosscheck",
-      "receiver_convention": "raster_pixel",
-      "height_m": 4,
-      "coord_uncertainty_m": 25,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      39.5,
-      43.5
-    ],
-    "known_gap": "rail-freight-R2",
-    "tolerance_note": "SHM Ln 45-50; C1 plan §4 — clear/retag per live value | v2 2026-07-09: band=live 41.50 +/-2; -3.5 below SHM Ln = the R2 residual (C1 closed 37.3->41.5)",
-    "caveats": "screened site (buildings, forest); 358 m from track"
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
   },
-  {
-    "id": "bldg_chodov_mall_facade",
-    "lat": 50.031,
-    "lng": 14.491,
-    "mode": "source:building",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "mall_hvac",
-      "near",
-      "dense_urban"
-    ],
-    "external": {
-      "value": "plant noise at receptors near large retail typically rated 40-55 dB(A)",
-      "metric": "BS 4142 practice (ANC guide 2020; acoustic-ltd service class)",
-      "year": 2020,
-      "url": "https://www.association-of-noise-consultants.co.uk/wp-content/uploads/2020/05/ANC-BS-4142-Guide-March-2020.pdf",
-      "months_covered": null,
-      "annualization_method": "BS 4142 practice class envelope (ANC guide 2020) -- literature, not a site measurement",
-      "band": [
-        40,
-        55
-      ]
-    },
-    "commensurability": {
-      "metric_variant": "plausibility",
-      "dominance": "near_source",
-      "receiver_convention": "facade",
-      "height_m": null,
-      "coord_uncertainty_m": 30,
-      "facade_correction_db": 0,
-      "correction_provenance": null
-    },
-    "regression_band": [
-      42.47,
-      46.47
-    ],
-    "tolerance_note": "settlement v2 phase 1 (2026-06-12) landed the building source INSIDE the BS4142 practice band: 45.0 day / 35.0 night (was 40.7 / ~25 with the -20 night cut). Band = the practice range itself, not live+/-2. | v2 2026-07-09: band=live 44.47 +/-2; practice envelope stays external.band"
+  "regression_band": [
+   55.56,
+   59.56
+  ],
+  "tolerance_note": "audit model DEN/NOC 53.4/50.1, Δ +1.8/+4.5; band = verified live Lden 2026-06-11 (57.55) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 57.56 +/-2",
+  "caveats": "georef ±150–300 m"
+ },
+ {
+  "id": "air_lkpr_rmt5_hostivice",
+  "lat": 50.0814,
+  "lng": 14.2347,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "suburban"
+  ],
+  "external": {
+   "value": "DEN 42.9 / NOC 35.6",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
   },
-  {
-    "id": "bldg_old_town_square",
-    "lat": 50.0875,
-    "lng": 14.4213,
-    "mode": "source:building",
-    "host": "any",
-    "anchor_type": "regression",
-    "role": "regression",
-    "tags": [
-      "pedestrian_zone",
-      "outdoor_hospitality",
-      "building_default_vs_typed",
-      "dense_urban",
-      "near",
-      "unmodelled_dominates"
-    ],
-    "external": {
-      "value": "pedestrian-zone deliveries/HVAC in-scope; LAeq day 63-71 incl. crowds (out of scope)",
-      "metric": "Dalian pedestrian-street study PMC10102546 + audit building-report",
-      "year": 2023,
-      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10102546/",
-      "months_covered": null,
-      "annualization_method": "literature LAeq incl. crowds (out of model scope) -- not band-comparable",
-      "band": null
-    },
-    "commensurability": {
-      "metric_variant": "plausibility",
-      "dominance": "total_ambient"
-    },
-    "regression_band": [
-      40.82,
-      44.82
-    ],
-    "known_gap": "building-phase2-classification",
-    "tolerance_note": "phase 1 moved 25.1 -> 31.7 but the square's restaurants/shops are building=yes -> residential profile until the phase-2 POI join; band = post-phase-2 expectation. KNOWN-GAP until then. | v2 2026-07-09: band=live 42.82 +/-2 (phase-1 state; phase-2 POI join stays the kg)"
-  }
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   47.16,
+   51.16
+  ],
+  "tolerance_note": "audit model DEN/NOC 45.8/40.5, Δ +2.9/+4.9; band = verified live Lden 2026-06-11 (48.81) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 49.16 +/-2",
+  "caveats": "georef ±150–300 m"
+ },
+ {
+  "id": "air_lkpr_rmt6_dobroviz",
+  "lat": 50.1144,
+  "lng": 14.2207,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village"
+  ],
+  "external": {
+   "value": "DEN 58.4 / NOC 52.5",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   62.87,
+   66.87
+  ],
+  "tolerance_note": "audit model DEN/NOC 61.5/57.2, Δ +3.1/+4.7; aircraft Lden 64.92 also cross-host-verified identical (world-validation §D); band = 64.92 ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 64.87 +/-2",
+  "caveats": "georef ±150–300 m"
+ },
+ {
+  "id": "air_lkpr_rmt7_knezeves",
+  "lat": 50.1199,
+  "lng": 14.2584,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village",
+   "runway_use_mismatch"
+  ],
+  "external": {
+   "value": "DEN 55.1 / NOC 49.9",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   53.15,
+   57.15
+  ],
+  "tolerance_note": "the ONLY under-predicting LKPR station (audit DEN/NOC 53.0/46.0, Δ −2.1/−3.9) — 12/30-axis signature: our sample window carries less 12/30 traffic than the measured year (RWY 06/24 closed 4.5 months of 2025); band = verified live Lden 2026-06-11 (55.10) ±2 | v2 2026-07-09: band=live 55.15 +/-2",
+  "caveats": "georef ±150–300 m"
+ },
+ {
+  "id": "air_lkpr_rmt8_horomerice_stred",
+  "lat": 50.14,
+  "lng": 14.3341,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "suburban",
+   "heli_base"
+  ],
+  "external": {
+   "value": "DEN 51.5 / NOC 45.7",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 900,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   56.81,
+   60.81
+  ],
+  "known_gap": "aircraft-heli-fallback-scope-open",
+  "tolerance_note": "band = MEASURED RMT8 DEN 51.5 ±3 (Letiste Praha 2025). GA hybrid: model 53.73 (residual +2.2 over measured — candidate heli NPD / NE-corridor ground share); pre-hybrid live ~58.9 was +7.4 over (heli phantom). Re-banded 2026-06-12; tighten to ±2 after the world re-extract re-validation. | v2 2026-07-09: FALLBACK remap (ace332fe, 2026-07-03) ingested real MI8/B412 police-heli ops -> this station sits above its 2026-06-12 measured-anchored band; modelling decision OPEN (owner 2026-07-09: heliport scope stays a documented note -- our ADS-B verified real and more complete than the official product); band=live 58.81 +/-2, kg tracks the open decision",
+  "caveats": "georef worst-case ±900 m (Horoměřice pair)"
+ },
+ {
+  "id": "air_lkpr_rmt9_predni_kopanina",
+  "lat": 50.1172,
+  "lng": 14.3014,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village",
+   "heli_base"
+  ],
+  "external": {
+   "value": "DEN 53.0 / NOC 46.1",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   57.34,
+   61.34
+  ],
+  "known_gap": "aircraft-heli-fallback-scope-open",
+  "tolerance_note": "band = MEASURED RMT9 DEN 53.0 ±3 (Letiste Praha 2025). GA hybrid: model 52.02 (Δ−0.98); pre-hybrid live ~59.3 was +6.3 over (strongest heli-corridor phantom — police base adjacency). Re-banded 2026-06-12. | v2 2026-07-09: FALLBACK remap (ace332fe, 2026-07-03) ingested real MI8/B412 police-heli ops -> this station sits above its 2026-06-12 measured-anchored band; modelling decision OPEN (owner 2026-07-09: heliport scope stays a documented note -- our ADS-B verified real and more complete than the official product); band=live 59.34 +/-2, kg tracks the open decision",
+  "caveats": "georef ±150–300 m"
+ },
+ {
+  "id": "air_lkpr_rmt10_horomerice_jv",
+  "lat": 50.1299,
+  "lng": 14.3439,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "suburban",
+   "heli_base"
+  ],
+  "external": {
+   "value": "DEN 49.6 / NOC 43.5",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 900,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   56.06,
+   60.06
+  ],
+  "known_gap": "aircraft-heli-fallback-scope-open",
+  "tolerance_note": "band = MEASURED RMT10 DEN 49.6 ±3 (Letiste Praha 2025). GA hybrid: model 52.41 (residual +2.8 over measured); pre-hybrid live ~58.1 was +8.5 over (heli phantom). Re-banded 2026-06-12; residual tracked with rmt8. | v2 2026-07-09: FALLBACK remap (ace332fe, 2026-07-03) ingested real MI8/B412 police-heli ops -> this station sits above its 2026-06-12 measured-anchored band; modelling decision OPEN (owner 2026-07-09: heliport scope stays a documented note -- our ADS-B verified real and more complete than the official product); band=live 58.06 +/-2, kg tracks the open decision",
+  "caveats": "georef worst-case ±900 m (Horoměřice pair)"
+ },
+ {
+  "id": "air_lkpr_rmt11_roztoky",
+  "lat": 50.1589,
+  "lng": 14.3946,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "suburban",
+   "heli_base"
+  ],
+  "external": {
+   "value": "DEN 50.4 / NOC 44.9",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   53.22,
+   57.22
+  ],
+  "known_gap": "aircraft-heli-fallback-scope-open",
+  "tolerance_note": "band = MEASURED RMT11 DEN 50.4 ±2 (Letiste Praha 2025). GA hybrid landed the model ON the measurement: 50.82 (Δ+0.42); pre-hybrid live 55.2 was +4.8 over measured (helicopter 14d-window phantom). Re-banded 2026-06-12 off the GA-consumer merge. | v2 2026-07-09: FALLBACK remap (ace332fe, 2026-07-03) ingested real MI8/B412 police-heli ops -> this station sits above its 2026-06-12 measured-anchored band; modelling decision OPEN (owner 2026-07-09: heliport scope stays a documented note -- our ADS-B verified real and more complete than the official product); band=live 55.22 +/-2, kg tracks the open decision",
+  "caveats": "georef ±150–300 m"
+ },
+ {
+  "id": "air_lkpr_rmt12_bila_hora",
+  "lat": 50.0711,
+  "lng": 14.3208,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "suburban",
+   "runway_use_mismatch"
+  ],
+  "external": {
+   "value": "DEN 58.8 / NOC 53.5",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   61.26,
+   65.26
+  ],
+  "tolerance_note": "audit model DEN/NOC 61.5/53.6, Δ +2.7/+0.1; 12/30-axis station — 2024→2025 measured day jumped 48.1→58.8 with the runway closure (natural experiment, §C.2 addendum); band = verified live Lden 2026-06-11 (63.26) ±2 | v2 2026-07-09: band=live 63.26 +/-2",
+  "caveats": "georef ±150–300 m"
+ },
+ {
+  "id": "air_lkpr_rmt13_suchdol",
+  "lat": 50.1456,
+  "lng": 14.3787,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "suburban",
+   "heli_base"
+  ],
+  "external": {
+   "value": "DEN 53.5 / NOC 48.3",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   55.65,
+   59.65
+  ],
+  "known_gap": "aircraft-heli-fallback-scope-open",
+  "tolerance_note": "band = MEASURED RMT13 DEN 53.5 ±2 (Letiste Praha 2025). GA hybrid: model 54.57 (Δ+1.07); pre-hybrid live 57.66 was +4.2 over measured (heli phantom). Re-banded 2026-06-12. | v2 2026-07-09: FALLBACK remap (ace332fe, 2026-07-03) ingested real MI8/B412 police-heli ops -> this station sits above its 2026-06-12 measured-anchored band; modelling decision OPEN (owner 2026-07-09: heliport scope stays a documented note -- our ADS-B verified real and more complete than the official product); band=live 57.65 +/-2, kg tracks the open decision",
+  "caveats": "georef ±150–300 m"
+ },
+ {
+  "id": "air_lkpr_rmt14_male_kysice",
+  "lat": 50.0588,
+  "lng": 14.082,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village"
+  ],
+  "external": {
+   "value": "DEN 50.9 / NOC 45.6",
+   "metric": "Letiště Praha Zpráva o hlukové situaci 2025, Příloha 2",
+   "year": 2025,
+   "url": "https://www.prg.aero/sites/default/files/obsah/O-letisti/zivotni-prostredi/Soubory/Zpravy%20o%20hlukove%20situaci/2025/Zpr%C3%A1va_hlk_2025_final.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual NMT report year (Letiště Praha 2025)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   55.54,
+   59.54
+  ],
+  "tolerance_note": "audit model DEN/NOC 52.9/50.4, Δ +2.0/+4.8; band = verified live Lden 2026-06-11 (57.53) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 57.54 +/-2",
+  "caveats": "georef ±150–300 m"
+ },
+ {
+  "id": "air_zrh_nmt1_rumlang",
+  "lat": 47.4524,
+  "lng": 8.531,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village"
+  ],
+  "external": {
+   "value": "Tag (06–22) 66 dB, 2024 (stable 65–67 across the monthly Lärmbulletin year)",
+   "metric": "Flughafen Zürich AG annual report 2024, NMT daytime aircraft levels (integer dB)",
+   "year": 2024,
+   "url": "https://report.flughafen-zuerich.ch/2024/ar/en/laerm",
+   "months_covered": 12,
+   "annualization_method": "annual report NMT Tag levels (integer dB; Swiss Tag 06-22 window)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 500,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   57.82,
+   61.82
+  ],
+  "tolerance_note": "audit model DEN 60.6 vs measured 66 → −5.4 (model LOW at ZRH: max-exposure NMT siting vs village-centre coords; Swiss Tag includes the 06–07 long-haul wave outside our DEN; A3 heavies −6.7/event); band = verified live Lden 2026-06-11 (59.77) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 59.82 +/-2",
+  "caveats": "coords are village centres, NMT exact siting unpublished → ±500 m / ±2–4 dB near gradients"
+ },
+ {
+  "id": "air_zrh_nmt3_oberglatt",
+  "lat": 47.4753,
+  "lng": 8.5052,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village"
+  ],
+  "external": {
+   "value": "Tag (06–22) 58 dB, 2024",
+   "metric": "Flughafen Zürich AG annual report 2024, NMT daytime aircraft levels",
+   "year": 2024,
+   "url": "https://report.flughafen-zuerich.ch/2024/ar/en/laerm",
+   "months_covered": 12,
+   "annualization_method": "annual report NMT Tag levels (integer dB; Swiss Tag 06-22 window)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 500,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   54.37,
+   58.37
+  ],
+  "tolerance_note": "audit model DEN 56.5, Δ −1.5; band = verified live Lden 2026-06-11 (56.24) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 56.37 +/-2",
+  "caveats": "village-centre coords ±500 m"
+ },
+ {
+  "id": "air_zrh_nmt6_glattbrugg",
+  "lat": 47.4333,
+  "lng": 8.563,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "suburban"
+  ],
+  "external": {
+   "value": "Tag (06–22) 66 dB, 2024",
+   "metric": "Flughafen Zürich AG annual report 2024, NMT daytime aircraft levels",
+   "year": 2024,
+   "url": "https://report.flughafen-zuerich.ch/2024/ar/en/laerm",
+   "months_covered": 12,
+   "annualization_method": "annual report NMT Tag levels (integer dB; Swiss Tag 06-22 window)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 500,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   63.19,
+   67.19
+  ],
+  "tolerance_note": "audit model DEN 63.5, Δ −2.5; band = verified live Lden 2026-06-11 (63.87) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 65.19 +/-2",
+  "caveats": "village-centre coords ±500 m"
+ },
+ {
+  "id": "air_zrh_nmt10_nurensdorf",
+  "lat": 47.4467,
+  "lng": 8.6477,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village"
+  ],
+  "external": {
+   "value": "Tag (06–22) 58 dB, 2024",
+   "metric": "Flughafen Zürich AG annual report 2024, NMT daytime aircraft levels",
+   "year": 2024,
+   "url": "https://report.flughafen-zuerich.ch/2024/ar/en/laerm",
+   "months_covered": 12,
+   "annualization_method": "annual report NMT Tag levels (integer dB; Swiss Tag 06-22 window)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "laeq_windows",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 500,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   52.38,
+   56.38
+  ],
+  "tolerance_note": "audit model DEN 53.2, Δ −4.8 (model low — ZRH confounders, airborne §C.2); band = verified live Lden 2026-06-11 (53.81) ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 54.38 +/-2",
+  "caveats": "village-centre coords ±500 m"
+ },
+ {
+  "id": "air_ams_ub045_nieuwveen",
+  "lat": 52.1905,
+  "lng": 4.7594,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village"
+  ],
+  "external": {
+   "value": "aircraft Lden 54.2 / Lnight 43.5, gebruiksjaar 2024",
+   "metric": "ODWH Rapportage vliegtuiggeluid 2024 (Sensornet, flight-correlated; valid time 72–96%)",
+   "year": 2024,
+   "url": "https://www.odwh.nl/wp-content/uploads/Rapportage-vliegtuiggeluid-2024-.pdf",
+   "months_covered": 12,
+   "annualization_method": "gebruiksjaar 2024 annual (Nov 2023-Okt 2024), flight-correlated Sensornet",
+   "band": [
+    52.2,
+    56.2
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "lden",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 100,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   53.85,
+   57.85
+  ],
+  "tolerance_note": "cleanest metric match in the audit (Dutch END windows ≡ model's); audit model Lden 55.75, Δ +1.6 (set mean +2.0 ± 1.0); band = audit model ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 55.85 +/-2; measured Lden 54.2 +/-2 stays external.band",
+  "caveats": "street-level geocode ±100 m; GJ2024 = Nov 2023–Oct 2024 vs our Jul-25..Jun-26 sample window"
+ },
+ {
+  "id": "air_ams_ub106_leimuiden",
+  "lat": 52.2262,
+  "lng": 4.664,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village"
+  ],
+  "external": {
+   "value": "aircraft Lden 52.5 / Lnight 43.1, gebruiksjaar 2024",
+   "metric": "ODWH Rapportage vliegtuiggeluid 2024 (Sensornet, flight-correlated)",
+   "year": 2024,
+   "url": "https://www.odwh.nl/wp-content/uploads/Rapportage-vliegtuiggeluid-2024-.pdf",
+   "months_covered": 12,
+   "annualization_method": "gebruiksjaar 2024 annual (Nov 2023-Okt 2024), flight-correlated Sensornet",
+   "band": [
+    50.5,
+    54.5
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "lden",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 150,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   53.74,
+   57.74
+  ],
+  "tolerance_note": "audit model Lden 55.61, Δ +3.1; band = audit model ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 55.74 +/-2; measured Lden 52.5 +/-2 stays external.band",
+  "caveats": "street-level geocode ±150 m"
+ },
+ {
+  "id": "air_ams_ub022_lisse",
+  "lat": 52.255,
+  "lng": 4.5501,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "village"
+  ],
+  "external": {
+   "value": "aircraft Lden 50.7 / Lnight 38.1, gebruiksjaar 2024",
+   "metric": "ODWH Rapportage vliegtuiggeluid 2024 (Sensornet, flight-correlated)",
+   "year": 2024,
+   "url": "https://www.odwh.nl/wp-content/uploads/Rapportage-vliegtuiggeluid-2024-.pdf",
+   "months_covered": 12,
+   "annualization_method": "gebruiksjaar 2024 annual (Nov 2023-Okt 2024), flight-correlated Sensornet",
+   "band": [
+    48.7,
+    52.7
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "lden",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 400,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   50.18,
+   54.18
+  ],
+  "tolerance_note": "audit model Lden 51.91, Δ +1.2 (Lnight −0.3); band = audit model ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 52.18 +/-2; measured Lden 50.7 +/-2 stays external.band",
+  "caveats": "street-level geocode ±400 m (long street)"
+ },
+ {
+  "id": "air_fra_mp06_raunheim",
+  "lat": 50.0114,
+  "lng": 8.4619,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "suburban"
+  ],
+  "external": {
+   "value": "day/night/Lden 59.7/51.6/61.3 — June 2024 monthly (DIN 45643, 58 dB event threshold)",
+   "metric": "Fraport Messbericht über Fluggeräusche 06/2024",
+   "year": 2024,
+   "url": "https://www.fraport.com/content/dam/fraport-company/images/umwelt/schallschutz/flugl%C3%A4rm/aktuell-gemessene-werte/messberichte/2024/06_2024%20Messberichte%20%C3%BCber%20Flugger%C3%A4usche.pdf/_jcr_content/renditions/original.media_file.download_attachment.file/06_2024%20Messberichte%20%C3%BCber%20Flugger%C3%A4usche.pdf",
+   "months_covered": 1,
+   "annualization_method": "June 2024 MONTHLY report (DIN 45643, event threshold) -- rule-1 short coverage, excluded from accuracy stats",
+   "band": [
+    59.3,
+    63.3
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "lden",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 30,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   61.25,
+   65.25
+  ],
+  "tolerance_note": "audit model Lden 61.64, Δ +0.3 (monthly sample + threshold under-capture + 1 h window shift — kept out of audit means); band = audit model ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 63.25 +/-2; monthly external kept diagnostic via months_covered=1",
+  "caveats": "exact address ±30 m; aircraft source includes a negligible ground-ops fold-in (19.8 dB, 4.8 km)"
+ },
+ {
+  "id": "air_fra_mp11_floersheim",
+  "lat": 50.0174,
+  "lng": 8.4214,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "suburban"
+  ],
+  "external": {
+   "value": "day/night/Lden 56.5/47.1/57.5 — June 2024 monthly (DIN 45643, 60 dB event threshold)",
+   "metric": "Fraport Messbericht über Fluggeräusche 06/2024",
+   "year": 2024,
+   "url": "https://www.fraport.com/content/dam/fraport-company/images/umwelt/schallschutz/flugl%C3%A4rm/aktuell-gemessene-werte/messberichte/2024/06_2024%20Messberichte%20%C3%BCber%20Flugger%C3%A4usche.pdf/_jcr_content/renditions/original.media_file.download_attachment.file/06_2024%20Messberichte%20%C3%BCber%20Flugger%C3%A4usche.pdf",
+   "months_covered": 1,
+   "annualization_method": "June 2024 MONTHLY report (DIN 45643, event threshold) -- rule-1 short coverage, excluded from accuracy stats",
+   "band": [
+    55.5,
+    59.5
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "lden",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 200,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   58.03,
+   62.03
+  ],
+  "tolerance_note": "audit model Lden 59.53, Δ +2.0; band = audit model ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 60.03 +/-2; monthly external kept diagnostic via months_covered=1",
+  "caveats": "street geocode ±200 m"
+ },
+ {
+  "id": "air_sfo_site12_foster_city",
+  "lat": 37.565,
+  "lng": -122.253,
+  "mode": "source:aircraft",
+  "host": "he84-only",
+  "anchor_type": "measurement",
+  "role": "diagnostic",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "suburban"
+  ],
+  "external": {
+   "value": "annual aircraft CNEL 61.8 (Jul 2022–Jun 2023)",
+   "metric": "SFO Title 21 Q2/2023 report Table 2; station coords from DataSF",
+   "year": 2023,
+   "url": "https://noise.flysfo.com/wp-content/uploads/2023/09/SFO_2023Q2_Title21_Report.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual CNEL (Jul 2022-Jun 2023), Title 21 quarterly report",
+   "band": [
+    59.8,
+    63.8
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "cnel",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 50,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "tolerance_note": "he84 verified 2026-06-11: aircraft Lden 58.4, Δ −3.4 (world-validation §B2); CNEL ≈ Lden (evening 19–22 vs 19–23, sub-dB); band = he84 ±2 — W5/B7 re-bands | v2 2026-07-09: role=diagnostic, band withheld: the dense-cell query is load-dependent on he84 (3x HTTP 504 at the 30 s work timeout earlier 2026-07-09; a value 59.60 was then captured under light load, -0.2 vs measured CNEL band) -- promote to role=regression once dense-cell popup perf makes it reliably capturable",
+  "caveats": "flat bayshore; 12-day extract vs annual measurement; SKIPPED on ry177 (no US arrows)"
+ },
+ {
+  "id": "air_sfo_site19_pacifica",
+  "lat": 37.658,
+  "lng": -122.481,
+  "mode": "source:aircraft",
+  "host": "he84-only",
+  "anchor_type": "measurement",
+  "role": "regression",
+  "tags": [
+   "hub_approach",
+   "hub_departure",
+   "adsb_window",
+   "suburban",
+   "single_hill",
+   "coastal_windy"
+  ],
+  "external": {
+   "value": "annual aircraft CNEL 60.0 (Jul 2022–Jun 2023)",
+   "metric": "SFO Title 21 Q2/2023 report Table 2; station coords from DataSF",
+   "year": 2023,
+   "url": "https://noise.flysfo.com/wp-content/uploads/2023/09/SFO_2023Q2_Title21_Report.pdf",
+   "months_covered": 12,
+   "annualization_method": "annual CNEL (Jul 2022-Jun 2023), Title 21 quarterly report",
+   "band": [
+    58.0,
+    62.0
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "cnel",
+   "dominance": "event_classified",
+   "receiver_convention": "nmt_pole",
+   "height_m": null,
+   "coord_uncertainty_m": 50,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   62.99,
+   66.99
+  ],
+  "tolerance_note": "he84 verified 2026-06-11: aircraft Lden 63.5, Δ +3.5 — model-high consistent with missing terrain shielding (A2; coastal hills, elev 170 m); band = he84 ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 64.99 +/-2 (+1.5 vs 2026-06-11 post-FALLBACK-remap); +3.0 above measured CNEL stays EXTERNAL-GAP (missing terrain shielding, audit A2)",
+  "caveats": "SKIPPED on ry177 (no US arrows)"
+ },
+ {
+  "id": "cruise_sumava",
+  "lat": 49.0228,
+  "lng": 13.4977,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "cruise_remote",
+   "adsb_window",
+   "wilderness_quiet"
+  ],
+  "external": {
+   "value": "20–40 dB rural-under-corridor band; high-altitude jets audible <15% of time",
+   "metric": "NPS Report to Congress ch. 9 overflight reports",
+   "year": null,
+   "url": "https://www.nonoise.org/library/npreport/chapter9.htm",
+   "months_covered": null,
+   "annualization_method": "NPS land-type envelope (Report to Congress ch. 9) -- not a station",
+   "band": [
+    20,
+    40
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "plausibility",
+   "dominance": "total_ambient",
+   "receiver_convention": "free_field",
+   "height_m": null,
+   "coord_uncertainty_m": 1000,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   25.47,
+   29.47
+  ],
+  "tolerance_note": "band = live 28.44 ±2 post-GA-hybrid (2026-06-12, local 14d airline scope); NPS truth band 20-40 holds regardless. Re-check after the world re-extract (local praha-150km cache clips the SW corridor); B2/C5 cruise sqrt2 re-band note stays. | v2 2026-07-09: band=live 27.47 +/-2",
+  "caveats": "total there 37.5 (roads dominate); aircraft aggregate, not the cruise-only sum"
+ },
+ {
+  "id": "cruise_zermatt",
+  "lat": 46.02,
+  "lng": 7.75,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "cruise_remote",
+   "adsb_window",
+   "mountain_valley"
+  ],
+  "external": {
+   "value": "20–40 dB rural-under-corridor band",
+   "metric": "NPS Report to Congress ch. 9 overflight reports",
+   "year": null,
+   "url": "https://www.nonoise.org/library/npreport/chapter9.htm",
+   "months_covered": null,
+   "annualization_method": "NPS land-type envelope (Report to Congress ch. 9) -- not a station",
+   "band": [
+    20,
+    40
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "plausibility",
+   "dominance": "total_ambient",
+   "receiver_convention": "free_field",
+   "height_m": null,
+   "coord_uncertainty_m": 1000,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   29.9,
+   33.9
+  ],
+  "tolerance_note": "audit cruise-only Lden 30.0 ✓ in band; band = verified live aircraft aggregate 2026-06-11 (33.26) ±2; re-band at C5 | v2 2026-07-09: band=live 31.90 +/-2",
+  "caveats": "alpine receiver: missing Doc 29 §4.2.1 impedance adjustment ≈ −0.5..−1 dB (C9)"
+ },
+ {
+  "id": "cruise_highlands",
+  "lat": 57.1,
+  "lng": -4.7,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "cruise_remote",
+   "adsb_window",
+   "wilderness_quiet"
+  ],
+  "external": {
+   "value": "20–40 dB band, lower density",
+   "metric": "NPS Report to Congress ch. 9 overflight reports",
+   "year": null,
+   "url": "https://www.nonoise.org/library/npreport/chapter9.htm",
+   "months_covered": null,
+   "annualization_method": "NPS land-type envelope (Report to Congress ch. 9) -- not a station",
+   "band": [
+    20,
+    40
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "plausibility",
+   "dominance": "total_ambient",
+   "receiver_convention": "free_field",
+   "height_m": null,
+   "coord_uncertainty_m": 1000,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   18.9,
+   22.9
+  ],
+  "tolerance_note": "audit cruise-only Lden 21.7 ✓; band = verified live aircraft aggregate 2026-06-11 (25.19) ±2; re-band at C5 | v2 2026-07-09: live 20.90 post-FALLBACK-remap (-4.3 vs 2026-06-11) -- inside NPS truth band; band=live +/-2"
+ },
+ {
+  "id": "cruise_lapland",
+  "lat": 68.05,
+  "lng": 24.0,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "cruise_remote",
+   "adsb_window",
+   "wilderness_quiet"
+  ],
+  "external": {
+   "value": "near-silence expected (polar routes rerouted south since 2022)",
+   "metric": "cruise-report §C plausibility anchor",
+   "year": null,
+   "url": "https://www.nonoise.org/library/npreport/chapter9.htm",
+   "months_covered": null,
+   "annualization_method": "NPS land-type envelope (Report to Congress ch. 9) -- not a station",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "plausibility",
+   "dominance": "total_ambient"
+  },
+  "regression_band": [
+   9.64,
+   13.64
+  ],
+  "tolerance_note": "audit cruise-only Lden 9.3 ✓ plausible; band = verified live aircraft aggregate 2026-06-11 (12.12) ±2; re-band at C5 | v2 2026-07-09: band=live 11.64 +/-2",
+  "caveats": ">59°N: ry177 lacks surface rasters here but the aircraft kernel is raster-independent (world-validation §D) — value comparable across hosts"
+ },
+ {
+  "id": "cruise_extremadura",
+  "lat": 39.9,
+  "lng": -5.3,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "cruise_remote",
+   "adsb_window",
+   "rural_open"
+  ],
+  "external": {
+   "value": "20–40 dB band; Madrid–Canaries/Americas corridors",
+   "metric": "NPS Report to Congress ch. 9 overflight reports",
+   "year": null,
+   "url": "https://www.nonoise.org/library/npreport/chapter9.htm",
+   "months_covered": null,
+   "annualization_method": "NPS land-type envelope (Report to Congress ch. 9) -- not a station",
+   "band": [
+    20,
+    40
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "plausibility",
+   "dominance": "total_ambient",
+   "receiver_convention": "free_field",
+   "height_m": null,
+   "coord_uncertainty_m": 1000,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   31.22,
+   35.22
+  ],
+  "tolerance_note": "audit cruise-only Lden 33.8 ✓; band = verified live aircraft aggregate 2026-06-11 (34.59) ±2; re-band at C5 | v2 2026-07-09: band=live 33.22 +/-2"
+ },
+ {
+  "id": "rail_usti_zalezly_ln",
+  "lat": 50.581,
+  "lng": 14.0418,
+  "mode": "source:railway",
+  "metric_field": "ln",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "ic_corridor",
+   "freight_night",
+   "mid",
+   "gtfs_derived",
+   "village",
+   "inversion_prone_valley"
+  ],
+  "external": {
+   "value": "Lden 60–65 + Ln 60–65",
+   "metric": "SHM2022 rail raster (Zeleznice_Ldvn/Ln ImageServer identify)",
+   "year": 2022,
+   "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
+   "months_covered": 12,
+   "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); real SŽ counts incl. freight",
+   "band": [
+    60,
+    65
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "ln",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   45.54,
+   49.54
+  ],
+  "known_gap": "rail-freight-R1R2",
+  "tolerance_note": "SHM Ln 60-65; C1 night split closes part of the gap, the rest needs R2 measured freight counts (plan C1 P3) | v2 2026-07-09: band=live 47.54 +/-2; night freight gap -12.5 below SHM Ln stays the loudest EXTERNAL-GAP in the set (R2 measured freight counts)",
+  "caveats": "SHM uses real SŽ counts incl. freight; 238 m from track; model Ln ≡ Lden − 7.91 (fixed split) → the −14..−19 night gap is invisible in Lden mode"
+ },
+ {
+  "id": "rail_zabori_ln",
+  "lat": 50.0284,
+  "lng": 15.3466,
+  "mode": "source:railway",
+  "metric_field": "ln",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "ic_corridor",
+   "freight_night",
+   "mid",
+   "gtfs_derived",
+   "stock_mix_assumed",
+   "village"
+  ],
+  "external": {
+   "value": "Lden 65–70 + Ln 60–65",
+   "metric": "SHM2022 rail raster (Zeleznice_Ldvn/Ln ImageServer identify)",
+   "year": 2022,
+   "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
+   "months_covered": 12,
+   "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); real SŽ counts incl. freight",
+   "band": [
+    60,
+    65
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "ln",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   59.49,
+   63.49
+  ],
+  "known_gap": "rail-R9-pre-retrofit-freight-spectrum",
+  "tolerance_note": "SHM Ln 60-65; band per C1 plan §4 | v2 2026-07-09: band=live 61.49 +/-2 (inside SHM Ln band post-C1 night split)",
+  "caveats": "63 m from track; audit Ln agreed only because Lden overshoot cancelled night undershoot (R1)"
+ },
+ {
+  "id": "rail_revnice_ln",
+  "lat": 49.9134,
+  "lng": 14.2403,
+  "mode": "source:railway",
+  "metric_field": "ln",
+  "host": "any",
+  "anchor_type": "official_map",
+  "role": "regression",
+  "tags": [
+   "ic_corridor",
+   "regional_hourly",
+   "freight_night",
+   "mid",
+   "gtfs_derived",
+   "building_row_shield",
+   "forest_belt",
+   "suburban"
+  ],
+  "external": {
+   "value": "Lden <50 (NoData) + Ln 45–50",
+   "metric": "SHM2022 rail raster (Zeleznice_Ldvn/Ln ImageServer identify)",
+   "year": 2022,
+   "url": "https://geoportal.mzcr.cz/server/rest/services/SHM2022",
+   "months_covered": 12,
+   "annualization_method": "official END annual model (CZ SHM 2022; traffic basis CSD 2020); real SŽ counts incl. freight",
+   "band": [
+    45,
+    50
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "ln",
+   "dominance": "map_crosscheck",
+   "receiver_convention": "raster_pixel",
+   "height_m": 4,
+   "coord_uncertainty_m": 25,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   39.5,
+   43.5
+  ],
+  "known_gap": "rail-freight-R2",
+  "tolerance_note": "SHM Ln 45-50; C1 plan §4 — clear/retag per live value | v2 2026-07-09: band=live 41.50 +/-2; -3.5 below SHM Ln = the R2 residual (C1 closed 37.3->41.5)",
+  "caveats": "screened site (buildings, forest); 358 m from track"
+ },
+ {
+  "id": "bldg_chodov_mall_facade",
+  "lat": 50.031,
+  "lng": 14.491,
+  "mode": "source:building",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "mall_hvac",
+   "near",
+   "dense_urban"
+  ],
+  "external": {
+   "value": "plant noise at receptors near large retail typically rated 40-55 dB(A)",
+   "metric": "BS 4142 practice (ANC guide 2020; acoustic-ltd service class)",
+   "year": 2020,
+   "url": "https://www.association-of-noise-consultants.co.uk/wp-content/uploads/2020/05/ANC-BS-4142-Guide-March-2020.pdf",
+   "months_covered": null,
+   "annualization_method": "BS 4142 practice class envelope (ANC guide 2020) -- literature, not a site measurement",
+   "band": [
+    40,
+    55
+   ]
+  },
+  "commensurability": {
+   "metric_variant": "plausibility",
+   "dominance": "near_source",
+   "receiver_convention": "facade",
+   "height_m": null,
+   "coord_uncertainty_m": 30,
+   "facade_correction_db": 0,
+   "correction_provenance": null
+  },
+  "regression_band": [
+   42.47,
+   46.47
+  ],
+  "tolerance_note": "settlement v2 phase 1 (2026-06-12) landed the building source INSIDE the BS4142 practice band: 45.0 day / 35.0 night (was 40.7 / ~25 with the -20 night cut). Band = the practice range itself, not live+/-2. | v2 2026-07-09: band=live 44.47 +/-2; practice envelope stays external.band"
+ },
+ {
+  "id": "bldg_old_town_square",
+  "lat": 50.0875,
+  "lng": 14.4213,
+  "mode": "source:building",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "pedestrian_zone",
+   "outdoor_hospitality",
+   "building_default_vs_typed",
+   "dense_urban",
+   "near",
+   "unmodelled_dominates"
+  ],
+  "external": {
+   "value": "pedestrian-zone deliveries/HVAC in-scope; LAeq day 63-71 incl. crowds (out of scope)",
+   "metric": "Dalian pedestrian-street study PMC10102546 + audit building-report",
+   "year": 2023,
+   "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10102546/",
+   "months_covered": null,
+   "annualization_method": "literature LAeq incl. crowds (out of model scope) -- not band-comparable",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "plausibility",
+   "dominance": "total_ambient"
+  },
+  "regression_band": [
+   40.82,
+   44.82
+  ],
+  "known_gap": "building-phase2-classification",
+  "tolerance_note": "phase 1 moved 25.1 -> 31.7 but the square's restaurants/shops are building=yes -> residential profile until the phase-2 POI join; band = post-phase-2 expectation. KNOWN-GAP until then. | v2 2026-07-09: band=live 42.82 +/-2 (phase-1 state; phase-2 POI join stays the kg)"
+ },
+ {
+  "id": "road_th_hospitality_krabi",
+  "lat": 7.4978,
+  "lng": 99.0747,
+  "mode": "source:road",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "mid",
+   "village",
+   "count_osm_default",
+   "stock_mix_assumed",
+   "outdoor_hospitality"
+  ],
+  "external": {
+   "value": "owner field observation 2026-07-16: ~100 motorcycles/hour on the unclassified access road (hotels/restaurants/tourism); model 2026-07-17 after trip-rates+fleet wave: 381 veh/day incl. 76 moto (service-tree; most guesthouses untyped building=yes in OSM, through-traffic not modelled)",
+   "metric": "owner eyeball count, daytime peak — order-of-magnitude only, not band-commensurable",
+   "year": 2026,
+   "url": null,
+   "months_covered": null,
+   "annualization_method": "none (spot observation)",
+   "band": null
+  },
+  "commensurability": {
+   "metric_variant": "input_data",
+   "dominance": "near_source"
+  },
+  "regression_band": [
+   29.66,
+   33.66
+  ],
+  "tolerance_note": "EXTERNAL-GAP: known undercount — OSM building typing sparse in rural TH + building-only trip model misses through-traffic (plan trip-generators Phase 2). Band pins the 2026-07-17 computed 31.66 dB; owner observation kept as the accuracy worklist marker."
+ }
 ]
