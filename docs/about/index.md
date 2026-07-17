@@ -55,22 +55,20 @@ Each layer's [methodology](/about/methodology) page lists **fallback defaults** 
 - **Railways** — ~50 countries from GTFS passenger timetables + national freight-corridor estimates, family-aware (tram / siding / mainline kept separate).
 - **Industrial** — ~124 countries with industrial enrichment: the EU-wide E-PRTR pollution registry (~30k facilities), the Global Power Plant Database, and national wind-turbine and power-plant registries; wind turbines from a global turbine inventory.
 
-Everything else falls back to the class-defaults. Each country page lists its specific sources.
+Everything else falls back to the class-defaults. Each country page lists exactly which extra data its country uses — explore by region:
 
-### How fresh is the data
+<!-- REGION_CHILDREN -->
+
+## How fresh is the data
 
 The current map is the **2026 dataset** — one worldwide computation generation, built from:
 
 - **OpenStreetMap** — planet extract from May 2026 (roads, railways, buildings, industrial sites, airports)
 - **Airline traffic** — [ADSBExchange](https://www.adsbexchange.com/) samples: the 1st of every month, July 2025 – June 2026 (12 days)
-- **General aviation & helicopters** — [adsb.lol](https://adsb.lol/) community feeds: every day of 2025 (365 days — occasional flights need a full year to be weighted honestly)
+- **General aviation & helicopters** — [adsb.lol](https://adsb.lol/) community feeds: every day of 2025, 1 January through 31 December (365 days — occasional flights need a full year to be weighted honestly; our archive already spans 2024–2026 for future datasets)
 - **Traffic counts & registries** — the latest published national data at build time (per-country details on the country pages)
 
 The plan is one frozen dataset per year: when the 2027 map arrives, you'll be able to compare — did your street get quieter?
-
-### Explore by region
-
-<!-- REGION_CHILDREN -->
 
 ## What you see on the map
 
@@ -154,8 +152,9 @@ Yes, free, with visible "0db.app" attribution — details in [credits & terms](/
 1. **Road traffic from navigation apps** — per-street average counts of cars / trucks / motorcycles by time of day, at Waze / Google Maps / TomTom scale. This is the single biggest accuracy lever the map has.
 2. **Commercial flight tracking** — denser coverage than the open feeds we use today (e.g. Flightradar24-grade data).
 3. **Railway traffic** — timetables and passenger/freight train counts per line.
-4. **Better national data for any country** — traffic censuses, facility registries, turbine inventories.
-5. **Shipping** — vessel traffic and port operations, for a future marine layer.
+4. **Real noise measurements** — station exports, long-term campaigns, monitoring-network data anywhere in the world. These feed the validation loop directly: every honest measurement makes the model demonstrably better.
+5. **Better national data for any country** — traffic censuses, facility registries, turbine inventories.
+6. **Shipping** — vessel traffic and port operations, for a future marine layer.
 
 If you work somewhere that has this data — or know who does — [we'd love to talk](mailto:hello@0db.app).
 
