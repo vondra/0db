@@ -108,7 +108,14 @@ export function createHexCountryResolver(adminBinPath: string): HexCountryResolv
         const gate = gateFor(iso)
         if (gate !== null && gate(lat, lon)) return iso
       }
-      return adminIso.get(hexId)
+      // No polygon claims the point — coastal roads sit metres outside the
+      // 55 m-simplified CGAZ coastline (piers, mangrove roads, reclaimed
+      // land). They belong to the neighbourhood's dominant country, not to
+      // WORLD: falling back to the hex's own admin ISO returned undefined on
+      // coastal hexes whose centroid is over water, which silently gave a
+      // fifth of Krabi's segments the 1 % WORLD moto split (world sweep
+      // spot-check 2026-07-17).
+      return adminIso.get(hexId) ?? info.candidates[0]
     },
   }
 }
