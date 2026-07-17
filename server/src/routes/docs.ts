@@ -10,6 +10,10 @@ interface DocFrontmatter {
   intro: string
   map?: { center: [number, number]; zoom: number }
   status?: string
+  // 'hidden' keeps a page reachable by URL (e.g. /about/methodology) without
+  // listing it in its parent's auto-generated children grid — used for
+  // hand-linked topic pages living alongside the region/country tree.
+  nav?: string
 }
 
 function parseFrontmatter(raw: string): { data: DocFrontmatter; content: string } {
@@ -38,19 +42,21 @@ function getChildren(dirPath: string): { slug: string; title: string; status: st
 
   for (const entry of entries) {
     if (entry.name === 'index.md') continue
+    let slug: string
+    let resolved: string | null
     if (entry.isDirectory()) {
-      const indexPath = resolveAboutRegularFile(path.join(dirPath, entry.name, 'index.md'))
-      if (indexPath) {
-        const { data } = parseFrontmatter(fs.readFileSync(indexPath, 'utf-8'))
-        children.push({ slug: entry.name, title: data.title || entry.name, status: data.status ?? null })
-      }
+      slug = entry.name
+      resolved = resolveAboutRegularFile(path.join(dirPath, entry.name, 'index.md'))
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
-      const slug = entry.name.replace(/\.md$/, '')
-      const filePath = resolveAboutRegularFile(path.join(dirPath, entry.name))
-      if (!filePath) continue
-      const { data } = parseFrontmatter(fs.readFileSync(filePath, 'utf-8'))
-      children.push({ slug, title: data.title || slug, status: data.status ?? null })
+      slug = entry.name.replace(/\.md$/, '')
+      resolved = resolveAboutRegularFile(path.join(dirPath, entry.name))
+    } else {
+      continue
     }
+    if (!resolved) continue
+    const { data } = parseFrontmatter(fs.readFileSync(resolved, 'utf-8'))
+    if (data.nav === 'hidden') continue
+    children.push({ slug, title: data.title || slug, status: data.status ?? null })
   }
   return children.sort((a, b) => a.title.localeCompare(b.title))
 }

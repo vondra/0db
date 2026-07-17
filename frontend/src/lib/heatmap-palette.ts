@@ -2,29 +2,29 @@
  * dBA → RGBA palette for the map heatmap (HM3 tile rendering).
  *
  * The server now serves raw HM3 byte tiles and renders no PNG, so this
- * ramp no longer has to track a server-side palette. The 15 stops below
- * are tuned for legibility over a light basemap (see [`STOPS`]).
+ * ramp no longer has to track a server-side palette. See [`STOPS`].
  */
 
-// Aggressive opacity ramp so the heatmap is *legible* over light
-// basemap tiles. The original heatmap-v2 ramp ran 0.06–0.12 below
-// 30 dB and 0.20–0.38 below 50 dB — those alpha values vanished
-// against OSM. Sub-15 dB still maps transparent since the cells
-// below the noise-atlas relevance floor would just fog the basemap.
+// Weninger, "A Color Scheme for the Presentation of Sound Immission in
+// Maps", EuroNoise 2015 (user-tested, 232 respondents) — the 10 colors and
+// opacities below are reused unmodified, hex for hex, dB for dB. Weninger's
+// own scheme is scoped to 35-80 dB: below 35 dB is "no color" (renders
+// transparent here, via the sub-floor check in paletteColor), and 80 dB is
+// the terminal color — above it the ramp clamps flat (lerpStop's fallback),
+// not a further, invented shade. Owner 2026-07-17: tried on the live map
+// without the earlier low/high-end extension (dropped 2026-07-16) to see
+// the paper's scale as designed, unaltered.
 const STOPS: { db: number; rgb: readonly [number, number, number]; op: number }[] = [
-  { db: 15, rgb: [0xDD, 0xEC, 0xF0], op: 0.25 },
-  { db: 25, rgb: [0xC3, 0xDA, 0xDE], op: 0.45 },
-  { db: 35, rgb: [0xA0, 0xBA, 0xBF], op: 0.60 },
-  { db: 40, rgb: [0xB8, 0xD6, 0xD1], op: 0.68 },
-  { db: 45, rgb: [0xCE, 0xE4, 0xCC], op: 0.74 },
-  { db: 50, rgb: [0xE2, 0xF2, 0xBF], op: 0.80 },
-  { db: 55, rgb: [0xF3, 0xC6, 0x83], op: 0.84 },
-  { db: 60, rgb: [0xE8, 0x7E, 0x4D], op: 0.87 },
-  { db: 65, rgb: [0xCD, 0x46, 0x3E], op: 0.89 },
-  { db: 70, rgb: [0xA1, 0x1A, 0x4D], op: 0.91 },
-  { db: 75, rgb: [0x75, 0x08, 0x5C], op: 0.93 },
-  { db: 80, rgb: [0x43, 0x0A, 0x4A], op: 0.95 },
-  { db: 90, rgb: [0x20, 0x00, 0x19], op: 0.97 },
+  { db: 35, rgb: [0xA0, 0xBA, 0xBF], op: 0.20 },
+  { db: 40, rgb: [0xB8, 0xD6, 0xD1], op: 0.26 },
+  { db: 45, rgb: [0xCE, 0xE4, 0xCC], op: 0.32 },
+  { db: 50, rgb: [0xE2, 0xF2, 0xBF], op: 0.38 },
+  { db: 55, rgb: [0xF3, 0xC6, 0x83], op: 0.46 },
+  { db: 60, rgb: [0xE8, 0x7E, 0x4D], op: 0.54 },
+  { db: 65, rgb: [0xCD, 0x46, 0x3E], op: 0.62 },
+  { db: 70, rgb: [0xA1, 0x1A, 0x4D], op: 0.69 },
+  { db: 75, rgb: [0x75, 0x08, 0x5C], op: 0.75 },
+  { db: 80, rgb: [0x43, 0x0A, 0x4A], op: 0.80 },
 ]
 
 const NO_COLOR: [number, number, number, number] = [0, 0, 0, 0]

@@ -1,7 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="0db.app">
-  <path fill="#430A4A" d="M32 3C42 3 45 8 50 12C57 17 61 24 60 33C60 43 54 48 48 53C42 59 35 62 26 60C17 59 12 54 7 47C2 40 3 32 5 24C7 16 13 10 21 6C25 4 28 3 32 3Z" />
-  <path fill="#CD463E" d="M32 9C40 9 43 13 47 16C52 20 55 25 54 33C54 40 50 44 45 49C40 54 34 56 27 54C20 53 16 49 12 44C8 38 9 32 10 26C12 20 16 15 22 12C25 10 29 9 32 9Z" />
-  <path fill="#F3C683" d="M32 15C38 15 41 18 44 20C48 23 50 28 49 33C49 39 46 42 42 45C38 49 33 50 28 49C23 48 19 45 17 41C14 37 15 32 16 28C17 23 21 20 25 17C27 16 30 15 32 15Z" />
-  <path fill="#A0BABF" d="M32 21C37 21 39 23 41 25C44 27 45 30 44 34C44 38 42 40 39 42C36 44 32 45 29 44C25 43 23 41 21 38C19 35 20 32 21 29C22 26 25 23 28 22C29 21 31 21 32 21Z" />
-  <path fill="#171717" fill-rule="evenodd" d="M32 23C26.8 23 24 26.5 24 32.5S26.8 42 32 42S40 38.5 40 32.5S37.2 23 32 23ZM32 27C34.6 27 35.75 28.8 35.75 32.5S34.6 38 32 38S28.25 36.2 28.25 32.5S29.4 27 32 27Z" />
+  <!-- Organic blob (deliberately irregular, not a regular polygon) filled with
+       a true radial gradient built from the SAME stops as the map's heatmap
+       ramp (frontend/src/lib/heatmap-palette.ts) — quiet (white, "0 dB") at
+       the center where the 0 sits, escalating outward through the palette to
+       loud at the edge. The logo is 0db.app's own idea in miniature: a quiet
+       center found amid rising noise, not a source radiating outward. -->
+  <defs>
+    <radialGradient id="g" cx="32" cy="32" r="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.28" stop-color="#FFFFFF"/>
+      <stop offset="0.28" stop-color="#A0BABF"/>
+      <stop offset="0.36" stop-color="#B8D6D1"/>
+      <stop offset="0.44" stop-color="#CEE4CC"/>
+      <stop offset="0.52" stop-color="#E2F2BF"/>
+      <stop offset="0.60" stop-color="#F3C683"/>
+      <stop offset="0.68" stop-color="#E87E4D"/>
+      <stop offset="0.76" stop-color="#CD463E"/>
+      <stop offset="0.84" stop-color="#A11A4D"/>
+      <stop offset="0.92" stop-color="#75085C"/>
+      <stop offset="1" stop-color="#430A4A"/>
+    </radialGradient>
+  </defs>
+  <path fill="url(#g)" stroke="rgba(0,0,0,.12)" stroke-width="0.6" d="M26.31,3.35 Q32.0,2.15 36.84,5.4 Q41.67,8.65 44.25,12.91 Q46.83,17.17 49.66,20.34 Q52.5,23.51 53.8,27.76 Q55.1,32.0 53.54,36.14 Q51.98,40.28 49.63,43.78 Q47.29,47.29 43.72,49.48 Q40.15,51.67 36.08,52.41 Q32.0,53.15 27.07,54.46 Q22.15,55.77 16.46,54.5 Q10.77,53.23 8.07,48.13 Q5.38,43.03 4.74,37.52 Q4.1,32.0 4.48,26.38 Q4.86,20.76 8.04,16.0 Q11.23,11.23 15.93,7.89 Q20.63,4.56 26.31,3.35 Z"/>
+  <path fill="#171717" fill-rule="evenodd" d="M32 23C26.8 23 24 26.5 24 32.5S26.8 42 32 42S40 38.5 40 32.5S37.2 23 32 23ZM32 27C34.6 27 35.75 28.8 35.75 32.5S34.6 38 32 38S28.25 36.2 28.25 32.5S29.4 27 32 27Z"/>
 </svg>
