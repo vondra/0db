@@ -68,7 +68,7 @@ For now, `trains_freight` remains 0 in the enriched data. CNOSSOS-EU defaults ar
 
 ## Real estate — in preparation
 
-Real-estate listings filtered by noise level are planned for the Czech Republic
-but not available yet — we are preparing the data sources. The feature will show
-land plots and houses on the map with the noise level at their location and a
-configurable Lden filter.
+Land plots and houses shown directly on the map, each with the computed Lden
+at its location and a noise slider to hide listings above your threshold. We
+are preparing data partnerships with Czech listing portals; the feature itself
+already works end-to-end.

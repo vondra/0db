@@ -15,6 +15,9 @@ nav: hidden
 - **Ground imperviousness:** [ESA WorldCover](https://worldcover2021.esa.int/) land-cover proxy (global), refined by [Copernicus Imperviousness Density](https://land.copernicus.eu/en/products/high-resolution-layer-imperviousness) (EEA) where sourced
 - **Road, railway & airport geometry:** © [OpenStreetMap](https://www.openstreetmap.org/) contributors (ODbL)
 - **Flight data:** [ADSBExchange](https://www.adsbexchange.com/) (airline traffic samples) + [adsb.lol](https://adsb.lol/) (ADS-B community feeds — GA & helicopters)
+- **Aircraft noise profiles:** [EASA ANP](https://www.easa.europa.eu/en/domains/environment/policy-support-and-research/aircraft-noise-and-performance-anp-data) (Aircraft Noise and Performance database)
+- **Traffic counts:** national road surveys (e.g. [US FHWA HPMS](https://www.fhwa.dot.gov/policyinformation/hpms.cfm)), EU harmonized city AADT, national rail statistics + public [GTFS](https://gtfs.org/) timetables
+- **Industrial facilities:** [E-PRTR](https://industry.eea.europa.eu/) (EU pollution registry), [Global Power Plant Database](https://datasets.wri.org/dataset/globalpowerplantdatabase) (WRI), [Global Energy Monitor](https://globalenergymonitor.org/) trackers, national wind-turbine registries
 - **Map rendering:** [MapLibre GL JS](https://maplibre.org/) (open source)
 
 ## Data license & terms of use

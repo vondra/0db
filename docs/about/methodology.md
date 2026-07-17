@@ -135,7 +135,7 @@ Industrial noise is spatially concentrated, near-constant, and locally dominant 
 <details>
 <summary>Technical: industrial emission profiles (ISO 8297 + NACE)</summary>
 
-[ISO 8297](https://www.iso.org/standard/15401.html), [CNOSSOS-EU §2.4](https://eur-lex.europa.eu/eli/dir_del/2021/1226). Reference area 10 000 m² (a 100 000 m² factory adds 10 dB to its base). Profile priority: registry `nace_4digit` → OSM subtype → coarse source type. Base values were authored against Czech SHM 2022 + EU Directive 2000/14/EC limits + 3M Noise Navigator measurements before the 2026-06 band normalization; they are now honest dB(A) totals (effective emission −4.9..−6.4 vs pre-audit), re-calibration pending.
+[ISO 8297](https://www.iso.org/standard/15401.html), [CNOSSOS-EU §2.4](https://eur-lex.europa.eu/eli/dir_del/2021/1226). Reference area 10 000 m² (a 100 000 m² factory adds 10 dB to its base). Profile priority: registry `nace_4digit` → OSM subtype → coarse source type. The Base Lw values below were calibrated against the EU's [END](https://eur-lex.europa.eu/eli/dir/2002/49/oj/eng) strategic noise maps (2022 round; plus EU Directive 2000/14/EC limits and 3M Noise Navigator measurements), and the radiated total deliberately stays on that calibration: each sector's A-weighted spectrum adds a fixed +4.9 to +6.4 dB(A) on top of its Base Lw. A per-sector re-anchoring against multi-country measurements is the planned next step.
 
 **By OSM site type** (when no registry NACE):
 
@@ -169,7 +169,7 @@ Industrial noise is spatially concentrated, near-constant, and locally dominant 
 | Retail / logistics | 46/47 | 84 dB | -8 | -20 |
 | Agriculture | 1-3 | 70 dB | -5 | -20 |
 
-Emission bands are normalized so the A-weighted band sum equals Base Lw exactly (audit 2026-06) — Base Lw is the radiated dB(A) total, not a pre-spectrum scalar.
+The tabulated Base Lw is a calibration anchor, not the radiated total: the site radiates Base Lw plus its sector spectrum's A-weighted sum (+4.9..+6.4 dB(A)), preserving the END strategic-noise-map calibration the bases were authored against.
 
 Source height: 8 m (quarry), 10 m (heavy industry NACE 5/8/23/24/35), 5 m (other), hub height for wind turbines (default 105 m, tag errors clamped at 175 m).
 
@@ -284,6 +284,8 @@ A leisure node with no polygon (most `outdoor_seating=yes` points) assumes the s
 
 Sound gets quieter as it travels. On flat open ground, a road drops about 3 dB every time you double your distance. But the real world has hills, buildings, and forests that block sound further — and hard surfaces like asphalt that reflect it.
 
+![The computed noise field around Prague, shown without the basemap — every filament is a road or railway, every halo a propagation calculation](noise-field-prague.jpg)
+
 We simulate these effects for every source-receiver pair using [ISO 9613-2](https://www.iso.org/standard/74047.html) and [CNOSSOS-EU](https://eur-lex.europa.eu/eli/dir_del/2021/1226), computed per 8 octave bands (63–8000 Hz), then A-weighted.
 
 Road, railway, industrial, settlement, and aircraft ground ops use the same propagation engine. Airborne aircraft uses NPD tables where atmospheric absorption is already included.
@@ -368,6 +370,6 @@ Accuracy is a continuous loop, not a one-off benchmark: measure the gap against 
 
 - **Primary reference — real measurements.** Annual per-station levels from public monitoring networks: city networks (Barcelona, Dublin), airport monitoring terminals (Prague, Zürich, Amsterdam, Frankfurt, San Francisco), and German rail-corridor stations (EBA) — several hundred station-years across five countries, and growing. Each station carries commensurability metadata (metric variant, receiver height, coordinate uncertainty) so a comparison is only made where it is honest.
 - **Honest comparison.** A street microphone hears everything at once — traffic, voices, weather — so a single modelled layer is checked there only as an *upper bound* (the model must never exceed the measured total). Event-classified airport terminals and near-source geometries allow a full two-sided check.
-- **Official maps as a benchmark, not a target.** National strategic noise maps (END / SHM) cross-check our results and probe our input data — a systematic gap that tracks a data regime points at enrichment, not physics — never as a calibration target.
+- **Official maps as a benchmark, not a target.** The EU's END strategic noise maps cross-check our results and probe our input data — a systematic gap that tracks a data regime points at enrichment, not physics — never as a calibration target.
 - **Already corrected by the loop.** A street-tram default speed and the double-counting of parallel rail tracks were each surfaced by a measurement station and fixed, then re-verified against the same stations.
 - **Target:** mean absolute error < 3 dB vs national strategic maps for road noise. A formal cross-country MAE is still pending — the per-network gap tables and a layer × country uncertainty breakdown are the interim measure.

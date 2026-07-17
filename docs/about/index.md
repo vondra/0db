@@ -12,29 +12,61 @@ map: { center: [15, 30], zoom: 2 }
 
 1. **Find quiet places** — search any address, explore the map, discover where to live, work, or relax without noise
 2. **Understand noise** — see which sources contribute (roads, railways, aircraft, industry) and how terrain, buildings, and forests reduce it
-3. **Track change over time** — noise maps updated regularly make noise visible and measurable. By tracking it transparently over time, governments and communities have the data to act — and everyone can see whether things are getting quieter
+3. **Track change over time** — regular updates make noise measurable, so communities and governments can see whether things are getting quieter
 
 Human-made noise is not the same as natural sound. A forest at 50 dB with birdsong feels quiet. A road at 50 dB with traffic feels loud. 0db.app measures environmental noise from human sources — transport, industry, and urban activity — not nature.
 
 ## How the map works
 
-The map computes noise in three steps: **sources emit it** (roads, trains, planes, factories, buildings — modelled from real traffic counts, flight tracks and registries), **it travels and fades** (hills, buildings and forests block it, simulated with ISO 9613-2 physics), and **you see the result** on a ~12-meter raster, colored from pale (quiet) through yellow and orange to deep purple (80+ dB, very loud). Each of the five source layers — roads, railways, aircraft, industrial, buildings — is modelled independently and toggles on its own in the UI.
+Three steps:
+
+1. **Sources emit noise.** Roads, trains, planes, factories and buildings — each modelled from real data: traffic counts, flight tracks, registries.
+2. **Sound travels and fades.** Hills block it, buildings screen it, forests absorb it — simulated with ISO 9613-2 physics.
+3. **You see the result** on a ~12-meter raster, from pale (quiet) through yellow and orange to deep purple (80+ dB).
+
+Each of the five source layers — roads, railways, aircraft, industrial, buildings — is modelled independently and toggles on its own in the map.
 
 ![0db.app — noise visualization](map-overview.jpg)
 
 → **[Read the full methodology](/about/methodology)** — per-layer emission standards (CNOSSOS-EU, Doc 29, IEC 61400-11), the propagation physics, where the model simplifies vs the standards, and the ongoing accuracy validation against real measurement stations.
 
+## Click anywhere
+
+Every point on the map can explain itself. Click, and a panel shows the total Lden at that spot with two views:
+
+**Noise sources** groups everything audible there the way you'd name it — a road as one row, a factory, "aircraft — airborne" — sorted by how much each contributes. Open a row and you see the source's data (speed, traffic and vehicle mix, surface, trains per day…) and its **sound path** to your point: how much the distance, air, ground, terrain, buildings and vegetation each took off, in dB. Underlined terms explain themselves on hover; aircraft rows link to the actual flight traces.
+
+**Segments** is the raw computation: the individual pieces the model actually sums — a few dozen meters of road each, single flights, single buildings. Filter by kind, open any piece, and you get its emission inputs, a terrain profile of the exact path from that piece to your point (elevation, buildings, forest, ground hardness), the attenuation table, day/evening/night levels — and what-if toggles: what would this be with no terrain in the way, no vegetation, free field?
+
+<p>
+<img src="popup-source-detail.png" alt="Noise sources — a road with its sound path breakdown" style="display:inline-block;width:300px;max-width:48%;vertical-align:top;margin:0 12px 0 0">
+<img src="popup-segment.png" alt="Segments — one road segment with the terrain profile" style="display:inline-block;width:300px;max-width:48%;vertical-align:top;margin:0">
+</p>
+
+Nothing on the map is a black box — if a number surprises you, two clicks show where it came from.
+
 ## Defaults and enrichment
 
 Each layer's [methodology](/about/methodology) page lists **fallback defaults** — what we assume when no measured data exists. Where real data is available it overrides them, resolved through a four-tier cascade: **city → country → continent → world**. A place with a local traffic survey uses it; otherwise it inherits its country's value, then its continent's, then a global default.
 
-**Enrichment is class-aware.** A measured motorway count is matched only to motorway-class segments, so a residential street never inherits a neighbouring highway's traffic and a tram siding never inherits a mainline's train count (a systemic class-blind bug fixed 2026-06/07). Coverage today (and growing):
+**Enrichment is class-aware.** A measured motorway count is matched only to motorway-class segments — a residential street never inherits a neighbouring highway's traffic, and a tram siding never inherits a mainline's train count. Coverage today (and growing):
 
 - **Roads** — 53 countries with national traffic data (US HPMS, EU 36-city harmonized AADT, national surveys), plus the global service-tree estimate for minor roads.
 - **Railways** — ~50 countries from GTFS passenger timetables + national freight-corridor estimates, family-aware (tram / siding / mainline kept separate).
 - **Industrial** — ~124 countries with industrial enrichment: the EU-wide E-PRTR pollution registry (~30k facilities), the Global Power Plant Database, and national wind-turbine and power-plant registries; wind turbines from a global turbine inventory.
 
 Everything else falls back to the class-defaults. Each country page lists its specific sources.
+
+### How fresh is the data
+
+The current map is the **2026 dataset** — one worldwide computation generation, built from:
+
+- **OpenStreetMap** — planet extract from May 2026 (roads, railways, buildings, industrial sites, airports)
+- **Airline traffic** — [ADSBExchange](https://www.adsbexchange.com/) samples: the 1st of every month, July 2025 – June 2026 (12 days)
+- **General aviation & helicopters** — [adsb.lol](https://adsb.lol/) community feeds: every day of 2025 (365 days — occasional flights need a full year to be weighted honestly)
+- **Traffic counts & registries** — the latest published national data at build time (per-country details on the country pages)
+
+The plan is one frozen dataset per year: when the 2027 map arrives, you'll be able to compare — did your street get quieter?
 
 ### Explore by region
 
@@ -60,7 +92,9 @@ A Web-Mercator raster at zoom 12 (512-pixel tiles, ~12 m per pixel at 50°N, var
 
 ### Color scale
 
-The published, user-tested scheme from Weninger, ["A Color Scheme for the Presentation of Sound Immission in Maps"](https://www.researchgate.net/publication/280488890_A_color_scheme_for_the_presentation_of_sound_immission_in_maps), EuroNoise 2015 (232 respondents, see also [coloringnoise.com](https://www.coloringnoise.com/)) — reused unmodified, hex for hex, dB for dB. Below 35 dB is transparent (Weninger's own "no color"); 80 dB is the paper's terminal shade, and the map holds that color flat above it rather than inventing a darker one. Colors interpolate smoothly between rows — a cell at 62 dB gets a blended shade between the 60 and 65 dB rows, never a hard jump — and opacity rises alongside color, quiet cells fading into the basemap rather than fogging it.
+The colors are not ours. They come from Weninger, ["A Color Scheme for the Presentation of Sound Immission in Maps"](https://www.researchgate.net/publication/280488890_A_color_scheme_for_the_presentation_of_sound_immission_in_maps), EuroNoise 2015 — a scheme tested with 232 respondents (see also [coloringnoise.com](https://www.coloringnoise.com/)) — and we use them unmodified, hex for hex, dB for dB.
+
+Below 35 dB the map is transparent (Weninger's own "no color"); 80 dB is the paper's terminal shade, held flat above it rather than inventing a darker one. Colors interpolate smoothly between rows — a cell at 62 dB gets a blended shade between the 60 and 65 dB rows, never a hard jump — and opacity rises alongside color, so quiet cells fade into the basemap instead of fogging it.
 
 | Lden | Swatch | Hex | Opacity |
 |------|--------|-----|---------|
@@ -85,15 +119,51 @@ The published, user-tested scheme from Weninger, ["A Color Scheme for the Presen
 
 ### Real estate — in preparation
 
-Real-estate listings filtered by noise level are planned but not available yet — we are preparing the data sources. The feature will sample each property's noise from the published z12 noise raster (the same tiles the map shows) and filter listings by a configurable Lden threshold.
+Property listings on the map, filtered by noise: each listing will carry the computed Lden at its location — sampled from the same tiles the map shows — with a noise slider to hide everything above your threshold. We are preparing data partnerships with listing portals; a prototype of the feature already works end-to-end.
 
 ### Quiet zones
 
 Shades every map pixel below a configurable noise threshold (default 35 dB, slider 20–45) green. Useful for identifying quiet retreats, parks, and areas suitable for noise-sensitive development.
 
+## FAQ
+
+**Is this measured or computed?**
+Computed — a physics model (CNOSSOS-EU emission, ISO 9613-2 propagation) over public data. No microphone network could cover the planet at 12-meter resolution. The model is continuously checked against real monitoring stations; see [Validation](/about/methodology).
+
+**How accurate is it?**
+It's an engineering estimate, not a certificate. The target is a mean error under 3 dB against official strategic noise maps for road noise, and every confirmed gap against a real measurement station becomes a fix. For a single address, read the value as "around X dB" — and click the point to see exactly what the number is built from.
+
+**Why does my quiet street show 50 dB?**
+Click it. Most surprises have a visible cause: a road with no measured traffic falls back to class defaults, a nearby factory is classified by registry sector, or the dominant source is something you've tuned out. If the inputs are genuinely wrong for your street, [tell us](mailto:hello@0db.app) — reports with an address are how the map gets better.
+
+**Why are there no low-flying aircraft where I live?**
+The aircraft layer sees what volunteer ADS-B receivers see. Where no feeder is nearby, low-altitude flights aren't received and only high-altitude cruise noise (~20 dB) appears — a limit of the data source, not the model. Hosting a receiver in a blank spot fixes it for everyone.
+
+**Why does the map show nothing below 35 dB?**
+By design: the [color scheme](#color-scale) marks under 35 dB as "no color" — genuinely quiet. To hunt for the quietest places, use the Quiet zones overlay, which shades everything under a threshold you pick (20–45 dB).
+
+**Can I use screenshots or embed the map?**
+Yes, free, with visible "0db.app" attribution — details in [credits & terms](/about/credits).
+
+## Help us make it better
+
+**See something wrong on your street?** Write to [hello@0db.app](mailto:hello@0db.app) with the address. Every confirmed report feeds the validation loop — real-world corrections are the most valuable data we get.
+
+**Have data? We're looking for** (in order of impact):
+
+1. **Road traffic from navigation apps** — per-street average counts of cars / trucks / motorcycles by time of day, at Waze / Google Maps / TomTom scale. This is the single biggest accuracy lever the map has.
+2. **Commercial flight tracking** — denser coverage than the open feeds we use today (e.g. Flightradar24-grade data).
+3. **Railway traffic** — timetables and passenger/freight train counts per line.
+4. **Better national data for any country** — traffic censuses, facility registries, turbine inventories.
+5. **Shipping** — vessel traffic and port operations, for a future marine layer.
+
+If you work somewhere that has this data — or know who does — [we'd love to talk](mailto:hello@0db.app).
+
 ## Who builds this
 
-0db.app is built by one person working with three AI coding agents: **Claude** as lead developer, **Codex** as second developer and code reviewer, and **Gemini** for an independent second opinion and review. Development started in June 2025 on Opus 4; every major Opus, GPT, and Gemini release since has been tried on this codebase — progress accelerated markedly with [OpenClaw](https://openclaw.ai/) and Opus 4.6, and it's kept getting better since.
+0db.app is built by one person working with three AI coding agents: **Claude** as lead developer, **Codex** as second developer and code reviewer, and **Gemini** for an independent second opinion and review — with promising open-source models tried along the way as they appear. Development started in June 2025 on Opus 4; every major Opus, GPT, and Gemini release since has been tried on this codebase — progress accelerated markedly with [OpenClaw](https://openclaw.ai/) and Opus 4.6, and it's kept getting better since.
+
+Some of it was built while hiking the forests of La Palma — changes discussed with the models over Telegram through OpenClaw, on a mobile signal that kept cutting out. It worked surprisingly well. Fitting, for a map about quiet.
 
 0db.app is an internal project of [Miton](https://www.miton.cz/en/).
 
