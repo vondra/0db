@@ -4,4 +4,4 @@
 # Only rebuild on branch checkouts; file-level checkouts don't move
 # HEAD so the diff against $1 would be empty anyway.
 [ "$3" = "1" ] || exit 0
-exec "$(dirname "$0")/_engine-rebuild.sh" "$1" "$2"
+exec "$(dirname "$0")/_rebuild-changed.sh" "$1" "$2"

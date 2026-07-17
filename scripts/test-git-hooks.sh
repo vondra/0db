@@ -56,8 +56,8 @@ if ! git -C "$REPO" diff --quiet ORIG_HEAD HEAD -- engine; then
 fi
 
 mkdir -p "$REPO/.githooks" "$TMP/bin"
-cp "$ROOT/.githooks/post-merge" "$ROOT/.githooks/_engine-rebuild.sh" "$REPO/.githooks/"
-chmod +x "$REPO/.githooks/post-merge" "$REPO/.githooks/_engine-rebuild.sh"
+cp "$ROOT/.githooks/post-merge" "$ROOT/.githooks/_rebuild-changed.sh" "$REPO/.githooks/"
+chmod +x "$REPO/.githooks/post-merge" "$REPO/.githooks/_rebuild-changed.sh"
 git -C "$REPO" config core.hooksPath .githooks
 
 printf '#!/usr/bin/env bash\ntouch "$HOOK_MARK"\nexit 0\n' > "$TMP/bin/cargo"
@@ -134,7 +134,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/cargo"
 chmod +x "$TMP/bin/cargo" "$TMP/bin/pgrep" "$TMP/bin/ss" "$TMP/bin/nohup"
 (
   cd "$REPO"
-  PATH="$TMP/bin:$PATH" .githooks/_engine-rebuild.sh "$HOOK_PREV" "$HOOK_NEW"
+  PATH="$TMP/bin:$PATH" .githooks/_rebuild-changed.sh "$HOOK_PREV" "$HOOK_NEW"
 )
 for _ in {1..20}; do
   [ -s "$HOOK_RESTART_ARGS" ] && break
@@ -145,6 +145,46 @@ wait "$LISTENER_PID" 2>/dev/null || true
 LISTENER_PID=""
 if ! grep -q '^env HOST=127\.0\.0\.1 PORT=9123 ' "$HOOK_RESTART_ARGS"; then
   echo 'engine hook restart did not preserve the loopback bind address' >&2
+  exit 1
+fi
+
+# A frontend-only pull must schedule a web restart WITHOUT any cargo build —
+# the selective split (owner 2026-07-17): web changes rebuild the web, engine
+# changes rebuild the engine, never everything for either.
+HOOK_PREV=$(git -C "$REPO" rev-parse HEAD)
+mkdir -p "$REPO/frontend/src"
+printf 'export const marker = 1\n' > "$REPO/frontend/src/app.ts"
+git -C "$REPO" add .
+git -C "$REPO" commit -qm 'frontend change'
+HOOK_NEW=$(git -C "$REPO" rev-parse HEAD)
+( cd "$REPO/server" && exec sleep 30 ) &
+LISTENER_PID=$!
+for _ in {1..20}; do
+  [ "$(readlink "/proc/$LISTENER_PID/cwd" 2>/dev/null || true)" = "$REPO/server" ] && break
+  sleep 0.05
+done
+export FAKE_LISTENER_PID="$LISTENER_PID"
+export HOOK_RESTART_ARGS="$TMP/hook-web-restart-args"
+printf '#!/usr/bin/env bash\ntouch "$CARGO_MARK"\nexit 0\n' > "$TMP/bin/cargo"
+chmod +x "$TMP/bin/cargo"
+(
+  cd "$REPO"
+  CARGO_MARK="$TMP/web-cargo-ran" PATH="$TMP/bin:$PATH" \
+    .githooks/_rebuild-changed.sh "$HOOK_PREV" "$HOOK_NEW"
+)
+for _ in {1..20}; do
+  [ -s "$HOOK_RESTART_ARGS" ] && break
+  sleep 0.05
+done
+kill "$LISTENER_PID" 2>/dev/null || true
+wait "$LISTENER_PID" 2>/dev/null || true
+LISTENER_PID=""
+if [ -e "$TMP/web-cargo-ran" ]; then
+  echo 'frontend-only pull must not cargo-rebuild the engine' >&2
+  exit 1
+fi
+if ! grep -q '^env HOST=127\.0\.0\.1 PORT=9123 ' "$HOOK_RESTART_ARGS"; then
+  echo 'frontend-only pull did not schedule the web restart' >&2
   exit 1
 fi
 echo 'git hook regression: OK'
