@@ -152,6 +152,13 @@ export const DATASETS: Dataset[] = [
     url: null,
     priority: 10,
     measurement: 'derived',
+    // The split is COMPUTED from one total via the per-country fleet table
+    // (country-fleet.generated.ts, up to 45 % moto in SE Asia) — a loader
+    // column-scramble is structurally impossible here, so R2's cars-in-the-
+    // moto-column tripwire must not fire on honest high-moto countries.
+    // Split correctness is pinned by direct unit tests instead
+    // (enrich-roads-service-tree.test.ts splitAADT conservation/clamp).
+    highMoto: true,
   },
   {
     // Junction-bounded same-ref continuity fill: copies a MEASURED neighbour's

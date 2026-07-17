@@ -19,10 +19,10 @@ import {
   findComponents,
   flowAccumulate,
   splitAADT,
-  estimateDwellings,
   SERVICE_TREE_CAP_PER_CLASS,
-  TRIPS_PER_DWELLING,
 } from './enrich-roads-service-tree.ts'
+import { WORLD_FLEET } from './lib/country-fleet.generated.ts'
+import type { BuildingLoad } from './lib/trip-rates.ts'
 
 // ─── Mock arrow-table helper ───────────────────────────────────────────────
 //
@@ -38,16 +38,27 @@ interface RoadRow {
   road_class: number
   source_id?: number
   osm_id?: number
+  /** Arrow Bool column — the mock returns real booleans like apache-arrow does. */
+  tunnel?: boolean
+  access?: number
 }
+
+const OPTIONAL_COLUMNS = new Set(['source_id', 'osm_id', 'tunnel', 'access'])
 
 function mockRoadTable(rows: RoadRow[]): any {
   return {
     numRows: rows.length,
     getChild(name: string) {
       if (!rows.length) return undefined
-      const sample = rows[0] as Record<string, number | undefined>
-      if (!(name in sample) && name !== 'source_id' && name !== 'osm_id') return undefined
-      return { get: (i: number) => (rows[i] as Record<string, number | undefined>)[name] ?? 0 }
+      const sample = rows[0] as Record<string, number | boolean | undefined>
+      if (!(name in sample) && !OPTIONAL_COLUMNS.has(name)) return undefined
+      return {
+        get: (i: number) => {
+          const v = (rows[i] as Record<string, number | boolean | undefined>)[name]
+          if (name === 'tunnel') return v ?? false // Bool column: boolean, never 0/1
+          return v ?? 0
+        },
+      }
     },
   }
 }
@@ -83,11 +94,31 @@ test('track-stub-not-root: service road dead-ending at track is not an exit', ()
   // (no buildings in this fixture, so segFlow seeded with 0).
   const segNodeIds = graph.segNodeIds
   const lengthCol = mockRoadTable(rows).getChild('length_m')
-  const emptyDwellings = new Map<number, number>()
-  const segFlow = flowAccumulate(components[0], segNodeIds, lengthCol, emptyDwellings)
+  const emptyLoad = new Map<number, BuildingLoad>()
+  const segFlow = flowAccumulate(components[0], segNodeIds, lengthCol, emptyLoad, () => WORLD_FLEET)
   for (const flow of segFlow.values()) {
     assert.strictEqual(flow, 0, 'no buildings → no flow inflation through fake-root')
   }
+})
+
+// ─── Test 1b: tunnel/access eligibility mirrors the engine drop rule ────────
+
+test('tunnel (Bool column) and access=no are excluded; plain rows stay eligible', () => {
+  // Four cls=5 segments in a row: open, tunnel=true, access=2 (no), access=3
+  // (destination — engine keeps it, only discounted).
+  const rows: RoadRow[] = [
+    { start_lat: 0, start_lon: 0, end_lat: 0, end_lon: 0.001, length_m: 100, road_class: 5, tunnel: false, access: 0 },
+    { start_lat: 0, start_lon: 0.001, end_lat: 0, end_lon: 0.002, length_m: 100, road_class: 5, tunnel: true, access: 0 },
+    { start_lat: 0, start_lon: 0.002, end_lat: 0, end_lon: 0.003, length_m: 100, road_class: 5, tunnel: false, access: 2 },
+    { start_lat: 0, start_lon: 0.003, end_lat: 0, end_lon: 0.004, length_m: 100, road_class: 5, tunnel: false, access: 3 },
+  ]
+  const graph = buildGraph(mockRoadTable(rows))
+  // The Bool column returns `false`, not 0 — a numeric !== 0 compare here once
+  // disqualified EVERY segment (/gg diff review CRITICAL); this pins it.
+  assert.strictEqual(graph.eligible[0], 1, 'open segment eligible')
+  assert.strictEqual(graph.eligible[1], 0, 'tunnel excluded')
+  assert.strictEqual(graph.eligible[2], 0, 'access=no excluded')
+  assert.strictEqual(graph.eligible[3], 1, 'access=destination stays eligible')
 })
 
 // ─── Test 2: measured-boundary still roots ─────────────────────────────────
@@ -133,28 +164,45 @@ test('apartment-cap-clamps: cls=7 flow > 400 clamps to cap, splitAADT correct', 
   assert.strictEqual(SERVICE_TREE_CAP_PER_CLASS[7], 400,
     'cls=7 cap raised from 200 to 400 (above engine default 250)')
 
-  // Apartment block: 200 dwellings × 3.68 = 736 trips (above cap).
-  const rawTrips = 200 * TRIPS_PER_DWELLING
+  // Apartment block: 200 dwellings × 3.68 (WORLD tpd) = 736 trips (above cap).
+  const rawTrips = 200 * WORLD_FLEET.tripsPerDwelling
   assert.ok(rawTrips > 400, 'apartment-block trip count exceeds cap')
 
   const capped = Math.min(rawTrips, SERVICE_TREE_CAP_PER_CLASS[7])
   assert.strictEqual(capped, 400)
 
-  // splitAADT proportions: 1 % medium, 2 % heavy, 1 % moto, rest light.
-  const split = splitAADT(capped)
+  // splitAADT proportions with the WORLD fleet: 1 % medium, 2 % heavy,
+  // 1 % moto (bit-preserved pre-2026-07 behaviour), rest light.
+  const split = splitAADT(capped, WORLD_FLEET)
   assert.strictEqual(split.medium + split.heavy + split.moto + split.light, 400)
   assert.ok(split.light >= 380 && split.light <= 396, `light should dominate, got ${split.light}`)
 })
 
-// ─── Test 4: estimateDwellings matches expected ratios ─────────────────────
+// ─── Test 4: fleet split conservation + country mix ────────────────────────
+// (Per-building trip generation moved to lib/trip-rates.test.ts.)
 
-test('estimateDwellings: residential default scales with GFA', () => {
-  // Type=0 (unknown → residential) divides GFA by 80 m²/dwelling.
-  assert.strictEqual(estimateDwellings(0, 1, 80), 1, '80 m² × 1 floor = 1 dw')
-  assert.strictEqual(estimateDwellings(0, 2, 80), 2, '80 m² × 2 floors = 2 dw')
-  assert.strictEqual(estimateDwellings(0, 5, 200), 12, '200 m² × 5 floors = 1000 m² GFA = 12 dw')
+test('splitAADT: conservation, clamp floor, and country moto share', () => {
+  // Conservation at any total, any fleet: the four classes always re-sum to
+  // the rounded total (light is the exact remainder).
+  for (const fleet of [WORLD_FLEET, { motoTrafficShare: 0.45, tripsPerDwelling: 2.5 }]) {
+    for (const total of [0, 7, 20, 333.4, 2000]) {
+      const s = splitAADT(total, fleet)
+      const expected = Math.round(Math.max(total, 20)) // MIN_AADT floor
+      assert.strictEqual(s.light + s.medium + s.heavy + s.moto, expected)
+      assert.ok(s.light >= 0, `light must stay non-negative, got ${s.light}`)
+    }
+  }
 
-  // Garage (type=7) is fixed at 1 dwelling regardless of size.
-  assert.strictEqual(estimateDwellings(7, 1, 30), 1)
-  assert.strictEqual(estimateDwellings(7, 1, 300), 1)
+  // A Thailand-like fleet writes the moto column from the country share —
+  // the pre-2026-07 hardcoded 1 % wrote 3 moto/day on ~100 moto/hour roads.
+  const th = splitAADT(1000, { motoTrafficShare: 0.2, tripsPerDwelling: 2.5 })
+  assert.strictEqual(th.moto, 200)
+  assert.strictEqual(th.light, 1000 - 10 - 20 - 200)
+
+  // Determinism: identical inputs give identical integer outputs (idempotent
+  // re-runs byte-compare stored ints against this candidate).
+  assert.deepEqual(
+    splitAADT(777.7, WORLD_FLEET),
+    splitAADT(777.7, WORLD_FLEET),
+  )
 })

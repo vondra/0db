@@ -623,7 +623,7 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
       layer: 'roads',
       country: null,
       notes:
-        'building-driven AADT for local classes 5-9, source_id==0 rows only — AFTER national/city so census-claimed locals are never touched. osm-to-h3r4.sh tail already runs it sharded on a fresh extract; a re-run is idempotent (use --from to skip when the extract is hours old). Never run two overlapping-scope chains concurrently: processHex holds the per-hex arrow lock across its whole compute (minutes on dense hexes) and the second process would hit the 5-minute lock timeout.',
+        'building-driven AADT for local classes 5-9, gated by shouldOverwrite precedence (claims empty/self/lower-rank rows; census-claimed locals are never touched) — AFTER national/city. REQUIRES data/prepared/h3r4-admin.bin (fail-closed: national vehicle-mix + trips/dwelling resolve per hex country; osm-to-h3r4.sh builds the table BEFORE this pass). Rates/mix come from committed generated tables (lib/trip-rates.ts, lib/country-fleet.generated.ts) — NEVER regenerate country-fleet mid-chain, half the hexes would carry the old mix. osm-to-h3r4.sh tail already runs it sharded on a fresh extract; a re-run is idempotent (use --from to skip when the extract is hours old). Never run two overlapping-scope chains concurrently: processHex holds the per-hex arrow lock across its whole compute (minutes on dense hexes) and the second process would hit the 5-minute lock timeout.',
       skipReason: null,
     },
     (b) => (b ? ['--bbox', serializeBbox(b)] : []),

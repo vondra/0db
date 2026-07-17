@@ -6,9 +6,21 @@
  * traffic flow. Accumulates trips bottom-up from leaves toward roots — dead-end
  * streets get only their local buildings, collector roads accumulate sub-branches.
  *
- * Only modifies: road_class in [5..9] (local roads) AND source_id == 0.
- * Excludes motorway_link / trunk_link / primary_link (10/11/12) — those carry
- * highway flow that residential accumulation drastically undercounts.
+ * Trip generation per building lives in lib/trip-rates.ts (ITE-derived rates
+ * for all building_type 0–13); the vehicle split and the residential
+ * trips/dwelling multiplier are COUNTRY-dependent via the generated
+ * lib/country-fleet.generated.ts table — interior hexes resolve their country
+ * from h3r4-admin.bin, border hexes per segment midpoint through CGAZ
+ * polygons (lib/hex-country.ts). The admin table is REQUIRED (fail-closed):
+ * a missing table would silently stamp WORLD mix over the whole extract.
+ *
+ * Only modifies: road_class in [5..9] (local roads) whose provenance
+ * service-tree may overwrite (shouldOverwrite gate — empty, self, or lower
+ * rank; never measured census rows). Excludes motorway_link / trunk_link /
+ * primary_link (10/11/12) — those carry highway flow that residential
+ * accumulation drastically undercounts — and segments the engine's
+ * normalize_road drops as non-emitting (tunnels, access=no): stamping those
+ * would assign trips the acoustic model then throws away.
  * Sets source_id = service-tree-heuristic registry id (heuristic estimate).
  *
  * Usage:
@@ -27,6 +39,9 @@ import { iterateCountryHexes } from './lib/roads-arrow.js'
 import { nodeKey } from './lib/spatial.js'
 import { MinHeap } from './lib/min-heap.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
+import { estimateBuildingLoad, type BuildingLoad } from './lib/trip-rates.js'
+import { fleetForIso, type CountryFleet } from './lib/country-fleet.generated.js'
+import { createHexCountryResolver, type HexCountryResolver } from './lib/hex-country.js'
 
 const MY_SOURCE_ID = SOURCE_ID_SERVICE_TREE_HEURISTIC
 
@@ -70,29 +85,11 @@ const GRID_KEY_MASK = (1 << GRID_KEY_BITS) - 1
  */
 export const MAX_BUFFER_M = 50
 
-/**
- * Vehicle trips per dwelling per day (global baseline) and effective occupancy.
- *
- * A.4 recalibration — was `6` (US NHTS 2017 ~5.9 = 1.9 cars × 3.1 trips/car,
- * over-estimates the rest of the world by 20-50 %). New split:
- *   BASE × OCCUPANCY = 4.0 × 0.92 ≈ 3.68 effective trips/dwelling
- *
- * Sources:
- *   - UK NTS 2023 table NTS0205: ~3.8 per household
- *   - MiD 2017 (DE): 3.9
- *   - ORNL NHTS 2022: 5.9 (NA outlier; per-country lookup deferred to Commit 4b)
- *   - OECD HM1-1: ~8 % unoccupied → 0.92 occupancy for Western Europe
- *   - Latin America midpoint ~2.2 (Bogotá/Santiago/Lima EOD surveys),
- *     South Asia ~0.5 (Delhi IITM survey) — these are still high with 3.68
- *     and will be pulled down via per-country lookup in 4b.
- *
- * The legacy TRIPS_PER_DWELLING symbol is retained as the product of the two
- * so callers that multiply by it read "trips per dwelling" correctly without
- * having to track the base/occupancy split.
- */
-const TRIPS_PER_DWELLING_BASE = 4.0
-const OCCUPANCY = 0.92
-export const TRIPS_PER_DWELLING = TRIPS_PER_DWELLING_BASE * OCCUPANCY // 3.68
+// Residential trips/dwelling is COUNTRY-dependent (the "Commit 4b" per-country
+// lookup the old global 3.68 constant deferred): lib/country-fleet.generated.ts
+// carries vehicle_trips_per_occupied_dwelling per country with survey
+// citations; WORLD_FLEET preserves the old 3.68 (4.0 base × 0.92 occupancy)
+// exactly, so hexes without a country row behave as before.
 
 /**
  * Floor for service-tree accumulated AADT — segments below this value are
@@ -132,12 +129,13 @@ export const SERVICE_TREE_CAP_PER_CLASS: Record<number, number> = {
   9: 2000,
 }
 
-// Vehicle split matching engine defaults for residential (480/5/10/5 ≈ 96/1/2/1)
-// Inherited from normalize.rs::default_road_traffic(5); arbitrary fit to
-// CNOSSOS-EU typical values, not from a measurement source.
+// Medium/heavy shares stay world-constant (local roads carry few trucks; no
+// per-country signal exists) — inherited from normalize.rs::
+// default_road_traffic(5). The MOTO share comes from the per-country fleet
+// table: the old SPLIT_MOTO = 0.01 wrote 3 moto/day onto Thai guesthouse
+// roads carrying ~100 moto/hour (owner report 2026-07-16, Krabi).
 const SPLIT_MEDIUM = 0.01
 const SPLIT_HEAVY = 0.02
-const SPLIT_MOTO = 0.01
 
 // ---------- Geometry ----------
 //
@@ -181,65 +179,24 @@ function packGridKey(latLocal: number, lonLocal: number): number {
   return (latLocal << GRID_KEY_BITS) | (lonLocal & GRID_KEY_MASK)
 }
 
-/**
- * Estimate dwelling-equivalent count for a building. Feeds trip generation —
- * trips = dwellings × TRIPS_PER_DWELLING (3.68 effective).
- *
- * Critical invariant (A.4): the divisor in every arm is matched to the
- * GFA scale (footprint × floors). The arrow's `area_m2` column stores
- * footprint only (docs/about/index.md:277 defines GFA = footprint ×
- * floors), so a 5-storey 200 m² hotel must be treated as 1000 m² GFA,
- * not 200 m². Previous code used footprint as GFA and under-counted
- * multi-storey buildings 3-10×.
- *
- * Per-type divisors derive from ITE Trip Generation Manual 11th Ed.
- * trip rates (trips per 1000 ft² or per unit) converted to "dwellings"
- * at 3.68 trips/dwelling:
- *
- *   | type | ITE code | basis | divisor |
- *   |---|---|---|---|
- *   | 1 commercial | 820 shopping | ~37 trips/1000 ft² → 1 trip/2.7 m² | 92  (GFA/1 dw) |
- *   | 2 industrial | 110 light ind | ~5 trips/1000 ft² → 1 trip/20 m² | 686 |
- *   | 3 school | 520 elementary, staff-only | ~8 trips/1000 ft² staff-only (pupils walk/bus) | 800 |
- *   | 4 hospital | 610 | 10 trips/bed, bed ≈ 30 m² | 11 |
- *   | 5 church | 560 | 9 trips/1000 ft² peak only — fixed minimal | — |
- *   | 6 hotel | 310 | 8.17 trips/room × 0.5 field × 0.6 off-season → 2.45/room; room ≈ 25 m² | 38 |
- *   | 7 garage | single-unit | — | fixed 1 |
- *   | 8 farm | low mobility | | 200 |
- *   | 9 civic | moderate | | 300 |
- *   | 0 unknown | residential default | 1 dwelling / 80 m² GFA | 80 |
- *
- * Sources: ITE Trip Generation Manual 11th Ed. land-use pages (820 /
- * 110 / 520 / 610 / 560 / 310), VTPI TDM encyclopedia adjustment for
- * field-vs-manual scaling on hotel + retail. Annotated in
- * engine/noise-compute/SPEC.md (A.7).
- */
-export function estimateDwellings(buildingType: number, floors: number, areaMr2: number | null): number {
-  const footprint = areaMr2 ?? 100
-  const effectiveFloors = floors > 0 ? floors : 1
-  const gfa = footprint * effectiveFloors
-  switch (buildingType) {
-    case 1:  return Math.min(Math.ceil(gfa / 92),  400) // commercial — ITE 820
-    case 2:  return Math.min(Math.ceil(gfa / 686), 200) // industrial — ITE 110
-    case 3:  return Math.min(Math.ceil(gfa / 800), 100) // school — ITE 520 staff-only
-    case 4:  return Math.min(Math.ceil(gfa / 11),  300) // hospital — ITE 610, 10/bed × 30 m²/bed
-    case 5:  return 2                                    // church — ITE 560 peak only, daily minimal
-    case 6:  return Math.min(Math.ceil(gfa / 38),  400) // hotel — ITE 310 × 0.5 field × 0.6 off-season
-    case 7:  return 1                                    // garage — single car unit
-    case 8:  return Math.min(Math.ceil(gfa / 200), 50)  // farm — rural, low mobility
-    case 9:  return Math.min(Math.ceil(gfa / 300), 100) // civic / public
-    default: return Math.min(Math.max(1, Math.floor(gfa / 80)), 200) // unknown → residential 80 m²/dw
-  }
-}
+// Per-building trip generation (ITE-derived rates, all building_type 0–13)
+// lives in lib/trip-rates.ts::estimateBuildingLoad — one table shared with its
+// golden-delta tests and mirrored into SPEC.md.
 
-export function splitAADT(totalTrips: number): { light: number; medium: number; heavy: number; moto: number } {
+export function splitAADT(
+  totalTrips: number,
+  fleet: CountryFleet,
+): { light: number; medium: number; heavy: number; moto: number } {
   // Integerized at the source: the columns are Int32 and the idempotence
   // no-op compares stored ints against this candidate — a float `light`
   // (22 !== 22.08) would flag every re-run as changed (#31 round-2 Codex).
+  // Everything upstream (building loads, flow accumulation) stays float;
+  // this is the single rounding point, so per-generator rounding can never
+  // inflate a street's sum (/gg Codex).
   const total = Math.round(Math.max(totalTrips, MIN_AADT))
   const medium = Math.round(total * SPLIT_MEDIUM)
   const heavy = Math.round(total * SPLIT_HEAVY)
-  const moto = Math.round(total * SPLIT_MOTO)
+  const moto = Math.round(total * fleet.motoTrafficShare)
   const light = total - medium - heavy - moto
   return { light, medium, heavy, moto }
 }
@@ -274,6 +231,8 @@ export function buildGraph(table: any): Graph {
   const endLon = table.getChild('end_lon')!
   const roadClass = table.getChild('road_class')!
   const existingSourceId = table.getChild('source_id')
+  const tunnelCol = table.getChild('tunnel')
+  const accessCol = table.getChild('access')
 
   // Intern (lat, lon) pairs into dense ids 0..numNodes-1. The string key
   // is only used during construction; the rest of the pipeline never sees
@@ -304,12 +263,24 @@ export function buildGraph(table: any): Graph {
 
     const cls = (roadClass.get(i) as number) ?? 5
     const existingId = existingSourceId ? (existingSourceId.get(i) as number) ?? 0 : 0
+    // Mirror the engine's normalize_road drop rule (normalize/road.rs): a
+    // tunnel never emits, access=no / motor_vehicle_no (codes 2/4) emits only
+    // with a MEASURED stamp — and service-tree is a heuristic, so a trip
+    // assigned to such a segment is thrown away by the acoustic model. Keep
+    // them out of eligibility (no assignment, no stamp); they still fall into
+    // the exit branch below via `isLocalMotor`, which is right — traffic
+    // continues through a tunnel / behind a gate, so flow drains toward it.
+    // `tunnel` is an Arrow Bool column (returns boolean, NOT 0/1 — a `!== 0`
+    // compare here once disqualified every segment, /gg diff review).
+    const engineDropsEmission = tunnelCol ? Boolean(tunnelCol.get(i)) : false
+    const access = accessCol ? ((accessCol.get(i) as number) ?? 0) : 0
     // Eligibility (in routing graph): local motor cls 5–9 *except* track. A.3:
     // tracks would pick up ~24/day from flow accumulation against a real ~1/day.
     // Links 10–12 excluded too — residential accumulation undercounts highway-
     // derived ramp traffic, so they stay at source_id=0 → engine class default.
     const isLocalMotor = cls >= 5 && cls <= 9 && cls !== 8
-    if (isLocalMotor && shouldOverwrite(existingId, MY_SOURCE_ID)) {
+    if (isLocalMotor && !engineDropsEmission && access !== 2 && access !== 4
+        && shouldOverwrite(existingId, MY_SOURCE_ID)) {
       eligible[i] = 1
       nodes[sId].eligibleEdges.push(i)
       nodes[eId].eligibleEdges.push(i)
@@ -478,17 +449,18 @@ export function buildBuildingGrid(table: any): BuildingGrid {
  * counted in each — inflating flow on both sides of a primary-road split.
  * One pass over all eligible segments + bucketed building grid.
  *
- * Returns `segIdx → totalDwellings` map (sum of `estimateDwellings` for
- * every building whose closest eligible segment is `segIdx`). Buildings
- * outside MAX_BUFFER_M from every eligible segment are simply omitted from
- * the totals. Per-component consumers (`flowAccumulate`) then look up
- * dwellings by segment in O(1) instead of re-iterating every building.
+ * Returns `segIdx → {dwellings, trips}` (sums of `estimateBuildingLoad` for
+ * every building whose closest eligible segment is `segIdx` — dwellings from
+ * residential arms, direct trips from activity arms). Buildings outside
+ * MAX_BUFFER_M from every eligible segment are simply omitted from the
+ * totals. Per-component consumers (`flowAccumulate`) then look up the load
+ * by segment in O(1) instead of re-iterating every building.
  */
 export function assignBuildingsGlobally(
   eligibleSegments: number[],
   startLat: any, startLon: any, endLat: any, endLon: any,
   bg: BuildingGrid,
-): Map<number, number> {
+): Map<number, BuildingLoad> {
   const n = bg.lats.length
   const bestSegArr = new Int32Array(n).fill(-1)
 
@@ -580,25 +552,36 @@ export function assignBuildingsGlobally(
     if (bestE >= 0) bestSegArr[bi] = segIdA[bestE]
   }
 
-  // Aggregate to `seg → totalDwellings` in one O(n) walk so each component
-  // consumer can read its segments by O(1) lookup instead of iterating
-  // every building. estimateDwellings is invoked once per assigned building
-  // (was once per component-membership previously, same total).
-  const segDwellings = new Map<number, number>()
+  // Aggregate to `seg → {dwellings, trips}` in one O(n) walk so each
+  // component consumer can read its segments by O(1) lookup instead of
+  // iterating every building. estimateBuildingLoad is invoked once per
+  // assigned building (was once per component-membership previously, same
+  // total). Dwellings stay integers (associative sums → order-independent);
+  // trips are floats and round only at splitAADT.
+  const segLoad = new Map<number, BuildingLoad>()
   for (let bi = 0; bi < n; bi++) {
     const seg = bestSegArr[bi]
     if (seg < 0) continue
-    const dw = estimateDwellings(bg.types[bi], bg.floors[bi], bg.areas[bi])
-    segDwellings.set(seg, (segDwellings.get(seg) ?? 0) + dw)
+    // estimateBuildingLoad returns a fresh object per call, so the first
+    // building's load can be stored (and later mutated) directly.
+    const load = estimateBuildingLoad(bg.types[bi], bg.floors[bi], bg.areas[bi])
+    const acc = segLoad.get(seg)
+    if (acc) {
+      acc.dwellings += load.dwellings
+      acc.trips += load.trips
+    } else {
+      segLoad.set(seg, load)
+    }
   }
-  return segDwellings
+  return segLoad
 }
 
 export function flowAccumulate(
   comp: Component,
   segNodeIds: Int32Array,
   lengthCol: any,
-  segDwellingsGlobal: Map<number, number>,
+  segLoadGlobal: Map<number, BuildingLoad>,
+  fleetForSeg: (seg: number) => CountryFleet,
 ): Map<number, number> {
   // Component-local node ids: dense 0..K-1, mapped from the global ids
   // that appear in this component's segments. Per-component dense ids let
@@ -639,15 +622,15 @@ export function flowAccumulate(
   const numLocal = localToGlobal.length
 
   // --- Step 1: pull per-component local trips out of the global
-  // segment→dwelling map. Each segment is only ever in one component's
+  // segment→load map. Each segment is only ever in one component's
   // segments list, so this is a direct lookup. Multiplying integer
-  // dwellings by TRIPS_PER_DWELLING once per segment keeps segFlow
+  // dwellings by the country trips/dwelling once per segment keeps segFlow
   // independent of building-iteration order (integer addition associative,
-  // floats aren't).
+  // floats aren't); activity trips are already per-segment sums.
   const segFlow = new Map<number, number>()
   for (const seg of comp.segments) {
-    const dw = segDwellingsGlobal.get(seg) ?? 0
-    segFlow.set(seg, dw * TRIPS_PER_DWELLING)
+    const load = segLoadGlobal.get(seg)
+    segFlow.set(seg, load ? load.dwellings * fleetForSeg(seg).tripsPerDwelling + load.trips : 0)
   }
 
   // --- Step 2: Multi-source Dijkstra from root nodes ---
@@ -741,12 +724,18 @@ function parseDebugOsmId(): number | null {
   return n
 }
 
-function debugFlow(segFlow: Map<number, number>, osmIdCol: any, target: number, segDw: Map<number, number>) {
+function debugFlow(
+  segFlow: Map<number, number>,
+  osmIdCol: any,
+  target: number,
+  segLoad: Map<number, BuildingLoad>,
+  fleetForSeg: (seg: number) => CountryFleet,
+) {
   for (const [seg, trips] of segFlow) {
     if (Number(osmIdCol.get(seg)) !== target) continue
-    const localDw = segDw.get(seg) ?? 0
-    const localTrips = localDw * TRIPS_PER_DWELLING
-    console.error(`  [DEBUG seg ${seg} osm=${target}] local_dw=${localDw} local_trips=${localTrips.toFixed(1)} TOTAL_FLOW=${trips.toFixed(0)} through_flow=${(trips - localTrips).toFixed(0)}`)
+    const load = segLoad.get(seg)
+    const localTrips = load ? load.dwellings * fleetForSeg(seg).tripsPerDwelling + load.trips : 0
+    console.error(`  [DEBUG seg ${seg} osm=${target}] local_dw=${load?.dwellings ?? 0} local_activity_trips=${(load?.trips ?? 0).toFixed(1)} local_trips=${localTrips.toFixed(1)} TOTAL_FLOW=${trips.toFixed(0)} through_flow=${(trips - localTrips).toFixed(0)}`)
   }
 }
 
@@ -759,7 +748,10 @@ function debugFlow(segFlow: Map<number, number>, osmIdCol: any, target: number, 
  *  `qm_batch_bboxes` popup pruning), had no lock against a concurrent writer,
  *  and re-serialized the file even when no row changed. Returning the input
  *  table on any no-op path keeps the hex byte-identical. */
-async function processHex(hexId: string): Promise<{ enriched: number; totalResidential: number } | null> {
+async function processHex(
+  hexId: string,
+  countryResolver: HexCountryResolver,
+): Promise<{ enriched: number; totalResidential: number } | null> {
   const roadsPath = resolve(H3R4_DIR, hexId, 'roads.arrow')
   const buildingsPath = resolve(H3R4_DIR, hexId, 'buildings.arrow')
   if (!existsSync(roadsPath) || !existsSync(buildingsPath)) return null
@@ -801,23 +793,45 @@ async function processHex(hexId: string): Promise<{ enriched: number; totalResid
       const segs = comp.segments
       for (let i = 0; i < segs.length; i++) eligibleSegments[writeIdx++] = segs[i]
     }
-    const globalBestSeg = assignBuildingsGlobally(
+    const segLoadGlobal = assignBuildingsGlobally(
       eligibleSegments, startLat, startLon, endLat, endLon, bg,
     )
 
-    // Flow accumulation per component, reading the precomputed seg→dwellings
+    // Country context: interior hexes use one fleet row for every segment
+    // (the overwhelmingly common case — zero per-segment cost); border hexes
+    // resolve each segment's midpoint through the CGAZ candidate polygons,
+    // memoized per segment (each segment is consulted by both the flow seed
+    // and splitAADT).
+    const hexFleet = fleetForIso(countryResolver.hexIso(hexId))
+    let fleetForSeg: (seg: number) => CountryFleet
+    if (!countryResolver.isBorderHex(hexId)) {
+      fleetForSeg = () => hexFleet
+    } else {
+      const segFleetCache = new Map<number, CountryFleet>()
+      fleetForSeg = (seg) => {
+        let fleet = segFleetCache.get(seg)
+        if (fleet === undefined) {
+          const midLat = (((startLat.get(seg) as number) ?? 0) + ((endLat.get(seg) as number) ?? 0)) / 2
+          const midLon = (((startLon.get(seg) as number) ?? 0) + ((endLon.get(seg) as number) ?? 0)) / 2
+          fleet = fleetForIso(countryResolver.isoAt(hexId, midLat, midLon))
+          segFleetCache.set(seg, fleet)
+        }
+        return fleet
+      }
+    }
+    // Flow accumulation per component, reading the precomputed seg→load
     // map by direct lookup (no per-component re-scan of every building).
     const segAADT = new Map<number, { light: number; medium: number; heavy: number; moto: number }>()
     const roadClassCol = roadTable.getChild('road_class')
     const debugTarget = parseDebugOsmId()
     const osmIdCol = debugTarget !== null ? roadTable.getChild('osm_id') : undefined
     for (const comp of components) {
-      const segFlow = flowAccumulate(comp, graph.segNodeIds, lengthCol, globalBestSeg)
-      if (osmIdCol) debugFlow(segFlow, osmIdCol, debugTarget!, globalBestSeg)
+      const segFlow = flowAccumulate(comp, graph.segNodeIds, lengthCol, segLoadGlobal, fleetForSeg)
+      if (osmIdCol) debugFlow(segFlow, osmIdCol, debugTarget!, segLoadGlobal, fleetForSeg)
       for (const [seg, trips] of segFlow) {
         const cls = (roadClassCol?.get(seg) as number) ?? 5
         const capped = Math.min(trips, SERVICE_TREE_CAP_PER_CLASS[cls] ?? Infinity)
-        segAADT.set(seg, splitAADT(capped))
+        segAADT.set(seg, splitAADT(capped, fleetForSeg(seg)))
       }
     }
 
@@ -874,6 +888,29 @@ async function processHex(hexId: string): Promise<{ enriched: number; totalResid
         taperCol[seg] = 0
       }
       enriched++
+    }
+
+    // Convergence sweep: rows WE stamped on an earlier run that are no longer
+    // eligible (tunnel/access exclusion added 2026-07, or a class/provenance
+    // change since) must be RETRACTED to empty, or a re-run would preserve
+    // stamps a fresh extract could never produce (Dobříš alone carried 722
+    // such tunnel/access rows, /gg diff review). Second run sees source_id 0
+    // → skips → byte-identical, so idempotence is preserved.
+    for (let i = 0; i < n; i++) {
+      if (sourceId[i] !== MY_SOURCE_ID || graph.eligible[i] === 1) continue
+      valueChanged = true
+      aadtLight[i] = 0
+      aadtMedium[i] = 0
+      aadtHeavy[i] = 0
+      aadtMoto[i] = 0
+      sourceId[i] = 0
+      if (existingTaper && ((existingTaper.get(i) as number) ?? 0) !== 0) {
+        if (!taperCol) {
+          taperCol = new Uint8Array(n)
+          for (let k = 0; k < n; k++) taperCol[k] = (existingTaper.get(k) as number) ?? 0
+        }
+        taperCol[i] = 0
+      }
     }
 
     // Idempotent re-run: buildGraph pre-gates shouldOverwrite, so every
@@ -948,6 +985,23 @@ async function main() {
   if (process.env.SHARD) rangeSuffix = ` | shard ${process.env.SHARD} → [${START_INDEX}, ${END_INDEX})`
   else if (START_INDEX > 0) rangeSuffix = ` (resume from #${START_INDEX})`
 
+  // FAIL-CLOSED: national fleet mix + trips/dwelling depend on the hex→country
+  // table; running without it would silently stamp WORLD values over the whole
+  // extract (/gg Codex CRITICAL). osm-to-h3r4.sh builds it before this pass.
+  const countryResolver = createHexCountryResolver(resolve(H3R4_DIR, '..', '..', 'h3r4-admin.bin'))
+
+  // Staleness guard: a WORLD-scope run against an admin table from an older
+  // extract would leave every hex the old table doesn't know on WORLD fleet.
+  // Coastal hexes legitimately miss centroids (their centre is over water),
+  // so the gate is a coverage share, and scoped runs (--bbox/--prefix over
+  // coastal regions like Krabi) only warn.
+  const covered = hexDirs.reduce((acc, h) => acc + (countryResolver.hexIso(h) !== undefined ? 1 : 0), 0)
+  if (hexDirs.length > 0 && covered / hexDirs.length < 0.5) {
+    const msg = `h3r4-admin.bin covers only ${covered}/${hexDirs.length} hexes in scope — stale or foreign table?`
+    if (!BBOX && !PREFIX) throw new Error(`${msg} Rebuild it: cd scripts && DATA_YEAR=${YEAR} npm run build:h3-admin`)
+    console.error(`WARNING: ${msg}`)
+  }
+
   console.log(`Service-tree AADT enrichment (v2: flow accumulation)`)
   console.log(`  H3R4 dir: ${H3R4_DIR}`)
   console.log(`  Hexes: ${hexDirs.length} total${PREFIX ? ` (prefix: ${PREFIX})` : ''}${BBOX ? ` (bbox: ${BBOX.join(',')})` : ''}${rangeSuffix}`)
@@ -961,7 +1015,7 @@ async function main() {
 
   for (let hi = START_INDEX; hi < END_INDEX; hi++) {
     const hexId = hexDirs[hi]
-    const result = await processHex(hexId)
+    const result = await processHex(hexId, countryResolver)
 
     if (result) {
       hexesEnriched++

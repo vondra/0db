@@ -950,64 +950,91 @@ direct standard quotes. Each row is either a cited external source or an
 explicitly-pragmatic heuristic with a one-line rationale. Target audience
 is the next reviewer who asks "where did this number come from?".
 
-### Trip generation per dwelling
+### Trip generation per dwelling (per-country, 2026-07)
 
-The service-tree enricher (`pipeline/enrich-roads-service-tree.ts`)
-converts building occupants to road trips via
-`TRIPS_PER_DWELLING = BASE × OCCUPANCY = 4.0 × 0.92 ≈ 3.68`.
+The service-tree enricher multiplies residential DWELLINGS by
+`vehicle_trips_per_occupied_dwelling` from the per-country fleet table
+(`scripts/country-fleet.json` → generated
+`pipeline/lib/country-fleet.generated.ts`). The WORLD terminal of the
+cascade is **3.68** = 4.0 base × 0.92 occupancy (OECD HM1-1 vacancy) —
+bit-identical to the pre-2026-07 global `TRIPS_PER_DWELLING`, so countries
+without a table row behave exactly as before.
 
-| Region | Trips / dwelling / day | Source |
-|---|---|---|
-| US | 9.43 (single-family home, ITE 210) | ITE Trip Generation Manual 11th Ed, 2021 |
-| UK | 5.8 (all vehicle trips / household) | NTS 2023 table NTS0205 (DfT) |
-| Germany | 3.8 (Pkw-Fahrten / HH) | MiD 2017 (BMVI / infas) |
-| France | 3.6 (déplacements en voiture / ménage) | EMP 2019 (SDES) |
-| South Korea | 2.9 (car trips / household) | KTDB 2022 national travel survey |
-| Japan | 2.5 (vehicle trips / household) | PT survey 2015 (MLIT) |
+Quantity definition (one per row, /gg 2026-07 review — the earlier table
+mixed person-trips, car availability and vehicle-trips): rows are entered
+as **motor-vehicle trips per OCCUPIED dwelling (household) per day, both
+directions, annual average, all vehicle classes including motorcycles** —
+the surveys' native unit — and the generator multiplies by 0.92 stock
+occupancy (OECD HM1-1) because the trip model counts GFA-estimated STOCK
+dwellings; the compiled `tripsPerDwelling` is per stock dwelling. Per-row
+source/year/confidence live in the JSON; curated examples: US 3.5 (FHWA
+NHTS 2022 Summary of Travel Trends tab. 2-8 — the often-quoted 5.9 is the
+2017 vintage), DE 3.9 (MiD 2017), JP 2.5 / KR 2.9 (PT/KTDB surveys),
+continent bands for the rest (EU 3.7, Asia 2.5, Africa 1.5, SA 2.2).
+Clamp [0.8, 6.0]. Every Natural Earth country carries a row (continent
+band when no better source), so the country → continent → WORLD cascade
+is materialised at generation time.
 
-**Chosen base = 4.0.** Explicitly a world-mean skewed toward EU values
-because (a) the engine's class defaults are EU-calibrated, (b) NA rates are
-a known outlier, (c) East Asia underestimates are partly offset by higher
-building density. Occupancy multiplier 0.92 folds in the ~8 % of dwellings
-that are vacant at any time (OECD Affordable Housing indicator **HM1-1**
-"Dwelling stock and vacancy rates", 2022 release).
+### Daily trip generation per building (ITE rates, 2026-07)
 
-Pragmatic — *not* re-derived per continent. Continent-level trip-rate
-tuning is an out-of-scope follow-up (see plan v5 §"Out of scope").
+`pipeline/lib/trip-rates.ts::estimateBuildingLoad` maps building geometry
+to `{dwellings, trips}` — residential arms return dwellings (× country
+trips/dwelling above), every other arm returns **vehicle trips/day
+directly** with an EXPLICIT ×0.3 ITE manual→field damping (ITE measures
+US suburban auto-oriented sites; VTPI's TDM encyclopedia documents 2–4×
+overestimation elsewhere). Basis: GFA = footprint × floors, except
+`footprint` for ground-floor-activity classes typed from interior POIs.
 
-### Dwelling inference from floor area (ITE codes)
-
-`estimateDwellings` turns GFA = footprint × floors into an equivalent
-dwelling count for each non-residential type, using ITE Trip Generation
-Manual 11th Ed land-use codes and their published daily-trip rates.
-
-| Class | ITE code | Name | GFA / dwelling | Cap |
+| Class | ITE code | Basis | Rate | Min–Cap (trips) |
 |---|---|---|---|---|
-| 1 commercial | 820 | Shopping Center | 92 m² | 400 |
-| 2 industrial | 110 | General Light Industrial | 686 m² | 200 |
-| 3 school | 520 | Elementary School (staff-only) | 800 m² | 100 |
-| 4 hospital | 610 | Hospital | 11 m² | 300 |
-| 5 church | 560 | Church (peak only) | fixed 2 | — |
-| 6 hotel | 310 | Hotel × 0.5 occupancy × 0.6 car mode | 38 m² | 400 |
-| 7 garage | — | fixed 1 | — | — |
-| 8 farm | — | Outbuildings + occasional delivery | 200 m² | 50 |
-| 9 civic | — | Government / cultural | 300 m² | 100 |
-| _ residential | 210 | Single-Family Detached | 80 m² | 200 |
+| 0 apartments | 221 | GFA → 1 dw / 80 m², cap 200 dw | ×tpd | — |
+| 11 HOUSE | 210 | GFA → 1 dw / 120 m², cap 4 dw | ×tpd | — |
+| 1 commercial/office | 820+710 ×0.3 | GFA | 12 / 100 m² | 5–3 000 |
+| 2 industrial bldg | 110 ×0.3 | GFA | 1.6 / 100 m² | 4–1 500 |
+| 3 school (staff-only) | 520 | GFA | 0.46 / 100 m² | 4–368 |
+| 4 hospital | 610 | GFA | 33.5 / 100 m² | 20–1 104 |
+| 5 church | 560 peak-only | fixed | 7.36 | — |
+| 6 hotel | 310 ×0.5 occ ×0.6 car | GFA | 9.7 / 100 m² | 8–1 472 |
+| 7 garage (+parking) | — | fixed | 3.68 | — |
+| 8 farm | — | GFA | 1.84 / 100 m² | 2–184 |
+| 9 civic | — | GFA | 1.23 / 100 m² | 2–368 |
+| 10 SILENT | — | — | **0** | — |
+| 12 FOOD_RETAIL | 820+850 ×0.3 | footprint | 30 / 100 m² | 20–20 000 |
+| 13 HOSPITALITY | 932 ×0.3 | footprint | 30 / 100 m² | 15–2 000 |
 
-The per-class divisor is chosen so that `divisor × 3.68` (base trip rate)
-reproduces ITE's published peak-hour or daily trips per 1000 ft² (converted
-to m²). Caps are pragmatic — a 50 000 m² mall would otherwise synthesise
-thousands of dwellings and saturate the service-tree cap per-class.
+Intentional 2026-07 golden deltas (pinned by
+`pipeline/lib/trip-rates.test.ts`): classes 10–13 previously fell into the
+residential default — SILENT sheds/roofs (~18 M footprints) generated
+phantom trips, and hospitality/food-retail (the Thailand Krabi owner
+report: guesthouse+restaurant roads at 3 moto/day) were billed as houses.
+Commercial was raised 4→12 trips/100 m² — the old divisor sat ~10× below
+its own cited ITE 820 rate. Classes 3/4/6/8/9 are numerically restated
+(continuous rate instead of per-building `ceil`, same asymptote and caps).
 
-Non-obvious coefficients:
-- **Hotel × 0.5 × 0.6**: half the rooms occupied at any time, of which
-  60 % arrive by car (industry-average ratio, see Promotur 2018 "Tourist
-  transport modal split, Canary Islands", used as the only publicly-
-  calibrated number for a resort destination).
-- **School staff-only**: school buses and parents dropping off don't
-  contribute AADT on the school's access road — only the ~20 staff
-  teachers do. ITE 520 gives daily trip rate per student, which is much
-  higher than the steady load the access road sees.
+### Local-road vehicle mix (per-country fleet table, 2026-07)
+
+`splitAADT` writes medium 1 % / heavy 2 % (world-constant — no per-country
+signal for local roads) and **moto from `moto_traffic_share`** in the same
+fleet table; light is the exact remainder. WORLD moto = 1 % (pre-2026-07
+bit-preserved).
+
+`moto_traffic_share` is a TRAFFIC share, not ownership: registered-fleet
+shares (WHO GSRRS 2023 country profiles, "powered 2-/3-wheelers") are only
+a prior, mapped by a continent-calibrated usage factor (Asia 0.40 — TH
+ownership 0.517 vs DOH-calibrated traffic 0.20; Europe/NA/Oceania 0.15 —
+CZ ownership 0.20 vs ŘSD-measured ~0.03; SA 0.20; Africa never derives —
+registration is blind to informal boda-boda/okada fleets) and clamped to
+[0.01, 0.45]. National-enricher-calibrated overrides win (TH 0.20, IN
+0.30, NG 0.30, EG 0.18, KE 0.20), plus curated rows where the Asia band
+would mislead: car-dominant East Asia (JP 0.02 MLIT, KR 0.03, CN 0.05 —
+urban moto bans, e-bikes are not cat-4), scooter-dominant TW 0.35 (MOTC,
+no WHO profile), and no-breakdown SE Asia (KH/LA/MM 0.30, VN/TH neighbour
+analogy). Interior hexes resolve their country
+via `h3r4-admin.bin` (built BEFORE the road passes — fail-closed);
+border hexes per segment midpoint through CGAZ polygons
+(`pipeline/lib/hex-country.ts`). The audit gate's R2 moto-scramble rule
+keeps its strict global form; the service-tree dataset declares
+`highMoto` because its split is computed, not column-mapped.
 
 ### Cascade defaults (city → country → continent → world)
 
