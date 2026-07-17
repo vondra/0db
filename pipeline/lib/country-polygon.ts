@@ -28,7 +28,7 @@
  * This is an actual-polygon gate — NOT `h3r4-admin.bin`, which is H3 res-4
  * (~22 km, centroid-based) and far too coarse to separate roads at a border.
  */
-import { readFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { pointInRing, pointToSegmentDist } from './spatial.js'
@@ -280,6 +280,55 @@ export function hasCountryPolygon(iso2: string): boolean {
   const iso3 = ISO2_TO_ISO3[iso2.toUpperCase()]
   if (!iso3) return false
   return cgazFeatures().some(x => x.properties.shapeGroup === iso3)
+}
+
+// ── Per-polygon country bboxes (cache-backed) ────────────────────────────────
+
+const BBOX_CACHE = resolve(CACHE_DIR, 'country-polygon-bboxes-cgaz-v6-s0005.json')
+
+export type CountryBbox = readonly [number, number, number, number] // [s, w, n, e]
+
+let bboxCache: Record<string, CountryBbox[]> | null = null
+
+/**
+ * ISO2 → bbox per CGAZ polygon PART (outer rings only). Per-part, never a
+ * union: FR/GB/NO territories would span half the globe as one box. Consumers:
+ * chain/scope.ts (country → hex enumeration) and lib/hex-country.ts
+ * (microstate candidate discovery). Served from the committed-format cache
+ * file; derived once from the CGAZ geojson when the cache is cold (tmp+rename
+ * so an interrupted write can't leave a truncated cache).
+ */
+export function allCountryPolygonBboxes(): Record<string, CountryBbox[]> {
+  if (bboxCache) return bboxCache
+  if (existsSync(BBOX_CACHE)) {
+    return (bboxCache = JSON.parse(readFileSync(BBOX_CACHE, 'utf8')) as Record<string, CountryBbox[]>)
+  }
+  const iso3to2 = new Map(Object.entries(ISO2_TO_ISO3).map(([a2, a3]) => [a3, a2]))
+  const out: Record<string, CountryBbox[]> = {}
+  for (const f of cgazFeatures()) {
+    const iso2 = iso3to2.get(String(f.properties.shapeGroup ?? ''))
+    if (!iso2) continue // numeric disputed-area codes — no ISO identity
+    const g = f.geometry
+    const rings: Ring[] =
+      g.type === 'Polygon'
+        ? [(g.coordinates as Ring[])[0]]
+        : g.type === 'MultiPolygon'
+          ? (g.coordinates as Ring[][]).map(poly => poly[0])
+          : []
+    out[iso2] = rings.map(ring => {
+      let s = Infinity, w = Infinity, n = -Infinity, e = -Infinity
+      for (const [lon, lat] of ring) {
+        if (lat < s) s = lat
+        if (lat > n) n = lat
+        if (lon < w) w = lon
+        if (lon > e) e = lon
+      }
+      return [s, w, n, e] as const
+    })
+  }
+  writeFileSync(`${BBOX_CACHE}.tmp`, JSON.stringify(out))
+  renameSync(`${BBOX_CACHE}.tmp`, BBOX_CACHE)
+  return (bboxCache = out)
 }
 
 // Global land-mask over ALL CGAZ features (incl. disputed / non-ISO), memoised +

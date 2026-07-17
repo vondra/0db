@@ -96,6 +96,22 @@ log "Cleaning up scratch (node cache + spill) ..."
 rm -f "$NODE_CACHE"
 rm -rf "$SPILL_DIR"
 
+# Admin table BEFORE the road passes: service-tree resolves each hex's country
+# for the national vehicle-mix/trip-rate tables, and readAdminIso() on a missing
+# file silently returns an empty map — running it after (the pre-2026-07 order)
+# made every fresh extract fall back to WORLD defaults unnoticed (/gg Codex
+# CRITICAL, trip-generators plan). Needs only the hex dir listing + Natural
+# Earth polygons, so right after extraction is the earliest correct slot.
+log ""
+log "Building H3R4 → admin lookup table (data/prepared/h3r4-admin.bin) ..."
+(
+    cd "$SCRIPT_DIR"
+    if [ ! -d node_modules ]; then
+        npm ci 2>&1 | while IFS= read -r line; do log "    $line"; done
+    fi
+    DATA_YEAR="$YEAR" npm run build:h3-admin
+) 2>&1 | while IFS= read -r line; do log "  $line"; done
+
 if [ "$RUN_SERVICE_TREE" = "1" ]; then
     if [ ! -d "$PROJECT_DIR/pipeline/node_modules" ]; then
         log ""
@@ -138,6 +154,17 @@ if [ "$RUN_SERVICE_TREE" = "1" ]; then
         exit 1
     fi
 
+    # Warm the CGAZ polygon caches ONCE before fan-out: border hexes make the
+    # shards lazily derive the geoBoundaries GeoJSON + bbox cache, and a fresh
+    # host would run that download/convert 96× concurrently against the same
+    # .tmp files (/gg diff review). Single-process here, cache hits in shards.
+    log ""
+    log "Preparing CGAZ country-polygon caches ..."
+    (
+        cd "$PROJECT_DIR/pipeline"
+        node_modules/.bin/tsx prepare-country-polygon-caches.ts
+    ) 2>&1 | while IFS= read -r line; do log "  $line"; done
+
     log ""
     log "Running service-tree road enrichment ($SVC_SHARDS shards x $SVC_JOBS jobs) ..."
     rm -rf "$SVC_LOG_DIR"; mkdir -p "$SVC_LOG_DIR"
@@ -160,7 +187,11 @@ if [ "$RUN_SERVICE_TREE" = "1" ]; then
     set -e
     log "  service-tree: $svc_enr segments enriched, $svc_done/$SVC_SHARDS shards completed"
     if [ "$svc_done" -ne "$SVC_SHARDS" ]; then
-        log "  WARNING: $((SVC_SHARDS - svc_done)) service-tree shard(s) did NOT complete (died/OOM/missing-binary) — see $SVC_LOG_DIR"
+        # FATAL like built-up above: a died shard leaves its hex slice with
+        # wrong traffic (fresh extract: zeroes) and the extract would march on
+        # to stamping unaware (/gg diff review). Re-running is idempotent.
+        log "  FATAL: $((SVC_SHARDS - svc_done)) service-tree shard(s) did NOT complete (died/OOM/missing-binary) — see $SVC_LOG_DIR"
+        exit 1
     fi
 
     if [ "$STAMP_ROAD_METADATA" = "1" ]; then
@@ -177,16 +208,6 @@ if [ "$RUN_SERVICE_TREE" = "1" ]; then
             2>&1 | while IFS= read -r line; do log "  $line"; done
     fi
 fi
-
-log ""
-log "Building H3R4 → admin lookup table (data/prepared/h3r4-admin.bin) ..."
-(
-    cd "$SCRIPT_DIR"
-    if [ ! -d node_modules ]; then
-        npm ci 2>&1 | while IFS= read -r line; do log "    $line"; done
-    fi
-    DATA_YEAR="$YEAR" npm run build:h3-admin
-) 2>&1 | while IFS= read -r line; do log "  $line"; done
 
 log ""
 log "=== OSM extraction DONE ==="

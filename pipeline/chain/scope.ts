@@ -6,8 +6,6 @@
 //! truth, no hand-maintained bbox table) and memoised to a JSON cache so a
 //! dry-run doesn't pay the 95 MB GeoJSON parse twice.
 
-import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs'
-import { resolve } from 'node:path'
 
 /** [minLat, minLon, maxLat, maxLon] — the S,W,N,E order every pipeline --bbox flag takes. */
 export type Bbox = readonly [number, number, number, number]
@@ -29,14 +27,6 @@ export interface ResolvedScope {
   canonical: string
 }
 
-const REPO_ROOT = resolve(import.meta.dirname, '..', '..')
-const CGAZ_GEOJSON = resolve(REPO_ROOT, 'scripts', 'cache', 'geoBoundariesCGAZ_ADM0_s0005.geojson')
-// Per-POLYGON bboxes (one country = many outer rings: mainland + islands +
-// overseas territories). Scope-intersection tests MUST use the per-polygon
-// list — the union bbox of FR/GB/NO spans half the globe via territories and
-// would drag them into every bbox scope on Earth.
-const BBOX_CACHE = resolve(REPO_ROOT, 'scripts', 'cache', 'country-polygon-bboxes-cgaz-v6-s0005.json')
-
 /**
  * Pad applied around a country's CGAZ bbox before hex enumeration. WHY 0.4°:
  * `iterateCountryHexes` selects hexes by CENTROID-in-bbox, and an H3 r4 hex is
@@ -46,59 +36,18 @@ const BBOX_CACHE = resolve(REPO_ROOT, 'scripts', 'cache', 'country-polygon-bboxe
  */
 export const COUNTRY_BBOX_PAD_DEG = 0.4
 
-// ISO2 → ISO3 for CGAZ `shapeGroup` lookup — the gate module's own table, so
-// scope and gates can never disagree about a country's identity.
-import { ISO2_TO_ISO3 } from '../lib/country-polygon.js'
-
-type CgazFeature = { properties: { shapeGroup?: string }; geometry: { type: string; coordinates: unknown } }
-
-/** Per-polygon bboxes of every CGAZ country, from cache or a one-time parse. */
-function loadCountryPolygonBboxes(): Record<string, Bbox[]> {
-  if (existsSync(BBOX_CACHE)) {
-    return JSON.parse(readFileSync(BBOX_CACHE, 'utf8')) as Record<string, Bbox[]>
-  }
-  if (!existsSync(CGAZ_GEOJSON)) {
-    throw new Error(
-      `country bbox derivation needs ${CGAZ_GEOJSON} — it is derived on demand by lib/country-polygon.ts ` +
-        `(any enricher that gates by country creates it); run one of those once, or check scripts/cache/.`,
-    )
-  }
-  const features = (JSON.parse(readFileSync(CGAZ_GEOJSON, 'utf8')) as { features: CgazFeature[] }).features
-  const out: Record<string, Bbox[]> = {}
-  const iso3to2 = new Map(Object.entries(ISO2_TO_ISO3).map(([a2, a3]) => [a3, a2]))
-  const ringBbox = (ring: Array<[number, number]>): Bbox => {
-    let s = Infinity, w = Infinity, n = -Infinity, e = -Infinity
-    for (const [lon, lat] of ring) {
-      if (lat < s) s = lat
-      if (lat > n) n = lat
-      if (lon < w) w = lon
-      if (lon > e) e = lon
-    }
-    return [s, w, n, e]
-  }
-  for (const f of features) {
-    const iso2 = iso3to2.get(String(f.properties.shapeGroup ?? ''))
-    if (!iso2) continue // numeric disputed-area codes — no ISO identity, no enricher
-    const boxes: Bbox[] = []
-    const g = f.geometry
-    if (g.type === 'Polygon') boxes.push(ringBbox((g.coordinates as Array<Array<[number, number]>>)[0]))
-    else if (g.type === 'MultiPolygon') for (const poly of g.coordinates as Array<Array<Array<[number, number]>>>) boxes.push(ringBbox(poly[0]))
-    out[iso2] = boxes
-  }
-  // tmp + rename: an interrupted write must not leave a truncated cache that
-  // existsSync would accept on the next run (same idiom as country-polygon.ts).
-  writeFileSync(`${BBOX_CACHE}.tmp`, JSON.stringify(out))
-  renameSync(`${BBOX_CACHE}.tmp`, BBOX_CACHE)
-  return out
-}
-
-let bboxes: Record<string, Bbox[]> | null = null
+// Per-POLYGON bboxes (one country = many outer rings: mainland + islands +
+// overseas territories) come from lib/country-polygon.ts — the gate module's
+// own geometry, so scope and gates can never disagree about a country's
+// identity or extent. Scope-intersection tests MUST use the per-polygon list —
+// the union bbox of FR/GB/NO spans half the globe via territories and would
+// drag them into every bbox scope on Earth.
+import { allCountryPolygonBboxes } from '../lib/country-polygon.js'
 
 /** Per-polygon CGAZ bboxes for an ISO2 country. Throws on unknown codes — fail
  *  loud, a silent world fallback would quietly widen a scope to the planet. */
 export function countryPolygonBboxes(iso2: string): Bbox[] {
-  bboxes ??= loadCountryPolygonBboxes()
-  const b = bboxes[iso2.toUpperCase()]
+  const b = allCountryPolygonBboxes()[iso2.toUpperCase()]
   if (!b || b.length === 0) throw new Error(`no CGAZ bbox for country '${iso2}' — unknown ISO2 or a dependent territory absent from CGAZ ADM0`)
   return b
 }
