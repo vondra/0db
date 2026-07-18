@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# cpu_rates.py — shared per-thread CPU-rate table for the perfqmap workload model.
+# cpu_rates.py — shared per-thread CPU-rate table for the Vast offer-scoring workload model.
 # Data lives in cpu-rates.json (PassMark CPU Mark / threads); this module loads it and resolves a CPU
-# name to a rate. Imported by perfqmap.py. Real on-box check-heatmap seconds are cached separately in
+# name to a rate. Imported by world/vast-offers.py. Real on-box check-heatmap seconds are cached separately in
 # box-timings.json (see box_timing.py), NOT folded into these priors. See cpu-rates.json "_doc".
 import json
 import os

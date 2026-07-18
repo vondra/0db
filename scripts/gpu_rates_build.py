@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # gpu_rates_build.py — one-off recipe: scripts/gpu-benchmarks.csv (PassMark G3DMark, owner-supplied
-# 2026-07-04) -> scripts/gpu-rates.json (the perfqmap GPU physics-baseline table, mirrors cpu-rates.json).
-# NOT imported at runtime — perfqmap reads gpu-rates.json via gpu_rates.py only.
+# 2026-07-04) -> scripts/gpu-rates.json (the Vast offer scorer's GPU physics baseline, mirrors cpu-rates.json).
+# NOT imported at runtime — vast-offers.py reads gpu-rates.json via gpu_rates.py only.
 #
 # Match-direction gotcha (found in /gg review, both models independently): cpu_rates.find_entry()'s
 # contract is `stored_match_key ⊂ offered_name`. For CPUs this works because vast's cpu_name is the
@@ -81,12 +81,12 @@ def build():
         entries.append(entry)
 
     return {
-        "_doc": "Per-card GPU strength for perfqmap's physics-baseline GPU term (g3dmark / REF_GPU_G3DMARK). "
+        "_doc": "Per-card GPU strength for the Vast offer scorer's physics-baseline GPU term (g3dmark / REF_GPU_G3DMARK). "
                 "Matching (gpu_rates.find_entry, shared with cpu_rates.py): a match key is a substring of the "
                 "offered gpu_name -- so CSV names are normalized DOWN to vast's terser vocabulary at build time "
                 "(see gpu_rates_build.py's normalize()), the OPPOSITE direction from cpu-rates.json. This is a "
                 "PRIOR only: box_timing.model_ratios() (real box-timings.json measurements, per GPU model) "
-                "supersedes it via perfqmap's confidence-weighted blend as real samples accumulate.",
+                "supersedes it via vast-offers.py's confidence-weighted blend as real samples accumulate.",
         "_g3dmark_source": "PassMark G3D Mark (gpu_benchmarks.csv, owner-supplied 2026-07-04, cpubenchmark.net export)",
         "rates": entries,
     }

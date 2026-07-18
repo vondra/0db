@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# gpu_rates.py — shared per-card GPU-strength table for the perfqmap workload model.
+# gpu_rates.py — shared per-card GPU-strength table for the Vast offer-scoring workload model.
 # Data lives in gpu-rates.json (PassMark G3D Mark, built by gpu_rates_build.py from the owner-supplied
-# gpu-benchmarks.csv); this module loads it and resolves a GPU name to a rate. Imported by perfqmap.py.
+# gpu-benchmarks.csv); this module loads it and resolves a GPU name to a rate. Imported by world/vast-offers.py.
 # Real per-model box-timings.json measurements (see box_timing.model_ratios()) are the workload-specific
-# complement — NOT folded in here; perfqmap blends the two by confidence. See gpu-rates.json "_doc".
+# complement — NOT folded in here; vast-offers blends the two by confidence. See gpu-rates.json "_doc".
 import json
 import os
 import re
@@ -56,14 +56,14 @@ def gpu_rate(name, table=None):
     disproportionately either a brand-new card missing from the CSV snapshot or a pre-Volta card the CUDA
     kernel can't run on at all -- zero is the safe failure mode for both, and matches GPU_SM's prior
     behaviour (no regression). A card with real box_timing.model_ratios() data still scores correctly
-    even at (0, False) here -- perfqmap's blend formula falls through to the empirical ratio alone."""
+    even at (0, False) here -- vast-offers' blend formula falls through to the empirical ratio alone."""
     table = table or load_table()
     e = _entry(name, table)
     return (e["g3dmark"], True) if e else (0, False)
 
 
 def model_key(name, table=None):
-    """Canonical 'match' key for a GPU name, or None if unrecognized. Shared by perfqmap's physics lookup
+    """Canonical 'match' key for a GPU name, or None if unrecognized. Shared by vast-offers' physics lookup
     AND box_timing.model_ratios()'s bucketing, so an owned box's fuller nvidia-smi name ('NVIDIA GeForce
     RTX 4060 Ti') and vast's terser one ('RTX 4060 Ti') land in the same calibration bucket."""
     table = table or load_table()
@@ -124,7 +124,7 @@ if __name__ == "__main__":
            laptop_key is not None and laptop_key != model_key("RTX 5090", t))
 
         # A100 PCIE must NOT accidentally resolve via a false substring match onto the CSV's lone
-        # A100-SXM4 row (the plan deliberately leaves A100 PCIE's physics leg unknown — see perfqmap.py's
+        # A100-SXM4 row (the plan deliberately leaves A100 PCIE's physics leg unknown — see vast-offers.py's
         # empirical-only fallback branch, which is what actually carries this card).
         ok("A100 PCIE does not false-match the A100 SXM4 CSV row",
            model_key("A100 PCIE", t) != model_key("A100-SXM4-40GB", t))
