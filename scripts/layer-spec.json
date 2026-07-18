@@ -101,14 +101,16 @@
         "aircraft-cruise"
       ],
       "seed_arrow": "cruise.arrow",
-      "rasters": "dem"
+      "rasters": "dem",
+      "on_demand": true
     },
     "airborne": {
       "layers": [
         "aircraft-airborne"
       ],
       "seed_arrow": "airborne.arrow",
-      "rasters": "dem"
+      "rasters": "dem",
+      "on_demand": true
     }
   },
   "worker_types": {
