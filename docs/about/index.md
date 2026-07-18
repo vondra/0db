@@ -65,7 +65,7 @@ The current map is the **2026 dataset** — one worldwide computation generation
 
 - **OpenStreetMap** — planet extract from May 2026 (roads, railways, buildings, industrial sites, airports)
 - **Airline traffic** — [ADSBExchange](https://www.adsbexchange.com/) samples: the 1st of every month, July 2025 – June 2026 (12 days)
-- **General aviation & helicopters** — [adsb.lol](https://adsb.lol/) community feeds: every day of 2025, 1 January through 31 December (365 days — occasional flights need a full year to be weighted honestly; our archive already spans 2024–2026 for future datasets)
+- **General aviation & helicopters** — [adsb.lol](https://adsb.lol/) community feeds: every day from 2 June 2025 through 1 June 2026 (364 days — one day was never published upstream). A full year of days, aligned with the airline window, because occasional flights need a whole year to be weighted honestly; our archive already spans 2024–2026 for future datasets
 - **Traffic counts & registries** — the latest published national data at build time (per-country details on the country pages)
 
 The plan is one frozen dataset per year: when the 2027 map arrives, you'll be able to compare — did your street get quieter?
