@@ -91,8 +91,8 @@ pub(crate) struct Args {
     #[arg(long, default_value_t = false)]
     pub(crate) write_empty: bool,
     /// STREAM mode: read output R4 cell IDs (one hex/line) from stdin and build each in a warm
-    /// double buffer: parallel CPU candidate prep for the next cell while one VRAM-bounded CUDA
-    /// stream builds the current cell. Prints `done <r4hex> <written> <skipped> <ms> ...` (or
+    /// pipeline: parallel CPU candidate prep ahead of two VRAM-gated CUDA streams (large cells
+    /// automatically run alone). Prints `done <r4hex> <written> <skipped> <ms> ...` (or
     /// `fail <r4hex> <err>`) per cell as it finishes. The persistent worker the cluster
     /// orchestrator feeds. Requires --seed-regions (resolves n_days + class_weights once).
     #[arg(long, default_value_t = false)]

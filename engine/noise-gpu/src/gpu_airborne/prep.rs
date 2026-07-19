@@ -16,7 +16,7 @@ use tile_painter::grid::tile_bbox;
 use tile_painter::r4_source_cache::R4SourceCache;
 
 /// One grid-aligned tile-block, CPU-prepped: its NW corner `(bx,by)`, the owned tiles in it,
-/// and the DEM-only `TileBatch`. `gpu_build_cell` rebuilds the `&FusedTileZ13` refs from
+/// and the DEM-only `TileBatch`. `gpu_build_cell_one_pass` rebuilds the `&FusedTileZ13` refs from
 /// `batch.tiles` by the same `((ty-by)*bn + (tx-bx))` index the serial path used.
 pub(crate) struct PrepBlock {
     pub(crate) bx: u32,
@@ -149,10 +149,10 @@ pub(crate) fn build_dem_blocks(
 /// through `cache`, `region_candidates` + pack the region SoA, then build the DEM-only tile
 /// batches for `tiles` (the cell's owned tiles — `region_tiles(r4,z)` on the stream/production
 /// path, a bbox/single-tile subset on the dev paths). The packed SoA is uploaded later by
-/// `gpu_build_cell` via `upload_region`. `region` is dropped right after packing — only the SoA
+/// `gpu_build_cell_one_pass` via `upload_region`. `region` is dropped right after packing — only the SoA
 /// crosses the channel, so host RAM per buffered cell is the SoA + its tile blocks, not the
 /// prepared-segment Vec too. (Takes no `&Args`: the output dir + write-empty flag this stage's
-/// serial predecessor referenced live in `gpu_build_cell` now, the only stage that writes tiles.)
+/// serial predecessor referenced live in the GPU build stage, now the only stage that writes tiles.)
 pub(crate) fn prep_cell(
     rasters: &RealRasters,
     cache: &mut R4SourceCache,

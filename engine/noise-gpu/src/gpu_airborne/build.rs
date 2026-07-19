@@ -25,7 +25,7 @@ use crate::Args;
 /// per-tile energy is `merge_from`-summed (additive), reconstructing the one-pass result on ANY card.
 /// `NOISE_GPU_AIRBORNE_CHUNK` stays ONLY as a test override (force many small passes to parity-test
 /// the accumulation), not a tuning knob.
-fn max_candidates_per_chunk(vram_total_bytes: u64) -> usize {
+pub(crate) fn max_candidates_per_chunk(vram_total_bytes: u64) -> usize {
     if let Some(n) = std::env::var("NOISE_GPU_AIRBORNE_CHUNK")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -42,7 +42,7 @@ fn max_candidates_per_chunk(vram_total_bytes: u64) -> usize {
 /// Collapse one tile's accumulator to Lden bytes and write it — or, if the (re)build shrank the tile
 /// to silence, unlink any stale prior tile so an incremental recombine/pyramid can't read phantom
 /// energy (mirrors the CPU builder). Returns whether a tile was written. One source of truth for the
-/// write + stale-unlink, shared by the one-pass (`gpu_build_cell`) and M2 chunked builds.
+/// write + stale-unlink, shared by the one-pass (`gpu_build_cell_one_pass`) and M2 chunked builds.
 fn write_tile_accumulator(
     args: &Args,
     n_days: u16,
@@ -138,7 +138,7 @@ fn write_running(
 /// zeroed accumulator is an exact f32 copy, so output is byte-identical to a direct write. Empty /
 /// silent regions are NOT skipped early: the single (possibly empty) fold zeros + stale-unlinks every
 /// tile (a bare `continue` would leave ghost tiles in an incremental rebuild).
-fn gpu_build_cell(
+pub(crate) fn gpu_build_cell_one_pass(
     gpu: &AirborneGpu,
     args: &Args,
     n_days: u16,
@@ -163,8 +163,8 @@ fn gpu_build_cell(
 /// noise. Bounds host RAM to the source Arcs + one chunk's candidates, and VRAM to one chunk's SoA +
 /// a block's scatter scratch — so even the 11 GB 2080ti / a 16 GB card builds Phoenix. Routed to by
 /// BOTH triggers: `prep_cell`'s host-budget guard (`too_big`) and a one-pass VRAM limit
-/// (`is_cell_unbuildable` from `gpu_build_cell`).
-fn gpu_build_cell_chunked(
+/// (`is_cell_unbuildable` from `gpu_build_cell_one_pass`).
+pub(crate) fn gpu_build_cell_chunked(
     gpu: &AirborneGpu,
     cache: &mut R4SourceCache,
     rasters: &RealRasters,
@@ -212,13 +212,13 @@ fn gpu_build_cell_chunked(
 }
 
 /// Build every owned tile of one region on the GPU (the BATCH `par_chunks` path): CPU-prep then
-/// GPU-build, SERIAL — `prep_cell` + `gpu_build_cell` share the exact code the A2 stream pipeline
+/// GPU-build, SERIAL — `prep_cell` + `gpu_build_cell_one_pass` share the exact code the stream pipeline
 /// splits across two threads, so this path is unchanged in behaviour. `tiles` is the cell's owned
 /// tile list (`region_tiles` for `--regions-file`, a bbox/single-tile subset for the dev modes),
 /// forwarded to `prep_cell` so the dev paths keep their explicit subset; the build-wide
 /// `!any_source_arrow` guard in `main` already returns Ok(()) before any GPU work for a
 /// no-airborne chunk.
-/// Route a prepped cell to its build path: one-pass (`gpu_build_cell`) for the common case, else the
+/// Route a prepped cell to its build path: one-pass (`gpu_build_cell_one_pass`) for the common case, else the
 /// M2 chunked build (`gpu_build_cell_chunked`) when the cell is too big for ONE host pass (`too_big`,
 /// set by `prep_cell`'s host-budget guard) OR hits a one-pass VRAM limit (`is_cell_unbuildable` — a
 /// card too small for the SoA; `upload_region` OOMs before any tile is written → clean rebuild). The
@@ -240,7 +240,7 @@ pub(crate) fn build_prepared_cell(
     if p.too_big {
         return gpu_build_cell_chunked(gpu, cache, rasters, args, n_days, z, bn, r4, tiles);
     }
-    match gpu_build_cell(gpu, args, n_days, p) {
+    match gpu_build_cell_one_pass(gpu, args, n_days, p) {
         Err(e) if is_cell_unbuildable(&e) => {
             gpu_build_cell_chunked(gpu, cache, rasters, args, n_days, z, bn, r4, tiles)
         }
