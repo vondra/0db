@@ -34,3 +34,29 @@ test('SPA fallback serves only real frontend routes', async (t) => {
   }
   assert.equal((await app.inject({ method: 'POST', url: '/about' })).statusCode, 404)
 })
+
+test('404 is friendly HTML for browsers, plain JSON for API and non-HTML clients', async (t) => {
+  const frontend = await mkdtemp(join(tmpdir(), '0db-web-'))
+  await writeFile(join(frontend, 'index.html'), '<!doctype html><title>quiet-map-test</title>')
+  t.after(async () => rm(frontend, { recursive: true, force: true }))
+
+  const app = Fastify()
+  await registerWeb(app, frontend)
+  t.after(async () => app.close())
+
+  const browser = await app.inject({ url: '/no-such-page', headers: { accept: 'text/html' } })
+  assert.equal(browser.statusCode, 404)
+  assert.match(browser.headers['content-type'] ?? '', /text\/html/)
+  assert.match(browser.body, /Too quiet/) // the friendly page's headline
+  assert.match(browser.body, /\/favicon\.svg/) // logo referenced, never embedded
+  assert.doesNotMatch(browser.body, /quiet-map-test/)
+
+  for (const response of [
+    await app.inject({ url: '/api/missing', headers: { accept: 'text/html' } }),
+    await app.inject('/no-such-page'), // curl-like: no Accept header
+  ]) {
+    assert.equal(response.statusCode, 404)
+    assert.match(response.headers['content-type'] ?? '', /application\/json/)
+    assert.deepEqual(response.json(), { error: 'Not found' })
+  }
+})
