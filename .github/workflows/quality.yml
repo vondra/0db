@@ -11,8 +11,7 @@ on:
       - frontend/**
       - pipeline/**
       - server/**
-      - scripts/check-fast.sh
-      - scripts/test-*.sh
+      - scripts/**
       - start.sh
   push:
     branches: [main]
@@ -25,8 +24,7 @@ on:
       - frontend/**
       - pipeline/**
       - server/**
-      - scripts/check-fast.sh
-      - scripts/test-*.sh
+      - scripts/**
       - start.sh
 
 permissions:
