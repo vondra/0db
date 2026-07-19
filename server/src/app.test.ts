@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildApp } from './app.js'
+import { buildApp, clusterRoutesEnabled } from './app.js'
 
 const ready = async () => ({ ready: true as const, failed: [], errors: {} })
 
@@ -34,6 +34,13 @@ test('cluster dashboard: absent unless enabled, else under the /a/ admin prefix 
   // is 404'd by requireLocalPeer — the raw port can't leak box IPs / costs.
   const direct = await withCluster.inject({ method: 'GET', url: '/a/api/cluster/status', remoteAddress: '203.0.113.20' })
   assert.equal(direct.statusCode, 404)
+})
+
+test('cluster dashboard defaults on for a named dev checkout and explicit configuration wins', () => {
+  assert.equal(clusterRoutesEnabled({ TILE_ENV: 'dev2' }), true)
+  assert.equal(clusterRoutesEnabled({ TILE_ENV: 'prod' }), false)
+  assert.equal(clusterRoutesEnabled({ TILE_ENV: 'dev3', ENABLE_CLUSTER_ROUTES: '0' }), false)
+  assert.equal(clusterRoutesEnabled({ TILE_ENV: 'prod', ENABLE_CLUSTER_ROUTES: '1' }), true)
 })
 
 test('noindex is an explicit deployment property', async (t) => {

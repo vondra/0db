@@ -32,6 +32,12 @@ export type BuildAppOptions = {
   preloadRuntimeData?: boolean
 }
 
+/** Dev checkouts expose the loopback-gated dashboard by default; an explicit flag still wins. */
+export function clusterRoutesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.ENABLE_CLUSTER_ROUTES != null) return env.ENABLE_CLUSTER_ROUTES === '1'
+  return /^dev[123]$/.test(env.TILE_ENV ?? '')
+}
+
 export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({
     logger: opts.logger ?? false,
@@ -95,7 +101,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await healthRoutes(app, readiness)
 
   const enableClusterRoutes = opts.enableClusterRoutes
-    ?? process.env.ENABLE_CLUSTER_ROUTES === '1'
+    ?? clusterRoutesEnabled()
   if (enableClusterRoutes) {
     // Dynamic import means a public-only process never even loads code that
     // reads SSH inventory, worker logs, costs, or cluster telemetry.
