@@ -100,8 +100,9 @@ impl RealRasters {
         }
     }
 
-    /// Pre-load all tiles covering a bounding box. Call before rayon par_iter.
-    /// After this, all sample() calls within bbox are lock-free (cache hits).
+    /// Pre-load all tiles covering a bounding box. Call before rayon par_iter to avoid file opens;
+    /// hot sequential walks still use each [`TileStore`](crate::tile::TileStore)'s cached sampler
+    /// to avoid per-sample cache-slot locking and LRU updates.
     pub fn preload_bbox(&self, lat_min: f64, lat_max: f64, lon_min: f64, lon_max: f64) {
         self.dem.preload_bbox(lat_min, lat_max, lon_min, lon_max);
         self.building

@@ -247,7 +247,13 @@ impl FusedTileZ13 {
         let mut rx_alt_m = vec![0.0_f32; n];
         let rx_refl_db = vec![0.0_f32; n];
 
-        // Same pixel-lattice indexing as build_receiver_altitude_only above —
+        // A z12 output tile usually lies inside one 1° DEM tile. Retain that mmap across the
+        // whole receiver walk: `sample()` would reacquire the TileStore slot mutex, clone its Arc,
+        // and update two LRU atomics for every one of the 262,144 pixels. `sample_cached()` runs
+        // the identical configured bilinear interpolation while doing that lookup only when the
+        // walk actually crosses a 1° boundary.
+        let mut cached_dem_key = (i32::MIN, i32::MIN);
+        let mut cached_dem_tile = None;
         // `py`/`px` drive both the lat/lon reads and `idx = py*TILE_PX + px`.
         #[allow(clippy::needless_range_loop)]
         for py in 0..TILE_PX {
@@ -257,7 +263,11 @@ impl FusedTileZ13 {
             for px in 0..TILE_PX {
                 let lon = rx_lon[px];
                 let idx = row_base + px;
-                let elev = rasters.dem.sample(lat, lon) as f32;
+                let elev =
+                    rasters
+                        .dem
+                        .sample_cached(lat, lon, &mut cached_dem_key, &mut cached_dem_tile)
+                        as f32;
                 inner_elev_m[idx] = elev;
                 rx_alt_m[idx] = elev + DEFAULT_RECEIVER_HEIGHT as f32;
             }
@@ -539,6 +549,37 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    struct TempPreparedRaster {
+        root: PathBuf,
+    }
+
+    impl Drop for TempPreparedRaster {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn receiver_dem_fixture() -> TempPreparedRaster {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "quiet-map-receiver-dem-{}-{unique}",
+            std::process::id()
+        ));
+        let dem = root.join("dem/copernicus");
+        std::fs::create_dir_all(&dem).expect("create DEM fixture directory");
+        for (name, values) in [
+            ("N49E015.hgt", [100_i16, 120, 140, 160]),
+            ("N49E016.hgt", [200_i16, 220, 240, 260]),
+        ] {
+            let bytes: Vec<u8> = values.into_iter().flat_map(i16::to_be_bytes).collect();
+            std::fs::write(dem.join(name), bytes).expect("write DEM fixture");
+        }
+        TempPreparedRaster { root }
+    }
+
     fn data_root() -> Option<PathBuf> {
         // Cargo runs tests from the crate root, so resolve relative to it.
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -618,6 +659,45 @@ mod tests {
         assert!(
             mid > 100.0 && mid < 500.0,
             "Praha tile centre alt = {mid} m"
+        );
+    }
+
+    #[test]
+    fn receiver_altitude_cache_matches_direct_sampling_across_dem_boundary() {
+        let fixture = receiver_dem_fixture();
+        let rasters = RealRasters::new(&fixture.root);
+        // z12/x2230 straddles 16°E, exercising the cached sampler's key transition between
+        // N49E015 and N49E016 rather than validating only the common one-source-tile case.
+        let cache_touches_before = rasters.dem.cache_touch_count();
+        let cached_started = std::time::Instant::now();
+        let tile = FusedTileZ13::build_receiver_altitude_only(12, 2230, 1403, &rasters);
+        let cached_elapsed = cached_started.elapsed();
+        let cache_touches = rasters.dem.cache_touch_count() - cache_touches_before;
+        assert!(
+            cache_touches <= (2 * TILE_PX) as u64,
+            "receiver walk performed {cache_touches} cache-slot lookups; expected at most two \
+             1° DEM transitions per row"
+        );
+        let direct_started = std::time::Instant::now();
+        for py in 0..TILE_PX {
+            for px in 0..TILE_PX {
+                let idx = py * TILE_PX + px;
+                let direct = rasters.dem.sample(tile.rx_lat[py], tile.rx_lon[px]) as f32;
+                assert_eq!(
+                    tile.inner_elev_m[idx].to_bits(),
+                    direct.to_bits(),
+                    "DEM mismatch at receiver ({py},{px})"
+                );
+                assert_eq!(
+                    tile.rx_alt_m[idx].to_bits(),
+                    (direct + DEFAULT_RECEIVER_HEIGHT as f32).to_bits(),
+                    "receiver altitude mismatch at ({py},{px})"
+                );
+            }
+        }
+        eprintln!(
+            "receiver altitude: cached builder {cached_elapsed:?}, direct parity walk {:?}",
+            direct_started.elapsed()
         );
     }
 

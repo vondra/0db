@@ -180,8 +180,9 @@ impl TileStore {
         }
     }
 
-    /// Pre-load all tiles covering a lat/lon bounding box.
-    /// After this call, all sample() calls within the bbox hit cache — no lock contention.
+    /// Pre-load all tiles covering a lat/lon bounding box, avoiding file opens in the hot path.
+    /// A plain [`TileStore::sample`] still locks its cache slot and updates LRU state per call;
+    /// sequential raster walks should retain an mmap through [`TileStore::sample_cached`].
     pub fn preload_bbox(&self, lat_min: f64, lat_max: f64, lon_min: f64, lon_max: f64) {
         let lat0 = lat_min.floor() as i32;
         let lat1 = lat_max.floor() as i32;
@@ -419,6 +420,11 @@ impl TileStore {
             Some(t) => self.sample_tile(t, frac_lat, frac_lon),
             None => self.default_value,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cache_touch_count(&self) -> u64 {
+        self.use_counter.load(Ordering::Relaxed)
     }
 
     /// Variant of [`sample_cached`] with an explicit [`Interp`] override.

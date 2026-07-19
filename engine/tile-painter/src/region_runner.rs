@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use h3o::{CellIndex, LatLng, Resolution};
@@ -201,6 +201,27 @@ pub fn split_stream_line(line: &str) -> (&str, Option<Vec<&str>>) {
         .and_then(|tok| tok.strip_prefix("layers="))
         .map(|csv| csv.split(',').filter(|s| !s.is_empty()).collect());
     (hex, layers)
+}
+
+/// Machine-readable lifecycle event shared by every warm CPU/GPU stream runner. Call this
+/// immediately before the engine starts a cell; the existing `done`/`fail` event closes it.
+/// The wall-clock timestamp lets an external supervisor preserve the start across samples,
+/// while its own monotonic clock remains authoritative for watchdog decisions.
+pub fn stream_cell_started_line(r4: u64, started_unix_ms: u128) -> String {
+    format!("start {r4:x} {started_unix_ms}")
+}
+
+/// Publish a cell start before potentially hours-long work, flushing because stdout is a pipe.
+pub fn announce_stream_cell_started(r4: u64) {
+    use std::io::Write;
+
+    let started_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{}", stream_cell_started_line(r4, started_unix_ms));
+    let _ = out.flush();
 }
 
 /// Narrow a `--stream` worker's CONFIGURED layers down to the subset a per-cell `layers=`
@@ -475,6 +496,14 @@ mod tests {
         let (hex, layers) = split_stream_line("841e309ffffffff garbage");
         assert_eq!(hex, "841e309ffffffff");
         assert!(layers.is_none());
+    }
+
+    #[test]
+    fn stream_cell_started_event_has_one_stable_machine_readable_shape() {
+        assert_eq!(
+            stream_cell_started_line(0x841e309ffffffff, 1_721_234_567_890),
+            "start 841e309ffffffff 1721234567890"
+        );
     }
 
     #[derive(Clone, Copy, PartialEq, Debug)]

@@ -3,6 +3,17 @@
 Fixtures and per-server baselines consumed by the `/check-heatmap`,
 `/check-popup` and `/check-world` skills.
 
+Candidate-box CPU oracle tiles are deliberately not stored here or in git. They are content-addressed
+under `/0db/data/runtime/benchmarks/box-qualification/v1/` by
+`scripts/qualification-reference.mjs`; the identity covers exact oracle code, fixed-cell data manifest,
+year, workload, compiler, native CPU target, and thread count. `scripts/benchmark-box.sh` syncs that
+immutable reference to each candidate and saves only the resulting four-lane timing + qualification
+identity in runtime `box-timings.json`.
+
+`box-qualification-profile.json` is the machine-readable schema/workload identity for that profile.
+Version 2 clocks the four lanes sequentially; only exact current-schema records may drive measured offer
+scoring or cross-model ratios.
+
 ## Files
 
 - **`popup-points.json`** — 115 curated points across Dobříš R4

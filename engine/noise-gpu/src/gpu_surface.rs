@@ -31,7 +31,8 @@ use rayon::prelude::*;
 use tile_painter::accumulator::TileAccumulator;
 use tile_painter::grid::tile_range;
 use tile_painter::region_runner::{
-    read_r4_file, region_tiles, split_configured_layers, split_stream_line, tile_centre_r4,
+    announce_stream_cell_started, read_r4_file, region_tiles, split_configured_layers,
+    split_stream_line, tile_centre_r4,
 };
 use tile_painter::source_line::LineRow;
 use tile_painter::source_loader_barrier::BarrierData;
@@ -447,9 +448,9 @@ fn process_region(
 /// (thread_local RASTERS — zero cross-thread sync; see the decision record above: the shared
 /// store was tried and reverted, cache contention gutted crop throughput) reused across the
 /// whole cell stream, so each thread's mmap-LRU stays warm across regions.
-/// Reads output R4 cell IDs (one hex/line) from stdin, builds each cell's owned tiles, and prints
-/// `done <r4hex> <written> <skipped> <ms>` (or `fail <r4hex> <err>`) as it finishes — the SAME
-/// line protocol as gpu-airborne --stream, so the box agent drives either worker identically.
+/// Reads output R4 cell IDs (one hex/line), prints `start <r4hex> <unix_ms>` before work, builds
+/// each cell's owned tiles, then prints `done <r4hex> <written> <skipped> <ms>` (or `fail
+/// <r4hex> <err>`) — the same protocol as gpu-airborne, so the agent drives either identically.
 fn run_stream(
     z: u8,
     layers: &[LineLayer],
@@ -560,6 +561,7 @@ fn run_stream(
                         }
                     };
                     let Some((r4, req_layers)) = cell else { break };
+                    announce_stream_cell_started(r4);
                     let t = Instant::now();
                     let tiles = region_tiles(r4, z);
                     // Narrow this process's configured layers down to the requested (stale)

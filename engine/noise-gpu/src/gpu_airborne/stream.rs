@@ -7,10 +7,12 @@ use noise_gpu::airborne::{is_cell_unbuildable, AirborneGpu};
 use raster_reader::fused_tile_z13::default_batch_size;
 use raster_reader::RealRasters;
 use tile_painter::r4_source_cache::R4SourceCache;
-use tile_painter::region_runner::region_tiles;
+use tile_painter::region_runner::{announce_stream_cell_started, region_tiles};
 use tile_painter::worklist::{any_source_arrow, resolve_n_days};
 
-use crate::build::{gpu_build_cell_chunked, gpu_build_cell_one_pass, max_candidates_per_chunk};
+use crate::build::{
+    gpu_build_cell_chunked, gpu_build_cell_one_pass, max_candidates_per_chunk, BuildTimings,
+};
 use crate::prep::{prep_cell, PreparedCell};
 use crate::{ring_union, Args, SEL};
 
@@ -88,13 +90,30 @@ impl Drop for VramLease<'_> {
 #[derive(Default)]
 struct PerfWindow {
     cells: u128,
+    detailed_cells: u128,
     candidates_ms: u128,
     pack_ms: u128,
     dem_ms: u128,
     queue_ms: u128,
     vram_wait_ms: u128,
     build_ms: u128,
+    accumulator_init_ms: u128,
+    upload_ms: u128,
+    scatter_ms: u128,
+    seal_ms: u128,
+    candidates: u128,
+    blocks: u128,
+    tiles: u128,
     chunked: u128,
+}
+
+#[derive(Clone, Copy)]
+struct DetailedCellPerf {
+    prep: crate::prep::PrepTimings,
+    build: BuildTimings,
+    candidates: usize,
+    blocks: usize,
+    tiles: usize,
 }
 
 impl PerfWindow {
@@ -102,39 +121,121 @@ impl PerfWindow {
 
     fn add(
         &mut self,
-        timings: crate::prep::PrepTimings,
         queue_ms: u128,
         vram_wait_ms: u128,
         build_ms: u128,
+        detail: Option<DetailedCellPerf>,
         chunked: bool,
     ) -> Option<String> {
         self.cells += 1;
-        self.candidates_ms += timings.candidates.as_millis();
-        self.pack_ms += timings.pack.as_millis();
-        self.dem_ms += timings.dem.as_millis();
         self.queue_ms += queue_ms;
         self.vram_wait_ms += vram_wait_ms;
         self.build_ms += build_ms;
+        if let Some(detail) = detail {
+            self.detailed_cells += 1;
+            self.candidates_ms += detail.prep.candidates.as_millis();
+            self.pack_ms += detail.prep.pack.as_millis();
+            self.dem_ms += detail.prep.dem.as_millis();
+            self.accumulator_init_ms += detail.build.accumulator_init.as_millis();
+            self.upload_ms += detail.build.upload.as_millis();
+            self.scatter_ms += detail.build.scatter.as_millis();
+            self.seal_ms += detail.build.seal.as_millis();
+            self.candidates += detail.candidates as u128;
+            self.blocks += detail.blocks as u128;
+            self.tiles += detail.tiles as u128;
+        }
         self.chunked += u128::from(chunked);
         if self.cells < Self::CELLS {
             return None;
         }
         let n = Self::CELLS;
-        let line = format!(
-            "{} cells avg: candidates={}ms pack={}ms dem={}ms queue={}ms vram-wait={}ms \
-             build={}ms chunked={}",
+        let mut line = format!(
+            "{} cells avg: queue={}ms vram-wait={}ms build={}ms",
             Self::CELLS,
-            self.candidates_ms / n,
-            self.pack_ms / n,
-            self.dem_ms / n,
             self.queue_ms / n,
             self.vram_wait_ms / n,
             self.build_ms / n,
-            self.chunked,
         );
+        if self.detailed_cells > 0 {
+            let measured = self.detailed_cells;
+            line.push_str(&format!(
+                "; one-pass={measured} avg[candidates={}ms pack={}ms dem={}ms accum={}ms \
+                 upload={}ms scatter={}ms seal={}ms shape={}cand/{}blocks/{}tiles]",
+                self.candidates_ms / measured,
+                self.pack_ms / measured,
+                self.dem_ms / measured,
+                self.accumulator_init_ms / measured,
+                self.upload_ms / measured,
+                self.scatter_ms / measured,
+                self.seal_ms / measured,
+                self.candidates / measured,
+                self.blocks / measured,
+                self.tiles / measured,
+            ));
+        } else {
+            line.push_str("; one-pass=0 detailed=unmeasured");
+        }
+        if self.chunked > 0 {
+            line.push_str(&format!(
+                "; shape=chunked/unmeasured cells={}",
+                self.chunked
+            ));
+        }
         *self = Self::default();
         Some(line)
     }
+}
+
+fn cell_perf_suffix(
+    queue_ms: u128,
+    vram_wait_ms: u128,
+    build_ms: u128,
+    detail: Option<DetailedCellPerf>,
+) -> String {
+    let Some(detail) = detail else {
+        return format!(
+            "prep_ms=unmeasured queue_ms={queue_ms} \
+             vram_wait_ms={vram_wait_ms} build_ms={build_ms} \
+             build_phases=unmeasured shape=chunked/unmeasured"
+        );
+    };
+    let prep_ms = detail.prep.total().as_millis();
+    format!(
+        "prep_ms={prep_ms} candidates_ms={} pack_ms={} dem_ms={} \
+         queue_ms={queue_ms} vram_wait_ms={vram_wait_ms} build_ms={build_ms} accum_ms={} \
+         upload_ms={} scatter_ms={} seal_ms={} shape=one-pass:{}cand/{}blocks/{}tiles",
+        detail.prep.candidates.as_millis(),
+        detail.prep.pack.as_millis(),
+        detail.prep.dem.as_millis(),
+        detail.build.accumulator_init.as_millis(),
+        detail.build.upload.as_millis(),
+        detail.build.scatter.as_millis(),
+        detail.build.seal.as_millis(),
+        detail.candidates,
+        detail.blocks,
+        detail.tiles,
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CellFailureDisposition {
+    ReportCellFailure,
+    FatalProcess,
+}
+
+fn cell_failure_disposition(
+    preparation_failed: bool,
+    error: &anyhow::Error,
+) -> CellFailureDisposition {
+    if preparation_failed || is_cell_unbuildable(error) {
+        CellFailureDisposition::ReportCellFailure
+    } else {
+        CellFailureDisposition::FatalProcess
+    }
+}
+
+fn stream_cell_failure_line(r4: u64, error: &anyhow::Error) -> String {
+    format!("fail {r4:x} {error}")
 }
 
 type PreparedReceiver =
@@ -173,7 +274,19 @@ fn run_gpu_worker(
         // lock and computes, so the peer can receive the next prepared cell concurrently.
         let message = receiver.lock().unwrap().recv();
         let Ok((r4, prepared)) = message else { break };
-        let prep_meta = prepared.as_ref().ok().map(|p| (p.t_start, p.timings));
+        let preparation_failed = prepared.is_err();
+        let prep_meta = prepared.as_ref().ok().map(|p| {
+            (
+                p.t_start,
+                p.timings,
+                p.nreg,
+                p.blocks.len(),
+                p.blocks
+                    .iter()
+                    .map(|block| block.btiles.len())
+                    .sum::<usize>(),
+            )
+        });
         let initial_permits = prepared
             .as_ref()
             .ok()
@@ -248,36 +361,43 @@ fn run_gpu_worker(
         drop(lease);
 
         let line = match built {
-            Ok((written, skipped)) => {
-                let (t_start, timings) = prep_meta.expect("successful prep metadata");
+            Ok(built) => {
+                let (t_start, timings, candidates, blocks, tiles) =
+                    prep_meta.expect("successful prep metadata");
                 let total_ms = t_start.elapsed().as_millis();
                 let prep_ms = timings.total().as_millis();
                 let queue_ms = total_ms
                     .saturating_sub(prep_ms)
                     .saturating_sub(vram_wait_ms)
                     .saturating_sub(build_ms);
+                let detail = (!used_chunked).then_some(DetailedCellPerf {
+                    prep: timings,
+                    build: built.timings,
+                    candidates,
+                    blocks,
+                    tiles,
+                });
                 if let Some(summary) =
-                    perf.add(timings, queue_ms, vram_wait_ms, build_ms, used_chunked)
+                    perf.add(queue_ms, vram_wait_ms, build_ms, detail, used_chunked)
                 {
                     eprintln!("[perf gpu={worker_id}] {summary}");
                 }
+                let perf_suffix = cell_perf_suffix(queue_ms, vram_wait_ms, build_ms, detail);
                 format!(
-                    "done {r4:x} {written} {skipped} {total_ms} prep_ms={prep_ms} \
-                     candidates_ms={} pack_ms={} dem_ms={} queue_ms={queue_ms} \
-                     vram_wait_ms={vram_wait_ms} build_ms={build_ms} chunked={}",
-                    timings.candidates.as_millis(),
-                    timings.pack.as_millis(),
-                    timings.dem.as_millis(),
-                    u8::from(used_chunked),
+                    "done {r4:x} {} {} {total_ms} {perf_suffix}",
+                    built.written, built.skipped,
                 )
             }
-            // Exclusive chunking exhausted the card too: this cell is unbuildable here, but the
-            // CUDA context remains usable and later cells continue.
-            Err(e) if is_cell_unbuildable(&e) => format!("fail {r4:x} {e}"),
-            Err(e) => {
-                eprintln!("airborne: FATAL unrecoverable error on {r4:x}: {e:?}");
-                std::process::exit(1);
-            }
+            // Preparation/input failures and a cell too large even for exclusive chunking are
+            // deterministic per-cell failures: report them so Hub attempts/parking can converge.
+            // Only a build-stage error that may have poisoned the CUDA context kills the process.
+            Err(e) => match cell_failure_disposition(preparation_failed, &e) {
+                CellFailureDisposition::ReportCellFailure => stream_cell_failure_line(r4, &e),
+                CellFailureDisposition::FatalProcess => {
+                    eprintln!("airborne: FATAL unrecoverable error on {r4:x}: {e:?}");
+                    std::process::exit(1);
+                }
+            },
         };
         let mut out = std::io::stdout().lock();
         let _ = writeln!(out, "{line}");
@@ -294,8 +414,9 @@ fn run_gpu_worker(
 /// fleet-safe maximum: small cells overlap launch/sync gaps; a weighted VRAM gate makes a large or
 /// chunked cell acquire both permits and run alone, preserving the old one-cell OOM safety. The
 /// stages are joined by a depth-1 channel, so prep cannot build an unbounded host-RAM backlog.
-/// Result lines print as cells finish; stdout locking prevents interleave and the orchestrator may
-/// ACK out of order. n_days + class_weights resolve once from `--seed-regions`.
+/// A `start <r4hex> <unix_ms>` line opens each cell before CPU prep; its result closes it after
+/// GPU work. Stdout locking prevents interleave and the orchestrator may ACK out of order.
+/// n_days + class_weights resolve once from `--seed-regions`.
 ///
 /// Termination / deadlock-freedom: the reader (main scope thread) parses stdin onto the Morton
 /// work queue; on EOF it sets the closed flag + `notify_all`. The prep thread drains contiguous
@@ -384,11 +505,15 @@ pub(crate) fn run_stream(args: &Args, z: u8) -> Result<()> {
                     break; // → return → drop gpu_tx → channel closes → GPU thread's `for` ends
                 }
                 for r4 in batch {
+                    // A GPU-airborne cell is active from CPU preparation through its final GPU
+                    // result; the depth-1 handoff is part of that one bounded pipeline lifetime.
+                    announce_stream_cell_started(r4);
                     let tiles = region_tiles(r4, z);
                     let prepared = prep_cell(&rasters, &mut cache, z, bn, r4, &tiles);
-                    // A prep error (CPU/IO/source-load) is forwarded so the GPU thread reports it
-                    // through the SAME A1 classification (non-OOM → exit(1)). If the GPU thread has
-                    // already gone (rx dropped), send fails → drop the work and exit gracefully.
+                    // A prep error (CPU/IO/source-load) is forwarded with the cell identity so the
+                    // GPU thread emits `fail` and continues; otherwise a deterministic corrupt input
+                    // could process-restart/TTL-requeue forever without ever reaching Hub parking.
+                    // If the GPU thread has already gone (rx dropped), exit gracefully.
                     if gpu_tx.send((r4, prepared)).is_err() {
                         return;
                     }
@@ -445,7 +570,92 @@ mod tests {
     use std::sync::{mpsc, Arc};
     use std::time::Duration;
 
-    use super::VramGate;
+    use crate::build::BuildTimings;
+    use crate::prep::PrepTimings;
+
+    use super::{
+        cell_failure_disposition, cell_perf_suffix, stream_cell_failure_line,
+        CellFailureDisposition, DetailedCellPerf, PerfWindow, VramGate,
+    };
+
+    fn measured_detail() -> DetailedCellPerf {
+        DetailedCellPerf {
+            prep: PrepTimings {
+                candidates: Duration::from_millis(1),
+                pack: Duration::from_millis(2),
+                dem: Duration::from_millis(3),
+            },
+            build: BuildTimings {
+                accumulator_init: Duration::from_millis(6),
+                upload: Duration::from_millis(7),
+                scatter: Duration::from_millis(8),
+                seal: Duration::from_millis(9),
+            },
+            candidates: 10,
+            blocks: 2,
+            tiles: 20,
+        }
+    }
+
+    #[test]
+    fn perf_window_emits_one_low_volume_phase_summary() {
+        let mut window = PerfWindow::default();
+        for _ in 0..PerfWindow::CELLS - 1 {
+            assert!(window
+                .add(4, 5, 30, Some(measured_detail()), false)
+                .is_none());
+        }
+        let summary = window
+            .add(4, 5, 30, Some(measured_detail()), false)
+            .expect("64th cell emits the aggregate");
+        assert_eq!(
+            summary,
+            "64 cells avg: queue=4ms vram-wait=5ms build=30ms; one-pass=64 \
+             avg[candidates=1ms pack=2ms dem=3ms accum=6ms upload=7ms scatter=8ms \
+             seal=9ms shape=10cand/2blocks/20tiles]"
+        );
+        assert_eq!(window.cells, 0, "the next aggregate starts a fresh window");
+    }
+
+    #[test]
+    fn chunked_perf_is_explicitly_unmeasured_never_zero_shaped() {
+        let suffix = cell_perf_suffix(4, 5, 30, None);
+        assert_eq!(
+            suffix,
+            "prep_ms=unmeasured queue_ms=4 vram_wait_ms=5 build_ms=30 \
+             build_phases=unmeasured shape=chunked/unmeasured"
+        );
+
+        let mut window = PerfWindow::default();
+        for _ in 0..PerfWindow::CELLS - 1 {
+            assert!(window
+                .add(4, 5, 30, Some(measured_detail()), false)
+                .is_none());
+        }
+        let summary = window
+            .add(4, 5, 30, None, true)
+            .expect("64th cell emits the aggregate");
+        assert!(summary.contains("one-pass=63"));
+        assert!(summary.contains("shape=chunked/unmeasured cells=1"));
+        assert!(!summary.contains("shape=0cand"));
+    }
+
+    #[test]
+    fn deterministic_preparation_error_reports_one_cell_without_killing_stream() {
+        let error = anyhow::anyhow!("corrupt airborne.arrow");
+        assert_eq!(
+            cell_failure_disposition(true, &error),
+            CellFailureDisposition::ReportCellFailure
+        );
+        assert_eq!(
+            cell_failure_disposition(false, &error),
+            CellFailureDisposition::FatalProcess
+        );
+        assert_eq!(
+            stream_cell_failure_line(0x841e309ffffffff, &error),
+            "fail 841e309ffffffff corrupt airborne.arrow"
+        );
+    }
 
     #[test]
     fn waiting_exclusive_cell_precedes_new_small_cells() {

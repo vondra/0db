@@ -25,8 +25,8 @@ use rayon::prelude::*;
 use tile_painter::grid::tile_range;
 use tile_painter::r4_source_cache::{R4SourceCache, SourceSel};
 use tile_painter::region_runner::{
-    morton_order, process_region, read_r4_file, region_tiles, tile_centre_r4, RegionCtx,
-    RegionStats,
+    announce_stream_cell_started, morton_order, process_region, read_r4_file, region_tiles,
+    tile_centre_r4, RegionCtx, RegionStats,
 };
 use tile_painter::worklist::{any_source_arrow, resolve_n_days, WorkList};
 
@@ -119,9 +119,9 @@ struct Args {
     print_n_days: bool,
     /// STREAM mode: read output R4 cell IDs (one hex/line) from stdin and build each on a warm
     /// OS-thread pool — n_days + class_weights + RealRasters resident, each worker its own R4
-    /// source LRU reused across cells (no per-chunk process spawn). Prints `done <r4hex> <written>
-    /// <skipped> <ms>` (or `fail <r4hex> <err>`) per cell as it finishes. The persistent CPU
-    /// worker the cell-stream orchestrator feeds.
+    /// source LRU reused across cells (no per-chunk process spawn). Prints `start <r4hex>
+    /// <unix_ms>` before work and `done <r4hex> <written> <skipped> <ms>` (or `fail <r4hex>
+    /// <err>`) as it finishes. The persistent CPU worker the cell-stream orchestrator feeds.
     #[arg(long, default_value_t = false)]
     stream: bool,
     /// STREAM mode: resolve the build-wide n_days + class_weights ONCE from this seed regions-file
@@ -266,6 +266,7 @@ fn run_stream(args: &Args, sel: SourceSel) -> Result<()> {
                         break;
                     }
                     for r4 in batch {
+                        announce_stream_cell_started(r4);
                         let t = Instant::now();
                         let tiles = region_tiles(r4, ctx.zoom);
                         let line = match process_region(ctx, &mut cache, r4, &tiles) {

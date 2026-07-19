@@ -34,8 +34,8 @@ use noise_compute::admin;
 use tile_painter::grid::tile_range;
 use tile_painter::r4_source_cache::SourceSel;
 use tile_painter::region_runner::{
-    morton_order, read_r4_file, region_tiles, split_configured_layers, split_stream_line,
-    tile_centre_r4,
+    announce_stream_cell_started, morton_order, read_r4_file, region_tiles,
+    split_configured_layers, split_stream_line, tile_centre_r4,
 };
 use tile_painter::surface_region::{
     layer_meta, process_surface_region, Heartbeat, Source, SurfaceCtx, SurfaceStats,
@@ -103,8 +103,9 @@ struct Args {
     region_concurrency: usize,
     /// STREAM mode: read output R4 cell IDs (one hex/line) from stdin and build each on a warm
     /// pool — n_days + class_weights + ONE shared RealRasters resident, at most region_concurrency
-    /// halos in flight. Prints `done <r4hex> <written> <skipped> <ms>` (or `fail …`) per cell. The
-    /// persistent CPU surface worker the cell-stream orchestrator feeds.
+    /// halos in flight. Prints `start <r4hex> <unix_ms>` before work, then `done <r4hex>
+    /// <written> <skipped> <ms>` (or `fail …`) per cell. The persistent CPU surface worker the
+    /// cell-stream orchestrator feeds.
     #[arg(long, default_value_t = false)]
     stream: bool,
     /// STREAM mode: resolve the build-wide ground-ops n_days + class_weights ONCE from this seed
@@ -217,8 +218,9 @@ fn cgroup_mem_max_bytes() -> Option<u64> {
 /// region_concurrency halos are in flight (the same memory cap the batch path uses). Per-cell
 /// output is IDENTICAL to batch (same process_surface_region); only scheduling differs — the pool
 /// is OS threads while the per-tile kernels use the global rayon pool (throughput, not bytes).
-/// Prints `done <r4hex> <written> <skipped> <ms>` (or `fail <r4hex> <err>`) per cell. n_days +
-/// class_weights resolve ONCE from --seed-regions, so streamed cells inherit the build-wide value.
+/// Prints `start <r4hex> <unix_ms>` before work, then `done <r4hex> <written> <skipped> <ms>`
+/// (or `fail <r4hex> <err>`) per cell. n_days + class_weights resolve ONCE from --seed-regions,
+/// so streamed cells inherit the build-wide value.
 fn run_stream(args: &Args, layers: &[Source], halo_m: f64) -> Result<()> {
     use std::collections::VecDeque;
     use std::io::{BufRead, Write};
@@ -288,6 +290,7 @@ fn run_stream(args: &Args, layers: &[Source], halo_m: f64) -> Result<()> {
                     break;
                 }
                 for (r4, req_layers) in batch {
+                    announce_stream_cell_started(r4);
                     let t = Instant::now();
                     let tiles = region_tiles(r4, ctx.zoom);
                     // Narrow this process's configured layers down to the requested (stale)
