@@ -118,7 +118,7 @@ export default function MapView({
       maxZoom={16}
       // Compact ⓘ: expands to the basemap sources' own credits (OSM/Carto —
       // their licenses require on-map attribution) plus the DB-IP CC-BY
-      // credit for the IP-city initial view (/api/initial-view).
+      // credit for the IP-country initial view (/api/initial-view).
       attributionControl={{ compact: true, customAttribution: '<a href="https://db-ip.com" target="_blank" rel="noopener">IP Geolocation by DB-IP</a>' }}
       // Defaults (deceleration 2500, maxSpeed 1400) give ~1.25 s inertia on a medium
       // flick — too sluggish. 4000 / 1100 lands around ~780 ms, between the default

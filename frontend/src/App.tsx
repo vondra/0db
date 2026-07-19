@@ -17,7 +17,7 @@ import type { RealEstateFilters, Property } from './components/RealEstateLayer'
 import { useValidationPayload, type ValidationSelection } from './components/ValidationLayer'
 import type { NoiseComputeData } from './types/noise'
 import { DEFAULT_BASEMAP, type BasemapId } from './utils/basemaps'
-import { fetchIpCityView, type InitialView } from './utils/initial-view'
+import { fetchIpCountry, resolveInitialView, type InitialView } from './utils/initial-view'
 import { setDocumentTitle } from './utils/page-title'
 
 const AboutPage = lazy(() => import('./components/AboutPage'))
@@ -39,9 +39,9 @@ export default function App() {
 function MapApp() {
   const { initial, updateUrl } = useUrlState()
 
-  // First-visit view: race the server's IP-city guess (bounded 500 ms)
+  // First-visit view: race the server's IP-country guess (bounded 500 ms)
   // BEFORE the map mounts, so the first paint already shows the visitor's
-  // city — never a visible country→city jump. A #hash with explicit
+  // country — never a visible Europe→country jump. A #hash with explicit
   // coordinates (a shared link) resolves immediately and skips the fetch;
   // any fetch failure falls back to the language heuristic in `initial`.
   const [initialView, setInitialView] = useState<InitialView | null>(
@@ -55,9 +55,14 @@ function MapApp() {
   useEffect(() => {
     if (initialView !== null) return
     let cancelled = false
-    void fetchIpCityView(500).then((ipView) => {
+    void fetchIpCountry(500).then((ipCountry) => {
       if (cancelled) return
-      const view = ipView ?? { lat: initial.lat, lng: initial.lng, zoom: initial.zoom }
+      // IP country wins; on a miss (null / timeout) keep the hash-seeded
+      // `initial` so a partial hash's zoom/state survives — its lat/lng/zoom
+      // already carry the language fallback for the no-hash first visit.
+      const view = ipCountry
+        ? resolveInitialView(navigator.languages ?? [], ipCountry)
+        : { lat: initial.lat, lng: initial.lng, zoom: initial.zoom }
       // Seed the URL-composition ref too: a layer toggle before the first
       // moveend must serialize THIS view, not the language fallback.
       mapViewRef.current = view

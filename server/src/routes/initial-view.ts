@@ -1,10 +1,13 @@
-// GET /api/initial-view — city-level first-map-view guess from the client IP.
+// GET /api/initial-view — COUNTRY-level first-map-view guess from the client IP.
 //
 // Feeds the frontend's initial view (frontend utils/initial-view.ts): a
-// visitor with no shared #hash link starts at their CITY instead of a
-// language-guessed country (owner report 2026-07-16: Prague visitor landed
-// on a whole-country view). City accuracy is deliberate — precise GPS stays
-// a user-triggered gesture on the map's locate button.
+// visitor with no shared #hash link starts at their COUNTRY. We deliberately
+// answer country, NOT city: DB-IP City Lite places consumer/mobile ISP pools
+// (O2 CZ AS5610, mobile CGNAT…) at the provider's regional registration, not
+// the subscriber — measured 2026-07-19 on the owner's O2 line in Kytín, every
+// free DB missed the town by 35–230 km while ALL agreed on the country. A
+// wrong city zoom (z11) is worse than a right country view, so we only trust
+// the reliable signal. Precise location stays a user gesture (locate button).
 //
 // Data: DB-IP City Lite mmdb (CC-BY 4.0 — attribution lives on the About
 // page; refreshed monthly by scripts/update-geoip-db.sh). The database is
@@ -19,11 +22,22 @@ import type { FastifyInstance } from 'fastify'
 import { Reader, type CityResponse } from 'mmdb-lib'
 import { REPO_ROOT } from '../runtime-paths.js'
 
-// The whole metro area on screen: z11 shows a capital end-to-end while the
-// district-level noise structure stays readable.
-const CITY_ZOOM = 11
-
 export const DEFAULT_GEOIP_DB_PATH = resolve(REPO_ROOT, 'data', 'prepared', 'geoip', 'dbip-city-lite.mmdb')
+
+export type InitialViewResponse = { source: 'ip-country'; country: string } | { source: 'none' }
+
+// Pure record → response mapping, extracted so the contract is unit-testable
+// without an mmdb fixture (the database is optional runtime data, not in git).
+// The ISO 3166-1 alpha-2 shape is validated with the SAME regex the client uses
+// (utils/initial-view.ts fetchIpCountry) so both ends of the wire agree; the
+// frontend maps the code to a country centroid+zoom via its COUNTRY_VIEW table.
+export function countryFromRecord(record: CityResponse | null): InitialViewResponse {
+  const country = record?.country?.iso_code
+  if (typeof country !== 'string' || !/^[A-Z]{2}$/.test(country)) {
+    return { source: 'none' }
+  }
+  return { source: 'ip-country', country }
+}
 
 export async function initialViewRoutes(
   app: FastifyInstance,
@@ -57,11 +71,6 @@ export async function initialViewRoutes(
     } catch {
       // Unparseable peer address (or a corrupt db node) — same as no match.
     }
-    const lat = record?.location?.latitude
-    const lng = record?.location?.longitude
-    if (typeof lat !== 'number' || typeof lng !== 'number') {
-      return { source: 'none' }
-    }
-    return { source: 'ip-city', lat, lng, zoom: CITY_ZOOM }
+    return countryFromRecord(record)
   })
 }

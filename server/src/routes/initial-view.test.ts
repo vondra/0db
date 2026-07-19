@@ -1,4 +1,4 @@
-// Contract test for GET /api/initial-view — the city-level first-view guess.
+// Contract test for GET /api/initial-view — the country-level first-view guess.
 // The GeoIP database is OPTIONAL runtime data (not in git), so these tests
 // cover the data-free contract: absent or corrupt database must mean a clean
 // {source:'none'} — never a 500 — and the response must never be cacheable
@@ -11,7 +11,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import Fastify from 'fastify'
-import { initialViewRoutes } from './initial-view.js'
+import type { CityResponse } from 'mmdb-lib'
+import { countryFromRecord, initialViewRoutes } from './initial-view.js'
 
 const dir = mkdtempSync(join(tmpdir(), 'initial-view-route-test-'))
 
@@ -47,4 +48,29 @@ test('repeated requests reuse the failed-load decision (no retry storm)', async 
   const second = await app.inject('/api/initial-view')
   assert.equal(first.statusCode, 200)
   assert.deepEqual(second.json(), { source: 'none' })
+})
+
+// The record → response mapping is the wire contract; it is pure and testable
+// without an mmdb fixture (the DB itself is optional runtime data, not in git).
+const asRecord = (r: unknown) => r as CityResponse | null
+
+test('countryFromRecord returns ip-country for a valid ISO alpha-2', () => {
+  assert.deepEqual(countryFromRecord(asRecord({ country: { iso_code: 'CZ' } })), {
+    source: 'ip-country',
+    country: 'CZ',
+  })
+})
+
+test('countryFromRecord is source:none when the record has no country', () => {
+  assert.deepEqual(countryFromRecord(null), { source: 'none' })
+  assert.deepEqual(countryFromRecord(asRecord({})), { source: 'none' })
+  assert.deepEqual(countryFromRecord(asRecord({ country: {} })), { source: 'none' })
+})
+
+test('countryFromRecord rejects codes that are not ISO alpha-2 shape', () => {
+  // Anonymous-proxy markers (A1/A2), lowercase, or junk must not reach the
+  // client as ip-country — the client applies the identical /^[A-Z]{2}$/ guard.
+  for (const iso_code of ['cz', 'CZE', 'C', '7!', 'A1', '']) {
+    assert.deepEqual(countryFromRecord(asRecord({ country: { iso_code } })), { source: 'none' })
+  }
 })

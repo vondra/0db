@@ -24,7 +24,7 @@ export interface UrlState {
   zoom: number
   /** True when the #hash carried explicit coordinates (a shared link) —
    *  false means lat/lng/zoom are the language-heuristic fallback and the
-   *  server's IP-city guess may improve on them before the map mounts. */
+   *  server's IP-country guess may improve on them before the map mounts. */
   hasExplicitView: boolean
   quietClusters: boolean
   quietThreshold: number

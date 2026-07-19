@@ -41,7 +41,7 @@ Raw model data is not distributed. Noise values are model estimates (CNOSSOS-EU 
 
 Like almost every website, our server keeps a standard technical **access log** (IP address, browser, and requested URLs — including map coordinates you click) for security and operations — the legal basis is legitimate interest (GDPR art. 6(1)(f)). Logs rotate automatically and are kept at most **30 days**, then deleted. From these logs we derive **anonymous, aggregated statistics** (visitor countries, browser types, popular map areas) — never profiles of individual visitors, and nothing is shared with third parties.
 
-To open the map near you, the first view is approximated to **city level** from your IP address using an offline GeoIP database running on our own server ([IP Geolocation by DB-IP](https://db-ip.com)). The lookup happens in memory, the result is not stored, and your IP is never sent to any third party for this. Precise location is used only if you tap the locate button, via your browser's standard permission prompt.
+To open the map in your part of the world, the first view is approximated to **country level** from your IP address using an offline GeoIP database running on our own server ([IP Geolocation by DB-IP](https://db-ip.com)). The lookup happens in memory, the result is not stored, and your IP is never sent to any third party for this. Precise location is used only if you tap the locate button, via your browser's standard permission prompt.
 
 Questions or requests: [hello@0db.app](mailto:hello@0db.app).
 
