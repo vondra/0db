@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { type TestContext } from 'node:test'
@@ -50,10 +50,17 @@ test('validation cohort is stable while runtime and prepared inputs are unchange
 
 test('validation cohort refuses inputs changed before its first fingerprint', async (t) => {
   const fixture = await cohortFixture(t)
-  await new Promise(resolve => setTimeout(resolve, 2))
+  const initial = await stat(fixture.runtimePath)
+  const modelProcessStartedAtMs = Math.ceil(Math.max(initial.mtimeMs, initial.ctimeMs)) + 1_000
+  const provider = createValidationCohortProvider({
+    ...fixture.providerOptions,
+    modelProcessStartedAtMs,
+  })
   await writeFile(fixture.runtimePath, 'export const model = "changed-before-cohort"\n')
+  const changedAt = new Date(modelProcessStartedAtMs + 1_000)
+  await utimes(fixture.runtimePath, changedAt, changedAt)
 
-  await assert.rejects(fixture.provider(), /server process loaded; restart required/)
+  await assert.rejects(provider(), /server process loaded; restart required/)
 })
 
 test('validation cohort refuses runtime changed under a live process', async (t) => {
