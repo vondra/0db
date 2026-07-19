@@ -3,7 +3,7 @@
 //! to the `build` stage; `build_dem_blocks` is shared with the M2 chunked build there.
 
 use std::collections::BTreeMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use h3o::CellIndex;
@@ -40,10 +40,26 @@ pub(crate) struct PreparedCell {
     pub(crate) nreg: usize,
     pub(crate) blocks: Vec<PrepBlock>,
     pub(crate) t_start: Instant,
+    pub(crate) timings: PrepTimings,
     /// M2: the region's full candidate Vec wouldn't fit one host/VRAM pass, so prep produced NO SoA
     /// — the GPU stage rebuilds + builds this cell CHUNKED (`gpu_build_cell_chunked`) instead. Set
     /// only for the ~5 densest megahubs; every other cell stays the one-pass A2 fast path.
     pub(crate) too_big: bool,
+}
+
+/// CPU-prep wall split emitted by the persistent stream. `candidates` includes loading the seven
+/// source cells because source decode/cache misses are part of the same pre-GPU bottleneck.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PrepTimings {
+    pub(crate) candidates: Duration,
+    pub(crate) pack: Duration,
+    pub(crate) dem: Duration,
+}
+
+impl PrepTimings {
+    pub(crate) fn total(self) -> Duration {
+        self.candidates + self.pack + self.dem
+    }
 }
 
 /// (memory.max, memory.current) of this process's cgroup-v2 scope, in bytes — the live memcap
@@ -156,9 +172,11 @@ pub(crate) fn prep_cell(
             nreg: 0,
             blocks: Vec::new(),
             t_start,
+            timings: PrepTimings::default(),
             too_big: false,
         });
     }
+    let candidates_start = Instant::now();
     // Load the region's grid_disk(1) airborne sources (Arc'd — held only for this function's
     // lifetime so the merged views stay valid while we pack), then region-prep + pack ONCE.
     let cell = CellIndex::try_from(r4)?;
@@ -203,13 +221,20 @@ pub(crate) fn prep_cell(
                 nreg: 0,
                 blocks: Vec::new(),
                 t_start,
+                timings: PrepTimings {
+                    candidates: candidates_start.elapsed(),
+                    ..PrepTimings::default()
+                },
                 too_big: true,
             });
         }
     }
     let region = region_candidates(&views, r4, z);
+    let candidates = candidates_start.elapsed();
     let nreg = region.len();
+    let pack_start = Instant::now();
     let (sll, sf, si) = pack_airborne_segs(&region);
+    let pack = pack_start.elapsed();
     // The SoA is fully packed — the prepared-segment Vec (and the source Arcs/views it borrows)
     // are no longer needed for the stream/scatter_region path, so drop them to bound host RAM.
     drop(region);
@@ -218,7 +243,9 @@ pub(crate) fn prep_cell(
 
     // Pre-fault the DEM footprint + batch the tiles into DEM-only blocks (shared with the M2 chunked
     // build — one source of truth for the block topology, see `build_dem_blocks`).
+    let dem_start = Instant::now();
     let blocks = build_dem_blocks(rasters, z, bn, tiles);
+    let dem = dem_start.elapsed();
     Ok(PreparedCell {
         sll,
         sf,
@@ -226,6 +253,11 @@ pub(crate) fn prep_cell(
         nreg,
         blocks,
         t_start,
+        timings: PrepTimings {
+            candidates,
+            pack,
+            dem,
+        },
         too_big: false,
     })
 }

@@ -30,6 +30,7 @@ use noise_compute::emission::aircraft::{
 };
 use noise_compute::types::AircraftSegment;
 use raster_reader::fused_tile_z13::{tile_pixel_size_m, FusedTileZ13, TILE_PX};
+use rayon::prelude::*;
 use tile_painter::accumulator::{CoarseLattice, TileAccumulator, COARSE_LEVELS_N};
 
 use crate::{pack_airborne_receivers, pack_airborne_receivers_batch, pack_airborne_segs};
@@ -82,26 +83,133 @@ pub fn region_candidates(
     r4: u64,
     zoom: u8,
 ) -> Vec<(SegmentPrepared, u8)> {
-    // The unbounded case of `for_each_region_chunk`: one chunk = every candidate. usize::MAX is
-    // never reached, so `f` fires once at the end and we MOVE the buffer out (no per-element clone).
-    let mut out = Vec::new();
-    for_each_region_chunk(views, r4, zoom, usize::MAX, |chunk| {
-        if out.is_empty() {
-            out = chunk;
-        } else {
-            out.extend(chunk);
+    let envelope = RegionEnvelope::new(r4, zoom).expect("valid R4 cell");
+
+    // `prepare_segment` is the live stream's CPU wall. Parallelise the independent Arrow rows,
+    // then concatenate their Vecs in input order: Rayon preserves the indexed `par_iter` order,
+    // so this produces exactly the same candidate ordering as the bounded serial walker below.
+    // Keeping one Vec per row also avoids shared locks/push contention. The one-pass host guard in
+    // gpu_airborne::prep budgets the construction peak at 2× the final candidate Vec, which covers
+    // these row Vecs plus the final concatenation; megahubs are routed to the bounded walker first.
+    views
+        .par_iter()
+        .map(|view| candidates_for_view(view, &envelope))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+/// Exact region-wide admit envelope shared by the parallel one-pass builder and the bounded
+/// megahub walker. A mismatch here would make ordinary and chunked cells use different physics.
+#[derive(Clone, Copy)]
+struct RegionEnvelope {
+    min_lat: f32,
+    max_lat: f32,
+    min_lon: f32,
+    max_lon: f32,
+    prune_lon: bool,
+}
+
+impl RegionEnvelope {
+    fn new(r4: u64, zoom: u8) -> Result<Self> {
+        let cell = CellIndex::try_from(r4).context("valid R4 cell")?;
+        let (mut s, mut n, mut w, mut e) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+        for ll in cell.boundary().iter() {
+            s = s.min(ll.lat());
+            n = n.max(ll.lat());
+            w = w.min(ll.lng());
+            e = e.max(ll.lng());
         }
-        Ok(())
-    })
-    .expect("region_candidates closure is infallible");
-    out
+        // Pad = max horizontal reach + max tile half-diagonal. Size half_diag at the equatorial
+        // z13 tile (widest, cos = 1) so it bounds every tile in the region; the lon pad uses the
+        // region's highest |lat| (most degrees per metre). Over-padding only adds a few one-time
+        // candidates that `classify_tile` rejects per tile — under-padding silently drops them.
+        let half_diag =
+            (TILE_PX as f64) * tile_pixel_size_m(zoom, 0.0) * std::f64::consts::SQRT_2 * 0.5;
+        let pad_m = AIRCRAFT_MAX_HORIZONTAL_REACH_M + half_diag;
+        let pad_lat = aircraft::meters_to_lat_deg(pad_m);
+        let pad_lon = aircraft::meters_to_lon_deg(s.abs().max(n.abs()), pad_m);
+        // Antimeridian: a dateline R4's vertices straddle ±180, so [w,e] is the long way round —
+        // disable the lon prune (lat alone still culls; mirrors `region_tiles`/`scatter_tile`).
+        let prune_lon = e - w <= 180.0 && (w - pad_lon) >= -180.0 && (e + pad_lon) <= 180.0;
+        Ok(Self {
+            min_lat: (s - pad_lat) as f32,
+            max_lat: (n + pad_lat) as f32,
+            min_lon: (w - pad_lon) as f32,
+            max_lon: (e + pad_lon) as f32,
+            prune_lon,
+        })
+    }
+
+    fn includes(self, view: &AirborneRowView<'_>) -> bool {
+        let bb = &view.bbox;
+        bb.max_lat >= self.min_lat
+            && bb.min_lat <= self.max_lat
+            && (!self.prune_lon || (bb.max_lon >= self.min_lon && bb.min_lon <= self.max_lon))
+    }
+}
+
+/// Prepare one sub-segment after the shared terrain-staleness gate. Both candidate walkers call
+/// this function, keeping AircraftSegment reconstruction and `prepare_segment` in one place.
+fn prepare_candidate(view: &AirborneRowView<'_>, i: usize) -> Option<(SegmentPrepared, u8)> {
+    let ss = &view.sub_segments;
+    let seg = AircraftSegment {
+        flight_id: view.flight_id,
+        profile_idx: view.profile_idx,
+        is_departure: ss.flags[i] & 0b001 != 0,
+        on_ground: false,
+        period: ss.period[i],
+        date_id: ss.date_id[i],
+        start_lat: ss.start_lat[i] as f64,
+        start_lon: ss.start_lon[i] as f64,
+        start_alt_m: ss.start_alt_m[i],
+        end_lat: ss.end_lat[i] as f64,
+        end_lon: ss.end_lon[i] as f64,
+        end_alt_m: ss.end_alt_m[i],
+        speed_kt: ss.speed_kt[i],
+        segment_length_m: ss.length_m[i],
+        count_weight: 1.0,
+        surface_model: false,
+        ground_context: GROUND_CONTEXT_NONE,
+        ground_ops_kind: GROUND_OPS_KIND_NONE,
+        source_id: view.source_id as u16,
+    };
+    let start_elev = ss.terrain_start_elev_m[i] as f64;
+    let end_elev = ss.terrain_end_elev_m[i] as f64;
+    let terrain = SegmentTerrain {
+        start_elev,
+        q1_elev: 0.0,
+        mid_elev: 0.0,
+        q3_elev: 0.0,
+        end_elev,
+    };
+    if is_ground_stale_with_terrain(&seg, &terrain) {
+        return None;
+    }
+    Some((
+        prepare_segment(&seg, start_elev - 30.0, end_elev - 30.0),
+        seg.period,
+    ))
+}
+
+fn candidates_for_view(
+    view: &AirborneRowView<'_>,
+    envelope: &RegionEnvelope,
+) -> Vec<(SegmentPrepared, u8)> {
+    if !envelope.includes(view) {
+        return Vec::new();
+    }
+    (0..view.sub_segments.start_lat.len())
+        .filter_map(|i| prepare_candidate(view, i))
+        .collect()
 }
 
 /// Build the region's candidate sub-segs in BOUNDED chunks, invoking `f` once per chunk of at most
 /// `max_per_chunk` candidates (passed BY VALUE so the caller packs+uploads it, then the buffer is
 /// reused for the next chunk → host RAM stays one chunk, not the whole Vec). Same envelope +
-/// ground-stale filter + `prepare_segment` as [`region_candidates`] (which IS this, unbounded) — so
-/// chunked and one-pass classify the SAME candidates; summing each chunk's per-tile energy
+/// ground-stale filter + `prepare_segment` helpers as [`region_candidates`] — so chunked and
+/// one-pass classify the SAME candidates; summing each chunk's per-tile energy
 /// (`TileAccumulator::merge_from`, additive in the linear domain) reconstructs the one-pass result.
 /// This is M2: the ~5 densest megahub cells whose full candidate Vec is tens of GB (Phoenix:
 /// 308M subsegs ≈ 78 GiB host / >24 GB VRAM) build in VRAM/host-sized passes on ANY card, instead
@@ -113,33 +221,10 @@ pub fn for_each_region_chunk(
     max_per_chunk: usize,
     mut f: impl FnMut(Vec<(SegmentPrepared, u8)>) -> Result<()>,
 ) -> Result<()> {
-    let cell = CellIndex::try_from(r4).context("valid R4 cell")?;
-    let (mut s, mut n, mut w, mut e) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
-    for ll in cell.boundary().iter() {
-        s = s.min(ll.lat());
-        n = n.max(ll.lat());
-        w = w.min(ll.lng());
-        e = e.max(ll.lng());
-    }
-    // Pad = max horizontal reach + max tile half-diagonal. Size half_diag at the equatorial
-    // z13 tile (widest, cos = 1) so it bounds every tile in the region; the lon pad uses the
-    // region's highest |lat| (most degrees per metre). Over-padding only adds a few one-time
-    // candidates that `classify_tile` rejects per tile — under-padding silently drops them.
-    let half_diag =
-        (TILE_PX as f64) * tile_pixel_size_m(zoom, 0.0) * std::f64::consts::SQRT_2 * 0.5;
-    let pad_m = AIRCRAFT_MAX_HORIZONTAL_REACH_M + half_diag;
-    let pad_lat = aircraft::meters_to_lat_deg(pad_m);
-    let pad_lon = aircraft::meters_to_lon_deg(s.abs().max(n.abs()), pad_m);
-    let env_min_lat = (s - pad_lat) as f32;
-    let env_max_lat = (n + pad_lat) as f32;
-    // Antimeridian: a dateline R4's vertices straddle ±180, so [w,e] is the long way round —
-    // disable the lon prune (lat alone still culls; mirrors `region_tiles`/`scatter_tile`).
-    let lon_prune = e - w <= 180.0 && (w - pad_lon) >= -180.0 && (e + pad_lon) <= 180.0;
-    let env_min_lon = (w - pad_lon) as f32;
-    let env_max_lon = (e + pad_lon) as f32;
+    let envelope = RegionEnvelope::new(r4, zoom)?;
 
-    // Pre-size the buffer to a bounded chunk (so a pass fills without re-allocating); for the
-    // unbounded `region_candidates` case grow from small — NOT a 16M pre-alloc on every tiny cell.
+    // Pre-size the buffer to a bounded chunk (so a pass fills without re-allocating); an unbounded
+    // diagnostic caller grows from small — NOT a huge pre-allocation on every tiny cell.
     let cap = if max_per_chunk >= (1 << 28) {
         4096
     } else {
@@ -147,52 +232,15 @@ pub fn for_each_region_chunk(
     };
     let mut buf: Vec<(SegmentPrepared, u8)> = Vec::with_capacity(cap);
     for v in views {
-        let bb = &v.bbox;
-        if bb.max_lat < env_min_lat || bb.min_lat > env_max_lat {
+        if !envelope.includes(v) {
             continue;
         }
-        if lon_prune && (bb.max_lon < env_min_lon || bb.min_lon > env_max_lon) {
-            continue;
-        }
-        let ss = &v.sub_segments;
-        for i in 0..ss.start_lat.len() {
-            let seg = AircraftSegment {
-                flight_id: v.flight_id,
-                profile_idx: v.profile_idx,
-                is_departure: ss.flags[i] & 0b001 != 0,
-                on_ground: false,
-                period: ss.period[i],
-                date_id: ss.date_id[i],
-                start_lat: ss.start_lat[i] as f64,
-                start_lon: ss.start_lon[i] as f64,
-                start_alt_m: ss.start_alt_m[i],
-                end_lat: ss.end_lat[i] as f64,
-                end_lon: ss.end_lon[i] as f64,
-                end_alt_m: ss.end_alt_m[i],
-                speed_kt: ss.speed_kt[i],
-                segment_length_m: ss.length_m[i],
-                count_weight: 1.0,
-                surface_model: false,
-                ground_context: GROUND_CONTEXT_NONE,
-                ground_ops_kind: GROUND_OPS_KIND_NONE,
-                source_id: v.source_id as u16,
-            };
-            let start_elev = ss.terrain_start_elev_m[i] as f64;
-            let end_elev = ss.terrain_end_elev_m[i] as f64;
-            let terrain = SegmentTerrain {
-                start_elev,
-                q1_elev: 0.0,
-                mid_elev: 0.0,
-                q3_elev: 0.0,
-                end_elev,
-            };
-            if is_ground_stale_with_terrain(&seg, &terrain) {
-                continue;
-            }
-            let prepared = prepare_segment(&seg, start_elev - 30.0, end_elev - 30.0);
-            buf.push((prepared, seg.period));
-            if buf.len() >= max_per_chunk {
-                f(std::mem::replace(&mut buf, Vec::with_capacity(cap)))?;
+        for i in 0..v.sub_segments.start_lat.len() {
+            if let Some(prepared) = prepare_candidate(v, i) {
+                buf.push(prepared);
+                if buf.len() >= max_per_chunk {
+                    f(std::mem::replace(&mut buf, Vec::with_capacity(cap)))?;
+                }
             }
         }
     }

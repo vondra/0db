@@ -28,8 +28,9 @@ type StreamQueue = std::sync::Arc<(
 /// that capped the cluster's GPU at ~61% effective (a warm process sustains ~88-100%, STEP 1).
 /// One process: CUDA context + NPD LUTs + class-weights + RealRasters all resident; R4 cell IDs
 /// stream in on stdin and each is built by an A2 CPU-prep / GPU-build double-buffer — ONE prep
-/// thread (its own `RealRasters` + R4 LRU) packs the NEXT cell while ONE GPU thread (one CUDA
-/// stream, so exactly one cell's region in VRAM — no OOM, no cell loss) builds the current one.
+/// coordinator (its own `RealRasters` + R4 LRU; candidate preparation fans across the shared Rayon
+/// pool) packs the NEXT cell while ONE GPU thread (one CUDA stream, so exactly one cell's region in
+/// VRAM — no OOM, no cell loss) builds the current one.
 /// The two stages are joined by a depth-1 `sync_channel`, so the prep thread runs at most one
 /// cell ahead (host RAM stays ~2-3 cells) and the GPU stays saturated across each cell's CPU
 /// prep instead of idling ~25% as in the serial per-worker loop. One `done <r4hex> <written>
@@ -76,7 +77,7 @@ pub(crate) fn run_stream(args: &Args, z: u8) -> Result<()> {
         args.batch_size
     };
     eprintln!(
-        "stream: n_days={n_days}, batch={bn}, A2 prep+GPU pipeline — reading R4 cells from stdin"
+        "stream: n_days={n_days}, batch={bn}, parallel-prep + GPU pipeline — reading R4 cells from stdin"
     );
 
     // Morton-locality work queue. The single prep thread pulls a CONTIGUOUS run of up to
@@ -143,11 +144,29 @@ pub(crate) fn run_stream(args: &Args, z: u8) -> Result<()> {
             // one-pass cells — only the ~5 densest touch it.
             let mut gpu_cache = R4SourceCache::new(&args.h3r4_dir, args.r4_cache.max(7), SEL);
             let gpu_rasters = RealRasters::new(&args.prepared_dir);
+            // Bounded operational timing: one aggregate line per 64 successful cells shows whether
+            // the live bottleneck is source/candidate prep, SoA packing, DEM prep, GPU build, or the
+            // depth-1 handoff queue. This goes to the normal box log; no profiler or SSH sampling is
+            // needed to explain a future bursty GPU.
+            const PERF_WINDOW: u128 = 64;
+            let mut perf_cells = 0u128;
+            let mut perf_candidates_ms = 0u128;
+            let mut perf_pack_ms = 0u128;
+            let mut perf_dem_ms = 0u128;
+            let mut perf_queue_ms = 0u128;
+            let mut perf_build_ms = 0u128;
+            let mut perf_chunked = 0u128;
             for (r4, prepared) in gpu_rx {
-                // ms = prep+build wall time per cell (t_start stamped at the START of prep_cell),
-                // matching the serial `done` line. Read it before gpu_build_cell consumes the cell.
-                let line = match prepared.and_then(|p| {
-                    let t_start = p.t_start;
+                // Read prep metadata before build_prepared_cell consumes the cell.
+                let prep_meta = prepared.as_ref().ok().map(|p| {
+                    (
+                        p.t_start,
+                        p.timings,
+                        p.too_big,
+                    )
+                });
+                let build_start = std::time::Instant::now();
+                let built = prepared.and_then(|p| {
                     // Production stream worklist = the whole cell, so the chunked fallback's `tiles`
                     // is `region_tiles(r4,z)` (matches what the prep thread built this cell against).
                     build_prepared_cell(
@@ -162,10 +181,48 @@ pub(crate) fn run_stream(args: &Args, z: u8) -> Result<()> {
                         p,
                         &region_tiles(r4, z),
                     )
-                    .map(|(w, s)| (w, s, t_start))
-                }) {
-                    Ok((w, s, t_start)) => {
-                        format!("done {r4:x} {w} {s} {}", t_start.elapsed().as_millis())
+                });
+                let build_ms = build_start.elapsed().as_millis();
+                let line = match built {
+                    Ok((w, s)) => {
+                        let (t_start, timings, chunked) = prep_meta.expect("successful prep metadata");
+                        let total_ms = t_start.elapsed().as_millis();
+                        let prep_ms = timings.total().as_millis();
+                        let candidates_ms = timings.candidates.as_millis();
+                        let pack_ms = timings.pack.as_millis();
+                        let dem_ms = timings.dem.as_millis();
+                        let queue_ms = total_ms.saturating_sub(prep_ms + build_ms);
+                        perf_cells += 1;
+                        perf_candidates_ms += candidates_ms;
+                        perf_pack_ms += pack_ms;
+                        perf_dem_ms += dem_ms;
+                        perf_queue_ms += queue_ms;
+                        perf_build_ms += build_ms;
+                        perf_chunked += u128::from(chunked);
+                        if perf_cells == PERF_WINDOW {
+                            eprintln!(
+                                "[perf] {PERF_WINDOW} cells avg: candidates={}ms pack={}ms dem={}ms \
+                                 queue={}ms build={}ms chunked={perf_chunked}",
+                                perf_candidates_ms / PERF_WINDOW,
+                                perf_pack_ms / PERF_WINDOW,
+                                perf_dem_ms / PERF_WINDOW,
+                                perf_queue_ms / PERF_WINDOW,
+                                perf_build_ms / PERF_WINDOW,
+                            );
+                            perf_cells = 0;
+                            perf_candidates_ms = 0;
+                            perf_pack_ms = 0;
+                            perf_dem_ms = 0;
+                            perf_queue_ms = 0;
+                            perf_build_ms = 0;
+                            perf_chunked = 0;
+                        }
+                        format!(
+                            "done {r4:x} {w} {s} {total_ms} prep_ms={prep_ms} \
+                             candidates_ms={candidates_ms} pack_ms={pack_ms} dem_ms={dem_ms} \
+                             queue_ms={queue_ms} build_ms={build_ms} chunked={}",
+                            u8::from(chunked),
+                        )
                     }
                     // A per-cell VRAM OOM / too-dense region: report THIS cell failed and keep
                     // streaming (the hub leaves it unstamped → uncomputed). A clean alloc failure

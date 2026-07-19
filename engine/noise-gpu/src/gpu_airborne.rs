@@ -13,7 +13,7 @@
 //!
 //! Submodules: `prep` (CPU prep stage — pack a cell's candidate SoA + DEM tile-blocks),
 //! `build` (GPU build stage — scatter the SoA into per-tile accumulators + write tiles),
-//! `stream` (the persistent `--stream` A2 prep/GPU double-buffer worker pool).
+//! `stream` (the persistent `--stream` parallel-prep/GPU double buffer).
 
 // This bin's path is `src/gpu_airborne.rs` (Cargo.toml `[[bin]] path`), so Rust resolves a bare
 // `mod prep;` to `src/prep.rs`, NOT `src/gpu_airborne/prep.rs`. Point each submodule at the
@@ -90,11 +90,11 @@ pub(crate) struct Args {
     pub(crate) r4_cache: usize,
     #[arg(long, default_value_t = false)]
     pub(crate) write_empty: bool,
-    /// STREAM mode: read output R4 cell IDs (one hex/line) from stdin and build each on a warm
-    /// K-in-flight worker pool (K = rayon threads, each its own CUDA stream + R4 LRU, reused
-    /// across cells — no per-chunk process spawn), printing `done <r4hex> <written> <skipped>
-    /// <ms>` (or `fail <r4hex> <err>`) per cell as it finishes. The persistent worker the
-    /// cluster orchestrator feeds. Requires --seed-regions (resolves n_days + class_weights once).
+    /// STREAM mode: read output R4 cell IDs (one hex/line) from stdin and build each in a warm
+    /// double buffer: parallel CPU candidate prep for the next cell while one VRAM-bounded CUDA
+    /// stream builds the current cell. Prints `done <r4hex> <written> <skipped> <ms> ...` (or
+    /// `fail <r4hex> <err>`) per cell as it finishes. The persistent worker the cluster
+    /// orchestrator feeds. Requires --seed-regions (resolves n_days + class_weights once).
     #[arg(long, default_value_t = false)]
     stream: bool,
     /// STREAM mode: resolve the build-wide n_days + class_weights ONCE at startup from this seed
