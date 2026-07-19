@@ -1,5 +1,5 @@
 import Fastify from 'fastify'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyError, FastifyInstance } from 'fastify'
 import compress from '@fastify/compress'
 import rateLimit from '@fastify/rate-limit'
 import { randomUUID } from 'node:crypto'
@@ -41,9 +41,27 @@ export function clusterRoutesEnabled(env: NodeJS.ProcessEnv = process.env): bool
 export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({
     logger: opts.logger ?? false,
+    // The access log lives in Caddy (full URIs, 30-day rotation, aggregated
+    // into anonymous product stats); per-request pino lines only duplicated
+    // it. Keep this logger for startup and crash diagnostics instead.
+    disableRequestLogging: true,
     // Never trust arbitrary forwarding headers. Caddy reaches Fastify from
     // loopback; only that hop may supply the public client's address.
     trustProxy: ['127.0.0.1', '::1'],
+  })
+
+  // disableRequestLogging also silences the default error handler, which would
+  // make 5xx stack traces invisible (Caddy sees only the status). Log server
+  // errors here; client errors (4xx) stay out — Caddy already records them.
+  // Like the default handler, the status is set BEFORE send: @fastify/rate-limit
+  // throws its 429 payload as a plain object, and reply.send() of a non-Error
+  // keeps the current status (200) unless it is set here first.
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    const statusCode = error.statusCode ?? 500
+    if (statusCode >= 500) {
+      request.log.error({ err: error }, error.message)
+    }
+    reply.status(statusCode).send(error)
   })
 
   app.addHook('onSend', async (_request, reply, payload) => {
@@ -116,6 +134,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     await app.register(async (adminApp) => {
       adminApp.addHook('onRequest', requireLocalPeer)
       await adminApp.register(clusterRoutes)
+      // Anonymous web analytics (/a/stats + /a/api/stats/*) — same /a scope;
+      // reads only the aggregate SQLite DB and bounded tails of the access log.
+      const { webStatsRoutes } = await import('./routes/web-stats.js')
+      await adminApp.register(webStatsRoutes)
     }, { prefix: '/a' })
   }
 

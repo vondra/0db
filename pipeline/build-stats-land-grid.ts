@@ -1,0 +1,148 @@
+/**
+ * One-off generator for the /a/stats canvas world map: rasterizes the
+ * Natural Earth 10 m admin-0 countries geojson into a coarse 0.5° land mask
+ * (720×360 bits, north-to-south) and emits it as a committed TS module
+ * (server/src/routes/web-stats-land-grid.ts) together with ISO → bbox and
+ * ISO → name tables. The geojson itself is a gitignored cache download
+ * (scripts/cache/ne_10m_admin_0_countries.geojson); only the OUTPUT is in
+ * git, so a fresh checkout never needs the source. Re-run after a Natural
+ * Earth refresh:  npx tsx pipeline/build-stats-land-grid.ts
+ */
+import { readFileSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+const REPO_ROOT = resolve(import.meta.dirname, '..')
+const SOURCE_GEOJSON = resolve(REPO_ROOT, 'scripts/cache/ne_10m_admin_0_countries.geojson')
+const OUTPUT_MODULE = resolve(REPO_ROOT, 'server/src/routes/web-stats-land-grid.ts')
+
+const GRID_WIDTH = 720 // 0.5° columns, lng -180 → +180
+const GRID_HEIGHT = 360 // 0.5° rows, lat +90 → -90 (north first)
+const CELL_DEG = 0.5
+
+type Ring = [number, number][]
+type Polygon = Ring[]
+
+interface CountryFeature {
+  properties: { ISO_A2?: string; ISO_A2_EH?: string; NAME?: string }
+  geometry: { type: string; coordinates: number[][][] | number[][][][] }
+}
+
+function polygonsOf(feature: CountryFeature): Polygon[] {
+  const { type, coordinates } = feature.geometry
+  if (type === 'Polygon') return [coordinates as number[][][]]
+  if (type === 'MultiPolygon') return coordinates as number[][][][]
+  return []
+}
+
+/** Scanline even-odd fill of one polygon into the bit grid. Edges that wrap
+ *  the antimeridian (|Δlng| > 180°) contribute a crossing clamped to the
+ *  ±180 boundary — at 0.5° the worst artifact is a half-cell at the edge
+ *  columns, invisible on the dashboard backdrop. */
+function fillPolygon(grid: Uint8Array, rings: Polygon): void {
+  let minLat = 90
+  let maxLat = -90
+  for (const ring of rings) {
+    for (const [, lat] of ring) {
+      if (lat < minLat) minLat = lat
+      if (lat > maxLat) maxLat = lat
+    }
+  }
+  const firstRow = Math.max(0, Math.floor((90 - maxLat) / CELL_DEG))
+  const lastRow = Math.min(GRID_HEIGHT - 1, Math.floor((90 - minLat) / CELL_DEG))
+  for (let row = firstRow; row <= lastRow; row += 1) {
+    const y = 90 - (row + 0.5) * CELL_DEG
+    const crossings: number[] = []
+    for (const ring of rings) {
+      for (let i = 0; i < ring.length - 1; i += 1) {
+        const [x1, y1] = ring[i]
+        let [x2, y2] = ring[i + 1]
+        if (y1 > y === y2 > y) continue // half-open rule: vertices count once
+        const dx = x2 - x1
+        if (dx > 180) x2 -= 360
+        else if (dx < -180) x2 += 360
+        const t = (y - y1) / (y2 - y1)
+        let x = x1 + t * (x2 - x1)
+        if (x > 180) x = 180
+        else if (x < -180) x = -180
+        crossings.push(x)
+      }
+    }
+    crossings.sort((a, b) => a - b)
+    for (let i = 0; i + 1 < crossings.length; i += 2) {
+      const fromCol = Math.max(0, Math.ceil((crossings[i] + 180) / CELL_DEG - 0.5))
+      const toCol = Math.min(GRID_WIDTH - 1, Math.floor((crossings[i + 1] + 180) / CELL_DEG - 0.5))
+      for (let col = fromCol; col <= toCol; col += 1) {
+        const bit = row * GRID_WIDTH + col
+        grid[bit >> 3] |= 1 << (bit & 7)
+      }
+    }
+  }
+}
+
+function main(): void {
+  const collection = JSON.parse(readFileSync(SOURCE_GEOJSON, 'utf8')) as {
+    features: CountryFeature[]
+  }
+  const grid = new Uint8Array((GRID_WIDTH * GRID_HEIGHT) / 8)
+  const bboxes: Record<string, [number, number, number, number]> = {}
+  const names: Record<string, string> = {}
+  let landCells = 0
+  for (const feature of collection.features) {
+    const iso = feature.properties.ISO_A2 !== '-99' && feature.properties.ISO_A2
+      ? feature.properties.ISO_A2!
+      : (feature.properties.ISO_A2_EH ?? '')
+    const polygons = polygonsOf(feature)
+    for (const polygon of polygons) fillPolygon(grid, polygon)
+    if (!/^[A-Z]{2}$/.test(iso)) continue
+    names[iso] = feature.properties.NAME ?? iso
+    let minLng = 180
+    let minLat = 90
+    let maxLng = -180
+    let maxLat = -90
+    for (const polygon of polygons) {
+      for (const ring of polygon) {
+        for (const [lng, lat] of ring) {
+          if (lng < minLng) minLng = lng
+          if (lng > maxLng) maxLng = lng
+          if (lat < minLat) minLat = lat
+          if (lat > maxLat) maxLat = lat
+        }
+      }
+    }
+    bboxes[iso] = [
+      Math.round(minLng * 10) / 10,
+      Math.round(minLat * 10) / 10,
+      Math.round(maxLng * 10) / 10,
+      Math.round(maxLat * 10) / 10,
+    ]
+  }
+  for (const byte of grid) {
+    let b = byte
+    while (b) {
+      landCells += b & 1
+      b >>= 1
+    }
+  }
+
+  const round = (record: Record<string, unknown>) =>
+    JSON.stringify(Object.fromEntries(Object.entries(record).sort(([a], [b]) => a.localeCompare(b))))
+  const moduleSource = `// GENERATED by pipeline/build-stats-land-grid.ts from Natural Earth 10 m admin-0
+// countries (scripts/cache, gitignored) — do not edit by hand; re-run the generator.
+// Backdrop data for the /a/stats canvas world map: a 0.5° land mask as one base64
+// bitmap (bit = row*720+col, north-to-south) plus ISO → bbox [minLng,minLat,maxLng,
+// maxLat] and ISO → name tables. Antimeridian-spanning bboxes (RU, FJ, US) cover the
+// full width by construction — the map dims on a best-effort basis only.
+export const LAND_GRID_WIDTH = ${GRID_WIDTH}
+export const LAND_GRID_HEIGHT = ${GRID_HEIGHT}
+export const LAND_GRID_BASE64 = '${Buffer.from(grid).toString('base64')}'
+export const COUNTRY_BBOX: Record<string, [number, number, number, number]> = ${round(bboxes)}
+export const COUNTRY_NAME: Record<string, string> = ${round(names)}
+`
+  writeFileSync(OUTPUT_MODULE, moduleSource)
+  console.log(
+    `land cells ${landCells} (${((landCells / (GRID_WIDTH * GRID_HEIGHT)) * 100).toFixed(1)}% of grid) · ` +
+      `${Object.keys(names).length} countries · wrote ${OUTPUT_MODULE} (${moduleSource.length} bytes)`,
+  )
+}
+
+main()
