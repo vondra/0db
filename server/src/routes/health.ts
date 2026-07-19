@@ -20,7 +20,7 @@ export async function healthRoutes(app: FastifyInstance, readiness: ReadinessChe
       app.log.error(error, 'runtime readiness check crashed')
       return reply.code(503).send({
         status: 'not_ready',
-        failed: ['engine', 'prepared-data', 'pmtiles'],
+        failed: ['engine', 'frontend', 'prepared-data', 'pmtiles'],
       })
     }
     if (result.ready) {

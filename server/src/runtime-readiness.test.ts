@@ -30,11 +30,14 @@ async function publisherProof(path: string, sha256: string) {
 async function readinessFixture() {
   const root = await mkdtemp(join(tmpdir(), '0db-ready-'))
   const sourceReaderPath = join(root, 'libsource_reader.so')
+  const frontendDist = join(root, 'frontend')
   const h3r4Dir = join(root, 'h3r4')
   const pmtilesDir = join(root, 'pmtiles')
   await mkdir(join(h3r4Dir, REFERENCE_HEX), { recursive: true })
   await mkdir(pmtilesDir, { recursive: true })
+  await mkdir(frontendDist, { recursive: true })
   await writeFile(sourceReaderPath, 'native-addon')
+  await writeFile(join(frontendDist, 'index.html'), '<!doctype html><title>map</title>')
   await writeFile(join(h3r4Dir, REFERENCE_HEX, 'roads.arrow'), 'arrow-data')
 
   const layers: Record<string, {
@@ -56,8 +59,35 @@ async function readinessFixture() {
     }
   }
   await writeFile(join(pmtilesDir, `current.${TEST_TILE_ENV}.json`), JSON.stringify({ build: 'b1', layers }))
-  return { root, sourceReaderPath, h3r4Dir, pmtilesDir, layers, tileEnv: TEST_TILE_ENV }
+  return { root, sourceReaderPath, frontendDist, h3r4Dir, pmtilesDir, layers, tileEnv: TEST_TILE_ENV }
 }
+
+test('readiness rejects a release whose static root is missing the SPA', async (t) => {
+  // 2026-07-19: a frontend-less release served 404 on every page while /api/ready
+  // reported healthy and start.sh activated it. The frontend gate locks that hole.
+  const fixture = await readinessFixture()
+  t.after(async () => rm(fixture.root, { recursive: true, force: true }))
+  await rm(join(fixture.frontendDist, 'index.html'))
+
+  const missing = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(missing.ready, false)
+  assert.deepEqual(missing.failed, ['frontend'])
+  assert.match(missing.errors.frontend ?? '', /index\.html/)
+
+  // An EMPTY index.html is just as broken (a truncated frontend copy).
+  await writeFile(join(fixture.frontendDist, 'index.html'), '')
+  const empty = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(empty.ready, false)
+  assert.deepEqual(empty.failed, ['frontend'])
+})
 
 test('readiness validates artifacts, single-flights, and periodically reprobes the engine', async (t) => {
   const fixture = await readinessFixture()

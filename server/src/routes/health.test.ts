@@ -43,7 +43,7 @@ test('unexpected checker failures are sanitized as not ready', async (t) => {
   assert.equal(response.statusCode, 503)
   assert.deepEqual(response.json(), {
     status: 'not_ready',
-    failed: ['engine', 'prepared-data', 'pmtiles'],
+    failed: ['engine', 'frontend', 'prepared-data', 'pmtiles'],
   })
   assert.doesNotMatch(response.body, /secret|runtime\/path/)
 })

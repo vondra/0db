@@ -5,10 +5,10 @@
 import { readFile, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { ALLOWED_LAYERS, PMTILES_BASE } from './routes/heatmap-shared.js'
-import { H3R4_DIR, SOURCE_READER_PATH } from './runtime-paths.js'
+import { FRONTEND_DIST, H3R4_DIR, SOURCE_READER_PATH } from './runtime-paths.js'
 import { resolveManifestPath } from './tile-manifest-reader.js'
 
-export type ReadinessComponent = 'engine' | 'prepared-data' | 'pmtiles'
+export type ReadinessComponent = 'engine' | 'frontend' | 'prepared-data' | 'pmtiles'
 
 export type ReadinessResult = {
   ready: boolean
@@ -22,6 +22,7 @@ export type ReadinessCheck = () => Promise<ReadinessResult>
 type ReadinessOptions = {
   engineProbe: () => Promise<void>
   sourceReaderPath?: string
+  frontendDist?: string
   h3r4Dir?: string
   pmtilesDir?: string
   /** Overrides process.env.TILE_ENV — tests only; see resolveTileEnv's own doc. */
@@ -41,6 +42,14 @@ async function requireNonEmptyFile(filePath: string): Promise<void> {
   if (!info.isFile() || info.size <= 0) {
     throw new Error(`${filePath} is not a non-empty regular file`)
   }
+}
+
+// The map IS the product: a release without its bundled frontend answers every
+// API route while serving 404 on every page — exactly the 2026-07-19 outage,
+// which /api/ready reported as healthy. Readiness must cover the static root,
+// or a broken deploy reports success and start.sh never rolls it back.
+async function checkFrontend(frontendDist: string): Promise<void> {
+  await requireNonEmptyFile(join(frontendDist, 'index.html'))
 }
 
 async function checkPreparedData(h3r4Dir: string): Promise<void> {
@@ -134,6 +143,7 @@ async function checkPmtiles(pmtilesDir: string, tileEnv?: string): Promise<void>
 
 export function createReadinessCheck(options: ReadinessOptions): ReadinessCheck {
   const sourceReaderPath = options.sourceReaderPath ?? SOURCE_READER_PATH
+  const frontendDist = options.frontendDist ?? FRONTEND_DIST
   const h3r4Dir = options.h3r4Dir ?? H3R4_DIR
   const pmtilesDir = options.pmtilesDir ?? PMTILES_BASE
   const tileEnv = options.tileEnv
@@ -156,6 +166,7 @@ export function createReadinessCheck(options: ReadinessOptions): ReadinessCheck 
     const errors: ReadinessResult['errors'] = {}
     const checks: Array<[ReadinessComponent, () => Promise<void>]> = [
       ['engine', () => requireNonEmptyFile(sourceReaderPath)],
+      ['frontend', () => checkFrontend(frontendDist)],
       ['prepared-data', () => checkPreparedData(h3r4Dir)],
       ['pmtiles', () => checkPmtiles(pmtilesDir, tileEnv)],
     ]

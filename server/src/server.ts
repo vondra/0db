@@ -1,8 +1,8 @@
-import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildApp } from './app.js'
 import { registerWeb } from './web.js'
+import { FRONTEND_DIST } from './runtime-paths.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -44,13 +44,7 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1)
 })
 
-const bundledFrontend = path.join(__dirname, 'frontend')
-const frontendDist = process.env.FRONTEND_DIST
-  ? path.resolve(process.env.FRONTEND_DIST)
-  : existsSync(path.join(bundledFrontend, 'index.html'))
-    ? bundledFrontend
-    : path.join(__dirname, '..', '..', 'frontend', 'dist')
-await registerWeb(app, frontendDist)
+await registerWeb(app, FRONTEND_DIST)
 
 const portText = process.env.PORT ?? '8501'
 if (!/^[0-9]{1,5}$/.test(portText) || Number(portText) < 1 || Number(portText) > 65535) {
