@@ -1,7 +1,7 @@
 // Process liveness and dependency readiness. Public responses name only the
 // failed component; absolute paths and native errors stay in server logs.
 import type { FastifyInstance, FastifyReply } from 'fastify'
-import type { ReadinessCheck, ReadinessResult } from '../runtime-readiness.js'
+import { READINESS_COMPONENTS, type ReadinessCheck, type ReadinessResult } from '../runtime-readiness.js'
 
 export async function healthRoutes(app: FastifyInstance, readiness: ReadinessCheck): Promise<void> {
   let lastLoggedFailure = ''
@@ -18,10 +18,7 @@ export async function healthRoutes(app: FastifyInstance, readiness: ReadinessChe
       result = await readiness()
     } catch (error) {
       app.log.error(error, 'runtime readiness check crashed')
-      return reply.code(503).send({
-        status: 'not_ready',
-        failed: ['engine', 'frontend', 'prepared-data', 'pmtiles'],
-      })
+      return reply.code(503).send({ status: 'not_ready', failed: [...READINESS_COMPONENTS] })
     }
     if (result.ready) {
       lastLoggedFailure = ''

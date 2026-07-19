@@ -8,7 +8,8 @@ import { ALLOWED_LAYERS, PMTILES_BASE } from './routes/heatmap-shared.js'
 import { FRONTEND_DIST, H3R4_DIR, SOURCE_READER_PATH } from './runtime-paths.js'
 import { resolveManifestPath } from './tile-manifest-reader.js'
 
-export type ReadinessComponent = 'engine' | 'frontend' | 'prepared-data' | 'pmtiles'
+export const READINESS_COMPONENTS = ['engine', 'frontend', 'prepared-data', 'pmtiles'] as const
+export type ReadinessComponent = (typeof READINESS_COMPONENTS)[number]
 
 export type ReadinessResult = {
   ready: boolean

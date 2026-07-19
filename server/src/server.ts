@@ -1,10 +1,6 @@
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { buildApp } from './app.js'
 import { registerWeb } from './web.js'
 import { FRONTEND_DIST } from './runtime-paths.js'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const app = await buildApp({
   logger: true,
