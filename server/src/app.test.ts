@@ -13,6 +13,7 @@ test('cluster dashboard: absent unless enabled, else under the /a/ admin prefix 
   const withCluster = await buildApp({ readinessCheck: ready, enableClusterRoutes: true })
   t.after(async () => withCluster.close())
   assert.equal(withCluster.hasRoute({ method: 'GET', url: '/a/cluster' }), true)
+  assert.equal(withCluster.hasRoute({ method: 'GET', url: '/a/api/cluster/worker-log' }), true)
 
   // Two-layer access control: Caddy basic_auth at the edge + requireLocalPeer here.
   // A request whose SOCKET peer is loopback (Caddy proxies from localhost; the shell TUI)
