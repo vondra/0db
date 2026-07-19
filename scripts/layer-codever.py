@@ -22,7 +22,10 @@ import os, sys, hashlib
 # the heatmap COMPUTE crates — NOT aircraft-extract / osm-extract (data prep; their edits change DATA,
 # bumping data_ver via arrow mtimes, not code). Validator-only bins are dropped (not production output).
 CRATES = ("tile-painter", "noise-compute", "noise-gpu", "raster-reader")
-EXCLUDE_BINS = {"compare_floats.rs", "compare_hm3.rs", "e2_full.rs", "tile_store_fsck.rs"}
+EXCLUDE_BINS = {
+    "compare_floats.rs", "compare_hm3.rs", "e2_airborne.rs", "e2_full.rs",
+    "tile_store_fsck.rs",
+}
 # Global build inputs OUTSIDE the crates that still change produced tiles (e.g. rustflags=target-cpu).
 GLOBAL_BUILD = (".cargo/config.toml", ".cargo/config", "rust-toolchain.toml", "rust-toolchain")
 
@@ -47,7 +50,16 @@ DEFAULT_EXCL = {
     "building": "tile-painter/src/source_loader_building.rs noise-compute/src/emission/settlement.rs"
                 " noise-compute/src/emission/leisure.rs",
     "aircraft-ground": "tile-painter/src/source_loader_traffic.rs tile-painter/src/ground_ops.rs noise-compute/src/emission/airport_traffic.rs noise-compute/src/emission/gse.rs noise-compute/src/emission/aircraft/ground_ops.rs noise-compute/src/compute/aircraft_v6/airport_traffic",
-    "aircraft-airborne": "tile-painter/src/source_loader_airborne.rs tile-painter/src/airborne.rs noise-compute/src/compute/aircraft_v6/airborne noise-gpu/src/gpu_airborne.rs noise-gpu/kernels/airborne.cu",
+    # `gpu_airborne.rs` was split into the gpu_airborne/ submodules in b7322f93, but the
+    # partition kept only the entry file. Those submodules and the shared-library airborne.rs
+    # therefore fell into SHARED: an aircraft-only stream optimisation changed road/cruise/ground
+    # cv and deploy tried to replan every active goal (2026-07-19). Own the whole submodule
+    # directory so future files cannot repeat the omission. Existing stamps survive this one-time
+    # partition hash rotation through their exact per-layer OUTPUT_VER proof in world-stamps.py.
+    "aircraft-airborne": "tile-painter/src/source_loader_airborne.rs tile-painter/src/airborne.rs"
+                         " noise-compute/src/compute/aircraft_v6/airborne"
+                         " noise-gpu/src/airborne.rs noise-gpu/src/gpu_airborne.rs"
+                         " noise-gpu/src/gpu_airborne noise-gpu/kernels/airborne.cu",
     "aircraft-cruise": "tile-painter/src/cruise.rs noise-compute/src/compute/aircraft_v6/cruise.rs",
 }
 
