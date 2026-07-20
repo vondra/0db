@@ -17,11 +17,20 @@ use tile_painter::wire_hm3::{collapse_lden_u8, write_tile, SOURCE_ID_AIRCRAFT};
 use crate::prep::{build_dem_blocks, prep_cell, PrepBlock, PreparedCell};
 use crate::Args;
 
-/// Host-wall split of the GPU build half of one cell. The persistent stream aggregates these
-/// fields every 64 cells, keeping production logging low-volume while distinguishing device input,
-/// scatter/copyback, and output sealing from CPU preparation.
+/// Host-wall split of the GPU build half of one cell. The persistent stream preserves these fields
+/// per cell and aggregates them every 64 cells while distinguishing device input, scatter/copyback,
+/// and output sealing from CPU preparation.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct BuildTimings {
+    /// Chunked-only reload of the source ring plus construction of borrowed source views.
+    pub(crate) source_load: Duration,
+    /// Chunked-only residual wall for candidate enumeration/preparation. This deliberately
+    /// includes the loop/callback bookkeeping that cannot be split without changing the hot path.
+    pub(crate) candidate_prepare_composite: Duration,
+    /// Chunked-only packing of prepared candidates into the device SoA.
+    pub(crate) pack: Duration,
+    /// Chunked-only DEM receiver-grid construction.
+    pub(crate) raster: Duration,
     pub(crate) accumulator_init: Duration,
     pub(crate) upload: Duration,
     pub(crate) scatter: Duration,
@@ -31,6 +40,7 @@ pub(crate) struct BuildTimings {
 pub(crate) struct BuiltCell {
     pub(crate) written: usize,
     pub(crate) skipped: usize,
+    pub(crate) output_bytes: usize,
     pub(crate) timings: BuildTimings,
 }
 
@@ -39,6 +49,7 @@ impl BuiltCell {
         Self {
             written: 0,
             skipped: 0,
+            output_bytes: 0,
             timings: BuildTimings::default(),
         }
     }
@@ -70,28 +81,30 @@ pub(crate) fn max_candidates_per_chunk(vram_total_bytes: u64) -> usize {
 
 /// Collapse one tile's accumulator to Lden bytes and write it — or, if the (re)build shrank the tile
 /// to silence, unlink any stale prior tile so an incremental recombine/pyramid can't read phantom
-/// energy (mirrors the CPU builder). Returns whether a tile was written. One source of truth for the
-/// write + stale-unlink, shared by the one-pass (`gpu_build_cell_one_pass`) and M2 chunked builds.
+/// energy (mirrors the CPU builder). Returns exact bytes written (zero for silence). One source of
+/// truth for the write + stale-unlink, shared by the one-pass (`gpu_build_cell_one_pass`) and M2
+/// chunked builds.
 fn write_tile_accumulator(
     args: &Args,
     n_days: u16,
     tx: u32,
     ty: u32,
     accum: &TileAccumulator,
-) -> Result<bool> {
+) -> Result<usize> {
     let out = args
         .output
         .join(args.zoom.to_string())
         .join(tx.to_string())
         .join(format!("{ty}.bin"));
     let cells = collapse_lden_u8(accum, n_days as f64);
-    if write_tile(&out, &cells, SOURCE_ID_AIRCRAFT, !args.write_empty)? > 0 {
-        Ok(true)
+    let written = write_tile(&out, &cells, SOURCE_ID_AIRCRAFT, !args.write_empty)?;
+    if written > 0 {
+        Ok(written)
     } else {
         if out.exists() {
             std::fs::remove_file(&out).with_context(|| format!("rm stale {}", out.display()))?;
         }
-        Ok(false)
+        Ok(0)
     }
 }
 
@@ -150,18 +163,20 @@ fn write_running(
     n_days: u16,
     blocks: &[PrepBlock],
     running: &[Vec<TileAccumulator>],
-) -> Result<(usize, usize)> {
-    let (mut written, mut skipped) = (0usize, 0usize);
+) -> Result<(usize, usize, usize)> {
+    let (mut written, mut skipped, mut output_bytes) = (0usize, 0usize, 0usize);
     for (block, run) in blocks.iter().zip(running.iter()) {
         for (&(tx, ty), accum) in block.btiles.iter().zip(run.iter()) {
-            if write_tile_accumulator(args, n_days, tx, ty, accum)? {
+            let bytes = write_tile_accumulator(args, n_days, tx, ty, accum)?;
+            if bytes > 0 {
                 written += 1;
+                output_bytes += bytes;
             } else {
                 skipped += 1;
             }
         }
     }
-    Ok((written, skipped))
+    Ok((written, skipped, output_bytes))
 }
 
 /// GPU build stage for a one-pass (fits-one-pass) cell: fold its single whole-region SoA chunk into
@@ -187,15 +202,17 @@ pub(crate) fn gpu_build_cell_one_pass(
     let (upload, scatter) =
         scatter_chunk_into_running(gpu, &p.blocks, &mut running, p.sll, p.sf, p.si, p.nreg)?;
     let seal_started = Instant::now();
-    let (written, skipped) = write_running(args, n_days, &p.blocks, &running)?;
+    let (written, skipped, output_bytes) = write_running(args, n_days, &p.blocks, &running)?;
     Ok(BuiltCell {
         written,
         skipped,
+        output_bytes,
         timings: BuildTimings {
             accumulator_init,
             upload,
             scatter,
             seal: seal_started.elapsed(),
+            ..BuildTimings::default()
         },
     })
 }
@@ -230,23 +247,29 @@ pub(crate) fn gpu_build_cell_chunked(
     }
     // Load the region's grid_disk(1) airborne sources (held for the whole chunk loop, since every
     // chunk re-reads them — the cheap part; the expensive candidate Vec is what we chunk).
+    let source_load_started = Instant::now();
     let cell = CellIndex::try_from(r4)?;
     let mut arcs = Vec::with_capacity(7);
     for nbr in cell.grid_disk::<Vec<_>>(1) {
         arcs.push(cache.get_or_load(u64::from(nbr))?);
     }
     let views: Vec<_> = arcs.iter().flat_map(|a| a.airborne.views()).collect();
+    let source_load = source_load_started.elapsed();
 
     // DEM tile-blocks (same topology as the one-pass prep, built ONCE, reused across chunks) + a
     // zeroed running accumulator per owned tile.
-    let accumulator_started = Instant::now();
+    let raster_started = Instant::now();
     let blocks = build_dem_blocks(rasters, z, bn, tiles);
+    let raster = raster_started.elapsed();
+    let accumulator_started = Instant::now();
     let mut running = new_running(&blocks);
     let accumulator_init = accumulator_started.elapsed();
+    let mut pack = Duration::ZERO;
     let mut upload = Duration::ZERO;
     let mut scatter = Duration::ZERO;
     // Fold each VRAM-sized candidate chunk into the running accumulators — the SAME scatter core the
     // one-pass build runs once, here run once per chunk (additive, so the sum = the one-pass result).
+    let candidate_loop_started = Instant::now();
     for_each_region_chunk(
         &views,
         r4,
@@ -254,7 +277,9 @@ pub(crate) fn gpu_build_cell_chunked(
         max_candidates_per_chunk(gpu.vram_total_bytes()),
         |chunk| {
             let nreg = chunk.len();
+            let pack_started = Instant::now();
             let (sll, sf, si) = pack_airborne_segs(&chunk);
+            pack += pack_started.elapsed();
             drop(chunk);
             let (chunk_upload, chunk_scatter) =
                 scatter_chunk_into_running(gpu, &blocks, &mut running, sll, sf, si, nreg)?;
@@ -263,12 +288,23 @@ pub(crate) fn gpu_build_cell_chunked(
             Ok(())
         },
     )?;
+    // Candidate construction happens between callback invocations inside for_each_region_chunk.
+    // Subtract the callback's explicitly measured pack/device work from the enclosing host wall;
+    // the honest remainder is candidate preparation plus small loop/callback bookkeeping.
+    let candidate_prepare_composite = candidate_loop_started
+        .elapsed()
+        .saturating_sub(pack + upload + scatter);
     let seal_started = Instant::now();
-    let (written, skipped) = write_running(args, n_days, &blocks, &running)?;
+    let (written, skipped, output_bytes) = write_running(args, n_days, &blocks, &running)?;
     Ok(BuiltCell {
         written,
         skipped,
+        output_bytes,
         timings: BuildTimings {
+            source_load,
+            candidate_prepare_composite,
+            pack,
+            raster,
             accumulator_init,
             upload,
             scatter,

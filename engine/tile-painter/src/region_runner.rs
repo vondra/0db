@@ -375,7 +375,6 @@ pub fn process_region(
                 wire_hm3::SOURCE_ID_AIRCRAFT,
                 !ctx.write_empty,
             )?;
-            stats.t_write += t_write.elapsed();
             if written == 0 {
                 // Re-run shrank this tile to silence — unlink any stale prior tile
                 // so an incremental recombine/pyramid can't read phantom energy
@@ -389,6 +388,9 @@ pub fn process_region(
                 stats.tiles_written += 1;
                 stats.bytes_written += written;
             }
+            // Collapse, Brotli encoding, filesystem write and stale-output removal are one
+            // existing production boundary; record the complete composite, including silence.
+            stats.t_write += t_write.elapsed();
         }
     }
     // Cruise telemetry was accumulated over the z10 coarse-field tiles, not the

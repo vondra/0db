@@ -22,6 +22,7 @@ use raster_reader::fused_tile_z13::default_batch_size;
 use raster_reader::RealRasters;
 use rayon::prelude::*;
 
+use tile_painter::engine_spans::EngineCellSpans;
 use tile_painter::grid::tile_range;
 use tile_painter::r4_source_cache::{R4SourceCache, SourceSel};
 use tile_painter::region_runner::{
@@ -120,8 +121,9 @@ struct Args {
     /// STREAM mode: read output R4 cell IDs (one hex/line) from stdin and build each on a warm
     /// OS-thread pool — n_days + class_weights + RealRasters resident, each worker its own R4
     /// source LRU reused across cells (no per-chunk process spawn). Prints `start <r4hex>
-    /// <unix_ms>` before work and `done <r4hex> <written> <skipped> <ms>` (or `fail <r4hex>
-    /// <err>`) as it finishes. The persistent CPU worker the cell-stream orchestrator feeds.
+    /// <unix_ms>` before work, one `engine-spans-v1 {json}` evidence line, and `done <r4hex>
+    /// <written> <skipped> <ms>` (or `fail <r4hex> <err>`) as it finishes. The persistent CPU
+    /// worker the cell-stream orchestrator feeds.
     #[arg(long, default_value_t = false)]
     stream: bool,
     /// STREAM mode: resolve the build-wide n_days + class_weights ONCE from this seed regions-file
@@ -242,7 +244,7 @@ fn run_stream(args: &Args, sel: SourceSel) -> Result<()> {
     const PULL_BATCH: usize = 4;
     let work: StreamQueue = Arc::new((Mutex::new((VecDeque::new(), false)), Condvar::new()));
     std::thread::scope(|scope| {
-        for _ in 0..n_workers {
+        for worker_slot in 0..n_workers {
             let work = Arc::clone(&work);
             let ctx = &ctx;
             scope.spawn(move || {
@@ -268,17 +270,78 @@ fn run_stream(args: &Args, sel: SourceSel) -> Result<()> {
                     for r4 in batch {
                         announce_stream_cell_started(r4);
                         let t = Instant::now();
+                        let mut spans =
+                            EngineCellSpans::new(r4, "build-heatmap-aircraft", worker_slot, t);
+                        spans.metric_bool("cuda_event_timing_enabled", false);
                         let tiles = region_tiles(r4, ctx.zoom);
+                        spans.metric("owned_tiles", serde_json::json!(tiles.len()));
+                        spans.metric(
+                            "sources",
+                            serde_json::json!({
+                                "cruise": ctx.sel.cruise,
+                                "airborne": ctx.sel.airborne,
+                            }),
+                        );
                         let line = match process_region(ctx, &mut cache, r4, &tiles) {
-                            Ok(st) => format!(
-                                "done {r4:x} {} {} {}",
-                                st.tiles_written,
-                                st.tiles_skipped,
-                                t.elapsed().as_millis()
-                            ),
-                            Err(e) => format!("fail {r4:x} {e}"),
+                            Ok(st) => {
+                                spans.push_aggregate_span(
+                                    "source_load",
+                                    st.t_load,
+                                    Some(1),
+                                    None,
+                                    None,
+                                );
+                                spans.push_aggregate_span("raster", st.t_raster, None, None, None);
+                                if ctx.sel.cruise {
+                                    spans.push_aggregate_span(
+                                        "cpu_scatter",
+                                        st.t_cruise_scatter,
+                                        None,
+                                        None,
+                                        Some("cruise"),
+                                    );
+                                }
+                                if ctx.sel.airborne {
+                                    spans.push_aggregate_span(
+                                        "cpu_scatter",
+                                        st.t_airborne_scatter,
+                                        None,
+                                        None,
+                                        Some("airborne"),
+                                    );
+                                }
+                                // RegionStats' existing write timer intentionally includes HM3
+                                // collapse/encoding. Report that honest composite, not two guessed
+                                // numbers, while retaining its exact byte counter.
+                                spans.push_aggregate_span(
+                                    "encode_write_composite",
+                                    st.t_write,
+                                    Some((st.tiles_written + st.tiles_skipped) as u64),
+                                    Some(st.bytes_written as u64),
+                                    None,
+                                );
+                                let wall = t.elapsed();
+                                spans.finish_done(
+                                    wall,
+                                    st.tiles_written,
+                                    st.tiles_skipped,
+                                    Some(st.bytes_written),
+                                );
+                                format!(
+                                    "done {r4:x} {} {} {}",
+                                    st.tiles_written,
+                                    st.tiles_skipped,
+                                    wall.as_millis()
+                                )
+                            }
+                            Err(e) => {
+                                let line = format!("fail {r4:x} {e}");
+                                spans.finish_failed(t.elapsed(), &line);
+                                line
+                            }
                         };
                         let mut out = std::io::stdout().lock();
+                        let _ = writeln!(out, "{}", spans.line());
                         let _ = writeln!(out, "{line}");
                         let _ = out.flush();
                     }

@@ -29,6 +29,7 @@ use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
 use rayon::prelude::*;
 use tile_painter::accumulator::TileAccumulator;
+use tile_painter::engine_spans::EngineCellSpans;
 use tile_painter::grid::tile_range;
 use tile_painter::region_runner::{
     announce_stream_cell_started, read_r4_file, region_tiles, split_configured_layers,
@@ -76,7 +77,7 @@ fn env(k: &str, d: &str) -> String {
 }
 
 /// Per-layer end-to-end counters (timings in seconds, summed over tiles).
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct LayerStat {
     t_kernel: f64,
     /// Isolated kernel time from CUDA events bracketing the launch (ms), summed
@@ -84,8 +85,17 @@ struct LayerStat {
     /// optimisation harness's median-of-N `KERNEL_MS` (vs the host-wall `t_kernel`,
     /// which folds in the htod/dtoh copies + sync). Stays 0 when timing is off.
     kernel_ms: f64,
+    kernel_calls: usize,
     t_bins: f64,
     t_load: f64,
+    /// Host-wall time of the synchronous H2D calls whose boundaries already exist. The shared
+    /// block halo upload is not yet included, so the event names this as a measured subset.
+    t_h2d: f64,
+    t_encode: f64,
+    t_write: f64,
+    /// All-source-empty cells still have correctness work: stale output files from an older
+    /// repaint must be removed. Keep that operation separate from an encode/write that never ran.
+    t_cleanup: f64,
     max_diff: i32,
     n_diff: usize,
     n_cmp: usize, // both-present cells compared (drift-gate denominator)
@@ -93,7 +103,44 @@ struct LayerStat {
     n_le3: usize, // |Δ| ≤ 3 bytes (1.5 dB)
     n_baseline: usize,
     n_written: usize,
+    bytes_written: usize,
+    n_cleanup_checked: usize,
+    n_cleanup_removed: usize,
     n_tiles: usize,
+}
+
+impl LayerStat {
+    fn delta(&self, before: Option<&Self>) -> Self {
+        let before = before.cloned().unwrap_or_default();
+        Self {
+            t_kernel: self.t_kernel - before.t_kernel,
+            kernel_ms: self.kernel_ms - before.kernel_ms,
+            kernel_calls: self.kernel_calls - before.kernel_calls,
+            t_bins: self.t_bins - before.t_bins,
+            t_load: self.t_load - before.t_load,
+            t_h2d: self.t_h2d - before.t_h2d,
+            t_encode: self.t_encode - before.t_encode,
+            t_write: self.t_write - before.t_write,
+            t_cleanup: self.t_cleanup - before.t_cleanup,
+            max_diff: self.max_diff,
+            n_diff: self.n_diff - before.n_diff,
+            n_cmp: self.n_cmp - before.n_cmp,
+            n_le1: self.n_le1 - before.n_le1,
+            n_le3: self.n_le3 - before.n_le3,
+            n_baseline: self.n_baseline - before.n_baseline,
+            n_written: self.n_written - before.n_written,
+            bytes_written: self.bytes_written - before.bytes_written,
+            n_cleanup_checked: self.n_cleanup_checked - before.n_cleanup_checked,
+            n_cleanup_removed: self.n_cleanup_removed - before.n_cleanup_removed,
+            n_tiles: self.n_tiles - before.n_tiles,
+        }
+    }
+}
+
+struct RegionResult {
+    written: usize,
+    skipped: usize,
+    raster: std::time::Duration,
 }
 
 struct Cfg {
@@ -219,6 +266,8 @@ fn process_block(
         let d_rxll = dev.htod_copy(bufs.rxll).expect("rxll");
         let d_rxar = dev.htod_copy(bufs.rxar).expect("rxar");
         let d_barr = dev.htod_copy(bufs.barr).expect("barr");
+        let h2d_done = Instant::now();
+        stats.entry(layer.dir()).or_default().t_h2d += h2d_done.duration_since(tk).as_secs_f64();
         // CUDA-event bracket (timing only): record on the SAME stream the kernel
         // launches on (`f.launch` → `dev.cu_stream()`), so `start`/`stop` straddle
         // exactly the kernel — not the htod copies above or the dtoh join below. The
@@ -256,6 +305,7 @@ fn process_block(
                 // Stream is synced by dtoh above ⇒ both events are recorded.
                 st.kernel_ms +=
                     unsafe { result::event::elapsed(start, stop).expect("elapsed") } as f64;
+                st.kernel_calls += 1;
                 unsafe {
                     result::event::destroy(start).expect("destroy start");
                     result::event::destroy(stop).expect("destroy stop");
@@ -263,9 +313,13 @@ fn process_block(
             }
         }
 
+        let output_started = Instant::now();
         let mut accum = TileAccumulator::new();
         accum.energy.copy_from_slice(&gpu);
         let cells = collapse_lden_surface_u8(&accum);
+        let encode_done = Instant::now();
+        stats.entry(layer.dir()).or_default().t_encode +=
+            encode_done.duration_since(output_started).as_secs_f64();
 
         if let Some(root) = &cfg.output {
             let out = Path::new(root)
@@ -273,14 +327,22 @@ fn process_block(
                 .join(cfg.z.to_string())
                 .join(tx.to_string())
                 .join(format!("{ty}.bin"));
-            if write_tile(&out, &cells, layer.source_id(), true)? > 0 {
-                stats.entry(layer.dir()).or_default().n_written += 1;
+            let bytes = write_tile(&out, &cells, layer.source_id(), true)?;
+            if bytes > 0 {
+                let st = stats.entry(layer.dir()).or_default();
+                st.n_written += 1;
+                st.bytes_written += bytes;
             } else if out.exists() {
                 // Rebuilt all-silent: unlink any stale tile a prior build left, else
                 // combine keeps summing stale GPU energy (mirrors build_heatmap_surface).
                 std::fs::remove_file(&out)
                     .with_context(|| format!("rm stale {}", out.display()))?;
             }
+            // `write_tile` includes Brotli encoding. Keep this one honest composite through the
+            // stale-output unlink rather than presenting either operation as an isolated write.
+            let write_done = Instant::now();
+            stats.entry(layer.dir()).or_default().t_write +=
+                write_done.duration_since(encode_done).as_secs_f64();
         }
         if !cfg.baseline.is_empty() {
             let bp = Path::new(&cfg.baseline)
@@ -324,7 +386,7 @@ fn process_block(
 /// and the --stream loop. Loads the region's grid_disk(1) rows + barriers once, uploads sources
 /// once, crops blocks in parallel (each rayon worker on its own persistent RASTERS instance —
 /// see the thread_local's decision-record comment), then runs the sequential GPU kernel loop.
-/// Returns (written, skipped) tile-layers for the `done` line.
+/// Returns the cell's written/skipped tile-layers plus its shared-raster wall for the event line.
 fn process_region(
     r4: u64,
     region_tiles: &[(u32, u32)],
@@ -335,7 +397,7 @@ fn process_region(
     prepared: &str,
     stats: &mut BTreeMap<&'static str, LayerStat>,
     prog: &mut Progress,
-) -> Result<(usize, usize)> {
+) -> Result<RegionResult> {
     let total = region_tiles.len() * layers.len();
     let written0: usize = stats.values().map(|s| s.n_written).sum();
     // Load every requested layer's rows ONCE for this region (grid_disk(1)).
@@ -356,20 +418,36 @@ fn process_region(
     // preserve the all-silent cleanup so a direct-to-OUTPUT rebuild drops a prior build's tiles.
     if region_rows.iter().all(|(_, rows)| rows.is_empty()) {
         if let Some(root) = &cfg.output {
-            for &(tx, ty) in region_tiles {
-                for l in layers {
-                    let _ = std::fs::remove_file(
-                        Path::new(root)
-                            .join(l.dir())
-                            .join(cfg.z.to_string())
-                            .join(tx.to_string())
-                            .join(format!("{ty}.bin")),
-                    );
+            for l in layers {
+                let cleanup_started = Instant::now();
+                let mut removed = 0usize;
+                for &(tx, ty) in region_tiles {
+                    let path = Path::new(root)
+                        .join(l.dir())
+                        .join(cfg.z.to_string())
+                        .join(tx.to_string())
+                        .join(format!("{ty}.bin"));
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => removed += 1,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            return Err(error)
+                                .with_context(|| format!("rm stale {}", path.display()))
+                        }
+                    }
                 }
+                let stat = stats.entry(l.dir()).or_default();
+                stat.t_cleanup += cleanup_started.elapsed().as_secs_f64();
+                stat.n_cleanup_checked += region_tiles.len();
+                stat.n_cleanup_removed += removed;
             }
         }
         prog.done += total;
-        return Ok((0, total));
+        return Ok(RegionResult {
+            written: 0,
+            skipped: total,
+            raster: std::time::Duration::ZERO,
+        });
     }
     let barrier_data = if cfg.barriers_enabled {
         BarrierData::load_for_r4s(&cfg.h3r4, &ring).context("load barriers")?
@@ -377,20 +455,20 @@ fn process_region(
         BarrierData::from_segments(Vec::new())
     };
     // Upload each layer's sources to the GPU ONCE for this region.
-    let src_dev: Vec<LayerSrc> = region_rows
-        .iter()
-        .map(|(layer, rows)| {
-            let s = pack_sources(rows);
-            (
-                *layer,
-                (
-                    dev.htod_copy(s.seg).expect("seg"),
-                    dev.htod_copy(s.sp).expect("sp"),
-                    dev.htod_copy(s.semis).expect("semis"),
-                ),
-            )
-        })
-        .collect();
+    let mut src_dev: Vec<LayerSrc> = Vec::with_capacity(region_rows.len());
+    for (layer, rows) in &region_rows {
+        let tp = Instant::now();
+        let s = pack_sources(rows);
+        stats.entry(layer.dir()).or_default().t_bins += tp.elapsed().as_secs_f64();
+        let th = Instant::now();
+        let uploaded = (
+            dev.htod_copy(s.seg).expect("seg"),
+            dev.htod_copy(s.sp).expect("sp"),
+            dev.htod_copy(s.semis).expect("semis"),
+        );
+        stats.entry(layer.dir()).or_default().t_h2d += th.elapsed().as_secs_f64();
+        src_dev.push((*layer, uploaded));
+    }
     // Batch the region's tiles into grid-aligned blocks (one shared halo each).
     let mut blocks: BTreeMap<(u32, u32), Vec<(u32, u32)>> = BTreeMap::new();
     for &(tx, ty) in region_tiles {
@@ -409,6 +487,7 @@ fn process_region(
     // dense cells, weak GPU → crop is the bottleneck). The GPU kernel loop below stays
     // SEQUENTIAL over the SAME sorted block order, so output is byte-identical.
     let block_keys: Vec<(u32, u32)> = blocks.keys().copied().collect();
+    let raster_started = Instant::now();
     let batches: Vec<((u32, u32), TileBatch)> = block_keys
         .par_iter()
         .map(|&(bx, by)| {
@@ -422,6 +501,7 @@ fn process_region(
             })
         })
         .collect();
+    let raster = raster_started.elapsed();
     for (key, batch) in &batches {
         let (bx, by) = *key;
         process_block(
@@ -440,7 +520,11 @@ fn process_region(
         )?;
     }
     let written: usize = stats.values().map(|s| s.n_written).sum::<usize>() - written0;
-    Ok((written, total.saturating_sub(written)))
+    Ok(RegionResult {
+        written,
+        skipped: total.saturating_sub(written),
+        raster,
+    })
 }
 
 /// STREAM mode (`--stream`): the persistent warm surface worker the cluster orchestrator feeds.
@@ -449,8 +533,9 @@ fn process_region(
 /// store was tried and reverted, cache contention gutted crop throughput) reused across the
 /// whole cell stream, so each thread's mmap-LRU stays warm across regions.
 /// Reads output R4 cell IDs (one hex/line), prints `start <r4hex> <unix_ms>` before work, builds
-/// each cell's owned tiles, then prints `done <r4hex> <written> <skipped> <ms>` (or `fail
-/// <r4hex> <err>`) — the same protocol as gpu-airborne, so the agent drives either identically.
+/// each cell's owned tiles, prints one `engine-spans-v1 {json}` evidence line, then `done <r4hex>
+/// <written> <skipped> <ms>` (or `fail <r4hex> <err>`) — the same protocol as gpu-airborne, so the
+/// agent drives either identically.
 fn run_stream(
     z: u8,
     layers: &[LineLayer],
@@ -531,7 +616,7 @@ fn run_stream(
 
     let cfg = &cfg;
     std::thread::scope(|scope| {
-        for _ in 0..n_workers {
+        for worker_slot in 0..n_workers {
             let work = Arc::clone(&work);
             let out = Arc::clone(&out);
             scope.spawn(move || {
@@ -563,7 +648,10 @@ fn run_stream(
                     let Some((r4, req_layers)) = cell else { break };
                     announce_stream_cell_started(r4);
                     let t = Instant::now();
+                    let mut spans = EngineCellSpans::new(r4, "gpu-surface", worker_slot, t);
                     let tiles = region_tiles(r4, z);
+                    spans.metric_u64("owned_tiles", tiles.len() as u64);
+                    spans.metric_bool("cuda_event_timing_enabled", timing_enabled());
                     // Narrow this process's configured layers down to the requested (stale)
                     // subset for THIS cell — absent request = build every configured layer,
                     // today's behavior (paint-pipeline-v4 PR#1 §3). The agent only sends
@@ -572,23 +660,162 @@ fn run_stream(
                     // hollow `done` that would let the hub seal an unbuilt stale layer.
                     let (effective, skipped) =
                         split_configured_layers(layers, req_layers.as_deref(), |l| l.dir());
+                    spans.metric_str(
+                        "effective_layers",
+                        &effective
+                            .iter()
+                            .map(|l| l.dir())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    );
+                    spans.metric_str(
+                        "h2d_coverage",
+                        "source-soa-and-per-tile; shared-block-halo unmeasured",
+                    );
+                    spans.metric_str(
+                        "cpu_prepare_coverage",
+                        "source-pack-and-per-tile-pack; shared-block-vector-pack unmeasured",
+                    );
+                    let stats_before = stats.clone();
                     let line = if effective.is_empty() {
-                        format!(
+                        let line = format!(
                             "fail {r4:x} layers-request matches none of configured [{}]",
                             skipped.join(",")
-                        )
+                        );
+                        spans.finish_failed(t.elapsed(), &line);
+                        line
                     } else {
                         match process_region(
                             r4, &tiles, &effective, cfg, &dev, &f, prepared, &mut stats, &mut prog,
                         ) {
-                            Ok((w, s)) => {
-                                format!("done {r4:x} {w} {s} {}", t.elapsed().as_millis())
+                            Ok(result) => {
+                                let mut output_bytes = 0usize;
+                                if !result.raster.is_zero() {
+                                    spans.push_aggregate_span(
+                                        "raster",
+                                        result.raster,
+                                        None,
+                                        None,
+                                        Some("surface-halo"),
+                                    );
+                                }
+                                for layer in &effective {
+                                    let name = layer.dir();
+                                    let delta = stats
+                                        .get(name)
+                                        .expect("effective layer has stats")
+                                        .delta(stats_before.get(name));
+                                    spans.push_aggregate_span(
+                                        "source_load",
+                                        std::time::Duration::from_secs_f64(delta.t_load.max(0.0)),
+                                        Some(1),
+                                        None,
+                                        Some(name),
+                                    );
+                                    if delta.t_bins > 0.0 {
+                                        spans.push_aggregate_span(
+                                            "cpu_prepare",
+                                            std::time::Duration::from_secs_f64(delta.t_bins),
+                                            None,
+                                            None,
+                                            Some(name),
+                                        );
+                                    }
+                                    if delta.t_h2d > 0.0 {
+                                        spans.push_aggregate_span(
+                                            "h2d",
+                                            std::time::Duration::from_secs_f64(delta.t_h2d),
+                                            None,
+                                            None,
+                                            Some(name),
+                                        );
+                                    }
+                                    if delta.kernel_calls > 0 {
+                                        spans.push_cuda_span(
+                                            "gpu_kernel",
+                                            std::time::Duration::from_secs_f64(
+                                                (delta.kernel_ms / 1_000.0).max(0.0),
+                                            ),
+                                            Some(delta.kernel_calls as u64),
+                                            Some(name),
+                                        );
+                                    }
+                                    // This existing host timer deliberately includes H2D, the
+                                    // overlapped prep of the next tile, kernel wait and D2H. It is
+                                    // useful evidence, but not mislabeled as isolated GPU time.
+                                    if delta.n_tiles > 0 {
+                                        spans.push_aggregate_span(
+                                            "gpu_pipeline_composite",
+                                            std::time::Duration::from_secs_f64(
+                                                delta.t_kernel.max(0.0),
+                                            ),
+                                            Some(delta.n_tiles as u64),
+                                            None,
+                                            Some(name),
+                                        );
+                                        spans.push_aggregate_span(
+                                            "encode",
+                                            std::time::Duration::from_secs_f64(
+                                                delta.t_encode.max(0.0),
+                                            ),
+                                            Some(delta.n_tiles as u64),
+                                            None,
+                                            Some(name),
+                                        );
+                                    }
+                                    if delta.t_write > 0.0 {
+                                        spans.push_aggregate_span(
+                                            "encode_write_composite",
+                                            std::time::Duration::from_secs_f64(delta.t_write),
+                                            Some(delta.n_tiles as u64),
+                                            Some(delta.bytes_written as u64),
+                                            Some(name),
+                                        );
+                                    }
+                                    if delta.n_cleanup_checked > 0 {
+                                        let cleanup_component =
+                                            format!("{name}:stale-output-cleanup");
+                                        spans.push_aggregate_span(
+                                            "write",
+                                            std::time::Duration::from_secs_f64(
+                                                delta.t_cleanup.max(0.0),
+                                            ),
+                                            Some(delta.n_cleanup_checked as u64),
+                                            None,
+                                            Some(&cleanup_component),
+                                        );
+                                        spans.metric_u64(
+                                            format!("stale_outputs_removed_{name}"),
+                                            delta.n_cleanup_removed as u64,
+                                        );
+                                    }
+                                    output_bytes += delta.bytes_written;
+                                }
+                                let wall = t.elapsed();
+                                spans.finish_done(
+                                    wall,
+                                    result.written,
+                                    result.skipped,
+                                    Some(output_bytes),
+                                );
+                                format!(
+                                    "done {r4:x} {} {} {}",
+                                    result.written,
+                                    result.skipped,
+                                    wall.as_millis()
+                                )
                             }
-                            Err(e) => format!("fail {r4:x} {e}"),
+                            Err(e) => {
+                                let line = format!("fail {r4:x} {e}");
+                                spans.finish_failed(t.elapsed(), &line);
+                                line
+                            }
                         }
                     };
                     let mut o = out.lock().unwrap();
-                    let ok = writeln!(o, "{line}").is_ok() && o.flush().is_ok();
+                    let ok = writeln!(o, "{}", spans.line()).is_ok()
+                        && writeln!(o, "{line}").is_ok()
+                        && o.flush().is_ok();
                     drop(o);
                     if !ok {
                         // downstream (the box-agent) closed its read end → stop the build, exactly

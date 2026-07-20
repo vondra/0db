@@ -31,6 +31,7 @@ use raster_reader::fused_tile_z13::{default_batch_size, tile_pixel_size_m, TILE_
 use raster_reader::{FusedPixel, RealRasters};
 
 use noise_compute::admin;
+use tile_painter::engine_spans::EngineCellSpans;
 use tile_painter::grid::tile_range;
 use tile_painter::r4_source_cache::SourceSel;
 use tile_painter::region_runner::{
@@ -103,9 +104,9 @@ struct Args {
     region_concurrency: usize,
     /// STREAM mode: read output R4 cell IDs (one hex/line) from stdin and build each on a warm
     /// pool — n_days + class_weights + ONE shared RealRasters resident, at most region_concurrency
-    /// halos in flight. Prints `start <r4hex> <unix_ms>` before work, then `done <r4hex>
-    /// <written> <skipped> <ms>` (or `fail …`) per cell. The persistent CPU surface worker the
-    /// cell-stream orchestrator feeds.
+    /// halos in flight. Prints `start <r4hex> <unix_ms>` before work, one
+    /// `engine-spans-v1 {json}` evidence line, then `done <r4hex> <written> <skipped> <ms>` (or
+    /// `fail …`) per cell. The persistent CPU surface worker the cell-stream orchestrator feeds.
     #[arg(long, default_value_t = false)]
     stream: bool,
     /// STREAM mode: resolve the build-wide ground-ops n_days + class_weights ONCE from this seed
@@ -218,9 +219,9 @@ fn cgroup_mem_max_bytes() -> Option<u64> {
 /// region_concurrency halos are in flight (the same memory cap the batch path uses). Per-cell
 /// output is IDENTICAL to batch (same process_surface_region); only scheduling differs — the pool
 /// is OS threads while the per-tile kernels use the global rayon pool (throughput, not bytes).
-/// Prints `start <r4hex> <unix_ms>` before work, then `done <r4hex> <written> <skipped> <ms>`
-/// (or `fail <r4hex> <err>`) per cell. n_days + class_weights resolve ONCE from --seed-regions,
-/// so streamed cells inherit the build-wide value.
+/// Prints `start <r4hex> <unix_ms>` before work, one `engine-spans-v1 {json}` evidence line, then
+/// `done <r4hex> <written> <skipped> <ms>` (or `fail <r4hex> <err>`) per cell. n_days +
+/// class_weights resolve ONCE from --seed-regions, so streamed cells inherit the build-wide value.
 fn run_stream(args: &Args, layers: &[Source], halo_m: f64) -> Result<()> {
     use std::collections::VecDeque;
     use std::io::{BufRead, Write};
@@ -267,7 +268,7 @@ fn run_stream(args: &Args, layers: &[Source], halo_m: f64) -> Result<()> {
     const PULL_BATCH: usize = 4;
     let work: StreamQueue = Arc::new((Mutex::new((VecDeque::new(), false)), Condvar::new()));
     std::thread::scope(|scope| {
-        for _ in 0..n_workers {
+        for worker_slot in 0..n_workers {
             let work = Arc::clone(&work);
             let ctx = &ctx;
             let heartbeat = &heartbeat;
@@ -292,6 +293,9 @@ fn run_stream(args: &Args, layers: &[Source], halo_m: f64) -> Result<()> {
                 for (r4, req_layers) in batch {
                     announce_stream_cell_started(r4);
                     let t = Instant::now();
+                    let mut spans =
+                        EngineCellSpans::new(r4, "build-heatmap-surface", worker_slot, t);
+                    spans.metric_bool("cuda_event_timing_enabled", false);
                     let tiles = region_tiles(r4, ctx.zoom);
                     // Narrow this process's configured layers down to the requested (stale)
                     // subset for THIS cell — absent request = build every configured layer,
@@ -301,23 +305,69 @@ fn run_stream(args: &Args, layers: &[Source], halo_m: f64) -> Result<()> {
                     // hollow `done` that would let the hub seal an unbuilt stale layer.
                     let (effective, skipped) =
                         split_configured_layers(layers, req_layers.as_deref(), |s| layer_meta(s).2);
+                    spans.metric("owned_tiles", serde_json::json!(tiles.len()));
+                    spans.metric(
+                        "effective_layers",
+                        serde_json::json!(effective
+                            .iter()
+                            .map(|&s| layer_meta(s).2)
+                            .collect::<Vec<_>>()),
+                    );
                     let line = if effective.is_empty() {
-                        format!(
+                        let error = format!(
                             "fail {r4:x} layers-request matches none of configured [{}]",
                             skipped.join(",")
-                        )
+                        );
+                        spans.finish_failed(t.elapsed(), &error);
+                        error
                     } else {
                         match process_surface_region(ctx, r4, &tiles, heartbeat, &effective) {
-                            Ok(st) => format!(
-                                "done {r4:x} {} {} {}",
-                                st.written,
-                                st.skipped,
-                                t.elapsed().as_millis()
-                            ),
-                            Err(e) => format!("fail {r4:x} {e}"),
+                            Ok(st) => {
+                                spans.push_aggregate_span(
+                                    "source_load",
+                                    st.t_load,
+                                    Some(1),
+                                    None,
+                                    None,
+                                );
+                                spans.push_aggregate_span("raster", st.t_raster, None, None, None);
+                                for (layer, layer_stats) in &st.by_layer {
+                                    spans.push_aggregate_span(
+                                        "cpu_scatter",
+                                        layer_stats.scatter,
+                                        None,
+                                        None,
+                                        Some(layer),
+                                    );
+                                }
+                                // SurfaceStats currently measures collapse + encode + filesystem
+                                // write as one interval. Keep it explicitly composite until those
+                                // already-hot per-tile boundaries are split and measured.
+                                spans.push_aggregate_span(
+                                    "encode_write_composite",
+                                    st.t_write,
+                                    Some((st.written + st.skipped) as u64),
+                                    Some(st.bytes as u64),
+                                    None,
+                                );
+                                let wall = t.elapsed();
+                                spans.finish_done(wall, st.written, st.skipped, Some(st.bytes));
+                                format!(
+                                    "done {r4:x} {} {} {}",
+                                    st.written,
+                                    st.skipped,
+                                    wall.as_millis()
+                                )
+                            }
+                            Err(e) => {
+                                let line = format!("fail {r4:x} {e}");
+                                spans.finish_failed(t.elapsed(), &line);
+                                line
+                            }
                         }
                     };
                     let mut out = std::io::stdout().lock();
+                    let _ = writeln!(out, "{}", spans.line());
                     let _ = writeln!(out, "{line}");
                     let _ = out.flush();
                 }

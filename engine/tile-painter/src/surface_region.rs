@@ -447,7 +447,6 @@ pub fn process_surface_region(
                     .join(x.to_string())
                     .join(format!("{y}.bin"));
                 let n = write_tile(&out, &cells, *source_id, !ctx.write_empty)?;
-                stats.t_write += t_w.elapsed();
                 if n == 0 {
                     // Rebuilt all-silent: unlink any stale tile a prior build left
                     // so combine can't read stale source energy.
@@ -460,6 +459,9 @@ pub fn process_surface_region(
                     stats.written += 1;
                     stats.bytes += n;
                 }
+                // Collapse/fill, Brotli encoding, write and stale-output removal are measured as
+                // the complete existing composite, including an all-silent rebuild.
+                stats.t_write += t_w.elapsed();
             }
             heartbeat.tick(region_r4);
         }

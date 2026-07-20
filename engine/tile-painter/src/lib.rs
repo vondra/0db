@@ -21,6 +21,7 @@ pub mod accumulator;
 pub mod airborne;
 pub mod cruise;
 pub mod cruise_field;
+pub mod engine_spans;
 pub mod grid;
 pub mod ground_ops;
 pub mod pyramid;
