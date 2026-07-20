@@ -15,7 +15,6 @@ import { heatmapPmtilesRoutes } from './routes/heatmap-pmtiles.js'
 import { tilesManifestRoutes } from './routes/tiles-manifest.js'
 import { initialViewRoutes } from './routes/initial-view.js'
 import { validationViewRoutes } from './routes/validation-view.js'
-import { mailInboundRoutes } from './routes/mail-inbound.js'
 import { healthRoutes } from './routes/health.js'
 import { createReadinessCheck, type ReadinessCheck } from './runtime-readiness.js'
 import { requireLocalPeer } from './internal-access.js'
@@ -111,9 +110,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(tilesManifestRoutes)
   await app.register(initialViewRoutes)
   await app.register(validationViewRoutes)
-  // Inbound-mail archive webhook (Cloudflare Email Worker → he84). Encapsulated
-  // so its raw MIME content-type parser never touches the JSON routes.
-  await app.register(mailInboundRoutes)
 
   const readiness = opts.readinessCheck ?? createReadinessCheck({ engineProbe })
   await healthRoutes(app, readiness)
@@ -122,23 +118,33 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     ?? clusterRoutesEnabled()
   if (enableClusterRoutes) {
     // Dynamic import means a public-only process never even loads code that
-    // reads SSH inventory, worker logs, costs, or cluster telemetry.
-    const { clusterRoutes } = await import('./routes/cluster.js')
-    // Internal admin area under the /a/ prefix — cluster now (→ /a/cluster +
-    // /a/api/cluster/status), other admins later. TWO layers of access control, because
-    // it surfaces box IPs, telemetry, and $ costs: Caddy basic_auth on dev.0db.app/a/*
-    // (the password), AND requireLocalPeer here so a DIRECT hit on the public :8520 port
-    // (bypassing Caddy — the box has no firewall) can't reach it. Caddy proxies from
-    // loopback so authed public requests + the local TUI pass; the public map stays open.
-    // NOTE the prefix must match cluster-page.ts's poll URL and scripts/cluster-dash.py.
-    await app.register(async (adminApp) => {
-      adminApp.addHook('onRequest', requireLocalPeer)
-      await adminApp.register(clusterRoutes)
-      // Anonymous web analytics (/a/stats + /a/api/stats/*) — same /a scope;
-      // reads only the aggregate SQLite DB and bounded tails of the access log.
-      const { webStatsRoutes } = await import('./routes/web-stats.js')
-      await adminApp.register(webStatsRoutes)
-    }, { prefix: '/a' })
+    // reads SSH inventory, worker logs, costs, or cluster telemetry — and a
+    // distribution that ships without that ops module simply skips it. The
+    // specifier is a variable so a distribution without the file typechecks.
+    let clusterRoutes: ((app: import('fastify').FastifyInstance) => Promise<unknown>) | undefined
+    const clusterModule = './routes/cluster.js'
+    try {
+      ;({ clusterRoutes } = await import(clusterModule))
+    } catch (error) {
+      app.log.info(`cluster routes unavailable (ops module not shipped): ${(error as Error).message}`)
+    }
+    if (clusterRoutes) {
+      // Internal admin area under the /a/ prefix — cluster now (→ /a/cluster +
+      // /a/api/cluster/status), other admins later. TWO layers of access control, because
+      // it surfaces box IPs, telemetry, and $ costs: Caddy basic_auth on dev.0db.app/a/*
+      // (the password), AND requireLocalPeer here so a DIRECT hit on the public :8520 port
+      // (bypassing Caddy — the box has no firewall) can't reach it. Caddy proxies from
+      // loopback so authed public requests + the local TUI pass; the public map stays open.
+      // NOTE the prefix must match cluster-page.ts's poll URL and scripts/cluster-dash.py.
+      await app.register(async (adminApp) => {
+        adminApp.addHook('onRequest', requireLocalPeer)
+        await adminApp.register(clusterRoutes!)
+        // Anonymous web analytics (/a/stats + /a/api/stats/*) — same /a scope;
+        // reads only the aggregate SQLite DB and bounded tails of the access log.
+        const { webStatsRoutes } = await import('./routes/web-stats.js')
+        await adminApp.register(webStatsRoutes)
+      }, { prefix: '/a' })
+    }
   }
 
   return app

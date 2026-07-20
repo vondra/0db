@@ -4,37 +4,14 @@ import { buildApp, clusterRoutesEnabled } from './app.js'
 
 const ready = async () => ({ ready: true as const, failed: [], errors: {} })
 
-test('cluster dashboard: absent unless enabled, else under the /a/ admin prefix (Caddy basic_auth gates the edge)', async (t) => {
-  const publicApp = await buildApp({ readinessCheck: ready, enableClusterRoutes: false })
-  t.after(async () => publicApp.close())
-  assert.equal(publicApp.hasRoute({ method: 'GET', url: '/a/cluster' }), false)
-  assert.equal(publicApp.hasRoute({ method: 'GET', url: '/a/api/cluster/status' }), false)
-
-  const withCluster = await buildApp({ readinessCheck: ready, enableClusterRoutes: true })
-  t.after(async () => withCluster.close())
-  assert.equal(withCluster.hasRoute({ method: 'GET', url: '/a/cluster' }), true)
-  assert.equal(withCluster.hasRoute({ method: 'GET', url: '/a/api/cluster/worker-log' }), true)
-
-  // Two-layer access control: Caddy basic_auth at the edge + requireLocalPeer here.
-  // A request whose SOCKET peer is loopback (Caddy proxies from localhost; the shell TUI)
-  // reaches the route regardless of the forwarded public IP. cachedStatus() warms in the
-  // background, so a fresh server answers 200 (warm) or 503 (warming) — both prove REACHED
-  // (asserting 200 alone is a warming race).
-  const reached = await withCluster.inject({
-    method: 'GET',
-    url: '/a/api/cluster/status',
-    remoteAddress: '127.0.0.1',
-    headers: { 'x-forwarded-for': '203.0.113.20' },
-  })
-  assert.ok(
-    reached.statusCode === 200 || reached.statusCode === 503,
-    `dashboard route must respond (200 warm / 503 warming), got ${reached.statusCode}`,
-  )
-
-  // A DIRECT hit on the public port (non-loopback socket, bypassing Caddy + basic_auth)
-  // is 404'd by requireLocalPeer — the raw port can't leak box IPs / costs.
-  const direct = await withCluster.inject({ method: 'GET', url: '/a/api/cluster/status', remoteAddress: '203.0.113.20' })
-  assert.equal(direct.statusCode, 404)
+test('a public distribution without the ops module skips cluster routes cleanly', async (t) => {
+  // The ops dashboard module (fleet supervision) is not part of the public
+  // distribution; the server must still boot and simply not register /a/*.
+  const app = await buildApp({ readinessCheck: ready, enableClusterRoutes: true })
+  t.after(async () => app.close())
+  assert.equal(app.hasRoute({ method: 'GET', url: '/a/cluster' }), false)
+  const res = await app.inject('/a/cluster')
+  assert.equal(res.statusCode, 404)
 })
 
 test('cluster dashboard defaults on for a named dev checkout and explicit configuration wins', () => {
