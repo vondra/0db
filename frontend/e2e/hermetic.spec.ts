@@ -48,8 +48,6 @@ test('desktop: rendered HM3 hover and clicked popup agree', async ({ page }) => 
   const { canvas, x, y } = await canvasCenter(page)
   await page.mouse.move(x, y)
   await expect(page.getByTestId('heatmap-hover')).toHaveText(`Lden: ${FIXTURE_DB.toFixed(1)} dB`)
-  const distance = (a: number[], b: number[]) => a.slice(0, 3)
-    .reduce((sum, channel, index) => sum + Math.abs(channel - b[index]), 0)
   let combinedPixel: number[] = []
   await expect.poll(async () => {
     await afterPaint(page)
@@ -82,8 +80,11 @@ test('desktop: rendered HM3 hover and clicked popup agree', async ({ page }) => 
   await expect.poll(async () => {
     await afterPaint(page)
     roadPixel = await pngCenterPixel(page, await canvas.screenshot())
-    const redDominance = Math.min(roadPixel[0] - roadPixel[1], roadPixel[0] - roadPixel[2])
-    return redDominance > 35 && distance(combinedPixel, roadPixel) > 15
+    const redDominance = roadPixel[0] - roadPixel[1]
+    // Weninger palette (2026-07-17): more energy reads REDDER (R−G grows with dB), and the
+    // bilinear upsample dilutes both pixels ~equally, so the old fixed RGB distance (>15) and
+    // >35 dominance no longer fit. Combined 60+60≈63 dB must beat road-only 60 dB on R−G.
+    return redDominance > 25 && (combinedPixel[0] - combinedPixel[1]) > redDominance
   }).toBe(true)
 
   await road.click()
