@@ -1,6 +1,12 @@
 import { FastifyInstance } from 'fastify'
+import { EXPENSIVE_ROUTE_RATE_LIMIT } from '../rate-limit.js'
 
-const VALHALLA_URL = process.env.VALHALLA_URL || 'http://localhost:8502'
+// The isochrone router backend. Nothing local was ever deployed here — the route 502'd in
+// dev AND prod (2026-07-20). Default to the public FOSSGIS demo instance, same pattern as the
+// search route's photon.komoot.io geocoder; VALHALLA_URL overrides for a self-hosted graph.
+// Read per request (not at import) so tests and config reloads take effect.
+const valhallaUrl = () => process.env.VALHALLA_URL || 'https://valhalla1.openstreetmap.de'
+const VALHALLA_TIMEOUT_MS = 15_000
 
 const MODE_TO_COSTING: Record<string, string> = {
   walk: 'pedestrian',
@@ -10,6 +16,7 @@ const MODE_TO_COSTING: Record<string, string> = {
 export async function isochronRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { lat: string; lng: string; time: string; modes: string } }>(
     '/api/isochron',
+    { config: { rateLimit: EXPENSIVE_ROUTE_RATE_LIMIT } },
     async (request, reply) => {
       const { lat, lng, time, modes } = request.query
       if (!lat || !lng || !time || !modes) {
@@ -31,9 +38,10 @@ export async function isochronRoutes(app: FastifyInstance) {
       try {
         const results = await Promise.all(
           modeList.map(async (mode) => {
-            const res = await fetch(`${VALHALLA_URL}/isochrone`, {
+            const res = await fetch(`${valhallaUrl()}/isochrone`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
+              signal: AbortSignal.timeout(VALHALLA_TIMEOUT_MS),
               body: JSON.stringify({
                 locations: [{ lat: latNum, lon: lngNum }],
                 costing: MODE_TO_COSTING[mode],
