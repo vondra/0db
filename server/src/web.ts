@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static'
 import type { FastifyInstance } from 'fastify'
 import { NOT_FOUND_PAGE_HTML } from './not-found-page.js'
 
-export function isSpaPath(pathname: string): boolean {
+function isSpaPath(pathname: string): boolean {
   return pathname === '/' || /^\/about(?:\/[a-z0-9-]+)*\/?$/.test(pathname)
 }
 

@@ -6,7 +6,7 @@ import { PMTILES_BASE } from './heatmap-shared.js'
 import { PmtilesManifestPinMissingError, readValidatedPmtilesManifest } from '../runtime-readiness.js'
 import { resolveManifestPath } from '../tile-manifest-reader.js'
 
-export const TILES_MANIFEST_VALIDATION_CACHE_MS = 10_000
+const TILES_MANIFEST_VALIDATION_CACHE_MS = 10_000
 
 /**
  * Serve `current.{TILE_ENV}.json` (docs/dev/checkout-restructure-plan.md Track 2 — per-env

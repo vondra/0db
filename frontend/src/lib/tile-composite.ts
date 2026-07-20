@@ -19,9 +19,9 @@ const COMPOSITE_MARGIN = 1
 const MAX_COMPOSITE_TILES = 96
 
 export type Range = { z: number; span: number; x0: number; x1: number; y0: number; y1: number; cols: number; rows: number }
-export type Bounds = [number, number, number, number]
+type Bounds = [number, number, number, number]
 export type Composite = { image: ImageData; bounds: Bounds }
-export type LngLatBounds = { getWest(): number; getEast(): number; getNorth(): number; getSouth(): number }
+type LngLatBounds = { getWest(): number; getEast(): number; getNorth(): number; getSouth(): number }
 
 /** Identity of a built composite — tile build + source set + base tile range.
  *  `update` skips a rebuild while this is unchanged; `apply` paints the composite

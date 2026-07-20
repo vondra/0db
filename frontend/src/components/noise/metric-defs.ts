@@ -6,7 +6,7 @@
  * of the app per CLAUDE.md "English everywhere" rule).
  */
 
-export type MetricDef = {
+type MetricDef = {
   label: string
   /** Technical description: formulas, standards citations, fine print.
    * Used by the Noise Segments tab (pro debug) via `MetricLabel mode='technical'`. */

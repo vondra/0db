@@ -116,7 +116,7 @@ export type PmtilesManifest = {
 }
 
 /** Validate one already-parsed environment pin with the exact boot-readiness contract. */
-export async function validatePmtilesManifest(
+async function validatePmtilesManifest(
   manifest: PmtilesManifest,
   pmtilesDir: string,
   manifestPath: string,

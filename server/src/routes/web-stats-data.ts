@@ -13,7 +13,7 @@ export const WEB_STATS_SITE = '0db.app'
 
 /** Resolved per call (never at import) so tests and ops can point WEB_STATS_DB
  *  at another file — including a missing one — without a process restart. */
-export function statsDbPath(): string {
+function statsDbPath(): string {
   return process.env.WEB_STATS_DB
     ? resolve(process.env.WEB_STATS_DB)
     : resolve(REPO_ROOT, 'data', 'web-stats.sqlite')
