@@ -44,6 +44,10 @@ path = "src/bin/tile_store_fsck.rs"
 name = "tile-store-gc"
 path = "src/bin/tile_store_gc.rs"
 
+[[bin]]
+name = "tile-store-transaction"
+path = "src/bin/tile_store_transaction.rs"
+
 [dependencies]
 noise-compute = { path = "../noise-compute" }
 raster-reader = { path = "../raster-reader" }

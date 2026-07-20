@@ -4,7 +4,8 @@
 // Run: cd server && npx tsx --test src/routes/tiles-manifest.test.ts
 
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -19,6 +20,7 @@ process.env.PMTILES_DIR = dir
 process.env.TILE_ENV = 'dev1'
 
 const { tilesManifestRoutes } = await import('./tiles-manifest.js')
+const { ALLOWED_LAYERS } = await import('./heatmap-shared.js')
 const { default: Fastify } = await import('fastify')
 
 async function buildApp() {
@@ -29,19 +31,34 @@ async function buildApp() {
 
 const pinPath = join(dir, 'current.dev1.json')
 const legacyPath = join(dir, 'current.json')
-const clearFixture = () => { for (const p of [pinPath, legacyPath]) rmSync(p, { force: true }) }
+const clearFixture = () => {
+  for (const name of readdirSync(dir)) rmSync(join(dir, name), { force: true, recursive: true })
+}
+function validManifest(build = 'b3') {
+  const layers: Record<string, { file: string; build: string; bytes: number; sha256: string }> = {}
+  for (const layer of ALLOWED_LAYERS) {
+    const file = `${layer}.${build}.pmtiles`
+    const content = `archive-${layer}-${build}`
+    writeFileSync(join(dir, file), content)
+    layers[layer] = {
+      file,
+      build,
+      bytes: Buffer.byteLength(content),
+      sha256: createHash('sha256').update(content).digest('hex'),
+    }
+  }
+  return { build, layers }
+}
 
 test('serves this environment pin, with tile_base attached', async () => {
   clearFixture()
-  writeFileSync(pinPath, JSON.stringify({ build: 'b3', layers: { total: { file: 'total.b3.pmtiles' } } }))
+  writeFileSync(pinPath, JSON.stringify(validManifest('b3')))
   const app = await buildApp()
   const res = await app.inject('/api/tiles-manifest')
   assert.equal(res.statusCode, 200)
-  assert.deepEqual(res.json(), {
-    build: 'b3',
-    layers: { total: { file: 'total.b3.pmtiles' } },
-    tile_base: null,
-  })
+  assert.equal(res.json().build, 'b3')
+  assert.equal(res.json().layers.total.file, 'total.b3.pmtiles')
+  assert.equal(res.json().tile_base, null)
   assert.equal(res.headers['cache-control'], 'no-cache')
   await app.close()
 })
@@ -74,4 +91,48 @@ test('a torn/unparseable pin is a 500', async () => {
   assert.equal(res.statusCode, 500)
   assert.deepEqual(res.json(), { error: 'manifest unreadable' })
   await app.close()
+})
+
+test('a parseable but readiness-invalid pin is a 500, never served to a goal', async () => {
+  clearFixture()
+  const manifest = validManifest('b4')
+  delete manifest.layers.road
+  writeFileSync(pinPath, JSON.stringify(manifest))
+  const app = await buildApp()
+  const res = await app.inject('/api/tiles-manifest')
+  assert.equal(res.statusCode, 500)
+  assert.deepEqual(res.json(), { error: 'manifest unreadable' })
+  await app.close()
+})
+
+test('a present pin that references a missing archive is corruption (500), not no-build (404)', async () => {
+  clearFixture()
+  const manifest = validManifest('b5')
+  rmSync(join(dir, manifest.layers.road.file))
+  writeFileSync(pinPath, JSON.stringify(manifest))
+  const app = await buildApp()
+  const res = await app.inject('/api/tiles-manifest')
+  assert.equal(res.statusCode, 500)
+  assert.deepEqual(res.json(), { error: 'manifest unreadable' })
+  await app.close()
+})
+
+test('the pin cache revalidates immutable archives after its short TTL', async () => {
+  clearFixture()
+  const manifest = validManifest('b6')
+  writeFileSync(pinPath, JSON.stringify(manifest))
+  const app = await buildApp()
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  try {
+    assert.equal((await app.inject('/api/tiles-manifest')).statusCode, 200)
+    rmSync(join(dir, manifest.layers.road.file))
+    assert.equal((await app.inject('/api/tiles-manifest')).statusCode, 200)
+    now += 10_001
+    assert.equal((await app.inject('/api/tiles-manifest')).statusCode, 500)
+  } finally {
+    Date.now = realNow
+    await app.close()
+  }
 })

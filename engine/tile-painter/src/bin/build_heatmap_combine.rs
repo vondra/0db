@@ -38,20 +38,12 @@ use clap::Parser;
 use rayon::prelude::*;
 
 use tile_painter::grid::tile_range;
-use tile_painter::pyramid::{build_pyramid, get_cells_lenient, scope_from_args, RebuildScope};
-use tile_painter::tile_store::TileStore;
+use tile_painter::pyramid::{
+    build_pyramid_with_existing_rebuild_fence, get_cells_lenient, rebuild_scope_fingerprint,
+    require_incremental_pyramid_levels, scope_from_args, RebuildScope,
+};
+use tile_painter::tile_store::{StoreRebuildFence, TileStore, TOTAL_INPUT_LAYERS};
 use tile_painter::wire_hm3::{dequantise_lden, quantise_lden, NO_DATA, SOURCE_ID_TOTAL};
-
-/// The seven source-layer store dirs energy-summed into `total/`.
-const LAYERS: &[&str] = &[
-    "road",
-    "rail",
-    "industrial",
-    "building",
-    "aircraft-airborne",
-    "aircraft-cruise",
-    "aircraft-ground",
-];
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -79,9 +71,6 @@ struct Args {
     /// pyramid::RebuildScope for the rationale.
     #[arg(long)]
     tiles_from: Vec<PathBuf>,
-    /// Skip the `total/` pyramid (base zoom only) — for fast parity checks.
-    #[arg(long, default_value_t = false)]
-    no_pyramid: bool,
 }
 
 fn parse_bbox(s: &str) -> Result<[f64; 4], String> {
@@ -109,7 +98,7 @@ fn main() -> Result<()> {
 
     // Open every layer store at the derived base zoom (a layer not yet built
     // is simply absent from the sum — finest_common_zoom already skipped it).
-    let layer_stores: Vec<TileStore> = LAYERS
+    let layer_stores: Vec<TileStore> = TOTAL_INPUT_LAYERS
         .iter()
         .filter_map(|l| {
             let dir = args.store_root.join(l);
@@ -126,13 +115,27 @@ fn main() -> Result<()> {
     if let Some(bad) = layer_stores.iter().find(|s| s.tile_px() != px) {
         bail!("mixed tile_px in layer stores: {} vs {px}", bad.tile_px());
     }
+    let full_rebuild = matches!(&scope, RebuildScope::Full);
+    if incremental {
+        // An incremental total is an update, never a hidden first-world bootstrap. Validate the
+        // whole derived band before changing its base tile so a missing ancestor fails with zero
+        // mutations and an explicit full-rebuild recovery.
+        require_incremental_pyramid_levels(&total_dir, zoom, args.dst_zoom)?;
+    }
+    // Base total + every ancestor are one transaction for every scope. Without the durable fence,
+    // a crash after z12 or a direct pack between incremental levels can expose a mixed cascade.
+    let operation = if full_rebuild {
+        "combine-total".to_string() // preserves adoption of a legacy full-combine crash marker
+    } else {
+        format!("combine-total:{}", rebuild_scope_fingerprint(&scope))
+    };
+    let rebuild_fence = StoreRebuildFence::begin(&total_dir, &operation)?;
 
     // The `total` destination store. Full combine: recreate from scratch —
     // total/ is fully derived, so stale tiles die wholesale. Bbox/tiles-from
     // combine: overwrite the existing store in place (everything outside the
     // scope stays valid).
-    let existing = total_dir.join(format!("z{zoom}.qtsi")).exists();
-    let total = if incremental && existing {
+    let total = if incremental {
         TileStore::open(&total_dir, zoom, true)?
     } else {
         TileStore::create(&total_dir, zoom, SOURCE_ID_TOTAL, px)?
@@ -251,18 +254,17 @@ fn main() -> Result<()> {
         t.elapsed().as_secs_f64()
     );
 
-    if !args.no_pyramid {
-        let tag = match &scope {
-            RebuildScope::Tiles(_) => " (tiles)",
-            RebuildScope::Bbox(_) => " (bbox)",
-            RebuildScope::Full => "",
-        };
-        let n = build_pyramid(&total_dir, zoom, args.dst_zoom, scope)?;
-        eprintln!(
-            "total/ pyramid z{}→z{}{tag}: {n} tiles",
-            zoom, args.dst_zoom
-        );
-    }
+    let tag = match &scope {
+        RebuildScope::Tiles(_) => " (tiles)",
+        RebuildScope::Bbox(_) => " (bbox)",
+        RebuildScope::Full => "",
+    };
+    let n = build_pyramid_with_existing_rebuild_fence(&total_dir, zoom, args.dst_zoom, scope)?;
+    eprintln!(
+        "total/ pyramid z{}→z{}{tag}: {n} tiles",
+        zoom, args.dst_zoom
+    );
+    rebuild_fence.finish()?;
     Ok(())
 }
 
@@ -272,7 +274,7 @@ fn main() -> Result<()> {
 /// root, and summing only the odd layer out would silently drop the rest.
 fn finest_common_zoom(store_root: &std::path::Path) -> Result<u8> {
     let mut finest: Option<(u8, &str)> = None;
-    for layer in LAYERS {
+    for layer in TOTAL_INPUT_LAYERS {
         let Some(z) = finest_level(&store_root.join(layer))? else {
             continue; // layer not built yet — absent from the sum by design
         };

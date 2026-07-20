@@ -30,6 +30,7 @@ use std::sync::Mutex;
 use anyhow::{bail, Context, Result};
 
 use super::format::{Entry, Header, TileCodec, ENTRY_BYTES, HEADER_BYTES, MAGIC_DATA, MAGIC_INDEX};
+use super::locks::zoom_store_lock_path;
 use crate::wire_hm3;
 
 /// Data-log preallocation step. Appends are sequential, but batching extent
@@ -67,11 +68,6 @@ fn index_path(dir: &Path, zoom: u8) -> PathBuf {
 fn data_path(dir: &Path, zoom: u8) -> PathBuf {
     dir.join(format!("z{zoom}.qtsd"))
 }
-/// The per-(layer,zoom) write-lock file — sits beside the store's two data
-/// files; the exclusive flock on it is what serialises writer processes.
-fn lock_path(dir: &Path, zoom: u8) -> PathBuf {
-    dir.join(format!("z{zoom}.lock"))
-}
 
 /// Acquire the exclusive per-store write flock, BLOCKING until any other writer
 /// of this exact `(layer, zoom)` drops its store. Returns the held `File`;
@@ -86,25 +82,27 @@ fn lock_path(dir: &Path, zoom: u8) -> PathBuf {
 /// LOCK ORDERING (deadlock avoidance): this is the INNERMOST of the build's
 /// three cross-process write locks. The outer two — the combine/pyramid master
 /// (`scripts/world/store-lock.sh`, `.master._combine.lock`) and the hub's
-/// per-ingest `.ingest.lock` (`tile_store_ingest.rs`) — are each taken at
-/// process/script start, BEFORE any store opens, and this lock is only ever
-/// taken AFTER them and released (on `Drop`) BEFORE them: no path holds this
-/// lock while acquiring an outer one. Every writer holds exactly ONE per-store
-/// write lock at a time: ingest and transcode process one store per loop
+/// per-ingest `.ingest.lock` (`tile_store_ingest.rs`) — are taken before any
+/// store opens. A path needing both uses [`super::locks::StoreMasterIngestLocks`]
+/// and therefore always takes master→ingest; transcode holds both for its whole
+/// replacement, while publish retains both through snapshot validation, archive
+/// staging, and manifest durability. This per-store lock is only taken AFTER the outer locks and released (on `Drop`)
+/// BEFORE them: no path holds it while acquiring an outer one. Every writer
+/// holds exactly ONE per-store write lock at a time: ingest and transcode process one store per loop
 /// iteration; a pyramid level opens its read source read-only (unlocked) and one
 /// write dst, dropped before the next level; combine reads the layer stores
 /// read-only and drops `total` after `sync_all` before rolling the pyramid
 /// (`build_heatmap_combine.rs`). With no thread holding two of these locks, there
 /// is no lock-ordering cycle to form; a blocking wait here can only be on a peer
-/// writer that will finish (a hung live writer would block it — the same
-/// unbounded-wait contract as the two outer flocks).
+/// writer that will finish (a hung live writer would block this innermost flock;
+/// the shared outer-pair acquisition is separately bounded).
 ///
 /// CALLER INVARIANT: the flock is per open-file-description, not reentrant per
 /// process — a single thread that opens the SAME `(dir, zoom)` writable twice
 /// while the first handle is still alive would BLOCK on itself forever. No caller
 /// does this (see above); a new one must not either.
 fn acquire_write_lock(dir: &Path, zoom: u8) -> Result<File> {
-    let path = lock_path(dir, zoom);
+    let path = zoom_store_lock_path(dir, zoom);
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -224,7 +222,11 @@ impl TileStore {
         if writable {
             let mut max_end = HEADER_BYTES;
             store.for_each_present(|_, _, e| {
-                max_end = max_end.max(e.offset + u64::from(e.len));
+                let end = e
+                    .offset
+                    .checked_add(u64::from(e.len))
+                    .context("indexed data range overflows u64 while recovering write tail")?;
+                max_end = max_end.max(end);
                 Ok(())
             })?;
             tail = tail.max(max_end);
@@ -267,6 +269,13 @@ impl TileStore {
 
     pub fn present(&self, x: u32, y: u32) -> Result<bool> {
         Ok(self.read_entry(x, y)?.is_some())
+    }
+
+    /// Logical length of this handle's pinned data-file inode. Snapshot validators capture it
+    /// under the matching writer locks, so a later append cannot make an originally
+    /// out-of-bounds index entry appear valid.
+    pub fn data_file_len(&self) -> Result<u64> {
+        Ok(self.data.metadata()?.len())
     }
 
     /// The stored bytes exactly as written, with their codec tag.
@@ -341,8 +350,8 @@ impl TileStore {
     /// CPU (full Brotli decode + a fresh allocation per tile) for a check that
     /// only ever needs to run ONCE before a publish, not once per read. It now
     /// lives in [`Self::validate_hm3_by_entry`], run by the MANDATORY
-    /// `tile-store-fsck` pass `worldctl publish` runs over every layer before
-    /// invoking `tile-store-pack` — the fsck binary already re-detects the
+    /// `tile-store-fsck` core `tile-store-pack` runs over every captured layer
+    /// before archive creation — it already re-detects the
     /// exact aliasing/corrupt-blob class this validation existed for (its own
     /// module doc), so ship-out no longer needs to repeat it per tile.
     /// Ingest-time validation (`tile_store_ingest.rs`, `put_blob`'s own
@@ -373,7 +382,7 @@ impl TileStore {
     /// validating twin [`Self::get_hm3_by_entry`] folded into every read
     /// before 2026-07-16 (see that method's doc for why the two split).
     /// `tile-store-fsck` calls this for `BrotliHm3` entries so the MANDATORY
-    /// pre-publish check (`worldctl publish`) still catches a corrupt or
+    /// pre-publish check (`tile-store-pack`) still catches a corrupt or
     /// aliased blob before it ships verbatim (the 2026-07-14 industrial/z12
     /// class). Same checks `get_hm3_by_entry` used to run: decode +
     /// magic/version/length, then the source_id must match this store's own
@@ -436,9 +445,17 @@ impl TileStore {
         let pos = self.entry_pos(x, y)?; // validate coords BEFORE reserving log space
         let len = u32::try_from(blob.len())
             .with_context(|| format!("blob for {x}/{y}: {} B exceeds u32", blob.len()))?;
-        let offset = self.tail.fetch_add(u64::from(len), Ordering::Relaxed);
+        let len_u64 = u64::from(len);
+        // A wrapping fetch_add would corrupt the process-local tail even though the checked_add
+        // below reports this one write. Reserve with one atomic checked update instead.
+        let offset = self
+            .tail
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |offset| {
+                offset.checked_add(len_u64)
+            })
+            .map_err(|_| anyhow::anyhow!("data log offset overflow"))?;
         let end = offset
-            .checked_add(u64::from(len))
+            .checked_add(len_u64)
             .context("data log offset overflow")?;
         self.ensure_allocated(end)?;
         self.data.write_all_at(blob, offset)?;
@@ -784,6 +801,49 @@ mod tests {
     }
 
     #[test]
+    fn writable_open_rejects_an_indexed_range_that_overflows_u64() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let store = TileStore::create(dir.path(), 6, SOURCE_ID_ROAD, TILE_PX as u16).unwrap();
+            store.put_cells(4, 4, &cells_with(&[(9, 70)])).unwrap();
+            store.sync_all().unwrap();
+        }
+
+        let index_path = dir.path().join("z6.qtsi");
+        let index = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(index_path)
+            .unwrap();
+        let entry_pos =
+            HEADER_BYTES + (u64::from(4u32) * u64::from(1u32 << 6) + u64::from(4u32)) * ENTRY_BYTES;
+        let mut raw = [0u8; ENTRY_BYTES as usize];
+        index.read_exact_at(&mut raw, entry_pos).unwrap();
+        raw[..8].copy_from_slice(&(u64::MAX - 1).to_le_bytes());
+        index.write_all_at(&raw, entry_pos).unwrap();
+        drop(index);
+
+        let error = TileStore::open(dir.path(), 6, true)
+            .err()
+            .expect("overflowing indexed range must fail instead of panic or wrap");
+        assert!(error.to_string().contains("overflows u64"));
+    }
+
+    #[test]
+    fn failed_tail_reservation_does_not_wrap_the_atomic_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TileStore::create(dir.path(), 6, SOURCE_ID_ROAD, TILE_PX as u16).unwrap();
+        store.tail.store(u64::MAX - 1, Ordering::Relaxed);
+
+        let error = store
+            .put_blob(1, 1, TileCodec::BrotliHm3, b"xx")
+            .expect_err("reservation past u64::MAX must fail");
+        assert!(error.to_string().contains("offset overflow"));
+        assert_eq!(store.tail.load(Ordering::Relaxed), u64::MAX - 1);
+        assert!(!store.present(1, 1).unwrap());
+    }
+
+    #[test]
     fn get_hm3_ships_brotli_verbatim_and_composes_zstd() {
         let dir = tempfile::tempdir().unwrap();
         let s = TileStore::create(dir.path(), 5, SOURCE_ID_ROAD, TILE_PX as u16).unwrap();
@@ -935,7 +995,7 @@ mod tests {
                 .write(true)
                 .create(true)
                 .truncate(false)
-                .open(lock_path(dir.path(), 4))
+                .open(zoom_store_lock_path(dir.path(), 4))
                 .unwrap();
             unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
         };

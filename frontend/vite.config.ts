@@ -11,6 +11,10 @@ export default defineConfig({
     },
   },
   build: {
+    // Runtime readiness reads Vite's complete output graph instead of guessing
+    // asset dependencies from index.html. That graph includes lazy chunks and
+    // every CSS/asset edge emitted by Rollup.
+    manifest: true,
     rollupOptions: {
       output: {
         // Split the two biggest independent vendor stacks into their own chunks

@@ -12,55 +12,49 @@
 //! silent-wrong-data pattern — this tool generalizes that forensic scan into
 //! a standing, scriptable check.
 //!
-//! MANDATORY pre-publish gate since 2026-07-16: `worldctl publish` runs this
-//! over every layer it is about to pack, BEFORE invoking `tile-store-pack` —
-//! a non-zero exit aborts the publish. This is what let `tile-store-pack`'s
+//! MANDATORY pre-publish gate since 2026-07-16: `tile-store-pack` copies exact
+//! entries + open data handles under outer writer locks plus every selected
+//! per-z lock, then calls the SAME [`validate_captured_store`] core used here.
+//! A dirty snapshot
+//! aborts before any archive is created. This is what let `tile-store-pack`'s
 //! own ship-out (`TileStore::get_hm3_by_entry`) drop its per-tile decode-
 //! validation of `BrotliHm3` blobs and go back to a verbatim copy: the
 //! decode-validate work this tool already did per entry only needs to run
 //! once before a publish, not once per read inside the packer.
+//! Standalone fsck uses the same master→ingest→canonical-per-z order and retains
+//! every guard through validation and reporting, so neither a normal writer nor
+//! a destructive `TileStore::create` can change a pinned data-file inode while
+//! it is being checked.
 //!
 //! Usage: tile-store-fsck <store-root> [--layer L] [--zoom N]
 //!        Exit 0 = clean. Exit 1 = problems found.
 
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
-use rayon::prelude::*;
 
 use tile_painter::grid::TILE_PX;
-use tile_painter::tile_store::{detect_layers, detect_zooms, Entry, TileCodec, TileStore};
+use tile_painter::tile_store::fsck::{validate_captured_store, CapturedTileRef, StoreFsckReport};
+use tile_painter::tile_store::{
+    detect_layers, detect_zooms, reject_incomplete_store_transactions, zoom_store_lock_path,
+    StoreFileLocks, StoreMasterIngestLocks, TileStore,
+};
 
-/// A real tile never exceeds ~160 KB even at the largest documented case (a 512px pyramid
-/// block, per `tile_store/mod.rs`'s own measurement) — comfortable headroom above that, but
-/// FAR below what a corrupted `Entry.len` (an untrusted `u32`, up to ~4 GiB) could claim.
-/// `get_blob_by_entry` allocates a same-sized buffer before it ever reads a byte, so an
-/// unchecked bogus `len` risks OOM-killing the whole fsck run — on the exact input class
-/// (a corrupted store) this tool exists to survive (/gg Codex, 2026-07-14). Checked BEFORE
-/// the read, not after: the allocation itself is the danger, not just a failed decode.
-const MAX_PLAUSIBLE_BLOB_LEN: u32 = 8 << 20;
+const STORE_LOCK_WAIT: Duration = Duration::from_secs(300);
 
-#[derive(Clone, Copy)]
-struct TileRef {
-    x: u32,
-    y: u32,
-    entry: Entry,
-}
-
-struct Report {
+struct FsckSnapshot {
     layer: String,
     zoom: u8,
-    entries: usize,
-    /// Store's own `tile_px` vs. the current global `TILE_PX` — set when they differ. Not a
-    /// per-entry problem: `TileStore::get_hm3_by_entry`'s `ZstdCells` arm re-encodes through
-    /// `wire_hm3::encode_tile_bytes`, which `assert_eq!`s the cell count against the GLOBAL
-    /// `TILE_PX`, not the store's own header — a legitimately self-consistent smaller store
-    /// (e.g. a pre-2026-07-shift 256px store) decodes fine here but PANICS the real pmtiles
-    /// packer the moment it reaches a `ZstdCells` entry. fsck must not report "clean" on a
-    /// store the real ship path cannot survive (/gg Codex, 2026-07-14).
-    tile_px_mismatch: Option<u16>,
-    decode_failures: Vec<(TileRef, String)>,
-    overlaps: Vec<(TileRef, TileRef)>,
+    store: TileStore,
+    captured_data_len: u64,
+    entries: Vec<CapturedTileRef>,
+}
+
+struct LockedFsckSnapshots {
+    _outer_locks: StoreMasterIngestLocks,
+    _snapshot_locks: StoreFileLocks,
+    snapshots: Vec<FsckSnapshot>,
 }
 
 fn main() -> Result<()> {
@@ -87,35 +81,13 @@ fn main() -> Result<()> {
     })?;
     let store_root = Path::new(&store_root);
 
-    let mut layers = detect_layers(store_root)?;
-    if let Some(l) = &only_layer {
-        layers.retain(|x| x == l);
-    }
-    if layers.is_empty() {
-        anyhow::bail!("no layer stores under {}", store_root.display());
-    }
-
-    let mut reports = Vec::new();
-    for layer in &layers {
-        let layer_dir = store_root.join(layer);
-        let mut zooms = detect_zooms(&layer_dir)?;
-        if let Some(z) = only_zoom {
-            zooms.retain(|&x| x == z);
-        }
-        for zoom in zooms {
-            reports.push(fsck_one(&layer_dir, layer, zoom)?);
-        }
-    }
-    // A --zoom that matches no store (e.g. --zoom 13 over a root that's all z12) leaves
-    // `reports` empty here even though every --layer matched — printing "0 problem(s)
-    // across 0 store(s)" and exiting 0 would be a silent false-green, indistinguishable
-    // from a genuinely clean, fully-checked store (/gg Codex, 2026-07-14).
-    if reports.is_empty() {
-        anyhow::bail!(
-            "no store matched --layer/--zoom under {} — nothing was checked",
-            store_root.display()
-        );
-    }
+    let locked = capture_locked_snapshots(
+        store_root,
+        only_layer.as_deref(),
+        only_zoom,
+        STORE_LOCK_WAIT,
+    )?;
+    let reports: Vec<StoreFsckReport> = locked.snapshots.iter().map(validate_snapshot).collect();
 
     let mut problems = 0usize;
     for r in &reports {
@@ -171,89 +143,162 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn fsck_one(layer_dir: &Path, layer: &str, zoom: u8) -> Result<Report> {
-    let store =
-        TileStore::open(layer_dir, zoom, false).with_context(|| format!("open {layer}/z{zoom}"))?;
-    let tile_px_mismatch = (store.tile_px() as usize != TILE_PX).then_some(store.tile_px());
-    let mut entries: Vec<TileRef> = Vec::new();
-    store.for_each_present(|x, y, entry| {
-        entries.push(TileRef { x, y, entry });
-        Ok(())
-    })?;
-    // Sort by offset ONCE — decode order doesn't matter, and this is exactly the order
-    // the overlap scan below needs (adjacent-pair check after an offset sort). Sorting
-    // in place here means the decode pass and the overlap scan share one Vec instead of
-    // a second offset-sorted copy.
-    entries.sort_unstable_by_key(|t| t.entry.offset);
-
-    // Decode-validate in parallel: independent pread + decompress per entry, the same
-    // shape tile-store-pack already parallelizes (its pack_layer). This IS the mandatory
-    // pre-publish check now (2026-07-16, `worldctl publish` runs this before every
-    // tile-store-pack invocation): ship-out itself (`TileStore::get_hm3_by_entry`) stopped
-    // decode-validating BrotliHm3 blobs — it used to, but that meant every publish re-paid
-    // the decode cost on every tile, for a check that only ever needs to run once before a
-    // publish. `validate_hm3_by_entry` is the same check (decode + magic/version/length,
-    // then a source_id match against this store's own layer), split out so fsck can run it
-    // without also composing a ship-out image. ZstdCells stays on
-    // get_blob_by_entry+decode_cells directly: `get_hm3_by_entry`'s ZstdCells arm forces a
-    // full Brotli-q9 RE-ENCODE (the ship-out format) — ~67× the CPU of a zstd round-trip
-    // (tile_store/mod.rs's own measurement) — wasted work for a health check that only
-    // needs to prove the bytes decode, never re-encode them.
-    let decode_failures: Vec<(TileRef, String)> = entries
-        .par_iter()
-        .filter_map(|t| {
-            // Reject an implausible len BEFORE the read: get_blob_by_entry allocates a
-            // same-sized buffer first, and a corrupted Entry.len is an untrusted u32 up to
-            // ~4 GiB — the exact input this tool must survive, not just report on.
-            if t.entry.len > MAX_PLAUSIBLE_BLOB_LEN {
-                return Some((
-                    *t,
-                    format!(
-                        "implausible len {} (max {MAX_PLAUSIBLE_BLOB_LEN})",
-                        t.entry.len
-                    ),
-                ));
-            }
-            let result: Result<()> = match t.entry.codec {
-                TileCodec::BrotliHm3 => store.validate_hm3_by_entry(&t.entry),
-                TileCodec::ZstdCells => store
-                    .get_blob_by_entry(&t.entry)
-                    .and_then(|blob| store.decode_cells(t.entry.codec, &blob))
-                    .map(|_| ()),
-            };
-            result.err().map(|err| (*t, err.to_string()))
-        })
-        .collect();
-
-    // checked_add, not `+`: entry.offset is an untrusted u64 read straight off a possibly
-    // corrupted index — a bogus offset near u64::MAX would panic this addition in a debug
-    // build (or silently wrap in release, hiding the corruption) with the plain operator.
-    // An overflow here is itself corruption: report it as an overlap unconditionally, since
-    // "this entry's range cannot even be computed" is strictly worse than "these two ranges
-    // touch" (/gg Codex, 2026-07-14).
-    let mut overlaps = Vec::new();
-    for w in entries.windows(2) {
-        let (a, b) = (w[0], w[1]);
-        let end = a.entry.offset.checked_add(u64::from(a.entry.len));
-        if end.is_none_or(|e| e > b.entry.offset) {
-            overlaps.push((a, b));
-        }
+fn capture_locked_snapshots(
+    store_root: &Path,
+    only_layer: Option<&str>,
+    only_zoom: Option<u8>,
+    timeout: Duration,
+) -> Result<LockedFsckSnapshots> {
+    let outer_locks = StoreMasterIngestLocks::acquire_bounded(store_root, timeout)?;
+    let marker_scope = only_layer
+        .map(|layer| vec![layer.to_string()])
+        .unwrap_or_default();
+    // Check before store detection: a failed destructive create may have left a marker before
+    // even one qtsi survived, and that is itself an unhealthy store state.
+    reject_incomplete_store_transactions(store_root, &marker_scope)?;
+    let mut layers = detect_layers(store_root)?;
+    if let Some(layer) = only_layer {
+        layers.retain(|candidate| candidate == layer);
+    }
+    if layers.is_empty() {
+        anyhow::bail!("no layer stores under {}", store_root.display());
     }
 
-    Ok(Report {
+    let mut selected = Vec::new();
+    for layer in &layers {
+        let layer_dir = store_root.join(layer);
+        let mut zooms = detect_zooms(&layer_dir)?;
+        if let Some(zoom) = only_zoom {
+            zooms.retain(|candidate| *candidate == zoom);
+        }
+        selected.extend(zooms.into_iter().map(|zoom| (layer.clone(), zoom)));
+    }
+    if selected.is_empty() {
+        anyhow::bail!(
+            "no store matched --layer/--zoom under {} — nothing was checked",
+            store_root.display()
+        );
+    }
+
+    // An open fd pins an inode across rename/unlink, but not across truncate. Acquire the
+    // complete per-z set only after the outer domains have frozen the directory shape.
+    let snapshot_locks = StoreFileLocks::acquire_canonical(
+        selected
+            .iter()
+            .map(|(layer, zoom)| zoom_store_lock_path(&store_root.join(layer), *zoom)),
+        timeout,
+    )?;
+    // A direct Rust writer need not take the outer master. Recheck only after every selected
+    // per-z lock is held, matching the packer's race-closing snapshot protocol.
+    reject_incomplete_store_transactions(store_root, &marker_scope)?;
+    let snapshots = selected
+        .iter()
+        .map(|(layer, zoom)| capture_store(&store_root.join(layer), layer, *zoom))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(LockedFsckSnapshots {
+        _outer_locks: outer_locks,
+        _snapshot_locks: snapshot_locks,
+        snapshots,
+    })
+}
+
+#[cfg(test)]
+fn fsck_one(layer_dir: &Path, layer: &str, zoom: u8) -> Result<StoreFsckReport> {
+    Ok(validate_snapshot(&capture_store(layer_dir, layer, zoom)?))
+}
+
+fn capture_store(layer_dir: &Path, layer: &str, zoom: u8) -> Result<FsckSnapshot> {
+    let store =
+        TileStore::open(layer_dir, zoom, false).with_context(|| format!("open {layer}/z{zoom}"))?;
+    let captured_data_len = store.data_file_len()?;
+    let mut entries: Vec<CapturedTileRef> = Vec::new();
+    store.for_each_present(|x, y, entry| {
+        entries.push(CapturedTileRef { x, y, entry });
+        Ok(())
+    })?;
+    Ok(FsckSnapshot {
         layer: layer.to_string(),
         zoom,
-        entries: entries.len(),
-        tile_px_mismatch,
-        decode_failures,
-        overlaps,
+        store,
+        captured_data_len,
+        entries,
     })
+}
+
+fn validate_snapshot(snapshot: &FsckSnapshot) -> StoreFsckReport {
+    validate_captured_store(
+        &snapshot.store,
+        &snapshot.layer,
+        snapshot.zoom,
+        snapshot.captured_data_len,
+        &snapshot.entries,
+        |tile| *tile,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tile_painter::tile_store::fsck::MAX_PLAUSIBLE_BLOB_LEN;
+    use tile_painter::tile_store::{
+        ingest_store_lock_path, master_store_lock_path, StoreFileLock, StoreRebuildFence,
+        StoreUpdateFence, TileCodec,
+    };
     use tile_painter::wire_hm3::{write_tile, NO_DATA, SOURCE_ID_INDUSTRIAL, SOURCE_ID_RAIL};
+
+    #[test]
+    fn standalone_scan_retains_outer_and_per_zoom_locks_through_validation() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let store_root = tmp.path().join("tiles/2026/store");
+        let layer_dir = store_root.join("rail");
+        TileStore::create(&layer_dir, 6, SOURCE_ID_RAIL, TILE_PX as u16)?.sync_all()?;
+        let master_path = master_store_lock_path(&store_root)?;
+        let ingest_path = ingest_store_lock_path(&store_root);
+        let zoom_path = zoom_store_lock_path(&layer_dir, 6);
+
+        let locked = capture_locked_snapshots(&store_root, None, None, Duration::ZERO)?;
+        assert!(StoreFileLock::acquire_bounded(&master_path, Duration::ZERO).is_err());
+        assert!(StoreFileLock::acquire_bounded(&ingest_path, Duration::ZERO).is_err());
+        assert!(StoreFileLock::acquire_bounded(&zoom_path, Duration::ZERO).is_err());
+        for snapshot in &locked.snapshots {
+            validate_snapshot(snapshot).ensure_clean()?;
+        }
+        drop(locked);
+
+        StoreFileLock::acquire_bounded(&master_path, Duration::ZERO)?;
+        StoreFileLock::acquire_bounded(&ingest_path, Duration::ZERO)?;
+        StoreFileLock::acquire_bounded(&zoom_path, Duration::ZERO)?;
+        Ok(())
+    }
+
+    #[test]
+    fn standalone_scan_rejects_an_incomplete_layer_rebuild() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let store_root = tmp.path().join("tiles/2026/store");
+        let layer_dir = store_root.join("rail");
+        TileStore::create(&layer_dir, 6, SOURCE_ID_RAIL, TILE_PX as u16)?.sync_all()?;
+        let fence = StoreRebuildFence::begin(&layer_dir, "pyramid:bbox-a")?;
+        drop(fence);
+
+        let error = capture_locked_snapshots(&store_root, None, None, Duration::ZERO)
+            .err()
+            .expect("an incomplete layer rebuild must block fsck");
+        assert!(error.to_string().contains("layer transaction incomplete"));
+        Ok(())
+    }
+
+    #[test]
+    fn standalone_scan_rejects_an_incomplete_scoped_update_before_detection() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let store_root = tmp.path().join("tiles/2026/store");
+        StoreUpdateFence::begin(&store_root, "z12|bbox-a|rail")?;
+
+        let error = capture_locked_snapshots(&store_root, None, None, Duration::ZERO)
+            .err()
+            .expect("an incomplete scoped update must block fsck");
+        assert!(error.to_string().contains("scoped store update"));
+        Ok(())
+    }
 
     #[test]
     fn clean_store_reports_zero_problems() {
@@ -348,7 +393,7 @@ mod tests {
     /// Regression test for the altitude-review finding (2026-07-14): decode_cells alone
     /// accepts an entry whose blob decodes cleanly but carries a DIFFERENT layer's
     /// source_id — the exact class validate_hm3_by_entry rejects, as the MANDATORY
-    /// pre-publish check this tool now runs before every publish (`worldctl publish`).
+    /// pre-publish check tile-store-pack now runs over every captured snapshot.
     /// fsck must use the same check, or it reports "clean" on a store publish must refuse.
     #[test]
     fn source_id_mismatch_is_reported_even_though_the_blob_decodes_cleanly() {
@@ -437,6 +482,40 @@ mod tests {
         assert_eq!(r.entries, 1);
         assert_eq!(r.decode_failures.len(), 1);
         assert!(r.decode_failures[0].1.contains("implausible len"));
+    }
+
+    #[test]
+    fn entry_past_the_captured_data_length_is_reported_as_out_of_bounds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("rail");
+        let cells = vec![NO_DATA; tile_painter::grid::TILE_PX * tile_painter::grid::TILE_PX];
+        let loose = tmp.path().join("loose.bin");
+        write_tile(&loose, &cells, SOURCE_ID_RAIL, false).unwrap();
+        let blob = std::fs::read(&loose).unwrap();
+        let store = TileStore::create(&dir, 12, SOURCE_ID_RAIL, 512).unwrap();
+        store.put_blob(10, 11, TileCodec::BrotliHm3, &blob).unwrap();
+        store.sync_all().unwrap();
+        drop(store);
+
+        use std::os::unix::fs::FileExt;
+        let data_len = std::fs::metadata(dir.join("z12.qtsd")).unwrap().len();
+        let index_path = dir.join("z12.qtsi");
+        let entry_pos = 32 + (u64::from(10u32) * (1u64 << 12) + u64::from(11u32)) * 16;
+        let index = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(index_path)
+            .unwrap();
+        let mut entry = [0u8; 16];
+        index.read_exact_at(&mut entry, entry_pos).unwrap();
+        entry[0..8].copy_from_slice(&data_len.to_le_bytes());
+        index.write_all_at(&entry, entry_pos).unwrap();
+
+        let report = fsck_one(&dir, "rail", 12).unwrap();
+        assert_eq!(report.decode_failures.len(), 1);
+        assert!(report.decode_failures[0]
+            .1
+            .contains("outside captured data file"));
     }
 
     /// Regression test for the /gg finding (2026-07-14): the overlap scan's `offset + len`

@@ -48,20 +48,23 @@
 //! — so a tile is only ever touched when one of its own children actually
 //! changed, not because it shares a bucket with something that did.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use rayon::prelude::*;
+use sha2::{Digest, Sha256};
 
 use crate::grid::tile_range;
-use crate::tile_store::TileStore;
+use crate::tile_store::{StoreRebuildFence, TileStore};
 use crate::wire_hm3::NO_DATA;
 
 /// How `build_pyramid` selects which destination tiles to (re)roll at every level. Owned
 /// throughout (no lifetime): `Tiles` doubles as both the caller-facing "starting list" and the
 /// per-level cascade state — `build_pyramid` reassigns its own `scope` binding after each level
 /// instead of threading a second, parallel "carry" variable that has to be kept in sync with it.
+#[derive(Debug)]
 pub enum RebuildScope {
     /// Every level store recreated from scratch (stale ancestors die
     /// wholesale) — the emergency/whole-layer-compaction path.
@@ -76,6 +79,36 @@ pub enum RebuildScope {
     /// the pyramid's own branching factor (4×) regardless of how the dirty
     /// tiles are scattered geographically.
     Tiles(Vec<(u32, u32)>),
+}
+
+/// Stable, bounded identity for one rebuild scope. It is persisted in the layer transaction
+/// fence, so a crashed incremental cascade can only be cleared by retrying the exact same work.
+pub fn rebuild_scope_fingerprint(scope: &RebuildScope) -> String {
+    match scope {
+        RebuildScope::Full => "full".to_string(),
+        RebuildScope::Bbox(bounds) => format!(
+            "bbox-{:016x}-{:016x}-{:016x}-{:016x}",
+            bounds[0].to_bits(),
+            bounds[1].to_bits(),
+            bounds[2].to_bits(),
+            bounds[3].to_bits()
+        ),
+        RebuildScope::Tiles(tiles) => {
+            let mut canonical = tiles.clone();
+            canonical.sort_unstable();
+            canonical.dedup();
+            let mut hasher = Sha256::new();
+            for &(x, y) in &canonical {
+                hasher.update(x.to_le_bytes());
+                hasher.update(y.to_le_bytes());
+            }
+            let mut digest = String::with_capacity(64);
+            for byte in hasher.finalize() {
+                write!(digest, "{byte:02x}").expect("write to String");
+            }
+            format!("tiles-{}-{digest}", canonical.len())
+        }
+    }
 }
 
 /// Resolves `--bbox`/`--tiles-from` CLI args into a `RebuildScope` — shared by both binaries
@@ -149,11 +182,83 @@ pub fn build_pyramid(
     layer_dir: &Path,
     base_zoom: u8,
     dst_zoom: u8,
-    mut scope: RebuildScope,
+    scope: RebuildScope,
 ) -> Result<usize> {
+    build_pyramid_managing_fence(layer_dir, base_zoom, dst_zoom, scope, &mut |_| Ok(()))
+}
+
+/// Build a pyramid inside an outer operation that fenced the layer before replacing its base
+/// level. The outer owner remains responsible for removing the fence only after its own
+/// post-pyramid checks and directory fsyncs complete.
+pub fn build_pyramid_with_existing_rebuild_fence(
+    layer_dir: &Path,
+    base_zoom: u8,
+    dst_zoom: u8,
+    scope: RebuildScope,
+) -> Result<usize> {
+    validate_zoom_range(base_zoom, dst_zoom)?;
+    if !matches!(scope, RebuildScope::Full) {
+        require_incremental_pyramid_levels(layer_dir, base_zoom, dst_zoom)?;
+    }
+    StoreRebuildFence::require_present(layer_dir)?;
+    build_pyramid_levels(layer_dir, base_zoom, dst_zoom, scope, &mut |_| Ok(()))
+}
+
+fn validate_zoom_range(base_zoom: u8, dst_zoom: u8) -> Result<()> {
     if base_zoom <= dst_zoom {
         anyhow::bail!("base_zoom {} must be > dst_zoom {}", base_zoom, dst_zoom);
     }
+    Ok(())
+}
+
+/// An incremental cascade is an update, never a bootstrap: every source and destination level
+/// must already exist before the first ancestor is touched. A caller that needs first-time stores
+/// must run the explicit full rebuild path.
+pub fn require_incremental_pyramid_levels(
+    layer_dir: &Path,
+    base_zoom: u8,
+    dst_zoom: u8,
+) -> Result<()> {
+    validate_zoom_range(base_zoom, dst_zoom)?;
+    for zoom in dst_zoom..=base_zoom {
+        for suffix in ["qtsi", "qtsd"] {
+            let path = layer_dir.join(format!("z{zoom}.{suffix}"));
+            if !path.try_exists()? {
+                anyhow::bail!(
+                    "incremental pyramid requires existing z{zoom}.{suffix} at {}; run one full pyramid bootstrap before scoped updates",
+                    path.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn build_pyramid_managing_fence(
+    layer_dir: &Path,
+    base_zoom: u8,
+    dst_zoom: u8,
+    scope: RebuildScope,
+    after_level: &mut dyn FnMut(u8) -> Result<()>,
+) -> Result<usize> {
+    validate_zoom_range(base_zoom, dst_zoom)?;
+    if !matches!(scope, RebuildScope::Full) {
+        require_incremental_pyramid_levels(layer_dir, base_zoom, dst_zoom)?;
+    }
+    let operation = format!("pyramid:{}", rebuild_scope_fingerprint(&scope));
+    let fence = StoreRebuildFence::begin(layer_dir, &operation)?;
+    let written = build_pyramid_levels(layer_dir, base_zoom, dst_zoom, scope, after_level)?;
+    fence.finish()?;
+    Ok(written)
+}
+
+fn build_pyramid_levels(
+    layer_dir: &Path,
+    base_zoom: u8,
+    dst_zoom: u8,
+    mut scope: RebuildScope,
+    after_level: &mut dyn FnMut(u8) -> Result<()>,
+) -> Result<usize> {
     // The caller's Tiles list is at base_zoom (z_src of the first fold), one level ABOVE the
     // first z_dst — halve it once up front so `scope` uniformly holds "this level's own tile
     // set" from the first iteration on, same as every iteration after it.
@@ -168,6 +273,7 @@ pub fn build_pyramid(
             break; // Tiles mode, nothing left to cascade — the walk is naturally exhausted
         }
         let (written, empty, corrupt, dst_vec) = build_one_level(layer_dir, z_src, z_dst, &scope)?;
+        after_level(z_dst)?;
         eprintln!("  z={z_dst} ← z={z_src}: {written} written, {empty} empty");
         total_written += written;
         total_corrupt += corrupt;
@@ -213,7 +319,15 @@ fn build_one_level(
     scope: &RebuildScope,
 ) -> Result<LevelResult> {
     if !layer_dir.join(format!("z{z_src}.qtsi")).exists() {
-        return Ok((0, 0, 0, Vec::new())); // no source level (e.g. a layer without this zoom)
+        anyhow::bail!(
+            "{} pyramid requires source z{z_src}, but {} is missing",
+            if matches!(scope, RebuildScope::Full) {
+                "full"
+            } else {
+                "incremental"
+            },
+            layer_dir.join(format!("z{z_src}.qtsi")).display()
+        );
     }
     let src = TileStore::open(layer_dir, z_src, false)?;
     let source_id = src.source_id(); // the layer's own header is the truth
@@ -236,17 +350,26 @@ fn build_one_level(
             set.into_iter().collect()
         }
     };
-    // Full recreates the destination store from scratch (stale ancestors die
-    // wholesale); Bbox/Tiles overwrite the EXISTING level store in place,
-    // creating it fresh only the first time this layer's incremental
-    // cascade ever reaches this level.
+    // Full recreates the destination store from scratch (stale ancestors die wholesale);
+    // Bbox/Tiles may only overwrite a preflighted existing level.
     let dst = if matches!(scope, RebuildScope::Full) {
         TileStore::create(layer_dir, z_dst, source_id, src.tile_px())?
-    } else if layer_dir.join(format!("z{z_dst}.qtsi")).exists() {
-        TileStore::open(layer_dir, z_dst, true)?
     } else {
-        TileStore::create(layer_dir, z_dst, source_id, src.tile_px())?
+        TileStore::open(layer_dir, z_dst, true)?
     };
+    if dst.source_id() != source_id {
+        anyhow::bail!(
+            "z{z_dst}: destination source_id {} differs from source z{z_src} source_id {source_id}",
+            dst.source_id()
+        );
+    }
+    if dst.tile_px() != src.tile_px() {
+        anyhow::bail!(
+            "z{z_dst}: destination tile_px {} differs from source z{z_src} tile_px {}",
+            dst.tile_px(),
+            src.tile_px()
+        );
+    }
 
     // Each destination tile reads its own 2×2 children and writes its own
     // disjoint store slot — embarrassingly parallel (atomic tail reservation,
@@ -316,9 +439,8 @@ fn build_one_level(
 /// corrupt blob rather than silently treat it as absent: a published archive
 /// can't self-heal the way a working-store read can. That is now
 /// `tile-store-fsck`'s job instead (`TileStore::validate_hm3_by_entry`), run
-/// as a MANDATORY gate before every publish (`worldctl publish`) — a store
-/// with a lingering corrupt tile fails the publish loudly there, well before
-/// `tile-store-pack` ever runs.
+/// as a MANDATORY gate inside every `tile-store-pack` run — a store with a
+/// lingering corrupt tile fails the publish loudly before any archive is
 /// Deliberately doesn't log per-tile: this runs inside a `par_iter` hot loop,
 /// and under mass corruption one `eprintln!` per bad tile would serialize
 /// every worker on stderr's lock. `corrupt` tallies hits for one aggregate
@@ -397,8 +519,8 @@ fn downsample_2x2_into_quadrant(src: &[u8], dst: &mut [u8], qx: usize, qy: usize
 mod tests {
     use super::*;
     use crate::grid::TILE_PX;
-    use crate::tile_store::TileCodec;
-    use crate::wire_hm3::{quantise_lden, SOURCE_ID_AIRCRAFT};
+    use crate::tile_store::{TileCodec, REBUILD_INCOMPLETE_MARKER};
+    use crate::wire_hm3::{quantise_lden, SOURCE_ID_AIRCRAFT, SOURCE_ID_RAIL, SOURCE_ID_ROAD};
 
     /// scope_from_args: the exclusivity check, the three no-file/no-bbox
     /// shapes, and — the reason it takes a slice at all — that repeated
@@ -443,6 +565,110 @@ mod tests {
             vec![(1, 2), (3, 4), (5, 6)],
             "deduped union, BTreeSet order"
         );
+    }
+
+    #[test]
+    fn full_rebuild_fails_when_a_required_source_level_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = build_pyramid(dir.path(), 6, 2, RebuildScope::Full).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("full pyramid requires source z6"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn injected_full_rebuild_failure_leaves_fence_until_complete_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = TileStore::create(dir.path(), 6, SOURCE_ID_ROAD, TILE_PX as u16).unwrap();
+        let cells = vec![quantise_lden(60.0); TILE_PX * TILE_PX];
+        base.put_cells_hm3(2, 2, &cells).unwrap();
+        base.sync_all().unwrap();
+        drop(base);
+
+        let mut completed_levels = 0;
+        let error = build_pyramid_managing_fence(dir.path(), 6, 2, RebuildScope::Full, &mut |_| {
+            completed_levels += 1;
+            anyhow::bail!("injected failure after first durable level")
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("injected failure"));
+        assert_eq!(completed_levels, 1);
+        assert!(dir.path().join(REBUILD_INCOMPLETE_MARKER).exists());
+        assert!(
+            dir.path().join("z5.qtsi").exists(),
+            "the failure was post-mutation"
+        );
+
+        build_pyramid(dir.path(), 6, 2, RebuildScope::Full).unwrap();
+        assert!(!dir.path().join(REBUILD_INCOMPLETE_MARKER).exists());
+    }
+
+    #[test]
+    fn incremental_rebuild_rejects_a_destination_source_id_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        TileStore::create(dir.path(), 6, SOURCE_ID_ROAD, TILE_PX as u16).unwrap();
+        TileStore::create(dir.path(), 5, SOURCE_ID_RAIL, TILE_PX as u16).unwrap();
+
+        let error = build_pyramid(dir.path(), 6, 5, RebuildScope::Tiles(vec![(2, 2)])).unwrap_err();
+        assert!(
+            error.to_string().contains("destination source_id"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn incremental_rebuild_rejects_a_destination_tile_size_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        TileStore::create(dir.path(), 6, SOURCE_ID_ROAD, TILE_PX as u16).unwrap();
+        TileStore::create(dir.path(), 5, SOURCE_ID_ROAD, 256).unwrap();
+
+        let error = build_pyramid(dir.path(), 6, 5, RebuildScope::Tiles(vec![(2, 2)])).unwrap_err();
+        assert!(
+            error.to_string().contains("destination tile_px"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn incremental_rebuild_refuses_to_bootstrap_a_missing_destination_level() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = TileStore::create(dir.path(), 6, SOURCE_ID_ROAD, TILE_PX as u16).unwrap();
+        base.put_cells_hm3(2, 2, &vec![quantise_lden(60.0); TILE_PX * TILE_PX])
+            .unwrap();
+        base.sync_all().unwrap();
+        drop(base);
+
+        let error = build_pyramid(dir.path(), 6, 5, RebuildScope::Tiles(vec![(2, 2)])).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("incremental pyramid requires existing"));
+        assert!(!dir.path().join("z5.qtsi").exists());
+        assert!(!dir.path().join(REBUILD_INCOMPLETE_MARKER).exists());
+    }
+
+    #[test]
+    fn injected_incremental_failure_keeps_fence_until_the_exact_retry_completes() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = TileStore::create(dir.path(), 6, SOURCE_ID_ROAD, TILE_PX as u16).unwrap();
+        base.put_cells_hm3(2, 2, &vec![quantise_lden(60.0); TILE_PX * TILE_PX])
+            .unwrap();
+        base.sync_all().unwrap();
+        drop(base);
+        build_pyramid(dir.path(), 6, 4, RebuildScope::Full).unwrap();
+
+        let scope = RebuildScope::Tiles(vec![(2, 2)]);
+        let error = build_pyramid_managing_fence(dir.path(), 6, 4, scope, &mut |_| {
+            anyhow::bail!("injected incremental failure")
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("injected incremental failure"));
+        assert!(dir.path().join(REBUILD_INCOMPLETE_MARKER).exists());
+
+        build_pyramid(dir.path(), 6, 4, RebuildScope::Tiles(vec![(2, 2)])).unwrap();
+        assert!(!dir.path().join(REBUILD_INCOMPLETE_MARKER).exists());
     }
 
     /// Synthetic z=13 → z=11 smoke over STORES: a 2×2 block of

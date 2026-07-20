@@ -68,10 +68,108 @@
 //! merge preflight and `tile-store-gc`'s retention sweep.
 
 pub mod format;
+pub mod fsck;
+pub mod locks;
 pub mod loose;
 pub mod manifest;
+pub mod rebuild;
 pub mod store;
 
 pub use format::{Entry, TileCodec};
+pub use locks::{
+    ingest_store_lock_path, master_store_lock_path, zoom_store_lock_path, StoreFileLock,
+    StoreFileLocks, StoreMasterIngestLocks,
+};
 pub use loose::LooseTree;
+pub use rebuild::{reject_incomplete_store_transactions, StoreRebuildFence, StoreUpdateFence};
 pub use store::{detect_layers, detect_zooms, TileStore};
+
+use crate::wire_hm3::{
+    SOURCE_ID_AIRCRAFT, SOURCE_ID_BUILDING, SOURCE_ID_INDUSTRIAL, SOURCE_ID_RAIL, SOURCE_ID_ROAD,
+    SOURCE_ID_TOTAL,
+};
+
+/// Source layers whose energy is folded into the derived `total` store.
+///
+/// The combiner and the packer's dependency fsck share this exact list: publishing a fresh
+/// `total` while retaining an old archive for any corrupt input layer would otherwise bless a
+/// coherent-but-incomplete energy sum.
+pub const TOTAL_INPUT_LAYERS: &[&str] = &[
+    "road",
+    "rail",
+    "industrial",
+    "building",
+    "aircraft-airborne",
+    "aircraft-cruise",
+    "aircraft-ground",
+];
+
+/// Exact layer set one immutable public manifest must expose.
+///
+/// A full pack must never derive this contract from whichever store directories happen to be
+/// present: losing one directory would otherwise silently remove that layer from `current.json`.
+pub const PUBLISHED_LAYERS: &[&str] = &[
+    "total",
+    "road",
+    "rail",
+    "industrial",
+    "building",
+    "aircraft-airborne",
+    "aircraft-cruise",
+    "aircraft-ground",
+];
+
+/// The HM3 discriminator required for one published layer name.
+///
+/// Keep this mapping beside the store format and use it at every boundary that turns an
+/// untrusted directory name into a durable store/archive. The three aircraft products share
+/// one wire discriminator by design; `total` is the derived energy sum and has its own id.
+pub fn expected_source_id(layer: &str) -> Option<u8> {
+    match layer {
+        "total" => Some(SOURCE_ID_TOTAL),
+        "road" => Some(SOURCE_ID_ROAD),
+        "rail" => Some(SOURCE_ID_RAIL),
+        "industrial" => Some(SOURCE_ID_INDUSTRIAL),
+        "building" => Some(SOURCE_ID_BUILDING),
+        "aircraft-ground" | "aircraft-airborne" | "aircraft-cruise" => Some(SOURCE_ID_AIRCRAFT),
+        _ => None,
+    }
+}
+
+/// Lowest zoom present in every complete, publishable heatmap layer.
+pub const PUBLISHED_MIN_ZOOM: u8 = 2;
+/// Finest zoom present in every complete, publishable 512-pixel heatmap layer.
+pub const PUBLISHED_BASE_ZOOM: u8 = 12;
+/// Durable fence left by an interrupted destructive whole-layer rebuild. Packers must refuse
+/// the layer until the same rebuild path completes and removes this marker after fsync.
+pub const REBUILD_INCOMPLETE_MARKER: &str = ".rebuild-incomplete";
+/// Durable store-root fence spanning a manual scoped ingest → pyramids → total transaction.
+pub const SCOPED_UPDATE_INCOMPLETE_MARKER: &str = ".scoped-update-incomplete";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn published_layer_source_ids_have_one_canonical_mapping() {
+        assert_eq!(expected_source_id("total"), Some(SOURCE_ID_TOTAL));
+        assert_eq!(expected_source_id("road"), Some(SOURCE_ID_ROAD));
+        assert_eq!(expected_source_id("rail"), Some(SOURCE_ID_RAIL));
+        assert_eq!(expected_source_id("industrial"), Some(SOURCE_ID_INDUSTRIAL));
+        assert_eq!(expected_source_id("building"), Some(SOURCE_ID_BUILDING));
+        for layer in ["aircraft-ground", "aircraft-airborne", "aircraft-cruise"] {
+            assert_eq!(expected_source_id(layer), Some(SOURCE_ID_AIRCRAFT));
+        }
+        assert_eq!(expected_source_id("unknown"), None);
+        assert_eq!(TOTAL_INPUT_LAYERS.len(), 7);
+        assert!(TOTAL_INPUT_LAYERS
+            .iter()
+            .all(|layer| expected_source_id(layer).is_some()));
+        assert!(!TOTAL_INPUT_LAYERS.contains(&"total"));
+        assert_eq!(PUBLISHED_LAYERS.len(), TOTAL_INPUT_LAYERS.len() + 1);
+        assert!(PUBLISHED_LAYERS.contains(&"total"));
+        assert!(TOTAL_INPUT_LAYERS
+            .iter()
+            .all(|layer| PUBLISHED_LAYERS.contains(layer)));
+    }
+}

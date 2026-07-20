@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -27,6 +27,22 @@ async function publisherProof(path: string, sha256: string) {
   }
 }
 
+async function writeFrontendAssetManifest(frontendDist: string, files: string[]) {
+  const entries = []
+  for (const file of files) {
+    const contents = await readFile(join(frontendDist, file))
+    entries.push({
+      file,
+      bytes: contents.length,
+      sha256: createHash('sha256').update(contents).digest('hex'),
+    })
+  }
+  await writeFile(
+    join(frontendDist, 'asset-manifest.json'),
+    JSON.stringify({ version: 1, files: entries }),
+  )
+}
+
 async function readinessFixture() {
   const root = await mkdtemp(join(tmpdir(), '0db-ready-'))
   const sourceReaderPath = join(root, 'libsource_reader.so')
@@ -35,9 +51,23 @@ async function readinessFixture() {
   const pmtilesDir = join(root, 'pmtiles')
   await mkdir(join(h3r4Dir, REFERENCE_HEX), { recursive: true })
   await mkdir(pmtilesDir, { recursive: true })
-  await mkdir(frontendDist, { recursive: true })
+  await mkdir(join(frontendDist, 'assets'), { recursive: true })
   await writeFile(sourceReaderPath, 'native-addon')
-  await writeFile(join(frontendDist, 'index.html'), '<!doctype html><title>map</title>')
+  await writeFile(
+    join(frontendDist, 'index.html'),
+    '<!doctype html><link rel="stylesheet" href="/assets/index-b2.css"><script type="module" src="/assets/index-a1.js"></script>',
+  )
+  await writeFile(join(frontendDist, 'assets/index-a1.js'), 'console.log("map")')
+  await writeFile(join(frontendDist, 'assets/index-b2.css'), 'body { margin: 0 }')
+  await writeFile(join(frontendDist, 'assets/AboutPage-lazy.js'), 'export default function AboutPage() {}')
+  await writeFile(join(frontendDist, 'assets/compose.worker-c3.js'), 'self.onmessage = () => {}')
+  await writeFrontendAssetManifest(frontendDist, [
+    'index.html',
+    'assets/index-a1.js',
+    'assets/index-b2.css',
+    'assets/AboutPage-lazy.js',
+    'assets/compose.worker-c3.js',
+  ])
   await writeFile(join(h3r4Dir, REFERENCE_HEX, 'roads.arrow'), 'arrow-data')
 
   const layers: Record<string, {
@@ -87,6 +117,46 @@ test('readiness rejects a release whose static root is missing the SPA', async (
   })()
   assert.equal(empty.ready, false)
   assert.deepEqual(empty.failed, ['frontend'])
+})
+
+test('readiness rejects a frontend cohort with a missing or changed entry asset', async (t) => {
+  const fixture = await readinessFixture()
+  t.after(async () => rm(fixture.root, { recursive: true, force: true }))
+  await rm(join(fixture.frontendDist, 'assets/index-a1.js'))
+
+  const missing = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(missing.ready, false)
+  assert.deepEqual(missing.failed, ['frontend'])
+  assert.match(missing.errors.frontend ?? '', /index-a1\.js/)
+
+  await writeFile(join(fixture.frontendDist, 'assets/index-a1.js'), '')
+  const empty = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(empty.ready, false)
+  assert.deepEqual(empty.failed, ['frontend'])
+  assert.match(empty.errors.frontend ?? '', /frontend asset manifest/)
+})
+
+test('readiness rejects a frontend cohort with a missing lazy chunk', async (t) => {
+  const fixture = await readinessFixture()
+  t.after(async () => rm(fixture.root, { recursive: true, force: true }))
+  await rm(join(fixture.frontendDist, 'assets/AboutPage-lazy.js'))
+
+  const result = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(result.ready, false)
+  assert.deepEqual(result.failed, ['frontend'])
+  assert.match(result.errors.frontend ?? '', /AboutPage-lazy\.js/)
 })
 
 test('readiness validates artifacts, single-flights, and periodically reprobes the engine', async (t) => {
@@ -151,6 +221,25 @@ test('readiness rejects a manifest file name that the tile route would not serve
   // The aliased road archive exists and has the declared size; filename-to-route
   // consistency, rather than the existing size check, must reject this manifest.
   assert.equal(total.file, 'total.b1.pmtiles')
+})
+
+test('readiness rejects a manifest with a layer the tile route does not serve', async (t) => {
+  const fixture = await readinessFixture()
+  t.after(async () => rm(fixture.root, { recursive: true, force: true }))
+  fixture.layers.debug = { ...fixture.layers.road }
+  await writeFile(
+    join(fixture.pmtilesDir, `current.${fixture.tileEnv}.json`),
+    JSON.stringify({ build: 'b1', layers: fixture.layers }),
+  )
+
+  const result = await createReadinessCheck({
+    ...fixture,
+    engineProbe: async () => {},
+    filesystemCacheMs: 0,
+  })()
+  assert.equal(result.ready, false)
+  assert.deepEqual(result.failed, ['pmtiles'])
+  assert.match(result.errors.pmtiles ?? '', /unexpected layer debug/)
 })
 
 test('readiness rejects a per-layer build that disagrees with its archive file', async (t) => {

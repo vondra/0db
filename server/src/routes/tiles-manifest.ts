@@ -1,17 +1,20 @@
 // GET /api/tiles-manifest — the currently published pmtiles generation FOR THIS ENVIRONMENT.
 
-import { readFile } from 'node:fs/promises'
 import type { FastifyInstance } from 'fastify'
+import { stat } from 'node:fs/promises'
 import { PMTILES_BASE } from './heatmap-shared.js'
+import { PmtilesManifestPinMissingError, readValidatedPmtilesManifest } from '../runtime-readiness.js'
 import { resolveManifestPath } from '../tile-manifest-reader.js'
+
+export const TILES_MANIFEST_VALIDATION_CACHE_MS = 10_000
 
 /**
  * Serve `current.{TILE_ENV}.json` (docs/dev/checkout-restructure-plan.md Track 2 — per-env
  * pmtiles pins, resolved by `tile-manifest-reader.ts`), which the Rust packer's fan-out /
  * `worldctl promote` write atomically: `{build, created, layers: {<layer>: {file, sha256,
  * tiles, bytes}}}`. The packer's fields pass through verbatim — the manifest is the single
- * source of truth and reshaping it here would fork that truth (JSON.parse below is a
- * validity gate only, so a torn/corrupt file becomes a 500 instead of garbage with a 200).
+ * source of truth and reshaping it here would fork that truth (the shared boot-readiness
+ * validator below rejects a torn, malformed, or semantically invalid manifest with a 500).
  * ONE deployment field is added on top: `tile_base` (env PUBLIC_TILE_BASE, e.g.
  * https://t.0db.app) tells the frontend which HOSTNAME serves the tiles — that is serving
  * topology, which the packer can't know and which must be changeable per checkout/host
@@ -23,26 +26,32 @@ import { resolveManifestPath } from '../tile-manifest-reader.js'
  */
 export async function tilesManifestRoutes(app: FastifyInstance): Promise<void> {
   const tileBase = (process.env.PUBLIC_TILE_BASE || '').replace(/\/$/, '') || null
+  let cached: { identity: string; validatedAt: number;
+    manifest: Awaited<ReturnType<typeof readValidatedPmtilesManifest>> } | null = null
   app.get('/api/tiles-manifest', async (_req, reply) => {
     reply.header('Cache-Control', 'no-cache')
-    let manifestPath: string
+    let manifest
+    let pinExists = false
     try {
-      manifestPath = resolveManifestPath(PMTILES_BASE)
+      const pinPath = resolveManifestPath(PMTILES_BASE)
+      const pin = await stat(pinPath, { bigint: true })
+      pinExists = true
+      const identity = `${pin.dev}:${pin.ino}:${pin.size}:${pin.mtimeNs}`
+      const now = Date.now()
+      if (cached?.identity === identity
+          && now - cached.validatedAt < TILES_MANIFEST_VALIDATION_CACHE_MS) manifest = cached.manifest
+      else {
+        manifest = await readValidatedPmtilesManifest(PMTILES_BASE)
+        cached = { identity, validatedAt: now, manifest }
+      }
     } catch (e) {
+      if (e instanceof PmtilesManifestPinMissingError
+          || ((e as NodeJS.ErrnoException).code === 'ENOENT' && !pinExists)) {
+        return reply.code(404).send({ error: 'no build published' })
+      }
       app.log?.error?.(`tiles-manifest: ${(e as Error).message}`)
       return reply.code(500).send({ error: 'manifest unreadable' })
     }
-    let raw: string
-    try {
-      raw = await readFile(manifestPath, 'utf-8')
-    } catch {
-      return reply.code(404).send({ error: 'no build published' })
-    }
-    try {
-      return { ...JSON.parse(raw), tile_base: tileBase }
-    } catch (e) {
-      app.log?.error?.(`tiles-manifest: ${manifestPath} invalid: ${(e as Error).message}`)
-      return reply.code(500).send({ error: 'manifest unreadable' })
-    }
+    return { ...manifest, tile_base: tileBase }
   })
 }

@@ -2,8 +2,9 @@
 // and refresh periodically. Successful native probes have a short cache: this
 // avoids making every monitor request contend with point queries while still
 // detecting a worker that exits after startup.
+import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, join, relative, resolve, sep } from 'node:path'
 import { ALLOWED_LAYERS, PMTILES_BASE } from './routes/heatmap-shared.js'
 import { FRONTEND_DIST, H3R4_DIR, SOURCE_READER_PATH } from './runtime-paths.js'
 import { resolveManifestPath } from './tile-manifest-reader.js'
@@ -45,12 +46,48 @@ async function requireNonEmptyFile(filePath: string): Promise<void> {
   }
 }
 
-// The map IS the product: a release without its bundled frontend answers every
-// API route while serving 404 on every page — exactly the 2026-07-19 outage,
-// which /api/ready reported as healthy. Readiness must cover the static root,
-// or a broken deploy reports success and start.sh never rolls it back.
+const FRONTEND_ASSET_MANIFEST = 'asset-manifest.json'
+const SHA256 = /^[a-f0-9]{64}$/
+
+// The map IS the product. The build writes one immutable inventory after Vite,
+// precompression, and sitemap generation. Unlike index.html, that inventory
+// includes lazy routes, web workers, fonts, and every other release artifact.
 async function checkFrontend(frontendDist: string): Promise<void> {
-  await requireNonEmptyFile(join(frontendDist, 'index.html'))
+  const manifestPath = join(frontendDist, FRONTEND_ASSET_MANIFEST)
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+    version?: unknown
+    files?: Array<{ file?: unknown; bytes?: unknown; sha256?: unknown }>
+  }
+  if (manifest.version !== 1 || !Array.isArray(manifest.files) || manifest.files.length === 0) {
+    throw new Error(`${manifestPath} has an invalid asset inventory`)
+  }
+  const root = resolve(frontendDist)
+  const seen = new Set<string>()
+  await Promise.all(manifest.files.map(async (entry) => {
+    if (typeof entry.file !== 'string' || !entry.file || entry.file.includes('\\')
+      || entry.file === FRONTEND_ASSET_MANIFEST || seen.has(entry.file)) {
+      throw new Error(`${manifestPath} has an invalid or duplicate file name`)
+    }
+    seen.add(entry.file)
+    if (!Number.isSafeInteger(entry.bytes) || (entry.bytes as number) <= 0
+      || typeof entry.sha256 !== 'string' || !SHA256.test(entry.sha256)) {
+      throw new Error(`${manifestPath} has invalid metadata for ${entry.file}`)
+    }
+    const assetPath = resolve(root, entry.file)
+    const fromRoot = relative(root, assetPath)
+    if (fromRoot === '' || fromRoot === '..' || fromRoot.startsWith(`..${sep}`)) {
+      throw new Error(`${manifestPath} has an unsafe file name ${entry.file}`)
+    }
+    const contents = await readFile(assetPath)
+    if (contents.length !== entry.bytes
+      || createHash('sha256').update(contents).digest('hex') !== entry.sha256) {
+      throw new Error(`${assetPath} does not match the frontend asset manifest`)
+    }
+  }))
+  if (!seen.has('index.html')) throw new Error(`${manifestPath} does not contain index.html`)
+  if (![...seen].some((file) => /^assets\/.*\.js$/.test(file))) {
+    throw new Error(`${manifestPath} does not contain a JavaScript bundle`)
+  }
 }
 
 async function checkPreparedData(h3r4Dir: string): Promise<void> {
@@ -64,7 +101,7 @@ async function checkPreparedData(h3r4Dir: string): Promise<void> {
 // publisher_proof still EXISTS in manifests (tile-store-pack writes it; fsck and
 // --rebind-verified consume it) — this reader just no longer judges it, so it has
 // no type here. See the decision comment inside checkPmtiles().
-type ManifestLayer = {
+export type ManifestLayer = {
   file?: unknown
   bytes?: unknown
   build?: unknown
@@ -72,17 +109,18 @@ type ManifestLayer = {
 }
 
 const BUILD_ID = /^b[0-9]+$/
-const SHA256 = /^[a-f0-9]{64}$/
-
-async function checkPmtiles(pmtilesDir: string, tileEnv?: string): Promise<void> {
-  // Per-environment pin (docs/dev/checkout-restructure-plan.md Track 2): boot readiness must
-  // gate on THIS deployment's own pin (`current.{TILE_ENV}.json`), not the packer's shared
-  // merge head — a prod instance must never report "ready" off a build only dev has promoted.
-  const manifestPath = resolveManifestPath(pmtilesDir, tileEnv)
-  const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+export type PmtilesManifest = {
     build?: unknown
     layers?: Record<string, ManifestLayer>
-  }
+    [key: string]: unknown
+}
+
+/** Validate one already-parsed environment pin with the exact boot-readiness contract. */
+export async function validatePmtilesManifest(
+  manifest: PmtilesManifest,
+  pmtilesDir: string,
+  manifestPath: string,
+): Promise<void> {
   if (typeof manifest.build !== 'string' || !BUILD_ID.test(manifest.build)) {
     throw new Error(`${manifestPath} has an invalid build id`)
   }
@@ -96,6 +134,9 @@ async function checkPmtiles(pmtilesDir: string, tileEnv?: string): Promise<void>
     }
   }
   for (const [layer, entry] of Object.entries(manifest.layers)) {
+    if (!ALLOWED_LAYERS.has(layer)) {
+      throw new Error(`${manifestPath} has unexpected layer ${layer}`)
+    }
     if (!entry || typeof entry.file !== 'string' || basename(entry.file) !== entry.file) {
       throw new Error(`${manifestPath} layer ${layer} has an unsafe file name`)
     }
@@ -140,6 +181,36 @@ async function checkPmtiles(pmtilesDir: string, tileEnv?: string): Promise<void>
       throw new Error(`${archivePath} size ${archive.size} does not match manifest ${entry.bytes}`)
     }
   }
+}
+
+/** Read and validate one per-environment pin; shared by readiness and the public manifest route. */
+export class PmtilesManifestPinMissingError extends Error {
+  readonly code = 'QM_PMTILES_MANIFEST_PIN_MISSING'
+}
+
+export async function readValidatedPmtilesManifest(
+  pmtilesDir: string,
+  tileEnv?: string,
+): Promise<PmtilesManifest> {
+  // Per-environment pin (docs/dev/checkout-restructure-plan.md Track 2): boot readiness and the
+  // route both gate on THIS deployment's pin, never the packer's shared merge head.
+  const manifestPath = resolveManifestPath(pmtilesDir, tileEnv)
+  let raw: string
+  try {
+    raw = await readFile(manifestPath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new PmtilesManifestPinMissingError(`${manifestPath} does not exist`)
+    }
+    throw error
+  }
+  const manifest = JSON.parse(raw) as PmtilesManifest
+  await validatePmtilesManifest(manifest, pmtilesDir, manifestPath)
+  return manifest
+}
+
+async function checkPmtiles(pmtilesDir: string, tileEnv?: string): Promise<void> {
+  await readValidatedPmtilesManifest(pmtilesDir, tileEnv)
 }
 
 export function createReadinessCheck(options: ReadinessOptions): ReadinessCheck {
