@@ -1,6 +1,7 @@
 //! Optional ops-route modules: import-or-null — absence is a normal distribution shape, breakage is a bug.
 
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { basename, join } from 'node:path'
 
 /**
  * True only when `error` reports the specifier ITSELF as unresolvable. Node ESM
@@ -26,13 +27,26 @@ function isAbsentModuleError(error: unknown, specifier: string, resolvedPath: st
  * which sits next to app.ts, so './routes/x.js' sees exactly app.ts's view.
  * The specifier travels as a plain string so a distribution without the file
  * still typechecks — a literal import() would be resolved by tsc.
+ *
+ * Model B: in a private checkout the ops modules live OUTSIDE the product repo
+ * (0db-private/ops-web/routes) — OPS_ROUTES_DIR points at that directory and is
+ * consulted when the in-tree specifier is absent. Unset = the public shape.
  */
 export async function importOptionalOpsModule<T>(specifier: string): Promise<T | null> {
   const resolvedPath = fileURLToPath(new URL(specifier, import.meta.url))
   try {
     return (await import(specifier)) as T
   } catch (error) {
-    if (isAbsentModuleError(error, specifier, resolvedPath)) return null
+    if (!isAbsentModuleError(error, specifier, resolvedPath)) throw error
+  }
+  const opsDir = process.env.OPS_ROUTES_DIR
+  if (!opsDir) return null
+  const externalPath = join(opsDir, basename(resolvedPath))
+  const externalSpecifier = pathToFileURL(externalPath).href
+  try {
+    return (await import(externalSpecifier)) as T
+  } catch (error) {
+    if (isAbsentModuleError(error, externalSpecifier, externalPath)) return null
     throw error
   }
 }
