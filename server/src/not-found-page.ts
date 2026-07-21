@@ -27,10 +27,10 @@ export const NOT_FOUND_PAGE_HTML = `<!doctype html>
   .meter { margin: 34px 0 6px; position: relative; }
   .ramp {
     height: 12px; border-radius: 6px; border: 1px solid rgba(0,0,0,.10);
-    /* same stops as the map heatmap ramp — quiet at the left, loud at the right */
+    /* same stops as the map heatmap ramp (v5.b, 30–80 dB) — quiet at the left, loud at the right */
     background: linear-gradient(90deg,
-      #FFFFFF 0%, #A0BABF 10%, #B8D6D1 22%, #CEE4CC 34%, #E2F2BF 46%,
-      #F3C683 58%, #E87E4D 68%, #CD463E 78%, #A11A4D 86%, #75085C 94%, #430A4A 100%);
+      #FFFFFF 0%, #82A6AD 8%, #A0BABF 18%, #B8D6D1 28%, #CEE4CC 38%, #E2F2BF 48%,
+      #F3C683 58%, #E87E4D 67%, #CD463E 76%, #A11A4D 85%, #75085C 93%, #430A4A 100%);
   }
   .pin {
     position: absolute; left: 0; top: -19px; font-size: 13px; line-height: 1;
