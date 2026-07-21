@@ -16,6 +16,10 @@ echo "==> server"
 (cd server && npm ci --no-audit --no-fund && npm run build -- --require-native --frontend-dir ../frontend/dist)
 
 (cd server && node scripts/activate-build.mjs)
+if [ "${QM_BUILD_ONLY:-0}" = "1" ]; then
+  echo "==> QM_BUILD_ONLY: built and activated; serving left to the caller (e.g. systemd)"
+  exit 0
+fi
 export PORT
 echo "==> serving on :$PORT (Ctrl-C to stop)"
 exec node server/scripts/start.mjs
