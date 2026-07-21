@@ -39,15 +39,16 @@
 # Stage 2 against the existing hybrid shuffle). DAYS is rejected in
 # hybrid mode — set AIRLINE_DAYS / GA_DAYS instead (both default to
 # every day present in their cache). Hybrid env knobs: AIRLINE_FEED
-# (default adsbexchange), AIRLINE_CACHE (/storagebox/adsbexchange —
-# lives on he84), AIRLINE_DAYS, GA_CACHE (/mnt/data/adsb — the raw
-# adsb.lol 2025 archive on ry177), GA_DAYS, FAIL_ON_GA_CRUISE=1
+# (default adsbexchange), AIRLINE_CACHE (the airline feed cache on the ops
+# storage host), AIRLINE_DAYS, GA_CACHE (the raw adsb.lol 2025 archive on
+# the ADS-B archive host), GA_DAYS, FAIL_ON_GA_CRUISE=1
 # (merge hard-fails if GA classes leak into cruise — plan delta 4).
-# Cross-host runbook (plan §4.2): run pass G on ry177 (data-local),
-# rsync $WORK_DIR/ga/segments to he84, run pass J + merge there.
+# Cross-host runbook (plan §4.2): run pass G on the ADS-B archive host
+# (data-local), rsync $WORK_DIR/ga/segments to the compute host, run
+# pass J + merge there.
 #
 # Single-feed defaults: --feed adsblol reads the raw adsb.lol archive
-# at /mnt/data/adsb (ry177; release naming v{Y.M.D}-planes-readsb-prod-0
+# on the ADS-B archive host (release naming v{Y.M.D}-planes-readsb-prod-0
 # is resolved by the binary). The old Praha dev subset stays reachable
 # via ADSB_CACHE=data/source/flights-cache/radius/praha-150km plus
 # SCOPE_BBOX=48.65,12.00,51.55,16.90 (subset caches REQUIRE a scope).
@@ -57,7 +58,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
-DATA_YEAR="${DATA_YEAR:-$(cat DATA_YEAR)}"  # default from committed ./DATA_YEAR (bump there yearly); env overrides
+DATA_YEAR="${DATA_YEAR:-$(python3 -c 'import json;print(json.load(open("scripts/dataset-year.json"))["current_year"])')}"  # default from committed ./DATA_YEAR (bump there yearly); env overrides
 DATA_ROOT="${DATA_ROOT:-data}"
 # Which ADS-B network to read. adsb.lol and adsbexchange ship the identical
 # readsb trace_full TAR format, so --feed only picks the default cache path +

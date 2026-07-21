@@ -7,8 +7,8 @@
 //! Usage:
 //!   extract-subtypes /path/to/planet.osm.pbf > subtypes.tsv
 //!
-//! Then patch Arrow files:
-//!   DATA_YEAR=2026 npx tsx pipeline/patch-industrial-subtype.ts subtypes.tsv
+//! `write_industrial.rs` already emits `site_subtype` at extract time, so this
+//! output is only a diagnostic cross-check of what the extract wrote.
 
 use osmpbf::{Element, ElementReader};
 use std::collections::HashMap;

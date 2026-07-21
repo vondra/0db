@@ -52,7 +52,7 @@ National passenger timetable for all of Germany: the DELFI NAP dataset (all ~12 
 
 ### MaStR (Marktstammdatenregister)
 
-Germany's energy facility registry from [Bundesnetzagentur](https://www.marktstammdatenregister.de/). Contains ~30,000 onshore wind turbines with:
+Germany's energy facility registry from [Bundesnetzagentur](https://www.marktstammdatenregister.de/). Contains 41,182 onshore wind turbines (26,425 matched to OSM) with:
 - Rated power (kW)
 - Hub height (m)
 - Rotor diameter

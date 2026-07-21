@@ -224,7 +224,7 @@ pub(crate) fn gpu_build_cell_one_pass(
 /// region's sources HERE (the GPU thread's own cache), since a too-big cell never crossed the prep
 /// channel with a packed SoA — accepted: it's the ~5 densest cells of 44k, so the lost prep-ahead is
 /// noise. Bounds host RAM to the source Arcs + one chunk's candidates, and VRAM to one chunk's SoA +
-/// a block's scatter scratch — so even the 11 GB 2080ti / a 16 GB card builds Phoenix. Routed to by
+/// a block's scatter scratch — so even an 11 GB / a 16 GB card builds Phoenix. Routed to by
 /// BOTH triggers: `prep_cell`'s host-budget guard (`too_big`) and a one-pass VRAM limit
 /// (`is_cell_unbuildable` from `gpu_build_cell_one_pass`).
 #[allow(clippy::too_many_arguments)]

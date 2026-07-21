@@ -1,5 +1,5 @@
 import Fastify from 'fastify'
-import type { FastifyError, FastifyInstance } from 'fastify'
+import type { FastifyError, FastifyInstance, FastifyPluginAsync } from 'fastify'
 import compress from '@fastify/compress'
 import rateLimit from '@fastify/rate-limit'
 import { randomUUID } from 'node:crypto'
@@ -18,6 +18,7 @@ import { validationViewRoutes } from './routes/validation-view.js'
 import { healthRoutes } from './routes/health.js'
 import { createReadinessCheck, type ReadinessCheck } from './runtime-readiness.js'
 import { requireLocalPeer } from './internal-access.js'
+import { importOptionalOpsModule } from './ops-routes.js'
 
 // Deliberately identifies only this Node process, not its build or data. Long
 // validation runs use it to reject results spanning a restart/deploy.
@@ -27,6 +28,8 @@ export type BuildAppOptions = {
   logger?: boolean
   readinessCheck?: ReadinessCheck
   enableClusterRoutes?: boolean
+  /** Simulates ops-module absence in tests; the production gate is file presence. */
+  importOpsModule?: typeof importOptionalOpsModule
   noIndex?: boolean
   preloadRuntimeData?: boolean
 }
@@ -110,6 +113,18 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(tilesManifestRoutes)
   await app.register(initialViewRoutes)
   await app.register(validationViewRoutes)
+  // Inbound-mail archive webhook (Cloudflare Email Worker → the ops mail host), ops-only:
+  // the public distribution ships without the file — its presence is the gate.
+  const importOpsModule = opts.importOpsModule ?? importOptionalOpsModule
+  const mailInboundModule = await importOpsModule<{ mailInboundRoutes: FastifyPluginAsync }>(
+    './routes/mail-inbound.js',
+  )
+  if (mailInboundModule) {
+    // Encapsulated so its raw MIME content-type parser never touches the JSON routes.
+    await app.register(mailInboundModule.mailInboundRoutes)
+  } else {
+    app.log.info('ops route module ./routes/mail-inbound.js absent; skipping registration')
+  }
 
   const readiness = opts.readinessCheck ?? createReadinessCheck({ engineProbe })
   await healthRoutes(app, readiness)
@@ -118,17 +133,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     ?? clusterRoutesEnabled()
   if (enableClusterRoutes) {
     // Dynamic import means a public-only process never even loads code that
-    // reads SSH inventory, worker logs, costs, or cluster telemetry — and a
-    // distribution that ships without that ops module simply skips it. The
-    // specifier is a variable so a distribution without the file typechecks.
-    let clusterRoutes: ((app: import('fastify').FastifyInstance) => Promise<unknown>) | undefined
-    const clusterModule = './routes/cluster.js'
-    try {
-      ;({ clusterRoutes } = await import(clusterModule))
-    } catch (error) {
-      app.log.info(`cluster routes unavailable (ops module not shipped): ${(error as Error).message}`)
-    }
-    if (clusterRoutes) {
+    // reads SSH inventory, worker logs, costs, or cluster telemetry.
+    const clusterModule = await importOpsModule<{ clusterRoutes: FastifyPluginAsync }>('./routes/cluster.js')
+    if (!clusterModule) {
+      app.log.info('ops route module ./routes/cluster.js absent; cluster dashboard not registered')
+    } else {
       // Internal admin area under the /a/ prefix — cluster now (→ /a/cluster +
       // /a/api/cluster/status), other admins later. TWO layers of access control, because
       // it surfaces box IPs, telemetry, and $ costs: Caddy basic_auth on dev.0db.app/a/*
@@ -138,11 +147,17 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       // NOTE the prefix must match cluster-page.ts's poll URL and scripts/cluster-dash.py.
       await app.register(async (adminApp) => {
         adminApp.addHook('onRequest', requireLocalPeer)
-        await adminApp.register(clusterRoutes!)
+        await adminApp.register(clusterModule.clusterRoutes)
         // Anonymous web analytics (/a/stats + /a/api/stats/*) — same /a scope;
         // reads only the aggregate SQLite DB and bounded tails of the access log.
-        const { webStatsRoutes } = await import('./routes/web-stats.js')
-        await adminApp.register(webStatsRoutes)
+        const webStatsModule = await importOpsModule<{ webStatsRoutes: FastifyPluginAsync }>(
+          './routes/web-stats.js',
+        )
+        if (webStatsModule) {
+          await adminApp.register(webStatsModule.webStatsRoutes)
+        } else {
+          app.log.info('ops route module ./routes/web-stats.js absent; skipping registration')
+        }
       }, { prefix: '/a' })
     }
   }

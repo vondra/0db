@@ -472,7 +472,7 @@
   "lat": 47.61625,
   "lng": -122.32888,
   "mode": "source:road",
-  "host": "he84-only",
+  "host": "full-tree-only",
   "anchor_type": "regression",
   "role": "regression",
   "tags": [
@@ -500,8 +500,8 @@
    85.41
   ],
   "known_gap": "road-us-i5-default-aadt",
-  "tolerance_note": "he84 verified 2026-06-11: road 80.9 (world-validation §B1); this segment default_by_class Σ29,310 → −6.4 dB input deficit, masked by on-carriageway receiver; band = he84 ±2; matcher gap-fill (world-report #7) would raise it | v2 2026-07-09: band=live 83.41 +/-2 (+2.5 vs 2026-06-11 he84 80.9 after the 2026 dataset re-extract); input-deficit KG unchanged",
-  "caveats": "surface=unpaved +1.0 dB bug on I-5 (world-report #10, extends R24); BTS band is 24-h LAeq, not Lden; SKIPPED on ry177 (no US arrows)"
+  "tolerance_note": "the full-tree host verified 2026-06-11: road 80.9 (world-validation §B1); this segment default_by_class Σ29,310 → −6.4 dB input deficit, masked by on-carriageway receiver; band = measured ±2; matcher gap-fill (world-report #7) would raise it | v2 2026-07-09: band=live 83.41 +/-2 (+2.5 vs 2026-06-11 full-tree 80.9 after the 2026 dataset re-extract); input-deficit KG unchanged",
+  "caveats": "surface=unpaved +1.0 dB bug on I-5 (world-report #10, extends R24); BTS band is 24-h LAeq, not Lden; SKIPPED on partial-tree hosts (no US arrows)"
  },
  {
   "id": "rail_usti_zalezly",
@@ -1976,7 +1976,7 @@
   "lat": 37.565,
   "lng": -122.253,
   "mode": "source:aircraft",
-  "host": "he84-only",
+  "host": "full-tree-only",
   "anchor_type": "measurement",
   "role": "diagnostic",
   "tags": [
@@ -2006,15 +2006,15 @@
    "facade_correction_db": 0,
    "correction_provenance": null
   },
-  "tolerance_note": "he84 verified 2026-06-11: aircraft Lden 58.4, Δ −3.4 (world-validation §B2); CNEL ≈ Lden (evening 19–22 vs 19–23, sub-dB); band = he84 ±2 — W5/B7 re-bands | v2 2026-07-09: role=diagnostic, band withheld: the dense-cell query is load-dependent on he84 (3x HTTP 504 at the 30 s work timeout earlier 2026-07-09; a value 59.60 was then captured under light load, -0.2 vs measured CNEL band) -- promote to role=regression once dense-cell popup perf makes it reliably capturable",
-  "caveats": "flat bayshore; 12-day extract vs annual measurement; SKIPPED on ry177 (no US arrows)"
+  "tolerance_note": "the full-tree host verified 2026-06-11: aircraft Lden 58.4, Δ −3.4 (world-validation §B2); CNEL ≈ Lden (evening 19–22 vs 19–23, sub-dB); band = measured ±2 — W5/B7 re-bands | v2 2026-07-09: role=diagnostic, band withheld: the dense-cell query is load-dependent on the full-tree host (3x HTTP 504 at the 30 s work timeout earlier 2026-07-09; a value 59.60 was then captured under light load, -0.2 vs measured CNEL band) -- promote to role=regression once dense-cell popup perf makes it reliably capturable",
+  "caveats": "flat bayshore; 12-day extract vs annual measurement; SKIPPED on partial-tree hosts (no US arrows)"
  },
  {
   "id": "air_sfo_site19_pacifica",
   "lat": 37.658,
   "lng": -122.481,
   "mode": "source:aircraft",
-  "host": "he84-only",
+  "host": "full-tree-only",
   "anchor_type": "measurement",
   "role": "regression",
   "tags": [
@@ -2050,8 +2050,8 @@
    62.99,
    66.99
   ],
-  "tolerance_note": "he84 verified 2026-06-11: aircraft Lden 63.5, Δ +3.5 — model-high consistent with missing terrain shielding (A2; coastal hills, elev 170 m); band = he84 ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 64.99 +/-2 (+1.5 vs 2026-06-11 post-FALLBACK-remap); +3.0 above measured CNEL stays EXTERNAL-GAP (missing terrain shielding, audit A2)",
-  "caveats": "SKIPPED on ry177 (no US arrows)"
+  "tolerance_note": "the full-tree host verified 2026-06-11: aircraft Lden 63.5, Δ +3.5 — model-high consistent with missing terrain shielding (A2; coastal hills, elev 170 m); band = measured ±2 — W5/B7 re-bands | v2 2026-07-09: band=live 64.99 +/-2 (+1.5 vs 2026-06-11 post-FALLBACK-remap); +3.0 above measured CNEL stays EXTERNAL-GAP (missing terrain shielding, audit A2)",
+  "caveats": "SKIPPED on partial-tree hosts (no US arrows)"
  },
  {
   "id": "cruise_sumava",
@@ -2206,7 +2206,7 @@
    13.64
   ],
   "tolerance_note": "audit cruise-only Lden 9.3 ✓ plausible; band = verified live aircraft aggregate 2026-06-11 (12.12) ±2; re-band at C5 | v2 2026-07-09: band=live 11.64 +/-2",
-  "caveats": ">59°N: ry177 lacks surface rasters here but the aircraft kernel is raster-independent (world-validation §D) — value comparable across hosts"
+  "caveats": ">59°N: partial-tree hosts lack surface rasters here but the aircraft kernel is raster-independent (world-validation §D) — value comparable across hosts"
  },
  {
   "id": "cruise_extremadura",

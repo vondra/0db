@@ -6,7 +6,7 @@ edition = "2021"
 # GPU backend for the surface scatter (docs/dev/gpu-ground-hybrid-plan.md).
 # cudarc + the nvcc kernel build live behind the `gpu` feature (used only by the two
 # bins). Default build = the CPU-side lib alone, so a host with no CUDA toolkit (e.g.
-# he84) builds noise-gpu cleanly; the GPU path is `--features gpu` on a GPU host.
+# a CPU-only box) builds noise-gpu cleanly; the GPU path is `--features gpu` on a GPU host.
 # cuda-12060 = highest bindings cudarc 0.12 ships; the 12.x driver API is
 # forward-compatible with the box's 12.8. `std` re-enables DriverError's Display + Error impls
 # (cfg-gated in cudarc) so the airborne builder propagates a CUDA OOM as an anyhow error and

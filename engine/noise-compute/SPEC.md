@@ -64,7 +64,9 @@ Emission speed is clamped to **[20, 130] km/h** before the rolling/propulsion fo
 
 OSM `maxspeed` is parsed unit-aware at extract (`osm-extract::classify::parse_maxspeed_kmh`: first `;`-token; `mph`/`knots`/`walk`; numeric clamp ≤ 400; `signals`/garbage → 0). The roads column stays u8: `maxspeed=none` (derestricted) stores sentinel **255** (`SPEED_LIMIT_DERESTRICTED`), real limits clamp to 254; `normalize_road` resolves the sentinel to **130 km/h** (`DERESTRICTED_SPEED_KMH` — BASt 2025 measured 124.1 km/h mean on derestricted Autobahn; CNOSSOS validity cap 130).
 
-**Untagged maxspeed (0)** resolves through the country's LEGAL implicit limit before the world table (`defaults.rs::resolve_speed_default`, table generated from the OSM-wiki legal-defaults dataset — `scripts/gen-country-speed-defaults-rs.mjs`): class 0 → motorway, 1 → motorroad-else-rural, 2/3/4/9 → urban/rural by the `built_up` roads.arrow column (building-raster sample at the segment midpoint; 0 = unknown → skip to the world table, never guessed rural). Local classes 5-8 and links 10-12 stay on the world table by design — a national urban limit would overstate them by +20-30 km/h (/gg 2026-07-03). Rationale: one global default (50) painted a ±5-6 dB colour seam at every tagged/untagged boundary mid-road (Wetherby A168 case, task #15); the receiver-country approximation at borders is the same one the AADT cascade makes.
+**Untagged maxspeed (0)** first passes through the R7 `speed_taper` (a graded
+effective speed from the road class and geometry, `normalize/road.rs`), then
+resolves through the country's LEGAL implicit limit before the world table (`defaults.rs::resolve_speed_default`, table generated from the OSM-wiki legal-defaults dataset — `scripts/gen-country-speed-defaults-rs.mjs`): class 0 → motorway, 1 → motorroad-else-rural, 2/3/4/9 → urban/rural by the `built_up` roads.arrow column (building-raster sample at the segment midpoint; 0 = unknown → skip to the world table, never guessed rural). Local classes 5-8 and links 10-12 stay on the world table by design — a national urban limit would overstate them by +20-30 km/h (/gg 2026-07-03). Rationale: one global default (50) painted a ±5-6 dB colour seam at every tagged/untagged boundary mid-road (Wetherby A168 case, task #15); the receiver-country approximation at borders is the same one the AADT cascade makes.
 
 ### Rolling noise per band (CNOSSOS-EU §2.4.6)
 ```
@@ -109,7 +111,8 @@ L_W_total,i = 10 × log₁₀(Σ_cat 10^(L_W'/m,cat,i / 10))
 
 ### Day/evening/night split
 
-Fixed per-class: 65/20/15 % for motorway-class roads, 70/18/12 % otherwise. Applied even on measured AADT — sub-daily census not currently sourced.
+Fixed per-class: 65/20/15 % for motorway + trunk + their ramps (classes
+0/1/10/11), 70/18/12 % otherwise. Applied even on measured AADT — sub-daily census not currently sourced.
 
 `access_factor` reductions are bypassed only when `Provenance::is_measured()` (City/National/Continental/GlobalMeasured); NationalProxy, Heuristic and Baseline rows still get access reductions — a national proxy is a class-default estimate, not a measurement, so it must be down-scaled on restricted-access roads.
 
@@ -223,9 +226,10 @@ where G = `1 - IMD/100`, from the imperviousness raster. G=0 hard, G=1 soft.
 Water is hard (ISO 9613-2 §7.3.1 groups water with paving/concrete): the
 WorldCover→IMD LUT maps water to 100; snow/ice stays 0 (porous snow cover →
 soft). A missing IMD tile defaults to 100 — the converted set has a tile for
-every land tile, so an absent tile is open ocean. Partial-tree caveat: ry177
-carries only 34–59°N (+synced Scandinavia), where missing northern LAND reads
-hard too; he84's complete raster tree is the production truth.
+every land tile, so an absent tile is open ocean. Partial-tree caveat: a dev
+box may carry only a subset (e.g. 34–59°N plus synced Scandinavia), where
+missing northern LAND reads hard too; the production host's complete raster
+tree is the truth.
 
 Current implementation:
 - **Line sources** (roads, railways, aircraft-ground): both popup and pipeline
@@ -379,8 +383,11 @@ to `RAILWAY_REACH_TARGET_LDEN_DB = 25 dB` (bisection over log-distance, 40
 steps in [100 m, 50 km]), clamped **[2 km, 10 km]** (`constants.rs`). The
 old blanket 7 km ("all types") is retired — a quiet branch line truncating
 at the same distance as a 300 km/h corridor was a correctness bug.
-Value-neutral for a default mainline (80 pax + 20 frt @ 80 km/h crosses
-25 dB at ≈ 7 km); quiet rows shrink, loud/HS corridors extend toward the
+For a default mainline (80 pax + 20 frt @ 80 km/h) the C1 per-region split
+crosses 25 dB at ≈ 7.7 km on the world split (test
+`default_mainline_reach_post_c1`) and further under the EU freight-night
+split — the flat pre-C1 split crossed at ≈ 7 km and is retired as
+value-neutral on purpose. Quiet rows shrink, loud/HS corridors extend toward the
 10 km ceiling (the existing road-halo budget). Known shared convention gap
 (documented on the constants): the solve is free-field UNREFLECTED while
 kernels add receiver reflection (up to ~+5 dB) — affects only the 25–30 dB
@@ -477,8 +484,8 @@ Non-obvious thresholds, periods, and routing rules (constants live in
 
 Since the v16/K3 refactor the gates are split by stage; the historical
 `is_valid_airborne_segment` bundle is **no longer applied to airborne
-segments** in either popup or heatmap (the function survives in
-`segment_filters.rs` and still serves cruise checks).
+segments** in either popup or heatmap (it survives in `segment_filters.rs`
+as dead code; cruise checks run through `is_valid_airborne_with_terrain`).
 
 Enforced at Stage 1 (extract) for airborne pairs:
 - **endpoint AGL**: `start_agl < -30 m` or `end_agl < -30 m` rejected
@@ -758,7 +765,8 @@ Discretized at load/query time in `normalize::prepare_industrial_points`
 - Energy split per point: `Lw_point = Lw_total − 10×log₁₀(area_total /
   area_point)` — area-weighted; equals −10·log₁₀(N) only for equal cells
 - Sources with resolved Lw < 10 dB are dropped; missing area defaults to
-  10 000 m² (→ Lw = baseLw exactly)
+  10 000 m² (at that default, Lw = baseLw + a_weighted_total(spectrum) under
+  the spectral-debt restore)
 
 Each discretized point also carries:
 ```

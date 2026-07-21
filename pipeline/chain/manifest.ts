@@ -7,8 +7,8 @@
 //! classify THROWS at plan time — a new enricher cannot silently stay outside
 //! the chain. Non-`enrich-*` diagnostics (enrichment-status, audit-map-
 //! discontinuities, calibrate-lane-ratios, import-properties, bench/*) are
-//! deliberately not steps; patch-industrial-subtype.ts is a legacy backfill —
-//! write_industrial.rs now emits site_subtype at extract time.
+//! deliberately not steps; `write_industrial.rs` emits site_subtype at extract
+//! time, so no backfill step is needed.
 //!
 //! Phase order (extract → global prior → national census → city → heuristics →
 //! taper → gate):

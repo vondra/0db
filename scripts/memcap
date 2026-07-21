@@ -5,11 +5,11 @@
 #
 # Why this exists: the kernel log shows a GUARDED build dying as CONSTRAINT_MEMCG
 # (contained — the box survives) while an UNGUARDED one triggered a global_oom that
-# killed Claude+tmux on he84. This wrapper is the single chokepoint every heavy
+# killed Claude+tmux on the dev host. This wrapper is the single chokepoint every heavy
 # builder is launched through, so the guard can't be forgotten on one path.
 #
 # Mechanism (auto-detected per host — no config):
-#   • user systemd reachable (he84, ry177) → run in a transient --scope with
+#   • user systemd reachable (Linux dev hosts) → run in a transient --scope with
 #     MemoryMax = RAM − reserve − /dev/shm-in-use, MemorySwapMax=0 (no swap thrash);
 #     the kernel OOM-kills only this scope's cgroup, nothing else.
 #   • no user systemd (vast containers)    → the container's own cgroup limit already

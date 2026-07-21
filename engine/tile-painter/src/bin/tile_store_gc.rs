@@ -38,6 +38,13 @@
 //! OUTER bash-level hold of the same file never nest inside one process tree, so there is no
 //! flock self-deadlock).
 //!
+//! Wired into the publish flow (2026-07-21, owner-approved after the /data1 100%-full
+//! incident): `worldctl`'s `gc_published_pmtiles` runs this binary as
+//! `tile-store-gc <pmtiles-dir> --delete --history-keep 2 --min-age-secs 3600` at the END of
+//! every successful publish/promote/rollback, strictly AFTER the verb's own bash-level lock
+//! hold has ended (never nested inside it) — a missing binary or a failed sweep is a loud
+//! warning there, never a failed verb. Manual runs remain possible and dry-run by default.
+//!
 //! Usage: tile-store-gc <pmtiles-dir> [--delete] [--min-age-secs N] [--history-keep N]
 
 use std::collections::HashSet;

@@ -483,8 +483,8 @@ fn process_region(
     // Crop every block's shared halo in PARALLEL over a SHARED rayon pool, REUSING each rayon
     // worker's persistent RealRasters (RASTERS thread_local — zero cross-thread synchronization
     // on the sampling hot path; see the decision record at the thread_local). The crop uses all
-    // cores instead of one, which a serial crop starved on a crop-bound box (the i9/2080ti:
-    // dense cells, weak GPU → crop is the bottleneck). The GPU kernel loop below stays
+    // cores instead of one, which a serial crop starved on a crop-bound box
+    // (dense cells, weak GPU → crop is the bottleneck). The GPU kernel loop below stays
     // SEQUENTIAL over the SAME sorted block order, so output is byte-identical.
     let block_keys: Vec<(u32, u32)> = blocks.keys().copied().collect();
     let raster_started = Instant::now();

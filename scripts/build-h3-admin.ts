@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url'
 import { cellToLatLng } from 'h3-js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const YEAR = process.env.DATA_YEAR || readFileSync(resolve(__dirname, '..', 'DATA_YEAR'), 'utf8').trim()
+const YEAR = process.env.DATA_YEAR || JSON.parse(readFileSync(resolve(__dirname, 'dataset-year.json'), 'utf8')).current_year
 const CACHE_DIR = resolve(__dirname, 'cache')
 const NE_GEOJSON = resolve(CACHE_DIR, 'ne_10m_admin_0_countries.geojson')
 const NE_URL =

@@ -16,7 +16,7 @@
 //!            the natural compaction pass), never in place.
 //! ```
 //!
-//! Design decided by measurement (2026-07-08, he84; see the census + codec
+//! Design decided by measurement (2026-07-08; see the census + codec
 //! experiment in the git history of this file):
 //!
 //! * **Variable-size blobs + dense index, NOT fixed slots**: z13 sizes spread

@@ -620,8 +620,9 @@ mod tests {
     /// missing-tile default must read fully hard (imd=100 → G=0). The
     /// converter emits an IMD tile for every land tile, never for ocean,
     /// so no mid-Atlantic tile exists on any host. (Partial-tree hosts —
-    /// ry177 keeps only 34–59°N + Scandinavia — make missing northern
-    /// LAND read hard too; he84's complete tree is the production truth.)
+    /// e.g. a dev box carrying only 34–59°N + Scandinavia — make missing
+    /// northern LAND read hard too; the production host's complete tree is
+    /// the truth.)
     /// Runs without `prepared_available()`: a missing data dir is the
     /// same code path as a missing tile.
     #[test]

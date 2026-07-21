@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
-YEAR="${DATA_YEAR:-$(cat DATA_YEAR)}"  # default from committed ./DATA_YEAR (bump there yearly); env overrides
+YEAR="${DATA_YEAR:-$(python3 -c 'import json;print(json.load(open("scripts/dataset-year.json"))["current_year"])')}"  # default from committed ./DATA_YEAR (bump there yearly); env overrides
 DATA_ROOT="${DATA_ROOT:-$PROJECT_DIR/data}"
 RUN_SERVICE_TREE="${RUN_SERVICE_TREE:-1}"
 STAMP_ROAD_METADATA="${STAMP_ROAD_METADATA:-1}"

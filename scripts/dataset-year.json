@@ -1,0 +1,4 @@
+{
+  "current_year": "2026",
+  "_doc": "current live dataset year (pin for the year transition; env DATA_YEAR overrides). Multi-year serving is a dataset dimension, this is the build default."
+}

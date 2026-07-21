@@ -79,9 +79,9 @@ impl RealRasters {
         // Missing-tile default 100 = hard (G=0): the WorldCover converter emits
         // an IMD tile for every land tile, so a tile absent from the complete
         // set is open ocean — acoustically hard water (ISO 9613-2, audit B3).
-        // Caveat: on hosts with a partial tree (ry177 carries only 34–59°N
-        // plus synced Scandinavia) missing northern LAND tiles read hard too;
-        // he84's complete tree is the production truth.
+        // Caveat: on hosts with a partial tree (e.g. only 34–59°N plus
+        // synced Scandinavia) missing northern LAND tiles read hard too;
+        // the production host's complete tree is the truth.
         let imd = TileStore::new(
             data_dir.join("rasters/imd"),
             3601,

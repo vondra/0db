@@ -53,7 +53,7 @@ Each layer's [methodology](/about/methodology) page lists **fallback defaults** 
 
 - **Roads** — 53 countries with national traffic data (US HPMS, EU 36-city harmonized AADT, national surveys), plus the global service-tree estimate for minor roads.
 - **Railways** — ~50 countries from GTFS passenger timetables + national freight-corridor estimates, family-aware (tram / siding / mainline kept separate).
-- **Industrial** — ~124 countries with industrial enrichment: the EU-wide E-PRTR pollution registry (~30k facilities), the Global Power Plant Database, and national wind-turbine and power-plant registries; wind turbines from a global turbine inventory.
+- **Industrial** — ~124 countries with industrial enrichment: the EU-wide E-PRTR pollution registry (~85,600 registered facilities, 50,488 reporting year 2024), the Global Power Plant Database, and national wind-turbine and power-plant registries; wind turbines from a global turbine inventory.
 
 Everything else falls back to the class-defaults. Each country page lists exactly which extra data its country uses — explore by region:
 

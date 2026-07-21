@@ -8,7 +8,7 @@
 //
 // Only the `gpu` feature (the gpu-surface/e2-full bins) needs CUDA. Without it the
 // crate is the CPU-side lib alone, so skip nvcc entirely — a host with no CUDA
-// toolkit (e.g. he84) then builds noise-gpu cleanly. nvcc is required only when you
+// toolkit (e.g. a CPU-only box) then builds noise-gpu cleanly. nvcc is required only when you
 // explicitly build `--features gpu`, which only happens on a GPU host.
 use std::{env, fs, path::PathBuf, process::Command};
 
