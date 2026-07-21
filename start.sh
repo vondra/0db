@@ -13,9 +13,9 @@ echo "==> frontend"
 (cd frontend && npm ci --no-audit --no-fund && npm run build)
 
 echo "==> server"
-(cd server && npm ci --no-audit --no-fund && npm run build)
+(cd server && npm ci --no-audit --no-fund && npm run build -- --require-native --frontend-dir ../frontend/dist)
 
-export FRONTEND_DIST="${FRONTEND_DIST:-$PWD/frontend/dist}"
+(cd server && node scripts/activate-build.mjs)
 export PORT
 echo "==> serving on :$PORT (Ctrl-C to stop)"
-exec node server/dist/server.js
+exec node server/scripts/start.mjs
