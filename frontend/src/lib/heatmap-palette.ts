@@ -34,7 +34,14 @@ const STOPS: { db: number; rgb: readonly [number, number, number]; op: number }[
   { db: 80, rgb: [0x43, 0x0A, 0x4A], op: 0.90 },
 ]
 
-const NO_COLOR: [number, number, number, number] = [0, 0, 0, 0]
+// Transparent pixels carry the lightest class color at alpha 0, NOT black:
+// MapLibre's bilinear resample blends RGB before applying alpha, so a
+// transparent-black neighbor bleeds a grey rim into every color↔floor edge
+// (30↔29 dB and NO_DATA edges, seen live 2026-07-21). Bleeding the floor
+// color instead fades those edges in the scheme's own hue.
+const TRANSPARENT: [number, number, number, number] = [
+  STOPS[0].rgb[0], STOPS[0].rgb[1], STOPS[0].rgb[2], 0,
+]
 
 /** Interpolate the STOPS ramp at `db` (caller clamps to ≥ STOPS[0].db).
  *  Returns RGB plus the 0–1 opacity so callers take what they need. */
@@ -60,9 +67,9 @@ function lerpStop(db: number): { rgb: [number, number, number]; op: number } {
 
 /** Interpolated dB → [r, g, b, a] (0-255 each). Sub-floor renders transparent. */
 function paletteColor(db: number): [number, number, number, number] {
-  if (!Number.isFinite(db)) return NO_COLOR
-  // Sub-floor cells render transparent — see [`STOPS`] header.
-  if (db < STOPS[0].db) return NO_COLOR
+  if (!Number.isFinite(db)) return TRANSPARENT
+  // Sub-floor cells render transparent (floor-hued, see [`TRANSPARENT`]).
+  if (db < STOPS[0].db) return TRANSPARENT
   const { rgb, op } = lerpStop(db)
   return [rgb[0], rgb[1], rgb[2], Math.round(255 * op)]
 }
@@ -85,7 +92,7 @@ export function paletteHex(db: number): string {
  * `TILE_PX² = 65 536` times so the avoided palette interpolation is
  * the bulk of decode cost. Size: 256 × 4 = 1 KB, cache-resident.
  *
- * Byte `255` (no-data sentinel) maps to fully transparent.
+ * Byte `255` (no-data sentinel) maps to floor-hued alpha-0 (see [`TRANSPARENT`]).
  */
 export const PALETTE_LUT: Uint8ClampedArray = (() => {
   const lut = new Uint8ClampedArray(256 * 4)
@@ -97,6 +104,9 @@ export const PALETTE_LUT: Uint8ClampedArray = (() => {
     lut[byte * 4 + 2] = b
     lut[byte * 4 + 3] = a
   }
-  // byte 255 = NO_DATA → fully transparent (already zero from init).
+  // byte 255 = NO_DATA → transparent, but floor-hued so resampling can't bleed grey.
+  lut[255 * 4] = TRANSPARENT[0]
+  lut[255 * 4 + 1] = TRANSPARENT[1]
+  lut[255 * 4 + 2] = TRANSPARENT[2]
   return lut
 })()
