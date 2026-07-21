@@ -19,7 +19,7 @@ dist/
 scripts/cache/
 
 # Data - large binary files, not in git
-data/
+/data
 
 # Build artifacts
 *.tsbuildinfo
