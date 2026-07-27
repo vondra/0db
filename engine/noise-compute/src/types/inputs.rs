@@ -153,7 +153,7 @@ pub struct PointSource {
     pub max_radius_m: f64,
     pub source_id: u16, // single source-of-truth stamp — see pipeline/lib/sources.ts
     /// Building OSM tag `building:levels` (0 = absent → engine
-    /// fell back to ceil(height/3)). Carried through so the popup
+    /// fell back to ceil(height / BUILDING_FLOOR_HEIGHT_M)). Carried through so the popup
     /// can display the canonical floor count alongside the
     /// derived `source_height_m`. 0 for industrial / wind turbines.
     pub floors: u8,

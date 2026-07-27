@@ -67,6 +67,23 @@ pub fn m_per_deg_lon(lat_rad: f64) -> f64 {
 }
 pub const SOURCE_HEIGHT_INDUSTRIAL_ENCLOSED: f64 = 4.0;
 
+/// Fallback building height (m) when a footprint has neither a mapped height
+/// nor a floor count — the last rung of the building height ladder
+/// (`height` → `floors × BUILDING_FLOOR_HEIGHT_M` → this). CANONICAL here;
+/// the Overture screening rasterizer
+/// (`scripts/rasters/download-overture-buildings.sh`) mirrors the value in
+/// shell and must be resynced on change. 8 m ≈ 2–3 storeys at
+/// `BUILDING_FLOOR_HEIGHT_M`, the dominant residential building form, and
+/// matches the engine's long-standing emission fallback so screening and
+/// emission agree on unmapped buildings (the rasterizer formerly used 6 m).
+pub const BUILDING_DEFAULT_HEIGHT_M: f64 = 8.0;
+
+/// Storey height (m) for `building:levels` / Overture `num_floors` × N
+/// height conversions — the middle rung of the building height ladder.
+/// Canonical here, mirrored by the shell rasterizer alongside
+/// [`BUILDING_DEFAULT_HEIGHT_M`].
+pub const BUILDING_FLOOR_HEIGHT_M: f64 = 3.0;
+
 /// CNOSSOS road emission reference speed [km/h].
 pub const V_REF_ROAD: f64 = 70.0;
 

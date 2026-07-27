@@ -61,9 +61,9 @@ pub struct PreparedPoint {
     pub exclusion_radius_m: f32,
     pub max_radius_m: f64,
     /// Building floors used in the Lw GFA computation (resolved
-    /// from OSM `building:levels` or derived from height_m / 3.0
-    /// when the tag is absent). 0 for industrial / wind-turbine
-    /// point sources.
+    /// from OSM `building:levels` or derived from
+    /// height_m / BUILDING_FLOOR_HEIGHT_M when the tag is absent).
+    /// 0 for industrial / wind-turbine point sources.
     pub floors: u8,
     /// Building polygon area (m²) used in the Lw GFA computation.
     /// 0 for industrial point sources without polygon coverage.
@@ -226,14 +226,14 @@ pub fn prepare_building_points(input: RawBuildingInput<'_>) -> Vec<PreparedPoint
     let actual_height = if input.height_m > 0.0 {
         input.height_m
     } else if input.floors > 0 {
-        input.floors as f32 * 3.0
+        input.floors as f32 * crate::constants::BUILDING_FLOOR_HEIGHT_M as f32
     } else {
-        8.0
+        crate::constants::BUILDING_DEFAULT_HEIGHT_M as f32
     };
     let actual_floors = if input.floors > 0 {
         input.floors
     } else {
-        (actual_height / 3.0).ceil() as u8
+        (actual_height / crate::constants::BUILDING_FLOOR_HEIGHT_M as f32).ceil() as u8
     };
     let area = resolve_area_m2(input.area_m2, input.polygon_wkb, 100.0);
 

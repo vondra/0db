@@ -137,14 +137,22 @@ process_tile() {
     fi
 
     # Step 2: Rasterize ALL buildings (not just those with height)
-    # Height priority: Overture height > OSM building:levels × 3m > 6m default
+    # Height ladder: Overture height > num_floors × 3 m > 8 m default.
+    # (num_floors carries OSM building:levels for OSM-sourced footprints, so
+    # the documented OSM-levels tier arrives through it.) The two numbers
+    # mirror noise_compute::constants::BUILDING_{FLOOR_HEIGHT,DEFAULT_HEIGHT}_M
+    # — resync here on change; shell cannot import the Rust constant.
     python3 -c "
 import pyarrow.parquet as pq
 import numpy as np
 from osgeo import ogr, gdal, osr
 gdal.UseExceptions()
 
-t = pq.read_table('$PQ', columns=['geometry', 'height'])
+cols = ['geometry', 'height']
+has_floors = 'num_floors' in pq.read_schema('$PQ').names
+if has_floors:
+    cols.append('num_floors')
+t = pq.read_table('$PQ', columns=cols)
 if len(t) == 0:
     raise SystemExit(0)
 
@@ -155,17 +163,27 @@ srs.ImportFromEPSG(4326)
 lyr = ds.CreateLayer('bld', srs, ogr.wkbPolygon)
 lyr.CreateField(ogr.FieldDefn('height', ogr.OFTReal))
 
-DEFAULT_HEIGHT = 6.0
+DEFAULT_HEIGHT = 8.0  # = BUILDING_DEFAULT_HEIGHT_M
+FLOOR_HEIGHT = 3.0    # = BUILDING_FLOOR_HEIGHT_M
 geoms = t.column('geometry').to_pylist()
 heights = t.column('height').to_pylist()
-for g, h in zip(geoms, heights):
+floors = t.column('num_floors').to_pylist() if has_floors else [None] * len(t)
+for g, h, f in zip(geoms, heights, floors):
     if g is None: continue
     feat = ogr.Feature(lyr.GetLayerDefn())
     geom = ogr.CreateGeometryFromWkb(bytes(g))
     if geom is None: continue
     feat.SetGeometry(geom)
-    height = min(float(h), 249.0) if h is not None else DEFAULT_HEIGHT
-    feat.SetField('height', height)
+    if h is not None and h > 0:
+        height = float(h)
+    elif f is not None and f > 0:
+        height = float(f) * FLOOR_HEIGHT
+    else:
+        height = DEFAULT_HEIGHT
+    # u8 raster ceiling: metres in one byte, clipped at 249. True supertall
+    # heights are carried by the vector obstacle store once geodata-v2
+    # Phase 1 lands (which also retires this raster).
+    feat.SetField('height', min(height, 249.0))
     lyr.CreateFeature(feat)
 
 # Node-registered 3601×3601: pixel centers at integer degrees

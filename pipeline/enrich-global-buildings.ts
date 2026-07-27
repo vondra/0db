@@ -114,8 +114,10 @@ async function main(): Promise<void> {
   (data/enrichment/global/overture-buildings/ghsl-backup/*.raw)
 - Per tile: download GeoParquet → gdal_rasterize building height polygons
   onto node-registered 3601×3601 grid → u8 .raw
-- Height priority per building: Overture height > OSM building:levels × 3 m > 6 m default
-- Output clamped to [0, 249] m (u8)
+- Height ladder per building: Overture height > num_floors × 3 m > 8 m default
+  (constants shared with the engine: BUILDING_{FLOOR_HEIGHT,DEFAULT_HEIGHT}_M)
+- Output clamped to [0, 249] m (u8 raster ceiling; true heights live in the
+  vector obstacle store once geodata-v2 Phase 1 lands)
 
 ## Output
 - Rasterized cache: ${RASTER_DIR} (${rasterizedCount} tiles)
@@ -132,7 +134,7 @@ async function main(): Promise<void> {
 ## Gaps
 - Overture coverage is excellent in EU/NA/JP but sparse in parts of Africa & central Asia
 - Where no Overture buildings exist, the promoted tile is all-zeros (no GHSL fallback)
-- Heights are mostly 6 m defaults outside cities where LiDAR/cadastre is not integrated upstream
+- Heights are mostly 8 m ladder defaults outside cities where LiDAR/cadastre is not integrated upstream
 
 ## Reproduction
 - \`cd pipeline && npx tsx enrich-global-buildings.ts\` (full run)
