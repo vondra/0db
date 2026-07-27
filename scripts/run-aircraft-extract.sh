@@ -217,6 +217,20 @@ fi
 
 mkdir -p "$WORK_DIR" "$H3R4_DIR"
 
+# Publish gate (2026-07-28): a partial run must never leave the tree with
+# mixed `sample_days_by_class` stamps — the reader's only consistency check
+# fired as a user-visible popup 500 for 9 days (157 stale cells found by the
+# owner, 2026-07-18 run). Sweep the whole tree; a mixed result fails the run
+# HERE, in ops, not in someone's popup.
+stamp_gate() {
+    log "publish gate: aircraft stamp consistency sweep (pipeline/audit-aircraft-stamps.ts)"
+    # Local tsx from pipeline/, NOT npx (races + wrong resolution from repo root).
+    # The audit resolves a repo-relative H3R4_DIR against the repo root itself.
+    if ! (cd "$PROJECT_DIR/pipeline" && H3R4_DIR="$H3R4_DIR" DATA_YEAR="$DATA_YEAR" node_modules/.bin/tsx audit-aircraft-stamps.ts --quiet) 2>&1 | stdbuf -oL -eL tee -a "$LOG_FILE"; then
+        die "stamp gate FAILED — aircraft arrows not publishable (see $LOG_FILE)"
+    fi
+}
+
 if [ -n "$HYBRID" ]; then
     # Two-window hybrid flow (ga-365d-hybrid-plan.md §4.2): both passes
     # stop after Stage 1; one merge invocation shuffles airline ∪ GA
@@ -285,6 +299,8 @@ if [ -n "$HYBRID" ]; then
         "${THREAD_ARGS[@]}" \
         2>&1 | stdbuf -oL -eL tee -a "$LOG_FILE"
 
+    stamp_gate
+
     log "done — hybrid popup arrows in $H3R4_DIR/<R4>/{airborne,cruise,airport_traffic}.arrow"
     exit 0
 fi
@@ -324,5 +340,7 @@ fi
     "${SCOPE_ARGS[@]}" \
     "${THREAD_ARGS[@]}" \
     2>&1 | stdbuf -oL -eL tee -a "$LOG_FILE"
+
+stamp_gate
 
 log "done — popup arrows in $H3R4_DIR/<R4>/{airborne,cruise,airport_traffic}.arrow"
