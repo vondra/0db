@@ -264,10 +264,12 @@ impl Builder {
     /// a courtyard wall is a wall). The closing edge back to the first
     /// point is added automatically.
     pub fn add_ring(&mut self, ring: &[(f64, f64)], height_m: f32, kind: ObstacleKind, id: u32) {
-        // `!(> 0)` also rejects NaN heights; non-finite coordinates would
-        // otherwise bin into cell (0,0) and panic the t-sort downstream.
+        // `is_finite` + `<= 0` together reject NaN heights; non-finite
+        // coordinates would otherwise bin into cell (0,0) and panic the
+        // t-sort downstream.
         if ring.len() < 3
-            || !(height_m > 0.0)
+            || !height_m.is_finite()
+            || height_m <= 0.0
             || ring.iter().any(|(a, o)| !a.is_finite() || !o.is_finite())
         {
             return;
@@ -295,7 +297,8 @@ impl Builder {
     /// Add an open polyline (noise barrier segment chain).
     pub fn add_polyline(&mut self, pts: &[(f64, f64)], height_m: f32, kind: ObstacleKind, id: u32) {
         if pts.len() < 2
-            || !(height_m > 0.0)
+            || !height_m.is_finite()
+            || height_m <= 0.0
             || pts.iter().any(|(a, o)| !a.is_finite() || !o.is_finite())
         {
             return;
