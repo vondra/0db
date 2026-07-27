@@ -142,7 +142,7 @@ pub struct BaselineTrace {
     pub source_height_m: f64,
     pub finite_line_corr_db: f64,
     /// Urban reflection boost (ISO 9613-2 §7.5 / CNOSSOS-EU §2.5.18) —
-    /// per-receiver A_refl from local building enclosure, clamped 0..5 dB.
+    /// per-receiver A_refl from local building enclosure, 0/1.5/3 dB.
     /// Same scalar for every segment at this receiver.
     pub reflection_boost_db: f64,
 }

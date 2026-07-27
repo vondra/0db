@@ -657,4 +657,53 @@ mod tests {
             "no screening increment over terrain"
         );
     }
+
+    /// NO DOUBLE-COUNT at the production level: hill + building at the SAME
+    /// sample — `terrain + screen` must equal `max(terrain, combined)` per
+    /// band, where `combined` is independently recomputed over the composite
+    /// profile with this module's exact height floors. Guards the increment
+    /// contract (`screen = (combined − terrain).max(0)`); ported from the
+    /// deleted `solve_single_edge` harness (geodata-v2 D11).
+    #[test]
+    fn hill_plus_building_does_not_double_count() {
+        let mut p = build_flat_profile(500.0, 100.0);
+        let (idx, _) = p
+            .t
+            .iter()
+            .enumerate()
+            .min_by(|(_, &a), (_, &b)| ((a - 0.5).abs()).partial_cmp(&((b - 0.5).abs())).unwrap())
+            .unwrap();
+        p.elevation_m[idx] = 110.0; // 10 m hill
+        p.building_h_m[idx] = 6; // + 6 m building on top
+        let src_elev = 100.05;
+        let rcv_alt = 104.0;
+
+        let terrain = terrain_attenuation(&mut p, src_elev, rcv_alt);
+        let (screen, _) =
+            screening_attenuation_with_meta(&mut p, &[], src_elev, rcv_alt, 0.0, &terrain);
+        assert!(terrain.iter().any(|&a| a > 0.0), "hill must attenuate");
+        assert!(
+            screen.iter().any(|&a| a > 0.0),
+            "building must add screening"
+        );
+
+        // Independent combined pass over the composite, same height floors.
+        let n = p.t.len();
+        let bare: Vec<f64> = p.elevation_m.iter().map(|&e| e as f64).collect();
+        let mut composite = bare.clone();
+        composite[idx] += p.building_h_m[idx] as f64;
+        let src_h = (src_elev - bare[0]).max(0.05);
+        let rcv_h = (rcv_alt - bare[n - 1]).max(0.5);
+        let (combined, _) = single_edge_atten(&p.t, &composite, &bare, 500.0, src_h, rcv_h);
+
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..NUM_BANDS {
+            assert!(
+                (terrain[i] + screen[i] - terrain[i].max(combined[i])).abs() < 1e-9,
+                "band {i}: terrain+screen {:.4} != max(terrain, combined) {:.4}",
+                terrain[i] + screen[i],
+                terrain[i].max(combined[i])
+            );
+        }
+    }
 }

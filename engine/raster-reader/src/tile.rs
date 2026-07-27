@@ -36,7 +36,7 @@ pub struct RawTile {
 }
 
 impl RawTile {
-    fn load(path: &Path, _expected_grid: u32, dtype: DType) -> Option<Self> {
+    fn load(path: &Path, expected_grid: u32, dtype: DType) -> Option<Self> {
         let file = File::open(path).ok()?;
         let mmap = unsafe { Mmap::map(&file).ok()? };
 
@@ -50,6 +50,18 @@ impl RawTile {
 
         // Verify it's a square grid
         if (grid_size as usize) * (grid_size as usize) * bytes_per_pixel != mmap.len() {
+            return None;
+        }
+
+        // Validate against the store's grid: sampling would read a mismatched
+        // tile correctly (per-tile grid_size drives pixel math), but the store's
+        // path-sampling CADENCE assumes its configured resolution, so a stray
+        // finer/coarser tile silently under/over-samples. Legacy SRTM 3-arcsec
+        // (1201²) is the one accepted alternate for elevation tiles; anything
+        // else (e.g. a 10 m 10801² tile in a 30 m store) is refused until the
+        // mixed-resolution manifest lands (geodata-v2 Phase 2c).
+        let srtm_3arcsec = matches!(dtype, DType::I16BE) && grid_size == 1201;
+        if grid_size != expected_grid && !srtm_3arcsec {
             return None;
         }
 
@@ -273,18 +285,38 @@ impl TileStore {
             lon_int.unsigned_abs()
         );
         let primary = self.dir.join(format!("{}{}", base, self.extension));
-        let loaded = if primary.exists() {
-            RawTile::load(&primary, self.grid_size, self.dtype)
-        } else if let (Some(alt_dir), Some(alt_ext)) = (&self.alt_dir, self.alt_extension) {
-            let alt = alt_dir.join(format!("{}{}", base, alt_ext));
-            if alt.exists() {
-                RawTile::load(&alt, self.grid_size, self.dtype)
-            } else {
-                None
+        let mut loaded = None;
+        if primary.exists() {
+            loaded = RawTile::load(&primary, self.grid_size, self.dtype);
+            if loaded.is_none() {
+                // Loud refusal: a present-but-invalid tile (wrong grid,
+                // truncated) must not masquerade as ocean. One line per slot
+                // per process — the slot latches Missing below.
+                eprintln!(
+                    "raster-reader: REFUSED {} (expected {}² grid) — falling back to alt dir if configured",
+                    primary.display(),
+                    self.grid_size
+                );
             }
-        } else {
-            None
-        };
+        }
+        // Alt dir is tried whenever the primary did not yield a tile —
+        // absent OR refused. A corrupt Copernicus tile must not suppress a
+        // valid SRTM fallback (gg review 2026-07-28).
+        if loaded.is_none() {
+            if let (Some(alt_dir), Some(alt_ext)) = (&self.alt_dir, self.alt_extension) {
+                let alt = alt_dir.join(format!("{}{}", base, alt_ext));
+                if alt.exists() {
+                    loaded = RawTile::load(&alt, self.grid_size, self.dtype);
+                    if loaded.is_none() {
+                        eprintln!(
+                            "raster-reader: REFUSED alt {} (expected {}² grid or SRTM 1201²)",
+                            alt.display(),
+                            self.grid_size
+                        );
+                    }
+                }
+            }
+        }
 
         let mut slot = self.tiles[idx].lock().unwrap_or_else(|e| e.into_inner());
         match &*slot {
@@ -457,144 +489,6 @@ impl TileStore {
             Interp::Nearest => tile.sample_nearest(frac_row, frac_col),
         }
     }
-
-    /// Sample along path, return profile of values at raster resolution.
-    pub fn profile_along_path(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> Vec<f64> {
-        let cos_lat = ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
-        let dlat = (lat2 - lat1) * 110_540.0;
-        let dlon = (lon2 - lon1) * 111_320.0 * cos_lat;
-        let dist_m = (dlat * dlat + dlon * dlon).sqrt();
-
-        // Adaptive resolution: full at <1km, 3× coarser 1-3km, 6× coarser >3km.
-        // Major terrain features (100m+ wide) detected at all distances.
-        let cell_m = 110_540.0 / (self.grid_size - 1) as f64;
-        let step_m = if dist_m <= 1000.0 {
-            cell_m
-        } else if dist_m <= 3000.0 {
-            cell_m * 3.0
-        } else {
-            cell_m * 6.0
-        };
-        let steps = (dist_m / step_m).ceil().max(3.0) as usize;
-
-        let mut cached_key = (i32::MIN, i32::MIN);
-        let mut cached_tile: Option<Arc<RawTile>> = None;
-        let mut profile = Vec::with_capacity(steps);
-        for i in 0..steps {
-            let t = i as f64 / (steps - 1).max(1) as f64;
-            let lat = lat1 + t * (lat2 - lat1);
-            let lon = lon1 + t * (lon2 - lon1);
-            profile.push(self.sample_cached(lat, lon, &mut cached_key, &mut cached_tile));
-        }
-        profile
-    }
-
-    /// Maximum value along path + its position (for building screening).
-    /// Returns (max_value, distance_from_start_m, distance_to_end_m).
-    pub fn max_along_path_with_pos(
-        &self,
-        lat1: f64,
-        lon1: f64,
-        lat2: f64,
-        lon2: f64,
-        total_dist_m: f64,
-    ) -> (f64, f64, f64) {
-        let cell_m = 110_540.0 / (self.grid_size - 1) as f64;
-        let steps = (total_dist_m / cell_m).ceil().max(3.0) as usize;
-
-        let mut max_val = 0.0f64;
-        let mut max_t = 0.5;
-        let mut cached_key = (i32::MIN, i32::MIN);
-        let mut cached_tile: Option<Arc<RawTile>> = None;
-
-        for i in 1..steps - 1 {
-            // skip source and receiver positions
-            let t = i as f64 / (steps - 1).max(1) as f64;
-            let lat = lat1 + t * (lat2 - lat1);
-            let lon = lon1 + t * (lon2 - lon1);
-            let v = self.sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
-            if v > max_val {
-                max_val = v;
-                max_t = t;
-            }
-        }
-
-        (max_val, max_t * total_dist_m, (1.0 - max_t) * total_dist_m)
-    }
-
-    /// Cumulative distance through cells above threshold (for forest depth).
-    /// Requires minimum contiguous depth of 10m.
-    pub fn cumulative_along_path(
-        &self,
-        lat1: f64,
-        lon1: f64,
-        lat2: f64,
-        lon2: f64,
-        threshold: f64,
-    ) -> f64 {
-        let cos_lat = ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
-        let dlat = (lat2 - lat1) * 110_540.0;
-        let dlon = (lon2 - lon1) * 111_320.0 * cos_lat;
-        let dist_m = (dlat * dlat + dlon * dlon).sqrt();
-
-        let cell_m = 110_540.0 / (self.grid_size - 1) as f64;
-        let steps = (dist_m / cell_m).ceil().max(3.0) as usize;
-        let step_m = dist_m / steps.max(1) as f64;
-
-        let mut total_depth = 0.0;
-        let mut contiguous_depth = 0.0;
-        let mut cached_key = (i32::MIN, i32::MIN);
-        let mut cached_tile: Option<Arc<RawTile>> = None;
-
-        for i in 0..steps {
-            let t = i as f64 / (steps - 1).max(1) as f64;
-            let lat = lat1 + t * (lat2 - lat1);
-            let lon = lon1 + t * (lon2 - lon1);
-            let v = self.sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
-
-            if v > threshold {
-                contiguous_depth += step_m;
-            } else {
-                // Only count contiguous sections >= 10m
-                if contiguous_depth >= 10.0 {
-                    total_depth += contiguous_depth;
-                }
-                contiguous_depth = 0.0;
-            }
-        }
-        // Don't forget last section
-        if contiguous_depth >= 10.0 {
-            total_depth += contiguous_depth;
-        }
-
-        total_depth
-    }
-
-    /// Average value along path (for ground G from IMD).
-    ///
-    /// Samples at the raster's native cell cadence (~30 m for current 3601²
-    /// IMD/forest/building tiles). All sample lookups use the underlying
-    /// `sample_cached` path which respects each store's interpolation mode.
-    pub fn avg_along_path(&self, lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
-        let cos_lat = ((lat1 + lat2) / 2.0).to_radians().cos().max(0.1);
-        let dlat = (lat2 - lat1) * 110_540.0;
-        let dlon = (lon2 - lon1) * 111_320.0 * cos_lat;
-        let dist_m = (dlat * dlat + dlon * dlon).sqrt();
-
-        let cell_m = 110_540.0 / (self.grid_size - 1) as f64;
-        let steps = (dist_m / cell_m).ceil().max(3.0) as usize;
-
-        let mut sum = 0.0;
-        let mut cached_key = (i32::MIN, i32::MIN);
-        let mut cached_tile: Option<Arc<RawTile>> = None;
-        for i in 0..steps {
-            let t = i as f64 / (steps - 1).max(1) as f64;
-            let lat = lat1 + t * (lat2 - lat1);
-            let lon = lon1 + t * (lon2 - lon1);
-            sum += self.sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
-        }
-        sum / steps as f64
-    }
 }
 
 #[cfg(test)]
@@ -676,5 +570,112 @@ mod tests {
         assert_eq!(store.sample(49.0, 16.0), 7.0);
         assert_eq!(store.sample_with(49.0, 16.0, Interp::Nearest), 7.0);
         assert_eq!(store.sample_with(49.0, 16.0, Interp::Bilinear), 7.0);
+    }
+
+    fn tile_test_dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("qm-tile-test-{}-{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Write an N00E000 tile of `grid`² pixels, every pixel = 42 (U8) or 42
+    /// big-endian (I16BE).
+    fn write_tile(dir: &Path, ext: &str, grid: usize, dtype: DType) {
+        let bytes: Vec<u8> = match dtype {
+            DType::U8 => vec![42u8; grid * grid],
+            DType::I16BE => [0u8, 42u8].repeat(grid * grid),
+        };
+        std::fs::write(dir.join(format!("N00E000{ext}")), bytes).unwrap();
+    }
+
+    /// A present-but-mismatched tile is REFUSED (store default served), and the
+    /// refusal is negatively cached — not silently sampled at the wrong cadence.
+    #[test]
+    fn load_refuses_grid_mismatch() {
+        let dir = tile_test_dir("refuse");
+        write_tile(&dir, ".raw", 5, DType::U8); // store expects 4²
+        let store = TileStore::new(dir.clone(), 4, DType::U8, Interp::Nearest, 7.0, ".raw", 2);
+        assert_eq!(
+            store.sample(0.5, 0.5),
+            7.0,
+            "mismatched tile must be refused"
+        );
+        assert_eq!(
+            store.sample(0.5, 0.5),
+            7.0,
+            "refusal stays negatively cached"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A matching tile loads and samples its pixel value.
+    #[test]
+    fn load_accepts_expected_grid() {
+        let dir = tile_test_dir("accept");
+        write_tile(&dir, ".raw", 4, DType::U8);
+        let store = TileStore::new(dir.clone(), 4, DType::U8, Interp::Nearest, 7.0, ".raw", 2);
+        assert_eq!(store.sample(0.5, 0.5), 42.0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A refused PRIMARY must not suppress a valid alt-dir fallback — the
+    /// corrupt-Copernicus-hides-SRTM case (gg review 2026-07-28).
+    #[test]
+    fn refused_primary_falls_back_to_alt_dir() {
+        let primary = tile_test_dir("fallback-primary");
+        let alt = tile_test_dir("fallback-alt");
+        write_tile(&primary, ".hgt", 5, DType::I16BE); // wrong grid, present
+        write_tile(&alt, ".hgt", 4, DType::I16BE); // valid fallback
+        let store = TileStore::new(
+            primary.clone(),
+            4,
+            DType::I16BE,
+            Interp::Nearest,
+            0.0,
+            ".hgt",
+            2,
+        )
+        .with_alt_dir(alt.clone(), ".hgt");
+        assert_eq!(
+            store.sample(0.5, 0.5),
+            42.0,
+            "alt tile must load when the primary is refused"
+        );
+        let _ = std::fs::remove_dir_all(&primary);
+        let _ = std::fs::remove_dir_all(&alt);
+    }
+
+    /// Legacy SRTM 3-arcsec (1201²) stays accepted for elevation stores; the
+    /// same grid in a U8 store is refused (no such legacy format exists there).
+    #[test]
+    fn srtm_1201_exception_is_elevation_only() {
+        let dem = tile_test_dir("srtm-i16");
+        write_tile(&dem, ".hgt", 1201, DType::I16BE);
+        let store = TileStore::new(
+            dem.clone(),
+            3601,
+            DType::I16BE,
+            Interp::Nearest,
+            0.0,
+            ".hgt",
+            2,
+        );
+        assert_eq!(store.sample(0.5, 0.5), 42.0, "1201² SRTM must load");
+        let _ = std::fs::remove_dir_all(&dem);
+
+        let cover = tile_test_dir("srtm-u8");
+        write_tile(&cover, ".raw", 1201, DType::U8);
+        let store = TileStore::new(
+            cover.clone(),
+            3601,
+            DType::U8,
+            Interp::Nearest,
+            9.0,
+            ".raw",
+            2,
+        );
+        assert_eq!(store.sample(0.5, 0.5), 9.0, "1201² U8 must be refused");
+        let _ = std::fs::remove_dir_all(&cover);
     }
 }

@@ -33,7 +33,7 @@ pub trait RasterSampler: Send + Sync {
     fn elevation(&self, lat: f64, lon: f64) -> f64;
     fn building_height(&self, lat: f64, lon: f64) -> f64;
     fn ground_g(&self, lat: f64, lon: f64) -> f64;
-    fn building_enclosure(&self, lat: f64, lon: f64) -> f64; // reflection boost 0-5 dB
+    fn building_enclosure(&self, lat: f64, lon: f64) -> f64; // reflection boost 0-3 dB
 
     /// Populate a `PathProfile` using the unified bilateral cadence. Fills
     /// `elevation_m`, `building_h_m`, `forest_u8`, `imd_u8` at every t.
@@ -68,7 +68,7 @@ pub trait RasterSampler: Send + Sync {
         dist_m: f64,
         excl_start_m: f64,
     ) -> (f64, f64) {
-        let cell_m = crate::constants::M_PER_DEG_LAT / 3600.0;
+        let cell_m = crate::propagation::path_profile::CELL_M;
         let step = if dist_m <= 1000.0 {
             cell_m
         } else if dist_m <= 3000.0 {
@@ -93,45 +93,5 @@ pub trait RasterSampler: Send + Sync {
             }
         }
         (max_bh, max_t)
-    }
-
-    /// Same scan as `max_building_along_path` but also returns sample count and
-    /// step size for popup transparency. Default delegates to per-point sampling.
-    fn max_building_along_path_stats(
-        &self,
-        src_lat: f64,
-        src_lon: f64,
-        rcv_lat: f64,
-        rcv_lon: f64,
-        dist_m: f64,
-        excl_start_m: f64,
-    ) -> (f64, f64, u32, f64) {
-        let cell_m = crate::constants::M_PER_DEG_LAT / 3600.0;
-        let step = if dist_m <= 1000.0 {
-            cell_m
-        } else if dist_m <= 3000.0 {
-            cell_m * 3.0
-        } else {
-            cell_m * 6.0
-        };
-        let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
-        let mut max_bh = 0.0f64;
-        let mut max_t = 0.5;
-        let mut taken: u32 = 0;
-        for k in 1..n {
-            let t = k as f64 / n as f64;
-            if excl_start_m > 0.0 && t * dist_m < excl_start_m {
-                continue;
-            }
-            let lat = src_lat + t * (rcv_lat - src_lat);
-            let lon = src_lon + t * (rcv_lon - src_lon);
-            let bh = self.building_height(lat, lon);
-            taken += 1;
-            if bh > max_bh {
-                max_bh = bh;
-                max_t = t;
-            }
-        }
-        (max_bh, max_t, taken, step)
     }
 }

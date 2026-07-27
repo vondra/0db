@@ -11,7 +11,7 @@
 //! whenever the composite edge dominates (the usual case, since composite ≥ bare),
 //! and the clamp keeps the stronger bare-earth band when the single composite
 //! edge happens to gate a band the bare hill still screens. This is exactly
-//! today's `(combined − terrain).max(0)` contract (path_effects.rs:359). Summing
+//! the `(combined − terrain).max(0)` contract in `path_effects::screening_attenuation_with_meta`. Summing
 //! two independent Maekawa terms would instead double-count (Maekawa non-linear).
 //!
 //! δ ∝ 1/(L−x) toward each endpoint, so the single max-δ edge is the
@@ -22,28 +22,6 @@ use super::diffraction::{
     compute_single_edge, diffraction_attenuation_rayleigh, DiffractionResult,
 };
 use crate::types::NUM_BANDS;
-
-/// Per-band terrain (bare-earth δ\*) + screening (composite-edge increment) for
-/// one source→receiver path. The caller sums `terrain + screen` into `a_bar`,
-/// then `max(a_gr, a_bar)` (ISO 9613-2 §7.3.1 — barrier REPLACES ground).
-#[derive(Clone, Copy, Debug)]
-pub struct EdgeDiffraction {
-    pub terrain: [f64; NUM_BANDS],
-    pub screen: [f64; NUM_BANDS],
-    /// Composite δ-edge distance from the receiver (m); -1.0 if none. Trace only.
-    pub edge_to_rcv_m: f64,
-    /// Composite δ-edge height above its own ground (m); 0.0 if none. Trace only.
-    pub edge_height_m: f64,
-}
-
-impl EdgeDiffraction {
-    pub const ZERO: EdgeDiffraction = EdgeDiffraction {
-        terrain: [0.0; NUM_BANDS],
-        screen: [0.0; NUM_BANDS],
-        edge_to_rcv_m: -1.0,
-        edge_height_m: 0.0,
-    };
-}
 
 /// Index of the obstacle with the largest CNOSSOS path-length difference
 /// δ = d_S→O + d_O→R − d_S→R over `1..n-1`, among samples above the
@@ -86,8 +64,8 @@ fn max_delta_idx(
 /// for trace/geometry, or `None` + zero bands when `top` clears the line of sight.
 ///
 /// THE shared primitive: surface terrain calls it with `top == bare`, screening
-/// with `top == composite`; the popup wrappers and the heatmap horizon both
-/// funnel through it, so they agree by construction.
+/// with `top == composite`; popup and pipeline both funnel through
+/// [`super::path_effects`], so they agree by construction.
 pub(crate) fn single_edge_atten(
     t: &[f64],
     top: &[f64],
@@ -115,144 +93,6 @@ pub(crate) fn single_edge_atten(
     }
 }
 
-/// The shared single-edge δ kernel. `bare` = bare-earth ground elevations,
-/// `composite` = ground+building, both absolute metres at fractional path
-/// positions `t∈[0,1]`; `total_dist` ground metres; `src_height`/`rcv_height`
-/// above local ground. Paths under 30 m carry no diffraction (raster-resolution
-/// floor — matches the old `compute_path_difference` guard).
-pub fn solve_single_edge(
-    t: &[f64],
-    bare: &[f64],
-    composite: &[f64],
-    total_dist: f64,
-    src_height: f64,
-    rcv_height: f64,
-) -> EdgeDiffraction {
-    if bare.len() < 3 || total_dist < 30.0 {
-        return EdgeDiffraction::ZERO;
-    }
-    let (terrain, _) = single_edge_atten(t, bare, bare, total_dist, src_height, rcv_height);
-    let (combined, c_res) =
-        single_edge_atten(t, composite, bare, total_dist, src_height, rcv_height);
-
-    // A_screen = clamped INCREMENT → terrain + screen = max(A_terrain, A_combined) per band.
-    let mut screen = [0.0; NUM_BANDS];
-    for i in 0..NUM_BANDS {
-        screen[i] = (combined[i] - terrain[i]).max(0.0);
-    }
-    let (edge_to_rcv_m, edge_height_m) = match c_res {
-        Some(r) => {
-            let i = r.edge_idx;
-            ((1.0 - t[i]) * total_dist, composite[i] - bare[i])
-        }
-        None => (-1.0, 0.0),
-    };
-    EdgeDiffraction {
-        terrain,
-        screen,
-        edge_to_rcv_m,
-        edge_height_m,
-    }
-}
-
-/// One raster cell crossed along a source ray: along-ray ground distance from
-/// the ray origin + the bare-earth and composite (ground+building) tops + the
-/// ground-cover bytes. A [`Horizon`] is the ordered list of these for one source
-/// direction — sampled once, reused by every receiver on the ray.
-#[derive(Clone, Copy, Debug)]
-pub struct HorizonCell {
-    pub dist_m: f32,
-    pub ground_m: f32,
-    pub composite_m: f32,
-    pub imd_u8: u8,
-    pub forest_u8: u8,
-}
-
-/// Obstacles along ONE source direction, ascending by `dist_m`. Built once (the
-/// only raster reads — see `build_horizon` in the heatmap crate); each receiver
-/// slices the prefix `[0, d]`. `origin_ground_m` is the DEM at the ray origin.
-pub struct Horizon {
-    pub cells: Vec<HorizonCell>,
-    pub origin_ground_m: f32,
-}
-
-impl Horizon {
-    /// Single-edge δ diffraction for a receiver at ground distance `d_m` along
-    /// the ray, absolute altitudes `src_elev`/`rcv_alt`, receiver bare-earth
-    /// `rcv_ground_m`. A pure scan of the cached cells — no raster reads. Builds
-    /// the `[origin, …interior cells…, receiver]` profile (endpoints carry no
-    /// building) and runs [`solve_single_edge`].
-    pub fn diffraction_for(
-        &self,
-        d_m: f64,
-        src_elev: f64,
-        rcv_alt: f64,
-        rcv_ground_m: f64,
-    ) -> EdgeDiffraction {
-        let origin_ground = self.origin_ground_m as f64;
-        let mut t = vec![0.0];
-        let mut bare = vec![origin_ground];
-        let mut composite = vec![origin_ground];
-        for c in &self.cells {
-            let dist = c.dist_m as f64;
-            if dist <= 0.0 {
-                continue;
-            }
-            if dist >= d_m {
-                break;
-            }
-            t.push(dist / d_m);
-            bare.push(c.ground_m as f64);
-            composite.push(c.composite_m as f64);
-        }
-        t.push(1.0);
-        bare.push(rcv_ground_m);
-        composite.push(rcv_ground_m);
-        // Height floors match path_effects (DEFAULT_RECEIVER_HEIGHT 4.0 → .min(0.5)).
-        let src_h = (src_elev - origin_ground).max(0.05);
-        let rcv_h = (rcv_alt - rcv_ground_m).max(0.5);
-        solve_single_edge(&t, &bare, &composite, d_m, src_h, rcv_h)
-    }
-
-    /// Path-averaged ground factor G (0 hard … 1 soft) over `[0, d_m]`, the
-    /// line-source analogue of `path_effects::ground_g_from_profile` (G = 1 −
-    /// imd/100). z13 cells are ~uniformly spaced, so a plain cell mean tracks the
-    /// distance-weighted integral. Empty prefix (sub-cell path) → 0.5 mixed.
-    pub fn ground_g_to(&self, d_m: f64) -> f64 {
-        let mut sum = 0u64;
-        let mut n = 0u64;
-        for c in &self.cells {
-            if c.dist_m as f64 >= d_m {
-                break;
-            }
-            sum += c.imd_u8 as u64;
-            n += 1;
-        }
-        if n == 0 {
-            return 0.5;
-        }
-        (1.0 - (sum as f64 / n as f64) / 100.0).clamp(0.0, 1.0)
-    }
-
-    /// Forest-covered path length (m) over `[0, d_m]` — feeds
-    /// `vegetation::vegetation_attenuation`. WorldCover forest is a 0/100 flag.
-    pub fn forest_depth_to(&self, d_m: f64) -> f64 {
-        let mut depth = 0.0_f64;
-        let mut prev = 0.0_f64;
-        for c in &self.cells {
-            let dist = c.dist_m as f64;
-            if dist >= d_m {
-                break;
-            }
-            if c.forest_u8 > 50 {
-                depth += dist - prev;
-            }
-            prev = dist;
-        }
-        depth
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,47 +101,72 @@ mod tests {
         (0..n).map(|i| i as f64 / (n - 1) as f64).collect()
     }
 
-    /// (a) Clear path → no terrain, no screening.
+    /// Terrain + combined bands for one profile pair — the exact call shape
+    /// `path_effects` uses (terrain over bare, combined over composite with the
+    /// Rayleigh fit on bare); screening there is `(combined − terrain).max(0)`.
+    fn edge_pair(
+        t: &[f64],
+        bare: &[f64],
+        composite: &[f64],
+        dist: f64,
+        src_h: f64,
+        rcv_h: f64,
+    ) -> (
+        [f64; NUM_BANDS],
+        [f64; NUM_BANDS],
+        Option<DiffractionResult>,
+    ) {
+        let (terrain, _) = single_edge_atten(t, bare, bare, dist, src_h, rcv_h);
+        let (combined, res) = single_edge_atten(t, composite, bare, dist, src_h, rcv_h);
+        (terrain, combined, res)
+    }
+
+    /// (a) Clear path → zero bands, no edge.
     #[test]
     fn flat_path_is_silent() {
         let t = uniform_t(11);
         let bare = vec![100.0; 11];
-        let d = solve_single_edge(&t, &bare, &bare, 500.0, 0.05, 4.0);
-        assert_eq!(d.terrain, [0.0; NUM_BANDS]);
-        assert_eq!(d.screen, [0.0; NUM_BANDS]);
-        assert_eq!(d.edge_to_rcv_m, -1.0);
+        let (atten, res) = single_edge_atten(&t, &bare, &bare, 500.0, 0.05, 4.0);
+        assert_eq!(atten, [0.0; NUM_BANDS]);
+        assert!(res.is_none());
     }
 
-    /// (b) A bare hill with NO building: terrain attenuates, screening is exactly
-    /// zero (composite == bare → A_combined == A_terrain → increment 0).
+    /// (b) A bare hill with NO building: terrain attenuates, and the combined
+    /// pass over an identical composite yields the identical bands — so the
+    /// screening increment is exactly zero.
     #[test]
     fn bare_hill_has_no_screening_increment() {
         let t = uniform_t(11);
         let mut bare = vec![100.0; 11];
         bare[5] = 112.0;
-        let d = solve_single_edge(&t, &bare, &bare, 500.0, 0.05, 4.0);
-        assert!(d.terrain.iter().any(|&a| a > 0.0), "hill must attenuate");
-        assert_eq!(d.screen, [0.0; NUM_BANDS], "no building → zero screening");
+        let (terrain, combined, _) = edge_pair(&t, &bare, &bare, 500.0, 0.05, 4.0);
+        assert!(terrain.iter().any(|&a| a > 0.0), "hill must attenuate");
+        assert_eq!(terrain, combined, "no building → zero increment");
     }
 
-    /// (c) A building on flat ground: zero terrain, screening == the full
-    /// composite attenuation (terrain is zero so the increment is the whole thing).
+    /// (c) A building on flat ground: zero terrain, combined attenuates, and the
+    /// dominant edge sits mid-path at the building's sample.
     #[test]
     fn building_on_flat_is_pure_screening() {
         let t = uniform_t(11);
         let bare = vec![100.0; 11];
         let mut composite = bare.clone();
         composite[5] = 106.0; // 6 m building
-        let d = solve_single_edge(&t, &bare, &composite, 500.0, 0.05, 4.0);
-        assert_eq!(d.terrain, [0.0; NUM_BANDS], "flat ground → zero terrain");
-        assert!(d.screen.iter().any(|&a| a > 0.0), "building must screen");
-        assert!(d.edge_height_m > 5.9 && d.edge_height_m < 6.1);
-        assert!((d.edge_to_rcv_m - 250.0).abs() < 1.0, "edge at mid-path");
+        let (terrain, combined, res) = edge_pair(&t, &bare, &composite, 500.0, 0.05, 4.0);
+        assert_eq!(terrain, [0.0; NUM_BANDS], "flat ground → zero terrain");
+        assert!(combined.iter().any(|&a| a > 0.0), "building must screen");
+        let r = res.expect("composite must yield an edge");
+        assert_eq!(r.edge_idx, 5, "edge at the building sample");
+        assert!((composite[r.edge_idx] - bare[r.edge_idx] - 6.0).abs() < 1e-9);
+        assert!(
+            ((1.0 - t[r.edge_idx]) * 500.0 - 250.0).abs() < 1.0,
+            "mid-path"
+        );
     }
 
-    /// (d) THE fix: δ-selection favours the near-RECEIVER barrier over a mid-path
-    /// one of equal height (δ ∝ 1/(L−x) is minimised mid-path). LOS-excess — the
-    /// old hull ranking — would tie or prefer the mid edge.
+    /// (d) THE fix the single-edge selection exists for: δ favours the
+    /// near-RECEIVER obstacle over a mid-path one of equal height
+    /// (δ ∝ 1/(L−x) is minimised mid-path). LOS-excess ranking would not.
     #[test]
     fn delta_picks_near_endpoint_over_midpath() {
         let t = uniform_t(11);
@@ -309,148 +174,31 @@ mod tests {
         let mut composite = bare.clone();
         composite[5] = 108.0; // mid-path, 8 m
         composite[9] = 108.0; // near receiver (t=0.9), same 8 m
-                              // Symmetric heights (src≈rcv height) so the only discriminator is δ.
-        let d = solve_single_edge(&t, &bare, &composite, 500.0, 2.0, 2.0);
-        assert!(
-            (d.edge_to_rcv_m - 50.0).abs() < 1.0,
-            "near-receiver edge (50 m) must win on δ, got {:.1} m",
-            d.edge_to_rcv_m
+                              // Symmetric endpoint heights so the only discriminator is δ.
+        let (_, _, res) = edge_pair(&t, &bare, &composite, 500.0, 2.0, 2.0);
+        let r = res.expect("obstructed path must yield an edge");
+        assert_eq!(
+            r.edge_idx, 9,
+            "near-receiver edge must win on δ, got idx {}",
+            r.edge_idx
         );
     }
 
-    /// (e) NO DOUBLE-COUNT: for a barrier on a hill, `terrain + screen` must equal
-    /// the combined composite attenuation, NOT the sum of two Maekawa terms.
-    #[test]
-    fn barrier_on_hill_does_not_double_count() {
-        let t = uniform_t(11);
-        let mut bare = vec![100.0; 11];
-        bare[5] = 110.0; // 10 m hill
-        let mut composite = bare.clone();
-        composite[5] = 116.0; // hill + 6 m building
-        let d = solve_single_edge(&t, &bare, &composite, 500.0, 0.05, 4.0);
-        assert!(d.terrain.iter().any(|&a| a > 0.0), "hill attenuates");
-        assert!(d.screen.iter().any(|&a| a > 0.0), "building adds screening");
-
-        // Independently compute A_combined over the composite δ-edge (idx 5, the
-        // only obstacle). `terrain + screen` must reconstruct it EXACTLY — proving
-        // screen is the increment, not a second Maekawa term added on top.
-        let src_elev = bare[0] + 0.05;
-        let rcv_elev = bare[10] + 4.0;
-        let dsr = (500.0 * 500.0 + (rcv_elev - src_elev).powi(2)).sqrt();
-        let r = compute_single_edge(
-            &t, &composite, &bare, 500.0, 5, src_elev, rcv_elev, dsr, 0.05, 4.0,
-        );
-        let combined = diffraction_attenuation_rayleigh(&r);
-        // Test loop compares three parallel band arrays and prints `i` on failure —
-        // an index loop is clearer here than a multi-array zip.
-        #[allow(clippy::needless_range_loop)]
-        for i in 0..NUM_BANDS {
-            assert!(
-                (d.terrain[i] + d.screen[i] - combined[i]).abs() < 1e-9,
-                "band {i}: terrain+screen {:.4} ≠ A_combined {:.4} (double-count!)",
-                d.terrain[i] + d.screen[i],
-                combined[i]
-            );
-        }
-    }
-
-    fn cell(dist_m: f32, ground_m: f32, composite_m: f32) -> HorizonCell {
-        HorizonCell {
-            dist_m,
-            ground_m,
-            composite_m,
-            imd_u8: 50,
-            forest_u8: 0,
-        }
-    }
-
-    /// `diffraction_for` must build the `[origin, …cells…, receiver]` profile
-    /// correctly — identical bands to `solve_single_edge` on the equivalent arrays.
-    #[test]
-    fn horizon_diffraction_for_matches_equivalent_profile() {
-        let horizon = Horizon {
-            cells: vec![
-                cell(100.0, 100.0, 100.0),
-                cell(200.0, 100.0, 100.0),
-                cell(250.0, 100.0, 108.0), // 8 m building mid-path
-                cell(300.0, 100.0, 100.0),
-                cell(400.0, 100.0, 100.0),
-            ],
-            origin_ground_m: 100.0,
-        };
-        let from_horizon = horizon.diffraction_for(500.0, 100.05, 104.0, 100.0);
-
-        let t = vec![0.0, 0.2, 0.4, 0.5, 0.6, 0.8, 1.0];
-        let bare = vec![100.0; 7];
-        let composite = vec![100.0, 100.0, 100.0, 108.0, 100.0, 100.0, 100.0];
-        let direct = solve_single_edge(&t, &bare, &composite, 500.0, 0.05, 4.0);
-
-        for i in 0..NUM_BANDS {
-            assert!((from_horizon.terrain[i] - direct.terrain[i]).abs() < 1e-9);
-            assert!((from_horizon.screen[i] - direct.screen[i]).abs() < 1e-9);
-        }
-        assert!(
-            from_horizon.screen.iter().any(|&a| a > 0.0),
-            "building must screen"
-        );
-        assert!((from_horizon.edge_to_rcv_m - 250.0).abs() < 1.0);
-    }
-
-    /// A horizon whose cells never rise above the LOS produces no diffraction.
-    #[test]
-    fn horizon_clear_path_is_zero() {
-        let horizon = Horizon {
-            cells: vec![cell(100.0, 100.0, 100.0), cell(300.0, 100.0, 100.0)],
-            origin_ground_m: 100.0,
-        };
-        let d = horizon.diffraction_for(500.0, 100.05, 104.0, 100.0);
-        assert_eq!(d.terrain, [0.0; NUM_BANDS]);
-        assert_eq!(d.screen, [0.0; NUM_BANDS]);
-    }
-
-    /// CNOSSOS §2.5.6(c) Rayleigh δ* gate (was diffraction.rs K9): a shallow bare
-    /// hill gates the long-wavelength low bands while higher bands pass — the gate
-    /// lives in compute_delta_star + maekawa, reached via the terrain edge.
+    /// CNOSSOS §2.5.6(c) Rayleigh δ* gate: a shallow bare hill gates the
+    /// long-wavelength low bands while higher bands pass — the gate lives in
+    /// compute_delta_star + maekawa, reached via the terrain edge.
     #[test]
     fn shallow_hill_rayleigh_gates_low_bands() {
         let n = 61;
         let mut bare = vec![400.0_f64; n];
         bare[n / 2] = 419.0;
         let t: Vec<f64> = (0..n).map(|i| i as f64 / (n - 1) as f64).collect();
-        let d = solve_single_edge(&t, &bare, &bare, 1850.0, 0.05, 4.0);
-        assert_eq!(d.terrain[0], 0.0, "63 Hz must be gated by δ*");
+        let (atten, _) = single_edge_atten(&t, &bare, &bare, 1850.0, 0.05, 4.0);
+        assert_eq!(atten[0], 0.0, "63 Hz must be gated by δ*");
         assert!(
-            d.terrain[4] > 5.0,
+            atten[4] > 5.0,
             "1 kHz should pass the gate, got {:.3}",
-            d.terrain[4]
+            atten[4]
         );
-    }
-
-    fn cover_cell(dist_m: f32, imd_u8: u8, forest_u8: u8) -> HorizonCell {
-        HorizonCell {
-            dist_m,
-            ground_m: 0.0,
-            composite_m: 0.0,
-            imd_u8,
-            forest_u8,
-        }
-    }
-
-    #[test]
-    fn ground_g_and_forest_depth_over_prefix() {
-        let horizon = Horizon {
-            cells: vec![
-                cover_cell(100.0, 0, 100), // soft ground, forest
-                cover_cell(200.0, 0, 100), // soft, forest
-                cover_cell(300.0, 100, 0), // hard, no forest
-            ],
-            origin_ground_m: 0.0,
-        };
-        // [0,250]: imd {0,0} → G=1 (soft); forest over both 100 m segments → 200 m.
-        assert!((horizon.ground_g_to(250.0) - 1.0).abs() < 1e-9);
-        assert!((horizon.forest_depth_to(250.0) - 200.0).abs() < 1e-9);
-        // [0,400]: imd {0,0,100} → mean 33.3 → G≈0.667; the hard cell adds no forest.
-        assert!((horizon.ground_g_to(400.0) - (1.0 - (100.0 / 3.0) / 100.0)).abs() < 1e-6);
-        assert!((horizon.forest_depth_to(400.0) - 200.0).abs() < 1e-9);
     }
 }

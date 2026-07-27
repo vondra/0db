@@ -295,7 +295,7 @@ See §3.5a for the shared path-sampling scheme.
 
 ### 3.5a Unified path sampler
 
-DEM, Overture building height, WorldCover forest cover and IMD imperviousness are all sampled along the source→receiver line by a single bilateral cadence — density highest near endpoints (Fresnel zone narrowest), coarsest in the middle. Implementation + cadence rationale: `propagation::path_profile::fill_t_values`. Terrain diffraction, building screening, vegetation depth, and ground-effect G all read from the resulting `PathProfile`. The surface **heatmap** additionally runs a coarser distance-dependent middle cadence (`fill_t_values_coarse_mid`) and a per-source-direction horizon ray-cache (`propagation/horizon.rs::Horizon`) — heatmap-only speed approximations; the popup always uses the exact cadence.
+DEM, Overture building height, WorldCover forest cover and IMD imperviousness are all sampled along the source→receiver line by a single bilateral cadence — density highest near endpoints (Fresnel zone narrowest), coarsest in the middle. Implementation + cadence rationale: `propagation::path_profile::fill_t_values`. Terrain diffraction, building screening, vegetation depth, and ground-effect G all read from the resulting `PathProfile`. The surface **heatmap** additionally runs a coarser distance-dependent middle cadence (`fill_t_values_coarse_mid`) — a heatmap-only speed approximation; the popup always uses the exact cadence.
 
 ### 3.5b Combined terrain + building + barrier screening
 
@@ -326,8 +326,9 @@ Per-RECEIVER boost based on building enclosure (`raster-reader::building_enclosu
 ```
 density > 0.5 → A_refl = +3.0 dB;  density > 0.2 → +1.5 dB;  else 0 dB
 ```
-Applied ONCE per receiver, not per source-receiver path. Maximum is 3 dB — the
-`clamp(enclosure_db, 0, 5)` helper (`reflection.rs`) is dead code.
+Applied ONCE per receiver, not per source-receiver path. Maximum is 3 dB
+(0 / 1.5 / 3.0 by probe density; the former `reflection.rs` clamp helper was
+dead code and is deleted).
 
 ### 3.9 Favourable meteorological conditions (CNOSSOS-EU §2.5.21)
 ❌ NOT IMPLEMENTED.

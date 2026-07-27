@@ -318,7 +318,7 @@ impl FusedTileZ13 {
         self.rx_alt_m[py as usize * TILE_PX + px as usize]
     }
 
-    /// Pre-baked enclosure reflection bonus (0..=5 dB) at pixel.
+    /// Pre-baked enclosure reflection bonus (0/1.5/3 dB) at pixel.
     #[inline]
     pub fn rx_refl(&self, py: u32, px: u32) -> f32 {
         self.rx_refl_db[py as usize * TILE_PX + px as usize]

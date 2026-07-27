@@ -8,6 +8,7 @@
 
 use crate::tile::{DType, Interp, TileStore};
 use crate::RawTile;
+use noise_compute::propagation::path_profile::CELL_M;
 use noise_compute::types::RasterSampler;
 use std::path::Path;
 
@@ -265,48 +266,6 @@ impl RasterSampler for RealRasters {
         (max_bh, max_t)
     }
 
-    fn max_building_along_path_stats(
-        &self,
-        src_lat: f64,
-        src_lon: f64,
-        rcv_lat: f64,
-        rcv_lon: f64,
-        dist_m: f64,
-        excl_start_m: f64,
-    ) -> (f64, f64, u32, f64) {
-        // Same scan as max_building_along_path but returns sample count + step for popup transparency.
-        let step = if dist_m <= 1000.0 {
-            CELL_M
-        } else if dist_m <= 3000.0 {
-            CELL_M * 3.0
-        } else {
-            CELL_M * 6.0
-        };
-        let n = ((dist_m / step).ceil() as usize).clamp(2, 400);
-        let mut max_bh = 0.0f64;
-        let mut max_t = 0.5;
-        let mut taken: u32 = 0;
-        let mut cached_key = (i32::MIN, i32::MIN);
-        let mut cached_tile = None;
-        for k in 1..n {
-            let t = k as f64 / n as f64;
-            if excl_start_m > 0.0 && t * dist_m < excl_start_m {
-                continue;
-            }
-            let lat = src_lat + t * (rcv_lat - src_lat);
-            let lon = src_lon + t * (rcv_lon - src_lon);
-            let bh = self
-                .building
-                .sample_cached(lat, lon, &mut cached_key, &mut cached_tile);
-            taken += 1;
-            if bh > max_bh {
-                max_bh = bh;
-                max_t = t;
-            }
-        }
-        (max_bh, max_t, taken, step)
-    }
-
     fn build_path_profile(
         &self,
         src_lat: f64,
@@ -371,8 +330,3 @@ impl RasterSampler for RealRasters {
         out.step_m_med = noise_compute::propagation::path_profile::median_step_m(&out.t, dist_m);
     }
 }
-
-/// Raster cell size in meters (~30.7m). Kept for callers that need it as a
-/// constant; the bilateral cadence itself lives in
-/// `noise_compute::propagation::path_profile::fill_t_values`.
-const CELL_M: f64 = 110_540.0 / 3600.0;

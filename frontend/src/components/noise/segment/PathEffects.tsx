@@ -110,7 +110,7 @@ export function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
       <HoverText
         title={
           'A_refl — Urban reflection boost (ISO 9613-2 §7.5).\n\n' +
-          'Per-receiver 0..5 dB boost from local building enclosure\n' +
+          'Per-receiver 0..3 dB boost from local building enclosure\n' +
           '(3×3 raster around the receiver). Reflected energy adds to\n' +
           'the direct path — always positive, same scalar for every\n' +
           'segment at this receiver.'
@@ -122,7 +122,7 @@ export function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
         title={
           `baseline.reflection_boost_db = +${baseline.reflection_boost_db.toFixed(2)} dB (engine scalar).\n\n` +
           'Computed once per receiver from the local building_enclosure()\n' +
-          'raster probe and clamped 0..5 dB. Not a variant delta — the\n' +
+          'raster probe (0 / 1.5 / 3 dB). Not a variant delta — the\n' +
           'same value appears on every segment at this point.'
         }
       >

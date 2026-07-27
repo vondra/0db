@@ -27,7 +27,7 @@ __constant__ double LDEN_W[3]     = {12.0, 12.649110640673518, 80.0};  // 4·√
 #define UB_SAFETY 1.0001         // inflate UB past fast_exp non-monotonicity
 #define SOS 340.0                // SPEED_OF_SOUND
 #define SINGLE_DIFF_CAP 20.0     // ISO 9613-2 §7.3 single-edge cap
-#define CELL_M (110540.0/3600.0) // raster cell ≈30.7m (1 arc-sec)
+#define CELL_M (110540.0/3600.0) // mirror of path_profile::CELL_M (M_PER_DEG_LAT/3600)
 #define NEAR_OFFSET_M 10.0       // near-endpoint probe
 #define MAXT 80                  // per-thread profile capacity (fill_t ≤~58 @10km)
 // SURFACE-HEATMAP coarse-middle cadence — MUST match the CPU defaults in
