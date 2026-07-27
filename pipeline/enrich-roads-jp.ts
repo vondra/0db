@@ -40,13 +40,14 @@ import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { cellToLatLng } from 'h3-js'
 import { shouldOverwrite } from './lib/provenance.js'
-import { SOURCE_ID_JP_NATIONAL_ROADS } from './lib/source-ids.generated.js'
+import { SOURCE_ID_JP_NATIONAL_ROADS, SOURCE_ID_JP_CLASS_MEDIAN_FALLBACK } from './lib/source-ids.generated.js'
 import { inBbox } from './lib/spatial.js'
 import { writeRoadAadt, iterateCountryHexes, type RoadRow } from './lib/roads-arrow.js'
 import { makeCoastalCountryGate } from './lib/country-polygon.js'
 import { DATA_YEAR as YEAR } from './lib/data-year.js'
 
 const MY_SOURCE_ID = SOURCE_ID_JP_NATIONAL_ROADS
+const MEDIAN_FALLBACK_SOURCE_ID = SOURCE_ID_JP_CLASS_MEDIAN_FALLBACK
 const H3R4_DIR = resolve(import.meta.dirname, `../data/prepared/${YEAR}/h3r4`)
 const CACHE_DIR = resolve(import.meta.dirname, `../data/enrichment/${YEAR}/jp`)
 
@@ -182,6 +183,14 @@ function loadCensus(): Census {
   const natlByRef = new Map([...refRows].map(([k, a]) => [k, toMed(a)]))
   const expwyByName = new Map([...nameRows].map(([k, a]) => [k, toMed(a)]))
   const classMed = new Map([...classRows].map(([k, a]) => [k, toMed(a)]))
+  // Link classes fall back to their parent mainline's median — the match
+  // arm halves it again (`roadClass >= 10 ? half(fb)`), so store the parent
+  // median verbatim. Without the keys the link fallback was dead code and
+  // the 9865-retract could zero a link with no re-claim path (/gg M1b).
+  for (const [link, parent] of [[10, 0], [11, 1], [12, 2]] as const) {
+    const p = classMed.get(parent)
+    if (p) classMed.set(link, p)
+  }
   const expwyNames = [...expwyByName.keys()].sort((a, b) => b.length - a.length)
 
   console.log(`  census: 47/47 prefecture files (hard-gated above), ${sections.toLocaleString()} usable sections`)
@@ -217,9 +226,19 @@ function makeExpwyResolver(c: Census): (osmName: string) => Veh | null {
 
 const half = (v: Veh): Veh => ({ small: Math.round(v.small / 2), large: Math.round(v.large / 2) })
 
-function toAadt(v: Veh) {
+function toAadt(v: Veh, tier: Tier) {
   const medium = Math.round(v.large * MEDIUM_OF_LARGE)
-  return { light: v.small, medium, heavy: v.large - medium, moto: 0, sourceId: MY_SOURCE_ID }
+  return {
+    light: v.small,
+    medium,
+    heavy: v.large - medium,
+    moto: 0,
+    // Census-matched rows are measured; the class-median fallback is a
+    // census-derived proxy — they must not share one measured id (owner
+    // review 2026-07-28: a proxy fallback stamped "measured" would skip
+    // access_factor and outrank real measurements of neighbours).
+    sourceId: tier === 'class-fallback' ? MEDIAN_FALLBACK_SOURCE_ID : MY_SOURCE_ID,
+  }
 }
 
 type Tier = 'expwy-name' | 'natl-ref' | 'natl-name' | 'class-fallback'
@@ -259,6 +278,7 @@ async function main() {
   let enriched = 0
   let hexesUpdated = 0
   let preserved = 0
+  let retractedTotal = 0
   let outsideJP = 0
   const byClass: Record<number, number> = {}
   const byTier: Record<Tier, number> = { 'expwy-name': 0, 'natl-ref': 0, 'natl-name': 0, 'class-fallback': 0 }
@@ -302,7 +322,7 @@ async function main() {
         if (!interior && !inJP(row.midLat, row.midLon)) { outsideJP++; return null }
 
         pendingTier = tier
-        return toAadt(v)
+        return toAadt(v, tier)
       },
       (row, _i, applied) => {
         enriched++
@@ -312,8 +332,27 @@ async function main() {
         sumAll += applied.light + applied.medium + applied.heavy
       },
       JP_COVERAGE,
+      {
+        // Legacy rows stamped 9392 by the class-median fallback must move to
+        // the proxy id 9865 (9392 is now measured-tier and would otherwise
+        // outrank its own proxy rows). Zero + re-claim in the same pass.
+        sourceId: MY_SOURCE_ID,
+        when: (row) => {
+          // Rows the pass can never claim (outside coverage — legacy
+          // mis-stamps) must be disowned, not silently promoted to measured.
+          if (!JP_COVERAGE.has(row.roadClass)) return true
+          if (row.roadClass === 0 || row.roadClass === 10) {
+            return !(row.name && resolveExpwy(row.name))
+          }
+          if (row.roadClass <= 2 || row.roadClass === 11 || row.roadClass === 12) {
+            return !resolveNatl(row)
+          }
+          return census.classMed.has(row.roadClass)
+        },
+      },
     )
     totalRoads += r.rows
+    retractedTotal += r.retracted
     if (r.updated) hexesUpdated++
 
     const elapsed = Date.now() - startTime
@@ -331,6 +370,7 @@ async function main() {
   console.log(`  Preserved (higher prio): ${preserved.toLocaleString()}`)
   console.log(`  Outside JP polygon:      ${outsideJP.toLocaleString()}`)
   console.log(`  Enriched:                ${enriched.toLocaleString()} (${(100 * enriched / Math.max(totalRoads, 1)).toFixed(1)}%)`)
+  console.log(`  Retracted 9392→9865/0:   ${retractedTotal.toLocaleString()}`)
   console.log(`  Hexes updated:           ${hexesUpdated}/${hexDirs.length}`)
   console.log(`\n  By road class:`)
   for (const cls of Object.keys(byClass).map(Number).sort((a, b) => a - b)) {

@@ -210,7 +210,7 @@ function nearestSeg(lat: number, lon: number, osmClass: number, grid: Map<string
 // runs; writeRoadAadt only overwrites rows it re-matches and never un-stamps, so
 // a row matched by an older logic but not the current one would keep a stale
 // value. Zeroing our own rows (src == MY_SOURCE_ID — only this enricher writes
-// 9006) up front makes every run reproduce the same result from any prior state.
+// 9484) up front makes every run reproduce the same result from any prior state.
 async function clearStaleStamps(hexDirs: string[]): Promise<number> {
   let cleared = 0
   for (const hex of hexDirs) {
@@ -265,7 +265,7 @@ async function main() {
   console.log(`  MX-bbox hexes with roads.arrow: ${hexDirs.length}`)
 
   const cleared = await clearStaleStamps(hexDirs)
-  console.log(`  Cleared prior 9006 stamps:      ${cleared.toLocaleString()}`)
+  console.log(`  Cleared prior 9484 stamps:      ${cleared.toLocaleString()}`)
 
   let totalRoads = 0, alreadyEnriched = 0, matched = 0, hexesUpdated = 0
   // bbox alone bleeds into US/Guatemala/Belize border roads — a Mexican class-default

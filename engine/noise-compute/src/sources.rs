@@ -1009,9 +1009,9 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9392,
         key: "jp-national-roads",
-        provenance: Provenance::NationalProxy,
+        provenance: Provenance::NationalMeasured,
         layer: "roads",
-        name: "Japan MLIT Road Traffic Census R3 (2021) class defaults",
+        name: "Japan MLIT Road Traffic Census R3 (2021) name/ref join",
         license: Some("derived-from-OSM"),
         url: Some("https://www.mlit.go.jp/road/census/r3/"),
         year: Some(2021),
@@ -1069,9 +1069,9 @@ pub const SOURCES: &[Source] = &[
     Source {
         id: 9484,
         key: "mx-national-roads",
-        provenance: Provenance::NationalProxy,
+        provenance: Provenance::NationalMeasured,
         layer: "roads",
-        name: "Mexico SICT/IMT Datos Viales 2025 (200m polyline match + class defaults)",
+        name: "Mexico SICT/IMT Datos Viales 2025 (200m polyline match)",
         license: Some("derived-from-OSM"),
         url: None,
         year: Some(2025),
@@ -1285,6 +1285,16 @@ pub const SOURCES: &[Source] = &[
         license: Some("CC-BY-4.0"),
         url: Some("https://gtfs.de/en/feeds/de_full/"),
         year: Some(2026),
+    },
+    Source {
+        id: 9865,
+        key: "jp-class-median-fallback",
+        provenance: Provenance::NationalProxy,
+        layer: "roads",
+        name: "Japan MLIT R3 class-median fallback (census-derived, no geometry join)",
+        license: Some("derived-from-OSM"),
+        url: Some("https://www.mlit.go.jp/road/census/r3/"),
+        year: Some(2021),
     },
 ];
 

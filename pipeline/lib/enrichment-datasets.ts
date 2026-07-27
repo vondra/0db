@@ -840,24 +840,37 @@ export const DATASETS: Dataset[] = [
     id: 9392, // JP = 392
     layer: 'roads',
     key: 'jp-national-roads',
-    name: 'Japan MLIT Road Traffic Census R3 (2021) class defaults',
+    name: 'Japan MLIT Road Traffic Census R3 (2021) name/ref join',
+    year: 2021,
+    license: 'derived-from-OSM',
+    url: 'https://www.mlit.go.jp/road/census/r3/',
+    priority: 80,
+    measurement: 'counted',
+    roadCoverage: [0, 1, 2, 3, 4, 10, 11, 12], // mirrors JP_COVERAGE in enrich-roads-jp.ts (R1b bucket A)
+  },
+  {
+    id: 9865,
+    layer: 'roads',
+    key: 'jp-class-median-fallback',
+    name: 'Japan MLIT R3 class-median fallback (census-derived, no geometry join)',
     year: 2021,
     license: 'derived-from-OSM',
     url: 'https://www.mlit.go.jp/road/census/r3/',
     priority: 80,
     measurement: 'proxy',
-    roadCoverage: [0, 1, 2, 3, 4, 10, 11, 12], // mirrors JP_COVERAGE in enrich-roads-jp.ts (R1b bucket A)
+    roadCoverage: [0, 1, 2, 3, 4, 10, 11, 12],
   },
   {
     id: 9484, // MX = 484
     layer: 'roads',
     key: 'mx-national-roads',
-    name: 'Mexico SICT/IMT Datos Viales 2025 (200m polyline match + class defaults)',
+    name: 'Mexico SICT/IMT Datos Viales 2025 (200m polyline match)',
     year: 2025,
     license: 'derived-from-OSM',
     url: null,
     priority: 80,
-    measurement: 'proxy',
+    measurement: 'counted',
+    roadCoverage: [0, 1, 2, 3], // mirrors COVERAGE in enrich-roads-mx.ts (R1 auditable)
   },
   {
     id: 9012, // DZ = 12
