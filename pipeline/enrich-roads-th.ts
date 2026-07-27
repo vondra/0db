@@ -1,5 +1,5 @@
 /**
- * Enrich TH roads.arrow with three complementary open-data sources:
+ * Enrich TH roads.arrow with two open-data sources + hand-built corridor tables:
  *
  * 1. **DRR Rural Roads AADT 2024** (กรมทางหลวงชนบท, Department of Rural Roads)
  *    3,415 per-segment AADT records with full CNOSSOS-compatible vehicle class split
@@ -17,20 +17,18 @@
  *    ระหว่างเมือง = intercity special highways). Used for motorway-class enrichment
  *    (Motorway 7 Bangkok↔Pattaya and Motorway 9 Outer Ring Road).
  *
- * 3. **Thailand-tuned CNOSSOS class defaults** (fallback)
- *    For DOH numeric-ref highways (ref=1, ref=7, ref=32, etc.) and unreffed segments,
- *    apply class defaults tuned to Thai road network. Thai roads carry 2-3x the EU
- *    default traffic (a Thai motorway ~60k AADT vs EU default 21.6k) and have a
- *    dominant motorcycle share (25-60% depending on urban/rural mix).
+ * 3. **DOH trunk highway hand table** (`DOH_TRUNK_AADT`) — numeric-`ref` match to
+ *    corridor AADT values calibrated from DOH 2021 annual vehicle-km rankings +
+ *    published corridor volumes (no open per-section counts exist, see blocked
+ *    sources below); split via `thaiClassSplit`.
  *
- *    | road_class | Tier | Rural AADT | Bangkok x1.5 |
- *    |---|---|---:|---:|
- *    | 0 (motorway) | Motorway 7/9 | 60,000 | 90,000 |
- *    | 1 (trunk) | DOH main highway | 30,000 | 45,000 |
- *    | 2 (primary) | DOH/DRR primary | 15,000 | 22,500 |
- *    | 3 (secondary) | DOH secondary | 6,000 | 9,000 |
- *    | 4 (tertiary) | DOH tertiary | 2,500 | 3,750 |
- *    | 5 (residential) | local | 1,200 | 1,800 |
+ * 4. **Unmatched segments** (no `ref`, or `ref` unknown to the tables above)
+ *    are left untouched by this enricher (`return null`). Rows still
+ *    unenriched after all enrichers resolve through the engine's default
+ *    cascade (`defaults.rs` TH country arm + Bangkok city arm) at compute
+ *    time — this enricher does NOT stamp class defaults, so the cascade
+ *    stays the single source of default values. (A `TH_DEFAULTS` table here
+ *    was dead code; removed 2026-07-28.)
  *
  * Blocked sources (TCP egress blocked, documented but not usable):
  * - `opendata.doh.go.th/dataset/ed101df4.../aadt-67.csv` (DOH 2024 per-segment)
@@ -194,20 +192,9 @@ function drrToCnossos(d: DrrAadt): { light: number; medium: number; heavy: numbe
   }
 }
 
-// ── Step 2: Thailand-tuned CNOSSOS class defaults ──
+// ── Step 2: DOH motorway/trunk hand tables ──
 
-/** AADT per class for Thailand, differentiated by urban (Bangkok) vs rural. */
-const TH_DEFAULTS: Record<number, { aadt: number; bkk: number }> = {
-  0: { aadt: 60000, bkk: 90000 }, // motorway (Motorway 7 Bangkok↔Pattaya real ~120k)
-  1: { aadt: 30000, bkk: 45000 }, // trunk (national highways 1, 2, 4, 32, 35 etc.)
-  2: { aadt: 15000, bkk: 22500 }, // primary
-  3: { aadt: 6000,  bkk: 9000 },  // secondary
-  4: { aadt: 2500,  bkk: 3750 },  // tertiary
-  5: { aadt: 1200,  bkk: 1800 },  // residential / unclassified
-  6: { aadt: 500,   bkk: 800 },   // service
-}
-
-// Thai vehicle split for class defaults
+// Thai vehicle split for the DOH tables below.
 // Thailand has very high motorcycle share: ~25% urban, ~15% rural
 // Cars dominate, trucks moderate, buses minor
 function thaiClassSplit(aadt: number, isBangkok: boolean): { light: number; medium: number; heavy: number; moto: number } {
@@ -257,7 +244,7 @@ const DOH_TRUNK_AADT: Record<string, { rural: number; bkk: number }> = {
 // ── Step 3: iterate hexes and match ──
 
 async function main() {
-  console.log(`=== TH Roads Enrichment — DRR AADT + CNOSSOS Thai defaults (${YEAR}) ===\n`)
+  console.log(`=== TH Roads Enrichment — DRR census + DOH motorway/trunk tables (${YEAR}) ===\n`)
   mkdirSync(CACHE_DIR, { recursive: true })
 
   const drrMap = await loadDrrAadt()
@@ -266,7 +253,7 @@ async function main() {
   console.log(`\nTH-bbox hexes with roads.arrow: ${hexDirs.length}`)
 
   let totalRoads = 0, excluded = 0, alreadyEnriched = 0
-  let matchedDrr = 0, matchedDohMotorway = 0, matchedDohTrunk = 0, matchedClassDefault = 0
+  let matchedDrr = 0, matchedDohMotorway = 0, matchedDohTrunk = 0
   let hexesUpdated = 0
   const startTime = Date.now()
 
@@ -289,7 +276,7 @@ async function main() {
         const isBkk = inBbox(midLat, midLon, BANGKOK_BBOX)
 
         let aadtLi = 0, aadtMe = 0, aadtHv = 0, aadtMo = 0
-        let source: 'drr' | 'motorway' | 'trunk' | 'default' | null = null
+        let source: 'drr' | 'motorway' | 'trunk' | null = null
 
         // Tier 1: DRR exact ref match (Thai prefix like นบ.3021)
         if (ref && drrMap.has(ref)) {
@@ -346,7 +333,7 @@ async function main() {
 
     const elapsed = Date.now() - startTime
     if (elapsed > 10_000 && hi % 20 === 0) {
-      console.log(`  [${(elapsed / 1000).toFixed(0)}s] ${hi + 1}/${hexDirs.length} hexes, ${matchedDrr + matchedDohMotorway + matchedDohTrunk + matchedClassDefault} matched`)
+      console.log(`  [${(elapsed / 1000).toFixed(0)}s] ${hi + 1}/${hexDirs.length} hexes, ${matchedDrr + matchedDohMotorway + matchedDohTrunk} matched`)
     }
   }
 
@@ -357,8 +344,7 @@ async function main() {
   console.log(`  Matched by DRR ref:      ${matchedDrr.toLocaleString()} (real AADT + per-class)`)
   console.log(`  Matched by DOH motorway: ${matchedDohMotorway.toLocaleString()}`)
   console.log(`  Matched by DOH trunk:    ${matchedDohTrunk.toLocaleString()}`)
-  console.log(`  Matched by class default: ${matchedClassDefault.toLocaleString()}`)
-  const total = matchedDrr + matchedDohMotorway + matchedDohTrunk + matchedClassDefault
+  const total = matchedDrr + matchedDohMotorway + matchedDohTrunk
   console.log(`  Total enriched:          ${total.toLocaleString()} (${(100 * total / Math.max(totalRoads, 1)).toFixed(2)}%)`)
   console.log(`  Hexes updated:           ${hexesUpdated}/${hexDirs.length}`)
 }

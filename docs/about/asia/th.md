@@ -56,22 +56,22 @@ Motorways and trunk highways are therefore enriched by **numeric `ref` match to 
 
 **Result**: 8,966 motorway segments + 113,716 trunk segments matched.
 
-### Tier 3 — Thailand-tuned CNOSSOS class defaults
+### Tier 4 — class defaults (engine cascade, classes 0–5)
 
-Thai roads carry 2-3× the European default traffic with a heavy motorcycle share. Class defaults:
+Segments with no `ref` match above are **not stamped by this enricher**; rows still unenriched after all enrichers resolve through the engine's traffic-default cascade (city → country → continent → world). Thailand carries explicit cascade arms for classes 0–5 (local/service classes 6–12 use the generic world defaults):
 
-| Class | Rural | Bangkok ×1.5 |
+| OSM class | TH rural (country default) | Bangkok (metro default) |
 |---|---:|---:|
-| Motorway | 60,000 | 90,000 |
-| Trunk | 30,000 | 45,000 |
-| Primary | 15,000 | 22,500 |
-| Secondary | 6,000 | 9,000 |
-| Tertiary | 2,500 | 3,750 |
-| Residential | 1,200 | 1,800 |
+| 0 motorway | 60,000 | 90,000 |
+| 1 trunk | 30,000 | 45,000 |
+| 2 primary | 15,000 | 22,500 |
+| 3 secondary | 6,000 | 9,000 |
+| 4 tertiary | 2,500 | 3,750 |
+| 5 residential | 1,200 | 1,800 |
 
-**Thai vehicle split**: 60-62% light / 8-10% medium / 7-13% heavy / **15-25% motorcycle**. Motorcycles are the single largest vehicle class in central Bangkok and dominate rural routes too.
+**Thai vehicle split**: 62/10/13/**15** rural and 60/8/7/**25** Bangkok (light/medium/heavy/motorcycle). Motorcycles are the single largest vehicle class in central Bangkok and dominate rural routes too.
 
-**Coverage**: 12M+ OSM road segments enriched across 402 Thai hexes.
+**Coverage**: 12M+ OSM road segments scanned across 402 Thai hexes.
 
 ## Railway
 

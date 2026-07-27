@@ -105,8 +105,10 @@ fn city_default(city_id: u16, class: u8) -> Option<Aadt> {
         (CITY_SAO_PAULO, 4) | (CITY_RIO, 4) => Some((2800.0, 400.0, 600.0, 200.0)),   // 4k tertiary
         (CITY_SAO_PAULO, 5) | (CITY_RIO, 5) => Some((1400.0, 200.0, 300.0, 100.0)), // 2k residential
 
-        // ─── Bangkok — TH tier-1 (×1.5) split 60/8/7/25 ────────────────────
-        // Source: pipeline/enrich-roads-th.ts THBKK_MULT = 1.5 + thaiClassSplit(isBangkok=true).
+        // ─── Bangkok — TH metro (rural × 1.5) split 60/8/7/25 ─────────────
+        // Derivation: TH rural totals (below) × 1.5, split via
+        // pipeline/enrich-roads-th.ts thaiClassSplit(isBangkok=true) (live,
+        // still used by the DOH tiers there).
         (CITY_BANGKOK, 0) => Some((54000.0, 7200.0, 6300.0, 22500.0)), // 90k motorway
         (CITY_BANGKOK, 1) => Some((27000.0, 3600.0, 3150.0, 11250.0)), // 45k trunk
         (CITY_BANGKOK, 2) => Some((13500.0, 1800.0, 1575.0, 5625.0)),  // 22.5k primary
@@ -165,9 +167,10 @@ fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
         (b"BR", 6) => return Some((240.0, 40.0, 100.0, 20.0)),         // 400 living_street
 
         // ─── Thailand rural — split 62/10/13/15 ───────────────────────────
-        // Source: pipeline/enrich-roads-th.ts THAI_RURAL class defaults
-        // × thaiClassSplit(isBangkok=false). Rural baseline, Bangkok hex
-        // overrides via CITY_BANGKOK above.
+        // Thai-tuned class totals (calibrated from DRR 2024 + DOH corridor
+        // data) × split from pipeline/enrich-roads-th.ts
+        // thaiClassSplit(isBangkok=false) (live there). Rural baseline;
+        // Bangkok hex overrides via CITY_BANGKOK above.
         (b"TH", 0) => return Some((37200.0, 6000.0, 7800.0, 9000.0)), // 60k motorway
         (b"TH", 1) => return Some((18600.0, 3000.0, 3900.0, 4500.0)), // 30k trunk
         (b"TH", 2) => return Some((9300.0, 1500.0, 1950.0, 2250.0)),  // 15k primary
