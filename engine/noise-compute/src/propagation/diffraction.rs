@@ -13,9 +13,17 @@ use crate::types::NUM_BANDS;
 /// Single-edge diffraction geometry + the CNOSSOS Rayleigh δ\*.
 pub struct DiffractionResult {
     pub delta: f64, // path difference in meters
+    /// CNOSSOS-EU (2.5.25) favourable-conditions path difference over the SAME
+    /// edge: ray curved toward the ground with Γ = max(1000, 8·d_SR), which
+    /// shortens the detour over the top — δ_F < δ (and can go negative, i.e.
+    /// the curved ray clears the edge entirely). Consumed only when
+    /// [`FAVOURABLE_MIXING`] is on; the edge itself stays max-δ-selected on
+    /// straight geometry (plan-accepted second-order simplification).
+    pub delta_fav: f64,
     /// CNOSSOS-EU §2.5.6(c) Rayleigh δ*: path difference over the dominant edge
     /// with mirror source/receiver reflected across the per-side mean ground
-    /// planes. 0.0 when there is no obstruction.
+    /// planes. 0.0 when there is no obstruction. Kept straight-geometry under
+    /// the favourable state too (review-pinned conservative choice).
     pub delta_star: f64,
     /// Number of diffraction edges found (0 = clear path, 1 = dominant edge).
     pub n_edges: u8,
@@ -27,10 +35,42 @@ pub struct DiffractionResult {
 fn empty_result() -> DiffractionResult {
     DiffractionResult {
         delta: 0.0,
+        delta_fav: 0.0,
         delta_star: 0.0,
         n_edges: 0,
         edge_idx: 0,
     }
+}
+
+/// CNOSSOS-EU (2.5.24)/(2.5.25) favourable-conditions path difference: each
+/// straight chord is replaced by the arc of a circle with radius
+/// Γ = max(1000, 8·dsr) through its endpoints (arc = 2Γ·asin(ℓ/2Γ)).
+/// Γ ≥ 8·dsr keeps every asin argument ≤ ~1/16, far from the domain edge.
+pub(crate) fn curved_path_difference(d_sb: f64, d_br: f64, dsr: f64, gamma: f64) -> f64 {
+    let arc = |chord: f64| 2.0 * gamma * (chord / (2.0 * gamma)).asin();
+    arc(d_sb) + arc(d_br) - arc(dsr)
+}
+
+/// CNOSSOS-EU (2.5.9) long-term energetic mix of the favourable and
+/// homogeneous states, expressed on ATTENUATIONS: both states share every
+/// other term of the level chain (emission, divergence, atmosphere, ground,
+/// vegetation), so mixing the diffraction attenuation is algebraically
+/// identical to mixing the received levels — and with the single flat
+/// [`P_FAV`] it is also identical to mixing per period or mixing Lden
+/// (verified in the plan review). Mixing leans to the LOUDER (favourable)
+/// state, which is the standard's point.
+pub(crate) fn mix_fav_hom(
+    hom: &[f64; NUM_BANDS],
+    fav: &[f64; NUM_BANDS],
+    p_fav: f64,
+) -> [f64; NUM_BANDS] {
+    let mut mixed = [0.0_f64; NUM_BANDS];
+    for i in 0..NUM_BANDS {
+        let e =
+            p_fav * 10.0_f64.powf(-fav[i] / 10.0) + (1.0 - p_fav) * 10.0_f64.powf(-hom[i] / 10.0);
+        mixed[i] = -10.0 * e.log10();
+    }
+    mixed
 }
 
 /// δ + Rayleigh δ\* over a single pre-selected edge `idx`. `edge_profile` is the
@@ -65,8 +105,10 @@ pub(super) fn compute_single_edge(
         source_height,
         receiver_height,
     );
+    let gamma = FAV_RAY_CURVATURE_MIN_M.max(FAV_RAY_CURVATURE_PER_DSR * dsr);
     DiffractionResult {
         delta: d_sb + d_br - dsr,
+        delta_fav: curved_path_difference(d_sb, d_br, dsr, gamma),
         delta_star,
         n_edges: 1,
         edge_idx: idx,
@@ -148,7 +190,12 @@ pub fn diffraction_attenuation(delta: f64) -> [f64; NUM_BANDS] {
 }
 
 pub fn diffraction_attenuation_rayleigh(result: &DiffractionResult) -> [f64; NUM_BANDS] {
-    maekawa_bands(result.delta, result.delta_star)
+    let hom = maekawa_bands(result.delta, result.delta_star);
+    if !FAVOURABLE_MIXING || result.n_edges == 0 {
+        return hom;
+    }
+    let fav = maekawa_bands(result.delta_fav, result.delta_star);
+    mix_fav_hom(&hom, &fav, P_FAV)
 }
 
 #[cfg(test)]
@@ -164,5 +211,120 @@ mod tests {
             "K6 1kHz: expected ~15.28, got {:.2}",
             at_1khz
         );
+    }
+
+    /// Kytín-shaped geometry: source and receiver ~2.2 km apart, an edge 25 m
+    /// above the LOS near mid-path. δ_H comes out sub-metre (matches the live
+    /// popup's δ = 0.9 m); the curved favourable ray must always shorten the
+    /// detour (δ_F < δ_H), here enough to go NEGATIVE — the curved ray clears
+    /// the hill, which is exactly the "distant motorway audible under
+    /// inversion" mechanism the plan implements.
+    fn kytin_edge() -> (f64, f64, f64) {
+        let d_sg = 1000.0_f64;
+        let d_rg = 1172.0_f64;
+        let rise = 25.0_f64;
+        let d_sb = (d_sg * d_sg + rise * rise).sqrt();
+        let d_br = (d_rg * d_rg + rise * rise).sqrt();
+        let dsr = d_sg + d_rg; // level endpoints
+        (d_sb, d_br, dsr)
+    }
+
+    #[test]
+    fn curved_ray_shortens_the_detour() {
+        let (d_sb, d_br, dsr) = kytin_edge();
+        let delta_h = d_sb + d_br - dsr;
+        assert!(
+            delta_h > 0.5 && delta_h < 1.0,
+            "fixture δ_H ≈ 0.58 m, got {delta_h:.3}"
+        );
+        let gamma = FAV_RAY_CURVATURE_MIN_M.max(FAV_RAY_CURVATURE_PER_DSR * dsr);
+        let delta_f = curved_path_difference(d_sb, d_br, dsr, gamma);
+        assert!(delta_f < delta_h, "δ_F must be smaller than δ_H");
+        assert!(
+            delta_f < 0.0,
+            "at 2.2 km the Γ=8·d curvature clears this sub-metre-δ hill (got {delta_f:.3})"
+        );
+    }
+
+    /// Γ → ∞ recovers straight rays: δ_F → δ_H.
+    #[test]
+    fn infinite_curvature_recovers_straight_delta() {
+        let (d_sb, d_br, dsr) = kytin_edge();
+        let delta_h = d_sb + d_br - dsr;
+        let delta_f = curved_path_difference(d_sb, d_br, dsr, 1.0e12);
+        assert!(
+            (delta_f - delta_h).abs() < 1e-6,
+            "Γ→∞: δ_F {delta_f:.9} must equal δ_H {delta_h:.9}"
+        );
+    }
+
+    /// (2.5.9) mix endpoints and monotonicity: p=0 → homogeneous, p=1 →
+    /// favourable, p=0.5 strictly between and BELOW the arithmetic midpoint
+    /// (energetic mean leans to the louder, less-attenuated state).
+    #[test]
+    fn mix_endpoints_and_energetic_lean() {
+        let hom = [12.0_f64; NUM_BANDS];
+        let fav = [2.0_f64; NUM_BANDS];
+        let m0 = mix_fav_hom(&hom, &fav, 0.0);
+        let m1 = mix_fav_hom(&hom, &fav, 1.0);
+        let mh = mix_fav_hom(&hom, &fav, 0.5);
+        for i in 0..NUM_BANDS {
+            assert!((m0[i] - hom[i]).abs() < 1e-9);
+            assert!((m1[i] - fav[i]).abs() < 1e-9);
+            assert!(mh[i] > fav[i] && mh[i] < hom[i]);
+            assert!(
+                mh[i] < (hom[i] + fav[i]) / 2.0,
+                "energetic mean must sit below the dB midpoint (louder state dominates)"
+            );
+        }
+        // 10 dB spread at p=0.5 → mixed ≈ fav + 2.6 dB (= −10·log10(0.5·(1+10⁻¹)) above fav).
+        assert!((mh[0] - (fav[0] + 2.61)).abs() < 0.05, "got {:.3}", mh[0]);
+    }
+
+    /// Flag OFF (the shipped state): the public band function must be
+    /// bit-identical to the pure homogeneous Maekawa — the merge changes
+    /// nothing until the plan's gates pass and the flag flips.
+    // The constant assert is the point: whoever flips FAVOURABLE_MIXING must
+    // consciously rewrite this test as part of the plan's flip commit.
+    #[allow(clippy::assertions_on_constants)]
+    #[test]
+    fn flag_off_is_bit_identical_to_homogeneous() {
+        assert!(!FAVOURABLE_MIXING, "Phase 1 ships with the flag OFF");
+        let r = DiffractionResult {
+            delta: 0.7,
+            delta_fav: -0.1,
+            delta_star: 0.05,
+            n_edges: 1,
+            edge_idx: 3,
+        };
+        let public = diffraction_attenuation_rayleigh(&r);
+        let hom = maekawa_bands(r.delta, r.delta_star);
+        assert_eq!(public, hom);
+    }
+
+    /// Mixed attenuation is never above homogeneous and never below favourable
+    /// (per band), across a sweep of edge geometries including a two-bump-like
+    /// tall/late edge — the property G1 pins for the ON state.
+    #[test]
+    fn mixed_bands_bounded_by_states() {
+        for (d_sg, d_rg, rise) in [
+            (1000.0_f64, 1172.0_f64, 25.0_f64), // Kytín-shaped
+            (300.0, 1900.0, 60.0),              // tall late edge (two-bump winner shape)
+            (50.0, 150.0, 8.0),                 // short urban path
+        ] {
+            let d_sb = (d_sg * d_sg + rise * rise).sqrt();
+            let d_br = (d_rg * d_rg + rise * rise).sqrt();
+            let dsr = d_sg + d_rg;
+            let gamma = FAV_RAY_CURVATURE_MIN_M.max(FAV_RAY_CURVATURE_PER_DSR * dsr);
+            let delta_h = d_sb + d_br - dsr;
+            let delta_f = curved_path_difference(d_sb, d_br, dsr, gamma);
+            assert!(delta_f < delta_h);
+            let hom = maekawa_bands(delta_h, 0.0);
+            let fav = maekawa_bands(delta_f, 0.0);
+            let mixed = mix_fav_hom(&hom, &fav, P_FAV);
+            for i in 0..NUM_BANDS {
+                assert!(mixed[i] <= hom[i] + 1e-9 && mixed[i] >= fav[i] - 1e-9);
+            }
+        }
     }
 }

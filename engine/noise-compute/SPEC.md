@@ -286,9 +286,10 @@ single-edge selection. The attenuation cap is therefore **20 dB in all cases**.
 Simplifications vs. strict CNOSSOS:
 - **Single edge only (N = 1)** — multiple diffraction (ISO §7.4 / CNOSSOS §2.5.23) removed 2026-06-01, see above.
 - We use **vertical** reflection across the fitted plane (standard acoustic practice in NMPB / NoiseModelling), not perpendicular-to-plane.
-- The **−λ/20** near-miss clause is not implemented — the path-difference scan early-returns zero when no sampled elevation sits above the line-of-sight, collapsing all non-blocked paths to zero before diffraction is considered.
+- The **−λ/20** near-miss clause is not implemented — the path-difference scan early-returns zero when no sampled elevation sits above the line-of-sight, collapsing all non-blocked paths to zero before diffraction is considered; a negative favourable δ_F is likewise zeroed by the `delta <= 0` gate rather than retaining the near-miss band.
 - `Δground` additive combination (CNOSSOS §2.5.31) is not implemented — we still combine ground and barrier via `max(A_ground, A_terrain + A_screen)` in §3.3.
-- Favourable-conditions curved rays (§2.5.24) are not implemented — see §3.9.
+- Favourable-conditions curved rays ((2.5.24)) are implemented behind the
+  OFF-by-default `FAVOURABLE_MIXING` flag — see §3.9.
 - Lateral diffraction around vertical edges (§2.5.6(i)) is not implemented.
 
 See §3.5a for the shared path-sampling scheme.
@@ -331,9 +332,34 @@ Applied ONCE per receiver, not per source-receiver path. Maximum is 3 dB
 dead code and is deleted).
 
 ### 3.9 Favourable meteorological conditions (CNOSSOS-EU §2.5.21)
-❌ NOT IMPLEMENTED.
+⏸ IMPLEMENTED BEHIND `FAVOURABLE_MIXING = false` (constants.rs) — output
+unchanged until the flag flips with a surface-layer OUTPUT_VER bump + world
+repaint (rollout gates: docs/dev/favourable-propagation-plan.md in
+0db-private).
 
-`P_FAV = 0.5` constant exists in code, but no wind / inversion / favourable-propagation correction is applied in current propagation.
+Mechanism (2015/996 formulas (2.5.9), (2.5.24), (2.5.25)), scoped to the
+single term where favourable/homogeneous physically diverge — diffraction:
+
+- For the max-δ edge, `compute_single_edge` also computes δ_F on the
+  favourable curved ray: every straight chord is replaced by the arc of a
+  circle with Γ = max(1000 m, 8·d_SR) (slant d_SR), arc = 2Γ·asin(ℓ/2Γ)
+  (`curved_path_difference`). δ_F < δ for every geometry where diffraction
+  still matters (the rare counter-shapes have δ deep in Maekawa saturation);
+  at km-scale paths a sub-metre
+  δ collapses to negative — the curved ray clears the hill (the audible
+  distant-motorway-under-inversion mechanism).
+- `diffraction_attenuation_rayleigh` then mixes the two Maekawa band
+  attenuations energetically with `P_FAV = 0.5` (`mix_fav_hom`, (2.5.9)).
+  Both states share every other chain term, so mixing the attenuation is
+  identical to mixing received levels; with the single flat p it is also
+  identical to per-period or Lden-level mixing.
+
+Deliberate simplifications (review-pinned): the Rayleigh δ* gate stays on
+straight geometry under the favourable state (conservative — suppresses part
+of the low-band favourable boost); edge selection stays max-δ on straight
+geometry (second-order on multi-bump profiles); no favourable variant of the
+CF-table ground model (a Fav variant of a non-CNOSSOS ground model would be
+fake precision); no per-period p (owner 2026-07-28); no Cmet.
 
 ### 3.10 Transport-specific adjustments
 Applied in pipeline and popup:

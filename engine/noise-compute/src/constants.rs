@@ -34,7 +34,22 @@ pub const SPEED_OF_SOUND: f64 = 340.0;
 pub const DEFAULT_RECEIVER_HEIGHT: f64 = 4.0;
 
 /// Favourable propagation probability (CNOSSOS-EU §2.5.21, Central Europe).
+/// One value for all periods (owner 2026-07-28: no per-period p).
 pub const P_FAV: f64 = 0.5;
+
+/// Master switch for CNOSSOS long-term favourable/homogeneous mixing
+/// (2015/996 formulas (2.5.9), (2.5.24), (2.5.25)); see
+/// docs/dev/favourable-propagation-plan.md (0db-private). OFF until the
+/// plan's G1–G6 gates pass: flipping it raises every terrain/building
+/// screened receiver (the mixture leans to the louder favourable state),
+/// so it ships together with the surface-layer OUTPUT_VER bump and a world
+/// repaint — never alone.
+pub const FAVOURABLE_MIXING: bool = false;
+
+/// CNOSSOS-EU (2.5.24) favourable-ray curvature Γ = max(Γ_MIN, Γ_PER_DSR·d),
+/// d = slant source→receiver distance (review-pinned reading).
+pub const FAV_RAY_CURVATURE_MIN_M: f64 = 1000.0;
+pub const FAV_RAY_CURVATURE_PER_DSR: f64 = 8.0;
 
 /// Diffraction attenuation cap [dB] (single-edge model).
 pub const SINGLE_DIFF_CAP: f64 = 20.0;
