@@ -508,6 +508,7 @@ fn scatter_band<G: PixelGeometry>(
                 let screening = path_effects::screening_attenuation(
                     &mut s.profile,
                     barriers,
+                    path_effects::ObstacleInput::CANDIDATES_OFF,
                     t.src_alt,
                     rx_alt,
                     t.excl_m,

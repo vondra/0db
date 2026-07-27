@@ -3,9 +3,10 @@
 //!
 //! The dominant edge is selected upstream by [`super::horizon`] (largest
 //! path-length difference δ); this module computes that edge's δ geometry
-//! ([`compute_single_edge`]), the bare-earth δ\* OLS mean-ground fit
-//! ([`compute_delta_star`]), and the banded attenuation
-//! ([`diffraction_attenuation_rayleigh`]).
+//! ([`compute_single_edge`] for a cadence sample, [`compute_single_edge_at`]
+//! for an explicit vector-obstacle crossing between samples), the bare-earth
+//! δ\* OLS mean-ground fit ([`compute_delta_star`]), and the banded
+//! attenuation ([`diffraction_attenuation_rayleigh`]).
 
 use crate::constants::*;
 use crate::types::NUM_BANDS;
@@ -113,6 +114,121 @@ pub(super) fn compute_single_edge(
         n_edges: 1,
         edge_idx: idx,
     }
+}
+
+/// δ + Rayleigh δ\* over an EXPLICIT edge point `(t_e, top_e)` that need not
+/// coincide with any profile sample — the vector-obstacle candidate path
+/// (geodata-v2 1.3). Same geometry as [`compute_single_edge`]. Per SPEC §3.5b
+/// (and the sample path at [`compute_delta_star`]), the diffraction point D —
+/// the bare ground LERPed at `t_e` — belongs to BOTH §2.5.6(c) mean-ground
+/// fits: source side = samples with `t < t_e` plus D, receiver side = D plus
+/// samples with `t > t_e`. At an exact sample t these are the sample path's
+/// point sets verbatim (bit-parity on any terrain), and between samples the
+/// fits vary continuously as `t_e` crosses a cadence sample.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn compute_single_edge_at(
+    t: &[f64],
+    ols_profile: &[f64],
+    t_e: f64,
+    top_e: f64,
+    total_dist: f64,
+    src_elev: f64,
+    rcv_elev: f64,
+    dsr: f64,
+    source_height: f64,
+    receiver_height: f64,
+) -> DiffractionResult {
+    let los = src_elev + (rcv_elev - src_elev) * t_e;
+    if top_e <= los {
+        return empty_result();
+    }
+    let d_sg = t_e * total_dist;
+    let d_rg = (1.0 - t_e) * total_dist;
+    let d_sb = (d_sg * d_sg + (top_e - src_elev).powi(2)).sqrt();
+    let d_br = (d_rg * d_rg + (top_e - rcv_elev).powi(2)).sqrt();
+
+    let n = ols_profile.len();
+    // Strict partitions: src samples t < t_e, rcv samples t > t_e; D joins
+    // both fits exactly once. Candidates carry t ∈ (0, 1) so each side keeps
+    // at least its endpoint sample.
+    let p_lo = t.partition_point(|&x| x < t_e);
+    let p_hi = t.partition_point(|&x| x <= t_e);
+    // Bare ground under the candidate edge, LERPed between its neighbours
+    // (equals the sample's elevation when t_e sits exactly on a sample).
+    let i1 = p_hi.clamp(1, n - 1);
+    let (t0, t1) = (t[i1 - 1], t[i1]);
+    let frac = if t1 > t0 {
+        ((t_e - t0) / (t1 - t0)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let d_top = ols_profile[i1 - 1] + frac * (ols_profile[i1] - ols_profile[i1 - 1]);
+
+    let (_, b_src) = fit_plane_with_point(
+        &t[..p_lo],
+        &ols_profile[..p_lo],
+        t_e,
+        d_top,
+        0.0,
+        total_dist,
+    );
+    let (a_rcv, b_rcv) = fit_plane_with_point(
+        &t[p_hi..],
+        &ols_profile[p_hi..],
+        t_e,
+        d_top,
+        t_e,
+        total_dist,
+    );
+    let plane_rcv_at_end = a_rcv * d_rg + b_rcv;
+    let s_star_z = 2.0 * b_src - (ols_profile[0] + source_height);
+    let r_star_z = 2.0 * plane_rcv_at_end - (ols_profile[n - 1] + receiver_height);
+    let d_sd = (d_sg * d_sg + (d_top - s_star_z).powi(2)).sqrt();
+    let d_dr = (d_rg * d_rg + (r_star_z - d_top).powi(2)).sqrt();
+    let d_sr = (total_dist * total_dist + (r_star_z - s_star_z).powi(2)).sqrt();
+    let delta_star = (d_sd + d_dr - d_sr).max(0.0);
+
+    DiffractionResult {
+        delta: d_sb + d_br - dsr,
+        delta_star,
+        n_edges: 1,
+        edge_idx: p_hi.clamp(1, n - 1),
+    }
+}
+
+/// [`fit_plane`] with one extra point `(extra_t, extra_z)` folded into the
+/// regression — the diffraction point D for the explicit-edge δ\* fits.
+fn fit_plane_with_point(
+    ts: &[f64],
+    zs: &[f64],
+    extra_t: f64,
+    extra_z: f64,
+    t_offset: f64,
+    total_dist: f64,
+) -> (f64, f64) {
+    let n = zs.len() as f64 + 1.0;
+    let mut sx = 0.0_f64;
+    let mut sz = 0.0_f64;
+    let mut sxx = 0.0_f64;
+    let mut sxz = 0.0_f64;
+    for (&ti, &z) in ts
+        .iter()
+        .zip(zs.iter())
+        .chain(std::iter::once((&extra_t, &extra_z)))
+    {
+        let x = (ti - t_offset) * total_dist;
+        sx += x;
+        sz += z;
+        sxx += x * x;
+        sxz += x * z;
+    }
+    let denom = n * sxx - sx * sx;
+    if denom.abs() < 1e-9 {
+        return (0.0, sz / n);
+    }
+    let a = (n * sxz - sx * sz) / denom;
+    let b = (sz - a * sx) / n;
+    (a, b)
 }
 
 /// CNOSSOS-EU §2.5.6(c) Rayleigh δ*.

@@ -379,6 +379,7 @@ fn scatter_band(
                 let screening = path_effects::screening_attenuation(
                     &mut s.profile,
                     barriers,
+                    path_effects::ObstacleInput::CANDIDATES_OFF,
                     src_alt,
                     rx_alt,
                     0.0,

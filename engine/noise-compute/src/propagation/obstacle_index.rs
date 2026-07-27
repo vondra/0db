@@ -210,6 +210,14 @@ impl ObstacleIndex {
     }
 }
 
+/// Read `QM_VECTOR_BUILDINGS` once per process. Loaders (tile-painter,
+/// source-reader) call this at init and thread the bool — kernels never read
+/// the environment. OFF is the production default until the Wave-1 cutover.
+pub fn vector_buildings_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("QM_VECTOR_BUILDINGS").is_ok_and(|v| v == "1"))
+}
+
 /// Chainage of the intersection of ray `(sx,sy)+t·(dx,dy)` with segment
 /// `(x0,y0)–(x1,y1)`, if any, with `t` strictly inside `(0, 1)` and the hit
 /// strictly inside the segment (`u ∈ [0, 1]`). Standard 2D cross-product

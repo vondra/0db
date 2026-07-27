@@ -190,6 +190,7 @@ fn compute_microseg_path(
     let (screening_atten, _obstacle_trace) = path_effects::screening_attenuation_with_meta(
         &mut path_profile,
         barriers,
+        path_effects::ObstacleInput::CANDIDATES_OFF,
         src_alt,
         rcv_alt,
         0.0, // no exclusion radius — airport ground source is point-like

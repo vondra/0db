@@ -85,6 +85,7 @@ pub(crate) fn compute_point_sources(
             propagation::path_effects::screening_attenuation_with_meta(
                 &mut path_profile,
                 barriers,
+                propagation::path_effects::ObstacleInput::CANDIDATES_OFF,
                 src_alt,
                 rcv_alt,
                 src.exclusion_radius_m as f64,

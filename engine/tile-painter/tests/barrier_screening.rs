@@ -192,6 +192,7 @@ fn line_kernel_applies_vector_barriers() {
     let screening = path_effects::screening_attenuation(
         &mut profile,
         &barriers,
+        path_effects::ObstacleInput::CANDIDATES_OFF,
         src_alt,
         rx_alt,
         0.0,
@@ -276,6 +277,7 @@ fn point_kernel_applies_vector_barriers() {
     let screening = path_effects::screening_attenuation(
         &mut profile,
         &barriers,
+        path_effects::ObstacleInput::CANDIDATES_OFF,
         src_alt,
         rx_alt,
         p.exclusion_radius_m,

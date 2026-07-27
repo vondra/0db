@@ -214,6 +214,7 @@ pub(crate) fn compute_railways(
             propagation::path_effects::screening_attenuation_with_meta(
                 &mut path_profile,
                 barriers,
+                propagation::path_effects::ObstacleInput::CANDIDATES_OFF,
                 src_alt,
                 rcv_alt,
                 0.0, // railways: no exclusion radius

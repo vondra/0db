@@ -416,6 +416,7 @@ pub fn compute_path_effects(
         propagation::path_effects::screening_attenuation_with_meta(
             &mut path_profile,
             barriers,
+            propagation::path_effects::ObstacleInput::CANDIDATES_OFF,
             src_height,
             rcv_alt,
             exclusion_radius_m,
