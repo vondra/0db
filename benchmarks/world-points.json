@@ -2521,14 +2521,14 @@
    "band": null
   },
   "regression_band": [
-   30.0,
-   36.0
+   25.0,
+   31.0
   ],
   "commensurability": {
    "metric_variant": "input_data",
    "dominance": "near_source"
   },
-  "tolerance_note": "computed 33.26 dB on 2026-07-28 (post-fix, deterministic across restarts); band ±3 dB pins the current quiet state — its real role is the smoke probe: any mixed-stamp state 500s the query and fails the run."
+  "tolerance_note": "aircraft-source lden 27.92 dB on 2026-07-28 (mode source:aircraft gates the source metric, not total_lden); band ±3 dB — its real role is the smoke probe: any mixed-stamp state 500s the query and fails the run."
  },
  {
   "id": "air_ca_hudsonbay_remote",
