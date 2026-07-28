@@ -615,6 +615,29 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
     }
   }
 
+  // ── national specials (explicit steps — their suffix is not a cc) ─────────
+  // TH from-to name matcher: claims ref-less segments the exact-ref census
+  // matcher (roads-th) cannot claim — same DRR census, same measured source
+  // id, so it must run AFTER the national family. Cache rule mirrors the
+  // family's `spec.always` branch: no cache → visible skip, NEVER download
+  // mid-run (`ROADS_DOWNLOADS_ALWAYS`, not the --enrich-only map).
+  {
+    const thNamesCache = cacheState(ROADS_DOWNLOADS_ALWAYS['th'])
+    pushIf(countryInScope('th', scope) === true, {
+      id: 'roads-th-names',
+      script: 'enrich-roads-th-names.ts',
+      phase: 'national',
+      layer: 'roads',
+      country: 'th',
+      args: ['--write'],
+      notes:
+        'DRR from-to name matching for ref-less TH roads (the Koh Phangan class) — held-out precision gate (0 FPs and ≥150 claims) enforced by the script itself; ambiguity → no match.',
+      skipReason: thNamesCache.present
+        ? null
+        : `cache missing (${thNamesCache.missing}) — chain never downloads mid-run; restore data/enrichment or run the script manually once`,
+    })
+  }
+
   // ── city ───────────────────────────────────────────────────────────────────
   for (const city of CITY_DATASETS) {
     const include =

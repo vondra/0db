@@ -173,11 +173,24 @@ fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
     }
 
     // (b) Hand-tuned arm — only where no per-section measured census is
-    // wired into the pipeline. TH's arm was deleted at M6 (superseded by
-    // the measured DRR 2024 medians above); BR stays until a BR per-section
-    // census exists in the pipeline (the DNIT-derived BR table is
-    // corridor-level, not per-section counts).
+    // wired into the pipeline. TH's arm was deleted at M6 only for classes
+    // the DRR census measures (3 secondary, 4 tertiary); the DOH-backed
+    // classes stay until a DOH adapter lands (/gg M6: deleting them dropped
+    // TH motorway/trunk/primary/residential −1.2 to −5 dB on no measured
+    // evidence). BR stays until a BR per-section census exists in the
+    // pipeline (the DNIT-derived BR table is corridor-level, not per-section
+    // counts).
     match (iso, class) {
+        // ─── Thailand rural — DOH-corridor classes, split 62/10/13/15 ────
+        // Source: pipeline/enrich-roads-th.ts thaiClassSplit(isBangkok=false)
+        // over DOH corridor totals. Rural baseline, Bangkok hex overrides via
+        // CITY_BANGKOK above. Classes 3/4 are superseded by the measured DRR
+        // medians in region_defaults_generated.
+        (b"TH", 0) => return Some((37200.0, 6000.0, 7800.0, 9000.0)), // 60k motorway
+        (b"TH", 1) => return Some((18600.0, 3000.0, 3900.0, 4500.0)), // 30k trunk
+        (b"TH", 2) => return Some((9300.0, 1500.0, 1950.0, 2250.0)),  // 15k primary
+        (b"TH", 5) => return Some((744.0, 120.0, 156.0, 180.0)),      // 1.2k residential
+
         // ─── Brazil rural (tier 0) — split 60/10/25/5 ────────────────────
         // Source: pipeline/enrich-roads-br.ts CLASS_AADT rural × splitVehicles(tier=0).
         (b"BR", 0) => return Some((30000.0, 5000.0, 12500.0, 2500.0)), // 50k motorway

@@ -14,9 +14,9 @@
 //! Refresh: `node scripts/gen-region-defaults-rs.mjs` (commit this file
 //! with the script change; the census CSV cache is a pipeline artifact).
 
-/// (iso, engine road_class, (light, medium, heavy, moto)) — veh/day both
 use crate::defaults::Aadt;
 
+/// (iso, engine road_class, (light, medium, heavy, moto)) — veh/day both
 /// directions. Sorted by (iso, class) for binary search.
 pub const REGION_DEFAULTS: &[(&[u8; 2], u8, Aadt)] = &[
     (b"TH", 3, (899.7, 62.4, 44.2, 912.1)), // n=3158 sections, median AADT 1919 — DRR Rural Roads AADT 2024 (กรมทางหลวงชนบท, MOT CKAN mirror)

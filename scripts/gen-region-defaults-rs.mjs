@@ -159,6 +159,10 @@ for (const census of CENSUSES) {
 }
 
 if (entries.length === 0) throw new Error('no census entries produced — refusing to emit an empty table')
+// binary_search_by in the consumer requires the table sorted by (iso, class)
+// — enforce it here; a new census adapter inserted out of order must never
+// silently break every lookup (/gg M6 #4).
+entries.sort((a, b) => a.iso.localeCompare(b.iso) || a.class - b.class)
 
 // ── Emit Rust ────────────────────────────────────────────────────────────
 
@@ -181,9 +185,9 @@ out.push(`//!
 //! Refresh: \`node scripts/gen-region-defaults-rs.mjs\` (commit this file
 //! with the script change; the census CSV cache is a pipeline artifact).`)
 out.push('')
-out.push('/// (iso, engine road_class, (light, medium, heavy, moto)) — veh/day both')
 out.push('use crate::defaults::Aadt;')
 out.push('')
+out.push('/// (iso, engine road_class, (light, medium, heavy, moto)) — veh/day both')
 out.push('/// directions. Sorted by (iso, class) for binary search.')
 out.push('pub const REGION_DEFAULTS: &[(&[u8; 2], u8, Aadt)] = &[')
 for (const e of entries) {
